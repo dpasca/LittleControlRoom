@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-11 10:54 JST (JST)
+Last updated: 2026-03-11 12:19 JST (JST)
 
 ## Current State
 
@@ -26,7 +26,7 @@ Current embedded Codex transport assumption:
 - The installed `codex app-server` schema supports structured user input beyond plain text, including local image attachments, and Little Control Room now uses that richer input path for the embedded pane.
 - The installed schema on this machine exposes `turn/start`, `turn/steer`, and `turn/interrupt`, but no separate queued-turn method; Little Control Room therefore supports explicit steer of the active turn, not a distinct queued-next-turn action.
 - The installed schema's `turn/start` params also support per-turn-and-subsequent-turn overrides for `model`, `effort`, `serviceTier`, and related thread settings, so embedded model changes can be applied without mutating the user's global Codex config.
-- The installed schema on this machine also exposes additional thread and utility RPCs such as `thread/fork`, `thread/read`, `thread/compact/start`, `review/start`, `model/list`, `app/list`, `skills/list`, and `account/rateLimits/read`, and Little Control Room now uses `thread/read` as a stale-busy sanity check when live completion notifications become ambiguous.
+- The installed schema on this machine also exposes additional thread and utility RPCs such as `thread/fork`, `thread/read`, `thread/compact/start`, `review/start`, `model/list`, `app/list`, `skills/list`, and `account/rateLimits/read`, and Little Control Room now uses `thread/read` both as a stale-busy sanity check and as a steer-recovery fallback when the app-server reports that the active turn id has already advanced.
 - The installed schema also emits `thread/status/changed` plus streamed `plan`, `reasoning`, and `mcpToolCall` notifications, but it still does not expose a single authoritative "all visible output has settled" event, so embedded turn tracking should model `running`, `finishing`, and `reconciling` instead of a binary busy/idle flag.
 - Embedded `codex app-server` stdout frames can exceed the prior 1 MiB scanner cap during tool-heavy turns (observed around MCP/browser screenshot activity), so the embedded transport must tolerate large JSON-RPC messages and treat stdout decode failures as fatal session breakage rather than a recoverable transcript-only warning.
 
@@ -59,28 +59,27 @@ Current embedded Codex transport assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-11 10:54 JST)
+## Latest Update (2026-03-11 12:19 JST)
 
-- Restored the public docs screenshots to the curated real-project allowlist from the local screenshot config instead of the temporary demo dataset, so the repo page once again shows real projects such as `FractalMech`, `roguellm`, `crypto`, and related work.
-- Added screenshot-only path sanitization for live project data, detail panes, classifications, session evidence, and artifact text so rendered screenshots now rewrite local absolute paths like `/Users/davide/...` to `/workspaces/...` while keeping project names intact.
-- Switched `make screenshots` back to the gitignored local `screenshots.local.toml` workflow for the maintainer path, while keeping the `demo_data` example/documentation path available for reproducible sample renders when needed.
-- Regenerated the committed PNG screenshots from the local curated set and confirmed via OCR that the real project names are visible while `/Users/davide` no longer appears in the rendered images.
+- Hardened the embedded `turn/steer` path so if `codex app-server` rejects a steer with `expected active turn id ... but found ...`, Little Control Room now reads the live thread state, retries against the current in-progress turn when possible, and falls back to `turn/start` if the thread has already gone idle.
+- Tightened local turn bookkeeping so successful steer responses fully refresh the active-turn state, clearing stale active items/pending completions and resetting the turn timer when the live turn id changes.
+- Added focused `internal/codexapp` regressions for steer mismatch retry, idle fallback to a fresh turn, and steer-state refresh, while keeping the TUI suite green.
 - No Codex/OpenCode detector assumptions changed; `docs/codex_cli_footprint.md` stayed aligned with the current footprint expectations.
 
 Verification snapshot:
 
+- `go test ./internal/codexapp` passed.
+- `go test ./internal/tui` passed.
 - `make test` passed.
-- `make screenshots` passed and refreshed `docs/screenshots/main-panel.png`, `docs/screenshots/main-panel-live-cx.png`, `docs/screenshots/codex-embedded.png`, and `docs/screenshots/commit-preview.png` from `screenshots.local.toml`.
-- OCR recheck over the regenerated PNGs confirmed the curated real project names are visible and `/Users/davide` no longer appears in the rendered screenshots; visible paths now use `/workspaces/...`.
-- `make scan` passed at `2026-03-11T10:54:15+09:00` (`activity projects: 80`, `tracked projects: 133`, `updated projects: 1`, `queued classifications: 0`).
-- `make doctor` passed on the cached snapshot dated `2026-03-11T10:54:15+09:00` (`projects: 133`).
-- `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q` as a UI startup smoke test.
+- `make scan` passed at `2026-03-11T12:18:51+09:00` (`activity projects: 80`, `tracked projects: 133`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-11T12:18:58+09:00` (`projects: 133`).
+- `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q` as an embedded-TUI smoke test.
 
 Next concrete tasks:
 
-- Decide whether `STATUS.md` and `docs/status_archive.md` should stay public as implementation handoff logs or be trimmed further for a cleaner external-facing repo.
-- Polish the public GitHub metadata further if desired (description, topics, homepage/social preview).
-- Consider whether the screenshot command should support an explicit committed "public real-projects" config path separate from the maintainer-only local config.
+- Reproduce the original embedded steer race against a live `codex app-server` session to confirm the automatic retry feels clean in the transcript and footer states.
+- Consider surfacing a small inline notice when a steer is automatically resynced to a newer active turn, so the recovery is visible without dumping a raw protocol error.
+- Keep watching for a future authoritative app-server turn-transition signal that could replace the current `thread/read` recovery path.
 
 ## Recent Updates
 

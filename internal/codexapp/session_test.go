@@ -1,6 +1,7 @@
 package codexapp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -846,6 +847,176 @@ func TestHydrateResumedThreadKeepsBusySinceForSameActiveTurn(t *testing.T) {
 	}
 	if snapshot.ActiveTurnID != "turn_live" {
 		t.Fatalf("active turn id = %q, want %q", snapshot.ActiveTurnID, "turn_live")
+	}
+}
+
+func TestSubmitInputRetriesSteerAfterActiveTurnMismatch(t *testing.T) {
+	startedAt := time.Date(2026, 3, 9, 17, 0, 0, 0, time.UTC)
+	callCount := 0
+
+	s := &appServerSession{
+		projectPath:  "/tmp/demo",
+		threadID:     "thread_456",
+		activeTurnID: "turn_old",
+		busy:         true,
+		busySince:    startedAt,
+		entryIndex:   make(map[string]int),
+		notify:       func() {},
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			callCount++
+			switch callCount {
+			case 1:
+				if method != "turn/steer" {
+					t.Fatalf("call 1 method = %q, want turn/steer", method)
+				}
+				request, ok := params.(turnSteerParams)
+				if !ok {
+					t.Fatalf("call 1 params = %#v, want turnSteerParams", params)
+				}
+				if request.ExpectedTurnID != "turn_old" {
+					t.Fatalf("call 1 expected turn id = %q, want turn_old", request.ExpectedTurnID)
+				}
+				return nil, errors.New("expected active turn id `turn_old` but found `turn_new`")
+			case 2:
+				if method != "thread/read" {
+					t.Fatalf("call 2 method = %q, want thread/read", method)
+				}
+				request, ok := params.(threadReadParams)
+				if !ok {
+					t.Fatalf("call 2 params = %#v, want threadReadParams", params)
+				}
+				if !request.IncludeTurns {
+					t.Fatalf("call 2 includeTurns = false, want true")
+				}
+				return json.RawMessage(`{"thread":{"id":"thread_456","status":{"type":"active"},"turns":[{"id":"turn_new","status":"inProgress"}]}}`), nil
+			case 3:
+				if method != "turn/steer" {
+					t.Fatalf("call 3 method = %q, want turn/steer", method)
+				}
+				request, ok := params.(turnSteerParams)
+				if !ok {
+					t.Fatalf("call 3 params = %#v, want turnSteerParams", params)
+				}
+				if request.ExpectedTurnID != "turn_new" {
+					t.Fatalf("call 3 expected turn id = %q, want turn_new", request.ExpectedTurnID)
+				}
+				return json.RawMessage(`{"turnId":"turn_new"}`), nil
+			default:
+				t.Fatalf("unexpected rpc call %d: %s", callCount, method)
+				return nil, nil
+			}
+		},
+	}
+
+	if err := s.Submit("follow up"); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+	if callCount != 3 {
+		t.Fatalf("rpc call count = %d, want 3", callCount)
+	}
+
+	snapshot := s.Snapshot()
+	if !snapshot.Busy {
+		t.Fatalf("busy = false, want true")
+	}
+	if snapshot.ActiveTurnID != "turn_new" {
+		t.Fatalf("active turn id = %q, want turn_new", snapshot.ActiveTurnID)
+	}
+	if snapshot.Status != "Sent follow-up to Codex" {
+		t.Fatalf("status = %q, want %q", snapshot.Status, "Sent follow-up to Codex")
+	}
+	if !snapshot.BusySince.After(startedAt) {
+		t.Fatalf("busy since = %v, want reset after switching to the new turn", snapshot.BusySince)
+	}
+}
+
+func TestSubmitInputStartsNewTurnWhenSteerMismatchFindsIdleThread(t *testing.T) {
+	callCount := 0
+
+	s := &appServerSession{
+		projectPath:  "/tmp/demo",
+		threadID:     "thread_456",
+		activeTurnID: "turn_old",
+		busy:         true,
+		entryIndex:   make(map[string]int),
+		notify:       func() {},
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			callCount++
+			switch callCount {
+			case 1:
+				if method != "turn/steer" {
+					t.Fatalf("call 1 method = %q, want turn/steer", method)
+				}
+				return nil, errors.New("expected active turn id `turn_old` but found `turn_new`")
+			case 2:
+				if method != "thread/read" {
+					t.Fatalf("call 2 method = %q, want thread/read", method)
+				}
+				return json.RawMessage(`{"thread":{"id":"thread_456","status":{"type":"idle"},"turns":[]}}`), nil
+			case 3:
+				if method != "turn/start" {
+					t.Fatalf("call 3 method = %q, want turn/start", method)
+				}
+				return json.RawMessage(`{"turn":{"id":"turn_fresh"}}`), nil
+			default:
+				t.Fatalf("unexpected rpc call %d: %s", callCount, method)
+				return nil, nil
+			}
+		},
+	}
+
+	if err := s.Submit("follow up"); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+	if callCount != 3 {
+		t.Fatalf("rpc call count = %d, want 3", callCount)
+	}
+
+	snapshot := s.Snapshot()
+	if !snapshot.Busy {
+		t.Fatalf("busy = false, want true")
+	}
+	if snapshot.ActiveTurnID != "turn_fresh" {
+		t.Fatalf("active turn id = %q, want turn_fresh", snapshot.ActiveTurnID)
+	}
+	if snapshot.Status != "Codex is working..." {
+		t.Fatalf("status = %q, want %q", snapshot.Status, "Codex is working...")
+	}
+}
+
+func TestRecordSteerSubmissionClearsPriorTurnState(t *testing.T) {
+	startedAt := time.Date(2026, 3, 9, 17, 0, 0, 0, time.UTC)
+	s := &appServerSession{
+		projectPath:       "/tmp/demo",
+		entryIndex:        make(map[string]int),
+		notify:            func() {},
+		busy:              true,
+		busySince:         startedAt,
+		activeTurnID:      "turn_old",
+		activeItems:       map[string]struct{}{"item_old": {}},
+		pendingCompletion: &turnCompletionState{TurnID: "turn_old", Status: "Completed in 00:04"},
+	}
+
+	s.recordSteerSubmission("turn_new")
+
+	snapshot := s.Snapshot()
+	if !snapshot.Busy {
+		t.Fatalf("busy = false, want true")
+	}
+	if snapshot.ActiveTurnID != "turn_new" {
+		t.Fatalf("active turn id = %q, want turn_new", snapshot.ActiveTurnID)
+	}
+	if snapshot.Status != "Sent follow-up to Codex" {
+		t.Fatalf("status = %q, want %q", snapshot.Status, "Sent follow-up to Codex")
+	}
+	if s.pendingCompletion != nil {
+		t.Fatalf("pending completion = %#v, want nil", s.pendingCompletion)
+	}
+	if len(s.activeItems) != 0 {
+		t.Fatalf("active items = %#v, want cleared", s.activeItems)
+	}
+	if !snapshot.BusySince.After(startedAt) {
+		t.Fatalf("busy since = %v, want reset for the new turn", snapshot.BusySince)
 	}
 }
 

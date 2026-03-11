@@ -28,6 +28,7 @@ type appServerSession struct {
 	projectPath string
 	preset      codexcli.Preset
 	notify      func()
+	rpcCallHook func(context.Context, string, any) (json.RawMessage, error)
 
 	cmd   *exec.Cmd
 	stdin io.WriteCloser
@@ -502,9 +503,11 @@ func (s *appServerSession) phaseLocked() SessionPhase {
 
 func (s *appServerSession) setBusyLocked(turnID string, external bool) {
 	turnID = strings.TrimSpace(turnID)
-	if turnID != "" && s.activeTurnID != "" && s.activeTurnID != turnID {
+	turnChanged := turnID != "" && s.activeTurnID != "" && s.activeTurnID != turnID
+	if turnChanged {
 		s.activeItems = nil
 		s.pendingCompletion = nil
+		s.busySince = time.Time{}
 	}
 	if s.pendingCompletion != nil {
 		pendingTurnID := strings.TrimSpace(s.pendingCompletion.TurnID)
@@ -677,28 +680,46 @@ func (s *appServerSession) SubmitInput(input Submission) error {
 	defer cancel()
 
 	if busy && activeTurnID != "" {
-		result, err := s.call(ctx, "turn/steer", turnSteerParams{
-			ThreadID:       threadID,
-			ExpectedTurnID: activeTurnID,
-			Input:          encodeSubmissionInput(input),
-		})
-		if err != nil {
-			s.appendSystemError(err)
-			return err
-		}
-		var response turnSteerResponse
-		_ = json.Unmarshal(result, &response)
-		s.mu.Lock()
-		if response.TurnID != "" {
-			s.activeTurnID = response.TurnID
-		}
-		s.busyExternal = false
-		s.status = "Sent follow-up to Codex"
-		s.mu.Unlock()
-		s.notify()
-		return nil
+		return s.submitBusyInput(ctx, threadID, activeTurnID, input, pendingModel, pendingReasoning, currentModel, currentReasoning)
 	}
 
+	return s.startTurnWithInput(ctx, threadID, input, pendingModel, pendingReasoning, currentModel, currentReasoning)
+}
+
+func (s *appServerSession) submitBusyInput(ctx context.Context, threadID, activeTurnID string, input Submission, pendingModel, pendingReasoning, currentModel, currentReasoning string) error {
+	turnID, err := s.steerTurn(ctx, threadID, activeTurnID, input)
+	if err == nil {
+		s.recordSteerSubmission(firstNonEmpty(turnID, activeTurnID))
+		return nil
+	}
+	if !isActiveTurnMismatchError(err) {
+		s.appendSystemError(err)
+		return err
+	}
+
+	recoveredTurnID, threadIdle, recoveryErr := s.recoverSteerTarget(ctx, threadID, activeTurnID, err)
+	if recoveryErr != nil {
+		combined := fmt.Errorf("%s (and failed to refresh thread state: %v)", err.Error(), recoveryErr)
+		s.appendSystemError(combined)
+		return combined
+	}
+
+	switch {
+	case threadIdle:
+		return s.startTurnWithInput(ctx, threadID, input, pendingModel, pendingReasoning, currentModel, currentReasoning)
+	case recoveredTurnID != "" && recoveredTurnID != activeTurnID:
+		turnID, err = s.steerTurn(ctx, threadID, recoveredTurnID, input)
+		if err == nil {
+			s.recordSteerSubmission(firstNonEmpty(turnID, recoveredTurnID))
+			return nil
+		}
+	}
+
+	s.appendSystemError(err)
+	return err
+}
+
+func (s *appServerSession) startTurnWithInput(ctx context.Context, threadID string, input Submission, pendingModel, pendingReasoning, currentModel, currentReasoning string) error {
 	params := turnStartParams{
 		ThreadID: threadID,
 		Input:    encodeSubmissionInput(input),
@@ -734,6 +755,66 @@ func (s *appServerSession) SubmitInput(input Submission) error {
 	s.mu.Unlock()
 	s.notify()
 	return nil
+}
+
+func (s *appServerSession) steerTurn(ctx context.Context, threadID, expectedTurnID string, input Submission) (string, error) {
+	result, err := s.call(ctx, "turn/steer", turnSteerParams{
+		ThreadID:       threadID,
+		ExpectedTurnID: expectedTurnID,
+		Input:          encodeSubmissionInput(input),
+	})
+	if err != nil {
+		return "", err
+	}
+	var response turnSteerResponse
+	_ = json.Unmarshal(result, &response)
+	return strings.TrimSpace(response.TurnID), nil
+}
+
+func (s *appServerSession) recordSteerSubmission(turnID string) {
+	turnID = strings.TrimSpace(turnID)
+	s.mu.Lock()
+	if turnID != "" {
+		s.setBusyLocked(turnID, false)
+	} else {
+		s.busy = true
+		s.busyExternal = false
+		s.reconciling = false
+	}
+	s.status = "Sent follow-up to Codex"
+	s.mu.Unlock()
+	s.notify()
+}
+
+func (s *appServerSession) recoverSteerTarget(ctx context.Context, threadID, expectedTurnID string, mismatchErr error) (string, bool, error) {
+	thread, err := s.readThreadState(ctx, threadID)
+	if err != nil {
+		return "", false, err
+	}
+
+	recoveredTurnID := activeTurnIDFromThread(thread)
+	if recoveredTurnID == "" {
+		if mismatch := parseActiveTurnMismatchError(mismatchErr); mismatch != nil && mismatch.ExpectedTurnID == expectedTurnID {
+			recoveredTurnID = mismatch.FoundTurnID
+		}
+	}
+	threadIdle := strings.EqualFold(strings.TrimSpace(thread.Status.Type), "idle")
+
+	s.mu.Lock()
+	s.touchLocked()
+	switch {
+	case threadIdle:
+		s.syncThreadStatusLocked(thread.ID, thread.Status, true)
+	case recoveredTurnID != "":
+		s.setBusyLocked(recoveredTurnID, false)
+		s.status = "Codex is working..."
+	default:
+		s.syncThreadStatusLocked(thread.ID, thread.Status, true)
+	}
+	s.mu.Unlock()
+	s.notify()
+
+	return recoveredTurnID, threadIdle, nil
 }
 
 func (s *appServerSession) ShowStatus() error {
@@ -1305,7 +1386,8 @@ func (s *appServerSession) RefreshBusyElsewhere() error {
 
 func (s *appServerSession) readThreadState(ctx context.Context, threadID string) (resumedThread, error) {
 	result, err := s.call(ctx, "thread/read", threadReadParams{
-		ThreadID: strings.TrimSpace(threadID),
+		ThreadID:     strings.TrimSpace(threadID),
+		IncludeTurns: true,
 	})
 	if err != nil {
 		return resumedThread{}, err
@@ -1788,6 +1870,9 @@ func (s *appServerSession) handleItemCompleted(params json.RawMessage) {
 }
 
 func (s *appServerSession) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	if s.rpcCallHook != nil {
+		return s.rpcCallHook(ctx, method, params)
+	}
 	id := s.nextRequestID()
 	key := idKey(id)
 	ch := make(chan rpcEnvelope, 1)
@@ -2503,6 +2588,70 @@ func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
 			return value
+		}
+	}
+	return ""
+}
+
+type activeTurnMismatch struct {
+	ExpectedTurnID string
+	FoundTurnID    string
+}
+
+func isActiveTurnMismatchError(err error) bool {
+	return parseActiveTurnMismatchError(err) != nil
+}
+
+func parseActiveTurnMismatchError(err error) *activeTurnMismatch {
+	if err == nil {
+		return nil
+	}
+	message := strings.TrimSpace(err.Error())
+	const prefix = "expected active turn id "
+	if !strings.HasPrefix(message, prefix) {
+		return nil
+	}
+	rest := strings.TrimPrefix(message, prefix)
+	expectedTurnID, remainder, ok := parseQuotedTurnID(rest)
+	if !ok {
+		return nil
+	}
+	const separator = " but found "
+	if !strings.HasPrefix(remainder, separator) {
+		return nil
+	}
+	foundTurnID, remainder, ok := parseQuotedTurnID(strings.TrimPrefix(remainder, separator))
+	if !ok || strings.TrimSpace(remainder) != "" {
+		return nil
+	}
+	return &activeTurnMismatch{
+		ExpectedTurnID: expectedTurnID,
+		FoundTurnID:    foundTurnID,
+	}
+}
+
+func parseQuotedTurnID(value string) (string, string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", "", false
+	}
+	quote := value[0]
+	if quote != '`' && quote != '"' && quote != '\'' {
+		return "", "", false
+	}
+	end := strings.IndexByte(value[1:], quote)
+	if end < 0 {
+		return "", "", false
+	}
+	end++
+	return value[1:end], value[end+1:], true
+}
+
+func activeTurnIDFromThread(thread resumedThread) string {
+	for i := len(thread.Turns) - 1; i >= 0; i-- {
+		turn := thread.Turns[i]
+		if strings.EqualFold(strings.TrimSpace(turn.Status), "inProgress") && strings.TrimSpace(turn.ID) != "" {
+			return strings.TrimSpace(turn.ID)
 		}
 	}
 	return ""
