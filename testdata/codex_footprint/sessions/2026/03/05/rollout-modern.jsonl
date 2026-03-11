@@ -1,0 +1,6 @@
+{"timestamp":"2026-03-05T07:30:48.894Z","type":"session_meta","payload":{"id":"019cbce5-bcab-73f2-896d-3287ed825280","timestamp":"2026-03-05T07:28:18.609Z","cwd":"/workspaces/repos/LittleControlRoom","originator":"codex_cli_rs","cli_version":"0.107.0","source":"cli","model_provider":"openai"}}
+{"timestamp":"2026-03-05T07:30:48.896Z","type":"event_msg","payload":{"type":"user_message","message":"Create Little Control Room"}}
+{"timestamp":"2026-03-05T07:30:49.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"019cbce5-bcab-73f2-896d-3287ed825280"}}
+{"timestamp":"2026-03-05T07:31:22.015Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_a","output":"Chunk ID: 1234\nProcess exited with code 0\nOutput:\n..."}}
+{"timestamp":"2026-03-05T07:32:12.011Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_b","output":"Chunk ID: 5678\nProcess exited with code 1\nOutput:\nerror: failed"}}
+{"timestamp":"2026-03-05T07:32:13.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"019cbce5-bcab-73f2-896d-3287ed825280","last_agent_message":"Done"}}

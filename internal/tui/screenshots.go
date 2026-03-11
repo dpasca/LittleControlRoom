@@ -1,0 +1,1143 @@
+package tui
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/xml"
+	"fmt"
+	"math"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+	"unicode"
+	"unicode/utf8"
+
+	"lcroom/internal/codexapp"
+	"lcroom/internal/codexcli"
+	"lcroom/internal/config"
+	"lcroom/internal/model"
+	"lcroom/internal/service"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
+)
+
+type ScreenshotAsset struct {
+	Name   string
+	Title  string
+	ANSI   string
+	HTML   string
+	Width  int
+	Height int
+}
+
+type ScreenshotReport struct {
+	Assets                []ScreenshotAsset
+	MatchedProjects       []string
+	MissingProjectFilters []string
+	Warnings              []string
+}
+
+func GenerateScreenshots(ctx context.Context, svc *service.Service, cfg config.ScreenshotConfig) (ScreenshotReport, error) {
+	if svc == nil {
+		return ScreenshotReport{}, fmt.Errorf("service required")
+	}
+
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	defer func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	}()
+
+	data, err := loadScreenshotData(ctx, svc, cfg)
+	if err != nil {
+		return ScreenshotReport{}, err
+	}
+	projects := data.projects
+
+	filtered, missingFilters := filterScreenshotProjects(projects, cfg.ProjectFilters)
+	if len(filtered) == 0 {
+		return ScreenshotReport{}, fmt.Errorf("no visible projects matched the screenshot filters")
+	}
+
+	selectedProject, selectedWarning := resolveScreenshotProject(filtered, cfg.SelectedProject)
+	liveProject, liveWarning := resolveScreenshotProject(filtered, cfg.LiveCodexProject)
+	if strings.TrimSpace(liveProject.Path) == "" {
+		liveProject = selectedProject
+	}
+
+	now := screenshotReferenceTime(filtered)
+	listSnapshots := screenshotListLiveCodexSnapshots(filtered, now)
+	liveSelectionProject := screenshotAlternateSelectionProject(filtered, liveProject)
+	assets := make([]ScreenshotAsset, 0, 4)
+
+	mainModel, err := buildScreenshotDashboardModel(ctx, svc, data, filtered, selectedProject.Path, cfg, now)
+	if err != nil {
+		return ScreenshotReport{}, err
+	}
+	if len(listSnapshots) > 0 {
+		mainModel.codexManager = newScreenshotCodexManager(listSnapshots)
+	}
+	assets = append(assets, screenshotAsset("main-panel", "Main Panel", mainModel.View(), cfg))
+
+	liveModel, err := buildScreenshotDashboardModel(ctx, svc, data, filtered, liveSelectionProject.Path, cfg, now)
+	if err != nil {
+		return ScreenshotReport{}, err
+	}
+	liveSnapshots := cloneScreenshotSnapshots(listSnapshots)
+	liveSnapshots[liveProject.Path] = screenshotLiveCodexSnapshot(liveProject, now)
+	liveModel.codexManager = newScreenshotCodexManager(liveSnapshots)
+	liveModel.codexHiddenProject = liveProject.Path
+	liveModel.status = "Embedded Codex session hidden."
+	assets = append(assets, screenshotAsset("main-panel-live-cx", "Main Panel With Live Codex", liveModel.View(), cfg))
+
+	codexModel, err := buildScreenshotDashboardModel(ctx, svc, data, filtered, liveProject.Path, cfg, now)
+	if err != nil {
+		return ScreenshotReport{}, err
+	}
+	embeddedSnapshots := cloneScreenshotSnapshots(listSnapshots)
+	embeddedSnapshots[liveProject.Path] = screenshotEmbeddedCodexSnapshot(liveProject, now)
+	codexModel.codexManager = newScreenshotCodexManager(embeddedSnapshots)
+	codexModel.codexVisibleProject = liveProject.Path
+	codexModel.codexHiddenProject = liveProject.Path
+	codexModel.syncCodexViewport(false)
+	codexModel.syncCodexComposerSize()
+	assets = append(assets, screenshotAsset("codex-embedded", "Embedded Codex Session", codexModel.View(), cfg))
+
+	commitModel, err := buildScreenshotDashboardModel(ctx, svc, data, filtered, selectedProject.Path, cfg, now)
+	if err != nil {
+		return ScreenshotReport{}, err
+	}
+	commitModel.commitPreview = screenshotCommitPreview(selectedProject)
+	commitModel.status = commitPreviewReadyStatus(commitModel.commitPreview.CanPush)
+	assets = append(assets, screenshotAsset("commit-preview", "Commit Preview", commitModel.View(), cfg))
+
+	report := ScreenshotReport{
+		Assets:                assets,
+		MatchedProjects:       screenshotProjectLabels(filtered),
+		MissingProjectFilters: missingFilters,
+	}
+	if selectedWarning != "" {
+		report.Warnings = append(report.Warnings, selectedWarning)
+	}
+	if liveWarning != "" {
+		report.Warnings = append(report.Warnings, liveWarning)
+	}
+	return report, nil
+}
+
+func loadScreenshotData(ctx context.Context, svc *service.Service, cfg config.ScreenshotConfig) (screenshotDataSet, error) {
+	if cfg.DemoData {
+		return screenshotDemoDataSet(), nil
+	}
+
+	projects, err := svc.Store().ListProjects(ctx, false)
+	if err != nil {
+		return screenshotDataSet{}, fmt.Errorf("list projects: %w", err)
+	}
+	return screenshotDataSet{projects: projects}, nil
+}
+
+func screenshotAsset(name, title, rendered string, cfg config.ScreenshotConfig) ScreenshotAsset {
+	html, width, height := renderTerminalHTMLDocument(title, rendered, cfg.TerminalWidth, cfg.TerminalHeight)
+	return ScreenshotAsset{
+		Name:   name,
+		Title:  title,
+		ANSI:   rendered,
+		HTML:   html,
+		Width:  width,
+		Height: height,
+	}
+}
+
+func buildScreenshotDashboardModel(ctx context.Context, svc *service.Service, data screenshotDataSet, projects []model.ProjectSummary, selectedPath string, cfg config.ScreenshotConfig, now time.Time) (Model, error) {
+	m := New(ctx, svc)
+	m.loading = false
+	m.err = nil
+	m.width = cfg.TerminalWidth
+	m.height = cfg.TerminalHeight
+	m.nowFn = func() time.Time { return now }
+	m.excludeProjectPatterns = nil
+	m.allProjects = append([]model.ProjectSummary(nil), projects...)
+	m.visibility = visibilityAIFolders
+	m.rebuildProjectList(selectedPath)
+	if len(m.projects) == 0 {
+		m.visibility = visibilityAllFolders
+		m.rebuildProjectList(selectedPath)
+	}
+	if len(m.projects) == 0 {
+		return Model{}, fmt.Errorf("no screenshot projects remained after visibility filtering")
+	}
+	if idx := m.indexByPath(selectedPath); idx >= 0 {
+		m.selected = idx
+	}
+	project, ok := m.selectedProject()
+	if !ok {
+		return Model{}, fmt.Errorf("selected screenshot project unavailable")
+	}
+	detail, err := data.projectDetail(ctx, svc, project.Path, 20)
+	if err != nil {
+		return Model{}, fmt.Errorf("load project detail %s: %w", project.Path, err)
+	}
+	m.detail = detail
+	m.status = fmt.Sprintf("Loaded %d projects (%s, %s)", len(m.projects), m.sortMode, visibilityLabel(m.visibility))
+	m.syncDetailViewport(false)
+	return m, nil
+}
+
+func (d screenshotDataSet) projectDetail(ctx context.Context, svc *service.Service, path string, eventLimit int) (model.ProjectDetail, error) {
+	if d.details != nil {
+		detail, ok := d.details[path]
+		if !ok {
+			return model.ProjectDetail{}, fmt.Errorf("demo project detail not found: %s", path)
+		}
+		return detail, nil
+	}
+	return svc.Store().GetProjectDetail(ctx, path, eventLimit)
+}
+
+func filterScreenshotProjects(projects []model.ProjectSummary, filters []string) ([]model.ProjectSummary, []string) {
+	if len(filters) == 0 {
+		return append([]model.ProjectSummary(nil), projects...), nil
+	}
+
+	filtered := make([]model.ProjectSummary, 0, len(filters))
+	seen := map[string]struct{}{}
+	missing := []string{}
+	for _, filter := range filters {
+		found := false
+		for _, project := range projects {
+			if !screenshotProjectMatches(project, filter) {
+				continue
+			}
+			found = true
+			if _, ok := seen[project.Path]; ok {
+				continue
+			}
+			seen[project.Path] = struct{}{}
+			filtered = append(filtered, project)
+		}
+		if !found {
+			missing = append(missing, filter)
+		}
+	}
+	return filtered, missing
+}
+
+func resolveScreenshotProject(projects []model.ProjectSummary, filter string) (model.ProjectSummary, string) {
+	if len(projects) == 0 {
+		return model.ProjectSummary{}, ""
+	}
+	filter = strings.TrimSpace(filter)
+	if filter == "" {
+		return projects[0], ""
+	}
+	for _, project := range projects {
+		if screenshotProjectMatches(project, filter) {
+			return project, ""
+		}
+	}
+	return projects[0], fmt.Sprintf("Screenshot project %q was not found; using %s instead.", filter, screenshotProjectLabel(projects[0]))
+}
+
+func screenshotProjectMatches(project model.ProjectSummary, filter string) bool {
+	filter = normalizeScreenshotProjectToken(filter)
+	if filter == "" {
+		return false
+	}
+
+	candidates := []string{
+		project.Name,
+		filepath.Base(filepath.Clean(project.Path)),
+	}
+	for _, candidate := range candidates {
+		if normalizeScreenshotProjectToken(candidate) == filter {
+			return true
+		}
+		if screenshotProjectAcronym(candidate) == filter {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeScreenshotProjectToken(value string) string {
+	var out strings.Builder
+	out.Grow(len(value))
+	for _, r := range strings.ToLower(strings.TrimSpace(value)) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			out.WriteRune(r)
+		}
+	}
+	return out.String()
+}
+
+func screenshotProjectAcronym(value string) string {
+	words := screenshotProjectWords(value)
+	if len(words) == 0 {
+		return ""
+	}
+	var out strings.Builder
+	for _, word := range words {
+		r, _ := utf8.DecodeRuneInString(word)
+		if r != utf8.RuneError && r != 0 {
+			out.WriteRune(unicode.ToLower(r))
+		}
+	}
+	return out.String()
+}
+
+func screenshotProjectWords(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+
+	words := []string{}
+	var current []rune
+	flush := func() {
+		if len(current) == 0 {
+			return
+		}
+		words = append(words, string(current))
+		current = current[:0]
+	}
+
+	var prev rune
+	for _, r := range value {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			if len(current) > 0 && unicode.IsUpper(r) && (unicode.IsLower(prev) || unicode.IsDigit(prev)) {
+				flush()
+			}
+			current = append(current, r)
+		default:
+			flush()
+		}
+		prev = r
+	}
+	flush()
+	return words
+}
+
+func screenshotReferenceTime(projects []model.ProjectSummary) time.Time {
+	latest := time.Time{}
+	for _, project := range projects {
+		if project.LastActivity.After(latest) {
+			latest = project.LastActivity
+		}
+	}
+	if latest.IsZero() {
+		return time.Now()
+	}
+	return latest.Add(5 * time.Minute)
+}
+
+func screenshotProjectLabels(projects []model.ProjectSummary) []string {
+	out := make([]string, 0, len(projects))
+	for _, project := range projects {
+		out = append(out, screenshotProjectLabel(project))
+	}
+	return out
+}
+
+func screenshotProjectLabel(project model.ProjectSummary) string {
+	if strings.TrimSpace(project.Name) != "" {
+		return project.Name
+	}
+	return filepath.Base(filepath.Clean(project.Path))
+}
+
+type screenshotCodexSession struct {
+	projectPath string
+	snapshot    codexapp.Snapshot
+}
+
+func (s *screenshotCodexSession) ProjectPath() string {
+	return s.projectPath
+}
+
+func (s *screenshotCodexSession) Snapshot() codexapp.Snapshot {
+	snapshot := s.snapshot
+	snapshot.ProjectPath = s.projectPath
+	return snapshot
+}
+
+func (s *screenshotCodexSession) Submit(prompt string) error {
+	return nil
+}
+
+func (s *screenshotCodexSession) SubmitInput(input codexapp.Submission) error {
+	return nil
+}
+
+func (s *screenshotCodexSession) ShowStatus() error {
+	return nil
+}
+
+func (s *screenshotCodexSession) Interrupt() error {
+	return nil
+}
+
+func (s *screenshotCodexSession) ListModels() ([]codexapp.ModelOption, error) {
+	return nil, nil
+}
+
+func (s *screenshotCodexSession) StageModelOverride(model, reasoningEffort string) error {
+	s.snapshot.PendingModel = model
+	s.snapshot.PendingReasoning = reasoningEffort
+	return nil
+}
+
+func (s *screenshotCodexSession) RespondApproval(decision codexapp.ApprovalDecision) error {
+	return nil
+}
+
+func (s *screenshotCodexSession) RespondToolInput(answers map[string][]string) error {
+	return nil
+}
+
+func (s *screenshotCodexSession) RespondElicitation(decision codexapp.ElicitationDecision, content json.RawMessage) error {
+	return nil
+}
+
+func (s *screenshotCodexSession) Close() error {
+	s.snapshot.Closed = true
+	return nil
+}
+
+func newScreenshotCodexManager(snapshots map[string]codexapp.Snapshot) *codexapp.Manager {
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		snapshot, ok := snapshots[strings.TrimSpace(req.ProjectPath)]
+		if !ok {
+			snapshot = codexapp.Snapshot{Preset: req.Preset}
+		}
+		if snapshot.Preset == "" {
+			snapshot.Preset = req.Preset
+		}
+		return &screenshotCodexSession{projectPath: req.ProjectPath, snapshot: snapshot}, nil
+	})
+	for projectPath, snapshot := range snapshots {
+		_, _, _ = manager.Open(codexapp.LaunchRequest{
+			ProjectPath: projectPath,
+			Preset:      snapshot.Preset,
+		})
+	}
+	return manager
+}
+
+func screenshotLiveCodexSnapshot(project model.ProjectSummary, now time.Time) codexapp.Snapshot {
+	return codexapp.Snapshot{
+		ThreadID:       "thread-live",
+		Preset:         codexcli.PresetYolo,
+		Started:        true,
+		Busy:           true,
+		BusySince:      now.Add(-48 * time.Second),
+		Status:         "Working",
+		LastActivityAt: now,
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptStatus, Text: fmt.Sprintf("Embedded Codex ready in %s", screenshotProjectLabel(project))},
+		},
+	}
+}
+
+func screenshotEmbeddedCodexSnapshot(project model.ProjectSummary, now time.Time) codexapp.Snapshot {
+	projectName := screenshotProjectLabel(project)
+	return codexapp.Snapshot{
+		ThreadID:        "thread-screenshot",
+		Preset:          codexcli.PresetYolo,
+		Started:         true,
+		Status:          "Codex turn completed",
+		LastActivityAt:  now,
+		Model:           "gpt-5.4",
+		ReasoningEffort: "xhigh",
+		TokenUsage: &codexapp.TokenUsageSnapshot{
+			Last: codexapp.TokenUsageBreakdown{
+				InputTokens:           10000,
+				OutputTokens:          2345,
+				ReasoningOutputTokens: 345,
+				TotalTokens:           12345,
+			},
+			Total: codexapp.TokenUsageBreakdown{
+				TotalTokens: 12345,
+			},
+			ModelContextWindow: 200000,
+		},
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptUser, Text: "set up reproducible screenshots for this app"},
+			{Kind: codexapp.TranscriptPlan, Text: "1. Add a local screenshot config for safe projects.\n2. Render fixed-size TUI scenarios at 112x31.\n3. Export PNG assets for docs and thumbnails."},
+			{Kind: codexapp.TranscriptCommand, Text: "$ rg --files internal/tui docs Makefile\ninternal/tui/app.go\ninternal/tui/codex_pane.go\ninternal/tui/screenshots.go\ndocs/reference.md\nMakefile\n[command completed, exit 0]"},
+			{Kind: codexapp.TranscriptFileChange, Text: "A internal/config/screenshot_config.go\nA internal/tui/screenshots.go\nM internal/cli/run.go\nM Makefile\nA docs/screenshots.example.toml"},
+			{Kind: codexapp.TranscriptAgent, Text: fmt.Sprintf("Added a screenshots command for %s with a local allowlist config, live dashboard capture, and browser-rendered PNG output in docs/screenshots.", projectName)},
+			{Kind: codexapp.TranscriptSystem, Text: "Tip: Alt+Up hides the pane while the CX badge stays lit in the project list."},
+		},
+		Transcript: "",
+	}
+}
+
+func screenshotListLiveCodexSnapshots(projects []model.ProjectSummary, now time.Time) map[string]codexapp.Snapshot {
+	type timerSpec struct {
+		filter   string
+		duration time.Duration
+	}
+
+	specs := []timerSpec{
+		{filter: "LCR", duration: 48 * time.Second},
+		{filter: screenshotDemoFollowupProject, duration: 2*time.Minute + 14*time.Second},
+		{filter: screenshotDemoBusyProject, duration: 86 * time.Second},
+	}
+
+	snapshots := make(map[string]codexapp.Snapshot, 2)
+	for _, spec := range specs {
+		project, ok := findScreenshotProject(projects, spec.filter)
+		if !ok {
+			continue
+		}
+		if _, exists := snapshots[project.Path]; exists {
+			continue
+		}
+		snapshots[project.Path] = codexapp.Snapshot{
+			ThreadID:       fmt.Sprintf("thread-%s-live", normalizeScreenshotProjectToken(project.Name)),
+			Preset:         codexcli.PresetYolo,
+			Started:        true,
+			Busy:           true,
+			BusySince:      now.Add(-spec.duration),
+			Status:         "Working",
+			LastActivityAt: now,
+		}
+		if len(snapshots) >= 2 {
+			break
+		}
+	}
+	return snapshots
+}
+
+func cloneScreenshotSnapshots(src map[string]codexapp.Snapshot) map[string]codexapp.Snapshot {
+	if len(src) == 0 {
+		return map[string]codexapp.Snapshot{}
+	}
+	dst := make(map[string]codexapp.Snapshot, len(src))
+	for path, snapshot := range src {
+		dst[path] = snapshot
+	}
+	return dst
+}
+
+func findScreenshotProject(projects []model.ProjectSummary, filter string) (model.ProjectSummary, bool) {
+	for _, project := range projects {
+		if screenshotProjectMatches(project, filter) {
+			return project, true
+		}
+	}
+	return model.ProjectSummary{}, false
+}
+
+func screenshotAlternateSelectionProject(projects []model.ProjectSummary, liveProject model.ProjectSummary) model.ProjectSummary {
+	if project, ok := findScreenshotProject(projects, screenshotDemoFollowupProject); ok && project.Path != liveProject.Path {
+		return project
+	}
+	for _, project := range projects {
+		if project.Path != liveProject.Path {
+			return project
+		}
+	}
+	return liveProject
+}
+
+func screenshotCommitPreview(project model.ProjectSummary) *service.CommitPreview {
+	return &service.CommitPreview{
+		Intent:      service.GitActionFinish,
+		ProjectPath: project.Path,
+		ProjectName: screenshotProjectLabel(project),
+		Branch:      "master",
+		StageMode:   service.GitStageAllChanges,
+		Message:     "Add reproducible screenshot workflow",
+		Included: []service.CommitFile{
+			{Code: "M", Summary: "internal/cli/run.go"},
+			{Code: "A", Summary: "internal/config/screenshot_config.go"},
+			{Code: "A", Summary: "internal/tui/screenshots.go"},
+			{Code: "M", Summary: "docs/reference.md"},
+			{Code: "A", Summary: "docs/screenshots.example.toml"},
+		},
+		DiffSummary:   "5 files changed, 312 insertions(+), 18 deletions(-)",
+		LatestSummary: strings.TrimSpace(project.LatestSessionSummary),
+		CanPush:       true,
+	}
+}
+
+type terminalTextStyle struct {
+	fg        string
+	bg        string
+	hasFG     bool
+	hasBG     bool
+	bold      bool
+	faint     bool
+	italic    bool
+	underline bool
+	reverse   bool
+}
+
+type terminalRun struct {
+	text  string
+	style terminalTextStyle
+}
+
+type terminalLine []terminalRun
+
+const (
+	terminalFontFamilyCSS = `'LCR Iosevka','Iosevka Term','Iosevka Fixed',Iosevka,ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace`
+)
+
+type terminalFrameLayout struct {
+	framePadding   float64
+	contentPadding float64
+	titleBarHeight float64
+	lineHeight     float64
+	contentBottom  float64
+	viewportWidth  int
+	viewportHeight int
+}
+
+func terminalFrameMetrics(cols, rows int) terminalFrameLayout {
+	const (
+		framePadding       = 18.0
+		contentPadding     = 22.0
+		titleBarHeight     = 34.0
+		cellWidthEstimate  = 9.3
+		lineHeight         = 18.0
+		contentBottom      = 18.0
+		captureExtraWidth  = 96.0
+		captureExtraHeight = 72.0
+	)
+	contentWidthEstimate := float64(cols) * cellWidthEstimate
+	contentHeightEstimate := float64(rows)*lineHeight + contentBottom
+	frameWidthEstimate := contentWidthEstimate + contentPadding*2
+	frameHeightEstimate := titleBarHeight + contentHeightEstimate + contentPadding*2
+	return terminalFrameLayout{
+		framePadding:   framePadding,
+		contentPadding: contentPadding,
+		titleBarHeight: titleBarHeight,
+		lineHeight:     lineHeight,
+		contentBottom:  contentBottom,
+		viewportWidth:  int(math.Ceil(frameWidthEstimate + framePadding*2 + captureExtraWidth)),
+		viewportHeight: int(math.Ceil(frameHeightEstimate + framePadding*2 + captureExtraHeight)),
+	}
+}
+
+func renderTerminalHTMLDocument(title, content string, cols, rows int) (string, int, int) {
+	const (
+		pageBackground  = "#0b1020"
+		frameBackground = "#10141d"
+		frameStroke     = "#20283a"
+		shadowColor     = "#070b16"
+		titleBarColor   = "#161b27"
+		titleColor      = "#9fb3d1"
+		defaultFG       = "#d7dbe6"
+		defaultBG       = "#151821"
+		titleInsetLeft  = 72.0
+		titleInsetTop   = 8.0
+		titleFontSize   = 13.0
+		windowRadius    = 18.0
+		contentRadius   = 10.0
+		dotSize         = 9.0
+		closeDotLeft    = 15.5
+		minimizeDotLeft = 31.5
+		maximizeDotLeft = 47.5
+		dotTop          = 12.5
+		shadowOffsetTop = 4.0
+	)
+
+	layout := terminalFrameMetrics(cols, rows)
+	lines := parseTerminalANSI(content)
+	if len(lines) < rows {
+		for len(lines) < rows {
+			lines = append(lines, terminalLine{})
+		}
+	}
+
+	var out strings.Builder
+	out.Grow(len(content) * 6)
+	out.WriteString(`<!doctype html><html lang="en"><head><meta charset="utf-8"/>`)
+	fmt.Fprintf(&out, `<meta name="viewport" content="width=%d,height=%d,initial-scale=1"/>`, layout.viewportWidth, layout.viewportHeight)
+	out.WriteString(`<title>`)
+	writeEscapedHTML(&out, title)
+	out.WriteString(`</title><style>`)
+	out.WriteString(embeddedTerminalFontCSS())
+	fmt.Fprintf(&out, `:root{--cols:%d;--rows:%d;--content-pad:%.1fpx;--title-h:%.1fpx;--line-h:%.1fpx;--content-bottom:%.1fpx;}`, cols, rows, layout.contentPadding, layout.titleBarHeight, layout.lineHeight, layout.contentBottom)
+	fmt.Fprintf(&out, `html,body{margin:0;padding:0;width:%dpx;height:%dpx;overflow:hidden;background:%s;}`, layout.viewportWidth, layout.viewportHeight, pageBackground)
+	fmt.Fprintf(&out, `body{font-family:%s;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;}`, terminalFontFamilyCSS)
+	fmt.Fprintf(&out, `.stage{position:relative;width:%dpx;height:%dpx;background:%s;overflow:hidden;}`, layout.viewportWidth, layout.viewportHeight, pageBackground)
+	fmt.Fprintf(&out, `.frame-wrap{position:absolute;left:%.1fpx;top:%.1fpx;display:inline-block;}`, layout.framePadding, layout.framePadding)
+	fmt.Fprintf(&out, `.frame-shadow{position:absolute;inset:0;transform:translateY(%.1fpx);border-radius:%.1fpx;background:%s;opacity:.35;}`, shadowOffsetTop, windowRadius, shadowColor)
+	fmt.Fprintf(&out, `.frame{position:relative;display:inline-block;border-radius:%.1fpx;background:%s;border:1px solid %s;overflow:hidden;}`, windowRadius, frameBackground, frameStroke)
+	fmt.Fprintf(&out, `.titlebar{display:block;height:%.1fpx;background:%s;}`, layout.titleBarHeight, titleBarColor)
+	fmt.Fprintf(&out, `.title{position:absolute;left:%.1fpx;top:%.1fpx;color:%s;font-size:%.1fpx;line-height:%.1fpx;font-family:%s;}`, titleInsetLeft, titleInsetTop, titleColor, titleFontSize, titleFontSize, terminalFontFamilyCSS)
+	fmt.Fprintf(&out, `.dot{position:absolute;top:%.1fpx;width:%.1fpx;height:%.1fpx;border-radius:50%%;}`, dotTop, dotSize, dotSize)
+	out.WriteString(`.dot-close{left:`)
+	out.WriteString(strconv.FormatFloat(closeDotLeft, 'f', 1, 64))
+	out.WriteString(`px;background:#ff6b6b;}`)
+	out.WriteString(`.dot-minimize{left:`)
+	out.WriteString(strconv.FormatFloat(minimizeDotLeft, 'f', 1, 64))
+	out.WriteString(`px;background:#ffd166;}`)
+	out.WriteString(`.dot-maximize{left:`)
+	out.WriteString(strconv.FormatFloat(maximizeDotLeft, 'f', 1, 64))
+	out.WriteString(`px;background:#4cc38a;}`)
+	out.WriteString(`.content{padding:0 0 var(--content-pad);}`)
+	fmt.Fprintf(&out, `.terminal-shell{display:inline-block;padding:%.1fpx;box-sizing:border-box;background:%s;border-radius:0 0 %.1fpx %.1fpx;overflow:hidden;}`, layout.contentPadding, defaultBG, contentRadius, contentRadius)
+	fmt.Fprintf(&out, `.terminal{display:block;width:calc(var(--cols) * 1ch);min-width:calc(var(--cols) * 1ch);min-height:calc((var(--rows) * var(--line-h)) + var(--content-bottom));padding-bottom:4px;box-sizing:content-box;overflow:hidden;font-family:%s;font-size:14px;line-height:var(--line-h);color:%s;letter-spacing:0;white-space:pre;font-variant-ligatures:none;font-feature-settings:'liga' 0,'calt' 0;font-variant-numeric:tabular-nums;font-synthesis:none;}`, terminalFontFamilyCSS, defaultFG)
+	out.WriteString(`.line{display:flex;align-items:stretch;width:100%;line-height:var(--line-h);}`)
+	out.WriteString(`.run{display:inline-block;white-space:pre;line-height:inherit;min-height:100%;vertical-align:top;}`)
+	out.WriteString(`</style></head><body><div class="stage"><div class="frame-wrap"><div class="frame-shadow"></div><div class="frame"><div class="titlebar"></div><div class="dot dot-close"></div><div class="dot dot-minimize"></div><div class="dot dot-maximize"></div><div class="title">`)
+	writeEscapedHTML(&out, title)
+	out.WriteString(`</div><div class="content">`)
+	out.WriteString(renderTerminalHTMLBlock(lines, layout.lineHeight, defaultFG, defaultBG))
+	out.WriteString(`</div></div></div></div></body></html>`)
+	return out.String(), layout.viewportWidth, layout.viewportHeight
+}
+
+func renderTerminalHTMLBlock(lines []terminalLine, lineHeight float64, defaultFG, defaultBG string) string {
+	var out strings.Builder
+	out.Grow(len(lines) * 128)
+	fmt.Fprintf(&out, `<div class="terminal-shell"><div class="terminal">`)
+	for _, line := range lines {
+		lineBG := terminalLineBackground(line, defaultFG, defaultBG)
+		fmt.Fprintf(&out, `<div class="line" style="height:%.1fpx;`, lineHeight)
+		if lineBG != "" {
+			fmt.Fprintf(&out, `background:%s;`, lineBG)
+		}
+		out.WriteString(`">`)
+		if len(line) == 0 {
+			out.WriteString(`&#8203;`)
+		} else {
+			for _, run := range line {
+				if run.text == "" {
+					continue
+				}
+				out.WriteString(`<span class="run" style="`)
+				out.WriteString(terminalRunCSS(run.style, defaultFG, defaultBG, lineBG))
+				out.WriteString(`">`)
+				writeEscapedHTML(&out, run.text)
+				out.WriteString(`</span>`)
+			}
+		}
+		out.WriteString(`</div>`)
+	}
+	out.WriteString(`</div></div>`)
+	return out.String()
+}
+
+func terminalRunCSS(style terminalTextStyle, defaultFG, defaultBG, lineBG string) string {
+	fg, bg := effectiveTerminalColors(style, defaultFG, defaultBG)
+	parts := []string{
+		fmt.Sprintf("color:%s", fg),
+	}
+	if bg != "" && bg != defaultBG && bg != lineBG {
+		parts = append(parts, fmt.Sprintf("background:%s", bg))
+	}
+	if style.bold {
+		parts = append(parts, "font-weight:600")
+	}
+	if style.faint {
+		parts = append(parts, "opacity:0.72")
+	}
+	if style.italic {
+		parts = append(parts, "font-style:italic")
+	}
+	if style.underline {
+		parts = append(parts, "text-decoration:underline")
+	}
+	return strings.Join(parts, ";")
+}
+
+var (
+	embeddedTerminalFontCSSOnce  sync.Once
+	embeddedTerminalFontCSSValue string
+)
+
+func embeddedTerminalFontCSS() string {
+	embeddedTerminalFontCSSOnce.Do(func() {
+		embeddedTerminalFontCSSValue = buildEmbeddedTerminalFontCSS()
+	})
+	return embeddedTerminalFontCSSValue
+}
+
+func buildEmbeddedTerminalFontCSS() string {
+	type fontFace struct {
+		weight     int
+		candidates []string
+	}
+
+	faces := []fontFace{
+		{
+			weight: 400,
+			candidates: []string{
+				"~/Library/Fonts/IosevkaTermNerdFontMono-Regular.ttf",
+				"~/Library/Fonts/IosevkaNerdFont-Regular.ttf",
+				"/usr/share/fonts/truetype/iosevka-term/IosevkaTerm-Regular.ttf",
+				"/usr/share/fonts/truetype/iosevka/Iosevka-Regular.ttf",
+				"/usr/local/share/fonts/IosevkaTerm-Regular.ttf",
+				"/usr/local/share/fonts/Iosevka-Regular.ttf",
+			},
+		},
+		{
+			weight: 600,
+			candidates: []string{
+				"~/Library/Fonts/IosevkaTermNerdFontMono-Medium.ttf",
+				"~/Library/Fonts/IosevkaNerdFont-SemiBold.ttf",
+				"~/Library/Fonts/IosevkaNerdFont-Heavy.ttf",
+				"/usr/share/fonts/truetype/iosevka-term/IosevkaTerm-Medium.ttf",
+				"/usr/share/fonts/truetype/iosevka/Iosevka-SemiBold.ttf",
+				"/usr/local/share/fonts/IosevkaTerm-Medium.ttf",
+				"/usr/local/share/fonts/Iosevka-SemiBold.ttf",
+			},
+		},
+	}
+
+	var css strings.Builder
+	for _, face := range faces {
+		path, ok := firstExistingScreenshotFont(face.candidates...)
+		if !ok {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		mimeType, format := embeddedFontFormat(path)
+		fmt.Fprintf(&css, "@font-face{font-family:'LCR Iosevka';src:url(data:%s;base64,%s) format('%s');font-style:normal;font-weight:%d;font-display:block;}", mimeType, base64.StdEncoding.EncodeToString(data), format, face.weight)
+	}
+	return css.String()
+}
+
+func firstExistingScreenshotFont(candidates ...string) (string, bool) {
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if strings.HasPrefix(candidate, "~/") {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				continue
+			}
+			candidate = filepath.Join(home, strings.TrimPrefix(candidate, "~/"))
+		}
+		info, err := os.Stat(candidate)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		return candidate, true
+	}
+	return "", false
+}
+
+func embeddedFontFormat(path string) (string, string) {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".otf":
+		return "font/otf", "opentype"
+	case ".woff":
+		return "font/woff", "woff"
+	case ".woff2":
+		return "font/woff2", "woff2"
+	default:
+		return "font/ttf", "truetype"
+	}
+}
+
+func terminalLineBackground(line terminalLine, defaultFG, defaultBG string) string {
+	if len(line) == 0 {
+		return ""
+	}
+	leftBG := ""
+	rightBG := ""
+	for _, run := range line {
+		if run.text == "" {
+			continue
+		}
+		_, bg := effectiveTerminalColors(run.style, defaultFG, defaultBG)
+		leftBG = bg
+		break
+	}
+	for i := len(line) - 1; i >= 0; i-- {
+		run := line[i]
+		if run.text == "" {
+			continue
+		}
+		_, bg := effectiveTerminalColors(run.style, defaultFG, defaultBG)
+		rightBG = bg
+		break
+	}
+	if leftBG == "" || rightBG == "" || leftBG != rightBG || leftBG == defaultBG {
+		return ""
+	}
+	return leftBG
+}
+
+func writeEscapedHTML(out *strings.Builder, text string) {
+	var escaped strings.Builder
+	if err := xml.EscapeText(&escaped, []byte(text)); err == nil {
+		out.WriteString(escaped.String())
+	}
+}
+
+func effectiveTerminalColors(style terminalTextStyle, defaultFG, defaultBG string) (string, string) {
+	fg := defaultFG
+	bg := defaultBG
+	if style.hasFG && style.fg != "" {
+		fg = style.fg
+	}
+	if style.hasBG && style.bg != "" {
+		bg = style.bg
+	}
+	if style.reverse {
+		fg, bg = bg, fg
+	}
+	return fg, bg
+}
+
+func parseTerminalANSI(content string) []terminalLine {
+	lines := []terminalLine{{}}
+	style := terminalTextStyle{}
+	var current strings.Builder
+	currentStyle := style
+
+	flush := func() {
+		if current.Len() == 0 {
+			return
+		}
+		line := lines[len(lines)-1]
+		line = append(line, terminalRun{text: current.String(), style: currentStyle})
+		lines[len(lines)-1] = line
+		current.Reset()
+	}
+
+	for i := 0; i < len(content); {
+		switch content[i] {
+		case '\n':
+			flush()
+			lines = append(lines, terminalLine{})
+			i++
+		case '\r':
+			i++
+		case 0x1b:
+			if i+1 < len(content) && content[i+1] == '[' {
+				end := i + 2
+				for end < len(content) {
+					b := content[end]
+					if b >= '@' && b <= '~' {
+						break
+					}
+					end++
+				}
+				if end < len(content) && content[end] == 'm' {
+					flush()
+					params := parseSGRParams(content[i+2 : end])
+					style = applySGRParams(style, params)
+					currentStyle = style
+					i = end + 1
+					continue
+				}
+				if end < len(content) {
+					i = end + 1
+					continue
+				}
+			}
+			i++
+		default:
+			r, size := utf8.DecodeRuneInString(content[i:])
+			if r == utf8.RuneError && size == 1 {
+				i++
+				continue
+			}
+			current.WriteRune(r)
+			i += size
+		}
+	}
+	flush()
+	return lines
+}
+
+func parseSGRParams(raw string) []int {
+	if raw == "" {
+		return []int{0}
+	}
+	parts := strings.Split(raw, ";")
+	params := make([]int, 0, len(parts))
+	for _, part := range parts {
+		if part == "" {
+			params = append(params, 0)
+			continue
+		}
+		value, err := strconv.Atoi(part)
+		if err != nil {
+			continue
+		}
+		params = append(params, value)
+	}
+	if len(params) == 0 {
+		return []int{0}
+	}
+	return params
+}
+
+func applySGRParams(style terminalTextStyle, params []int) terminalTextStyle {
+	for i := 0; i < len(params); i++ {
+		switch p := params[i]; {
+		case p == 0:
+			style = terminalTextStyle{}
+		case p == 1:
+			style.bold = true
+		case p == 2:
+			style.faint = true
+		case p == 3:
+			style.italic = true
+		case p == 4:
+			style.underline = true
+		case p == 7:
+			style.reverse = true
+		case p == 22:
+			style.bold = false
+			style.faint = false
+		case p == 23:
+			style.italic = false
+		case p == 24:
+			style.underline = false
+		case p == 27:
+			style.reverse = false
+		case p >= 30 && p <= 37:
+			style.fg = ansi16Color(p - 30)
+			style.hasFG = true
+		case p == 39:
+			style.fg = ""
+			style.hasFG = false
+		case p >= 40 && p <= 47:
+			style.bg = ansi16Color(p - 40)
+			style.hasBG = true
+		case p == 49:
+			style.bg = ""
+			style.hasBG = false
+		case p >= 90 && p <= 97:
+			style.fg = ansi16BrightColor(p - 90)
+			style.hasFG = true
+		case p >= 100 && p <= 107:
+			style.bg = ansi16BrightColor(p - 100)
+			style.hasBG = true
+		case p == 38 || p == 48:
+			isForeground := p == 38
+			if i+1 >= len(params) {
+				continue
+			}
+			mode := params[i+1]
+			switch mode {
+			case 5:
+				if i+2 >= len(params) {
+					i = len(params)
+					break
+				}
+				color := ansi256Color(params[i+2])
+				if isForeground {
+					style.fg = color
+					style.hasFG = true
+				} else {
+					style.bg = color
+					style.hasBG = true
+				}
+				i += 2
+			case 2:
+				if i+4 >= len(params) {
+					i = len(params)
+					break
+				}
+				color := fmt.Sprintf("#%02x%02x%02x", clampColor(params[i+2]), clampColor(params[i+3]), clampColor(params[i+4]))
+				if isForeground {
+					style.fg = color
+					style.hasFG = true
+				} else {
+					style.bg = color
+					style.hasBG = true
+				}
+				i += 4
+			default:
+				i++
+			}
+		}
+	}
+	return style
+}
+
+func clampColor(value int) int {
+	switch {
+	case value < 0:
+		return 0
+	case value > 255:
+		return 255
+	default:
+		return value
+	}
+}
+
+func ansi16Color(index int) string {
+	base := []string{
+		"#1f2430",
+		"#ef6b73",
+		"#8ccf7e",
+		"#d9b66b",
+		"#6ea8ff",
+		"#c792ea",
+		"#63cdda",
+		"#d7dbe6",
+	}
+	if index < 0 || index >= len(base) {
+		return "#d7dbe6"
+	}
+	return base[index]
+}
+
+func ansi16BrightColor(index int) string {
+	bright := []string{
+		"#5c6370",
+		"#ff7b86",
+		"#a6da95",
+		"#f5c76f",
+		"#7dc4ff",
+		"#d4a5ff",
+		"#73daca",
+		"#f2f4f8",
+	}
+	if index < 0 || index >= len(bright) {
+		return "#f2f4f8"
+	}
+	return bright[index]
+}
+
+func ansi256Color(index int) string {
+	if index < 0 {
+		index = 0
+	}
+	if index > 255 {
+		index = 255
+	}
+	if index < 8 {
+		return ansi16Color(index)
+	}
+	if index < 16 {
+		return ansi16BrightColor(index - 8)
+	}
+	if index >= 232 {
+		gray := 8 + (index-232)*10
+		return fmt.Sprintf("#%02x%02x%02x", gray, gray, gray)
+	}
+	index -= 16
+	r := index / 36
+	g := (index % 36) / 6
+	b := index % 6
+	levels := []int{0, 95, 135, 175, 215, 255}
+	return fmt.Sprintf("#%02x%02x%02x", levels[r], levels[g], levels[b])
+}

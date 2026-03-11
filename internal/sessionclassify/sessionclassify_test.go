@@ -1,0 +1,257 @@
+package sessionclassify
+
+import (
+	"context"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"lcroom/internal/events"
+	"lcroom/internal/model"
+	"lcroom/internal/store"
+)
+
+type fakeClassifier struct {
+	result Result
+	err    error
+	model  string
+	seen   *SessionSnapshot
+}
+
+func (f *fakeClassifier) Classify(_ context.Context, snapshot SessionSnapshot) (Result, error) {
+	if f.seen != nil {
+		*f.seen = snapshot
+	}
+	return f.result, f.err
+}
+
+func (f *fakeClassifier) ModelName() string {
+	return f.model
+}
+
+func TestExtractSnapshotModernFixture(t *testing.T) {
+	t.Parallel()
+
+	fixture := filepath.Clean(filepath.Join("..", "..", "testdata", "codex_footprint", "sessions", "2026", "03", "05", "rollout-modern.jsonl"))
+	snapshot, err := ExtractSnapshot(context.Background(), model.SessionClassification{
+		SessionID:       "fixture-modern",
+		ProjectPath:     "/tmp/baton",
+		SessionFile:     fixture,
+		SessionFormat:   "modern",
+		SourceUpdatedAt: time.Now(),
+	}, model.SessionEvidence{
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  true,
+	}, GitStatusSnapshot{})
+	if err != nil {
+		t.Fatalf("extract snapshot: %v", err)
+	}
+	if !snapshot.LatestTurnStateKnown || !snapshot.LatestTurnCompleted {
+		t.Fatalf("expected lifecycle flags in snapshot, got known=%v completed=%v", snapshot.LatestTurnStateKnown, snapshot.LatestTurnCompleted)
+	}
+	if len(snapshot.Transcript) < 2 {
+		t.Fatalf("expected transcript items, got %d", len(snapshot.Transcript))
+	}
+	if snapshot.Transcript[0].Role != "user" {
+		t.Fatalf("first role = %s, want user", snapshot.Transcript[0].Role)
+	}
+	last := snapshot.Transcript[len(snapshot.Transcript)-1]
+	if last.Role != "assistant" {
+		t.Fatalf("last role = %s, want assistant", last.Role)
+	}
+	if !strings.Contains(last.Text, "Done") {
+		t.Fatalf("last text = %q, want Done", last.Text)
+	}
+}
+
+func TestManagerProcessOneCompletesClassification(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	fixture := filepath.Clean(filepath.Join("..", "..", "testdata", "codex_footprint", "sessions", "2026", "03", "05", "rollout-modern.jsonl"))
+	now := time.Now()
+	state := model.ProjectState{
+		Path:           "/tmp/baton",
+		Name:           "baton",
+		Status:         model.StatusPossiblyStuck,
+		AttentionScore: 40,
+		InScope:        true,
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{{
+			SessionID:            "ses_modern",
+			ProjectPath:          "/tmp/baton",
+			SessionFile:          fixture,
+			Format:               "modern",
+			LastEventAt:          now,
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  true,
+		}},
+	}
+	if err := st.UpsertProjectState(ctx, state); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	var (
+		refreshed    string
+		seenSnapshot SessionSnapshot
+	)
+	manager := NewManager(st, events.NewBus(), Options{
+		Client: &fakeClassifier{
+			seen:  &seenSnapshot,
+			model: "gpt-test-mini",
+			result: Result{
+				Category:   model.SessionCategoryCompleted,
+				Summary:    "Work appears complete for now.",
+				Confidence: 0.92,
+				Model:      "gpt-test-mini",
+				Usage: model.LLMUsage{
+					InputTokens:       321,
+					OutputTokens:      57,
+					TotalTokens:       378,
+					CachedInputTokens: 12,
+					ReasoningTokens:   4,
+				},
+			},
+		},
+		OnProjectUpdated: func(_ context.Context, projectPath string) error {
+			refreshed = projectPath
+			return nil
+		},
+		Workers: 1,
+	})
+
+	queued, err := manager.QueueProject(ctx, state)
+	if err != nil {
+		t.Fatalf("queue project: %v", err)
+	}
+	if !queued {
+		t.Fatalf("expected queue project to enqueue work")
+	}
+
+	processed, err := manager.processOne(ctx)
+	if err != nil {
+		t.Fatalf("process one: %v", err)
+	}
+	if !processed {
+		t.Fatalf("expected processOne to process work")
+	}
+	if refreshed != state.Path {
+		t.Fatalf("refreshed project = %q, want %q", refreshed, state.Path)
+	}
+	if !seenSnapshot.LatestTurnStateKnown || !seenSnapshot.LatestTurnCompleted {
+		t.Fatalf("expected classifier snapshot to include lifecycle flags, got %#v", seenSnapshot)
+	}
+
+	classification, err := st.GetSessionClassification(ctx, "ses_modern")
+	if err != nil {
+		t.Fatalf("get classification: %v", err)
+	}
+	if classification.Status != model.ClassificationCompleted {
+		t.Fatalf("status = %s, want completed", classification.Status)
+	}
+	if classification.Category != model.SessionCategoryCompleted {
+		t.Fatalf("category = %s, want completed", classification.Category)
+	}
+	if classification.Model != "gpt-test-mini" {
+		t.Fatalf("model = %q, want %q", classification.Model, "gpt-test-mini")
+	}
+
+	usage := manager.UsageSnapshot()
+	if !usage.Enabled {
+		t.Fatalf("expected usage snapshot to be enabled")
+	}
+	if usage.Model != "gpt-test-mini" {
+		t.Fatalf("usage model = %q, want %q", usage.Model, "gpt-test-mini")
+	}
+	if usage.Running != 0 {
+		t.Fatalf("usage running = %d, want 0", usage.Running)
+	}
+	if usage.Started != 1 || usage.Completed != 1 || usage.Failed != 0 {
+		t.Fatalf("unexpected usage counters: %+v", usage)
+	}
+	if usage.Totals.InputTokens != 321 || usage.Totals.OutputTokens != 57 || usage.Totals.TotalTokens != 378 {
+		t.Fatalf("unexpected usage totals: %+v", usage.Totals)
+	}
+	if usage.Totals.CachedInputTokens != 12 || usage.Totals.ReasoningTokens != 4 {
+		t.Fatalf("unexpected usage detail totals: %+v", usage.Totals)
+	}
+}
+
+func TestSnapshotHashForSnapshotIgnoresLastEventAt(t *testing.T) {
+	t.Parallel()
+
+	base := SessionSnapshot{
+		ProjectPath:          "/tmp/demo",
+		SessionID:            "ses_demo",
+		SessionFormat:        "opencode_db",
+		LastEventAt:          "2026-03-06T01:00:00Z",
+		LatestTurnStateKnown: true,
+		Transcript: []TranscriptItem{
+			{Role: "user", Text: "Please review the latest idle state."},
+			{Role: "assistant", Text: "Everything looks complete for now."},
+		},
+	}
+	changedTimestamp := base
+	changedTimestamp.LastEventAt = "2026-03-06T01:05:00Z"
+
+	if got, want := SnapshotHashForSnapshot(base), SnapshotHashForSnapshot(changedTimestamp); got != want {
+		t.Fatalf("snapshot hash changed for timestamp-only update: got %s want %s", got, want)
+	}
+}
+
+func TestSnapshotHashForSnapshotChangesWhenGitStatusChanges(t *testing.T) {
+	t.Parallel()
+
+	base := SessionSnapshot{
+		ProjectPath:   "/tmp/demo",
+		SessionID:     "ses_demo",
+		SessionFormat: "modern",
+		GitStatus: GitStatusSnapshot{
+			WorktreeDirty: false,
+			RemoteStatus:  string(model.RepoSyncSynced),
+		},
+		Transcript: []TranscriptItem{
+			{Role: "user", Text: "Please finish this task."},
+			{Role: "assistant", Text: "Done, all requested changes are in place."},
+		},
+	}
+	changedGit := base
+	changedGit.GitStatus = GitStatusSnapshot{
+		WorktreeDirty: true,
+		RemoteStatus:  string(model.RepoSyncAhead),
+		AheadCount:    1,
+	}
+
+	if got, want := SnapshotHashForSnapshot(base), SnapshotHashForSnapshot(changedGit); got == want {
+		t.Fatalf("expected snapshot hash to change when git status changes")
+	}
+}
+
+func TestSnapshotHashForSnapshotChangesWhenTurnLifecycleChanges(t *testing.T) {
+	t.Parallel()
+
+	base := SessionSnapshot{
+		ProjectPath:          "/tmp/demo",
+		SessionID:            "ses_demo",
+		SessionFormat:        "modern",
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  false,
+		Transcript: []TranscriptItem{
+			{Role: "user", Text: "Please finish this task."},
+			{Role: "assistant", Text: "Running the last validation step now."},
+		},
+	}
+	completed := base
+	completed.LatestTurnCompleted = true
+
+	if got, want := SnapshotHashForSnapshot(base), SnapshotHashForSnapshot(completed); got == want {
+		t.Fatalf("expected snapshot hash to change when turn lifecycle changes")
+	}
+}

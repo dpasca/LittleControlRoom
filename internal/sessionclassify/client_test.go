@@ -1,0 +1,362 @@
+package sessionclassify
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"lcroom/internal/model"
+)
+
+func TestOpenAIClientClassifyCapturesUsage(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", r.Method)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
+			t.Fatalf("authorization = %q, want bearer token", got)
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		var req struct {
+			Input []struct {
+				Content []struct {
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"input"`
+			Reasoning struct {
+				Effort string `json:"effort"`
+			} `json:"reasoning"`
+			MaxOutputTokens *int `json:"max_output_tokens"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if len(req.Input) < 2 || len(req.Input[1].Content) == 0 {
+			t.Fatalf("unexpected request structure: %s", string(body))
+		}
+		if req.Reasoning.Effort != "medium" {
+			t.Fatalf("reasoning effort = %q, want %q", req.Reasoning.Effort, "medium")
+		}
+		if req.MaxOutputTokens != nil {
+			t.Fatalf("max_output_tokens = %v, want omitted field", *req.MaxOutputTokens)
+		}
+		userText := req.Input[1].Content[0].Text
+		prefix := "Classify this latest coding-session snapshot:\n\n"
+		if !strings.HasPrefix(userText, prefix) {
+			t.Fatalf("unexpected classifier prompt: %q", userText)
+		}
+		var snapshot SessionSnapshot
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(userText, prefix)), &snapshot); err != nil {
+			t.Fatalf("decode embedded snapshot: %v", err)
+		}
+		if snapshot.GitStatus.RemoteStatus != "ahead" {
+			t.Fatalf("git remote status = %q, want %q", snapshot.GitStatus.RemoteStatus, "ahead")
+		}
+		if !snapshot.GitStatus.WorktreeDirty {
+			t.Fatalf("expected git dirty flag in snapshot")
+		}
+		if snapshot.GitStatus.AheadCount != 2 {
+			t.Fatalf("git ahead count = %d, want %d", snapshot.GitStatus.AheadCount, 2)
+		}
+		if !snapshot.LatestTurnStateKnown || !snapshot.LatestTurnCompleted {
+			t.Fatalf("expected lifecycle flags in snapshot, got known=%v completed=%v", snapshot.LatestTurnStateKnown, snapshot.LatestTurnCompleted)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"status":"completed",
+			"model":"gpt-5-mini-2026-03-01",
+			"usage":{
+				"input_tokens":345,
+				"input_tokens_details":{"cached_tokens":21},
+				"output_tokens":67,
+				"output_tokens_details":{"reasoning_tokens":5},
+				"total_tokens":412
+			},
+			"output":[
+				{
+					"type":"message",
+					"role":"assistant",
+					"content":[
+						{
+							"type":"output_text",
+							"text":"{\"category\":\"completed\",\"summary\":\"Work is wrapped up.\",\"confidence\":0.84}"
+						}
+					]
+				}
+			]
+		}`))
+	}))
+	defer server.Close()
+
+	client := &OpenAIClient{
+		apiKey:   "test-key",
+		model:    "gpt-5-mini",
+		endpoint: server.URL,
+		httpClient: &http.Client{
+			Timeout: 5 * time.Second,
+		},
+	}
+
+	result, err := client.Classify(context.Background(), SessionSnapshot{
+		ProjectPath:          "/tmp/demo",
+		SessionID:            "ses_demo",
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  true,
+		GitStatus: GitStatusSnapshot{
+			WorktreeDirty: true,
+			RemoteStatus:  "ahead",
+			AheadCount:    2,
+		},
+	})
+	if err != nil {
+		t.Fatalf("classify: %v", err)
+	}
+	if result.Category != model.SessionCategoryCompleted {
+		t.Fatalf("category = %s, want completed", result.Category)
+	}
+	if result.Model != "gpt-5-mini-2026-03-01" {
+		t.Fatalf("model = %q, want response model", result.Model)
+	}
+	if result.Usage.InputTokens != 345 || result.Usage.OutputTokens != 67 || result.Usage.TotalTokens != 412 {
+		t.Fatalf("unexpected usage totals: %+v", result.Usage)
+	}
+	if result.Usage.CachedInputTokens != 21 || result.Usage.ReasoningTokens != 5 {
+		t.Fatalf("unexpected usage detail totals: %+v", result.Usage)
+	}
+}
+
+func TestOpenAIClientClassifyRetriesIncompleteWithFallback(t *testing.T) {
+	t.Parallel()
+
+	attempts := make([]struct {
+		Effort string
+	}, 0, 2)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		var req struct {
+			Reasoning struct {
+				Effort string `json:"effort"`
+			} `json:"reasoning"`
+			MaxOutputTokens *int `json:"max_output_tokens"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if req.MaxOutputTokens != nil {
+			t.Fatalf("max_output_tokens = %v, want omitted field", *req.MaxOutputTokens)
+		}
+		attempts = append(attempts, struct {
+			Effort string
+		}{
+			Effort: req.Reasoning.Effort,
+		})
+
+		w.Header().Set("Content-Type", "application/json")
+		if len(attempts) == 1 {
+			_, _ = w.Write([]byte(`{
+				"status":"incomplete",
+				"model":"gpt-5-mini-2026-03-01",
+				"max_output_tokens":1024,
+				"incomplete_details":{"reason":"max_output_tokens"},
+				"usage":{
+					"input_tokens":288,
+					"input_tokens_details":{"cached_tokens":0},
+					"output_tokens":1024,
+					"output_tokens_details":{"reasoning_tokens":1009},
+					"total_tokens":1312
+				},
+				"output":[]
+			}`))
+			return
+		}
+
+		_, _ = w.Write([]byte(`{
+			"status":"completed",
+			"model":"gpt-5-mini-2026-03-01",
+			"usage":{
+				"input_tokens":288,
+				"input_tokens_details":{"cached_tokens":0},
+				"output_tokens":63,
+				"output_tokens_details":{"reasoning_tokens":8},
+				"total_tokens":351
+			},
+			"output":[
+				{
+					"type":"message",
+					"role":"assistant",
+					"content":[
+						{
+							"type":"output_text",
+							"text":"{\"category\":\"needs_follow_up\",\"summary\":\"One more repo step remains.\",\"confidence\":0.72}"
+						}
+					]
+				}
+			]
+		}`))
+	}))
+	defer server.Close()
+
+	client := &OpenAIClient{
+		apiKey:   "test-key",
+		model:    "gpt-5-mini",
+		endpoint: server.URL,
+		httpClient: &http.Client{
+			Timeout: 5 * time.Second,
+		},
+	}
+
+	result, err := client.Classify(context.Background(), SessionSnapshot{
+		ProjectPath: "/tmp/demo",
+		SessionID:   "ses_demo",
+		Transcript: []TranscriptItem{
+			{Role: "user", Text: "Please verify whether this is finished."},
+			{Role: "assistant", Text: "I still need to run one last step."},
+		},
+	})
+	if err != nil {
+		t.Fatalf("classify: %v", err)
+	}
+	if result.Category != model.SessionCategoryNeedsFollowUp {
+		t.Fatalf("category = %s, want needs_follow_up", result.Category)
+	}
+	if len(attempts) != 2 {
+		t.Fatalf("attempts = %d, want 2", len(attempts))
+	}
+	if attempts[0].Effort != classifierPrimaryReasoningEffort {
+		t.Fatalf("first attempt = %+v, want primary classifier settings", attempts[0])
+	}
+	if attempts[1].Effort != classifierFallbackReasoningEffort {
+		t.Fatalf("second attempt = %+v, want fallback classifier settings", attempts[1])
+	}
+}
+
+func TestOpenAIClientClassifyRetriesTransientServerError(t *testing.T) {
+	t.Parallel()
+
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":{"message":"temporary upstream failure"}}`))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"status":"completed",
+			"model":"gpt-5-mini-2026-03-01",
+			"output":[
+				{
+					"type":"message",
+					"role":"assistant",
+					"content":[
+						{
+							"type":"output_text",
+							"text":"{\"category\":\"completed\",\"summary\":\"Everything is wrapped up.\",\"confidence\":0.89}"
+						}
+					]
+				}
+			]
+		}`))
+	}))
+	defer server.Close()
+
+	client := &OpenAIClient{
+		apiKey:   "test-key",
+		model:    "gpt-5-mini",
+		endpoint: server.URL,
+		httpClient: &http.Client{
+			Timeout: 5 * time.Second,
+		},
+	}
+
+	result, err := client.Classify(context.Background(), SessionSnapshot{
+		ProjectPath: "/tmp/demo",
+		SessionID:   "ses_demo",
+		Transcript: []TranscriptItem{
+			{Role: "user", Text: "Please verify whether this is finished."},
+			{Role: "assistant", Text: "Yes, the requested work is complete."},
+		},
+	})
+	if err != nil {
+		t.Fatalf("classify: %v", err)
+	}
+	if result.Category != model.SessionCategoryCompleted {
+		t.Fatalf("category = %s, want completed", result.Category)
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", attempts)
+	}
+}
+
+func TestOpenAIClientClassifyReportsIncompleteReason(t *testing.T) {
+	t.Parallel()
+
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"status":"incomplete",
+			"model":"gpt-5-mini-2026-03-01",
+			"max_output_tokens":320,
+			"incomplete_details":{"reason":"max_output_tokens"},
+			"usage":{
+				"input_tokens":288,
+				"input_tokens_details":{"cached_tokens":0},
+				"output_tokens":320,
+				"output_tokens_details":{"reasoning_tokens":309},
+				"total_tokens":608
+			},
+			"output":[]
+		}`))
+	}))
+	defer server.Close()
+
+	client := &OpenAIClient{
+		apiKey:   "test-key",
+		model:    "gpt-5-mini",
+		endpoint: server.URL,
+		httpClient: &http.Client{
+			Timeout: 5 * time.Second,
+		},
+	}
+
+	_, err := client.Classify(context.Background(), SessionSnapshot{
+		ProjectPath: "/tmp/demo",
+		SessionID:   "ses_demo",
+		Transcript: []TranscriptItem{
+			{Role: "user", Text: "Please verify whether this is finished."},
+			{Role: "assistant", Text: "I still need to run one last step."},
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected classify to fail after both attempts")
+	}
+	if !strings.Contains(err.Error(), "reason=max_output_tokens") {
+		t.Fatalf("error = %q, want incomplete reason", err.Error())
+	}
+	if !strings.Contains(err.Error(), "reasoning_tokens=309") {
+		t.Fatalf("error = %q, want reasoning token detail", err.Error())
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", attempts)
+	}
+}

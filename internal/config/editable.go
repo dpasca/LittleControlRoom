@@ -1,0 +1,184 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"lcroom/internal/codexcli"
+)
+
+type EditableSettings struct {
+	IncludePaths           []string
+	ExcludePaths           []string
+	ExcludeProjectPatterns []string
+	CodexLaunchPreset      codexcli.Preset
+	ScanInterval           time.Duration
+	ActiveThreshold        time.Duration
+	StuckThreshold         time.Duration
+}
+
+func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
+	return EditableSettings{
+		IncludePaths:           append([]string(nil), cfg.IncludePaths...),
+		ExcludePaths:           append([]string(nil), cfg.ExcludePaths...),
+		ExcludeProjectPatterns: append([]string(nil), cfg.ExcludeProjectPatterns...),
+		CodexLaunchPreset:      cfg.CodexLaunchPreset,
+		ScanInterval:           cfg.ScanInterval,
+		ActiveThreshold:        cfg.ActiveThreshold,
+		StuckThreshold:         cfg.StuckThreshold,
+	}
+}
+
+func ParseEditableSettings(includeRaw, excludeRaw, excludeProjectPatternsRaw, codexLaunchPresetRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
+	includePaths, err := expandAndSplitPaths(includeRaw)
+	if err != nil {
+		return EditableSettings{}, fmt.Errorf("include paths: %w", err)
+	}
+	excludePaths, err := expandAndSplitPaths(excludeRaw)
+	if err != nil {
+		return EditableSettings{}, fmt.Errorf("exclude paths: %w", err)
+	}
+	excludeProjectPatterns := normalizeProjectPatterns(strings.Split(excludeProjectPatternsRaw, ","))
+	codexLaunchPreset, err := codexcli.ParsePreset(codexLaunchPresetRaw)
+	if err != nil {
+		return EditableSettings{}, fmt.Errorf("codex launch preset: %w", err)
+	}
+
+	active, err := parseConfigDuration(strings.TrimSpace(activeRaw), "active-threshold")
+	if err != nil {
+		return EditableSettings{}, err
+	}
+
+	stuck, err := parseConfigDuration(strings.TrimSpace(stuckRaw), "stuck-threshold")
+	if err != nil {
+		return EditableSettings{}, err
+	}
+
+	interval, err := parseConfigDuration(strings.TrimSpace(intervalRaw), "interval")
+	if err != nil {
+		return EditableSettings{}, err
+	}
+
+	settings := EditableSettings{
+		IncludePaths:           includePaths,
+		ExcludePaths:           excludePaths,
+		ExcludeProjectPatterns: excludeProjectPatterns,
+		CodexLaunchPreset:      codexLaunchPreset,
+		ScanInterval:           interval,
+		ActiveThreshold:        active,
+		StuckThreshold:         stuck,
+	}
+	if err := validateEditableSettings(settings); err != nil {
+		return EditableSettings{}, err
+	}
+	return settings, nil
+}
+
+func SaveEditableSettings(path string, settings EditableSettings) error {
+	if err := validateEditableSettings(settings); err != nil {
+		return err
+	}
+	if path == "" {
+		return fmt.Errorf("config path is required")
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create config directory: %w", err)
+	}
+
+	tempFile, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp config file: %w", err)
+	}
+	tempPath := tempFile.Name()
+	defer func() {
+		_ = tempFile.Close()
+		_ = os.Remove(tempPath)
+	}()
+
+	if _, err := tempFile.WriteString(renderEditableSettings(settings)); err != nil {
+		return fmt.Errorf("write temp config file: %w", err)
+	}
+	if err := tempFile.Chmod(0o644); err != nil {
+		return fmt.Errorf("chmod temp config file: %w", err)
+	}
+	if err := tempFile.Close(); err != nil {
+		return fmt.Errorf("close temp config file: %w", err)
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return fmt.Errorf("install config file: %w", err)
+	}
+	return nil
+}
+
+func validateEditableSettings(settings EditableSettings) error {
+	cfg := Default()
+	cfg.IncludePaths = append([]string(nil), settings.IncludePaths...)
+	cfg.ExcludePaths = append([]string(nil), settings.ExcludePaths...)
+	cfg.ExcludeProjectPatterns = append([]string(nil), settings.ExcludeProjectPatterns...)
+	cfg.CodexLaunchPreset = settings.CodexLaunchPreset
+	cfg.ScanInterval = settings.ScanInterval
+	cfg.ActiveThreshold = settings.ActiveThreshold
+	cfg.StuckThreshold = settings.StuckThreshold
+	return validate(cfg)
+}
+
+func parseConfigDuration(raw, label string) (time.Duration, error) {
+	if raw == "" {
+		return 0, fmt.Errorf("%s is required", label)
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", label, err)
+	}
+	return d, nil
+}
+
+func renderEditableSettings(settings EditableSettings) string {
+	lines := []string{"include_paths = ["}
+	for _, path := range settings.IncludePaths {
+		lines = append(lines, fmt.Sprintf("  %s,", strconv.Quote(path)))
+	}
+	lines = append(lines, "]")
+	lines = append(lines, "")
+	lines = append(lines, "exclude_paths = [")
+	for _, path := range settings.ExcludePaths {
+		lines = append(lines, fmt.Sprintf("  %s,", strconv.Quote(path)))
+	}
+	lines = append(lines, "]")
+	lines = append(lines, "")
+	lines = append(lines, "exclude_project_patterns = [")
+	for _, pattern := range settings.ExcludeProjectPatterns {
+		lines = append(lines, fmt.Sprintf("  %s,", strconv.Quote(pattern)))
+	}
+	lines = append(lines, "]")
+	lines = append(lines, "")
+	lines = append(lines, fmt.Sprintf("codex_launch_preset = %s", strconv.Quote(string(settings.CodexLaunchPreset))))
+	lines = append(lines, "")
+	lines = append(lines, fmt.Sprintf("interval = %s", strconv.Quote(formatConfigDuration(settings.ScanInterval))))
+	lines = append(lines, fmt.Sprintf("active-threshold = %s", strconv.Quote(formatConfigDuration(settings.ActiveThreshold))))
+	lines = append(lines, fmt.Sprintf("stuck-threshold = %s", strconv.Quote(formatConfigDuration(settings.StuckThreshold))))
+	lines = append(lines, "")
+	return strings.Join(lines, "\n")
+}
+
+func formatConfigDuration(d time.Duration) string {
+	switch {
+	case d == 0:
+		return "0s"
+	case d%(24*time.Hour) == 0:
+		return fmt.Sprintf("%dh", int(d/time.Hour))
+	case d%time.Hour == 0:
+		return fmt.Sprintf("%dh", int(d/time.Hour))
+	case d%time.Minute == 0:
+		return fmt.Sprintf("%dm", int(d/time.Minute))
+	case d%time.Second == 0:
+		return fmt.Sprintf("%ds", int(d/time.Second))
+	default:
+		return d.String()
+	}
+}

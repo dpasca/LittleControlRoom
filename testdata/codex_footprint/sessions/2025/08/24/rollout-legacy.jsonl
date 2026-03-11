@@ -1,0 +1,4 @@
+{"id":"6957cb86-6686-4b4b-8e2b-292e0710b734","timestamp":"2025-08-24T17:58:26.728Z","instructions":null,"git":{"commit_hash":"edb45465545f6514ea85b920d3cc155e50d29810","branch":"master","repository_url":"https://github.com/example/legacy-demo.git"}}
+{"record_type":"state"}
+{"type":"message","id":null,"role":"user","content":[{"type":"input_text","text":"<environment_context>\nCurrent working directory: /workspaces/repos/legacy-demo\nApproval policy: on-request\nSandbox mode: workspace-write\nNetwork access: restricted\n</environment_context>"}]}
+{"type":"function_call_output","call_id":"legacy_call","output":"Process exited with code 0"}

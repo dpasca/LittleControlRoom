@@ -1,0 +1,98 @@
+package scanner
+
+import "testing"
+
+func TestParseGitRepoStatusOutputAhead(t *testing.T) {
+	status := parseGitRepoStatusOutput(`# branch.oid abc123
+# branch.head master
+# branch.upstream origin/master
+# branch.ab +2 -0
+1 .M N... 100644 100644 100644 abc123 abc123 README.md
+`)
+
+	if !status.Dirty {
+		t.Fatalf("expected dirty status")
+	}
+	if !status.HasRemote || !status.HasUpstream {
+		t.Fatalf("expected upstream tracking status, got %#v", status)
+	}
+	if status.Ahead != 2 || status.Behind != 0 {
+		t.Fatalf("unexpected ahead/behind counts: %#v", status)
+	}
+	if status.Branch != "master" {
+		t.Fatalf("branch = %q, want master", status.Branch)
+	}
+	if got := len(status.Changes); got != 1 {
+		t.Fatalf("changes len = %d, want 1", got)
+	}
+	if got := status.Changes[0].Code; got != "M" {
+		t.Fatalf("change code = %q, want M", got)
+	}
+	if !status.Changes[0].Unstaged || status.Changes[0].Staged {
+		t.Fatalf("expected unstaged-only change, got %#v", status.Changes[0])
+	}
+}
+
+func TestParseGitRepoStatusOutputDivergedClean(t *testing.T) {
+	status := parseGitRepoStatusOutput(`# branch.oid abc123
+# branch.head master
+# branch.upstream origin/master
+# branch.ab +3 -1
+`)
+
+	if status.Dirty {
+		t.Fatalf("expected clean status")
+	}
+	if !status.HasRemote || !status.HasUpstream {
+		t.Fatalf("expected upstream tracking status, got %#v", status)
+	}
+	if status.Ahead != 3 || status.Behind != 1 {
+		t.Fatalf("unexpected ahead/behind counts: %#v", status)
+	}
+}
+
+func TestParseGitRepoStatusOutputSeparatesStagedAndUntracked(t *testing.T) {
+	status := parseGitRepoStatusOutput(`# branch.oid abc123
+# branch.head master
+# branch.upstream origin/master
+# branch.ab +0 -0
+1 M. N... 100644 100644 100644 abc123 abc123 README.md
+? notes.txt
+`)
+
+	staged := status.StagedChanges()
+	if len(staged) != 1 || staged[0].Path != "README.md" {
+		t.Fatalf("staged changes = %#v, want README.md", staged)
+	}
+
+	untracked := status.UntrackedChanges()
+	if len(untracked) != 1 || untracked[0].Path != "notes.txt" {
+		t.Fatalf("untracked changes = %#v, want notes.txt", untracked)
+	}
+	if !untracked[0].Unstaged {
+		t.Fatalf("expected untracked file to count as unstaged: %#v", untracked[0])
+	}
+}
+
+func TestParseGitRepoStatusOutputRenamedPath(t *testing.T) {
+	status := parseGitRepoStatusOutput(`# branch.oid abc123
+# branch.head master
+# branch.upstream origin/master
+# branch.ab +0 -0
+2 R. N... 100644 100644 100644 abc123 abc123 R100 old.txt	new.txt
+`)
+
+	if len(status.Changes) != 1 {
+		t.Fatalf("changes len = %d, want 1", len(status.Changes))
+	}
+	change := status.Changes[0]
+	if change.Path != "new.txt" || change.OriginalPath != "old.txt" {
+		t.Fatalf("rename paths = %#v, want old.txt -> new.txt", change)
+	}
+	if change.Kind != GitChangeRenamed {
+		t.Fatalf("rename kind = %s, want %s", change.Kind, GitChangeRenamed)
+	}
+	if !change.Staged || change.Unstaged {
+		t.Fatalf("expected staged-only rename, got %#v", change)
+	}
+}

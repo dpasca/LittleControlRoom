@@ -1,0 +1,8 @@
+.DS_Store
+/Session.vim
+/.littlecontrolroom.db
+/lcroom
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+screenshots.local.toml
