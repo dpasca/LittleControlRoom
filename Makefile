@@ -16,7 +16,7 @@ DB ?= $(DB_DEFAULT)
 INTERVAL ?= 60s
 ACTIVE_THRESHOLD ?= 20m
 STUCK_THRESHOLD ?= 4h
-SCREENSHOT_CONFIG ?= docs/screenshots.example.toml
+SCREENSHOT_CONFIG ?= screenshots.local.toml
 SCREENSHOT_OUTPUT_DIR ?=
 
 INCLUDE_PATHS_FLAG := $(if $(strip $(INCLUDE_PATHS)),--include-paths "$(INCLUDE_PATHS)",)

@@ -66,8 +66,7 @@ stuck-threshold = "4h"
 ## Screenshots
 
 - `make screenshots` renders a curated set of fixed-size PNG terminal screenshots for docs.
-- `make screenshots` defaults to the committed safe demo config at [`screenshots.example.toml`](screenshots.example.toml).
-- Common local override path: `./screenshots.local.toml`
+- Default local config path: `./screenshots.local.toml`
 - Override the screenshot config path with `lcroom screenshots --screenshot-config /path/to/screenshots.local.toml`
 - Override the output directory with `lcroom screenshots --output-dir /tmp/lcroom-shots`
 - Committed example file: [`screenshots.example.toml`](screenshots.example.toml)
@@ -104,7 +103,7 @@ The generated set currently includes:
 - `commit-preview.png`
 
 `project_filters`, `selected_project`, and `live_codex_project` match against the project name, the repo directory name, and simple acronyms such as `LCR` for `LittleControlRoom`.
-Use `demo_data = true` for reproducible public docs screenshots and a local config file when you want to capture your own projects.
+Use `demo_data = true` when you want a reproducible sample set, or a local config file when you want screenshots from your own curated projects.
 
 ## TUI Keys
 

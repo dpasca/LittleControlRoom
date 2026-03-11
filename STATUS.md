@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-11 10:29 JST (JST)
+Last updated: 2026-03-11 10:54 JST (JST)
 
 ## Current State
 
@@ -59,26 +59,38 @@ Current embedded Codex transport assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-11 10:29 JST)
+## Latest Update (2026-03-11 10:54 JST)
 
-- Added an MIT `LICENSE` so the public snapshot has explicit reuse terms before the visibility flip.
-- Created a local pre-public backup archive (git bundle plus working-tree tarball) before rewriting the repo history, so the prior private history and local files remain recoverable off-repo.
-- Repointed local `master` to the clean public snapshot and kept that rewritten history as a single sanitized commit without reintroducing machine-specific paths or private fixture names.
+- Restored the public docs screenshots to the curated real-project allowlist from the local screenshot config instead of the temporary demo dataset, so the repo page once again shows real projects such as `FractalMech`, `roguellm`, `crypto`, and related work.
+- Added screenshot-only path sanitization for live project data, detail panes, classifications, session evidence, and artifact text so rendered screenshots now rewrite local absolute paths like `/Users/davide/...` to `/workspaces/...` while keeping project names intact.
+- Switched `make screenshots` back to the gitignored local `screenshots.local.toml` workflow for the maintainer path, while keeping the `demo_data` example/documentation path available for reproducible sample renders when needed.
+- Regenerated the committed PNG screenshots from the local curated set and confirmed via OCR that the real project names are visible while `/Users/davide` no longer appears in the rendered images.
 - No Codex/OpenCode detector assumptions changed; `docs/codex_cli_footprint.md` stayed aligned with the current footprint expectations.
 
 Verification snapshot:
 
-- Existing verification from the sanitized public snapshot remained the same: `make test`, `make screenshots`, `make scan`, `make doctor`, and `env COLUMNS=100 LINES=28 make tui` had already passed before the license/history-only pass.
-- `git bundle verify` passed for the local pre-public archive backup created before the history rewrite.
-- `make test` passed again after repointing local `master` to the clean public snapshot.
+- `make test` passed.
+- `make screenshots` passed and refreshed `docs/screenshots/main-panel.png`, `docs/screenshots/main-panel-live-cx.png`, `docs/screenshots/codex-embedded.png`, and `docs/screenshots/commit-preview.png` from `screenshots.local.toml`.
+- OCR recheck over the regenerated PNGs confirmed the curated real project names are visible and `/Users/davide` no longer appears in the rendered screenshots; visible paths now use `/workspaces/...`.
+- `make scan` passed at `2026-03-11T10:54:15+09:00` (`activity projects: 80`, `tracked projects: 133`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-11T10:54:15+09:00` (`projects: 133`).
+- `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q` as a UI startup smoke test.
 
 Next concrete tasks:
 
-- Force-push the rewritten `master` when ready to replace the remote private history with the clean public snapshot.
 - Decide whether `STATUS.md` and `docs/status_archive.md` should stay public as implementation handoff logs or be trimmed further for a cleaner external-facing repo.
-- Optionally remove the temporary `public-clean` branch locally once the remote rewrite is complete and the new `master` is confirmed.
+- Polish the public GitHub metadata further if desired (description, topics, homepage/social preview).
+- Consider whether the screenshot command should support an explicit committed "public real-projects" config path separate from the maintainer-only local config.
 
 ## Recent Updates
+
+### 2026-03-11 10:35 JST
+
+- Added an MIT `LICENSE` so the public snapshot has explicit reuse terms before the visibility flip.
+- Created a local pre-public backup archive (git bundle plus working-tree tarball) before rewriting the repo history, so the prior private history and local files remain recoverable off-repo.
+- Repointed local `master` to the clean public snapshot and kept that rewritten history as a single sanitized commit without reintroducing machine-specific paths or private fixture names.
+- Force-pushed the rewritten `master` and flipped the GitHub repository visibility to public; the live public page now serves the sanitized one-commit snapshot with `master` as the default branch.
+- No Codex/OpenCode detector assumptions changed; `docs/codex_cli_footprint.md` stayed aligned with the current footprint expectations.
 
 ### 2026-03-11 09:00 JST
 

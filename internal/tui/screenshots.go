@@ -142,7 +142,23 @@ func loadScreenshotData(ctx context.Context, svc *service.Service, cfg config.Sc
 	if err != nil {
 		return screenshotDataSet{}, fmt.Errorf("list projects: %w", err)
 	}
-	return screenshotDataSet{projects: projects}, nil
+
+	sanitizedProjects := make([]model.ProjectSummary, 0, len(projects))
+	details := make(map[string]model.ProjectDetail, len(projects))
+	for _, project := range projects {
+		detail, err := svc.Store().GetProjectDetail(ctx, project.Path, 20)
+		if err != nil {
+			return screenshotDataSet{}, fmt.Errorf("load screenshot detail %s: %w", project.Path, err)
+		}
+		sanitizedDetail := sanitizeScreenshotProjectDetail(detail)
+		sanitizedProjects = append(sanitizedProjects, sanitizedDetail.Summary)
+		details[sanitizedDetail.Summary.Path] = sanitizedDetail
+	}
+
+	return screenshotDataSet{
+		projects: sanitizedProjects,
+		details:  details,
+	}, nil
 }
 
 func screenshotAsset(name, title, rendered string, cfg config.ScreenshotConfig) ScreenshotAsset {
@@ -201,6 +217,82 @@ func (d screenshotDataSet) projectDetail(ctx context.Context, svc *service.Servi
 		return detail, nil
 	}
 	return svc.Store().GetProjectDetail(ctx, path, eventLimit)
+}
+
+func sanitizeScreenshotProjectDetail(detail model.ProjectDetail) model.ProjectDetail {
+	detail.Summary = sanitizeScreenshotProjectSummary(detail.Summary)
+	for i := range detail.Reasons {
+		detail.Reasons[i].Text = sanitizeScreenshotText(detail.Reasons[i].Text)
+	}
+	for i := range detail.Sessions {
+		detail.Sessions[i] = sanitizeScreenshotSession(detail.Sessions[i])
+	}
+	for i := range detail.Artifacts {
+		detail.Artifacts[i].Path = sanitizeScreenshotPath(detail.Artifacts[i].Path)
+		detail.Artifacts[i].Note = sanitizeScreenshotText(detail.Artifacts[i].Note)
+	}
+	for i := range detail.RecentEvents {
+		detail.RecentEvents[i].ProjectPath = sanitizeScreenshotPath(detail.RecentEvents[i].ProjectPath)
+		detail.RecentEvents[i].Payload = sanitizeScreenshotText(detail.RecentEvents[i].Payload)
+	}
+	if detail.LatestSessionClassification != nil {
+		classification := *detail.LatestSessionClassification
+		classification.ProjectPath = sanitizeScreenshotPath(classification.ProjectPath)
+		classification.SessionFile = sanitizeScreenshotPath(classification.SessionFile)
+		classification.Summary = sanitizeScreenshotText(classification.Summary)
+		classification.LastError = sanitizeScreenshotText(classification.LastError)
+		detail.LatestSessionClassification = &classification
+	}
+	return detail
+}
+
+func sanitizeScreenshotProjectSummary(summary model.ProjectSummary) model.ProjectSummary {
+	summary.Path = sanitizeScreenshotPath(summary.Path)
+	summary.Note = sanitizeScreenshotText(summary.Note)
+	summary.MovedFromPath = sanitizeScreenshotPath(summary.MovedFromPath)
+	summary.LatestSessionDetectedProjectPath = sanitizeScreenshotPath(summary.LatestSessionDetectedProjectPath)
+	summary.LatestSessionSummary = sanitizeScreenshotText(summary.LatestSessionSummary)
+	return summary
+}
+
+func sanitizeScreenshotSession(session model.SessionEvidence) model.SessionEvidence {
+	session.ProjectPath = sanitizeScreenshotPath(session.ProjectPath)
+	session.DetectedProjectPath = sanitizeScreenshotPath(session.DetectedProjectPath)
+	session.SessionFile = sanitizeScreenshotPath(session.SessionFile)
+	return session
+}
+
+func sanitizeScreenshotPath(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+	return sanitizeScreenshotText(path)
+}
+
+func sanitizeScreenshotText(text string) string {
+	replacements := []struct {
+		from string
+		to   string
+	}{
+		{from: "/Users/davide/dev/repos/", to: "/workspaces/repos/"},
+		{from: "/Users/davide/dev/repos", to: "/workspaces/repos"},
+		{from: "/Users/davide/dev/poncle_repos/", to: "/workspaces/poncle_repos/"},
+		{from: "/Users/davide/dev/poncle_repos", to: "/workspaces/poncle_repos"},
+		{from: "/Users/davide/projects_control_center/", to: "/workspaces/projects_control_center/"},
+		{from: "/Users/davide/projects_control_center", to: "/workspaces/projects_control_center"},
+		{from: "/Users/davide/.codex/", to: "/workspaces/.codex/"},
+		{from: "/Users/davide/.codex", to: "/workspaces/.codex"},
+		{from: "/Users/davide/.local/share/opencode/", to: "/workspaces/.local/share/opencode/"},
+		{from: "/Users/davide/.local/share/opencode", to: "/workspaces/.local/share/opencode"},
+		{from: "/Users/davide/.little-control-room/", to: "/workspaces/.little-control-room/"},
+		{from: "/Users/davide/.little-control-room", to: "/workspaces/.little-control-room"},
+		{from: "/Users/davide/", to: "/workspaces/"},
+		{from: "/Users/davide", to: "/workspaces"},
+	}
+	for _, replacement := range replacements {
+		text = strings.ReplaceAll(text, replacement.from, replacement.to)
+	}
+	return text
 }
 
 func filterScreenshotProjects(projects []model.ProjectSummary, filters []string) ([]model.ProjectSummary, []string) {

@@ -138,3 +138,71 @@ func TestScreenshotDemoDataSetUsesSafeFixturePaths(t *testing.T) {
 		}
 	}
 }
+
+func TestSanitizeScreenshotProjectDetailRewritesLocalPaths(t *testing.T) {
+	t.Parallel()
+
+	detail := model.ProjectDetail{
+		Summary: model.ProjectSummary{
+			Path:                             "/Users/davide/dev/repos/LittleControlRoom",
+			MovedFromPath:                    "/Users/davide/dev/repos/BatonDeck",
+			LatestSessionDetectedProjectPath: "/Users/davide/dev/repos/LittleControlRoom",
+			LatestSessionSummary:             "Path check: /Users/davide/dev/repos/LittleControlRoom",
+		},
+		Reasons: []model.AttentionReason{
+			{Text: "Recent activity in /Users/davide/dev/poncle_repos/quickgame_03"},
+		},
+		Sessions: []model.SessionEvidence{{
+			ProjectPath:         "/Users/davide/dev/repos/LittleControlRoom",
+			DetectedProjectPath: "/Users/davide/dev/repos/LittleControlRoom",
+			SessionFile:         "/Users/davide/.codex/sessions/demo.jsonl",
+		}},
+		Artifacts: []model.ArtifactEvidence{{
+			Path: "/Users/davide/.local/share/opencode/opencode.db",
+			Note: "artifact under /Users/davide/.local/share/opencode/opencode.db",
+		}},
+		RecentEvents: []model.StoredEvent{{
+			ProjectPath: "/Users/davide/dev/repos/LittleControlRoom",
+			Payload:     "payload /Users/davide/dev/repos/LittleControlRoom",
+		}},
+		LatestSessionClassification: &model.SessionClassification{
+			ProjectPath: "/Users/davide/dev/repos/LittleControlRoom",
+			SessionFile: "/Users/davide/.codex/sessions/demo.jsonl",
+			Summary:     "classification /Users/davide/dev/repos/LittleControlRoom",
+			LastError:   "error /Users/davide/.little-control-room/config.toml",
+		},
+	}
+
+	got := sanitizeScreenshotProjectDetail(detail)
+	for _, candidate := range []string{
+		got.Summary.Path,
+		got.Summary.MovedFromPath,
+		got.Summary.LatestSessionDetectedProjectPath,
+		got.Summary.LatestSessionSummary,
+		got.Reasons[0].Text,
+		got.Sessions[0].ProjectPath,
+		got.Sessions[0].DetectedProjectPath,
+		got.Sessions[0].SessionFile,
+		got.Artifacts[0].Path,
+		got.Artifacts[0].Note,
+		got.RecentEvents[0].ProjectPath,
+		got.RecentEvents[0].Payload,
+		got.LatestSessionClassification.ProjectPath,
+		got.LatestSessionClassification.SessionFile,
+		got.LatestSessionClassification.Summary,
+		got.LatestSessionClassification.LastError,
+	} {
+		if strings.Contains(candidate, "/Users/davide") {
+			t.Fatalf("sanitizeScreenshotProjectDetail() left a local path behind: %q", candidate)
+		}
+	}
+	if got.Summary.Path != "/workspaces/repos/LittleControlRoom" {
+		t.Fatalf("summary path = %q", got.Summary.Path)
+	}
+	if got.Reasons[0].Text != "Recent activity in /workspaces/poncle_repos/quickgame_03" {
+		t.Fatalf("reason text = %q", got.Reasons[0].Text)
+	}
+	if got.Sessions[0].SessionFile != "/workspaces/.codex/sessions/demo.jsonl" {
+		t.Fatalf("session file = %q", got.Sessions[0].SessionFile)
+	}
+}
