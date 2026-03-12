@@ -3707,7 +3707,7 @@ func TestViewWithCommitPreviewRespectsHeight(t *testing.T) {
 	if got := len(strings.Split(rendered, "\n")); got != m.height {
 		t.Fatalf("View() line count = %d, want terminal height %d; render was %q", got, m.height, rendered)
 	}
-	if !strings.Contains(rendered, "Commit Preview for demo (master)") {
+	if !strings.Contains(rendered, "Commit Preview - demo (master)") {
 		t.Fatalf("View() missing commit preview: %q", rendered)
 	}
 	if !strings.Contains(rendered, "Changes") || !strings.Contains(rendered, "Ship current repo changes") {
@@ -3905,11 +3905,14 @@ func TestCommitPreviewNoChangesOpensGitStatusDialog(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(got.renderGitStatusDialogContent(72))
-	if !strings.Contains(rendered, "Nothing To Commit") || !strings.Contains(rendered, "quickgame_30") {
+	if !strings.Contains(rendered, "Nothing To Commit - quickgame_30 (master)") {
 		t.Fatalf("rendered dialog should identify the project and empty-commit state: %q", rendered)
 	}
 	if !strings.Contains(rendered, "ahead of upstream by 4 commit(s)") {
 		t.Fatalf("rendered dialog should show ahead status: %q", rendered)
+	}
+	if strings.Contains(rendered, "Branch: master") {
+		t.Fatalf("rendered dialog should fold branch metadata into the title: %q", rendered)
 	}
 	if !strings.Contains(rendered, "push 4 existing commits") {
 		t.Fatalf("rendered dialog should offer pushing existing commits: %q", rendered)
@@ -3945,8 +3948,11 @@ func TestCommitPreviewSubmoduleAttentionOpensGitStatusDialog(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(got.renderGitStatusDialogContent(72))
-	if !strings.Contains(rendered, "Submodule Attention") || !strings.Contains(rendered, "FractalMech") {
+	if !strings.Contains(rendered, "Submodule Attention - FractalMech (master)") {
 		t.Fatalf("rendered dialog should identify the project and submodule state: %q", rendered)
+	}
+	if strings.Contains(rendered, "Branch: master") {
+		t.Fatalf("rendered dialog should fold branch metadata into the title: %q", rendered)
 	}
 	if !strings.Contains(rendered, "assets_src") || !strings.Contains(rendered, "resolve & continue") {
 		t.Fatalf("rendered dialog should explain the submodule follow-up: %q", rendered)

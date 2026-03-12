@@ -59,27 +59,27 @@ Current embedded Codex transport assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-12 10:23 JST)
+## Latest Update (2026-03-12 10:43 JST)
 
-- Extended the new submodule-aware commit flow with an assisted `resolve & continue` path: from the `Submodule Attention` dialog, the user can now commit and push the dirty submodule(s) first, then drop straight into the parent repo's normal commit preview with the updated gitlink ready.
-- Added service-side recursive submodule resolution so nested dirty submodules are handled depth-first, and added a pushable-submodule integration test that proves the flow commits the child repo, pushes it, and then prepares the parent commit preview against the new submodule hash.
-- Kept the safer default behavior from the earlier pass: dirty submodule worktrees still no longer masquerade as parent-committable changes, stage-all previews still use a temp index, and mixed parent/submodule states still warn clearly about what will or will not be included.
-- Updated the TUI dialog copy/actions so `Enter` now advertises the assisted submodule path while `Esc` still cleanly backs out, and added focused TUI coverage for the new action.
+- Unified the commit-style dialog headers so both overlays now render as `Title - <project> (<branch>)`, with the project name using a brighter accent color that stands apart from the generic dialog title text.
+- Removed the redundant `Branch` row from the git-status/submodule-attention dialog now that branch metadata lives in the header, and dropped the old `Selected project:` subtitle there since the title already carries that context.
+- Switched the regular commit preview to the same header format so `Commit Preview` and `Submodule Attention` present project/branch context consistently instead of using slightly different title patterns.
+- Refreshed the TUI coverage to lock in the new header text and the absence of the old branch row.
 - No Codex/OpenCode detector assumptions changed; `docs/codex_cli_footprint.md` stayed aligned with the current footprint expectations.
 
 Verification snapshot:
 
-- `go test ./internal/service ./internal/tui` passed.
+- `go test ./internal/tui ./internal/service` passed.
 - `make test` passed.
-- `make scan` passed at `2026-03-12T10:23:42+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 1`, `queued classifications: 1`).
-- `make doctor` passed on the cached snapshot dated `2026-03-12T10:23:41+09:00` (`projects: 135`).
-- `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q` as a TUI smoke test after the assisted submodule action wiring.
+- `make scan` passed at `2026-03-12T10:43:06+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-12T10:43:06+09:00` (`projects: 135`).
+- `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q` as a TUI smoke test after the shared dialog-header pass.
 
 Next concrete tasks:
 
-- Do an interactive pass on the real FractalMech repo to confirm the new `resolve & continue` action feels trustworthy when `assets_src/` is dirty, especially around submodule push failures or missing upstreams.
-- Decide whether the parent commit preview should explicitly summarize the submodule commit subjects/hashes that were just created, or whether the current one-line resolved warning is enough.
-- Consider offering the same assisted submodule action from the mixed commit preview when parent files are also dirty, not just from the submodule-only dialog.
+- Do an interactive pass on the real FractalMech repo to confirm the new shared header styling reads well at normal terminal widths and that the accent color feels obvious without becoming noisy.
+- Decide whether the `Nothing To Commit` dialog should keep sharing the same title treatment indefinitely, or whether it deserves a slightly calmer header variant despite the new consistency.
+- Consider offering the assisted submodule action from the mixed commit preview when parent files are also dirty, not just from the submodule-only dialog.
 
 ## Recent Updates
 

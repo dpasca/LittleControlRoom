@@ -1471,6 +1471,7 @@ var (
 	commandPaletteSelectStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("24")).Bold(true)
 	commitPreviewInfoStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	commitPreviewValueStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Bold(true)
+	dialogProjectTitleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
 	commitActionKeyStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("42")).Bold(true).Padding(0, 1)
 	commitActionTextStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("120")).Bold(true)
 	navigateActionKeyStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("81")).Bold(true).Padding(0, 1)
@@ -2491,18 +2492,15 @@ func (m Model) renderGitStatusDialogOverlay(body string, bodyW, bodyH int) strin
 }
 
 func (m Model) renderGitStatusDialogContent(width int) string {
-	_ = width
 	if m.gitStatusDialog == nil {
 		return ""
 	}
 	dialog := *m.gitStatusDialog
 
 	lines := []string{
-		commandPaletteTitleStyle.Render(dialog.Title),
-		commandPaletteHintStyle.Render("Selected project: " + dialog.ProjectName),
+		renderDialogHeader(dialog.Title, dialog.ProjectName, dialog.Branch, width),
 		"",
 		commitPreviewLine("Status", dialog.Status),
-		commitPreviewLine("Branch", dialog.Branch),
 	}
 	if strings.TrimSpace(dialog.RemoteStatus) != "" {
 		lines = append(lines, commitPreviewLine("Remote", dialog.RemoteStatus))
@@ -2533,7 +2531,7 @@ func (m Model) renderCommitPreviewContent(width int) string {
 	preview := *m.commitPreview
 
 	lines := []string{
-		renderCommitPreviewHeader(preview.ProjectName, preview.Branch, width),
+		renderDialogHeader("Commit Preview", preview.ProjectName, preview.Branch, width),
 		"",
 	}
 	lines = append(lines, renderCommitPreviewMessageBlock("Message", preview.Message, width))
@@ -2581,8 +2579,7 @@ func commitPreviewLine(label, value string) string {
 	return detailLabelStyle.Render(label+":") + " " + commitPreviewInfoStyle.Render(value)
 }
 
-func renderCommitPreviewHeader(projectName, branch string, width int) string {
-	title := "Commit Preview"
+func renderDialogHeader(title, projectName, branch string, width int) string {
 	titleWidth := ansi.StringWidth(title)
 	if width <= titleWidth {
 		return commandPaletteTitleStyle.Render(truncateText(title, max(1, width)))
@@ -2590,19 +2587,43 @@ func renderCommitPreviewHeader(projectName, branch string, width int) string {
 
 	projectName = strings.TrimSpace(projectName)
 	branch = strings.TrimSpace(branch)
-	suffix := ""
-	switch {
-	case projectName != "" && branch != "":
-		suffix = fmt.Sprintf(" for %s (%s)", projectName, branch)
-	case projectName != "":
-		suffix = " for " + projectName
-	case branch != "":
-		suffix = " (" + branch + ")"
-	}
-	if suffix == "" {
+	if projectName == "" && branch == "" {
 		return commandPaletteTitleStyle.Render(title)
 	}
-	return commandPaletteTitleStyle.Render(title) + commitPreviewInfoStyle.Render(truncateText(suffix, width-titleWidth))
+
+	suffixPlain := ""
+	switch {
+	case projectName != "" && branch != "":
+		suffixPlain = fmt.Sprintf("%s (%s)", projectName, branch)
+	case projectName != "":
+		suffixPlain = projectName
+	case branch != "":
+		suffixPlain = fmt.Sprintf("(%s)", branch)
+	}
+	if suffixPlain == "" {
+		return commandPaletteTitleStyle.Render(title)
+	}
+
+	separator := " - "
+	if titleWidth+ansi.StringWidth(separator)+ansi.StringWidth(suffixPlain) > width {
+		return commandPaletteTitleStyle.Render(title) + commitPreviewInfoStyle.Render(separator+truncateText(suffixPlain, max(1, width-titleWidth-ansi.StringWidth(separator))))
+	}
+
+	parts := []string{
+		commandPaletteTitleStyle.Render(title),
+		commitPreviewInfoStyle.Render(separator),
+	}
+	if projectName != "" {
+		parts = append(parts, dialogProjectTitleStyle.Render(projectName))
+	}
+	if branch != "" {
+		branchText := "(" + branch + ")"
+		if projectName != "" {
+			branchText = " " + branchText
+		}
+		parts = append(parts, commitPreviewInfoStyle.Render(branchText))
+	}
+	return strings.Join(parts, "")
 }
 
 func renderCommitPreviewMessageBlock(label, value string, width int) string {
