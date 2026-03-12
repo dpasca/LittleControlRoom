@@ -3926,6 +3926,8 @@ func TestCommitPreviewSubmoduleAttentionOpensGitStatusDialog(t *testing.T) {
 			Branch:      "master",
 			Submodules:  []string{"assets_src"},
 		},
+		intent:  service.GitActionCommit,
+		message: "Update parent after assets refresh",
 	})
 	got := updated.(Model)
 
@@ -3938,7 +3940,7 @@ func TestCommitPreviewSubmoduleAttentionOpensGitStatusDialog(t *testing.T) {
 	if got.err != nil {
 		t.Fatalf("submodule-attention dialog should clear the generic error, got %v", got.err)
 	}
-	if got.status != "Submodule needs attention before parent commit. Enter close, Esc close" {
+	if got.status != "Submodule needs attention. Enter resolve & continue, Esc close" {
 		t.Fatalf("status = %q", got.status)
 	}
 
@@ -3946,7 +3948,7 @@ func TestCommitPreviewSubmoduleAttentionOpensGitStatusDialog(t *testing.T) {
 	if !strings.Contains(rendered, "Submodule Attention") || !strings.Contains(rendered, "FractalMech") {
 		t.Fatalf("rendered dialog should identify the project and submodule state: %q", rendered)
 	}
-	if !strings.Contains(rendered, "assets_src") || !strings.Contains(rendered, "before committing the parent repo") {
+	if !strings.Contains(rendered, "assets_src") || !strings.Contains(rendered, "resolve & continue") {
 		t.Fatalf("rendered dialog should explain the submodule follow-up: %q", rendered)
 	}
 }
@@ -4013,6 +4015,31 @@ func TestGitStatusDialogEnterClosesWithCustomDismissStatus(t *testing.T) {
 	}
 	if cmd != nil {
 		t.Fatalf("enter should not return a command when the dialog only closes")
+	}
+}
+
+func TestGitStatusDialogEnterResolvesSubmodulesWhenAvailable(t *testing.T) {
+	m := Model{
+		gitStatusDialog: &gitStatusDialog{
+			ProjectPath:       "/tmp/demo",
+			ResolveSubmodules: true,
+			CommitIntent:      service.GitActionCommit,
+			CommitMessage:     "Update parent",
+			DismissStatus:     "Submodule changes still need attention",
+			ReadyStatus:       "Submodule needs attention. Enter resolve & continue, Esc close",
+		},
+	}
+
+	updated, cmd := m.updateGitStatusDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if !got.gitStatusApplying {
+		t.Fatalf("enter should start resolving submodules when the dialog offers it")
+	}
+	if got.status != "Resolving submodule commits..." {
+		t.Fatalf("status = %q, want resolving status", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("enter should return a resolve command when the dialog offers it")
 	}
 }
 

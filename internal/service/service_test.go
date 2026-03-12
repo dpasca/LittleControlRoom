@@ -1230,6 +1230,64 @@ func TestPrepareCommitAndApplyCommitLeaveDirtySubmoduleOutOfParentCommit(t *test
 	}
 }
 
+func TestResolveSubmodulesAndPrepareCommitCommitsPushesSubmoduleAndReturnsParentPreview(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	submoduleRootPath := filepath.Join(root, "assets")
+	submodulePath := initGitRepoWithPushableSubmodule(t, projectPath, submoduleRootPath, "assets_src")
+	initialSubmoduleHead := strings.TrimSpace(gitOutput(t, submodulePath, "git", "rev-parse", "HEAD"))
+
+	if err := os.WriteFile(filepath.Join(submodulePath, "README.md"), []byte("hello\nsubmodule edit\n"), 0o644); err != nil {
+		t.Fatalf("write submodule README: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "repo",
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	svc.commitMessageSuggester = nil
+
+	preview, err := svc.ResolveSubmodulesAndPrepareCommit(ctx, projectPath, GitActionCommit, "Update parent after assets refresh")
+	if err != nil {
+		t.Fatalf("resolve submodules and prepare commit: %v", err)
+	}
+	if len(preview.Included) != 1 || preview.Included[0].Path != "assets_src" {
+		t.Fatalf("included files = %#v, want staged submodule hash only", preview.Included)
+	}
+	if !strings.Contains(strings.Join(preview.Warnings, "\n"), "Resolved submodule assets_src") {
+		t.Fatalf("warnings = %#v, want resolved submodule note", preview.Warnings)
+	}
+
+	currentSubmoduleHead := strings.TrimSpace(gitOutput(t, submodulePath, "git", "rev-parse", "HEAD"))
+	if currentSubmoduleHead == "" || currentSubmoduleHead == initialSubmoduleHead {
+		t.Fatalf("expected submodule HEAD to advance, got %q -> %q", initialSubmoduleHead, currentSubmoduleHead)
+	}
+	remoteHead := strings.TrimSpace(gitOutput(t, filepath.Join(submoduleRootPath, "origin.git"), "git", "rev-parse", "master"))
+	if remoteHead != currentSubmoduleHead {
+		t.Fatalf("expected pushed submodule HEAD %q to match remote %q", currentSubmoduleHead, remoteHead)
+	}
+
+	submoduleStatus := strings.TrimSpace(gitOutput(t, submodulePath, "git", "status", "--short"))
+	if submoduleStatus != "" {
+		t.Fatalf("expected clean submodule after assisted commit/push, got %q", submoduleStatus)
+	}
+}
+
 func TestApplyCommitStagesRecommendedUntrackedFiles(t *testing.T) {
 	t.Parallel()
 
@@ -1433,6 +1491,21 @@ func initGitRepoWithSubmodule(t *testing.T, projectPath, submoduleOriginPath, su
 	initGitRepo(t, submoduleOriginPath)
 	initGitRepo(t, projectPath)
 	runGit(t, projectPath, "git", "-c", "protocol.file.allow=always", "submodule", "add", submoduleOriginPath, submoduleName)
+	runGit(t, projectPath, "git", "commit", "-m", "add submodule")
+	return filepath.Join(projectPath, submoduleName)
+}
+
+func initGitRepoWithPushableSubmodule(t *testing.T, projectPath, submoduleRootPath, submoduleName string) string {
+	t.Helper()
+	seedPath := filepath.Join(submoduleRootPath, "seed")
+	originPath := filepath.Join(submoduleRootPath, "origin.git")
+	initBareGitRepo(t, originPath)
+	initGitRepo(t, seedPath)
+	runGit(t, seedPath, "git", "remote", "add", "origin", originPath)
+	runGit(t, seedPath, "git", "push", "-u", "origin", "master")
+
+	initGitRepo(t, projectPath)
+	runGit(t, projectPath, "git", "-c", "protocol.file.allow=always", "submodule", "add", originPath, submoduleName)
 	runGit(t, projectPath, "git", "commit", "-m", "add submodule")
 	return filepath.Join(projectPath, submoduleName)
 }

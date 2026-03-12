@@ -59,27 +59,27 @@ Current embedded Codex transport assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-12 09:51 JST)
+## Latest Update (2026-03-12 10:23 JST)
 
-- Fixed the git commit workflow for dirty submodules by teaching repo-status parsing to keep Git's submodule state bits, so the commit flow can now tell the difference between a parent-committable gitlink change and submodule-local dirt such as `assets_src/` edits.
-- Reworked commit preview generation to exclude submodule-only dirt from stage-all previews by staging into a temporary index first; mixed parent+submodule cases now preview only the real parent commit contents and add explicit warnings when submodule edits will stay behind.
-- Added a dedicated `Submodule Attention` dialog in the TUI for the tricky case where the parent repo is dirty only because a submodule worktree is dirty, so `/commit` no longer falls through to a failed `git commit` with a vague modified-directory message.
-- Added focused scanner, service, and TUI coverage for dirty-only submodules and mixed parent/submodule changes.
+- Extended the new submodule-aware commit flow with an assisted `resolve & continue` path: from the `Submodule Attention` dialog, the user can now commit and push the dirty submodule(s) first, then drop straight into the parent repo's normal commit preview with the updated gitlink ready.
+- Added service-side recursive submodule resolution so nested dirty submodules are handled depth-first, and added a pushable-submodule integration test that proves the flow commits the child repo, pushes it, and then prepares the parent commit preview against the new submodule hash.
+- Kept the safer default behavior from the earlier pass: dirty submodule worktrees still no longer masquerade as parent-committable changes, stage-all previews still use a temp index, and mixed parent/submodule states still warn clearly about what will or will not be included.
+- Updated the TUI dialog copy/actions so `Enter` now advertises the assisted submodule path while `Esc` still cleanly backs out, and added focused TUI coverage for the new action.
 - No Codex/OpenCode detector assumptions changed; `docs/codex_cli_footprint.md` stayed aligned with the current footprint expectations.
 
 Verification snapshot:
 
-- `go test ./internal/scanner ./internal/service ./internal/tui` passed.
+- `go test ./internal/service ./internal/tui` passed.
 - `make test` passed.
-- `make scan` passed at `2026-03-12T09:50:48+09:00` (`activity projects: 80`, `tracked projects: 134`, `updated projects: 1`, `queued classifications: 0`).
-- `make doctor` passed on the cached snapshot dated `2026-03-12T09:50:48+09:00` (`projects: 134`).
-- `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q` as a TUI smoke test after the new submodule dialog wiring.
+- `make scan` passed at `2026-03-12T10:23:42+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-12T10:23:41+09:00` (`projects: 135`).
+- `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q` as a TUI smoke test after the assisted submodule action wiring.
 
 Next concrete tasks:
 
-- Do an interactive pass on the new `Submodule Attention` dialog against the real FractalMech repo to confirm the wording is clear when `assets_src/` is the only dirty item.
-- Decide whether the dialog should grow a convenience action later, such as opening the submodule path in Codex or copying a suggested `git -C <submodule>` command, while keeping the current flow non-destructive.
-- Consider whether other parent-repo-only edge cases should get similarly explicit dialogs instead of generic git failures.
+- Do an interactive pass on the real FractalMech repo to confirm the new `resolve & continue` action feels trustworthy when `assets_src/` is dirty, especially around submodule push failures or missing upstreams.
+- Decide whether the parent commit preview should explicitly summarize the submodule commit subjects/hashes that were just created, or whether the current one-line resolved warning is enough.
+- Consider offering the same assisted submodule action from the mixed commit preview when parent files are also dirty, not just from the submodule-only dialog.
 
 ## Recent Updates
 

@@ -116,22 +116,28 @@ type actionMsg struct {
 }
 
 type commitPreviewMsg struct {
-	preview service.CommitPreview
-	err     error
+	preview     service.CommitPreview
+	projectPath string
+	intent      service.GitActionIntent
+	message     string
+	err         error
 }
 
 type gitStatusDialog struct {
-	Title         string
-	ProjectPath   string
-	ProjectName   string
-	Branch        string
-	Status        string
-	RemoteStatus  string
-	Warnings      []string
-	CanPush       bool
-	Ahead         int
-	ReadyStatus   string
-	DismissStatus string
+	Title             string
+	ProjectPath       string
+	ProjectName       string
+	Branch            string
+	Status            string
+	RemoteStatus      string
+	Warnings          []string
+	CanPush           bool
+	Ahead             int
+	ReadyStatus       string
+	DismissStatus     string
+	ResolveSubmodules bool
+	CommitIntent      service.GitActionIntent
+	CommitMessage     string
 }
 
 type settingsSavedMsg struct {
@@ -378,7 +384,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			var submoduleErr service.SubmoduleAttentionError
 			if errors.As(msg.err, &submoduleErr) {
-				dialog := gitStatusDialogFromSubmoduleAttention(submoduleErr)
+				dialog := gitStatusDialogFromSubmoduleAttention(submoduleErr, msg.intent, msg.message)
 				m.err = nil
 				m.showHelp = false
 				m.gitStatusDialog = &dialog
@@ -774,6 +780,11 @@ func (m Model) updateGitStatusDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.gitStatusApplying = false
 		return m, nil
 	case "enter":
+		if m.gitStatusDialog.ResolveSubmodules {
+			m.gitStatusApplying = true
+			m.status = "Resolving submodule commits..."
+			return m, m.resolveSubmodulesAndContinueCmd(m.gitStatusDialog.ProjectPath, m.gitStatusDialog.CommitIntent, m.gitStatusDialog.CommitMessage)
+		}
 		if !m.gitStatusDialog.CanPush {
 			m.status = gitStatusDialogDismissStatus(*m.gitStatusDialog)
 			m.gitStatusDialog = nil
@@ -1736,7 +1747,14 @@ func (m Model) forgetProjectCmd(path string) tea.Cmd {
 func (m Model) prepareCommitPreviewCmd(path string, intent service.GitActionIntent, message string) tea.Cmd {
 	return func() tea.Msg {
 		preview, err := m.svc.PrepareCommit(m.ctx, path, intent, message)
-		return commitPreviewMsg{preview: preview, err: err}
+		return commitPreviewMsg{preview: preview, projectPath: path, intent: intent, message: message, err: err}
+	}
+}
+
+func (m Model) resolveSubmodulesAndContinueCmd(path string, intent service.GitActionIntent, message string) tea.Cmd {
+	return func() tea.Msg {
+		preview, err := m.svc.ResolveSubmodulesAndPrepareCommit(m.ctx, path, intent, message)
+		return commitPreviewMsg{preview: preview, projectPath: path, intent: intent, message: message, err: err}
 	}
 }
 
@@ -2708,7 +2726,7 @@ func gitStatusDialogDismissStatus(dialog gitStatusDialog) string {
 	return "No changes to commit"
 }
 
-func gitStatusDialogFromSubmoduleAttention(err service.SubmoduleAttentionError) gitStatusDialog {
+func gitStatusDialogFromSubmoduleAttention(err service.SubmoduleAttentionError, intent service.GitActionIntent, message string) gitStatusDialog {
 	projectName := strings.TrimSpace(err.ProjectName)
 	if projectName == "" && strings.TrimSpace(err.ProjectPath) != "" {
 		projectName = filepath.Base(err.ProjectPath)
@@ -2723,13 +2741,16 @@ func gitStatusDialogFromSubmoduleAttention(err service.SubmoduleAttentionError) 
 	}
 
 	dialog := gitStatusDialog{
-		Title:         "Submodule Attention",
-		ProjectPath:   err.ProjectPath,
-		ProjectName:   projectName,
-		Branch:        branch,
-		Status:        "Only submodule-local changes are pending.",
-		ReadyStatus:   "Submodule needs attention before parent commit. Enter close, Esc close",
-		DismissStatus: "Submodule changes still need attention",
+		Title:             "Submodule Attention",
+		ProjectPath:       err.ProjectPath,
+		ProjectName:       projectName,
+		Branch:            branch,
+		Status:            "Only submodule-local changes are pending.",
+		ReadyStatus:       "Submodule needs attention. Enter resolve & continue, Esc close",
+		DismissStatus:     "Submodule changes still need attention",
+		ResolveSubmodules: true,
+		CommitIntent:      intent,
+		CommitMessage:     message,
 	}
 
 	if len(err.Submodules) == 1 {
@@ -2737,6 +2758,7 @@ func gitStatusDialogFromSubmoduleAttention(err service.SubmoduleAttentionError) 
 	} else if len(err.Submodules) > 1 {
 		dialog.Warnings = append(dialog.Warnings, fmt.Sprintf("Commit or discard the local changes inside these submodules before committing the parent repo: %s.", strings.Join(err.Submodules, ", ")))
 	}
+	dialog.Warnings = append(dialog.Warnings, "Enter resolve & continue will commit all current changes inside those submodules, push them, and then reopen the parent commit preview.")
 	if warning := strings.TrimSpace(err.PushWarning); warning != "" {
 		dialog.Warnings = append(dialog.Warnings, warning)
 	}
@@ -2744,6 +2766,13 @@ func gitStatusDialogFromSubmoduleAttention(err service.SubmoduleAttentionError) 
 }
 
 func renderGitStatusDialogActions(dialog gitStatusDialog) string {
+	if dialog.ResolveSubmodules {
+		actions := []string{
+			renderDialogAction("Enter", "resolve & continue", commitActionKeyStyle, commitActionTextStyle),
+			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
+		}
+		return strings.Join(actions, "   ")
+	}
 	primaryLabel := "close"
 	keyStyle := commitActionKeyStyle
 	textStyle := commitActionTextStyle
