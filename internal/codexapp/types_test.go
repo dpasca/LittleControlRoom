@@ -282,6 +282,63 @@ func TestManagerOpenForceNewReplacesExistingSession(t *testing.T) {
 	}
 }
 
+func TestManagerOpenReplacesSessionWhenProviderChanges(t *testing.T) {
+	var created []*fakeSession
+
+	manager := NewManagerWithFactory(func(req LaunchRequest, notify func()) (Session, error) {
+		session := &fakeSession{
+			projectPath: req.ProjectPath,
+			snapshot: Snapshot{
+				Provider: ProviderCodex,
+				Started:  true,
+				Preset:   req.Preset,
+			},
+		}
+		if req.Provider.Normalized() == ProviderOpenCode {
+			session.snapshot.Provider = ProviderOpenCode
+			session.snapshot.Preset = ""
+		}
+		created = append(created, session)
+		return session, nil
+	})
+
+	first, reused, err := manager.Open(LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    ProviderCodex,
+		Preset:      codexcli.PresetYolo,
+	})
+	if err != nil {
+		t.Fatalf("first Open() error = %v", err)
+	}
+	if reused {
+		t.Fatalf("first Open() reused = true, want false")
+	}
+
+	second, reused, err := manager.Open(LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    ProviderOpenCode,
+		ResumeID:    "ses_open",
+	})
+	if err != nil {
+		t.Fatalf("second Open() error = %v", err)
+	}
+	if reused {
+		t.Fatalf("second Open() reused = true, want false")
+	}
+	if first == second {
+		t.Fatalf("Open() should replace the existing session when the provider changes")
+	}
+	if len(created) != 2 {
+		t.Fatalf("factory create count = %d, want 2", len(created))
+	}
+	if !created[0].closed {
+		t.Fatalf("original session should be closed when the provider changes")
+	}
+	if got := created[1].snapshot.Provider; got != ProviderOpenCode {
+		t.Fatalf("replacement provider = %q, want %q", got, ProviderOpenCode)
+	}
+}
+
 func TestManagerOpenForceNewWaitsForExistingSessionShutdown(t *testing.T) {
 	release := make(chan struct{})
 	created := make(chan struct{}, 1)
@@ -456,6 +513,36 @@ func TestManagerReconcileBusySessionsRechecksStaleBusySession(t *testing.T) {
 	manager.reconcileBusySessions(time.Now())
 	if session.reconcileCalls != 1 {
 		t.Fatalf("reconcile calls = %d, want 1", session.reconcileCalls)
+	}
+}
+
+func TestManagerReconcileBusySessionsUsesBusyActivityTimestamp(t *testing.T) {
+	session := &fakeSession{
+		projectPath: "/tmp/demo",
+		snapshot: Snapshot{
+			Started:            true,
+			Preset:             codexcli.PresetYolo,
+			Busy:               true,
+			Phase:              SessionPhaseFinishing,
+			LastActivityAt:     time.Now(),
+			LastBusyActivityAt: time.Now().Add(-2 * time.Minute),
+		},
+	}
+	manager := NewManagerWithFactory(func(req LaunchRequest, notify func()) (Session, error) {
+		return session, nil
+	})
+	manager.busyReconcileAfter = 30 * time.Second
+
+	if _, _, err := manager.Open(LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	manager.reconcileBusySessions(time.Now())
+	if session.reconcileCalls != 1 {
+		t.Fatalf("reconcile calls = %d, want 1 when only generic activity is fresh", session.reconcileCalls)
 	}
 }
 

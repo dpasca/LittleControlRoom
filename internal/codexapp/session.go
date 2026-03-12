@@ -56,6 +56,7 @@ type appServerSession struct {
 	lastError          string
 	lastSystemNotice   string
 	lastActivityAt     time.Time
+	lastBusyActivityAt time.Time
 	currentCWD         string
 	model              string
 	modelProvider      string
@@ -456,6 +457,7 @@ func (s *appServerSession) Snapshot() Snapshot {
 	tokenUsage := exportedTokenUsageSnapshot(s.tokenUsage)
 	usageWindows := exportedUsageWindowsSnapshot(s.rateLimits, s.rateLimitsByID)
 	return Snapshot{
+		Provider:           ProviderCodex,
 		ProjectPath:        s.projectPath,
 		ThreadID:           s.threadID,
 		Preset:             s.preset,
@@ -464,6 +466,7 @@ func (s *appServerSession) Snapshot() Snapshot {
 		Busy:               s.busy,
 		BusyExternal:       s.busyExternal,
 		BusySince:          s.busySince,
+		LastBusyActivityAt: s.lastBusyActivityAt,
 		Closed:             s.closed,
 		ActiveTurnID:       s.activeTurnID,
 		PendingApproval:    cloneApprovalRequest(s.pendingApproval),
@@ -484,6 +487,15 @@ func (s *appServerSession) Snapshot() Snapshot {
 		PendingReasoning:   s.pendingReasoning,
 		TokenUsage:         tokenUsage,
 		UsageWindows:       usageWindows,
+	}
+}
+
+func newEmbeddedSession(req LaunchRequest, notify func()) (Session, error) {
+	switch req.Provider.Normalized() {
+	case ProviderOpenCode:
+		return newOpenCodeSession(req, notify)
+	default:
+		return newAppServerSession(req, notify)
 	}
 }
 
@@ -524,9 +536,12 @@ func (s *appServerSession) setBusyLocked(turnID string, external bool) {
 	if turnID != "" {
 		s.activeTurnID = turnID
 	}
+	now := time.Now()
 	if s.busySince.IsZero() {
-		s.busySince = time.Now()
+		s.busySince = now
 	}
+	s.lastActivityAt = now
+	s.lastBusyActivityAt = now
 }
 
 func (s *appServerSession) clearBusyLocked(turnID string) {
@@ -534,6 +549,7 @@ func (s *appServerSession) clearBusyLocked(turnID string) {
 	s.busyExternal = false
 	s.reconciling = false
 	s.busySince = time.Time{}
+	s.lastBusyActivityAt = time.Time{}
 	s.activeItems = nil
 	s.pendingCompletion = nil
 	if turnID == "" || s.activeTurnID == turnID {
@@ -1716,7 +1732,7 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 			return
 		}
 		s.mu.Lock()
-		s.touchLocked()
+		s.touchBusyLocked()
 		status := formatTurnCompletionStatus(msg.Turn.Status, s.busySince, time.Now())
 		s.queueTurnCompletionLocked(msg.Turn.ID, status)
 		s.mu.Unlock()
@@ -1743,7 +1759,7 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 			return
 		}
 		s.mu.Lock()
-		s.touchLocked()
+		s.touchBusyLocked()
 		s.markItemActiveLocked(msg.TurnID, msg.ItemID)
 		if msg.SummaryIndex > 0 {
 			s.appendDeltaToItemLocked(msg.ItemID, TranscriptReasoning, "\n\n")
@@ -1758,7 +1774,7 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 			return
 		}
 		s.mu.Lock()
-		s.touchLocked()
+		s.touchBusyLocked()
 		s.markItemActiveLocked(msg.TurnID, msg.ItemID)
 		progress := strings.TrimSpace(msg.Message)
 		if progress == "" {
@@ -1854,7 +1870,7 @@ func (s *appServerSession) handleItemStarted(params json.RawMessage) {
 	itemID := decodeRawString(msg.Item["id"])
 
 	s.mu.Lock()
-	s.touchLocked()
+	s.touchBusyLocked()
 	if tracksBusyItemLifecycle(itemType) {
 		s.markItemActiveLocked(msg.TurnID, itemID)
 	}
@@ -1880,7 +1896,7 @@ func (s *appServerSession) handleItemDelta(params json.RawMessage, kind Transcri
 		return
 	}
 	s.mu.Lock()
-	s.touchLocked()
+	s.touchBusyLocked()
 	s.markItemActiveLocked(msg.TurnID, msg.ItemID)
 	s.appendDeltaToItemLocked(msg.ItemID, kind, msg.Delta)
 	s.mu.Unlock()
@@ -1899,7 +1915,7 @@ func (s *appServerSession) handleItemCompleted(params json.RawMessage) {
 	itemID := decodeRawString(msg.Item["id"])
 
 	s.mu.Lock()
-	s.touchLocked()
+	s.touchBusyLocked()
 	switch itemType {
 	case "commandExecution":
 		s.finalizeCommandItemLocked(itemID, msg.Item)
@@ -2126,6 +2142,12 @@ func hasRateLimitSnapshot(snapshot rateLimitSnapshot) bool {
 
 func (s *appServerSession) touchLocked() {
 	s.lastActivityAt = time.Now()
+}
+
+func (s *appServerSession) touchBusyLocked() {
+	now := time.Now()
+	s.lastActivityAt = now
+	s.lastBusyActivityAt = now
 }
 
 func (s *appServerSession) clearActiveStateLocked() {
@@ -2450,6 +2472,7 @@ func (s *appServerSession) hydrateResumedThreadLocked(thread resumedThread) {
 	}
 	wasBusy := s.busy
 	previousBusySince := s.busySince
+	previousBusyActivityAt := s.lastBusyActivityAt
 	previousTurnID := strings.TrimSpace(s.activeTurnID)
 
 	busy := thread.Status.Type == "active"
@@ -2474,16 +2497,19 @@ func (s *appServerSession) hydrateResumedThreadLocked(thread resumedThread) {
 	}
 
 	busySince := time.Time{}
+	lastBusyActivityAt := time.Time{}
 	switch {
 	case !busy:
 		busySince = time.Time{}
 	case !previousBusySince.IsZero() && wasBusy && previousTurnID == strings.TrimSpace(activeTurnID):
 		busySince = previousBusySince
+		lastBusyActivityAt = previousBusyActivityAt
 	}
 
 	s.busy = busy
 	s.busyExternal = busyExternal
 	s.busySince = busySince
+	s.lastBusyActivityAt = lastBusyActivityAt
 	s.activeTurnID = activeTurnID
 }
 

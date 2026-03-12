@@ -68,7 +68,47 @@ func (m Model) codexPendingOpenProject() string {
 	return strings.TrimSpace(m.codexPendingOpen.projectPath)
 }
 
-func (m *Model) beginCodexPendingOpen(projectPath string) {
+func (m Model) codexPendingOpenProvider() codexapp.Provider {
+	if m.codexPendingOpen == nil {
+		return codexapp.ProviderCodex
+	}
+	if provider := m.codexPendingOpen.provider.Normalized(); provider != "" {
+		return provider
+	}
+	return codexapp.ProviderCodex
+}
+
+func embeddedProvider(snapshot codexapp.Snapshot) codexapp.Provider {
+	if provider := snapshot.Provider.Normalized(); provider != "" {
+		return provider
+	}
+	return codexapp.ProviderCodex
+}
+
+func (m Model) currentEmbeddedProvider() codexapp.Provider {
+	if snapshot, ok := m.currentCodexSnapshot(); ok {
+		return embeddedProvider(snapshot)
+	}
+	if provider := m.codexPendingOpenProvider(); provider != "" {
+		return provider
+	}
+	return codexapp.ProviderCodex
+}
+
+func (m Model) currentEmbeddedProviderLabel() string {
+	return m.currentEmbeddedProvider().Label()
+}
+
+func embeddedNewCommand(provider codexapp.Provider) string {
+	switch provider.Normalized() {
+	case codexapp.ProviderOpenCode:
+		return "/opencode-new"
+	default:
+		return "/codex-new"
+	}
+}
+
+func (m *Model) beginCodexPendingOpen(projectPath string, provider codexapp.Provider) {
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
 		m.codexPendingOpen = nil
@@ -77,7 +117,10 @@ func (m *Model) beginCodexPendingOpen(projectPath string) {
 	if current := strings.TrimSpace(m.codexVisibleProject); current != "" && current != projectPath {
 		m.persistVisibleCodexDraft()
 	}
-	m.codexPendingOpen = &codexPendingOpenState{projectPath: projectPath}
+	m.codexPendingOpen = &codexPendingOpenState{
+		projectPath: projectPath,
+		provider:    provider.Normalized(),
+	}
 }
 
 func (m *Model) finishCodexPendingOpen(projectPath string, opened bool) {
@@ -157,36 +200,35 @@ func (m Model) refreshBusyElsewhereCmd(projectPath string) tea.Cmd {
 	}
 }
 
-func (m Model) openCodexSessionCmd(plan codexcli.LaunchPlan) tea.Cmd {
+func (m Model) openCodexSessionCmd(req codexapp.LaunchRequest) tea.Cmd {
 	manager := m.codexManager
 	return func() tea.Msg {
+		provider := req.Provider.Normalized()
+		if provider == "" {
+			provider = codexapp.ProviderCodex
+		}
+		label := provider.Label()
 		if manager == nil {
-			return codexSessionOpenedMsg{err: fmt.Errorf("Codex manager unavailable")}
+			return codexSessionOpenedMsg{err: fmt.Errorf("%s manager unavailable", label)}
 		}
-		session, reused, err := manager.Open(codexapp.LaunchRequest{
-			ProjectPath: plan.ProjectPath,
-			ResumeID:    plan.SessionID,
-			ForceNew:    plan.Kind == codexcli.LaunchNew,
-			Prompt:      plan.Prompt,
-			Preset:      plan.Preset,
-		})
+		session, reused, err := manager.Open(req)
 		if err != nil {
-			return codexSessionOpenedMsg{projectPath: plan.ProjectPath, err: err}
+			return codexSessionOpenedMsg{projectPath: req.ProjectPath, err: err}
 		}
-		status := "Embedded Codex session opened. Alt+Up hides it."
+		status := "Embedded " + label + " session opened. Alt+Up hides it."
 		snapshot := session.Snapshot()
 		switch {
-		case snapshot.BusyExternal && strings.TrimSpace(plan.Prompt) != "":
-			status = "Codex is already active in another process. Prompt was not sent; use /codex-new for a separate session."
+		case snapshot.BusyExternal && strings.TrimSpace(req.Prompt) != "":
+			status = label + " is already active in another process. Prompt was not sent; use " + embeddedNewCommand(provider) + " for a separate session."
 		case snapshot.BusyExternal:
-			status = "Codex is already active in another process. Embedded view is read-only until it finishes."
-		case strings.TrimSpace(plan.Prompt) != "":
-			status = "Prompt sent to embedded Codex. Alt+Up hides it."
+			status = label + " is already active in another process. Embedded view is read-only until it finishes."
+		case strings.TrimSpace(req.Prompt) != "":
+			status = "Prompt sent to embedded " + label + ". Alt+Up hides it."
 		case reused:
-			status = "Embedded Codex session reopened. Alt+Up hides it."
+			status = "Embedded " + label + " session reopened. Alt+Up hides it."
 		}
 		return codexSessionOpenedMsg{
-			projectPath: plan.ProjectPath,
+			projectPath: req.ProjectPath,
 			status:      status,
 		}
 	}
@@ -200,16 +242,18 @@ func (m Model) submitVisibleCodexCmd(draft codexDraft) tea.Cmd {
 	projectPath := m.codexVisibleProject
 	submission := draft.Submission()
 	steer := false
+	label := "Codex"
 	if snapshot, ok := m.currentCodexSnapshot(); ok {
 		steer = codexSnapshotCanSteer(snapshot)
+		label = embeddedProvider(snapshot).Label()
 	}
 	return func() tea.Msg {
 		if err := session.SubmitInput(submission); err != nil {
 			return codexActionMsg{projectPath: projectPath, restoreDraft: draft, err: err}
 		}
-		status := "Prompt sent to Codex"
+		status := "Prompt sent to " + label
 		if steer {
-			status = "Steer sent to the active Codex turn"
+			status = "Steer sent to the active " + label + " turn"
 		}
 		return codexActionMsg{projectPath: projectPath, status: status}
 	}
@@ -221,11 +265,15 @@ func (m Model) showVisibleCodexStatusCmd() tea.Cmd {
 		return nil
 	}
 	projectPath := m.codexVisibleProject
+	label := "Codex"
+	if snapshot, ok := m.currentCodexSnapshot(); ok {
+		label = embeddedProvider(snapshot).Label()
+	}
 	return func() tea.Msg {
 		if err := session.ShowStatus(); err != nil {
 			return codexActionMsg{projectPath: projectPath, err: err}
 		}
-		return codexActionMsg{projectPath: projectPath, status: "Embedded Codex status added to the transcript"}
+		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " status added to the transcript"}
 	}
 }
 
@@ -234,17 +282,25 @@ func (m Model) restartVisibleCodexSessionCmd(prompt string) tea.Cmd {
 		return nil
 	}
 	projectPath := strings.TrimSpace(m.codexVisibleProject)
-	preset := codexcli.DefaultPreset()
-	if snapshot, ok := m.currentCodexSnapshot(); ok && snapshot.Preset != "" {
-		preset = snapshot.Preset
+	req := codexapp.LaunchRequest{
+		Provider:    codexapp.ProviderCodex,
+		ProjectPath: projectPath,
+		ForceNew:    true,
+		Prompt:      prompt,
 	}
-	plan, err := codexcli.BuildLaunchPlan(projectPath, "", prompt, true, preset)
-	if err != nil {
+	if snapshot, ok := m.currentCodexSnapshot(); ok {
+		req.Provider = embeddedProvider(snapshot)
+		req.Preset = snapshot.Preset
+	}
+	if req.Provider.Normalized() == codexapp.ProviderCodex && req.Preset == "" {
+		req.Preset = codexcli.DefaultPreset()
+	}
+	if err := req.Validate(); err != nil {
 		return func() tea.Msg {
 			return codexSessionOpenedMsg{projectPath: projectPath, err: err}
 		}
 	}
-	return m.openCodexSessionCmd(plan)
+	return m.openCodexSessionCmd(req)
 }
 
 func (m Model) interruptVisibleCodexCmd() tea.Cmd {
@@ -252,11 +308,15 @@ func (m Model) interruptVisibleCodexCmd() tea.Cmd {
 	if !ok {
 		return nil
 	}
+	label := "Codex"
+	if snapshot, ok := m.currentCodexSnapshot(); ok {
+		label = embeddedProvider(snapshot).Label()
+	}
 	return func() tea.Msg {
 		if err := session.Interrupt(); err != nil {
 			return codexActionMsg{err: err}
 		}
-		return codexActionMsg{status: "Interrupt sent to Codex"}
+		return codexActionMsg{status: "Interrupt sent to " + label}
 	}
 }
 
@@ -266,13 +326,17 @@ func (m Model) closeVisibleCodexCmd() tea.Cmd {
 	}
 	projectPath := m.codexVisibleProject
 	manager := m.codexManager
+	label := "Codex"
+	if snapshot, ok := m.currentCodexSnapshot(); ok {
+		label = embeddedProvider(snapshot).Label()
+	}
 	return func() tea.Msg {
 		if err := manager.CloseProject(projectPath); err != nil {
 			return codexActionMsg{err: err}
 		}
 		return codexActionMsg{
 			projectPath: projectPath,
-			status:      "Embedded Codex session closed",
+			status:      "Embedded " + label + " session closed",
 			closed:      true,
 		}
 	}
@@ -283,11 +347,15 @@ func (m Model) respondVisibleApprovalCmd(decision codexapp.ApprovalDecision) tea
 	if !ok {
 		return nil
 	}
+	label := "Codex"
+	if snapshot, ok := m.currentCodexSnapshot(); ok {
+		label = embeddedProvider(snapshot).Label()
+	}
 	return func() tea.Msg {
 		if err := session.RespondApproval(decision); err != nil {
 			return codexActionMsg{err: err}
 		}
-		return codexActionMsg{status: "Approval decision sent to Codex"}
+		return codexActionMsg{status: "Approval decision sent to " + label}
 	}
 }
 
@@ -297,11 +365,15 @@ func (m Model) respondVisibleToolInputCmd(answers map[string][]string) tea.Cmd {
 		return nil
 	}
 	projectPath := m.codexVisibleProject
+	label := "Codex"
+	if snapshot, ok := m.currentCodexSnapshot(); ok {
+		label = embeddedProvider(snapshot).Label()
+	}
 	return func() tea.Msg {
 		if err := session.RespondToolInput(answers); err != nil {
 			return codexActionMsg{projectPath: projectPath, err: err}
 		}
-		return codexActionMsg{projectPath: projectPath, status: "Structured input sent to Codex"}
+		return codexActionMsg{projectPath: projectPath, status: "Structured input sent to " + label}
 	}
 }
 
@@ -311,11 +383,15 @@ func (m Model) respondVisibleElicitationCmd(decision codexapp.ElicitationDecisio
 		return nil
 	}
 	projectPath := m.codexVisibleProject
+	label := "Codex"
+	if snapshot, ok := m.currentCodexSnapshot(); ok {
+		label = embeddedProvider(snapshot).Label()
+	}
 	return func() tea.Msg {
 		if err := session.RespondElicitation(decision, content); err != nil {
 			return codexActionMsg{projectPath: projectPath, restoreDraft: restoreDraft, err: err}
 		}
-		return codexActionMsg{projectPath: projectPath, status: "MCP input sent to Codex"}
+		return codexActionMsg{projectPath: projectPath, status: "MCP input sent to " + label}
 	}
 }
 
@@ -326,10 +402,10 @@ func (m Model) toggleCodexVisibility() (tea.Model, tea.Cmd) {
 	}
 	projectPath := m.preferredHiddenCodexProject()
 	if projectPath == "" {
-		m.status = "No hidden Codex session"
+		m.status = "No hidden embedded session"
 		return m, nil
 	}
-	return m.showCodexProject(projectPath, "Embedded Codex session restored")
+	return m.showCodexProject(projectPath, "Embedded session restored")
 }
 
 func (m Model) hideCodexSession() (tea.Model, tea.Cmd) {
@@ -337,11 +413,15 @@ func (m Model) hideCodexSession() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	label := "Embedded session"
+	if snapshot, ok := m.currentCodexSnapshot(); ok {
+		label = "Embedded " + embeddedProvider(snapshot).Label() + " session"
+	}
 	m.persistVisibleCodexDraft()
 	m.codexHiddenProject = m.codexVisibleProject
 	m.codexVisibleProject = ""
 	m.codexInput.Blur()
-	m.status = "Embedded Codex session hidden."
+	m.status = label + " hidden."
 	return m, m.focusProjectPath(projectPath)
 }
 
@@ -352,27 +432,32 @@ func (m Model) cycleCodexSession(direction int) (tea.Model, tea.Cmd) {
 		nextProject = m.previousLiveCodexProject()
 	}
 	if nextProject == "" {
-		m.status = "No live Codex sessions"
+		m.status = "No live embedded sessions"
 		return m, nil
 	}
 	current := strings.TrimSpace(m.codexVisibleProject)
 	if current != "" && nextProject == current && len(m.liveCodexProjects()) == 1 {
-		m.status = "Only one live Codex session"
+		m.status = "Only one live embedded session"
 		return m, nil
 	}
-	if direction < 0 {
-		return m.showCodexProject(nextProject, "Switched to the previous embedded Codex session")
+	label := "embedded session"
+	if snapshot, ok := m.liveCodexSnapshot(nextProject); ok {
+		label = "embedded " + embeddedProvider(snapshot).Label() + " session"
 	}
-	return m.showCodexProject(nextProject, "Switched to the next embedded Codex session")
+	if direction < 0 {
+		return m.showCodexProject(nextProject, "Switched to the previous "+label)
+	}
+	return m.showCodexProject(nextProject, "Switched to the next "+label)
 }
 
 func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if projectPath := m.codexPendingOpenProject(); projectPath != "" {
+		label := m.codexPendingOpenProvider().Label()
 		switch msg.String() {
 		case "esc", "alt+up":
-			m.status = "Embedded Codex is still starting for " + filepath.Base(projectPath)
+			m.status = "Embedded " + label + " is still starting for " + filepath.Base(projectPath)
 		default:
-			m.status = "Embedded Codex session is still starting..."
+			m.status = "Embedded " + label + " session is still starting..."
 		}
 		return m, nil
 	}
@@ -380,9 +465,10 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	snapshot, ok := m.currentCodexSnapshot()
 	if !ok {
 		m.codexVisibleProject = ""
-		m.status = "Codex session is no longer available"
+		m.status = "Embedded session is no longer available"
 		return m, nil
 	}
+	label := embeddedProvider(snapshot).Label()
 
 	switch msg.String() {
 	case "f3":
@@ -408,22 +494,22 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "ctrl+c":
 		if snapshot.BusyExternal {
-			m.status = "This Codex session is busy in another process. Interrupt it there or hide it here with Alt+Up."
+			m.status = "This " + label + " session is busy in another process. Interrupt it there or hide it here with Alt+Up."
 			return m, nil
 		}
 		if codexSnapshotCanSteer(snapshot) {
-			m.status = "Interrupting Codex turn..."
+			m.status = "Interrupting " + label + " turn..."
 			return m, m.interruptVisibleCodexCmd()
 		}
 		if snapshot.Phase == codexapp.SessionPhaseFinishing {
-			m.status = "Codex is finishing the current turn. Wait for the final output to settle or hide it with Alt+Up."
+			m.status = label + " is finishing the current turn. Wait for the final output to settle or hide it with Alt+Up."
 			return m, nil
 		}
 		if snapshot.Phase == codexapp.SessionPhaseReconciling {
-			m.status = "Codex is rechecking whether the current turn has gone idle. Please wait a moment."
+			m.status = label + " is rechecking whether the current turn has gone idle. Please wait a moment."
 			return m, nil
 		}
-		m.status = "Closing embedded Codex session..."
+		m.status = "Closing embedded " + label + " session..."
 		return m, m.closeVisibleCodexCmd()
 	case "pgup":
 		m.codexViewport.PageUp()
@@ -436,20 +522,20 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if snapshot.PendingApproval != nil {
 		switch msg.String() {
 		case "a":
-			m.status = "Approving Codex request..."
+			m.status = "Approving " + label + " request..."
 			return m, m.respondVisibleApprovalCmd(codexapp.DecisionAccept)
 		case "A":
 			if !snapshot.PendingApproval.AllowsDecision(codexapp.DecisionAcceptForSession) {
 				m.status = "This approval cannot be accepted for the whole session"
 				return m, nil
 			}
-			m.status = "Approving Codex request for this session..."
+			m.status = "Approving " + label + " request for this session..."
 			return m, m.respondVisibleApprovalCmd(codexapp.DecisionAcceptForSession)
 		case "d":
-			m.status = "Declining Codex request..."
+			m.status = "Declining " + label + " request..."
 			return m, m.respondVisibleApprovalCmd(codexapp.DecisionDecline)
 		case "c":
-			m.status = "Canceling Codex request..."
+			m.status = "Canceling " + label + " request..."
 			return m, m.respondVisibleApprovalCmd(codexapp.DecisionCancel)
 		default:
 			return m, nil
@@ -466,7 +552,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if snapshot.Closed {
 		if msg.String() == "enter" {
-			m.status = "Codex session is closed. Press Esc or Alt+Up to hide it, then reopen from the project list."
+			m.status = label + " session is closed. Press Esc or Alt+Up to hide it, then reopen from the project list."
 		}
 		return m, nil
 	}
@@ -491,15 +577,15 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.clearCodexDraft(m.codexVisibleProject)
 			switch inv.Kind {
 			case codexslash.KindNew:
-				m.status = "Starting a fresh embedded Codex session..."
-				m.beginCodexPendingOpen(m.codexVisibleProject)
+				m.status = "Starting a fresh embedded " + label + " session..."
+				m.beginCodexPendingOpen(m.codexVisibleProject, embeddedProvider(snapshot))
 				return m, m.restartVisibleCodexSessionCmd(inv.Prompt)
 			case codexslash.KindModel:
 				m.openCodexModelPickerLoading()
-				m.status = "Loading embedded Codex models..."
+				m.status = "Loading embedded " + label + " models..."
 				return m, m.openCodexModelPickerCmd()
 			case codexslash.KindStatus:
-				m.status = "Reading embedded Codex status..."
+				m.status = "Reading embedded " + label + " status..."
 				return m, m.showVisibleCodexStatusCmd()
 			default:
 				m.status = "Unsupported embedded slash command"
@@ -515,22 +601,22 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if snapshot.BusyExternal {
-			m.status = "This Codex session is already active in another process, so embedded Codex cannot steer it. Use /codex-new for a separate session."
+			m.status = "This " + label + " session is already active in another process, so the embedded view cannot steer it. Use " + embeddedNewCommand(embeddedProvider(snapshot)) + " for a separate session."
 			return m, nil
 		}
 		if snapshot.Phase == codexapp.SessionPhaseFinishing {
-			m.status = "Codex is finishing the current turn. Wait for it to settle before sending another prompt."
+			m.status = label + " is finishing the current turn. Wait for it to settle before sending another prompt."
 			return m, nil
 		}
 		if snapshot.Phase == codexapp.SessionPhaseReconciling {
-			m.status = "Codex is rechecking the current turn state. Wait for that to finish before sending another prompt."
+			m.status = label + " is rechecking the current turn state. Wait for that to finish before sending another prompt."
 			return m, nil
 		}
 		m.clearCodexDraft(m.codexVisibleProject)
 		if codexSnapshotCanSteer(snapshot) {
-			m.status = "Sending follow-up to Codex..."
+			m.status = "Sending follow-up to " + label + "..."
 		} else {
-			m.status = "Sending prompt to Codex..."
+			m.status = "Sending prompt to " + label + "..."
 		}
 		return m, m.submitVisibleCodexCmd(draft)
 	case "alt+enter", "ctrl+j":
@@ -821,7 +907,7 @@ func (m Model) renderCodexView() string {
 	}
 	snapshot, ok := m.currentCodexSnapshot()
 	if !ok {
-		return lipgloss.NewStyle().Bold(true).Render(brand.FullTitle + " | Codex session unavailable")
+		return lipgloss.NewStyle().Bold(true).Render(brand.FullTitle + " | Embedded session unavailable")
 	}
 
 	width := m.width
@@ -866,19 +952,21 @@ func (m Model) renderCodexOpeningView(projectPath string) string {
 	if projectName == "" || projectName == "." {
 		projectName = projectPath
 	}
-	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Render("Codex | " + projectName)
+	label := m.codexPendingOpenProvider().Label()
+	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Render(label + " | " + projectName)
 	bodyHeight := max(3, height-6)
 	body := m.renderFramedPane(strings.Join([]string{
-		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Render("Opening embedded Codex session..."),
+		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Render("Opening embedded " + label + " session..."),
 		"",
 		fitFooterWidth("Project: "+projectPath, max(24, width-8)),
-		fitFooterWidth("Waiting for the previous Codex app-server to settle and for the new session to come online.", max(24, width-8)),
+		fitFooterWidth("Waiting for the previous embedded session to settle and for the new session to come online.", max(24, width-8)),
 	}, "\n"), width, bodyHeight, true)
-	footer := renderFooterLine(width, renderFooterStatus("Opening embedded Codex session"))
+	footer := renderFooterLine(width, renderFooterStatus("Opening embedded "+label+" session"))
 	return strings.Join([]string{renderFooterLine(width, title), body, footer}, "\n")
 }
 
 func (m Model) codexLowerBlocks(snapshot codexapp.Snapshot, width int) []string {
+	label := embeddedProvider(snapshot).Label()
 	switch {
 	case snapshot.PendingApproval != nil:
 		approvalActions := []footerAction{
@@ -907,7 +995,7 @@ func (m Model) codexLowerBlocks(snapshot codexapp.Snapshot, width int) []string 
 		return lines
 	case snapshot.Closed:
 		return []string{
-			fitFooterWidth("Codex session closed. Esc or Alt+Up hides it; Enter on the project opens a new one.", width),
+			fitFooterWidth(label+" session closed. Esc or Alt+Up hides it; Enter on the project opens a new one.", width),
 			"",
 		}
 	default:
@@ -987,7 +1075,8 @@ func (m Model) renderCodexElicitationBlocks(request codexapp.ElicitationRequest,
 }
 
 func (m Model) renderCodexBanner(snapshot codexapp.Snapshot, width int) string {
-	parts := []string{"Codex"}
+	provider := embeddedProvider(snapshot)
+	parts := []string{provider.Label()}
 	if projectName := strings.TrimSpace(filepath.Base(snapshot.ProjectPath)); projectName != "" && projectName != "." {
 		parts = append(parts, projectName)
 	}
@@ -1006,7 +1095,7 @@ func (m Model) renderCodexBanner(snapshot codexapp.Snapshot, width int) string {
 	)
 	overlay := ""
 	contentWidth := width
-	if snapshot.Preset == codexcli.PresetYolo && !snapshot.Closed {
+	if provider == codexapp.ProviderCodex && snapshot.Preset == codexcli.PresetYolo && !snapshot.Closed {
 		overlay = "  " + detailDangerStyle.Render("YOLO MODE")
 		if overlayWidth := lipgloss.Width(overlay); overlayWidth >= width {
 			return ansi.Cut(overlay, max(0, overlayWidth-width), overlayWidth)
@@ -1043,13 +1132,14 @@ func overlayCodexBannerRight(base, overlay string, width int) string {
 }
 
 func (m Model) renderCodexBusyElsewhereNotice(snapshot codexapp.Snapshot, width int) string {
+	label := embeddedProvider(snapshot).Label()
 	message := strings.TrimSpace(snapshot.LastSystemNotice)
-	if message == "" || !strings.Contains(strings.ToLower(message), "another codex process") {
+	if message == "" {
 		sessionID := shortID(snapshot.ThreadID)
 		if sessionID == "" {
 			sessionID = "this session"
 		}
-		message = fmt.Sprintf("Embedded Codex session %s is already active in another Codex process, so embedded controls are read-only until it finishes.", sessionID)
+		message = fmt.Sprintf("Embedded %s session %s is already active in another process, so embedded controls are read-only until it finishes.", label, sessionID)
 	}
 	return renderCodexMessageBlock("Read-only", message, lipgloss.Color("221"), lipgloss.Color("252"), max(24, width-4))
 }
@@ -1144,7 +1234,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 	case snapshot.BusyExternal:
 		actions = []footerAction{
 			footerHideAction("Alt+Up", "hide"),
-			footerNavAction("/codex-new", "session"),
+			footerNavAction(embeddedNewCommand(embeddedProvider(snapshot)), "session"),
 		}
 	case snapshot.Phase == codexapp.SessionPhaseReconciling:
 		actions = []footerAction{
@@ -1188,13 +1278,13 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 func (m Model) renderCodexTranscriptContent(width int) string {
 	snapshot, ok := m.currentCodexSnapshot()
 	if !ok {
-		return "Codex session unavailable"
+		return "Embedded session unavailable"
 	}
 	if rendered := m.renderCodexTranscriptEntries(snapshot, width); strings.TrimSpace(rendered) != "" {
 		return rendered
 	}
 	if snapshot.Closed {
-		return "Codex session closed."
+		return embeddedProvider(snapshot).Label() + " session closed."
 	}
 	if notice := strings.TrimSpace(snapshot.LastSystemNotice); notice != "" {
 		return "[system] " + sanitizeCodexRenderedText(notice)
@@ -1205,13 +1295,15 @@ func (m Model) renderCodexTranscriptContent(width int) string {
 func normalizedCodexStatus(status string) string {
 	status = strings.TrimSpace(status)
 	switch status {
-	case "", "Codex session ready":
+	case "", "Codex session ready", "OpenCode session ready":
 		return ""
-	case "Codex turn complete", "Codex turn completed":
+	case "Codex turn complete", "Codex turn completed", "OpenCode turn complete", "OpenCode turn completed", "Turn completed":
 		return "Turn completed"
 	default:
-		if strings.HasPrefix(status, "Codex turn ") {
-			return "Turn " + strings.TrimSpace(strings.TrimPrefix(status, "Codex turn "))
+		for _, prefix := range []string{"Codex turn ", "OpenCode turn "} {
+			if strings.HasPrefix(status, prefix) {
+				return "Turn " + strings.TrimSpace(strings.TrimPrefix(status, prefix))
+			}
 		}
 		return status
 	}
@@ -1435,6 +1527,7 @@ type codexStatusBlockData struct {
 	Model              string
 	ModelProvider      string
 	ReasoningEffort    string
+	Agent              string
 	ServiceTier        string
 	Approval           string
 	Sandbox            string
@@ -1510,7 +1603,12 @@ func renderCodexStatusBlock(body string, width int) string {
 
 func parseCodexStatusBlock(body string) (codexStatusBlockData, bool) {
 	lines := strings.Split(strings.TrimSpace(body), "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "Embedded Codex status" {
+	if len(lines) == 0 {
+		return codexStatusBlockData{}, false
+	}
+	switch strings.TrimSpace(lines[0]) {
+	case "Embedded Codex status", "Embedded OpenCode status":
+	default:
 		return codexStatusBlockData{}, false
 	}
 	status := codexStatusBlockData{}
@@ -1545,6 +1643,8 @@ func parseCodexStatusBlock(body string) (codexStatusBlockData, bool) {
 			status.ModelProvider = value
 		case "reasoning effort":
 			status.ReasoningEffort = value
+		case "agent":
+			status.Agent = value
 		case "service tier":
 			status.ServiceTier = value
 		case "approval":
@@ -1637,8 +1737,12 @@ func renderCodexStatusSummaryRows(status codexStatusBlockData, width int) []stri
 		if status.ModelProvider != "" {
 			extras = append(extras, status.ModelProvider)
 		}
-		if status.ServiceTier != "" {
-			extras = append(extras, "tier "+status.ServiceTier)
+		if status.ServiceTier != "" && status.Agent == "" {
+			if strings.HasPrefix(status.ServiceTier, "agent ") {
+				extras = append(extras, status.ServiceTier)
+			} else {
+				extras = append(extras, "tier "+status.ServiceTier)
+			}
 		}
 		if len(extras) > 0 {
 			value += " " + mutedStyle.Render("("+strings.Join(extras, ", ")+")")
@@ -1647,6 +1751,9 @@ func renderCodexStatusSummaryRows(status codexStatusBlockData, width int) []stri
 	}
 	if status.ReasoningEffort != "" {
 		rows = append(rows, renderCodexStatusField("Reasoning", reasoningStyle.Render(status.ReasoningEffort), labelWidth))
+	}
+	if status.Agent != "" {
+		rows = append(rows, renderCodexStatusField("Agent", valueStyle.Render(status.Agent), labelWidth))
 	}
 	directory := status.CWD
 	if strings.TrimSpace(directory) == "" {

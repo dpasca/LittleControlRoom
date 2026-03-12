@@ -32,9 +32,9 @@ type Invocation struct {
 }
 
 var specs = []Spec{
-	{Name: "new", Usage: "/new [prompt]", Summary: "Start a fresh embedded Codex session for this project"},
-	{Name: "model", Usage: "/model", Summary: "Pick the embedded Codex model and reasoning effort for the next prompt"},
-	{Name: "status", Usage: "/status", Summary: "Show embedded Codex session config, limits, and token usage"},
+	{Name: "new", Usage: "/new [prompt]", Summary: "Start a fresh embedded session for this project"},
+	{Name: "model", Usage: "/model", Summary: "Pick the embedded model and reasoning effort for the next prompt"},
+	{Name: "status", Usage: "/status", Summary: "Show embedded session config, limits, and token usage"},
 }
 
 func Specs() []Spec {
@@ -67,7 +67,7 @@ func Suggestions(input string) []Suggestion {
 		return []Suggestion{{
 			Insert:  "/new",
 			Display: "/new [prompt]",
-			Summary: "Start a fresh embedded Codex session; optional inline prompt opens the new session with that prompt",
+			Summary: "Start a fresh embedded session; optional inline prompt opens the new session with that prompt",
 		}}
 	case "model":
 		return []Suggestion{{
@@ -79,7 +79,7 @@ func Suggestions(input string) []Suggestion {
 		return []Suggestion{{
 			Insert:  "/status",
 			Display: "/status",
-			Summary: "Show embedded Codex session config, limits, and token usage",
+			Summary: "Show embedded session config, limits, and token usage",
 		}}
 	default:
 		return nameSuggestions(strings.ToLower(fields[0]))

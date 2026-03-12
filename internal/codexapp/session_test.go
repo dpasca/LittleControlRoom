@@ -282,6 +282,33 @@ func TestSnapshotIncludesStructuredMetadata(t *testing.T) {
 	}
 }
 
+func TestTokenUsageUpdateDoesNotRefreshBusyActivityTimestamp(t *testing.T) {
+	staleBusy := time.Now().Add(-2 * time.Hour).Round(0)
+	s := &appServerSession{
+		projectPath:        "/tmp/demo",
+		entryIndex:         make(map[string]int),
+		notify:             func() {},
+		busy:               true,
+		activeTurnID:       "turn_live",
+		lastActivityAt:     staleBusy,
+		lastBusyActivityAt: staleBusy,
+	}
+
+	s.handleNotification("thread/tokenUsage/updated", json.RawMessage(`{
+		"threadId":"thread_456",
+		"turnId":"turn_live",
+		"tokenUsage":{"total":{"totalTokens":42}}
+	}`))
+
+	snapshot := s.Snapshot()
+	if !snapshot.LastBusyActivityAt.Equal(staleBusy) {
+		t.Fatalf("last busy activity = %v, want %v", snapshot.LastBusyActivityAt, staleBusy)
+	}
+	if snapshot.LastActivityAt.Equal(staleBusy) {
+		t.Fatalf("last activity = %v, want a refreshed timestamp", snapshot.LastActivityAt)
+	}
+}
+
 func TestStageModelOverrideUpdatesSnapshot(t *testing.T) {
 	s := &appServerSession{
 		projectPath:     "/tmp/demo",

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"lcroom/internal/codexapp"
-	"lcroom/internal/codexcli"
 	"lcroom/internal/model"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -19,6 +18,7 @@ type codexSessionChoice struct {
 	ProjectPath  string
 	ProjectName  string
 	SessionID    string
+	Provider     codexapp.Provider
 	LastActivity time.Time
 	Summary      string
 	Live         bool
@@ -31,12 +31,12 @@ type codexSessionChoice struct {
 func (m Model) openCodexPicker() (tea.Model, tea.Cmd) {
 	choices := m.codexSessionChoices()
 	if len(choices) == 0 {
-		m.status = "No live or resumable Codex sessions"
+		m.status = "No live or resumable embedded sessions"
 		return m, nil
 	}
 	m.codexPickerVisible = true
 	m.codexPickerSelected = m.defaultCodexPickerIndex(choices)
-	m.status = "Codex session picker open"
+	m.status = "Embedded session picker open"
 	return m, nil
 }
 
@@ -51,7 +51,7 @@ func (m *Model) closeCodexPicker(status string) {
 func (m Model) updateCodexPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	choices := m.codexSessionChoices()
 	if len(choices) == 0 {
-		m.closeCodexPicker("No live or resumable Codex sessions")
+		m.closeCodexPicker("No live or resumable embedded sessions")
 		return m, nil
 	}
 	if m.codexPickerSelected >= len(choices) {
@@ -63,7 +63,7 @@ func (m Model) updateCodexPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "esc", "alt+down":
-		m.closeCodexPicker("Codex session picker closed")
+		m.closeCodexPicker("Embedded session picker closed")
 		return m, nil
 	case "up", "k":
 		m.moveCodexPickerSelection(-1, len(choices))
@@ -160,6 +160,7 @@ func (m Model) codexSessionChoices() []codexSessionChoice {
 			ProjectPath:  snapshot.ProjectPath,
 			ProjectName:  projectNameForPicker(project, snapshot.ProjectPath),
 			SessionID:    snapshot.ThreadID,
+			Provider:     embeddedProvider(snapshot),
 			LastActivity: snapshot.LastActivityAt,
 			Summary:      pickerSummaryForLiveSnapshot(snapshot),
 			Live:         true,
@@ -187,7 +188,8 @@ func (m Model) codexSessionChoices() []codexSessionChoice {
 		}
 	})
 	for _, project := range recent {
-		if !isCodexSessionFormat(project.LatestSessionFormat) || strings.TrimSpace(project.LatestSessionID) == "" {
+		provider := providerForSessionFormat(project.LatestSessionFormat)
+		if provider == "" || strings.TrimSpace(project.LatestSessionID) == "" {
 			continue
 		}
 		if _, ok := seen[project.Path]; ok {
@@ -197,8 +199,9 @@ func (m Model) codexSessionChoices() []codexSessionChoice {
 			ProjectPath:  project.Path,
 			ProjectName:  projectNameForPicker(project, project.Path),
 			SessionID:    project.LatestSessionID,
+			Provider:     provider,
 			LastActivity: project.LastActivity,
-			Summary:      pickerSummaryForProject(project),
+			Summary:      pickerSummaryForProject(project, provider),
 			Missing:      !project.PresentOnDisk,
 		})
 	}
@@ -219,6 +222,7 @@ func projectNameForPicker(project model.ProjectSummary, path string) string {
 }
 
 func pickerSummaryForLiveSnapshot(snapshot codexapp.Snapshot) string {
+	label := embeddedProvider(snapshot).Label()
 	status := normalizedCodexStatus(snapshot.Status)
 	switch {
 	case snapshot.BusyExternal:
@@ -234,48 +238,57 @@ func pickerSummaryForLiveSnapshot(snapshot codexapp.Snapshot) string {
 	case status != "":
 		return status
 	default:
-		return "Live embedded Codex session"
+		return "Live embedded " + label + " session"
 	}
 }
 
-func pickerSummaryForProject(project model.ProjectSummary) string {
+func pickerSummaryForProject(project model.ProjectSummary, provider codexapp.Provider) string {
 	if summary := strings.TrimSpace(project.LatestSessionSummary); summary != "" {
 		return summary
 	}
+	label := provider.Label()
 	if !project.LastActivity.IsZero() {
-		return "Latest resumable Codex session"
+		return "Latest resumable " + label + " session"
 	}
-	return "Resumable Codex session"
+	return "Resumable " + label + " session"
 }
 
 func (m Model) openCodexSessionChoice(choice codexSessionChoice) (tea.Model, tea.Cmd) {
+	label := choice.Provider.Label()
 	if choice.Live {
 		if strings.TrimSpace(choice.ProjectPath) == strings.TrimSpace(m.codexVisibleProject) {
-			m.status = "Already showing that live embedded Codex session"
+			m.status = "Already showing that live embedded " + label + " session"
 			return m, nil
 		}
-		return m.showCodexProject(choice.ProjectPath, "Switched to the selected embedded Codex session")
+		return m.showCodexProject(choice.ProjectPath, "Switched to the selected embedded "+label+" session")
 	}
 	if choice.Missing {
-		m.status = "Resuming Codex requires a folder present on disk"
+		m.status = "Resuming " + label + " requires a folder present on disk"
 		return m, nil
 	}
-	plan, err := codexcli.BuildLaunchPlan(choice.ProjectPath, choice.SessionID, "", false, m.currentCodexLaunchPreset())
-	if err != nil {
+	req := codexapp.LaunchRequest{
+		Provider:    choice.Provider,
+		ProjectPath: choice.ProjectPath,
+		ResumeID:    choice.SessionID,
+	}
+	if choice.Provider.Normalized() == codexapp.ProviderCodex {
+		req.Preset = m.currentCodexLaunchPreset()
+	}
+	if err := req.Validate(); err != nil {
 		m.status = err.Error()
 		return m, nil
 	}
-	m.beginCodexPendingOpen(choice.ProjectPath)
-	m.status = fmt.Sprintf("Opening Codex session %s...", shortID(choice.SessionID))
+	m.beginCodexPendingOpen(choice.ProjectPath, choice.Provider)
+	m.status = fmt.Sprintf("Opening embedded %s session %s...", label, shortID(choice.SessionID))
 	focusCmd := m.focusProjectPath(choice.ProjectPath)
-	return m, tea.Batch(m.openCodexSessionCmd(plan), focusCmd)
+	return m, tea.Batch(m.openCodexSessionCmd(req), focusCmd)
 }
 
 func (m Model) showCodexProject(projectPath, status string) (tea.Model, tea.Cmd) {
 	m.ensureCodexRuntime()
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
-		m.status = "Codex session unavailable"
+		m.status = "Embedded session unavailable"
 		return m, nil
 	}
 	if current := strings.TrimSpace(m.codexVisibleProject); current != "" && current != projectPath {
@@ -315,7 +328,7 @@ func (m Model) renderCodexPickerOverlay(body string, bodyW, bodyH int) string {
 	panelWidth := lipgloss.Width(panel)
 	panelHeight := lipgloss.Height(panel)
 	left := max(0, (bodyW-panelWidth)/2)
-	top := max(0, (bodyH-panelHeight)/4)
+	top := max(0, min((bodyH-panelHeight)/6, bodyH-panelHeight))
 	return overlayBlock(body, panel, bodyW, bodyH, left, top)
 }
 
@@ -335,8 +348,8 @@ func (m Model) renderCodexPicker(bodyW int) string {
 func (m Model) renderCodexPickerContent(width int) string {
 	choices := m.codexSessionChoices()
 	lines := []string{
-		commandPaletteTitleStyle.Render("Codex Sessions"),
-		commandPaletteHintStyle.Render("Live sessions first, then each project's latest resumable Codex session."),
+		commandPaletteTitleStyle.Render("Embedded Sessions"),
+		commandPaletteHintStyle.Render("Live sessions first, then each project's latest resumable embedded session."),
 		"",
 		renderDialogAction("Enter", "open", commitActionKeyStyle, commitActionTextStyle) + "   " +
 			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
@@ -344,7 +357,7 @@ func (m Model) renderCodexPickerContent(width int) string {
 	}
 
 	if len(choices) == 0 {
-		lines = append(lines, commandPaletteHintStyle.Render("No live or resumable Codex sessions found."))
+		lines = append(lines, commandPaletteHintStyle.Render("No live or resumable embedded sessions found."))
 		return strings.Join(lines, "\n")
 	}
 
@@ -362,10 +375,10 @@ func (m Model) renderCodexPickerContent(width int) string {
 	if selected, ok := m.currentCodexPickerChoice(); ok {
 		lines = append(lines, "")
 		lines = append(lines, commandPaletteTitleStyle.Render("About"))
-		lines = append(lines, commandPaletteHintStyle.Render(selected.ProjectPath))
-		lines = append(lines, detailValueStyle.Render("Session: "+shortID(selected.SessionID)+"  Last activity: "+formatPickerActivity(selected.LastActivity)))
+		lines = append(lines, commandPaletteHintStyle.Render(fitFooterWidth(selected.ProjectPath, width)))
+		lines = append(lines, detailValueStyle.Render(fitFooterWidth("Source: "+selected.Provider.Label()+"  Session: "+shortID(selected.SessionID)+"  Last activity: "+formatPickerActivity(selected.LastActivity), width)))
 		if summary := strings.TrimSpace(selected.Summary); summary != "" {
-			lines = append(lines, commandPaletteHintStyle.Render(summary))
+			lines = append(lines, commandPaletteHintStyle.Render(fitFooterWidth(summary, width)))
 		}
 	}
 
@@ -392,7 +405,10 @@ func (m Model) codexPickerWindow(total int) (int, int) {
 }
 
 func (m Model) renderCodexPickerRow(choice codexSessionChoice, selected bool, width int) string {
-	badges := make([]string, 0, 3)
+	badges := make([]string, 0, 4)
+	if tag := choice.Provider.SourceTag(); tag != "" {
+		badges = append(badges, tag)
+	}
 	switch {
 	case choice.Live && choice.Hidden:
 		badges = append(badges, "OPEN")

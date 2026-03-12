@@ -2757,8 +2757,136 @@ func TestAltDownOpensCodexSessionPicker(t *testing.T) {
 		t.Fatalf("codex picker should be visible")
 	}
 	rendered := ansi.Strip(got.View())
-	if !strings.Contains(rendered, "Codex Sessions") || !strings.Contains(rendered, "demo") {
+	if !strings.Contains(rendered, "Embedded Sessions") || !strings.Contains(rendered, "Source: Codex") || !strings.Contains(rendered, "demo") {
 		t.Fatalf("picker overlay should render the session list: %q", rendered)
+	}
+}
+
+func TestOpenCodexSessionChoiceLaunchesOpenCodeResume(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: codexapp.ProviderOpenCode,
+				Started:  true,
+				ThreadID: req.ResumeID,
+				Status:   "OpenCode session ready",
+			},
+		}, nil
+	})
+
+	m := Model{
+		codexManager:  manager,
+		codexInput:    newCodexTextarea(),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, cmd := m.openCodexSessionChoice(codexSessionChoice{
+		ProjectPath:  "/tmp/demo",
+		ProjectName:  "demo",
+		SessionID:    "ses_open",
+		Provider:     codexapp.ProviderOpenCode,
+		LastActivity: time.Date(2026, 3, 8, 12, 0, 0, 0, time.UTC),
+	})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("openCodexSessionChoice() should return an open command")
+	}
+	if got.codexPendingOpen == nil || got.codexPendingOpen.provider != codexapp.ProviderOpenCode {
+		t.Fatalf("codexPendingOpen = %#v, want pending OpenCode session", got.codexPendingOpen)
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("open command returned error = %v", opened.err)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want 1", len(requests))
+	}
+	if requests[0].Provider != codexapp.ProviderOpenCode {
+		t.Fatalf("provider = %q, want %q", requests[0].Provider, codexapp.ProviderOpenCode)
+	}
+	if requests[0].ResumeID != "ses_open" {
+		t.Fatalf("resume id = %q, want %q", requests[0].ResumeID, "ses_open")
+	}
+	if requests[0].Preset != "" {
+		t.Fatalf("preset = %q, want empty for OpenCode", requests[0].Preset)
+	}
+}
+
+func TestNormalModeEnterOpensPreferredOpenCodeSession(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: codexapp.ProviderOpenCode,
+				Started:  true,
+				ThreadID: req.ResumeID,
+				Status:   "OpenCode session ready",
+			},
+		}, nil
+	})
+
+	project := model.ProjectSummary{
+		Path:                "/tmp/demo",
+		Name:                "demo",
+		PresentOnDisk:       true,
+		LatestSessionID:     "latest-open",
+		LatestSessionFormat: "opencode_db",
+	}
+	m := Model{
+		codexManager: manager,
+		projects:     []model.ProjectSummary{project},
+		selected:     0,
+		focusedPane:  focusProjects,
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Sessions: []model.SessionEvidence{
+				{SessionID: "ses_open", Format: "opencode_db"},
+				{SessionID: "cx_old", Format: "modern"},
+			},
+		},
+		codexInput:    newCodexTextarea(),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should return an open command")
+	}
+	if got.codexPendingOpen == nil || got.codexPendingOpen.provider != codexapp.ProviderOpenCode {
+		t.Fatalf("codexPendingOpen = %#v, want pending OpenCode session", got.codexPendingOpen)
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("open command returned error = %v", opened.err)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want 1", len(requests))
+	}
+	if requests[0].Provider != codexapp.ProviderOpenCode {
+		t.Fatalf("provider = %q, want %q", requests[0].Provider, codexapp.ProviderOpenCode)
+	}
+	if requests[0].ResumeID != "ses_open" {
+		t.Fatalf("resume id = %q, want %q", requests[0].ResumeID, "ses_open")
 	}
 }
 
@@ -3239,6 +3367,33 @@ func TestRenderCodexTranscriptEntriesRendersEmbeddedStatusCard(t *testing.T) {
 	}
 }
 
+func TestRenderCodexTranscriptEntriesRendersOpenCodeStatusCard(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptStatus,
+				Text: strings.Join([]string{
+					"Embedded OpenCode status",
+					"model: gpt-5.4",
+					"model provider: openai",
+					"reasoning effort: high",
+					"agent: build",
+					"cwd: /tmp/demo",
+					"total tokens: 12345",
+					"last turn tokens: 4321",
+				}, "\n"),
+			},
+		},
+	}
+
+	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 80))
+	for _, want := range []string{"Status", "Model:", "gpt-5.4", "Reasoning:", "high", "Agent:", "build", "Last turn:", "4,321 tokens"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered OpenCode status card should include %q: %q", want, rendered)
+		}
+	}
+}
+
 func TestRenderCodexTranscriptEntriesRendersLocalMarkdownLinksAsTerminalHyperlinks(t *testing.T) {
 	snapshot := codexapp.Snapshot{
 		Entries: []codexapp.TranscriptEntry{
@@ -3353,6 +3508,32 @@ func TestSelectedProjectCodexSessionIDPrefersDetailCodexSession(t *testing.T) {
 	got := m.selectedProjectCodexSessionID(project)
 	if got != "cx_2" {
 		t.Fatalf("selectedProjectCodexSessionID() = %q, want %q", got, "cx_2")
+	}
+}
+
+func TestSelectedProjectSessionIDPrefersDetailOpenCodeSession(t *testing.T) {
+	project := model.ProjectSummary{
+		Path:                "/tmp/demo",
+		Name:                "demo",
+		PresentOnDisk:       true,
+		LatestSessionID:     "cx_summary",
+		LatestSessionFormat: "modern",
+	}
+	m := Model{
+		projects: []model.ProjectSummary{project},
+		selected: 0,
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Sessions: []model.SessionEvidence{
+				{SessionID: "cx_2", Format: "modern"},
+				{SessionID: "op_3", Format: "opencode_db"},
+			},
+		},
+	}
+
+	got := m.selectedProjectSessionID(project, codexapp.ProviderOpenCode)
+	if got != "op_3" {
+		t.Fatalf("selectedProjectSessionID() = %q, want %q", got, "op_3")
 	}
 }
 

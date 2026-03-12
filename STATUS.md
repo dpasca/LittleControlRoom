@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-13 00:09 JST (JST)
+Last updated: 2026-03-13 07:55 JST (JST)
 
 ## Current State
 
@@ -32,8 +32,10 @@ Current embedded Codex transport assumption:
 
 Current OpenCode transport assumption:
 
-- The installed `opencode` CLI on this machine (observed `1.2.24`) exposes both `serve` and `acp`; `serve` publishes an HTTP/OpenAPI + SSE surface with session, message, status, event, permission, and question endpoints that appears sufficient for a later embedded transport.
-- Observed `opencode.db` session parts are structured rather than text-only, including `text`, `reasoning`, `tool`, `patch`, `file`, `step-start`, and `step-finish`, so OpenCode transcript extraction should preserve more of that structure for classification and future UI work.
+- The installed `opencode` CLI on this machine (observed `1.2.24`) exposes both `serve` and `acp`; `serve` publishes an HTTP/OpenAPI + SSE surface with session, message, status, event, permission, and question endpoints, and Little Control Room now uses that live surface for embedded OpenCode sessions.
+- Observed `opencode.db` session parts are structured rather than text-only, including `text`, `reasoning`, `tool`, `patch`, `file`, `step-start`, and `step-finish`, so OpenCode transcript extraction and the embedded pane should preserve that structure instead of flattening it to plain text.
+- Observed `prompt_async` behavior accepts a follow-up prompt while the session is still busy (returning `204` and later appending a second user/assistant turn), so the embedded pane can treat Enter as a steer/follow-up path much like embedded Codex.
+- OpenCode `FilePartInput` accepts structured file parts and the current embedded implementation sends local image attachments as `data:` URLs; transport support is confirmed, but end-to-end image robustness should still be treated as provisional until more real image cases are exercised.
 
 Current screenshot workflow assumption:
 
@@ -54,15 +56,18 @@ Current screenshot workflow assumption:
 - TUI stacked layout with focusable detail pane, scrolling, compact settings modal, and command palette
 - Git workflow actions in the TUI for full-screen diff preview, commit preview, finish, and push
 - Embedded Codex pane via `codex app-server`, with multiline compose, per-project drafts, inline `[Image #n]` clipboard image markers in the composer, backspace-based image removal, local embedded slash commands for `/new`, `/model`, and `/status`, visible slash autocomplete/suggestions in the composer, live model/reasoning/context-left metadata under the transcript, a local model+reasoning picker backed by `model/list`, `Enter`/`/codex`/`/codex-new`, `Esc` or `Alt+Up` hide from the embedded pane with `Enter` reopening from the project list, `Alt+Down` session picker/history, `Alt+[`/`Alt+]` live-session stepping, wrapped transcript blocks, shaded echoed user transcript blocks that reuse the composer shell styling, denser command/tool/file blocks with `Alt+L` expand/collapse, label-free user/assistant transcript rendering, manager-side update coalescing, inline approvals/input requests, and busy-elsewhere rechecks when a read-only embedded session is reopened or restored
+- Embedded OpenCode pane via `opencode serve`, with live SSE transcript updates, resume/new launch from `Enter` and `/opencode` / `/opencode-new`, shared picker/history and model picker, provider-aware banners/footer/help copy, interrupt/status actions, shared approval/question handling, and mixed Codex/OpenCode live-session management per project
 - Settings-backed Codex launch presets, currently defaulting to the dangerous `yolo` mode
 - Programmatic screenshot generation via `lcroom screenshots` and `make screenshots`, using screenshot-config-driven browser-rendered PNG exports from deterministic HTML terminal scenarios
 
 ## Current Priorities
 
-- Keep polishing the embedded Codex pane now that the main picker/attach/transcript ergonomics are in place.
+- Keep polishing the embedded Codex/OpenCode pane now that live OpenCode transport and the mixed-session TUI flow are in place.
+- Improve OpenCode parity details such as richer attachment confidence, better agent/status presentation, and any remaining approval/question edge cases.
 - Consider a schema-aware mini form for MCP elicitation instead of the current freeform JSON/text fallback.
 - Watch for future `codex app-server` protocol support for true queued turns and adopt it when it exists.
-- Add a later generic terminal/dev-server lane beside Codex sessions.
+- Factor a provider-neutral transcript/session abstraction so Codex and OpenCode stop sharing only by convention.
+- Add a later generic terminal/dev-server lane beside Codex/OpenCode sessions.
 
 ## Status File Policy
 
@@ -70,27 +75,52 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-13 00:09 JST)
+## Latest Update (2026-03-13 07:55 JST)
 
-- Trimmed the OpenCode snapshot formatter so routine `step-finish` markers with reason `tool-calls` are now omitted from extracted transcripts, while meaningful terminal states such as `stop` are still preserved.
-- Extended the OpenCode structured-parts regression fixture to include a noisy `tool-calls` boundary and added an assertion that it stays out of the assistant transcript while the final completion marker remains.
-- Re-ran the snapshot dumper against a real current-list OpenCode session and confirmed the output now keeps the reasoning/tool summaries without the repetitive `Step finished: tool-calls` lines.
+- Traced the stale `RUN` timer report to embedded Codex session bookkeeping rather than the assessment classifier: completed turns could stay marked busy because generic metadata activity (`thread/tokenUsage/updated`, rate-limit updates, similar heartbeats) kept refreshing the same timestamp the stale-busy reconciler uses.
+- Added a dedicated `LastBusyActivityAt` snapshot field and `lastBusyActivityAt` session clock so the manager now reconciles based on real turn/output activity instead of any session activity.
+- Updated embedded Codex turn/item handlers to refresh the busy-activity clock only for turn lifecycle and output-bearing events, while leaving generic metadata updates as ordinary activity that no longer masks stale busy sessions.
+- Added focused regression coverage for both sides of the bug: token-usage updates do not refresh the busy-activity clock, and the manager still rechecks a busy session when only generic activity is fresh.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
 
 Verification snapshot:
 
-- `go test ./internal/sessionclassify -run 'TestExtractSnapshotOpenCodePreservesStructuredParts|TestExtractSnapshotModernFixture|TestManagerProcessOneCompletesClassification|TestSnapshotHashForSnapshotIgnoresLastEventAt|TestSnapshotHashForSnapshotChangesWhenGitStatusChanges|TestSnapshotHashForSnapshotChangesWhenTurnLifecycleChanges'` passed.
-- `go run ./cmd/lcroom snapshot --session-id ses_32927dba1ffe1cBXIzuF6pbAzJ | rg 'tool-calls|Step finished: stop|Tool bash completed|Reasoning:'` passed and showed real OpenCode output without the suppressed `tool-calls` markers.
+- `go test ./internal/codexapp` passed.
 - `make test` passed.
-- `make scan` passed at `2026-03-13T00:09:14+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 2`, `queued classifications: 3`).
-- `make doctor` passed on the cached snapshot dated `2026-03-13T00:09:14+09:00` (`projects: 135`).
+- `make scan` passed at `2026-03-13T07:52:46+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 7`, `queued classifications: 7`).
+- `make doctor` passed on the cached snapshot dated `2026-03-13T07:52:47+09:00` (`projects: 138`).
+- `make tui` launched cleanly in a PTY and exited via `Ctrl+C` after a startup smoke check.
 
 Next concrete tasks:
 
-- Decide whether OpenCode `step-start` events are worth preserving at all, or whether the current reasoning/tool summaries already cover that progress signal well enough.
-- Inspect a few more real sessions to decide whether additional OpenCode structured parts such as `agent`, `subtask`, or `retry` would add useful signal or just more transcript noise.
-- If the calibrated summaries stay stable, start extracting a provider-neutral transcript/transport abstraction so a later embedded OpenCode pane can share the same high-level rendering model as Codex.
+- Reproduce a fully finished hidden embedded Codex turn in the live TUI and confirm the stale-busy reconciler now drops the `RUN` timer after the quiet window instead of leaving the row pinned for hours.
+- Decide whether OpenCode should also carry a dedicated busy-activity clock or whether its current busy-state source is already specific enough.
+- Keep folding provider-neutral session abstractions through the TUI now that mixed Codex/OpenCode behavior is landing.
 
 ## Recent Updates
+
+### 2026-03-13 02:01 JST
+
+- Landed the first real embedded OpenCode lane in the app: `internal/codexapp/opencode_session.go` now launches `opencode serve`, resumes or creates sessions over HTTP, hydrates transcript history, streams `/event` SSE updates, exposes model list/staging, supports status and interrupt, maps permission/question requests into the shared embedded UI, and sends local image attachments as `FilePartInput` data URLs.
+- Lifted the embedded-session stack from Codex-only to mixed-provider behavior. The manager, slash commands, picker/history, banner/footer/help text, status cards, and model picker now understand both `CX` and `OC`, and `Enter` from the project list prefers the selected project's latest provider instead of assuming Codex.
+- Added focused regression coverage for OpenCode command parsing, provider-switch session replacement, OpenCode resume from the picker, Enter-opening of the preferred OpenCode session, OpenCode status-card rendering, and provider-specific session-id selection from the detail pane.
+- Polished the mixed-provider UX after the first pass: the busy-elsewhere warning now preserves the original provider message when present, the session picker overlay no longer overflows the parent frame, and OpenCode status cards now show `agent:` as a first-class row instead of smuggling it through the Codex `service tier` slot.
+- No Codex/OpenCode detector footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/codexapp ./internal/commands ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-13T02:00:04+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 4`, `queued classifications: 7`).
+- `make doctor` passed on the cached snapshot dated `2026-03-13T02:00:04+09:00` (`projects: 138`).
+- `env COLUMNS=110 LINES=30 make tui` launched and exited cleanly via `q`.
+- Manual OpenCode smoke test passed: created a temporary git repo under `/private/tmp/lcr-oc-smoke.0JlgcW`, started `opencode serve`, created a real session, sent `prompt_async`, confirmed the assistant reply via `/session/{id}/message`, and then confirmed `make doctor` tracked that repo as `format=opencode_db`.
+
+Next concrete tasks:
+
+- Add a provider-neutral transcript/session abstraction above Codex/OpenCode so the TUI no longer relies on Codex-named helpers and duplicated provider conditionals.
+- Exercise more real OpenCode image/file prompts to harden attachment behavior and decide whether `data:` URLs are sufficient or whether `file://` fallbacks are needed.
+- Improve OpenCode-specific polish around agent/status presentation and any remaining approval/question wording that still feels Codex-shaped.
 
 ### 2026-03-11 10:35 JST
 

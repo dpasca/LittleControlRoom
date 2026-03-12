@@ -22,6 +22,8 @@ const (
 	KindFinish      Kind = "finish"
 	KindCodex       Kind = "codex"
 	KindCodexNew    Kind = "codex-new"
+	KindOpenCode    Kind = "opencode"
+	KindOpenCodeNew Kind = "opencode-new"
 	KindPin         Kind = "pin"
 	KindSnooze      Kind = "snooze"
 	KindClearSnooze Kind = "clear-snooze"
@@ -98,6 +100,8 @@ var specs = []Spec{
 	{Name: "finish", Usage: "/finish [message]", Summary: "Open the commit preview for the selected project"},
 	{Name: "codex", Usage: "/codex [prompt]", Summary: "Resume the selected project's latest Codex session, or start a new one"},
 	{Name: "codex-new", Usage: "/codex-new [prompt]", Summary: "Start a fresh Codex session in the selected project"},
+	{Name: "opencode", Usage: "/opencode [prompt]", Summary: "Resume the selected project's latest OpenCode session, or start a new one"},
+	{Name: "opencode-new", Usage: "/opencode-new [prompt]", Summary: "Start a fresh OpenCode session in the selected project"},
 	{Name: "pin", Usage: "/pin", Summary: "Toggle pin on the selected project"},
 	{Name: "snooze", Usage: "/snooze [duration]", Summary: "Snooze the selected project"},
 	{Name: "clear-snooze", Usage: "/clear-snooze", Summary: "Clear snooze on the selected project"},
@@ -284,6 +288,18 @@ func Parse(input string) (Invocation, error) {
 			Kind:      KindCodexNew,
 			Prompt:    strings.TrimSpace(rawArgs),
 			Canonical: canonicalCommand("codex-new", rawArgs),
+		}, nil
+	case "opencode":
+		return Invocation{
+			Kind:      KindOpenCode,
+			Prompt:    strings.TrimSpace(rawArgs),
+			Canonical: canonicalCommand("opencode", rawArgs),
+		}, nil
+	case "opencode-new", "oc-start":
+		return Invocation{
+			Kind:      KindOpenCodeNew,
+			Prompt:    strings.TrimSpace(rawArgs),
+			Canonical: canonicalCommand("opencode-new", rawArgs),
 		}, nil
 	case "snooze":
 		duration, err := parseDurationArg(rawArgs)

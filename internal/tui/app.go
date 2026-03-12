@@ -171,6 +171,7 @@ type codexSessionOpenedMsg struct {
 
 type codexPendingOpenState struct {
 	projectPath string
+	provider    codexapp.Provider
 }
 
 type busMsg events.Event
@@ -539,7 +540,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		if msg.err != nil {
 			m.finishCodexPendingOpen(msg.projectPath, false)
-			m.status = "Codex open failed"
+			m.status = "Embedded session open failed"
 			m.err = msg.err
 			return m, nil
 		}
@@ -549,7 +550,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case codexActionMsg:
 		if msg.err != nil {
 			m.err = msg.err
-			m.status = "Codex action failed"
+			m.status = "Embedded session action failed"
 			if msg.projectPath != "" && !msg.restoreDraft.Empty() {
 				m.restoreCodexDraft(msg.projectPath, msg.restoreDraft)
 			}
@@ -687,7 +688,12 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "enter":
 		if m.focusedPane == focusProjects {
-			return m.launchCodexForSelection(false, "")
+			project, ok := m.selectedProject()
+			if !ok {
+				m.status = "No project selected"
+				return m, nil
+			}
+			return m.launchEmbeddedForSelection(preferredEmbeddedProviderForProject(project), false, "")
 		}
 	case "up", "k":
 		if m.focusedPane == focusDetail {
@@ -1684,6 +1690,10 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m.launchCodexForSelection(false, inv.Prompt)
 	case commands.KindCodexNew:
 		return m.launchCodexForSelection(true, inv.Prompt)
+	case commands.KindOpenCode:
+		return m.launchOpenCodeForSelection(false, inv.Prompt)
+	case commands.KindOpenCodeNew:
+		return m.launchOpenCodeForSelection(true, inv.Prompt)
 	case commands.KindPin:
 		p, ok := m.selectedProject()
 		if !ok {
@@ -1740,39 +1750,59 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) launchCodexForSelection(forceNew bool, prompt string) (tea.Model, tea.Cmd) {
+	return m.launchEmbeddedForSelection(codexapp.ProviderCodex, forceNew, prompt)
+}
+
+func (m Model) launchOpenCodeForSelection(forceNew bool, prompt string) (tea.Model, tea.Cmd) {
+	return m.launchEmbeddedForSelection(codexapp.ProviderOpenCode, forceNew, prompt)
+}
+
+func (m Model) launchEmbeddedForSelection(provider codexapp.Provider, forceNew bool, prompt string) (tea.Model, tea.Cmd) {
 	p, ok := m.selectedProject()
 	if !ok {
 		m.status = "No project selected"
 		return m, nil
 	}
 	if !p.PresentOnDisk {
-		m.status = "Codex launch requires a folder present on disk"
+		m.status = provider.Label() + " launch requires a folder present on disk"
 		return m, nil
 	}
 
-	sessionID := m.selectedProjectCodexSessionID(p)
-	plan, err := codexcli.BuildLaunchPlan(p.Path, sessionID, prompt, forceNew, m.currentCodexLaunchPreset())
-	if err != nil {
+	req := codexapp.LaunchRequest{
+		Provider:    provider,
+		ProjectPath: p.Path,
+		ResumeID:    m.selectedProjectSessionID(p, provider),
+		ForceNew:    forceNew,
+		Prompt:      prompt,
+	}
+	if provider.Normalized() == codexapp.ProviderCodex {
+		req.Preset = m.currentCodexLaunchPreset()
+	}
+	if err := req.Validate(); err != nil {
 		m.status = err.Error()
 		return m, nil
 	}
 
 	m.ensureCodexRuntime()
-	m.beginCodexPendingOpen(p.Path)
+	m.beginCodexPendingOpen(p.Path, provider)
 	m.err = nil
-	m.status = "Opening embedded Codex session..."
-	return m, m.openCodexSessionCmd(plan)
+	m.status = "Opening embedded " + provider.Label() + " session..."
+	return m, m.openCodexSessionCmd(req)
 }
 
 func (m Model) selectedProjectCodexSessionID(project model.ProjectSummary) string {
+	return m.selectedProjectSessionID(project, codexapp.ProviderCodex)
+}
+
+func (m Model) selectedProjectSessionID(project model.ProjectSummary, provider codexapp.Provider) string {
 	if m.detail.Summary.Path == project.Path {
 		for _, session := range m.detail.Sessions {
-			if isCodexSessionFormat(session.Format) && strings.TrimSpace(session.SessionID) != "" {
+			if providerForSessionFormat(session.Format) == provider.Normalized() && strings.TrimSpace(session.SessionID) != "" {
 				return session.SessionID
 			}
 		}
 	}
-	if isCodexSessionFormat(project.LatestSessionFormat) {
+	if providerForSessionFormat(project.LatestSessionFormat) == provider.Normalized() {
 		return strings.TrimSpace(project.LatestSessionID)
 	}
 	return ""
@@ -1787,12 +1817,36 @@ func (m Model) currentCodexLaunchPreset() codexcli.Preset {
 }
 
 func isCodexSessionFormat(format string) bool {
-	switch format {
+	return providerForSessionFormat(format) == codexapp.ProviderCodex
+}
+
+func isOpenCodeSessionFormat(format string) bool {
+	return providerForSessionFormat(format) == codexapp.ProviderOpenCode
+}
+
+func providerForSessionFormat(format string) codexapp.Provider {
+	switch strings.TrimSpace(format) {
 	case "modern", "legacy":
-		return true
+		return codexapp.ProviderCodex
+	case "opencode_db":
+		return codexapp.ProviderOpenCode
 	default:
-		return false
+		return ""
 	}
+}
+
+func preferredEmbeddedProviderForProject(project model.ProjectSummary) codexapp.Provider {
+	if provider := providerForSessionFormat(project.LatestSessionFormat); provider != "" {
+		return provider
+	}
+	return codexapp.ProviderCodex
+}
+
+func (m Model) currentEmbeddedLaunchLabel() string {
+	if project, ok := m.selectedProject(); ok {
+		return preferredEmbeddedProviderForProject(project).Label()
+	}
+	return codexapp.ProviderCodex.Label()
 }
 
 func scanCompleteStatus(report service.ScanReport) string {
@@ -2629,7 +2683,7 @@ func (m Model) renderFooter(width int) string {
 	}
 	return renderFooterLine(
 		width,
-		compactFooterBase(width, m.focusedPane, m.detailViewport.ScrollPercent(), m.hasHiddenCodexSession()),
+		compactFooterBase(width, m.focusedPane, m.detailViewport.ScrollPercent(), m.hasHiddenCodexSession(), m.currentEmbeddedLaunchLabel()),
 		renderFooterUsage(usageLabel),
 	)
 }
@@ -3210,7 +3264,10 @@ func compactUsageLabel(usage model.LLMSessionUsage) string {
 	return fmt.Sprintf("tok %s/%s", formatTokenCount(usage.Totals.InputTokens), formatTokenCount(usage.Totals.OutputTokens))
 }
 
-func compactFooterBase(width int, focused paneFocus, detailScroll float64, hasHiddenCodex bool) string {
+func compactFooterBase(width int, focused paneFocus, detailScroll float64, hasHiddenCodex bool, launchLabel string) string {
+	if strings.TrimSpace(launchLabel) == "" {
+		launchLabel = "Session"
+	}
 	if focused == focusDetail {
 		detailPercent := int(detailScroll * 100)
 		switch {
@@ -3257,7 +3314,7 @@ func compactFooterBase(width int, focused paneFocus, detailScroll float64, hasHi
 			return joinFooterSegments(
 				renderFooterMeta("Focus: list"),
 				renderFooterActionList(
-					footerPrimaryAction("Enter", "Codex"),
+					footerPrimaryAction("Enter", launchLabel),
 					footerNavAction("Alt+Down", "picker"),
 					footerNavAction("Alt+[/]", "sessions"),
 					footerNavAction("/", "command"),
@@ -3269,7 +3326,7 @@ func compactFooterBase(width int, focused paneFocus, detailScroll float64, hasHi
 		return joinFooterSegments(
 			renderFooterMeta("Focus: list"),
 			renderFooterActionList(
-				footerPrimaryAction("Enter", "Codex"),
+				footerPrimaryAction("Enter", launchLabel),
 				footerNavAction("Alt+Down", "picker"),
 				footerNavAction("/", "command"),
 				footerNavAction("Tab", "switch"),
@@ -3283,7 +3340,7 @@ func compactFooterBase(width int, focused paneFocus, detailScroll float64, hasHi
 			return joinFooterSegments(
 				renderFooterMeta("Focus: list"),
 				renderFooterActionList(
-					footerPrimaryAction("Enter", "Codex"),
+					footerPrimaryAction("Enter", launchLabel),
 					footerNavAction("Alt+Down", "picker"),
 					footerNavAction("/", "command"),
 					footerLowAction("?", "help"),
@@ -3294,7 +3351,7 @@ func compactFooterBase(width int, focused paneFocus, detailScroll float64, hasHi
 		return joinFooterSegments(
 			renderFooterMeta("Focus: list"),
 			renderFooterActionList(
-				footerPrimaryAction("Enter", "Codex"),
+				footerPrimaryAction("Enter", launchLabel),
 				footerNavAction("Alt+Down", "picker"),
 				footerNavAction("/", "command"),
 				footerNavAction("Tab", "switch"),
@@ -3304,14 +3361,14 @@ func compactFooterBase(width int, focused paneFocus, detailScroll float64, hasHi
 		)
 	default:
 		actions := []footerAction{
-			footerPrimaryAction("Enter", "Codex"),
+			footerPrimaryAction("Enter", launchLabel),
 			footerNavAction("/", "cmd"),
 			footerLowAction("?", "help"),
 			footerExitAction("q", "quit"),
 		}
 		if hasHiddenCodex {
 			actions = []footerAction{
-				footerPrimaryAction("Enter", "Codex"),
+				footerPrimaryAction("Enter", launchLabel),
 				footerNavAction("/", "cmd"),
 				footerExitAction("q", "quit"),
 			}
@@ -3433,12 +3490,12 @@ func (m Model) renderHelpPanel(bodyW, bodyH int) string {
 		{
 			Title: "Actions",
 			Lines: []string{
-				"Enter list open/resume Codex",
-				"Esc     hide visible Codex",
-				"Alt+Up  hide visible Codex",
+				"Enter list open/resume latest provider",
+				"Esc     hide visible session",
+				"Alt+Up  hide visible session",
 				"Alt+Down open session picker",
-				"Alt+[  previous live Codex",
-				"Alt+]  next live Codex",
+				"Alt+[  previous live session",
+				"Alt+]  next live session",
 				"Enter busy=steer idle=send",
 				"Ctrl+C busy=interrupt idle=close",
 				"busy elsewhere = read-only",
@@ -3450,7 +3507,7 @@ func (m Model) renderHelpPanel(bodyW, bodyH int) string {
 				"s/S snooze/clear",
 				"n   note",
 				"/refresh /settings",
-				"/codex /codex-new",
+				"/codex /codex-new /opencode /opencode-new",
 				"/diff /commit /finish /push",
 			},
 		},
@@ -3459,7 +3516,7 @@ func (m Model) renderHelpPanel(bodyW, bodyH int) string {
 			Lines: []string{
 				"SRC  bright CX live, dim CX saved",
 				"SRC  OC OpenCode history",
-				"RUN  live Codex turn timer",
+				"RUN  live embedded turn timer",
 				"ASSESS latest session summary",
 				"ASSESS pending/running/failed when unfinished",
 				"! in ATTN = dirty or remote warning",

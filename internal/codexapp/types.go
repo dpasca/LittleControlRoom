@@ -26,6 +26,42 @@ const (
 	TranscriptOther      TranscriptKind = "other"
 )
 
+type Provider string
+
+const (
+	ProviderCodex    Provider = "codex"
+	ProviderOpenCode Provider = "opencode"
+)
+
+func (p Provider) Normalized() Provider {
+	switch strings.ToLower(strings.TrimSpace(string(p))) {
+	case "", string(ProviderCodex):
+		return ProviderCodex
+	case string(ProviderOpenCode), "open-code":
+		return ProviderOpenCode
+	default:
+		return ""
+	}
+}
+
+func (p Provider) Label() string {
+	switch p.Normalized() {
+	case ProviderOpenCode:
+		return "OpenCode"
+	default:
+		return "Codex"
+	}
+}
+
+func (p Provider) SourceTag() string {
+	switch p.Normalized() {
+	case ProviderOpenCode:
+		return "OC"
+	default:
+		return "CX"
+	}
+}
+
 type TranscriptEntry struct {
 	ItemID string
 	Kind   TranscriptKind
@@ -361,6 +397,7 @@ type ModelOption struct {
 }
 
 type Snapshot struct {
+	Provider           Provider
 	ProjectPath        string
 	ThreadID           string
 	Preset             codexcli.Preset
@@ -369,6 +406,7 @@ type Snapshot struct {
 	Busy               bool
 	BusyExternal       bool
 	BusySince          time.Time
+	LastBusyActivityAt time.Time
 	Closed             bool
 	ActiveTurnID       string
 	PendingApproval    *ApprovalRequest
@@ -407,6 +445,7 @@ type Session interface {
 }
 
 type LaunchRequest struct {
+	Provider    Provider
 	ProjectPath string
 	ResumeID    string
 	ForceNew    bool
@@ -418,11 +457,19 @@ func (r LaunchRequest) Validate() error {
 	if strings.TrimSpace(r.ProjectPath) == "" {
 		return fmt.Errorf("project path required")
 	}
-	if r.Preset == "" {
-		r.Preset = codexcli.DefaultPreset()
-	}
-	if _, err := codexcli.ParsePreset(string(r.Preset)); err != nil {
-		return err
+	switch r.Provider.Normalized() {
+	case ProviderCodex:
+		preset := r.Preset
+		if preset == "" {
+			preset = codexcli.DefaultPreset()
+		}
+		if _, err := codexcli.ParsePreset(string(preset)); err != nil {
+			return err
+		}
+	case ProviderOpenCode:
+		// OpenCode sessions do not use Codex launch presets.
+	default:
+		return fmt.Errorf("embedded provider must be one of: codex, opencode")
 	}
 	return nil
 }
@@ -460,12 +507,12 @@ type Manager struct {
 }
 
 func NewManager() *Manager {
-	return NewManagerWithFactory(newAppServerSession)
+	return NewManagerWithFactory(newEmbeddedSession)
 }
 
 func NewManagerWithFactory(factory func(req LaunchRequest, notify func()) (Session, error)) *Manager {
 	if factory == nil {
-		factory = newAppServerSession
+		factory = newEmbeddedSession
 	}
 	manager := &Manager{
 		sessions:           make(map[string]Session),
@@ -516,7 +563,7 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 	if m == nil {
 		return nil, false, fmt.Errorf("manager required")
 	}
-	if req.Preset == "" {
+	if req.Provider.Normalized() == ProviderCodex && req.Preset == "" {
 		req.Preset = codexcli.DefaultPreset()
 	}
 	if err := req.Validate(); err != nil {
@@ -527,10 +574,26 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 
 	m.mu.Lock()
 	existing, ok := m.sessions[projectPath]
+	replaceExisting := false
 	if ok && existing.Snapshot().Closed {
 		delete(m.sessions, projectPath)
 		existing = nil
 		ok = false
+	}
+	if ok {
+		existingProvider := existing.Snapshot().Provider.Normalized()
+		if existingProvider == "" {
+			existingProvider = ProviderCodex
+		}
+		requestedProvider := req.Provider.Normalized()
+		if requestedProvider == "" {
+			requestedProvider = ProviderCodex
+		}
+		if existingProvider != requestedProvider {
+			delete(m.sessions, projectPath)
+			replaceExisting = true
+			ok = false
+		}
 	}
 	if ok && !req.ForceNew {
 		m.mu.Unlock()
@@ -548,10 +611,11 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 	}
 	if ok {
 		delete(m.sessions, projectPath)
+		replaceExisting = true
 	}
 	m.mu.Unlock()
 
-	if ok {
+	if replaceExisting {
 		_ = existing.Close()
 		if waiter, ok := existing.(closeWaiter); ok {
 			waiter.WaitClosed(5 * time.Second)
@@ -711,10 +775,14 @@ func (m *Manager) reconcileBusySessions(now time.Time) {
 		if snapshot.PendingApproval != nil || snapshot.PendingToolInput != nil || snapshot.PendingElicitation != nil {
 			continue
 		}
-		if snapshot.LastActivityAt.IsZero() {
+		lastBusyActivityAt := snapshot.LastActivityAt
+		if !snapshot.LastBusyActivityAt.IsZero() {
+			lastBusyActivityAt = snapshot.LastBusyActivityAt
+		}
+		if lastBusyActivityAt.IsZero() {
 			continue
 		}
-		if now.Sub(snapshot.LastActivityAt) < m.busyReconcileAfter {
+		if now.Sub(lastBusyActivityAt) < m.busyReconcileAfter {
 			continue
 		}
 		_ = reconciler.ReconcileBusyState()

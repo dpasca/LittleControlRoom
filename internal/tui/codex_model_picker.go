@@ -45,6 +45,13 @@ func (m Model) openCodexModelPickerCmd() tea.Cmd {
 	}
 }
 
+func (m Model) currentEmbeddedSessionLabel() string {
+	if snapshot, ok := m.currentCodexSnapshot(); ok {
+		return embeddedProvider(snapshot).Label()
+	}
+	return "Codex"
+}
+
 func (m *Model) openCodexModelPickerLoading() {
 	m.codexModelPicker = &codexModelPickerState{
 		Loading: true,
@@ -53,9 +60,10 @@ func (m *Model) openCodexModelPickerLoading() {
 }
 
 func (m *Model) openLoadedCodexModelPicker(models []codexapp.ModelOption) {
+	label := m.currentEmbeddedSessionLabel()
 	if len(models) == 0 {
 		m.codexModelPicker = nil
-		m.status = "No embedded Codex models are available"
+		m.status = "No embedded " + label + " models are available"
 		return
 	}
 	state := &codexModelPickerState{
@@ -82,7 +90,7 @@ func (m *Model) openLoadedCodexModelPicker(models []codexapp.ModelOption) {
 	}
 
 	m.codexModelPicker = state
-	m.status = "Embedded model picker open"
+	m.status = "Embedded " + label + " model picker open"
 }
 
 func (m *Model) closeCodexModelPicker(status string) {
@@ -177,7 +185,7 @@ func (m Model) updateCodexModelPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if len(state.Models) == 0 {
-		m.closeCodexModelPicker("No embedded Codex models are available")
+		m.closeCodexModelPicker("No embedded " + m.currentEmbeddedSessionLabel() + " models are available")
 		return m, nil
 	}
 
@@ -291,12 +299,12 @@ func (m *Model) moveCodexModelPickerSelection(delta int) {
 func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 	session, ok := m.currentCodexSession()
 	if !ok {
-		m.closeCodexModelPicker("Codex session unavailable")
+		m.closeCodexModelPicker("Embedded session unavailable")
 		return m, nil
 	}
 	modelOption, ok := m.currentCodexModelOption()
 	if !ok {
-		m.closeCodexModelPicker("No embedded Codex models are available")
+		m.closeCodexModelPicker("No embedded " + m.currentEmbeddedSessionLabel() + " models are available")
 		return m, nil
 	}
 	effort := strings.TrimSpace(modelOption.DefaultReasoningEffort)
@@ -350,9 +358,10 @@ func (m Model) renderCodexModelPicker(bodyW int) string {
 
 func (m Model) renderCodexModelPickerContent(width int) string {
 	state := m.codexModelPicker
+	label := m.currentEmbeddedSessionLabel()
 	lines := []string{
 		commandPaletteTitleStyle.Render("Embedded Model Picker"),
-		commandPaletteHintStyle.Render("Choose a model and reasoning effort for upcoming embedded Codex prompts."),
+		commandPaletteHintStyle.Render("Choose a model and reasoning effort for upcoming embedded " + label + " prompts."),
 		"",
 		renderDialogAction("Enter", "apply", commitActionKeyStyle, commitActionTextStyle) + "   " +
 			renderDialogAction("Tab", "focus", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
@@ -361,11 +370,11 @@ func (m Model) renderCodexModelPickerContent(width int) string {
 	}
 
 	if state == nil || state.Loading {
-		lines = append(lines, commandPaletteHintStyle.Render("Loading available embedded Codex models..."))
+		lines = append(lines, commandPaletteHintStyle.Render("Loading available embedded "+label+" models..."))
 		return strings.Join(lines, "\n")
 	}
 	if len(state.Models) == 0 {
-		lines = append(lines, commandPaletteHintStyle.Render("No embedded Codex models are available."))
+		lines = append(lines, commandPaletteHintStyle.Render("No embedded "+label+" models are available."))
 		return strings.Join(lines, "\n")
 	}
 
