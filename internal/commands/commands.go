@@ -16,6 +16,7 @@ const (
 	KindView        Kind = "view"
 	KindSettings    Kind = "settings"
 	KindNewProject  Kind = "new-project"
+	KindDiff        Kind = "diff"
 	KindCommit      Kind = "commit"
 	KindPush        Kind = "push"
 	KindFinish      Kind = "finish"
@@ -91,6 +92,7 @@ var specs = []Spec{
 	{Name: "view", Usage: "/view ai|all", Summary: "Choose AI-linked or all folders"},
 	{Name: "settings", Usage: "/settings", Summary: "Edit persisted scope, demo filters, and scan thresholds"},
 	{Name: "new-project", Usage: "/new-project", Summary: "Create a project folder or add an existing one"},
+	{Name: "diff", Usage: "/diff", Summary: "Open a full-screen diff for the selected project"},
 	{Name: "commit", Usage: "/commit [message]", Summary: "Preview a commit for the selected project"},
 	{Name: "push", Usage: "/push", Summary: "Push the selected project when its branch is ahead"},
 	{Name: "finish", Usage: "/finish [message]", Summary: "Open the commit preview for the selected project"},
@@ -244,6 +246,11 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /new-project")
 		}
 		return Invocation{Kind: KindNewProject, Canonical: "/new-project"}, nil
+	case "diff":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /diff")
+		}
+		return Invocation{Kind: KindDiff, Canonical: "/diff"}, nil
 	case "pin":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /pin")

@@ -59,6 +59,7 @@ type Model struct {
 	commandSelected     int
 	newProjectDialog    *newProjectDialogState
 	preferredSelectPath string
+	diffView            *diffViewState
 	gitStatusDialog     *gitStatusDialog
 	gitStatusApplying   bool
 	commitPreview       *service.CommitPreview
@@ -122,6 +123,11 @@ type commitPreviewMsg struct {
 	intent      service.GitActionIntent
 	message     string
 	err         error
+}
+
+type diffPreviewMsg struct {
+	preview service.DiffPreview
+	err     error
 }
 
 type gitStatusDialog struct {
@@ -264,6 +270,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.ensureSelectionVisible()
 		m.syncCommandInputWidth()
+		m.syncDiffView(false)
 		m.syncDetailViewport(false)
 		m.syncCodexComposerSize()
 		m.syncCodexViewport(false)
@@ -280,6 +287,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.newProjectDialog != nil {
 			return m.updateNewProjectMode(msg)
+		}
+		if m.diffView != nil {
+			return m.updateDiffMode(msg)
 		}
 		if m.gitStatusDialog != nil {
 			return m.updateGitStatusDialogMode(msg)
@@ -415,11 +425,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.commitApplying = false
 		m.status = commitPreviewReadyStatus(msg.preview.CanPush)
 		return m, nil
+	case diffPreviewMsg:
+		if m.diffView == nil {
+			return m, nil
+		}
+		m.diffView.loading = false
+		if msg.err != nil {
+			var noDiffErr service.NoDiffChangesError
+			if errors.As(msg.err, &noDiffErr) {
+				m.err = nil
+				m.diffView = nil
+				m.status = "No changed files to show in diff"
+				return m, nil
+			}
+			m.err = msg.err
+			m.diffView = nil
+			m.status = "Diff preview failed"
+			return m, nil
+		}
+		m.err = nil
+		m.diffView.preview = &msg.preview
+		m.diffView.selected = 0
+		m.diffView.offset = 0
+		m.diffView.renderedIndex = -1
+		m.diffView.renderedWidth = 0
+		m.syncDiffView(true)
+		m.status = diffViewReadyStatus(*m.diffView)
+		return m, nil
 	case actionMsg:
 		m.gitStatusApplying = false
 		m.gitStatusDialog = nil
 		m.commitApplying = false
 		m.commitPreview = nil
+		m.diffView = nil
 		if msg.err != nil {
 			m.err = msg.err
 			m.status = "Action failed"
@@ -1090,6 +1128,9 @@ func (m Model) View() string {
 
 	layout := m.bodyLayout()
 	header := m.renderTopStatusLine(layout.width)
+	if m.diffView != nil {
+		return strings.Join([]string{header, m.renderDiffView(layout.width, layout.height), m.renderFooter(layout.width)}, "\n")
+	}
 	listHeight := max(1, layout.listPaneHeight-2)
 	detailHeight := max(1, layout.detailPaneHeight-2)
 	list := m.renderProjectList(layout.listContentWidth, listHeight)
@@ -1548,6 +1589,22 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, m.openSettingsMode()
 	case commands.KindNewProject:
 		return m, m.openNewProjectDialog()
+	case commands.KindDiff:
+		p, ok := m.selectedProject()
+		if !ok {
+			m.status = "No project selected"
+			return m, nil
+		}
+		if !p.PresentOnDisk {
+			m.status = "Diff requires a folder present on disk"
+			return m, nil
+		}
+		m.err = nil
+		m.showHelp = false
+		m.diffView = newDiffViewState(p.Path, p.Name)
+		m.syncDiffView(true)
+		m.status = "Preparing diff view..."
+		return m, m.prepareDiffPreviewCmd(p.Path)
 	case commands.KindCommit:
 		p, ok := m.selectedProject()
 		if !ok {
@@ -1751,6 +1808,13 @@ func (m Model) prepareCommitPreviewCmd(path string, intent service.GitActionInte
 	return func() tea.Msg {
 		preview, err := m.svc.PrepareCommit(m.ctx, path, intent, message)
 		return commitPreviewMsg{preview: preview, projectPath: path, intent: intent, message: message, err: err}
+	}
+}
+
+func (m Model) prepareDiffPreviewCmd(path string) tea.Cmd {
+	return func() tea.Msg {
+		preview, err := m.svc.PrepareDiff(m.ctx, path)
+		return diffPreviewMsg{preview: preview, err: err}
 	}
 }
 
@@ -2390,6 +2454,9 @@ func (m Model) classificationCounts() classificationSummary {
 func (m Model) renderFooter(width int) string {
 	usage := m.currentUsage()
 	usageLabel := compactUsageLabel(usage)
+	if m.diffView != nil {
+		return fitFooterWidth(diffViewFooterLabel(*m.diffView)+" | "+usageLabel, width)
+	}
 	if m.gitStatusDialog != nil {
 		label := gitStatusDialogReadyStatus(*m.gitStatusDialog)
 		if m.gitStatusApplying {
@@ -3241,7 +3308,7 @@ func (m Model) renderHelpPanel(bodyW, bodyH int) string {
 				"n   note",
 				"/refresh /settings",
 				"/codex /codex-new",
-				"/commit /finish /push",
+				"/diff /commit /finish /push",
 			},
 		},
 		{

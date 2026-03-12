@@ -1,8 +1,12 @@
 package tui
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +19,7 @@ import (
 	"lcroom/internal/commands"
 	"lcroom/internal/config"
 	"lcroom/internal/model"
+	"lcroom/internal/scanner"
 	"lcroom/internal/service"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -4243,4 +4248,156 @@ func TestRenderHelpPanelOmitsForgetHint(t *testing.T) {
 	if !strings.Contains(rendered, "/refresh /settings") {
 		t.Fatalf("renderHelpPanel() should continue to advertise refresh via slash command: %q", rendered)
 	}
+}
+
+func TestDispatchDiffCommandOpensDiffView(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+		width:    100,
+		height:   24,
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindDiff})
+	got := updated.(Model)
+	if got.diffView == nil {
+		t.Fatalf("dispatchCommand(/diff) should open the diff view")
+	}
+	if got.status != "Preparing diff view..." {
+		t.Fatalf("status = %q, want preparing diff status", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("dispatchCommand(/diff) should return a load command")
+	}
+}
+
+func TestViewWithDiffScreenUsesFullBody(t *testing.T) {
+	diffState := newDiffViewState("/tmp/demo", "demo")
+	diffState.loading = false
+	diffState.preview = &service.DiffPreview{
+		ProjectName: "demo",
+		ProjectPath: "/tmp/demo",
+		Branch:      "master",
+		Summary:     "3 files changed, 12 insertions(+), 1 deletion(-)",
+		Files: []service.DiffFilePreview{
+			{
+				Path:      "README.md",
+				Summary:   "README.md",
+				Code:      "M",
+				Kind:      scanner.GitChangeModified,
+				Unstaged:  true,
+				Body:      "# Unstaged\n\ndiff --git a/README.md b/README.md\n+diff screen\n",
+				IsImage:   false,
+				OldImage:  nil,
+				NewImage:  nil,
+				Untracked: false,
+			},
+			{
+				Path:      "pixel.png",
+				Summary:   "pixel.png",
+				Code:      "M",
+				Kind:      scanner.GitChangeModified,
+				Unstaged:  true,
+				Body:      "Binary image change rendered as ANSI preview.",
+				IsImage:   true,
+				OldImage:  mustTestPNG(color.RGBA{R: 220, G: 32, B: 32, A: 255}),
+				NewImage:  mustTestPNG(color.RGBA{R: 32, G: 120, B: 220, A: 255}),
+				Untracked: false,
+			},
+		},
+	}
+	diffState.selected = 1
+
+	m := Model{
+		diffView: diffState,
+		width:    100,
+		height:   24,
+		status:   "Preparing diff view...",
+	}
+	m.syncDiffView(true)
+
+	rendered := ansi.Strip(m.View())
+	if got := len(strings.Split(rendered, "\n")); got != m.height {
+		t.Fatalf("View() line count = %d, want terminal height %d; render was %q", got, m.height, rendered)
+	}
+	if !strings.Contains(rendered, "Files") || !strings.Contains(rendered, "README.md") {
+		t.Fatalf("View() should render the diff file list: %q", rendered)
+	}
+	if !strings.Contains(rendered, "HEAD image") || !strings.Contains(rendered, "Working tree image") {
+		t.Fatalf("View() should render image diff labels: %q", rendered)
+	}
+	if strings.Contains(rendered, "ATTN  STATE") || strings.Contains(rendered, "Attention reasons") {
+		t.Fatalf("View() should replace the normal list/detail body when diff is open: %q", rendered)
+	}
+}
+
+func TestDiffModeMovesSelectionAndScrollsContent(t *testing.T) {
+	diffState := newDiffViewState("/tmp/demo", "demo")
+	diffState.loading = false
+	diffState.preview = &service.DiffPreview{
+		Files: []service.DiffFilePreview{
+			{
+				Path:     "README.md",
+				Summary:  "README.md",
+				Code:     "M",
+				Kind:     scanner.GitChangeModified,
+				Unstaged: true,
+				Body:     "# Unstaged\n\n" + strings.Repeat("+line\n", 8),
+			},
+			{
+				Path:      "notes.txt",
+				Summary:   "notes.txt",
+				Code:      "??",
+				Kind:      scanner.GitChangeUntracked,
+				Untracked: true,
+				Body:      "# Untracked\n\n" + strings.Repeat("+note\n", 40),
+			},
+		},
+	}
+
+	m := Model{
+		diffView: diffState,
+		width:    100,
+		height:   24,
+	}
+	m.syncDiffView(true)
+
+	updated, _ := m.updateDiffMode(tea.KeyMsg{Type: tea.KeyDown})
+	got := updated.(Model)
+	if got.diffView.selected != 1 {
+		t.Fatalf("selected index = %d, want 1", got.diffView.selected)
+	}
+
+	updated, _ = got.updateDiffMode(tea.KeyMsg{Type: tea.KeyTab})
+	got = updated.(Model)
+	if got.diffView.focus != diffFocusContent {
+		t.Fatalf("focus = %s, want content", got.diffView.focus)
+	}
+
+	updated, _ = got.updateDiffMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	if got.diffView.selected != 1 {
+		t.Fatalf("down in content focus should keep file selection, got %d", got.diffView.selected)
+	}
+	if got.diffView.contentViewport.YOffset == 0 {
+		t.Fatalf("down in content focus should scroll the diff viewport")
+	}
+}
+
+func mustTestPNG(fill color.RGBA) []byte {
+	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
+	for y := 0; y < 4; y++ {
+		for x := 0; x < 4; x++ {
+			img.SetRGBA(x, y, fill)
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		panic(err)
+	}
+	return buf.Bytes()
 }

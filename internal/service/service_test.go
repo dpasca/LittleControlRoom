@@ -3,6 +3,9 @@ package service
 import (
 	"context"
 	"errors"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -986,6 +989,131 @@ func TestPrepareCommitUsesStagedScopeAndFinishPushState(t *testing.T) {
 	}
 }
 
+func TestPrepareDiffIncludesTextUntrackedDeletedAndImagePreviews(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	projectPath := filepath.Join(t.TempDir(), "repo")
+	initGitRepo(t, projectPath)
+
+	if err := writeTestPNG(filepath.Join(projectPath, "pixel.png"), color.RGBA{R: 220, G: 32, B: 32, A: 255}); err != nil {
+		t.Fatalf("write initial image: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectPath, "old.txt"), []byte("old line\n"), 0o644); err != nil {
+		t.Fatalf("write old.txt: %v", err)
+	}
+	runGit(t, projectPath, "git", "add", "pixel.png", "old.txt")
+	runGit(t, projectPath, "git", "commit", "-m", "add fixtures")
+
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("hello\ndiff screen\n"), 0o644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	if err := writeTestPNG(filepath.Join(projectPath, "pixel.png"), color.RGBA{R: 32, G: 120, B: 220, A: 255}); err != nil {
+		t.Fatalf("write updated image: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectPath, "notes.txt"), []byte("release note\n"), 0o644); err != nil {
+		t.Fatalf("write notes: %v", err)
+	}
+	if err := os.Remove(filepath.Join(projectPath, "old.txt")); err != nil {
+		t.Fatalf("remove old.txt: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "repo",
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	preview, err := svc.PrepareDiff(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("prepare diff: %v", err)
+	}
+	if preview.ProjectName != "repo" {
+		t.Fatalf("project name = %q, want repo", preview.ProjectName)
+	}
+	if len(preview.Files) != 4 {
+		t.Fatalf("file count = %d, want 4", len(preview.Files))
+	}
+
+	byPath := map[string]DiffFilePreview{}
+	for _, file := range preview.Files {
+		byPath[file.Path] = file
+	}
+
+	readme := byPath["README.md"]
+	if !strings.Contains(readme.Body, "diff --git") || !strings.Contains(readme.Body, "README.md") {
+		t.Fatalf("README preview = %q, want git diff content", readme.Body)
+	}
+
+	notes := byPath["notes.txt"]
+	if !notes.Untracked || !strings.Contains(notes.Body, "# Untracked") || !strings.Contains(notes.Body, "+release note") {
+		t.Fatalf("notes preview = %#v, want untracked added-line preview", notes)
+	}
+
+	deleted := byPath["old.txt"]
+	if deleted.Kind != scanner.GitChangeDeleted || !strings.Contains(deleted.Body, "old.txt") {
+		t.Fatalf("deleted preview = %#v, want deleted file diff", deleted)
+	}
+
+	imageFile := byPath["pixel.png"]
+	if !imageFile.IsImage {
+		t.Fatalf("pixel.png should be marked as image: %#v", imageFile)
+	}
+	if len(imageFile.OldImage) == 0 || len(imageFile.NewImage) == 0 {
+		t.Fatalf("image previews should include HEAD and worktree bytes: %#v", imageFile)
+	}
+	if !strings.Contains(imageFile.Body, "Binary image change rendered as ANSI preview.") {
+		t.Fatalf("image body = %q, want image-preview note", imageFile.Body)
+	}
+}
+
+func TestPrepareDiffReturnsNoChangesError(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	projectPath := filepath.Join(t.TempDir(), "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "repo",
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	_, err = svc.PrepareDiff(ctx, projectPath)
+	if err == nil {
+		t.Fatalf("prepare diff should fail on a clean repo")
+	}
+
+	var noDiffErr NoDiffChangesError
+	if !errors.As(err, &noDiffErr) {
+		t.Fatalf("prepare diff error = %v, want NoDiffChangesError", err)
+	}
+	if noDiffErr.ProjectName != "repo" {
+		t.Fatalf("project name = %q, want repo", noDiffErr.ProjectName)
+	}
+}
+
 func TestPrepareCommitIncludesRecommendedUntrackedFiles(t *testing.T) {
 	t.Parallel()
 
@@ -1469,6 +1597,21 @@ func fakeActivity(projectPath, sessionID string, at time.Time) *model.DetectorPr
 			LastEventAt:         at,
 		}},
 	}
+}
+
+func writeTestPNG(path string, fill color.RGBA) error {
+	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
+	for y := 0; y < 4; y++ {
+		for x := 0; x < 4; x++ {
+			img.SetRGBA(x, y, fill)
+		}
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return png.Encode(f, img)
 }
 
 func initGitRepo(t *testing.T, path string) {

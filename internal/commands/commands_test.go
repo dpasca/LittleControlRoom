@@ -57,6 +57,15 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "diff",
+			raw:  "/diff",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindDiff {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindDiff)
+				}
+			},
+		},
+		{
 			name: "commit custom message",
 			raw:  "/commit Improve command palette scrolling",
 			check: func(t *testing.T, inv Invocation) {
@@ -209,6 +218,16 @@ func TestSuggestionsIncludeNewProjectCommand(t *testing.T) {
 	}
 	if got[0].Insert != "/new-project" {
 		t.Fatalf("first /new suggestion = %q, want /new-project", got[0].Insert)
+	}
+}
+
+func TestSuggestionsIncludeDiffCommand(t *testing.T) {
+	got := Suggestions("/di")
+	if len(got) == 0 {
+		t.Fatalf("Suggestions(/di) returned none")
+	}
+	if got[0].Insert != "/diff" {
+		t.Fatalf("first /di suggestion = %q, want /diff", got[0].Insert)
 	}
 }
 

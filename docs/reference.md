@@ -135,6 +135,14 @@ While the Codex pane is visible:
 - `Alt+L` expands or collapses dense command, file, and tool transcript blocks
 - `Ctrl+C` interrupts the active turn when busy and closes the session when idle
 
+While the diff screen is visible:
+
+- `Up/Down` or `j/k` moves between files when the file list is focused
+- `Enter`, `Right`, or `Tab` moves focus into the diff pane
+- `Left` or `Tab` moves focus back to the file list
+- `PgUp/PgDn/Home/End` pages or jumps within the focused pane
+- `Esc` closes the diff screen
+
 ## Slash Commands
 
 The TUI command palette opens with `/` and supports autocomplete with `Tab`.
@@ -146,6 +154,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/view ai`
 - `/view all`
 - `/settings`
+- `/diff`
 - `/codex`
 - `/codex continue from the last breakpoint`
 - `/codex-new sketch a plan for this repo`

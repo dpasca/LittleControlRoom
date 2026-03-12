@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-12 17:07 JST (JST)
+Last updated: 2026-03-12 18:27 JST (JST)
 
 ## Current State
 
@@ -46,7 +46,7 @@ Current screenshot workflow assumption:
 - Scope-aware persistence via path filters and project-name filters
 - Cached `doctor` by default, with `doctor --scan` for a fresh rescan
 - TUI stacked layout with focusable detail pane, scrolling, compact settings modal, and command palette
-- Git workflow actions in the TUI for commit preview, finish, and push
+- Git workflow actions in the TUI for full-screen diff preview, commit preview, finish, and push
 - Embedded Codex pane via `codex app-server`, with multiline compose, per-project drafts, inline `[Image #n]` clipboard image markers in the composer, backspace-based image removal, local embedded slash commands for `/new`, `/model`, and `/status`, visible slash autocomplete/suggestions in the composer, live model/reasoning/context-left metadata under the transcript, a local model+reasoning picker backed by `model/list`, `Enter`/`/codex`/`/codex-new`, `Esc` or `Alt+Up` hide from the embedded pane with `Enter` reopening from the project list, `Alt+Down` session picker/history, `Alt+[`/`Alt+]` live-session stepping, wrapped transcript blocks, shaded echoed user transcript blocks that reuse the composer shell styling, denser command/tool/file blocks with `Alt+L` expand/collapse, label-free user/assistant transcript rendering, manager-side update coalescing, inline approvals/input requests, and busy-elsewhere rechecks when a read-only embedded session is reopened or restored
 - Settings-backed Codex launch presets, currently defaulting to the dangerous `yolo` mode
 - Programmatic screenshot generation via `lcroom screenshots` and `make screenshots`, using screenshot-config-driven browser-rendered PNG exports from deterministic HTML terminal scenarios
@@ -64,25 +64,24 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-12 17:07 JST)
+## Latest Update (2026-03-12 18:27 JST)
 
-- Fixed embedded Codex session navigation so the project list selection now follows the currently shown embedded session, not just the project that originally opened Codex.
-- `Alt+[`, `Alt+]`, picker-driven session switches, hidden-session restore, and `Alt+Up`/`Esc` hide now all reuse the same project-focus path, which keeps the main list/detail pane aligned with the last embedded Codex project you visited.
-- Added a focused TUI regression covering the exact flow: open project A, switch to embedded project B, then hide and confirm the main list stays on B.
+- Added a dedicated full-screen `/diff` screen that replaces the normal list/detail body with a left-hand changed-file picker and a right-hand diff preview pane.
+- The new diff view supports changed, untracked, and deleted files, keeps separate file-list vs diff-content focus/scroll behavior, and renders PNG/JPEG/GIF changes as ANSI image previews using Git `HEAD` blobs plus current worktree bytes.
+- Added service/git preview plumbing plus focused command, service, and TUI regressions for `/diff`, text diffs, untracked/deleted file previews, and image preview payloads.
 - No Codex/OpenCode detector assumptions changed; `docs/codex_cli_footprint.md` stayed aligned with the current footprint expectations.
 
 Verification snapshot:
 
-- `go test ./internal/tui` passed.
 - `make test` passed.
-- `make scan` passed at `2026-03-12T17:05:36+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 2`, `queued classifications: 2`).
-- `make doctor` passed on the cached snapshot dated `2026-03-12T17:05:59+09:00` (`projects: 135`).
+- `make scan` passed at `2026-03-12T18:26:35+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 2`, `queued classifications: 2`).
+- `make doctor` passed on the cached snapshot dated `2026-03-12T18:26:36+09:00` (`projects: 135`).
 - `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q`.
 
 Next concrete tasks:
 
-- Manually sanity-check the new selection-sync behavior in a fuller real session with multiple live embedded Codex panes, especially when the list is sorted or filtered.
-- Decide later whether hidden/resumable Codex sessions that are currently filtered out should surface a more explicit fallback instead of silently keeping the nearest visible row selected.
+- Add a shortcut into the new diff screen from the commit preview once the keyboard flow is settled.
+- Decide whether the diff pane should gain optional per-line colorized text wrapping or richer binary-file handling beyond the current ANSI image preview path.
 
 ## Recent Updates
 

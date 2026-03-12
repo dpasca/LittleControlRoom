@@ -23,7 +23,7 @@ Click any screenshot to open the full-size PNG on GitHub.
 - Finds recent Codex sessions across your local projects
 - Shows which projects are active, idle, or worth revisiting
 - Lets you open or resume Codex directly from the dashboard
-- Keeps common actions close at hand: refresh, pin, snooze, notes, commit, and push
+- Keeps common actions close at hand: refresh, pin, snooze, notes, diff, commit, and push
 
 ## What it doesn't do (yet)
 
@@ -61,9 +61,11 @@ No config file is required for a first run. If you want to limit what shows up, 
 2. Move through projects with the arrow keys.
 3. Press `Enter` to open or resume Codex for the selected project.
 4. Press `Esc` or `Alt+Up` to hide the Codex pane while it keeps working, then press `Enter` on that project to reopen it from the list.
-5. Press `/` to open the command palette for actions like refresh, pin, snooze, note, commit, or push.
+5. Press `/` to open the command palette for actions like refresh, pin, snooze, note, diff, commit, or push.
 
 Use `/settings` when you want to save include or exclude paths or change the Codex launch mode.
+
+Use `/diff` to open a full-screen git diff for the selected project, with a file list on the left and a scrollable text or image preview on the right.
 
 To create a a new project, use the command `/new-project`. This will create a new directory or acknowledge an existing one, and add it to the list of projects to track.
 
@@ -88,4 +90,3 @@ These operations are done with cheaper models like `gpt-5-mini` and a relatively
 ## Contributing
 
 This is a utility that I constantly change to suit some specific needs. For this reason this is not a good candidate for external contributions, however, bug reports are welcome and anyone is free to fork and modify for their own use.
-
