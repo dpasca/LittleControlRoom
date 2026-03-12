@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-12 09:03 JST (JST)
+Last updated: 2026-03-12 09:15 JST (JST)
 
 ## Current State
 
@@ -59,27 +59,25 @@ Current embedded Codex transport assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-12 09:03 JST)
+## Latest Update (2026-03-12 09:15 JST)
 
-- Added a main-panel `/new-project` slash command that opens a dedicated modal for creating or attaching a project, with separate parent-path and project-name inputs, a live full-path preview built via `filepath.Join`, and a default-on git-init checkbox for newly created folders.
-- Added backend support for manual project tracking so an existing folder can be added to the list even before any Codex/OpenCode session exists there, while preserving already tracked projects and their sessions instead of overwriting them.
-- Persisted the last three parent paths in the local store and surfaced them back into the dialog, with the newest path becoming the default and `Alt+1..3` quick picks available in the modal.
-- Introduced an explicit `manually_added` project flag so manually attached folders remain visible in the default `AI folders` view without faking detector activity or session metadata.
+- Removed the single-key `r` refresh shortcut and the single-key `f` forget shortcut from the main TUI, while keeping slash-command access such as `/refresh` and `/forget` intact.
+- Trimmed the main and detail footers so they no longer advertise those removed shortcuts, and removed the detail-pane `↑/↓ scroll` footer hint now that the movement is considered implicit.
+- Updated the help panel copy to advertise refresh via `/refresh` instead of `r`, and refreshed the TUI/reference coverage so regressions catch any accidental reintroduction of the old shortcut hints.
 - No Codex/OpenCode detector assumptions changed; `docs/codex_cli_footprint.md` stayed aligned with the current footprint expectations.
 
 Verification snapshot:
 
-- `go test ./internal/commands ./internal/store ./internal/service ./internal/tui` passed.
 - `make test` passed.
-- `make scan` passed at `2026-03-12T09:03:11+09:00` (`activity projects: 80`, `tracked projects: 133`, `updated projects: 1`, `queued classifications: 1`).
-- `make doctor` passed on the cached snapshot dated `2026-03-12T09:03:11+09:00` (`projects: 133`).
+- `make scan` passed at `2026-03-12T09:14:46+09:00` (`activity projects: 80`, `tracked projects: 134`, `updated projects: 2`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-12T09:14:55+09:00` (`projects: 134`).
 - `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q` as a main-TUI smoke test.
 
 Next concrete tasks:
 
-- Exercise `/new-project` interactively against both paths: creating a brand-new folder and attaching an already existing folder, to confirm the modal copy and footer hints feel right in normal use.
-- Consider whether manually added folders should get a small visible badge in the list/detail pane so they are distinguishable from detector-discovered projects.
-- Decide whether the new-project modal should also be reachable from a non-slash keybinding or stay command-palette-only for now.
+- Do a quick interactive feel pass on the updated footer/help copy in a normally sized terminal to confirm the reduced hints still feel discoverable.
+- Decide whether any other low-value single-key actions should move behind slash commands for consistency with the new refresh/forget behavior.
+- Keep watching whether the `/new-project` modal needs a non-slash entry point, since that remains the biggest recent UX decision still open.
 
 ## Recent Updates
 

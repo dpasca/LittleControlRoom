@@ -118,7 +118,6 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 - `PgUp/PgDn/Home/End` fast scrolling in long project lists
 - `Tab` or `Shift+Tab` switch focus between list and detail
 - `o` toggle sort mode between `attention` and `recent activity`
-- `r` refresh
 - `p` pin toggle
 - `s` snooze for 1 hour
 - `S` clear snooze

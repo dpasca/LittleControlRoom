@@ -619,10 +619,6 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.moveSelectionTo(max(0, len(m.projects)-1))
-	case "r":
-		m.loading = true
-		m.status = "Scanning and retrying failed assessments..."
-		return m, m.scanCmd(true)
 	case "o":
 		if m.sortMode == sortByAttention {
 			return m, m.setSortMode(sortByRecent)
@@ -636,14 +632,6 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "p":
 		if p, ok := m.selectedProject(); ok {
 			return m, m.togglePinCmd(p.Path)
-		}
-	case "f":
-		if p, ok := m.selectedProject(); ok {
-			if p.PresentOnDisk {
-				m.status = "Forget only applies to missing folders"
-				return m, nil
-			}
-			return m, m.forgetProjectCmd(p.Path)
 		}
 	case "s":
 		if p, ok := m.selectedProject(); ok {
@@ -2914,7 +2902,6 @@ func compactFooterBase(width int, focused paneFocus, detailScroll float64, hasHi
 				renderFooterMeta("Focus: detail"),
 				renderFooterActionList(
 					footerHideAction("Esc", "list"),
-					footerNavAction("↑/↓", "scroll"),
 					footerNavAction("PgUp/PgDn", "page"),
 					footerNavAction("/", "command"),
 					footerNavAction("Tab", "switch"),
@@ -2928,7 +2915,6 @@ func compactFooterBase(width int, focused paneFocus, detailScroll float64, hasHi
 				renderFooterMeta("Focus: detail"),
 				renderFooterActionList(
 					footerHideAction("Esc", "list"),
-					footerNavAction("↑/↓", "scroll"),
 					footerNavAction("/", "command"),
 					footerNavAction("Tab", "switch"),
 					footerLowAction("?", "help"),
@@ -2958,7 +2944,6 @@ func compactFooterBase(width int, focused paneFocus, detailScroll float64, hasHi
 					footerNavAction("Alt+Down", "picker"),
 					footerNavAction("Alt+[/]", "sessions"),
 					footerNavAction("/", "command"),
-					footerNavAction("r", "refresh"),
 					footerLowAction("?", "help"),
 					footerExitAction("q", "quit"),
 				),
@@ -2971,7 +2956,6 @@ func compactFooterBase(width int, focused paneFocus, detailScroll float64, hasHi
 				footerNavAction("Alt+Down", "picker"),
 				footerNavAction("/", "command"),
 				footerNavAction("Tab", "switch"),
-				footerNavAction("r", "refresh"),
 				footerNavAction("v", "view"),
 				footerLowAction("?", "help"),
 				footerExitAction("q", "quit"),
@@ -2985,7 +2969,6 @@ func compactFooterBase(width int, focused paneFocus, detailScroll float64, hasHi
 					footerPrimaryAction("Enter", "Codex"),
 					footerNavAction("Alt+Down", "picker"),
 					footerNavAction("/", "command"),
-					footerNavAction("r", "refresh"),
 					footerLowAction("?", "help"),
 					footerExitAction("q", "quit"),
 				),
@@ -2998,7 +2981,6 @@ func compactFooterBase(width int, focused paneFocus, detailScroll float64, hasHi
 				footerNavAction("Alt+Down", "picker"),
 				footerNavAction("/", "command"),
 				footerNavAction("Tab", "switch"),
-				footerNavAction("r", "refresh"),
 				footerLowAction("?", "help"),
 				footerExitAction("q", "quit"),
 			),
@@ -3007,7 +2989,6 @@ func compactFooterBase(width int, focused paneFocus, detailScroll float64, hasHi
 		actions := []footerAction{
 			footerPrimaryAction("Enter", "Codex"),
 			footerNavAction("/", "cmd"),
-			footerNavAction("r", "refresh"),
 			footerLowAction("?", "help"),
 			footerExitAction("q", "quit"),
 		}
@@ -3148,11 +3129,10 @@ func (m Model) renderHelpPanel(bodyW, bodyH int) string {
 				"Ctrl+V paste image",
 				"Backspace remove image marker",
 				"Alt+L expand dense blocks",
-				"r   rescan + retry failed AI",
 				"p   pin",
 				"s/S snooze/clear",
 				"n   note",
-				"/settings",
+				"/refresh /settings",
 				"/codex /codex-new",
 				"/commit /finish /push",
 			},

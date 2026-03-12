@@ -547,6 +547,18 @@ func TestRenderFooterListOmitsMoveAndForgetHints(t *testing.T) {
 	if strings.Contains(rendered, "f forget") {
 		t.Fatalf("renderFooter() should not advertise forget in the main list footer: %q", rendered)
 	}
+	if strings.Contains(rendered, "r refresh") {
+		t.Fatalf("renderFooter() should not advertise refresh in the main list footer: %q", rendered)
+	}
+}
+
+func TestRenderFooterDetailOmitsScrollHint(t *testing.T) {
+	m := Model{focusedPane: focusDetail}
+
+	rendered := ansi.Strip(m.renderFooter(160))
+	if strings.Contains(rendered, "↑/↓ scroll") {
+		t.Fatalf("renderFooter() should not advertise detail scrolling in the footer: %q", rendered)
+	}
 }
 
 func TestCompactUsageLabel(t *testing.T) {
@@ -1268,16 +1280,39 @@ func TestSlashOpensCommandMode(t *testing.T) {
 	}
 }
 
-func TestRefreshKeyUsesRetryingStatus(t *testing.T) {
+func TestRefreshKeyDoesNothing(t *testing.T) {
 	m := Model{}
 
 	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	got := updated.(Model)
-	if cmd == nil {
-		t.Fatalf("refresh key should return a scan command")
+	if cmd != nil {
+		t.Fatalf("refresh key should no longer return a scan command")
 	}
-	if got.status != "Scanning and retrying failed assessments..." {
-		t.Fatalf("status = %q, want retrying scan notice", got.status)
+	if got.status != "" {
+		t.Fatalf("status = %q, want empty status after removed shortcut", got.status)
+	}
+	if got.loading {
+		t.Fatalf("loading = true, want false after removed shortcut")
+	}
+}
+
+func TestForgetKeyDoesNothing(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/missing",
+			Name:          "missing",
+			PresentOnDisk: false,
+		}},
+		selected: 0,
+	}
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("forget key should no longer return a forget command")
+	}
+	if got.status != "" {
+		t.Fatalf("status = %q, want empty status after removed shortcut", got.status)
 	}
 }
 
@@ -3967,5 +4002,11 @@ func TestRenderHelpPanelOmitsForgetHint(t *testing.T) {
 	rendered := ansi.Strip(m.renderHelpPanel(80, 20))
 	if strings.Contains(rendered, "f   forget missing") {
 		t.Fatalf("renderHelpPanel() should not advertise forget while it is unavailable: %q", rendered)
+	}
+	if strings.Contains(rendered, "r   rescan + retry failed AI") {
+		t.Fatalf("renderHelpPanel() should not advertise the removed refresh key: %q", rendered)
+	}
+	if !strings.Contains(rendered, "/refresh /settings") {
+		t.Fatalf("renderHelpPanel() should continue to advertise refresh via slash command: %q", rendered)
 	}
 }
