@@ -90,6 +90,10 @@ func (s *Service) PrepareDiff(ctx context.Context, projectPath string) (DiffPrev
 
 	changes := append([]scanner.GitChange(nil), repoStatus.Changes...)
 	sort.SliceStable(changes, func(i, j int) bool {
+		leftStage, rightStage := diffStageRank(changes[i]), diffStageRank(changes[j])
+		if leftStage != rightStage {
+			return leftStage < rightStage
+		}
 		left, right := diffGroupRank(changes[i]), diffGroupRank(changes[j])
 		if left != right {
 			return left < right
@@ -135,6 +139,13 @@ func (s *Service) ToggleDiffFileStage(ctx context.Context, projectPath string, f
 		return "", err
 	}
 	return "Staged " + file.Summary, nil
+}
+
+func diffStageRank(change scanner.GitChange) int {
+	if change.Staged {
+		return 0
+	}
+	return 1
 }
 
 func buildDiffFilePreview(ctx context.Context, projectPath string, change scanner.GitChange) DiffFilePreview {

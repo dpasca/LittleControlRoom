@@ -67,7 +67,7 @@ The main commands to look for are `/settings`, `/diff`, `/commit`, `/finish`, `/
 
 Use `/settings` when you want to save include or exclude paths or change the Codex launch mode.
 
-Use `/diff` to open a full-screen git diff for the selected project, with a file list on the left and a scrollable text or image preview on the right.
+Use `/diff` to open a full-screen git diff for the selected project, with staged files listed first on the left, unstaged files below them, and a scrollable text or image preview on the right.
 
 To create a a new project, use the command `/new-project`. This will create a new directory or acknowledge an existing one, and add it to the list of projects to track.
 

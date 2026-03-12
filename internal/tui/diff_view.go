@@ -25,6 +25,11 @@ const (
 	diffFocusContent diffPaneFocus = "content"
 )
 
+type diffListRow struct {
+	Title     string
+	FileIndex int
+}
+
 type diffViewState struct {
 	ProjectPath string
 	ProjectName string
@@ -197,19 +202,24 @@ func (m *Model) ensureDiffSelectionVisible() {
 	if m.diffView == nil || m.diffView.preview == nil || len(m.diffView.preview.Files) == 0 {
 		return
 	}
+	rows := buildDiffListRows(m.diffView.preview.Files)
+	selectedRow := diffListRowIndex(rows, m.diffView.selected)
+	if selectedRow < 0 {
+		selectedRow = 0
+	}
 	visible := m.diffVisibleRows()
 	if visible <= 0 {
 		visible = 1
 	}
-	maxOffset := max(0, len(m.diffView.preview.Files)-visible)
+	maxOffset := max(0, len(rows)-visible)
 	if m.diffView.offset > maxOffset {
 		m.diffView.offset = maxOffset
 	}
-	if m.diffView.selected < m.diffView.offset {
-		m.diffView.offset = m.diffView.selected
+	if selectedRow < m.diffView.offset {
+		m.diffView.offset = selectedRow
 	}
-	if m.diffView.selected >= m.diffView.offset+visible {
-		m.diffView.offset = m.diffView.selected - visible + 1
+	if selectedRow >= m.diffView.offset+visible {
+		m.diffView.offset = selectedRow - visible + 1
 	}
 	if m.diffView.offset < 0 {
 		m.diffView.offset = 0
@@ -318,20 +328,34 @@ func (m Model) renderDiffFileList(width, height int) string {
 		return fitPaneContent(strings.Join(lines, "\n"), width, height)
 	}
 
+	rows := buildDiffListRows(m.diffView.preview.Files)
 	visible := max(1, height-1)
 	start := m.diffView.offset
-	maxOffset := max(0, len(m.diffView.preview.Files)-visible)
+	maxOffset := max(0, len(rows)-visible)
 	if start > maxOffset {
 		start = maxOffset
 	}
-	end := min(len(m.diffView.preview.Files), start+visible)
+	end := min(len(rows), start+visible)
 	for i := start; i < end; i++ {
-		lines = append(lines, renderDiffFileRow(m.diffView.preview.Files[i], i == m.diffView.selected, width))
+		row := rows[i]
+		if row.FileIndex < 0 {
+			lines = append(lines, renderDiffSectionHeader(row.Title, width))
+			continue
+		}
+		lines = append(lines, renderDiffFileRow(m.diffView.preview.Files[row.FileIndex], row.FileIndex == m.diffView.selected, width))
 	}
-	if end < len(m.diffView.preview.Files) {
-		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d more", len(m.diffView.preview.Files)-end)))
+	if end < len(rows) {
+		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d more", len(rows)-end)))
 	}
 	return fitPaneContent(strings.Join(lines, "\n"), width, height)
+}
+
+func renderDiffSectionHeader(title string, width int) string {
+	return lipgloss.NewStyle().
+		Width(width).
+		Foreground(lipgloss.Color("246")).
+		Bold(true).
+		Render(truncateText(title, max(1, width)))
 }
 
 func renderDiffFileRow(file service.DiffFilePreview, selected bool, width int) string {
@@ -585,6 +609,46 @@ func renderDiffFooter(width int, state diffViewState, usageLabel string) string 
 	}
 	actions = append(actions, footerExitAction("Esc", "close"))
 	return renderFooterLine(width, meta, renderFooterActionList(actions...), renderFooterUsage(usageLabel))
+}
+
+func buildDiffListRows(files []service.DiffFilePreview) []diffListRow {
+	if len(files) == 0 {
+		return nil
+	}
+	stagedCount := 0
+	for _, file := range files {
+		if file.Staged {
+			stagedCount++
+		}
+	}
+	rows := make([]diffListRow, 0, len(files)+2)
+	if stagedCount > 0 {
+		rows = append(rows, diffListRow{Title: fmt.Sprintf("Staged (%d)", stagedCount), FileIndex: -1})
+		for i, file := range files {
+			if file.Staged {
+				rows = append(rows, diffListRow{FileIndex: i})
+			}
+		}
+	}
+	unstagedCount := len(files) - stagedCount
+	if unstagedCount > 0 {
+		rows = append(rows, diffListRow{Title: fmt.Sprintf("Unstaged (%d)", unstagedCount), FileIndex: -1})
+		for i, file := range files {
+			if !file.Staged {
+				rows = append(rows, diffListRow{FileIndex: i})
+			}
+		}
+	}
+	return rows
+}
+
+func diffListRowIndex(rows []diffListRow, fileIndex int) int {
+	for i, row := range rows {
+		if row.FileIndex == fileIndex {
+			return i
+		}
+	}
+	return -1
 }
 
 func selectedDiffFileFromState(state diffViewState) (service.DiffFilePreview, bool) {

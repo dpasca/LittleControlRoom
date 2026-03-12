@@ -4312,18 +4312,6 @@ func TestViewWithDiffScreenUsesFullBody(t *testing.T) {
 		Summary:     "3 files changed, 12 insertions(+), 1 deletion(-)",
 		Files: []service.DiffFilePreview{
 			{
-				Path:      "README.md",
-				Summary:   "README.md",
-				Code:      "M",
-				Kind:      scanner.GitChangeModified,
-				Unstaged:  true,
-				Body:      "# Unstaged\n\ndiff --git a/README.md b/README.md\n+diff screen\n",
-				IsImage:   false,
-				OldImage:  nil,
-				NewImage:  nil,
-				Untracked: false,
-			},
-			{
 				Path:      "pixel.png",
 				Summary:   "pixel.png",
 				Code:      "M",
@@ -4335,9 +4323,20 @@ func TestViewWithDiffScreenUsesFullBody(t *testing.T) {
 				NewImage:  mustTestPNG(color.RGBA{R: 32, G: 120, B: 220, A: 255}),
 				Untracked: false,
 			},
+			{
+				Path:      "README.md",
+				Summary:   "README.md",
+				Code:      "M",
+				Kind:      scanner.GitChangeModified,
+				Staged:    true,
+				Body:      "# Staged\n\ndiff --git a/README.md b/README.md\n+diff screen\n",
+				IsImage:   false,
+				OldImage:  nil,
+				NewImage:  nil,
+				Untracked: false,
+			},
 		},
 	}
-	diffState.selected = 1
 
 	m := Model{
 		diffView: diffState,
@@ -4354,6 +4353,9 @@ func TestViewWithDiffScreenUsesFullBody(t *testing.T) {
 	if !strings.Contains(rendered, "Files") || !strings.Contains(rendered, "README.md") {
 		t.Fatalf("View() should render the diff file list: %q", rendered)
 	}
+	if !strings.Contains(rendered, "Staged (1)") || !strings.Contains(rendered, "Unstaged (1)") {
+		t.Fatalf("View() should render staged and unstaged file sections: %q", rendered)
+	}
 	if !strings.Contains(rendered, "HEAD image") || !strings.Contains(rendered, "Working tree image") {
 		t.Fatalf("View() should render image diff labels: %q", rendered)
 	}
@@ -4362,6 +4364,48 @@ func TestViewWithDiffScreenUsesFullBody(t *testing.T) {
 	}
 	if strings.Contains(rendered, "ATTN  STATE") || strings.Contains(rendered, "Attention reasons") {
 		t.Fatalf("View() should replace the normal list/detail body when diff is open: %q", rendered)
+	}
+}
+
+func TestRenderDiffFileListSeparatesStagedAndUnstagedSections(t *testing.T) {
+	diffState := newDiffViewState("/tmp/demo", "demo")
+	diffState.loading = false
+	diffState.preview = &service.DiffPreview{
+		Files: []service.DiffFilePreview{
+			{
+				Path:     "unstaged.txt",
+				Summary:  "unstaged.txt",
+				Code:     "M",
+				Kind:     scanner.GitChangeModified,
+				Unstaged: true,
+			},
+			{
+				Path:    "staged.txt",
+				Summary: "staged.txt",
+				Code:    "M",
+				Kind:    scanner.GitChangeModified,
+				Staged:  true,
+			},
+		},
+	}
+
+	m := Model{
+		diffView: diffState,
+		width:    100,
+		height:   20,
+	}
+	m.syncDiffView(true)
+
+	rendered := ansi.Strip(m.renderDiffFileList(28, 10))
+	stagedHeader := strings.Index(rendered, "Staged (1)")
+	stagedFile := strings.Index(rendered, "staged.txt")
+	unstagedHeader := strings.Index(rendered, "Unstaged (1)")
+	unstagedFile := strings.Index(rendered, "unstaged.txt")
+	if stagedHeader == -1 || stagedFile == -1 || unstagedHeader == -1 || unstagedFile == -1 {
+		t.Fatalf("renderDiffFileList() should include both grouped sections and files: %q", rendered)
+	}
+	if !(stagedHeader < stagedFile && stagedFile < unstagedHeader && unstagedHeader < unstagedFile) {
+		t.Fatalf("renderDiffFileList() should place staged files before the unstaged section: %q", rendered)
 	}
 }
 
