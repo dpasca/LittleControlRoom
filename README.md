@@ -22,6 +22,12 @@ Click any screenshot to open the full-size PNG on GitHub.
 | --- | --- |
 | [![Little Control Room diff window](docs/screenshots/diff-view.png)](docs/screenshots/diff-view.png) | [![Little Control Room commit preview dialog](docs/screenshots/commit-preview.png)](docs/screenshots/commit-preview.png) |
 
+<p align="center">
+  <a href="docs/screenshots/diff-view-image.png">
+    <img src="docs/screenshots/diff-view-image.png" alt="Little Control Room diff window showing before and after image previews" width="760">
+  </a>
+</p>
+
 ## What It Does
 
 - Finds recent Codex sessions across your local projects

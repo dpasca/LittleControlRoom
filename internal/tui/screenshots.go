@@ -1,11 +1,15 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"math"
 	"os"
 	"path/filepath"
@@ -77,7 +81,7 @@ func GenerateScreenshots(ctx context.Context, svc *service.Service, cfg config.S
 	now := screenshotReferenceTime(filtered)
 	listSnapshots := screenshotListLiveCodexSnapshots(filtered, now)
 	liveSelectionProject := screenshotAlternateSelectionProject(filtered, liveProject)
-	assets := make([]ScreenshotAsset, 0, 5)
+	assets := make([]ScreenshotAsset, 0, 6)
 
 	mainModel, err := buildScreenshotDashboardModel(ctx, svc, data, filtered, selectedProject.Path, cfg, now)
 	if err != nil {
@@ -120,6 +124,15 @@ func GenerateScreenshots(ctx context.Context, svc *service.Service, cfg config.S
 	diffModel.syncDiffView(true)
 	diffModel.status = diffViewReadyStatus(*diffModel.diffView)
 	assets = append(assets, screenshotAsset("diff-view", "Diff View", diffModel.View(), cfg))
+
+	imageDiffModel, err := buildScreenshotDashboardModel(ctx, svc, data, filtered, selectedProject.Path, cfg, now)
+	if err != nil {
+		return ScreenshotReport{}, err
+	}
+	imageDiffModel.diffView = screenshotImageDiffView(selectedProject)
+	imageDiffModel.syncDiffView(true)
+	imageDiffModel.status = diffViewReadyStatus(*imageDiffModel.diffView)
+	assets = append(assets, screenshotAsset("diff-view-image", "Image Diff View", imageDiffModel.View(), cfg))
 
 	commitModel, err := buildScreenshotDashboardModel(ctx, svc, data, filtered, selectedProject.Path, cfg, now)
 	if err != nil {
@@ -1221,7 +1234,153 @@ func applySGRParams(style terminalTextStyle, params []int) terminalTextStyle {
 			}
 		}
 	}
+
 	return style
+}
+
+func screenshotImageDiffView(project model.ProjectSummary) *diffViewState {
+	state := newDiffViewState(project.Path, screenshotProjectLabel(project))
+	state.loading = false
+	state.preview = screenshotImageDiffPreview(project)
+	state.selected = 1
+	state.focus = diffFocusContent
+	return state
+}
+
+func screenshotImageDiffPreview(project model.ProjectSummary) *service.DiffPreview {
+	return &service.DiffPreview{
+		ProjectPath: project.Path,
+		ProjectName: screenshotProjectLabel(project),
+		Branch:      "master",
+		Summary:     "3 files changed, 12 insertions(+), 1 deletion(-)",
+		Files: []service.DiffFilePreview{
+			{
+				Path:    "internal/tui/diff_view.go",
+				Summary: "internal/tui/diff_view.go",
+				Code:    "M",
+				Kind:    scanner.GitChangeModified,
+				Staged:  true,
+				Body: strings.TrimSpace(`# Staged
+
+diff --git a/internal/tui/diff_view.go b/internal/tui/diff_view.go
+@@ -455,0 +456,3 @@
++if imageBlock := renderDiffImagePreviewSet(file, width); strings.TrimSpace(imageBlock) != "" {
++	blocks = append(blocks, imageBlock)
++}
+`),
+			},
+			{
+				Path:     "assets/sprites/bunker_guard.png",
+				Summary:  "assets/sprites/bunker_guard.png",
+				Code:     "M",
+				Kind:     scanner.GitChangeModified,
+				Unstaged: true,
+				IsImage:  true,
+				Body:     "FractalMech-style bunker sprite pass: intact frame on the left, damaged repaint on the right.",
+				OldImage: screenshotBunkerSpritePNG(false),
+				NewImage: screenshotBunkerSpritePNG(true),
+			},
+			{
+				Path:      "notes/image-diff.txt",
+				Summary:   "notes/image-diff.txt",
+				Code:      "??",
+				Kind:      scanner.GitChangeUntracked,
+				Untracked: true,
+				Body: strings.TrimSpace(`# Untracked
+
+Use a built-in bunker sprite pair for the docs screenshot so the image diff stays deterministic and does not depend on ../FractalMech being present.
+`),
+			},
+		},
+	}
+}
+
+func screenshotBunkerSpritePNG(destroyed bool) []byte {
+	const (
+		width  = 64
+		height = 48
+	)
+
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	clear := color.RGBA{}
+	sky := color.RGBA{R: 18, G: 24, B: 40, A: 255}
+	haze := color.RGBA{R: 54, G: 66, B: 86, A: 255}
+	ground := color.RGBA{R: 72, G: 60, B: 42, A: 255}
+	shadow := color.RGBA{R: 26, G: 23, B: 20, A: 220}
+	bunkerBase := color.RGBA{R: 120, G: 126, B: 132, A: 255}
+	bunkerLight := color.RGBA{R: 154, G: 162, B: 170, A: 255}
+	bunkerDark := color.RGBA{R: 76, G: 82, B: 88, A: 255}
+	doorGlow := color.RGBA{R: 255, G: 196, B: 92, A: 255}
+	damageGlow := color.RGBA{R: 255, G: 116, B: 54, A: 255}
+	smoke := color.RGBA{R: 96, G: 89, B: 84, A: 210}
+
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			img.SetRGBA(x, y, clear)
+		}
+	}
+
+	fillRectRGBA(img, 0, 14, width, 18, sky)
+	fillRectRGBA(img, 0, 26, width, 10, haze)
+	fillRectRGBA(img, 0, 36, width, 12, ground)
+	fillRectRGBA(img, 8, 33, 48, 5, shadow)
+	fillRectRGBA(img, 10, 28, 44, 9, bunkerDark)
+	fillRectRGBA(img, 14, 18, 36, 12, bunkerBase)
+	fillRectRGBA(img, 18, 11, 28, 10, bunkerLight)
+	fillRectRGBA(img, 21, 14, 22, 4, bunkerDark)
+	fillRectRGBA(img, 16, 22, 8, 2, bunkerLight)
+	fillRectRGBA(img, 40, 22, 8, 2, bunkerLight)
+	fillRectRGBA(img, 29, 23, 6, 5, bunkerDark)
+	fillRectRGBA(img, 30, 24, 4, 4, doorGlow)
+	fillRectRGBA(img, 43, 15, 9, 2, bunkerDark)
+	fillRectRGBA(img, 50, 13, 4, 4, bunkerLight)
+	setPixelRGBA(img, 53, 12, bunkerLight)
+	setPixelRGBA(img, 54, 11, bunkerLight)
+
+	if destroyed {
+		fillRectRGBA(img, 22, 16, 16, 6, color.RGBA{R: 58, G: 54, B: 58, A: 255})
+		fillRectRGBA(img, 30, 24, 4, 4, color.RGBA{R: 30, G: 22, B: 18, A: 255})
+		fillRectRGBA(img, 26, 26, 12, 2, color.RGBA{R: 56, G: 42, B: 34, A: 255})
+		fillRectRGBA(img, 20, 30, 24, 3, color.RGBA{R: 48, G: 38, B: 30, A: 255})
+		fillRectRGBA(img, 27, 21, 10, 2, damageGlow)
+		fillRectRGBA(img, 18, 18, 6, 3, smoke)
+		fillRectRGBA(img, 23, 13, 7, 4, smoke)
+		fillRectRGBA(img, 31, 10, 8, 5, smoke)
+		fillRectRGBA(img, 39, 14, 6, 3, smoke)
+		setPixelRGBA(img, 41, 28, damageGlow)
+		setPixelRGBA(img, 42, 27, damageGlow)
+		setPixelRGBA(img, 43, 26, damageGlow)
+		for x := 19; x <= 43; x += 3 {
+			setPixelRGBA(img, x, 29, bunkerDark)
+		}
+	} else {
+		fillRectRGBA(img, 22, 16, 16, 3, bunkerLight)
+		fillRectRGBA(img, 24, 20, 12, 2, bunkerDark)
+		fillRectRGBA(img, 19, 28, 26, 2, bunkerBase)
+		setPixelRGBA(img, 18, 17, doorGlow)
+		setPixelRGBA(img, 46, 17, doorGlow)
+	}
+
+	var out bytes.Buffer
+	if err := png.Encode(&out, img); err != nil {
+		return nil
+	}
+	return out.Bytes()
+}
+
+func fillRectRGBA(img *image.RGBA, x, y, w, h int, c color.RGBA) {
+	for yy := max(0, y); yy < min(img.Bounds().Dy(), y+h); yy++ {
+		for xx := max(0, x); xx < min(img.Bounds().Dx(), x+w); xx++ {
+			img.SetRGBA(xx, yy, c)
+		}
+	}
+}
+
+func setPixelRGBA(img *image.RGBA, x, y int, c color.RGBA) {
+	if x < 0 || y < 0 || x >= img.Bounds().Dx() || y >= img.Bounds().Dy() {
+		return
+	}
+	img.SetRGBA(x, y, c)
 }
 
 func clampColor(value int) int {

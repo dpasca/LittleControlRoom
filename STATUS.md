@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-12 19:49 JST (JST)
+Last updated: 2026-03-12 20:10 JST (JST)
 
 ## Current State
 
@@ -34,7 +34,7 @@ Current screenshot workflow assumption:
 
 - `make screenshots` currently defaults to the repo-root `screenshots.local.toml` unless `SCREENSHOT_CONFIG` is overridden; the committed demo config remains available at `docs/screenshots.example.toml`.
 - Screenshot capture scale is now configurable via `capture_scale`, and the default browser-rendered PNG export path uses `1.5x` capture scale for sharper text.
-- The committed docs screenshot set now includes `main-panel.png`, `main-panel-live-cx.png`, `codex-embedded.png`, `diff-view.png`, and `commit-preview.png`.
+- The committed docs screenshot set now includes `main-panel.png`, `main-panel-live-cx.png`, `codex-embedded.png`, `diff-view.png`, `diff-view-image.png`, and `commit-preview.png`.
 
 ## What Works
 
@@ -65,24 +65,24 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-12 19:49 JST)
+## Latest Update (2026-03-12 20:10 JST)
 
-- Added a deterministic full-screen diff screenshot scenario to `lcroom screenshots` / `make screenshots`, using a curated staged-plus-unstaged fixture so the docs now capture the dedicated `/diff` window as well as the main, embedded Codex, and commit-preview views.
-- Updated the screenshot docs surfaces to include the new asset in the README gallery and the reference command docs, then regenerated the committed PNG set from the demo screenshot config so `docs/screenshots/diff-view.png` is checked in alongside the existing screenshots.
+- Added a second deterministic `/diff` screenshot scenario that selects an image change and renders side-by-side before/after previews from a built-in bunker sprite pair inspired by the FractalMech bunker/destroyed art, keeping the docs pipeline self-contained instead of depending on `../FractalMech`.
+- Kept the original text-diff screenshot, added the new image-diff asset to the README and reference docs, and regenerated the committed PNG set from the demo screenshot config so `docs/screenshots/diff-view-image.png` ships alongside the rest of the curated docs screenshots.
 - No Codex/OpenCode detector assumptions changed; `docs/codex_cli_footprint.md` stayed aligned with the current footprint expectations.
 
 Verification snapshot:
 
-- `go test ./internal/tui -run 'TestScreenshotDiffViewFixtureRendersSelectedPatch|TestScreenshotEmbeddedCodexSnapshotRendersSessionMeta|TestViewWithDiffScreenUsesFullBody|TestRenderDiffFileListSeparatesStagedAndUnstagedSections'` passed.
-- `SCREENSHOT_CONFIG=docs/screenshots.example.toml SCREENSHOT_OUTPUT_DIR=docs/screenshots make screenshots` passed and refreshed `docs/screenshots/main-panel.png`, `docs/screenshots/main-panel-live-cx.png`, `docs/screenshots/codex-embedded.png`, `docs/screenshots/diff-view.png`, and `docs/screenshots/commit-preview.png`.
+- `go test ./internal/tui -run 'TestScreenshotDiffViewFixtureRendersSelectedPatch|TestScreenshotImageDiffViewFixtureRendersImagePreview|TestScreenshotEmbeddedCodexSnapshotRendersSessionMeta|TestViewWithDiffScreenUsesFullBody|TestRenderDiffFileListSeparatesStagedAndUnstagedSections'` passed.
+- `SCREENSHOT_CONFIG=docs/screenshots.example.toml SCREENSHOT_OUTPUT_DIR=docs/screenshots make screenshots` passed and refreshed `docs/screenshots/main-panel.png`, `docs/screenshots/main-panel-live-cx.png`, `docs/screenshots/codex-embedded.png`, `docs/screenshots/diff-view.png`, `docs/screenshots/diff-view-image.png`, and `docs/screenshots/commit-preview.png`.
 - `make test` passed.
-- `make scan` passed at `2026-03-12T19:48:55+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 2`, `queued classifications: 2`).
-- `make doctor` passed on the cached snapshot dated `2026-03-12T19:48:55+09:00` (`projects: 135`).
+- `make scan` passed at `2026-03-12T20:09:44+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-12T20:09:44+09:00` (`projects: 135`).
 - `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q`.
 
 Next concrete tasks:
 
-- Consider adding a second diff screenshot scenario that selects an image change, so the docs also show the ANSI image-preview path.
+- Decide whether the README should keep the image-diff screenshot as its own centered showcase or fold it into a denser gallery layout.
 - Decide whether the screenshot generator should support rendering a named subset of assets for faster documentation refreshes.
 
 ## Recent Updates

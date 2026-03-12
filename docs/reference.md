@@ -103,6 +103,7 @@ The generated set currently includes:
 - `main-panel-live-cx.png`
 - `codex-embedded.png`
 - `diff-view.png`
+- `diff-view-image.png`
 - `commit-preview.png`
 
 `project_filters`, `selected_project`, and `live_codex_project` match against the project name, the repo directory name, and simple acronyms such as `LCR` for `LittleControlRoom`.

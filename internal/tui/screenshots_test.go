@@ -151,6 +151,35 @@ func TestScreenshotDiffViewFixtureRendersSelectedPatch(t *testing.T) {
 	}
 }
 
+func TestScreenshotImageDiffViewFixtureRendersImagePreview(t *testing.T) {
+	t.Parallel()
+
+	project := model.ProjectSummary{
+		Name: "LittleControlRoom",
+		Path: "/tmp/LittleControlRoom",
+	}
+
+	m := Model{
+		diffView: screenshotImageDiffView(project),
+		width:    112,
+		height:   31,
+	}
+	m.syncDiffView(true)
+
+	rendered := ansi.Strip(m.View())
+	for _, want := range []string{
+		"assets/sprites/bunker_guard.png",
+		"HEAD image",
+		"Working tree image",
+		"FractalMech-style bunker sprite pass",
+		"Alt+Up",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("image diff screenshot render missing %q: %q", want, rendered)
+		}
+	}
+}
+
 func TestScreenshotDemoDataSetUsesSafeFixturePaths(t *testing.T) {
 	t.Parallel()
 
