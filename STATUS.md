@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-12 15:30 JST (JST)
+Last updated: 2026-03-12 15:38 JST (JST)
 
 ## Current State
 
@@ -33,6 +33,7 @@ Current embedded Codex transport assumption:
 Current screenshot workflow assumption:
 
 - `make screenshots` currently defaults to the repo-root `screenshots.local.toml` unless `SCREENSHOT_CONFIG` is overridden; the committed demo config remains available at `docs/screenshots.example.toml`.
+- Screenshot capture scale is now configurable via `capture_scale`, and the default browser-rendered PNG export path uses `1.5x` capture scale for sharper text.
 
 ## What Works
 
@@ -63,25 +64,27 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-12 15:30 JST)
+## Latest Update (2026-03-12 15:38 JST)
 
-- Hardened the session-classifier OpenAI client so transient transport/socket failures from `httpClient.Do` now count as retryable instead of immediately surfacing as permanent same-snapshot failures.
-- Kept that transport retry intentionally bounded by the existing two-attempt classifier plan, so the worker gets one follow-up try without any open-ended retry loop.
-- Added focused coverage for both transport paths: a transient `can't assign requested address` style failure that succeeds on retry, and a repeated transport failure that stops after the bounded attempt cap.
+- Added configurable screenshot `capture_scale` support, defaulted to `1.5`, so the browser-rendered docs PNGs are captured at higher resolution instead of being hard-pinned to `1x`.
+- Wired that scale through screenshot config parsing, browser capture argument building, crop-padding scaling, and the screenshot docs/example config so the sharper export path is explicit and tunable.
+- Regenerated the committed screenshot set and visually rechecked `docs/screenshots/codex-embedded.png`; the refreshed PNGs now render at `1244x941`, which looks noticeably crisper than the prior `1x` export.
 - No Codex/OpenCode detector assumptions changed; `docs/codex_cli_footprint.md` stayed aligned with the current footprint expectations.
 
 Verification snapshot:
 
-- `go test ./internal/sessionclassify` passed.
+- `go test ./internal/config ./internal/cli ./internal/tui` passed.
+- `make screenshots` passed and refreshed `docs/screenshots/main-panel.png`, `docs/screenshots/main-panel-live-cx.png`, `docs/screenshots/codex-embedded.png`, and `docs/screenshots/commit-preview.png`.
 - `make test` passed.
-- `make scan` passed at `2026-03-12T15:30:35+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 1`, `queued classifications: 1`).
-- `make doctor` passed on the cached snapshot dated `2026-03-12T15:30:43+09:00` (`projects: 135`).
+- `make scan` passed at `2026-03-12T15:37:39+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-12T15:37:46+09:00` (`projects: 135`).
+- `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q`.
 
 Next concrete tasks:
 
-- Decide whether the same bounded transport-retry policy should also cover the git commit-message / untracked-file OpenAI client for consistency.
-- Watch for any remaining transient network errors that should join the retryable set without broadening it into a catch-all.
-- If self-healing transport failures still feel noisy in the TUI, consider softening or annotating the stored failure copy so temporary blips read less like hard failures.
+- Compare the new `1.5x` screenshot output against prior docs/GitHub rendering and decide whether `capture_scale` should stay at `1.5` or move to `2.0`.
+- If font edges still feel too soft in downstream presentation, add an optional supersample-and-downscale export mode rather than baking in more font-weight.
+- Keep an eye on screenshot file size growth now that the committed PNG set is higher resolution.
 
 ## Recent Updates
 

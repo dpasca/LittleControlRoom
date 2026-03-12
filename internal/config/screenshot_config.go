@@ -15,6 +15,7 @@ type ScreenshotConfig struct {
 	DemoData         bool
 	TerminalWidth    int
 	TerminalHeight   int
+	CaptureScale     float64
 	OutputDir        string
 	BrowserPath      string
 	ProjectFilters   []string
@@ -26,6 +27,7 @@ type screenshotFileConfig struct {
 	DemoData         bool     `toml:"demo_data"`
 	TerminalWidth    int      `toml:"terminal_width"`
 	TerminalHeight   int      `toml:"terminal_height"`
+	CaptureScale     float64  `toml:"capture_scale"`
 	OutputDir        string   `toml:"output_dir"`
 	BrowserPath      string   `toml:"browser_path"`
 	ProjectFilters   []string `toml:"project_filters"`
@@ -37,6 +39,7 @@ func DefaultScreenshotConfig() ScreenshotConfig {
 	return ScreenshotConfig{
 		TerminalWidth:  112,
 		TerminalHeight: 31,
+		CaptureScale:   1.5,
 		OutputDir:      "docs/screenshots",
 	}
 }
@@ -71,6 +74,9 @@ func ParseScreenshotConfig(path string) (ScreenshotConfig, error) {
 	}
 	if fc.TerminalHeight > 0 {
 		cfg.TerminalHeight = fc.TerminalHeight
+	}
+	if fc.CaptureScale > 0 {
+		cfg.CaptureScale = fc.CaptureScale
 	}
 	if strings.TrimSpace(fc.OutputDir) != "" {
 		cfg.OutputDir = strings.TrimSpace(fc.OutputDir)
@@ -136,6 +142,9 @@ func validateScreenshotConfig(cfg ScreenshotConfig) error {
 	}
 	if cfg.TerminalHeight < 12 {
 		return fmt.Errorf("terminal_height must be at least 12")
+	}
+	if cfg.CaptureScale < 1 {
+		return fmt.Errorf("capture_scale must be at least 1")
 	}
 	if strings.TrimSpace(cfg.OutputDir) == "" {
 		return fmt.Errorf("output_dir is required")

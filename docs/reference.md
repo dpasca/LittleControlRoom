@@ -76,6 +76,7 @@ Screenshot config fields:
 - `demo_data` (when `true`, render built-in sample data instead of your local project scan)
 - `terminal_width`
 - `terminal_height`
+- `capture_scale` (browser device scale factor for higher-resolution PNGs; default `1.5`)
 - `output_dir`
 - `browser_path` (optional absolute path or command name for Chrome/Chromium/Brave/Edge)
 - `project_filters`
@@ -88,6 +89,7 @@ Minimal screenshot example:
 demo_data = true
 terminal_width = 112
 terminal_height = 31
+capture_scale = 1.5
 output_dir = "screenshots"
 # browser_path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 

@@ -6,6 +6,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -103,5 +104,32 @@ func TestCropBrowserScreenshotTrimsUniformBackground(t *testing.T) {
 	}
 	if got, want := cropped.Bounds().Dy(), 12; got != want {
 		t.Fatalf("cropped height = %d, want %d", got, want)
+	}
+}
+
+func TestBrowserScreenshotArgsUseCaptureScale(t *testing.T) {
+	t.Parallel()
+
+	args := browserScreenshotArgs("file:///tmp/demo.html", "/tmp/demo.png", 640, 480, 1.5)
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--force-device-scale-factor=1.50") {
+		t.Fatalf("browserScreenshotArgs() missing capture scale: %q", joined)
+	}
+	if !strings.Contains(joined, "--window-size=640,480") {
+		t.Fatalf("browserScreenshotArgs() missing window size: %q", joined)
+	}
+}
+
+func TestScaleScreenshotCropPaddingTracksCaptureScale(t *testing.T) {
+	t.Parallel()
+
+	got := scaleScreenshotCropPadding(screenshotCropPadding{
+		left:   10,
+		top:    8,
+		right:  6,
+		bottom: 18,
+	}, 1.5)
+	if got.left != 15 || got.top != 12 || got.right != 9 || got.bottom != 27 {
+		t.Fatalf("scaleScreenshotCropPadding() = %+v", got)
 	}
 }

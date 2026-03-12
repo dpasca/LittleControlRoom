@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
+	"math"
 	"net/url"
 	"os"
 	"os/exec"
@@ -71,7 +72,7 @@ func resolveScreenshotBrowserCandidate(candidate string) (string, bool) {
 	return path, true
 }
 
-func captureBrowserScreenshot(ctx context.Context, browserPath, htmlPath, outputPath string, width, height int) error {
+func captureBrowserScreenshot(ctx context.Context, browserPath, htmlPath, outputPath string, width, height int, captureScale float64) error {
 	htmlPath, err := filepath.Abs(htmlPath)
 	if err != nil {
 		return fmt.Errorf("resolve html path: %w", err)
@@ -86,18 +87,7 @@ func captureBrowserScreenshot(ctx context.Context, browserPath, htmlPath, output
 		Path:   filepath.ToSlash(htmlPath),
 	}).String()
 
-	args := []string{
-		"--headless=new",
-		"--disable-gpu",
-		"--hide-scrollbars",
-		"--force-device-scale-factor=1",
-		"--force-color-profile=srgb",
-		"--run-all-compositor-stages-before-draw",
-		"--virtual-time-budget=1500",
-		fmt.Sprintf("--window-size=%d,%d", width, height),
-		fmt.Sprintf("--screenshot=%s", outputPath),
-		fileURL,
-	}
+	args := browserScreenshotArgs(fileURL, outputPath, width, height, captureScale)
 
 	cmd := exec.CommandContext(ctx, browserPath, args...)
 	output, err := cmd.CombinedOutput()
@@ -108,15 +98,58 @@ func captureBrowserScreenshot(ctx context.Context, browserPath, htmlPath, output
 		}
 		return fmt.Errorf("capture browser screenshot: %w", err)
 	}
-	if err := cropBrowserScreenshot(outputPath, screenshotCropPadding{
+	if err := cropBrowserScreenshot(outputPath, scaleScreenshotCropPadding(screenshotCropPadding{
 		left:   10,
 		top:    10,
 		right:  10,
 		bottom: 18,
-	}); err != nil {
+	}, captureScale)); err != nil {
 		return fmt.Errorf("crop browser screenshot: %w", err)
 	}
 	return nil
+}
+
+func browserScreenshotArgs(fileURL, outputPath string, width, height int, captureScale float64) []string {
+	captureScale = normalizeScreenshotCaptureScale(captureScale)
+	return []string{
+		"--headless=new",
+		"--disable-gpu",
+		"--hide-scrollbars",
+		fmt.Sprintf("--force-device-scale-factor=%.2f", captureScale),
+		"--force-color-profile=srgb",
+		"--run-all-compositor-stages-before-draw",
+		"--virtual-time-budget=1500",
+		fmt.Sprintf("--window-size=%d,%d", width, height),
+		fmt.Sprintf("--screenshot=%s", outputPath),
+		fileURL,
+	}
+}
+
+func normalizeScreenshotCaptureScale(scale float64) float64 {
+	if scale < 1 {
+		return 1
+	}
+	return scale
+}
+
+func scaleScreenshotCropPadding(padding screenshotCropPadding, captureScale float64) screenshotCropPadding {
+	captureScale = normalizeScreenshotCaptureScale(captureScale)
+	if captureScale == 1 {
+		return padding
+	}
+	return screenshotCropPadding{
+		left:   scaleScreenshotCropValue(padding.left, captureScale),
+		top:    scaleScreenshotCropValue(padding.top, captureScale),
+		right:  scaleScreenshotCropValue(padding.right, captureScale),
+		bottom: scaleScreenshotCropValue(padding.bottom, captureScale),
+	}
+}
+
+func scaleScreenshotCropValue(value int, captureScale float64) int {
+	if value <= 0 {
+		return 0
+	}
+	return int(math.Ceil(float64(value) * captureScale))
 }
 
 type screenshotCropPadding struct {

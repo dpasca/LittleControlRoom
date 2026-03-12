@@ -15,6 +15,7 @@ func TestParseScreenshotConfig(t *testing.T) {
 demo_data = true
 terminal_width = 112
 terminal_height = 31
+capture_scale = 1.75
 output_dir = "docs/screenshots"
 browser_path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
@@ -37,6 +38,9 @@ live_codex_project = "assistant-lab"
 
 	if cfg.TerminalWidth != 112 || cfg.TerminalHeight != 31 {
 		t.Fatalf("terminal size = %dx%d, want 112x31", cfg.TerminalWidth, cfg.TerminalHeight)
+	}
+	if cfg.CaptureScale != 1.75 {
+		t.Fatalf("CaptureScale = %v, want 1.75", cfg.CaptureScale)
 	}
 	if !cfg.DemoData {
 		t.Fatalf("DemoData = false, want true")
@@ -76,6 +80,9 @@ project_filters = ["LittleControlRoom"]
 
 	if cfg.TerminalWidth != 112 || cfg.TerminalHeight != 31 {
 		t.Fatalf("defaults = %dx%d, want 112x31", cfg.TerminalWidth, cfg.TerminalHeight)
+	}
+	if cfg.CaptureScale != 1.5 {
+		t.Fatalf("CaptureScale = %v, want 1.5", cfg.CaptureScale)
 	}
 	if cfg.DemoData {
 		t.Fatalf("DemoData = true, want false")

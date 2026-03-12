@@ -86,7 +86,7 @@ func runScreenshots(ctx context.Context, svc *service.Service, rawArgs []string)
 			return 1
 		}
 		path := filepath.Join(cfg.OutputDir, asset.Name+".png")
-		if err := captureBrowserScreenshot(ctx, browserPath, htmlPath, path, asset.Width, asset.Height); err != nil {
+		if err := captureBrowserScreenshot(ctx, browserPath, htmlPath, path, asset.Width, asset.Height, cfg.CaptureScale); err != nil {
 			fmt.Fprintf(os.Stderr, "render %s: %v\n", path, err)
 			fmt.Fprintf(os.Stderr, "debug html left at %s\n", htmlPath)
 			keepTemp = true
