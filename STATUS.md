@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-13 07:55 JST (JST)
+Last updated: 2026-03-13 08:13 JST (JST)
 
 ## Current State
 
@@ -75,7 +75,31 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-13 07:55 JST)
+## Latest Update (2026-03-13 08:13 JST)
+
+- Fixed an embedded OpenCode stability bug reported from the demo project: the shared OpenCode `http.Client` was carrying a global `20s` timeout, which is fine for short RPCs but wrong for the long-lived `/event` SSE stream. The OpenCode transport now leaves the shared client without a global timeout and relies on per-request contexts for normal RPC deadlines, so the event stream can stay open while the model picker or other idle UI is on screen.
+- Added a focused regression in `internal/codexapp/opencode_session_test.go` that locks in the no-global-timeout HTTP client used by the embedded OpenCode transport.
+- Re-ran the mixed-provider focused suites after the fix; Codex/OpenCode picker, pane, and command tests still pass.
+- No Codex/OpenCode detector footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/codexapp ./internal/tui ./internal/commands -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-13T02:00:04+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 4`, `queued classifications: 7`).
+- `make doctor` passed on the cached snapshot dated `2026-03-13T02:00:04+09:00` (`projects: 138`).
+- `env COLUMNS=110 LINES=30 make tui` launched and exited cleanly via `q`.
+- Manual OpenCode smoke test still reproduced a real OpenCode session and assistant reply in `/private/tmp/lcr-oc-smoke.0JlgcW`, and `make doctor` tracked that repo as `format=opencode_db`.
+
+Next concrete tasks:
+
+- Add a provider-neutral transcript/session abstraction above Codex/OpenCode so the TUI no longer relies on Codex-named helpers and duplicated provider conditionals.
+- Exercise more real OpenCode image/file prompts to harden attachment behavior and decide whether `data:` URLs are sufficient or whether `file://` fallbacks are needed.
+- Improve OpenCode-specific polish around agent/status presentation and any remaining approval/question wording that still feels Codex-shaped.
+
+## Recent Updates
+
+### 2026-03-13 07:55 JST
 
 - Traced the stale `RUN` timer report to embedded Codex session bookkeeping rather than the assessment classifier: completed turns could stay marked busy because generic metadata activity (`thread/tokenUsage/updated`, rate-limit updates, similar heartbeats) kept refreshing the same timestamp the stale-busy reconciler uses.
 - Added a dedicated `LastBusyActivityAt` snapshot field and `lastBusyActivityAt` session clock so the manager now reconciles based on real turn/output activity instead of any session activity.
@@ -90,14 +114,6 @@ Verification snapshot:
 - `make scan` passed at `2026-03-13T07:52:46+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 7`, `queued classifications: 7`).
 - `make doctor` passed on the cached snapshot dated `2026-03-13T07:52:47+09:00` (`projects: 138`).
 - `make tui` launched cleanly in a PTY and exited via `Ctrl+C` after a startup smoke check.
-
-Next concrete tasks:
-
-- Reproduce a fully finished hidden embedded Codex turn in the live TUI and confirm the stale-busy reconciler now drops the `RUN` timer after the quiet window instead of leaving the row pinned for hours.
-- Decide whether OpenCode should also carry a dedicated busy-activity clock or whether its current busy-state source is already specific enough.
-- Keep folding provider-neutral session abstractions through the TUI now that mixed Codex/OpenCode behavior is landing.
-
-## Recent Updates
 
 ### 2026-03-13 02:01 JST
 

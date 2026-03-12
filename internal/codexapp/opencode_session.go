@@ -240,12 +240,18 @@ type openCodeQuestionReply struct {
 	Answers [][]string `json:"answers"`
 }
 
+func newOpenCodeHTTPClient() *http.Client {
+	// Use per-request contexts for RPC deadlines and leave the shared client
+	// without a global timeout so the long-lived SSE event stream can stay open.
+	return &http.Client{}
+}
+
 func newOpenCodeSession(req LaunchRequest, notify func()) (Session, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &openCodeSession{
 		projectPath:       req.ProjectPath,
 		notify:            notify,
-		http:              &http.Client{Timeout: openCodeRPCTimeout},
+		http:              newOpenCodeHTTPClient(),
 		agent:             openCodeDefaultAgent,
 		cancel:            cancel,
 		exitCh:            make(chan struct{}),
