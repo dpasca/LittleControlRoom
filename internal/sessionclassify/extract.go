@@ -391,10 +391,11 @@ func parseOpenCodePartText(partData string) string {
 		}
 		toolName := sanitizeTranscriptText(payload.Tool)
 		status := sanitizeTranscriptText(payload.State.Status)
-		summary := firstNonEmptyTranscriptValue(
-			payload.State.Input.Command,
+		summary := summarizeOpenCodeToolDetail(
+			toolName,
 			payload.State.Input.Description,
 			payload.State.Title,
+			payload.State.Input.Command,
 		)
 		switch {
 		case toolName != "" && status != "" && summary != "":
@@ -456,6 +457,9 @@ func parseOpenCodePartText(partData string) string {
 			return ""
 		}
 		reason := sanitizeTranscriptText(payload.Reason)
+		if reason == "tool-calls" {
+			return ""
+		}
 		if reason == "" {
 			return "Step finished"
 		}
@@ -465,6 +469,32 @@ func parseOpenCodePartText(partData string) string {
 	default:
 		return ""
 	}
+}
+
+func summarizeOpenCodeToolDetail(toolName string, values ...string) string {
+	for _, value := range values {
+		text := sanitizeTranscriptText(value)
+		if text == "" {
+			continue
+		}
+		if looksLikeOpenCodePathSummary(text) && toolName != "bash" {
+			text = sanitizeTranscriptText(filepath.Base(text))
+		}
+		if text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func looksLikeOpenCodePathSummary(text string) bool {
+	if text == "" {
+		return false
+	}
+	if strings.Contains(text, " ") {
+		return false
+	}
+	return strings.ContainsAny(text, `/\`)
 }
 
 func firstNonEmptyTranscriptValue(values ...string) string {

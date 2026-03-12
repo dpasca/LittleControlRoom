@@ -108,11 +108,14 @@ func TestExtractSnapshotOpenCodePreservesStructuredParts(t *testing.T) {
 	if !strings.Contains(assistant.Text, "Reasoning: Reviewing the repository state") {
 		t.Fatalf("assistant text = %q, want reasoning summary", assistant.Text)
 	}
-	if !strings.Contains(assistant.Text, "Tool bash completed: go test ./internal/service") {
+	if !strings.Contains(assistant.Text, "Tool bash completed: Run focused service tests") {
 		t.Fatalf("assistant text = %q, want tool summary", assistant.Text)
 	}
 	if !strings.Contains(assistant.Text, "Patch touched service.go, README.md") {
 		t.Fatalf("assistant text = %q, want patch summary", assistant.Text)
+	}
+	if strings.Contains(assistant.Text, "Step finished: tool-calls") {
+		t.Fatalf("assistant text = %q, want tool-calls finish marker omitted", assistant.Text)
 	}
 	if !strings.Contains(assistant.Text, "Step finished: stop") {
 		t.Fatalf("assistant text = %q, want step finish summary", assistant.Text)
@@ -344,8 +347,9 @@ func seedOpenCodeTranscriptFixture(dbPath string) error {
 			('part_user_file', 'msg_user', 'ses_open', 1002, '{"type":"file","mime":"image/png","filename":"clipboard.png","url":"data:image/png;base64,AAA"}'),
 			('part_assistant_reasoning', 'msg_assistant', 'ses_open', 2001, '{"type":"reasoning","text":"Reviewing the repository state"}'),
 			('part_assistant_tool', 'msg_assistant', 'ses_open', 2002, '{"type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"go test ./internal/service","description":"Run focused service tests"}}}'),
-			('part_assistant_patch', 'msg_assistant', 'ses_open', 2003, '{"type":"patch","files":["/tmp/opencode-demo/internal/service/service.go","/tmp/opencode-demo/README.md"]}'),
-			('part_assistant_finish', 'msg_assistant', 'ses_open', 2004, '{"type":"step-finish","reason":"stop"}');
+			('part_assistant_tool_finish', 'msg_assistant', 'ses_open', 2003, '{"type":"step-finish","reason":"tool-calls"}'),
+			('part_assistant_patch', 'msg_assistant', 'ses_open', 2004, '{"type":"patch","files":["/tmp/opencode-demo/internal/service/service.go","/tmp/opencode-demo/README.md"]}'),
+			('part_assistant_finish', 'msg_assistant', 'ses_open', 2005, '{"type":"step-finish","reason":"stop"}');
 	`)
 	return err
 }

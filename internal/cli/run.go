@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -94,6 +95,8 @@ func Run(programName string, args []string) int {
 		return runClassify(ctx, svc)
 	case "doctor":
 		return runDoctor(ctx, svc, cfg)
+	case "snapshot":
+		return runSnapshot(ctx, svc, cfg)
 	case "screenshots":
 		return runScreenshots(ctx, svc, args[1:])
 	case "tui":
@@ -298,6 +301,110 @@ func runDoctor(ctx context.Context, svc *service.Service, cfg config.AppConfig) 
 		fmt.Println()
 	}
 	return 0
+}
+
+type snapshotDumpSelection struct {
+	State   model.ProjectState
+	Session model.SessionEvidence
+}
+
+type snapshotDumpEntry struct {
+	ProjectPath   string                           `json:"project_path"`
+	SessionID     string                           `json:"session_id"`
+	SessionFile   string                           `json:"session_file"`
+	SessionFormat string                           `json:"session_format"`
+	LastEventAt   string                           `json:"last_event_at"`
+	Snapshot      *sessionclassify.SessionSnapshot `json:"snapshot,omitempty"`
+	ExtractError  string                           `json:"extract_error,omitempty"`
+}
+
+func runSnapshot(ctx context.Context, svc *service.Service, cfg config.AppConfig) int {
+	report, err := svc.ScanOnce(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "snapshot scan failed: %v\n", err)
+		return 1
+	}
+
+	states := filterProjectStatesByName(report.States, cfg.ExcludeProjectPatterns)
+	selected := selectOpenCodeSnapshotSessions(states, cfg.SnapshotProject, cfg.SnapshotSessionID, cfg.SnapshotLimit)
+	dumps := make([]snapshotDumpEntry, 0, len(selected))
+	for _, choice := range selected {
+		entry := snapshotDumpEntry{
+			ProjectPath:   choice.State.Path,
+			SessionID:     choice.Session.SessionID,
+			SessionFile:   choice.Session.SessionFile,
+			SessionFormat: choice.Session.Format,
+		}
+		if !choice.Session.LastEventAt.IsZero() {
+			entry.LastEventAt = choice.Session.LastEventAt.UTC().Format(time.RFC3339)
+		}
+		gitStatus := sessionclassify.NewGitStatusSnapshot(
+			choice.State.RepoDirty,
+			choice.State.RepoSyncStatus,
+			choice.State.RepoAheadCount,
+			choice.State.RepoBehindCount,
+		)
+		snapshot, err := sessionclassify.ExtractSnapshot(ctx, model.SessionClassification{
+			SessionID:       choice.Session.SessionID,
+			ProjectPath:     choice.State.Path,
+			SessionFile:     choice.Session.SessionFile,
+			SessionFormat:   choice.Session.Format,
+			SourceUpdatedAt: choice.Session.LastEventAt,
+		}, choice.Session, gitStatus)
+		if err != nil {
+			entry.ExtractError = err.Error()
+		} else {
+			entry.Snapshot = &snapshot
+		}
+		dumps = append(dumps, entry)
+	}
+
+	encoded, err := json.MarshalIndent(dumps, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "snapshot encode failed: %v\n", err)
+		return 1
+	}
+	fmt.Println(string(encoded))
+	return 0
+}
+
+func selectOpenCodeSnapshotSessions(states []model.ProjectState, projectPath, sessionID string, limit int) []snapshotDumpSelection {
+	projectPath = strings.TrimSpace(projectPath)
+	sessionID = strings.TrimSpace(sessionID)
+
+	selected := make([]snapshotDumpSelection, 0, limit)
+	for _, state := range states {
+		if projectPath != "" && filepath.Clean(state.Path) != filepath.Clean(projectPath) {
+			continue
+		}
+		for _, session := range state.Sessions {
+			if session.Format != "opencode_db" {
+				continue
+			}
+			if sessionID != "" && session.SessionID != sessionID {
+				continue
+			}
+			selected = append(selected, snapshotDumpSelection{
+				State:   state,
+				Session: session,
+			})
+		}
+	}
+
+	sort.Slice(selected, func(i, j int) bool {
+		if selected[i].Session.LastEventAt.Equal(selected[j].Session.LastEventAt) {
+			if selected[i].State.Path == selected[j].State.Path {
+				return selected[i].Session.SessionID < selected[j].Session.SessionID
+			}
+			return selected[i].State.Path < selected[j].State.Path
+		}
+		return selected[i].Session.LastEventAt.After(selected[j].Session.LastEventAt)
+	})
+
+	if limit > 0 && len(selected) > limit {
+		selected = selected[:limit]
+	}
+	return selected
 }
 
 func loadDoctorReport(ctx context.Context, svc *service.Service, refresh bool) (service.ScanReport, error) {
@@ -507,7 +614,7 @@ func printUsage(programName string) {
 	}
 	fmt.Println(brand.Name)
 	fmt.Println(brand.Subtitle)
-	fmt.Printf("Usage: %s <scope|scan|classify|doctor|screenshots|tui|serve> [flags]\n", name)
+	fmt.Printf("Usage: %s <scope|scan|classify|doctor|snapshot|screenshots|tui|serve> [flags]\n", name)
 	fmt.Println("Common flags:")
 	fmt.Println("  --config <path>")
 	fmt.Println("  --include-paths <comma-separated-paths>")
@@ -519,6 +626,10 @@ func printUsage(programName string) {
 	fmt.Println("  --interval <duration>")
 	fmt.Println("  --active-threshold <duration>")
 	fmt.Println("  --stuck-threshold <duration>")
+	fmt.Println("Snapshot flags:")
+	fmt.Println("  --limit <count>")
+	fmt.Println("  --project <path>")
+	fmt.Println("  --session-id <id>")
 	fmt.Println("Screenshots flags:")
 	fmt.Println("  --screenshot-config <path>")
 	fmt.Println("  --output-dir <path>")

@@ -28,6 +28,9 @@ type AppConfig struct {
 	ConfigPath             string
 	ConfigLoaded           bool
 	DoctorScan             bool
+	SnapshotLimit          int
+	SnapshotProject        string
+	SnapshotSessionID      string
 	ScanInterval           time.Duration
 	ActiveThreshold        time.Duration
 	StuckThreshold         time.Duration
@@ -54,6 +57,7 @@ func Default() AppConfig {
 		DataDir:           dataDir,
 		DBPath:            filepath.Join(dataDir, brand.DBFileName),
 		ConfigPath:        filepath.Join(dataDir, brand.ConfigFileName),
+		SnapshotLimit:     3,
 		ScanInterval:      60 * time.Second,
 		ActiveThreshold:   20 * time.Minute,
 		StuckThreshold:    4 * time.Hour,
@@ -100,8 +104,16 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	active := fs.Duration("active-threshold", cfg.ActiveThreshold, "Active status threshold")
 	stuck := fs.Duration("stuck-threshold", cfg.StuckThreshold, "Possibly stuck status threshold")
 	var doctorScan *bool
+	var snapshotLimit *int
+	var snapshotProject *string
+	var snapshotSessionID *string
 	if subcmd == "doctor" {
 		doctorScan = fs.Bool("scan", false, "Refresh state before printing the doctor report")
+	}
+	if subcmd == "snapshot" {
+		snapshotLimit = fs.Int("limit", cfg.SnapshotLimit, "Maximum number of recent OpenCode snapshots to dump")
+		snapshotProject = fs.String("project", cfg.SnapshotProject, "Only dump snapshots for this project path")
+		snapshotSessionID = fs.String("session-id", cfg.SnapshotSessionID, "Only dump this session ID")
 	}
 
 	if err := fs.Parse(args); err != nil {
@@ -146,6 +158,15 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	cfg.StuckThreshold = *stuck
 	if doctorScan != nil {
 		cfg.DoctorScan = *doctorScan
+	}
+	if snapshotLimit != nil {
+		cfg.SnapshotLimit = *snapshotLimit
+	}
+	if snapshotProject != nil {
+		cfg.SnapshotProject = strings.TrimSpace(*snapshotProject)
+	}
+	if snapshotSessionID != nil {
+		cfg.SnapshotSessionID = strings.TrimSpace(*snapshotSessionID)
 	}
 
 	if err := validate(cfg); err != nil {
@@ -278,6 +299,9 @@ func validate(cfg AppConfig) error {
 	}
 	if cfg.StuckThreshold <= cfg.ActiveThreshold {
 		return errors.New("stuck-threshold must be greater than active-threshold")
+	}
+	if cfg.SnapshotLimit <= 0 {
+		return errors.New("snapshot limit must be > 0")
 	}
 	if _, err := codexcli.ParsePreset(string(cfg.CodexLaunchPreset)); err != nil {
 		return err

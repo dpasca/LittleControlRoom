@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-12 21:52 JST (JST)
+Last updated: 2026-03-13 00:09 JST (JST)
 
 ## Current State
 
@@ -70,24 +70,25 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-12 21:52 JST)
+## Latest Update (2026-03-13 00:09 JST)
 
-- Extended OpenCode session transcript extraction so classifier snapshots now preserve structured `reasoning`, `tool`, `patch`, `file`, `step-finish`, and `compaction` parts instead of keeping only plain `text`.
-- Structured OpenCode parts are now summarized into compact transcript lines for the classifier, which keeps assistant activity visible even when an OpenCode message has no plain assistant text part.
-- Added a focused SQLite-backed session-classifier regression that seeds an OpenCode session with text, file, reasoning, tool, patch, and step-finish parts and asserts the extracted snapshot keeps those summaries.
-- OpenCode transport assumptions changed in `STATUS.md` after validating the locally installed `opencode` CLI: `serve`/`acp` exist and the stored session parts are richer than the previous text-only mental model. No Codex/OpenCode detector footprint assumptions changed, so `docs/codex_cli_footprint.md` did not need edits.
+- Trimmed the OpenCode snapshot formatter so routine `step-finish` markers with reason `tool-calls` are now omitted from extracted transcripts, while meaningful terminal states such as `stop` are still preserved.
+- Extended the OpenCode structured-parts regression fixture to include a noisy `tool-calls` boundary and added an assertion that it stays out of the assistant transcript while the final completion marker remains.
+- Re-ran the snapshot dumper against a real current-list OpenCode session and confirmed the output now keeps the reasoning/tool summaries without the repetitive `Step finished: tool-calls` lines.
 
 Verification snapshot:
 
 - `go test ./internal/sessionclassify -run 'TestExtractSnapshotOpenCodePreservesStructuredParts|TestExtractSnapshotModernFixture|TestManagerProcessOneCompletesClassification|TestSnapshotHashForSnapshotIgnoresLastEventAt|TestSnapshotHashForSnapshotChangesWhenGitStatusChanges|TestSnapshotHashForSnapshotChangesWhenTurnLifecycleChanges'` passed.
+- `go run ./cmd/lcroom snapshot --session-id ses_32927dba1ffe1cBXIzuF6pbAzJ | rg 'tool-calls|Step finished: stop|Tool bash completed|Reasoning:'` passed and showed real OpenCode output without the suppressed `tool-calls` markers.
 - `make test` passed.
-- `make scan` passed at `2026-03-12T21:51:34+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 5`, `queued classifications: 5`).
-- `make doctor` passed on the cached snapshot dated `2026-03-12T21:51:33+09:00` (`projects: 135`).
+- `make scan` passed at `2026-03-13T00:09:14+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 2`, `queued classifications: 3`).
+- `make doctor` passed on the cached snapshot dated `2026-03-13T00:09:14+09:00` (`projects: 135`).
 
 Next concrete tasks:
 
-- Decide whether the OpenCode classifier snapshot should also preserve additional structured parts such as `agent`, `subtask`, or `retry`, or whether the current summary set is the right noise/signal balance.
-- If the classifier output looks useful in practice, extract a provider-neutral transcript/transport abstraction so the later embedded OpenCode pane can reuse the same high-level rendering model as Codex.
+- Decide whether OpenCode `step-start` events are worth preserving at all, or whether the current reasoning/tool summaries already cover that progress signal well enough.
+- Inspect a few more real sessions to decide whether additional OpenCode structured parts such as `agent`, `subtask`, or `retry` would add useful signal or just more transcript noise.
+- If the calibrated summaries stay stable, start extracting a provider-neutral transcript/transport abstraction so a later embedded OpenCode pane can share the same high-level rendering model as Codex.
 
 ## Recent Updates
 

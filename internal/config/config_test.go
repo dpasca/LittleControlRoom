@@ -204,6 +204,36 @@ func TestParseDoctorScanFlag(t *testing.T) {
 	}
 }
 
+func TestParseSnapshotFlags(t *testing.T) {
+	useTempHome(t)
+
+	cfg, err := Parse("snapshot", []string{
+		"--limit", "5",
+		"--project", "/tmp/demo",
+		"--session-id", "ses_demo",
+	})
+	if err != nil {
+		t.Fatalf("parse snapshot config: %v", err)
+	}
+	if cfg.SnapshotLimit != 5 {
+		t.Fatalf("snapshot limit = %d, want 5", cfg.SnapshotLimit)
+	}
+	if cfg.SnapshotProject != "/tmp/demo" {
+		t.Fatalf("snapshot project = %q, want /tmp/demo", cfg.SnapshotProject)
+	}
+	if cfg.SnapshotSessionID != "ses_demo" {
+		t.Fatalf("snapshot session id = %q, want ses_demo", cfg.SnapshotSessionID)
+	}
+}
+
+func TestParseRejectsInvalidSnapshotLimit(t *testing.T) {
+	useTempHome(t)
+
+	if _, err := Parse("snapshot", []string{"--limit", "0"}); err == nil {
+		t.Fatalf("expected snapshot limit validation error")
+	}
+}
+
 func TestParseEditableSettings(t *testing.T) {
 	useTempHome(t)
 
