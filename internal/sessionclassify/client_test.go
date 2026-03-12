@@ -6,12 +6,20 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"lcroom/internal/model"
 )
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 func TestOpenAIClientClassifyCapturesUsage(t *testing.T) {
 	t.Parallel()
@@ -358,5 +366,120 @@ func TestOpenAIClientClassifyReportsIncompleteReason(t *testing.T) {
 	}
 	if attempts != 2 {
 		t.Fatalf("attempts = %d, want 2", attempts)
+	}
+}
+
+func TestOpenAIClientClassifyRetriesTransientTransportError(t *testing.T) {
+	t.Parallel()
+
+	attempts := make([]string, 0, len(classifierAttemptPlan))
+	client := &OpenAIClient{
+		apiKey:   "test-key",
+		model:    "gpt-5-mini",
+		endpoint: "https://api.openai.com/v1/responses",
+		httpClient: &http.Client{
+			Timeout: 5 * time.Second,
+			Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+				body, err := io.ReadAll(req.Body)
+				if err != nil {
+					t.Fatalf("read request body: %v", err)
+				}
+				var payload struct {
+					Reasoning struct {
+						Effort string `json:"effort"`
+					} `json:"reasoning"`
+				}
+				if err := json.Unmarshal(body, &payload); err != nil {
+					t.Fatalf("decode request body: %v", err)
+				}
+				attempts = append(attempts, payload.Reasoning.Effort)
+
+				if len(attempts) == 1 {
+					return nil, &os.SyscallError{Syscall: "read", Err: syscall.EADDRNOTAVAIL}
+				}
+
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Header:     make(http.Header),
+					Body: io.NopCloser(strings.NewReader(`{
+						"status":"completed",
+						"model":"gpt-5-mini-2026-03-01",
+						"output":[
+							{
+								"type":"message",
+								"role":"assistant",
+								"content":[
+									{
+										"type":"output_text",
+										"text":"{\"category\":\"completed\",\"summary\":\"Everything is wrapped up.\",\"confidence\":0.89}"
+									}
+								]
+							}
+						]
+					}`)),
+				}, nil
+			}),
+		},
+	}
+
+	result, err := client.Classify(context.Background(), SessionSnapshot{
+		ProjectPath: "/tmp/demo",
+		SessionID:   "ses_demo",
+		Transcript: []TranscriptItem{
+			{Role: "user", Text: "Please verify whether this is finished."},
+			{Role: "assistant", Text: "Yes, the requested work is complete."},
+		},
+	})
+	if err != nil {
+		t.Fatalf("classify: %v", err)
+	}
+	if result.Category != model.SessionCategoryCompleted {
+		t.Fatalf("category = %s, want completed", result.Category)
+	}
+	if len(attempts) != 2 {
+		t.Fatalf("attempts = %d, want 2", len(attempts))
+	}
+	if attempts[0] != classifierPrimaryReasoningEffort {
+		t.Fatalf("first attempt effort = %q, want %q", attempts[0], classifierPrimaryReasoningEffort)
+	}
+	if attempts[1] != classifierFallbackReasoningEffort {
+		t.Fatalf("second attempt effort = %q, want %q", attempts[1], classifierFallbackReasoningEffort)
+	}
+}
+
+func TestOpenAIClientClassifyTransportRetriesRemainBounded(t *testing.T) {
+	t.Parallel()
+
+	var attempts int
+	client := &OpenAIClient{
+		apiKey:   "test-key",
+		model:    "gpt-5-mini",
+		endpoint: "https://api.openai.com/v1/responses",
+		httpClient: &http.Client{
+			Timeout: 5 * time.Second,
+			Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+				attempts++
+				return nil, &os.SyscallError{Syscall: "read", Err: syscall.EADDRNOTAVAIL}
+			}),
+		},
+	}
+
+	_, err := client.Classify(context.Background(), SessionSnapshot{
+		ProjectPath: "/tmp/demo",
+		SessionID:   "ses_demo",
+		Transcript: []TranscriptItem{
+			{Role: "user", Text: "Please verify whether this is finished."},
+			{Role: "assistant", Text: "Yes, the requested work is complete."},
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected classify to fail after bounded retries")
+	}
+	if attempts != len(classifierAttemptPlan) {
+		t.Fatalf("attempts = %d, want %d", attempts, len(classifierAttemptPlan))
+	}
+	if !strings.Contains(err.Error(), "can't assign requested address") {
+		t.Fatalf("error = %q, want transport detail", err.Error())
 	}
 }

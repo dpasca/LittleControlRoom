@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-12 11:26 JST (JST)
+Last updated: 2026-03-12 15:30 JST (JST)
 
 ## Current State
 
@@ -63,28 +63,25 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-12 11:26 JST)
+## Latest Update (2026-03-12 15:30 JST)
 
-- Tightened the screenshot shell again to better match the live theme reference: much smaller outer padding, a true-black stage and terminal background, and a flatter rounded card instead of the earlier roomier presentation.
-- Made the screenshot fallback ANSI 16-color palette more vivid so non-256 terminal colors stay punchy against black instead of drifting toward the older softer contrast.
-- Tightened the screenshot HTML regression to assert the true-black background alongside the borderless shell markup, then regenerated and visually rechecked `main-panel.png`, `main-panel-live-cx.png`, `codex-embedded.png`, and `commit-preview.png`.
-- Kept the corrected screenshot-workflow note in place: `make screenshots` currently defaults to the repo-root `screenshots.local.toml` unless `SCREENSHOT_CONFIG` is overridden.
+- Hardened the session-classifier OpenAI client so transient transport/socket failures from `httpClient.Do` now count as retryable instead of immediately surfacing as permanent same-snapshot failures.
+- Kept that transport retry intentionally bounded by the existing two-attempt classifier plan, so the worker gets one follow-up try without any open-ended retry loop.
+- Added focused coverage for both transport paths: a transient `can't assign requested address` style failure that succeeds on retry, and a repeated transport failure that stops after the bounded attempt cap.
 - No Codex/OpenCode detector assumptions changed; `docs/codex_cli_footprint.md` stayed aligned with the current footprint expectations.
 
 Verification snapshot:
 
-- `go test ./internal/tui ./internal/cli ./internal/config` passed.
-- `make screenshots` passed and refreshed `docs/screenshots/main-panel.png`, `docs/screenshots/main-panel-live-cx.png`, `docs/screenshots/codex-embedded.png`, and `docs/screenshots/commit-preview.png`.
+- `go test ./internal/sessionclassify` passed.
 - `make test` passed.
-- `make scan` passed at `2026-03-12T11:26:07+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 2`, `queued classifications: 2`).
-- `make doctor` passed on the cached snapshot dated `2026-03-12T11:26:15+09:00` (`projects: 135`); that cached snapshot now shows fresh latest-session classification work running for the newly scanned activity.
-- `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q` as a TUI smoke test after the vivid black screenshot refresh.
+- `make scan` passed at `2026-03-12T15:30:35+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-12T15:30:43+09:00` (`projects: 135`).
 
 Next concrete tasks:
 
-- Preview the refreshed screenshots in the README / GitHub light-background context to confirm the tighter black shell still reads cleanly once it is scaled down.
-- Decide whether the screenshot shell should lose even more outer border/shadow weight or whether this black-card treatment is the right steady-state default.
-- Decide whether `make screenshots` should keep using `screenshots.local.toml` by default or switch to the committed demo config for fully reproducible docs builds.
+- Decide whether the same bounded transport-retry policy should also cover the git commit-message / untracked-file OpenAI client for consistency.
+- Watch for any remaining transient network errors that should join the retryable set without broadening it into a catch-all.
+- If self-healing transport failures still feel noisy in the TUI, consider softening or annotating the stored failure copy so temporary blips read less like hard failures.
 
 ## Recent Updates
 

@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"lcroom/internal/brand"
@@ -231,7 +232,11 @@ func (c *OpenAIClient) classifyAttempt(ctx context.Context, snapshotJSON []byte,
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return Result{}, fmt.Errorf("send openai request: %w", err)
+		err = fmt.Errorf("send openai request: %w", err)
+		if retryable := retryableTransportClassificationError(ctx, err); retryable != nil {
+			return Result{}, retryable
+		}
+		return Result{}, err
 	}
 	defer resp.Body.Close()
 
@@ -329,6 +334,48 @@ func missingAssistantOutputError(envelope openAIResponseEnvelope) error {
 
 func isRetryableHTTPStatus(statusCode int) bool {
 	return statusCode == http.StatusRequestTimeout || statusCode == http.StatusTooManyRequests || statusCode >= 500
+}
+
+func retryableTransportClassificationError(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return nil
+	}
+	if !isRetryableTransportError(err) {
+		return nil
+	}
+	return &retryableClassificationError{
+		cause: err,
+		delay: classifierDefaultRetryBackoff,
+	}
+}
+
+func isRetryableTransportError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	var timeoutErr interface{ Timeout() bool }
+	if errors.As(err, &timeoutErr) && timeoutErr.Timeout() {
+		return true
+	}
+	return errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.EADDRNOTAVAIL) ||
+		errors.Is(err, syscall.ECONNABORTED) ||
+		errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.EHOSTDOWN) ||
+		errors.Is(err, syscall.EHOSTUNREACH) ||
+		errors.Is(err, syscall.ENETDOWN) ||
+		errors.Is(err, syscall.ENETRESET) ||
+		errors.Is(err, syscall.ENETUNREACH) ||
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ETIMEDOUT)
 }
 
 func retryDelayForClassificationError(err error) time.Duration {
