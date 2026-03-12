@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-12 11:10 JST (JST)
+Last updated: 2026-03-12 11:26 JST (JST)
 
 ## Current State
 
@@ -30,6 +30,10 @@ Current embedded Codex transport assumption:
 - The installed schema also emits `thread/status/changed` plus streamed `plan`, `reasoning`, and `mcpToolCall` notifications, but it still does not expose a single authoritative "all visible output has settled" event, so embedded turn tracking should model `running`, `finishing`, and `reconciling` instead of a binary busy/idle flag.
 - Embedded `codex app-server` stdout frames can exceed the prior 1 MiB scanner cap during tool-heavy turns (observed around MCP/browser screenshot activity), so the embedded transport must tolerate large JSON-RPC messages and treat stdout decode failures as fatal session breakage rather than a recoverable transcript-only warning.
 
+Current screenshot workflow assumption:
+
+- `make screenshots` currently defaults to the repo-root `screenshots.local.toml` unless `SCREENSHOT_CONFIG` is overridden; the committed demo config remains available at `docs/screenshots.example.toml`.
+
 ## What Works
 
 - Fast startup scan path for Codex using `~/.codex/state_5.sqlite` threads metadata
@@ -44,7 +48,7 @@ Current embedded Codex transport assumption:
 - Git workflow actions in the TUI for commit preview, finish, and push
 - Embedded Codex pane via `codex app-server`, with multiline compose, per-project drafts, inline `[Image #n]` clipboard image markers in the composer, backspace-based image removal, local embedded slash commands for `/new`, `/model`, and `/status`, visible slash autocomplete/suggestions in the composer, live model/reasoning/context-left metadata under the transcript, a local model+reasoning picker backed by `model/list`, `Enter`/`/codex`/`/codex-new`, `Esc` or `Alt+Up` hide from the embedded pane with `Enter` reopening from the project list, `Alt+Down` session picker/history, `Alt+[`/`Alt+]` live-session stepping, wrapped transcript blocks, shaded echoed user transcript blocks that reuse the composer shell styling, denser command/tool/file blocks with `Alt+L` expand/collapse, label-free user/assistant transcript rendering, manager-side update coalescing, inline approvals/input requests, and busy-elsewhere rechecks when a read-only embedded session is reopened or restored
 - Settings-backed Codex launch presets, currently defaulting to the dangerous `yolo` mode
-- Programmatic screenshot generation via `lcroom screenshots` and `make screenshots`, using a gitignored local screenshot config plus browser-rendered PNG exports from deterministic HTML terminal scenarios
+- Programmatic screenshot generation via `lcroom screenshots` and `make screenshots`, using screenshot-config-driven browser-rendered PNG exports from deterministic HTML terminal scenarios
 
 ## Current Priorities
 
@@ -59,27 +63,28 @@ Current embedded Codex transport assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-12 11:10 JST)
+## Latest Update (2026-03-12 11:26 JST)
 
-- Traced `/codex-new` end to end and confirmed the command routing already forces `LaunchNew`; the actual bug was the handoff around forced replacement, not a parser/dispatcher mix-up.
-- Added an embedded-session shutdown wait for forced replacements so Little Control Room now gives the old `codex app-server` process time to fully exit before starting the replacement session.
-- Added an explicit pending-open UI state for `/codex-new`, picker resumes, and embedded `/new`, so the pane now shows an opening placeholder instead of leaving the previous transcript onscreen while the new session is still starting.
-- Added focused regressions for both behaviors: one proving `ForceNew` waits for prior session shutdown, and one proving the TUI renders the opening state instead of the old session.
+- Tightened the screenshot shell again to better match the live theme reference: much smaller outer padding, a true-black stage and terminal background, and a flatter rounded card instead of the earlier roomier presentation.
+- Made the screenshot fallback ANSI 16-color palette more vivid so non-256 terminal colors stay punchy against black instead of drifting toward the older softer contrast.
+- Tightened the screenshot HTML regression to assert the true-black background alongside the borderless shell markup, then regenerated and visually rechecked `main-panel.png`, `main-panel-live-cx.png`, `codex-embedded.png`, and `commit-preview.png`.
+- Kept the corrected screenshot-workflow note in place: `make screenshots` currently defaults to the repo-root `screenshots.local.toml` unless `SCREENSHOT_CONFIG` is overridden.
 - No Codex/OpenCode detector assumptions changed; `docs/codex_cli_footprint.md` stayed aligned with the current footprint expectations.
 
 Verification snapshot:
 
-- `go test ./internal/codexapp ./internal/tui` passed.
+- `go test ./internal/tui ./internal/cli ./internal/config` passed.
+- `make screenshots` passed and refreshed `docs/screenshots/main-panel.png`, `docs/screenshots/main-panel-live-cx.png`, `docs/screenshots/codex-embedded.png`, and `docs/screenshots/commit-preview.png`.
 - `make test` passed.
-- `make scan` passed at `2026-03-12T11:09:53+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 1`, `queued classifications: 1`).
-- `make doctor` passed on the cached snapshot dated `2026-03-12T11:10:00+09:00` (`projects: 135`).
-- `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q` as a TUI smoke test after the `/codex-new` handoff fix.
+- `make scan` passed at `2026-03-12T11:26:07+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 2`, `queued classifications: 2`).
+- `make doctor` passed on the cached snapshot dated `2026-03-12T11:26:15+09:00` (`projects: 135`); that cached snapshot now shows fresh latest-session classification work running for the newly scanned activity.
+- `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q` as a TUI smoke test after the vivid black screenshot refresh.
 
 Next concrete tasks:
 
-- Do an interactive repro pass in the real TUI to confirm the first `/codex-new` now lands cleanly on a fresh thread even when replacing an active embedded session.
-- Decide whether the pending-open placeholder should show slightly richer state, for example whether it is waiting on shutdown versus waiting on `thread/start`.
-- Consider surfacing a visible warning if the forced-replacement shutdown wait hits its timeout, since that would be a strong signal that Codex itself is lagging during teardown.
+- Preview the refreshed screenshots in the README / GitHub light-background context to confirm the tighter black shell still reads cleanly once it is scaled down.
+- Decide whether the screenshot shell should lose even more outer border/shadow weight or whether this black-card treatment is the right steady-state default.
+- Decide whether `make screenshots` should keep using `screenshots.local.toml` by default or switch to the committed demo config for fully reproducible docs builds.
 
 ## Recent Updates
 

@@ -688,9 +688,9 @@ const (
 )
 
 type terminalFrameLayout struct {
-	framePadding   float64
-	contentPadding float64
-	titleBarHeight float64
+	stagePadding   float64
+	shellPaddingX  float64
+	shellPaddingY  float64
 	lineHeight     float64
 	contentBottom  float64
 	viewportWidth  int
@@ -699,9 +699,9 @@ type terminalFrameLayout struct {
 
 func terminalFrameMetrics(cols, rows int) terminalFrameLayout {
 	const (
-		framePadding       = 18.0
-		contentPadding     = 22.0
-		titleBarHeight     = 34.0
+		stagePadding       = 18.0
+		shellPaddingX      = 12.0
+		shellPaddingY      = 10.0
 		cellWidthEstimate  = 9.3
 		lineHeight         = 18.0
 		contentBottom      = 18.0
@@ -710,40 +710,30 @@ func terminalFrameMetrics(cols, rows int) terminalFrameLayout {
 	)
 	contentWidthEstimate := float64(cols) * cellWidthEstimate
 	contentHeightEstimate := float64(rows)*lineHeight + contentBottom
-	frameWidthEstimate := contentWidthEstimate + contentPadding*2
-	frameHeightEstimate := titleBarHeight + contentHeightEstimate + contentPadding*2
+	shellWidthEstimate := contentWidthEstimate + shellPaddingX*2
+	shellHeightEstimate := contentHeightEstimate + shellPaddingY*2
 	return terminalFrameLayout{
-		framePadding:   framePadding,
-		contentPadding: contentPadding,
-		titleBarHeight: titleBarHeight,
+		stagePadding:   stagePadding,
+		shellPaddingX:  shellPaddingX,
+		shellPaddingY:  shellPaddingY,
 		lineHeight:     lineHeight,
 		contentBottom:  contentBottom,
-		viewportWidth:  int(math.Ceil(frameWidthEstimate + framePadding*2 + captureExtraWidth)),
-		viewportHeight: int(math.Ceil(frameHeightEstimate + framePadding*2 + captureExtraHeight)),
+		viewportWidth:  int(math.Ceil(shellWidthEstimate + stagePadding*2 + captureExtraWidth)),
+		viewportHeight: int(math.Ceil(shellHeightEstimate + stagePadding*2 + captureExtraHeight)),
 	}
 }
 
 func renderTerminalHTMLDocument(title, content string, cols, rows int) (string, int, int) {
 	const (
-		pageBackground  = "#0b1020"
-		frameBackground = "#10141d"
-		frameStroke     = "#20283a"
-		shadowColor     = "#070b16"
-		titleBarColor   = "#161b27"
-		titleColor      = "#9fb3d1"
-		defaultFG       = "#d7dbe6"
-		defaultBG       = "#151821"
-		titleInsetLeft  = 72.0
-		titleInsetTop   = 8.0
-		titleFontSize   = 13.0
-		windowRadius    = 18.0
-		contentRadius   = 10.0
-		dotSize         = 9.0
-		closeDotLeft    = 15.5
-		minimizeDotLeft = 31.5
-		maximizeDotLeft = 47.5
-		dotTop          = 12.5
-		shadowOffsetTop = 4.0
+		pageBackground    = "#000000"
+		shellBackground   = "#000000"
+		shellStroke       = "#154863"
+		shellHighlight    = "rgba(95,215,255,0.10)"
+		shadowColor       = "rgba(0,0,0,0.22)"
+		defaultFG         = "#f6fbff"
+		defaultBG         = shellBackground
+		shellRadius       = 10.0
+		shellBottomAdjust = 1.0
 	)
 
 	layout := terminalFrameMetrics(cols, rows)
@@ -762,35 +752,18 @@ func renderTerminalHTMLDocument(title, content string, cols, rows int) (string, 
 	writeEscapedHTML(&out, title)
 	out.WriteString(`</title><style>`)
 	out.WriteString(embeddedTerminalFontCSS())
-	fmt.Fprintf(&out, `:root{--cols:%d;--rows:%d;--content-pad:%.1fpx;--title-h:%.1fpx;--line-h:%.1fpx;--content-bottom:%.1fpx;}`, cols, rows, layout.contentPadding, layout.titleBarHeight, layout.lineHeight, layout.contentBottom)
+	fmt.Fprintf(&out, `:root{--cols:%d;--rows:%d;--shell-pad-x:%.1fpx;--shell-pad-y:%.1fpx;--line-h:%.1fpx;--content-bottom:%.1fpx;}`, cols, rows, layout.shellPaddingX, layout.shellPaddingY, layout.lineHeight, layout.contentBottom)
 	fmt.Fprintf(&out, `html,body{margin:0;padding:0;width:%dpx;height:%dpx;overflow:hidden;background:%s;}`, layout.viewportWidth, layout.viewportHeight, pageBackground)
 	fmt.Fprintf(&out, `body{font-family:%s;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;}`, terminalFontFamilyCSS)
 	fmt.Fprintf(&out, `.stage{position:relative;width:%dpx;height:%dpx;background:%s;overflow:hidden;}`, layout.viewportWidth, layout.viewportHeight, pageBackground)
-	fmt.Fprintf(&out, `.frame-wrap{position:absolute;left:%.1fpx;top:%.1fpx;display:inline-block;}`, layout.framePadding, layout.framePadding)
-	fmt.Fprintf(&out, `.frame-shadow{position:absolute;inset:0;transform:translateY(%.1fpx);border-radius:%.1fpx;background:%s;opacity:.35;}`, shadowOffsetTop, windowRadius, shadowColor)
-	fmt.Fprintf(&out, `.frame{position:relative;display:inline-block;border-radius:%.1fpx;background:%s;border:1px solid %s;overflow:hidden;}`, windowRadius, frameBackground, frameStroke)
-	fmt.Fprintf(&out, `.titlebar{display:block;height:%.1fpx;background:%s;}`, layout.titleBarHeight, titleBarColor)
-	fmt.Fprintf(&out, `.title{position:absolute;left:%.1fpx;top:%.1fpx;color:%s;font-size:%.1fpx;line-height:%.1fpx;font-family:%s;}`, titleInsetLeft, titleInsetTop, titleColor, titleFontSize, titleFontSize, terminalFontFamilyCSS)
-	fmt.Fprintf(&out, `.dot{position:absolute;top:%.1fpx;width:%.1fpx;height:%.1fpx;border-radius:50%%;}`, dotTop, dotSize, dotSize)
-	out.WriteString(`.dot-close{left:`)
-	out.WriteString(strconv.FormatFloat(closeDotLeft, 'f', 1, 64))
-	out.WriteString(`px;background:#ff6b6b;}`)
-	out.WriteString(`.dot-minimize{left:`)
-	out.WriteString(strconv.FormatFloat(minimizeDotLeft, 'f', 1, 64))
-	out.WriteString(`px;background:#ffd166;}`)
-	out.WriteString(`.dot-maximize{left:`)
-	out.WriteString(strconv.FormatFloat(maximizeDotLeft, 'f', 1, 64))
-	out.WriteString(`px;background:#4cc38a;}`)
-	out.WriteString(`.content{padding:0 0 var(--content-pad);}`)
-	fmt.Fprintf(&out, `.terminal-shell{display:inline-block;padding:%.1fpx;box-sizing:border-box;background:%s;border-radius:0 0 %.1fpx %.1fpx;overflow:hidden;}`, layout.contentPadding, defaultBG, contentRadius, contentRadius)
+	fmt.Fprintf(&out, `.shell-wrap{position:absolute;left:%.1fpx;top:%.1fpx;display:inline-block;}`, layout.stagePadding, layout.stagePadding)
+	fmt.Fprintf(&out, `.terminal-shell{display:inline-block;padding:var(--shell-pad-y) var(--shell-pad-x) calc(var(--shell-pad-y) - %.1fpx);box-sizing:border-box;background:%s;border:1px solid %s;border-radius:%.1fpx;box-shadow:0 6px 14px %s,inset 0 1px 0 %s;overflow:hidden;}`, shellBottomAdjust, defaultBG, shellStroke, shellRadius, shadowColor, shellHighlight)
 	fmt.Fprintf(&out, `.terminal{display:block;width:calc(var(--cols) * 1ch);min-width:calc(var(--cols) * 1ch);min-height:calc((var(--rows) * var(--line-h)) + var(--content-bottom));padding-bottom:4px;box-sizing:content-box;overflow:hidden;font-family:%s;font-size:14px;line-height:var(--line-h);color:%s;letter-spacing:0;white-space:pre;font-variant-ligatures:none;font-feature-settings:'liga' 0,'calt' 0;font-variant-numeric:tabular-nums;font-synthesis:none;}`, terminalFontFamilyCSS, defaultFG)
 	out.WriteString(`.line{display:flex;align-items:stretch;width:100%;line-height:var(--line-h);}`)
 	out.WriteString(`.run{display:inline-block;white-space:pre;line-height:inherit;min-height:100%;vertical-align:top;}`)
-	out.WriteString(`</style></head><body><div class="stage"><div class="frame-wrap"><div class="frame-shadow"></div><div class="frame"><div class="titlebar"></div><div class="dot dot-close"></div><div class="dot dot-minimize"></div><div class="dot dot-maximize"></div><div class="title">`)
-	writeEscapedHTML(&out, title)
-	out.WriteString(`</div><div class="content">`)
+	out.WriteString(`</style></head><body><div class="stage"><div class="shell-wrap">`)
 	out.WriteString(renderTerminalHTMLBlock(lines, layout.lineHeight, defaultFG, defaultBG))
-	out.WriteString(`</div></div></div></div></body></html>`)
+	out.WriteString(`</div></div></body></html>`)
 	return out.String(), layout.viewportWidth, layout.viewportHeight
 }
 
@@ -1177,34 +1150,34 @@ func clampColor(value int) int {
 
 func ansi16Color(index int) string {
 	base := []string{
-		"#1f2430",
-		"#ef6b73",
-		"#8ccf7e",
-		"#d9b66b",
-		"#6ea8ff",
-		"#c792ea",
-		"#63cdda",
-		"#d7dbe6",
+		"#1c1c1c",
+		"#ff5f5f",
+		"#5fff87",
+		"#ffd75f",
+		"#5fafff",
+		"#af87ff",
+		"#5fd7ff",
+		"#e6edf3",
 	}
 	if index < 0 || index >= len(base) {
-		return "#d7dbe6"
+		return "#e6edf3"
 	}
 	return base[index]
 }
 
 func ansi16BrightColor(index int) string {
 	bright := []string{
-		"#5c6370",
-		"#ff7b86",
-		"#a6da95",
-		"#f5c76f",
-		"#7dc4ff",
-		"#d4a5ff",
-		"#73daca",
-		"#f2f4f8",
+		"#4d4d4d",
+		"#ff8f8f",
+		"#87ffaf",
+		"#ffe68a",
+		"#87c7ff",
+		"#c4a1ff",
+		"#8be9fd",
+		"#f8fbff",
 	}
 	if index < 0 || index >= len(bright) {
-		return "#f2f4f8"
+		return "#f8fbff"
 	}
 	return bright[index]
 }

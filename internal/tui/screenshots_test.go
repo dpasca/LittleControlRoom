@@ -47,8 +47,17 @@ func TestRenderTerminalHTMLDocumentIncludesEscapedTextAndColors(t *testing.T) {
 	if !strings.Contains(rendered, "#5fd7ff") {
 		t.Fatalf("html should include the ANSI 256 foreground color: %q", rendered)
 	}
-	if !strings.Contains(rendered, "<div class=\"title\">Demo</div>") {
-		t.Fatalf("html should include the terminal title bar label: %q", rendered)
+	if !strings.Contains(rendered, "background:#000000") {
+		t.Fatalf("html should render against a true black background: %q", rendered)
+	}
+	if !strings.Contains(rendered, "<title>Demo</title>") {
+		t.Fatalf("html should include the document title: %q", rendered)
+	}
+	if strings.Contains(rendered, "titlebar") || strings.Contains(rendered, "dot-close") {
+		t.Fatalf("html should not include fake window chrome: %q", rendered)
+	}
+	if !strings.Contains(rendered, "class=\"shell-wrap\"") {
+		t.Fatalf("html should render the borderless shell wrapper: %q", rendered)
 	}
 	if !strings.Contains(rendered, "Iosevka") {
 		t.Fatalf("html should prefer the Iosevka font stack: %q", rendered)
@@ -60,7 +69,7 @@ func TestTerminalLineBackgroundRequiresMatchingEdges(t *testing.T) {
 
 	shellBG := "#303030"
 	defaultFG := "#d7dbe6"
-	defaultBG := "#151821"
+	defaultBG := "#000000"
 
 	line := terminalLine{
 		{text: "> ", style: terminalTextStyle{bg: shellBG, hasBG: true}},
