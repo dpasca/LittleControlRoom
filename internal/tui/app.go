@@ -130,6 +130,14 @@ type diffPreviewMsg struct {
 	err     error
 }
 
+type diffStageToggleMsg struct {
+	preview      service.DiffPreview
+	status       string
+	path         string
+	originalPath string
+	err          error
+}
+
 type gitStatusDialog struct {
 	Title             string
 	ProjectPath       string
@@ -451,6 +459,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.diffView.renderedWidth = 0
 		m.syncDiffView(true)
 		m.status = diffViewReadyStatus(*m.diffView)
+		return m, nil
+	case diffStageToggleMsg:
+		if m.diffView == nil {
+			return m, nil
+		}
+		m.diffView.loading = false
+		if msg.err != nil {
+			var noDiffErr service.NoDiffChangesError
+			if errors.As(msg.err, &noDiffErr) {
+				m.err = nil
+				m.diffView = nil
+				m.status = "No changed files to show in diff"
+				return m, nil
+			}
+			m.err = msg.err
+			m.status = "Diff staging failed"
+			return m, nil
+		}
+		m.err = nil
+		m.diffView.preview = &msg.preview
+		m.diffView.selected = diffPreviewSelectionIndex(msg.preview.Files, msg.path, msg.originalPath, m.diffView.selected)
+		m.diffView.renderedIndex = -1
+		m.diffView.renderedWidth = 0
+		m.syncDiffView(true)
+		if strings.TrimSpace(msg.status) != "" {
+			m.status = msg.status
+		} else {
+			m.status = diffViewReadyStatus(*m.diffView)
+		}
 		return m, nil
 	case actionMsg:
 		m.gitStatusApplying = false
@@ -789,6 +826,11 @@ func (m Model) updateCommitPreviewMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.commitApplying = false
 		m.status = "Commit preview canceled"
 		return m, nil
+	case "d":
+		cmd := m.startDiffView(m.commitPreview.ProjectPath, m.commitPreview.ProjectName)
+		m.commitPreview = nil
+		m.commitApplying = false
+		return m, cmd
 	case "shift+enter", "alt+enter":
 		if !m.commitPreview.CanPush {
 			m.status = "Commit & push is unavailable for this repo"
@@ -1599,12 +1641,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 			m.status = "Diff requires a folder present on disk"
 			return m, nil
 		}
-		m.err = nil
-		m.showHelp = false
-		m.diffView = newDiffViewState(p.Path, p.Name)
-		m.syncDiffView(true)
-		m.status = "Preparing diff view..."
-		return m, m.prepareDiffPreviewCmd(p.Path)
+		return m, m.startDiffView(p.Path, p.Name)
 	case commands.KindCommit:
 		p, ok := m.selectedProject()
 		if !ok {
@@ -1816,6 +1853,53 @@ func (m Model) prepareDiffPreviewCmd(path string) tea.Cmd {
 		preview, err := m.svc.PrepareDiff(m.ctx, path)
 		return diffPreviewMsg{preview: preview, err: err}
 	}
+}
+
+func (m *Model) startDiffView(projectPath, projectName string) tea.Cmd {
+	m.err = nil
+	m.showHelp = false
+	m.diffView = newDiffViewState(projectPath, projectName)
+	m.syncDiffView(true)
+	m.status = "Preparing diff view..."
+	return m.prepareDiffPreviewCmd(projectPath)
+}
+
+func (m Model) toggleDiffStageCmd(projectPath string, file service.DiffFilePreview) tea.Cmd {
+	return func() tea.Msg {
+		status, err := m.svc.ToggleDiffFileStage(m.ctx, projectPath, file)
+		if err != nil {
+			return diffStageToggleMsg{status: status, path: file.Path, originalPath: file.OriginalPath, err: err}
+		}
+		preview, err := m.svc.PrepareDiff(m.ctx, projectPath)
+		return diffStageToggleMsg{
+			preview:      preview,
+			status:       status,
+			path:         file.Path,
+			originalPath: file.OriginalPath,
+			err:          err,
+		}
+	}
+}
+
+func diffPreviewSelectionIndex(files []service.DiffFilePreview, path, originalPath string, fallback int) int {
+	for i, file := range files {
+		if strings.TrimSpace(file.Path) == strings.TrimSpace(path) && strings.TrimSpace(file.OriginalPath) == strings.TrimSpace(originalPath) {
+			return i
+		}
+		if strings.TrimSpace(file.Path) == strings.TrimSpace(path) {
+			return i
+		}
+	}
+	if len(files) == 0 {
+		return 0
+	}
+	if fallback < 0 {
+		return 0
+	}
+	if fallback >= len(files) {
+		return len(files) - 1
+	}
+	return fallback
 }
 
 func (m Model) resolveSubmodulesAndContinueCmd(path string, intent service.GitActionIntent, message string) tea.Cmd {
@@ -2455,7 +2539,7 @@ func (m Model) renderFooter(width int) string {
 	usage := m.currentUsage()
 	usageLabel := compactUsageLabel(usage)
 	if m.diffView != nil {
-		return fitFooterWidth(diffViewFooterLabel(*m.diffView)+" | "+usageLabel, width)
+		return renderDiffFooter(width, *m.diffView, usageLabel)
 	}
 	if m.gitStatusDialog != nil {
 		label := gitStatusDialogReadyStatus(*m.gitStatusDialog)
@@ -2744,9 +2828,9 @@ func stageModeLabel(mode service.GitStageMode, selectedUntracked int) string {
 
 func commitPreviewReadyStatus(canPush bool) string {
 	if canPush {
-		return "Commit preview ready. Enter commit, Alt+Enter commit & push, Esc cancel"
+		return "Commit preview ready. Enter commit, Alt+Enter commit & push, d diff, Esc cancel"
 	}
-	return "Commit preview ready. Enter commit, Alt+Enter unavailable, Esc cancel"
+	return "Commit preview ready. Enter commit, Alt+Enter unavailable, d diff, Esc cancel"
 }
 
 func gitStatusDialogFromNoChanges(err service.NoChangesToCommitError) gitStatusDialog {
@@ -2889,6 +2973,7 @@ func renderCommitPreviewActions(canPush bool) string {
 	} else {
 		actions = append(actions, renderDialogAction("Alt+Enter", "push unavailable", disabledActionKeyStyle, disabledActionTextStyle))
 	}
+	actions = append(actions, renderDialogAction("d", "diff", navigateActionKeyStyle, navigateActionTextStyle))
 	actions = append(actions, renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle))
 	return strings.Join(actions, "   ")
 }

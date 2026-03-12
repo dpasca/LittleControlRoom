@@ -120,6 +120,23 @@ func (s *Service) PrepareDiff(ctx context.Context, projectPath string) (DiffPrev
 	}, nil
 }
 
+func (s *Service) ToggleDiffFileStage(ctx context.Context, projectPath string, file DiffFilePreview) (string, error) {
+	paths := diffFilePaths(file)
+	if len(paths) == 0 {
+		return "", fmt.Errorf("no file paths available to stage")
+	}
+	if file.Staged {
+		if err := gitops.UnstagePaths(ctx, projectPath, paths); err != nil {
+			return "", err
+		}
+		return "Unstaged " + file.Summary, nil
+	}
+	if err := gitops.StagePaths(ctx, projectPath, paths); err != nil {
+		return "", err
+	}
+	return "Staged " + file.Summary, nil
+}
+
 func buildDiffFilePreview(ctx context.Context, projectPath string, change scanner.GitChange) DiffFilePreview {
 	preview := DiffFilePreview{
 		Path:         change.Path,
@@ -253,6 +270,27 @@ func diffPathspecs(change scanner.GitChange) []string {
 		paths = append(paths, original)
 	}
 	if current := strings.TrimSpace(change.Path); current != "" {
+		paths = append(paths, current)
+	}
+	if len(paths) == 0 {
+		return nil
+	}
+	sort.Strings(paths)
+	out := paths[:0]
+	for _, path := range paths {
+		if len(out) == 0 || out[len(out)-1] != path {
+			out = append(out, path)
+		}
+	}
+	return out
+}
+
+func diffFilePaths(file DiffFilePreview) []string {
+	paths := []string{}
+	if original := strings.TrimSpace(file.OriginalPath); original != "" {
+		paths = append(paths, original)
+	}
+	if current := strings.TrimSpace(file.Path); current != "" {
 		paths = append(paths, current)
 	}
 	if len(paths) == 0 {

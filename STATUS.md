@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-12 18:27 JST (JST)
+Last updated: 2026-03-12 18:50 JST (JST)
 
 ## Current State
 
@@ -64,23 +64,25 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-12 18:27 JST)
+## Latest Update (2026-03-12 18:50 JST)
 
-- Added a dedicated full-screen `/diff` screen that replaces the normal list/detail body with a left-hand changed-file picker and a right-hand diff preview pane.
-- The new diff view supports changed, untracked, and deleted files, keeps separate file-list vs diff-content focus/scroll behavior, and renders PNG/JPEG/GIF changes as ANSI image previews using Git `HEAD` blobs plus current worktree bytes.
-- Added service/git preview plumbing plus focused command, service, and TUI regressions for `/diff`, text diffs, untracked/deleted file previews, and image preview payloads.
+- Polished the dedicated full-screen `/diff` screen so `Alt+Up` returns to the main project list, the footer uses the same highlighted action-chip style as the embedded Codex pane, and the selected file can be staged or unstaged in place with `-`.
+- Added commit-preview handoff into the same diff screen via `d`, and wired stage/unstage support through service and git helpers so the diff preview refreshes after `git add -A --` or `git restore --staged --`.
+- Updated the docs to call out `/diff` among the main dashboard commands, and documented the diff-screen controls including `-` for stage/unstage and `Alt+Up` for returning to the list.
 - No Codex/OpenCode detector assumptions changed; `docs/codex_cli_footprint.md` stayed aligned with the current footprint expectations.
 
 Verification snapshot:
 
+- `go test ./internal/service -run 'TestPrepareDiff|TestToggleDiffFileStage|TestPrepareCommit'` passed.
+- `go test ./internal/tui -run 'TestCommitPreviewDOpensDiffView|TestDispatchDiffCommandOpensDiffView|TestViewWithDiffScreenUsesFullBody|TestDiffModeMovesSelectionAndScrollsContent|TestDiffModeAltUpReturnsToMainList|TestDiffModeDashStartsStageToggle'` passed.
 - `make test` passed.
-- `make scan` passed at `2026-03-12T18:26:35+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 2`, `queued classifications: 2`).
-- `make doctor` passed on the cached snapshot dated `2026-03-12T18:26:36+09:00` (`projects: 135`).
+- `make scan` passed at `2026-03-12T18:50:06+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 2`, `queued classifications: 2`).
+- `make doctor` passed on the cached snapshot dated `2026-03-12T18:50:13+09:00` (`projects: 135`).
 - `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q`.
 
 Next concrete tasks:
 
-- Add a shortcut into the new diff screen from the commit preview once the keyboard flow is settled.
+- Consider whether the diff screen should also accept `s` as an alias for stage/unstage, or keep the more Fugitive-like `-` as the single shortcut.
 - Decide whether the diff pane should gain optional per-line colorized text wrapping or richer binary-file handling beyond the current ANSI image preview path.
 
 ## Recent Updates

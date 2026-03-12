@@ -62,6 +62,10 @@ func (m Model) updateDiffMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.diffView = nil
 		m.status = "Diff view closed"
 		return m, nil
+	case "alt+up":
+		m.diffView = nil
+		m.status = "Focus: project list"
+		return m, nil
 	}
 
 	if m.diffView.loading {
@@ -69,6 +73,18 @@ func (m Model) updateDiffMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
+	case "-":
+		file, ok := m.selectedDiffFile()
+		if !ok {
+			return m, nil
+		}
+		m.diffView.loading = true
+		if file.Staged {
+			m.status = "Unstaging selected file..."
+		} else {
+			m.status = "Staging selected file..."
+		}
+		return m, m.toggleDiffStageCmd(m.diffView.ProjectPath, file)
 	case "tab":
 		m.toggleDiffFocus()
 		return m, nil
@@ -254,6 +270,13 @@ func (m *Model) ensureRenderedDiffContent(width int) {
 	m.diffView.renderedContent = renderDiffEntryBody(file, width)
 	m.diffView.renderedWidth = width
 	m.diffView.renderedIndex = m.diffView.selected
+}
+
+func (m Model) selectedDiffFile() (service.DiffFilePreview, bool) {
+	if m.diffView == nil || m.diffView.preview == nil || m.diffView.selected < 0 || m.diffView.selected >= len(m.diffView.preview.Files) {
+		return service.DiffFilePreview{}, false
+	}
+	return m.diffView.preview.Files[m.diffView.selected], true
 }
 
 func (m Model) renderDiffView(width, height int) string {
@@ -516,4 +539,57 @@ func diffViewFooterLabel(state diffViewState) string {
 	default:
 		return "Diff: Up/Down choose, Enter/Right open, PgUp/PgDn page, Esc close"
 	}
+}
+
+func renderDiffFooter(width int, state diffViewState, usageLabel string) string {
+	if state.loading {
+		return renderFooterLine(
+			width,
+			renderFooterMeta("Diff"),
+			renderFooterActionList(
+				footerHideAction("Alt+Up", "list"),
+				footerExitAction("Esc", "close"),
+			),
+			renderFooterUsage(usageLabel),
+		)
+	}
+
+	meta := renderFooterMeta("Diff: files")
+	switch state.focus {
+	case diffFocusContent:
+		meta = renderFooterMeta("Diff: content")
+	}
+
+	stageLabel := "stage"
+	if file, ok := selectedDiffFileFromState(state); ok && file.Staged {
+		stageLabel = "unstage"
+	}
+
+	actions := []footerAction{
+		footerPrimaryAction("-", stageLabel),
+		footerHideAction("Alt+Up", "list"),
+	}
+	switch state.focus {
+	case diffFocusContent:
+		actions = append(actions,
+			footerNavAction("Up/Down", "scroll"),
+			footerNavAction("Tab/Left", "files"),
+			footerNavAction("PgUp/PgDn", "page"),
+		)
+	default:
+		actions = append(actions,
+			footerNavAction("Up/Down", "choose"),
+			footerNavAction("Enter/Tab", "diff"),
+			footerNavAction("PgUp/PgDn", "page"),
+		)
+	}
+	actions = append(actions, footerExitAction("Esc", "close"))
+	return renderFooterLine(width, meta, renderFooterActionList(actions...), renderFooterUsage(usageLabel))
+}
+
+func selectedDiffFileFromState(state diffViewState) (service.DiffFilePreview, bool) {
+	if state.preview == nil || state.selected < 0 || state.selected >= len(state.preview.Files) {
+		return service.DiffFilePreview{}, false
+	}
+	return state.preview.Files[state.selected], true
 }

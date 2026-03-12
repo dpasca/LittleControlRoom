@@ -55,6 +55,8 @@ lcroom tui
 
 No config file is required for a first run. If you want to limit what shows up, open the dashboard and use `/settings`, or create `~/.little-control-room/config.toml` from [`docs/config.example.toml`](docs/config.example.toml).
 
+The main commands to look for are `/settings`, `/diff`, `/commit`, `/finish`, `/push`, `/codex`, and `/codex-new`.
+
 ## Everyday Workflow
 
 1. Start the dashboard with `lcroom tui` or `./lcroom tui`.

@@ -91,10 +91,22 @@ func StagePaths(ctx context.Context, path string, paths []string) error {
 	if len(paths) == 0 {
 		return nil
 	}
-	args := append([]string{"-C", path, "add", "--"}, paths...)
+	args := append([]string{"-C", path, "add", "-A", "--"}, paths...)
 	cmd := exec.CommandContext(ctx, "git", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("stage selected paths for %s: %w: %s", path, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func UnstagePaths(ctx context.Context, path string, paths []string) error {
+	if len(paths) == 0 {
+		return nil
+	}
+	args := append([]string{"-C", path, "restore", "--staged", "--"}, paths...)
+	cmd := exec.CommandContext(ctx, "git", args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("unstage selected paths for %s: %w: %s", path, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

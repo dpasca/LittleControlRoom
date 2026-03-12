@@ -4026,6 +4026,33 @@ func TestCommitPreviewAltEnterStaysBlockedWithoutPush(t *testing.T) {
 	}
 }
 
+func TestCommitPreviewDOpensDiffView(t *testing.T) {
+	m := Model{
+		commitPreview: &service.CommitPreview{
+			ProjectName: "demo",
+			ProjectPath: "/tmp/demo",
+			Message:     "Update repo",
+		},
+		width:  100,
+		height: 24,
+	}
+
+	updated, cmd := m.updateCommitPreviewMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	got := updated.(Model)
+	if got.commitPreview != nil {
+		t.Fatalf("pressing d should close the commit preview and open diff mode")
+	}
+	if got.diffView == nil {
+		t.Fatalf("pressing d should open diff mode")
+	}
+	if got.status != "Preparing diff view..." {
+		t.Fatalf("status = %q, want diff preparing status", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("pressing d should return a diff load command")
+	}
+}
+
 func TestCommitPreviewNoChangesOpensGitStatusDialog(t *testing.T) {
 	m := Model{}
 
@@ -4330,6 +4357,9 @@ func TestViewWithDiffScreenUsesFullBody(t *testing.T) {
 	if !strings.Contains(rendered, "HEAD image") || !strings.Contains(rendered, "Working tree image") {
 		t.Fatalf("View() should render image diff labels: %q", rendered)
 	}
+	if !strings.Contains(rendered, "Alt+Up") || !strings.Contains(rendered, "stage") {
+		t.Fatalf("View() should render the highlighted diff footer legend: %q", rendered)
+	}
 	if strings.Contains(rendered, "ATTN  STATE") || strings.Contains(rendered, "Attention reasons") {
 		t.Fatalf("View() should replace the normal list/detail body when diff is open: %q", rendered)
 	}
@@ -4385,6 +4415,74 @@ func TestDiffModeMovesSelectionAndScrollsContent(t *testing.T) {
 	}
 	if got.diffView.contentViewport.YOffset == 0 {
 		t.Fatalf("down in content focus should scroll the diff viewport")
+	}
+}
+
+func TestDiffModeAltUpReturnsToMainList(t *testing.T) {
+	diffState := newDiffViewState("/tmp/demo", "demo")
+	diffState.loading = false
+	diffState.preview = &service.DiffPreview{
+		Files: []service.DiffFilePreview{{
+			Path:     "README.md",
+			Summary:  "README.md",
+			Code:     "M",
+			Kind:     scanner.GitChangeModified,
+			Unstaged: true,
+			Body:     "# Unstaged\n\n+line\n",
+		}},
+	}
+
+	m := Model{
+		diffView: diffState,
+		width:    100,
+		height:   24,
+	}
+	m.syncDiffView(true)
+
+	updated, cmd := m.updateDiffMode(tea.KeyMsg{Type: tea.KeyUp, Alt: true})
+	got := updated.(Model)
+	if got.diffView != nil {
+		t.Fatalf("alt+up should close the diff view and return to the main list")
+	}
+	if got.status != "Focus: project list" {
+		t.Fatalf("status = %q, want focus-list status", got.status)
+	}
+	if cmd != nil {
+		t.Fatalf("alt+up should not return another command")
+	}
+}
+
+func TestDiffModeDashStartsStageToggle(t *testing.T) {
+	diffState := newDiffViewState("/tmp/demo", "demo")
+	diffState.loading = false
+	diffState.preview = &service.DiffPreview{
+		Files: []service.DiffFilePreview{{
+			Path:     "README.md",
+			Summary:  "README.md",
+			Code:     "M",
+			Kind:     scanner.GitChangeModified,
+			Unstaged: true,
+			Body:     "# Unstaged\n\n+line\n",
+		}},
+	}
+
+	m := Model{
+		diffView: diffState,
+		width:    100,
+		height:   24,
+	}
+	m.syncDiffView(true)
+
+	updated, cmd := m.updateDiffMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'-'}})
+	got := updated.(Model)
+	if !got.diffView.loading {
+		t.Fatalf("pressing - should put the diff view into loading mode")
+	}
+	if got.status != "Staging selected file..." {
+		t.Fatalf("status = %q, want staging status", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("pressing - should return a toggle command")
 	}
 }
 

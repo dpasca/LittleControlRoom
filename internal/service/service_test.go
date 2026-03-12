@@ -1114,6 +1114,68 @@ func TestPrepareDiffReturnsNoChangesError(t *testing.T) {
 	}
 }
 
+func TestToggleDiffFileStageStagesAndUnstagesFile(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	projectPath := filepath.Join(t.TempDir(), "repo")
+	initGitRepo(t, projectPath)
+
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("hello\ndiff toggle\n"), 0o644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "repo",
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	preview, err := svc.PrepareDiff(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("prepare diff: %v", err)
+	}
+	if len(preview.Files) != 1 {
+		t.Fatalf("file count = %d, want 1", len(preview.Files))
+	}
+
+	status, err := svc.ToggleDiffFileStage(ctx, projectPath, preview.Files[0])
+	if err != nil {
+		t.Fatalf("stage file: %v", err)
+	}
+	if !strings.Contains(status, "Staged README.md") {
+		t.Fatalf("status = %q, want staged status", status)
+	}
+	if got := gitOutput(t, projectPath, "git", "status", "--short"); !strings.Contains(got, "M  README.md") {
+		t.Fatalf("git status after stage = %q, want staged README", got)
+	}
+
+	preview, err = svc.PrepareDiff(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("prepare diff after stage: %v", err)
+	}
+	status, err = svc.ToggleDiffFileStage(ctx, projectPath, preview.Files[0])
+	if err != nil {
+		t.Fatalf("unstage file: %v", err)
+	}
+	if !strings.Contains(status, "Unstaged README.md") {
+		t.Fatalf("status = %q, want unstaged status", status)
+	}
+	if got := gitOutput(t, projectPath, "git", "status", "--short"); !strings.Contains(got, " M README.md") {
+		t.Fatalf("git status after unstage = %q, want unstaged README", got)
+	}
+}
+
 func TestPrepareCommitIncludesRecommendedUntrackedFiles(t *testing.T) {
 	t.Parallel()
 

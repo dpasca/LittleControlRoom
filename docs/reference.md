@@ -137,10 +137,12 @@ While the Codex pane is visible:
 
 While the diff screen is visible:
 
+- `-` stages the selected file when it is unstaged, and unstages it when it already has staged changes
 - `Up/Down` or `j/k` moves between files when the file list is focused
 - `Enter`, `Right`, or `Tab` moves focus into the diff pane
 - `Left` or `Tab` moves focus back to the file list
 - `PgUp/PgDn/Home/End` pages or jumps within the focused pane
+- `Alt+Up` returns to the main project list
 - `Esc` closes the diff screen
 
 ## Slash Commands
