@@ -59,25 +59,27 @@ Current embedded Codex transport assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-12 09:15 JST)
+## Latest Update (2026-03-12 09:51 JST)
 
-- Removed the single-key `r` refresh shortcut and the single-key `f` forget shortcut from the main TUI, while keeping slash-command access such as `/refresh` and `/forget` intact.
-- Trimmed the main and detail footers so they no longer advertise those removed shortcuts, and removed the detail-pane `↑/↓ scroll` footer hint now that the movement is considered implicit.
-- Updated the help panel copy to advertise refresh via `/refresh` instead of `r`, and refreshed the TUI/reference coverage so regressions catch any accidental reintroduction of the old shortcut hints.
+- Fixed the git commit workflow for dirty submodules by teaching repo-status parsing to keep Git's submodule state bits, so the commit flow can now tell the difference between a parent-committable gitlink change and submodule-local dirt such as `assets_src/` edits.
+- Reworked commit preview generation to exclude submodule-only dirt from stage-all previews by staging into a temporary index first; mixed parent+submodule cases now preview only the real parent commit contents and add explicit warnings when submodule edits will stay behind.
+- Added a dedicated `Submodule Attention` dialog in the TUI for the tricky case where the parent repo is dirty only because a submodule worktree is dirty, so `/commit` no longer falls through to a failed `git commit` with a vague modified-directory message.
+- Added focused scanner, service, and TUI coverage for dirty-only submodules and mixed parent/submodule changes.
 - No Codex/OpenCode detector assumptions changed; `docs/codex_cli_footprint.md` stayed aligned with the current footprint expectations.
 
 Verification snapshot:
 
+- `go test ./internal/scanner ./internal/service ./internal/tui` passed.
 - `make test` passed.
-- `make scan` passed at `2026-03-12T09:14:46+09:00` (`activity projects: 80`, `tracked projects: 134`, `updated projects: 2`, `queued classifications: 1`).
-- `make doctor` passed on the cached snapshot dated `2026-03-12T09:14:55+09:00` (`projects: 134`).
-- `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q` as a main-TUI smoke test.
+- `make scan` passed at `2026-03-12T09:50:48+09:00` (`activity projects: 80`, `tracked projects: 134`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-12T09:50:48+09:00` (`projects: 134`).
+- `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q` as a TUI smoke test after the new submodule dialog wiring.
 
 Next concrete tasks:
 
-- Do a quick interactive feel pass on the updated footer/help copy in a normally sized terminal to confirm the reduced hints still feel discoverable.
-- Decide whether any other low-value single-key actions should move behind slash commands for consistency with the new refresh/forget behavior.
-- Keep watching whether the `/new-project` modal needs a non-slash entry point, since that remains the biggest recent UX decision still open.
+- Do an interactive pass on the new `Submodule Attention` dialog against the real FractalMech repo to confirm the wording is clear when `assets_src/` is the only dirty item.
+- Decide whether the dialog should grow a convenience action later, such as opening the submodule path in Codex or copying a suggested `git -C <submodule>` command, while keeping the current flow non-destructive.
+- Consider whether other parent-repo-only edge cases should get similarly explicit dialogs instead of generic git failures.
 
 ## Recent Updates
 

@@ -3916,6 +3916,41 @@ func TestCommitPreviewNoChangesOpensGitStatusDialog(t *testing.T) {
 	}
 }
 
+func TestCommitPreviewSubmoduleAttentionOpensGitStatusDialog(t *testing.T) {
+	m := Model{}
+
+	updated, cmd := m.Update(commitPreviewMsg{
+		err: service.SubmoduleAttentionError{
+			ProjectPath: "/tmp/fractalmech",
+			ProjectName: "FractalMech",
+			Branch:      "master",
+			Submodules:  []string{"assets_src"},
+		},
+	})
+	got := updated.(Model)
+
+	if cmd != nil {
+		t.Fatalf("submodule-attention dialog should not immediately return another command")
+	}
+	if got.gitStatusDialog == nil {
+		t.Fatalf("expected submodule-attention result to open the git status dialog")
+	}
+	if got.err != nil {
+		t.Fatalf("submodule-attention dialog should clear the generic error, got %v", got.err)
+	}
+	if got.status != "Submodule needs attention before parent commit. Enter close, Esc close" {
+		t.Fatalf("status = %q", got.status)
+	}
+
+	rendered := ansi.Strip(got.renderGitStatusDialogContent(72))
+	if !strings.Contains(rendered, "Submodule Attention") || !strings.Contains(rendered, "FractalMech") {
+		t.Fatalf("rendered dialog should identify the project and submodule state: %q", rendered)
+	}
+	if !strings.Contains(rendered, "assets_src") || !strings.Contains(rendered, "before committing the parent repo") {
+		t.Fatalf("rendered dialog should explain the submodule follow-up: %q", rendered)
+	}
+}
+
 func TestGitStatusDialogEnterPushesExistingCommits(t *testing.T) {
 	m := Model{
 		gitStatusDialog: &gitStatusDialog{
@@ -3953,6 +3988,28 @@ func TestGitStatusDialogEnterClosesWhenPushUnavailable(t *testing.T) {
 	}
 	if got.status != "No changes to commit" {
 		t.Fatalf("status = %q, want %q", got.status, "No changes to commit")
+	}
+	if cmd != nil {
+		t.Fatalf("enter should not return a command when the dialog only closes")
+	}
+}
+
+func TestGitStatusDialogEnterClosesWithCustomDismissStatus(t *testing.T) {
+	m := Model{
+		gitStatusDialog: &gitStatusDialog{
+			ProjectPath:   "/tmp/demo",
+			CanPush:       false,
+			DismissStatus: "Submodule changes still need attention",
+		},
+	}
+
+	updated, cmd := m.updateGitStatusDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.gitStatusDialog != nil {
+		t.Fatalf("enter should close the dialog when no push action is available")
+	}
+	if got.status != "Submodule changes still need attention" {
+		t.Fatalf("status = %q, want custom dismiss status", got.status)
 	}
 	if cmd != nil {
 		t.Fatalf("enter should not return a command when the dialog only closes")

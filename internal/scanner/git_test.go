@@ -96,3 +96,42 @@ func TestParseGitRepoStatusOutputRenamedPath(t *testing.T) {
 		t.Fatalf("expected staged-only rename, got %#v", change)
 	}
 }
+
+func TestParseGitRepoStatusOutputDirtySubmoduleOnlyNeedsLocalAttention(t *testing.T) {
+	status := parseGitRepoStatusOutput(`# branch.oid abc123
+# branch.head master
+1 .M S.M. 160000 160000 160000 abc123 abc123 assets_src
+`)
+
+	if len(status.Changes) != 1 {
+		t.Fatalf("changes len = %d, want 1", len(status.Changes))
+	}
+	change := status.Changes[0]
+	if !change.IsSubmodule {
+		t.Fatalf("expected submodule change, got %#v", change)
+	}
+	if !change.SubmoduleModified || change.SubmoduleCommitChanged || change.SubmoduleUntracked {
+		t.Fatalf("unexpected submodule state flags: %#v", change)
+	}
+	if change.ParentCommitEligible() {
+		t.Fatalf("dirty-only submodule worktree should not be parent-commit eligible: %#v", change)
+	}
+}
+
+func TestParseGitRepoStatusOutputSubmoduleCommitChangeIsParentCommitEligible(t *testing.T) {
+	status := parseGitRepoStatusOutput(`# branch.oid abc123
+# branch.head master
+1 .M SC.. 160000 160000 160000 abc123 def456 assets_src
+`)
+
+	if len(status.Changes) != 1 {
+		t.Fatalf("changes len = %d, want 1", len(status.Changes))
+	}
+	change := status.Changes[0]
+	if !change.IsSubmodule || !change.SubmoduleCommitChanged {
+		t.Fatalf("expected submodule commit change, got %#v", change)
+	}
+	if !change.ParentCommitEligible() {
+		t.Fatalf("submodule commit change should be parent-commit eligible: %#v", change)
+	}
+}

@@ -30,6 +30,11 @@ type GitChange struct {
 	Staged       bool
 	Unstaged     bool
 	Untracked    bool
+	IsSubmodule  bool
+
+	SubmoduleCommitChanged bool
+	SubmoduleModified      bool
+	SubmoduleUntracked     bool
 }
 
 type GitChangeKind string
@@ -45,6 +50,21 @@ const (
 	GitChangeUntracked GitChangeKind = "untracked"
 	GitChangeUnknown   GitChangeKind = "unknown"
 )
+
+func (c GitChange) ParentCommitEligible() bool {
+	if !c.IsSubmodule {
+		return true
+	}
+	switch c.Kind {
+	case GitChangeAdded, GitChangeDeleted, GitChangeRenamed, GitChangeCopied, GitChangeType, GitChangeUnmerged, GitChangeUntracked:
+		return true
+	}
+	return c.Staged || c.SubmoduleCommitChanged
+}
+
+func (c GitChange) SubmoduleWorktreeDirty() bool {
+	return c.IsSubmodule && (c.SubmoduleModified || c.SubmoduleUntracked)
+}
 
 func (s GitRepoStatus) StagedChanges() []GitChange {
 	out := make([]GitChange, 0, len(s.Changes))
@@ -185,7 +205,7 @@ func parseOrdinaryGitChange(line string) (GitChange, bool) {
 	if len(fields) < 9 {
 		return GitChange{}, false
 	}
-	return buildGitChange(fields[1], fields[8], "", false), true
+	return buildGitChange(fields[1], fields[2], fields[8], "", false), true
 }
 
 func parseRenamedGitChange(line string) (GitChange, bool) {
@@ -201,7 +221,7 @@ func parseRenamedGitChange(line string) (GitChange, bool) {
 	if target == "" {
 		return GitChange{}, false
 	}
-	return buildGitChange(header[1], target, header[len(header)-1], true), true
+	return buildGitChange(header[1], header[2], target, header[len(header)-1], true), true
 }
 
 func parseUnmergedGitChange(line string) (GitChange, bool) {
@@ -209,7 +229,7 @@ func parseUnmergedGitChange(line string) (GitChange, bool) {
 	if len(fields) < 11 {
 		return GitChange{}, false
 	}
-	change := buildGitChange(fields[1], fields[10], "", false)
+	change := buildGitChange(fields[1], fields[2], fields[10], "", false)
 	change.Kind = GitChangeUnmerged
 	change.Code = strings.ToUpper(fields[1])
 	change.Staged = true
@@ -217,14 +237,20 @@ func parseUnmergedGitChange(line string) (GitChange, bool) {
 	return change, true
 }
 
-func buildGitChange(xy, path, originalPath string, renamed bool) GitChange {
+func buildGitChange(xy, submoduleState, path, originalPath string, renamed bool) GitChange {
 	indexCode, worktreeCode := splitXY(xy)
 	kind := gitChangeKind(indexCode, worktreeCode, renamed)
+	isSubmodule, commitChanged, modified, untracked := parseGitSubmoduleState(submoduleState)
 	change := GitChange{
 		Path:         path,
 		OriginalPath: originalPath,
 		Code:         gitChangeCode(indexCode, worktreeCode),
 		Kind:         kind,
+		IsSubmodule:  isSubmodule,
+
+		SubmoduleCommitChanged: commitChanged,
+		SubmoduleModified:      modified,
+		SubmoduleUntracked:     untracked,
 	}
 	if kind == GitChangeUntracked {
 		change.Untracked = true
@@ -234,6 +260,13 @@ func buildGitChange(xy, path, originalPath string, renamed bool) GitChange {
 	change.Staged = indexCode != '.'
 	change.Unstaged = worktreeCode != '.'
 	return change
+}
+
+func parseGitSubmoduleState(token string) (bool, bool, bool, bool) {
+	if len(token) != 4 || token[0] != 'S' {
+		return false, false, false, false
+	}
+	return true, token[1] == 'C', token[2] == 'M', token[3] == 'U'
 }
 
 func splitXY(xy string) (byte, byte) {

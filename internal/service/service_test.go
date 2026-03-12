@@ -1114,6 +1114,122 @@ func TestPrepareCommitReturnsNoChangesErrorWithPushContext(t *testing.T) {
 	}
 }
 
+func TestPrepareCommitReturnsSubmoduleAttentionErrorForDirtySubmoduleOnly(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	submoduleOriginPath := filepath.Join(root, "assets-origin")
+	submodulePath := initGitRepoWithSubmodule(t, projectPath, submoduleOriginPath, "assets_src")
+
+	if err := os.WriteFile(filepath.Join(submodulePath, "README.md"), []byte("hello\nsubmodule edit\n"), 0o644); err != nil {
+		t.Fatalf("write submodule README: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "repo",
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	_, err = svc.PrepareCommit(ctx, projectPath, GitActionCommit, "")
+	if err == nil {
+		t.Fatalf("prepare commit should fail when only submodule-local changes are dirty")
+	}
+
+	var submoduleErr SubmoduleAttentionError
+	if !errors.As(err, &submoduleErr) {
+		t.Fatalf("prepare commit error = %v, want SubmoduleAttentionError", err)
+	}
+	if len(submoduleErr.Submodules) != 1 || submoduleErr.Submodules[0] != "assets_src" {
+		t.Fatalf("submodules = %#v, want assets_src", submoduleErr.Submodules)
+	}
+}
+
+func TestPrepareCommitAndApplyCommitLeaveDirtySubmoduleOutOfParentCommit(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	submoduleOriginPath := filepath.Join(root, "assets-origin")
+	submodulePath := initGitRepoWithSubmodule(t, projectPath, submoduleOriginPath, "assets_src")
+
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("hello\nship parent update\n"), 0o644); err != nil {
+		t.Fatalf("write parent README: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(submodulePath, "README.md"), []byte("hello\nsubmodule edit\n"), 0o644); err != nil {
+		t.Fatalf("write submodule README: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "repo",
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	svc.commitMessageSuggester = nil
+
+	preview, err := svc.PrepareCommit(ctx, projectPath, GitActionFinish, "Ship parent update")
+	if err != nil {
+		t.Fatalf("prepare commit: %v", err)
+	}
+	if preview.StageMode != GitStageAllChanges {
+		t.Fatalf("stage mode = %s, want %s", preview.StageMode, GitStageAllChanges)
+	}
+	if len(preview.Included) != 1 || preview.Included[0].Path != "README.md" {
+		t.Fatalf("included files = %#v, want parent README only", preview.Included)
+	}
+	if len(preview.Excluded) != 1 || preview.Excluded[0].Path != "assets_src" {
+		t.Fatalf("excluded files = %#v, want dirty assets_src submodule", preview.Excluded)
+	}
+	if strings.Contains(preview.DiffStat, "assets_src") {
+		t.Fatalf("diff stat should exclude dirty-only submodule changes, got %q", preview.DiffStat)
+	}
+	if warnings := strings.Join(preview.Warnings, "\n"); !strings.Contains(warnings, "Submodule assets_src has local changes inside it.") {
+		t.Fatalf("warnings = %#v, want submodule guidance", preview.Warnings)
+	}
+
+	result, err := svc.ApplyCommit(ctx, preview, false)
+	if err != nil {
+		t.Fatalf("apply commit: %v", err)
+	}
+	if result.Pushed {
+		t.Fatalf("commit-only flow should not push, got %#v", result)
+	}
+
+	headFiles := gitOutput(t, projectPath, "git", "show", "--name-only", "--format=", "HEAD")
+	if !strings.Contains(headFiles, "README.md") || strings.Contains(headFiles, "assets_src") {
+		t.Fatalf("HEAD files = %q, want parent README only", headFiles)
+	}
+
+	statusOut := gitOutput(t, projectPath, "git", "status", "--short")
+	if !strings.Contains(statusOut, "assets_src") || strings.Contains(statusOut, "README.md") {
+		t.Fatalf("post-commit status = %q, want only dirty submodule left", statusOut)
+	}
+}
+
 func TestApplyCommitStagesRecommendedUntrackedFiles(t *testing.T) {
 	t.Parallel()
 
@@ -1310,6 +1426,15 @@ func initGitRepo(t *testing.T, path string) {
 	}
 	runGit(t, path, "git", "add", "README.md")
 	runGit(t, path, "git", "commit", "-m", "initial")
+}
+
+func initGitRepoWithSubmodule(t *testing.T, projectPath, submoduleOriginPath, submoduleName string) string {
+	t.Helper()
+	initGitRepo(t, submoduleOriginPath)
+	initGitRepo(t, projectPath)
+	runGit(t, projectPath, "git", "-c", "protocol.file.allow=always", "submodule", "add", submoduleOriginPath, submoduleName)
+	runGit(t, projectPath, "git", "commit", "-m", "add submodule")
+	return filepath.Join(projectPath, submoduleName)
 }
 
 func initBareGitRepo(t *testing.T, path string) {

@@ -121,15 +121,17 @@ type commitPreviewMsg struct {
 }
 
 type gitStatusDialog struct {
-	Title        string
-	ProjectPath  string
-	ProjectName  string
-	Branch       string
-	Status       string
-	RemoteStatus string
-	Warnings     []string
-	CanPush      bool
-	Ahead        int
+	Title         string
+	ProjectPath   string
+	ProjectName   string
+	Branch        string
+	Status        string
+	RemoteStatus  string
+	Warnings      []string
+	CanPush       bool
+	Ahead         int
+	ReadyStatus   string
+	DismissStatus string
 }
 
 type settingsSavedMsg struct {
@@ -365,6 +367,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var noChangesErr service.NoChangesToCommitError
 			if errors.As(msg.err, &noChangesErr) {
 				dialog := gitStatusDialogFromNoChanges(noChangesErr)
+				m.err = nil
+				m.showHelp = false
+				m.gitStatusDialog = &dialog
+				m.gitStatusApplying = false
+				m.commitPreview = nil
+				m.commitApplying = false
+				m.status = gitStatusDialogReadyStatus(dialog)
+				return m, nil
+			}
+			var submoduleErr service.SubmoduleAttentionError
+			if errors.As(msg.err, &submoduleErr) {
+				dialog := gitStatusDialogFromSubmoduleAttention(submoduleErr)
 				m.err = nil
 				m.showHelp = false
 				m.gitStatusDialog = &dialog
@@ -2672,6 +2686,9 @@ func gitStatusDialogFromNoChanges(err service.NoChangesToCommitError) gitStatusD
 }
 
 func gitStatusDialogReadyStatus(dialog gitStatusDialog) string {
+	if ready := strings.TrimSpace(dialog.ReadyStatus); ready != "" {
+		return ready
+	}
 	if dialog.CanPush {
 		if dialog.Ahead == 1 {
 			return "Nothing new to commit. Enter push 1 existing commit, Esc cancel"
@@ -2682,10 +2699,48 @@ func gitStatusDialogReadyStatus(dialog gitStatusDialog) string {
 }
 
 func gitStatusDialogDismissStatus(dialog gitStatusDialog) string {
+	if dismiss := strings.TrimSpace(dialog.DismissStatus); dismiss != "" {
+		return dismiss
+	}
 	if dialog.CanPush {
 		return "Nothing new to commit. Use /push to send existing commits."
 	}
 	return "No changes to commit"
+}
+
+func gitStatusDialogFromSubmoduleAttention(err service.SubmoduleAttentionError) gitStatusDialog {
+	projectName := strings.TrimSpace(err.ProjectName)
+	if projectName == "" && strings.TrimSpace(err.ProjectPath) != "" {
+		projectName = filepath.Base(err.ProjectPath)
+	}
+	if projectName == "" {
+		projectName = "(unknown project)"
+	}
+
+	branch := strings.TrimSpace(err.Branch)
+	if branch == "" {
+		branch = "(detached)"
+	}
+
+	dialog := gitStatusDialog{
+		Title:         "Submodule Attention",
+		ProjectPath:   err.ProjectPath,
+		ProjectName:   projectName,
+		Branch:        branch,
+		Status:        "Only submodule-local changes are pending.",
+		ReadyStatus:   "Submodule needs attention before parent commit. Enter close, Esc close",
+		DismissStatus: "Submodule changes still need attention",
+	}
+
+	if len(err.Submodules) == 1 {
+		dialog.Warnings = append(dialog.Warnings, fmt.Sprintf("Commit or discard the local changes inside submodule %s before committing the parent repo.", err.Submodules[0]))
+	} else if len(err.Submodules) > 1 {
+		dialog.Warnings = append(dialog.Warnings, fmt.Sprintf("Commit or discard the local changes inside these submodules before committing the parent repo: %s.", strings.Join(err.Submodules, ", ")))
+	}
+	if warning := strings.TrimSpace(err.PushWarning); warning != "" {
+		dialog.Warnings = append(dialog.Warnings, warning)
+	}
+	return dialog
 }
 
 func renderGitStatusDialogActions(dialog gitStatusDialog) string {

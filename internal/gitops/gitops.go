@@ -39,6 +39,26 @@ func ReadDiffPatch(ctx context.Context, path string, cached bool, maxBytes int) 
 	return trimmed, nil
 }
 
+func ReadDiffStatAllStaged(ctx context.Context, path string) (string, error) {
+	out, err := readCachedDiffWithTempIndex(ctx, path, []string{"add", "--all", "--", "."}, "--stat", "--find-renames", "--", ".")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func ReadDiffPatchAllStaged(ctx context.Context, path string, maxBytes int) (string, error) {
+	out, err := readCachedDiffWithTempIndex(ctx, path, []string{"add", "--all", "--", "."}, "--unified=0", "--no-color", "--find-renames", "--", ".")
+	if err != nil {
+		return "", err
+	}
+	trimmed := strings.TrimSpace(string(out))
+	if maxBytes > 0 && len(trimmed) > maxBytes {
+		return "", nil
+	}
+	return trimmed, nil
+}
+
 func ReadDiffStatWithAddedPaths(ctx context.Context, path string, extraPaths []string) (string, error) {
 	out, err := readCachedDiffWithAddedPaths(ctx, path, extraPaths, "--stat", "--find-renames", "--", ".")
 	if err != nil {
@@ -131,23 +151,8 @@ func readCachedDiffWithAddedPaths(ctx context.Context, path string, extraPaths [
 		return nil, fmt.Errorf("create empty temp index for %s: %w", path, writeErr)
 	}
 
-	env := append(os.Environ(), "GIT_INDEX_FILE="+tempIndex)
-	addArgs := append([]string{"-C", path, "add", "--"}, extraPaths...)
-	addCmd := exec.CommandContext(ctx, "git", addArgs...)
-	addCmd.Env = env
-	if out, err := addCmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("stage selected paths in temp index for %s: %w: %s", path, err, strings.TrimSpace(string(out)))
-	}
-
-	args := []string{"-C", path, "diff", "--cached"}
-	args = append(args, diffArgs...)
-	diffCmd := exec.CommandContext(ctx, "git", args...)
-	diffCmd.Env = env
-	out, err := diffCmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("read git cached diff with temp index for %s: %w", path, err)
-	}
-	return out, nil
+	addArgs := append([]string{"add", "--"}, extraPaths...)
+	return readCachedDiffWithTempIndexFromSeed(ctx, path, tempIndex, addArgs, diffArgs...)
 }
 
 func gitIndexPath(ctx context.Context, path string) (string, error) {
@@ -163,4 +168,47 @@ func gitIndexPath(ctx context.Context, path string) (string, error) {
 		return indexPath, nil
 	}
 	return filepath.Join(path, indexPath), nil
+}
+
+func readCachedDiffWithTempIndex(ctx context.Context, path string, addArgs []string, diffArgs ...string) ([]byte, error) {
+	indexPath, err := gitIndexPath(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	tempDir, err := os.MkdirTemp("", "lcroom-index-*")
+	if err != nil {
+		return nil, fmt.Errorf("create temp index dir for %s: %w", path, err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	tempIndex := filepath.Join(tempDir, "index")
+	if data, readErr := os.ReadFile(indexPath); readErr == nil {
+		if writeErr := os.WriteFile(tempIndex, data, 0o600); writeErr != nil {
+			return nil, fmt.Errorf("seed temp index for %s: %w", path, writeErr)
+		}
+	} else if !os.IsNotExist(readErr) {
+		return nil, fmt.Errorf("read git index for %s: %w", path, readErr)
+	} else if writeErr := os.WriteFile(tempIndex, nil, 0o600); writeErr != nil {
+		return nil, fmt.Errorf("create empty temp index for %s: %w", path, writeErr)
+	}
+	return readCachedDiffWithTempIndexFromSeed(ctx, path, tempIndex, addArgs, diffArgs...)
+}
+
+func readCachedDiffWithTempIndexFromSeed(ctx context.Context, path, tempIndex string, addArgs []string, diffArgs ...string) ([]byte, error) {
+	env := append(os.Environ(), "GIT_INDEX_FILE="+tempIndex)
+	addCmd := exec.CommandContext(ctx, "git", append([]string{"-C", path}, addArgs...)...)
+	addCmd.Env = env
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("stage temp index changes for %s: %w: %s", path, err, strings.TrimSpace(string(out)))
+	}
+
+	args := []string{"-C", path, "diff", "--cached"}
+	args = append(args, diffArgs...)
+	diffCmd := exec.CommandContext(ctx, "git", args...)
+	diffCmd.Env = env
+	out, err := diffCmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("read git cached diff with temp index for %s: %w", path, err)
+	}
+	return out, nil
 }

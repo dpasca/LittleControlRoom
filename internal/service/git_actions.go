@@ -75,6 +75,14 @@ type NoChangesToCommitError struct {
 	PushWarning string
 }
 
+type SubmoduleAttentionError struct {
+	ProjectPath string
+	ProjectName string
+	Branch      string
+	Submodules  []string
+	PushWarning string
+}
+
 func (e NoChangesToCommitError) Error() string {
 	base := "no changes to commit"
 	switch {
@@ -87,6 +95,14 @@ func (e NoChangesToCommitError) Error() string {
 	default:
 		return base
 	}
+}
+
+func (e SubmoduleAttentionError) Error() string {
+	base := "submodule changes need attention before the parent repo can commit"
+	if len(e.Submodules) == 0 {
+		return base
+	}
+	return fmt.Sprintf("%s: %s", base, strings.Join(e.Submodules, ", "))
 }
 
 func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent GitActionIntent, messageOverride string) (CommitPreview, error) {
@@ -111,14 +127,24 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 	excludedChanges := append([]scanner.GitChange{}, repoStatus.UnstagedChanges()...)
 	selectedUntracked := []scanner.GitChange{}
 	stageMode := GitStageStagedOnly
-	useCachedDiff := true
 	if len(staged) == 0 {
-		includedChanges = append([]scanner.GitChange{}, repoStatus.Changes...)
-		excludedChanges = nil
+		includedChanges = filterParentCommitEligible(repoStatus.Changes)
+		excludedChanges = filterParentCommitBlocked(repoStatus.Changes)
 		stageMode = GitStageAllChanges
-		useCachedDiff = false
+	} else {
+		includedChanges = filterParentCommitEligible(staged)
 	}
 	if len(includedChanges) == 0 {
+		blockedSubmodules := blockedSubmodulePaths(repoStatus.Changes)
+		if len(blockedSubmodules) > 0 {
+			return CommitPreview{}, SubmoduleAttentionError{
+				ProjectPath: projectPath,
+				ProjectName: projectName,
+				Branch:      branchName,
+				Submodules:  blockedSubmodules,
+				PushWarning: pushWarning,
+			}
+		}
 		return CommitPreview{}, NoChangesToCommitError{
 			ProjectPath: projectPath,
 			ProjectName: projectName,
@@ -131,15 +157,29 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 	}
 
 	latestSummary := strings.TrimSpace(detail.Summary.LatestSessionSummary)
-	diffStat, err := gitops.ReadDiffStat(ctx, projectPath, useCachedDiff)
-	if err != nil {
-		return CommitPreview{}, err
-	}
+	diffStat := ""
 	patch := ""
-	if len(includedChanges) <= 8 {
-		patch, err = gitops.ReadDiffPatch(ctx, projectPath, useCachedDiff, 6000)
+	if stageMode == GitStageAllChanges {
+		diffStat, err = gitops.ReadDiffStatAllStaged(ctx, projectPath)
 		if err != nil {
 			return CommitPreview{}, err
+		}
+		if len(includedChanges) <= 8 {
+			patch, err = gitops.ReadDiffPatchAllStaged(ctx, projectPath, 6000)
+			if err != nil {
+				return CommitPreview{}, err
+			}
+		}
+	} else {
+		diffStat, err = gitops.ReadDiffStat(ctx, projectPath, true)
+		if err != nil {
+			return CommitPreview{}, err
+		}
+		if len(includedChanges) <= 8 {
+			patch, err = gitops.ReadDiffPatch(ctx, projectPath, true, 6000)
+			if err != nil {
+				return CommitPreview{}, err
+			}
 		}
 	}
 
@@ -164,7 +204,7 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 					selectedUntracked, selectedDecisions = selectRecommendedUntracked(untracked, suggestion.Files)
 					if len(selectedUntracked) > 0 {
 						includedChanges = append(append([]scanner.GitChange{}, staged...), selectedUntracked...)
-						excludedChanges = excludeChangesByPath(repoStatus.UnstagedChanges(), gitChangePaths(selectedUntracked))
+						excludedChanges = excludeChangesByPath(excludedChanges, gitChangePaths(selectedUntracked))
 						diffStat, err = gitops.ReadDiffStatWithAddedPaths(ctx, projectPath, gitChangePaths(selectedUntracked))
 						if err != nil {
 							return CommitPreview{}, err
@@ -213,6 +253,7 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 			preview.Warnings = append(preview.Warnings, "Only staged changes will be committed; other local changes stay in your worktree.")
 		}
 	}
+	preview.Warnings = append(preview.Warnings, submodulePreviewWarnings(includedChanges, excludedChanges)...)
 
 	messageOverride = normalizeCommitMessage(messageOverride)
 	if messageOverride != "" {
@@ -267,6 +308,31 @@ func (s *Service) ApplyCommit(ctx context.Context, preview CommitPreview, pushAf
 		}
 	} else if err := gitops.StagePaths(ctx, preview.ProjectPath, commitFileStagePaths(preview.SelectedUntracked)); err != nil {
 		return CommitResult{}, err
+	}
+	repoStatus, err := s.gitRepoStatusReader(ctx, preview.ProjectPath)
+	if err != nil {
+		return CommitResult{}, err
+	}
+	if len(filterParentCommitEligible(repoStatus.StagedChanges())) == 0 {
+		blockedSubmodules := blockedSubmodulePaths(repoStatus.Changes)
+		if len(blockedSubmodules) > 0 {
+			return CommitResult{}, SubmoduleAttentionError{
+				ProjectPath: preview.ProjectPath,
+				ProjectName: preview.ProjectName,
+				Branch:      preview.Branch,
+				Submodules:  blockedSubmodules,
+			}
+		}
+		canPush, pushWarning := pushAvailability(repoStatus)
+		return CommitResult{}, NoChangesToCommitError{
+			ProjectPath: preview.ProjectPath,
+			ProjectName: preview.ProjectName,
+			Branch:      strings.TrimSpace(repoStatus.Branch),
+			Ahead:       repoStatus.Ahead,
+			Behind:      repoStatus.Behind,
+			CanPush:     canPush && repoStatus.Ahead > 0,
+			PushWarning: pushWarning,
+		}
 	}
 
 	hash, err := gitops.Commit(ctx, preview.ProjectPath, preview.Message)
@@ -402,6 +468,79 @@ func diffStatSummary(diffStat string) string {
 		}
 	}
 	return ""
+}
+
+func filterParentCommitEligible(changes []scanner.GitChange) []scanner.GitChange {
+	out := make([]scanner.GitChange, 0, len(changes))
+	for _, change := range changes {
+		if change.ParentCommitEligible() {
+			out = append(out, change)
+		}
+	}
+	return out
+}
+
+func filterParentCommitBlocked(changes []scanner.GitChange) []scanner.GitChange {
+	out := make([]scanner.GitChange, 0, len(changes))
+	for _, change := range changes {
+		if !change.ParentCommitEligible() {
+			out = append(out, change)
+		}
+	}
+	return out
+}
+
+func blockedSubmodulePaths(changes []scanner.GitChange) []string {
+	return uniqueSubmodulePaths(changes, func(change scanner.GitChange) bool {
+		return change.IsSubmodule && !change.ParentCommitEligible() && change.SubmoduleWorktreeDirty()
+	})
+}
+
+func dirtyIncludedSubmodulePaths(changes []scanner.GitChange) []string {
+	return uniqueSubmodulePaths(changes, func(change scanner.GitChange) bool {
+		return change.ParentCommitEligible() && change.SubmoduleWorktreeDirty()
+	})
+}
+
+func uniqueSubmodulePaths(changes []scanner.GitChange, keep func(scanner.GitChange) bool) []string {
+	seen := make(map[string]struct{}, len(changes))
+	out := make([]string, 0, len(changes))
+	for _, change := range changes {
+		if !keep(change) {
+			continue
+		}
+		if _, ok := seen[change.Path]; ok {
+			continue
+		}
+		seen[change.Path] = struct{}{}
+		out = append(out, change.Path)
+	}
+	return out
+}
+
+func submodulePreviewWarnings(includedChanges, excludedChanges []scanner.GitChange) []string {
+	warnings := []string{}
+	if blocked := blockedSubmodulePaths(excludedChanges); len(blocked) > 0 {
+		warnings = append(warnings, formatBlockedSubmoduleWarning(blocked))
+	}
+	if dirtyIncluded := dirtyIncludedSubmodulePaths(includedChanges); len(dirtyIncluded) > 0 {
+		warnings = append(warnings, formatDirtyIncludedSubmoduleWarning(dirtyIncluded))
+	}
+	return warnings
+}
+
+func formatBlockedSubmoduleWarning(paths []string) string {
+	if len(paths) == 1 {
+		return fmt.Sprintf("Submodule %s has local changes inside it. The parent commit will not include them; commit or discard them in that submodule first.", paths[0])
+	}
+	return fmt.Sprintf("Submodules %s have local changes inside them. The parent commit will not include those edits; commit or discard them in the submodules first.", strings.Join(paths, ", "))
+}
+
+func formatDirtyIncludedSubmoduleWarning(paths []string) string {
+	if len(paths) == 1 {
+		return fmt.Sprintf("Submodule %s still has additional local changes inside it. The parent commit can record the submodule pointer, but those submodule edits will stay in its worktree.", paths[0])
+	}
+	return fmt.Sprintf("Submodules %s still have additional local changes inside them. The parent commit can record their pointers, but those submodule edits will stay in each submodule worktree.", strings.Join(paths, ", "))
 }
 
 func pushAvailability(status scanner.GitRepoStatus) (bool, string) {
