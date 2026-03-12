@@ -13,6 +13,7 @@ import (
 	"lcroom/internal/scanner"
 	"lcroom/internal/service"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -71,6 +72,9 @@ func (m Model) updateDiffMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.diffView = nil
 		m.status = "Focus: project list"
 		return m, nil
+	case "/":
+		m.openCommandMode()
+		return m, textinput.Blink
 	}
 
 	if m.diffView.loading {
@@ -360,12 +364,12 @@ func renderDiffSectionHeader(title string, width int) string {
 
 func renderDiffFileRow(file service.DiffFilePreview, selected bool, width int) string {
 	state := diffFileStateWord(file)
-	base := fmt.Sprintf("%-3s %-9s %s", file.Code, state, truncateText(file.Summary, max(8, width-15)))
+	pathWidth := max(8, width-15)
+	base := fmt.Sprintf(" %s %-9s %s", file.Code, state, truncateText(file.Summary, pathWidth))
 	if selected {
-		return commandPaletteSelectStyle.Width(width).Render(" " + truncateText(base, max(1, width-1)))
+		return commandPaletteSelectStyle.Width(width).Render(truncateText(base, max(1, width)))
 	}
 	code := diffFileCodeStyle(file).Render(file.Code)
-	pathWidth := max(8, width-15)
 	row := " " + code + " " + commandPaletteHintStyle.Render(fmt.Sprintf("%-9s", state)) + " " + commandPaletteRowStyle.Render(truncateText(file.Summary, pathWidth))
 	return commandPaletteRowStyle.Width(width).Render(row)
 }

@@ -296,6 +296,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.newProjectDialog != nil {
 			return m.updateNewProjectMode(msg)
 		}
+		if m.commandMode {
+			return m.updateCommandMode(msg)
+		}
 		if m.diffView != nil {
 			return m.updateDiffMode(msg)
 		}
@@ -307,9 +310,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.settingsMode {
 			return m.updateSettingsMode(msg)
-		}
-		if m.commandMode {
-			return m.updateCommandMode(msg)
 		}
 		if m.noteMode {
 			return m.updateNoteMode(msg)
@@ -392,6 +392,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = scanCompleteStatus(msg.report)
 		return m, tea.Batch(m.loadProjectsCmd())
 	case commitPreviewMsg:
+		m.diffView = nil
 		if msg.err != nil {
 			var noChangesErr service.NoChangesToCommitError
 			if errors.As(msg.err, &noChangesErr) {

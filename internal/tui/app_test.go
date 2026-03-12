@@ -4409,6 +4409,22 @@ func TestRenderDiffFileListSeparatesStagedAndUnstagedSections(t *testing.T) {
 	}
 }
 
+func TestRenderDiffFileRowSelectedUsesCompactCodeSpacing(t *testing.T) {
+	rendered := ansi.Strip(renderDiffFileRow(service.DiffFilePreview{
+		Path:     "README.md",
+		Summary:  "README.md",
+		Code:     "M",
+		Kind:     scanner.GitChangeModified,
+		Unstaged: true,
+	}, true, 28))
+	if strings.Contains(rendered, "M   changed") {
+		t.Fatalf("selected diff row should not add extra padding before the state label: %q", rendered)
+	}
+	if !strings.Contains(rendered, "M changed") {
+		t.Fatalf("selected diff row should keep the compact code-to-state spacing: %q", rendered)
+	}
+}
+
 func TestDiffModeMovesSelectionAndScrollsContent(t *testing.T) {
 	diffState := newDiffViewState("/tmp/demo", "demo")
 	diffState.loading = false
@@ -4434,9 +4450,10 @@ func TestDiffModeMovesSelectionAndScrollsContent(t *testing.T) {
 	}
 
 	m := Model{
-		diffView: diffState,
-		width:    100,
-		height:   24,
+		diffView:     diffState,
+		commandInput: textinput.New(),
+		width:        100,
+		height:       24,
 	}
 	m.syncDiffView(true)
 
@@ -4477,9 +4494,10 @@ func TestDiffModeAltUpReturnsToMainList(t *testing.T) {
 	}
 
 	m := Model{
-		diffView: diffState,
-		width:    100,
-		height:   24,
+		diffView:     diffState,
+		commandInput: textinput.New(),
+		width:        100,
+		height:       24,
 	}
 	m.syncDiffView(true)
 
@@ -4511,9 +4529,10 @@ func TestDiffModeDashStartsStageToggle(t *testing.T) {
 	}
 
 	m := Model{
-		diffView: diffState,
-		width:    100,
-		height:   24,
+		diffView:     diffState,
+		commandInput: textinput.New(),
+		width:        100,
+		height:       24,
 	}
 	m.syncDiffView(true)
 
@@ -4527,6 +4546,91 @@ func TestDiffModeDashStartsStageToggle(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatalf("pressing - should return a toggle command")
+	}
+}
+
+func TestSlashCommandModeTakesPriorityOverDiffView(t *testing.T) {
+	diffState := newDiffViewState("/tmp/demo", "demo")
+	diffState.loading = false
+	diffState.preview = &service.DiffPreview{
+		Files: []service.DiffFilePreview{{
+			Path:     "README.md",
+			Summary:  "README.md",
+			Code:     "M",
+			Kind:     scanner.GitChangeModified,
+			Unstaged: true,
+			Body:     "# Unstaged\n\n+line\n",
+		}},
+	}
+
+	m := Model{
+		diffView:     diffState,
+		commandInput: textinput.New(),
+		width:        100,
+		height:       24,
+	}
+	m.syncDiffView(true)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	got := updated.(Model)
+	if !got.commandMode {
+		t.Fatalf("pressing / in diff mode should open command mode")
+	}
+	if got.diffView == nil {
+		t.Fatalf("opening command mode from diff should keep the diff view active until a command replaces it")
+	}
+	if cmd == nil {
+		t.Fatalf("opening command mode should return a blink command")
+	}
+
+	got.commandInput.SetValue("/help")
+	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if !got.showHelp {
+		t.Fatalf("command mode should take priority over diff key handling once opened")
+	}
+}
+
+func TestCommitPreviewMsgClosesDiffView(t *testing.T) {
+	diffState := newDiffViewState("/tmp/demo", "demo")
+	diffState.loading = false
+	diffState.preview = &service.DiffPreview{
+		Files: []service.DiffFilePreview{{
+			Path:     "README.md",
+			Summary:  "README.md",
+			Code:     "M",
+			Kind:     scanner.GitChangeModified,
+			Unstaged: true,
+			Body:     "# Unstaged\n\n+line\n",
+		}},
+	}
+
+	m := Model{
+		diffView: diffState,
+		width:    100,
+		height:   24,
+	}
+
+	updated, _ := m.Update(commitPreviewMsg{
+		preview: service.CommitPreview{
+			Intent:      service.GitActionCommit,
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			Branch:      "master",
+			StageMode:   service.GitStageAllChanges,
+			DiffStat:    "1 file changed",
+			DiffSummary: "README.md",
+			Message:     "demo commit",
+		},
+		projectPath: "/tmp/demo",
+		intent:      service.GitActionCommit,
+	})
+	got := updated.(Model)
+	if got.diffView != nil {
+		t.Fatalf("commit preview should replace the diff view once ready")
+	}
+	if got.commitPreview == nil {
+		t.Fatalf("commit preview should be stored when the preview message arrives")
 	}
 }
 

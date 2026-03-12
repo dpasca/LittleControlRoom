@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-12 19:01 JST (JST)
+Last updated: 2026-03-12 19:28 JST (JST)
 
 ## Current State
 
@@ -64,20 +64,20 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-12 19:01 JST)
+## Latest Update (2026-03-12 19:28 JST)
 
 - Polished the dedicated full-screen `/diff` screen so `Alt+Up` returns to the main project list, the footer uses the same highlighted action-chip style as the embedded Codex pane, and the selected file can be staged or unstaged in place with `-`.
-- Split the diff sidebar into staged-first and unstaged-following sections, while keeping the existing single-file selection model and scroll behavior intact.
-- Added commit-preview handoff into the same diff screen via `d`, wired stage/unstage support through service and git helpers so the diff preview refreshes after `git add -A --` or `git restore --staged --`, and updated the docs to describe the staged/unstaged grouping plus the `/diff` command.
+- Split the diff sidebar into staged-first and unstaged-following sections, tightened the selected-row rendering so the state label no longer picks up extra padding, and kept the existing single-file selection model and scroll behavior intact.
+- Added commit-preview handoff into the same diff screen via `d`, wired stage/unstage support through service and git helpers so the diff preview refreshes after `git add -A --` or `git restore --staged --`, and now allow slash commands such as `/commit` to be opened directly from the diff screen and replace it cleanly with commit preview when ready.
 - No Codex/OpenCode detector assumptions changed; `docs/codex_cli_footprint.md` stayed aligned with the current footprint expectations.
 
 Verification snapshot:
 
 - `go test ./internal/service -run 'TestPrepareDiff|TestToggleDiffFileStage|TestPrepareCommit'` passed.
-- `go test ./internal/tui -run 'TestViewWithDiffScreenUsesFullBody|TestRenderDiffFileListSeparatesStagedAndUnstagedSections|TestDiffModeMovesSelectionAndScrollsContent|TestDiffModeAltUpReturnsToMainList|TestDiffModeDashStartsStageToggle|TestCommitPreviewDOpensDiffView|TestDispatchDiffCommandOpensDiffView'` passed.
+- `go test ./internal/tui -run 'TestViewWithDiffScreenUsesFullBody|TestRenderDiffFileListSeparatesStagedAndUnstagedSections|TestRenderDiffFileRowSelectedUsesCompactCodeSpacing|TestDiffModeMovesSelectionAndScrollsContent|TestDiffModeAltUpReturnsToMainList|TestDiffModeDashStartsStageToggle|TestSlashCommandModeTakesPriorityOverDiffView|TestCommitPreviewMsgClosesDiffView|TestCommitPreviewDOpensDiffView|TestDispatchDiffCommandOpensDiffView'` passed.
 - `make test` passed.
-- `make scan` passed at `2026-03-12T19:00:48+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 2`, `queued classifications: 1`).
-- `make doctor` passed on the cached snapshot dated `2026-03-12T19:00:55+09:00` (`projects: 135`).
+- `make scan` passed at `2026-03-12T19:28:38+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-12T19:28:45+09:00` (`projects: 135`).
 - `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q`.
 
 Next concrete tasks:
