@@ -48,6 +48,15 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "new project",
+			raw:  "/new-project",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindNewProject {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindNewProject)
+				}
+			},
+		},
+		{
 			name: "commit custom message",
 			raw:  "/commit Improve command palette scrolling",
 			check: func(t *testing.T, inv Invocation) {
@@ -190,6 +199,16 @@ func TestSuggestionsIncludeSettingsCommand(t *testing.T) {
 	}
 	if got[0].Insert != "/settings" {
 		t.Fatalf("first /set suggestion = %q, want /settings", got[0].Insert)
+	}
+}
+
+func TestSuggestionsIncludeNewProjectCommand(t *testing.T) {
+	got := Suggestions("/new")
+	if len(got) == 0 {
+		t.Fatalf("Suggestions(/new) returned none")
+	}
+	if got[0].Insert != "/new-project" {
+		t.Fatalf("first /new suggestion = %q, want /new-project", got[0].Insert)
 	}
 }
 

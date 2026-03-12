@@ -15,6 +15,7 @@ const (
 	KindSort        Kind = "sort"
 	KindView        Kind = "view"
 	KindSettings    Kind = "settings"
+	KindNewProject  Kind = "new-project"
 	KindCommit      Kind = "commit"
 	KindPush        Kind = "push"
 	KindFinish      Kind = "finish"
@@ -89,6 +90,7 @@ var specs = []Spec{
 	{Name: "sort", Usage: "/sort attention|recent", Summary: "Set list ordering"},
 	{Name: "view", Usage: "/view ai|all", Summary: "Choose AI-linked or all folders"},
 	{Name: "settings", Usage: "/settings", Summary: "Edit persisted scope, demo filters, and scan thresholds"},
+	{Name: "new-project", Usage: "/new-project", Summary: "Create a project folder or add an existing one"},
 	{Name: "commit", Usage: "/commit [message]", Summary: "Preview a commit for the selected project"},
 	{Name: "push", Usage: "/push", Summary: "Push the selected project when its branch is ahead"},
 	{Name: "finish", Usage: "/finish [message]", Summary: "Open the commit preview for the selected project"},
@@ -237,6 +239,11 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /settings")
 		}
 		return Invocation{Kind: KindSettings, Canonical: "/settings"}, nil
+	case "new-project":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /new-project")
+		}
+		return Invocation{Kind: KindNewProject, Canonical: "/new-project"}, nil
 	case "pin":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /pin")

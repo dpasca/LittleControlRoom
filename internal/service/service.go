@@ -48,6 +48,7 @@ type Service struct {
 
 	gitFingerprintReader func(context.Context, string) (scanner.GitFingerprint, error)
 	gitRepoStatusReader  func(context.Context, string) (scanner.GitRepoStatus, error)
+	gitRepoInitializer   func(context.Context, string) error
 
 	mu sync.Mutex
 }
@@ -83,6 +84,7 @@ func New(cfg config.AppConfig, st *store.Store, bus *events.Bus, detectorList []
 		untrackedFileRecommender: commitAssistant,
 		gitFingerprintReader:     scanner.ReadGitFingerprint,
 		gitRepoStatusReader:      scanner.ReadGitRepoStatus,
+		gitRepoInitializer:       runGitInit,
 	}
 }
 
@@ -392,6 +394,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			RepoAheadCount:  repoAheadCount,
 			RepoBehindCount: repoBehindCount,
 			Forgotten:       forgotten,
+			ManuallyAdded:   old.ManuallyAdded,
 			InScope:         true,
 			Pinned:          old.Pinned,
 			SnoozedUntil:    old.SnoozedUntil,
@@ -514,6 +517,7 @@ func projectStateChanged(old model.ProjectSummary, state model.ProjectState) boo
 		old.RepoAheadCount != state.RepoAheadCount ||
 		old.RepoBehindCount != state.RepoBehindCount ||
 		old.Forgotten != state.Forgotten ||
+		old.ManuallyAdded != state.ManuallyAdded ||
 		!timesEqual(old.LastActivity, state.LastActivity)
 }
 
@@ -844,12 +848,37 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 	}
 
 	classificationKnown, classificationCategory := s.latestSessionClassification(ctx, projectPath, detail.Sessions)
+	presentOnDisk := projectPathExists(detail.Summary.Path)
+	repoDirty := false
+	repoSyncStatus := model.RepoSyncStatus("")
+	repoAheadCount := 0
+	repoBehindCount := 0
+	if presentOnDisk {
+		if s.gitRepoStatusReader != nil {
+			if repoStatus, err := s.gitRepoStatusReader(ctx, detail.Summary.Path); err == nil {
+				repoDirty = repoStatus.Dirty
+				repoSyncStatus = repoSyncStatusFromGit(repoStatus)
+				repoAheadCount = repoStatus.Ahead
+				repoBehindCount = repoStatus.Behind
+			} else {
+				repoDirty = detail.Summary.RepoDirty
+				repoSyncStatus = detail.Summary.RepoSyncStatus
+				repoAheadCount = detail.Summary.RepoAheadCount
+				repoBehindCount = detail.Summary.RepoBehindCount
+			}
+		} else {
+			repoDirty = detail.Summary.RepoDirty
+			repoSyncStatus = detail.Summary.RepoSyncStatus
+			repoAheadCount = detail.Summary.RepoAheadCount
+			repoBehindCount = detail.Summary.RepoBehindCount
+		}
+	}
 
 	score := attention.Score(attention.Input{
 		Path:                       detail.Summary.Path,
 		Now:                        now,
 		LastActivity:               detail.Summary.LastActivity,
-		RepoDirty:                  detail.Summary.RepoDirty,
+		RepoDirty:                  repoDirty,
 		Pinned:                     detail.Summary.Pinned,
 		SnoozedUntil:               detail.Summary.SnoozedUntil,
 		ErrorCount:                 errorCount,
@@ -867,12 +896,13 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 		LastActivity:    detail.Summary.LastActivity,
 		Status:          score.Status,
 		AttentionScore:  score.Score,
-		PresentOnDisk:   detail.Summary.PresentOnDisk,
-		RepoDirty:       detail.Summary.RepoDirty,
-		RepoSyncStatus:  detail.Summary.RepoSyncStatus,
-		RepoAheadCount:  detail.Summary.RepoAheadCount,
-		RepoBehindCount: detail.Summary.RepoBehindCount,
+		PresentOnDisk:   presentOnDisk,
+		RepoDirty:       repoDirty,
+		RepoSyncStatus:  repoSyncStatus,
+		RepoAheadCount:  repoAheadCount,
+		RepoBehindCount: repoBehindCount,
 		Forgotten:       detail.Summary.Forgotten,
+		ManuallyAdded:   detail.Summary.ManuallyAdded,
 		InScope:         detail.Summary.InScope,
 		Pinned:          detail.Summary.Pinned,
 		SnoozedUntil:    detail.Summary.SnoozedUntil,

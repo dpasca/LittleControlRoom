@@ -154,6 +154,7 @@ type ProjectState struct {
 	RepoAheadCount  int
 	RepoBehindCount int
 	Forgotten       bool
+	ManuallyAdded   bool
 	InScope         bool
 	Pinned          bool
 	SnoozedUntil    *time.Time
@@ -178,6 +179,7 @@ type ProjectSummary struct {
 	RepoAheadCount                            int
 	RepoBehindCount                           int
 	Forgotten                                 bool
+	ManuallyAdded                             bool
 	InScope                                   bool
 	Pinned                                    bool
 	SnoozedUntil                              *time.Time

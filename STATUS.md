@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-11 12:19 JST (JST)
+Last updated: 2026-03-12 09:03 JST (JST)
 
 ## Current State
 
@@ -59,27 +59,27 @@ Current embedded Codex transport assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-11 12:19 JST)
+## Latest Update (2026-03-12 09:03 JST)
 
-- Hardened the embedded `turn/steer` path so if `codex app-server` rejects a steer with `expected active turn id ... but found ...`, Little Control Room now reads the live thread state, retries against the current in-progress turn when possible, and falls back to `turn/start` if the thread has already gone idle.
-- Tightened local turn bookkeeping so successful steer responses fully refresh the active-turn state, clearing stale active items/pending completions and resetting the turn timer when the live turn id changes.
-- Added focused `internal/codexapp` regressions for steer mismatch retry, idle fallback to a fresh turn, and steer-state refresh, while keeping the TUI suite green.
+- Added a main-panel `/new-project` slash command that opens a dedicated modal for creating or attaching a project, with separate parent-path and project-name inputs, a live full-path preview built via `filepath.Join`, and a default-on git-init checkbox for newly created folders.
+- Added backend support for manual project tracking so an existing folder can be added to the list even before any Codex/OpenCode session exists there, while preserving already tracked projects and their sessions instead of overwriting them.
+- Persisted the last three parent paths in the local store and surfaced them back into the dialog, with the newest path becoming the default and `Alt+1..3` quick picks available in the modal.
+- Introduced an explicit `manually_added` project flag so manually attached folders remain visible in the default `AI folders` view without faking detector activity or session metadata.
 - No Codex/OpenCode detector assumptions changed; `docs/codex_cli_footprint.md` stayed aligned with the current footprint expectations.
 
 Verification snapshot:
 
-- `go test ./internal/codexapp` passed.
-- `go test ./internal/tui` passed.
+- `go test ./internal/commands ./internal/store ./internal/service ./internal/tui` passed.
 - `make test` passed.
-- `make scan` passed at `2026-03-11T12:18:51+09:00` (`activity projects: 80`, `tracked projects: 133`, `updated projects: 1`, `queued classifications: 0`).
-- `make doctor` passed on the cached snapshot dated `2026-03-11T12:18:58+09:00` (`projects: 133`).
-- `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q` as an embedded-TUI smoke test.
+- `make scan` passed at `2026-03-12T09:03:11+09:00` (`activity projects: 80`, `tracked projects: 133`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-12T09:03:11+09:00` (`projects: 133`).
+- `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q` as a main-TUI smoke test.
 
 Next concrete tasks:
 
-- Reproduce the original embedded steer race against a live `codex app-server` session to confirm the automatic retry feels clean in the transcript and footer states.
-- Consider surfacing a small inline notice when a steer is automatically resynced to a newer active turn, so the recovery is visible without dumping a raw protocol error.
-- Keep watching for a future authoritative app-server turn-transition signal that could replace the current `thread/read` recovery path.
+- Exercise `/new-project` interactively against both paths: creating a brand-new folder and attaching an already existing folder, to confirm the modal copy and footer hints feel right in normal use.
+- Consider whether manually added folders should get a small visible badge in the list/detail pane so they are distinguishable from detector-discovered projects.
+- Decide whether the new-project modal should also be reachable from a non-slash keybinding or stay command-palette-only for now.
 
 ## Recent Updates
 

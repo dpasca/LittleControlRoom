@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -45,24 +46,27 @@ type Model struct {
 	status  string
 	err     error
 
-	width  int
-	height int
-	nowFn  func() time.Time
+	width     int
+	height    int
+	nowFn     func() time.Time
+	homeDirFn func() (string, error)
 
 	noteMode  bool
 	noteInput textinput.Model
 
-	commandMode       bool
-	commandInput      textinput.Model
-	commandSelected   int
-	gitStatusDialog   *gitStatusDialog
-	gitStatusApplying bool
-	commitPreview     *service.CommitPreview
-	commitApplying    bool
-	settingsMode      bool
-	settingsFields    []settingsField
-	settingsSelected  int
-	settingsBaseline  *config.EditableSettings
+	commandMode         bool
+	commandInput        textinput.Model
+	commandSelected     int
+	newProjectDialog    *newProjectDialogState
+	preferredSelectPath string
+	gitStatusDialog     *gitStatusDialog
+	gitStatusApplying   bool
+	commitPreview       *service.CommitPreview
+	commitApplying      bool
+	settingsMode        bool
+	settingsFields      []settingsField
+	settingsSelected    int
+	settingsBaseline    *config.EditableSettings
 
 	detailViewport viewport.Model
 	focusedPane    paneFocus
@@ -85,6 +89,8 @@ type Model struct {
 	showSessions bool
 	showEvents   bool
 	showHelp     bool
+
+	newProjectRecentParents []string
 }
 
 type projectsMsg struct {
@@ -216,6 +222,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		excludeProjectPatterns: currentExcludeProjectPatterns(svc),
 		codexManager:           codexapp.NewManager(),
 		nowFn:                  time.Now,
+		homeDirFn:              os.UserHomeDir,
 	}
 }
 
@@ -234,7 +241,7 @@ func currentExcludeProjectPatterns(svc *service.Service) []string {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.loadProjectsCmd(), m.waitBusCmd(), m.waitCodexCmd(), spinnerTickCmd())
+	return tea.Batch(m.loadProjectsCmd(), m.loadRecentProjectParentsCmd(), m.waitBusCmd(), m.waitCodexCmd(), spinnerTickCmd())
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -257,6 +264,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.codexVisible() {
 			return m.updateCodexMode(msg)
+		}
+		if m.newProjectDialog != nil {
+			return m.updateNewProjectMode(msg)
 		}
 		if m.gitStatusDialog != nil {
 			return m.updateGitStatusDialogMode(msg)
@@ -282,7 +292,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.err = msg.filterErr
 		selectedPath := ""
-		if p, ok := m.selectedProject(); ok {
+		if strings.TrimSpace(m.preferredSelectPath) != "" {
+			selectedPath = strings.TrimSpace(m.preferredSelectPath)
+			m.preferredSelectPath = ""
+		} else if p, ok := m.selectedProject(); ok {
 			selectedPath = p.Path
 		}
 
@@ -299,6 +312,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detail = model.ProjectDetail{}
 		m.syncDetailViewport(true)
 		return m, nil
+	case recentProjectParentsMsg:
+		if msg.err == nil {
+			m.newProjectRecentParents = append([]string(nil), msg.paths...)
+		}
+		return m, nil
+	case newProjectResultMsg:
+		if m.newProjectDialog != nil {
+			m.newProjectDialog.Submitting = false
+		}
+		if msg.err != nil {
+			m.err = nil
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.err = nil
+		m.newProjectRecentParents = append([]string(nil), msg.result.RecentParentPaths...)
+		m.newProjectDialog = nil
+		m.focusedPane = focusProjects
+		m.preferredSelectPath = msg.result.ProjectPath
+		switch msg.result.Action {
+		case service.CreateOrAttachProjectCreated:
+			if msg.result.GitRepoCreated {
+				m.status = "Project created, git initialized, and added to the list"
+			} else {
+				m.status = "Project created and added to the list"
+			}
+		case service.CreateOrAttachProjectAdded:
+			m.status = "Existing folder added to the list"
+		default:
+			m.status = "Project already in the list"
+		}
+		return m, m.loadProjectsCmd()
 	case detailMsg:
 		m.err = msg.err
 		if msg.err == nil {
@@ -1043,6 +1088,8 @@ func (m Model) View() string {
 		body = m.renderGitStatusDialogOverlay(body, layout.width, layout.height)
 	} else if m.commitPreview != nil {
 		body = m.renderCommitPreviewOverlay(body, layout.width, layout.height)
+	} else if m.newProjectDialog != nil {
+		body = m.renderNewProjectOverlay(body, layout.width, layout.height)
 	} else if m.settingsMode {
 		body = m.renderSettingsOverlay(body, layout.width, layout.height)
 	} else if m.showHelp {
@@ -1484,6 +1531,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, m.setVisibilityMode(commandVisibilityMode(inv.View))
 	case commands.KindSettings:
 		return m, m.openSettingsMode()
+	case commands.KindNewProject:
+		return m, m.openNewProjectDialog()
 	case commands.KindCommit:
 		p, ok := m.selectedProject()
 		if !ok {
@@ -2201,7 +2250,7 @@ func visibilityShortLabel(mode projectVisibilityMode) string {
 }
 
 func projectHasAIMetadata(project model.ProjectSummary) bool {
-	return !project.LastActivity.IsZero() || project.LatestSessionFormat != "" || project.LatestSessionClassification != ""
+	return project.ManuallyAdded || !project.LastActivity.IsZero() || project.LatestSessionFormat != "" || project.LatestSessionClassification != ""
 }
 
 func projectMissing(project model.ProjectSummary) bool {
@@ -2329,6 +2378,13 @@ func (m Model) renderFooter(width int) string {
 		label := commitPreviewReadyStatus(m.commitPreview.CanPush)
 		if m.commitApplying {
 			label = "Applying git action..."
+		}
+		return fitFooterWidth(label+" | "+usageLabel, width)
+	}
+	if m.newProjectDialog != nil {
+		label := "New project: Enter create/add, Space toggle git, Alt+1..3 recent, Esc cancel"
+		if m.newProjectDialog.Submitting {
+			label = "New project: applying..."
 		}
 		return fitFooterWidth(label+" | "+usageLabel, width)
 	}

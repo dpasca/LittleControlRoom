@@ -713,3 +713,34 @@ func TestMoveProjectPathPreservesData(t *testing.T) {
 		t.Fatalf("classification project path = %s, want %s", classification.ProjectPath, newPath)
 	}
 }
+
+func TestRememberRecentProjectParentPathKeepsNewestUniquePaths(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	for _, path := range []string{"/tmp/one", "/tmp/two", "/tmp/three", "/tmp/two", "/tmp/four"} {
+		if err := st.RememberRecentProjectParentPath(ctx, path, 3); err != nil {
+			t.Fatalf("remember recent parent path %q: %v", path, err)
+		}
+	}
+
+	got, err := st.ListRecentProjectParentPaths(ctx, 5)
+	if err != nil {
+		t.Fatalf("list recent parent paths: %v", err)
+	}
+	want := []string{"/tmp/four", "/tmp/two", "/tmp/three"}
+	if len(got) != len(want) {
+		t.Fatalf("recent parent path count = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("recent parent path %d = %q, want %q (all=%v)", i, got[i], want[i], got)
+		}
+	}
+}
