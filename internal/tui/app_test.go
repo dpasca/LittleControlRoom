@@ -2619,6 +2619,88 @@ func TestVisibleCodexAltBracketCyclesLiveSessions(t *testing.T) {
 	}
 }
 
+func TestVisibleCodexAltUpReturnsToLastEmbeddedProjectSelection(t *testing.T) {
+	sessionA := &fakeCodexSession{
+		projectPath: "/tmp/a",
+		snapshot: codexapp.Snapshot{
+			Started:        true,
+			Preset:         codexcli.PresetYolo,
+			Status:         "Codex session ready",
+			LastActivityAt: time.Date(2026, 3, 8, 10, 0, 0, 0, time.UTC),
+		},
+	}
+	sessionB := &fakeCodexSession{
+		projectPath: "/tmp/b",
+		snapshot: codexapp.Snapshot{
+			Started:        true,
+			Preset:         codexcli.PresetYolo,
+			Status:         "Codex session ready",
+			LastActivityAt: time.Date(2026, 3, 8, 10, 5, 0, 0, time.UTC),
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		switch req.ProjectPath {
+		case "/tmp/a":
+			return sessionA, nil
+		case "/tmp/b":
+			return sessionB, nil
+		default:
+			return nil, fmt.Errorf("unexpected project %s", req.ProjectPath)
+		}
+	})
+	for _, projectPath := range []string{"/tmp/a", "/tmp/b"} {
+		if _, _, err := manager.Open(codexapp.LaunchRequest{
+			ProjectPath: projectPath,
+			Preset:      codexcli.PresetYolo,
+		}); err != nil {
+			t.Fatalf("manager.Open(%q) error = %v", projectPath, err)
+		}
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/a",
+		codexHiddenProject:  "/tmp/a",
+		codexInput:          newCodexTextarea(),
+		codexDrafts:         make(map[string]codexDraft),
+		codexViewport:       viewport.New(0, 0),
+		projects: []model.ProjectSummary{
+			{Path: "/tmp/a", Name: "a", PresentOnDisk: true},
+			{Path: "/tmp/b", Name: "b", PresentOnDisk: true},
+		},
+		selected: 0,
+		width:    100,
+		height:   24,
+	}
+
+	updated, cycleCmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}, Alt: true})
+	got := updated.(Model)
+	if cycleCmd == nil {
+		t.Fatalf("alt+] should queue the session switch work")
+	}
+	if got.codexVisibleProject != "/tmp/b" {
+		t.Fatalf("codexVisibleProject = %q, want /tmp/b", got.codexVisibleProject)
+	}
+	if project, ok := got.selectedProject(); !ok || project.Path != "/tmp/b" {
+		t.Fatalf("selected project after alt+] = %#v, want /tmp/b", project)
+	}
+
+	updated, hideCmd := got.updateCodexMode(tea.KeyMsg{Type: tea.KeyUp, Alt: true})
+	got = updated.(Model)
+	if hideCmd == nil {
+		t.Fatalf("alt+up should refresh the main list detail for the last embedded project")
+	}
+	if got.codexVisibleProject != "" {
+		t.Fatalf("codexVisibleProject = %q, want hidden", got.codexVisibleProject)
+	}
+	if got.codexHiddenProject != "/tmp/b" {
+		t.Fatalf("codexHiddenProject = %q, want /tmp/b", got.codexHiddenProject)
+	}
+	if project, ok := got.selectedProject(); !ok || project.Path != "/tmp/b" {
+		t.Fatalf("selected project after alt+up = %#v, want /tmp/b", project)
+	}
+}
+
 func TestAltDownOpensCodexSessionPicker(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",

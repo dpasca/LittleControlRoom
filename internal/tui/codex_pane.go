@@ -322,31 +322,27 @@ func (m Model) respondVisibleElicitationCmd(decision codexapp.ElicitationDecisio
 func (m Model) toggleCodexVisibility() (tea.Model, tea.Cmd) {
 	m.ensureCodexRuntime()
 	if m.codexVisible() {
-		return m.hideCodexSession(), nil
+		return m.hideCodexSession()
 	}
 	projectPath := m.preferredHiddenCodexProject()
 	if projectPath == "" {
 		m.status = "No hidden Codex session"
 		return m, nil
 	}
-	m.codexVisibleProject = projectPath
-	m.codexHiddenProject = projectPath
-	m.loadCodexDraft(projectPath)
-	m.syncCodexViewport(true)
-	m.status = "Embedded Codex session restored"
-	return m, tea.Batch(m.codexInput.Focus(), m.refreshBusyElsewhereCmd(projectPath))
+	return m.showCodexProject(projectPath, "Embedded Codex session restored")
 }
 
-func (m Model) hideCodexSession() Model {
+func (m Model) hideCodexSession() (tea.Model, tea.Cmd) {
 	if !m.codexVisible() {
-		return m
+		return m, nil
 	}
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
 	m.persistVisibleCodexDraft()
 	m.codexHiddenProject = m.codexVisibleProject
 	m.codexVisibleProject = ""
 	m.codexInput.Blur()
 	m.status = "Embedded Codex session hidden."
-	return m
+	return m, m.focusProjectPath(projectPath)
 }
 
 func (m Model) cycleCodexSession(direction int) (tea.Model, tea.Cmd) {
@@ -364,20 +360,10 @@ func (m Model) cycleCodexSession(direction int) (tea.Model, tea.Cmd) {
 		m.status = "Only one live Codex session"
 		return m, nil
 	}
-	if current != "" {
-		m.persistVisibleCodexDraft()
-		m.codexHiddenProject = current
-	}
-	m.codexVisibleProject = nextProject
-	m.codexHiddenProject = nextProject
-	m.loadCodexDraft(nextProject)
-	m.syncCodexViewport(true)
 	if direction < 0 {
-		m.status = "Switched to the previous embedded Codex session"
-	} else {
-		m.status = "Switched to the next embedded Codex session"
+		return m.showCodexProject(nextProject, "Switched to the previous embedded Codex session")
 	}
-	return m, tea.Batch(m.codexInput.Focus(), m.refreshBusyElsewhereCmd(nextProject))
+	return m.showCodexProject(nextProject, "Switched to the next embedded Codex session")
 }
 
 func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -404,11 +390,9 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "alt+down":
 		return m.openCodexPicker()
 	case "esc":
-		hidden := m.hideCodexSession()
-		return hidden, nil
+		return m.hideCodexSession()
 	case "alt+up":
-		hidden := m.hideCodexSession()
-		return hidden, nil
+		return m.hideCodexSession()
 	case "alt+[":
 		return m.cycleCodexSession(-1)
 	case "alt+]":

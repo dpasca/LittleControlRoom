@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-12 16:45 JST (JST)
+Last updated: 2026-03-12 17:07 JST (JST)
 
 ## Current State
 
@@ -64,25 +64,25 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-12 16:45 JST)
+## Latest Update (2026-03-12 17:07 JST)
 
-- Evaluated a supersample-and-downscale screenshot path locally after the pushed `capture_scale = 1.5` baseline, then chose not to keep it because the visual improvement was subtle while the PNG files grew substantially.
-- Restored the tracked screenshot code, docs, example config, Go module set, and generated PNGs back to the simpler non-supersampled baseline already pushed on `origin/master` (`24b774d`), and reset the repo-local `screenshots.local.toml` default back to `capture_scale = 1.5` only.
-- The current checked-in screenshot workflow therefore remains the simpler higher-resolution capture path without an extra supersampling/downscale stage.
+- Fixed embedded Codex session navigation so the project list selection now follows the currently shown embedded session, not just the project that originally opened Codex.
+- `Alt+[`, `Alt+]`, picker-driven session switches, hidden-session restore, and `Alt+Up`/`Esc` hide now all reuse the same project-focus path, which keeps the main list/detail pane aligned with the last embedded Codex project you visited.
+- Added a focused TUI regression covering the exact flow: open project A, switch to embedded project B, then hide and confirm the main list stays on B.
 - No Codex/OpenCode detector assumptions changed; `docs/codex_cli_footprint.md` stayed aligned with the current footprint expectations.
 
 Verification snapshot:
 
-- `make screenshots` passed and refreshed `docs/screenshots/main-panel.png`, `docs/screenshots/main-panel-live-cx.png`, `docs/screenshots/codex-embedded.png`, and `docs/screenshots/commit-preview.png`.
+- `go test ./internal/tui` passed.
 - `make test` passed.
-- `make scan` passed at `2026-03-12T16:45:16+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 1`, `queued classifications: 0`).
-- `make doctor` passed on the cached snapshot dated `2026-03-12T16:45:16+09:00` (`projects: 135`).
+- `make scan` passed at `2026-03-12T17:05:36+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 2`, `queued classifications: 2`).
+- `make doctor` passed on the cached snapshot dated `2026-03-12T17:05:59+09:00` (`projects: 135`).
+- `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q`.
 
 Next concrete tasks:
 
-- If screenshot text still needs more presence later, compare the current `capture_scale = 1.5` baseline against a simple `capture_scale = 2.0` path before revisiting heavier post-processing.
-- Keep an eye on screenshot clarity at GitHub/docs display scale instead of judging only the raw PNGs at full zoom.
-- Avoid adding extra screenshot pipeline complexity unless it produces a clearly visible improvement over the current baseline.
+- Manually sanity-check the new selection-sync behavior in a fuller real session with multiple live embedded Codex panes, especially when the list is sorted or filtered.
+- Decide later whether hidden/resumable Codex sessions that are currently filtered out should surface a more explicit fallback instead of silently keeping the nearest visible row selected.
 
 ## Recent Updates
 
