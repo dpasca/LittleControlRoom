@@ -65,6 +65,8 @@ No config file is required for a first run. If you want to limit what shows up, 
 
 Use `/settings` when you want to save include or exclude paths or change the Codex launch mode.
 
+To create a a new project, use the command `/new-project`. This will create a new directory or acknowledge an existing one, and add it to the list of projects to track.
+
 ## Costs
 
 Using Codex or OpenCode inside LCR does not add any additional cost beyond what you would normally pay for those tools.
