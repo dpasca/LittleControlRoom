@@ -347,17 +347,172 @@ func parseOpenCodeRole(messageData string) string {
 }
 
 func parseOpenCodePartText(partData string) string {
-	var payload struct {
+	var header struct {
 		Type string `json:"type"`
-		Text string `json:"text"`
 	}
-	if err := json.Unmarshal([]byte(partData), &payload); err != nil {
+	if err := json.Unmarshal([]byte(partData), &header); err != nil {
 		return ""
 	}
-	if payload.Type != "text" {
+	switch header.Type {
+	case "text":
+		var payload struct {
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal([]byte(partData), &payload); err != nil {
+			return ""
+		}
+		return sanitizeTranscriptText(payload.Text)
+	case "reasoning":
+		var payload struct {
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal([]byte(partData), &payload); err != nil {
+			return ""
+		}
+		text := sanitizeTranscriptText(payload.Text)
+		if text == "" {
+			return ""
+		}
+		return "Reasoning: " + text
+	case "tool":
+		var payload struct {
+			Tool  string `json:"tool"`
+			State struct {
+				Status string `json:"status"`
+				Title  string `json:"title"`
+				Input  struct {
+					Command     string `json:"command"`
+					Description string `json:"description"`
+				} `json:"input"`
+			} `json:"state"`
+		}
+		if err := json.Unmarshal([]byte(partData), &payload); err != nil {
+			return ""
+		}
+		toolName := sanitizeTranscriptText(payload.Tool)
+		status := sanitizeTranscriptText(payload.State.Status)
+		summary := firstNonEmptyTranscriptValue(
+			payload.State.Input.Command,
+			payload.State.Input.Description,
+			payload.State.Title,
+		)
+		switch {
+		case toolName != "" && status != "" && summary != "":
+			return fmt.Sprintf("Tool %s %s: %s", toolName, status, summary)
+		case toolName != "" && summary != "":
+			return fmt.Sprintf("Tool %s: %s", toolName, summary)
+		case summary != "":
+			return "Tool: " + summary
+		case toolName != "" && status != "":
+			return fmt.Sprintf("Tool %s %s", toolName, status)
+		case toolName != "":
+			return "Tool " + toolName
+		default:
+			return "Tool activity"
+		}
+	case "patch":
+		var payload struct {
+			Files []string `json:"files"`
+		}
+		if err := json.Unmarshal([]byte(partData), &payload); err != nil {
+			return ""
+		}
+		files := summarizeOpenCodePaths(payload.Files, 3)
+		if len(files) == 0 {
+			return "Patch applied"
+		}
+		return "Patch touched " + strings.Join(files, ", ")
+	case "file":
+		var payload struct {
+			Mime     string `json:"mime"`
+			Filename string `json:"filename"`
+			Source   struct {
+				Path string `json:"path"`
+			} `json:"source"`
+		}
+		if err := json.Unmarshal([]byte(partData), &payload); err != nil {
+			return ""
+		}
+		name := firstNonEmptyTranscriptValue(payload.Filename)
+		if name == "" {
+			name = firstNonEmptyTranscriptPathValue(payload.Source.Path)
+		}
+		mime := sanitizeTranscriptText(payload.Mime)
+		switch {
+		case name != "" && mime != "":
+			return fmt.Sprintf("Attached file: %s (%s)", name, mime)
+		case name != "":
+			return "Attached file: " + name
+		case mime != "":
+			return "Attached file: " + mime
+		default:
+			return "Attached file"
+		}
+	case "step-finish":
+		var payload struct {
+			Reason string `json:"reason"`
+		}
+		if err := json.Unmarshal([]byte(partData), &payload); err != nil {
+			return ""
+		}
+		reason := sanitizeTranscriptText(payload.Reason)
+		if reason == "" {
+			return "Step finished"
+		}
+		return "Step finished: " + reason
+	case "compaction":
+		return "Session compacted"
+	default:
 		return ""
 	}
-	return sanitizeTranscriptText(payload.Text)
+}
+
+func firstNonEmptyTranscriptValue(values ...string) string {
+	for _, value := range values {
+		text := sanitizeTranscriptText(value)
+		if text == "" {
+			continue
+		}
+		if text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func firstNonEmptyTranscriptPathValue(values ...string) string {
+	for _, value := range values {
+		text := sanitizeTranscriptText(value)
+		if text == "" {
+			continue
+		}
+		if strings.ContainsAny(text, `/\`) {
+			text = sanitizeTranscriptText(filepath.Base(text))
+		}
+		if text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func summarizeOpenCodePaths(paths []string, limit int) []string {
+	out := make([]string, 0, len(paths))
+	total := 0
+	for _, path := range paths {
+		name := firstNonEmptyTranscriptPathValue(path)
+		if name == "" {
+			continue
+		}
+		total++
+		if limit <= 0 || len(out) < limit {
+			out = append(out, name)
+		}
+	}
+	if limit > 0 && total > len(out) && len(out) > 0 {
+		out[len(out)-1] = fmt.Sprintf("%s (+%d more)", out[len(out)-1], total-len(out))
+	}
+	return out
 }
 
 func finalizeTranscript(items []TranscriptItem) []TranscriptItem {

@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-12 20:24 JST (JST)
+Last updated: 2026-03-12 21:52 JST (JST)
 
 ## Current State
 
@@ -29,6 +29,11 @@ Current embedded Codex transport assumption:
 - The installed schema on this machine also exposes additional thread and utility RPCs such as `thread/fork`, `thread/read`, `thread/compact/start`, `review/start`, `model/list`, `app/list`, `skills/list`, and `account/rateLimits/read`, and Little Control Room now uses `thread/read` both as a stale-busy sanity check and as a steer-recovery fallback when the app-server reports that the active turn id has already advanced.
 - The installed schema also emits `thread/status/changed` plus streamed `plan`, `reasoning`, and `mcpToolCall` notifications, but it still does not expose a single authoritative "all visible output has settled" event, so embedded turn tracking should model `running`, `finishing`, and `reconciling` instead of a binary busy/idle flag.
 - Embedded `codex app-server` stdout frames can exceed the prior 1 MiB scanner cap during tool-heavy turns (observed around MCP/browser screenshot activity), so the embedded transport must tolerate large JSON-RPC messages and treat stdout decode failures as fatal session breakage rather than a recoverable transcript-only warning.
+
+Current OpenCode transport assumption:
+
+- The installed `opencode` CLI on this machine (observed `1.2.24`) exposes both `serve` and `acp`; `serve` publishes an HTTP/OpenAPI + SSE surface with session, message, status, event, permission, and question endpoints that appears sufficient for a later embedded transport.
+- Observed `opencode.db` session parts are structured rather than text-only, including `text`, `reasoning`, `tool`, `patch`, `file`, `step-start`, and `step-finish`, so OpenCode transcript extraction should preserve more of that structure for classification and future UI work.
 
 Current screenshot workflow assumption:
 
@@ -65,26 +70,24 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-12 20:24 JST)
+## Latest Update (2026-03-12 21:52 JST)
 
-- The diff screen now remembers when it was opened from commit preview: `Esc` and `Alt+Up` return to the commit preview overlay instead of dropping straight back to the project list.
-- Commit previews now carry a deterministic state hash derived from the latest session summary plus relevant git status fields. When diff closes back to commit preview, Little Control Room compares the current hash with the cached one and either restores the cached preview immediately or reruns `PrepareCommit` with the original intent and explicit message override.
-- Added focused service and TUI coverage for the new restore-vs-refresh behavior and updated the reference docs so the diff keybinding semantics match the new flow.
-- No Codex/OpenCode detector assumptions changed; `docs/codex_cli_footprint.md` stayed aligned with the current footprint expectations.
+- Extended OpenCode session transcript extraction so classifier snapshots now preserve structured `reasoning`, `tool`, `patch`, `file`, `step-finish`, and `compaction` parts instead of keeping only plain `text`.
+- Structured OpenCode parts are now summarized into compact transcript lines for the classifier, which keeps assistant activity visible even when an OpenCode message has no plain assistant text part.
+- Added a focused SQLite-backed session-classifier regression that seeds an OpenCode session with text, file, reasoning, tool, patch, and step-finish parts and asserts the extracted snapshot keeps those summaries.
+- OpenCode transport assumptions changed in `STATUS.md` after validating the locally installed `opencode` CLI: `serve`/`acp` exist and the stored session parts are richer than the previous text-only mental model. No Codex/OpenCode detector footprint assumptions changed, so `docs/codex_cli_footprint.md` did not need edits.
 
 Verification snapshot:
 
-- `go test ./internal/service -run 'TestCommitPreviewStateHashTracksCurrentGitState'` passed.
-- `go test ./internal/tui -run 'TestDiffModeEscReturnsCachedCommitPreviewWhenStateMatches|TestDiffModeEscRefreshesCommitPreviewWhenStateChanges|TestDiffModeAltUpReturnsToMainList|TestCommitPreviewDOpensDiffView'` passed.
+- `go test ./internal/sessionclassify -run 'TestExtractSnapshotOpenCodePreservesStructuredParts|TestExtractSnapshotModernFixture|TestManagerProcessOneCompletesClassification|TestSnapshotHashForSnapshotIgnoresLastEventAt|TestSnapshotHashForSnapshotChangesWhenGitStatusChanges|TestSnapshotHashForSnapshotChangesWhenTurnLifecycleChanges'` passed.
 - `make test` passed.
-- `make scan` passed at `2026-03-12T20:24:20+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 2`, `queued classifications: 1`).
-- `make doctor` passed on the cached snapshot dated `2026-03-12T20:24:28+09:00` (`projects: 135`).
-- `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q`.
+- `make scan` passed at `2026-03-12T21:51:34+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 5`, `queued classifications: 5`).
+- `make doctor` passed on the cached snapshot dated `2026-03-12T21:51:33+09:00` (`projects: 135`).
 
 Next concrete tasks:
 
-- Decide whether the diff screen should reopen the git-status/commit flow automatically if all visible changes disappear while the user is still inside diff mode.
-- Consider adding an explicit editable commit-message field in the commit preview overlay now that returning from diff preserves the preview context.
+- Decide whether the OpenCode classifier snapshot should also preserve additional structured parts such as `agent`, `subtask`, or `retry`, or whether the current summary set is the right noise/signal balance.
+- If the classifier output looks useful in practice, extract a provider-neutral transcript/transport abstraction so the later embedded OpenCode pane can reuse the same high-level rendering model as Codex.
 
 ## Recent Updates
 

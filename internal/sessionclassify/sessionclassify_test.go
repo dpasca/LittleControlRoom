@@ -2,6 +2,8 @@ package sessionclassify
 
 import (
 	"context"
+	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -62,6 +64,58 @@ func TestExtractSnapshotModernFixture(t *testing.T) {
 	}
 	if !strings.Contains(last.Text, "Done") {
 		t.Fatalf("last text = %q, want Done", last.Text)
+	}
+}
+
+func TestExtractSnapshotOpenCodePreservesStructuredParts(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "opencode.db")
+	if err := seedOpenCodeTranscriptFixture(dbPath); err != nil {
+		t.Fatalf("seed opencode fixture: %v", err)
+	}
+
+	snapshot, err := ExtractSnapshot(context.Background(), model.SessionClassification{
+		SessionID:       "ses_open",
+		ProjectPath:     "/tmp/opencode-demo",
+		SessionFile:     dbPath + "#session:ses_open",
+		SessionFormat:   "opencode_db",
+		SourceUpdatedAt: time.Now(),
+	}, model.SessionEvidence{}, GitStatusSnapshot{})
+	if err != nil {
+		t.Fatalf("extract snapshot: %v", err)
+	}
+	if len(snapshot.Transcript) != 2 {
+		t.Fatalf("expected 2 transcript items, got %#v", snapshot.Transcript)
+	}
+
+	user := snapshot.Transcript[0]
+	if user.Role != "user" {
+		t.Fatalf("user role = %q, want user", user.Role)
+	}
+	if !strings.Contains(user.Text, "Please review the latest OpenCode session.") {
+		t.Fatalf("user text = %q, want preserved user prompt", user.Text)
+	}
+	if !strings.Contains(user.Text, "Attached file: clipboard.png (image/png)") {
+		t.Fatalf("user text = %q, want preserved file attachment summary", user.Text)
+	}
+
+	assistant := snapshot.Transcript[1]
+	if assistant.Role != "assistant" {
+		t.Fatalf("assistant role = %q, want assistant", assistant.Role)
+	}
+	if !strings.Contains(assistant.Text, "Reasoning: Reviewing the repository state") {
+		t.Fatalf("assistant text = %q, want reasoning summary", assistant.Text)
+	}
+	if !strings.Contains(assistant.Text, "Tool bash completed: go test ./internal/service") {
+		t.Fatalf("assistant text = %q, want tool summary", assistant.Text)
+	}
+	if !strings.Contains(assistant.Text, "Patch touched service.go, README.md") {
+		t.Fatalf("assistant text = %q, want patch summary", assistant.Text)
+	}
+	if !strings.Contains(assistant.Text, "Step finished: stop") {
+		t.Fatalf("assistant text = %q, want step finish summary", assistant.Text)
 	}
 }
 
@@ -254,4 +308,44 @@ func TestSnapshotHashForSnapshotChangesWhenTurnLifecycleChanges(t *testing.T) {
 	if got, want := SnapshotHashForSnapshot(base), SnapshotHashForSnapshot(completed); got == want {
 		t.Fatalf("expected snapshot hash to change when turn lifecycle changes")
 	}
+}
+
+func seedOpenCodeTranscriptFixture(dbPath string) error {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		return err
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+
+	_, err = db.Exec(`
+		CREATE TABLE message (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			time_created INTEGER NOT NULL,
+			data TEXT NOT NULL
+		);
+		CREATE TABLE part (
+			id TEXT PRIMARY KEY,
+			message_id TEXT NOT NULL,
+			session_id TEXT NOT NULL,
+			time_created INTEGER NOT NULL,
+			data TEXT NOT NULL
+		);
+		INSERT INTO message(id, session_id, time_created, data) VALUES
+			('msg_user', 'ses_open', 1000, '{"role":"user"}'),
+			('msg_assistant', 'ses_open', 2000, '{"role":"assistant"}');
+		INSERT INTO part(id, message_id, session_id, time_created, data) VALUES
+			('part_user_text', 'msg_user', 'ses_open', 1001, '{"type":"text","text":"Please review the latest OpenCode session."}'),
+			('part_user_file', 'msg_user', 'ses_open', 1002, '{"type":"file","mime":"image/png","filename":"clipboard.png","url":"data:image/png;base64,AAA"}'),
+			('part_assistant_reasoning', 'msg_assistant', 'ses_open', 2001, '{"type":"reasoning","text":"Reviewing the repository state"}'),
+			('part_assistant_tool', 'msg_assistant', 'ses_open', 2002, '{"type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"go test ./internal/service","description":"Run focused service tests"}}}'),
+			('part_assistant_patch', 'msg_assistant', 'ses_open', 2003, '{"type":"patch","files":["/tmp/opencode-demo/internal/service/service.go","/tmp/opencode-demo/README.md"]}'),
+			('part_assistant_finish', 'msg_assistant', 'ses_open', 2004, '{"type":"step-finish","reason":"stop"}');
+	`)
+	return err
 }
