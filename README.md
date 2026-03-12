@@ -14,9 +14,13 @@ Click any screenshot to open the full-size PNG on GitHub.
   </a>
 </p>
 
-| Dashboard | Embedded Codex | Commit Preview |
-| --- | --- | --- |
-| [![Little Control Room dashboard list view](docs/screenshots/main-panel.png)](docs/screenshots/main-panel.png) | [![Little Control Room embedded Codex conversation](docs/screenshots/codex-embedded.png)](docs/screenshots/codex-embedded.png) | [![Little Control Room commit preview dialog](docs/screenshots/commit-preview.png)](docs/screenshots/commit-preview.png) |
+| Dashboard | Embedded Codex |
+| --- | --- |
+| [![Little Control Room dashboard list view](docs/screenshots/main-panel.png)](docs/screenshots/main-panel.png) | [![Little Control Room embedded Codex conversation](docs/screenshots/codex-embedded.png)](docs/screenshots/codex-embedded.png) |
+
+| Diff View | Commit Preview |
+| --- | --- |
+| [![Little Control Room diff window](docs/screenshots/diff-view.png)](docs/screenshots/diff-view.png) | [![Little Control Room commit preview dialog](docs/screenshots/commit-preview.png)](docs/screenshots/commit-preview.png) |
 
 ## What It Does
 

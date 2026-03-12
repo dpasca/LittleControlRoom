@@ -121,6 +121,36 @@ func TestScreenshotEmbeddedCodexSnapshotRendersSessionMeta(t *testing.T) {
 	}
 }
 
+func TestScreenshotDiffViewFixtureRendersSelectedPatch(t *testing.T) {
+	t.Parallel()
+
+	project := model.ProjectSummary{
+		Name: "LittleControlRoom",
+		Path: "/tmp/LittleControlRoom",
+	}
+
+	m := Model{
+		diffView: screenshotDiffView(project),
+		width:    112,
+		height:   31,
+	}
+	m.syncDiffView(true)
+
+	rendered := ansi.Strip(m.View())
+	for _, want := range []string{
+		"Staged (1)",
+		"Unstaged (3)",
+		"internal/tui/diff_view.go",
+		"func renderDiffFooter",
+		"Alt+Up",
+		"stage",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("diff screenshot render missing %q: %q", want, rendered)
+		}
+	}
+}
+
 func TestScreenshotDemoDataSetUsesSafeFixturePaths(t *testing.T) {
 	t.Parallel()
 

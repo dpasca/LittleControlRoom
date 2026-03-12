@@ -20,6 +20,7 @@ import (
 	"lcroom/internal/codexcli"
 	"lcroom/internal/config"
 	"lcroom/internal/model"
+	"lcroom/internal/scanner"
 	"lcroom/internal/service"
 
 	"github.com/charmbracelet/lipgloss"
@@ -76,7 +77,7 @@ func GenerateScreenshots(ctx context.Context, svc *service.Service, cfg config.S
 	now := screenshotReferenceTime(filtered)
 	listSnapshots := screenshotListLiveCodexSnapshots(filtered, now)
 	liveSelectionProject := screenshotAlternateSelectionProject(filtered, liveProject)
-	assets := make([]ScreenshotAsset, 0, 4)
+	assets := make([]ScreenshotAsset, 0, 5)
 
 	mainModel, err := buildScreenshotDashboardModel(ctx, svc, data, filtered, selectedProject.Path, cfg, now)
 	if err != nil {
@@ -110,6 +111,15 @@ func GenerateScreenshots(ctx context.Context, svc *service.Service, cfg config.S
 	codexModel.syncCodexViewport(false)
 	codexModel.syncCodexComposerSize()
 	assets = append(assets, screenshotAsset("codex-embedded", "Embedded Codex Session", codexModel.View(), cfg))
+
+	diffModel, err := buildScreenshotDashboardModel(ctx, svc, data, filtered, selectedProject.Path, cfg, now)
+	if err != nil {
+		return ScreenshotReport{}, err
+	}
+	diffModel.diffView = screenshotDiffView(selectedProject)
+	diffModel.syncDiffView(true)
+	diffModel.status = diffViewReadyStatus(*diffModel.diffView)
+	assets = append(assets, screenshotAsset("diff-view", "Diff View", diffModel.View(), cfg))
 
 	commitModel, err := buildScreenshotDashboardModel(ctx, svc, data, filtered, selectedProject.Path, cfg, now)
 	if err != nil {
@@ -661,6 +671,83 @@ func screenshotCommitPreview(project model.ProjectSummary) *service.CommitPrevie
 		DiffSummary:   "5 files changed, 312 insertions(+), 18 deletions(-)",
 		LatestSummary: strings.TrimSpace(project.LatestSessionSummary),
 		CanPush:       true,
+	}
+}
+
+func screenshotDiffView(project model.ProjectSummary) *diffViewState {
+	state := newDiffViewState(project.Path, screenshotProjectLabel(project))
+	state.loading = false
+	state.preview = screenshotDiffPreview(project)
+	state.selected = 1
+	state.focus = diffFocusContent
+	return state
+}
+
+func screenshotDiffPreview(project model.ProjectSummary) *service.DiffPreview {
+	return &service.DiffPreview{
+		ProjectPath: project.Path,
+		ProjectName: screenshotProjectLabel(project),
+		Branch:      "master",
+		Summary:     "4 files changed, 29 insertions(+), 3 deletions(-)",
+		Files: []service.DiffFilePreview{
+			{
+				Path:    "internal/tui/app.go",
+				Summary: "internal/tui/app.go",
+				Code:    "M",
+				Kind:    scanner.GitChangeModified,
+				Staged:  true,
+				Body: strings.TrimSpace(`# Staged
+
+diff --git a/internal/tui/app.go b/internal/tui/app.go
+@@ -1172,0 +1173,4 @@
++if m.diffView != nil {
++	return strings.Join([]string{header, m.renderDiffView(layout.width, layout.height), m.renderFooter(layout.width)}, "\n")
++}
+`),
+			},
+			{
+				Path:     "internal/tui/diff_view.go",
+				Summary:  "internal/tui/diff_view.go",
+				Code:     "M",
+				Kind:     scanner.GitChangeModified,
+				Unstaged: true,
+				Body: strings.TrimSpace(`# Unstaged
+
+diff --git a/internal/tui/diff_view.go b/internal/tui/diff_view.go
+@@ -572,0 +573,12 @@
++func renderDiffFooter(width int, state diffViewState, usageLabel string) string {
++	actions := []footerAction{
++		footerPrimaryAction("-", "stage"),
++		footerHideAction("Alt+Up", "list"),
++	}
++	return renderFooterLine(width, meta, renderFooterActionList(actions...), renderFooterUsage(usageLabel))
++}
+`),
+			},
+			{
+				Path:     "README.md",
+				Summary:  "README.md",
+				Code:     "M",
+				Kind:     scanner.GitChangeModified,
+				Unstaged: true,
+				Body: strings.TrimSpace(`# Unstaged
+
+diff --git a/README.md b/README.md
+@@ -17,0 +18,3 @@
++| Diff View | Commit Preview |
++| --- | --- |
++| [![Little Control Room diff window](docs/screenshots/diff-view.png)](docs/screenshots/diff-view.png) | [![Little Control Room commit preview dialog](docs/screenshots/commit-preview.png)](docs/screenshots/commit-preview.png) |
+`),
+			},
+			{
+				Path:      "docs/screenshots/diff-view.png",
+				Summary:   "docs/screenshots/diff-view.png",
+				Code:      "??",
+				Kind:      scanner.GitChangeUntracked,
+				Untracked: true,
+				Body:      "# Untracked\n\nBinary file preview unavailable.",
+			},
+		},
 	}
 }
 
