@@ -58,7 +58,57 @@ func (m Model) waitCodexCmd() tea.Cmd {
 }
 
 func (m Model) codexVisible() bool {
-	return strings.TrimSpace(m.codexVisibleProject) != ""
+	return strings.TrimSpace(m.codexVisibleProject) != "" || strings.TrimSpace(m.codexPendingOpenProject()) != ""
+}
+
+func (m Model) codexPendingOpenProject() string {
+	if m.codexPendingOpen == nil {
+		return ""
+	}
+	return strings.TrimSpace(m.codexPendingOpen.projectPath)
+}
+
+func (m *Model) beginCodexPendingOpen(projectPath string) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		m.codexPendingOpen = nil
+		return
+	}
+	if current := strings.TrimSpace(m.codexVisibleProject); current != "" && current != projectPath {
+		m.persistVisibleCodexDraft()
+	}
+	m.codexPendingOpen = &codexPendingOpenState{projectPath: projectPath}
+}
+
+func (m *Model) finishCodexPendingOpen(projectPath string, opened bool) {
+	projectPath = strings.TrimSpace(projectPath)
+	if pending := m.codexPendingOpenProject(); pending != "" && pending == projectPath {
+		m.codexPendingOpen = nil
+	}
+	if !opened {
+		m.pruneCodexSessionVisibility()
+		return
+	}
+	m.markCodexSessionLive(projectPath)
+	m.codexVisibleProject = projectPath
+	m.codexHiddenProject = projectPath
+	m.loadCodexDraft(projectPath)
+	m.syncCodexViewport(true)
+	m.syncCodexComposerSize()
+}
+
+func (m *Model) pruneCodexSessionVisibility() {
+	if projectPath := strings.TrimSpace(m.codexVisibleProject); projectPath != "" {
+		if _, ok := m.codexSession(projectPath); !ok {
+			m.codexVisibleProject = ""
+			m.codexInput.Blur()
+		}
+	}
+	if projectPath := strings.TrimSpace(m.codexHiddenProject); projectPath != "" {
+		if _, ok := m.codexSession(projectPath); !ok {
+			m.codexHiddenProject = ""
+		}
+	}
 }
 
 func (m Model) codexSession(projectPath string) (codexapp.Session, bool) {
@@ -331,6 +381,16 @@ func (m Model) cycleCodexSession(direction int) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if projectPath := m.codexPendingOpenProject(); projectPath != "" {
+		switch msg.String() {
+		case "esc", "alt+up":
+			m.status = "Embedded Codex is still starting for " + filepath.Base(projectPath)
+		default:
+			m.status = "Embedded Codex session is still starting..."
+		}
+		return m, nil
+	}
+
 	snapshot, ok := m.currentCodexSnapshot()
 	if !ok {
 		m.codexVisibleProject = ""
@@ -448,6 +508,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			switch inv.Kind {
 			case codexslash.KindNew:
 				m.status = "Starting a fresh embedded Codex session..."
+				m.beginCodexPendingOpen(m.codexVisibleProject)
 				return m, m.restartVisibleCodexSessionCmd(inv.Prompt)
 			case codexslash.KindModel:
 				m.openCodexModelPickerLoading()
@@ -771,6 +832,9 @@ func (m *Model) syncCodexViewport(resetToBottom bool) {
 }
 
 func (m Model) renderCodexView() string {
+	if projectPath := m.codexPendingOpenProject(); projectPath != "" {
+		return m.renderCodexOpeningView(projectPath)
+	}
 	snapshot, ok := m.currentCodexSnapshot()
 	if !ok {
 		return lipgloss.NewStyle().Bold(true).Render(brand.FullTitle + " | Codex session unavailable")
@@ -802,6 +866,32 @@ func (m Model) renderCodexView() string {
 
 func codexTranscriptContentHeight(totalHeight, lowerHeight int) int {
 	return max(3, totalHeight-lowerHeight-3)
+}
+
+func (m Model) renderCodexOpeningView(projectPath string) string {
+	width := m.width
+	if width <= 0 {
+		width = 120
+	}
+	height := m.height
+	if height <= 0 {
+		height = 30
+	}
+
+	projectName := strings.TrimSpace(filepath.Base(projectPath))
+	if projectName == "" || projectName == "." {
+		projectName = projectPath
+	}
+	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Render("Codex | " + projectName)
+	bodyHeight := max(3, height-6)
+	body := m.renderFramedPane(strings.Join([]string{
+		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Render("Opening embedded Codex session..."),
+		"",
+		fitFooterWidth("Project: "+projectPath, max(24, width-8)),
+		fitFooterWidth("Waiting for the previous Codex app-server to settle and for the new session to come online.", max(24, width-8)),
+	}, "\n"), width, bodyHeight, true)
+	footer := renderFooterLine(width, renderFooterStatus("Opening embedded Codex session"))
+	return strings.Join([]string{renderFooterLine(width, title), body, footer}, "\n")
 }
 
 func (m Model) codexLowerBlocks(snapshot codexapp.Snapshot, width int) []string {

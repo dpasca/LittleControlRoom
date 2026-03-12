@@ -265,6 +265,7 @@ func (m Model) openCodexSessionChoice(choice codexSessionChoice) (tea.Model, tea
 		m.status = err.Error()
 		return m, nil
 	}
+	m.beginCodexPendingOpen(choice.ProjectPath)
 	m.status = fmt.Sprintf("Opening Codex session %s...", shortID(choice.SessionID))
 	focusCmd := m.focusProjectPath(choice.ProjectPath)
 	return m, tea.Batch(m.openCodexSessionCmd(plan), focusCmd)

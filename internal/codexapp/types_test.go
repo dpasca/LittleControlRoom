@@ -13,6 +13,7 @@ type fakeSession struct {
 	snapshot       Snapshot
 	submitted      []string
 	closed         bool
+	waitClosedFn   func(*fakeSession, time.Duration) bool
 	refreshCalls   int
 	refreshFn      func(*fakeSession) error
 	reconcileCalls int
@@ -73,6 +74,13 @@ func (s *fakeSession) RespondElicitation(decision ElicitationDecision, content j
 func (s *fakeSession) Close() error {
 	s.closed = true
 	return nil
+}
+
+func (s *fakeSession) WaitClosed(timeout time.Duration) bool {
+	if s.waitClosedFn != nil {
+		return s.waitClosedFn(s, timeout)
+	}
+	return s.closed
 }
 
 func (s *fakeSession) RefreshBusyElsewhere() error {
@@ -271,6 +279,83 @@ func TestManagerOpenForceNewReplacesExistingSession(t *testing.T) {
 	}
 	if !created[0].closed {
 		t.Fatalf("original session should be closed when replaced")
+	}
+}
+
+func TestManagerOpenForceNewWaitsForExistingSessionShutdown(t *testing.T) {
+	release := make(chan struct{})
+	created := make(chan struct{}, 1)
+
+	manager := NewManagerWithFactory(func(req LaunchRequest, notify func()) (Session, error) {
+		session := &fakeSession{
+			projectPath: req.ProjectPath,
+			snapshot: Snapshot{
+				Started: true,
+				Preset:  req.Preset,
+			},
+		}
+		select {
+		case created <- struct{}{}:
+		default:
+		}
+		return session, nil
+	})
+
+	first, _, err := manager.Open(LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	})
+	if err != nil {
+		t.Fatalf("first Open() error = %v", err)
+	}
+	session := first.(*fakeSession)
+	session.waitClosedFn = func(_ *fakeSession, timeout time.Duration) bool {
+		select {
+		case <-release:
+			return true
+		case <-time.After(timeout):
+			return false
+		}
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := manager.Open(LaunchRequest{
+			ProjectPath: "/tmp/demo",
+			Preset:      codexcli.PresetYolo,
+			ForceNew:    true,
+		})
+		result <- err
+	}()
+
+	select {
+	case <-created:
+		// Consume the initial session creation event from the first open.
+	case <-time.After(100 * time.Millisecond):
+		t.Fatalf("first session creation was not recorded")
+	}
+
+	select {
+	case <-created:
+		t.Fatalf("replacement session should not start before the old session finishes shutting down")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(release)
+
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("second Open() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("second Open() did not finish after allowing shutdown")
+	}
+
+	select {
+	case <-created:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatalf("replacement session was never created")
 	}
 }
 

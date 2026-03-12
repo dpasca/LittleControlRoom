@@ -1886,6 +1886,13 @@ func TestVisibleCodexSlashNewStartsFreshSession(t *testing.T) {
 	if got.status != "Starting a fresh embedded Codex session..." {
 		t.Fatalf("status = %q, want fresh-session notice", got.status)
 	}
+	if got.codexPendingOpen == nil || got.codexPendingOpen.projectPath != "/tmp/demo" {
+		t.Fatalf("codexPendingOpen = %#v, want pending open for /tmp/demo", got.codexPendingOpen)
+	}
+	rendered := ansi.Strip(got.renderCodexView())
+	if !strings.Contains(rendered, "Opening embedded Codex session...") {
+		t.Fatalf("rendered view should show opening state, got %q", rendered)
+	}
 
 	msg := cmd()
 	opened, ok := msg.(codexSessionOpenedMsg)
@@ -1903,6 +1910,61 @@ func TestVisibleCodexSlashNewStartsFreshSession(t *testing.T) {
 	}
 	if requests[1].Prompt != "continue in the new thread" {
 		t.Fatalf("second launch prompt = %q, want inline /new prompt", requests[1].Prompt)
+	}
+}
+
+func TestLaunchCodexForSelectionShowsOpeningStateInsteadOfPreviousSession(t *testing.T) {
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Started: true,
+				Preset:  req.Preset,
+				Status:  "Codex session ready",
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/previous",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/previous",
+		codexHiddenProject:  "/tmp/previous",
+		codexInput:          newCodexTextarea(),
+		codexDrafts:         make(map[string]codexDraft),
+		codexViewport:       viewport.New(0, 0),
+		projects: []model.ProjectSummary{{
+			Name:          "next",
+			Path:          "/tmp/next",
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+		width:    100,
+		height:   24,
+	}
+
+	updated, cmd := m.launchCodexForSelection(true, "")
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("launchCodexForSelection() should return an open command")
+	}
+	if got.codexPendingOpen == nil || got.codexPendingOpen.projectPath != "/tmp/next" {
+		t.Fatalf("codexPendingOpen = %#v, want pending open for /tmp/next", got.codexPendingOpen)
+	}
+	if got.codexVisibleProject != "/tmp/previous" {
+		t.Fatalf("codexVisibleProject = %q, want previous session to remain stored while opening", got.codexVisibleProject)
+	}
+	rendered := ansi.Strip(got.renderCodexView())
+	if !strings.Contains(rendered, "Project: /tmp/next") {
+		t.Fatalf("rendered opening view should mention the requested project, got %q", rendered)
+	}
+	if strings.Contains(rendered, "/tmp/previous") {
+		t.Fatalf("rendered opening view should not keep showing the previous session, got %q", rendered)
 	}
 }
 

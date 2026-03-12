@@ -74,6 +74,7 @@ type Model struct {
 	codexManager        *codexapp.Manager
 	codexVisibleProject string
 	codexHiddenProject  string
+	codexPendingOpen    *codexPendingOpenState
 	codexInput          textarea.Model
 	codexDrafts         map[string]codexDraft
 	codexClosedHandled  map[string]struct{}
@@ -150,6 +151,10 @@ type codexSessionOpenedMsg struct {
 	projectPath string
 	status      string
 	err         error
+}
+
+type codexPendingOpenState struct {
+	projectPath string
 }
 
 type busMsg events.Event
@@ -448,17 +453,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case codexSessionOpenedMsg:
 		m.err = nil
 		if msg.err != nil {
+			m.finishCodexPendingOpen(msg.projectPath, false)
 			m.status = "Codex open failed"
 			m.err = msg.err
 			return m, nil
 		}
-		m.markCodexSessionLive(msg.projectPath)
-		m.codexVisibleProject = msg.projectPath
-		m.codexHiddenProject = msg.projectPath
+		m.finishCodexPendingOpen(msg.projectPath, true)
 		m.status = msg.status
-		m.loadCodexDraft(msg.projectPath)
-		m.syncCodexViewport(true)
-		m.syncCodexComposerSize()
 		return m, m.codexInput.Focus()
 	case codexActionMsg:
 		if msg.err != nil {
@@ -1649,6 +1650,7 @@ func (m Model) launchCodexForSelection(forceNew bool, prompt string) (tea.Model,
 	}
 
 	m.ensureCodexRuntime()
+	m.beginCodexPendingOpen(p.Path)
 	m.err = nil
 	m.status = "Opening embedded Codex session..."
 	return m, m.openCodexSessionCmd(plan)

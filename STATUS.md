@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-12 09:15 JST (JST)
+Last updated: 2026-03-12 11:10 JST (JST)
 
 ## Current State
 
@@ -59,27 +59,27 @@ Current embedded Codex transport assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-12 10:43 JST)
+## Latest Update (2026-03-12 11:10 JST)
 
-- Unified the commit-style dialog headers so both overlays now render as `Title - <project> (<branch>)`, with the project name using a brighter accent color that stands apart from the generic dialog title text.
-- Removed the redundant `Branch` row from the git-status/submodule-attention dialog now that branch metadata lives in the header, and dropped the old `Selected project:` subtitle there since the title already carries that context.
-- Switched the regular commit preview to the same header format so `Commit Preview` and `Submodule Attention` present project/branch context consistently instead of using slightly different title patterns.
-- Refreshed the TUI coverage to lock in the new header text and the absence of the old branch row.
+- Traced `/codex-new` end to end and confirmed the command routing already forces `LaunchNew`; the actual bug was the handoff around forced replacement, not a parser/dispatcher mix-up.
+- Added an embedded-session shutdown wait for forced replacements so Little Control Room now gives the old `codex app-server` process time to fully exit before starting the replacement session.
+- Added an explicit pending-open UI state for `/codex-new`, picker resumes, and embedded `/new`, so the pane now shows an opening placeholder instead of leaving the previous transcript onscreen while the new session is still starting.
+- Added focused regressions for both behaviors: one proving `ForceNew` waits for prior session shutdown, and one proving the TUI renders the opening state instead of the old session.
 - No Codex/OpenCode detector assumptions changed; `docs/codex_cli_footprint.md` stayed aligned with the current footprint expectations.
 
 Verification snapshot:
 
-- `go test ./internal/tui ./internal/service` passed.
+- `go test ./internal/codexapp ./internal/tui` passed.
 - `make test` passed.
-- `make scan` passed at `2026-03-12T10:43:06+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 1`, `queued classifications: 1`).
-- `make doctor` passed on the cached snapshot dated `2026-03-12T10:43:06+09:00` (`projects: 135`).
-- `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q` as a TUI smoke test after the shared dialog-header pass.
+- `make scan` passed at `2026-03-12T11:09:53+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-12T11:10:00+09:00` (`projects: 135`).
+- `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q` as a TUI smoke test after the `/codex-new` handoff fix.
 
 Next concrete tasks:
 
-- Do an interactive pass on the real FractalMech repo to confirm the new shared header styling reads well at normal terminal widths and that the accent color feels obvious without becoming noisy.
-- Decide whether the `Nothing To Commit` dialog should keep sharing the same title treatment indefinitely, or whether it deserves a slightly calmer header variant despite the new consistency.
-- Consider offering the assisted submodule action from the mixed commit preview when parent files are also dirty, not just from the submodule-only dialog.
+- Do an interactive repro pass in the real TUI to confirm the first `/codex-new` now lands cleanly on a fresh thread even when replacing an active embedded session.
+- Decide whether the pending-open placeholder should show slightly richer state, for example whether it is waiting on shutdown versus waiting on `thread/start`.
+- Consider surfacing a visible warning if the forced-replacement shutdown wait hits its timeout, since that would be a strong signal that Codex itself is lagging during teardown.
 
 ## Recent Updates
 

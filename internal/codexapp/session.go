@@ -38,6 +38,8 @@ type appServerSession struct {
 	pendingMu sync.Mutex
 	pending   map[string]chan rpcEnvelope
 	nextID    int64
+	exitCh    chan struct{}
+	exitOnce  sync.Once
 
 	mu                 sync.Mutex
 	threadID           string
@@ -417,6 +419,7 @@ func newAppServerSession(req LaunchRequest, notify func()) (Session, error) {
 		preset:         req.Preset,
 		notify:         notify,
 		pending:        make(map[string]chan rpcEnvelope),
+		exitCh:         make(chan struct{}),
 		activeItems:    make(map[string]struct{}),
 		entryIndex:     make(map[string]int),
 		status:         "Starting Codex app-server...",
@@ -1161,6 +1164,8 @@ func (s *appServerSession) Close() error {
 	}
 	if cmd != nil && cmd.Process != nil {
 		_ = cmd.Process.Kill()
+	} else {
+		s.closeExitCh()
 	}
 	s.failPending("session closed")
 	s.notify()
@@ -1192,10 +1197,39 @@ func (s *appServerSession) CloseDueToInactivity() error {
 	}
 	if cmd != nil && cmd.Process != nil {
 		_ = cmd.Process.Kill()
+	} else {
+		s.closeExitCh()
 	}
 	s.failPending("session closed")
 	s.notify()
 	return nil
+}
+
+func (s *appServerSession) WaitClosed(timeout time.Duration) bool {
+	if s == nil {
+		return true
+	}
+	s.mu.Lock()
+	closed := s.closed
+	cmd := s.cmd
+	exitCh := s.exitCh
+	s.mu.Unlock()
+	if cmd == nil || exitCh == nil {
+		return true
+	}
+	if !closed {
+		return false
+	}
+	if timeout <= 0 {
+		<-exitCh
+		return true
+	}
+	select {
+	case <-exitCh:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
 }
 
 func (s *appServerSession) start(req LaunchRequest) error {
@@ -1469,9 +1503,11 @@ func (s *appServerSession) readStderr(r io.Reader) {
 
 func (s *appServerSession) waitForExit() {
 	if s.cmd == nil {
+		s.closeExitCh()
 		return
 	}
 	err := s.cmd.Wait()
+	s.closeExitCh()
 	s.mu.Lock()
 	if !s.closed {
 		s.closed = true
@@ -1488,6 +1524,17 @@ func (s *appServerSession) waitForExit() {
 	s.mu.Unlock()
 	s.failPending("session exited")
 	s.notify()
+}
+
+func (s *appServerSession) closeExitCh() {
+	if s == nil {
+		return
+	}
+	s.exitOnce.Do(func() {
+		if s.exitCh != nil {
+			close(s.exitCh)
+		}
+	})
 }
 
 func (s *appServerSession) routeEnvelope(env rpcEnvelope) {

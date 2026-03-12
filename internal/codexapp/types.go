@@ -437,6 +437,10 @@ type busyElsewhereRefresher interface {
 	RefreshBusyElsewhere() error
 }
 
+type closeWaiter interface {
+	WaitClosed(timeout time.Duration) bool
+}
+
 type busyReconciler interface {
 	ReconcileBusyState() error
 }
@@ -549,6 +553,9 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 
 	if ok {
 		_ = existing.Close()
+		if waiter, ok := existing.(closeWaiter); ok {
+			waiter.WaitClosed(5 * time.Second)
+		}
 	}
 
 	session, err := m.factory(req, func() {
