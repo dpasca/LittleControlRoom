@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-12 15:38 JST (JST)
+Last updated: 2026-03-12 16:45 JST (JST)
 
 ## Current State
 
@@ -64,27 +64,25 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-12 15:38 JST)
+## Latest Update (2026-03-12 16:45 JST)
 
-- Added configurable screenshot `capture_scale` support, defaulted to `1.5`, so the browser-rendered docs PNGs are captured at higher resolution instead of being hard-pinned to `1x`.
-- Wired that scale through screenshot config parsing, browser capture argument building, crop-padding scaling, and the screenshot docs/example config so the sharper export path is explicit and tunable.
-- Regenerated the committed screenshot set and visually rechecked `docs/screenshots/codex-embedded.png`; the refreshed PNGs now render at `1244x941`, which looks noticeably crisper than the prior `1x` export.
+- Evaluated a supersample-and-downscale screenshot path locally after the pushed `capture_scale = 1.5` baseline, then chose not to keep it because the visual improvement was subtle while the PNG files grew substantially.
+- Restored the tracked screenshot code, docs, example config, Go module set, and generated PNGs back to the simpler non-supersampled baseline already pushed on `origin/master` (`24b774d`), and reset the repo-local `screenshots.local.toml` default back to `capture_scale = 1.5` only.
+- The current checked-in screenshot workflow therefore remains the simpler higher-resolution capture path without an extra supersampling/downscale stage.
 - No Codex/OpenCode detector assumptions changed; `docs/codex_cli_footprint.md` stayed aligned with the current footprint expectations.
 
 Verification snapshot:
 
-- `go test ./internal/config ./internal/cli ./internal/tui` passed.
 - `make screenshots` passed and refreshed `docs/screenshots/main-panel.png`, `docs/screenshots/main-panel-live-cx.png`, `docs/screenshots/codex-embedded.png`, and `docs/screenshots/commit-preview.png`.
 - `make test` passed.
-- `make scan` passed at `2026-03-12T15:37:39+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 1`, `queued classifications: 0`).
-- `make doctor` passed on the cached snapshot dated `2026-03-12T15:37:46+09:00` (`projects: 135`).
-- `env COLUMNS=100 LINES=28 make tui` launched and exited cleanly via `q`.
+- `make scan` passed at `2026-03-12T16:45:16+09:00` (`activity projects: 81`, `tracked projects: 135`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-12T16:45:16+09:00` (`projects: 135`).
 
 Next concrete tasks:
 
-- Compare the new `1.5x` screenshot output against prior docs/GitHub rendering and decide whether `capture_scale` should stay at `1.5` or move to `2.0`.
-- If font edges still feel too soft in downstream presentation, add an optional supersample-and-downscale export mode rather than baking in more font-weight.
-- Keep an eye on screenshot file size growth now that the committed PNG set is higher resolution.
+- If screenshot text still needs more presence later, compare the current `capture_scale = 1.5` baseline against a simple `capture_scale = 2.0` path before revisiting heavier post-processing.
+- Keep an eye on screenshot clarity at GitHub/docs display scale instead of judging only the raw PNGs at full zoom.
+- Avoid adding extra screenshot pipeline complexity unless it produces a clearly visible improvement over the current baseline.
 
 ## Recent Updates
 
