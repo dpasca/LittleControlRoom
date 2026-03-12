@@ -54,20 +54,22 @@ type Model struct {
 	noteMode  bool
 	noteInput textinput.Model
 
-	commandMode         bool
-	commandInput        textinput.Model
-	commandSelected     int
-	newProjectDialog    *newProjectDialogState
-	preferredSelectPath string
-	diffView            *diffViewState
-	gitStatusDialog     *gitStatusDialog
-	gitStatusApplying   bool
-	commitPreview       *service.CommitPreview
-	commitApplying      bool
-	settingsMode        bool
-	settingsFields      []settingsField
-	settingsSelected    int
-	settingsBaseline    *config.EditableSettings
+	commandMode                  bool
+	commandInput                 textinput.Model
+	commandSelected              int
+	newProjectDialog             *newProjectDialogState
+	preferredSelectPath          string
+	diffView                     *diffViewState
+	gitStatusDialog              *gitStatusDialog
+	gitStatusApplying            bool
+	commitPreview                *service.CommitPreview
+	commitPreviewMessageOverride string
+	commitPreviewRefreshing      bool
+	commitApplying               bool
+	settingsMode                 bool
+	settingsFields               []settingsField
+	settingsSelected             int
+	settingsBaseline             *config.EditableSettings
 
 	detailViewport viewport.Model
 	focusedPane    paneFocus
@@ -393,6 +395,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.loadProjectsCmd())
 	case commitPreviewMsg:
 		m.diffView = nil
+		m.commitPreviewRefreshing = false
 		if msg.err != nil {
 			var noChangesErr service.NoChangesToCommitError
 			if errors.As(msg.err, &noChangesErr) {
@@ -402,6 +405,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.gitStatusDialog = &dialog
 				m.gitStatusApplying = false
 				m.commitPreview = nil
+				m.commitPreviewMessageOverride = ""
 				m.commitApplying = false
 				m.status = gitStatusDialogReadyStatus(dialog)
 				return m, nil
@@ -414,6 +418,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.gitStatusDialog = &dialog
 				m.gitStatusApplying = false
 				m.commitPreview = nil
+				m.commitPreviewMessageOverride = ""
 				m.commitApplying = false
 				m.status = gitStatusDialogReadyStatus(dialog)
 				return m, nil
@@ -423,6 +428,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.gitStatusDialog = nil
 			m.gitStatusApplying = false
 			m.commitPreview = nil
+			m.commitPreviewMessageOverride = ""
 			m.commitApplying = false
 			return m, nil
 		}
@@ -431,6 +437,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.gitStatusDialog = nil
 		m.gitStatusApplying = false
 		m.commitPreview = &msg.preview
+		m.commitPreviewMessageOverride = msg.message
 		m.commitApplying = false
 		m.status = commitPreviewReadyStatus(msg.preview.CanPush)
 		return m, nil
@@ -494,7 +501,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.gitStatusApplying = false
 		m.gitStatusDialog = nil
 		m.commitApplying = false
+		m.commitPreviewRefreshing = false
 		m.commitPreview = nil
+		m.commitPreviewMessageOverride = ""
 		m.diffView = nil
 		if msg.err != nil {
 			m.err = msg.err
@@ -818,18 +827,22 @@ func (m Model) updateCommitPreviewMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.commitPreview == nil {
 		return m, nil
 	}
-	if m.commitApplying {
+	if m.commitApplying || m.commitPreviewRefreshing {
 		return m, nil
 	}
 	switch msg.String() {
 	case "esc":
 		m.commitPreview = nil
+		m.commitPreviewMessageOverride = ""
+		m.commitPreviewRefreshing = false
 		m.commitApplying = false
 		m.status = "Commit preview canceled"
 		return m, nil
 	case "d":
-		cmd := m.startDiffView(m.commitPreview.ProjectPath, m.commitPreview.ProjectName)
+		cmd := m.startDiffViewFromCommitPreview(*m.commitPreview, m.commitPreviewMessageOverride)
 		m.commitPreview = nil
+		m.commitPreviewMessageOverride = ""
+		m.commitPreviewRefreshing = false
 		m.commitApplying = false
 		return m, cmd
 	case "shift+enter", "alt+enter":
@@ -1865,6 +1878,17 @@ func (m *Model) startDiffView(projectPath, projectName string) tea.Cmd {
 	return m.prepareDiffPreviewCmd(projectPath)
 }
 
+func (m *Model) startDiffViewFromCommitPreview(preview service.CommitPreview, messageOverride string) tea.Cmd {
+	cmd := m.startDiffView(preview.ProjectPath, preview.ProjectName)
+	if m.diffView != nil {
+		m.diffView.returnToCommitPreview = &commitPreviewReturnState{
+			preview:         preview,
+			messageOverride: messageOverride,
+		}
+	}
+	return cmd
+}
+
 func (m Model) toggleDiffStageCmd(projectPath string, file service.DiffFilePreview) tea.Cmd {
 	return func() tea.Msg {
 		status, err := m.svc.ToggleDiffFileStage(m.ctx, projectPath, file)
@@ -1879,6 +1903,35 @@ func (m Model) toggleDiffStageCmd(projectPath string, file service.DiffFilePrevi
 			originalPath: file.OriginalPath,
 			err:          err,
 		}
+	}
+}
+
+func (m Model) resumeCommitPreviewCmd(cached service.CommitPreview, messageOverride string) tea.Cmd {
+	return func() tea.Msg {
+		previewMsg := commitPreviewMsg{
+			projectPath: cached.ProjectPath,
+			intent:      cached.Intent,
+			message:     messageOverride,
+		}
+		if m.svc == nil {
+			previewMsg.err = fmt.Errorf("service unavailable")
+			return previewMsg
+		}
+
+		currentHash, err := m.svc.CommitPreviewStateHash(m.ctx, cached.ProjectPath)
+		if err != nil {
+			previewMsg.err = err
+			return previewMsg
+		}
+		if currentHash == cached.StateHash && currentHash != "" {
+			previewMsg.preview = cached
+			return previewMsg
+		}
+
+		preview, err := m.svc.PrepareCommit(m.ctx, cached.ProjectPath, cached.Intent, messageOverride)
+		previewMsg.preview = preview
+		previewMsg.err = err
+		return previewMsg
 	}
 }
 
@@ -2553,6 +2606,8 @@ func (m Model) renderFooter(width int) string {
 		label := commitPreviewReadyStatus(m.commitPreview.CanPush)
 		if m.commitApplying {
 			label = "Applying git action..."
+		} else if m.commitPreviewRefreshing {
+			label = "Refreshing commit preview..."
 		}
 		return fitFooterWidth(label+" | "+usageLabel, width)
 	}
@@ -2722,6 +2777,8 @@ func (m Model) renderCommitPreviewContent(width int) string {
 	lines = append(lines, "")
 	if m.commitApplying {
 		lines = append(lines, commandPaletteHintStyle.Render("Applying git action..."))
+	} else if m.commitPreviewRefreshing {
+		lines = append(lines, commandPaletteHintStyle.Render("Refreshing commit preview..."))
 	} else {
 		lines = append(lines, renderCommitPreviewActions(preview.CanPush))
 	}

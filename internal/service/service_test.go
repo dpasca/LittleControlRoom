@@ -989,6 +989,64 @@ func TestPrepareCommitUsesStagedScopeAndFinishPushState(t *testing.T) {
 	}
 }
 
+func TestCommitPreviewStateHashTracksCurrentGitState(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	projectPath := filepath.Join(t.TempDir(), "repo")
+	initGitRepo(t, projectPath)
+
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("hello\npreview\n"), 0o644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	runGit(t, projectPath, "git", "add", "README.md")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "repo",
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	preview, err := svc.PrepareCommit(ctx, projectPath, GitActionCommit, "")
+	if err != nil {
+		t.Fatalf("prepare commit: %v", err)
+	}
+	if strings.TrimSpace(preview.StateHash) == "" {
+		t.Fatalf("prepare commit should populate a state hash: %#v", preview)
+	}
+
+	currentHash, err := svc.CommitPreviewStateHash(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("current commit preview state hash: %v", err)
+	}
+	if currentHash != preview.StateHash {
+		t.Fatalf("current hash = %q, want preview hash %q", currentHash, preview.StateHash)
+	}
+
+	if err := os.WriteFile(filepath.Join(projectPath, "notes.txt"), []byte("keep this too\n"), 0o644); err != nil {
+		t.Fatalf("write notes: %v", err)
+	}
+	runGit(t, projectPath, "git", "add", "notes.txt")
+
+	updatedHash, err := svc.CommitPreviewStateHash(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("updated commit preview state hash: %v", err)
+	}
+	if updatedHash == preview.StateHash {
+		t.Fatalf("state hash should change after staged files change; still got %q", updatedHash)
+	}
+}
+
 func TestPrepareDiffIncludesTextUntrackedDeletedAndImagePreviews(t *testing.T) {
 	t.Parallel()
 

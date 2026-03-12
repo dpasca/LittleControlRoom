@@ -31,12 +31,18 @@ type diffListRow struct {
 	FileIndex int
 }
 
+type commitPreviewReturnState struct {
+	preview         service.CommitPreview
+	messageOverride string
+}
+
 type diffViewState struct {
 	ProjectPath string
 	ProjectName string
 
-	loading bool
-	preview *service.DiffPreview
+	loading               bool
+	preview               *service.DiffPreview
+	returnToCommitPreview *commitPreviewReturnState
 
 	selected int
 	offset   int
@@ -65,13 +71,9 @@ func (m Model) updateDiffMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case "esc":
-		m.diffView = nil
-		m.status = "Diff view closed"
-		return m, nil
+		return m.closeDiffView("Diff view closed")
 	case "alt+up":
-		m.diffView = nil
-		m.status = "Focus: project list"
-		return m, nil
+		return m.closeDiffView("Focus: project list")
 	case "/":
 		m.openCommandMode()
 		return m, textinput.Blink
@@ -154,6 +156,26 @@ func (m Model) updateDiffMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+func (m Model) closeDiffView(fallbackStatus string) (tea.Model, tea.Cmd) {
+	if m.diffView == nil {
+		return m, nil
+	}
+	cached := m.diffView.returnToCommitPreview
+	m.diffView = nil
+	if cached == nil {
+		m.status = fallbackStatus
+		return m, nil
+	}
+
+	preview := cached.preview
+	m.commitPreview = &preview
+	m.commitPreviewMessageOverride = cached.messageOverride
+	m.commitPreviewRefreshing = true
+	m.commitApplying = false
+	m.status = "Refreshing commit preview..."
+	return m, m.resumeCommitPreviewCmd(cached.preview, cached.messageOverride)
 }
 
 func (m *Model) toggleDiffFocus() {
@@ -546,37 +568,45 @@ func rgbaForPreview(c color.Color) [3]uint8 {
 }
 
 func diffViewReadyStatus(state diffViewState) string {
+	closeLabel := diffViewCloseLabel(state)
 	if state.loading {
 		return "Preparing diff view..."
 	}
 	switch state.focus {
 	case diffFocusContent:
-		return "Diff ready. Up/Down scroll, Tab files, Esc close"
+		return "Diff ready. Up/Down scroll, Tab files, Esc " + closeLabel
 	default:
-		return "Diff ready. Up/Down choose file, Tab scroll pane, Esc close"
+		return "Diff ready. Up/Down choose file, Tab scroll pane, Esc " + closeLabel
 	}
 }
 
 func diffViewFooterLabel(state diffViewState) string {
+	closeLabel := diffViewCloseLabel(state)
 	if state.loading {
-		return "Diff loading. Esc close"
+		return "Diff loading. Esc " + closeLabel
 	}
 	switch state.focus {
 	case diffFocusContent:
-		return "Diff: Up/Down scroll, PgUp/PgDn page, Left/Tab files, Esc close"
+		return "Diff: Up/Down scroll, PgUp/PgDn page, Left/Tab files, Esc " + closeLabel
 	default:
-		return "Diff: Up/Down choose, Enter/Right open, PgUp/PgDn page, Esc close"
+		return "Diff: Up/Down choose, Enter/Right open, PgUp/PgDn page, Esc " + closeLabel
 	}
 }
 
 func renderDiffFooter(width int, state diffViewState, usageLabel string) string {
+	hideLabel := "list"
+	closeLabel := "close"
+	if state.returnToCommitPreview != nil {
+		hideLabel = "back"
+		closeLabel = "back"
+	}
 	if state.loading {
 		return renderFooterLine(
 			width,
 			renderFooterMeta("Diff"),
 			renderFooterActionList(
-				footerHideAction("Alt+Up", "list"),
-				footerExitAction("Esc", "close"),
+				footerHideAction("Alt+Up", hideLabel),
+				footerExitAction("Esc", closeLabel),
 			),
 			renderFooterUsage(usageLabel),
 		)
@@ -595,7 +625,7 @@ func renderDiffFooter(width int, state diffViewState, usageLabel string) string 
 
 	actions := []footerAction{
 		footerPrimaryAction("-", stageLabel),
-		footerHideAction("Alt+Up", "list"),
+		footerHideAction("Alt+Up", hideLabel),
 	}
 	switch state.focus {
 	case diffFocusContent:
@@ -611,8 +641,15 @@ func renderDiffFooter(width int, state diffViewState, usageLabel string) string 
 			footerNavAction("PgUp/PgDn", "page"),
 		)
 	}
-	actions = append(actions, footerExitAction("Esc", "close"))
+	actions = append(actions, footerExitAction("Esc", closeLabel))
 	return renderFooterLine(width, meta, renderFooterActionList(actions...), renderFooterUsage(usageLabel))
+}
+
+func diffViewCloseLabel(state diffViewState) string {
+	if state.returnToCommitPreview != nil {
+		return "back"
+	}
+	return "close"
 }
 
 func buildDiffListRows(files []service.DiffFilePreview) []diffListRow {

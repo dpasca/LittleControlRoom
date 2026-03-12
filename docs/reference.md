@@ -145,8 +145,8 @@ While the diff screen is visible:
 - `Enter`, `Right`, or `Tab` moves focus into the diff pane
 - `Left` or `Tab` moves focus back to the file list
 - `PgUp/PgDn/Home/End` pages or jumps within the focused pane
-- `Alt+Up` returns to the main project list
-- `Esc` closes the diff screen
+- `Alt+Up` returns to the commit preview when the diff was opened from there, otherwise to the main project list
+- `Esc` returns to the commit preview when the diff was opened from there, otherwise closes the diff screen
 
 ## Slash Commands
 

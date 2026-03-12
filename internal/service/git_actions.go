@@ -2,8 +2,11 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -48,6 +51,7 @@ type CommitPreview struct {
 	LatestSummary     string
 	CanPush           bool
 	Warnings          []string
+	StateHash         string
 }
 
 type CommitResult struct {
@@ -118,8 +122,8 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 	if err != nil {
 		return CommitPreview{}, err
 	}
-	projectName := strings.TrimSpace(detail.Summary.Name)
-	branchName := strings.TrimSpace(repoStatus.Branch)
+	projectName := commitPreviewProjectName(projectPath, detail.Summary.Name)
+	branchName := commitPreviewBranchName(repoStatus.Branch)
 	canPush, pushWarning := pushAvailability(repoStatus)
 
 	staged := repoStatus.StagedChanges()
@@ -157,6 +161,7 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 	}
 
 	latestSummary := strings.TrimSpace(detail.Summary.LatestSessionSummary)
+	stateHash := commitPreviewStateHash(projectName, latestSummary, repoStatus)
 	diffStat := ""
 	patch := ""
 	if stageMode == GitStageAllChanges {
@@ -239,9 +244,7 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 		DiffSummary:       diffStatSummary(diffStat),
 		LatestSummary:     latestSummary,
 		Warnings:          warnings,
-	}
-	if preview.Branch == "" {
-		preview.Branch = "(detached)"
+		StateHash:         stateHash,
 	}
 
 	if stageMode == GitStageAllChanges {
@@ -289,6 +292,25 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 		preview.Warnings = append(preview.Warnings, pushWarning)
 	}
 	return preview, nil
+}
+
+func (s *Service) CommitPreviewStateHash(ctx context.Context, projectPath string) (string, error) {
+	detail, err := s.store.GetProjectDetail(ctx, projectPath, 1)
+	if err != nil {
+		return "", err
+	}
+	if !projectPathExists(projectPath) {
+		return "", fmt.Errorf("project not found on disk: %s", projectPath)
+	}
+
+	repoStatus, err := s.gitRepoStatusReader(ctx, projectPath)
+	if err != nil {
+		return "", err
+	}
+
+	projectName := commitPreviewProjectName(projectPath, detail.Summary.Name)
+	latestSummary := strings.TrimSpace(detail.Summary.LatestSessionSummary)
+	return commitPreviewStateHash(projectName, latestSummary, repoStatus), nil
 }
 
 func (s *Service) ApplyCommit(ctx context.Context, preview CommitPreview, pushAfterCommit bool) (CommitResult, error) {
@@ -363,6 +385,65 @@ func (s *Service) ApplyCommit(ctx context.Context, preview CommitPreview, pushAf
 	_ = s.store.AddEvent(ctx, eventForGitAction(now, preview.ProjectPath, action, result))
 
 	return result, nil
+}
+
+func commitPreviewProjectName(projectPath, configuredName string) string {
+	projectName := strings.TrimSpace(configuredName)
+	if projectName == "" {
+		projectName = filepath.Base(projectPath)
+	}
+	return projectName
+}
+
+func commitPreviewBranchName(branch string) string {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return "(detached)"
+	}
+	return branch
+}
+
+func commitPreviewStateHash(projectName, latestSummary string, repoStatus scanner.GitRepoStatus) string {
+	changes := append([]scanner.GitChange(nil), repoStatus.Changes...)
+	sort.Slice(changes, func(i, j int) bool {
+		return commitPreviewChangeSortKey(changes[i]) < commitPreviewChangeSortKey(changes[j])
+	})
+
+	hasher := sha256.New()
+	writeCommitPreviewHashLine(hasher, "project", strings.TrimSpace(projectName))
+	writeCommitPreviewHashLine(hasher, "summary", strings.TrimSpace(latestSummary))
+	writeCommitPreviewHashLine(hasher, "branch", commitPreviewBranchName(repoStatus.Branch))
+	writeCommitPreviewHashLine(hasher, "ahead", fmt.Sprintf("%d", repoStatus.Ahead))
+	writeCommitPreviewHashLine(hasher, "behind", fmt.Sprintf("%d", repoStatus.Behind))
+	writeCommitPreviewHashLine(hasher, "has_remote", fmt.Sprintf("%t", repoStatus.HasRemote))
+	writeCommitPreviewHashLine(hasher, "has_upstream", fmt.Sprintf("%t", repoStatus.HasUpstream))
+	for _, change := range changes {
+		writeCommitPreviewHashLine(hasher, "change", commitPreviewChangeSortKey(change))
+	}
+	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+func commitPreviewChangeSortKey(change scanner.GitChange) string {
+	return strings.Join([]string{
+		strings.TrimSpace(change.Path),
+		strings.TrimSpace(change.OriginalPath),
+		change.Code,
+		string(change.Kind),
+		fmt.Sprintf("%t", change.Staged),
+		fmt.Sprintf("%t", change.Unstaged),
+		fmt.Sprintf("%t", change.Untracked),
+		fmt.Sprintf("%t", change.IsSubmodule),
+		fmt.Sprintf("%t", change.SubmoduleCommitChanged),
+		fmt.Sprintf("%t", change.SubmoduleModified),
+		fmt.Sprintf("%t", change.SubmoduleUntracked),
+	}, "|")
+}
+
+func writeCommitPreviewHashLine(builder interface{ Write([]byte) (int, error) }, label, value string) {
+	_, _ = builder.Write([]byte(label))
+	_, _ = builder.Write([]byte("="))
+	_, _ = builder.Write([]byte(value))
+	_, _ = builder.Write([]byte{'\n'})
 }
 
 func (s *Service) PushProject(ctx context.Context, projectPath string) (PushResult, error) {

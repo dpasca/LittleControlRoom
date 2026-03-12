@@ -2,12 +2,14 @@ package tui
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
 	"image/png"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,9 +20,11 @@ import (
 	"lcroom/internal/codexcli"
 	"lcroom/internal/commands"
 	"lcroom/internal/config"
+	"lcroom/internal/events"
 	"lcroom/internal/model"
 	"lcroom/internal/scanner"
 	"lcroom/internal/service"
+	"lcroom/internal/store"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -4514,6 +4518,132 @@ func TestDiffModeAltUpReturnsToMainList(t *testing.T) {
 	}
 }
 
+func TestDiffModeEscReturnsCachedCommitPreviewWhenStateMatches(t *testing.T) {
+	ctx := context.Background()
+	projectPath, svc := newCommitPreviewReturnTestRepo(t, ctx)
+
+	preview, err := svc.PrepareCommit(ctx, projectPath, service.GitActionCommit, "")
+	if err != nil {
+		t.Fatalf("prepare commit: %v", err)
+	}
+	preview.Message = "Cached preview should survive"
+
+	diffState := newDiffViewState(projectPath, "repo")
+	diffState.loading = false
+	diffState.returnToCommitPreview = &commitPreviewReturnState{
+		preview:         preview,
+		messageOverride: "",
+	}
+
+	m := Model{
+		ctx:      ctx,
+		svc:      svc,
+		diffView: diffState,
+		width:    100,
+		height:   24,
+	}
+
+	updated, cmd := m.updateDiffMode(tea.KeyMsg{Type: tea.KeyEsc})
+	got := updated.(Model)
+	if got.diffView != nil {
+		t.Fatalf("esc should close the diff view before restoring commit preview")
+	}
+	if got.commitPreview == nil {
+		t.Fatalf("esc should restore the cached commit preview shell")
+	}
+	if !got.commitPreviewRefreshing {
+		t.Fatalf("esc should mark the commit preview as refreshing while the hash check runs")
+	}
+	if got.status != "Refreshing commit preview..." {
+		t.Fatalf("status = %q, want refreshing commit preview", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("esc should return a resume command")
+	}
+
+	msg := cmd()
+	previewMsg, ok := msg.(commitPreviewMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want commitPreviewMsg", msg)
+	}
+	if previewMsg.err != nil {
+		t.Fatalf("resume commit preview returned error: %v", previewMsg.err)
+	}
+	if previewMsg.preview.Message != "Cached preview should survive" {
+		t.Fatalf("resume should reuse the cached preview when the hash matches, got message %q", previewMsg.preview.Message)
+	}
+
+	updated, _ = got.Update(previewMsg)
+	got = updated.(Model)
+	if got.commitPreviewRefreshing {
+		t.Fatalf("commit preview should stop refreshing once the preview is ready")
+	}
+	if got.commitPreview == nil || got.commitPreview.Message != "Cached preview should survive" {
+		t.Fatalf("cached commit preview should be restored, got %#v", got.commitPreview)
+	}
+}
+
+func TestDiffModeEscRefreshesCommitPreviewWhenStateChanges(t *testing.T) {
+	ctx := context.Background()
+	projectPath, svc := newCommitPreviewReturnTestRepo(t, ctx)
+
+	preview, err := svc.PrepareCommit(ctx, projectPath, service.GitActionCommit, "")
+	if err != nil {
+		t.Fatalf("prepare commit: %v", err)
+	}
+	preview.Message = "Cached preview should be replaced"
+
+	diffState := newDiffViewState(projectPath, "repo")
+	diffState.loading = false
+	diffState.returnToCommitPreview = &commitPreviewReturnState{
+		preview:         preview,
+		messageOverride: "",
+	}
+
+	if err := os.WriteFile(filepath.Join(projectPath, "notes.txt"), []byte("keep this too\n"), 0o644); err != nil {
+		t.Fatalf("write notes.txt: %v", err)
+	}
+	runTUITestGit(t, projectPath, "add", "notes.txt")
+
+	m := Model{
+		ctx:      ctx,
+		svc:      svc,
+		diffView: diffState,
+		width:    100,
+		height:   24,
+	}
+
+	updated, cmd := m.updateDiffMode(tea.KeyMsg{Type: tea.KeyEsc})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("esc should return a resume command")
+	}
+
+	msg := cmd()
+	previewMsg, ok := msg.(commitPreviewMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want commitPreviewMsg", msg)
+	}
+	if previewMsg.err != nil {
+		t.Fatalf("resume commit preview returned error: %v", previewMsg.err)
+	}
+	if previewMsg.preview.Message == "Cached preview should be replaced" {
+		t.Fatalf("resume should rebuild the commit preview after git state changes")
+	}
+	if len(previewMsg.preview.Included) != 2 {
+		t.Fatalf("refreshed preview should include both staged files, got %#v", previewMsg.preview.Included)
+	}
+
+	updated, _ = got.Update(previewMsg)
+	got = updated.(Model)
+	if got.commitPreview == nil {
+		t.Fatalf("refreshed commit preview should be restored")
+	}
+	if got.commitPreview.Message == "Cached preview should be replaced" {
+		t.Fatalf("visible commit preview should come from a refresh, got cached message %q", got.commitPreview.Message)
+	}
+}
+
 func TestDiffModeDashStartsStageToggle(t *testing.T) {
 	diffState := newDiffViewState("/tmp/demo", "demo")
 	diffState.loading = false
@@ -4646,4 +4776,58 @@ func mustTestPNG(fill color.RGBA) []byte {
 		panic(err)
 	}
 	return buf.Bytes()
+}
+
+func newCommitPreviewReturnTestRepo(t *testing.T, ctx context.Context) (string, *service.Service) {
+	t.Helper()
+
+	projectPath := filepath.Join(t.TempDir(), "repo")
+	runTUITestGit(t, "", "init", projectPath)
+	runTUITestGit(t, projectPath, "config", "user.name", "Little Control Room Tests")
+	runTUITestGit(t, projectPath, "config", "user.email", "tests@example.com")
+
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("hello\nbase\n"), 0o644); err != nil {
+		t.Fatalf("write README.md: %v", err)
+	}
+	runTUITestGit(t, projectPath, "add", "README.md")
+	runTUITestGit(t, projectPath, "commit", "-m", "initial commit")
+
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("hello\npreview\n"), 0o644); err != nil {
+		t.Fatalf("update README.md: %v", err)
+	}
+	runTUITestGit(t, projectPath, "add", "README.md")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = st.Close()
+	})
+
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "repo",
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	return projectPath, service.New(config.Default(), st, events.NewBus(), nil)
+}
+
+func runTUITestGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+
+	cmd := exec.Command("git", args...)
+	if strings.TrimSpace(dir) != "" {
+		cmd.Dir = dir
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out))
 }
