@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -3927,6 +3928,35 @@ func TestRenderCodexFooterAnimatesBusyStatus(t *testing.T) {
 	}
 	if !strings.Contains(renderedA, "\x1b[") {
 		t.Fatalf("busy footer should include ANSI styling while active: %q", renderedA)
+	}
+	statusSegment := strings.SplitN(renderedA, "  ", 2)[0]
+	for _, legacy := range []string{"38;5;81", "38;5;117", "38;5;153", "38;5;178", "38;5;214", "38;5;221"} {
+		if strings.Contains(statusSegment, legacy) {
+			t.Fatalf("busy footer should use the neutral gray ramp instead of legacy colorful code %q: %q", legacy, statusSegment)
+		}
+	}
+}
+
+func TestCodexBusyGradientWrapsContinuously(t *testing.T) {
+	phase := codexBusyGradientPhase(17)
+	start := codexBusyGradientGrayLevel(0, phase)
+	end := codexBusyGradientGrayLevel(1, phase)
+
+	if math.Abs(float64(start-end)) > 0.0001 {
+		t.Fatalf("wrapped busy gradient should match at the seam: start=%d end=%d phase=%v", start, end, phase)
+	}
+}
+
+func TestSpinnerTickKeepsHighResolutionAnimationFrames(t *testing.T) {
+	base := Model{spinnerFrame: len(spinnerFrames) - 1}
+
+	nextModel, _ := base.Update(spinnerTickMsg{})
+	next, ok := nextModel.(Model)
+	if !ok {
+		t.Fatalf("Update() returned %T, want tui.Model", nextModel)
+	}
+	if next.spinnerFrame != len(spinnerFrames) {
+		t.Fatalf("spinnerFrame = %d, want %d so gradients are not limited to spinner glyph count", next.spinnerFrame, len(spinnerFrames))
 	}
 }
 

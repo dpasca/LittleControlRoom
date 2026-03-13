@@ -3,6 +3,7 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
 	"path/filepath"
 	"strconv"
@@ -1290,28 +1291,17 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 }
 
 var (
-	codexBusyFooterPalette        = []lipgloss.Color{lipgloss.Color("81"), lipgloss.Color("117"), lipgloss.Color("153"), lipgloss.Color("221"), lipgloss.Color("214"), lipgloss.Color("178")}
 	codexFinishingFooterPalette   = []lipgloss.Color{lipgloss.Color("214"), lipgloss.Color("220"), lipgloss.Color("229"), lipgloss.Color("221")}
 	codexReconcilingFooterPalette = []lipgloss.Color{lipgloss.Color("220"), lipgloss.Color("229"), lipgloss.Color("214")}
 )
 
+const codexBusyGradientLoopFrames = 60.0
+
 func renderCodexFooterStatus(snapshot codexapp.Snapshot, now time.Time, spinnerFrame int) string {
 	status := codexFooterStatus(snapshot, now)
 	switch {
-	case strings.HasPrefix(status, "Working elsewhere "):
-		timer := strings.TrimPrefix(status, "Working elsewhere ")
-		return renderCodexAnimatedFooterLabel("Working", spinnerFrame, codexBusyFooterPalette) + " " +
-			lipgloss.NewStyle().Foreground(lipgloss.Color("246")).Render("elsewhere") + " " +
-			renderCodexAnimatedFooterTimer(timer, spinnerFrame, lipgloss.Color("229"))
-	case status == "Working elsewhere":
-		return renderCodexAnimatedFooterLabel("Working", spinnerFrame, codexBusyFooterPalette) + " " +
-			lipgloss.NewStyle().Foreground(lipgloss.Color("246")).Render("elsewhere")
-	case strings.HasPrefix(status, "Working "):
-		timer := strings.TrimPrefix(status, "Working ")
-		return renderCodexAnimatedFooterLabel("Working", spinnerFrame, codexBusyFooterPalette) + " " +
-			renderCodexAnimatedFooterTimer(timer, spinnerFrame, lipgloss.Color("229"))
-	case status == "Working":
-		return renderCodexAnimatedFooterLabel("Working", spinnerFrame, codexBusyFooterPalette)
+	case status == "Working", status == "Working elsewhere", strings.HasPrefix(status, "Working "):
+		return renderCodexAnimatedBusyFooterStatus(status, spinnerFrame)
 	case strings.HasPrefix(status, "Finishing "):
 		timer := strings.TrimPrefix(status, "Finishing ")
 		return renderCodexAnimatedFooterLabel("Finishing", spinnerFrame, codexFinishingFooterPalette) + " " +
@@ -1323,6 +1313,59 @@ func renderCodexFooterStatus(snapshot codexapp.Snapshot, now time.Time, spinnerF
 	default:
 		return renderFooterStatus(status)
 	}
+}
+
+// Render a wrapped grayscale wave across the full busy label so the gradient
+// stays continuous from the end of the phrase back to the beginning.
+func renderCodexAnimatedBusyFooterStatus(text string, spinnerFrame int) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) == 1 {
+		return lipgloss.NewStyle().Bold(true).Foreground(renderCodexBusyGrayColor(228)).Render(text)
+	}
+
+	phase := codexBusyGradientPhase(spinnerFrame)
+	count := float64(len(runes))
+	var out strings.Builder
+	for i, r := range runes {
+		position := (float64(i) + 0.5) / count
+		gray := codexBusyGradientGrayLevel(position, phase)
+		out.WriteString(lipgloss.NewStyle().Bold(true).Foreground(renderCodexBusyGrayColor(gray)).Render(string(r)))
+	}
+	return out.String()
+}
+
+func codexBusyGradientPhase(spinnerFrame int) float64 {
+	phase := math.Mod(float64(spinnerFrame)/codexBusyGradientLoopFrames, 1.0)
+	if phase < 0 {
+		phase += 1
+	}
+	return phase
+}
+
+func codexBusyGradientGrayLevel(position, phase float64) int {
+	position = math.Mod(position, 1)
+	if position < 0 {
+		position += 1
+	}
+	theta := 2 * math.Pi * (position - phase)
+	wave := 0.5 + 0.5*math.Cos(theta)
+	contrast := math.Pow(wave, 0.92)
+	gray := 124 + contrast*(244-124)
+	return int(math.Round(gray))
+}
+
+func renderCodexBusyGrayColor(level int) lipgloss.Color {
+	if level < 0 {
+		level = 0
+	}
+	if level > 255 {
+		level = 255
+	}
+	return lipgloss.Color(fmt.Sprintf("#%02x%02x%02x", level, level, level))
 }
 
 func renderCodexAnimatedFooterLabel(label string, spinnerFrame int, palette []lipgloss.Color) string {

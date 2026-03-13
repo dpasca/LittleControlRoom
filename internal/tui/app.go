@@ -621,7 +621,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 	case spinnerTickMsg:
-		m.spinnerFrame = (m.spinnerFrame + 1) % len(spinnerFrames)
+		m.spinnerFrame = (m.spinnerFrame + 1) % spinnerAnimationFrameWrap
 		return m, spinnerTickCmd()
 	case codexUpdateMsg:
 		cmds := []tea.Cmd{m.waitCodexCmd()}
@@ -1570,7 +1570,10 @@ func projectListCellStyle(style lipgloss.Style, selected bool) lipgloss.Style {
 
 var spinnerFrames = []string{"|", "/", "-", `\`}
 
-const recentMoveWindow = 24 * time.Hour
+const (
+	recentMoveWindow          = 24 * time.Hour
+	spinnerAnimationFrameWrap = 4096
+)
 
 var (
 	detailLabelStyle            = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)

@@ -76,25 +76,25 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-13 20:17 JST)
+## Latest Update (2026-03-13 20:59 JST)
 
-- Cleaned up the embedded `/resume` picker in `internal/tui/codex_picker.go`: resume-mode rows now use the session summary as the primary label, stop stamping every historical row as `LAST`, and instead distinguish `CURRENT`, `LIVE`, `LATEST`, and `SAVED` more honestly.
-- Simplified the resume picker layout so saved-session rows are single-line and the About section no longer duplicates the same title/summary text when they match, which makes the selected current session read much more cleanly.
-- Added focused TUI coverage in `internal/tui/app_test.go` for the new resume-row badge semantics and for preferring the useful summary over noisy transcript-derived titles like the raw `# AGENTS.md ...` line.
+- Kept the new wrapped grayscale `Working` footer in `internal/tui/codex_pane.go` and sped its phase loop up a bit by moving the wrapped wave from a `72`-frame cycle to a `60`-frame cycle. With the existing `120ms` spinner tick, that shortens one full pass from about `8.6s` to about `7.2s`.
+- Fixed the hidden cause of the steppy animation in `internal/tui/app.go`: `spinnerFrame` had been wrapped to the 4 spinner glyphs, which meant every "smooth" footer animation only had 4 actual states. The counter now keeps a higher-resolution animation frame and only mods by 4 when selecting the spinner glyph itself.
+- Added focused TUI regression coverage in `internal/tui/app_test.go` for both root issues: the wrapped busy gradient now proves it matches exactly at the seam, and the spinner tick keeps advancing past the 4 glyph states so animated gradients are not limited to four phases.
 - No Codex/OpenCode detector assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
 
 Verification snapshot:
 
-- `go test ./internal/tui -run 'Test(VisibleCodexSlashResumeOpensPickerAndLoadsChoices|RenderCodexPickerRowUsesSavedBadgeAndSummaryInResumeMode|RenderCodexPickerRowMarksLatestSavedSessionInResumeMode)' -count=1` passed.
+- `go test ./internal/tui -run 'Test(RenderCodexFooterAnimatesBusyStatus|CodexBusyGradientWrapsContinuously|SpinnerTickKeepsHighResolutionAnimationFrames)' -count=1` passed.
 - `make test` passed.
-- `make scan` passed at `2026-03-13T20:17:29+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 2`, `queued classifications: 1`).
-- `make doctor` passed on the cached snapshot dated `2026-03-13T20:17:36+09:00` (`projects: 138`).
-- `env COLUMNS=112 LINES=31 make tui` launched and exited cleanly via `q`.
+- `make scan` passed at `2026-03-13T20:58:54+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 2`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-13T20:59:02+09:00` (`projects: 138`).
+- `env COLUMNS=110 LINES=30 make tui` launched and exited cleanly via `q`.
 
 Next concrete tasks:
 
-- Re-open the resume picker against a few real long-history projects to see whether the remaining preview extraction should be upgraded further, especially for terse markdown-only summaries like `Findings`.
-- Decide whether the picker should eventually group `CURRENT` separately from saved sessions instead of mixing it into a single list.
+- Re-open the embedded pane against a live busy Codex/OpenCode session and tune the wrapped wave's contrast and speed further if it still feels off compared with Codex CLI in real use.
+- Decide whether the same higher-resolution wrapped-gradient treatment should also replace the remaining `Finishing` and `Rechecking turn status` animated footer states for consistency.
 - Factor a provider-neutral transcript/session abstraction so Codex and OpenCode stop sharing only by convention.
 
 ## Recent Updates
