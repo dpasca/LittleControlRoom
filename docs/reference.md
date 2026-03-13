@@ -193,8 +193,10 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 
 ## Notes
 
-- `Enter` on the selected project opens an embedded Codex pane inside Little Control Room.
+- `Enter` on the selected project opens that project's latest embedded provider inside Little Control Room.
 - `/codex` resumes the selected project's latest known Codex session when available, otherwise it starts a new one.
-- `/codex-new` always starts a fresh session.
+- `/codex-new` always starts a fresh Codex session.
+- `/opencode` resumes the selected project's latest known OpenCode session when available, otherwise it starts a new one.
+- `/opencode-new` always starts a fresh OpenCode session.
 - `codex_launch_preset` controls how Codex is launched. The default is `yolo`.
 - CLI flags override config file values.

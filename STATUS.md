@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-13 08:13 JST (JST)
+Last updated: 2026-03-13 10:16 JST (JST)
 
 ## Current State
 
@@ -75,7 +75,27 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-13 08:13 JST)
+## Latest Update (2026-03-13 10:16 JST)
+
+- Tightened `README.md` so the top-level product story now reflects embedded OpenCode support without adding a second provider explainer: the intro, feature list, quick start requirements, command list, and everyday workflow all mention Codex/OpenCode in one short pass.
+- Corrected the ambiguous README workflow line again to use even plainer wording: `/codex` and `/opencode` now say they resume the last session, while `/codex-new` and `/opencode-new` remain the explicit fresh-session commands.
+- Updated `docs/reference.md` to match the current mixed-provider behavior too: `Enter` now describes the latest embedded provider rather than always saying Codex, and the OpenCode resume/new commands are listed alongside the Codex ones.
+- No Codex/OpenCode detector footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `git diff -- README.md docs/reference.md` reviewed; this follow-up was documentation-only, so no additional code checks were needed.
+- Earlier same-session verification for the merged embedded OpenCode and stale-busy fixes remained green: `make test`, `make scan`, and `make doctor` had already passed on the current code line before this README pass.
+
+Next concrete tasks:
+
+- Push `master` once the merged embedded OpenCode and stale-busy changes are ready to publish.
+- Consider a tiny screenshot refresh later if we want a provider-neutral embedded-session image/caption to match the new README wording even more closely.
+- Keep the README short and defer deeper provider-specific behavior to `docs/reference.md`.
+
+## Recent Updates
+
+### 2026-03-13 08:13 JST
 
 - Fixed an embedded OpenCode stability bug reported from the demo project: the shared OpenCode `http.Client` was carrying a global `20s` timeout, which is fine for short RPCs but wrong for the long-lived `/event` SSE stream. The OpenCode transport now leaves the shared client without a global timeout and relies on per-request contexts for normal RPC deadlines, so the event stream can stay open while the model picker or other idle UI is on screen.
 - Added a focused regression in `internal/codexapp/opencode_session_test.go` that locks in the no-global-timeout HTTP client used by the embedded OpenCode transport.
@@ -96,8 +116,6 @@ Next concrete tasks:
 - Add a provider-neutral transcript/session abstraction above Codex/OpenCode so the TUI no longer relies on Codex-named helpers and duplicated provider conditionals.
 - Exercise more real OpenCode image/file prompts to harden attachment behavior and decide whether `data:` URLs are sufficient or whether `file://` fallbacks are needed.
 - Improve OpenCode-specific polish around agent/status presentation and any remaining approval/question wording that still feels Codex-shaped.
-
-## Recent Updates
 
 ### 2026-03-13 07:55 JST
 

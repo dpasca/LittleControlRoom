@@ -2,7 +2,7 @@
 
 Little Control Room (LCR) is a terminal dashboard for keeping track of AI work across multiple local projects.
 
-It finds recent Codex activity, highlights what needs attention, and lets you jump back into work without bouncing between repos and terminal tabs.
+It finds recent Codex and OpenCode activity, highlights what needs attention, and lets you jump back into work without bouncing between repos and terminal tabs.
 
 ## Screenshots
 
@@ -14,7 +14,7 @@ Click any screenshot to open the full-size PNG on GitHub.
   </a>
 </p>
 
-| Dashboard | Embedded Codex |
+| Dashboard | Embedded Session |
 | --- | --- |
 | [![Little Control Room dashboard list view](docs/screenshots/main-panel.png)](docs/screenshots/main-panel.png) | [![Little Control Room embedded Codex conversation](docs/screenshots/codex-embedded.png)](docs/screenshots/codex-embedded.png) |
 
@@ -30,16 +30,16 @@ Click any screenshot to open the full-size PNG on GitHub.
 
 ## What It Does
 
-- Finds recent Codex sessions across your local projects
+- Finds recent Codex and OpenCode sessions across your local projects
 - Shows which projects are active, idle, or worth revisiting
-- Lets you open or resume Codex directly from the dashboard
+- Lets you open or resume embedded Codex or OpenCode sessions directly from the dashboard
 - Keeps common actions close at hand: refresh, pin, snooze, notes, diff, commit, and push
 
 ## What it doesn't do (yet)
 
 - There's currently no way to switch between multiple sessions in the same project.
 - Many Codex slash-commands are missing.
-- Support for OpenCode is very limited.
+- Some OpenCode details are still catching up with Codex.
 
 ## Quick Start
 
@@ -47,6 +47,7 @@ Requirements:
 
 - Go 1.25+
 - Codex installed locally, capable of running in the terminal.
+- OpenCode installed locally if you want embedded OpenCode sessions.
 - `OPENAI_API_KEY` in the environment (used for summaries, classifications, etc. not for coding).
 
 Build and launch from this repo:
@@ -65,17 +66,21 @@ lcroom tui
 
 No config file is required for a first run. If you want to limit what shows up, open the dashboard and use `/settings`, or create `~/.little-control-room/config.toml` from [`docs/config.example.toml`](docs/config.example.toml).
 
-The main commands to look for are `/settings`, `/diff`, `/commit`, `/finish`, `/push`, `/codex`, and `/codex-new`.
+The main commands to look for are `/settings`, `/diff`, `/commit`, `/finish`, `/push`, `/codex`, `/codex-new`, `/opencode`, and `/opencode-new`.
 
 ## Everyday Workflow
 
 1. Start the dashboard with `lcroom tui` or `./lcroom tui`.
 2. Move through projects with the arrow keys.
-3. Press `Enter` to open or resume Codex for the selected project.
-4. Press `Esc` or `Alt+Up` to hide the Codex pane while it keeps working, then press `Enter` on that project to reopen it from the list.
+3. Press `Enter` to open or resume the selected project's latest embedded provider.
+4. Press `Esc` or `Alt+Up` to hide the embedded session pane while it keeps working, then press `Enter` on that project to reopen it from the list.
 5. Press `/` to open the command palette for actions like refresh, pin, snooze, note, diff, commit, or push.
 
-Use `/settings` when you want to save include or exclude paths or change the Codex launch mode.
+Use `/codex` or `/opencode` to resume the last session.
+
+Use `/codex-new` or `/opencode-new` when you want a fresh session instead of resuming an existing one.
+
+Use `/settings` when you want to save include or exclude paths or change the default Codex launch mode.
 
 Use `/diff` to open a full-screen git diff for the selected project, with staged files listed first on the left, unstaged files below them, and a scrollable text or image preview on the right.
 
