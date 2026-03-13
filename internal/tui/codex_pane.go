@@ -550,13 +550,6 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateCodexElicitationMode(snapshot, msg)
 	}
 
-	if snapshot.Closed {
-		if msg.String() == "enter" {
-			m.status = label + " session is closed. Press Esc or Alt+Up to hide it, then reopen from the project list."
-		}
-		return m, nil
-	}
-
 	if m.codexSlashActive() {
 		switch msg.String() {
 		case "tab":
@@ -575,11 +568,25 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.clearCodexDraft(m.codexVisibleProject)
+			if snapshot.Closed && (inv.Kind == codexslash.KindModel || inv.Kind == codexslash.KindStatus) {
+				m.status = label + " session is closed. Use /resume or /new to reopen it."
+				return m, nil
+			}
 			switch inv.Kind {
 			case codexslash.KindNew:
 				m.status = "Starting a fresh embedded " + label + " session..."
 				m.beginCodexPendingOpen(m.codexVisibleProject, embeddedProvider(snapshot))
 				return m, m.restartVisibleCodexSessionCmd(inv.Prompt)
+			case codexslash.KindResume:
+				if strings.TrimSpace(inv.SessionID) == "" {
+					return m.openVisibleCodexResumePicker()
+				}
+				return m.openCodexSessionChoice(codexSessionChoice{
+					ProjectPath: m.codexVisibleProject,
+					ProjectName: projectNameForPicker(m.pickerProjectSummary(m.codexVisibleProject), m.codexVisibleProject),
+					SessionID:   inv.SessionID,
+					Provider:    embeddedProvider(snapshot),
+				})
 			case codexslash.KindModel:
 				m.openCodexModelPickerLoading()
 				m.status = "Loading embedded " + label + " models..."
@@ -592,6 +599,13 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
+	}
+
+	if snapshot.Closed {
+		if msg.String() == "enter" {
+			m.status = label + " session is closed. Use /resume, /new, or reopen it from the project list."
+		}
+		return m, nil
 	}
 
 	switch msg.String() {

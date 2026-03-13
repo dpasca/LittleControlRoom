@@ -32,12 +32,11 @@ Click any screenshot to open the full-size PNG on GitHub.
 
 - Finds recent Codex and OpenCode sessions across your local projects
 - Shows which projects are active, idle, or worth revisiting
-- Lets you open or resume embedded Codex or OpenCode sessions directly from the dashboard
+- Lets you open, resume, or switch embedded Codex or OpenCode sessions directly from the dashboard
 - Keeps common actions close at hand: refresh, pin, snooze, notes, diff, commit, and push
 
 ## What it doesn't do (yet)
 
-- There's currently no way to switch between multiple sessions in the same project.
 - Many Codex slash-commands are missing.
 - Some OpenCode details are still catching up with Codex.
 
@@ -79,6 +78,8 @@ The main commands to look for are `/settings`, `/diff`, `/commit`, `/finish`, `/
 Use `/codex` or `/opencode` to resume the last session.
 
 Use `/codex-new` or `/opencode-new` when you want a fresh session instead of resuming an existing one.
+
+Inside the embedded Codex or OpenCode pane, use `/resume` or `/session` to open a provider-specific session picker for the current project, or `/resume <session-id>` to jump straight to that session.
 
 Use `/settings` when you want to save include or exclude paths or change the default Codex launch mode.
 

@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-13 10:16 JST (JST)
+Last updated: 2026-03-13 10:50 JST (JST)
 
 ## Current State
 
@@ -55,7 +55,7 @@ Current screenshot workflow assumption:
 - Cached `doctor` by default, with `doctor --scan` for a fresh rescan
 - TUI stacked layout with focusable detail pane, scrolling, compact settings modal, and command palette
 - Git workflow actions in the TUI for full-screen diff preview, commit preview, finish, and push
-- Embedded Codex pane via `codex app-server`, with multiline compose, per-project drafts, inline `[Image #n]` clipboard image markers in the composer, backspace-based image removal, local embedded slash commands for `/new`, `/model`, and `/status`, visible slash autocomplete/suggestions in the composer, live model/reasoning/context-left metadata under the transcript, a local model+reasoning picker backed by `model/list`, `Enter`/`/codex`/`/codex-new`, `Esc` or `Alt+Up` hide from the embedded pane with `Enter` reopening from the project list, `Alt+Down` session picker/history, `Alt+[`/`Alt+]` live-session stepping, wrapped transcript blocks, shaded echoed user transcript blocks that reuse the composer shell styling, denser command/tool/file blocks with `Alt+L` expand/collapse, label-free user/assistant transcript rendering, manager-side update coalescing, inline approvals/input requests, and busy-elsewhere rechecks when a read-only embedded session is reopened or restored
+- Embedded Codex pane via `codex app-server`, with multiline compose, per-project drafts, inline `[Image #n]` clipboard image markers in the composer, backspace-based image removal, local embedded slash commands for `/new`, `/resume` (`/session` alias), `/model`, and `/status`, visible slash autocomplete/suggestions in the composer, a provider-specific saved-session resume picker with lightweight title/summary previews and current-session markers, live model/reasoning/context-left metadata under the transcript, a local model+reasoning picker backed by `model/list`, `Enter`/`/codex`/`/codex-new`, `Esc` or `Alt+Up` hide from the embedded pane with `Enter` reopening from the project list, `Alt+Down` session picker/history, `Alt+[`/`Alt+]` live-session stepping, wrapped transcript blocks, shaded echoed user transcript blocks that reuse the composer shell styling, denser command/tool/file blocks with `Alt+L` expand/collapse, label-free user/assistant transcript rendering, manager-side update coalescing, inline approvals/input requests, and busy-elsewhere rechecks when a read-only embedded session is reopened or restored
 - Embedded OpenCode pane via `opencode serve`, with live SSE transcript updates, resume/new launch from `Enter` and `/opencode` / `/opencode-new`, shared picker/history and model picker, provider-aware banners/footer/help copy, interrupt/status actions, shared approval/question handling, and mixed Codex/OpenCode live-session management per project
 - Settings-backed Codex launch presets, currently defaulting to the dangerous `yolo` mode
 - Programmatic screenshot generation via `lcroom screenshots` and `make screenshots`, using screenshot-config-driven browser-rendered PNG exports from deterministic HTML terminal scenarios
@@ -75,23 +75,28 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-13 10:16 JST)
+## Latest Update (2026-03-13 10:50 JST)
 
-- Tightened `README.md` so the top-level product story now reflects embedded OpenCode support without adding a second provider explainer: the intro, feature list, quick start requirements, command list, and everyday workflow all mention Codex/OpenCode in one short pass.
-- Corrected the ambiguous README workflow line again to use even plainer wording: `/codex` and `/opencode` now say they resume the last session, while `/codex-new` and `/opencode-new` remain the explicit fresh-session commands.
-- Updated `docs/reference.md` to match the current mixed-provider behavior too: `Enter` now describes the latest embedded provider rather than always saying Codex, and the OpenCode resume/new commands are listed alongside the Codex ones.
+- Added embedded `/resume` support, with hidden `/session` as an alias, to the shared Codex/OpenCode slash-command layer. `/resume` with no session ID now opens a picker for saved sessions from the current project and provider, while `/resume <session-id>` jumps straight to that session.
+- Expanded the shared embedded session picker into a resume mode that shows saved-session title, lightweight artifact-derived summary, provider tag, last activity, and a `CURRENT` badge for the visible session when present.
+- Extended session preview extraction so Codex JSONL and OpenCode transcript artifacts can supply short titles and summaries without any extra LLM pass, which keeps the picker responsive and avoids long-context parsing.
+- Added focused regression coverage for slash parsing, picker loading, direct session resume, and the `/session` alias opening an OpenCode session through the embedded pane.
+- Updated `README.md` and `docs/reference.md` to mention the new embedded `/resume` flow and removed the outdated claim that switching to other sessions in the same project is not supported.
 - No Codex/OpenCode detector footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
 
 Verification snapshot:
 
-- `git diff -- README.md docs/reference.md` reviewed; this follow-up was documentation-only, so no additional code checks were needed.
-- Earlier same-session verification for the merged embedded OpenCode and stale-busy fixes remained green: `make test`, `make scan`, and `make doctor` had already passed on the current code line before this README pass.
+- `go test ./internal/tui ./internal/sessionclassify ./internal/codexapp ./internal/codexslash -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-13T10:48:00+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 7`, `queued classifications: 4`).
+- `make doctor` passed on the cached snapshot dated `2026-03-13T10:48:08+09:00` (`projects: 138`).
+- `env COLUMNS=110 LINES=30 make tui` launched and exited cleanly via `q`.
 
 Next concrete tasks:
 
-- Push `master` once the merged embedded OpenCode and stale-busy changes are ready to publish.
-- Consider a tiny screenshot refresh later if we want a provider-neutral embedded-session image/caption to match the new README wording even more closely.
-- Keep the README short and defer deeper provider-specific behavior to `docs/reference.md`.
+- Factor a provider-neutral transcript/session abstraction so Codex and OpenCode stop sharing only by convention.
+- Consider a small screenshot refresh later if we want a captured resume-picker image in the docs once the UI settles.
+- Keep polishing OpenCode parity details such as agent/status presentation and attachment confidence.
 
 ## Recent Updates
 

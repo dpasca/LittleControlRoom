@@ -1580,7 +1580,7 @@ func TestVisibleCodexSlashSuggestionsRender(t *testing.T) {
 	if !strings.Contains(rendered, "Embedded Slash Commands") {
 		t.Fatalf("rendered view should show embedded slash commands: %q", rendered)
 	}
-	if !strings.Contains(rendered, "/new [prompt]") || !strings.Contains(rendered, "/model") || !strings.Contains(rendered, "/status") {
+	if !strings.Contains(rendered, "/new [prompt]") || !strings.Contains(rendered, "/resume [session-id]") || !strings.Contains(rendered, "/model") || !strings.Contains(rendered, "/status") {
 		t.Fatalf("rendered view should list embedded slash suggestions: %q", rendered)
 	}
 	if !strings.Contains(rendered, "Enter run  Ctrl+C close  Alt+Up hide") {
@@ -1634,8 +1634,17 @@ func TestVisibleCodexSlashTabCyclesSuggestions(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("tab cycling should not queue a command")
 	}
+	if got.codexInput.Value() != "/resume" {
+		t.Fatalf("codex input = %q, want /resume after second tab", got.codexInput.Value())
+	}
+
+	updated, cmd = got.updateCodexMode(tea.KeyMsg{Type: tea.KeyTab})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("tab cycling should not queue a command")
+	}
 	if got.codexInput.Value() != "/model" {
-		t.Fatalf("codex input = %q, want /model after second tab", got.codexInput.Value())
+		t.Fatalf("codex input = %q, want /model after third tab", got.codexInput.Value())
 	}
 
 	updated, cmd = got.updateCodexMode(tea.KeyMsg{Type: tea.KeyTab})
@@ -1644,7 +1653,7 @@ func TestVisibleCodexSlashTabCyclesSuggestions(t *testing.T) {
 		t.Fatalf("tab cycling should not queue a command")
 	}
 	if got.codexInput.Value() != "/status" {
-		t.Fatalf("codex input = %q, want /status after third tab", got.codexInput.Value())
+		t.Fatalf("codex input = %q, want /status after fourth tab", got.codexInput.Value())
 	}
 
 	updated, cmd = got.updateCodexMode(tea.KeyMsg{Type: tea.KeyShiftTab})
@@ -1847,6 +1856,248 @@ func TestVisibleCodexSlashModelOpensPickerAndStagesSelection(t *testing.T) {
 	}
 	if session.modelStages[0].Model != "gpt-5-codex" || session.modelStages[0].Reasoning != "high" {
 		t.Fatalf("staged model = %#v, want gpt-5-codex + high", session.modelStages[0])
+	}
+}
+
+func TestVisibleCodexSlashResumeOpensPickerAndLoadsChoices(t *testing.T) {
+	modernFixture := filepath.Clean(filepath.Join("..", "..", "testdata", "codex_footprint", "sessions", "2026", "03", "05", "rollout-modern.jsonl"))
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started:  true,
+			Preset:   codexcli.PresetYolo,
+			Status:   "Codex session ready",
+			ThreadID: "thread-demo",
+			Entries: []codexapp.TranscriptEntry{
+				{Kind: codexapp.TranscriptUser, Text: "Current task title"},
+				{Kind: codexapp.TranscriptAgent, Text: "Current session summary."},
+			},
+			LastActivityAt: time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC),
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/resume")
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              28,
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{
+				Path:                 "/tmp/demo",
+				Name:                 "demo",
+				PresentOnDisk:        true,
+				LatestSessionID:      "thread-demo",
+				LatestSessionFormat:  "modern",
+				LatestSessionSummary: "Work appears complete for now.",
+			},
+			Sessions: []model.SessionEvidence{
+				{
+					SessionID:   "thread-demo",
+					Format:      "modern",
+					SessionFile: modernFixture,
+					LastEventAt: time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC),
+				},
+				{
+					SessionID:   "thread-old",
+					Format:      "modern",
+					SessionFile: modernFixture,
+					LastEventAt: time.Date(2026, 3, 8, 11, 0, 0, 0, time.UTC),
+				},
+			},
+		},
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should open the embedded /resume picker")
+	}
+	if !got.codexPickerVisible || !got.codexPickerLoading || got.codexPickerKind != codexPickerKindResume {
+		t.Fatalf("resume picker should enter loading state")
+	}
+	if got.status != "Loading Codex sessions for this project..." {
+		t.Fatalf("status = %q, want loading embedded sessions notice", got.status)
+	}
+	if got.codexInput.Value() != "" {
+		t.Fatalf("codex input should clear after /resume, got %q", got.codexInput.Value())
+	}
+
+	msg := cmd()
+	listMsg, ok := msg.(codexResumeChoicesMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexResumeChoicesMsg", msg)
+	}
+	if listMsg.err != nil {
+		t.Fatalf("/resume returned error = %v", listMsg.err)
+	}
+
+	updated, _ = got.Update(listMsg)
+	got = updated.(Model)
+	if !got.codexPickerVisible || got.codexPickerLoading || got.codexPickerKind != codexPickerKindResume {
+		t.Fatalf("resume picker should remain visible with loaded choices")
+	}
+	if len(got.codexPickerChoices) != 2 {
+		t.Fatalf("resume picker choices = %d, want 2", len(got.codexPickerChoices))
+	}
+	if !got.codexPickerChoices[0].Current {
+		t.Fatalf("first resume choice should be marked current")
+	}
+	if got.codexPickerChoices[0].Title != "Current task title" {
+		t.Fatalf("current choice title = %q, want live title", got.codexPickerChoices[0].Title)
+	}
+	if got.codexPickerChoices[0].Summary != "Work appears complete for now." {
+		t.Fatalf("current choice summary = %q, want latest summary", got.codexPickerChoices[0].Summary)
+	}
+
+	rendered := ansi.Strip(got.View())
+	for _, want := range []string{"Resume Codex Session", "CURRENT", "Current task title", "Work appears complete for now."} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("resume picker render missing %q: %q", want, rendered)
+		}
+	}
+}
+
+func TestVisibleCodexSlashResumeIDOpensRequestedSession(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Started:  true,
+				Preset:   req.Preset,
+				Status:   "Codex session ready",
+				ThreadID: req.ResumeID,
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+		ResumeID:    "thread-demo",
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/resume thread-old")
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should resume the requested embedded session")
+	}
+	if got.codexPendingOpen == nil {
+		t.Fatalf("codexPendingOpen should be set while the requested session opens")
+	}
+	if !strings.Contains(got.status, "Opening embedded Codex session") || !strings.Contains(got.status, "thread-o") {
+		t.Fatalf("status = %q, want requested session open notice", got.status)
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("/resume thread-old returned error = %v", opened.err)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("launch requests = %d, want 2", len(requests))
+	}
+	if requests[1].ResumeID != "thread-old" {
+		t.Fatalf("resume id = %q, want %q", requests[1].ResumeID, "thread-old")
+	}
+}
+
+func TestVisibleCodexSlashSessionAliasOpensRequestedOpenCodeSession(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: codexapp.ProviderOpenCode,
+				Started:  true,
+				Status:   "OpenCode session ready",
+				ThreadID: req.ResumeID,
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderOpenCode,
+		ResumeID:    "ses-current",
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/session ses-old")
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should resume the requested embedded OpenCode session")
+	}
+	if got.codexPendingOpen == nil || got.codexPendingOpen.provider != codexapp.ProviderOpenCode {
+		t.Fatalf("codexPendingOpen = %#v, want pending OpenCode session", got.codexPendingOpen)
+	}
+	if !strings.Contains(got.status, "Opening embedded OpenCode session") || !strings.Contains(got.status, "ses-old") {
+		t.Fatalf("status = %q, want requested OpenCode session open notice", got.status)
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("/session ses-old returned error = %v", opened.err)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("launch requests = %d, want 2", len(requests))
+	}
+	if requests[1].Provider != codexapp.ProviderOpenCode {
+		t.Fatalf("provider = %q, want %q", requests[1].Provider, codexapp.ProviderOpenCode)
+	}
+	if requests[1].ResumeID != "ses-old" {
+		t.Fatalf("resume id = %q, want %q", requests[1].ResumeID, "ses-old")
 	}
 }
 

@@ -596,6 +596,17 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 		}
 	}
 	if ok && !req.ForceNew {
+		requestedResumeID := strings.TrimSpace(req.ResumeID)
+		if requestedResumeID != "" {
+			existingThreadID := strings.TrimSpace(existing.Snapshot().ThreadID)
+			if existingThreadID == "" || existingThreadID != requestedResumeID {
+				delete(m.sessions, projectPath)
+				replaceExisting = true
+				ok = false
+			}
+		}
+	}
+	if ok && !req.ForceNew {
 		m.mu.Unlock()
 		if existing.Snapshot().BusyExternal {
 			if refresher, ok := existing.(busyElsewhereRefresher); ok {

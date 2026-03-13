@@ -9,6 +9,7 @@ type Kind string
 
 const (
 	KindNew    Kind = "new"
+	KindResume Kind = "resume"
 	KindStatus Kind = "status"
 	KindModel  Kind = "model"
 )
@@ -17,6 +18,7 @@ type Spec struct {
 	Name    string
 	Usage   string
 	Summary string
+	Hidden  bool
 }
 
 type Suggestion struct {
@@ -28,11 +30,14 @@ type Suggestion struct {
 type Invocation struct {
 	Kind      Kind
 	Prompt    string
+	SessionID string
 	Canonical string
 }
 
 var specs = []Spec{
 	{Name: "new", Usage: "/new [prompt]", Summary: "Start a fresh embedded session for this project"},
+	{Name: "resume", Usage: "/resume [session-id]", Summary: "Resume a different embedded session for this project, or pick one when no session ID is given"},
+	{Name: "session", Usage: "/session [session-id]", Summary: "Alias for /resume", Hidden: true},
 	{Name: "model", Usage: "/model", Summary: "Pick the embedded model and reasoning effort for the next prompt"},
 	{Name: "status", Usage: "/status", Summary: "Show embedded session config, limits, and token usage"},
 }
@@ -69,6 +74,10 @@ func Suggestions(input string) []Suggestion {
 			Display: "/new [prompt]",
 			Summary: "Start a fresh embedded session; optional inline prompt opens the new session with that prompt",
 		}}
+	case "resume":
+		return []Suggestion{resumeSuggestion("/resume")}
+	case "session":
+		return []Suggestion{resumeSuggestion("/session")}
 	case "model":
 		return []Suggestion{{
 			Insert:  "/model",
@@ -108,6 +117,16 @@ func Parse(input string) (Invocation, error) {
 			Prompt:    strings.TrimSpace(rawArgs),
 			Canonical: canonicalCommand("new", rawArgs),
 		}, nil
+	case "resume", "session":
+		sessionID := strings.TrimSpace(rawArgs)
+		if len(strings.Fields(sessionID)) > 1 {
+			return Invocation{}, fmt.Errorf("usage: /resume [session-id]")
+		}
+		return Invocation{
+			Kind:      KindResume,
+			SessionID: sessionID,
+			Canonical: canonicalCommand("resume", rawArgs),
+		}, nil
 	case "model":
 		if strings.TrimSpace(rawArgs) != "" {
 			return Invocation{}, fmt.Errorf("usage: /model")
@@ -141,6 +160,9 @@ func splitCommandBody(body string) (string, string) {
 func nameSuggestions(prefix string) []Suggestion {
 	out := make([]Suggestion, 0, len(specs))
 	for _, spec := range specs {
+		if prefix == "" && spec.Hidden {
+			continue
+		}
 		if prefix != "" && !strings.HasPrefix(spec.Name, prefix) {
 			continue
 		}
@@ -151,6 +173,14 @@ func nameSuggestions(prefix string) []Suggestion {
 		})
 	}
 	return out
+}
+
+func resumeSuggestion(insert string) Suggestion {
+	return Suggestion{
+		Insert:  insert,
+		Display: insert + " [session-id]",
+		Summary: "Resume another embedded session for this project, or open a picker when no session ID is given",
+	}
 }
 
 func canonicalCommand(name, rawArgs string) string {

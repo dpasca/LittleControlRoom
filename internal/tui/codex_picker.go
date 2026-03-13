@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -9,9 +10,17 @@ import (
 
 	"lcroom/internal/codexapp"
 	"lcroom/internal/model"
+	"lcroom/internal/sessionclassify"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+)
+
+type codexPickerKind string
+
+const (
+	codexPickerKindGlobal codexPickerKind = "global"
+	codexPickerKindResume codexPickerKind = "resume"
 )
 
 type codexSessionChoice struct {
@@ -20,8 +29,10 @@ type codexSessionChoice struct {
 	SessionID    string
 	Provider     codexapp.Provider
 	LastActivity time.Time
+	Title        string
 	Summary      string
 	Live         bool
+	Current      bool
 	Busy         bool
 	BusyExternal bool
 	Hidden       bool
@@ -36,22 +47,71 @@ func (m Model) openCodexPicker() (tea.Model, tea.Cmd) {
 	}
 	m.codexPickerVisible = true
 	m.codexPickerSelected = m.defaultCodexPickerIndex(choices)
+	m.codexPickerChoices = choices
+	m.codexPickerLoading = false
+	m.codexPickerKind = codexPickerKindGlobal
+	m.codexPickerTitle = "Embedded Sessions"
+	m.codexPickerHint = "Live sessions first, then each project's latest resumable embedded session."
+	m.codexPickerEmpty = "No live or resumable embedded sessions found."
+	m.codexPickerProject = ""
+	m.codexPickerProvider = ""
 	m.status = "Embedded session picker open"
 	return m, nil
+}
+
+func (m Model) openCodexResumePicker(provider codexapp.Provider, projectPath string) (tea.Model, tea.Cmd) {
+	projectPath = strings.TrimSpace(projectPath)
+	provider = provider.Normalized()
+	if projectPath == "" || provider == "" {
+		m.status = "Embedded session unavailable"
+		return m, nil
+	}
+	m.codexPickerVisible = true
+	m.codexPickerSelected = 0
+	m.codexPickerChoices = nil
+	m.codexPickerLoading = true
+	m.codexPickerKind = codexPickerKindResume
+	m.codexPickerTitle = "Resume " + provider.Label() + " Session"
+	m.codexPickerHint = "Saved sessions for this project. The current one is marked CURRENT."
+	m.codexPickerEmpty = "No saved " + provider.Label() + " sessions found for this project."
+	m.codexPickerProject = projectPath
+	m.codexPickerProvider = provider
+	m.status = "Loading " + provider.Label() + " sessions for this project..."
+	return m, m.loadCodexResumeChoicesCmd(projectPath, provider)
+}
+
+func (m Model) openVisibleCodexResumePicker() (tea.Model, tea.Cmd) {
+	return m.openCodexResumePicker(m.currentEmbeddedProvider(), m.codexVisibleProject)
 }
 
 func (m *Model) closeCodexPicker(status string) {
 	m.codexPickerVisible = false
 	m.codexPickerSelected = 0
+	m.codexPickerChoices = nil
+	m.codexPickerLoading = false
+	m.codexPickerKind = ""
+	m.codexPickerTitle = ""
+	m.codexPickerHint = ""
+	m.codexPickerEmpty = ""
+	m.codexPickerProject = ""
+	m.codexPickerProvider = ""
 	if status != "" {
 		m.status = status
 	}
 }
 
 func (m Model) updateCodexPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	choices := m.codexSessionChoices()
+	if m.codexPickerLoading {
+		switch msg.String() {
+		case "esc", "alt+down":
+			m.closeCodexPicker("Embedded session picker closed")
+		}
+		return m, nil
+	}
+
+	choices := m.currentCodexPickerChoices()
 	if len(choices) == 0 {
-		m.closeCodexPicker("No live or resumable embedded sessions")
+		m.closeCodexPicker(m.currentCodexPickerEmpty())
 		return m, nil
 	}
 	if m.codexPickerSelected >= len(choices) {
@@ -109,7 +169,7 @@ func (m *Model) moveCodexPickerSelection(delta, total int) {
 }
 
 func (m Model) currentCodexPickerChoice() (codexSessionChoice, bool) {
-	choices := m.codexSessionChoices()
+	choices := m.currentCodexPickerChoices()
 	if len(choices) == 0 {
 		return codexSessionChoice{}, false
 	}
@@ -123,7 +183,26 @@ func (m Model) currentCodexPickerChoice() (codexSessionChoice, bool) {
 	return choices[index], true
 }
 
+func (m Model) currentCodexPickerChoices() []codexSessionChoice {
+	return append([]codexSessionChoice(nil), m.codexPickerChoices...)
+}
+
+func (m Model) currentCodexPickerEmpty() string {
+	if text := strings.TrimSpace(m.codexPickerEmpty); text != "" {
+		return text
+	}
+	return "No live or resumable embedded sessions"
+}
+
 func (m Model) defaultCodexPickerIndex(choices []codexSessionChoice) int {
+	if m.codexPickerKind == codexPickerKindResume {
+		for i, choice := range choices {
+			if choice.Current {
+				return i
+			}
+		}
+		return 0
+	}
 	current := strings.TrimSpace(m.codexVisibleProject)
 	for i, choice := range choices {
 		if choice.ProjectPath == current {
@@ -144,6 +223,107 @@ func (m Model) defaultCodexPickerIndex(choices []codexSessionChoice) int {
 		}
 	}
 	return 0
+}
+
+func (m Model) loadCodexResumeChoicesCmd(projectPath string, provider codexapp.Provider) tea.Cmd {
+	ctx := m.ctx
+	svc := m.svc
+	currentDetail := m.detail
+	projectPath = strings.TrimSpace(projectPath)
+	provider = provider.Normalized()
+	return func() tea.Msg {
+		var detail model.ProjectDetail
+		if currentDetail.Summary.Path == projectPath {
+			detail = currentDetail
+		} else {
+			if svc == nil || svc.Store() == nil {
+				return codexResumeChoicesMsg{
+					projectPath: projectPath,
+					provider:    provider,
+					err:         fmt.Errorf("embedded session store unavailable"),
+				}
+			}
+			loaded, err := svc.Store().GetProjectDetail(ctx, projectPath, 1)
+			if err != nil {
+				return codexResumeChoicesMsg{
+					projectPath: projectPath,
+					provider:    provider,
+					err:         err,
+				}
+			}
+			detail = loaded
+		}
+		choices := buildCodexResumeChoices(ctx, detail, provider)
+		return codexResumeChoicesMsg{
+			projectPath: projectPath,
+			provider:    provider,
+			choices:     choices,
+		}
+	}
+}
+
+func buildCodexResumeChoices(ctx context.Context, detail model.ProjectDetail, provider codexapp.Provider) []codexSessionChoice {
+	project := detail.Summary
+	choices := make([]codexSessionChoice, 0, len(detail.Sessions))
+	for _, session := range detail.Sessions {
+		if providerForSessionFormat(session.Format) != provider.Normalized() {
+			continue
+		}
+		if strings.TrimSpace(session.SessionID) == "" {
+			continue
+		}
+		choice := codexSessionChoice{
+			ProjectPath:  project.Path,
+			ProjectName:  projectNameForPicker(project, project.Path),
+			SessionID:    session.SessionID,
+			Provider:     provider,
+			LastActivity: session.LastEventAt,
+			Missing:      !project.PresentOnDisk,
+		}
+		if preview, err := sessionclassify.ExtractPreview(ctx, session); err == nil {
+			choice.Title = strings.TrimSpace(preview.Title)
+			choice.Summary = strings.TrimSpace(preview.Summary)
+		}
+		if choice.Title == "" {
+			choice.Title = "Session " + shortID(session.SessionID)
+		}
+		if detail.Summary.LatestSessionID == session.SessionID && providerForSessionFormat(detail.Summary.LatestSessionFormat) == provider {
+			if latest := strings.TrimSpace(detail.Summary.LatestSessionSummary); latest != "" {
+				choice.Summary = latest
+			}
+		}
+		if choice.Summary == "" {
+			choice.Summary = "Saved " + provider.Label() + " session"
+		}
+		choices = append(choices, choice)
+	}
+	return choices
+}
+
+func (m Model) applyCodexResumeChoices(msg codexResumeChoicesMsg) (tea.Model, tea.Cmd) {
+	if m.codexPickerKind != codexPickerKindResume {
+		return m, nil
+	}
+	if strings.TrimSpace(msg.projectPath) != strings.TrimSpace(m.codexPickerProject) || msg.provider.Normalized() != m.codexPickerProvider.Normalized() {
+		return m, nil
+	}
+	m.codexPickerLoading = false
+	if msg.err != nil {
+		m.closeCodexPicker("")
+		m.err = msg.err
+		m.status = "Embedded session picker failed"
+		return m, nil
+	}
+	m.err = nil
+	choices := m.mergeCurrentResumeChoice(msg.choices)
+	if len(choices) == 0 {
+		m.closeCodexPicker(m.currentCodexPickerEmpty())
+		return m, nil
+	}
+	m.codexPickerChoices = choices
+	m.codexPickerSelected = m.defaultCodexPickerIndex(choices)
+	m.status = m.codexPickerTitle + " open"
+	return m, nil
 }
 
 func (m Model) codexSessionChoices() []codexSessionChoice {
@@ -284,6 +464,37 @@ func (m Model) openCodexSessionChoice(choice codexSessionChoice) (tea.Model, tea
 	return m, tea.Batch(m.openCodexSessionCmd(req), focusCmd)
 }
 
+func (m Model) resumeEmbeddedSession(projectPath string, provider codexapp.Provider, sessionID string) (tea.Model, tea.Cmd) {
+	projectPath = strings.TrimSpace(projectPath)
+	provider = provider.Normalized()
+	sessionID = strings.TrimSpace(sessionID)
+	if projectPath == "" || provider == "" || sessionID == "" {
+		m.status = "Session ID required"
+		return m, nil
+	}
+	project := m.pickerProjectSummary(projectPath)
+	choice := codexSessionChoice{
+		ProjectPath: projectPath,
+		ProjectName: projectNameForPicker(project, projectPath),
+		SessionID:   sessionID,
+		Provider:    provider,
+	}
+	if session, ok := m.codexSession(projectPath); ok {
+		snapshot := session.Snapshot()
+		if embeddedProvider(snapshot) == provider && strings.TrimSpace(snapshot.ThreadID) == sessionID && !snapshot.Closed {
+			title, summary := liveSessionPreview(snapshot)
+			choice.Title = title
+			choice.Summary = summary
+			choice.LastActivity = snapshot.LastActivityAt
+			choice.Live = true
+			choice.Current = true
+			choice.Busy = snapshot.Busy
+			choice.BusyExternal = snapshot.BusyExternal
+		}
+	}
+	return m.openCodexSessionChoice(choice)
+}
+
 func (m Model) showCodexProject(projectPath, status string) (tea.Model, tea.Cmd) {
 	m.ensureCodexRuntime()
 	projectPath = strings.TrimSpace(projectPath)
@@ -346,18 +557,35 @@ func (m Model) renderCodexPicker(bodyW int) string {
 }
 
 func (m Model) renderCodexPickerContent(width int) string {
-	choices := m.codexSessionChoices()
+	choices := m.currentCodexPickerChoices()
+	title := strings.TrimSpace(m.codexPickerTitle)
+	if title == "" {
+		title = "Embedded Sessions"
+	}
+	hint := strings.TrimSpace(m.codexPickerHint)
+	if hint == "" {
+		hint = "Live sessions first, then each project's latest resumable embedded session."
+	}
+	action := "open"
+	if m.codexPickerKind == codexPickerKindResume {
+		action = "resume"
+	}
 	lines := []string{
-		commandPaletteTitleStyle.Render("Embedded Sessions"),
-		commandPaletteHintStyle.Render("Live sessions first, then each project's latest resumable embedded session."),
+		commandPaletteTitleStyle.Render(title),
+		commandPaletteHintStyle.Render(hint),
 		"",
-		renderDialogAction("Enter", "open", commitActionKeyStyle, commitActionTextStyle) + "   " +
+		renderDialogAction("Enter", action, commitActionKeyStyle, commitActionTextStyle) + "   " +
 			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
 		"",
 	}
 
+	if m.codexPickerLoading {
+		lines = append(lines, commandPaletteHintStyle.Render(spinnerFrames[m.spinnerFrame%len(spinnerFrames)]+" Loading session previews..."))
+		return strings.Join(lines, "\n")
+	}
+
 	if len(choices) == 0 {
-		lines = append(lines, commandPaletteHintStyle.Render("No live or resumable embedded sessions found."))
+		lines = append(lines, commandPaletteHintStyle.Render(m.currentCodexPickerEmpty()))
 		return strings.Join(lines, "\n")
 	}
 
@@ -375,8 +603,15 @@ func (m Model) renderCodexPickerContent(width int) string {
 	if selected, ok := m.currentCodexPickerChoice(); ok {
 		lines = append(lines, "")
 		lines = append(lines, commandPaletteTitleStyle.Render("About"))
+		if m.codexPickerKind == codexPickerKindResume && strings.TrimSpace(selected.Title) != "" {
+			lines = append(lines, detailValueStyle.Render(fitFooterWidth(selected.Title, width)))
+		}
 		lines = append(lines, commandPaletteHintStyle.Render(fitFooterWidth(selected.ProjectPath, width)))
-		lines = append(lines, detailValueStyle.Render(fitFooterWidth("Source: "+selected.Provider.Label()+"  Session: "+shortID(selected.SessionID)+"  Last activity: "+formatPickerActivity(selected.LastActivity), width)))
+		meta := "Source: " + selected.Provider.Label() + "  Session: " + shortID(selected.SessionID) + "  Last activity: " + formatPickerActivity(selected.LastActivity)
+		if selected.Current {
+			meta += "  Current: yes"
+		}
+		lines = append(lines, detailValueStyle.Render(fitFooterWidth(meta, width)))
 		if summary := strings.TrimSpace(selected.Summary); summary != "" {
 			lines = append(lines, commandPaletteHintStyle.Render(fitFooterWidth(summary, width)))
 		}
@@ -389,7 +624,11 @@ func (m Model) codexPickerWindow(total int) (int, int) {
 	if total <= 0 {
 		return 0, 0
 	}
-	limit := min(7, total)
+	limit := 7
+	if m.codexPickerKind == codexPickerKindResume {
+		limit = 5
+	}
+	limit = min(limit, total)
 	start := 0
 	if m.codexPickerSelected >= limit {
 		start = m.codexPickerSelected - limit + 1
@@ -408,6 +647,9 @@ func (m Model) renderCodexPickerRow(choice codexSessionChoice, selected bool, wi
 	badges := make([]string, 0, 4)
 	if tag := choice.Provider.SourceTag(); tag != "" {
 		badges = append(badges, tag)
+	}
+	if choice.Current {
+		badges = append(badges, "CURRENT")
 	}
 	switch {
 	case choice.Live && choice.Hidden:
@@ -430,13 +672,131 @@ func (m Model) renderCodexPickerRow(choice codexSessionChoice, selected bool, wi
 	left := strings.Join(badges, " ")
 	right := fmt.Sprintf("%s  %s", formatPickerActivity(choice.LastActivity), shortID(choice.SessionID))
 	available := max(16, width-len(left)-len(right)-6)
-	label := truncateText(choice.ProjectName, available)
-	row := fmt.Sprintf("  %s  %s  %s", left, label, right)
+	label := choice.ProjectName
+	if m.codexPickerKind == codexPickerKindResume && strings.TrimSpace(choice.Title) != "" {
+		label = choice.Title
+	}
+	row := fmt.Sprintf("  %s  %s  %s", left, truncateText(label, available), right)
+	if m.codexPickerKind == codexPickerKindResume && strings.TrimSpace(choice.Summary) != "" {
+		row += "\n  " + truncateText(choice.Summary, max(12, width-4))
+	}
 	if selected {
 		row = "> " + strings.TrimPrefix(row, "  ")
 		return commandPaletteSelectStyle.Width(width).Render(row)
 	}
 	return commandPaletteRowStyle.Width(width).Render(row)
+}
+
+func (m Model) mergeCurrentResumeChoice(choices []codexSessionChoice) []codexSessionChoice {
+	if m.codexPickerKind != codexPickerKindResume {
+		return append([]codexSessionChoice(nil), choices...)
+	}
+	currentChoice, ok := m.currentResumeChoice()
+	if !ok {
+		return append([]codexSessionChoice(nil), choices...)
+	}
+
+	mergedCurrent := currentChoice
+	others := make([]codexSessionChoice, 0, len(choices))
+	for _, choice := range choices {
+		if strings.TrimSpace(choice.SessionID) == strings.TrimSpace(currentChoice.SessionID) {
+			if strings.TrimSpace(mergedCurrent.Title) == "" {
+				mergedCurrent.Title = choice.Title
+			}
+			if strings.TrimSpace(choice.Summary) != "" {
+				mergedCurrent.Summary = choice.Summary
+			} else if strings.TrimSpace(mergedCurrent.Summary) == "" {
+				mergedCurrent.Summary = choice.Summary
+			}
+			if choice.LastActivity.After(mergedCurrent.LastActivity) {
+				mergedCurrent.LastActivity = choice.LastActivity
+			}
+			mergedCurrent.Missing = choice.Missing
+			continue
+		}
+		others = append(others, choice)
+	}
+	return append([]codexSessionChoice{mergedCurrent}, others...)
+}
+
+func (m Model) currentResumeChoice() (codexSessionChoice, bool) {
+	snapshot, ok := m.currentCodexSnapshot()
+	if !ok {
+		return codexSessionChoice{}, false
+	}
+	projectPath := strings.TrimSpace(m.codexPickerProject)
+	provider := m.codexPickerProvider.Normalized()
+	if projectPath == "" || provider == "" {
+		return codexSessionChoice{}, false
+	}
+	if strings.TrimSpace(snapshot.ProjectPath) != projectPath || embeddedProvider(snapshot) != provider {
+		return codexSessionChoice{}, false
+	}
+	sessionID := strings.TrimSpace(snapshot.ThreadID)
+	if sessionID == "" {
+		return codexSessionChoice{}, false
+	}
+	project := m.pickerProjectSummary(projectPath)
+	title, summary := liveSessionPreview(snapshot)
+	if title == "" {
+		title = "Session " + shortID(sessionID)
+	}
+	if summary == "" {
+		summary = pickerSummaryForLiveSnapshot(snapshot)
+	}
+	return codexSessionChoice{
+		ProjectPath:  projectPath,
+		ProjectName:  projectNameForPicker(project, projectPath),
+		SessionID:    sessionID,
+		Provider:     provider,
+		LastActivity: snapshot.LastActivityAt,
+		Title:        title,
+		Summary:      summary,
+		Live:         true,
+		Current:      true,
+		Busy:         snapshot.Busy,
+		BusyExternal: snapshot.BusyExternal,
+		Missing:      !project.PresentOnDisk && project.Path != "",
+	}, true
+}
+
+func (m Model) pickerProjectSummary(projectPath string) model.ProjectSummary {
+	if m.detail.Summary.Path == projectPath {
+		return m.detail.Summary
+	}
+	for _, project := range m.allProjects {
+		if project.Path == projectPath {
+			return project
+		}
+	}
+	return model.ProjectSummary{Path: projectPath}
+}
+
+func liveSessionPreview(snapshot codexapp.Snapshot) (string, string) {
+	items := make([]sessionclassify.TranscriptItem, 0, len(snapshot.Entries))
+	for _, entry := range snapshot.Entries {
+		role := ""
+		switch entry.Kind {
+		case codexapp.TranscriptUser:
+			role = "user"
+		case codexapp.TranscriptAgent, codexapp.TranscriptStatus, codexapp.TranscriptSystem, codexapp.TranscriptPlan, codexapp.TranscriptReasoning, codexapp.TranscriptCommand, codexapp.TranscriptFileChange, codexapp.TranscriptTool:
+			role = "assistant"
+		default:
+			continue
+		}
+		text := strings.TrimSpace(entry.Text)
+		if text == "" {
+			continue
+		}
+		items = append(items, sessionclassify.TranscriptItem{Role: role, Text: text})
+	}
+	preview := sessionclassify.PreviewFromTranscript(items)
+	title := strings.TrimSpace(preview.Title)
+	summary := strings.TrimSpace(preview.Summary)
+	if summary == "" && strings.TrimSpace(snapshot.LastSystemNotice) != "" {
+		summary = strings.TrimSpace(snapshot.LastSystemNotice)
+	}
+	return title, summary
 }
 
 func formatPickerActivity(at time.Time) string {

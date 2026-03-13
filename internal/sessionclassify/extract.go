@@ -22,6 +22,9 @@ const (
 	maxTranscriptItems = 8
 	maxTranscriptBytes = 800
 	codexTailBytes     = 1024 * 1024
+	maxPreviewBytes    = 160
+	previewHeadBytes   = 64 * 1024
+	previewItemLimit   = 6
 )
 
 type SessionSnapshot struct {
@@ -33,6 +36,11 @@ type SessionSnapshot struct {
 	LatestTurnCompleted  bool              `json:"latest_turn_completed"`
 	GitStatus            GitStatusSnapshot `json:"git_status,omitempty"`
 	Transcript           []TranscriptItem  `json:"transcript"`
+}
+
+type SessionPreview struct {
+	Title   string `json:"title"`
+	Summary string `json:"summary"`
 }
 
 type GitStatusSnapshot struct {
@@ -78,6 +86,108 @@ func ExtractSnapshot(ctx context.Context, classification model.SessionClassifica
 	}
 	snapshot.Transcript = items
 	return snapshot, nil
+}
+
+func ExtractPreview(ctx context.Context, session model.SessionEvidence) (SessionPreview, error) {
+	switch session.Format {
+	case "modern", "legacy":
+		return extractCodexPreview(session.SessionFile)
+	case "opencode_db":
+		return extractOpenCodePreview(ctx, session.SessionFile)
+	default:
+		return SessionPreview{}, fmt.Errorf("unsupported session format: %s", session.Format)
+	}
+}
+
+func PreviewFromTranscript(items []TranscriptItem) SessionPreview {
+	return previewFromTranscript(items)
+}
+
+func extractCodexPreview(path string) (SessionPreview, error) {
+	headItems, err := extractCodexHeadTranscript(path)
+	if err != nil {
+		return SessionPreview{}, err
+	}
+	tailItems, err := extractCodexTranscript(path)
+	if err != nil {
+		return SessionPreview{}, err
+	}
+	items := append(headItems, tailItems...)
+	if len(items) == 0 {
+		return SessionPreview{}, errors.New("no conversational transcript found")
+	}
+	return previewFromTranscript(items), nil
+}
+
+func extractCodexHeadTranscript(path string) ([]TranscriptItem, error) {
+	lines, err := readHeadLines(path, previewHeadBytes)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]TranscriptItem, 0, previewItemLimit)
+	for _, line := range lines {
+		item, ok := extractCodexTranscriptItem(line)
+		if !ok {
+			continue
+		}
+		items = append(items, item)
+		if len(items) >= previewItemLimit {
+			break
+		}
+	}
+	return finalizeTranscript(items), nil
+}
+
+func readHeadLines(path string, maxBytes int64) ([]string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open session file: %w", err)
+	}
+	defer file.Close()
+
+	scanner := newSessionScanner(file)
+	lines := []string{}
+	var bytesRead int64
+	for scanner.Scan() {
+		line := scanner.Text()
+		lines = append(lines, line)
+		bytesRead += int64(len(line)) + 1
+		if bytesRead >= maxBytes {
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan session file: %w", err)
+	}
+	return lines, nil
+}
+
+func extractOpenCodePreview(ctx context.Context, sessionRef string) (SessionPreview, error) {
+	dbPath, sessionID, err := parseOpenCodeSessionRef(sessionRef)
+	if err != nil {
+		return SessionPreview{}, err
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return SessionPreview{}, fmt.Errorf("open opencode sqlite: %w", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+
+	headItems, err := extractOpenCodeTranscriptItems(ctx, db, sessionID, false, previewItemLimit)
+	if err != nil {
+		return SessionPreview{}, err
+	}
+	tailItems, err := extractOpenCodeTranscriptItems(ctx, db, sessionID, true, previewItemLimit)
+	if err != nil {
+		return SessionPreview{}, err
+	}
+	items := append(headItems, tailItems...)
+	if len(items) == 0 {
+		return SessionPreview{}, errors.New("no conversational transcript found")
+	}
+	return previewFromTranscript(items), nil
 }
 
 func NewGitStatusSnapshot(repoDirty bool, repoSyncStatus model.RepoSyncStatus, repoAheadCount, repoBehindCount int) GitStatusSnapshot {
@@ -132,8 +242,7 @@ func readTailLines(path string, maxBytes int64) ([]string, error) {
 		return nil, fmt.Errorf("seek session file: %w", err)
 	}
 
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	scanner := newSessionScanner(file)
 
 	lines := []string{}
 	for scanner.Scan() {
@@ -143,6 +252,12 @@ func readTailLines(path string, maxBytes int64) ([]string, error) {
 		return nil, fmt.Errorf("scan session file: %w", err)
 	}
 	return lines, nil
+}
+
+func newSessionScanner(r io.Reader) *bufio.Scanner {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	return scanner
 }
 
 func extractCodexTranscriptItem(line string) (TranscriptItem, bool) {
@@ -247,20 +362,30 @@ func extractOpenCodeTranscript(ctx context.Context, sessionRef string) ([]Transc
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
+	return extractOpenCodeTranscriptItems(ctx, db, sessionID, true, 12)
+}
 
-	rows, err := db.QueryContext(ctx, `
-		WITH recent_messages AS (
+func extractOpenCodeTranscriptItems(ctx context.Context, db *sql.DB, sessionID string, newest bool, limit int) ([]TranscriptItem, error) {
+	ordering := "ASC"
+	cteName := "first_messages"
+	if newest {
+		ordering = "DESC"
+		cteName = "recent_messages"
+	}
+
+	rows, err := db.QueryContext(ctx, fmt.Sprintf(`
+		WITH %s AS (
 			SELECT id, time_created, data
 			FROM message
 			WHERE session_id = ?
-			ORDER BY time_created DESC
-			LIMIT 12
+			ORDER BY time_created %s
+			LIMIT %d
 		)
 		SELECT rm.id, rm.time_created, rm.data, p.time_created, p.data
-		FROM recent_messages rm
+		FROM %s rm
 		LEFT JOIN part p ON p.message_id = rm.id
 		ORDER BY rm.time_created ASC, p.time_created ASC
-	`, sessionID)
+	`, cteName, ordering, limit, cteName), sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("query opencode transcript: %w", err)
 	}
@@ -289,12 +414,10 @@ func extractOpenCodeTranscript(ctx context.Context, sessionRef string) ([]Transc
 
 		entry, ok := entries[messageID]
 		if !ok {
-			role := parseOpenCodeRole(messageData)
-			entry = &messageEntry{ID: messageID, Role: role}
+			entry = &messageEntry{ID: messageID, Role: parseOpenCodeRole(messageData)}
 			entries[messageID] = entry
 			order = append(order, messageID)
 		}
-
 		if !partData.Valid {
 			continue
 		}
@@ -563,6 +686,87 @@ func finalizeTranscript(items []TranscriptItem) []TranscriptItem {
 		out = out[len(out)-maxTranscriptItems:]
 	}
 	return out
+}
+
+func previewFromTranscript(items []TranscriptItem) SessionPreview {
+	title := firstPreviewTitle(items)
+	summary := lastPreviewSummary(items, title)
+	switch {
+	case title == "" && summary != "":
+		title = summary
+	case summary == "" && title != "":
+		summary = title
+	}
+	return SessionPreview{Title: title, Summary: summary}
+}
+
+func firstPreviewTitle(items []TranscriptItem) string {
+	for _, item := range items {
+		if strings.TrimSpace(strings.ToLower(item.Role)) != "user" {
+			continue
+		}
+		text := previewText(item.Text)
+		if text == "" || previewNoise(text) {
+			continue
+		}
+		return text
+	}
+	for _, item := range items {
+		text := previewText(item.Text)
+		if text == "" || previewNoise(text) {
+			continue
+		}
+		return text
+	}
+	return ""
+}
+
+func lastPreviewSummary(items []TranscriptItem, title string) string {
+	title = strings.TrimSpace(title)
+	for i := len(items) - 1; i >= 0; i-- {
+		if strings.TrimSpace(strings.ToLower(items[i].Role)) != "assistant" {
+			continue
+		}
+		text := previewText(items[i].Text)
+		if text == "" || previewNoise(text) || strings.EqualFold(text, title) {
+			continue
+		}
+		return text
+	}
+	for i := len(items) - 1; i >= 0; i-- {
+		text := previewText(items[i].Text)
+		if text == "" || previewNoise(text) || strings.EqualFold(text, title) {
+			continue
+		}
+		return text
+	}
+	return ""
+}
+
+func previewText(text string) string {
+	text = sanitizeTranscriptText(text)
+	if newline := strings.IndexByte(text, '\n'); newline >= 0 {
+		text = text[:newline]
+	}
+	text = strings.Join(strings.Fields(text), " ")
+	if len(text) <= maxPreviewBytes {
+		return text
+	}
+	return text[:maxPreviewBytes-3] + "..."
+}
+
+func previewNoise(text string) bool {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	switch {
+	case lower == "":
+		return true
+	case strings.HasPrefix(lower, "<environment_context>"):
+		return true
+	case strings.HasPrefix(lower, "current working directory:"):
+		return true
+	default:
+		return false
+	}
 }
 
 func sanitizeTranscriptText(text string) string {

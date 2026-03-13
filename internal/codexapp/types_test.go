@@ -282,6 +282,59 @@ func TestManagerOpenForceNewReplacesExistingSession(t *testing.T) {
 	}
 }
 
+func TestManagerOpenReplacesSessionWhenResumeIDChanges(t *testing.T) {
+	var created []*fakeSession
+
+	manager := NewManagerWithFactory(func(req LaunchRequest, notify func()) (Session, error) {
+		session := &fakeSession{
+			projectPath: req.ProjectPath,
+			snapshot: Snapshot{
+				Started:  true,
+				Preset:   req.Preset,
+				ThreadID: req.ResumeID,
+			},
+		}
+		created = append(created, session)
+		return session, nil
+	})
+
+	first, reused, err := manager.Open(LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+		ResumeID:    "thread_a",
+	})
+	if err != nil {
+		t.Fatalf("first Open() error = %v", err)
+	}
+	if reused {
+		t.Fatalf("first Open() reused = true, want false")
+	}
+
+	second, reused, err := manager.Open(LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+		ResumeID:    "thread_b",
+	})
+	if err != nil {
+		t.Fatalf("second Open() error = %v", err)
+	}
+	if reused {
+		t.Fatalf("second Open() reused = true, want false")
+	}
+	if first == second {
+		t.Fatalf("Open() should replace the existing session when the resume target changes")
+	}
+	if len(created) != 2 {
+		t.Fatalf("factory create count = %d, want 2", len(created))
+	}
+	if !created[0].closed {
+		t.Fatalf("original session should be closed when the resume target changes")
+	}
+	if got := created[1].snapshot.ThreadID; got != "thread_b" {
+		t.Fatalf("replacement thread id = %q, want %q", got, "thread_b")
+	}
+}
+
 func TestManagerOpenReplacesSessionWhenProviderChanges(t *testing.T) {
 	var created []*fakeSession
 

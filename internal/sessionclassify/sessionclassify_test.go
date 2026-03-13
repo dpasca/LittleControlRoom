@@ -122,6 +122,24 @@ func TestExtractSnapshotOpenCodePreservesStructuredParts(t *testing.T) {
 	}
 }
 
+func TestPreviewFromTranscriptUsesInitialUserAndLatestAssistantSnippets(t *testing.T) {
+	t.Parallel()
+
+	preview := previewFromTranscript([]TranscriptItem{
+		{Role: "user", Text: "Original request"},
+		{Role: "assistant", Text: "Working through the setup now."},
+		{Role: "user", Text: "Please switch to the older session and inspect the failing test output."},
+		{Role: "assistant", Text: "I found the failing assertion in the footer rendering path."},
+	})
+
+	if preview.Title != "Original request" {
+		t.Fatalf("preview title = %q", preview.Title)
+	}
+	if preview.Summary != "I found the failing assertion in the footer rendering path." {
+		t.Fatalf("preview summary = %q", preview.Summary)
+	}
+}
+
 func TestManagerProcessOneCompletesClassification(t *testing.T) {
 	t.Parallel()
 

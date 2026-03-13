@@ -113,12 +113,12 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 
 - `/` open the command palette
 - `↑/↓` move selection
-- `Enter` open or resume Codex for the selected project
-- `Esc` hide the visible Codex pane
-- `Alt+Up` hide the visible Codex pane
-- `Alt+Down` open the Codex session picker and history overlay
-- `Alt+[` jump to the previous live Codex session
-- `Alt+]` jump to the next live Codex session
+- `Enter` open or resume the selected project's latest embedded provider
+- `Esc` hide the visible embedded session pane
+- `Alt+Up` hide the visible embedded session pane
+- `Alt+Down` open the embedded session picker and history overlay
+- `Alt+[` jump to the previous live embedded session
+- `Alt+]` jump to the next live embedded session
 - `PgUp/PgDn/Home/End` fast scrolling in long project lists
 - `Tab` or `Shift+Tab` switch focus between list and detail
 - `o` toggle sort mode between `attention` and `recent activity`
@@ -128,9 +128,9 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 - `n` add or edit note
 - `q` quit
 
-While the Codex pane is visible:
+While the embedded Codex or OpenCode pane is visible:
 
-- `Enter` sends a prompt when idle and steers the active turn when Codex is busy
+- `Enter` sends a prompt when idle and steers the active turn when the embedded session is busy
 - `Alt+Enter` or `Ctrl+J` inserts a newline
 - `Ctrl+V` attaches a clipboard image when available
 - `Backspace` on an inline `[Image #n]` marker removes that attachment
@@ -198,5 +198,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/codex-new` always starts a fresh Codex session.
 - `/opencode` resumes the selected project's latest known OpenCode session when available, otherwise it starts a new one.
 - `/opencode-new` always starts a fresh OpenCode session.
+- While an embedded Codex or OpenCode pane is visible, local slash commands include `/new`, `/resume` (`/session` alias), `/model`, and `/status`.
+- `/resume` with no session ID opens a picker for saved sessions from the current project and provider; `/resume <session-id>` jumps straight to that session.
 - `codex_launch_preset` controls how Codex is launched. The default is `yolo`.
 - CLI flags override config file values.

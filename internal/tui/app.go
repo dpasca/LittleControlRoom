@@ -83,6 +83,14 @@ type Model struct {
 	codexClosedHandled  map[string]struct{}
 	codexPickerVisible  bool
 	codexPickerSelected int
+	codexPickerChoices  []codexSessionChoice
+	codexPickerLoading  bool
+	codexPickerKind     codexPickerKind
+	codexPickerTitle    string
+	codexPickerHint     string
+	codexPickerEmpty    string
+	codexPickerProject  string
+	codexPickerProvider codexapp.Provider
 	codexModelPicker    *codexModelPickerState
 	codexDenseExpanded  bool
 	codexSlashSelected  int
@@ -190,6 +198,12 @@ type codexActionMsg struct {
 type codexModelListMsg struct {
 	projectPath string
 	models      []codexapp.ModelOption
+	err         error
+}
+type codexResumeChoicesMsg struct {
+	projectPath string
+	provider    codexapp.Provider
+	choices     []codexSessionChoice
 	err         error
 }
 
@@ -592,6 +606,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		m.openLoadedCodexModelPicker(msg.models)
 		return m, nil
+	case codexResumeChoicesMsg:
+		return m.applyCodexResumeChoices(msg)
 	case busMsg:
 		cmds := []tea.Cmd{m.waitBusCmd()}
 		if msg.Type == events.ClassificationUpdated {
