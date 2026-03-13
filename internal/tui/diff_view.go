@@ -63,6 +63,8 @@ type diffSideBySideRow struct {
 	FullTone  diffCellTone
 	LeftTone  diffCellTone
 	RightTone diffCellTone
+	LeftCode  bool
+	RightCode bool
 	FullWidth bool
 }
 
@@ -524,6 +526,13 @@ func diffFileMeta(file service.DiffFilePreview, mode diffRenderMode) string {
 	return strings.Join(parts, " | ")
 }
 
+func diffSyntaxFilename(file service.DiffFilePreview) string {
+	if path := strings.TrimSpace(file.Path); path != "" {
+		return path
+	}
+	return strings.TrimSpace(file.OriginalPath)
+}
+
 func renderDiffEntryBody(file service.DiffFilePreview, width int, mode diffRenderMode) string {
 	if file.IsImage {
 		return renderDiffImageBody(file, width)
@@ -532,11 +541,12 @@ func renderDiffEntryBody(file service.DiffFilePreview, width int, mode diffRende
 	if body == "" {
 		body = "No textual diff available."
 	}
+	syntaxFilename := diffSyntaxFilename(file)
 	switch mode {
 	case diffRenderModeUnified:
-		return renderDiffUnifiedTextBody(body, width)
+		return renderDiffUnifiedTextBody(body, syntaxFilename, width)
 	default:
-		return renderDiffSideBySideTextBody(body, width)
+		return renderDiffSideBySideTextBody(body, syntaxFilename, width)
 	}
 }
 
@@ -554,11 +564,22 @@ func renderDiffImageBody(file service.DiffFilePreview, width int) string {
 	return strings.Join(blocks, "\n\n")
 }
 
-func renderDiffUnifiedTextBody(body string, width int) string {
-	return renderCodexMonospaceBlock("Diff", body, lipgloss.Color("81"), width)
+func renderDiffUnifiedTextBody(body, syntaxFilename string, width int) string {
+	contentWidth := max(10, width-2)
+	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Render("Diff")
+	renderedLines := make([]string, 0, len(strings.Split(body, "\n")))
+	for _, line := range strings.Split(body, "\n") {
+		renderedLines = append(renderedLines, renderUnifiedDiffLine(line, syntaxFilename))
+	}
+	bodyBlock := lipgloss.NewStyle().Width(contentWidth).Render(strings.Join(renderedLines, "\n"))
+	return lipgloss.NewStyle().
+		BorderLeft(true).
+		BorderForeground(lipgloss.Color("81")).
+		PaddingLeft(1).
+		Render(title + "\n" + bodyBlock)
 }
 
-func renderDiffSideBySideTextBody(body string, width int) string {
+func renderDiffSideBySideTextBody(body, syntaxFilename string, width int) string {
 	body = strings.TrimSpace(body)
 	if body == "" {
 		body = "No textual diff available."
@@ -568,7 +589,7 @@ func renderDiffSideBySideTextBody(body string, width int) string {
 	sections := parseDiffTextSections(body)
 	rendered := make([]string, 0, len(sections))
 	for _, section := range sections {
-		block := renderDiffTextSection(section, contentWidth)
+		block := renderDiffTextSection(section, syntaxFilename, contentWidth)
 		if strings.TrimSpace(ansi.Strip(block)) != "" {
 			rendered = append(rendered, block)
 		}
@@ -644,16 +665,39 @@ func trimBlankLines(lines []string) []string {
 	return out
 }
 
-func renderDiffTextSection(section diffTextSection, width int) string {
+func renderDiffTextSection(section diffTextSection, syntaxFilename string, width int) string {
 	rows := buildDiffSideBySideRows(section)
 	if len(rows) == 0 {
 		return ""
 	}
 	rendered := make([]string, 0, len(rows))
 	for _, row := range rows {
-		rendered = append(rendered, renderDiffSideBySideRow(row, width))
+		rendered = append(rendered, renderDiffSideBySideRow(row, width, syntaxFilename))
 	}
 	return strings.Join(rendered, "\n")
+}
+
+func renderUnifiedDiffLine(line, syntaxFilename string) string {
+	switch {
+	case strings.HasPrefix(line, "$ "):
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true).Render(line)
+	case strings.HasPrefix(line, "diff --git "), strings.HasPrefix(line, "index "):
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Bold(true).Render(line)
+	case strings.HasPrefix(line, "@@"):
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true).Render(line)
+	case strings.HasPrefix(line, "# "):
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Faint(true).Render(line)
+	case strings.HasPrefix(line, "[command ") || strings.HasPrefix(line, "[file changes "):
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("149")).Bold(true).Render(line)
+	case diffPatchLineKind(line) != "":
+		return renderDiffHighlightedPatchLine(line, diffToneForPatchLine(line), syntaxFilename)
+	case strings.HasPrefix(line, "+++"):
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render(line)
+	case strings.HasPrefix(line, "---"):
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render(line)
+	default:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Render(line)
+	}
 }
 
 // Pair adjacent removed and added runs so the diff content reads as before/after columns.
@@ -701,6 +745,8 @@ func buildDiffSideBySideRows(section diffTextSection) []diffSideBySideRow {
 				Right:     right,
 				LeftTone:  diffToneForPatchCell(left, diffCellToneDeleted),
 				RightTone: diffToneForPatchCell(right, diffCellToneAdded),
+				LeftCode:  left != "",
+				RightCode: right != "",
 			})
 		}
 		removed = nil
@@ -741,6 +787,7 @@ func buildDiffSideBySideRows(section diffTextSection) []diffSideBySideRow {
 				Right:     line,
 				LeftTone:  diffCellToneNeutral,
 				RightTone: diffCellToneAdded,
+				RightCode: false,
 			})
 		case strings.HasPrefix(line, "@@"):
 			flushPair()
@@ -780,6 +827,8 @@ func buildDiffSideBySideRows(section diffTextSection) []diffSideBySideRow {
 					Right:     line,
 					LeftTone:  diffCellToneNeutral,
 					RightTone: diffCellToneNeutral,
+					LeftCode:  true,
+					RightCode: true,
 				})
 			default:
 				flushPair()
@@ -850,6 +899,17 @@ func diffToneForPatchCell(line string, fallback diffCellTone) diffCellTone {
 	return fallback
 }
 
+func diffToneForPatchLine(line string) diffCellTone {
+	switch diffPatchLineKind(line) {
+	case "+":
+		return diffCellToneAdded
+	case "-":
+		return diffCellToneDeleted
+	default:
+		return diffCellToneNeutral
+	}
+}
+
 func diffToneForFullDiffLine(line string) diffCellTone {
 	switch {
 	case strings.HasPrefix(line, "\\ "):
@@ -867,7 +927,7 @@ func diffToneForFullDiffLine(line string) diffCellTone {
 	}
 }
 
-func renderDiffSideBySideRow(row diffSideBySideRow, width int) string {
+func renderDiffSideBySideRow(row diffSideBySideRow, width int, syntaxFilename string) string {
 	if row.FullWidth {
 		return renderDiffFullRow(row.Full, width, row.FullTone)
 	}
@@ -891,9 +951,9 @@ func renderDiffSideBySideRow(row diffSideBySideRow, width int) string {
 			right = rightLines[i]
 		}
 		rendered = append(rendered,
-			renderDiffCellLine(left, leftWidth, row.LeftTone)+
+			renderDiffCellLine(left, leftWidth, row.LeftTone, syntaxFilename, row.LeftCode)+
 				gap+
-				renderDiffCellLine(right, rightWidth, row.RightTone),
+				renderDiffCellLine(right, rightWidth, row.RightTone, syntaxFilename, row.RightCode),
 		)
 	}
 	return strings.Join(rendered, "\n")
@@ -921,12 +981,78 @@ func wrapDiffCell(text string, width int) []string {
 	return lines
 }
 
-func renderDiffCellLine(text string, width int, tone diffCellTone) string {
+func renderDiffCellLine(text string, width int, tone diffCellTone, syntaxFilename string, highlightSyntax bool) string {
+	if highlightSyntax && strings.TrimSpace(text) != "" {
+		return renderDiffHighlightedCellLine(text, width, tone, syntaxFilename)
+	}
 	style := diffToneStyle(tone)
 	if width > 0 {
 		style = style.Width(width)
 	}
 	return style.Render(text)
+}
+
+func renderDiffHighlightedCellLine(text string, width int, tone diffCellTone, syntaxFilename string) string {
+	prefix, body := splitDiffSyntaxPrefix(text)
+	highlighted := diffToneStyle(tone).Render(prefix) + syntaxHighlightBlock(body, "", syntaxFilename, syntaxHighlightOptions{
+		DefaultColor:    diffToneDefaultColor(tone),
+		BackgroundColor: diffToneBackgroundColor(tone),
+	})
+	strippedWidth := ansi.StringWidth(ansi.Strip(highlighted))
+	if width > 0 && strippedWidth < width {
+		highlighted += diffToneFill(tone, width-strippedWidth)
+	}
+	if width > 0 && ansi.StringWidth(ansi.Strip(highlighted)) > width {
+		return ansi.Truncate(highlighted, width, "")
+	}
+	return highlighted
+}
+
+func renderDiffHighlightedPatchLine(line string, tone diffCellTone, syntaxFilename string) string {
+	prefix, body := splitDiffSyntaxPrefix(line)
+	return diffToneStyle(tone).Render(prefix) + syntaxHighlightBlock(body, "", syntaxFilename, syntaxHighlightOptions{
+		DefaultColor: diffToneDefaultColor(tone),
+	})
+}
+
+func splitDiffSyntaxPrefix(text string) (string, string) {
+	if text == "" {
+		return "", ""
+	}
+	return text[:1], text[1:]
+}
+
+func diffToneFill(tone diffCellTone, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	fill := strings.Repeat(" ", width)
+	if bg := diffToneBackgroundColor(tone); bg != "" {
+		return lipgloss.NewStyle().Background(bg).Render(fill)
+	}
+	return fill
+}
+
+func diffToneDefaultColor(tone diffCellTone) lipgloss.Color {
+	switch tone {
+	case diffCellToneDeleted:
+		return lipgloss.Color("224")
+	case diffCellToneAdded:
+		return lipgloss.Color("194")
+	default:
+		return lipgloss.Color("250")
+	}
+}
+
+func diffToneBackgroundColor(tone diffCellTone) lipgloss.Color {
+	switch tone {
+	case diffCellToneDeleted:
+		return lipgloss.Color("52")
+	case diffCellToneAdded:
+		return lipgloss.Color("22")
+	default:
+		return ""
+	}
 }
 
 func renderDiffFullRow(text string, width int, tone diffCellTone) string {

@@ -3692,6 +3692,46 @@ func TestRenderCodexTranscriptEntriesKeepsHTTPSMarkdownLinksClickable(t *testing
 	}
 }
 
+func TestRenderCodexTranscriptEntriesHighlightsFencedCodeBlocks(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	goSnapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "Use this helper:\n```go\nfunc main() {\n    if err != nil {\n        return err\n    }\n}\n```",
+		}},
+	}
+	textSnapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "Use this helper:\n```text\nfunc main() {\n    if err != nil {\n        return err\n    }\n}\n```",
+		}},
+	}
+
+	goRendered := (Model{}).renderCodexTranscriptEntries(goSnapshot, 80)
+	textRendered := (Model{}).renderCodexTranscriptEntries(textSnapshot, 80)
+
+	for _, rendered := range []string{goRendered, textRendered} {
+		stripped := ansi.Strip(rendered)
+		if !strings.Contains(stripped, "func main() {") || !strings.Contains(stripped, "return err") {
+			t.Fatalf("fenced-code rendering should preserve the visible code text: %q", stripped)
+		}
+	}
+	if !strings.Contains(goRendered, "\x1b[") {
+		t.Fatalf("Go fenced block should include ANSI styling: %q", goRendered)
+	}
+	if goRendered == textRendered {
+		t.Fatalf("language-tagged fenced block should render differently from plain-text fenced block")
+	}
+}
+
 func TestVisibleCodexViewHidesSessionApprovalShortcutForFileChanges(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
@@ -4937,6 +4977,16 @@ diff --git a/README.md b/README.md
 	}
 }
 
+func TestSyntaxHighlightLexerUsesFilenameHint(t *testing.T) {
+	lexer := syntaxHighlightLexer("", "main.go", "if err != nil {\n    return err\n}")
+	if lexer == nil {
+		t.Fatalf("expected a lexer for Go source")
+	}
+	if got := strings.ToLower(lexer.Config().Name); !strings.Contains(got, "go") {
+		t.Fatalf("lexer name = %q, want a Go lexer", lexer.Config().Name)
+	}
+}
+
 func TestDiffModeMovesSelectionAndScrollsContent(t *testing.T) {
 	diffState := newDiffViewState("/tmp/demo", "demo")
 	diffState.loading = false
@@ -5053,6 +5103,34 @@ diff --git a/README.md b/README.md
 	}
 	if !strings.Contains(ansi.Strip(got.diffView.renderedContent), "Before") {
 		t.Fatalf("side-by-side mode should restore the paired columns: %q", ansi.Strip(got.diffView.renderedContent))
+	}
+}
+
+func TestSyntaxHighlightBlockUsesLanguageHint(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	code := "func main() {\n    if err != nil {\n        return err\n    }\n}\n"
+	goRendered := syntaxHighlightBlock(code, "go", "", syntaxHighlightOptions{})
+	textRendered := syntaxHighlightBlock(code, "text", "", syntaxHighlightOptions{})
+
+	if ansi.Strip(goRendered) != code || ansi.Strip(textRendered) != code {
+		t.Fatalf("syntax highlighting should preserve the visible code text")
+	}
+	if !strings.Contains(goRendered, "\x1b[") {
+		t.Fatalf("language hint should produce ANSI styling: %q", goRendered)
+	}
+	if goRendered == textRendered {
+		t.Fatalf("language hint should render differently from plain text")
+	}
+	if syntaxHighlightLexer("text", "", code) != nil {
+		t.Fatalf("explicit text hint should skip syntax lexing")
 	}
 }
 

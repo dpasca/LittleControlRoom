@@ -2067,14 +2067,34 @@ func renderCodexBody(body string, color lipgloss.Color, width int) string {
 	lines := strings.Split(body, "\n")
 	out := make([]string, 0, len(lines))
 	inFence := false
+	fenceLanguage := ""
+	fenceLines := []string{}
+
+	flushFence := func() {
+		if len(fenceLines) == 0 {
+			return
+		}
+		highlighted := syntaxHighlightBlock(strings.Join(fenceLines, "\n"), fenceLanguage, "", syntaxHighlightOptions{
+			DefaultColor: lipgloss.Color("180"),
+		})
+		out = append(out, strings.Split(highlighted, "\n")...)
+		fenceLines = nil
+	}
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		switch {
 		case strings.HasPrefix(trimmed, "```"):
-			inFence = !inFence
+			if inFence {
+				flushFence()
+				inFence = false
+				fenceLanguage = ""
+			} else {
+				inFence = true
+				fenceLanguage = strings.TrimSpace(strings.TrimPrefix(trimmed, "```"))
+			}
 			out = append(out, lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Faint(true).Render(line))
 		case inFence:
-			out = append(out, lipgloss.NewStyle().Foreground(lipgloss.Color("180")).Render(line))
+			fenceLines = append(fenceLines, line)
 		case strings.HasPrefix(trimmed, "[attached image]"):
 			out = append(out, renderCodexInlineMarkdown(line, lipgloss.NewStyle().Foreground(lipgloss.Color("179")).Bold(true)))
 		case strings.HasPrefix(trimmed, "## "):
@@ -2088,6 +2108,9 @@ func renderCodexBody(body string, color lipgloss.Color, width int) string {
 		default:
 			out = append(out, renderCodexInlineMarkdown(line, lipgloss.NewStyle().Foreground(color)))
 		}
+	}
+	if inFence {
+		flushFence()
 	}
 	return lipgloss.NewStyle().Width(width).Render(strings.Join(out, "\n"))
 }
