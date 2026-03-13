@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-13 10:50 JST (JST)
+Last updated: 2026-03-13 11:02 JST (JST)
 
 ## Current State
 
@@ -75,7 +75,32 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-13 10:50 JST)
+## Latest Update (2026-03-13 11:02 JST)
+
+- Fixed the OpenCode reassessment loop where unchanged projects could keep re-queueing the LLM classifier just because `opencode.db` was temporarily busy during snapshot extraction.
+- Added a dedicated `internal/opencodesqlite` read helper that opens `opencode.db` with a busy timeout and query-only mode, and switched both the detector and OpenCode snapshot/preview extraction onto that helper.
+- Tightened classification queuing so supported session formats now require a real transcript-derived `snapshot_hash`; scan/classification no longer silently falls back to a timestamp-based legacy hash when snapshot extraction fails.
+- Extended project summaries with the latest session hash and last-event timestamp, then reused that stored hash when the same latest OpenCode session is unchanged across scans. This preserves the stable classification key even if a fresh read is transiently blocked.
+- Added focused regression coverage for the new OpenCode SQLite helper and for unchanged OpenCode sessions reusing the previous stable snapshot hash.
+- No Codex/OpenCode detector footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/opencodesqlite ./internal/sessionclassify ./internal/service ./internal/detectors/opencode -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-13T11:01:55+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 2`, `queued classifications: 2`).
+- `make doctor` passed on the cached snapshot dated `2026-03-13T11:01:56+09:00` (`projects: 138`).
+- `sqlite3 ~/.little-control-room/little-control-room.sqlite "SELECT ... WHERE sc.status IN ('pending','running') ..."` showed only two queued `modern` (Codex) sessions after the scan, with no queued OpenCode reassessment entries.
+
+Next concrete tasks:
+
+- Factor a provider-neutral transcript/session abstraction so Codex and OpenCode stop sharing only by convention.
+- Keep polishing OpenCode parity details such as agent/status presentation and attachment confidence.
+- Consider a small follow-up around persistent OpenCode snapshot failures that are not lock-related, so they surface more clearly in the UI/doctor output.
+
+## Recent Updates
+
+### 2026-03-13 10:50 JST
 
 - Added embedded `/resume` support, with hidden `/session` as an alias, to the shared Codex/OpenCode slash-command layer. `/resume` with no session ID now opens a picker for saved sessions from the current project and provider, while `/resume <session-id>` jumps straight to that session.
 - Expanded the shared embedded session picker into a resume mode that shows saved-session title, lightweight artifact-derived summary, provider tag, last activity, and a `CURRENT` badge for the visible session when present.
@@ -97,8 +122,6 @@ Next concrete tasks:
 - Factor a provider-neutral transcript/session abstraction so Codex and OpenCode stop sharing only by convention.
 - Consider a small screenshot refresh later if we want a captured resume-picker image in the docs once the UI settles.
 - Keep polishing OpenCode parity details such as agent/status presentation and attachment confidence.
-
-## Recent Updates
 
 ### 2026-03-13 08:13 JST
 

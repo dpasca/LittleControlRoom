@@ -132,12 +132,13 @@ func TestRefreshProjectStatusUsesCompletedClassification(t *testing.T) {
 		InScope:        true,
 		UpdatedAt:      now,
 		Sessions: []model.SessionEvidence{{
-			SessionID:   "ses_1",
-			ProjectPath: "/tmp/archived-demo",
-			SessionFile: "/tmp/archived-demo/session.jsonl",
-			Format:      "modern",
-			StartedAt:   now.Add(-73 * time.Hour),
-			LastEventAt: now.Add(-72 * time.Hour),
+			SessionID:    "ses_1",
+			ProjectPath:  "/tmp/archived-demo",
+			SessionFile:  "/tmp/archived-demo/session.jsonl",
+			Format:       "modern",
+			SnapshotHash: "stable-session-hash",
+			StartedAt:    now.Add(-73 * time.Hour),
+			LastEventAt:  now.Add(-72 * time.Hour),
 		}},
 	}
 	if err := st.UpsertProjectState(ctx, state); err != nil {
@@ -183,6 +184,80 @@ func TestRefreshProjectStatusUsesCompletedClassification(t *testing.T) {
 	}
 	if len(detail.Reasons) != 0 {
 		t.Fatalf("expected no attention reasons for stale completed work, got %#v", detail.Reasons)
+	}
+}
+
+func TestScanOnceReusesLatestOpenCodeSnapshotHashWhenSessionIsUnchanged(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := filepath.Join(t.TempDir(), "demo")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	sessionID := "ses_reuse_hash"
+	lastEventAt := time.Date(2026, 3, 13, 2, 0, 0, 0, time.UTC)
+
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "demo",
+		Status:         model.StatusIdle,
+		AttentionScore: 0,
+		PresentOnDisk:  true,
+		InScope:        true,
+		UpdatedAt:      lastEventAt,
+		Sessions: []model.SessionEvidence{{
+			SessionID:    sessionID,
+			ProjectPath:  projectPath,
+			SessionFile:  filepath.Join(t.TempDir(), "missing-opencode.db") + "#session:" + sessionID,
+			Format:       "opencode_db",
+			SnapshotHash: "stable-opencode-hash",
+			StartedAt:    lastEventAt.Add(-5 * time.Minute),
+			LastEventAt:  lastEventAt,
+		}},
+	}); err != nil {
+		t.Fatalf("seed prior project state: %v", err)
+	}
+
+	detector := staticDetector{
+		activities: map[string]*model.DetectorProjectActivity{
+			projectPath: {
+				ProjectPath:  projectPath,
+				LastActivity: lastEventAt,
+				Source:       "opencode",
+				Sessions: []model.SessionEvidence{{
+					SessionID:   sessionID,
+					ProjectPath: projectPath,
+					SessionFile: filepath.Join(t.TempDir(), "missing-opencode.db") + "#session:" + sessionID,
+					Format:      "opencode_db",
+					StartedAt:   lastEventAt.Add(-5 * time.Minute),
+					LastEventAt: lastEventAt,
+				}},
+			},
+		},
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = []string{projectPath}
+	svc := New(cfg, st, events.NewBus(), []detectors.Detector{detector})
+	svc.gitFingerprintReader = nil
+	svc.gitRepoStatusReader = nil
+
+	report, err := svc.ScanOnce(ctx)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(report.States) != 1 {
+		t.Fatalf("expected one scanned project, got %#v", report.States)
+	}
+	if got := report.States[0].Sessions[0].SnapshotHash; got != "stable-opencode-hash" {
+		t.Fatalf("snapshot hash = %q, want reused stable hash", got)
 	}
 }
 

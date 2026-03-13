@@ -189,6 +189,8 @@ type ProjectSummary struct {
 	LatestSessionID                           string
 	LatestSessionFormat                       string
 	LatestSessionDetectedProjectPath          string
+	LatestSessionSnapshotHash                 string
+	LatestSessionLastEventAt                  time.Time
 	LatestTurnStartedAt                       time.Time
 	LatestTurnStateKnown                      bool
 	LatestTurnCompleted                       bool

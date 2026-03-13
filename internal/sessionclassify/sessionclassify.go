@@ -135,6 +135,10 @@ func BuildClassificationRequest(state model.ProjectState) (model.SessionClassifi
 	if latest.SessionID == "" || latest.SessionFile == "" {
 		return model.SessionClassification{}, false
 	}
+	snapshotHash := strings.TrimSpace(latest.SnapshotHash)
+	if snapshotHash == "" {
+		return model.SessionClassification{}, false
+	}
 	switch latest.Format {
 	case "modern", "legacy", "opencode_db":
 	default:
@@ -146,7 +150,7 @@ func BuildClassificationRequest(state model.ProjectState) (model.SessionClassifi
 		ProjectPath:       state.Path,
 		SessionFile:       latest.SessionFile,
 		SessionFormat:     latest.Format,
-		SnapshotHash:      SnapshotHashForSession(latest, state.Path),
+		SnapshotHash:      snapshotHash,
 		Status:            model.ClassificationPending,
 		Model:             DefaultModel,
 		ClassifierVersion: ClassifierVersion,

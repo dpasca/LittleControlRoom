@@ -11,9 +11,8 @@ import (
 	"time"
 
 	"lcroom/internal/model"
+	"lcroom/internal/opencodesqlite"
 	"lcroom/internal/scanner"
-
-	_ "modernc.org/sqlite"
 )
 
 type Detector struct {
@@ -37,12 +36,11 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 		return nil, err
 	}
 
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := opencodesqlite.Open(dbPath)
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	db.SetMaxOpenConns(1)
 
 	rows, err := db.QueryContext(ctx, `
 		SELECT

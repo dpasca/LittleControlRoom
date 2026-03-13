@@ -14,8 +14,7 @@ import (
 	"time"
 
 	"lcroom/internal/model"
-
-	_ "modernc.org/sqlite"
+	"lcroom/internal/opencodesqlite"
 )
 
 const (
@@ -168,12 +167,11 @@ func extractOpenCodePreview(ctx context.Context, sessionRef string) (SessionPrev
 		return SessionPreview{}, err
 	}
 
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := opencodesqlite.Open(dbPath)
 	if err != nil {
 		return SessionPreview{}, fmt.Errorf("open opencode sqlite: %w", err)
 	}
 	defer db.Close()
-	db.SetMaxOpenConns(1)
 
 	headItems, err := extractOpenCodeTranscriptItems(ctx, db, sessionID, false, previewItemLimit)
 	if err != nil {
@@ -356,12 +354,11 @@ func extractOpenCodeTranscript(ctx context.Context, sessionRef string) ([]Transc
 		return nil, err
 	}
 
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := opencodesqlite.Open(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open opencode sqlite: %w", err)
 	}
 	defer db.Close()
-	db.SetMaxOpenConns(1)
 	return extractOpenCodeTranscriptItems(ctx, db, sessionID, true, 12)
 }
 

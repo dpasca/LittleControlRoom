@@ -450,6 +450,8 @@ func (s *Store) GetProjectSummaryMap(ctx context.Context) (map[string]model.Proj
 			COALESCE(ps.session_id, ''),
 			COALESCE(ps.format, ''),
 			COALESCE(ps.detected_project_path, ''),
+			COALESCE(ps.snapshot_hash, ''),
+			ps.last_event_at,
 			ps.latest_turn_started_at,
 			COALESCE(ps.latest_turn_state_known, 0),
 			COALESCE(ps.latest_turn_completed, 0),
@@ -493,6 +495,8 @@ func (s *Store) ListProjects(ctx context.Context, includeHistorical bool) ([]mod
 			COALESCE(ps.session_id, ''),
 			COALESCE(ps.format, ''),
 			COALESCE(ps.detected_project_path, ''),
+			COALESCE(ps.snapshot_hash, ''),
+			ps.last_event_at,
 			ps.latest_turn_started_at,
 			COALESCE(ps.latest_turn_state_known, 0),
 			COALESCE(ps.latest_turn_completed, 0),
@@ -539,14 +543,15 @@ func scanSummaryRow(scanner interface {
 	Scan(dest ...any) error
 }) (model.ProjectSummary, error) {
 	var (
-		path, name, status, note, movedFromPath                                                     string
-		lastActivity, snoozedUntil, movedAt, latestTurnStartedAt                                    sql.NullInt64
-		latestSessionID, latestSessionFormat, latestSessionDetectedPath, latestClassificationStatus sql.NullString
-		latestClassificationStage, latestClassificationCategory, latestClassificationSummary        sql.NullString
-		latestClassificationStageStartedAt, latestClassificationUpdatedAt                           sql.NullInt64
-		repoSyncStatus                                                                              string
-		attentionScore, repoAheadCount, repoBehindCount, latestTurnKnown, latestTurnCompleted       int
-		presentOnDisk, repoDirty, forgotten, manuallyAdded, inScope, pinned                         int
+		path, name, status, note, movedFromPath                                                    string
+		lastActivity, snoozedUntil, movedAt, latestSessionLastEventAt, latestTurnStartedAt         sql.NullInt64
+		latestSessionID, latestSessionFormat, latestSessionDetectedPath, latestSessionSnapshotHash sql.NullString
+		latestClassificationStatus                                                                 sql.NullString
+		latestClassificationStage, latestClassificationCategory, latestClassificationSummary       sql.NullString
+		latestClassificationStageStartedAt, latestClassificationUpdatedAt                          sql.NullInt64
+		repoSyncStatus                                                                             string
+		attentionScore, repoAheadCount, repoBehindCount, latestTurnKnown, latestTurnCompleted      int
+		presentOnDisk, repoDirty, forgotten, manuallyAdded, inScope, pinned                        int
 	)
 	if err := scanner.Scan(
 		&path,
@@ -570,6 +575,8 @@ func scanSummaryRow(scanner interface {
 		&latestSessionID,
 		&latestSessionFormat,
 		&latestSessionDetectedPath,
+		&latestSessionSnapshotHash,
+		&latestSessionLastEventAt,
 		&latestTurnStartedAt,
 		&latestTurnKnown,
 		&latestTurnCompleted,
@@ -601,6 +608,7 @@ func scanSummaryRow(scanner interface {
 		LatestSessionID:                  latestSessionID.String,
 		LatestSessionFormat:              latestSessionFormat.String,
 		LatestSessionDetectedProjectPath: latestSessionDetectedPath.String,
+		LatestSessionSnapshotHash:        latestSessionSnapshotHash.String,
 		LatestTurnStateKnown:             latestTurnKnown != 0,
 		LatestTurnCompleted:              latestTurnCompleted != 0,
 		LatestSessionClassification:      model.SessionClassificationStatus(latestClassificationStatus.String),
@@ -617,6 +625,9 @@ func scanSummaryRow(scanner interface {
 	}
 	if movedAt.Valid {
 		p.MovedAt = time.Unix(movedAt.Int64, 0)
+	}
+	if latestSessionLastEventAt.Valid {
+		p.LatestSessionLastEventAt = time.Unix(latestSessionLastEventAt.Int64, 0)
 	}
 	if latestTurnStartedAt.Valid {
 		p.LatestTurnStartedAt = time.Unix(latestTurnStartedAt.Int64, 0)
@@ -1364,6 +1375,8 @@ func (s *Store) GetProjectDetail(ctx context.Context, path string, eventLimit in
 			COALESCE(ps.session_id, ''),
 			COALESCE(ps.format, ''),
 			COALESCE(ps.detected_project_path, ''),
+			COALESCE(ps.snapshot_hash, ''),
+			ps.last_event_at,
 			ps.latest_turn_started_at,
 			COALESCE(ps.latest_turn_state_known, 0),
 			COALESCE(ps.latest_turn_completed, 0),

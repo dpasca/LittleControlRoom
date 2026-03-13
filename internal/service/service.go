@@ -354,6 +354,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			artifacts = dedupeArtifacts(activity.Artifacts)
 			errorCount = activity.ErrorCount
 			if len(sessions) > 0 {
+				reuseLatestSessionSnapshotHash(old, &sessions[0])
 				ensureSessionSnapshotHash(ctx, path, &sessions[0], sessionclassify.NewGitStatusSnapshot(repoDirty, repoSyncStatus, repoAheadCount, repoBehindCount))
 			}
 			if len(sessions) > 0 {
@@ -805,11 +806,30 @@ func (s *Service) latestSessionClassification(ctx context.Context, path string, 
 	if classification.Status != model.ClassificationCompleted {
 		return false, model.SessionCategoryUnknown
 	}
-	expectedHash := sessionclassify.SnapshotHashForSession(sessions[0], path)
+	expectedHash := strings.TrimSpace(sessions[0].SnapshotHash)
+	if expectedHash == "" {
+		return false, model.SessionCategoryUnknown
+	}
 	if classification.SnapshotHash != expectedHash {
 		return false, model.SessionCategoryUnknown
 	}
 	return true, classification.Category
+}
+
+func reuseLatestSessionSnapshotHash(old model.ProjectSummary, session *model.SessionEvidence) {
+	if session == nil || strings.TrimSpace(session.SnapshotHash) != "" {
+		return
+	}
+	if old.LatestSessionID == "" || old.LatestSessionSnapshotHash == "" {
+		return
+	}
+	if old.LatestSessionID != session.SessionID || old.LatestSessionFormat != session.Format {
+		return
+	}
+	if !timesEqual(old.LatestSessionLastEventAt, session.LastEventAt) {
+		return
+	}
+	session.SnapshotHash = old.LatestSessionSnapshotHash
 }
 
 func ensureSessionSnapshotHash(ctx context.Context, projectPath string, session *model.SessionEvidence, gitStatus sessionclassify.GitStatusSnapshot) {
@@ -822,9 +842,7 @@ func ensureSessionSnapshotHash(ctx context.Context, projectPath string, session 
 	hash, err := sessionclassify.ComputeSnapshotHash(ctx, projectPath, *session, gitStatus)
 	if err == nil && strings.TrimSpace(hash) != "" {
 		session.SnapshotHash = hash
-		return
 	}
-	session.SnapshotHash = sessionclassify.SnapshotHashForSession(*session, projectPath)
 }
 
 func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) error {
