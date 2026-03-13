@@ -54,7 +54,7 @@ func GenerateScreenshots(ctx context.Context, svc *service.Service, cfg config.S
 
 	prevProfile := lipgloss.ColorProfile()
 	prevDarkBackground := lipgloss.HasDarkBackground()
-	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetColorProfile(termenv.TrueColor)
 	lipgloss.SetHasDarkBackground(true)
 	defer func() {
 		lipgloss.SetColorProfile(prevProfile)
@@ -1251,6 +1251,7 @@ func screenshotImageDiffView(project model.ProjectSummary) *diffViewState {
 }
 
 func screenshotImageDiffPreview(project model.ProjectSummary) *service.DiffPreview {
+	imagePath, imageBody, noteBody, oldImage, newImage := screenshotImageDiffFixture(project)
 	return &service.DiffPreview{
 		ProjectPath: project.Path,
 		ProjectName: screenshotProjectLabel(project),
@@ -1273,15 +1274,15 @@ diff --git a/internal/tui/diff_view.go b/internal/tui/diff_view.go
 `),
 			},
 			{
-				Path:     "assets/sprites/bunker_guard.png",
-				Summary:  "assets/sprites/bunker_guard.png",
+				Path:     imagePath,
+				Summary:  imagePath,
 				Code:     "M",
 				Kind:     scanner.GitChangeModified,
 				Unstaged: true,
 				IsImage:  true,
-				Body:     "FractalMech-style bunker sprite pass: intact frame on the left, damaged repaint on the right.",
-				OldImage: screenshotBunkerSpritePNG(false),
-				NewImage: screenshotBunkerSpritePNG(true),
+				Body:     imageBody,
+				OldImage: oldImage,
+				NewImage: newImage,
 			},
 			{
 				Path:      "notes/image-diff.txt",
@@ -1289,13 +1290,58 @@ diff --git a/internal/tui/diff_view.go b/internal/tui/diff_view.go
 				Code:      "??",
 				Kind:      scanner.GitChangeUntracked,
 				Untracked: true,
-				Body: strings.TrimSpace(`# Untracked
-
-Use a built-in bunker sprite pair for the docs screenshot so the image diff stays deterministic and does not depend on ../FractalMech being present.
-`),
+				Body:      "# Untracked\n\n" + strings.TrimSpace(noteBody),
 			},
 		},
 	}
+}
+
+func screenshotImageDiffFixture(project model.ProjectSummary) (path, imageBody, noteBody string, oldImage, newImage []byte) {
+	searchRoots := []string{}
+	if projectDir := strings.TrimSpace(project.Path); projectDir != "" {
+		searchRoots = append(searchRoots, filepath.Dir(projectDir))
+	}
+	if wd, err := os.Getwd(); err == nil && strings.TrimSpace(wd) != "" {
+		searchRoots = append(searchRoots, filepath.Dir(wd))
+	}
+
+	if oldJet, newJet, ok := screenshotSiblingFractalMechJets(searchRoots...); ok {
+		return "public/assets/sprites/enemies/jet_f15_gray_camo.png",
+			"FractalMech jet sprite comparison: F-15 on the left, F-16 on the right.",
+			`Use the sibling FractalMech jet sprite pair for the docs screenshot when that repo is present next to LittleControlRoom.
+
+Fallback to the built-in bunker sprite pair when the sibling repo is unavailable, so screenshot generation still works elsewhere.`,
+			oldJet, newJet
+	}
+
+	return "assets/sprites/bunker_guard.png",
+		"FractalMech-style bunker sprite pass: intact frame on the left, damaged repaint on the right.",
+		`Use a built-in bunker sprite pair for the docs screenshot so the image diff stays deterministic when the sibling ../FractalMech repo is not present.`,
+		screenshotBunkerSpritePNG(false), screenshotBunkerSpritePNG(true)
+}
+
+func screenshotSiblingFractalMechJets(searchRoots ...string) (oldImage, newImage []byte, ok bool) {
+	seen := make(map[string]struct{}, len(searchRoots))
+	for _, root := range searchRoots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		root = filepath.Clean(root)
+		if _, exists := seen[root]; exists {
+			continue
+		}
+		seen[root] = struct{}{}
+
+		oldJetPath := filepath.Join(root, "FractalMech", "public", "assets", "sprites", "enemies", "jet_f15_gray_camo.png")
+		newJetPath := filepath.Join(root, "FractalMech", "public", "assets", "sprites", "enemies", "jet_f16_gray_camo.png")
+		oldJet, oldErr := os.ReadFile(oldJetPath)
+		newJet, newErr := os.ReadFile(newJetPath)
+		if oldErr == nil && newErr == nil {
+			return oldJet, newJet, true
+		}
+	}
+	return nil, nil, false
 }
 
 func screenshotBunkerSpritePNG(destroyed bool) []byte {

@@ -1,6 +1,12 @@
 package tui
 
 import (
+	"bytes"
+	"image"
+	"image/color"
+	"image/png"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -61,6 +67,18 @@ func TestRenderTerminalHTMLDocumentIncludesEscapedTextAndColors(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "Iosevka") {
 		t.Fatalf("html should prefer the Iosevka font stack: %q", rendered)
+	}
+}
+
+func TestRenderTerminalHTMLDocumentIncludesTrueColorEscapes(t *testing.T) {
+	t.Parallel()
+
+	rendered, _, _ := renderTerminalHTMLDocument("Demo", "\x1b[38;2;76;52;56mhello \x1b[48;2;40;66;53mworld\x1b[0m", 20, 4)
+	if !strings.Contains(rendered, "#4c3438") {
+		t.Fatalf("html should preserve truecolor foreground escapes: %q", rendered)
+	}
+	if !strings.Contains(rendered, "background:#284235") {
+		t.Fatalf("html should preserve truecolor background escapes: %q", rendered)
 	}
 }
 
@@ -183,6 +201,49 @@ func TestScreenshotImageDiffViewFixtureRendersImagePreview(t *testing.T) {
 	}
 }
 
+func TestScreenshotImageDiffFixturePrefersSiblingFractalMechJets(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "LittleControlRoom")
+	fractalPath := filepath.Join(root, "FractalMech", "public", "assets", "sprites", "enemies")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("mkdir project path: %v", err)
+	}
+	if err := os.MkdirAll(fractalPath, 0o755); err != nil {
+		t.Fatalf("mkdir fractal path: %v", err)
+	}
+
+	oldPNG := mustScreenshotPNG(color.RGBA{R: 180, G: 190, B: 200, A: 255})
+	newPNG := mustScreenshotPNG(color.RGBA{R: 120, G: 140, B: 160, A: 255})
+	oldPath := filepath.Join(fractalPath, "jet_f15_gray_camo.png")
+	newPath := filepath.Join(fractalPath, "jet_f16_gray_camo.png")
+	if err := os.WriteFile(oldPath, oldPNG, 0o644); err != nil {
+		t.Fatalf("write old jet png: %v", err)
+	}
+	if err := os.WriteFile(newPath, newPNG, 0o644); err != nil {
+		t.Fatalf("write new jet png: %v", err)
+	}
+
+	path, body, note, oldImage, newImage := screenshotImageDiffFixture(model.ProjectSummary{
+		Name: "LittleControlRoom",
+		Path: projectPath,
+	})
+
+	if path != "public/assets/sprites/enemies/jet_f15_gray_camo.png" {
+		t.Fatalf("fixture path = %q, want jet sprite path", path)
+	}
+	if !strings.Contains(body, "F-15") || !strings.Contains(body, "F-16") {
+		t.Fatalf("fixture body should describe the jet comparison: %q", body)
+	}
+	if !strings.Contains(note, "sibling FractalMech jet sprite pair") {
+		t.Fatalf("fixture note should mention sibling jet sprites: %q", note)
+	}
+	if !bytes.Equal(oldImage, oldPNG) || !bytes.Equal(newImage, newPNG) {
+		t.Fatalf("fixture should load the sibling jet png bytes")
+	}
+}
+
 func TestScreenshotDemoDataSetUsesSafeFixturePaths(t *testing.T) {
 	t.Parallel()
 
@@ -208,6 +269,20 @@ func TestScreenshotDemoDataSetUsesSafeFixturePaths(t *testing.T) {
 			t.Fatalf("demo projects missing %q", want)
 		}
 	}
+}
+
+func mustScreenshotPNG(fill color.RGBA) []byte {
+	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
+	for y := 0; y < img.Bounds().Dy(); y++ {
+		for x := 0; x < img.Bounds().Dx(); x++ {
+			img.SetRGBA(x, y, fill)
+		}
+	}
+	var out bytes.Buffer
+	if err := png.Encode(&out, img); err != nil {
+		panic(err)
+	}
+	return out.Bytes()
 }
 
 func TestSanitizeScreenshotProjectDetailRewritesLocalPaths(t *testing.T) {

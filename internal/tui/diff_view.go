@@ -1022,7 +1022,7 @@ func renderDiffCellLine(text string, width int, tone diffCellTone, highlightPlan
 	if highlightSyntax && strings.TrimSpace(text) != "" {
 		return renderDiffHighlightedCellLine(text, width, tone, highlightPlan)
 	}
-	style := diffToneStyle(tone)
+	style := diffToneCellStyle(tone)
 	if width > 0 {
 		style = style.Width(width)
 	}
@@ -1031,8 +1031,8 @@ func renderDiffCellLine(text string, width int, tone diffCellTone, highlightPlan
 
 func renderDiffHighlightedCellLine(text string, width int, tone diffCellTone, highlightPlan syntaxHighlightPlan) string {
 	prefix, body := splitDiffSyntaxPrefix(text)
-	highlighted := diffToneStyle(tone).Render(prefix) + highlightPlan.Render(body, syntaxHighlightOptions{
-		DefaultColor:    diffToneDefaultColor(tone),
+	highlighted := diffToneCellStyle(tone).Render(prefix) + highlightPlan.Render(body, syntaxHighlightOptions{
+		DefaultColor:    diffToneCellDefaultColor(tone),
 		BackgroundColor: diffToneBackgroundColor(tone),
 	})
 	strippedWidth := ansi.StringWidth(ansi.Strip(highlighted))
@@ -1081,14 +1081,34 @@ func diffToneDefaultColor(tone diffCellTone) lipgloss.Color {
 	}
 }
 
+func diffToneCellDefaultColor(tone diffCellTone) lipgloss.Color {
+	switch tone {
+	case diffCellToneDeleted, diffCellToneAdded:
+		return lipgloss.Color("252")
+	default:
+		return diffToneDefaultColor(tone)
+	}
+}
+
 func diffToneBackgroundColor(tone diffCellTone) lipgloss.Color {
 	switch tone {
 	case diffCellToneDeleted:
-		return lipgloss.Color("95")
+		return lipgloss.Color("#4c3438")
 	case diffCellToneAdded:
-		return lipgloss.Color("65")
+		return lipgloss.Color("#284235")
 	default:
 		return ""
+	}
+}
+
+func diffToneCellStyle(tone diffCellTone) lipgloss.Style {
+	switch tone {
+	case diffCellToneDeleted, diffCellToneAdded:
+		return lipgloss.NewStyle().
+			Foreground(diffToneCellDefaultColor(tone)).
+			Background(diffToneBackgroundColor(tone))
+	default:
+		return diffToneStyle(tone)
 	}
 }
 
@@ -1102,9 +1122,9 @@ func renderDiffFullRow(text string, width int, tone diffCellTone) string {
 func diffToneStyle(tone diffCellTone) lipgloss.Style {
 	switch tone {
 	case diffCellToneDeleted:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("224")).Background(lipgloss.Color("95"))
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("224")).Background(lipgloss.Color("#4c3438"))
 	case diffCellToneAdded:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("194")).Background(lipgloss.Color("65"))
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("194")).Background(lipgloss.Color("#284235"))
 	case diffCellToneMeta:
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Bold(true)
 	case diffCellToneHunk:

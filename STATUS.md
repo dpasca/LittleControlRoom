@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-13 13:59 JST (JST)
+Last updated: 2026-03-13 14:47 JST (JST)
 
 ## Current State
 
@@ -41,6 +41,7 @@ Current screenshot workflow assumption:
 
 - `make screenshots` currently defaults to the repo-root `screenshots.local.toml` unless `SCREENSHOT_CONFIG` is overridden; the committed demo config remains available at `docs/screenshots.example.toml`.
 - Screenshot capture scale is now configurable via `capture_scale`, and the default browser-rendered PNG export path uses `1.5x` capture scale for sharper text.
+- Screenshot export now preserves truecolor terminal escapes instead of forcing ANSI256 quantization, so the committed docs images can match the live TUI palette more closely.
 - The committed docs screenshot set now includes `main-panel.png`, `main-panel-live-cx.png`, `codex-embedded.png`, `diff-view.png`, `diff-view-image.png`, and `commit-preview.png`.
 
 ## What Works
@@ -75,22 +76,21 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-13 13:59 JST)
+## Latest Update (2026-03-13 14:47 JST)
 
-- Softened the split-diff add/remove backgrounds in `internal/tui/diff_view.go` from the more saturated red/green blocks to muted ANSI256 tints, so the paired diff stays readable without dominating the pane.
-- Investigated the slow diff-file switching path and tightened two hot spots: the diff renderer now resolves the syntax lexer once per file render instead of per highlighted line fragment, and the open diff view now keeps a small per-file/per-width/per-mode render cache instead of only caching the currently selected file.
-- Added focused TUI coverage in `internal/tui/app_test.go` for the new diff render cache, alongside the existing split/unified and syntax-highlighting regressions.
-- Regenerated screenshots after the palette change; `docs/screenshots/diff-view.png` refreshed to match the softer split-diff styling.
-- No Codex/OpenCode detector assumptions or screenshot-footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+- Updated `internal/tui/screenshots.go` so the image-diff screenshot fixture now prefers a sibling `../FractalMech` jet pair (`jet_f15_gray_camo.png` and `jet_f16_gray_camo.png`) when that repo is present beside Little Control Room, which makes the committed demo image diff more visually meaningful than the old bunker placeholder.
+- Kept the built-in bunker sprite pair as the fallback fixture path so screenshot generation still works on machines that do not have the sibling `FractalMech` repo checked out.
+- Added focused coverage in `internal/tui/screenshots_test.go` for the sibling-repo jet fixture path selection, and regenerated `docs/screenshots/diff-view-image.png` so the docs now show the jet-vs-jet image comparison.
+- No Codex/OpenCode detector assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
 
 Verification snapshot:
 
-- `go test ./internal/tui -run 'Test(DiffViewCachesRenderedEntriesAcrossSelectionChanges|RenderCodexTranscriptEntriesHighlightsFencedCodeBlocks|SyntaxHighlightBlockUsesLanguageHint|SyntaxHighlightLexerUsesFilenameHint|RenderDiffEntryBodyCanUseUnifiedMode|RenderDiffEntryBodyUsesSideBySideColumns|DiffModeMTogglesRenderMode|DiffModeMovesSelectionAndScrollsContent)' -count=1` passed.
-- `make test` passed.
-- `make scan` passed at `2026-03-13T13:58:51+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 2`, `queued classifications: 1`).
-- `make doctor` passed on the cached snapshot dated `2026-03-13T13:58:58+09:00` (`projects: 138`).
-- `env COLUMNS=112 LINES=31 make tui` launched and exited cleanly via `q`.
+- `go test ./internal/tui -run 'Test(ScreenshotImageDiffViewFixtureRendersImagePreview|ScreenshotImageDiffFixturePrefersSiblingFractalMechJets|RenderTerminalHTMLDocumentIncludesTrueColorEscapes)' -count=1` passed.
 - `SCREENSHOT_CONFIG=docs/screenshots.example.toml SCREENSHOT_OUTPUT_DIR=docs/screenshots make screenshots` passed and refreshed the committed screenshot set.
+- `make test` passed.
+- `make scan` passed at `2026-03-13T14:45:40+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-13T14:45:47+09:00` (`projects: 138`).
+- `env COLUMNS=112 LINES=31 make tui` launched and exited cleanly via `q`.
 
 Next concrete tasks:
 
