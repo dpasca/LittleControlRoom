@@ -14,15 +14,40 @@ type syntaxHighlightOptions struct {
 	BackgroundColor lipgloss.Color
 }
 
+type syntaxHighlightPlan struct {
+	lexer chroma.Lexer
+}
+
 func syntaxHighlightBlock(text, languageHint, filename string, opts syntaxHighlightOptions) string {
+	return newSyntaxHighlightPlan(languageHint, filename, text).Render(text, opts)
+}
+
+func newSyntaxHighlightPlan(languageHint, filename, sampleText string) syntaxHighlightPlan {
+	return syntaxHighlightPlan{
+		lexer: syntaxHighlightPreparedLexer(languageHint, filename, sampleText),
+	}
+}
+
+func (plan syntaxHighlightPlan) Render(text string, opts syntaxHighlightOptions) string {
+	return syntaxHighlightWithLexer(text, plan.lexer, opts)
+}
+
+func syntaxHighlightPreparedLexer(languageHint, filename, text string) chroma.Lexer {
+	lexer := syntaxHighlightLexer(languageHint, filename, text)
+	if lexer == nil {
+		return nil
+	}
+	return chroma.Coalesce(lexer)
+}
+
+func syntaxHighlightWithLexer(text string, lexer chroma.Lexer, opts syntaxHighlightOptions) string {
 	if text == "" {
 		return ""
 	}
-	lexer := syntaxHighlightLexer(languageHint, filename, text)
 	if lexer == nil {
 		return syntaxHighlightPlainText(text, opts)
 	}
-	iterator, err := chroma.Coalesce(lexer).Tokenise(nil, text)
+	iterator, err := lexer.Tokenise(nil, text)
 	if err != nil {
 		return syntaxHighlightPlainText(text, opts)
 	}

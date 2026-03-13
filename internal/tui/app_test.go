@@ -5041,6 +5041,81 @@ func TestDiffModeMovesSelectionAndScrollsContent(t *testing.T) {
 	}
 }
 
+func TestDiffViewCachesRenderedEntriesAcrossSelectionChanges(t *testing.T) {
+	diffState := newDiffViewState("/tmp/demo", "demo")
+	diffState.loading = false
+	diffState.preview = &service.DiffPreview{
+		Files: []service.DiffFilePreview{
+			{
+				Path:     "main.go",
+				Summary:  "main.go",
+				Code:     "M",
+				Kind:     scanner.GitChangeModified,
+				Unstaged: true,
+				Body: strings.TrimSpace(`# Unstaged
+
+diff --git a/main.go b/main.go
+@@ -1,3 +1,4 @@
+-func main() {}
++func main() {
++    println("hello")
++}
+ `),
+			},
+			{
+				Path:     "diff_view.go",
+				Summary:  "diff_view.go",
+				Code:     "M",
+				Kind:     scanner.GitChangeModified,
+				Unstaged: true,
+				Body: strings.TrimSpace(`# Unstaged
+
+diff --git a/diff_view.go b/diff_view.go
+@@ -10,3 +10,5 @@
+-return "before"
++if mode == diffRenderModeUnified {
++    return "after"
++}
+ `),
+			},
+		},
+	}
+
+	m := Model{
+		diffView:     diffState,
+		commandInput: textinput.New(),
+		width:        100,
+		height:       24,
+	}
+	m.syncDiffView(true)
+
+	cacheKey0 := diffRenderCacheKey{
+		FileIndex: 0,
+		Width:     m.diffView.contentViewport.Width,
+		Mode:      diffRenderModeSideBySide,
+	}
+	firstRendered := m.diffView.renderedContent
+	if got := len(m.diffView.renderCache); got != 1 {
+		t.Fatalf("initial render cache size = %d, want 1", got)
+	}
+	if cached := m.diffView.renderCache[cacheKey0]; cached != firstRendered {
+		t.Fatalf("cached render for first file did not match rendered content")
+	}
+
+	m.moveDiffSelectionTo(1)
+	if got := len(m.diffView.renderCache); got != 2 {
+		t.Fatalf("cache size after rendering second file = %d, want 2", got)
+	}
+
+	m.moveDiffSelectionTo(0)
+	if got := len(m.diffView.renderCache); got != 2 {
+		t.Fatalf("cache size after revisiting first file = %d, want 2", got)
+	}
+	if m.diffView.renderedContent != firstRendered {
+		t.Fatalf("revisiting a file should reuse the cached render")
+	}
+}
+
 func TestDiffModeMTogglesRenderMode(t *testing.T) {
 	diffState := newDiffViewState("/tmp/demo", "demo")
 	diffState.loading = false

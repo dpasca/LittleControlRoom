@@ -478,8 +478,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.diffView.preview = &msg.preview
 		m.diffView.selected = 0
 		m.diffView.offset = 0
-		m.diffView.renderedIndex = -1
-		m.diffView.renderedWidth = 0
+		m.diffView.resetRenderCache()
 		m.syncDiffView(true)
 		m.status = diffViewReadyStatus(*m.diffView)
 		return m, nil
@@ -503,8 +502,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		m.diffView.preview = &msg.preview
 		m.diffView.selected = diffPreviewSelectionIndex(msg.preview.Files, msg.path, msg.originalPath, m.diffView.selected)
-		m.diffView.renderedIndex = -1
-		m.diffView.renderedWidth = 0
+		m.diffView.resetRenderCache()
 		m.syncDiffView(true)
 		if strings.TrimSpace(msg.status) != "" {
 			m.status = msg.status
