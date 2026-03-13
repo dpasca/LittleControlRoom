@@ -4795,7 +4795,7 @@ func TestViewWithDiffScreenUsesFullBody(t *testing.T) {
 	if !strings.Contains(rendered, "HEAD image") || !strings.Contains(rendered, "Working tree image") {
 		t.Fatalf("View() should render image diff labels: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Alt+Up") || !strings.Contains(rendered, "stage") {
+	if !strings.Contains(rendered, "Alt+Up") || !strings.Contains(rendered, "stage") || !strings.Contains(rendered, "unified") {
 		t.Fatalf("View() should render the highlighted diff footer legend: %q", rendered)
 	}
 	if strings.Contains(rendered, "ATTN  STATE") || strings.Contains(rendered, "Attention reasons") {
@@ -4861,6 +4861,82 @@ func TestRenderDiffFileRowSelectedUsesCompactCodeSpacing(t *testing.T) {
 	}
 }
 
+func TestRenderDiffEntryBodyUsesSideBySideColumns(t *testing.T) {
+	rendered := ansi.Strip(renderDiffEntryBody(service.DiffFilePreview{
+		Path:    "README.md",
+		Summary: "README.md",
+		Code:    "M",
+		Kind:    scanner.GitChangeModified,
+		Body: strings.TrimSpace(`# Unstaged
+
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -1,3 +1,3 @@
+-old title
++new title
+ shared line
+`),
+	}, 84, diffRenderModeSideBySide))
+
+	for _, want := range []string{
+		"Unstaged",
+		"Before",
+		"After",
+		"--- a/README.md",
+		"+++ b/README.md",
+		"@@ -1,3 +1,3 @@",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("renderDiffEntryBody() missing %q in side-by-side output: %q", want, rendered)
+		}
+	}
+
+	foundPair := false
+	for _, line := range strings.Split(rendered, "\n") {
+		if strings.Contains(line, "-old title") && strings.Contains(line, "+new title") {
+			foundPair = true
+			break
+		}
+	}
+	if !foundPair {
+		t.Fatalf("renderDiffEntryBody() should place removed and added lines on the same visual row: %q", rendered)
+	}
+}
+
+func TestRenderDiffEntryBodyCanUseUnifiedMode(t *testing.T) {
+	rendered := ansi.Strip(renderDiffEntryBody(service.DiffFilePreview{
+		Path:    "README.md",
+		Summary: "README.md",
+		Code:    "M",
+		Kind:    scanner.GitChangeModified,
+		Body: strings.TrimSpace(`# Unstaged
+
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -1,3 +1,3 @@
+-old title
++new title
+ shared line
+`),
+	}, 84, diffRenderModeUnified))
+
+	for _, want := range []string{
+		"diff --git a/README.md b/README.md",
+		"@@ -1,3 +1,3 @@",
+		"-old title",
+		"+new title",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("unified diff output missing %q: %q", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "Before") || strings.Contains(rendered, "After") {
+		t.Fatalf("unified diff output should not render side-by-side column headers: %q", rendered)
+	}
+}
+
 func TestDiffModeMovesSelectionAndScrollsContent(t *testing.T) {
 	diffState := newDiffViewState("/tmp/demo", "demo")
 	diffState.loading = false
@@ -4912,6 +4988,71 @@ func TestDiffModeMovesSelectionAndScrollsContent(t *testing.T) {
 	}
 	if got.diffView.contentViewport.YOffset == 0 {
 		t.Fatalf("down in content focus should scroll the diff viewport")
+	}
+}
+
+func TestDiffModeMTogglesRenderMode(t *testing.T) {
+	diffState := newDiffViewState("/tmp/demo", "demo")
+	diffState.loading = false
+	diffState.focus = diffFocusContent
+	diffState.preview = &service.DiffPreview{
+		Files: []service.DiffFilePreview{{
+			Path:     "README.md",
+			Summary:  "README.md",
+			Code:     "M",
+			Kind:     scanner.GitChangeModified,
+			Unstaged: true,
+			Body: strings.TrimSpace(`# Unstaged
+
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -1,3 +1,3 @@
+-old title
++new title
+ shared line
+`),
+		}},
+	}
+
+	m := Model{
+		diffView:     diffState,
+		commandInput: textinput.New(),
+		width:        100,
+		height:       24,
+	}
+	m.syncDiffView(true)
+
+	if m.diffView.mode != diffRenderModeSideBySide {
+		t.Fatalf("default diff mode = %s, want side-by-side", m.diffView.mode)
+	}
+	if !strings.Contains(ansi.Strip(m.diffView.renderedContent), "Before") {
+		t.Fatalf("default diff renderer should start in side-by-side mode: %q", ansi.Strip(m.diffView.renderedContent))
+	}
+
+	updated, _ := m.updateDiffMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	got := updated.(Model)
+	if got.diffView.mode != diffRenderModeUnified {
+		t.Fatalf("toggling mode should switch to unified, got %s", got.diffView.mode)
+	}
+	if !strings.Contains(got.status, "unified") {
+		t.Fatalf("status should mention unified mode after toggling: %q", got.status)
+	}
+	unified := ansi.Strip(got.diffView.renderedContent)
+	if strings.Contains(unified, "Before") || strings.Contains(unified, "After") {
+		t.Fatalf("unified mode should not show side-by-side column headers: %q", unified)
+	}
+	if !strings.Contains(unified, "diff --git a/README.md b/README.md") {
+		t.Fatalf("unified mode should keep the regular patch text: %q", unified)
+	}
+
+	updated, _ = got.updateDiffMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	got = updated.(Model)
+	if got.diffView.mode != diffRenderModeSideBySide {
+		t.Fatalf("second toggle should switch back to side-by-side, got %s", got.diffView.mode)
+	}
+	if !strings.Contains(ansi.Strip(got.diffView.renderedContent), "Before") {
+		t.Fatalf("side-by-side mode should restore the paired columns: %q", ansi.Strip(got.diffView.renderedContent))
 	}
 }
 

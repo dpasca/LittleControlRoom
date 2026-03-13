@@ -727,14 +727,17 @@ diff --git a/internal/tui/app.go b/internal/tui/app.go
 				Body: strings.TrimSpace(`# Unstaged
 
 diff --git a/internal/tui/diff_view.go b/internal/tui/diff_view.go
-@@ -572,0 +573,12 @@
-+func renderDiffFooter(width int, state diffViewState, usageLabel string) string {
-+	actions := []footerAction{
-+		footerPrimaryAction("-", "stage"),
-+		footerHideAction("Alt+Up", "list"),
+--- a/internal/tui/diff_view.go
++++ b/internal/tui/diff_view.go
+@@ -412,4 +412,9 @@
+-func diffModeLabel() string {
+-	return "unified"
++func diffModeLabel(mode diffRenderMode) string {
++	if mode == diffRenderModeUnified {
++		return "unified"
 +	}
-+	return renderFooterLine(width, meta, renderFooterActionList(actions...), renderFooterUsage(usageLabel))
-+}
++	return "side-by-side"
+ }
 `),
 			},
 			{

@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type diffPaneFocus string
@@ -26,9 +27,43 @@ const (
 	diffFocusContent diffPaneFocus = "content"
 )
 
+type diffRenderMode string
+
+const (
+	diffRenderModeSideBySide diffRenderMode = "side_by_side"
+	diffRenderModeUnified    diffRenderMode = "unified"
+)
+
 type diffListRow struct {
 	Title     string
 	FileIndex int
+}
+
+type diffTextSection struct {
+	Title string
+	Lines []string
+}
+
+type diffCellTone int
+
+const (
+	diffCellToneNeutral diffCellTone = iota
+	diffCellToneDeleted
+	diffCellToneAdded
+	diffCellToneMeta
+	diffCellToneHunk
+	diffCellToneNote
+	diffCellToneHeader
+)
+
+type diffSideBySideRow struct {
+	Full      string
+	Left      string
+	Right     string
+	FullTone  diffCellTone
+	LeftTone  diffCellTone
+	RightTone diffCellTone
+	FullWidth bool
 }
 
 type commitPreviewReturnState struct {
@@ -47,10 +82,12 @@ type diffViewState struct {
 	selected int
 	offset   int
 	focus    diffPaneFocus
+	mode     diffRenderMode
 
 	contentViewport viewport.Model
 	renderedWidth   int
 	renderedIndex   int
+	renderedMode    diffRenderMode
 	renderedContent string
 }
 
@@ -60,6 +97,7 @@ func newDiffViewState(projectPath, projectName string) *diffViewState {
 		ProjectName:     strings.TrimSpace(projectName),
 		loading:         true,
 		focus:           diffFocusFiles,
+		mode:            diffRenderModeSideBySide,
 		contentViewport: viewport.New(0, 0),
 		renderedIndex:   -1,
 	}
@@ -96,6 +134,9 @@ func (m Model) updateDiffMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "Staging selected file..."
 		}
 		return m, m.toggleDiffStageCmd(m.diffView.ProjectPath, file)
+	case "m":
+		m.toggleDiffRenderMode()
+		return m, nil
 	case "tab":
 		m.toggleDiffFocus()
 		return m, nil
@@ -198,6 +239,22 @@ func (m *Model) setDiffFocus(focus diffPaneFocus) {
 	m.status = diffViewReadyStatus(*m.diffView)
 }
 
+func (m *Model) toggleDiffRenderMode() {
+	if m.diffView == nil {
+		return
+	}
+	if m.diffView.mode == diffRenderModeUnified {
+		m.diffView.mode = diffRenderModeSideBySide
+	} else {
+		m.diffView.mode = diffRenderModeUnified
+	}
+	m.diffView.renderedIndex = -1
+	m.diffView.renderedWidth = 0
+	m.diffView.renderedMode = ""
+	m.syncDiffView(false)
+	m.status = diffViewReadyStatus(*m.diffView)
+}
+
 func (m *Model) moveDiffSelectionBy(delta int) {
 	if m.diffView == nil || m.diffView.preview == nil || len(m.diffView.preview.Files) == 0 || delta == 0 {
 		return
@@ -297,15 +354,17 @@ func (m *Model) ensureRenderedDiffContent(width int) {
 		m.diffView.renderedContent = renderCodexMessageBlock("Diff", "No changed files loaded.", lipgloss.Color("81"), lipgloss.Color("252"), width)
 		m.diffView.renderedWidth = width
 		m.diffView.renderedIndex = -1
+		m.diffView.renderedMode = m.diffView.mode
 		return
 	}
-	if m.diffView.renderedWidth == width && m.diffView.renderedIndex == m.diffView.selected && m.diffView.renderedContent != "" {
+	if m.diffView.renderedWidth == width && m.diffView.renderedIndex == m.diffView.selected && m.diffView.renderedMode == m.diffView.mode && m.diffView.renderedContent != "" {
 		return
 	}
 	file := m.diffView.preview.Files[m.diffView.selected]
-	m.diffView.renderedContent = renderDiffEntryBody(file, width)
+	m.diffView.renderedContent = renderDiffEntryBody(file, width, m.diffView.mode)
 	m.diffView.renderedWidth = width
 	m.diffView.renderedIndex = m.diffView.selected
+	m.diffView.renderedMode = m.diffView.mode
 }
 
 func (m Model) selectedDiffFile() (service.DiffFilePreview, bool) {
@@ -432,7 +491,7 @@ func (m Model) renderDiffContentPane(width, height int) string {
 		case m.diffView.preview != nil && len(m.diffView.preview.Files) > 0:
 			file := m.diffView.preview.Files[m.diffView.selected]
 			title = commandPaletteTitleStyle.Render(truncateText(file.Summary, max(1, width)))
-			meta = commandPaletteHintStyle.Render(diffFileMeta(file))
+			meta = commandPaletteHintStyle.Render(diffFileMeta(file, m.diffView.mode))
 			body = m.diffView.contentViewport.View()
 		default:
 			meta = commandPaletteHintStyle.Render("No changed files")
@@ -447,7 +506,7 @@ func (m Model) renderDiffContentPane(width, height int) string {
 	return fitPaneContent(strings.Join(content, "\n"), width, height)
 }
 
-func diffFileMeta(file service.DiffFilePreview) string {
+func diffFileMeta(file service.DiffFilePreview, mode diffRenderMode) string {
 	parts := []string{diffFileStateWord(file)}
 	switch {
 	case file.Staged && file.Unstaged:
@@ -459,11 +518,13 @@ func diffFileMeta(file service.DiffFilePreview) string {
 	}
 	if file.IsImage {
 		parts = append(parts, "image preview")
+	} else {
+		parts = append(parts, diffRenderModeMetaLabel(mode))
 	}
 	return strings.Join(parts, " | ")
 }
 
-func renderDiffEntryBody(file service.DiffFilePreview, width int) string {
+func renderDiffEntryBody(file service.DiffFilePreview, width int, mode diffRenderMode) string {
 	if file.IsImage {
 		return renderDiffImageBody(file, width)
 	}
@@ -471,7 +532,12 @@ func renderDiffEntryBody(file service.DiffFilePreview, width int) string {
 	if body == "" {
 		body = "No textual diff available."
 	}
-	return renderCodexMonospaceBlock("Diff", body, lipgloss.Color("81"), width)
+	switch mode {
+	case diffRenderModeUnified:
+		return renderDiffUnifiedTextBody(body, width)
+	default:
+		return renderDiffSideBySideTextBody(body, width)
+	}
 }
 
 func renderDiffImageBody(file service.DiffFilePreview, width int) string {
@@ -486,6 +552,415 @@ func renderDiffImageBody(file service.DiffFilePreview, width int) string {
 		blocks = append(blocks, renderCodexMessageBlock("Image", "Preview unavailable.", lipgloss.Color("81"), lipgloss.Color("252"), width))
 	}
 	return strings.Join(blocks, "\n\n")
+}
+
+func renderDiffUnifiedTextBody(body string, width int) string {
+	return renderCodexMonospaceBlock("Diff", body, lipgloss.Color("81"), width)
+}
+
+func renderDiffSideBySideTextBody(body string, width int) string {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		body = "No textual diff available."
+	}
+
+	contentWidth := max(10, width-2)
+	sections := parseDiffTextSections(body)
+	rendered := make([]string, 0, len(sections))
+	for _, section := range sections {
+		block := renderDiffTextSection(section, contentWidth)
+		if strings.TrimSpace(ansi.Strip(block)) != "" {
+			rendered = append(rendered, block)
+		}
+	}
+	if len(rendered) == 0 {
+		rendered = append(rendered, renderDiffFullRow("No textual diff available.", contentWidth, diffCellToneNote))
+	}
+	return renderDiffTextBlock("Diff", strings.Join(rendered, "\n\n"), lipgloss.Color("81"))
+}
+
+func parseDiffTextSections(body string) []diffTextSection {
+	lines := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
+	sections := make([]diffTextSection, 0, 3)
+	current := diffTextSection{}
+	haveCurrent := false
+
+	flush := func() {
+		if !haveCurrent {
+			return
+		}
+		current.Lines = trimBlankLines(current.Lines)
+		if current.Title != "" || len(current.Lines) > 0 {
+			sections = append(sections, current)
+		}
+		current = diffTextSection{}
+		haveCurrent = false
+	}
+
+	for _, line := range lines {
+		if title, ok := diffTextSectionTitle(line); ok {
+			flush()
+			current = diffTextSection{Title: title}
+			haveCurrent = true
+			continue
+		}
+		if !haveCurrent {
+			haveCurrent = true
+		}
+		current.Lines = append(current.Lines, line)
+	}
+	flush()
+
+	if len(sections) == 0 {
+		return []diffTextSection{{Lines: trimBlankLines(lines)}}
+	}
+	return sections
+}
+
+func diffTextSectionTitle(line string) (string, bool) {
+	if !strings.HasPrefix(line, "# ") {
+		return "", false
+	}
+	title := strings.TrimSpace(strings.TrimPrefix(line, "# "))
+	switch title {
+	case "Staged", "Unstaged", "Untracked":
+		return title, true
+	default:
+		return "", false
+	}
+}
+
+func trimBlankLines(lines []string) []string {
+	start := 0
+	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	end := len(lines)
+	for end > start && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
+	out := make([]string, end-start)
+	copy(out, lines[start:end])
+	return out
+}
+
+func renderDiffTextSection(section diffTextSection, width int) string {
+	rows := buildDiffSideBySideRows(section)
+	if len(rows) == 0 {
+		return ""
+	}
+	rendered := make([]string, 0, len(rows))
+	for _, row := range rows {
+		rendered = append(rendered, renderDiffSideBySideRow(row, width))
+	}
+	return strings.Join(rendered, "\n")
+}
+
+// Pair adjacent removed and added runs so the diff content reads as before/after columns.
+func buildDiffSideBySideRows(section diffTextSection) []diffSideBySideRow {
+	rows := []diffSideBySideRow{}
+	if title := strings.TrimSpace(section.Title); title != "" {
+		rows = append(rows, diffSideBySideRow{
+			Full:      title,
+			FullTone:  diffCellToneHeader,
+			FullWidth: true,
+		})
+	}
+	if len(section.Lines) == 0 {
+		return rows
+	}
+	if diffSectionUsesSideBySide(section.Lines) {
+		rows = append(rows, diffSideBySideRow{
+			Left:      "Before",
+			Right:     "After",
+			LeftTone:  diffCellToneHeader,
+			RightTone: diffCellToneHeader,
+		})
+	}
+
+	var removed []string
+	var added []string
+	pendingOldPath := ""
+
+	flushPair := func() {
+		if len(removed) == 0 && len(added) == 0 {
+			return
+		}
+		pairs := max(len(removed), len(added))
+		for i := 0; i < pairs; i++ {
+			left := ""
+			right := ""
+			if i < len(removed) {
+				left = removed[i]
+			}
+			if i < len(added) {
+				right = added[i]
+			}
+			rows = append(rows, diffSideBySideRow{
+				Left:      left,
+				Right:     right,
+				LeftTone:  diffToneForPatchCell(left, diffCellToneDeleted),
+				RightTone: diffToneForPatchCell(right, diffCellToneAdded),
+			})
+		}
+		removed = nil
+		added = nil
+	}
+
+	for _, line := range section.Lines {
+		if strings.TrimSpace(line) == "" {
+			flushPair()
+			continue
+		}
+
+		switch {
+		case strings.HasPrefix(line, "diff --git "), strings.HasPrefix(line, "index "):
+			flushPair()
+			rows = append(rows, diffSideBySideRow{
+				Full:      line,
+				FullTone:  diffCellToneMeta,
+				FullWidth: true,
+			})
+		case strings.HasPrefix(line, "--- "):
+			flushPair()
+			pendingOldPath = line
+		case strings.HasPrefix(line, "+++ "):
+			flushPair()
+			if pendingOldPath != "" {
+				rows = append(rows, diffSideBySideRow{
+					Left:      pendingOldPath,
+					Right:     line,
+					LeftTone:  diffCellToneDeleted,
+					RightTone: diffCellToneAdded,
+				})
+				pendingOldPath = ""
+				continue
+			}
+			rows = append(rows, diffSideBySideRow{
+				Left:      "",
+				Right:     line,
+				LeftTone:  diffCellToneNeutral,
+				RightTone: diffCellToneAdded,
+			})
+		case strings.HasPrefix(line, "@@"):
+			flushPair()
+			if pendingOldPath != "" {
+				rows = append(rows, diffSideBySideRow{
+					Left:      pendingOldPath,
+					Right:     "",
+					LeftTone:  diffCellToneDeleted,
+					RightTone: diffCellToneNeutral,
+				})
+				pendingOldPath = ""
+			}
+			rows = append(rows, diffSideBySideRow{
+				Full:      line,
+				FullTone:  diffCellToneHunk,
+				FullWidth: true,
+			})
+		default:
+			switch diffPatchLineKind(line) {
+			case "-":
+				removed = append(removed, line)
+			case "+":
+				added = append(added, line)
+			case " ":
+				flushPair()
+				if pendingOldPath != "" {
+					rows = append(rows, diffSideBySideRow{
+						Left:      pendingOldPath,
+						Right:     "",
+						LeftTone:  diffCellToneDeleted,
+						RightTone: diffCellToneNeutral,
+					})
+					pendingOldPath = ""
+				}
+				rows = append(rows, diffSideBySideRow{
+					Left:      line,
+					Right:     line,
+					LeftTone:  diffCellToneNeutral,
+					RightTone: diffCellToneNeutral,
+				})
+			default:
+				flushPair()
+				if pendingOldPath != "" {
+					rows = append(rows, diffSideBySideRow{
+						Left:      pendingOldPath,
+						Right:     "",
+						LeftTone:  diffCellToneDeleted,
+						RightTone: diffCellToneNeutral,
+					})
+					pendingOldPath = ""
+				}
+				rows = append(rows, diffSideBySideRow{
+					Full:      line,
+					FullTone:  diffToneForFullDiffLine(line),
+					FullWidth: true,
+				})
+			}
+		}
+	}
+
+	flushPair()
+	if pendingOldPath != "" {
+		rows = append(rows, diffSideBySideRow{
+			Left:      pendingOldPath,
+			Right:     "",
+			LeftTone:  diffCellToneDeleted,
+			RightTone: diffCellToneNeutral,
+		})
+	}
+	return rows
+}
+
+func diffSectionUsesSideBySide(lines []string) bool {
+	for _, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "diff --git "), strings.HasPrefix(line, "--- "), strings.HasPrefix(line, "+++ "), strings.HasPrefix(line, "@@"):
+			return true
+		case diffPatchLineKind(line) != "":
+			return true
+		}
+	}
+	return false
+}
+
+func diffPatchLineKind(line string) string {
+	if line == "" {
+		return ""
+	}
+	switch {
+	case strings.HasPrefix(line, "+++ "), strings.HasPrefix(line, "--- "):
+		return ""
+	case strings.HasPrefix(line, "+"):
+		return "+"
+	case strings.HasPrefix(line, "-"):
+		return "-"
+	case strings.HasPrefix(line, " "):
+		return " "
+	default:
+		return ""
+	}
+}
+
+func diffToneForPatchCell(line string, fallback diffCellTone) diffCellTone {
+	if strings.TrimSpace(line) == "" {
+		return diffCellToneNeutral
+	}
+	return fallback
+}
+
+func diffToneForFullDiffLine(line string) diffCellTone {
+	switch {
+	case strings.HasPrefix(line, "\\ "):
+		return diffCellToneMeta
+	case strings.HasPrefix(line, "# "):
+		return diffCellToneNote
+	case strings.HasPrefix(line, "new file mode"), strings.HasPrefix(line, "deleted file mode"),
+		strings.HasPrefix(line, "old mode"), strings.HasPrefix(line, "new mode"),
+		strings.HasPrefix(line, "rename from "), strings.HasPrefix(line, "rename to "),
+		strings.HasPrefix(line, "similarity index"), strings.HasPrefix(line, "dissimilarity index"),
+		strings.HasPrefix(line, "Binary files "):
+		return diffCellToneMeta
+	default:
+		return diffCellToneNote
+	}
+}
+
+func renderDiffSideBySideRow(row diffSideBySideRow, width int) string {
+	if row.FullWidth {
+		return renderDiffFullRow(row.Full, width, row.FullTone)
+	}
+
+	gap := lipgloss.NewStyle().Foreground(lipgloss.Color("239")).Render(" │ ")
+	gapWidth := ansi.StringWidth(ansi.Strip(gap))
+	leftWidth := max(1, (width-gapWidth)/2)
+	rightWidth := max(1, width-leftWidth-gapWidth)
+
+	leftLines := wrapDiffCell(row.Left, leftWidth)
+	rightLines := wrapDiffCell(row.Right, rightWidth)
+	lineCount := max(len(leftLines), len(rightLines))
+	rendered := make([]string, 0, lineCount)
+	for i := 0; i < lineCount; i++ {
+		left := ""
+		right := ""
+		if i < len(leftLines) {
+			left = leftLines[i]
+		}
+		if i < len(rightLines) {
+			right = rightLines[i]
+		}
+		rendered = append(rendered,
+			renderDiffCellLine(left, leftWidth, row.LeftTone)+
+				gap+
+				renderDiffCellLine(right, rightWidth, row.RightTone),
+		)
+	}
+	return strings.Join(rendered, "\n")
+}
+
+func wrapDiffCell(text string, width int) []string {
+	if width <= 0 {
+		return []string{text}
+	}
+	text = strings.ReplaceAll(text, "\t", "    ")
+	if text == "" {
+		return []string{""}
+	}
+	lines := []string{}
+	remaining := text
+	for remaining != "" {
+		part := ansi.Truncate(remaining, width, "")
+		if part == "" {
+			runes := []rune(remaining)
+			part = string(runes[:1])
+		}
+		lines = append(lines, part)
+		remaining = strings.TrimPrefix(remaining, part)
+	}
+	return lines
+}
+
+func renderDiffCellLine(text string, width int, tone diffCellTone) string {
+	if text == "" {
+		return strings.Repeat(" ", max(0, width))
+	}
+	return fitStyledWidth(diffToneStyle(tone).Render(text), width)
+}
+
+func renderDiffFullRow(text string, width int, tone diffCellTone) string {
+	if text == "" {
+		return strings.Repeat(" ", max(0, width))
+	}
+	return fitStyledWidth(diffToneStyle(tone).Render(text), width)
+}
+
+func diffToneStyle(tone diffCellTone) lipgloss.Style {
+	switch tone {
+	case diffCellToneDeleted:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
+	case diffCellToneAdded:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+	case diffCellToneMeta:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Bold(true)
+	case diffCellToneHunk:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
+	case diffCellToneHeader:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("246")).Bold(true)
+	case diffCellToneNote:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Faint(true)
+	default:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+	}
+}
+
+func renderDiffTextBlock(label, body string, accent lipgloss.Color) string {
+	title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render(label)
+	return lipgloss.NewStyle().
+		BorderLeft(true).
+		BorderForeground(accent).
+		PaddingLeft(1).
+		Render(title + "\n" + body)
 }
 
 func renderDiffImagePreviewSet(file service.DiffFilePreview, width int) string {
@@ -567,16 +1042,39 @@ func rgbaForPreview(c color.Color) [3]uint8 {
 	return [3]uint8{r, g, b}
 }
 
+func diffRenderModeLabel(mode diffRenderMode) string {
+	switch mode {
+	case diffRenderModeUnified:
+		return "unified"
+	default:
+		return "split"
+	}
+}
+
+func diffRenderModeMetaLabel(mode diffRenderMode) string {
+	return diffRenderModeLabel(mode)
+}
+
+func diffRenderModeToggleLabel(mode diffRenderMode) string {
+	switch mode {
+	case diffRenderModeUnified:
+		return "split"
+	default:
+		return "unified"
+	}
+}
+
 func diffViewReadyStatus(state diffViewState) string {
 	closeLabel := diffViewCloseLabel(state)
 	if state.loading {
 		return "Preparing diff view..."
 	}
+	modeLabel := diffRenderModeToggleLabel(state.mode)
 	switch state.focus {
 	case diffFocusContent:
-		return "Diff ready. Up/Down scroll, Tab files, Esc " + closeLabel
+		return "Diff " + diffRenderModeLabel(state.mode) + ". Up/Down scroll, M " + modeLabel + ", Tab files, Esc " + closeLabel
 	default:
-		return "Diff ready. Up/Down choose file, Tab scroll pane, Esc " + closeLabel
+		return "Diff " + diffRenderModeLabel(state.mode) + ". Up/Down choose file, M " + modeLabel + ", Tab scroll pane, Esc " + closeLabel
 	}
 }
 
@@ -585,11 +1083,12 @@ func diffViewFooterLabel(state diffViewState) string {
 	if state.loading {
 		return "Diff loading. Esc " + closeLabel
 	}
+	modeLabel := diffRenderModeToggleLabel(state.mode)
 	switch state.focus {
 	case diffFocusContent:
-		return "Diff: Up/Down scroll, PgUp/PgDn page, Left/Tab files, Esc " + closeLabel
+		return "Diff: Up/Down scroll, M " + modeLabel + ", PgUp/PgDn page, Left/Tab files, Esc " + closeLabel
 	default:
-		return "Diff: Up/Down choose, Enter/Right open, PgUp/PgDn page, Esc " + closeLabel
+		return "Diff: Up/Down choose, M " + modeLabel + ", Enter/Right open, PgUp/PgDn page, Esc " + closeLabel
 	}
 }
 
@@ -612,11 +1111,7 @@ func renderDiffFooter(width int, state diffViewState, usageLabel string) string 
 		)
 	}
 
-	meta := renderFooterMeta("Diff: files")
-	switch state.focus {
-	case diffFocusContent:
-		meta = renderFooterMeta("Diff: content")
-	}
+	meta := renderFooterMeta("Diff: " + diffRenderModeMetaLabel(state.mode))
 
 	stageLabel := "stage"
 	if file, ok := selectedDiffFileFromState(state); ok && file.Staged {
@@ -626,6 +1121,7 @@ func renderDiffFooter(width int, state diffViewState, usageLabel string) string 
 	actions := []footerAction{
 		footerPrimaryAction("-", stageLabel),
 		footerHideAction("Alt+Up", hideLabel),
+		footerLowAction("m", diffRenderModeToggleLabel(state.mode)),
 	}
 	switch state.focus {
 	case diffFocusContent:

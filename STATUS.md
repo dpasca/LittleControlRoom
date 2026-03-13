@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-13 11:02 JST (JST)
+Last updated: 2026-03-13 11:33 JST (JST)
 
 ## Current State
 
@@ -75,7 +75,55 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-13 11:02 JST)
+## Latest Update (2026-03-13 11:33 JST)
+
+- Added an in-diff `m` toggle in `internal/tui/diff_view.go` so users can switch between the new split view and the original unified patch view without leaving the diff screen.
+- Extended diff-view state, footer hints, and status/meta copy so the current mode is visible and the next mode is discoverable from the UI (`m unified` or `m split`).
+- Reworked the demo diff screenshot fixture in `internal/tui/screenshots.go` to use a shorter before/after code change instead of an add-only patch, which keeps the left column populated and reduces wrapping in the committed screenshot set.
+- Updated focused TUI coverage for unified-mode rendering, `m`-key toggling, and the refreshed screenshot fixture expectations; regenerated `docs/screenshots/diff-view.png` and `docs/screenshots/diff-view-image.png`.
+- No Codex/OpenCode detector or screenshot-footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/tui -run 'Test(RenderDiffEntryBodyUsesSideBySideColumns|RenderDiffEntryBodyCanUseUnifiedMode|DiffModeMTogglesRenderMode|ViewWithDiffScreenUsesFullBody|ScreenshotDiffViewFixtureRendersSelectedPatch)' -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-13T11:33:28+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-13T11:33:28+09:00` (`projects: 138`).
+- `env COLUMNS=112 LINES=31 make tui` launched and exited cleanly via `q`.
+- `SCREENSHOT_CONFIG=docs/screenshots.example.toml SCREENSHOT_OUTPUT_DIR=docs/screenshots make screenshots` passed and refreshed the committed diff screenshots.
+
+Next concrete tasks:
+
+- Decide whether diff mode should later become a persisted user setting in config instead of a per-view toggle.
+- Exercise the split renderer against more rename/delete-heavy diffs to tune any edge-case metadata rows and narrow-width behavior.
+- Factor a provider-neutral transcript/session abstraction so Codex and OpenCode stop sharing only by convention.
+
+## Recent Updates
+
+### 2026-03-13 11:19 JST
+
+- Switched the diff screen's text preview from a unified patch block to a side-by-side renderer in `internal/tui/diff_view.go`, while preserving the existing file list, staged/unstaged grouping, image diff handling, and diff-screen navigation.
+- Added a lightweight parser for the preview body's staged/unstaged/untracked sections so removed and added runs are paired into `Before | After` columns, with hunk headers, file headers, and diff metadata still rendered distinctly.
+- Added focused TUI regression coverage for the new paired-column rendering and updated the screenshot fixture expectations to lock in the side-by-side layout.
+- Regenerated the committed demo screenshot at `docs/screenshots/diff-view.png` so the docs now match the new diff screen.
+- No Codex/OpenCode detector or screenshot-footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/tui -run 'Test(RenderDiffEntryBodyUsesSideBySideColumns|RenderDiffFileListSeparatesStagedAndUnstagedSections|ViewWithDiffScreenUsesFullBody|ScreenshotDiffViewFixtureRendersSelectedPatch|DiffModeMovesSelectionAndScrollsContent)' -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-13T11:18:16+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-13T11:18:24+09:00` (`projects: 138`).
+- `env COLUMNS=112 LINES=31 make tui` launched and exited cleanly via `q`.
+- `SCREENSHOT_CONFIG=docs/screenshots.example.toml SCREENSHOT_OUTPUT_DIR=docs/screenshots make screenshots` passed and refreshed `docs/screenshots/diff-view.png`.
+
+Next concrete tasks:
+
+- Exercise the side-by-side renderer against more real rename/delete-heavy diffs to tune any edge-case metadata rows.
+- Decide whether the diff pane should grow optional line numbers or a narrow-terminal fallback once we have more usage feedback.
+- Factor a provider-neutral transcript/session abstraction so Codex and OpenCode stop sharing only by convention.
+
+### 2026-03-13 11:02 JST
 
 - Fixed the OpenCode reassessment loop where unchanged projects could keep re-queueing the LLM classifier just because `opencode.db` was temporarily busy during snapshot extraction.
 - Added a dedicated `internal/opencodesqlite` read helper that opens `opencode.db` with a busy timeout and query-only mode, and switched both the detector and OpenCode snapshot/preview extraction onto that helper.
@@ -97,8 +145,6 @@ Next concrete tasks:
 - Factor a provider-neutral transcript/session abstraction so Codex and OpenCode stop sharing only by convention.
 - Keep polishing OpenCode parity details such as agent/status presentation and attachment confidence.
 - Consider a small follow-up around persistent OpenCode snapshot failures that are not lock-related, so they surface more clearly in the UI/doctor output.
-
-## Recent Updates
 
 ### 2026-03-13 10:50 JST
 

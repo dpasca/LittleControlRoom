@@ -141,7 +141,10 @@ func TestScreenshotDiffViewFixtureRendersSelectedPatch(t *testing.T) {
 		"Staged (1)",
 		"Unstaged (3)",
 		"internal/tui/diff_view.go",
-		"func renderDiffFooter",
+		"Before",
+		"After",
+		"func diffModeLabel",
+		"side-by-side",
 		"Alt+Up",
 		"stage",
 	} {
