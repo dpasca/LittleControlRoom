@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-13 20:09 JST (JST)
+Last updated: 2026-03-13 20:17 JST (JST)
 
 ## Current State
 
@@ -76,25 +76,25 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-13 20:09 JST)
+## Latest Update (2026-03-13 20:17 JST)
 
-- Updated the embedded Codex/OpenCode footer in `internal/tui/codex_pane.go` so active states now pop visually: `Working` and `Finishing` use an animated shifting color gradient, the live timer pulses, and reconciling status gets a lighter animated accent while keeping the plain text copy unchanged.
-- Kept the animation render-only by leaving `codexFooterStatus` as the source of truth for the underlying status string, which avoids changing session logic or any text-based behavior elsewhere in the TUI.
-- Added focused coverage in `internal/tui/app_test.go` to lock in that busy footer text still strips to the same `Working 12:00` copy while the ANSI-styled render changes across spinner frames.
+- Cleaned up the embedded `/resume` picker in `internal/tui/codex_picker.go`: resume-mode rows now use the session summary as the primary label, stop stamping every historical row as `LAST`, and instead distinguish `CURRENT`, `LIVE`, `LATEST`, and `SAVED` more honestly.
+- Simplified the resume picker layout so saved-session rows are single-line and the About section no longer duplicates the same title/summary text when they match, which makes the selected current session read much more cleanly.
+- Added focused TUI coverage in `internal/tui/app_test.go` for the new resume-row badge semantics and for preferring the useful summary over noisy transcript-derived titles like the raw `# AGENTS.md ...` line.
 - No Codex/OpenCode detector assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
 
 Verification snapshot:
 
-- `go test ./internal/tui -run 'Test(CodexFooterStatusShowsBusyTimer|CodexFooterStatusShowsTimerWhileBusyExternal|CodexFooterStatusShowsFinishingState|CodexFooterStatusShowsReconcilingState|RenderCodexFooterPrioritizesSendCloseHideAndDefersDenseBlocks|RenderCodexFooterAnimatesBusyStatus)' -count=1` passed.
+- `go test ./internal/tui -run 'Test(VisibleCodexSlashResumeOpensPickerAndLoadsChoices|RenderCodexPickerRowUsesSavedBadgeAndSummaryInResumeMode|RenderCodexPickerRowMarksLatestSavedSessionInResumeMode)' -count=1` passed.
 - `make test` passed.
-- `make scan` passed at `2026-03-13T20:09:11+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 0`).
-- `make doctor` passed on the cached snapshot dated `2026-03-13T20:09:18+09:00` (`projects: 138`).
+- `make scan` passed at `2026-03-13T20:17:29+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 2`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-13T20:17:36+09:00` (`projects: 138`).
 - `env COLUMNS=112 LINES=31 make tui` launched and exited cleanly via `q`.
 
 Next concrete tasks:
 
-- Tune the active footer palette after a little live use, especially if the pulse should be stronger or slower on terminals with reduced color support.
-- Consider whether the same active-state treatment should also be reused in the project list `RUN` column or detail-pane activity labels for better at-a-glance motion cues.
+- Re-open the resume picker against a few real long-history projects to see whether the remaining preview extraction should be upgraded further, especially for terse markdown-only summaries like `Findings`.
+- Decide whether the picker should eventually group `CURRENT` separately from saved sessions instead of mixing it into a single list.
 - Factor a provider-neutral transcript/session abstraction so Codex and OpenCode stop sharing only by convention.
 
 ## Recent Updates

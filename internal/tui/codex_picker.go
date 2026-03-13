@@ -33,6 +33,7 @@ type codexSessionChoice struct {
 	Summary      string
 	Live         bool
 	Current      bool
+	Latest       bool
 	Busy         bool
 	BusyExternal bool
 	Hidden       bool
@@ -72,7 +73,7 @@ func (m Model) openCodexResumePicker(provider codexapp.Provider, projectPath str
 	m.codexPickerLoading = true
 	m.codexPickerKind = codexPickerKindResume
 	m.codexPickerTitle = "Resume " + provider.Label() + " Session"
-	m.codexPickerHint = "Saved sessions for this project. The current one is marked CURRENT."
+	m.codexPickerHint = "Saved sessions for this project. CURRENT marks the open embedded session."
 	m.codexPickerEmpty = "No saved " + provider.Label() + " sessions found for this project."
 	m.codexPickerProject = projectPath
 	m.codexPickerProvider = provider
@@ -278,6 +279,7 @@ func buildCodexResumeChoices(ctx context.Context, detail model.ProjectDetail, pr
 			SessionID:    session.SessionID,
 			Provider:     provider,
 			LastActivity: session.LastEventAt,
+			Latest:       detail.Summary.LatestSessionID == session.SessionID && providerForSessionFormat(detail.Summary.LatestSessionFormat) == provider,
 			Missing:      !project.PresentOnDisk,
 		}
 		if preview, err := sessionclassify.ExtractPreview(ctx, session); err == nil {
@@ -603,8 +605,11 @@ func (m Model) renderCodexPickerContent(width int) string {
 	if selected, ok := m.currentCodexPickerChoice(); ok {
 		lines = append(lines, "")
 		lines = append(lines, commandPaletteTitleStyle.Render("About"))
-		if m.codexPickerKind == codexPickerKindResume && strings.TrimSpace(selected.Title) != "" {
-			lines = append(lines, detailValueStyle.Render(fitFooterWidth(selected.Title, width)))
+		if summary := strings.TrimSpace(selected.Summary); summary != "" {
+			lines = append(lines, detailValueStyle.Render(fitFooterWidth(summary, width)))
+		}
+		if title := strings.TrimSpace(selected.Title); title != "" && !strings.EqualFold(title, strings.TrimSpace(selected.Summary)) {
+			lines = append(lines, commandPaletteHintStyle.Render(fitFooterWidth("Title: "+title, width)))
 		}
 		lines = append(lines, commandPaletteHintStyle.Render(fitFooterWidth(selected.ProjectPath, width)))
 		meta := "Source: " + selected.Provider.Label() + "  Session: " + shortID(selected.SessionID) + "  Last activity: " + formatPickerActivity(selected.LastActivity)
@@ -612,9 +617,6 @@ func (m Model) renderCodexPickerContent(width int) string {
 			meta += "  Current: yes"
 		}
 		lines = append(lines, detailValueStyle.Render(fitFooterWidth(meta, width)))
-		if summary := strings.TrimSpace(selected.Summary); summary != "" {
-			lines = append(lines, commandPaletteHintStyle.Render(fitFooterWidth(summary, width)))
-		}
 	}
 
 	return strings.Join(lines, "\n")
@@ -651,13 +653,24 @@ func (m Model) renderCodexPickerRow(choice codexSessionChoice, selected bool, wi
 	if choice.Current {
 		badges = append(badges, "CURRENT")
 	}
-	switch {
-	case choice.Live && choice.Hidden:
-		badges = append(badges, "OPEN")
-	case choice.Live:
-		badges = append(badges, "LIVE")
-	default:
-		badges = append(badges, "LAST")
+	if m.codexPickerKind == codexPickerKindResume {
+		switch {
+		case choice.Live:
+			badges = append(badges, "LIVE")
+		case choice.Latest:
+			badges = append(badges, "LATEST")
+		default:
+			badges = append(badges, "SAVED")
+		}
+	} else {
+		switch {
+		case choice.Live && choice.Hidden:
+			badges = append(badges, "OPEN")
+		case choice.Live:
+			badges = append(badges, "LIVE")
+		default:
+			badges = append(badges, "LAST")
+		}
 	}
 	if choice.Busy {
 		badges = append(badges, "BUSY")
@@ -672,12 +685,9 @@ func (m Model) renderCodexPickerRow(choice codexSessionChoice, selected bool, wi
 	left := strings.Join(badges, " ")
 	right := fmt.Sprintf("%s  %s", formatPickerActivity(choice.LastActivity), shortID(choice.SessionID))
 	available := max(16, width-len(left)-len(right)-6)
-	label := choice.ProjectName
-	if m.codexPickerKind == codexPickerKindResume && strings.TrimSpace(choice.Title) != "" {
-		label = choice.Title
-	}
+	label := m.codexPickerPrimaryLabel(choice)
 	row := fmt.Sprintf("  %s  %s  %s", left, truncateText(label, available), right)
-	if m.codexPickerKind == codexPickerKindResume && strings.TrimSpace(choice.Summary) != "" {
+	if m.codexPickerKind != codexPickerKindResume && strings.TrimSpace(choice.Summary) != "" {
 		row += "\n  " + truncateText(choice.Summary, max(12, width-4))
 	}
 	if selected {
@@ -711,12 +721,31 @@ func (m Model) mergeCurrentResumeChoice(choices []codexSessionChoice) []codexSes
 			if choice.LastActivity.After(mergedCurrent.LastActivity) {
 				mergedCurrent.LastActivity = choice.LastActivity
 			}
+			mergedCurrent.Latest = mergedCurrent.Latest || choice.Latest
 			mergedCurrent.Missing = choice.Missing
 			continue
 		}
 		others = append(others, choice)
 	}
 	return append([]codexSessionChoice{mergedCurrent}, others...)
+}
+
+func (m Model) codexPickerPrimaryLabel(choice codexSessionChoice) string {
+	if m.codexPickerKind == codexPickerKindResume {
+		if summary := strings.TrimSpace(choice.Summary); summary != "" {
+			return summary
+		}
+		if title := strings.TrimSpace(choice.Title); title != "" {
+			return title
+		}
+	}
+	if title := strings.TrimSpace(choice.Title); title != "" {
+		return title
+	}
+	if summary := strings.TrimSpace(choice.Summary); summary != "" {
+		return summary
+	}
+	return choice.ProjectName
 }
 
 func (m Model) currentResumeChoice() (codexSessionChoice, bool) {
@@ -754,6 +783,7 @@ func (m Model) currentResumeChoice() (codexSessionChoice, bool) {
 		Summary:      summary,
 		Live:         true,
 		Current:      true,
+		Latest:       project.LatestSessionID == sessionID && providerForSessionFormat(project.LatestSessionFormat) == provider,
 		Busy:         snapshot.Busy,
 		BusyExternal: snapshot.BusyExternal,
 		Missing:      !project.PresentOnDisk && project.Path != "",

@@ -1972,6 +1972,48 @@ func TestVisibleCodexSlashResumeOpensPickerAndLoadsChoices(t *testing.T) {
 	}
 }
 
+func TestRenderCodexPickerRowUsesSavedBadgeAndSummaryInResumeMode(t *testing.T) {
+	m := Model{codexPickerKind: codexPickerKindResume}
+	row := ansi.Strip(m.renderCodexPickerRow(codexSessionChoice{
+		Provider:     codexapp.ProviderCodex,
+		SessionID:    "thread-old",
+		LastActivity: time.Date(2026, 3, 13, 19, 56, 0, 0, time.UTC),
+		Title:        "# AGENTS.md instructions for /Users/davide/dev/repos/FractalMech",
+		Summary:      "Feature added: wheel plays a blip on character change, build passes; tuning offers optional next steps.",
+	}, false, 96))
+
+	if !strings.Contains(row, "SAVED") {
+		t.Fatalf("resume picker row should mark historical sessions as saved: %q", row)
+	}
+	if strings.Contains(row, "LAST") {
+		t.Fatalf("resume picker row should not label every saved session as last: %q", row)
+	}
+	if !strings.Contains(row, "Feature added: wheel plays a blip") {
+		t.Fatalf("resume picker row should surface the summary first: %q", row)
+	}
+	if strings.Contains(row, "# AGENTS.md instructions") {
+		t.Fatalf("resume picker row should keep noisy transcript titles out of the list row: %q", row)
+	}
+}
+
+func TestRenderCodexPickerRowMarksLatestSavedSessionInResumeMode(t *testing.T) {
+	m := Model{codexPickerKind: codexPickerKindResume}
+	row := ansi.Strip(m.renderCodexPickerRow(codexSessionChoice{
+		Provider:     codexapp.ProviderCodex,
+		SessionID:    "thread-latest",
+		LastActivity: time.Date(2026, 3, 13, 19, 56, 0, 0, time.UTC),
+		Summary:      "Latest saved session summary.",
+		Latest:       true,
+	}, false, 96))
+
+	if !strings.Contains(row, "LATEST") {
+		t.Fatalf("resume picker row should mark the newest saved session: %q", row)
+	}
+	if strings.Contains(row, "SAVED") {
+		t.Fatalf("latest saved session should use the latest badge instead of saved: %q", row)
+	}
+}
+
 func TestVisibleCodexSlashResumeIDOpensRequestedSession(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
