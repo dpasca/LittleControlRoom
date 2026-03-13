@@ -3850,6 +3850,44 @@ func TestRenderCodexFooterPrioritizesSendCloseHideAndDefersDenseBlocks(t *testin
 	}
 }
 
+func TestRenderCodexFooterAnimatesBusyStatus(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	now := time.Date(2026, 3, 13, 15, 4, 5, 0, time.UTC)
+	snapshot := codexapp.Snapshot{
+		Busy:      true,
+		BusySince: now.Add(-12 * time.Minute),
+		Status:    "Codex is working...",
+	}
+
+	base := Model{
+		nowFn: func() time.Time { return now },
+	}
+	renderedA := base.renderCodexFooter(snapshot, 140)
+	base.spinnerFrame = 6
+	renderedB := base.renderCodexFooter(snapshot, 140)
+
+	if stripped := ansi.Strip(renderedA); !strings.Contains(stripped, "Working 12:00") {
+		t.Fatalf("renderCodexFooter() missing busy status text: %q", stripped)
+	}
+	if ansi.Strip(renderedA) != ansi.Strip(renderedB) {
+		t.Fatalf("busy footer should keep the same visible text while animating: %q vs %q", ansi.Strip(renderedA), ansi.Strip(renderedB))
+	}
+	if renderedA == renderedB {
+		t.Fatalf("busy footer should animate across spinner frames")
+	}
+	if !strings.Contains(renderedA, "\x1b[") {
+		t.Fatalf("busy footer should include ANSI styling while active: %q", renderedA)
+	}
+}
+
 func TestRenderCodexBannerPromotesPickerPrevNextAndBlocks(t *testing.T) {
 	rendered := ansi.Strip((Model{}).renderCodexBanner(codexapp.Snapshot{
 		Started:     true,

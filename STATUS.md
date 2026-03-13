@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-13 14:47 JST (JST)
+Last updated: 2026-03-13 20:09 JST (JST)
 
 ## Current State
 
@@ -76,26 +76,25 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-13 14:47 JST)
+## Latest Update (2026-03-13 20:09 JST)
 
-- Updated `internal/tui/screenshots.go` so the image-diff screenshot fixture now prefers a sibling `../FractalMech` jet pair (`jet_f15_gray_camo.png` and `jet_f16_gray_camo.png`) when that repo is present beside Little Control Room, which makes the committed demo image diff more visually meaningful than the old bunker placeholder.
-- Kept the built-in bunker sprite pair as the fallback fixture path so screenshot generation still works on machines that do not have the sibling `FractalMech` repo checked out.
-- Added focused coverage in `internal/tui/screenshots_test.go` for the sibling-repo jet fixture path selection, and regenerated `docs/screenshots/diff-view-image.png` so the docs now show the jet-vs-jet image comparison.
+- Updated the embedded Codex/OpenCode footer in `internal/tui/codex_pane.go` so active states now pop visually: `Working` and `Finishing` use an animated shifting color gradient, the live timer pulses, and reconciling status gets a lighter animated accent while keeping the plain text copy unchanged.
+- Kept the animation render-only by leaving `codexFooterStatus` as the source of truth for the underlying status string, which avoids changing session logic or any text-based behavior elsewhere in the TUI.
+- Added focused coverage in `internal/tui/app_test.go` to lock in that busy footer text still strips to the same `Working 12:00` copy while the ANSI-styled render changes across spinner frames.
 - No Codex/OpenCode detector assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
 
 Verification snapshot:
 
-- `go test ./internal/tui -run 'Test(ScreenshotImageDiffViewFixtureRendersImagePreview|ScreenshotImageDiffFixturePrefersSiblingFractalMechJets|RenderTerminalHTMLDocumentIncludesTrueColorEscapes)' -count=1` passed.
-- `SCREENSHOT_CONFIG=docs/screenshots.example.toml SCREENSHOT_OUTPUT_DIR=docs/screenshots make screenshots` passed and refreshed the committed screenshot set.
+- `go test ./internal/tui -run 'Test(CodexFooterStatusShowsBusyTimer|CodexFooterStatusShowsTimerWhileBusyExternal|CodexFooterStatusShowsFinishingState|CodexFooterStatusShowsReconcilingState|RenderCodexFooterPrioritizesSendCloseHideAndDefersDenseBlocks|RenderCodexFooterAnimatesBusyStatus)' -count=1` passed.
 - `make test` passed.
-- `make scan` passed at `2026-03-13T14:45:40+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 0`).
-- `make doctor` passed on the cached snapshot dated `2026-03-13T14:45:47+09:00` (`projects: 138`).
+- `make scan` passed at `2026-03-13T20:09:11+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-13T20:09:18+09:00` (`projects: 138`).
 - `env COLUMNS=112 LINES=31 make tui` launched and exited cleanly via `q`.
 
 Next concrete tasks:
 
-- Decide whether diff mode should later become a persisted user setting in config instead of a per-view toggle.
-- Keep tuning the split-diff palette and token colors so the syntax layer and the diff add/remove tint stay readable across more languages and narrow widths.
+- Tune the active footer palette after a little live use, especially if the pulse should be stronger or slower on terminals with reduced color support.
+- Consider whether the same active-state treatment should also be reused in the project list `RUN` column or detail-pane activity labels for better at-a-glance motion cues.
 - Factor a provider-neutral transcript/session abstraction so Codex and OpenCode stop sharing only by convention.
 
 ## Recent Updates

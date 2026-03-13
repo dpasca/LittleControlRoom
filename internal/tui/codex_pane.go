@@ -1200,7 +1200,7 @@ func firstNonEmptyCodexLabel(values ...string) string {
 }
 
 func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
-	status := codexFooterStatus(snapshot, m.currentTime())
+	status := renderCodexFooterStatus(snapshot, m.currentTime(), m.spinnerFrame)
 
 	var actions []footerAction
 	switch {
@@ -1283,10 +1283,84 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 
 	segments := []string{}
 	if status != "" {
-		segments = append(segments, renderFooterStatus(status))
+		segments = append(segments, status)
 	}
 	segments = append(segments, renderFooterActionList(actions...))
 	return renderFooterLine(width, segments...)
+}
+
+var (
+	codexBusyFooterPalette        = []lipgloss.Color{lipgloss.Color("81"), lipgloss.Color("117"), lipgloss.Color("153"), lipgloss.Color("221"), lipgloss.Color("214"), lipgloss.Color("178")}
+	codexFinishingFooterPalette   = []lipgloss.Color{lipgloss.Color("214"), lipgloss.Color("220"), lipgloss.Color("229"), lipgloss.Color("221")}
+	codexReconcilingFooterPalette = []lipgloss.Color{lipgloss.Color("220"), lipgloss.Color("229"), lipgloss.Color("214")}
+)
+
+func renderCodexFooterStatus(snapshot codexapp.Snapshot, now time.Time, spinnerFrame int) string {
+	status := codexFooterStatus(snapshot, now)
+	switch {
+	case strings.HasPrefix(status, "Working elsewhere "):
+		timer := strings.TrimPrefix(status, "Working elsewhere ")
+		return renderCodexAnimatedFooterLabel("Working", spinnerFrame, codexBusyFooterPalette) + " " +
+			lipgloss.NewStyle().Foreground(lipgloss.Color("246")).Render("elsewhere") + " " +
+			renderCodexAnimatedFooterTimer(timer, spinnerFrame, lipgloss.Color("229"))
+	case status == "Working elsewhere":
+		return renderCodexAnimatedFooterLabel("Working", spinnerFrame, codexBusyFooterPalette) + " " +
+			lipgloss.NewStyle().Foreground(lipgloss.Color("246")).Render("elsewhere")
+	case strings.HasPrefix(status, "Working "):
+		timer := strings.TrimPrefix(status, "Working ")
+		return renderCodexAnimatedFooterLabel("Working", spinnerFrame, codexBusyFooterPalette) + " " +
+			renderCodexAnimatedFooterTimer(timer, spinnerFrame, lipgloss.Color("229"))
+	case status == "Working":
+		return renderCodexAnimatedFooterLabel("Working", spinnerFrame, codexBusyFooterPalette)
+	case strings.HasPrefix(status, "Finishing "):
+		timer := strings.TrimPrefix(status, "Finishing ")
+		return renderCodexAnimatedFooterLabel("Finishing", spinnerFrame, codexFinishingFooterPalette) + " " +
+			renderCodexAnimatedFooterTimer(timer, spinnerFrame, lipgloss.Color("221"))
+	case status == "Finishing":
+		return renderCodexAnimatedFooterLabel("Finishing", spinnerFrame, codexFinishingFooterPalette)
+	case status == "Rechecking turn status":
+		return renderCodexAnimatedFooterText(status, spinnerFrame, codexReconcilingFooterPalette)
+	default:
+		return renderFooterStatus(status)
+	}
+}
+
+func renderCodexAnimatedFooterLabel(label string, spinnerFrame int, palette []lipgloss.Color) string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return ""
+	}
+	if len(palette) == 0 {
+		return renderFooterStatus(label)
+	}
+	shift := (spinnerFrame / 3) % len(palette)
+	var out strings.Builder
+	for i, r := range label {
+		style := lipgloss.NewStyle().Bold(true).Foreground(palette[(i+shift)%len(palette)])
+		out.WriteString(style.Render(string(r)))
+	}
+	return out.String()
+}
+
+func renderCodexAnimatedFooterText(text string, spinnerFrame int, palette []lipgloss.Color) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	if len(palette) == 0 {
+		return renderFooterStatus(text)
+	}
+	color := palette[(spinnerFrame/4)%len(palette)]
+	return lipgloss.NewStyle().Bold(true).Foreground(color).Render(text)
+}
+
+func renderCodexAnimatedFooterTimer(text string, spinnerFrame int, accent lipgloss.Color) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	palette := []lipgloss.Color{accent, lipgloss.Color("252"), accent, lipgloss.Color("153")}
+	return lipgloss.NewStyle().Bold(true).Foreground(palette[(spinnerFrame/4)%len(palette)]).Render(text)
 }
 
 func (m Model) renderCodexTranscriptContent(width int) string {
