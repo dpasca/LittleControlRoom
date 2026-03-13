@@ -1295,7 +1295,7 @@ var (
 	codexReconcilingFooterPalette = []lipgloss.Color{lipgloss.Color("220"), lipgloss.Color("229"), lipgloss.Color("214")}
 )
 
-const codexBusyGradientLoopFrames = 60.0
+const codexBusyGradientLoopFrames = 25.0
 
 func renderCodexFooterStatus(snapshot codexapp.Snapshot, now time.Time, spinnerFrame int) string {
 	status := codexFooterStatus(snapshot, now)

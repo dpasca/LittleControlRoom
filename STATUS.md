@@ -76,9 +76,9 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-13 20:59 JST)
+## Latest Update (2026-03-13 21:08 JST)
 
-- Kept the new wrapped grayscale `Working` footer in `internal/tui/codex_pane.go` and sped its phase loop up a bit by moving the wrapped wave from a `72`-frame cycle to a `60`-frame cycle. With the existing `120ms` spinner tick, that shortens one full pass from about `8.6s` to about `7.2s`.
+- Kept the new wrapped grayscale `Working` footer in `internal/tui/codex_pane.go` and sped its phase loop up again to match the requested feel by moving the wrapped wave down to a `25`-frame cycle. With the existing `120ms` spinner tick, that makes one full pass take about `3.0s`.
 - Fixed the hidden cause of the steppy animation in `internal/tui/app.go`: `spinnerFrame` had been wrapped to the 4 spinner glyphs, which meant every "smooth" footer animation only had 4 actual states. The counter now keeps a higher-resolution animation frame and only mods by 4 when selecting the spinner glyph itself.
 - Added focused TUI regression coverage in `internal/tui/app_test.go` for both root issues: the wrapped busy gradient now proves it matches exactly at the seam, and the spinner tick keeps advancing past the 4 glyph states so animated gradients are not limited to four phases.
 - No Codex/OpenCode detector assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
@@ -87,8 +87,8 @@ Verification snapshot:
 
 - `go test ./internal/tui -run 'Test(RenderCodexFooterAnimatesBusyStatus|CodexBusyGradientWrapsContinuously|SpinnerTickKeepsHighResolutionAnimationFrames)' -count=1` passed.
 - `make test` passed.
-- `make scan` passed at `2026-03-13T20:58:54+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 2`, `queued classifications: 1`).
-- `make doctor` passed on the cached snapshot dated `2026-03-13T20:59:02+09:00` (`projects: 138`).
+- `make scan` passed at `2026-03-13T21:08:22+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 2`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-13T21:08:30+09:00` (`projects: 138`).
 - `env COLUMNS=110 LINES=30 make tui` launched and exited cleanly via `q`.
 
 Next concrete tasks:
