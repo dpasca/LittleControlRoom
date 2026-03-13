@@ -922,10 +922,11 @@ func wrapDiffCell(text string, width int) []string {
 }
 
 func renderDiffCellLine(text string, width int, tone diffCellTone) string {
-	if text == "" {
-		return strings.Repeat(" ", max(0, width))
+	style := diffToneStyle(tone)
+	if width > 0 {
+		style = style.Width(width)
 	}
-	return fitStyledWidth(diffToneStyle(tone).Render(text), width)
+	return style.Render(text)
 }
 
 func renderDiffFullRow(text string, width int, tone diffCellTone) string {
@@ -938,9 +939,9 @@ func renderDiffFullRow(text string, width int, tone diffCellTone) string {
 func diffToneStyle(tone diffCellTone) lipgloss.Style {
 	switch tone {
 	case diffCellToneDeleted:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("224")).Background(lipgloss.Color("52"))
 	case diffCellToneAdded:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("194")).Background(lipgloss.Color("22"))
 	case diffCellToneMeta:
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Bold(true)
 	case diffCellToneHunk:

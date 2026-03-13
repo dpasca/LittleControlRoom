@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-13 11:33 JST (JST)
+Last updated: 2026-03-13 12:40 JST (JST)
 
 ## Current State
 
@@ -75,11 +75,12 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-13 11:33 JST)
+## Latest Update (2026-03-13 12:40 JST)
 
 - Added an in-diff `m` toggle in `internal/tui/diff_view.go` so users can switch between the new split view and the original unified patch view without leaving the diff screen.
 - Extended diff-view state, footer hints, and status/meta copy so the current mode is visible and the next mode is discoverable from the UI (`m unified` or `m split`).
 - Reworked the demo diff screenshot fixture in `internal/tui/screenshots.go` to use a shorter before/after code change instead of an add-only patch, which keeps the left column populated and reduces wrapping in the committed screenshot set.
+- Updated the split-diff add/remove cell styling to use tinted red and green backgrounds, which makes the paired view read more like the Codex diff presentation while keeping unified mode unchanged.
 - Updated focused TUI coverage for unified-mode rendering, `m`-key toggling, and the refreshed screenshot fixture expectations; regenerated `docs/screenshots/diff-view.png` and `docs/screenshots/diff-view-image.png`.
 - No Codex/OpenCode detector or screenshot-footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
 
@@ -87,8 +88,8 @@ Verification snapshot:
 
 - `go test ./internal/tui -run 'Test(RenderDiffEntryBodyUsesSideBySideColumns|RenderDiffEntryBodyCanUseUnifiedMode|DiffModeMTogglesRenderMode|ViewWithDiffScreenUsesFullBody|ScreenshotDiffViewFixtureRendersSelectedPatch)' -count=1` passed.
 - `make test` passed.
-- `make scan` passed at `2026-03-13T11:33:28+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 0`).
-- `make doctor` passed on the cached snapshot dated `2026-03-13T11:33:28+09:00` (`projects: 138`).
+- `make scan` passed at `2026-03-13T12:40:50+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-13T12:40:57+09:00` (`projects: 138`).
 - `env COLUMNS=112 LINES=31 make tui` launched and exited cleanly via `q`.
 - `SCREENSHOT_CONFIG=docs/screenshots.example.toml SCREENSHOT_OUTPUT_DIR=docs/screenshots make screenshots` passed and refreshed the committed diff screenshots.
 
