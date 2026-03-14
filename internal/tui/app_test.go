@@ -1419,6 +1419,74 @@ func TestEnterLaunchesCodexFromFocusedProjectList(t *testing.T) {
 	}
 }
 
+func TestEnterRestoresHiddenLiveCodexSessionFromFocusedProjectList(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: codexapp.ProviderCodex,
+				Started:  true,
+				ThreadID: "thread-live",
+				Status:   "Codex session ready",
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+		ResumeID:    "thread-live",
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{
+			{
+				Path:                "/tmp/demo",
+				Name:                "demo",
+				PresentOnDisk:       true,
+				LatestSessionID:     "thread-stale",
+				LatestSessionFormat: "modern",
+			},
+		},
+		selected:           0,
+		focusedPane:        focusProjects,
+		codexHiddenProject: "/tmp/demo",
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Sessions: []model.SessionEvidence{
+				{SessionID: "thread-stale", Format: "modern"},
+			},
+		},
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should restore the hidden embedded Codex session")
+	}
+	if got.codexVisibleProject != "/tmp/demo" {
+		t.Fatalf("codexVisibleProject = %q, want /tmp/demo", got.codexVisibleProject)
+	}
+	if got.codexPendingOpen != nil {
+		t.Fatalf("codexPendingOpen = %#v, want nil when restoring a live session", got.codexPendingOpen)
+	}
+	if got.status != "Embedded Codex session reopened. Alt+Up hides it." {
+		t.Fatalf("status = %q, want live restore notice", got.status)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want 1 because reopening should not launch again", len(requests))
+	}
+}
+
 func TestEnterDoesNotLaunchCodexFromDetailPane(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{
@@ -4064,6 +4132,51 @@ func TestSelectedProjectSessionIDPrefersDetailOpenCodeSession(t *testing.T) {
 	got := m.selectedProjectSessionID(project, codexapp.ProviderOpenCode)
 	if got != "op_3" {
 		t.Fatalf("selectedProjectSessionID() = %q, want %q", got, "op_3")
+	}
+}
+
+func TestSelectedProjectSessionIDPrefersLiveEmbeddedSession(t *testing.T) {
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: codexapp.ProviderCodex,
+				Started:  true,
+				ThreadID: "thread-live",
+				Status:   "Codex session ready",
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+		ResumeID:    "thread-live",
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	project := model.ProjectSummary{
+		Path:                "/tmp/demo",
+		Name:                "demo",
+		PresentOnDisk:       true,
+		LatestSessionID:     "cx_summary",
+		LatestSessionFormat: "modern",
+	}
+	m := Model{
+		codexManager: manager,
+		projects:     []model.ProjectSummary{project},
+		selected:     0,
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Sessions: []model.SessionEvidence{
+				{SessionID: "cx_2", Format: "modern"},
+			},
+		},
+	}
+
+	got := m.selectedProjectSessionID(project, codexapp.ProviderCodex)
+	if got != "thread-live" {
+		t.Fatalf("selectedProjectSessionID() = %q, want %q", got, "thread-live")
 	}
 }
 

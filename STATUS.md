@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-14 20:42 JST (JST)
+Last updated: 2026-03-14 21:09 JST (JST)
 
 ## Current State
 
@@ -76,6 +76,27 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-14 21:09 JST)
+
+- Fixed a hidden-session reopen regression in the main project list: pressing `Enter` on a project with an already-live hidden embedded Codex/OpenCode session could still go back through the launch/resume path, so stale stored session ids could replace the running session and append a misleading `Resumed...` notice.
+- The list reopen path now restores the existing live embedded session for that project/provider directly, and the session-id selection helper now prefers the live embedded thread over older detail/summary metadata when a true relaunch path still needs a resume target.
+- Added focused TUI regressions for both behaviors: restoring a hidden live Codex session from the project list without relaunching, and preferring the live embedded session id over stale stored ids.
+- No detector or footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-14T21:08:34+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-14T21:08:34+09:00` (`projects: 138`).
+- A short `go run ./cmd/lcroom tui ... --allow-multiple-instances` smoke launch showed the expected existing-owner warning, reached the TUI, and exited via `q`.
+
+Next concrete tasks:
+
+- Reproduce the exact "hide while the reply is streaming, then reopen from the main list" flow in a free debug TUI session and confirm no extra `Resumed...` system notice is appended.
+- If the transcript still ever looks partial after this fix, trace whether that is a separate transcript-hydration/reconciliation issue rather than another reopen/replace bug.
+- Consider whether the status copy should explicitly say `restored` vs `resumed` in more places so the distinction is clearer during live use.
 
 ## Latest Update (2026-03-14 20:42 JST)
 

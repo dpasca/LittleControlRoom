@@ -1786,6 +1786,11 @@ func (m Model) launchEmbeddedForSelection(provider codexapp.Provider, forceNew b
 		m.status = provider.Label() + " launch requires a folder present on disk"
 		return m, nil
 	}
+	if !forceNew && strings.TrimSpace(prompt) == "" {
+		if _, ok := m.liveEmbeddedSnapshotForProject(p.Path, provider); ok {
+			return m.showCodexProject(p.Path, "Embedded "+provider.Label()+" session reopened. Alt+Up hides it.")
+		}
+	}
 
 	req := codexapp.LaunchRequest{
 		Provider:    provider,
@@ -1813,7 +1818,30 @@ func (m Model) selectedProjectCodexSessionID(project model.ProjectSummary) strin
 	return m.selectedProjectSessionID(project, codexapp.ProviderCodex)
 }
 
+func (m Model) liveEmbeddedSnapshotForProject(projectPath string, provider codexapp.Provider) (codexapp.Snapshot, bool) {
+	projectPath = strings.TrimSpace(projectPath)
+	provider = provider.Normalized()
+	if projectPath == "" || provider == "" {
+		return codexapp.Snapshot{}, false
+	}
+	session, ok := m.codexSession(projectPath)
+	if !ok {
+		return codexapp.Snapshot{}, false
+	}
+	snapshot := session.Snapshot()
+	if snapshot.Closed || strings.TrimSpace(snapshot.ThreadID) == "" {
+		return codexapp.Snapshot{}, false
+	}
+	if embeddedProvider(snapshot) != provider {
+		return codexapp.Snapshot{}, false
+	}
+	return snapshot, true
+}
+
 func (m Model) selectedProjectSessionID(project model.ProjectSummary, provider codexapp.Provider) string {
+	if snapshot, ok := m.liveEmbeddedSnapshotForProject(project.Path, provider); ok {
+		return strings.TrimSpace(snapshot.ThreadID)
+	}
 	if m.detail.Summary.Path == project.Path {
 		for _, session := range m.detail.Sessions {
 			if providerForSessionFormat(session.Format) == provider.Normalized() && strings.TrimSpace(session.SessionID) != "" {
