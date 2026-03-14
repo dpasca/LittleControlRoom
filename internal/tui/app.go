@@ -3929,7 +3929,11 @@ func sourceStyle(format string, live bool) lipgloss.Style {
 		}
 		return style
 	case "OC":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true)
+		style := lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true)
+		if !live {
+			style = style.Foreground(lipgloss.Color("172")).Faint(true)
+		}
+		return style
 	default:
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	}

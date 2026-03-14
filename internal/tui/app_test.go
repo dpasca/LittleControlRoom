@@ -4039,6 +4039,27 @@ func TestRenderCodexTranscriptEntriesHighlightsFencedCodeBlocks(t *testing.T) {
 	}
 }
 
+func TestSourceStyleDimsNonLiveOpenCodeBadge(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	nonLive := sourceStyle("opencode_db", false).Render("OC")
+	live := sourceStyle("opencode_db", true).Render("OC")
+
+	if ansi.Strip(nonLive) != "OC" || ansi.Strip(live) != "OC" {
+		t.Fatalf("source badge text should stay visible: non-live=%q live=%q", ansi.Strip(nonLive), ansi.Strip(live))
+	}
+	if nonLive == live {
+		t.Fatalf("non-live OpenCode badge should render differently from a live badge: non-live=%q live=%q", nonLive, live)
+	}
+}
+
 func TestVisibleCodexViewHidesSessionApprovalShortcutForFileChanges(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",

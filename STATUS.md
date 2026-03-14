@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-14 21:09 JST (JST)
+Last updated: 2026-03-14 21:31 JST (JST)
 
 ## Current State
 
@@ -76,6 +76,27 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-14 21:31 JST)
+
+- Fixed an OpenCode live/idle presentation bug in the main project list: `OC` source tags were always rendered in the bright live-looking style, which made OpenCode projects look pre-opened even on cold start despite the embedded manager having no live session for them.
+- OpenCode source styling now mirrors the Codex live-state treatment by dimming idle rows and only using the bright accent when there is an actual live embedded session for that project.
+- Added a focused TUI regression that proves idle and live OpenCode source tags render differently, so future styling changes cannot silently reintroduce the false-open appearance.
+- Investigation of the live store also confirmed there was no broad OpenCode detector/session-state bug behind this specific symptom: stored OpenCode rows in the current DB were not marked as running (`latest_turn_state_known=0` / `latest_turn_completed=0`).
+- No detector or footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-14T21:31:11+09:00` (`activity projects: 84`, `tracked projects: 136`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-14T21:31:23+09:00` (`projects: 136`).
+- A short `go run ./cmd/lcroom tui ... --allow-multiple-instances` smoke launch showed the expected existing-owner warning, reached the TUI, and exited via `q`.
+
+Next concrete tasks:
+
+- Do one longer manual OpenCode UI pass inside the real TUI and confirm there is no separate hidden-session/reopen issue beyond the fixed source-tag styling.
+- If users still report OpenCode rows reopening unexpectedly, instrument the embedded manager/session counts per provider so future reports can distinguish render-state confusion from a real live-session leak.
 
 ## Latest Update (2026-03-14 21:09 JST)
 
