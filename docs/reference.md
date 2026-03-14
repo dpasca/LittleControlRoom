@@ -133,7 +133,8 @@ While the project note dialog is open:
 - `Ctrl+Y` copies the whole current note to the system clipboard
 - `Tab` or `Shift+Tab` moves between the editor and actions
 - `Enter` adds a newline in the editor or runs the selected action
-- `Copy...` opens a small menu for copying the whole note, the current line, the current paragraph, or text before or after the cursor
+- `Copy...` opens a small menu for either `Whole note` or `Selected text`
+- In note selection mode, press `Space` once to mark the start, move the cursor, and press `Space` again to copy the selected range
 
 While the embedded Codex or OpenCode pane is visible:
 

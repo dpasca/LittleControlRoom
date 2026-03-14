@@ -2,13 +2,17 @@ package tui
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"lcroom/internal/model"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	rw "github.com/mattn/go-runewidth"
+	"github.com/rivo/uniseg"
 )
 
 const (
@@ -19,10 +23,7 @@ const (
 	noteDialogFocusCancel
 
 	noteCopyScopeWhole = iota
-	noteCopyScopeCurrentLine
-	noteCopyScopeCurrentParagraph
-	noteCopyScopeStartToCursor
-	noteCopyScopeCursorToEnd
+	noteCopyScopeSelectedText
 	noteCopyScopeCancel
 
 	noteClearConfirmFocusConfirm
@@ -35,6 +36,7 @@ type noteDialogState struct {
 	OriginalNote string
 	Editor       textarea.Model
 	Selected     int
+	Selection    *noteTextSelectionState
 }
 
 type noteClearConfirmState struct {
@@ -47,10 +49,29 @@ type noteCopyDialogState struct {
 	Selected int
 }
 
+type noteTextSelectionState struct {
+	AnchorSet  bool
+	AnchorLine int
+	AnchorCol  int
+	ViewportY  int
+}
+
+type noteSelectionDisplayLine struct {
+	rawLine  int
+	startCol int
+	endCol   int
+	text     string
+}
+
 var (
 	noteDialogButtonStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Padding(0, 1)
 	noteDialogButtonSelectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("24")).Bold(true).Padding(0, 1)
 	noteListIndicatorStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
+	noteSelectionLineStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(codexComposerShellColor).Inline(true)
+	noteSelectionCursorLineStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(codexComposerCursorLineColor).Inline(true)
+	noteSelectionRangeStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color("60")).Inline(true)
+	noteSelectionCursorStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("214")).Bold(true).Inline(true)
+	noteSelectionCursorRangeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("222")).Bold(true).Inline(true)
 )
 
 func normalizeProjectNote(note string) string {
@@ -137,6 +158,7 @@ func (m *Model) openNoteDialog(project model.ProjectSummary) tea.Cmd {
 func (m *Model) closeNoteDialog(status string) {
 	if m.noteDialog != nil {
 		m.noteDialog.Editor.Blur()
+		m.noteDialog.Selection = nil
 	}
 	m.noteCopyDialog = nil
 	m.noteDialog = nil
@@ -151,7 +173,7 @@ func (m *Model) openNoteCopyDialog() tea.Cmd {
 	}
 	m.noteCopyDialog = &noteCopyDialogState{Selected: noteCopyScopeWhole}
 	m.noteDialog.Editor.Blur()
-	m.status = "Choose which note text to copy"
+	m.status = "Choose whole note or selected text"
 	return nil
 }
 
@@ -222,6 +244,9 @@ func (m Model) updateNoteDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	dialog := m.noteDialog
 	if dialog == nil {
 		return m, nil
+	}
+	if dialog.Selection != nil {
+		return m.updateNoteTextSelectionMode(msg)
 	}
 
 	switch msg.String() {
@@ -438,6 +463,11 @@ func (m Model) renderNoteDialogContent(width, editorHeight int) string {
 		commandPaletteHintStyle.Render("Keep a lightweight project scratchpad for handoff context, reminders, or next steps that should stay visible in the control room."),
 		"",
 	}
+	if dialog.Selection != nil {
+		lines = append(lines, detailSectionStyle.Render("Copy Selection"))
+		lines = append(lines, commandPaletteHintStyle.Render(noteTextSelectionHint(dialog)))
+		lines = append(lines, "")
+	}
 
 	label := "  Notes"
 	labelStyle := detailLabelStyle
@@ -446,7 +476,11 @@ func (m Model) renderNoteDialogContent(width, editorHeight int) string {
 		labelStyle = commandPalettePickStyle
 	}
 	lines = append(lines, labelStyle.Render(label))
-	lines = append(lines, editor.View())
+	editorView := editor.View()
+	if dialog.Selection != nil {
+		editorView = renderNoteSelectionEditor(editor, dialog.Selection)
+	}
+	lines = append(lines, editorView)
 	lines = append(lines, "")
 	lines = append(lines, strings.Join([]string{
 		renderNoteDialogButton("Copy...", dialog.Selected == noteDialogFocusCopy),
@@ -480,22 +514,19 @@ func (m Model) renderNoteCopyDialogContent(width int) string {
 
 	lines := []string{
 		renderDialogHeader("Copy Note Text", dialog.ProjectName, "", width),
-		commandPaletteHintStyle.Render("Choose exactly which part of the note to send to the system clipboard. Move the editor cursor first if you only want text around that point."),
+		commandPaletteHintStyle.Render("Copy the whole note immediately or enter selection mode. In selection mode, press Space once to mark the start and Space again to copy the end of the range."),
 		"",
 	}
 
 	options := []int{
 		noteCopyScopeWhole,
-		noteCopyScopeCurrentLine,
-		noteCopyScopeCurrentParagraph,
-		noteCopyScopeStartToCursor,
-		noteCopyScopeCursorToEnd,
+		noteCopyScopeSelectedText,
 		noteCopyScopeCancel,
 	}
 	for _, option := range options {
 		lines = append(lines, renderNoteDialogButton(noteCopyScopeLabel(option), copyDialog.Selected == option))
 	}
-	lines = append(lines, commandPaletteHintStyle.Render("Tab, arrows, or Shift+Tab switch options. Enter copies the selected text. Esc closes this menu."))
+	lines = append(lines, commandPaletteHintStyle.Render("Tab, arrows, or Shift+Tab switch options. Enter runs the selected action. Esc closes this menu."))
 	return strings.Join(lines, "\n")
 }
 
@@ -544,14 +575,8 @@ func noteCopyScopeLabel(scope int) string {
 	switch scope {
 	case noteCopyScopeWhole:
 		return "Whole note"
-	case noteCopyScopeCurrentLine:
-		return "Current line"
-	case noteCopyScopeCurrentParagraph:
-		return "Current paragraph"
-	case noteCopyScopeStartToCursor:
-		return "Start to cursor"
-	case noteCopyScopeCursorToEnd:
-		return "Cursor to end"
+	case noteCopyScopeSelectedText:
+		return "Selected text"
 	default:
 		return "Cancel"
 	}
@@ -561,14 +586,8 @@ func noteCopyScopeStatus(scope int) string {
 	switch scope {
 	case noteCopyScopeWhole:
 		return "Note copied to clipboard"
-	case noteCopyScopeCurrentLine:
-		return "Current line copied to clipboard"
-	case noteCopyScopeCurrentParagraph:
-		return "Current paragraph copied to clipboard"
-	case noteCopyScopeStartToCursor:
-		return "Note text before the cursor copied to clipboard"
-	case noteCopyScopeCursorToEnd:
-		return "Note text from the cursor onward copied to clipboard"
+	case noteCopyScopeSelectedText:
+		return "Selected note text copied to clipboard"
 	default:
 		return "Note copy canceled"
 	}
@@ -620,8 +639,94 @@ func (m *Model) activateNoteCopyDialogSelection() tea.Cmd {
 	if copyDialog.Selected == noteCopyScopeCancel {
 		return m.closeNoteCopyDialog("Note copy canceled")
 	}
+	if copyDialog.Selected == noteCopyScopeSelectedText {
+		return m.startNoteTextSelection()
+	}
 	m.copyNoteDialogSelection(copyDialog.Selected)
 	return m.closeNoteCopyDialog("")
+}
+
+func (m *Model) startNoteTextSelection() tea.Cmd {
+	if m.noteDialog == nil {
+		return nil
+	}
+	m.noteCopyDialog = nil
+	m.noteDialog.Selection = &noteTextSelectionState{ViewportY: noteSelectionInitialViewport(m.noteDialog.Editor)}
+	m.noteDialog.Selected = noteDialogFocusEditor
+	m.err = nil
+	m.status = "Selection mode: move to the start and press Space"
+	return m.noteDialog.Editor.Focus()
+}
+
+func (m Model) updateNoteTextSelectionMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	dialog := m.noteDialog
+	if dialog == nil || dialog.Selection == nil {
+		return m, nil
+	}
+
+	switch msg.String() {
+	case "esc":
+		dialog.Selection = nil
+		m.err = nil
+		m.status = "Text selection canceled"
+		return m, m.restoreNoteDialogFocus()
+	case " ":
+		return m, m.toggleNoteTextSelectionMark()
+	}
+
+	if !noteSelectionNavigationKey(msg.String()) {
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	dialog.Editor, cmd = dialog.Editor.Update(msg)
+	dialog.Selection.ViewportY = noteSelectionViewportForCursor(dialog.Editor, dialog.Selection.ViewportY)
+	return m, cmd
+}
+
+func noteSelectionNavigationKey(key string) bool {
+	switch key {
+	case "left", "right", "up", "down", "home", "end",
+		"ctrl+a", "ctrl+e", "ctrl+b", "ctrl+f", "ctrl+n", "ctrl+p",
+		"alt+left", "alt+right", "alt+b", "alt+f",
+		"alt+<", "alt+>", "ctrl+home", "ctrl+end":
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *Model) toggleNoteTextSelectionMark() tea.Cmd {
+	dialog := m.noteDialog
+	if dialog == nil || dialog.Selection == nil {
+		return nil
+	}
+	line, col := noteEditorCursor(dialog.Editor)
+	selection := dialog.Selection
+	if !selection.AnchorSet {
+		selection.AnchorSet = true
+		selection.AnchorLine = line
+		selection.AnchorCol = col
+		m.err = nil
+		m.status = "Selection start set. Move to the end and press Space again."
+		return nil
+	}
+
+	text := noteSelectedText(dialog.Editor, selection.AnchorLine, selection.AnchorCol, line, col)
+	if text == "" {
+		m.err = nil
+		m.status = "Selection is empty. Move the cursor and press Space again."
+		return nil
+	}
+	if err := clipboardTextWriter(text); err != nil {
+		m.err = err
+		m.status = "Note copy failed"
+		return nil
+	}
+	m.err = nil
+	dialog.Selection = nil
+	m.status = noteCopyScopeStatus(noteCopyScopeSelectedText)
+	return m.restoreNoteDialogFocus()
 }
 
 func (m *Model) copyNoteDialogSelection(scope int) {
@@ -645,37 +750,16 @@ func (m *Model) copyNoteDialogSelection(scope int) {
 }
 
 func noteCopyScopeText(editor textarea.Model, scope int) string {
-	value := strings.ReplaceAll(editor.Value(), "\r\n", "\n")
-	lines := strings.Split(value, "\n")
-	if len(lines) == 0 {
-		lines = []string{""}
-	}
-
 	switch scope {
 	case noteCopyScopeWhole:
-		return value
-	case noteCopyScopeCurrentLine:
-		line, _ := noteEditorCursor(editor, lines)
-		return lines[line]
-	case noteCopyScopeCurrentParagraph:
-		line, _ := noteEditorCursor(editor, lines)
-		return noteCurrentParagraph(lines, line)
-	case noteCopyScopeStartToCursor:
-		line, col := noteEditorCursor(editor, lines)
-		segments := append([]string(nil), lines[:line]...)
-		segments = append(segments, noteSliceToCursor(lines[line], col))
-		return strings.Join(segments, "\n")
-	case noteCopyScopeCursorToEnd:
-		line, col := noteEditorCursor(editor, lines)
-		segments := []string{noteSliceFromCursor(lines[line], col)}
-		segments = append(segments, lines[line+1:]...)
-		return strings.Join(segments, "\n")
+		return strings.ReplaceAll(editor.Value(), "\r\n", "\n")
 	default:
 		return ""
 	}
 }
 
-func noteEditorCursor(editor textarea.Model, lines []string) (int, int) {
+func noteEditorCursor(editor textarea.Model) (int, int) {
+	lines := noteEditorLines(editor)
 	line := editor.Line()
 	if len(lines) == 0 {
 		return 0, 0
@@ -688,33 +772,329 @@ func noteEditorCursor(editor textarea.Model, lines []string) (int, int) {
 	return line, col
 }
 
-func noteCurrentParagraph(lines []string, line int) string {
+func noteEditorLines(editor textarea.Model) []string {
+	lines := strings.Split(strings.ReplaceAll(editor.Value(), "\r\n", "\n"), "\n")
 	if len(lines) == 0 {
-		return ""
+		return []string{""}
 	}
-	line = max(0, min(line, len(lines)-1))
-	if strings.TrimSpace(lines[line]) == "" {
-		return ""
-	}
-	start := line
-	for start > 0 && strings.TrimSpace(lines[start-1]) != "" {
-		start--
-	}
-	end := line
-	for end+1 < len(lines) && strings.TrimSpace(lines[end+1]) != "" {
-		end++
-	}
-	return strings.Join(lines[start:end+1], "\n")
+	return lines
 }
 
-func noteSliceToCursor(line string, col int) string {
-	runes := []rune(line)
-	col = max(0, min(col, len(runes)))
-	return string(runes[:col])
+func noteSelectedText(editor textarea.Model, startLine, startCol, endLine, endCol int) string {
+	lines := noteEditorLines(editor)
+	startLine = max(0, min(startLine, len(lines)-1))
+	endLine = max(0, min(endLine, len(lines)-1))
+	startCol = max(0, min(startCol, len([]rune(lines[startLine]))))
+	endCol = max(0, min(endCol, len([]rune(lines[endLine]))))
+	if noteCursorAfter(startLine, startCol, endLine, endCol) {
+		startLine, endLine = endLine, startLine
+		startCol, endCol = endCol, startCol
+	}
+	if startLine == endLine {
+		return noteSliceRunes(lines[startLine], startCol, endCol)
+	}
+	segments := []string{noteSliceRunes(lines[startLine], startCol, len([]rune(lines[startLine])))}
+	for line := startLine + 1; line < endLine; line++ {
+		segments = append(segments, lines[line])
+	}
+	segments = append(segments, noteSliceRunes(lines[endLine], 0, endCol))
+	return strings.Join(segments, "\n")
 }
 
-func noteSliceFromCursor(line string, col int) string {
+func noteSliceRunes(line string, startCol, endCol int) string {
 	runes := []rune(line)
-	col = max(0, min(col, len(runes)))
-	return string(runes[col:])
+	startCol = max(0, min(startCol, len(runes)))
+	endCol = max(0, min(endCol, len(runes)))
+	if startCol > endCol {
+		startCol, endCol = endCol, startCol
+	}
+	return string(runes[startCol:endCol])
+}
+
+func noteCursorAfter(lineA, colA, lineB, colB int) bool {
+	if lineA != lineB {
+		return lineA > lineB
+	}
+	return colA > colB
+}
+
+func noteTextSelectionHint(dialog *noteDialogState) string {
+	if dialog == nil || dialog.Selection == nil {
+		return ""
+	}
+	line, col := noteEditorCursor(dialog.Editor)
+	if !dialog.Selection.AnchorSet {
+		return "Selection mode is on. Move to the start of the text you want and press Space to mark it. Esc cancels."
+	}
+	return "Start " + noteCursorLabel(dialog.Selection.AnchorLine, dialog.Selection.AnchorCol) + " set. Move to the end and press Space again to copy. Cursor " + noteCursorLabel(line, col) + "."
+}
+
+func noteCursorLabel(line, col int) string {
+	return "L" + strconv.Itoa(line+1) + ":" + strconv.Itoa(col+1)
+}
+
+func renderNoteSelectionEditor(editor textarea.Model, selection *noteTextSelectionState) string {
+	displayLines := noteSelectionDisplayLines(editor)
+	height := max(1, editor.Height())
+	width := max(1, editor.Width())
+	offset := noteSelectionViewportForCursor(editor, selection.ViewportY)
+	maxOffset := max(0, len(displayLines)-height)
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+
+	cursorRow, cursorCol := noteSelectionDisplayCursor(editor)
+	startLine, startCol, endLine, endCol, hasSelection := noteSelectionRange(editor, selection)
+
+	lines := make([]string, 0, height)
+	for row := 0; row < height; row++ {
+		index := offset + row
+		if index >= len(displayLines) {
+			lines = append(lines, noteSelectionLineStyle.Render(strings.Repeat(" ", width)))
+			continue
+		}
+		line := displayLines[index]
+		lines = append(lines, renderNoteSelectionDisplayLine(line, width, index == cursorRow, cursorCol, startLine, startCol, endLine, endCol, hasSelection))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderNoteSelectionDisplayLine(
+	line noteSelectionDisplayLine,
+	width int,
+	cursorVisible bool,
+	cursorCol int,
+	startLine int,
+	startCol int,
+	endLine int,
+	endCol int,
+	hasSelection bool,
+) string {
+	baseStyle := noteSelectionLineStyle
+	if cursorVisible {
+		baseStyle = noteSelectionCursorLineStyle
+	}
+	runes := []rune(line.text)
+	selectionStart, selectionEnd, ok := noteSelectionRangeForDisplayLine(line, startLine, startCol, endLine, endCol, hasSelection)
+
+	var out strings.Builder
+	lineWidth := 0
+	for index, r := range runes {
+		style := baseStyle
+		if ok && index >= selectionStart && index < selectionEnd {
+			style = noteSelectionRangeStyle
+		}
+		if cursorVisible && index == cursorCol {
+			if ok && index >= selectionStart && index < selectionEnd {
+				style = noteSelectionCursorRangeStyle
+			} else {
+				style = noteSelectionCursorStyle
+			}
+		}
+		out.WriteString(style.Render(string(r)))
+		lineWidth += rw.RuneWidth(r)
+	}
+	if cursorVisible && cursorCol == len(runes) {
+		style := noteSelectionCursorStyle
+		if ok && cursorCol >= selectionStart && cursorCol < selectionEnd {
+			style = noteSelectionCursorRangeStyle
+		}
+		out.WriteString(style.Render(" "))
+		lineWidth++
+	}
+	if lineWidth < width {
+		out.WriteString(baseStyle.Render(strings.Repeat(" ", width-lineWidth)))
+	}
+	return out.String()
+}
+
+func noteSelectionRangeForDisplayLine(
+	line noteSelectionDisplayLine,
+	startLine int,
+	startCol int,
+	endLine int,
+	endCol int,
+	hasSelection bool,
+) (int, int, bool) {
+	if !hasSelection {
+		return 0, 0, false
+	}
+	if noteCursorAfter(startLine, startCol, line.rawLine, line.endCol) || (startLine == line.rawLine && startCol == line.endCol) {
+		return 0, 0, false
+	}
+	if noteCursorAfter(line.rawLine, line.startCol, endLine, endCol) || (line.rawLine == endLine && line.startCol == endCol) {
+		return 0, 0, false
+	}
+	selectionStart := line.startCol
+	if line.rawLine == startLine {
+		selectionStart = max(selectionStart, startCol)
+	}
+	selectionEnd := line.endCol
+	if line.rawLine == endLine {
+		selectionEnd = min(selectionEnd, endCol)
+	}
+	if selectionStart >= selectionEnd {
+		return 0, 0, false
+	}
+	return selectionStart - line.startCol, selectionEnd - line.startCol, true
+}
+
+func noteSelectionRange(editor textarea.Model, selection *noteTextSelectionState) (int, int, int, int, bool) {
+	if selection == nil || !selection.AnchorSet {
+		return 0, 0, 0, 0, false
+	}
+	line, col := noteEditorCursor(editor)
+	startLine, startCol := selection.AnchorLine, selection.AnchorCol
+	endLine, endCol := line, col
+	if noteCursorAfter(startLine, startCol, endLine, endCol) {
+		startLine, endLine = endLine, startLine
+		startCol, endCol = endCol, startCol
+	}
+	return startLine, startCol, endLine, endCol, true
+}
+
+func noteSelectionDisplayLines(editor textarea.Model) []noteSelectionDisplayLine {
+	lines := noteEditorLines(editor)
+	width := max(1, editor.Width())
+	displayLines := make([]noteSelectionDisplayLine, 0, len(lines))
+	for lineIndex, line := range lines {
+		displayLines = append(displayLines, noteWrapDisplayLine(line, lineIndex, width)...)
+	}
+	if len(displayLines) == 0 {
+		return []noteSelectionDisplayLine{{}}
+	}
+	return displayLines
+}
+
+func noteWrapDisplayLine(line string, rawLine int, width int) []noteSelectionDisplayLine {
+	wrapped := noteWrapTextareaRunes([]rune(line), width)
+	if len(wrapped) == 0 {
+		return []noteSelectionDisplayLine{{rawLine: rawLine}}
+	}
+	lineRunes := []rune(line)
+	consumed := 0
+	displayLines := make([]noteSelectionDisplayLine, 0, len(wrapped))
+	for _, wrappedLine := range wrapped {
+		actualLen := min(len(wrappedLine), len(lineRunes)-consumed)
+		if actualLen < 0 {
+			actualLen = 0
+		}
+		displayLines = append(displayLines, noteSelectionDisplayLine{
+			rawLine:  rawLine,
+			startCol: consumed,
+			endCol:   consumed + actualLen,
+			text:     string(wrappedLine[:actualLen]),
+		})
+		consumed += actualLen
+	}
+	return displayLines
+}
+
+func noteSelectionDisplayCursor(editor textarea.Model) (int, int) {
+	displayLines := noteSelectionDisplayLines(editor)
+	line, col := noteEditorCursor(editor)
+	for row, displayLine := range displayLines {
+		if displayLine.rawLine != line {
+			continue
+		}
+		if col < displayLine.startCol || col > displayLine.endCol {
+			continue
+		}
+		if col == displayLine.endCol && row+1 < len(displayLines) && displayLines[row+1].rawLine == line && displayLines[row+1].startCol == col {
+			continue
+		}
+		return row, col - displayLine.startCol
+	}
+	return 0, 0
+}
+
+func noteSelectionInitialViewport(editor textarea.Model) int {
+	cursorRow, _ := noteSelectionDisplayCursor(editor)
+	return max(0, cursorRow-editor.Height()+1)
+}
+
+func noteSelectionViewportForCursor(editor textarea.Model, offset int) int {
+	displayLines := noteSelectionDisplayLines(editor)
+	height := max(1, editor.Height())
+	maxOffset := max(0, len(displayLines)-height)
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	cursorRow, _ := noteSelectionDisplayCursor(editor)
+	if cursorRow < offset {
+		offset = cursorRow
+	}
+	if cursorRow >= offset+height {
+		offset = cursorRow - height + 1
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	return offset
+}
+
+func noteWrapTextareaRunes(runes []rune, width int) [][]rune {
+	if width <= 0 {
+		return [][]rune{runes}
+	}
+	var (
+		lines  = [][]rune{{}}
+		word   = []rune{}
+		row    int
+		spaces int
+	)
+
+	for _, r := range runes {
+		if unicode.IsSpace(r) {
+			spaces++
+		} else {
+			word = append(word, r)
+		}
+
+		if spaces > 0 {
+			if uniseg.StringWidth(string(lines[row]))+uniseg.StringWidth(string(word))+spaces > width {
+				row++
+				lines = append(lines, []rune{})
+				lines[row] = append(lines[row], word...)
+				lines[row] = append(lines[row], noteRepeatSpaces(spaces)...)
+				spaces = 0
+				word = nil
+			} else {
+				lines[row] = append(lines[row], word...)
+				lines[row] = append(lines[row], noteRepeatSpaces(spaces)...)
+				spaces = 0
+				word = nil
+			}
+		} else if len(word) > 0 {
+			lastCharLen := rw.RuneWidth(word[len(word)-1])
+			if uniseg.StringWidth(string(word))+lastCharLen > width {
+				if len(lines[row]) > 0 {
+					row++
+					lines = append(lines, []rune{})
+				}
+				lines[row] = append(lines[row], word...)
+				word = nil
+			}
+		}
+	}
+
+	if uniseg.StringWidth(string(lines[row]))+uniseg.StringWidth(string(word))+spaces >= width {
+		lines = append(lines, []rune{})
+		lines[row+1] = append(lines[row+1], word...)
+		spaces++
+		lines[row+1] = append(lines[row+1], noteRepeatSpaces(spaces)...)
+	} else {
+		lines[row] = append(lines[row], word...)
+		spaces++
+		lines[row] = append(lines[row], noteRepeatSpaces(spaces)...)
+	}
+
+	return lines
+}
+
+func noteRepeatSpaces(n int) []rune {
+	return []rune(strings.Repeat(" ", n))
 }

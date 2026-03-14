@@ -2731,6 +2731,9 @@ func (m Model) renderFooter(width int) string {
 	if m.noteCopyDialog != nil {
 		return fitFooterWidth("Copy note text: Enter copy, Tab next, Esc cancel | "+usageLabel, width)
 	}
+	if m.noteDialog != nil && m.noteDialog.Selection != nil {
+		return fitFooterWidth("Note selection: Space mark/copy, arrows move, Esc cancel | "+usageLabel, width)
+	}
 	if m.noteDialog != nil {
 		return fitFooterWidth("Project notes: Ctrl+Y copy, Ctrl+S save, Tab actions, Esc cancel | "+usageLabel, width)
 	}

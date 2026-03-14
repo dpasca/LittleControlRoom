@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-14 15:51 JST (JST)
+Last updated: 2026-03-14 17:02 JST (JST)
 
 ## Current State
 
@@ -55,7 +55,7 @@ Current screenshot workflow assumption:
 - Scope-aware persistence via path filters and project-name filters
 - Cached `doctor` by default, with `doctor --scan` for a fresh rescan
 - TUI stacked layout with focusable detail pane, scrolling, compact settings modal, and command palette
-- Project notes via `/note` or `n`, with a multiline modal editor, wrapped detail-pane notes, a list badge when a project has saved notes, and clipboard copy actions for the whole note or cursor-based slices
+- Project notes via `/note` or `n`, with a multiline modal editor, wrapped detail-pane notes, a list badge when a project has saved notes, and clipboard copy actions for the whole note or an explicit marked selection
 - Git workflow actions in the TUI for full-screen diff preview, commit preview, finish, and push
 - Embedded Codex pane via `codex app-server`, with multiline compose, per-project drafts, inline `[Image #n]` clipboard image markers in the composer, backspace-based image removal, local embedded slash commands for `/new`, `/resume` (`/session` alias), `/model`, and `/status`, visible slash autocomplete/suggestions in the composer, a provider-specific saved-session resume picker with lightweight title/summary previews and current-session markers, live model/reasoning/context-left metadata under the transcript, a local model+reasoning picker backed by `model/list`, `Enter`/`/codex`/`/codex-new`, `Esc` or `Alt+Up` hide from the embedded pane with `Enter` reopening from the project list, `Alt+Down` session picker/history, `Alt+[`/`Alt+]` live-session stepping, wrapped transcript blocks, shaded echoed user transcript blocks that reuse the composer shell styling, denser command/tool/file blocks with `Alt+L` expand/collapse, label-free user/assistant transcript rendering, manager-side update coalescing, inline approvals/input requests, and busy-elsewhere rechecks when a read-only embedded session is reopened or restored
 - Embedded OpenCode pane via `opencode serve`, with live SSE transcript updates, resume/new launch from `Enter` and `/opencode` / `/opencode-new`, shared picker/history and model picker, provider-aware banners/footer/help copy, interrupt/status actions, shared approval/question handling, and mixed Codex/OpenCode live-session management per project
@@ -77,19 +77,20 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-14 15:51 JST)
+## Latest Update (2026-03-14 17:02 JST)
 
 - Added explicit clipboard support to the project note dialog so users no longer have to rely on terminal text selection that can capture surrounding UI chrome.
-- Notes now support a quick `Ctrl+Y` whole-note copy plus a `Copy...` action that can copy the whole note, the current line, the current paragraph, or the text before or after the cursor.
-- Added focused TUI regression coverage for the new note-copy behavior and updated the note-related docs/help copy to advertise the new workflow.
+- Notes now support a quick `Ctrl+Y` whole-note copy plus a `Copy...` action with just `Whole note` and `Selected text`. Selected-text mode uses a two-step `Space` mark-start / move / `Space` copy flow inside the editor.
+- Added a dedicated selection-mode renderer so the currently selected note range is visibly highlighted while the user is choosing it, instead of relying only on status text.
+- Added focused TUI regression coverage for the new note-copy and selection-highlight behavior and updated the note-related docs/help copy to advertise the new workflow.
 - No Codex/OpenCode detector assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
 
 Verification snapshot:
 
 - `go test ./internal/tui -count=1` passed.
 - `make test` passed.
-- `make scan` passed at `2026-03-14T15:50:27+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 9`, `queued classifications: 0`).
-- `make doctor` passed on the cached snapshot dated `2026-03-14T15:50:33+09:00` (`projects: 138`).
+- `make scan` passed at `2026-03-14T17:01:44+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 11`, `queued classifications: 2`).
+- `make doctor` passed on the cached snapshot dated `2026-03-14T17:01:52+09:00` (`projects: 138`).
 - `env COLUMNS=110 LINES=30 make tui` launched and exited cleanly via `q`.
 
 Next concrete tasks:
