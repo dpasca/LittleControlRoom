@@ -52,6 +52,7 @@ type Model struct {
 	homeDirFn func() (string, error)
 
 	noteDialog       *noteDialogState
+	noteCopyDialog   *noteCopyDialogState
 	noteClearConfirm *noteClearConfirmState
 
 	commandMode                  bool
@@ -311,6 +312,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.noteClearConfirm != nil {
 			return m.updateNoteClearConfirmMode(msg)
+		}
+		if m.noteCopyDialog != nil {
+			return m.updateNoteCopyDialogMode(msg)
 		}
 		if m.noteDialog != nil {
 			return m.updateNoteDialogMode(msg)
@@ -1193,10 +1197,6 @@ func (m Model) View() string {
 		body = m.renderCommitPreviewOverlay(body, layout.width, layout.height)
 	} else if m.newProjectDialog != nil {
 		body = m.renderNewProjectOverlay(body, layout.width, layout.height)
-	} else if m.noteClearConfirm != nil {
-		body = m.renderNoteClearConfirmOverlay(body, layout.width, layout.height)
-	} else if m.noteDialog != nil {
-		body = m.renderNoteDialogOverlay(body, layout.width, layout.height)
 	} else if m.settingsMode {
 		body = m.renderSettingsOverlay(body, layout.width, layout.height)
 	} else if m.showHelp {
@@ -1205,6 +1205,15 @@ func (m Model) View() string {
 		body = m.renderCommandPaletteOverlay(body, layout.width, layout.height)
 	} else if m.codexPickerVisible {
 		body = m.renderCodexPickerOverlay(body, layout.width, layout.height)
+	}
+	if m.noteDialog != nil {
+		body = m.renderNoteDialogOverlay(body, layout.width, layout.height)
+	}
+	if m.noteCopyDialog != nil {
+		body = m.renderNoteCopyDialogOverlay(body, layout.width, layout.height)
+	}
+	if m.noteClearConfirm != nil {
+		body = m.renderNoteClearConfirmOverlay(body, layout.width, layout.height)
 	}
 
 	return strings.Join([]string{header, body, m.renderFooter(layout.width)}, "\n")
@@ -2719,8 +2728,11 @@ func (m Model) renderFooter(width int) string {
 	if m.noteClearConfirm != nil {
 		return fitFooterWidth("Confirm note clear | "+usageLabel, width)
 	}
+	if m.noteCopyDialog != nil {
+		return fitFooterWidth("Copy note text: Enter copy, Tab next, Esc cancel | "+usageLabel, width)
+	}
 	if m.noteDialog != nil {
-		return fitFooterWidth("Project notes open | "+usageLabel, width)
+		return fitFooterWidth("Project notes: Ctrl+Y copy, Ctrl+S save, Tab actions, Esc cancel | "+usageLabel, width)
 	}
 	return renderFooterLine(
 		width,
@@ -3542,6 +3554,7 @@ func (m Model) renderHelpPanel(bodyW, bodyH int) string {
 				"busy elsewhere = read-only",
 				"Alt+Enter/Ctrl+J newline",
 				"Ctrl+V paste image",
+				"Ctrl+Y note copy when notes open",
 				"Backspace remove image marker",
 				"Alt+L expand dense blocks",
 				"p   pin",

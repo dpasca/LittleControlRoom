@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-14 15:07 JST (JST)
+Last updated: 2026-03-14 15:51 JST (JST)
 
 ## Current State
 
@@ -55,7 +55,7 @@ Current screenshot workflow assumption:
 - Scope-aware persistence via path filters and project-name filters
 - Cached `doctor` by default, with `doctor --scan` for a fresh rescan
 - TUI stacked layout with focusable detail pane, scrolling, compact settings modal, and command palette
-- Project notes via `/note` or `n`, with a multiline modal editor, wrapped detail-pane notes, and a list badge when a project has saved notes
+- Project notes via `/note` or `n`, with a multiline modal editor, wrapped detail-pane notes, a list badge when a project has saved notes, and clipboard copy actions for the whole note or cursor-based slices
 - Git workflow actions in the TUI for full-screen diff preview, commit preview, finish, and push
 - Embedded Codex pane via `codex app-server`, with multiline compose, per-project drafts, inline `[Image #n]` clipboard image markers in the composer, backspace-based image removal, local embedded slash commands for `/new`, `/resume` (`/session` alias), `/model`, and `/status`, visible slash autocomplete/suggestions in the composer, a provider-specific saved-session resume picker with lightweight title/summary previews and current-session markers, live model/reasoning/context-left metadata under the transcript, a local model+reasoning picker backed by `model/list`, `Enter`/`/codex`/`/codex-new`, `Esc` or `Alt+Up` hide from the embedded pane with `Enter` reopening from the project list, `Alt+Down` session picker/history, `Alt+[`/`Alt+]` live-session stepping, wrapped transcript blocks, shaded echoed user transcript blocks that reuse the composer shell styling, denser command/tool/file blocks with `Alt+L` expand/collapse, label-free user/assistant transcript rendering, manager-side update coalescing, inline approvals/input requests, and busy-elsewhere rechecks when a read-only embedded session is reopened or restored
 - Embedded OpenCode pane via `opencode serve`, with live SSE transcript updates, resume/new launch from `Enter` and `/opencode` / `/opencode-new`, shared picker/history and model picker, provider-aware banners/footer/help copy, interrupt/status actions, shared approval/question handling, and mixed Codex/OpenCode live-session management per project
@@ -77,7 +77,30 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-14 15:07 JST)
+## Latest Update (2026-03-14 15:51 JST)
+
+- Added explicit clipboard support to the project note dialog so users no longer have to rely on terminal text selection that can capture surrounding UI chrome.
+- Notes now support a quick `Ctrl+Y` whole-note copy plus a `Copy...` action that can copy the whole note, the current line, the current paragraph, or the text before or after the cursor.
+- Added focused TUI regression coverage for the new note-copy behavior and updated the note-related docs/help copy to advertise the new workflow.
+- No Codex/OpenCode detector assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-14T15:50:27+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 9`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-14T15:50:33+09:00` (`projects: 138`).
+- `env COLUMNS=110 LINES=30 make tui` launched and exited cleanly via `q`.
+
+Next concrete tasks:
+
+- Decide whether note copy should also be exposed directly from the main detail pane or command palette, not just inside the note dialog.
+- Keep polishing OpenCode parity details such as richer attachment confidence, better agent/status presentation, and any remaining approval/question edge cases.
+- Factor a provider-neutral transcript/session abstraction so Codex and OpenCode stop sharing only by convention.
+
+## Recent Updates
+
+### 2026-03-14 15:07 JST
 
 - Changed the main project list to show the full raw attention score instead of the old score-divided-by-10 shorthand, and widened the `ATTN` column by one character so repo-warning rows still render cleanly with the leading `!`.
 - Reworked attention scoring so recency now contributes progressively after the normal stuck threshold instead of only through the separate recent sort. Projects with activity from later the same day, yesterday, or about two days ago now keep a modest `recent_activity` bonus that fades out across a `72h` window.
@@ -98,8 +121,6 @@ Next concrete tasks:
 - Watch a few live workdays with the new taper and tune the `72h`/weight constants if completed work from about two days ago still feels either too sticky or not sticky enough.
 - Decide whether the detail pane should eventually group or visually separate base attention reasons from softer modifiers like `recent_activity`.
 - Factor a provider-neutral transcript/session abstraction so Codex and OpenCode stop sharing only by convention.
-
-## Recent Updates
 
 ### 2026-03-13 21:08 JST
 

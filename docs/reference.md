@@ -128,6 +128,13 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 - `n` open the project note dialog
 - `q` quit
 
+While the project note dialog is open:
+
+- `Ctrl+Y` copies the whole current note to the system clipboard
+- `Tab` or `Shift+Tab` moves between the editor and actions
+- `Enter` adds a newline in the editor or runs the selected action
+- `Copy...` opens a small menu for copying the whole note, the current line, the current paragraph, or text before or after the cursor
+
 While the embedded Codex or OpenCode pane is visible:
 
 - `Enter` sends a prompt when idle and steers the active turn when the embedded session is busy
