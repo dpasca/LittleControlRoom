@@ -377,23 +377,23 @@ func TestProjectDisplayStatusShowsMissingWhenFolderGone(t *testing.T) {
 
 func TestProjectAttentionLabel(t *testing.T) {
 	project := model.ProjectSummary{AttentionScore: 95, RepoDirty: true}
-	if got := projectAttentionLabel(project); got != "!  9" {
-		t.Fatalf("projectAttentionLabel() = %q, want %q", got, "!  9")
+	if got := projectAttentionLabel(project); got != "!  95" {
+		t.Fatalf("projectAttentionLabel() = %q, want %q", got, "!  95")
 	}
 
 	project.Pinned = true
-	if got := projectAttentionLabel(project); got != "!  9" {
+	if got := projectAttentionLabel(project); got != "!  95" {
 		t.Fatalf("projectAttentionLabel() should ignore pinned rows in the list label, got %q", got)
 	}
 
 	project = model.ProjectSummary{AttentionScore: 100, RepoSyncStatus: model.RepoSyncAhead}
-	if got := projectAttentionLabel(project); got != "! 10" {
-		t.Fatalf("projectAttentionLabel() = %q, want %q", got, "! 10")
+	if got := projectAttentionLabel(project); got != "! 100" {
+		t.Fatalf("projectAttentionLabel() = %q, want %q", got, "! 100")
 	}
 
 	project = model.ProjectSummary{AttentionScore: 0}
-	if got := projectAttentionLabel(project); got != "   0" {
-		t.Fatalf("projectAttentionLabel() = %q, want %q", got, "   0")
+	if got := projectAttentionLabel(project); got != "    0" {
+		t.Fatalf("projectAttentionLabel() = %q, want %q", got, "    0")
 	}
 }
 
@@ -859,7 +859,7 @@ func TestRenderProjectListShowsRepoWarningInAttentionColumn(t *testing.T) {
 	if len(lines) < 2 {
 		t.Fatalf("renderProjectList() expected header plus one row, got %q", rendered)
 	}
-	if !strings.Contains(lines[1], "!  9") {
+	if !strings.Contains(lines[1], "!  95") {
 		t.Fatalf("renderProjectList() should show repo warnings in ATTN, got %q", lines[1])
 	}
 	if strings.Contains(lines[1], "demo project !") {
@@ -4443,7 +4443,7 @@ func TestViewWithSettingsModeRespectsHeight(t *testing.T) {
 	if !strings.Contains(rendered, "Config:") {
 		t.Fatalf("View() missing config path context: %q", rendered)
 	}
-	if !strings.Contains(rendered, "│ AT") || !strings.Contains(rendered, "│ Pa") {
+	if !strings.Contains(rendered, "│  A") || !strings.Contains(rendered, "│ Pa") {
 		t.Fatalf("View() should preserve background list and detail context under the settings modal: %q", rendered)
 	}
 }
@@ -4706,7 +4706,7 @@ func TestViewWithCommitPreviewRespectsHeight(t *testing.T) {
 	if stageLine-messageLine < 2 || blankVisible != "" {
 		t.Fatalf("View() should leave a blank line after the commit message: %q", rendered)
 	}
-	if !strings.Contains(rendered, "ATT") || !strings.Contains(rendered, "Attention reasons") {
+	if !strings.Contains(rendered, "│  A") || !strings.Contains(rendered, "Attention reasons") {
 		t.Fatalf("View() should preserve background list and detail context under the commit preview: %q", rendered)
 	}
 }

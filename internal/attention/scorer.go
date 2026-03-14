@@ -32,13 +32,15 @@ type Output struct {
 	Reasons []model.AttentionReason
 }
 
-const completedAttentionWindow = 48 * time.Hour
+const recentAttentionWindow = 72 * time.Hour
 const activeAttentionWeight = 50
 const genericStuckAttentionWeight = 40
 const blockedAttentionWeight = 40
 const inProgressAttentionWeight = 32
 const needsFollowUpAttentionWeight = 28
 const waitingForUserAttentionWeight = 22
+const recentCompletionAttentionWeight = 20
+const recentActivityBonusWeight = 10
 
 type classifiedIdleOutcome struct {
 	Status model.ProjectStatus
@@ -81,18 +83,24 @@ func Score(in Input) Output {
 				}
 				break
 			}
-			if in.LatestTurnKnown && in.LatestTurnComplete && idleFor <= completedAttentionWindow {
+			if in.LatestTurnKnown && in.LatestTurnComplete {
 				out.Status = model.StatusIdle
-				w := 18
-				out.Score += w
-				out.Reasons = append(out.Reasons, model.AttentionReason{Code: "recently_completed", Text: fmt.Sprintf("Last turn completed; idle for %s", formatAttentionDuration(idleFor)), Weight: w})
-				break
+				if reason := recentCompletionReason("recently_completed", "Last turn completed", idleFor, in.StuckThreshold); reason != nil {
+					out.Score += reason.Weight
+					out.Reasons = append(out.Reasons, *reason)
+					break
+				}
 			}
 			out.Status = model.StatusPossiblyStuck
 			w := genericStuckAttentionWeight
 			out.Score += w
 			out.Reasons = append(out.Reasons, model.AttentionReason{Code: "possibly_stuck", Text: fmt.Sprintf("No activity for %s", formatAttentionDuration(idleFor)), Weight: w})
 		}
+	}
+
+	if reason := recentActivityReason(in); reason != nil {
+		out.Score += reason.Weight
+		out.Reasons = append(out.Reasons, *reason)
 	}
 
 	if in.RepoDirty {
@@ -177,16 +185,12 @@ func classifiedIdleReason(in Input, idleFor time.Duration) (bool, classifiedIdle
 
 	switch in.LatestSessionCategory {
 	case model.SessionCategoryCompleted:
-		if idleFor > completedAttentionWindow {
+		if idleFor > recentAttentionWindow {
 			return true, classifiedIdleOutcome{Status: model.StatusIdle}
 		}
 		return true, classifiedIdleOutcome{
 			Status: model.StatusIdle,
-			Reason: &model.AttentionReason{
-				Code:   "session_completed",
-				Text:   fmt.Sprintf("Recently completed; idle for %s", formatAttentionDuration(idleFor)),
-				Weight: 15,
-			},
+			Reason: recentCompletionReason("session_completed", "Recently completed", idleFor, in.StuckThreshold),
 		}
 	case model.SessionCategoryBlocked:
 		return true, classifiedIdleOutcome{
@@ -231,4 +235,58 @@ func classifiedIdleReason(in Input, idleFor time.Duration) (bool, classifiedIdle
 
 func latestSessionCompleted(in Input) bool {
 	return in.LatestSessionCategoryKnown && in.LatestSessionCategory == model.SessionCategoryCompleted
+}
+
+func recentCompletionReason(code, text string, idleFor, floor time.Duration) *model.AttentionReason {
+	weight := taperedAttentionWeight(idleFor, floor, recentAttentionWindow, recentCompletionAttentionWeight)
+	if weight == 0 {
+		return nil
+	}
+	return &model.AttentionReason{
+		Code:   code,
+		Text:   fmt.Sprintf("%s; idle for %s", text, formatAttentionDuration(idleFor)),
+		Weight: weight,
+	}
+}
+
+func recentActivityReason(in Input) *model.AttentionReason {
+	if !in.HasActivity || in.LastActivity.IsZero() {
+		return nil
+	}
+	idleFor := in.Now.Sub(in.LastActivity)
+	if idleFor <= in.StuckThreshold {
+		return nil
+	}
+	weight := taperedAttentionWeight(idleFor, in.StuckThreshold, recentAttentionWindow, recentActivityBonusWeight)
+	if weight == 0 {
+		return nil
+	}
+	return &model.AttentionReason{
+		Code:   "recent_activity",
+		Text:   fmt.Sprintf("Recent activity %s ago", formatAttentionDuration(idleFor)),
+		Weight: weight,
+	}
+}
+
+func taperedAttentionWeight(age, floor, ceiling time.Duration, maxWeight int) int {
+	if maxWeight <= 0 || ceiling <= floor {
+		return 0
+	}
+	if age <= floor {
+		return maxWeight
+	}
+	if age >= ceiling {
+		return 0
+	}
+
+	window := int64(ceiling - floor)
+	remaining := int64(ceiling - age)
+	weight := int((remaining * int64(maxWeight)) / window)
+	if weight < 1 {
+		return 1
+	}
+	if weight > maxWeight {
+		return maxWeight
+	}
+	return weight
 }

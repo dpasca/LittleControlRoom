@@ -1391,7 +1391,7 @@ func (m Model) renderProjectList(width, height int) string {
 		runLabel, running := m.projectRunLabel(p, now)
 		row := lipgloss.JoinHorizontal(
 			lipgloss.Top,
-			cellStyle(lipgloss.NewStyle().Width(4).Align(lipgloss.Right).Bold(selectedRow)).Render(attention),
+			cellStyle(lipgloss.NewStyle().Width(5).Align(lipgloss.Right).Bold(selectedRow)).Render(attention),
 			"  ",
 			cellStyle(statusDisplayStyle(p).Width(8)).Render(projectListStatus(p)),
 			" ",
@@ -2123,7 +2123,7 @@ func formatRelativeUnit(n int, unit string) string {
 }
 
 func projectAttentionLabel(project model.ProjectSummary) string {
-	label := fmt.Sprintf("%3d", project.AttentionScore/10)
+	label := fmt.Sprintf("%4d", project.AttentionScore)
 	if projectHasRepoWarning(project) {
 		return "!" + label
 	}
@@ -2215,7 +2215,7 @@ func projectNoteIndicator(note string) string {
 }
 
 func projectListColumnWidths(totalWidth int) (int, int) {
-	const baseWidth = 44
+	const baseWidth = 45
 
 	if totalWidth < baseWidth+22 {
 		return 10, 10
@@ -2238,7 +2238,7 @@ func projectListColumnWidths(totalWidth int) (int, int) {
 func renderProjectListHeader(projectW, assessmentW int) string {
 	return lipgloss.JoinHorizontal(
 		lipgloss.Top,
-		lipgloss.NewStyle().Width(4).Align(lipgloss.Right).Render("ATTN"),
+		lipgloss.NewStyle().Width(5).Align(lipgloss.Right).Render("ATTN"),
 		"  ",
 		lipgloss.NewStyle().Width(8).Render("STATE"),
 		" ",

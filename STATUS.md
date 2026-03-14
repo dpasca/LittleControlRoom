@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-14 12:47 JST (JST)
+Last updated: 2026-03-14 15:07 JST (JST)
 
 ## Current State
 
@@ -77,27 +77,26 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-14 12:47 JST)
+## Latest Update (2026-03-14 15:07 JST)
 
-- Reworked project notes from the old footer-only single-line editor into a real multiline modal dialog backed by the existing stored `projects.note` field. The new flow opens from `/note` or `n`, supports cancel/save/clear actions, and keeps Enter for inserting newlines while Tab moves between the editor and action buttons.
-- Added note presence surfacing in the main list with a dedicated `N` badge column and promoted saved notes in the detail pane into a wrapped `Notes` section instead of the old inline `Note:` field.
-- Tightened the main-list column layout after the first pass by switching the header onto the same fixed-width cell layout as the rows and giving the note column clearer spacing, which keeps the new `N` marker aligned cleanly with project data in live TUI rendering.
-- Added a second overlay for destructive note removal so both the note dialog's `Clear` action and `/note clear` now require explicit confirmation before the saved note is deleted.
-- Extended the slash-command layer with `/note` and `/note clear`, added focused command/TUI regression coverage for note parsing, modal opening, note list indicators, detail rendering, save behavior, clear-confirm behavior, and header alignment, and refreshed the README/reference docs to describe the new flow more explicitly.
+- Changed the main project list to show the full raw attention score instead of the old score-divided-by-10 shorthand, and widened the `ATTN` column by one character so repo-warning rows still render cleanly with the leading `!`.
+- Reworked attention scoring so recency now contributes progressively after the normal stuck threshold instead of only through the separate recent sort. Projects with activity from later the same day, yesterday, or about two days ago now keep a modest `recent_activity` bonus that fades out across a `72h` window.
+- Replaced the old flat completed-session window with a tapered completion reason: recently completed work now gradually loses attention over the same `72h` horizon instead of dropping from a fixed recent score to zero at the old `48h` cutoff.
+- Extended scorer and TUI regression coverage to lock in the new raw list labels, modal-overlay clipping expectations, explicit `recent_activity` reasons, and the completion-score taper over time.
 - No Codex/OpenCode detector assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
 
 Verification snapshot:
 
-- `go test ./internal/tui ./internal/commands -count=1` passed.
+- `go test ./internal/attention ./internal/tui -count=1` passed.
 - `make test` passed.
-- `make scan` passed at `2026-03-14T12:47:29+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
-- `make doctor` passed on the cached snapshot dated `2026-03-14T12:47:29+09:00` (`projects: 138`).
-- `env COLUMNS=110 LINES=30 make tui` launched, the list header/note column spacing looked aligned in the live TUI, the no-note clear path safely refused to delete anything, and the app exited cleanly via `q`.
+- `make scan` passed at `2026-03-14T15:06:53+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 9`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-14T15:06:59+09:00` (`projects: 138`).
+- `env COLUMNS=110 LINES=30 make tui` launched; the live list showed raw scores such as `95`, `73`, and `43` in the widened `ATTN` column, and the app exited cleanly via `q`.
 
 Next concrete tasks:
 
-- Decide whether especially long notes should gain a collapsed preview or scrollbar hint in the detail pane.
-- Consider whether project notes should be optionally surfaced inside later `/commit` or `/finish` flows as human-authored context.
+- Watch a few live workdays with the new taper and tune the `72h`/weight constants if completed work from about two days ago still feels either too sticky or not sticky enough.
+- Decide whether the detail pane should eventually group or visually separate base attention reasons from softer modifiers like `recent_activity`.
 - Factor a provider-neutral transcript/session abstraction so Codex and OpenCode stop sharing only by convention.
 
 ## Recent Updates

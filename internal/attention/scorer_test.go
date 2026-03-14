@@ -22,8 +22,8 @@ func TestScoreIgnoresNonZeroCommandExits(t *testing.T) {
 	if out.Status != "possibly_stuck" {
 		t.Fatalf("status = %s, want possibly_stuck", out.Status)
 	}
-	if out.Score != 40 {
-		t.Fatalf("score = %d, want 40", out.Score)
+	if out.Score != 49 {
+		t.Fatalf("score = %d, want 49", out.Score)
 	}
 	for _, reason := range out.Reasons {
 		if reason.Code == "error_markers" {
@@ -151,8 +151,8 @@ func TestScoreRecentCompletedClassificationKeepsAttention(t *testing.T) {
 	if out.Score != 15 {
 		t.Fatalf("score = %d, want 15", out.Score)
 	}
-	if len(out.Reasons) != 1 || out.Reasons[0].Code != "session_completed" {
-		t.Fatalf("expected session_completed reason, got %#v", out.Reasons)
+	if len(out.Reasons) != 2 || out.Reasons[0].Code != "session_completed" || out.Reasons[1].Code != "recent_activity" {
+		t.Fatalf("expected session_completed + recent_activity reasons, got %#v", out.Reasons)
 	}
 }
 
@@ -172,11 +172,11 @@ func TestScoreWaitingForUserDowngradesStuck(t *testing.T) {
 	if out.Status != "idle" {
 		t.Fatalf("status = %s, want idle", out.Status)
 	}
-	if out.Score != waitingForUserAttentionWeight {
-		t.Fatalf("score = %d, want %d", out.Score, waitingForUserAttentionWeight)
+	if out.Score != waitingForUserAttentionWeight+9 {
+		t.Fatalf("score = %d, want %d", out.Score, waitingForUserAttentionWeight+9)
 	}
-	if len(out.Reasons) != 1 || out.Reasons[0].Code != "waiting_for_user" {
-		t.Fatalf("expected waiting_for_user reason, got %#v", out.Reasons)
+	if len(out.Reasons) != 2 || out.Reasons[0].Code != "waiting_for_user" || out.Reasons[1].Code != "recent_activity" {
+		t.Fatalf("expected waiting_for_user + recent_activity reasons, got %#v", out.Reasons)
 	}
 }
 
@@ -196,11 +196,11 @@ func TestScoreNeedsFollowUpUsesSpecificReason(t *testing.T) {
 	if out.Status != model.StatusPossiblyStuck {
 		t.Fatalf("status = %s, want possibly_stuck", out.Status)
 	}
-	if out.Score != needsFollowUpAttentionWeight {
-		t.Fatalf("score = %d, want %d", out.Score, needsFollowUpAttentionWeight)
+	if out.Score != needsFollowUpAttentionWeight+9 {
+		t.Fatalf("score = %d, want %d", out.Score, needsFollowUpAttentionWeight+9)
 	}
-	if len(out.Reasons) != 1 || out.Reasons[0].Code != "needs_follow_up" {
-		t.Fatalf("expected needs_follow_up reason, got %#v", out.Reasons)
+	if len(out.Reasons) != 2 || out.Reasons[0].Code != "needs_follow_up" || out.Reasons[1].Code != "recent_activity" {
+		t.Fatalf("expected needs_follow_up + recent_activity reasons, got %#v", out.Reasons)
 	}
 }
 
@@ -220,11 +220,11 @@ func TestScoreInProgressUsesSpecificReason(t *testing.T) {
 	if out.Status != model.StatusPossiblyStuck {
 		t.Fatalf("status = %s, want possibly_stuck", out.Status)
 	}
-	if out.Score != inProgressAttentionWeight {
-		t.Fatalf("score = %d, want %d", out.Score, inProgressAttentionWeight)
+	if out.Score != inProgressAttentionWeight+9 {
+		t.Fatalf("score = %d, want %d", out.Score, inProgressAttentionWeight+9)
 	}
-	if len(out.Reasons) != 1 || out.Reasons[0].Code != "in_progress" {
-		t.Fatalf("expected in_progress reason, got %#v", out.Reasons)
+	if len(out.Reasons) != 2 || out.Reasons[0].Code != "in_progress" || out.Reasons[1].Code != "recent_activity" {
+		t.Fatalf("expected in_progress + recent_activity reasons, got %#v", out.Reasons)
 	}
 }
 
@@ -244,11 +244,34 @@ func TestScoreBlockedUsesSpecificReason(t *testing.T) {
 	if out.Status != model.StatusPossiblyStuck {
 		t.Fatalf("status = %s, want possibly_stuck", out.Status)
 	}
-	if out.Score != blockedAttentionWeight {
-		t.Fatalf("score = %d, want %d", out.Score, blockedAttentionWeight)
+	if out.Score != blockedAttentionWeight+9 {
+		t.Fatalf("score = %d, want %d", out.Score, blockedAttentionWeight+9)
 	}
-	if len(out.Reasons) != 1 || out.Reasons[0].Code != "blocked" {
-		t.Fatalf("expected blocked reason, got %#v", out.Reasons)
+	if len(out.Reasons) != 2 || out.Reasons[0].Code != "blocked" || out.Reasons[1].Code != "recent_activity" {
+		t.Fatalf("expected blocked + recent_activity reasons, got %#v", out.Reasons)
+	}
+}
+
+func TestScoreCompletedRecencyTapersOverTime(t *testing.T) {
+	now := time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC)
+	inputs := []time.Duration{24 * time.Hour, 48 * time.Hour, 60 * time.Hour}
+	scores := make([]int, 0, len(inputs))
+
+	for _, age := range inputs {
+		out := Score(Input{
+			Now:                        now,
+			HasActivity:                true,
+			LastActivity:               now.Add(-age),
+			ActiveThreshold:            20 * time.Minute,
+			StuckThreshold:             4 * time.Hour,
+			LatestSessionCategoryKnown: true,
+			LatestSessionCategory:      model.SessionCategoryCompleted,
+		})
+		scores = append(scores, out.Score)
+	}
+
+	if !(scores[0] > scores[1] && scores[1] > scores[2]) {
+		t.Fatalf("expected completed scores to taper over time, got %v", scores)
 	}
 }
 
