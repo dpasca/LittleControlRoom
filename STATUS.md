@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-14 19:59 JST (JST)
+Last updated: 2026-03-14 20:42 JST (JST)
 
 ## Current State
 
@@ -76,6 +76,48 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-14 20:42 JST)
+
+- Fixed a resume-picker confusion bug where forked Codex subagent sessions were being listed like normal resumable conversations, which could surface duplicate-looking titles with different session ids and timestamps.
+- The picker now inspects Codex `session_meta` headers and hides spawned subagent/thread-fork children from the saved-session resume list, bringing the visible entries closer to the top-level conversations shown by Codex TUI.
+- Added a focused regression that builds a parent session plus a forked `explorer` child session and verifies that only the parent remains resumable in the picker.
+- No detector or footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-14T20:42:35+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-14T20:42:42+09:00` (`projects: 138`).
+- A short `go run ./cmd/lcroom tui ... --allow-multiple-instances` smoke launch started and exited cleanly via `q`.
+
+Next concrete tasks:
+
+- Sanity-check whether any intentionally user-created non-subagent Codex forks should remain visible later, or whether hiding all spawned child sessions is the right long-term rule for the resume UI.
+- Consider whether the picker should explicitly surface parent/child lineage somewhere else for debugging, without cluttering the main resume list.
+
+## Latest Update (2026-03-14 20:24 JST)
+
+- Updated the embedded `/resume` session picker to use each session `Title` as the primary list preview, with the `Summary` demoted to secondary detail text in the About block.
+- Made the picker height-aware so it now shows substantially more resume rows on taller terminals instead of the old fixed ~5-row window, while still leaving room for the dialog header and detail area.
+- Reworked the left status rail into compact fixed-width slots such as `CX CUR LIVE`, `CX     SAVE`, and `CX     LAST`, which keeps the timestamp and session-id columns aligned even when a row is current/live.
+- Added focused TUI regressions for title-first resume rows, compact badge-column alignment, and the taller picker window calculation.
+- No detector or footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-14T20:23:22+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-14T20:23:33+09:00` (`projects: 138`).
+- `make tui` correctly refused to start because another `lcroom tui` process already owns the shared DB.
+- A short `go run ./cmd/lcroom tui ... --allow-multiple-instances` smoke launch started and exited cleanly via `q`, confirming the override path still boots for temporary UI checks.
+
+Next concrete tasks:
+
+- Reopen the populated `/resume` picker in a free debug TUI session and sanity-check the new row count and compact badge rail against real saved-session data.
+- Decide whether the global embedded-session picker should also switch to title-first previews now that the resume picker behavior feels better.
 
 ## Latest Update (2026-03-14 19:59 JST)
 

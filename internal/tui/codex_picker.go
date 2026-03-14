@@ -1,8 +1,12 @@
 package tui
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -273,6 +277,9 @@ func buildCodexResumeChoices(ctx context.Context, detail model.ProjectDetail, pr
 		if strings.TrimSpace(session.SessionID) == "" {
 			continue
 		}
+		if codexResumeSessionHidden(session, provider) {
+			continue
+		}
 		choice := codexSessionChoice{
 			ProjectPath:  project.Path,
 			ProjectName:  projectNameForPicker(project, project.Path),
@@ -300,6 +307,76 @@ func buildCodexResumeChoices(ctx context.Context, detail model.ProjectDetail, pr
 		choices = append(choices, choice)
 	}
 	return choices
+}
+
+func codexResumeSessionHidden(session model.SessionEvidence, provider codexapp.Provider) bool {
+	if provider.Normalized() != codexapp.ProviderCodex {
+		return false
+	}
+	if strings.TrimSpace(session.SessionFile) == "" {
+		return false
+	}
+	hidden, err := codexSessionIsForkedSubagent(session.SessionFile)
+	if err != nil {
+		return false
+	}
+	return hidden
+}
+
+func codexSessionIsForkedSubagent(path string) (bool, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer file.Close()
+
+	reader := bufio.NewReader(file)
+	for i := 0; i < 3; i++ {
+		line, err := reader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return false, err
+		}
+		line = strings.TrimSpace(line)
+		if line != "" {
+			if hidden, ok := parseCodexForkedSubagentLine(line); ok {
+				return hidden, nil
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+	}
+	return false, nil
+}
+
+func parseCodexForkedSubagentLine(line string) (hidden, ok bool) {
+	var payload struct {
+		Type    string `json:"type"`
+		Payload struct {
+			ForkedFromID string `json:"forked_from_id"`
+			AgentRole    string `json:"agent_role"`
+			Source       struct {
+				Subagent struct {
+					ThreadSpawn struct {
+						ParentThreadID string `json:"parent_thread_id"`
+					} `json:"thread_spawn"`
+				} `json:"subagent"`
+			} `json:"source"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal([]byte(line), &payload); err != nil {
+		return false, false
+	}
+	if payload.Type != "session_meta" {
+		return false, false
+	}
+	if strings.TrimSpace(payload.Payload.Source.Subagent.ThreadSpawn.ParentThreadID) != "" {
+		return true, true
+	}
+	if strings.TrimSpace(payload.Payload.ForkedFromID) != "" && strings.TrimSpace(payload.Payload.AgentRole) != "" {
+		return true, true
+	}
+	return false, true
 }
 
 func (m Model) applyCodexResumeChoices(msg codexResumeChoicesMsg) (tea.Model, tea.Cmd) {
@@ -537,7 +614,7 @@ func (m *Model) focusProjectPath(projectPath string) tea.Cmd {
 }
 
 func (m Model) renderCodexPickerOverlay(body string, bodyW, bodyH int) string {
-	panel := m.renderCodexPicker(bodyW)
+	panel := m.renderCodexPicker(bodyW, bodyH)
 	panelWidth := lipgloss.Width(panel)
 	panelHeight := lipgloss.Height(panel)
 	left := max(0, (bodyW-panelWidth)/2)
@@ -545,7 +622,7 @@ func (m Model) renderCodexPickerOverlay(body string, bodyW, bodyH int) string {
 	return overlayBlock(body, panel, bodyW, bodyH, left, top)
 }
 
-func (m Model) renderCodexPicker(bodyW int) string {
+func (m Model) renderCodexPicker(bodyW, bodyH int) string {
 	panelWidth := min(bodyW, min(max(58, bodyW-10), 96))
 	panelInnerWidth := max(28, panelWidth-4)
 	return lipgloss.NewStyle().
@@ -555,10 +632,10 @@ func (m Model) renderCodexPicker(bodyW int) string {
 		Padding(0, 1).
 		Background(lipgloss.Color("235")).
 		Foreground(lipgloss.Color("252")).
-		Render(m.renderCodexPickerContent(panelInnerWidth))
+		Render(m.renderCodexPickerContent(panelInnerWidth, bodyH))
 }
 
-func (m Model) renderCodexPickerContent(width int) string {
+func (m Model) renderCodexPickerContent(width, bodyH int) string {
 	choices := m.currentCodexPickerChoices()
 	title := strings.TrimSpace(m.codexPickerTitle)
 	if title == "" {
@@ -591,7 +668,7 @@ func (m Model) renderCodexPickerContent(width int) string {
 		return strings.Join(lines, "\n")
 	}
 
-	start, end := m.codexPickerWindow(len(choices))
+	start, end := m.codexPickerWindow(len(choices), bodyH)
 	if start > 0 {
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d more", start)))
 	}
@@ -605,11 +682,11 @@ func (m Model) renderCodexPickerContent(width int) string {
 	if selected, ok := m.currentCodexPickerChoice(); ok {
 		lines = append(lines, "")
 		lines = append(lines, commandPaletteTitleStyle.Render("About"))
-		if summary := strings.TrimSpace(selected.Summary); summary != "" {
-			lines = append(lines, detailValueStyle.Render(fitFooterWidth(summary, width)))
+		if preview := strings.TrimSpace(m.codexPickerPrimaryLabel(selected)); preview != "" {
+			lines = append(lines, detailValueStyle.Render(fitFooterWidth(preview, width)))
 		}
-		if title := strings.TrimSpace(selected.Title); title != "" && !strings.EqualFold(title, strings.TrimSpace(selected.Summary)) {
-			lines = append(lines, commandPaletteHintStyle.Render(fitFooterWidth("Title: "+title, width)))
+		if secondary := strings.TrimSpace(m.codexPickerSecondaryLabel(selected)); secondary != "" {
+			lines = append(lines, commandPaletteHintStyle.Render(fitFooterWidth(secondary, width)))
 		}
 		lines = append(lines, commandPaletteHintStyle.Render(fitFooterWidth(selected.ProjectPath, width)))
 		meta := "Source: " + selected.Provider.Label() + "  Session: " + shortID(selected.SessionID) + "  Last activity: " + formatPickerActivity(selected.LastActivity)
@@ -622,14 +699,11 @@ func (m Model) renderCodexPickerContent(width int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) codexPickerWindow(total int) (int, int) {
+func (m Model) codexPickerWindow(total, bodyH int) (int, int) {
 	if total <= 0 {
 		return 0, 0
 	}
-	limit := 7
-	if m.codexPickerKind == codexPickerKindResume {
-		limit = 5
-	}
+	limit := m.codexPickerListLimit(total, bodyH)
 	limit = min(limit, total)
 	start := 0
 	if m.codexPickerSelected >= limit {
@@ -645,44 +719,49 @@ func (m Model) codexPickerWindow(total int) (int, int) {
 	return start, start + limit
 }
 
-func (m Model) renderCodexPickerRow(choice codexSessionChoice, selected bool, width int) string {
-	badges := make([]string, 0, 4)
-	if tag := choice.Provider.SourceTag(); tag != "" {
-		badges = append(badges, tag)
+func (m Model) codexPickerListLimit(total, bodyH int) int {
+	if total <= 0 {
+		return 0
 	}
-	if choice.Current {
-		badges = append(badges, "CURRENT")
-	}
-	if m.codexPickerKind == codexPickerKindResume {
-		switch {
-		case choice.Live:
-			badges = append(badges, "LIVE")
-		case choice.Latest:
-			badges = append(badges, "LATEST")
-		default:
-			badges = append(badges, "SAVED")
-		}
-	} else {
-		switch {
-		case choice.Live && choice.Hidden:
-			badges = append(badges, "OPEN")
-		case choice.Live:
-			badges = append(badges, "LIVE")
-		default:
-			badges = append(badges, "LAST")
-		}
-	}
-	if choice.Busy {
-		badges = append(badges, "BUSY")
-	}
-	if choice.BusyExternal {
-		badges = append(badges, "EXT")
-	}
-	if choice.Missing {
-		badges = append(badges, "MISSING")
+	if bodyH <= 0 {
+		bodyH = 30
 	}
 
-	left := strings.Join(badges, " ")
+	panelMaxHeight := max(12, bodyH-6)
+	headerLines := 5
+	rowHeight := 2
+	if m.codexPickerKind == codexPickerKindResume {
+		rowHeight = 1
+	}
+
+	aboutLines := 0
+	if selected, ok := m.currentCodexPickerChoice(); ok {
+		aboutLines = 4 // blank line, section title, path, and metadata
+		if strings.TrimSpace(m.codexPickerPrimaryLabel(selected)) != "" {
+			aboutLines++
+		}
+		if strings.TrimSpace(m.codexPickerSecondaryLabel(selected)) != "" {
+			aboutLines++
+		}
+	}
+
+	markerLines := 2 // reserve space for both "more" markers when scrolling
+	borderLines := 2
+	available := panelMaxHeight - headerLines - aboutLines - markerLines - borderLines
+	if available < rowHeight {
+		available = rowHeight
+	}
+	limit := max(1, available/rowHeight)
+	if m.codexPickerKind == codexPickerKindResume {
+		limit = min(limit, 12)
+	} else {
+		limit = min(limit, 8)
+	}
+	return min(limit, total)
+}
+
+func (m Model) renderCodexPickerRow(choice codexSessionChoice, selected bool, width int) string {
+	left := m.codexPickerBadgeColumn(choice)
 	right := fmt.Sprintf("%s  %s", formatPickerActivity(choice.LastActivity), shortID(choice.SessionID))
 	available := max(16, width-lipgloss.Width(left)-lipgloss.Width(right)-6)
 	label := m.codexPickerPrimaryLabel(choice)
@@ -696,6 +775,66 @@ func (m Model) renderCodexPickerRow(choice codexSessionChoice, selected bool, wi
 		return commandPaletteSelectStyle.Width(width).Render(row)
 	}
 	return commandPaletteRowStyle.Width(width).Render(row)
+}
+
+func (m Model) codexPickerBadgeColumn(choice codexSessionChoice) string {
+	parts := []string{fixedBadgeSlot(choice.Provider.SourceTag(), 2)}
+	if m.codexPickerKind == codexPickerKindResume {
+		parts = append(parts, fixedBadgeSlot(boolBadge(choice.Current, "CUR"), 3))
+		parts = append(parts, fixedBadgeSlot(m.codexPickerResumeState(choice), 4))
+	} else {
+		parts = append(parts, fixedBadgeSlot(m.codexPickerGlobalState(choice), 4))
+	}
+	if choice.Busy {
+		parts = append(parts, "BUSY")
+	}
+	if choice.BusyExternal {
+		parts = append(parts, "EXT")
+	}
+	if choice.Missing {
+		parts = append(parts, "MISS")
+	}
+	return strings.TrimRight(strings.Join(parts, " "), " ")
+}
+
+func (m Model) codexPickerResumeState(choice codexSessionChoice) string {
+	switch {
+	case choice.Live:
+		return "LIVE"
+	case choice.Latest:
+		return "LAST"
+	default:
+		return "SAVE"
+	}
+}
+
+func (m Model) codexPickerGlobalState(choice codexSessionChoice) string {
+	switch {
+	case choice.Live && choice.Hidden:
+		return "OPEN"
+	case choice.Live:
+		return "LIVE"
+	default:
+		return "LAST"
+	}
+}
+
+func boolBadge(enabled bool, label string) string {
+	if !enabled {
+		return ""
+	}
+	return label
+}
+
+func fixedBadgeSlot(label string, width int) string {
+	label = strings.TrimSpace(label)
+	if width <= 0 {
+		return label
+	}
+	if label == "" {
+		return strings.Repeat(" ", width)
+	}
+	return fmt.Sprintf("%-*s", width, truncateText(label, width))
 }
 
 func (m Model) mergeCurrentResumeChoice(choices []codexSessionChoice) []codexSessionChoice {
@@ -733,11 +872,11 @@ func (m Model) mergeCurrentResumeChoice(choices []codexSessionChoice) []codexSes
 
 func (m Model) codexPickerPrimaryLabel(choice codexSessionChoice) string {
 	if m.codexPickerKind == codexPickerKindResume {
-		if summary := strings.TrimSpace(choice.Summary); summary != "" {
-			return summary
-		}
 		if title := strings.TrimSpace(choice.Title); title != "" {
 			return title
+		}
+		if summary := strings.TrimSpace(choice.Summary); summary != "" {
+			return summary
 		}
 	}
 	if title := strings.TrimSpace(choice.Title); title != "" {
@@ -747,6 +886,21 @@ func (m Model) codexPickerPrimaryLabel(choice codexSessionChoice) string {
 		return summary
 	}
 	return choice.ProjectName
+}
+
+func (m Model) codexPickerSecondaryLabel(choice codexSessionChoice) string {
+	primary := strings.TrimSpace(m.codexPickerPrimaryLabel(choice))
+	if primary == "" {
+		return ""
+	}
+	for _, candidate := range []string{choice.Summary, choice.Title, choice.ProjectName} {
+		text := strings.TrimSpace(candidate)
+		if text == "" || strings.EqualFold(text, primary) {
+			continue
+		}
+		return text
+	}
+	return ""
 }
 
 func (m Model) currentResumeChoice() (codexSessionChoice, bool) {

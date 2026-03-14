@@ -2039,7 +2039,56 @@ func TestVisibleCodexSlashResumeOpensPickerAndLoadsChoices(t *testing.T) {
 	}
 }
 
-func TestRenderCodexPickerRowUsesSavedBadgeAndSummaryInResumeMode(t *testing.T) {
+func TestBuildCodexResumeChoicesSkipsForkedSubagentSessions(t *testing.T) {
+	parentFixture := filepath.Join(t.TempDir(), "parent.jsonl")
+	if err := os.WriteFile(parentFixture, []byte(strings.Join([]string{
+		`{"timestamp":"2026-03-14T06:27:12Z","type":"session_meta","payload":{"id":"thread-parent","cwd":"/tmp/demo"}}`,
+		`{"timestamp":"2026-03-14T06:27:13Z","type":"event_msg","payload":{"type":"user_message","message":"Top-level conversation"}}`,
+		`{"timestamp":"2026-03-14T06:27:14Z","type":"event_msg","payload":{"type":"agent_message","message":"Parent summary"}}`,
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write parent fixture: %v", err)
+	}
+
+	childFixture := filepath.Join(t.TempDir(), "child.jsonl")
+	if err := os.WriteFile(childFixture, []byte(strings.Join([]string{
+		`{"timestamp":"2026-03-14T09:32:01Z","type":"session_meta","payload":{"id":"thread-child","forked_from_id":"thread-parent","cwd":"/tmp/demo","agent_role":"explorer","source":{"subagent":{"thread_spawn":{"parent_thread_id":"thread-parent"}}}}}`,
+		`{"timestamp":"2026-03-14T09:32:02Z","type":"event_msg","payload":{"type":"user_message","message":"Top-level conversation"}}`,
+		`{"timestamp":"2026-03-14T09:32:03Z","type":"event_msg","payload":{"type":"agent_message","message":"Child summary"}}`,
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write child fixture: %v", err)
+	}
+
+	choices := buildCodexResumeChoices(context.Background(), model.ProjectDetail{
+		Summary: model.ProjectSummary{
+			Path:          "/tmp/demo",
+			Name:          "demo",
+			PresentOnDisk: true,
+		},
+		Sessions: []model.SessionEvidence{
+			{
+				SessionID:   "thread-parent",
+				Format:      "modern",
+				SessionFile: parentFixture,
+				LastEventAt: time.Date(2026, 3, 14, 6, 27, 14, 0, time.UTC),
+			},
+			{
+				SessionID:   "thread-child",
+				Format:      "modern",
+				SessionFile: childFixture,
+				LastEventAt: time.Date(2026, 3, 14, 9, 32, 3, 0, time.UTC),
+			},
+		},
+	}, codexapp.ProviderCodex)
+
+	if len(choices) != 1 {
+		t.Fatalf("resume picker choices = %d, want 1 after hiding forked subagent session", len(choices))
+	}
+	if choices[0].SessionID != "thread-parent" {
+		t.Fatalf("remaining choice session id = %q, want thread-parent", choices[0].SessionID)
+	}
+}
+
+func TestRenderCodexPickerRowUsesCompactSavedBadgeAndTitleInResumeMode(t *testing.T) {
 	m := Model{codexPickerKind: codexPickerKindResume}
 	row := ansi.Strip(m.renderCodexPickerRow(codexSessionChoice{
 		Provider:     codexapp.ProviderCodex,
@@ -2049,17 +2098,17 @@ func TestRenderCodexPickerRowUsesSavedBadgeAndSummaryInResumeMode(t *testing.T) 
 		Summary:      "Feature added: wheel plays a blip on character change, build passes; tuning offers optional next steps.",
 	}, false, 96))
 
-	if !strings.Contains(row, "SAVED") {
-		t.Fatalf("resume picker row should mark historical sessions as saved: %q", row)
+	if !strings.Contains(row, "CX     SAVE") {
+		t.Fatalf("resume picker row should use the compact saved badge rail: %q", row)
 	}
 	if strings.Contains(row, "LAST") {
 		t.Fatalf("resume picker row should not label every saved session as last: %q", row)
 	}
-	if !strings.Contains(row, "Feature added: wheel plays a blip") {
-		t.Fatalf("resume picker row should surface the summary first: %q", row)
+	if !strings.Contains(row, "# AGENTS.md instructions") {
+		t.Fatalf("resume picker row should surface the title in the list: %q", row)
 	}
-	if strings.Contains(row, "# AGENTS.md instructions") {
-		t.Fatalf("resume picker row should keep noisy transcript titles out of the list row: %q", row)
+	if strings.Contains(row, "Feature added: wheel plays a blip") {
+		t.Fatalf("resume picker row should no longer use the summary as the primary list preview: %q", row)
 	}
 }
 
@@ -2073,10 +2122,10 @@ func TestRenderCodexPickerRowMarksLatestSavedSessionInResumeMode(t *testing.T) {
 		Latest:       true,
 	}, false, 96))
 
-	if !strings.Contains(row, "LATEST") {
-		t.Fatalf("resume picker row should mark the newest saved session: %q", row)
+	if !strings.Contains(row, "CX     LAST") {
+		t.Fatalf("resume picker row should use the compact latest badge rail: %q", row)
 	}
-	if strings.Contains(row, "SAVED") {
+	if strings.Contains(row, "SAVE") {
 		t.Fatalf("latest saved session should use the latest badge instead of saved: %q", row)
 	}
 }
@@ -2107,6 +2156,58 @@ func TestRenderCodexPickerRowAlignsResumeMetadataColumns(t *testing.T) {
 	}
 	if shortIndex != longIndex {
 		t.Fatalf("timestamp columns should align: short=%d long=%d shortRow=%q longRow=%q", shortIndex, longIndex, shortRow, longRow)
+	}
+}
+
+func TestRenderCodexPickerRowKeepsCompactBadgeColumnAligned(t *testing.T) {
+	m := Model{codexPickerKind: codexPickerKindResume}
+	at := time.Date(2026, 3, 13, 19, 56, 0, 0, time.UTC)
+	ts := formatPickerActivity(at)
+
+	savedRow := ansi.Strip(m.renderCodexPickerRow(codexSessionChoice{
+		Provider:     codexapp.ProviderCodex,
+		SessionID:    "thread-saved",
+		LastActivity: at,
+		Title:        "Saved session title",
+	}, false, 96))
+
+	currentLiveRow := ansi.Strip(m.renderCodexPickerRow(codexSessionChoice{
+		Provider:     codexapp.ProviderCodex,
+		SessionID:    "thread-live",
+		LastActivity: at,
+		Title:        "Current live session title",
+		Current:      true,
+		Live:         true,
+	}, false, 96))
+
+	savedIndex := strings.Index(savedRow, ts)
+	liveIndex := strings.Index(currentLiveRow, ts)
+	if savedIndex < 0 || liveIndex < 0 {
+		t.Fatalf("expected both rows to include the activity timestamp %q: saved=%q live=%q", ts, savedRow, currentLiveRow)
+	}
+	if savedIndex != liveIndex {
+		t.Fatalf("compact badge rail should keep timestamp columns aligned: saved=%d live=%d savedRow=%q liveRow=%q", savedIndex, liveIndex, savedRow, currentLiveRow)
+	}
+	if !strings.Contains(currentLiveRow, "CX CUR LIVE") {
+		t.Fatalf("current live row should use the compact current/live badge rail: %q", currentLiveRow)
+	}
+}
+
+func TestCodexPickerWindowUsesAvailableTerminalHeight(t *testing.T) {
+	m := Model{
+		codexPickerKind:     codexPickerKindResume,
+		codexPickerSelected: 0,
+		codexPickerChoices: []codexSessionChoice{
+			{Title: "First", Summary: "Summary"},
+		},
+	}
+
+	start, end := m.codexPickerWindow(20, 30)
+	if start != 0 {
+		t.Fatalf("start = %d, want 0", start)
+	}
+	if visible := end - start; visible <= 5 {
+		t.Fatalf("visible rows = %d, want more than the old fixed window", visible)
 	}
 }
 
