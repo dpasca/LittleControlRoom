@@ -167,6 +167,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/view ai`
 - `/view all`
 - `/settings`
+- `/open`
 - `/note`
 - `/note clear`
 - `/diff`
@@ -204,6 +205,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 ## Notes
 
 - `Enter` on the selected project opens that project's latest embedded provider inside Little Control Room.
+- `/open` opens the selected project's folder in the system browser.
 - `/codex` resumes the selected project's latest known Codex session when available, otherwise it starts a new one.
 - `/codex-new` always starts a fresh Codex session.
 - `/opencode` resumes the selected project's latest known OpenCode session when available, otherwise it starts a new one.

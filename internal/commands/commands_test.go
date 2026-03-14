@@ -57,6 +57,15 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "open",
+			raw:  "/open",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindOpen {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindOpen)
+				}
+			},
+		},
+		{
 			name: "diff",
 			raw:  "/diff",
 			check: func(t *testing.T, inv Invocation) {
@@ -310,13 +319,16 @@ func TestSuggestionsIncludeCodexCommands(t *testing.T) {
 
 func TestSuggestionsIncludeOpenCodeCommands(t *testing.T) {
 	got := Suggestions("/open")
-	if len(got) < 2 {
-		t.Fatalf("Suggestions(/open) len = %d, want at least 2", len(got))
+	if len(got) < 3 {
+		t.Fatalf("Suggestions(/open) len = %d, want at least 3", len(got))
 	}
-	if got[0].Insert != "/opencode" {
-		t.Fatalf("first /open suggestion = %q, want /opencode", got[0].Insert)
+	if got[0].Insert != "/open" {
+		t.Fatalf("first /open suggestion = %q, want /open", got[0].Insert)
 	}
-	if got[1].Insert != "/opencode-new" {
-		t.Fatalf("second /open suggestion = %q, want /opencode-new", got[1].Insert)
+	if got[1].Insert != "/opencode" {
+		t.Fatalf("second /open suggestion = %q, want /opencode", got[1].Insert)
+	}
+	if got[2].Insert != "/opencode-new" {
+		t.Fatalf("third /open suggestion = %q, want /opencode-new", got[2].Insert)
 	}
 }

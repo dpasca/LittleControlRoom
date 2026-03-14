@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-15 00:30 JST (JST)
+Last updated: 2026-03-15 00:59 JST (JST)
 
 ## Current State
 
@@ -55,6 +55,7 @@ Current screenshot workflow assumption:
 - Scope-aware persistence via path filters and project-name filters
 - Cached `doctor` by default, with `doctor --scan` for a fresh rescan
 - TUI stacked layout with focusable detail pane, scrolling, compact settings modal, and command palette
+- Top-level `/open` slash command to open the selected project's folder in the system browser
 - Project notes via `/note` or `n`, with a multiline modal editor, wrapped detail-pane notes, a list badge when a project has saved notes, and clipboard copy actions for the whole note or an explicit marked selection
 - Git workflow actions in the TUI for full-screen diff preview, commit preview, finish, and push
 - Embedded Codex pane via `codex app-server`, with multiline compose, per-project drafts, inline `[Image #n]` clipboard image markers in the composer, backspace-based image removal, local embedded slash commands for `/new`, `/resume` (`/session` alias), `/model`, and `/status`, visible slash autocomplete/suggestions in the composer, a provider-specific saved-session resume picker with lightweight title/summary previews and current-session markers, live model/reasoning/context-left metadata under the transcript, a local model+reasoning picker backed by `model/list`, `Enter`/`/codex`/`/codex-new`, `Esc` or `Alt+Up` hide from the embedded pane with `Enter` reopening from the project list, `Alt+Down` session picker/history, `Alt+[`/`Alt+]` live-session stepping, wrapped transcript blocks, shaded echoed user transcript blocks that reuse the composer shell styling, denser command/tool/file blocks with `Alt+L` expand/collapse, label-free user/assistant transcript rendering, manager-side update coalescing, inline approvals/input requests, and busy-elsewhere rechecks when a read-only embedded session is reopened or restored
@@ -76,6 +77,27 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-15 00:59 JST)
+
+- Added a top-level `/open` slash command that opens the selected project's directory in the system browser, including parser support, command-palette suggestions, TUI dispatch, and user-facing help/docs updates.
+- Added a small cross-platform external-browser helper in the TUI layer that turns the project directory into a `file://` URL and launches it via the platform opener, while keeping the action unit-testable behind a stubbed function variable.
+- Added focused regressions for both layers: command parsing/suggestion coverage for the new `/open` entry and TUI tests that confirm the selected project path is routed to the external browser helper without touching the real OS browser during tests.
+- No detector or footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/commands -count=1` passed.
+- `go test ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-15T00:59:04+09:00` (`activity projects: 85`, `tracked projects: 136`, `updated projects: 2`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-15T00:59:05+09:00` (`projects: 136`).
+- `make tui DB=/tmp/lcroom-open-command-smoke.sqlite` reached the TUI and exited via `q`.
+
+Next concrete tasks:
+
+- Decide whether `/open` should remain a plain `file://` handoff on every platform or grow a lightweight local HTTP directory viewer later if browser handling of folders proves inconsistent.
+- Consider adding a small keyboard shortcut for the same action if opening the selected project in an external browser becomes a frequent workflow.
 
 ## Latest Update (2026-03-15 00:30 JST)
 

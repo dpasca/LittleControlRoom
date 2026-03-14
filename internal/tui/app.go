@@ -128,6 +128,11 @@ type actionMsg struct {
 	err    error
 }
 
+type browserOpenMsg struct {
+	status string
+	err    error
+}
+
 type commitPreviewMsg struct {
 	preview     service.CommitPreview
 	projectPath string
@@ -528,6 +533,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.status = msg.status
 		return m, tea.Batch(m.scanCmd(false), m.loadProjectsCmd())
+	case browserOpenMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			m.status = "Open failed"
+			return m, nil
+		}
+		m.err = nil
+		m.status = msg.status
+		return m, nil
 	case settingsSavedMsg:
 		m.err = nil
 		if msg.err != nil {
@@ -1656,6 +1670,18 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, m.openSettingsMode()
 	case commands.KindNewProject:
 		return m, m.openNewProjectDialog()
+	case commands.KindOpen:
+		p, ok := m.selectedProject()
+		if !ok {
+			m.status = "No project selected"
+			return m, nil
+		}
+		if !p.PresentOnDisk {
+			m.status = "Open requires a folder present on disk"
+			return m, nil
+		}
+		m.status = "Opening project in browser..."
+		return m, m.openProjectDirInBrowserCmd(p.Path)
 	case commands.KindDiff:
 		p, ok := m.selectedProject()
 		if !ok {
@@ -1953,6 +1979,15 @@ func (m Model) forgetProjectCmd(path string) tea.Cmd {
 	return func() tea.Msg {
 		err := m.svc.ForgetProject(m.ctx, path)
 		return actionMsg{status: "Missing folder forgotten", err: err}
+	}
+}
+
+func (m Model) openProjectDirInBrowserCmd(path string) tea.Cmd {
+	return func() tea.Msg {
+		if err := openProjectDirInBrowser(path); err != nil {
+			return browserOpenMsg{err: err}
+		}
+		return browserOpenMsg{status: "Opened project in browser"}
 	}
 }
 
@@ -3604,7 +3639,7 @@ func (m Model) renderHelpPanel(bodyW, bodyH int) string {
 				"s/S snooze/clear",
 				"n   note dialog",
 				"/refresh /settings",
-				"/note [/clear]",
+				"/open /note [/clear]",
 				"/codex /codex-new /opencode /opencode-new",
 				"/diff /commit /finish /push",
 			},
