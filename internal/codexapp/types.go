@@ -590,7 +590,6 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 			requestedProvider = ProviderCodex
 		}
 		if existingProvider != requestedProvider {
-			delete(m.sessions, projectPath)
 			replaceExisting = true
 			ok = false
 		}
@@ -600,7 +599,6 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 		if requestedResumeID != "" {
 			existingThreadID := strings.TrimSpace(existing.Snapshot().ThreadID)
 			if existingThreadID == "" || existingThreadID != requestedResumeID {
-				delete(m.sessions, projectPath)
 				replaceExisting = true
 				ok = false
 			}
@@ -621,7 +619,6 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 		return existing, true, nil
 	}
 	if ok {
-		delete(m.sessions, projectPath)
 		replaceExisting = true
 	}
 	m.mu.Unlock()

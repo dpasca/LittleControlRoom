@@ -2480,6 +2480,95 @@ func TestVisibleCodexSlashNewStartsFreshSession(t *testing.T) {
 	}
 }
 
+func TestVisibleOpenCodeSlashNewFailureKeepsClosedSessionVisible(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		if len(requests) == 1 {
+			return &fakeCodexSession{
+				projectPath: req.ProjectPath,
+				snapshot: codexapp.Snapshot{
+					Provider: codexapp.ProviderOpenCode,
+					Started:  true,
+					Status:   "OpenCode session ready",
+					ThreadID: "ses-current",
+				},
+			}, nil
+		}
+		return nil, fmt.Errorf("opencode create failed")
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderOpenCode,
+		ResumeID:    "ses-current",
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/new")
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should run the embedded OpenCode /new command")
+	}
+	if got.codexPendingOpen == nil || got.codexPendingOpen.provider != codexapp.ProviderOpenCode {
+		t.Fatalf("codexPendingOpen = %#v, want pending OpenCode session", got.codexPendingOpen)
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err == nil || opened.err.Error() != "opencode create failed" {
+		t.Fatalf("/new returned error = %v, want opencode create failed", opened.err)
+	}
+
+	updated, _ = got.Update(opened)
+	got = updated.(Model)
+	if got.codexPendingOpen != nil {
+		t.Fatalf("codexPendingOpen = %#v, want nil after handling the failed open", got.codexPendingOpen)
+	}
+	if got.codexVisibleProject != "/tmp/demo" {
+		t.Fatalf("codexVisibleProject = %q, want the closed OpenCode session to remain visible", got.codexVisibleProject)
+	}
+	snapshot, ok := got.currentCodexSnapshot()
+	if !ok {
+		t.Fatalf("currentCodexSnapshot() unavailable after a failed replacement")
+	}
+	if !snapshot.Closed {
+		t.Fatalf("snapshot.Closed = false, want the previous OpenCode session to remain as a closed placeholder")
+	}
+	if got.status != "Embedded session open failed" {
+		t.Fatalf("status = %q, want embedded-session-open-failed notice", got.status)
+	}
+	if got.err == nil || got.err.Error() != "opencode create failed" {
+		t.Fatalf("got.err = %v, want opencode create failed", got.err)
+	}
+	rendered := ansi.Strip(got.renderCodexView())
+	if !strings.Contains(rendered, "OpenCode session closed.") {
+		t.Fatalf("rendered view should keep showing the closed OpenCode session, got %q", rendered)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("launch requests = %d, want 2", len(requests))
+	}
+	if !requests[1].ForceNew {
+		t.Fatalf("second launch request should force a fresh OpenCode session")
+	}
+}
+
 func TestLaunchCodexForSelectionShowsOpeningStateInsteadOfPreviousSession(t *testing.T) {
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
 		return &fakeCodexSession{

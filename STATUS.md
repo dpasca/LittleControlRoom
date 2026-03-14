@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-14 21:31 JST (JST)
+Last updated: 2026-03-14 23:55 JST (JST)
 
 ## Current State
 
@@ -76,6 +76,28 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-14 23:55 JST)
+
+- Fixed an embedded OpenCode `/new` failure-path regression where replacing the current session could drop the TUI back to the project list if the fresh session failed to start.
+- The embedded session manager now keeps the previous session entry in place until a replacement is created successfully, so a failed force-new launch leaves the closed session visible instead of pruning the pane away.
+- Added focused regressions for both layers: a manager test that proves failed replacements keep the prior closed session attached to the project, and a TUI test that exercises embedded OpenCode `/new` failure handling without losing the visible pane.
+- Direct local `opencode serve` HTTP smoke checks also confirmed that creating and resuming sessions for `/Users/davide/dev/repos` still works outside the TUI, which supports the conclusion that this was a rollback/state-handling bug rather than a detector-footprint change.
+- No detector or footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/codexapp -run 'TestManagerOpen(FailedReplacementKeepsClosedExistingSession|ForceNewReplacesExistingSession)' -count=1` passed.
+- `go test ./internal/tui -run 'TestVisible(OpenCodeSlashNewFailureKeepsClosedSessionVisible|CodexSlashNewStartsFreshSession)' -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-14T23:55:29+09:00` (`activity projects: 84`, `tracked projects: 135`, `updated projects: 2`, `queued classifications: 2`).
+- `make doctor` passed on the cached snapshot dated `2026-03-14T23:55:30+09:00` (`projects: 135`).
+- Manual OpenCode HTTP smoke checks passed: `opencode serve --hostname 127.0.0.1 --port 0 --print-logs` accepted `POST /session`, resumed a created session via `GET /session/<id>`, and created a second fresh session both in `LittleControlRoom` and in `/Users/davide/dev/repos`.
+
+Next concrete tasks:
+
+- Re-run the exact real-TUI `repos` -> `Enter` -> embedded OpenCode `/new` flow and confirm the user-visible behavior now stays in the pane even if startup fails.
+- Consider surfacing the underlying OpenCode startup error text more prominently in the embedded pane so future failures are easier to distinguish from a successful close/reopen cycle.
 
 ## Latest Update (2026-03-14 21:31 JST)
 

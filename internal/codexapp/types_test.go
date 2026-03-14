@@ -2,6 +2,7 @@ package codexapp
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -279,6 +280,58 @@ func TestManagerOpenForceNewReplacesExistingSession(t *testing.T) {
 	}
 	if !created[0].closed {
 		t.Fatalf("original session should be closed when replaced")
+	}
+}
+
+func TestManagerOpenFailedReplacementKeepsClosedExistingSession(t *testing.T) {
+	createCalls := 0
+
+	manager := NewManagerWithFactory(func(req LaunchRequest, notify func()) (Session, error) {
+		createCalls++
+		if createCalls == 1 {
+			return &fakeSession{
+				projectPath: req.ProjectPath,
+				snapshot: Snapshot{
+					Started: true,
+					Preset:  req.Preset,
+				},
+			}, nil
+		}
+		return nil, fmt.Errorf("replacement failed")
+	})
+
+	first, _, err := manager.Open(LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	})
+	if err != nil {
+		t.Fatalf("first Open() error = %v", err)
+	}
+
+	second, reused, err := manager.Open(LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+		ForceNew:    true,
+	})
+	if err == nil {
+		t.Fatalf("second Open() error = nil, want replacement failure")
+	}
+	if reused {
+		t.Fatalf("second Open() reused = true, want false")
+	}
+	if second != nil {
+		t.Fatalf("second Open() session = %#v, want nil on failure", second)
+	}
+
+	stored, ok := manager.Session("/tmp/demo")
+	if !ok {
+		t.Fatalf("manager.Session() lost the previous session after a failed replacement")
+	}
+	if stored != first {
+		t.Fatalf("manager.Session() = %#v, want original session %#v", stored, first)
+	}
+	if !stored.Snapshot().Closed {
+		t.Fatalf("stored snapshot should remain closed after the failed replacement")
 	}
 }
 
