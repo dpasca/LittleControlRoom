@@ -55,13 +55,21 @@ type TranscriptItem struct {
 }
 
 func ExtractSnapshot(ctx context.Context, classification model.SessionClassification, session model.SessionEvidence, gitStatus GitStatusSnapshot) (SessionSnapshot, error) {
+	recoveredSession := session
+	if strings.TrimSpace(recoveredSession.SessionFile) == "" {
+		recoveredSession.SessionFile = classification.SessionFile
+	}
+	if strings.TrimSpace(recoveredSession.Format) == "" {
+		recoveredSession.Format = classification.SessionFormat
+	}
+	_ = RecoverSessionTurnState(&recoveredSession)
 	snapshot := SessionSnapshot{
 		ProjectPath:          classification.ProjectPath,
 		SessionID:            classification.SessionID,
 		SessionFormat:        classification.SessionFormat,
 		LastEventAt:          classification.SourceUpdatedAt.UTC().Format(time.RFC3339),
-		LatestTurnStateKnown: session.LatestTurnStateKnown,
-		LatestTurnCompleted:  session.LatestTurnCompleted,
+		LatestTurnStateKnown: recoveredSession.LatestTurnStateKnown,
+		LatestTurnCompleted:  recoveredSession.LatestTurnCompleted,
 		GitStatus:            gitStatus,
 	}
 
@@ -85,6 +93,31 @@ func ExtractSnapshot(ctx context.Context, classification model.SessionClassifica
 	}
 	snapshot.Transcript = items
 	return snapshot, nil
+}
+
+// RecoverSessionTurnState backfills latest-turn lifecycle from the session artifact
+// when the fast detector omitted it, which commonly happens on older Codex sessions.
+func RecoverSessionTurnState(session *model.SessionEvidence) error {
+	if session == nil || session.LatestTurnStateKnown || strings.TrimSpace(session.SessionFile) == "" {
+		return nil
+	}
+
+	switch session.Format {
+	case "modern", "legacy":
+		state, err := detectCodexTurnLifecycle(session.SessionFile)
+		if err != nil {
+			return err
+		}
+		if !state.known {
+			return nil
+		}
+		session.LatestTurnStateKnown = true
+		session.LatestTurnCompleted = state.completed
+		session.LatestTurnStartedAt = state.startedAt
+	default:
+	}
+
+	return nil
 }
 
 func ExtractPreview(ctx context.Context, session model.SessionEvidence) (SessionPreview, error) {
@@ -220,6 +253,34 @@ func extractCodexTranscript(path string) ([]TranscriptItem, error) {
 	return finalizeTranscript(items), nil
 }
 
+type codexTurnLifecycle struct {
+	known     bool
+	completed bool
+	startedAt time.Time
+}
+
+func detectCodexTurnLifecycle(path string) (codexTurnLifecycle, error) {
+	lines, err := readTailLines(path, codexTailBytes)
+	if err != nil {
+		return codexTurnLifecycle{}, err
+	}
+	state := codexTurnLifecycle{}
+	for _, line := range lines {
+		event, ok := extractCodexTurnLifecycleEvent(line)
+		if !ok {
+			continue
+		}
+		state.known = true
+		state.completed = event.completed
+		if event.completed {
+			state.startedAt = time.Time{}
+			continue
+		}
+		state.startedAt = event.timestamp
+	}
+	return state, nil
+}
+
 func readTailLines(path string, maxBytes int64) ([]string, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -327,6 +388,39 @@ func extractCodexTranscriptItem(line string) (TranscriptItem, bool) {
 		}
 	default:
 		return TranscriptItem{}, false
+	}
+}
+
+type codexTurnLifecycleEvent struct {
+	completed bool
+	timestamp time.Time
+}
+
+func extractCodexTurnLifecycleEvent(line string) (codexTurnLifecycleEvent, bool) {
+	var top struct {
+		Type      string `json:"type"`
+		Timestamp string `json:"timestamp"`
+		Payload   struct {
+			Type string `json:"type"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal([]byte(line), &top); err != nil {
+		return codexTurnLifecycleEvent{}, false
+	}
+	if top.Type != "event_msg" {
+		return codexTurnLifecycleEvent{}, false
+	}
+	timestamp := time.Time{}
+	if parsed, err := time.Parse(time.RFC3339, top.Timestamp); err == nil {
+		timestamp = parsed
+	}
+	switch top.Payload.Type {
+	case "task_started":
+		return codexTurnLifecycleEvent{completed: false, timestamp: timestamp}, true
+	case "task_complete":
+		return codexTurnLifecycleEvent{completed: true, timestamp: timestamp}, true
+	default:
+		return codexTurnLifecycleEvent{}, false
 	}
 }
 

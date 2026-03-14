@@ -391,6 +391,221 @@ func TestScanOncePersistsLatestSessionSnapshotHash(t *testing.T) {
 	}
 }
 
+func TestScanOnceRecoversLatestSessionTurnStateFromTranscript(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "turn-scan")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	fixture := filepath.Clean(filepath.Join("..", "..", "testdata", "codex_footprint", "sessions", "2026", "03", "05", "rollout-modern.jsonl"))
+	detector := &fakeDetector{
+		activities: map[string]*model.DetectorProjectActivity{
+			projectPath: {
+				ProjectPath:  projectPath,
+				LastActivity: time.Date(2026, 3, 6, 1, 0, 0, 0, time.UTC),
+				Source:       "codex",
+				Sessions: []model.SessionEvidence{{
+					SessionID:   "ses_turn_scan",
+					ProjectPath: projectPath,
+					SessionFile: fixture,
+					Format:      "modern",
+					StartedAt:   time.Date(2026, 3, 6, 0, 45, 0, 0, time.UTC),
+					LastEventAt: time.Date(2026, 3, 6, 1, 0, 0, 0, time.UTC),
+				}},
+			},
+		},
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = []string{root}
+	svc := New(cfg, st, events.NewBus(), []detectors.Detector{detector})
+
+	report, err := svc.ScanOnce(ctx)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(report.States) != 1 || len(report.States[0].Sessions) != 1 {
+		t.Fatalf("unexpected scan report: %#v", report.States)
+	}
+	session := report.States[0].Sessions[0]
+	if !session.LatestTurnStateKnown || !session.LatestTurnCompleted {
+		t.Fatalf("expected recovered in-memory turn state, got known=%v completed=%v", session.LatestTurnStateKnown, session.LatestTurnCompleted)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 10)
+	if err != nil {
+		t.Fatalf("get detail: %v", err)
+	}
+	if len(detail.Sessions) != 1 {
+		t.Fatalf("expected stored session, got %#v", detail.Sessions)
+	}
+	if !detail.Sessions[0].LatestTurnStateKnown || !detail.Sessions[0].LatestTurnCompleted {
+		t.Fatalf("expected stored recovered turn state, got known=%v completed=%v", detail.Sessions[0].LatestTurnStateKnown, detail.Sessions[0].LatestTurnCompleted)
+	}
+}
+
+func TestScanOnceRecomputesLatestSessionSnapshotHashWhenTurnStateChanges(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "turn-hash-refresh")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	fixture := filepath.Clean(filepath.Join("..", "..", "testdata", "codex_footprint", "sessions", "2026", "03", "05", "rollout-modern.jsonl"))
+	lastEventAt := time.Date(2026, 3, 6, 1, 0, 0, 0, time.UTC)
+	staleHash := "stale-no-turn-state-hash"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           filepath.Base(projectPath),
+		LastActivity:   lastEventAt,
+		Status:         model.StatusIdle,
+		AttentionScore: 20,
+		PresentOnDisk:  true,
+		InScope:        true,
+		UpdatedAt:      lastEventAt,
+		Sessions: []model.SessionEvidence{{
+			SessionID:    "ses_turn_hash_refresh",
+			ProjectPath:  projectPath,
+			SessionFile:  fixture,
+			Format:       "modern",
+			SnapshotHash: staleHash,
+			StartedAt:    lastEventAt.Add(-5 * time.Minute),
+			LastEventAt:  lastEventAt,
+		}},
+	}); err != nil {
+		t.Fatalf("seed project state: %v", err)
+	}
+
+	detector := &fakeDetector{
+		activities: map[string]*model.DetectorProjectActivity{
+			projectPath: {
+				ProjectPath:  projectPath,
+				LastActivity: lastEventAt,
+				Source:       "codex",
+				Sessions: []model.SessionEvidence{{
+					SessionID:   "ses_turn_hash_refresh",
+					ProjectPath: projectPath,
+					SessionFile: fixture,
+					Format:      "modern",
+					StartedAt:   lastEventAt.Add(-5 * time.Minute),
+					LastEventAt: lastEventAt,
+				}},
+			},
+		},
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = []string{root}
+	svc := New(cfg, st, events.NewBus(), []detectors.Detector{detector})
+
+	report, err := svc.ScanOnce(ctx)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(report.States) != 1 || len(report.States[0].Sessions) != 1 {
+		t.Fatalf("unexpected scan report: %#v", report.States)
+	}
+	session := report.States[0].Sessions[0]
+	if session.SnapshotHash == "" {
+		t.Fatalf("expected recomputed snapshot hash")
+	}
+	if session.SnapshotHash == staleHash {
+		t.Fatalf("snapshot hash = %q, want a refreshed hash after turn-state recovery", session.SnapshotHash)
+	}
+}
+
+func TestScanOnceReusesStoredLatestTurnStateWhenSessionIsUnchanged(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "turn-reuse")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	lastEventAt := time.Date(2026, 3, 6, 1, 0, 0, 0, time.UTC)
+	startedAt := lastEventAt.Add(-5 * time.Minute)
+	latestTurnStartedAt := lastEventAt.Add(-90 * time.Second)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           filepath.Base(projectPath),
+		LastActivity:   lastEventAt,
+		Status:         model.StatusIdle,
+		AttentionScore: 20,
+		PresentOnDisk:  true,
+		InScope:        true,
+		UpdatedAt:      lastEventAt,
+		Sessions: []model.SessionEvidence{{
+			SessionID:            "ses_turn_reuse",
+			ProjectPath:          projectPath,
+			Format:               "modern",
+			StartedAt:            startedAt,
+			LastEventAt:          lastEventAt,
+			LatestTurnStartedAt:  latestTurnStartedAt,
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  false,
+		}},
+	}); err != nil {
+		t.Fatalf("seed project state: %v", err)
+	}
+
+	detector := &fakeDetector{
+		activities: map[string]*model.DetectorProjectActivity{
+			projectPath: {
+				ProjectPath:  projectPath,
+				LastActivity: lastEventAt,
+				Source:       "codex",
+				Sessions: []model.SessionEvidence{{
+					SessionID:   "ses_turn_reuse",
+					ProjectPath: projectPath,
+					Format:      "modern",
+					StartedAt:   startedAt,
+					LastEventAt: lastEventAt,
+				}},
+			},
+		},
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = []string{root}
+	svc := New(cfg, st, events.NewBus(), []detectors.Detector{detector})
+
+	report, err := svc.ScanOnce(ctx)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(report.States) != 1 || len(report.States[0].Sessions) != 1 {
+		t.Fatalf("unexpected scan report: %#v", report.States)
+	}
+	session := report.States[0].Sessions[0]
+	if !session.LatestTurnStateKnown || session.LatestTurnCompleted {
+		t.Fatalf("expected reused latest turn state, got known=%v completed=%v", session.LatestTurnStateKnown, session.LatestTurnCompleted)
+	}
+	if !session.LatestTurnStartedAt.Equal(latestTurnStartedAt) {
+		t.Fatalf("latest turn started at = %s, want %s", session.LatestTurnStartedAt, latestTurnStartedAt)
+	}
+}
+
 func TestScanOnceAutoMovesProjectAndCanonicalizesOldPathActivity(t *testing.T) {
 	t.Parallel()
 

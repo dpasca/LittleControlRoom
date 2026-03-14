@@ -21,6 +21,7 @@ import (
 	"lcroom/internal/detectors/opencode"
 	"lcroom/internal/events"
 	"lcroom/internal/model"
+	"lcroom/internal/runtimeguard"
 	"lcroom/internal/server"
 	"lcroom/internal/service"
 	"lcroom/internal/sessionclassify"
@@ -66,6 +67,43 @@ func Run(programName string, args []string) int {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	var runtimeLease *runtimeguard.Lease
+	if guardedRuntimeMode(subcmd) {
+		lease, owner, err := runtimeguard.Acquire(cfg.DBPath, subcmd)
+		if err != nil {
+			if errors.Is(err, runtimeguard.ErrBusy) {
+				message := formatRuntimeConflictMessage(owner, cfg.DBPath, subcmd)
+				if cfg.AllowMultipleInstances {
+					fmt.Fprintf(os.Stderr, "warning: %s\n", message)
+				} else {
+					fmt.Fprintln(os.Stderr, message)
+					fmt.Fprintln(os.Stderr, "Re-run with --allow-multiple-instances only for intentional short-lived dev/debug overlap.")
+					return 1
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "runtime lease failed: %v\n", err)
+				return 1
+			}
+		} else {
+			runtimeLease = lease
+			if peer, err := runtimeguard.FindPeerProcess(cfg.DBPath); err != nil {
+				fmt.Fprintf(os.Stderr, "runtime peer check failed: %v\n", err)
+				return 1
+			} else if peer != nil {
+				message := formatRuntimeConflictMessage(peer, cfg.DBPath, subcmd)
+				if cfg.AllowMultipleInstances {
+					fmt.Fprintf(os.Stderr, "warning: %s\n", message)
+				} else {
+					_ = runtimeLease.Close()
+					fmt.Fprintln(os.Stderr, message)
+					fmt.Fprintln(os.Stderr, "Stop the older lcroom process first, or re-run with --allow-multiple-instances only for intentional short-lived dev/debug overlap.")
+					return 1
+				}
+			}
+			defer runtimeLease.Close()
+		}
+	}
 
 	st, err := store.Open(cfg.DBPath)
 	if err != nil {
@@ -626,6 +664,7 @@ func printUsage(programName string) {
 	fmt.Println("  --interval <duration>")
 	fmt.Println("  --active-threshold <duration>")
 	fmt.Println("  --stuck-threshold <duration>")
+	fmt.Println("  --allow-multiple-instances")
 	fmt.Println("Snapshot flags:")
 	fmt.Println("  --limit <count>")
 	fmt.Println("  --project <path>")
@@ -640,4 +679,41 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func guardedRuntimeMode(subcmd string) bool {
+	switch subcmd {
+	case "classify", "tui", "serve":
+		return true
+	default:
+		return false
+	}
+}
+
+func formatRuntimeConflictMessage(owner *runtimeguard.Owner, dbPath, mode string) string {
+	lines := []string{
+		fmt.Sprintf("another %s %s runtime is already active for %s", brand.Name, strings.TrimSpace(mode), filepath.Clean(strings.TrimSpace(dbPath))),
+	}
+	if owner == nil {
+		return strings.Join(lines, "\n")
+	}
+	if owner.PID > 0 {
+		lines = append(lines, fmt.Sprintf("  pid: %d", owner.PID))
+	}
+	if trimmed := strings.TrimSpace(owner.Mode); trimmed != "" {
+		lines = append(lines, fmt.Sprintf("  active mode: %s", trimmed))
+	}
+	if !owner.StartedAt.IsZero() {
+		lines = append(lines, fmt.Sprintf("  started: %s", owner.StartedAt.Format(time.RFC3339)))
+	}
+	if trimmed := strings.TrimSpace(owner.CWD); trimmed != "" {
+		lines = append(lines, fmt.Sprintf("  cwd: %s", trimmed))
+	}
+	if trimmed := strings.TrimSpace(owner.Hostname); trimmed != "" {
+		lines = append(lines, fmt.Sprintf("  host: %s", trimmed))
+	}
+	if trimmed := strings.TrimSpace(owner.Command); trimmed != "" {
+		lines = append(lines, fmt.Sprintf("  command: %s", trimmed))
+	}
+	return strings.Join(lines, "\n")
 }

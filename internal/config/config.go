@@ -34,6 +34,7 @@ type AppConfig struct {
 	ScanInterval           time.Duration
 	ActiveThreshold        time.Duration
 	StuckThreshold         time.Duration
+	AllowMultipleInstances bool
 }
 
 type fileConfig struct {
@@ -103,6 +104,7 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	scanInterval := fs.Duration("interval", cfg.ScanInterval, "Scan interval")
 	active := fs.Duration("active-threshold", cfg.ActiveThreshold, "Active status threshold")
 	stuck := fs.Duration("stuck-threshold", cfg.StuckThreshold, "Possibly stuck status threshold")
+	allowMultipleInstances := fs.Bool("allow-multiple-instances", cfg.AllowMultipleInstances, "Allow multiple long-lived lcroom runtimes to share the same DB")
 	var doctorScan *bool
 	var snapshotLimit *int
 	var snapshotProject *string
@@ -156,6 +158,7 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	cfg.ScanInterval = *scanInterval
 	cfg.ActiveThreshold = *active
 	cfg.StuckThreshold = *stuck
+	cfg.AllowMultipleInstances = *allowMultipleInstances
 	if doctorScan != nil {
 		cfg.DoctorScan = *doctorScan
 	}

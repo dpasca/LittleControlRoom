@@ -318,15 +318,15 @@ func TestProjectListStatus(t *testing.T) {
 	}
 }
 
-func TestProjectListStatusUsesAssessmentCategory(t *testing.T) {
+func TestProjectListStatusIgnoresAssessmentCategory(t *testing.T) {
 	project := model.ProjectSummary{
 		Status:                          model.StatusIdle,
 		PresentOnDisk:                   true,
 		LatestSessionClassification:     model.ClassificationCompleted,
 		LatestSessionClassificationType: model.SessionCategoryWaitingForUser,
 	}
-	if got := projectListStatus(project); got != "waiting" {
-		t.Fatalf("projectListStatus() = %q, want %q", got, "waiting")
+	if got := projectListStatus(project); got != "idle" {
+		t.Fatalf("projectListStatus() = %q, want %q", got, "idle")
 	}
 }
 
@@ -349,15 +349,25 @@ func TestProjectDisplayStatusClearsMovedWhenLatestSessionIsInNewPath(t *testing.
 	}
 }
 
-func TestProjectDisplayStatusUsesReadableAssessmentCategory(t *testing.T) {
+func TestProjectDisplayStatusUsesProjectStatusEvenWithAssessment(t *testing.T) {
 	project := model.ProjectSummary{
 		Status:                          model.StatusIdle,
 		PresentOnDisk:                   true,
 		LatestSessionClassification:     model.ClassificationCompleted,
 		LatestSessionClassificationType: model.SessionCategoryNeedsFollowUp,
 	}
-	if got := projectDisplayStatus(project); got != "needs follow-up" {
-		t.Fatalf("projectDisplayStatus() = %q, want %q", got, "needs follow-up")
+	if got := projectDisplayStatus(project); got != "idle" {
+		t.Fatalf("projectDisplayStatus() = %q, want %q", got, "idle")
+	}
+}
+
+func TestAssessmentStatusLabelUsesInProgressName(t *testing.T) {
+	project := model.ProjectSummary{
+		LatestSessionClassification:     model.ClassificationCompleted,
+		LatestSessionClassificationType: model.SessionCategoryInProgress,
+	}
+	if got, _, ok := assessmentStatusLabel(project, true); !ok || got != "in progress" {
+		t.Fatalf("assessmentStatusLabel(compact) = (%q, %v), want (%q, true)", got, ok, "in progress")
 	}
 }
 
@@ -1030,8 +1040,8 @@ func TestRenderDetailSimplifiesStateAndAttention(t *testing.T) {
 	if !strings.Contains(rendered, "waiting for user") {
 		t.Fatalf("renderDetailContent() missing assessment-based label: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Activity:") || !strings.Contains(rendered, "idle") {
-		t.Fatalf("renderDetailContent() missing separate activity field: %q", rendered)
+	if !strings.Contains(rendered, "Status:") || !strings.Contains(rendered, "idle") {
+		t.Fatalf("renderDetailContent() missing separate status field: %q", rendered)
 	}
 	if strings.Contains(rendered, "Attention status:") {
 		t.Fatalf("renderDetailContent() still shows separate attention status line: %q", rendered)

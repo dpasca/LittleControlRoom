@@ -394,6 +394,183 @@ func TestSessionClassificationQueueAndDetail(t *testing.T) {
 	}
 }
 
+func TestSessionClassificationAttemptGuardsIgnoreStaleWorker(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	state := model.ProjectState{
+		Path:         "/tmp/guarded",
+		Name:         "guarded",
+		LastActivity: now,
+		Status:       model.StatusIdle,
+		InScope:      true,
+		UpdatedAt:    now,
+		Sessions: []model.SessionEvidence{{
+			SessionID:   "ses_guarded",
+			ProjectPath: "/tmp/guarded",
+			SessionFile: "/tmp/guarded/session.jsonl",
+			Format:      "modern",
+			LastEventAt: now,
+		}},
+	}
+	if err := st.UpsertProjectState(ctx, state); err != nil {
+		t.Fatalf("upsert project state: %v", err)
+	}
+
+	base := model.SessionClassification{
+		SessionID:         "ses_guarded",
+		ProjectPath:       state.Path,
+		SessionFile:       state.Sessions[0].SessionFile,
+		SessionFormat:     state.Sessions[0].Format,
+		SnapshotHash:      "hash-1",
+		Model:             "gpt-5-mini",
+		ClassifierVersion: "v1",
+		SourceUpdatedAt:   now,
+	}
+	if queued, err := st.QueueSessionClassification(ctx, base, 15*time.Minute); err != nil || !queued {
+		t.Fatalf("initial queue: queued=%v err=%v", queued, err)
+	}
+	claimed, err := st.ClaimNextPendingSessionClassification(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("claim first attempt: %v", err)
+	}
+	advanced, err := st.AdvanceSessionClassificationStage(ctx, &claimed, model.ClassificationStageWaitingForModel)
+	if err != nil {
+		t.Fatalf("advance first attempt: %v", err)
+	}
+	if !advanced {
+		t.Fatalf("expected first attempt stage advance to succeed")
+	}
+	staleAttempt := claimed
+
+	requeued := base
+	requeued.SnapshotHash = "hash-2"
+	requeued.SourceUpdatedAt = now.Add(time.Minute)
+	if queued, err := st.QueueSessionClassification(ctx, requeued, 15*time.Minute); err != nil || !queued {
+		t.Fatalf("requeue changed snapshot: queued=%v err=%v", queued, err)
+	}
+	current, err := st.ClaimNextPendingSessionClassification(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("claim second attempt: %v", err)
+	}
+	if current.SnapshotHash != "hash-2" {
+		t.Fatalf("second attempt snapshot hash = %q, want hash-2", current.SnapshotHash)
+	}
+
+	staleAttempt.Category = model.SessionCategoryCompleted
+	staleAttempt.Summary = "stale completion"
+	staleAttempt.Confidence = 0.2
+	completed, err := st.CompleteSessionClassificationAttempt(ctx, &staleAttempt)
+	if err != nil {
+		t.Fatalf("complete stale attempt: %v", err)
+	}
+	if completed {
+		t.Fatalf("expected stale attempt completion to be ignored")
+	}
+
+	current.Category = model.SessionCategoryCompleted
+	current.Summary = "current completion"
+	current.Confidence = 0.9
+	completed, err = st.CompleteSessionClassificationAttempt(ctx, &current)
+	if err != nil {
+		t.Fatalf("complete current attempt: %v", err)
+	}
+	if !completed {
+		t.Fatalf("expected current attempt completion to succeed")
+	}
+
+	stored, err := st.GetSessionClassification(ctx, base.SessionID)
+	if err != nil {
+		t.Fatalf("get stored classification: %v", err)
+	}
+	if stored.Status != model.ClassificationCompleted {
+		t.Fatalf("stored status = %s, want completed", stored.Status)
+	}
+	if stored.Stage != "" {
+		t.Fatalf("stored stage = %q, want empty", stored.Stage)
+	}
+	if stored.Summary != "current completion" {
+		t.Fatalf("stored summary = %q, want current completion", stored.Summary)
+	}
+}
+
+func TestOpenRepairsTerminalSessionClassificationStages(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "repair.sqlite")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	_, err = db.ExecContext(ctx, `
+		CREATE TABLE session_classifications (
+			session_id TEXT PRIMARY KEY,
+			project_path TEXT NOT NULL,
+			session_file TEXT NOT NULL,
+			session_format TEXT NOT NULL,
+			snapshot_hash TEXT NOT NULL,
+			status TEXT NOT NULL,
+			stage TEXT NOT NULL DEFAULT '',
+			category TEXT NOT NULL DEFAULT '',
+			summary TEXT NOT NULL DEFAULT '',
+			confidence REAL NOT NULL DEFAULT 0,
+			model TEXT NOT NULL DEFAULT '',
+			classifier_version TEXT NOT NULL DEFAULT '',
+			last_error TEXT NOT NULL DEFAULT '',
+			source_updated_at INTEGER NOT NULL,
+			created_at INTEGER NOT NULL,
+			stage_started_at INTEGER,
+			updated_at INTEGER NOT NULL,
+			completed_at INTEGER
+		);
+		INSERT INTO session_classifications(
+			session_id, project_path, session_file, session_format, snapshot_hash,
+			status, stage, category, summary, confidence, model, classifier_version,
+			last_error, source_updated_at, created_at, stage_started_at, updated_at, completed_at
+		) VALUES (
+			'ses_repair', '/tmp/repair', '/tmp/repair/session.jsonl', 'modern', 'hash-repair',
+			'completed', 'waiting_for_model', 'completed', 'done', 1, 'gpt-5-mini', 'v1',
+			'', 1, 1, 123, 2, 2
+		);
+	`)
+	if err != nil {
+		t.Fatalf("seed legacy terminal row: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close sqlite: %v", err)
+	}
+
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open repaired store: %v", err)
+	}
+	defer st.Close()
+
+	stored, err := st.GetSessionClassification(ctx, "ses_repair")
+	if err != nil {
+		t.Fatalf("get repaired classification: %v", err)
+	}
+	if stored.Status != model.ClassificationCompleted {
+		t.Fatalf("status = %s, want completed", stored.Status)
+	}
+	if stored.Stage != "" {
+		t.Fatalf("stage = %q, want empty", stored.Stage)
+	}
+	if !stored.StageStartedAt.IsZero() {
+		t.Fatalf("expected repaired stage timestamp to be zero, got %v", stored.StageStartedAt)
+	}
+}
+
 func TestQueueSessionClassificationFailedSameSnapshotCanRetryImmediatelyWhenForced(t *testing.T) {
 	t.Parallel()
 

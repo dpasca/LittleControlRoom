@@ -95,6 +95,43 @@ func NewManager(st *store.Store, bus *events.Bus, opts Options) *Manager {
 	}
 }
 
+func (m *Manager) classificationHeartbeatInterval() time.Duration {
+	if m == nil {
+		return 30 * time.Second
+	}
+	if m.staleAfter > 0 {
+		interval := m.staleAfter / 2
+		if interval > 0 && interval < 30*time.Second {
+			return interval
+		}
+	}
+	return 30 * time.Second
+}
+
+func (m *Manager) heartbeatClassification(ctx context.Context, classification *model.SessionClassification) {
+	if m == nil || classification == nil {
+		return
+	}
+	interval := m.classificationHeartbeatInterval()
+	if interval <= 0 {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			touched, err := m.store.TouchSessionClassification(ctx, classification)
+			if err != nil || !touched {
+				return
+			}
+		}
+	}
+}
+
 func (m *Manager) Enabled() bool {
 	return m != nil && m.client != nil
 }
@@ -312,18 +349,30 @@ func (m *Manager) processOne(ctx context.Context) (bool, error) {
 			break
 		}
 	}
+	_ = RecoverSessionTurnState(&sessionEvidence)
 
 	snapshot, err := ExtractSnapshot(ctx, classification, sessionEvidence, gitStatus)
 	if err != nil {
-		m.failClassification(ctx, classification, err)
+		m.failClassification(ctx, &classification, err)
 		return true, nil
 	}
 	classification.SnapshotHash = SnapshotHashForSnapshot(snapshot)
-	if err := m.store.UpdateSessionClassificationStage(ctx, classification.SessionID, model.ClassificationStageWaitingForModel); err != nil {
+	sessionEvidence.SnapshotHash = classification.SnapshotHash
+	sessionEvidence.LatestTurnStateKnown = snapshot.LatestTurnStateKnown
+	sessionEvidence.LatestTurnCompleted = snapshot.LatestTurnCompleted
+	if snapshot.LatestTurnCompleted {
+		sessionEvidence.LatestTurnStartedAt = time.Time{}
+	}
+	if err := m.store.UpdateSessionEvidenceMetadata(ctx, sessionEvidence); err != nil {
 		return true, err
 	}
-	classification.Stage = model.ClassificationStageWaitingForModel
-	classification.StageStartedAt = time.Now()
+	advanced, err := m.store.AdvanceSessionClassificationStage(ctx, &classification, model.ClassificationStageWaitingForModel)
+	if err != nil {
+		return true, err
+	}
+	if !advanced {
+		return true, nil
+	}
 
 	modelName := strings.TrimSpace(classification.Model)
 	if modelName == "" {
@@ -333,12 +382,17 @@ func (m *Manager) processOne(ctx context.Context) (bool, error) {
 		m.usage.start(modelName)
 	}
 
+	classifyCtx, stopHeartbeat := context.WithCancel(ctx)
+	defer stopHeartbeat()
+	go m.heartbeatClassification(classifyCtx, &classification)
+
 	result, err := m.client.Classify(ctx, snapshot)
+	stopHeartbeat()
 	if err != nil {
 		if m.usage != nil {
 			m.usage.fail(modelName)
 		}
-		m.failClassification(ctx, classification, err)
+		m.failClassification(ctx, &classification, err)
 		return true, nil
 	}
 	if strings.TrimSpace(result.Model) != "" {
@@ -353,8 +407,12 @@ func (m *Manager) processOne(ctx context.Context) (bool, error) {
 	classification.Summary = clipForStorage(result.Summary, 280)
 	classification.Confidence = clampConfidence(result.Confidence)
 	classification.CompletedAt = time.Now()
-	if err := m.store.CompleteSessionClassification(ctx, classification); err != nil {
+	completed, err := m.store.CompleteSessionClassificationAttempt(ctx, &classification)
+	if err != nil {
 		return true, err
+	}
+	if !completed {
+		return true, nil
 	}
 
 	m.publishClassificationEvent(ctx, classification, "completed")
@@ -364,10 +422,16 @@ func (m *Manager) processOne(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-func (m *Manager) failClassification(ctx context.Context, classification model.SessionClassification, err error) {
+func (m *Manager) failClassification(ctx context.Context, classification *model.SessionClassification, err error) {
+	if classification == nil {
+		return
+	}
 	msg := clipForStorage(err.Error(), 280)
-	_ = m.store.FailSessionClassification(ctx, classification.SessionID, msg)
-	m.publishClassificationEvent(ctx, classification, "failed")
+	failed, storeErr := m.store.FailSessionClassificationAttempt(ctx, classification, msg)
+	if storeErr != nil || !failed {
+		return
+	}
+	m.publishClassificationEvent(ctx, *classification, "failed")
 }
 
 func (m *Manager) publishClassificationEvent(ctx context.Context, classification model.SessionClassification, state string) {

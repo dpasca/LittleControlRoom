@@ -1443,13 +1443,13 @@ func (m Model) renderDetailContent(width int) string {
 		d = model.ProjectDetail{}
 	}
 	assessmentValue := assessmentDisplayStyle(p).Render(projectAssessmentLabelAt(p, m.currentTime()))
-	activityValue := activityDisplayStyle(p).Render(projectActivityStatus(p))
+	statusValue := activityDisplayStyle(p).Render(projectActivityStatus(p))
 	attentionValue := detailAttentionValueStyle.Render(fmt.Sprintf("%d", p.AttentionScore))
 
 	lines := []string{detailField("Path", detailValueStyle.Render(p.Path))}
 	lines = appendDetailFields(lines, width,
 		detailField("Assessment", assessmentValue),
-		detailField("Activity", activityValue),
+		detailField("Status", statusValue),
 	)
 	if projectMissing(p) {
 		lines = append(lines, detailWarningStyle.Render("Folder: missing on disk"))
@@ -2545,16 +2545,7 @@ func projectActivityStatus(project model.ProjectSummary) string {
 }
 
 func projectListStatus(project model.ProjectSummary) string {
-	if projectMissing(project) {
-		return "missing"
-	}
-	if moveStatusActive(project.MovedAt, project.Path, project.LatestSessionDetectedProjectPath) {
-		return "moved"
-	}
-	if label, _, ok := assessmentStatusLabel(project, true); ok {
-		return label
-	}
-	return attentionStatusLabel(project.Status)
+	return projectActivityStatus(project)
 }
 
 func visibilityLabel(mode projectVisibilityMode) string {
@@ -3730,16 +3721,7 @@ func (m Model) classificationTag(project model.ProjectSummary) string {
 }
 
 func projectDisplayStatus(project model.ProjectSummary) string {
-	if projectMissing(project) {
-		return "missing"
-	}
-	if moveStatusActive(project.MovedAt, project.Path, project.LatestSessionDetectedProjectPath) {
-		return "moved"
-	}
-	if label, _, ok := assessmentStatusLabel(project, false); ok {
-		return label
-	}
-	return attentionStatusLabel(project.Status)
+	return projectActivityStatus(project)
 }
 
 func recentlyMoved(movedAt time.Time) bool {
@@ -3761,16 +3743,7 @@ func moveStatusActive(movedAt time.Time, currentPath, latestDetectedPath string)
 }
 
 func statusDisplayStyle(project model.ProjectSummary) lipgloss.Style {
-	if projectMissing(project) {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("178")).Bold(true)
-	}
-	if moveStatusActive(project.MovedAt, project.Path, project.LatestSessionDetectedProjectPath) {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Bold(true)
-	}
-	if _, category, ok := assessmentStatusLabel(project, false); ok {
-		return classificationCategoryStyle(category)
-	}
-	return statusStyle(project.Status)
+	return activityDisplayStyle(project)
 }
 
 func assessmentStatusLabel(project model.ProjectSummary, compact bool) (string, model.SessionCategory, bool) {
@@ -3797,9 +3770,6 @@ func assessmentStatusLabel(project model.ProjectSummary, compact bool) (string, 
 		}
 		return "needs follow-up", model.SessionCategoryNeedsFollowUp, true
 	case model.SessionCategoryInProgress:
-		if compact {
-			return "working", model.SessionCategoryInProgress, true
-		}
 		return "in progress", model.SessionCategoryInProgress, true
 	default:
 		return "", model.SessionCategoryUnknown, false

@@ -204,6 +204,18 @@ func TestParseDoctorScanFlag(t *testing.T) {
 	}
 }
 
+func TestParseAllowMultipleInstancesFlag(t *testing.T) {
+	useTempHome(t)
+
+	cfg, err := Parse("tui", []string{"--allow-multiple-instances"})
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+	if !cfg.AllowMultipleInstances {
+		t.Fatalf("expected allow-multiple-instances to be enabled")
+	}
+}
+
 func TestParseSnapshotFlags(t *testing.T) {
 	useTempHome(t)
 

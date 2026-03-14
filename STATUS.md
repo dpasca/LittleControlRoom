@@ -77,26 +77,74 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-14 17:11 JST)
+## Latest Update (2026-03-14 18:56 JST)
 
-- Fixed two embedded `/resume` picker issues in the saved-session flow.
-- Resume-row layout now pads the middle preview cell to a fixed width before appending the activity/session metadata, so short summaries no longer pull the date/id columns left.
-- Session preview extraction now skips Codex-injected `AGENTS.md` / `<environment_context>` scaffold messages when choosing the title, and it skips heading-only first lines like `**Classification**` when choosing the preview summary. That gives the picker a real user prompt in `Title:` and a substantive assistant sentence in the main row/about panel.
-- Added focused regressions for both behaviors: preview extraction now locks in scaffold-title and heading-summary skipping, and the picker row test now asserts that timestamp columns stay aligned across short and long resume labels.
+- Added a runtime-owner guard for long-lived `lcroom` modes (`tui`, `serve`, `classify`) so only one process per DB may own scanning/classification by default.
+- The guard uses a per-DB advisory lock plus an OS process-table fallback, so a fresh build can still detect older pre-lock `lcroom` processes that are already running and refuse to compete with them.
+- Added a new `--allow-multiple-instances` escape hatch for intentional short-lived dev/debug overlap; the default path now exits with a clear owner report (PID, mode, command) instead of silently sharing the live DB.
+- Live verification against the currently running duplicate TUIs now blocks as intended: a fresh `lcroom classify` exits immediately and points at the older `tui` PID/command instead of starting another competing classifier run.
+- Embedded Codex/OpenCode cleanup assumptions did not change: the TUI already closes embedded sessions on quit, so the concrete hazard here was multiple full `lcroom` processes, not orphaned embedded helper subprocesses.
+
+Verification snapshot:
+
+- `go test ./internal/runtimeguard ./internal/config ./internal/cli -count=1` passed.
+- `make test` passed.
+- `go run ./cmd/lcroom classify --config ~/.little-control-room/config.toml --db ~/.little-control-room/little-control-room.sqlite ...` now exits with a conflict message naming the older `tui` process.
+- `make scan` passed at `2026-03-14T18:55:42+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 36`, `queued classifications: 28`).
+- `make doctor` passed on the cached snapshot dated `2026-03-14T18:55:42+09:00` (`projects: 138`).
+
+Next concrete tasks:
+
+- Decide whether the TUI itself should also render an in-app banner when launched with `--allow-multiple-instances`, since the CLI now blocks by default but the override path is currently terminal-only.
+- Restart the two stale pre-lock TUIs once so future launches are protected by the new lease as well.
+- Revisit a handful of old `in_progress` assessments like `quickgame_27` and `xpsvr-static`; the requeue bug is fixed, but some historical classifier judgments still look worth recalibrating separately.
+
+## Latest Update (2026-03-14 18:45 JST)
+
+- Fixed a classification-attempt ownership bug that let stale or duplicate workers overwrite newer lifecycle state, which was leaving impossible rows like `status=completed` with `stage=queued` / `waiting_for_model` and helping unchanged sessions get reassessed again.
+- Added attempt-scoped store updates plus a model-wait heartbeat: active classifications now refresh their `updated_at` while waiting on the LLM, and stage/complete/fail writes only succeed for the currently claimed running attempt.
+- Store open now repairs legacy terminal rows by clearing stray stages from `completed` / `failed` classifications, so older corrupted DB state does not keep confusing the UI after restart.
+- Added regressions for stale-attempt overwrite protection, long `waiting_for_model` heartbeats staying fresh past the stale timeout, and the startup repair of broken terminal classification rows.
+- Live investigation also found two long-lived `lcroom tui` processes still running pre-fix binaries against `~/.little-control-room/little-control-room.sqlite`; those old processes can still reintroduce churn until they are restarted on the new code.
+
+Verification snapshot:
+
+- `go test ./internal/store ./internal/sessionclassify -count=1` passed.
+- `go test ./internal/service -count=1` passed.
+- `make test` passed.
+- `make doctor` passed on the cached snapshot dated `2026-03-14T18:44:03+09:00` (`projects: 138`).
+- A one-shot current-code `doctor` open repaired the live DB from `44` broken terminal classification rows down to `0`.
+- `make scan` first pass after the repair queued `27` classifications; an immediate second `make scan` dropped to `1`, which strongly suggests the broad churn was repair/backlog fallout rather than a stable repeat-scan loop in the current code.
+
+Next concrete tasks:
+
+- Restart or close the two stale `lcroom tui` processes still running older binaries against the live DB, then watch whether repeated `classification_updated` events disappear fully.
+- Re-check a few previously noisy projects like `okmain`, `quickgame_27`, and `quickgame_30` after those old app instances are gone to confirm they stay stable across background scans.
+- Decide whether terminal classifications should expose any failure-stage detail elsewhere now that terminal rows no longer keep `stage` in storage.
+
+## Latest Update (2026-03-14 17:32 JST)
+
+- Fixed the `quickgame_27` misclassification path by recovering Codex `task_started` / `task_complete` lifecycle from rollout transcripts when the fast detector omitted it for older sessions.
+- Service scan now reuses stored latest-turn state when the latest session is unchanged, falls back to transcript recovery when needed, and computes snapshot hashes after that recovery so stale pre-recovery hashes do not survive.
+- Session classification now also writes the recovered snapshot hash and latest-turn lifecycle back into `project_sessions`, which lets later scans and attention scoring keep that stronger completion signal.
+- Simplified the TUI state/assessment split: the main list `STATE` column now stays on project status (`active` / `idle` / `stuck`), the detail pane label is now `Status` instead of `Activity`, and the assessment label no longer aliases `in progress` to `working`.
+- Added focused regressions for transcript lifecycle recovery, snapshot-hash refresh after lifecycle recovery, reuse of stored latest-turn state, classifier backfill into `project_sessions`, the `STATE` column ignoring assessment labels, and the renamed detail `Status` field.
 - No Codex/OpenCode detector assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
 
 Verification snapshot:
 
-- `go test ./internal/sessionclassify ./internal/tui -run 'TestPreviewFromTranscript|TestRenderCodexPickerRow' -count=1` passed.
+- `go test ./internal/sessionclassify ./internal/service ./internal/tui -count=1` passed.
 - `make test` passed.
-- `make scan` passed at `2026-03-14T17:11:08+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 7`, `queued classifications: 0`).
-- `make doctor` passed on the cached snapshot dated `2026-03-14T17:11:16+09:00` (`projects: 138`).
-- `env COLUMNS=110 LINES=30 make tui` launched and exited cleanly via `q`.
+- `make classify` passed and drained the classification queue with the new lifecycle-backfill path.
+- `make scan` passed at `2026-03-14T17:31:04+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 26`, `queued classifications: 20`).
+- `make doctor` passed on the cached snapshot dated `2026-03-14T17:31:22+09:00` (`projects: 138`); the cached report now shows `/Users/davide/dev/poncle_repos/quickgame_27` as `status=idle` with latest-session assessment `category=completed`.
+- Live DB spot-check after the refresh showed `quickgame_27` with `latest_turn_state_known=1`, `latest_turn_completed=1`, `classify_status=completed`, and project `status=idle`.
+- `env COLUMNS=110 LINES=30 make tui` launched; the list showed `STATE` values like `active`, `stuck`, and `idle`, and the detail pane rendered `Assessment: ...  Status: ...`; the app exited cleanly via `q`.
 
 Next concrete tasks:
 
-- Re-open the embedded `/resume` picker against a few older Codex and OpenCode sessions to see whether any other transcript scaffolding still leaks into preview titles or summaries.
-- Decide whether the About section should keep showing both `Summary` and `Title` when they are near-duplicates, or collapse to one line once the new preview extraction settles.
+- Investigate why a fresh broad `make scan` still requeues a batch of older classifications even after the lifecycle backfill now converges `quickgame_27`; decide whether that is expected churn from broader snapshot changes or a remaining hash-reuse issue.
+- Decide whether the main list should surface a short explicit assessment-category badge somewhere, now that `STATE` is once again reserved for project status.
 - Factor a provider-neutral transcript/session abstraction so Codex and OpenCode stop sharing only by convention.
 
 ## Recent Updates

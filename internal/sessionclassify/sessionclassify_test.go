@@ -3,6 +3,7 @@ package sessionclassify
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,6 +31,18 @@ func (f *fakeClassifier) Classify(_ context.Context, snapshot SessionSnapshot) (
 
 func (f *fakeClassifier) ModelName() string {
 	return f.model
+}
+
+type blockingClassifier struct {
+	result  Result
+	started chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingClassifier) Classify(_ context.Context, _ SessionSnapshot) (Result, error) {
+	close(b.started)
+	<-b.release
+	return b.result, nil
 }
 
 func TestExtractSnapshotModernFixture(t *testing.T) {
@@ -64,6 +77,25 @@ func TestExtractSnapshotModernFixture(t *testing.T) {
 	}
 	if !strings.Contains(last.Text, "Done") {
 		t.Fatalf("last text = %q, want Done", last.Text)
+	}
+}
+
+func TestExtractSnapshotModernFixtureRecoversLifecycleFromTranscript(t *testing.T) {
+	t.Parallel()
+
+	fixture := filepath.Clean(filepath.Join("..", "..", "testdata", "codex_footprint", "sessions", "2026", "03", "05", "rollout-modern.jsonl"))
+	snapshot, err := ExtractSnapshot(context.Background(), model.SessionClassification{
+		SessionID:       "fixture-modern-recovered",
+		ProjectPath:     "/tmp/baton",
+		SessionFile:     fixture,
+		SessionFormat:   "modern",
+		SourceUpdatedAt: time.Now(),
+	}, model.SessionEvidence{}, GitStatusSnapshot{})
+	if err != nil {
+		t.Fatalf("extract snapshot: %v", err)
+	}
+	if !snapshot.LatestTurnStateKnown || !snapshot.LatestTurnCompleted {
+		t.Fatalf("expected recovered lifecycle flags in snapshot, got known=%v completed=%v", snapshot.LatestTurnStateKnown, snapshot.LatestTurnCompleted)
 	}
 }
 
@@ -256,6 +288,17 @@ func TestManagerProcessOneCompletesClassification(t *testing.T) {
 		t.Fatalf("model = %q, want %q", classification.Model, "gpt-test-mini")
 	}
 
+	detail, err := st.GetProjectDetail(ctx, state.Path, 1)
+	if err != nil {
+		t.Fatalf("get detail: %v", err)
+	}
+	if len(detail.Sessions) != 1 {
+		t.Fatalf("expected stored session metadata, got %#v", detail.Sessions)
+	}
+	if !detail.Sessions[0].LatestTurnStateKnown || !detail.Sessions[0].LatestTurnCompleted {
+		t.Fatalf("expected recovered lifecycle persisted to project_sessions, got known=%v completed=%v", detail.Sessions[0].LatestTurnStateKnown, detail.Sessions[0].LatestTurnCompleted)
+	}
+
 	usage := manager.UsageSnapshot()
 	if !usage.Enabled {
 		t.Fatalf("expected usage snapshot to be enabled")
@@ -274,6 +317,100 @@ func TestManagerProcessOneCompletesClassification(t *testing.T) {
 	}
 	if usage.Totals.CachedInputTokens != 12 || usage.Totals.ReasoningTokens != 4 {
 		t.Fatalf("unexpected usage detail totals: %+v", usage.Totals)
+	}
+}
+
+func TestManagerProcessOneHeartbeatsWaitingForModel(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	fixture := filepath.Clean(filepath.Join("..", "..", "testdata", "codex_footprint", "sessions", "2026", "03", "05", "rollout-modern.jsonl"))
+	now := time.Now()
+	state := model.ProjectState{
+		Path:           "/tmp/heartbeat",
+		Name:           "heartbeat",
+		Status:         model.StatusPossiblyStuck,
+		AttentionScore: 25,
+		InScope:        true,
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{{
+			SessionID:            "ses_heartbeat",
+			ProjectPath:          "/tmp/heartbeat",
+			SessionFile:          fixture,
+			Format:               "modern",
+			LastEventAt:          now,
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  true,
+		}},
+	}
+	if err := st.UpsertProjectState(ctx, state); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	classifier := &blockingClassifier{
+		result: Result{
+			Category:   model.SessionCategoryCompleted,
+			Summary:    "heartbeat complete",
+			Confidence: 0.9,
+			Model:      "gpt-test-mini",
+		},
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	manager := NewManager(st, events.NewBus(), Options{
+		Client:     classifier,
+		Workers:    1,
+		RetryAfter: time.Minute,
+		StaleAfter: 80 * time.Millisecond,
+	})
+
+	queued, err := manager.QueueProject(ctx, state)
+	if err != nil {
+		t.Fatalf("queue project: %v", err)
+	}
+	if !queued {
+		t.Fatalf("expected queue project to enqueue work")
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := manager.processOne(ctx)
+		done <- err
+	}()
+
+	select {
+	case <-classifier.started:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("classifier never started")
+	}
+
+	time.Sleep(140 * time.Millisecond)
+	if _, err := st.ClaimNextPendingSessionClassification(ctx, 80*time.Millisecond); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("expected heartbeat to keep attempt fresh, got err=%v", err)
+	}
+
+	close(classifier.release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("process one: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("processOne did not finish")
+	}
+
+	classification, err := st.GetSessionClassification(ctx, "ses_heartbeat")
+	if err != nil {
+		t.Fatalf("get classification: %v", err)
+	}
+	if classification.Status != model.ClassificationCompleted {
+		t.Fatalf("status = %s, want completed", classification.Status)
 	}
 }
 

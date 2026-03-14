@@ -354,6 +354,8 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			artifacts = dedupeArtifacts(activity.Artifacts)
 			errorCount = activity.ErrorCount
 			if len(sessions) > 0 {
+				reuseLatestSessionTurnState(old, &sessions[0])
+				ensureLatestSessionTurnState(&sessions[0])
 				reuseLatestSessionSnapshotHash(old, &sessions[0])
 				ensureSessionSnapshotHash(ctx, path, &sessions[0], sessionclassify.NewGitStatusSnapshot(repoDirty, repoSyncStatus, repoAheadCount, repoBehindCount))
 			}
@@ -829,7 +831,35 @@ func reuseLatestSessionSnapshotHash(old model.ProjectSummary, session *model.Ses
 	if !timesEqual(old.LatestSessionLastEventAt, session.LastEventAt) {
 		return
 	}
+	if old.LatestTurnStateKnown != session.LatestTurnStateKnown || old.LatestTurnCompleted != session.LatestTurnCompleted {
+		return
+	}
 	session.SnapshotHash = old.LatestSessionSnapshotHash
+}
+
+func reuseLatestSessionTurnState(old model.ProjectSummary, session *model.SessionEvidence) {
+	if session == nil || session.LatestTurnStateKnown {
+		return
+	}
+	if old.LatestSessionID == "" || !old.LatestTurnStateKnown {
+		return
+	}
+	if old.LatestSessionID != session.SessionID || old.LatestSessionFormat != session.Format {
+		return
+	}
+	if !timesEqual(old.LatestSessionLastEventAt, session.LastEventAt) {
+		return
+	}
+	session.LatestTurnStateKnown = true
+	session.LatestTurnCompleted = old.LatestTurnCompleted
+	session.LatestTurnStartedAt = old.LatestTurnStartedAt
+}
+
+func ensureLatestSessionTurnState(session *model.SessionEvidence) {
+	if session == nil || session.LatestTurnStateKnown {
+		return
+	}
+	_ = sessionclassify.RecoverSessionTurnState(session)
 }
 
 func ensureSessionSnapshotHash(ctx context.Context, projectPath string, session *model.SessionEvidence, gitStatus sessionclassify.GitStatusSnapshot) {
@@ -857,9 +887,14 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 
 	errorCount := 0
 	latestSessionStart := time.Time{}
+	latestTurnKnown := false
+	latestTurnComplete := false
 	if len(detail.Sessions) > 0 {
+		ensureLatestSessionTurnState(&detail.Sessions[0])
 		ensureSessionSnapshotHash(ctx, projectPath, &detail.Sessions[0], sessionclassify.NewGitStatusSnapshot(detail.Summary.RepoDirty, detail.Summary.RepoSyncStatus, detail.Summary.RepoAheadCount, detail.Summary.RepoBehindCount))
 		latestSessionStart = detail.Sessions[0].StartedAt
+		latestTurnKnown = detail.Sessions[0].LatestTurnStateKnown
+		latestTurnComplete = detail.Sessions[0].LatestTurnCompleted
 	}
 	for _, session := range detail.Sessions {
 		errorCount += session.ErrorCount
@@ -901,6 +936,8 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 		SnoozedUntil:               detail.Summary.SnoozedUntil,
 		ErrorCount:                 errorCount,
 		LatestSessionStart:         latestSessionStart,
+		LatestTurnKnown:            latestTurnKnown,
+		LatestTurnComplete:         latestTurnComplete,
 		LatestSessionCategoryKnown: classificationKnown,
 		LatestSessionCategory:      classificationCategory,
 		HasActivity:                !detail.Summary.LastActivity.IsZero(),
