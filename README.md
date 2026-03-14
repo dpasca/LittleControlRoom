@@ -33,7 +33,7 @@ Click any screenshot to open the full-size PNG on GitHub.
 - Finds recent Codex and OpenCode sessions across your local projects
 - Shows which projects are active, idle, or worth revisiting
 - Lets you open, resume, or switch embedded Codex or OpenCode sessions directly from the dashboard
-- Keeps common actions close at hand: refresh, pin, snooze, notes, diff, commit, and push
+- Keeps common actions close at hand: refresh, pin, snooze, multiline project notes with list badges, diff, commit, and push
 
 ## What it doesn't do (yet)
 
@@ -65,7 +65,7 @@ lcroom tui
 
 No config file is required for a first run. If you want to limit what shows up, open the dashboard and use `/settings`, or create `~/.little-control-room/config.toml` from [`docs/config.example.toml`](docs/config.example.toml).
 
-The main commands to look for are `/settings`, `/diff`, `/commit`, `/finish`, `/push`, `/codex`, `/codex-new`, `/opencode`, and `/opencode-new`.
+The main commands to look for are `/settings`, `/note`, `/diff`, `/commit`, `/finish`, `/push`, `/codex`, `/codex-new`, `/opencode`, and `/opencode-new`.
 
 ## Everyday Workflow
 
@@ -82,6 +82,8 @@ Use `/codex-new` or `/opencode-new` when you want a fresh session instead of res
 Inside the embedded Codex or OpenCode pane, use `/resume` or `/session` to open a provider-specific session picker for the current project, or `/resume <session-id>` to jump straight to that session.
 
 Use `/settings` when you want to save include or exclude paths or change the default Codex launch mode.
+
+Use `/note` to open a multiline note editor for the selected project, or `/note clear` to remove the saved note. Projects with saved notes show an `N` badge in the main list. Press `n` for the same editor as a shortcut.
 
 Use `/diff` to open a full-screen git diff for the selected project, with staged files listed first on the left, unstaged files below them, and a scrollable text or image preview on the right.
 

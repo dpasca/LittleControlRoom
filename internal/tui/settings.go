@@ -36,7 +36,7 @@ func (m *Model) openSettingsMode() tea.Cmd {
 	m.settingsMode = true
 	m.commandMode = false
 	m.showHelp = false
-	m.noteMode = false
+	m.closeNoteDialog("")
 	m.err = nil
 	m.status = "Editing settings. Enter to save, Esc to cancel"
 	return m.setSettingsSelection(0)

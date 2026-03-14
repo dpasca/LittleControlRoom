@@ -125,7 +125,7 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 - `p` pin toggle
 - `s` snooze for 1 hour
 - `S` clear snooze
-- `n` add or edit note
+- `n` open the project note dialog
 - `q` quit
 
 While the embedded Codex or OpenCode pane is visible:
@@ -159,6 +159,8 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/view ai`
 - `/view all`
 - `/settings`
+- `/note`
+- `/note clear`
 - `/diff`
 - `/codex`
 - `/codex continue from the last breakpoint`

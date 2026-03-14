@@ -66,6 +66,33 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "note",
+			raw:  "/note",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindNote {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindNote)
+				}
+				if inv.Clear {
+					t.Fatalf("clear = true, want false")
+				}
+			},
+		},
+		{
+			name: "clear note",
+			raw:  "/note clear",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindNote {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindNote)
+				}
+				if !inv.Clear {
+					t.Fatalf("clear = false, want true")
+				}
+				if inv.Canonical != "/note clear" {
+					t.Fatalf("canonical = %q, want /note clear", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "commit custom message",
 			raw:  "/commit Improve command palette scrolling",
 			check: func(t *testing.T, inv Invocation) {
@@ -215,6 +242,16 @@ func TestSuggestionsCommandArguments(t *testing.T) {
 	}
 	if got[0].Insert != "/sort recent" {
 		t.Fatalf("suggestion = %q, want /sort recent", got[0].Insert)
+	}
+}
+
+func TestSuggestionsNoteClearArgument(t *testing.T) {
+	got := Suggestions("/note c")
+	if len(got) != 1 {
+		t.Fatalf("Suggestions(/note c) len = %d, want 1", len(got))
+	}
+	if got[0].Insert != "/note clear" {
+		t.Fatalf("suggestion = %q, want /note clear", got[0].Insert)
 	}
 }
 

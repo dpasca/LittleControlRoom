@@ -72,7 +72,7 @@ func (m *Model) openNewProjectDialog() tea.Cmd {
 
 	m.newProjectDialog = dialog
 	m.showHelp = false
-	m.noteMode = false
+	m.closeNoteDialog("")
 	m.err = nil
 	m.status = "New project dialog open. Enter create/add, Esc cancel"
 	return m.setNewProjectSelection(newProjectFieldPath)

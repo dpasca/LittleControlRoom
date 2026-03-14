@@ -867,6 +867,62 @@ func TestRenderProjectListShowsRepoWarningInAttentionColumn(t *testing.T) {
 	}
 }
 
+func TestRenderProjectListShowsNoteIndicator(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "alpha",
+			Path:          "/tmp/alpha",
+			Status:        model.StatusIdle,
+			PresentOnDisk: true,
+			Note:          "Follow up on the handoff",
+		}},
+		selected:   0,
+		sortMode:   sortByAttention,
+		visibility: visibilityAIFolders,
+	}
+
+	rendered := ansi.Strip(m.renderProjectList(80, 6))
+	lines := strings.Split(rendered, "\n")
+	if len(lines) < 2 {
+		t.Fatalf("renderProjectList() expected header plus one row, got %q", rendered)
+	}
+	if !strings.Contains(lines[0], "N  PROJECT") {
+		t.Fatalf("renderProjectList() missing note header, got %q", lines[0])
+	}
+	fields := strings.Fields(lines[1])
+	foundIndicator := false
+	for _, field := range fields {
+		if field == "N" {
+			foundIndicator = true
+			break
+		}
+	}
+	if !foundIndicator {
+		t.Fatalf("renderProjectList() should show the note indicator in the row, got %q", lines[1])
+	}
+}
+
+func TestRenderDetailContentShowsNotesSection(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			Status:        model.StatusIdle,
+			PresentOnDisk: true,
+			Note:          "Line one\nLine two",
+		}},
+		selected: 0,
+	}
+
+	rendered := ansi.Strip(m.renderDetailContent(60))
+	if !strings.Contains(rendered, "Notes") {
+		t.Fatalf("renderDetailContent() should include a Notes section: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Line one") || !strings.Contains(rendered, "Line two") {
+		t.Fatalf("renderDetailContent() should render multiline notes: %q", rendered)
+	}
+}
+
 func TestViewStacksListAndDetailVertically(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{
@@ -4087,6 +4143,68 @@ func TestCommandEnterOpensSettingsMode(t *testing.T) {
 	}
 	if len(got.settingsFields) != 7 {
 		t.Fatalf("settings field count = %d, want 7", len(got.settingsFields))
+	}
+}
+
+func TestCommandEnterOpensNoteDialog(t *testing.T) {
+	input := textinput.New()
+	input.SetValue("/note")
+
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			PresentOnDisk: true,
+			Note:          "Remember the release checklist",
+		}},
+		selected:     0,
+		commandMode:  true,
+		commandInput: input,
+		width:        100,
+		height:       24,
+	}
+	m.syncCommandSelection()
+
+	updated, cmd := m.updateCommandMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.commandMode {
+		t.Fatalf("command mode should close after /note")
+	}
+	if got.noteDialog == nil {
+		t.Fatalf("note dialog should open after /note")
+	}
+	if got.noteDialog.ProjectPath != "/tmp/demo" {
+		t.Fatalf("note dialog project path = %q, want /tmp/demo", got.noteDialog.ProjectPath)
+	}
+	if got.noteDialog.Editor.Value() != "Remember the release checklist" {
+		t.Fatalf("note dialog value = %q, want saved note", got.noteDialog.Editor.Value())
+	}
+	if cmd == nil {
+		t.Fatalf("/note should return a focus command for the editor")
+	}
+}
+
+func TestNoteDialogSaveActionClosesDialogAndReturnsCommand(t *testing.T) {
+	m := Model{
+		noteDialog: &noteDialogState{
+			ProjectPath:  "/tmp/demo",
+			ProjectName:  "demo",
+			OriginalNote: "",
+			Editor:       newNoteTextarea("Capture the next handoff"),
+			Selected:     noteDialogFocusSave,
+		},
+	}
+
+	updated, cmd := m.updateNoteDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.noteDialog != nil {
+		t.Fatalf("save should close the note dialog")
+	}
+	if got.status != "Saving note..." {
+		t.Fatalf("status = %q, want saving note status", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("save should return a note command")
 	}
 }
 

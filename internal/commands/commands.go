@@ -24,6 +24,7 @@ const (
 	KindCodexNew    Kind = "codex-new"
 	KindOpenCode    Kind = "opencode"
 	KindOpenCodeNew Kind = "opencode-new"
+	KindNote        Kind = "note"
 	KindPin         Kind = "pin"
 	KindSnooze      Kind = "snooze"
 	KindClearSnooze Kind = "clear-snooze"
@@ -84,6 +85,7 @@ type Invocation struct {
 	Duration  time.Duration
 	Message   string
 	Prompt    string
+	Clear     bool
 	Canonical string
 }
 
@@ -102,6 +104,7 @@ var specs = []Spec{
 	{Name: "codex-new", Usage: "/codex-new [prompt]", Summary: "Start a fresh Codex session in the selected project"},
 	{Name: "opencode", Usage: "/opencode [prompt]", Summary: "Resume the selected project's latest OpenCode session, or start a new one"},
 	{Name: "opencode-new", Usage: "/opencode-new [prompt]", Summary: "Start a fresh OpenCode session in the selected project"},
+	{Name: "note", Usage: "/note [clear]", Summary: "Edit or clear the selected project's note"},
 	{Name: "pin", Usage: "/pin", Summary: "Toggle pin on the selected project"},
 	{Name: "snooze", Usage: "/snooze [duration]", Summary: "Snooze the selected project"},
 	{Name: "clear-snooze", Usage: "/clear-snooze", Summary: "Clear snooze on the selected project"},
@@ -197,6 +200,14 @@ func Suggestions(input string) []Suggestion {
 			choice("4h", "Snooze for 4 hours"),
 			choice("24h", "Snooze for 24 hours"),
 		)
+	case "note":
+		argPrefix := ""
+		if len(fields) > 1 {
+			argPrefix = strings.ToLower(fields[len(fields)-1])
+		}
+		return enumSuggestions("/note ", argPrefix,
+			choice("clear", "Remove the selected project's saved note"),
+		)
 	default:
 		return commandNameSuggestions(namePrefix)
 	}
@@ -255,6 +266,15 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /diff")
 		}
 		return Invocation{Kind: KindDiff, Canonical: "/diff"}, nil
+	case "note":
+		switch strings.ToLower(strings.TrimSpace(rawArgs)) {
+		case "":
+			return Invocation{Kind: KindNote, Canonical: "/note"}, nil
+		case "clear":
+			return Invocation{Kind: KindNote, Clear: true, Canonical: "/note clear"}, nil
+		default:
+			return Invocation{}, fmt.Errorf("usage: /note [clear]")
+		}
 	case "pin":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /pin")

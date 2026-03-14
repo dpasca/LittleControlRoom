@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-13 20:17 JST (JST)
+Last updated: 2026-03-14 09:39 JST (JST)
 
 ## Current State
 
@@ -55,6 +55,7 @@ Current screenshot workflow assumption:
 - Scope-aware persistence via path filters and project-name filters
 - Cached `doctor` by default, with `doctor --scan` for a fresh rescan
 - TUI stacked layout with focusable detail pane, scrolling, compact settings modal, and command palette
+- Project notes via `/note` or `n`, with a multiline modal editor, wrapped detail-pane notes, and a list badge when a project has saved notes
 - Git workflow actions in the TUI for full-screen diff preview, commit preview, finish, and push
 - Embedded Codex pane via `codex app-server`, with multiline compose, per-project drafts, inline `[Image #n]` clipboard image markers in the composer, backspace-based image removal, local embedded slash commands for `/new`, `/resume` (`/session` alias), `/model`, and `/status`, visible slash autocomplete/suggestions in the composer, a provider-specific saved-session resume picker with lightweight title/summary previews and current-session markers, live model/reasoning/context-left metadata under the transcript, a local model+reasoning picker backed by `model/list`, `Enter`/`/codex`/`/codex-new`, `Esc` or `Alt+Up` hide from the embedded pane with `Enter` reopening from the project list, `Alt+Down` session picker/history, `Alt+[`/`Alt+]` live-session stepping, wrapped transcript blocks, shaded echoed user transcript blocks that reuse the composer shell styling, denser command/tool/file blocks with `Alt+L` expand/collapse, label-free user/assistant transcript rendering, manager-side update coalescing, inline approvals/input requests, and busy-elsewhere rechecks when a read-only embedded session is reopened or restored
 - Embedded OpenCode pane via `opencode serve`, with live SSE transcript updates, resume/new launch from `Enter` and `/opencode` / `/opencode-new`, shared picker/history and model picker, provider-aware banners/footer/help copy, interrupt/status actions, shared approval/question handling, and mixed Codex/OpenCode live-session management per project
@@ -76,7 +77,31 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-13 21:08 JST)
+## Latest Update (2026-03-14 09:39 JST)
+
+- Reworked project notes from the old footer-only single-line editor into a real multiline modal dialog backed by the existing stored `projects.note` field. The new flow opens from `/note` or `n`, supports cancel/save/clear actions, and keeps Enter for inserting newlines while Tab moves between the editor and action buttons.
+- Added note presence surfacing in the main list with a dedicated `N` badge column and promoted saved notes in the detail pane into a wrapped `Notes` section instead of the old inline `Note:` field.
+- Tightened the main-list column layout after the first pass by switching the header onto the same fixed-width cell layout as the rows and giving the note column clearer spacing, which keeps the new `N` marker aligned cleanly with project data in live TUI rendering.
+- Extended the slash-command layer with `/note` and `/note clear`, added focused command/TUI regression coverage for note parsing, modal opening, note list indicators, detail rendering, save behavior, and header alignment, and refreshed the README/reference docs to describe the new flow more explicitly.
+- No Codex/OpenCode detector assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/tui ./internal/commands -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-14T09:38:49+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-14T09:38:50+09:00` (`projects: 138`).
+- `env COLUMNS=110 LINES=30 make tui` launched, the list header/note column spacing looked aligned in the live TUI, and the app exited cleanly via `q`.
+
+Next concrete tasks:
+
+- Decide whether especially long notes should gain a collapsed preview or scrollbar hint in the detail pane.
+- Consider whether project notes should be optionally surfaced inside later `/commit` or `/finish` flows as human-authored context.
+- Factor a provider-neutral transcript/session abstraction so Codex and OpenCode stop sharing only by convention.
+
+## Recent Updates
+
+### 2026-03-13 21:08 JST
 
 - Kept the new wrapped grayscale `Working` footer in `internal/tui/codex_pane.go` and sped its phase loop up again to match the requested feel by moving the wrapped wave down to a `25`-frame cycle. With the existing `120ms` spinner tick, that makes one full pass take about `3.0s`.
 - Fixed the hidden cause of the steppy animation in `internal/tui/app.go`: `spinnerFrame` had been wrapped to the 4 spinner glyphs, which meant every "smooth" footer animation only had 4 actual states. The counter now keeps a higher-resolution animation frame and only mods by 4 when selecting the spinner glyph itself.
@@ -96,8 +121,6 @@ Next concrete tasks:
 - Re-open the embedded pane against a live busy Codex/OpenCode session and tune the wrapped wave's contrast and speed further if it still feels off compared with Codex CLI in real use.
 - Decide whether the same higher-resolution wrapped-gradient treatment should also replace the remaining `Finishing` and `Rechecking turn status` animated footer states for consistency.
 - Factor a provider-neutral transcript/session abstraction so Codex and OpenCode stop sharing only by convention.
-
-## Recent Updates
 
 ### 2026-03-13 11:19 JST
 

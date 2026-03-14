@@ -51,8 +51,7 @@ type Model struct {
 	nowFn     func() time.Time
 	homeDirFn func() (string, error)
 
-	noteMode  bool
-	noteInput textinput.Model
+	noteDialog *noteDialogState
 
 	commandMode                  bool
 	commandInput                 textinput.Model
@@ -234,10 +233,6 @@ const (
 
 func New(ctx context.Context, svc *service.Service) Model {
 	busCh, unsub := svc.Bus().Subscribe(128)
-	input := textinput.New()
-	input.Placeholder = "Add a project note"
-	input.CharLimit = 280
-	input.Width = 56
 	commandInput := textinput.New()
 	commandInput.Placeholder = "/help"
 	commandInput.CharLimit = 280
@@ -252,7 +247,6 @@ func New(ctx context.Context, svc *service.Service) Model {
 		busCh:                  busCh,
 		unsub:                  unsub,
 		status:                 initialProjectsStatus,
-		noteInput:              input,
 		commandInput:           commandInput,
 		codexInput:             codexInput,
 		codexDrafts:            make(map[string]codexDraft),
@@ -295,6 +289,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.ensureSelectionVisible()
 		m.syncCommandInputWidth()
+		m.syncNoteDialogSize()
 		m.syncDiffView(false)
 		m.syncDetailViewport(false)
 		m.syncCodexComposerSize()
@@ -313,6 +308,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.newProjectDialog != nil {
 			return m.updateNewProjectMode(msg)
 		}
+		if m.noteDialog != nil {
+			return m.updateNoteDialogMode(msg)
+		}
 		if m.commandMode {
 			return m.updateCommandMode(msg)
 		}
@@ -327,9 +325,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.settingsMode {
 			return m.updateSettingsMode(msg)
-		}
-		if m.noteMode {
-			return m.updateNoteMode(msg)
 		}
 		return m.updateNormalMode(msg)
 	case projectsMsg:
@@ -768,13 +763,7 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.clearSnoozeCmd(p.Path)
 		}
 	case "n":
-		if p, ok := m.selectedProject(); ok {
-			m.noteMode = true
-			m.noteInput.SetValue(p.Note)
-			m.noteInput.CursorEnd()
-			m.status = "Editing note. Enter to save, Esc to cancel"
-			return m, textinput.Blink
-		}
+		return m, m.openNoteDialogForSelection()
 	case "x":
 		m.applySectionToggle("Sessions", commands.ToggleToggle, &m.showSessions)
 		return m, nil
@@ -783,27 +772,6 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
-}
-
-func (m Model) updateNoteMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.noteMode = false
-		m.status = "Note edit canceled"
-		return m, nil
-	case "enter":
-		p, ok := m.selectedProject()
-		if !ok {
-			m.noteMode = false
-			return m, nil
-		}
-		note := m.noteInput.Value()
-		m.noteMode = false
-		return m, m.setNoteCmd(p.Path, note)
-	}
-	var cmd tea.Cmd
-	m.noteInput, cmd = m.noteInput.Update(msg)
-	return m, cmd
 }
 
 func (m Model) updateCommandMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1221,6 +1189,8 @@ func (m Model) View() string {
 		body = m.renderCommitPreviewOverlay(body, layout.width, layout.height)
 	} else if m.newProjectDialog != nil {
 		body = m.renderNewProjectOverlay(body, layout.width, layout.height)
+	} else if m.noteDialog != nil {
+		body = m.renderNoteDialogOverlay(body, layout.width, layout.height)
 	} else if m.settingsMode {
 		body = m.renderSettingsOverlay(body, layout.width, layout.height)
 	} else if m.showHelp {
@@ -1244,12 +1214,7 @@ func (m Model) bodyLayout() bodyLayout {
 	if height <= 0 {
 		height = 30
 	}
-	footerLines := 1
-	if m.noteMode {
-		footerLines = 2
-	}
-
-	bodyHeight := height - (1 + footerLines) // top line + footer
+	bodyHeight := height - 2 // top line + footer
 	if bodyHeight < 8 {
 		bodyHeight = 8
 	}
@@ -1371,10 +1336,13 @@ func (m Model) renderProjectList(width, height int) string {
 
 	projectW, assessmentW := projectListColumnWidths(width)
 	rows := make([]string, 0, visible+2)
-	header := fmt.Sprintf("ATTN  STATE     LAST        SRC RUN     %-*s  %-*s", projectW, "PROJECT", assessmentW, "ASSESSMENT")
+	header := renderProjectListHeader(projectW, assessmentW)
 	meta := fmt.Sprintf("  (sort=%s view=%s)", m.sortMode, visibilityShortLabel(m.visibility))
 	if lipgloss.Width(header)+lipgloss.Width(meta) <= width {
 		header += meta
+	}
+	if width > 0 {
+		header = fitStyledWidth(header, width)
 	}
 	rows = append(rows, header)
 	now := m.currentTime()
@@ -1412,6 +1380,7 @@ func (m Model) renderProjectList(width, height int) string {
 		last := formatListActivityTime(now, p.LastActivity)
 		attention := projectAttentionLabel(p)
 		name := truncateText(p.Name, projectW)
+		noteIndicator := projectNoteIndicator(p.Note)
 		assessment := truncateText(projectAssessmentTextAt(p, now), assessmentW)
 		runLabel, running := m.projectRunLabel(p, now)
 		row := lipgloss.JoinHorizontal(
@@ -1425,7 +1394,9 @@ func (m Model) renderProjectList(width, height int) string {
 			cellStyle(sourceStyle(p.LatestSessionFormat, m.projectHasLiveCodexSession(p.Path)).Width(3).Align(lipgloss.Center)).Render(sourceTag(p.LatestSessionFormat)),
 			" ",
 			cellStyle(projectRunStyle(running).Width(7).Align(lipgloss.Left)).Render(runLabel),
-			" ",
+			"  ",
+			cellStyle(noteListIndicatorStyle.Width(1).Align(lipgloss.Center)).Render(noteIndicator),
+			"  ",
 			cellStyle(lipgloss.NewStyle().Width(projectW).Bold(selectedRow)).Render(name),
 			"  ",
 			cellStyle(projectAssessmentStyle(p).Width(assessmentW).Bold(selectedRow)).Render(assessment),
@@ -1495,8 +1466,10 @@ func (m Model) renderDetailContent(width int) string {
 	if p.SnoozedUntil != nil {
 		lines = append(lines, detailField("Snoozed until", detailValueStyle.Render(p.SnoozedUntil.Format(time.RFC3339))))
 	}
-	if p.Note != "" {
-		lines = append(lines, detailField("Note", detailValueStyle.Render(p.Note)))
+	if projectHasNote(p.Note) {
+		note := normalizeProjectNote(p.Note)
+		lines = append(lines, detailSectionStyle.Render("Notes"))
+		lines = append(lines, lipgloss.NewStyle().Width(max(12, width)).Render(detailValueStyle.Render(note)))
 	}
 
 	lines = append(lines, detailSectionStyle.Render("Attention reasons"))
@@ -1711,6 +1684,21 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m.launchOpenCodeForSelection(false, inv.Prompt)
 	case commands.KindOpenCodeNew:
 		return m.launchOpenCodeForSelection(true, inv.Prompt)
+	case commands.KindNote:
+		p, ok := m.selectedProject()
+		if !ok {
+			m.status = "No project selected"
+			return m, nil
+		}
+		if inv.Clear {
+			if !projectHasNote(p.Note) {
+				m.status = "No note to clear"
+				return m, nil
+			}
+			m.status = "Clearing note..."
+			return m, m.setNoteCmd(p.Path, "")
+		}
+		return m, m.openNoteDialog(p)
 	case commands.KindPin:
 		p, ok := m.selectedProject()
 		if !ok {
@@ -2214,8 +2202,15 @@ func projectAssessmentStyle(project model.ProjectSummary) lipgloss.Style {
 	}
 }
 
+func projectNoteIndicator(note string) string {
+	if projectHasNote(note) {
+		return "N"
+	}
+	return ""
+}
+
 func projectListColumnWidths(totalWidth int) (int, int) {
-	const baseWidth = 40
+	const baseWidth = 44
 
 	if totalWidth < baseWidth+22 {
 		return 10, 10
@@ -2233,6 +2228,27 @@ func projectListColumnWidths(totalWidth int) (int, int) {
 		assessmentWidth = max(10, remaining-projectWidth-2)
 	}
 	return projectWidth, assessmentWidth
+}
+
+func renderProjectListHeader(projectW, assessmentW int) string {
+	return lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		lipgloss.NewStyle().Width(4).Align(lipgloss.Right).Render("ATTN"),
+		"  ",
+		lipgloss.NewStyle().Width(8).Render("STATE"),
+		" ",
+		lipgloss.NewStyle().Width(10).Render("LAST"),
+		" ",
+		lipgloss.NewStyle().Width(3).Align(lipgloss.Center).Render("SRC"),
+		" ",
+		lipgloss.NewStyle().Width(7).Align(lipgloss.Left).Render("RUN"),
+		"  ",
+		lipgloss.NewStyle().Width(1).Align(lipgloss.Center).Render("N"),
+		"  ",
+		lipgloss.NewStyle().Width(projectW).Render("PROJECT"),
+		"  ",
+		lipgloss.NewStyle().Width(assessmentW).Render("ASSESSMENT"),
+	)
 }
 
 func (m Model) projectRunLabel(project model.ProjectSummary, now time.Time) (string, bool) {
@@ -2695,8 +2711,8 @@ func (m Model) renderFooter(width int) string {
 	if m.settingsMode {
 		return fitFooterWidth("Settings: Enter save, Tab next, Esc cancel | "+usageLabel, width)
 	}
-	if m.noteMode {
-		return fitFooterWidth("Note mode: Enter save, Esc cancel | "+usageLabel, width) + "\n" + m.noteInput.View()
+	if m.noteDialog != nil {
+		return fitFooterWidth("Project notes open | "+usageLabel, width)
 	}
 	return renderFooterLine(
 		width,
@@ -3522,8 +3538,9 @@ func (m Model) renderHelpPanel(bodyW, bodyH int) string {
 				"Alt+L expand dense blocks",
 				"p   pin",
 				"s/S snooze/clear",
-				"n   note",
+				"n   note dialog",
 				"/refresh /settings",
+				"/note [/clear]",
 				"/codex /codex-new /opencode /opencode-new",
 				"/diff /commit /finish /push",
 			},
