@@ -4184,6 +4184,33 @@ func TestCommandEnterOpensNoteDialog(t *testing.T) {
 	}
 }
 
+func TestDispatchNoteClearOpensConfirmationDialog(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			PresentOnDisk: true,
+			Note:          "Saved note",
+		}},
+		selected: 0,
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindNote, Clear: true})
+	got := updated.(Model)
+	if got.noteClearConfirm == nil {
+		t.Fatalf("/note clear should open a confirmation dialog")
+	}
+	if got.noteClearConfirm.ProjectPath != "/tmp/demo" {
+		t.Fatalf("confirmation project path = %q, want /tmp/demo", got.noteClearConfirm.ProjectPath)
+	}
+	if got.noteClearConfirm.Selected != noteClearConfirmFocusCancel {
+		t.Fatalf("default confirmation selection = %d, want cancel", got.noteClearConfirm.Selected)
+	}
+	if cmd != nil {
+		t.Fatalf("/note clear should not clear immediately")
+	}
+}
+
 func TestNoteDialogSaveActionClosesDialogAndReturnsCommand(t *testing.T) {
 	m := Model{
 		noteDialog: &noteDialogState{
@@ -4205,6 +4232,70 @@ func TestNoteDialogSaveActionClosesDialogAndReturnsCommand(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatalf("save should return a note command")
+	}
+}
+
+func TestNoteClearConfirmationConfirmClosesDialogsAndReturnsCommand(t *testing.T) {
+	m := Model{
+		noteDialog: &noteDialogState{
+			ProjectPath:  "/tmp/demo",
+			ProjectName:  "demo",
+			OriginalNote: "Saved note",
+			Editor:       newNoteTextarea("Saved note"),
+			Selected:     noteDialogFocusClear,
+		},
+		noteClearConfirm: &noteClearConfirmState{
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			Selected:    noteClearConfirmFocusConfirm,
+		},
+	}
+
+	updated, cmd := m.updateNoteClearConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.noteClearConfirm != nil {
+		t.Fatalf("confirm should close the confirmation dialog")
+	}
+	if got.noteDialog != nil {
+		t.Fatalf("confirm should close the note dialog before clearing")
+	}
+	if got.status != "Clearing note..." {
+		t.Fatalf("status = %q, want clearing note status", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("confirm should return a clear-note command")
+	}
+}
+
+func TestNoteClearConfirmationCancelKeepsNoteDialogOpen(t *testing.T) {
+	m := Model{
+		noteDialog: &noteDialogState{
+			ProjectPath:  "/tmp/demo",
+			ProjectName:  "demo",
+			OriginalNote: "Saved note",
+			Editor:       newNoteTextarea("Saved note"),
+			Selected:     noteDialogFocusClear,
+		},
+		noteClearConfirm: &noteClearConfirmState{
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			Selected:    noteClearConfirmFocusCancel,
+		},
+	}
+
+	updated, cmd := m.updateNoteClearConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.noteClearConfirm != nil {
+		t.Fatalf("cancel should close the confirmation dialog")
+	}
+	if got.noteDialog == nil {
+		t.Fatalf("cancel should leave the note dialog open")
+	}
+	if got.status != "Note clear canceled" {
+		t.Fatalf("status = %q, want note clear canceled", got.status)
+	}
+	if cmd != nil {
+		t.Fatalf("cancel should not return a command")
 	}
 }
 

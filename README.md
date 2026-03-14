@@ -83,7 +83,7 @@ Inside the embedded Codex or OpenCode pane, use `/resume` or `/session` to open 
 
 Use `/settings` when you want to save include or exclude paths or change the default Codex launch mode.
 
-Use `/note` to open a multiline note editor for the selected project, or `/note clear` to remove the saved note. Projects with saved notes show an `N` badge in the main list. Press `n` for the same editor as a shortcut.
+Use `/note` to open a multiline note editor for the selected project, or `/note clear` to remove the saved note after confirmation. Projects with saved notes show an `N` badge in the main list. Press `n` for the same editor as a shortcut.
 
 Use `/diff` to open a full-screen git diff for the selected project, with staged files listed first on the left, unstaged files below them, and a scrollable text or image preview on the right.
 

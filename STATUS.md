@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-14 09:39 JST (JST)
+Last updated: 2026-03-14 12:47 JST (JST)
 
 ## Current State
 
@@ -77,21 +77,22 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-14 09:39 JST)
+## Latest Update (2026-03-14 12:47 JST)
 
 - Reworked project notes from the old footer-only single-line editor into a real multiline modal dialog backed by the existing stored `projects.note` field. The new flow opens from `/note` or `n`, supports cancel/save/clear actions, and keeps Enter for inserting newlines while Tab moves between the editor and action buttons.
 - Added note presence surfacing in the main list with a dedicated `N` badge column and promoted saved notes in the detail pane into a wrapped `Notes` section instead of the old inline `Note:` field.
 - Tightened the main-list column layout after the first pass by switching the header onto the same fixed-width cell layout as the rows and giving the note column clearer spacing, which keeps the new `N` marker aligned cleanly with project data in live TUI rendering.
-- Extended the slash-command layer with `/note` and `/note clear`, added focused command/TUI regression coverage for note parsing, modal opening, note list indicators, detail rendering, save behavior, and header alignment, and refreshed the README/reference docs to describe the new flow more explicitly.
+- Added a second overlay for destructive note removal so both the note dialog's `Clear` action and `/note clear` now require explicit confirmation before the saved note is deleted.
+- Extended the slash-command layer with `/note` and `/note clear`, added focused command/TUI regression coverage for note parsing, modal opening, note list indicators, detail rendering, save behavior, clear-confirm behavior, and header alignment, and refreshed the README/reference docs to describe the new flow more explicitly.
 - No Codex/OpenCode detector assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
 
 Verification snapshot:
 
 - `go test ./internal/tui ./internal/commands -count=1` passed.
 - `make test` passed.
-- `make scan` passed at `2026-03-14T09:38:49+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
-- `make doctor` passed on the cached snapshot dated `2026-03-14T09:38:50+09:00` (`projects: 138`).
-- `env COLUMNS=110 LINES=30 make tui` launched, the list header/note column spacing looked aligned in the live TUI, and the app exited cleanly via `q`.
+- `make scan` passed at `2026-03-14T12:47:29+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-14T12:47:29+09:00` (`projects: 138`).
+- `env COLUMNS=110 LINES=30 make tui` launched, the list header/note column spacing looked aligned in the live TUI, the no-note clear path safely refused to delete anything, and the app exited cleanly via `q`.
 
 Next concrete tasks:
 

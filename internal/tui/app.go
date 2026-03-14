@@ -51,7 +51,8 @@ type Model struct {
 	nowFn     func() time.Time
 	homeDirFn func() (string, error)
 
-	noteDialog *noteDialogState
+	noteDialog       *noteDialogState
+	noteClearConfirm *noteClearConfirmState
 
 	commandMode                  bool
 	commandInput                 textinput.Model
@@ -307,6 +308,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.newProjectDialog != nil {
 			return m.updateNewProjectMode(msg)
+		}
+		if m.noteClearConfirm != nil {
+			return m.updateNoteClearConfirmMode(msg)
 		}
 		if m.noteDialog != nil {
 			return m.updateNoteDialogMode(msg)
@@ -1189,6 +1193,8 @@ func (m Model) View() string {
 		body = m.renderCommitPreviewOverlay(body, layout.width, layout.height)
 	} else if m.newProjectDialog != nil {
 		body = m.renderNewProjectOverlay(body, layout.width, layout.height)
+	} else if m.noteClearConfirm != nil {
+		body = m.renderNoteClearConfirmOverlay(body, layout.width, layout.height)
 	} else if m.noteDialog != nil {
 		body = m.renderNoteDialogOverlay(body, layout.width, layout.height)
 	} else if m.settingsMode {
@@ -1695,8 +1701,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 				m.status = "No note to clear"
 				return m, nil
 			}
-			m.status = "Clearing note..."
-			return m, m.setNoteCmd(p.Path, "")
+			return m, m.openNoteClearConfirm(p.Path, p.Name)
 		}
 		return m, m.openNoteDialog(p)
 	case commands.KindPin:
@@ -2710,6 +2715,9 @@ func (m Model) renderFooter(width int) string {
 	}
 	if m.settingsMode {
 		return fitFooterWidth("Settings: Enter save, Tab next, Esc cancel | "+usageLabel, width)
+	}
+	if m.noteClearConfirm != nil {
+		return fitFooterWidth("Confirm note clear | "+usageLabel, width)
 	}
 	if m.noteDialog != nil {
 		return fitFooterWidth("Project notes open | "+usageLabel, width)
