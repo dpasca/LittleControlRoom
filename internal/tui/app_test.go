@@ -632,11 +632,11 @@ func TestLLMHelpLines(t *testing.T) {
 }
 
 func TestSessionCategoryLabel(t *testing.T) {
-	if got := sessionCategoryLabel(model.SessionCategoryNeedsFollowUp); got != "needs follow-up" {
-		t.Fatalf("sessionCategoryLabel(needs_follow_up) = %q, want %q", got, "needs follow-up")
+	if got := sessionCategoryLabel(model.SessionCategoryNeedsFollowUp); got != "followup" {
+		t.Fatalf("sessionCategoryLabel(needs_follow_up) = %q, want %q", got, "followup")
 	}
-	if got := sessionCategoryLabel(model.SessionCategoryWaitingForUser); got != "waiting for user" {
-		t.Fatalf("sessionCategoryLabel(waiting_for_user) = %q, want %q", got, "waiting for user")
+	if got := sessionCategoryLabel(model.SessionCategoryWaitingForUser); got != "waiting" {
+		t.Fatalf("sessionCategoryLabel(waiting_for_user) = %q, want %q", got, "waiting")
 	}
 }
 
@@ -1006,7 +1006,7 @@ func TestRenderDetailAssessmentOmitsConfidence(t *testing.T) {
 	}
 
 	rendered := m.renderDetailContent(80)
-	if !strings.Contains(rendered, "needs follow-up") {
+	if !strings.Contains(rendered, "followup") {
 		t.Fatalf("renderDetailContent() missing formatted category label: %q", rendered)
 	}
 	if strings.Contains(rendered, "91%") {
@@ -1037,7 +1037,7 @@ func TestRenderDetailSimplifiesStateAndAttention(t *testing.T) {
 	if !strings.Contains(rendered, "Assessment:") {
 		t.Fatalf("renderDetailContent() missing Assessment label: %q", rendered)
 	}
-	if !strings.Contains(rendered, "waiting for user") {
+	if !strings.Contains(rendered, "waiting") {
 		t.Fatalf("renderDetailContent() missing assessment-based label: %q", rendered)
 	}
 	if !strings.Contains(rendered, "Status:") || !strings.Contains(rendered, "idle") {

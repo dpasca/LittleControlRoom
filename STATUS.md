@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-14 19:53 JST (JST)
+Last updated: 2026-03-14 19:59 JST (JST)
 
 ## Current State
 
@@ -76,6 +76,26 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-14 19:59 JST)
+
+- Unified the assessment vocabulary between the list and detail pane so they now use the same short canonical labels for completed classified states: `done`, `waiting`, `followup`, `working`, and `blocked`.
+- The shared assessment helper no longer mixes short and formal synonyms like `done` vs `completed` or `working` vs `in progress`, which keeps the list and selected-project detail aligned as the same project changes state.
+- Also aligned the local `sessionCategoryLabel` helper to the same canonical wording so future TUI surfaces are less likely to reintroduce the old split vocabulary.
+- No detector or footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-14T19:59:28+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-14T19:59:28+09:00` (`projects: 138`).
+- A short live TUI launch with `--allow-multiple-instances` confirmed that the same project now moved from `Assessment: preparing snapshot` to `Assessment: working` using the same wording visible in the list.
+
+Next concrete tasks:
+
+- Decide whether `followup` should stay compact ASCII or become `follow-up` with a small column-width adjustment later.
+- Consider whether pending/running transient labels like `snapshot` and `model` should also eventually gain a matching dedicated detail shorthand, or remain detail-only as the fuller phrase.
 
 ## Latest Update (2026-03-14 19:53 JST)
 

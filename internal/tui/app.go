@@ -3785,27 +3785,15 @@ func assessmentStatusLabel(project model.ProjectSummary, compact bool) (string, 
 
 	switch project.LatestSessionClassificationType {
 	case model.SessionCategoryCompleted:
-		if compact {
-			return "done", model.SessionCategoryCompleted, true
-		}
-		return "completed", model.SessionCategoryCompleted, true
+		return "done", model.SessionCategoryCompleted, true
 	case model.SessionCategoryBlocked:
 		return "blocked", model.SessionCategoryBlocked, true
 	case model.SessionCategoryWaitingForUser:
-		if compact {
-			return "waiting", model.SessionCategoryWaitingForUser, true
-		}
-		return "waiting for user", model.SessionCategoryWaitingForUser, true
+		return "waiting", model.SessionCategoryWaitingForUser, true
 	case model.SessionCategoryNeedsFollowUp:
-		if compact {
-			return "followup", model.SessionCategoryNeedsFollowUp, true
-		}
-		return "needs follow-up", model.SessionCategoryNeedsFollowUp, true
+		return "followup", model.SessionCategoryNeedsFollowUp, true
 	case model.SessionCategoryInProgress:
-		if compact {
-			return "working", model.SessionCategoryInProgress, true
-		}
-		return "in progress", model.SessionCategoryInProgress, true
+		return "working", model.SessionCategoryInProgress, true
 	default:
 		return "", model.SessionCategoryUnknown, false
 	}
@@ -3884,15 +3872,15 @@ func projectRunStyle(running bool) lipgloss.Style {
 func sessionCategoryLabel(category model.SessionCategory) string {
 	switch category {
 	case model.SessionCategoryCompleted:
-		return "completed"
+		return "done"
 	case model.SessionCategoryBlocked:
 		return "blocked"
 	case model.SessionCategoryWaitingForUser:
-		return "waiting for user"
+		return "waiting"
 	case model.SessionCategoryNeedsFollowUp:
-		return "needs follow-up"
+		return "followup"
 	case model.SessionCategoryInProgress:
-		return "in progress"
+		return "working"
 	case model.SessionCategoryUnknown:
 		return "unknown"
 	default:
