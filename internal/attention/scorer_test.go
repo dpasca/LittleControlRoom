@@ -72,6 +72,28 @@ func TestScoreActiveAddsAttentionReason(t *testing.T) {
 	}
 }
 
+func TestScoreRecentIdleAddsFreshnessBonus(t *testing.T) {
+	now := time.Date(2026, 3, 7, 0, 0, 0, 0, time.UTC)
+	in := Input{
+		Now:             now,
+		HasActivity:     true,
+		LastActivity:    now.Add(-27 * time.Minute),
+		ActiveThreshold: 20 * time.Minute,
+		StuckThreshold:  4 * time.Hour,
+	}
+
+	out := Score(in)
+	if out.Status != model.StatusIdle {
+		t.Fatalf("status = %s, want idle", out.Status)
+	}
+	if out.Score != 29 {
+		t.Fatalf("score = %d, want 29", out.Score)
+	}
+	if len(out.Reasons) != 2 || out.Reasons[0].Code != "idle" || out.Reasons[1].Code != "recent_activity" {
+		t.Fatalf("expected idle + recent_activity reasons, got %#v", out.Reasons)
+	}
+}
+
 func TestScoreRecentlyCompletedDowngradesStuck(t *testing.T) {
 	now := time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC)
 	in := Input{
@@ -87,6 +109,12 @@ func TestScoreRecentlyCompletedDowngradesStuck(t *testing.T) {
 	out := Score(in)
 	if out.Status != "idle" {
 		t.Fatalf("status = %s, want idle", out.Status)
+	}
+	if out.Score != 26 {
+		t.Fatalf("score = %d, want 26", out.Score)
+	}
+	if len(out.Reasons) != 2 || out.Reasons[0].Code != "recently_completed" || out.Reasons[1].Code != "recent_activity" {
+		t.Fatalf("expected recently_completed + recent_activity reasons, got %#v", out.Reasons)
 	}
 }
 
@@ -172,8 +200,8 @@ func TestScoreWaitingForUserDowngradesStuck(t *testing.T) {
 	if out.Status != "idle" {
 		t.Fatalf("status = %s, want idle", out.Status)
 	}
-	if out.Score != waitingForUserAttentionWeight+9 {
-		t.Fatalf("score = %d, want %d", out.Score, waitingForUserAttentionWeight+9)
+	if out.Score != waitingForUserAttentionWeight+8 {
+		t.Fatalf("score = %d, want %d", out.Score, waitingForUserAttentionWeight+8)
 	}
 	if len(out.Reasons) != 2 || out.Reasons[0].Code != "waiting_for_user" || out.Reasons[1].Code != "recent_activity" {
 		t.Fatalf("expected waiting_for_user + recent_activity reasons, got %#v", out.Reasons)
@@ -196,8 +224,8 @@ func TestScoreNeedsFollowUpUsesSpecificReason(t *testing.T) {
 	if out.Status != model.StatusPossiblyStuck {
 		t.Fatalf("status = %s, want possibly_stuck", out.Status)
 	}
-	if out.Score != needsFollowUpAttentionWeight+9 {
-		t.Fatalf("score = %d, want %d", out.Score, needsFollowUpAttentionWeight+9)
+	if out.Score != needsFollowUpAttentionWeight+8 {
+		t.Fatalf("score = %d, want %d", out.Score, needsFollowUpAttentionWeight+8)
 	}
 	if len(out.Reasons) != 2 || out.Reasons[0].Code != "needs_follow_up" || out.Reasons[1].Code != "recent_activity" {
 		t.Fatalf("expected needs_follow_up + recent_activity reasons, got %#v", out.Reasons)
@@ -220,8 +248,8 @@ func TestScoreInProgressUsesSpecificReason(t *testing.T) {
 	if out.Status != model.StatusPossiblyStuck {
 		t.Fatalf("status = %s, want possibly_stuck", out.Status)
 	}
-	if out.Score != inProgressAttentionWeight+9 {
-		t.Fatalf("score = %d, want %d", out.Score, inProgressAttentionWeight+9)
+	if out.Score != inProgressAttentionWeight+8 {
+		t.Fatalf("score = %d, want %d", out.Score, inProgressAttentionWeight+8)
 	}
 	if len(out.Reasons) != 2 || out.Reasons[0].Code != "in_progress" || out.Reasons[1].Code != "recent_activity" {
 		t.Fatalf("expected in_progress + recent_activity reasons, got %#v", out.Reasons)
@@ -244,8 +272,8 @@ func TestScoreBlockedUsesSpecificReason(t *testing.T) {
 	if out.Status != model.StatusPossiblyStuck {
 		t.Fatalf("status = %s, want possibly_stuck", out.Status)
 	}
-	if out.Score != blockedAttentionWeight+9 {
-		t.Fatalf("score = %d, want %d", out.Score, blockedAttentionWeight+9)
+	if out.Score != blockedAttentionWeight+8 {
+		t.Fatalf("score = %d, want %d", out.Score, blockedAttentionWeight+8)
 	}
 	if len(out.Reasons) != 2 || out.Reasons[0].Code != "blocked" || out.Reasons[1].Code != "recent_activity" {
 		t.Fatalf("expected blocked + recent_activity reasons, got %#v", out.Reasons)
@@ -362,8 +390,8 @@ func TestScoreRepoDirtyAddsAttentionReason(t *testing.T) {
 	}
 
 	out := Score(in)
-	if out.Score != 35 {
-		t.Fatalf("score = %d, want 35", out.Score)
+	if out.Score != 44 {
+		t.Fatalf("score = %d, want 44", out.Score)
 	}
 	found := false
 	for _, reason := range out.Reasons {

@@ -69,11 +69,6 @@ func Score(in Input) Output {
 				Text:   fmt.Sprintf("Recent activity within %s", in.ActiveThreshold.Round(time.Minute)),
 				Weight: activeAttentionWeight,
 			})
-		case idleFor <= in.StuckThreshold:
-			out.Status = model.StatusIdle
-			w := 20
-			out.Score += w
-			out.Reasons = append(out.Reasons, model.AttentionReason{Code: "idle", Text: fmt.Sprintf("Idle for %s", formatAttentionDuration(idleFor)), Weight: w})
 		default:
 			if handled, outcome := classifiedIdleReason(in, idleFor); handled {
 				out.Status = outcome.Status
@@ -90,6 +85,13 @@ func Score(in Input) Output {
 					out.Reasons = append(out.Reasons, *reason)
 					break
 				}
+			}
+			if idleFor <= in.StuckThreshold {
+				out.Status = model.StatusIdle
+				w := 20
+				out.Score += w
+				out.Reasons = append(out.Reasons, model.AttentionReason{Code: "idle", Text: fmt.Sprintf("Idle for %s", formatAttentionDuration(idleFor)), Weight: w})
+				break
 			}
 			out.Status = model.StatusPossiblyStuck
 			w := genericStuckAttentionWeight
@@ -254,10 +256,10 @@ func recentActivityReason(in Input) *model.AttentionReason {
 		return nil
 	}
 	idleFor := in.Now.Sub(in.LastActivity)
-	if idleFor <= in.StuckThreshold {
+	if idleFor <= in.ActiveThreshold {
 		return nil
 	}
-	weight := taperedAttentionWeight(idleFor, in.StuckThreshold, recentAttentionWindow, recentActivityBonusWeight)
+	weight := taperedAttentionWeight(idleFor, in.ActiveThreshold, recentAttentionWindow, recentActivityBonusWeight)
 	if weight == 0 {
 		return nil
 	}

@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-14 23:55 JST (JST)
+Last updated: 2026-03-15 00:30 JST (JST)
 
 ## Current State
 
@@ -76,6 +76,27 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-15 00:30 JST)
+
+- Fixed the freshness gap in attention scoring for recently idle projects: the soft `recent_activity` bonus now starts as soon as a project leaves the active window instead of waiting until it crosses the stuck threshold.
+- Also fixed recent-completion surfacing for idle projects with known completed work: classified `completed` sessions and recovered `latest turn completed` sessions now keep their completion reason during the normal idle window instead of falling back to a generic `Idle for ...` reason.
+- Added focused regressions for the exact shape of the bug: a recent idle scorer case, a recent completed-turn scorer case, updated classified-state score expectations, and a service refresh regression that locks in the `session_completed + recent_activity` result for fresh completed work.
+- No detector or footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/attention ./internal/service -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-15T00:30:28+09:00` (`activity projects: 84`, `tracked projects: 136`, `updated projects: 6`, `queued classifications: 2`).
+- `make doctor` passed on the cached snapshot dated `2026-03-15T00:30:35+09:00` (`projects: 136`).
+- `env COLUMNS=110 LINES=30 make tui` correctly refused to start because another `lcroom tui` process already owns the shared DB.
+- A short `go run ./cmd/lcroom tui ... --allow-multiple-instances` smoke launch showed the expected existing-owner warning, reached the TUI, and exited via `q`.
+
+Next concrete tasks:
+
+- Watch the live list for a workday and tune the fresh-idle/completed weights if recently touched repos now feel either too sticky or still too easy to bury.
+- Consider a small detail-pane distinction between category reasons like `session_completed` and softer modifiers like `recent_activity` so the score makeup stays easy to read.
 
 ## Latest Update (2026-03-14 23:55 JST)
 

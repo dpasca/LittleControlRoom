@@ -73,7 +73,7 @@ func TestScanWithOptionsForceRetriesFailedClassifications(t *testing.T) {
 	defer st.Close()
 
 	projectPath := t.TempDir()
-	now := time.Now().UTC().Truncate(time.Second)
+	now := time.Date(2026, 3, 6, 9, 0, 0, 0, time.UTC)
 	detector := staticDetector{
 		activities: map[string]*model.DetectorProjectActivity{
 			projectPath: {
@@ -122,7 +122,7 @@ func TestRefreshProjectStatusUsesCompletedClassification(t *testing.T) {
 	}
 	defer st.Close()
 
-	now := time.Date(2026, 3, 6, 9, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	state := model.ProjectState{
 		Path:           "/tmp/archived-demo",
 		Name:           "archived-demo",
@@ -184,6 +184,81 @@ func TestRefreshProjectStatusUsesCompletedClassification(t *testing.T) {
 	}
 	if len(detail.Reasons) != 0 {
 		t.Fatalf("expected no attention reasons for stale completed work, got %#v", detail.Reasons)
+	}
+}
+
+func TestRefreshProjectStatusKeepsRecentCompletedWorkFresh(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	state := model.ProjectState{
+		Path:           "/tmp/fresh-demo",
+		Name:           "fresh-demo",
+		LastActivity:   now.Add(-27 * time.Minute),
+		Status:         model.StatusIdle,
+		AttentionScore: 20,
+		InScope:        true,
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{{
+			SessionID:    "ses_recent",
+			ProjectPath:  "/tmp/fresh-demo",
+			SessionFile:  "/tmp/fresh-demo/session.jsonl",
+			Format:       "modern",
+			SnapshotHash: "recent-session-hash",
+			StartedAt:    now.Add(-42 * time.Minute),
+			LastEventAt:  now.Add(-27 * time.Minute),
+		}},
+	}
+	if err := st.UpsertProjectState(ctx, state); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	classification, ok := sessionclassify.BuildClassificationRequest(state)
+	if !ok {
+		t.Fatalf("expected build classification request to succeed")
+	}
+	if queued, err := st.QueueSessionClassification(ctx, classification, time.Minute); err != nil || !queued {
+		t.Fatalf("queue classification: queued=%v err=%v", queued, err)
+	}
+	claimed, err := st.ClaimNextPendingSessionClassification(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("claim classification: %v", err)
+	}
+	claimed.Category = model.SessionCategoryCompleted
+	claimed.Summary = "Work appears complete for now."
+	claimed.Confidence = 0.93
+	if err := st.CompleteSessionClassification(ctx, claimed); err != nil {
+		t.Fatalf("complete classification: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.ActiveThreshold = 20 * time.Minute
+	cfg.StuckThreshold = 4 * time.Hour
+	svc := New(cfg, st, events.NewBus(), nil)
+
+	if err := svc.RefreshProjectStatus(ctx, state.Path); err != nil {
+		t.Fatalf("refresh project status: %v", err)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, state.Path, 10)
+	if err != nil {
+		t.Fatalf("get detail: %v", err)
+	}
+	if detail.Summary.Status != model.StatusIdle {
+		t.Fatalf("status = %s, want idle", detail.Summary.Status)
+	}
+	if detail.Summary.AttentionScore != 29 {
+		t.Fatalf("attention score = %d, want 29", detail.Summary.AttentionScore)
+	}
+	if len(detail.Reasons) != 2 || detail.Reasons[0].Code != "session_completed" || detail.Reasons[1].Code != "recent_activity" {
+		t.Fatalf("expected session_completed + recent_activity reasons, got %#v", detail.Reasons)
 	}
 }
 
