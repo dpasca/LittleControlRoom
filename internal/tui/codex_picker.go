@@ -684,9 +684,10 @@ func (m Model) renderCodexPickerRow(choice codexSessionChoice, selected bool, wi
 
 	left := strings.Join(badges, " ")
 	right := fmt.Sprintf("%s  %s", formatPickerActivity(choice.LastActivity), shortID(choice.SessionID))
-	available := max(16, width-len(left)-len(right)-6)
+	available := max(16, width-lipgloss.Width(left)-lipgloss.Width(right)-6)
 	label := m.codexPickerPrimaryLabel(choice)
-	row := fmt.Sprintf("  %s  %s  %s", left, truncateText(label, available), right)
+	labelCell := fitStyledWidth(fitFooterWidth(label, available), available)
+	row := fmt.Sprintf("  %s  %s  %s", left, labelCell, right)
 	if m.codexPickerKind != codexPickerKindResume && strings.TrimSpace(choice.Summary) != "" {
 		row += "\n  " + truncateText(choice.Summary, max(12, width-4))
 	}

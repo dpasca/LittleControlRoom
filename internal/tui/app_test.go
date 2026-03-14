@@ -2071,6 +2071,35 @@ func TestRenderCodexPickerRowMarksLatestSavedSessionInResumeMode(t *testing.T) {
 	}
 }
 
+func TestRenderCodexPickerRowAlignsResumeMetadataColumns(t *testing.T) {
+	m := Model{codexPickerKind: codexPickerKindResume}
+	at := time.Date(2026, 3, 13, 19, 56, 0, 0, time.UTC)
+	ts := formatPickerActivity(at)
+
+	shortRow := ansi.Strip(m.renderCodexPickerRow(codexSessionChoice{
+		Provider:     codexapp.ProviderCodex,
+		SessionID:    "thread-short",
+		LastActivity: at,
+		Summary:      "Short label",
+	}, false, 96))
+
+	longRow := ansi.Strip(m.renderCodexPickerRow(codexSessionChoice{
+		Provider:     codexapp.ProviderCodex,
+		SessionID:    "thread-longer",
+		LastActivity: at,
+		Summary:      "Selection highlight implemented, tests and validation passed after the footer refresh.",
+	}, false, 96))
+
+	shortIndex := strings.Index(shortRow, ts)
+	longIndex := strings.Index(longRow, ts)
+	if shortIndex < 0 || longIndex < 0 {
+		t.Fatalf("expected both rows to include the activity timestamp %q: short=%q long=%q", ts, shortRow, longRow)
+	}
+	if shortIndex != longIndex {
+		t.Fatalf("timestamp columns should align: short=%d long=%d shortRow=%q longRow=%q", shortIndex, longIndex, shortRow, longRow)
+	}
+}
+
 func TestVisibleCodexSlashResumeIDOpensRequestedSession(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {

@@ -703,14 +703,14 @@ func firstPreviewTitle(items []TranscriptItem) string {
 			continue
 		}
 		text := previewText(item.Text)
-		if text == "" || previewNoise(text) {
+		if text == "" {
 			continue
 		}
 		return text
 	}
 	for _, item := range items {
 		text := previewText(item.Text)
-		if text == "" || previewNoise(text) {
+		if text == "" {
 			continue
 		}
 		return text
@@ -725,14 +725,14 @@ func lastPreviewSummary(items []TranscriptItem, title string) string {
 			continue
 		}
 		text := previewText(items[i].Text)
-		if text == "" || previewNoise(text) || strings.EqualFold(text, title) {
+		if text == "" || strings.EqualFold(text, title) {
 			continue
 		}
 		return text
 	}
 	for i := len(items) - 1; i >= 0; i-- {
 		text := previewText(items[i].Text)
-		if text == "" || previewNoise(text) || strings.EqualFold(text, title) {
+		if text == "" || strings.EqualFold(text, title) {
 			continue
 		}
 		return text
@@ -742,18 +742,21 @@ func lastPreviewSummary(items []TranscriptItem, title string) string {
 
 func previewText(text string) string {
 	text = sanitizeTranscriptText(text)
-	if newline := strings.IndexByte(text, '\n'); newline >= 0 {
-		text = text[:newline]
+	lines := strings.Split(text, "\n")
+	if previewScaffoldText(lines) {
+		return ""
 	}
-	text = strings.Join(strings.Fields(text), " ")
-	if len(text) <= maxPreviewBytes {
-		return text
+	if line := previewLine(lines, true); line != "" {
+		return truncatePreviewLine(line)
 	}
-	return text[:maxPreviewBytes-3] + "..."
+	return truncatePreviewLine(previewLine(lines, false))
 }
 
-func previewNoise(text string) bool {
-	lower := strings.ToLower(strings.TrimSpace(text))
+func previewScaffoldText(lines []string) bool {
+	if len(lines) == 0 {
+		return true
+	}
+	lower := strings.ToLower(strings.TrimSpace(lines[0]))
 	switch {
 	case lower == "":
 		return true
@@ -761,9 +764,59 @@ func previewNoise(text string) bool {
 		return true
 	case strings.HasPrefix(lower, "current working directory:"):
 		return true
+	case strings.HasPrefix(lower, "# agents.md instructions for "):
+		return true
 	default:
 		return false
 	}
+}
+
+func previewLine(lines []string, skipPresentation bool) string {
+	for _, line := range lines {
+		line = strings.Join(strings.Fields(strings.TrimSpace(line)), " ")
+		if line == "" {
+			continue
+		}
+		if skipPresentation && previewPresentationLine(line) {
+			continue
+		}
+		return line
+	}
+	return ""
+}
+
+func previewPresentationLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	switch {
+	case trimmed == "":
+		return true
+	case strings.HasPrefix(trimmed, "#"):
+		return true
+	case wrappedBy(trimmed, "**", "**"):
+		return true
+	case wrappedBy(trimmed, "__", "__"):
+		return true
+	case wrappedBy(trimmed, "*", "*"):
+		return true
+	case wrappedBy(trimmed, "_", "_"):
+		return true
+	default:
+		return false
+	}
+}
+
+func wrappedBy(text, prefix, suffix string) bool {
+	if len(text) <= len(prefix)+len(suffix) {
+		return false
+	}
+	return strings.HasPrefix(text, prefix) && strings.HasSuffix(text, suffix)
+}
+
+func truncatePreviewLine(text string) string {
+	if len(text) <= maxPreviewBytes {
+		return text
+	}
+	return text[:maxPreviewBytes-3] + "..."
 }
 
 func sanitizeTranscriptText(text string) string {

@@ -140,6 +140,24 @@ func TestPreviewFromTranscriptUsesInitialUserAndLatestAssistantSnippets(t *testi
 	}
 }
 
+func TestPreviewFromTranscriptSkipsScaffoldTitlesAndHeadingOnlySummaries(t *testing.T) {
+	t.Parallel()
+
+	preview := previewFromTranscript([]TranscriptItem{
+		{Role: "user", Text: "# AGENTS.md instructions for /tmp/demo\n\n<INSTRUCTIONS>\nKeep STATUS.md updated.\n</INSTRUCTIONS>\n\n<environment_context>\n  <cwd>/tmp/demo</cwd>\n</environment_context>"},
+		{Role: "user", Text: "why is the quickgame_27 project marked stuck?"},
+		{Role: "assistant", Text: "Still checking the latest session state."},
+		{Role: "assistant", Text: "**Classification**\n\nI'd classify the latest session as completed, not in progress."},
+	})
+
+	if preview.Title != "why is the quickgame_27 project marked stuck?" {
+		t.Fatalf("preview title = %q", preview.Title)
+	}
+	if preview.Summary != "I'd classify the latest session as completed, not in progress." {
+		t.Fatalf("preview summary = %q", preview.Summary)
+	}
+}
+
 func TestManagerProcessOneCompletesClassification(t *testing.T) {
 	t.Parallel()
 

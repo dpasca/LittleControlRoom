@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-14 17:02 JST (JST)
+Last updated: 2026-03-14 17:11 JST (JST)
 
 ## Current State
 
@@ -77,7 +77,31 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-14 17:02 JST)
+## Latest Update (2026-03-14 17:11 JST)
+
+- Fixed two embedded `/resume` picker issues in the saved-session flow.
+- Resume-row layout now pads the middle preview cell to a fixed width before appending the activity/session metadata, so short summaries no longer pull the date/id columns left.
+- Session preview extraction now skips Codex-injected `AGENTS.md` / `<environment_context>` scaffold messages when choosing the title, and it skips heading-only first lines like `**Classification**` when choosing the preview summary. That gives the picker a real user prompt in `Title:` and a substantive assistant sentence in the main row/about panel.
+- Added focused regressions for both behaviors: preview extraction now locks in scaffold-title and heading-summary skipping, and the picker row test now asserts that timestamp columns stay aligned across short and long resume labels.
+- No Codex/OpenCode detector assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/sessionclassify ./internal/tui -run 'TestPreviewFromTranscript|TestRenderCodexPickerRow' -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-14T17:11:08+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 7`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-14T17:11:16+09:00` (`projects: 138`).
+- `env COLUMNS=110 LINES=30 make tui` launched and exited cleanly via `q`.
+
+Next concrete tasks:
+
+- Re-open the embedded `/resume` picker against a few older Codex and OpenCode sessions to see whether any other transcript scaffolding still leaks into preview titles or summaries.
+- Decide whether the About section should keep showing both `Summary` and `Title` when they are near-duplicates, or collapse to one line once the new preview extraction settles.
+- Factor a provider-neutral transcript/session abstraction so Codex and OpenCode stop sharing only by convention.
+
+## Recent Updates
+
+### 2026-03-14 17:02 JST
 
 - Added explicit clipboard support to the project note dialog so users no longer have to rely on terminal text selection that can capture surrounding UI chrome.
 - Notes now support a quick `Ctrl+Y` whole-note copy plus a `Copy...` action with just `Whole note` and `Selected text`. Selected-text mode uses a two-step `Space` mark-start / move / `Space` copy flow inside the editor.
@@ -98,8 +122,6 @@ Next concrete tasks:
 - Decide whether note copy should also be exposed directly from the main detail pane or command palette, not just inside the note dialog.
 - Keep polishing OpenCode parity details such as richer attachment confidence, better agent/status presentation, and any remaining approval/question edge cases.
 - Factor a provider-neutral transcript/session abstraction so Codex and OpenCode stop sharing only by convention.
-
-## Recent Updates
 
 ### 2026-03-14 15:07 JST
 
