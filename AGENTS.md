@@ -40,3 +40,9 @@ Use these checks before finishing:
 - `make doctor`
 
 Run `make tui` for interactive verification when UI behavior is touched.
+
+## Debugging Multi-Instance Runs
+
+- By default, long-lived `lcroom` modes such as `tui`, `serve`, and `classify` now refuse to share the same DB with another active runtime.
+- For intentional short-lived local debugging overlap only, re-run with `--allow-multiple-instances`.
+- Treat `--allow-multiple-instances` as a temporary escape hatch for dev/debug sessions, not the normal way to run Little Control Room day to day.

@@ -318,15 +318,15 @@ func TestProjectListStatus(t *testing.T) {
 	}
 }
 
-func TestProjectListStatusIgnoresAssessmentCategory(t *testing.T) {
+func TestProjectListStatusUsesAssessmentCategory(t *testing.T) {
 	project := model.ProjectSummary{
 		Status:                          model.StatusIdle,
 		PresentOnDisk:                   true,
 		LatestSessionClassification:     model.ClassificationCompleted,
 		LatestSessionClassificationType: model.SessionCategoryWaitingForUser,
 	}
-	if got := projectListStatus(project); got != "idle" {
-		t.Fatalf("projectListStatus() = %q, want %q", got, "idle")
+	if got := projectListStatus(project); got != "waiting" {
+		t.Fatalf("projectListStatus() = %q, want %q", got, "waiting")
 	}
 }
 
@@ -366,8 +366,8 @@ func TestAssessmentStatusLabelUsesInProgressName(t *testing.T) {
 		LatestSessionClassification:     model.ClassificationCompleted,
 		LatestSessionClassificationType: model.SessionCategoryInProgress,
 	}
-	if got, _, ok := assessmentStatusLabel(project, true); !ok || got != "in progress" {
-		t.Fatalf("assessmentStatusLabel(compact) = (%q, %v), want (%q, true)", got, ok, "in progress")
+	if got, _, ok := assessmentStatusLabel(project, true); !ok || got != "working" {
+		t.Fatalf("assessmentStatusLabel(compact) = (%q, %v), want (%q, true)", got, ok, "working")
 	}
 }
 
@@ -710,8 +710,8 @@ func TestRenderProjectListIncludesAssessmentColumn(t *testing.T) {
 	if !strings.Contains(rendered, "RUN") {
 		t.Fatalf("renderProjectList() missing RUN header: %q", rendered)
 	}
-	if !strings.Contains(rendered, "ASSESSMENT") {
-		t.Fatalf("renderProjectList() missing assessment header: %q", rendered)
+	if !strings.Contains(rendered, "ASSESS") || !strings.Contains(rendered, "SUMMARY") {
+		t.Fatalf("renderProjectList() missing assessment/summary headers: %q", rendered)
 	}
 	if !strings.Contains(rendered, "A concrete next step still remains.") {
 		t.Fatalf("renderProjectList() missing latest assessment summary: %q", rendered)
@@ -5196,7 +5196,7 @@ func TestViewWithDiffScreenUsesFullBody(t *testing.T) {
 	if !strings.Contains(rendered, "Alt+Up") || !strings.Contains(rendered, "stage") || !strings.Contains(rendered, "unified") {
 		t.Fatalf("View() should render the highlighted diff footer legend: %q", rendered)
 	}
-	if strings.Contains(rendered, "ATTN  STATE") || strings.Contains(rendered, "Attention reasons") {
+	if strings.Contains(rendered, "ATTN  ASSESS") || strings.Contains(rendered, "Attention reasons") {
 		t.Fatalf("View() should replace the normal list/detail body when diff is open: %q", rendered)
 	}
 }

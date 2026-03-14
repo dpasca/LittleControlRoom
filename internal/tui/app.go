@@ -2249,7 +2249,7 @@ func renderProjectListHeader(projectW, assessmentW int) string {
 		lipgloss.Top,
 		lipgloss.NewStyle().Width(5).Align(lipgloss.Right).Render("ATTN"),
 		"  ",
-		lipgloss.NewStyle().Width(8).Render("STATE"),
+		lipgloss.NewStyle().Width(8).Render("ASSESS"),
 		" ",
 		lipgloss.NewStyle().Width(10).Render("LAST"),
 		" ",
@@ -2261,7 +2261,7 @@ func renderProjectListHeader(projectW, assessmentW int) string {
 		"  ",
 		lipgloss.NewStyle().Width(projectW).Render("PROJECT"),
 		"  ",
-		lipgloss.NewStyle().Width(assessmentW).Render("ASSESSMENT"),
+		lipgloss.NewStyle().Width(assessmentW).Render("SUMMARY"),
 	)
 }
 
@@ -2467,6 +2467,31 @@ func projectAssessmentLabelAt(project model.ProjectSummary, now time.Time) strin
 	}
 }
 
+func projectListStatus(project model.ProjectSummary) string {
+	if projectMissing(project) {
+		return "missing"
+	}
+	if moveStatusActive(project.MovedAt, project.Path, project.LatestSessionDetectedProjectPath) {
+		return "moved"
+	}
+	if label, _, ok := assessmentStatusLabel(project, true); ok {
+		return label
+	}
+	switch project.LatestSessionClassification {
+	case model.ClassificationPending:
+		return "queued"
+	case model.ClassificationRunning:
+		return classificationProgressCompactLabel(project.LatestSessionClassificationStage)
+	case model.ClassificationFailed:
+		return "failed"
+	default:
+		if project.LatestSessionFormat != "" {
+			return "pending"
+		}
+		return projectActivityStatus(project)
+	}
+}
+
 func classificationProgressText(status model.SessionClassificationStatus, stage model.SessionClassificationStage, stageStartedAt, updatedAt, now time.Time, includeAssessmentPrefix bool) string {
 	label := classificationProgressStageLabel(status, stage)
 	if label == "" {
@@ -2542,10 +2567,6 @@ func projectActivityStatus(project model.ProjectSummary) string {
 		return "moved"
 	}
 	return attentionStatusLabel(project.Status)
-}
-
-func projectListStatus(project model.ProjectSummary) string {
-	return projectActivityStatus(project)
 }
 
 func visibilityLabel(mode projectVisibilityMode) string {
@@ -3566,8 +3587,8 @@ func (m Model) renderHelpPanel(bodyW, bodyH int) string {
 				"SRC  bright CX live, dim CX saved",
 				"SRC  OC OpenCode history",
 				"RUN  live embedded turn timer",
-				"ASSESS latest session summary",
-				"ASSESS pending/running/failed when unfinished",
+				"ASSESS short latest assessment label",
+				"SUMMARY latest session summary",
 				"! in ATTN = dirty or remote warning",
 			},
 		},
@@ -3743,7 +3764,18 @@ func moveStatusActive(movedAt time.Time, currentPath, latestDetectedPath string)
 }
 
 func statusDisplayStyle(project model.ProjectSummary) lipgloss.Style {
-	return activityDisplayStyle(project)
+	if projectMissing(project) || moveStatusActive(project.MovedAt, project.Path, project.LatestSessionDetectedProjectPath) {
+		return activityDisplayStyle(project)
+	}
+	switch project.LatestSessionClassification {
+	case model.ClassificationCompleted, model.ClassificationPending, model.ClassificationRunning, model.ClassificationFailed:
+		return assessmentDisplayStyle(project)
+	default:
+		if project.LatestSessionFormat != "" {
+			return detailMutedStyle
+		}
+		return activityDisplayStyle(project)
+	}
 }
 
 func assessmentStatusLabel(project model.ProjectSummary, compact bool) (string, model.SessionCategory, bool) {
@@ -3770,9 +3802,23 @@ func assessmentStatusLabel(project model.ProjectSummary, compact bool) (string, 
 		}
 		return "needs follow-up", model.SessionCategoryNeedsFollowUp, true
 	case model.SessionCategoryInProgress:
+		if compact {
+			return "working", model.SessionCategoryInProgress, true
+		}
 		return "in progress", model.SessionCategoryInProgress, true
 	default:
 		return "", model.SessionCategoryUnknown, false
+	}
+}
+
+func classificationProgressCompactLabel(stage model.SessionClassificationStage) string {
+	switch stage {
+	case model.ClassificationStagePreparingSnapshot:
+		return "snapshot"
+	case model.ClassificationStageWaitingForModel:
+		return "model"
+	default:
+		return "running"
 	}
 }
 

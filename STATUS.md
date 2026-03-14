@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-14 17:11 JST (JST)
+Last updated: 2026-03-14 19:53 JST (JST)
 
 ## Current State
 
@@ -76,6 +76,45 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-14 19:53 JST)
+
+- Added a small `AGENTS.md` note documenting the new multi-instance runtime guard and the intended debugging-only use of `--allow-multiple-instances`.
+- Kept the guidance concise and local to the validation/debugging instructions so future sessions can find the flag quickly without treating it as the default launch mode.
+- No product behavior or detector assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `make test` passed.
+- `make scan` passed at `2026-03-14T19:53:16+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-14T19:53:16+09:00` (`projects: 138`).
+
+Next concrete tasks:
+
+- If we keep relying on `--allow-multiple-instances` for short debug launches, consider mirroring the same reminder in a user-facing troubleshooting doc later.
+- Keep an eye on whether the runtime-owner warning itself should suggest the most common debug command shapes more explicitly.
+
+## Latest Update (2026-03-14 19:51 JST)
+
+- Replaced the short list `STATE` column with a compact assessment label so the main list now surfaces classifier outcomes like `waiting`, `done`, `followup`, `working`, `snapshot`, and `failed` instead of the coarser activity state.
+- Renamed the long right-hand list column from `ASSESSMENT` to `SUMMARY` to better match its actual content: the latest session summary/explanation rather than the short assessment tag.
+- Kept the detail pane split intact so the selected project still shows both `Assessment` and `Status`, preserving the broader activity signal without spending scarce list space on it.
+- Updated TUI regression coverage for the new compact assessment labels, the renamed list headers, and the normal-body suppression checks that referenced the old `STATE` header text.
+- No Codex/OpenCode detector assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-14T19:50:42+09:00` (`activity projects: 84`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-14T19:50:51+09:00` (`projects: 138`).
+- A short live TUI launch with `--allow-multiple-instances` showed the new `ATTN  ASSESS ... SUMMARY` header and rows such as `snapshot`, `done`, `waiting`, and `working`, then exited cleanly via `q`.
+
+Next concrete tasks:
+
+- Watch whether the compact running-stage labels (`snapshot`, `model`, `working`) feel right in real use or should be tuned further.
+- Consider whether the detail pane should also rename `Status` to `Activity` again now that the list has taken over the compact assessment role more explicitly.
+- Decide whether later list-density passes should reclaim one more character from `LAST` or `RUN` now that `ASSESS` is carrying more value.
 
 ## Latest Update (2026-03-14 18:56 JST)
 
