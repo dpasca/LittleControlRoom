@@ -44,18 +44,23 @@ func (m Model) renderRuntimeDetail(lines []string, width int, projectPath, saved
 	}
 	lines = appendDetailFields(lines, width, fields...)
 
+	infoFields := make([]string, 0, 2)
 	if len(snapshot.Ports) > 0 {
-		lines = append(lines, detailField("Ports", detailValueStyle.Render(joinPorts(snapshot.Ports))))
+		infoFields = append(infoFields, detailField("Ports", detailValueStyle.Render(joinPorts(snapshot.Ports))))
 	}
 	if urlSummary := runtimeURLSummary(snapshot); urlSummary != "" {
-		lines = append(lines, detailField("URL", detailValueStyle.Render(urlSummary)))
+		infoFields = append(infoFields, detailField("URL", detailValueStyle.Render(urlSummary)))
 	}
+	lines = appendDetailFields(lines, width, infoFields...)
+
+	statusFields := make([]string, 0, 2)
 	if len(snapshot.ConflictPorts) > 0 {
-		lines = append(lines, detailField("Conflict", detailDangerStyle.Render(m.runtimeConflictSummary(projectPath, snapshot.ConflictPorts))))
+		statusFields = append(statusFields, detailField("Conflict", detailDangerStyle.Render(m.runtimeConflictSummary(projectPath, snapshot.ConflictPorts))))
 	}
 	if strings.TrimSpace(snapshot.LastError) != "" {
-		lines = append(lines, detailField("Runtime err", detailDangerStyle.Render(snapshot.LastError)))
+		statusFields = append(statusFields, detailField("Runtime err", detailDangerStyle.Render(snapshot.LastError)))
 	}
+	lines = appendDetailFields(lines, width, statusFields...)
 	if outputSummary := runtimeOutputSummary(snapshot, width); outputSummary != "" {
 		lines = append(lines, detailField("Output", detailMutedStyle.Render(outputSummary)))
 	}

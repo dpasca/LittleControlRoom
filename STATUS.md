@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-17 02:32 JST (JST)
+Last updated: 2026-03-17 03:10 JST (JST)
 
 ## Current State
 
@@ -80,20 +80,21 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-17 02:32 JST)
+## Latest Update (2026-03-17 03:10 JST)
 
 - Compactified the selected-project runtime presentation so the shared detail pane now keeps runtime command, state, ports, URL, conflicts, errors, and a short output teaser instead of appending the full runtime tail inline.
 - Added a dedicated runtime inspector opened with `r` or `/runtime`, with scrollable captured output plus quick `restart`, `stop`, and `open URL` actions wired into the same overlay/footer pattern as the rest of the TUI.
+- Tightened the compact runtime summary further by packing related fields such as `Ports` + `URL` onto the same row when the pane is wide enough, so the runtime block spends fewer lines before the attention and session sections.
 - Added the runtime restart flow, generalized browser opening for raw runtime URLs, refreshed help/docs copy, and added focused regressions for the new runtime command/key path, compact detail rendering, runtime inspector rendering, and browser URL opening.
 - No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
 
 Verification snapshot:
 
-- `go test ./internal/commands ./internal/tui -count=1` passed.
+- `go test ./internal/commands ./internal/tui -count=1` passed for the initial runtime-panel pass, and `go test ./internal/tui -count=1` passed again after the compact row packing follow-up.
 - `make test` passed.
-- `make scan` passed at `2026-03-17T02:25:42+09:00` (`activity projects: 85`, `tracked projects: 136`, `updated projects: 1`, `queued classifications: 0`).
-- `make doctor` passed on the cached snapshot dated `2026-03-17T02:25:51+09:00` (`projects: 136`).
-- `env COLUMNS=110 LINES=30 make tui DB=/tmp/lcroom-runtime-inspector-smoke.sqlite` reached the TUI with a temp DB, rendered the updated main layout, and exited via `q`.
+- `make scan` passed at `2026-03-17T03:08:59+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-17T03:08:59+09:00` (`projects: 137`).
+- `env COLUMNS=110 LINES=30 make tui DB=/tmp/lcroom-runtime-inspector-smoke.sqlite` reached the TUI with a temp DB, rendered the updated main layout after the compaction pass, and exited via `q`.
 
 Next concrete tasks:
 

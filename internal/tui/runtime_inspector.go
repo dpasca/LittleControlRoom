@@ -187,18 +187,27 @@ func (m Model) renderRuntimeInspectorSummary(width int, projectPath string) []st
 	}
 	lines = appendDetailFields(lines, width, fields...)
 
+	infoFields := make([]string, 0, 2)
 	if len(snapshot.Ports) > 0 {
-		lines = append(lines, detailField("Ports", detailValueStyle.Render(joinPorts(snapshot.Ports))))
+		infoFields = append(infoFields, detailField("Ports", detailValueStyle.Render(joinPorts(snapshot.Ports))))
 	}
 	if len(snapshot.AnnouncedURLs) > 0 {
-		lines = append(lines, renderWrappedRuntimeField("URLs", width, detailValueStyle, strings.Join(snapshot.AnnouncedURLs, ", "))...)
+		infoFields = append(infoFields, detailField("URL", detailValueStyle.Render(runtimeURLSummary(snapshot))))
 	}
+	lines = appendDetailFields(lines, width, infoFields...)
+
+	if len(snapshot.AnnouncedURLs) > 1 {
+		lines = append(lines, renderWrappedRuntimeField("More URLs", width, detailMutedStyle, strings.Join(snapshot.AnnouncedURLs[1:], ", "))...)
+	}
+
+	statusFields := make([]string, 0, 2)
 	if len(snapshot.ConflictPorts) > 0 {
-		lines = append(lines, renderWrappedRuntimeField("Conflict", width, detailDangerStyle, m.runtimeConflictSummary(projectPath, snapshot.ConflictPorts))...)
+		statusFields = append(statusFields, detailField("Conflict", detailDangerStyle.Render(m.runtimeConflictSummary(projectPath, snapshot.ConflictPorts))))
 	}
 	if strings.TrimSpace(snapshot.LastError) != "" {
-		lines = append(lines, renderWrappedRuntimeField("Runtime err", width, detailDangerStyle, snapshot.LastError)...)
+		statusFields = append(statusFields, detailField("Runtime err", detailDangerStyle.Render(snapshot.LastError)))
 	}
+	lines = appendDetailFields(lines, width, statusFields...)
 	return lines
 }
 
