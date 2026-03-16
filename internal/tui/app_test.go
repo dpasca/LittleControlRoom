@@ -943,6 +943,118 @@ func TestRenderDetailContentShowsSavedRunCommand(t *testing.T) {
 	}
 }
 
+func TestRenderDetailContentSummarizesRuntimeOutput(t *testing.T) {
+	dir := t.TempDir()
+	manager := projectrun.NewManager()
+	defer func() { _ = manager.CloseAll() }()
+
+	_, err := manager.Start(projectrun.StartRequest{
+		ProjectPath: dir,
+		Command:     "printf 'ready on http://127.0.0.1:4310/\\nwarming up\\n'; sleep 2",
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	waitForRuntimeSnapshot(t, manager, dir, func(snapshot projectrun.Snapshot) bool {
+		return len(snapshot.RecentOutput) >= 2 && len(snapshot.AnnouncedURLs) >= 1
+	})
+
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          dir,
+			PresentOnDisk: true,
+			RunCommand:    "pnpm dev",
+		}},
+		selected:       0,
+		runtimeManager: manager,
+	}
+
+	rendered := ansi.Strip(m.renderDetailContent(92))
+	if strings.Contains(rendered, "Runtime output") {
+		t.Fatalf("renderDetailContent() should keep runtime output out of the main detail pane: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Output: 2 lines captured") {
+		t.Fatalf("renderDetailContent() should summarize runtime output instead of dumping it: %q", rendered)
+	}
+	if !strings.Contains(rendered, "r or /runtime") {
+		t.Fatalf("renderDetailContent() should point to the runtime inspector: %q", rendered)
+	}
+}
+
+func TestRuntimeInspectorOverlayShowsOutputAndActions(t *testing.T) {
+	dir := t.TempDir()
+	manager := projectrun.NewManager()
+	defer func() { _ = manager.CloseAll() }()
+
+	_, err := manager.Start(projectrun.StartRequest{
+		ProjectPath: dir,
+		Command:     "printf 'ready on http://127.0.0.1:4311/\\nwatching changes\\n'; sleep 2",
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	waitForRuntimeSnapshot(t, manager, dir, func(snapshot projectrun.Snapshot) bool {
+		return len(snapshot.RecentOutput) >= 2 && len(snapshot.AnnouncedURLs) >= 1
+	})
+
+	m := Model{
+		width:  100,
+		height: 28,
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          dir,
+			PresentOnDisk: true,
+			RunCommand:    "pnpm dev",
+		}},
+		selected:       0,
+		runtimeManager: manager,
+	}
+	if cmd := m.openRuntimeInspectorForSelection(); cmd != nil {
+		t.Fatalf("openRuntimeInspectorForSelection() should not return a command, got %T", cmd)
+	}
+
+	rendered := ansi.Strip(m.View())
+	if !strings.Contains(rendered, "demo Runtime") {
+		t.Fatalf("View() should show the runtime inspector title: %q", rendered)
+	}
+	if !strings.Contains(rendered, "watching changes") {
+		t.Fatalf("View() should show runtime output in the inspector: %q", rendered)
+	}
+	if !strings.Contains(rendered, "r restart, s stop, o open URL") {
+		t.Fatalf("View() should show runtime inspector actions in the footer: %q", rendered)
+	}
+}
+
+func waitForRuntimeSnapshot(t *testing.T, manager *projectrun.Manager, projectPath string, ready func(projectrun.Snapshot) bool) projectrun.Snapshot {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := projectrun.WaitUntilRunning(ctx, manager, projectPath); err != nil {
+		t.Fatalf("WaitUntilRunning() error = %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		snapshot, err := manager.Snapshot(projectPath)
+		if err != nil {
+			t.Fatalf("Snapshot() error = %v", err)
+		}
+		if ready(snapshot) {
+			return snapshot
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	snapshot, err := manager.Snapshot(projectPath)
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	t.Fatalf("runtime snapshot never reached expected state: %+v", snapshot)
+	return projectrun.Snapshot{}
+}
+
 func TestRenderDetailContentShowsNotesSection(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{
@@ -1387,19 +1499,27 @@ func TestSlashOpensCommandMode(t *testing.T) {
 	}
 }
 
-func TestRefreshKeyDoesNothing(t *testing.T) {
-	m := Model{}
+func TestRuntimeKeyOpensRuntimeInspector(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			PresentOnDisk: true,
+			RunCommand:    "pnpm dev",
+		}},
+		selected: 0,
+	}
 
 	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	got := updated.(Model)
 	if cmd != nil {
-		t.Fatalf("refresh key should no longer return a scan command")
+		t.Fatalf("runtime key should open locally without an async command")
 	}
-	if got.status != "" {
-		t.Fatalf("status = %q, want empty status after removed shortcut", got.status)
+	if got.runtimeInspector == nil {
+		t.Fatalf("runtime key should open the runtime inspector")
 	}
-	if got.loading {
-		t.Fatalf("loading = true, want false after removed shortcut")
+	if got.status != "Runtime panel open" {
+		t.Fatalf("status = %q, want runtime panel open", got.status)
 	}
 }
 

@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-16 21:30 JST (JST)
+Last updated: 2026-03-17 02:32 JST (JST)
 
 ## Current State
 
@@ -57,7 +57,7 @@ Current screenshot workflow assumption:
 - TUI stacked layout with focusable detail pane, scrolling, compact settings modal, and command palette
 - Top-level `/open` slash command to open the selected project's folder in the system browser
 - Project notes via `/note` or `n`, with a multiline modal editor, wrapped detail-pane notes, a list badge when a project has saved notes, and clipboard copy actions for the whole note or an explicit marked selection
-- Managed per-project run commands via `/run`, `/run-edit`, and `/stop`, with persisted default commands, first-pass command suggestions from common project files, a small run-command editor overlay, list badges for notes/runtime/conflicts, detail-pane runtime status/output, and best-effort listening-port detection for LCR-managed runtimes
+- Managed per-project run commands via `/run`, `/run-edit`, `/runtime`, and `/stop`, with persisted default commands, first-pass command suggestions from common project files, a small run-command editor overlay, compact detail-pane runtime summaries, a dedicated runtime inspector with output/actions, and best-effort listening-port detection for LCR-managed runtimes
 - Git workflow actions in the TUI for full-screen diff preview, commit preview, finish, and push
 - Embedded Codex pane via `codex app-server`, with multiline compose, per-project drafts, inline `[Image #n]` clipboard image markers in the composer, backspace-based image removal, local embedded slash commands for `/new`, `/resume` (`/session` alias), `/model`, and `/status`, visible slash autocomplete/suggestions in the composer, a provider-specific saved-session resume picker with lightweight title/summary previews and current-session markers, live model/reasoning/context-left metadata under the transcript, a local model+reasoning picker backed by `model/list`, `Enter`/`/codex`/`/codex-new`, `Esc` or `Alt+Up` hide from the embedded pane with `Enter` reopening from the project list, `Alt+Down` session picker/history, `Alt+[`/`Alt+]` live-session stepping, wrapped transcript blocks, shaded echoed user transcript blocks that reuse the composer shell styling, denser command/tool/file blocks with `Alt+L` expand/collapse, label-free user/assistant transcript rendering, manager-side update coalescing, inline approvals/input requests, and busy-elsewhere rechecks when a read-only embedded session is reopened or restored
 - Embedded OpenCode pane via `opencode serve`, with live SSE transcript updates, resume/new launch from `Enter` and `/opencode` / `/opencode-new`, shared picker/history and model picker, provider-aware banners/footer/help copy, interrupt/status actions, shared approval/question handling, and mixed Codex/OpenCode live-session management per project
@@ -68,7 +68,7 @@ Current screenshot workflow assumption:
 
 - Keep polishing the embedded Codex/OpenCode pane now that live OpenCode transport and the mixed-session TUI flow are in place.
 - Improve OpenCode parity details such as richer attachment confidence, better agent/status presentation, and any remaining approval/question edge cases.
-- Polish the new managed runtime lane: restart/open-url workflows, better external-port attribution, and stronger cross-platform shell launching.
+- Polish the new managed runtime lane: multi-URL/runtime-panel ergonomics, better external-port attribution, and stronger cross-platform shell launching.
 - Consider a schema-aware mini form for MCP elicitation instead of the current freeform JSON/text fallback.
 - Watch for future `codex app-server` protocol support for true queued turns and adopt it when it exists.
 - Factor a provider-neutral transcript/session abstraction so Codex and OpenCode stop sharing only by convention.
@@ -79,6 +79,26 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-17 02:32 JST)
+
+- Compactified the selected-project runtime presentation so the shared detail pane now keeps runtime command, state, ports, URL, conflicts, errors, and a short output teaser instead of appending the full runtime tail inline.
+- Added a dedicated runtime inspector opened with `r` or `/runtime`, with scrollable captured output plus quick `restart`, `stop`, and `open URL` actions wired into the same overlay/footer pattern as the rest of the TUI.
+- Added the runtime restart flow, generalized browser opening for raw runtime URLs, refreshed help/docs copy, and added focused regressions for the new runtime command/key path, compact detail rendering, runtime inspector rendering, and browser URL opening.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/commands ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-17T02:25:42+09:00` (`activity projects: 85`, `tracked projects: 136`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-17T02:25:51+09:00` (`projects: 136`).
+- `env COLUMNS=110 LINES=30 make tui DB=/tmp/lcroom-runtime-inspector-smoke.sqlite` reached the TUI with a temp DB, rendered the updated main layout, and exited via `q`.
+
+Next concrete tasks:
+
+- Decide whether the runtime inspector should let users choose among multiple announced URLs instead of always opening the first available URL/port.
+- Consider keeping a longer or persisted runtime output history now that the dedicated panel makes the current 8-line tail more noticeable.
 
 ## Latest Update (2026-03-16 21:30 JST)
 

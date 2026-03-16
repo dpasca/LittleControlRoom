@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"lcroom/internal/model"
 	"lcroom/internal/projectrun"
@@ -184,8 +185,34 @@ func (m Model) stopProjectRuntimeCmd(projectPath string) tea.Cmd {
 	}
 }
 
+func (m Model) restartProjectRuntimeCmd(projectPath, command string) tea.Cmd {
+	command = strings.TrimSpace(command)
+	return func() tea.Msg {
+		if m.runtimeManager == nil {
+			return runtimeActionMsg{projectPath: projectPath, err: fmt.Errorf("runtime manager unavailable")}
+		}
+		if command == "" {
+			return runtimeActionMsg{projectPath: projectPath, err: fmt.Errorf("runtime command is not set")}
+		}
+		snapshot, err := restartProjectRuntime(m.runtimeManager, projectrun.StartRequest{
+			ProjectPath: projectPath,
+			Command:     command,
+		})
+		if err != nil {
+			return runtimeActionMsg{projectPath: projectPath, err: fmt.Errorf("restart runtime: %w", err)}
+		}
+		return runtimeActionMsg{
+			projectPath: projectPath,
+			status:      runtimeActionStatus("Restarted runtime", snapshot),
+		}
+	}
+}
+
 func runtimeStartStatus(snapshot projectrun.Snapshot) string {
-	label := "Started runtime"
+	return runtimeActionStatus("Started runtime", snapshot)
+}
+
+func runtimeActionStatus(label string, snapshot projectrun.Snapshot) string {
 	if snapshot.Running {
 		if len(snapshot.Ports) == 1 {
 			return fmt.Sprintf("%s on port %d", label, snapshot.Ports[0])
@@ -199,6 +226,40 @@ func runtimeStartStatus(snapshot projectrun.Snapshot) string {
 		return "Runtime exited: " + snapshot.LastError
 	}
 	return label
+}
+
+func restartProjectRuntime(manager *projectrun.Manager, req projectrun.StartRequest) (projectrun.Snapshot, error) {
+	if manager == nil {
+		return projectrun.Snapshot{}, fmt.Errorf("runtime manager unavailable")
+	}
+	snapshot, err := manager.Snapshot(req.ProjectPath)
+	if err != nil {
+		return projectrun.Snapshot{}, err
+	}
+	if snapshot.Running {
+		if err := manager.Stop(req.ProjectPath); err != nil && !errors.Is(err, projectrun.ErrNotRunning) {
+			return projectrun.Snapshot{}, err
+		}
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			time.Sleep(100 * time.Millisecond)
+			snapshot, err = manager.Snapshot(req.ProjectPath)
+			if err != nil {
+				return projectrun.Snapshot{}, err
+			}
+			if !snapshot.Running {
+				break
+			}
+		}
+		if snapshot.Running {
+			return snapshot, fmt.Errorf("timed out waiting for runtime to stop")
+		}
+	}
+	snapshot, err = manager.Start(req)
+	if errors.Is(err, projectrun.ErrAlreadyRunning) {
+		return snapshot, nil
+	}
+	return snapshot, err
 }
 
 func (m Model) renderRunCommandOverlay(body string, width, height int) string {

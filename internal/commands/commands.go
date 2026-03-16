@@ -19,6 +19,7 @@ const (
 	KindOpen        Kind = "open"
 	KindRun         Kind = "run"
 	KindRunEdit     Kind = "run-edit"
+	KindRuntime     Kind = "runtime"
 	KindStop        Kind = "stop"
 	KindDiff        Kind = "diff"
 	KindCommit      Kind = "commit"
@@ -104,6 +105,7 @@ var specs = []Spec{
 	{Name: "open", Usage: "/open", Summary: "Open the selected project's folder in the system browser"},
 	{Name: "run", Usage: "/run [command]", Summary: "Start the selected project's managed runtime"},
 	{Name: "run-edit", Usage: "/run-edit", Summary: "Edit the selected project's saved run command"},
+	{Name: "runtime", Usage: "/runtime", Summary: "Open the selected project's runtime inspector"},
 	{Name: "stop", Usage: "/stop", Summary: "Stop the selected project's managed runtime"},
 	{Name: "diff", Usage: "/diff", Summary: "Open a full-screen diff for the selected project"},
 	{Name: "commit", Usage: "/commit [message]", Summary: "Preview a commit for the selected project"},
@@ -286,6 +288,11 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /run-edit")
 		}
 		return Invocation{Kind: KindRunEdit, Canonical: "/run-edit"}, nil
+	case "runtime":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /runtime")
+		}
+		return Invocation{Kind: KindRuntime, Canonical: "/runtime"}, nil
 	case "stop":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /stop")

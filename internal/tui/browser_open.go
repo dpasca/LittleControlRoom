@@ -29,10 +29,7 @@ func openProjectDirInBrowser(path string) error {
 		return fmt.Errorf("project path is not a directory")
 	}
 
-	if err := externalBrowserOpener(directoryFileURL(absPath)); err != nil {
-		return fmt.Errorf("open project in browser: %w", err)
-	}
-	return nil
+	return openBrowserURL(directoryFileURL(absPath), "open project in browser")
 }
 
 func directoryFileURL(path string) string {
@@ -44,6 +41,25 @@ func directoryFileURL(path string) string {
 		cleanPath += "/"
 	}
 	return (&url.URL{Scheme: "file", Path: cleanPath}).String()
+}
+
+func openRuntimeURLInBrowser(rawURL string) error {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return fmt.Errorf("runtime URL is required")
+	}
+	return openBrowserURL(rawURL, "open runtime URL in browser")
+}
+
+func openBrowserURL(rawURL, action string) error {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return fmt.Errorf("browser URL is required")
+	}
+	if err := externalBrowserOpener(rawURL); err != nil {
+		return fmt.Errorf("%s: %w", action, err)
+	}
+	return nil
 }
 
 func openExternalBrowserURL(rawURL string) error {

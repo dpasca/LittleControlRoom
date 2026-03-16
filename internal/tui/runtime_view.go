@@ -24,14 +24,11 @@ func (m Model) projectRuntimeSnapshot(projectPath string) projectrun.Snapshot {
 func (m Model) renderRuntimeDetail(lines []string, width int, projectPath, savedCommand string) []string {
 	savedCommand = strings.TrimSpace(savedCommand)
 	snapshot := m.projectRuntimeSnapshot(projectPath)
-	if savedCommand == "" && strings.TrimSpace(snapshot.Command) == "" && !snapshot.Running && len(snapshot.RecentOutput) == 0 && len(snapshot.Ports) == 0 && strings.TrimSpace(snapshot.LastError) == "" {
+	if !runtimeDetailAvailable(savedCommand, snapshot) {
 		return lines
 	}
 
-	commandValue := savedCommand
-	if commandValue == "" {
-		commandValue = strings.TrimSpace(snapshot.Command)
-	}
+	commandValue := effectiveRuntimeCommand(savedCommand, snapshot)
 	if commandValue == "" {
 		commandValue = detailMutedStyle.Render("not set")
 	} else {
@@ -39,20 +36,7 @@ func (m Model) renderRuntimeDetail(lines []string, width int, projectPath, saved
 	}
 	lines = append(lines, detailField("Run cmd", commandValue))
 
-	statusValue := detailMutedStyle.Render("idle")
-	if snapshot.Running {
-		statusValue = detailValueStyle.Render("running")
-	} else if snapshot.ExitCodeKnown {
-		if snapshot.ExitCode == 0 {
-			statusValue = detailMutedStyle.Render("exited")
-		} else {
-			statusValue = detailDangerStyle.Render(fmt.Sprintf("exit %d", snapshot.ExitCode))
-		}
-	} else if strings.TrimSpace(snapshot.LastError) != "" {
-		statusValue = detailDangerStyle.Render("failed")
-	}
-
-	fields := []string{detailField("Runtime", statusValue)}
+	fields := []string{detailField("Runtime", renderRuntimeStatusValue(snapshot))}
 	if snapshot.Running && !snapshot.StartedAt.IsZero() {
 		fields = append(fields, detailField("Up", detailValueStyle.Render(formatRunningDuration(m.currentTime().Sub(snapshot.StartedAt)))))
 	} else if !snapshot.ExitedAt.IsZero() {
@@ -63,8 +47,8 @@ func (m Model) renderRuntimeDetail(lines []string, width int, projectPath, saved
 	if len(snapshot.Ports) > 0 {
 		lines = append(lines, detailField("Ports", detailValueStyle.Render(joinPorts(snapshot.Ports))))
 	}
-	if len(snapshot.AnnouncedURLs) > 0 {
-		lines = append(lines, detailField("URLs", detailValueStyle.Render(strings.Join(snapshot.AnnouncedURLs, ", "))))
+	if urlSummary := runtimeURLSummary(snapshot); urlSummary != "" {
+		lines = append(lines, detailField("URL", detailValueStyle.Render(urlSummary)))
 	}
 	if len(snapshot.ConflictPorts) > 0 {
 		lines = append(lines, detailField("Conflict", detailDangerStyle.Render(m.runtimeConflictSummary(projectPath, snapshot.ConflictPorts))))
@@ -72,13 +56,90 @@ func (m Model) renderRuntimeDetail(lines []string, width int, projectPath, saved
 	if strings.TrimSpace(snapshot.LastError) != "" {
 		lines = append(lines, detailField("Runtime err", detailDangerStyle.Render(snapshot.LastError)))
 	}
-	if len(snapshot.RecentOutput) > 0 {
-		lines = append(lines, detailSectionStyle.Render("Runtime output"))
-		for _, line := range snapshot.RecentOutput {
-			lines = append(lines, renderWrappedDetailBullet(detailMutedStyle, width, line))
-		}
+	if outputSummary := runtimeOutputSummary(snapshot, width); outputSummary != "" {
+		lines = append(lines, detailField("Output", detailMutedStyle.Render(outputSummary)))
 	}
 	return lines
+}
+
+func runtimeDetailAvailable(savedCommand string, snapshot projectrun.Snapshot) bool {
+	return strings.TrimSpace(savedCommand) != "" ||
+		strings.TrimSpace(snapshot.Command) != "" ||
+		snapshot.Running ||
+		snapshot.ExitCodeKnown ||
+		!snapshot.ExitedAt.IsZero() ||
+		len(snapshot.Ports) > 0 ||
+		len(snapshot.ConflictPorts) > 0 ||
+		len(snapshot.AnnouncedURLs) > 0 ||
+		len(snapshot.RecentOutput) > 0 ||
+		strings.TrimSpace(snapshot.LastError) != ""
+}
+
+func effectiveRuntimeCommand(savedCommand string, snapshot projectrun.Snapshot) string {
+	savedCommand = strings.TrimSpace(savedCommand)
+	if savedCommand != "" {
+		return savedCommand
+	}
+	return strings.TrimSpace(snapshot.Command)
+}
+
+func runtimePrimaryURL(snapshot projectrun.Snapshot) string {
+	if len(snapshot.AnnouncedURLs) > 0 {
+		return strings.TrimSpace(snapshot.AnnouncedURLs[0])
+	}
+	if len(snapshot.Ports) > 0 {
+		return fmt.Sprintf("http://127.0.0.1:%d/", snapshot.Ports[0])
+	}
+	return ""
+}
+
+func runtimeURLSummary(snapshot projectrun.Snapshot) string {
+	primary := runtimePrimaryURL(snapshot)
+	if primary == "" {
+		return ""
+	}
+	if len(snapshot.AnnouncedURLs) <= 1 {
+		return primary
+	}
+	return fmt.Sprintf("%s (+%d more)", primary, len(snapshot.AnnouncedURLs)-1)
+}
+
+func runtimeOutputSummary(snapshot projectrun.Snapshot, width int) string {
+	if len(snapshot.RecentOutput) == 0 {
+		return ""
+	}
+	count := len(snapshot.RecentOutput)
+	label := "lines"
+	if count == 1 {
+		label = "line"
+	}
+	last := strings.TrimSpace(snapshot.RecentOutput[count-1])
+	if last == "" {
+		last = "(blank line)"
+	}
+	last = truncateText(last, max(18, width-36))
+	return fmt.Sprintf("%d %s captured; last: %s  (r or /runtime)", count, label, last)
+}
+
+func renderRuntimeStatusValue(snapshot projectrun.Snapshot) string {
+	statusStyle := detailMutedStyle
+	statusText := "idle"
+	switch {
+	case snapshot.Running:
+		statusStyle = detailValueStyle
+		statusText = "running"
+	case snapshot.ExitCodeKnown:
+		if snapshot.ExitCode == 0 {
+			statusText = "exited"
+		} else {
+			statusStyle = detailDangerStyle
+			statusText = fmt.Sprintf("exit %d", snapshot.ExitCode)
+		}
+	case strings.TrimSpace(snapshot.LastError) != "":
+		statusStyle = detailDangerStyle
+		statusText = "failed"
+	}
+	return statusStyle.Render(statusText)
 }
 
 func joinPorts(ports []int) string {

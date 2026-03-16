@@ -87,6 +87,15 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "runtime inspector",
+			raw:  "/runtime",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindRuntime {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindRuntime)
+				}
+			},
+		},
+		{
 			name: "stop runtime",
 			raw:  "/stop",
 			check: func(t *testing.T, inv Invocation) {
@@ -360,5 +369,21 @@ func TestSuggestionsIncludeOpenCodeCommands(t *testing.T) {
 	}
 	if got[2].Insert != "/opencode-new" {
 		t.Fatalf("third /open suggestion = %q, want /opencode-new", got[2].Insert)
+	}
+}
+
+func TestSuggestionsIncludeRuntimeCommand(t *testing.T) {
+	got := Suggestions("/run")
+	if len(got) < 3 {
+		t.Fatalf("Suggestions(/run) len = %d, want at least 3", len(got))
+	}
+	if got[0].Insert != "/run" {
+		t.Fatalf("first /run suggestion = %q, want /run", got[0].Insert)
+	}
+	if got[1].Insert != "/run-edit" {
+		t.Fatalf("second /run suggestion = %q, want /run-edit", got[1].Insert)
+	}
+	if got[2].Insert != "/runtime" {
+		t.Fatalf("third /run suggestion = %q, want /runtime", got[2].Insert)
 	}
 }

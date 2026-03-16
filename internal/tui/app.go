@@ -62,6 +62,7 @@ type Model struct {
 	commandSelected              int
 	newProjectDialog             *newProjectDialogState
 	runCommandDialog             *runCommandDialogState
+	runtimeInspector             *runtimeInspectorState
 	preferredSelectPath          string
 	diffView                     *diffViewState
 	gitStatusDialog              *gitStatusDialog
@@ -319,6 +320,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncDetailViewport(false)
 		m.syncCodexComposerSize()
 		m.syncCodexViewport(false)
+		m.syncRuntimeInspectorViewport(false)
 		return m, nil
 	case tea.KeyMsg:
 		if m.codexModelPickerVisible() {
@@ -344,6 +346,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.noteDialog != nil {
 			return m.updateNoteDialogMode(msg)
+		}
+		if m.runtimeInspector != nil {
+			return m.updateRuntimeInspectorMode(msg)
 		}
 		if m.commandMode {
 			return m.updateCommandMode(msg)
@@ -573,6 +578,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if strings.TrimSpace(msg.status) != "" {
 			m.status = msg.status
 		}
+		if m.runtimeInspector != nil && strings.TrimSpace(m.runtimeInspector.ProjectPath) == strings.TrimSpace(msg.projectPath) {
+			m.syncRuntimeInspectorViewport(false)
+		}
 		return m, nil
 	case runCommandSavedMsg:
 		if m.runCommandDialog != nil && m.runCommandDialog.ProjectPath == msg.projectPath {
@@ -691,6 +699,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	case spinnerTickMsg:
 		m.spinnerFrame = (m.spinnerFrame + 1) % spinnerAnimationFrameWrap
+		if m.runtimeInspector != nil {
+			m.syncRuntimeInspectorViewport(false)
+		}
 		return m, spinnerTickCmd()
 	case codexUpdateMsg:
 		cmds := []tea.Cmd{m.waitCodexCmd()}
@@ -838,6 +849,8 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "n":
 		return m, m.openNoteDialogForSelection()
+	case "r":
+		return m, m.openRuntimeInspectorForSelection()
 	case "x":
 		m.applySectionToggle("Sessions", commands.ToggleToggle, &m.showSessions)
 		return m, nil
@@ -1257,7 +1270,9 @@ func (m Model) View() string {
 	listPane := m.renderFramedPane(list, layout.width, listHeight, m.focusedPane == focusProjects)
 	detailPane := m.renderFramedPane(detail, layout.width, detailHeight, m.focusedPane == focusDetail)
 	body := lipgloss.JoinVertical(lipgloss.Left, listPane, detailPane)
-	if m.gitStatusDialog != nil {
+	if m.runtimeInspector != nil {
+		body = m.renderRuntimeInspectorOverlay(body, layout.width, layout.height)
+	} else if m.gitStatusDialog != nil {
 		body = m.renderGitStatusDialogOverlay(body, layout.width, layout.height)
 	} else if m.commitPreview != nil {
 		body = m.renderCommitPreviewOverlay(body, layout.width, layout.height)
@@ -1763,6 +1778,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.openRunCommandDialog(p, false)
+	case commands.KindRuntime:
+		return m, m.openRuntimeInspectorForSelection()
 	case commands.KindStop:
 		p, ok := m.selectedProject()
 		if !ok {
@@ -2079,6 +2096,15 @@ func (m Model) openProjectDirInBrowserCmd(path string) tea.Cmd {
 			return browserOpenMsg{err: err}
 		}
 		return browserOpenMsg{status: "Opened project in browser"}
+	}
+}
+
+func (m Model) openRuntimeURLInBrowserCmd(rawURL string) tea.Cmd {
+	return func() tea.Msg {
+		if err := openRuntimeURLInBrowser(rawURL); err != nil {
+			return browserOpenMsg{err: err}
+		}
+		return browserOpenMsg{status: "Opened runtime URL in browser"}
 	}
 }
 
@@ -2986,6 +3012,9 @@ func (m Model) renderFooter(width int) string {
 	if m.diffView != nil {
 		return renderDiffFooter(width, *m.diffView, usageLabel)
 	}
+	if m.runtimeInspector != nil {
+		return fitFooterWidth("Runtime panel: ↑/↓ scroll, r restart, s stop, o open URL, Esc close | "+usageLabel, width)
+	}
 	if m.gitStatusDialog != nil {
 		label := gitStatusDialogReadyStatus(*m.gitStatusDialog)
 		if m.gitStatusApplying {
@@ -3851,10 +3880,11 @@ func (m Model) renderHelpPanel(bodyW, bodyH int) string {
 				"Backspace remove image marker",
 				"Alt+L expand dense blocks",
 				"p   pin",
+				"r   runtime panel",
 				"s/S snooze/clear",
 				"n   note dialog",
 				"/refresh /settings",
-				"/open /run [/cmd] /stop",
+				"/open /run [/cmd] /runtime /stop",
 				"/run-edit /note [/clear]",
 				"/codex /codex-new /opencode /opencode-new",
 				"/diff /commit /finish /push",
@@ -3868,6 +3898,7 @@ func (m Model) renderHelpPanel(bodyW, bodyH int) string {
 				"N     * note saved",
 				"RUN   saved /run command summary",
 				"RUN   @port or !port when detected",
+				"Detail keeps runtime output in r or /runtime",
 				"ASSESS short latest assessment label",
 				"SUMMARY latest session summary",
 				"! in ATTN = dirty or remote warning",

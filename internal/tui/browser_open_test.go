@@ -27,6 +27,24 @@ func TestOpenProjectDirInBrowserUsesDirectoryFileURL(t *testing.T) {
 	}
 }
 
+func TestOpenRuntimeURLInBrowserUsesRawURL(t *testing.T) {
+	previousOpener := externalBrowserOpener
+	defer func() { externalBrowserOpener = previousOpener }()
+
+	called := ""
+	externalBrowserOpener = func(rawURL string) error {
+		called = rawURL
+		return nil
+	}
+
+	if err := openRuntimeURLInBrowser("http://127.0.0.1:3000/"); err != nil {
+		t.Fatalf("openRuntimeURLInBrowser() error = %v", err)
+	}
+	if called != "http://127.0.0.1:3000/" {
+		t.Fatalf("opened URL = %q, want runtime URL", called)
+	}
+}
+
 func TestDispatchOpenCommandOpensSelectedProjectInBrowser(t *testing.T) {
 	dir := t.TempDir()
 

@@ -171,6 +171,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/run`
 - `/run pnpm dev`
 - `/run-edit`
+- `/runtime`
 - `/stop`
 - `/note`
 - `/note clear`
@@ -213,6 +214,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/run` starts the selected project's saved managed runtime. If no command is saved yet, Little Control Room opens a small dialog with an auto-suggested command when it can infer one from common files like `bin/dev`, `package.json`, `Makefile`, `justfile`, or a simple Go entrypoint.
 - `/run <command>` saves that command as the selected project's default runtime command and starts it immediately.
 - `/run-edit` opens the saved runtime command for editing without starting it.
+- `/runtime` opens a dedicated runtime inspector with the latest captured output plus `restart`, `stop`, and `open URL` actions.
 - `/stop` stops the selected project's managed runtime when one is running.
 - `/codex` resumes the selected project's latest known Codex session when available, otherwise it starts a new one.
 - `/codex-new` always starts a fresh Codex session.
@@ -220,7 +222,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/opencode-new` always starts a fresh OpenCode session.
 - While an embedded Codex or OpenCode pane is visible, local slash commands include `/new`, `/resume` (`/session` alias), `/model`, and `/status`.
 - `/resume` with no session ID opens a picker for saved sessions from the current project and provider; `/resume <session-id>` jumps straight to that session.
-- Main-list badges currently mean: `N` saved note, `$` active managed runtime, `!` managed port conflict.
-- The `RUN` column now shows either a live embedded AI turn timer or the active managed runtime port summary such as `:3000` or `2p`.
+- The main list uses `N` for a saved note, `RUN` for the saved or active managed runtime summary, and `!` inside `RUN` when Little Control Room detects a managed port conflict.
+- The project detail pane keeps runtime command, state, ports, URL, and error/context summary inline, while runtime output lives in the dedicated `r` or `/runtime` inspector.
 - `codex_launch_preset` controls how Codex is launched. The default is `yolo`.
 - CLI flags override config file values.
