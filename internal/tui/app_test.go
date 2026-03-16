@@ -23,6 +23,7 @@ import (
 	"lcroom/internal/config"
 	"lcroom/internal/events"
 	"lcroom/internal/model"
+	"lcroom/internal/projectrun"
 	"lcroom/internal/scanner"
 	"lcroom/internal/service"
 	"lcroom/internal/store"
@@ -718,73 +719,36 @@ func TestRenderProjectListIncludesAssessmentColumn(t *testing.T) {
 	}
 }
 
-func TestProjectRunLabelUsesLiveBusyTimer(t *testing.T) {
-	session := &fakeCodexSession{
-		projectPath: "/tmp/demo",
-		snapshot: codexapp.Snapshot{
-			Started:   true,
-			Busy:      true,
-			BusySince: time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC),
-		},
+func TestProjectRunLabelUsesManagedRuntimeState(t *testing.T) {
+	got, state := projectRunLabel(projectrun.Snapshot{Running: true})
+	if state != projectRunActive {
+		t.Fatalf("projectRunLabel() state = %v, want %v", state, projectRunActive)
 	}
-	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
-		return session, nil
-	})
-	if _, _, err := manager.Open(codexapp.LaunchRequest{
-		ProjectPath: "/tmp/demo",
-		Preset:      codexcli.PresetYolo,
-	}); err != nil {
-		t.Fatalf("manager.Open() error = %v", err)
-	}
-
-	m := Model{codexManager: manager}
-	project := model.ProjectSummary{
-		Path:                "/tmp/demo",
-		PresentOnDisk:       true,
-		LatestSessionFormat: "modern",
-	}
-
-	got, running := m.projectRunLabel(project, time.Date(2026, 3, 9, 12, 0, 37, 0, time.UTC))
-	if !running {
-		t.Fatalf("projectRunLabel() running = false, want true")
-	}
-	if got != "00:37" {
-		t.Fatalf("projectRunLabel() = %q, want %q", got, "00:37")
+	if got != "on" {
+		t.Fatalf("projectRunLabel() = %q, want %q", got, "on")
 	}
 }
 
-func TestProjectRunLabelFallsBackToLatestTurnStartWhenLiveBusyTimerMissing(t *testing.T) {
-	session := &fakeCodexSession{
-		projectPath: "/tmp/demo",
-		snapshot: codexapp.Snapshot{
-			Started: true,
-			Busy:    true,
-		},
+func TestProjectRunLabelShowsLastRunError(t *testing.T) {
+	got, state := projectRunLabel(projectrun.Snapshot{LastError: "exit status 1"})
+	if state != projectRunError {
+		t.Fatalf("projectRunLabel() state = %v, want %v", state, projectRunError)
 	}
-	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
-		return session, nil
+	if got != "err" {
+		t.Fatalf("projectRunLabel() = %q, want %q", got, "err")
+	}
+}
+
+func TestProjectPortLabelShowsConflictIndicator(t *testing.T) {
+	got, state := projectPortLabel(projectrun.Snapshot{
+		Ports:         []int{3000},
+		ConflictPorts: []int{3000},
 	})
-	if _, _, err := manager.Open(codexapp.LaunchRequest{
-		ProjectPath: "/tmp/demo",
-		Preset:      codexcli.PresetYolo,
-	}); err != nil {
-		t.Fatalf("manager.Open() error = %v", err)
+	if state != projectPortConflict {
+		t.Fatalf("projectPortLabel() state = %v, want %v", state, projectPortConflict)
 	}
-
-	m := Model{codexManager: manager}
-	project := model.ProjectSummary{
-		Path:                "/tmp/demo",
-		PresentOnDisk:       true,
-		LatestSessionFormat: "modern",
-		LatestTurnStartedAt: time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC),
-	}
-
-	got, running := m.projectRunLabel(project, time.Date(2026, 3, 9, 12, 0, 37, 0, time.UTC))
-	if !running {
-		t.Fatalf("projectRunLabel() running = false, want true")
-	}
-	if got != "00:37" {
-		t.Fatalf("projectRunLabel() = %q, want %q", got, "00:37")
+	if got != "!3000" {
+		t.Fatalf("projectPortLabel() = %q, want %q", got, "!3000")
 	}
 }
 
@@ -896,13 +860,13 @@ func TestRenderProjectListShowsNoteIndicator(t *testing.T) {
 	if len(lines) < 2 {
 		t.Fatalf("renderProjectList() expected header plus one row, got %q", rendered)
 	}
-	if !strings.Contains(lines[0], "BAD  PROJECT") {
-		t.Fatalf("renderProjectList() missing badge header, got %q", lines[0])
+	if !strings.Contains(lines[0], "N RUN PORT") {
+		t.Fatalf("renderProjectList() missing note/run/port headers, got %q", lines[0])
 	}
 	fields := strings.Fields(lines[1])
 	foundIndicator := false
 	for _, field := range fields {
-		if field == "N" {
+		if field == "*" {
 			foundIndicator = true
 			break
 		}

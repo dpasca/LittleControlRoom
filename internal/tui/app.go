@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1463,9 +1464,10 @@ func (m Model) renderProjectList(width, height int) string {
 		attention := projectAttentionLabel(p)
 		name := truncateText(p.Name, projectW)
 		assessment := truncateText(projectAssessmentTextAt(p, now), assessmentW)
-		runLabel, running := m.projectRunLabel(p, now)
 		runtimeSnapshot := m.projectRuntimeSnapshot(p.Path)
-		badges := projectBadgeLabel(p.Note, runtimeSnapshot.Running, len(runtimeSnapshot.ConflictPorts) > 0)
+		noteMarker := projectNoteMarker(p.Note)
+		runLabel, runState := projectRunLabel(runtimeSnapshot)
+		portLabel, portState := projectPortLabel(runtimeSnapshot)
 		row := lipgloss.JoinHorizontal(
 			lipgloss.Top,
 			cellStyle(lipgloss.NewStyle().Width(5).Align(lipgloss.Right).Bold(selectedRow)).Render(attention),
@@ -1476,9 +1478,11 @@ func (m Model) renderProjectList(width, height int) string {
 			" ",
 			cellStyle(sourceStyle(p.LatestSessionFormat, m.projectHasLiveCodexSession(p.Path)).Width(3).Align(lipgloss.Center)).Render(sourceTag(p.LatestSessionFormat)),
 			" ",
-			cellStyle(projectRunStyle(running).Width(7).Align(lipgloss.Left)).Render(runLabel),
-			"  ",
-			cellStyle(noteListIndicatorStyle.Width(3).Align(lipgloss.Left)).Render(badges),
+			cellStyle(noteListIndicatorStyle.Width(1).Align(lipgloss.Center)).Render(noteMarker),
+			" ",
+			cellStyle(projectRunStyle(runState).Width(3).Align(lipgloss.Left)).Render(runLabel),
+			" ",
+			cellStyle(projectPortStyle(portState).Width(6).Align(lipgloss.Left)).Render(portLabel),
 			"  ",
 			cellStyle(lipgloss.NewStyle().Width(projectW).Bold(selectedRow)).Render(name),
 			"  ",
@@ -2366,18 +2370,27 @@ func projectAssessmentStyle(project model.ProjectSummary) lipgloss.Style {
 	}
 }
 
-func projectBadgeLabel(note string, runtimeActive, runtimeConflict bool) string {
-	var out strings.Builder
+type projectRunState uint8
+
+const (
+	projectRunIdle projectRunState = iota
+	projectRunActive
+	projectRunError
+)
+
+type projectPortState uint8
+
+const (
+	projectPortIdle projectPortState = iota
+	projectPortActive
+	projectPortConflict
+)
+
+func projectNoteMarker(note string) string {
 	if projectHasNote(note) {
-		out.WriteByte('N')
+		return "*"
 	}
-	if runtimeActive {
-		out.WriteByte('$')
-	}
-	if runtimeConflict {
-		out.WriteByte('!')
-	}
-	return out.String()
+	return ""
 }
 
 func projectListColumnWidths(totalWidth int) (int, int) {
@@ -2412,9 +2425,11 @@ func renderProjectListHeader(projectW, assessmentW int) string {
 		" ",
 		lipgloss.NewStyle().Width(3).Align(lipgloss.Center).Render("SRC"),
 		" ",
-		lipgloss.NewStyle().Width(7).Align(lipgloss.Left).Render("RUN"),
-		"  ",
-		lipgloss.NewStyle().Width(3).Align(lipgloss.Left).Render("BAD"),
+		lipgloss.NewStyle().Width(1).Align(lipgloss.Center).Render("N"),
+		" ",
+		lipgloss.NewStyle().Width(3).Align(lipgloss.Left).Render("RUN"),
+		" ",
+		lipgloss.NewStyle().Width(6).Align(lipgloss.Left).Render("PORT"),
 		"  ",
 		lipgloss.NewStyle().Width(projectW).Render("PROJECT"),
 		"  ",
@@ -2422,38 +2437,34 @@ func renderProjectListHeader(projectW, assessmentW int) string {
 	)
 }
 
-func (m Model) projectRunLabel(project model.ProjectSummary, now time.Time) (string, bool) {
-	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
-		if snapshot.Busy {
-			startedAt := snapshot.BusySince
-			if startedAt.IsZero() && !project.LatestTurnStartedAt.IsZero() {
-				startedAt = project.LatestTurnStartedAt
-			}
-			if !startedAt.IsZero() {
-				return formatRunningDuration(now.Sub(startedAt)), true
-			}
-			return "live", true
-		}
-		return "", false
+func projectRunLabel(snapshot projectrun.Snapshot) (string, projectRunState) {
+	if snapshot.Running {
+		return "on", projectRunActive
 	}
-	if project.LatestTurnStateKnown && !project.LatestTurnCompleted {
-		if !project.LatestTurnStartedAt.IsZero() {
-			return formatRunningDuration(now.Sub(project.LatestTurnStartedAt)), true
-		}
-		return "live", true
+	if strings.TrimSpace(snapshot.LastError) != "" {
+		return "err", projectRunError
 	}
-	runtimeSnapshot := m.projectRuntimeSnapshot(project.Path)
-	if runtimeSnapshot.Running {
-		switch len(runtimeSnapshot.Ports) {
-		case 0:
-			return "", false
-		case 1:
-			return fmt.Sprintf(":%d", runtimeSnapshot.Ports[0]), true
-		default:
-			return fmt.Sprintf("%dp", len(runtimeSnapshot.Ports)), true
-		}
+	if snapshot.ExitCodeKnown && snapshot.ExitCode != 0 {
+		return "err", projectRunError
 	}
-	return "", false
+	return "", projectRunIdle
+}
+
+func projectPortLabel(snapshot projectrun.Snapshot) (string, projectPortState) {
+	if len(snapshot.Ports) == 0 {
+		return "", projectPortIdle
+	}
+	label := ""
+	switch len(snapshot.Ports) {
+	case 1:
+		label = strconv.Itoa(snapshot.Ports[0])
+	default:
+		label = fmt.Sprintf("%dp", len(snapshot.Ports))
+	}
+	if len(snapshot.ConflictPorts) > 0 {
+		return "!" + label, projectPortConflict
+	}
+	return label, projectPortActive
 }
 
 func truncateText(text string, width int) string {
@@ -3753,10 +3764,11 @@ func (m Model) renderHelpPanel(bodyW, bodyH int) string {
 		{
 			Title: "Legend",
 			Lines: []string{
-				"SRC  bright CX live, dim CX saved",
-				"SRC  OC OpenCode history",
-				"RUN  live AI timer or active runtime port",
-				"BAD  N note, $ runtime, ! port conflict",
+				"SRC   bright CX live, dim CX saved",
+				"SRC   OC OpenCode history",
+				"N     * note saved",
+				"RUN   /run managed runtime is active",
+				"PORT  detected runtime port; ! means conflict",
 				"ASSESS short latest assessment label",
 				"SUMMARY latest session summary",
 				"! in ATTN = dirty or remote warning",
@@ -4032,11 +4044,26 @@ func classificationCategoryStyle(category model.SessionCategory) lipgloss.Style 
 	}
 }
 
-func projectRunStyle(running bool) lipgloss.Style {
-	if running {
+func projectRunStyle(state projectRunState) lipgloss.Style {
+	switch state {
+	case projectRunActive:
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
+	case projectRunError:
+		return detailDangerStyle
+	default:
+		return detailMutedStyle
 	}
-	return detailMutedStyle
+}
+
+func projectPortStyle(state projectPortState) lipgloss.Style {
+	switch state {
+	case projectPortActive:
+		return detailValueStyle.Bold(true)
+	case projectPortConflict:
+		return detailDangerStyle
+	default:
+		return detailMutedStyle
+	}
 }
 
 func sessionCategoryLabel(category model.SessionCategory) string {

@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-15 01:35 JST (JST)
+Last updated: 2026-03-16 18:54 JST (JST)
 
 ## Current State
 
@@ -80,12 +80,53 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
+## Latest Update (2026-03-16 18:54 JST)
+
+- Redesigned the main project-list runtime/note area to use explicit columns instead of the cryptic combined badge rail: `N` now shows `*` for saved notes, `RUN` is reserved for active `/run` managed runtimes, and `PORT` is reserved for detected runtime ports.
+- Removed the old overloaded list behavior where `RUN` could mean either an AI live timer or a runtime port, and where note/runtime/conflict state was compressed into the short-lived `N$!` badge rail.
+- Kept conflict visibility by rendering `PORT` values with a leading `!` when Little Control Room detects a managed port conflict.
+- Updated the list legend/help copy and the focused TUI regressions so the new column model is documented and covered by tests.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `make test` passed.
+- `make scan` passed at `2026-03-16T18:54:23+09:00` (`activity projects: 85`, `tracked projects: 136`, `updated projects: 2`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-16T18:54:32+09:00` (`projects: 136`).
+- `env COLUMNS=110 LINES=30 make tui` correctly refused to start because another real `lcroom tui` runtime already owned the shared DB.
+- A short `go run ./cmd/lcroom tui ... --allow-multiple-instances` smoke launch showed the expected existing-owner warning, rendered the project list with the new `N`, `RUN`, and `PORT` headers visible, and exited via `q`.
+
+Next concrete tasks:
+
+- Watch whether `RUN` should remain a simple active/error indicator or also surface a saved-but-idle configured state once the new layout gets some real use.
+- If we still want more AI-live visibility in the list, add it under a clearly named column instead of reusing `RUN`.
+
+## Latest Update (2026-03-16 18:43 JST)
+
+- Renamed the project-list badge rail header from `BAD` to `N$!` so the visible label matches the badges actually shown in each row.
+- Updated the help legend to spell that rail out as `N` note, `$` shell/runtime, and `!` port conflict.
+- Adjusted the focused TUI rendering regression so the header assertion now follows the new `N$!` label.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `make test` passed.
+- `make scan` passed at `2026-03-16T18:42:07+09:00` (`activity projects: 85`, `tracked projects: 136`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-16T18:42:14+09:00` (`projects: 136`).
+- `env COLUMNS=110 LINES=30 make tui` correctly refused to start because another real `lcroom tui` runtime already owned the shared DB.
+- A short `go run ./cmd/lcroom tui ... --allow-multiple-instances` smoke launch showed the expected existing-owner warning, rendered the project list with the `N$!` header visible, and exited via `q`.
+
+Next concrete tasks:
+
+- Decide whether the badge rail should keep symbol-first copy (`N$!`) or grow a slightly wider text label if the list layout changes again.
+- If runtime terminology keeps causing confusion, consider whether `$` should stay runtime-flavored in the legend or be renamed more explicitly around shell-launched processes.
+
 ## Latest Update (2026-03-15 01:35 JST)
 
 - Added a first managed runtime lane to the TUI: the selected project can now save a default run command, start it with `/run`, edit it with `/run-edit`, and stop it with `/stop`.
 - Persisted the default run command on the project record, including schema migration support, summary/detail loading, move/consolidation preservation, service setters, and stored action events.
 - Added a new `internal/projectrun` package that manages per-project shell-launched runtimes, captures recent stdout/stderr lines, extracts announced local URLs, and does best-effort listening-port detection via the managed process group.
-- Updated the main list and detail pane to surface runtime state: `BAD` now carries `N` notes, `$` active runtimes, and `!` managed port conflicts; the `RUN` column can show detected ports like `:3000` or `2p`; the detail pane now shows the saved run command, runtime status, ports, URLs, conflicts, and recent output.
+- Updated the main list and detail pane to surface runtime state: the badge rail (then labeled `BAD`, now `N$!`) carries `N` notes, `$` active runtimes, and `!` managed port conflicts; the `RUN` column can show detected ports like `:3000` or `2p`; the detail pane now shows the saved run command, runtime status, ports, URLs, conflicts, and recent output.
 - Added focused regressions for command parsing, run-command persistence and move safety, service event publishing, project-run suggestions, and TUI rendering/command-mode behavior around the new runtime flow.
 - No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
 
@@ -96,7 +137,7 @@ Verification snapshot:
 - `make scan` passed at `2026-03-15T01:34:32+09:00` (`activity projects: 85`, `tracked projects: 136`, `updated projects: 1`, `queued classifications: 1`).
 - `make doctor` passed on the cached snapshot dated `2026-03-15T01:34:32+09:00` (`projects: 136`).
 - `make tui` correctly refused to start because another real `lcroom tui` runtime already owned the shared DB.
-- A short `go run ./cmd/lcroom tui ... --allow-multiple-instances` smoke launch showed the expected existing-owner warning, reached the TUI with the new `BAD` header visible, and exited via `q`.
+- A short `go run ./cmd/lcroom tui ... --allow-multiple-instances` smoke launch showed the expected existing-owner warning, reached the TUI with the then-new `BAD` header visible, and exited via `q`.
 
 Next concrete tasks:
 
