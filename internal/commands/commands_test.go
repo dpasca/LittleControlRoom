@@ -66,6 +66,36 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "run with explicit command",
+			raw:  "/run pnpm dev",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindRun {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindRun)
+				}
+				if inv.Command != "pnpm dev" {
+					t.Fatalf("command = %q, want pnpm dev", inv.Command)
+				}
+			},
+		},
+		{
+			name: "run edit",
+			raw:  "/run-edit",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindRunEdit {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindRunEdit)
+				}
+			},
+		},
+		{
+			name: "stop runtime",
+			raw:  "/stop",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindStop {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindStop)
+				}
+			},
+		},
+		{
 			name: "diff",
 			raw:  "/diff",
 			check: func(t *testing.T, inv Invocation) {

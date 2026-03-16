@@ -1770,6 +1770,64 @@ func TestPrepareCommitReturnsSubmoduleAttentionErrorForDirtySubmoduleOnly(t *tes
 	}
 }
 
+func TestSetRunCommandPublishesActionAndPersistsEvent(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := "/tmp/runtime-project"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "runtime-project",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		InScope:        true,
+		UpdatedAt:      time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	bus := events.NewBus()
+	sub, unsub := bus.Subscribe(1)
+	defer unsub()
+
+	svc := New(config.Default(), st, bus, nil)
+	if err := svc.SetRunCommand(ctx, projectPath, "pnpm dev"); err != nil {
+		t.Fatalf("SetRunCommand() error = %v", err)
+	}
+
+	select {
+	case evt := <-sub:
+		if evt.Type != events.ActionApplied {
+			t.Fatalf("event type = %s, want %s", evt.Type, events.ActionApplied)
+		}
+		if evt.ProjectPath != projectPath {
+			t.Fatalf("event project path = %q, want %q", evt.ProjectPath, projectPath)
+		}
+		if evt.Payload["action"] != "set_run_command" {
+			t.Fatalf("event action = %q, want set_run_command", evt.Payload["action"])
+		}
+	default:
+		t.Fatalf("expected ActionApplied event")
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() error = %v", err)
+	}
+	if detail.Summary.RunCommand != "pnpm dev" {
+		t.Fatalf("run command = %q, want pnpm dev", detail.Summary.RunCommand)
+	}
+	if len(detail.RecentEvents) == 0 || detail.RecentEvents[0].Payload != "set_run_command" {
+		t.Fatalf("expected stored set_run_command event, got %#v", detail.RecentEvents)
+	}
+}
+
 func TestPrepareCommitAndApplyCommitLeaveDirtySubmoduleOutOfParentCommit(t *testing.T) {
 	t.Parallel()
 

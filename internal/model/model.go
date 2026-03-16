@@ -159,6 +159,7 @@ type ProjectState struct {
 	Pinned          bool
 	SnoozedUntil    *time.Time
 	Note            string
+	RunCommand      string
 	MovedFromPath   string
 	MovedAt         time.Time
 	AttentionReason []AttentionReason
@@ -184,6 +185,7 @@ type ProjectSummary struct {
 	Pinned                                    bool
 	SnoozedUntil                              *time.Time
 	Note                                      string
+	RunCommand                                string
 	MovedFromPath                             string
 	MovedAt                                   time.Time
 	LatestSessionID                           string

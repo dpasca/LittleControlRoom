@@ -17,6 +17,9 @@ const (
 	KindSettings    Kind = "settings"
 	KindNewProject  Kind = "new-project"
 	KindOpen        Kind = "open"
+	KindRun         Kind = "run"
+	KindRunEdit     Kind = "run-edit"
+	KindStop        Kind = "stop"
 	KindDiff        Kind = "diff"
 	KindCommit      Kind = "commit"
 	KindPush        Kind = "push"
@@ -86,6 +89,7 @@ type Invocation struct {
 	Duration  time.Duration
 	Message   string
 	Prompt    string
+	Command   string
 	Clear     bool
 	Canonical string
 }
@@ -98,6 +102,9 @@ var specs = []Spec{
 	{Name: "settings", Usage: "/settings", Summary: "Edit persisted scope, demo filters, and scan thresholds"},
 	{Name: "new-project", Usage: "/new-project", Summary: "Create a project folder or add an existing one"},
 	{Name: "open", Usage: "/open", Summary: "Open the selected project's folder in the system browser"},
+	{Name: "run", Usage: "/run [command]", Summary: "Start the selected project's managed runtime"},
+	{Name: "run-edit", Usage: "/run-edit", Summary: "Edit the selected project's saved run command"},
+	{Name: "stop", Usage: "/stop", Summary: "Stop the selected project's managed runtime"},
 	{Name: "diff", Usage: "/diff", Summary: "Open a full-screen diff for the selected project"},
 	{Name: "commit", Usage: "/commit [message]", Summary: "Preview a commit for the selected project"},
 	{Name: "push", Usage: "/push", Summary: "Push the selected project when its branch is ahead"},
@@ -268,6 +275,22 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /open")
 		}
 		return Invocation{Kind: KindOpen, Canonical: "/open"}, nil
+	case "run":
+		return Invocation{
+			Kind:      KindRun,
+			Command:   strings.TrimSpace(rawArgs),
+			Canonical: canonicalCommand("run", rawArgs),
+		}, nil
+	case "run-edit":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /run-edit")
+		}
+		return Invocation{Kind: KindRunEdit, Canonical: "/run-edit"}, nil
+	case "stop":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /stop")
+		}
+		return Invocation{Kind: KindStop, Canonical: "/stop"}, nil
 	case "diff":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /diff")

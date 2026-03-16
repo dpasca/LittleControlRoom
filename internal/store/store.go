@@ -77,6 +77,7 @@ func (s *Store) initSchema(ctx context.Context) error {
 			pinned INTEGER NOT NULL DEFAULT 0,
 			snoozed_until INTEGER,
 			note TEXT NOT NULL DEFAULT '',
+			run_command TEXT NOT NULL DEFAULT '',
 			moved_from_path TEXT NOT NULL DEFAULT '',
 			moved_at INTEGER,
 			updated_at INTEGER NOT NULL
@@ -180,6 +181,9 @@ func (s *Store) initSchema(ctx context.Context) error {
 		return err
 	}
 	if err := s.ensureProjectsMoveColumns(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureProjectsRunCommandColumn(ctx); err != nil {
 		return err
 	}
 	if err := s.ensureProjectSessionsDetectedPathColumn(ctx); err != nil {
@@ -311,6 +315,20 @@ func (s *Store) ensureProjectsMoveColumns(ctx context.Context) error {
 	}
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN moved_at INTEGER`); err != nil {
 		return fmt.Errorf("add projects.moved_at column: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ensureProjectsRunCommandColumn(ctx context.Context) error {
+	columns, err := s.projectTableColumns(ctx)
+	if err != nil {
+		return err
+	}
+	if _, ok := columns["run_command"]; ok {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN run_command TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("add projects.run_command column: %w", err)
 	}
 	return nil
 }
@@ -449,6 +467,7 @@ func (s *Store) GetProjectSummaryMap(ctx context.Context) (map[string]model.Proj
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
 			p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.repo_dirty, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until, p.note,
+			p.run_command,
 			p.moved_from_path, p.moved_at,
 			COALESCE(ps.session_id, ''),
 			COALESCE(ps.format, ''),
@@ -494,6 +513,7 @@ func (s *Store) ListProjects(ctx context.Context, includeHistorical bool) ([]mod
 	query := `
 		SELECT
 			p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.repo_dirty, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until, p.note,
+			p.run_command,
 			p.moved_from_path, p.moved_at,
 			COALESCE(ps.session_id, ''),
 			COALESCE(ps.format, ''),
@@ -546,7 +566,7 @@ func scanSummaryRow(scanner interface {
 	Scan(dest ...any) error
 }) (model.ProjectSummary, error) {
 	var (
-		path, name, status, note, movedFromPath                                                    string
+		path, name, status, note, runCommand, movedFromPath                                        string
 		lastActivity, snoozedUntil, movedAt, latestSessionLastEventAt, latestTurnStartedAt         sql.NullInt64
 		latestSessionID, latestSessionFormat, latestSessionDetectedPath, latestSessionSnapshotHash sql.NullString
 		latestClassificationStatus                                                                 sql.NullString
@@ -573,6 +593,7 @@ func scanSummaryRow(scanner interface {
 		&pinned,
 		&snoozedUntil,
 		&note,
+		&runCommand,
 		&movedFromPath,
 		&movedAt,
 		&latestSessionID,
@@ -607,6 +628,7 @@ func scanSummaryRow(scanner interface {
 		InScope:                          inScope == 1,
 		Pinned:                           pinned == 1,
 		Note:                             note,
+		RunCommand:                       runCommand,
 		MovedFromPath:                    movedFromPath,
 		LatestSessionID:                  latestSessionID.String,
 		LatestSessionFormat:              latestSessionFormat.String,
@@ -933,8 +955,8 @@ func (s *Store) MoveProjectPath(ctx context.Context, oldPath, newPath string, mo
 	}
 
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO projects(path, name, last_activity, status, attention_score, present_on_disk, repo_dirty, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, pinned, snoozed_until, note, moved_from_path, moved_at, updated_at)
-		SELECT ?, ?, last_activity, status, attention_score, present_on_disk, repo_dirty, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, pinned, snoozed_until, note, ?, ?, ?
+		INSERT INTO projects(path, name, last_activity, status, attention_score, present_on_disk, repo_dirty, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, pinned, snoozed_until, note, run_command, moved_from_path, moved_at, updated_at)
+		SELECT ?, ?, last_activity, status, attention_score, present_on_disk, repo_dirty, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, pinned, snoozed_until, note, run_command, ?, ?, ?
 		FROM projects
 		WHERE path = ?
 	`, newPath, filepath.Base(newPath), oldPath, movedAt.Unix(), movedAt.Unix(), oldPath)
@@ -996,6 +1018,7 @@ func (s *Store) ConsolidateProjectPath(ctx context.Context, oldPath, newPath str
 		forgotten     bool
 		snoozedUntil  sql.NullInt64
 		note          string
+		runCommand    string
 		movedFromPath string
 		movedAt       sql.NullInt64
 	}
@@ -1004,10 +1027,10 @@ func (s *Store) ConsolidateProjectPath(ctx context.Context, oldPath, newPath str
 		var row projectRow
 		var manuallyAdded, pinned, forgotten int
 		err := tx.QueryRowContext(ctx, `
-			SELECT manually_added, pinned, forgotten, snoozed_until, note, moved_from_path, moved_at
+			SELECT manually_added, pinned, forgotten, snoozed_until, note, run_command, moved_from_path, moved_at
 			FROM projects
 			WHERE path = ?
-		`, path).Scan(&manuallyAdded, &pinned, &forgotten, &row.snoozedUntil, &row.note, &row.movedFromPath, &row.movedAt)
+		`, path).Scan(&manuallyAdded, &pinned, &forgotten, &row.snoozedUntil, &row.note, &row.runCommand, &row.movedFromPath, &row.movedAt)
 		if err != nil {
 			return projectRow{}, err
 		}
@@ -1039,6 +1062,10 @@ func (s *Store) ConsolidateProjectPath(ctx context.Context, oldPath, newPath str
 	if strings.TrimSpace(mergedNote) == "" {
 		mergedNote = oldProject.note
 	}
+	mergedRunCommand := strings.TrimSpace(newProject.runCommand)
+	if mergedRunCommand == "" {
+		mergedRunCommand = strings.TrimSpace(oldProject.runCommand)
+	}
 	mergedSnoozedUntil := pickLaterNullInt64(oldProject.snoozedUntil, newProject.snoozedUntil)
 	mergedMovedFromPath := strings.TrimSpace(newProject.movedFromPath)
 	if mergedMovedFromPath == "" {
@@ -1059,11 +1086,12 @@ func (s *Store) ConsolidateProjectPath(ctx context.Context, oldPath, newPath str
 			forgotten = ?,
 			snoozed_until = ?,
 			note = ?,
+			run_command = ?,
 			moved_from_path = ?,
 			moved_at = ?,
 			updated_at = ?
 		WHERE path = ?
-	`, boolToInt(mergedManuallyAdded), boolToInt(mergedPinned), boolToInt(mergedForgotten), nullableInt64Value(mergedSnoozedUntil), mergedNote, mergedMovedFromPath, nullableInt64Value(mergedMovedAt), movedAt.Unix(), newPath); err != nil {
+	`, boolToInt(mergedManuallyAdded), boolToInt(mergedPinned), boolToInt(mergedForgotten), nullableInt64Value(mergedSnoozedUntil), mergedNote, mergedRunCommand, mergedMovedFromPath, nullableInt64Value(mergedMovedAt), movedAt.Unix(), newPath); err != nil {
 		return err
 	}
 
@@ -1542,6 +1570,7 @@ func (s *Store) GetProjectDetail(ctx context.Context, path string, eventLimit in
 	row := s.db.QueryRowContext(ctx, `
 		SELECT
 			p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.repo_dirty, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until, p.note,
+			p.run_command,
 			p.moved_from_path, p.moved_at,
 			COALESCE(ps.session_id, ''),
 			COALESCE(ps.format, ''),
@@ -1837,6 +1866,11 @@ func (s *Store) SetSnooze(ctx context.Context, path string, until *time.Time) er
 
 func (s *Store) SetNote(ctx context.Context, path, note string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE projects SET note = ?, updated_at = ? WHERE path = ?`, note, time.Now().Unix(), path)
+	return err
+}
+
+func (s *Store) SetRunCommand(ctx context.Context, path, command string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE projects SET run_command = ?, updated_at = ? WHERE path = ?`, strings.TrimSpace(command), time.Now().Unix(), path)
 	return err
 }
 

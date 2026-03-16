@@ -168,6 +168,10 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/view all`
 - `/settings`
 - `/open`
+- `/run`
+- `/run pnpm dev`
+- `/run-edit`
+- `/stop`
 - `/note`
 - `/note clear`
 - `/diff`
@@ -206,11 +210,17 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 
 - `Enter` on the selected project opens that project's latest embedded provider inside Little Control Room.
 - `/open` opens the selected project's folder in the system browser.
+- `/run` starts the selected project's saved managed runtime. If no command is saved yet, Little Control Room opens a small dialog with an auto-suggested command when it can infer one from common files like `bin/dev`, `package.json`, `Makefile`, `justfile`, or a simple Go entrypoint.
+- `/run <command>` saves that command as the selected project's default runtime command and starts it immediately.
+- `/run-edit` opens the saved runtime command for editing without starting it.
+- `/stop` stops the selected project's managed runtime when one is running.
 - `/codex` resumes the selected project's latest known Codex session when available, otherwise it starts a new one.
 - `/codex-new` always starts a fresh Codex session.
 - `/opencode` resumes the selected project's latest known OpenCode session when available, otherwise it starts a new one.
 - `/opencode-new` always starts a fresh OpenCode session.
 - While an embedded Codex or OpenCode pane is visible, local slash commands include `/new`, `/resume` (`/session` alias), `/model`, and `/status`.
 - `/resume` with no session ID opens a picker for saved sessions from the current project and provider; `/resume <session-id>` jumps straight to that session.
+- Main-list badges currently mean: `N` saved note, `$` active managed runtime, `!` managed port conflict.
+- The `RUN` column now shows either a live embedded AI turn timer or the active managed runtime port summary such as `:3000` or `2p`.
 - `codex_launch_preset` controls how Codex is launched. The default is `yolo`.
 - CLI flags override config file values.

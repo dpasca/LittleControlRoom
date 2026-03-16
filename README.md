@@ -33,7 +33,7 @@ Click any screenshot to open the full-size PNG on GitHub.
 - Finds recent Codex and OpenCode sessions across your local projects
 - Shows which projects are active, idle, or worth revisiting
 - Lets you open, resume, or switch embedded Codex or OpenCode sessions directly from the dashboard
-- Keeps common actions close at hand: refresh, pin, snooze, multiline project notes with list badges, diff, commit, and push
+- Keeps common actions close at hand: refresh, pin, snooze, multiline project notes with list badges, managed per-project run commands with runtime/port badges, diff, commit, and push
 
 ## What it doesn't do (yet)
 
@@ -65,7 +65,7 @@ lcroom tui
 
 No config file is required for a first run. If you want to limit what shows up, open the dashboard and use `/settings`, or create `~/.little-control-room/config.toml` from [`docs/config.example.toml`](docs/config.example.toml).
 
-The main commands to look for are `/settings`, `/open`, `/note`, `/diff`, `/commit`, `/finish`, `/push`, `/codex`, `/codex-new`, `/opencode`, and `/opencode-new`.
+The main commands to look for are `/settings`, `/open`, `/run`, `/run-edit`, `/stop`, `/note`, `/diff`, `/commit`, `/finish`, `/push`, `/codex`, `/codex-new`, `/opencode`, and `/opencode-new`.
 
 ## Everyday Workflow
 
@@ -74,6 +74,10 @@ The main commands to look for are `/settings`, `/open`, `/note`, `/diff`, `/comm
 3. Press `Enter` to open or resume the selected project's latest embedded provider.
 4. Press `Esc` or `Alt+Up` to hide the embedded session pane while it keeps working, then press `Enter` on that project to reopen it from the list.
 5. Press `/` to open the command palette for actions like refresh, pin, snooze, note, diff, commit, or push.
+
+Use `/run` to start the selected project's saved managed runtime. On the first run, LCR suggests a command from files like `bin/dev`, `package.json`, `Makefile`, `justfile`, or a simple Go entrypoint and lets you confirm or edit it before saving.
+
+Use `/run-edit` to change the saved run command later, and `/stop` to stop the selected project's managed runtime.
 
 Use `/codex` or `/opencode` to resume the last session.
 
@@ -86,6 +90,8 @@ Use `/settings` when you want to save include or exclude paths or change the def
 Use `/open` to open the selected project's folder in your system browser.
 
 Use `/note` to open a multiline note editor for the selected project, or `/note clear` to remove the saved note after confirmation. Projects with saved notes show an `N` badge in the main list. Press `n` for the same editor as a shortcut. Inside the note dialog, `Ctrl+Y` copies the whole current note to the system clipboard, and the `Copy...` action offers either `Whole note` or `Selected text`. In selection mode, press `Space` once to mark the start, move the cursor, and press `Space` again to copy the selected range.
+
+Projects with an active managed runtime show a `$` badge. If that runtime is listening on ports, the `RUN` column shows `:3000` for one port or `2p` for multiple ports. A `!` badge marks a managed port conflict between tracked projects.
 
 Use `/diff` to open a full-screen git diff for the selected project, with staged files listed first on the left, unstaged files below them, and a scrollable text or image preview on the right.
 

@@ -17,6 +17,7 @@ import (
 	"lcroom/internal/config"
 	"lcroom/internal/events"
 	"lcroom/internal/model"
+	"lcroom/internal/projectrun"
 	"lcroom/internal/service"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -59,6 +60,7 @@ type Model struct {
 	commandInput                 textinput.Model
 	commandSelected              int
 	newProjectDialog             *newProjectDialogState
+	runCommandDialog             *runCommandDialogState
 	preferredSelectPath          string
 	diffView                     *diffViewState
 	gitStatusDialog              *gitStatusDialog
@@ -76,6 +78,7 @@ type Model struct {
 	focusedPane    paneFocus
 
 	codexManager        *codexapp.Manager
+	runtimeManager      *projectrun.Manager
 	codexVisibleProject string
 	codexHiddenProject  string
 	codexPendingOpen    *codexPendingOpenState
@@ -131,6 +134,19 @@ type actionMsg struct {
 type browserOpenMsg struct {
 	status string
 	err    error
+}
+
+type runtimeActionMsg struct {
+	projectPath string
+	status      string
+	err         error
+}
+
+type runCommandSavedMsg struct {
+	projectPath string
+	command     string
+	startAfter  bool
+	err         error
 }
 
 type commitPreviewMsg struct {
@@ -266,6 +282,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		visibility:             visibilityAIFolders,
 		excludeProjectPatterns: currentExcludeProjectPatterns(svc),
 		codexManager:           codexapp.NewManager(),
+		runtimeManager:         projectrun.NewManager(),
 		nowFn:                  time.Now,
 		homeDirFn:              os.UserHomeDir,
 	}
@@ -314,6 +331,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.newProjectDialog != nil {
 			return m.updateNewProjectMode(msg)
+		}
+		if m.runCommandDialog != nil {
+			return m.updateRunCommandDialogMode(msg)
 		}
 		if m.noteClearConfirm != nil {
 			return m.updateNoteClearConfirmMode(msg)
@@ -542,6 +562,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		m.status = msg.status
 		return m, nil
+	case runtimeActionMsg:
+		if msg.err != nil {
+			m.err = nil
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.err = nil
+		if strings.TrimSpace(msg.status) != "" {
+			m.status = msg.status
+		}
+		return m, nil
+	case runCommandSavedMsg:
+		if m.runCommandDialog != nil && m.runCommandDialog.ProjectPath == msg.projectPath {
+			m.runCommandDialog.Submitting = false
+		}
+		if msg.err != nil {
+			m.err = nil
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.closeRunCommandDialog("")
+		cmds := []tea.Cmd{m.loadProjectsCmd()}
+		if p, ok := m.selectedProject(); ok && p.Path == msg.projectPath {
+			cmds = append(cmds, m.loadDetailCmd(msg.projectPath))
+		}
+		if strings.TrimSpace(msg.command) != "" && msg.startAfter {
+			cmds = append(cmds, m.startProjectRuntimeCmd(msg.projectPath, msg.command))
+		} else {
+			m.status = "Saved run command"
+		}
+		return m, tea.Batch(cmds...)
 	case settingsSavedMsg:
 		m.err = nil
 		if msg.err != nil {
@@ -1211,6 +1262,8 @@ func (m Model) View() string {
 		body = m.renderCommitPreviewOverlay(body, layout.width, layout.height)
 	} else if m.newProjectDialog != nil {
 		body = m.renderNewProjectOverlay(body, layout.width, layout.height)
+	} else if m.runCommandDialog != nil {
+		body = m.renderRunCommandOverlay(body, layout.width, layout.height)
 	} else if m.settingsMode {
 		body = m.renderSettingsOverlay(body, layout.width, layout.height)
 	} else if m.showHelp {
@@ -1409,9 +1462,10 @@ func (m Model) renderProjectList(width, height int) string {
 		last := formatListActivityTime(now, p.LastActivity)
 		attention := projectAttentionLabel(p)
 		name := truncateText(p.Name, projectW)
-		noteIndicator := projectNoteIndicator(p.Note)
 		assessment := truncateText(projectAssessmentTextAt(p, now), assessmentW)
 		runLabel, running := m.projectRunLabel(p, now)
+		runtimeSnapshot := m.projectRuntimeSnapshot(p.Path)
+		badges := projectBadgeLabel(p.Note, runtimeSnapshot.Running, len(runtimeSnapshot.ConflictPorts) > 0)
 		row := lipgloss.JoinHorizontal(
 			lipgloss.Top,
 			cellStyle(lipgloss.NewStyle().Width(5).Align(lipgloss.Right).Bold(selectedRow)).Render(attention),
@@ -1424,7 +1478,7 @@ func (m Model) renderProjectList(width, height int) string {
 			" ",
 			cellStyle(projectRunStyle(running).Width(7).Align(lipgloss.Left)).Render(runLabel),
 			"  ",
-			cellStyle(noteListIndicatorStyle.Width(1).Align(lipgloss.Center)).Render(noteIndicator),
+			cellStyle(noteListIndicatorStyle.Width(3).Align(lipgloss.Left)).Render(badges),
 			"  ",
 			cellStyle(lipgloss.NewStyle().Width(projectW).Bold(selectedRow)).Render(name),
 			"  ",
@@ -1480,6 +1534,7 @@ func (m Model) renderDetailContent(width int) string {
 		lastActivityValue += "  " + lastSourceValue
 	}
 	lines = append(lines, detailField("Last activity", lastActivityValue))
+	lines = m.renderRuntimeDetail(lines, width, p.Path, p.RunCommand)
 	if p.MovedFromPath != "" && moveStatusActive(p.MovedAt, p.Path, p.LatestSessionDetectedProjectPath) {
 		movedFields := []string{detailField("Moved from", detailValueStyle.Render(p.MovedFromPath))}
 		if !p.MovedAt.IsZero() {
@@ -1682,6 +1737,35 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		}
 		m.status = "Opening project in browser..."
 		return m, m.openProjectDirInBrowserCmd(p.Path)
+	case commands.KindRun:
+		p, ok := m.selectedProject()
+		if !ok {
+			m.status = "No project selected"
+			return m, nil
+		}
+		if !p.PresentOnDisk {
+			m.status = "Run requires a folder present on disk"
+			return m, nil
+		}
+		return m.handleRunCommand(p, inv.Command)
+	case commands.KindRunEdit:
+		p, ok := m.selectedProject()
+		if !ok {
+			m.status = "No project selected"
+			return m, nil
+		}
+		if !p.PresentOnDisk {
+			m.status = "Run command editing requires a folder present on disk"
+			return m, nil
+		}
+		return m, m.openRunCommandDialog(p, false)
+	case commands.KindStop:
+		p, ok := m.selectedProject()
+		if !ok {
+			m.status = "No project selected"
+			return m, nil
+		}
+		return m, m.stopProjectRuntimeCmd(p.Path)
 	case commands.KindDiff:
 		p, ok := m.selectedProject()
 		if !ok {
@@ -1783,6 +1867,9 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 	case commands.KindQuit:
 		if m.codexManager != nil {
 			_ = m.codexManager.CloseAll()
+		}
+		if m.runtimeManager != nil {
+			_ = m.runtimeManager.CloseAll()
 		}
 		if m.unsub != nil {
 			m.unsub()
@@ -2279,15 +2366,22 @@ func projectAssessmentStyle(project model.ProjectSummary) lipgloss.Style {
 	}
 }
 
-func projectNoteIndicator(note string) string {
+func projectBadgeLabel(note string, runtimeActive, runtimeConflict bool) string {
+	var out strings.Builder
 	if projectHasNote(note) {
-		return "N"
+		out.WriteByte('N')
 	}
-	return ""
+	if runtimeActive {
+		out.WriteByte('$')
+	}
+	if runtimeConflict {
+		out.WriteByte('!')
+	}
+	return out.String()
 }
 
 func projectListColumnWidths(totalWidth int) (int, int) {
-	const baseWidth = 45
+	const baseWidth = 47
 
 	if totalWidth < baseWidth+22 {
 		return 10, 10
@@ -2320,7 +2414,7 @@ func renderProjectListHeader(projectW, assessmentW int) string {
 		" ",
 		lipgloss.NewStyle().Width(7).Align(lipgloss.Left).Render("RUN"),
 		"  ",
-		lipgloss.NewStyle().Width(1).Align(lipgloss.Center).Render("N"),
+		lipgloss.NewStyle().Width(3).Align(lipgloss.Left).Render("BAD"),
 		"  ",
 		lipgloss.NewStyle().Width(projectW).Render("PROJECT"),
 		"  ",
@@ -2347,6 +2441,17 @@ func (m Model) projectRunLabel(project model.ProjectSummary, now time.Time) (str
 			return formatRunningDuration(now.Sub(project.LatestTurnStartedAt)), true
 		}
 		return "live", true
+	}
+	runtimeSnapshot := m.projectRuntimeSnapshot(project.Path)
+	if runtimeSnapshot.Running {
+		switch len(runtimeSnapshot.Ports) {
+		case 0:
+			return "", false
+		case 1:
+			return fmt.Sprintf(":%d", runtimeSnapshot.Ports[0]), true
+		default:
+			return fmt.Sprintf("%dp", len(runtimeSnapshot.Ports)), true
+		}
 	}
 	return "", false
 }
@@ -3639,7 +3744,8 @@ func (m Model) renderHelpPanel(bodyW, bodyH int) string {
 				"s/S snooze/clear",
 				"n   note dialog",
 				"/refresh /settings",
-				"/open /note [/clear]",
+				"/open /run [/cmd] /stop",
+				"/run-edit /note [/clear]",
 				"/codex /codex-new /opencode /opencode-new",
 				"/diff /commit /finish /push",
 			},
@@ -3649,7 +3755,8 @@ func (m Model) renderHelpPanel(bodyW, bodyH int) string {
 			Lines: []string{
 				"SRC  bright CX live, dim CX saved",
 				"SRC  OC OpenCode history",
-				"RUN  live embedded turn timer",
+				"RUN  live AI timer or active runtime port",
+				"BAD  N note, $ runtime, ! port conflict",
 				"ASSESS short latest assessment label",
 				"SUMMARY latest session summary",
 				"! in ATTN = dirty or remote warning",

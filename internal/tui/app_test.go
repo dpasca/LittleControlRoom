@@ -896,8 +896,8 @@ func TestRenderProjectListShowsNoteIndicator(t *testing.T) {
 	if len(lines) < 2 {
 		t.Fatalf("renderProjectList() expected header plus one row, got %q", rendered)
 	}
-	if !strings.Contains(lines[0], "N  PROJECT") {
-		t.Fatalf("renderProjectList() missing note header, got %q", lines[0])
+	if !strings.Contains(lines[0], "BAD  PROJECT") {
+		t.Fatalf("renderProjectList() missing badge header, got %q", lines[0])
 	}
 	fields := strings.Fields(lines[1])
 	foundIndicator := false
@@ -909,6 +909,27 @@ func TestRenderProjectListShowsNoteIndicator(t *testing.T) {
 	}
 	if !foundIndicator {
 		t.Fatalf("renderProjectList() should show the note indicator in the row, got %q", lines[1])
+	}
+}
+
+func TestRenderDetailContentShowsSavedRunCommand(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			Status:        model.StatusIdle,
+			PresentOnDisk: true,
+			RunCommand:    "pnpm dev",
+		}},
+		selected: 0,
+	}
+
+	rendered := ansi.Strip(m.renderDetailContent(72))
+	if !strings.Contains(rendered, "Run cmd: pnpm dev") {
+		t.Fatalf("renderDetailContent() should show the saved run command: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Runtime: idle") {
+		t.Fatalf("renderDetailContent() should show idle runtime state: %q", rendered)
 	}
 }
 
@@ -4544,6 +4565,40 @@ func TestCommandEnterOpensNoteDialog(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatalf("/note should return a focus command for the editor")
+	}
+}
+
+func TestCommandEnterOpensRunCommandDialogWhenUnset(t *testing.T) {
+	input := textinput.New()
+	input.SetValue("/run")
+
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			PresentOnDisk: true,
+		}},
+		selected:     0,
+		commandMode:  true,
+		commandInput: input,
+		width:        100,
+		height:       24,
+	}
+	m.syncCommandSelection()
+
+	updated, cmd := m.updateCommandMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.commandMode {
+		t.Fatalf("command mode should close after /run")
+	}
+	if got.runCommandDialog == nil {
+		t.Fatalf("run command dialog should open after /run when no command is saved")
+	}
+	if got.runCommandDialog.ProjectPath != "/tmp/demo" {
+		t.Fatalf("run command dialog project path = %q, want /tmp/demo", got.runCommandDialog.ProjectPath)
+	}
+	if cmd == nil {
+		t.Fatalf("/run should return a focus command for the input")
 	}
 }
 

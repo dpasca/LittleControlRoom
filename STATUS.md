@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-15 00:59 JST (JST)
+Last updated: 2026-03-15 01:35 JST (JST)
 
 ## Current State
 
@@ -8,7 +8,7 @@ Implemented milestone:
 
 1. Phase 0 footprint discovery doc + fixtures
 2. Phase 1 monitoring foundation (`scan`, `doctor`, SQLite store, attention scoring, event bus)
-3. Phase 2 TUI (`tui`) with refresh, filters, pin, snooze, note, command palette, and git workflow actions
+3. Phase 2 TUI (`tui`) with refresh, filters, pin, snooze, note, command palette, git workflow actions, and a first managed per-project runtime lane
 4. Optional Phase 3 skeleton (`serve`) with read-only REST + WS stream
 
 ## Confirmed Footprint Assumption
@@ -57,6 +57,7 @@ Current screenshot workflow assumption:
 - TUI stacked layout with focusable detail pane, scrolling, compact settings modal, and command palette
 - Top-level `/open` slash command to open the selected project's folder in the system browser
 - Project notes via `/note` or `n`, with a multiline modal editor, wrapped detail-pane notes, a list badge when a project has saved notes, and clipboard copy actions for the whole note or an explicit marked selection
+- Managed per-project run commands via `/run`, `/run-edit`, and `/stop`, with persisted default commands, first-pass command suggestions from common project files, a small run-command editor overlay, list badges for notes/runtime/conflicts, detail-pane runtime status/output, and best-effort listening-port detection for LCR-managed runtimes
 - Git workflow actions in the TUI for full-screen diff preview, commit preview, finish, and push
 - Embedded Codex pane via `codex app-server`, with multiline compose, per-project drafts, inline `[Image #n]` clipboard image markers in the composer, backspace-based image removal, local embedded slash commands for `/new`, `/resume` (`/session` alias), `/model`, and `/status`, visible slash autocomplete/suggestions in the composer, a provider-specific saved-session resume picker with lightweight title/summary previews and current-session markers, live model/reasoning/context-left metadata under the transcript, a local model+reasoning picker backed by `model/list`, `Enter`/`/codex`/`/codex-new`, `Esc` or `Alt+Up` hide from the embedded pane with `Enter` reopening from the project list, `Alt+Down` session picker/history, `Alt+[`/`Alt+]` live-session stepping, wrapped transcript blocks, shaded echoed user transcript blocks that reuse the composer shell styling, denser command/tool/file blocks with `Alt+L` expand/collapse, label-free user/assistant transcript rendering, manager-side update coalescing, inline approvals/input requests, and busy-elsewhere rechecks when a read-only embedded session is reopened or restored
 - Embedded OpenCode pane via `opencode serve`, with live SSE transcript updates, resume/new launch from `Enter` and `/opencode` / `/opencode-new`, shared picker/history and model picker, provider-aware banners/footer/help copy, interrupt/status actions, shared approval/question handling, and mixed Codex/OpenCode live-session management per project
@@ -67,16 +68,40 @@ Current screenshot workflow assumption:
 
 - Keep polishing the embedded Codex/OpenCode pane now that live OpenCode transport and the mixed-session TUI flow are in place.
 - Improve OpenCode parity details such as richer attachment confidence, better agent/status presentation, and any remaining approval/question edge cases.
+- Polish the new managed runtime lane: restart/open-url workflows, better external-port attribution, and stronger cross-platform shell launching.
 - Consider a schema-aware mini form for MCP elicitation instead of the current freeform JSON/text fallback.
 - Watch for future `codex app-server` protocol support for true queued turns and adopt it when it exists.
 - Factor a provider-neutral transcript/session abstraction so Codex and OpenCode stop sharing only by convention.
-- Add a later generic terminal/dev-server lane beside Codex/OpenCode sessions.
+- Decide whether managed runtime state should graduate from TUI-only memory into a provider-neutral service/runtime abstraction that `doctor` and `serve` can also report.
 
 ## Status File Policy
 
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-15 01:35 JST)
+
+- Added a first managed runtime lane to the TUI: the selected project can now save a default run command, start it with `/run`, edit it with `/run-edit`, and stop it with `/stop`.
+- Persisted the default run command on the project record, including schema migration support, summary/detail loading, move/consolidation preservation, service setters, and stored action events.
+- Added a new `internal/projectrun` package that manages per-project shell-launched runtimes, captures recent stdout/stderr lines, extracts announced local URLs, and does best-effort listening-port detection via the managed process group.
+- Updated the main list and detail pane to surface runtime state: `BAD` now carries `N` notes, `$` active runtimes, and `!` managed port conflicts; the `RUN` column can show detected ports like `:3000` or `2p`; the detail pane now shows the saved run command, runtime status, ports, URLs, conflicts, and recent output.
+- Added focused regressions for command parsing, run-command persistence and move safety, service event publishing, project-run suggestions, and TUI rendering/command-mode behavior around the new runtime flow.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./...` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-15T01:34:32+09:00` (`activity projects: 85`, `tracked projects: 136`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-15T01:34:32+09:00` (`projects: 136`).
+- `make tui` correctly refused to start because another real `lcroom tui` runtime already owned the shared DB.
+- A short `go run ./cmd/lcroom tui ... --allow-multiple-instances` smoke launch showed the expected existing-owner warning, reached the TUI with the new `BAD` header visible, and exited via `q`.
+
+Next concrete tasks:
+
+- Add a restart/open-url action once runtime start/stop settles, so common web-app flows need fewer manual steps after `/run`.
+- Improve port attribution for non-LCR-managed listeners and decide whether conflicts should eventually become attention reasons in the shared store rather than a TUI-only badge.
 
 ## Latest Update (2026-03-15 00:59 JST)
 

@@ -183,6 +183,54 @@ func TestOpenConfiguresSQLitePragmas(t *testing.T) {
 	}
 }
 
+func TestSetRunCommandPersistsInProjectSummaryAndDetail(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now()
+	projectPath := "/tmp/run-project"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "run-project",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		InScope:        true,
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("upsert project state: %v", err)
+	}
+
+	if err := st.SetRunCommand(ctx, projectPath, "pnpm dev"); err != nil {
+		t.Fatalf("set run command: %v", err)
+	}
+
+	projects, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list projects: %v", err)
+	}
+	if len(projects) != 1 {
+		t.Fatalf("expected 1 project, got %d", len(projects))
+	}
+	if projects[0].RunCommand != "pnpm dev" {
+		t.Fatalf("run command = %q, want pnpm dev", projects[0].RunCommand)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 5)
+	if err != nil {
+		t.Fatalf("get project detail: %v", err)
+	}
+	if detail.Summary.RunCommand != "pnpm dev" {
+		t.Fatalf("detail run command = %q, want pnpm dev", detail.Summary.RunCommand)
+	}
+}
+
 func TestSessionClassificationQueueAndDetail(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -814,6 +862,9 @@ func TestMoveProjectPathPreservesData(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("upsert project state: %v", err)
 	}
+	if err := st.SetRunCommand(ctx, oldPath, "pnpm dev"); err != nil {
+		t.Fatalf("set run command: %v", err)
+	}
 	if err := st.AddEvent(ctx, model.StoredEvent{
 		At:          now,
 		ProjectPath: oldPath,
@@ -863,8 +914,8 @@ func TestMoveProjectPathPreservesData(t *testing.T) {
 	if detail.Summary.RepoSyncStatus != model.RepoSyncAhead || detail.Summary.RepoAheadCount != 2 || detail.Summary.RepoBehindCount != 0 {
 		t.Fatalf("expected repo sync data to survive move: %#v", detail.Summary)
 	}
-	if !detail.Summary.Pinned || detail.Summary.Note != "keep this note" {
-		t.Fatalf("expected pin/note to survive move: %#v", detail.Summary)
+	if !detail.Summary.Pinned || detail.Summary.Note != "keep this note" || detail.Summary.RunCommand != "pnpm dev" {
+		t.Fatalf("expected pin/note/run command to survive move: %#v", detail.Summary)
 	}
 	if len(detail.Reasons) != 1 || detail.Reasons[0].Code != "idle" {
 		t.Fatalf("expected reasons to survive move, got %#v", detail.Reasons)

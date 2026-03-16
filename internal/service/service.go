@@ -1027,6 +1027,29 @@ func (s *Service) SetNote(ctx context.Context, projectPath, note string) error {
 	return nil
 }
 
+func (s *Service) SetRunCommand(ctx context.Context, projectPath, command string) error {
+	if err := s.store.SetRunCommand(ctx, projectPath, command); err != nil {
+		return err
+	}
+	now := time.Now()
+	s.bus.Publish(events.Event{
+		Type:        events.ActionApplied,
+		At:          now,
+		ProjectPath: projectPath,
+		Payload: map[string]string{
+			"action":      "set_run_command",
+			"run_command": strings.TrimSpace(command),
+		},
+	})
+	_ = s.store.AddEvent(ctx, model.StoredEvent{
+		At:          now,
+		ProjectPath: projectPath,
+		Type:        string(events.ActionApplied),
+		Payload:     "set_run_command",
+	})
+	return nil
+}
+
 func (s *Service) ForgetProject(ctx context.Context, projectPath string) error {
 	m, err := s.store.GetProjectSummaryMap(ctx)
 	if err != nil {
