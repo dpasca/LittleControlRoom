@@ -708,8 +708,8 @@ func TestRenderProjectListIncludesAssessmentColumn(t *testing.T) {
 	}
 
 	rendered := m.renderProjectList(120, 8)
-	if !strings.Contains(rendered, "RUN") {
-		t.Fatalf("renderProjectList() missing RUN header: %q", rendered)
+	if !strings.Contains(rendered, "AGENT") || !strings.Contains(rendered, "RUN") {
+		t.Fatalf("renderProjectList() missing agent/run headers: %q", rendered)
 	}
 	if !strings.Contains(rendered, "ASSESS") || !strings.Contains(rendered, "SUMMARY") {
 		t.Fatalf("renderProjectList() missing assessment/summary headers: %q", rendered)
@@ -719,36 +719,82 @@ func TestRenderProjectListIncludesAssessmentColumn(t *testing.T) {
 	}
 }
 
-func TestProjectRunLabelUsesManagedRuntimeState(t *testing.T) {
-	got, state := projectRunLabel(projectrun.Snapshot{Running: true})
+func TestProjectAgentDisplayUsesLiveBusyTimer(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider:  codexapp.ProviderCodex,
+			Started:   true,
+			Busy:      true,
+			BusySince: time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC),
+			ThreadID:  "thread-live",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{codexManager: manager}
+	project := model.ProjectSummary{
+		Path:                "/tmp/demo",
+		PresentOnDisk:       true,
+		LatestSessionFormat: "modern",
+	}
+
+	label, tag, live := m.projectAgentDisplay(project, time.Date(2026, 3, 9, 12, 0, 37, 0, time.UTC))
+	if !live {
+		t.Fatalf("projectAgentDisplay() live = false, want true")
+	}
+	if tag != "CX" {
+		t.Fatalf("projectAgentDisplay() tag = %q, want %q", tag, "CX")
+	}
+	if label != "CX 00:37" {
+		t.Fatalf("projectAgentDisplay() label = %q, want %q", label, "CX 00:37")
+	}
+}
+
+func TestProjectRunSummaryIncludesCommandAndPort(t *testing.T) {
+	got, state := projectRunSummary(projectrun.Snapshot{
+		Running: true,
+		Command: "pnpm dev",
+		Ports:   []int{3000},
+	}, "")
 	if state != projectRunActive {
-		t.Fatalf("projectRunLabel() state = %v, want %v", state, projectRunActive)
+		t.Fatalf("projectRunSummary() state = %v, want %v", state, projectRunActive)
 	}
-	if got != "on" {
-		t.Fatalf("projectRunLabel() = %q, want %q", got, "on")
-	}
-}
-
-func TestProjectRunLabelShowsLastRunError(t *testing.T) {
-	got, state := projectRunLabel(projectrun.Snapshot{LastError: "exit status 1"})
-	if state != projectRunError {
-		t.Fatalf("projectRunLabel() state = %v, want %v", state, projectRunError)
-	}
-	if got != "err" {
-		t.Fatalf("projectRunLabel() = %q, want %q", got, "err")
+	if got != "pnpm@3000" {
+		t.Fatalf("projectRunSummary() = %q, want %q", got, "pnpm@3000")
 	}
 }
 
-func TestProjectPortLabelShowsConflictIndicator(t *testing.T) {
-	got, state := projectPortLabel(projectrun.Snapshot{
+func TestProjectRunSummaryShowsConflictInRunColumn(t *testing.T) {
+	got, state := projectRunSummary(projectrun.Snapshot{
+		Running:       true,
+		Command:       "./bin/dev",
 		Ports:         []int{3000},
 		ConflictPorts: []int{3000},
-	})
-	if state != projectPortConflict {
-		t.Fatalf("projectPortLabel() state = %v, want %v", state, projectPortConflict)
+	}, "")
+	if state != projectRunError {
+		t.Fatalf("projectRunSummary() state = %v, want %v", state, projectRunError)
 	}
-	if got != "!3000" {
-		t.Fatalf("projectPortLabel() = %q, want %q", got, "!3000")
+	if got != "dev!3000" {
+		t.Fatalf("projectRunSummary() = %q, want %q", got, "dev!3000")
+	}
+}
+
+func TestProjectRunSummaryUsesSavedCommandWhenIdle(t *testing.T) {
+	got, state := projectRunSummary(projectrun.Snapshot{}, "pnpm dev")
+	if state != projectRunIdle {
+		t.Fatalf("projectRunSummary() state = %v, want %v", state, projectRunIdle)
+	}
+	if got != "pnpm" {
+		t.Fatalf("projectRunSummary() = %q, want %q", got, "pnpm")
 	}
 }
 
@@ -860,8 +906,8 @@ func TestRenderProjectListShowsNoteIndicator(t *testing.T) {
 	if len(lines) < 2 {
 		t.Fatalf("renderProjectList() expected header plus one row, got %q", rendered)
 	}
-	if !strings.Contains(lines[0], "N RUN PORT") {
-		t.Fatalf("renderProjectList() missing note/run/port headers, got %q", lines[0])
+	if !strings.Contains(lines[0], "AGENT") || !strings.Contains(lines[0], "N RUN") {
+		t.Fatalf("renderProjectList() missing agent/note/run headers, got %q", lines[0])
 	}
 	fields := strings.Fields(lines[1])
 	foundIndicator := false

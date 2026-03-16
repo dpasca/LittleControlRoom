@@ -1465,9 +1465,9 @@ func (m Model) renderProjectList(width, height int) string {
 		name := truncateText(p.Name, projectW)
 		assessment := truncateText(projectAssessmentTextAt(p, now), assessmentW)
 		runtimeSnapshot := m.projectRuntimeSnapshot(p.Path)
+		agentLabel, agentTag, agentLive := m.projectAgentDisplay(p, now)
 		noteMarker := projectNoteMarker(p.Note)
-		runLabel, runState := projectRunLabel(runtimeSnapshot)
-		portLabel, portState := projectPortLabel(runtimeSnapshot)
+		runLabel, runState := projectRunSummary(runtimeSnapshot, p.RunCommand)
 		row := lipgloss.JoinHorizontal(
 			lipgloss.Top,
 			cellStyle(lipgloss.NewStyle().Width(5).Align(lipgloss.Right).Bold(selectedRow)).Render(attention),
@@ -1476,13 +1476,11 @@ func (m Model) renderProjectList(width, height int) string {
 			" ",
 			cellStyle(lipgloss.NewStyle().Width(10)).Render(last),
 			" ",
-			cellStyle(sourceStyle(p.LatestSessionFormat, m.projectHasLiveCodexSession(p.Path)).Width(3).Align(lipgloss.Center)).Render(sourceTag(p.LatestSessionFormat)),
+			cellStyle(sourceStyleForTag(agentTag, agentLive).Width(projectListAgentWidth).Align(lipgloss.Left)).Render(truncateText(agentLabel, projectListAgentWidth)),
 			" ",
 			cellStyle(noteListIndicatorStyle.Width(1).Align(lipgloss.Center)).Render(noteMarker),
 			" ",
-			cellStyle(projectRunStyle(runState).Width(3).Align(lipgloss.Left)).Render(runLabel),
-			" ",
-			cellStyle(projectPortStyle(portState).Width(6).Align(lipgloss.Left)).Render(portLabel),
+			cellStyle(projectRunStyle(runState).Width(projectListRunWidth).Align(lipgloss.Left)).Render(truncateText(runLabel, projectListRunWidth)),
 			"  ",
 			cellStyle(lipgloss.NewStyle().Width(projectW).Bold(selectedRow)).Render(name),
 			"  ",
@@ -1634,6 +1632,8 @@ var spinnerFrames = []string{"|", "/", "-", `\`}
 const (
 	recentMoveWindow          = 24 * time.Hour
 	spinnerAnimationFrameWrap = 4096
+	projectListAgentWidth     = 10
+	projectListRunWidth       = 11
 )
 
 var (
@@ -2378,14 +2378,6 @@ const (
 	projectRunError
 )
 
-type projectPortState uint8
-
-const (
-	projectPortIdle projectPortState = iota
-	projectPortActive
-	projectPortConflict
-)
-
 func projectNoteMarker(note string) string {
 	if projectHasNote(note) {
 		return "*"
@@ -2394,7 +2386,7 @@ func projectNoteMarker(note string) string {
 }
 
 func projectListColumnWidths(totalWidth int) (int, int) {
-	const baseWidth = 47
+	const baseWidth = 53
 
 	if totalWidth < baseWidth+22 {
 		return 10, 10
@@ -2423,13 +2415,11 @@ func renderProjectListHeader(projectW, assessmentW int) string {
 		" ",
 		lipgloss.NewStyle().Width(10).Render("LAST"),
 		" ",
-		lipgloss.NewStyle().Width(3).Align(lipgloss.Center).Render("SRC"),
+		lipgloss.NewStyle().Width(projectListAgentWidth).Align(lipgloss.Left).Render("AGENT"),
 		" ",
 		lipgloss.NewStyle().Width(1).Align(lipgloss.Center).Render("N"),
 		" ",
-		lipgloss.NewStyle().Width(3).Align(lipgloss.Left).Render("RUN"),
-		" ",
-		lipgloss.NewStyle().Width(6).Align(lipgloss.Left).Render("PORT"),
+		lipgloss.NewStyle().Width(projectListRunWidth).Align(lipgloss.Left).Render("RUN"),
 		"  ",
 		lipgloss.NewStyle().Width(projectW).Render("PROJECT"),
 		"  ",
@@ -2437,34 +2427,143 @@ func renderProjectListHeader(projectW, assessmentW int) string {
 	)
 }
 
-func projectRunLabel(snapshot projectrun.Snapshot) (string, projectRunState) {
+func (m Model) projectAgentDisplay(project model.ProjectSummary, now time.Time) (string, string, bool) {
+	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
+		tag := embeddedProvider(snapshot).SourceTag()
+		label := tag
+		if snapshot.Busy {
+			startedAt := snapshot.BusySince
+			if startedAt.IsZero() && !project.LatestTurnStartedAt.IsZero() {
+				startedAt = project.LatestTurnStartedAt
+			}
+			if !startedAt.IsZero() && !now.IsZero() {
+				label += " " + formatRunningDuration(now.Sub(startedAt))
+			}
+		}
+		return label, tag, true
+	}
+
+	provider := providerForSessionFormat(project.LatestSessionFormat)
+	if provider == "" {
+		return "", "", false
+	}
+	tag := provider.SourceTag()
+	if project.LatestTurnStateKnown && !project.LatestTurnCompleted {
+		label := tag
+		if !project.LatestTurnStartedAt.IsZero() && !now.IsZero() {
+			label += " " + formatRunningDuration(now.Sub(project.LatestTurnStartedAt))
+		}
+		return label, tag, true
+	}
+	return tag, tag, false
+}
+
+func projectRunSummary(snapshot projectrun.Snapshot, savedCommand string) (string, projectRunState) {
+	command := strings.TrimSpace(snapshot.Command)
+	if command == "" {
+		command = strings.TrimSpace(savedCommand)
+	}
+	label := projectRunCommandLabel(command)
+	port := projectRunPortSummary(snapshot)
 	if snapshot.Running {
-		return "on", projectRunActive
+		if label == "" {
+			label = "run"
+		}
+		if port != "" {
+			if len(snapshot.ConflictPorts) > 0 {
+				return label + "!" + port, projectRunError
+			}
+			return label + "@" + port, projectRunActive
+		}
+		return label, projectRunActive
 	}
 	if strings.TrimSpace(snapshot.LastError) != "" {
-		return "err", projectRunError
+		if label == "" {
+			return "err", projectRunError
+		}
+		return label + " err", projectRunError
 	}
 	if snapshot.ExitCodeKnown && snapshot.ExitCode != 0 {
-		return "err", projectRunError
+		if label == "" {
+			return "err", projectRunError
+		}
+		return label + " err", projectRunError
+	}
+	if label != "" {
+		return label, projectRunIdle
 	}
 	return "", projectRunIdle
 }
 
-func projectPortLabel(snapshot projectrun.Snapshot) (string, projectPortState) {
+func projectRunPortSummary(snapshot projectrun.Snapshot) string {
 	if len(snapshot.Ports) == 0 {
-		return "", projectPortIdle
+		return ""
 	}
-	label := ""
 	switch len(snapshot.Ports) {
 	case 1:
-		label = strconv.Itoa(snapshot.Ports[0])
+		return strconv.Itoa(snapshot.Ports[0])
 	default:
-		label = fmt.Sprintf("%dp", len(snapshot.Ports))
+		return fmt.Sprintf("%dp", len(snapshot.Ports))
 	}
-	if len(snapshot.ConflictPorts) > 0 {
-		return "!" + label, projectPortConflict
+}
+
+func projectRunCommandLabel(command string) string {
+	tokens := strings.Fields(strings.TrimSpace(command))
+	for i := 0; i < len(tokens); i++ {
+		token := trimRunToken(tokens[i])
+		if token == "" {
+			continue
+		}
+		if isShellEnvAssignment(token) {
+			continue
+		}
+		switch token {
+		case "env", "command", "nohup", "time":
+			continue
+		case "sudo":
+			for i+1 < len(tokens) {
+				next := trimRunToken(tokens[i+1])
+				if !strings.HasPrefix(next, "-") {
+					break
+				}
+				i++
+			}
+			continue
+		case "npx":
+			if i+1 < len(tokens) {
+				next := trimRunToken(tokens[i+1])
+				if next != "" {
+					return filepath.Base(next)
+				}
+			}
+			return "npx"
+		default:
+			return filepath.Base(token)
+		}
 	}
-	return label, projectPortActive
+	return ""
+}
+
+func trimRunToken(token string) string {
+	return strings.TrimSpace(strings.Trim(token, `"'`))
+}
+
+func isShellEnvAssignment(token string) bool {
+	idx := strings.IndexByte(token, '=')
+	if idx <= 0 {
+		return false
+	}
+	key := token[:idx]
+	for i, r := range key {
+		if r == '_' || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+			continue
+		}
+		if i > 0 && r >= '0' && r <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func truncateText(text string, width int) string {
@@ -3764,11 +3863,11 @@ func (m Model) renderHelpPanel(bodyW, bodyH int) string {
 		{
 			Title: "Legend",
 			Lines: []string{
-				"SRC   bright CX live, dim CX saved",
-				"SRC   OC OpenCode history",
+				"AGENT bright CX/OC live, dim saved",
+				"AGENT shows turn timer while busy",
 				"N     * note saved",
-				"RUN   /run managed runtime is active",
-				"PORT  detected runtime port; ! means conflict",
+				"RUN   saved /run command summary",
+				"RUN   @port or !port when detected",
 				"ASSESS short latest assessment label",
 				"SUMMARY latest session summary",
 				"! in ATTN = dirty or remote warning",
@@ -4055,17 +4154,6 @@ func projectRunStyle(state projectRunState) lipgloss.Style {
 	}
 }
 
-func projectPortStyle(state projectPortState) lipgloss.Style {
-	switch state {
-	case projectPortActive:
-		return detailValueStyle.Bold(true)
-	case projectPortConflict:
-		return detailDangerStyle
-	default:
-		return detailMutedStyle
-	}
-}
-
 func sessionCategoryLabel(category model.SessionCategory) string {
 	switch category {
 	case model.SessionCategoryCompleted:
@@ -4090,7 +4178,11 @@ func sessionCategoryLabel(category model.SessionCategory) string {
 }
 
 func sourceStyle(format string, live bool) lipgloss.Style {
-	switch sourceTag(format) {
+	return sourceStyleForTag(sourceTag(format), live)
+}
+
+func sourceStyleForTag(tag string, live bool) lipgloss.Style {
+	switch tag {
 	case "CX":
 		style := lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
 		if !live {

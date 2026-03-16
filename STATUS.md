@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-16 18:54 JST (JST)
+Last updated: 2026-03-16 21:30 JST (JST)
 
 ## Current State
 
@@ -79,6 +79,27 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-16 21:30 JST)
+
+- Refined the project-list column redesign so the old live-turn signal is back under a clearer `AGENT` column instead of being mixed into `RUN`: busy rows now show compact provider+timer labels such as `CX 06:10`, while non-busy saved history still shows dim `CX` or `OC`.
+- Merged the separate runtime/port presentation into a single `RUN` summary column that stays dedicated to `/run`-managed processes and can show compact labels like `pnpm`, `pnpm@3000`, or `dev!3000`.
+- Added lightweight command-label extraction for saved or active run commands so the list can show a short executable-style runtime summary without exposing the full shell command in every row.
+- Updated the list legend/help copy and the focused TUI regressions so the new `AGENT` + `N` + merged `RUN` model is documented and covered by tests.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `make test` passed.
+- `make scan` passed at `2026-03-16T21:29:50+09:00` (`activity projects: 85`, `tracked projects: 136`, `updated projects: 2`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-16T21:30:01+09:00` (`projects: 136`).
+- `env COLUMNS=110 LINES=30 make tui` correctly refused to start because another real `lcroom tui` runtime already owned the shared DB.
+- A short `go run ./cmd/lcroom tui ... --allow-multiple-instances` smoke launch showed the expected existing-owner warning, rendered the project list with the new `AGENT`, `N`, and merged `RUN` columns visible, and exited via `q`.
+
+Next concrete tasks:
+
+- Watch a few real `/run` workflows and see whether the first-pass runtime labels (`pnpm`, `make`, `dev`, `go`, etc.) feel informative enough or need an explicit user-editable short label later.
+- Decide whether idle but live embedded sessions should stay visually bright in `AGENT` or whether only busy turns should get the strongest styling once there is more daily usage feedback.
 
 ## Latest Update (2026-03-16 18:54 JST)
 
