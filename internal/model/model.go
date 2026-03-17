@@ -169,39 +169,42 @@ type ProjectState struct {
 }
 
 type ProjectSummary struct {
-	Path                                      string
-	Name                                      string
-	LastActivity                              time.Time
-	Status                                    ProjectStatus
-	AttentionScore                            int
-	PresentOnDisk                             bool
-	RepoDirty                                 bool
-	RepoSyncStatus                            RepoSyncStatus
-	RepoAheadCount                            int
-	RepoBehindCount                           int
-	Forgotten                                 bool
-	ManuallyAdded                             bool
-	InScope                                   bool
-	Pinned                                    bool
-	SnoozedUntil                              *time.Time
-	Note                                      string
-	RunCommand                                string
-	MovedFromPath                             string
-	MovedAt                                   time.Time
-	LatestSessionID                           string
-	LatestSessionFormat                       string
-	LatestSessionDetectedProjectPath          string
-	LatestSessionSnapshotHash                 string
-	LatestSessionLastEventAt                  time.Time
-	LatestTurnStartedAt                       time.Time
-	LatestTurnStateKnown                      bool
-	LatestTurnCompleted                       bool
-	LatestSessionClassification               SessionClassificationStatus
-	LatestSessionClassificationStage          SessionClassificationStage
-	LatestSessionClassificationType           SessionCategory
-	LatestSessionSummary                      string
-	LatestSessionClassificationStageStartedAt time.Time
-	LatestSessionClassificationUpdatedAt      time.Time
+	Path                                          string
+	Name                                          string
+	LastActivity                                  time.Time
+	Status                                        ProjectStatus
+	AttentionScore                                int
+	PresentOnDisk                                 bool
+	RepoDirty                                     bool
+	RepoSyncStatus                                RepoSyncStatus
+	RepoAheadCount                                int
+	RepoBehindCount                               int
+	Forgotten                                     bool
+	ManuallyAdded                                 bool
+	InScope                                       bool
+	Pinned                                        bool
+	SnoozedUntil                                  *time.Time
+	Note                                          string
+	RunCommand                                    string
+	MovedFromPath                                 string
+	MovedAt                                       time.Time
+	LatestSessionID                               string
+	LatestSessionFormat                           string
+	LatestSessionDetectedProjectPath              string
+	LatestSessionSnapshotHash                     string
+	LatestSessionLastEventAt                      time.Time
+	LatestTurnStartedAt                           time.Time
+	LatestTurnStateKnown                          bool
+	LatestTurnCompleted                           bool
+	LatestSessionClassification                   SessionClassificationStatus
+	LatestSessionClassificationStage              SessionClassificationStage
+	LatestSessionClassificationType               SessionCategory
+	LatestSessionSummary                          string
+	LatestSessionClassificationStageStartedAt     time.Time
+	LatestSessionClassificationUpdatedAt          time.Time
+	LatestCompletedSessionClassificationType      SessionCategory
+	LatestCompletedSessionSummary                 string
+	LatestCompletedSessionClassificationUpdatedAt time.Time
 }
 
 type ProjectDetail struct {

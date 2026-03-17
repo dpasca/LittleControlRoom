@@ -79,9 +79,14 @@ type Model struct {
 	runtimeViewport       viewport.Model
 	runtimeActionSelected int
 	focusedPane           paneFocus
+	assessmentFlashUntil  map[string]time.Time
+	usagePulseUntil       time.Time
+	lastUsageTotals       model.LLMUsage
+	haveUsageTotals       bool
 
 	codexManager        *codexapp.Manager
 	runtimeManager      *projectrun.Manager
+	runtimeSnapshots    map[string]projectrun.Snapshot
 	codexVisibleProject string
 	codexHiddenProject  string
 	codexPendingOpen    *codexPendingOpenState
@@ -288,6 +293,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		runtimeViewport:        runtimeViewport,
 		codexViewport:          codexViewport,
 		focusedPane:            focusProjects,
+		assessmentFlashUntil:   make(map[string]time.Time),
 		sortMode:               sortByAttention,
 		visibility:             visibilityAIFolders,
 		excludeProjectPatterns: currentExcludeProjectPatterns(svc),
@@ -303,6 +309,68 @@ func (m Model) currentTime() time.Time {
 		return m.nowFn()
 	}
 	return time.Now()
+}
+
+func (m *Model) markAssessmentFlash(projectPath string, at time.Time) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return
+	}
+	if at.IsZero() {
+		at = m.currentTime()
+	}
+	if m.assessmentFlashUntil == nil {
+		m.assessmentFlashUntil = make(map[string]time.Time)
+	}
+	m.assessmentFlashUntil[projectPath] = at.Add(assessmentFlashDuration)
+}
+
+func (m Model) assessmentFlashActive(projectPath string) bool {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return false
+	}
+	until, ok := m.assessmentFlashUntil[projectPath]
+	if !ok {
+		return false
+	}
+	return until.After(m.currentTime())
+}
+
+func (m *Model) pruneTransientHighlights(now time.Time) {
+	if now.IsZero() {
+		now = m.currentTime()
+	}
+	for projectPath, until := range m.assessmentFlashUntil {
+		if !until.After(now) {
+			delete(m.assessmentFlashUntil, projectPath)
+		}
+	}
+	if !m.usagePulseUntil.After(now) {
+		m.usagePulseUntil = time.Time{}
+	}
+}
+
+func (m *Model) refreshUsagePulse() {
+	usage := m.currentUsage()
+	if !usage.Enabled {
+		m.lastUsageTotals = model.LLMUsage{}
+		m.haveUsageTotals = false
+		m.usagePulseUntil = time.Time{}
+		return
+	}
+	totals := usage.Totals
+	if !m.haveUsageTotals {
+		m.lastUsageTotals = totals
+		m.haveUsageTotals = true
+		return
+	}
+	if totals.InputTokens > m.lastUsageTotals.InputTokens ||
+		totals.OutputTokens > m.lastUsageTotals.OutputTokens ||
+		totals.TotalTokens > m.lastUsageTotals.TotalTokens {
+		m.usagePulseUntil = m.currentTime().Add(usagePulseDuration)
+	}
+	m.lastUsageTotals = totals
 }
 
 func currentExcludeProjectPatterns(svc *service.Service) []string {
@@ -689,6 +757,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case busMsg:
 		cmds := []tea.Cmd{m.waitBusCmd()}
 		if msg.Type == events.ClassificationUpdated {
+			if msg.Payload["status"] == "completed" {
+				m.markAssessmentFlash(msg.ProjectPath, msg.At)
+			}
 			cmds = append(cmds, m.loadProjectsCmd())
 			if p, ok := m.selectedProject(); ok && p.Path == msg.ProjectPath {
 				cmds = append(cmds, m.loadDetailCmd(p.Path))
@@ -702,6 +773,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	case spinnerTickMsg:
 		m.spinnerFrame = (m.spinnerFrame + 1) % spinnerAnimationFrameWrap
+		m.refreshUsagePulse()
+		m.pruneTransientHighlights(m.currentTime())
 		m.syncRuntimeViewport(false)
 		return m, spinnerTickCmd()
 	case codexUpdateMsg:
@@ -1611,7 +1684,7 @@ func (m Model) renderProjectList(width, height int) string {
 			lipgloss.Top,
 			cellStyle(lipgloss.NewStyle().Width(5).Align(lipgloss.Right).Bold(selectedRow)).Render(attention),
 			"  ",
-			cellStyle(statusDisplayStyle(p).Width(8)).Render(projectListStatus(p)),
+			cellStyle(m.projectListAssessmentStatusStyle(p).Width(8)).Render(projectListStatus(p)),
 			" ",
 			cellStyle(lipgloss.NewStyle().Width(10)).Render(last),
 			" ",
@@ -1623,7 +1696,7 @@ func (m Model) renderProjectList(width, height int) string {
 			"  ",
 			cellStyle(lipgloss.NewStyle().Width(projectW).Bold(selectedRow)).Render(name),
 			"  ",
-			cellStyle(projectAssessmentStyle(p).Width(assessmentW).Bold(selectedRow)).Render(assessment),
+			cellStyle(m.projectListAssessmentSummaryStyle(p).Width(assessmentW).Bold(selectedRow)).Render(assessment),
 		)
 		if width > 0 {
 			row = fitStyledWidth(row, width)
@@ -1706,26 +1779,15 @@ func (m Model) renderDetailContent(width int) string {
 	}
 
 	lines = append(lines, detailSectionStyle.Render("Session summary"))
-	if d.LatestSessionClassification == nil {
+	summaryText := projectAssessmentTextAt(p, m.currentTime())
+	summaryStyle := detailValueStyle
+	if projectAssessmentRefreshing(p) {
+		summaryStyle = detailMutedStyle
+	}
+	if strings.TrimSpace(summaryText) == "" || summaryText == "-" {
 		lines = append(lines, renderWrappedDetailBullet(detailMutedStyle, width, "not assessed yet"))
 	} else {
-		c := d.LatestSessionClassification
-		switch c.Status {
-		case model.ClassificationPending:
-			lines = append(lines, renderWrappedDetailBullet(classificationStyle(c.Status), width, classificationProgressText(c.Status, c.Stage, c.StageStartedAt, c.UpdatedAt, m.currentTime(), true)))
-		case model.ClassificationRunning:
-			lines = append(lines, renderWrappedDetailBullet(classificationStyle(c.Status), width, classificationProgressText(c.Status, c.Stage, c.StageStartedAt, c.UpdatedAt, m.currentTime(), true)))
-		case model.ClassificationFailed:
-			lines = append(lines, renderWrappedDetailBullet(classificationStyle(c.Status), width, classificationFailureText(c)))
-		case model.ClassificationCompleted:
-			if c.Summary != "" {
-				lines = append(lines, renderWrappedDetailBullet(detailValueStyle, width, c.Summary))
-			} else {
-				lines = append(lines, renderWrappedDetailBullet(detailMutedStyle, width, "no summary"))
-			}
-		default:
-			lines = append(lines, renderWrappedDetailBullet(detailValueStyle, width, string(c.Status)))
-		}
+		lines = append(lines, renderWrappedDetailBullet(summaryStyle, width, summaryText))
 	}
 
 	if m.showSessions {
@@ -1770,8 +1832,10 @@ var spinnerFrames = []string{"|", "/", "-", `\`}
 const (
 	recentMoveWindow          = 24 * time.Hour
 	spinnerAnimationFrameWrap = 4096
+	assessmentFlashDuration   = time.Second
 	projectListAgentWidth     = 10
 	projectListRunWidth       = 11
+	usagePulseDuration        = 900 * time.Millisecond
 )
 
 var (
@@ -2468,55 +2532,30 @@ func projectAssessmentText(project model.ProjectSummary) string {
 }
 
 func projectAssessmentTextAt(project model.ProjectSummary, now time.Time) string {
-	switch project.LatestSessionClassification {
-	case model.ClassificationCompleted:
-		if strings.TrimSpace(project.LatestSessionSummary) != "" {
-			return project.LatestSessionSummary
-		}
-		if label, _, ok := assessmentStatusLabel(project, false); ok {
-			return label
-		}
-		return "completed"
-	case model.ClassificationPending:
-		return classificationProgressText(
-			project.LatestSessionClassification,
-			project.LatestSessionClassificationStage,
-			project.LatestSessionClassificationStageStartedAt,
-			project.LatestSessionClassificationUpdatedAt,
-			now,
-			false,
-		)
-	case model.ClassificationRunning:
-		return classificationProgressText(
-			project.LatestSessionClassification,
-			project.LatestSessionClassificationStage,
-			project.LatestSessionClassificationStageStartedAt,
-			project.LatestSessionClassificationUpdatedAt,
-			now,
-			false,
-		)
-	case model.ClassificationFailed:
-		if stageLabel := classificationProgressStageLabel(model.ClassificationRunning, project.LatestSessionClassificationStage); stageLabel != "" {
-			return "failed after " + stageLabel
-		}
-		return "failed"
-	default:
-		if project.LatestSessionFormat != "" {
-			return "not assessed yet"
-		}
-		return "-"
+	_ = now
+	if strings.TrimSpace(project.LatestSessionSummary) != "" && project.LatestSessionClassification == model.ClassificationCompleted {
+		return project.LatestSessionSummary
 	}
+	if strings.TrimSpace(project.LatestCompletedSessionSummary) != "" {
+		return project.LatestCompletedSessionSummary
+	}
+	if label, _, ok := visibleAssessmentStatusLabel(project); ok {
+		return label
+	}
+	if project.LatestSessionFormat != "" {
+		return "not assessed yet"
+	}
+	return "-"
 }
 
 func projectAssessmentStyle(project model.ProjectSummary) lipgloss.Style {
-	switch project.LatestSessionClassification {
-	case model.ClassificationCompleted:
+	if _, _, ok := visibleAssessmentStatusLabel(project); ok {
+		if projectAssessmentRefreshing(project) {
+			return detailMutedStyle
+		}
 		return detailValueStyle
-	case model.ClassificationPending, model.ClassificationRunning, model.ClassificationFailed:
-		return classificationStyle(project.LatestSessionClassification)
-	default:
-		return detailMutedStyle
 	}
+	return detailMutedStyle
 }
 
 type projectRunState uint8
@@ -2850,48 +2889,24 @@ func detailReasonLine(reason model.AttentionReason) string {
 }
 
 func assessmentDisplayStyle(project model.ProjectSummary) lipgloss.Style {
-	if _, category, ok := assessmentStatusLabel(project, false); ok {
+	if _, category, ok := visibleAssessmentStatusLabel(project); ok {
+		if projectAssessmentRefreshing(project) {
+			return detailMutedStyle
+		}
 		return classificationCategoryStyle(category)
 	}
-	switch project.LatestSessionClassification {
-	case model.ClassificationPending, model.ClassificationRunning, model.ClassificationFailed:
-		return classificationStyle(project.LatestSessionClassification)
-	default:
-		return detailMutedStyle
-	}
+	return detailMutedStyle
 }
 
 func projectAssessmentLabelAt(project model.ProjectSummary, now time.Time) string {
-	if label, _, ok := assessmentStatusLabel(project, false); ok {
+	_ = now
+	if label, _, ok := visibleAssessmentStatusLabel(project); ok {
 		return label
 	}
-	switch project.LatestSessionClassification {
-	case model.ClassificationPending:
-		return classificationProgressText(
-			project.LatestSessionClassification,
-			project.LatestSessionClassificationStage,
-			project.LatestSessionClassificationStageStartedAt,
-			project.LatestSessionClassificationUpdatedAt,
-			now,
-			false,
-		)
-	case model.ClassificationRunning:
-		return classificationProgressText(
-			project.LatestSessionClassification,
-			project.LatestSessionClassificationStage,
-			project.LatestSessionClassificationStageStartedAt,
-			project.LatestSessionClassificationUpdatedAt,
-			now,
-			false,
-		)
-	case model.ClassificationFailed:
-		return "failed"
-	default:
-		if project.LatestSessionFormat != "" {
-			return "not assessed yet"
-		}
-		return "not assessed"
+	if project.LatestSessionFormat != "" {
+		return "not assessed yet"
 	}
+	return "not assessed"
 }
 
 func projectListStatus(project model.ProjectSummary) string {
@@ -2901,22 +2916,13 @@ func projectListStatus(project model.ProjectSummary) string {
 	if moveStatusActive(project.MovedAt, project.Path, project.LatestSessionDetectedProjectPath) {
 		return "moved"
 	}
-	if label, _, ok := assessmentStatusLabel(project, true); ok {
+	if label, _, ok := visibleAssessmentStatusLabel(project); ok {
 		return label
 	}
-	switch project.LatestSessionClassification {
-	case model.ClassificationPending:
-		return "queued"
-	case model.ClassificationRunning:
-		return classificationProgressCompactLabel(project.LatestSessionClassificationStage)
-	case model.ClassificationFailed:
-		return "failed"
-	default:
-		if project.LatestSessionFormat != "" {
-			return "pending"
-		}
-		return projectActivityStatus(project)
+	if project.LatestSessionFormat != "" {
+		return "new"
 	}
+	return projectActivityStatus(project)
 }
 
 func classificationProgressText(status model.SessionClassificationStatus, stage model.SessionClassificationStage, stageStartedAt, updatedAt, now time.Time, includeAssessmentPrefix bool) string {
@@ -3132,15 +3138,16 @@ func (m Model) classificationCounts() classificationSummary {
 func (m Model) renderFooter(width int) string {
 	usage := m.currentUsage()
 	usageLabel := compactUsageLabel(usage)
+	usageSegment := m.renderFooterUsageSegment(usageLabel)
 	if m.diffView != nil {
-		return renderDiffFooter(width, *m.diffView, usageLabel)
+		return renderDiffFooter(width, *m.diffView, usageSegment)
 	}
 	if m.gitStatusDialog != nil {
 		label := gitStatusDialogReadyStatus(*m.gitStatusDialog)
 		if m.gitStatusApplying {
 			label = "Applying git action..."
 		}
-		return fitFooterWidth(label+" | "+usageLabel, width)
+		return fitFooterWidth(label+" | "+usageSegment, width)
 	}
 	if m.commitPreview != nil {
 		label := commitPreviewReadyStatus(m.commitPreview.CanPush)
@@ -3149,37 +3156,37 @@ func (m Model) renderFooter(width int) string {
 		} else if m.commitPreviewRefreshing {
 			label = "Refreshing commit preview..."
 		}
-		return fitFooterWidth(label+" | "+usageLabel, width)
+		return fitFooterWidth(label+" | "+usageSegment, width)
 	}
 	if m.newProjectDialog != nil {
 		label := "New project: Enter create/add, Space toggle git, Alt+1..3 recent, Esc cancel"
 		if m.newProjectDialog.Submitting {
 			label = "New project: applying..."
 		}
-		return fitFooterWidth(label+" | "+usageLabel, width)
+		return fitFooterWidth(label+" | "+usageSegment, width)
 	}
 	if m.commandMode {
-		return fitFooterWidth("Command palette open | "+usageLabel, width)
+		return fitFooterWidth("Command palette open | "+usageSegment, width)
 	}
 	if m.settingsMode {
-		return fitFooterWidth("Settings: Enter save, Tab next, Esc cancel | "+usageLabel, width)
+		return fitFooterWidth("Settings: Enter save, Tab next, Esc cancel | "+usageSegment, width)
 	}
 	if m.noteClearConfirm != nil {
-		return fitFooterWidth("Confirm note clear | "+usageLabel, width)
+		return fitFooterWidth("Confirm note clear | "+usageSegment, width)
 	}
 	if m.noteCopyDialog != nil {
-		return fitFooterWidth("Copy note text: Enter copy, Tab next, Esc cancel | "+usageLabel, width)
+		return fitFooterWidth("Copy note text: Enter copy, Tab next, Esc cancel | "+usageSegment, width)
 	}
 	if m.noteDialog != nil && m.noteDialog.Selection != nil {
-		return fitFooterWidth("Note selection: Space mark/copy, arrows move, Esc cancel | "+usageLabel, width)
+		return fitFooterWidth("Note selection: Space mark/copy, arrows move, Esc cancel | "+usageSegment, width)
 	}
 	if m.noteDialog != nil {
-		return fitFooterWidth("Project notes: Ctrl+Y copy, Ctrl+S save, Tab actions, Esc cancel | "+usageLabel, width)
+		return fitFooterWidth("Project notes: Ctrl+Y copy, Ctrl+S save, Tab actions, Esc cancel | "+usageSegment, width)
 	}
 	return renderFooterLine(
 		width,
 		compactFooterBase(width, m.focusedPane, m.detailViewport.ScrollPercent(), m.runtimeViewport.ScrollPercent(), m.hasHiddenCodexSession(), m.currentEmbeddedLaunchLabel()),
-		renderFooterUsage(usageLabel),
+		usageSegment,
 	)
 }
 
@@ -3759,6 +3766,20 @@ func compactUsageLabel(usage model.LLMSessionUsage) string {
 	return fmt.Sprintf("tok %s/%s", formatTokenCount(usage.Totals.InputTokens), formatTokenCount(usage.Totals.OutputTokens))
 }
 
+func (m Model) renderFooterUsageSegment(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	if !m.usagePulseUntil.After(m.currentTime()) {
+		return renderFooterUsage(text)
+	}
+	if m.spinnerFrame%2 == 0 {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("186")).Bold(true).Render(text)
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("59")).Bold(true).Render(text)
+}
+
 func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll float64, hasHiddenCodex bool, launchLabel string) string {
 	if strings.TrimSpace(launchLabel) == "" {
 		launchLabel = "Session"
@@ -4243,23 +4264,45 @@ func statusDisplayStyle(project model.ProjectSummary) lipgloss.Style {
 	if projectMissing(project) || moveStatusActive(project.MovedAt, project.Path, project.LatestSessionDetectedProjectPath) {
 		return activityDisplayStyle(project)
 	}
-	switch project.LatestSessionClassification {
-	case model.ClassificationCompleted, model.ClassificationPending, model.ClassificationRunning, model.ClassificationFailed:
+	if _, _, ok := visibleAssessmentStatusLabel(project); ok {
 		return assessmentDisplayStyle(project)
-	default:
-		if project.LatestSessionFormat != "" {
-			return detailMutedStyle
-		}
-		return activityDisplayStyle(project)
 	}
+	if project.LatestSessionFormat != "" {
+		return detailMutedStyle
+	}
+	return activityDisplayStyle(project)
+}
+
+func assessmentFlashStyle(style lipgloss.Style) lipgloss.Style {
+	return style.Foreground(lipgloss.Color("16")).Background(lipgloss.Color("186")).Bold(true)
+}
+
+func (m Model) projectListAssessmentStatusStyle(project model.ProjectSummary) lipgloss.Style {
+	style := statusDisplayStyle(project)
+	if m.assessmentFlashActive(project.Path) {
+		return assessmentFlashStyle(style)
+	}
+	return style
+}
+
+func (m Model) projectListAssessmentSummaryStyle(project model.ProjectSummary) lipgloss.Style {
+	style := projectAssessmentStyle(project)
+	if m.assessmentFlashActive(project.Path) {
+		return assessmentFlashStyle(style)
+	}
+	return style
 }
 
 func assessmentStatusLabel(project model.ProjectSummary, compact bool) (string, model.SessionCategory, bool) {
 	if project.LatestSessionClassification != model.ClassificationCompleted {
 		return "", model.SessionCategoryUnknown, false
 	}
+	return assessmentStatusLabelForCategory(project.LatestSessionClassificationType, compact)
+}
 
-	switch project.LatestSessionClassificationType {
+func assessmentStatusLabelForCategory(category model.SessionCategory, compact bool) (string, model.SessionCategory, bool) {
+	_ = compact
+	switch category {
 	case model.SessionCategoryCompleted:
 		return "done", model.SessionCategoryCompleted, true
 	case model.SessionCategoryBlocked:
@@ -4272,6 +4315,29 @@ func assessmentStatusLabel(project model.ProjectSummary, compact bool) (string, 
 		return "working", model.SessionCategoryInProgress, true
 	default:
 		return "", model.SessionCategoryUnknown, false
+	}
+}
+
+func latestCompletedAssessmentStatusLabel(project model.ProjectSummary, compact bool) (string, model.SessionCategory, bool) {
+	if project.LatestCompletedSessionClassificationType == "" || project.LatestCompletedSessionClassificationType == model.SessionCategoryUnknown {
+		return "", model.SessionCategoryUnknown, false
+	}
+	return assessmentStatusLabelForCategory(project.LatestCompletedSessionClassificationType, compact)
+}
+
+func visibleAssessmentStatusLabel(project model.ProjectSummary) (string, model.SessionCategory, bool) {
+	if label, category, ok := assessmentStatusLabel(project, false); ok {
+		return label, category, true
+	}
+	return latestCompletedAssessmentStatusLabel(project, false)
+}
+
+func projectAssessmentRefreshing(project model.ProjectSummary) bool {
+	switch project.LatestSessionClassification {
+	case model.ClassificationPending, model.ClassificationRunning:
+		return true
+	default:
+		return false
 	}
 }
 

@@ -60,6 +60,20 @@ type fakeElicitationResponse struct {
 	content  json.RawMessage
 }
 
+type usageSnapshotClassifier struct {
+	usage model.LLMSessionUsage
+}
+
+func (c *usageSnapshotClassifier) QueueProject(context.Context, model.ProjectState) (bool, error) {
+	return true, nil
+}
+
+func (c *usageSnapshotClassifier) Notify()               {}
+func (c *usageSnapshotClassifier) Start(context.Context) {}
+func (c *usageSnapshotClassifier) UsageSnapshot() model.LLMSessionUsage {
+	return c.usage
+}
+
 func (s *fakeCodexSession) ProjectPath() string {
 	return s.projectPath
 }
@@ -331,6 +345,44 @@ func TestProjectListStatusUsesAssessmentCategory(t *testing.T) {
 	}
 }
 
+func TestAssessmentFlashHighlightsListCells(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	now := time.Date(2026, 3, 17, 12, 0, 0, 0, time.UTC)
+	project := model.ProjectSummary{
+		Path:                             "/tmp/demo",
+		Status:                           model.StatusIdle,
+		PresentOnDisk:                    true,
+		LatestSessionClassification:      model.ClassificationCompleted,
+		LatestSessionClassificationType:  model.SessionCategoryNeedsFollowUp,
+		LatestSessionSummary:             "A concrete next step still remains.",
+		LatestSessionFormat:              "modern",
+		LatestSessionDetectedProjectPath: "/tmp/demo",
+	}
+
+	plain := Model{nowFn: func() time.Time { return now }}
+	flashing := Model{
+		nowFn:                func() time.Time { return now },
+		assessmentFlashUntil: map[string]time.Time{project.Path: now.Add(assessmentFlashDuration)},
+	}
+
+	plainRendered := plain.projectListAssessmentStatusStyle(project).Render(projectListStatus(project))
+	flashRendered := flashing.projectListAssessmentStatusStyle(project).Render(projectListStatus(project))
+	if ansi.Strip(plainRendered) != ansi.Strip(flashRendered) {
+		t.Fatalf("assessment flash should keep the same visible text: %q vs %q", ansi.Strip(plainRendered), ansi.Strip(flashRendered))
+	}
+	if plainRendered == flashRendered {
+		t.Fatalf("assessment flash should change the ANSI styling")
+	}
+}
+
 func TestProjectDisplayStatusClearsMovedWhenLatestSessionIsInNewPath(t *testing.T) {
 	now := time.Now().UTC()
 	project := model.ProjectSummary{
@@ -599,6 +651,73 @@ func TestCompactUsageLabel(t *testing.T) {
 	}
 }
 
+func TestRenderFooterPulsesWhenUsageIncreases(t *testing.T) {
+	t.Parallel()
+
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	classifier := &usageSnapshotClassifier{
+		usage: model.LLMSessionUsage{
+			Enabled: true,
+			Totals: model.LLMUsage{
+				InputTokens:  345,
+				OutputTokens: 538,
+			},
+		},
+	}
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	svc.SetSessionClassifier(classifier)
+
+	now := time.Date(2026, 3, 17, 12, 0, 0, 0, time.UTC)
+	m := New(ctx, svc)
+	m.nowFn = func() time.Time { return now }
+	m.refreshUsagePulse()
+
+	steady := m.renderFooter(160)
+	if !strings.Contains(ansi.Strip(steady), "tok 345/538") {
+		t.Fatalf("steady footer missing token label: %q", steady)
+	}
+
+	classifier.usage.Totals.InputTokens = 360
+	classifier.usage.Totals.OutputTokens = 544
+	m.spinnerFrame = 0
+	m.refreshUsagePulse()
+	pulseA := m.renderFooter(160)
+
+	m.spinnerFrame = 1
+	pulseB := m.renderFooter(160)
+
+	if ansi.Strip(pulseA) != ansi.Strip(pulseB) {
+		t.Fatalf("token pulse should keep the same visible text: %q vs %q", ansi.Strip(pulseA), ansi.Strip(pulseB))
+	}
+	if pulseA == pulseB {
+		t.Fatalf("token pulse should animate across spinner frames")
+	}
+	if pulseA == ansi.Strip(pulseA) {
+		t.Fatalf("token pulse should use ANSI styling: %q", pulseA)
+	}
+
+	now = now.Add(usagePulseDuration + 50*time.Millisecond)
+	settled := m.renderFooter(160)
+	if settled == pulseA || settled == pulseB {
+		t.Fatalf("token pulse should expire after the pulse window")
+	}
+}
+
 func TestLLMHelpLines(t *testing.T) {
 	usage := model.LLMSessionUsage{
 		Enabled:   true,
@@ -669,17 +788,19 @@ func TestProjectAssessmentTextUsesFallbackStates(t *testing.T) {
 	project := model.ProjectSummary{
 		LatestSessionClassification: model.ClassificationRunning,
 	}
-	if got := projectAssessmentText(project); got != "running" {
-		t.Fatalf("projectAssessmentText(running) = %q, want %q", got, "running")
+	if got := projectAssessmentText(project); got != "-" {
+		t.Fatalf("projectAssessmentText(running) = %q, want %q", got, "-")
 	}
 
 	project = model.ProjectSummary{
 		LatestSessionClassification:               model.ClassificationRunning,
 		LatestSessionClassificationStage:          model.ClassificationStageWaitingForModel,
 		LatestSessionClassificationStageStartedAt: time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC),
+		LatestCompletedSessionClassificationType:  model.SessionCategoryNeedsFollowUp,
+		LatestCompletedSessionSummary:             "A concrete next step still remains.",
 	}
-	if got := projectAssessmentTextAt(project, time.Date(2026, 3, 10, 12, 0, 37, 0, time.UTC)); got != "waiting for model 00:37" {
-		t.Fatalf("projectAssessmentTextAt(waiting_for_model) = %q, want %q", got, "waiting for model 00:37")
+	if got := projectAssessmentTextAt(project, time.Date(2026, 3, 10, 12, 0, 37, 0, time.UTC)); got != "A concrete next step still remains." {
+		t.Fatalf("projectAssessmentTextAt(refreshing) = %q, want completed summary", got)
 	}
 
 	project = model.ProjectSummary{
@@ -687,6 +808,25 @@ func TestProjectAssessmentTextUsesFallbackStates(t *testing.T) {
 	}
 	if got := projectAssessmentText(project); got != "not assessed yet" {
 		t.Fatalf("projectAssessmentText(unassessed) = %q, want %q", got, "not assessed yet")
+	}
+}
+
+func TestProjectListStatusUsesLastCompletedAssessmentWhileRefreshRuns(t *testing.T) {
+	project := model.ProjectSummary{
+		Status:                                   model.StatusIdle,
+		PresentOnDisk:                            true,
+		LatestSessionFormat:                      "modern",
+		LatestSessionClassification:              model.ClassificationRunning,
+		LatestSessionClassificationStage:         model.ClassificationStageWaitingForModel,
+		LatestCompletedSessionClassificationType: model.SessionCategoryWaitingForUser,
+		LatestCompletedSessionSummary:            "Waiting on a design decision before coding resumes.",
+	}
+
+	if got := projectListStatus(project); got != "waiting" {
+		t.Fatalf("projectListStatus(refreshing) = %q, want %q", got, "waiting")
+	}
+	if got := projectAssessmentText(project); got != project.LatestCompletedSessionSummary {
+		t.Fatalf("projectAssessmentText(refreshing) = %q, want completed summary", got)
 	}
 }
 
@@ -1195,6 +1335,8 @@ func TestRenderDetailShowsAssessmentStageTiming(t *testing.T) {
 			LatestSessionClassification:      model.ClassificationRunning,
 			LatestSessionClassificationStage: model.ClassificationStageWaitingForModel,
 			LatestSessionClassificationStageStartedAt: time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC),
+			LatestCompletedSessionClassificationType:  model.SessionCategoryWaitingForUser,
+			LatestCompletedSessionSummary:             "Waiting on a design decision before coding resumes.",
 		}},
 		selected: 0,
 		detail: model.ProjectDetail{
@@ -1207,11 +1349,11 @@ func TestRenderDetailShowsAssessmentStageTiming(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderDetailContent(100))
-	if !strings.Contains(rendered, "Assessment: waiting for model 00:37") {
-		t.Fatalf("renderDetailContent() missing assessment stage timing: %q", rendered)
+	if !strings.Contains(rendered, "Assessment: waiting") {
+		t.Fatalf("renderDetailContent() missing visible assessment label: %q", rendered)
 	}
-	if !strings.Contains(rendered, "- assessment waiting for model 00:37") {
-		t.Fatalf("renderDetailContent() missing session summary stage timing: %q", rendered)
+	if !strings.Contains(rendered, "- Waiting on a design decision before coding resumes.") {
+		t.Fatalf("renderDetailContent() missing visible session summary: %q", rendered)
 	}
 }
 
@@ -1224,6 +1366,7 @@ func TestRenderDetailWrapsLongSessionSummary(t *testing.T) {
 			PresentOnDisk:                   true,
 			LatestSessionClassification:     model.ClassificationCompleted,
 			LatestSessionClassificationType: model.SessionCategoryNeedsFollowUp,
+			LatestSessionSummary:            "This is a deliberately long session summary that should wrap inside the detail pane instead of clipping off the edge.",
 		}},
 		selected: 0,
 		detail: model.ProjectDetail{

@@ -1276,7 +1276,7 @@ func diffViewFooterLabel(state diffViewState) string {
 	}
 }
 
-func renderDiffFooter(width int, state diffViewState, usageLabel string) string {
+func renderDiffFooter(width int, state diffViewState, usageSegment string) string {
 	hideLabel := "list"
 	closeLabel := "close"
 	if state.returnToCommitPreview != nil {
@@ -1291,7 +1291,7 @@ func renderDiffFooter(width int, state diffViewState, usageLabel string) string 
 				footerHideAction("Alt+Up", hideLabel),
 				footerExitAction("Esc", closeLabel),
 			),
-			renderFooterUsage(usageLabel),
+			usageSegment,
 		)
 	}
 
@@ -1322,7 +1322,7 @@ func renderDiffFooter(width int, state diffViewState, usageLabel string) string 
 		)
 	}
 	actions = append(actions, footerExitAction("Esc", closeLabel))
-	return renderFooterLine(width, meta, renderFooterActionList(actions...), renderFooterUsage(usageLabel))
+	return renderFooterLine(width, meta, renderFooterActionList(actions...), usageSegment)
 }
 
 func diffViewCloseLabel(state diffViewState) string {

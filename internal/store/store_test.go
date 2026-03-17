@@ -383,11 +383,79 @@ func TestSessionClassificationQueueAndDetail(t *testing.T) {
 	if projects[0].LatestSessionSummary != "Work appears complete for now." {
 		t.Fatalf("latest session summary = %q, want completed summary", projects[0].LatestSessionSummary)
 	}
+	if projects[0].LatestCompletedSessionClassificationType != model.SessionCategoryCompleted {
+		t.Fatalf("latest completed session classification type = %s, want completed", projects[0].LatestCompletedSessionClassificationType)
+	}
+	if projects[0].LatestCompletedSessionSummary != "Work appears complete for now." {
+		t.Fatalf("latest completed session summary = %q, want completed summary", projects[0].LatestCompletedSessionSummary)
+	}
 	if got := projects[0].LatestTurnStartedAt; got.Unix() != turnStartedAt.Unix() {
 		t.Fatalf("project latest turn started at = %v, want %v", got, turnStartedAt)
 	}
 	if !projects[0].LatestTurnStateKnown || projects[0].LatestTurnCompleted {
 		t.Fatalf("project latest turn state = known:%v completed:%v, want known:true completed:false", projects[0].LatestTurnStateKnown, projects[0].LatestTurnCompleted)
+	}
+
+	refreshTime := now.Add(2 * time.Minute)
+	state.UpdatedAt = refreshTime
+	state.Sessions = []model.SessionEvidence{
+		{
+			SessionID:            "ses_1",
+			ProjectPath:          "/tmp/classified",
+			DetectedProjectPath:  "/tmp/classified",
+			SessionFile:          "/tmp/session.jsonl",
+			Format:               "modern",
+			SnapshotHash:         "session-hash-1",
+			LastEventAt:          now,
+			LatestTurnStartedAt:  turnStartedAt,
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  false,
+		},
+		{
+			SessionID:            "ses_2",
+			ProjectPath:          "/tmp/classified",
+			DetectedProjectPath:  "/tmp/classified",
+			SessionFile:          "/tmp/session-2.jsonl",
+			Format:               "modern",
+			SnapshotHash:         "session-hash-2",
+			LastEventAt:          refreshTime,
+			LatestTurnStartedAt:  refreshTime,
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  false,
+		},
+	}
+	if err := st.UpsertProjectState(ctx, state); err != nil {
+		t.Fatalf("upsert refreshed project state: %v", err)
+	}
+	queued, err = st.QueueSessionClassification(ctx, model.SessionClassification{
+		SessionID:         "ses_2",
+		ProjectPath:       "/tmp/classified",
+		SessionFile:       "/tmp/session-2.jsonl",
+		SessionFormat:     "modern",
+		SnapshotHash:      "hash-2",
+		Model:             "gpt-5-mini",
+		ClassifierVersion: "v1",
+		SourceUpdatedAt:   refreshTime,
+	}, 15*time.Minute)
+	if err != nil {
+		t.Fatalf("queue refresh classification: %v", err)
+	}
+	if !queued {
+		t.Fatalf("expected refreshed session to queue classification")
+	}
+
+	projects, err = st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list projects with queued refresh classification: %v", err)
+	}
+	if projects[0].LatestSessionClassification != model.ClassificationPending {
+		t.Fatalf("latest session classification = %s, want pending", projects[0].LatestSessionClassification)
+	}
+	if projects[0].LatestCompletedSessionClassificationType != model.SessionCategoryCompleted {
+		t.Fatalf("latest completed session classification type = %s, want completed", projects[0].LatestCompletedSessionClassificationType)
+	}
+	if projects[0].LatestCompletedSessionSummary != "Work appears complete for now." {
+		t.Fatalf("latest completed session summary after refresh = %q, want completed summary", projects[0].LatestCompletedSessionSummary)
 	}
 
 	queued, err = st.QueueSessionClassification(ctx, model.SessionClassification{

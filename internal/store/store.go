@@ -528,7 +528,10 @@ func (s *Store) ListProjects(ctx context.Context, includeHistorical bool) ([]mod
 			COALESCE(sc.category, ''),
 			COALESCE(sc.summary, ''),
 			sc.stage_started_at,
-			sc.updated_at
+			sc.updated_at,
+			COALESCE(sc_completed.category, ''),
+			COALESCE(sc_completed.summary, ''),
+			sc_completed.updated_at
 		FROM projects p
 		LEFT JOIN project_sessions ps ON ps.session_id = (
 			SELECT ps2.session_id
@@ -538,6 +541,13 @@ func (s *Store) ListProjects(ctx context.Context, includeHistorical bool) ([]mod
 			LIMIT 1
 		)
 		LEFT JOIN session_classifications sc ON sc.session_id = ps.session_id
+		LEFT JOIN session_classifications sc_completed ON sc_completed.session_id = (
+			SELECT sc2.session_id
+			FROM session_classifications sc2
+			WHERE sc2.project_path = p.path AND sc2.status = 'completed'
+			ORDER BY COALESCE(sc2.completed_at, sc2.updated_at) DESC, sc2.updated_at DESC
+			LIMIT 1
+		)
 	`
 	query += ` WHERE p.forgotten = 0`
 	if !includeHistorical {
@@ -572,6 +582,8 @@ func scanSummaryRow(scanner interface {
 		latestClassificationStatus                                                                 sql.NullString
 		latestClassificationStage, latestClassificationCategory, latestClassificationSummary       sql.NullString
 		latestClassificationStageStartedAt, latestClassificationUpdatedAt                          sql.NullInt64
+		latestCompletedClassificationCategory, latestCompletedClassificationSummary                sql.NullString
+		latestCompletedClassificationUpdatedAt                                                     sql.NullInt64
 		repoSyncStatus                                                                             string
 		attentionScore, repoAheadCount, repoBehindCount, latestTurnKnown, latestTurnCompleted      int
 		presentOnDisk, repoDirty, forgotten, manuallyAdded, inScope, pinned                        int
@@ -610,36 +622,41 @@ func scanSummaryRow(scanner interface {
 		&latestClassificationSummary,
 		&latestClassificationStageStartedAt,
 		&latestClassificationUpdatedAt,
+		&latestCompletedClassificationCategory,
+		&latestCompletedClassificationSummary,
+		&latestCompletedClassificationUpdatedAt,
 	); err != nil {
 		return model.ProjectSummary{}, err
 	}
 	p := model.ProjectSummary{
-		Path:                             path,
-		Name:                             name,
-		Status:                           model.ProjectStatus(status),
-		AttentionScore:                   attentionScore,
-		PresentOnDisk:                    presentOnDisk == 1,
-		RepoDirty:                        repoDirty == 1,
-		RepoSyncStatus:                   model.RepoSyncStatus(repoSyncStatus),
-		RepoAheadCount:                   repoAheadCount,
-		RepoBehindCount:                  repoBehindCount,
-		Forgotten:                        forgotten == 1,
-		ManuallyAdded:                    manuallyAdded == 1,
-		InScope:                          inScope == 1,
-		Pinned:                           pinned == 1,
-		Note:                             note,
-		RunCommand:                       runCommand,
-		MovedFromPath:                    movedFromPath,
-		LatestSessionID:                  latestSessionID.String,
-		LatestSessionFormat:              latestSessionFormat.String,
-		LatestSessionDetectedProjectPath: latestSessionDetectedPath.String,
-		LatestSessionSnapshotHash:        latestSessionSnapshotHash.String,
-		LatestTurnStateKnown:             latestTurnKnown != 0,
-		LatestTurnCompleted:              latestTurnCompleted != 0,
-		LatestSessionClassification:      model.SessionClassificationStatus(latestClassificationStatus.String),
-		LatestSessionClassificationStage: model.SessionClassificationStage(latestClassificationStage.String),
-		LatestSessionClassificationType:  model.SessionCategory(latestClassificationCategory.String),
-		LatestSessionSummary:             latestClassificationSummary.String,
+		Path:                                     path,
+		Name:                                     name,
+		Status:                                   model.ProjectStatus(status),
+		AttentionScore:                           attentionScore,
+		PresentOnDisk:                            presentOnDisk == 1,
+		RepoDirty:                                repoDirty == 1,
+		RepoSyncStatus:                           model.RepoSyncStatus(repoSyncStatus),
+		RepoAheadCount:                           repoAheadCount,
+		RepoBehindCount:                          repoBehindCount,
+		Forgotten:                                forgotten == 1,
+		ManuallyAdded:                            manuallyAdded == 1,
+		InScope:                                  inScope == 1,
+		Pinned:                                   pinned == 1,
+		Note:                                     note,
+		RunCommand:                               runCommand,
+		MovedFromPath:                            movedFromPath,
+		LatestSessionID:                          latestSessionID.String,
+		LatestSessionFormat:                      latestSessionFormat.String,
+		LatestSessionDetectedProjectPath:         latestSessionDetectedPath.String,
+		LatestSessionSnapshotHash:                latestSessionSnapshotHash.String,
+		LatestTurnStateKnown:                     latestTurnKnown != 0,
+		LatestTurnCompleted:                      latestTurnCompleted != 0,
+		LatestSessionClassification:              model.SessionClassificationStatus(latestClassificationStatus.String),
+		LatestSessionClassificationStage:         model.SessionClassificationStage(latestClassificationStage.String),
+		LatestSessionClassificationType:          model.SessionCategory(latestClassificationCategory.String),
+		LatestSessionSummary:                     latestClassificationSummary.String,
+		LatestCompletedSessionClassificationType: model.SessionCategory(latestCompletedClassificationCategory.String),
+		LatestCompletedSessionSummary:            latestCompletedClassificationSummary.String,
 	}
 	if lastActivity.Valid {
 		p.LastActivity = time.Unix(lastActivity.Int64, 0)
@@ -662,6 +679,9 @@ func scanSummaryRow(scanner interface {
 	}
 	if latestClassificationUpdatedAt.Valid {
 		p.LatestSessionClassificationUpdatedAt = time.Unix(latestClassificationUpdatedAt.Int64, 0)
+	}
+	if latestCompletedClassificationUpdatedAt.Valid {
+		p.LatestCompletedSessionClassificationUpdatedAt = time.Unix(latestCompletedClassificationUpdatedAt.Int64, 0)
 	}
 	return p, nil
 }
@@ -1585,7 +1605,10 @@ func (s *Store) GetProjectDetail(ctx context.Context, path string, eventLimit in
 			COALESCE(sc.category, ''),
 			COALESCE(sc.summary, ''),
 			sc.stage_started_at,
-			sc.updated_at
+			sc.updated_at,
+			COALESCE(sc_completed.category, ''),
+			COALESCE(sc_completed.summary, ''),
+			sc_completed.updated_at
 		FROM projects p
 		LEFT JOIN project_sessions ps ON ps.session_id = (
 			SELECT ps2.session_id
@@ -1595,6 +1618,13 @@ func (s *Store) GetProjectDetail(ctx context.Context, path string, eventLimit in
 			LIMIT 1
 		)
 		LEFT JOIN session_classifications sc ON sc.session_id = ps.session_id
+		LEFT JOIN session_classifications sc_completed ON sc_completed.session_id = (
+			SELECT sc2.session_id
+			FROM session_classifications sc2
+			WHERE sc2.project_path = p.path AND sc2.status = 'completed'
+			ORDER BY COALESCE(sc2.completed_at, sc2.updated_at) DESC, sc2.updated_at DESC
+			LIMIT 1
+		)
 		WHERE p.path = ?
 	`, path)
 	summary, err := scanSummaryRow(row)
