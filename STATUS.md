@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-18 01:06 JST (JST)
+Last updated: 2026-03-18 02:52 JST (JST)
 
 ## Current State
 
@@ -8,7 +8,7 @@ Implemented milestone:
 
 1. Phase 0 footprint discovery doc + fixtures
 2. Phase 1 monitoring foundation (`scan`, `doctor`, SQLite store, attention scoring, event bus)
-3. Phase 2 TUI (`tui`) with refresh, filters, pin, snooze, note, command palette, git workflow actions, and a first managed per-project runtime lane
+3. Phase 2 TUI (`tui`) with refresh, filters, pin, snooze, note, command palette, git workflow actions, a first managed per-project runtime lane, and an animated pixel-art idle control-room vignette in the runtime pane
 4. Optional Phase 3 skeleton (`serve`) with read-only REST + WS stream
 
 ## Confirmed Footprint Assumption
@@ -27,6 +27,7 @@ Current embedded Codex transport assumption:
 - The installed schema on this machine exposes `turn/start`, `turn/steer`, and `turn/interrupt`, but no separate queued-turn method; Little Control Room therefore supports explicit steer of the active turn, not a distinct queued-next-turn action.
 - The installed schema's `turn/start` params also support per-turn-and-subsequent-turn overrides for `model`, `effort`, `serviceTier`, and related thread settings, so embedded model changes can be applied without mutating the user's global Codex config.
 - The installed schema on this machine also exposes additional thread and utility RPCs such as `thread/fork`, `thread/read`, `thread/compact/start`, `review/start`, `model/list`, `app/list`, `skills/list`, and `account/rateLimits/read`, and Little Control Room now uses `thread/read` both as a stale-busy sanity check and as a steer-recovery fallback when the app-server reports that the active turn id has already advanced.
+- Observed `thread/read` can still report `status.type = active` after the steerable turn is already gone, so embedded turn recovery should trust the presence or absence of an in-progress turn in `thread.turns[]` more than `status.type` alone when deciding whether a follow-up should steer or start a fresh turn.
 - The installed schema also emits `thread/status/changed` plus streamed `plan`, `reasoning`, and `mcpToolCall` notifications, but it still does not expose a single authoritative "all visible output has settled" event, so embedded turn tracking should model `running`, `finishing`, and `reconciling` instead of a binary busy/idle flag.
 - Embedded `codex app-server` stdout frames can exceed the prior 1 MiB scanner cap during tool-heavy turns (observed around MCP/browser screenshot activity), so the embedded transport must tolerate large JSON-RPC messages and treat stdout decode failures as fatal session breakage rather than a recoverable transcript-only warning.
 - Embedded `codex app-server` sessions now launch in their own process group on Unix, and Little Control Room tears down that whole group on close, idle-timeout cleanup, and transport failure so long-lived child tool processes (for example `vite preview`) do not survive the embedded session.
@@ -61,6 +62,7 @@ Current screenshot workflow assumption:
 - Top-level `/open` slash command to open the selected project's folder in the system browser
 - Project notes via `/note` or `n`, with a multiline modal editor, wrapped detail-pane notes, a list badge when a project has saved notes, and clipboard copy actions for the whole note or an explicit marked selection
 - Managed per-project run commands via `/run` (`/start` alias), `/restart`, `/run-edit`, `/runtime`, and `/stop`, with persisted default commands, first-pass command suggestions from common project files, a small run-command editor overlay, a dedicated selectable runtime pane with output/actions, and best-effort listening-port detection for LCR-managed runtimes
+- Animated runtime-pane empty state that shows a small ANSI truecolor pixel-art "Control Room" scene with a blinking operator, console, and subtle motion when the pane is wide/tall enough, while falling back to the older text-only empty-state summary in cramped layouts
 - Git workflow actions in the TUI for full-screen diff preview, commit preview, finish, and push
 - Embedded Codex pane via `codex app-server`, with multiline compose, per-project drafts, inline `[Image #n]` clipboard image markers, large clipboard-text placeholders, backspace-based marker removal, local embedded slash commands for `/new`, `/resume` (`/session` alias), `/model`, and `/status`, visible slash autocomplete/suggestions in the composer, a provider-specific saved-session resume picker with lightweight title/summary previews and current-session markers, live model/reasoning/context-left metadata under the transcript, a local model+reasoning picker backed by `model/list`, `Enter`/`/codex`/`/codex-new`, `Esc` or `Alt+Up` hide from the embedded pane with `Enter` reopening from the project list, `Alt+Down` session picker/history, `Alt+[`/`Alt+]` live-session stepping, wrapped transcript blocks, shaded echoed user transcript blocks that reuse the composer shell styling, denser command/tool/file blocks with `Alt+L` expand/collapse, label-free user/assistant transcript rendering, manager-side update coalescing, inline approvals/input requests, and busy-elsewhere rechecks when a read-only embedded session is reopened or restored
 - Embedded OpenCode pane via `opencode serve`, with live SSE transcript updates, resume/new launch from `Enter` and `/opencode` / `/opencode-new`, shared picker/history and model picker, provider-aware banners/footer/help copy, interrupt/status actions, shared approval/question handling, and mixed Codex/OpenCode live-session management per project
@@ -82,6 +84,160 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-18 02:52 JST)
+
+- Fixed another embedded Codex stale-turn edge case: if `turn/steer` now comes back with `no active turn to steer`, Little Control Room re-reads the thread and starts a fresh turn whenever there is no in-progress turn left, instead of surfacing the stale-turn error back to the user.
+- Tightened stale-busy recovery so `thread/read` no longer keeps the session in `Working` just because `thread.status.type` still says `active`; if there is no in-progress turn in `thread.turns[]`, the session now reconciles back to idle.
+- Tightened resumed-session hydration the same way, so reopening a thread that has no live turn no longer revives it as a bogus busy/external session.
+- Softened the embedded send confirmation copy from “Steer sent…” to “Follow-up sent…” so the UI stays accurate whether the follow-up actually steered a live turn or recovered by starting a new one.
+- Added focused `internal/codexapp` regressions for all three cases: resumed active-without-turn threads, steer recovery from `no active turn to steer`, and stale-busy reconciliation when `thread/read` says `active` but exposes no in-progress turns.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/codexapp/session.go internal/codexapp/session_test.go internal/tui/codex_pane.go` passed.
+- `go test ./internal/codexapp ./internal/tui` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-18T02:51:30+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 2`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-18T02:51:38+09:00` (`projects: 132`).
+- `env -u OPENAI_API_KEY COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-parallel-stale-turn-check` reached the TUI in a no-token sandbox and was closed via `q`.
+
+Next concrete tasks:
+
+- Reproduce the original stuck `Working` / `no active turn to steer` scenario in a live embedded Codex turn and verify the footer now falls back to idle soon after the turn really ends.
+- If the app-server keeps producing more “thread says active but no turn exists” cases, consider surfacing a tiny transcript/debug breadcrumb so future protocol oddities are easier to diagnose from inside the pane.
+
+## Latest Update (2026-03-18 02:36 JST)
+
+- Simplified the operator head again by removing the tiny headset-side accents from the face area entirely and reducing the face to a clearer hair-frame, eyes, jaw, and neck shape so the sprite reads less like it has extra facial features.
+- Slowed the idle loop further by increasing the scene cycle length and reducing pose changes to a calmer cadence, with the right terminal now getting the longest dwell in the route before the operator starts the return walk.
+- Slowed the narrow-pane desk-only fallback too, so even the simplified scene keeps the more deliberate pacing.
+- Updated the walk-state regression expectations to the longer 30-step cycle and the extended right-terminal hold.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/runtime_flair.go internal/tui/runtime_flair_test.go` passed.
+- `go test ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-18T02:30:33+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-18T02:30:44+09:00` (`projects: 132`).
+- `env -u OPENAI_API_KEY COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-parallel-flair-check5` reached the TUI, rendered the updated idle scene in a no-token sandbox, and was closed via `q`.
+
+Next concrete tasks:
+
+- If the face still feels too ambiguous in your terminal font, the next move should be a genuinely smaller head sprite rather than more detail: fewer pixels usually read better than more at this scale.
+- If the route still feels unclear, consider turning the left panel into a more terminal-like object so the “walk between two stations” idea reads even in a static frame.
+
+## Latest Update (2026-03-18 02:30 JST)
+
+- Tweaked the operator face again by moving the small headset/mic accent out of the face area so the turned sprite no longer reads like it has an extra eye or mouth tucked under one eye.
+- Lengthened the idle cycle so the operator now lingers longer at each station, with a noticeably longer dwell at the right-hand desk terminal before starting the return walk.
+- Slowed the narrow-pane desk-only loop as well, so even the fallback scene keeps the calmer pacing instead of flipping between typing frames too quickly.
+- Updated the operator-state regression to assert the longer station holds and the shifted walk timing across the expanded cycle.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/runtime_flair.go internal/tui/runtime_flair_test.go` passed.
+- `go test ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-18T02:30:33+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-18T02:30:44+09:00` (`projects: 132`).
+- `env -u OPENAI_API_KEY COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-parallel-flair-check3` reached the TUI, exercised the slower linger-at-terminal loop in a no-token sandbox, and exited via `q`.
+
+Next concrete tasks:
+
+- If the face still reads oddly in some terminal fonts, try a narrower face width or closer-set eyes before adding any more facial detail.
+- Consider turning the left status panel into a more explicit workstation silhouette so the “two terminals” route is legible even when the user catches only a single frame.
+
+## Latest Update (2026-03-18 02:26 JST)
+
+- Tuned the control-room operator again after a live visual pass: the face now drops the extra dark lower-face pixel that was reading like extra eyes, keeping the expression closer to a simple two-eye sprite.
+- Slowed the walk loop down by expanding the animation cycle and repeating each travel step so the operator now clearly pauses at one terminal, walks across, spends a beat at the other terminal, and only then heads back.
+- Updated the scene timing so the terminal lights and monitor flicker stay in sync with the longer cycle rather than flashing at the earlier faster cadence.
+- Extended the walk-state unit test coverage to assert the new linger-at-terminal behavior and the slower multi-step return path.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/runtime_flair.go internal/tui/runtime_flair_test.go` passed.
+- `go test ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-18T02:26:11+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 2`, `queued classifications: 2`).
+- `make doctor` passed on the cached snapshot dated `2026-03-18T02:26:24+09:00` (`projects: 132`).
+- `env -u OPENAI_API_KEY COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-parallel-flair-check2` reached the TUI, exercised the slower idle cycle in a no-token sandbox, and exited via `q`.
+
+Next concrete tasks:
+
+- If the face still feels off after another real screenshot pass, consider a slightly narrower head or closer-set eyes rather than adding more facial detail.
+- Decide whether the left-side panel should become a more explicit terminal/workstation so the character's two-stop loop reads immediately even without motion.
+
+## Latest Update (2026-03-18 02:12 JST)
+
+- Polished the runtime-pane control-room animation by replacing the original single-sprite arm layering with explicit inspect, walk, and typing poses so the operator no longer shows overlapping raised/down arms.
+- Simplified the face pixels to remove the heavier internal outline look, added a lighter face-shadow cue plus blink frames, and nudged the desk farther right so the operator has more room to read as a character instead of a static centered icon.
+- Added a small back-and-forth walk cycle between the side panel and the main desk terminal when the pane is wide enough, while keeping narrower panes on a desk-only typing loop so cramped layouts still read cleanly.
+- Added focused unit coverage for the operator state machine so the left-to-right walk path and the narrow-pane desk-only fallback stay intentional as the scene evolves.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/runtime_flair.go internal/tui/runtime_flair_test.go internal/tui/app_test.go internal/tui/runtime_inspector.go` passed.
+- `go test ./internal/tui -run 'TestRenderRuntimePane(ShowsControlRoomFlairWhenEmpty|ControlRoomFlairAnimates|FallsBackToTextWhenTooNarrowForFlair)' -count=1` passed.
+- `go test ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-18T02:11:52+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-18T02:12:02+09:00` (`projects: 132`).
+- `env -u OPENAI_API_KEY COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-parallel-flair-check` reached the TUI, exercised the updated idle scene in a no-token sandbox, and exited via `q`.
+
+Next concrete tasks:
+
+- Decide whether the operator should react to runtime state next, for example pausing at the desk for a longer typing loop when a run command exists or switching to a warning-light pose when the latest runtime ended with an error.
+- Consider whether the scene should gain one or two tiny environmental accents that do not compete with the character, for example a cable/floor shadow pass or a second blinking desk indicator for the large-pane layout.
+
+## Latest Update (2026-03-18 01:58 JST)
+
+- Added `make tui-parallel`, a dedicated debug/smoke-launch target for opening a second TUI alongside the main one without sharing the live SQLite state.
+- The new target uses its own config and DB under `/tmp/lcroom-parallel-<user>/`, copies the main config only on first launch for convenience, and intentionally avoids `--allow-multiple-instances` so the normal single-instance runtime guard still protects the day-to-day TUI.
+- This makes it practical to test visual/runtime changes, including the new control-room idle scene, in a throwaway parallel sandbox without disturbing the primary dashboard session.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `make test` passed.
+- `make scan` passed at `2026-03-18T01:58:19+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 3`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-18T01:58:29+09:00` (`projects: 132`).
+- `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-parallel-smoke` reached the TUI, rendered normally, and exited via `q`.
+
+Next concrete tasks:
+
+- Decide whether `tui-parallel` should stay as a Make-only convenience or also get a documented CLI alias/script for users who do not rely on the repo Makefile.
+- If we add a flair settings toggle next, use the parallel sandbox path for iterative UI/smoke checks so the primary TUI session can stay attached to the real working DB.
+
+## Latest Update (2026-03-18 01:53 JST)
+
+- Added a new runtime-pane empty state that renders an original low-res ANSI truecolor "Control Room" scene with a tiny animated operator, monitor wall, desk, and blinking lights instead of the plain `Output` box when the selected project has no saved/run-time runtime data and the pane is large enough.
+- Kept the effect low-risk by rendering it only in that no-runtime state, by driving animation from the existing spinner tick, and by falling back automatically to the previous text-only runtime summary whenever the pane is too cramped for the scene.
+- Added focused TUI regressions for the new scene, including coverage for the animated frames and the narrow-pane fallback, and refreshed older layout tests so they accept either the legacy runtime empty state or the new control-room rendering.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/runtime_flair.go internal/tui/runtime_inspector.go internal/tui/app_test.go` passed.
+- `go test ./internal/tui -run 'TestRenderRuntimePane(ShowsControlRoomFlairWhenEmpty|ControlRoomFlairAnimates|FallsBackToTextWhenTooNarrowForFlair)|TestRuntimePaneShowsRuntimeOutputAndActions' -count=1` passed.
+- `go test ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-18T01:51:49+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-18T01:51:50+09:00` (`projects: 132`).
+- `env COLUMNS=112 LINES=31 make tui DB=/tmp/lcroom-runtime-flair-smoke.sqlite` reached the TUI, rendered the new runtime-pane control-room scene during a live smoke run, and exited via `q`.
+
+Next concrete tasks:
+
+- Decide whether the control-room scene should get a small settings toggle (`off` / `subtle` / `full`) before we add more ambient motion.
+- If the scene stays, consider teaching it a few more runtime-aware poses, for example a typing loop when a run command exists but no output has arrived yet, or a warning-light variant for runtime errors.
+- Decide whether the committed screenshot/demo flow should get a dedicated idle-runtime showcase asset so the new visual identity appears in docs without replacing the existing live-runtime screenshot.
 
 ## Latest Update (2026-03-18 01:06 JST)
 

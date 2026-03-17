@@ -712,12 +712,12 @@ func (s *appServerSession) submitBusyInput(ctx context.Context, threadID, active
 		s.recordSteerSubmission(firstNonEmpty(turnID, activeTurnID))
 		return nil
 	}
-	if !isActiveTurnMismatchError(err) {
+	if !isRecoverableSteerError(err) {
 		s.appendSystemError(err)
 		return err
 	}
 
-	recoveredTurnID, threadIdle, recoveryErr := s.recoverSteerTarget(ctx, threadID, activeTurnID, err)
+	recoveredTurnID, threadIdle, recoveryErr := s.recoverSteerTarget(ctx, threadID)
 	if recoveryErr != nil {
 		combined := fmt.Errorf("%s (and failed to refresh thread state: %v)", err.Error(), recoveryErr)
 		s.appendSystemError(combined)
@@ -727,7 +727,7 @@ func (s *appServerSession) submitBusyInput(ctx context.Context, threadID, active
 	switch {
 	case threadIdle:
 		return s.startTurnWithInput(ctx, threadID, input, pendingModel, pendingReasoning, currentModel, currentReasoning)
-	case recoveredTurnID != "" && recoveredTurnID != activeTurnID:
+	case recoveredTurnID != "":
 		turnID, err = s.steerTurn(ctx, threadID, recoveredTurnID, input)
 		if err == nil {
 			s.recordSteerSubmission(firstNonEmpty(turnID, recoveredTurnID))
@@ -806,19 +806,14 @@ func (s *appServerSession) recordSteerSubmission(turnID string) {
 	s.notify()
 }
 
-func (s *appServerSession) recoverSteerTarget(ctx context.Context, threadID, expectedTurnID string, mismatchErr error) (string, bool, error) {
+func (s *appServerSession) recoverSteerTarget(ctx context.Context, threadID string) (string, bool, error) {
 	thread, err := s.readThreadState(ctx, threadID)
 	if err != nil {
 		return "", false, err
 	}
 
 	recoveredTurnID := activeTurnIDFromThread(thread)
-	if recoveredTurnID == "" {
-		if mismatch := parseActiveTurnMismatchError(mismatchErr); mismatch != nil && mismatch.ExpectedTurnID == expectedTurnID {
-			recoveredTurnID = mismatch.FoundTurnID
-		}
-	}
-	threadIdle := strings.EqualFold(strings.TrimSpace(thread.Status.Type), "idle")
+	threadIdle := recoveredTurnID == ""
 
 	s.mu.Lock()
 	s.touchLocked()
@@ -1485,7 +1480,11 @@ func (s *appServerSession) ReconcileBusyState() error {
 	}
 	s.reconciling = false
 	if err == nil {
-		s.syncThreadStatusLocked(threadID, thread.Status, true)
+		if activeTurnIDFromThread(thread) == "" {
+			s.syncThreadStatusLocked(threadID, resumedThreadStatus{Type: "idle"}, true)
+		} else {
+			s.syncThreadStatusLocked(threadID, thread.Status, true)
+		}
 	}
 	s.mu.Unlock()
 	s.notify()
@@ -2521,18 +2520,13 @@ func (s *appServerSession) hydrateResumedThreadLocked(thread resumedThread) {
 	previousBusyActivityAt := s.lastBusyActivityAt
 	previousTurnID := strings.TrimSpace(s.activeTurnID)
 
-	busy := thread.Status.Type == "active"
+	activeTurnID := activeTurnIDFromThread(thread)
+	busy := activeTurnID != ""
 	busyExternal := busy
-	activeTurnID := ""
 	s.activeItems = nil
 	s.pendingCompletion = nil
 
 	for _, turn := range thread.Turns {
-		if turn.Status == "inProgress" {
-			busy = true
-			busyExternal = true
-			activeTurnID = turn.ID
-		}
 		for _, item := range turn.Items {
 			itemID, kind, text := renderResumedThreadItem(item)
 			s.mergeHistoryItemLocked(itemID, kind, text)
@@ -2721,6 +2715,10 @@ func isActiveTurnMismatchError(err error) bool {
 	return parseActiveTurnMismatchError(err) != nil
 }
 
+func isRecoverableSteerError(err error) bool {
+	return isActiveTurnMismatchError(err) || isNoActiveTurnToSteerError(err)
+}
+
 func parseActiveTurnMismatchError(err error) *activeTurnMismatch {
 	if err == nil {
 		return nil
@@ -2747,6 +2745,17 @@ func parseActiveTurnMismatchError(err error) *activeTurnMismatch {
 		ExpectedTurnID: expectedTurnID,
 		FoundTurnID:    foundTurnID,
 	}
+}
+
+func isNoActiveTurnToSteerError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	if message == "" {
+		return false
+	}
+	return strings.Contains(message, "no active turn to steer")
 }
 
 func parseQuotedTurnID(value string) (string, string, bool) {

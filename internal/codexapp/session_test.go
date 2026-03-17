@@ -568,6 +568,38 @@ func TestThreadStatusIdleClearsResumedBusyExternalTurn(t *testing.T) {
 	}
 }
 
+func TestHydrateResumedThreadDoesNotStayBusyWithoutInProgressTurn(t *testing.T) {
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+	}
+
+	s.hydrateResumedThread(resumedThread{
+		ID: "thread_456",
+		Status: resumedThreadStatus{
+			Type: "active",
+		},
+		Turns: []resumedTurn{
+			{
+				ID:     "turn_done",
+				Status: "completed",
+			},
+		},
+	})
+
+	snapshot := s.Snapshot()
+	if snapshot.Busy {
+		t.Fatalf("busy = true, want false when no turn is actually in progress")
+	}
+	if snapshot.BusyExternal {
+		t.Fatalf("busy external = true, want false when no turn is actually in progress")
+	}
+	if snapshot.ActiveTurnID != "" {
+		t.Fatalf("active turn id = %q, want empty", snapshot.ActiveTurnID)
+	}
+}
+
 func TestRecoveredIdleStatusMarksRecoveredTurn(t *testing.T) {
 	s := &appServerSession{
 		projectPath:  "/tmp/demo",
@@ -1054,6 +1086,94 @@ func TestSubmitInputStartsNewTurnWhenSteerMismatchFindsIdleThread(t *testing.T) 
 	}
 	if snapshot.Status != "Codex is working..." {
 		t.Fatalf("status = %q, want %q", snapshot.Status, "Codex is working...")
+	}
+}
+
+func TestSubmitInputStartsNewTurnWhenSteerFindsNoActiveTurn(t *testing.T) {
+	callCount := 0
+
+	s := &appServerSession{
+		projectPath:  "/tmp/demo",
+		threadID:     "thread_456",
+		activeTurnID: "turn_old",
+		busy:         true,
+		entryIndex:   make(map[string]int),
+		notify:       func() {},
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			callCount++
+			switch callCount {
+			case 1:
+				if method != "turn/steer" {
+					t.Fatalf("call 1 method = %q, want turn/steer", method)
+				}
+				return nil, errors.New("no active turn to steer")
+			case 2:
+				if method != "thread/read" {
+					t.Fatalf("call 2 method = %q, want thread/read", method)
+				}
+				return json.RawMessage(`{"thread":{"id":"thread_456","status":{"type":"active"},"turns":[]}}`), nil
+			case 3:
+				if method != "turn/start" {
+					t.Fatalf("call 3 method = %q, want turn/start", method)
+				}
+				return json.RawMessage(`{"turn":{"id":"turn_fresh"}}`), nil
+			default:
+				t.Fatalf("unexpected rpc call %d: %s", callCount, method)
+				return nil, nil
+			}
+		},
+	}
+
+	if err := s.Submit("follow up"); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+	if callCount != 3 {
+		t.Fatalf("rpc call count = %d, want 3", callCount)
+	}
+
+	snapshot := s.Snapshot()
+	if !snapshot.Busy {
+		t.Fatalf("busy = false, want true")
+	}
+	if snapshot.ActiveTurnID != "turn_fresh" {
+		t.Fatalf("active turn id = %q, want turn_fresh", snapshot.ActiveTurnID)
+	}
+	if snapshot.Status != "Codex is working..." {
+		t.Fatalf("status = %q, want %q", snapshot.Status, "Codex is working...")
+	}
+}
+
+func TestReconcileBusyStateClearsBusyWhenThreadReadShowsNoActiveTurn(t *testing.T) {
+	s := &appServerSession{
+		projectPath:        "/tmp/demo",
+		threadID:           "thread_456",
+		activeTurnID:       "turn_old",
+		busy:               true,
+		status:             "Codex is working...",
+		entryIndex:         make(map[string]int),
+		notify:             func() {},
+		lastBusyActivityAt: time.Now().Add(-2 * time.Minute),
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			if method != "thread/read" {
+				t.Fatalf("method = %q, want thread/read", method)
+			}
+			return json.RawMessage(`{"thread":{"id":"thread_456","status":{"type":"active"},"turns":[]}}`), nil
+		},
+	}
+
+	if err := s.ReconcileBusyState(); err != nil {
+		t.Fatalf("ReconcileBusyState() error = %v", err)
+	}
+
+	snapshot := s.Snapshot()
+	if snapshot.Busy {
+		t.Fatalf("busy = true, want false after reconcile sees no active turn")
+	}
+	if snapshot.ActiveTurnID != "" {
+		t.Fatalf("active turn id = %q, want empty", snapshot.ActiveTurnID)
+	}
+	if snapshot.Status != "Recovered idle after status check" {
+		t.Fatalf("status = %q, want %q", snapshot.Status, "Recovered idle after status check")
 	}
 }
 
