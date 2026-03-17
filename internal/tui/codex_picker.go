@@ -588,6 +588,7 @@ func (m Model) showCodexProject(projectPath, status string) (tea.Model, tea.Cmd)
 	m.codexVisibleProject = projectPath
 	m.codexHiddenProject = projectPath
 	m.loadCodexDraft(projectPath)
+	m.refreshCodexSnapshot(projectPath)
 	m.syncCodexViewport(true)
 	if strings.TrimSpace(status) != "" {
 		m.status = status

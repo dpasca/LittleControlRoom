@@ -39,6 +39,7 @@ import (
 type fakeCodexSession struct {
 	projectPath   string
 	snapshot      codexapp.Snapshot
+	snapshotCalls int
 	submitted     []string
 	submissions   []codexapp.Submission
 	decisions     []codexapp.ApprovalDecision
@@ -79,6 +80,7 @@ func (s *fakeCodexSession) ProjectPath() string {
 }
 
 func (s *fakeCodexSession) Snapshot() codexapp.Snapshot {
+	s.snapshotCalls++
 	snapshot := s.snapshot
 	snapshot.ProjectPath = s.projectPath
 	return snapshot
@@ -4767,6 +4769,105 @@ func TestVisibleCodexViewHidesSessionApprovalShortcutForFileChanges(t *testing.T
 	}
 	if !strings.Contains(rendered, "a accept  d decline  c cancel  Alt+Up hide") {
 		t.Fatalf("file change approval footer missing expected keys: %q", rendered)
+	}
+}
+
+func TestStoreCodexSnapshotOnlyInvalidatesTranscriptRevisionWhenTranscriptChanges(t *testing.T) {
+	m := Model{}
+	projectPath := "/tmp/demo"
+	base := codexapp.Snapshot{
+		Provider: codexapp.ProviderCodex,
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "First reply",
+		}},
+	}
+
+	m.storeCodexSnapshot(projectPath, base)
+	if got := m.codexTranscriptRevision(projectPath); got != 1 {
+		t.Fatalf("initial transcript revision = %d, want 1", got)
+	}
+
+	statusOnly := base
+	statusOnly.Status = "Codex is working..."
+	m.storeCodexSnapshot(projectPath, statusOnly)
+	if got := m.codexTranscriptRevision(projectPath); got != 1 {
+		t.Fatalf("status-only update should not bump transcript revision, got %d", got)
+	}
+
+	changed := base
+	changed.Entries = []codexapp.TranscriptEntry{{
+		Kind: codexapp.TranscriptAgent,
+		Text: "Updated reply",
+	}}
+	m.storeCodexSnapshot(projectPath, changed)
+	if got := m.codexTranscriptRevision(projectPath); got != 2 {
+		t.Fatalf("transcript update should bump transcript revision, got %d", got)
+	}
+}
+
+func TestVisibleCodexViewUsesCachedSnapshotWhileTyping(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started: true,
+			Preset:  codexcli.PresetYolo,
+			Status:  "Codex session ready",
+			Entries: []codexapp.TranscriptEntry{{
+				Kind: codexapp.TranscriptAgent,
+				Text: "Existing reply",
+			}},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("hello")
+	input.Focus()
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+	if _, ok := m.refreshCodexSnapshot("/tmp/demo"); !ok {
+		t.Fatalf("refreshCodexSnapshot() failed")
+	}
+	m.syncCodexViewport(true)
+
+	callsAfterSync := session.snapshotCalls
+	if callsAfterSync == 0 {
+		t.Fatalf("expected the initial snapshot refresh to read the session")
+	}
+
+	rendered := ansi.Strip(m.View())
+	if !strings.Contains(rendered, "Existing reply") {
+		t.Fatalf("View() missing transcript content: %q", rendered)
+	}
+	if session.snapshotCalls != callsAfterSync {
+		t.Fatalf("View() should reuse the cached snapshot after sync; snapshot calls = %d, want %d", session.snapshotCalls, callsAfterSync)
+	}
+
+	updated, _ := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("!")})
+	got := updated.(Model)
+	_ = got.View()
+	if session.snapshotCalls != callsAfterSync {
+		t.Fatalf("typing should not reread the session snapshot; snapshot calls = %d, want %d", session.snapshotCalls, callsAfterSync)
+	}
+	if got.codexInput.Value() != "hello!" {
+		t.Fatalf("codex input = %q, want appended text", got.codexInput.Value())
 	}
 }
 

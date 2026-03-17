@@ -88,31 +88,35 @@ type Model struct {
 	lastUsageTotals       model.LLMUsage
 	haveUsageTotals       bool
 
-	codexManager        *codexapp.Manager
-	runtimeManager      *projectrun.Manager
-	runtimeSnapshots    map[string]projectrun.Snapshot
-	codexVisibleProject string
-	codexHiddenProject  string
-	codexPendingOpen    *codexPendingOpenState
-	codexInput          textarea.Model
-	codexDrafts         map[string]codexDraft
-	codexPasteTokenSeq  int
-	codexClosedHandled  map[string]struct{}
-	codexPickerVisible  bool
-	codexPickerSelected int
-	codexPickerChoices  []codexSessionChoice
-	codexPickerLoading  bool
-	codexPickerKind     codexPickerKind
-	codexPickerTitle    string
-	codexPickerHint     string
-	codexPickerEmpty    string
-	codexPickerProject  string
-	codexPickerProvider codexapp.Provider
-	codexModelPicker    *codexModelPickerState
-	codexDenseExpanded  bool
-	codexSlashSelected  int
-	codexToolAnswers    map[string]codexToolAnswerState
-	codexViewport       viewport.Model
+	codexManager         *codexapp.Manager
+	runtimeManager       *projectrun.Manager
+	runtimeSnapshots     map[string]projectrun.Snapshot
+	codexSnapshots       map[string]codexapp.Snapshot
+	codexTranscriptRev   map[string]uint64
+	codexVisibleProject  string
+	codexHiddenProject   string
+	codexPendingOpen     *codexPendingOpenState
+	codexInput           textarea.Model
+	codexDrafts          map[string]codexDraft
+	codexPasteTokenSeq   int
+	codexClosedHandled   map[string]struct{}
+	codexPickerVisible   bool
+	codexPickerSelected  int
+	codexPickerChoices   []codexSessionChoice
+	codexPickerLoading   bool
+	codexPickerKind      codexPickerKind
+	codexPickerTitle     string
+	codexPickerHint      string
+	codexPickerEmpty     string
+	codexPickerProject   string
+	codexPickerProvider  codexapp.Provider
+	codexModelPicker     *codexModelPickerState
+	codexDenseExpanded   bool
+	codexSlashSelected   int
+	codexToolAnswers     map[string]codexToolAnswerState
+	codexViewport        viewport.Model
+	codexTranscriptCache codexTranscriptRenderCache
+	codexViewportContent codexViewportContentState
 
 	spinnerFrame int
 	showSessions bool
@@ -120,6 +124,21 @@ type Model struct {
 	showHelp     bool
 
 	newProjectRecentParents []string
+}
+
+type codexTranscriptRenderCache struct {
+	projectPath   string
+	width         int
+	denseExpanded bool
+	transcriptRev uint64
+	rendered      string
+}
+
+type codexViewportContentState struct {
+	projectPath   string
+	width         int
+	denseExpanded bool
+	transcriptRev uint64
 }
 
 type projectsMsg struct {
@@ -303,6 +322,8 @@ func New(ctx context.Context, svc *service.Service) Model {
 		codexInput:             codexInput,
 		codexDrafts:            make(map[string]codexDraft),
 		codexClosedHandled:     make(map[string]struct{}),
+		codexSnapshots:         make(map[string]codexapp.Snapshot),
+		codexTranscriptRev:     make(map[string]uint64),
 		codexToolAnswers:       make(map[string]codexToolAnswerState),
 		detailViewport:         detailViewport,
 		runtimeViewport:        runtimeViewport,
@@ -830,12 +851,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.codexManager != nil {
 			m.codexManager.AckUpdate(msg.projectPath)
 		}
+		snapshot, ok := m.refreshCodexSnapshot(msg.projectPath)
 		if m.codexVisibleProject == msg.projectPath {
 			m.resetCodexToolAnswerState(msg.projectPath)
 			m.syncCodexViewport(true)
 		}
-		if session, ok := m.codexSession(msg.projectPath); ok {
-			snapshot := session.Snapshot()
+		if ok {
 			if !snapshot.Closed {
 				m.markCodexSessionLive(msg.projectPath)
 				return m, tea.Batch(cmds...)
@@ -854,6 +875,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loading = true
 			cmds = append(cmds, m.scanCmd(false))
 			cmds = append(cmds, m.loadProjectsCmd())
+		} else {
+			m.dropCodexSnapshot(msg.projectPath)
 		}
 		return m, tea.Batch(cmds...)
 	}

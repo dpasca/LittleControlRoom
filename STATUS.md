@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-17 18:29 JST (JST)
+Last updated: 2026-03-17 19:41 JST (JST)
 
 ## Current State
 
@@ -80,6 +80,27 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-17 19:41 JST)
+
+- Reduced embedded Codex/OpenCode pane redraw cost for long sessions by caching the latest per-project session snapshot in the TUI and reusing a rendered transcript body keyed by project, width, dense-block mode, and transcript revision instead of rebuilding it on every normal redraw.
+- Updated the visible embedded-pane flow to refresh that cache when sessions open, reopen, or emit `codexUpdateMsg`, while keeping ordinary typing and spinner redraws on the already-rendered transcript whenever the session text has not changed.
+- Added focused TUI regressions that verify status-only snapshot changes do not invalidate the transcript revision and that a cache-primed embedded pane no longer rereads the session snapshot while typing.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/app.go internal/tui/codex_pane.go internal/tui/codex_composer.go internal/tui/codex_picker.go internal/tui/app_test.go` passed.
+- `go test ./internal/tui -run 'Test(StoreCodexSnapshotOnlyInvalidatesTranscriptRevisionWhenTranscriptChanges|VisibleCodexViewUsesCachedSnapshotWhileTyping)' -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-17T19:41:10+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 2`, `queued classifications: 2`).
+- `make doctor` passed on the cached snapshot dated `2026-03-17T19:41:19+09:00` (`projects: 132`).
+- `env COLUMNS=110 LINES=30 make tui DB=/tmp/lcroom-codex-transcript-cache-smoke.sqlite` reached the TUI, rendered the main view, and exited via `q`.
+
+Next concrete tasks:
+
+- Watch whether the remaining redraw cost is now mostly in lower-pane/footer recomposition and, if so, decide whether that area needs its own lightweight cache or spinner-specific throttling.
+- Decide whether the same snapshot-caching approach should also be applied to other live embedded/session surfaces that still call `session.Snapshot()` directly outside the visible-pane hot path.
 
 ## Latest Update (2026-03-17 19:13 JST)
 

@@ -39,6 +39,12 @@ func (m *Model) ensureCodexRuntime() {
 	if m.codexToolAnswers == nil {
 		m.codexToolAnswers = make(map[string]codexToolAnswerState)
 	}
+	if m.codexSnapshots == nil {
+		m.codexSnapshots = make(map[string]codexapp.Snapshot)
+	}
+	if m.codexTranscriptRev == nil {
+		m.codexTranscriptRev = make(map[string]uint64)
+	}
 	if m.codexViewport.Width == 0 && m.codexViewport.Height == 0 {
 		m.codexViewport = viewport.New(0, 0)
 	}
@@ -137,6 +143,7 @@ func (m *Model) finishCodexPendingOpen(projectPath string, opened bool) {
 	m.codexVisibleProject = projectPath
 	m.codexHiddenProject = projectPath
 	m.loadCodexDraft(projectPath)
+	m.refreshCodexSnapshot(projectPath)
 	m.syncCodexViewport(true)
 	m.syncCodexComposerSize()
 }
@@ -144,12 +151,14 @@ func (m *Model) finishCodexPendingOpen(projectPath string, opened bool) {
 func (m *Model) pruneCodexSessionVisibility() {
 	if projectPath := strings.TrimSpace(m.codexVisibleProject); projectPath != "" {
 		if _, ok := m.codexSession(projectPath); !ok {
+			m.dropCodexSnapshot(projectPath)
 			m.codexVisibleProject = ""
 			m.codexInput.Blur()
 		}
 	}
 	if projectPath := strings.TrimSpace(m.codexHiddenProject); projectPath != "" {
 		if _, ok := m.codexSession(projectPath); !ok {
+			m.dropCodexSnapshot(projectPath)
 			m.codexHiddenProject = ""
 		}
 	}
@@ -171,7 +180,157 @@ func (m Model) currentCodexSnapshot() (codexapp.Snapshot, bool) {
 	if !ok {
 		return codexapp.Snapshot{}, false
 	}
+	if projectPath := strings.TrimSpace(m.codexVisibleProject); projectPath != "" {
+		if snapshot, ok := m.codexSnapshots[projectPath]; ok {
+			return snapshot, true
+		}
+	}
 	return session.Snapshot(), true
+}
+
+func (m *Model) refreshCodexSnapshot(projectPath string) (codexapp.Snapshot, bool) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return codexapp.Snapshot{}, false
+	}
+	session, ok := m.codexSession(projectPath)
+	if !ok {
+		m.dropCodexSnapshot(projectPath)
+		return codexapp.Snapshot{}, false
+	}
+	snapshot := session.Snapshot()
+	m.storeCodexSnapshot(projectPath, snapshot)
+	return snapshot, true
+}
+
+func (m *Model) storeCodexSnapshot(projectPath string, snapshot codexapp.Snapshot) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return
+	}
+	if m.codexSnapshots == nil {
+		m.codexSnapshots = make(map[string]codexapp.Snapshot)
+	}
+	if m.codexTranscriptRev == nil {
+		m.codexTranscriptRev = make(map[string]uint64)
+	}
+	if prev, ok := m.codexSnapshots[projectPath]; !ok || codexTranscriptStateChanged(prev, snapshot) {
+		m.codexTranscriptRev[projectPath]++
+		m.resetCodexTranscriptCaches(projectPath)
+	}
+	m.codexSnapshots[projectPath] = snapshot
+}
+
+func (m *Model) dropCodexSnapshot(projectPath string) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return
+	}
+	delete(m.codexSnapshots, projectPath)
+	delete(m.codexTranscriptRev, projectPath)
+	m.resetCodexTranscriptCaches(projectPath)
+}
+
+func (m *Model) resetCodexTranscriptCaches(projectPath string) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return
+	}
+	if m.codexTranscriptCache.projectPath == projectPath {
+		m.codexTranscriptCache = codexTranscriptRenderCache{}
+	}
+	if m.codexViewportContent.projectPath == projectPath {
+		m.codexViewportContent = codexViewportContentState{}
+	}
+}
+
+func codexTranscriptStateChanged(prev, next codexapp.Snapshot) bool {
+	if prev.Provider != next.Provider || prev.Closed != next.Closed || prev.LastSystemNotice != next.LastSystemNotice {
+		return true
+	}
+	if !codexTranscriptEntriesEqual(prev.Entries, next.Entries) {
+		return true
+	}
+	if len(prev.Entries) == 0 && len(next.Entries) == 0 && prev.Transcript != next.Transcript {
+		return true
+	}
+	return false
+}
+
+func codexTranscriptEntriesEqual(left, right []codexapp.TranscriptEntry) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i].ItemID != right[i].ItemID || left[i].Kind != right[i].Kind || left[i].Text != right[i].Text {
+			return false
+		}
+	}
+	return true
+}
+
+func (m Model) codexTranscriptRevision(projectPath string) uint64 {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return 0
+	}
+	return m.codexTranscriptRev[projectPath]
+}
+
+func (m Model) codexTranscriptCacheMatches(projectPath string, width int) bool {
+	projectPath = strings.TrimSpace(projectPath)
+	return projectPath != "" &&
+		m.codexTranscriptCache.projectPath == projectPath &&
+		m.codexTranscriptCache.width == width &&
+		m.codexTranscriptCache.denseExpanded == m.codexDenseExpanded &&
+		m.codexTranscriptCache.transcriptRev == m.codexTranscriptRevision(projectPath) &&
+		m.codexTranscriptCache.rendered != ""
+}
+
+func (m Model) cachedCodexTranscriptContent(projectPath string, width int) (string, bool) {
+	if !m.codexTranscriptCacheMatches(projectPath, width) {
+		return "", false
+	}
+	return m.codexTranscriptCache.rendered, true
+}
+
+func (m *Model) renderAndCacheCodexTranscript(projectPath string, snapshot codexapp.Snapshot, width int) string {
+	rendered := m.renderCodexTranscriptContentFromSnapshot(snapshot, width)
+	m.codexTranscriptCache = codexTranscriptRenderCache{
+		projectPath:   strings.TrimSpace(projectPath),
+		width:         width,
+		denseExpanded: m.codexDenseExpanded,
+		transcriptRev: m.codexTranscriptRevision(projectPath),
+		rendered:      rendered,
+	}
+	return rendered
+}
+
+func (m Model) codexViewportContentMatches(projectPath string, width int) bool {
+	projectPath = strings.TrimSpace(projectPath)
+	return projectPath != "" &&
+		m.codexViewportContent.projectPath == projectPath &&
+		m.codexViewportContent.width == width &&
+		m.codexViewportContent.denseExpanded == m.codexDenseExpanded &&
+		m.codexViewportContent.transcriptRev == m.codexTranscriptRevision(projectPath)
+}
+
+func (m *Model) setCodexViewportTranscript(projectPath string, snapshot codexapp.Snapshot, width int) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return
+	}
+	rendered, ok := m.cachedCodexTranscriptContent(projectPath, width)
+	if !ok {
+		rendered = m.renderAndCacheCodexTranscript(projectPath, snapshot, width)
+	}
+	m.codexViewport.SetContent(rendered)
+	m.codexViewportContent = codexViewportContentState{
+		projectPath:   projectPath,
+		width:         width,
+		denseExpanded: m.codexDenseExpanded,
+		transcriptRev: m.codexTranscriptRevision(projectPath),
+	}
 }
 
 func (m Model) hasHiddenCodexSession() bool {
@@ -1012,11 +1171,14 @@ func (m *Model) syncCodexViewport(resetToBottom bool) {
 	lowerHeight := countRenderedBlockLines(lowerBlocks)
 	transcriptHeight := codexTranscriptContentHeight(height, lowerHeight)
 
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
 	m.codexViewport.Width = max(24, width-4)
 	m.codexViewport.Height = max(1, transcriptHeight)
 
 	offset := m.codexViewport.YOffset
-	m.codexViewport.SetContent(m.renderCodexTranscriptContent(m.codexViewport.Width))
+	if !m.codexViewportContentMatches(projectPath, m.codexViewport.Width) {
+		m.setCodexViewportTranscript(projectPath, snapshot, m.codexViewport.Width)
+	}
 	if resetToBottom {
 		m.codexViewport.GotoBottom()
 		return
@@ -1051,9 +1213,26 @@ func (m Model) renderCodexView() string {
 	transcriptHeight := codexTranscriptContentHeight(height, lowerHeight)
 
 	transcript := m.codexViewport
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
 	transcript.Width = max(24, width-4)
 	transcript.Height = max(1, transcriptHeight)
-	transcript.SetContent(m.renderCodexTranscriptContent(transcript.Width))
+	switch {
+	case m.codexViewportContentMatches(projectPath, transcript.Width):
+		maxOffset := max(0, transcript.TotalLineCount()-transcript.Height)
+		if transcript.YOffset > maxOffset {
+			transcript.SetYOffset(maxOffset)
+		}
+	case func() bool {
+		rendered, ok := m.cachedCodexTranscriptContent(projectPath, transcript.Width)
+		if !ok {
+			return false
+		}
+		transcript.SetContent(rendered)
+		return true
+	}():
+	default:
+		transcript.SetContent(m.renderCodexTranscriptContentFromSnapshot(snapshot, transcript.Width))
+	}
 	body := m.renderFramedPane(transcript.View(), width, transcriptHeight, true)
 
 	lines := []string{m.renderCodexBanner(snapshot, width), body}
@@ -1523,6 +1702,10 @@ func (m Model) renderCodexTranscriptContent(width int) string {
 	if !ok {
 		return "Embedded session unavailable"
 	}
+	return m.renderCodexTranscriptContentFromSnapshot(snapshot, width)
+}
+
+func (m Model) renderCodexTranscriptContentFromSnapshot(snapshot codexapp.Snapshot, width int) string {
 	if rendered := m.renderCodexTranscriptEntries(snapshot, width); strings.TrimSpace(rendered) != "" {
 		return rendered
 	}
