@@ -13,6 +13,7 @@ import (
 
 	"lcroom/internal/codexapp"
 	"lcroom/internal/model"
+	"lcroom/internal/projectrun"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/x/ansi"
@@ -136,6 +137,95 @@ func TestScreenshotEmbeddedCodexSnapshotRendersSessionMeta(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("embedded screenshot render missing %q: %q", want, rendered)
 		}
+	}
+}
+
+func TestScreenshotRuntimeSnapshotRendersRuntimePane(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.March, 17, 12, 0, 0, 0, time.Local)
+	project := model.ProjectSummary{
+		Name:          "FractalMech",
+		Path:          "/tmp/FractalMech",
+		PresentOnDisk: true,
+		RunCommand:    "pnpm dev",
+	}
+
+	m := Model{
+		width:  112,
+		height: 31,
+		projects: []model.ProjectSummary{
+			project,
+		},
+		selected:         0,
+		focusedPane:      focusRuntime,
+		runtimeSnapshots: map[string]projectrun.Snapshot{project.Path: screenshotLiveRuntimeSnapshot(project, now)},
+		nowFn: func() time.Time {
+			return now
+		},
+	}
+	m.syncDetailViewport(false)
+
+	rendered := ansi.Strip(m.View())
+	for _, want := range []string{
+		"Runtime - FractalMech",
+		"Run cmd: pnpm dev",
+		"Ports: 3000",
+		"URL: http://127.0.0.1:3000/",
+		"serving FractalMech assets",
+		"watching for changes...",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("runtime screenshot render missing %q: %q", want, rendered)
+		}
+	}
+}
+
+func TestSanitizeScreenshotProjectSummaryHidesQueuedAssessmentState(t *testing.T) {
+	t.Parallel()
+
+	summary := sanitizeScreenshotProjectSummary(model.ProjectSummary{
+		Name:                             "LittleControlRoom",
+		Path:                             "/Users/davide/dev/repos/LittleControlRoom",
+		LatestSessionFormat:              "modern",
+		LatestSessionClassification:      model.ClassificationPending,
+		LatestSessionClassificationStage: model.ClassificationStageQueued,
+		LatestSessionClassificationType:  model.SessionCategoryInProgress,
+	})
+
+	if summary.LatestSessionClassification != "" {
+		t.Fatalf("LatestSessionClassification = %q, want empty", summary.LatestSessionClassification)
+	}
+	if got := projectAssessmentLabelAt(summary, time.Time{}); got == "queued" {
+		t.Fatalf("projectAssessmentLabelAt() = %q, want non-queued label", got)
+	}
+}
+
+func TestScreenshotDashboardSelectionProjectPrefersStableAssessment(t *testing.T) {
+	t.Parallel()
+
+	preferred := model.ProjectSummary{
+		Name:                        "LittleControlRoom",
+		Path:                        "/tmp/LittleControlRoom",
+		LatestSessionClassification: model.ClassificationPending,
+	}
+	live := model.ProjectSummary{
+		Name:                            "FractalMech",
+		Path:                            "/tmp/FractalMech",
+		LatestSessionClassification:     model.ClassificationCompleted,
+		LatestSessionClassificationType: model.SessionCategoryCompleted,
+	}
+	runtime := live
+	candidate := model.ProjectSummary{
+		Name:                            "okmain",
+		Path:                            "/tmp/okmain",
+		LatestSessionClassification:     model.ClassificationCompleted,
+		LatestSessionClassificationType: model.SessionCategoryNeedsFollowUp,
+	}
+
+	got := screenshotDashboardSelectionProject([]model.ProjectSummary{preferred, live, candidate}, preferred, live, runtime)
+	if got.Path != candidate.Path {
+		t.Fatalf("dashboard selection = %q, want %q", got.Path, candidate.Path)
 	}
 }
 
@@ -294,6 +384,7 @@ func TestSanitizeScreenshotProjectDetailRewritesLocalPaths(t *testing.T) {
 			MovedFromPath:                    "/Users/davide/dev/repos/BatonDeck",
 			LatestSessionDetectedProjectPath: "/Users/davide/dev/repos/LittleControlRoom",
 			LatestSessionSummary:             "Path check: /Users/davide/dev/repos/LittleControlRoom",
+			LatestCompletedSessionSummary:    "Completed: /Users/davide/dev/repos/LittleControlRoom looks healthy",
 		},
 		Reasons: []model.AttentionReason{
 			{Text: "Recent activity in /Users/davide/dev/poncle_repos/quickgame_03"},
@@ -312,6 +403,7 @@ func TestSanitizeScreenshotProjectDetailRewritesLocalPaths(t *testing.T) {
 			Payload:     "payload /Users/davide/dev/repos/LittleControlRoom",
 		}},
 		LatestSessionClassification: &model.SessionClassification{
+			Status:      model.ClassificationCompleted,
 			ProjectPath: "/Users/davide/dev/repos/LittleControlRoom",
 			SessionFile: "/Users/davide/.codex/sessions/demo.jsonl",
 			Summary:     "classification /Users/davide/dev/repos/LittleControlRoom",
@@ -325,6 +417,7 @@ func TestSanitizeScreenshotProjectDetailRewritesLocalPaths(t *testing.T) {
 		got.Summary.MovedFromPath,
 		got.Summary.LatestSessionDetectedProjectPath,
 		got.Summary.LatestSessionSummary,
+		got.Summary.LatestCompletedSessionSummary,
 		got.Reasons[0].Text,
 		got.Sessions[0].ProjectPath,
 		got.Sessions[0].DetectedProjectPath,

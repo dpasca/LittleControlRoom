@@ -13,6 +13,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,6 +25,7 @@ import (
 	"lcroom/internal/codexcli"
 	"lcroom/internal/config"
 	"lcroom/internal/model"
+	"lcroom/internal/projectrun"
 	"lcroom/internal/scanner"
 	"lcroom/internal/service"
 
@@ -80,10 +82,21 @@ func GenerateScreenshots(ctx context.Context, svc *service.Service, cfg config.S
 
 	now := screenshotReferenceTime(filtered)
 	listSnapshots := screenshotListLiveCodexSnapshots(filtered, now)
-	liveSelectionProject := screenshotAlternateSelectionProject(filtered, liveProject)
+	runtimeProject := selectedProject
+	runtimeWarning := ""
+	if filter := strings.TrimSpace(cfg.LiveRuntimeProject); filter != "" {
+		if project, ok := findScreenshotProject(filtered, filter); ok {
+			runtimeProject = project
+		} else {
+			runtimeWarning = fmt.Sprintf("Screenshot runtime project %q was not found; using %s instead.", filter, screenshotProjectLabel(selectedProject))
+		}
+	}
+	runtimeSnapshots := screenshotRuntimeSnapshots(runtimeProject, now)
+	dashboardProject := screenshotDashboardSelectionProject(filtered, selectedProject, liveProject, runtimeProject)
+
 	assets := make([]ScreenshotAsset, 0, 6)
 
-	mainModel, err := buildScreenshotDashboardModel(ctx, svc, data, filtered, selectedProject.Path, cfg, now)
+	mainModel, err := buildScreenshotDashboardModel(ctx, svc, data, filtered, dashboardProject.Path, cfg, now)
 	if err != nil {
 		return ScreenshotReport{}, err
 	}
@@ -92,16 +105,14 @@ func GenerateScreenshots(ctx context.Context, svc *service.Service, cfg config.S
 	}
 	assets = append(assets, screenshotAsset("main-panel", "Main Panel", mainModel.View(), cfg))
 
-	liveModel, err := buildScreenshotDashboardModel(ctx, svc, data, filtered, liveSelectionProject.Path, cfg, now)
+	runtimeModel, err := buildScreenshotDashboardModel(ctx, svc, data, filtered, runtimeProject.Path, cfg, now)
 	if err != nil {
 		return ScreenshotReport{}, err
 	}
-	liveSnapshots := cloneScreenshotSnapshots(listSnapshots)
-	liveSnapshots[liveProject.Path] = screenshotLiveCodexSnapshot(liveProject, now)
-	liveModel.codexManager = newScreenshotCodexManager(liveSnapshots)
-	liveModel.codexHiddenProject = liveProject.Path
-	liveModel.status = "Embedded Codex session hidden."
-	assets = append(assets, screenshotAsset("main-panel-live-cx", "Main Panel With Live Codex", liveModel.View(), cfg))
+	runtimeModel.codexManager = newScreenshotCodexManager(cloneScreenshotSnapshots(listSnapshots))
+	runtimeModel.runtimeSnapshots = cloneScreenshotRuntimeSnapshots(runtimeSnapshots)
+	_ = runtimeModel.openRuntimeInspectorForSelection()
+	assets = append(assets, screenshotAsset("main-panel-live-runtime", "Main Panel With Live Runtime", runtimeModel.View(), cfg))
 
 	codexModel, err := buildScreenshotDashboardModel(ctx, svc, data, filtered, liveProject.Path, cfg, now)
 	if err != nil {
@@ -152,6 +163,9 @@ func GenerateScreenshots(ctx context.Context, svc *service.Service, cfg config.S
 	}
 	if liveWarning != "" {
 		report.Warnings = append(report.Warnings, liveWarning)
+	}
+	if runtimeWarning != "" {
+		report.Warnings = append(report.Warnings, runtimeWarning)
 	}
 	return report, nil
 }
@@ -264,7 +278,7 @@ func sanitizeScreenshotProjectDetail(detail model.ProjectDetail) model.ProjectDe
 		classification.SessionFile = sanitizeScreenshotPath(classification.SessionFile)
 		classification.Summary = sanitizeScreenshotText(classification.Summary)
 		classification.LastError = sanitizeScreenshotText(classification.LastError)
-		detail.LatestSessionClassification = &classification
+		detail.LatestSessionClassification = normalizeScreenshotClassificationDetail(&classification)
 	}
 	return detail
 }
@@ -275,7 +289,30 @@ func sanitizeScreenshotProjectSummary(summary model.ProjectSummary) model.Projec
 	summary.MovedFromPath = sanitizeScreenshotPath(summary.MovedFromPath)
 	summary.LatestSessionDetectedProjectPath = sanitizeScreenshotPath(summary.LatestSessionDetectedProjectPath)
 	summary.LatestSessionSummary = sanitizeScreenshotText(summary.LatestSessionSummary)
+	summary.LatestCompletedSessionSummary = sanitizeScreenshotText(summary.LatestCompletedSessionSummary)
+	return normalizeScreenshotClassificationSummary(summary)
+}
+
+func normalizeScreenshotClassificationSummary(summary model.ProjectSummary) model.ProjectSummary {
+	if summary.LatestSessionClassification == model.ClassificationCompleted {
+		return summary
+	}
+	summary.LatestSessionClassification = ""
+	summary.LatestSessionClassificationStage = ""
+	summary.LatestSessionClassificationType = model.SessionCategoryUnknown
+	summary.LatestSessionClassificationStageStartedAt = time.Time{}
+	summary.LatestSessionClassificationUpdatedAt = time.Time{}
 	return summary
+}
+
+func normalizeScreenshotClassificationDetail(classification *model.SessionClassification) *model.SessionClassification {
+	if classification == nil {
+		return nil
+	}
+	if classification.Status != model.ClassificationCompleted {
+		return nil
+	}
+	return classification
 }
 
 func sanitizeScreenshotSession(session model.SessionEvidence) model.SessionEvidence {
@@ -604,12 +641,16 @@ func screenshotListLiveCodexSnapshots(projects []model.ProjectSummary, now time.
 	}
 
 	specs := []timerSpec{
-		{filter: "LCR", duration: 48 * time.Second},
-		{filter: screenshotDemoFollowupProject, duration: 2*time.Minute + 14*time.Second},
-		{filter: screenshotDemoBusyProject, duration: 86 * time.Second},
+		{filter: "LCR", duration: 18*time.Minute + 42*time.Second},
+		{filter: "FractalMech", duration: 11*time.Minute + 8*time.Second},
+		{filter: "okmain", duration: 24*time.Minute + 17*time.Second},
+		{filter: "local-llm-lab", duration: 7*time.Minute + 41*time.Second},
+		{filter: screenshotDemoBusyProject, duration: 24*time.Minute + 17*time.Second},
+		{filter: screenshotDemoFollowupProject, duration: 11*time.Minute + 8*time.Second},
+		{filter: "platform-api", duration: 7*time.Minute + 41*time.Second},
 	}
 
-	snapshots := make(map[string]codexapp.Snapshot, 2)
+	snapshots := make(map[string]codexapp.Snapshot, 4)
 	for _, spec := range specs {
 		project, ok := findScreenshotProject(projects, spec.filter)
 		if !ok {
@@ -627,7 +668,28 @@ func screenshotListLiveCodexSnapshots(projects []model.ProjectSummary, now time.
 			Status:         "Working",
 			LastActivityAt: now,
 		}
-		if len(snapshots) >= 2 {
+		if len(snapshots) >= 4 {
+			break
+		}
+	}
+	if len(snapshots) >= 4 {
+		return snapshots
+	}
+	for _, project := range screenshotRecentActiveProjects(projects) {
+		if _, exists := snapshots[project.Path]; exists {
+			continue
+		}
+		duration := 5*time.Minute + time.Duration(len(snapshots))*6*time.Minute + 19*time.Second
+		snapshots[project.Path] = codexapp.Snapshot{
+			ThreadID:       fmt.Sprintf("thread-%s-live", normalizeScreenshotProjectToken(project.Name)),
+			Preset:         codexcli.PresetYolo,
+			Started:        true,
+			Busy:           true,
+			BusySince:      now.Add(-duration),
+			Status:         "Working",
+			LastActivityAt: now,
+		}
+		if len(snapshots) >= 4 {
 			break
 		}
 	}
@@ -643,6 +705,48 @@ func cloneScreenshotSnapshots(src map[string]codexapp.Snapshot) map[string]codex
 		dst[path] = snapshot
 	}
 	return dst
+}
+
+func screenshotRuntimeSnapshots(project model.ProjectSummary, now time.Time) map[string]projectrun.Snapshot {
+	projectPath := strings.TrimSpace(project.Path)
+	if projectPath == "" {
+		return map[string]projectrun.Snapshot{}
+	}
+	return map[string]projectrun.Snapshot{
+		projectPath: screenshotLiveRuntimeSnapshot(project, now),
+	}
+}
+
+func cloneScreenshotRuntimeSnapshots(src map[string]projectrun.Snapshot) map[string]projectrun.Snapshot {
+	if len(src) == 0 {
+		return map[string]projectrun.Snapshot{}
+	}
+	dst := make(map[string]projectrun.Snapshot, len(src))
+	for path, snapshot := range src {
+		dst[path] = snapshot
+	}
+	return dst
+}
+
+func screenshotLiveRuntimeSnapshot(project model.ProjectSummary, now time.Time) projectrun.Snapshot {
+	command := strings.TrimSpace(project.RunCommand)
+	if command == "" {
+		command = "pnpm dev"
+	}
+	return projectrun.Snapshot{
+		ProjectPath:   strings.TrimSpace(project.Path),
+		Command:       command,
+		Running:       true,
+		StartedAt:     now.Add(-11*time.Minute - 24*time.Second),
+		Ports:         []int{3000},
+		AnnouncedURLs: []string{"http://127.0.0.1:3000/"},
+		RecentOutput: []string{
+			"$ " + command,
+			"ready on http://127.0.0.1:3000/",
+			fmt.Sprintf("serving %s assets", screenshotProjectLabel(project)),
+			"watching for changes...",
+		},
+	}
 }
 
 func findScreenshotProject(projects []model.ProjectSummary, filter string) (model.ProjectSummary, bool) {
@@ -664,6 +768,56 @@ func screenshotAlternateSelectionProject(projects []model.ProjectSummary, livePr
 		}
 	}
 	return liveProject
+}
+
+func screenshotDashboardSelectionProject(projects []model.ProjectSummary, preferred, liveProject, runtimeProject model.ProjectSummary) model.ProjectSummary {
+	if screenshotProjectHasShowcaseAssessment(preferred) {
+		return preferred
+	}
+	for _, project := range projects {
+		if project.Path == runtimeProject.Path || project.Path == liveProject.Path {
+			continue
+		}
+		if screenshotProjectHasShowcaseAssessment(project) {
+			return project
+		}
+	}
+	for _, project := range projects {
+		if project.Path == runtimeProject.Path {
+			continue
+		}
+		if screenshotProjectHasShowcaseAssessment(project) {
+			return project
+		}
+	}
+	if fallback := screenshotAlternateSelectionProject(projects, liveProject); strings.TrimSpace(fallback.Path) != "" {
+		return fallback
+	}
+	return preferred
+}
+
+func screenshotProjectHasShowcaseAssessment(project model.ProjectSummary) bool {
+	_, _, ok := assessmentStatusLabel(project, false)
+	return ok
+}
+
+func screenshotRecentActiveProjects(projects []model.ProjectSummary) []model.ProjectSummary {
+	if len(projects) == 0 {
+		return nil
+	}
+	out := append([]model.ProjectSummary(nil), projects...)
+	sort.SliceStable(out, func(i, j int) bool {
+		left := out[i]
+		right := out[j]
+		if !left.LastActivity.Equal(right.LastActivity) {
+			return left.LastActivity.After(right.LastActivity)
+		}
+		if left.AttentionScore != right.AttentionScore {
+			return left.AttentionScore > right.AttentionScore
+		}
+		return strings.ToLower(left.Name) < strings.ToLower(right.Name)
+	})
+	return out
 }
 
 func screenshotCommitPreview(project model.ProjectSummary) *service.CommitPreview {

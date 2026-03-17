@@ -27,6 +27,7 @@ project_filters = [
 
 selected_project = "LCR"
 live_codex_project = "assistant-lab"
+live_runtime_project = "FractalMech"
 `), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -60,6 +61,9 @@ live_codex_project = "assistant-lab"
 	if cfg.LiveCodexProject != "assistant-lab" {
 		t.Fatalf("LiveCodexProject = %q", cfg.LiveCodexProject)
 	}
+	if cfg.LiveRuntimeProject != "FractalMech" {
+		t.Fatalf("LiveRuntimeProject = %q", cfg.LiveRuntimeProject)
+	}
 }
 
 func TestParseScreenshotConfigDefaults(t *testing.T) {
@@ -89,5 +93,8 @@ project_filters = ["LittleControlRoom"]
 	}
 	if cfg.OutputDir != filepath.Join(dir, "docs", "screenshots") {
 		t.Fatalf("OutputDir = %q", cfg.OutputDir)
+	}
+	if cfg.LiveRuntimeProject != "" {
+		t.Fatalf("LiveRuntimeProject = %q, want empty", cfg.LiveRuntimeProject)
 	}
 }

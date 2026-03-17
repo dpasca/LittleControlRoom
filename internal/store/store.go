@@ -482,7 +482,10 @@ func (s *Store) GetProjectSummaryMap(ctx context.Context) (map[string]model.Proj
 			COALESCE(sc.category, ''),
 			COALESCE(sc.summary, ''),
 			sc.stage_started_at,
-			sc.updated_at
+			sc.updated_at,
+			COALESCE(sc_completed.category, ''),
+			COALESCE(sc_completed.summary, ''),
+			sc_completed.updated_at
 		FROM projects p
 		LEFT JOIN project_sessions ps ON ps.session_id = (
 			SELECT ps2.session_id
@@ -492,6 +495,13 @@ func (s *Store) GetProjectSummaryMap(ctx context.Context) (map[string]model.Proj
 			LIMIT 1
 		)
 		LEFT JOIN session_classifications sc ON sc.session_id = ps.session_id
+		LEFT JOIN session_classifications sc_completed ON sc_completed.session_id = (
+			SELECT sc2.session_id
+			FROM session_classifications sc2
+			WHERE sc2.project_path = p.path AND sc2.status = 'completed'
+			ORDER BY COALESCE(sc2.completed_at, sc2.updated_at) DESC, sc2.updated_at DESC
+			LIMIT 1
+		)
 	`)
 	if err != nil {
 		return nil, err

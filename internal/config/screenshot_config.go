@@ -11,28 +11,30 @@ import (
 )
 
 type ScreenshotConfig struct {
-	Path             string
-	DemoData         bool
-	TerminalWidth    int
-	TerminalHeight   int
-	CaptureScale     float64
-	OutputDir        string
-	BrowserPath      string
-	ProjectFilters   []string
-	SelectedProject  string
-	LiveCodexProject string
+	Path               string
+	DemoData           bool
+	TerminalWidth      int
+	TerminalHeight     int
+	CaptureScale       float64
+	OutputDir          string
+	BrowserPath        string
+	ProjectFilters     []string
+	SelectedProject    string
+	LiveCodexProject   string
+	LiveRuntimeProject string
 }
 
 type screenshotFileConfig struct {
-	DemoData         bool     `toml:"demo_data"`
-	TerminalWidth    int      `toml:"terminal_width"`
-	TerminalHeight   int      `toml:"terminal_height"`
-	CaptureScale     float64  `toml:"capture_scale"`
-	OutputDir        string   `toml:"output_dir"`
-	BrowserPath      string   `toml:"browser_path"`
-	ProjectFilters   []string `toml:"project_filters"`
-	SelectedProject  string   `toml:"selected_project"`
-	LiveCodexProject string   `toml:"live_codex_project"`
+	DemoData           bool     `toml:"demo_data"`
+	TerminalWidth      int      `toml:"terminal_width"`
+	TerminalHeight     int      `toml:"terminal_height"`
+	CaptureScale       float64  `toml:"capture_scale"`
+	OutputDir          string   `toml:"output_dir"`
+	BrowserPath        string   `toml:"browser_path"`
+	ProjectFilters     []string `toml:"project_filters"`
+	SelectedProject    string   `toml:"selected_project"`
+	LiveCodexProject   string   `toml:"live_codex_project"`
+	LiveRuntimeProject string   `toml:"live_runtime_project"`
 }
 
 func DefaultScreenshotConfig() ScreenshotConfig {
@@ -86,6 +88,7 @@ func ParseScreenshotConfig(path string) (ScreenshotConfig, error) {
 	cfg.ProjectFilters = normalizeScreenshotFilters(fc.ProjectFilters)
 	cfg.SelectedProject = strings.TrimSpace(fc.SelectedProject)
 	cfg.LiveCodexProject = strings.TrimSpace(fc.LiveCodexProject)
+	cfg.LiveRuntimeProject = strings.TrimSpace(fc.LiveRuntimeProject)
 
 	if !filepath.IsAbs(cfg.OutputDir) {
 		cfg.OutputDir = filepath.Join(filepath.Dir(expandedPath), cfg.OutputDir)

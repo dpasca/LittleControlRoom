@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-17 10:46 JST (JST)
+Last updated: 2026-03-17 11:36 JST (JST)
 
 ## Current State
 
@@ -41,8 +41,9 @@ Current screenshot workflow assumption:
 
 - `make screenshots` currently defaults to the repo-root `screenshots.local.toml` unless `SCREENSHOT_CONFIG` is overridden; the committed demo config remains available at `docs/screenshots.example.toml`.
 - Screenshot capture scale is now configurable via `capture_scale`, and the default browser-rendered PNG export path uses `1.5x` capture scale for sharper text.
+- Screenshot config also supports `live_runtime_project`, which renders a focused runtime-pane screenshot using a screenshot-only managed-runtime snapshot for the chosen project (defaulting to `selected_project` when unspecified).
 - Screenshot export now preserves truecolor terminal escapes instead of forcing ANSI256 quantization, so the committed docs images can match the live TUI palette more closely.
-- The committed docs screenshot set now includes `main-panel.png`, `main-panel-live-cx.png`, `codex-embedded.png`, `diff-view.png`, `diff-view-image.png`, and `commit-preview.png`.
+- The committed docs screenshot set now includes `main-panel.png`, `main-panel-live-runtime.png`, `codex-embedded.png`, `diff-view.png`, `diff-view-image.png`, and `commit-preview.png`.
 
 ## What Works
 
@@ -79,6 +80,72 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-17 11:36 JST)
+
+- Changed the live assessment presentation so the project list and detail pane keep showing the last completed assessment while a new one is queued or running, instead of replacing it with internal scheduler/debug states.
+- Added a short completed-assessment highlight in the main list and a footer usage pulse when total token usage increases, so the UI surfaces important changes without noisy status text.
+- Fixed a store summary-query regression uncovered by `make test`: `GetProjectSummaryMap` now returns the same latest-completed assessment columns as the other project summary paths, keeping scans and rescans aligned with the calmer assessment UI.
+- Extended screenshot sanitization/regressions so screenshot-only text cleanup also rewrites the persisted last-completed assessment summary, then regenerated the docs screenshots; the curated gallery now avoids transient assessment messages like `queued`/`waiting for model`.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/store ./internal/service ./internal/tui ./internal/config -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-17T11:35:58+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 2`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-17T11:36:07+09:00` (`projects: 137`).
+- `make screenshots` passed and wrote `docs/screenshots/main-panel.png`, `docs/screenshots/main-panel-live-runtime.png`, `docs/screenshots/codex-embedded.png`, `docs/screenshots/diff-view.png`, `docs/screenshots/diff-view-image.png`, and `docs/screenshots/commit-preview.png`.
+- `env COLUMNS=110 LINES=30 make tui DB=/tmp/lcroom-assessment-flash-smoke.sqlite` reached the TUI with a temp DB and exited via `q`.
+
+Next concrete tasks:
+
+- Decide whether the same “keep last completed assessment visible while refreshing” treatment should also be applied anywhere outside the main list/detail views, such as future REST/serve surfaces.
+- Tune the strength/duration of the assessment flash and token-usage pulse after a bit of daily usage feedback, now that both cues are live.
+
+## Latest Update (2026-03-17 11:11 JST)
+
+- Tightened the docs screenshot organization by dropping the near-duplicate `main-panel-live-cx` asset and making `main-panel` the single dashboard-overview screenshot.
+- Curated the overview screenshot itself so it now prefers a project with a stable user-facing assessment in the detail pane, while the list shows more simultaneous live AGENT timers with longer durations.
+- Screenshot sanitization now strips non-completed assessment scheduling states (`queued`, `waiting for model`, similar internal progress) so the generated docs images emphasize user-facing categories instead of internal classifier bookkeeping.
+- Regenerated the screenshot set and refreshed the README gallery so the committed assets are now `main-panel`, `main-panel-live-runtime`, `codex-embedded`, `diff-view`, `diff-view-image`, and `commit-preview`.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/tui ./internal/config -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-17T11:08:16+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-17T11:08:16+09:00` (`projects: 137`).
+- `make screenshots` passed and wrote `docs/screenshots/main-panel.png`, `docs/screenshots/main-panel-live-runtime.png`, `docs/screenshots/codex-embedded.png`, `docs/screenshots/diff-view.png`, `docs/screenshots/diff-view-image.png`, and `docs/screenshots/commit-preview.png`.
+- `env COLUMNS=110 LINES=30 make tui DB=/tmp/lcroom-screenshot-curation-smoke.sqlite` reached the TUI with a temp DB and exited via `q`.
+
+Next concrete tasks:
+
+- Decide whether the screenshot pipeline should eventually get an explicit “showcase selection” config knob instead of auto-picking a stable detail-pane project when the configured one is too internal/noisy.
+- Consider whether the real live TUI should also hide or relabel queued classifier states, now that the screenshot curation made it obvious they read as internal scheduling rather than user-facing status.
+
+## Latest Update (2026-03-17 10:57 JST)
+
+- Extended the screenshot pipeline so it can render a focused runtime-pane scenario via a screenshot-only managed-runtime snapshot, which lets the generated docs set show a running project without depending on a live in-memory TUI session.
+- Added `live_runtime_project` to the screenshot config, set the local docs config to target `FractalMech`, documented the new field, and regenerated the committed PNG set with a new `main-panel-live-runtime.png` asset.
+- Refreshed the README screenshot gallery so the runtime-pane shot is visible alongside the existing dashboard, embedded session, diff, and commit-preview examples.
+- Added focused regression coverage for parsing `live_runtime_project` and for rendering the runtime pane from a screenshot runtime snapshot override.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/tui ./internal/config -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-17T10:54:26+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-17T10:54:42+09:00` (`projects: 137`).
+- `make screenshots` passed and wrote `docs/screenshots/main-panel.png`, `docs/screenshots/main-panel-live-runtime.png`, `docs/screenshots/codex-embedded.png`, `docs/screenshots/diff-view.png`, `docs/screenshots/diff-view-image.png`, and `docs/screenshots/commit-preview.png`.
+- `env COLUMNS=110 LINES=30 make tui DB=/tmp/lcroom-screenshot-runtime-smoke.sqlite` reached the TUI with a temp DB and exited via `q`.
+
+Next concrete tasks:
+
+- Decide whether the runtime screenshot should eventually pull from persisted provider-neutral runtime state instead of the current screenshot-only synthetic snapshot if `doctor`/`serve` gain runtime reporting.
+- Consider whether the screenshot set should also include a runtime pane state with multiple URLs or an error/conflict scenario now that the runtime lane has its own dedicated panel.
 
 ## Latest Update (2026-03-17 10:46 JST)
 

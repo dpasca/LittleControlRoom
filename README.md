@@ -9,24 +9,22 @@ It finds recent Codex and OpenCode activity, highlights what needs attention, an
 Click any screenshot to open the full-size PNG on GitHub.
 
 <p align="center">
-  <a href="docs/screenshots/main-panel-live-cx.png">
-    <img src="docs/screenshots/main-panel-live-cx.png" alt="Little Control Room main dashboard with the embedded Codex pane open" width="850">
+  <a href="docs/screenshots/main-panel.png">
+    <img src="docs/screenshots/main-panel.png" alt="Little Control Room main dashboard overview with live agent activity in the list" width="850">
   </a>
 </p>
 
-| Dashboard | Embedded Session |
+| Dashboard | Runtime Pane |
 | --- | --- |
-| [![Little Control Room dashboard list view](docs/screenshots/main-panel.png)](docs/screenshots/main-panel.png) | [![Little Control Room embedded Codex conversation](docs/screenshots/codex-embedded.png)](docs/screenshots/codex-embedded.png) |
+| [![Little Control Room dashboard list view](docs/screenshots/main-panel.png)](docs/screenshots/main-panel.png) | [![Little Control Room runtime pane focused on a running FractalMech session](docs/screenshots/main-panel-live-runtime.png)](docs/screenshots/main-panel-live-runtime.png) |
 
-| Diff View | Commit Preview |
+| Embedded Session | Diff View |
 | --- | --- |
-| [![Little Control Room diff window](docs/screenshots/diff-view.png)](docs/screenshots/diff-view.png) | [![Little Control Room commit preview dialog](docs/screenshots/commit-preview.png)](docs/screenshots/commit-preview.png) |
+| [![Little Control Room embedded Codex conversation](docs/screenshots/codex-embedded.png)](docs/screenshots/codex-embedded.png) | [![Little Control Room diff window](docs/screenshots/diff-view.png)](docs/screenshots/diff-view.png) |
 
-<p align="center">
-  <a href="docs/screenshots/diff-view-image.png">
-    <img src="docs/screenshots/diff-view-image.png" alt="Little Control Room diff window showing before and after image previews" width="760">
-  </a>
-</p>
+| Commit Preview | Image Diff |
+| --- | --- |
+| [![Little Control Room commit preview dialog](docs/screenshots/commit-preview.png)](docs/screenshots/commit-preview.png) | [![Little Control Room diff window showing before and after image previews](docs/screenshots/diff-view-image.png)](docs/screenshots/diff-view-image.png) |
 
 ## What It Does
 

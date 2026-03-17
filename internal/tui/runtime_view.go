@@ -11,12 +11,19 @@ import (
 )
 
 func (m Model) projectRuntimeSnapshot(projectPath string) projectrun.Snapshot {
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "." {
+		projectPath = ""
+	}
+	if snapshot, ok := m.runtimeSnapshots[projectPath]; ok {
+		return snapshot
+	}
 	if m.runtimeManager == nil {
-		return projectrun.Snapshot{ProjectPath: strings.TrimSpace(projectPath)}
+		return projectrun.Snapshot{ProjectPath: projectPath}
 	}
 	snapshot, err := m.runtimeManager.Snapshot(projectPath)
 	if err != nil {
-		return projectrun.Snapshot{ProjectPath: strings.TrimSpace(projectPath)}
+		return projectrun.Snapshot{ProjectPath: projectPath}
 	}
 	return snapshot
 }

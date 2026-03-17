@@ -82,6 +82,7 @@ Screenshot config fields:
 - `project_filters`
 - `selected_project`
 - `live_codex_project`
+- `live_runtime_project` (optional; defaults to `selected_project` and renders a focused runtime-pane screenshot with a screenshot-only running-session snapshot)
 
 Minimal screenshot example:
 
@@ -95,18 +96,19 @@ output_dir = "screenshots"
 
 selected_project = "LittleControlRoom"
 live_codex_project = "LittleControlRoom"
+live_runtime_project = "LittleControlRoom"
 ```
 
 The generated set currently includes:
 
 - `main-panel.png`
-- `main-panel-live-cx.png`
+- `main-panel-live-runtime.png`
 - `codex-embedded.png`
 - `diff-view.png`
 - `diff-view-image.png`
 - `commit-preview.png`
 
-`project_filters`, `selected_project`, and `live_codex_project` match against the project name, the repo directory name, and simple acronyms such as `LCR` for `LittleControlRoom`.
+`project_filters`, `selected_project`, `live_codex_project`, and `live_runtime_project` match against the project name, the repo directory name, and simple acronyms such as `LCR` for `LittleControlRoom`.
 Use `demo_data = true` when you want a reproducible sample set, or a local config file when you want screenshots from your own curated projects.
 
 ## TUI Keys

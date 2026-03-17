@@ -7,3 +7,4 @@ output_dir = "screenshots"
 
 selected_project = "LittleControlRoom"
 live_codex_project = "LittleControlRoom"
+live_runtime_project = "LittleControlRoom"
