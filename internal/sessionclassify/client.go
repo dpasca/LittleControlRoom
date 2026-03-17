@@ -204,7 +204,7 @@ func (c *OpenAIClient) classifyAttempt(ctx context.Context, snapshotJSON []byte,
 						},
 						"summary": map[string]any{
 							"type":        "string",
-							"description": "One concise sentence under 140 characters.",
+							"description": "One concise dashboard-ready summary under 140 characters; brief fragments are fine, write from the implicit assistant point of view, and omit prefixes like 'Assistant is'.",
 						},
 						"confidence": map[string]any{
 							"type":    "number",
@@ -445,4 +445,8 @@ If latest_turn_state_known is true, treat latest_turn_completed as a strong work
 Dirty or unsynced git state can be evidence of unfinished follow-up, but transcript evidence should remain primary.
 Do not label a session in_progress only because the worktree is dirty after a completed turn.
 Prefer completed when the assistant clearly wrapped up the asked task and any extra offer is optional.
-Return a short factual summary sentence under 140 characters.`
+Return a short factual dashboard summary under 140 characters.
+Prefer brief direct phrasing over full sentences when natural.
+Write from the implicit assistant point of view rather than naming the assistant as the subject.
+Omit leading scaffolding like "Assistant is" or "The assistant is".
+Do not force a stock opener; choose the most direct wording that fits the evidence.`

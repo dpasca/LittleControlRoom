@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-17 21:21 JST (JST)
+Last updated: 2026-03-18 01:06 JST (JST)
 
 ## Current State
 
@@ -82,6 +82,26 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-18 01:06 JST)
+
+- Refined the session-classifier prompt so dashboard summaries now explicitly write from the implicit assistant point of view, omit leading scaffolding like `Assistant is ...`, and avoid falling into a new stock opener.
+- Tightened the classifier JSON schema description for `summary` to match that style, clarifying that brief fragments are acceptable and that the assistant should stay implicit rather than named as the subject.
+- Updated the focused `internal/sessionclassify` regression so it captures the outbound Responses request and asserts both the system prompt and the schema ask for implicit-assistant, non-templated summary wording.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/sessionclassify/client.go internal/sessionclassify/client_test.go` passed.
+- `go test ./internal/sessionclassify -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-18T01:06:54+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 2`, `queued classifications: 2`).
+- `make doctor` passed on the cached snapshot dated `2026-03-18T01:06:55+09:00` (`projects: 132`).
+
+Next concrete tasks:
+
+- Decide whether older persisted session summaries that already start with `Assistant is ...` should be reclassified once or simply age out naturally.
+- Watch fresh classifier outputs in the TUI/doctor flow to confirm the revised prompt consistently yields implicit-assistant wording without converging on a different canned opener.
 
 ## Latest Update (2026-03-18 00:55 JST)
 

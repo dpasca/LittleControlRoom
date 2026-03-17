@@ -143,6 +143,106 @@ func TestOpenAIClientClassifyCapturesUsage(t *testing.T) {
 	}
 }
 
+func TestOpenAIClientClassifyRequestsImplicitAssistantPOVSummaries(t *testing.T) {
+	t.Parallel()
+
+	var (
+		systemText         string
+		summaryDescription string
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		var req struct {
+			Input []struct {
+				Content []struct {
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"input"`
+			Text struct {
+				Format struct {
+					Schema struct {
+						Properties struct {
+							Summary struct {
+								Description string `json:"description"`
+							} `json:"summary"`
+						} `json:"properties"`
+					} `json:"schema"`
+				} `json:"format"`
+			} `json:"text"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if len(req.Input) == 0 || len(req.Input[0].Content) == 0 {
+			t.Fatalf("unexpected request structure: %s", string(body))
+		}
+		systemText = req.Input[0].Content[0].Text
+		summaryDescription = req.Text.Format.Schema.Properties.Summary.Description
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"status":"completed",
+			"model":"gpt-5-mini-2026-03-01",
+			"output":[
+				{
+					"type":"message",
+					"role":"assistant",
+					"content":[
+						{
+							"type":"output_text",
+							"text":"{\"category\":\"in_progress\",\"summary\":\"Actively working on the runtime cleanup.\",\"confidence\":0.78}"
+						}
+					]
+				}
+			]
+		}`))
+	}))
+	defer server.Close()
+
+	client := &OpenAIClient{
+		apiKey:   "test-key",
+		model:    "gpt-5-mini",
+		endpoint: server.URL,
+		httpClient: &http.Client{
+			Timeout: 5 * time.Second,
+		},
+	}
+
+	_, err := client.Classify(context.Background(), SessionSnapshot{
+		ProjectPath: "/tmp/demo",
+		SessionID:   "ses_demo",
+		Transcript: []TranscriptItem{
+			{Role: "user", Text: "Please summarize the current state."},
+			{Role: "assistant", Text: "I am still working through the runtime cleanup."},
+		},
+	})
+	if err != nil {
+		t.Fatalf("classify: %v", err)
+	}
+	if !strings.Contains(systemText, `Omit leading scaffolding like "Assistant is" or "The assistant is".`) {
+		t.Fatalf("system prompt = %q, want prefix-free summary guidance", systemText)
+	}
+	if !strings.Contains(systemText, "Write from the implicit assistant point of view rather than naming the assistant as the subject.") {
+		t.Fatalf("system prompt = %q, want implicit point-of-view guidance", systemText)
+	}
+	if !strings.Contains(systemText, "Do not force a stock opener; choose the most direct wording that fits the evidence.") {
+		t.Fatalf("system prompt = %q, want anti-template guidance", systemText)
+	}
+	if !strings.Contains(summaryDescription, "brief fragments are fine") {
+		t.Fatalf("summary schema description = %q, want brief-fragment guidance", summaryDescription)
+	}
+	if !strings.Contains(summaryDescription, "implicit assistant point of view") {
+		t.Fatalf("summary schema description = %q, want implicit point-of-view guidance", summaryDescription)
+	}
+	if !strings.Contains(summaryDescription, "omit prefixes like 'Assistant is'") {
+		t.Fatalf("summary schema description = %q, want prefix omission guidance", summaryDescription)
+	}
+}
+
 func TestOpenAIClientClassifyRetriesIncompleteWithFallback(t *testing.T) {
 	t.Parallel()
 
