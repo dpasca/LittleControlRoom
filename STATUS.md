@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-17 17:29 JST (JST)
+Last updated: 2026-03-17 17:43 JST (JST)
 
 ## Current State
 
@@ -80,6 +80,20 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-17 17:43 JST)
+
+- Added a concise slash-command section to the README with one-line descriptions for the main TUI palette plus the embedded Codex/OpenCode pane commands, so new users can scan the command surface without leaving the front page.
+- Synced the command reference inventory with the actual command set by adding the missing `/new-project`, `/opencode`, and `/opencode-new` entries to `docs/reference.md`.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- Docs-only change; no code/test commands were rerun.
+
+Next concrete tasks:
+
+- Keep the README and `docs/reference.md` command lists in sync as new slash commands land, and only consider generating them from command specs if manual drift becomes annoying in practice.
 
 ## Latest Update (2026-03-17 17:29 JST)
 

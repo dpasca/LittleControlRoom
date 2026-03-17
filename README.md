@@ -63,7 +63,48 @@ lcroom tui
 
 No config file is required for a first run. If you want to limit what shows up, open the dashboard and use `/settings`, or create `~/.little-control-room/config.toml` from [`docs/config.example.toml`](docs/config.example.toml).
 
-The main commands to look for are `/settings`, `/ignore`, `/ignored`, `/open`, `/run`, `/run-edit`, `/runtime`, `/stop`, `/note`, `/diff`, `/commit`, `/finish`, `/push`, `/codex`, `/codex-new`, `/opencode`, and `/opencode-new`.
+## Slash Commands
+
+The main TUI command palette opens with `/`.
+
+- `/help`: Open the help panel.
+- `/refresh`: Rescan projects and retry failed assessments.
+- `/sort <attention|recent>`: Change the project ordering.
+- `/view <ai|all>`: Switch between AI-linked and all tracked folders.
+- `/settings`: Edit saved scope and scan settings.
+- `/new-project`: Create a project folder or add an existing one.
+- `/open`: Open the selected project's folder in the system browser.
+- `/run [command]`: Start the selected project's managed runtime.
+- `/run-edit`: Edit the saved runtime command.
+- `/runtime`: Focus the runtime pane.
+- `/stop`: Stop the selected project's managed runtime.
+- `/note [clear]`: Edit or clear the selected project's note.
+- `/diff`: Open the full-screen git diff.
+- `/commit [message]`: Preview a commit for the selected project.
+- `/push`: Push the selected project's branch.
+- `/finish [message]`: Open the finish/commit flow.
+- `/codex [prompt]`: Resume the latest Codex session or start one.
+- `/codex-new [prompt]`: Start a fresh Codex session.
+- `/opencode [prompt]`: Resume the latest OpenCode session or start one.
+- `/opencode-new [prompt]`: Start a fresh OpenCode session.
+- `/pin`: Toggle pin on the selected project.
+- `/snooze [duration]`: Snooze the selected project.
+- `/clear-snooze`: Clear the selected project's snooze.
+- `/sessions <on|off|toggle>`: Show or hide the Sessions section.
+- `/events <on|off|toggle>`: Show or hide Recent events.
+- `/focus <list|detail|runtime>`: Move focus between panes.
+- `/ignore`: Hide the selected project's exact name.
+- `/ignored`: Review ignored names and restore them.
+- `/forget`: Forget a selected missing folder.
+- `/quit`: Quit the TUI.
+
+Inside the embedded Codex or OpenCode pane:
+
+- `/new`: Start a fresh session for the current provider.
+- `/resume [session-id]`: Open the session picker or jump to a saved session.
+- `/session [session-id]`: Alias for `/resume`.
+- `/model`: Change the model and reasoning settings.
+- `/status`: Show the current provider/session status.
 
 ## Everyday Workflow
 

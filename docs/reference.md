@@ -170,6 +170,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/view ai`
 - `/view all`
 - `/settings`
+- `/new-project`
 - `/open`
 - `/run`
 - `/run pnpm dev`
@@ -182,6 +183,9 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/codex`
 - `/codex continue from the last breakpoint`
 - `/codex-new sketch a plan for this repo`
+- `/opencode`
+- `/opencode continue from the last breakpoint`
+- `/opencode-new sketch a plan for this repo`
 - `/commit`
 - `/commit tighten git status parsing`
 - `/push`
