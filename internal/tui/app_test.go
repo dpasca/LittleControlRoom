@@ -718,39 +718,6 @@ func TestRenderFooterPulsesWhenUsageIncreases(t *testing.T) {
 	}
 }
 
-func TestLLMHelpLines(t *testing.T) {
-	usage := model.LLMSessionUsage{
-		Enabled:   true,
-		Model:     "gpt-5-mini-2025-08-07",
-		Running:   1,
-		Started:   3,
-		Completed: 2,
-		Failed:    1,
-		Totals: model.LLMUsage{
-			InputTokens:       1200,
-			OutputTokens:      538,
-			TotalTokens:       1738,
-			CachedInputTokens: 45,
-			ReasoningTokens:   12,
-		},
-	}
-
-	lines := llmHelpLines(usage, 1)
-	joined := strings.Join(lines, "\n")
-	if !strings.Contains(joined, "state  busy x1 /") {
-		t.Fatalf("help lines missing running state: %q", joined)
-	}
-	if !strings.Contains(joined, "model  gpt-5-mini-2025-08-07") {
-		t.Fatalf("help lines missing model: %q", joined)
-	}
-	if !strings.Contains(joined, "tok    in=1.2k out=538 total=1.7k") {
-		t.Fatalf("help lines missing token totals: %q", joined)
-	}
-	if !strings.Contains(joined, "extra  cache=45 reason=12") {
-		t.Fatalf("help lines missing extra totals: %q", joined)
-	}
-}
-
 func TestSessionCategoryLabel(t *testing.T) {
 	if got := sessionCategoryLabel(model.SessionCategoryNeedsFollowUp); got != "followup" {
 		t.Fatalf("sessionCategoryLabel(needs_follow_up) = %q, want %q", got, "followup")
@@ -6207,18 +6174,42 @@ func TestCommandPaletteScrollsSelectedSuggestionIntoView(t *testing.T) {
 	}
 }
 
-func TestRenderHelpPanelOmitsForgetHint(t *testing.T) {
+func TestHelpPanelLinesStayMinimal(t *testing.T) {
+	lines := helpPanelLines()
+	joined := strings.Join(lines, "\n")
+
+	if len(lines) > 13 {
+		t.Fatalf("helpPanelLines() should stay compact, got %d lines: %q", len(lines), joined)
+	}
+	if !strings.Contains(joined, "Enter       open / action / send") {
+		t.Fatalf("helpPanelLines() missing enter hint: %q", joined)
+	}
+	if !strings.Contains(joined, "AGENT live  N note  RUN runtime  ! warning") {
+		t.Fatalf("helpPanelLines() missing compact legend: %q", joined)
+	}
+	if strings.Contains(joined, "/refresh /settings") {
+		t.Fatalf("helpPanelLines() should not grow back into a slash-command inventory: %q", joined)
+	}
+	if strings.Contains(joined, "Runtime pane shows command, ports, URL, logs") {
+		t.Fatalf("helpPanelLines() should omit verbose runtime detail: %q", joined)
+	}
+}
+
+func TestRenderHelpPanelOmitsVerboseLegacyHints(t *testing.T) {
 	m := Model{}
 
 	rendered := ansi.Strip(m.renderHelpPanel(80, 20))
 	if strings.Contains(rendered, "f   forget missing") {
 		t.Fatalf("renderHelpPanel() should not advertise forget while it is unavailable: %q", rendered)
 	}
-	if strings.Contains(rendered, "r   rescan + retry failed AI") {
-		t.Fatalf("renderHelpPanel() should not advertise the removed refresh key: %q", rendered)
+	if strings.Contains(rendered, "Ctrl+Y note copy when notes open") {
+		t.Fatalf("renderHelpPanel() should not advertise the old verbose note-copy hint: %q", rendered)
 	}
-	if !strings.Contains(rendered, "/refresh /settings") {
-		t.Fatalf("renderHelpPanel() should continue to advertise refresh via slash command: %q", rendered)
+	if strings.Contains(rendered, "Runtime pane shows command, ports, URL, logs") {
+		t.Fatalf("renderHelpPanel() should not include verbose runtime prose: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Ctrl+V      paste image/text") {
+		t.Fatalf("renderHelpPanel() should keep the compact paste hint: %q", rendered)
 	}
 }
 

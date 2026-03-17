@@ -4006,50 +4006,6 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 	}
 }
 
-func llmStateLabel(usage model.LLMSessionUsage, spinnerFrame int) string {
-	if !usage.Enabled {
-		return "disabled"
-	}
-	state := "idle"
-	if usage.Running > 0 {
-		state = fmt.Sprintf("busy x%d %s", usage.Running, spinnerFrames[spinnerFrame%len(spinnerFrames)])
-	}
-	return state
-}
-
-func llmHelpLines(usage model.LLMSessionUsage, spinnerFrame int) []string {
-	if !usage.Enabled {
-		return []string{
-			"state  disabled",
-			"footer tok off",
-			"enable set OPENAI_API_KEY",
-		}
-	}
-
-	inTokens := formatTokenCount(usage.Totals.InputTokens)
-	outTokens := formatTokenCount(usage.Totals.OutputTokens)
-	totalTokens := formatTokenCount(usage.Totals.TotalTokens)
-	modelName := usage.Model
-	if modelName == "" {
-		modelName = "classifier"
-	}
-
-	lines := []string{
-		"state  " + llmStateLabel(usage, spinnerFrame),
-		"model  " + modelName,
-		fmt.Sprintf("req    start=%d ok=%d err=%d", usage.Started, usage.Completed, usage.Failed),
-		fmt.Sprintf("tok    in=%s out=%s total=%s", inTokens, outTokens, totalTokens),
-	}
-	if usage.Totals.CachedInputTokens > 0 || usage.Totals.ReasoningTokens > 0 {
-		lines = append(lines, fmt.Sprintf(
-			"extra  cache=%s reason=%s",
-			formatTokenCount(usage.Totals.CachedInputTokens),
-			formatTokenCount(usage.Totals.ReasoningTokens),
-		))
-	}
-	return lines
-}
-
 func formatTokenCount(v int64) string {
 	switch {
 	case v >= 1_000_000:
@@ -4060,6 +4016,24 @@ func formatTokenCount(v int64) string {
 		return fmt.Sprintf("%.1fk", float64(v)/1_000)
 	default:
 		return fmt.Sprintf("%d", v)
+	}
+}
+
+func helpPanelLines() []string {
+	return []string{
+		"/           command bar",
+		"Tab         switch pane",
+		"↑/↓ or j/k  move",
+		"PgUp/PgDn   page",
+		"Enter       open / action / send",
+		"Esc         list / hide / close",
+		"p pin   s/S snooze   n note",
+		"o sort  v view  x sessions  e events",
+		"Ctrl+V      paste image/text",
+		"Alt+Enter   newline",
+		"Ctrl+C      interrupt busy session",
+		"AGENT live  N note  RUN runtime  ! warning",
+		"q           quit",
 	}
 }
 
@@ -4093,87 +4067,11 @@ func formatSnoozeDuration(d time.Duration) string {
 }
 
 func (m Model) renderHelpPanel(bodyW, bodyH int) string {
-	sections := []helpSection{
-		{
-			Title: "Navigation",
-			Lines: []string{
-				"/           command bar",
-				"Tab/Shift+Tab focus",
-				"↑/↓ or j/k  focused pane",
-				"PgUp/PgDn   page focused",
-				"Home/End    top/bottom",
-				"Esc         back to list",
-			},
-		},
-		{
-			Title: "Views",
-			Lines: []string{
-				"o  sort",
-				"v  AI/all folders",
-				"focus grows active pane",
-				"runtime grows when focused",
-				"x  sessions",
-				"e  events",
-				"?  help",
-			},
-		},
-		{
-			Title: "Actions",
-			Lines: []string{
-				"Enter list open/resume latest provider",
-				"Esc     hide visible session",
-				"Alt+Up  hide visible session",
-				"Alt+Down open session picker",
-				"Alt+[  previous live session",
-				"Alt+]  next live session",
-				"Enter busy=steer idle=send",
-				"Ctrl+C busy=interrupt idle=close",
-				"busy elsewhere = read-only",
-				"Alt+Enter/Ctrl+J newline",
-				"Ctrl+V paste image/text",
-				"Ctrl+Y note copy when notes open",
-				"Backspace remove image/text marker",
-				"Alt+L expand dense blocks",
-				"p   pin",
-				"runtime pane: Left/Right action",
-				"runtime pane: Enter run action",
-				"s/S snooze/clear",
-				"n   note dialog",
-				"/refresh /settings",
-				"/open /run [/cmd] /runtime /stop",
-				"/run-edit /note [/clear]",
-				"/codex /codex-new /opencode /opencode-new",
-				"/diff /commit /finish /push",
-			},
-		},
-		{
-			Title: "Legend",
-			Lines: []string{
-				"AGENT bright CX/OC live, dim saved",
-				"AGENT shows turn timer while busy",
-				"N     * note saved",
-				"RUN   saved /run command summary",
-				"RUN   @port or !port when detected",
-				"Runtime pane shows command, ports, URL, logs",
-				"ASSESS short latest assessment label",
-				"SUMMARY latest session summary",
-				"! in ATTN = dirty or remote warning",
-			},
-		},
-		{
-			Title: "LLM",
-			Lines: llmHelpLines(m.currentUsage(), m.spinnerFrame),
-		},
-		{
-			Title: "Close",
-			Lines: []string{
-				renderDialogAction("Esc/?", "close help", cancelActionKeyStyle, cancelActionTextStyle),
-				renderDialogAction("q", "quit", disabledActionKeyStyle, disabledActionTextStyle),
-			},
-		},
-	}
-
-	content := renderHelpContent(sections, bodyW, bodyH)
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81"))
+	contentLines := append([]string{titleStyle.Render("Help"), ""}, helpPanelLines()...)
+	content := lipgloss.NewStyle().
+		MaxWidth(min(max(36, bodyW-6), 44)).
+		Render(strings.Join(contentLines, "\n"))
 	panel := lipgloss.NewStyle().
 		MaxWidth(max(36, bodyW-2)).
 		Border(lipgloss.RoundedBorder()).
@@ -4183,112 +4081,6 @@ func (m Model) renderHelpPanel(bodyW, bodyH int) string {
 		Foreground(lipgloss.Color("252")).
 		Render(content)
 	return lipgloss.Place(bodyW, bodyH, lipgloss.Center, lipgloss.Top, panel)
-}
-
-type helpSection struct {
-	Title string
-	Lines []string
-}
-
-func renderHelpContent(sections []helpSection, bodyW, bodyH int) string {
-	if len(sections) == 0 {
-		return ""
-	}
-
-	innerMaxW := max(36, bodyW-6)
-	maxCols := helpGridColumns(sections, innerMaxW)
-
-	best := renderHelpGrid(sections, 1, innerMaxW)
-	bestHeight := lipgloss.Height(best) + 2
-	for cols := maxCols; cols >= 1; cols-- {
-		candidate := renderHelpGrid(sections, cols, innerMaxW)
-		height := lipgloss.Height(candidate) + 2
-		if height <= bodyH {
-			return candidate
-		}
-		if height < bestHeight {
-			best = candidate
-			bestHeight = height
-		}
-	}
-	return best
-}
-
-func helpGridColumns(sections []helpSection, maxWidth int) int {
-	const (
-		gapWidth = 2
-	)
-	sectionCount := len(sections)
-	if sectionCount <= 1 {
-		return 1
-	}
-	minCardWidth := 22
-	for _, section := range sections {
-		sectionWidth := lipgloss.Width(section.Title)
-		for _, line := range section.Lines {
-			sectionWidth = max(sectionWidth, lipgloss.Width(" "+line))
-		}
-		minCardWidth = max(minCardWidth, sectionWidth+2)
-	}
-	cols := (maxWidth + gapWidth) / (minCardWidth + gapWidth)
-	if cols < 1 {
-		cols = 1
-	}
-	if cols > sectionCount {
-		cols = sectionCount
-	}
-	return cols
-}
-
-func renderHelpGrid(sections []helpSection, cols, maxWidth int) string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81"))
-	if cols <= 1 {
-		return strings.Join([]string{
-			titleStyle.Render("Help"),
-			"",
-			renderHelpCardColumn(sections, min(maxWidth, 42)),
-		}, "\n")
-	}
-
-	gap := "  "
-	colWidth := max(24, (maxWidth-(cols-1)*len(gap))/cols)
-	rows := make([]string, 0, (len(sections)+cols-1)/cols)
-	for start := 0; start < len(sections); start += cols {
-		end := min(len(sections), start+cols)
-		cards := make([]string, 0, end-start)
-		for _, section := range sections[start:end] {
-			cards = append(cards, renderHelpCard(section, colWidth))
-		}
-		row := cards[0]
-		for i := 1; i < len(cards); i++ {
-			row = lipgloss.JoinHorizontal(lipgloss.Top, row, gap, cards[i])
-		}
-		rows = append(rows, row)
-	}
-
-	return strings.Join([]string{
-		titleStyle.Render("Help"),
-		"",
-		strings.Join(rows, "\n\n"),
-	}, "\n")
-}
-
-func renderHelpCardColumn(sections []helpSection, width int) string {
-	blocks := make([]string, 0, len(sections))
-	for _, section := range sections {
-		blocks = append(blocks, renderHelpCard(section, width))
-	}
-	return strings.Join(blocks, "\n\n")
-}
-
-func renderHelpCard(section helpSection, width int) string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81"))
-	lines := make([]string, 0, len(section.Lines)+1)
-	lines = append(lines, titleStyle.Render(section.Title))
-	for _, line := range section.Lines {
-		lines = append(lines, " "+line)
-	}
-	return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
 }
 
 func (m Model) classificationTag(project model.ProjectSummary) string {

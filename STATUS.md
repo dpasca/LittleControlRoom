@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-17 17:43 JST (JST)
+Last updated: 2026-03-17 18:20 JST (JST)
 
 ## Current State
 
@@ -80,6 +80,27 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-17 18:20 JST)
+
+- Replaced the oversized multi-card help overlay with a single compact essentials card, so `?` and `/help` now show the same short, predictable cheat sheet instead of a long command inventory that could fall off moderate terminals.
+- Dropped the dynamic LLM/status block and the verbose runtime/session prose from the help panel, keeping only the highest-signal global shortcuts plus a one-line compact legend for `AGENT`, `N`, `RUN`, and `!`.
+- Tightened TUI coverage around the new behavior by asserting the help content stays compact and that the old verbose hints do not quietly reappear.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/app.go internal/tui/app_test.go` passed.
+- `go test ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-17T18:20:19+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 2`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-17T18:20:28+09:00` (`projects: 137`).
+- `env COLUMNS=110 LINES=30 make tui DB=/tmp/lcroom-help-minimal-smoke.sqlite` reached the TUI, opened the trimmed help overlay via `?`, and exited via `q`.
+
+Next concrete tasks:
+
+- Watch for any shortcuts that now feel too hidden and decide whether they belong in the footer or a contextual secondary help view instead of growing the global help modal again.
+- If the help panel stays stable, consider reusing the same compact-copy discipline for other overlays that have started to accrete status/detail text.
 
 ## Latest Update (2026-03-17 17:43 JST)
 
