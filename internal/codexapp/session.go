@@ -1179,7 +1179,7 @@ func (s *appServerSession) Close() error {
 		_ = stdin.Close()
 	}
 	if cmd != nil && cmd.Process != nil {
-		_ = cmd.Process.Kill()
+		_ = terminateAppServerCommand(cmd)
 	} else {
 		s.closeExitCh()
 	}
@@ -1212,7 +1212,7 @@ func (s *appServerSession) CloseDueToInactivity() error {
 		_ = stdin.Close()
 	}
 	if cmd != nil && cmd.Process != nil {
-		_ = cmd.Process.Kill()
+		_ = terminateAppServerCommand(cmd)
 	} else {
 		s.closeExitCh()
 	}
@@ -1251,6 +1251,7 @@ func (s *appServerSession) WaitClosed(timeout time.Duration) bool {
 func (s *appServerSession) start(req LaunchRequest) error {
 	cmd := exec.Command("codex", "app-server")
 	cmd.Dir = req.ProjectPath
+	configureAppServerCommand(cmd)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -2230,7 +2231,7 @@ func (s *appServerSession) handleTransportFailure(err error) {
 		_ = stdin.Close()
 	}
 	if cmd != nil && cmd.Process != nil {
-		_ = cmd.Process.Kill()
+		_ = terminateAppServerCommand(cmd)
 	}
 	s.failPending(message)
 	s.notify()

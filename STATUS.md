@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-17 19:41 JST (JST)
+Last updated: 2026-03-17 21:21 JST (JST)
 
 ## Current State
 
@@ -29,6 +29,7 @@ Current embedded Codex transport assumption:
 - The installed schema on this machine also exposes additional thread and utility RPCs such as `thread/fork`, `thread/read`, `thread/compact/start`, `review/start`, `model/list`, `app/list`, `skills/list`, and `account/rateLimits/read`, and Little Control Room now uses `thread/read` both as a stale-busy sanity check and as a steer-recovery fallback when the app-server reports that the active turn id has already advanced.
 - The installed schema also emits `thread/status/changed` plus streamed `plan`, `reasoning`, and `mcpToolCall` notifications, but it still does not expose a single authoritative "all visible output has settled" event, so embedded turn tracking should model `running`, `finishing`, and `reconciling` instead of a binary busy/idle flag.
 - Embedded `codex app-server` stdout frames can exceed the prior 1 MiB scanner cap during tool-heavy turns (observed around MCP/browser screenshot activity), so the embedded transport must tolerate large JSON-RPC messages and treat stdout decode failures as fatal session breakage rather than a recoverable transcript-only warning.
+- Embedded `codex app-server` sessions now launch in their own process group on Unix, and Little Control Room tears down that whole group on close, idle-timeout cleanup, and transport failure so long-lived child tool processes (for example `vite preview`) do not survive the embedded session.
 
 Current OpenCode transport assumption:
 
@@ -80,6 +81,25 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-17 21:21 JST)
+
+- Hardened embedded Codex shutdown on Unix by launching `codex app-server` in its own process group and terminating that whole group on explicit close, idle reaping, and transport failure, which prevents long-lived child tool processes from being orphaned when the embedded session goes away.
+- Added a Unix-only regression test that starts a background child process under a shell, invokes the new terminator, and asserts the child dies with the parent process group instead of lingering.
+- No Codex/OpenCode footprint assumptions changed beyond the embedded transport cleanup behavior above, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/codexapp/session.go internal/codexapp/process_unix.go internal/codexapp/process_other.go internal/codexapp/process_unix_test.go` passed.
+- `go test ./internal/codexapp -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-17T21:21:32+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-17T21:21:39+09:00` (`projects: 132`).
+
+Next concrete tasks:
+
+- Consider applying the same process-group cleanup helper to the embedded OpenCode server path, which still uses direct parent-process kills today.
+- Run one live embedded Codex smoke check against a real long-lived tool command and confirm the descendant process disappears immediately after the pane is explicitly closed or reaped for inactivity.
 
 ## Latest Update (2026-03-17 19:41 JST)
 
