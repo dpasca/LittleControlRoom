@@ -839,6 +839,52 @@ func TestCloseClearsBusyState(t *testing.T) {
 	}
 }
 
+func TestReadStderrAppendsAuth403Diagnosis(t *testing.T) {
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+	}
+
+	s.readStderr(strings.NewReader("2026-03-17T15:31:02.728473Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 403 Forbidden, url: wss://chatgpt.com/backend-api/codex/responses\n"))
+
+	snapshot := s.Snapshot()
+	if len(snapshot.Entries) != 2 {
+		t.Fatalf("entries = %d, want 2", len(snapshot.Entries))
+	}
+	if snapshot.Entries[0].Kind != TranscriptSystem || !strings.Contains(snapshot.Entries[0].Text, "codex stderr:") {
+		t.Fatalf("first entry = %#v, want raw stderr notice", snapshot.Entries[0])
+	}
+	if snapshot.Entries[1].Kind != TranscriptSystem || !strings.Contains(snapshot.Entries[1].Text, "Codex rejected the request with HTTP 403.") {
+		t.Fatalf("second entry = %#v, want auth diagnosis notice", snapshot.Entries[1])
+	}
+	if snapshot.Status != codexAuth403StatusLabel() {
+		t.Fatalf("status = %q, want %q", snapshot.Status, codexAuth403StatusLabel())
+	}
+}
+
+func TestAuth403DiagnosisIsOnlyAppendedOnce(t *testing.T) {
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+	}
+
+	s.readStderr(strings.NewReader("2026-03-17T15:31:02.728473Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 403 Forbidden, url: wss://chatgpt.com/backend-api/codex/responses\n"))
+	s.appendSystemError(errors.New("unexpected status 403 Forbidden: Unknown error, url: https://chatgpt.com/backend-api/codex/responses"))
+
+	snapshot := s.Snapshot()
+	count := 0
+	for _, entry := range snapshot.Entries {
+		if strings.Contains(entry.Text, "Codex rejected the request with HTTP 403.") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("auth diagnosis count = %d, want 1; entries = %#v", count, snapshot.Entries)
+	}
+}
+
 func TestHydrateResumedThreadKeepsBusySinceForSameActiveTurn(t *testing.T) {
 	startedAt := time.Date(2026, 3, 9, 17, 0, 0, 0, time.UTC)
 	s := &appServerSession{

@@ -30,6 +30,7 @@ Current embedded Codex transport assumption:
 - The installed schema also emits `thread/status/changed` plus streamed `plan`, `reasoning`, and `mcpToolCall` notifications, but it still does not expose a single authoritative "all visible output has settled" event, so embedded turn tracking should model `running`, `finishing`, and `reconciling` instead of a binary busy/idle flag.
 - Embedded `codex app-server` stdout frames can exceed the prior 1 MiB scanner cap during tool-heavy turns (observed around MCP/browser screenshot activity), so the embedded transport must tolerate large JSON-RPC messages and treat stdout decode failures as fatal session breakage rather than a recoverable transcript-only warning.
 - Embedded `codex app-server` sessions now launch in their own process group on Unix, and Little Control Room tears down that whole group on close, idle-timeout cleanup, and transport failure so long-lived child tool processes (for example `vite preview`) do not survive the embedded session.
+- Observed ChatGPT-backed `403 Forbidden` failures on `backend-api/codex/responses` can reject both the websocket path and the later HTTP fallback even while `codex login status` still reports logged in, so Little Control Room should treat that pattern as an auth/account-side Codex failure rather than a websocket-only transport bug.
 
 Current OpenCode transport assumption:
 
@@ -81,6 +82,46 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-18 00:55 JST)
+
+- Tightened the embedded Codex `403` diagnosis copy specifically for the status/footer path: the transcript and `LastSystemNotice` still keep the longer auth/account explanation, but the live `snapshot.Status` string now collapses to the short label `Codex auth/session rejected (HTTP 403)` so the embedded turn/status bar stays readable.
+- Adjusted the focused `internal/codexapp` regression to assert the shorter status label while preserving the existing longer transcript notice behavior.
+- No Codex/OpenCode footprint assumptions changed beyond the already-documented `403` diagnosis behavior, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/codexapp/session.go internal/codexapp/session_test.go` passed.
+- `go test ./internal/codexapp -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-18T00:55:11+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-18T00:55:11+09:00` (`projects: 132`).
+
+Next concrete tasks:
+
+- If we see other long diagnostic strings crowding the embedded footer, consider introducing an explicit short-status versus long-notice pattern for a few more high-noise failures instead of only this `403` case.
+- Decide whether session-picker summaries should prefer the compact status label or the richer `LastSystemNotice` when the active issue is already visible in the transcript.
+
+## Latest Update (2026-03-18 00:41 JST)
+
+- Added a one-shot embedded Codex diagnosis for ChatGPT-backed `403 Forbidden` failures on `backend-api/codex/responses`: Little Control Room still preserves the raw `codex stderr` or turn error text, but now also appends a clearer system notice that points toward ChatGPT auth/session or entitlement trouble instead of implying a generic local transport failure.
+- Covered the new behavior with focused `internal/codexapp` regressions that verify the diagnosis appears for the websocket-stderr form of the failure and that the higher-signal notice is only appended once even if a later HTTP fallback also fails with the same `403`.
+- Confirmed from the local Codex CLI log that this failure pattern is not websocket-only on this machine: the client retries websocket streaming, falls back to HTTP, and then still receives `403 Forbidden` from `https://chatgpt.com/backend-api/codex/responses`, while the public status page also reported a live ChatGPT sign-in/account incident during the same window.
+- No Codex/OpenCode footprint assumptions changed beyond the embedded transport diagnosis note above, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/codexapp/session.go internal/codexapp/session_test.go` passed.
+- `go test ./internal/codexapp -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-18T00:40:32+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-18T00:40:32+09:00` (`projects: 132`).
+- `env COLUMNS=110 LINES=30 make tui DB=/tmp/lcroom-auth403-diagnosis-smoke.sqlite` reached the TUI and exited via `q`.
+
+Next concrete tasks:
+
+- Decide whether the embedded Codex pane should also surface the same auth/account diagnosis when the failure arrives only through a structured app-server notification and not through stderr.
+- If more auth-side Codex failures appear in the wild, consider grouping the repeated raw retry chatter into a compact local summary so the embedded transcript stays readable during multi-retry outages.
 
 ## Latest Update (2026-03-17 21:21 JST)
 

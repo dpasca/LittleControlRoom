@@ -50,6 +50,7 @@ type appServerSession struct {
 	busy               bool
 	busyExternal       bool
 	reconciling        bool
+	reportedAuth403    bool
 	busySince          time.Time
 	closed             bool
 	status             string
@@ -1512,6 +1513,7 @@ func (s *appServerSession) readStderr(r io.Reader) {
 			return
 		}
 		s.appendSystemNotice("codex stderr: " + line)
+		s.maybeAppendAuth403Diagnosis(line)
 	})
 	if err != nil {
 		s.appendSystemNotice("codex stderr stream error: " + err.Error())
@@ -2261,6 +2263,49 @@ func (s *appServerSession) appendSystemError(err error) {
 	s.lastError = message
 	s.lastSystemNotice = message
 	s.status = "Codex error"
+	s.mu.Unlock()
+	s.notify()
+	s.maybeAppendAuth403Diagnosis(message)
+}
+
+func diagnoseCodexAuth403(message string) string {
+	normalized := strings.ToLower(strings.TrimSpace(message))
+	if !strings.Contains(normalized, "403 forbidden") {
+		return ""
+	}
+	switch {
+	case strings.Contains(normalized, "backend-api/codex/responses"),
+		strings.Contains(normalized, "failed to connect to websocket"),
+		strings.Contains(normalized, "unexpected status 403 forbidden"):
+		return "Codex rejected the request with HTTP 403. This usually means ChatGPT authentication, session access, or Codex entitlement is unavailable, or ChatGPT account access is temporarily degraded. It is usually not a Little Control Room transport bug. Check `codex login status`; if needed, run `codex logout` and `codex login`, then retry once ChatGPT account access is healthy again."
+	default:
+		return ""
+	}
+}
+
+func codexAuth403StatusLabel() string {
+	return "Codex auth/session rejected (HTTP 403)"
+}
+
+func (s *appServerSession) maybeAppendAuth403Diagnosis(message string) {
+	diagnosis := diagnoseCodexAuth403(message)
+	if diagnosis == "" {
+		return
+	}
+
+	s.mu.Lock()
+	if s.reportedAuth403 {
+		s.mu.Unlock()
+		return
+	}
+	s.touchLocked()
+	s.reportedAuth403 = true
+	s.appendEntryLocked("", TranscriptSystem, diagnosis)
+	s.lastSystemNotice = diagnosis
+	status := strings.ToLower(strings.TrimSpace(s.status))
+	if status == "" || status == "codex error" || strings.HasPrefix(status, "codex stderr:") || strings.Contains(status, "403 forbidden") {
+		s.status = codexAuth403StatusLabel()
+	}
 	s.mu.Unlock()
 	s.notify()
 }
