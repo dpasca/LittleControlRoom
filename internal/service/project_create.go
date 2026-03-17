@@ -32,12 +32,20 @@ const (
 )
 
 type CreateOrAttachProjectResult struct {
-	Action            CreateOrAttachProjectAction
-	ProjectPath       string
-	ProjectName       string
-	ParentPath        string
-	GitRepoCreated    bool
-	RecentParentPaths []string
+	Action              CreateOrAttachProjectAction
+	ProjectPath         string
+	ProjectName         string
+	ParentPath          string
+	GitRepoCreated      bool
+	NameDerivedFromPath bool
+	RecentParentPaths   []string
+}
+
+type normalizedCreateOrAttachProjectRequest struct {
+	ParentPath          string
+	ProjectName         string
+	ProjectPath         string
+	NameDerivedFromPath bool
 }
 
 func (s *Service) RecentProjectParentPaths(ctx context.Context, limit int) ([]string, error) {
@@ -48,10 +56,13 @@ func (s *Service) RecentProjectParentPaths(ctx context.Context, limit int) ([]st
 }
 
 func (s *Service) CreateOrAttachProject(ctx context.Context, req CreateOrAttachProjectRequest) (CreateOrAttachProjectResult, error) {
-	parentPath, projectName, projectPath, err := normalizeCreateOrAttachProjectRequest(req)
+	normalized, err := normalizeCreateOrAttachProjectRequest(req)
 	if err != nil {
 		return CreateOrAttachProjectResult{}, err
 	}
+	parentPath := normalized.ParentPath
+	projectName := normalized.ProjectName
+	projectPath := normalized.ProjectPath
 
 	info, statErr := os.Stat(projectPath)
 	exists := statErr == nil
@@ -69,9 +80,10 @@ func (s *Service) CreateOrAttachProject(ctx context.Context, req CreateOrAttachP
 	existing := projects[projectPath]
 
 	result := CreateOrAttachProjectResult{
-		ProjectPath: projectPath,
-		ProjectName: projectName,
-		ParentPath:  parentPath,
+		ProjectPath:         projectPath,
+		ProjectName:         projectName,
+		ParentPath:          parentPath,
+		NameDerivedFromPath: normalized.NameDerivedFromPath,
 	}
 
 	switch {
@@ -204,35 +216,76 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 	return nil
 }
 
-func normalizeCreateOrAttachProjectRequest(req CreateOrAttachProjectRequest) (string, string, string, error) {
-	parentPath := strings.TrimSpace(req.ParentPath)
+func normalizeCreateOrAttachProjectRequest(req CreateOrAttachProjectRequest) (normalizedCreateOrAttachProjectRequest, error) {
+	parentPath := normalizeCreateOrAttachProjectPath(req.ParentPath)
 	if parentPath == "" {
-		return "", "", "", fmt.Errorf("project path is required")
+		return normalizedCreateOrAttachProjectRequest{}, fmt.Errorf("project path is required")
 	}
-	parentPath = expandUserHomePath(parentPath)
-	absParentPath, err := filepath.Abs(parentPath)
-	if err != nil {
-		return "", "", "", fmt.Errorf("resolve project path: %w", err)
-	}
-	parentPath = filepath.Clean(absParentPath)
 
 	projectName := strings.TrimSpace(req.Name)
 	if projectName == "" {
-		return "", "", "", fmt.Errorf("project name is required")
+		info, err := os.Stat(parentPath)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			return normalizedCreateOrAttachProjectRequest{}, fmt.Errorf("project name is required unless the path already exists")
+		case err != nil:
+			return normalizedCreateOrAttachProjectRequest{}, fmt.Errorf("check project path: %w", err)
+		case !info.IsDir():
+			return normalizedCreateOrAttachProjectRequest{}, fmt.Errorf("path already exists and is not a directory: %s", parentPath)
+		}
+
+		projectName = filepath.Base(parentPath)
+		if projectName == "." || projectName == string(os.PathSeparator) || !validProjectFolderName(projectName) {
+			return normalizedCreateOrAttachProjectRequest{}, fmt.Errorf("project name is required unless the path ends with a folder name")
+		}
+		return normalizedCreateOrAttachProjectRequest{
+			ParentPath:          filepath.Dir(parentPath),
+			ProjectName:         projectName,
+			ProjectPath:         parentPath,
+			NameDerivedFromPath: true,
+		}, nil
 	}
-	if projectName == "." || projectName == ".." || projectNameIsPathLike(projectName) {
-		return "", "", "", fmt.Errorf("project name must be a single folder name")
+	if !validProjectFolderName(projectName) {
+		return normalizedCreateOrAttachProjectRequest{}, fmt.Errorf("project name must be a single folder name")
 	}
 
 	projectPath := filepath.Clean(filepath.Join(parentPath, projectName))
 	if projectPath == parentPath {
-		return "", "", "", fmt.Errorf("project name must be a single folder name")
+		return normalizedCreateOrAttachProjectRequest{}, fmt.Errorf("project name must be a single folder name")
 	}
-	return parentPath, projectName, projectPath, nil
+	return normalizedCreateOrAttachProjectRequest{
+		ParentPath:  parentPath,
+		ProjectName: projectName,
+		ProjectPath: projectPath,
+	}, nil
 }
 
-func projectNameIsPathLike(name string) bool {
-	return strings.ContainsRune(name, '/') || strings.ContainsRune(name, '\\') || filepath.Base(name) != name
+func validProjectFolderName(name string) bool {
+	return name != "" && name != "." && name != ".." && !strings.ContainsRune(name, '/') && !strings.ContainsRune(name, '\\') && filepath.Base(name) == name
+}
+
+func normalizeCreateOrAttachProjectPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	path = trimWrappingPathQuotes(path)
+	path = expandUserHomePath(path)
+	absPath, err := filepath.Abs(path)
+	if err == nil {
+		path = absPath
+	}
+	return filepath.Clean(path)
+}
+
+func trimWrappingPathQuotes(path string) string {
+	path = strings.TrimSpace(path)
+	if len(path) >= 2 {
+		if (path[0] == '\'' && path[len(path)-1] == '\'') || (path[0] == '"' && path[len(path)-1] == '"') {
+			return strings.TrimSpace(path[1 : len(path)-1])
+		}
+	}
+	return path
 }
 
 func expandUserHomePath(path string) string {

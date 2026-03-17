@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -117,5 +118,68 @@ func TestNewProjectDialogAltDigitAppliesRecentPath(t *testing.T) {
 	}
 	if got.newProjectDialog.PathInput.Value() != "/tmp/two" {
 		t.Fatalf("path input = %q, want /tmp/two", got.newProjectDialog.PathInput.Value())
+	}
+}
+
+func TestNewProjectPreviewDerivesNameFromQuotedExistingPathWhenNameBlank(t *testing.T) {
+	t.Parallel()
+
+	projectPath := filepath.Join(t.TempDir(), "Family Room", "Media", "2026_03_mothers_farm")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("mkdir project path: %v", err)
+	}
+
+	m := Model{
+		width:     100,
+		height:    28,
+		homeDirFn: func() (string, error) { return "/Users/tester", nil },
+	}
+	m.newProjectDialog = &newProjectDialogState{
+		PathInput:          newNewProjectTextInput("'"+projectPath+"'", 1024),
+		NameInput:          newNewProjectTextInput("", 256),
+		CreateGitRepo:      true,
+		PathManuallyEdited: true,
+	}
+
+	preview := m.currentNewProjectPreview()
+	if !preview.Ready {
+		t.Fatalf("expected preview to be ready, got %#v", preview)
+	}
+	if !preview.NameDerivedFromPath {
+		t.Fatalf("expected preview to derive the project name from the path")
+	}
+	if preview.Name != "2026_03_mothers_farm" {
+		t.Fatalf("preview name = %q, want %q", preview.Name, "2026_03_mothers_farm")
+	}
+	if preview.ParentPath != filepath.Dir(projectPath) {
+		t.Fatalf("parent path = %q, want %q", preview.ParentPath, filepath.Dir(projectPath))
+	}
+
+	rendered := m.renderNewProjectContent(80)
+	if !strings.Contains(rendered, "Using existing folder name") {
+		t.Fatalf("rendered dialog missing derived-name hint: %q", rendered)
+	}
+}
+
+func TestNewProjectPreviewDoesNotAutoDeriveNameForDefaultParentPath(t *testing.T) {
+	t.Parallel()
+
+	parent := t.TempDir()
+	m := Model{
+		width:     100,
+		height:    28,
+		homeDirFn: func() (string, error) { return parent, nil },
+	}
+	m.newProjectDialog = &newProjectDialogState{
+		PathInput: newNewProjectTextInput(parent, 1024),
+		NameInput: newNewProjectTextInput("", 256),
+	}
+
+	preview := m.currentNewProjectPreview()
+	if preview.Ready {
+		t.Fatalf("default parent path should not be ready without a name: %#v", preview)
+	}
+	if preview.NameDerivedFromPath {
+		t.Fatalf("default parent path should not derive a project name: %#v", preview)
 	}
 }

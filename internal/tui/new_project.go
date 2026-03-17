@@ -23,11 +23,12 @@ const (
 const newProjectRecentPathLimit = 3
 
 type newProjectDialogState struct {
-	PathInput     textinput.Model
-	NameInput     textinput.Model
-	Selected      int
-	CreateGitRepo bool
-	Submitting    bool
+	PathInput          textinput.Model
+	NameInput          textinput.Model
+	Selected           int
+	CreateGitRepo      bool
+	Submitting         bool
+	PathManuallyEdited bool
 }
 
 type newProjectResultMsg struct {
@@ -41,13 +42,14 @@ type recentProjectParentsMsg struct {
 }
 
 type newProjectPreview struct {
-	ParentPath  string
-	Name        string
-	FullPath    string
-	Ready       bool
-	Exists      bool
-	ExistingDir bool
-	Error       string
+	ParentPath          string
+	Name                string
+	FullPath            string
+	Ready               bool
+	Exists              bool
+	ExistingDir         bool
+	NameDerivedFromPath bool
+	Error               string
 }
 
 func (m Model) loadRecentProjectParentsCmd() tea.Cmd {
@@ -68,7 +70,7 @@ func (m *Model) openNewProjectDialog() tea.Cmd {
 		CreateGitRepo: true,
 	}
 	dialog.PathInput.Placeholder = "/path/to/projects"
-	dialog.NameInput.Placeholder = "project-name"
+	dialog.NameInput.Placeholder = "project-name (optional for existing folder path)"
 
 	m.newProjectDialog = dialog
 	m.showHelp = false
@@ -102,6 +104,7 @@ func (m Model) updateNewProjectMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if index >= 0 && index < len(m.newProjectRecentParents) && index < newProjectRecentPathLimit {
 			dialog.PathInput.SetValue(m.newProjectRecentParents[index])
 			dialog.PathInput.CursorEnd()
+			dialog.PathManuallyEdited = false
 			m.status = fmt.Sprintf("Using recent parent path %d", index+1)
 			return m, nil
 		}
@@ -145,8 +148,12 @@ func (m Model) updateNewProjectMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch dialog.Selected {
 	case newProjectFieldPath:
+		previous := dialog.PathInput.Value()
 		input, cmd := dialog.PathInput.Update(msg)
 		dialog.PathInput = input
+		if dialog.PathInput.Value() != previous {
+			dialog.PathManuallyEdited = true
+		}
 		return m, cmd
 	case newProjectFieldName:
 		input, cmd := dialog.NameInput.Update(msg)
@@ -236,7 +243,7 @@ func (m Model) currentNewProjectPreview() newProjectPreview {
 		return newProjectPreview{}
 	}
 
-	parentPath := normalizeNewProjectParentPath(m.homeDirFn, dialog.PathInput.Value())
+	parentPath := normalizeNewProjectPathInput(m.homeDirFn, dialog.PathInput.Value())
 	name := strings.TrimSpace(dialog.NameInput.Value())
 	displayName := name
 	if displayName == "" {
@@ -254,9 +261,15 @@ func (m Model) currentNewProjectPreview() newProjectPreview {
 		return preview
 	}
 	if name == "" {
+		if !dialog.PathManuallyEdited {
+			return preview
+		}
+		if inferred, ok := deriveNewProjectPreviewFromExistingPath(parentPath); ok {
+			return inferred
+		}
 		return preview
 	}
-	if name == "." || name == ".." || strings.ContainsRune(name, '/') || strings.ContainsRune(name, '\\') || filepath.Base(name) != name {
+	if !validNewProjectFolderName(name) {
 		preview.Error = "Project name must be a single folder name"
 		return preview
 	}
@@ -278,11 +291,12 @@ func (m Model) currentNewProjectPreview() newProjectPreview {
 	return preview
 }
 
-func normalizeNewProjectParentPath(homeDirFn func() (string, error), raw string) string {
+func normalizeNewProjectPathInput(homeDirFn func() (string, error), raw string) string {
 	path := strings.TrimSpace(raw)
 	if path == "" {
 		return ""
 	}
+	path = trimNewProjectWrappingQuotes(path)
 	if expanded := expandNewProjectHomePath(homeDirFn, path); expanded != "" {
 		path = expanded
 	}
@@ -290,6 +304,62 @@ func normalizeNewProjectParentPath(homeDirFn func() (string, error), raw string)
 		path = absPath
 	}
 	return filepath.Clean(path)
+}
+
+func trimNewProjectWrappingQuotes(path string) string {
+	path = strings.TrimSpace(path)
+	if len(path) >= 2 {
+		if (path[0] == '\'' && path[len(path)-1] == '\'') || (path[0] == '"' && path[len(path)-1] == '"') {
+			return strings.TrimSpace(path[1 : len(path)-1])
+		}
+	}
+	return path
+}
+
+func validNewProjectFolderName(name string) bool {
+	return name != "" && name != "." && name != ".." && !strings.ContainsRune(name, '/') && !strings.ContainsRune(name, '\\') && filepath.Base(name) == name
+}
+
+func deriveNewProjectPreviewFromExistingPath(path string) (newProjectPreview, bool) {
+	info, err := os.Stat(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return newProjectPreview{}, false
+	case err != nil:
+		return newProjectPreview{
+			ParentPath: path,
+			FullPath:   path,
+			Error:      fmt.Sprintf("Unable to inspect path: %v", err),
+		}, true
+	case !info.IsDir():
+		return newProjectPreview{
+			ParentPath: path,
+			FullPath:   path,
+			Exists:     true,
+			Error:      "Path already exists and is not a directory",
+		}, true
+	}
+
+	name := filepath.Base(path)
+	if !validNewProjectFolderName(name) || name == string(os.PathSeparator) {
+		return newProjectPreview{
+			ParentPath:  path,
+			FullPath:    path,
+			Exists:      true,
+			ExistingDir: true,
+			Error:       "Project name is required unless the path ends with a folder name",
+		}, true
+	}
+
+	return newProjectPreview{
+		ParentPath:          filepath.Dir(path),
+		Name:                name,
+		FullPath:            path,
+		Ready:               true,
+		Exists:              true,
+		ExistingDir:         true,
+		NameDerivedFromPath: true,
+	}, true
 }
 
 func expandNewProjectHomePath(homeDirFn func() (string, error), path string) string {
@@ -361,7 +431,7 @@ func (m Model) renderNewProjectContent(width int) string {
 		for i, path := range m.newProjectRecentParents {
 			label := fmt.Sprintf("Alt+%d ", i+1)
 			rowStyle := commandPaletteRowStyle
-			if normalizeNewProjectParentPath(m.homeDirFn, dialog.PathInput.Value()) == filepath.Clean(path) {
+			if normalizeNewProjectPathInput(m.homeDirFn, dialog.PathInput.Value()) == filepath.Clean(path) {
 				rowStyle = commandPaletteSelectStyle
 			}
 			lines = append(lines, rowStyle.Width(width).Render(label+truncateText(path, max(12, width-len(label)))))
@@ -407,6 +477,12 @@ func (m Model) renderNewProjectStatus(preview newProjectPreview, width int) []st
 	switch {
 	case preview.Error != "":
 		lines = append(lines, detailWarningStyle.Render(preview.Error))
+	case preview.NameDerivedFromPath:
+		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("Name left blank. Using existing folder name %q from the provided path.", preview.Name)))
+		lines = append(lines, commandPaletteHintStyle.Render("Enter will add that folder to the list directly."))
+		if m.newProjectDialog != nil && m.newProjectDialog.CreateGitRepo {
+			lines = append(lines, commandPaletteHintStyle.Render("Git init only runs when a new folder is created here."))
+		}
 	case preview.Exists && preview.ExistingDir:
 		lines = append(lines, commandPaletteHintStyle.Render("Folder already exists. Enter will add it to the list instead of creating it."))
 		if m.newProjectDialog != nil && m.newProjectDialog.CreateGitRepo {
@@ -415,7 +491,7 @@ func (m Model) renderNewProjectStatus(preview newProjectPreview, width int) []st
 	case preview.Ready:
 		lines = append(lines, commandPaletteHintStyle.Render("Folder does not exist yet. Enter will create it and add it to the list."))
 	default:
-		lines = append(lines, commandPaletteHintStyle.Render("Enter a parent path and a single-folder project name."))
+		lines = append(lines, commandPaletteHintStyle.Render("Enter a parent path and a single-folder project name, or paste an existing folder path and leave Name blank."))
 	}
 	if width > 0 && len(lines) > 0 {
 		for i, line := range lines {

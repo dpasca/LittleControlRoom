@@ -533,9 +533,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = "Project created and added to the list"
 			}
 		case service.CreateOrAttachProjectAdded:
-			m.status = "Existing folder added to the list"
+			if msg.result.NameDerivedFromPath {
+				m.status = fmt.Sprintf("Existing folder added to the list using %q as the project name", msg.result.ProjectName)
+			} else {
+				m.status = "Existing folder added to the list"
+			}
 		default:
-			m.status = "Project already in the list"
+			if msg.result.NameDerivedFromPath {
+				m.status = fmt.Sprintf("Project already in the list as %q", msg.result.ProjectName)
+			} else {
+				m.status = "Project already in the list"
+			}
 		}
 		return m, m.loadProjectsCmd()
 	case detailMsg:

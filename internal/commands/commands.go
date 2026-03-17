@@ -105,7 +105,7 @@ var specs = []Spec{
 	{Name: "sort", Usage: "/sort attention|recent", Summary: "Set list ordering"},
 	{Name: "view", Usage: "/view ai|all", Summary: "Choose AI-linked or all folders"},
 	{Name: "settings", Usage: "/settings", Summary: "Edit persisted scope, demo filters, and scan thresholds"},
-	{Name: "new-project", Usage: "/new-project", Summary: "Create a project folder or add an existing one"},
+	{Name: "new-project", Usage: "/new-project", Summary: "Create a project folder, or paste an existing path to add it"},
 	{Name: "open", Usage: "/open", Summary: "Open the selected project's folder in the system browser"},
 	{Name: "run", Usage: "/run [command]", Summary: "Start the selected project's managed runtime"},
 	{Name: "start", Usage: "/start [command]", Summary: "Alias for /run"},

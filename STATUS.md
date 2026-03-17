@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-18 03:05 JST (JST)
+Last updated: 2026-03-18 03:19 JST (JST)
 
 ## Current State
 
@@ -128,6 +128,29 @@ Next concrete tasks:
 
 - Reproduce the original stuck `Working` / `no active turn to steer` scenario in a live embedded Codex turn and verify the footer now falls back to idle soon after the turn really ends.
 - If the app-server keeps producing more “thread says active but no turn exists” cases, consider surfacing a tiny transcript/debug breadcrumb so future protocol oddities are easier to diagnose from inside the pane.
+
+## Latest Update (2026-03-18 03:19 JST)
+
+- Updated the `/new-project` flow so it accepts pasted shell-quoted paths such as macOS-style single-quoted folder paths, normalizing matching outer quotes before path resolution in both the TUI preview and the service layer.
+- Added a path-only add mode for existing folders: when the user manually edits the path field, leaves `Name` blank, and the path already exists as a directory, Little Control Room now derives the project name from the final path segment and adds that folder directly.
+- Kept the existing parent-plus-name creation flow safe by avoiding automatic name derivation for the dialog's default parent path or recent-path shortcuts unless the user manually edits the path field first, preventing accidental adds of a parent directory on a blank-name Enter press.
+- Surfaced the derived-name behavior in the dialog/status copy and command summary, and added focused regressions for quoted existing paths, missing-name validation, derived-name preview hints, and the default-parent-path guardrail.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/service/project_create.go internal/service/project_create_test.go internal/tui/new_project.go internal/tui/new_project_test.go internal/tui/app.go` passed.
+- `go test ./internal/service ./internal/tui -run 'Test(CreateOrAttachProject|NewProject)' -count=1` passed.
+- `go test ./internal/commands -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-18T03:19:00+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-18T03:19:00+09:00` (`projects: 132`).
+- `env -u OPENAI_API_KEY COLUMNS=112 LINES=31 make tui DATA_DIR=/tmp/lcroom-new-project-check CONFIG=/tmp/lcroom-new-project-check/config.toml DB=/tmp/lcroom-new-project-check/little-control-room.sqlite INTERVAL=1h` reached the TUI on an isolated temp DB and exited cleanly via `q`.
+
+Next concrete tasks:
+
+- Consider whether the dialog should offer a small inline affordance such as `Paste full path` or `Use folder name` so the path-only mode is more discoverable than a status hint alone.
+- If we later want to support shell-escaped pasted paths with embedded quotes or backslashes beyond simple outer quoting, add that deliberately with explicit tests rather than broad path munging.
 
 ## Latest Update (2026-03-18 02:36 JST)
 

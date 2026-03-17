@@ -95,6 +95,71 @@ func TestCreateOrAttachProjectAddsExistingDirectoryWithoutInitializingGit(t *tes
 	}
 }
 
+func TestCreateOrAttachProjectAddsQuotedExistingDirectoryAndDerivesNameFromPath(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	parent := filepath.Join(t.TempDir(), "Family Room", "Media")
+	projectPath := filepath.Join(parent, "2026_03_mothers_farm")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("mkdir existing project: %v", err)
+	}
+
+	result, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath:    "'" + projectPath + "'",
+		CreateGitRepo: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateOrAttachProject() error = %v", err)
+	}
+	if result.Action != CreateOrAttachProjectAdded {
+		t.Fatalf("action = %q, want %q", result.Action, CreateOrAttachProjectAdded)
+	}
+	if !result.NameDerivedFromPath {
+		t.Fatalf("expected project name to be derived from path")
+	}
+	if result.ProjectName != "2026_03_mothers_farm" {
+		t.Fatalf("project name = %q, want %q", result.ProjectName, "2026_03_mothers_farm")
+	}
+	if result.ParentPath != parent {
+		t.Fatalf("parent path = %q, want %q", result.ParentPath, parent)
+	}
+	if result.ProjectPath != projectPath {
+		t.Fatalf("project path = %q, want %q", result.ProjectPath, projectPath)
+	}
+}
+
+func TestCreateOrAttachProjectRequiresNameForMissingPath(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	projectPath := filepath.Join(t.TempDir(), "missing-project")
+
+	_, err = svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: projectPath,
+	})
+	if err == nil {
+		t.Fatalf("expected missing-path request without a name to fail")
+	}
+	if got := err.Error(); got != "project name is required unless the path already exists" {
+		t.Fatalf("error = %q, want %q", got, "project name is required unless the path already exists")
+	}
+}
+
 func TestCreateOrAttachProjectDoesNotOverwriteTrackedSessions(t *testing.T) {
 	t.Parallel()
 

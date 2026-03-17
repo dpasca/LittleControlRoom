@@ -72,7 +72,7 @@ The main TUI command palette opens with `/`.
 - `/sort <attention|recent>`: Change the project ordering.
 - `/view <ai|all>`: Switch between AI-linked and all tracked folders.
 - `/settings`: Edit saved scope and scan settings.
-- `/new-project`: Create a project folder or add an existing one.
+- `/new-project`: Create a project folder, or paste an existing project path to add it directly.
 - `/open`: Open the selected project's folder in the system browser.
 - `/run [command]`: Start the selected project's managed runtime.
 - `/start [command]`: Alias for `/run`.
@@ -142,7 +142,7 @@ Projects with an active managed runtime show a short summary in the `RUN` column
 
 Use `/diff` to open a full-screen git diff for the selected project, with staged files listed first on the left, unstaged files below them, and a scrollable text or image preview on the right.
 
-To create a a new project, use the command `/new-project`. This will create a new directory or acknowledge an existing one, and add it to the list of projects to track.
+To create a new project, use the command `/new-project`. This will create a new directory or acknowledge an existing one, and add it to the list of projects to track. If you already have a full folder path copied from macOS, you can paste it directly into the path field, leave `Name` blank, and LCR will use the last folder name automatically.
 
 ## Costs
 
