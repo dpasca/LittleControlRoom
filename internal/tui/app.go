@@ -92,6 +92,7 @@ type Model struct {
 	codexPendingOpen    *codexPendingOpenState
 	codexInput          textarea.Model
 	codexDrafts         map[string]codexDraft
+	codexPasteTokenSeq  int
 	codexClosedHandled  map[string]struct{}
 	codexPickerVisible  bool
 	codexPickerSelected int
@@ -4059,9 +4060,9 @@ func (m Model) renderHelpPanel(bodyW, bodyH int) string {
 				"Ctrl+C busy=interrupt idle=close",
 				"busy elsewhere = read-only",
 				"Alt+Enter/Ctrl+J newline",
-				"Ctrl+V paste image",
+				"Ctrl+V paste image/text",
 				"Ctrl+Y note copy when notes open",
-				"Backspace remove image marker",
+				"Backspace remove image/text marker",
 				"Alt+L expand dense blocks",
 				"p   pin",
 				"runtime pane: Left/Right action",

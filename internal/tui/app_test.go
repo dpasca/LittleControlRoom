@@ -3122,6 +3122,177 @@ func TestVisibleCodexBackspaceRemovesInlineImageMarker(t *testing.T) {
 	}
 }
 
+func TestVisibleCodexCtrlVPastesLargeTextAsPlaceholder(t *testing.T) {
+	previousExporter := clipboardImageExporter
+	clipboardImageExporter = func() (string, error) {
+		return "", errClipboardHasNoImage
+	}
+	t.Cleanup(func() {
+		clipboardImageExporter = previousExporter
+	})
+
+	previousReader := clipboardTextReader
+	clipboardTextReader = func() (string, error) {
+		return strings.Repeat("a", 1200), nil
+	}
+	t.Cleanup(func() {
+		clipboardTextReader = previousReader
+	})
+
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started: true,
+			Preset:  codexcli.PresetYolo,
+			Status:  "Codex session ready",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          newCodexTextarea(),
+		codexDrafts:         make(map[string]codexDraft),
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlV})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("ctrl+v large text paste should not queue a command")
+	}
+	if got.codexInput.Value() != "[Paste #1: 1200 characters] " {
+		t.Fatalf("composer = %q, want large paste placeholder", got.codexInput.Value())
+	}
+	pastedTexts := got.currentCodexPastedTexts()
+	if len(pastedTexts) != 1 {
+		t.Fatalf("pasted texts = %d, want 1", len(pastedTexts))
+	}
+	if pastedTexts[0].Text != strings.Repeat("a", 1200) {
+		t.Fatalf("stored pasted text length = %d, want 1200", len([]rune(pastedTexts[0].Text)))
+	}
+	if got.status != "Pasted [1200 characters] as a placeholder" {
+		t.Fatalf("status = %q, want placeholder notice", got.status)
+	}
+}
+
+func TestVisibleCodexBracketedPasteUsesLargeTextPlaceholder(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started: true,
+			Preset:  codexcli.PresetYolo,
+			Status:  "Codex session ready",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	longText := strings.Repeat("b", 800)
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          newCodexTextarea(),
+		codexDrafts:         make(map[string]codexDraft),
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(longText), Paste: true})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("bracketed large paste should not queue a command")
+	}
+	if got.codexInput.Value() != "[Paste #1: 800 characters] " {
+		t.Fatalf("composer = %q, want bracketed paste placeholder", got.codexInput.Value())
+	}
+}
+
+func TestVisibleCodexBackspaceRemovesLargePastePlaceholder(t *testing.T) {
+	previousExporter := clipboardImageExporter
+	clipboardImageExporter = func() (string, error) {
+		return "", errClipboardHasNoImage
+	}
+	t.Cleanup(func() {
+		clipboardImageExporter = previousExporter
+	})
+
+	previousReader := clipboardTextReader
+	clipboardTextReader = func() (string, error) {
+		return strings.Repeat("x", 900), nil
+	}
+	t.Cleanup(func() {
+		clipboardTextReader = previousReader
+	})
+
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started: true,
+			Preset:  codexcli.PresetYolo,
+			Status:  "Codex session ready",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          newCodexTextarea(),
+		codexDrafts:         make(map[string]codexDraft),
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, _ := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlV})
+	got := updated.(Model)
+	updated, cmd := got.updateCodexMode(tea.KeyMsg{Type: tea.KeyBackspace})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("backspace large placeholder removal should not queue a command")
+	}
+	if got.codexInput.Value() != "" {
+		t.Fatalf("composer = %q, want placeholder removed", got.codexInput.Value())
+	}
+	if len(got.currentCodexPastedTexts()) != 0 {
+		t.Fatalf("pasted texts = %d, want 0", len(got.currentCodexPastedTexts()))
+	}
+	if got.status != "Removed [900 characters] placeholder" {
+		t.Fatalf("status = %q, want placeholder removal notice", got.status)
+	}
+}
+
 func TestVisibleCodexSubmissionStripsInlineImageMarker(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
@@ -3185,6 +3356,113 @@ func TestVisibleCodexSubmissionStripsInlineImageMarker(t *testing.T) {
 	}
 	if got.codexInput.Value() != "" {
 		t.Fatalf("composer should clear after submit, got %q", got.codexInput.Value())
+	}
+}
+
+func TestVisibleCodexSubmissionExpandsLargePastePlaceholder(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started: true,
+			Preset:  codexcli.PresetYolo,
+			Status:  "Codex session ready",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	hidden := strings.Repeat("p", 700)
+	token := "[Paste #1: 700 characters]"
+	input := newCodexTextarea()
+	input.SetValue(token + " summarize this")
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexDrafts: map[string]codexDraft{
+			"/tmp/demo": {
+				PastedTexts: []codexPastedText{{
+					Token: token,
+					Text:  hidden,
+				}},
+			},
+		},
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should queue a submission command")
+	}
+	msg := cmd()
+	action, ok := msg.(codexActionMsg)
+	if !ok {
+		t.Fatalf("cmd() = %T, want codexActionMsg", msg)
+	}
+	if action.err != nil {
+		t.Fatalf("submission returned error = %v", action.err)
+	}
+	if len(session.submissions) != 1 {
+		t.Fatalf("submissions = %d, want 1", len(session.submissions))
+	}
+	submission := session.submissions[0]
+	if submission.Text != hidden+" summarize this" {
+		t.Fatalf("submission text length = %d, want expanded hidden paste", len([]rune(submission.Text)))
+	}
+	if got.codexInput.Value() != "" {
+		t.Fatalf("composer should clear after submit, got %q", got.codexInput.Value())
+	}
+}
+
+func TestRenderCodexTranscriptCollapsesLargeUserPaste(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started: true,
+			Preset:  codexcli.PresetYolo,
+			Status:  "Codex session ready",
+			Entries: []codexapp.TranscriptEntry{
+				{Kind: codexapp.TranscriptUser, Text: strings.Repeat("z", 650)},
+			},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	rendered := ansi.Strip(m.renderCodexView())
+	if !strings.Contains(rendered, "[650 characters]") {
+		t.Fatalf("rendered transcript should collapse the large user message: %q", rendered)
+	}
+	if strings.Contains(rendered, strings.Repeat("z", 80)) {
+		t.Fatalf("rendered transcript should not include the full pasted text")
 	}
 }
 

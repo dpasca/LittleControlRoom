@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-17 11:36 JST (JST)
+Last updated: 2026-03-17 11:56 JST (JST)
 
 ## Current State
 
@@ -60,7 +60,7 @@ Current screenshot workflow assumption:
 - Project notes via `/note` or `n`, with a multiline modal editor, wrapped detail-pane notes, a list badge when a project has saved notes, and clipboard copy actions for the whole note or an explicit marked selection
 - Managed per-project run commands via `/run`, `/run-edit`, `/runtime`, and `/stop`, with persisted default commands, first-pass command suggestions from common project files, a small run-command editor overlay, a dedicated selectable runtime pane with output/actions, and best-effort listening-port detection for LCR-managed runtimes
 - Git workflow actions in the TUI for full-screen diff preview, commit preview, finish, and push
-- Embedded Codex pane via `codex app-server`, with multiline compose, per-project drafts, inline `[Image #n]` clipboard image markers in the composer, backspace-based image removal, local embedded slash commands for `/new`, `/resume` (`/session` alias), `/model`, and `/status`, visible slash autocomplete/suggestions in the composer, a provider-specific saved-session resume picker with lightweight title/summary previews and current-session markers, live model/reasoning/context-left metadata under the transcript, a local model+reasoning picker backed by `model/list`, `Enter`/`/codex`/`/codex-new`, `Esc` or `Alt+Up` hide from the embedded pane with `Enter` reopening from the project list, `Alt+Down` session picker/history, `Alt+[`/`Alt+]` live-session stepping, wrapped transcript blocks, shaded echoed user transcript blocks that reuse the composer shell styling, denser command/tool/file blocks with `Alt+L` expand/collapse, label-free user/assistant transcript rendering, manager-side update coalescing, inline approvals/input requests, and busy-elsewhere rechecks when a read-only embedded session is reopened or restored
+- Embedded Codex pane via `codex app-server`, with multiline compose, per-project drafts, inline `[Image #n]` clipboard image markers, large clipboard-text placeholders, backspace-based marker removal, local embedded slash commands for `/new`, `/resume` (`/session` alias), `/model`, and `/status`, visible slash autocomplete/suggestions in the composer, a provider-specific saved-session resume picker with lightweight title/summary previews and current-session markers, live model/reasoning/context-left metadata under the transcript, a local model+reasoning picker backed by `model/list`, `Enter`/`/codex`/`/codex-new`, `Esc` or `Alt+Up` hide from the embedded pane with `Enter` reopening from the project list, `Alt+Down` session picker/history, `Alt+[`/`Alt+]` live-session stepping, wrapped transcript blocks, shaded echoed user transcript blocks that reuse the composer shell styling, denser command/tool/file blocks with `Alt+L` expand/collapse, label-free user/assistant transcript rendering, manager-side update coalescing, inline approvals/input requests, and busy-elsewhere rechecks when a read-only embedded session is reopened or restored
 - Embedded OpenCode pane via `opencode serve`, with live SSE transcript updates, resume/new launch from `Enter` and `/opencode` / `/opencode-new`, shared picker/history and model picker, provider-aware banners/footer/help copy, interrupt/status actions, shared approval/question handling, and mixed Codex/OpenCode live-session management per project
 - Settings-backed Codex launch presets, currently defaulting to the dangerous `yolo` mode
 - Programmatic screenshot generation via `lcroom screenshots` and `make screenshots`, using screenshot-config-driven browser-rendered PNG exports from deterministic HTML terminal scenarios
@@ -80,6 +80,26 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-17 11:56 JST)
+
+- Added large clipboard-text placeholders in the embedded composer so `Ctrl+V` and bracketed terminal paste now collapse oversized pasted text into compact markers like `[Paste #1: 2739 characters]` instead of flooding the visible composer.
+- Hidden pasted text now stays in the per-project draft state and expands back to the real prompt only at submit time, so the model still receives the full text while the user-facing draft stays readable.
+- Backspace now removes those pasted-text markers as a unit, the help copy mentions the shared image/text paste flow, and oversized echoed user transcript blocks now collapse to a short `[N characters]` placeholder so both embedded Codex and echoed OpenCode-style user messages stay compact after send.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-17T11:55:54+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 2`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-17T11:56:02+09:00` (`projects: 137`).
+- `env COLUMNS=110 LINES=30 make tui DB=/tmp/lcroom-large-paste-smoke.sqlite` reached the TUI with a temp DB and exited via `q`.
+
+Next concrete tasks:
+
+- Decide whether the large-paste collapse threshold should stay hard-coded or move into a user setting once there is real usage feedback on what counts as “too large”.
+- Consider adding a transient “peek expanded pasted text” affordance in the embedded pane if the compact placeholder proves too opaque for prompt review before sending.
 
 ## Latest Update (2026-03-17 11:36 JST)
 

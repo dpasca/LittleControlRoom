@@ -609,6 +609,10 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if handled, cmd := m.tryHandleCodexPaste(msg, true); handled {
+		return m, cmd
+	}
+
 	switch msg.String() {
 	case "enter":
 		draft := m.currentCodexDraft()
@@ -640,13 +644,13 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.syncCodexComposerSize()
 		return m, nil
 	case "ctrl+v":
-		if attached, err := m.tryAttachClipboardImage(); err != nil {
-			m.status = err.Error()
-			return m, nil
-		} else if attached {
+		return m, nil
+	case "backspace", "delete":
+		if m.removeCodexPastedTextMarkerBeforeCursor() {
+			m.persistVisibleCodexDraft()
+			m.syncCodexComposerSize()
 			return m, nil
 		}
-	case "backspace", "delete":
 		if m.removeCodexAttachmentMarkerBeforeCursor() {
 			m.persistVisibleCodexDraft()
 			m.syncCodexComposerSize()
@@ -679,6 +683,10 @@ func (m Model) updateCodexToolInputMode(snapshot codexapp.Snapshot, msg tea.KeyM
 		state.QuestionIndex = max(0, len(request.Questions)-1)
 	}
 	question := request.Questions[state.QuestionIndex]
+
+	if handled, cmd := m.tryHandleCodexPaste(msg, false); handled {
+		return m, cmd
+	}
 
 	switch msg.String() {
 	case "tab":
@@ -742,6 +750,12 @@ func (m Model) updateCodexElicitationMode(snapshot codexapp.Snapshot, msg tea.Ke
 		return m, nil
 	}
 
+	if request.Mode == codexapp.ElicitationModeForm {
+		if handled, cmd := m.tryHandleCodexPaste(msg, false); handled {
+			return m, cmd
+		}
+	}
+
 	switch msg.String() {
 	case "d":
 		m.status = "Declining MCP input request..."
@@ -779,6 +793,49 @@ func (m Model) updateCodexElicitationMode(snapshot codexapp.Snapshot, msg tea.Ke
 	return m, cmd
 }
 
+func (m *Model) tryHandleCodexPaste(msg tea.KeyMsg, allowImage bool) (bool, tea.Cmd) {
+	switch {
+	case msg.Paste:
+		text := string(msg.Runes)
+		if !shouldCollapseCodexPaste(text) {
+			return false, nil
+		}
+		m.insertCodexPastedText(text)
+		return true, nil
+	case msg.Type != tea.KeyCtrlV:
+		return false, nil
+	}
+
+	if allowImage {
+		attached, err := m.tryAttachClipboardImage()
+		if err != nil {
+			m.status = err.Error()
+			return true, nil
+		}
+		if attached {
+			return true, nil
+		}
+	}
+
+	text, err := clipboardTextReader()
+	if err != nil {
+		m.status = "Clipboard paste failed: " + err.Error()
+		return true, nil
+	}
+	if text == "" {
+		return true, nil
+	}
+	if shouldCollapseCodexPaste(text) {
+		m.insertCodexPastedText(text)
+		return true, nil
+	}
+	m.codexInput.InsertString(text)
+	m.persistVisibleCodexDraft()
+	m.syncCodexComposerSize()
+	m.syncCodexSlashSelection()
+	return true, nil
+}
+
 func (m *Model) tryAttachClipboardImage() (bool, error) {
 	projectPath := strings.TrimSpace(m.codexVisibleProject)
 	if projectPath == "" {
@@ -805,8 +862,28 @@ func (m *Model) tryAttachClipboardImage() (bool, error) {
 	return true, nil
 }
 
+func (m *Model) insertCodexPastedText(text string) {
+	if strings.TrimSpace(m.codexVisibleProject) == "" {
+		return
+	}
+	token := m.nextCodexPastedTextToken(text)
+	m.insertCodexComposerToken(token)
+	pasted := codexPastedText{
+		Token: token,
+		Text:  text,
+	}
+	m.appendCurrentCodexPastedText(pasted)
+	m.persistVisibleCodexDraft()
+	m.syncCodexComposerSize()
+	m.syncCodexSlashSelection()
+	m.status = "Pasted " + codexPastedTextPlaceholder(text) + " as a placeholder"
+}
+
 func (m *Model) insertCodexAttachmentMarker(index int, attachment codexapp.Attachment) {
-	token := codexAttachmentComposerToken(index, attachment)
+	m.insertCodexComposerToken(codexAttachmentComposerToken(index, attachment))
+}
+
+func (m *Model) insertCodexComposerToken(token string) {
 	valueRunes := []rune(m.codexInput.Value())
 	cursor := codexTextareaCursorOffset(m.codexInput)
 	if cursor < 0 {
@@ -827,6 +904,41 @@ func (m *Model) insertCodexAttachmentMarker(index int, attachment codexapp.Attac
 		insert += " "
 	}
 	m.codexInput.InsertString(insert)
+}
+
+func (m *Model) removeCodexPastedTextMarkerBeforeCursor() bool {
+	pastedTexts := m.currentCodexPastedTexts()
+	if len(pastedTexts) == 0 {
+		return false
+	}
+	value := m.codexInput.Value()
+	cursor := codexTextareaCursorOffset(m.codexInput)
+	runes := []rune(value)
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor > len(runes) {
+		cursor = len(runes)
+	}
+	prefix := string(runes[:cursor])
+	for i := len(pastedTexts) - 1; i >= 0; i-- {
+		token := pastedTexts[i].Token
+		switch {
+		case strings.HasSuffix(prefix, token+" "):
+			start := cursor - len([]rune(token)) - 1
+			m.setCodexComposerValue(string(runes[:start])+string(runes[cursor:]), start)
+			m.removeCurrentCodexPastedTextByToken(token)
+			m.status = "Removed " + codexPastedTextPlaceholder(pastedTexts[i].Text) + " placeholder"
+			return true
+		case strings.HasSuffix(prefix, token):
+			start := cursor - len([]rune(token))
+			m.setCodexComposerValue(string(runes[:start])+string(runes[cursor:]), start)
+			m.removeCurrentCodexPastedTextByToken(token)
+			m.status = "Removed " + codexPastedTextPlaceholder(pastedTexts[i].Text) + " placeholder"
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Model) removeCodexAttachmentMarkerBeforeCursor() bool {
@@ -1524,6 +1636,7 @@ func renderCodexTranscriptEntry(entry codexapp.TranscriptEntry, width int, expan
 	}
 	switch entry.Kind {
 	case codexapp.TranscriptUser:
+		text = compactCodexUserTranscriptText(text)
 		return renderCodexUserMessageBlock(text, width)
 	case codexapp.TranscriptAgent:
 		return renderCodexMessageBlock("", text, lipgloss.Color("120"), lipgloss.Color("252"), width)
@@ -1546,6 +1659,34 @@ func renderCodexTranscriptEntry(entry codexapp.TranscriptEntry, width int, expan
 	default:
 		return renderCodexMessageBlock("", text, lipgloss.Color("244"), lipgloss.Color("252"), width)
 	}
+}
+
+func compactCodexUserTranscriptText(text string) string {
+	if !shouldCollapseCodexPaste(text) {
+		return text
+	}
+	lines := strings.Split(text, "\n")
+	contentLines := make([]string, 0, len(lines))
+	attachmentLines := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if isCodexTranscriptAttachmentLine(trimmed) {
+			attachmentLines = append(attachmentLines, trimmed)
+			continue
+		}
+		contentLines = append(contentLines, line)
+	}
+	content := strings.TrimSpace(strings.Join(contentLines, "\n"))
+	if !shouldCollapseCodexPaste(content) {
+		return text
+	}
+	compacted := []string{codexPastedTextPlaceholder(content)}
+	compacted = append(compacted, attachmentLines...)
+	return strings.Join(compacted, "\n")
+}
+
+func isCodexTranscriptAttachmentLine(line string) bool {
+	return strings.HasPrefix(line, "[attached ") || strings.HasPrefix(line, "[attachment]")
 }
 
 func sanitizeCodexRenderedText(text string) string {

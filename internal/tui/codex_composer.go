@@ -11,12 +11,30 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const (
+	codexLargePasteCharacterThreshold = 500
+	codexLargePasteLineThreshold      = 8
+)
+
+type codexPastedText struct {
+	Token string
+	Text  string
+}
+
 type codexDraft struct {
 	Text        string
 	Attachments []codexapp.Attachment
+	PastedTexts []codexPastedText
+}
+
+func (d codexDraft) normalized() codexDraft {
+	d.Attachments = cloneCodexAttachments(d.Attachments)
+	d.PastedTexts = pruneCodexPastedTexts(d.Text, d.PastedTexts)
+	return d
 }
 
 func (d codexDraft) Empty() bool {
+	d = d.normalized()
 	if strings.TrimSpace(d.Text) != "" {
 		return false
 	}
@@ -25,12 +43,19 @@ func (d codexDraft) Empty() bool {
 			return false
 		}
 	}
+	for _, pasted := range d.PastedTexts {
+		if strings.TrimSpace(pasted.Token) != "" && pasted.Text != "" {
+			return false
+		}
+	}
 	return true
 }
 
 func (d codexDraft) Submission() codexapp.Submission {
+	d = d.normalized()
+	displayText := stripCodexAttachmentComposerTokens(d.Text, d.Attachments)
 	return codexapp.Submission{
-		Text:        stripCodexAttachmentComposerTokens(d.Text, d.Attachments),
+		Text:        expandCodexPastedTextTokens(displayText, d.PastedTexts),
 		Attachments: cloneCodexAttachments(d.Attachments),
 	}
 }
@@ -100,10 +125,73 @@ func cloneCodexAttachments(in []codexapp.Attachment) []codexapp.Attachment {
 	return out
 }
 
+func cloneCodexPastedTexts(in []codexPastedText) []codexPastedText {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]codexPastedText, 0, len(in))
+	for _, pasted := range in {
+		if strings.TrimSpace(pasted.Token) == "" || pasted.Text == "" {
+			continue
+		}
+		out = append(out, pasted)
+	}
+	return out
+}
+
+func pruneCodexPastedTexts(text string, in []codexPastedText) []codexPastedText {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]codexPastedText, 0, len(in))
+	for _, pasted := range in {
+		if strings.TrimSpace(pasted.Token) == "" || pasted.Text == "" {
+			continue
+		}
+		if !strings.Contains(text, pasted.Token) {
+			continue
+		}
+		out = append(out, pasted)
+	}
+	return out
+}
+
+func expandCodexPastedTextTokens(text string, pastedTexts []codexPastedText) string {
+	expanded := text
+	for _, pasted := range pruneCodexPastedTexts(text, pastedTexts) {
+		expanded = strings.ReplaceAll(expanded, pasted.Token, pasted.Text)
+	}
+	return strings.TrimSpace(expanded)
+}
+
+func codexPastedTextPlaceholder(text string) string {
+	return fmt.Sprintf("[%d characters]", codexVisibleRuneCount(text))
+}
+
+func codexPastedTextComposerToken(id int, text string) string {
+	return fmt.Sprintf("[Paste #%d: %d characters]", id, codexVisibleRuneCount(text))
+}
+
+func codexVisibleRuneCount(text string) int {
+	return len([]rune(text))
+}
+
+func codexVisibleLineCount(text string) int {
+	if text == "" {
+		return 0
+	}
+	return strings.Count(text, "\n") + 1
+}
+
+func shouldCollapseCodexPaste(text string) bool {
+	return codexVisibleRuneCount(text) >= codexLargePasteCharacterThreshold || codexVisibleLineCount(text) >= codexLargePasteLineThreshold
+}
+
 func cloneCodexDraft(in codexDraft) codexDraft {
 	return codexDraft{
 		Text:        in.Text,
 		Attachments: cloneCodexAttachments(in.Attachments),
+		PastedTexts: cloneCodexPastedTexts(in.PastedTexts),
 	}
 }
 
@@ -116,7 +204,7 @@ func (m *Model) currentCodexDraftFor(projectPath string) codexDraft {
 	if projectPath == m.codexVisibleProject {
 		draft.Text = m.codexInput.Value()
 	}
-	return draft
+	return draft.normalized()
 }
 
 func (m *Model) markCodexSessionLive(projectPath string) {
@@ -157,7 +245,7 @@ func (m *Model) persistCodexDraft(projectPath string) {
 	if m.codexDrafts == nil {
 		m.codexDrafts = make(map[string]codexDraft)
 	}
-	draft := m.currentCodexDraftFor(projectPath)
+	draft := m.currentCodexDraftFor(projectPath).normalized()
 	if draft.Empty() {
 		delete(m.codexDrafts, projectPath)
 		return
@@ -177,7 +265,7 @@ func (m *Model) loadCodexDraft(projectPath string) {
 		m.syncCodexSlashSelection()
 		return
 	}
-	draft := cloneCodexDraft(m.codexDrafts[projectPath])
+	draft := cloneCodexDraft(m.codexDrafts[projectPath]).normalized()
 	m.codexInput.SetValue(draft.Text)
 	m.codexInput.CursorEnd()
 	m.syncCodexComposerSize()
@@ -192,7 +280,7 @@ func (m *Model) restoreCodexDraft(projectPath string, draft codexDraft) {
 	if m.codexDrafts == nil {
 		m.codexDrafts = make(map[string]codexDraft)
 	}
-	draft = cloneCodexDraft(draft)
+	draft = cloneCodexDraft(draft).normalized()
 	if draft.Empty() {
 		delete(m.codexDrafts, projectPath)
 	} else {
@@ -224,6 +312,10 @@ func (m *Model) currentCodexAttachments() []codexapp.Attachment {
 	return cloneCodexAttachments(m.currentCodexDraft().Attachments)
 }
 
+func (m *Model) currentCodexPastedTexts() []codexPastedText {
+	return cloneCodexPastedTexts(m.currentCodexDraft().PastedTexts)
+}
+
 func (m *Model) setCurrentCodexAttachments(attachments []codexapp.Attachment) {
 	projectPath := strings.TrimSpace(m.codexVisibleProject)
 	if projectPath == "" {
@@ -234,6 +326,25 @@ func (m *Model) setCurrentCodexAttachments(attachments []codexapp.Attachment) {
 	}
 	draft := m.currentCodexDraft()
 	draft.Attachments = cloneCodexAttachments(attachments)
+	draft = draft.normalized()
+	if draft.Empty() {
+		delete(m.codexDrafts, projectPath)
+	} else {
+		m.codexDrafts[projectPath] = draft
+	}
+}
+
+func (m *Model) setCurrentCodexPastedTexts(pastedTexts []codexPastedText) {
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	if projectPath == "" {
+		return
+	}
+	if m.codexDrafts == nil {
+		m.codexDrafts = make(map[string]codexDraft)
+	}
+	draft := m.currentCodexDraft()
+	draft.PastedTexts = cloneCodexPastedTexts(pastedTexts)
+	draft = draft.normalized()
 	if draft.Empty() {
 		delete(m.codexDrafts, projectPath)
 	} else {
@@ -245,6 +356,12 @@ func (m *Model) appendCurrentCodexAttachment(attachment codexapp.Attachment) {
 	attachments := m.currentCodexAttachments()
 	attachments = append(attachments, attachment)
 	m.setCurrentCodexAttachments(attachments)
+}
+
+func (m *Model) appendCurrentCodexPastedText(pasted codexPastedText) {
+	pastedTexts := m.currentCodexPastedTexts()
+	pastedTexts = append(pastedTexts, pasted)
+	m.setCurrentCodexPastedTexts(pastedTexts)
 }
 
 func (m *Model) removeLastCurrentCodexAttachment() bool {
@@ -265,6 +382,44 @@ func (m *Model) removeCurrentCodexAttachment(index int) bool {
 	updated = append(updated, attachments[index+1:]...)
 	m.setCurrentCodexAttachments(updated)
 	return true
+}
+
+func (m *Model) removeCurrentCodexPastedTextByToken(token string) bool {
+	pastedTexts := m.currentCodexPastedTexts()
+	if len(pastedTexts) == 0 || strings.TrimSpace(token) == "" {
+		return false
+	}
+	updated := make([]codexPastedText, 0, len(pastedTexts))
+	removed := false
+	for _, pasted := range pastedTexts {
+		if pasted.Token == token {
+			removed = true
+			continue
+		}
+		updated = append(updated, pasted)
+	}
+	if removed {
+		m.setCurrentCodexPastedTexts(updated)
+	}
+	return removed
+}
+
+func (m *Model) nextCodexPastedTextToken(text string) string {
+	pastedTexts := m.currentCodexPastedTexts()
+	for {
+		m.codexPasteTokenSeq++
+		token := codexPastedTextComposerToken(m.codexPasteTokenSeq, text)
+		collision := false
+		for _, pasted := range pastedTexts {
+			if pasted.Token == token {
+				collision = true
+				break
+			}
+		}
+		if !collision {
+			return token
+		}
+	}
 }
 
 func codexAttachmentComposerToken(index int, attachment codexapp.Attachment) string {
