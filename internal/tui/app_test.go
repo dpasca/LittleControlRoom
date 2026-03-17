@@ -1096,6 +1096,108 @@ func TestRuntimePaneShowsRuntimeOutputAndActions(t *testing.T) {
 	}
 }
 
+func TestRenderRuntimePaneShowsControlRoomFlairWhenEmpty(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			Status:        model.StatusIdle,
+			PresentOnDisk: true,
+		}},
+		allProjects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			Status:        model.StatusIdle,
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+	}
+
+	rendered := m.renderRuntimePanel(41, 10)
+	stripped := ansi.Strip(rendered)
+	if !strings.Contains(stripped, "Control Room - demo") {
+		t.Fatalf("renderRuntimePanel() should show the control room header: %q", stripped)
+	}
+	if !strings.Contains(stripped, "Standby. Use /run or /run-edit.") {
+		t.Fatalf("renderRuntimePanel() should show the wake-room hint: %q", stripped)
+	}
+	if strings.Contains(stripped, "Output") {
+		t.Fatalf("renderRuntimePanel() should use the dedicated flair layout instead of the generic output box: %q", stripped)
+	}
+	if !strings.Contains(rendered, "\x1b[38;2;") {
+		t.Fatalf("renderRuntimePanel() should use truecolor pixel styling for the idle scene: %q", rendered)
+	}
+	if !strings.Contains(rendered, "\u2580") && !strings.Contains(rendered, "\u2584") && !strings.Contains(rendered, "\u2588") {
+		t.Fatalf("renderRuntimePanel() should include pixel block glyphs in the idle scene: %q", rendered)
+	}
+}
+
+func TestRenderRuntimePaneControlRoomFlairAnimates(t *testing.T) {
+	base := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			Status:        model.StatusIdle,
+			PresentOnDisk: true,
+		}},
+		allProjects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			Status:        model.StatusIdle,
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+	}
+
+	renderedA := base.renderRuntimePanel(41, 10)
+	base.spinnerFrame = 12
+	renderedB := base.renderRuntimePanel(41, 10)
+
+	if renderedA == renderedB {
+		t.Fatalf("renderRuntimePanel() should animate the control room scene across spinner frames")
+	}
+	linesA := strings.Split(ansi.Strip(renderedA), "\n")
+	linesB := strings.Split(ansi.Strip(renderedB), "\n")
+	if len(linesA) != len(linesB) {
+		t.Fatalf("control room render line count changed across frames: %d vs %d", len(linesA), len(linesB))
+	}
+	if linesA[0] != linesB[0] {
+		t.Fatalf("control room header should stay stable while animating: %q vs %q", linesA[0], linesB[0])
+	}
+	if linesA[len(linesA)-1] != linesB[len(linesB)-1] {
+		t.Fatalf("control room footer should stay stable while animating: %q vs %q", linesA[len(linesA)-1], linesB[len(linesB)-1])
+	}
+}
+
+func TestRenderRuntimePaneFallsBackToTextWhenTooNarrowForFlair(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			Status:        model.StatusIdle,
+			PresentOnDisk: true,
+		}},
+		allProjects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			Status:        model.StatusIdle,
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+	}
+
+	rendered := ansi.Strip(m.renderRuntimePanel(22, 8))
+	if !strings.Contains(rendered, "Runtime - demo") {
+		t.Fatalf("renderRuntimePanel() should fall back to the standard runtime summary when the pane is too narrow: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Use /run, /start, or /") {
+		t.Fatalf("renderRuntimePanel() should keep the original empty-runtime guidance when flair is unavailable: %q", rendered)
+	}
+	if strings.Contains(rendered, "Control Room - demo") {
+		t.Fatalf("renderRuntimePanel() should not force the control room flair into a cramped pane: %q", rendered)
+	}
+}
+
 func waitForRuntimeSnapshot(t *testing.T, manager *projectrun.Manager, projectPath string, ready func(projectrun.Snapshot) bool) projectrun.Snapshot {
 	t.Helper()
 
@@ -1207,7 +1309,7 @@ func TestViewStacksListAndDetailVertically(t *testing.T) {
 	if !strings.Contains(rendered, "Repo: dirty worktree") || !strings.Contains(rendered, "Remote: ahead by 2") {
 		t.Fatalf("View() should keep both repo and remote details visible in the detail pane: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Runtime - demo") {
+	if !strings.Contains(rendered, "Runtime - demo") && !strings.Contains(rendered, "Control Room - demo") {
 		t.Fatalf("View() should render the runtime pane beside the detail pane: %q", rendered)
 	}
 	for _, line := range strings.Split(ansi.Strip(rendered), "\n") {
@@ -5977,7 +6079,10 @@ func TestViewWithCommitPreviewRespectsHeight(t *testing.T) {
 	if stageLine-messageLine < 2 || blankVisible != "" {
 		t.Fatalf("View() should leave a blank line after the commit message: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Status: idle") || !strings.Contains(rendered, "Output") {
+	if !strings.Contains(rendered, "Status: idle") {
+		t.Fatalf("View() should preserve the detail-pane context under the commit preview: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Output") && !strings.Contains(rendered, "Standby. Use /run or /run-edit.") {
 		t.Fatalf("View() should preserve background list and detail context under the commit preview: %q", rendered)
 	}
 }

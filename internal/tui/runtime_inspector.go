@@ -147,6 +147,9 @@ func (m Model) renderRuntimePanel(width, height int) string {
 	if height <= 0 {
 		return ""
 	}
+	if flair, ok := m.renderRuntimeFlairPanel(width, height); ok {
+		return fitPaneContent(flair, width, height)
+	}
 	projectPath := m.runtimePanelProjectPath()
 	summaryLines := m.renderRuntimePanelSummary(width, projectPath)
 	contentLines := append([]string(nil), summaryLines...)

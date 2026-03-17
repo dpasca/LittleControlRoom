@@ -18,6 +18,9 @@ ACTIVE_THRESHOLD ?= 20m
 STUCK_THRESHOLD ?= 4h
 SCREENSHOT_CONFIG ?= screenshots.local.toml
 SCREENSHOT_OUTPUT_DIR ?=
+PARALLEL_DATA_DIR ?= /tmp/lcroom-parallel-$(shell id -un)
+PARALLEL_DB ?= $(PARALLEL_DATA_DIR)/little-control-room.sqlite
+PARALLEL_CONFIG ?= $(PARALLEL_DATA_DIR)/config.toml
 
 INCLUDE_PATHS_FLAG := $(if $(strip $(INCLUDE_PATHS)),--include-paths "$(INCLUDE_PATHS)",)
 EXCLUDE_PATHS_FLAG := $(if $(strip $(EXCLUDE_PATHS)),--exclude-paths "$(EXCLUDE_PATHS)",)
@@ -26,8 +29,9 @@ STUCK_THRESHOLD_FLAG := $(if $(filter 4h,$(STUCK_THRESHOLD)),,--stuck-threshold 
 INTERVAL_FLAG := $(if $(filter 60s,$(INTERVAL)),,--interval "$(INTERVAL)")
 SCREENSHOT_OUTPUT_FLAG := $(if $(strip $(SCREENSHOT_OUTPUT_DIR)),--output-dir "$(SCREENSHOT_OUTPUT_DIR)",)
 COMMON_FLAGS := --config "$(CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
+PARALLEL_FLAGS := --config "$(PARALLEL_CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(PARALLEL_DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 
-.PHONY: help tidy fmt test build install clean scope scan classify doctor doctor-scan screenshots tui serve
+.PHONY: help tidy fmt test build install clean scope scan classify doctor doctor-scan screenshots tui tui-parallel serve
 
 help:
 	@echo "$(APP_NAME) Make Targets"
@@ -45,6 +49,7 @@ help:
 	@echo "  make doctor-scan     - refresh state, then print detected artifacts/reasons"
 	@echo "  make screenshots     - render curated PNG screenshots for docs"
 	@echo "  make tui             - run TUI dashboard"
+	@echo "  make tui-parallel    - run a second TUI using isolated config/DB under /tmp"
 	@echo "  make serve           - run REST/WS server skeleton"
 	@echo ""
 	@echo "Config vars (override like: make scan INCLUDE_PATHS=... DB=...):"
@@ -60,6 +65,9 @@ help:
 	@echo "  STUCK_THRESHOLD=$(STUCK_THRESHOLD)"
 	@echo "  SCREENSHOT_CONFIG=$(SCREENSHOT_CONFIG)"
 	@echo "  SCREENSHOT_OUTPUT_DIR=$(SCREENSHOT_OUTPUT_DIR)"
+	@echo "  PARALLEL_DATA_DIR=$(PARALLEL_DATA_DIR)"
+	@echo "  PARALLEL_CONFIG=$(PARALLEL_CONFIG)"
+	@echo "  PARALLEL_DB=$(PARALLEL_DB)"
 
 tidy:
 	$(GO) mod tidy
@@ -100,6 +108,14 @@ screenshots:
 
 tui:
 	$(GO) run ./cmd/$(APP) tui $(COMMON_FLAGS) $(INTERVAL_FLAG)
+
+tui-parallel:
+	@mkdir -p "$(PARALLEL_DATA_DIR)"
+	@if [ -f "$(CONFIG)" ] && [ ! -f "$(PARALLEL_CONFIG)" ]; then cp "$(CONFIG)" "$(PARALLEL_CONFIG)"; fi
+	@echo "Launching parallel TUI sandbox"
+	@echo "  config: $(PARALLEL_CONFIG)"
+	@echo "  db:     $(PARALLEL_DB)"
+	$(GO) run ./cmd/$(APP) tui $(PARALLEL_FLAGS) $(INTERVAL_FLAG)
 
 serve:
 	$(GO) run ./cmd/$(APP) serve $(COMMON_FLAGS) $(INTERVAL_FLAG)

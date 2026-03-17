@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-18 02:52 JST (JST)
+Last updated: 2026-03-18 03:05 JST (JST)
 
 ## Current State
 
@@ -84,6 +84,27 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-18 03:05 JST)
+
+- Broadened the operator head again so the face now extends one pixel farther on each side, keeping the eyes more inset from the hairline and making the sprite read closer to a simple square pixel-art head.
+- Lengthened the idle scene cycle to 32 beats and turned the right-terminal dwell into a true pause: while parked there, the operator now stays in one typing pose with only a brief blink instead of bobbing or alternating poses.
+- Updated the runtime-flair regression to assert that the right-terminal hold keeps the same position and pose across the dwell window, so future tweaks do not reintroduce the “touch and go” feel.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/runtime_flair.go internal/tui/runtime_flair_test.go` passed.
+- `go test ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-18T03:04:35+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-18T03:04:42+09:00` (`projects: 132`).
+- `env -u OPENAI_API_KEY COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-parallel-flair-check6` reached the TUI in a no-token sandbox, showed the wider head plus the steadier right-terminal pause, and exited via `q`.
+
+Next concrete tasks:
+
+- If the head still feels too wide in some terminal fonts, try moving the eyes inward by one pixel before adding any new facial detail.
+- Consider calming the desk monitor flicker a bit during the right-terminal pause so the stillness reads even more clearly from a quick glance.
 
 ## Latest Update (2026-03-18 02:52 JST)
 
