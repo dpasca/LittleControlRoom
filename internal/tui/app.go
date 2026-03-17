@@ -1416,7 +1416,7 @@ func splitBodyHeights(bodyHeight int, focused paneFocus) (int, int) {
 	listHeight := (bodyHeight * 3) / 5
 	bottomHeight := bodyHeight - listHeight
 	if focused == focusDetail || focused == focusRuntime {
-		bottomHeight = (bodyHeight * 11) / 20
+		bottomHeight = (bodyHeight * 13) / 20
 		listHeight = bodyHeight - bottomHeight
 	}
 

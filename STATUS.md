@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-17 03:56 JST (JST)
+Last updated: 2026-03-17 10:46 JST (JST)
 
 ## Current State
 
@@ -79,6 +79,25 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-17 10:46 JST)
+
+- Increased the vertical expansion for the focused lower row so the detail and runtime panes gain more height when selected, instead of mainly feeling wider.
+- Kept the same three-pane structure and minimum list-height guardrails, so small terminals still keep the project list usable while the focused lower panes get a stronger emphasis.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/tui ./internal/commands -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-17T10:45:48+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-17T10:45:57+09:00` (`projects: 137`).
+- `env COLUMNS=110 LINES=30 make tui DB=/tmp/lcroom-runtime-pane-vertical-smoke.sqlite` reached the TUI, rendered the taller focused-pane layout, and exited via `q`.
+
+Next concrete tasks:
+
+- Decide whether the focused lower row should grow even more on very tall terminals while keeping the current smaller-terminal floor unchanged.
+- Consider a small user setting for list/detail/runtime balance if the preferred ratios turn out to vary a lot between projects and terminal sizes.
 
 ## Latest Update (2026-03-17 03:56 JST)
 
