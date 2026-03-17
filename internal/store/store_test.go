@@ -1077,6 +1077,59 @@ func TestMoveProjectPathPreservesData(t *testing.T) {
 	}
 }
 
+func TestUpsertProjectStateDoesNotOverwriteExistingNote(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	path := "/tmp/note-race"
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           path,
+		Name:           "note-race",
+		Status:         model.StatusIdle,
+		AttentionScore: 5,
+		InScope:        true,
+		Note:           "old note text",
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("upsert initial project state: %v", err)
+	}
+
+	if err := st.SetNote(ctx, path, ""); err != nil {
+		t.Fatalf("clear note: %v", err)
+	}
+
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           path,
+		Name:           "note-race",
+		Status:         model.StatusActive,
+		AttentionScore: 11,
+		InScope:        true,
+		Note:           "old note text",
+		UpdatedAt:      now.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("upsert refreshed project state: %v", err)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, path, 5)
+	if err != nil {
+		t.Fatalf("get project detail: %v", err)
+	}
+	if detail.Summary.Note != "" {
+		t.Fatalf("note after refreshed upsert = %q, want cleared note to persist", detail.Summary.Note)
+	}
+	if detail.Summary.Status != model.StatusActive || detail.Summary.AttentionScore != 11 {
+		t.Fatalf("summary after refreshed upsert = %#v, want scan-derived fields to update", detail.Summary)
+	}
+}
+
 func TestRememberRecentProjectParentPathKeepsNewestUniquePaths(t *testing.T) {
 	t.Parallel()
 

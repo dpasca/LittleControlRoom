@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-17 18:20 JST (JST)
+Last updated: 2026-03-17 18:29 JST (JST)
 
 ## Current State
 
@@ -80,6 +80,24 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-17 18:29 JST)
+
+- Fixed a project-note persistence bug in the store merge path: refresh/scan upserts no longer overwrite the existing saved note for an already tracked project, which prevents an older scan snapshot from resurrecting note text the user already removed.
+- Added a focused store regression test that clears a note, applies a stale follow-up `UpsertProjectState`, and asserts the cleared note stays cleared while scan-derived status fields still refresh.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/store -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-17T18:29:25+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 2`, `queued classifications: 2`).
+- `make doctor` passed on the cached snapshot dated `2026-03-17T18:29:25+09:00` (`projects: 137`).
+
+Next concrete tasks:
+
+- Decide whether the same “scan must not replay stale user state” protection should also be applied to other user-managed project fields such as pin/snooze if similar reports show up.
+- Run a short live TUI smoke pass around note editing if more reports come in, to confirm there is no separate front-end-only state issue beyond the store merge fix.
 
 ## Latest Update (2026-03-17 18:20 JST)
 

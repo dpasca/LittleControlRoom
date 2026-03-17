@@ -768,6 +768,8 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 		movedAt = state.MovedAt.Unix()
 	}
 
+	// Notes are user-managed state, so refresh upserts should leave the current
+	// saved note alone on existing rows instead of replaying an older scan copy.
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO projects(path, name, last_activity, status, attention_score, present_on_disk, repo_dirty, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, pinned, snoozed_until, note, moved_from_path, moved_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -786,7 +788,6 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 			in_scope=excluded.in_scope,
 			pinned=excluded.pinned,
 			snoozed_until=excluded.snoozed_until,
-			note=excluded.note,
 			moved_from_path=CASE
 				WHEN excluded.moved_from_path != '' THEN excluded.moved_from_path
 				ELSE projects.moved_from_path
