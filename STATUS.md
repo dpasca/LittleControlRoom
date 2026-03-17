@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-17 03:10 JST (JST)
+Last updated: 2026-03-17 03:56 JST (JST)
 
 ## Current State
 
@@ -54,10 +54,10 @@ Current screenshot workflow assumption:
 - Repo-health surfacing for dirty worktrees and remote sync state
 - Scope-aware persistence via path filters and project-name filters
 - Cached `doctor` by default, with `doctor --scan` for a fresh rescan
-- TUI stacked layout with focusable detail pane, scrolling, compact settings modal, and command palette
+- TUI main view with focusable project, detail, and runtime panes, scrolling viewports, a compact settings modal, and command palette
 - Top-level `/open` slash command to open the selected project's folder in the system browser
 - Project notes via `/note` or `n`, with a multiline modal editor, wrapped detail-pane notes, a list badge when a project has saved notes, and clipboard copy actions for the whole note or an explicit marked selection
-- Managed per-project run commands via `/run`, `/run-edit`, `/runtime`, and `/stop`, with persisted default commands, first-pass command suggestions from common project files, a small run-command editor overlay, compact detail-pane runtime summaries, a dedicated runtime inspector with output/actions, and best-effort listening-port detection for LCR-managed runtimes
+- Managed per-project run commands via `/run`, `/run-edit`, `/runtime`, and `/stop`, with persisted default commands, first-pass command suggestions from common project files, a small run-command editor overlay, a dedicated selectable runtime pane with output/actions, and best-effort listening-port detection for LCR-managed runtimes
 - Git workflow actions in the TUI for full-screen diff preview, commit preview, finish, and push
 - Embedded Codex pane via `codex app-server`, with multiline compose, per-project drafts, inline `[Image #n]` clipboard image markers in the composer, backspace-based image removal, local embedded slash commands for `/new`, `/resume` (`/session` alias), `/model`, and `/status`, visible slash autocomplete/suggestions in the composer, a provider-specific saved-session resume picker with lightweight title/summary previews and current-session markers, live model/reasoning/context-left metadata under the transcript, a local model+reasoning picker backed by `model/list`, `Enter`/`/codex`/`/codex-new`, `Esc` or `Alt+Up` hide from the embedded pane with `Enter` reopening from the project list, `Alt+Down` session picker/history, `Alt+[`/`Alt+]` live-session stepping, wrapped transcript blocks, shaded echoed user transcript blocks that reuse the composer shell styling, denser command/tool/file blocks with `Alt+L` expand/collapse, label-free user/assistant transcript rendering, manager-side update coalescing, inline approvals/input requests, and busy-elsewhere rechecks when a read-only embedded session is reopened or restored
 - Embedded OpenCode pane via `opencode serve`, with live SSE transcript updates, resume/new launch from `Enter` and `/opencode` / `/opencode-new`, shared picker/history and model picker, provider-aware banners/footer/help copy, interrupt/status actions, shared approval/question handling, and mixed Codex/OpenCode live-session management per project
@@ -80,21 +80,44 @@ Current screenshot workflow assumption:
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
 
-## Latest Update (2026-03-17 03:10 JST)
+## Latest Update (2026-03-17 03:56 JST)
 
-- Compactified the selected-project runtime presentation so the shared detail pane now keeps runtime command, state, ports, URL, conflicts, errors, and a short output teaser instead of appending the full runtime tail inline.
-- Added a dedicated runtime inspector opened with `r` or `/runtime`, with scrollable captured output plus quick `restart`, `stop`, and `open URL` actions wired into the same overlay/footer pattern as the rest of the TUI.
-- Tightened the compact runtime summary further by packing related fields such as `Ports` + `URL` onto the same row when the pane is wide enough, so the runtime block spends fewer lines before the attention and session sections.
-- Added the runtime restart flow, generalized browser opening for raw runtime URLs, refreshed help/docs copy, and added focused regressions for the new runtime command/key path, compact detail rendering, runtime inspector rendering, and browser URL opening.
+- Reworked the main TUI into a three-pane layout: project list on top, detail pane bottom-left, and a dedicated runtime pane bottom-right that expands horizontally when focused.
+- Replaced the old modal runtime inspector and the inline detail-pane runtime preview with a persistent runtime pane that keeps runtime command, state, ports + URL, conflicts or errors, and the captured output tail visible at all times.
+- `Tab` and `Shift+Tab` now cycle focus across list, detail, and runtime; `/runtime` now focuses the runtime pane instead of opening an overlay; runtime actions are selected with `Left` and `Right` and triggered with `Enter`.
+- Updated footer/help/docs copy and focused TUI regressions to match the new pane model, including runtime-pane rendering, focus cycling, and `/runtime` command behavior.
 - No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
 
 Verification snapshot:
 
-- `go test ./internal/commands ./internal/tui -count=1` passed for the initial runtime-panel pass, and `go test ./internal/tui -count=1` passed again after the compact row packing follow-up.
+- `go test ./internal/tui ./internal/commands -count=1` passed.
 - `make test` passed.
-- `make scan` passed at `2026-03-17T03:08:59+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 1`).
-- `make doctor` passed on the cached snapshot dated `2026-03-17T03:08:59+09:00` (`projects: 137`).
-- `env COLUMNS=110 LINES=30 make tui DB=/tmp/lcroom-runtime-inspector-smoke.sqlite` reached the TUI with a temp DB, rendered the updated main layout after the compaction pass, and exited via `q`.
+- `make scan` passed at `2026-03-17T03:56:54+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-17T03:57:04+09:00` (`projects: 137`).
+- `env COLUMNS=110 LINES=30 make tui DB=/tmp/lcroom-runtime-pane-smoke.sqlite` reached the TUI, rendered the new three-pane empty state, and exited via `q`.
+
+Next concrete tasks:
+
+- Decide whether the runtime pane should offer a small multi-URL chooser when a process announces more than one URL.
+- Consider whether the runtime pane should remember a deeper output history than the current in-memory tail now that it is visible all the time.
+
+## Latest Update (2026-03-17 03:37 JST)
+
+- Compactified the selected-project runtime presentation so the shared detail pane now keeps runtime command, state, ports, URL, conflicts, errors, and a short output teaser instead of appending the full runtime tail inline.
+- Added a dedicated runtime inspector opened with `r` or `/runtime`, with scrollable captured output plus quick `restart`, `stop`, and `open URL` actions wired into the same overlay/footer pattern as the rest of the TUI.
+- Tightened the compact runtime summary further by packing related fields such as `Ports` + `URL` onto the same row when the pane is wide enough, so the runtime block spends fewer lines before the attention and session sections.
+- Added an inline boxed runtime-output preview in the detail pane with quick `open output` and `open URL` hints, and fixed a quit-path bug where plain `q` / `Ctrl+C` could exit the TUI without calling `runtimeManager.CloseAll()`.
+- `CloseAll()` now also waits briefly for managed runtimes to report stopped, which should reduce fast-restart races where a repo falls back to a secondary port like `3002` because the old listener is still winding down.
+- Added the runtime restart flow, generalized browser opening for raw runtime URLs, refreshed help/docs copy, and added focused regressions for the runtime command/key path, compact detail rendering, runtime inspector rendering, browser URL opening, and quit-time runtime shutdown.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/commands ./internal/tui -count=1` passed for the initial runtime-panel pass, and `go test ./internal/tui -count=1` passed again after the compact row packing + inline preview + quit-shutdown follow-up.
+- `make test` passed.
+- `make scan` passed at `2026-03-17T03:35:15+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-17T03:35:25+09:00` (`projects: 137`).
+- `env COLUMNS=110 LINES=30 make tui DB=/tmp/lcroom-runtime-inspector-smoke.sqlite` reached the TUI with a temp DB, rendered the updated main layout after the inline preview + quit fix, and exited via `q`.
 
 Next concrete tasks:
 

@@ -65,8 +65,9 @@ const (
 type FocusTarget string
 
 const (
-	FocusList   FocusTarget = "list"
-	FocusDetail FocusTarget = "detail"
+	FocusList    FocusTarget = "list"
+	FocusDetail  FocusTarget = "detail"
+	FocusRuntime FocusTarget = "runtime"
 )
 
 type Spec struct {
@@ -105,7 +106,7 @@ var specs = []Spec{
 	{Name: "open", Usage: "/open", Summary: "Open the selected project's folder in the system browser"},
 	{Name: "run", Usage: "/run [command]", Summary: "Start the selected project's managed runtime"},
 	{Name: "run-edit", Usage: "/run-edit", Summary: "Edit the selected project's saved run command"},
-	{Name: "runtime", Usage: "/runtime", Summary: "Open the selected project's runtime inspector"},
+	{Name: "runtime", Usage: "/runtime", Summary: "Focus the selected project's runtime pane"},
 	{Name: "stop", Usage: "/stop", Summary: "Stop the selected project's managed runtime"},
 	{Name: "diff", Usage: "/diff", Summary: "Open a full-screen diff for the selected project"},
 	{Name: "commit", Usage: "/commit [message]", Summary: "Preview a commit for the selected project"},
@@ -122,7 +123,7 @@ var specs = []Spec{
 	{Name: "sessions", Usage: "/sessions on|off|toggle", Summary: "Show or hide the Sessions section"},
 	{Name: "events", Usage: "/events on|off|toggle", Summary: "Show or hide Recent events"},
 	{Name: "forget", Usage: "/forget", Summary: "Forget a selected missing folder"},
-	{Name: "focus", Usage: "/focus list|detail", Summary: "Move focus between panes"},
+	{Name: "focus", Usage: "/focus list|detail|runtime", Summary: "Move focus between panes"},
 	{Name: "quit", Usage: "/quit", Summary: "Quit the TUI"},
 }
 
@@ -200,6 +201,7 @@ func Suggestions(input string) []Suggestion {
 		return enumSuggestions("/focus ", argPrefix,
 			choice("list", "Focus the project list"),
 			choice("detail", "Focus the detail pane"),
+			choice("runtime", "Focus the runtime pane"),
 		)
 	case "snooze":
 		argPrefix := ""
@@ -496,8 +498,10 @@ func parseFocusTarget(raw string) (FocusTarget, error) {
 		return FocusList, nil
 	case "detail", "details":
 		return FocusDetail, nil
+	case "runtime":
+		return FocusRuntime, nil
 	default:
-		return "", fmt.Errorf("usage: /focus list|detail")
+		return "", fmt.Errorf("usage: /focus list|detail|runtime")
 	}
 }
 

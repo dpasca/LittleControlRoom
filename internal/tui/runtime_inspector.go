@@ -6,161 +6,166 @@ import (
 
 	"lcroom/internal/model"
 
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-type runtimeInspectorState struct {
-	ProjectPath string
-	Viewport    viewport.Model
+type runtimePaneActionKind string
+
+const (
+	runtimePaneActionOpenURL runtimePaneActionKind = "open-url"
+	runtimePaneActionRestart runtimePaneActionKind = "restart"
+	runtimePaneActionStop    runtimePaneActionKind = "stop"
+)
+
+type runtimePaneAction struct {
+	Kind           runtimePaneActionKind
+	Label          string
+	Enabled        bool
+	DisabledStatus string
 }
 
 func (m *Model) openRuntimeInspectorForSelection() tea.Cmd {
+	if _, ok := m.selectedProject(); !ok {
+		m.status = "No project selected"
+		return nil
+	}
+	m.err = nil
+	m.showHelp = false
+	m.focusedPane = focusRuntime
+	m.status = focusedPaneStatus(m.focusedPane)
+	m.ensureSelectionVisible()
+	m.syncDetailViewport(false)
+	m.syncRuntimeViewport(true)
+	return nil
+}
+
+func (m *Model) syncRuntimeViewport(reset bool) {
+	layout := m.bodyLayout()
+	projectPath := m.runtimePanelProjectPath()
+	m.clampRuntimeActionSelection(projectPath)
+
+	m.runtimeViewport.Width = layout.runtimeContentWidth
+	innerHeight := max(1, layout.bottomPaneHeight-2)
+	summaryLines := m.renderRuntimePanelSummary(layout.runtimeContentWidth, projectPath)
+	outputHeight := max(3, innerHeight-len(summaryLines)-4)
+	m.runtimeViewport.Height = outputHeight
+
+	offset := m.runtimeViewport.YOffset
+	m.runtimeViewport.SetContent(m.renderRuntimePanelOutputContent(layout.runtimeContentWidth, projectPath))
+	if reset {
+		m.runtimeViewport.GotoBottom()
+		return
+	}
+	maxOffset := max(0, m.runtimeViewport.TotalLineCount()-m.runtimeViewport.Height)
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	m.runtimeViewport.SetYOffset(offset)
+}
+
+func (m *Model) moveRuntimeActionSelection(delta int) {
+	actions := m.runtimePanelActions(m.runtimePanelProjectPath())
+	if len(actions) == 0 || delta == 0 {
+		return
+	}
+	selected := m.runtimeActionSelected % len(actions)
+	if selected < 0 {
+		selected += len(actions)
+	}
+	next := (selected + delta) % len(actions)
+	if next < 0 {
+		next += len(actions)
+	}
+	m.runtimeActionSelected = next
+}
+
+func (m *Model) clampRuntimeActionSelection(projectPath string) {
+	actions := m.runtimePanelActions(projectPath)
+	if len(actions) == 0 {
+		m.runtimeActionSelected = 0
+		return
+	}
+	if m.runtimeActionSelected < 0 {
+		m.runtimeActionSelected = 0
+	}
+	if m.runtimeActionSelected >= len(actions) {
+		m.runtimeActionSelected = len(actions) - 1
+	}
+}
+
+func (m *Model) activateRuntimePaneAction() tea.Cmd {
 	project, ok := m.selectedProject()
 	if !ok {
 		m.status = "No project selected"
 		return nil
 	}
-	snapshot := m.projectRuntimeSnapshot(project.Path)
-	if !runtimeDetailAvailable(project.RunCommand, snapshot) {
-		m.status = "No runtime details yet. Use /run to start one"
+	actions := m.runtimePanelActions(project.Path)
+	if len(actions) == 0 {
+		m.status = "No runtime actions available"
 		return nil
 	}
-	m.err = nil
-	m.showHelp = false
-	m.runtimeInspector = &runtimeInspectorState{
-		ProjectPath: project.Path,
-		Viewport:    viewport.New(0, 0),
+	m.clampRuntimeActionSelection(project.Path)
+	action := actions[m.runtimeActionSelected]
+	if !action.Enabled {
+		m.status = action.DisabledStatus
+		return nil
 	}
-	m.syncRuntimeInspectorViewport(true)
-	m.status = "Runtime panel open"
-	return nil
-}
 
-func (m *Model) closeRuntimeInspector(status string) {
-	m.runtimeInspector = nil
-	if status != "" {
-		m.status = status
-	}
-}
-
-func (m Model) updateRuntimeInspectorMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.runtimeInspector == nil {
-		return m, nil
-	}
-	switch msg.String() {
-	case "esc":
-		m.closeRuntimeInspector("Runtime panel closed")
-		return m, nil
-	case "up", "k":
-		m.runtimeInspector.Viewport.LineUp(1)
-		return m, nil
-	case "down", "j":
-		m.runtimeInspector.Viewport.LineDown(1)
-		return m, nil
-	case "pgup":
-		m.runtimeInspector.Viewport.PageUp()
-		return m, nil
-	case "pgdown":
-		m.runtimeInspector.Viewport.PageDown()
-		return m, nil
-	case "home":
-		m.runtimeInspector.Viewport.GotoTop()
-		return m, nil
-	case "end":
-		m.runtimeInspector.Viewport.GotoBottom()
-		return m, nil
-	case "o":
-		rawURL := m.runtimeInspectorOpenURL()
+	snapshot := m.projectRuntimeSnapshot(project.Path)
+	switch action.Kind {
+	case runtimePaneActionOpenURL:
+		rawURL := runtimePrimaryURL(snapshot)
 		if rawURL == "" {
 			m.status = "No runtime URL or detected port to open"
-			return m, nil
+			return nil
 		}
 		m.status = "Opening runtime URL in browser..."
-		return m, m.openRuntimeURLInBrowserCmd(rawURL)
-	case "s":
-		m.status = "Stopping runtime..."
-		return m, m.stopProjectRuntimeCmd(m.runtimeInspector.ProjectPath)
-	case "r":
-		command := m.runtimeInspectorCommand()
+		return m.openRuntimeURLInBrowserCmd(rawURL)
+	case runtimePaneActionRestart:
+		command := effectiveRuntimeCommand(project.RunCommand, snapshot)
 		if command == "" {
 			m.status = "Runtime command is not set"
-			return m, nil
+			return nil
 		}
 		m.status = "Restarting runtime..."
-		return m, m.restartProjectRuntimeCmd(m.runtimeInspector.ProjectPath, command)
+		return m.restartProjectRuntimeCmd(project.Path, command)
+	case runtimePaneActionStop:
+		if !snapshot.Running {
+			m.status = "Runtime is not running"
+			return nil
+		}
+		m.status = "Stopping runtime..."
+		return m.stopProjectRuntimeCmd(project.Path)
+	default:
+		m.status = "Runtime action unavailable"
+		return nil
 	}
-	return m, nil
 }
 
-func (m *Model) syncRuntimeInspectorViewport(reset bool) {
-	if m.runtimeInspector == nil {
-		return
-	}
-	_, _, innerWidth, innerHeight := runtimeInspectorPanelDimensions(m.width, m.height)
-	summaryLines := m.renderRuntimeInspectorSummary(innerWidth, m.runtimeInspector.ProjectPath)
-	outputHeight := max(4, innerHeight-len(summaryLines)-2)
-
-	state := m.runtimeInspector
-	state.Viewport.Width = innerWidth
-	state.Viewport.Height = outputHeight
-	offset := state.Viewport.YOffset
-	state.Viewport.SetContent(m.renderRuntimeInspectorOutputContent(innerWidth, state.ProjectPath))
-	if reset {
-		state.Viewport.GotoBottom()
-		return
-	}
-	maxOffset := max(0, state.Viewport.TotalLineCount()-state.Viewport.Height)
-	if offset > maxOffset {
-		offset = maxOffset
-	}
-	state.Viewport.SetYOffset(offset)
-}
-
-func runtimeInspectorPanelDimensions(width, height int) (panelWidth, panelHeight, innerWidth, innerHeight int) {
-	if width <= 0 {
-		width = 120
-	}
+func (m Model) renderRuntimePanel(width, height int) string {
 	if height <= 0 {
-		height = 30
+		return ""
 	}
-	bodyHeight := height - 2
-	if bodyHeight < 12 {
-		bodyHeight = 12
-	}
-	panelWidth = min(width, min(max(72, width-8), 112))
-	panelHeight = min(bodyHeight, max(16, bodyHeight-2))
-	innerWidth = max(24, panelWidth-4)
-	innerHeight = max(8, panelHeight-2)
-	return panelWidth, panelHeight, innerWidth, innerHeight
-}
-
-func (m Model) renderRuntimeInspectorOverlay(body string, bodyW, bodyH int) string {
-	if m.runtimeInspector == nil {
-		return body
-	}
-	panelWidth, _, innerWidth, _ := runtimeInspectorPanelDimensions(bodyW, bodyH+2)
-	summaryLines := m.renderRuntimeInspectorSummary(innerWidth, m.runtimeInspector.ProjectPath)
-	contentLines := append(summaryLines, "")
+	projectPath := m.runtimePanelProjectPath()
+	summaryLines := m.renderRuntimePanelSummary(width, projectPath)
+	contentLines := append([]string(nil), summaryLines...)
+	contentLines = append(contentLines, "")
+	contentLines = append(contentLines, m.renderRuntimePanelActionRow(width, projectPath))
+	contentLines = append(contentLines, "")
 	contentLines = append(contentLines, detailSectionStyle.Render("Output"))
-	contentLines = append(contentLines, m.runtimeInspector.Viewport.View())
-	panel := lipgloss.NewStyle().
-		Width(panelWidth).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("81")).
-		Padding(0, 1).
-		Background(lipgloss.Color("235")).
-		Foreground(lipgloss.Color("252")).
-		Render(strings.Join(contentLines, "\n"))
-	panelWidth = lipgloss.Width(panel)
-	panelHeight := lipgloss.Height(panel)
-	left := max(0, (bodyW-panelWidth)/2)
-	top := max(0, (bodyH-panelHeight)/3)
-	return overlayBlock(body, panel, bodyW, bodyH, left, top)
+	contentLines = append(contentLines, m.runtimeViewport.View())
+	return fitPaneContent(strings.Join(contentLines, "\n"), width, height)
 }
 
-func (m Model) renderRuntimeInspectorSummary(width int, projectPath string) []string {
+func (m Model) renderRuntimePanelSummary(width int, projectPath string) []string {
+	if strings.TrimSpace(projectPath) == "" {
+		return []string{
+			detailSectionStyle.Render("Runtime"),
+			detailMutedStyle.Render("Select a project to inspect its runtime"),
+		}
+	}
+
 	project, _ := m.projectSummaryByPath(projectPath)
 	snapshot := m.projectRuntimeSnapshot(projectPath)
 	projectName := strings.TrimSpace(project.Name)
@@ -168,10 +173,13 @@ func (m Model) renderRuntimeInspectorSummary(width int, projectPath string) []st
 		projectName = filepath.Base(strings.TrimSpace(projectPath))
 	}
 
-	lines := []string{dialogProjectTitleStyle.Render(projectName + " Runtime")}
-	lines = append(lines, renderWrappedRuntimeField("Path", width, detailValueStyle, projectPath)...)
-
+	lines := []string{detailSectionStyle.Render("Runtime - " + projectName)}
 	command := effectiveRuntimeCommand(project.RunCommand, snapshot)
+	if command == "" && !runtimeDetailAvailable(project.RunCommand, snapshot) {
+		lines = append(lines, detailMutedStyle.Render("Use /run or /run-edit to start a managed runtime"))
+		return lines
+	}
+
 	commandStyle := detailValueStyle
 	if command == "" {
 		command = "not set"
@@ -191,8 +199,8 @@ func (m Model) renderRuntimeInspectorSummary(width int, projectPath string) []st
 	if len(snapshot.Ports) > 0 {
 		infoFields = append(infoFields, detailField("Ports", detailValueStyle.Render(joinPorts(snapshot.Ports))))
 	}
-	if len(snapshot.AnnouncedURLs) > 0 {
-		infoFields = append(infoFields, detailField("URL", detailValueStyle.Render(runtimeURLSummary(snapshot))))
+	if urlSummary := runtimeURLSummary(snapshot); urlSummary != "" {
+		infoFields = append(infoFields, detailField("URL", detailValueStyle.Render(urlSummary)))
 	}
 	lines = appendDetailFields(lines, width, infoFields...)
 
@@ -211,9 +219,16 @@ func (m Model) renderRuntimeInspectorSummary(width int, projectPath string) []st
 	return lines
 }
 
-func (m Model) renderRuntimeInspectorOutputContent(width int, projectPath string) string {
+func (m Model) renderRuntimePanelOutputContent(width int, projectPath string) string {
+	if strings.TrimSpace(projectPath) == "" {
+		return detailMutedStyle.Render("Select a project to see runtime output")
+	}
+	project, _ := m.projectSummaryByPath(projectPath)
 	snapshot := m.projectRuntimeSnapshot(projectPath)
 	if len(snapshot.RecentOutput) == 0 {
+		if !runtimeDetailAvailable(project.RunCommand, snapshot) {
+			return detailMutedStyle.Render("No managed runtime yet")
+		}
 		return detailMutedStyle.Render("No captured runtime output yet")
 	}
 	lines := make([]string, 0, len(snapshot.RecentOutput))
@@ -225,6 +240,78 @@ func (m Model) renderRuntimeInspectorOutputContent(width int, projectPath string
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderRuntimePanelActionRow(width int, projectPath string) string {
+	actions := m.runtimePanelActions(projectPath)
+	if len(actions) == 0 {
+		return detailMutedStyle.Render("No runtime actions available")
+	}
+	parts := make([]string, 0, len(actions))
+	for i, action := range actions {
+		selected := m.focusedPane == focusRuntime && i == m.runtimeActionSelected
+		parts = append(parts, renderRuntimePaneActionChip(action, selected))
+	}
+	return fitStyledWidth(strings.Join(parts, " "), width)
+}
+
+func renderRuntimePaneActionChip(action runtimePaneAction, selected bool) string {
+	if !action.Enabled {
+		return disabledActionKeyStyle.Render(action.Label)
+	}
+	if !selected {
+		return lipgloss.NewStyle().
+			Foreground(lipgloss.Color("252")).
+			Background(lipgloss.Color("236")).
+			Padding(0, 1).
+			Bold(true).
+			Render(action.Label)
+	}
+	switch action.Kind {
+	case runtimePaneActionOpenURL:
+		return pushActionKeyStyle.Render(action.Label)
+	case runtimePaneActionStop:
+		return cancelActionKeyStyle.Render(action.Label)
+	default:
+		return commitActionKeyStyle.Render(action.Label)
+	}
+}
+
+func (m Model) runtimePanelProjectPath() string {
+	project, ok := m.selectedProject()
+	if !ok {
+		return ""
+	}
+	return project.Path
+}
+
+func (m Model) runtimePanelActions(projectPath string) []runtimePaneAction {
+	if strings.TrimSpace(projectPath) == "" {
+		return nil
+	}
+	project, _ := m.projectSummaryByPath(projectPath)
+	snapshot := m.projectRuntimeSnapshot(projectPath)
+	command := effectiveRuntimeCommand(project.RunCommand, snapshot)
+	return []runtimePaneAction{
+		{
+			Kind:           runtimePaneActionOpenURL,
+			Label:          "Open URL",
+			Enabled:        runtimePrimaryURL(snapshot) != "",
+			DisabledStatus: "No runtime URL or detected port to open",
+		},
+		{
+			Kind:           runtimePaneActionRestart,
+			Label:          "Restart",
+			Enabled:        command != "",
+			DisabledStatus: "Runtime command is not set",
+		},
+		{
+			Kind:           runtimePaneActionStop,
+			Label:          "Stop",
+			Enabled:        snapshot.Running,
+			DisabledStatus: "Runtime is not running",
+		},
+	}
 }
 
 func renderWrappedRuntimeField(label string, width int, valueStyle lipgloss.Style, value string) []string {
@@ -250,21 +337,6 @@ func renderWrappedRuntimeField(label string, width int, valueStyle lipgloss.Styl
 		lines = append(lines, continuation+valueStyle.Render(part))
 	}
 	return lines
-}
-
-func (m Model) runtimeInspectorCommand() string {
-	if m.runtimeInspector == nil {
-		return ""
-	}
-	project, _ := m.projectSummaryByPath(m.runtimeInspector.ProjectPath)
-	return effectiveRuntimeCommand(project.RunCommand, m.projectRuntimeSnapshot(m.runtimeInspector.ProjectPath))
-}
-
-func (m Model) runtimeInspectorOpenURL() string {
-	if m.runtimeInspector == nil {
-		return ""
-	}
-	return runtimePrimaryURL(m.projectRuntimeSnapshot(m.runtimeInspector.ProjectPath))
 }
 
 func (m Model) projectSummaryByPath(projectPath string) (model.ProjectSummary, bool) {

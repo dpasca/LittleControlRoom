@@ -19,6 +19,7 @@ const (
 	portRefreshInterval = 2 * time.Second
 	maxRecentOutput     = 8
 	maxAnnouncedURLs    = 4
+	closeAllWaitTimeout = 2 * time.Second
 )
 
 var (
@@ -112,7 +113,40 @@ func (m *Manager) CloseAll() error {
 			firstErr = err
 		}
 	}
+	if err := m.waitForAllStopped(closeAllWaitTimeout); err != nil && firstErr == nil {
+		firstErr = err
+	}
 	return firstErr
+}
+
+func (m *Manager) waitForAllStopped(timeout time.Duration) error {
+	if m == nil {
+		return nil
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		if !m.anyRunningRuntime() {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return errors.New("timed out waiting for runtimes to stop")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func (m *Manager) anyRunningRuntime() bool {
+	if m == nil {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, runtime := range m.runtimes {
+		if runtime != nil && runtime.running {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) Start(req StartRequest) (Snapshot, error) {

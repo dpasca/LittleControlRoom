@@ -21,52 +21,6 @@ func (m Model) projectRuntimeSnapshot(projectPath string) projectrun.Snapshot {
 	return snapshot
 }
 
-func (m Model) renderRuntimeDetail(lines []string, width int, projectPath, savedCommand string) []string {
-	savedCommand = strings.TrimSpace(savedCommand)
-	snapshot := m.projectRuntimeSnapshot(projectPath)
-	if !runtimeDetailAvailable(savedCommand, snapshot) {
-		return lines
-	}
-
-	commandValue := effectiveRuntimeCommand(savedCommand, snapshot)
-	if commandValue == "" {
-		commandValue = detailMutedStyle.Render("not set")
-	} else {
-		commandValue = detailValueStyle.Render(commandValue)
-	}
-	lines = append(lines, detailField("Run cmd", commandValue))
-
-	fields := []string{detailField("Runtime", renderRuntimeStatusValue(snapshot))}
-	if snapshot.Running && !snapshot.StartedAt.IsZero() {
-		fields = append(fields, detailField("Up", detailValueStyle.Render(formatRunningDuration(m.currentTime().Sub(snapshot.StartedAt)))))
-	} else if !snapshot.ExitedAt.IsZero() {
-		fields = append(fields, detailField("Stopped", detailMutedStyle.Render(snapshot.ExitedAt.Format(timeFieldFormat))))
-	}
-	lines = appendDetailFields(lines, width, fields...)
-
-	infoFields := make([]string, 0, 2)
-	if len(snapshot.Ports) > 0 {
-		infoFields = append(infoFields, detailField("Ports", detailValueStyle.Render(joinPorts(snapshot.Ports))))
-	}
-	if urlSummary := runtimeURLSummary(snapshot); urlSummary != "" {
-		infoFields = append(infoFields, detailField("URL", detailValueStyle.Render(urlSummary)))
-	}
-	lines = appendDetailFields(lines, width, infoFields...)
-
-	statusFields := make([]string, 0, 2)
-	if len(snapshot.ConflictPorts) > 0 {
-		statusFields = append(statusFields, detailField("Conflict", detailDangerStyle.Render(m.runtimeConflictSummary(projectPath, snapshot.ConflictPorts))))
-	}
-	if strings.TrimSpace(snapshot.LastError) != "" {
-		statusFields = append(statusFields, detailField("Runtime err", detailDangerStyle.Render(snapshot.LastError)))
-	}
-	lines = appendDetailFields(lines, width, statusFields...)
-	if outputSummary := runtimeOutputSummary(snapshot, width); outputSummary != "" {
-		lines = append(lines, detailField("Output", detailMutedStyle.Render(outputSummary)))
-	}
-	return lines
-}
-
 func runtimeDetailAvailable(savedCommand string, snapshot projectrun.Snapshot) bool {
 	return strings.TrimSpace(savedCommand) != "" ||
 		strings.TrimSpace(snapshot.Command) != "" ||
@@ -107,23 +61,6 @@ func runtimeURLSummary(snapshot projectrun.Snapshot) string {
 		return primary
 	}
 	return fmt.Sprintf("%s (+%d more)", primary, len(snapshot.AnnouncedURLs)-1)
-}
-
-func runtimeOutputSummary(snapshot projectrun.Snapshot, width int) string {
-	if len(snapshot.RecentOutput) == 0 {
-		return ""
-	}
-	count := len(snapshot.RecentOutput)
-	label := "lines"
-	if count == 1 {
-		label = "line"
-	}
-	last := strings.TrimSpace(snapshot.RecentOutput[count-1])
-	if last == "" {
-		last = "(blank line)"
-	}
-	last = truncateText(last, max(18, width-36))
-	return fmt.Sprintf("%d %s captured; last: %s  (r or /runtime)", count, label, last)
 }
 
 func renderRuntimeStatusValue(snapshot projectrun.Snapshot) string {

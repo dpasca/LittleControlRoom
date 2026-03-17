@@ -79,7 +79,7 @@ Use `/run` to start the selected project's saved managed runtime. On the first r
 
 Use `/run-edit` to change the saved run command later, and `/stop` to stop the selected project's managed runtime.
 
-Use `r` or `/runtime` to open a dedicated runtime panel with the captured output tail plus quick `restart`, `stop`, and `open URL` actions.
+The main view now keeps a dedicated runtime pane beside the detail pane. Use `Tab` or `/runtime` to focus it, then use `Left` and `Right` to choose `Open URL`, `Restart`, or `Stop`, and `Enter` to run the selected action.
 
 Use `/codex` or `/opencode` to resume the last session.
 
@@ -93,7 +93,7 @@ Use `/open` to open the selected project's folder in your system browser.
 
 Use `/note` to open a multiline note editor for the selected project, or `/note clear` to remove the saved note after confirmation. Projects with saved notes show an `N` badge in the main list. Press `n` for the same editor as a shortcut. Inside the note dialog, `Ctrl+Y` copies the whole current note to the system clipboard, and the `Copy...` action offers either `Whole note` or `Selected text`. In selection mode, press `Space` once to mark the start, move the cursor, and press `Space` again to copy the selected range.
 
-Projects with an active managed runtime show a short summary in the `RUN` column. Detected ports appear inline there as `@3000`, while `!3000` marks a managed port conflict between tracked projects. The main detail pane keeps only a compact runtime summary and leaves output to the dedicated runtime panel.
+Projects with an active managed runtime show a short summary in the `RUN` column. Detected ports appear inline there as `@3000`, while `!3000` marks a managed port conflict between tracked projects. The detail pane stays focused on project metadata, while the separate runtime pane shows the saved command, runtime state, detected ports and URL, conflicts or errors, and the captured output tail.
 
 Use `/diff` to open a full-screen git diff for the selected project, with staged files listed first on the left, unstaged files below them, and a scrollable text or image preview on the right.
 

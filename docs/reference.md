@@ -120,13 +120,14 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 - `Alt+[` jump to the previous live embedded session
 - `Alt+]` jump to the next live embedded session
 - `PgUp/PgDn/Home/End` fast scrolling in long project lists
-- `Tab` or `Shift+Tab` switch focus between list and detail
+- `Tab` or `Shift+Tab` switch focus between list, detail, and runtime
 - `o` toggle sort mode between `attention` and `recent activity`
 - `p` pin toggle
 - `s` snooze for 1 hour
 - `S` clear snooze
 - `n` open the project note dialog
 - `q` quit
+- While the runtime pane is focused, `Left` and `Right` choose the highlighted runtime action and `Enter` runs it
 
 While the project note dialog is open:
 
@@ -190,6 +191,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/sessions toggle`
 - `/events off`
 - `/focus detail`
+- `/focus runtime`
 - `/forget`
 - `/quit`
 
@@ -214,7 +216,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/run` starts the selected project's saved managed runtime. If no command is saved yet, Little Control Room opens a small dialog with an auto-suggested command when it can infer one from common files like `bin/dev`, `package.json`, `Makefile`, `justfile`, or a simple Go entrypoint.
 - `/run <command>` saves that command as the selected project's default runtime command and starts it immediately.
 - `/run-edit` opens the saved runtime command for editing without starting it.
-- `/runtime` opens a dedicated runtime inspector with the latest captured output plus `restart`, `stop`, and `open URL` actions.
+- `/runtime` focuses the runtime pane for the selected project.
 - `/stop` stops the selected project's managed runtime when one is running.
 - `/codex` resumes the selected project's latest known Codex session when available, otherwise it starts a new one.
 - `/codex-new` always starts a fresh Codex session.
@@ -223,6 +225,6 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - While an embedded Codex or OpenCode pane is visible, local slash commands include `/new`, `/resume` (`/session` alias), `/model`, and `/status`.
 - `/resume` with no session ID opens a picker for saved sessions from the current project and provider; `/resume <session-id>` jumps straight to that session.
 - The main list uses `N` for a saved note, `RUN` for the saved or active managed runtime summary, and `!` inside `RUN` when Little Control Room detects a managed port conflict.
-- The project detail pane keeps runtime command, state, ports, URL, and error/context summary inline, while runtime output lives in the dedicated `r` or `/runtime` inspector.
+- The project detail pane keeps project metadata only, while the dedicated runtime pane shows runtime command, state, ports, URL, conflicts or errors, and the captured output tail.
 - `codex_launch_preset` controls how Codex is launched. The default is `yolo`.
 - CLI flags override config file values.

@@ -922,7 +922,7 @@ func TestRenderProjectListShowsNoteIndicator(t *testing.T) {
 	}
 }
 
-func TestRenderDetailContentShowsSavedRunCommand(t *testing.T) {
+func TestRenderDetailContentKeepsRuntimeInSeparatePane(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{
 			Name:          "demo",
@@ -935,15 +935,12 @@ func TestRenderDetailContentShowsSavedRunCommand(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderDetailContent(72))
-	if !strings.Contains(rendered, "Run cmd: pnpm dev") {
-		t.Fatalf("renderDetailContent() should show the saved run command: %q", rendered)
-	}
-	if !strings.Contains(rendered, "Runtime: idle") {
-		t.Fatalf("renderDetailContent() should show idle runtime state: %q", rendered)
+	if strings.Contains(rendered, "Run cmd:") || strings.Contains(rendered, "Runtime:") {
+		t.Fatalf("renderDetailContent() should leave runtime fields to the runtime pane: %q", rendered)
 	}
 }
 
-func TestRenderDetailContentSummarizesRuntimeOutput(t *testing.T) {
+func TestRuntimePaneShowsRuntimeOutputAndActions(t *testing.T) {
 	dir := t.TempDir()
 	manager := projectrun.NewManager()
 	defer func() { _ = manager.CloseAll() }()
@@ -951,45 +948,6 @@ func TestRenderDetailContentSummarizesRuntimeOutput(t *testing.T) {
 	_, err := manager.Start(projectrun.StartRequest{
 		ProjectPath: dir,
 		Command:     "printf 'ready on http://127.0.0.1:4310/\\nwarming up\\n'; sleep 2",
-	})
-	if err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
-	waitForRuntimeSnapshot(t, manager, dir, func(snapshot projectrun.Snapshot) bool {
-		return len(snapshot.RecentOutput) >= 2 && len(snapshot.AnnouncedURLs) >= 1
-	})
-
-	m := Model{
-		projects: []model.ProjectSummary{{
-			Name:          "demo",
-			Path:          dir,
-			PresentOnDisk: true,
-			RunCommand:    "pnpm dev",
-		}},
-		selected:       0,
-		runtimeManager: manager,
-	}
-
-	rendered := ansi.Strip(m.renderDetailContent(92))
-	if strings.Contains(rendered, "Runtime output") {
-		t.Fatalf("renderDetailContent() should keep runtime output out of the main detail pane: %q", rendered)
-	}
-	if !strings.Contains(rendered, "Output: 2 lines captured") {
-		t.Fatalf("renderDetailContent() should summarize runtime output instead of dumping it: %q", rendered)
-	}
-	if !strings.Contains(rendered, "r or /runtime") {
-		t.Fatalf("renderDetailContent() should point to the runtime inspector: %q", rendered)
-	}
-}
-
-func TestRuntimeInspectorOverlayShowsOutputAndActions(t *testing.T) {
-	dir := t.TempDir()
-	manager := projectrun.NewManager()
-	defer func() { _ = manager.CloseAll() }()
-
-	_, err := manager.Start(projectrun.StartRequest{
-		ProjectPath: dir,
-		Command:     "printf 'ready on http://127.0.0.1:4311/\\nwatching changes\\n'; sleep 2",
 	})
 	if err != nil {
 		t.Fatalf("Start() error = %v", err)
@@ -1015,14 +973,17 @@ func TestRuntimeInspectorOverlayShowsOutputAndActions(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.View())
-	if !strings.Contains(rendered, "demo Runtime") {
-		t.Fatalf("View() should show the runtime inspector title: %q", rendered)
+	if !strings.Contains(rendered, "Runtime - demo") {
+		t.Fatalf("View() should show the runtime pane title: %q", rendered)
 	}
-	if !strings.Contains(rendered, "watching changes") {
-		t.Fatalf("View() should show runtime output in the inspector: %q", rendered)
+	if !strings.Contains(rendered, "ready on http://127.0.0.1:4310/") || !strings.Contains(rendered, "warming up") {
+		t.Fatalf("View() should show runtime output in the runtime pane: %q", rendered)
 	}
-	if !strings.Contains(rendered, "r restart, s stop, o open URL") {
-		t.Fatalf("View() should show runtime inspector actions in the footer: %q", rendered)
+	if !strings.Contains(rendered, "Open URL") || !strings.Contains(rendered, "Restart") || !strings.Contains(rendered, "Stop") {
+		t.Fatalf("View() should show runtime pane actions: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Focus: runtime") {
+		t.Fatalf("View() should show runtime focus in the footer: %q", rendered)
 	}
 }
 
@@ -1052,6 +1013,29 @@ func waitForRuntimeSnapshot(t *testing.T, manager *projectrun.Manager, projectPa
 		t.Fatalf("Snapshot() error = %v", err)
 	}
 	t.Fatalf("runtime snapshot never reached expected state: %+v", snapshot)
+	return projectrun.Snapshot{}
+}
+
+func waitForRuntimeStopped(t *testing.T, manager *projectrun.Manager, projectPath string) projectrun.Snapshot {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		snapshot, err := manager.Snapshot(projectPath)
+		if err != nil {
+			t.Fatalf("Snapshot() error = %v", err)
+		}
+		if !snapshot.Running {
+			return snapshot
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	snapshot, err := manager.Snapshot(projectPath)
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	t.Fatalf("runtime did not stop: %+v", snapshot)
 	return projectrun.Snapshot{}
 }
 
@@ -1111,8 +1095,11 @@ func TestViewStacksListAndDetailVertically(t *testing.T) {
 	if got := len(strings.Split(rendered, "\n")); got != m.height {
 		t.Fatalf("View() line count = %d, want terminal height %d; render was %q", got, m.height, rendered)
 	}
-	if !strings.Contains(rendered, "Repo: dirty worktree  Remote: ahead by 2") {
-		t.Fatalf("View() should keep repo and remote on one compact row: %q", rendered)
+	if !strings.Contains(rendered, "Repo: dirty worktree") || !strings.Contains(rendered, "Remote: ahead by 2") {
+		t.Fatalf("View() should keep both repo and remote details visible in the detail pane: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Runtime - demo") {
+		t.Fatalf("View() should render the runtime pane beside the detail pane: %q", rendered)
 	}
 	for _, line := range strings.Split(ansi.Strip(rendered), "\n") {
 		if ansi.StringWidth(line) > m.width {
@@ -1452,6 +1439,11 @@ func TestSplitBodyHeightsGrowFocusedPane(t *testing.T) {
 	if detailDetailHeight <= detailListHeight {
 		t.Fatalf("detail focus should favor detail pane: list=%d detail=%d", detailListHeight, detailDetailHeight)
 	}
+
+	runtimeListHeight, runtimeBottomHeight := splitBodyHeights(20, focusRuntime)
+	if runtimeBottomHeight <= runtimeListHeight {
+		t.Fatalf("runtime focus should favor bottom panes: list=%d bottom=%d", runtimeListHeight, runtimeBottomHeight)
+	}
 }
 
 func TestTabSwitchesFocusAndEscReturnsToList(t *testing.T) {
@@ -1466,6 +1458,18 @@ func TestTabSwitchesFocusAndEscReturnsToList(t *testing.T) {
 	got := updated.(Model)
 	if got.focusedPane != focusDetail {
 		t.Fatalf("tab should move focus to detail, got %s", got.focusedPane)
+	}
+
+	updated, _ = got.updateNormalMode(tea.KeyMsg{Type: tea.KeyTab})
+	got = updated.(Model)
+	if got.focusedPane != focusRuntime {
+		t.Fatalf("second tab should move focus to runtime, got %s", got.focusedPane)
+	}
+
+	updated, _ = got.updateNormalMode(tea.KeyMsg{Type: tea.KeyShiftTab})
+	got = updated.(Model)
+	if got.focusedPane != focusDetail {
+		t.Fatalf("shift+tab should move focus back to detail, got %s", got.focusedPane)
 	}
 
 	updated, _ = got.updateNormalMode(tea.KeyMsg{Type: tea.KeyEsc})
@@ -1499,7 +1503,7 @@ func TestSlashOpensCommandMode(t *testing.T) {
 	}
 }
 
-func TestRuntimeKeyOpensRuntimeInspector(t *testing.T) {
+func TestRuntimeCommandFocusesRuntimePane(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{
 			Name:          "demo",
@@ -1507,19 +1511,54 @@ func TestRuntimeKeyOpensRuntimeInspector(t *testing.T) {
 			PresentOnDisk: true,
 			RunCommand:    "pnpm dev",
 		}},
-		selected: 0,
+		selected:    0,
+		width:       100,
+		height:      24,
+		focusedPane: focusProjects,
 	}
 
-	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindRuntime})
 	got := updated.(Model)
 	if cmd != nil {
-		t.Fatalf("runtime key should open locally without an async command")
+		t.Fatalf("/runtime should focus locally without an async command")
 	}
-	if got.runtimeInspector == nil {
-		t.Fatalf("runtime key should open the runtime inspector")
+	if got.focusedPane != focusRuntime {
+		t.Fatalf("/runtime should focus the runtime pane, got %s", got.focusedPane)
 	}
-	if got.status != "Runtime panel open" {
-		t.Fatalf("status = %q, want runtime panel open", got.status)
+	if got.status != "Focus: runtime pane" {
+		t.Fatalf("status = %q, want runtime focus status", got.status)
+	}
+}
+
+func TestQuitKeyStopsManagedRuntimes(t *testing.T) {
+	dir := t.TempDir()
+	manager := projectrun.NewManager()
+	defer func() { _ = manager.CloseAll() }()
+
+	_, err := manager.Start(projectrun.StartRequest{
+		ProjectPath: dir,
+		Command:     "sleep 30",
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	waitForRuntimeSnapshot(t, manager, dir, func(snapshot projectrun.Snapshot) bool {
+		return snapshot.Running
+	})
+
+	m := Model{runtimeManager: manager}
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if cmd == nil {
+		t.Fatalf("quit key should return tea.Quit")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatalf("quit key command should emit tea.QuitMsg")
+	}
+	_ = updated.(Model)
+
+	snapshot := waitForRuntimeStopped(t, manager, dir)
+	if snapshot.Running {
+		t.Fatalf("runtime should be stopped after quit: %+v", snapshot)
 	}
 }
 
@@ -5254,7 +5293,7 @@ func TestViewWithCommitPreviewRespectsHeight(t *testing.T) {
 	if stageLine-messageLine < 2 || blankVisible != "" {
 		t.Fatalf("View() should leave a blank line after the commit message: %q", rendered)
 	}
-	if !strings.Contains(rendered, "│  A") || !strings.Contains(rendered, "Attention reasons") {
+	if !strings.Contains(rendered, "Status: idle") || !strings.Contains(rendered, "Output") {
 		t.Fatalf("View() should preserve background list and detail context under the commit preview: %q", rendered)
 	}
 }

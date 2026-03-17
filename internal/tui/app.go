@@ -62,7 +62,6 @@ type Model struct {
 	commandSelected              int
 	newProjectDialog             *newProjectDialogState
 	runCommandDialog             *runCommandDialogState
-	runtimeInspector             *runtimeInspectorState
 	preferredSelectPath          string
 	diffView                     *diffViewState
 	gitStatusDialog              *gitStatusDialog
@@ -76,8 +75,10 @@ type Model struct {
 	settingsSelected             int
 	settingsBaseline             *config.EditableSettings
 
-	detailViewport viewport.Model
-	focusedPane    paneFocus
+	detailViewport        viewport.Model
+	runtimeViewport       viewport.Model
+	runtimeActionSelected int
+	focusedPane           paneFocus
 
 	codexManager        *codexapp.Manager
 	runtimeManager      *projectrun.Manager
@@ -236,11 +237,15 @@ type projectVisibilityMode string
 type paneFocus string
 
 type bodyLayout struct {
-	width            int
-	height           int
-	listPaneHeight   int
-	detailPaneHeight int
-	listContentWidth int
+	width               int
+	height              int
+	listPaneHeight      int
+	bottomPaneHeight    int
+	listContentWidth    int
+	detailPaneWidth     int
+	runtimePaneWidth    int
+	detailContentWidth  int
+	runtimeContentWidth int
 }
 
 const (
@@ -252,6 +257,7 @@ const (
 
 	focusProjects paneFocus = "projects"
 	focusDetail   paneFocus = "detail"
+	focusRuntime  paneFocus = "runtime"
 
 	initialProjectsStatus = "Loading projects..."
 )
@@ -264,6 +270,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 	commandInput.Width = 56
 	codexInput := newCodexTextarea()
 	detailViewport := viewport.New(0, 0)
+	runtimeViewport := viewport.New(0, 0)
 	codexViewport := viewport.New(0, 0)
 
 	return Model{
@@ -278,6 +285,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		codexClosedHandled:     make(map[string]struct{}),
 		codexToolAnswers:       make(map[string]codexToolAnswerState),
 		detailViewport:         detailViewport,
+		runtimeViewport:        runtimeViewport,
 		codexViewport:          codexViewport,
 		focusedPane:            focusProjects,
 		sortMode:               sortByAttention,
@@ -320,7 +328,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncDetailViewport(false)
 		m.syncCodexComposerSize()
 		m.syncCodexViewport(false)
-		m.syncRuntimeInspectorViewport(false)
+		m.syncRuntimeViewport(false)
 		return m, nil
 	case tea.KeyMsg:
 		if m.codexModelPickerVisible() {
@@ -346,9 +354,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.noteDialog != nil {
 			return m.updateNoteDialogMode(msg)
-		}
-		if m.runtimeInspector != nil {
-			return m.updateRuntimeInspectorMode(msg)
 		}
 		if m.commandMode {
 			return m.updateCommandMode(msg)
@@ -578,9 +583,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if strings.TrimSpace(msg.status) != "" {
 			m.status = msg.status
 		}
-		if m.runtimeInspector != nil && strings.TrimSpace(m.runtimeInspector.ProjectPath) == strings.TrimSpace(msg.projectPath) {
-			m.syncRuntimeInspectorViewport(false)
-		}
+		m.syncRuntimeViewport(false)
 		return m, nil
 	case runCommandSavedMsg:
 		if m.runCommandDialog != nil && m.runCommandDialog.ProjectPath == msg.projectPath {
@@ -699,9 +702,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	case spinnerTickMsg:
 		m.spinnerFrame = (m.spinnerFrame + 1) % spinnerAnimationFrameWrap
-		if m.runtimeInspector != nil {
-			m.syncRuntimeInspectorViewport(false)
-		}
+		m.syncRuntimeViewport(false)
 		return m, spinnerTickCmd()
 	case codexUpdateMsg:
 		cmds := []tea.Cmd{m.waitCodexCmd()}
@@ -745,6 +746,9 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.codexManager != nil {
 			_ = m.codexManager.CloseAll()
 		}
+		if m.runtimeManager != nil {
+			_ = m.runtimeManager.CloseAll()
+		}
 		if m.unsub != nil {
 			m.unsub()
 		}
@@ -752,8 +756,11 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		m.openCommandMode()
 		return m, textinput.Blink
-	case "tab", "shift+tab":
-		m.togglePaneFocus()
+	case "tab":
+		m.cyclePaneFocus(1)
+		return m, nil
+	case "shift+tab":
+		m.cyclePaneFocus(-1)
 		return m, nil
 	case "?":
 		m.showHelp = !m.showHelp
@@ -789,9 +796,16 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m.launchEmbeddedForSelection(preferredEmbeddedProviderForProject(project), false, "")
 		}
+		if m.focusedPane == focusRuntime {
+			return m, m.activateRuntimePaneAction()
+		}
 	case "up", "k":
 		if m.focusedPane == focusDetail {
 			m.detailViewport.LineUp(1)
+			return m, nil
+		}
+		if m.focusedPane == focusRuntime {
+			m.runtimeViewport.LineUp(1)
 			return m, nil
 		}
 		return m, m.moveSelectionBy(-1)
@@ -800,10 +814,18 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailViewport.LineDown(1)
 			return m, nil
 		}
+		if m.focusedPane == focusRuntime {
+			m.runtimeViewport.LineDown(1)
+			return m, nil
+		}
 		return m, m.moveSelectionBy(1)
 	case "pgup":
 		if m.focusedPane == focusDetail {
 			m.detailViewport.PageUp()
+			return m, nil
+		}
+		if m.focusedPane == focusRuntime {
+			m.runtimeViewport.PageUp()
 			return m, nil
 		}
 		return m, m.moveSelectionBy(-m.rowsVisible())
@@ -812,10 +834,18 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailViewport.PageDown()
 			return m, nil
 		}
+		if m.focusedPane == focusRuntime {
+			m.runtimeViewport.PageDown()
+			return m, nil
+		}
 		return m, m.moveSelectionBy(m.rowsVisible())
 	case "home":
 		if m.focusedPane == focusDetail {
 			m.detailViewport.GotoTop()
+			return m, nil
+		}
+		if m.focusedPane == focusRuntime {
+			m.runtimeViewport.GotoTop()
 			return m, nil
 		}
 		return m, m.moveSelectionTo(0)
@@ -824,8 +854,25 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailViewport.GotoBottom()
 			return m, nil
 		}
+		if m.focusedPane == focusRuntime {
+			m.runtimeViewport.GotoBottom()
+			return m, nil
+		}
 		return m, m.moveSelectionTo(max(0, len(m.projects)-1))
+	case "left", "h":
+		if m.focusedPane == focusRuntime {
+			m.moveRuntimeActionSelection(-1)
+			return m, nil
+		}
+	case "right", "l":
+		if m.focusedPane == focusRuntime {
+			m.moveRuntimeActionSelection(1)
+			return m, nil
+		}
 	case "o":
+		if m.focusedPane == focusRuntime {
+			return m, nil
+		}
 		if m.sortMode == sortByAttention {
 			return m, m.setSortMode(sortByRecent)
 		}
@@ -840,17 +887,21 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.togglePinCmd(p.Path)
 		}
 	case "s":
+		if m.focusedPane == focusRuntime {
+			return m, nil
+		}
 		if p, ok := m.selectedProject(); ok {
 			return m, m.snoozeCmd(p.Path, time.Hour)
 		}
 	case "S":
+		if m.focusedPane == focusRuntime {
+			return m, nil
+		}
 		if p, ok := m.selectedProject(); ok {
 			return m, m.clearSnoozeCmd(p.Path)
 		}
 	case "n":
 		return m, m.openNoteDialogForSelection()
-	case "r":
-		return m, m.openRuntimeInspectorForSelection()
 	case "x":
 		m.applySectionToggle("Sessions", commands.ToggleToggle, &m.showSessions)
 		return m, nil
@@ -997,14 +1048,24 @@ func (m *Model) moveSelectionTo(index int) tea.Cmd {
 	return m.loadDetailCmd(m.projects[m.selected].Path)
 }
 
-func (m *Model) togglePaneFocus() {
-	if m.focusedPane == focusProjects {
-		m.focusedPane = focusDetail
-		m.status = "Focus: detail pane"
-	} else {
-		m.focusedPane = focusProjects
-		m.status = "Focus: project list"
+func (m *Model) cyclePaneFocus(delta int) {
+	order := []paneFocus{focusProjects, focusDetail, focusRuntime}
+	current := 0
+	for i, pane := range order {
+		if pane == m.focusedPane {
+			current = i
+			break
+		}
 	}
+	if delta == 0 {
+		delta = 1
+	}
+	next := (current + delta) % len(order)
+	if next < 0 {
+		next += len(order)
+	}
+	m.focusedPane = order[next]
+	m.status = focusedPaneStatus(m.focusedPane)
 	m.ensureSelectionVisible()
 	m.syncDetailViewport(false)
 }
@@ -1014,7 +1075,7 @@ func (m *Model) focusProjectsPane() bool {
 		return false
 	}
 	m.focusedPane = focusProjects
-	m.status = "Focus: project list"
+	m.status = focusedPaneStatus(m.focusedPane)
 	m.ensureSelectionVisible()
 	m.syncDetailViewport(false)
 	return true
@@ -1024,13 +1085,25 @@ func (m *Model) setFocusedPaneFromCommand(target commands.FocusTarget) {
 	switch target {
 	case commands.FocusDetail:
 		m.focusedPane = focusDetail
-		m.status = "Focus: detail pane"
+	case commands.FocusRuntime:
+		m.focusedPane = focusRuntime
 	default:
 		m.focusedPane = focusProjects
-		m.status = "Focus: project list"
 	}
+	m.status = focusedPaneStatus(m.focusedPane)
 	m.ensureSelectionVisible()
 	m.syncDetailViewport(false)
+}
+
+func focusedPaneStatus(pane paneFocus) string {
+	switch pane {
+	case focusDetail:
+		return "Focus: detail pane"
+	case focusRuntime:
+		return "Focus: runtime pane"
+	default:
+		return "Focus: project list"
+	}
 }
 
 func (m *Model) setSortMode(mode projectSortMode) tea.Cmd {
@@ -1192,13 +1265,14 @@ func (m Model) resolvedCommandInput() string {
 
 func (m *Model) syncDetailViewport(reset bool) {
 	layout := m.bodyLayout()
-	m.detailViewport.Width = layout.listContentWidth
-	m.detailViewport.Height = max(1, layout.detailPaneHeight-2)
+	m.detailViewport.Width = layout.detailContentWidth
+	m.detailViewport.Height = max(1, layout.bottomPaneHeight-2)
 
 	offset := m.detailViewport.YOffset
-	m.detailViewport.SetContent(m.renderDetailContent(layout.listContentWidth))
+	m.detailViewport.SetContent(m.renderDetailContent(layout.detailContentWidth))
 	if reset {
 		m.detailViewport.GotoTop()
+		m.syncRuntimeViewport(true)
 		return
 	}
 	maxOffset := max(0, m.detailViewport.TotalLineCount()-m.detailViewport.Height)
@@ -1206,6 +1280,7 @@ func (m *Model) syncDetailViewport(reset bool) {
 		offset = maxOffset
 	}
 	m.detailViewport.SetYOffset(offset)
+	m.syncRuntimeViewport(false)
 }
 
 func (m Model) renderDetailViewport(width, height int) string {
@@ -1263,16 +1338,17 @@ func (m Model) View() string {
 		return strings.Join([]string{header, m.renderDiffView(layout.width, layout.height), m.renderFooter(layout.width)}, "\n")
 	}
 	listHeight := max(1, layout.listPaneHeight-2)
-	detailHeight := max(1, layout.detailPaneHeight-2)
+	bottomHeight := max(1, layout.bottomPaneHeight-2)
 	list := m.renderProjectList(layout.listContentWidth, listHeight)
-	detail := m.renderDetailViewport(layout.listContentWidth, detailHeight)
+	detail := m.renderDetailViewport(layout.detailContentWidth, bottomHeight)
+	runtime := m.renderRuntimePanel(layout.runtimeContentWidth, bottomHeight)
 
 	listPane := m.renderFramedPane(list, layout.width, listHeight, m.focusedPane == focusProjects)
-	detailPane := m.renderFramedPane(detail, layout.width, detailHeight, m.focusedPane == focusDetail)
-	body := lipgloss.JoinVertical(lipgloss.Left, listPane, detailPane)
-	if m.runtimeInspector != nil {
-		body = m.renderRuntimeInspectorOverlay(body, layout.width, layout.height)
-	} else if m.gitStatusDialog != nil {
+	detailPane := m.renderFramedPane(detail, layout.detailPaneWidth, bottomHeight, m.focusedPane == focusDetail)
+	runtimePane := m.renderFramedPane(runtime, layout.runtimePaneWidth, bottomHeight, m.focusedPane == focusRuntime)
+	bottomRow := lipgloss.JoinHorizontal(lipgloss.Top, detailPane, " ", runtimePane)
+	body := lipgloss.JoinVertical(lipgloss.Left, listPane, bottomRow)
+	if m.gitStatusDialog != nil {
 		body = m.renderGitStatusDialogOverlay(body, layout.width, layout.height)
 	} else if m.commitPreview != nil {
 		body = m.renderCommitPreviewOverlay(body, layout.width, layout.height)
@@ -1317,13 +1393,18 @@ func (m Model) bodyLayout() bodyLayout {
 		bodyHeight = 8
 	}
 
-	listPaneHeight, detailPaneHeight := splitBodyHeights(bodyHeight, m.focusedPane)
+	listPaneHeight, bottomPaneHeight := splitBodyHeights(bodyHeight, m.focusedPane)
+	detailPaneWidth, runtimePaneWidth := splitBottomPaneWidths(width, m.focusedPane)
 	return bodyLayout{
-		width:            width,
-		height:           bodyHeight,
-		listPaneHeight:   listPaneHeight,
-		detailPaneHeight: detailPaneHeight,
-		listContentWidth: max(24, width-4),
+		width:               width,
+		height:              bodyHeight,
+		listPaneHeight:      listPaneHeight,
+		bottomPaneHeight:    bottomPaneHeight,
+		listContentWidth:    max(24, width-4),
+		detailPaneWidth:     detailPaneWidth,
+		runtimePaneWidth:    runtimePaneWidth,
+		detailContentWidth:  max(20, detailPaneWidth-4),
+		runtimeContentWidth: max(18, runtimePaneWidth-4),
 	}
 }
 
@@ -1333,21 +1414,64 @@ func splitBodyHeights(bodyHeight int, focused paneFocus) (int, int) {
 	}
 
 	listHeight := (bodyHeight * 3) / 5
-	detailHeight := bodyHeight - listHeight
-	if focused == focusDetail {
-		detailHeight = (bodyHeight * 11) / 20
-		listHeight = bodyHeight - detailHeight
+	bottomHeight := bodyHeight - listHeight
+	if focused == focusDetail || focused == focusRuntime {
+		bottomHeight = (bodyHeight * 11) / 20
+		listHeight = bodyHeight - bottomHeight
 	}
 
 	if listHeight < 6 {
 		listHeight = 6
-		detailHeight = bodyHeight - listHeight
+		bottomHeight = bodyHeight - listHeight
 	}
-	if detailHeight < 6 {
-		detailHeight = 6
-		listHeight = bodyHeight - detailHeight
+	if bottomHeight < 6 {
+		bottomHeight = 6
+		listHeight = bodyHeight - bottomHeight
 	}
-	return listHeight, detailHeight
+	return listHeight, bottomHeight
+}
+
+func splitBottomPaneWidths(totalWidth int, focused paneFocus) (int, int) {
+	if totalWidth <= 0 {
+		totalWidth = 120
+	}
+	gap := 1
+	available := max(2, totalWidth-gap)
+	detailWidth := (available * 3) / 5
+	switch focused {
+	case focusDetail:
+		detailWidth = (available * 17) / 25
+	case focusRuntime:
+		detailWidth = (available * 2) / 5
+	}
+	runtimeWidth := available - detailWidth
+
+	minDetail := min(available-18, 28)
+	if minDetail < 18 {
+		minDetail = 18
+	}
+	minRuntime := min(available-18, 24)
+	if minRuntime < 18 {
+		minRuntime = 18
+	}
+
+	if detailWidth < minDetail {
+		detailWidth = minDetail
+		runtimeWidth = available - detailWidth
+	}
+	if runtimeWidth < minRuntime {
+		runtimeWidth = minRuntime
+		detailWidth = available - runtimeWidth
+	}
+	if detailWidth < 18 {
+		detailWidth = max(18, available/2)
+		runtimeWidth = available - detailWidth
+	}
+	if runtimeWidth < 18 {
+		runtimeWidth = max(18, available/2)
+		detailWidth = available - runtimeWidth
+	}
+	return detailWidth, runtimeWidth
 }
 
 func (m Model) renderTopStatusLine(width int) string {
@@ -1551,7 +1675,6 @@ func (m Model) renderDetailContent(width int) string {
 		lastActivityValue += "  " + lastSourceValue
 	}
 	lines = append(lines, detailField("Last activity", lastActivityValue))
-	lines = m.renderRuntimeDetail(lines, width, p.Path, p.RunCommand)
 	if p.MovedFromPath != "" && moveStatusActive(p.MovedAt, p.Path, p.LatestSessionDetectedProjectPath) {
 		movedFields := []string{detailField("Moved from", detailValueStyle.Render(p.MovedFromPath))}
 		if !p.MovedAt.IsZero() {
@@ -3012,9 +3135,6 @@ func (m Model) renderFooter(width int) string {
 	if m.diffView != nil {
 		return renderDiffFooter(width, *m.diffView, usageLabel)
 	}
-	if m.runtimeInspector != nil {
-		return fitFooterWidth("Runtime panel: ↑/↓ scroll, r restart, s stop, o open URL, Esc close | "+usageLabel, width)
-	}
 	if m.gitStatusDialog != nil {
 		label := gitStatusDialogReadyStatus(*m.gitStatusDialog)
 		if m.gitStatusApplying {
@@ -3058,7 +3178,7 @@ func (m Model) renderFooter(width int) string {
 	}
 	return renderFooterLine(
 		width,
-		compactFooterBase(width, m.focusedPane, m.detailViewport.ScrollPercent(), m.hasHiddenCodexSession(), m.currentEmbeddedLaunchLabel()),
+		compactFooterBase(width, m.focusedPane, m.detailViewport.ScrollPercent(), m.runtimeViewport.ScrollPercent(), m.hasHiddenCodexSession(), m.currentEmbeddedLaunchLabel()),
 		renderFooterUsage(usageLabel),
 	)
 }
@@ -3639,7 +3759,7 @@ func compactUsageLabel(usage model.LLMSessionUsage) string {
 	return fmt.Sprintf("tok %s/%s", formatTokenCount(usage.Totals.InputTokens), formatTokenCount(usage.Totals.OutputTokens))
 }
 
-func compactFooterBase(width int, focused paneFocus, detailScroll float64, hasHiddenCodex bool, launchLabel string) string {
+func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll float64, hasHiddenCodex bool, launchLabel string) string {
 	if strings.TrimSpace(launchLabel) == "" {
 		launchLabel = "Session"
 	}
@@ -3678,6 +3798,48 @@ func compactFooterBase(width int, focused paneFocus, detailScroll float64, hasHi
 					footerHideAction("Esc", "list"),
 					footerNavAction("/", "cmd"),
 					footerLowAction("?", "help"),
+					footerExitAction("q", "quit"),
+				),
+			)
+		}
+	}
+	if focused == focusRuntime {
+		runtimePercent := int(runtimeScroll * 100)
+		switch {
+		case width >= 80:
+			return joinFooterSegments(
+				renderFooterMeta("Focus: runtime"),
+				renderFooterActionList(
+					footerPrimaryAction("Enter", "action"),
+					footerNavAction("Left/Right", "pick"),
+					footerNavAction("PgUp/PgDn", "page"),
+					footerNavAction("Tab", "switch"),
+					footerHideAction("Esc", "list"),
+					footerLowAction("?", "help"),
+					footerExitAction("q", "quit"),
+				),
+				renderFooterStatus(fmt.Sprintf("%d%%", runtimePercent)),
+			)
+		case width >= 60:
+			return joinFooterSegments(
+				renderFooterMeta("Focus: runtime"),
+				renderFooterActionList(
+					footerPrimaryAction("Enter", "action"),
+					footerNavAction("L/R", "pick"),
+					footerNavAction("Tab", "switch"),
+					footerHideAction("Esc", "list"),
+					footerLowAction("?", "help"),
+					footerExitAction("q", "quit"),
+				),
+				renderFooterStatus(fmt.Sprintf("%d%%", runtimePercent)),
+			)
+		default:
+			return joinFooterSegments(
+				renderFooterMeta("Runtime"),
+				renderFooterActionList(
+					footerPrimaryAction("Enter", "run"),
+					footerNavAction("L/R", "pick"),
+					footerHideAction("Esc", "list"),
 					footerExitAction("q", "quit"),
 				),
 			)
@@ -3857,6 +4019,7 @@ func (m Model) renderHelpPanel(bodyW, bodyH int) string {
 				"o  sort",
 				"v  AI/all folders",
 				"focus grows active pane",
+				"runtime grows when focused",
 				"x  sessions",
 				"e  events",
 				"?  help",
@@ -3880,7 +4043,8 @@ func (m Model) renderHelpPanel(bodyW, bodyH int) string {
 				"Backspace remove image marker",
 				"Alt+L expand dense blocks",
 				"p   pin",
-				"r   runtime panel",
+				"runtime pane: Left/Right action",
+				"runtime pane: Enter run action",
 				"s/S snooze/clear",
 				"n   note dialog",
 				"/refresh /settings",
@@ -3898,7 +4062,7 @@ func (m Model) renderHelpPanel(bodyW, bodyH int) string {
 				"N     * note saved",
 				"RUN   saved /run command summary",
 				"RUN   @port or !port when detected",
-				"Detail keeps runtime output in r or /runtime",
+				"Runtime pane shows command, ports, URL, logs",
 				"ASSESS short latest assessment label",
 				"SUMMARY latest session summary",
 				"! in ATTN = dirty or remote warning",
