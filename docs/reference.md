@@ -173,7 +173,9 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/new-project`
 - `/open`
 - `/run`
+- `/start`
 - `/run pnpm dev`
+- `/restart`
 - `/run-edit`
 - `/runtime`
 - `/stop`
@@ -224,7 +226,9 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/ignore` hides the selected project's exact name inside Little Control Room, which is handy for Codex-generated worktrees or other old projects that share a stable folder name.
 - `/ignored` opens a reversible picker of hidden project names; press `Enter` there to restore one.
 - `/run` starts the selected project's saved managed runtime. If no command is saved yet, Little Control Room opens a small dialog with an auto-suggested command when it can infer one from common files like `bin/dev`, `package.json`, `Makefile`, `justfile`, or a simple Go entrypoint.
+- `/start` is an alias for `/run`.
 - `/run <command>` saves that command as the selected project's default runtime command and starts it immediately.
+- `/restart` restarts the selected project's managed runtime with the saved command, or with the active runtime command when one is already known.
 - `/run-edit` opens the saved runtime command for editing without starting it.
 - `/runtime` focuses the runtime pane for the selected project.
 - `/stop` stops the selected project's managed runtime when one is running.

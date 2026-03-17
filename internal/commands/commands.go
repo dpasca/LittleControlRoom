@@ -18,6 +18,7 @@ const (
 	KindNewProject  Kind = "new-project"
 	KindOpen        Kind = "open"
 	KindRun         Kind = "run"
+	KindRestart     Kind = "restart"
 	KindRunEdit     Kind = "run-edit"
 	KindRuntime     Kind = "runtime"
 	KindStop        Kind = "stop"
@@ -107,6 +108,8 @@ var specs = []Spec{
 	{Name: "new-project", Usage: "/new-project", Summary: "Create a project folder or add an existing one"},
 	{Name: "open", Usage: "/open", Summary: "Open the selected project's folder in the system browser"},
 	{Name: "run", Usage: "/run [command]", Summary: "Start the selected project's managed runtime"},
+	{Name: "start", Usage: "/start [command]", Summary: "Alias for /run"},
+	{Name: "restart", Usage: "/restart", Summary: "Restart the selected project's managed runtime"},
 	{Name: "run-edit", Usage: "/run-edit", Summary: "Edit the selected project's saved run command"},
 	{Name: "runtime", Usage: "/runtime", Summary: "Focus the selected project's runtime pane"},
 	{Name: "stop", Usage: "/stop", Summary: "Stop the selected project's managed runtime"},
@@ -283,12 +286,17 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /open")
 		}
 		return Invocation{Kind: KindOpen, Canonical: "/open"}, nil
-	case "run":
+	case "run", "start":
 		return Invocation{
 			Kind:      KindRun,
 			Command:   strings.TrimSpace(rawArgs),
 			Canonical: canonicalCommand("run", rawArgs),
 		}, nil
+	case "restart":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /restart")
+		}
+		return Invocation{Kind: KindRestart, Canonical: "/restart"}, nil
 	case "run-edit":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /run-edit")

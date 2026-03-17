@@ -176,7 +176,7 @@ func (m Model) renderRuntimePanelSummary(width int, projectPath string) []string
 	lines := []string{detailSectionStyle.Render("Runtime - " + projectName)}
 	command := effectiveRuntimeCommand(project.RunCommand, snapshot)
 	if command == "" && !runtimeDetailAvailable(project.RunCommand, snapshot) {
-		lines = append(lines, detailMutedStyle.Render("Use /run or /run-edit to start a managed runtime"))
+		lines = append(lines, detailMutedStyle.Render("Use /run, /start, or /run-edit to start a managed runtime"))
 		return lines
 	}
 

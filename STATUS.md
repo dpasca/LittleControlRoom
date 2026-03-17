@@ -55,10 +55,10 @@ Current screenshot workflow assumption:
 - Repo-health surfacing for dirty worktrees and remote sync state
 - Scope-aware persistence via path filters and project-name filters
 - Cached `doctor` by default, with `doctor --scan` for a fresh rescan
-- TUI main view with focusable project, detail, and runtime panes, scrolling viewports, a compact settings modal, and command palette
+- TUI main view with focusable project, detail, and runtime panes, scrolling viewports, compact help/settings overlays, and command palette
 - Top-level `/open` slash command to open the selected project's folder in the system browser
 - Project notes via `/note` or `n`, with a multiline modal editor, wrapped detail-pane notes, a list badge when a project has saved notes, and clipboard copy actions for the whole note or an explicit marked selection
-- Managed per-project run commands via `/run`, `/run-edit`, `/runtime`, and `/stop`, with persisted default commands, first-pass command suggestions from common project files, a small run-command editor overlay, a dedicated selectable runtime pane with output/actions, and best-effort listening-port detection for LCR-managed runtimes
+- Managed per-project run commands via `/run` (`/start` alias), `/restart`, `/run-edit`, `/runtime`, and `/stop`, with persisted default commands, first-pass command suggestions from common project files, a small run-command editor overlay, a dedicated selectable runtime pane with output/actions, and best-effort listening-port detection for LCR-managed runtimes
 - Git workflow actions in the TUI for full-screen diff preview, commit preview, finish, and push
 - Embedded Codex pane via `codex app-server`, with multiline compose, per-project drafts, inline `[Image #n]` clipboard image markers, large clipboard-text placeholders, backspace-based marker removal, local embedded slash commands for `/new`, `/resume` (`/session` alias), `/model`, and `/status`, visible slash autocomplete/suggestions in the composer, a provider-specific saved-session resume picker with lightweight title/summary previews and current-session markers, live model/reasoning/context-left metadata under the transcript, a local model+reasoning picker backed by `model/list`, `Enter`/`/codex`/`/codex-new`, `Esc` or `Alt+Up` hide from the embedded pane with `Enter` reopening from the project list, `Alt+Down` session picker/history, `Alt+[`/`Alt+]` live-session stepping, wrapped transcript blocks, shaded echoed user transcript blocks that reuse the composer shell styling, denser command/tool/file blocks with `Alt+L` expand/collapse, label-free user/assistant transcript rendering, manager-side update coalescing, inline approvals/input requests, and busy-elsewhere rechecks when a read-only embedded session is reopened or restored
 - Embedded OpenCode pane via `opencode serve`, with live SSE transcript updates, resume/new launch from `Enter` and `/opencode` / `/opencode-new`, shared picker/history and model picker, provider-aware banners/footer/help copy, interrupt/status actions, shared approval/question handling, and mixed Codex/OpenCode live-session management per project
@@ -80,6 +80,70 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-17 19:13 JST)
+
+- Reordered the help card's quick-action row to emphasize `note`, `sort/view`, `pin`, and `Ctrl+V image`, and swapped the slash-command examples to the more useful set: `/codex`, `/opencode`, `/settings`, `/commit`, `/diff`, and `/run`.
+- Removed the old dev-only `x`/`e` section-toggle shortcuts from normal mode instead of merely hiding them in the help text, so the help and the actual keybindings now match.
+- Kept the compact overlay help card structure from the prior pass, including the preserved background rendering and the explicit slash-command palette explanation.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/app.go internal/tui/app_test.go` passed.
+- `go test ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-17T19:12:52+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-17T19:12:59+09:00` (`projects: 132`).
+- `env COLUMNS=110 LINES=30 make tui DB=/tmp/lcroom-help-overlay-smoke.sqlite` reached the TUI, toggled help via `?`, and exited via `q`.
+
+Next concrete tasks:
+
+- Decide whether the slash-command examples in the help card should eventually become context-aware, for example preferring runtime commands when the runtime pane is focused.
+- If section toggles are no longer part of the day-to-day workflow, decide whether `/sessions` and `/events` themselves should also leave the public command surface or stay available as explicit commands only.
+
+## Latest Update (2026-03-17 18:59 JST)
+
+- Refined the help overlay into a denser, color-coded card with clearer sections for palette usage, navigation, quick actions, compose/status controls, and the `AGENT`/`N`/`RUN`/`!` legend.
+- Made the help copy explicitly explain the slash-command palette, including `Tab` completion there and concrete examples such as `/refresh`, `/run`, `/restart`, `/codex`, and `/help`.
+- Fixed the help rendering path so it now uses the same overlay compositor as the other modals, keeping the project list/detail/runtime panes visible behind the card instead of replacing the whole body.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/app.go internal/tui/app_test.go` passed.
+- `go test ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-17T18:59:42+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-17T18:59:49+09:00` (`projects: 132`).
+- `env COLUMNS=110 LINES=30 make tui DB=/tmp/lcroom-help-overlay-smoke.sqlite` reached the TUI, opened help via `?`, and exited via `q`.
+
+Next concrete tasks:
+
+- Decide whether the same compact, color-coded structure should also be applied to the command palette and settings overlays so the modal family feels more unified.
+- If the help card keeps growing, consider a second context-specific help view instead of turning the global overlay back into a long inventory.
+
+## Latest Update (2026-03-17 18:46 JST)
+
+- Added a user-visible `/start` command as a top-level alias for `/run`, keeping the canonical parsed form as `/run` so command handling and saved-command behavior stay unified.
+- Added a top-level `/restart` command for the selected project's managed runtime, reusing the existing runtime restart path and matching the runtime-pane behavior when a saved or active command is available.
+- Extended slash-command coverage in parser/TUI tests and synced the README plus `docs/reference.md` so the new runtime commands are discoverable from both the palette and the docs.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/commands/commands.go internal/commands/commands_test.go internal/tui/app.go internal/tui/app_test.go internal/tui/runtime_inspector.go` passed.
+- `go test ./internal/commands ./internal/tui -count=1` passed.
+- `go test ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-17T18:47:46+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-17T18:47:56+09:00` (`projects: 132`).
+- `env COLUMNS=110 LINES=30 make tui DB=/tmp/lcroom-start-restart-smoke.sqlite` reached the TUI and exited via `q`.
+
+Next concrete tasks:
+
+- Decide whether `/restart` should remain strict when no saved or active run command exists, or eventually fall back to the same run-command editor flow as `/run`.
+- Keep the README and `docs/reference.md` command inventories aligned as more runtime-lane slash commands land, unless it becomes worth generating them from the command specs.
 
 ## Latest Update (2026-03-17 18:29 JST)
 

@@ -1023,12 +1023,6 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "n":
 		return m, m.openNoteDialogForSelection()
-	case "x":
-		m.applySectionToggle("Sessions", commands.ToggleToggle, &m.showSessions)
-		return m, nil
-	case "e":
-		m.applySectionToggle("Recent events", commands.ToggleToggle, &m.showEvents)
-		return m, nil
 	}
 	return m, nil
 }
@@ -1480,7 +1474,7 @@ func (m Model) View() string {
 	} else if m.settingsMode {
 		body = m.renderSettingsOverlay(body, layout.width, layout.height)
 	} else if m.showHelp {
-		body = m.renderHelpPanel(layout.width, layout.height)
+		body = m.renderHelpPanelOverlay(body, layout.width, layout.height)
 	} else if m.commandMode {
 		body = m.renderCommandPaletteOverlay(body, layout.width, layout.height)
 	} else if m.codexPickerVisible {
@@ -2004,6 +1998,24 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.handleRunCommand(p, inv.Command)
+	case commands.KindRestart:
+		p, ok := m.selectedProject()
+		if !ok {
+			m.status = "No project selected"
+			return m, nil
+		}
+		if !p.PresentOnDisk {
+			m.status = "Restart requires a folder present on disk"
+			return m, nil
+		}
+		snapshot := m.projectRuntimeSnapshot(p.Path)
+		command := effectiveRuntimeCommand(p.RunCommand, snapshot)
+		if command == "" {
+			m.status = "Runtime command is not set"
+			return m, nil
+		}
+		m.status = "Restarting runtime..."
+		return m, m.restartProjectRuntimeCmd(p.Path, command)
 	case commands.KindRunEdit:
 		p, ok := m.selectedProject()
 		if !ok {
@@ -4021,20 +4033,62 @@ func formatTokenCount(v int64) string {
 
 func helpPanelLines() []string {
 	return []string{
-		"/           command bar",
-		"Tab         switch pane",
-		"↑/↓ or j/k  move",
-		"PgUp/PgDn   page",
-		"Enter       open / action / send",
-		"Esc         list / hide / close",
-		"p pin   s/S snooze   n note",
-		"o sort  v view  x sessions  e events",
-		"Ctrl+V      paste image/text",
-		"Alt+Enter   newline",
-		"Ctrl+C      interrupt busy session",
-		"AGENT live  N note  RUN runtime  ! warning",
-		"q           quit",
+		detailSectionStyle.Render("Palette"),
+		renderHelpPanelActionRow(
+			renderDialogAction("/", "open slash-command palette", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("Tab", "complete there", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("?", "toggle help", commitActionKeyStyle, commitActionTextStyle),
+		),
+		commandPaletteHintStyle.Render("Try /codex, /opencode, /settings, /commit, /diff, or /run."),
+		detailSectionStyle.Render("Navigate"),
+		renderHelpPanelActionRow(
+			renderDialogAction("Tab", "switch pane", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("↑/↓ or j/k", "move", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("PgUp/PgDn", "page", navigateActionKeyStyle, navigateActionTextStyle),
+		),
+		renderHelpPanelActionRow(
+			renderDialogAction("Enter", "open/send", commitActionKeyStyle, commitActionTextStyle),
+			renderDialogAction("Esc", "back out", cancelActionKeyStyle, cancelActionTextStyle),
+		),
+		detailSectionStyle.Render("Quick Actions"),
+		renderHelpPanelActionRow(
+			renderDialogAction("n", "note", commitActionKeyStyle, commitActionTextStyle),
+			renderDialogAction("o/v", "sort/view", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("p", "pin", pushActionKeyStyle, pushActionTextStyle),
+			renderDialogAction("Ctrl+V", "image", pushActionKeyStyle, pushActionTextStyle),
+		),
+		detailSectionStyle.Render("Compose & Status"),
+		renderHelpPanelActionRow(
+			renderDialogAction("Alt+Enter", "newline", commitActionKeyStyle, commitActionTextStyle),
+			renderDialogAction("Ctrl+C", "interrupt busy session", cancelActionKeyStyle, cancelActionTextStyle),
+		),
+		detailSectionStyle.Render("Legend"),
+		renderHelpPanelLegendLine(),
+		renderHelpPanelActionRow(
+			renderDialogAction("q", "quit", disabledActionKeyStyle, disabledActionTextStyle),
+		),
 	}
+}
+
+func renderHelpPanelActionRow(parts ...string) string {
+	filtered := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if strings.TrimSpace(part) == "" {
+			continue
+		}
+		filtered = append(filtered, part)
+	}
+	return strings.Join(filtered, "   ")
+}
+
+func renderHelpPanelLegendLine() string {
+	legend := []string{
+		renderDialogAction("AGENT", "live", detailLabelStyle, detailValueStyle),
+		renderDialogAction("N", "note", commitActionKeyStyle, commitActionTextStyle),
+		renderDialogAction("RUN", "runtime", pushActionKeyStyle, pushActionTextStyle),
+		renderDialogAction("!", "warning", cancelActionKeyStyle, cancelActionTextStyle),
+	}
+	return strings.Join(legend, "  ")
 }
 
 func fitFooterWidth(line string, width int) string {
@@ -4066,21 +4120,31 @@ func formatSnoozeDuration(d time.Duration) string {
 	return d.String()
 }
 
-func (m Model) renderHelpPanel(bodyW, bodyH int) string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81"))
-	contentLines := append([]string{titleStyle.Render("Help"), ""}, helpPanelLines()...)
+func (m Model) renderHelpPanel(bodyW int) string {
+	panelWidth := min(bodyW, min(max(58, bodyW-12), 80))
+	panelInnerWidth := max(30, panelWidth-4)
+	contentLines := []string{commandPaletteTitleStyle.Render("Help")}
+	contentLines = append(contentLines, helpPanelLines()...)
 	content := lipgloss.NewStyle().
-		MaxWidth(min(max(36, bodyW-6), 44)).
+		Width(panelInnerWidth).
 		Render(strings.Join(contentLines, "\n"))
-	panel := lipgloss.NewStyle().
-		MaxWidth(max(36, bodyW-2)).
+	return lipgloss.NewStyle().
+		Width(panelWidth).
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("81")).
-		Padding(0, 1).
-		Background(lipgloss.Color("235")).
+		BorderForeground(lipgloss.Color("214")).
+		Padding(0, 1, 1, 1).
+		Background(lipgloss.Color("234")).
 		Foreground(lipgloss.Color("252")).
 		Render(content)
-	return lipgloss.Place(bodyW, bodyH, lipgloss.Center, lipgloss.Top, panel)
+}
+
+func (m Model) renderHelpPanelOverlay(body string, bodyW, bodyH int) string {
+	panel := m.renderHelpPanel(bodyW)
+	panelWidth := lipgloss.Width(panel)
+	panelHeight := lipgloss.Height(panel)
+	left := max(0, (bodyW-panelWidth)/2)
+	top := max(0, (bodyH-panelHeight)/5)
+	return overlayBlock(body, panel, bodyW, bodyH, left, top)
 }
 
 func (m Model) classificationTag(project model.ProjectSummary) string {

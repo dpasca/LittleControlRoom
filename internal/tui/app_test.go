@@ -5126,36 +5126,89 @@ func TestCommandEnterOpensNoteDialog(t *testing.T) {
 }
 
 func TestCommandEnterOpensRunCommandDialogWhenUnset(t *testing.T) {
-	input := textinput.New()
-	input.SetValue("/run")
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{name: "run", command: "/run"},
+		{name: "start alias", command: "/start"},
+	}
 
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := textinput.New()
+			input.SetValue(tt.command)
+
+			m := Model{
+				projects: []model.ProjectSummary{{
+					Name:          "demo",
+					Path:          "/tmp/demo",
+					PresentOnDisk: true,
+				}},
+				selected:     0,
+				commandMode:  true,
+				commandInput: input,
+				width:        100,
+				height:       24,
+			}
+			m.syncCommandSelection()
+
+			updated, cmd := m.updateCommandMode(tea.KeyMsg{Type: tea.KeyEnter})
+			got := updated.(Model)
+			if got.commandMode {
+				t.Fatalf("command mode should close after %s", tt.command)
+			}
+			if got.runCommandDialog == nil {
+				t.Fatalf("run command dialog should open after %s when no command is saved", tt.command)
+			}
+			if got.runCommandDialog.ProjectPath != "/tmp/demo" {
+				t.Fatalf("run command dialog project path = %q, want /tmp/demo", got.runCommandDialog.ProjectPath)
+			}
+			if cmd == nil {
+				t.Fatalf("%s should return a focus command for the input", tt.command)
+			}
+		})
+	}
+}
+
+func TestRestartCommandQueuesRuntimeRestart(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			PresentOnDisk: true,
+			RunCommand:    "pnpm dev",
+		}},
+		selected: 0,
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindRestart})
+	got := updated.(Model)
+	if got.status != "Restarting runtime..." {
+		t.Fatalf("status = %q, want restarting status", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("dispatchCommand(/restart) should return a restart command")
+	}
+}
+
+func TestRestartCommandRequiresSavedOrActiveCommand(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{
 			Name:          "demo",
 			Path:          "/tmp/demo",
 			PresentOnDisk: true,
 		}},
-		selected:     0,
-		commandMode:  true,
-		commandInput: input,
-		width:        100,
-		height:       24,
+		selected: 0,
 	}
-	m.syncCommandSelection()
 
-	updated, cmd := m.updateCommandMode(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindRestart})
 	got := updated.(Model)
-	if got.commandMode {
-		t.Fatalf("command mode should close after /run")
+	if got.status != "Runtime command is not set" {
+		t.Fatalf("status = %q, want missing runtime command status", got.status)
 	}
-	if got.runCommandDialog == nil {
-		t.Fatalf("run command dialog should open after /run when no command is saved")
-	}
-	if got.runCommandDialog.ProjectPath != "/tmp/demo" {
-		t.Fatalf("run command dialog project path = %q, want /tmp/demo", got.runCommandDialog.ProjectPath)
-	}
-	if cmd == nil {
-		t.Fatalf("/run should return a focus command for the input")
+	if cmd != nil {
+		t.Fatalf("dispatchCommand(/restart) should fail locally when no runtime command exists")
 	}
 }
 
@@ -6176,18 +6229,27 @@ func TestCommandPaletteScrollsSelectedSuggestionIntoView(t *testing.T) {
 
 func TestHelpPanelLinesStayMinimal(t *testing.T) {
 	lines := helpPanelLines()
-	joined := strings.Join(lines, "\n")
+	joined := ansi.Strip(strings.Join(lines, "\n"))
 
-	if len(lines) > 13 {
+	if len(lines) > 20 {
 		t.Fatalf("helpPanelLines() should stay compact, got %d lines: %q", len(lines), joined)
 	}
-	if !strings.Contains(joined, "Enter       open / action / send") {
-		t.Fatalf("helpPanelLines() missing enter hint: %q", joined)
+	if !strings.Contains(joined, "slash-command palette") {
+		t.Fatalf("helpPanelLines() should explain the slash-command palette: %q", joined)
 	}
-	if !strings.Contains(joined, "AGENT live  N note  RUN runtime  ! warning") {
-		t.Fatalf("helpPanelLines() missing compact legend: %q", joined)
+	if !strings.Contains(joined, "/codex, /opencode, /settings, /commit, /diff, or /run") {
+		t.Fatalf("helpPanelLines() should include concrete slash-command examples: %q", joined)
 	}
-	if strings.Contains(joined, "/refresh /settings") {
+	if !strings.Contains(joined, "interrupt busy session") {
+		t.Fatalf("helpPanelLines() should keep the session interrupt hint: %q", joined)
+	}
+	if !strings.Contains(joined, "n  note") || !strings.Contains(joined, "o/v  sort/view") || !strings.Contains(joined, "p  pin") || !strings.Contains(joined, "Ctrl+V  image") {
+		t.Fatalf("helpPanelLines() should show the reordered quick actions: %q", joined)
+	}
+	if !strings.Contains(joined, "AGENT") || !strings.Contains(joined, "RUN") {
+		t.Fatalf("helpPanelLines() missing colored legend content: %q", joined)
+	}
+	if strings.Contains(joined, "/settings /new-project /open /run-edit") {
 		t.Fatalf("helpPanelLines() should not grow back into a slash-command inventory: %q", joined)
 	}
 	if strings.Contains(joined, "Runtime pane shows command, ports, URL, logs") {
@@ -6198,7 +6260,7 @@ func TestHelpPanelLinesStayMinimal(t *testing.T) {
 func TestRenderHelpPanelOmitsVerboseLegacyHints(t *testing.T) {
 	m := Model{}
 
-	rendered := ansi.Strip(m.renderHelpPanel(80, 20))
+	rendered := ansi.Strip(m.renderHelpPanel(80))
 	if strings.Contains(rendered, "f   forget missing") {
 		t.Fatalf("renderHelpPanel() should not advertise forget while it is unavailable: %q", rendered)
 	}
@@ -6208,8 +6270,68 @@ func TestRenderHelpPanelOmitsVerboseLegacyHints(t *testing.T) {
 	if strings.Contains(rendered, "Runtime pane shows command, ports, URL, logs") {
 		t.Fatalf("renderHelpPanel() should not include verbose runtime prose: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Ctrl+V      paste image/text") {
-		t.Fatalf("renderHelpPanel() should keep the compact paste hint: %q", rendered)
+	if !strings.Contains(rendered, "slash-command palette") {
+		t.Fatalf("renderHelpPanel() should explain the slash-command palette: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Ctrl+V") || !strings.Contains(rendered, "image") {
+		t.Fatalf("renderHelpPanel() should keep the paste hint: %q", rendered)
+	}
+}
+
+func TestViewWithHelpOverlayPreservesBackground(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:                             "demo",
+			Path:                             "/tmp/demo",
+			Status:                           model.StatusIdle,
+			PresentOnDisk:                    true,
+			LatestSessionClassification:      model.ClassificationCompleted,
+			LatestSessionClassificationType:  model.SessionCategoryCompleted,
+			LatestSessionSummary:             "Work appears complete for now.",
+			LatestSessionFormat:              "modern",
+			LatestSessionDetectedProjectPath: "/tmp/demo",
+		}},
+		selected: 0,
+		showHelp: true,
+		width:    100,
+		height:   24,
+	}
+	m.syncDetailViewport(false)
+
+	rendered := ansi.Strip(m.View())
+	if got := len(strings.Split(rendered, "\n")); got != m.height {
+		t.Fatalf("View() line count = %d, want terminal height %d; render was %q", got, m.height, rendered)
+	}
+	if !strings.Contains(rendered, "Help") || !strings.Contains(rendered, "slash-command palette") {
+		t.Fatalf("View() should show the help overlay content: %q", rendered)
+	}
+	if !strings.Contains(rendered, "ATTN") || !strings.Contains(rendered, "Path:") || !strings.Contains(rendered, "Focus: list") {
+		t.Fatalf("View() should preserve the dashboard behind the help overlay: %q", rendered)
+	}
+}
+
+func TestSectionToggleDevKeysAreNoLongerBound(t *testing.T) {
+	m := Model{
+		showSessions: true,
+		showEvents:   true,
+	}
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("x should no longer trigger a command")
+	}
+	if !got.showSessions || !got.showEvents {
+		t.Fatalf("x should no longer toggle section visibility")
+	}
+
+	updated, cmd = got.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("e should no longer trigger a command")
+	}
+	if !got.showSessions || !got.showEvents {
+		t.Fatalf("e should no longer toggle section visibility")
 	}
 }
 

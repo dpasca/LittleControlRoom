@@ -75,6 +75,8 @@ The main TUI command palette opens with `/`.
 - `/new-project`: Create a project folder or add an existing one.
 - `/open`: Open the selected project's folder in the system browser.
 - `/run [command]`: Start the selected project's managed runtime.
+- `/start [command]`: Alias for `/run`.
+- `/restart`: Restart the selected project's managed runtime.
 - `/run-edit`: Edit the saved runtime command.
 - `/runtime`: Focus the runtime pane.
 - `/stop`: Stop the selected project's managed runtime.
@@ -114,9 +116,9 @@ Inside the embedded Codex or OpenCode pane:
 4. Press `Esc` or `Alt+Up` to hide the embedded session pane while it keeps working, then press `Enter` on that project to reopen it from the list.
 5. Press `/` to open the command palette for actions like refresh, pin, snooze, note, diff, commit, or push.
 
-Use `/run` to start the selected project's saved managed runtime. On the first run, LCR suggests a command from files like `bin/dev`, `package.json`, `Makefile`, `justfile`, or a simple Go entrypoint and lets you confirm or edit it before saving.
+Use `/run` or `/start` to start the selected project's saved managed runtime. On the first run, LCR suggests a command from files like `bin/dev`, `package.json`, `Makefile`, `justfile`, or a simple Go entrypoint and lets you confirm or edit it before saving.
 
-Use `/run-edit` to change the saved run command later, and `/stop` to stop the selected project's managed runtime.
+Use `/restart` to bounce the managed runtime with the saved or active command, `/run-edit` to change the saved run command later, and `/stop` to stop it entirely.
 
 The main view now keeps a dedicated runtime pane beside the detail pane. Use `Tab` or `/runtime` to focus it, then use `Left` and `Right` to choose `Open URL`, `Restart`, or `Stop`, and `Enter` to run the selected action.
 

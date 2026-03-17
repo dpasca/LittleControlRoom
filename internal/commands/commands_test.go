@@ -78,6 +78,33 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "start alias with explicit command",
+			raw:  "/start pnpm dev",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindRun {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindRun)
+				}
+				if inv.Command != "pnpm dev" {
+					t.Fatalf("command = %q, want pnpm dev", inv.Command)
+				}
+				if inv.Canonical != "/run pnpm dev" {
+					t.Fatalf("canonical = %q, want /run pnpm dev", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "restart runtime",
+			raw:  "/restart",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindRestart {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindRestart)
+				}
+				if inv.Canonical != "/restart" {
+					t.Fatalf("canonical = %q, want /restart", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "run edit",
 			raw:  "/run-edit",
 			check: func(t *testing.T, inv Invocation) {
@@ -344,6 +371,16 @@ func TestSuggestionsIncludeSettingsCommand(t *testing.T) {
 	}
 	if got[0].Insert != "/settings" {
 		t.Fatalf("first /set suggestion = %q, want /settings", got[0].Insert)
+	}
+}
+
+func TestSuggestionsIncludeStartCommand(t *testing.T) {
+	got := Suggestions("/sta")
+	if len(got) == 0 {
+		t.Fatalf("Suggestions(/sta) returned none")
+	}
+	if got[0].Insert != "/start" {
+		t.Fatalf("first /sta suggestion = %q, want /start", got[0].Insert)
 	}
 }
 
