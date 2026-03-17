@@ -66,6 +66,7 @@ type managedRuntime struct {
 	pid           int
 	pgid          int
 	running       bool
+	stopRequested bool
 	startedAt     time.Time
 	exitedAt      time.Time
 	exitCode      int
@@ -103,14 +104,24 @@ func (m *Manager) CloseAll() error {
 	m.mu.Lock()
 	runtimes := make([]*managedRuntime, 0, len(m.runtimes))
 	for _, runtime := range m.runtimes {
+		if runtime != nil && runtime.running {
+			runtime.stopRequested = true
+		}
 		runtimes = append(runtimes, runtime)
 	}
 	m.mu.Unlock()
 
 	var firstErr error
 	for _, runtime := range runtimes {
-		if err := stopManagedRuntime(runtime); err != nil && firstErr == nil {
-			firstErr = err
+		if err := stopManagedRuntime(runtime); err != nil {
+			m.mu.Lock()
+			if runtime != nil {
+				runtime.stopRequested = false
+			}
+			m.mu.Unlock()
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
 	if err := m.waitForAllStopped(closeAllWaitTimeout); err != nil && firstErr == nil {
@@ -178,6 +189,7 @@ func (m *Manager) Start(req StartRequest) (Snapshot, error) {
 	existing.exitCode = 0
 	existing.exitCodeKnown = false
 	existing.lastError = ""
+	existing.stopRequested = false
 	existing.ports = nil
 	existing.announcedURLs = nil
 	existing.recentOutput = nil
@@ -226,6 +238,7 @@ func (m *Manager) Start(req StartRequest) (Snapshot, error) {
 	runtime.exitCode = 0
 	runtime.exitCodeKnown = false
 	runtime.lastError = ""
+	runtime.stopRequested = false
 	runtime.ports = nil
 	runtime.announcedURLs = nil
 	runtime.recentOutput = nil
@@ -249,11 +262,22 @@ func (m *Manager) Stop(projectPath string) error {
 
 	m.mu.Lock()
 	runtime := m.runtimes[projectPath]
+	if runtime != nil && runtime.running {
+		runtime.stopRequested = true
+	}
 	m.mu.Unlock()
 	if runtime == nil || !runtime.running {
 		return ErrNotRunning
 	}
-	return stopManagedRuntime(runtime)
+	if err := stopManagedRuntime(runtime); err != nil {
+		m.mu.Lock()
+		if current := m.runtimes[projectPath]; current == runtime {
+			current.stopRequested = false
+		}
+		m.mu.Unlock()
+		return err
+	}
+	return nil
 }
 
 func (m *Manager) Snapshot(projectPath string) (Snapshot, error) {
@@ -389,11 +413,19 @@ func (m *Manager) waitForExit(projectPath string, cmd *exec.Cmd) {
 	if runtime == nil {
 		return
 	}
+	stopRequested := runtime.stopRequested
 	runtime.running = false
+	runtime.stopRequested = false
 	runtime.exitedAt = time.Now()
-	runtime.exitCode = exitCode
-	runtime.exitCodeKnown = exitCodeKnown
-	runtime.lastError = lastError
+	if stopRequested {
+		runtime.exitCode = 0
+		runtime.exitCodeKnown = false
+		runtime.lastError = ""
+	} else {
+		runtime.exitCode = exitCode
+		runtime.exitCodeKnown = exitCodeKnown
+		runtime.lastError = lastError
+	}
 	runtime.ports = nil
 	runtime.process = nil
 }
@@ -408,6 +440,7 @@ func (m *Manager) markRuntimeStartFailure(projectPath, command string, err error
 	}
 	runtime.command = command
 	runtime.running = false
+	runtime.stopRequested = false
 	runtime.exitedAt = time.Now()
 	runtime.exitCode = 0
 	runtime.exitCodeKnown = false

@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-18 03:19 JST (JST)
+Last updated: 2026-03-18 08:14 JST (JST)
 
 ## Current State
 
@@ -84,6 +84,26 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-18 08:14 JST)
+
+- Normalized user-requested managed runtime stops so `/stop` no longer leaves the runtime snapshot in an error-looking `signal: terminated` / `exit -1` state after Little Control Room sends `SIGTERM` to the runtime process group.
+- The runtime manager now records an explicit stop request before terminating the process and clears the later exit-code/error bookkeeping for that requested shutdown path, while still preserving normal non-stop failures; `CloseAll()` now marks those shutdowns the same way so quit-time cleanup is consistent too.
+- Updated runtime status rendering so an intentionally stopped runtime now reads as `stopped` instead of surfacing a raw negative exit code, and added focused regressions for both the manager snapshot normalization and the TUI status copy.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/projectrun/manager.go internal/projectrun/manager_test.go internal/tui/runtime_view.go internal/tui/runtime_view_test.go` passed.
+- `go test ./internal/projectrun ./internal/tui -run 'Test(StopNormalizesUserRequestedTermination|RenderRuntimeStatusValueShowsStoppedForUserStoppedRuntime|QuitKeyStopsManagedRuntimes)' -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-18T08:14:45+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 2`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-18T08:14:45+09:00` (`projects: 132`).
+
+Next concrete tasks:
+
+- Run a quick live TUI pass with a real long-lived dev server and confirm the runtime pane now settles on `stopped` after `/stop`, especially in restart-heavy workflows.
+- Decide whether the inspector should eventually distinguish `stopped by user` from other graceful stops, or whether the shorter neutral `stopped` label is the right long-term copy.
 
 ## Latest Update (2026-03-18 03:05 JST)
 

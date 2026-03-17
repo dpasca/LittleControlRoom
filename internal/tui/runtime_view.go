@@ -77,6 +77,8 @@ func renderRuntimeStatusValue(snapshot projectrun.Snapshot) string {
 	case snapshot.Running:
 		statusStyle = detailValueStyle
 		statusText = "running"
+	case !snapshot.ExitedAt.IsZero() && !snapshot.ExitCodeKnown && strings.TrimSpace(snapshot.LastError) == "":
+		statusText = "stopped"
 	case snapshot.ExitCodeKnown:
 		if snapshot.ExitCode == 0 {
 			statusText = "exited"
