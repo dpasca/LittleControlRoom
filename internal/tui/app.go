@@ -60,6 +60,10 @@ type Model struct {
 	commandMode                  bool
 	commandInput                 textinput.Model
 	commandSelected              int
+	ignoredPickerVisible         bool
+	ignoredPickerLoading         bool
+	ignoredPickerSelected        int
+	ignoredPickerItems           []model.IgnoredProjectName
 	newProjectDialog             *newProjectDialogState
 	runCommandDialog             *runCommandDialogState
 	preferredSelectPath          string
@@ -200,6 +204,16 @@ type settingsSavedMsg struct {
 	settings config.EditableSettings
 	path     string
 	err      error
+}
+
+type ignoredProjectsMsg struct {
+	items []model.IgnoredProjectName
+	err   error
+}
+
+type ignoredProjectActionMsg struct {
+	status string
+	err    error
 }
 
 type codexSessionOpenedMsg struct {
@@ -405,6 +419,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.codexPickerVisible {
 			return m.updateCodexPickerMode(msg)
+		}
+		if m.ignoredPickerVisible {
+			return m.updateIgnoredPickerMode(msg)
 		}
 		if m.codexVisible() {
 			return m.updateCodexMode(msg)
@@ -697,6 +714,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detail = model.ProjectDetail{}
 		m.syncDetailViewport(true)
 		return m, nil
+	case ignoredProjectsMsg:
+		if msg.err != nil {
+			m.closeIgnoredPicker(msg.err.Error())
+			return m, nil
+		}
+		if len(msg.items) == 0 {
+			m.closeIgnoredPicker("No ignored projects")
+			return m, nil
+		}
+		m.ignoredPickerLoading = false
+		m.ignoredPickerItems = append([]model.IgnoredProjectName(nil), msg.items...)
+		if m.ignoredPickerSelected >= len(m.ignoredPickerItems) {
+			m.ignoredPickerSelected = len(m.ignoredPickerItems) - 1
+		}
+		if m.ignoredPickerSelected < 0 {
+			m.ignoredPickerSelected = 0
+		}
+		m.status = "Ignored projects"
+		return m, nil
+	case ignoredProjectActionMsg:
+		if msg.err != nil {
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.status = msg.status
+		cmds := []tea.Cmd{m.loadProjectsCmd()}
+		if m.ignoredPickerVisible {
+			cmds = append(cmds, m.loadIgnoredProjectsCmd())
+		}
+		return m, tea.Batch(cmds...)
 	case codexSessionOpenedMsg:
 		m.err = nil
 		if msg.err != nil {
@@ -1438,6 +1485,8 @@ func (m Model) View() string {
 		body = m.renderCommandPaletteOverlay(body, layout.width, layout.height)
 	} else if m.codexPickerVisible {
 		body = m.renderCodexPickerOverlay(body, layout.width, layout.height)
+	} else if m.ignoredPickerVisible {
+		body = m.renderIgnoredPickerOverlay(body, layout.width, layout.height)
 	}
 	if m.noteDialog != nil {
 		body = m.renderNoteDialogOverlay(body, layout.width, layout.height)
@@ -2059,6 +2108,15 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 	case commands.KindEvents:
 		m.applySectionToggle("Recent events", inv.Toggle, &m.showEvents)
 		return m, nil
+	case commands.KindIgnore:
+		p, ok := m.selectedProject()
+		if !ok {
+			m.status = "No project selected"
+			return m, nil
+		}
+		return m, m.ignoreProjectCmd(p)
+	case commands.KindIgnored:
+		return m.openIgnoredPicker()
 	case commands.KindForget:
 		p, ok := m.selectedProject()
 		if !ok {
@@ -2275,6 +2333,18 @@ func (m Model) forgetProjectCmd(path string) tea.Cmd {
 	return func() tea.Msg {
 		err := m.svc.ForgetProject(m.ctx, path)
 		return actionMsg{status: "Missing folder forgotten", err: err}
+	}
+}
+
+func (m Model) ignoreProjectCmd(project model.ProjectSummary) tea.Cmd {
+	name := strings.TrimSpace(project.Name)
+	if name == "" {
+		name = filepath.Base(filepath.Clean(project.Path))
+	}
+	return func() tea.Msg {
+		err := m.svc.Store().SetIgnoredProjectName(m.ctx, name, true)
+		status := fmt.Sprintf("Ignored %q", name)
+		return ignoredProjectActionMsg{status: status, err: err}
 	}
 }
 

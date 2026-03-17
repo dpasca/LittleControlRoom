@@ -164,6 +164,10 @@ func (s *Store) initSchema(ctx context.Context) error {
 			last_used_at INTEGER NOT NULL
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_recent_project_parent_paths_last_used_at ON recent_project_parent_paths(last_used_at DESC);`,
+		`CREATE TABLE IF NOT EXISTS ignored_project_names (
+			name TEXT PRIMARY KEY,
+			created_at INTEGER NOT NULL
+		);`,
 	}
 
 	for _, stmt := range stmts {
@@ -559,7 +563,12 @@ func (s *Store) ListProjects(ctx context.Context, includeHistorical bool) ([]mod
 			LIMIT 1
 		)
 	`
-	query += ` WHERE p.forgotten = 0`
+	query += ` WHERE p.forgotten = 0
+		AND NOT EXISTS (
+			SELECT 1
+			FROM ignored_project_names ipn
+			WHERE LOWER(ipn.name) = LOWER(p.name)
+		)`
 	if !includeHistorical {
 		query += ` AND p.in_scope = 1`
 	}
@@ -1917,6 +1926,60 @@ func (s *Store) SetRunCommand(ctx context.Context, path, command string) error {
 func (s *Store) SetForgotten(ctx context.Context, path string, forgotten bool) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE projects SET forgotten = ?, updated_at = ? WHERE path = ?`, boolToInt(forgotten), time.Now().Unix(), path)
 	return err
+}
+
+func (s *Store) SetIgnoredProjectName(ctx context.Context, name string, ignored bool) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("ignored project name is required")
+	}
+	now := time.Now().Unix()
+	if ignored {
+		_, err := s.db.ExecContext(ctx, `
+			INSERT INTO ignored_project_names(name, created_at)
+			VALUES(?, ?)
+			ON CONFLICT(name) DO NOTHING
+		`, name, now)
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM ignored_project_names WHERE LOWER(name) = LOWER(?)`, name)
+	return err
+}
+
+func (s *Store) ListIgnoredProjectNames(ctx context.Context) ([]model.IgnoredProjectName, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			ipn.name,
+			ipn.created_at,
+			COUNT(p.path)
+		FROM ignored_project_names ipn
+		LEFT JOIN projects p ON LOWER(p.name) = LOWER(ipn.name)
+		GROUP BY ipn.name, ipn.created_at
+		ORDER BY ipn.created_at DESC, ipn.name ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []model.IgnoredProjectName{}
+	for rows.Next() {
+		var (
+			name          string
+			createdAtUnix int64
+			matched       int
+		)
+		if err := rows.Scan(&name, &createdAtUnix, &matched); err != nil {
+			return nil, err
+		}
+		entry := model.IgnoredProjectName{
+			Name:            name,
+			CreatedAt:       time.Unix(createdAtUnix, 0),
+			MatchedProjects: matched,
+		}
+		out = append(out, entry)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) SetProjectScope(ctx context.Context, path string, inScope bool) error {

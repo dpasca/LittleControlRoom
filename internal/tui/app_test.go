@@ -5615,6 +5615,148 @@ func TestSettingsSavedMsgAppliesProjectNameFilterImmediately(t *testing.T) {
 	}
 }
 
+func TestDispatchIgnoreCommandStoresIgnoredNameAndHidesProject(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Date(2026, 3, 17, 9, 0, 0, 0, time.UTC)
+	for _, state := range []model.ProjectState{
+		{
+			Path:           "/tmp/projects_control_center",
+			Name:           "projects_control_center",
+			AttentionScore: 20,
+			InScope:        true,
+			UpdatedAt:      now,
+		},
+		{
+			Path:           "/tmp/worktrees/a1/projects_control_center",
+			Name:           "projects_control_center",
+			AttentionScore: 15,
+			InScope:        true,
+			UpdatedAt:      now,
+		},
+		{
+			Path:           "/tmp/visible-demo",
+			Name:           "visible-demo",
+			AttentionScore: 10,
+			InScope:        true,
+			UpdatedAt:      now,
+		},
+	} {
+		if err := st.UpsertProjectState(ctx, state); err != nil {
+			t.Fatalf("upsert project %s: %v", state.Path, err)
+		}
+	}
+
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	projects, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list projects: %v", err)
+	}
+
+	m := Model{
+		ctx:         ctx,
+		svc:         svc,
+		allProjects: projects,
+		sortMode:    sortByAttention,
+		visibility:  visibilityAllFolders,
+	}
+	m.rebuildProjectList("")
+	if len(m.projects) != 3 || m.projects[0].Name != "projects_control_center" {
+		t.Fatalf("initial projects = %#v, want ignored candidate first", m.projects)
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindIgnore})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("dispatchCommand(/ignore) should return an ignore command")
+	}
+
+	actionMsg := cmd()
+	afterAction, reloadCmd := got.Update(actionMsg)
+	reloaded := afterAction.(Model)
+	if reloadCmd == nil {
+		t.Fatalf("ignore action should trigger a project reload")
+	}
+	projectsMsg := reloadCmd()
+	finalModel, _ := reloaded.Update(projectsMsg)
+	saved := finalModel.(Model)
+	if len(saved.projects) != 1 || saved.projects[0].Name != "visible-demo" {
+		t.Fatalf("visible projects after /ignore = %#v, want only visible-demo", saved.projects)
+	}
+	if saved.status != `Ignored "projects_control_center"` {
+		t.Fatalf("status = %q, want ignore confirmation", saved.status)
+	}
+
+	ignored, err := st.ListIgnoredProjectNames(ctx)
+	if err != nil {
+		t.Fatalf("list ignored names: %v", err)
+	}
+	if len(ignored) != 1 || ignored[0].Name != "projects_control_center" {
+		t.Fatalf("ignored names = %#v, want projects_control_center", ignored)
+	}
+}
+
+func TestIgnoredPickerListsAndRestoresIgnoredNames(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.SetIgnoredProjectName(ctx, "projects_control_center", true); err != nil {
+		t.Fatalf("seed ignored project name: %v", err)
+	}
+
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	m := Model{ctx: ctx, svc: svc}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindIgnored})
+	got := updated.(Model)
+	if !got.ignoredPickerVisible || !got.ignoredPickerLoading {
+		t.Fatalf("/ignored should open the ignored picker in loading state")
+	}
+	if cmd == nil {
+		t.Fatalf("/ignored should load ignored project names")
+	}
+
+	loadedModel, _ := got.Update(cmd())
+	loaded := loadedModel.(Model)
+	if !loaded.ignoredPickerVisible || loaded.ignoredPickerLoading {
+		t.Fatalf("ignored picker should be visible after loading")
+	}
+	if len(loaded.ignoredPickerItems) != 1 || loaded.ignoredPickerItems[0].Name != "projects_control_center" {
+		t.Fatalf("ignored picker items = %#v, want projects_control_center", loaded.ignoredPickerItems)
+	}
+
+	nextModel, unignoreCmd := loaded.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next := nextModel.(Model)
+	if unignoreCmd == nil {
+		t.Fatalf("enter in ignored picker should trigger restore")
+	}
+	if !next.ignoredPickerLoading {
+		t.Fatalf("ignored picker should return to loading while restoring")
+	}
+
+	restoredModel, _ := next.Update(unignoreCmd())
+	restored := restoredModel.(Model)
+	if restored.status != `Restored "projects_control_center"` {
+		t.Fatalf("status = %q, want restore confirmation", restored.status)
+	}
+
+	ignored, err := st.ListIgnoredProjectNames(ctx)
+	if err != nil {
+		t.Fatalf("list ignored names after restore: %v", err)
+	}
+	if len(ignored) != 0 {
+		t.Fatalf("ignored names after restore = %#v, want none", ignored)
+	}
+}
+
 func TestViewWithCommitPreviewRespectsHeight(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{

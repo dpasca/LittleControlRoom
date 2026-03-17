@@ -35,6 +35,8 @@ const (
 	KindClearSnooze Kind = "clear-snooze"
 	KindSessions    Kind = "sessions"
 	KindEvents      Kind = "events"
+	KindIgnore      Kind = "ignore"
+	KindIgnored     Kind = "ignored"
 	KindForget      Kind = "forget"
 	KindFocus       Kind = "focus"
 	KindQuit        Kind = "quit"
@@ -122,6 +124,8 @@ var specs = []Spec{
 	{Name: "clear-snooze", Usage: "/clear-snooze", Summary: "Clear snooze on the selected project"},
 	{Name: "sessions", Usage: "/sessions on|off|toggle", Summary: "Show or hide the Sessions section"},
 	{Name: "events", Usage: "/events on|off|toggle", Summary: "Show or hide Recent events"},
+	{Name: "ignore", Usage: "/ignore", Summary: "Hide the selected project's exact name"},
+	{Name: "ignored", Usage: "/ignored", Summary: "Review ignored project names and restore them"},
 	{Name: "forget", Usage: "/forget", Summary: "Forget a selected missing folder"},
 	{Name: "focus", Usage: "/focus list|detail|runtime", Summary: "Move focus between panes"},
 	{Name: "quit", Usage: "/quit", Summary: "Quit the TUI"},
@@ -383,6 +387,16 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, err
 		}
 		return Invocation{Kind: KindEvents, Toggle: mode, Canonical: "/events " + string(mode)}, nil
+	case "ignore":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /ignore")
+		}
+		return Invocation{Kind: KindIgnore, Canonical: "/ignore"}, nil
+	case "ignored":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /ignored")
+		}
+		return Invocation{Kind: KindIgnored, Canonical: "/ignored"}, nil
 	case "forget":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /forget")

@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-17 11:56 JST (JST)
+Last updated: 2026-03-17 17:29 JST (JST)
 
 ## Current State
 
@@ -80,6 +80,29 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-17 17:29 JST)
+
+- Added an internal ignored-project-name registry in the store, so stale project families can be hidden without relying on config excludes; normal project lists now suppress any tracked project whose exact name is in that registry.
+- Added `/ignore` to hide the selected project's exact name and `/ignored` to open a reversible picker of hidden names where `Enter` restores the selected one.
+- Kept the user's intentionally-disabled config excludes untouched and seeded the live store with `projects_control_center` in the new ignore registry, which hides the old Codex-generated project family while preserving an explicit path to bring it back later.
+- Made CLI surfaces match the new behavior by filtering ignored names in `doctor` and `snapshot`, and documented `/ignore` plus `/ignored` in the README and command reference.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/store ./internal/commands ./internal/tui ./internal/cli -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-17T17:29:03+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 1`).
+- Inserted `projects_control_center` into the live `ignored_project_names` table in `/Users/davide/.little-control-room/little-control-room.sqlite`.
+- `make doctor` passed on the cached snapshot dated `2026-03-17T17:29:19+09:00` (`projects: 132` after ignored-name filtering).
+- `go run ./cmd/lcroom doctor | rg -n "projects:|projects_control_center"` returned only `projects: 132`, confirming that `projects_control_center` no longer appears in filtered output even with config excludes still disabled.
+- `env COLUMNS=110 LINES=30 make tui DB=/tmp/lcroom-ignore-registry-smoke.sqlite` reached the TUI with a temp DB and exited via `q`.
+
+Next concrete tasks:
+
+- Decide whether the internal ignore registry should grow a second mode for exact paths, or whether exact-name ignore is the right default for Codex/OpenCode worktree cleanup.
+- Consider surfacing matched hidden-project counts or sample paths more prominently inside `/ignored` so users can see exactly what each hidden name currently covers.
 
 ## Latest Update (2026-03-17 11:56 JST)
 

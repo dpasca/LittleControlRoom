@@ -246,6 +246,12 @@ func runDoctor(ctx context.Context, svc *service.Service, cfg config.AppConfig) 
 	}
 
 	states := append([]model.ProjectState(nil), report.States...)
+	ignored, err := svc.Store().ListIgnoredProjectNames(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "doctor ignored-project lookup failed: %v\n", err)
+		return 1
+	}
+	states = filterProjectStatesByIgnoredName(states, ignored)
 	states = filterProjectStatesByName(states, cfg.ExcludeProjectPatterns)
 	sort.Slice(states, func(i, j int) bool {
 		if states[i].AttentionScore == states[j].AttentionScore {
@@ -364,6 +370,12 @@ func runSnapshot(ctx context.Context, svc *service.Service, cfg config.AppConfig
 	}
 
 	states := filterProjectStatesByName(report.States, cfg.ExcludeProjectPatterns)
+	ignored, err := svc.Store().ListIgnoredProjectNames(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "snapshot ignored-project lookup failed: %v\n", err)
+		return 1
+	}
+	states = filterProjectStatesByIgnoredName(states, ignored)
 	selected := selectOpenCodeSnapshotSessions(states, cfg.SnapshotProject, cfg.SnapshotSessionID, cfg.SnapshotLimit)
 	dumps := make([]snapshotDumpEntry, 0, len(selected))
 	for _, choice := range selected {
@@ -576,6 +588,31 @@ func filterProjectStatesByName(states []model.ProjectState, excludeProjectPatter
 		if strings.EqualFold(strings.TrimSpace(base), strings.TrimSpace(state.Name)) || !config.ProjectNameExcluded(base, excludeProjectPatterns) {
 			filtered = append(filtered, state)
 		}
+	}
+	return filtered
+}
+
+func filterProjectStatesByIgnoredName(states []model.ProjectState, ignored []model.IgnoredProjectName) []model.ProjectState {
+	if len(states) == 0 || len(ignored) == 0 {
+		return states
+	}
+	ignoredNames := make(map[string]struct{}, len(ignored))
+	for _, entry := range ignored {
+		name := strings.ToLower(strings.TrimSpace(entry.Name))
+		if name == "" {
+			continue
+		}
+		ignoredNames[name] = struct{}{}
+	}
+	if len(ignoredNames) == 0 {
+		return states
+	}
+	filtered := make([]model.ProjectState, 0, len(states))
+	for _, state := range states {
+		if _, hidden := ignoredNames[strings.ToLower(strings.TrimSpace(state.Name))]; hidden {
+			continue
+		}
+		filtered = append(filtered, state)
 	}
 	return filtered
 }

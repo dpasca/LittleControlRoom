@@ -74,6 +74,73 @@ func TestListProjectsScopeFiltering(t *testing.T) {
 	}
 }
 
+func TestListProjectsHidesIgnoredProjectNames(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now()
+	for _, state := range []model.ProjectState{
+		{
+			Path:           "/tmp/projects_control_center",
+			Name:           "projects_control_center",
+			Status:         model.StatusIdle,
+			AttentionScore: 10,
+			InScope:        true,
+			UpdatedAt:      now,
+		},
+		{
+			Path:           "/tmp/worktrees/abcd/projects_control_center",
+			Name:           "projects_control_center",
+			Status:         model.StatusIdle,
+			AttentionScore: 10,
+			InScope:        true,
+			UpdatedAt:      now,
+		},
+		{
+			Path:           "/tmp/visible-demo",
+			Name:           "visible-demo",
+			Status:         model.StatusIdle,
+			AttentionScore: 10,
+			InScope:        true,
+			UpdatedAt:      now,
+		},
+	} {
+		if err := st.UpsertProjectState(ctx, state); err != nil {
+			t.Fatalf("upsert project %s: %v", state.Path, err)
+		}
+	}
+
+	if err := st.SetIgnoredProjectName(ctx, "projects_control_center", true); err != nil {
+		t.Fatalf("ignore project name: %v", err)
+	}
+
+	projects, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list projects: %v", err)
+	}
+	if len(projects) != 1 || projects[0].Name != "visible-demo" {
+		t.Fatalf("visible projects = %#v, want only visible-demo", projects)
+	}
+
+	ignored, err := st.ListIgnoredProjectNames(ctx)
+	if err != nil {
+		t.Fatalf("list ignored project names: %v", err)
+	}
+	if len(ignored) != 1 || ignored[0].Name != "projects_control_center" {
+		t.Fatalf("ignored project names = %#v, want projects_control_center", ignored)
+	}
+	if ignored[0].MatchedProjects != 2 {
+		t.Fatalf("matched projects = %d, want 2", ignored[0].MatchedProjects)
+	}
+}
+
 func TestOpenMigratesProjectsInScopeColumn(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

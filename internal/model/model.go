@@ -224,6 +224,12 @@ type StoredEvent struct {
 	Payload     string
 }
 
+type IgnoredProjectName struct {
+	Name            string
+	CreatedAt       time.Time
+	MatchedProjects int
+}
+
 func StatusRank(s ProjectStatus) int {
 	switch s {
 	case StatusPossiblyStuck:

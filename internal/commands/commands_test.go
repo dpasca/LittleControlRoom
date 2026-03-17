@@ -246,6 +246,30 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "ignore",
+			raw:  "/ignore",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindIgnore {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindIgnore)
+				}
+				if inv.Canonical != "/ignore" {
+					t.Fatalf("canonical = %q, want /ignore", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "ignored",
+			raw:  "/ignored",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindIgnored {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindIgnored)
+				}
+				if inv.Canonical != "/ignored" {
+					t.Fatalf("canonical = %q, want /ignored", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "focus detail alias",
 			raw:  "/focus details",
 			check: func(t *testing.T, inv Invocation) {

@@ -63,7 +63,7 @@ lcroom tui
 
 No config file is required for a first run. If you want to limit what shows up, open the dashboard and use `/settings`, or create `~/.little-control-room/config.toml` from [`docs/config.example.toml`](docs/config.example.toml).
 
-The main commands to look for are `/settings`, `/open`, `/run`, `/run-edit`, `/runtime`, `/stop`, `/note`, `/diff`, `/commit`, `/finish`, `/push`, `/codex`, `/codex-new`, `/opencode`, and `/opencode-new`.
+The main commands to look for are `/settings`, `/ignore`, `/ignored`, `/open`, `/run`, `/run-edit`, `/runtime`, `/stop`, `/note`, `/diff`, `/commit`, `/finish`, `/push`, `/codex`, `/codex-new`, `/opencode`, and `/opencode-new`.
 
 ## Everyday Workflow
 
@@ -86,6 +86,10 @@ Use `/codex-new` or `/opencode-new` when you want a fresh session instead of res
 Inside the embedded Codex or OpenCode pane, use `/resume` or `/session` to open a provider-specific session picker for the current project, or `/resume <session-id>` to jump straight to that session.
 
 Use `/settings` when you want to save include or exclude paths or change the default Codex launch mode.
+
+Use `/ignore` on a selected project when you want to hide that exact project name, including Codex-generated worktrees that share the same folder name.
+
+Use `/ignored` to review the hidden names and restore them later with `Enter`, so cleanup stays reversible.
 
 Use `/open` to open the selected project's folder in your system browser.
 
