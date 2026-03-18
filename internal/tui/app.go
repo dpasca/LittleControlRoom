@@ -403,9 +403,7 @@ func (m *Model) refreshUsagePulse() {
 		m.haveUsageTotals = true
 		return
 	}
-	if totals.InputTokens > m.lastUsageTotals.InputTokens ||
-		totals.OutputTokens > m.lastUsageTotals.OutputTokens ||
-		totals.TotalTokens > m.lastUsageTotals.TotalTokens {
+	if totals.EstimatedCostUSD > m.lastUsageTotals.EstimatedCostUSD {
 		m.usagePulseUntil = m.currentTime().Add(usagePulseDuration)
 	}
 	m.lastUsageTotals = totals
@@ -3898,9 +3896,13 @@ func (m Model) currentUsage() model.LLMSessionUsage {
 
 func compactUsageLabel(usage model.LLMSessionUsage) string {
 	if !usage.Enabled {
-		return "tok off"
+		return "cost off"
 	}
-	return fmt.Sprintf("tok %s/%s", formatTokenCount(usage.Totals.InputTokens), formatTokenCount(usage.Totals.OutputTokens))
+	estimatedCostUSD, ok := estimatedUsageCostUSD(usage)
+	if !ok {
+		return "cost ?"
+	}
+	return "cost " + formatEstimatedCostUSD(estimatedCostUSD)
 }
 
 func (m Model) renderFooterUsageSegment(text string) string {
@@ -4082,6 +4084,30 @@ func formatTokenCount(v int64) string {
 		return fmt.Sprintf("%.1fk", float64(v)/1_000)
 	default:
 		return fmt.Sprintf("%d", v)
+	}
+}
+
+func estimatedUsageCostUSD(usage model.LLMSessionUsage) (float64, bool) {
+	if usage.Totals.EstimatedCostUSD > 0 {
+		return usage.Totals.EstimatedCostUSD, true
+	}
+	if usage.Totals.InputTokens == 0 && usage.Totals.OutputTokens == 0 && usage.Totals.TotalTokens == 0 {
+		return 0, true
+	}
+	if estimatedCostUSD, ok := model.EstimateLLMCostUSD(usage.Model, usage.Totals); ok {
+		return estimatedCostUSD, true
+	}
+	return 0, false
+}
+
+func formatEstimatedCostUSD(costUSD float64) string {
+	switch {
+	case costUSD >= 1:
+		return fmt.Sprintf("$%.2f", costUSD)
+	case costUSD >= 0.01:
+		return fmt.Sprintf("$%.3f", costUSD)
+	default:
+		return fmt.Sprintf("$%.4f", costUSD)
 	}
 }
 

@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-19 06:48 JST (JST)
+Last updated: 2026-03-19 08:02 JST (JST)
 
 ## Current State
 
@@ -85,6 +85,27 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-19 08:02 JST)
+
+- Replaced the footer's raw `tok in/out` classifier usage badge with a cost estimate badge, so the TUI now shows approximate tracked OpenAI spend instead of only token volume.
+- Added a small GPT-5 pricing table for the currently relevant classifier candidates (`gpt-5-mini`, `gpt-5.4-mini`, `gpt-5-nano`, and `gpt-5.4-nano`) plus snapshot-alias handling, and started recording per-call estimated USD cost alongside token totals when classifier responses come back with usage data.
+- Switched the footer usage pulse to react to estimated cost increases instead of token-count increases, added focused pricing tests, and refreshed the README costs copy to describe the footer as an estimate rather than telling users to infer cost from tokens alone.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/model/model.go internal/model/llm_pricing.go internal/model/llm_pricing_test.go internal/sessionclassify/client.go internal/tui/app.go internal/tui/app_test.go` passed.
+- `go test ./internal/model ./internal/sessionclassify ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-19T08:01:37+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-19T08:01:37+09:00` (`projects: 132`).
+- `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-cost-estimator-check CONFIG=/tmp/lcroom-cost-estimator-config.toml DB=/tmp/lcroom-cost-estimator.sqlite INTERVAL=1h` reached the TUI sandbox and exited via `q`.
+
+Next concrete tasks:
+
+- Switch the session classifier from `gpt-5-mini` to `gpt-5.4-nano` with `reasoning.effort = "medium"` now that the footer can show a pricing estimate for that model.
+- Decide whether the footer cost estimate should stay aligned with the old classifier-only usage scope for now or be broadened to also aggregate commit-help usage before we start mixing models across more workflows.
 
 ## Latest Update (2026-03-19 06:48 JST)
 

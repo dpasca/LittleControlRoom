@@ -114,11 +114,12 @@ type SessionClassification struct {
 }
 
 type LLMUsage struct {
-	InputTokens       int64 `json:"input_tokens"`
-	OutputTokens      int64 `json:"output_tokens"`
-	TotalTokens       int64 `json:"total_tokens"`
-	CachedInputTokens int64 `json:"cached_input_tokens"`
-	ReasoningTokens   int64 `json:"reasoning_tokens"`
+	InputTokens       int64   `json:"input_tokens"`
+	OutputTokens      int64   `json:"output_tokens"`
+	TotalTokens       int64   `json:"total_tokens"`
+	CachedInputTokens int64   `json:"cached_input_tokens"`
+	ReasoningTokens   int64   `json:"reasoning_tokens"`
+	EstimatedCostUSD  float64 `json:"estimated_cost_usd"`
 }
 
 type LLMSessionUsage struct {

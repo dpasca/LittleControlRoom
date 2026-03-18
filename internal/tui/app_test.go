@@ -637,19 +637,20 @@ func TestRenderFooterDetailOmitsScrollHint(t *testing.T) {
 }
 
 func TestCompactUsageLabel(t *testing.T) {
-	if got := compactUsageLabel(model.LLMSessionUsage{}); got != "tok off" {
-		t.Fatalf("compactUsageLabel(disabled) = %q, want %q", got, "tok off")
+	if got := compactUsageLabel(model.LLMSessionUsage{}); got != "cost off" {
+		t.Fatalf("compactUsageLabel(disabled) = %q, want %q", got, "cost off")
 	}
 
 	usage := model.LLMSessionUsage{
 		Enabled: true,
+		Model:   "gpt-5-mini",
 		Totals: model.LLMUsage{
 			InputTokens:  345,
 			OutputTokens: 538,
 		},
 	}
-	if got := compactUsageLabel(usage); got != "tok 345/538" {
-		t.Fatalf("compactUsageLabel(enabled) = %q, want %q", got, "tok 345/538")
+	if got := compactUsageLabel(usage); got != "cost $0.0012" {
+		t.Fatalf("compactUsageLabel(enabled) = %q, want %q", got, "cost $0.0012")
 	}
 }
 
@@ -675,9 +676,11 @@ func TestRenderFooterPulsesWhenUsageIncreases(t *testing.T) {
 	classifier := &usageSnapshotClassifier{
 		usage: model.LLMSessionUsage{
 			Enabled: true,
+			Model:   "gpt-5-mini",
 			Totals: model.LLMUsage{
-				InputTokens:  345,
-				OutputTokens: 538,
+				InputTokens:      345_000,
+				OutputTokens:     538_000,
+				EstimatedCostUSD: 1.16225,
 			},
 		},
 	}
@@ -690,12 +693,13 @@ func TestRenderFooterPulsesWhenUsageIncreases(t *testing.T) {
 	m.refreshUsagePulse()
 
 	steady := m.renderFooter(160)
-	if !strings.Contains(ansi.Strip(steady), "tok 345/538") {
-		t.Fatalf("steady footer missing token label: %q", steady)
+	if !strings.Contains(ansi.Strip(steady), "cost $1.16") {
+		t.Fatalf("steady footer missing cost label: %q", steady)
 	}
 
-	classifier.usage.Totals.InputTokens = 360
-	classifier.usage.Totals.OutputTokens = 544
+	classifier.usage.Totals.InputTokens = 360_000
+	classifier.usage.Totals.OutputTokens = 544_000
+	classifier.usage.Totals.EstimatedCostUSD = 1.178
 	m.spinnerFrame = 0
 	m.refreshUsagePulse()
 	pulseA := m.renderFooter(160)
@@ -704,19 +708,19 @@ func TestRenderFooterPulsesWhenUsageIncreases(t *testing.T) {
 	pulseB := m.renderFooter(160)
 
 	if ansi.Strip(pulseA) != ansi.Strip(pulseB) {
-		t.Fatalf("token pulse should keep the same visible text: %q vs %q", ansi.Strip(pulseA), ansi.Strip(pulseB))
+		t.Fatalf("usage pulse should keep the same visible text: %q vs %q", ansi.Strip(pulseA), ansi.Strip(pulseB))
 	}
 	if pulseA == pulseB {
-		t.Fatalf("token pulse should animate across spinner frames")
+		t.Fatalf("usage pulse should animate across spinner frames")
 	}
 	if pulseA == ansi.Strip(pulseA) {
-		t.Fatalf("token pulse should use ANSI styling: %q", pulseA)
+		t.Fatalf("usage pulse should use ANSI styling: %q", pulseA)
 	}
 
 	now = now.Add(usagePulseDuration + 50*time.Millisecond)
 	settled := m.renderFooter(160)
 	if settled == pulseA || settled == pulseB {
-		t.Fatalf("token pulse should expire after the pulse window")
+		t.Fatalf("usage pulse should expire after the pulse window")
 	}
 }
 

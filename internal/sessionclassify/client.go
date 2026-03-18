@@ -288,6 +288,9 @@ func (c *OpenAIClient) classifyAttempt(ctx context.Context, snapshotJSON []byte,
 			CachedInputTokens: envelope.Usage.InputTokensDetails.CachedTokens,
 			ReasoningTokens:   envelope.Usage.OutputTokensDetails.ReasoningTokens,
 		}
+		if estimatedCostUSD, ok := model.EstimateLLMCostUSD(result.Model, result.Usage); ok {
+			result.Usage.EstimatedCostUSD = estimatedCostUSD
+		}
 	}
 	return result, nil
 }
