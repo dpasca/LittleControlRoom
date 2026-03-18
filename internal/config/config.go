@@ -17,6 +17,7 @@ import (
 )
 
 type AppConfig struct {
+	OpenAIAPIKey           string
 	IncludePaths           []string
 	ExcludePaths           []string
 	ExcludeProjectPatterns []string
@@ -38,6 +39,7 @@ type AppConfig struct {
 }
 
 type fileConfig struct {
+	OpenAIAPIKey           *string   `toml:"openai_api_key"`
 	IncludePaths           *[]string `toml:"include_paths"`
 	ExcludePaths           *[]string `toml:"exclude_paths"`
 	ExcludeProjectPatterns *[]string `toml:"exclude_project_patterns"`
@@ -253,6 +255,9 @@ func applyConfigFile(cfg *AppConfig) error {
 			return fmt.Errorf("config include_paths: %w", err)
 		}
 		cfg.IncludePaths = includePaths
+	}
+	if fc.OpenAIAPIKey != nil {
+		cfg.OpenAIAPIKey = strings.TrimSpace(*fc.OpenAIAPIKey)
 	}
 	if fc.ExcludePaths != nil {
 		excludePaths, err := normalizePaths(*fc.ExcludePaths)

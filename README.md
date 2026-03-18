@@ -45,7 +45,7 @@ Requirements:
 - Go 1.25+
 - Codex installed locally, capable of running in the terminal.
 - OpenCode installed locally if you want embedded OpenCode sessions.
-- `OPENAI_API_KEY` in the environment (used for summaries, classifications, etc. not for coding).
+- An OpenAI API key saved in `~/.little-control-room/config.toml`. LCR requires this at startup and opens Settings until you save it.
 
 Build and launch from this repo:
 
@@ -61,7 +61,7 @@ make install
 lcroom tui
 ```
 
-No config file is required for a first run. If you want to limit what shows up, open the dashboard and use `/settings`, or create `~/.little-control-room/config.toml` from [`docs/config.example.toml`](docs/config.example.toml).
+On the first run, LCR opens `/settings` and stays there until you save `openai_api_key`. After that, you can keep editing the saved config from the dashboard or create `~/.little-control-room/config.toml` from [`docs/config.example.toml`](docs/config.example.toml).
 
 ## Slash Commands
 
@@ -71,7 +71,7 @@ The main TUI command palette opens with `/`.
 - `/refresh`: Rescan projects and retry failed assessments.
 - `/sort <attention|recent>`: Change the project ordering.
 - `/view <ai|all>`: Switch between AI-linked and all tracked folders.
-- `/settings`: Edit saved scope and scan settings.
+- `/settings`: Edit the saved OpenAI key, scope, and scan settings.
 - `/new-project`: Create a project folder, or paste an existing project path to add it directly.
 - `/open`: Open the selected project's folder in the system browser.
 - `/run [command]`: Start the selected project's managed runtime.
@@ -128,7 +128,7 @@ Use `/codex-new` or `/opencode-new` when you want a fresh session instead of res
 
 Inside the embedded Codex or OpenCode pane, use `/resume` or `/session` to open a provider-specific session picker for the current project, or `/resume <session-id>` to jump straight to that session.
 
-Use `/settings` when you want to save include or exclude paths or change the default Codex launch mode.
+Use `/settings` when you want to save your OpenAI API key, include or exclude paths, or change the default Codex launch mode.
 
 Use `/ignore` on a selected project when you want to hide that exact project name, including Codex-generated worktrees that share the same folder name.
 
@@ -148,7 +148,7 @@ To create a new project, use the command `/new-project`. This will create a new 
 
 Using Codex or OpenCode inside LCR does not add any additional cost beyond what you would normally pay for those tools.
 
-There are some OpenAI API costs from a key the user needs to provide (`OPENAI_API_KEY`). These are for LCR to
+There are some OpenAI API costs from a key the user needs to provide (`openai_api_key` in the config file). These are for LCR to
 summarize sessions, classify them, help with commit messages.
 These operations are done with cheaper models like `gpt-5-mini` and a relatively small amount of tokens, so the cost should be minimal, but it's important to keep an eye on usage from the OpenAI dashboard, to avoid any surprises.
 

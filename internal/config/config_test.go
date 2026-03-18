@@ -51,6 +51,7 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.toml")
 	content := "" +
+		"openai_api_key = \"sk-live-example\"\n" +
 		"include_paths = [\"/tmp/a\", \"/tmp/b\"]\n" +
 		"exclude_paths = [\"/tmp/skip\"]\n" +
 		"exclude_project_patterns = [\"quickgame_*\", \"secret-demo\"]\n" +
@@ -69,6 +70,9 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 
 	if got, want := cfg.ScanInterval, 45*time.Second; got != want {
 		t.Fatalf("interval = %s, want %s", got, want)
+	}
+	if got, want := cfg.OpenAIAPIKey, "sk-live-example"; got != want {
+		t.Fatalf("openai api key = %q, want %q", got, want)
 	}
 	if got, want := cfg.ExcludePaths, []string{"/tmp/skip"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("exclude paths = %v, want %v", got, want)
@@ -249,7 +253,7 @@ func TestParseRejectsInvalidSnapshotLimit(t *testing.T) {
 func TestParseEditableSettings(t *testing.T) {
 	useTempHome(t)
 
-	settings, err := ParseEditableSettings("~/dev/repos,/tmp/other", "/tmp/skip", "quickgame_*,secret-demo", "yolo", "10m", "2h", "45s")
+	settings, err := ParseEditableSettings("sk-test-example", "~/dev/repos,/tmp/other", "/tmp/skip", "quickgame_*,secret-demo", "yolo", "10m", "2h", "45s")
 	if err != nil {
 		t.Fatalf("ParseEditableSettings() error = %v", err)
 	}
@@ -261,6 +265,9 @@ func TestParseEditableSettings(t *testing.T) {
 	wantIncludePaths := []string{filepath.Join(home, "dev", "repos"), "/tmp/other"}
 	if !reflect.DeepEqual(settings.IncludePaths, wantIncludePaths) {
 		t.Fatalf("include paths = %v, want %v", settings.IncludePaths, wantIncludePaths)
+	}
+	if got, want := settings.OpenAIAPIKey, "sk-test-example"; got != want {
+		t.Fatalf("openai api key = %q, want %q", got, want)
 	}
 	if got, want := settings.ExcludePaths, []string{"/tmp/skip"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("exclude paths = %v, want %v", got, want)
@@ -285,7 +292,7 @@ func TestParseEditableSettings(t *testing.T) {
 func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 	useTempHome(t)
 
-	if _, err := ParseEditableSettings("/tmp/a", "", "", "yolo", "20m", "10m", "60s"); err == nil {
+	if _, err := ParseEditableSettings("sk-test-example", "/tmp/a", "", "", "yolo", "20m", "10m", "60s"); err == nil {
 		t.Fatalf("expected validation error")
 	}
 }
@@ -293,8 +300,16 @@ func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 func TestParseEditableSettingsRejectsInvalidCodexPreset(t *testing.T) {
 	useTempHome(t)
 
-	if _, err := ParseEditableSettings("/tmp/a", "", "", "turbo", "20m", "2h", "60s"); err == nil {
+	if _, err := ParseEditableSettings("sk-test-example", "/tmp/a", "", "", "turbo", "20m", "2h", "60s"); err == nil {
 		t.Fatalf("expected codex preset validation error")
+	}
+}
+
+func TestParseEditableSettingsRequiresOpenAIAPIKey(t *testing.T) {
+	useTempHome(t)
+
+	if _, err := ParseEditableSettings("", "/tmp/a", "", "", "yolo", "20m", "2h", "60s"); err == nil {
+		t.Fatalf("expected openai api key validation error")
 	}
 }
 
@@ -303,6 +318,7 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.toml")
 
 	err := SaveEditableSettings(configPath, EditableSettings{
+		OpenAIAPIKey:           "sk-test-example",
 		IncludePaths:           []string{"/tmp/a", "/tmp/b"},
 		ExcludePaths:           []string{"/tmp/skip"},
 		ExcludeProjectPatterns: []string{"quickgame_*", "secret-demo"},
@@ -323,6 +339,9 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 	if !strings.Contains(text, "include_paths = [") {
 		t.Fatalf("saved config should include include_paths array: %q", text)
 	}
+	if !strings.Contains(text, "openai_api_key = \"sk-test-example\"") {
+		t.Fatalf("saved config should include openai api key: %q", text)
+	}
 	if !strings.Contains(text, "exclude_paths = [") {
 		t.Fatalf("saved config should include exclude_paths array: %q", text)
 	}
@@ -340,6 +359,13 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 	}
 	if !strings.Contains(text, "stuck-threshold = \"3h\"") {
 		t.Fatalf("saved config should include stuck threshold: %q", text)
+	}
+	info, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatalf("stat config file: %v", err)
+	}
+	if got, want := info.Mode().Perm(), os.FileMode(0o600); got != want {
+		t.Fatalf("config file mode = %o, want %o", got, want)
 	}
 }
 

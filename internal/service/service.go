@@ -74,18 +74,17 @@ type ScanOptions struct {
 }
 
 func New(cfg config.AppConfig, st *store.Store, bus *events.Bus, detectorList []detectors.Detector) *Service {
-	commitAssistant := gitops.NewOpenAICommitMessageClientFromEnv()
-	return &Service{
-		cfg:                      cfg,
-		store:                    st,
-		bus:                      bus,
-		detectors:                detectorList,
-		commitMessageSuggester:   commitAssistant,
-		untrackedFileRecommender: commitAssistant,
-		gitFingerprintReader:     scanner.ReadGitFingerprint,
-		gitRepoStatusReader:      scanner.ReadGitRepoStatus,
-		gitRepoInitializer:       runGitInit,
+	svc := &Service{
+		cfg:                  cfg,
+		store:                st,
+		bus:                  bus,
+		detectors:            detectorList,
+		gitFingerprintReader: scanner.ReadGitFingerprint,
+		gitRepoStatusReader:  scanner.ReadGitRepoStatus,
+		gitRepoInitializer:   runGitInit,
 	}
+	svc.configureOpenAIClientsLocked(strings.TrimSpace(cfg.OpenAIAPIKey))
+	return svc
 }
 
 func (s *Service) Store() *store.Store {
@@ -98,6 +97,7 @@ func (s *Service) Bus() *events.Bus {
 
 func (s *Service) Config() config.AppConfig {
 	cfg := s.cfg
+	cfg.OpenAIAPIKey = s.cfg.OpenAIAPIKey
 	cfg.IncludePaths = append([]string(nil), s.cfg.IncludePaths...)
 	cfg.ExcludePaths = append([]string(nil), s.cfg.ExcludePaths...)
 	cfg.ExcludeProjectPatterns = append([]string(nil), s.cfg.ExcludeProjectPatterns...)
@@ -108,6 +108,21 @@ func (s *Service) SetSessionClassifier(classifier SessionClassifier) {
 	s.classifier = classifier
 }
 
+func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.cfg.OpenAIAPIKey = strings.TrimSpace(settings.OpenAIAPIKey)
+	s.cfg.IncludePaths = append([]string(nil), settings.IncludePaths...)
+	s.cfg.ExcludePaths = append([]string(nil), settings.ExcludePaths...)
+	s.cfg.ExcludeProjectPatterns = append([]string(nil), settings.ExcludeProjectPatterns...)
+	s.cfg.CodexLaunchPreset = settings.CodexLaunchPreset
+	s.cfg.ScanInterval = settings.ScanInterval
+	s.cfg.ActiveThreshold = settings.ActiveThreshold
+	s.cfg.StuckThreshold = settings.StuckThreshold
+	s.configureOpenAIClientsLocked(s.cfg.OpenAIAPIKey)
+}
+
 func (s *Service) StartSessionClassifier(ctx context.Context) {
 	if s.classifier == nil {
 		return
@@ -116,7 +131,13 @@ func (s *Service) StartSessionClassifier(ctx context.Context) {
 }
 
 func (s *Service) HasSessionClassifier() bool {
-	return s.classifier != nil
+	if s.classifier == nil {
+		return false
+	}
+	if enabled, ok := s.classifier.(interface{ Enabled() bool }); ok {
+		return enabled.Enabled()
+	}
+	return true
 }
 
 func (s *Service) SessionUsage() model.LLMSessionUsage {
@@ -127,6 +148,24 @@ func (s *Service) SessionUsage() model.LLMSessionUsage {
 		return usageReader.UsageSnapshot()
 	}
 	return model.LLMSessionUsage{Enabled: true}
+}
+
+func (s *Service) configureOpenAIClientsLocked(apiKey string) {
+	apiKey = strings.TrimSpace(apiKey)
+	commitAssistant := gitops.NewOpenAICommitMessageClient(apiKey)
+	s.commitMessageSuggester = commitAssistant
+	s.untrackedFileRecommender = commitAssistant
+
+	client := sessionclassify.NewOpenAIClient(apiKey)
+	if manager, ok := s.classifier.(*sessionclassify.Manager); ok {
+		manager.ConfigureClient(client)
+		manager.Notify()
+		return
+	}
+	s.classifier = sessionclassify.NewManager(s.store, s.bus, sessionclassify.Options{
+		Client:           client,
+		OnProjectUpdated: s.RefreshProjectStatus,
+	})
 }
 
 func (s *Service) ScanOnce(ctx context.Context) (ScanReport, error) {

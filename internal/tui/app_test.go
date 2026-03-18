@@ -5285,8 +5285,27 @@ func TestCommandEnterOpensSettingsMode(t *testing.T) {
 	if got.commandMode {
 		t.Fatalf("command mode should close after /settings")
 	}
-	if len(got.settingsFields) != 7 {
-		t.Fatalf("settings field count = %d, want 7", len(got.settingsFields))
+	if len(got.settingsFields) != 8 {
+		t.Fatalf("settings field count = %d, want 8", len(got.settingsFields))
+	}
+}
+
+func TestStartupOpenAIKeyRequirementOpensSettingsMode(t *testing.T) {
+	m := Model{
+		width:  100,
+		height: 24,
+	}
+
+	updated, cmd := m.Update(openAIKeyRequiredMsg{})
+	got := updated.(Model)
+	if !got.settingsMode {
+		t.Fatalf("settings mode should open when the startup api key requirement is triggered")
+	}
+	if got.status != "OpenAI API key required. Save it in Settings to enable session summaries, classifications, and commit help." {
+		t.Fatalf("status = %q, want startup api key explanation", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("opening settings should return a focus command")
 	}
 }
 
@@ -5680,11 +5699,15 @@ func TestViewWithSettingsModeRespectsHeight(t *testing.T) {
 }
 
 func TestSettingsModalRendersColoredActionLegend(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.OpenAIAPIKey = "sk-test-example"
+
 	m := Model{
-		settingsMode:   true,
-		settingsFields: newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
-		width:          100,
-		height:         24,
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
 	}
 	_ = m.setSettingsSelection(0)
 
@@ -5700,6 +5723,21 @@ func TestSettingsModalRendersColoredActionLegend(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "Esc") || !strings.Contains(rendered, "cancel") {
 		t.Fatalf("settings modal should render Esc cancel action: %q", rendered)
+	}
+}
+
+func TestSettingsModalShowsEscQuitWhenAPIKeyRequired(t *testing.T) {
+	m := Model{
+		settingsMode:   true,
+		settingsFields: newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
+		width:          100,
+		height:         24,
+	}
+	_ = m.setSettingsSelection(0)
+
+	rendered := ansi.Strip(m.renderSettingsContent(72, 18))
+	if !strings.Contains(rendered, "Esc") || !strings.Contains(rendered, "quit") {
+		t.Fatalf("settings modal should render Esc quit action when api key is required: %q", rendered)
 	}
 }
 
@@ -5742,6 +5780,7 @@ func TestSettingsEnterSavesConfigAndClosesModal(t *testing.T) {
 	}
 	_ = m.setSettingsSelection(0)
 
+	m.settingsFields[settingsFieldOpenAIAPIKey].input.SetValue("sk-test-example")
 	m.settingsFields[settingsFieldIncludePaths].input.SetValue("/tmp/a,/tmp/b")
 	m.settingsFields[settingsFieldExcludePaths].input.SetValue("/tmp/skip")
 	m.settingsFields[settingsFieldExcludeProjectPatterns].input.SetValue("quickgame_*,secret-demo")
@@ -5765,7 +5804,7 @@ func TestSettingsEnterSavesConfigAndClosesModal(t *testing.T) {
 	if saved.settingsMode {
 		t.Fatalf("settings mode should close after a successful save")
 	}
-	if !strings.Contains(saved.status, "Name filters and Codex launch mode apply now") {
+	if !strings.Contains(saved.status, "OpenAI key, name filters, and Codex launch mode apply now") {
 		t.Fatalf("status = %q, want immediate-apply notice", saved.status)
 	}
 
@@ -5775,7 +5814,7 @@ func TestSettingsEnterSavesConfigAndClosesModal(t *testing.T) {
 		t.Fatalf("read saved config: %v", err)
 	}
 	text := string(raw)
-	if !strings.Contains(text, "include_paths = [") || !strings.Contains(text, "exclude_paths = [") || !strings.Contains(text, "exclude_project_patterns = [") || !strings.Contains(text, "codex_launch_preset = \"full-auto\"") || !strings.Contains(text, "interval = \"45s\"") {
+	if !strings.Contains(text, "openai_api_key = \"sk-test-example\"") || !strings.Contains(text, "include_paths = [") || !strings.Contains(text, "exclude_paths = [") || !strings.Contains(text, "exclude_project_patterns = [") || !strings.Contains(text, "codex_launch_preset = \"full-auto\"") || !strings.Contains(text, "interval = \"45s\"") {
 		t.Fatalf("saved config missing edited values: %q", text)
 	}
 }
@@ -5788,6 +5827,7 @@ func TestSettingsEnterShowsValidationError(t *testing.T) {
 		height:         24,
 	}
 	_ = m.setSettingsSelection(0)
+	m.settingsFields[settingsFieldOpenAIAPIKey].input.SetValue("sk-test-example")
 	m.settingsFields[settingsFieldActiveThreshold].input.SetValue("20m")
 	m.settingsFields[settingsFieldStuckThreshold].input.SetValue("10m")
 
@@ -5801,6 +5841,49 @@ func TestSettingsEnterShowsValidationError(t *testing.T) {
 	}
 	if !got.settingsMode {
 		t.Fatalf("settings mode should stay open after validation failure")
+	}
+}
+
+func TestSettingsEscRequiresOpenAIAPIKeyWhenMissing(t *testing.T) {
+	m := Model{
+		settingsMode:   true,
+		settingsFields: newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
+		width:          100,
+		height:         24,
+	}
+	_ = m.setSettingsSelection(0)
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEsc})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("esc should quit when the api key is required")
+	}
+	if !got.settingsMode {
+		t.Fatalf("settings mode should stay open until the quit command is processed")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatalf("esc should return tea.Quit when api key is required")
+	}
+}
+
+func TestSettingsAPIKeyHintShowsMaskedSuffix(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.OpenAIAPIKey = "sk-live-12345"
+
+	m := Model{
+		settingsMode:   true,
+		settingsFields: newSettingsFields(settings),
+		width:          100,
+		height:         24,
+	}
+	_ = m.setSettingsSelection(settingsFieldOpenAIAPIKey)
+
+	rendered := ansi.Strip(m.renderSettingsContent(72, 18))
+	if !strings.Contains(rendered, "Stored key ends with ...12345.") {
+		t.Fatalf("settings modal should show a masked api key suffix hint: %q", rendered)
+	}
+	if strings.Contains(rendered, "sk-live-12345") {
+		t.Fatalf("settings modal should not show the full api key: %q", rendered)
 	}
 }
 
@@ -5833,7 +5916,7 @@ func TestSettingsSavedMsgAppliesProjectNameFilterImmediately(t *testing.T) {
 	if len(got.projects) != 1 || got.projects[0].Name != "visible-demo" {
 		t.Fatalf("visible projects after settingsSavedMsg = %#v, want only visible-demo", got.projects)
 	}
-	if !strings.Contains(got.status, "Name filters and Codex launch mode apply now") {
+	if !strings.Contains(got.status, "OpenAI key, name filters, and Codex launch mode apply now") {
 		t.Fatalf("status = %q, want immediate-apply notice", got.status)
 	}
 }

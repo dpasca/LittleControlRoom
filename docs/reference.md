@@ -13,7 +13,7 @@ This page keeps the command, keybinding, and configuration details that are usef
 - `lcroom scope` shows the effective include and exclude scope for this run
 - `lcroom serve` starts the optional read-only REST and WebSocket server
 
-`lcroom classify` requires `OPENAI_API_KEY`.
+`lcroom classify` requires `openai_api_key` in the config file. The TUI will open `/settings` automatically until you save one.
 
 ## Config File
 
@@ -24,6 +24,7 @@ This page keeps the command, keybinding, and configuration details that are usef
 
 The TUI `/settings` modal writes these values:
 
+- `openai_api_key`
 - `include_paths`
 - `exclude_paths`
 - `exclude_project_patterns`
@@ -35,6 +36,8 @@ The TUI `/settings` modal writes these values:
 Minimal config example:
 
 ```toml
+openai_api_key = "sk-your-openai-api-key"
+
 include_paths = [
   "~/dev/repos",
 ]
@@ -47,6 +50,8 @@ codex_launch_preset = "yolo"
 Saved-from-TUI example:
 
 ```toml
+openai_api_key = "sk-your-openai-api-key"
+
 include_paths = [
   "~/dev/repos",
 ]

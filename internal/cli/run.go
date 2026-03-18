@@ -118,13 +118,6 @@ func Run(programName string, args []string) int {
 		opencode.New(cfg.OpenCodeHome),
 	}
 	svc := service.New(cfg, st, bus, detectorList)
-	if client := sessionclassify.NewOpenAIClientFromEnv(); client != nil {
-		classifier := sessionclassify.NewManager(st, bus, sessionclassify.Options{
-			Client:           client,
-			OnProjectUpdated: svc.RefreshProjectStatus,
-		})
-		svc.SetSessionClassifier(classifier)
-	}
 
 	switch subcmd {
 	case "scan":
@@ -186,7 +179,7 @@ func runScan(ctx context.Context, svc *service.Service) int {
 
 func runClassify(ctx context.Context, svc *service.Service) int {
 	if !svc.HasSessionClassifier() {
-		fmt.Fprintln(os.Stderr, "classify requires OPENAI_API_KEY in the environment")
+		fmt.Fprintln(os.Stderr, "classify requires openai_api_key in the config; save it in the TUI settings first")
 		return 1
 	}
 

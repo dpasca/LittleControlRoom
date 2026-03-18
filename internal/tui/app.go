@@ -225,6 +225,8 @@ type settingsSavedMsg struct {
 	err      error
 }
 
+type openAIKeyRequiredMsg struct{}
+
 type ignoredProjectsMsg struct {
 	items []model.IgnoredProjectName
 	err   error
@@ -417,7 +419,17 @@ func currentExcludeProjectPatterns(svc *service.Service) []string {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.loadProjectsCmd(), m.loadRecentProjectParentsCmd(), m.waitBusCmd(), m.waitCodexCmd(), spinnerTickCmd())
+	cmds := []tea.Cmd{
+		m.loadProjectsCmd(),
+		m.loadRecentProjectParentsCmd(),
+		m.waitBusCmd(),
+		m.waitCodexCmd(),
+		spinnerTickCmd(),
+	}
+	if strings.TrimSpace(m.currentSettingsBaseline().OpenAIAPIKey) == "" {
+		cmds = append(cmds, func() tea.Msg { return openAIKeyRequiredMsg{} })
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -511,6 +523,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.newProjectRecentParents = append([]string(nil), msg.paths...)
 		}
 		return m, nil
+	case openAIKeyRequiredMsg:
+		if strings.TrimSpace(m.currentSettingsBaseline().OpenAIAPIKey) != "" {
+			return m, nil
+		}
+		return m, m.openSettingsMode()
 	case newProjectResultMsg:
 		if m.newProjectDialog != nil {
 			m.newProjectDialog.Submitting = false
@@ -726,6 +743,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = msg.err.Error()
 			return m, nil
 		}
+		if m.svc != nil {
+			m.svc.ApplyEditableSettings(msg.settings)
+		}
 		selectedPath := ""
 		if p, ok := m.selectedProject(); ok {
 			selectedPath = p.Path
@@ -734,7 +754,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.settingsBaseline = &saved
 		m.excludeProjectPatterns = append([]string(nil), msg.settings.ExcludeProjectPatterns...)
 		m.settingsMode = false
-		m.status = fmt.Sprintf("Settings saved to %s. Name filters and Codex launch mode apply now; other settings still apply on next launch of %s.", msg.path, brand.CLIName)
+		m.status = fmt.Sprintf("Settings saved to %s. OpenAI key, name filters, and Codex launch mode apply now; the running scheduler keeps its current timing until the next launch of %s.", msg.path, brand.CLIName)
 		m.rebuildProjectList(selectedPath)
 		if len(m.projects) > 0 {
 			m.syncDetailViewport(false)
@@ -3283,6 +3303,9 @@ func (m Model) renderFooter(width int) string {
 		return fitFooterWidth("Command palette open | "+usageSegment, width)
 	}
 	if m.settingsMode {
+		if m.settingsRequireOpenAIAPIKey() {
+			return fitFooterWidth("Settings: Enter save, Tab next, Esc quit | "+usageSegment, width)
+		}
 		return fitFooterWidth("Settings: Enter save, Tab next, Esc cancel | "+usageSegment, width)
 	}
 	if m.noteClearConfirm != nil {

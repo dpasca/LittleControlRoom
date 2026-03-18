@@ -95,8 +95,8 @@ func (e *retryableClassificationError) Unwrap() error {
 	return e.cause
 }
 
-func NewOpenAIClientFromEnv() *OpenAIClient {
-	apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
+func NewOpenAIClient(apiKey string) *OpenAIClient {
+	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
 		return nil
 	}

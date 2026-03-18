@@ -13,7 +13,8 @@ import (
 )
 
 const (
-	settingsFieldIncludePaths = iota
+	settingsFieldOpenAIAPIKey = iota
+	settingsFieldIncludePaths
 	settingsFieldExcludePaths
 	settingsFieldExcludeProjectPatterns
 	settingsFieldCodexLaunchPreset
@@ -23,9 +24,10 @@ const (
 )
 
 type settingsField struct {
-	label string
-	hint  string
-	input textinput.Model
+	label     string
+	hint      string
+	input     textinput.Model
+	sensitive bool
 }
 
 const settingsHintMaxLines = 2
@@ -38,7 +40,11 @@ func (m *Model) openSettingsMode() tea.Cmd {
 	m.showHelp = false
 	m.closeNoteDialog("")
 	m.err = nil
-	m.status = "Editing settings. Enter to save, Esc to cancel"
+	if m.settingsRequireOpenAIAPIKey() {
+		m.status = "OpenAI API key required. Save it in Settings to enable session summaries, classifications, and commit help."
+	} else {
+		m.status = "Editing settings. Enter to save, Esc to cancel"
+	}
 	return m.setSettingsSelection(0)
 }
 
@@ -53,6 +59,9 @@ func (m *Model) closeSettingsMode(status string) {
 func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
+		if m.settingsRequireOpenAIAPIKey() {
+			return m, tea.Quit
+		}
 		m.closeSettingsMode("Settings edit canceled")
 		return m, nil
 	case "tab", "down", "ctrl+n":
@@ -61,6 +70,7 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.moveSettingsSelection(-1)
 	case "enter":
 		settings, err := config.ParseEditableSettings(
+			m.settingsFieldValue(settingsFieldOpenAIAPIKey),
 			m.settingsFieldValue(settingsFieldIncludePaths),
 			m.settingsFieldValue(settingsFieldExcludePaths),
 			m.settingsFieldValue(settingsFieldExcludeProjectPatterns),
@@ -191,7 +201,11 @@ func (m Model) renderSettingsContent(width, maxHeight int) string {
 	lines := []string{
 		commandPaletteTitleStyle.Render("Settings"),
 		commandPaletteHintStyle.Render("Config: " + truncateText(m.currentConfigPath(), max(20, width-8))),
-		commandPaletteHintStyle.Render("Immediate: name filters, Codex mode. Restart: thresholds, interval."),
+	}
+	if m.settingsRequireOpenAIAPIKey() {
+		lines = append(lines, commandPaletteHintStyle.Render("OpenAI API key required: save one here to enable session summaries, classifications, and commit help."))
+	} else {
+		lines = append(lines, commandPaletteHintStyle.Render("Immediate: API key, filters, Codex mode, thresholds. Scheduler timing fully resets on next launch."))
 	}
 
 	labelWidth := m.settingsLabelWidth(width)
@@ -213,7 +227,7 @@ func (m Model) renderSettingsContent(width, maxHeight int) string {
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, renderSettingsActions())
+	lines = append(lines, renderSettingsActions(m.settingsRequireOpenAIAPIKey()))
 	return strings.Join(lines, "\n")
 }
 
@@ -282,7 +296,7 @@ func (m Model) renderSelectedSettingsHint(width int) string {
 	}
 
 	hintWidth := max(18, width)
-	wrapped := lipgloss.NewStyle().Width(hintWidth).Render("Hint: " + m.settingsFields[m.settingsSelected].hint)
+	wrapped := lipgloss.NewStyle().Width(hintWidth).Render("Hint: " + m.settingsFieldHint(m.settingsSelected))
 	lines := strings.Split(wrapped, "\n")
 	for i, line := range lines {
 		lines[i] = strings.TrimRight(line, " ")
@@ -294,18 +308,28 @@ func (m Model) renderSelectedSettingsHint(width int) string {
 	return commandPaletteHintStyle.Render(strings.Join(lines, "\n"))
 }
 
-func renderSettingsActions() string {
+func renderSettingsActions(requiresOpenAIKey bool) string {
+	escLabel := "cancel"
+	if requiresOpenAIKey {
+		escLabel = "quit"
+	}
 	actions := []string{
 		renderDialogAction("Enter", "save", commitActionKeyStyle, commitActionTextStyle),
 		renderDialogAction("Tab", "next", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("Up/Down", "choose", pushActionKeyStyle, pushActionTextStyle),
-		renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
+		renderDialogAction("Esc", escLabel, cancelActionKeyStyle, cancelActionTextStyle),
 	}
 	return strings.Join(actions, "   ")
 }
 
 func newSettingsFields(settings config.EditableSettings) []settingsField {
 	return []settingsField{
+		newSensitiveSettingsField(
+			"OpenAI API key",
+			"Required for session summaries, classifications, and AI commit help.",
+			settings.OpenAIAPIKey,
+			512,
+		),
 		newSettingsField(
 			"Include paths",
 			"Optional comma-separated path prefixes to keep in scope. Leave blank for all detected paths.",
@@ -363,11 +387,54 @@ func newSettingsField(label, hint, value string, charLimit int) settingsField {
 	}
 }
 
+func newSensitiveSettingsField(label, hint, value string, charLimit int) settingsField {
+	field := newSettingsField(label, hint, value, charLimit)
+	field.input.EchoMode = textinput.EchoPassword
+	field.input.EchoCharacter = '*'
+	field.input.Placeholder = "Paste OpenAI API key"
+	field.sensitive = true
+	return field
+}
+
 func cloneEditableSettings(settings config.EditableSettings) config.EditableSettings {
+	settings.OpenAIAPIKey = strings.TrimSpace(settings.OpenAIAPIKey)
 	settings.IncludePaths = append([]string(nil), settings.IncludePaths...)
 	settings.ExcludePaths = append([]string(nil), settings.ExcludePaths...)
 	settings.ExcludeProjectPatterns = append([]string(nil), settings.ExcludeProjectPatterns...)
 	return settings
+}
+
+func (m Model) settingsFieldHint(index int) string {
+	if index < 0 || index >= len(m.settingsFields) {
+		return ""
+	}
+	field := m.settingsFields[index]
+	if index != settingsFieldOpenAIAPIKey {
+		return field.hint
+	}
+	if suffix := maskedOpenAIKeySuffix(field.input.Value()); suffix != "" {
+		return field.hint + " Stored key ends with " + suffix + "."
+	}
+	if m.settingsRequireOpenAIAPIKey() {
+		return field.hint + " The dashboard opens here until you save one."
+	}
+	return field.hint
+}
+
+func (m Model) settingsRequireOpenAIAPIKey() bool {
+	return strings.TrimSpace(m.currentSettingsBaseline().OpenAIAPIKey) == ""
+}
+
+func maskedOpenAIKeySuffix(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	runes := []rune(trimmed)
+	if len(runes) > 5 {
+		runes = runes[len(runes)-5:]
+	}
+	return "..." + string(runes)
 }
 
 func formatSettingsDuration(d time.Duration) string {

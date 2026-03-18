@@ -47,6 +47,7 @@ type Options struct {
 type Manager struct {
 	store            *store.Store
 	bus              *events.Bus
+	mu               sync.RWMutex
 	client           Classifier
 	modelName        string
 	workers          int
@@ -55,6 +56,7 @@ type Manager struct {
 	onProjectUpdated ProjectUpdater
 	notifyCh         chan struct{}
 	usage            *usageTracker
+	startOnce        sync.Once
 }
 
 type usageTracker struct {
@@ -95,6 +97,29 @@ func NewManager(st *store.Store, bus *events.Bus, opts Options) *Manager {
 	}
 }
 
+func (m *Manager) ConfigureClient(client Classifier) {
+	if m == nil {
+		return
+	}
+	modelName := ""
+	if named, ok := client.(interface{ ModelName() string }); ok {
+		modelName = strings.TrimSpace(named.ModelName())
+	}
+	m.mu.Lock()
+	m.client = client
+	m.modelName = modelName
+	m.mu.Unlock()
+}
+
+func (m *Manager) currentClient() (Classifier, string) {
+	if m == nil {
+		return nil, ""
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.client, m.modelName
+}
+
 func (m *Manager) classificationHeartbeatInterval() time.Duration {
 	if m == nil {
 		return 30 * time.Second
@@ -133,7 +158,8 @@ func (m *Manager) heartbeatClassification(ctx context.Context, classification *m
 }
 
 func (m *Manager) Enabled() bool {
-	return m != nil && m.client != nil
+	client, _ := m.currentClient()
+	return client != nil
 }
 
 func (m *Manager) QueueProject(ctx context.Context, state model.ProjectState) (bool, error) {
@@ -141,6 +167,7 @@ func (m *Manager) QueueProject(ctx context.Context, state model.ProjectState) (b
 }
 
 func (m *Manager) QueueProjectRetry(ctx context.Context, state model.ProjectState, retryAfter time.Duration) (bool, error) {
+	_, modelName := m.currentClient()
 	if !m.Enabled() {
 		return false, nil
 	}
@@ -155,8 +182,8 @@ func (m *Manager) QueueProjectRetry(ctx context.Context, state model.ProjectStat
 	if !ok {
 		return false, nil
 	}
-	if m.modelName != "" {
-		classification.Model = m.modelName
+	if modelName != "" {
+		classification.Model = modelName
 	}
 	if retryAfter < 0 {
 		retryAfter = 0
@@ -277,21 +304,24 @@ func (m *Manager) UsageSnapshot() model.LLMSessionUsage {
 		return model.LLMSessionUsage{}
 	}
 	if m.usage == nil {
+		_, modelName := m.currentClient()
 		return model.LLMSessionUsage{
 			Enabled: m.Enabled(),
-			Model:   strings.TrimSpace(m.modelName),
+			Model:   strings.TrimSpace(modelName),
 		}
 	}
 	return m.usage.snapshotFor(m.Enabled())
 }
 
 func (m *Manager) Start(ctx context.Context) {
-	if !m.Enabled() {
+	if m == nil {
 		return
 	}
-	for i := 0; i < m.workers; i++ {
-		go m.runWorker(ctx)
-	}
+	m.startOnce.Do(func() {
+		for i := 0; i < m.workers; i++ {
+			go m.runWorker(ctx)
+		}
+	})
 	m.Notify()
 }
 
@@ -323,6 +353,11 @@ func (m *Manager) runWorker(ctx context.Context) {
 }
 
 func (m *Manager) processOne(ctx context.Context) (bool, error) {
+	client, defaultModelName := m.currentClient()
+	if client == nil {
+		return false, nil
+	}
+
 	classification, err := m.store.ClaimNextPendingSessionClassification(ctx, m.staleAfter)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -376,7 +411,7 @@ func (m *Manager) processOne(ctx context.Context) (bool, error) {
 
 	modelName := strings.TrimSpace(classification.Model)
 	if modelName == "" {
-		modelName = strings.TrimSpace(m.modelName)
+		modelName = strings.TrimSpace(defaultModelName)
 	}
 	if m.usage != nil {
 		m.usage.start(modelName)
@@ -386,7 +421,7 @@ func (m *Manager) processOne(ctx context.Context) (bool, error) {
 	defer stopHeartbeat()
 	go m.heartbeatClassification(classifyCtx, &classification)
 
-	result, err := m.client.Classify(ctx, snapshot)
+	result, err := client.Classify(ctx, snapshot)
 	stopHeartbeat()
 	if err != nil {
 		if m.usage != nil {

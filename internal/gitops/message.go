@@ -48,8 +48,8 @@ type OpenAICommitMessageClient struct {
 	httpClient *http.Client
 }
 
-func NewOpenAICommitMessageClientFromEnv() *OpenAICommitMessageClient {
-	apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
+func NewOpenAICommitMessageClient(apiKey string) *OpenAICommitMessageClient {
+	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
 		return nil
 	}

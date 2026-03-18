@@ -12,6 +12,7 @@ import (
 )
 
 type EditableSettings struct {
+	OpenAIAPIKey           string
 	IncludePaths           []string
 	ExcludePaths           []string
 	ExcludeProjectPatterns []string
@@ -23,6 +24,7 @@ type EditableSettings struct {
 
 func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 	return EditableSettings{
+		OpenAIAPIKey:           cfg.OpenAIAPIKey,
 		IncludePaths:           append([]string(nil), cfg.IncludePaths...),
 		ExcludePaths:           append([]string(nil), cfg.ExcludePaths...),
 		ExcludeProjectPatterns: append([]string(nil), cfg.ExcludeProjectPatterns...),
@@ -33,7 +35,12 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 	}
 }
 
-func ParseEditableSettings(includeRaw, excludeRaw, excludeProjectPatternsRaw, codexLaunchPresetRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
+func ParseEditableSettings(openAIAPIKeyRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, codexLaunchPresetRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
+	openAIAPIKey := strings.TrimSpace(openAIAPIKeyRaw)
+	if openAIAPIKey == "" {
+		return EditableSettings{}, fmt.Errorf("openai api key is required")
+	}
+
 	includePaths, err := expandAndSplitPaths(includeRaw)
 	if err != nil {
 		return EditableSettings{}, fmt.Errorf("include paths: %w", err)
@@ -64,6 +71,7 @@ func ParseEditableSettings(includeRaw, excludeRaw, excludeProjectPatternsRaw, co
 	}
 
 	settings := EditableSettings{
+		OpenAIAPIKey:           openAIAPIKey,
 		IncludePaths:           includePaths,
 		ExcludePaths:           excludePaths,
 		ExcludeProjectPatterns: excludeProjectPatterns,
@@ -103,7 +111,7 @@ func SaveEditableSettings(path string, settings EditableSettings) error {
 	if _, err := tempFile.WriteString(renderEditableSettings(settings)); err != nil {
 		return fmt.Errorf("write temp config file: %w", err)
 	}
-	if err := tempFile.Chmod(0o644); err != nil {
+	if err := tempFile.Chmod(0o600); err != nil {
 		return fmt.Errorf("chmod temp config file: %w", err)
 	}
 	if err := tempFile.Close(); err != nil {
@@ -117,6 +125,7 @@ func SaveEditableSettings(path string, settings EditableSettings) error {
 
 func validateEditableSettings(settings EditableSettings) error {
 	cfg := Default()
+	cfg.OpenAIAPIKey = settings.OpenAIAPIKey
 	cfg.IncludePaths = append([]string(nil), settings.IncludePaths...)
 	cfg.ExcludePaths = append([]string(nil), settings.ExcludePaths...)
 	cfg.ExcludeProjectPatterns = append([]string(nil), settings.ExcludeProjectPatterns...)
@@ -139,7 +148,11 @@ func parseConfigDuration(raw, label string) (time.Duration, error) {
 }
 
 func renderEditableSettings(settings EditableSettings) string {
-	lines := []string{"include_paths = ["}
+	lines := []string{
+		fmt.Sprintf("openai_api_key = %s", strconv.Quote(settings.OpenAIAPIKey)),
+		"",
+		"include_paths = [",
+	}
 	for _, path := range settings.IncludePaths {
 		lines = append(lines, fmt.Sprintf("  %s,", strconv.Quote(path)))
 	}

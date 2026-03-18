@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-18 08:14 JST (JST)
+Last updated: 2026-03-18 17:08 JST (JST)
 
 ## Current State
 
@@ -84,6 +84,44 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-18 17:08 JST)
+
+- Softened the README startup copy so it simply says the OpenAI key is required at startup and saved via Settings, without explicitly calling out environment-variable lookup behavior.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `sed -n '44,68p' README.md` confirmed the startup instructions now say the key is required and saved via `/settings`, without the extra env-var sentence.
+- No tests were run for this docs-only wording change.
+
+Next concrete tasks:
+
+- If we keep refining onboarding copy, check that `README.md`, `docs/reference.md`, and the in-app Settings blocker stay phrased at the same level of detail.
+
+## Latest Update (2026-03-18 16:57 JST)
+
+- Moved the OpenAI API key from environment-only wiring into persisted settings/config via a new `openai_api_key` field, and updated both latest-session classification and AI commit-help clients to read from that stored value instead of `OPENAI_API_KEY`.
+- Made the TUI demand a saved key on startup: when the config lacks `openai_api_key`, launch now opens the Settings overlay immediately with blocker copy explaining that the key is required for session summaries, classifications, and commit help, and `Esc` no longer dismisses that blocker until a key is saved.
+- Added a dedicated `OpenAI API key` field at the top of Settings, hid the stored value behind password masking, showed only a short suffix hint like `...12345`, and tightened settings saves so blank keys are rejected and config files are written with `0600` permissions.
+- Reworked the service/session-classifier plumbing so the saved key applies live inside the running TUI without needing an env var restart, while keeping the background classifier manager reusable when the key is configured later.
+- Updated user-facing help/docs/examples so the repo now describes the config-backed key flow instead of the old env-var setup.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/config/config.go internal/config/editable.go internal/config/config_test.go internal/sessionclassify/client.go internal/sessionclassify/sessionclassify.go internal/gitops/message.go internal/service/service.go internal/cli/run.go internal/tui/settings.go internal/tui/app.go internal/tui/app_test.go internal/commands/commands.go` passed.
+- `go test ./internal/config ./internal/sessionclassify ./internal/gitops ./internal/service ./internal/tui ./internal/commands -count=1` passed.
+- `go test ./internal/cli ./internal/tui -count=1` passed after restoring the needed `sessionclassify` import in `internal/cli/run.go`.
+- `make test` passed.
+- `make scan` passed at `2026-03-18T16:56:33+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-18T16:56:40+09:00` (`projects: 132`).
+- `env COLUMNS=112 LINES=31 make tui DATA_DIR=/tmp/lcroom-openai-key-check CONFIG=/tmp/lcroom-openai-key-check/config.toml DB=/tmp/lcroom-openai-key-check/little-control-room.sqlite INTERVAL=1h` opened the TUI on an isolated temp config with no key, landed directly in the Settings blocker, showed the masked `OpenAI API key` field and explanatory copy, and was then terminated from the shell after the smoke check.
+
+Next concrete tasks:
+
+- Decide whether replacing an already-saved API key should get a tiny confirmation affordance or “test key” check so users can catch typos before leaving Settings.
+- Consider whether the settings overlay should expose a dedicated clear/revoke action for the saved key instead of relying on freeform editing now that the field is mandatory on startup.
 
 ## Latest Update (2026-03-18 08:14 JST)
 
