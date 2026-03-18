@@ -1018,6 +1018,8 @@ func renderTerminalHTMLDocument(title, content string, cols, rows int) (string, 
 	fmt.Fprintf(&out, `.terminal{display:block;width:calc(var(--cols) * 1ch);min-width:calc(var(--cols) * 1ch);min-height:calc((var(--rows) * var(--line-h)) + var(--content-bottom));padding-bottom:4px;box-sizing:content-box;overflow:hidden;font-family:%s;font-size:14px;line-height:var(--line-h);color:%s;letter-spacing:0;white-space:pre;font-variant-ligatures:none;font-feature-settings:'liga' 0,'calt' 0;font-variant-numeric:tabular-nums;font-synthesis:none;}`, terminalFontFamilyCSS, defaultFG)
 	out.WriteString(`.line{display:flex;align-items:stretch;width:100%;line-height:var(--line-h);}`)
 	out.WriteString(`.run{display:inline-block;white-space:pre;line-height:inherit;min-height:100%;vertical-align:top;}`)
+	out.WriteString(`.pixel-run{display:inline-flex;align-items:stretch;gap:0;height:100%;line-height:0;vertical-align:top;}`)
+	out.WriteString(`.pixel-cell{display:inline-block;flex:0 0 1ch;width:1ch;height:100%;}`)
 	out.WriteString(`</style></head><body><div class="stage"><div class="shell-wrap">`)
 	out.WriteString(renderTerminalHTMLBlock(lines, layout.lineHeight, defaultFG, defaultBG))
 	out.WriteString(`</div></div></body></html>`)
@@ -1042,6 +1044,10 @@ func renderTerminalHTMLBlock(lines []terminalLine, lineHeight float64, defaultFG
 				if run.text == "" {
 					continue
 				}
+				if terminalRunUsesPixelCells(run.text) {
+					out.WriteString(renderTerminalPixelRun(run, defaultFG, defaultBG, lineBG))
+					continue
+				}
 				out.WriteString(`<span class="run" style="`)
 				out.WriteString(terminalRunCSS(run.style, defaultFG, defaultBG, lineBG))
 				out.WriteString(`">`)
@@ -1052,6 +1058,27 @@ func renderTerminalHTMLBlock(lines []terminalLine, lineHeight float64, defaultFG
 		out.WriteString(`</div>`)
 	}
 	out.WriteString(`</div></div>`)
+	return out.String()
+}
+
+func renderTerminalPixelRun(run terminalRun, defaultFG, defaultBG, lineBG string) string {
+	fg, _ := effectiveTerminalColors(run.style, defaultFG, defaultBG)
+	bg := effectiveTerminalPixelBackground(run.style, defaultBG, lineBG)
+
+	var out strings.Builder
+	out.WriteString(`<span class="pixel-run"`)
+	if css := terminalPixelRunCSS(run.style); css != "" {
+		out.WriteString(` style="`)
+		out.WriteString(css)
+		out.WriteString(`"`)
+	}
+	out.WriteString(`>`)
+	for _, r := range run.text {
+		out.WriteString(`<span class="pixel-cell" style="`)
+		out.WriteString(terminalPixelCellCSS(r, fg, bg))
+		out.WriteString(`"></span>`)
+	}
+	out.WriteString(`</span>`)
 	return out.String()
 }
 
@@ -1076,6 +1103,55 @@ func terminalRunCSS(style terminalTextStyle, defaultFG, defaultBG, lineBG string
 		parts = append(parts, "text-decoration:underline")
 	}
 	return strings.Join(parts, ";")
+}
+
+func terminalRunUsesPixelCells(text string) bool {
+	if text == "" {
+		return false
+	}
+	hasBlock := false
+	for _, r := range text {
+		switch r {
+		case ' ':
+			continue
+		case '█', '▀', '▄':
+			hasBlock = true
+		default:
+			return false
+		}
+	}
+	return hasBlock
+}
+
+func effectiveTerminalPixelBackground(style terminalTextStyle, defaultBG, lineBG string) string {
+	if style.hasBG && style.bg != "" {
+		return style.bg
+	}
+	if lineBG != "" {
+		return lineBG
+	}
+	return defaultBG
+}
+
+func terminalPixelRunCSS(style terminalTextStyle) string {
+	parts := []string{}
+	if style.faint {
+		parts = append(parts, "opacity:0.72")
+	}
+	return strings.Join(parts, ";")
+}
+
+func terminalPixelCellCSS(r rune, fg, bg string) string {
+	switch r {
+	case '█':
+		return fmt.Sprintf("background:%s", fg)
+	case '▀':
+		return fmt.Sprintf("background:linear-gradient(to bottom,%s 0 50%%,%s 50%% 100%%)", fg, bg)
+	case '▄':
+		return fmt.Sprintf("background:linear-gradient(to bottom,%s 0 50%%,%s 50%% 100%%)", bg, fg)
+	default:
+		return ""
+	}
 }
 
 var (

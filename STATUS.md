@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-18 17:22 JST (JST)
+Last updated: 2026-03-18 17:31 JST (JST)
 
 ## Current State
 
@@ -46,6 +46,7 @@ Current screenshot workflow assumption:
 - Screenshot capture scale is now configurable via `capture_scale`, and the default browser-rendered PNG export path uses `1.5x` capture scale for sharper text.
 - Screenshot config also supports `live_runtime_project`, which renders a focused runtime-pane screenshot using a screenshot-only managed-runtime snapshot for the chosen project (defaulting to `selected_project` when unspecified).
 - Screenshot export now preserves truecolor terminal escapes instead of forcing ANSI256 quantization, so the committed docs images can match the live TUI palette more closely.
+- Screenshot export now also renders block-only ANSI pixel-art runs as explicit CSS pixel cells instead of font glyphs, avoiding hollow-edge “screen door” seams in the control-room vignette PNGs.
 - The committed docs screenshot set now includes `main-panel.png`, `main-panel-live-runtime.png`, `codex-embedded.png`, `diff-view.png`, `diff-view-image.png`, and `commit-preview.png`.
 
 ## What Works
@@ -84,6 +85,27 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-18 17:31 JST)
+
+- Updated the screenshot HTML exporter so block-only ANSI runs (`█`, `▀`, `▄`) are no longer rendered through the browser font stack; they now render as explicit CSS pixel cells, which removes the hollow-edge “screen door” gaps from the control-room vignette in exported PNGs.
+- Added a focused screenshot regression that locks in the pixel-cell path for block-glyph runs and regenerated the committed docs screenshots, including `docs/screenshots/main-panel.png`, with the crisper control-room scene.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/screenshots.go internal/tui/screenshots_test.go` passed.
+- `go test ./internal/tui -run 'TestRenderTerminalHTMLDocument(IncludesEscapedTextAndColors|IncludesTrueColorEscapes|UsesPixelCellsForBlockGlyphRuns)' -count=1` passed.
+- `make screenshots` passed and rewrote the committed PNG set in `docs/screenshots/`.
+- `make test` passed.
+- `make scan` passed at `2026-03-18T17:31:03+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-18T17:31:03+09:00` (`projects: 132`).
+- A zoomed visual check of the regenerated `docs/screenshots/main-panel.png` confirmed that the control-room sprite now renders as solid pixel blocks instead of hollow-edged font blocks.
+
+Next concrete tasks:
+
+- If other screenshot scenes start using additional Unicode block-drawing characters, extend the pixel-cell renderer beyond `█`, `▀`, and `▄` before relying on those glyphs in docs art.
+- If the terminal screenshot typography ever moves away from the current browser/font path, keep this pixel-cell shortcut for sprite-like runs so the control-room art stays crisp regardless of font metrics.
 
 ## Latest Update (2026-03-18 17:22 JST)
 

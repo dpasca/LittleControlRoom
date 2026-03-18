@@ -83,6 +83,27 @@ func TestRenderTerminalHTMLDocumentIncludesTrueColorEscapes(t *testing.T) {
 	}
 }
 
+func TestRenderTerminalHTMLDocumentUsesPixelCellsForBlockGlyphRuns(t *testing.T) {
+	t.Parallel()
+
+	rendered, _, _ := renderTerminalHTMLDocument("Demo", "\x1b[38;2;16;32;48;48;2;4;8;12m▀█▄\x1b[0m", 3, 1)
+	if !strings.Contains(rendered, `class="pixel-run"`) {
+		t.Fatalf("html should render block glyph runs through pixel cells: %q", rendered)
+	}
+	for _, want := range []string{
+		`background:linear-gradient(to bottom,#102030 0 50%,#04080c 50% 100%)`,
+		`background:#102030`,
+		`background:linear-gradient(to bottom,#04080c 0 50%,#102030 50% 100%)`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("html missing pixel-cell style %q: %q", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, ">▀█▄<") {
+		t.Fatalf("html should not rely on raw block glyph text for pixel-art runs: %q", rendered)
+	}
+}
+
 func TestTerminalLineBackgroundRequiresMatchingEdges(t *testing.T) {
 	t.Parallel()
 
