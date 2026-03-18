@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"lcroom/internal/llm"
 )
 
 func TestOpenAICommitMessageClientSuggest(t *testing.T) {
@@ -64,6 +66,13 @@ func TestOpenAICommitMessageClientSuggest(t *testing.T) {
 		_, _ = w.Write([]byte(`{
 			"status":"completed",
 			"model":"gpt-5-mini-2026-03-07",
+			"usage":{
+				"input_tokens":1200,
+				"input_tokens_details":{"cached_tokens":100},
+				"output_tokens":12,
+				"output_tokens_details":{"reasoning_tokens":3},
+				"total_tokens":1212
+			},
 			"output":[
 				{
 					"type":"message",
@@ -80,6 +89,7 @@ func TestOpenAICommitMessageClientSuggest(t *testing.T) {
 	}))
 	defer server.Close()
 
+	usageTracker := llm.NewUsageTracker()
 	client := &OpenAICommitMessageClient{
 		apiKey:   "test-key",
 		model:    "gpt-5-mini",
@@ -87,6 +97,9 @@ func TestOpenAICommitMessageClientSuggest(t *testing.T) {
 		httpClient: &http.Client{
 			Timeout: 5 * time.Second,
 		},
+		responses: llm.NewResponsesClientWithHTTPClient("test-key", server.URL, &http.Client{
+			Timeout: 5 * time.Second,
+		}, usageTracker),
 	}
 
 	suggestion, err := client.Suggest(context.Background(), CommitMessageInput{
@@ -105,6 +118,13 @@ func TestOpenAICommitMessageClientSuggest(t *testing.T) {
 	}
 	if suggestion.Model != "gpt-5-mini-2026-03-07" {
 		t.Fatalf("model = %q, want response model", suggestion.Model)
+	}
+	usage := usageTracker.Snapshot(true)
+	if usage.Completed != 1 || usage.Failed != 0 {
+		t.Fatalf("usage counters = %+v, want one successful tracked call", usage)
+	}
+	if usage.Totals.EstimatedCostUSD <= 0 {
+		t.Fatalf("usage estimated cost = %f, want positive commit cost", usage.Totals.EstimatedCostUSD)
 	}
 }
 
@@ -161,6 +181,13 @@ func TestOpenAICommitMessageClientRecommendUntracked(t *testing.T) {
 		_, _ = w.Write([]byte(`{
 			"status":"completed",
 			"model":"gpt-5-mini-2026-03-07",
+			"usage":{
+				"input_tokens":1400,
+				"input_tokens_details":{"cached_tokens":200},
+				"output_tokens":24,
+				"output_tokens_details":{"reasoning_tokens":5},
+				"total_tokens":1424
+			},
 			"output":[
 				{
 					"type":"message",
@@ -177,6 +204,7 @@ func TestOpenAICommitMessageClientRecommendUntracked(t *testing.T) {
 	}))
 	defer server.Close()
 
+	usageTracker := llm.NewUsageTracker()
 	client := &OpenAICommitMessageClient{
 		apiKey:   "test-key",
 		model:    "gpt-5-mini",
@@ -184,6 +212,9 @@ func TestOpenAICommitMessageClientRecommendUntracked(t *testing.T) {
 		httpClient: &http.Client{
 			Timeout: 5 * time.Second,
 		},
+		responses: llm.NewResponsesClientWithHTTPClient("test-key", server.URL, &http.Client{
+			Timeout: 5 * time.Second,
+		}, usageTracker),
 	}
 
 	suggestion, err := client.RecommendUntracked(context.Background(), UntrackedFileRecommendationInput{
@@ -210,5 +241,12 @@ func TestOpenAICommitMessageClientRecommendUntracked(t *testing.T) {
 	}
 	if suggestion.Model != "gpt-5-mini-2026-03-07" {
 		t.Fatalf("model = %q, want response model", suggestion.Model)
+	}
+	usage := usageTracker.Snapshot(true)
+	if usage.Completed != 1 || usage.Failed != 0 {
+		t.Fatalf("usage counters = %+v, want one successful tracked call", usage)
+	}
+	if usage.Totals.EstimatedCostUSD <= 0 {
+		t.Fatalf("usage estimated cost = %f, want positive untracked-review cost", usage.Totals.EstimatedCostUSD)
 	}
 }

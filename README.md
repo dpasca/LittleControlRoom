@@ -150,7 +150,7 @@ Using Codex or OpenCode inside LCR does not add any additional cost beyond what 
 
 There are some OpenAI API costs from a key the user needs to provide (`openai_api_key` in the config file). These are for LCR to
 summarize sessions, classify them, help with commit messages.
-These operations are done with relatively small requests on cheaper models, and the footer now shows a running cost estimate for tracked LCR API usage. It is still best to keep an eye on the OpenAI dashboard, which remains the source of truth.
+These operations are done with relatively small requests on cheaper models, and the footer now shows a running cost estimate for tracked LCR API usage across the current summary/classification and commit-help paths. It is still best to keep an eye on the OpenAI dashboard, which remains the source of truth.
 
 ## Notes
 

@@ -1,12 +1,10 @@
 package gitops
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,6 +12,7 @@ import (
 	"time"
 
 	"lcroom/internal/brand"
+	"lcroom/internal/llm"
 )
 
 const defaultCommitModel = "gpt-5-mini"
@@ -46,9 +45,14 @@ type OpenAICommitMessageClient struct {
 	model      string
 	endpoint   string
 	httpClient *http.Client
+	responses  *llm.ResponsesClient
 }
 
 func NewOpenAICommitMessageClient(apiKey string) *OpenAICommitMessageClient {
+	return NewOpenAICommitMessageClientWithUsageTracker(apiKey, nil)
+}
+
+func NewOpenAICommitMessageClientWithUsageTracker(apiKey string, usage *llm.UsageTracker) *OpenAICommitMessageClient {
 	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
 		return nil
@@ -59,19 +63,11 @@ func NewOpenAICommitMessageClient(apiKey string) *OpenAICommitMessageClient {
 		model = defaultCommitModel
 	}
 
-	endpoint := strings.TrimSpace(os.Getenv("OPENAI_BASE_URL"))
-	if endpoint == "" {
-		endpoint = "https://api.openai.com/v1"
-	}
-	endpoint = strings.TrimRight(endpoint, "/") + "/responses"
-
 	return &OpenAICommitMessageClient{
-		apiKey:   apiKey,
-		model:    model,
-		endpoint: endpoint,
-		httpClient: &http.Client{
-			Timeout: 45 * time.Second,
-		},
+		apiKey:     apiKey,
+		model:      model,
+		httpClient: &http.Client{Timeout: 45 * time.Second},
+		responses:  llm.NewResponsesClient(apiKey, 45*time.Second, usage),
 	}
 }
 
@@ -83,7 +79,7 @@ func (c *OpenAICommitMessageClient) ModelName() string {
 }
 
 func (c *OpenAICommitMessageClient) Suggest(ctx context.Context, input CommitMessageInput) (CommitMessageSuggestion, error) {
-	if c == nil || c.apiKey == "" {
+	if c == nil || c.responsesClient() == nil {
 		return CommitMessageSuggestion{}, errors.New("openai commit message client not configured")
 	}
 	if strings.TrimSpace(input.ProjectName) == "" && strings.TrimSpace(input.Branch) != "" {
@@ -95,7 +91,7 @@ func (c *OpenAICommitMessageClient) Suggest(ctx context.Context, input CommitMes
 		return CommitMessageSuggestion{}, fmt.Errorf("marshal commit message input: %w", err)
 	}
 
-	outputText, modelName, err := c.runJSONSchemaPrompt(
+	response, err := c.runJSONSchemaPrompt(
 		ctx,
 		commitMessageInstructions,
 		"Draft a git commit subject for this coding task snapshot:\n\n"+string(payload),
@@ -119,7 +115,7 @@ func (c *OpenAICommitMessageClient) Suggest(ctx context.Context, input CommitMes
 	var decoded struct {
 		Message string `json:"message"`
 	}
-	if err := json.Unmarshal([]byte(outputText), &decoded); err != nil {
+	if err := json.Unmarshal([]byte(response.OutputText), &decoded); err != nil {
 		return CommitMessageSuggestion{}, fmt.Errorf("decode commit message result: %w", err)
 	}
 	message := strings.TrimSpace(decoded.Message)
@@ -128,114 +124,39 @@ func (c *OpenAICommitMessageClient) Suggest(ctx context.Context, input CommitMes
 	}
 	return CommitMessageSuggestion{
 		Message: message,
-		Model:   modelName,
+		Model:   response.Model,
 	}, nil
 }
 
-func (c *OpenAICommitMessageClient) runJSONSchemaPrompt(ctx context.Context, systemText, userText, schemaName string, schema map[string]any) (string, string, error) {
-	reqBody := map[string]any{
-		"model": c.model,
-		"input": []any{
-			map[string]any{
-				"role": "system",
-				"content": []any{
-					map[string]any{
-						"type": "input_text",
-						"text": systemText,
-					},
-				},
-			},
-			map[string]any{
-				"role": "user",
-				"content": []any{
-					map[string]any{
-						"type": "input_text",
-						"text": userText,
-					},
-				},
-			},
-		},
-		"reasoning": map[string]any{
-			"effort": "minimal",
-		},
-		"store": false,
-		"text": map[string]any{
-			"format": map[string]any{
-				"type":   "json_schema",
-				"name":   schemaName,
-				"strict": true,
-				"schema": schema,
-			},
-		},
-	}
-
-	raw, err := json.Marshal(reqBody)
+func (c *OpenAICommitMessageClient) runJSONSchemaPrompt(ctx context.Context, systemText, userText, schemaName string, schema map[string]any) (llm.JSONSchemaResponse, error) {
+	response, err := c.responsesClient().RunJSONSchema(ctx, llm.JSONSchemaRequest{
+		Model:           c.model,
+		SystemText:      systemText,
+		UserText:        userText,
+		SchemaName:      schemaName,
+		Schema:          schema,
+		ReasoningEffort: "minimal",
+	})
 	if err != nil {
-		return "", "", fmt.Errorf("marshal openai request: %w", err)
+		return llm.JSONSchemaResponse{}, err
 	}
+	if strings.TrimSpace(response.OutputText) == "" {
+		return llm.JSONSchemaResponse{}, fmt.Errorf("openai response missing assistant output (status=%s)", response.Status)
+	}
+	return response, nil
+}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(raw))
-	if err != nil {
-		return "", "", fmt.Errorf("create openai request: %w", err)
+func (c *OpenAICommitMessageClient) responsesClient() *llm.ResponsesClient {
+	if c == nil {
+		return nil
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", "", fmt.Errorf("send openai request: %w", err)
+	if c.responses != nil {
+		return c.responses
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", "", fmt.Errorf("read openai response: %w", err)
+	if strings.TrimSpace(c.apiKey) == "" {
+		return nil
 	}
-	if resp.StatusCode >= 300 {
-		return "", "", fmt.Errorf("openai responses api %s: %s", resp.Status, strings.TrimSpace(string(body)))
-	}
-
-	var envelope struct {
-		Status string `json:"status"`
-		Model  string `json:"model"`
-		Error  *struct {
-			Message string `json:"message"`
-		} `json:"error"`
-		Output []struct {
-			Type    string `json:"type"`
-			Role    string `json:"role"`
-			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"output"`
-	}
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		return "", "", fmt.Errorf("decode openai response: %w", err)
-	}
-	if envelope.Error != nil && envelope.Error.Message != "" {
-		return "", "", errors.New(envelope.Error.Message)
-	}
-
-	var outputText string
-	for _, item := range envelope.Output {
-		if item.Type != "message" || item.Role != "assistant" {
-			continue
-		}
-		for _, content := range item.Content {
-			if content.Type == "output_text" && strings.TrimSpace(content.Text) != "" {
-				outputText = content.Text
-				break
-			}
-		}
-		if outputText != "" {
-			break
-		}
-	}
-	if outputText == "" {
-		return "", "", fmt.Errorf("openai response missing assistant output (status=%s)", envelope.Status)
-	}
-	return outputText, strings.TrimSpace(envelope.Model), nil
+	return llm.NewResponsesClientWithHTTPClient(c.apiKey, c.endpoint, c.httpClient, nil)
 }
 
 const commitMessageInstructions = `You write short git commit subject lines for coding work.

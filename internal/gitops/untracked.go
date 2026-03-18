@@ -47,7 +47,7 @@ type UntrackedFileRecommender interface {
 }
 
 func (c *OpenAICommitMessageClient) RecommendUntracked(ctx context.Context, input UntrackedFileRecommendationInput) (UntrackedFileRecommendationResult, error) {
-	if c == nil || c.apiKey == "" {
+	if c == nil || c.responsesClient() == nil {
 		return UntrackedFileRecommendationResult{}, errors.New("openai commit message client not configured")
 	}
 	if strings.TrimSpace(input.ProjectName) == "" && strings.TrimSpace(input.Branch) != "" {
@@ -59,7 +59,7 @@ func (c *OpenAICommitMessageClient) RecommendUntracked(ctx context.Context, inpu
 		return UntrackedFileRecommendationResult{}, fmt.Errorf("marshal untracked recommendation input: %w", err)
 	}
 
-	outputText, modelName, err := c.runJSONSchemaPrompt(
+	response, err := c.runJSONSchemaPrompt(
 		ctx,
 		untrackedRecommendationInstructions,
 		"Review these untracked file candidates for a proposed git commit:\n\n"+string(payload),
@@ -104,7 +104,7 @@ func (c *OpenAICommitMessageClient) RecommendUntracked(ctx context.Context, inpu
 	var decoded struct {
 		Files []UntrackedFileDecision `json:"files"`
 	}
-	if err := json.Unmarshal([]byte(outputText), &decoded); err != nil {
+	if err := json.Unmarshal([]byte(response.OutputText), &decoded); err != nil {
 		return UntrackedFileRecommendationResult{}, fmt.Errorf("decode untracked recommendation result: %w", err)
 	}
 	for i := range decoded.Files {
@@ -113,7 +113,7 @@ func (c *OpenAICommitMessageClient) RecommendUntracked(ctx context.Context, inpu
 	}
 	return UntrackedFileRecommendationResult{
 		Files: decoded.Files,
-		Model: modelName,
+		Model: response.Model,
 	}, nil
 }
 

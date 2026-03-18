@@ -1,7 +1,6 @@
 package sessionclassify
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +14,7 @@ import (
 	"time"
 
 	"lcroom/internal/brand"
+	"lcroom/internal/llm"
 	"lcroom/internal/model"
 )
 
@@ -23,6 +23,7 @@ type OpenAIClient struct {
 	model      string
 	endpoint   string
 	httpClient *http.Client
+	responses  *llm.ResponsesClient
 }
 
 const (
@@ -45,37 +46,6 @@ type classifierAttemptConfig struct {
 	ReasoningEffort string
 }
 
-type openAIResponseEnvelope struct {
-	Status            string `json:"status"`
-	Model             string `json:"model"`
-	MaxOutputTokens   *int64 `json:"max_output_tokens"`
-	IncompleteDetails *struct {
-		Reason string `json:"reason"`
-	} `json:"incomplete_details"`
-	Error *struct {
-		Message string `json:"message"`
-	} `json:"error"`
-	Usage *struct {
-		InputTokens        int64 `json:"input_tokens"`
-		InputTokensDetails struct {
-			CachedTokens int64 `json:"cached_tokens"`
-		} `json:"input_tokens_details"`
-		OutputTokens        int64 `json:"output_tokens"`
-		OutputTokensDetails struct {
-			ReasoningTokens int64 `json:"reasoning_tokens"`
-		} `json:"output_tokens_details"`
-		TotalTokens int64 `json:"total_tokens"`
-	} `json:"usage"`
-	Output []struct {
-		Type    string `json:"type"`
-		Role    string `json:"role"`
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-	} `json:"output"`
-}
-
 type retryableClassificationError struct {
 	cause error
 	delay time.Duration
@@ -96,6 +66,10 @@ func (e *retryableClassificationError) Unwrap() error {
 }
 
 func NewOpenAIClient(apiKey string) *OpenAIClient {
+	return NewOpenAIClientWithUsageTracker(apiKey, nil)
+}
+
+func NewOpenAIClientWithUsageTracker(apiKey string, usage *llm.UsageTracker) *OpenAIClient {
 	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
 		return nil
@@ -106,19 +80,11 @@ func NewOpenAIClient(apiKey string) *OpenAIClient {
 		model = DefaultModel
 	}
 
-	endpoint := strings.TrimSpace(os.Getenv("OPENAI_BASE_URL"))
-	if endpoint == "" {
-		endpoint = "https://api.openai.com/v1"
-	}
-	endpoint = strings.TrimRight(endpoint, "/") + "/responses"
-
 	return &OpenAIClient{
-		apiKey:   apiKey,
-		model:    model,
-		endpoint: endpoint,
-		httpClient: &http.Client{
-			Timeout: classifierHTTPTimeout,
-		},
+		apiKey:     apiKey,
+		model:      model,
+		httpClient: &http.Client{Timeout: classifierHTTPTimeout},
+		responses:  llm.NewResponsesClient(apiKey, classifierHTTPTimeout, usage),
 	}
 }
 
@@ -130,7 +96,7 @@ func (c *OpenAIClient) ModelName() string {
 }
 
 func (c *OpenAIClient) Classify(ctx context.Context, snapshot SessionSnapshot) (Result, error) {
-	if c == nil || c.apiKey == "" {
+	if c == nil || c.responsesClient() == nil {
 		return Result{}, errors.New("openai client not configured")
 	}
 
@@ -156,117 +122,32 @@ func (c *OpenAIClient) Classify(ctx context.Context, snapshot SessionSnapshot) (
 }
 
 func (c *OpenAIClient) classifyAttempt(ctx context.Context, snapshotJSON []byte, attempt classifierAttemptConfig) (Result, error) {
-	reqBody := map[string]any{
-		"model": c.model,
-		"input": []any{
-			map[string]any{
-				"role": "system",
-				"content": []any{
-					map[string]any{
-						"type": "input_text",
-						"text": sessionClassificationInstructions,
-					},
-				},
-			},
-			map[string]any{
-				"role": "user",
-				"content": []any{
-					map[string]any{
-						"type": "input_text",
-						"text": "Classify this latest coding-session snapshot:\n\n" + string(snapshotJSON),
-					},
-				},
-			},
-		},
-		"reasoning": map[string]any{
-			"effort": attempt.ReasoningEffort,
-		},
-		"store": false,
-		"text": map[string]any{
-			"format": map[string]any{
-				"type":   "json_schema",
-				"name":   "session_state_classification",
-				"strict": true,
-				"schema": map[string]any{
-					"type":                 "object",
-					"additionalProperties": false,
-					"properties": map[string]any{
-						"category": map[string]any{
-							"type": "string",
-							"enum": []string{
-								string(model.SessionCategoryCompleted),
-								string(model.SessionCategoryBlocked),
-								string(model.SessionCategoryWaitingForUser),
-								string(model.SessionCategoryNeedsFollowUp),
-								string(model.SessionCategoryInProgress),
-								string(model.SessionCategoryUnknown),
-							},
-						},
-						"summary": map[string]any{
-							"type":        "string",
-							"description": "One concise dashboard-ready summary under 140 characters; brief fragments are fine, write from the implicit assistant point of view, and omit prefixes like 'Assistant is'.",
-						},
-						"confidence": map[string]any{
-							"type":    "number",
-							"minimum": 0,
-							"maximum": 1,
-						},
-					},
-					"required": []string{"category", "summary", "confidence"},
-				},
-			},
-		},
-	}
-
-	raw, err := json.Marshal(reqBody)
+	response, err := c.responsesClient().RunJSONSchema(ctx, llm.JSONSchemaRequest{
+		Model:           c.model,
+		SystemText:      sessionClassificationInstructions,
+		UserText:        "Classify this latest coding-session snapshot:\n\n" + string(snapshotJSON),
+		SchemaName:      "session_state_classification",
+		Schema:          sessionClassificationSchema(),
+		ReasoningEffort: attempt.ReasoningEffort,
+	})
 	if err != nil {
-		return Result{}, fmt.Errorf("marshal openai request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(raw))
-	if err != nil {
-		return Result{}, fmt.Errorf("create openai request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		err = fmt.Errorf("send openai request: %w", err)
+		var httpErr *llm.HTTPStatusError
+		if errors.As(err, &httpErr) && isRetryableHTTPStatus(httpErr.StatusCode) {
+			return Result{}, &retryableClassificationError{
+				cause: err,
+				delay: retryDelayFromHeader(httpErr.RetryAfter),
+			}
+		}
 		if retryable := retryableTransportClassificationError(ctx, err); retryable != nil {
 			return Result{}, retryable
 		}
 		return Result{}, err
 	}
-	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return Result{}, fmt.Errorf("read openai response: %w", err)
-	}
-	if resp.StatusCode >= 300 {
-		err := fmt.Errorf("openai responses api %s: %s", resp.Status, strings.TrimSpace(string(body)))
-		if isRetryableHTTPStatus(resp.StatusCode) {
-			return Result{}, &retryableClassificationError{
-				cause: err,
-				delay: retryDelayFromHeader(resp.Header.Get("Retry-After")),
-			}
-		}
-		return Result{}, err
-	}
-
-	var envelope openAIResponseEnvelope
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		return Result{}, fmt.Errorf("decode openai response: %w", err)
-	}
-	if envelope.Error != nil && envelope.Error.Message != "" {
-		return Result{}, errors.New(envelope.Error.Message)
-	}
-
-	outputText := responseAssistantOutputText(envelope)
+	outputText := response.OutputText
 	if outputText == "" {
-		err := missingAssistantOutputError(envelope)
-		if strings.EqualFold(strings.TrimSpace(envelope.Status), "incomplete") {
+		err := missingAssistantOutputError(response)
+		if strings.EqualFold(strings.TrimSpace(response.Status), "incomplete") {
 			return Result{}, &retryableClassificationError{cause: err}
 		}
 		return Result{}, err
@@ -279,53 +160,39 @@ func (c *OpenAIClient) classifyAttempt(ctx context.Context, snapshotJSON []byte,
 	if result.Category == "" {
 		result.Category = model.SessionCategoryUnknown
 	}
-	result.Model = strings.TrimSpace(envelope.Model)
-	if envelope.Usage != nil {
-		result.Usage = model.LLMUsage{
-			InputTokens:       envelope.Usage.InputTokens,
-			OutputTokens:      envelope.Usage.OutputTokens,
-			TotalTokens:       envelope.Usage.TotalTokens,
-			CachedInputTokens: envelope.Usage.InputTokensDetails.CachedTokens,
-			ReasoningTokens:   envelope.Usage.OutputTokensDetails.ReasoningTokens,
-		}
-		if estimatedCostUSD, ok := model.EstimateLLMCostUSD(result.Model, result.Usage); ok {
-			result.Usage.EstimatedCostUSD = estimatedCostUSD
-		}
-	}
+	result.Model = strings.TrimSpace(response.Model)
+	result.Usage = response.Usage
 	return result, nil
 }
 
-func responseAssistantOutputText(envelope openAIResponseEnvelope) string {
-	for _, item := range envelope.Output {
-		if item.Type != "message" || item.Role != "assistant" {
-			continue
-		}
-		for _, content := range item.Content {
-			if content.Type == "output_text" && strings.TrimSpace(content.Text) != "" {
-				return content.Text
-			}
-		}
+func (c *OpenAIClient) responsesClient() *llm.ResponsesClient {
+	if c == nil {
+		return nil
 	}
-	return ""
+	if c.responses != nil {
+		return c.responses
+	}
+	if strings.TrimSpace(c.apiKey) == "" {
+		return nil
+	}
+	return llm.NewResponsesClientWithHTTPClient(c.apiKey, c.endpoint, c.httpClient, nil)
 }
 
-func missingAssistantOutputError(envelope openAIResponseEnvelope) error {
-	status := strings.TrimSpace(envelope.Status)
+func missingAssistantOutputError(response llm.JSONSchemaResponse) error {
+	status := strings.TrimSpace(response.Status)
 	if strings.EqualFold(status, "incomplete") {
 		details := []string{"status=incomplete"}
-		if envelope.IncompleteDetails != nil && strings.TrimSpace(envelope.IncompleteDetails.Reason) != "" {
-			details = append(details, "reason="+strings.TrimSpace(envelope.IncompleteDetails.Reason))
+		if strings.TrimSpace(response.IncompleteReason) != "" {
+			details = append(details, "reason="+strings.TrimSpace(response.IncompleteReason))
 		}
-		if envelope.MaxOutputTokens != nil && *envelope.MaxOutputTokens > 0 {
-			details = append(details, fmt.Sprintf("max_output_tokens=%d", *envelope.MaxOutputTokens))
+		if response.MaxOutputTokens != nil && *response.MaxOutputTokens > 0 {
+			details = append(details, fmt.Sprintf("max_output_tokens=%d", *response.MaxOutputTokens))
 		}
-		if envelope.Usage != nil {
-			if envelope.Usage.OutputTokens > 0 {
-				details = append(details, fmt.Sprintf("output_tokens=%d", envelope.Usage.OutputTokens))
-			}
-			if envelope.Usage.OutputTokensDetails.ReasoningTokens > 0 {
-				details = append(details, fmt.Sprintf("reasoning_tokens=%d", envelope.Usage.OutputTokensDetails.ReasoningTokens))
-			}
+		if response.Usage.OutputTokens > 0 {
+			details = append(details, fmt.Sprintf("output_tokens=%d", response.Usage.OutputTokens))
+		}
+		if response.Usage.ReasoningTokens > 0 {
+			details = append(details, fmt.Sprintf("reasoning_tokens=%d", response.Usage.ReasoningTokens))
 		}
 		return fmt.Errorf("openai response incomplete (%s)", strings.Join(details, ", "))
 	}
@@ -333,6 +200,36 @@ func missingAssistantOutputError(envelope openAIResponseEnvelope) error {
 		status = "unknown"
 	}
 	return fmt.Errorf("openai response missing assistant output (status=%s)", status)
+}
+
+func sessionClassificationSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"category": map[string]any{
+				"type": "string",
+				"enum": []string{
+					string(model.SessionCategoryCompleted),
+					string(model.SessionCategoryBlocked),
+					string(model.SessionCategoryWaitingForUser),
+					string(model.SessionCategoryNeedsFollowUp),
+					string(model.SessionCategoryInProgress),
+					string(model.SessionCategoryUnknown),
+				},
+			},
+			"summary": map[string]any{
+				"type":        "string",
+				"description": "One concise dashboard-ready summary under 140 characters; brief fragments are fine, write from the implicit assistant point of view, and omit prefixes like 'Assistant is'.",
+			},
+			"confidence": map[string]any{
+				"type":    "number",
+				"minimum": 0,
+				"maximum": 1,
+			},
+		},
+		"required": []string{"category", "summary", "confidence"},
+	}
 }
 
 func isRetryableHTTPStatus(statusCode int) bool {

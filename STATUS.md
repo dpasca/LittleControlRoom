@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-19 08:02 JST (JST)
+Last updated: 2026-03-19 08:34 JST (JST)
 
 ## Current State
 
@@ -85,6 +85,28 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-19 08:34 JST)
+
+- Centralized the current OpenAI Responses API access behind a shared `internal/llm` transport layer, so classifier, commit-subject suggestion, and untracked-file recommendation prompts now all use the same request/response path instead of each feature building its own HTTP client flow.
+- Added a shared LLM usage tracker in `service` and wired both classifier and commit-help clients through it, so the footer cost estimate now includes commit-help traffic as well as session classification instead of remaining classifier-only.
+- Kept the footer/session-usage surface compatible by preferring the new centralized usage snapshot when present while falling back to the older classifier snapshot path for empty/test scenarios, and added commit-path regressions proving tracked usage cost now increments on both commit-subject and untracked-review requests.
+- Updated the README cost note to describe the footer estimate as covering the current summary/classification and commit-help paths.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/llm/usage.go internal/llm/responses.go internal/service/service.go internal/gitops/message.go internal/gitops/message_test.go internal/gitops/untracked.go internal/sessionclassify/client.go` passed.
+- `go test ./internal/llm ./internal/gitops ./internal/sessionclassify ./internal/service -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-19T08:34:13+09:00` (`activity projects: 87`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-19T08:34:13+09:00` (`projects: 133`).
+- `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-central-usage-check CONFIG=/tmp/lcroom-cost-estimator-config.toml DB=/tmp/lcroom-central-usage.sqlite INTERVAL=1h` reached the TUI sandbox and exited via `q`.
+
+Next concrete tasks:
+
+- Switch the session classifier from `gpt-5-mini` to `gpt-5.4-nano` with `reasoning.effort = "medium"` now that the shared cost tracker covers both assessment and commit-help paths.
+- Decide whether the older classifier-local usage tracker should now be removed entirely, since the service-level shared tracker is the new source for footer accounting.
 
 ## Latest Update (2026-03-19 08:02 JST)
 

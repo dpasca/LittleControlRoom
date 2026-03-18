@@ -18,6 +18,7 @@ import (
 	"lcroom/internal/detectors"
 	"lcroom/internal/events"
 	"lcroom/internal/gitops"
+	"lcroom/internal/llm"
 	"lcroom/internal/model"
 	"lcroom/internal/scanner"
 	"lcroom/internal/sessionclassify"
@@ -45,6 +46,7 @@ type Service struct {
 
 	commitMessageSuggester   gitops.CommitMessageSuggester
 	untrackedFileRecommender gitops.UntrackedFileRecommender
+	llmUsageTracker          *llm.UsageTracker
 
 	gitFingerprintReader func(context.Context, string) (scanner.GitFingerprint, error)
 	gitRepoStatusReader  func(context.Context, string) (scanner.GitRepoStatus, error)
@@ -79,6 +81,7 @@ func New(cfg config.AppConfig, st *store.Store, bus *events.Bus, detectorList []
 		store:                st,
 		bus:                  bus,
 		detectors:            detectorList,
+		llmUsageTracker:      llm.NewUsageTracker(),
 		gitFingerprintReader: scanner.ReadGitFingerprint,
 		gitRepoStatusReader:  scanner.ReadGitRepoStatus,
 		gitRepoInitializer:   runGitInit,
@@ -141,22 +144,32 @@ func (s *Service) HasSessionClassifier() bool {
 }
 
 func (s *Service) SessionUsage() model.LLMSessionUsage {
+	enabled := strings.TrimSpace(s.cfg.OpenAIAPIKey) != ""
+	if s.llmUsageTracker != nil {
+		snapshot := s.llmUsageTracker.Snapshot(enabled)
+		if hasMeaningfulLLMUsage(snapshot) {
+			return snapshot
+		}
+	}
 	if s.classifier == nil {
+		if enabled {
+			return model.LLMSessionUsage{Enabled: true}
+		}
 		return model.LLMSessionUsage{}
 	}
 	if usageReader, ok := s.classifier.(interface{ UsageSnapshot() model.LLMSessionUsage }); ok {
 		return usageReader.UsageSnapshot()
 	}
-	return model.LLMSessionUsage{Enabled: true}
+	return model.LLMSessionUsage{Enabled: enabled}
 }
 
 func (s *Service) configureOpenAIClientsLocked(apiKey string) {
 	apiKey = strings.TrimSpace(apiKey)
-	commitAssistant := gitops.NewOpenAICommitMessageClient(apiKey)
+	commitAssistant := gitops.NewOpenAICommitMessageClientWithUsageTracker(apiKey, s.llmUsageTracker)
 	s.commitMessageSuggester = commitAssistant
 	s.untrackedFileRecommender = commitAssistant
 
-	client := sessionclassify.NewOpenAIClient(apiKey)
+	client := sessionclassify.NewOpenAIClientWithUsageTracker(apiKey, s.llmUsageTracker)
 	if manager, ok := s.classifier.(*sessionclassify.Manager); ok {
 		manager.ConfigureClient(client)
 		manager.Notify()
@@ -166,6 +179,20 @@ func (s *Service) configureOpenAIClientsLocked(apiKey string) {
 		Client:           client,
 		OnProjectUpdated: s.RefreshProjectStatus,
 	})
+}
+
+func hasMeaningfulLLMUsage(snapshot model.LLMSessionUsage) bool {
+	return snapshot.Started > 0 ||
+		snapshot.Completed > 0 ||
+		snapshot.Failed > 0 ||
+		snapshot.Running > 0 ||
+		strings.TrimSpace(snapshot.Model) != "" ||
+		snapshot.Totals.InputTokens > 0 ||
+		snapshot.Totals.OutputTokens > 0 ||
+		snapshot.Totals.TotalTokens > 0 ||
+		snapshot.Totals.CachedInputTokens > 0 ||
+		snapshot.Totals.ReasoningTokens > 0 ||
+		snapshot.Totals.EstimatedCostUSD > 0
 }
 
 func (s *Service) ScanOnce(ctx context.Context) (ScanReport, error) {
