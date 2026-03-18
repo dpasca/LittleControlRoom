@@ -3102,6 +3102,71 @@ func TestLaunchCodexForSelectionShowsOpeningStateInsteadOfPreviousSession(t *tes
 	}
 }
 
+func TestLaunchCodexForSelectionForceNewRetriesWhenPreviousThreadReopensFirst(t *testing.T) {
+	const previousThreadID = "019cccc3abcd"
+	const newThreadID = "019dddd4efgh"
+
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		threadID := previousThreadID
+		if len(requests) > 1 {
+			threadID = newThreadID
+		}
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: codexapp.ProviderCodex,
+				Started:  true,
+				Preset:   req.Preset,
+				Status:   "Codex session ready",
+				ThreadID: threadID,
+			},
+		}, nil
+	})
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:                "/tmp/demo",
+			Name:                "demo",
+			PresentOnDisk:       true,
+			LatestSessionID:     previousThreadID,
+			LatestSessionFormat: "modern",
+		}},
+	}
+
+	updated, cmd := m.launchCodexForSelection(true, "")
+	if cmd == nil {
+		t.Fatalf("launchCodexForSelection() should return an open command")
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("/codex-new returned error = %v", opened.err)
+	}
+	if opened.status != "Embedded Codex session opened. Alt+Up hides it." {
+		t.Fatalf("opened.status = %q, want normal opened status after retry", opened.status)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("launch requests = %d, want 2 after the automatic fresh-session retry", len(requests))
+	}
+
+	updated, _ = updated.(Model).Update(opened)
+	got := updated.(Model)
+	snapshot, ok := got.currentCodexSnapshot()
+	if !ok {
+		t.Fatalf("currentCodexSnapshot() unavailable after handling the opened session")
+	}
+	if snapshot.ThreadID != newThreadID {
+		t.Fatalf("thread id = %q, want retried fresh thread %q", snapshot.ThreadID, newThreadID)
+	}
+}
+
 func TestLaunchCodexForSelectionForceNewWarnsWhenActiveSessionIsReopenedReadOnly(t *testing.T) {
 	const threadID = "019cccc3abcd"
 

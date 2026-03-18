@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-18 17:31 JST (JST)
+Last updated: 2026-03-19 06:48 JST (JST)
 
 ## Current State
 
@@ -85,6 +85,26 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-19 06:48 JST)
+
+- Tightened the embedded fresh-session open path so top-level `/codex-new` and embedded `/new` now automatically retry once when a forced fresh launch comes back on the same prior thread instead of immediately showing that stale session.
+- Added a focused TUI regression for the specific first-open failure mode: no live embedded session exists, the first forced-new launch reopens the previous saved thread, and the automatic retry lands on a genuinely fresh thread.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/codex_pane.go internal/tui/app_test.go` passed.
+- `go test ./internal/tui -run 'Test(LaunchCodexForSelectionForceNewRetriesWhenPreviousThreadReopensFirst|LaunchCodexForSelectionForceNewWarnsWhenActiveSessionIsReopenedReadOnly|VisibleCodexSlashNewStartsFreshSession)' -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-19T06:47:26+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-19T06:47:26+09:00` (`projects: 132`).
+- `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-parallel-codex-new-retry-check` reached the TUI sandbox and exited via `q`.
+
+Next concrete tasks:
+
+- Run a live embedded Codex repro against the real `codex app-server` the next time the stale first-open case appears, to confirm the automatic retry eliminates the user-visible failure outside the fake-session path too.
+- If Codex eventually exposes an explicit fresh-session guarantee or error for “reopened existing thread,” replace this retry-on-same-thread recovery with that provider signal.
 
 ## Latest Update (2026-03-18 17:31 JST)
 

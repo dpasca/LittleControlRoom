@@ -382,11 +382,40 @@ func (m Model) openCodexSessionCmd(req codexapp.LaunchRequest) tea.Cmd {
 			return codexSessionOpenedMsg{projectPath: req.ProjectPath, err: err}
 		}
 		snapshot := session.Snapshot()
+		// Codex can occasionally hand back the last thread on the first forced-new
+		// launch even though a second identical launch immediately fixes it.
+		if shouldRetryFreshEmbeddedOpen(req, previousThreadID, snapshot) {
+			session, reused, err = manager.Open(req)
+			if err != nil {
+				return codexSessionOpenedMsg{projectPath: req.ProjectPath, err: err}
+			}
+			snapshot = session.Snapshot()
+		}
 		return codexSessionOpenedMsg{
 			projectPath: req.ProjectPath,
 			status:      embeddedSessionOpenStatus(req, previousThreadID, reused, snapshot),
 		}
 	}
+}
+
+func shouldRetryFreshEmbeddedOpen(req codexapp.LaunchRequest, previousThreadID string, snapshot codexapp.Snapshot) bool {
+	return forceNewMatchedExistingThread(req, previousThreadID, snapshot) && !snapshot.BusyExternal
+}
+
+func forceNewMatchedExistingThread(req codexapp.LaunchRequest, previousThreadID string, snapshot codexapp.Snapshot) bool {
+	if !req.ForceNew {
+		return false
+	}
+	currentThreadID := strings.TrimSpace(snapshot.ThreadID)
+	if currentThreadID == "" {
+		return false
+	}
+	previousThreadID = strings.TrimSpace(previousThreadID)
+	if previousThreadID != "" && currentThreadID == previousThreadID {
+		return true
+	}
+	requestedResumeID := strings.TrimSpace(req.ResumeID)
+	return requestedResumeID != "" && currentThreadID == requestedResumeID
 }
 
 func embeddedSessionOpenStatus(req codexapp.LaunchRequest, previousThreadID string, reused bool, snapshot codexapp.Snapshot) string {
@@ -396,8 +425,7 @@ func embeddedSessionOpenStatus(req codexapp.LaunchRequest, previousThreadID stri
 	}
 	label := provider.Label()
 	currentThreadID := strings.TrimSpace(snapshot.ThreadID)
-	requestedResumeID := strings.TrimSpace(req.ResumeID)
-	matchedExisting := currentThreadID != "" && (currentThreadID == requestedResumeID || currentThreadID == strings.TrimSpace(previousThreadID))
+	matchedExisting := forceNewMatchedExistingThread(req, previousThreadID, snapshot)
 	sessionLabel := "another session"
 	if short := shortID(currentThreadID); short != "" {
 		sessionLabel = "session " + short
