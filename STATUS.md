@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-18 17:08 JST (JST)
+Last updated: 2026-03-18 17:22 JST (JST)
 
 ## Current State
 
@@ -84,6 +84,28 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-18 17:22 JST)
+
+- Tightened embedded fresh-session launch feedback so `/codex-new` and embedded `/new` now detect when a supposed fresh Codex launch lands back on the same thread and that thread is already active in another process, instead of pretending a new session opened successfully.
+- The open-status copy now tells the user that Little Control Room could not start a fresh embedded session because the existing session is active elsewhere and that the app is showing that session read-only instead.
+- Added focused TUI regressions for both entry points: top-level `/codex-new` from the project list and embedded `/new` inside an existing Codex pane.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/codex_pane.go internal/tui/app_test.go` passed.
+- `go test ./internal/tui -run 'Test(VisibleCodexSlashNewWarnsWhenActiveSessionIsReopenedReadOnly|LaunchCodexForSelectionForceNewWarnsWhenActiveSessionIsReopenedReadOnly|VisibleCodexSlashNewStartsFreshSession|VisibleOpenCodeSlashNewFailureKeepsClosedSessionVisible|LaunchCodexForSelectionShowsOpeningStateInsteadOfPreviousSession)' -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-18T17:22:07+09:00` (`activity projects: 86`, `tracked projects: 137`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-18T17:22:14+09:00` (`projects: 132`).
+- `env -u OPENAI_API_KEY COLUMNS=112 LINES=31 make tui` correctly refused to share the main DB because another TUI runtime was already active (`pid 88777`), so the UI smoke check was rerun safely in parallel.
+- `env -u OPENAI_API_KEY COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-parallel-codex-new-busy-elsewhere-check` reached the TUI sandbox and exited via `q`.
+
+Next concrete tasks:
+
+- If Codex eventually exposes a first-class “fresh session blocked by active external thread” signal, switch this detection from thread-ID comparison to that explicit protocol signal.
+- Consider surfacing the same fresh-session failure copy inside the read-only transcript notice block, not only in the global status line.
 
 ## Latest Update (2026-03-18 17:08 JST)
 

@@ -2973,6 +2973,80 @@ func TestVisibleOpenCodeSlashNewFailureKeepsClosedSessionVisible(t *testing.T) {
 	}
 }
 
+func TestVisibleCodexSlashNewWarnsWhenActiveSessionIsReopenedReadOnly(t *testing.T) {
+	const threadID = "019cccc3abcd"
+
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		snapshot := codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex,
+			Started:  true,
+			Preset:   req.Preset,
+			Status:   "Codex session ready",
+			ThreadID: threadID,
+		}
+		if len(requests) > 1 {
+			snapshot.BusyExternal = true
+		}
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot:    snapshot,
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+		ResumeID:    threadID,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/new")
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should run the embedded /new command")
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("/new returned error = %v", opened.err)
+	}
+	wantStatus := "Could not start a fresh embedded Codex session because session 019cccc3 is already active in another process. Showing that session read-only instead."
+	if opened.status != wantStatus {
+		t.Fatalf("opened.status = %q, want %q", opened.status, wantStatus)
+	}
+
+	updated, _ = got.Update(opened)
+	got = updated.(Model)
+	if got.status != wantStatus {
+		t.Fatalf("status = %q, want %q", got.status, wantStatus)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("launch requests = %d, want 2", len(requests))
+	}
+	if !requests[1].ForceNew {
+		t.Fatalf("second launch request should force a fresh session")
+	}
+}
+
 func TestLaunchCodexForSelectionShowsOpeningStateInsteadOfPreviousSession(t *testing.T) {
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
 		return &fakeCodexSession{
@@ -3025,6 +3099,60 @@ func TestLaunchCodexForSelectionShowsOpeningStateInsteadOfPreviousSession(t *tes
 	}
 	if strings.Contains(rendered, "/tmp/previous") {
 		t.Fatalf("rendered opening view should not keep showing the previous session, got %q", rendered)
+	}
+}
+
+func TestLaunchCodexForSelectionForceNewWarnsWhenActiveSessionIsReopenedReadOnly(t *testing.T) {
+	const threadID = "019cccc3abcd"
+
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:     codexapp.ProviderCodex,
+				Started:      true,
+				Preset:       req.Preset,
+				Status:       "Codex session ready",
+				ThreadID:     threadID,
+				BusyExternal: true,
+			},
+		}, nil
+	})
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:                "/tmp/demo",
+			Name:                "demo",
+			PresentOnDisk:       true,
+			LatestSessionID:     threadID,
+			LatestSessionFormat: "modern",
+		}},
+	}
+
+	updated, cmd := m.launchCodexForSelection(true, "")
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("launchCodexForSelection() should return an open command")
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("/codex-new returned error = %v", opened.err)
+	}
+	wantStatus := "Could not start a fresh embedded Codex session because session 019cccc3 is already active in another process. Showing that session read-only instead."
+	if opened.status != wantStatus {
+		t.Fatalf("opened.status = %q, want %q", opened.status, wantStatus)
+	}
+
+	updated, _ = got.Update(opened)
+	got = updated.(Model)
+	if got.status != wantStatus {
+		t.Fatalf("status = %q, want %q", got.status, wantStatus)
 	}
 }
 

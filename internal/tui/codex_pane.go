@@ -362,6 +362,12 @@ func (m Model) refreshBusyElsewhereCmd(projectPath string) tea.Cmd {
 
 func (m Model) openCodexSessionCmd(req codexapp.LaunchRequest) tea.Cmd {
 	manager := m.codexManager
+	previousThreadID := ""
+	if manager != nil {
+		if existing, ok := manager.Session(req.ProjectPath); ok {
+			previousThreadID = strings.TrimSpace(existing.Snapshot().ThreadID)
+		}
+	}
 	return func() tea.Msg {
 		provider := req.Provider.Normalized()
 		if provider == "" {
@@ -375,22 +381,45 @@ func (m Model) openCodexSessionCmd(req codexapp.LaunchRequest) tea.Cmd {
 		if err != nil {
 			return codexSessionOpenedMsg{projectPath: req.ProjectPath, err: err}
 		}
-		status := "Embedded " + label + " session opened. Alt+Up hides it."
 		snapshot := session.Snapshot()
-		switch {
-		case snapshot.BusyExternal && strings.TrimSpace(req.Prompt) != "":
-			status = label + " is already active in another process. Prompt was not sent; use " + embeddedNewCommand(provider) + " for a separate session."
-		case snapshot.BusyExternal:
-			status = label + " is already active in another process. Embedded view is read-only until it finishes."
-		case strings.TrimSpace(req.Prompt) != "":
-			status = "Prompt sent to embedded " + label + ". Alt+Up hides it."
-		case reused:
-			status = "Embedded " + label + " session reopened. Alt+Up hides it."
-		}
 		return codexSessionOpenedMsg{
 			projectPath: req.ProjectPath,
-			status:      status,
+			status:      embeddedSessionOpenStatus(req, previousThreadID, reused, snapshot),
 		}
+	}
+}
+
+func embeddedSessionOpenStatus(req codexapp.LaunchRequest, previousThreadID string, reused bool, snapshot codexapp.Snapshot) string {
+	provider := req.Provider.Normalized()
+	if provider == "" {
+		provider = embeddedProvider(snapshot)
+	}
+	label := provider.Label()
+	currentThreadID := strings.TrimSpace(snapshot.ThreadID)
+	requestedResumeID := strings.TrimSpace(req.ResumeID)
+	matchedExisting := currentThreadID != "" && (currentThreadID == requestedResumeID || currentThreadID == strings.TrimSpace(previousThreadID))
+	sessionLabel := "another session"
+	if short := shortID(currentThreadID); short != "" {
+		sessionLabel = "session " + short
+	}
+
+	switch {
+	case req.ForceNew && snapshot.BusyExternal && matchedExisting:
+		return "Could not start a fresh embedded " + label + " session because " + sessionLabel + " is already active in another process. Showing that session read-only instead."
+	case req.ForceNew && snapshot.BusyExternal:
+		return "Could not start a fresh embedded " + label + " session because " + sessionLabel + " is already active in another process. Embedded view is read-only until it finishes."
+	case req.ForceNew && matchedExisting:
+		return "Could not start a fresh embedded " + label + " session; " + sessionLabel + " reopened instead."
+	case snapshot.BusyExternal && strings.TrimSpace(req.Prompt) != "":
+		return label + " is already active in another process. Prompt was not sent; use " + embeddedNewCommand(provider) + " for a separate session."
+	case snapshot.BusyExternal:
+		return label + " is already active in another process. Embedded view is read-only until it finishes."
+	case strings.TrimSpace(req.Prompt) != "":
+		return "Prompt sent to embedded " + label + ". Alt+Up hides it."
+	case reused:
+		return "Embedded " + label + " session reopened. Alt+Up hides it."
+	default:
+		return "Embedded " + label + " session opened. Alt+Up hides it."
 	}
 }
 
