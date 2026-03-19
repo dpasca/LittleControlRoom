@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-19 08:34 JST (JST)
+Last updated: 2026-03-19 10:25 JST (JST)
 
 ## Current State
 
@@ -85,6 +85,22 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-19 10:25 JST)
+
+- Changed the session-classifier retry plan from `medium -> minimal` to `medium -> low`, keeping the primary assessment effort unchanged while making the fallback compatible with GPT-5.4 models such as `gpt-5.4-nano`, which reject `minimal`.
+- Switched the session classifier default model from `gpt-5-mini` to `gpt-5.4-nano`, so new assessment runs now target the cheaper GPT-5.4 nano path by default while still using `medium` reasoning on the first attempt.
+- Kept the retry behavior otherwise unchanged: the fallback still only applies on retryable transport/API failures or incomplete outputs, so normal classifier requests still run at `medium`.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- No verification rerun in this step, per user request.
+
+Next concrete tasks:
+
+- Re-run the live multi-project assessment bake-off later, after a bit of real usage, so cost and quality are measured on the actual production model and retry plan.
+- Decide whether to migrate commit-subject generation separately after enough footer cost data has accumulated under the new classifier model.
 
 ## Latest Update (2026-03-19 08:34 JST)
 

@@ -29,7 +29,7 @@ type OpenAIClient struct {
 const (
 	classifierHTTPTimeout             = 60 * time.Second
 	classifierPrimaryReasoningEffort  = "medium"
-	classifierFallbackReasoningEffort = "minimal"
+	classifierFallbackReasoningEffort = "low"
 	classifierDefaultRetryBackoff     = 750 * time.Millisecond
 )
 

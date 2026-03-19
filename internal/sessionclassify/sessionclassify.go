@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	DefaultModel      = "gpt-5-mini"
+	DefaultModel      = "gpt-5.4-nano"
 	ClassifierVersion = "session-v1"
 )
 
