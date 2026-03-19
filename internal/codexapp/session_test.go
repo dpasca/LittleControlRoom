@@ -1227,6 +1227,67 @@ func TestReconcileBusyStateClearsBusyWhenThreadReadShowsNoActiveTurn(t *testing.
 	}
 }
 
+func TestEnsureFreshThreadRejectsRetainedHistory(t *testing.T) {
+	callCount := 0
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			callCount++
+			if method != "thread/read" {
+				t.Fatalf("method = %q, want thread/read", method)
+			}
+			request, ok := params.(threadReadParams)
+			if !ok {
+				t.Fatalf("params = %#v, want threadReadParams", params)
+			}
+			if request.ThreadID != "thread_456" {
+				t.Fatalf("thread id = %q, want thread_456", request.ThreadID)
+			}
+			return json.RawMessage(`{"thread":{"id":"thread_456","status":{"type":"idle"},"turns":[{"id":"turn_old","status":"completed","items":[{"id":"item_user","type":"userMessage"}]}]}}`), nil
+		},
+	}
+
+	err := s.ensureFreshThread(context.Background(), "thread_456")
+	if err == nil {
+		t.Fatalf("ensureFreshThread() error = nil, want ForceNewSessionReusedError")
+	}
+	var reusedErr *ForceNewSessionReusedError
+	if !errors.As(err, &reusedErr) {
+		t.Fatalf("ensureFreshThread() error = %v, want ForceNewSessionReusedError", err)
+	}
+	if reusedErr.ThreadID != "thread_456" {
+		t.Fatalf("reused thread id = %q, want thread_456", reusedErr.ThreadID)
+	}
+	if callCount != 1 {
+		t.Fatalf("rpc call count = %d, want 1", callCount)
+	}
+}
+
+func TestEnsureFreshThreadAcceptsEmptyThread(t *testing.T) {
+	callCount := 0
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			callCount++
+			if method != "thread/read" {
+				t.Fatalf("method = %q, want thread/read", method)
+			}
+			return json.RawMessage(`{"thread":{"id":"thread_456","status":{"type":"idle"},"turns":[]}}`), nil
+		},
+	}
+
+	if err := s.ensureFreshThread(context.Background(), "thread_456"); err != nil {
+		t.Fatalf("ensureFreshThread() error = %v", err)
+	}
+	if callCount != 1 {
+		t.Fatalf("rpc call count = %d, want 1", callCount)
+	}
+}
+
 func TestTurnAbortedClearsBusyLikeInterruptedCompletion(t *testing.T) {
 	s := &appServerSession{
 		projectPath: "/tmp/demo",

@@ -25,6 +25,18 @@ const (
 	busyStateReconcileAfter = time.Minute
 )
 
+type ForceNewSessionReusedError struct {
+	ThreadID string
+}
+
+func (e *ForceNewSessionReusedError) Error() string {
+	threadID := strings.TrimSpace(e.ThreadID)
+	if threadID == "" {
+		return "forced fresh embedded Codex open reused an existing thread"
+	}
+	return "forced fresh embedded Codex open reused existing thread " + threadID
+}
+
 type appServerSession struct {
 	projectPath string
 	preset      codexcli.Preset
@@ -1340,6 +1352,11 @@ func (s *appServerSession) start(req LaunchRequest) error {
 		if err != nil {
 			return err
 		}
+		if req.ForceNew {
+			if err := s.ensureFreshThread(ctx, threadID); err != nil {
+				return err
+			}
+		}
 	}
 
 	s.mu.Lock()
@@ -1355,6 +1372,21 @@ func (s *appServerSession) start(req LaunchRequest) error {
 			return nil
 		}
 		return s.Submit(req.Prompt)
+	}
+	return nil
+}
+
+func (s *appServerSession) ensureFreshThread(ctx context.Context, threadID string) error {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return nil
+	}
+	thread, err := s.readThreadState(ctx, threadID)
+	if err != nil {
+		return err
+	}
+	if threadHasRetainedHistory(thread) {
+		return &ForceNewSessionReusedError{ThreadID: threadID}
 	}
 	return nil
 }
@@ -2836,6 +2868,18 @@ func effectiveThreadStatus(thread resumedThread) resumedThreadStatus {
 		return resumedThreadStatus{Type: "idle"}
 	}
 	return thread.Status
+}
+
+func threadHasRetainedHistory(thread resumedThread) bool {
+	if activeTurnIDFromThread(thread) != "" {
+		return true
+	}
+	for _, turn := range thread.Turns {
+		if len(turn.Items) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeSubmission(input Submission) Submission {

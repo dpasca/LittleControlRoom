@@ -1,6 +1,29 @@
 # Little Control Room Status
 
-Last updated: 2026-03-19 22:57 JST (JST)
+Last updated: 2026-03-19 23:36 JST (JST)
+
+## Latest Update (2026-03-19 23:36 JST)
+
+- Hardened the fresh embedded Codex open path for `/codex-new` and embedded `/new`: forced-new launches now verify the thread they got back is actually fresh, not just a different-looking open result.
+- Added a Codex app-server freshness guard that reads the just-started thread before accepting it. If the forced-new launch already contains retained history or an in-progress turn, Little Control Room now treats that as “old session reopened” and retries instead of accepting it as the new session.
+- Expanded the TUI retry path from a single retry to a bounded multi-attempt loop, and taught it to retry both the older “same known thread ID came back” case and the new app-server “fresh open reused an existing thread” signal.
+- Added focused regressions for both layers: Codex app-session tests covering the retained-history check, plus TUI coverage for the retry-on-provider-signal flow alongside the earlier same-thread reopen path.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/codexapp/session.go internal/codexapp/session_test.go internal/tui/codex_pane.go internal/tui/app_test.go` passed.
+- `go test ./internal/codexapp ./internal/tui -run 'Test(EnsureFreshThread(RejectsRetainedHistory|AcceptsEmptyThread)|LaunchCodexForSelectionForceNew(RetriesWhenPreviousThreadReopensFirst|RetriesWhenCodexRejectsFreshThread|WarnsWhenActiveSessionIsReopenedReadOnly))' -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-19T23:36:12+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-19T23:36:23+09:00` (`projects: 133`).
+- `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-codex-new-fresh-open-check INTERVAL=1h` reached the TUI sandbox and exited via `q`.
+
+Next concrete tasks:
+
+- Run a live repro against the real embedded Codex `/codex-new` flow the next time the stale-open glitch appears, to confirm the retained-history guard fully removes the user-visible fallback in practice.
+- Decide whether the bounded retry count for forced-new Codex opens should stay at `3` or become a configurable/internal constant if more field data suggests a different sweet spot.
+- If Codex eventually exposes an explicit “fresh thread created” signal, replace the retained-history inference with that provider-native guarantee.
 
 ## Latest Update (2026-03-19 22:57 JST)
 

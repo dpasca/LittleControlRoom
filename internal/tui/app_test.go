@@ -3325,6 +3325,82 @@ func TestLaunchCodexForSelectionForceNewRetriesWhenPreviousThreadReopensFirst(t 
 	}
 }
 
+func TestLaunchCodexForSelectionForceNewRetriesWhenCodexRejectsFreshThread(t *testing.T) {
+	const freshThreadID = "019fresh4efgh"
+	const prompt = "continue in the new thread"
+
+	var (
+		requests []codexapp.LaunchRequest
+		created  []*fakeCodexSession
+	)
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		if len(requests) == 1 {
+			return nil, &codexapp.ForceNewSessionReusedError{ThreadID: "019stale3abcd"}
+		}
+		session := &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: codexapp.ProviderCodex,
+				Started:  true,
+				Preset:   req.Preset,
+				Status:   "Codex session ready",
+				ThreadID: freshThreadID,
+			},
+		}
+		created = append(created, session)
+		return session, nil
+	})
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/demo",
+			Name:          "demo",
+			PresentOnDisk: true,
+		}},
+	}
+
+	updated, cmd := m.launchCodexForSelection(true, prompt)
+	if cmd == nil {
+		t.Fatalf("launchCodexForSelection() should return an open command")
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("/codex-new returned error = %v", opened.err)
+	}
+	if opened.status != "Prompt sent to embedded Codex. Alt+Up hides it." {
+		t.Fatalf("opened.status = %q, want prompt-sent status after retry", opened.status)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("launch requests = %d, want 2 after retryable fresh-thread failure", len(requests))
+	}
+	if !requests[0].ForceNew || !requests[1].ForceNew {
+		t.Fatalf("launch requests should keep ForceNew enabled across retries: %#v", requests)
+	}
+	if requests[1].Prompt != prompt {
+		t.Fatalf("second launch prompt = %q, want the original inline prompt after retry", requests[1].Prompt)
+	}
+	if len(created) != 1 {
+		t.Fatalf("created sessions = %d, want 1 successful fresh session", len(created))
+	}
+
+	updated, _ = updated.(Model).Update(opened)
+	got := updated.(Model)
+	snapshot, ok := got.currentCodexSnapshot()
+	if !ok {
+		t.Fatalf("currentCodexSnapshot() unavailable after handling the opened session")
+	}
+	if snapshot.ThreadID != freshThreadID {
+		t.Fatalf("thread id = %q, want retried fresh thread %q", snapshot.ThreadID, freshThreadID)
+	}
+}
+
 func TestLaunchCodexForSelectionForceNewWarnsWhenActiveSessionIsReopenedReadOnly(t *testing.T) {
 	const threadID = "019cccc3abcd"
 

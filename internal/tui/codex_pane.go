@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/url"
@@ -22,6 +23,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
+
+const maxForceNewEmbeddedOpenAttempts = 3
 
 func (m *Model) ensureCodexRuntime() {
 	if m.codexManager == nil {
@@ -377,25 +380,45 @@ func (m Model) openCodexSessionCmd(req codexapp.LaunchRequest) tea.Cmd {
 		if manager == nil {
 			return codexSessionOpenedMsg{err: fmt.Errorf("%s manager unavailable", label)}
 		}
-		session, reused, err := manager.Open(req)
-		if err != nil {
-			return codexSessionOpenedMsg{projectPath: req.ProjectPath, err: err}
+		attemptLimit := 1
+		if req.ForceNew {
+			attemptLimit = maxForceNewEmbeddedOpenAttempts
 		}
-		snapshot := session.Snapshot()
-		// Codex can occasionally hand back the last thread on the first forced-new
-		// launch even though a second identical launch immediately fixes it.
-		if shouldRetryFreshEmbeddedOpen(req, previousThreadID, snapshot) {
+		var (
+			session  codexapp.Session
+			reused   bool
+			err      error
+			snapshot codexapp.Snapshot
+		)
+		for attempt := 1; attempt <= attemptLimit; attempt++ {
 			session, reused, err = manager.Open(req)
 			if err != nil {
+				if shouldRetryFreshEmbeddedOpenError(req, err) && attempt < attemptLimit {
+					continue
+				}
 				return codexSessionOpenedMsg{projectPath: req.ProjectPath, err: err}
 			}
 			snapshot = session.Snapshot()
+			// Codex can occasionally hand back the last thread on a forced-new
+			// launch even though a second identical launch immediately fixes it.
+			if shouldRetryFreshEmbeddedOpen(req, previousThreadID, snapshot) && attempt < attemptLimit {
+				continue
+			}
+			break
 		}
 		return codexSessionOpenedMsg{
 			projectPath: req.ProjectPath,
 			status:      embeddedSessionOpenStatus(req, previousThreadID, reused, snapshot),
 		}
 	}
+}
+
+func shouldRetryFreshEmbeddedOpenError(req codexapp.LaunchRequest, err error) bool {
+	if !req.ForceNew || err == nil {
+		return false
+	}
+	var reusedErr *codexapp.ForceNewSessionReusedError
+	return errors.As(err, &reusedErr)
 }
 
 func shouldRetryFreshEmbeddedOpen(req codexapp.LaunchRequest, previousThreadID string, snapshot codexapp.Snapshot) bool {
