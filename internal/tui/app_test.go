@@ -469,12 +469,12 @@ func TestFilterProjects(t *testing.T) {
 		{Name: "hidden"},
 	}
 
-	filtered := filterProjects(projects, visibilityAIFolders, nil)
+	filtered := filterProjects(projects, visibilityAIFolders, nil, "")
 	if len(filtered) != 1 || filtered[0].Name != "visible" {
 		t.Fatalf("filterProjects(AI folders) = %#v, want only visible project", filtered)
 	}
 
-	all := filterProjects(projects, visibilityAllFolders, nil)
+	all := filterProjects(projects, visibilityAllFolders, nil, "")
 	if len(all) != 2 {
 		t.Fatalf("filterProjects(All folders) len = %d, want 2", len(all))
 	}
@@ -487,9 +487,27 @@ func TestFilterProjectsExcludesConfiguredNamePatterns(t *testing.T) {
 		{Name: "visible-demo", Path: "/tmp/visible-demo", LastActivity: time.Date(2026, 3, 6, 10, 0, 0, 0, time.UTC)},
 	}
 
-	filtered := filterProjects(projects, visibilityAllFolders, []string{"client-*", "*control*"})
+	filtered := filterProjects(projects, visibilityAllFolders, []string{"client-*", "*control*"}, "")
 	if len(filtered) != 1 || filtered[0].Name != "visible-demo" {
 		t.Fatalf("filterProjects() with name excludes = %#v, want only visible-demo", filtered)
+	}
+}
+
+func TestFilterProjectsByTransientProjectFilter(t *testing.T) {
+	projects := []model.ProjectSummary{
+		{Name: "LittleControlRoom", Path: "/tmp/LittleControlRoom", LastActivity: time.Date(2026, 3, 6, 9, 0, 0, 0, time.UTC)},
+		{Name: "helper-tools", Path: "/tmp/helper-tools", LastActivity: time.Date(2026, 3, 6, 10, 0, 0, 0, time.UTC)},
+		{Name: "archive", Path: "/tmp/archive", LastActivity: time.Date(2026, 3, 6, 11, 0, 0, 0, time.UTC)},
+	}
+
+	filtered := filterProjects(projects, visibilityAllFolders, nil, "control")
+	if len(filtered) != 1 || filtered[0].Name != "LittleControlRoom" {
+		t.Fatalf("filterProjects() with transient filter = %#v, want only LittleControlRoom", filtered)
+	}
+
+	filtered = filterProjects(projects, visibilityAllFolders, nil, "helper")
+	if len(filtered) != 1 || filtered[0].Path != "/tmp/helper-tools" {
+		t.Fatalf("filterProjects() with helper filter = %#v, want only /tmp/helper-tools", filtered)
 	}
 }
 
@@ -1769,7 +1787,7 @@ func TestProjectsMsgClearsInitialLoadingStatusAfterStartupLoad(t *testing.T) {
 	})
 	got := updated.(Model)
 
-	want := loadedProjectsStatus(1, sortByAttention, visibilityAIFolders)
+	want := loadedProjectsStatus(1, sortByAttention, visibilityAIFolders, "")
 	if got.status != want {
 		t.Fatalf("status = %q, want %q", got.status, want)
 	}
@@ -1911,23 +1929,28 @@ func TestQuitKeyStopsManagedRuntimes(t *testing.T) {
 	}
 }
 
-func TestForgetKeyDoesNothing(t *testing.T) {
+func TestFKeyOpensProjectFilterDialog(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{
 			Path:          "/tmp/missing",
 			Name:          "missing",
 			PresentOnDisk: false,
 		}},
+		width:    100,
+		height:   24,
 		selected: 0,
 	}
 
 	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
 	got := updated.(Model)
-	if cmd != nil {
-		t.Fatalf("forget key should no longer return a forget command")
+	if got.projectFilterDialog == nil {
+		t.Fatalf("f key should open the project filter dialog")
 	}
-	if got.status != "" {
-		t.Fatalf("status = %q, want empty status after removed shortcut", got.status)
+	if got.status != "Project filter open. Type to narrow, Enter keep, Esc close" {
+		t.Fatalf("status = %q, want filter dialog status", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("f key should return a focus command")
 	}
 }
 

@@ -1,6 +1,29 @@
 # Little Control Room Status
 
-Last updated: 2026-03-19 20:02 JST (JST)
+Last updated: 2026-03-19 22:57 JST (JST)
+
+## Latest Update (2026-03-19 22:57 JST)
+
+- Added a transient project-name filter for the main TUI. You can now press `f` from the dashboard to open a live filter dialog, use `/filter <text>` to apply the same temporary narrowing from the command palette, and use `/filter clear` to remove it.
+- Wired the temporary filter through the project-list rebuild path so it composes with the existing AI/all visibility toggle and saved exclude-name patterns. Matching is case-insensitive and checks both the tracked project name and the folder basename.
+- Made the active filter visible in the list chrome instead of feeling like hidden state: the list header and footer now show the current filter, and the empty-state copy explains when no rows match the active filter.
+- Added focused command/TUI coverage for the new parser, keybinding, dialog behavior, render state, and list filtering, and updated the README plus `docs/reference.md` so the new command and `f` shortcut are documented.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/commands/commands.go internal/commands/commands_test.go internal/tui/app.go internal/tui/project_filter.go internal/tui/project_filter_test.go internal/tui/app_test.go` passed.
+- `go test ./internal/commands ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-19T22:57:06+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 2`, `queued classifications: 2`).
+- `make doctor` passed on the cached snapshot dated `2026-03-19T22:57:06+09:00` (`projects: 133`).
+- `make tui` hit the expected active-instance guard on the shared DB, so the interactive UI check used `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-project-filter-check INTERVAL=1h`, which reached the TUI sandbox and exited via `q`.
+
+Next concrete tasks:
+
+- Decide whether the temporary filter should stay a strict substring match or grow into a looser acronym/fuzzy matcher later.
+- Consider adding matched-substring highlighting inside the project column so the narrowed rows are even easier to visually scan.
+- Decide whether we want an always-visible one-keystroke clear affordance for the active filter beyond reopening `f` or using `/filter clear`.
 
 ## Latest Update (2026-03-19 20:02 JST)
 

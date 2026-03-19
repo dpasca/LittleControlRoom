@@ -61,6 +61,8 @@ type Model struct {
 	commandMode                  bool
 	commandInput                 textinput.Model
 	commandSelected              int
+	projectFilter                string
+	projectFilterDialog          *projectFilterDialogState
 	ignoredPickerVisible         bool
 	ignoredPickerLoading         bool
 	ignoredPickerSelected        int
@@ -485,6 +487,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.noteDialog != nil {
 			return m.updateNoteDialogMode(msg)
 		}
+		if m.projectFilterDialog != nil {
+			return m.updateProjectFilterMode(msg)
+		}
 		if m.commandMode {
 			return m.updateCommandMode(msg)
 		}
@@ -523,7 +528,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.allProjects = msg.projects
 		m.rebuildProjectList(selectedPath)
 		if strings.TrimSpace(m.status) == "" || m.status == initialProjectsStatus || len(m.projects) == 0 {
-			m.status = loadedProjectsStatus(len(m.projects), m.sortMode, m.visibility)
+			m.status = loadedProjectsStatus(len(m.projects), m.sortMode, m.visibility, m.projectFilter)
 		}
 		if len(m.projects) > 0 {
 			m.syncDetailViewport(false)
@@ -975,6 +980,8 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "Help closed"
 		}
 		return m, nil
+	case "f":
+		return m, m.openProjectFilterDialog()
 	case "f3":
 		return m.cycleCodexSession(1)
 	case "alt+down":
@@ -1561,6 +1568,8 @@ func (m Model) View() string {
 		body = m.renderSettingsOverlay(body, layout.width, layout.height)
 	} else if m.showHelp {
 		body = m.renderHelpPanelOverlay(body, layout.width, layout.height)
+	} else if m.projectFilterDialog != nil {
+		body = m.renderProjectFilterOverlay(body, layout.width, layout.height)
 	} else if m.commandMode {
 		body = m.renderCommandPaletteOverlay(body, layout.width, layout.height)
 	} else if m.codexPickerVisible {
@@ -1748,6 +1757,9 @@ func (m Model) renderProjectList(width, height int) string {
 		if m.loading {
 			return "Loading..."
 		}
+		if filterLabel := m.projectFilterSummaryLabel(24); filterLabel != "" {
+			return fmt.Sprintf("No projects match %s\nPress f or /filter to change it", filterLabel)
+		}
 		if len(m.allProjects) > 0 && m.visibility == visibilityAIFolders {
 			return "No AI-linked folders\nPress v for All folders"
 		}
@@ -1762,10 +1774,24 @@ func (m Model) renderProjectList(width, height int) string {
 		visible = 1
 	}
 
-	projectW, assessmentW := projectListColumnWidths(width)
+	metaParts := []string{
+		fmt.Sprintf("sort=%s", m.sortMode),
+		fmt.Sprintf("view=%s", visibilityShortLabel(m.visibility)),
+	}
+	filterLabel := m.projectFilterSummaryLabel(16)
+	if filterLabel != "" {
+		metaParts = append(metaParts, "filter:"+filterLabel)
+	}
+	meta := "  (" + strings.Join(metaParts, " ") + ")"
+	columnWidth := width
+	if filterLabel != "" {
+		if reserved := lipgloss.Width(meta); reserved > 0 && width > reserved+53 {
+			columnWidth = width - reserved
+		}
+	}
+	projectW, assessmentW := projectListColumnWidths(columnWidth)
 	rows := make([]string, 0, visible+2)
 	header := renderProjectListHeader(projectW, assessmentW)
-	meta := fmt.Sprintf("  (sort=%s view=%s)", m.sortMode, visibilityShortLabel(m.visibility))
 	if lipgloss.Width(header)+lipgloss.Width(meta) <= width {
 		header += meta
 	}
@@ -2066,6 +2092,14 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, m.openSetupMode()
 	case commands.KindSettings:
 		return m, m.openSettingsMode()
+	case commands.KindFilter:
+		if inv.Clear {
+			return m, m.setProjectFilter("")
+		}
+		if strings.TrimSpace(inv.Filter) != "" {
+			return m, m.setProjectFilter(inv.Filter)
+		}
+		return m, m.openProjectFilterDialog()
 	case commands.KindNewProject:
 		return m, m.openNewProjectDialog()
 	case commands.KindOpen:
@@ -2383,8 +2417,12 @@ func scanCompleteStatus(report service.ScanReport) string {
 	return fmt.Sprintf("Scan complete: %d updated, %d %s queued", len(report.UpdatedProjects), report.QueuedClassifications, label)
 }
 
-func loadedProjectsStatus(projectCount int, sortMode projectSortMode, visibility projectVisibilityMode) string {
-	return fmt.Sprintf("Loaded %d projects (%s, %s)", projectCount, sortMode, visibilityLabel(visibility))
+func loadedProjectsStatus(projectCount int, sortMode projectSortMode, visibility projectVisibilityMode, projectFilter string) string {
+	status := fmt.Sprintf("Loaded %d projects (%s, %s)", projectCount, sortMode, visibilityLabel(visibility))
+	if label := compactProjectFilterLabel(projectFilter, 24); label != "" {
+		return status + " with " + label
+	}
+	return status
 }
 
 func (m Model) scanCmd(forceRetryFailedClassifications bool) tea.Cmd {
@@ -3241,9 +3279,9 @@ func projectMissing(project model.ProjectSummary) bool {
 	return !project.PresentOnDisk
 }
 
-func filterProjects(projects []model.ProjectSummary, mode projectVisibilityMode, excludeProjectPatterns []string) []model.ProjectSummary {
+func filterProjects(projects []model.ProjectSummary, mode projectVisibilityMode, excludeProjectPatterns []string, projectFilter string) []model.ProjectSummary {
 	if mode == visibilityAllFolders {
-		return filterProjectsByName(projects, excludeProjectPatterns)
+		return filterProjectsByFilter(filterProjectsByName(projects, excludeProjectPatterns), projectFilter)
 	}
 	filtered := make([]model.ProjectSummary, 0, len(projects))
 	for _, project := range projects {
@@ -3251,7 +3289,7 @@ func filterProjects(projects []model.ProjectSummary, mode projectVisibilityMode,
 			filtered = append(filtered, project)
 		}
 	}
-	return filterProjectsByName(filtered, excludeProjectPatterns)
+	return filterProjectsByFilter(filterProjectsByName(filtered, excludeProjectPatterns), projectFilter)
 }
 
 func filterProjectsByName(projects []model.ProjectSummary, excludeProjectPatterns []string) []model.ProjectSummary {
@@ -3271,6 +3309,24 @@ func filterProjectsByName(projects []model.ProjectSummary, excludeProjectPattern
 	return filtered
 }
 
+func filterProjectsByFilter(projects []model.ProjectSummary, projectFilter string) []model.ProjectSummary {
+	projectFilter = strings.TrimSpace(projectFilter)
+	if len(projects) == 0 {
+		return nil
+	}
+	if projectFilter == "" {
+		return append([]model.ProjectSummary(nil), projects...)
+	}
+	filtered := make([]model.ProjectSummary, 0, len(projects))
+	for _, project := range projects {
+		if !projectMatchesFilter(project, projectFilter) {
+			continue
+		}
+		filtered = append(filtered, project)
+	}
+	return filtered
+}
+
 func projectMatchesExcludedName(project model.ProjectSummary, excludeProjectPatterns []string) bool {
 	if config.ProjectNameExcluded(project.Name, excludeProjectPatterns) {
 		return true
@@ -3282,10 +3338,52 @@ func projectMatchesExcludedName(project model.ProjectSummary, excludeProjectPatt
 	return config.ProjectNameExcluded(base, excludeProjectPatterns)
 }
 
+func projectMatchesFilter(project model.ProjectSummary, projectFilter string) bool {
+	projectFilter = strings.TrimSpace(projectFilter)
+	if projectFilter == "" {
+		return true
+	}
+
+	filterNeedle := strings.ToLower(projectFilter)
+	normalizedNeedle := normalizeProjectFilterToken(projectFilter)
+	candidates := []string{
+		project.Name,
+		filepath.Base(filepath.Clean(project.Path)),
+	}
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if strings.Contains(strings.ToLower(candidate), filterNeedle) {
+			return true
+		}
+		if normalizedNeedle != "" && strings.Contains(normalizeProjectFilterToken(candidate), normalizedNeedle) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeProjectFilterToken(value string) string {
+	var out strings.Builder
+	out.Grow(len(value))
+	for _, r := range strings.ToLower(strings.TrimSpace(value)) {
+		if r >= 'a' && r <= 'z' {
+			out.WriteRune(r)
+			continue
+		}
+		if r >= '0' && r <= '9' {
+			out.WriteRune(r)
+		}
+	}
+	return out.String()
+}
+
 func (m *Model) rebuildProjectList(selectedPath string) {
 	sorted := append([]model.ProjectSummary(nil), m.allProjects...)
 	m.sortProjects(sorted)
-	m.projects = filterProjects(sorted, m.visibility, m.excludeProjectPatterns)
+	m.projects = filterProjects(sorted, m.visibility, m.excludeProjectPatterns, m.projectFilter)
 	if len(m.projects) == 0 {
 		m.selected = 0
 		m.offset = 0
@@ -3351,15 +3449,16 @@ func (m Model) classificationCounts() classificationSummary {
 func (m Model) renderFooter(width int) string {
 	usageLabel := m.footerUsageLabel()
 	usageSegment := m.renderFooterUsageSegment(usageLabel)
+	filterSegment := m.renderFooterProjectFilterSegment()
 	if m.diffView != nil {
-		return renderDiffFooter(width, *m.diffView, usageSegment)
+		return renderFooterLine(width, renderDiffFooter(width, *m.diffView, usageSegment), filterSegment)
 	}
 	if m.gitStatusDialog != nil {
 		label := gitStatusDialogReadyStatus(*m.gitStatusDialog)
 		if m.gitStatusApplying {
 			label = "Applying git action..."
 		}
-		return fitFooterWidth(label+" | "+usageSegment, width)
+		return m.renderModalFooter(width, label, filterSegment, usageSegment)
 	}
 	if m.commitPreview != nil {
 		label := commitPreviewReadyStatus(m.commitPreview.CanPush)
@@ -3368,39 +3467,44 @@ func (m Model) renderFooter(width int) string {
 		} else if m.commitPreviewRefreshing {
 			label = "Refreshing commit preview..."
 		}
-		return fitFooterWidth(label+" | "+usageSegment, width)
+		return m.renderModalFooter(width, label, filterSegment, usageSegment)
 	}
 	if m.newProjectDialog != nil {
 		label := "New project: Enter create/add, Space toggle git, Alt+1..3 recent, Esc cancel"
 		if m.newProjectDialog.Submitting {
 			label = "New project: applying..."
 		}
-		return fitFooterWidth(label+" | "+usageSegment, width)
+		return m.renderModalFooter(width, label, filterSegment, usageSegment)
+	}
+	if m.projectFilterDialog != nil {
+		label := "Project filter: type to narrow, Enter keep, Esc close"
+		return m.renderModalFooter(width, label, filterSegment, usageSegment)
 	}
 	if m.commandMode {
-		return fitFooterWidth("Command palette open | "+usageSegment, width)
+		return m.renderModalFooter(width, "Command palette open", filterSegment, usageSegment)
 	}
 	if m.setupMode {
-		return fitFooterWidth("Setup: Enter choose, r refresh, s settings, Esc continue | "+usageSegment, width)
+		return m.renderModalFooter(width, "Setup: Enter choose, r refresh, s settings, Esc continue", filterSegment, usageSegment)
 	}
 	if m.settingsMode {
-		return fitFooterWidth("Settings: Enter save, Tab next, Esc cancel | "+usageSegment, width)
+		return m.renderModalFooter(width, "Settings: Enter save, Tab next, Esc cancel", filterSegment, usageSegment)
 	}
 	if m.noteClearConfirm != nil {
-		return fitFooterWidth("Confirm note clear | "+usageSegment, width)
+		return m.renderModalFooter(width, "Confirm note clear", filterSegment, usageSegment)
 	}
 	if m.noteCopyDialog != nil {
-		return fitFooterWidth("Copy note text: Enter copy, Tab next, Esc cancel | "+usageSegment, width)
+		return m.renderModalFooter(width, "Copy note text: Enter copy, Tab next, Esc cancel", filterSegment, usageSegment)
 	}
 	if m.noteDialog != nil && m.noteDialog.Selection != nil {
-		return fitFooterWidth("Note selection: Space mark/copy, arrows move, Esc cancel | "+usageSegment, width)
+		return m.renderModalFooter(width, "Note selection: Space mark/copy, arrows move, Esc cancel", filterSegment, usageSegment)
 	}
 	if m.noteDialog != nil {
-		return fitFooterWidth("Project notes: Ctrl+Y copy, Ctrl+S save, Tab actions, Esc cancel | "+usageSegment, width)
+		return m.renderModalFooter(width, "Project notes: Ctrl+Y copy, Ctrl+S save, Tab actions, Esc cancel", filterSegment, usageSegment)
 	}
 	return renderFooterLine(
 		width,
 		compactFooterBase(width, m.focusedPane, m.detailViewport.ScrollPercent(), m.runtimeViewport.ScrollPercent(), m.hasHiddenCodexSession(), m.currentEmbeddedLaunchLabel()),
+		filterSegment,
 		usageSegment,
 	)
 }
@@ -4191,6 +4295,7 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 					footerPrimaryAction("Enter", launchLabel),
 					footerNavAction("Alt+Down", "picker"),
 					footerNavAction("Alt+[/]", "sessions"),
+					footerNavAction("f", "filter"),
 					footerNavAction("/", "command"),
 					footerLowAction("?", "help"),
 					footerExitAction("q", "quit"),
@@ -4202,6 +4307,7 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 			renderFooterActionList(
 				footerPrimaryAction("Enter", launchLabel),
 				footerNavAction("Alt+Down", "picker"),
+				footerNavAction("f", "filter"),
 				footerNavAction("/", "command"),
 				footerNavAction("Tab", "switch"),
 				footerNavAction("v", "view"),
@@ -4216,6 +4322,7 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 				renderFooterActionList(
 					footerPrimaryAction("Enter", launchLabel),
 					footerNavAction("Alt+Down", "picker"),
+					footerNavAction("f", "filter"),
 					footerNavAction("/", "command"),
 					footerLowAction("?", "help"),
 					footerExitAction("q", "quit"),
@@ -4227,6 +4334,7 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 			renderFooterActionList(
 				footerPrimaryAction("Enter", launchLabel),
 				footerNavAction("Alt+Down", "picker"),
+				footerNavAction("f", "filter"),
 				footerNavAction("/", "command"),
 				footerNavAction("Tab", "switch"),
 				footerLowAction("?", "help"),
@@ -4309,6 +4417,7 @@ func helpPanelLines() []string {
 		),
 		detailSectionStyle.Render("Quick Actions"),
 		renderHelpPanelActionRow(
+			renderDialogAction("f", "filter", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("n", "note", commitActionKeyStyle, commitActionTextStyle),
 			renderDialogAction("o/v", "sort/view", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("p", "pin", pushActionKeyStyle, pushActionTextStyle),

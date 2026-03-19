@@ -75,6 +75,7 @@ The main TUI command palette opens with `/`.
 - `/view <ai|all>`: Switch between AI-linked and all tracked folders.
 - `/setup`: Choose and check the AI backend for summaries and commit help.
 - `/settings`: Edit scope, filters, and scan settings.
+- `/filter [text|clear]`: Temporarily narrow the whole dashboard to matching project names.
 - `/new-project`: Create a project folder, or paste an existing project path to add it directly.
 - `/open`: Open the selected project's folder in the system browser.
 - `/run [command]`: Start the selected project's managed runtime.
@@ -118,6 +119,8 @@ Inside the embedded Codex or OpenCode pane:
 4. Press `Esc` or `Alt+Up` to hide the embedded session pane while it keeps working, then press `Enter` on that project to reopen it from the list.
 5. Press `/` to open the command palette for actions like refresh, pin, snooze, note, diff, commit, or push.
 
+Press `f` from the main dashboard to open the live project-name filter. Type any partial name to narrow the list immediately, and clear the field again when you want the full list back.
+
 Use `/run` or `/start` to start the selected project's saved managed runtime. On the first run, LCR suggests a command from files like `bin/dev`, `package.json`, `Makefile`, `justfile`, or a simple Go entrypoint and lets you confirm or edit it before saving.
 
 Use `/restart` to bounce the managed runtime with the saved or active command, `/run-edit` to change the saved run command later, and `/stop` to stop it entirely.
@@ -131,6 +134,8 @@ Use `/codex-new` or `/opencode-new` when you want a fresh session instead of res
 Inside the embedded Codex or OpenCode pane, use `/resume` or `/session` to open a provider-specific session picker for the current project, or `/resume <session-id>` to jump straight to that session.
 
 Use `/settings` when you want to save your OpenAI API key, include or exclude paths, or change the default Codex launch mode.
+
+Use `/filter <text>` when you want to apply a temporary project-name filter directly from the command palette, `/filter clear` to remove it, or just press `f` for the live filter dialog.
 
 Use `/ignore` on a selected project when you want to hide that exact project name, including Codex-generated worktrees that share the same folder name.
 

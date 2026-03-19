@@ -16,6 +16,7 @@ const (
 	KindView        Kind = "view"
 	KindSetup       Kind = "setup"
 	KindSettings    Kind = "settings"
+	KindFilter      Kind = "filter"
 	KindNewProject  Kind = "new-project"
 	KindOpen        Kind = "open"
 	KindRun         Kind = "run"
@@ -95,6 +96,7 @@ type Invocation struct {
 	Message   string
 	Prompt    string
 	Command   string
+	Filter    string
 	Clear     bool
 	Canonical string
 }
@@ -106,6 +108,7 @@ var specs = []Spec{
 	{Name: "view", Usage: "/view ai|all", Summary: "Choose AI-linked or all folders"},
 	{Name: "settings", Usage: "/settings", Summary: "Edit the saved OpenAI key, scope, filters, and scan thresholds"},
 	{Name: "setup", Usage: "/setup", Summary: "Choose and check the AI backend for summaries and commit help"},
+	{Name: "filter", Usage: "/filter [text|clear]", Summary: "Temporarily show only matching project names"},
 	{Name: "new-project", Usage: "/new-project", Summary: "Create a project folder, or paste an existing path to add it"},
 	{Name: "open", Usage: "/open", Summary: "Open the selected project's folder in the system browser"},
 	{Name: "run", Usage: "/run [command]", Summary: "Start the selected project's managed runtime"},
@@ -179,6 +182,14 @@ func Suggestions(input string) []Suggestion {
 		return enumSuggestions("/view ", argPrefix,
 			choice("ai", "Show AI-linked folders only"),
 			choice("all", "Show all discovered folders"),
+		)
+	case "filter":
+		argPrefix := ""
+		if len(fields) > 1 {
+			argPrefix = strings.ToLower(fields[len(fields)-1])
+		}
+		return enumSuggestions("/filter ", argPrefix,
+			choice("clear", "Remove the active project-name filter"),
 		)
 	case "sessions":
 		argPrefix := ""
@@ -281,6 +292,19 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /settings")
 		}
 		return Invocation{Kind: KindSettings, Canonical: "/settings"}, nil
+	case "filter":
+		switch strings.ToLower(strings.TrimSpace(rawArgs)) {
+		case "":
+			return Invocation{Kind: KindFilter, Canonical: "/filter"}, nil
+		case "clear":
+			return Invocation{Kind: KindFilter, Clear: true, Canonical: "/filter clear"}, nil
+		default:
+			return Invocation{
+				Kind:      KindFilter,
+				Filter:    strings.TrimSpace(rawArgs),
+				Canonical: canonicalCommand("filter", rawArgs),
+			}, nil
+		}
 	case "new-project":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /new-project")

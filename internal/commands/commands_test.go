@@ -48,6 +48,51 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "filter dialog",
+			raw:  "/filter",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindFilter {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindFilter)
+				}
+				if inv.Filter != "" {
+					t.Fatalf("filter = %q, want empty", inv.Filter)
+				}
+				if inv.Clear {
+					t.Fatalf("clear = true, want false")
+				}
+			},
+		},
+		{
+			name: "filter text",
+			raw:  "/filter little",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindFilter {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindFilter)
+				}
+				if inv.Filter != "little" {
+					t.Fatalf("filter = %q, want little", inv.Filter)
+				}
+				if inv.Canonical != "/filter little" {
+					t.Fatalf("canonical = %q, want /filter little", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "filter clear",
+			raw:  "/filter clear",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindFilter {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindFilter)
+				}
+				if !inv.Clear {
+					t.Fatalf("clear = false, want true")
+				}
+				if inv.Canonical != "/filter clear" {
+					t.Fatalf("canonical = %q, want /filter clear", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "new project",
 			raw:  "/new-project",
 			check: func(t *testing.T, inv Invocation) {
@@ -353,8 +398,18 @@ func TestSuggestionsIncludeCommitWorkflowCommands(t *testing.T) {
 	if len(got) == 0 {
 		t.Fatalf("Suggestions(/f) returned none")
 	}
-	if got[0].Insert != "/forget" {
-		t.Fatalf("first /f suggestion = %q, want /forget", got[0].Insert)
+	if got[0].Insert != "/filter" {
+		t.Fatalf("first /f suggestion = %q, want /filter", got[0].Insert)
+	}
+}
+
+func TestSuggestionsFilterClearArgument(t *testing.T) {
+	got := Suggestions("/filter c")
+	if len(got) != 1 {
+		t.Fatalf("Suggestions(/filter c) len = %d, want 1", len(got))
+	}
+	if got[0].Insert != "/filter clear" {
+		t.Fatalf("suggestion = %q, want /filter clear", got[0].Insert)
 	}
 }
 

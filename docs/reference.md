@@ -128,6 +128,7 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 - `Alt+]` jump to the next live embedded session
 - `PgUp/PgDn/Home/End` fast scrolling in long project lists
 - `Tab` or `Shift+Tab` switch focus between list, detail, and runtime
+- `f` open the temporary project-name filter dialog
 - `o` toggle sort mode between `attention` and `recent activity`
 - `p` pin toggle
 - `s` snooze for 1 hour
@@ -176,6 +177,8 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/view all`
 - `/setup`
 - `/settings`
+- `/filter`
+- `/filter clear`
 - `/new-project`
 - `/open`
 - `/run`
@@ -228,6 +231,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `Enter` on the selected project opens that project's latest embedded provider inside Little Control Room.
 - `/open` opens the selected project's folder in the system browser.
 - `/ignore` hides the selected project's exact name inside Little Control Room, which is handy for Codex-generated worktrees or other old projects that share a stable folder name.
+- `f` opens a live project-name filter dialog for the whole dashboard; `/filter <text>` applies the same temporary filter from the command palette, and `/filter clear` removes it.
 - `/ignored` opens a reversible picker of hidden project names; press `Enter` there to restore one.
 - `/run` starts the selected project's saved managed runtime. If no command is saved yet, Little Control Room opens a small dialog with an auto-suggested command when it can infer one from common files like `bin/dev`, `package.json`, `Makefile`, `justfile`, or a simple Go entrypoint.
 - `/start` is an alias for `/run`.
