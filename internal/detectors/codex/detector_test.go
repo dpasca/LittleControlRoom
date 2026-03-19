@@ -88,4 +88,13 @@ func TestExtractTurnLifecycle(t *testing.T) {
 	if event.timestamp.IsZero() {
 		t.Fatalf("task_complete timestamp = zero, want parsed timestamp")
 	}
+
+	abortedLine := `{"timestamp":"2026-03-05T09:04:12.000Z","type":"event_msg","payload":{"type":"turn_aborted","reason":"interrupted"}}`
+	event, ok = extractTurnLifecycle(abortedLine)
+	if !ok || !event.completed {
+		t.Fatalf("turn_aborted parse = (%#v, ok=%v), want completed=true, ok=true", event, ok)
+	}
+	if event.timestamp.IsZero() {
+		t.Fatalf("turn_aborted timestamp = zero, want parsed timestamp")
+	}
 }

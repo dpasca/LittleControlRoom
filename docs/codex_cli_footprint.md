@@ -49,8 +49,9 @@ Observed structured turn lifecycle markers under `event_msg.payload.type`:
 
 - `task_started`
 - `task_complete`
+- `turn_aborted` (observed with `reason: "interrupted"`)
 
-These are usable as a best-effort "latest turn completed" signal without parsing natural-language content.
+These are usable as a best-effort "latest turn completed" signal without parsing natural-language content. In particular, interrupted turns may end with `turn_aborted` and no later `task_complete`.
 
 Observed recent conversational text usable for model-based "where was work left off?" classification:
 
@@ -106,7 +107,7 @@ Primary (filesystem-first):
 
 1. Parse `~/.codex/sessions/**/*.jsonl` for `(session_id, cwd, started_at)`.
 2. Use session file mtime as last activity signal.
-3. Parse structured `event_msg.payload.type` lifecycle markers to infer whether the latest turn completed.
+3. Parse structured `event_msg.payload.type` lifecycle markers (`task_started`, `task_complete`, `turn_aborted`) to infer whether the latest turn completed.
 4. For latest-session classification, read only a bounded tail of recent conversational events from the JSONL instead of reparsing full history.
 5. Optionally scan recent output text for non-zero process exit markers.
 

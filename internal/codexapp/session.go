@@ -19,9 +19,10 @@ import (
 )
 
 const (
-	rpcTimeout         = 15 * time.Second
-	idleShutdownAfter  = time.Hour
-	idleShutdownNotice = "Closed embedded Codex session after 1 hour of inactivity."
+	rpcTimeout              = 15 * time.Second
+	idleShutdownAfter       = time.Hour
+	idleShutdownNotice      = "Closed embedded Codex session after 1 hour of inactivity."
+	busyStateReconcileAfter = time.Minute
 )
 
 type appServerSession struct {
@@ -277,6 +278,16 @@ type threadStartedNotification struct {
 
 type turnNotification struct {
 	ThreadID string `json:"threadId"`
+	Turn     struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	} `json:"turn"`
+}
+
+type turnAbortedNotification struct {
+	ThreadID string `json:"threadId"`
+	TurnID   string `json:"turnId"`
+	Reason   string `json:"reason"`
 	Turn     struct {
 		ID     string `json:"id"`
 		Status string `json:"status"`
@@ -545,6 +556,20 @@ func (s *appServerSession) setBusyLocked(turnID string, external bool) {
 	s.lastBusyActivityAt = now
 }
 
+func (s *appServerSession) shouldRefreshBusyBeforeSteerLocked(now time.Time) bool {
+	if !s.busy || s.busyExternal || strings.TrimSpace(s.activeTurnID) == "" {
+		return false
+	}
+	lastBusyActivityAt := s.lastActivityAt
+	if !s.lastBusyActivityAt.IsZero() {
+		lastBusyActivityAt = s.lastBusyActivityAt
+	}
+	if lastBusyActivityAt.IsZero() {
+		return false
+	}
+	return now.Sub(lastBusyActivityAt) >= busyStateReconcileAfter
+}
+
 func (s *appServerSession) clearBusyLocked(turnID string) {
 	s.busy = false
 	s.busyExternal = false
@@ -680,6 +705,7 @@ func (s *appServerSession) SubmitInput(input Submission) error {
 	activeTurnID := s.activeTurnID
 	busy := s.busy
 	busyExternal := s.busyExternal
+	refreshBusyBeforeSteer := busy && activeTurnID != "" && s.shouldRefreshBusyBeforeSteerLocked(time.Now())
 	pendingModel := strings.TrimSpace(s.pendingModel)
 	pendingReasoning := strings.TrimSpace(s.pendingReasoning)
 	currentModel := strings.TrimSpace(s.model)
@@ -700,13 +726,25 @@ func (s *appServerSession) SubmitInput(input Submission) error {
 	defer cancel()
 
 	if busy && activeTurnID != "" {
-		return s.submitBusyInput(ctx, threadID, activeTurnID, input, pendingModel, pendingReasoning, currentModel, currentReasoning)
+		return s.submitBusyInput(ctx, threadID, activeTurnID, input, pendingModel, pendingReasoning, currentModel, currentReasoning, refreshBusyBeforeSteer)
 	}
 
 	return s.startTurnWithInput(ctx, threadID, input, pendingModel, pendingReasoning, currentModel, currentReasoning)
 }
 
-func (s *appServerSession) submitBusyInput(ctx context.Context, threadID, activeTurnID string, input Submission, pendingModel, pendingReasoning, currentModel, currentReasoning string) error {
+func (s *appServerSession) submitBusyInput(ctx context.Context, threadID, activeTurnID string, input Submission, pendingModel, pendingReasoning, currentModel, currentReasoning string, refreshBusyBeforeSteer bool) error {
+	if refreshBusyBeforeSteer {
+		recoveredTurnID, threadIdle, recoveryErr := s.recoverSteerTarget(ctx, threadID)
+		if recoveryErr == nil {
+			switch {
+			case threadIdle:
+				return s.startTurnWithInput(ctx, threadID, input, pendingModel, pendingReasoning, currentModel, currentReasoning)
+			case recoveredTurnID != "":
+				activeTurnID = recoveredTurnID
+			}
+		}
+	}
+
 	turnID, err := s.steerTurn(ctx, threadID, activeTurnID, input)
 	if err == nil {
 		s.recordSteerSubmission(firstNonEmpty(turnID, activeTurnID))
@@ -814,17 +852,18 @@ func (s *appServerSession) recoverSteerTarget(ctx context.Context, threadID stri
 
 	recoveredTurnID := activeTurnIDFromThread(thread)
 	threadIdle := recoveredTurnID == ""
+	status := effectiveThreadStatus(thread)
 
 	s.mu.Lock()
 	s.touchLocked()
 	switch {
 	case threadIdle:
-		s.syncThreadStatusLocked(thread.ID, thread.Status, true)
+		s.syncThreadStatusLocked(thread.ID, status, true)
 	case recoveredTurnID != "":
 		s.setBusyLocked(recoveredTurnID, false)
 		s.status = "Codex is working..."
 	default:
-		s.syncThreadStatusLocked(thread.ID, thread.Status, true)
+		s.syncThreadStatusLocked(thread.ID, status, true)
 	}
 	s.mu.Unlock()
 	s.notify()
@@ -1480,11 +1519,7 @@ func (s *appServerSession) ReconcileBusyState() error {
 	}
 	s.reconciling = false
 	if err == nil {
-		if activeTurnIDFromThread(thread) == "" {
-			s.syncThreadStatusLocked(threadID, resumedThreadStatus{Type: "idle"}, true)
-		} else {
-			s.syncThreadStatusLocked(threadID, thread.Status, true)
-		}
+		s.syncThreadStatusLocked(threadID, effectiveThreadStatus(thread), true)
 	}
 	s.mu.Unlock()
 	s.notify()
@@ -1737,6 +1772,17 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 		s.touchBusyLocked()
 		status := formatTurnCompletionStatus(msg.Turn.Status, s.busySince, time.Now())
 		s.queueTurnCompletionLocked(msg.Turn.ID, status)
+		s.mu.Unlock()
+		s.notify()
+	case "turn/aborted":
+		var msg turnAbortedNotification
+		if err := json.Unmarshal(params, &msg); err != nil {
+			return
+		}
+		s.mu.Lock()
+		s.touchBusyLocked()
+		status := formatTurnCompletionStatus(firstNonEmpty(msg.Turn.Status, msg.Reason, "interrupted"), s.busySince, time.Now())
+		s.queueTurnCompletionLocked(firstNonEmpty(msg.Turn.ID, msg.TurnID), status)
 		s.mu.Unlock()
 		s.notify()
 	case "item/started":
@@ -2783,6 +2829,13 @@ func activeTurnIDFromThread(thread resumedThread) string {
 		}
 	}
 	return ""
+}
+
+func effectiveThreadStatus(thread resumedThread) resumedThreadStatus {
+	if activeTurnIDFromThread(thread) == "" {
+		return resumedThreadStatus{Type: "idle"}
+	}
+	return thread.Status
 }
 
 func normalizeSubmission(input Submission) Submission {

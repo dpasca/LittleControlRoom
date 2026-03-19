@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-19 10:40 JST (JST)
+Last updated: 2026-03-19 11:31 JST (JST)
 
 ## Current State
 
@@ -28,6 +28,8 @@ Current embedded Codex transport assumption:
 - The installed schema's `turn/start` params also support per-turn-and-subsequent-turn overrides for `model`, `effort`, `serviceTier`, and related thread settings, so embedded model changes can be applied without mutating the user's global Codex config.
 - The installed schema on this machine also exposes additional thread and utility RPCs such as `thread/fork`, `thread/read`, `thread/compact/start`, `review/start`, `model/list`, `app/list`, `skills/list`, and `account/rateLimits/read`, and Little Control Room now uses `thread/read` both as a stale-busy sanity check and as a steer-recovery fallback when the app-server reports that the active turn id has already advanced.
 - Observed `thread/read` can still report `status.type = active` after the steerable turn is already gone, so embedded turn recovery should trust the presence or absence of an in-progress turn in `thread.turns[]` more than `status.type` alone when deciding whether a follow-up should steer or start a fresh turn.
+- Observed Codex session rollouts can end a turn with `event_msg.payload.type == "turn_aborted"` (seen with `reason:"interrupted"`) without a later `task_complete`, so both artifact scanners and embedded-session lifecycle handling should treat `turn_aborted` as a terminal turn event rather than waiting for a separate completion marker.
+- Observed interrupted turns can later read back through `thread/read` / `thread/resume` as idle with no active turn even when the JSONL tail ends in `turn_aborted`, so stale-busy recovery should prefer the live thread turn list over any missing `task_complete` marker.
 - The installed schema also emits `thread/status/changed` plus streamed `plan`, `reasoning`, and `mcpToolCall` notifications, but it still does not expose a single authoritative "all visible output has settled" event, so embedded turn tracking should model `running`, `finishing`, and `reconciling` instead of a binary busy/idle flag.
 - Embedded `codex app-server` stdout frames can exceed the prior 1 MiB scanner cap during tool-heavy turns (observed around MCP/browser screenshot activity), so the embedded transport must tolerate large JSON-RPC messages and treat stdout decode failures as fatal session breakage rather than a recoverable transcript-only warning.
 - Embedded `codex app-server` sessions now launch in their own process group on Unix, and Little Control Room tears down that whole group on close, idle-timeout cleanup, and transport failure so long-lived child tool processes (for example `vite preview`) do not survive the embedded session.
@@ -85,6 +87,30 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-19 11:31 JST)
+
+- Taught both the Codex artifact detector and the session-classifier lifecycle recovery to treat `event_msg.payload.type == "turn_aborted"` as a terminal turn event, which fixes the real interrupted-turn footprint seen in `2026_03_mothers_farm` where no later `task_complete` was written.
+- Tightened embedded Codex session recovery so stale busy follow-ups refresh `thread/read` before steering, normalize `thread/read` results with no in-progress turns to idle even when `status.type` still says `active`, and handle live `turn/aborted` notifications as an interrupted terminal turn.
+- Updated `docs/codex_cli_footprint.md` and the embedded transport assumptions above to record the newly confirmed interrupted-turn behavior.
+- Verified against the live LCR DB after `make scan`: the `project_sessions` row for `/Users/davide/Library/CloudStorage/Dropbox/Family Room/Media/2026_03_mothers_farm` now shows `latest_turn_state_known=1` and `latest_turn_completed=1`, and the newest `session_classifications` row for that project is `completed/completed`.
+
+Verification snapshot:
+
+- `gofmt -w internal/codexapp/session.go internal/codexapp/types.go internal/codexapp/session_test.go internal/detectors/codex/detector.go internal/detectors/codex/detector_test.go internal/sessionclassify/extract.go internal/sessionclassify/extract_test.go internal/model/model.go` passed.
+- `go test ./internal/codexapp -count=1` passed.
+- `go test ./internal/detectors/codex -count=1` passed.
+- `go test ./internal/sessionclassify -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-19T11:30:37+09:00` (`activity projects: 87`, `tracked projects: 138`, `updated projects: 2`, `queued classifications: 77`).
+- `make doctor` passed on the cached snapshot dated `2026-03-19T11:30:47+09:00` (`projects: 133`).
+- `sqlite3 ~/.little-control-room/little-control-room.sqlite "SELECT session_id,format,latest_turn_state_known,latest_turn_completed,datetime(latest_turn_started_at,'unixepoch','localtime'),datetime(last_event_at,'unixepoch','localtime') FROM project_sessions WHERE project_path='/Users/davide/Library/CloudStorage/Dropbox/Family Room/Media/2026_03_mothers_farm';"` returned `019d0331-5efa-7602-86ab-4416313f5a16|modern|1|1||2026-03-19 11:23:51`.
+- `sqlite3 ~/.little-control-room/little-control-room.sqlite "SELECT session_id,status,category,summary,updated_at,completed_at FROM session_classifications WHERE project_path='/Users/davide/Library/CloudStorage/Dropbox/Family Room/Media/2026_03_mothers_farm' ORDER BY updated_at DESC LIMIT 3;"` returned the newest row as `019d0331-5efa-7602-86ab-4416313f5a16|completed|completed|...`.
+
+Next concrete tasks:
+
+- Check the next real interrupted embedded Codex turn in the TUI to confirm the new `turn/aborted` notification handling clears the live “Working …” banner immediately instead of waiting for stale-busy reconciliation.
+- If any stale-busy reports remain after this, capture the raw embedded notification sequence so the remaining gap can be narrowed to a missing live protocol event instead of the artifact scanner path.
 
 ## Latest Update (2026-03-19 10:40 JST)
 

@@ -522,7 +522,7 @@ func NewManagerWithFactory(factory func(req LaunchRequest, notify func()) (Sessi
 		factory:            factory,
 		idleTimeout:        idleShutdownAfter,
 		reapInterval:       time.Minute,
-		busyReconcileAfter: time.Minute,
+		busyReconcileAfter: busyStateReconcileAfter,
 	}
 	go manager.reapLoop()
 	return manager

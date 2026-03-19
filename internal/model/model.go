@@ -66,7 +66,7 @@ type SessionEvidence struct {
 	LastEventAt         time.Time `json:"last_event_at"`
 	ErrorCount          int       `json:"error_count"`
 	LatestTurnStartedAt time.Time `json:"latest_turn_started_at"`
-	// Best-effort signal from structured session events (task_started/task_complete).
+	// Best-effort signal from structured session events (for example task_started/task_complete/turn_aborted).
 	LatestTurnStateKnown bool `json:"latest_turn_state_known"`
 	LatestTurnCompleted  bool `json:"latest_turn_completed"`
 }

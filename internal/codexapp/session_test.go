@@ -1143,6 +1143,56 @@ func TestSubmitInputStartsNewTurnWhenSteerFindsNoActiveTurn(t *testing.T) {
 	}
 }
 
+func TestSubmitInputStartsNewTurnWhenBusyStateIsStaleAndThreadReadShowsNoActiveTurn(t *testing.T) {
+	callCount := 0
+
+	s := &appServerSession{
+		projectPath:        "/tmp/demo",
+		threadID:           "thread_456",
+		activeTurnID:       "turn_old",
+		busy:               true,
+		entryIndex:         make(map[string]int),
+		notify:             func() {},
+		lastBusyActivityAt: time.Now().Add(-2 * time.Minute),
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			callCount++
+			switch callCount {
+			case 1:
+				if method != "thread/read" {
+					t.Fatalf("call 1 method = %q, want thread/read", method)
+				}
+				return json.RawMessage(`{"thread":{"id":"thread_456","status":{"type":"active"},"turns":[]}}`), nil
+			case 2:
+				if method != "turn/start" {
+					t.Fatalf("call 2 method = %q, want turn/start", method)
+				}
+				return json.RawMessage(`{"turn":{"id":"turn_fresh"}}`), nil
+			default:
+				t.Fatalf("unexpected rpc call %d: %s", callCount, method)
+				return nil, nil
+			}
+		},
+	}
+
+	if err := s.Submit("follow up"); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+	if callCount != 2 {
+		t.Fatalf("rpc call count = %d, want 2", callCount)
+	}
+
+	snapshot := s.Snapshot()
+	if !snapshot.Busy {
+		t.Fatalf("busy = false, want true")
+	}
+	if snapshot.ActiveTurnID != "turn_fresh" {
+		t.Fatalf("active turn id = %q, want turn_fresh", snapshot.ActiveTurnID)
+	}
+	if snapshot.Status != "Codex is working..." {
+		t.Fatalf("status = %q, want %q", snapshot.Status, "Codex is working...")
+	}
+}
+
 func TestReconcileBusyStateClearsBusyWhenThreadReadShowsNoActiveTurn(t *testing.T) {
 	s := &appServerSession{
 		projectPath:        "/tmp/demo",
@@ -1174,6 +1224,31 @@ func TestReconcileBusyStateClearsBusyWhenThreadReadShowsNoActiveTurn(t *testing.
 	}
 	if snapshot.Status != "Recovered idle after status check" {
 		t.Fatalf("status = %q, want %q", snapshot.Status, "Recovered idle after status check")
+	}
+}
+
+func TestTurnAbortedClearsBusyLikeInterruptedCompletion(t *testing.T) {
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+	}
+
+	s.handleNotification("turn/started", json.RawMessage(`{"threadId":"thread_456","turn":{"id":"turn_live","status":"inProgress"}}`))
+	s.handleNotification("turn/aborted", json.RawMessage(`{"threadId":"thread_456","turnId":"turn_live","reason":"interrupted"}`))
+
+	snapshot := s.Snapshot()
+	if snapshot.Busy {
+		t.Fatalf("busy = true, want false")
+	}
+	if snapshot.BusyExternal {
+		t.Fatalf("busy external = true, want false")
+	}
+	if snapshot.ActiveTurnID != "" {
+		t.Fatalf("active turn id = %q, want empty", snapshot.ActiveTurnID)
+	}
+	if snapshot.Status != "Turn interrupted" {
+		t.Fatalf("status = %q, want %q", snapshot.Status, "Turn interrupted")
 	}
 }
 

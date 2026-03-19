@@ -417,7 +417,7 @@ func extractCodexTurnLifecycleEvent(line string) (codexTurnLifecycleEvent, bool)
 	switch top.Payload.Type {
 	case "task_started":
 		return codexTurnLifecycleEvent{completed: false, timestamp: timestamp}, true
-	case "task_complete":
+	case "task_complete", "turn_aborted":
 		return codexTurnLifecycleEvent{completed: true, timestamp: timestamp}, true
 	default:
 		return codexTurnLifecycleEvent{}, false

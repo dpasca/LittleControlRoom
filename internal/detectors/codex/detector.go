@@ -684,7 +684,7 @@ func extractTurnLifecycle(line string) (turnLifecycleEvent, bool) {
 	switch top.Payload.Type {
 	case "task_started":
 		return turnLifecycleEvent{completed: false, timestamp: timestamp}, true
-	case "task_complete":
+	case "task_complete", "turn_aborted":
 		return turnLifecycleEvent{completed: true, timestamp: timestamp}, true
 	default:
 		return turnLifecycleEvent{}, false
