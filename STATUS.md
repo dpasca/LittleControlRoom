@@ -1,6 +1,27 @@
 # Little Control Room Status
 
-Last updated: 2026-03-19 17:00 JST (JST)
+Last updated: 2026-03-19 17:14 JST (JST)
+
+## Latest Update (2026-03-19 17:14 JST)
+
+- Tightened the `/commit` and `/finish` UX for slower local AI backends: the commit-preview modal now opens immediately with a placeholder shell, keeps the supplied message visible when one is provided, shows `Generating ...` / `Inspecting repo changes...` while the async preview is still loading, and continues to block commit/apply actions until the preview finishes refreshing.
+- Added focused TUI regressions covering the new immediate-open loading shell, the placeholder rendering, and the existing “Enter stays blocked while loading” behavior, so the modal no longer feels frozen while Codex is generating the preview.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/app.go internal/tui/app_test.go` passed.
+- `go test ./internal/tui -count=1` passed.
+- `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-commit-loading-check INTERVAL=1h` reached the TUI sandbox and exited via `q`.
+- `make test` passed.
+- `make scan` passed at `2026-03-19T17:14:14+09:00` (`activity projects: 87`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-19T17:14:24+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- If Codex still feels too slow after the immediate-open modal, consider a second pass on backend latency itself, most likely by reusing a persistent local helper/session instead of spawning a fresh `codex exec` process for every summary or commit preview.
+- Decide whether the loading modal should support `Esc` cancellation during generation, which would need a stale-response guard so a late async preview does not reopen a dialog the user already dismissed.
+- Add a short README/help note for `/setup` and local-backend behavior once the backend-selection UX settles.
 
 ## Current State
 

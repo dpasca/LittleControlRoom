@@ -6615,6 +6615,36 @@ func TestViewWithCommitPreviewShowsRecommendedUntrackedFiles(t *testing.T) {
 	}
 }
 
+func TestRenderCommitPreviewContentShowsLoadingPlaceholder(t *testing.T) {
+	m := Model{
+		commitPreview: &service.CommitPreview{
+			Intent:        service.GitActionCommit,
+			ProjectName:   "demo",
+			ProjectPath:   "/tmp/demo",
+			StageMode:     service.GitStageStagedOnly,
+			Message:       "Generating commit message...",
+			LatestSummary: "Recent AI/backend setup work",
+		},
+		commitPreviewRefreshing: true,
+		width:                   100,
+		height:                  24,
+	}
+
+	rendered := ansi.Strip(m.renderCommitPreviewContent(72))
+	if !strings.Contains(rendered, "Generating commit message...") {
+		t.Fatalf("renderCommitPreviewContent() should show the loading message placeholder: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Inspecting repo changes...") {
+		t.Fatalf("renderCommitPreviewContent() should show the loading changes placeholder: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Building commit preview...") {
+		t.Fatalf("renderCommitPreviewContent() should show the loading footer hint: %q", rendered)
+	}
+	if strings.Contains(rendered, "Enter commit") {
+		t.Fatalf("renderCommitPreviewContent() should hide commit actions while loading: %q", rendered)
+	}
+}
+
 func TestCommitPreviewEnterCommitsWithoutPush(t *testing.T) {
 	m := Model{
 		commitPreview: &service.CommitPreview{
@@ -6634,6 +6664,25 @@ func TestCommitPreviewEnterCommitsWithoutPush(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatalf("enter should return an apply command")
+	}
+}
+
+func TestCommitPreviewRefreshingBlocksCommitActions(t *testing.T) {
+	m := Model{
+		commitPreview: &service.CommitPreview{
+			ProjectPath: "/tmp/demo",
+			Message:     "Generating commit message...",
+		},
+		commitPreviewRefreshing: true,
+	}
+
+	updated, cmd := m.updateCommitPreviewMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.commitApplying {
+		t.Fatalf("enter should stay blocked while the preview is still refreshing")
+	}
+	if cmd != nil {
+		t.Fatalf("enter should not return an apply command while refreshing")
 	}
 }
 
@@ -7047,6 +7096,70 @@ func TestDispatchDiffCommandOpensDiffView(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatalf("dispatchCommand(/diff) should return a load command")
+	}
+}
+
+func TestDispatchCommitCommandOpensLoadingPreviewImmediately(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:                 "demo",
+			Path:                 "/tmp/demo",
+			PresentOnDisk:        true,
+			LatestSessionSummary: "Recent backend setup cleanup",
+		}},
+		selected: 0,
+		width:    100,
+		height:   24,
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindCommit})
+	got := updated.(Model)
+	if got.commitPreview == nil {
+		t.Fatalf("dispatchCommand(/commit) should open the commit preview shell immediately")
+	}
+	if !got.commitPreviewRefreshing {
+		t.Fatalf("dispatchCommand(/commit) should mark the preview as refreshing")
+	}
+	if got.commitPreview.Message != "Generating commit message..." {
+		t.Fatalf("loading preview message = %q, want generating placeholder", got.commitPreview.Message)
+	}
+	if got.commitPreview.ProjectName != "demo" {
+		t.Fatalf("loading preview should use the selected project name, got %q", got.commitPreview.ProjectName)
+	}
+	if got.status != "Preparing commit preview..." {
+		t.Fatalf("status = %q, want preparing commit preview", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("dispatchCommand(/commit) should still return the async preview command")
+	}
+}
+
+func TestDispatchFinishCommandPreservesProvidedMessageWhileLoading(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{
+		Kind:    commands.KindFinish,
+		Message: "Ship current repo changes",
+	})
+	got := updated.(Model)
+	if got.commitPreview == nil {
+		t.Fatalf("dispatchCommand(/finish) should open the commit preview shell immediately")
+	}
+	if got.commitPreview.Message != "Ship current repo changes" {
+		t.Fatalf("loading preview should keep the provided message, got %q", got.commitPreview.Message)
+	}
+	if got.status != "Preparing finish preview..." {
+		t.Fatalf("status = %q, want preparing finish preview", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("dispatchCommand(/finish) should still return the async preview command")
 	}
 }
 

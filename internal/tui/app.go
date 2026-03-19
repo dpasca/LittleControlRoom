@@ -2146,8 +2146,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 			m.status = "No project selected"
 			return m, nil
 		}
-		m.status = "Preparing commit preview..."
-		return m, m.prepareCommitPreviewCmd(p.Path, service.GitActionCommit, inv.Message)
+		return m, m.startCommitPreview(p, service.GitActionCommit, inv.Message)
 	case commands.KindPush:
 		p, ok := m.selectedProject()
 		if !ok {
@@ -2162,8 +2161,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 			m.status = "No project selected"
 			return m, nil
 		}
-		m.status = "Preparing finish preview..."
-		return m, m.prepareCommitPreviewCmd(p.Path, service.GitActionFinish, inv.Message)
+		return m, m.startCommitPreview(p, service.GitActionFinish, inv.Message)
 	case commands.KindCodex:
 		return m.launchCodexForSelection(false, inv.Prompt)
 	case commands.KindCodexNew:
@@ -2476,6 +2474,52 @@ func (m Model) prepareCommitPreviewCmd(path string, intent service.GitActionInte
 		preview, err := m.svc.PrepareCommit(m.ctx, path, intent, message)
 		return commitPreviewMsg{preview: preview, projectPath: path, intent: intent, message: message, err: err}
 	}
+}
+
+func (m *Model) startCommitPreview(project model.ProjectSummary, intent service.GitActionIntent, messageOverride string) tea.Cmd {
+	projectName := strings.TrimSpace(project.Name)
+	if projectName == "" {
+		projectName = filepath.Base(filepath.Clean(project.Path))
+	}
+
+	preview := service.CommitPreview{
+		Intent:        intent,
+		ProjectPath:   project.Path,
+		ProjectName:   projectName,
+		StageMode:     service.GitStageStagedOnly,
+		Message:       commitPreviewLoadingMessage(intent, messageOverride),
+		LatestSummary: strings.TrimSpace(project.LatestSessionSummary),
+	}
+
+	m.err = nil
+	m.showHelp = false
+	m.gitStatusDialog = nil
+	m.gitStatusApplying = false
+	m.diffView = nil
+	m.commitApplying = false
+	m.commitPreview = &preview
+	m.commitPreviewMessageOverride = strings.TrimSpace(messageOverride)
+	m.commitPreviewRefreshing = true
+	m.status = commitPreviewPreparingStatus(intent)
+	return m.prepareCommitPreviewCmd(project.Path, intent, messageOverride)
+}
+
+func commitPreviewPreparingStatus(intent service.GitActionIntent) string {
+	if intent == service.GitActionFinish {
+		return "Preparing finish preview..."
+	}
+	return "Preparing commit preview..."
+}
+
+func commitPreviewLoadingMessage(intent service.GitActionIntent, messageOverride string) string {
+	messageOverride = strings.TrimSpace(messageOverride)
+	if messageOverride != "" {
+		return messageOverride
+	}
+	if intent == service.GitActionFinish {
+		return "Generating finish message..."
+	}
+	return "Generating commit message..."
 }
 
 func (m Model) prepareDiffPreviewCmd(path string) tea.Cmd {
@@ -3472,6 +3516,7 @@ func (m Model) renderCommitPreviewContent(width int) string {
 		return ""
 	}
 	preview := *m.commitPreview
+	placeholder := commitPreviewHasPlaceholderState(preview)
 
 	lines := []string{
 		renderDialogHeader("Commit Preview", preview.ProjectName, preview.Branch, width),
@@ -3489,12 +3534,16 @@ func (m Model) renderCommitPreviewContent(width int) string {
 
 	lines = append(lines, "")
 	lines = append(lines, commandPaletteTitleStyle.Render("Changes"))
-	lines = append(lines, renderCommitPreviewFiles(preview.Included, 6, width)...)
-	if strings.TrimSpace(preview.DiffSummary) != "" {
+	if placeholder {
+		lines = append(lines, detailMutedStyle.Render("- Inspecting repo changes..."))
+	} else {
+		lines = append(lines, renderCommitPreviewFiles(preview.Included, 6, width)...)
+	}
+	if !placeholder && strings.TrimSpace(preview.DiffSummary) != "" {
 		lines = append(lines, commandPaletteHintStyle.Render(strings.TrimSpace(preview.DiffSummary)))
 	}
 
-	if len(preview.Excluded) > 0 {
+	if !placeholder && len(preview.Excluded) > 0 {
 		lines = append(lines, "")
 		lines = append(lines, commandPaletteTitleStyle.Render("Left out"))
 		lines = append(lines, renderCommitPreviewFiles(preview.Excluded, 4, width)...)
@@ -3512,12 +3561,24 @@ func (m Model) renderCommitPreviewContent(width int) string {
 	if m.commitApplying {
 		lines = append(lines, commandPaletteHintStyle.Render("Applying git action..."))
 	} else if m.commitPreviewRefreshing {
-		lines = append(lines, commandPaletteHintStyle.Render("Refreshing commit preview..."))
+		hint := "Refreshing commit preview..."
+		if placeholder {
+			hint = "Building commit preview..."
+		}
+		lines = append(lines, commandPaletteHintStyle.Render(hint))
 	} else {
 		lines = append(lines, renderCommitPreviewActions(preview.CanPush))
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+func commitPreviewHasPlaceholderState(preview service.CommitPreview) bool {
+	return len(preview.Included) == 0 &&
+		len(preview.Excluded) == 0 &&
+		len(preview.SelectedUntracked) == 0 &&
+		strings.TrimSpace(preview.DiffSummary) == "" &&
+		strings.TrimSpace(preview.DiffStat) == ""
 }
 
 func commitPreviewLine(label, value string) string {
