@@ -1383,6 +1383,9 @@ func (s *appServerSession) ensureFreshThread(ctx context.Context, threadID strin
 	}
 	thread, err := s.readThreadState(ctx, threadID)
 	if err != nil {
+		if isFreshThreadUnmaterializedError(err) {
+			return nil
+		}
 		return err
 	}
 	if threadHasRetainedHistory(thread) {
@@ -2880,6 +2883,15 @@ func threadHasRetainedHistory(thread resumedThread) bool {
 		}
 	}
 	return false
+}
+
+func isFreshThreadUnmaterializedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(message, "not materialized yet") &&
+		strings.Contains(message, "includeturns is unavailable before first user message")
 }
 
 func normalizeSubmission(input Submission) Submission {

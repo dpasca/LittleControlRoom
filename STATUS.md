@@ -1,6 +1,30 @@
 # Little Control Room Status
 
-Last updated: 2026-03-19 23:36 JST (JST)
+Last updated: 2026-03-20 00:50 JST (JST)
+
+## Latest Update (2026-03-20 00:50 JST)
+
+- Corrected the `/codex-new` fresh-open fix after a live `codex app-server` probe showed the previous guard was too aggressive: genuinely fresh threads can reject `thread/read includeTurns=true` with “not materialized yet; includeTurns is unavailable before first user message”.
+- Updated the fresh-thread check so that specific pre-first-message `thread/read` failure is treated as evidence of a healthy new thread, while still rejecting forced-new opens that come back with retained history or an in-progress turn.
+- Kept the bounded forced-new retry path in place, so Little Control Room still retries the real stale-reopen cases, but it no longer mistakes an unmaterialized fresh thread for a failed open and leave the old session visible.
+- Added focused regression coverage for the newly observed live behavior by asserting that `ensureFreshThread` accepts the unmaterialized-thread error while still rejecting retained-history threads.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- Live `codex app-server` probe confirmed the previously missing behavior: after `thread/start`, a fresh unread thread can fail `thread/read includeTurns=true` with `thread ... is not materialized yet; includeTurns is unavailable before first user message`.
+- `gofmt -w internal/codexapp/session.go internal/codexapp/session_test.go` passed.
+- `go test ./internal/codexapp ./internal/tui -run 'Test(EnsureFreshThread(RejectsRetainedHistory|AcceptsEmptyThread|AcceptsUnmaterializedFreshThread)|LaunchCodexForSelectionForceNew(RetriesWhenPreviousThreadReopensFirst|RetriesWhenCodexRejectsFreshThread|WarnsWhenActiveSessionIsReopenedReadOnly))' -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-20T00:50:18+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 3`, `queued classifications: 2`).
+- `make doctor` passed on the cached snapshot dated `2026-03-20T00:50:26+09:00` (`projects: 133`).
+- `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-codex-new-unmaterialized-fix-check INTERVAL=1h` reached the TUI sandbox and exited via `q`.
+
+Next concrete tasks:
+
+- Re-run the actual user-facing `/codex-new` flow against the real embedded Codex pane and confirm the “previous session stayed on screen” report is gone now that healthy fresh threads are no longer rejected.
+- Keep looking for a provider-native fresh-thread signal or metadata field so this logic can stop inferring freshness from `thread/read` behavior.
+- If the stale-reopen bug still appears after this correction, capture the wrong reopened thread id and whether the pane showed an open failure status, because that would point back to either the remaining same-thread retry path or a TUI visibility bug.
 
 ## Latest Update (2026-03-19 23:36 JST)
 
@@ -231,6 +255,7 @@ Current embedded Codex transport assumption:
 - The installed schema on this machine exposes `turn/start`, `turn/steer`, and `turn/interrupt`, but no separate queued-turn method; Little Control Room therefore supports explicit steer of the active turn, not a distinct queued-next-turn action.
 - The installed schema's `turn/start` params also support per-turn-and-subsequent-turn overrides for `model`, `effort`, `serviceTier`, and related thread settings, so embedded model changes can be applied without mutating the user's global Codex config.
 - The installed schema on this machine also exposes additional thread and utility RPCs such as `thread/fork`, `thread/read`, `thread/compact/start`, `review/start`, `model/list`, `app/list`, `skills/list`, and `account/rateLimits/read`, and Little Control Room now uses `thread/read` both as a stale-busy sanity check and as a steer-recovery fallback when the app-server reports that the active turn id has already advanced.
+- Observed freshly started threads can reject `thread/read` with `includeTurns=true` before the first user message because the thread is not materialized yet, so forced-new freshness checks should treat that specific error as a healthy new-thread state rather than a retryable stale-session failure.
 - Observed `thread/read` can still report `status.type = active` after the steerable turn is already gone, so embedded turn recovery should trust the presence or absence of an in-progress turn in `thread.turns[]` more than `status.type` alone when deciding whether a follow-up should steer or start a fresh turn.
 - Observed Codex session rollouts can end a turn with `event_msg.payload.type == "turn_aborted"` (seen with `reason:"interrupted"`) without a later `task_complete`, so both artifact scanners and embedded-session lifecycle handling should treat `turn_aborted` as a terminal turn event rather than waiting for a separate completion marker.
 - Observed interrupted turns can later read back through `thread/read` / `thread/resume` as idle with no active turn even when the JSONL tail ends in `turn_aborted`, so stale-busy recovery should prefer the live thread turn list over any missing `task_complete` marker.
