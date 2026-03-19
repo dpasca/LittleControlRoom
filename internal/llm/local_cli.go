@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"lcroom/internal/appfs"
 	"lcroom/internal/model"
 )
 
@@ -47,6 +48,10 @@ type localRunnerResponseCache struct {
 }
 
 func NewCodexExecRunner(timeout time.Duration, usage *UsageTracker) *CodexExecRunner {
+	return NewCodexExecRunnerInDataDir("", timeout, usage)
+}
+
+func NewCodexExecRunnerInDataDir(dataDir string, timeout time.Duration, usage *UsageTracker) *CodexExecRunner {
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
@@ -54,12 +59,16 @@ func NewCodexExecRunner(timeout time.Duration, usage *UsageTracker) *CodexExecRu
 		timeout:   timeout,
 		usage:     usage,
 		command:   "codex",
-		tempDirFn: os.TempDir,
+		tempDirFn: func() string { return appfs.InternalWorkspaceRoot(dataDir) },
 		cache:     newLocalRunnerResponseCache(64),
 	}
 }
 
 func NewOpenCodeRunRunner(timeout time.Duration, usage *UsageTracker) *OpenCodeRunRunner {
+	return NewOpenCodeRunRunnerInDataDir("", timeout, usage)
+}
+
+func NewOpenCodeRunRunnerInDataDir(dataDir string, timeout time.Duration, usage *UsageTracker) *OpenCodeRunRunner {
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
@@ -67,7 +76,7 @@ func NewOpenCodeRunRunner(timeout time.Duration, usage *UsageTracker) *OpenCodeR
 		timeout:   timeout,
 		usage:     usage,
 		command:   "opencode",
-		tempDirFn: os.TempDir,
+		tempDirFn: func() string { return appfs.InternalWorkspaceRoot(dataDir) },
 		cache:     newLocalRunnerResponseCache(64),
 	}
 }
@@ -330,6 +339,9 @@ func createRunnerWorkspace(tempDirFn func() string) (string, func(), error) {
 	root := os.TempDir()
 	if tempDirFn != nil {
 		root = tempDirFn()
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return "", nil, fmt.Errorf("create runner root: %w", err)
 	}
 	workDir, err := os.MkdirTemp(root, "lcroom-ai-*")
 	if err != nil {

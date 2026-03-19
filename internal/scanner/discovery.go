@@ -5,11 +5,14 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"lcroom/internal/appfs"
 )
 
 type Discovery struct {
-	Roots    []string
-	MaxDepth int
+	Roots     []string
+	MaxDepth  int
+	SkipPaths []string
 }
 
 func DiscoverGitProjects(cfg Discovery) ([]string, error) {
@@ -30,6 +33,9 @@ func DiscoverGitProjects(cfg Discovery) ([]string, error) {
 			}
 			if !d.IsDir() {
 				return nil
+			}
+			if appfs.IsManagedInternalPath(path, cfg.SkipPaths) {
+				return filepath.SkipDir
 			}
 
 			rel, relErr := filepath.Rel(root, path)

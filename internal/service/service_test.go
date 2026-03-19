@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/appfs"
 	"lcroom/internal/brand"
 	"lcroom/internal/config"
 	"lcroom/internal/detectors"
@@ -109,6 +110,104 @@ func TestScanWithOptionsForceRetriesFailedClassifications(t *testing.T) {
 	}
 	if classifier.normalCalls != 0 {
 		t.Fatalf("normalCalls = %d, want 0", classifier.normalCalls)
+	}
+}
+
+func TestScanHidesManagedInternalProjects(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Date(2026, 3, 19, 18, 0, 0, 0, time.UTC)
+	dataDir := filepath.Join(t.TempDir(), ".little-control-room")
+	helperPath := filepath.Join(appfs.InternalWorkspaceRoot(dataDir), "lcroom-codex-helper-live")
+	if err := os.MkdirAll(helperPath, 0o700); err != nil {
+		t.Fatalf("mkdir helper path: %v", err)
+	}
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           helperPath,
+		Name:           filepath.Base(helperPath),
+		LastActivity:   now.Add(-time.Minute),
+		Status:         model.StatusActive,
+		AttentionScore: 60,
+		PresentOnDisk:  true,
+		InScope:        true,
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("seed leaked helper project: %v", err)
+	}
+
+	projectPath := t.TempDir()
+	detector := staticDetector{
+		activities: map[string]*model.DetectorProjectActivity{
+			projectPath: {
+				ProjectPath:  projectPath,
+				LastActivity: now,
+				Sessions: []model.SessionEvidence{{
+					SessionID:           "ses_visible",
+					ProjectPath:         projectPath,
+					DetectedProjectPath: projectPath,
+					SessionFile:         filepath.Join(projectPath, "session.jsonl"),
+					Format:              "modern",
+					StartedAt:           now.Add(-time.Hour),
+					LastEventAt:         now,
+				}},
+				Source: "test",
+			},
+			helperPath: {
+				ProjectPath:  helperPath,
+				LastActivity: now,
+				Sessions: []model.SessionEvidence{{
+					SessionID:           "ses_hidden",
+					ProjectPath:         helperPath,
+					DetectedProjectPath: helperPath,
+					SessionFile:         filepath.Join(helperPath, "session.jsonl"),
+					Format:              "modern",
+					StartedAt:           now.Add(-5 * time.Minute),
+					LastEventAt:         now,
+				}},
+				Source: "test",
+			},
+		},
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = nil
+	cfg.DataDir = dataDir
+	svc := New(cfg, st, events.NewBus(), []detectors.Detector{detector})
+	svc.gitFingerprintReader = nil
+	svc.gitRepoStatusReader = nil
+
+	if _, err := svc.ScanOnce(ctx); err != nil {
+		t.Fatalf("scan once: %v", err)
+	}
+
+	projects, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list current projects: %v", err)
+	}
+	if len(projects) != 1 || projects[0].Path != projectPath {
+		t.Fatalf("visible projects = %#v, want only %q", projects, projectPath)
+	}
+
+	summaries, err := st.GetProjectSummaryMap(ctx)
+	if err != nil {
+		t.Fatalf("summary map: %v", err)
+	}
+	helper, ok := summaries[helperPath]
+	if !ok {
+		t.Fatalf("expected helper project row to remain queryable for cleanup assertions")
+	}
+	if helper.InScope {
+		t.Fatalf("helper project should be out of scope after cleanup")
+	}
+	if !helper.Forgotten {
+		t.Fatalf("helper project should be forgotten after cleanup")
 	}
 }
 

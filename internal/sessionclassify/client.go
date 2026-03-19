@@ -85,16 +85,24 @@ func NewOpenAIClientWithUsageTracker(apiKey string, usage *llm.UsageTracker) *Op
 }
 
 func NewCodexClientWithUsageTracker(usage *llm.UsageTracker) *OpenAIClient {
+	return NewCodexClientWithUsageTrackerInDataDir("", usage)
+}
+
+func NewCodexClientWithUsageTrackerInDataDir(dataDir string, usage *llm.UsageTracker) *OpenAIClient {
 	return &OpenAIClient{
 		model:     configuredClassifierModel(localRunnerDefaultModel),
-		responses: llm.NewCodexExecRunner(classifierHTTPTimeout, usage),
+		responses: llm.NewPersistentCodexRunnerInDataDir(dataDir, classifierHTTPTimeout, usage),
 	}
 }
 
 func NewOpenCodeClientWithUsageTracker(usage *llm.UsageTracker) *OpenAIClient {
+	return NewOpenCodeClientWithUsageTrackerInDataDir("", usage)
+}
+
+func NewOpenCodeClientWithUsageTrackerInDataDir(dataDir string, usage *llm.UsageTracker) *OpenAIClient {
 	return &OpenAIClient{
 		model:     configuredClassifierModel(localRunnerDefaultModel),
-		responses: llm.NewOpenCodeRunRunner(classifierHTTPTimeout, usage),
+		responses: llm.NewOpenCodeRunRunnerInDataDir(dataDir, classifierHTTPTimeout, usage),
 	}
 }
 
@@ -173,14 +181,43 @@ func (c *OpenAIClient) classifyAttempt(ctx context.Context, snapshotJSON []byte,
 
 	var result Result
 	if err := json.Unmarshal([]byte(outputText), &result); err != nil {
-		return Result{}, fmt.Errorf("decode classifier result: %w", err)
+		return Result{}, &retryableClassificationError{
+			cause: fmt.Errorf("decode classifier result: %w", err),
+		}
 	}
-	if result.Category == "" {
-		result.Category = model.SessionCategoryUnknown
+	if err := validateClassificationResult(&result); err != nil {
+		return Result{}, &retryableClassificationError{cause: err}
 	}
 	result.Model = strings.TrimSpace(response.Model)
 	result.Usage = response.Usage
 	return result, nil
+}
+
+func validateClassificationResult(result *Result) error {
+	if result == nil {
+		return errors.New("classifier result missing")
+	}
+	result.Summary = strings.TrimSpace(result.Summary)
+	switch result.Category {
+	case model.SessionCategoryCompleted,
+		model.SessionCategoryBlocked,
+		model.SessionCategoryWaitingForUser,
+		model.SessionCategoryNeedsFollowUp,
+		model.SessionCategoryInProgress,
+		model.SessionCategoryUnknown:
+	default:
+		if strings.TrimSpace(string(result.Category)) == "" {
+			return errors.New("classifier result missing category")
+		}
+		return fmt.Errorf("classifier result has invalid category %q", result.Category)
+	}
+	if result.Summary == "" {
+		return errors.New("classifier result missing summary")
+	}
+	if result.Confidence < 0 || result.Confidence > 1 {
+		return fmt.Errorf("classifier result has invalid confidence %.4f", result.Confidence)
+	}
+	return nil
 }
 
 func (c *OpenAIClient) responsesClient() llm.JSONSchemaRunner {

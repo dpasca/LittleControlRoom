@@ -21,3 +21,17 @@ func TestPathScopeExcludeOverridesInclude(t *testing.T) {
 		t.Fatalf("expected exclude path to win over include path")
 	}
 }
+
+func TestPathScopeAlwaysExcludesManagedInternalPaths(t *testing.T) {
+	scope := NewPathScope(nil, nil).WithAlwaysExcluded("/tmp/.little-control-room/internal-workspaces")
+
+	if scope.Allows("/tmp/.little-control-room/internal-workspaces/lcroom-codex-helper-123") {
+		t.Fatalf("expected managed internal workspace root to be rejected")
+	}
+	if scope.Allows("/var/folders/demo/lcroom-codex-helper-legacy") {
+		t.Fatalf("expected legacy helper prefix path to be rejected")
+	}
+	if !scope.Allows("/tmp/demo") {
+		t.Fatalf("expected unrelated path to remain allowed")
+	}
+}

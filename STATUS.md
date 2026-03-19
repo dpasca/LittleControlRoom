@@ -1,6 +1,103 @@
 # Little Control Room Status
 
-Last updated: 2026-03-19 18:05 JST (JST)
+Last updated: 2026-03-19 19:20 JST (JST)
+
+## Latest Update (2026-03-19 19:20 JST)
+
+- Fixed the helper-workspace leak that was polluting the project list with `lcroom-codex-helper-*` rows. Codex/OpenCode helper and local-runner workspaces now live under a dedicated Little Control Room internal workspace root instead of generic temp directories, and the scanner/service path filters now treat both that managed root and the older legacy `lcroom-*` temp prefixes as always-internal.
+- Added best-effort startup hygiene for internal workspaces: stale directories under the managed internal root are cleaned up on service startup, and any already-leaked helper/index rows in the project store are marked `forgotten` and `out of scope` so they stop surfacing in the current project list.
+- Added belt-and-suspenders filtering in `PathScope`, git repo discovery, and the scan merge path itself so even a detector that ignores scope does not get to reintroduce internal helper paths as visible projects.
+- Added focused tests for internal-path detection/cleanup, scanner exclusion, and service-level hiding of leaked helper projects.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/appfs/workspaces.go internal/appfs/workspaces_test.go internal/codexapp/helper.go internal/llm/local_cli.go internal/llm/codex_helper.go internal/gitops/message.go internal/sessionclassify/client.go internal/scanner/scope.go internal/scanner/discovery.go internal/scanner/discovery_test.go internal/scanner/scope_test.go internal/service/service.go internal/service/service_test.go` passed.
+- `go test ./internal/appfs ./internal/scanner ./internal/service ./internal/llm ./internal/gitops ./internal/sessionclassify -count=1` passed.
+- `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-internal-workspace-filter-check INTERVAL=1h` reached the TUI sandbox and exited via `q`.
+- `make test` passed.
+- `make scan` passed at `2026-03-19T19:20:08+09:00` (`activity projects: 87`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-19T19:20:08+09:00` (`projects: 133`).
+- Live DB verification after the scan: `SELECT COUNT(*) ... WHERE forgotten = 0 AND in_scope = 1 AND name LIKE 'lcroom-%'` returned `0`, and the leaked legacy helper rows are now stored as `forgotten=1, in_scope=0`.
+
+Next concrete tasks:
+
+- Decide whether we want a lightweight maintenance command to permanently prune already-forgotten internal helper rows from the DB, or if keeping them hidden as historical artifacts is good enough.
+- Add a small developer-facing smoke/debug command for the persistent helper and classifier so live backend checks do not require env-gated Go tests.
+- Revisit OpenCode later if we want the same persistent-helper treatment there beyond the current shared internal-workspace root.
+
+## Latest Update (2026-03-19 18:47 JST)
+
+- Hardened the session-classification path after a follow-up live check: the classifier itself was healthy again after the helper schema fix, but it could still silently accept malformed JSON with missing required fields and mark the run `completed`, which is exactly how a “gray refresh happened but no summary showed up” state can occur.
+- Added strict classifier result validation in the Codex/OpenCode/API client path: decoded results must now include a valid category, a non-empty summary, and an in-range confidence, otherwise the attempt is treated as retryable instead of being accepted as a bogus completed assessment.
+- Added store-side recovery for stale completed classifications with blank summaries. If an older same-snapshot classification was marked `completed` without a summary, the next queue pass now re-enqueues it instead of treating it as permanently done, so past malformed completions can heal once the backend starts returning valid structured output again.
+- Added focused regression coverage for both pieces plus an env-gated live classifier probe, and confirmed the live Codex classifier now returns a real category + summary for the current helper path.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/sessionclassify/client.go internal/sessionclassify/client_test.go internal/store/store.go internal/store/store_test.go internal/sessionclassify/client_live_test.go` passed.
+- `go test ./internal/sessionclassify ./internal/store -count=1` passed.
+- `LCROOM_RUN_LIVE_CODEX_HELPER_TEST=1 go test ./internal/sessionclassify -run TestCodexClassifierClientLive -count=1 -v` passed and returned a real non-empty classification summary.
+- `make test` passed.
+- `make scan` passed at `2026-03-19T18:46:53+09:00` (`activity projects: 99`, `tracked projects: 150`, `updated projects: 3`, `queued classifications: 3`).
+- `make doctor` passed on the cached snapshot dated `2026-03-19T18:46:53+09:00` (`projects: 144`).
+
+Next concrete tasks:
+
+- Add a small developer-facing smoke/debug command for the persistent helper and classifier so live backend checks do not require env-gated Go tests.
+- If helper resource use becomes noticeable, consider sharing one warm Codex helper across commit help and classification instead of the current per-client helper reuse.
+- Revisit OpenCode later if we want the same persistent-helper treatment there; for now it still uses cached `opencode run`.
+
+## Latest Update (2026-03-19 18:40 JST)
+
+- Fixed a live Codex commit-preview regression in the new persistent helper path: the warm `codex app-server` runner was reusing the old “schema enforced elsewhere” prompt shape, but `app-server` does not expose the same hard `--output-schema` contract as one-shot `codex exec`, so Codex could return valid-looking JSON with the wrong field names (for example `{"subject": ...}` instead of the requested `{"message": ...}`) and the commit dialog fell back.
+- Updated the persistent Codex runner to embed the full JSON schema in the helper prompt instead of relying on implicit enforcement, which brings the helper path back in line with the existing OpenCode/local prompt strategy and fixes both commit-message generation and any other helper-backed structured tasks that depend on exact field names.
+- Added regression coverage that checks the persistent Codex runner now includes the schema text in the prompt, plus env-gated live Codex helper probes for both the raw helper and the real commit-message client so future helper changes can be exercised against an actual logged-in local Codex install when needed.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/llm/codex_helper.go internal/llm/codex_helper_test.go internal/codexapp/helper_live_test.go internal/gitops/message_live_test.go` passed.
+- `go test ./internal/llm ./internal/gitops -count=1` passed.
+- `go test ./internal/codexapp ./internal/llm ./internal/gitops ./internal/sessionclassify -count=1` passed.
+- `LCROOM_RUN_LIVE_CODEX_HELPER_TEST=1 go test ./internal/codexapp -run TestPromptHelperLive -count=1 -v` passed (`{"ok":true}`).
+- `LCROOM_RUN_LIVE_CODEX_HELPER_TEST=1 go test ./internal/gitops -run TestCodexCommitMessageClientLive -count=1 -v` passed and returned a real non-empty commit message after the fix.
+- `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-commit-helper-schema-fix INTERVAL=1h` reached the TUI sandbox and exited via `q`.
+- `make test` passed.
+- `make scan` passed at `2026-03-19T18:40:02+09:00` (`activity projects: 94`, `tracked projects: 145`, `updated projects: 4`, `queued classifications: 4`).
+- `make doctor` passed on the cached snapshot dated `2026-03-19T18:40:03+09:00` (`projects: 138`).
+
+Next concrete tasks:
+
+- Add a small developer-facing smoke/debug command for the persistent helper so live backend checks do not require running env-gated Go tests manually.
+- If helper resource use becomes noticeable, consider sharing one warm Codex helper across commit help and classification instead of the current per-client helper reuse.
+- Revisit OpenCode later if we want the same persistent-helper treatment there; for now it still uses cached `opencode run`.
+
+## Latest Update (2026-03-19 18:29 JST)
+
+- Swapped the Codex local backend from one-shot `codex exec` calls to a warm persistent helper built on `codex app-server`: Codex-backed commit-message generation and session classification now reuse a hidden app-server process, start a fresh thread for each request to avoid cross-request context bleed, and recycle helpers after idle time or repeated use.
+- Kept OpenCode on the lighter cached `opencode run` path for now; the new persistent-helper path is Codex-only in this pass because Codex already had a mature in-repo transport we could safely reuse.
+- Removed the ambiguous `/finish` command from the public command surface. `/commit` remains the single commit workflow entry point, with `Alt+Enter` still handling commit-and-push when the repo can push.
+- Added lifecycle tests for the persistent runner (helper reuse, rotation after a request cap, discard-on-error) plus the earlier local-runner caching tests, so the new helper behavior is covered without depending on live Codex auth during unit tests.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/codexapp/helper.go internal/llm/codex_helper.go internal/llm/codex_helper_test.go internal/sessionclassify/client.go internal/gitops/message.go` passed.
+- `go test ./internal/codexapp ./internal/llm ./internal/sessionclassify ./internal/gitops -count=1` passed.
+- `go test ./internal/tui -count=1` passed.
+- `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-persistent-helper-check INTERVAL=1h` reached the TUI sandbox and exited via `q`.
+- `make test` passed.
+- `make scan` passed at `2026-03-19T18:28:38+09:00` (`activity projects: 87`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-19T18:28:46+09:00` (`projects: 133`).
+- Note: this pass did not include a dedicated live Codex-auth smoke request through the new helper; verification is code-level and suite-level rather than an explicit real-account end-to-end helper probe.
+
+Next concrete tasks:
+
+- If Codex helper resource use becomes noticeable, consider sharing a single persistent helper between commit help and classification instead of today’s separate per-client helpers.
+- Add an explicit live smoke test path or small debug command for the persistent helper so future transport changes can be exercised against a real logged-in Codex install without manual TUI work.
+- Revisit OpenCode later if we want the same persistent-helper treatment there; for now it still relies on cached `opencode run` calls.
 
 ## Latest Update (2026-03-19 18:05 JST)
 

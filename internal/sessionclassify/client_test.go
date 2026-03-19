@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"lcroom/internal/brand"
+	"lcroom/internal/llm"
 	"lcroom/internal/model"
 )
 
@@ -20,6 +21,14 @@ type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+type fakeJSONSchemaRunner struct {
+	run func(context.Context, llm.JSONSchemaRequest) (llm.JSONSchemaResponse, error)
+}
+
+func (f fakeJSONSchemaRunner) RunJSONSchema(ctx context.Context, req llm.JSONSchemaRequest) (llm.JSONSchemaResponse, error) {
+	return f.run(ctx, req)
 }
 
 func TestNewCodexClientWithUsageTrackerDefaultsToLocalCompatibleModel(t *testing.T) {
@@ -43,6 +52,63 @@ func TestNewOpenCodeClientWithUsageTrackerDefaultsToLocalCompatibleModel(t *test
 	}
 	if got := client.ModelName(); got != localRunnerDefaultModel {
 		t.Fatalf("ModelName() = %q, want %q", got, localRunnerDefaultModel)
+	}
+}
+
+func TestOpenAIClientClassifyRetriesWhenStructuredOutputMissesRequiredFields(t *testing.T) {
+	t.Parallel()
+
+	callCount := 0
+	client := &OpenAIClient{
+		model: "gpt-5.4-mini",
+		responses: fakeJSONSchemaRunner{
+			run: func(_ context.Context, req llm.JSONSchemaRequest) (llm.JSONSchemaResponse, error) {
+				callCount++
+				if callCount == 1 {
+					if req.ReasoningEffort != classifierPrimaryReasoningEffort {
+						t.Fatalf("first reasoning effort = %q, want %q", req.ReasoningEffort, classifierPrimaryReasoningEffort)
+					}
+					return llm.JSONSchemaResponse{
+						Status:     "completed",
+						Model:      "gpt-5.4-mini",
+						OutputText: `{"classification":"completed","description":"Work is wrapped up."}`,
+					}, nil
+				}
+				if req.ReasoningEffort != classifierFallbackReasoningEffort {
+					t.Fatalf("second reasoning effort = %q, want %q", req.ReasoningEffort, classifierFallbackReasoningEffort)
+				}
+				return llm.JSONSchemaResponse{
+					Status:     "completed",
+					Model:      "gpt-5.4-mini",
+					OutputText: `{"category":"completed","summary":"Work is wrapped up.","confidence":0.88}`,
+				}, nil
+			},
+		},
+	}
+
+	result, err := client.Classify(context.Background(), SessionSnapshot{
+		ProjectPath:          "/tmp/demo",
+		SessionID:            "ses_demo",
+		SessionFormat:        "modern",
+		LastEventAt:          time.Now().UTC().Format(time.RFC3339),
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  true,
+		Transcript: []TranscriptItem{
+			{Role: "user", Text: "Ship the change."},
+			{Role: "assistant", Text: "Done and verified."},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Classify() error = %v", err)
+	}
+	if callCount != 2 {
+		t.Fatalf("runner call count = %d, want 2 after retrying malformed output", callCount)
+	}
+	if result.Category != model.SessionCategoryCompleted {
+		t.Fatalf("category = %s, want completed", result.Category)
+	}
+	if result.Summary != "Work is wrapped up." {
+		t.Fatalf("summary = %q, want valid retried summary", result.Summary)
 	}
 }
 

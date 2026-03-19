@@ -75,24 +75,32 @@ func NewOpenAICommitMessageClientWithUsageTracker(apiKey string, usage *llm.Usag
 }
 
 func NewCodexCommitMessageClientWithUsageTracker(usage *llm.UsageTracker) *OpenAICommitMessageClient {
+	return NewCodexCommitMessageClientWithUsageTrackerInDataDir("", usage)
+}
+
+func NewCodexCommitMessageClientWithUsageTrackerInDataDir(dataDir string, usage *llm.UsageTracker) *OpenAICommitMessageClient {
 	model := strings.TrimSpace(os.Getenv(brand.CommitModelEnvVar))
 	if model == "" {
 		model = defaultCommitModel
 	}
 	return &OpenAICommitMessageClient{
 		model:     model,
-		responses: llm.NewCodexExecRunner(45*time.Second, usage),
+		responses: llm.NewPersistentCodexRunnerInDataDir(dataDir, 45*time.Second, usage),
 	}
 }
 
 func NewOpenCodeCommitMessageClientWithUsageTracker(usage *llm.UsageTracker) *OpenAICommitMessageClient {
+	return NewOpenCodeCommitMessageClientWithUsageTrackerInDataDir("", usage)
+}
+
+func NewOpenCodeCommitMessageClientWithUsageTrackerInDataDir(dataDir string, usage *llm.UsageTracker) *OpenAICommitMessageClient {
 	model := strings.TrimSpace(os.Getenv(brand.CommitModelEnvVar))
 	if model == "" {
 		model = defaultCommitModel
 	}
 	return &OpenAICommitMessageClient{
 		model:     model,
-		responses: llm.NewOpenCodeRunRunner(45*time.Second, usage),
+		responses: llm.NewOpenCodeRunRunnerInDataDir(dataDir, 45*time.Second, usage),
 	}
 }
 

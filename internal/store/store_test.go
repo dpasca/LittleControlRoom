@@ -826,6 +826,80 @@ func TestQueueSessionClassificationFailedSameSnapshotCanRetryImmediatelyWhenForc
 	}
 }
 
+func TestQueueSessionClassificationCompletedSameSnapshotWithBlankSummaryRequeues(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	classification := model.SessionClassification{
+		SessionID:         "ses_blank_summary_retry",
+		ProjectPath:       "/tmp/blank-summary-retry",
+		SessionFile:       "/tmp/blank-summary-retry/session.jsonl",
+		SessionFormat:     "modern",
+		SnapshotHash:      "hash-blank-summary-retry",
+		Model:             "gpt-5-mini",
+		ClassifierVersion: "v1",
+		SourceUpdatedAt:   now,
+	}
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           classification.ProjectPath,
+		Name:           "blank-summary-retry",
+		Status:         model.StatusIdle,
+		AttentionScore: 12,
+		PresentOnDisk:  true,
+		InScope:        true,
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{{
+			SessionID:    classification.SessionID,
+			ProjectPath:  classification.ProjectPath,
+			SessionFile:  classification.SessionFile,
+			Format:       classification.SessionFormat,
+			LastEventAt:  now,
+			SnapshotHash: classification.SnapshotHash,
+		}},
+	}); err != nil {
+		t.Fatalf("upsert project state: %v", err)
+	}
+
+	if queued, err := st.QueueSessionClassification(ctx, classification, 15*time.Minute); err != nil || !queued {
+		t.Fatalf("initial queue: queued=%v err=%v", queued, err)
+	}
+	claimed, err := st.ClaimNextPendingSessionClassification(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("claim classification: %v", err)
+	}
+	claimed.Category = model.SessionCategoryUnknown
+	claimed.Summary = ""
+	claimed.Confidence = 0
+	if err := st.CompleteSessionClassification(ctx, claimed); err != nil {
+		t.Fatalf("complete blank-summary classification: %v", err)
+	}
+
+	if queued, err := st.QueueSessionClassification(ctx, classification, 15*time.Minute); err != nil {
+		t.Fatalf("requeue blank-summary completion: %v", err)
+	} else if !queued {
+		t.Fatalf("expected blank-summary completed classification to requeue")
+	}
+
+	stored, err := st.GetSessionClassification(ctx, classification.SessionID)
+	if err != nil {
+		t.Fatalf("get classification: %v", err)
+	}
+	if stored.Status != model.ClassificationPending {
+		t.Fatalf("status = %s, want pending after requeue", stored.Status)
+	}
+	if stored.Stage != model.ClassificationStageQueued {
+		t.Fatalf("stage = %s, want queued after requeue", stored.Stage)
+	}
+}
+
 func TestQueueSessionClassificationRunningSameSnapshotDoesNotRetryImmediately(t *testing.T) {
 	t.Parallel()
 

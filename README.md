@@ -1,8 +1,10 @@
 # Little Control Room
 
-Little Control Room (LCR) is a terminal dashboard for keeping track of AI work across multiple local projects.
+Little Control Room (LCR) is a modern day IDE for developers using Codex and OpenCode.
 
-It finds recent Codex and OpenCode activity, highlights what needs attention, and lets you jump back into work without bouncing between repos and terminal tabs.
+LCR is meant to be a single window where you can coordinate most of your development activity, multitasking across dozens of projects and sessions as well as possible.
+
+LCR shows you in real time the progress of each Codex and OpenCode session, and lets you open, resume, or switch sessions, view diffs, generate commits with automatic messages, and manage per-project runtimes, all without leaving the dashboard.
 
 ## Screenshots
 
@@ -146,11 +148,13 @@ To create a new project, use the command `/new-project`. This will create a new 
 
 ## Costs
 
-Using Codex or OpenCode inside LCR does not add any additional cost beyond what you would normally pay for those tools.
+When available, LCR will use Codex and OpenCode access to do its work. This means that there is no additional cost if you use Codex or OpenCode with a flat rate subscription.
 
-LCR can also make its own small OpenAI API calls from the `openai_api_key` in your config. Today that is mainly for session summaries/classification and commit-help features.
+If instead you provide an OpenAI API key, per-token cost will incur. A cost estimate is shown at the bottom of the window. Do not rely on this estimate. Your source of truth should be the OpenAI dashboard.
 
-The app includes a live cost estimator in the footer so you can see tracked LCR API usage as you work. With a few projects active, a full day of use is often around $1 to $2, though real cost depends on how much classification and commit-help traffic you generate. The OpenAI dashboard is still the source of truth for billing.
+LCR relies on the GPT Mini and Nano models, so it should use little of your quota / API usage.
+
+Type `/setup` from the TUI or edit `~/.little-control-room/config.toml` to change the provider.
 
 ## Notes
 

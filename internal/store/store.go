@@ -1257,7 +1257,11 @@ func (s *Store) QueueSessionClassification(ctx context.Context, classification m
 
 	if sameSnapshot {
 		switch existing.Status {
-		case model.ClassificationCompleted, model.ClassificationPending:
+		case model.ClassificationCompleted:
+			if strings.TrimSpace(existing.Summary) != "" {
+				return false, nil
+			}
+		case model.ClassificationPending:
 			return false, nil
 		case model.ClassificationRunning:
 			if retryAfter <= 0 {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"lcroom/internal/aibackend"
+	"lcroom/internal/appfs"
 	"lcroom/internal/attention"
 	"lcroom/internal/brand"
 	"lcroom/internal/config"
@@ -88,6 +89,7 @@ func New(cfg config.AppConfig, st *store.Store, bus *events.Bus, detectorList []
 		gitRepoInitializer:   runGitInit,
 	}
 	svc.configureAIClientsLocked()
+	svc.bestEffortPrepareInternalWorkspaceState()
 	return svc
 }
 
@@ -180,13 +182,13 @@ func (s *Service) configureAIClientsLocked() {
 		client = sessionclassify.NewOpenAIClientWithUsageTracker(apiKey, s.llmUsageTracker)
 	case config.AIBackendCodex:
 		if selectedStatus.Ready {
-			commitAssistant = gitops.NewCodexCommitMessageClientWithUsageTracker(s.llmUsageTracker)
-			client = sessionclassify.NewCodexClientWithUsageTracker(s.llmUsageTracker)
+			commitAssistant = gitops.NewCodexCommitMessageClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
+			client = sessionclassify.NewCodexClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
 		}
 	case config.AIBackendOpenCode:
 		if selectedStatus.Ready {
-			commitAssistant = gitops.NewOpenCodeCommitMessageClientWithUsageTracker(s.llmUsageTracker)
-			client = sessionclassify.NewOpenCodeClientWithUsageTracker(s.llmUsageTracker)
+			commitAssistant = gitops.NewOpenCodeCommitMessageClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
+			client = sessionclassify.NewOpenCodeClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
 		}
 	}
 	s.commitMessageSuggester = commitAssistant
@@ -216,6 +218,33 @@ func hasMeaningfulLLMUsage(snapshot model.LLMSessionUsage) bool {
 		snapshot.Totals.EstimatedCostUSD > 0
 }
 
+func (s *Service) bestEffortPrepareInternalWorkspaceState() {
+	internalWorkspaceRoot := appfs.InternalWorkspaceRoot(s.cfg.DataDir)
+	_ = appfs.CleanupStaleInternalWorkspaces(s.cfg.DataDir, 24*time.Hour)
+	if s.store == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	summaries, err := s.store.GetProjectSummaryMap(ctx)
+	if err != nil {
+		return
+	}
+	for path, summary := range summaries {
+		if !appfs.IsManagedInternalPath(path, []string{internalWorkspaceRoot}) {
+			continue
+		}
+		if summary.InScope {
+			_ = s.store.SetProjectScope(ctx, path, false)
+		}
+		if !summary.Forgotten {
+			_ = s.store.SetForgotten(ctx, path, true)
+		}
+	}
+}
+
 func (s *Service) ScanOnce(ctx context.Context) (ScanReport, error) {
 	return s.ScanWithOptions(ctx, ScanOptions{})
 }
@@ -225,13 +254,15 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 	defer s.mu.Unlock()
 
 	now := time.Now()
-	scope := scanner.NewPathScope(s.cfg.IncludePaths, s.cfg.ExcludePaths)
+	internalWorkspaceRoot := appfs.InternalWorkspaceRoot(s.cfg.DataDir)
+	scope := scanner.NewPathScope(s.cfg.IncludePaths, s.cfg.ExcludePaths).WithAlwaysExcluded(internalWorkspaceRoot)
 	discovered := []string{}
 	var err error
 	if len(s.cfg.IncludePaths) > 0 {
 		discovered, err = scanner.DiscoverGitProjects(scanner.Discovery{
-			Roots:    s.cfg.IncludePaths,
-			MaxDepth: 4,
+			Roots:     s.cfg.IncludePaths,
+			MaxDepth:  4,
+			SkipPaths: []string{internalWorkspaceRoot},
 		})
 		if err != nil {
 			return ScanReport{}, fmt.Errorf("discover git projects: %w", err)
@@ -272,6 +303,9 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		}
 		for path, activity := range detected {
 			rawPath := filepath.Clean(path)
+			if appfs.IsManagedInternalPath(rawPath, []string{internalWorkspaceRoot}) {
+				continue
+			}
 			normalized := normalizeActivity(activity, rawPath)
 			existing, ok := rawActivities[rawPath]
 			if !ok {
@@ -419,7 +453,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			}
 		}
 		forgotten := old.Forgotten
-		if presentOnDisk && forgotten {
+		if presentOnDisk && forgotten && scope.Allows(path) {
 			forgotten = false
 		}
 		if forgotten && !presentOnDisk {
