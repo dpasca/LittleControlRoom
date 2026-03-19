@@ -148,9 +148,9 @@ To create a new project, use the command `/new-project`. This will create a new 
 
 Using Codex or OpenCode inside LCR does not add any additional cost beyond what you would normally pay for those tools.
 
-There are some OpenAI API costs from a key the user needs to provide (`openai_api_key` in the config file). These are for LCR to
-summarize sessions, classify them, help with commit messages.
-These operations are done with relatively small requests on cheaper models, and the footer now shows a running cost estimate for tracked LCR API usage across the current summary/classification and commit-help paths. It is still best to keep an eye on the OpenAI dashboard, which remains the source of truth.
+LCR can also make its own small OpenAI API calls from the `openai_api_key` in your config. Today that is mainly for session summaries/classification and commit-help features.
+
+The app includes a live cost estimator in the footer so you can see tracked LCR API usage as you work. With a few projects active, a full day of use is often around $1 to $2, though real cost depends on how much classification and commit-help traffic you generate. The OpenAI dashboard is still the source of truth for billing.
 
 ## Notes
 

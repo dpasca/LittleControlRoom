@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-19 11:31 JST (JST)
+Last updated: 2026-03-19 15:40 JST (JST)
 
 ## Current State
 
@@ -87,6 +87,23 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-19 15:40 JST)
+
+- Simplified the README `Costs` section so it is shorter and more direct: it now clearly says Codex/OpenCode usage itself does not add extra LCR cost, that LCR's own OpenAI API traffic is mainly summaries/classification plus commit-help, and that the footer includes a live cost estimator.
+- Adjusted that rough cost expectation to a safer range: with a few active projects, a full day of LCR usage is often around `$1` to `$2`, while still keeping the OpenAI dashboard as the billing source of truth.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `make test` passed.
+- `make scan` passed at `2026-03-19T15:40:43+09:00` (`activity projects: 87`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 77`).
+- `make doctor` passed on the cached snapshot dated `2026-03-19T15:40:51+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- Decide whether the same simplified cost wording should also replace the longer wording in any future docs/reference or onboarding surfaces so the estimate stays consistent across the project.
+- If the footer estimator scope grows beyond summaries/classification and commit-help, refresh the README example so the `$1-$2/day with a few active projects` guidance stays honest.
 
 ## Latest Update (2026-03-19 11:31 JST)
 
