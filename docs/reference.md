@@ -174,6 +174,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/sort recent`
 - `/view ai`
 - `/view all`
+- `/setup`
 - `/settings`
 - `/new-project`
 - `/open`
@@ -196,8 +197,6 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/commit`
 - `/commit tighten git status parsing`
 - `/push`
-- `/finish`
-- `/finish polish palette and ship`
 - `/pin`
 - `/snooze 4h`
 - `/clear-snooze`

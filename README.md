@@ -47,7 +47,7 @@ Requirements:
 - Go 1.25+
 - Codex installed locally, capable of running in the terminal.
 - OpenCode installed locally if you want embedded OpenCode sessions.
-- An OpenAI API key saved in `~/.little-control-room/config.toml`. LCR requires this at startup and opens Settings until you save it.
+- At least one AI backend configured: Codex, OpenCode, or an OpenAI API key.
 
 Build and launch from this repo:
 
@@ -63,7 +63,7 @@ make install
 lcroom tui
 ```
 
-On the first run, LCR opens `/settings` and stays there until you save `openai_api_key`. After that, you can keep editing the saved config from the dashboard or create `~/.little-control-room/config.toml` from [`docs/config.example.toml`](docs/config.example.toml).
+On the first run, LCR opens `/setup` if no AI backend is configured. From there you can use Codex, OpenCode, an OpenAI API key, or continue without AI and come back later.
 
 ## Slash Commands
 
@@ -73,7 +73,8 @@ The main TUI command palette opens with `/`.
 - `/refresh`: Rescan projects and retry failed assessments.
 - `/sort <attention|recent>`: Change the project ordering.
 - `/view <ai|all>`: Switch between AI-linked and all tracked folders.
-- `/settings`: Edit the saved OpenAI key, scope, and scan settings.
+- `/setup`: Choose and check the AI backend for summaries and commit help.
+- `/settings`: Edit scope, filters, and scan settings.
 - `/new-project`: Create a project folder, or paste an existing project path to add it directly.
 - `/open`: Open the selected project's folder in the system browser.
 - `/run [command]`: Start the selected project's managed runtime.
@@ -86,7 +87,6 @@ The main TUI command palette opens with `/`.
 - `/diff`: Open the full-screen git diff.
 - `/commit [message]`: Preview a commit for the selected project.
 - `/push`: Push the selected project's branch.
-- `/finish [message]`: Open the finish/commit flow.
 - `/codex [prompt]`: Resume the latest Codex session or start one.
 - `/codex-new [prompt]`: Start a fresh Codex session.
 - `/opencode [prompt]`: Resume the latest OpenCode session or start one.
@@ -148,11 +148,11 @@ To create a new project, use the command `/new-project`. This will create a new 
 
 ## Costs
 
-When available, LCR will use Codex and OpenCode access to do its work. This means that there is no additional cost if you use Codex or OpenCode with a flat rate subscription.
+If Codex or OpenCode is available, LCR can use that local login for summaries and commit help. On a flat-rate plan, that usually means no extra LCR API cost.
 
-If instead you provide an OpenAI API key, per-token cost will incur. A cost estimate is shown at the bottom of the window. Do not rely on this estimate. Your source of truth should be the OpenAI dashboard.
+If you use an OpenAI API key instead, LCR mainly spends tokens on summaries/classification and commit help. The footer shows a live estimate for that API usage only.
 
-LCR relies on the GPT Mini and Nano models, so it should use little of your quota / API usage.
+With a few active projects, a full day is often around `$1` to `$2`, but treat that as a rough guide. The OpenAI dashboard is the billing source of truth.
 
 Type `/setup` from the TUI or edit `~/.little-control-room/config.toml` to change the provider.
 

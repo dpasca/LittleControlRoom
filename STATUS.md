@@ -1,6 +1,24 @@
 # Little Control Room Status
 
-Last updated: 2026-03-19 19:20 JST (JST)
+Last updated: 2026-03-19 20:02 JST (JST)
+
+## Latest Update (2026-03-19 20:02 JST)
+
+- Tightened the README cost/provider copy so it matches the current backend behavior: Codex/OpenCode usage is described as using the local login path, the footer estimate is now documented as API-key-only, and the rough `$1` to `$2` full-day estimate for a few active projects is back in place with the OpenAI dashboard called out as the billing source of truth.
+- Cleaned up adjacent README setup/command drift that had become misleading after the recent backend work: Quick Start no longer claims an OpenAI API key is required at startup, `/setup` is documented as the first-run backend picker, and the removed `/finish` command is no longer listed.
+- Synced `docs/reference.md` with the same command-surface reality by adding `/setup` and removing the stale `/finish` examples.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `make test` passed.
+- `make scan` passed at `2026-03-19T20:01:48+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-19T20:01:48+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- Keep the public docs in sync with the backend/setup work as the provider-selection UX settles, especially if we later add an OpenCode persistent-helper path or more `/setup` actions.
+- Consider whether the README should also mention that local Codex/OpenCode backends show activity labels in the footer rather than dollar amounts, if we want to make that distinction even more explicit for first-time users.
 
 ## Latest Update (2026-03-19 19:20 JST)
 
