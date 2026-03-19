@@ -34,6 +34,9 @@ func TestOpenAICommitMessageClientSuggest(t *testing.T) {
 					Text string `json:"text"`
 				} `json:"content"`
 			} `json:"input"`
+			Reasoning struct {
+				Effort string `json:"effort"`
+			} `json:"reasoning"`
 			MaxOutputTokens *int `json:"max_output_tokens"`
 		}
 		if err := json.Unmarshal(body, &req); err != nil {
@@ -41,6 +44,9 @@ func TestOpenAICommitMessageClientSuggest(t *testing.T) {
 		}
 		if len(req.Input) < 2 || len(req.Input[1].Content) == 0 {
 			t.Fatalf("unexpected request structure: %s", string(body))
+		}
+		if req.Reasoning.Effort != "low" {
+			t.Fatalf("reasoning effort = %q, want %q", req.Reasoning.Effort, "low")
 		}
 		if req.MaxOutputTokens != nil {
 			t.Fatalf("max_output_tokens = %v, want omitted field", *req.MaxOutputTokens)
@@ -65,7 +71,7 @@ func TestOpenAICommitMessageClientSuggest(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"status":"completed",
-			"model":"gpt-5-mini-2026-03-07",
+			"model":"gpt-5.4-mini-2026-03-17",
 			"usage":{
 				"input_tokens":1200,
 				"input_tokens_details":{"cached_tokens":100},
@@ -92,7 +98,7 @@ func TestOpenAICommitMessageClientSuggest(t *testing.T) {
 	usageTracker := llm.NewUsageTracker()
 	client := &OpenAICommitMessageClient{
 		apiKey:   "test-key",
-		model:    "gpt-5-mini",
+		model:    "gpt-5.4-mini",
 		endpoint: server.URL,
 		httpClient: &http.Client{
 			Timeout: 5 * time.Second,
@@ -116,7 +122,7 @@ func TestOpenAICommitMessageClientSuggest(t *testing.T) {
 	if suggestion.Message != "Improve command palette scrolling" {
 		t.Fatalf("message = %q, want expected subject", suggestion.Message)
 	}
-	if suggestion.Model != "gpt-5-mini-2026-03-07" {
+	if suggestion.Model != "gpt-5.4-mini-2026-03-17" {
 		t.Fatalf("model = %q, want response model", suggestion.Model)
 	}
 	usage := usageTracker.Snapshot(true)
@@ -146,6 +152,9 @@ func TestOpenAICommitMessageClientRecommendUntracked(t *testing.T) {
 					Text string `json:"text"`
 				} `json:"content"`
 			} `json:"input"`
+			Reasoning struct {
+				Effort string `json:"effort"`
+			} `json:"reasoning"`
 			MaxOutputTokens *int `json:"max_output_tokens"`
 		}
 		if err := json.Unmarshal(body, &req); err != nil {
@@ -153,6 +162,9 @@ func TestOpenAICommitMessageClientRecommendUntracked(t *testing.T) {
 		}
 		if len(req.Input) < 2 || len(req.Input[1].Content) == 0 {
 			t.Fatalf("unexpected request structure: %s", string(body))
+		}
+		if req.Reasoning.Effort != "low" {
+			t.Fatalf("reasoning effort = %q, want %q", req.Reasoning.Effort, "low")
 		}
 		if req.MaxOutputTokens != nil {
 			t.Fatalf("max_output_tokens = %v, want omitted field", *req.MaxOutputTokens)
@@ -180,7 +192,7 @@ func TestOpenAICommitMessageClientRecommendUntracked(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"status":"completed",
-			"model":"gpt-5-mini-2026-03-07",
+			"model":"gpt-5.4-mini-2026-03-17",
 			"usage":{
 				"input_tokens":1400,
 				"input_tokens_details":{"cached_tokens":200},
@@ -207,7 +219,7 @@ func TestOpenAICommitMessageClientRecommendUntracked(t *testing.T) {
 	usageTracker := llm.NewUsageTracker()
 	client := &OpenAICommitMessageClient{
 		apiKey:   "test-key",
-		model:    "gpt-5-mini",
+		model:    "gpt-5.4-mini",
 		endpoint: server.URL,
 		httpClient: &http.Client{
 			Timeout: 5 * time.Second,
@@ -239,7 +251,7 @@ func TestOpenAICommitMessageClientRecommendUntracked(t *testing.T) {
 	if suggestion.Files[1].Include || suggestion.Files[1].Path != "scratch.txt" {
 		t.Fatalf("second decision = %#v, want scratch.txt excluded", suggestion.Files[1])
 	}
-	if suggestion.Model != "gpt-5-mini-2026-03-07" {
+	if suggestion.Model != "gpt-5.4-mini-2026-03-17" {
 		t.Fatalf("model = %q, want response model", suggestion.Model)
 	}
 	usage := usageTracker.Snapshot(true)

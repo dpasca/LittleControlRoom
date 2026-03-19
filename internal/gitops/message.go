@@ -15,7 +15,10 @@ import (
 	"lcroom/internal/llm"
 )
 
-const defaultCommitModel = "gpt-5-mini"
+const (
+	defaultCommitModel           = "gpt-5.4-mini"
+	defaultCommitReasoningEffort = "low"
+)
 
 type CommitMessageInput struct {
 	Intent                  string   `json:"intent"`
@@ -135,7 +138,7 @@ func (c *OpenAICommitMessageClient) runJSONSchemaPrompt(ctx context.Context, sys
 		UserText:        userText,
 		SchemaName:      schemaName,
 		Schema:          schema,
-		ReasoningEffort: "minimal",
+		ReasoningEffort: defaultCommitReasoningEffort,
 	})
 	if err != nil {
 		return llm.JSONSchemaResponse{}, err

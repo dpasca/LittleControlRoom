@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-19 10:25 JST (JST)
+Last updated: 2026-03-19 10:40 JST (JST)
 
 ## Current State
 
@@ -85,6 +85,25 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-19 10:40 JST)
+
+- Switched the AI commit-subject and untracked-file recommendation default model from `gpt-5-mini` to `gpt-5.4-mini`, and changed that shared commit-help path from `reasoning.effort = "minimal"` to `reasoning.effort = "low"` so it stays GPT-5.4-compatible while keeping the request lightweight.
+- Tightened the focused `internal/gitops` tests so they now assert the outgoing reasoning effort is `low` and the returned tracked model is a GPT-5.4 mini snapshot, which keeps the new commit-help configuration covered instead of only changing production constants.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/gitops/message.go internal/gitops/message_test.go` passed.
+- `go test ./internal/gitops -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-19T10:40:04+09:00` (`activity projects: 87`, `tracked projects: 138`, `updated projects: 2`, `queued classifications: 77`).
+- `make doctor` passed on the cached snapshot dated `2026-03-19T10:40:13+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- Watch a few real commit-preview suggestions under `gpt-5.4-mini` to confirm the quality bump is worth the higher per-call cost versus `gpt-5.4-nano`.
+- If commit subjects still feel over-detailed, tighten the prompt contract before changing models again.
 
 ## Latest Update (2026-03-19 10:25 JST)
 
