@@ -26,7 +26,6 @@ const (
 	KindDiff        Kind = "diff"
 	KindCommit      Kind = "commit"
 	KindPush        Kind = "push"
-	KindFinish      Kind = "finish"
 	KindCodex       Kind = "codex"
 	KindCodexNew    Kind = "codex-new"
 	KindOpenCode    Kind = "opencode"
@@ -116,9 +115,8 @@ var specs = []Spec{
 	{Name: "runtime", Usage: "/runtime", Summary: "Focus the selected project's runtime pane"},
 	{Name: "stop", Usage: "/stop", Summary: "Stop the selected project's managed runtime"},
 	{Name: "diff", Usage: "/diff", Summary: "Open a full-screen diff for the selected project"},
-	{Name: "commit", Usage: "/commit [message]", Summary: "Preview a commit for the selected project"},
+	{Name: "commit", Usage: "/commit [message]", Summary: "Preview a commit; Alt+Enter also pushes when available"},
 	{Name: "push", Usage: "/push", Summary: "Push the selected project when its branch is ahead"},
-	{Name: "finish", Usage: "/finish [message]", Summary: "Open the commit preview for the selected project"},
 	{Name: "codex", Usage: "/codex [prompt]", Summary: "Resume the selected project's latest Codex session, or start a new one"},
 	{Name: "codex-new", Usage: "/codex-new [prompt]", Summary: "Start a fresh Codex session in the selected project"},
 	{Name: "opencode", Usage: "/opencode [prompt]", Summary: "Resume the selected project's latest OpenCode session, or start a new one"},
@@ -349,12 +347,6 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /push")
 		}
 		return Invocation{Kind: KindPush, Canonical: "/push"}, nil
-	case "finish":
-		return Invocation{
-			Kind:      KindFinish,
-			Message:   strings.TrimSpace(rawArgs),
-			Canonical: canonicalCommand("finish", rawArgs),
-		}, nil
 	case "codex":
 		return Invocation{
 			Kind:      KindCodex,

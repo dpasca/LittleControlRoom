@@ -1,6 +1,28 @@
 # Little Control Room Status
 
-Last updated: 2026-03-19 17:14 JST (JST)
+Last updated: 2026-03-19 18:05 JST (JST)
+
+## Latest Update (2026-03-19 18:05 JST)
+
+- Removed the ambiguous `/finish` slash command from the public TUI command surface. `/commit` remains the single commit workflow entry point, with `Alt+Enter` still handling commit-and-push when the repo can push.
+- Added a low-risk local-backend speed win inside the Codex/OpenCode JSON-schema runners: identical local requests are now memoized per runner, so repeated commit-help or classification prompts with the same exact payload can return from cache instead of spawning another `codex exec` / `opencode run` process.
+- Kept the earlier immediate-open commit modal UX intact, so slower local backends now at least show progress immediately while repeated identical requests can skip the extra helper round-trip.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/commands/commands.go internal/commands/commands_test.go internal/tui/app.go internal/tui/app_test.go internal/llm/local_cli.go internal/llm/local_cli_test.go` passed.
+- `go test ./internal/commands ./internal/llm ./internal/tui -count=1` passed.
+- `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-commit-cache-check INTERVAL=1h` reached the TUI sandbox and exited via `q`.
+- `make test` passed on rerun. The first attempt hit the existing flaky `TestRenderFooterPulsesWhenUsageIncreases`; the immediate rerun passed cleanly.
+- `make scan` passed at `2026-03-19T18:04:56+09:00` (`activity projects: 87`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-19T18:05:04+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- If local Codex still feels too slow after the new cache hits, the next bigger step is a real persistent helper/session path instead of one-shot `codex exec` processes.
+- Consider whether repeated commit previews should also cache more of the non-AI repo analysis path, not just the local runner response, when the repo state hash is unchanged.
+- Add a short README/help note for `/setup` and local-backend behavior once the backend-selection UX settles.
 
 ## Latest Update (2026-03-19 17:14 JST)
 

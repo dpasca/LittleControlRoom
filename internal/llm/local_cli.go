@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"lcroom/internal/model"
@@ -25,6 +28,7 @@ type CodexExecRunner struct {
 	usage     *UsageTracker
 	command   string
 	tempDirFn func() string
+	cache     *localRunnerResponseCache
 }
 
 type OpenCodeRunRunner struct {
@@ -32,6 +36,14 @@ type OpenCodeRunRunner struct {
 	usage     *UsageTracker
 	command   string
 	tempDirFn func() string
+	cache     *localRunnerResponseCache
+}
+
+type localRunnerResponseCache struct {
+	mu      sync.Mutex
+	entries map[string]JSONSchemaResponse
+	order   []string
+	limit   int
 }
 
 func NewCodexExecRunner(timeout time.Duration, usage *UsageTracker) *CodexExecRunner {
@@ -43,6 +55,7 @@ func NewCodexExecRunner(timeout time.Duration, usage *UsageTracker) *CodexExecRu
 		usage:     usage,
 		command:   "codex",
 		tempDirFn: os.TempDir,
+		cache:     newLocalRunnerResponseCache(64),
 	}
 }
 
@@ -55,6 +68,7 @@ func NewOpenCodeRunRunner(timeout time.Duration, usage *UsageTracker) *OpenCodeR
 		usage:     usage,
 		command:   "opencode",
 		tempDirFn: os.TempDir,
+		cache:     newLocalRunnerResponseCache(64),
 	}
 }
 
@@ -64,6 +78,10 @@ func (r *CodexExecRunner) RunJSONSchema(ctx context.Context, req JSONSchemaReque
 	}
 	if strings.TrimSpace(req.Model) == "" {
 		return JSONSchemaResponse{}, errors.New("codex exec runner requires a model")
+	}
+	cacheKey := cacheKeyForJSONSchemaRequest(req)
+	if cached, ok := r.cachedResponse(cacheKey); ok {
+		return cached, nil
 	}
 	if r.usage != nil {
 		r.usage.Start(req.Model)
@@ -78,6 +96,7 @@ func (r *CodexExecRunner) RunJSONSchema(ctx context.Context, req JSONSchemaReque
 	if r.usage != nil {
 		r.usage.Complete(response.Model, response.Usage)
 	}
+	r.storeCachedResponse(cacheKey, response)
 	return response, nil
 }
 
@@ -124,6 +143,10 @@ func (r *OpenCodeRunRunner) RunJSONSchema(ctx context.Context, req JSONSchemaReq
 	if strings.TrimSpace(req.Model) == "" {
 		return JSONSchemaResponse{}, errors.New("opencode runner requires a model")
 	}
+	cacheKey := cacheKeyForJSONSchemaRequest(req)
+	if cached, ok := r.cachedResponse(cacheKey); ok {
+		return cached, nil
+	}
 	if r.usage != nil {
 		r.usage.Start(req.Model)
 	}
@@ -137,7 +160,36 @@ func (r *OpenCodeRunRunner) RunJSONSchema(ctx context.Context, req JSONSchemaReq
 	if r.usage != nil {
 		r.usage.Complete(response.Model, response.Usage)
 	}
+	r.storeCachedResponse(cacheKey, response)
 	return response, nil
+}
+
+func (r *CodexExecRunner) cachedResponse(cacheKey string) (JSONSchemaResponse, bool) {
+	if r == nil || r.cache == nil {
+		return JSONSchemaResponse{}, false
+	}
+	return r.cache.Get(cacheKey)
+}
+
+func (r *CodexExecRunner) storeCachedResponse(cacheKey string, response JSONSchemaResponse) {
+	if r == nil || r.cache == nil {
+		return
+	}
+	r.cache.Store(cacheKey, response)
+}
+
+func (r *OpenCodeRunRunner) cachedResponse(cacheKey string) (JSONSchemaResponse, bool) {
+	if r == nil || r.cache == nil {
+		return JSONSchemaResponse{}, false
+	}
+	return r.cache.Get(cacheKey)
+}
+
+func (r *OpenCodeRunRunner) storeCachedResponse(cacheKey string, response JSONSchemaResponse) {
+	if r == nil || r.cache == nil {
+		return
+	}
+	r.cache.Store(cacheKey, response)
 }
 
 func (r *OpenCodeRunRunner) run(parent context.Context, req JSONSchemaRequest) (JSONSchemaResponse, error) {
@@ -185,6 +237,72 @@ func buildSchemaPrompt(req JSONSchemaRequest, schemaEnforced bool) string {
 		lines = append(lines, "Return only valid JSON that matches this schema exactly:\n"+string(schemaRaw))
 	}
 	return strings.Join(lines, "\n\n")
+}
+
+func newLocalRunnerResponseCache(limit int) *localRunnerResponseCache {
+	if limit <= 0 {
+		limit = 1
+	}
+	return &localRunnerResponseCache{
+		entries: make(map[string]JSONSchemaResponse, limit),
+		order:   make([]string, 0, limit),
+		limit:   limit,
+	}
+}
+
+func (c *localRunnerResponseCache) Get(key string) (JSONSchemaResponse, bool) {
+	if c == nil || strings.TrimSpace(key) == "" {
+		return JSONSchemaResponse{}, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	response, ok := c.entries[key]
+	if !ok {
+		return JSONSchemaResponse{}, false
+	}
+	return response, true
+}
+
+func (c *localRunnerResponseCache) Store(key string, response JSONSchemaResponse) {
+	if c == nil || strings.TrimSpace(key) == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.entries[key]; ok {
+		c.entries[key] = response
+		return
+	}
+	if len(c.order) >= c.limit {
+		evict := c.order[0]
+		c.order = c.order[1:]
+		delete(c.entries, evict)
+	}
+	c.entries[key] = response
+	c.order = append(c.order, key)
+}
+
+func cacheKeyForJSONSchemaRequest(req JSONSchemaRequest) string {
+	payload, err := json.Marshal(struct {
+		Model           string         `json:"model"`
+		SystemText      string         `json:"system_text"`
+		UserText        string         `json:"user_text"`
+		SchemaName      string         `json:"schema_name"`
+		Schema          map[string]any `json:"schema"`
+		ReasoningEffort string         `json:"reasoning_effort"`
+	}{
+		Model:           strings.TrimSpace(req.Model),
+		SystemText:      strings.TrimSpace(req.SystemText),
+		UserText:        strings.TrimSpace(req.UserText),
+		SchemaName:      strings.TrimSpace(req.SchemaName),
+		Schema:          req.Schema,
+		ReasoningEffort: strings.TrimSpace(req.ReasoningEffort),
+	})
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:])
 }
 
 func openCodeModelArg(modelName string) string {

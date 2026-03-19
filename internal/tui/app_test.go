@@ -7134,35 +7134,6 @@ func TestDispatchCommitCommandOpensLoadingPreviewImmediately(t *testing.T) {
 	}
 }
 
-func TestDispatchFinishCommandPreservesProvidedMessageWhileLoading(t *testing.T) {
-	m := Model{
-		projects: []model.ProjectSummary{{
-			Name:          "demo",
-			Path:          "/tmp/demo",
-			PresentOnDisk: true,
-		}},
-		selected: 0,
-	}
-
-	updated, cmd := m.dispatchCommand(commands.Invocation{
-		Kind:    commands.KindFinish,
-		Message: "Ship current repo changes",
-	})
-	got := updated.(Model)
-	if got.commitPreview == nil {
-		t.Fatalf("dispatchCommand(/finish) should open the commit preview shell immediately")
-	}
-	if got.commitPreview.Message != "Ship current repo changes" {
-		t.Fatalf("loading preview should keep the provided message, got %q", got.commitPreview.Message)
-	}
-	if got.status != "Preparing finish preview..." {
-		t.Fatalf("status = %q, want preparing finish preview", got.status)
-	}
-	if cmd == nil {
-		t.Fatalf("dispatchCommand(/finish) should still return the async preview command")
-	}
-}
-
 func TestViewWithDiffScreenUsesFullBody(t *testing.T) {
 	diffState := newDiffViewState("/tmp/demo", "demo")
 	diffState.loading = false

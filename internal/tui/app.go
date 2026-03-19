@@ -2155,13 +2155,6 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		}
 		m.status = "Pushing..."
 		return m, m.pushCmd(p.Path)
-	case commands.KindFinish:
-		p, ok := m.selectedProject()
-		if !ok {
-			m.status = "No project selected"
-			return m, nil
-		}
-		return m, m.startCommitPreview(p, service.GitActionFinish, inv.Message)
 	case commands.KindCodex:
 		return m.launchCodexForSelection(false, inv.Prompt)
 	case commands.KindCodexNew:

@@ -180,18 +180,6 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
-			name: "finish without message",
-			raw:  "/finish",
-			check: func(t *testing.T, inv Invocation) {
-				if inv.Kind != KindFinish {
-					t.Fatalf("kind = %s, want %s", inv.Kind, KindFinish)
-				}
-				if inv.Message != "" {
-					t.Fatalf("message = %q, want empty", inv.Message)
-				}
-			},
-		},
-		{
 			name: "codex smart resume prompt",
 			raw:  "/codex continue with the latest session",
 			check: func(t *testing.T, inv Invocation) {
@@ -324,6 +312,12 @@ func TestParseRejectsUnknownCommand(t *testing.T) {
 	}
 }
 
+func TestParseRejectsRemovedFinishCommand(t *testing.T) {
+	if _, err := Parse("/finish"); err == nil {
+		t.Fatalf("Parse(/finish) expected error after removing the ambiguous alias")
+	}
+}
+
 func TestSuggestionsCommandNames(t *testing.T) {
 	got := Suggestions("/s")
 	if len(got) == 0 {
@@ -359,8 +353,8 @@ func TestSuggestionsIncludeCommitWorkflowCommands(t *testing.T) {
 	if len(got) == 0 {
 		t.Fatalf("Suggestions(/f) returned none")
 	}
-	if got[0].Insert != "/finish" {
-		t.Fatalf("first /f suggestion = %q, want /finish", got[0].Insert)
+	if got[0].Insert != "/forget" {
+		t.Fatalf("first /f suggestion = %q, want /forget", got[0].Insert)
 	}
 }
 
