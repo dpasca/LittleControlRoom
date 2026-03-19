@@ -48,7 +48,7 @@ type OpenAICommitMessageClient struct {
 	model      string
 	endpoint   string
 	httpClient *http.Client
-	responses  *llm.ResponsesClient
+	responses  llm.JSONSchemaRunner
 }
 
 func NewOpenAICommitMessageClient(apiKey string) *OpenAICommitMessageClient {
@@ -71,6 +71,28 @@ func NewOpenAICommitMessageClientWithUsageTracker(apiKey string, usage *llm.Usag
 		model:      model,
 		httpClient: &http.Client{Timeout: 45 * time.Second},
 		responses:  llm.NewResponsesClient(apiKey, 45*time.Second, usage),
+	}
+}
+
+func NewCodexCommitMessageClientWithUsageTracker(usage *llm.UsageTracker) *OpenAICommitMessageClient {
+	model := strings.TrimSpace(os.Getenv(brand.CommitModelEnvVar))
+	if model == "" {
+		model = defaultCommitModel
+	}
+	return &OpenAICommitMessageClient{
+		model:     model,
+		responses: llm.NewCodexExecRunner(45*time.Second, usage),
+	}
+}
+
+func NewOpenCodeCommitMessageClientWithUsageTracker(usage *llm.UsageTracker) *OpenAICommitMessageClient {
+	model := strings.TrimSpace(os.Getenv(brand.CommitModelEnvVar))
+	if model == "" {
+		model = defaultCommitModel
+	}
+	return &OpenAICommitMessageClient{
+		model:     model,
+		responses: llm.NewOpenCodeRunRunner(45*time.Second, usage),
 	}
 }
 
@@ -149,7 +171,7 @@ func (c *OpenAICommitMessageClient) runJSONSchemaPrompt(ctx context.Context, sys
 	return response, nil
 }
 
-func (c *OpenAICommitMessageClient) responsesClient() *llm.ResponsesClient {
+func (c *OpenAICommitMessageClient) responsesClient() llm.JSONSchemaRunner {
 	if c == nil {
 		return nil
 	}

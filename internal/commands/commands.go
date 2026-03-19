@@ -14,6 +14,7 @@ const (
 	KindRefresh     Kind = "refresh"
 	KindSort        Kind = "sort"
 	KindView        Kind = "view"
+	KindSetup       Kind = "setup"
 	KindSettings    Kind = "settings"
 	KindNewProject  Kind = "new-project"
 	KindOpen        Kind = "open"
@@ -105,6 +106,7 @@ var specs = []Spec{
 	{Name: "sort", Usage: "/sort attention|recent", Summary: "Set list ordering"},
 	{Name: "view", Usage: "/view ai|all", Summary: "Choose AI-linked or all folders"},
 	{Name: "settings", Usage: "/settings", Summary: "Edit the saved OpenAI key, scope, filters, and scan thresholds"},
+	{Name: "setup", Usage: "/setup", Summary: "Choose and check the AI backend for summaries and commit help"},
 	{Name: "new-project", Usage: "/new-project", Summary: "Create a project folder, or paste an existing path to add it"},
 	{Name: "open", Usage: "/open", Summary: "Open the selected project's folder in the system browser"},
 	{Name: "run", Usage: "/run [command]", Summary: "Start the selected project's managed runtime"},
@@ -271,6 +273,11 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, err
 		}
 		return Invocation{Kind: KindView, View: mode, Canonical: "/view " + string(mode)}, nil
+	case "setup":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /setup")
+		}
+		return Invocation{Kind: KindSetup, Canonical: "/setup"}, nil
 	case "settings":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /settings")

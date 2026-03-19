@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/aibackend"
 	"lcroom/internal/brand"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
@@ -74,6 +75,11 @@ type Model struct {
 	commitPreviewMessageOverride string
 	commitPreviewRefreshing      bool
 	commitApplying               bool
+	setupMode                    bool
+	setupChecked                 bool
+	setupLoading                 bool
+	setupSelected                int
+	setupSnapshot                aibackend.Snapshot
 	settingsMode                 bool
 	settingsFields               []settingsField
 	settingsSelected             int
@@ -225,7 +231,16 @@ type settingsSavedMsg struct {
 	err      error
 }
 
-type openAIKeyRequiredMsg struct{}
+type setupSavedMsg struct {
+	settings config.EditableSettings
+	path     string
+	err      error
+}
+
+type setupSnapshotMsg struct {
+	snapshot      aibackend.Snapshot
+	openOnStartup bool
+}
 
 type ignoredProjectsMsg struct {
 	items []model.IgnoredProjectName
@@ -420,12 +435,10 @@ func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		m.loadProjectsCmd(),
 		m.loadRecentProjectParentsCmd(),
+		m.refreshSetupSnapshotCmd(true),
 		m.waitBusCmd(),
 		m.waitCodexCmd(),
 		spinnerTickCmd(),
-	}
-	if strings.TrimSpace(m.currentSettingsBaseline().OpenAIAPIKey) == "" {
-		cmds = append(cmds, func() tea.Msg { return openAIKeyRequiredMsg{} })
 	}
 	return tea.Batch(cmds...)
 }
@@ -484,6 +497,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.commitPreview != nil {
 			return m.updateCommitPreviewMode(msg)
 		}
+		if m.setupMode {
+			return m.updateSetupMode(msg)
+		}
 		if m.settingsMode {
 			return m.updateSettingsMode(msg)
 		}
@@ -521,11 +537,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.newProjectRecentParents = append([]string(nil), msg.paths...)
 		}
 		return m, nil
-	case openAIKeyRequiredMsg:
-		if strings.TrimSpace(m.currentSettingsBaseline().OpenAIAPIKey) != "" {
-			return m, nil
+	case setupSnapshotMsg:
+		m.setupChecked = true
+		m.setupLoading = false
+		m.setupSnapshot = msg.snapshot
+		if msg.openOnStartup && msg.snapshot.NeedsSetup() {
+			return m, m.openSetupMode()
 		}
-		return m, m.openSettingsMode()
+		return m, nil
 	case newProjectResultMsg:
 		if m.newProjectDialog != nil {
 			m.newProjectDialog.Submitting = false
@@ -752,15 +771,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.settingsBaseline = &saved
 		m.excludeProjectPatterns = append([]string(nil), msg.settings.ExcludeProjectPatterns...)
 		m.settingsMode = false
-		m.status = fmt.Sprintf("Settings saved to %s. OpenAI key, name filters, and Codex launch mode apply now; the running scheduler keeps its current timing until the next launch of %s.", msg.path, brand.CLIName)
+		m.status = fmt.Sprintf("Settings saved to %s. Filters, API key, and Codex launch mode apply now; the running scheduler keeps its current timing until the next launch of %s.", msg.path, brand.CLIName)
 		m.rebuildProjectList(selectedPath)
+		cmds := []tea.Cmd{m.refreshSetupSnapshotCmd(false)}
 		if len(m.projects) > 0 {
 			m.syncDetailViewport(false)
-			return m, m.loadDetailCmd(m.projects[m.selected].Path)
+			cmds = append(cmds, m.loadDetailCmd(m.projects[m.selected].Path))
+			return m, tea.Batch(cmds...)
 		}
 		m.detail = model.ProjectDetail{}
 		m.syncDetailViewport(true)
-		return m, nil
+		return m, tea.Batch(cmds...)
+	case setupSavedMsg:
+		m.err = nil
+		if msg.err != nil {
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		if m.svc != nil {
+			m.svc.ApplyEditableSettings(msg.settings)
+		}
+		saved := cloneEditableSettings(msg.settings)
+		m.settingsBaseline = &saved
+		m.setupMode = false
+		m.status = fmt.Sprintf("AI setup saved to %s. %s is now selected.", msg.path, msg.settings.AIBackend.Label())
+		return m, m.refreshSetupSnapshotCmd(false)
 	case ignoredProjectsMsg:
 		if msg.err != nil {
 			m.closeIgnoredPicker(msg.err.Error())
@@ -1520,6 +1555,8 @@ func (m Model) View() string {
 		body = m.renderNewProjectOverlay(body, layout.width, layout.height)
 	} else if m.runCommandDialog != nil {
 		body = m.renderRunCommandOverlay(body, layout.width, layout.height)
+	} else if m.setupMode {
+		body = m.renderSetupOverlay(body, layout.width, layout.height)
 	} else if m.settingsMode {
 		body = m.renderSettingsOverlay(body, layout.width, layout.height)
 	} else if m.showHelp {
@@ -1645,6 +1682,9 @@ func (m Model) renderTopStatusLine(width int) string {
 	status := m.status
 	if m.err != nil {
 		status = fmt.Sprintf("%s | error: %v", status, m.err)
+	}
+	if aiNotice := m.renderAIBackendStatusNotice(); aiNotice != "" {
+		status = fmt.Sprintf("%s | %s", status, aiNotice)
 	}
 	status = fmt.Sprintf("%s | AI %s", status, m.renderClassificationSummary())
 	return fitFooterWidth(title+" - "+status, width)
@@ -1938,6 +1978,8 @@ var (
 	detailMutedStyle            = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	detailWarningStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("178")).Bold(true)
 	detailDangerStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true)
+	topStatusWarningBadgeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("160")).Bold(true).Padding(0, 1)
+	topStatusSetupBadgeStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("214")).Bold(true).Padding(0, 1)
 	detailAttentionValueStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Bold(true)
 	projectListSelectedRowStyle = lipgloss.NewStyle().
 					Background(lipgloss.AdaptiveColor{Light: "255", Dark: "236"})
@@ -2020,6 +2062,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, m.setSortMode(projectSortMode(inv.Sort))
 	case commands.KindView:
 		return m, m.setVisibilityMode(commandVisibilityMode(inv.View))
+	case commands.KindSetup:
+		return m, m.openSetupMode()
 	case commands.KindSettings:
 		return m, m.openSettingsMode()
 	case commands.KindNewProject:
@@ -3268,8 +3312,7 @@ func (m Model) classificationCounts() classificationSummary {
 }
 
 func (m Model) renderFooter(width int) string {
-	usage := m.currentUsage()
-	usageLabel := compactUsageLabel(usage)
+	usageLabel := m.footerUsageLabel()
 	usageSegment := m.renderFooterUsageSegment(usageLabel)
 	if m.diffView != nil {
 		return renderDiffFooter(width, *m.diffView, usageSegment)
@@ -3300,10 +3343,10 @@ func (m Model) renderFooter(width int) string {
 	if m.commandMode {
 		return fitFooterWidth("Command palette open | "+usageSegment, width)
 	}
+	if m.setupMode {
+		return fitFooterWidth("Setup: Enter choose, r refresh, s settings, Esc continue | "+usageSegment, width)
+	}
 	if m.settingsMode {
-		if m.settingsRequireOpenAIAPIKey() {
-			return fitFooterWidth("Settings: Enter save, Tab next, Esc quit | "+usageSegment, width)
-		}
 		return fitFooterWidth("Settings: Enter save, Tab next, Esc cancel | "+usageSegment, width)
 	}
 	if m.noteClearConfirm != nil {
@@ -3894,6 +3937,57 @@ func (m Model) currentUsage() model.LLMSessionUsage {
 	return m.svc.SessionUsage()
 }
 
+func (m Model) footerUsageLabel() string {
+	if !m.setupChecked {
+		return compactUsageLabel(m.currentUsage())
+	}
+	switch status := m.setupSnapshot.SelectedStatus(); {
+	case m.setupSnapshot.NeedsSetup():
+		return "AI setup"
+	case m.setupSnapshot.Selected == config.AIBackendDisabled:
+		return "AI disabled"
+	case m.setupSnapshot.Selected != config.AIBackendUnset && !status.Ready:
+		return "AI unavailable"
+	default:
+		switch m.setupSnapshot.Selected {
+		case config.AIBackendCodex, config.AIBackendOpenCode:
+			return compactLocalUsageLabel(m.setupSnapshot.Selected.Label(), m.currentUsage())
+		}
+		return compactUsageLabel(m.currentUsage())
+	}
+}
+
+func (m Model) aiBackendStatusNotice() string {
+	if !m.setupChecked {
+		return ""
+	}
+	switch status := m.setupSnapshot.SelectedStatus(); {
+	case m.setupSnapshot.NeedsSetup():
+		return "Use /setup to enable AI"
+	case m.setupSnapshot.Selected == config.AIBackendDisabled:
+		return "AI disabled"
+	case m.setupSnapshot.Selected != config.AIBackendUnset && !status.Ready:
+		return "AI unavailable (use /setup)"
+	default:
+		return ""
+	}
+}
+
+func (m Model) renderAIBackendStatusNotice() string {
+	notice := m.aiBackendStatusNotice()
+	if notice == "" {
+		return ""
+	}
+	switch {
+	case m.setupSnapshot.NeedsSetup():
+		return topStatusSetupBadgeStyle.Render(notice)
+	case m.setupSnapshot.Selected == config.AIBackendDisabled:
+		return detailMutedStyle.Render(notice)
+	default:
+		return topStatusWarningBadgeStyle.Render(notice)
+	}
+}
+
 func compactUsageLabel(usage model.LLMSessionUsage) string {
 	if !usage.Enabled {
 		return "cost off"
@@ -3905,10 +3999,39 @@ func compactUsageLabel(usage model.LLMSessionUsage) string {
 	return "cost " + formatEstimatedCostUSD(estimatedCostUSD)
 }
 
+func compactLocalUsageLabel(providerLabel string, usage model.LLMSessionUsage) string {
+	providerLabel = strings.TrimSpace(providerLabel)
+	if providerLabel == "" {
+		providerLabel = "AI"
+	}
+	if usage.Running > 0 {
+		return providerLabel + " running"
+	}
+	callCount := usage.Completed + usage.Failed
+	if callCount <= 0 {
+		callCount = usage.Started
+	}
+	if callCount <= 0 {
+		return providerLabel + " ready"
+	}
+	if callCount == 1 {
+		return providerLabel + " 1 call"
+	}
+	return fmt.Sprintf("%s %d calls", providerLabel, callCount)
+}
+
 func (m Model) renderFooterUsageSegment(text string) string {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return ""
+	}
+	switch text {
+	case "AI setup":
+		return topStatusSetupBadgeStyle.Render(text)
+	case "AI unavailable":
+		return topStatusWarningBadgeStyle.Render(text)
+	case "AI disabled":
+		return detailMutedStyle.Render(text)
 	}
 	if !m.usagePulseUntil.After(m.currentTime()) {
 		return renderFooterUsage(text)
@@ -4119,7 +4242,7 @@ func helpPanelLines() []string {
 			renderDialogAction("Tab", "complete there", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("?", "toggle help", commitActionKeyStyle, commitActionTextStyle),
 		),
-		commandPaletteHintStyle.Render("Try /codex, /opencode, /settings, /commit, /diff, or /run."),
+		commandPaletteHintStyle.Render("Try /setup, /codex, /opencode, /settings, /commit, /diff, or /run."),
 		detailSectionStyle.Render("Navigate"),
 		renderHelpPanelActionRow(
 			renderDialogAction("Tab", "switch pane", navigateActionKeyStyle, navigateActionTextStyle),

@@ -17,6 +17,7 @@ import (
 )
 
 type AppConfig struct {
+	AIBackend              AIBackend
 	OpenAIAPIKey           string
 	IncludePaths           []string
 	ExcludePaths           []string
@@ -38,7 +39,12 @@ type AppConfig struct {
 	AllowMultipleInstances bool
 }
 
+func (c AppConfig) EffectiveAIBackend() AIBackend {
+	return ResolveAIBackend(c.AIBackend, c.OpenAIAPIKey)
+}
+
 type fileConfig struct {
+	AIBackend              string    `toml:"ai_backend"`
 	OpenAIAPIKey           *string   `toml:"openai_api_key"`
 	IncludePaths           *[]string `toml:"include_paths"`
 	ExcludePaths           *[]string `toml:"exclude_paths"`
@@ -256,6 +262,13 @@ func applyConfigFile(cfg *AppConfig) error {
 		}
 		cfg.IncludePaths = includePaths
 	}
+	if strings.TrimSpace(fc.AIBackend) != "" {
+		backend, err := ParseAIBackend(fc.AIBackend)
+		if err != nil {
+			return fmt.Errorf("config ai_backend: %w", err)
+		}
+		cfg.AIBackend = backend
+	}
 	if fc.OpenAIAPIKey != nil {
 		cfg.OpenAIAPIKey = strings.TrimSpace(*fc.OpenAIAPIKey)
 	}
@@ -312,6 +325,9 @@ func validate(cfg AppConfig) error {
 		return errors.New("snapshot limit must be > 0")
 	}
 	if _, err := codexcli.ParsePreset(string(cfg.CodexLaunchPreset)); err != nil {
+		return err
+	}
+	if _, err := ParseAIBackend(string(cfg.AIBackend)); err != nil {
 		return err
 	}
 	return nil

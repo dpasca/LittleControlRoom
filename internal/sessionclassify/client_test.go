@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/brand"
 	"lcroom/internal/model"
 )
 
@@ -19,6 +20,30 @@ type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+func TestNewCodexClientWithUsageTrackerDefaultsToLocalCompatibleModel(t *testing.T) {
+	t.Setenv(brand.SessionClassifierModelEnvVar, "")
+
+	client := NewCodexClientWithUsageTracker(nil)
+	if client == nil {
+		t.Fatalf("expected codex client")
+	}
+	if got := client.ModelName(); got != localRunnerDefaultModel {
+		t.Fatalf("ModelName() = %q, want %q", got, localRunnerDefaultModel)
+	}
+}
+
+func TestNewOpenCodeClientWithUsageTrackerDefaultsToLocalCompatibleModel(t *testing.T) {
+	t.Setenv(brand.SessionClassifierModelEnvVar, "")
+
+	client := NewOpenCodeClientWithUsageTracker(nil)
+	if client == nil {
+		t.Fatalf("expected opencode client")
+	}
+	if got := client.ModelName(); got != localRunnerDefaultModel {
+		t.Fatalf("ModelName() = %q, want %q", got, localRunnerDefaultModel)
+	}
 }
 
 func TestOpenAIClientClassifyCapturesUsage(t *testing.T) {

@@ -23,7 +23,7 @@ type OpenAIClient struct {
 	model      string
 	endpoint   string
 	httpClient *http.Client
-	responses  *llm.ResponsesClient
+	responses  llm.JSONSchemaRunner
 }
 
 const (
@@ -31,6 +31,7 @@ const (
 	classifierPrimaryReasoningEffort  = "medium"
 	classifierFallbackReasoningEffort = "low"
 	classifierDefaultRetryBackoff     = 750 * time.Millisecond
+	localRunnerDefaultModel           = "gpt-5.4-mini"
 )
 
 var classifierAttemptPlan = []classifierAttemptConfig{
@@ -75,17 +76,34 @@ func NewOpenAIClientWithUsageTracker(apiKey string, usage *llm.UsageTracker) *Op
 		return nil
 	}
 
-	model := strings.TrimSpace(os.Getenv(brand.SessionClassifierModelEnvVar))
-	if model == "" {
-		model = DefaultModel
-	}
-
 	return &OpenAIClient{
 		apiKey:     apiKey,
-		model:      model,
+		model:      configuredClassifierModel(DefaultModel),
 		httpClient: &http.Client{Timeout: classifierHTTPTimeout},
 		responses:  llm.NewResponsesClient(apiKey, classifierHTTPTimeout, usage),
 	}
+}
+
+func NewCodexClientWithUsageTracker(usage *llm.UsageTracker) *OpenAIClient {
+	return &OpenAIClient{
+		model:     configuredClassifierModel(localRunnerDefaultModel),
+		responses: llm.NewCodexExecRunner(classifierHTTPTimeout, usage),
+	}
+}
+
+func NewOpenCodeClientWithUsageTracker(usage *llm.UsageTracker) *OpenAIClient {
+	return &OpenAIClient{
+		model:     configuredClassifierModel(localRunnerDefaultModel),
+		responses: llm.NewOpenCodeRunRunner(classifierHTTPTimeout, usage),
+	}
+}
+
+func configuredClassifierModel(defaultModel string) string {
+	model := strings.TrimSpace(os.Getenv(brand.SessionClassifierModelEnvVar))
+	if model != "" {
+		return model
+	}
+	return strings.TrimSpace(defaultModel)
 }
 
 func (c *OpenAIClient) ModelName() string {
@@ -165,7 +183,7 @@ func (c *OpenAIClient) classifyAttempt(ctx context.Context, snapshotJSON []byte,
 	return result, nil
 }
 
-func (c *OpenAIClient) responsesClient() *llm.ResponsesClient {
+func (c *OpenAIClient) responsesClient() llm.JSONSchemaRunner {
 	if c == nil {
 		return nil
 	}

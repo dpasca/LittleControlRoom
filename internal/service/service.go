@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"lcroom/internal/aibackend"
 	"lcroom/internal/attention"
 	"lcroom/internal/brand"
 	"lcroom/internal/config"
@@ -86,7 +87,7 @@ func New(cfg config.AppConfig, st *store.Store, bus *events.Bus, detectorList []
 		gitRepoStatusReader:  scanner.ReadGitRepoStatus,
 		gitRepoInitializer:   runGitInit,
 	}
-	svc.configureOpenAIClientsLocked(strings.TrimSpace(cfg.OpenAIAPIKey))
+	svc.configureAIClientsLocked()
 	return svc
 }
 
@@ -100,6 +101,7 @@ func (s *Service) Bus() *events.Bus {
 
 func (s *Service) Config() config.AppConfig {
 	cfg := s.cfg
+	cfg.AIBackend = s.cfg.AIBackend
 	cfg.OpenAIAPIKey = s.cfg.OpenAIAPIKey
 	cfg.IncludePaths = append([]string(nil), s.cfg.IncludePaths...)
 	cfg.ExcludePaths = append([]string(nil), s.cfg.ExcludePaths...)
@@ -115,6 +117,7 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.cfg.AIBackend = settings.AIBackend
 	s.cfg.OpenAIAPIKey = strings.TrimSpace(settings.OpenAIAPIKey)
 	s.cfg.IncludePaths = append([]string(nil), settings.IncludePaths...)
 	s.cfg.ExcludePaths = append([]string(nil), settings.ExcludePaths...)
@@ -123,7 +126,7 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	s.cfg.ScanInterval = settings.ScanInterval
 	s.cfg.ActiveThreshold = settings.ActiveThreshold
 	s.cfg.StuckThreshold = settings.StuckThreshold
-	s.configureOpenAIClientsLocked(s.cfg.OpenAIAPIKey)
+	s.configureAIClientsLocked()
 }
 
 func (s *Service) StartSessionClassifier(ctx context.Context) {
@@ -144,7 +147,7 @@ func (s *Service) HasSessionClassifier() bool {
 }
 
 func (s *Service) SessionUsage() model.LLMSessionUsage {
-	enabled := strings.TrimSpace(s.cfg.OpenAIAPIKey) != ""
+	enabled := s.HasSessionClassifier() || s.commitMessageSuggester != nil
 	if s.llmUsageTracker != nil {
 		snapshot := s.llmUsageTracker.Snapshot(enabled)
 		if hasMeaningfulLLMUsage(snapshot) {
@@ -163,13 +166,31 @@ func (s *Service) SessionUsage() model.LLMSessionUsage {
 	return model.LLMSessionUsage{Enabled: enabled}
 }
 
-func (s *Service) configureOpenAIClientsLocked(apiKey string) {
-	apiKey = strings.TrimSpace(apiKey)
-	commitAssistant := gitops.NewOpenAICommitMessageClientWithUsageTracker(apiKey, s.llmUsageTracker)
+func (s *Service) configureAIClientsLocked() {
+	var (
+		client          sessionclassify.Classifier
+		commitAssistant *gitops.OpenAICommitMessageClient
+		selectedBackend = s.cfg.EffectiveAIBackend()
+		selectedStatus  = aibackend.Detect(context.Background(), s.cfg).StatusFor(selectedBackend)
+	)
+	switch selectedBackend {
+	case config.AIBackendOpenAIAPI:
+		apiKey := strings.TrimSpace(s.cfg.OpenAIAPIKey)
+		commitAssistant = gitops.NewOpenAICommitMessageClientWithUsageTracker(apiKey, s.llmUsageTracker)
+		client = sessionclassify.NewOpenAIClientWithUsageTracker(apiKey, s.llmUsageTracker)
+	case config.AIBackendCodex:
+		if selectedStatus.Ready {
+			commitAssistant = gitops.NewCodexCommitMessageClientWithUsageTracker(s.llmUsageTracker)
+			client = sessionclassify.NewCodexClientWithUsageTracker(s.llmUsageTracker)
+		}
+	case config.AIBackendOpenCode:
+		if selectedStatus.Ready {
+			commitAssistant = gitops.NewOpenCodeCommitMessageClientWithUsageTracker(s.llmUsageTracker)
+			client = sessionclassify.NewOpenCodeClientWithUsageTracker(s.llmUsageTracker)
+		}
+	}
 	s.commitMessageSuggester = commitAssistant
 	s.untrackedFileRecommender = commitAssistant
-
-	client := sessionclassify.NewOpenAIClientWithUsageTracker(apiKey, s.llmUsageTracker)
 	if manager, ok := s.classifier.(*sessionclassify.Manager); ok {
 		manager.ConfigureClient(client)
 		manager.Notify()

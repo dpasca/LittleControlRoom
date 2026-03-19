@@ -12,6 +12,7 @@ import (
 )
 
 type EditableSettings struct {
+	AIBackend              AIBackend
 	OpenAIAPIKey           string
 	IncludePaths           []string
 	ExcludePaths           []string
@@ -24,6 +25,7 @@ type EditableSettings struct {
 
 func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 	return EditableSettings{
+		AIBackend:              cfg.EffectiveAIBackend(),
 		OpenAIAPIKey:           cfg.OpenAIAPIKey,
 		IncludePaths:           append([]string(nil), cfg.IncludePaths...),
 		ExcludePaths:           append([]string(nil), cfg.ExcludePaths...),
@@ -35,11 +37,12 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 	}
 }
 
-func ParseEditableSettings(openAIAPIKeyRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, codexLaunchPresetRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
-	openAIAPIKey := strings.TrimSpace(openAIAPIKeyRaw)
-	if openAIAPIKey == "" {
-		return EditableSettings{}, fmt.Errorf("openai api key is required")
+func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, codexLaunchPresetRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
+	parsedBackend, err := ParseAIBackend(string(aiBackend))
+	if err != nil {
+		return EditableSettings{}, err
 	}
+	openAIAPIKey := strings.TrimSpace(openAIAPIKeyRaw)
 
 	includePaths, err := expandAndSplitPaths(includeRaw)
 	if err != nil {
@@ -71,6 +74,7 @@ func ParseEditableSettings(openAIAPIKeyRaw, includeRaw, excludeRaw, excludeProje
 	}
 
 	settings := EditableSettings{
+		AIBackend:              parsedBackend,
 		OpenAIAPIKey:           openAIAPIKey,
 		IncludePaths:           includePaths,
 		ExcludePaths:           excludePaths,
@@ -125,6 +129,7 @@ func SaveEditableSettings(path string, settings EditableSettings) error {
 
 func validateEditableSettings(settings EditableSettings) error {
 	cfg := Default()
+	cfg.AIBackend = settings.AIBackend
 	cfg.OpenAIAPIKey = settings.OpenAIAPIKey
 	cfg.IncludePaths = append([]string(nil), settings.IncludePaths...)
 	cfg.ExcludePaths = append([]string(nil), settings.ExcludePaths...)
@@ -148,11 +153,14 @@ func parseConfigDuration(raw, label string) (time.Duration, error) {
 }
 
 func renderEditableSettings(settings EditableSettings) string {
-	lines := []string{
-		fmt.Sprintf("openai_api_key = %s", strconv.Quote(settings.OpenAIAPIKey)),
-		"",
-		"include_paths = [",
+	lines := []string{}
+	if settings.AIBackend != AIBackendUnset {
+		lines = append(lines, fmt.Sprintf("ai_backend = %s", strconv.Quote(string(settings.AIBackend))), "")
 	}
+	if settings.OpenAIAPIKey != "" {
+		lines = append(lines, fmt.Sprintf("openai_api_key = %s", strconv.Quote(settings.OpenAIAPIKey)), "")
+	}
+	lines = append(lines, "include_paths = [")
 	for _, path := range settings.IncludePaths {
 		lines = append(lines, fmt.Sprintf("  %s,", strconv.Quote(path)))
 	}

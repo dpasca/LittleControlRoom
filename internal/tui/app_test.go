@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/aibackend"
 	"lcroom/internal/brand"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
@@ -651,6 +652,136 @@ func TestCompactUsageLabel(t *testing.T) {
 	}
 	if got := compactUsageLabel(usage); got != "cost $0.0012" {
 		t.Fatalf("compactUsageLabel(enabled) = %q, want %q", got, "cost $0.0012")
+	}
+}
+
+func TestCompactLocalUsageLabel(t *testing.T) {
+	if got := compactLocalUsageLabel("Codex", model.LLMSessionUsage{}); got != "Codex ready" {
+		t.Fatalf("compactLocalUsageLabel(ready) = %q, want %q", got, "Codex ready")
+	}
+
+	usage := model.LLMSessionUsage{Started: 1, Completed: 1}
+	if got := compactLocalUsageLabel("Codex", usage); got != "Codex 1 call" {
+		t.Fatalf("compactLocalUsageLabel(one call) = %q, want %q", got, "Codex 1 call")
+	}
+}
+
+func TestFooterUsageLabelShowsLocalBackendActivity(t *testing.T) {
+	m := Model{
+		setupChecked: true,
+		setupSnapshot: aibackend.Snapshot{
+			Selected: config.AIBackendCodex,
+			Codex: aibackend.Status{
+				Backend:       config.AIBackendCodex,
+				Label:         "Codex",
+				Installed:     true,
+				Authenticated: true,
+				Ready:         true,
+				Detail:        "Logged in with ChatGPT.",
+			},
+		},
+	}
+
+	if got := m.footerUsageLabel(); got != "Codex ready" {
+		t.Fatalf("footerUsageLabel() = %q, want %q", got, "Codex ready")
+	}
+}
+
+func TestFooterUsageLabelShowsUnavailableBackend(t *testing.T) {
+	m := Model{
+		setupChecked: true,
+		setupSnapshot: aibackend.Snapshot{
+			Selected: config.AIBackendOpenAIAPI,
+			OpenAIAPI: aibackend.Status{
+				Backend: config.AIBackendOpenAIAPI,
+				Label:   "OpenAI API key",
+				Detail:  "No saved OpenAI API key.",
+			},
+		},
+	}
+
+	if got := m.footerUsageLabel(); got != "AI unavailable" {
+		t.Fatalf("footerUsageLabel() = %q, want AI unavailable", got)
+	}
+}
+
+func TestRenderTopStatusLineShowsUnavailableBackendNotice(t *testing.T) {
+	m := Model{
+		status:       "Ready",
+		setupChecked: true,
+		setupSnapshot: aibackend.Snapshot{
+			Selected: config.AIBackendOpenAIAPI,
+			OpenAIAPI: aibackend.Status{
+				Backend: config.AIBackendOpenAIAPI,
+				Label:   "OpenAI API key",
+				Detail:  "No saved OpenAI API key.",
+			},
+		},
+	}
+
+	rendered := ansi.Strip(m.renderTopStatusLine(160))
+	if !strings.Contains(rendered, "AI unavailable (use /setup)") {
+		t.Fatalf("top status line missing backend warning: %q", rendered)
+	}
+	if strings.Contains(rendered, "OpenAI API key") {
+		t.Fatalf("top status line should keep the warning generic, got %q", rendered)
+	}
+}
+
+func TestRenderAIBackendStatusNoticeUsesWarningBadge(t *testing.T) {
+	t.Parallel()
+
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	m := Model{
+		setupChecked: true,
+		setupSnapshot: aibackend.Snapshot{
+			Selected: config.AIBackendOpenAIAPI,
+			OpenAIAPI: aibackend.Status{
+				Backend: config.AIBackendOpenAIAPI,
+				Label:   "OpenAI API key",
+				Detail:  "No saved OpenAI API key.",
+			},
+		},
+	}
+
+	rendered := m.renderAIBackendStatusNotice()
+	if got := strings.TrimSpace(ansi.Strip(rendered)); got != "AI unavailable (use /setup)" {
+		t.Fatalf("renderAIBackendStatusNotice() = %q, want %q", got, "AI unavailable (use /setup)")
+	}
+	if !strings.Contains(rendered, "\x1b[") {
+		t.Fatalf("renderAIBackendStatusNotice() should render a styled badge, got %q", rendered)
+	}
+}
+
+func TestSetupSnapshotUnavailableKeepsExistingStatus(t *testing.T) {
+	m := Model{
+		status: "Ready",
+	}
+
+	updated, cmd := m.Update(setupSnapshotMsg{
+		snapshot: aibackend.Snapshot{
+			Selected: config.AIBackendOpenAIAPI,
+			OpenAIAPI: aibackend.Status{
+				Backend: config.AIBackendOpenAIAPI,
+				Label:   "OpenAI API key",
+				Detail:  "No saved OpenAI API key.",
+			},
+		},
+	})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("setupSnapshotMsg should not return a command")
+	}
+	if got.status != "Ready" {
+		t.Fatalf("status = %q, want existing status to be preserved", got.status)
 	}
 }
 
@@ -5487,22 +5618,95 @@ func TestCommandEnterOpensSettingsMode(t *testing.T) {
 	}
 }
 
-func TestStartupOpenAIKeyRequirementOpensSettingsMode(t *testing.T) {
+func TestStartupUnconfiguredAIBackendOpensSetupMode(t *testing.T) {
 	m := Model{
 		width:  100,
 		height: 24,
 	}
 
-	updated, cmd := m.Update(openAIKeyRequiredMsg{})
+	updated, cmd := m.Update(setupSnapshotMsg{
+		openOnStartup: true,
+		snapshot: aibackend.Snapshot{
+			Selected: config.AIBackendUnset,
+		},
+	})
 	got := updated.(Model)
-	if !got.settingsMode {
-		t.Fatalf("settings mode should open when the startup api key requirement is triggered")
+	if !got.setupMode {
+		t.Fatalf("setup mode should open when startup detects no configured backend")
 	}
-	if got.status != "OpenAI API key required. Save it in Settings to enable session summaries, classifications, and commit help." {
-		t.Fatalf("status = %q, want startup api key explanation", got.status)
+	if got.status != "Choose how Little Control Room should run AI summaries, classifications, and commit help." {
+		t.Fatalf("status = %q, want startup setup explanation", got.status)
 	}
 	if cmd == nil {
-		t.Fatalf("opening settings should return a focus command")
+		t.Fatalf("opening setup should return a refresh command")
+	}
+}
+
+func TestOpenSetupModePrefersReadyBackendOverUnavailableCurrentBackend(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendOpenAIAPI
+
+	m := Model{
+		settingsBaseline: &settings,
+		setupSnapshot: aibackend.Snapshot{
+			Selected: config.AIBackendOpenAIAPI,
+			OpenAIAPI: aibackend.Status{
+				Backend: config.AIBackendOpenAIAPI,
+				Label:   "OpenAI API key",
+				Detail:  "No saved OpenAI API key.",
+			},
+			Codex: aibackend.Status{
+				Backend:       config.AIBackendCodex,
+				Label:         "Codex",
+				Installed:     true,
+				Authenticated: true,
+				Ready:         true,
+				Detail:        "Logged in with ChatGPT.",
+			},
+		},
+	}
+
+	_ = m.openSetupMode()
+	if got := m.setupSelectedBackend(); got != config.AIBackendCodex {
+		t.Fatalf("setupSelectedBackend() = %s, want %s", got, config.AIBackendCodex)
+	}
+}
+
+func TestRenderSetupOptionRowDistinguishesActiveAndReadyBackends(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendOpenAIAPI
+
+	m := Model{
+		settingsBaseline: &settings,
+		setupSnapshot: aibackend.Snapshot{
+			Selected: config.AIBackendOpenAIAPI,
+			OpenAIAPI: aibackend.Status{
+				Backend: config.AIBackendOpenAIAPI,
+				Label:   "OpenAI API key",
+				Detail:  "No saved OpenAI API key.",
+			},
+			Codex: aibackend.Status{
+				Backend:       config.AIBackendCodex,
+				Label:         "Codex",
+				Installed:     true,
+				Authenticated: true,
+				Ready:         true,
+				Detail:        "Logged in with ChatGPT.",
+			},
+		},
+	}
+
+	activeRow := ansi.Strip(m.renderSetupOptionRow(config.AIBackendOpenAIAPI, false, 88))
+	if !strings.Contains(activeRow, "active") {
+		t.Fatalf("active backend row should say active, got %q", activeRow)
+	}
+
+	readyRow := ansi.Strip(m.renderSetupOptionRow(config.AIBackendCodex, false, 88))
+	if !strings.Contains(readyRow, "ready") {
+		t.Fatalf("ready backend row should say ready, got %q", readyRow)
+	}
+	if strings.Contains(readyRow, "active") {
+		t.Fatalf("ready backend row should not look active, got %q", readyRow)
 	}
 }
 
@@ -5923,7 +6127,7 @@ func TestSettingsModalRendersColoredActionLegend(t *testing.T) {
 	}
 }
 
-func TestSettingsModalShowsEscQuitWhenAPIKeyRequired(t *testing.T) {
+func TestSettingsModalShowsEscCancel(t *testing.T) {
 	m := Model{
 		settingsMode:   true,
 		settingsFields: newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
@@ -5933,8 +6137,8 @@ func TestSettingsModalShowsEscQuitWhenAPIKeyRequired(t *testing.T) {
 	_ = m.setSettingsSelection(0)
 
 	rendered := ansi.Strip(m.renderSettingsContent(72, 18))
-	if !strings.Contains(rendered, "Esc") || !strings.Contains(rendered, "quit") {
-		t.Fatalf("settings modal should render Esc quit action when api key is required: %q", rendered)
+	if !strings.Contains(rendered, "Esc") || !strings.Contains(rendered, "cancel") {
+		t.Fatalf("settings modal should render Esc cancel action: %q", rendered)
 	}
 }
 
@@ -6001,7 +6205,7 @@ func TestSettingsEnterSavesConfigAndClosesModal(t *testing.T) {
 	if saved.settingsMode {
 		t.Fatalf("settings mode should close after a successful save")
 	}
-	if !strings.Contains(saved.status, "OpenAI key, name filters, and Codex launch mode apply now") {
+	if !strings.Contains(saved.status, "Filters, API key, and Codex launch mode apply now") {
 		t.Fatalf("status = %q, want immediate-apply notice", saved.status)
 	}
 
@@ -6041,7 +6245,7 @@ func TestSettingsEnterShowsValidationError(t *testing.T) {
 	}
 }
 
-func TestSettingsEscRequiresOpenAIAPIKeyWhenMissing(t *testing.T) {
+func TestSettingsEscCancelsWithoutQuitting(t *testing.T) {
 	m := Model{
 		settingsMode:   true,
 		settingsFields: newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
@@ -6052,14 +6256,14 @@ func TestSettingsEscRequiresOpenAIAPIKeyWhenMissing(t *testing.T) {
 
 	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEsc})
 	got := updated.(Model)
-	if cmd == nil {
-		t.Fatalf("esc should quit when the api key is required")
+	if cmd != nil {
+		t.Fatalf("esc should not return a command")
 	}
-	if !got.settingsMode {
-		t.Fatalf("settings mode should stay open until the quit command is processed")
+	if got.settingsMode {
+		t.Fatalf("settings mode should close after escape")
 	}
-	if _, ok := cmd().(tea.QuitMsg); !ok {
-		t.Fatalf("esc should return tea.Quit when api key is required")
+	if got.status != "Settings edit canceled" {
+		t.Fatalf("status = %q, want canceled message", got.status)
 	}
 }
 
@@ -6113,7 +6317,7 @@ func TestSettingsSavedMsgAppliesProjectNameFilterImmediately(t *testing.T) {
 	if len(got.projects) != 1 || got.projects[0].Name != "visible-demo" {
 		t.Fatalf("visible projects after settingsSavedMsg = %#v, want only visible-demo", got.projects)
 	}
-	if !strings.Contains(got.status, "OpenAI key, name filters, and Codex launch mode apply now") {
+	if !strings.Contains(got.status, "Filters, API key, and Codex launch mode apply now") {
 		t.Fatalf("status = %q, want immediate-apply notice", got.status)
 	}
 }

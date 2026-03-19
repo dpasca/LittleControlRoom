@@ -1,6 +1,6 @@
 # Little Control Room Status
 
-Last updated: 2026-03-19 15:40 JST (JST)
+Last updated: 2026-03-19 17:00 JST (JST)
 
 ## Current State
 
@@ -87,6 +87,136 @@ Current screenshot workflow assumption:
 - `STATUS.md` should stay short: current state plus the latest active work burst.
 - Older historical notes now live in [docs/status_archive.md](docs/status_archive.md).
 - If a note is mostly historical and no longer affects implementation, archive it instead of keeping it inline here.
+
+## Latest Update (2026-03-19 17:00 JST)
+
+- Split local-backend activity from metered API spend in the footer: when `Codex` or `OpenCode` is the selected backend, the footer now shows non-dollar activity labels such as `Codex ready`, `Codex running`, or `Codex 1 call` instead of a `$...` estimate, so local commit-help/classification no longer implies extra direct LCR API cost.
+- Fixed the local assessment model mismatch: the Codex/OpenCode classifier clients now default to `gpt-5.4-mini` instead of `gpt-5.4-nano`, because live repro confirmed `codex exec --model gpt-5.4-nano` fails under ChatGPT-backed Codex auth while `gpt-5.4-mini` succeeds. Added focused tests for the new local classifier default plus the local footer activity labels.
+- Live verification note: a separate already-running TUI process on this machine was still using the previous classifier build during overlap testing, so existing in-flight classifications there can still show the old `gpt-5.4-nano` failure until that TUI/runtime is restarted. The newly built code path and direct `codex exec` repro are both good.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/app.go internal/tui/app_test.go internal/sessionclassify/client.go internal/sessionclassify/client_test.go` passed.
+- `go test ./internal/tui ./internal/sessionclassify -count=1` passed.
+- `codex exec --skip-git-repo-check --ephemeral --json --model gpt-5.4-nano 'Return exactly {"ok":true}'` failed with `invalid_request_error` (`gpt-5.4-nano` unsupported for ChatGPT-backed Codex auth on this machine).
+- `codex exec --skip-git-repo-check --ephemeral --json --model gpt-5.4-mini 'Return exactly {"ok":true}'` succeeded.
+- `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-local-backend-ui-check INTERVAL=1h` reached the TUI sandbox and exited via `q`.
+- `make test` passed.
+- `make scan` passed at `2026-03-19T16:59:02+09:00` (`activity projects: 87`, `tracked projects: 138`, `updated projects: 2`, `queued classifications: 67`).
+- `make doctor` passed on the cached snapshot dated `2026-03-19T16:59:11+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- Restart the currently running TUI/runtime on this machine so the live classifier worker picks up the new local `gpt-5.4-mini` default instead of continuing with the older in-memory `gpt-5.4-nano` client.
+- Decide whether `/setup` should eventually launch `codex login` / `opencode auth login` directly, or keep today’s lighter “remind and refresh” flow.
+- Add a short README/help note for the new `/setup` flow and local-backend footer behavior once the backend-selection UX settles.
+
+## Latest Update (2026-03-19 16:50 JST)
+
+- Refined the `/setup` chooser after another live UX pass: when the currently configured backend is unavailable but another backend is already ready, the setup cursor now defaults to that ready backend instead of sticking to the broken one. In the reported case, an unavailable OpenAI-key backend now opens `/setup` with `Codex` preselected when Codex is installed and logged in.
+- Clarified the setup list itself by distinguishing `active` from `ready`: the current configured backend is labeled `active`, while already-available alternatives (for example logged-in Codex) get a brighter `ready` state so users can spot a working fallback without confusing it for the active choice.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/setup.go internal/tui/app_test.go` passed.
+- `go test ./internal/tui -count=1` passed.
+- `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-setup-choice-check INTERVAL=1h` reached the TUI sandbox and exited via `q`.
+- `make test` passed.
+- `make scan` passed at `2026-03-19T16:49:55+09:00` (`activity projects: 87`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-19T16:50:04+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- Decide whether `/setup` should eventually launch `codex login` / `opencode auth login` directly, or keep today’s lighter “remind and refresh” flow.
+- Consider making first-time API-key saves write `ai_backend = "openai_api"` explicitly even when the starting config was unconfigured, so the saved TOML becomes fully explicit after that first setup pass.
+- Add a short README/help note for the new `/setup` flow once the backend-selection UX settles.
+
+## Latest Update (2026-03-19 16:43 JST)
+
+- Trimmed the persistent AI-backend warning chrome after another live pass: setup/backend refreshes no longer overwrite the main banner status with a long `Configured AI backend unavailable...` sentence, so the top line now stays short and lets the colored `AI unavailable (use /setup)` badge carry the warning by itself.
+- Added a focused TUI regression that keeps the existing status text intact when an unavailable-backend snapshot arrives, preventing the banner from drifting back to the duplicated long-form wording.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/app.go internal/tui/app_test.go` passed.
+- `go test ./internal/tui -count=1` passed.
+- `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-ai-warning-short-check INTERVAL=1h` reached the TUI sandbox and exited via `q`.
+- `make test` passed on rerun. The first attempt hit one transient failure in `TestRenderFooterPulsesWhenUsageIncreases`; the immediate rerun passed cleanly.
+- `make scan` passed at `2026-03-19T16:42:42+09:00` (`activity projects: 87`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-19T16:42:50+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- Decide whether `/setup` should eventually launch `codex login` / `opencode auth login` directly, or keep today’s lighter “remind and refresh” flow.
+- Consider making first-time API-key saves write `ai_backend = "openai_api"` explicitly even when the starting config was unconfigured, so the saved TOML becomes fully explicit after that first setup pass.
+- Add a short README/help note for the new `/setup` flow once the backend-selection UX settles.
+
+## Latest Update (2026-03-19 16:39 JST)
+
+- Tuned the new persistent AI-backend warning chrome after follow-up UX feedback: the top banner now shows a colored warning badge, the footer mirrors `AI setup` / `AI unavailable` with the same higher-contrast styling, and the copy stays generic (`AI unavailable (use /setup)`) instead of naming `OpenAI API key`.
+- Added focused TUI regressions proving the unavailable-backend notice stays generic and renders as a styled badge, so the warning keeps standing out and does not drift back toward API-key-specific copy.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/app.go internal/tui/app_test.go` passed.
+- `go test ./internal/tui -count=1` passed.
+- `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-ai-warning-check INTERVAL=1h` reached the TUI sandbox and exited via `q`.
+- `make test` passed.
+- `make scan` passed at `2026-03-19T16:38:47+09:00` (`activity projects: 87`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-19T16:38:56+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- Decide whether `/setup` should eventually launch `codex login` / `opencode auth login` directly, or keep today’s lighter “remind and refresh” flow.
+- Consider making first-time API-key saves write `ai_backend = "openai_api"` explicitly even when the starting config was unconfigured, so the saved TOML becomes fully explicit after that first setup pass.
+- Add a short README/help note for the new `/setup` flow once the backend-selection UX settles.
+
+## Latest Update (2026-03-19 16:30 JST)
+
+- Tightened the new setup/backends UX after live feedback: when the selected AI backend is unavailable, the warning now stays visible in the persistent TUI chrome instead of only flashing through transient status text, so removing an OpenAI key while `ai_backend = "openai_api"` now leaves a clear on-screen `AI unavailable` / `/setup` reminder while commit-help falls back.
+- Added focused TUI regressions covering the new persistent unavailable-backend footer/header labels, keeping the no-backend-warning path from silently disappearing again.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/app.go internal/tui/app_test.go` passed.
+- `go test ./internal/tui ./internal/commands ./internal/config ./internal/llm -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-19T16:30:29+09:00` (`activity projects: 87`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-19T16:30:40+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- Decide whether `/setup` should eventually launch `codex login` / `opencode auth login` directly, or keep today’s lighter “remind and refresh” flow.
+- Consider making first-time API-key saves write `ai_backend = "openai_api"` explicitly even when the starting config was unconfigured, so the saved TOML becomes fully explicit after that first setup pass.
+- Add a short README/help note for the new `/setup` flow once the backend-selection UX settles.
+
+## Latest Update (2026-03-19 16:21 JST)
+
+- Replaced the old hard OpenAI-key startup gate with a first-class AI backend setup flow: config now supports `ai_backend = "openai_api" | "codex" | "opencode" | "disabled"`, the TUI has a new `/setup` overlay with local backend checks, and first launch now auto-opens that setup overlay when no backend is configured instead of refusing to continue.
+- Added local backend detection plus soft-gated readiness handling for OpenAI API keys, Codex login state, and OpenCode auth state, and rewired the service layer so session classification, commit-subject generation, and untracked-file review can use local `codex exec` or `opencode run` backends when those tools are installed and authenticated.
+- Kept `/settings` focused on scope/API-key/threshold editing with `/setup` as the backend chooser, updated help/footer/CLI copy to point users at `/setup`, and added focused parser/tests around the new CLI-backed JSON-output path and setup/UI behavior.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/cli/run.go internal/commands/commands.go internal/config/config.go internal/config/config_test.go internal/config/editable.go internal/config/ai_backend.go internal/aibackend/detect.go internal/gitops/message.go internal/service/service.go internal/sessionclassify/client.go internal/llm/local_cli.go internal/llm/local_cli_test.go internal/tui/app.go internal/tui/app_test.go internal/tui/settings.go internal/tui/setup.go` passed.
+- `go test ./internal/config ./internal/commands ./internal/llm ./internal/gitops ./internal/sessionclassify ./internal/service ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-19T16:20:21+09:00` (`activity projects: 87`, `tracked projects: 138`, `updated projects: 2`, `queued classifications: 77`).
+- `make doctor` passed on the cached snapshot dated `2026-03-19T16:20:32+09:00` (`projects: 133`).
+- `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-setup-ui-check INTERVAL=1h` reached the TUI sandbox and exited via `q`.
+- `env COLUMNS=112 LINES=31 go run ./cmd/lcroom tui --config /tmp/lcroom-setup-unconfigured/config.toml --db /tmp/lcroom-setup-unconfigured/little-control-room.sqlite --codex-home "$HOME/.codex" --opencode-home "$HOME/.local/share/opencode" --interval 1h` reached the unconfigured first-run TUI and auto-opened the new Setup overlay; the process was then terminated after the overlay was verified.
+
+Next concrete tasks:
+
+- Decide whether `/setup` should eventually launch `codex login` / `opencode auth login` directly, or keep today’s lighter “remind and refresh” flow.
+- Consider making first-time API-key saves write `ai_backend = "openai_api"` explicitly even when the starting config was unconfigured, so the saved TOML becomes fully explicit after that first setup pass.
+- Add a short README/help note for the new `/setup` flow once the backend-selection UX settles.
 
 ## Latest Update (2026-03-19 15:40 JST)
 

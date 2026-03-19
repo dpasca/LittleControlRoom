@@ -33,18 +33,20 @@ type settingsField struct {
 const settingsHintMaxLines = 2
 
 func (m *Model) openSettingsMode() tea.Cmd {
-	settings := m.currentSettingsBaseline()
+	return m.openSettingsModeWithBaseline(m.currentSettingsBaseline())
+}
+
+func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) tea.Cmd {
 	m.settingsFields = newSettingsFields(settings)
+	saved := cloneEditableSettings(settings)
+	m.settingsBaseline = &saved
 	m.settingsMode = true
+	m.setupMode = false
 	m.commandMode = false
 	m.showHelp = false
 	m.closeNoteDialog("")
 	m.err = nil
-	if m.settingsRequireOpenAIAPIKey() {
-		m.status = "OpenAI API key required. Save it in Settings to enable session summaries, classifications, and commit help."
-	} else {
-		m.status = "Editing settings. Enter to save, Esc to cancel"
-	}
+	m.status = "Editing settings. Enter to save, Esc to cancel"
 	return m.setSettingsSelection(0)
 }
 
@@ -59,9 +61,6 @@ func (m *Model) closeSettingsMode(status string) {
 func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
-		if m.settingsRequireOpenAIAPIKey() {
-			return m, tea.Quit
-		}
 		m.closeSettingsMode("Settings edit canceled")
 		return m, nil
 	case "tab", "down", "ctrl+n":
@@ -70,6 +69,7 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.moveSettingsSelection(-1)
 	case "enter":
 		settings, err := config.ParseEditableSettings(
+			m.currentSettingsBaseline().AIBackend,
 			m.settingsFieldValue(settingsFieldOpenAIAPIKey),
 			m.settingsFieldValue(settingsFieldIncludePaths),
 			m.settingsFieldValue(settingsFieldExcludePaths),
@@ -202,11 +202,7 @@ func (m Model) renderSettingsContent(width, maxHeight int) string {
 		commandPaletteTitleStyle.Render("Settings"),
 		commandPaletteHintStyle.Render("Config: " + truncateText(m.currentConfigPath(), max(20, width-8))),
 	}
-	if m.settingsRequireOpenAIAPIKey() {
-		lines = append(lines, commandPaletteHintStyle.Render("OpenAI API key required: save one here to enable session summaries, classifications, and commit help."))
-	} else {
-		lines = append(lines, commandPaletteHintStyle.Render("Immediate: API key, filters, Codex mode, thresholds. Scheduler timing fully resets on next launch."))
-	}
+	lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("AI backend: %s. Use /setup to change it. Scope, filters, and API key save here.", m.currentSettingsBaseline().AIBackend.Label())))
 
 	labelWidth := m.settingsLabelWidth(width)
 	inputWidth := max(10, width-labelWidth-1)
@@ -227,7 +223,7 @@ func (m Model) renderSettingsContent(width, maxHeight int) string {
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, renderSettingsActions(m.settingsRequireOpenAIAPIKey()))
+	lines = append(lines, renderSettingsActions())
 	return strings.Join(lines, "\n")
 }
 
@@ -308,16 +304,12 @@ func (m Model) renderSelectedSettingsHint(width int) string {
 	return commandPaletteHintStyle.Render(strings.Join(lines, "\n"))
 }
 
-func renderSettingsActions(requiresOpenAIKey bool) string {
-	escLabel := "cancel"
-	if requiresOpenAIKey {
-		escLabel = "quit"
-	}
+func renderSettingsActions() string {
 	actions := []string{
 		renderDialogAction("Enter", "save", commitActionKeyStyle, commitActionTextStyle),
 		renderDialogAction("Tab", "next", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("Up/Down", "choose", pushActionKeyStyle, pushActionTextStyle),
-		renderDialogAction("Esc", escLabel, cancelActionKeyStyle, cancelActionTextStyle),
+		renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
 	}
 	return strings.Join(actions, "   ")
 }
@@ -326,7 +318,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 	return []settingsField{
 		newSensitiveSettingsField(
 			"OpenAI API key",
-			"Required for session summaries, classifications, and AI commit help.",
+			"Used when the AI backend is OpenAI API key. Leave blank if you plan to use Codex or OpenCode instead.",
 			settings.OpenAIAPIKey,
 			512,
 		),
@@ -397,6 +389,7 @@ func newSensitiveSettingsField(label, hint, value string, charLimit int) setting
 }
 
 func cloneEditableSettings(settings config.EditableSettings) config.EditableSettings {
+	settings.AIBackend = config.ResolveAIBackend(settings.AIBackend, settings.OpenAIAPIKey)
 	settings.OpenAIAPIKey = strings.TrimSpace(settings.OpenAIAPIKey)
 	settings.IncludePaths = append([]string(nil), settings.IncludePaths...)
 	settings.ExcludePaths = append([]string(nil), settings.ExcludePaths...)
@@ -415,14 +408,10 @@ func (m Model) settingsFieldHint(index int) string {
 	if suffix := maskedOpenAIKeySuffix(field.input.Value()); suffix != "" {
 		return field.hint + " Stored key ends with " + suffix + "."
 	}
-	if m.settingsRequireOpenAIAPIKey() {
-		return field.hint + " The dashboard opens here until you save one."
+	if m.currentSettingsBaseline().AIBackend == config.AIBackendOpenAIAPI {
+		return field.hint + " The selected backend still needs a saved key."
 	}
 	return field.hint
-}
-
-func (m Model) settingsRequireOpenAIAPIKey() bool {
-	return strings.TrimSpace(m.currentSettingsBaseline().OpenAIAPIKey) == ""
 }
 
 func maskedOpenAIKeySuffix(raw string) string {

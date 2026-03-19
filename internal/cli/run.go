@@ -179,7 +179,7 @@ func runScan(ctx context.Context, svc *service.Service) int {
 
 func runClassify(ctx context.Context, svc *service.Service) int {
 	if !svc.HasSessionClassifier() {
-		fmt.Fprintln(os.Stderr, "classify requires openai_api_key in the config; save it in the TUI settings first")
+		fmt.Fprintln(os.Stderr, "classify requires a configured AI backend; run /setup in the TUI or save ai_backend in the config first")
 		return 1
 	}
 
