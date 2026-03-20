@@ -1052,12 +1052,7 @@ func (s *openCodeSession) handleEventData(raw string) {
 			}
 			s.status = "OpenCode is working..."
 		default:
-			s.busy = false
-			s.busyExternal = false
-			s.activeTurnID = ""
-			if strings.TrimSpace(s.status) == "OpenCode is working..." {
-				s.status = ""
-			}
+			s.markIdleLocked()
 		}
 		s.mu.Unlock()
 		s.notify()
@@ -1073,13 +1068,7 @@ func (s *openCodeSession) handleEventData(raw string) {
 		}
 		s.mu.Lock()
 		s.touchLocked()
-		s.busy = false
-		s.busyExternal = false
-		s.activeTurnID = ""
-		if strings.TrimSpace(s.status) == "OpenCode is working..." {
-			s.status = "Turn completed"
-			s.lastSystemNotice = "Turn completed"
-		}
+		s.markIdleLocked()
 		s.mu.Unlock()
 		_ = s.refreshPendingRequests(context.Background())
 		s.notify()
@@ -1182,6 +1171,24 @@ func (s *openCodeSession) isClosed() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.closed
+}
+
+func (s *openCodeSession) markIdleLocked() {
+	wasBusyExternal := s.busyExternal || strings.TrimSpace(s.status) == "OpenCode is active in another process"
+	wasBusy := s.busy || s.activeTurnID != "" || strings.TrimSpace(s.status) == "OpenCode is working..."
+
+	s.busy = false
+	s.busyExternal = false
+	s.activeTurnID = ""
+
+	switch {
+	case wasBusyExternal:
+		s.status = "OpenCode session ready"
+		s.lastSystemNotice = "OpenCode session ready"
+	case wasBusy:
+		s.status = "Turn completed"
+		s.lastSystemNotice = "Turn completed"
+	}
 }
 
 func (s *openCodeSession) touchLocked() {

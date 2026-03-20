@@ -1,6 +1,29 @@
 # Little Control Room Status
 
-Last updated: 2026-03-20 14:42 JST (JST)
+Last updated: 2026-03-20 15:05 JST (JST)
+
+## Latest Update (2026-03-20 15:05 JST)
+
+- Investigated the embedded OpenCode turn-completion parity gap after the report that OpenCode did not seem to show a clear `Turn completed` state the way embedded Codex does.
+- Fixed the OpenCode event-stream idle transition logic so a real busy-to-idle transition now surfaces completion reliably regardless of whether OpenCode sends the state change via `session.status`, `session.idle`, or both in either order.
+- Kept the state handling provider-appropriate instead of bolting on transcript heuristics: embedded OpenCode now mirrors Codex-style completion/ready notices in session status fields, while externally busy OpenCode sessions still resolve back to `OpenCode session ready` instead of being mislabeled as local turn completions.
+- Added focused `internal/codexapp` regressions covering the OpenCode busy-to-idle completion path, the direct `session.idle` completion path, and the external-busy-to-ready path.
+- This patch improves completion signaling parity, but it does not change the OpenCode transport/server-exit path. If `quickgame_28` was truly interrupted rather than merely going idle without a visible completion message, that still needs a separate transport-level investigation.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/codexapp/opencode_session.go internal/codexapp/opencode_session_test.go` passed.
+- `go test ./internal/codexapp -run 'Test(NewOpenCodeHTTPClientHasNoGlobalTimeout|OpenCodeSessionStatusIdleMarksTurnCompleted|OpenCodeSessionIdleEventMarksTurnCompleted|OpenCodeSessionIdleAfterExternalBusyMarksSessionReady)' -count=1` passed.
+- `go test ./internal/codexapp ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-20T15:05:01+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-20T15:05:09+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- Re-run a real embedded OpenCode prompt on `quickgame_28` and confirm the pane now lands on `Turn completed` reliably even when OpenCode emits idle-related events in a different order.
+- If `quickgame_28` still appears to stop without a clear reason, instrument or log the OpenCode server-exit / event-stream failure path next so we can distinguish a real interruption from a previously silent busy-to-idle transition.
 
 ## Latest Update (2026-03-20 14:42 JST)
 
