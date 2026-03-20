@@ -154,6 +154,47 @@ func TestExtractSnapshotOpenCodePreservesStructuredParts(t *testing.T) {
 	}
 }
 
+func TestExtractSnapshotOpenCodePrefersVisibleAssistantTextOverPlanningParts(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "opencode.db")
+	if err := seedOpenCodeVisibleTextFixture(dbPath); err != nil {
+		t.Fatalf("seed opencode visible-text fixture: %v", err)
+	}
+
+	snapshot, err := ExtractSnapshot(context.Background(), model.SessionClassification{
+		SessionID:       "ses_visible",
+		ProjectPath:     "/tmp/opencode-visible",
+		SessionFile:     dbPath + "#session:ses_visible",
+		SessionFormat:   "opencode_db",
+		SourceUpdatedAt: time.Now(),
+	}, model.SessionEvidence{}, GitStatusSnapshot{})
+	if err != nil {
+		t.Fatalf("extract snapshot: %v", err)
+	}
+	if len(snapshot.Transcript) != 2 {
+		t.Fatalf("expected 2 transcript items, got %#v", snapshot.Transcript)
+	}
+
+	assistant := snapshot.Transcript[1]
+	if assistant.Role != "assistant" {
+		t.Fatalf("assistant role = %q, want assistant", assistant.Role)
+	}
+	if !strings.Contains(assistant.Text, "Committed the fix and pushed it to origin/master.") {
+		t.Fatalf("assistant text = %q, want visible completion text", assistant.Text)
+	}
+	if strings.Contains(assistant.Text, "Reasoning:") {
+		t.Fatalf("assistant text = %q, want reasoning omitted when visible text is present", assistant.Text)
+	}
+	if strings.Contains(assistant.Text, "Tool bash completed") {
+		t.Fatalf("assistant text = %q, want tool summary omitted when visible text is present", assistant.Text)
+	}
+	if strings.Contains(assistant.Text, "Step finished: stop") {
+		t.Fatalf("assistant text = %q, want step summary omitted when visible text is present", assistant.Text)
+	}
+}
+
 func TestPreviewFromTranscriptUsesInitialUserAndLatestAssistantSnippets(t *testing.T) {
 	t.Parallel()
 
@@ -523,6 +564,47 @@ func seedOpenCodeTranscriptFixture(dbPath string) error {
 			('part_assistant_tool_finish', 'msg_assistant', 'ses_open', 2003, '{"type":"step-finish","reason":"tool-calls"}'),
 			('part_assistant_patch', 'msg_assistant', 'ses_open', 2004, '{"type":"patch","files":["/tmp/opencode-demo/internal/service/service.go","/tmp/opencode-demo/README.md"]}'),
 			('part_assistant_finish', 'msg_assistant', 'ses_open', 2005, '{"type":"step-finish","reason":"stop"}');
+	`)
+	return err
+}
+
+func seedOpenCodeVisibleTextFixture(dbPath string) error {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		return err
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+
+	_, err = db.Exec(`
+		CREATE TABLE message (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			time_created INTEGER NOT NULL,
+			data TEXT NOT NULL
+		);
+		CREATE TABLE part (
+			id TEXT PRIMARY KEY,
+			message_id TEXT NOT NULL,
+			session_id TEXT NOT NULL,
+			time_created INTEGER NOT NULL,
+			data TEXT NOT NULL
+		);
+		INSERT INTO message(id, session_id, time_created, data) VALUES
+			('msg_user', 'ses_visible', 1000, '{"role":"user"}'),
+			('msg_assistant_plan', 'ses_visible', 2000, '{"role":"assistant"}'),
+			('msg_assistant_reply', 'ses_visible', 3000, '{"role":"assistant"}');
+		INSERT INTO part(id, message_id, session_id, time_created, data) VALUES
+			('part_user_text', 'msg_user', 'ses_visible', 1001, '{"type":"text","text":"Please bump the version, commit, and push."}'),
+			('part_assistant_plan_reasoning', 'msg_assistant_plan', 'ses_visible', 2001, '{"type":"reasoning","text":"I still need to run git push after the commit."}'),
+			('part_assistant_plan_tool', 'msg_assistant_plan', 'ses_visible', 2002, '{"type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"git add package.json && git commit -m \"release\" && git push"}}}'),
+			('part_assistant_plan_finish', 'msg_assistant_plan', 'ses_visible', 2003, '{"type":"step-finish","reason":"tool-calls"}'),
+			('part_assistant_reply_text', 'msg_assistant_reply', 'ses_visible', 3001, '{"type":"text","text":"Committed the fix and pushed it to origin/master."}'),
+			('part_assistant_reply_finish', 'msg_assistant_reply', 'ses_visible', 3002, '{"type":"step-finish","reason":"stop"}');
 	`)
 	return err
 }

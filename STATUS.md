@@ -1,6 +1,33 @@
 # Little Control Room Status
 
-Last updated: 2026-03-20 16:33 JST (JST)
+Last updated: 2026-03-20 17:41 JST (JST)
+
+## Latest Update (2026-03-20 17:41 JST)
+
+- Investigated the bad `quickgame_28` dashboard summary that still said commit/push were pending even though the OpenCode turn had already finished them.
+- Confirmed this was not stale OpenCode session ingestion: the live `~/.local/share/opencode/opencode.db` rows for `ses_2f643d060ffek6vafOcwIixZ4E` already contained the final assistant text saying the version bump was committed and pushed to `origin/master`, and the project git snapshot in LCR was already clean + synced.
+- Confirmed prompt-only classifier guidance was not sufficient. After a `session-v2` reclassification run, the live row still came back `needs_follow_up`, which narrowed the issue to snapshot shaping rather than missing raw transcript data.
+- Fixed OpenCode session snapshot extraction so consecutive assistant-only planning/tool messages collapse to the last user-visible assistant reply when one exists, and assistant messages with visible text now prefer that visible reply over same-message reasoning/tool scaffolding for classification purposes.
+- Added regressions covering both cases: preserving structured OpenCode parts when no visible assistant reply exists, and preferring the final visible assistant completion text over prior planning/tool chatter.
+- Validated the fix in an isolated one-project temp DB for `quickgame_28`: the same session now classifies as `completed` with summary `Bumped to 0.3.7, committed, and pushed the ghost-facing fix.`
+- Updated the live cached classification row for `quickgame_28` to the corrected derived `session-v2` result from that isolated run, so the dashboard now reflects the fixed summary immediately.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- Direct SQLite inspection of `~/.local/share/opencode/opencode.db` showed the final assistant message for `ses_2f643d060ffek6vafOcwIixZ4E` already said the change was committed and pushed, while `projects.repo_dirty = 0` and `repo_sync_status = synced` in the LCR store.
+- `go test ./internal/sessionclassify -count=1` passed after the prompt update and again after the extractor/run-collapse fix.
+- `go run ./cmd/lcroom snapshot --config "/Users/davide/.little-control-room/config.toml" --codex-home "/Users/davide/.codex" --opencode-home "/Users/davide/.local/share/opencode" --db /tmp/lcroom-quickgame28-refresh.sqlite --include-paths "/Users/davide/dev/poncle_repos/quickgame_28" --project "/Users/davide/dev/poncle_repos/quickgame_28" --session-id ses_2f643d060ffek6vafOcwIixZ4E --limit 1` showed the cleaned classification snapshot centered on the visible completion reply instead of the earlier planning-only assistant chatter.
+- `go run ./cmd/lcroom classify --config "/Users/davide/.little-control-room/config.toml" --codex-home "/Users/davide/.codex" --opencode-home "/Users/davide/.local/share/opencode" --db /tmp/lcroom-quickgame28-refresh.sqlite --include-paths "/Users/davide/dev/poncle_repos/quickgame_28"` passed and classified the session as `completed`.
+- `make test` passed.
+- `make scan` passed at `2026-03-20T17:40:49+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 3`, `queued classifications: 77`).
+- `make doctor` passed on the cached snapshot dated `2026-03-20T17:40:49+09:00`; `quickgame_28` now shows `latest_session_assessment: status=completed category=completed` with summary `Bumped to 0.3.7, committed, and pushed the ghost-facing fix.`
+- A direct `sqlite3 ~/.little-control-room/little-control-room.sqlite` check confirmed the live `session_classifications` row for `ses_2f643d060ffek6vafOcwIixZ4E` now stores the corrected `session-v2` completed summary and matching snapshot hash.
+
+Next concrete tasks:
+
+- Watch the next real OpenCode commit/push-style turn in the live dashboard and confirm the new snapshot shaping prevents the same false `needs_follow_up` outcome without any manual cache correction.
+- If more misclassifications remain, consider whether the classifier snapshot should also down-rank or further compress assistant planning-only runs for non-OpenCode transcripts, while keeping in-progress sessions legible.
 
 ## Latest Update (2026-03-20 16:33 JST)
 

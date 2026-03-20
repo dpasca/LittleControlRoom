@@ -400,6 +400,9 @@ If latest_turn_state_known is true, treat latest_turn_completed as a strong work
 Dirty or unsynced git state can be evidence of unfinished follow-up, but transcript evidence should remain primary.
 Do not label a session in_progress only because the worktree is dirty after a completed turn.
 Prefer completed when the assistant clearly wrapped up the asked task and any extra offer is optional.
+Treat optional follow-up offers like “if you want, I can also ...” as optional unless the user actually asked for that extra step or the assistant says it still must happen.
+Reasoning/tool transcript items can reflect earlier planning; when they conflict with a later user-visible assistant message, trust the latest user-visible assistant message.
+If the latest assistant message says requested repo actions already happened (for example committed, pushed, built, deployed, or published) and the git snapshot agrees, prefer completed over needs_follow_up.
 Return a short factual dashboard summary under 140 characters.
 Prefer brief direct phrasing over full sentences when natural.
 Write from the implicit assistant point of view rather than naming the assistant as the subject.

@@ -50,8 +50,9 @@ type GitStatusSnapshot struct {
 }
 
 type TranscriptItem struct {
-	Role string `json:"role"`
-	Text string `json:"text"`
+	Role    string `json:"role"`
+	Text    string `json:"text"`
+	Visible bool   `json:"-"`
 }
 
 func ExtractSnapshot(ctx context.Context, classification model.SessionClassification, session model.SessionEvidence, gitStatus GitStatusSnapshot) (SessionSnapshot, error) {
@@ -337,7 +338,7 @@ func extractCodexTranscriptItem(line string) (TranscriptItem, bool) {
 		if top.Role == "" || text == "" {
 			return TranscriptItem{}, false
 		}
-		return TranscriptItem{Role: top.Role, Text: text}, true
+		return TranscriptItem{Role: top.Role, Text: text, Visible: true}, true
 	case "response_item":
 		var payload struct {
 			Type    string          `json:"type"`
@@ -354,7 +355,7 @@ func extractCodexTranscriptItem(line string) (TranscriptItem, bool) {
 		if payload.Role == "" || text == "" {
 			return TranscriptItem{}, false
 		}
-		return TranscriptItem{Role: payload.Role, Text: text}, true
+		return TranscriptItem{Role: payload.Role, Text: text, Visible: true}, true
 	case "event_msg":
 		var payload struct {
 			Type             string `json:"type"`
@@ -370,19 +371,19 @@ func extractCodexTranscriptItem(line string) (TranscriptItem, bool) {
 			if text == "" {
 				return TranscriptItem{}, false
 			}
-			return TranscriptItem{Role: "user", Text: text}, true
+			return TranscriptItem{Role: "user", Text: text, Visible: true}, true
 		case "agent_message":
 			text := sanitizeTranscriptText(payload.Message)
 			if text == "" {
 				return TranscriptItem{}, false
 			}
-			return TranscriptItem{Role: "assistant", Text: text}, true
+			return TranscriptItem{Role: "assistant", Text: text, Visible: true}, true
 		case "task_complete":
 			text := sanitizeTranscriptText(payload.LastAgentMessage)
 			if text == "" {
 				return TranscriptItem{}, false
 			}
-			return TranscriptItem{Role: "assistant", Text: text}, true
+			return TranscriptItem{Role: "assistant", Text: text, Visible: true}, true
 		default:
 			return TranscriptItem{}, false
 		}
@@ -483,9 +484,10 @@ func extractOpenCodeTranscriptItems(ctx context.Context, db *sql.DB, sessionID s
 	defer rows.Close()
 
 	type messageEntry struct {
-		ID   string
-		Role string
-		Text []string
+		ID         string
+		Role       string
+		TextParts  []string
+		OtherParts []string
 	}
 
 	order := []string{}
@@ -512,8 +514,14 @@ func extractOpenCodeTranscriptItems(ctx context.Context, db *sql.DB, sessionID s
 		if !partData.Valid {
 			continue
 		}
-		if text := parseOpenCodePartText(partData.String); text != "" {
-			entry.Text = append(entry.Text, text)
+		kind, text := parseOpenCodePartText(partData.String)
+		if text == "" {
+			continue
+		}
+		if kind == "text" {
+			entry.TextParts = append(entry.TextParts, text)
+		} else {
+			entry.OtherParts = append(entry.OtherParts, text)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -523,13 +531,20 @@ func extractOpenCodeTranscriptItems(ctx context.Context, db *sql.DB, sessionID s
 	items := make([]TranscriptItem, 0, len(order))
 	for _, id := range order {
 		entry := entries[id]
-		text := sanitizeTranscriptText(strings.Join(entry.Text, "\n\n"))
+		parts := entry.OtherParts
+		if entry.Role == "assistant" && len(entry.TextParts) > 0 {
+			parts = entry.TextParts
+		} else if len(entry.TextParts) > 0 {
+			parts = append(append([]string(nil), entry.TextParts...), entry.OtherParts...)
+		}
+		text := sanitizeTranscriptText(strings.Join(parts, "\n\n"))
 		if entry.Role == "" || text == "" {
 			continue
 		}
 		items = append(items, TranscriptItem{
-			Role: entry.Role,
-			Text: text,
+			Role:    entry.Role,
+			Text:    text,
+			Visible: entry.Role != "assistant" || len(entry.TextParts) > 0,
 		})
 	}
 	return finalizeTranscript(items), nil
@@ -560,12 +575,12 @@ func parseOpenCodeRole(messageData string) string {
 	return payload.Role
 }
 
-func parseOpenCodePartText(partData string) string {
+func parseOpenCodePartText(partData string) (string, string) {
 	var header struct {
 		Type string `json:"type"`
 	}
 	if err := json.Unmarshal([]byte(partData), &header); err != nil {
-		return ""
+		return "", ""
 	}
 	switch header.Type {
 	case "text":
@@ -573,21 +588,21 @@ func parseOpenCodePartText(partData string) string {
 			Text string `json:"text"`
 		}
 		if err := json.Unmarshal([]byte(partData), &payload); err != nil {
-			return ""
+			return "", ""
 		}
-		return sanitizeTranscriptText(payload.Text)
+		return "text", sanitizeTranscriptText(payload.Text)
 	case "reasoning":
 		var payload struct {
 			Text string `json:"text"`
 		}
 		if err := json.Unmarshal([]byte(partData), &payload); err != nil {
-			return ""
+			return "", ""
 		}
 		text := sanitizeTranscriptText(payload.Text)
 		if text == "" {
-			return ""
+			return "", ""
 		}
-		return "Reasoning: " + text
+		return "reasoning", "Reasoning: " + text
 	case "tool":
 		var payload struct {
 			Tool  string `json:"tool"`
@@ -601,7 +616,7 @@ func parseOpenCodePartText(partData string) string {
 			} `json:"state"`
 		}
 		if err := json.Unmarshal([]byte(partData), &payload); err != nil {
-			return ""
+			return "", ""
 		}
 		toolName := sanitizeTranscriptText(payload.Tool)
 		status := sanitizeTranscriptText(payload.State.Status)
@@ -613,30 +628,30 @@ func parseOpenCodePartText(partData string) string {
 		)
 		switch {
 		case toolName != "" && status != "" && summary != "":
-			return fmt.Sprintf("Tool %s %s: %s", toolName, status, summary)
+			return "tool", fmt.Sprintf("Tool %s %s: %s", toolName, status, summary)
 		case toolName != "" && summary != "":
-			return fmt.Sprintf("Tool %s: %s", toolName, summary)
+			return "tool", fmt.Sprintf("Tool %s: %s", toolName, summary)
 		case summary != "":
-			return "Tool: " + summary
+			return "tool", "Tool: " + summary
 		case toolName != "" && status != "":
-			return fmt.Sprintf("Tool %s %s", toolName, status)
+			return "tool", fmt.Sprintf("Tool %s %s", toolName, status)
 		case toolName != "":
-			return "Tool " + toolName
+			return "tool", "Tool " + toolName
 		default:
-			return "Tool activity"
+			return "tool", "Tool activity"
 		}
 	case "patch":
 		var payload struct {
 			Files []string `json:"files"`
 		}
 		if err := json.Unmarshal([]byte(partData), &payload); err != nil {
-			return ""
+			return "", ""
 		}
 		files := summarizeOpenCodePaths(payload.Files, 3)
 		if len(files) == 0 {
-			return "Patch applied"
+			return "patch", "Patch applied"
 		}
-		return "Patch touched " + strings.Join(files, ", ")
+		return "patch", "Patch touched " + strings.Join(files, ", ")
 	case "file":
 		var payload struct {
 			Mime     string `json:"mime"`
@@ -646,7 +661,7 @@ func parseOpenCodePartText(partData string) string {
 			} `json:"source"`
 		}
 		if err := json.Unmarshal([]byte(partData), &payload); err != nil {
-			return ""
+			return "", ""
 		}
 		name := firstNonEmptyTranscriptValue(payload.Filename)
 		if name == "" {
@@ -655,33 +670,33 @@ func parseOpenCodePartText(partData string) string {
 		mime := sanitizeTranscriptText(payload.Mime)
 		switch {
 		case name != "" && mime != "":
-			return fmt.Sprintf("Attached file: %s (%s)", name, mime)
+			return "file", fmt.Sprintf("Attached file: %s (%s)", name, mime)
 		case name != "":
-			return "Attached file: " + name
+			return "file", "Attached file: " + name
 		case mime != "":
-			return "Attached file: " + mime
+			return "file", "Attached file: " + mime
 		default:
-			return "Attached file"
+			return "file", "Attached file"
 		}
 	case "step-finish":
 		var payload struct {
 			Reason string `json:"reason"`
 		}
 		if err := json.Unmarshal([]byte(partData), &payload); err != nil {
-			return ""
+			return "", ""
 		}
 		reason := sanitizeTranscriptText(payload.Reason)
 		if reason == "tool-calls" {
-			return ""
+			return "", ""
 		}
 		if reason == "" {
-			return "Step finished"
+			return "step-finish", "Step finished"
 		}
-		return "Step finished: " + reason
+		return "step-finish", "Step finished: " + reason
 	case "compaction":
-		return "Session compacted"
+		return "compaction", "Session compacted"
 	default:
-		return ""
+		return "", ""
 	}
 }
 
@@ -767,14 +782,51 @@ func finalizeTranscript(items []TranscriptItem) []TranscriptItem {
 		if role == "" || text == "" {
 			continue
 		}
-		clean := TranscriptItem{Role: role, Text: text}
+		clean := TranscriptItem{Role: role, Text: text, Visible: item.Visible}
 		if len(out) > 0 && out[len(out)-1] == clean {
 			continue
 		}
 		out = append(out, clean)
 	}
+	out = collapseAssistantRuns(out)
 	if len(out) > maxTranscriptItems {
 		out = out[len(out)-maxTranscriptItems:]
+	}
+	return out
+}
+
+func collapseAssistantRuns(items []TranscriptItem) []TranscriptItem {
+	if len(items) <= 1 {
+		return items
+	}
+
+	out := make([]TranscriptItem, 0, len(items))
+	for i := 0; i < len(items); {
+		if items[i].Role != "assistant" {
+			out = append(out, items[i])
+			i++
+			continue
+		}
+
+		j := i + 1
+		lastVisible := -1
+		for j <= len(items) {
+			if items[j-1].Visible {
+				lastVisible = j - 1
+			}
+			if j == len(items) || items[j].Role != "assistant" {
+				break
+			}
+			j++
+		}
+
+		switch {
+		case lastVisible >= 0:
+			out = append(out, items[lastVisible])
+		default:
+			out = append(out, items[j-1])
+		}
+		i = j
 	}
 	return out
 }

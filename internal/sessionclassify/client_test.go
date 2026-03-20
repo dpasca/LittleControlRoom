@@ -323,6 +323,15 @@ func TestOpenAIClientClassifyRequestsImplicitAssistantPOVSummaries(t *testing.T)
 	if !strings.Contains(systemText, "Do not force a stock opener; choose the most direct wording that fits the evidence.") {
 		t.Fatalf("system prompt = %q, want anti-template guidance", systemText)
 	}
+	if !strings.Contains(systemText, "Treat optional follow-up offers like") {
+		t.Fatalf("system prompt = %q, want optional-follow-up guidance", systemText)
+	}
+	if !strings.Contains(systemText, "Reasoning/tool transcript items can reflect earlier planning; when they conflict with a later user-visible assistant message, trust the latest user-visible assistant message.") {
+		t.Fatalf("system prompt = %q, want latest-visible-message guidance", systemText)
+	}
+	if !strings.Contains(systemText, "If the latest assistant message says requested repo actions already happened") {
+		t.Fatalf("system prompt = %q, want completed-repo-actions guidance", systemText)
+	}
 	if !strings.Contains(summaryDescription, "brief fragments are fine") {
 		t.Fatalf("summary schema description = %q, want brief-fragment guidance", summaryDescription)
 	}
