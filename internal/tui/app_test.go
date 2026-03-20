@@ -463,6 +463,114 @@ func TestProjectAttentionLabel(t *testing.T) {
 	}
 }
 
+func TestProjectAttentionScoreAddsRunningRuntimeWeight(t *testing.T) {
+	now := time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC)
+	project := model.ProjectSummary{
+		Name:           "demo",
+		Path:           "/tmp/demo",
+		AttentionScore: 7,
+	}
+	m := Model{
+		nowFn: func() time.Time { return now },
+		runtimeSnapshots: map[string]projectrun.Snapshot{
+			project.Path: {
+				ProjectPath: project.Path,
+				Running:     true,
+				StartedAt:   now.Add(-5 * time.Minute),
+				Ports:       []int{3000},
+			},
+		},
+	}
+
+	if got := m.projectAttentionScore(project); got != project.AttentionScore+runtimeRunningAttentionWeight {
+		t.Fatalf("projectAttentionScore() = %d, want %d", got, project.AttentionScore+runtimeRunningAttentionWeight)
+	}
+
+	reasons := m.projectAttentionReasons(project, nil)
+	if len(reasons) != 1 {
+		t.Fatalf("projectAttentionReasons() len = %d, want 1", len(reasons))
+	}
+	if reasons[0].Code != "runtime_running" {
+		t.Fatalf("reason code = %q, want runtime_running", reasons[0].Code)
+	}
+	if reasons[0].Weight != runtimeRunningAttentionWeight {
+		t.Fatalf("reason weight = %d, want %d", reasons[0].Weight, runtimeRunningAttentionWeight)
+	}
+	if !strings.Contains(reasons[0].Text, "Managed runtime running for 05:00") {
+		t.Fatalf("reason text = %q, want running duration", reasons[0].Text)
+	}
+	if !strings.Contains(reasons[0].Text, "3000") {
+		t.Fatalf("reason text = %q, want port summary", reasons[0].Text)
+	}
+}
+
+func TestSortProjectsUsesRunningRuntimeAttentionBoost(t *testing.T) {
+	running := model.ProjectSummary{
+		Name:           "running",
+		Path:           "/tmp/running",
+		AttentionScore: 1,
+	}
+	idle := model.ProjectSummary{
+		Name:           "idle",
+		Path:           "/tmp/idle",
+		AttentionScore: 9,
+	}
+	projects := []model.ProjectSummary{idle, running}
+	m := Model{
+		sortMode: sortByAttention,
+		runtimeSnapshots: map[string]projectrun.Snapshot{
+			running.Path: {
+				ProjectPath: running.Path,
+				Running:     true,
+			},
+		},
+	}
+
+	m.sortProjects(projects)
+	if projects[0].Path != running.Path {
+		t.Fatalf("first project path = %q, want %q after runtime boost", projects[0].Path, running.Path)
+	}
+}
+
+func TestRenderDetailContentShowsRuntimeAttentionReason(t *testing.T) {
+	now := time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC)
+	project := model.ProjectSummary{
+		Name:           "demo",
+		Path:           "/tmp/demo",
+		AttentionScore: 4,
+		PresentOnDisk:  true,
+	}
+	m := Model{
+		nowFn: func() time.Time { return now },
+		projects: []model.ProjectSummary{
+			project,
+		},
+		allProjects: []model.ProjectSummary{
+			project,
+		},
+		selected: 0,
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: project.Path},
+		},
+		runtimeSnapshots: map[string]projectrun.Snapshot{
+			project.Path: {
+				ProjectPath: project.Path,
+				Running:     true,
+				StartedAt:   now.Add(-5 * time.Minute),
+				Ports:       []int{3000},
+			},
+		},
+	}
+
+	rendered := ansi.Strip(m.renderDetailContent(100))
+	if !strings.Contains(rendered, "Attention: 14") {
+		t.Fatalf("renderDetailContent() missing boosted attention score: %q", rendered)
+	}
+	if !strings.Contains(rendered, "[+10] Managed runtime running for 05:00 on 3000") {
+		t.Fatalf("renderDetailContent() missing runtime attention reason: %q", rendered)
+	}
+}
+
 func TestFilterProjects(t *testing.T) {
 	projects := []model.ProjectSummary{
 		{Name: "visible", LastActivity: time.Date(2026, 3, 6, 9, 0, 0, 0, time.UTC)},

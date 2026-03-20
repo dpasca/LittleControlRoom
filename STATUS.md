@@ -44,6 +44,30 @@ Next concrete tasks:
 - If more backend-outage Codex failures appear in practice, consider adding a one-shot explanatory system notice for `5xx` failures similar to the existing richer `403` diagnosis, while still keeping the footer copy short.
 - Decide whether the session picker should also prefer the compact status label over the raw `LastSystemNotice` for known noisy backend/auth failures.
 
+## Latest Update (2026-03-20 06:37 JST)
+
+- Added a live managed-runtime attention boost in the TUI so projects with a currently running `/run` or `/start` session get extra attention weight even when there is no fresh Codex/OpenCode activity yet.
+- Kept the stored `LastActivity` semantics intact instead of faking Codex/OpenCode activity from runtime launches: the runtime boost is applied as a TUI-layer overlay to effective attention score, sort order, and visible attention reasons.
+- Rewired the attention-sorted project list and detail pane to use that live effective score, and appended a transparent `runtime_running` reason that shows the managed runtime duration (and port when known).
+- Rebuilt the visible project ordering immediately after runtime start/stop actions so `/run`, `/start`, and `/stop` affect attention sort right away without waiting for the next scan.
+- Added focused TUI regressions covering the new runtime attention score, attention-sort behavior, and detail-pane reason rendering.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/app.go internal/tui/app_test.go internal/tui/runtime_attention.go` passed.
+- `go test ./internal/tui -run 'Test(ProjectAttentionScoreAddsRunningRuntimeWeight|SortProjectsUsesRunningRuntimeAttentionBoost|RenderDetailContentShowsRuntimeAttentionReason|ProjectAttentionLabel|RuntimePaneShowsRuntimeOutputAndActions|QuitKeyStopsManagedRuntimes)' -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-20T06:36:39+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 3`, `queued classifications: 3`).
+- `make doctor` passed on the cached snapshot dated `2026-03-20T06:36:51+09:00` (`projects: 133`).
+- `env COLUMNS=112 LINES=31 make tui` hit the expected active-instance guard on the shared DB, so the UI smoke check used `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-runtime-attention-check INTERVAL=1h`, which reached the TUI sandbox and exited via `q`.
+
+Next concrete tasks:
+
+- Decide whether managed runtime state should eventually graduate from the TUI-only manager into a provider-neutral service/store layer so runtime-derived attention also shows up in `doctor`, screenshots, and any non-TUI consumers.
+- Decide whether recently stopped runtimes should keep a short tapering attention bonus, or if “currently running only” is the right behavior after using this for a bit.
+- If runtime-aware attention proves useful, consider adding an explicit runtime-derived status/reason badge in the list chrome so the score bump feels even more legible at a glance.
+
 ## Latest Update (2026-03-20 00:50 JST)
 
 - Corrected the `/codex-new` fresh-open fix after a live `codex app-server` probe showed the previous guard was too aggressive: genuinely fresh threads can reject `thread/read includeTurns=true` with “not materialized yet; includeTurns is unavailable before first user message”.

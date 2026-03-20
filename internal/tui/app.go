@@ -737,6 +737,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if strings.TrimSpace(msg.status) != "" {
 			m.status = msg.status
 		}
+		selectedPath := msg.projectPath
+		if selectedPath == "" {
+			if p, ok := m.selectedProject(); ok {
+				selectedPath = p.Path
+			}
+		}
+		m.rebuildProjectList(selectedPath)
 		m.syncRuntimeViewport(false)
 		return m, nil
 	case runCommandSavedMsg:
@@ -1832,7 +1839,7 @@ func (m Model) renderProjectList(width, height int) string {
 			return projectListCellStyle(style, selectedRow)
 		}
 		last := formatListActivityTime(now, p.LastActivity)
-		attention := projectAttentionLabel(p)
+		attention := projectAttentionLabelForScore(p, m.projectAttentionScore(p))
 		name := truncateText(p.Name, projectW)
 		assessment := truncateText(projectAssessmentTextAt(p, now), assessmentW)
 		runtimeSnapshot := m.projectRuntimeSnapshot(p.Path)
@@ -1885,7 +1892,7 @@ func (m Model) renderDetailContent(width int) string {
 	}
 	assessmentValue := assessmentDisplayStyle(p).Render(projectAssessmentLabelAt(p, m.currentTime()))
 	statusValue := activityDisplayStyle(p).Render(projectActivityStatus(p))
-	attentionValue := detailAttentionValueStyle.Render(fmt.Sprintf("%d", p.AttentionScore))
+	attentionValue := detailAttentionValueStyle.Render(fmt.Sprintf("%d", m.projectAttentionScore(p)))
 
 	lines := []string{detailField("Path", detailValueStyle.Render(p.Path))}
 	lines = appendDetailFields(lines, width,
@@ -1929,10 +1936,11 @@ func (m Model) renderDetailContent(width int) string {
 	}
 
 	lines = append(lines, detailSectionStyle.Render("Attention reasons"))
-	if len(d.Reasons) == 0 {
+	reasons := m.projectAttentionReasons(p, d.Reasons)
+	if len(reasons) == 0 {
 		lines = append(lines, detailMutedStyle.Render("- none"))
 	} else {
-		for _, r := range d.Reasons {
+		for _, r := range reasons {
 			lines = append(lines, detailReasonLine(r))
 		}
 	}
@@ -2747,14 +2755,6 @@ func formatRelativeUnit(n int, unit string) string {
 		return fmt.Sprintf("1 %s", unit)
 	}
 	return fmt.Sprintf("%d %ss", n, unit)
-}
-
-func projectAttentionLabel(project model.ProjectSummary) string {
-	label := fmt.Sprintf("%4d", project.AttentionScore)
-	if projectHasRepoWarning(project) {
-		return "!" + label
-	}
-	return " " + label
 }
 
 func projectHasRepoWarning(project model.ProjectSummary) bool {
@@ -4777,6 +4777,16 @@ func sourceLabel(format string) string {
 }
 
 func (m *Model) sortProjects(projects []model.ProjectSummary) {
+	attentionScores := make(map[string]int, len(projects))
+	attentionScoreFor := func(project model.ProjectSummary) int {
+		if score, ok := attentionScores[project.Path]; ok {
+			return score
+		}
+		score := m.projectAttentionScore(project)
+		attentionScores[project.Path] = score
+		return score
+	}
+
 	switch m.sortMode {
 	case sortByRecent:
 		sort.SliceStable(projects, func(i, j int) bool {
@@ -4788,15 +4798,19 @@ func (m *Model) sortProjects(projects []model.ProjectSummary) {
 			if !li.Equal(lj) {
 				return li.After(lj)
 			}
-			if projects[i].AttentionScore != projects[j].AttentionScore {
-				return projects[i].AttentionScore > projects[j].AttentionScore
+			scoreI := attentionScoreFor(projects[i])
+			scoreJ := attentionScoreFor(projects[j])
+			if scoreI != scoreJ {
+				return scoreI > scoreJ
 			}
 			return projects[i].Name < projects[j].Name
 		})
 	default:
 		sort.SliceStable(projects, func(i, j int) bool {
-			if projects[i].AttentionScore != projects[j].AttentionScore {
-				return projects[i].AttentionScore > projects[j].AttentionScore
+			scoreI := attentionScoreFor(projects[i])
+			scoreJ := attentionScoreFor(projects[j])
+			if scoreI != scoreJ {
+				return scoreI > scoreJ
 			}
 			li := projects[i].LastActivity
 			lj := projects[j].LastActivity
