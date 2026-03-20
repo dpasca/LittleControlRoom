@@ -453,6 +453,7 @@ func embeddedSessionOpenStatus(req codexapp.LaunchRequest, previousThreadID stri
 	if short := shortID(currentThreadID); short != "" {
 		sessionLabel = "session " + short
 	}
+	freshSessionLabel := "fresh embedded " + label + " " + sessionLabel
 
 	switch {
 	case req.ForceNew && snapshot.BusyExternal && matchedExisting:
@@ -461,6 +462,10 @@ func embeddedSessionOpenStatus(req codexapp.LaunchRequest, previousThreadID stri
 		return "Could not start a fresh embedded " + label + " session because " + sessionLabel + " is already active in another process. Embedded view is read-only until it finishes."
 	case req.ForceNew && matchedExisting:
 		return "Could not start a fresh embedded " + label + " session; " + sessionLabel + " reopened instead."
+	case req.ForceNew && strings.TrimSpace(req.Prompt) != "":
+		return "Prompt sent to " + freshSessionLabel + ". Alt+Up hides it."
+	case req.ForceNew:
+		return "Fresh embedded " + label + " " + sessionLabel + " opened. Alt+Up hides it."
 	case snapshot.BusyExternal && strings.TrimSpace(req.Prompt) != "":
 		return label + " is already active in another process. Prompt was not sent; use " + embeddedNewCommand(provider) + " for a separate session."
 	case snapshot.BusyExternal:

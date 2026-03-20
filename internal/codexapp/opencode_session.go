@@ -706,7 +706,7 @@ func (s *openCodeSession) initializeSession(parent context.Context, req LaunchRe
 	if resumed {
 		s.appendSystemNotice("Resumed embedded OpenCode session " + shortID(sessionID) + ".")
 	} else {
-		s.appendSystemNotice("Started a new embedded OpenCode session.")
+		s.appendSystemNotice("Started a new embedded OpenCode session " + shortID(sessionID) + ".")
 	}
 	if strings.TrimSpace(req.Prompt) != "" {
 		if snapshot := s.Snapshot(); snapshot.BusyExternal {

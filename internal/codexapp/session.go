@@ -1414,7 +1414,7 @@ func (s *appServerSession) startThread(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	s.applyThreadConfigLocked(response.ApprovalPolicy, response.CWD, response.Model, response.ModelProvider, stringValue(response.ReasoningEffort), stringValue(response.ServiceTier), response.Sandbox)
 	s.mu.Unlock()
-	s.appendSystemNotice("Started a new embedded Codex session.")
+	s.appendSystemNotice("Started a new embedded Codex session " + shortID(response.Thread.ID) + ".")
 	return response.Thread.ID, nil
 }
 

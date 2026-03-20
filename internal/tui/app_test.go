@@ -3150,6 +3150,86 @@ func TestVisibleCodexSlashNewStartsFreshSession(t *testing.T) {
 	}
 }
 
+func TestVisibleOpenCodeSlashNewStartsFreshSession(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		threadID := "ses-old1"
+		if len(requests) > 1 {
+			threadID = "ses-new1"
+		}
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: codexapp.ProviderOpenCode,
+				Started:  true,
+				Status:   "OpenCode session ready",
+				ThreadID: threadID,
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderOpenCode,
+		ResumeID:    "ses-old1",
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/new")
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should run the embedded OpenCode /new command")
+	}
+	if got.codexPendingOpen == nil || got.codexPendingOpen.provider != codexapp.ProviderOpenCode {
+		t.Fatalf("codexPendingOpen = %#v, want pending OpenCode session", got.codexPendingOpen)
+	}
+	if got.status != "Starting a fresh embedded OpenCode session..." {
+		t.Fatalf("status = %q, want fresh OpenCode session notice", got.status)
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("/new returned error = %v", opened.err)
+	}
+	if opened.status != "Fresh embedded OpenCode session ses-new1 opened. Alt+Up hides it." {
+		t.Fatalf("opened.status = %q, want fresh OpenCode session confirmation", opened.status)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("launch requests = %d, want 2", len(requests))
+	}
+	if !requests[1].ForceNew {
+		t.Fatalf("second launch request should force a fresh OpenCode session")
+	}
+
+	updated, _ = got.Update(opened)
+	got = updated.(Model)
+	snapshot, ok := got.currentCodexSnapshot()
+	if !ok {
+		t.Fatalf("currentCodexSnapshot() unavailable after handling the opened session")
+	}
+	if snapshot.ThreadID != "ses-new1" {
+		t.Fatalf("thread id = %q, want %q", snapshot.ThreadID, "ses-new1")
+	}
+}
+
 func TestVisibleOpenCodeSlashNewFailureKeepsClosedSessionVisible(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
@@ -3415,7 +3495,7 @@ func TestLaunchCodexForSelectionForceNewRetriesWhenPreviousThreadReopensFirst(t 
 	if opened.err != nil {
 		t.Fatalf("/codex-new returned error = %v", opened.err)
 	}
-	if opened.status != "Embedded Codex session opened. Alt+Up hides it." {
+	if opened.status != "Fresh embedded Codex session 019dddd4 opened. Alt+Up hides it." {
 		t.Fatalf("opened.status = %q, want normal opened status after retry", opened.status)
 	}
 	if len(requests) != 2 {
@@ -3482,7 +3562,7 @@ func TestLaunchCodexForSelectionForceNewRetriesWhenCodexRejectsFreshThread(t *te
 	if opened.err != nil {
 		t.Fatalf("/codex-new returned error = %v", opened.err)
 	}
-	if opened.status != "Prompt sent to embedded Codex. Alt+Up hides it." {
+	if opened.status != "Prompt sent to fresh embedded Codex session 019fresh. Alt+Up hides it." {
 		t.Fatalf("opened.status = %q, want prompt-sent status after retry", opened.status)
 	}
 	if len(requests) != 2 {

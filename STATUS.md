@@ -1,6 +1,31 @@
 # Little Control Room Status
 
-Last updated: 2026-03-20 14:24 JST (JST)
+Last updated: 2026-03-20 14:42 JST (JST)
+
+## Latest Update (2026-03-20 14:42 JST)
+
+- Investigated the report that embedded OpenCode `/new` "doesn't seem to work" and live-probed the real `opencode serve` API against `quickgame_28`.
+- Confirmed the underlying OpenCode transport is creating a genuinely fresh session on that project: a live `POST /session` returned a new session id (`ses_2f643d060ffek6vafOcwIixZ4E`) alongside the older saved `ses_3498ba387ffeXwqvnyCGdEiJ3a`, with the new session starting empty before the first prompt.
+- Tightened the embedded fresh-session messaging so successful `/new` flows now explicitly name the new session id in both the pane status text and the provider-side "started new embedded session" transcript notice, which makes OpenCode fresh opens much easier to verify in practice.
+- Added the missing successful embedded OpenCode `/new` regression in the TUI suite and updated the fresh-session status expectations for the existing force-new Codex retry coverage.
+- Updated the documented OpenCode transport assumptions below to record the newly validated `POST /session` behavior.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- Live `opencode serve` probe in `/Users/davide/dev/poncle_repos/quickgame_28` confirmed `POST /session` created a fresh empty session `ses_2f643d060ffek6vafOcwIixZ4E` instead of reusing `ses_3498ba387ffeXwqvnyCGdEiJ3a`.
+- `gofmt -w internal/codexapp/session.go internal/codexapp/opencode_session.go internal/tui/codex_pane.go internal/tui/app_test.go` passed.
+- `go test ./internal/tui -run 'Test(VisibleCodexSlashNewStartsFreshSession|VisibleOpenCodeSlashNewStartsFreshSession|VisibleOpenCodeSlashNewFailureKeepsClosedSessionVisible|LaunchCodexForSelectionForceNewRetriesWhenPreviousThreadReopensFirst|LaunchCodexForSelectionForceNewRetriesWhenCodexRejectsFreshThread)' -count=1` passed.
+- `go test ./internal/tui ./internal/codexapp -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-20T14:41:50+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-20T14:41:50+09:00` (`projects: 133`).
+- `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-opencode-new-status-smoke INTERVAL=1h` reached the updated TUI sandbox and exited via `q`.
+
+Next concrete tasks:
+
+- Re-run the actual embedded OpenCode `/new` flow on `quickgame_28` inside the updated TUI and confirm the new session-id confirmation removes the ambiguity that prompted this report.
+- If users still report that `/new` feels unreliable after the clearer status copy, the next pass should refresh more project/session metadata immediately after a successful OpenCode fresh open so the detail pane and saved-session list visibly flip to the new row without waiting for scan cadence.
 
 ## Latest Update (2026-03-20 14:24 JST)
 
@@ -333,6 +358,7 @@ Current embedded Codex transport assumption:
 Current OpenCode transport assumption:
 
 - The installed `opencode` CLI on this machine (observed `1.2.24`) exposes both `serve` and `acp`; `serve` publishes an HTTP/OpenAPI + SSE surface with session, message, status, event, permission, and question endpoints, and Little Control Room now uses that live surface for embedded OpenCode sessions.
+- Observed `POST /session` on that `serve` surface creates a distinct new OpenCode session row immediately, before the first user prompt, so ambiguous embedded `/new` reports are more likely UI-confirmation or visibility issues than the server silently reusing the previous session.
 - Observed `opencode.db` session parts are structured rather than text-only, including `text`, `reasoning`, `tool`, `patch`, `file`, `step-start`, and `step-finish`, so OpenCode transcript extraction and the embedded pane should preserve that structure instead of flattening it to plain text.
 - Observed `prompt_async` behavior accepts a follow-up prompt while the session is still busy (returning `204` and later appending a second user/assistant turn), so the embedded pane can treat Enter as a steer/follow-up path much like embedded Codex.
 - OpenCode `FilePartInput` accepts structured file parts and the current embedded implementation sends local image attachments as `data:` URLs; transport support is confirmed, but end-to-end image robustness should still be treated as provisional until more real image cases are exercised.
