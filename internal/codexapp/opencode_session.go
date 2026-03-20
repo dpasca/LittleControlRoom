@@ -93,13 +93,14 @@ type openCodeMessage struct {
 }
 
 type openCodeMessageInfo struct {
-	ID         string `json:"id"`
-	SessionID  string `json:"sessionID"`
-	Role       string `json:"role"`
-	ModelID    string `json:"modelID"`
-	ProviderID string `json:"providerID"`
-	Agent      string `json:"agent"`
-	Finish     string `json:"finish"`
+	ID         string                `json:"id"`
+	SessionID  string                `json:"sessionID"`
+	Role       string                `json:"role"`
+	ModelID    string                `json:"modelID"`
+	ProviderID string                `json:"providerID"`
+	Agent      string                `json:"agent"`
+	Finish     string                `json:"finish"`
+	Error      *openCodeMessageError `json:"error,omitempty"`
 	Path       struct {
 		CWD  string `json:"cwd"`
 		Root string `json:"root"`
@@ -118,6 +119,17 @@ type openCodeMessageInfo struct {
 			Write int64 `json:"write"`
 		} `json:"cache"`
 	} `json:"tokens"`
+}
+
+type openCodeMessageError struct {
+	Name string `json:"name"`
+	Data struct {
+		Message    string `json:"message"`
+		StatusCode int    `json:"statusCode"`
+		Metadata   struct {
+			URL string `json:"url"`
+		} `json:"metadata"`
+	} `json:"data"`
 }
 
 type openCodePartHeader struct {
@@ -749,7 +761,7 @@ func (s *openCodeSession) refreshSessionState(parent context.Context, external b
 		s.mu.Unlock()
 		return nil
 	}
-	s.rebuildTranscriptLocked(messages)
+	latestError := s.rebuildTranscriptLocked(messages)
 	status := statuses[sessionID]
 	switch status.Type {
 	case "busy", "retry":
@@ -768,7 +780,14 @@ func (s *openCodeSession) refreshSessionState(parent context.Context, external b
 		s.busy = false
 		s.busyExternal = false
 		s.activeTurnID = ""
-		if external {
+		if latestError != "" {
+			s.lastError = latestError
+			s.lastSystemNotice = latestError
+			s.status = latestError
+		} else {
+			s.lastError = ""
+		}
+		if external && latestError == "" {
 			s.status = "OpenCode session ready"
 			s.lastSystemNotice = "OpenCode session ready"
 		}
@@ -883,25 +902,35 @@ func (s *openCodeSession) refreshPendingRequests(ctx context.Context) error {
 	return nil
 }
 
-func (s *openCodeSession) rebuildTranscriptLocked(messages []openCodeMessage) {
+func (s *openCodeSession) rebuildTranscriptLocked(messages []openCodeMessage) string {
 	s.entries = nil
 	s.entryIndex = make(map[string]int)
 	s.messageRole = make(map[string]string)
 	s.partKind = make(map[string]TranscriptKind)
 	s.partType = make(map[string]string)
 
+	latestError := ""
 	for _, message := range messages {
-		s.applyMessageInfoLocked(message.Info)
+		if errorSummary := s.applyMessageInfoLocked(message.Info); errorSummary != "" {
+			latestError = errorSummary
+		} else {
+			latestError = ""
+		}
 		for _, rawPart := range message.Parts {
 			s.applyPartLocked(message.Info.Role, rawPart, true)
 		}
 	}
+	return latestError
 }
 
-func (s *openCodeSession) applyMessageInfoLocked(info openCodeMessageInfo) {
+func (s *openCodeSession) applyMessageInfoLocked(info openCodeMessageInfo) string {
 	messageID := strings.TrimSpace(info.ID)
 	if messageID != "" {
 		s.messageRole[messageID] = strings.TrimSpace(info.Role)
+	}
+	if summary, detail := renderOpenCodeMessageError(info); summary != "" {
+		s.upsertItemEntryLocked(messageID, TranscriptError, detail)
+		return summary
 	}
 	if strings.EqualFold(strings.TrimSpace(info.Role), "assistant") {
 		if modelKey := qualifiedOpenCodeModelKey(info.ProviderID, info.ModelID); modelKey != "" {
@@ -939,6 +968,7 @@ func (s *openCodeSession) applyMessageInfoLocked(info openCodeMessageInfo) {
 			}
 		}
 	}
+	return ""
 }
 
 func (s *openCodeSession) applyPartLocked(role string, raw json.RawMessage, replace bool) {
@@ -1043,6 +1073,7 @@ func (s *openCodeSession) handleEventData(raw string) {
 		}
 		s.mu.Lock()
 		s.touchLocked()
+		shouldRefresh := false
 		switch payload.Status.Type {
 		case "busy", "retry":
 			s.busy = true
@@ -1052,9 +1083,13 @@ func (s *openCodeSession) handleEventData(raw string) {
 			}
 			s.status = "OpenCode is working..."
 		default:
-			s.markIdleLocked()
+			shouldRefresh = s.markIdleLocked()
 		}
 		s.mu.Unlock()
+		if shouldRefresh {
+			_ = s.refreshSessionState(context.Background(), false)
+			return
+		}
 		s.notify()
 	case "session.idle":
 		var payload struct {
@@ -1068,8 +1103,12 @@ func (s *openCodeSession) handleEventData(raw string) {
 		}
 		s.mu.Lock()
 		s.touchLocked()
-		s.markIdleLocked()
+		shouldRefresh := s.markIdleLocked()
 		s.mu.Unlock()
+		if shouldRefresh {
+			_ = s.refreshSessionState(context.Background(), false)
+			return
+		}
 		_ = s.refreshPendingRequests(context.Background())
 		s.notify()
 	case "message.updated":
@@ -1082,7 +1121,11 @@ func (s *openCodeSession) handleEventData(raw string) {
 		}
 		s.mu.Lock()
 		s.touchLocked()
-		s.applyMessageInfoLocked(payload.Info)
+		if errorSummary := s.applyMessageInfoLocked(payload.Info); errorSummary != "" {
+			s.lastError = errorSummary
+			s.lastSystemNotice = errorSummary
+			s.status = errorSummary
+		}
 		s.mu.Unlock()
 		s.notify()
 	case "message.part.updated":
@@ -1173,7 +1216,7 @@ func (s *openCodeSession) isClosed() bool {
 	return s.closed
 }
 
-func (s *openCodeSession) markIdleLocked() {
+func (s *openCodeSession) markIdleLocked() bool {
 	wasBusyExternal := s.busyExternal || strings.TrimSpace(s.status) == "OpenCode is active in another process"
 	wasBusy := s.busy || s.activeTurnID != "" || strings.TrimSpace(s.status) == "OpenCode is working..."
 
@@ -1189,6 +1232,7 @@ func (s *openCodeSession) markIdleLocked() {
 		s.status = "Turn completed"
 		s.lastSystemNotice = "Turn completed"
 	}
+	return wasBusyExternal || wasBusy
 }
 
 func (s *openCodeSession) touchLocked() {
@@ -1651,6 +1695,54 @@ func summarizeOpenCodePaths(paths []string, limit int) []string {
 		}
 	}
 	return out
+}
+
+func renderOpenCodeMessageError(info openCodeMessageInfo) (string, string) {
+	if info.Error == nil {
+		return "", ""
+	}
+	code := info.Error.Data.StatusCode
+	message := strings.TrimSpace(info.Error.Data.Message)
+	url := strings.TrimSpace(info.Error.Data.Metadata.URL)
+	provider := openCodeProviderLabel(info.ProviderID)
+
+	switch {
+	case code == 403 && strings.EqualFold(strings.TrimSpace(info.ProviderID), "openai") && strings.Contains(strings.ToLower(url), "api.openai.com/v1/responses"):
+		summary := "OpenCode OpenAI request rejected (HTTP 403)"
+		detail := "OpenCode OpenAI request was rejected with HTTP 403 Forbidden by https://api.openai.com/v1/responses. Check `opencode auth list`, refresh OpenCode OpenAI auth or API key if needed, then use `/reconnect` in Little Control Room."
+		return summary, detail
+	case code > 0:
+		summary := fmt.Sprintf("OpenCode %s request failed (HTTP %d)", provider, code)
+		detail := summary
+		if message != "" {
+			detail += ": " + message
+		}
+		if url != "" {
+			detail += " (" + url + ")"
+		}
+		return summary, detail
+	case message != "":
+		summary := "OpenCode " + provider + " error"
+		return summary, summary + ": " + message
+	default:
+		name := strings.TrimSpace(info.Error.Name)
+		if name == "" {
+			name = "error"
+		}
+		summary := "OpenCode " + provider + " error"
+		return summary, summary + ": " + name
+	}
+}
+
+func openCodeProviderLabel(providerID string) string {
+	switch strings.ToLower(strings.TrimSpace(providerID)) {
+	case "openai":
+		return "OpenAI"
+	case "":
+		return "provider"
+	default:
+		return strings.TrimSpace(providerID)
+	}
 }
 
 func qualifiedOpenCodeModelKey(providerID, modelID string) string {

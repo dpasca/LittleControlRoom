@@ -1,6 +1,11 @@
 package codexapp
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
 
 func TestNewOpenCodeHTTPClientHasNoGlobalTimeout(t *testing.T) {
 	client := newOpenCodeHTTPClient()
@@ -13,7 +18,7 @@ func TestNewOpenCodeHTTPClientHasNoGlobalTimeout(t *testing.T) {
 }
 
 func TestOpenCodeSessionStatusIdleMarksTurnCompleted(t *testing.T) {
-	session := newTestOpenCodeSession()
+	session := newTestOpenCodeSession(t, "")
 
 	session.handleEventData(`{"type":"session.status","properties":{"sessionID":"ses_test","status":{"type":"busy"}}}`)
 	session.handleEventData(`{"type":"session.status","properties":{"sessionID":"ses_test","status":{"type":"idle"}}}`)
@@ -37,7 +42,7 @@ func TestOpenCodeSessionStatusIdleMarksTurnCompleted(t *testing.T) {
 }
 
 func TestOpenCodeSessionIdleEventMarksTurnCompleted(t *testing.T) {
-	session := newTestOpenCodeSession()
+	session := newTestOpenCodeSession(t, "")
 
 	session.handleEventData(`{"type":"session.status","properties":{"sessionID":"ses_test","status":{"type":"busy"}}}`)
 	session.handleEventData(`{"type":"session.idle","properties":{"sessionID":"ses_test"}}`)
@@ -55,7 +60,7 @@ func TestOpenCodeSessionIdleEventMarksTurnCompleted(t *testing.T) {
 }
 
 func TestOpenCodeSessionIdleAfterExternalBusyMarksSessionReady(t *testing.T) {
-	session := newTestOpenCodeSession()
+	session := newTestOpenCodeSession(t, "")
 	session.busy = true
 	session.busyExternal = true
 	session.activeTurnID = "ses_test"
@@ -81,10 +86,127 @@ func TestOpenCodeSessionIdleAfterExternalBusyMarksSessionReady(t *testing.T) {
 	}
 }
 
-func newTestOpenCodeSession() *openCodeSession {
+func TestOpenCodeSessionIdleRefreshesErrorOnlyMessageIntoTranscript(t *testing.T) {
+	session := newTestOpenCodeSession(t, `[
+		{
+			"info": {
+				"id": "msg_err",
+				"sessionID": "ses_test",
+				"role": "assistant",
+				"modelID": "gpt-5.4",
+				"providerID": "openai",
+				"agent": "build",
+				"path": {
+					"cwd": "/tmp/demo",
+					"root": "/tmp/demo"
+				},
+				"time": {
+					"created": 1,
+					"completed": 2
+				},
+				"error": {
+					"name": "APIError",
+					"data": {
+						"message": "Forbidden",
+						"statusCode": 403,
+						"metadata": {
+							"url": "https://api.openai.com/v1/responses"
+						}
+					}
+				}
+			},
+			"parts": []
+		}
+	]`)
+
+	session.handleEventData(`{"type":"session.status","properties":{"sessionID":"ses_test","status":{"type":"busy"}}}`)
+	session.handleEventData(`{"type":"session.idle","properties":{"sessionID":"ses_test"}}`)
+
+	snapshot := session.Snapshot()
+	if snapshot.Status != "OpenCode OpenAI request rejected (HTTP 403)" {
+		t.Fatalf("snapshot.Status = %q, want OpenCode OpenAI request rejected (HTTP 403)", snapshot.Status)
+	}
+	if snapshot.LastError != "OpenCode OpenAI request rejected (HTTP 403)" {
+		t.Fatalf("snapshot.LastError = %q, want OpenCode OpenAI request rejected (HTTP 403)", snapshot.LastError)
+	}
+	if len(snapshot.Entries) == 0 {
+		t.Fatalf("snapshot.Entries should include an error entry")
+	}
+	last := snapshot.Entries[len(snapshot.Entries)-1]
+	if last.Kind != TranscriptError {
+		t.Fatalf("last.Kind = %q, want %q", last.Kind, TranscriptError)
+	}
+	if !strings.Contains(last.Text, "opencode auth list") {
+		t.Fatalf("last.Text = %q, want auth guidance", last.Text)
+	}
+	if !strings.Contains(last.Text, "HTTP 403 Forbidden") {
+		t.Fatalf("last.Text = %q, want HTTP 403 detail", last.Text)
+	}
+}
+
+func TestOpenCodeSessionMessageUpdatedShowsErrorImmediately(t *testing.T) {
+	session := newTestOpenCodeSession(t, "")
+
+	session.handleEventData(`{
+		"type":"message.updated",
+		"properties":{
+			"info":{
+				"id":"msg_err",
+				"sessionID":"ses_test",
+				"role":"assistant",
+				"modelID":"gpt-5.4",
+				"providerID":"openai",
+				"agent":"build",
+				"error":{
+					"name":"APIError",
+					"data":{
+						"message":"Forbidden",
+						"statusCode":403,
+						"metadata":{
+							"url":"https://api.openai.com/v1/responses"
+						}
+					}
+				}
+			}
+		}
+	}`)
+
+	snapshot := session.Snapshot()
+	if snapshot.Status != "OpenCode OpenAI request rejected (HTTP 403)" {
+		t.Fatalf("snapshot.Status = %q, want OpenCode OpenAI request rejected (HTTP 403)", snapshot.Status)
+	}
+	if len(snapshot.Entries) != 1 {
+		t.Fatalf("len(snapshot.Entries) = %d, want 1", len(snapshot.Entries))
+	}
+	if snapshot.Entries[0].Kind != TranscriptError {
+		t.Fatalf("snapshot.Entries[0].Kind = %q, want %q", snapshot.Entries[0].Kind, TranscriptError)
+	}
+}
+
+func newTestOpenCodeSession(t *testing.T, messagesResponse string) *openCodeSession {
+	t.Helper()
+	if strings.TrimSpace(messagesResponse) == "" {
+		messagesResponse = `[]`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		switch r.URL.Path {
+		case "/session/ses_test/message":
+			_, _ = w.Write([]byte(messagesResponse))
+		case "/session/status":
+			_, _ = w.Write([]byte(`{}`))
+		case "/permission", "/question":
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
 	return &openCodeSession{
 		sessionID:         "ses_test",
-		http:              newOpenCodeHTTPClient(),
+		baseURL:           server.URL,
+		http:              server.Client(),
 		notify:            func() {},
 		entryIndex:        make(map[string]int),
 		messageRole:       make(map[string]string),

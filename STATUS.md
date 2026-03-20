@@ -1,6 +1,31 @@
 # Little Control Room Status
 
-Last updated: 2026-03-20 16:04 JST (JST)
+Last updated: 2026-03-20 16:33 JST (JST)
+
+## Latest Update (2026-03-20 16:33 JST)
+
+- Re-investigated the repeated embedded OpenCode stoppage on `quickgame_28` with a live `opencode serve` probe plus direct inspection of `~/.local/share/opencode/opencode.db`.
+- Confirmed the stop was not caused by tool execution itself. The repeated pattern was `step-finish reason=tool-calls` followed immediately by a new assistant message whose `info.error` contained `APIError`, `statusCode: 403`, `providerID: openai`, and `metadata.url: https://api.openai.com/v1/responses`, with `parts: []`.
+- Confirmed Little Control Room's embedded OpenCode renderer was dropping exactly those error-only assistant messages because it only rendered `parts` and ignored `info.error`, which is why the pane could misleadingly look like `Turn completed` right after tool activity.
+- Fixed the embedded OpenCode session layer so error-only `info.error` messages now render as transcript errors, update the visible embedded status/notice fields, and replace the fake completion state after idle transitions by refreshing the latest session message state when OpenCode goes busy -> idle.
+- Added a targeted OpenCode diagnosis for the observed OpenAI Responses `403` case that points users to `opencode auth list`, refreshing OpenCode OpenAI auth or API key if needed, and then `/reconnect` inside Little Control Room.
+- Added focused regressions covering both the immediate `message.updated` error path and the real busy -> idle refresh path for an error-only assistant message.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- Live `opencode serve --hostname 127.0.0.1 --port 0 --print-logs` probe in `/Users/davide/dev/poncle_repos/quickgame_28` confirmed `/session/ses_2f643d060ffek6vafOcwIixZ4E/message` returns a final assistant message with `info.error.statusCode = 403`, `providerID = openai`, `metadata.url = https://api.openai.com/v1/responses`, and `parts = []`.
+- `gofmt -w internal/codexapp/opencode_session.go internal/codexapp/opencode_session_test.go` passed.
+- `go test ./internal/codexapp -run 'Test(NewOpenCodeHTTPClientHasNoGlobalTimeout|OpenCodeSessionStatusIdleMarksTurnCompleted|OpenCodeSessionIdleEventMarksTurnCompleted|OpenCodeSessionIdleAfterExternalBusyMarksSessionReady|OpenCodeSessionIdleRefreshesErrorOnlyMessageIntoTranscript|OpenCodeSessionMessageUpdatedShowsErrorImmediately)' -count=1` passed.
+- `go test ./internal/codexapp ./internal/tui -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-20T16:32:52+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-20T16:33:00+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- Re-run the embedded OpenCode session on `quickgame_28` and confirm the next post-tool `403` now shows up explicitly as an OpenCode/OpenAI error instead of `Turn completed`.
+- If the same `403` keeps happening after refreshing OpenCode auth and using `/reconnect`, investigate why this OpenCode environment is hitting OpenAI Responses authorization failures for `gpt-5.4` despite `opencode auth list` showing OpenAI auth configured.
 
 ## Latest Update (2026-03-20 16:04 JST)
 
