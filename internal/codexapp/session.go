@@ -2327,7 +2327,11 @@ func (s *appServerSession) appendSystemNotice(message string) {
 	s.touchLocked()
 	s.appendEntryLocked("", TranscriptSystem, message)
 	s.lastSystemNotice = message
-	s.status = message
+	if label := compactCodexStatusLabel(message); label != "" {
+		s.status = label
+	} else {
+		s.status = message
+	}
 	s.mu.Unlock()
 	s.notify()
 }
@@ -2342,29 +2346,163 @@ func (s *appServerSession) appendSystemError(err error) {
 	s.appendEntryLocked("", TranscriptError, message)
 	s.lastError = message
 	s.lastSystemNotice = message
-	s.status = "Codex error"
+	if label := compactCodexStatusLabel(message); label != "" {
+		s.status = label
+	} else {
+		s.status = "Codex error"
+	}
 	s.mu.Unlock()
 	s.notify()
 	s.maybeAppendAuth403Diagnosis(message)
 }
 
+func normalizeCodexStatusMessage(message string) string {
+	return strings.ToLower(strings.TrimSpace(message))
+}
+
+func extractCodexHTTPStatusCode(normalized string) (int, bool) {
+	for _, marker := range []string{"http error: ", "unexpected status "} {
+		idx := strings.Index(normalized, marker)
+		if idx < 0 {
+			continue
+		}
+		rest := strings.TrimSpace(normalized[idx+len(marker):])
+		fields := strings.Fields(rest)
+		if len(fields) == 0 {
+			continue
+		}
+		code, err := strconv.Atoi(strings.Trim(fields[0], " ,:"))
+		if err == nil {
+			return code, true
+		}
+	}
+	return 0, false
+}
+
+func isCodexResponsesTransportContext(normalized string) bool {
+	return strings.Contains(normalized, "/backend-api/codex/responses") ||
+		strings.Contains(normalized, "failed to connect to websocket")
+}
+
 func diagnoseCodexAuth403(message string) string {
-	normalized := strings.ToLower(strings.TrimSpace(message))
-	if !strings.Contains(normalized, "403 forbidden") {
+	normalized := normalizeCodexStatusMessage(message)
+	code, ok := extractCodexHTTPStatusCode(normalized)
+	if !ok || code != 403 || !isCodexResponsesTransportContext(normalized) {
 		return ""
 	}
-	switch {
-	case strings.Contains(normalized, "backend-api/codex/responses"),
-		strings.Contains(normalized, "failed to connect to websocket"),
-		strings.Contains(normalized, "unexpected status 403 forbidden"):
-		return "Codex rejected the request with HTTP 403. This usually means ChatGPT authentication, session access, or Codex entitlement is unavailable, or ChatGPT account access is temporarily degraded. It is usually not a Little Control Room transport bug. Check `codex login status`; if needed, run `codex logout` and `codex login`, then retry once ChatGPT account access is healthy again."
+	return "Codex rejected the request with HTTP 403. This usually means ChatGPT authentication, session access, or Codex entitlement is unavailable, or ChatGPT account access is temporarily degraded. It is usually not a Little Control Room transport bug. Check `codex login status`; if needed, run `codex logout` and `codex login`, then retry once ChatGPT account access is healthy again."
+}
+
+func codexRateLimited429StatusLabel() string {
+	return "Codex rate limited (HTTP 429)"
+}
+
+func isCodexServiceUnavailable503(message string) bool {
+	normalized := normalizeCodexStatusMessage(message)
+	code, ok := extractCodexHTTPStatusCode(normalized)
+	return ok && code == 503 && isCodexResponsesTransportContext(normalized)
+}
+
+func codexServiceUnavailableStatusLabel(code int) string {
+	switch code {
+	case 500:
+		return "Codex server error (HTTP 500)"
+	case 502, 503, 504:
+		return fmt.Sprintf("Codex service unavailable (HTTP %d)", code)
 	default:
+		if code >= 500 && code <= 599 {
+			return fmt.Sprintf("Codex server error (HTTP %d)", code)
+		}
 		return ""
+	}
+}
+
+func isCodexTimeoutMessage(normalized string) bool {
+	if !isCodexResponsesTransportContext(normalized) {
+		return false
+	}
+	switch {
+	case strings.Contains(normalized, "context deadline exceeded"),
+		strings.Contains(normalized, "i/o timeout"),
+		strings.Contains(normalized, "timeout awaiting response headers"):
+		return true
+	default:
+		return false
+	}
+}
+
+func isCodexConnectionFailureMessage(normalized string) bool {
+	if !isCodexResponsesTransportContext(normalized) {
+		return false
+	}
+	switch {
+	case strings.Contains(normalized, "failed to connect to websocket"),
+		strings.Contains(normalized, "connection refused"),
+		strings.Contains(normalized, "connection reset by peer"),
+		strings.Contains(normalized, "broken pipe"),
+		strings.Contains(normalized, "dial tcp"):
+		return true
+	default:
+		return false
 	}
 }
 
 func codexAuth403StatusLabel() string {
 	return "Codex auth/session rejected (HTTP 403)"
+}
+
+func codexServiceUnavailable503StatusLabel() string {
+	return "Codex service unavailable (HTTP 503)"
+}
+
+func codexTimeoutStatusLabel() string {
+	return "Codex request timed out"
+}
+
+func codexConnectionFailedStatusLabel() string {
+	return "Codex connection failed"
+}
+
+func codexGenericStderrStatusLabel(message string) string {
+	normalized := normalizeCodexStatusMessage(message)
+	switch {
+	case strings.HasPrefix(normalized, "codex stderr stream error:"):
+		return "Codex stderr stream failed"
+	case strings.HasPrefix(normalized, "codex stderr:"):
+		return "Codex reported stderr"
+	default:
+		return ""
+	}
+}
+
+func compactCodexStatusLabel(message string) string {
+	normalized := normalizeCodexStatusMessage(message)
+	switch {
+	case diagnoseCodexAuth403(message) != "":
+		return codexAuth403StatusLabel()
+	case func() bool {
+		code, ok := extractCodexHTTPStatusCode(normalized)
+		return ok && code == 429 && isCodexResponsesTransportContext(normalized)
+	}():
+		return codexRateLimited429StatusLabel()
+	case func() string {
+		code, ok := extractCodexHTTPStatusCode(normalized)
+		if !ok || !isCodexResponsesTransportContext(normalized) {
+			return ""
+		}
+		return codexServiceUnavailableStatusLabel(code)
+	}() != "":
+		code, _ := extractCodexHTTPStatusCode(normalized)
+		return codexServiceUnavailableStatusLabel(code)
+	case isCodexTimeoutMessage(normalized):
+		return codexTimeoutStatusLabel()
+	case isCodexConnectionFailureMessage(normalized):
+		return codexConnectionFailedStatusLabel()
+	case codexGenericStderrStatusLabel(message) != "":
+		return codexGenericStderrStatusLabel(message)
+	default:
+		return ""
+	}
 }
 
 func (s *appServerSession) maybeAppendAuth403Diagnosis(message string) {

@@ -895,6 +895,103 @@ func TestReadStderrAppendsAuth403Diagnosis(t *testing.T) {
 	}
 }
 
+func TestReadStderrCompactsServiceUnavailable503Status(t *testing.T) {
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+	}
+
+	s.readStderr(strings.NewReader("2026-03-20T05:08:05.951003Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 503 Service Unavailable, url: wss://chatgpt.com/backend-api/codex/responses\n"))
+
+	snapshot := s.Snapshot()
+	if len(snapshot.Entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(snapshot.Entries))
+	}
+	if snapshot.Entries[0].Kind != TranscriptSystem || !strings.Contains(snapshot.Entries[0].Text, "codex stderr:") {
+		t.Fatalf("first entry = %#v, want raw stderr notice", snapshot.Entries[0])
+	}
+	if snapshot.Status != codexServiceUnavailable503StatusLabel() {
+		t.Fatalf("status = %q, want %q", snapshot.Status, codexServiceUnavailable503StatusLabel())
+	}
+	if !strings.Contains(snapshot.LastSystemNotice, "503 Service Unavailable") {
+		t.Fatalf("last system notice = %q, want raw 503 stderr notice retained", snapshot.LastSystemNotice)
+	}
+}
+
+func TestReadStderrUsesGenericCompactStatusForUnknownStderr(t *testing.T) {
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+	}
+
+	s.readStderr(strings.NewReader("2026-03-20T05:08:05.951003Z WARN codex_transport::stream: reconnecting after unexpected EOF\n"))
+
+	snapshot := s.Snapshot()
+	if snapshot.Status != "Codex reported stderr" {
+		t.Fatalf("status = %q, want %q", snapshot.Status, "Codex reported stderr")
+	}
+	if !strings.Contains(snapshot.LastSystemNotice, "unexpected EOF") {
+		t.Fatalf("last system notice = %q, want raw stderr notice retained", snapshot.LastSystemNotice)
+	}
+}
+
+func TestAppendSystemErrorCompactsRateLimitedStatus(t *testing.T) {
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+	}
+
+	s.appendSystemError(errors.New("unexpected status 429 Too Many Requests: rate limited, url: https://chatgpt.com/backend-api/codex/responses"))
+
+	snapshot := s.Snapshot()
+	if snapshot.Status != codexRateLimited429StatusLabel() {
+		t.Fatalf("status = %q, want %q", snapshot.Status, codexRateLimited429StatusLabel())
+	}
+	if !strings.Contains(snapshot.LastSystemNotice, "429 Too Many Requests") {
+		t.Fatalf("last system notice = %q, want raw error retained", snapshot.LastSystemNotice)
+	}
+}
+
+func TestCompactCodexStatusLabel(t *testing.T) {
+	tests := []struct {
+		name    string
+		message string
+		want    string
+	}{
+		{
+			name:    "502 service unavailable",
+			message: "codex stderr: failed to connect to websocket: HTTP error: 502 Bad Gateway, url: wss://chatgpt.com/backend-api/codex/responses",
+			want:    "Codex service unavailable (HTTP 502)",
+		},
+		{
+			name:    "timeout",
+			message: "codex stderr: request failed with context deadline exceeded while calling https://chatgpt.com/backend-api/codex/responses",
+			want:    codexTimeoutStatusLabel(),
+		},
+		{
+			name:    "connection failure",
+			message: "codex stderr: dial tcp 1.2.3.4:443: connect: connection refused while reaching https://chatgpt.com/backend-api/codex/responses",
+			want:    codexConnectionFailedStatusLabel(),
+		},
+		{
+			name:    "stderr stream",
+			message: "codex stderr stream error: read |0: file already closed",
+			want:    "Codex stderr stream failed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := compactCodexStatusLabel(tt.message); got != tt.want {
+				t.Fatalf("compactCodexStatusLabel() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAuth403DiagnosisIsOnlyAppendedOnce(t *testing.T) {
 	s := &appServerSession{
 		projectPath: "/tmp/demo",

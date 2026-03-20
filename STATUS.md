@@ -1,6 +1,48 @@
 # Little Control Room Status
 
-Last updated: 2026-03-20 00:50 JST (JST)
+Last updated: 2026-03-20 14:24 JST (JST)
+
+## Latest Update (2026-03-20 14:24 JST)
+
+- Extended the embedded Codex short-status compaction beyond the original `403` and `503` cases so the footer/status bar now stays brief whenever the full raw stderr or error text is already visible in the transcript.
+- Added compact status labels for ChatGPT/Codex transport `429` rate limits, `5xx` backend failures (including `502`/`503`/`504`), request timeouts, and connection-failure patterns tied to `backend-api/codex/responses`.
+- Added a generic fallback for otherwise-unrecognized `codex stderr:` lines, so noisy raw stderr no longer spills directly into the embedded status line even when the message does not match a known diagnosis pattern.
+- Reused the same compact-label logic for both stderr notices and direct embedded Codex error returns, so the footer remains short whether the failure comes from websocket stderr chatter or an HTTP fallback error path.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/codexapp/session.go internal/codexapp/session_test.go` passed.
+- `go test ./internal/codexapp -run 'Test(ReadStderrAppendsAuth403Diagnosis|ReadStderrCompactsServiceUnavailable503Status|ReadStderrUsesGenericCompactStatusForUnknownStderr|AppendSystemErrorCompactsRateLimitedStatus|CompactCodexStatusLabel|Auth403DiagnosisIsOnlyAppendedOnce)' -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-20T14:23:44+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-20T14:23:55+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- Watch the next real embedded Codex failure or recovery in the TUI and confirm the compact footer labels feel clear enough without hiding too much context now that the transcript keeps the raw stderr.
+- If we want even less footer churn later, consider splitting snapshot status into an explicit short status field plus the richer long notice instead of continuing to infer that distinction from message content.
+
+## Latest Update (2026-03-20 14:13 JST)
+
+- Investigated an embedded Codex outage-shaped stderr report from `codex_api::endpoint::responses_websocket` and confirmed the underlying failure was an upstream `HTTP 503 Service Unavailable` from `wss://chatgpt.com/backend-api/codex/responses`, which points to temporary Codex/ChatGPT backend unavailability rather than a Little Control Room transport bug.
+- Fixed the embedded-status regression where that raw stderr line could spill straight into the embedded footer/status bar: Little Control Room now keeps the raw stderr entry in the transcript and `LastSystemNotice`, but compacts the live status string to `Codex service unavailable (HTTP 503)` for this noisy backend-unavailable pattern.
+- Generalized the compact-status hook so known high-noise stderr notices can preserve detailed transcript evidence without overwhelming the embedded footer; the earlier `403` auth/session short label still works through the same path.
+- Added a focused `internal/codexapp` regression that covers the new `503 Service Unavailable` stderr shape and asserts that the raw stderr text is retained while the footer-facing status is shortened.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/codexapp/session.go internal/codexapp/session_test.go` passed.
+- `go test ./internal/codexapp -run 'Test(ReadStderrAppendsAuth403Diagnosis|ReadStderrCompactsServiceUnavailable503Status|Auth403DiagnosisIsOnlyAppendedOnce)' -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-20T14:13:18+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-20T14:13:26+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- If more backend-outage Codex failures appear in practice, consider adding a one-shot explanatory system notice for `5xx` failures similar to the existing richer `403` diagnosis, while still keeping the footer copy short.
+- Decide whether the session picker should also prefer the compact status label over the raw `LastSystemNotice` for known noisy backend/auth failures.
 
 ## Latest Update (2026-03-20 00:50 JST)
 
