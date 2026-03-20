@@ -108,6 +108,7 @@ Inside the embedded Codex or OpenCode pane:
 - `/new`: Start a fresh session for the current provider.
 - `/resume [session-id]`: Open the session picker or jump to a saved session.
 - `/session [session-id]`: Alias for `/resume`.
+- `/reconnect`: Restart the embedded provider helper and reconnect to the current session.
 - `/model`: Change the model and reasoning settings.
 - `/status`: Show the current provider/session status.
 
@@ -131,7 +132,7 @@ Use `/codex` or `/opencode` to resume the last session.
 
 Use `/codex-new` or `/opencode-new` when you want a fresh session instead of resuming an existing one.
 
-Inside the embedded Codex or OpenCode pane, use `/resume` or `/session` to open a provider-specific session picker for the current project, or `/resume <session-id>` to jump straight to that session.
+Inside the embedded Codex or OpenCode pane, use `/resume` or `/session` to open a provider-specific session picker for the current project, `/resume <session-id>` to jump straight to that session, or `/reconnect` after refreshing provider auth so Little Control Room bounces just the embedded helper instead of needing a full app restart.
 
 Use `/settings` when you want to save your OpenAI API key, include or exclude paths, or change the default Codex launch mode.
 

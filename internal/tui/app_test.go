@@ -2467,7 +2467,100 @@ func TestVisibleCodexSlashTabCyclesSuggestions(t *testing.T) {
 		t.Fatalf("shift+tab cycling should not queue a command")
 	}
 	if got.codexInput.Value() != "/model" {
-		t.Fatalf("codex input = %q, want /model after shift+tab", got.codexInput.Value())
+		t.Fatalf("codex input = %q, want /model after shift+tab from /status", got.codexInput.Value())
+	}
+
+	updated, cmd = got.updateCodexMode(tea.KeyMsg{Type: tea.KeyTab})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("tab cycling should not queue a command")
+	}
+	if got.codexInput.Value() != "/status" {
+		t.Fatalf("codex input = %q, want /status after tab from /model", got.codexInput.Value())
+	}
+
+	updated, cmd = got.updateCodexMode(tea.KeyMsg{Type: tea.KeyTab})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("tab cycling should not queue a command")
+	}
+	if got.codexInput.Value() != "/reconnect" {
+		t.Fatalf("codex input = %q, want /reconnect after fifth tab", got.codexInput.Value())
+	}
+}
+
+func TestVisibleOpenCodeSlashReconnectReopensSameSession(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: codexapp.ProviderOpenCode,
+				Started:  true,
+				Status:   "OpenCode session ready",
+				ThreadID: "ses-old1",
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderOpenCode,
+		ResumeID:    "ses-old1",
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/reconnect")
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should run the embedded /reconnect command")
+	}
+	if got.codexInput.Value() != "" {
+		t.Fatalf("codex input should clear after /reconnect, got %q", got.codexInput.Value())
+	}
+	if got.status != "Reconnecting embedded OpenCode session..." {
+		t.Fatalf("status = %q, want reconnect notice", got.status)
+	}
+	if got.codexPendingOpen == nil || got.codexPendingOpen.provider != codexapp.ProviderOpenCode {
+		t.Fatalf("codexPendingOpen = %#v, want pending OpenCode reconnect", got.codexPendingOpen)
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("/reconnect returned error = %v", opened.err)
+	}
+	if opened.status != "Reconnected embedded OpenCode session ses-old1. Alt+Up hides it." {
+		t.Fatalf("opened.status = %q, want reconnect confirmation", opened.status)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("launch requests = %d, want 2", len(requests))
+	}
+	if requests[1].Provider != codexapp.ProviderOpenCode {
+		t.Fatalf("second launch provider = %q, want %q", requests[1].Provider, codexapp.ProviderOpenCode)
+	}
+	if requests[1].ResumeID != "ses-old1" {
+		t.Fatalf("second launch resume id = %q, want %q", requests[1].ResumeID, "ses-old1")
+	}
+	if requests[1].ForceNew {
+		t.Fatalf("second launch request should not force a fresh session")
 	}
 }
 

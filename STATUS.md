@@ -1,6 +1,31 @@
 # Little Control Room Status
 
-Last updated: 2026-03-20 15:05 JST (JST)
+Last updated: 2026-03-20 16:04 JST (JST)
+
+## Latest Update (2026-03-20 16:04 JST)
+
+- Investigated the follow-up auth report where embedded Codex showed `HTTP 403 Forbidden` even after `codex login` succeeded in another shell, and where `quickgame_28` OpenCode still appeared to stop unexpectedly while using Codex-backed access.
+- Confirmed the likely restart boundary is the embedded provider helper process, not the whole Little Control Room app: embedded Codex uses a long-lived `codex app-server`, and embedded OpenCode uses a long-lived `opencode serve`, so refreshed external auth can leave the already-running embedded helper stale until that helper is bounced.
+- Added a new embedded-only slash command, `/reconnect`, which closes the current embedded Codex/OpenCode helper for the visible project and immediately reopens it against the same provider and session when possible. This gives users an in-place recovery path after refreshing `codex login`, without requiring a full LCR restart.
+- Wired `/reconnect` into the embedded slash parser, suggestion list, pane command handling, and user-facing docs, and updated the embedded closed-session guidance so it points to `/reconnect` alongside `/resume` and `/new`.
+- Updated the embedded Codex `HTTP 403` diagnosis text so it now explicitly suggests `/reconnect` (or reopening the embedded session) after `codex login` / `codex logout` + `codex login`.
+- This does not prove that every `quickgame_28` OpenCode stop was caused by stale Codex auth, but it gives the correct local recovery action for that class of failure. If OpenCode still stops after `/reconnect`, the remaining issue is likely in the OpenCode transport/server-exit path rather than auth-refresh visibility alone.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/codexslash/commands.go internal/codexslash/commands_test.go internal/tui/codex_pane.go internal/tui/codex_slash.go internal/tui/app_test.go internal/codexapp/session.go` passed.
+- `go test ./internal/codexslash -run 'Test(SuggestionsIncludeModelCommand|SuggestionsIncludeReconnectCommand|ParseModelCommand|ParseReconnectCommand|ParseSessionAliasReturnsResumeInvocation|SuggestionsExposeSessionAliasWhenPrefixMatches)' -count=1` passed.
+- `go test ./internal/tui -run 'Test(VisibleCodexSlashShowsSuggestions|VisibleCodexSlashTabCyclesSuggestions|VisibleOpenCodeSlashReconnectReopensSameSession|VisibleCodexSlashNewStartsFreshSession|VisibleOpenCodeSlashNewStartsFreshSession|VisibleOpenCodeSlashNewFailureKeepsClosedSessionVisible)' -count=1` passed.
+- `go test ./internal/codexapp -run 'Test(ReadStderrAppendsAuth403Diagnosis|ReadStderrCompactsServiceUnavailable503Status|ReadStderrUsesGenericCompactStatusForUnknownStderr|AppendSystemErrorCompactsRateLimitedStatus|CompactCodexStatusLabel|Auth403DiagnosisIsOnlyAppendedOnce)' -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-20T16:04:36+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-20T16:04:44+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- Live-verify the new `/reconnect` flow inside the embedded Codex and OpenCode panes right after a fresh `codex login`, especially on `quickgame_28`, and confirm that a stale-helper auth failure recovers without restarting all of LCR.
+- If `quickgame_28` still stops after `/reconnect`, instrument or surface the OpenCode server-exit / event-stream failure path next so silent OpenCode transport failures become explicit in the transcript/footer instead of looking like ambiguous completions.
 
 ## Latest Update (2026-03-20 15:05 JST)
 

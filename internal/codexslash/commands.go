@@ -8,10 +8,11 @@ import (
 type Kind string
 
 const (
-	KindNew    Kind = "new"
-	KindResume Kind = "resume"
-	KindStatus Kind = "status"
-	KindModel  Kind = "model"
+	KindNew       Kind = "new"
+	KindResume    Kind = "resume"
+	KindStatus    Kind = "status"
+	KindModel     Kind = "model"
+	KindReconnect Kind = "reconnect"
 )
 
 type Spec struct {
@@ -40,6 +41,7 @@ var specs = []Spec{
 	{Name: "session", Usage: "/session [session-id]", Summary: "Alias for /resume", Hidden: true},
 	{Name: "model", Usage: "/model", Summary: "Pick the embedded model and reasoning effort for the next prompt"},
 	{Name: "status", Usage: "/status", Summary: "Show embedded session config, limits, and token usage"},
+	{Name: "reconnect", Usage: "/reconnect", Summary: "Restart the embedded provider helper and reconnect to the current session"},
 }
 
 func Specs() []Spec {
@@ -89,6 +91,12 @@ func Suggestions(input string) []Suggestion {
 			Insert:  "/status",
 			Display: "/status",
 			Summary: "Show embedded session config, limits, and token usage",
+		}}
+	case "reconnect":
+		return []Suggestion{{
+			Insert:  "/reconnect",
+			Display: "/reconnect",
+			Summary: "Restart the embedded provider helper and reconnect to the current session",
 		}}
 	default:
 		return nameSuggestions(strings.ToLower(fields[0]))
@@ -142,6 +150,14 @@ func Parse(input string) (Invocation, error) {
 		return Invocation{
 			Kind:      KindStatus,
 			Canonical: "/status",
+		}, nil
+	case "reconnect":
+		if strings.TrimSpace(rawArgs) != "" {
+			return Invocation{}, fmt.Errorf("usage: /reconnect")
+		}
+		return Invocation{
+			Kind:      KindReconnect,
+			Canonical: "/reconnect",
 		}, nil
 	default:
 		return Invocation{}, fmt.Errorf("unsupported embedded slash command: /%s", name)

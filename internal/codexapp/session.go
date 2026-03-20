@@ -2390,7 +2390,7 @@ func diagnoseCodexAuth403(message string) string {
 	if !ok || code != 403 || !isCodexResponsesTransportContext(normalized) {
 		return ""
 	}
-	return "Codex rejected the request with HTTP 403. This usually means ChatGPT authentication, session access, or Codex entitlement is unavailable, or ChatGPT account access is temporarily degraded. It is usually not a Little Control Room transport bug. Check `codex login status`; if needed, run `codex logout` and `codex login`, then retry once ChatGPT account access is healthy again."
+	return "Codex rejected the request with HTTP 403. This usually means ChatGPT authentication, session access, or Codex entitlement is unavailable, or ChatGPT account access is temporarily degraded. It is usually not a Little Control Room transport bug. Check `codex login status`; if needed, run `codex logout` and `codex login`, then use `/reconnect` in the embedded pane or reopen the embedded session once ChatGPT account access is healthy again."
 }
 
 func codexRateLimited429StatusLabel() string {

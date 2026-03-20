@@ -344,6 +344,10 @@ type codexBusyElsewhereRefresher interface {
 	RefreshBusyElsewhere() error
 }
 
+type codexCloseWaiter interface {
+	WaitClosed(timeout time.Duration) bool
+}
+
 func (m Model) refreshBusyElsewhereCmd(projectPath string) tea.Cmd {
 	session, ok := m.codexSession(projectPath)
 	if !ok {
@@ -479,6 +483,22 @@ func embeddedSessionOpenStatus(req codexapp.LaunchRequest, previousThreadID stri
 	}
 }
 
+func embeddedSessionReconnectStatus(req codexapp.LaunchRequest, snapshot codexapp.Snapshot) string {
+	provider := req.Provider.Normalized()
+	if provider == "" {
+		provider = embeddedProvider(snapshot)
+	}
+	label := provider.Label()
+	sessionLabel := ""
+	if short := shortID(strings.TrimSpace(snapshot.ThreadID)); short != "" {
+		sessionLabel = " " + short
+	}
+	if snapshot.BusyExternal {
+		return "Reconnected embedded " + label + " session" + sessionLabel + ". It is already active in another process, so the embedded view is read-only until it finishes."
+	}
+	return "Reconnected embedded " + label + " session" + sessionLabel + ". Alt+Up hides it."
+}
+
 func (m Model) submitVisibleCodexCmd(draft codexDraft) tea.Cmd {
 	session, ok := m.currentCodexSession()
 	if !ok {
@@ -546,6 +566,47 @@ func (m Model) restartVisibleCodexSessionCmd(prompt string) tea.Cmd {
 		}
 	}
 	return m.openCodexSessionCmd(req)
+}
+
+func (m Model) reconnectVisibleCodexSessionCmd() tea.Cmd {
+	if m.codexManager == nil || strings.TrimSpace(m.codexVisibleProject) == "" {
+		return nil
+	}
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	req := codexapp.LaunchRequest{
+		Provider:    codexapp.ProviderCodex,
+		ProjectPath: projectPath,
+	}
+	if snapshot, ok := m.currentCodexSnapshot(); ok {
+		req.Provider = embeddedProvider(snapshot)
+		req.ResumeID = strings.TrimSpace(snapshot.ThreadID)
+		req.Preset = snapshot.Preset
+	}
+	if req.Provider.Normalized() == codexapp.ProviderCodex && req.Preset == "" {
+		req.Preset = codexcli.DefaultPreset()
+	}
+	if err := req.Validate(); err != nil {
+		return func() tea.Msg {
+			return codexSessionOpenedMsg{projectPath: projectPath, err: err}
+		}
+	}
+	manager := m.codexManager
+	return func() tea.Msg {
+		if existing, ok := manager.Session(projectPath); ok {
+			_ = manager.CloseProject(projectPath)
+			if waiter, ok := existing.(codexCloseWaiter); ok {
+				waiter.WaitClosed(5 * time.Second)
+			}
+		}
+		session, _, err := manager.Open(req)
+		if err != nil {
+			return codexSessionOpenedMsg{projectPath: projectPath, err: err}
+		}
+		return codexSessionOpenedMsg{
+			projectPath: projectPath,
+			status:      embeddedSessionReconnectStatus(req, session.Snapshot()),
+		}
+	}
 }
 
 func (m Model) interruptVisibleCodexCmd() tea.Cmd {
@@ -814,7 +875,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.clearCodexDraft(m.codexVisibleProject)
 			if snapshot.Closed && (inv.Kind == codexslash.KindModel || inv.Kind == codexslash.KindStatus) {
-				m.status = label + " session is closed. Use /resume or /new to reopen it."
+				m.status = label + " session is closed. Use /resume, /new, or /reconnect to reopen it."
 				return m, nil
 			}
 			switch inv.Kind {
@@ -832,6 +893,10 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					SessionID:   inv.SessionID,
 					Provider:    embeddedProvider(snapshot),
 				})
+			case codexslash.KindReconnect:
+				m.status = "Reconnecting embedded " + label + " session..."
+				m.beginCodexPendingOpen(m.codexVisibleProject, embeddedProvider(snapshot))
+				return m, m.reconnectVisibleCodexSessionCmd()
 			case codexslash.KindModel:
 				m.openCodexModelPickerLoading()
 				m.status = "Loading embedded " + label + " models..."
@@ -848,7 +913,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if snapshot.Closed {
 		if msg.String() == "enter" {
-			m.status = label + " session is closed. Use /resume, /new, or reopen it from the project list."
+			m.status = label + " session is closed. Use /resume, /new, /reconnect, or reopen it from the project list."
 		}
 		return m, nil
 	}
