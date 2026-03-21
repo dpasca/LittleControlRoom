@@ -1032,17 +1032,32 @@ func (s *appServerSession) StageModelOverride(model, reasoningEffort string) err
 		reasoningEffort = currentReasoning
 	}
 
-	if model == currentModel && reasoningEffort == currentReasoning {
-		s.pendingModel = ""
-		s.pendingReasoning = ""
-	} else {
-		s.pendingModel = model
-		s.pendingReasoning = reasoningEffort
-	}
+	s.pendingModel, s.pendingReasoning = stagedModelOverride(currentModel, currentReasoning, model, reasoningEffort)
 	s.touchLocked()
 	s.mu.Unlock()
 	s.notify()
 	return nil
+}
+
+func stagedModelOverride(currentModel, currentReasoning, requestedModel, requestedReasoning string) (string, string) {
+	currentModel = strings.TrimSpace(currentModel)
+	currentReasoning = strings.TrimSpace(currentReasoning)
+	requestedModel = strings.TrimSpace(requestedModel)
+	requestedReasoning = strings.TrimSpace(requestedReasoning)
+
+	if requestedModel == "" && requestedReasoning == "" {
+		return "", ""
+	}
+	if requestedModel == "" {
+		requestedModel = currentModel
+	}
+	if requestedReasoning == "" {
+		requestedReasoning = currentReasoning
+	}
+	if strings.EqualFold(requestedModel, currentModel) && strings.EqualFold(requestedReasoning, currentReasoning) {
+		return "", ""
+	}
+	return requestedModel, requestedReasoning
 }
 
 func (s *appServerSession) Interrupt() error {
@@ -1362,6 +1377,7 @@ func (s *appServerSession) start(req LaunchRequest) error {
 	s.mu.Lock()
 	s.threadID = threadID
 	s.started = true
+	s.pendingModel, s.pendingReasoning = stagedModelOverride(s.model, s.reasoningEffort, req.PendingModel, req.PendingReasoning)
 	s.status = ""
 	s.mu.Unlock()
 	s.notify()

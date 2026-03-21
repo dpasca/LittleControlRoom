@@ -314,6 +314,10 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 	modelName := strings.TrimSpace(modelOption.Model)
 	projectPath := m.codexVisibleProject
 	snapshot, _ := m.currentCodexSnapshot()
+	provider := embeddedProvider(snapshot)
+	if provider.Normalized() == "" {
+		provider = codexapp.ProviderCodex
+	}
 	m.closeCodexModelPicker("")
 	m.status = fmt.Sprintf("Staging %s (%s)...", modelName, effort)
 	return m, func() tea.Msg {
@@ -330,7 +334,13 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 			strings.TrimSpace(snapshot.PendingReasoning) == "" {
 			status = fmt.Sprintf("Embedded model remains %s with %s reasoning", modelName, effort)
 		}
-		return codexActionMsg{projectPath: projectPath, status: status}
+		return codexActionMsg{
+			projectPath: projectPath,
+			status:      status,
+			provider:    provider,
+			model:       modelName,
+			reasoning:   effort,
+		}
 	}
 }
 

@@ -470,8 +470,7 @@ func (s *openCodeSession) StageModelOverride(model, reasoningEffort string) erro
 		s.pendingModel = ""
 		s.pendingReasoning = ""
 	} else {
-		s.pendingModel = model
-		s.pendingReasoning = reasoningEffort
+		s.pendingModel, s.pendingReasoning = stagedModelOverride(currentModel, currentReasoning, model, reasoningEffort)
 	}
 	s.touchLocked()
 	go s.notify()
@@ -708,6 +707,7 @@ func (s *openCodeSession) initializeSession(parent context.Context, req LaunchRe
 	s.mu.Lock()
 	s.sessionID = sessionID
 	s.started = true
+	s.pendingModel, s.pendingReasoning = stagedModelOverride(s.model, s.reasoningEffort, req.PendingModel, req.PendingReasoning)
 	s.status = ""
 	s.mu.Unlock()
 

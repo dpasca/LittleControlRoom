@@ -368,6 +368,7 @@ func (m Model) refreshBusyElsewhereCmd(projectPath string) tea.Cmd {
 }
 
 func (m Model) openCodexSessionCmd(req codexapp.LaunchRequest) tea.Cmd {
+	req = m.applyEmbeddedModelPreference(req)
 	manager := m.codexManager
 	previousThreadID := ""
 	if manager != nil {
@@ -1602,16 +1603,23 @@ func (m Model) renderCodexBusyElsewhereNotice(snapshot codexapp.Snapshot, width 
 
 func (m Model) renderCodexSessionMeta(snapshot codexapp.Snapshot, width int) string {
 	segments := []string{}
-	if model := strings.TrimSpace(snapshot.Model); model != "" {
+	model := strings.TrimSpace(snapshot.Model)
+	reasoning := strings.TrimSpace(snapshot.ReasoningEffort)
+	showPendingAsCurrent := codexSnapshotShowsPendingModelAsCurrent(snapshot)
+	if showPendingAsCurrent {
+		model = strings.TrimSpace(snapshot.PendingModel)
+		reasoning = firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingReasoning), reasoning)
+	}
+	if model != "" {
 		segments = append(segments, renderFooterMeta("Model")+" "+renderFooterStatus(model))
 	}
-	if reasoning := strings.TrimSpace(snapshot.ReasoningEffort); reasoning != "" {
+	if reasoning != "" {
 		segments = append(segments, renderFooterMeta("Reasoning")+" "+renderFooterStatus(reasoning))
 	}
 	if context := codexSnapshotContextLeftLabel(snapshot); context != "" {
 		segments = append(segments, renderFooterMeta("Context")+" "+renderFooterStatus(context))
 	}
-	if nextModel := strings.TrimSpace(snapshot.PendingModel); nextModel != "" {
+	if nextModel := strings.TrimSpace(snapshot.PendingModel); nextModel != "" && !showPendingAsCurrent {
 		nextReasoning := firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingReasoning), strings.TrimSpace(snapshot.ReasoningEffort))
 		next := nextModel
 		if nextReasoning != "" {
@@ -1623,6 +1631,21 @@ func (m Model) renderCodexSessionMeta(snapshot codexapp.Snapshot, width int) str
 		return ""
 	}
 	return renderFooterLine(width, segments...)
+}
+
+func codexSnapshotShowsPendingModelAsCurrent(snapshot codexapp.Snapshot) bool {
+	if strings.TrimSpace(snapshot.PendingModel) == "" || snapshot.Busy || snapshot.BusyExternal || snapshot.Closed {
+		return false
+	}
+	for _, entry := range snapshot.Entries {
+		switch entry.Kind {
+		case codexapp.TranscriptSystem, codexapp.TranscriptStatus:
+			continue
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func codexSnapshotContextLeftLabel(snapshot codexapp.Snapshot) string {

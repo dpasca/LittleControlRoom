@@ -3105,6 +3105,85 @@ func TestVisibleCodexSlashResumeIDOpensRequestedSession(t *testing.T) {
 	}
 }
 
+func TestEmbeddedModelPreferencePersistsAcrossFutureSessionsPerProvider(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				Started:  true,
+				Preset:   req.Preset,
+				Status:   req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/demo",
+			Name:          "demo",
+			PresentOnDisk: true,
+		}},
+		selected:      0,
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, _ := m.Update(codexActionMsg{
+		projectPath: "/tmp/demo",
+		status:      "Embedded model set to gpt-5.4 with high reasoning for the next prompt",
+		provider:    codexapp.ProviderCodex,
+		model:       "gpt-5.4",
+		reasoning:   "high",
+	})
+	m = updated.(Model)
+
+	updated, cmd := m.launchEmbeddedForSelection(codexapp.ProviderCodex, true, "")
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("launchEmbeddedForSelection(codex) should return an open command")
+	}
+	msg := cmd()
+	if opened, ok := msg.(codexSessionOpenedMsg); !ok || opened.err != nil {
+		t.Fatalf("codex open msg = %#v, want successful codexSessionOpenedMsg", msg)
+	}
+
+	updated, _ = m.Update(codexActionMsg{
+		projectPath: "/tmp/demo",
+		status:      "Embedded model set to openai/gpt-5.4 with medium reasoning for the next prompt",
+		provider:    codexapp.ProviderOpenCode,
+		model:       "openai/gpt-5.4",
+		reasoning:   "medium",
+	})
+	m = updated.(Model)
+
+	updated, cmd = m.launchEmbeddedForSelection(codexapp.ProviderOpenCode, true, "")
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("launchEmbeddedForSelection(opencode) should return an open command")
+	}
+	msg = cmd()
+	if opened, ok := msg.(codexSessionOpenedMsg); !ok || opened.err != nil {
+		t.Fatalf("opencode open msg = %#v, want successful codexSessionOpenedMsg", msg)
+	}
+
+	if len(requests) != 2 {
+		t.Fatalf("request count = %d, want 2", len(requests))
+	}
+	if requests[0].Provider != codexapp.ProviderCodex || requests[0].PendingModel != "gpt-5.4" || requests[0].PendingReasoning != "high" {
+		t.Fatalf("codex request = %#v, want persisted Codex model preference", requests[0])
+	}
+	if requests[1].Provider != codexapp.ProviderOpenCode || requests[1].PendingModel != "openai/gpt-5.4" || requests[1].PendingReasoning != "medium" {
+		t.Fatalf("opencode request = %#v, want persisted OpenCode model preference", requests[1])
+	}
+}
+
 func TestVisibleCodexSlashSessionAliasOpensRequestedOpenCodeSession(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
@@ -5082,6 +5161,9 @@ func TestRenderCodexSessionMetaShowsModelReasoningContextAndPending(t *testing.T
 		ReasoningEffort:  "high",
 		PendingModel:     "gpt-5",
 		PendingReasoning: "medium",
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptUser, Text: "Continue from the last breakpoint"},
+		},
 		TokenUsage: &codexapp.TokenUsageSnapshot{
 			Last: codexapp.TokenUsageBreakdown{
 				InputTokens:           10000,
@@ -5099,6 +5181,29 @@ func TestRenderCodexSessionMetaShowsModelReasoningContextAndPending(t *testing.T
 	for _, want := range []string{"Model", "gpt-5-codex", "Reasoning", "high", "Context", "94% left", "188,000 tok", "Next", "gpt-5 / medium"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("renderCodexSessionMeta() missing %q: %q", want, rendered)
+		}
+	}
+}
+
+func TestRenderCodexSessionMetaTreatsFreshPendingModelAsCurrent(t *testing.T) {
+	rendered := ansi.Strip((Model{}).renderCodexSessionMeta(codexapp.Snapshot{
+		Model:            "gpt-5-codex",
+		ReasoningEffort:  "medium",
+		PendingModel:     "gpt-5.4",
+		PendingReasoning: "high",
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptSystem, Text: "Started a new embedded Codex session 019demo."},
+		},
+	}, 140))
+
+	for _, want := range []string{"Model", "gpt-5.4", "Reasoning", "high"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("renderCodexSessionMeta() missing %q: %q", want, rendered)
+		}
+	}
+	for _, unwanted := range []string{"Next", "gpt-5-codex", "medium"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("renderCodexSessionMeta() should not include %q for a fresh session: %q", unwanted, rendered)
 		}
 	}
 }

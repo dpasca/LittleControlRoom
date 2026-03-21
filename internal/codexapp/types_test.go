@@ -238,6 +238,48 @@ func TestManagerOpenRefreshesBusyElsewhereSessionBeforeSubmittingPrompt(t *testi
 	}
 }
 
+func TestManagerOpenReusesExistingSessionAppliesPendingModelOverride(t *testing.T) {
+	session := &fakeSession{
+		projectPath: "/tmp/demo",
+		snapshot: Snapshot{
+			Started:         true,
+			Preset:          codexcli.PresetYolo,
+			Model:           "gpt-5",
+			ReasoningEffort: "medium",
+		},
+	}
+
+	manager := NewManagerWithFactory(func(req LaunchRequest, notify func()) (Session, error) {
+		return session, nil
+	})
+
+	if _, _, err := manager.Open(LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("first Open() error = %v", err)
+	}
+
+	if _, reused, err := manager.Open(LaunchRequest{
+		ProjectPath:      "/tmp/demo",
+		Preset:           codexcli.PresetYolo,
+		PendingModel:     "gpt-5-codex",
+		PendingReasoning: "high",
+		Prompt:           "continue",
+	}); err != nil {
+		t.Fatalf("second Open() error = %v", err)
+	} else if !reused {
+		t.Fatalf("second Open() reused = false, want true")
+	}
+
+	if session.snapshot.PendingModel != "gpt-5-codex" || session.snapshot.PendingReasoning != "high" {
+		t.Fatalf("pending override = (%q, %q), want (gpt-5-codex, high)", session.snapshot.PendingModel, session.snapshot.PendingReasoning)
+	}
+	if got := session.submitted; len(got) != 1 || got[0] != "continue" {
+		t.Fatalf("submitted prompts = %#v, want [\"continue\"]", got)
+	}
+}
+
 func TestManagerOpenForceNewReplacesExistingSession(t *testing.T) {
 	var created []*fakeSession
 

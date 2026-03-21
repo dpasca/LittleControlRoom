@@ -1,6 +1,48 @@
 # Little Control Room Status
 
-Last updated: 2026-03-21 16:36 JST (JST)
+Last updated: 2026-03-21 20:29 JST (JST)
+
+## Latest Update (2026-03-21 20:29 JST)
+
+- Fixed the embedded session meta/footer display after the `/model` persistence work: a fresh `/new` session that only has startup/system entries now shows the carried-forward model as the current effective model instead of rendering it as `Next`.
+- Kept the `Next` model badge for real in-session follow-up overrides by only promoting the pending model to current display when the session is still effectively fresh and has no user/agent/tool/command activity yet.
+- Added a focused TUI regression covering the fresh-session case alongside the existing pending-override footer test.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/codex_pane.go internal/tui/app_test.go` passed.
+- `go test ./internal/tui -run 'Test(RenderCodexSessionMetaShowsModelReasoningContextAndPending|RenderCodexSessionMetaTreatsFreshPendingModelAsCurrent)' -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-21T20:29:12+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-21T20:29:12+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- Live-check the embedded pane with both Codex and OpenCode after `/model` plus `/new` to confirm the fresh-session promotion feels right once the first real prompt is sent and the provider echoes back the actual model.
+- If the same confusion appears elsewhere, consider whether the detailed `/status` card should also label launch-seeded model preferences as the current effective model for fresh sessions instead of listing them as a separate staged override.
+
+## Latest Update (2026-03-21 20:22 JST)
+
+- Fixed embedded `/model` so a model/reasoning choice now carries forward to future embedded sessions of the same provider instead of only staging the currently open session.
+- Added a small TUI-side embedded model preference store keyed by provider, taught embedded session launches to inject those preferences into new or resumed Codex/OpenCode sessions, and reused the same launch-time preference when a live session is reopened through the manager.
+- Unified the pending-model normalization logic in `internal/codexapp` so launch-time model preferences and live-session `/model` changes follow the same "stage only when different from current" behavior.
+- Added focused regressions across the TUI and embedded session manager for persisted per-provider model preferences, manager reuse with pending model overrides, and the normalized staging helper.
+- Updated the README, slash-command copy, and reference docs so `/model` now explicitly describes the new future-session behavior.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/codexapp/types.go internal/codexapp/session.go internal/codexapp/opencode_session.go internal/codexapp/session_test.go internal/codexapp/types_test.go internal/tui/app.go internal/tui/codex_model_picker.go internal/tui/codex_pane.go internal/tui/app_test.go internal/tui/embedded_model_preferences.go internal/codexslash/commands.go` passed.
+- `go test ./internal/codexapp ./internal/tui ./internal/codexslash -run 'Test(StagedModelOverride|ManagerOpenReusesExistingSessionAppliesPendingModelOverride|EmbeddedModelPreferencePersistsAcrossFutureSessionsPerProvider|VisibleCodexSlashResumeIDOpensRequestedSession|StageModelOverrideUpdatesSnapshot|SuggestionsIncludeModelCommand|ParseModelCommand)' -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-21T20:22:30+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-21T20:22:40+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- Live-verify the embedded Codex and OpenCode `/model` flow in the TUI by setting a non-default model, starting `/new`, and confirming the next fresh session shows the staged choice before the first prompt.
+- Decide whether these per-provider embedded model preferences should stay in-memory for the current Little Control Room run or be promoted to durable config/state across app restarts as a separate follow-up.
 
 ## Latest Update (2026-03-21 16:36 JST)
 

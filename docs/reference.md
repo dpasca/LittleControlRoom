@@ -245,6 +245,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/opencode` resumes the selected project's latest known OpenCode session when available, otherwise it starts a new one.
 - `/opencode-new` always starts a fresh OpenCode session.
 - While an embedded Codex or OpenCode pane is visible, local slash commands include `/new`, `/resume` (`/session` alias), `/reconnect`, `/model`, and `/status`.
+- `/model` changes the model and reasoning for the current embedded tool and carries that choice forward to future embedded sessions of the same tool.
 - `/resume` with no session ID opens a picker for saved sessions from the current project and provider; `/resume <session-id>` jumps straight to that session.
 - `/reconnect` restarts the current embedded provider helper and reconnects to the same session when possible, which is useful after refreshing `codex login` or other provider auth outside Little Control Room.
 - The main list uses `N` for a saved note, `RUN` for the saved or active managed runtime summary, and `!` inside `RUN` when Little Control Room detects a managed port conflict.

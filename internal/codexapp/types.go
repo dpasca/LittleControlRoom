@@ -445,12 +445,14 @@ type Session interface {
 }
 
 type LaunchRequest struct {
-	Provider    Provider
-	ProjectPath string
-	ResumeID    string
-	ForceNew    bool
-	Prompt      string
-	Preset      codexcli.Preset
+	Provider         Provider
+	ProjectPath      string
+	ResumeID         string
+	ForceNew         bool
+	Prompt           string
+	Preset           codexcli.Preset
+	PendingModel     string
+	PendingReasoning string
 }
 
 func (r LaunchRequest) Validate() error {
@@ -609,6 +611,11 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 		if existing.Snapshot().BusyExternal {
 			if refresher, ok := existing.(busyElsewhereRefresher); ok {
 				_ = refresher.RefreshBusyElsewhere()
+			}
+		}
+		if strings.TrimSpace(req.PendingModel) != "" || strings.TrimSpace(req.PendingReasoning) != "" {
+			if err := existing.StageModelOverride(req.PendingModel, req.PendingReasoning); err != nil {
+				return nil, true, err
 			}
 		}
 		if strings.TrimSpace(req.Prompt) != "" {

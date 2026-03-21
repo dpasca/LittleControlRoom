@@ -336,6 +336,28 @@ func TestStageModelOverrideUpdatesSnapshot(t *testing.T) {
 	}
 }
 
+func TestStagedModelOverride(t *testing.T) {
+	model, reasoning := stagedModelOverride("gpt-5", "medium", "gpt-5-codex", "high")
+	if model != "gpt-5-codex" || reasoning != "high" {
+		t.Fatalf("stagedModelOverride(change) = (%q, %q), want (gpt-5-codex, high)", model, reasoning)
+	}
+
+	model, reasoning = stagedModelOverride("gpt-5", "medium", "gpt-5", "medium")
+	if model != "" || reasoning != "" {
+		t.Fatalf("stagedModelOverride(same) = (%q, %q), want empty", model, reasoning)
+	}
+
+	model, reasoning = stagedModelOverride("gpt-5", "medium", "", "")
+	if model != "" || reasoning != "" {
+		t.Fatalf("stagedModelOverride(empty) = (%q, %q), want empty", model, reasoning)
+	}
+
+	model, reasoning = stagedModelOverride("gpt-5", "medium", "gpt-5-codex", "")
+	if model != "gpt-5-codex" || reasoning != "medium" {
+		t.Fatalf("stagedModelOverride(fill reasoning) = (%q, %q), want (gpt-5-codex, medium)", model, reasoning)
+	}
+}
+
 func stringPtr(value string) *string {
 	return &value
 }

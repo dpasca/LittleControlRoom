@@ -119,6 +119,7 @@ type Model struct {
 	codexPickerProject   string
 	codexPickerProvider  codexapp.Provider
 	codexModelPicker     *codexModelPickerState
+	embeddedModelPrefs   map[codexapp.Provider]embeddedModelPreference
 	codexDenseExpanded   bool
 	codexSlashSelected   int
 	codexToolAnswers     map[string]codexToolAnswerState
@@ -276,6 +277,9 @@ type codexActionMsg struct {
 	status       string
 	closed       bool
 	restoreDraft codexDraft
+	provider     codexapp.Provider
+	model        string
+	reasoning    string
 	err          error
 }
 type codexModelListMsg struct {
@@ -859,6 +863,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.err = nil
+		if msg.provider.Normalized() != "" && (strings.TrimSpace(msg.model) != "" || strings.TrimSpace(msg.reasoning) != "") {
+			m.rememberEmbeddedModelPreference(msg.provider, msg.model, msg.reasoning)
+		}
 		if msg.closed {
 			delete(m.codexClosedHandled, msg.projectPath)
 			if m.codexVisibleProject == msg.projectPath {
