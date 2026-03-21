@@ -5333,6 +5333,37 @@ func TestRenderCodexTranscriptEntryHighlightsUserEchoBlock(t *testing.T) {
 	}
 }
 
+func TestRenderCodexTranscriptEntryCompactsToolCallsToSingleLine(t *testing.T) {
+	rendered := ansi.Strip(renderCodexTranscriptEntry(codexapp.TranscriptEntry{
+		Kind: codexapp.TranscriptTool,
+		Text: "Tool call completed: read README.md\nusing rg --files",
+	}, 90, false))
+
+	if !strings.Contains(rendered, "Tool call completed: read README.md | using rg --files") {
+		t.Fatalf("tool transcript entry should compact tool text into one visible line: %q", rendered)
+	}
+	if strings.Contains(rendered, "\n") {
+		t.Fatalf("tool transcript entry should not render a separate header/body split when width allows it: %q", rendered)
+	}
+}
+
+func TestRenderCodexTranscriptEntriesKeepsConsecutiveToolCallsDense(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptTool, Text: "Tool call completed: read README.md"},
+			{Kind: codexapp.TranscriptTool, Text: "Tool call completed: scan internal/tui"},
+		},
+	}
+
+	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 90))
+	if strings.Contains(rendered, "\n\n") {
+		t.Fatalf("consecutive tool transcript entries should not be separated by a blank line: %q", rendered)
+	}
+	if strings.Count(rendered, "\n") != 1 {
+		t.Fatalf("consecutive tool transcript entries should render as one line each: %q", rendered)
+	}
+}
+
 func TestRenderCodexTranscriptEntriesParsesLegacyTranscriptWithoutSenderLabels(t *testing.T) {
 	snapshot := codexapp.Snapshot{
 		Transcript: "You: summarize this repo\n\nCodex: Here is a deliberately long answer that should wrap inside the pane without repeating the sender name on screen.",

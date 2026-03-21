@@ -1,6 +1,28 @@
 # Little Control Room Status
 
-Last updated: 2026-03-20 17:41 JST (JST)
+Last updated: 2026-03-21 06:43 JST (JST)
+
+## Latest Update (2026-03-21 06:43 JST)
+
+- Tightened the embedded Codex/OpenCode transcript layout for tool calls so `TranscriptTool` entries no longer render as a two-line dense block with a separate `Tool` header.
+- Tool entries now reuse the tool accent color as a single compact transcript row, and any internal line breaks inside a tool entry are collapsed into one visible summary line with ` | ` separators.
+- Consecutive tool entries now render back-to-back with a single newline instead of a blank spacer line, so a burst of tool activity stays dense and scannable while command/file-change blocks keep their existing spacing.
+- Added focused TUI regressions covering both behaviors: single-line tool-call rendering and dense spacing for consecutive tool entries.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/codex_pane.go internal/tui/app_test.go` passed.
+- `go test ./internal/tui -run 'Test(RenderCodexTranscriptEntryCompactsToolCallsToSingleLine|RenderCodexTranscriptEntriesKeepsConsecutiveToolCallsDense|VisibleCodexViewUsesStructuredTranscriptEntries|RenderCodexTranscriptEntriesWrapLongAgentMessagesWithoutSenderLabels)' -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-21T06:42:05+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-21T06:42:05+09:00` (`projects: 133`).
+- `env COLUMNS=112 LINES=31 make tui` hit the expected active-instance guard on the shared DB, so the UI smoke check used `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-tool-line-smoke INTERVAL=1h`, which reached the TUI sandbox and exited via `q`.
+
+Next concrete tasks:
+
+- Open a live embedded Codex or OpenCode turn that emits several back-to-back tool calls and sanity-check whether the new compact styling feels readable at normal dashboard widths, especially when tool summaries wrap.
+- If users like this denser treatment, consider whether other low-signal transcript items such as short file-change notices should get a similar compact-row mode, without making commands or richer status cards harder to scan.
 
 ## Latest Update (2026-03-20 17:41 JST)
 

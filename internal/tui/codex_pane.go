@@ -1952,14 +1952,21 @@ func (m Model) renderCodexTranscriptEntries(snapshot codexapp.Snapshot, width in
 		width = 80
 	}
 	contentWidth := max(18, width-4)
-	blocks := make([]string, 0, len(snapshot.Entries))
+	blocks := make([]string, 0, len(snapshot.Entries)*2)
+	var previousKind codexapp.TranscriptKind
+	hasPrevious := false
 	for _, entry := range snapshot.Entries {
 		block := renderCodexTranscriptEntry(entry, contentWidth, m.codexDenseExpanded)
 		if strings.TrimSpace(block) != "" {
+			if hasPrevious {
+				blocks = append(blocks, codexTranscriptEntrySeparator(previousKind, entry.Kind))
+			}
 			blocks = append(blocks, block)
+			previousKind = entry.Kind
+			hasPrevious = true
 		}
 	}
-	return strings.Join(blocks, "\n\n")
+	return strings.Join(blocks, "")
 }
 
 func renderCodexTranscriptEntry(entry codexapp.TranscriptEntry, width int, expanded bool) string {
@@ -1982,7 +1989,7 @@ func renderCodexTranscriptEntry(entry codexapp.TranscriptEntry, width int, expan
 	case codexapp.TranscriptFileChange:
 		return renderCodexDenseBlock("File changes", text, lipgloss.Color("179"), width, expanded)
 	case codexapp.TranscriptTool:
-		return renderCodexDenseBlock("Tool", text, lipgloss.Color("141"), width, expanded)
+		return renderCodexCompactTranscriptLine(compactCodexToolTranscriptText(text), lipgloss.Color("141"), width)
 	case codexapp.TranscriptError:
 		return renderCodexMessageBlock("Error", text, lipgloss.Color("203"), lipgloss.Color("252"), width)
 	case codexapp.TranscriptStatus:
@@ -1992,6 +1999,26 @@ func renderCodexTranscriptEntry(entry codexapp.TranscriptEntry, width int, expan
 	default:
 		return renderCodexMessageBlock("", text, lipgloss.Color("244"), lipgloss.Color("252"), width)
 	}
+}
+
+func codexTranscriptEntrySeparator(previous, current codexapp.TranscriptKind) string {
+	if previous == codexapp.TranscriptTool && current == codexapp.TranscriptTool {
+		return "\n"
+	}
+	return "\n\n"
+}
+
+func compactCodexToolTranscriptText(text string) string {
+	lines := strings.Split(strings.TrimSpace(text), "\n")
+	parts := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts = append(parts, line)
+	}
+	return strings.Join(parts, " | ")
 }
 
 func compactCodexUserTranscriptText(text string) string {
@@ -2567,6 +2594,10 @@ func formatInt64(value int64) string {
 
 func renderCodexMessageBlock(label, body string, accent, bodyColor lipgloss.Color, width int) string {
 	return renderCodexMessageBlockWithStyle(label, body, accent, bodyColor, width, false)
+}
+
+func renderCodexCompactTranscriptLine(body string, accent lipgloss.Color, width int) string {
+	return renderCodexMessageBlockWithStyle("", body, accent, accent, width, false)
 }
 
 func renderCodexUserMessageBlock(body string, width int) string {
