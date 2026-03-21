@@ -845,7 +845,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case codexSessionOpenedMsg:
 		m.err = nil
 		if msg.err != nil {
+			provider := m.codexPendingOpenProvider()
 			m.finishCodexPendingOpen(msg.projectPath, false)
+			if strings.TrimSpace(msg.projectPath) != "" {
+				if _, ok := m.codexSession(msg.projectPath); !ok {
+					m.showEmbeddedOpenFailure(msg.projectPath, provider, msg.err)
+				}
+			}
 			m.status = "Embedded session open failed"
 			m.err = msg.err
 			return m, nil

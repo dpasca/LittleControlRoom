@@ -3491,6 +3491,80 @@ func TestVisibleOpenCodeSlashNewFailureKeepsClosedSessionVisible(t *testing.T) {
 	}
 }
 
+func TestLaunchOpenCodeForSelectionFailureKeepsErrorPlaceholderVisible(t *testing.T) {
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return nil, fmt.Errorf("opencode create failed")
+	})
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/demo",
+			Name:          "demo",
+			PresentOnDisk: true,
+		}},
+		selected:      0,
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, cmd := m.launchOpenCodeForSelection(false, "")
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("launchOpenCodeForSelection() should return an open command")
+	}
+	if got.codexPendingOpen == nil || got.codexPendingOpen.provider != codexapp.ProviderOpenCode {
+		t.Fatalf("codexPendingOpen = %#v, want pending OpenCode session", got.codexPendingOpen)
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err == nil || opened.err.Error() != "opencode create failed" {
+		t.Fatalf("open returned error = %v, want opencode create failed", opened.err)
+	}
+
+	updated, _ = got.Update(opened)
+	got = updated.(Model)
+	if got.codexVisibleProject != "/tmp/demo" {
+		t.Fatalf("codexVisibleProject = %q, want failed OpenCode project to stay visible", got.codexVisibleProject)
+	}
+	if got.codexHiddenProject != "/tmp/demo" {
+		t.Fatalf("codexHiddenProject = %q, want failed OpenCode project to stay restorable", got.codexHiddenProject)
+	}
+	snapshot, ok := got.currentCodexSnapshot()
+	if !ok {
+		t.Fatalf("currentCodexSnapshot() unavailable after failed open")
+	}
+	if snapshot.Provider != codexapp.ProviderOpenCode {
+		t.Fatalf("snapshot.Provider = %q, want %q", snapshot.Provider, codexapp.ProviderOpenCode)
+	}
+	if !snapshot.Closed {
+		t.Fatalf("snapshot.Closed = false, want closed placeholder after failed open")
+	}
+	if snapshot.LastError != "opencode create failed" {
+		t.Fatalf("snapshot.LastError = %q, want opencode create failed", snapshot.LastError)
+	}
+	if got.status != "Embedded session open failed" {
+		t.Fatalf("status = %q, want embedded-session-open-failed notice", got.status)
+	}
+	if got.err == nil || got.err.Error() != "opencode create failed" {
+		t.Fatalf("got.err = %v, want opencode create failed", got.err)
+	}
+	rendered := ansi.Strip(got.renderCodexView())
+	if !strings.Contains(rendered, "OpenCode session closed.") {
+		t.Fatalf("rendered view should keep showing the failed OpenCode placeholder, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "opencode create failed") {
+		t.Fatalf("rendered view should show the OpenCode startup error, got %q", rendered)
+	}
+}
+
 func TestVisibleCodexSlashNewWarnsWhenActiveSessionIsReopenedReadOnly(t *testing.T) {
 	const threadID = "019cccc3abcd"
 

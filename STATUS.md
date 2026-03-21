@@ -1,6 +1,30 @@
 # Little Control Room Status
 
-Last updated: 2026-03-21 20:29 JST (JST)
+Last updated: 2026-03-22 07:54 JST (JST)
+
+## Latest Update (2026-03-22 07:54 JST)
+
+- Investigated the report that running `/opencode` from the project list can open the embedded pane and then immediately drop back to the dashboard, which made provider-switch failures look like Little Control Room could not switch away from Codex.
+- Kept failed embedded opens visible by storing a closed provider-specific placeholder snapshot when an OpenCode or Codex launch fails before a real embedded session is registered, instead of clearing the pane outright.
+- Taught the embedded pane to fall back to cached closed snapshots when no live session object exists yet, so failed-open placeholders and closed-session views remain renderable and restorable.
+- Added a focused TUI regression covering the project-list `/opencode` failure case to ensure the pane now stays open, shows `OpenCode session closed.`, and surfaces the startup error text instead of disappearing.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/codex_pane.go internal/tui/app.go internal/tui/app_test.go` passed.
+- `go test ./internal/tui -run 'Test(LaunchOpenCodeForSelectionFailureKeepsErrorPlaceholderVisible|VisibleOpenCodeSlashNewFailureKeepsClosedSessionVisible)' -count=1` passed.
+- `go test ./internal/tui -run 'Test(LaunchOpenCodeForSelectionFailureKeepsErrorPlaceholderVisible|LaunchCodexForSelectionShowsOpeningStateInsteadOfPreviousSession|VisibleOpenCodeSlashNewStartsFreshSession|VisibleOpenCodeSlashNewFailureKeepsClosedSessionVisible)' -count=1` passed.
+- `opencode --version` returned `1.2.24`.
+- `timeout 8s opencode serve --hostname 127.0.0.1 --port 0 --print-logs` reached `opencode server listening on http://127.0.0.1:4096` before the timeout, confirming local OpenCode startup still works in this environment.
+- `make test` passed.
+- `make scan` was attempted on the shared default DB but did not finish while another long-lived `lcroom tui` process was already using that DB, so there is no fresh successful scan snapshot from this turn.
+- `make doctor` passed on the cached snapshot dated `2026-03-22T07:51:28+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- Live-check the exact `/opencode` flow on the reported `oykgames.com` project now that startup failures stay visible, and capture the real OpenCode error text if that project still cannot switch.
+- Decide whether failed embedded opens should stay visible only until the next explicit hide/reopen, or whether the closed placeholder should also be included in the embedded session picker/history list.
 
 ## Latest Update (2026-03-21 20:29 JST)
 

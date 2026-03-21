@@ -181,6 +181,11 @@ func (m Model) currentCodexSession() (codexapp.Session, bool) {
 func (m Model) currentCodexSnapshot() (codexapp.Snapshot, bool) {
 	session, ok := m.currentCodexSession()
 	if !ok {
+		if projectPath := strings.TrimSpace(m.codexVisibleProject); projectPath != "" {
+			if snapshot, ok := m.codexSnapshots[projectPath]; ok && snapshot.Closed {
+				return snapshot, true
+			}
+		}
 		return codexapp.Snapshot{}, false
 	}
 	if projectPath := strings.TrimSpace(m.codexVisibleProject); projectPath != "" {
@@ -198,12 +203,49 @@ func (m *Model) refreshCodexSnapshot(projectPath string) (codexapp.Snapshot, boo
 	}
 	session, ok := m.codexSession(projectPath)
 	if !ok {
+		if snapshot, ok := m.codexSnapshots[projectPath]; ok && snapshot.Closed {
+			return snapshot, true
+		}
 		m.dropCodexSnapshot(projectPath)
 		return codexapp.Snapshot{}, false
 	}
 	snapshot := session.Snapshot()
 	m.storeCodexSnapshot(projectPath, snapshot)
 	return snapshot, true
+}
+
+func (m *Model) showEmbeddedOpenFailure(projectPath string, provider codexapp.Provider, err error) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" || err == nil {
+		return
+	}
+	provider = provider.Normalized()
+	if provider == "" {
+		provider = codexapp.ProviderCodex
+	}
+	message := strings.TrimSpace(err.Error())
+	snapshot := codexapp.Snapshot{
+		Provider:         provider,
+		ProjectPath:      projectPath,
+		Closed:           true,
+		Status:           provider.Label() + " session closed",
+		LastError:        message,
+		LastSystemNotice: message,
+	}
+	if message != "" {
+		snapshot.Entries = []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptError,
+			Text: message,
+		}}
+		snapshot.Transcript = provider.Label() + " error: " + message
+	}
+	m.storeCodexSnapshot(projectPath, snapshot)
+	m.markCodexSessionLive(projectPath)
+	m.codexVisibleProject = projectPath
+	m.codexHiddenProject = projectPath
+	m.loadCodexDraft(projectPath)
+	m.syncCodexViewport(true)
+	m.syncCodexComposerSize()
 }
 
 func (m *Model) storeCodexSnapshot(projectPath string, snapshot codexapp.Snapshot) {
