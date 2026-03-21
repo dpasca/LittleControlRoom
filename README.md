@@ -118,39 +118,17 @@ Inside the embedded Codex or OpenCode pane:
 2. Move through projects with the arrow keys.
 3. Press `Enter` to open or resume the selected project's latest embedded provider.
 4. Press `Esc` or `Alt+Up` to hide the embedded session pane while it keeps working, then press `Enter` on that project to reopen it from the list.
-5. Press `/` to open the command palette for actions like refresh, pin, snooze, note, diff, commit, or push.
+5. Press `/` for commands, or `f` to filter the project list instantly.
 
-Press `f` from the main dashboard to open the live project-name filter. Type any partial name to narrow the list immediately, and clear the field again when you want the full list back.
+Most day-to-day use falls into a few buckets:
 
-Use `/run` or `/start` to start the selected project's saved managed runtime. On the first run, LCR suggests a command from files like `bin/dev`, `package.json`, `Makefile`, `justfile`, or a simple Go entrypoint and lets you confirm or edit it before saving.
+- `🚀 Run and monitor`: Use `/run` or `/start` to launch a saved runtime, `/restart` to bounce it, `/run-edit` to change the command, and `/stop` to shut it down. Press `Tab` or `/runtime` when you want to work directly in the runtime pane.
+- `🤖 Resume agent work`: Use `/codex` or `/opencode` to pick up where you left off, and `/codex-new` or `/opencode-new` when you want a fresh session. Inside the embedded pane, `/resume`, `/session`, and `/reconnect` handle switching sessions or reattaching the helper.
+- `🧹 Keep the list clean`: Use `f` or `/filter <text>` to narrow the project list, `/pin` and `/snooze` to control attention, `/ignore` and `/ignored` to hide or restore exact project names, and `/forget` to remove a missing folder.
+- `📝 Review and organize`: Use `/note` or `n` for project notes, `/diff` to inspect git changes, `/commit` and `/push` when you are ready to ship, and `/open` to jump to the project folder.
+- `⚙️ Adjust setup`: Use `/settings` for API keys, paths, and defaults, and `/new-project` when you want to add something new to the dashboard.
 
-Use `/restart` to bounce the managed runtime with the saved or active command, `/run-edit` to change the saved run command later, and `/stop` to stop it entirely.
-
-The main view now keeps a dedicated runtime pane beside the detail pane. Use `Tab` or `/runtime` to focus it, then use `Left` and `Right` to choose `Open URL`, `Restart`, or `Stop`, and `Enter` to run the selected action.
-
-Use `/codex` or `/opencode` to resume the last session.
-
-Use `/codex-new` or `/opencode-new` when you want a fresh session instead of resuming an existing one.
-
-Inside the embedded Codex or OpenCode pane, use `/resume` or `/session` to open a provider-specific session picker for the current project, `/resume <session-id>` to jump straight to that session, or `/reconnect` after refreshing provider auth so Little Control Room bounces just the embedded helper instead of needing a full app restart.
-
-Use `/settings` when you want to save your OpenAI API key, include or exclude paths, or change the default Codex launch mode.
-
-Use `/filter <text>` when you want to apply a temporary project-name filter directly from the command palette, `/filter clear` to remove it, or just press `f` for the live filter dialog.
-
-Use `/ignore` on a selected project when you want to hide that exact project name, including Codex-generated worktrees that share the same folder name.
-
-Use `/ignored` to review the hidden names and restore them later with `Enter`, so cleanup stays reversible.
-
-Use `/open` to open the selected project's folder in your system browser.
-
-Use `/note` to open a multiline note editor for the selected project, or `/note clear` to remove the saved note after confirmation. Projects with saved notes show an `N` badge in the main list. Press `n` for the same editor as a shortcut. Inside the note dialog, `Ctrl+Y` copies the whole current note to the system clipboard, and the `Copy...` action offers either `Whole note` or `Selected text`. In selection mode, press `Space` once to mark the start, move the cursor, and press `Space` again to copy the selected range.
-
-Projects with an active managed runtime show a short summary in the `RUN` column. Detected ports appear inline there as `@3000`, while `!3000` marks a managed port conflict between tracked projects. The detail pane stays focused on project metadata, while the separate runtime pane shows the saved command, runtime state, detected ports and URL, conflicts or errors, and the captured output tail.
-
-Use `/diff` to open a full-screen git diff for the selected project, with staged files listed first on the left, unstaged files below them, and a scrollable text or image preview on the right.
-
-To create a new project, use the command `/new-project`. This will create a new directory or acknowledge an existing one, and add it to the list of projects to track. If you already have a full folder path copied from macOS, you can paste it directly into the path field, leave `Name` blank, and LCR will use the last folder name automatically.
+For the full command list and detailed behavior, see [`docs/reference.md`](docs/reference.md).
 
 ## Costs
 

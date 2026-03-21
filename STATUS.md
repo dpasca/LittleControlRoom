@@ -1,6 +1,24 @@
 # Little Control Room Status
 
-Last updated: 2026-03-21 06:43 JST (JST)
+Last updated: 2026-03-21 16:36 JST (JST)
+
+## Latest Update (2026-03-21 16:36 JST)
+
+- Simplified the README `Everyday Workflow` section so it stays centered on the basic five-step flow instead of expanding into a long sequence of one-off command explanations.
+- Replaced the long follow-up prose with five compact emoji-backed buckets for the most common actions: runtimes, agent sessions, list cleanup, review/organizing, and setup.
+- Kept the detailed command behavior in `docs/reference.md` instead of repeating that level of detail in the README.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `make test` passed.
+- `make scan` passed at `2026-03-21T16:35:57+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-21T16:35:58+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- Decide whether the README should keep this lighter emoji-backed tone elsewhere, or reserve it for the onboarding-style workflow section only.
+- If the README still feels command-heavy, consider trimming the top-level command inventory next and leaning more on `docs/reference.md` for exhaustive command details.
 
 ## Latest Update (2026-03-21 06:43 JST)
 
