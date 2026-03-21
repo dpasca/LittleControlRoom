@@ -31,7 +31,7 @@ SCREENSHOT_OUTPUT_FLAG := $(if $(strip $(SCREENSHOT_OUTPUT_DIR)),--output-dir "$
 COMMON_FLAGS := --config "$(CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 PARALLEL_FLAGS := --config "$(PARALLEL_CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(PARALLEL_DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 
-.PHONY: help tidy fmt test build install clean scope scan classify doctor doctor-scan screenshots tui tui-parallel serve
+.PHONY: help tidy fmt test build install clean scope scan classify doctor doctor-scan screenshots tui tui-parallel tui-parallel-clean serve
 
 help:
 	@echo "$(APP_NAME) Make Targets"
@@ -50,6 +50,7 @@ help:
 	@echo "  make screenshots     - render curated PNG screenshots for docs"
 	@echo "  make tui             - run TUI dashboard"
 	@echo "  make tui-parallel    - run a second TUI using isolated config/DB under /tmp"
+	@echo "  make tui-parallel-clean - remove stale /tmp TUI sandboxes not used by active runtimes"
 	@echo "  make serve           - run REST/WS server skeleton"
 	@echo ""
 	@echo "Config vars (override like: make scan INCLUDE_PATHS=... DB=...):"
@@ -109,7 +110,22 @@ screenshots:
 tui:
 	$(GO) run ./cmd/$(APP) tui $(COMMON_FLAGS) $(INTERVAL_FLAG)
 
+tui-parallel-clean:
+	@setopt local_options null_glob; \
+	active_commands="$$(ps -axo command=)"; \
+	for dir in /tmp/lcroom-parallel-*; do \
+		[ -d "$$dir" ] || continue; \
+		db="$$dir/little-control-room.sqlite"; \
+		if printf '%s\n' "$$active_commands" | grep -F -- "--db $$db" >/dev/null; then \
+			echo "Keeping active sandbox: $$dir"; \
+			continue; \
+		fi; \
+		echo "Removing stale sandbox: $$dir"; \
+		rm -rf "$$dir"; \
+	done
+
 tui-parallel:
+	@$(MAKE) tui-parallel-clean
 	@mkdir -p "$(PARALLEL_DATA_DIR)"
 	@if [ -f "$(CONFIG)" ] && [ ! -f "$(PARALLEL_CONFIG)" ]; then cp "$(CONFIG)" "$(PARALLEL_CONFIG)"; fi
 	@echo "Launching parallel TUI sandbox"

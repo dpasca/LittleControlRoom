@@ -1904,6 +1904,48 @@ func TestProjectsMsgClearsInitialLoadingStatusAfterStartupLoad(t *testing.T) {
 	}
 }
 
+func TestProjectsMsgShowsStartupFailureStatusWhenInitialLoadFails(t *testing.T) {
+	m := Model{
+		loading: true,
+		status:  initialProjectsStatus,
+	}
+
+	updated, _ := m.Update(projectsMsg{err: fmt.Errorf("open store: database is locked")})
+	got := updated.(Model)
+
+	if got.status != "Project load failed" {
+		t.Fatalf("status = %q, want project-load failure status", got.status)
+	}
+	if got.err == nil || got.err.Error() != "open store: database is locked" {
+		t.Fatalf("err = %v, want startup load error", got.err)
+	}
+	if got.loading {
+		t.Fatalf("loading should be false after project load failure")
+	}
+}
+
+func TestProjectsMsgShowsRefreshFailureStatusWhenReloadFails(t *testing.T) {
+	m := Model{
+		loading: false,
+		status:  "Loaded 3 projects (attention, AI folders)",
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			PresentOnDisk: true,
+		}},
+	}
+
+	updated, _ := m.Update(projectsMsg{err: fmt.Errorf("read config failed")})
+	got := updated.(Model)
+
+	if got.status != "Project refresh failed" {
+		t.Fatalf("status = %q, want project-refresh failure status", got.status)
+	}
+	if got.err == nil || got.err.Error() != "read config failed" {
+		t.Fatalf("err = %v, want refresh error", got.err)
+	}
+}
+
 func TestSplitBodyHeightsGrowFocusedPane(t *testing.T) {
 	listListHeight, listDetailHeight := splitBodyHeights(20, focusProjects)
 	if listListHeight <= listDetailHeight {

@@ -46,3 +46,5 @@ Run `make tui` for interactive verification when UI behavior is touched.
 - By default, long-lived `lcroom` modes such as `tui`, `serve`, and `classify` now refuse to share the same DB with another active runtime.
 - For intentional short-lived local debugging overlap only, re-run with `--allow-multiple-instances`.
 - Treat `--allow-multiple-instances` as a temporary escape hatch for dev/debug sessions, not the normal way to run Little Control Room day to day.
+- Prefer `make tui-parallel` for isolated TUI experiments, and run `make tui-parallel-clean` periodically so stale `/tmp/lcroom-parallel-*` sandboxes do not pile up and confuse later debugging.
+- When touching startup, project loading, or refresh flows, make failure states explicit in the UI/status text. Do not leave the app looking like it is still "Loading..." when the real issue is an error.

@@ -475,10 +475,11 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			artifacts = dedupeArtifacts(activity.Artifacts)
 			errorCount = activity.ErrorCount
 			if len(sessions) > 0 {
+				gitStatus := sessionclassify.NewGitStatusSnapshot(repoDirty, repoSyncStatus, repoAheadCount, repoBehindCount)
 				reuseLatestSessionTurnState(old, &sessions[0])
 				ensureLatestSessionTurnState(&sessions[0])
-				reuseLatestSessionSnapshotHash(old, &sessions[0])
-				ensureSessionSnapshotHash(ctx, path, &sessions[0], sessionclassify.NewGitStatusSnapshot(repoDirty, repoSyncStatus, repoAheadCount, repoBehindCount))
+				reuseLatestSessionSnapshotHash(old, &sessions[0], gitStatus)
+				ensureSessionSnapshotHash(ctx, path, &sessions[0], gitStatus)
 			}
 			if len(sessions) > 0 {
 				latestSessionStart = sessions[0].StartedAt
@@ -939,7 +940,7 @@ func (s *Service) latestSessionClassification(ctx context.Context, path string, 
 	return true, classification.Category
 }
 
-func reuseLatestSessionSnapshotHash(old model.ProjectSummary, session *model.SessionEvidence) {
+func reuseLatestSessionSnapshotHash(old model.ProjectSummary, session *model.SessionEvidence, gitStatus sessionclassify.GitStatusSnapshot) {
 	if session == nil || strings.TrimSpace(session.SnapshotHash) != "" {
 		return
 	}
@@ -955,7 +956,17 @@ func reuseLatestSessionSnapshotHash(old model.ProjectSummary, session *model.Ses
 	if old.LatestTurnStateKnown != session.LatestTurnStateKnown || old.LatestTurnCompleted != session.LatestTurnCompleted {
 		return
 	}
+	if !projectSummaryMatchesGitStatus(old, gitStatus) {
+		return
+	}
 	session.SnapshotHash = old.LatestSessionSnapshotHash
+}
+
+func projectSummaryMatchesGitStatus(summary model.ProjectSummary, gitStatus sessionclassify.GitStatusSnapshot) bool {
+	return summary.RepoDirty == gitStatus.WorktreeDirty &&
+		summary.RepoSyncStatus == model.RepoSyncStatus(gitStatus.RemoteStatus) &&
+		summary.RepoAheadCount == gitStatus.AheadCount &&
+		summary.RepoBehindCount == gitStatus.BehindCount
 }
 
 func reuseLatestSessionTurnState(old model.ProjectSummary, session *model.SessionEvidence) {
@@ -1006,22 +1017,6 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 		return err
 	}
 
-	errorCount := 0
-	latestSessionStart := time.Time{}
-	latestTurnKnown := false
-	latestTurnComplete := false
-	if len(detail.Sessions) > 0 {
-		ensureLatestSessionTurnState(&detail.Sessions[0])
-		ensureSessionSnapshotHash(ctx, projectPath, &detail.Sessions[0], sessionclassify.NewGitStatusSnapshot(detail.Summary.RepoDirty, detail.Summary.RepoSyncStatus, detail.Summary.RepoAheadCount, detail.Summary.RepoBehindCount))
-		latestSessionStart = detail.Sessions[0].StartedAt
-		latestTurnKnown = detail.Sessions[0].LatestTurnStateKnown
-		latestTurnComplete = detail.Sessions[0].LatestTurnCompleted
-	}
-	for _, session := range detail.Sessions {
-		errorCount += session.ErrorCount
-	}
-
-	classificationKnown, classificationCategory := s.latestSessionClassification(ctx, projectPath, detail.Sessions)
 	presentOnDisk := projectPathExists(detail.Summary.Path)
 	repoDirty := false
 	repoSyncStatus := model.RepoSyncStatus("")
@@ -1048,6 +1043,22 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 		}
 	}
 
+	errorCount := 0
+	latestSessionStart := time.Time{}
+	latestTurnKnown := false
+	latestTurnComplete := false
+	if len(detail.Sessions) > 0 {
+		ensureLatestSessionTurnState(&detail.Sessions[0])
+		ensureSessionSnapshotHash(ctx, projectPath, &detail.Sessions[0], sessionclassify.NewGitStatusSnapshot(repoDirty, repoSyncStatus, repoAheadCount, repoBehindCount))
+		latestSessionStart = detail.Sessions[0].StartedAt
+		latestTurnKnown = detail.Sessions[0].LatestTurnStateKnown
+		latestTurnComplete = detail.Sessions[0].LatestTurnCompleted
+	}
+	for _, session := range detail.Sessions {
+		errorCount += session.ErrorCount
+	}
+
+	classificationKnown, classificationCategory := s.latestSessionClassification(ctx, projectPath, detail.Sessions)
 	score := attention.Score(attention.Input{
 		Path:                       detail.Summary.Path,
 		Now:                        now,

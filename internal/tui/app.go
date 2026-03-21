@@ -517,6 +517,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		if msg.err != nil {
 			m.err = msg.err
+			m.status = projectLoadFailedStatus(len(m.projects) > 0)
 			return m, nil
 		}
 		m.err = msg.filterErr
@@ -2444,6 +2445,13 @@ func loadedProjectsStatus(projectCount int, sortMode projectSortMode, visibility
 		return status + " with " + label
 	}
 	return status
+}
+
+func projectLoadFailedStatus(hadProjects bool) string {
+	if hadProjects {
+		return "Project refresh failed"
+	}
+	return "Project load failed"
 }
 
 func (m Model) scanCmd(forceRetryFailedClassifications bool) tea.Cmd {

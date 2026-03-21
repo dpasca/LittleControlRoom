@@ -1,6 +1,69 @@
 # Little Control Room Status
 
-Last updated: 2026-03-22 07:54 JST (JST)
+Last updated: 2026-03-22 08:32 JST (JST)
+
+## Latest Update (2026-03-22 08:32 JST)
+
+- Added a permanent development note to `AGENTS.md` so the recent startup/debugging lesson is captured in repo guidance instead of only living in session history.
+- Documented that parallel TUI experiments should use `make tui-parallel`, that `make tui-parallel-clean` should be run periodically to prune stale `/tmp/lcroom-parallel-*` sandboxes, and that startup/load failures must surface explicit error states rather than leaving the UI looking like it is still loading.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `make test` passed.
+- `make scan` passed at `2026-03-22T08:32:20+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-22T08:32:20+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- If more dev-only operational knowledge accumulates, consider a short `## Development Hygiene` section in `AGENTS.md` so sandbox cleanup, runtime-lock expectations, and startup error-reporting guidance stay grouped together.
+- If startup can still feel ambiguous, add a more direct recovery hint in the top status line for common failures such as DB lock conflicts or project-list load errors.
+
+## Latest Update (2026-03-22 08:26 JST)
+
+- Investigated the report that `make tui` looked stuck at startup, then confirmed the immediate blocker was a still-running `lcroom tui` already holding the default DB lock while several old `tui-parallel` sandboxes were still lying around under `/tmp`.
+- Added `make tui-parallel-clean` and wired `make tui-parallel` to run it first, so stale `/tmp/lcroom-parallel-*` sandboxes that are no longer backing an active `lcroom tui --db ...` process are removed automatically before new parallel dev sessions start.
+- Used the new cleanup path to remove the leftover experimental sandboxes from this machine, including prior flair/busy-elsewhere/smoke scratch runs.
+- Fixed a startup UX bug in the TUI: when the initial `loadProjectsCmd` fails, the app no longer sits on `Loading projects...`; it now sets an explicit failure status (`Project load failed`, or `Project refresh failed` on later reloads) while still surfacing the underlying error text in the top status line.
+- Added focused TUI regressions for both initial project-load failure and later project-refresh failure so these cases keep reporting a real failure state instead of looking hung.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/app.go internal/tui/app_test.go` passed.
+- `make tui-parallel-clean` passed and removed stale `/tmp/lcroom-parallel-*` sandboxes not used by active runtimes.
+- `go test ./internal/tui -run 'Test(ProjectsMsgClearsInitialLoadingStatusAfterStartupLoad|ProjectsMsgShowsStartupFailureStatusWhenInitialLoadFails|ProjectsMsgShowsRefreshFailureStatusWhenReloadFails)' -count=1` passed.
+- `timeout 5s make tui` reached the normal long-lived TUI launch path on the default DB and only exited because the timeout terminated it, confirming the old lock conflict was gone.
+- `make test` passed.
+- `make scan` passed at `2026-03-22T08:25:51+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 13`, `queued classifications: 2`).
+- `make doctor` passed on the cached snapshot dated `2026-03-22T08:25:50+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- Consider whether `make tui-parallel-clean` should grow an explicit "stop active parallel sandboxes too" mode for heavier dev cleanup, instead of only pruning stale directories.
+- If startup can still feel frozen in real use, add a small retry/help hint in the top status line when `projectsMsg` or the first detail load fails so the recovery action is obvious without reading the full error text.
+
+## Latest Update (2026-03-22 08:10 JST)
+
+- Investigated why LittleControlRoom could still show the previous latest-session assessment after the repo worktree changed, even though commit-message inference for another project proved the session/LLM path itself was healthy.
+- Found a stale-snapshot reuse bug in the scan path: when the latest session ID/timestamps/turn state matched the stored session, we reused the prior `LatestSessionSnapshotHash` without checking whether git status had changed, so a clean-to-dirty repo transition could keep the old assessment snapshot hash alive.
+- Tightened latest-session snapshot-hash reuse so it now only reuses the old hash when the stored repo dirty/sync/ahead/behind state still matches the current git snapshot.
+- Updated `RefreshProjectStatus` to read current git status before recomputing the latest session snapshot hash, so manual/status refreshes do not derive assessment freshness from stale stored repo state.
+- Added a focused service regression covering the exact stale-assessment scenario: same latest session metadata, but repo becomes dirty, and the latest session snapshot hash must refresh instead of being reused.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/service/service.go internal/service/service_test.go` passed.
+- `go test ./internal/service -run 'Test(ScanOnceRecomputesLatestSessionSnapshotHashWhenGitStatusChanges|ScanOnceReusesLatestOpenCodeSnapshotHashWhenSessionIsUnchanged|ScanOnceRecomputesLatestSessionSnapshotHashWhenTurnStateChanges)' -count=1` passed.
+- `make test` passed.
+- `make scan` was attempted against the shared live DB but did not complete in this session, so there is no fresh successful scan snapshot from this turn.
+- `make doctor` passed on the cached snapshot dated `2026-03-22T08:10:14+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- Re-run `make scan` against the intended Little Control Room DB and confirm the project now drops the stale assessment as soon as the worktree dirties, then requeues/replaces it with a fresh assessment.
+- Consider adding a higher-level service/store regression that seeds an old completed classification and verifies the visible assessment becomes unknown/refreshing immediately when only git status changes.
 
 ## Latest Update (2026-03-22 07:54 JST)
 

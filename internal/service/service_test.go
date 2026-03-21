@@ -703,6 +703,94 @@ func TestScanOnceRecomputesLatestSessionSnapshotHashWhenTurnStateChanges(t *test
 	}
 }
 
+func TestScanOnceRecomputesLatestSessionSnapshotHashWhenGitStatusChanges(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "git-hash-refresh")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	fixture := filepath.Clean(filepath.Join("..", "..", "testdata", "codex_footprint", "sessions", "2026", "03", "05", "rollout-modern.jsonl"))
+	lastEventAt := time.Date(2026, 3, 6, 1, 0, 0, 0, time.UTC)
+	staleHash := "clean-repo-session-hash"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           filepath.Base(projectPath),
+		LastActivity:   lastEventAt,
+		Status:         model.StatusIdle,
+		AttentionScore: 20,
+		PresentOnDisk:  true,
+		InScope:        true,
+		UpdatedAt:      lastEventAt,
+		Sessions: []model.SessionEvidence{{
+			SessionID:            "ses_git_hash_refresh",
+			ProjectPath:          projectPath,
+			SessionFile:          fixture,
+			Format:               "modern",
+			SnapshotHash:         staleHash,
+			StartedAt:            lastEventAt.Add(-5 * time.Minute),
+			LastEventAt:          lastEventAt,
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  true,
+		}},
+	}); err != nil {
+		t.Fatalf("seed project state: %v", err)
+	}
+
+	detector := &fakeDetector{
+		activities: map[string]*model.DetectorProjectActivity{
+			projectPath: {
+				ProjectPath:  projectPath,
+				LastActivity: lastEventAt,
+				Source:       "codex",
+				Sessions: []model.SessionEvidence{{
+					SessionID:            "ses_git_hash_refresh",
+					ProjectPath:          projectPath,
+					SessionFile:          fixture,
+					Format:               "modern",
+					StartedAt:            lastEventAt.Add(-5 * time.Minute),
+					LastEventAt:          lastEventAt,
+					LatestTurnStateKnown: true,
+					LatestTurnCompleted:  true,
+				}},
+			},
+		},
+	}
+
+	if err := os.WriteFile(filepath.Join(projectPath, "scratch.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatalf("write dirty file: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = []string{root}
+	svc := New(cfg, st, events.NewBus(), []detectors.Detector{detector})
+
+	report, err := svc.ScanOnce(ctx)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(report.States) != 1 || len(report.States[0].Sessions) != 1 {
+		t.Fatalf("unexpected scan report: %#v", report.States)
+	}
+	if !report.States[0].RepoDirty {
+		t.Fatalf("expected repo to be marked dirty")
+	}
+	session := report.States[0].Sessions[0]
+	if session.SnapshotHash == "" {
+		t.Fatalf("expected recomputed snapshot hash")
+	}
+	if session.SnapshotHash == staleHash {
+		t.Fatalf("snapshot hash = %q, want a refreshed hash after git status changed", session.SnapshotHash)
+	}
+}
+
 func TestScanOnceReusesStoredLatestTurnStateWhenSessionIsUnchanged(t *testing.T) {
 	t.Parallel()
 
