@@ -5669,6 +5669,26 @@ func TestRenderCodexSessionMetaTreatsFreshPendingModelAsCurrent(t *testing.T) {
 	}
 }
 
+func TestRenderCodexSessionMetaSkipsNextWhenPendingHasBeenAppliedBeforeOpen(t *testing.T) {
+	rendered := ansi.Strip((Model{}).renderCodexSessionMeta(codexapp.Snapshot{
+		Model:            "openai/gpt-5",
+		ReasoningEffort:  "high",
+		PendingModel:     "",
+		PendingReasoning: "",
+	}, 140))
+
+	for _, want := range []string{"Model", "openai/gpt-5", "Reasoning", "high"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("renderCodexSessionMeta() missing %q: %q", want, rendered)
+		}
+	}
+	for _, unwanted := range []string{"Next", "gpt-5 /"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("renderCodexSessionMeta() should not include %q: %q", unwanted, rendered)
+		}
+	}
+}
+
 func TestVisibleCodexViewShowsBusyElsewhereWarningBlock(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",

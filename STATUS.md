@@ -1,6 +1,27 @@
 # Little Control Room Status
 
-Last updated: 2026-03-22 22:00 JST (JST)
+Last updated: 2026-03-22 22:40 JST (JST)
+
+## Latest Update (2026-03-22 22:40 JST)
+
+- Completed the OpenCode stale-`/model` launch override reconciliation flow by tracking whether pending values came from launch and clearing only those when transcript replay proves the session is already running under a different model.
+- Added focused OpenCode session tests in `internal/codexapp/opencode_session_test.go`:
+  - `TestOpenCodeSessionRefreshReconcilesStalePendingModelFromReplayedModel`
+  - `TestOpenCodeSessionRefreshKeepsLaunchPendingWhenNoReplayedModel`
+- Added a TUI regression in `internal/tui/app_test.go`:
+  - `TestRenderCodexSessionMetaSkipsNextWhenPendingHasBeenAppliedBeforeOpen`
+
+Verification snapshot:
+
+- `go test ./internal/codexapp -count=1` passed
+- `go test ./internal/tui -count=1` passed
+- `make test` passed
+- `make scan` completed (`updated projects: 1` at `2026-03-22T22:38:51+09:00`)
+- `make doctor` returned the cached report and was command- and config-parse successful
+
+Next concrete tasks:
+
+- Optional follow-up: keep `reopen`-path test for this behavior if OpenCode transcript formats change around model metadata.
 
 ## Latest Update (2026-03-22 22:00 JST)
 

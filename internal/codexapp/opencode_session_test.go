@@ -1,6 +1,7 @@
 package codexapp
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -413,6 +414,64 @@ func TestOpenCodeSessionMessageUpdatedShowsErrorImmediately(t *testing.T) {
 	}
 	if snapshot.Entries[0].Kind != TranscriptError {
 		t.Fatalf("snapshot.Entries[0].Kind = %q, want %q", snapshot.Entries[0].Kind, TranscriptError)
+	}
+}
+
+func TestOpenCodeSessionRefreshReconcilesStalePendingModelFromReplayedModel(t *testing.T) {
+	session := newTestOpenCodeSession(t, `[
+		{
+			"info": {
+				"id": "msg_assistant_01",
+				"sessionID": "ses_test",
+				"role": "assistant",
+				"modelID": "gpt-5",
+				"providerID": "openai"
+			},
+			"parts": []
+		}
+	]`)
+	session.model = "openai/gpt-5.4"
+	session.pendingFromLaunch = true
+	session.pendingModel = "openai/gpt-5.4"
+	session.pendingReasoning = "high"
+
+	if err := session.refreshSessionState(context.Background(), false); err != nil {
+		t.Fatalf("session.refreshSessionState() error = %v", err)
+	}
+
+	snapshot := session.Snapshot()
+	if got := snapshot.Model; got != "openai/gpt-5" {
+		t.Fatalf("snapshot.Model = %q, want %q", got, "openai/gpt-5")
+	}
+	if snapshot.PendingModel != "" || snapshot.PendingReasoning != "" {
+		t.Fatalf("snapshot.PendingModel = %q, PendingReasoning = %q, want both empty", snapshot.PendingModel, snapshot.PendingReasoning)
+	}
+
+	if session.pendingFromLaunch {
+		t.Fatalf("pendingFromLaunch should be cleared after reconcile")
+	}
+}
+
+func TestOpenCodeSessionRefreshKeepsLaunchPendingWhenNoReplayedModel(t *testing.T) {
+	session := newTestOpenCodeSession(t, `[]`)
+	session.model = "openai/gpt-5"
+	session.pendingFromLaunch = true
+	session.pendingModel = "openai/gpt-5.4"
+	session.pendingReasoning = "high"
+
+	if err := session.refreshSessionState(context.Background(), false); err != nil {
+		t.Fatalf("session.refreshSessionState() error = %v", err)
+	}
+
+	snapshot := session.Snapshot()
+	if snapshot.Model != "openai/gpt-5" {
+		t.Fatalf("snapshot.Model = %q, want %q", snapshot.Model, "openai/gpt-5")
+	}
+	if snapshot.PendingModel != "openai/gpt-5.4" {
+		t.Fatalf("snapshot.PendingModel = %q, want %q", snapshot.PendingModel, "openai/gpt-5.4")
+	}
+	if snapshot.PendingReasoning != "high" {
+		t.Fatalf("snapshot.PendingReasoning = %q, want %q", snapshot.PendingReasoning, "high")
 	}
 }
 

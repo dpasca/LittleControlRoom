@@ -58,6 +58,7 @@ type openCodeSession struct {
 	reasoningEffort   string
 	pendingModel      string
 	pendingReasoning  string
+	pendingFromLaunch bool
 	activeTurnID      string
 	tokenUsage        *threadTokenUsage
 	entries           []transcriptEntry
@@ -699,6 +700,7 @@ func (s *openCodeSession) initializeSession(parent context.Context, req LaunchRe
 			sessionID = ""
 		}
 	}
+	launchPending := strings.TrimSpace(req.PendingModel) != "" || strings.TrimSpace(req.PendingReasoning) != ""
 	if sessionID == "" {
 		var created openCodeSessionEnvelope
 		if err := s.postJSON(ctx, "/session", nil, &created); err != nil {
@@ -713,6 +715,7 @@ func (s *openCodeSession) initializeSession(parent context.Context, req LaunchRe
 	s.mu.Lock()
 	s.sessionID = sessionID
 	s.started = true
+	s.pendingFromLaunch = launchPending
 	s.pendingModel, s.pendingReasoning = stagedModelOverride(s.model, s.reasoningEffort, req.PendingModel, req.PendingReasoning)
 	s.status = ""
 	s.mu.Unlock()
@@ -767,7 +770,10 @@ func (s *openCodeSession) refreshSessionState(parent context.Context, external b
 		s.mu.Unlock()
 		return nil
 	}
-	latestError := s.rebuildTranscriptLocked(messages)
+	latestError, replayedModel := s.rebuildTranscriptLocked(messages)
+	if replayedModel {
+		s.reconcilePendingModelFromReplayedMessagesLocked()
+	}
 	status := statuses[sessionID]
 	switch status.Type {
 	case "busy", "retry":
@@ -908,7 +914,7 @@ func (s *openCodeSession) refreshPendingRequests(ctx context.Context) error {
 	return nil
 }
 
-func (s *openCodeSession) rebuildTranscriptLocked(messages []openCodeMessage) string {
+func (s *openCodeSession) rebuildTranscriptLocked(messages []openCodeMessage) (string, bool) {
 	s.entries = nil
 	s.entryIndex = make(map[string]int)
 	s.messageRole = make(map[string]string)
@@ -916,7 +922,13 @@ func (s *openCodeSession) rebuildTranscriptLocked(messages []openCodeMessage) st
 	s.partType = make(map[string]string)
 
 	latestError := ""
+	replayedModel := false
 	for _, message := range messages {
+		if strings.EqualFold(strings.TrimSpace(message.Info.Role), "assistant") {
+			if modelKey := qualifiedOpenCodeModelKey(message.Info.ProviderID, message.Info.ModelID); modelKey != "" {
+				replayedModel = true
+			}
+		}
 		if errorSummary := s.applyMessageInfoLocked(message.Info); errorSummary != "" {
 			latestError = errorSummary
 		} else {
@@ -926,7 +938,28 @@ func (s *openCodeSession) rebuildTranscriptLocked(messages []openCodeMessage) st
 			s.applyPartLocked(message.Info.Role, rawPart, true)
 		}
 	}
-	return latestError
+	return latestError, replayedModel
+}
+
+func (s *openCodeSession) reconcilePendingModelFromReplayedMessagesLocked() {
+	if !s.pendingFromLaunch {
+		return
+	}
+
+	pendingModel := strings.TrimSpace(s.pendingModel)
+	if pendingModel == "" {
+		s.pendingFromLaunch = false
+		return
+	}
+
+	if strings.EqualFold(strings.TrimSpace(s.model), pendingModel) {
+		s.pendingFromLaunch = false
+		return
+	}
+
+	s.pendingModel = ""
+	s.pendingReasoning = ""
+	s.pendingFromLaunch = false
 }
 
 func (s *openCodeSession) applyMessageInfoLocked(info openCodeMessageInfo) string {
