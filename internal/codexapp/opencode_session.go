@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"lcroom/internal/codexcli"
 )
 
 const (
@@ -29,6 +31,7 @@ const (
 
 type openCodeSession struct {
 	projectPath string
+	preset      codexcli.Preset
 	notify      func()
 
 	cmd      *exec.Cmd
@@ -263,6 +266,7 @@ func newOpenCodeSession(req LaunchRequest, notify func()) (Session, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &openCodeSession{
 		projectPath:       req.ProjectPath,
+		preset:            req.Preset,
 		notify:            notify,
 		http:              newOpenCodeHTTPClient(),
 		agent:             openCodeDefaultAgent,
@@ -310,6 +314,7 @@ func (s *openCodeSession) Snapshot() Snapshot {
 		Provider:         ProviderOpenCode,
 		ProjectPath:      s.projectPath,
 		ThreadID:         s.sessionID,
+		Preset:           s.preset,
 		Phase:            s.phaseLocked(),
 		Started:          s.started,
 		Busy:             s.busy,
@@ -658,7 +663,7 @@ func (s *openCodeSession) ReconcileBusyState() error {
 }
 
 func (s *openCodeSession) start(parent context.Context, req LaunchRequest) error {
-	baseURL, cmd, err := startOpenCodeServer(req.ProjectPath)
+	baseURL, cmd, err := startOpenCodeServer(req.ProjectPath, req.Preset)
 	if err != nil {
 		return err
 	}
@@ -1434,9 +1439,77 @@ func (s *openCodeSession) postJSON(parent context.Context, path string, payload 
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
-func startOpenCodeServer(projectPath string) (string, *exec.Cmd, error) {
+type openCodePermissionOverride struct {
+	Edit              string `json:"edit,omitempty"`
+	Bash              string `json:"bash,omitempty"`
+	WebFetch          string `json:"webfetch,omitempty"`
+	DoomLoop          string `json:"doom_loop,omitempty"`
+	ExternalDirectory string `json:"external_directory,omitempty"`
+}
+
+type openCodeConfigOverride struct {
+	Permission openCodePermissionOverride `json:"permission,omitempty"`
+}
+
+func openCodePermissionOverrideForPreset(preset codexcli.Preset) openCodePermissionOverride {
+	switch preset {
+	case codexcli.PresetSafe:
+		// OpenCode does not expose Codex's read-only sandbox directly, so the
+		// closest safe preset is "ask before everything that mutates or escapes".
+		return openCodePermissionOverride{
+			Edit:              "ask",
+			Bash:              "ask",
+			WebFetch:          "ask",
+			DoomLoop:          "ask",
+			ExternalDirectory: "ask",
+		}
+	case codexcli.PresetFullAuto:
+		// Match workspace-write-like behavior by allowing in-project work while
+		// still prompting before broader filesystem escapes or loop-risk cases.
+		return openCodePermissionOverride{
+			Edit:              "allow",
+			Bash:              "allow",
+			WebFetch:          "allow",
+			DoomLoop:          "ask",
+			ExternalDirectory: "ask",
+		}
+	default:
+		return openCodePermissionOverride{
+			Edit:              "allow",
+			Bash:              "allow",
+			WebFetch:          "allow",
+			DoomLoop:          "allow",
+			ExternalDirectory: "allow",
+		}
+	}
+}
+
+func openCodeConfigContentForPreset(preset codexcli.Preset) (string, error) {
+	raw, err := json.Marshal(openCodeConfigOverride{
+		Permission: openCodePermissionOverrideForPreset(preset),
+	})
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func buildOpenCodeServerCommand(projectPath string, preset codexcli.Preset) (*exec.Cmd, error) {
 	cmd := exec.Command("opencode", "serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs")
 	cmd.Dir = projectPath
+	configContent, err := openCodeConfigContentForPreset(preset)
+	if err != nil {
+		return nil, err
+	}
+	cmd.Env = append(os.Environ(), "OPENCODE_CONFIG_CONTENT="+configContent)
+	return cmd, nil
+}
+
+func startOpenCodeServer(projectPath string, preset codexcli.Preset) (string, *exec.Cmd, error) {
+	cmd, err := buildOpenCodeServerCommand(projectPath, preset)
+	if err != nil {
+		return "", nil, err
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

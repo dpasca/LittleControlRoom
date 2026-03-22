@@ -3,15 +3,22 @@ package tui
 import (
 	"fmt"
 
+	"lcroom/internal/codexapp"
 	"lcroom/internal/model"
 )
 
-const runtimeRunningAttentionWeight = 10
+const (
+	runtimeRunningAttentionWeight   = 10
+	embeddedApprovalAttentionWeight = 120
+)
 
 func (m Model) projectAttentionScore(project model.ProjectSummary) int {
 	score := project.AttentionScore
 	if snapshot := m.projectRuntimeSnapshot(project.Path); snapshot.Running {
 		score += runtimeRunningAttentionWeight
+	}
+	if _, _, ok := m.projectPendingEmbeddedApproval(project.Path); ok {
+		score += embeddedApprovalAttentionWeight
 	}
 	return score
 }
@@ -19,6 +26,9 @@ func (m Model) projectAttentionScore(project model.ProjectSummary) int {
 func (m Model) projectAttentionReasons(project model.ProjectSummary, base []model.AttentionReason) []model.AttentionReason {
 	reasons := append([]model.AttentionReason(nil), base...)
 	if reason := m.projectRuntimeAttentionReason(project.Path); reason != nil {
+		reasons = append(reasons, *reason)
+	}
+	if reason := m.projectEmbeddedApprovalAttentionReason(project.Path); reason != nil {
 		reasons = append(reasons, *reason)
 	}
 	return reasons
@@ -42,6 +52,33 @@ func (m Model) projectRuntimeAttentionReason(projectPath string) *model.Attentio
 		Code:   "runtime_running",
 		Text:   text,
 		Weight: runtimeRunningAttentionWeight,
+	}
+}
+
+func (m Model) projectEmbeddedApprovalAttentionReason(projectPath string) *model.AttentionReason {
+	request, provider, ok := m.projectPendingEmbeddedApproval(projectPath)
+	if !ok {
+		return nil
+	}
+
+	text := provider.Label() + " is waiting for approval"
+	switch request.Kind {
+	case codexapp.ApprovalFileChange:
+		if request.GrantRoot != "" {
+			text = fmt.Sprintf("%s is waiting for file-change approval under %s", provider.Label(), request.GrantRoot)
+		} else {
+			text = provider.Label() + " is waiting for file-change approval"
+		}
+	case codexapp.ApprovalCommandExecution:
+		if request.Command != "" {
+			text = fmt.Sprintf("%s is waiting for command approval: %s", provider.Label(), request.Command)
+		}
+	}
+
+	return &model.AttentionReason{
+		Code:   "embedded_approval_pending",
+		Text:   text,
+		Weight: embeddedApprovalAttentionWeight,
 	}
 }
 

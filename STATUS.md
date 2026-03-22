@@ -1,6 +1,31 @@
 # Little Control Room Status
 
-Last updated: 2026-03-22 11:15 JST (JST)
+Last updated: 2026-03-22 11:40 JST (JST)
+
+## Latest Update (2026-03-22 11:40 JST)
+
+- Fixed embedded OpenCode launch presets so the global `codex_launch_preset` now applies to OpenCode too instead of only Codex.
+- OpenCode embedded sessions now carry the preset through launch validation, snapshot state, and banner rendering, so YOLO sessions show the same `YOLO MODE` warning overlay that Codex already had.
+- Started embedded OpenCode servers with an `OPENCODE_CONFIG_CONTENT` override derived from the saved preset, mapping `yolo`, `full-auto`, and `safe` to the closest OpenCode permission profile available without mutating the user's disk config.
+- Added project-list approval pulsing for pending embedded approvals, and boosted attention scoring/reasons for those projects so an approval request stands out immediately in the dashboard.
+- Added focused regressions for the OpenCode preset-to-permission mapping, injected server config, OpenCode YOLO banner rendering, OpenCode launch preset propagation, and the new approval pulse styling.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- Live probe: `OPENCODE_CONFIG_CONTENT='{"permission":{"edit":"allow","bash":"allow","webfetch":"allow","external_directory":"allow","doom_loop":"allow"}}' opencode serve --hostname 127.0.0.1 --port 0 --print-logs` started successfully, `GET /config` reflected the injected permission override, and `GET /agent` showed the effective `build` agent picking up the appended allow rules.
+- `gofmt -w internal/codexapp/opencode_session.go internal/codexapp/opencode_session_test.go internal/codexapp/types.go internal/tui/app.go internal/tui/runtime_attention.go internal/tui/codex_pane.go internal/tui/app_test.go` passed.
+- `go test ./internal/codexapp -run 'Test(OpenCodePermissionOverrideForPreset|BuildOpenCodeServerCommandInjectsPresetConfig|OpenCodePostJSONNilPayloadSendsEmptyJSONObject|OpenCodePostJSONMarshalsPayloadAsJSON)' -count=1` passed.
+- `go test ./internal/tui -run 'Test(ApprovalPulseHighlightsProjectListRow|OpenCodexSessionChoiceLaunchesOpenCodeResume|VisibleCodexViewShowsBannerAndYoloWarning|VisibleOpenCodeViewShowsBannerAndYoloWarning)' -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-22T11:40:02+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-22T11:40:03+09:00` (`projects: 133`).
+- `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-approval-pulse-smoke INTERVAL=1h` launched the isolated TUI sandbox successfully and exited cleanly via `q`.
+
+Next concrete tasks:
+
+- Live-check a real embedded OpenCode approval flow in the dashboard and confirm the project row pulse feels obvious enough once an actual pending approval lands.
+- Decide whether approval-pending projects should also swap the list status label to something explicit like `approve`, or whether the new pulse + attention boost is the right level of interruption.
 
 ## Latest Update (2026-03-22 11:15 JST)
 

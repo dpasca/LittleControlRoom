@@ -459,17 +459,15 @@ func (r LaunchRequest) Validate() error {
 	if strings.TrimSpace(r.ProjectPath) == "" {
 		return fmt.Errorf("project path required")
 	}
+	preset := r.Preset
+	if preset == "" {
+		preset = codexcli.DefaultPreset()
+	}
 	switch r.Provider.Normalized() {
-	case ProviderCodex:
-		preset := r.Preset
-		if preset == "" {
-			preset = codexcli.DefaultPreset()
-		}
+	case ProviderCodex, ProviderOpenCode:
 		if _, err := codexcli.ParsePreset(string(preset)); err != nil {
 			return err
 		}
-	case ProviderOpenCode:
-		// OpenCode sessions do not use Codex launch presets.
 	default:
 		return fmt.Errorf("embedded provider must be one of: codex, opencode")
 	}
@@ -565,7 +563,7 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 	if m == nil {
 		return nil, false, fmt.Errorf("manager required")
 	}
-	if req.Provider.Normalized() == ProviderCodex && req.Preset == "" {
+	if req.Preset == "" {
 		req.Preset = codexcli.DefaultPreset()
 	}
 	if err := req.Validate(); err != nil {

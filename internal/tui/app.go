@@ -418,6 +418,29 @@ func (m *Model) pruneTransientHighlights(now time.Time) {
 	}
 }
 
+func (m Model) projectPendingEmbeddedApproval(projectPath string) (*codexapp.ApprovalRequest, codexapp.Provider, bool) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return nil, "", false
+	}
+	session, ok := m.codexSession(projectPath)
+	if !ok {
+		return nil, "", false
+	}
+	snapshot := session.Snapshot()
+	if snapshot.Closed || snapshot.PendingApproval == nil {
+		return nil, "", false
+	}
+	return snapshot.PendingApproval, embeddedProvider(snapshot), true
+}
+
+func (m Model) projectApprovalPulseActive(projectPath string) bool {
+	if _, _, ok := m.projectPendingEmbeddedApproval(projectPath); !ok {
+		return false
+	}
+	return m.spinnerFrame%2 == 0
+}
+
 func (m *Model) refreshUsagePulse() {
 	usage := m.currentUsage()
 	if !usage.Enabled {
@@ -1888,7 +1911,11 @@ func (m Model) renderProjectList(width, height int) string {
 		p := m.projects[i]
 		selectedRow := i == m.selected
 		cellStyle := func(style lipgloss.Style) lipgloss.Style {
-			return projectListCellStyle(style, selectedRow)
+			style = projectListCellStyle(style, selectedRow)
+			if m.projectApprovalPulseActive(p.Path) {
+				style = approvalPulseStyle(style)
+			}
+			return style
 		}
 		last := formatListActivityTime(now, p.LastActivity)
 		attention := projectAttentionLabelForScore(p, m.projectAttentionScore(p))
@@ -2044,6 +2071,10 @@ func projectListCellStyle(style lipgloss.Style, selected bool) lipgloss.Style {
 		return style
 	}
 	return style.Inherit(projectListSelectedRowStyle)
+}
+
+func approvalPulseStyle(style lipgloss.Style) lipgloss.Style {
+	return style.Foreground(lipgloss.Color("255")).Background(lipgloss.Color("160")).Bold(true)
 }
 
 var spinnerFrames = []string{"|", "/", "-", `\`}
@@ -2368,9 +2399,7 @@ func (m Model) launchEmbeddedForSelection(provider codexapp.Provider, forceNew b
 		ResumeID:    m.selectedProjectSessionID(p, provider),
 		ForceNew:    forceNew,
 		Prompt:      prompt,
-	}
-	if provider.Normalized() == codexapp.ProviderCodex {
-		req.Preset = m.currentCodexLaunchPreset()
+		Preset:      m.currentCodexLaunchPreset(),
 	}
 	if err := req.Validate(); err != nil {
 		m.status = err.Error()

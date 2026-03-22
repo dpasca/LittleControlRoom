@@ -386,6 +386,72 @@ func TestAssessmentFlashHighlightsListCells(t *testing.T) {
 	}
 }
 
+func TestApprovalPulseHighlightsProjectListRow(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderOpenCode,
+			Started:  true,
+			Status:   "Waiting for approval",
+			PendingApproval: &codexapp.ApprovalRequest{
+				Kind:    codexapp.ApprovalCommandExecution,
+				Command: "git commit -m test",
+			},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderOpenCode,
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	project := model.ProjectSummary{
+		Path:                             "/tmp/demo",
+		Name:                             "demo",
+		Status:                           model.StatusIdle,
+		PresentOnDisk:                    true,
+		LatestSessionClassification:      model.ClassificationCompleted,
+		LatestSessionClassificationType:  model.SessionCategoryWaitingForUser,
+		LatestSessionSummary:             "Approval needed",
+		LatestSessionFormat:              "opencode_db",
+		LatestSessionDetectedProjectPath: "/tmp/demo",
+	}
+
+	plain := Model{
+		nowFn:        func() time.Time { return time.Date(2026, 3, 17, 12, 0, 0, 0, time.UTC) },
+		projects:     []model.ProjectSummary{project},
+		codexManager: manager,
+		width:        120,
+		height:       10,
+		spinnerFrame: 1,
+	}
+	flashing := plain
+	flashing.spinnerFrame = 0
+
+	plainRendered := plain.renderProjectList(120, 6)
+	flashRendered := flashing.renderProjectList(120, 6)
+	if ansi.Strip(plainRendered) != ansi.Strip(flashRendered) {
+		t.Fatalf("approval pulse should keep the same visible text: %q vs %q", ansi.Strip(plainRendered), ansi.Strip(flashRendered))
+	}
+	if plainRendered == flashRendered {
+		t.Fatalf("approval pulse should change the ANSI styling")
+	}
+}
+
 func TestProjectDisplayStatusClearsMovedWhenLatestSessionIsInNewPath(t *testing.T) {
 	now := time.Now().UTC()
 	project := model.ProjectSummary{
@@ -5107,8 +5173,8 @@ func TestOpenCodexSessionChoiceLaunchesOpenCodeResume(t *testing.T) {
 	if requests[0].ResumeID != "ses_open" {
 		t.Fatalf("resume id = %q, want %q", requests[0].ResumeID, "ses_open")
 	}
-	if requests[0].Preset != "" {
-		t.Fatalf("preset = %q, want empty for OpenCode", requests[0].Preset)
+	if requests[0].Preset != codexcli.PresetYolo {
+		t.Fatalf("preset = %q, want %q for OpenCode", requests[0].Preset, codexcli.PresetYolo)
 	}
 }
 
@@ -5326,6 +5392,51 @@ func TestVisibleCodexViewShowsBannerAndYoloWarning(t *testing.T) {
 		if ansi.StringWidth(line) > m.width {
 			t.Fatalf("embedded Codex view line width = %d, want <= %d: %q", ansi.StringWidth(line), m.width, line)
 		}
+	}
+}
+
+func TestVisibleOpenCodeViewShowsBannerAndYoloWarning(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider:         codexapp.ProviderOpenCode,
+			Started:          true,
+			Preset:           codexcli.PresetYolo,
+			Status:           "OpenCode session ready",
+			Model:            "openai/gpt-5.4",
+			ReasoningEffort:  "high",
+			Transcript:       "OpenCode: hello",
+			LastSystemNotice: "Started a new embedded OpenCode session ses_demo.",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderOpenCode,
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+	m.syncCodexViewport(true)
+
+	rendered := m.View()
+	if !strings.Contains(rendered, "OpenCode | demo") {
+		t.Fatalf("embedded OpenCode view should use a compact OpenCode banner: %q", rendered)
+	}
+	if !strings.Contains(rendered, "YOLO MODE") {
+		t.Fatalf("embedded OpenCode view should show YOLO warning: %q", rendered)
 	}
 }
 

@@ -1594,7 +1594,7 @@ func (m Model) renderCodexBanner(snapshot codexapp.Snapshot, width int) string {
 	)
 	overlay := ""
 	contentWidth := width
-	if provider == codexapp.ProviderCodex && snapshot.Preset == codexcli.PresetYolo && !snapshot.Closed {
+	if snapshot.Preset == codexcli.PresetYolo && !snapshot.Closed {
 		overlay = "  " + detailDangerStyle.Render("YOLO MODE")
 		if overlayWidth := lipgloss.Width(overlay); overlayWidth >= width {
 			return ansi.Cut(overlay, max(0, overlayWidth-width), overlayWidth)

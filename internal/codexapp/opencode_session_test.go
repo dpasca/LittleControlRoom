@@ -5,8 +5,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+
+	"lcroom/internal/codexcli"
 )
 
 func TestNewOpenCodeHTTPClientHasNoGlobalTimeout(t *testing.T) {
@@ -98,6 +101,105 @@ func TestOpenCodePostJSONMarshalsPayloadAsJSON(t *testing.T) {
 	}
 	if gotMap["message"] != "approved" {
 		t.Fatalf("message = %#v, want approved", gotMap["message"])
+	}
+}
+
+func TestOpenCodePermissionOverrideForPreset(t *testing.T) {
+	tests := []struct {
+		name   string
+		preset codexcli.Preset
+		want   openCodePermissionOverride
+	}{
+		{
+			name:   "yolo",
+			preset: codexcli.PresetYolo,
+			want: openCodePermissionOverride{
+				Edit:              "allow",
+				Bash:              "allow",
+				WebFetch:          "allow",
+				DoomLoop:          "allow",
+				ExternalDirectory: "allow",
+			},
+		},
+		{
+			name:   "full-auto",
+			preset: codexcli.PresetFullAuto,
+			want: openCodePermissionOverride{
+				Edit:              "allow",
+				Bash:              "allow",
+				WebFetch:          "allow",
+				DoomLoop:          "ask",
+				ExternalDirectory: "ask",
+			},
+		},
+		{
+			name:   "safe",
+			preset: codexcli.PresetSafe,
+			want: openCodePermissionOverride{
+				Edit:              "ask",
+				Bash:              "ask",
+				WebFetch:          "ask",
+				DoomLoop:          "ask",
+				ExternalDirectory: "ask",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := openCodePermissionOverrideForPreset(tt.preset); got != tt.want {
+				t.Fatalf("openCodePermissionOverrideForPreset(%q) = %#v, want %#v", tt.preset, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildOpenCodeServerCommandInjectsPresetConfig(t *testing.T) {
+	cmd, err := buildOpenCodeServerCommand("/tmp/demo", codexcli.PresetSafe)
+	if err != nil {
+		t.Fatalf("buildOpenCodeServerCommand() error = %v", err)
+	}
+	if cmd.Dir != "/tmp/demo" {
+		t.Fatalf("cmd.Dir = %q, want /tmp/demo", cmd.Dir)
+	}
+	if got := strings.Join(cmd.Args, " "); !strings.Contains(got, "opencode serve") {
+		t.Fatalf("cmd.Args = %q, want opencode serve", got)
+	}
+
+	var configContent string
+	for _, entry := range cmd.Env {
+		if strings.HasPrefix(entry, "OPENCODE_CONFIG_CONTENT=") {
+			configContent = strings.TrimPrefix(entry, "OPENCODE_CONFIG_CONTENT=")
+			break
+		}
+	}
+	if configContent == "" {
+		t.Fatalf("cmd.Env missing OPENCODE_CONFIG_CONTENT: %#v", cmd.Env)
+	}
+
+	var cfg openCodeConfigOverride
+	if err := json.Unmarshal([]byte(configContent), &cfg); err != nil {
+		t.Fatalf("unmarshal injected config: %v", err)
+	}
+	if got := cfg.Permission; got != (openCodePermissionOverride{
+		Edit:              "ask",
+		Bash:              "ask",
+		WebFetch:          "ask",
+		DoomLoop:          "ask",
+		ExternalDirectory: "ask",
+	}) {
+		t.Fatalf("cfg.Permission = %#v, want safe preset ask-everything override", got)
+	}
+
+	foundPath := false
+	for _, entry := range cmd.Env {
+		if strings.HasPrefix(entry, "PATH=") {
+			foundPath = true
+			break
+		}
+	}
+	if !foundPath && os.Getenv("PATH") != "" {
+		t.Fatalf("cmd.Env should preserve PATH from the parent environment")
 	}
 }
 
