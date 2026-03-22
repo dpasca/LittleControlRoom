@@ -2,6 +2,7 @@ package codexapp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -1405,15 +1406,15 @@ func (s *openCodeSession) postJSON(parent context.Context, path string, payload 
 	ctx, cancel := context.WithTimeout(parent, openCodeRPCTimeout)
 	defer cancel()
 
-	var body io.Reader
+	raw := []byte("{}")
 	if payload != nil {
-		raw, err := json.Marshal(payload)
+		var err error
+		raw, err = json.Marshal(payload)
 		if err != nil {
 			return err
 		}
-		body = strings.NewReader(string(raw))
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+path, body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+path, bytes.NewReader(raw))
 	if err != nil {
 		return err
 	}

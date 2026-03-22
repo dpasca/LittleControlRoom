@@ -1,6 +1,8 @@
 package codexapp
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +16,88 @@ func TestNewOpenCodeHTTPClientHasNoGlobalTimeout(t *testing.T) {
 	}
 	if client.Timeout != 0 {
 		t.Fatalf("client timeout = %s, want 0 so the SSE stream can stay open", client.Timeout)
+	}
+}
+
+func TestOpenCodePostJSONNilPayloadSendsEmptyJSONObject(t *testing.T) {
+	var gotMethod string
+	var gotContentType string
+	var gotBody string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotContentType = r.Header.Get("content-type")
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		gotBody = string(body)
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"ses_created"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	session := &openCodeSession{
+		baseURL: server.URL,
+		http:    server.Client(),
+	}
+
+	var out struct {
+		ID string `json:"id"`
+	}
+	if err := session.postJSON(t.Context(), "/session", nil, &out); err != nil {
+		t.Fatalf("postJSON() error = %v", err)
+	}
+
+	if gotMethod != http.MethodPost {
+		t.Fatalf("method = %q, want %q", gotMethod, http.MethodPost)
+	}
+	if gotContentType != "application/json" {
+		t.Fatalf("content-type = %q, want application/json", gotContentType)
+	}
+	if gotBody != "{}" {
+		t.Fatalf("body = %q, want {}", gotBody)
+	}
+	if out.ID != "ses_created" {
+		t.Fatalf("response id = %q, want ses_created", out.ID)
+	}
+}
+
+func TestOpenCodePostJSONMarshalsPayloadAsJSON(t *testing.T) {
+	var got any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Fatalf("unmarshal request body: %v", err)
+		}
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(server.Close)
+
+	session := &openCodeSession{
+		baseURL: server.URL,
+		http:    server.Client(),
+	}
+
+	payload := openCodePermissionReply{Reply: "always", Message: "approved"}
+	if err := session.postJSON(t.Context(), "/permission/reply", payload, nil); err != nil {
+		t.Fatalf("postJSON() error = %v", err)
+	}
+
+	gotMap, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("decoded payload = %#v, want object", got)
+	}
+	if gotMap["reply"] != "always" {
+		t.Fatalf("reply = %#v, want always", gotMap["reply"])
+	}
+	if gotMap["message"] != "approved" {
+		t.Fatalf("message = %#v, want approved", gotMap["message"])
 	}
 }
 

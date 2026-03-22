@@ -1,6 +1,28 @@
 # Little Control Room Status
 
-Last updated: 2026-03-22 10:59 JST (JST)
+Last updated: 2026-03-22 11:05 JST (JST)
+
+## Latest Update (2026-03-22 11:05 JST)
+
+- Investigated the reported `/opencode` provider-switch failure on projects whose last embedded session was Codex, and traced it to fresh OpenCode session creation rather than cross-provider state reuse.
+- Live `opencode serve` probing confirmed the current OpenCode `1.2.24` HTTP surface now rejects an empty-body `POST /session` with `Content-Type: application/json`, returning `400 Malformed JSON in request body`, while the same request succeeds with `{}`.
+- Fixed the embedded OpenCode HTTP helper so bodyless JSON POSTs now send `{}` instead of an empty body, which covers fresh `/session` creation and any other OpenCode POSTs that do not carry payload fields.
+- Added focused `internal/codexapp` regressions covering both the new nil-payload `{}` behavior and the unchanged payload-marshaling path for normal JSON POST requests.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- Live `opencode serve --hostname 127.0.0.1 --port 0 --print-logs` probing in `/Users/davide/dev/repos/LittleControlRoom` reproduced the failure: `POST /session` with an empty body returned `400 Malformed JSON in request body`, while `POST /session` with `--data '{}'` returned `200 OK` and created session `ses_2ecb7d292ffeGzqocSmmmJUfn2`.
+- `gofmt -w internal/codexapp/opencode_session.go internal/codexapp/opencode_session_test.go` passed.
+- `go test ./internal/codexapp -run 'TestOpenCode(PostJSONNilPayloadSendsEmptyJSONObject|PostJSONMarshalsPayloadAsJSON)' -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-22T11:05:09+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-22T11:05:18+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- Live-check `/opencode` on the reported `oykgames.com` project now that fresh embedded OpenCode session creation sends valid JSON, and confirm the pane switches cleanly from the previous Codex session instead of surfacing the `POST /session` error.
+- If OpenCode keeps tightening its HTTP contract, consider a small transport-level regression around other nil-payload POST endpoints such as `/session/<id>/abort` so future server-side JSON strictness changes stay caught quickly.
 
 ## Latest Update (2026-03-22 10:59 JST)
 
