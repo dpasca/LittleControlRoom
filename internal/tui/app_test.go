@@ -2875,29 +2875,32 @@ func TestVisibleCodexSlashModelOpensPickerAndStagesSelection(t *testing.T) {
 	if !got.codexModelPickerVisible() || got.codexModelPicker.Loading {
 		t.Fatalf("model picker should be visible with loaded models")
 	}
-	if got.codexModelPicker.Focus != codexModelPickerFocusModels {
-		t.Fatalf("initial picker focus = %q, want models", got.codexModelPicker.Focus)
+	if got.codexModelPicker.Focus != codexModelPickerFocusFilter {
+		t.Fatalf("initial picker focus = %q, want filter", got.codexModelPicker.Focus)
 	}
 
-	updated, _ = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyDown})
-	got = updated.(Model)
-	updated, _ = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyTab})
-	got = updated.(Model)
-	if got.codexModelPicker.Focus != codexModelPickerFocusEfforts {
-		t.Fatalf("picker focus after first tab = %q, want efforts", got.codexModelPicker.Focus)
-	}
 	updated, _ = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyTab})
 	got = updated.(Model)
 	if got.codexModelPicker.Focus != codexModelPickerFocusModels {
-		t.Fatalf("picker focus after second tab = %q, want models", got.codexModelPicker.Focus)
+		t.Fatalf("picker focus after first tab = %q, want models", got.codexModelPicker.Focus)
+	}
+	updated, _ = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	if got.codexModelPicker.ModelIndex != 1 {
+		t.Fatalf("model index after down = %d, want 1", got.codexModelPicker.ModelIndex)
 	}
 	updated, _ = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyTab})
 	got = updated.(Model)
 	if got.codexModelPicker.Focus != codexModelPickerFocusEfforts {
-		t.Fatalf("picker focus after third tab = %q, want efforts", got.codexModelPicker.Focus)
+		t.Fatalf("picker focus after second tab = %q, want efforts", got.codexModelPicker.Focus)
 	}
-	updated, cmd = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyDown})
 	got = updated.(Model)
+	updated, _ = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	if got.codexModelPicker.EffortIndex != 2 {
+		t.Fatalf("effort index after two downs = %d, want 2 (high)", got.codexModelPicker.EffortIndex)
+	}
 	updated, cmd = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
 	if cmd == nil {

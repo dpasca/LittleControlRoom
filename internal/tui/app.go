@@ -127,6 +127,8 @@ type Model struct {
 	codexPickerProvider  codexapp.Provider
 	codexModelPicker     *codexModelPickerState
 	embeddedModelPrefs   map[codexapp.Provider]embeddedModelPreference
+	recentCodexModels    []string
+	recentOpenCodeModels []string
 	codexDenseExpanded   bool
 	codexSlashSelected   int
 	codexToolAnswers     map[string]codexToolAnswerState
@@ -381,6 +383,8 @@ func New(ctx context.Context, svc *service.Service) Model {
 		codexManager:           codexapp.NewManager(),
 		runtimeManager:         projectrun.NewManager(),
 		embeddedModelPrefs:     embeddedModelPreferencesFromSettings(initialSettings),
+		recentCodexModels:      append([]string(nil), initialSettings.RecentCodexModels...),
+		recentOpenCodeModels:   append([]string(nil), initialSettings.RecentOpenCodeModels...),
 		nowFn:                  time.Now,
 		homeDirFn:              os.UserHomeDir,
 	}
@@ -998,6 +1002,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.provider.Normalized() != "" && (strings.TrimSpace(msg.model) != "" || strings.TrimSpace(msg.reasoning) != "") {
 			m.rememberEmbeddedModelPreference(msg.provider, msg.model, msg.reasoning)
+			m.recordRecentModel(msg.provider, msg.model)
 			return m, m.saveEmbeddedModelPreferencesCmd()
 		}
 		if msg.closed {

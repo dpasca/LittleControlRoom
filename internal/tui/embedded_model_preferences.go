@@ -90,3 +90,33 @@ func (m Model) applyEmbeddedModelPreference(req codexapp.LaunchRequest) codexapp
 	}
 	return req
 }
+
+func (m *Model) recordRecentModel(provider codexapp.Provider, model string) {
+	provider = provider.Normalized()
+	model = strings.TrimSpace(model)
+	if provider == "" || model == "" {
+		return
+	}
+	maxRecent := 5
+	var recent *[]string
+	switch provider {
+	case codexapp.ProviderCodex:
+		recent = &m.recentCodexModels
+	case codexapp.ProviderOpenCode:
+		recent = &m.recentOpenCodeModels
+	default:
+		return
+	}
+	filtered := make([]string, 0, len(*recent)+1)
+	for _, existing := range *recent {
+		if strings.EqualFold(strings.TrimSpace(existing), model) {
+			continue
+		}
+		filtered = append(filtered, existing)
+	}
+	filtered = append([]string{model}, filtered...)
+	if len(filtered) > maxRecent {
+		filtered = filtered[:maxRecent]
+	}
+	*recent = filtered
+}

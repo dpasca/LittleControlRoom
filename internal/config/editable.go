@@ -22,6 +22,8 @@ type EditableSettings struct {
 	EmbeddedCodexReasoning    string
 	EmbeddedOpenCodeModel     string
 	EmbeddedOpenCodeReasoning string
+	RecentCodexModels         []string
+	RecentOpenCodeModels      []string
 	CodexLaunchPreset         codexcli.Preset
 	ScanInterval              time.Duration
 	ActiveThreshold           time.Duration
@@ -40,6 +42,8 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		EmbeddedCodexReasoning:    cfg.EmbeddedCodexReasoning,
 		EmbeddedOpenCodeModel:     cfg.EmbeddedOpenCodeModel,
 		EmbeddedOpenCodeReasoning: cfg.EmbeddedOpenCodeReasoning,
+		RecentCodexModels:         append([]string(nil), cfg.RecentCodexModels...),
+		RecentOpenCodeModels:      append([]string(nil), cfg.RecentOpenCodeModels...),
 		CodexLaunchPreset:         cfg.CodexLaunchPreset,
 		ScanInterval:              cfg.ScanInterval,
 		ActiveThreshold:           cfg.ActiveThreshold,
@@ -151,6 +155,8 @@ func validateEditableSettings(settings EditableSettings) error {
 	cfg.EmbeddedCodexReasoning = strings.TrimSpace(settings.EmbeddedCodexReasoning)
 	cfg.EmbeddedOpenCodeModel = strings.TrimSpace(settings.EmbeddedOpenCodeModel)
 	cfg.EmbeddedOpenCodeReasoning = strings.TrimSpace(settings.EmbeddedOpenCodeReasoning)
+	cfg.RecentCodexModels = append([]string(nil), settings.RecentCodexModels...)
+	cfg.RecentOpenCodeModels = append([]string(nil), settings.RecentOpenCodeModels...)
 	cfg.CodexLaunchPreset = settings.CodexLaunchPreset
 	cfg.ScanInterval = settings.ScanInterval
 	cfg.ActiveThreshold = settings.ActiveThreshold
@@ -217,6 +223,22 @@ func renderEditableSettings(settings EditableSettings) string {
 		strings.TrimSpace(settings.EmbeddedCodexReasoning) != "" ||
 		strings.TrimSpace(settings.EmbeddedOpenCodeModel) != "" ||
 		strings.TrimSpace(settings.EmbeddedOpenCodeReasoning) != "" {
+		lines = append(lines, "")
+	}
+	if len(settings.RecentCodexModels) > 0 {
+		lines = append(lines, "recent_codex_models = [")
+		for _, model := range settings.RecentCodexModels {
+			lines = append(lines, fmt.Sprintf("  %s,", strconv.Quote(model)))
+		}
+		lines = append(lines, "]")
+		lines = append(lines, "")
+	}
+	if len(settings.RecentOpenCodeModels) > 0 {
+		lines = append(lines, "recent_opencode_models = [")
+		for _, model := range settings.RecentOpenCodeModels {
+			lines = append(lines, fmt.Sprintf("  %s,", strconv.Quote(model)))
+		}
+		lines = append(lines, "]")
 		lines = append(lines, "")
 	}
 	lines = append(lines, fmt.Sprintf("codex_launch_preset = %s", strconv.Quote(string(settings.CodexLaunchPreset))))

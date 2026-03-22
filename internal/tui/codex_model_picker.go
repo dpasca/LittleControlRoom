@@ -13,16 +13,22 @@ import (
 type codexModelPickerFocus string
 
 const (
+	codexModelPickerFocusFilter  codexModelPickerFocus = "filter"
+	codexModelPickerFocusRecent  codexModelPickerFocus = "recent"
 	codexModelPickerFocusModels  codexModelPickerFocus = "models"
 	codexModelPickerFocusEfforts codexModelPickerFocus = "efforts"
 )
 
 type codexModelPickerState struct {
-	Models      []codexapp.ModelOption
-	ModelIndex  int
-	EffortIndex int
-	Focus       codexModelPickerFocus
-	Loading     bool
+	Models         []codexapp.ModelOption
+	FilteredModels []codexapp.ModelOption
+	RecentModels   []codexapp.ModelOption
+	FilterText     string
+	ModelIndex     int
+	RecentIndex    int
+	EffortIndex    int
+	Focus          codexModelPickerFocus
+	Loading        bool
 }
 
 func (m Model) codexModelPickerVisible() bool {
@@ -55,7 +61,7 @@ func (m Model) currentEmbeddedSessionLabel() string {
 func (m *Model) openCodexModelPickerLoading() {
 	m.codexModelPicker = &codexModelPickerState{
 		Loading: true,
-		Focus:   codexModelPickerFocusModels,
+		Focus:   codexModelPickerFocusFilter,
 	}
 }
 
@@ -67,9 +73,16 @@ func (m *Model) openLoadedCodexModelPicker(models []codexapp.ModelOption) {
 		return
 	}
 	state := &codexModelPickerState{
-		Models: append([]codexapp.ModelOption(nil), models...),
-		Focus:  codexModelPickerFocusModels,
+		Models:         append([]codexapp.ModelOption(nil), models...),
+		FilteredModels: append([]codexapp.ModelOption(nil), models...),
+		Focus:          codexModelPickerFocusFilter,
 	}
+
+	recentModelIDs := m.recentCodexModels
+	if label == "OpenCode" {
+		recentModelIDs = m.recentOpenCodeModels
+	}
+	state.RecentModels = codexBuildRecentModels(models, recentModelIDs, 5)
 
 	desiredModel := ""
 	desiredReasoning := ""
@@ -78,15 +91,17 @@ func (m *Model) openLoadedCodexModelPicker(models []codexapp.ModelOption) {
 		desiredReasoning = firstNonEmptyTrimmed(snapshot.PendingReasoning, snapshot.ReasoningEffort)
 	}
 
-	state.ModelIndex = codexModelOptionIndex(state.Models, desiredModel)
+	state.ModelIndex = codexModelOptionIndex(state.FilteredModels, desiredModel)
 	if state.ModelIndex < 0 {
-		state.ModelIndex = codexDefaultModelOptionIndex(state.Models)
+		state.ModelIndex = codexDefaultModelOptionIndex(state.FilteredModels)
 	}
 
-	efforts := codexReasoningOptionsFor(state.Models[state.ModelIndex])
-	state.EffortIndex = codexReasoningOptionIndex(efforts, desiredReasoning)
-	if state.EffortIndex < 0 {
-		state.EffortIndex = codexDefaultReasoningOptionIndex(state.Models[state.ModelIndex], efforts)
+	if len(state.FilteredModels) > 0 && state.ModelIndex >= 0 && state.ModelIndex < len(state.FilteredModels) {
+		efforts := codexReasoningOptionsFor(state.FilteredModels[state.ModelIndex])
+		state.EffortIndex = codexReasoningOptionIndex(efforts, desiredReasoning)
+		if state.EffortIndex < 0 {
+			state.EffortIndex = codexDefaultReasoningOptionIndex(state.FilteredModels[state.ModelIndex], efforts)
+		}
 	}
 
 	m.codexModelPicker = state
@@ -105,7 +120,7 @@ func (m *Model) syncCodexModelPickerSelection() {
 	if state == nil {
 		return
 	}
-	if len(state.Models) == 0 {
+	if len(state.FilteredModels) == 0 {
 		state.ModelIndex = 0
 		state.EffortIndex = 0
 		return
@@ -113,14 +128,19 @@ func (m *Model) syncCodexModelPickerSelection() {
 	if state.ModelIndex < 0 {
 		state.ModelIndex = 0
 	}
-	if state.ModelIndex >= len(state.Models) {
-		state.ModelIndex = len(state.Models) - 1
+	if state.ModelIndex >= len(state.FilteredModels) {
+		state.ModelIndex = len(state.FilteredModels) - 1
+	}
+	if state.RecentIndex < 0 {
+		state.RecentIndex = 0
+	}
+	if state.RecentIndex >= len(state.RecentModels) {
+		state.RecentIndex = len(state.RecentModels) - 1
 	}
 
-	efforts := codexReasoningOptionsFor(state.Models[state.ModelIndex])
+	efforts := m.currentCodexReasoningOptions()
 	if len(efforts) == 0 {
 		state.EffortIndex = 0
-		state.Focus = codexModelPickerFocusModels
 		return
 	}
 	if state.EffortIndex < 0 {
@@ -133,17 +153,30 @@ func (m *Model) syncCodexModelPickerSelection() {
 
 func (m Model) currentCodexModelOption() (codexapp.ModelOption, bool) {
 	state := m.codexModelPicker
-	if state == nil || len(state.Models) == 0 {
+	if state == nil {
+		return codexapp.ModelOption{}, false
+	}
+	if state.Focus == codexModelPickerFocusRecent && len(state.RecentModels) > 0 {
+		index := state.RecentIndex
+		if index < 0 {
+			index = 0
+		}
+		if index >= len(state.RecentModels) {
+			index = len(state.RecentModels) - 1
+		}
+		return state.RecentModels[index], true
+	}
+	if len(state.FilteredModels) == 0 {
 		return codexapp.ModelOption{}, false
 	}
 	index := state.ModelIndex
 	if index < 0 {
 		index = 0
 	}
-	if index >= len(state.Models) {
-		index = len(state.Models) - 1
+	if index >= len(state.FilteredModels) {
+		index = len(state.FilteredModels) - 1
 	}
-	return state.Models[index], true
+	return state.FilteredModels[index], true
 }
 
 func (m Model) currentCodexReasoningOptions() []codexapp.ReasoningEffortOption {
@@ -189,37 +222,31 @@ func (m Model) updateCodexModelPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if state.Focus == codexModelPickerFocusFilter {
+		return m.updateCodexModelPickerFilterMode(msg)
+	}
+
 	switch msg.String() {
 	case "esc":
 		m.closeCodexModelPicker("Embedded model picker canceled")
 		return m, nil
 	case "tab":
-		if state.Focus == codexModelPickerFocusEfforts || len(m.currentCodexReasoningOptions()) == 0 {
-			state.Focus = codexModelPickerFocusModels
-			m.status = "Choosing embedded model"
-			return m, nil
-		}
-		state.Focus = codexModelPickerFocusEfforts
-		m.status = "Choosing embedded reasoning effort"
+		m.codexModelPickerFocusNext()
 		return m, nil
 	case "shift+tab":
-		if state.Focus == codexModelPickerFocusModels && len(m.currentCodexReasoningOptions()) > 0 {
-			state.Focus = codexModelPickerFocusEfforts
-			m.status = "Choosing embedded reasoning effort"
-			return m, nil
-		}
-		state.Focus = codexModelPickerFocusModels
-		m.status = "Choosing embedded model"
+		m.codexModelPickerFocusPrev()
 		return m, nil
 	case "right", "l":
-		if len(m.currentCodexReasoningOptions()) > 0 {
+		if state.Focus == codexModelPickerFocusModels && len(m.currentCodexReasoningOptions()) > 0 {
 			state.Focus = codexModelPickerFocusEfforts
 			m.status = "Choosing embedded reasoning effort"
 		}
 		return m, nil
 	case "left", "h":
-		state.Focus = codexModelPickerFocusModels
-		m.status = "Choosing embedded model"
+		if state.Focus == codexModelPickerFocusEfforts {
+			state.Focus = codexModelPickerFocusModels
+			m.status = "Choosing embedded model"
+		}
 		return m, nil
 	case "up", "k":
 		m.moveCodexModelPickerSelection(-1)
@@ -236,9 +263,10 @@ func (m Model) updateCodexModelPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "home":
 		if state.Focus == codexModelPickerFocusEfforts {
 			state.EffortIndex = 0
+		} else if state.Focus == codexModelPickerFocusRecent {
+			state.RecentIndex = 0
 		} else {
 			state.ModelIndex = 0
-			state.EffortIndex = codexDefaultReasoningOptionIndex(state.Models[state.ModelIndex], m.currentCodexReasoningOptions())
 		}
 		m.syncCodexModelPickerSelection()
 		return m, nil
@@ -246,22 +274,156 @@ func (m Model) updateCodexModelPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if state.Focus == codexModelPickerFocusEfforts {
 			options := m.currentCodexReasoningOptions()
 			state.EffortIndex = max(0, len(options)-1)
+		} else if state.Focus == codexModelPickerFocusRecent {
+			state.RecentIndex = max(0, len(state.RecentModels)-1)
 		} else {
-			state.ModelIndex = len(state.Models) - 1
-			state.EffortIndex = codexDefaultReasoningOptionIndex(state.Models[state.ModelIndex], m.currentCodexReasoningOptions())
+			state.ModelIndex = max(0, len(state.FilteredModels)-1)
 		}
 		m.syncCodexModelPickerSelection()
 		return m, nil
 	case "enter":
+		if state.Focus == codexModelPickerFocusRecent && len(state.RecentModels) > 0 {
+			return m.applyCodexModelPickerSelection()
+		}
 		if state.Focus == codexModelPickerFocusModels && len(m.currentCodexReasoningOptions()) > 0 {
 			state.Focus = codexModelPickerFocusEfforts
 			m.status = "Choose reasoning effort, then press Enter to apply"
 			return m, nil
 		}
 		return m.applyCodexModelPickerSelection()
+	case "backspace":
+		state.Focus = codexModelPickerFocusFilter
+		m.status = "Filter models"
+		return m, nil
 	}
 
 	return m, nil
+}
+
+func (m Model) updateCodexModelPickerFilterMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	state := m.codexModelPicker
+	if state == nil {
+		return m, nil
+	}
+
+	switch msg.String() {
+	case "esc":
+		m.closeCodexModelPicker("Embedded model picker canceled")
+		return m, nil
+	case "enter":
+		if len(state.RecentModels) > 0 {
+			state.Focus = codexModelPickerFocusRecent
+			m.status = "Choosing from recent models"
+		} else if len(state.FilteredModels) > 0 {
+			state.Focus = codexModelPickerFocusModels
+			m.status = "Choosing embedded model"
+		}
+		return m, nil
+	case "tab":
+		if len(state.RecentModels) > 0 {
+			state.Focus = codexModelPickerFocusRecent
+			m.status = "Choosing from recent models"
+		} else if len(state.FilteredModels) > 0 {
+			state.Focus = codexModelPickerFocusModels
+			m.status = "Choosing embedded model"
+		}
+		return m, nil
+	case "backspace":
+		if len(state.FilterText) > 0 {
+			state.FilterText = state.FilterText[:len(state.FilterText)-1]
+			m.applyCodexModelPickerFilter()
+		}
+		return m, nil
+	default:
+		if len(msg.String()) == 1 {
+			state.FilterText += msg.String()
+			m.applyCodexModelPickerFilter()
+			return m, nil
+		}
+	}
+
+	return m, nil
+}
+
+func (m *Model) applyCodexModelPickerFilter() {
+	state := m.codexModelPicker
+	if state == nil {
+		return
+	}
+	state.FilteredModels = codexFilterModels(state.Models, state.FilterText)
+	state.ModelIndex = 0
+	if len(state.FilteredModels) > 0 {
+		state.EffortIndex = codexDefaultReasoningOptionIndex(state.FilteredModels[0], codexReasoningOptionsFor(state.FilteredModels[0]))
+	} else {
+		state.EffortIndex = 0
+	}
+}
+
+func (m *Model) codexModelPickerFocusNext() {
+	state := m.codexModelPicker
+	if state == nil {
+		return
+	}
+	switch state.Focus {
+	case codexModelPickerFocusFilter:
+		if len(state.RecentModels) > 0 {
+			state.Focus = codexModelPickerFocusRecent
+			m.status = "Choosing from recent models"
+		} else if len(state.FilteredModels) > 0 {
+			state.Focus = codexModelPickerFocusModels
+			m.status = "Choosing embedded model"
+		}
+	case codexModelPickerFocusRecent:
+		if len(state.FilteredModels) > 0 {
+			state.Focus = codexModelPickerFocusModels
+			m.status = "Choosing embedded model"
+		} else if len(m.currentCodexReasoningOptions()) > 0 {
+			state.Focus = codexModelPickerFocusEfforts
+			m.status = "Choosing embedded reasoning effort"
+		}
+	case codexModelPickerFocusModels:
+		if len(m.currentCodexReasoningOptions()) > 0 {
+			state.Focus = codexModelPickerFocusEfforts
+			m.status = "Choosing embedded reasoning effort"
+		}
+	case codexModelPickerFocusEfforts:
+		state.Focus = codexModelPickerFocusFilter
+		m.status = "Filter models"
+	}
+}
+
+func (m *Model) codexModelPickerFocusPrev() {
+	state := m.codexModelPicker
+	if state == nil {
+		return
+	}
+	switch state.Focus {
+	case codexModelPickerFocusFilter:
+		if len(m.currentCodexReasoningOptions()) > 0 {
+			state.Focus = codexModelPickerFocusEfforts
+			m.status = "Choosing embedded reasoning effort"
+		} else if len(state.FilteredModels) > 0 {
+			state.Focus = codexModelPickerFocusModels
+			m.status = "Choosing embedded model"
+		} else if len(state.RecentModels) > 0 {
+			state.Focus = codexModelPickerFocusRecent
+			m.status = "Choosing from recent models"
+		}
+	case codexModelPickerFocusRecent:
+		state.Focus = codexModelPickerFocusFilter
+		m.status = "Filter models"
+	case codexModelPickerFocusModels:
+		if len(state.RecentModels) > 0 {
+			state.Focus = codexModelPickerFocusRecent
+			m.status = "Choosing from recent models"
+		} else {
+			state.Focus = codexModelPickerFocusFilter
+			m.status = "Filter models"
+		}
+	case codexModelPickerFocusEfforts:
+		state.Focus = codexModelPickerFocusModels
+		m.status = "Choosing embedded model"
+	}
 }
 
 func (m *Model) moveCodexModelPickerSelection(delta int) {
@@ -282,16 +444,28 @@ func (m *Model) moveCodexModelPickerSelection(delta int) {
 		if state.EffortIndex >= len(options) {
 			state.EffortIndex = len(options) - 1
 		}
+	case codexModelPickerFocusRecent:
+		if len(state.RecentModels) == 0 {
+			return
+		}
+		state.RecentIndex += delta
+		if state.RecentIndex < 0 {
+			state.RecentIndex = 0
+		}
+		if state.RecentIndex >= len(state.RecentModels) {
+			state.RecentIndex = len(state.RecentModels) - 1
+		}
 	default:
+		if len(state.FilteredModels) == 0 {
+			return
+		}
 		state.ModelIndex += delta
 		if state.ModelIndex < 0 {
 			state.ModelIndex = 0
 		}
-		if state.ModelIndex >= len(state.Models) {
-			state.ModelIndex = len(state.Models) - 1
+		if state.ModelIndex >= len(state.FilteredModels) {
+			state.ModelIndex = len(state.FilteredModels) - 1
 		}
-		options := m.currentCodexReasoningOptions()
-		state.EffortIndex = codexDefaultReasoningOptionIndex(state.Models[state.ModelIndex], options)
 	}
 	m.syncCodexModelPickerSelection()
 }
@@ -345,21 +519,26 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) renderCodexModelPickerOverlay(body string, bodyW, bodyH int) string {
-	panel := m.renderCodexModelPicker(bodyW)
+	panel := m.renderCodexModelPicker(bodyW, bodyH)
 	panelWidth := lipgloss.Width(panel)
 	panelHeight := lipgloss.Height(panel)
 	left := max(0, (bodyW-panelWidth)/2)
-	top := max(0, (bodyH-panelHeight)/5)
+	top := max(0, (bodyH-panelHeight)/4)
 	return overlayBlock(body, panel, bodyW, bodyH, left, top)
 }
 
-func (m Model) renderCodexModelPicker(bodyW int) string {
+func (m Model) renderCodexModelPicker(bodyW, bodyH int) string {
+	maxHeight := bodyH - 8
+	if maxHeight < 20 {
+		maxHeight = 20
+	}
 	panelWidth := min(bodyW, min(max(72, bodyW-10), 108))
 	panelInnerWidth := max(36, panelWidth-4)
-	return renderDialogPanel(panelWidth, panelInnerWidth, m.renderCodexModelPickerContent(panelInnerWidth))
+	content := m.renderCodexModelPickerContent(panelInnerWidth, maxHeight)
+	return renderDialogPanel(panelWidth, panelInnerWidth, content)
 }
 
-func (m Model) renderCodexModelPickerContent(width int) string {
+func (m Model) renderCodexModelPickerContent(width, maxHeight int) string {
 	state := m.codexModelPicker
 	label := m.currentEmbeddedSessionLabel()
 	lines := []string{
@@ -390,16 +569,48 @@ func (m Model) renderCodexModelPickerContent(width int) string {
 		}
 	}
 
+	filterLabel := "Filter: "
+	filterValue := state.FilterText
+	if state.Focus == codexModelPickerFocusFilter {
+		filterValue += "█"
+	}
+	filterLine := filterLabel + filterValue
+	if len(filterLine) > width {
+		filterLine = filterLine[:width]
+	}
+	lines = append(lines, commandPaletteRowStyle.Render(filterLine))
+	lines = append(lines, "")
+
+	if len(state.RecentModels) > 0 {
+		lines = append(lines, commandPaletteTitleStyle.Render("Recent"))
+		start, end := codexPickerWindowFor(state.RecentIndex, len(state.RecentModels), 5)
+		for i := start; i < end; i++ {
+			lines = append(lines, m.renderCodexModelPickerRow(state.RecentModels[i], i == state.RecentIndex && state.Focus == codexModelPickerFocusRecent, width))
+		}
+		lines = append(lines, "")
+	}
+
 	lines = append(lines, commandPaletteTitleStyle.Render("Models"))
-	start, end := codexPickerWindowFor(state.ModelIndex, len(state.Models), 6)
-	if start > 0 {
-		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d more", start)))
-	}
-	for i := start; i < end; i++ {
-		lines = append(lines, m.renderCodexModelPickerRow(state.Models[i], i == state.ModelIndex, width))
-	}
-	if end < len(state.Models) {
-		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d more", len(state.Models)-end)))
+	if len(state.FilteredModels) == 0 {
+		lines = append(lines, commandPaletteHintStyle.Render("No models match filter."))
+	} else {
+		modelLimit := maxHeight - len(lines) - 10
+		if modelLimit < 5 {
+			modelLimit = 5
+		}
+		if modelLimit > 12 {
+			modelLimit = 12
+		}
+		start, end := codexPickerWindowFor(state.ModelIndex, len(state.FilteredModels), modelLimit)
+		if start > 0 {
+			lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d more", start)))
+		}
+		for i := start; i < end; i++ {
+			lines = append(lines, m.renderCodexModelPickerRow(state.FilteredModels[i], i == state.ModelIndex && state.Focus == codexModelPickerFocusModels, width))
+		}
+		if end < len(state.FilteredModels) {
+			lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d more", len(state.FilteredModels)-end)))
+		}
 	}
 
 	selectedModel, _ := m.currentCodexModelOption()
@@ -552,4 +763,44 @@ func firstNonEmptyTrimmed(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func codexBuildRecentModels(models []codexapp.ModelOption, recentIDs []string, maxRecent int) []codexapp.ModelOption {
+	if len(recentIDs) == 0 || len(models) == 0 || maxRecent <= 0 {
+		return nil
+	}
+	modelMap := make(map[string]codexapp.ModelOption)
+	for _, model := range models {
+		modelMap[strings.ToLower(strings.TrimSpace(model.Model))] = model
+	}
+	var recent []codexapp.ModelOption
+	for _, id := range recentIDs {
+		id = strings.ToLower(strings.TrimSpace(id))
+		if id == "" {
+			continue
+		}
+		if model, ok := modelMap[id]; ok {
+			recent = append(recent, model)
+			if len(recent) >= maxRecent {
+				break
+			}
+		}
+	}
+	return recent
+}
+
+func codexFilterModels(models []codexapp.ModelOption, filter string) []codexapp.ModelOption {
+	filter = strings.ToLower(strings.TrimSpace(filter))
+	if filter == "" {
+		return models
+	}
+	var filtered []codexapp.ModelOption
+	for _, model := range models {
+		name := strings.ToLower(model.DisplayName)
+		id := strings.ToLower(model.Model)
+		if strings.Contains(name, filter) || strings.Contains(id, filter) {
+			filtered = append(filtered, model)
+		}
+	}
+	return filtered
 }

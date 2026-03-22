@@ -27,6 +27,8 @@ type AppConfig struct {
 	EmbeddedCodexReasoning    string
 	EmbeddedOpenCodeModel     string
 	EmbeddedOpenCodeReasoning string
+	RecentCodexModels         []string
+	RecentOpenCodeModels      []string
 	CodexHome                 string
 	OpenCodeHome              string
 	CodexLaunchPreset         codexcli.Preset
@@ -63,6 +65,8 @@ type fileConfig struct {
 	EmbeddedCodexReasoning    *string   `toml:"embedded_codex_reasoning_effort"`
 	EmbeddedOpenCodeModel     *string   `toml:"embedded_opencode_model"`
 	EmbeddedOpenCodeReasoning *string   `toml:"embedded_opencode_reasoning_effort"`
+	RecentCodexModels         *[]string `toml:"recent_codex_models"`
+	RecentOpenCodeModels      *[]string `toml:"recent_opencode_models"`
 	CodexLaunchPreset         string    `toml:"codex_launch_preset"`
 	ScanInterval              string    `toml:"interval"`
 	ActiveThreshold           string    `toml:"active-threshold"`
@@ -334,6 +338,12 @@ func applyConfigFile(cfg *AppConfig) error {
 	if fc.EmbeddedOpenCodeReasoning != nil {
 		cfg.EmbeddedOpenCodeReasoning = strings.TrimSpace(*fc.EmbeddedOpenCodeReasoning)
 	}
+	if fc.RecentCodexModels != nil {
+		cfg.RecentCodexModels = trimStrings(*fc.RecentCodexModels)
+	}
+	if fc.RecentOpenCodeModels != nil {
+		cfg.RecentOpenCodeModels = trimStrings(*fc.RecentOpenCodeModels)
+	}
 	if strings.TrimSpace(fc.CodexLaunchPreset) != "" {
 		preset, err := codexcli.ParsePreset(fc.CodexLaunchPreset)
 		if err != nil {
@@ -502,4 +512,14 @@ func moveFileIfMissing(src, dst string) error {
 		return fmt.Errorf("remove legacy file %s: %w", src, err)
 	}
 	return nil
+}
+
+func trimStrings(items []string) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }

@@ -182,6 +182,8 @@ func (m Model) saveSettingsCmd(settings config.EditableSettings) tea.Cmd {
 func (m Model) saveEmbeddedModelPreferencesCmd() tea.Cmd {
 	settings := m.currentSettingsBaseline()
 	applyEmbeddedModelPreferencesToSettings(&settings, m.embeddedModelPrefs)
+	settings.RecentCodexModels = append([]string(nil), m.recentCodexModels...)
+	settings.RecentOpenCodeModels = append([]string(nil), m.recentOpenCodeModels...)
 	path := m.currentConfigPath()
 	return func() tea.Msg {
 		err := config.SaveEditableSettings(path, settings)
