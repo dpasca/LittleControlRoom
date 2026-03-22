@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"lcroom/internal/codexcli"
 )
@@ -297,6 +298,8 @@ func TestOpenCodeSessionIdleAfterExternalBusyMarksSessionReady(t *testing.T) {
 	session := newTestOpenCodeSession(t, "")
 	session.busy = true
 	session.busyExternal = true
+	session.busySince = time.Date(2026, 3, 22, 12, 0, 0, 0, time.UTC)
+	session.lastBusyActivityAt = session.busySince
 	session.activeTurnID = "ses_test"
 	session.status = "OpenCode is active in another process"
 
@@ -317,6 +320,32 @@ func TestOpenCodeSessionIdleAfterExternalBusyMarksSessionReady(t *testing.T) {
 	}
 	if snapshot.LastSystemNotice != "OpenCode session ready" {
 		t.Fatalf("snapshot.LastSystemNotice = %q, want %q", snapshot.LastSystemNotice, "OpenCode session ready")
+	}
+	if !snapshot.BusySince.IsZero() {
+		t.Fatalf("snapshot.BusySince = %v, want zero after idle", snapshot.BusySince)
+	}
+}
+
+func TestOpenCodeSessionBusyStatusKeepsExistingBusySince(t *testing.T) {
+	session := newTestOpenCodeSession(t, "")
+	startedAt := time.Date(2026, 3, 22, 12, 0, 0, 0, time.UTC)
+	session.busy = true
+	session.busySince = startedAt
+	session.lastBusyActivityAt = startedAt
+	session.lastActivityAt = startedAt
+	session.activeTurnID = "ses_test"
+
+	session.handleEventData(`{"type":"session.status","properties":{"sessionID":"ses_test","status":{"type":"busy"}}}`)
+
+	snapshot := session.Snapshot()
+	if !snapshot.Busy {
+		t.Fatalf("snapshot.Busy = false, want true")
+	}
+	if !snapshot.BusySince.Equal(startedAt) {
+		t.Fatalf("snapshot.BusySince = %v, want %v", snapshot.BusySince, startedAt)
+	}
+	if !snapshot.LastBusyActivityAt.After(startedAt) {
+		t.Fatalf("snapshot.LastBusyActivityAt = %v, want after %v", snapshot.LastBusyActivityAt, startedAt)
 	}
 }
 
@@ -452,6 +481,44 @@ func TestOpenCodeSessionRefreshReconcilesStalePendingModelFromReplayedModel(t *t
 	}
 }
 
+func TestOpenCodeSessionRefreshReconcilesStalePendingReasoningWhenModelMatches(t *testing.T) {
+	session := newTestOpenCodeSession(t, `[
+		{
+			"info": {
+				"id": "msg_assistant_01",
+				"sessionID": "ses_test",
+				"role": "assistant",
+				"modelID": "gpt-5",
+				"providerID": "openai"
+			},
+			"parts": []
+		}
+	]`)
+	session.model = "openai/gpt-5"
+	session.reasoningEffort = "low"
+	session.pendingFromLaunch = true
+	session.pendingModel = "openai/gpt-5"
+	session.pendingReasoning = "xhigh"
+
+	if err := session.refreshSessionState(context.Background(), false); err != nil {
+		t.Fatalf("session.refreshSessionState() error = %v", err)
+	}
+
+	snapshot := session.Snapshot()
+	if snapshot.Model != "openai/gpt-5" {
+		t.Fatalf("snapshot.Model = %q, want %q", snapshot.Model, "openai/gpt-5")
+	}
+	if snapshot.ReasoningEffort != "low" {
+		t.Fatalf("snapshot.ReasoningEffort = %q, want %q", snapshot.ReasoningEffort, "low")
+	}
+	if snapshot.PendingModel != "" || snapshot.PendingReasoning != "" {
+		t.Fatalf("snapshot.PendingModel = %q, PendingReasoning = %q, want both empty", snapshot.PendingModel, snapshot.PendingReasoning)
+	}
+	if session.pendingFromLaunch {
+		t.Fatalf("pendingFromLaunch should be cleared after reconcile")
+	}
+}
+
 func TestOpenCodeSessionRefreshKeepsLaunchPendingWhenNoReplayedModel(t *testing.T) {
 	session := newTestOpenCodeSession(t, `[]`)
 	session.model = "openai/gpt-5"
@@ -475,10 +542,42 @@ func TestOpenCodeSessionRefreshKeepsLaunchPendingWhenNoReplayedModel(t *testing.
 	}
 }
 
+func TestOpenCodeSessionRefreshBusyKeepsExistingBusySince(t *testing.T) {
+	session := newTestOpenCodeSessionWithStatus(t, `[]`, `{"ses_test":{"type":"busy"}}`)
+	startedAt := time.Date(2026, 3, 22, 12, 0, 0, 0, time.UTC)
+	session.busy = true
+	session.busySince = startedAt
+	session.lastBusyActivityAt = startedAt
+	session.lastActivityAt = startedAt
+	session.activeTurnID = "ses_test"
+
+	if err := session.refreshSessionState(context.Background(), false); err != nil {
+		t.Fatalf("session.refreshSessionState() error = %v", err)
+	}
+
+	snapshot := session.Snapshot()
+	if !snapshot.Busy {
+		t.Fatalf("snapshot.Busy = false, want true")
+	}
+	if !snapshot.BusySince.Equal(startedAt) {
+		t.Fatalf("snapshot.BusySince = %v, want %v", snapshot.BusySince, startedAt)
+	}
+	if !snapshot.LastBusyActivityAt.After(startedAt) {
+		t.Fatalf("snapshot.LastBusyActivityAt = %v, want after %v", snapshot.LastBusyActivityAt, startedAt)
+	}
+}
+
 func newTestOpenCodeSession(t *testing.T, messagesResponse string) *openCodeSession {
+	return newTestOpenCodeSessionWithStatus(t, messagesResponse, `{}`)
+}
+
+func newTestOpenCodeSessionWithStatus(t *testing.T, messagesResponse, statusResponse string) *openCodeSession {
 	t.Helper()
 	if strings.TrimSpace(messagesResponse) == "" {
 		messagesResponse = `[]`
+	}
+	if strings.TrimSpace(statusResponse) == "" {
+		statusResponse = `{}`
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("content-type", "application/json")
@@ -486,7 +585,7 @@ func newTestOpenCodeSession(t *testing.T, messagesResponse string) *openCodeSess
 		case "/session/ses_test/message":
 			_, _ = w.Write([]byte(messagesResponse))
 		case "/session/status":
-			_, _ = w.Write([]byte(`{}`))
+			_, _ = w.Write([]byte(statusResponse))
 		case "/permission", "/question":
 			_, _ = w.Write([]byte(`[]`))
 		default:

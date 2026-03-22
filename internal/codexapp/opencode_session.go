@@ -42,34 +42,36 @@ type openCodeSession struct {
 	exitCh   chan struct{}
 	exitOnce sync.Once
 
-	mu                sync.Mutex
-	sessionID         string
-	started           bool
-	busy              bool
-	busyExternal      bool
-	closed            bool
-	status            string
-	lastError         string
-	lastSystemNotice  string
-	lastActivityAt    time.Time
-	currentCWD        string
-	model             string
-	modelProvider     string
-	reasoningEffort   string
-	pendingModel      string
-	pendingReasoning  string
-	pendingFromLaunch bool
-	activeTurnID      string
-	tokenUsage        *threadTokenUsage
-	entries           []transcriptEntry
-	entryIndex        map[string]int
-	messageRole       map[string]string
-	partKind          map[string]TranscriptKind
-	partType          map[string]string
-	modelOptions      []ModelOption
-	modelOptionsByKey map[string]ModelOption
-	pendingApproval   *ApprovalRequest
-	pendingToolInput  *ToolInputRequest
+	mu                 sync.Mutex
+	sessionID          string
+	started            bool
+	busy               bool
+	busyExternal       bool
+	closed             bool
+	status             string
+	lastError          string
+	lastSystemNotice   string
+	lastActivityAt     time.Time
+	busySince          time.Time
+	lastBusyActivityAt time.Time
+	currentCWD         string
+	model              string
+	modelProvider      string
+	reasoningEffort    string
+	pendingModel       string
+	pendingReasoning   string
+	pendingFromLaunch  bool
+	activeTurnID       string
+	tokenUsage         *threadTokenUsage
+	entries            []transcriptEntry
+	entryIndex         map[string]int
+	messageRole        map[string]string
+	partKind           map[string]TranscriptKind
+	partType           map[string]string
+	modelOptions       []ModelOption
+	modelOptionsByKey  map[string]ModelOption
+	pendingApproval    *ApprovalRequest
+	pendingToolInput   *ToolInputRequest
 }
 
 type openCodeSessionEnvelope struct {
@@ -312,32 +314,33 @@ func (s *openCodeSession) Snapshot() Snapshot {
 	}
 
 	return Snapshot{
-		Provider:         ProviderOpenCode,
-		ProjectPath:      s.projectPath,
-		ThreadID:         s.sessionID,
-		Preset:           s.preset,
-		Phase:            s.phaseLocked(),
-		Started:          s.started,
-		Busy:             s.busy,
-		BusyExternal:     s.busyExternal,
-		BusySince:        s.busySinceLocked(),
-		Closed:           s.closed,
-		ActiveTurnID:     s.activeTurnID,
-		PendingApproval:  cloneApprovalRequest(s.pendingApproval),
-		PendingToolInput: cloneToolInputRequest(s.pendingToolInput),
-		Entries:          entries,
-		Transcript:       strings.Join(lines, "\n\n"),
-		Status:           s.status,
-		LastError:        s.lastError,
-		LastSystemNotice: s.lastSystemNotice,
-		LastActivityAt:   s.lastActivityAt,
-		CurrentCWD:       s.currentCWD,
-		Model:            s.model,
-		ModelProvider:    s.modelProvider,
-		ReasoningEffort:  s.reasoningEffort,
-		PendingModel:     s.pendingModel,
-		PendingReasoning: s.pendingReasoning,
-		TokenUsage:       exportedTokenUsageSnapshot(s.tokenUsage),
+		Provider:           ProviderOpenCode,
+		ProjectPath:        s.projectPath,
+		ThreadID:           s.sessionID,
+		Preset:             s.preset,
+		Phase:              s.phaseLocked(),
+		Started:            s.started,
+		Busy:               s.busy,
+		BusyExternal:       s.busyExternal,
+		BusySince:          s.busySinceLocked(),
+		LastBusyActivityAt: s.lastBusyActivityAt,
+		Closed:             s.closed,
+		ActiveTurnID:       s.activeTurnID,
+		PendingApproval:    cloneApprovalRequest(s.pendingApproval),
+		PendingToolInput:   cloneToolInputRequest(s.pendingToolInput),
+		Entries:            entries,
+		Transcript:         strings.Join(lines, "\n\n"),
+		Status:             s.status,
+		LastError:          s.lastError,
+		LastSystemNotice:   s.lastSystemNotice,
+		LastActivityAt:     s.lastActivityAt,
+		CurrentCWD:         s.currentCWD,
+		Model:              s.model,
+		ModelProvider:      s.modelProvider,
+		ReasoningEffort:    s.reasoningEffort,
+		PendingModel:       s.pendingModel,
+		PendingReasoning:   s.pendingReasoning,
+		TokenUsage:         exportedTokenUsageSnapshot(s.tokenUsage),
 	}
 }
 
@@ -358,10 +361,34 @@ func (s *openCodeSession) busySinceLocked() time.Time {
 	if !s.busy {
 		return time.Time{}
 	}
-	if s.lastActivityAt.IsZero() {
-		return time.Now()
+	return s.busySince
+}
+
+func (s *openCodeSession) setBusyLocked(external bool) {
+	now := time.Now()
+	if !s.busy || s.busySince.IsZero() {
+		s.busySince = now
 	}
-	return s.lastActivityAt
+	s.busy = true
+	s.busyExternal = external
+	s.lastActivityAt = now
+	s.lastBusyActivityAt = now
+}
+
+func (s *openCodeSession) touchBusyLocked() {
+	now := time.Now()
+	s.lastActivityAt = now
+	if s.busy {
+		s.lastBusyActivityAt = now
+	}
+}
+
+func (s *openCodeSession) clearBusyLocked() {
+	s.busy = false
+	s.busyExternal = false
+	s.busySince = time.Time{}
+	s.lastBusyActivityAt = time.Time{}
+	s.activeTurnID = ""
 }
 
 func (s *openCodeSession) Submit(prompt string) error {
@@ -404,9 +431,7 @@ func (s *openCodeSession) SubmitInput(input Submission) error {
 	}
 
 	s.mu.Lock()
-	s.touchLocked()
-	s.busy = true
-	s.busyExternal = false
+	s.setBusyLocked(false)
 	if model != "" {
 		s.model = model
 	}
@@ -580,8 +605,7 @@ func (s *openCodeSession) Close() error {
 		return nil
 	}
 	s.closed = true
-	s.busy = false
-	s.busyExternal = false
+	s.clearBusyLocked()
 	s.pendingApproval = nil
 	s.pendingToolInput = nil
 	s.status = "OpenCode session closed"
@@ -777,8 +801,7 @@ func (s *openCodeSession) refreshSessionState(parent context.Context, external b
 	status := statuses[sessionID]
 	switch status.Type {
 	case "busy", "retry":
-		s.busy = true
-		s.busyExternal = external
+		s.setBusyLocked(external)
 		if s.activeTurnID == "" {
 			s.activeTurnID = sessionID
 		}
@@ -789,9 +812,7 @@ func (s *openCodeSession) refreshSessionState(parent context.Context, external b
 			s.status = "OpenCode is working..."
 		}
 	default:
-		s.busy = false
-		s.busyExternal = false
-		s.activeTurnID = ""
+		s.clearBusyLocked()
 		if latestError != "" {
 			s.lastError = latestError
 			s.lastSystemNotice = latestError
@@ -954,6 +975,8 @@ func (s *openCodeSession) reconcilePendingModelFromReplayedMessagesLocked() {
 
 	if strings.EqualFold(strings.TrimSpace(s.model), pendingModel) {
 		s.pendingFromLaunch = false
+		s.pendingModel = ""
+		s.pendingReasoning = ""
 		return
 	}
 
@@ -1111,12 +1134,11 @@ func (s *openCodeSession) handleEventData(raw string) {
 			return
 		}
 		s.mu.Lock()
-		s.touchLocked()
+		s.touchBusyLocked()
 		shouldRefresh := false
 		switch payload.Status.Type {
 		case "busy", "retry":
-			s.busy = true
-			s.busyExternal = false
+			s.setBusyLocked(false)
 			if s.activeTurnID == "" {
 				s.activeTurnID = s.sessionID
 			}
@@ -1159,7 +1181,7 @@ func (s *openCodeSession) handleEventData(raw string) {
 			return
 		}
 		s.mu.Lock()
-		s.touchLocked()
+		s.touchBusyLocked()
 		if errorSummary := s.applyMessageInfoLocked(payload.Info); errorSummary != "" {
 			s.lastError = errorSummary
 			s.lastSystemNotice = errorSummary
@@ -1180,7 +1202,7 @@ func (s *openCodeSession) handleEventData(raw string) {
 			return
 		}
 		s.mu.Lock()
-		s.touchLocked()
+		s.touchBusyLocked()
 		role := s.messageRole[strings.TrimSpace(header.MessageID)]
 		s.applyPartLocked(role, payload.Part, true)
 		s.mu.Unlock()
@@ -1194,7 +1216,7 @@ func (s *openCodeSession) handleEventData(raw string) {
 			return
 		}
 		s.mu.Lock()
-		s.touchLocked()
+		s.touchBusyLocked()
 		role := s.messageRole[strings.TrimSpace(payload.MessageID)]
 		kind := s.partKind[strings.TrimSpace(payload.PartID)]
 		if kind == "" {
@@ -1226,8 +1248,7 @@ func (s *openCodeSession) waitForExit() {
 	s.mu.Lock()
 	if !s.closed {
 		s.closed = true
-		s.busy = false
-		s.busyExternal = false
+		s.clearBusyLocked()
 		s.pendingApproval = nil
 		s.pendingToolInput = nil
 		if err != nil {
@@ -1259,9 +1280,7 @@ func (s *openCodeSession) markIdleLocked() bool {
 	wasBusyExternal := s.busyExternal || strings.TrimSpace(s.status) == "OpenCode is active in another process"
 	wasBusy := s.busy || s.activeTurnID != "" || strings.TrimSpace(s.status) == "OpenCode is working..."
 
-	s.busy = false
-	s.busyExternal = false
-	s.activeTurnID = ""
+	s.clearBusyLocked()
 
 	switch {
 	case wasBusyExternal:
@@ -1325,8 +1344,7 @@ func (s *openCodeSession) handleTransportFailure(err error) {
 	}
 	s.touchLocked()
 	s.closed = true
-	s.busy = false
-	s.busyExternal = false
+	s.clearBusyLocked()
 	s.pendingApproval = nil
 	s.pendingToolInput = nil
 	s.appendEntryLocked("", TranscriptError, message)

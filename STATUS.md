@@ -1,6 +1,31 @@
 # Little Control Room Status
 
-Last updated: 2026-03-22 22:40 JST (JST)
+Last updated: 2026-03-22 23:32 JST (JST)
+
+## Latest Update (2026-03-22 23:32 JST)
+
+- Fixed the embedded OpenCode busy-timer reset loop in `internal/codexapp/opencode_session.go` by separating turn-start timing from general activity timing.
+- OpenCode sessions now keep a dedicated `busySince` plus `lastBusyActivityAt`, so periodic refreshes and repeated busy events no longer restart the visible `Working 00:xx` timer.
+- Added focused OpenCode regressions in `internal/codexapp/opencode_session_test.go`:
+  - `TestOpenCodeSessionBusyStatusKeepsExistingBusySince`
+  - `TestOpenCodeSessionRefreshBusyKeepsExistingBusySince`
+  - extended `TestOpenCodeSessionIdleAfterExternalBusyMarksSessionReady` to verify busy timing clears on idle
+- Extended the launch-override reconciliation path in `internal/codexapp/opencode_session.go` so stale launch pending reasoning is also cleared when replayed model matches the pending model, preventing stale `/model` reason from resurfacing as a still-pending `/next` value.
+- Added `TestOpenCodeSessionRefreshReconcilesStalePendingReasoningWhenModelMatches` in `internal/codexapp/opencode_session_test.go`.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/codexapp/opencode_session.go internal/codexapp/opencode_session_test.go` passed
+- `go test ./internal/codexapp -count=1` passed
+- `go test ./internal/codexapp -run 'TestOpenCodeSessionRefreshReconcilesStalePendingReasoningWhenModelMatches' -count=1` passed
+- `make test` passed
+- `make scan` completed (`updated projects: 1` at `2026-03-22T23:32:43+09:00`)
+- `make doctor` returned the cached report dated `2026-03-22T23:32:43+09:00` and completed successfully
+
+Next concrete tasks:
+
+- Live-check the original stuck OpenCode session flow in `make tui` and confirm the footer timer now keeps climbing instead of snapping back after about one minute.
 
 ## Latest Update (2026-03-22 22:40 JST)
 
