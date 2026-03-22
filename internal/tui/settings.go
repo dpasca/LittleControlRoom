@@ -42,6 +42,7 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	saved := cloneEditableSettings(settings)
 	m.settingsBaseline = &saved
 	m.settingsMode = true
+	m.settingsRevealPrivacy = false
 	m.setupMode = false
 	m.commandMode = false
 	m.showHelp = false
@@ -90,6 +91,17 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		m.status = "Saving settings..."
 		return m, m.saveSettingsCmd(settings)
+	case "ctrl+r":
+		if m.settingsSelected == settingsFieldPrivacyPatterns {
+			m.settingsRevealPrivacy = !m.settingsRevealPrivacy
+			m.syncPrivacyPatternsReveal()
+			if m.settingsRevealPrivacy {
+				m.status = "Privacy patterns revealed"
+			} else {
+				m.status = "Privacy patterns hidden"
+			}
+			return m, nil
+		}
 	}
 
 	if m.settingsSelected < 0 || m.settingsSelected >= len(m.settingsFields) {
@@ -142,6 +154,20 @@ func (m *Model) setSettingsSelection(index int) tea.Cmd {
 func (m *Model) blurSettingsFields() {
 	for i := range m.settingsFields {
 		m.settingsFields[i].input.Blur()
+	}
+}
+
+func (m *Model) syncPrivacyPatternsReveal() {
+	if len(m.settingsFields) <= settingsFieldPrivacyPatterns {
+		return
+	}
+	field := &m.settingsFields[settingsFieldPrivacyPatterns]
+	if m.settingsRevealPrivacy {
+		field.input.EchoMode = textinput.EchoNormal
+		field.input.EchoCharacter = ' '
+	} else {
+		field.input.EchoMode = textinput.EchoPassword
+		field.input.EchoCharacter = '*'
 	}
 }
 
@@ -346,7 +372,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			strings.Join(settings.ExcludeProjectPatterns, ","),
 			2048,
 		),
-		newSensitiveSettingsField(
+		newPrivacyPatternsField(
 			"Privacy patterns",
 			"Comma-separated patterns to redact in demo mode. Example: medical,visa,personal",
 			strings.Join(settings.PrivacyPatterns, ","),
@@ -400,6 +426,15 @@ func newSensitiveSettingsField(label, hint, value string, charLimit int) setting
 	return field
 }
 
+func newPrivacyPatternsField(label, hint, value string, charLimit int) settingsField {
+	field := newSettingsField(label, hint, value, charLimit)
+	field.input.EchoMode = textinput.EchoPassword
+	field.input.EchoCharacter = '*'
+	field.input.Placeholder = "e.g., medical,visa,personal"
+	field.sensitive = true
+	return field
+}
+
 func cloneEditableSettings(settings config.EditableSettings) config.EditableSettings {
 	settings.AIBackend = config.ResolveAIBackend(settings.AIBackend, settings.OpenAIAPIKey)
 	settings.OpenAIAPIKey = strings.TrimSpace(settings.OpenAIAPIKey)
@@ -415,16 +450,26 @@ func (m Model) settingsFieldHint(index int) string {
 		return ""
 	}
 	field := m.settingsFields[index]
-	if index != settingsFieldOpenAIAPIKey {
+	switch index {
+	case settingsFieldOpenAIAPIKey:
+		if suffix := maskedOpenAIKeySuffix(field.input.Value()); suffix != "" {
+			return field.hint + " Stored key ends with " + suffix + "."
+		}
+		if m.currentSettingsBaseline().AIBackend == config.AIBackendOpenAIAPI {
+			return field.hint + " The selected backend still needs a saved key."
+		}
+		return field.hint
+	case settingsFieldPrivacyPatterns:
+		hint := field.hint
+		if m.settingsRevealPrivacy {
+			hint += " (revealed - press Ctrl+R to hide)"
+		} else {
+			hint += " (hidden - press Ctrl+R to reveal)"
+		}
+		return hint
+	default:
 		return field.hint
 	}
-	if suffix := maskedOpenAIKeySuffix(field.input.Value()); suffix != "" {
-		return field.hint + " Stored key ends with " + suffix + "."
-	}
-	if m.currentSettingsBaseline().AIBackend == config.AIBackendOpenAIAPI {
-		return field.hint + " The selected backend still needs a saved key."
-	}
-	return field.hint
 }
 
 func maskedOpenAIKeySuffix(raw string) string {

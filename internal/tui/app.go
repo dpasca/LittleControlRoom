@@ -92,6 +92,7 @@ type Model struct {
 	settingsFields               []settingsField
 	settingsSelected             int
 	settingsBaseline             *config.EditableSettings
+	settingsRevealPrivacy        bool
 
 	detailViewport        viewport.Model
 	runtimeViewport       viewport.Model

@@ -1,13 +1,14 @@
 # Little Control Room Status
 
-Last updated: 2026-03-23 07:52 JST
+Last updated: 2026-03-23 07:58 JST
 
-## Latest Update (2026-03-23 07:52 JST)
+## Latest Update (2026-03-23 07:58 JST)
 
 - Added demo/privacy mode feature:
   - New `/privacy on|off|toggle` slash command to toggle privacy mode
   - Privacy patterns configurable via `/settings` (new "Privacy patterns" field)
   - **Privacy patterns field is masked with asterisks** (like API key) to avoid shoulder-surfing in demos
+  - **Ctrl+R on privacy patterns field toggles reveal/hide** the patterns for editing
   - When privacy mode is active, projects matching configured patterns are **completely hidden** from the list
   - Privacy mode indicator shown in project list header meta: `(sort=..., view=..., privacy)`
   - Uses existing `wildcardMatch` pattern matching (same as exclude project patterns)
