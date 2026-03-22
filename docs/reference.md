@@ -131,8 +131,6 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 - `f` open the temporary project-name filter dialog
 - `o` toggle sort mode between `attention` and `recent activity`
 - `p` pin toggle
-- `s` snooze for 1 hour
-- `S` clear snooze
 - `n` open the project note dialog
 - `q` quit
 - While the runtime pane is focused, `Left` and `Right` choose the highlighted runtime action and `Enter` runs it
@@ -201,7 +199,8 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/commit tighten git status parsing`
 - `/push`
 - `/pin`
-- `/snooze 4h`
+- `/snooze [duration|off]`
+- `/unsnooze`
 - `/clear-snooze`
 - `/sessions toggle`
 - `/events off`
@@ -231,6 +230,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `Enter` on the selected project opens that project's latest embedded provider inside Little Control Room.
 - `/open` opens the selected project's folder in the system browser.
 - `/ignore` hides the selected project's exact name inside Little Control Room, which is handy for Codex-generated worktrees or other old projects that share a stable folder name.
+- `/snooze [duration|off]` snoozes the selected project for a period, and `/unsnooze` clears any active snooze.
 - `f` opens a live project-name filter dialog for the whole dashboard; `/filter <text>` applies the same temporary filter from the command palette, and `/filter clear` removes it.
 - `/ignored` opens a reversible picker of hidden project names; press `Enter` there to restore one.
 - `/run` starts the selected project's saved managed runtime. If no command is saved yet, Little Control Room opens a small dialog with an auto-suggested command when it can infer one from common files like `bin/dev`, `package.json`, `Makefile`, `justfile`, or a simple Go entrypoint.

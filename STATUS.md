@@ -1,6 +1,56 @@
 # Little Control Room Status
 
-Last updated: 2026-03-22 20:12 JST (JST)
+Last updated: 2026-03-22 20:50 JST (JST)
+
+## Latest Update (2026-03-22 20:50 JST)
+
+- Removed the remaining TUI quick-key mapping for snooze clear: `S` no longer maps to `m.clearSnoozeCmd` in normal mode.
+- Added/updated TUI regression coverage so both `s` and `S` are now explicitly no-ops in `updateNormalMode` when pressed on a project row.
+- Updated `docs/reference.md` to remove `S` from the normal TUI key list, matching the command-palette-only snooze workflow.
+
+Verification snapshot:
+
+- `go test ./internal/tui -run 'TestSKeyNoLongerSnoozesProject|TestSUppercaseNoLongerClearsSnooze|TestSuggestionsSnoozeArgumentOff' -count=1`
+- `go test ./internal/commands -run 'TestParse|TestSuggestions' -count=1`
+- `make test`
+- `make scan`
+- `make doctor`
+
+Next concrete tasks:
+
+- No immediate follow-up required for this key-remap cleanup; optionally run a quick TUI smoke check if you want a live confirmation.
+
+## Latest Update (2026-03-22 20:44 JST)
+
+- Added a focused regression test for env handling: `TestBuildOpenCodeServerCommandOverridesPreExistingConfigEnv` in `internal/codexapp/opencode_session_test.go`.
+- The test verifies pre-existing `OPENCODE_CONFIG_CONTENT` is replaced (not duplicated), and the injected config still reflects safe preset permissions.
+
+Verification snapshot:
+
+- `go test ./internal/codexapp -run 'Test(BuildOpenCodeServerCommandInjectsPresetConfig|TestBuildOpenCodeServerCommandOverridesPreExistingConfigEnv|TestOpenCodePermissionOverrideForPreset)' -count=1`
+
+Next concrete tasks:
+
+- Continue normal cleanup/iteration; no follow-up required for this regression class.
+
+## Latest Update (2026-03-22 20:40 JST)
+
+- Resolved the last `make test` blocker by making OpenCode launch env injection deterministic: `OPENCODE_CONFIG_CONTENT` is now explicitly overridden in `openCode` server env construction (no duplicate/empty stale values from caller env).
+- Confirmed that this was the actual cause of the previous preset mismatch failure; nuking the runtime process was unrelated.
+- Kept snooze-workflow changes in place: no accidental lowercase `s` snooze, `/snooze` now accepts `off/clear/unsnooze`, and docs/tests reflect `/unsnooze` plus explicit clear behavior.
+
+Verification snapshot:
+
+- `go test ./internal/codexapp -run 'TestBuildOpenCodeServerCommandInjectsPresetConfig|TestOpenCodePermissionOverrideForPreset' -count=1`
+- `go test ./internal/commands -run 'TestParse|TestSuggestions' -count=1`
+- `go test ./internal/tui -run 'TestSKeyNoLongerSnoozesProject|TestSClearSnoozeStillWorks|TestSuggestionsSnoozeArgumentOff' -count=1`
+- `make scan`
+- `make doctor`
+- `make test`
+
+Next concrete tasks:
+
+- No immediate follow-up required: suite is clean, and the remaining focus is normal iterative polish.
 
 ## Latest Update (2026-03-22 20:12 JST)
 

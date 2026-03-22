@@ -2185,6 +2185,46 @@ func TestFKeyOpensProjectFilterDialog(t *testing.T) {
 	}
 }
 
+func TestSKeyNoLongerSnoozesProject(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/demo",
+			Name:          "demo",
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+		width:    100,
+		height:   24,
+	}
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	if cmd != nil {
+		t.Fatalf("lowercase s should no longer enqueue a snooze command")
+	}
+	got := updated.(Model)
+	if got.status != "" {
+		t.Fatalf("lowercase s should not change status, got %q", got.status)
+	}
+}
+
+func TestSUppercaseNoLongerClearsSnooze(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{Path: "/tmp/demo", Name: "demo", PresentOnDisk: true}},
+		selected: 0,
+		width:    100,
+		height:   24,
+	}
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'S'}})
+	if cmd != nil {
+		t.Fatalf("uppercase S should no longer enqueue a clear-snooze command")
+	}
+	got := updated.(Model)
+	if got.status != "" {
+		t.Fatalf("uppercase S should not change status, got %q", got.status)
+	}
+}
+
 func TestEnterLaunchesCodexFromFocusedProjectList(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{

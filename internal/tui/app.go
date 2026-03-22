@@ -1227,20 +1227,6 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if p, ok := m.selectedProject(); ok {
 			return m, m.togglePinCmd(p.Path)
 		}
-	case "s":
-		if m.focusedPane == focusRuntime {
-			return m, nil
-		}
-		if p, ok := m.selectedProject(); ok {
-			return m, m.snoozeCmd(p.Path, time.Hour)
-		}
-	case "S":
-		if m.focusedPane == focusRuntime {
-			return m, nil
-		}
-		if p, ok := m.selectedProject(); ok {
-			return m, m.clearSnoozeCmd(p.Path)
-		}
 	case "t":
 		return m, m.openTodoDialogForSelection()
 	}
