@@ -141,6 +141,87 @@ func TestListProjectsHidesIgnoredProjectNames(t *testing.T) {
 	}
 }
 
+func TestOpenMigratesLegacyProjectNotesIntoTodos(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "legacy-notes.sqlite")
+	db, err := sql.Open("sqlite", sqliteDSN(dbPath))
+	if err != nil {
+		t.Fatalf("open raw sqlite: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE TABLE projects (
+			path TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			last_activity INTEGER,
+			status TEXT NOT NULL,
+			attention_score INTEGER NOT NULL,
+			present_on_disk INTEGER NOT NULL DEFAULT 1,
+			repo_dirty INTEGER NOT NULL DEFAULT 0,
+			repo_sync_status TEXT NOT NULL DEFAULT '',
+			repo_ahead_count INTEGER NOT NULL DEFAULT 0,
+			repo_behind_count INTEGER NOT NULL DEFAULT 0,
+			forgotten INTEGER NOT NULL DEFAULT 0,
+			manually_added INTEGER NOT NULL DEFAULT 0,
+			in_scope INTEGER NOT NULL DEFAULT 1,
+			pinned INTEGER NOT NULL DEFAULT 0,
+			snoozed_until INTEGER,
+			note TEXT NOT NULL DEFAULT '',
+			run_command TEXT NOT NULL DEFAULT '',
+			moved_from_path TEXT NOT NULL DEFAULT '',
+			moved_at INTEGER,
+			updated_at INTEGER NOT NULL
+		)
+	`); err != nil {
+		t.Fatalf("create legacy projects table: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO projects(path, name, status, attention_score, note, updated_at)
+		VALUES('/tmp/demo', 'demo', 'idle', 0, 'First task
+
+Second task', ?)
+	`, time.Now().Unix()); err != nil {
+		t.Fatalf("insert legacy project note: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close raw sqlite: %v", err)
+	}
+
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open migrated store: %v", err)
+	}
+	defer st.Close()
+
+	projects, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list projects: %v", err)
+	}
+	if len(projects) != 1 {
+		t.Fatalf("project count = %d, want 1", len(projects))
+	}
+	if projects[0].OpenTODOCount != 2 || projects[0].TotalTODOCount != 2 {
+		t.Fatalf("todo counts = (%d, %d), want (2, 2)", projects[0].OpenTODOCount, projects[0].TotalTODOCount)
+	}
+	if projects[0].Note != "" {
+		t.Fatalf("legacy note should be cleared after migration, got %q", projects[0].Note)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, "/tmp/demo", 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() error = %v", err)
+	}
+	if len(detail.Todos) != 2 {
+		t.Fatalf("todo count = %d, want 2", len(detail.Todos))
+	}
+	if detail.Todos[0].Text != "First task" || detail.Todos[1].Text != "Second task" {
+		t.Fatalf("migrated todos = %#v, want split legacy note lines", detail.Todos)
+	}
+}
+
 func TestOpenMigratesProjectsInScopeColumn(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

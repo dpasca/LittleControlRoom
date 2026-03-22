@@ -82,6 +82,18 @@ func (s *Store) initSchema(ctx context.Context) error {
 			moved_at INTEGER,
 			updated_at INTEGER NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS project_todos (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			project_path TEXT NOT NULL,
+			text TEXT NOT NULL,
+			done INTEGER NOT NULL DEFAULT 0,
+			position INTEGER NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			completed_at INTEGER,
+			FOREIGN KEY(project_path) REFERENCES projects(path) ON DELETE CASCADE
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_project_todos_project_path_position ON project_todos(project_path, done, position, id);`,
 		`CREATE TABLE IF NOT EXISTS project_reasons (
 			project_path TEXT NOT NULL,
 			position INTEGER NOT NULL,
@@ -188,6 +200,9 @@ func (s *Store) initSchema(ctx context.Context) error {
 		return err
 	}
 	if err := s.ensureProjectsRunCommandColumn(ctx); err != nil {
+		return err
+	}
+	if err := s.migrateLegacyProjectNotesToTodos(ctx); err != nil {
 		return err
 	}
 	if err := s.ensureProjectSessionsDetectedPathColumn(ctx); err != nil {
@@ -337,6 +352,93 @@ func (s *Store) ensureProjectsRunCommandColumn(ctx context.Context) error {
 	return nil
 }
 
+func (s *Store) migrateLegacyProjectNotesToTodos(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT path, note
+		FROM projects
+		WHERE TRIM(note) != ''
+	`)
+	if err != nil {
+		return fmt.Errorf("load legacy project notes: %w", err)
+	}
+	defer rows.Close()
+
+	type legacyNote struct {
+		path string
+		note string
+	}
+	var notes []legacyNote
+	for rows.Next() {
+		var row legacyNote
+		if err := rows.Scan(&row.path, &row.note); err != nil {
+			return fmt.Errorf("scan legacy project note: %w", err)
+		}
+		notes = append(notes, row)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read legacy project notes: %w", err)
+	}
+	if len(notes) == 0 {
+		return nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	now := time.Now().Unix()
+	for _, row := range notes {
+		lines := splitLegacyNoteIntoTodos(row.note)
+		if len(lines) == 0 {
+			if _, err = tx.ExecContext(ctx, `UPDATE projects SET note = '' WHERE path = ?`, row.path); err != nil {
+				return fmt.Errorf("clear blank legacy note for %s: %w", row.path, err)
+			}
+			continue
+		}
+		var existing int
+		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_todos WHERE project_path = ?`, row.path).Scan(&existing); err != nil {
+			return fmt.Errorf("count existing todos for %s: %w", row.path, err)
+		}
+		if existing == 0 {
+			for i, line := range lines {
+				if _, err = tx.ExecContext(ctx, `
+					INSERT INTO project_todos(project_path, text, done, position, created_at, updated_at)
+					VALUES(?, ?, 0, ?, ?, ?)
+				`, row.path, line, i, now, now); err != nil {
+					return fmt.Errorf("migrate legacy note todo for %s: %w", row.path, err)
+				}
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE projects SET note = '' WHERE path = ?`, row.path); err != nil {
+			return fmt.Errorf("clear legacy note for %s: %w", row.path, err)
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func splitLegacyNoteIntoTodos(note string) []string {
+	parts := strings.Split(strings.ReplaceAll(note, "\r\n", "\n"), "\n")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		out = append(out, part)
+	}
+	return out
+}
+
 func (s *Store) projectSessionsTableColumns(ctx context.Context) (map[string]struct{}, error) {
 	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(project_sessions)`)
 	if err != nil {
@@ -471,6 +573,8 @@ func (s *Store) GetProjectSummaryMap(ctx context.Context) (map[string]model.Proj
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
 			p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.repo_dirty, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until, p.note,
+			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path AND pt.done = 0), 0),
+			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path), 0),
 			p.run_command,
 			p.moved_from_path, p.moved_at,
 			COALESCE(ps.session_id, ''),
@@ -527,6 +631,8 @@ func (s *Store) ListProjects(ctx context.Context, includeHistorical bool) ([]mod
 	query := `
 		SELECT
 			p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.repo_dirty, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until, p.note,
+			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path AND pt.done = 0), 0),
+			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path), 0),
 			p.run_command,
 			p.moved_from_path, p.moved_at,
 			COALESCE(ps.session_id, ''),
@@ -604,7 +710,8 @@ func scanSummaryRow(scanner interface {
 		latestCompletedClassificationCategory, latestCompletedClassificationSummary                sql.NullString
 		latestCompletedClassificationUpdatedAt                                                     sql.NullInt64
 		repoSyncStatus                                                                             string
-		attentionScore, repoAheadCount, repoBehindCount, latestTurnKnown, latestTurnCompleted      int
+		attentionScore, repoAheadCount, repoBehindCount, openTODOCount, totalTODOCount             int
+		latestTurnKnown, latestTurnCompleted                                                       int
 		presentOnDisk, repoDirty, forgotten, manuallyAdded, inScope, pinned                        int
 	)
 	if err := scanner.Scan(
@@ -624,6 +731,8 @@ func scanSummaryRow(scanner interface {
 		&pinned,
 		&snoozedUntil,
 		&note,
+		&openTODOCount,
+		&totalTODOCount,
 		&runCommand,
 		&movedFromPath,
 		&movedAt,
@@ -662,6 +771,8 @@ func scanSummaryRow(scanner interface {
 		InScope:                                  inScope == 1,
 		Pinned:                                   pinned == 1,
 		Note:                                     note,
+		OpenTODOCount:                            openTODOCount,
+		TotalTODOCount:                           totalTODOCount,
 		RunCommand:                               runCommand,
 		MovedFromPath:                            movedFromPath,
 		LatestSessionID:                          latestSessionID.String,
@@ -1012,6 +1123,7 @@ func (s *Store) MoveProjectPath(ctx context.Context, oldPath, newPath string, mo
 	}
 
 	updateStatements := []string{
+		`UPDATE project_todos SET project_path = ? WHERE project_path = ?`,
 		`UPDATE project_reasons SET project_path = ? WHERE project_path = ?`,
 		`UPDATE project_sessions SET project_path = ? WHERE project_path = ?`,
 		`UPDATE project_artifacts SET project_path = ? WHERE project_path = ?`,
@@ -1140,6 +1252,7 @@ func (s *Store) ConsolidateProjectPath(ctx context.Context, oldPath, newPath str
 	}
 
 	updateStatements := []string{
+		`UPDATE project_todos SET project_path = ? WHERE project_path = ?`,
 		`UPDATE project_sessions SET project_path = ? WHERE project_path = ?`,
 		`UPDATE project_artifacts SET project_path = ? WHERE project_path = ?`,
 		`UPDATE session_classifications SET project_path = ? WHERE project_path = ?`,
@@ -1614,6 +1727,8 @@ func (s *Store) GetProjectDetail(ctx context.Context, path string, eventLimit in
 	row := s.db.QueryRowContext(ctx, `
 		SELECT
 			p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.repo_dirty, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until, p.note,
+			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path AND pt.done = 0), 0),
+			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path), 0),
 			p.run_command,
 			p.moved_from_path, p.moved_at,
 			COALESCE(ps.session_id, ''),
@@ -1663,6 +1778,10 @@ func (s *Store) GetProjectDetail(ctx context.Context, path string, eventLimit in
 	if err != nil {
 		return model.ProjectDetail{}, err
 	}
+	todos, err := s.listTodos(ctx, path)
+	if err != nil {
+		return model.ProjectDetail{}, err
+	}
 	sessions, err := s.listSessions(ctx, path)
 	if err != nil {
 		return model.ProjectDetail{}, err
@@ -1690,11 +1809,47 @@ func (s *Store) GetProjectDetail(ctx context.Context, path string, eventLimit in
 	return model.ProjectDetail{
 		Summary:                     summary,
 		Reasons:                     reasons,
+		Todos:                       todos,
 		Sessions:                    sessions,
 		Artifacts:                   artifacts,
 		RecentEvents:                events,
 		LatestSessionClassification: latestClassification,
 	}, nil
+}
+
+func (s *Store) listTodos(ctx context.Context, path string) ([]model.TodoItem, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, project_path, text, done, position, created_at, updated_at, completed_at
+		FROM project_todos
+		WHERE project_path = ?
+		ORDER BY done ASC, position ASC, id ASC
+	`, path)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []model.TodoItem{}
+	for rows.Next() {
+		var (
+			item        model.TodoItem
+			done        int
+			createdAt   int64
+			updatedAt   int64
+			completedAt sql.NullInt64
+		)
+		if err := rows.Scan(&item.ID, &item.ProjectPath, &item.Text, &done, &item.Position, &createdAt, &updatedAt, &completedAt); err != nil {
+			return nil, err
+		}
+		item.Done = done != 0
+		item.CreatedAt = time.Unix(createdAt, 0)
+		item.UpdatedAt = time.Unix(updatedAt, 0)
+		if completedAt.Valid {
+			item.CompletedAt = time.Unix(completedAt.Int64, 0)
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) listReasons(ctx context.Context, path string) ([]model.AttentionReason, error) {
@@ -1921,6 +2076,125 @@ func (s *Store) SetSnooze(ctx context.Context, path string, until *time.Time) er
 func (s *Store) SetNote(ctx context.Context, path, note string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE projects SET note = ?, updated_at = ? WHERE path = ?`, note, time.Now().Unix(), path)
 	return err
+}
+
+func (s *Store) AddTodo(ctx context.Context, projectPath, text string) (model.TodoItem, error) {
+	text = strings.TrimSpace(text)
+	if projectPath == "" {
+		return model.TodoItem{}, fmt.Errorf("project path is required")
+	}
+	if text == "" {
+		return model.TodoItem{}, fmt.Errorf("todo text is required")
+	}
+	now := time.Now()
+	position, err := s.nextTodoPosition(ctx, projectPath)
+	if err != nil {
+		return model.TodoItem{}, err
+	}
+	result, err := s.db.ExecContext(ctx, `
+		INSERT INTO project_todos(project_path, text, done, position, created_at, updated_at)
+		VALUES(?, ?, 0, ?, ?, ?)
+	`, projectPath, text, position, now.Unix(), now.Unix())
+	if err != nil {
+		return model.TodoItem{}, err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return model.TodoItem{}, err
+	}
+	_, _ = s.db.ExecContext(ctx, `UPDATE projects SET updated_at = ? WHERE path = ?`, now.Unix(), projectPath)
+	return model.TodoItem{
+		ID:          id,
+		ProjectPath: projectPath,
+		Text:        text,
+		Position:    position,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}, nil
+}
+
+func (s *Store) UpdateTodo(ctx context.Context, id int64, text string) error {
+	text = strings.TrimSpace(text)
+	if id <= 0 {
+		return fmt.Errorf("todo id is required")
+	}
+	if text == "" {
+		return fmt.Errorf("todo text is required")
+	}
+	now := time.Now()
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE project_todos
+		SET text = ?, updated_at = ?
+		WHERE id = ?
+	`, text, now.Unix(), id)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) ToggleTodoDone(ctx context.Context, id int64, done bool) error {
+	if id <= 0 {
+		return fmt.Errorf("todo id is required")
+	}
+	now := time.Now()
+	completedAt := any(nil)
+	if done {
+		completedAt = now.Unix()
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE project_todos
+		SET done = ?, completed_at = ?, updated_at = ?
+		WHERE id = ?
+	`, boolToInt(done), completedAt, now.Unix(), id)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) DeleteTodo(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return fmt.Errorf("todo id is required")
+	}
+	result, err := s.db.ExecContext(ctx, `DELETE FROM project_todos WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) nextTodoPosition(ctx context.Context, projectPath string) (int, error) {
+	var next int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COALESCE(MAX(position), -1) + 1
+		FROM project_todos
+		WHERE project_path = ?
+	`, projectPath).Scan(&next); err != nil {
+		return 0, err
+	}
+	return next, nil
 }
 
 func (s *Store) SetRunCommand(ctx context.Context, path, command string) error {

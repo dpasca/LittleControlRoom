@@ -186,6 +186,8 @@ type ProjectSummary struct {
 	Pinned                                        bool
 	SnoozedUntil                                  *time.Time
 	Note                                          string
+	OpenTODOCount                                 int
+	TotalTODOCount                                int
 	RunCommand                                    string
 	MovedFromPath                                 string
 	MovedAt                                       time.Time
@@ -208,9 +210,21 @@ type ProjectSummary struct {
 	LatestCompletedSessionClassificationUpdatedAt time.Time
 }
 
+type TodoItem struct {
+	ID          int64
+	ProjectPath string
+	Text        string
+	Done        bool
+	Position    int
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	CompletedAt time.Time
+}
+
 type ProjectDetail struct {
 	Summary                     ProjectSummary
 	Reasons                     []AttentionReason
+	Todos                       []TodoItem
 	Sessions                    []SessionEvidence
 	Artifacts                   []ArtifactEvidence
 	RecentEvents                []StoredEvent

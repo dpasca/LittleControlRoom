@@ -1,6 +1,34 @@
 # Little Control Room Status
 
-Last updated: 2026-03-22 13:52 JST (JST)
+Last updated: 2026-03-22 19:01 JST (JST)
+
+## Latest Update (2026-03-22 19:01 JST)
+
+- Replaced the visible per-project note workflow with first-class TODOs backed by a new `project_todos` store table, while keeping the old `projects.note` column only as a legacy migration source.
+- Added TODO counts to project summaries/details so the project list now shows a compact open-task counter and the detail pane shows a `TODO` section with open items instead of the old freeform note block.
+- Added automatic legacy-note migration on store open: existing project notes are split by non-empty line into open TODOs, then the legacy note text is cleared so the migration only happens once.
+- Added TODO service operations and TUI overlays for listing, adding, editing, toggling, and deleting TODOs, plus a new `/todo` slash command and `t` quick action.
+- Wired `Enter` on a selected TODO to open a fresh embedded Codex/OpenCode session using the project's preferred provider, preload the selected TODO text into the composer draft, and leave it unsent for review before submission.
+- Kept a hidden `/note` compatibility path for now so older note-oriented tests and workflows do not break abruptly while the visible UX shifts to TODOs.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/model/model.go internal/store/store.go internal/service/service.go internal/commands/commands.go internal/tui/app.go internal/tui/todo_dialog.go internal/store/store_test.go internal/tui/app_test.go` passed.
+- `go test ./internal/store -run 'Test(OpenMigratesLegacyProjectNotesIntoTodos)' -count=1` passed.
+- `go test ./internal/tui -run 'Test(TodoDialogEnterStartsFreshPreferredProviderWithDraft|RenderProjectListShowsTODOCount|RenderDetailContentShowsTODOSection|HelpPanelLinesStayMinimal)' -count=1` passed.
+- `go test ./internal/commands ./internal/store ./internal/tui -count=1` passed.
+- `go test ./internal/service -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-22T19:00:23+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-22T19:00:23+09:00` (`projects: 131`).
+- `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-todo-smoke-pty INTERVAL=1h` launched successfully in a PTY, rendered the updated dashboard with the new `TODO` list column, and exited cleanly via `q`.
+
+Next concrete tasks:
+
+- Decide whether the hidden `/note` compatibility path should be removed soon now that `/todo` is the primary visible workflow.
+- Decide whether TODOs need drag/reorder support or whether append-only ordering is enough for the first real usage cycle.
+- Consider whether completed TODOs should get a lighter inline treatment or a collapsible subsection in the TODO overlay once projects accumulate longer histories.
 
 ## Latest Update (2026-03-22 13:52 JST)
 

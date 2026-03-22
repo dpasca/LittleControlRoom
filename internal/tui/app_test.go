@@ -1337,14 +1337,15 @@ func TestRenderProjectListShowsRepoWarningInAttentionColumn(t *testing.T) {
 	}
 }
 
-func TestRenderProjectListShowsNoteIndicator(t *testing.T) {
+func TestRenderProjectListShowsTODOCount(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{
-			Name:          "alpha",
-			Path:          "/tmp/alpha",
-			Status:        model.StatusIdle,
-			PresentOnDisk: true,
-			Note:          "Follow up on the handoff",
+			Name:           "alpha",
+			Path:           "/tmp/alpha",
+			Status:         model.StatusIdle,
+			PresentOnDisk:  true,
+			OpenTODOCount:  3,
+			TotalTODOCount: 5,
 		}},
 		selected:   0,
 		sortMode:   sortByAttention,
@@ -1356,19 +1357,11 @@ func TestRenderProjectListShowsNoteIndicator(t *testing.T) {
 	if len(lines) < 2 {
 		t.Fatalf("renderProjectList() expected header plus one row, got %q", rendered)
 	}
-	if !strings.Contains(lines[0], "AGENT") || !strings.Contains(lines[0], "N RUN") {
-		t.Fatalf("renderProjectList() missing agent/note/run headers, got %q", lines[0])
+	if !strings.Contains(lines[0], "AGENT") || !strings.Contains(lines[0], "TODO RUN") {
+		t.Fatalf("renderProjectList() missing agent/todo/run headers, got %q", lines[0])
 	}
-	fields := strings.Fields(lines[1])
-	foundIndicator := false
-	for _, field := range fields {
-		if field == "*" {
-			foundIndicator = true
-			break
-		}
-	}
-	if !foundIndicator {
-		t.Fatalf("renderProjectList() should show the note indicator in the row, got %q", lines[1])
+	if !strings.Contains(lines[1], " 3 ") {
+		t.Fatalf("renderProjectList() should show the open TODO count in the row, got %q", lines[1])
 	}
 }
 
@@ -1591,24 +1584,32 @@ func waitForRuntimeStopped(t *testing.T, manager *projectrun.Manager, projectPat
 	return projectrun.Snapshot{}
 }
 
-func TestRenderDetailContentShowsNotesSection(t *testing.T) {
+func TestRenderDetailContentShowsTODOSection(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{
-			Name:          "demo",
-			Path:          "/tmp/demo",
-			Status:        model.StatusIdle,
-			PresentOnDisk: true,
-			Note:          "Line one\nLine two",
+			Name:           "demo",
+			Path:           "/tmp/demo",
+			Status:         model.StatusIdle,
+			PresentOnDisk:  true,
+			OpenTODOCount:  2,
+			TotalTODOCount: 2,
 		}},
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo", OpenTODOCount: 2, TotalTODOCount: 2},
+			Todos: []model.TodoItem{
+				{ID: 1, ProjectPath: "/tmp/demo", Text: "Line one"},
+				{ID: 2, ProjectPath: "/tmp/demo", Text: "Line two"},
+			},
+		},
 		selected: 0,
 	}
 
 	rendered := ansi.Strip(m.renderDetailContent(60))
-	if !strings.Contains(rendered, "Notes") {
-		t.Fatalf("renderDetailContent() should include a Notes section: %q", rendered)
+	if !strings.Contains(rendered, "TODO") {
+		t.Fatalf("renderDetailContent() should include a TODO section: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Line one") || !strings.Contains(rendered, "Line two") {
-		t.Fatalf("renderDetailContent() should render multiline notes: %q", rendered)
+	if !strings.Contains(rendered, "[ ] Line one") || !strings.Contains(rendered, "[ ] Line two") {
+		t.Fatalf("renderDetailContent() should render open TODO items: %q", rendered)
 	}
 }
 
@@ -3303,6 +3304,93 @@ func TestEmbeddedModelPreferencePersistsAcrossFutureSessionsPerProvider(t *testi
 	}
 	if requests[1].Provider != codexapp.ProviderOpenCode || requests[1].PendingModel != "openai/gpt-5.4" || requests[1].PendingReasoning != "medium" {
 		t.Fatalf("opencode request = %#v, want persisted OpenCode model preference", requests[1])
+	}
+}
+
+func TestTodoDialogEnterStartsFreshPreferredProviderWithDraft(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				ThreadID: "ses-todo",
+				Started:  true,
+				Preset:   req.Preset,
+				Status:   req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:                "/tmp/demo",
+			Name:                "demo",
+			PresentOnDisk:       true,
+			LatestSessionFormat: "opencode_db",
+		}},
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Todos: []model.TodoItem{{
+				ID:          7,
+				ProjectPath: "/tmp/demo",
+				Text:        "Change font color to red when there's an error",
+			}},
+		},
+		selected:      0,
+		todoDialog:    &todoDialogState{ProjectPath: "/tmp/demo", ProjectName: "demo"},
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, cmd := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.todoDialog != nil {
+		t.Fatalf("todo dialog should close when starting the selected TODO")
+	}
+	if got.codexPendingOpen == nil || got.codexPendingOpen.provider != codexapp.ProviderOpenCode {
+		t.Fatalf("codexPendingOpen = %#v, want pending OpenCode session", got.codexPendingOpen)
+	}
+	if got.codexDrafts["/tmp/demo"].Text != "Change font color to red when there's an error" {
+		t.Fatalf("draft text = %q, want selected TODO text", got.codexDrafts["/tmp/demo"].Text)
+	}
+	if cmd == nil {
+		t.Fatalf("starting a TODO should return an open command")
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("todo launch returned error = %v", opened.err)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("request count = %d, want 1", len(requests))
+	}
+	if requests[0].Provider != codexapp.ProviderOpenCode || !requests[0].ForceNew || strings.TrimSpace(requests[0].Prompt) != "" {
+		t.Fatalf("launch request = %#v, want fresh OpenCode launch without auto-sent prompt", requests[0])
+	}
+
+	updated, cmd = got.Update(opened)
+	got = updated.(Model)
+	if got.codexVisibleProject != "/tmp/demo" {
+		t.Fatalf("codexVisibleProject = %q, want /tmp/demo", got.codexVisibleProject)
+	}
+	if got.codexInput.Value() != "Change font color to red when there's an error" {
+		t.Fatalf("composer text = %q, want selected TODO draft", got.codexInput.Value())
+	}
+	if got.status != "Fresh OpenCode session ready with TODO draft. Edit and press Enter to send." {
+		t.Fatalf("status = %q, want todo draft ready status", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("opening the embedded session should return a focus command")
 	}
 }
 
@@ -7956,13 +8044,13 @@ func TestHelpPanelLinesStayMinimal(t *testing.T) {
 	if !strings.Contains(joined, "slash-command palette") {
 		t.Fatalf("helpPanelLines() should explain the slash-command palette: %q", joined)
 	}
-	if !strings.Contains(joined, "/codex, /opencode, /settings, /commit, /diff, or /run") {
+	if !strings.Contains(joined, "/codex, /opencode, /todo, /commit, /diff, or /run") {
 		t.Fatalf("helpPanelLines() should include concrete slash-command examples: %q", joined)
 	}
 	if !strings.Contains(joined, "interrupt busy session") {
 		t.Fatalf("helpPanelLines() should keep the session interrupt hint: %q", joined)
 	}
-	if !strings.Contains(joined, "n  note") || !strings.Contains(joined, "o/v  sort/view") || !strings.Contains(joined, "p  pin") || !strings.Contains(joined, "Ctrl+V  image") {
+	if !strings.Contains(joined, "t  todo") || !strings.Contains(joined, "o/v  sort/view") || !strings.Contains(joined, "p  pin") || !strings.Contains(joined, "Ctrl+V  image") {
 		t.Fatalf("helpPanelLines() should show the reordered quick actions: %q", joined)
 	}
 	if !strings.Contains(joined, "AGENT") || !strings.Contains(joined, "RUN") {

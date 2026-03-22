@@ -54,9 +54,13 @@ type Model struct {
 	nowFn     func() time.Time
 	homeDirFn func() (string, error)
 
-	noteDialog       *noteDialogState
-	noteCopyDialog   *noteCopyDialogState
-	noteClearConfirm *noteClearConfirmState
+	noteDialog        *noteDialogState
+	noteCopyDialog    *noteCopyDialogState
+	noteClearConfirm  *noteClearConfirmState
+	todoDialog        *todoDialogState
+	todoEditor        *todoEditorState
+	todoDeleteConfirm *todoDeleteConfirmState
+	todoLaunchDraft   *todoLaunchDraftState
 
 	commandMode                  bool
 	commandInput                 textinput.Model
@@ -187,6 +191,12 @@ type runCommandSavedMsg struct {
 	projectPath string
 	command     string
 	startAfter  bool
+	err         error
+}
+
+type todoActionMsg struct {
+	projectPath string
+	status      string
 	err         error
 }
 
@@ -488,6 +498,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ensureSelectionVisible()
 		m.syncCommandInputWidth()
 		m.syncNoteDialogSize()
+		m.syncTodoDialogSize()
+		m.syncTodoEditorSize()
 		m.syncDiffView(false)
 		m.syncDetailViewport(false)
 		m.syncCodexComposerSize()
@@ -512,6 +524,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.runCommandDialog != nil {
 			return m.updateRunCommandDialogMode(msg)
+		}
+		if m.todoDeleteConfirm != nil {
+			return m.updateTodoDeleteConfirmMode(msg)
+		}
+		if m.todoEditor != nil {
+			return m.updateTodoEditorMode(msg)
+		}
+		if m.todoDialog != nil {
+			return m.updateTodoDialogMode(msg)
 		}
 		if m.noteClearConfirm != nil {
 			return m.updateNoteClearConfirmMode(msg)
@@ -625,6 +646,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 		if msg.err == nil {
 			m.detail = msg.detail
+			m.syncTodoDialogSelection()
 			m.syncDetailViewport(false)
 		}
 		return m, nil
@@ -818,6 +840,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "Saved run command"
 		}
 		return m, tea.Batch(cmds...)
+	case todoActionMsg:
+		if msg.err != nil {
+			m.err = nil
+			m.status = msg.err.Error()
+			if m.todoEditor != nil {
+				m.todoEditor.Submitting = false
+			}
+			return m, nil
+		}
+		if m.todoEditor != nil {
+			m.todoEditor.Submitting = false
+			m.todoEditor = nil
+		}
+		m.todoDeleteConfirm = nil
+		m.err = nil
+		if strings.TrimSpace(msg.status) != "" {
+			m.status = msg.status
+		}
+		return m, nil
 	case settingsSavedMsg:
 		m.err = nil
 		if msg.err != nil {
@@ -911,6 +952,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			provider := m.codexPendingOpenProvider()
 			m.finishCodexPendingOpen(msg.projectPath, false)
+			m.todoLaunchDraft = nil
 			if strings.TrimSpace(msg.projectPath) != "" {
 				if _, ok := m.codexSession(msg.projectPath); !ok {
 					m.showEmbeddedOpenFailure(msg.projectPath, provider, msg.err)
@@ -921,7 +963,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.finishCodexPendingOpen(msg.projectPath, true)
-		m.status = msg.status
+		if m.todoLaunchDraft != nil && strings.TrimSpace(m.todoLaunchDraft.projectPath) == strings.TrimSpace(msg.projectPath) {
+			m.status = "Fresh " + m.todoLaunchDraft.provider.Label() + " session ready with TODO draft. Edit and press Enter to send."
+			m.todoLaunchDraft = nil
+		} else {
+			m.status = msg.status
+		}
 		return m, m.codexInput.Focus()
 	case codexActionMsg:
 		if msg.err != nil {
@@ -1194,8 +1241,8 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if p, ok := m.selectedProject(); ok {
 			return m, m.clearSnoozeCmd(p.Path)
 		}
-	case "n":
-		return m, m.openNoteDialogForSelection()
+	case "t":
+		return m, m.openTodoDialogForSelection()
 	}
 	return m, nil
 }
@@ -1665,6 +1712,15 @@ func (m Model) View() string {
 	} else if m.ignoredPickerVisible {
 		body = m.renderIgnoredPickerOverlay(body, layout.width, layout.height)
 	}
+	if m.todoDialog != nil {
+		body = m.renderTodoDialogOverlay(body, layout.width, layout.height)
+	}
+	if m.todoEditor != nil {
+		body = m.renderTodoEditorOverlay(body, layout.width, layout.height)
+	}
+	if m.todoDeleteConfirm != nil {
+		body = m.renderTodoDeleteConfirmOverlay(body, layout.width, layout.height)
+	}
 	if m.noteDialog != nil {
 		body = m.renderNoteDialogOverlay(body, layout.width, layout.height)
 	}
@@ -1929,7 +1985,7 @@ func (m Model) renderProjectList(width, height int) string {
 		assessment := truncateText(projectAssessmentTextAt(p, now), assessmentW)
 		runtimeSnapshot := m.projectRuntimeSnapshot(p.Path)
 		agentLabel, agentTag, agentLive := m.projectAgentDisplay(p, now)
-		noteMarker := projectNoteMarker(p.Note)
+		todoCount := projectTODOCountLabel(p.OpenTODOCount)
 		runLabel, runState := projectRunSummary(runtimeSnapshot, p.RunCommand)
 		row := lipgloss.JoinHorizontal(
 			lipgloss.Top,
@@ -1941,7 +1997,7 @@ func (m Model) renderProjectList(width, height int) string {
 			" ",
 			cellStyle(sourceStyleForTag(agentTag, agentLive).Width(projectListAgentWidth).Align(lipgloss.Left)).Render(truncateText(agentLabel, projectListAgentWidth)),
 			" ",
-			cellStyle(noteListIndicatorStyle.Width(1).Align(lipgloss.Center)).Render(noteMarker),
+			cellStyle(noteListIndicatorStyle.Width(projectListTODOWidth).Align(lipgloss.Right)).Render(todoCount),
 			" ",
 			cellStyle(projectRunStyle(runState).Width(projectListRunWidth).Align(lipgloss.Left)).Render(truncateText(runLabel, projectListRunWidth)),
 			"  ",
@@ -2014,10 +2070,25 @@ func (m Model) renderDetailContent(width int) string {
 	if p.SnoozedUntil != nil {
 		lines = append(lines, detailField("Snoozed until", detailValueStyle.Render(p.SnoozedUntil.Format(time.RFC3339))))
 	}
-	if projectHasNote(p.Note) {
-		note := normalizeProjectNote(p.Note)
-		lines = append(lines, detailSectionStyle.Render("Notes"))
-		lines = append(lines, lipgloss.NewStyle().Width(max(12, width)).Render(detailValueStyle.Render(note)))
+	lines = append(lines, detailSectionStyle.Render("TODO"))
+	if p.TotalTODOCount == 0 {
+		lines = append(lines, detailMutedStyle.Render("No TODOs yet. Press t or run /todo."))
+	} else {
+		lines = append(lines, detailField("Counts", detailValueStyle.Render(fmt.Sprintf("%d open, %d total", p.OpenTODOCount, p.TotalTODOCount))))
+		openShown := 0
+		for _, item := range d.Todos {
+			if item.Done {
+				continue
+			}
+			lines = append(lines, renderWrappedDetailBullet(detailValueStyle, width, "[ ] "+strings.TrimSpace(item.Text)))
+			openShown++
+			if openShown >= 5 {
+				break
+			}
+		}
+		if openShown == 0 {
+			lines = append(lines, detailMutedStyle.Render("All TODOs are done. Press t or run /todo."))
+		}
 	}
 
 	lines = append(lines, detailSectionStyle.Render("Attention reasons"))
@@ -2090,6 +2161,7 @@ const (
 	spinnerAnimationFrameWrap = 4096
 	assessmentFlashDuration   = time.Second
 	projectListAgentWidth     = 10
+	projectListTODOWidth      = 4
 	projectListRunWidth       = 11
 	usagePulseDuration        = 900 * time.Millisecond
 )
@@ -2294,6 +2366,13 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m.launchOpenCodeForSelection(false, inv.Prompt)
 	case commands.KindOpenCodeNew:
 		return m.launchOpenCodeForSelection(true, inv.Prompt)
+	case commands.KindTodo:
+		p, ok := m.selectedProject()
+		if !ok {
+			m.status = "No project selected"
+			return m, nil
+		}
+		return m, m.openTodoDialog(p)
 	case commands.KindNote:
 		p, ok := m.selectedProject()
 		if !ok {
@@ -2911,15 +2990,15 @@ const (
 	projectRunError
 )
 
-func projectNoteMarker(note string) string {
-	if projectHasNote(note) {
-		return "*"
+func projectTODOCountLabel(count int) string {
+	if count <= 0 {
+		return "-"
 	}
-	return ""
+	return strconv.Itoa(count)
 }
 
 func projectListColumnWidths(totalWidth int) (int, int) {
-	const baseWidth = 53
+	const baseWidth = 56
 
 	if totalWidth < baseWidth+22 {
 		return 10, 10
@@ -2950,7 +3029,7 @@ func renderProjectListHeader(projectW, assessmentW int) string {
 		" ",
 		lipgloss.NewStyle().Width(projectListAgentWidth).Align(lipgloss.Left).Render("AGENT"),
 		" ",
-		lipgloss.NewStyle().Width(1).Align(lipgloss.Center).Render("N"),
+		lipgloss.NewStyle().Width(projectListTODOWidth).Align(lipgloss.Right).Render("TODO"),
 		" ",
 		lipgloss.NewStyle().Width(projectListRunWidth).Align(lipgloss.Left).Render("RUN"),
 		"  ",
@@ -4509,7 +4588,7 @@ func helpPanelLines() []string {
 			renderDialogAction("Tab", "complete there", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("?", "toggle help", commitActionKeyStyle, commitActionTextStyle),
 		),
-		commandPaletteHintStyle.Render("Try /setup, /codex, /opencode, /settings, /commit, /diff, or /run."),
+		commandPaletteHintStyle.Render("Try /setup, /codex, /opencode, /todo, /commit, /diff, or /run."),
 		detailSectionStyle.Render("Navigate"),
 		renderHelpPanelActionRow(
 			renderDialogAction("Tab", "switch pane", navigateActionKeyStyle, navigateActionTextStyle),
@@ -4523,7 +4602,7 @@ func helpPanelLines() []string {
 		detailSectionStyle.Render("Quick Actions"),
 		renderHelpPanelActionRow(
 			renderDialogAction("f", "filter", navigateActionKeyStyle, navigateActionTextStyle),
-			renderDialogAction("n", "note", commitActionKeyStyle, commitActionTextStyle),
+			renderDialogAction("t", "todo", commitActionKeyStyle, commitActionTextStyle),
 			renderDialogAction("o/v", "sort/view", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("p", "pin", pushActionKeyStyle, pushActionTextStyle),
 			renderDialogAction("Ctrl+V", "image", pushActionKeyStyle, pushActionTextStyle),
@@ -4555,7 +4634,7 @@ func renderHelpPanelActionRow(parts ...string) string {
 func renderHelpPanelLegendLine() string {
 	legend := []string{
 		renderDialogAction("AGENT", "live", detailLabelStyle, detailValueStyle),
-		renderDialogAction("N", "note", commitActionKeyStyle, commitActionTextStyle),
+		renderDialogAction("TODO", "open", commitActionKeyStyle, commitActionTextStyle),
 		renderDialogAction("RUN", "runtime", pushActionKeyStyle, pushActionTextStyle),
 		renderDialogAction("!", "warning", cancelActionKeyStyle, cancelActionTextStyle),
 	}

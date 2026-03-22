@@ -31,6 +31,7 @@ const (
 	KindCodexNew    Kind = "codex-new"
 	KindOpenCode    Kind = "opencode"
 	KindOpenCodeNew Kind = "opencode-new"
+	KindTodo        Kind = "todo"
 	KindNote        Kind = "note"
 	KindPin         Kind = "pin"
 	KindSnooze      Kind = "snooze"
@@ -124,7 +125,7 @@ var specs = []Spec{
 	{Name: "codex-new", Usage: "/codex-new [prompt]", Summary: "Start a fresh Codex session in the selected project"},
 	{Name: "opencode", Usage: "/opencode [prompt]", Summary: "Resume the selected project's latest OpenCode session, or start a new one"},
 	{Name: "opencode-new", Usage: "/opencode-new [prompt]", Summary: "Start a fresh OpenCode session in the selected project"},
-	{Name: "note", Usage: "/note [clear]", Summary: "Edit or clear the selected project's note"},
+	{Name: "todo", Usage: "/todo", Summary: "Open the selected project's TODO list"},
 	{Name: "pin", Usage: "/pin", Summary: "Toggle pin on the selected project"},
 	{Name: "snooze", Usage: "/snooze [duration]", Summary: "Snooze the selected project"},
 	{Name: "clear-snooze", Usage: "/clear-snooze", Summary: "Clear snooze on the selected project"},
@@ -346,6 +347,11 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /diff")
 		}
 		return Invocation{Kind: KindDiff, Canonical: "/diff"}, nil
+	case "todo":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /todo")
+		}
+		return Invocation{Kind: KindTodo, Canonical: "/todo"}, nil
 	case "note":
 		switch strings.ToLower(strings.TrimSpace(rawArgs)) {
 		case "":
