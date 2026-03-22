@@ -7831,6 +7831,50 @@ func TestViewWithDiffScreenUsesFullBody(t *testing.T) {
 	}
 }
 
+func TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen(t *testing.T) {
+	m := Model{
+		diffView: newDiffViewState("/tmp/demo", "demo"),
+		width:    100,
+		height:   24,
+	}
+
+	updated, cmd := m.Update(diffPreviewMsg{
+		err: service.NoDiffChangesError{
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			Branch:      "master",
+		},
+	})
+	got := updated.(Model)
+
+	if cmd != nil {
+		t.Fatalf("no-diff result should not queue another command")
+	}
+	if got.diffView == nil {
+		t.Fatalf("no-diff result should keep the diff screen open")
+	}
+	if got.diffView.loading {
+		t.Fatalf("no-diff result should stop loading")
+	}
+	if got.diffView.preview == nil {
+		t.Fatalf("no-diff result should keep preview metadata for the empty state")
+	}
+	if got.status != "Worktree clean. Esc close" {
+		t.Fatalf("status = %q, want clean-worktree status", got.status)
+	}
+
+	rendered := ansi.Strip(got.View())
+	if !strings.Contains(rendered, "Clean worktree") {
+		t.Fatalf("clean diff screen should explain the empty state: %q", rendered)
+	}
+	if !strings.Contains(rendered, "demo has no staged, unstaged, or untracked changes") {
+		t.Fatalf("clean diff screen should show the no-diff warning in the content pane: %q", rendered)
+	}
+	if strings.Contains(rendered, "Enter/Tab") || strings.Contains(rendered, "unified") {
+		t.Fatalf("clean diff screen should not show interactive diff controls: %q", rendered)
+	}
+}
+
 func TestRenderDiffFileListSeparatesStagedAndUnstagedSections(t *testing.T) {
 	diffState := newDiffViewState("/tmp/demo", "demo")
 	diffState.loading = false

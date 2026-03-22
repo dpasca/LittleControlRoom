@@ -1,6 +1,28 @@
 # Little Control Room Status
 
-Last updated: 2026-03-22 08:32 JST (JST)
+Last updated: 2026-03-22 10:59 JST (JST)
+
+## Latest Update (2026-03-22 10:59 JST)
+
+- Investigated the `/diff` flash-and-close behavior on clean repos and confirmed the diff screen was being opened and then immediately torn down when `PrepareDiff` returned `NoDiffChangesError`.
+- Kept the diff screen open for clean-worktree cases by preserving an empty diff state with project/branch metadata instead of closing back to the dashboard.
+- Updated the diff renderer, status text, footer, and key handling so the empty state now clearly says the worktree is clean, shows the warning inside the diff pane, and hides file-selection/render-mode controls that do not apply without changed files.
+- Added a focused TUI regression proving a clean-worktree `/diff` result keeps the screen open and renders the warning instead of bouncing away.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/app.go internal/tui/diff_view.go internal/tui/app_test.go` passed.
+- `go test ./internal/tui -run 'Test(ViewWithDiffScreenUsesFullBody|DiffPreviewMsgNoChangesKeepsDiffScreenOpen)' -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-22T10:58:57+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-22T10:58:57+09:00` (`projects: 133`).
+- `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-clean-diff-smoke INTERVAL=1h` launched the isolated TUI sandbox successfully and exited cleanly via `q`.
+
+Next concrete tasks:
+
+- Consider whether the clean-worktree diff state should offer a one-line recovery hint such as `/commit` or `/run` for users who land there expecting the next workflow step.
+- If other full-screen tools still collapse on empty states, align them with this "stay open and explain why" pattern for consistency.
 
 ## Latest Update (2026-03-22 08:32 JST)
 

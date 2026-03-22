@@ -100,6 +100,10 @@ type diffViewState struct {
 	renderCache     map[diffRenderCacheKey]string
 }
 
+func (state *diffViewState) hasFiles() bool {
+	return state != nil && state.preview != nil && len(state.preview.Files) > 0
+}
+
 func newDiffViewState(projectPath, projectName string) *diffViewState {
 	return &diffViewState{
 		ProjectPath:     strings.TrimSpace(projectPath),
@@ -139,6 +143,9 @@ func (m Model) updateDiffMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.diffView.loading {
+		return m, nil
+	}
+	if !m.diffView.hasFiles() {
 		return m, nil
 	}
 
@@ -371,8 +378,8 @@ func (m *Model) ensureRenderedDiffContent(width int) {
 	if width < 1 {
 		width = 1
 	}
-	if m.diffView.preview == nil || len(m.diffView.preview.Files) == 0 {
-		m.diffView.renderedContent = renderCodexMessageBlock("Diff", "No changed files loaded.", lipgloss.Color("81"), lipgloss.Color("252"), width)
+	if !m.diffView.hasFiles() {
+		m.diffView.renderedContent = renderCodexMessageBlock("Nothing to diff", diffViewEmptyMessage(*m.diffView), lipgloss.Color("81"), lipgloss.Color("252"), width)
 		m.diffView.renderedWidth = width
 		m.diffView.renderedIndex = -1
 		m.diffView.renderedMode = m.diffView.mode
@@ -445,8 +452,8 @@ func (m Model) renderDiffFileList(width, height int) string {
 		lines = append(lines, commandPaletteHintStyle.Render("Loading git diff..."))
 		return fitPaneContent(strings.Join(lines, "\n"), width, height)
 	}
-	if m.diffView.preview == nil || len(m.diffView.preview.Files) == 0 {
-		lines = append(lines, commandPaletteHintStyle.Render("No changed files"))
+	if !m.diffView.hasFiles() {
+		lines = append(lines, commandPaletteHintStyle.Render(diffViewEmptyMeta(*m.diffView)))
 		return fitPaneContent(strings.Join(lines, "\n"), width, height)
 	}
 
@@ -525,14 +532,15 @@ func (m Model) renderDiffContentPane(width, height int) string {
 			title = commandPaletteTitleStyle.Render("Diff")
 			meta = commandPaletteHintStyle.Render("Loading changed files and previews...")
 			body = renderCodexMessageBlock("Status", "Building the selected project's diff preview.", lipgloss.Color("81"), lipgloss.Color("252"), width)
-		case m.diffView.preview != nil && len(m.diffView.preview.Files) > 0:
+		case m.diffView.hasFiles():
 			file := m.diffView.preview.Files[m.diffView.selected]
 			title = commandPaletteTitleStyle.Render(truncateText(file.Summary, max(1, width)))
 			meta = commandPaletteHintStyle.Render(diffFileMeta(file, m.diffView.mode))
 			body = m.diffView.contentViewport.View()
 		default:
-			meta = commandPaletteHintStyle.Render("No changed files")
-			body = renderCodexMessageBlock("Status", "No changed files loaded.", lipgloss.Color("81"), lipgloss.Color("252"), width)
+			title = commandPaletteTitleStyle.Render(truncateText(diffViewEmptyTitle(*m.diffView), max(1, width)))
+			meta = commandPaletteHintStyle.Render(diffViewEmptyMeta(*m.diffView))
+			body = renderCodexMessageBlock("Nothing to diff", diffViewEmptyMessage(*m.diffView), lipgloss.Color("81"), lipgloss.Color("252"), width)
 		}
 	}
 
@@ -1253,6 +1261,9 @@ func diffViewReadyStatus(state diffViewState) string {
 	if state.loading {
 		return "Preparing diff view..."
 	}
+	if !state.hasFiles() {
+		return "Worktree clean. Esc " + closeLabel
+	}
 	modeLabel := diffRenderModeToggleLabel(state.mode)
 	switch state.focus {
 	case diffFocusContent:
@@ -1266,6 +1277,9 @@ func diffViewFooterLabel(state diffViewState) string {
 	closeLabel := diffViewCloseLabel(state)
 	if state.loading {
 		return "Diff loading. Esc " + closeLabel
+	}
+	if !state.hasFiles() {
+		return "Diff clean. Esc " + closeLabel
 	}
 	modeLabel := diffRenderModeToggleLabel(state.mode)
 	switch state.focus {
@@ -1287,6 +1301,17 @@ func renderDiffFooter(width int, state diffViewState, usageSegment string) strin
 		return renderFooterLine(
 			width,
 			renderFooterMeta("Diff"),
+			renderFooterActionList(
+				footerHideAction("Alt+Up", hideLabel),
+				footerExitAction("Esc", closeLabel),
+			),
+			usageSegment,
+		)
+	}
+	if !state.hasFiles() {
+		return renderFooterLine(
+			width,
+			renderFooterMeta("Diff: clean worktree"),
 			renderFooterActionList(
 				footerHideAction("Alt+Up", hideLabel),
 				footerExitAction("Esc", closeLabel),
@@ -1330,6 +1355,34 @@ func diffViewCloseLabel(state diffViewState) string {
 		return "back"
 	}
 	return "close"
+}
+
+func diffViewEmptyTitle(state diffViewState) string {
+	if project := strings.TrimSpace(state.ProjectName); project != "" {
+		return project
+	}
+	if state.preview != nil && strings.TrimSpace(state.preview.ProjectName) != "" {
+		return strings.TrimSpace(state.preview.ProjectName)
+	}
+	return "Diff"
+}
+
+func diffViewEmptyMeta(state diffViewState) string {
+	parts := []string{"Clean worktree"}
+	if state.preview != nil {
+		if branch := strings.TrimSpace(state.preview.Branch); branch != "" {
+			parts = append(parts, branch)
+		}
+	}
+	return strings.Join(parts, " | ")
+}
+
+func diffViewEmptyMessage(state diffViewState) string {
+	project := diffViewEmptyTitle(state)
+	if strings.EqualFold(project, "Diff") {
+		return "This project has no staged, unstaged, or untracked changes right now."
+	}
+	return fmt.Sprintf("%s has no staged, unstaged, or untracked changes right now.", project)
 }
 
 func buildDiffListRows(files []service.DiffFilePreview) []diffListRow {

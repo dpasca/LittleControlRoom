@@ -663,8 +663,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var noDiffErr service.NoDiffChangesError
 			if errors.As(msg.err, &noDiffErr) {
 				m.err = nil
-				m.diffView = nil
-				m.status = "No changed files to show in diff"
+				m.diffView.preview = &service.DiffPreview{
+					ProjectPath: noDiffErr.ProjectPath,
+					ProjectName: noDiffErr.ProjectName,
+					Branch:      noDiffErr.Branch,
+				}
+				m.diffView.selected = 0
+				m.diffView.offset = 0
+				m.diffView.resetRenderCache()
+				m.syncDiffView(true)
+				m.status = diffViewReadyStatus(*m.diffView)
 				return m, nil
 			}
 			m.err = msg.err
@@ -689,8 +697,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var noDiffErr service.NoDiffChangesError
 			if errors.As(msg.err, &noDiffErr) {
 				m.err = nil
-				m.diffView = nil
-				m.status = "No changed files to show in diff"
+				m.diffView.preview = &service.DiffPreview{
+					ProjectPath: noDiffErr.ProjectPath,
+					ProjectName: noDiffErr.ProjectName,
+					Branch:      noDiffErr.Branch,
+				}
+				m.diffView.selected = 0
+				m.diffView.offset = 0
+				m.diffView.resetRenderCache()
+				m.syncDiffView(true)
+				m.status = diffViewReadyStatus(*m.diffView)
 				return m, nil
 			}
 			m.err = msg.err
