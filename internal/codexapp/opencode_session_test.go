@@ -203,6 +203,53 @@ func TestBuildOpenCodeServerCommandInjectsPresetConfig(t *testing.T) {
 	}
 }
 
+func TestBuildOpenCodeServerCommandOverridesPreExistingConfigEnv(t *testing.T) {
+	t.Setenv("OPENCODE_CONFIG_CONTENT", `{"permission":{"edit":"old"}}`)
+
+	cmd, err := buildOpenCodeServerCommand("/tmp/demo", codexcli.PresetSafe)
+	if err != nil {
+		t.Fatalf("buildOpenCodeServerCommand() error = %v", err)
+	}
+
+	values := 0
+	for _, entry := range cmd.Env {
+		if strings.HasPrefix(entry, "OPENCODE_CONFIG_CONTENT=") {
+			values++
+		}
+	}
+	if values != 1 {
+		t.Fatalf("expected exactly one OPENCODE_CONFIG_CONTENT entry, got %d", values)
+	}
+
+	var configContent string
+	for _, entry := range cmd.Env {
+		if strings.HasPrefix(entry, "OPENCODE_CONFIG_CONTENT=") {
+			configContent = strings.TrimPrefix(entry, "OPENCODE_CONFIG_CONTENT=")
+			break
+		}
+	}
+	if configContent == "" {
+		t.Fatal("cmd.Env missing OPENCODE_CONFIG_CONTENT")
+	}
+	if configContent == `{"permission":{"edit":"old"}}` {
+		t.Fatalf("config env was not overridden: %q", configContent)
+	}
+
+	var cfg openCodeConfigOverride
+	if err := json.Unmarshal([]byte(configContent), &cfg); err != nil {
+		t.Fatalf("unmarshal injected config: %v", err)
+	}
+	if got := cfg.Permission; got != (openCodePermissionOverride{
+		Edit:              "ask",
+		Bash:              "ask",
+		WebFetch:          "ask",
+		DoomLoop:          "ask",
+		ExternalDirectory: "ask",
+	}) {
+		t.Fatalf("cfg.Permission = %#v, want safe preset ask-everything override", got)
+	}
+}
+
 func TestOpenCodeSessionStatusIdleMarksTurnCompleted(t *testing.T) {
 	session := newTestOpenCodeSession(t, "")
 

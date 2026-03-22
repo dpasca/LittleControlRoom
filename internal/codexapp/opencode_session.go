@@ -1494,6 +1494,19 @@ func openCodeConfigContentForPreset(preset codexcli.Preset) (string, error) {
 	return string(raw), nil
 }
 
+func envWithOverride(base []string, key, value string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(base)+1)
+	for _, e := range base {
+		if strings.HasPrefix(e, prefix) {
+			continue
+		}
+		out = append(out, e)
+	}
+	out = append(out, key+"="+value)
+	return out
+}
+
 func buildOpenCodeServerCommand(projectPath string, preset codexcli.Preset) (*exec.Cmd, error) {
 	cmd := exec.Command("opencode", "serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs")
 	cmd.Dir = projectPath
@@ -1501,7 +1514,7 @@ func buildOpenCodeServerCommand(projectPath string, preset codexcli.Preset) (*ex
 	if err != nil {
 		return nil, err
 	}
-	cmd.Env = append(os.Environ(), "OPENCODE_CONFIG_CONTENT="+configContent)
+	cmd.Env = envWithOverride(os.Environ(), "OPENCODE_CONFIG_CONTENT", configContent)
 	return cmd, nil
 }
 
