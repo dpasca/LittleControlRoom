@@ -100,3 +100,17 @@ func wildcardMatch(pattern, value string) bool {
 	}
 	return patternIndex == len(pattern)
 }
+
+func RedactPrivacy(name string, patterns []string) string {
+	if name == "" || len(patterns) == 0 {
+		return name
+	}
+	if ProjectNameExcluded(name, patterns) {
+		return "********"
+	}
+	return name
+}
+
+func MatchesPrivacyPattern(name string, patterns []string) bool {
+	return ProjectNameExcluded(name, patterns)
+}

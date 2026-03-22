@@ -22,6 +22,7 @@ type AppConfig struct {
 	IncludePaths              []string
 	ExcludePaths              []string
 	ExcludeProjectPatterns    []string
+	PrivacyPatterns           []string
 	EmbeddedCodexModel        string
 	EmbeddedCodexReasoning    string
 	EmbeddedOpenCodeModel     string
@@ -57,6 +58,7 @@ type fileConfig struct {
 	IncludePaths              *[]string `toml:"include_paths"`
 	ExcludePaths              *[]string `toml:"exclude_paths"`
 	ExcludeProjectPatterns    *[]string `toml:"exclude_project_patterns"`
+	PrivacyPatterns           *[]string `toml:"privacy_patterns"`
 	EmbeddedCodexModel        *string   `toml:"embedded_codex_model"`
 	EmbeddedCodexReasoning    *string   `toml:"embedded_codex_reasoning_effort"`
 	EmbeddedOpenCodeModel     *string   `toml:"embedded_opencode_model"`
@@ -316,6 +318,9 @@ func applyConfigFile(cfg *AppConfig) error {
 	}
 	if fc.ExcludeProjectPatterns != nil {
 		cfg.ExcludeProjectPatterns = normalizeProjectPatterns(*fc.ExcludeProjectPatterns)
+	}
+	if fc.PrivacyPatterns != nil {
+		cfg.PrivacyPatterns = normalizeProjectPatterns(*fc.PrivacyPatterns)
 	}
 	if fc.EmbeddedCodexModel != nil {
 		cfg.EmbeddedCodexModel = strings.TrimSpace(*fc.EmbeddedCodexModel)

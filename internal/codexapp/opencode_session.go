@@ -716,6 +716,9 @@ func (s *openCodeSession) initializeSession(parent context.Context, req LaunchRe
 
 	sessionID := strings.TrimSpace(req.ResumeID)
 	resumed := false
+	if req.ForceNew {
+		sessionID = ""
+	}
 	if !req.ForceNew && sessionID != "" {
 		var existing openCodeSessionEnvelope
 		if err := s.getJSON(ctx, "/session/"+sessionID, &existing); err == nil && strings.TrimSpace(existing.ID) != "" {
@@ -734,6 +737,12 @@ func (s *openCodeSession) initializeSession(parent context.Context, req LaunchRe
 		if sessionID == "" {
 			return fmt.Errorf("opencode session create returned no session id")
 		}
+		if req.ForceNew {
+			if err := s.ensureFreshSession(ctx, sessionID); err != nil {
+				return err
+			}
+		}
+	} else {
 		if req.ForceNew {
 			if err := s.ensureFreshSession(ctx, sessionID); err != nil {
 				return err
@@ -771,9 +780,9 @@ func (s *openCodeSession) initializeSession(parent context.Context, req LaunchRe
 func (s *openCodeSession) ensureFreshSession(ctx context.Context, sessionID string) error {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
-		return nil
+		return fmt.Errorf("ensureFreshSession called with empty sessionID")
 	}
-	var messages []openCodeMessage
+	messages := []openCodeMessage{}
 	if err := s.getJSON(ctx, "/session/"+sessionID+"/message", &messages); err != nil {
 		return err
 	}

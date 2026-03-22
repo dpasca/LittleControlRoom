@@ -44,6 +44,8 @@ type Model struct {
 	sortMode               projectSortMode
 	visibility             projectVisibilityMode
 	excludeProjectPatterns []string
+	privacyMode            bool
+	privacyPatterns        []string
 
 	loading bool
 	status  string
@@ -373,6 +375,8 @@ func New(ctx context.Context, svc *service.Service) Model {
 		sortMode:               sortByAttention,
 		visibility:             visibilityAIFolders,
 		excludeProjectPatterns: currentExcludeProjectPatterns(svc),
+		privacyMode:            false,
+		privacyPatterns:        currentPrivacyPatterns(svc),
 		codexManager:           codexapp.NewManager(),
 		runtimeManager:         projectrun.NewManager(),
 		embeddedModelPrefs:     embeddedModelPreferencesFromSettings(initialSettings),
@@ -476,6 +480,13 @@ func currentExcludeProjectPatterns(svc *service.Service) []string {
 		return nil
 	}
 	return append([]string(nil), svc.Config().ExcludeProjectPatterns...)
+}
+
+func currentPrivacyPatterns(svc *service.Service) []string {
+	if svc == nil {
+		return nil
+	}
+	return append([]string(nil), svc.Config().PrivacyPatterns...)
 }
 
 func (m Model) Init() tea.Cmd {
@@ -875,6 +886,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		saved := cloneEditableSettings(msg.settings)
 		m.settingsBaseline = &saved
 		m.excludeProjectPatterns = append([]string(nil), msg.settings.ExcludeProjectPatterns...)
+		m.privacyPatterns = append([]string(nil), msg.settings.PrivacyPatterns...)
 		m.embeddedModelPrefs = embeddedModelPreferencesFromSettings(msg.settings)
 		m.settingsMode = false
 		m.status = fmt.Sprintf("Settings saved to %s. Filters, API key, and Codex launch mode apply now; the running scheduler keeps its current timing until the next launch of %s.", msg.path, brand.CLIName)
@@ -1912,6 +1924,9 @@ func (m Model) renderProjectList(width, height int) string {
 	if filterLabel != "" {
 		metaParts = append(metaParts, "filter:"+filterLabel)
 	}
+	if m.privacyMode {
+		metaParts = append(metaParts, "privacy")
+	}
 	meta := "  (" + strings.Join(metaParts, " ") + ")"
 	columnWidth := width
 	if filterLabel != "" {
@@ -2427,6 +2442,28 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, m.forgetProjectCmd(p.Path)
 	case commands.KindFocus:
 		m.setFocusedPaneFromCommand(inv.Focus)
+		return m, nil
+	case commands.KindPrivacy:
+		switch inv.Toggle {
+		case commands.ToggleOn:
+			m.privacyMode = true
+			m.status = "Privacy mode enabled"
+		case commands.ToggleOff:
+			m.privacyMode = false
+			m.status = "Privacy mode disabled"
+		case commands.ToggleToggle:
+			m.privacyMode = !m.privacyMode
+			if m.privacyMode {
+				m.status = "Privacy mode enabled"
+			} else {
+				m.status = "Privacy mode disabled"
+			}
+		}
+		selectedPath := ""
+		if p, ok := m.selectedProject(); ok {
+			selectedPath = p.Path
+		}
+		m.rebuildProjectList(selectedPath)
 		return m, nil
 	case commands.KindQuit:
 		if m.codexManager != nil {
@@ -3467,6 +3504,19 @@ func filterProjects(projects []model.ProjectSummary, mode projectVisibilityMode,
 	return filterProjectsByFilter(filterProjectsByName(filtered, excludeProjectPatterns), projectFilter)
 }
 
+func filterProjectsByPrivacy(projects []model.ProjectSummary, privacyPatterns []string) []model.ProjectSummary {
+	if len(projects) == 0 || len(privacyPatterns) == 0 {
+		return projects
+	}
+	filtered := make([]model.ProjectSummary, 0, len(projects))
+	for _, project := range projects {
+		if !config.MatchesPrivacyPattern(project.Name, privacyPatterns) {
+			filtered = append(filtered, project)
+		}
+	}
+	return filtered
+}
+
 func filterProjectsByName(projects []model.ProjectSummary, excludeProjectPatterns []string) []model.ProjectSummary {
 	if len(projects) == 0 {
 		return nil
@@ -3559,6 +3609,9 @@ func (m *Model) rebuildProjectList(selectedPath string) {
 	sorted := append([]model.ProjectSummary(nil), m.allProjects...)
 	m.sortProjects(sorted)
 	m.projects = filterProjects(sorted, m.visibility, m.excludeProjectPatterns, m.projectFilter)
+	if m.privacyMode {
+		m.projects = filterProjectsByPrivacy(m.projects, m.privacyPatterns)
+	}
 	if len(m.projects) == 0 {
 		m.selected = 0
 		m.offset = 0

@@ -17,6 +17,7 @@ const (
 	settingsFieldIncludePaths
 	settingsFieldExcludePaths
 	settingsFieldExcludeProjectPatterns
+	settingsFieldPrivacyPatterns
 	settingsFieldCodexLaunchPreset
 	settingsFieldActiveThreshold
 	settingsFieldStuckThreshold
@@ -74,6 +75,7 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.settingsFieldValue(settingsFieldIncludePaths),
 			m.settingsFieldValue(settingsFieldExcludePaths),
 			m.settingsFieldValue(settingsFieldExcludeProjectPatterns),
+			m.settingsFieldValue(settingsFieldPrivacyPatterns),
 			m.settingsFieldValue(settingsFieldCodexLaunchPreset),
 			m.settingsFieldValue(settingsFieldActiveThreshold),
 			m.settingsFieldValue(settingsFieldStuckThreshold),
@@ -344,6 +346,12 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			strings.Join(settings.ExcludeProjectPatterns, ","),
 			2048,
 		),
+		newSensitiveSettingsField(
+			"Privacy patterns",
+			"Comma-separated patterns to redact in demo mode. Example: medical,visa,personal",
+			strings.Join(settings.PrivacyPatterns, ","),
+			2048,
+		),
 		newSettingsField(
 			"Codex launch mode",
 			"Accepted values: yolo, full-auto, safe. YOLO is the default. Anything else adds a lot more approval prompts and user interaction; safe is the most interruption-heavy.",
@@ -398,6 +406,7 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.IncludePaths = append([]string(nil), settings.IncludePaths...)
 	settings.ExcludePaths = append([]string(nil), settings.ExcludePaths...)
 	settings.ExcludeProjectPatterns = append([]string(nil), settings.ExcludeProjectPatterns...)
+	settings.PrivacyPatterns = append([]string(nil), settings.PrivacyPatterns...)
 	return settings
 }
 

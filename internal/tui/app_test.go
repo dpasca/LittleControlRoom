@@ -4280,6 +4280,99 @@ func TestLaunchOpenCodeForSelectionForceNewRetriesWhenOpenCodeRejectsFreshSessio
 	}
 }
 
+func TestLaunchOpenCodeForSelectionForceNewRetriesWhenOpenCodeReturnsKnownReusedSession(t *testing.T) {
+	const staleSessionID = "ses_stale3abcd"
+	const freshSessionID = "ses_fresh4efgh"
+	const prompt = "continue with a third-force-new attempt"
+
+	var (
+		requests []codexapp.LaunchRequest
+		created  []*fakeCodexSession
+	)
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		switch len(requests) {
+		case 1:
+			return nil, &codexapp.ForceNewSessionReusedError{Provider: codexapp.ProviderOpenCode, ThreadID: staleSessionID}
+		case 2:
+			session := &fakeCodexSession{
+				projectPath: req.ProjectPath,
+				snapshot: codexapp.Snapshot{
+					Provider: codexapp.ProviderOpenCode,
+					Started:  true,
+					Preset:   req.Preset,
+					Status:   "OpenCode session ready",
+					ThreadID: staleSessionID,
+				},
+			}
+			created = append(created, session)
+			return session, nil
+		default:
+			session := &fakeCodexSession{
+				projectPath: req.ProjectPath,
+				snapshot: codexapp.Snapshot{
+					Provider: codexapp.ProviderOpenCode,
+					Started:  true,
+					Preset:   req.Preset,
+					Status:   "OpenCode session ready",
+					ThreadID: freshSessionID,
+				},
+			}
+			created = append(created, session)
+			return session, nil
+		}
+	})
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:                "/tmp/demo",
+			Name:                "demo",
+			PresentOnDisk:       true,
+			LatestSessionFormat: "opencode_db",
+		}},
+	}
+
+	updated, cmd := m.launchOpenCodeForSelection(true, prompt)
+	if cmd == nil {
+		t.Fatalf("launchOpenCodeForSelection() should return an open command")
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("/opencode-new returned error = %v", opened.err)
+	}
+	if opened.status != "Prompt sent to fresh embedded OpenCode session ses_fres. Alt+Up hides it." {
+		t.Fatalf("opened.status = %q, want prompt-sent status after stale-session retry", opened.status)
+	}
+	if len(requests) != 3 {
+		t.Fatalf("launch requests = %d, want 3 when stale thread is not previous or resume", len(requests))
+	}
+	if requests[0].Prompt != prompt || requests[1].Prompt != prompt || requests[2].Prompt != prompt {
+		t.Fatalf("launch prompts changed across retries: %#v", []string{requests[0].Prompt, requests[1].Prompt, requests[2].Prompt})
+	}
+	if !requests[0].ForceNew || !requests[1].ForceNew || !requests[2].ForceNew {
+		t.Fatalf("launch requests should keep ForceNew enabled across retries: %#v", requests)
+	}
+	if len(created) != 2 {
+		t.Fatalf("created sessions = %d, want 2 successful attempts (reused then fresh)", len(created))
+	}
+
+	updated, _ = updated.(Model).Update(opened)
+	got := updated.(Model)
+	snapshot, ok := got.currentCodexSnapshot()
+	if !ok {
+		t.Fatalf("currentCodexSnapshot() unavailable after handling the opened session")
+	}
+	if snapshot.ThreadID != freshSessionID {
+		t.Fatalf("thread id = %q, want retried fresh session %q", snapshot.ThreadID, freshSessionID)
+	}
+}
+
 func TestLaunchCodexForSelectionForceNewWarnsWhenActiveSessionIsReopenedReadOnly(t *testing.T) {
 	const threadID = "019cccc3abcd"
 
@@ -6774,8 +6867,8 @@ func TestCommandEnterOpensSettingsMode(t *testing.T) {
 	if got.commandMode {
 		t.Fatalf("command mode should close after /settings")
 	}
-	if len(got.settingsFields) != 8 {
-		t.Fatalf("settings field count = %d, want 8", len(got.settingsFields))
+	if len(got.settingsFields) != 9 {
+		t.Fatalf("settings field count = %d, want 9", len(got.settingsFields))
 	}
 }
 

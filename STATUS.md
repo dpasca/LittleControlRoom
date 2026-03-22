@@ -1,6 +1,112 @@
 # Little Control Room Status
 
-Last updated: 2026-03-23 00:55 JST (JST)
+Last updated: 2026-03-23 07:52 JST
+
+## Latest Update (2026-03-23 07:52 JST)
+
+- Added demo/privacy mode feature:
+  - New `/privacy on|off|toggle` slash command to toggle privacy mode
+  - Privacy patterns configurable via `/settings` (new "Privacy patterns" field)
+  - **Privacy patterns field is masked with asterisks** (like API key) to avoid shoulder-surfing in demos
+  - When privacy mode is active, projects matching configured patterns are **completely hidden** from the list
+  - Privacy mode indicator shown in project list header meta: `(sort=..., view=..., privacy)`
+  - Uses existing `wildcardMatch` pattern matching (same as exclude project patterns)
+  - `MatchesPrivacyPattern(name, patterns)` function added to `config/project_filters.go`
+  - `filterProjectsByPrivacy` filters out matching projects from the project list when privacy mode is on
+  - Project list rebuilt automatically when privacy mode is toggled
+- All tests pass, scan and doctor succeed (`make test`, `make scan`, `make doctor` all green).
+
+Next concrete tasks:
+
+- Manual interactive verification in `make tui` or `make tui-parallel` to test `/privacy` toggle and verify matching projects are hidden when privacy mode is on.
+
+## Latest Update (2026-03-23 02:22 JST)
+
+- Found and fixed the ROOT CAUSE of `/opencode-new` always reopening the same session:
+  - **Bug**: In `initializeSession`, when `sessionID` was non-empty (from `req.ResumeID`, set by `selectedProjectSessionID` to the currently live session's thread ID) AND `ForceNew=true`, the code would:
+    1. Skip the resume block (correct, since `ForceNew=true`)
+    2. Skip creating a new session (incorrect, since `sessionID != ""`)
+    3. Call `ensureFreshSession` on the OLD session ID
+    4. But `ensureFreshSession` checks the OLD session on the NEW server - since the new server doesn't have the old session in memory, `getJSON` returns empty messages, so `ensureFreshSession` returns `nil` (treating it as "fresh")!
+    5. We then proceeded with `s.sessionID = oldSessionID` - the OLD session ID on the NEW server
+  - **Fix**: When `ForceNew=true`, ALWAYS clear `sessionID` first to force creation of a new session, ignoring any `ResumeID`. Added `if req.ForceNew { sessionID = "" }` before the resume logic.
+- Also fixed earlier: `ensureFreshSession` returning `nil` for empty `sessionID` (now returns error), and `messages` initialized to `[]openCodeMessage{}` instead of `nil`.
+- All tests pass, scan and doctor succeed (`make test`, `make scan`, `make doctor` all green).
+
+Next concrete tasks:
+
+- Manual interactive verification in `make tui` or `make tui-parallel` (with a real TTY) to confirm `/opencode-new` now opens a genuinely fresh session after loading a project.
+
+## Latest Update (2026-03-23 02:05 JST)
+
+- Investigated and fixed a bug in `ensureFreshSession` that could allow a stale/reused session to be treated as fresh:
+  - `ensureFreshSession` was returning `nil` (fresh) when `sessionID` was empty after `strings.TrimSpace`, incorrectly treating no session as a fresh session.
+  - Fixed by returning an error instead of `nil` when `sessionID` is empty: `return fmt.Errorf("ensureFreshSession called with empty sessionID")`.
+  - Also initialized `messages` to `[]openCodeMessage{}` (empty slice) instead of `nil` to ensure proper JSON unmarshal behavior.
+- All tests pass, scan and doctor succeed (`make test`, `make scan`, `make doctor` all green).
+
+Next concrete tasks:
+
+- The `/opencode-new` fix is now in place. Manual interactive verification in `make tui` or `make tui-parallel` (with a real TTY) is still needed to confirm end-to-end behavior.
+
+## Latest Update (2026-03-23 01:42 JST)
+
+- Continued `/opencode-new` force-new validation with a fresh full check:
+  - `make test` passed
+  - `make scan` completed at `2026-03-23T01:40:39+09:00` (`updated projects: 1`)
+  - `make doctor` succeeded (`doctor report (cached, 2026-03-23T01:40:46+09:00)`)
+- Interactive verification still blocked in this session:
+  - `make tui` reports an already-active runtime for the default DB (pid `44068`) and suggests `--allow-multiple-instances` for short-lived overlap.
+  - `make tui-parallel` fails in this shell context because no TTY is available (`could not open a new TTY: open /dev/tty: device not configured`).
+- No new functional changes were made in this continuation pass; current state is to wait for a terminal-capable session to run the final `/opencode-new` manual flow.
+
+Next concrete tasks:
+
+- Re-run `make tui` in a terminal capable of interactive TTY (or stop the active pid if safe) and execute `/opencode-new` end-to-end for a real project.
+- If needed, use a fresh isolated DB with a real PTY (for example via a terminal `env COLUMNS=... LINES=... make tui-parallel`) to complete the manual check once `/dev/tty` is available.
+
+## Latest Update (2026-03-23 01:34 JST)
+
+- Completed end-to-end validation for the `/opencode-new` force-new retry path and kept the max-attempt guard at `maxForceNewEmbeddedOpenAttempts = 3`:
+  - `internal/tui/codex_pane.go` now retries with an evolving `threadIDsToAvoid` set built from:
+    - current in-memory live session thread
+    - `req.ResumeID`
+    - each `ThreadID` surfaced via `ForceNewSessionReusedError` returned from manager open attempts
+  - `shouldRetryFreshEmbeddedOpen`, `shouldRetryFreshEmbeddedOpenError`, and `extractForceNewReusedThread` now encapsulate reuse/retry logic.
+  - `embeddedSessionOpenStatus` now accepts `threadIDsToAvoid` so user-facing status strings describe matched/reused attempts consistently.
+- Added regression coverage in `internal/tui/app_test.go` for `/opencode-new` retry behavior:
+  - `TestLaunchOpenCodeForSelectionForceNewRetriesWhenOpenCodeRejectsFreshSession`
+  - `TestLaunchOpenCodeForSelectionForceNewRetriesWhenOpenCodeReturnsKnownReusedSession`
+- Confirmed OpenCode freshness rejection path in `internal/codexapp/opencode_session.go` via `ensureFreshSession`, returning `ForceNewSessionReusedError` whenever a newly-created session has pre-existing history.
+
+- Verification completed:
+  - `make test` passed
+  - `make scan` updated 1 project at `2026-03-23T01:31:53+09:00`
+  - `make doctor` produced a cached report at `2026-03-23T01:32:01+09:00`
+
+Next concrete tasks:
+
+- Run `make tui` when convenient to manually verify `/opencode-new` in a real embedded session path now that retries are implemented.
+
+## Latest Update (2026-03-23 01:17 JST)
+
+- Hardened `/opencode-new` force-new retry matching so stale/reused threads are tracked across attempts:
+  - `internal/tui/codex_pane.go` now seeds the retry-check set with `previousThreadID` and `req.ResumeID`, records thread IDs from `ForceNewSessionReusedError` rejections, and reuses that evolving set to classify subsequent `Open` success snapshots as stale/reused.
+  - `openCodexSessionCmd` still enforces `maxForceNewEmbeddedOpenAttempts = 3` and preserves existing status message branches.
+- Added a regression test in `internal/tui/app_test.go`:
+  - `TestLaunchOpenCodeForSelectionForceNewRetriesWhenOpenCodeReturnsKnownReusedSession`
+  - verifies a third attempt is triggered when a second attempt returns a known reused session ID that is not `previousThreadID` or `req.ResumeID`.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/codex_pane.go internal/tui/app_test.go`
+- `go test ./internal/tui -run 'TestLaunchOpenCodeForSelectionForceNewRetriesWhenOpenCodeRejectsFreshSession|TestLaunchOpenCodeForSelectionForceNewRetriesWhenOpenCodeReturnsKnownReusedSession|TestLaunchCodexForSelectionForceNewRetriesWhenCodexRejectsFreshThread' -count=1` (pass)
+- `go test ./internal/tui -count=1` (pass)
+
+Next concrete tasks:
+
+- Run `make test`, `make scan`, and `make doctor` before handoff.
+- Continue with `make tui` to confirm `/opencode-new` behavior in an interactive OpenCode session.
 
 ## Latest Update (2026-03-23 00:55 JST)
 

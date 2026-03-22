@@ -42,6 +42,7 @@ const (
 	KindIgnored     Kind = "ignored"
 	KindForget      Kind = "forget"
 	KindFocus       Kind = "focus"
+	KindPrivacy     Kind = "privacy"
 	KindQuit        Kind = "quit"
 )
 
@@ -136,6 +137,7 @@ var specs = []Spec{
 	{Name: "ignored", Usage: "/ignored", Summary: "Review ignored project names and restore them"},
 	{Name: "forget", Usage: "/forget", Summary: "Forget a selected missing folder"},
 	{Name: "focus", Usage: "/focus list|detail|runtime", Summary: "Move focus between panes"},
+	{Name: "privacy", Usage: "/privacy on|off|toggle", Summary: "Toggle demo privacy mode that hides project name patterns"},
 	{Name: "quit", Usage: "/quit", Summary: "Quit the TUI"},
 }
 
@@ -241,6 +243,16 @@ func Suggestions(input string) []Suggestion {
 		}
 		return enumSuggestions("/note ", argPrefix,
 			choice("clear", "Remove the selected project's saved note"),
+		)
+	case "privacy":
+		argPrefix := ""
+		if len(fields) > 1 {
+			argPrefix = strings.ToLower(fields[len(fields)-1])
+		}
+		return enumSuggestions("/privacy ", argPrefix,
+			choice("toggle", "Flip demo privacy mode"),
+			choice("on", "Enable demo privacy mode"),
+			choice("off", "Disable demo privacy mode"),
 		)
 	default:
 		return commandNameSuggestions(namePrefix)
@@ -458,6 +470,12 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, err
 		}
 		return Invocation{Kind: KindFocus, Focus: target, Canonical: "/focus " + string(target)}, nil
+	case "privacy":
+		mode, err := parseToggleMode(rawArgs, "/privacy")
+		if err != nil {
+			return Invocation{}, err
+		}
+		return Invocation{Kind: KindPrivacy, Toggle: mode, Canonical: "/privacy " + string(mode)}, nil
 	case "quit":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /quit")

@@ -17,6 +17,7 @@ type EditableSettings struct {
 	IncludePaths              []string
 	ExcludePaths              []string
 	ExcludeProjectPatterns    []string
+	PrivacyPatterns           []string
 	EmbeddedCodexModel        string
 	EmbeddedCodexReasoning    string
 	EmbeddedOpenCodeModel     string
@@ -34,6 +35,7 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		IncludePaths:              append([]string(nil), cfg.IncludePaths...),
 		ExcludePaths:              append([]string(nil), cfg.ExcludePaths...),
 		ExcludeProjectPatterns:    append([]string(nil), cfg.ExcludeProjectPatterns...),
+		PrivacyPatterns:           append([]string(nil), cfg.PrivacyPatterns...),
 		EmbeddedCodexModel:        cfg.EmbeddedCodexModel,
 		EmbeddedCodexReasoning:    cfg.EmbeddedCodexReasoning,
 		EmbeddedOpenCodeModel:     cfg.EmbeddedOpenCodeModel,
@@ -45,7 +47,7 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 	}
 }
 
-func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, codexLaunchPresetRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
+func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
 	parsedBackend, err := ParseAIBackend(string(aiBackend))
 	if err != nil {
 		return EditableSettings{}, err
@@ -61,6 +63,7 @@ func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, includeRaw, exc
 		return EditableSettings{}, fmt.Errorf("exclude paths: %w", err)
 	}
 	excludeProjectPatterns := normalizeProjectPatterns(strings.Split(excludeProjectPatternsRaw, ","))
+	privacyPatterns := normalizeProjectPatterns(strings.Split(privacyPatternsRaw, ","))
 	codexLaunchPreset, err := codexcli.ParsePreset(codexLaunchPresetRaw)
 	if err != nil {
 		return EditableSettings{}, fmt.Errorf("codex launch preset: %w", err)
@@ -87,6 +90,7 @@ func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, includeRaw, exc
 		IncludePaths:           includePaths,
 		ExcludePaths:           excludePaths,
 		ExcludeProjectPatterns: excludeProjectPatterns,
+		PrivacyPatterns:        privacyPatterns,
 		CodexLaunchPreset:      codexLaunchPreset,
 		ScanInterval:           interval,
 		ActiveThreshold:        active,
@@ -142,6 +146,7 @@ func validateEditableSettings(settings EditableSettings) error {
 	cfg.IncludePaths = append([]string(nil), settings.IncludePaths...)
 	cfg.ExcludePaths = append([]string(nil), settings.ExcludePaths...)
 	cfg.ExcludeProjectPatterns = append([]string(nil), settings.ExcludeProjectPatterns...)
+	cfg.PrivacyPatterns = append([]string(nil), settings.PrivacyPatterns...)
 	cfg.EmbeddedCodexModel = strings.TrimSpace(settings.EmbeddedCodexModel)
 	cfg.EmbeddedCodexReasoning = strings.TrimSpace(settings.EmbeddedCodexReasoning)
 	cfg.EmbeddedOpenCodeModel = strings.TrimSpace(settings.EmbeddedOpenCodeModel)
@@ -186,6 +191,12 @@ func renderEditableSettings(settings EditableSettings) string {
 	lines = append(lines, "")
 	lines = append(lines, "exclude_project_patterns = [")
 	for _, pattern := range settings.ExcludeProjectPatterns {
+		lines = append(lines, fmt.Sprintf("  %s,", strconv.Quote(pattern)))
+	}
+	lines = append(lines, "]")
+	lines = append(lines, "")
+	lines = append(lines, "privacy_patterns = [")
+	for _, pattern := range settings.PrivacyPatterns {
 		lines = append(lines, fmt.Sprintf("  %s,", strconv.Quote(pattern)))
 	}
 	lines = append(lines, "]")
