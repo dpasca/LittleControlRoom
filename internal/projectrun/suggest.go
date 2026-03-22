@@ -3,11 +3,27 @@ package projectrun
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 )
+
+const maxNestedSuggestionDepth = 3
+
+var skippedNestedSuggestionDirs = map[string]struct{}{
+	".git":         {},
+	".next":        {},
+	".turbo":       {},
+	".yarn":        {},
+	"build":        {},
+	"coverage":     {},
+	"dist":         {},
+	"node_modules": {},
+	"tmp":          {},
+	"vendor":       {},
+}
 
 type Suggestion struct {
 	Command string
@@ -31,6 +47,22 @@ func Candidates(projectPath string) ([]Suggestion, error) {
 		return nil, fmt.Errorf("project path is required")
 	}
 
+	candidates, err := candidatesAtPath(projectPath)
+	if err != nil {
+		return nil, err
+	}
+	if len(candidates) > 0 {
+		return dedupeSuggestions(candidates), nil
+	}
+
+	candidates, err = nestedCandidates(projectPath)
+	if err != nil {
+		return nil, err
+	}
+	return dedupeSuggestions(candidates), nil
+}
+
+func candidatesAtPath(projectPath string) ([]Suggestion, error) {
 	candidates := []Suggestion{}
 	if suggestion, ok := suggestBinDev(projectPath); ok {
 		candidates = append(candidates, suggestion)
@@ -54,7 +86,116 @@ func Candidates(projectPath string) ([]Suggestion, error) {
 		candidates = append(candidates, suggestion)
 	}
 
-	return dedupeSuggestions(candidates), nil
+	return candidates, nil
+}
+
+func nestedCandidates(projectPath string) ([]Suggestion, error) {
+	type match struct {
+		relPath     string
+		suggestions []Suggestion
+	}
+
+	matches := []match{}
+	err := filepath.WalkDir(projectPath, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() {
+			return nil
+		}
+
+		relPath, err := filepath.Rel(projectPath, path)
+		if err != nil {
+			return err
+		}
+		if relPath == "." {
+			return nil
+		}
+		if shouldSkipNestedSuggestionDir(entry.Name(), relPath) {
+			return filepath.SkipDir
+		}
+		if nestedSuggestionDepth(relPath) > maxNestedSuggestionDepth {
+			return filepath.SkipDir
+		}
+
+		suggestions, err := candidatesAtPath(path)
+		if err != nil {
+			return err
+		}
+		if len(suggestions) == 0 {
+			return nil
+		}
+		matches = append(matches, match{
+			relPath:     filepath.ToSlash(relPath),
+			suggestions: suggestions,
+		})
+		return filepath.SkipDir
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(matches) != 1 {
+		return nil, nil
+	}
+
+	out := make([]Suggestion, 0, len(matches[0].suggestions))
+	for _, suggestion := range matches[0].suggestions {
+		out = append(out, Suggestion{
+			Command: prefixNestedCommand(matches[0].relPath, suggestion.Command),
+			Reason:  prefixNestedReason(matches[0].relPath, suggestion.Reason),
+		})
+	}
+	return out, nil
+}
+
+func shouldSkipNestedSuggestionDir(name, relPath string) bool {
+	if strings.TrimSpace(relPath) == "" || relPath == "." {
+		return false
+	}
+	_, skip := skippedNestedSuggestionDirs[name]
+	return skip
+}
+
+func nestedSuggestionDepth(relPath string) int {
+	relPath = filepath.Clean(strings.TrimSpace(relPath))
+	if relPath == "" || relPath == "." {
+		return 0
+	}
+	return strings.Count(relPath, string(os.PathSeparator)) + 1
+}
+
+func prefixNestedCommand(relPath, command string) string {
+	command = strings.TrimSpace(command)
+	relPath = strings.TrimSpace(relPath)
+	if command == "" || relPath == "" || relPath == "." {
+		return command
+	}
+	return "cd " + shellQuote(relPath) + " && " + command
+}
+
+func prefixNestedReason(relPath, reason string) string {
+	reason = strings.TrimSpace(strings.TrimSuffix(reason, "."))
+	relPath = strings.TrimSpace(relPath)
+	if reason == "" {
+		if relPath == "" || relPath == "." {
+			return ""
+		}
+		return fmt.Sprintf("Found runnable project files under %s.", relPath)
+	}
+	if relPath == "" || relPath == "." {
+		return reason + "."
+	}
+	return fmt.Sprintf("%s under %s.", reason, relPath)
+}
+
+func shellQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	if !strings.ContainsAny(value, " \t\n\r'\"\\$&;|<>()[]{}*?!#~`") {
+		return value
+	}
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
 func suggestBinDev(projectPath string) (Suggestion, bool) {

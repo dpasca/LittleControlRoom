@@ -3041,6 +3041,17 @@ func projectRunCommandLabel(command string) string {
 		if token == "" {
 			continue
 		}
+		if token == "cd" {
+			i++
+			for i < len(tokens) {
+				next := trimRunToken(tokens[i])
+				if next == "&&" || next == ";" {
+					break
+				}
+				i++
+			}
+			continue
+		}
 		if isShellEnvAssignment(token) {
 			continue
 		}

@@ -1,6 +1,31 @@
 # Little Control Room Status
 
-Last updated: 2026-03-22 12:17 JST (JST)
+Last updated: 2026-03-22 13:18 JST (JST)
+
+## Latest Update (2026-03-22 13:18 JST)
+
+- Investigated why `/run` showed no automatic command suggestion for the `oykgames.com` project and confirmed the runnable app files live under the repo's `src/` subdirectory rather than the project root.
+- Extended the managed-runtime suggester so it still prefers root-level markers first, but now falls back to a shallow nested-directory scan when the root has no `bin/dev`, `package.json`, `Makefile`, `justfile`, or Go entrypoint.
+- Kept the nested scan intentionally bounded and conservative: it skips obvious build/dependency directories, only searches a shallow depth, and refuses to guess when multiple nested app roots are found.
+- Nested suggestions now prefill shell-safe commands such as `cd src && pnpm dev`, with a matching suggestion reason that points at the subdirectory that was detected.
+- Taught the project-list/runtime summary label extraction to look past a leading `cd ... &&` prefix so nested commands still render as the real runtime label (`pnpm`, `vite`, etc.) instead of `cd`.
+- Added focused regressions for single nested app detection, root-over-nested preference, multi-match ambiguity suppression, and run-label rendering for nested `cd ... &&` commands.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- Confirmed the real `oykgames.com` layout on disk: `/Users/davide/dev/repos/oykgames.com` has no root `package.json`, while `/Users/davide/dev/repos/oykgames.com/src/package.json` contains the runnable `dev`, `build`, and `preview` scripts.
+- `gofmt -w internal/projectrun/suggest.go internal/projectrun/suggest_test.go internal/tui/app.go internal/tui/app_test.go` passed.
+- `go test ./internal/projectrun -run 'TestSuggest(UsesSingleNestedPackageScript|PrefersRootCandidateOverNestedCandidate|DoesNotGuessAcrossMultipleNestedCandidates|PrefersBinDev|UsesPnpmForDevScript|UsesSingleGoCmdEntrypoint)' -count=1` passed.
+- `go test ./internal/tui -run 'TestProjectRunSummary(IncludesCommandAndPort|UsesCommandAfterNestedCdPrefix|ShowsConflictInRunColumn)' -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-22T13:17:38+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-22T13:17:39+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- Consider whether the run-command dialog should eventually show multiple nested candidates as explicit choices instead of leaving the field empty when more than one plausible app root is found.
+- Decide whether managed runtimes should grow an explicit saved working-directory field later, so nested app launches do not need to be encoded as `cd ... && ...` in the saved command text.
 
 ## Latest Update (2026-03-22 12:17 JST)
 

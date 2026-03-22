@@ -1209,6 +1209,20 @@ func TestProjectRunSummaryIncludesCommandAndPort(t *testing.T) {
 	}
 }
 
+func TestProjectRunSummaryUsesCommandAfterNestedCdPrefix(t *testing.T) {
+	got, state := projectRunSummary(projectrun.Snapshot{
+		Running: true,
+		Command: "cd src && pnpm dev",
+		Ports:   []int{3000},
+	}, "")
+	if state != projectRunActive {
+		t.Fatalf("projectRunSummary() state = %v, want %v", state, projectRunActive)
+	}
+	if got != "pnpm@3000" {
+		t.Fatalf("projectRunSummary() = %q, want %q", got, "pnpm@3000")
+	}
+}
+
 func TestProjectRunSummaryShowsConflictInRunColumn(t *testing.T) {
 	got, state := projectRunSummary(projectrun.Snapshot{
 		Running:       true,
