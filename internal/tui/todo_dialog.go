@@ -480,7 +480,7 @@ func (m Model) renderTodoDialogOverlay(body string, bodyW, bodyH int) string {
 			}
 			line := prefix + " " + truncateText(strings.TrimSpace(item.Text), max(12, panelInnerW-6))
 			if i == dialog.Selected {
-				line = noteDialogButtonSelectedStyle.UnsetPadding().Padding(0, 1).Width(panelInnerW).Render(line)
+				line = noteDialogButtonSelectedStyle.UnsetPadding().Width(panelInnerW).Render(line)
 			} else {
 				line = style.Render(line)
 			}

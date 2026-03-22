@@ -1,6 +1,22 @@
 # Little Control Room Status
 
-Last updated: 2026-03-22 19:53 JST (JST)
+Last updated: 2026-03-22 20:12 JST (JST)
+
+## Latest Update (2026-03-22 20:12 JST)
+
+- Fixed the TODO dialog selected-row spacing by removing the extra horizontal padding from the selected-row style.
+- Added a regression test to ensure the selected TODO row renders with a single leading space after the dialog border (no extra blank before the checkbox marker).
+
+Verification snapshot:
+
+- `go test ./internal/tui -run 'TestTodoDialogEnterStartsFreshPreferredProviderWithDraft|TestTodoDialogSelectedRowHasNoExtraLeadingSpace|TestTodoDialogLegendUsesDistinctActionTones|TestRenderDialogPanelRestoresBackgroundAfterStyledResets' -count=1`
+- `make test`
+- `make scan`
+- `make doctor`
+
+Next concrete tasks:
+
+- Confirm the same spacing behavior visually in a full terminal with the latest dialog theme settings.
 
 ## Latest Update (2026-03-22 19:53 JST)
 

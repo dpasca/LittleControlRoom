@@ -3394,6 +3394,40 @@ func TestTodoDialogEnterStartsFreshPreferredProviderWithDraft(t *testing.T) {
 	}
 }
 
+func TestTodoDialogSelectedRowHasNoExtraLeadingSpace(t *testing.T) {
+	m := Model{
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Todos: []model.TodoItem{{
+				ID:          7,
+				ProjectPath: "/tmp/demo",
+				Text:        "Fix spacing on selected TODO row",
+			}},
+		},
+		todoDialog: &todoDialogState{ProjectPath: "/tmp/demo", ProjectName: "demo", Selected: 0},
+		width:      100,
+		height:     24,
+	}
+
+	rendered := ansi.Strip(m.renderTodoDialogOverlay("", 100, 24))
+	selectedRow := ""
+	for _, line := range strings.Split(rendered, "\n") {
+		if strings.Contains(line, "[ ] Fix spacing on selected TODO row") {
+			selectedRow = strings.TrimLeft(line, " \t")
+			break
+		}
+	}
+	if selectedRow == "" {
+		t.Fatalf("selected TODO row not found, got %q", rendered)
+	}
+	if !strings.HasPrefix(selectedRow, "│ [") {
+		t.Fatalf("expected selected TODO row to start with a single leading space after panel border, got %q", selectedRow)
+	}
+	if strings.HasPrefix(selectedRow, "│  [") {
+		t.Fatalf("expected no extra leading space before selected TODO marker, got %q", selectedRow)
+	}
+}
+
 func TestEmbeddedModelPreferenceLoadsFromSavedSettingsOnStartup(t *testing.T) {
 	cfg := config.Default()
 	cfg.ConfigPath = filepath.Join(t.TempDir(), "config.toml")
