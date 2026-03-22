@@ -129,10 +129,16 @@ func (m Model) resolvedCodexSlashInput() string {
 	if raw == "" {
 		return raw
 	}
+	suggestion, ok := m.selectedCodexSlashSuggestion()
+	if ok {
+		insert := strings.TrimSpace(suggestion.Insert)
+		if strings.HasPrefix(strings.ToLower(insert), strings.ToLower(raw)) && !strings.EqualFold(insert, raw) {
+			return suggestion.Insert
+		}
+	}
 	if _, err := codexslash.Parse(raw); err == nil {
 		return raw
 	}
-	suggestion, ok := m.selectedCodexSlashSuggestion()
 	if !ok {
 		return raw
 	}

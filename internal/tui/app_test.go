@@ -6378,6 +6378,67 @@ func TestCommandEnterUsesAutocompleteSuggestion(t *testing.T) {
 	}
 }
 
+func TestCommandEnterUsesHighlightedSuggestionOverValidPrefix(t *testing.T) {
+	input := textinput.New()
+	input.SetValue("/open")
+
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				Started:  true,
+				Status:   req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+
+	m := Model{
+		commandMode:  true,
+		commandInput: input,
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/demo",
+			Name:          "demo",
+			PresentOnDisk: true,
+		}},
+		selected:      0,
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+	m.syncCommandSelection()
+	m.moveCommandSelection(1)
+
+	updated, cmd := m.updateCommandMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should launch the highlighted /opencode suggestion")
+	}
+	if got.commandMode {
+		t.Fatalf("command mode should close after executing the highlighted suggestion")
+	}
+	if got.codexPendingOpen == nil || got.codexPendingOpen.provider != codexapp.ProviderOpenCode {
+		t.Fatalf("codexPendingOpen = %#v, want pending OpenCode launch", got.codexPendingOpen)
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("highlighted /opencode returned error = %v", opened.err)
+	}
+	if len(requests) != 1 || requests[0].Provider != codexapp.ProviderOpenCode {
+		t.Fatalf("launch requests = %#v, want one OpenCode launch", requests)
+	}
+}
+
 func TestCommandEnterViewAllChangesVisibility(t *testing.T) {
 	input := textinput.New()
 	input.SetValue("/view all")

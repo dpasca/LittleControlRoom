@@ -1,6 +1,29 @@
 # Little Control Room Status
 
-Last updated: 2026-03-22 13:18 JST (JST)
+Last updated: 2026-03-22 13:52 JST (JST)
+
+## Latest Update (2026-03-22 13:52 JST)
+
+- Investigated the command-palette bug where typing `/open`, moving the highlight down to `/opencode`, and pressing Enter still executed `/open`.
+- Traced the issue to the palette's Enter-resolution order: it accepted an already-valid typed command before checking whether the currently highlighted suggestion was a longer prefix match the user had explicitly selected.
+- Fixed the main command palette so Enter now prefers the highlighted suggestion whenever that suggestion extends the typed prefix, which lets `/open` correctly resolve to `/opencode` or `/opencode-new` after cursor selection.
+- Applied the same resolution rule to the embedded slash-command path for consistency, even though the current embedded slash command set does not yet expose the same overlapping valid-prefix case.
+- Added a focused TUI regression proving that a highlighted `/opencode` selection launched OpenCode instead of the shorter `/open` command.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/tui/app.go internal/tui/codex_slash.go internal/tui/app_test.go` passed.
+- `go test ./internal/tui -run 'Test(CommandEnterUsesAutocompleteSuggestion|CommandEnterUsesHighlightedSuggestionOverValidPrefix|VisibleCodexSlashStatusRunsLocally)' -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-22T13:46:12+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 2`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-22T13:46:11+09:00` (`projects: 133`).
+- `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-command-palette-smoke INTERVAL=1h` launched the isolated TUI sandbox successfully and exited cleanly via `q`.
+
+Next concrete tasks:
+
+- Live-check the exact `/open` -> highlighted `/opencode` -> Enter flow in the updated TUI and confirm the visible selection now matches the executed command end to end.
+- Decide whether the command palette should eventually mirror some editors and write the highlighted suggestion into the input immediately on arrow movement, instead of only resolving it on Enter or Tab.
 
 ## Latest Update (2026-03-22 13:18 JST)
 

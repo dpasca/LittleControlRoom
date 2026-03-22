@@ -1538,10 +1538,16 @@ func (m Model) resolvedCommandInput() string {
 	if raw == "" {
 		return raw
 	}
+	suggestion, ok := m.selectedCommandSuggestion()
+	if ok {
+		insert := strings.TrimSpace(suggestion.Insert)
+		if strings.HasPrefix(strings.ToLower(insert), strings.ToLower(raw)) && !strings.EqualFold(insert, raw) {
+			return suggestion.Insert
+		}
+	}
 	if _, err := commands.Parse(raw); err == nil {
 		return raw
 	}
-	suggestion, ok := m.selectedCommandSuggestion()
 	if !ok {
 		return raw
 	}
