@@ -374,7 +374,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newPrivacyPatternsField(
 			"Privacy patterns",
-			"Comma-separated patterns to redact in demo mode. Example: medical,visa,personal",
+			"Comma-separated patterns to hide in demo mode. Supports '*' wildcards. Example: *medical*,*personal*",
 			strings.Join(settings.PrivacyPatterns, ","),
 			2048,
 		),
@@ -430,7 +430,7 @@ func newPrivacyPatternsField(label, hint, value string, charLimit int) settingsF
 	field := newSettingsField(label, hint, value, charLimit)
 	field.input.EchoMode = textinput.EchoPassword
 	field.input.EchoCharacter = '*'
-	field.input.Placeholder = "e.g., medical,visa,personal"
+	field.input.Placeholder = "e.g., *medical*,*personal*"
 	field.sensitive = true
 	return field
 }
