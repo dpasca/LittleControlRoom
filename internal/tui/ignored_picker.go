@@ -145,14 +145,7 @@ func (m Model) renderIgnoredPickerPanel(bodyW, bodyH int) string {
 	panelWidth := min(bodyW, min(max(58, bodyW-10), 86))
 	panelInnerWidth := max(24, panelWidth-4)
 	maxContentHeight := max(10, bodyH-2)
-	return lipgloss.NewStyle().
-		Width(panelWidth).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("81")).
-		Padding(0, 1).
-		Background(lipgloss.Color("235")).
-		Foreground(lipgloss.Color("252")).
-		Render(m.renderIgnoredPickerContent(panelInnerWidth, maxContentHeight))
+	return renderDialogPanel(panelWidth, panelInnerWidth, m.renderIgnoredPickerContent(panelInnerWidth, maxContentHeight))
 }
 
 func (m Model) renderIgnoredPickerContent(width, bodyH int) string {

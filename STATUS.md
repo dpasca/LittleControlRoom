@@ -1,6 +1,47 @@
 # Little Control Room Status
 
-Last updated: 2026-03-22 19:01 JST (JST)
+Last updated: 2026-03-22 19:53 JST (JST)
+
+## Latest Update (2026-03-22 19:53 JST)
+
+- Fixed modal/dialog background rendering across the shared TUI dialog family by routing those overlays through a shared `renderDialogPanel` helper that restores the panel background after nested ANSI style resets and fills each rendered line to the panel width.
+- Applied that shared dialog-panel renderer to the TODO, notes, settings, setup, command palette, commit/git-status, picker, filter, ignored-projects, run-command, and new-project overlays so the dark/black gaps seen between styled spans no longer bleed through on modal rows.
+- Polished the TODO dialog specifically:
+  - Rebalanced the action legend tones so edit/provider read as navigation, done reads as a state-change action, and delete reads as destructive instead of almost everything showing up in the same green key treatment.
+  - Made the selected TODO row render at the full dialog width so the highlight reads as one clean row instead of a short badge.
+- Added focused TUI regressions covering the dialog background restoration helper and the distinct TODO legend tones.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `go test ./internal/tui -run 'Test(RenderDialogPanelRestoresBackgroundAfterStyledResets|TodoDialogLegendUsesDistinctActionTones|ViewWithSettingsModeRespectsHeight|SettingsModalRendersColoredActionLegend|TodoDialogEnterStartsFreshPreferredProviderWithDraft)' -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-22T19:52:56+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 0`).
+- `make doctor` passed on the cached snapshot dated `2026-03-22T19:53:05+09:00` (`projects: 131`).
+- `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-dialog-bg-smoke INTERVAL=1h` launched the isolated TUI sandbox successfully and exited cleanly via `q`.
+
+Next concrete tasks:
+
+- Live-check the TODO, note, and settings dialogs in the real terminal theme and confirm the shared background-restoration helper fully clears the remaining black-gap artifacts.
+- Decide whether the same per-line background restoration should also be applied to any future non-modal chrome that starts combining dense styled spans inside filled panels.
+
+## Latest Update (2026-03-22 19:21 JST)
+
+- Tuned TODO UX polish:
+  - Removed the `-` marker for empty TODO count cells in the project list so rows now show blank when open TODO count is zero.
+  - Increased TODO dialog footprint (`todoDialogPanelLayout` and a dedicated `todoEditorPanelLayout`) so lists and edits have more room.
+  - Switched TODO entry editing from single-line `textinput` to multiline `textarea`.
+  - Changed TODO edit save from bare `Enter` to `Ctrl+S` so Enter can create newlines while editing.
+  - Added colorized legend/action rows in TODO list and edit overlays using `renderDialogAction`, matching the rest of the modal key legend styling.
+- No functional TODO workflow changed beyond this UI polish.
+
+Verification snapshot:
+
+- `make tui-parallel` / `make test` not re-run for this visual-only pass.
+
+Next concrete tasks:
+
+- Decide whether TODO editor save should also accept plain Enter for power users or remain `Ctrl+S` only.
 
 ## Latest Update (2026-03-22 19:01 JST)
 

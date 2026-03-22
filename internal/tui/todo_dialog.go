@@ -7,7 +7,7 @@ import (
 	"lcroom/internal/codexapp"
 	"lcroom/internal/model"
 
-	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -28,7 +28,7 @@ type todoEditorState struct {
 	ProjectPath string
 	ProjectName string
 	TodoID      int64
-	Input       textinput.Model
+	Input       textarea.Model
 	Submitting  bool
 }
 
@@ -58,12 +58,15 @@ func normalizeTodoText(text string) string {
 	return strings.Join(out, " ")
 }
 
-func newTodoTextInput(value string) textinput.Model {
-	input := textinput.New()
+func newTodoTextInput(value string) textarea.Model {
+	input := textarea.New()
 	input.Prompt = ""
 	input.Placeholder = "Change font color to red when there's an error"
-	input.CharLimit = 512
-	input.Width = 72
+	input.CharLimit = 1024
+	input.ShowLineNumbers = false
+	styleNoteTextarea(&input)
+	input.SetWidth(72)
+	input.SetHeight(6)
 	input.SetValue(value)
 	return input
 }
@@ -279,7 +282,7 @@ func (m Model) updateTodoEditorMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.closeTodoEditor("TODO edit canceled")
 		return m, nil
-	case "enter":
+	case "ctrl+s":
 		text := normalizeTodoText(dialog.Input.Value())
 		if text == "" {
 			m.status = "TODO text is required"
@@ -425,15 +428,24 @@ func (m *Model) syncTodoDialogSize() {
 
 func (m *Model) syncTodoEditorSize() {
 	if m.todoEditor != nil {
-		m.todoEditor.Input.Width = max(24, min(72, m.width-18))
+		_, panelInnerW, editorHeight := todoEditorPanelLayout(m.width, m.height)
+		m.todoEditor.Input.SetWidth(max(24, panelInnerW))
+		m.todoEditor.Input.SetHeight(editorHeight)
 	}
 }
 
 func todoDialogPanelLayout(bodyW, bodyH int) (int, int, int) {
-	panelW := min(max(54, bodyW-12), 88)
+	panelW := min(max(62, bodyW-8), 96)
 	panelInnerW := max(24, panelW-4)
-	listH := max(8, min(16, bodyH-12))
+	listH := max(10, min(20, bodyH-10))
 	return panelW, panelInnerW, listH
+}
+
+func todoEditorPanelLayout(bodyW, bodyH int) (int, int, int) {
+	panelW := min(max(62, bodyW-6), 96)
+	panelInnerW := max(28, panelW-4)
+	editorH := max(8, min(16, bodyH-14))
+	return panelW, panelInnerW, editorH
 }
 
 func (m Model) renderTodoDialogOverlay(body string, bodyW, bodyH int) string {
@@ -468,7 +480,7 @@ func (m Model) renderTodoDialogOverlay(body string, bodyW, bodyH int) string {
 			}
 			line := prefix + " " + truncateText(strings.TrimSpace(item.Text), max(12, panelInnerW-6))
 			if i == dialog.Selected {
-				line = noteDialogButtonSelectedStyle.UnsetPadding().Padding(0, 1).Render(line)
+				line = noteDialogButtonSelectedStyle.UnsetPadding().Padding(0, 1).Width(panelInnerW).Render(line)
 			} else {
 				line = style.Render(line)
 			}
@@ -479,15 +491,8 @@ func (m Model) renderTodoDialogOverlay(body string, bodyW, bodyH int) string {
 		}
 	}
 	lines = append(lines, "")
-	lines = append(lines, detailMutedStyle.Render("a add  e edit  space done  d delete  Enter start  c/o force provider  Esc close"))
-	panel := lipgloss.NewStyle().
-		Width(panelW).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("81")).
-		Padding(0, 1).
-		Background(lipgloss.Color("235")).
-		Foreground(lipgloss.Color("252")).
-		Render(lipgloss.NewStyle().Width(panelInnerW).Render(strings.Join(lines, "\n")))
+	lines = append(lines, todoDialogLegendLine())
+	panel := renderDialogPanel(panelW, panelInnerW, strings.Join(lines, "\n"))
 	left := max(0, (bodyW-panelW)/2)
 	top := max(0, (bodyH-lipgloss.Height(panel))/2)
 	return overlayBlock(body, panel, bodyW, bodyH, left, top)
@@ -498,30 +503,44 @@ func (m Model) renderTodoEditorOverlay(body string, bodyW, bodyH int) string {
 	if dialog == nil {
 		return body
 	}
-	panelW := min(max(50, bodyW-18), 84)
-	panelInnerW := max(24, panelW-4)
+	panelW, panelInnerW, editorHeight := todoEditorPanelLayout(bodyW, bodyH)
 	title := "New TODO"
 	if dialog.TodoID > 0 {
 		title = "Edit TODO"
 	}
+	dialog.Input.SetWidth(max(24, panelInnerW))
+	dialog.Input.SetHeight(editorHeight)
 	lines := []string{
 		detailSectionStyle.Render(title) + "  " + detailValueStyle.Render(dialog.ProjectName),
 		"",
 		dialog.Input.View(),
 		"",
-		detailMutedStyle.Render("Enter save  Esc cancel"),
+		todoEditorLegendLine(),
 	}
-	panel := lipgloss.NewStyle().
-		Width(panelW).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("81")).
-		Padding(0, 1).
-		Background(lipgloss.Color("235")).
-		Foreground(lipgloss.Color("252")).
-		Render(lipgloss.NewStyle().Width(panelInnerW).Render(strings.Join(lines, "\n")))
+	panel := renderDialogPanel(panelW, panelInnerW, strings.Join(lines, "\n"))
 	left := max(0, (bodyW-panelW)/2)
 	top := max(0, (bodyH-lipgloss.Height(panel))/2)
 	return overlayBlock(body, panel, bodyW, bodyH, left, top)
+}
+
+func todoDialogLegendLine() string {
+	return renderHelpPanelActionRow(
+		renderDialogAction("a", "add", commitActionKeyStyle, commitActionTextStyle),
+		renderDialogAction("e", "edit", navigateActionKeyStyle, navigateActionTextStyle),
+		renderDialogAction("space", "done", pushActionKeyStyle, pushActionTextStyle),
+		renderDialogAction("d", "delete", cancelActionKeyStyle, cancelActionTextStyle),
+		renderDialogAction("Enter", "start", commitActionKeyStyle, commitActionTextStyle),
+		renderDialogAction("c/o", "provider", navigateActionKeyStyle, navigateActionTextStyle),
+		renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
+	)
+}
+
+func todoEditorLegendLine() string {
+	return renderHelpPanelActionRow(
+		renderDialogAction("enter", "newline", navigateActionKeyStyle, navigateActionTextStyle),
+		renderDialogAction("ctrl+s", "save", commitActionKeyStyle, commitActionTextStyle),
+		renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
+	)
 }
 
 func (m Model) renderTodoDeleteConfirmOverlay(body string, bodyW, bodyH int) string {
@@ -544,14 +563,7 @@ func (m Model) renderTodoDeleteConfirmOverlay(body string, bodyW, bodyH int) str
 		"",
 		buttons,
 	}
-	panel := lipgloss.NewStyle().
-		Width(panelW).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("81")).
-		Padding(0, 1).
-		Background(lipgloss.Color("235")).
-		Foreground(lipgloss.Color("252")).
-		Render(lipgloss.NewStyle().Width(panelInnerW).Render(strings.Join(lines, "\n")))
+	panel := renderDialogPanel(panelW, panelInnerW, strings.Join(lines, "\n"))
 	left := max(0, (bodyW-panelW)/2)
 	top := max(0, (bodyH-lipgloss.Height(panel))/2)
 	return overlayBlock(body, panel, bodyW, bodyH, left, top)

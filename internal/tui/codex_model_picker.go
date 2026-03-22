@@ -356,14 +356,7 @@ func (m Model) renderCodexModelPickerOverlay(body string, bodyW, bodyH int) stri
 func (m Model) renderCodexModelPicker(bodyW int) string {
 	panelWidth := min(bodyW, min(max(72, bodyW-10), 108))
 	panelInnerWidth := max(36, panelWidth-4)
-	return lipgloss.NewStyle().
-		Width(panelWidth).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("81")).
-		Padding(0, 1).
-		Background(lipgloss.Color("235")).
-		Foreground(lipgloss.Color("252")).
-		Render(m.renderCodexModelPickerContent(panelInnerWidth))
+	return renderDialogPanel(panelWidth, panelInnerWidth, m.renderCodexModelPickerContent(panelInnerWidth))
 }
 
 func (m Model) renderCodexModelPickerContent(width int) string {

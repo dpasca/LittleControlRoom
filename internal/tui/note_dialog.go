@@ -439,14 +439,7 @@ func (m Model) renderNoteClearConfirmOverlay(body string, bodyW, bodyH int) stri
 
 func (m Model) renderNoteDialogPanel(bodyW, bodyH int) string {
 	panelWidth, panelInnerWidth, editorHeight := noteDialogPanelLayout(bodyW, bodyH)
-	return lipgloss.NewStyle().
-		Width(panelWidth).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("81")).
-		Padding(0, 1).
-		Background(lipgloss.Color("235")).
-		Foreground(lipgloss.Color("252")).
-		Render(m.renderNoteDialogContent(panelInnerWidth, editorHeight))
+	return renderDialogPanel(panelWidth, panelInnerWidth, m.renderNoteDialogContent(panelInnerWidth, editorHeight))
 }
 
 func (m Model) renderNoteDialogContent(width, editorHeight int) string {
@@ -495,14 +488,7 @@ func (m Model) renderNoteDialogContent(width, editorHeight int) string {
 func (m Model) renderNoteCopyDialogPanel(bodyW int) string {
 	panelWidth := min(bodyW, min(max(52, bodyW-16), 82))
 	panelInnerWidth := max(24, panelWidth-4)
-	return lipgloss.NewStyle().
-		Width(panelWidth).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("81")).
-		Padding(0, 1).
-		Background(lipgloss.Color("235")).
-		Foreground(lipgloss.Color("252")).
-		Render(m.renderNoteCopyDialogContent(panelInnerWidth))
+	return renderDialogPanel(panelWidth, panelInnerWidth, m.renderNoteCopyDialogContent(panelInnerWidth))
 }
 
 func (m Model) renderNoteCopyDialogContent(width int) string {
@@ -533,14 +519,7 @@ func (m Model) renderNoteCopyDialogContent(width int) string {
 func (m Model) renderNoteClearConfirmPanel(bodyW int) string {
 	panelWidth := min(bodyW, min(max(48, bodyW-16), 78))
 	panelInnerWidth := max(24, panelWidth-4)
-	return lipgloss.NewStyle().
-		Width(panelWidth).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("81")).
-		Padding(0, 1).
-		Background(lipgloss.Color("235")).
-		Foreground(lipgloss.Color("252")).
-		Render(m.renderNoteClearConfirmContent(panelInnerWidth))
+	return renderDialogPanel(panelWidth, panelInnerWidth, m.renderNoteClearConfirmContent(panelInnerWidth))
 }
 
 func (m Model) renderNoteClearConfirmContent(width int) string {

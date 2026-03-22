@@ -274,14 +274,7 @@ func (m Model) renderRunCommandOverlay(body string, width, height int) string {
 func (m Model) renderRunCommandPanel(bodyW int) string {
 	panelWidth := min(bodyW, min(max(58, bodyW-10), 94))
 	panelInnerWidth := max(26, panelWidth-4)
-	return lipgloss.NewStyle().
-		Width(panelWidth).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("81")).
-		Padding(0, 1).
-		Background(lipgloss.Color("235")).
-		Foreground(lipgloss.Color("252")).
-		Render(m.renderRunCommandContent(panelInnerWidth))
+	return renderDialogPanel(panelWidth, panelInnerWidth, m.renderRunCommandContent(panelInnerWidth))
 }
 
 func (m Model) renderRunCommandContent(width int) string {

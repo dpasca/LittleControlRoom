@@ -391,14 +391,7 @@ func (m Model) renderNewProjectOverlay(body string, bodyW, bodyH int) string {
 func (m Model) renderNewProjectPanel(bodyW int) string {
 	panelWidth := min(bodyW, min(max(60, bodyW-10), 98))
 	panelInnerWidth := max(28, panelWidth-4)
-	return lipgloss.NewStyle().
-		Width(panelWidth).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("81")).
-		Padding(0, 1).
-		Background(lipgloss.Color("235")).
-		Foreground(lipgloss.Color("252")).
-		Render(m.renderNewProjectContent(panelInnerWidth))
+	return renderDialogPanel(panelWidth, panelInnerWidth, m.renderNewProjectContent(panelInnerWidth))
 }
 
 func (m Model) renderNewProjectContent(width int) string {

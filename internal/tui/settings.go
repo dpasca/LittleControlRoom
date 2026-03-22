@@ -198,14 +198,7 @@ func (m Model) renderSettingsPanel(bodyW, bodyH int) string {
 	panelWidth := min(bodyW, min(max(64, bodyW-10), 104))
 	panelInnerWidth := max(28, panelWidth-4)
 	maxContentHeight := max(10, bodyH-2)
-	return lipgloss.NewStyle().
-		Width(panelWidth).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("81")).
-		Padding(0, 1).
-		Background(lipgloss.Color("235")).
-		Foreground(lipgloss.Color("252")).
-		Render(m.renderSettingsContent(panelInnerWidth, maxContentHeight))
+	return renderDialogPanel(panelWidth, panelInnerWidth, m.renderSettingsContent(panelInnerWidth, maxContentHeight))
 }
 
 func (m Model) renderSettingsContent(width, maxHeight int) string {

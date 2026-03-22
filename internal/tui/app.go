@@ -2167,6 +2167,11 @@ const (
 )
 
 var (
+	dialogPanelBackground       = lipgloss.Color("235")
+	dialogPanelBorderColor      = lipgloss.Color("81")
+	dialogPanelFillReset        = "\x1b[48;5;235m"
+	dialogPanelResetReplacer    = strings.NewReplacer("\x1b[0m", "\x1b[0m"+dialogPanelFillReset, "\x1b[m", "\x1b[m"+dialogPanelFillReset)
+	dialogPanelFillStyle        = lipgloss.NewStyle().Background(dialogPanelBackground)
 	detailLabelStyle            = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
 	detailSectionStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
 	detailValueStyle            = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
@@ -2992,7 +2997,7 @@ const (
 
 func projectTODOCountLabel(count int) string {
 	if count <= 0 {
-		return "-"
+		return ""
 	}
 	return strconv.Itoa(count)
 }
@@ -3696,14 +3701,7 @@ func (m Model) renderFooter(width int) string {
 func (m Model) renderCommandPalette(bodyW int) string {
 	panelWidth := min(bodyW, min(max(48, bodyW-10), 84))
 	panelInnerWidth := max(24, panelWidth-4)
-	return lipgloss.NewStyle().
-		Width(panelWidth).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("81")).
-		Padding(0, 1).
-		Background(lipgloss.Color("235")).
-		Foreground(lipgloss.Color("252")).
-		Render(m.renderCommandPaletteContent(panelInnerWidth))
+	return renderDialogPanel(panelWidth, panelInnerWidth, m.renderCommandPaletteContent(panelInnerWidth))
 }
 
 func (m Model) renderCommandPaletteOverlay(body string, bodyW, bodyH int) string {
@@ -3718,14 +3716,7 @@ func (m Model) renderCommandPaletteOverlay(body string, bodyW, bodyH int) string
 func (m Model) renderCommitPreview(bodyW int) string {
 	panelWidth := min(bodyW, min(max(54, bodyW-12), 96))
 	panelInnerWidth := max(28, panelWidth-4)
-	return lipgloss.NewStyle().
-		Width(panelWidth).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("81")).
-		Padding(0, 1).
-		Background(lipgloss.Color("235")).
-		Foreground(lipgloss.Color("252")).
-		Render(m.renderCommitPreviewContent(panelInnerWidth))
+	return renderDialogPanel(panelWidth, panelInnerWidth, m.renderCommitPreviewContent(panelInnerWidth))
 }
 
 func (m Model) renderCommitPreviewOverlay(body string, bodyW, bodyH int) string {
@@ -3740,14 +3731,7 @@ func (m Model) renderCommitPreviewOverlay(body string, bodyW, bodyH int) string 
 func (m Model) renderGitStatusDialog(bodyW int) string {
 	panelWidth := min(bodyW, min(max(54, bodyW-12), 96))
 	panelInnerWidth := max(28, panelWidth-4)
-	return lipgloss.NewStyle().
-		Width(panelWidth).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("81")).
-		Padding(0, 1).
-		Background(lipgloss.Color("235")).
-		Foreground(lipgloss.Color("252")).
-		Render(m.renderGitStatusDialogContent(panelInnerWidth))
+	return renderDialogPanel(panelWidth, panelInnerWidth, m.renderGitStatusDialogContent(panelInnerWidth))
 }
 
 func (m Model) renderGitStatusDialogOverlay(body string, bodyW, bodyH int) string {
@@ -4113,7 +4097,7 @@ func renderCommitPreviewActions(canPush bool) string {
 }
 
 func renderDialogAction(key, label string, keyStyle, labelStyle lipgloss.Style) string {
-	return lipgloss.JoinHorizontal(lipgloss.Left, keyStyle.Render(key), " ", labelStyle.Render(label))
+	return lipgloss.JoinHorizontal(lipgloss.Left, keyStyle.Render(key), dialogPanelFillStyle.Render(" "), labelStyle.Render(label))
 }
 
 func renderCommandPaletteActions() string {
@@ -4628,7 +4612,7 @@ func renderHelpPanelActionRow(parts ...string) string {
 		}
 		filtered = append(filtered, part)
 	}
-	return strings.Join(filtered, "   ")
+	return strings.Join(filtered, dialogPanelFillStyle.Render("   "))
 }
 
 func renderHelpPanelLegendLine() string {
@@ -4639,6 +4623,41 @@ func renderHelpPanelLegendLine() string {
 		renderDialogAction("!", "warning", cancelActionKeyStyle, cancelActionTextStyle),
 	}
 	return strings.Join(legend, "  ")
+}
+
+func renderDialogPanel(panelWidth, panelInnerWidth int, content string) string {
+	return lipgloss.NewStyle().
+		Width(panelWidth).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(dialogPanelBorderColor).
+		Padding(0, 1).
+		Background(dialogPanelBackground).
+		Foreground(lipgloss.Color("252")).
+		Render(fillDialogBlock(content, panelInnerWidth))
+}
+
+func fillDialogBlock(content string, width int) string {
+	if width <= 0 {
+		return content
+	}
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		lines[i] = fillDialogLine(line, width)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func fillDialogLine(line string, width int) string {
+	if width <= 0 {
+		return line
+	}
+	line = dialogPanelResetReplacer.Replace(line)
+	visibleWidth := lipgloss.Width(line)
+	line = dialogPanelFillStyle.Render(line)
+	if visibleWidth >= width {
+		return line
+	}
+	return line + dialogPanelFillStyle.Render(strings.Repeat(" ", width-visibleWidth))
 }
 
 func fitFooterWidth(line string, width int) string {

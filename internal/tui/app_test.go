@@ -7026,6 +7026,33 @@ func TestCommandPaletteRendersColoredActionLegend(t *testing.T) {
 	}
 }
 
+func TestRenderDialogPanelRestoresBackgroundAfterStyledResets(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	defer lipgloss.SetColorProfile(prevProfile)
+
+	panel := renderDialogPanel(30, 26, detailSectionStyle.Render("TODO")+"  "+detailValueStyle.Render("demo"))
+	if !strings.Contains(panel, dialogPanelFillReset) {
+		t.Fatalf("dialog panel should reapply its background color after nested style resets: %q", panel)
+	}
+	if !strings.Contains(ansi.Strip(panel), "TODO  demo") {
+		t.Fatalf("dialog panel should preserve the rendered content, got %q", ansi.Strip(panel))
+	}
+}
+
+func TestTodoDialogLegendUsesDistinctActionTones(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	defer lipgloss.SetColorProfile(prevProfile)
+
+	rendered := todoDialogLegendLine()
+	for _, bgCode := range []string{"48;5;42", "48;5;81", "48;5;214", "48;5;160"} {
+		if !strings.Contains(rendered, bgCode) {
+			t.Fatalf("todo dialog legend should include tone %s, got %q", bgCode, rendered)
+		}
+	}
+}
+
 func TestViewWithSettingsModeRespectsHeight(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{
