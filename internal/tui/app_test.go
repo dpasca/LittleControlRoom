@@ -3226,6 +3226,64 @@ func TestEmbeddedModelPreferencePersistsAcrossFutureSessionsPerProvider(t *testi
 	}
 }
 
+func TestEmbeddedModelPreferenceLoadsFromSavedSettingsOnStartup(t *testing.T) {
+	cfg := config.Default()
+	cfg.ConfigPath = filepath.Join(t.TempDir(), "config.toml")
+	cfg.EmbeddedCodexModel = "gpt-5.4"
+	cfg.EmbeddedCodexReasoning = "high"
+	cfg.EmbeddedOpenCodeModel = "openai/gpt-5.4"
+	cfg.EmbeddedOpenCodeReasoning = "medium"
+
+	svc := service.New(cfg, nil, events.NewBus(), nil)
+	m := New(context.Background(), svc)
+
+	var requests []codexapp.LaunchRequest
+	m.codexManager = codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				Started:  true,
+				Status:   req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+	m.projects = []model.ProjectSummary{{
+		Path:          "/tmp/demo",
+		Name:          "demo",
+		PresentOnDisk: true,
+	}}
+
+	updated, cmd := m.launchEmbeddedForSelection(codexapp.ProviderCodex, true, "")
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("launchEmbeddedForSelection(codex) should return an open command")
+	}
+	if msg := cmd(); msg == nil {
+		t.Fatalf("codex open command should return a message")
+	}
+
+	updated, cmd = m.launchEmbeddedForSelection(codexapp.ProviderOpenCode, true, "")
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("launchEmbeddedForSelection(opencode) should return an open command")
+	}
+	if msg := cmd(); msg == nil {
+		t.Fatalf("opencode open command should return a message")
+	}
+
+	if len(requests) != 2 {
+		t.Fatalf("request count = %d, want 2", len(requests))
+	}
+	if requests[0].PendingModel != "gpt-5.4" || requests[0].PendingReasoning != "high" {
+		t.Fatalf("codex request = %#v, want saved startup preference", requests[0])
+	}
+	if requests[1].PendingModel != "openai/gpt-5.4" || requests[1].PendingReasoning != "medium" {
+		t.Fatalf("opencode request = %#v, want saved startup preference", requests[1])
+	}
+}
+
 func TestVisibleCodexSlashSessionAliasOpensRequestedOpenCodeSession(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
@@ -6874,6 +6932,110 @@ func TestSettingsEnterShowsValidationError(t *testing.T) {
 	}
 	if !got.settingsMode {
 		t.Fatalf("settings mode should stay open after validation failure")
+	}
+}
+
+func TestSettingsSavePreservesEmbeddedModelPreferences(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cfg := config.Default()
+	cfg.ConfigPath = filepath.Join(home, ".little-control-room", "config.toml")
+	cfg.EmbeddedCodexModel = "gpt-5.4"
+	cfg.EmbeddedCodexReasoning = "high"
+	cfg.EmbeddedOpenCodeModel = "openai/gpt-5.4"
+	cfg.EmbeddedOpenCodeReasoning = "medium"
+
+	svc := service.New(cfg, nil, events.NewBus(), nil)
+	m := New(context.Background(), svc)
+	m.settingsMode = true
+	m.settingsFields = newSettingsFields(config.EditableSettingsFromAppConfig(cfg))
+	m.width = 100
+	m.height = 24
+	_ = m.setSettingsSelection(settingsFieldOpenAIAPIKey)
+	m.settingsFields[settingsFieldOpenAIAPIKey].input.SetValue("sk-test-example")
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatalf("expected save command from settings enter")
+	}
+	msg := cmd()
+	savedMsg, ok := msg.(settingsSavedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want settingsSavedMsg", msg)
+	}
+	if savedMsg.err != nil {
+		t.Fatalf("settings save returned error = %v", savedMsg.err)
+	}
+	got := updated.(Model)
+	updated, _ = got.Update(savedMsg)
+	got = updated.(Model)
+
+	raw, err := os.ReadFile(cfg.ConfigPath)
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+	text := string(raw)
+	for _, want := range []string{
+		"embedded_codex_model = \"gpt-5.4\"",
+		"embedded_codex_reasoning_effort = \"high\"",
+		"embedded_opencode_model = \"openai/gpt-5.4\"",
+		"embedded_opencode_reasoning_effort = \"medium\"",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("saved config missing %q: %q", want, text)
+		}
+	}
+	if got.currentSettingsBaseline().EmbeddedCodexModel != "gpt-5.4" {
+		t.Fatalf("baseline embedded codex model = %q, want gpt-5.4", got.currentSettingsBaseline().EmbeddedCodexModel)
+	}
+}
+
+func TestCodexActionMsgPersistsEmbeddedModelPreferencesToConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cfg := config.Default()
+	cfg.ConfigPath = filepath.Join(home, ".little-control-room", "config.toml")
+	svc := service.New(cfg, nil, events.NewBus(), nil)
+	m := New(context.Background(), svc)
+
+	updated, cmd := m.Update(codexActionMsg{
+		projectPath: "/tmp/demo",
+		status:      "Embedded model set to gpt-5.4 with high reasoning for the next prompt",
+		provider:    codexapp.ProviderCodex,
+		model:       "gpt-5.4",
+		reasoning:   "high",
+	})
+	if cmd == nil {
+		t.Fatalf("codexActionMsg should trigger a config save command")
+	}
+	got := updated.(Model)
+	if got.status != "Embedded model set to gpt-5.4 with high reasoning for the next prompt" {
+		t.Fatalf("status = %q, want model update message", got.status)
+	}
+
+	msg := cmd()
+	savedMsg, ok := msg.(embeddedModelPreferencesSavedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want embeddedModelPreferencesSavedMsg", msg)
+	}
+	if savedMsg.err != nil {
+		t.Fatalf("embedded model preference save returned error = %v", savedMsg.err)
+	}
+
+	updated, _ = got.Update(savedMsg)
+	got = updated.(Model)
+	raw, err := os.ReadFile(cfg.ConfigPath)
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+	text := string(raw)
+	if !strings.Contains(text, "embedded_codex_model = \"gpt-5.4\"") || !strings.Contains(text, "embedded_codex_reasoning_effort = \"high\"") {
+		t.Fatalf("saved config missing codex model preference: %q", text)
+	}
+	if got.currentSettingsBaseline().EmbeddedCodexModel != "gpt-5.4" || got.currentSettingsBaseline().EmbeddedCodexReasoning != "high" {
+		t.Fatalf("settings baseline = %#v, want saved codex model preference", got.currentSettingsBaseline())
 	}
 }
 

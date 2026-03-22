@@ -39,7 +39,7 @@ var specs = []Spec{
 	{Name: "new", Usage: "/new [prompt]", Summary: "Start a fresh embedded session for this project"},
 	{Name: "resume", Usage: "/resume [session-id]", Summary: "Resume a different embedded session for this project, or pick one when no session ID is given"},
 	{Name: "session", Usage: "/session [session-id]", Summary: "Alias for /resume", Hidden: true},
-	{Name: "model", Usage: "/model", Summary: "Pick the embedded model and reasoning effort for this and future embedded sessions of the same tool"},
+	{Name: "model", Usage: "/model", Summary: "Pick the embedded model and reasoning effort for this and future embedded sessions of the same tool, even after restarting LCR"},
 	{Name: "status", Usage: "/status", Summary: "Show embedded session config, limits, and token usage"},
 	{Name: "reconnect", Usage: "/reconnect", Summary: "Restart the embedded provider helper and reconnect to the current session"},
 }
@@ -84,7 +84,7 @@ func Suggestions(input string) []Suggestion {
 		return []Suggestion{{
 			Insert:  "/model",
 			Display: "/model",
-			Summary: "Open a local picker for the embedded model and reasoning effort used by this and future embedded sessions of the same tool",
+			Summary: "Open a local picker for the embedded model and reasoning effort used by this and future embedded sessions of the same tool, even after restarting LCR",
 		}}
 	case "status":
 		return []Suggestion{{

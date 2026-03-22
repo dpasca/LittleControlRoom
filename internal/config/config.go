@@ -17,26 +17,30 @@ import (
 )
 
 type AppConfig struct {
-	AIBackend              AIBackend
-	OpenAIAPIKey           string
-	IncludePaths           []string
-	ExcludePaths           []string
-	ExcludeProjectPatterns []string
-	CodexHome              string
-	OpenCodeHome           string
-	CodexLaunchPreset      codexcli.Preset
-	DataDir                string
-	DBPath                 string
-	ConfigPath             string
-	ConfigLoaded           bool
-	DoctorScan             bool
-	SnapshotLimit          int
-	SnapshotProject        string
-	SnapshotSessionID      string
-	ScanInterval           time.Duration
-	ActiveThreshold        time.Duration
-	StuckThreshold         time.Duration
-	AllowMultipleInstances bool
+	AIBackend                 AIBackend
+	OpenAIAPIKey              string
+	IncludePaths              []string
+	ExcludePaths              []string
+	ExcludeProjectPatterns    []string
+	EmbeddedCodexModel        string
+	EmbeddedCodexReasoning    string
+	EmbeddedOpenCodeModel     string
+	EmbeddedOpenCodeReasoning string
+	CodexHome                 string
+	OpenCodeHome              string
+	CodexLaunchPreset         codexcli.Preset
+	DataDir                   string
+	DBPath                    string
+	ConfigPath                string
+	ConfigLoaded              bool
+	DoctorScan                bool
+	SnapshotLimit             int
+	SnapshotProject           string
+	SnapshotSessionID         string
+	ScanInterval              time.Duration
+	ActiveThreshold           time.Duration
+	StuckThreshold            time.Duration
+	AllowMultipleInstances    bool
 }
 
 func (c AppConfig) EffectiveAIBackend() AIBackend {
@@ -44,15 +48,19 @@ func (c AppConfig) EffectiveAIBackend() AIBackend {
 }
 
 type fileConfig struct {
-	AIBackend              string    `toml:"ai_backend"`
-	OpenAIAPIKey           *string   `toml:"openai_api_key"`
-	IncludePaths           *[]string `toml:"include_paths"`
-	ExcludePaths           *[]string `toml:"exclude_paths"`
-	ExcludeProjectPatterns *[]string `toml:"exclude_project_patterns"`
-	CodexLaunchPreset      string    `toml:"codex_launch_preset"`
-	ScanInterval           string    `toml:"interval"`
-	ActiveThreshold        string    `toml:"active-threshold"`
-	StuckThreshold         string    `toml:"stuck-threshold"`
+	AIBackend                 string    `toml:"ai_backend"`
+	OpenAIAPIKey              *string   `toml:"openai_api_key"`
+	IncludePaths              *[]string `toml:"include_paths"`
+	ExcludePaths              *[]string `toml:"exclude_paths"`
+	ExcludeProjectPatterns    *[]string `toml:"exclude_project_patterns"`
+	EmbeddedCodexModel        *string   `toml:"embedded_codex_model"`
+	EmbeddedCodexReasoning    *string   `toml:"embedded_codex_reasoning_effort"`
+	EmbeddedOpenCodeModel     *string   `toml:"embedded_opencode_model"`
+	EmbeddedOpenCodeReasoning *string   `toml:"embedded_opencode_reasoning_effort"`
+	CodexLaunchPreset         string    `toml:"codex_launch_preset"`
+	ScanInterval              string    `toml:"interval"`
+	ActiveThreshold           string    `toml:"active-threshold"`
+	StuckThreshold            string    `toml:"stuck-threshold"`
 }
 
 func Default() AppConfig {
@@ -281,6 +289,18 @@ func applyConfigFile(cfg *AppConfig) error {
 	}
 	if fc.ExcludeProjectPatterns != nil {
 		cfg.ExcludeProjectPatterns = normalizeProjectPatterns(*fc.ExcludeProjectPatterns)
+	}
+	if fc.EmbeddedCodexModel != nil {
+		cfg.EmbeddedCodexModel = strings.TrimSpace(*fc.EmbeddedCodexModel)
+	}
+	if fc.EmbeddedCodexReasoning != nil {
+		cfg.EmbeddedCodexReasoning = strings.TrimSpace(*fc.EmbeddedCodexReasoning)
+	}
+	if fc.EmbeddedOpenCodeModel != nil {
+		cfg.EmbeddedOpenCodeModel = strings.TrimSpace(*fc.EmbeddedOpenCodeModel)
+	}
+	if fc.EmbeddedOpenCodeReasoning != nil {
+		cfg.EmbeddedOpenCodeReasoning = strings.TrimSpace(*fc.EmbeddedOpenCodeReasoning)
 	}
 	if strings.TrimSpace(fc.CodexLaunchPreset) != "" {
 		preset, err := codexcli.ParsePreset(fc.CodexLaunchPreset)

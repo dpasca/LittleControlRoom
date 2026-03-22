@@ -12,28 +12,36 @@ import (
 )
 
 type EditableSettings struct {
-	AIBackend              AIBackend
-	OpenAIAPIKey           string
-	IncludePaths           []string
-	ExcludePaths           []string
-	ExcludeProjectPatterns []string
-	CodexLaunchPreset      codexcli.Preset
-	ScanInterval           time.Duration
-	ActiveThreshold        time.Duration
-	StuckThreshold         time.Duration
+	AIBackend                 AIBackend
+	OpenAIAPIKey              string
+	IncludePaths              []string
+	ExcludePaths              []string
+	ExcludeProjectPatterns    []string
+	EmbeddedCodexModel        string
+	EmbeddedCodexReasoning    string
+	EmbeddedOpenCodeModel     string
+	EmbeddedOpenCodeReasoning string
+	CodexLaunchPreset         codexcli.Preset
+	ScanInterval              time.Duration
+	ActiveThreshold           time.Duration
+	StuckThreshold            time.Duration
 }
 
 func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 	return EditableSettings{
-		AIBackend:              cfg.EffectiveAIBackend(),
-		OpenAIAPIKey:           cfg.OpenAIAPIKey,
-		IncludePaths:           append([]string(nil), cfg.IncludePaths...),
-		ExcludePaths:           append([]string(nil), cfg.ExcludePaths...),
-		ExcludeProjectPatterns: append([]string(nil), cfg.ExcludeProjectPatterns...),
-		CodexLaunchPreset:      cfg.CodexLaunchPreset,
-		ScanInterval:           cfg.ScanInterval,
-		ActiveThreshold:        cfg.ActiveThreshold,
-		StuckThreshold:         cfg.StuckThreshold,
+		AIBackend:                 cfg.EffectiveAIBackend(),
+		OpenAIAPIKey:              cfg.OpenAIAPIKey,
+		IncludePaths:              append([]string(nil), cfg.IncludePaths...),
+		ExcludePaths:              append([]string(nil), cfg.ExcludePaths...),
+		ExcludeProjectPatterns:    append([]string(nil), cfg.ExcludeProjectPatterns...),
+		EmbeddedCodexModel:        cfg.EmbeddedCodexModel,
+		EmbeddedCodexReasoning:    cfg.EmbeddedCodexReasoning,
+		EmbeddedOpenCodeModel:     cfg.EmbeddedOpenCodeModel,
+		EmbeddedOpenCodeReasoning: cfg.EmbeddedOpenCodeReasoning,
+		CodexLaunchPreset:         cfg.CodexLaunchPreset,
+		ScanInterval:              cfg.ScanInterval,
+		ActiveThreshold:           cfg.ActiveThreshold,
+		StuckThreshold:            cfg.StuckThreshold,
 	}
 }
 
@@ -134,6 +142,10 @@ func validateEditableSettings(settings EditableSettings) error {
 	cfg.IncludePaths = append([]string(nil), settings.IncludePaths...)
 	cfg.ExcludePaths = append([]string(nil), settings.ExcludePaths...)
 	cfg.ExcludeProjectPatterns = append([]string(nil), settings.ExcludeProjectPatterns...)
+	cfg.EmbeddedCodexModel = strings.TrimSpace(settings.EmbeddedCodexModel)
+	cfg.EmbeddedCodexReasoning = strings.TrimSpace(settings.EmbeddedCodexReasoning)
+	cfg.EmbeddedOpenCodeModel = strings.TrimSpace(settings.EmbeddedOpenCodeModel)
+	cfg.EmbeddedOpenCodeReasoning = strings.TrimSpace(settings.EmbeddedOpenCodeReasoning)
 	cfg.CodexLaunchPreset = settings.CodexLaunchPreset
 	cfg.ScanInterval = settings.ScanInterval
 	cfg.ActiveThreshold = settings.ActiveThreshold
@@ -178,6 +190,24 @@ func renderEditableSettings(settings EditableSettings) string {
 	}
 	lines = append(lines, "]")
 	lines = append(lines, "")
+	if value := strings.TrimSpace(settings.EmbeddedCodexModel); value != "" {
+		lines = append(lines, fmt.Sprintf("embedded_codex_model = %s", strconv.Quote(value)))
+	}
+	if value := strings.TrimSpace(settings.EmbeddedCodexReasoning); value != "" {
+		lines = append(lines, fmt.Sprintf("embedded_codex_reasoning_effort = %s", strconv.Quote(value)))
+	}
+	if value := strings.TrimSpace(settings.EmbeddedOpenCodeModel); value != "" {
+		lines = append(lines, fmt.Sprintf("embedded_opencode_model = %s", strconv.Quote(value)))
+	}
+	if value := strings.TrimSpace(settings.EmbeddedOpenCodeReasoning); value != "" {
+		lines = append(lines, fmt.Sprintf("embedded_opencode_reasoning_effort = %s", strconv.Quote(value)))
+	}
+	if strings.TrimSpace(settings.EmbeddedCodexModel) != "" ||
+		strings.TrimSpace(settings.EmbeddedCodexReasoning) != "" ||
+		strings.TrimSpace(settings.EmbeddedOpenCodeModel) != "" ||
+		strings.TrimSpace(settings.EmbeddedOpenCodeReasoning) != "" {
+		lines = append(lines, "")
+	}
 	lines = append(lines, fmt.Sprintf("codex_launch_preset = %s", strconv.Quote(string(settings.CodexLaunchPreset))))
 	lines = append(lines, "")
 	lines = append(lines, fmt.Sprintf("interval = %s", strconv.Quote(formatConfigDuration(settings.ScanInterval))))

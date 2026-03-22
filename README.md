@@ -109,7 +109,7 @@ Inside the embedded Codex or OpenCode pane:
 - `/resume [session-id]`: Open the session picker or jump to a saved session.
 - `/session [session-id]`: Alias for `/resume`.
 - `/reconnect`: Restart the embedded provider helper and reconnect to the current session.
-- `/model`: Change the model and reasoning settings for this and future embedded sessions of the same tool.
+- `/model`: Change the model and reasoning settings for this and future embedded sessions of the same tool, including after restarting LCR.
 - `/status`: Show the current provider/session status.
 
 ## Everyday Workflow

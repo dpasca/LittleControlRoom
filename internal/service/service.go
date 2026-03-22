@@ -108,6 +108,10 @@ func (s *Service) Config() config.AppConfig {
 	cfg.IncludePaths = append([]string(nil), s.cfg.IncludePaths...)
 	cfg.ExcludePaths = append([]string(nil), s.cfg.ExcludePaths...)
 	cfg.ExcludeProjectPatterns = append([]string(nil), s.cfg.ExcludeProjectPatterns...)
+	cfg.EmbeddedCodexModel = s.cfg.EmbeddedCodexModel
+	cfg.EmbeddedCodexReasoning = s.cfg.EmbeddedCodexReasoning
+	cfg.EmbeddedOpenCodeModel = s.cfg.EmbeddedOpenCodeModel
+	cfg.EmbeddedOpenCodeReasoning = s.cfg.EmbeddedOpenCodeReasoning
 	return cfg
 }
 
@@ -124,6 +128,10 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	s.cfg.IncludePaths = append([]string(nil), settings.IncludePaths...)
 	s.cfg.ExcludePaths = append([]string(nil), settings.ExcludePaths...)
 	s.cfg.ExcludeProjectPatterns = append([]string(nil), settings.ExcludeProjectPatterns...)
+	s.cfg.EmbeddedCodexModel = strings.TrimSpace(settings.EmbeddedCodexModel)
+	s.cfg.EmbeddedCodexReasoning = strings.TrimSpace(settings.EmbeddedCodexReasoning)
+	s.cfg.EmbeddedOpenCodeModel = strings.TrimSpace(settings.EmbeddedOpenCodeModel)
+	s.cfg.EmbeddedOpenCodeReasoning = strings.TrimSpace(settings.EmbeddedOpenCodeReasoning)
 	s.cfg.CodexLaunchPreset = settings.CodexLaunchPreset
 	s.cfg.ScanInterval = settings.ScanInterval
 	s.cfg.ActiveThreshold = settings.ActiveThreshold

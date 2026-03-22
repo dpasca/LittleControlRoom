@@ -234,6 +234,12 @@ type settingsSavedMsg struct {
 	err      error
 }
 
+type embeddedModelPreferencesSavedMsg struct {
+	settings config.EditableSettings
+	path     string
+	err      error
+}
+
 type setupSavedMsg struct {
 	settings config.EditableSettings
 	path     string
@@ -334,6 +340,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 	detailViewport := viewport.New(0, 0)
 	runtimeViewport := viewport.New(0, 0)
 	codexViewport := viewport.New(0, 0)
+	initialSettings := config.EditableSettingsFromAppConfig(svc.Config())
 
 	return Model{
 		ctx:                    ctx,
@@ -358,6 +365,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		excludeProjectPatterns: currentExcludeProjectPatterns(svc),
 		codexManager:           codexapp.NewManager(),
 		runtimeManager:         projectrun.NewManager(),
+		embeddedModelPrefs:     embeddedModelPreferencesFromSettings(initialSettings),
 		nowFn:                  time.Now,
 		homeDirFn:              os.UserHomeDir,
 	}
@@ -803,6 +811,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		saved := cloneEditableSettings(msg.settings)
 		m.settingsBaseline = &saved
 		m.excludeProjectPatterns = append([]string(nil), msg.settings.ExcludeProjectPatterns...)
+		m.embeddedModelPrefs = embeddedModelPreferencesFromSettings(msg.settings)
 		m.settingsMode = false
 		m.status = fmt.Sprintf("Settings saved to %s. Filters, API key, and Codex launch mode apply now; the running scheduler keeps its current timing until the next launch of %s.", msg.path, brand.CLIName)
 		m.rebuildProjectList(selectedPath)
@@ -826,9 +835,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		saved := cloneEditableSettings(msg.settings)
 		m.settingsBaseline = &saved
+		m.embeddedModelPrefs = embeddedModelPreferencesFromSettings(msg.settings)
 		m.setupMode = false
 		m.status = fmt.Sprintf("AI setup saved to %s. %s is now selected.", msg.path, msg.settings.AIBackend.Label())
 		return m, m.refreshSetupSnapshotCmd(false)
+	case embeddedModelPreferencesSavedMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			m.status = fmt.Sprintf("Embedded model updated for this run, but saving %s failed: %v", msg.path, msg.err)
+			return m, nil
+		}
+		m.err = nil
+		if m.svc != nil {
+			m.svc.ApplyEditableSettings(msg.settings)
+		}
+		saved := cloneEditableSettings(msg.settings)
+		m.settingsBaseline = &saved
+		m.embeddedModelPrefs = embeddedModelPreferencesFromSettings(msg.settings)
+		return m, nil
 	case ignoredProjectsMsg:
 		if msg.err != nil {
 			m.closeIgnoredPicker(msg.err.Error())
@@ -886,8 +910,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.err = nil
+		if msg.status != "" {
+			m.status = msg.status
+		}
 		if msg.provider.Normalized() != "" && (strings.TrimSpace(msg.model) != "" || strings.TrimSpace(msg.reasoning) != "") {
 			m.rememberEmbeddedModelPreference(msg.provider, msg.model, msg.reasoning)
+			return m, m.saveEmbeddedModelPreferencesCmd()
 		}
 		if msg.closed {
 			delete(m.codexClosedHandled, msg.projectPath)
@@ -902,13 +930,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if p, ok := m.selectedProject(); ok {
 				cmds = append(cmds, m.loadDetailCmd(p.Path))
 			}
-			if msg.status != "" {
-				m.status = msg.status
-			}
 			return m, tea.Batch(cmds...)
-		}
-		if msg.status != "" {
-			m.status = msg.status
 		}
 		return m, nil
 	case codexModelListMsg:

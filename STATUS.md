@@ -1,6 +1,27 @@
 # Little Control Room Status
 
-Last updated: 2026-03-22 11:05 JST (JST)
+Last updated: 2026-03-22 11:15 JST (JST)
+
+## Latest Update (2026-03-22 11:15 JST)
+
+- Made embedded `/model` choices durable across LCR restarts by storing per-provider model/reasoning preferences in `config.toml` for both Codex and OpenCode.
+- Initialized the TUI's embedded model preference cache from saved settings at startup, and auto-save those preferences whenever `/model` changes so a relaunch keeps the same override.
+- Preserved these hidden `/model` preferences when saving normal settings, so opening `/settings` later no longer wipes a previously saved model override.
+- Updated the embedded `/model` help text in the README, slash-command copy, and reference docs to clarify that the choice now survives restarts.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/config/config.go internal/config/editable.go internal/config/config_test.go internal/service/service.go internal/tui/embedded_model_preferences.go internal/tui/app.go internal/tui/settings.go internal/tui/app_test.go internal/codexslash/commands.go` passed.
+- `go test ./internal/config ./internal/tui ./internal/codexslash -run 'Test(ParseLoadsEmbeddedModelPreferencesFromConfigFile|SaveEditableSettingsWritesReadableTOML|EmbeddedModelPreferenceLoadsFromSavedSettingsOnStartup|SettingsSavePreservesEmbeddedModelPreferences|CodexActionMsgPersistsEmbeddedModelPreferencesToConfig|EmbeddedModelPreferencePersistsAcrossFutureSessionsPerProvider|SuggestionsIncludeModelCommand|ParseModelCommand)' -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-22T11:15:02+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 2`, `queued classifications: 2`).
+- `make doctor` passed on the cached snapshot dated `2026-03-22T11:15:03+09:00` (`projects: 133`).
+
+Next concrete tasks:
+
+- Live-check `/model` end to end for both Codex and OpenCode by setting a non-default model, restarting LCR, and confirming the next embedded session starts with the saved override already staged.
+- Decide whether `/model` should also grow an explicit "reset to provider default" action now that preferences are durable, so users have a direct way to clear a saved override instead of replacing it with another one.
 
 ## Latest Update (2026-03-22 11:05 JST)
 

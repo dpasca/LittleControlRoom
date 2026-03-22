@@ -4,11 +4,50 @@ import (
 	"strings"
 
 	"lcroom/internal/codexapp"
+	"lcroom/internal/config"
 )
 
 type embeddedModelPreference struct {
 	Model     string
 	Reasoning string
+}
+
+func embeddedModelPreferencesFromSettings(settings config.EditableSettings) map[codexapp.Provider]embeddedModelPreference {
+	prefs := map[codexapp.Provider]embeddedModelPreference{}
+	if model := strings.TrimSpace(settings.EmbeddedCodexModel); model != "" || strings.TrimSpace(settings.EmbeddedCodexReasoning) != "" {
+		prefs[codexapp.ProviderCodex] = embeddedModelPreference{
+			Model:     model,
+			Reasoning: strings.TrimSpace(settings.EmbeddedCodexReasoning),
+		}
+	}
+	if model := strings.TrimSpace(settings.EmbeddedOpenCodeModel); model != "" || strings.TrimSpace(settings.EmbeddedOpenCodeReasoning) != "" {
+		prefs[codexapp.ProviderOpenCode] = embeddedModelPreference{
+			Model:     model,
+			Reasoning: strings.TrimSpace(settings.EmbeddedOpenCodeReasoning),
+		}
+	}
+	if len(prefs) == 0 {
+		return nil
+	}
+	return prefs
+}
+
+func applyEmbeddedModelPreferencesToSettings(settings *config.EditableSettings, prefs map[codexapp.Provider]embeddedModelPreference) {
+	if settings == nil {
+		return
+	}
+	settings.EmbeddedCodexModel = ""
+	settings.EmbeddedCodexReasoning = ""
+	settings.EmbeddedOpenCodeModel = ""
+	settings.EmbeddedOpenCodeReasoning = ""
+	if pref, ok := prefs[codexapp.ProviderCodex]; ok {
+		settings.EmbeddedCodexModel = strings.TrimSpace(pref.Model)
+		settings.EmbeddedCodexReasoning = strings.TrimSpace(pref.Reasoning)
+	}
+	if pref, ok := prefs[codexapp.ProviderOpenCode]; ok {
+		settings.EmbeddedOpenCodeModel = strings.TrimSpace(pref.Model)
+		settings.EmbeddedOpenCodeReasoning = strings.TrimSpace(pref.Reasoning)
+	}
 }
 
 func (m Model) embeddedModelPreference(provider codexapp.Provider) (embeddedModelPreference, bool) {

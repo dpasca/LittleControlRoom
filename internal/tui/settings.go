@@ -84,6 +84,7 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = err.Error()
 			return m, nil
 		}
+		applyEmbeddedModelPreferencesToSettings(&settings, embeddedModelPreferencesFromSettings(m.currentSettingsBaseline()))
 		m.err = nil
 		m.status = "Saving settings..."
 		return m, m.saveSettingsCmd(settings)
@@ -147,6 +148,16 @@ func (m Model) saveSettingsCmd(settings config.EditableSettings) tea.Cmd {
 	return func() tea.Msg {
 		err := config.SaveEditableSettings(path, settings)
 		return settingsSavedMsg{settings: settings, path: path, err: err}
+	}
+}
+
+func (m Model) saveEmbeddedModelPreferencesCmd() tea.Cmd {
+	settings := m.currentSettingsBaseline()
+	applyEmbeddedModelPreferencesToSettings(&settings, m.embeddedModelPrefs)
+	path := m.currentConfigPath()
+	return func() tea.Msg {
+		err := config.SaveEditableSettings(path, settings)
+		return embeddedModelPreferencesSavedMsg{settings: settings, path: path, err: err}
 	}
 }
 

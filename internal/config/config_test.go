@@ -91,6 +91,38 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 	}
 }
 
+func TestParseLoadsEmbeddedModelPreferencesFromConfigFile(t *testing.T) {
+	useTempHome(t)
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	content := "" +
+		"embedded_codex_model = \"gpt-5.4\"\n" +
+		"embedded_codex_reasoning_effort = \"high\"\n" +
+		"embedded_opencode_model = \"openai/gpt-5.4\"\n" +
+		"embedded_opencode_reasoning_effort = \"medium\"\n"
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+
+	cfg, err := Parse("scan", []string{"--config", configPath})
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	if got, want := cfg.EmbeddedCodexModel, "gpt-5.4"; got != want {
+		t.Fatalf("embedded codex model = %q, want %q", got, want)
+	}
+	if got, want := cfg.EmbeddedCodexReasoning, "high"; got != want {
+		t.Fatalf("embedded codex reasoning = %q, want %q", got, want)
+	}
+	if got, want := cfg.EmbeddedOpenCodeModel, "openai/gpt-5.4"; got != want {
+		t.Fatalf("embedded opencode model = %q, want %q", got, want)
+	}
+	if got, want := cfg.EmbeddedOpenCodeReasoning, "medium"; got != want {
+		t.Fatalf("embedded opencode reasoning = %q, want %q", got, want)
+	}
+}
+
 func TestParseIncludePathsFlagOverridesConfigFile(t *testing.T) {
 	useTempHome(t)
 	dir := t.TempDir()
@@ -322,15 +354,19 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.toml")
 
 	err := SaveEditableSettings(configPath, EditableSettings{
-		AIBackend:              AIBackendOpenAIAPI,
-		OpenAIAPIKey:           "sk-test-example",
-		IncludePaths:           []string{"/tmp/a", "/tmp/b"},
-		ExcludePaths:           []string{"/tmp/skip"},
-		ExcludeProjectPatterns: []string{"quickgame_*", "secret-demo"},
-		CodexLaunchPreset:      codexcli.PresetFullAuto,
-		ScanInterval:           45 * time.Second,
-		ActiveThreshold:        15 * time.Minute,
-		StuckThreshold:         3 * time.Hour,
+		AIBackend:                 AIBackendOpenAIAPI,
+		OpenAIAPIKey:              "sk-test-example",
+		IncludePaths:              []string{"/tmp/a", "/tmp/b"},
+		ExcludePaths:              []string{"/tmp/skip"},
+		ExcludeProjectPatterns:    []string{"quickgame_*", "secret-demo"},
+		EmbeddedCodexModel:        "gpt-5.4",
+		EmbeddedCodexReasoning:    "high",
+		EmbeddedOpenCodeModel:     "openai/gpt-5.4",
+		EmbeddedOpenCodeReasoning: "medium",
+		CodexLaunchPreset:         codexcli.PresetFullAuto,
+		ScanInterval:              45 * time.Second,
+		ActiveThreshold:           15 * time.Minute,
+		StuckThreshold:            3 * time.Hour,
 	})
 	if err != nil {
 		t.Fatalf("SaveEditableSettings() error = %v", err)
@@ -355,6 +391,18 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 	}
 	if !strings.Contains(text, "exclude_project_patterns = [") {
 		t.Fatalf("saved config should include exclude_project_patterns array: %q", text)
+	}
+	if !strings.Contains(text, "embedded_codex_model = \"gpt-5.4\"") {
+		t.Fatalf("saved config should include embedded codex model: %q", text)
+	}
+	if !strings.Contains(text, "embedded_codex_reasoning_effort = \"high\"") {
+		t.Fatalf("saved config should include embedded codex reasoning: %q", text)
+	}
+	if !strings.Contains(text, "embedded_opencode_model = \"openai/gpt-5.4\"") {
+		t.Fatalf("saved config should include embedded opencode model: %q", text)
+	}
+	if !strings.Contains(text, "embedded_opencode_reasoning_effort = \"medium\"") {
+		t.Fatalf("saved config should include embedded opencode reasoning: %q", text)
 	}
 	if !strings.Contains(text, "codex_launch_preset = \"full-auto\"") {
 		t.Fatalf("saved config should include codex launch preset: %q", text)
