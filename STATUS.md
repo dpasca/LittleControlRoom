@@ -1,6 +1,100 @@
 # Little Control Room Status
 
-Last updated: 2026-03-22 23:32 JST (JST)
+Last updated: 2026-03-23 00:55 JST (JST)
+
+## Latest Update (2026-03-23 00:55 JST)
+
+- Hardened `sanitize-summaries` to avoid missing classification rows when a project has more than 30 sessions: the command now builds `SessionEvidence` from classification records instead of searching only the first 30 project sessions returned by `GetProjectDetail`.
+- Added a validation run with constrained dry-run:
+  - `go run ./cmd/lcroom sanitize-summaries --project /Users/davide/dev/repos/LittleControlRoom --dry-run`
+  - result: `matched=161 changed=0 skipped=161 failed=0`
+
+- Moved session summary normalization into classification upstream so status-like text (for example `Turn completed`) never persists as a completed summary again. `sessionclassify.Manager.processOne` now sanitizes `result.Summary` with transcript-aware fallback before storing.
+- Added a dedicated CLI utility `sanitize-summaries` to backfill existing rows:
+  - filters: `--project`, `--session-id`
+  - controls: `--apply`, `--dry-run`
+  - default is safe dry-run when `--apply` is not set.
+- Updated the embedded sessions global picker to show project ownership on each row (`[Project Name]` / path-base fallback) so multi-project session lists are immediately scannable.
+- Expanded tests for sanitizer behavior, store query/update helpers, CLI sanitize flow, and picker project hint rendering.
+
+Verification snapshot:
+
+- `go test ./...`
+- `make scan` completed at `2026-03-23T00:48:46+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 0`)
+- `make doctor` completed with cached report at `2026-03-23T00:48:54+09:00` (exit success)
+
+Next concrete tasks:
+
+- Run `lcroom sanitize-summaries --apply` if we want to backfill any remaining historical mis-summaries in the current DB.
+
+## Latest Update (2026-03-23 00:27 JST)
+
+- Moved summary cleanup to the session-classification layer so status-like text never reaches stored summaries. `sessionclassify` now sanitizes classifier output via `sanitizeClassificationSummary` and uses transcript previews as the primary fallback.
+- Removed picker-side status fallback logic so embedded session rows no longer special-case values like `Turn completed` when rendering summaries.
+- Updated global embedded picker row rendering to include owning project hints (`[Project Name]` or path base fallback), so cross-project OpenCode sessions are obvious.
+- Added/updated tests:
+  - `TestSanitizeClassificationSummaryUsesTranscriptPreviewForStatusLikeInput`
+  - `TestSanitizeClassificationSummaryKeepsNonStatusText`
+  - `TestSanitizeClassificationSummaryFallsBackWhenNoTranscriptPreview`
+  - `TestManagerProcessOneSanitizesStatusLikeSummaryFromClassifier`
+  - `TestAddPickerProjectHintFallsBackToPathBase`
+
+Verification snapshot:
+
+- `go test ./internal/sessionclassify ./internal/tui ./internal/codexapp`
+- `make test`
+- `make scan`
+- `make doctor`
+
+Next concrete tasks:
+
+- Run `make tui` to confirm the embedded sessions list shows the expected per-project hints and that older pre-migration OpenCode session summaries are visually cleaned up as expected.
+
+## Latest Update (2026-03-22 23:53 JST)
+
+- Fixed embedded sessions picker behavior so OpenCode entries no longer show status strings like `Turn completed` in place of summaries.
+- Added a picker fallback so project-bound sessions in the global picker now show summary from `LatestCompletedSessionSummary` when `LatestSessionSummary` is status-like.
+- Added row rendering support so global picker rows display the owning project (`[Project Name]` or path base fallback), making cross-project session lists easier to scan.
+- Added/updated focused TUI tests:
+  - `TestBuildCodexResumeChoicesUsesExtractedSummaryWhenLatestSummaryIsStatusLike`
+  - `TestPickerSummaryForProjectFallsBackToCompletedSummaryForTurnCompleted`
+  - `TestSummaryLooksLikeSessionStatus`
+  - `TestAddPickerProjectHintFallsBackToPathBase`
+
+Verification snapshot:
+
+- `go test ./internal/tui` passed
+- `go test ./internal/tui -run 'TestBuildCodexResumeChoicesUsesExtractedSummaryWhenLatestSummaryIsStatusLike|TestPickerSummaryForProjectFallsBackToCompletedSummaryForTurnCompleted|TestSummaryLooksLikeSessionStatus|TestAddPickerProjectHintFallsBackToPathBase|TestAltDownOpensCodexSessionPicker|TestRenderCodexPickerRowUsesCompactSavedBadgeAndTitleInResumeMode|TestRenderCodexPickerRowMarksLatestSavedSessionInResumeMode'` passed
+- `make test` passed
+- `make scan` completed (`activity projects: 88`, `tracked projects: 138`, `updated projects: 0`, `queued classifications: 0`) at `2026-03-22T23:52:58+09:00`
+- `make doctor` returned cached report at `2026-03-22T23:53:05+09:00`
+
+Next concrete tasks:
+
+- Confirm this exact OpenCode picker ordering and label rendering in `make tui` for interactive confirmation.
+
+## Latest Update (2026-03-22 23:41 JST)
+
+- Fixed `/opencode-new` fresh-launch reliability by teaching embedded OpenCode startup to reject a newly created session when the backend hands back a session that already has retained message history.
+- Reused the existing forced-fresh retry path by making `ForceNewSessionReusedError` provider-aware and returning it from both Codex and OpenCode fresh-session guards.
+- Added a focused OpenCode startup regression in `internal/codexapp/opencode_session_test.go`:
+  - `TestOpenCodeInitializeSessionForceNewRejectsReusedSessionWithHistory`
+- Added a TUI regression in `internal/tui/app_test.go`:
+  - `TestLaunchOpenCodeForSelectionForceNewRetriesWhenOpenCodeRejectsFreshSession`
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- `gofmt -w internal/codexapp/session.go internal/codexapp/opencode_session.go internal/codexapp/opencode_session_test.go internal/tui/app_test.go` passed
+- `go test ./internal/codexapp -run 'TestOpenCodeInitializeSessionForceNewRejectsReusedSessionWithHistory|TestOpenCodeSessionRefreshReconcilesStalePendingReasoningWhenModelMatches' -count=1` passed
+- `go test ./internal/tui -run 'TestLaunchOpenCodeForSelectionForceNewRetriesWhenOpenCodeRejectsFreshSession|TestVisibleOpenCodeSlashNewStartsFreshSession' -count=1` passed
+- `make test` passed
+- `make scan` completed (`updated projects: 1` at `2026-03-22T23:41:23+09:00`)
+- `make doctor` returned the cached report dated `2026-03-22T23:41:24+09:00` and completed successfully
+
+Next concrete tasks:
+
+- Live-check `/opencode-new` against the real embedded OpenCode backend in `make tui` and confirm it now lands on a distinct new session even when the latest OpenCode session exists for the same project.
 
 ## Latest Update (2026-03-22 23:32 JST)
 

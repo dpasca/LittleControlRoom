@@ -2,10 +2,13 @@ package cli
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"lcroom/internal/config"
 	"lcroom/internal/model"
 	"lcroom/internal/store"
 )
@@ -185,5 +188,216 @@ func TestSelectOpenCodeSnapshotSessionsSupportsProjectAndSessionFilters(t *testi
 	}
 	if selected[0].State.Path != "/tmp/demo" || selected[0].Session.SessionID != "ses_keep" {
 		t.Fatalf("unexpected selection: %+v", selected[0])
+	}
+}
+
+func TestRunSanitizeSummariesDryRunAndApply(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	st, err := store.Open(filepath.Join(tempDir, "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := "/tmp/demo"
+	sessionID := "ses_open_status"
+	sessionFile := filepath.Join(tempDir, "session-summary.jsonl")
+	if err := os.WriteFile(sessionFile, []byte(strings.Join([]string{
+		`{"timestamp":"2026-03-14T06:27:12Z","type":"message","role":"user","content":[{"type":"text","text":"Please confirm the session summary behavior."}]}`,
+		`{"timestamp":"2026-03-14T06:27:13Z","type":"message","role":"assistant","content":[{"type":"text","text":"I confirmed the behavior and updated the retry guard."}]}`,
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "demo",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		InScope:        true,
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{{
+			SessionID:            sessionID,
+			ProjectPath:          projectPath,
+			DetectedProjectPath:  projectPath,
+			SessionFile:          sessionFile,
+			Format:               "modern",
+			LastEventAt:          now,
+			LatestTurnStateKnown: true,
+		}},
+	}); err != nil {
+		t.Fatalf("upsert project state: %v", err)
+	}
+	if _, err := st.QueueSessionClassification(ctx, model.SessionClassification{
+		SessionID:         sessionID,
+		ProjectPath:       projectPath,
+		SessionFile:       sessionFile,
+		SessionFormat:     "modern",
+		SnapshotHash:      "hash-1",
+		Model:             "gpt-test-mini",
+		ClassifierVersion: "v1",
+		SourceUpdatedAt:   now,
+	}, 15*time.Minute); err != nil {
+		t.Fatalf("queue classification: %v", err)
+	}
+	updated, err := st.UpdateSessionClassificationSummary(ctx, sessionID, "Turn completed")
+	if err != nil || !updated {
+		t.Fatalf("pre-sanitize summary update: updated=%v err=%v", updated, err)
+	}
+
+	if code := runSanitizeSummaries(ctx, st, config.AppConfig{SanitizeDryRun: true}); code != 0 {
+		t.Fatalf("runSanitizeSummaries dry-run: code=%d", code)
+	}
+	stored, err := st.GetSessionClassification(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("read classification: %v", err)
+	}
+	if got := strings.TrimSpace(stored.Summary); got != "Turn completed" {
+		t.Fatalf("dry-run should not modify summary, got %q", got)
+	}
+
+	if code := runSanitizeSummaries(ctx, st, config.AppConfig{SanitizeApply: true}); code != 0 {
+		t.Fatalf("runSanitizeSummaries apply: code=%d", code)
+	}
+	stored, err = st.GetSessionClassification(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("read classification after apply: %v", err)
+	}
+	want := "I confirmed the behavior and updated the retry guard."
+	if got := strings.TrimSpace(stored.Summary); got != want {
+		t.Fatalf("sanitized summary = %q, want %q", got, want)
+	}
+}
+
+func TestRunSanitizeSummariesProjectAndSessionFilter(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	st, err := store.Open(filepath.Join(tempDir, "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	makeFixture := func(project, file string) {
+		_ = os.WriteFile(file, []byte(strings.Join([]string{
+			`{"timestamp":"2026-03-14T06:27:12Z","type":"message","role":"user","content":[{"type":"text","text":"` + project + `"}]}`,
+			`{"timestamp":"2026-03-14T06:27:13Z","type":"message","role":"assistant","content":[{"type":"text","text":"Summary for ` + project + `"}]}`,
+		}, "\n")+"\n"), 0o644)
+	}
+
+	fixtureAlpha := filepath.Join(tempDir, "alpha.jsonl")
+	fixtureBeta := filepath.Join(tempDir, "beta.jsonl")
+	makeFixture("alpha", fixtureAlpha)
+	makeFixture("beta", fixtureBeta)
+
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           "/tmp/alpha",
+		Name:           "alpha",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		InScope:        true,
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{{
+			SessionID:            "ses_alpha",
+			ProjectPath:          "/tmp/alpha",
+			DetectedProjectPath:  "/tmp/alpha",
+			SessionFile:          fixtureAlpha,
+			Format:               "modern",
+			LastEventAt:          now,
+			LatestTurnStateKnown: true,
+		}},
+	}); err != nil {
+		t.Fatalf("upsert alpha project: %v", err)
+	}
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           "/tmp/beta",
+		Name:           "beta",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		InScope:        true,
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{{
+			SessionID:            "ses_beta",
+			ProjectPath:          "/tmp/beta",
+			DetectedProjectPath:  "/tmp/beta",
+			SessionFile:          fixtureBeta,
+			Format:               "modern",
+			LastEventAt:          now,
+			LatestTurnStateKnown: true,
+		}},
+	}); err != nil {
+		t.Fatalf("upsert beta project: %v", err)
+	}
+
+	for _, classification := range []model.SessionClassification{
+		{
+			SessionID:         "ses_alpha",
+			ProjectPath:       "/tmp/alpha",
+			SessionFile:       fixtureAlpha,
+			SessionFormat:     "modern",
+			SnapshotHash:      "hash-alpha",
+			Model:             "gpt-5-mini",
+			ClassifierVersion: "v1",
+			SourceUpdatedAt:   now,
+		},
+		{
+			SessionID:         "ses_beta",
+			ProjectPath:       "/tmp/beta",
+			SessionFile:       fixtureBeta,
+			SessionFormat:     "modern",
+			SnapshotHash:      "hash-beta",
+			Model:             "gpt-5-mini",
+			ClassifierVersion: "v1",
+			SourceUpdatedAt:   now,
+		},
+	} {
+		if _, err := st.QueueSessionClassification(ctx, classification, 15*time.Minute); err != nil {
+			t.Fatalf("queue classification %s: %v", classification.SessionID, err)
+		}
+		if _, err := st.UpdateSessionClassificationSummary(ctx, classification.SessionID, "Turn completed"); err != nil {
+			t.Fatalf("seed bad summary %s: %v", classification.SessionID, err)
+		}
+	}
+
+	if code := runSanitizeSummaries(ctx, st, config.AppConfig{
+		SanitizeProject: "/tmp/alpha",
+		SanitizeApply:   true,
+	}); code != 0 {
+		t.Fatalf("runSanitizeSummaries with project filter: code=%d", code)
+	}
+
+	alpha, err := st.GetSessionClassification(ctx, "ses_alpha")
+	if err != nil {
+		t.Fatalf("read alpha classification: %v", err)
+	}
+	if strings.TrimSpace(alpha.Summary) == "Turn completed" {
+		t.Fatalf("alpha summary should be sanitized")
+	}
+	beta, err := st.GetSessionClassification(ctx, "ses_beta")
+	if err != nil {
+		t.Fatalf("read beta classification: %v", err)
+	}
+	if strings.TrimSpace(beta.Summary) != "Turn completed" {
+		t.Fatalf("beta summary should remain unsanitized by project filter")
+	}
+
+	if code := runSanitizeSummaries(ctx, st, config.AppConfig{
+		SanitizeSessionID: "ses_beta",
+		SanitizeApply:     true,
+	}); code != 0 {
+		t.Fatalf("runSanitizeSummaries with session filter: code=%d", code)
+	}
+	beta, err = st.GetSessionClassification(ctx, "ses_beta")
+	if err != nil {
+		t.Fatalf("read beta classification after session filter: %v", err)
+	}
+	if strings.TrimSpace(beta.Summary) == "Turn completed" {
+		t.Fatalf("beta summary should be sanitized after session-id filter")
 	}
 }

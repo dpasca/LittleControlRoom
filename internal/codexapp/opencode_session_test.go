@@ -3,6 +3,7 @@ package codexapp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -103,6 +104,80 @@ func TestOpenCodePostJSONMarshalsPayloadAsJSON(t *testing.T) {
 	}
 	if gotMap["message"] != "approved" {
 		t.Fatalf("message = %#v, want approved", gotMap["message"])
+	}
+}
+
+func TestOpenCodeInitializeSessionForceNewRejectsReusedSessionWithHistory(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		switch r.URL.Path {
+		case "/agent":
+			_, _ = w.Write([]byte(`[{"name":"build","mode":"primary"}]`))
+		case "/config/providers":
+			_, _ = w.Write([]byte(`{
+				"providers": [{
+					"id": "openai",
+					"name": "OpenAI",
+					"models": {
+						"gpt-5.4": {
+							"id": "gpt-5.4",
+							"providerID": "openai",
+							"name": "GPT-5.4",
+							"status": "stable"
+						}
+					}
+				}],
+				"default": {"openai":"gpt-5.4"}
+			}`))
+		case "/session":
+			_, _ = w.Write([]byte(`{"id":"ses_old"}`))
+		case "/session/ses_old/message":
+			_, _ = w.Write([]byte(`[
+				{
+					"info": {
+						"id": "msg_old",
+						"sessionID": "ses_old",
+						"role": "assistant",
+						"modelID": "gpt-5.4",
+						"providerID": "openai"
+					},
+					"parts": [{"type":"text","text":"previous reply"}]
+				}
+			]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	session := &openCodeSession{
+		baseURL:           server.URL,
+		http:              server.Client(),
+		notify:            func() {},
+		entryIndex:        make(map[string]int),
+		messageRole:       make(map[string]string),
+		partKind:          make(map[string]TranscriptKind),
+		partType:          make(map[string]string),
+		modelOptionsByKey: make(map[string]ModelOption),
+	}
+
+	err := session.initializeSession(context.Background(), LaunchRequest{
+		Provider:    ProviderOpenCode,
+		ProjectPath: "/tmp/demo",
+		ForceNew:    true,
+	})
+	if err == nil {
+		t.Fatalf("initializeSession() error = nil, want ForceNewSessionReusedError")
+	}
+	var reusedErr *ForceNewSessionReusedError
+	if !errors.As(err, &reusedErr) {
+		t.Fatalf("initializeSession() error = %v, want ForceNewSessionReusedError", err)
+	}
+	if reusedErr.Provider != ProviderOpenCode {
+		t.Fatalf("reusedErr.Provider = %q, want %q", reusedErr.Provider, ProviderOpenCode)
+	}
+	if reusedErr.ThreadID != "ses_old" {
+		t.Fatalf("reusedErr.ThreadID = %q, want %q", reusedErr.ThreadID, "ses_old")
 	}
 }
 

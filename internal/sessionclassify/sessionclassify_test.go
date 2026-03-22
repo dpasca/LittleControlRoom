@@ -231,6 +231,110 @@ func TestPreviewFromTranscriptSkipsScaffoldTitlesAndHeadingOnlySummaries(t *test
 	}
 }
 
+func TestSanitizeClassificationSummaryUsesTranscriptPreviewForStatusLikeInput(t *testing.T) {
+	got := sanitizeClassificationSummary("Turn completed", SessionSnapshot{
+		Transcript: []TranscriptItem{
+			{Role: "user", Text: "Please review the latest OpenCode session."},
+			{Role: "assistant", Text: "I confirmed the behavior and updated the retry guard."},
+		},
+	})
+	if got != "I confirmed the behavior and updated the retry guard." {
+		t.Fatalf("sanitize summary = %q, want transcript-derived summary", got)
+	}
+}
+
+func TestSanitizeClassificationSummaryKeepsNonStatusText(t *testing.T) {
+	const summary = "Retry path now handles stale sessions."
+	if got := sanitizeClassificationSummary(summary, SessionSnapshot{}); got != summary {
+		t.Fatalf("sanitize summary = %q, want %q", got, summary)
+	}
+}
+
+func TestSanitizeClassificationSummaryFallsBackWhenNoTranscriptPreview(t *testing.T) {
+	got := sanitizeClassificationSummary("OpenCode turn completed", SessionSnapshot{})
+	if got != "Session summary available in transcript, not captured by classifier." {
+		t.Fatalf("sanitize summary = %q, want fallback summary", got)
+	}
+}
+
+func TestManagerProcessOneSanitizesStatusLikeSummaryFromClassifier(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	fixture := filepath.Clean(filepath.Join(t.TempDir(), "session-summary.jsonl"))
+	if err := os.WriteFile(fixture, []byte(strings.Join([]string{
+		`{"timestamp":"2026-03-14T06:27:12Z","type":"message","role":"user","content":[{"type":"text","text":"Please confirm the OpenCode session status behavior."}]}`,
+		`{"timestamp":"2026-03-14T06:27:13Z","type":"message","role":"assistant","content":[{"type":"text","text":"I confirmed the behavior and updated the retry guard."}]}`,
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	now := time.Now()
+	state := model.ProjectState{
+		Path:           "/tmp/opencode-demo",
+		Name:           "opencode-demo",
+		Status:         model.StatusPossiblyStuck,
+		AttentionScore: 32,
+		InScope:        true,
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{{
+			SessionID:            "ses_open_status",
+			ProjectPath:          "/tmp/opencode-demo",
+			SessionFile:          fixture,
+			Format:               "modern",
+			LastEventAt:          now,
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  true,
+		}},
+	}
+	if err := st.UpsertProjectState(ctx, state); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	manager := NewManager(st, events.NewBus(), Options{
+		Client: &fakeClassifier{
+			model: "gpt-test-mini",
+			result: Result{
+				Category:   model.SessionCategoryCompleted,
+				Summary:    "Turn completed",
+				Confidence: 0.94,
+				Model:      "gpt-test-mini",
+			},
+		},
+		Workers: 1,
+	})
+
+	queued, err := manager.QueueProject(ctx, state)
+	if err != nil {
+		t.Fatalf("queue project: %v", err)
+	}
+	if !queued {
+		t.Fatalf("expected queue project to enqueue work")
+	}
+
+	processed, err := manager.processOne(ctx)
+	if err != nil {
+		t.Fatalf("process one: %v", err)
+	}
+	if !processed {
+		t.Fatalf("expected processOne to process work")
+	}
+
+	classification, err := st.GetSessionClassification(ctx, "ses_open_status")
+	if err != nil {
+		t.Fatalf("get classification: %v", err)
+	}
+	if got := classification.Summary; got != "I confirmed the behavior and updated the retry guard." {
+		t.Fatalf("classification summary = %q, want transcript summary", got)
+	}
+}
+
 func TestManagerProcessOneCompletesClassification(t *testing.T) {
 	t.Parallel()
 

@@ -26,15 +26,26 @@ const (
 )
 
 type ForceNewSessionReusedError struct {
+	Provider Provider
 	ThreadID string
 }
 
 func (e *ForceNewSessionReusedError) Error() string {
+	provider := e.Provider.Normalized()
+	label := "embedded session"
+	unit := "thread"
+	switch provider {
+	case ProviderOpenCode:
+		label = "embedded OpenCode session"
+		unit = "session"
+	case ProviderCodex:
+		label = "embedded Codex session"
+	}
 	threadID := strings.TrimSpace(e.ThreadID)
 	if threadID == "" {
-		return "forced fresh embedded Codex open reused an existing thread"
+		return "forced fresh " + label + " open reused an existing " + unit
 	}
-	return "forced fresh embedded Codex open reused existing thread " + threadID
+	return "forced fresh " + label + " open reused existing " + unit + " " + threadID
 }
 
 type appServerSession struct {
@@ -1406,7 +1417,7 @@ func (s *appServerSession) ensureFreshThread(ctx context.Context, threadID strin
 		return err
 	}
 	if threadHasRetainedHistory(thread) {
-		return &ForceNewSessionReusedError{ThreadID: threadID}
+		return &ForceNewSessionReusedError{Provider: ProviderCodex, ThreadID: threadID}
 	}
 	return nil
 }

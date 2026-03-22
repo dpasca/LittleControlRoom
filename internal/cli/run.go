@@ -124,6 +124,8 @@ func Run(programName string, args []string) int {
 		return runScan(ctx, svc)
 	case "classify":
 		return runClassify(ctx, svc)
+	case "sanitize-summaries":
+		return runSanitizeSummaries(ctx, svc.Store(), cfg)
 	case "doctor":
 		return runDoctor(ctx, svc, cfg)
 	case "snapshot":
@@ -675,6 +677,101 @@ func runServe(ctx context.Context, svc *service.Service) int {
 	return 0
 }
 
+func runSanitizeSummaries(ctx context.Context, st *store.Store, cfg config.AppConfig) int {
+	dryRun := cfg.SanitizeDryRun
+	if cfg.SanitizeApply {
+		dryRun = false
+	}
+	projectPath := strings.TrimSpace(cfg.SanitizeProject)
+	sessionID := strings.TrimSpace(cfg.SanitizeSessionID)
+
+	classifications, err := st.ListSessionClassifications(ctx, projectPath, sessionID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "list session classifications failed: %v\n", err)
+		return 1
+	}
+
+	if len(classifications) == 0 {
+		fmt.Println("no matching session classifications found")
+		return 0
+	}
+
+	details := make(map[string]model.ProjectDetail)
+	changedCount := 0
+	skippedCount := 0
+	failedCount := 0
+	for _, classification := range classifications {
+		project := strings.TrimSpace(classification.ProjectPath)
+		detail, ok := details[project]
+		if !ok {
+			detail, err = st.GetProjectDetail(ctx, project, 1)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "load project detail failed: project=%s err=%v\n", project, err)
+				failedCount++
+				continue
+			}
+			details[project] = detail
+		}
+		session := model.SessionEvidence{
+			SessionID:    strings.TrimSpace(classification.SessionID),
+			ProjectPath:  strings.TrimSpace(classification.ProjectPath),
+			SessionFile:  strings.TrimSpace(classification.SessionFile),
+			Format:       strings.TrimSpace(classification.SessionFormat),
+			SnapshotHash: strings.TrimSpace(classification.SnapshotHash),
+		}
+
+		gitStatus := sessionclassify.NewGitStatusSnapshot(
+			detail.Summary.RepoDirty,
+			detail.Summary.RepoSyncStatus,
+			detail.Summary.RepoAheadCount,
+			detail.Summary.RepoBehindCount,
+		)
+		snapshot, err := sessionclassify.ExtractSnapshot(ctx, model.SessionClassification{
+			SessionID:       classification.SessionID,
+			ProjectPath:     classification.ProjectPath,
+			SessionFile:     classification.SessionFile,
+			SessionFormat:   classification.SessionFormat,
+			SourceUpdatedAt: classification.SourceUpdatedAt,
+		}, session, gitStatus)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "extract snapshot failed: project=%s session=%s err=%v\n", project, classification.SessionID, err)
+			failedCount++
+			continue
+		}
+
+		sanitized := sessionclassify.SanitizeClassificationSummary(classification.Summary, snapshot)
+		if strings.TrimSpace(sanitized) == strings.TrimSpace(classification.Summary) {
+			skippedCount++
+			continue
+		}
+
+		if dryRun {
+			fmt.Printf("dry-run: would update %s summary\n  old: %q\n  new: %q\n", classification.SessionID, classification.Summary, sanitized)
+			skippedCount++
+			continue
+		}
+
+		updated, err := st.UpdateSessionClassificationSummary(ctx, classification.SessionID, sanitized)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "update summary failed: project=%s session=%s err=%v\n", classification.ProjectPath, classification.SessionID, err)
+			failedCount++
+			continue
+		}
+		if updated {
+			fmt.Printf("updated %s summary\n", classification.SessionID)
+			changedCount++
+		} else {
+			skippedCount++
+		}
+	}
+
+	fmt.Printf("sanitize-summaries: matched=%d changed=%d skipped=%d failed=%d\n", len(classifications), changedCount, skippedCount, failedCount)
+	if failedCount > 0 {
+		return 1
+	}
+	return 0
+}
+
 func printUsage(programName string) {
 	name := strings.TrimSpace(programName)
 	if name == "" {
@@ -682,7 +779,7 @@ func printUsage(programName string) {
 	}
 	fmt.Println(brand.Name)
 	fmt.Println(brand.Subtitle)
-	fmt.Printf("Usage: %s <scope|scan|classify|doctor|snapshot|screenshots|tui|serve> [flags]\n", name)
+	fmt.Printf("Usage: %s <scope|scan|classify|doctor|snapshot|sanitize-summaries|screenshots|tui|serve> [flags]\n", name)
 	fmt.Println("Common flags:")
 	fmt.Println("  --config <path>")
 	fmt.Println("  --include-paths <comma-separated-paths>")
@@ -695,6 +792,11 @@ func printUsage(programName string) {
 	fmt.Println("  --active-threshold <duration>")
 	fmt.Println("  --stuck-threshold <duration>")
 	fmt.Println("  --allow-multiple-instances")
+	fmt.Println("Sanitize summaries flags:")
+	fmt.Println("  --project <path>")
+	fmt.Println("  --session-id <id>")
+	fmt.Println("  --apply")
+	fmt.Println("  --dry-run")
 	fmt.Println("Snapshot flags:")
 	fmt.Println("  --limit <count>")
 	fmt.Println("  --project <path>")

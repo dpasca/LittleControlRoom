@@ -41,6 +41,10 @@ type AppConfig struct {
 	ActiveThreshold           time.Duration
 	StuckThreshold            time.Duration
 	AllowMultipleInstances    bool
+	SanitizeApply             bool
+	SanitizeDryRun            bool
+	SanitizeProject           string
+	SanitizeSessionID         string
 }
 
 func (c AppConfig) EffectiveAIBackend() AIBackend {
@@ -134,6 +138,17 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 		snapshotSessionID = fs.String("session-id", cfg.SnapshotSessionID, "Only dump this session ID")
 	}
 
+	var sanitizeProject *string
+	var sanitizeSessionID *string
+	var sanitizeApply *bool
+	var sanitizeDryRun *bool
+	if subcmd == "sanitize-summaries" {
+		sanitizeProject = fs.String("project", cfg.SanitizeProject, "Only sanitize summaries for this project path")
+		sanitizeSessionID = fs.String("session-id", cfg.SanitizeSessionID, "Only sanitize this session ID")
+		sanitizeApply = fs.Bool("apply", false, "Apply updated summaries instead of reporting")
+		sanitizeDryRun = fs.Bool("dry-run", true, "Only report changes (default)")
+	}
+
 	if err := fs.Parse(args); err != nil {
 		return AppConfig{}, err
 	}
@@ -186,6 +201,18 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	}
 	if snapshotSessionID != nil {
 		cfg.SnapshotSessionID = strings.TrimSpace(*snapshotSessionID)
+	}
+	if sanitizeProject != nil {
+		cfg.SanitizeProject = strings.TrimSpace(*sanitizeProject)
+	}
+	if sanitizeSessionID != nil {
+		cfg.SanitizeSessionID = strings.TrimSpace(*sanitizeSessionID)
+	}
+	if sanitizeApply != nil {
+		cfg.SanitizeApply = *sanitizeApply
+	}
+	if sanitizeDryRun != nil {
+		cfg.SanitizeDryRun = *sanitizeDryRun
 	}
 
 	if err := validate(cfg); err != nil {

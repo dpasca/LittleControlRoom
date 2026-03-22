@@ -1719,6 +1719,73 @@ func (s *Store) GetSessionClassification(ctx context.Context, sessionID string) 
 	return scanSessionClassificationRow(row)
 }
 
+func (s *Store) ListSessionClassifications(ctx context.Context, projectPath, sessionID string) ([]model.SessionClassification, error) {
+	projectPath = strings.TrimSpace(projectPath)
+	sessionID = strings.TrimSpace(sessionID)
+
+	where := []string{"1 = 1"}
+	args := []any{}
+	if projectPath != "" {
+		where = append(where, "project_path = ?")
+		args = append(args, projectPath)
+	}
+	if sessionID != "" {
+		where = append(where, "session_id = ?")
+		args = append(args, sessionID)
+	}
+
+	query := `
+		SELECT
+			session_id, project_path, session_file, session_format, snapshot_hash,
+			status, stage, category, summary, confidence, model, classifier_version,
+			last_error, source_updated_at, created_at, stage_started_at, updated_at, completed_at
+		FROM session_classifications
+		WHERE ` + strings.Join(where, " AND ") + `
+		ORDER BY project_path ASC, session_id ASC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []model.SessionClassification{}
+	for rows.Next() {
+		classification, err := scanSessionClassificationRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, classification)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *Store) UpdateSessionClassificationSummary(ctx context.Context, sessionID, summary string) (bool, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return false, fmt.Errorf("session classification requires session_id")
+	}
+	summary = strings.TrimSpace(summary)
+
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE session_classifications
+		SET summary = ?, updated_at = ?
+		WHERE session_id = ? AND summary != ?
+	`, summary, time.Now().Unix(), sessionID, summary)
+	if err != nil {
+		return false, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected > 0, nil
+}
+
 func (s *Store) GetProjectDetail(ctx context.Context, path string, eventLimit int) (model.ProjectDetail, error) {
 	if eventLimit <= 0 {
 		eventLimit = 20

@@ -658,6 +658,210 @@ func TestSessionClassificationQueueAndDetail(t *testing.T) {
 	}
 }
 
+func TestListSessionClassificationsFiltersAndOrders(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now()
+	alphaState := model.ProjectState{
+		Path:           "/tmp/alpha",
+		Name:           "alpha",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		InScope:        true,
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{
+			{
+				SessionID:           "ses_alpha",
+				ProjectPath:         "/tmp/alpha",
+				DetectedProjectPath: "/tmp/alpha",
+				SessionFile:         "/tmp/alpha-session.jsonl",
+				Format:              "modern",
+				LastEventAt:         now,
+			},
+		},
+	}
+	betaState := model.ProjectState{
+		Path:           "/tmp/beta",
+		Name:           "beta",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		InScope:        true,
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{
+			{
+				SessionID:           "ses_beta_b",
+				ProjectPath:         "/tmp/beta",
+				DetectedProjectPath: "/tmp/beta",
+				SessionFile:         "/tmp/beta-session-b.jsonl",
+				Format:              "modern",
+				LastEventAt:         now.Add(-time.Minute),
+			},
+			{
+				SessionID:           "ses_beta_a",
+				ProjectPath:         "/tmp/beta",
+				DetectedProjectPath: "/tmp/beta",
+				SessionFile:         "/tmp/beta-session-a.jsonl",
+				Format:              "modern",
+				LastEventAt:         now,
+			},
+		},
+	}
+	if err := st.UpsertProjectState(ctx, alphaState); err != nil {
+		t.Fatalf("upsert alpha state: %v", err)
+	}
+	if err := st.UpsertProjectState(ctx, betaState); err != nil {
+		t.Fatalf("upsert beta state: %v", err)
+	}
+
+	for _, classification := range []model.SessionClassification{
+		{
+			SessionID:         "ses_alpha",
+			ProjectPath:       "/tmp/alpha",
+			SessionFile:       "/tmp/alpha-session.jsonl",
+			SessionFormat:     "modern",
+			SnapshotHash:      "hash-alpha",
+			Model:             "gpt-5-mini",
+			ClassifierVersion: "v1",
+			SourceUpdatedAt:   now,
+		},
+		{
+			SessionID:         "ses_beta_b",
+			ProjectPath:       "/tmp/beta",
+			SessionFile:       "/tmp/beta-session-b.jsonl",
+			SessionFormat:     "modern",
+			SnapshotHash:      "hash-beta-b",
+			Model:             "gpt-5-mini",
+			ClassifierVersion: "v1",
+			SourceUpdatedAt:   now,
+		},
+		{
+			SessionID:         "ses_beta_a",
+			ProjectPath:       "/tmp/beta",
+			SessionFile:       "/tmp/beta-session-a.jsonl",
+			SessionFormat:     "modern",
+			SnapshotHash:      "hash-beta-a",
+			Model:             "gpt-5-mini",
+			ClassifierVersion: "v1",
+			SourceUpdatedAt:   now,
+		},
+	} {
+		if _, err := st.QueueSessionClassification(ctx, classification, 15*time.Minute); err != nil {
+			t.Fatalf("queue classification for %s: %v", classification.SessionID, err)
+		}
+	}
+
+	got, err := st.ListSessionClassifications(ctx, "", "")
+	if err != nil {
+		t.Fatalf("list all classifications: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("ListSessionClassifications() len = %d, want 3", len(got))
+	}
+	if got[0].ProjectPath != "/tmp/alpha" || got[0].SessionID != "ses_alpha" {
+		t.Fatalf("first classification = %s/%s, want /tmp/alpha/ses_alpha", got[0].ProjectPath, got[0].SessionID)
+	}
+	if got[1].ProjectPath != "/tmp/beta" || got[1].SessionID != "ses_beta_a" {
+		t.Fatalf("second classification = %s/%s, want /tmp/beta/ses_beta_a", got[1].ProjectPath, got[1].SessionID)
+	}
+	if got[2].ProjectPath != "/tmp/beta" || got[2].SessionID != "ses_beta_b" {
+		t.Fatalf("third classification = %s/%s, want /tmp/beta/ses_beta_b", got[2].ProjectPath, got[2].SessionID)
+	}
+
+	filteredByProject, err := st.ListSessionClassifications(ctx, "/tmp/beta", "")
+	if err != nil {
+		t.Fatalf("filter by project: %v", err)
+	}
+	if len(filteredByProject) != 2 {
+		t.Fatalf("filtered by project len = %d, want 2", len(filteredByProject))
+	}
+
+	filteredBySession, err := st.ListSessionClassifications(ctx, "", "ses_alpha")
+	if err != nil {
+		t.Fatalf("filter by session id: %v", err)
+	}
+	if len(filteredBySession) != 1 {
+		t.Fatalf("filtered by session id len = %d, want 1", len(filteredBySession))
+	}
+	if filteredBySession[0].SessionID != "ses_alpha" {
+		t.Fatalf("filtered by session id = %s, want ses_alpha", filteredBySession[0].SessionID)
+	}
+}
+
+func TestUpdateSessionClassificationSummaryUpdatesAndRejectsNoop(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now()
+	state := model.ProjectState{
+		Path:           "/tmp/demo",
+		Name:           "demo",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		InScope:        true,
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{
+			{
+				SessionID:           "ses_summary",
+				ProjectPath:         "/tmp/demo",
+				DetectedProjectPath: "/tmp/demo",
+				SessionFile:         "/tmp/demo-session.jsonl",
+				Format:              "modern",
+				LastEventAt:         now,
+			},
+		},
+	}
+	if err := st.UpsertProjectState(ctx, state); err != nil {
+		t.Fatalf("upsert state: %v", err)
+	}
+	if _, err := st.QueueSessionClassification(ctx, model.SessionClassification{
+		SessionID:         "ses_summary",
+		ProjectPath:       "/tmp/demo",
+		SessionFile:       "/tmp/demo-session.jsonl",
+		SessionFormat:     "modern",
+		SnapshotHash:      "hash-summary",
+		Model:             "gpt-5-mini",
+		ClassifierVersion: "v1",
+		SourceUpdatedAt:   now,
+	}, 15*time.Minute); err != nil {
+		t.Fatalf("queue classification: %v", err)
+	}
+
+	updated, err := st.UpdateSessionClassificationSummary(ctx, "ses_summary", "Turn completed")
+	if err != nil {
+		t.Fatalf("update summary: %v", err)
+	}
+	if !updated {
+		t.Fatalf("expected initial update to change summary")
+	}
+
+	unchanged, err := st.UpdateSessionClassificationSummary(ctx, "ses_summary", "Turn completed")
+	if err != nil {
+		t.Fatalf("update summary unchanged: %v", err)
+	}
+	if unchanged {
+		t.Fatalf("expected no-op update to skip")
+	}
+
+	if _, err := st.UpdateSessionClassificationSummary(ctx, "", "No session"); err == nil {
+		t.Fatalf("expected empty session id to fail")
+	}
+}
+
 func TestSessionClassificationAttemptGuardsIgnoreStaleWorker(t *testing.T) {
 	t.Parallel()
 

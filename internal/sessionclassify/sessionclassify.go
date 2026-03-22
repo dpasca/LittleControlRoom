@@ -439,7 +439,7 @@ func (m *Manager) processOne(ctx context.Context) (bool, error) {
 	}
 
 	classification.Category = result.Category
-	classification.Summary = clipForStorage(result.Summary, 280)
+	classification.Summary = clipForStorage(sanitizeClassificationSummary(result.Summary, snapshot), 280)
 	classification.Confidence = clampConfidence(result.Confidence)
 	classification.CompletedAt = time.Now()
 	completed, err := m.store.CompleteSessionClassificationAttempt(ctx, &classification)
@@ -512,6 +512,73 @@ func clampConfidence(v float64) float64 {
 	default:
 		return v
 	}
+}
+
+func sanitizeClassificationSummary(summary string, snapshot SessionSnapshot) string {
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return ""
+	}
+	if !isSessionStatusSummary(summary) {
+		return summary
+	}
+
+	preview := previewFromTranscript(snapshot.Transcript)
+	if sanitized := strings.TrimSpace(preview.Summary); sanitized != "" && !isSessionStatusSummary(sanitized) {
+		return sanitized
+	}
+	if sanitized := strings.TrimSpace(preview.Title); sanitized != "" && !isSessionStatusSummary(sanitized) {
+		return sanitized
+	}
+
+	return "Session summary available in transcript, not captured by classifier."
+}
+
+// SanitizeClassificationSummary normalizes a classifier summary to avoid status-like
+// text (for example "Turn completed") from leaking into the persisted value.
+func SanitizeClassificationSummary(summary string, snapshot SessionSnapshot) string {
+	return sanitizeClassificationSummary(summary, snapshot)
+}
+
+func isSessionStatusSummary(summary string) bool {
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return false
+	}
+	summary = strings.TrimRight(summary, ".,;")
+	lower := strings.ToLower(strings.TrimSpace(summary))
+
+	if isTurnCompletionStatus(lower) {
+		return true
+	}
+
+	for _, value := range []string{
+		"live now: waiting for turn state to settle",
+		"live elsewhere: embedded view is read-only",
+		"rechecking whether the turn has gone idle",
+		"finishing: waiting for trailing output",
+	} {
+		if strings.HasPrefix(lower, value) {
+			return true
+		}
+	}
+	return false
+}
+
+func isTurnCompletionStatus(status string) bool {
+	status = strings.TrimSpace(strings.ToLower(status))
+	if status == "" {
+		return false
+	}
+	if strings.HasPrefix(status, "codex turn ") {
+		status = strings.TrimSpace(strings.TrimPrefix(status, "codex turn "))
+		return status == "complete" || status == "completed"
+	}
+	if strings.HasPrefix(status, "opencode turn ") {
+		status = strings.TrimSpace(strings.TrimPrefix(status, "opencode turn "))
+		return status == "complete" || status == "completed"
+	}
+	return status == "turn completed" || status == "turn complete"
 }
 
 func newUsageTracker(modelName string) *usageTracker {

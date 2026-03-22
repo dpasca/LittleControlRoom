@@ -734,6 +734,11 @@ func (s *openCodeSession) initializeSession(parent context.Context, req LaunchRe
 		if sessionID == "" {
 			return fmt.Errorf("opencode session create returned no session id")
 		}
+		if req.ForceNew {
+			if err := s.ensureFreshSession(ctx, sessionID); err != nil {
+				return err
+			}
+		}
 	}
 
 	s.mu.Lock()
@@ -759,6 +764,21 @@ func (s *openCodeSession) initializeSession(parent context.Context, req LaunchRe
 			return nil
 		}
 		return s.Submit(req.Prompt)
+	}
+	return nil
+}
+
+func (s *openCodeSession) ensureFreshSession(ctx context.Context, sessionID string) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil
+	}
+	var messages []openCodeMessage
+	if err := s.getJSON(ctx, "/session/"+sessionID+"/message", &messages); err != nil {
+		return err
+	}
+	if len(messages) > 0 {
+		return &ForceNewSessionReusedError{Provider: ProviderOpenCode, ThreadID: sessionID}
 	}
 	return nil
 }

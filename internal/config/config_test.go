@@ -274,6 +274,43 @@ func TestParseSnapshotFlags(t *testing.T) {
 	}
 }
 
+func TestParseSanitizeSummaryFlags(t *testing.T) {
+	useTempHome(t)
+
+	cfg, err := Parse("sanitize-summaries", []string{
+		"--project", "/tmp/demo",
+		"--session-id", "ses_demo",
+		"--dry-run=false",
+	})
+	if err != nil {
+		t.Fatalf("parse sanitize config: %v", err)
+	}
+	if cfg.SanitizeProject != "/tmp/demo" {
+		t.Fatalf("sanitize project = %q, want /tmp/demo", cfg.SanitizeProject)
+	}
+	if cfg.SanitizeSessionID != "ses_demo" {
+		t.Fatalf("sanitize session id = %q, want ses_demo", cfg.SanitizeSessionID)
+	}
+	if cfg.SanitizeDryRun {
+		t.Fatalf("sanitize dry-run = %v, want false", cfg.SanitizeDryRun)
+	}
+}
+
+func TestParseSanitizeSummaryApplyFlag(t *testing.T) {
+	useTempHome(t)
+
+	cfg, err := Parse("sanitize-summaries", []string{"--apply"})
+	if err != nil {
+		t.Fatalf("parse sanitize config: %v", err)
+	}
+	if !cfg.SanitizeApply {
+		t.Fatalf("sanitize apply = %v, want true", cfg.SanitizeApply)
+	}
+	if !cfg.SanitizeDryRun {
+		t.Fatalf("sanitize dry-run = %v, want true by default", cfg.SanitizeDryRun)
+	}
+}
+
 func TestParseRejectsInvalidSnapshotLimit(t *testing.T) {
 	useTempHome(t)
 

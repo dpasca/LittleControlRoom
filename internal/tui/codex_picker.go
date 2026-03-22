@@ -502,7 +502,8 @@ func pickerSummaryForLiveSnapshot(snapshot codexapp.Snapshot) string {
 }
 
 func pickerSummaryForProject(project model.ProjectSummary, provider codexapp.Provider) string {
-	if summary := strings.TrimSpace(project.LatestSessionSummary); summary != "" {
+	summary := strings.TrimSpace(project.LatestSessionSummary)
+	if summary != "" {
 		return summary
 	}
 	label := provider.Label()
@@ -757,6 +758,9 @@ func (m Model) codexPickerListLimit(total, bodyH int) int {
 func (m Model) renderCodexPickerRow(choice codexSessionChoice, selected bool, width int) string {
 	left := m.codexPickerBadgeColumn(choice)
 	right := fmt.Sprintf("%s  %s", formatPickerActivity(choice.LastActivity), shortID(choice.SessionID))
+	if m.codexPickerKind != codexPickerKindResume {
+		right = addPickerProjectHint(right, choice.ProjectName, choice.ProjectPath)
+	}
 	available := max(16, width-lipgloss.Width(left)-lipgloss.Width(right)-6)
 	label := m.codexPickerPrimaryLabel(choice)
 	labelCell := fitStyledWidth(fitFooterWidth(label, available), available)
@@ -769,6 +773,24 @@ func (m Model) renderCodexPickerRow(choice codexSessionChoice, selected bool, wi
 		return commandPaletteSelectStyle.Width(width).Render(row)
 	}
 	return commandPaletteRowStyle.Width(width).Render(row)
+}
+
+func addPickerProjectHint(line, projectName, projectPath string) string {
+	project := strings.TrimSpace(projectName)
+	if project == "" {
+		project = strings.TrimSpace(projectPath)
+		if project != "" {
+			base := strings.TrimSpace(filepath.Base(filepath.Clean(project)))
+			if base != "" && base != string(filepath.Separator) && base != "." {
+				project = base
+			}
+		}
+	}
+	project = strings.TrimSpace(project)
+	if project == "" {
+		return line
+	}
+	return fmt.Sprintf("%s  [%s]", line, truncateText(project, 24))
 }
 
 func (m Model) codexPickerBadgeColumn(choice codexSessionChoice) string {
