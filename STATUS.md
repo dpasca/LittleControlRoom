@@ -1,6 +1,23 @@
 # Little Control Room Status
 
-Last updated: 2026-03-22 20:50 JST (JST)
+Last updated: 2026-03-22 22:00 JST (JST)
+
+## Latest Update (2026-03-22 22:00 JST)
+
+- Committed two scoped follow-ups from the current work set:
+  - `e87b539` updates `/snooze` slash behavior and docs to support `/snooze off`, `/snooze clear`, `/snooze unsnooze`, and `/unsnooze`.
+  - `6a52aab` changes OpenCode launch env construction to replace any existing `OPENCODE_CONFIG_CONTENT` instead of appending another copy.
+- Added/updated focused tests to lock both behaviors in `internal/commands` and `internal/codexapp`.
+
+Verification snapshot:
+
+- `gofmt -w internal/commands/commands.go internal/commands/commands_test.go internal/codexapp/opencode_session.go internal/codexapp/opencode_session_test.go`
+- `go test ./internal/commands -run 'Test(Parse|Suggestions)' -count=1`
+- `go test ./internal/codexapp -run 'TestBuildOpenCodeServerCommandOverridesPreExistingConfigEnv|TestBuildOpenCodeServerCommandInjectsPresetConfig' -count=1`
+
+Next concrete tasks:
+
+- No immediate follow-up required for these scoped cleanups.
 
 ## Latest Update (2026-03-22 20:50 JST)
 
