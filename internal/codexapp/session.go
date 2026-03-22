@@ -610,6 +610,7 @@ func (s *appServerSession) markItemActiveLocked(turnID, itemID string) {
 	if !s.busy || s.activeTurnID == "" || s.activeTurnID == turnID {
 		s.setBusyLocked(turnID, false)
 	}
+	s.status = "Codex is working..."
 }
 
 func (s *appServerSession) markItemCompletedLocked(itemID string) {
@@ -1810,8 +1811,18 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 		}
 		s.mu.Lock()
 		s.touchLocked()
-		s.setBusyLocked(msg.Turn.ID, false)
-		s.status = "Codex is working..."
+		turnID := strings.TrimSpace(msg.Turn.ID)
+		if s.busy || strings.TrimSpace(s.activeTurnID) != "" {
+			s.setBusyLocked(turnID, false)
+			s.status = "Codex is working..."
+		} else if turnID != "" {
+			// Some control-only Codex turns briefly emit turn/started before any
+			// user-visible work exists. Keep the turn ID for later correlation,
+			// but do not surface a fresh busy timer until real activity arrives.
+			s.activeTurnID = turnID
+			s.pendingCompletion = nil
+			s.reconciling = false
+		}
 		s.mu.Unlock()
 		s.notify()
 	case "turn/completed":

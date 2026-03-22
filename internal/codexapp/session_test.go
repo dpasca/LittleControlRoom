@@ -110,26 +110,24 @@ func TestHydrateResumedThreadMarksActiveTurnBusy(t *testing.T) {
 	}
 }
 
-func TestTurnStartedSetsBusySince(t *testing.T) {
+func TestTurnStartedWithoutFollowupActivityStaysIdle(t *testing.T) {
 	s := &appServerSession{
 		projectPath: "/tmp/demo",
 		entryIndex:  make(map[string]int),
 		notify:      func() {},
 	}
 
-	before := time.Now()
 	s.handleNotification("turn/started", json.RawMessage(`{"threadId":"thread_456","turn":{"id":"turn_live","status":"inProgress"}}`))
-	after := time.Now()
 
 	snapshot := s.Snapshot()
-	if !snapshot.Busy {
-		t.Fatalf("busy = false, want true")
+	if snapshot.Busy {
+		t.Fatalf("busy = true, want false until meaningful activity arrives")
 	}
-	if snapshot.BusySince.IsZero() {
-		t.Fatalf("busy since = zero, want turn start timestamp")
+	if !snapshot.BusySince.IsZero() {
+		t.Fatalf("busy since = %v, want zero while the turn is still provisional", snapshot.BusySince)
 	}
-	if snapshot.BusySince.Before(before) || snapshot.BusySince.After(after) {
-		t.Fatalf("busy since = %v, want between %v and %v", snapshot.BusySince, before, after)
+	if snapshot.ActiveTurnID != "turn_live" {
+		t.Fatalf("active turn id = %q, want turn_live", snapshot.ActiveTurnID)
 	}
 }
 

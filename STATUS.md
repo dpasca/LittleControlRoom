@@ -1,6 +1,30 @@
 # Little Control Room Status
 
-Last updated: 2026-03-22 11:40 JST (JST)
+Last updated: 2026-03-22 12:17 JST (JST)
+
+## Latest Update (2026-03-22 12:17 JST)
+
+- Investigated the report that the embedded Codex timer restarted after a round had visibly ended and confirmed the restart signal in the real rollout for this repo rather than relying on code inspection alone.
+- The rollout showed Codex can emit a bare `task_started` for control/meta churn such as model-switch or developer-context injection before any user-visible activity follows, and Little Control Room was surfacing that provisional start as a real busy turn in the embedded pane and project list.
+- Tightened the embedded Codex session state machine so a raw `turn/started` notification no longer lights a fresh busy timer when the pane was idle already; it now keeps the turn ID for correlation and only promotes the turn to busy once real item/output activity arrives, while locally submitted prompts still show immediate busy state.
+- Tightened Codex artifact turn-state recovery in both the detector and `sessionclassify` fallback so a trailing control-only `task_started` no longer overwrites the last stable completed state unless meaningful non-control activity follows in that turn.
+- Added focused regressions for both sides of the fix: embedded idle `turn/started` stays provisional, and detector/classifier rollout parsing now ignores a control-only `task_started` followed only by `turn_context`, developer messages, and token-count noise.
+- No Codex/OpenCode footprint assumptions changed, so `docs/codex_cli_footprint.md` stayed in sync without edits.
+
+Verification snapshot:
+
+- Live rollout inspection against `/Users/davide/.codex/sessions/2026/03/22/rollout-2026-03-22T11-43-29-019d136d-1742-7722-9398-7e2cd2b58052.jsonl` confirmed the unexpected restart pattern: a completed turn was followed by a control-only `task_started` plus developer-context churn before the next visible user activity.
+- `gofmt -w internal/codexapp/session.go internal/codexapp/session_test.go internal/detectors/codex/detector.go internal/detectors/codex/detector_test.go internal/sessionclassify/extract.go internal/sessionclassify/extract_test.go` passed.
+- `go test ./internal/codexapp ./internal/detectors/codex ./internal/sessionclassify -count=1` passed.
+- `make test` passed.
+- `make scan` passed at `2026-03-22T12:16:53+09:00` (`activity projects: 88`, `tracked projects: 138`, `updated projects: 1`, `queued classifications: 1`).
+- `make doctor` passed on the cached snapshot dated `2026-03-22T12:17:09+09:00` (`projects: 133`).
+- `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-control-turn-smoke INTERVAL=1h` launched the isolated TUI sandbox successfully and exited cleanly via `q`.
+
+Next concrete tasks:
+
+- Live-check the same control-turn scenario once a fresh model-switch or similar Codex control event happens again, to confirm the embedded pane no longer shows a ghost busy timer before visible turn activity begins.
+- Consider whether the detector should also distinguish separate classes of non-user Codex turns more explicitly in stored session metadata, instead of only suppressing control-only starts from the busy timer path.
 
 ## Latest Update (2026-03-22 11:40 JST)
 

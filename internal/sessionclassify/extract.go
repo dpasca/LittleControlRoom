@@ -266,18 +266,25 @@ func detectCodexTurnLifecycle(path string) (codexTurnLifecycle, error) {
 		return codexTurnLifecycle{}, err
 	}
 	state := codexTurnLifecycle{}
+	provisionalTurnStart := time.Time{}
 	for _, line := range lines {
 		event, ok := extractCodexTurnLifecycleEvent(line)
-		if !ok {
+		if ok {
+			if event.completed {
+				state.known = true
+				state.completed = true
+				state.startedAt = time.Time{}
+				provisionalTurnStart = time.Time{}
+			} else {
+				provisionalTurnStart = event.timestamp
+			}
 			continue
 		}
-		state.known = true
-		state.completed = event.completed
-		if event.completed {
-			state.startedAt = time.Time{}
-			continue
+		if !provisionalTurnStart.IsZero() && isMeaningfulCodexTurnActivityLine(line) {
+			state.known = true
+			state.completed = false
+			state.startedAt = provisionalTurnStart
 		}
-		state.startedAt = event.timestamp
 	}
 	return state, nil
 }
@@ -422,6 +429,54 @@ func extractCodexTurnLifecycleEvent(line string) (codexTurnLifecycleEvent, bool)
 		return codexTurnLifecycleEvent{completed: true, timestamp: timestamp}, true
 	default:
 		return codexTurnLifecycleEvent{}, false
+	}
+}
+
+func isMeaningfulCodexTurnActivityLine(line string) bool {
+	var top struct {
+		Type    string          `json:"type"`
+		Role    string          `json:"role"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal([]byte(line), &top); err != nil {
+		return false
+	}
+
+	switch top.Type {
+	case "event_msg":
+		var payload struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(top.Payload, &payload); err != nil {
+			return false
+		}
+		switch payload.Type {
+		case "", "task_started", "task_complete", "turn_aborted", "token_count":
+			return false
+		default:
+			return true
+		}
+	case "response_item":
+		var payload struct {
+			Type string `json:"type"`
+			Role string `json:"role"`
+		}
+		if err := json.Unmarshal(top.Payload, &payload); err != nil {
+			return false
+		}
+		if payload.Type == "" {
+			return false
+		}
+		if payload.Type == "message" {
+			role := strings.ToLower(strings.TrimSpace(payload.Role))
+			return role != "" && role != "developer" && role != "system"
+		}
+		return true
+	case "message":
+		role := strings.ToLower(strings.TrimSpace(top.Role))
+		return role != "" && role != "developer" && role != "system"
+	default:
+		return false
 	}
 }
 

@@ -453,16 +453,24 @@ func (d *Detector) detectTurnStateFromTail(path string) turnLifecycleState {
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	state := turnLifecycleState{}
+	provisionalTurnStart := time.Time{}
 	for sc.Scan() {
 		line := sc.Text()
 		if event, ok := extractTurnLifecycle(line); ok {
-			state.known = true
-			state.completed = event.completed
 			if event.completed {
+				state.known = true
+				state.completed = true
 				state.startedAt = time.Time{}
+				provisionalTurnStart = time.Time{}
 			} else {
-				state.startedAt = event.timestamp
+				provisionalTurnStart = event.timestamp
 			}
+			continue
+		}
+		if !provisionalTurnStart.IsZero() && isMeaningfulTurnActivityLine(line) {
+			state.known = true
+			state.completed = false
+			state.startedAt = provisionalTurnStart
 		}
 	}
 	return state
@@ -489,6 +497,7 @@ func parseSessionFile(path string, modTime time.Time) (parseResult, error) {
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 
 	lineNo := 0
+	provisionalTurnStart := time.Time{}
 	for scanner.Scan() {
 		line := scanner.Text()
 		lineNo++
@@ -522,13 +531,22 @@ func parseSessionFile(path string, modTime time.Time) (parseResult, error) {
 			res.errorCount += countNonZeroExitCodes(output)
 		}
 		if event, ok := extractTurnLifecycle(line); ok {
-			res.turnKnown = true
-			res.turnDone = event.completed
 			if event.completed {
+				res.turnKnown = true
+				res.turnDone = true
 				res.turnStartedAt = time.Time{}
 			} else {
-				res.turnStartedAt = event.timestamp
+				provisionalTurnStart = event.timestamp
 			}
+			if event.completed {
+				provisionalTurnStart = time.Time{}
+			}
+			continue
+		}
+		if !provisionalTurnStart.IsZero() && isMeaningfulTurnActivityLine(line) {
+			res.turnKnown = true
+			res.turnDone = false
+			res.turnStartedAt = provisionalTurnStart
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -688,6 +706,54 @@ func extractTurnLifecycle(line string) (turnLifecycleEvent, bool) {
 		return turnLifecycleEvent{completed: true, timestamp: timestamp}, true
 	default:
 		return turnLifecycleEvent{}, false
+	}
+}
+
+func isMeaningfulTurnActivityLine(line string) bool {
+	var top struct {
+		Type    string          `json:"type"`
+		Role    string          `json:"role"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal([]byte(line), &top); err != nil {
+		return false
+	}
+
+	switch top.Type {
+	case "event_msg":
+		var payload struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(top.Payload, &payload); err != nil {
+			return false
+		}
+		switch payload.Type {
+		case "", "task_started", "task_complete", "turn_aborted", "token_count":
+			return false
+		default:
+			return true
+		}
+	case "response_item":
+		var payload struct {
+			Type string `json:"type"`
+			Role string `json:"role"`
+		}
+		if err := json.Unmarshal(top.Payload, &payload); err != nil {
+			return false
+		}
+		if payload.Type == "" {
+			return false
+		}
+		if payload.Type == "message" {
+			role := strings.ToLower(strings.TrimSpace(payload.Role))
+			return role != "" && role != "developer" && role != "system"
+		}
+		return true
+	case "message":
+		role := strings.ToLower(strings.TrimSpace(top.Role))
+		return role != "" && role != "developer" && role != "system"
+	default:
+		return false
 	}
 }
 
