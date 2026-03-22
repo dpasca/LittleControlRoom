@@ -127,8 +127,9 @@ var specs = []Spec{
 	{Name: "opencode-new", Usage: "/opencode-new [prompt]", Summary: "Start a fresh OpenCode session in the selected project"},
 	{Name: "todo", Usage: "/todo", Summary: "Open the selected project's TODO list"},
 	{Name: "pin", Usage: "/pin", Summary: "Toggle pin on the selected project"},
-	{Name: "snooze", Usage: "/snooze [duration]", Summary: "Snooze the selected project"},
+	{Name: "snooze", Usage: "/snooze [duration|off]", Summary: "Snooze the selected project or clear with /snooze off"},
 	{Name: "clear-snooze", Usage: "/clear-snooze", Summary: "Clear snooze on the selected project"},
+	{Name: "unsnooze", Usage: "/unsnooze", Summary: "Clear snooze on the selected project"},
 	{Name: "sessions", Usage: "/sessions on|off|toggle", Summary: "Show or hide the Sessions section"},
 	{Name: "events", Usage: "/events on|off|toggle", Summary: "Show or hide Recent events"},
 	{Name: "ignore", Usage: "/ignore", Summary: "Hide the selected project's exact name"},
@@ -228,6 +229,7 @@ func Suggestions(input string) []Suggestion {
 			argPrefix = strings.ToLower(fields[len(fields)-1])
 		}
 		return enumSuggestions("/snooze ", argPrefix,
+			choice("off", "Clear snooze"),
 			choice("1h", "Snooze for 1 hour"),
 			choice("4h", "Snooze for 4 hours"),
 			choice("24h", "Snooze for 24 hours"),
@@ -402,11 +404,22 @@ func Parse(input string) (Invocation, error) {
 			Canonical: canonicalCommand("opencode-new", rawArgs),
 		}, nil
 	case "snooze":
-		duration, err := parseDurationArg(rawArgs)
-		if err != nil {
-			return Invocation{}, err
+		switch strings.ToLower(strings.TrimSpace(rawArgs)) {
+		case "", "now":
+			duration, err := parseDurationArg(rawArgs)
+			if err != nil {
+				return Invocation{}, err
+			}
+			return Invocation{Kind: KindSnooze, Duration: duration, Canonical: "/snooze " + formatDurationArg(duration)}, nil
+		case "off", "clear", "unsnooze":
+			return Invocation{Kind: KindClearSnooze, Canonical: "/snooze off"}, nil
+		default:
+			duration, err := parseDurationArg(rawArgs)
+			if err != nil {
+				return Invocation{}, err
+			}
+			return Invocation{Kind: KindSnooze, Duration: duration, Canonical: "/snooze " + formatDurationArg(duration)}, nil
 		}
-		return Invocation{Kind: KindSnooze, Duration: duration, Canonical: "/snooze " + formatDurationArg(duration)}, nil
 	case "clear-snooze", "unsnooze":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /clear-snooze")
@@ -564,13 +577,13 @@ func parseDurationArg(raw string) (time.Duration, error) {
 	if strings.HasSuffix(trimmed, "d") {
 		n, err := strconv.Atoi(strings.TrimSuffix(trimmed, "d"))
 		if err != nil || n <= 0 {
-			return 0, fmt.Errorf("usage: /snooze [duration]")
+			return 0, fmt.Errorf("usage: /snooze [duration|off]")
 		}
 		return time.Duration(n) * 24 * time.Hour, nil
 	}
 	d, err := time.ParseDuration(trimmed)
 	if err != nil || d <= 0 {
-		return 0, fmt.Errorf("usage: /snooze [duration]")
+		return 0, fmt.Errorf("usage: /snooze [duration|off]")
 	}
 	return d, nil
 }

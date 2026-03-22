@@ -297,6 +297,54 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "snooze off",
+			raw:  "/snooze off",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindClearSnooze {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindClearSnooze)
+				}
+				if inv.Canonical != "/snooze off" {
+					t.Fatalf("canonical = %q, want /snooze off", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "snooze clear",
+			raw:  "/snooze clear",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindClearSnooze {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindClearSnooze)
+				}
+				if inv.Canonical != "/snooze off" {
+					t.Fatalf("canonical = %q, want /snooze off", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "snooze unsnooze",
+			raw:  "/snooze unsnooze",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindClearSnooze {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindClearSnooze)
+				}
+				if inv.Canonical != "/snooze off" {
+					t.Fatalf("canonical = %q, want /snooze off", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "unsnooze alias",
+			raw:  "/unsnooze",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindClearSnooze {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindClearSnooze)
+				}
+				if inv.Canonical != "/clear-snooze" {
+					t.Fatalf("canonical = %q, want /clear-snooze", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "sessions default toggle",
 			raw:  "/sessions",
 			check: func(t *testing.T, inv Invocation) {
@@ -390,6 +438,16 @@ func TestSuggestionsNoteClearArgument(t *testing.T) {
 	}
 	if got[0].Insert != "/note clear" {
 		t.Fatalf("suggestion = %q, want /note clear", got[0].Insert)
+	}
+}
+
+func TestSuggestionsSnoozeArgumentOff(t *testing.T) {
+	got := Suggestions("/snooze o")
+	if len(got) != 1 {
+		t.Fatalf("Suggestions(/snooze o) len = %d, want 1", len(got))
+	}
+	if got[0].Insert != "/snooze off" {
+		t.Fatalf("suggestion = %q, want /snooze off", got[0].Insert)
 	}
 }
 
