@@ -24,7 +24,16 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-const maxForceNewEmbeddedOpenAttempts = 3
+const (
+	maxForceNewEmbeddedOpenAttempts     = 3
+	maxOpenCodeCollapsedToolRun         = 5
+	openCodeToolPreviewCount            = 3
+	openCodeCollapsedToolPreviewMaxText = 180
+	openCodeCollapsedAgentCodeLineLimit = 80
+	openCodeAgentCodePreviewLines       = 14
+	openCodeCollapsedCodePreviewMaxText = 240
+	openCodeCollapsedAgentPreviewRatio  = 45
+)
 
 func (m *Model) ensureCodexRuntime() {
 	if m.codexManager == nil {
@@ -2036,14 +2045,19 @@ func (m Model) renderCodexTranscriptEntries(snapshot codexapp.Snapshot, width in
 	if len(snapshot.Entries) == 0 {
 		return ""
 	}
+	entries := snapshot.Entries
+	if snapshot.Provider.Normalized() == codexapp.ProviderOpenCode {
+		entries = collapseOpenCodeToolRuns(entries, m.codexDenseExpanded)
+		entries = collapseOpenCodeLargeCodeBlocks(entries, m.codexDenseExpanded)
+	}
 	if width <= 0 {
 		width = 80
 	}
 	contentWidth := max(18, width-4)
-	blocks := make([]string, 0, len(snapshot.Entries)*2)
+	blocks := make([]string, 0, len(entries)*2)
 	var previousKind codexapp.TranscriptKind
 	hasPrevious := false
-	for _, entry := range snapshot.Entries {
+	for _, entry := range entries {
 		if m.hideReasoningSections && entry.Kind == codexapp.TranscriptReasoning {
 			continue
 		}
@@ -2108,6 +2122,244 @@ func compactCodexToolTranscriptText(text string) string {
 			continue
 		}
 		parts = append(parts, line)
+	}
+	return strings.Join(parts, " | ")
+}
+
+func collapseOpenCodeToolRuns(entries []codexapp.TranscriptEntry, expanded bool) []codexapp.TranscriptEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	out := make([]codexapp.TranscriptEntry, 0, len(entries))
+	toolRunStart := -1
+	agentRunStart := -1
+	flushTools := func(end int) {
+		if toolRunStart < 0 || end <= toolRunStart {
+			return
+		}
+		out = append(out, summarizeOpenCodeToolRun(entries[toolRunStart:end]))
+		toolRunStart = -1
+	}
+	flushAgents := func(end int) {
+		if agentRunStart < 0 || end <= agentRunStart {
+			return
+		}
+		run := entries[agentRunStart:end]
+		if expanded {
+			out = append(out, run...)
+		} else {
+			parts := make([]string, 0, len(run))
+			for _, entry := range run {
+				parts = append(parts, strings.TrimSpace(entry.Text))
+			}
+			if collapsedText, ok := collapseOpenCodeLargeCodeBlock(strings.Join(parts, "\n")); ok {
+				out = append(out, codexapp.TranscriptEntry{
+					Kind: codexapp.TranscriptAgent,
+					Text: collapsedText,
+				})
+			} else {
+				out = append(out, run...)
+			}
+		}
+		agentRunStart = -1
+	}
+	for i, entry := range entries {
+		switch entry.Kind {
+		case codexapp.TranscriptTool:
+			flushAgents(i)
+			if toolRunStart < 0 {
+				toolRunStart = i
+			}
+		case codexapp.TranscriptAgent:
+			flushTools(i)
+			if agentRunStart < 0 {
+				agentRunStart = i
+			}
+		default:
+			flushTools(i)
+			flushAgents(i)
+			out = append(out, entry)
+		}
+	}
+	flushTools(len(entries))
+	flushAgents(len(entries))
+	return out
+}
+
+func collapseOpenCodeLargeCodeBlocks(entries []codexapp.TranscriptEntry, expanded bool) []codexapp.TranscriptEntry {
+	if expanded || len(entries) == 0 {
+		return entries
+	}
+	out := make([]codexapp.TranscriptEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Kind != codexapp.TranscriptAgent {
+			out = append(out, entry)
+			continue
+		}
+		toolText, ok := collapseOpenCodeLargeCodeBlock(entry.Text)
+		if !ok {
+			out = append(out, entry)
+			continue
+		}
+		out = append(out, codexapp.TranscriptEntry{
+			Kind: entry.Kind,
+			Text: toolText,
+		})
+	}
+	return out
+}
+
+func collapseOpenCodeLargeCodeBlock(text string) (string, bool) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", false
+	}
+	lines := strings.Split(text, "\n")
+	if len(lines) <= openCodeCollapsedAgentCodeLineLimit {
+		return "", false
+	}
+	inCodeFence := false
+	foundCodeFence := false
+	codeLineCount := 0
+	previewLines := make([]string, 0, openCodeAgentCodePreviewLines)
+	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			foundCodeFence = true
+			inCodeFence = !inCodeFence
+			continue
+		}
+		if !inCodeFence {
+			if foundCodeFence {
+				continue
+			}
+			if isLikelyCodeLine(line) {
+				codeLineCount++
+				if len(previewLines) < openCodeAgentCodePreviewLines {
+					previewLines = append(previewLines, line)
+				}
+			}
+			continue
+		}
+		codeLineCount++
+		if len(previewLines) < openCodeAgentCodePreviewLines {
+			previewLines = append(previewLines, line)
+		}
+	}
+	if !foundCodeFence {
+		if !looksLikeCodeBlock(lines) {
+			return "", false
+		}
+		if codeLineCount == 0 {
+			codeLineCount = len(lines)
+			previewLines = make([]string, 0, openCodeAgentCodePreviewLines)
+			for _, line := range lines {
+				if len(previewLines) >= openCodeAgentCodePreviewLines {
+					break
+				}
+				previewLines = append(previewLines, line)
+			}
+		}
+	}
+	if codeLineCount <= openCodeCollapsedAgentCodeLineLimit {
+		return "", false
+	}
+	totalCodeLines := codeLineCount
+	shownPreview := len(previewLines)
+	hiddenLines := totalCodeLines - shownPreview
+	if shownPreview > 0 {
+		return fmt.Sprintf("Assistant answer includes a long code block (%d lines, %d shown, %d hidden). Alt+L expands the full output.\n\nPreview:\n%s", totalCodeLines, shownPreview, hiddenLines, truncateText(strings.Join(previewLines, "\n"), openCodeCollapsedCodePreviewMaxText)), true
+	}
+	return fmt.Sprintf("Assistant answer includes a long code block (%d lines). Alt+L expands the full output.", totalCodeLines), true
+}
+
+func looksLikeCodeBlock(lines []string) bool {
+	if len(lines) <= openCodeCollapsedAgentCodeLineLimit {
+		return false
+	}
+	codeLike := 0
+	total := 0
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		total++
+		if isLikelyCodeLine(line) {
+			codeLike++
+		}
+	}
+	if total == 0 {
+		return false
+	}
+	return codeLike*100/total >= openCodeCollapsedAgentPreviewRatio
+}
+
+func isLikelyCodeLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return false
+	}
+	if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "*") || strings.HasPrefix(trimmed, "}") || strings.HasPrefix(trimmed, "{") {
+		return true
+	}
+	if strings.HasPrefix(trimmed, "const ") || strings.HasPrefix(trimmed, "let ") || strings.HasPrefix(trimmed, "var ") || strings.HasPrefix(trimmed, "func ") || strings.HasPrefix(trimmed, "function ") || strings.HasPrefix(trimmed, "for ") || strings.HasPrefix(trimmed, "if ") {
+		return true
+	}
+	if strings.HasSuffix(trimmed, "{") || strings.HasSuffix(trimmed, "}") {
+		return true
+	}
+	if strings.ContainsAny(trimmed, "{}();[]<>+=-*/!?:") {
+		return true
+	}
+	return false
+}
+
+func summarizeOpenCodeToolRun(entries []codexapp.TranscriptEntry) codexapp.TranscriptEntry {
+	if len(entries) == 0 {
+		return codexapp.TranscriptEntry{}
+	}
+	if len(entries) <= maxOpenCodeCollapsedToolRun {
+		return codexapp.TranscriptEntry{
+			Kind: codexapp.TranscriptTool,
+			Text: joinOpenCodeToolRun(entries),
+		}
+	}
+	previews := make([]string, 0, openCodeToolPreviewCount)
+	for _, entry := range entries {
+		preview := strings.TrimSpace(compactCodexToolTranscriptText(entry.Text))
+		if preview == "" {
+			continue
+		}
+		previews = append(previews, preview)
+		if len(previews) >= openCodeToolPreviewCount {
+			break
+		}
+	}
+	if len(previews) == 0 {
+		return codexapp.TranscriptEntry{
+			Kind: codexapp.TranscriptTool,
+			Text: fmt.Sprintf("Tool activity: %d updates", len(entries)),
+		}
+	}
+	text := "Tool activity: " + strings.Join(previews, " | ")
+	remaining := len(entries) - len(previews)
+	if remaining > 0 {
+		text += fmt.Sprintf(" | +%d more tool updates", remaining)
+	}
+	return codexapp.TranscriptEntry{
+		Kind: codexapp.TranscriptTool,
+		Text: truncateText(text, openCodeCollapsedToolPreviewMaxText),
+	}
+}
+
+func joinOpenCodeToolRun(entries []codexapp.TranscriptEntry) string {
+	parts := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		text := strings.TrimSpace(compactCodexToolTranscriptText(entry.Text))
+		if text == "" {
+			continue
+		}
+		parts = append(parts, text)
 	}
 	return strings.Join(parts, " | ")
 }

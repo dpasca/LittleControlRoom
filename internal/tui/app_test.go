@@ -6152,6 +6152,170 @@ func TestRenderCodexTranscriptEntriesKeepsConsecutiveToolCallsDense(t *testing.T
 	}
 }
 
+func TestRenderCodexTranscriptEntriesCollapsesLongOpenCodeToolRuns(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderOpenCode,
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptTool, Text: "Tool bash completed: read STATUS.md"},
+			{Kind: codexapp.TranscriptTool, Text: "Tool bash completed: inspect codex_pane.go"},
+			{Kind: codexapp.TranscriptTool, Text: "Tool bash completed: inspect app_test.go"},
+			{Kind: codexapp.TranscriptTool, Text: "Tool bash completed: inspect opencode_session.go"},
+			{Kind: codexapp.TranscriptTool, Text: "Tool bash completed: inspect opencode_session_test.go"},
+			{Kind: codexapp.TranscriptTool, Text: "Tool bash completed: prepare patch"},
+		},
+	}
+
+	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 120))
+	if !strings.Contains(rendered, "Tool activity:") {
+		t.Fatalf("long OpenCode tool run should collapse into a summary line: %q", rendered)
+	}
+	if !strings.Contains(rendered, "+3 more tool updates") {
+		t.Fatalf("collapsed OpenCode tool run should mention omitted updates: %q", rendered)
+	}
+	if strings.Contains(rendered, "inspect opencode_session.go") {
+		t.Fatalf("collapsed OpenCode tool run should omit later repetitive updates: %q", rendered)
+	}
+}
+
+func TestRenderCodexTranscriptEntriesCollapsesLongOpenCodeAgentCodeBlocks(t *testing.T) {
+	codeLines := make([]string, 0, 95)
+	for i := 1; i <= 95; i++ {
+		codeLines = append(codeLines, fmt.Sprintf("    line_%d", i))
+	}
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderOpenCode,
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "```go\n" + strings.Join(codeLines, "\n") + "\n```",
+		}},
+	}
+
+	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 120))
+	if !strings.Contains(rendered, "Assistant answer includes a long code block") {
+		t.Fatalf("long assistant code block should collapse: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Alt+L expands") {
+		t.Fatalf("collapsed summary should mention expansion: %q", rendered)
+	}
+	if strings.Contains(rendered, "line_95") {
+		t.Fatalf("collapsed summary should hide most lines: %q", rendered)
+	}
+}
+
+func TestRenderCodexTranscriptEntriesCollapsesLongOpenCodeAgentCodeBlocksWithoutFence(t *testing.T) {
+	codeLines := make([]string, 0, 120)
+	for i := 1; i <= 120; i++ {
+		codeLines = append(codeLines, "if (i == "+fmt.Sprintf("%d", i)+") { const shake = scene.cameras.main.shake(0, 0); }")
+	}
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderOpenCode,
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: strings.Join(codeLines, "\n"),
+		}},
+	}
+
+	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 120))
+	if !strings.Contains(rendered, "Assistant answer includes a long code block") {
+		t.Fatalf("long non-fenced OpenCode code block should collapse: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Alt+L expands") {
+		t.Fatalf("collapsed summary should mention expansion: %q", rendered)
+	}
+	if strings.Contains(rendered, "i == 120") {
+		t.Fatalf("collapsed summary should hide most lines for non-fenced code: %q", rendered)
+	}
+}
+
+func TestRenderCodexTranscriptEntriesCollapsesLongOpenCodeConsecutiveAgentChunks(t *testing.T) {
+	chunk := make([]string, 0, 16)
+	for i := 1; i <= 16; i++ {
+		chunk = append(chunk, fmt.Sprintf("if (cond_%d) { const shake = scene.cameras.main.shake(0, 0); }", i))
+	}
+	entries := make([]codexapp.TranscriptEntry, 0, 20)
+	for i := 0; i < 10; i++ {
+		entries = append(entries, codexapp.TranscriptEntry{Kind: codexapp.TranscriptAgent, Text: strings.Join(chunk, "\n")})
+	}
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderOpenCode,
+		Entries:  entries,
+	}
+
+	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 120))
+	if !strings.Contains(rendered, "Assistant answer includes a long code block") {
+		t.Fatalf("consecutive OpenCode agent chunks should collapse to summary: %q", rendered)
+	}
+	if strings.Count(rendered, "cond_") > 20 {
+		t.Fatalf("collapsed output should not duplicate every chunk: %q", rendered)
+	}
+}
+
+func TestRenderCodexTranscriptEntriesExpandsLongOpenCodeAgentCodeBlocksWithDenseMode(t *testing.T) {
+	codeLines := make([]string, 0, 95)
+	for i := 1; i <= 95; i++ {
+		codeLines = append(codeLines, fmt.Sprintf("    line_%d", i))
+	}
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderOpenCode,
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "```go\n" + strings.Join(codeLines, "\n") + "\n```",
+		}},
+	}
+	m := Model{codexDenseExpanded: true}
+	rendered := ansi.Strip(m.renderCodexTranscriptEntries(snapshot, 120))
+	if strings.Contains(rendered, "Assistant answer includes a long code block") {
+		t.Fatalf("dense-expanded OpenCode should keep the full assistant output: %q", rendered)
+	}
+	if !strings.Contains(rendered, "line_95") {
+		t.Fatalf("expanded output should include the final line: %q", rendered)
+	}
+}
+
+func TestRenderCodexTranscriptEntriesKeepsCodexAgentCodeBlocksUncollapsed(t *testing.T) {
+	codeLines := make([]string, 0, 95)
+	for i := 1; i <= 95; i++ {
+		codeLines = append(codeLines, fmt.Sprintf("    line_%d", i))
+	}
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderCodex,
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "```go\n" + strings.Join(codeLines, "\n") + "\n```",
+		}},
+	}
+
+	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 120))
+	if strings.Contains(rendered, "Assistant answer includes a long code block") {
+		t.Fatalf("Codex should not use OpenCode-only code collapse behavior: %q", rendered)
+	}
+	if !strings.Contains(rendered, "line_95") {
+		t.Fatalf("Codex transcript should keep full code line text: %q", rendered)
+	}
+}
+
+func TestRenderCodexTranscriptEntriesKeepsCodexToolRunsUncollapsed(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderCodex,
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptTool, Text: "Tool call completed: read STATUS.md"},
+			{Kind: codexapp.TranscriptTool, Text: "Tool call completed: inspect codex_pane.go"},
+			{Kind: codexapp.TranscriptTool, Text: "Tool call completed: inspect app_test.go"},
+			{Kind: codexapp.TranscriptTool, Text: "Tool call completed: inspect opencode_session.go"},
+			{Kind: codexapp.TranscriptTool, Text: "Tool call completed: inspect opencode_session_test.go"},
+			{Kind: codexapp.TranscriptTool, Text: "Tool call completed: prepare patch"},
+		},
+	}
+
+	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 120))
+	if strings.Contains(rendered, "Tool activity:") {
+		t.Fatalf("Codex tool runs should keep the existing dense rendering: %q", rendered)
+	}
+	if !strings.Contains(rendered, "inspect opencode_session.go") {
+		t.Fatalf("Codex tool runs should still show individual updates: %q", rendered)
+	}
+}
+
 func TestRenderCodexTranscriptEntriesParsesLegacyTranscriptWithoutSenderLabels(t *testing.T) {
 	snapshot := codexapp.Snapshot{
 		Transcript: "You: summarize this repo\n\nCodex: Here is a deliberately long answer that should wrap inside the pane without repeating the sender name on screen.",

@@ -1,6 +1,73 @@
 # Little Control Room Status
 
-Last updated: 2026-03-23 14:21 JST
+Last updated: 2026-03-23 23:25 JST
+
+## Latest Update (2026-03-23 23:25 JST)
+
+- Added additional OpenCode collapse behavior for long streams split into many small transcript chunks.
+- In [internal/tui/codex_pane.go](/Users/davide/dev/repos/LittleControlRoom/internal/tui/codex_pane.go):
+  - `collapseOpenCodeToolRuns` now also collapses long consecutive `TranscriptAgent` runs (in addition to existing tool runs) using existing summary logic in `collapseOpenCodeLargeCodeBlock`.
+  - `collapseOpenCodeLargeCodeBlock` now handles non-fenced, code-like output using a code-likeness heuristic.
+- Added regression test in [internal/tui/app_test.go](/Users/davide/dev/repos/LittleControlRoom/internal/tui/app_test.go):
+  - `TestRenderCodexTranscriptEntriesCollapsesLongOpenCodeConsecutiveAgentChunks`
+- Existing tests for no-fence long block collapse remain intact.
+- Validation still not run in this fast-follow pass.
+
+## Latest Update (2026-03-23 23:21 JST)
+
+## Latest Update (2026-03-23 23:21 JST)
+
+- Fixed a gap where long, non-fenced OpenCode code dumps could still appear fully rendered.
+- Expanded OpenCode transcript collapsing in [internal/tui/codex_pane.go](/Users/davide/dev/repos/LittleControlRoom/internal/tui/codex_pane.go) to also summarize long code-like agent outputs without fenced blocks.
+- Added heuristics for code-likeness so long brace/punctuation/indented output is compacted while preserving a short preview and `Alt+L` full-expansion path.
+- Added tests in [internal/tui/app_test.go](/Users/davide/dev/repos/LittleControlRoom/internal/tui/app_test.go):
+  - `TestRenderCodexTranscriptEntriesCollapsesLongOpenCodeAgentCodeBlocksWithoutFence`
+- Kept existing OpenCode tool-run collapse and compact/dense behavior unchanged for other content.
+- No artifact-footprint assumption changes.
+- Verification status: not run in this pass.
+- Next concrete tasks:
+  - Use `make tui` and open the active FractalMech OpenCode session again to confirm the long code loop now collapses to a summary.
+  - If needed, tune `openCodeCollapsedAgentCodeLineLimit` and `openCodeCollapsedAgentPreviewRatio`.
+
+## Latest Update (2026-03-23 23:14 JST)
+
+- Reduced oversized OpenCode assistant messages in the embedded transcript to avoid giant code streams in the pane.
+- Added OpenCode-only output compaction in [internal/tui/codex_pane.go](internal/tui/codex_pane.go):
+  - Non-expanded views now collapse long OpenCode assistant messages that contain large fenced code blocks.
+  - Summary now shows total code line count, number of preview lines shown, and remaining hidden lines.
+  - Message includes an `Alt+L` hint to expand.
+  - In dense-expanded mode (`Alt+L`), OpenCode assistant code blocks remain fully shown.
+- Kept existing OpenCode tool-run collapsing behavior and added tests for the new message compaction.
+- Added regression coverage in [internal/tui/app_test.go](internal/tui/app_test.go):
+  - `TestRenderCodexTranscriptEntriesCollapsesLongOpenCodeAgentCodeBlocks`
+  - `TestRenderCodexTranscriptEntriesExpandsLongOpenCodeAgentCodeBlocksWithDenseMode`
+  - `TestRenderCodexTranscriptEntriesKeepsCodexAgentCodeBlocksUncollapsed`
+- No Codex/OpenCode artifact-footprint assumptions changed.
+- Validation status:
+  - Not run in this pass to keep this small-touch follow-up interaction fast.
+- Next concrete tasks:
+  - Run `make tui` and inspect the latest FractalMech OpenCode session with model `zai-coding-plan/glm-5`.
+  - Tune the code collapse thresholds if output is still too verbose or too aggressive.
+
+## Latest Update (2026-03-23 22:53 JST)
+
+- Made embedded OpenCode transcript output more user-friendly when a turn emits a long burst of tool chatter.
+- `internal/tui/codex_pane.go` now collapses long consecutive `TranscriptTool` runs for `ProviderOpenCode` into a short preview line such as `Tool activity: ... | +N more tool updates`.
+- The change is renderer-only:
+  - raw transcript entries are preserved in session state
+  - Codex provider rendering is unchanged
+  - normal short OpenCode tool runs still render densely rather than being collapsed
+- Added regression coverage in `internal/tui/app_test.go`:
+  - `TestRenderCodexTranscriptEntriesCollapsesLongOpenCodeToolRuns`
+  - `TestRenderCodexTranscriptEntriesKeepsCodexToolRunsUncollapsed`
+- No Codex/OpenCode artifact-footprint assumptions changed in this pass.
+- Verification completed:
+  - `make test` passed
+  - `make scan` passed at `2026-03-23T22:52:52+09:00` (`updated projects: 1`)
+  - `make doctor` passed using cached report at `2026-03-23T22:52:52+09:00`
+- Next concrete tasks:
+  - Run `make tui` and inspect the latest FractalMech OpenCode session to confirm the collapsed tool summary reads well in the embedded pane.
+  - If the final assistant text still feels too code-heavy, add a second presentation rule that collapses oversized assistant code fences behind a concise teaser line.
  
 ## Latest Update (2026-03-23 14:32 JST)
 
