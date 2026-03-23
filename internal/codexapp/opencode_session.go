@@ -22,11 +22,14 @@ import (
 )
 
 const (
-	openCodeRPCTimeout        = 20 * time.Second
-	openCodeReconnectDelay    = 500 * time.Millisecond
-	openCodeListeningPrefix   = "opencode server listening on "
-	openCodeDefaultAgent      = "build"
-	openCodeIdleShutdownAfter = idleShutdownAfter
+	openCodeRPCTimeout          = 20 * time.Second
+	openCodeReconnectDelay      = 500 * time.Millisecond
+	openCodeMaxReconnectDelay   = 10 * time.Second
+	openCodeStreamRecoverMsg    = "OpenCode event stream reconnected"
+	openCodeStreamDisconnectMsg = "OpenCode event stream disconnected; reconnecting..."
+	openCodeListeningPrefix     = "opencode server listening on "
+	openCodeDefaultAgent        = "build"
+	openCodeIdleShutdownAfter   = idleShutdownAfter
 )
 
 type openCodeSession struct {
@@ -1088,6 +1091,8 @@ func (s *openCodeSession) applyPartLocked(role string, raw json.RawMessage, repl
 }
 
 func (s *openCodeSession) runEventLoop(parent context.Context) {
+	streamInterrupted := false
+	reconnectDelay := openCodeReconnectDelay
 	for {
 		if s.isClosed() {
 			return
@@ -1097,12 +1102,38 @@ func (s *openCodeSession) runEventLoop(parent context.Context) {
 			return
 		}
 		if err == nil {
-			time.Sleep(openCodeReconnectDelay)
+			if streamInterrupted {
+				s.markEventStreamRecovered()
+				streamInterrupted = false
+			}
+			reconnectDelay = openCodeReconnectDelay
+			time.Sleep(jitteredReconnectDelay(reconnectDelay))
 			continue
 		}
-		s.handleTransportFailure(fmt.Errorf("opencode event stream error: %w", err))
-		return
+		streamInterrupted = true
+		s.markEventStreamInterrupted(fmt.Errorf("opencode event stream error: %w", err))
+		reconnectDelay *= 2
+		if reconnectDelay > openCodeMaxReconnectDelay {
+			reconnectDelay = openCodeMaxReconnectDelay
+		}
+		time.Sleep(jitteredReconnectDelay(reconnectDelay))
 	}
+}
+
+func jitteredReconnectDelay(base time.Duration) time.Duration {
+	if base <= 0 {
+		return base
+	}
+	jitterRange := base / 5
+	if jitterRange <= 0 {
+		return base
+	}
+	offset := time.Now().UnixNano()%(int64(jitterRange)*2+1) - int64(jitterRange)
+	jittered := int64(base) + offset
+	if jittered < int64(openCodeReconnectDelay) {
+		return openCodeReconnectDelay
+	}
+	return time.Duration(jittered)
 }
 
 func (s *openCodeSession) consumeEventStream(parent context.Context) error {
@@ -1357,7 +1388,7 @@ func (s *openCodeSession) appendSystemError(err error) {
 	s.notify()
 }
 
-func (s *openCodeSession) handleTransportFailure(err error) {
+func (s *openCodeSession) markEventStreamInterrupted(err error) {
 	if err == nil {
 		return
 	}
@@ -1372,24 +1403,24 @@ func (s *openCodeSession) handleTransportFailure(err error) {
 		return
 	}
 	s.touchLocked()
-	s.closed = true
-	s.clearBusyLocked()
-	s.pendingApproval = nil
-	s.pendingToolInput = nil
-	s.appendEntryLocked("", TranscriptError, message)
 	s.lastError = message
-	s.lastSystemNotice = message
-	s.status = "OpenCode transport failed; session closed"
-	cmd := s.cmd
-	cancel := s.cancel
+	s.lastSystemNotice = openCodeStreamDisconnectMsg
+	s.status = openCodeStreamDisconnectMsg
 	s.mu.Unlock()
 
-	if cancel != nil {
-		cancel()
+	s.notify()
+}
+
+func (s *openCodeSession) markEventStreamRecovered() {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
 	}
-	if cmd != nil && cmd.Process != nil {
-		_ = cmd.Process.Kill()
-	}
+	s.lastError = ""
+	s.lastSystemNotice = openCodeStreamRecoverMsg
+	s.status = openCodeStreamRecoverMsg
+	s.mu.Unlock()
 	s.notify()
 }
 

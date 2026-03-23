@@ -280,6 +280,30 @@ func TestBuildOpenCodeServerCommandInjectsPresetConfig(t *testing.T) {
 	}
 }
 
+func TestJitteredReconnectDelayWithinExpectedRange(t *testing.T) {
+	t.Parallel()
+
+	base := openCodeReconnectDelay
+	min := base - (base / 5)
+	max := base + (base / 5)
+
+	for i := 0; i < 500; i++ {
+		got := jitteredReconnectDelay(base)
+		if got < min || got > max {
+			t.Fatalf("jitteredReconnectDelay(%s) = %s, want within [%s,%s]", base, got, min, max)
+		}
+	}
+}
+
+func TestJitteredReconnectDelaySmallBaseFallsBackToMinimumDelay(t *testing.T) {
+	t.Parallel()
+
+	got := jitteredReconnectDelay(100 * time.Millisecond)
+	if got != openCodeReconnectDelay {
+		t.Fatalf("jitteredReconnectDelay(100ms) = %s, want %s", got, openCodeReconnectDelay)
+	}
+}
+
 func TestBuildOpenCodeServerCommandOverridesPreExistingConfigEnv(t *testing.T) {
 	t.Setenv("OPENCODE_CONFIG_CONTENT", `{"permission":{"edit":"old"}}`)
 

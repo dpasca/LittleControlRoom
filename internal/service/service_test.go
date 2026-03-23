@@ -2383,6 +2383,127 @@ func initGitRepoWithPushableSubmodule(t *testing.T, projectPath, submoduleRootPa
 	return filepath.Join(projectPath, submoduleName)
 }
 
+func TestScanOnceClearsExpiredSnooze(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := t.TempDir()
+	now := time.Now().UTC().Truncate(time.Second)
+	snoozedUntil := now.Add(-1 * time.Hour)
+
+	state := model.ProjectState{
+		Path:           projectPath,
+		Name:           filepath.Base(projectPath),
+		LastActivity:   now.Add(-2 * time.Hour),
+		Status:         model.StatusIdle,
+		AttentionScore: 0,
+		InScope:        true,
+		SnoozedUntil:   &snoozedUntil,
+		UpdatedAt:      now,
+	}
+	if err := st.UpsertProjectState(ctx, state); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	detector := staticDetector{
+		activities: map[string]*model.DetectorProjectActivity{
+			projectPath: {
+				ProjectPath:  projectPath,
+				LastActivity: now.Add(-2 * time.Hour),
+				Source:       "test",
+			},
+		},
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = nil
+	svc := New(cfg, st, events.NewBus(), []detectors.Detector{detector})
+
+	report, err := svc.ScanOnce(ctx)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(report.States) != 1 {
+		t.Fatalf("expected 1 project, got %d", len(report.States))
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 10)
+	if err != nil {
+		t.Fatalf("get detail: %v", err)
+	}
+	if detail.Summary.SnoozedUntil != nil {
+		t.Fatalf("expected snooze to be cleared, got snoozed_until=%v", detail.Summary.SnoozedUntil)
+	}
+}
+
+func TestScanOnceKeepsActiveSnooze(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := t.TempDir()
+	now := time.Now().UTC().Truncate(time.Second)
+	snoozedUntil := now.Add(1 * time.Hour)
+
+	state := model.ProjectState{
+		Path:           projectPath,
+		Name:           filepath.Base(projectPath),
+		LastActivity:   now.Add(-2 * time.Hour),
+		Status:         model.StatusIdle,
+		AttentionScore: 0,
+		InScope:        true,
+		SnoozedUntil:   &snoozedUntil,
+		UpdatedAt:      now,
+	}
+	if err := st.UpsertProjectState(ctx, state); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	detector := staticDetector{
+		activities: map[string]*model.DetectorProjectActivity{
+			projectPath: {
+				ProjectPath:  projectPath,
+				LastActivity: now.Add(-2 * time.Hour),
+				Source:       "test",
+			},
+		},
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = nil
+	svc := New(cfg, st, events.NewBus(), []detectors.Detector{detector})
+
+	report, err := svc.ScanOnce(ctx)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(report.States) != 1 {
+		t.Fatalf("expected 1 project, got %d", len(report.States))
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 10)
+	if err != nil {
+		t.Fatalf("get detail: %v", err)
+	}
+	if detail.Summary.SnoozedUntil == nil {
+		t.Fatalf("expected snooze to remain active")
+	}
+	if !detail.Summary.SnoozedUntil.Equal(snoozedUntil) {
+		t.Fatalf("snoozed_until = %v, want %v", detail.Summary.SnoozedUntil, snoozedUntil)
+	}
+}
+
 func initBareGitRepo(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

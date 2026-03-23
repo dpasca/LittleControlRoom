@@ -462,6 +462,12 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 	for _, path := range paths {
 		activity := activities[path]
 		old := oldMap[path]
+		if old.SnoozedUntil != nil && now.After(*old.SnoozedUntil) {
+			if err := s.store.SetSnooze(ctx, path, nil); err != nil {
+				return ScanReport{}, fmt.Errorf("clear expired snooze: %w", err)
+			}
+			old.SnoozedUntil = nil
+		}
 		presentOnDisk := projectPathExists(path)
 		repoDirty := false
 		repoSyncStatus := model.RepoSyncStatus("")

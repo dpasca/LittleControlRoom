@@ -1,8 +1,62 @@
 # Little Control Room Status
 
-Last updated: 2026-03-23 14:01 JST
+Last updated: 2026-03-23 14:21 JST
 
-## Latest Update (2026-03-23 14:01 JST)
+## Latest Update (2026-03-23 14:21 JST)
+
+- Added unit coverage for OpenCode reconnect backoff jitter.
+  - New tests in `internal/codexapp/opencode_session_test.go`:
+    - `TestJitteredReconnectDelayWithinExpectedRange` verifies jitter stays inside ±20% for nominal delays.
+    - `TestJitteredReconnectDelaySmallBaseFallsBackToMinimumDelay` verifies low-delay calls are clamped to the minimum reconnect wait.
+  - This covers the new `jitteredReconnectDelay` behavior added for embedded session resilience.
+- No validation commands were run in this pass.
+
+## Previous Update (2026-03-23 14:20 JST)
+
+- Added jitter to OpenCode event-stream reconnect backoff to prevent thundering-reconnect patterns.
+  - `openCodeSession.runEventLoop` now sleeps for a jittered delay (±20%) instead of a fixed backoff value.
+  - New helper `jitteredReconnectDelay` in `internal/codexapp/opencode_session.go` applies deterministic time-based jitter around the current backoff.
+  - Delay sequence remains capped at 10s and still resets to 500ms after a successful stream cycle.
+- No verification commands were run in this pass.
+
+## Previous Update (2026-03-23 14:20 JST)
+
+- Added exponential backoff to embedded OpenCode event-stream reconnect attempts.
+  - `runEventLoop` in `internal/codexapp/opencode_session.go` now increases reconnect wait after each consecutive error, doubling from 500ms up to a 10s maximum.
+  - On successful stream resume, the delay resets to 500ms.
+  - This replaces the prior fixed-delay retry loop and reduces reconnection churn during prolonged network outages while preserving recovery capability.
+- No verification commands were run in this pass.
+
+## Previous Update (2026-03-23 14:19 JST)
+
+- Prevented embedded OpenCode sessions from being torn down on transient event-stream transport errors.
+  - `internal/codexapp/opencode_session.go` now keeps `runEventLoop` alive after `consumeEventStream` errors and retries every `openCodeReconnectDelay`.
+  - Added explicit stream status messaging for UI visibility:
+    - `openCodeStreamDisconnectMsg = "OpenCode event stream disconnected; reconnecting..."`
+    - `openCodeStreamRecoverMsg = "OpenCode event stream reconnected"`
+  - On reconnection, stream errors clear `lastError` and surface a recovery notice so the pane stops being stuck after intermittent network drops.
+- No verification commands were run in this continuation pass to keep to the requested minimal-touch workflow.
+
+Next concrete tasks:
+
+- Manually run `make tui` and simulate a short network interruption in an embedded OpenCode session to confirm automatic recovery end-to-end.
+
+## Previous Update (2026-03-23 14:08 JST)
+
+- Added automatic snooze expiration clearing during scan cycle:
+  - `ScanWithOptions` now checks if `SnoozedUntil` has passed and clears it automatically
+  - Expired snooze states are removed from the database during each scan
+  - Active snooze states (not yet expired) are preserved
+- Added focused regression tests:
+  - `TestScanOnceClearsExpiredSnooze` verifies expired snooze is cleared
+  - `TestScanOnceKeepsActiveSnooze` verifies active snooze is preserved
+- All tests pass, scan and doctor succeed (`make test`, `make scan`, `make doctor` all green).
+
+Next concrete tasks:
+
+- Manual interactive verification in `make tui` to confirm snooze expiration works as expected.
+
+## Previous Update (2026-03-23 14:01 JST)
 
 - Added a documented incident record for the latest embedded OpenCode continuous-repetition concern after manual analysis:
   - [docs/incidents/opencode-embedded-continuous-repetition-incident-2026-03-23.md](/Users/davide/dev/repos/LittleControlRoom/docs/incidents/opencode-embedded-continuous-repetition-incident-2026-03-23.md)
