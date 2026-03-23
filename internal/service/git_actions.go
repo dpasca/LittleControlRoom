@@ -160,7 +160,14 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 		}
 	}
 
-	latestSummary := strings.TrimSpace(detail.Summary.LatestSessionSummary)
+	fullLatestSummary := strings.TrimSpace(detail.Summary.LatestSessionSummary)
+	// When files are pre-staged, the session summary may describe work that
+	// happened after staging, so exclude it from the commit message to keep
+	// the message grounded in the actual diff.
+	latestSummary := fullLatestSummary
+	if stageMode == GitStageStagedOnly {
+		latestSummary = ""
+	}
 	stateHash := commitPreviewStateHash(projectName, latestSummary, repoStatus)
 	diffStat := ""
 	patch := ""
@@ -196,7 +203,7 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 		case s.untrackedFileRecommender == nil:
 			warnings = append(warnings, "AI untracked review unavailable; untracked files will stay out unless you stage them manually.")
 		default:
-			input, buildWarnings, buildErr := buildUntrackedInclusionInput(projectPath, intent, projectName, branchName, latestSummary, staged, diffStat, patch, untracked)
+			input, buildWarnings, buildErr := buildUntrackedInclusionInput(projectPath, intent, projectName, branchName, fullLatestSummary, staged, diffStat, patch, untracked)
 			warnings = append(warnings, buildWarnings...)
 			if buildErr != nil {
 				warnings = append(warnings, "AI untracked review unavailable: "+strings.TrimSpace(buildErr.Error()))
