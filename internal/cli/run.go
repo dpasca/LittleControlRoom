@@ -653,6 +653,7 @@ func runTUI(ctx context.Context, svc *service.Service) int {
 	_, _ = svc.ScanOnce(ctx)
 	go svc.StartScheduler(ctx)
 	go svc.StartSessionClassifier(ctx)
+	svc.StartBackgroundDiscovery(ctx)
 
 	m := tui.New(ctx, svc)
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -667,6 +668,7 @@ func runServe(ctx context.Context, svc *service.Service) int {
 	_, _ = svc.ScanOnce(ctx)
 	go svc.StartScheduler(ctx)
 	go svc.StartSessionClassifier(ctx)
+	svc.StartBackgroundDiscovery(ctx)
 
 	s := server.New(svc)
 	fmt.Printf("serving %s on :7777\n", brand.Name)

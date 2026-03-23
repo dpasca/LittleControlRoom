@@ -148,6 +148,18 @@ func (s *Service) StartSessionClassifier(ctx context.Context) {
 	s.classifier.Start(ctx)
 }
 
+func (s *Service) StartBackgroundDiscovery(ctx context.Context) {
+	if s.opencodeDiscovery == nil {
+		return
+	}
+	go func() {
+		_, _ = ctx.Deadline()
+		bgCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		_ = s.opencodeDiscovery.Discover(bgCtx)
+	}()
+}
+
 func (s *Service) HasSessionClassifier() bool {
 	if s.classifier == nil {
 		return false
@@ -199,7 +211,6 @@ func (s *Service) configureAIClientsLocked() {
 		if selectedStatus.Ready {
 			tier, _ := config.ParseModelTier(s.cfg.OpenCodeModelTier)
 			if s.opencodeDiscovery != nil {
-				_ = s.opencodeDiscovery.Discover(context.Background())
 				commitAssistant = gitops.NewOpenCodeCommitMessageClientWithFallback(s.opencodeDiscovery, tier, s.llmUsageTracker)
 				client = sessionclassify.NewOpenCodeClientWithFallback(s.opencodeDiscovery, tier, s.llmUsageTracker)
 			} else {
