@@ -191,6 +191,8 @@ func (c *OpenAIClient) classifyAttempt(ctx context.Context, snapshotJSON []byte,
 		return Result{}, err
 	}
 
+	outputText = stripMarkdownCodeBlock(outputText)
+
 	var result Result
 	if err := json.Unmarshal([]byte(outputText), &result); err != nil {
 		return Result{}, &retryableClassificationError{
@@ -420,3 +422,19 @@ Prefer brief direct phrasing over full sentences when natural.
 Write from the implicit assistant point of view rather than naming the assistant as the subject.
 Omit leading scaffolding like "Assistant is" or "The assistant is".
 Do not force a stock opener; choose the most direct wording that fits the evidence.`
+
+func stripMarkdownCodeBlock(s string) string {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "```") {
+		return s
+	}
+	idx := strings.Index(s, "\n")
+	if idx == -1 {
+		return s
+	}
+	content := s[idx+1:]
+	if strings.HasSuffix(content, "```") {
+		content = strings.TrimSuffix(content, "```")
+	}
+	return strings.TrimSpace(content)
+}

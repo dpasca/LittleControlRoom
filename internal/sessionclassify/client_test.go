@@ -683,3 +683,40 @@ func TestOpenAIClientClassifyTransportRetriesRemainBounded(t *testing.T) {
 		t.Fatalf("error = %q, want transport detail", err.Error())
 	}
 }
+
+func TestStripMarkdownCodeBlock(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "plain json",
+			input: `{"category": "completed", "summary": "done"}`,
+			want:  `{"category": "completed", "summary": "done"}`,
+		},
+		{
+			name:  "json in code block",
+			input: "```json\n{\"category\": \"completed\", \"summary\": \"done\"}\n```",
+			want:  `{"category": "completed", "summary": "done"}`,
+		},
+		{
+			name:  "json in code block without language",
+			input: "```\n{\"category\": \"completed\", \"summary\": \"done\"}\n```",
+			want:  `{"category": "completed", "summary": "done"}`,
+		},
+		{
+			name:  "json in code block with extra whitespace",
+			input: "```json\n  {\"category\": \"completed\", \"summary\": \"done\"}  \n```",
+			want:  `{"category": "completed", "summary": "done"}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stripMarkdownCodeBlock(tt.input)
+			if got != tt.want {
+				t.Errorf("stripMarkdownCodeBlock() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
