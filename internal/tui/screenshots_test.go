@@ -191,8 +191,7 @@ func TestScreenshotRuntimeSnapshotRendersRuntimePane(t *testing.T) {
 	for _, want := range []string{
 		"Runtime - FractalMech",
 		"Run cmd: pnpm dev",
-		"Ports: 3000",
-		"URL: http://127.0.0.1:3000/",
+		"URL: http://127.0.0.1:3000/ (ports: 3000)",
 		"serving FractalMech assets",
 		"watching for changes...",
 	} {

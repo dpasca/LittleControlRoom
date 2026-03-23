@@ -1648,8 +1648,8 @@ func TestViewStacksListAndDetailVertically(t *testing.T) {
 	if got := len(strings.Split(rendered, "\n")); got != m.height {
 		t.Fatalf("View() line count = %d, want terminal height %d; render was %q", got, m.height, rendered)
 	}
-	if !strings.Contains(rendered, "Repo: dirty worktree") || !strings.Contains(rendered, "Remote: ahead by 2") {
-		t.Fatalf("View() should keep both repo and remote details visible in the detail pane: %q", rendered)
+	if !strings.Contains(rendered, "Repo: dirty, ahead 2") {
+		t.Fatalf("View() should show combined repo status in the detail pane: %q", rendered)
 	}
 	if !strings.Contains(rendered, "Runtime - demo") && !strings.Contains(rendered, "Control Room - demo") {
 		t.Fatalf("View() should render the runtime pane beside the detail pane: %q", rendered)
@@ -1723,8 +1723,11 @@ func TestRenderDetailSimplifiesStateAndAttention(t *testing.T) {
 	if !strings.Contains(rendered, "waiting") {
 		t.Fatalf("renderDetailContent() missing assessment-based label: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Status:") || !strings.Contains(rendered, "idle") {
-		t.Fatalf("renderDetailContent() missing separate status field: %q", rendered)
+	if !strings.Contains(rendered, "idle") {
+		t.Fatalf("renderDetailContent() missing status value: %q", rendered)
+	}
+	if strings.Contains(rendered, "Status:") {
+		t.Fatalf("renderDetailContent() should not show separate Status field (now combined with Assessment): %q", rendered)
 	}
 	if strings.Contains(rendered, "Attention status:") {
 		t.Fatalf("renderDetailContent() still shows separate attention status line: %q", rendered)
@@ -7951,7 +7954,7 @@ func TestViewWithCommitPreviewRespectsHeight(t *testing.T) {
 	if stageLine-messageLine < 2 || blankVisible != "" {
 		t.Fatalf("View() should leave a blank line after the commit message: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Status: idle") {
+	if !strings.Contains(rendered, "Repo: clean") {
 		t.Fatalf("View() should preserve the detail-pane context under the commit preview: %q", rendered)
 	}
 	if !strings.Contains(rendered, "Output") && !strings.Contains(rendered, "Standby. Use /run or /run-edit.") {

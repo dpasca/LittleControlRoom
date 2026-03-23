@@ -2047,11 +2047,9 @@ func (m Model) renderDetailContent(width int) string {
 	statusValue := activityDisplayStyle(p).Render(projectActivityStatus(p))
 	attentionValue := detailAttentionValueStyle.Render(fmt.Sprintf("%d", m.projectAttentionScore(p)))
 
+	combinedAssessmentStatus := assessmentValue + " " + detailMutedStyle.Render("(") + statusValue + detailMutedStyle.Render(")")
 	lines := []string{detailField("Path", detailValueStyle.Render(p.Path))}
-	lines = appendDetailFields(lines, width,
-		detailField("Assessment", assessmentValue),
-		detailField("Status", statusValue),
-	)
+	lines = append(lines, detailField("Assessment", combinedAssessmentStatus))
 	if projectMissing(p) {
 		lines = append(lines, detailWarningStyle.Render("Folder: missing on disk"))
 	}
@@ -2074,10 +2072,7 @@ func (m Model) renderDetailContent(width int) string {
 		}
 		lines = appendDetailFields(lines, width, movedFields...)
 	}
-	lines = appendDetailFields(lines, width,
-		detailField("Repo", repoDirtyDetailValue(p)),
-		detailField("Remote", repoSyncDetailValue(p)),
-	)
+	lines = append(lines, detailField("Repo", repoCombinedDetailValue(p)))
 	lines = append(lines, detailField("Attention", attentionValue))
 	if p.SnoozedUntil != nil {
 		lines = append(lines, detailField("Snoozed until", detailValueStyle.Render(p.SnoozedUntil.Format(time.RFC3339))))
@@ -3304,6 +3299,30 @@ func repoSyncDetailLine(project model.ProjectSummary) string {
 		return ""
 	}
 	return "Remote: " + value
+}
+
+func repoCombinedDetailValue(project model.ProjectSummary) string {
+	var parts []string
+	if project.RepoDirty {
+		parts = append(parts, detailWarningStyle.Render("dirty"))
+	} else {
+		parts = append(parts, detailMutedStyle.Render("clean"))
+	}
+	switch project.RepoSyncStatus {
+	case model.RepoSyncNoRemote:
+		parts = append(parts, detailMutedStyle.Render("no remote"))
+	case model.RepoSyncNoUpstream:
+		parts = append(parts, repoSyncDetailStyle(project.RepoSyncStatus).Render("no upstream"))
+	case model.RepoSyncSynced:
+		parts = append(parts, repoSyncDetailStyle(project.RepoSyncStatus).Render("synced"))
+	case model.RepoSyncAhead:
+		parts = append(parts, repoSyncDetailStyle(project.RepoSyncStatus).Render(fmt.Sprintf("ahead %d", project.RepoAheadCount)))
+	case model.RepoSyncBehind:
+		parts = append(parts, repoSyncDetailStyle(project.RepoSyncStatus).Render(fmt.Sprintf("behind %d", project.RepoBehindCount)))
+	case model.RepoSyncDiverged:
+		parts = append(parts, repoSyncDetailStyle(project.RepoSyncStatus).Render(fmt.Sprintf("diverged +%d/-%d", project.RepoAheadCount, project.RepoBehindCount)))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func repoDirtyDetailValue(project model.ProjectSummary) string {

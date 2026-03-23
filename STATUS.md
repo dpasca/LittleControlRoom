@@ -1,8 +1,21 @@
 # Little Control Room Status
 
-Last updated: 2026-03-23 13:40 JST
+Last updated: 2026-03-23 13:51 JST
 
-## Latest Update (2026-03-23 13:40 JST)
+## Latest Update (2026-03-23 13:51 JST)
+
+- Optimized space usage in details and runtime panels by combining related fields:
+  - Details panel: `Repo` and `Remote` fields now combined into single `Repo: clean, synced` or `Repo: dirty, ahead 2` line
+  - Runtime panel: `Runtime` status and `Up` duration combined into `Runtime: running (up 11:24)`
+  - Runtime panel: `URL` and `Ports` combined into `URL: http://... (ports: 3000, 3001)`
+  - Saves ~3 rows per panel for a more compact, neat display
+- All tests pass, scan and doctor succeed (`make test`, `make scan`, `make doctor` all green).
+
+Next concrete tasks:
+
+- Manual interactive verification in `make tui` to confirm the compact panel layout looks clean.
+
+## Previous Update (2026-03-23 13:40 JST)
 
 - Added hide reasoning sections feature for models like GLM-5 that output verbose thinking blocks:
   - New config option `hide_reasoning_sections` in config.toml (default: `true`)

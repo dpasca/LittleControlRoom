@@ -190,22 +190,22 @@ func (m Model) renderRuntimePanelSummary(width int, projectPath string) []string
 	}
 	lines = append(lines, renderWrappedRuntimeField("Run cmd", width, commandStyle, command)...)
 
-	fields := []string{detailField("Runtime", renderRuntimeStatusValue(snapshot))}
+	runtimeStatus := renderRuntimeStatusValue(snapshot)
 	if snapshot.Running && !snapshot.StartedAt.IsZero() {
-		fields = append(fields, detailField("Up", detailValueStyle.Render(formatRunningDuration(m.currentTime().Sub(snapshot.StartedAt)))))
+		runtimeStatus += " " + detailMutedStyle.Render("(up "+formatRunningDuration(m.currentTime().Sub(snapshot.StartedAt))+")")
 	} else if !snapshot.ExitedAt.IsZero() {
-		fields = append(fields, detailField("Stopped", detailMutedStyle.Render(snapshot.ExitedAt.Format(timeFieldFormat))))
+		runtimeStatus += " " + detailMutedStyle.Render("(stopped "+snapshot.ExitedAt.Format(timeFieldFormat)+")")
 	}
-	lines = appendDetailFields(lines, width, fields...)
+	lines = append(lines, detailField("Runtime", runtimeStatus))
 
-	infoFields := make([]string, 0, 2)
-	if len(snapshot.Ports) > 0 {
-		infoFields = append(infoFields, detailField("Ports", detailValueStyle.Render(joinPorts(snapshot.Ports))))
-	}
 	if urlSummary := runtimeURLSummary(snapshot); urlSummary != "" {
-		infoFields = append(infoFields, detailField("URL", detailValueStyle.Render(urlSummary)))
+		if len(snapshot.Ports) > 0 {
+			urlSummary += " " + detailMutedStyle.Render("(ports: "+joinPorts(snapshot.Ports)+")")
+		}
+		lines = append(lines, detailField("URL", detailValueStyle.Render(urlSummary)))
+	} else if len(snapshot.Ports) > 0 {
+		lines = append(lines, detailField("Ports", detailValueStyle.Render(joinPorts(snapshot.Ports))))
 	}
-	lines = appendDetailFields(lines, width, infoFields...)
 
 	if len(snapshot.AnnouncedURLs) > 1 {
 		lines = append(lines, renderWrappedRuntimeField("More URLs", width, detailMutedStyle, strings.Join(snapshot.AnnouncedURLs[1:], ", "))...)
