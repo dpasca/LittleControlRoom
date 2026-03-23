@@ -1,8 +1,20 @@
 # Little Control Room Status
 
-Last updated: 2026-03-23 09:26 JST
+Last updated: 2026-03-23 10:15 JST
 
-## Latest Update (2026-03-23 09:26 JST)
+## Latest Update (2026-03-23 10:15 JST)
+
+- Committed OpenCode model discovery feature (`efdb0d3`):
+  - Uses CLI approach (`opencode models --verbose`) for model discovery
+  - Considered HTTP API (`GET /provider` via `opencode serve`) but CLI works standalone without server
+  - OpenCode uses Models.dev as upstream source for model info
+- Feature complete: model discovery, fallback chain, tier selection in `/setup`
+
+Next concrete tasks:
+
+- Manual interactive verification in `make tui` to confirm OpenCode backend uses free-tier models first and falls back gracefully on rate limiting.
+
+## Previous Update (2026-03-23 09:26 JST)
 
 - Added OpenCode model discovery and automatic fallback chain for summaries/commits:
   - New `internal/llm/opencode_models.go` - discovers available models via `opencode models --verbose`
@@ -20,10 +32,6 @@ Last updated: 2026-03-23 09:26 JST
   - Completed classifications with valid summaries are now preserved regardless of model name changes
   - Previously, switching from Codex to OpenCode would re-queue all summaries because the model name changed
 - All tests pass, scan and doctor succeed (`make test`, `make scan`, `make doctor` all green).
-
-Next concrete tasks:
-
-- Manual interactive verification in `make tui` to confirm OpenCode backend uses free-tier models first and falls back gracefully on rate limiting.
 
 ## Latest Update (2026-03-23 08:30 JST)
 
