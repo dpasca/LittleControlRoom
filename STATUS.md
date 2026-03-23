@@ -1,8 +1,20 @@
 # Little Control Room Status
 
-Last updated: 2026-03-23 13:51 JST
+Last updated: 2026-03-23 14:01 JST
 
-## Latest Update (2026-03-23 13:51 JST)
+## Latest Update (2026-03-23 14:01 JST)
+
+- Added a documented incident record for the latest embedded OpenCode continuous-repetition concern after manual analysis:
+  - [docs/incidents/opencode-embedded-continuous-repetition-incident-2026-03-23.md](/Users/davide/dev/repos/LittleControlRoom/docs/incidents/opencode-embedded-continuous-repetition-incident-2026-03-23.md)
+- Recorded conclusion: transcript evidence did not show repeated identical model text chunks; behavior is more consistent with streaming/rendering perception plus a manual  abort.
+- No code changes were made in this step; no artifact-footprint assumptions changed.
+- Verification status: no code/test validation was run (documentation-only update).
+
+Next concrete tasks:
+
+- Use the incident document as the starting reference if the behavior returns and attach a raw stream trace to confirm whether duplicates originate from model output or view refresh timing.
+
+## Previous Update (2026-03-23 13:51 JST)
 
 - Optimized space usage in details and runtime panels by combining related fields:
   - Details panel: `Repo` and `Remote` fields now combined into single `Repo: clean, synced` or `Repo: dirty, ahead 2` line
