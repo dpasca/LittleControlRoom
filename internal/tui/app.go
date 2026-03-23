@@ -87,6 +87,7 @@ type Model struct {
 	setupChecked                 bool
 	setupLoading                 bool
 	setupSelected                int
+	setupModelTier               config.ModelTier
 	setupSnapshot                aibackend.Snapshot
 	settingsMode                 bool
 	settingsFields               []settingsField

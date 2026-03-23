@@ -11,3 +11,6 @@ codex_launch_preset = "yolo"
 interval = "60s"
 active-threshold = "20m"
 stuck-threshold = "4h"
+
+ai_backend = "opencode"
+opencode_model_tier = "free"

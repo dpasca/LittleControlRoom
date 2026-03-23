@@ -78,6 +78,7 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.settingsFieldValue(settingsFieldExcludeProjectPatterns),
 			m.settingsFieldValue(settingsFieldPrivacyPatterns),
 			m.settingsFieldValue(settingsFieldCodexLaunchPreset),
+			m.currentSettingsBaseline().OpenCodeModelTier,
 			m.settingsFieldValue(settingsFieldActiveThreshold),
 			m.settingsFieldValue(settingsFieldStuckThreshold),
 			m.settingsFieldValue(settingsFieldInterval),

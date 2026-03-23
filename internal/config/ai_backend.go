@@ -15,6 +15,27 @@ const (
 	AIBackendOpenCode  AIBackend = "opencode"
 )
 
+type ModelTier string
+
+const (
+	ModelTierFree     ModelTier = "free"
+	ModelTierCheap    ModelTier = "cheap"
+	ModelTierBalanced ModelTier = "balanced"
+)
+
+func ParseModelTier(raw string) (ModelTier, error) {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case "", "free":
+		return ModelTierFree, nil
+	case "cheap":
+		return ModelTierCheap, nil
+	case "balanced":
+		return ModelTierBalanced, nil
+	default:
+		return ModelTierFree, fmt.Errorf("model_tier must be one of free, cheap, or balanced")
+	}
+}
+
 func ParseAIBackend(raw string) (AIBackend, error) {
 	switch strings.TrimSpace(strings.ToLower(raw)) {
 	case "":

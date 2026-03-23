@@ -49,6 +49,7 @@ type Service struct {
 	commitMessageSuggester   gitops.CommitMessageSuggester
 	untrackedFileRecommender gitops.UntrackedFileRecommender
 	llmUsageTracker          *llm.UsageTracker
+	opencodeDiscovery        *llm.OpenCodeDiscovery
 
 	gitFingerprintReader func(context.Context, string) (scanner.GitFingerprint, error)
 	gitRepoStatusReader  func(context.Context, string) (scanner.GitRepoStatus, error)
@@ -84,6 +85,7 @@ func New(cfg config.AppConfig, st *store.Store, bus *events.Bus, detectorList []
 		bus:                  bus,
 		detectors:            detectorList,
 		llmUsageTracker:      llm.NewUsageTracker(),
+		opencodeDiscovery:    llm.NewOpenCodeDiscovery(),
 		gitFingerprintReader: scanner.ReadGitFingerprint,
 		gitRepoStatusReader:  scanner.ReadGitRepoStatus,
 		gitRepoInitializer:   runGitInit,
@@ -195,8 +197,15 @@ func (s *Service) configureAIClientsLocked() {
 		}
 	case config.AIBackendOpenCode:
 		if selectedStatus.Ready {
-			commitAssistant = gitops.NewOpenCodeCommitMessageClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
-			client = sessionclassify.NewOpenCodeClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
+			tier, _ := config.ParseModelTier(s.cfg.OpenCodeModelTier)
+			if s.opencodeDiscovery != nil {
+				_ = s.opencodeDiscovery.Discover(context.Background())
+				commitAssistant = gitops.NewOpenCodeCommitMessageClientWithFallback(s.opencodeDiscovery, tier, s.llmUsageTracker)
+				client = sessionclassify.NewOpenCodeClientWithFallback(s.opencodeDiscovery, tier, s.llmUsageTracker)
+			} else {
+				commitAssistant = gitops.NewOpenCodeCommitMessageClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
+				client = sessionclassify.NewOpenCodeClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
+			}
 		}
 	}
 	s.commitMessageSuggester = commitAssistant

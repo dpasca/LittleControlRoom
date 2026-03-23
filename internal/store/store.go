@@ -1368,6 +1368,12 @@ func (s *Store) QueueSessionClassification(ctx context.Context, classification m
 		sameClassificationModel(existing.Model, classification.Model) &&
 		existing.ClassifierVersion == classification.ClassifierVersion
 
+	sameSnapshotHash := existing.SnapshotHash == classification.SnapshotHash
+
+	if sameSnapshotHash && existing.Status == model.ClassificationCompleted && strings.TrimSpace(existing.Summary) != "" {
+		return false, nil
+	}
+
 	if sameSnapshot {
 		switch existing.Status {
 		case model.ClassificationCompleted:

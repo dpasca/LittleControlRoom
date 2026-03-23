@@ -27,6 +27,7 @@ type AppConfig struct {
 	EmbeddedCodexReasoning    string
 	EmbeddedOpenCodeModel     string
 	EmbeddedOpenCodeReasoning string
+	OpenCodeModelTier         string
 	RecentCodexModels         []string
 	RecentOpenCodeModels      []string
 	CodexHome                 string
@@ -65,6 +66,7 @@ type fileConfig struct {
 	EmbeddedCodexReasoning    *string   `toml:"embedded_codex_reasoning_effort"`
 	EmbeddedOpenCodeModel     *string   `toml:"embedded_opencode_model"`
 	EmbeddedOpenCodeReasoning *string   `toml:"embedded_opencode_reasoning_effort"`
+	OpenCodeModelTier         *string   `toml:"opencode_model_tier"`
 	RecentCodexModels         *[]string `toml:"recent_codex_models"`
 	RecentOpenCodeModels      *[]string `toml:"recent_opencode_models"`
 	CodexLaunchPreset         string    `toml:"codex_launch_preset"`
@@ -337,6 +339,9 @@ func applyConfigFile(cfg *AppConfig) error {
 	}
 	if fc.EmbeddedOpenCodeReasoning != nil {
 		cfg.EmbeddedOpenCodeReasoning = strings.TrimSpace(*fc.EmbeddedOpenCodeReasoning)
+	}
+	if fc.OpenCodeModelTier != nil {
+		cfg.OpenCodeModelTier = strings.TrimSpace(*fc.OpenCodeModelTier)
 	}
 	if fc.RecentCodexModels != nil {
 		cfg.RecentCodexModels = trimStrings(*fc.RecentCodexModels)

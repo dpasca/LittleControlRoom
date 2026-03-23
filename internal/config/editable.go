@@ -22,6 +22,7 @@ type EditableSettings struct {
 	EmbeddedCodexReasoning    string
 	EmbeddedOpenCodeModel     string
 	EmbeddedOpenCodeReasoning string
+	OpenCodeModelTier         string
 	RecentCodexModels         []string
 	RecentOpenCodeModels      []string
 	CodexLaunchPreset         codexcli.Preset
@@ -42,6 +43,7 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		EmbeddedCodexReasoning:    cfg.EmbeddedCodexReasoning,
 		EmbeddedOpenCodeModel:     cfg.EmbeddedOpenCodeModel,
 		EmbeddedOpenCodeReasoning: cfg.EmbeddedOpenCodeReasoning,
+		OpenCodeModelTier:         cfg.OpenCodeModelTier,
 		RecentCodexModels:         append([]string(nil), cfg.RecentCodexModels...),
 		RecentOpenCodeModels:      append([]string(nil), cfg.RecentOpenCodeModels...),
 		CodexLaunchPreset:         cfg.CodexLaunchPreset,
@@ -51,7 +53,7 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 	}
 }
 
-func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
+func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, openCodeModelTierRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
 	parsedBackend, err := ParseAIBackend(string(aiBackend))
 	if err != nil {
 		return EditableSettings{}, err
@@ -96,6 +98,7 @@ func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, includeRaw, exc
 		ExcludeProjectPatterns: excludeProjectPatterns,
 		PrivacyPatterns:        privacyPatterns,
 		CodexLaunchPreset:      codexLaunchPreset,
+		OpenCodeModelTier:      strings.TrimSpace(openCodeModelTierRaw),
 		ScanInterval:           interval,
 		ActiveThreshold:        active,
 		StuckThreshold:         stuck,
@@ -155,6 +158,7 @@ func validateEditableSettings(settings EditableSettings) error {
 	cfg.EmbeddedCodexReasoning = strings.TrimSpace(settings.EmbeddedCodexReasoning)
 	cfg.EmbeddedOpenCodeModel = strings.TrimSpace(settings.EmbeddedOpenCodeModel)
 	cfg.EmbeddedOpenCodeReasoning = strings.TrimSpace(settings.EmbeddedOpenCodeReasoning)
+	cfg.OpenCodeModelTier = strings.TrimSpace(settings.OpenCodeModelTier)
 	cfg.RecentCodexModels = append([]string(nil), settings.RecentCodexModels...)
 	cfg.RecentOpenCodeModels = append([]string(nil), settings.RecentOpenCodeModels...)
 	cfg.CodexLaunchPreset = settings.CodexLaunchPreset
@@ -224,6 +228,9 @@ func renderEditableSettings(settings EditableSettings) string {
 		strings.TrimSpace(settings.EmbeddedOpenCodeModel) != "" ||
 		strings.TrimSpace(settings.EmbeddedOpenCodeReasoning) != "" {
 		lines = append(lines, "")
+	}
+	if value := strings.TrimSpace(settings.OpenCodeModelTier); value != "" {
+		lines = append(lines, fmt.Sprintf("opencode_model_tier = %s", strconv.Quote(value)))
 	}
 	if len(settings.RecentCodexModels) > 0 {
 		lines = append(lines, "recent_codex_models = [")

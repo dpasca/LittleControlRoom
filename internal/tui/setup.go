@@ -24,6 +24,8 @@ func (m *Model) openSetupMode() tea.Cmd {
 	m.showHelp = false
 	m.err = nil
 	m.setupSelected = m.setupSelectionForBackend(m.recommendedSetupBackend())
+	tier, _ := config.ParseModelTier(m.currentSettingsBaseline().OpenCodeModelTier)
+	m.setupModelTier = tier
 	m.setupLoading = true
 	m.status = "Choose how Little Control Room should run AI summaries, classifications, and commit help."
 	return m.refreshSetupSnapshotCmd(false)
@@ -75,6 +77,11 @@ func (m Model) updateSetupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setupLoading = true
 		m.status = "Refreshing AI backend checks..."
 		return m, m.refreshSetupSnapshotCmd(false)
+	case "t":
+		if m.setupSelectedBackend() == config.AIBackendOpenCode {
+			m.setupModelTier = m.cycleModelTier(m.setupModelTier)
+			return m, nil
+		}
 	case "s":
 		settings := m.currentSettingsBaseline()
 		if selected := m.setupSelectedBackend(); selected == config.AIBackendOpenAIAPI {
@@ -87,9 +94,21 @@ func (m Model) updateSetupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) cycleModelTier(tier config.ModelTier) config.ModelTier {
+	switch tier {
+	case config.ModelTierFree:
+		return config.ModelTierCheap
+	case config.ModelTierCheap:
+		return config.ModelTierBalanced
+	default:
+		return config.ModelTierFree
+	}
+}
+
 func (m Model) activateSetupSelection() (tea.Model, tea.Cmd) {
 	settings := m.currentSettingsBaseline()
 	settings.AIBackend = m.setupSelectedBackend()
+	settings.OpenCodeModelTier = string(m.setupModelTier)
 	selectedStatus := m.setupSnapshot.StatusFor(settings.AIBackend)
 	switch settings.AIBackend {
 	case config.AIBackendDisabled:
@@ -192,7 +211,7 @@ func (m Model) renderSetupContent(width, _ int) string {
 		lines = append(lines, hint)
 	}
 	lines = append(lines, "")
-	lines = append(lines, renderSetupActions())
+	lines = append(lines, m.renderSetupActions())
 	return strings.Join(lines, "\n")
 }
 
@@ -214,9 +233,16 @@ func (m Model) renderSetupOptionRow(backend config.AIBackend, selected bool, wid
 	if status.Ready || backend == m.setupCurrentBackend() {
 		detailStyle = detailValueStyle
 	}
+	detailText := status.Detail
+	if backend == config.AIBackendOpenCode && selected {
+		tierHint := " [T: " + string(m.setupModelTier) + "]"
+		if len(detailText)+len(tierHint) < detailWidth {
+			detailText = detailText + tierHint
+		}
+	}
 	return labelStyle.Width(labelWidth).Render(truncateText(label, labelWidth)) +
 		" " + stateStyle.Width(stateWidth).Render(truncateText(state, stateWidth)) +
-		" " + detailStyle.Render(truncateText(status.Detail, detailWidth))
+		" " + detailStyle.Render(truncateText(detailText, detailWidth))
 }
 
 func (m Model) setupOptionState(backend config.AIBackend, status aibackend.Status) (string, lipgloss.Style) {
@@ -240,17 +266,26 @@ func (m Model) renderSetupHint(width int) string {
 	if m.setupSelectedBackend() == config.AIBackendDisabled {
 		hint = "Disable AI features completely. Little Control Room keeps working, but summaries, classifications, and commit help stay off until you run /setup again."
 	}
+	if m.setupSelectedBackend() == config.AIBackendOpenCode && selectedStatus.Ready {
+		hint = "OpenCode will use " + string(m.setupModelTier) + " tier models for summaries. Press T to cycle: free → cheap → balanced."
+	}
 	if selectedStatus.LoginHint != "" && !selectedStatus.Ready {
 		hint = selectedStatus.LoginHint
 	}
 	return commandPaletteHintStyle.Render(lipgloss.NewStyle().Width(width).Render("Hint: " + hint))
 }
 
-func renderSetupActions() string {
-	return strings.Join([]string{
+func (m Model) renderSetupActions() string {
+	actions := []string{
 		renderDialogAction("Enter", "choose", commitActionKeyStyle, commitActionTextStyle),
 		renderDialogAction("R", "refresh", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("S", "settings", pushActionKeyStyle, pushActionTextStyle),
 		renderDialogAction("Esc", "continue", cancelActionKeyStyle, cancelActionTextStyle),
-	}, "   ")
+	}
+	if m.setupSelectedBackend() == config.AIBackendOpenCode {
+		actions = append(actions[:3], append([]string{
+			renderDialogAction("T", "tier", navigateActionKeyStyle, navigateActionTextStyle),
+		}, actions[3:]...)...)
+	}
+	return strings.Join(actions, "   ")
 }

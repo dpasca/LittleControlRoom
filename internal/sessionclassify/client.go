@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"lcroom/internal/brand"
+	"lcroom/internal/config"
 	"lcroom/internal/llm"
 	"lcroom/internal/model"
 )
@@ -103,6 +104,17 @@ func NewOpenCodeClientWithUsageTrackerInDataDir(dataDir string, usage *llm.Usage
 	return &OpenAIClient{
 		model:     configuredClassifierModel(localRunnerDefaultModel),
 		responses: llm.NewOpenCodeRunRunnerInDataDir(dataDir, classifierHTTPTimeout, usage),
+	}
+}
+
+func NewOpenCodeClientWithFallback(discovery *llm.OpenCodeDiscovery, tier config.ModelTier, usage *llm.UsageTracker) *OpenAIClient {
+	baseRunner := llm.NewOpenCodeRunRunner(classifierHTTPTimeout, usage)
+	cfg := llm.DefaultModelSelectionConfig()
+	cfg.Tier = llm.ModelTier(tier)
+	fallbackRunner := llm.NewFallbackRunner(discovery, baseRunner, cfg, usage)
+	return &OpenAIClient{
+		model:     "",
+		responses: fallbackRunner,
 	}
 }
 

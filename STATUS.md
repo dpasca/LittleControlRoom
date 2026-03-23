@@ -1,8 +1,31 @@
 # Little Control Room Status
 
-Last updated: 2026-03-23 07:58 JST
+Last updated: 2026-03-23 09:26 JST
 
-## Latest Update (2026-03-23 07:58 JST)
+## Latest Update (2026-03-23 09:26 JST)
+
+- Added OpenCode model discovery and automatic fallback chain for summaries/commits:
+  - New `internal/llm/opencode_models.go` - discovers available models via `opencode models --verbose`
+  - New `internal/llm/fallback.go` - implements fallback runner that tries alternative models on rate limits
+  - Model selection prioritizes free-tier models first (mimo-free, minimax-free, nemotron-free)
+  - Falls back to cheap models (gpt-5.4-nano, etc.) when free models hit rate limits
+  - New config option `opencode_model_tier` in config.toml: `free` (default), `cheap`, or `balanced`
+  - Service now uses `OpenCodeDiscovery` to build intelligent model fallback chains
+  - Both session classification and commit message generation use the fallback runner
+- Added model tier selection to `/setup` dialog (not `/settings`):
+  - When OpenCode is selected in `/setup`, press `T` to cycle through tiers: free → cheap → balanced
+  - Shows current tier in the OpenCode row detail
+  - Saved automatically when Enter is pressed
+- Fixed summary re-queuing when switching AI backends:
+  - Completed classifications with valid summaries are now preserved regardless of model name changes
+  - Previously, switching from Codex to OpenCode would re-queue all summaries because the model name changed
+- All tests pass, scan and doctor succeed (`make test`, `make scan`, `make doctor` all green).
+
+Next concrete tasks:
+
+- Manual interactive verification in `make tui` to confirm OpenCode backend uses free-tier models first and falls back gracefully on rate limiting.
+
+## Latest Update (2026-03-23 08:30 JST)
 
 - Added demo/privacy mode feature:
   - New `/privacy on|off|toggle` slash command to toggle privacy mode

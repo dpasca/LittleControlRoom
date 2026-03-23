@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"lcroom/internal/brand"
+	"lcroom/internal/config"
 	"lcroom/internal/llm"
 )
 
@@ -101,6 +102,17 @@ func NewOpenCodeCommitMessageClientWithUsageTrackerInDataDir(dataDir string, usa
 	return &OpenAICommitMessageClient{
 		model:     model,
 		responses: llm.NewOpenCodeRunRunnerInDataDir(dataDir, 45*time.Second, usage),
+	}
+}
+
+func NewOpenCodeCommitMessageClientWithFallback(discovery *llm.OpenCodeDiscovery, tier config.ModelTier, usage *llm.UsageTracker) *OpenAICommitMessageClient {
+	baseRunner := llm.NewOpenCodeRunRunner(45*time.Second, usage)
+	cfg := llm.DefaultModelSelectionConfig()
+	cfg.Tier = llm.ModelTier(tier)
+	fallbackRunner := llm.NewFallbackRunner(discovery, baseRunner, cfg, usage)
+	return &OpenAICommitMessageClient{
+		model:     "",
+		responses: fallbackRunner,
 	}
 }
 
