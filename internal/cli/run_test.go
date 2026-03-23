@@ -135,15 +135,15 @@ func TestSelectOpenCodeSnapshotSessionsSortsAndFilters(t *testing.T) {
 		},
 	}
 
-	selected := selectOpenCodeSnapshotSessions(states, "", "", 2)
+	selected := selectSnapshotSessions(states, "", "", 2)
 	if len(selected) != 2 {
 		t.Fatalf("selected len = %d, want 2", len(selected))
 	}
 	if selected[0].Session.SessionID != "ses_beta_new" {
 		t.Fatalf("first session = %q, want ses_beta_new", selected[0].Session.SessionID)
 	}
-	if selected[1].Session.SessionID != "ses_alpha_old" {
-		t.Fatalf("second session = %q, want ses_alpha_old", selected[1].Session.SessionID)
+	if selected[1].Session.SessionID != "ses_beta_codex" {
+		t.Fatalf("second session = %q, want ses_beta_codex", selected[1].Session.SessionID)
 	}
 }
 
@@ -182,7 +182,7 @@ func TestSelectOpenCodeSnapshotSessionsSupportsProjectAndSessionFilters(t *testi
 		},
 	}
 
-	selected := selectOpenCodeSnapshotSessions(states, "/tmp/demo", "ses_keep", 3)
+	selected := selectSnapshotSessions(states, "/tmp/demo", "ses_keep", 3)
 	if len(selected) != 1 {
 		t.Fatalf("selected len = %d, want 1", len(selected))
 	}

@@ -371,7 +371,7 @@ func runSnapshot(ctx context.Context, svc *service.Service, cfg config.AppConfig
 		return 1
 	}
 	states = filterProjectStatesByIgnoredName(states, ignored)
-	selected := selectOpenCodeSnapshotSessions(states, cfg.SnapshotProject, cfg.SnapshotSessionID, cfg.SnapshotLimit)
+	selected := selectSnapshotSessions(states, cfg.SnapshotProject, cfg.SnapshotSessionID, cfg.SnapshotLimit)
 	dumps := make([]snapshotDumpEntry, 0, len(selected))
 	for _, choice := range selected {
 		entry := snapshotDumpEntry{
@@ -413,7 +413,7 @@ func runSnapshot(ctx context.Context, svc *service.Service, cfg config.AppConfig
 	return 0
 }
 
-func selectOpenCodeSnapshotSessions(states []model.ProjectState, projectPath, sessionID string, limit int) []snapshotDumpSelection {
+func selectSnapshotSessions(states []model.ProjectState, projectPath, sessionID string, limit int) []snapshotDumpSelection {
 	projectPath = strings.TrimSpace(projectPath)
 	sessionID = strings.TrimSpace(sessionID)
 
@@ -423,9 +423,6 @@ func selectOpenCodeSnapshotSessions(states []model.ProjectState, projectPath, se
 			continue
 		}
 		for _, session := range state.Sessions {
-			if session.Format != "opencode_db" {
-				continue
-			}
 			if sessionID != "" && session.SessionID != sessionID {
 				continue
 			}
