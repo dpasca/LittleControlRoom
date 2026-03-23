@@ -1,8 +1,22 @@
 # Little Control Room Status
 
-Last updated: 2026-03-23 10:15 JST
+Last updated: 2026-03-23 13:40 JST
 
-## Latest Update (2026-03-23 10:15 JST)
+## Latest Update (2026-03-23 13:40 JST)
+
+- Added hide reasoning sections feature for models like GLM-5 that output verbose thinking blocks:
+  - New config option `hide_reasoning_sections` in config.toml (default: `true`)
+  - When enabled, `TranscriptReasoning` entries are filtered from the embedded transcript view
+  - Reasoning blocks now render with dimmed text and subtle background for clearer boundaries
+  - Toggle available in `/settings` dialog ("Hide reasoning" field accepts `true` or `false`)
+  - `renderCodexReasoningBlock` renders reasoning with `Faint(true)` style and dark background
+- All tests pass, scan and doctor succeed (`make test`, `make scan`, `make doctor` all green).
+
+Next concrete tasks:
+
+- Manual interactive verification in `make tui` to confirm reasoning sections are hidden by default and visible when setting is disabled.
+
+## Previous Update (2026-03-23 10:15 JST)
 
 - Committed OpenCode model discovery feature (`efdb0d3`):
   - Uses CLI approach (`opencode models --verbose`) for model discovery

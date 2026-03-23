@@ -2044,6 +2044,9 @@ func (m Model) renderCodexTranscriptEntries(snapshot codexapp.Snapshot, width in
 	var previousKind codexapp.TranscriptKind
 	hasPrevious := false
 	for _, entry := range snapshot.Entries {
+		if m.hideReasoningSections && entry.Kind == codexapp.TranscriptReasoning {
+			continue
+		}
 		block := renderCodexTranscriptEntry(entry, contentWidth, m.codexDenseExpanded)
 		if strings.TrimSpace(block) != "" {
 			if hasPrevious {
@@ -2071,7 +2074,7 @@ func renderCodexTranscriptEntry(entry codexapp.TranscriptEntry, width int, expan
 	case codexapp.TranscriptPlan:
 		return renderCodexMessageBlock("Plan", text, lipgloss.Color("214"), lipgloss.Color("252"), width)
 	case codexapp.TranscriptReasoning:
-		return renderCodexMessageBlock("Reasoning", text, lipgloss.Color("220"), lipgloss.Color("250"), width)
+		return renderCodexReasoningBlock(text, width)
 	case codexapp.TranscriptCommand:
 		return renderCodexDenseBlock("Command", text, lipgloss.Color("111"), width, expanded)
 	case codexapp.TranscriptFileChange:
@@ -2709,6 +2712,22 @@ func renderCodexMessageBlockWithStyle(label, body string, accent, bodyColor lipg
 	}
 	lines = append(lines, renderCodexBody(body, bodyColor, contentWidth))
 	return style.Render(strings.Join(lines, "\n"))
+}
+
+var codexReasoningBackgroundColor = lipgloss.Color("235")
+
+func renderCodexReasoningBlock(body string, width int) string {
+	contentWidth := max(10, width-4)
+	label := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("180")).Faint(true).Render("Reasoning")
+	bodyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Faint(true).Width(contentWidth)
+	wrappedBody := bodyStyle.Render(renderCodexBody(body, lipgloss.Color("244"), contentWidth))
+	return lipgloss.NewStyle().
+		BorderLeft(true).
+		BorderForeground(lipgloss.Color("180")).
+		PaddingLeft(1).
+		PaddingRight(1).
+		Background(codexReasoningBackgroundColor).
+		Render(label + "\n" + wrappedBody)
 }
 
 func renderCodexComposer(input textarea.Model, width int) string {

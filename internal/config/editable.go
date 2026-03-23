@@ -29,6 +29,7 @@ type EditableSettings struct {
 	ScanInterval              time.Duration
 	ActiveThreshold           time.Duration
 	StuckThreshold            time.Duration
+	HideReasoningSections     bool
 }
 
 func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
@@ -50,10 +51,11 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		ScanInterval:              cfg.ScanInterval,
 		ActiveThreshold:           cfg.ActiveThreshold,
 		StuckThreshold:            cfg.StuckThreshold,
+		HideReasoningSections:     cfg.HideReasoningSections,
 	}
 }
 
-func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, openCodeModelTierRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
+func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, hideReasoningSectionsRaw, openCodeModelTierRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
 	parsedBackend, err := ParseAIBackend(string(aiBackend))
 	if err != nil {
 		return EditableSettings{}, err
@@ -74,6 +76,8 @@ func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, includeRaw, exc
 	if err != nil {
 		return EditableSettings{}, fmt.Errorf("codex launch preset: %w", err)
 	}
+
+	hideReasoningSections := strings.EqualFold(strings.TrimSpace(hideReasoningSectionsRaw), "true")
 
 	active, err := parseConfigDuration(strings.TrimSpace(activeRaw), "active-threshold")
 	if err != nil {
@@ -99,6 +103,7 @@ func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, includeRaw, exc
 		PrivacyPatterns:        privacyPatterns,
 		CodexLaunchPreset:      codexLaunchPreset,
 		OpenCodeModelTier:      strings.TrimSpace(openCodeModelTierRaw),
+		HideReasoningSections:  hideReasoningSections,
 		ScanInterval:           interval,
 		ActiveThreshold:        active,
 		StuckThreshold:         stuck,
@@ -165,6 +170,7 @@ func validateEditableSettings(settings EditableSettings) error {
 	cfg.ScanInterval = settings.ScanInterval
 	cfg.ActiveThreshold = settings.ActiveThreshold
 	cfg.StuckThreshold = settings.StuckThreshold
+	cfg.HideReasoningSections = settings.HideReasoningSections
 	return validate(cfg)
 }
 
@@ -249,6 +255,8 @@ func renderEditableSettings(settings EditableSettings) string {
 		lines = append(lines, "")
 	}
 	lines = append(lines, fmt.Sprintf("codex_launch_preset = %s", strconv.Quote(string(settings.CodexLaunchPreset))))
+	lines = append(lines, "")
+	lines = append(lines, fmt.Sprintf("hide_reasoning_sections = %t", settings.HideReasoningSections))
 	lines = append(lines, "")
 	lines = append(lines, fmt.Sprintf("interval = %s", strconv.Quote(formatConfigDuration(settings.ScanInterval))))
 	lines = append(lines, fmt.Sprintf("active-threshold = %s", strconv.Quote(formatConfigDuration(settings.ActiveThreshold))))

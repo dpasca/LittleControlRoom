@@ -142,6 +142,8 @@ type Model struct {
 	showEvents   bool
 	showHelp     bool
 
+	hideReasoningSections bool
+
 	newProjectRecentParents []string
 }
 
@@ -386,6 +388,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		embeddedModelPrefs:     embeddedModelPreferencesFromSettings(initialSettings),
 		recentCodexModels:      append([]string(nil), initialSettings.RecentCodexModels...),
 		recentOpenCodeModels:   append([]string(nil), initialSettings.RecentOpenCodeModels...),
+		hideReasoningSections:  initialSettings.HideReasoningSections,
 		nowFn:                  time.Now,
 		homeDirFn:              os.UserHomeDir,
 	}
@@ -894,6 +897,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.excludeProjectPatterns = append([]string(nil), msg.settings.ExcludeProjectPatterns...)
 		m.privacyPatterns = append([]string(nil), msg.settings.PrivacyPatterns...)
 		m.embeddedModelPrefs = embeddedModelPreferencesFromSettings(msg.settings)
+		m.hideReasoningSections = msg.settings.HideReasoningSections
 		m.settingsMode = false
 		m.status = fmt.Sprintf("Settings saved to %s. Filters, API key, and Codex launch mode apply now; the running scheduler keeps its current timing until the next launch of %s.", msg.path, brand.CLIName)
 		m.rebuildProjectList(selectedPath)

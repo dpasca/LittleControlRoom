@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ const (
 	settingsFieldExcludeProjectPatterns
 	settingsFieldPrivacyPatterns
 	settingsFieldCodexLaunchPreset
+	settingsFieldHideReasoningSections
 	settingsFieldActiveThreshold
 	settingsFieldStuckThreshold
 	settingsFieldInterval
@@ -78,6 +80,7 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.settingsFieldValue(settingsFieldExcludeProjectPatterns),
 			m.settingsFieldValue(settingsFieldPrivacyPatterns),
 			m.settingsFieldValue(settingsFieldCodexLaunchPreset),
+			m.settingsFieldValue(settingsFieldHideReasoningSections),
 			m.currentSettingsBaseline().OpenCodeModelTier,
 			m.settingsFieldValue(settingsFieldActiveThreshold),
 			m.settingsFieldValue(settingsFieldStuckThreshold),
@@ -386,6 +389,12 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			"Accepted values: yolo, full-auto, safe. YOLO is the default. Anything else adds a lot more approval prompts and user interaction; safe is the most interruption-heavy.",
 			string(settings.CodexLaunchPreset),
 			24,
+		),
+		newSettingsField(
+			"Hide reasoning",
+			"Accepted values: true, false. When true, hides model reasoning sections (e.g., GLM-5 thinking blocks) in the embedded transcript. Default: true.",
+			strconv.FormatBool(settings.HideReasoningSections),
+			8,
 		),
 		newSettingsField(
 			"Active threshold",

@@ -49,6 +49,7 @@ type AppConfig struct {
 	SanitizeDryRun            bool
 	SanitizeProject           string
 	SanitizeSessionID         string
+	HideReasoningSections     bool
 }
 
 func (c AppConfig) EffectiveAIBackend() AIBackend {
@@ -73,6 +74,7 @@ type fileConfig struct {
 	ScanInterval              string    `toml:"interval"`
 	ActiveThreshold           string    `toml:"active-threshold"`
 	StuckThreshold            string    `toml:"stuck-threshold"`
+	HideReasoningSections     *bool     `toml:"hide_reasoning_sections"`
 }
 
 func Default() AppConfig {
@@ -376,6 +378,9 @@ func applyConfigFile(cfg *AppConfig) error {
 			return fmt.Errorf("config stuck-threshold: %w", err)
 		}
 		cfg.StuckThreshold = d
+	}
+	if fc.HideReasoningSections != nil {
+		cfg.HideReasoningSections = *fc.HideReasoningSections
 	}
 	cfg.ConfigLoaded = true
 	return nil
