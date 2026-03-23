@@ -1,6 +1,17 @@
 # Little Control Room Status
 
 Last updated: 2026-03-23 14:21 JST
+ 
+## Latest Update (2026-03-23 14:32 JST)
+
+- Added `decodeJSONOutput` in `internal/gitops/message.go` to sanitize model output before JSON unmarshal.
+- Commit message parsing now strips markdown-style code fences and extracts the first JSON object when the model returns wrapped text.
+- Reused the same sanitizer for untracked-file recommendation parsing in `internal/gitops/untracked.go`.
+- Added unit coverage `TestDecodeJSONOutput` in `internal/gitops/message_test.go`.
+- Verification commands were intentionally not run in this pass.
+- Next concrete tasks:
+  - Run `go test ./internal/gitops`.
+  - Manually verify `/commit` AI message fallback in `make tui` when using OpenCode.
 
 ## Latest Update (2026-03-23 14:21 JST)
 

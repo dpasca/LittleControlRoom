@@ -134,6 +134,48 @@ func TestOpenAICommitMessageClientSuggest(t *testing.T) {
 	}
 }
 
+func TestDecodeJSONOutput(t *testing.T) {
+	t.Parallel()
+
+	type commitPayload struct {
+		Message string `json:"message"`
+	}
+
+	tests := []struct {
+		name string
+		text string
+	}{
+		{
+			name: "plain json",
+			text: `{"message":"Improve commit message parsing"}`,
+		},
+		{
+			name: "json fenced output",
+			text: "```json\n{\"message\":\"Improve commit message parsing\"}\n```",
+		},
+		{
+			name: "fenced output with suffix",
+			text: "```json\n{\"message\":\"Improve commit message parsing\"}\n```\n",
+		},
+		{
+			name: "json embedded in prose",
+			text: "Here is the payload:\n{\"message\":\"Improve commit message parsing\"}",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var decoded commitPayload
+			if err := decodeJSONOutput(tc.text, &decoded); err != nil {
+				t.Fatalf("decodeJSONOutput: %v", err)
+			}
+			if decoded.Message != "Improve commit message parsing" {
+				t.Fatalf("message = %q, want recovered subject", decoded.Message)
+			}
+		})
+	}
+}
+
 func TestOpenAICommitMessageClientRecommendUntracked(t *testing.T) {
 	t.Parallel()
 

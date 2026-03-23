@@ -104,7 +104,7 @@ func (c *OpenAICommitMessageClient) RecommendUntracked(ctx context.Context, inpu
 	var decoded struct {
 		Files []UntrackedFileDecision `json:"files"`
 	}
-	if err := json.Unmarshal([]byte(response.OutputText), &decoded); err != nil {
+	if err := decodeJSONOutput(response.OutputText, &decoded); err != nil {
 		return UntrackedFileRecommendationResult{}, fmt.Errorf("decode untracked recommendation result: %w", err)
 	}
 	for i := range decoded.Files {
