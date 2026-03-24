@@ -33,6 +33,13 @@ const (
 	openCodeAgentCodePreviewLines       = 14
 	openCodeCollapsedCodePreviewMaxText = 240
 	openCodeCollapsedAgentPreviewRatio  = 45
+	// Massive output caps: applied to any entry regardless of content type.
+	openCodeMaxEntryLines           = 200 // hard cap per entry (collapsed mode)
+	openCodeMaxEntryPreviewLines    = 20  // preview lines shown when capped
+	openCodeRepetitionWindowLines   = 6   // sliding window size for repetition detection
+	openCodeRepetitionThreshold     = 4   // consecutive repeated windows to trigger collapse
+	openCodeMaxReasoningLines       = 120 // reasoning blocks get a tighter cap
+	openCodeMaxReasoningPreview     = 12  // preview lines for reasoning
 )
 
 func (m *Model) ensureCodexRuntime() {
@@ -2049,6 +2056,7 @@ func (m Model) renderCodexTranscriptEntries(snapshot codexapp.Snapshot, width in
 	if snapshot.Provider.Normalized() == codexapp.ProviderOpenCode {
 		entries = collapseOpenCodeToolRuns(entries, m.codexDenseExpanded)
 		entries = collapseOpenCodeLargeCodeBlocks(entries, m.codexDenseExpanded)
+		entries = collapseOpenCodeMassiveEntries(entries, m.codexDenseExpanded)
 	}
 	if width <= 0 {
 		width = 80
@@ -2312,6 +2320,101 @@ func isLikelyCodeLine(line string) bool {
 		return true
 	}
 	return false
+}
+
+// collapseOpenCodeMassiveEntries caps oversized entries and detects repetitive content.
+// Applied after code-block collapsing as a safety net for verbose/broken model output.
+func collapseOpenCodeMassiveEntries(entries []codexapp.TranscriptEntry, expanded bool) []codexapp.TranscriptEntry {
+	if expanded || len(entries) == 0 {
+		return entries
+	}
+	out := make([]codexapp.TranscriptEntry, 0, len(entries))
+	for _, entry := range entries {
+		switch entry.Kind {
+		case codexapp.TranscriptAgent, codexapp.TranscriptReasoning:
+			text := strings.TrimSpace(entry.Text)
+			lines := strings.Split(text, "\n")
+
+			maxLines := openCodeMaxEntryLines
+			previewLines := openCodeMaxEntryPreviewLines
+			kindLabel := "output"
+			if entry.Kind == codexapp.TranscriptReasoning {
+				maxLines = openCodeMaxReasoningLines
+				previewLines = openCodeMaxReasoningPreview
+				kindLabel = "reasoning"
+			}
+
+			// Check for repetitive content first (catches it even under the line cap)
+			if repIdx, repCount := detectRepetitiveContent(lines); repIdx >= 0 {
+				kept := lines[:repIdx]
+				omitted := len(lines) - repIdx
+				summary := fmt.Sprintf("\n[Repetitive %s detected: %d similar blocks omitted (%d lines). Alt+L expands.]",
+					kindLabel, repCount, omitted)
+				out = append(out, codexapp.TranscriptEntry{
+					Kind: entry.Kind,
+					Text: strings.Join(kept, "\n") + summary,
+				})
+				continue
+			}
+
+			// Apply line cap
+			if len(lines) > maxLines {
+				preview := strings.Join(lines[:previewLines], "\n")
+				summary := fmt.Sprintf("%s\n\n[Long %s truncated: %d lines total, %d shown. Alt+L expands the full output.]",
+					preview, kindLabel, len(lines), previewLines)
+				out = append(out, codexapp.TranscriptEntry{
+					Kind: entry.Kind,
+					Text: summary,
+				})
+				continue
+			}
+
+			out = append(out, entry)
+		default:
+			out = append(out, entry)
+		}
+	}
+	return out
+}
+
+// detectRepetitiveContent looks for repeated blocks of lines using a sliding window.
+// Returns the line index where repetition starts and how many repeated blocks were found,
+// or (-1, 0) if no significant repetition is detected.
+func detectRepetitiveContent(lines []string) (startIdx int, repeatCount int) {
+	if len(lines) < openCodeRepetitionWindowLines*openCodeRepetitionThreshold {
+		return -1, 0
+	}
+	// Try window sizes from the configured size down to 3
+	for windowSize := openCodeRepetitionWindowLines; windowSize >= 3; windowSize-- {
+		for start := 0; start+windowSize*(openCodeRepetitionThreshold+1) <= len(lines); start++ {
+			window := normalizeWindowLines(lines[start : start+windowSize])
+			matches := 0
+			pos := start + windowSize
+			for pos+windowSize <= len(lines) {
+				candidate := normalizeWindowLines(lines[pos : pos+windowSize])
+				if window == candidate {
+					matches++
+					pos += windowSize
+				} else {
+					break
+				}
+			}
+			if matches >= openCodeRepetitionThreshold {
+				// Keep the first occurrence, report where repeats start
+				return start + windowSize, matches
+			}
+		}
+	}
+	return -1, 0
+}
+
+func normalizeWindowLines(lines []string) string {
+	var b strings.Builder
+	for _, line := range lines {
+		b.WriteString(strings.TrimSpace(line))
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 func summarizeOpenCodeToolRun(entries []codexapp.TranscriptEntry) codexapp.TranscriptEntry {
@@ -3050,6 +3153,7 @@ func renderCodexBody(body string, color lipgloss.Color, width int) string {
 	inFence := false
 	fenceLanguage := ""
 	fenceLines := []string{}
+	tableRows := []string{}
 
 	flushFence := func() {
 		if len(fenceLines) == 0 {
@@ -3061,10 +3165,18 @@ func renderCodexBody(body string, color lipgloss.Color, width int) string {
 		out = append(out, strings.Split(highlighted, "\n")...)
 		fenceLines = nil
 	}
+	flushTable := func() {
+		if len(tableRows) == 0 {
+			return
+		}
+		out = append(out, renderCodexMarkdownTable(tableRows, color, width)...)
+		tableRows = nil
+	}
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		switch {
 		case strings.HasPrefix(trimmed, "```"):
+			flushTable()
 			if inFence {
 				flushFence()
 				inFence = false
@@ -3076,24 +3188,147 @@ func renderCodexBody(body string, color lipgloss.Color, width int) string {
 			out = append(out, lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Faint(true).Render(line))
 		case inFence:
 			fenceLines = append(fenceLines, line)
-		case strings.HasPrefix(trimmed, "[attached image]"):
-			out = append(out, renderCodexInlineMarkdown(line, lipgloss.NewStyle().Foreground(lipgloss.Color("179")).Bold(true)))
-		case strings.HasPrefix(trimmed, "## "):
-			out = append(out, renderCodexInlineMarkdown(strings.TrimPrefix(trimmed, "## "), lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)))
-		case strings.HasPrefix(trimmed, "# "):
-			out = append(out, renderCodexInlineMarkdown(strings.TrimPrefix(trimmed, "# "), lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)))
-		case strings.HasPrefix(trimmed, "> "):
-			out = append(out, renderCodexInlineMarkdown(line, lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Italic(true)))
-		case strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* "):
-			out = append(out, renderCodexInlineMarkdown("• "+strings.TrimSpace(trimmed[2:]), lipgloss.NewStyle().Foreground(lipgloss.Color("151"))))
+		case isMarkdownTableRow(trimmed):
+			tableRows = append(tableRows, trimmed)
 		default:
-			out = append(out, renderCodexInlineMarkdown(line, lipgloss.NewStyle().Foreground(color)))
+			flushTable()
+			switch {
+			case strings.HasPrefix(trimmed, "[attached image]"):
+				out = append(out, renderCodexInlineMarkdown(line, lipgloss.NewStyle().Foreground(lipgloss.Color("179")).Bold(true)))
+			case strings.HasPrefix(trimmed, "## "):
+				out = append(out, renderCodexInlineMarkdown(strings.TrimPrefix(trimmed, "## "), lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)))
+			case strings.HasPrefix(trimmed, "# "):
+				out = append(out, renderCodexInlineMarkdown(strings.TrimPrefix(trimmed, "# "), lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)))
+			case strings.HasPrefix(trimmed, "> "):
+				out = append(out, renderCodexInlineMarkdown(line, lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Italic(true)))
+			case strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* "):
+				out = append(out, renderCodexInlineMarkdown("• "+strings.TrimSpace(trimmed[2:]), lipgloss.NewStyle().Foreground(lipgloss.Color("151"))))
+			default:
+				out = append(out, renderCodexInlineMarkdown(line, lipgloss.NewStyle().Foreground(color)))
+			}
 		}
 	}
 	if inFence {
 		flushFence()
 	}
+	flushTable()
 	return lipgloss.NewStyle().Width(width).Render(strings.Join(out, "\n"))
+}
+
+func isMarkdownTableRow(line string) bool {
+	return strings.HasPrefix(line, "|") && strings.HasSuffix(line, "|") && strings.Count(line, "|") >= 3
+}
+
+func isMarkdownTableSeparator(line string) bool {
+	if !isMarkdownTableRow(line) {
+		return false
+	}
+	inner := strings.Trim(line, "|")
+	for _, cell := range strings.Split(inner, "|") {
+		cell = strings.TrimSpace(cell)
+		cleaned := strings.Trim(cell, ":-")
+		if cleaned != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func renderCodexMarkdownTable(rows []string, color lipgloss.Color, maxWidth int) []string {
+	if len(rows) == 0 {
+		return nil
+	}
+	// Parse all rows into cells
+	parsed := make([][]string, 0, len(rows))
+	separatorIdxs := map[int]bool{}
+	for i, row := range rows {
+		if isMarkdownTableSeparator(row) {
+			separatorIdxs[i] = true
+			parsed = append(parsed, nil)
+			continue
+		}
+		inner := strings.Trim(strings.TrimSpace(row), "|")
+		cells := strings.Split(inner, "|")
+		for j := range cells {
+			cells[j] = strings.TrimSpace(cells[j])
+		}
+		parsed = append(parsed, cells)
+	}
+
+	// Compute column widths
+	numCols := 0
+	for _, cells := range parsed {
+		if len(cells) > numCols {
+			numCols = len(cells)
+		}
+	}
+	if numCols == 0 {
+		return nil
+	}
+	colWidths := make([]int, numCols)
+	for _, cells := range parsed {
+		for j, cell := range cells {
+			if len(cell) > colWidths[j] {
+				colWidths[j] = len(cell)
+			}
+		}
+	}
+
+	// Cap column widths so table fits within maxWidth (account for separators: " | " between cols + "| " prefix + " |" suffix)
+	tableOverhead := 2 + numCols*3 - 1 // "| " + " | " * (n-1) + " |"
+	totalWidth := tableOverhead
+	for _, w := range colWidths {
+		totalWidth += w
+	}
+	if totalWidth > maxWidth && maxWidth > tableOverhead+numCols {
+		available := maxWidth - tableOverhead
+		for i, w := range colWidths {
+			maxCol := available / (numCols - i)
+			if w > maxCol {
+				colWidths[i] = maxCol
+			}
+			available -= colWidths[i]
+		}
+	}
+
+	headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)
+	cellStyle := lipgloss.NewStyle().Foreground(color)
+	borderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+
+	out := make([]string, 0, len(rows))
+	for i, cells := range parsed {
+		if separatorIdxs[i] {
+			// Render separator line
+			parts := make([]string, numCols)
+			for j := range parts {
+				parts[j] = strings.Repeat("─", colWidths[j])
+			}
+			out = append(out, borderStyle.Render("├─"+strings.Join(parts, "─┼─")+"─┤"))
+			continue
+		}
+		// Render data row
+		isHeader := i == 0 && len(parsed) > 1 && separatorIdxs[1]
+		parts := make([]string, numCols)
+		for j := 0; j < numCols; j++ {
+			cell := ""
+			if j < len(cells) {
+				cell = cells[j]
+			}
+			// Truncate if needed
+			if len(cell) > colWidths[j] {
+				cell = cell[:colWidths[j]-1] + "…"
+			}
+			padded := cell + strings.Repeat(" ", colWidths[j]-len(cell))
+			if isHeader {
+				parts[j] = headerStyle.Render(padded)
+			} else {
+				parts[j] = cellStyle.Render(padded)
+			}
+		}
+		sep := borderStyle.Render(" │ ")
+		out = append(out, borderStyle.Render("│ ")+strings.Join(parts, sep)+borderStyle.Render(" │"))
+	}
+	return out
 }
 
 func renderCodexInlineMarkdown(text string, style lipgloss.Style) string {
@@ -3103,22 +3338,87 @@ func renderCodexInlineMarkdown(text string, style lipgloss.Style) string {
 	var out strings.Builder
 	remaining := text
 	for len(remaining) > 0 {
-		start := strings.IndexByte(remaining, '[')
-		if start < 0 {
+		// Find the earliest markdown marker: **, *, or [
+		boldIdx := strings.Index(remaining, "**")
+		italicIdx := -1
+		linkIdx := strings.IndexByte(remaining, '[')
+
+		// Find standalone * (italic) that is not part of **
+		for i := 0; i < len(remaining); i++ {
+			if remaining[i] == '*' {
+				if i+1 < len(remaining) && remaining[i+1] == '*' {
+					i++ // skip **
+					continue
+				}
+				italicIdx = i
+				break
+			}
+		}
+
+		// Find earliest marker
+		earliest := -1
+		for _, idx := range []int{boldIdx, italicIdx, linkIdx} {
+			if idx >= 0 && (earliest < 0 || idx < earliest) {
+				earliest = idx
+			}
+		}
+		if earliest < 0 {
 			out.WriteString(style.Render(remaining))
 			break
 		}
-		if start > 0 {
-			out.WriteString(style.Render(remaining[:start]))
+
+		// Render text before the marker
+		if earliest > 0 {
+			out.WriteString(style.Render(remaining[:earliest]))
 		}
-		label, target, consumed, ok := parseCodexMarkdownLink(remaining[start:])
-		if !ok {
-			out.WriteString(style.Render(string(remaining[start])))
-			remaining = remaining[start+1:]
-			continue
+
+		// Process the marker
+		switch {
+		case boldIdx == earliest:
+			// Look for closing **
+			close := strings.Index(remaining[earliest+2:], "**")
+			if close < 0 || close == 0 {
+				out.WriteString(style.Render("**"))
+				remaining = remaining[earliest+2:]
+				continue
+			}
+			inner := remaining[earliest+2 : earliest+2+close]
+			out.WriteString(style.Copy().Bold(true).Render(inner))
+			remaining = remaining[earliest+2+close+2:]
+
+		case italicIdx == earliest:
+			// Look for closing * (not **)
+			rest := remaining[earliest+1:]
+			close := -1
+			for i := 0; i < len(rest); i++ {
+				if rest[i] == '*' {
+					if i+1 < len(rest) && rest[i+1] == '*' {
+						i++ // skip **
+						continue
+					}
+					close = i
+					break
+				}
+			}
+			if close <= 0 {
+				out.WriteString(style.Render("*"))
+				remaining = remaining[earliest+1:]
+				continue
+			}
+			inner := rest[:close]
+			out.WriteString(style.Copy().Italic(true).Render(inner))
+			remaining = rest[close+1:]
+
+		case linkIdx == earliest:
+			label, target, consumed, ok := parseCodexMarkdownLink(remaining[earliest:])
+			if !ok {
+				out.WriteString(style.Render("["))
+				remaining = remaining[earliest+1:]
+				continue
+			}
+			out.WriteString(renderCodexHyperlink(label, target, style))
+			remaining = remaining[earliest+consumed:]
 		}
-		out.WriteString(renderCodexHyperlink(label, target, style))
-		remaining = remaining[start+consumed:]
 	}
 	return out.String()
 }

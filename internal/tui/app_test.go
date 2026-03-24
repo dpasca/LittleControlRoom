@@ -6316,6 +6316,129 @@ func TestRenderCodexTranscriptEntriesKeepsCodexToolRunsUncollapsed(t *testing.T)
 	}
 }
 
+func TestRenderCodexBodyRendersBoldAndItalic(t *testing.T) {
+	rendered := ansi.Strip(renderCodexBody("This is **bold** and *italic* text.", lipgloss.Color("252"), 80))
+	if !strings.Contains(rendered, "bold") {
+		t.Fatalf("bold text should be preserved: %q", rendered)
+	}
+	if !strings.Contains(rendered, "italic") {
+		t.Fatalf("italic text should be preserved: %q", rendered)
+	}
+	// The ** and * delimiters should be stripped
+	if strings.Contains(rendered, "**") {
+		t.Fatalf("bold markers should be stripped: %q", rendered)
+	}
+}
+
+func TestRenderCodexBodyRendersMarkdownTable(t *testing.T) {
+	table := "| Name | Value | Status |\n| --- | --- | --- |\n| foo | 42 | ok |\n| bar | 99 | err |"
+	rendered := ansi.Strip(renderCodexBody(table, lipgloss.Color("252"), 80))
+	if !strings.Contains(rendered, "Name") || !strings.Contains(rendered, "foo") {
+		t.Fatalf("table should render cell contents: %q", rendered)
+	}
+	if !strings.Contains(rendered, "│") {
+		t.Fatalf("table should use box-drawing separators: %q", rendered)
+	}
+	if !strings.Contains(rendered, "─") {
+		t.Fatalf("table should render horizontal separator: %q", rendered)
+	}
+}
+
+func TestRenderCodexTranscriptEntriesCollapsesMassiveAgentOutput(t *testing.T) {
+	lines := make([]string, 250)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("This is output line %d with some content.", i)
+	}
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderOpenCode,
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: strings.Join(lines, "\n"),
+		}},
+	}
+
+	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 120))
+	if !strings.Contains(rendered, "Long output truncated") {
+		t.Fatalf("massive agent output should be truncated: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Alt+L expands") {
+		t.Fatalf("truncated output should mention Alt+L: %q", rendered)
+	}
+}
+
+func TestRenderCodexTranscriptEntriesCollapsesMassiveReasoningOutput(t *testing.T) {
+	lines := make([]string, 150)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("Thinking step %d...", i)
+	}
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderOpenCode,
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptReasoning,
+			Text: strings.Join(lines, "\n"),
+		}},
+	}
+
+	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 120))
+	if !strings.Contains(rendered, "Long reasoning truncated") {
+		t.Fatalf("massive reasoning output should be truncated: %q", rendered)
+	}
+}
+
+func TestRenderCodexTranscriptEntriesCollapsesRepetitiveContent(t *testing.T) {
+	// Simulate GLM-5 style repetitive output
+	lines := make([]string, 0, 100)
+	lines = append(lines, "Here is the solution:")
+	block := []string{
+		"Step 1: Initialize the variable",
+		"Step 2: Loop through items",
+		"Step 3: Process each item",
+		"Step 4: Return the result",
+		"Step 5: Clean up resources",
+		"Step 6: Log completion",
+	}
+	for i := 0; i < 10; i++ {
+		lines = append(lines, block...)
+	}
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderOpenCode,
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: strings.Join(lines, "\n"),
+		}},
+	}
+
+	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 120))
+	if !strings.Contains(rendered, "Repetitive") {
+		t.Fatalf("repetitive content should be detected and collapsed: %q", rendered)
+	}
+	if !strings.Contains(rendered, "similar blocks omitted") {
+		t.Fatalf("repetitive collapse should mention omitted blocks: %q", rendered)
+	}
+}
+
+func TestRenderCodexTranscriptEntriesExpandsMassiveOutputWithDenseMode(t *testing.T) {
+	lines := make([]string, 250)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("This is output line %d with some content.", i)
+	}
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderOpenCode,
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: strings.Join(lines, "\n"),
+		}},
+	}
+
+	rendered := ansi.Strip((Model{codexDenseExpanded: true}).renderCodexTranscriptEntries(snapshot, 120))
+	if strings.Contains(rendered, "Long output truncated") {
+		t.Fatalf("dense-expanded mode should show full output: %q", rendered[:200])
+	}
+	if !strings.Contains(rendered, "output line 249") {
+		t.Fatalf("dense-expanded mode should include all lines: %q", rendered[len(rendered)-200:])
+	}
+}
+
 func TestRenderCodexTranscriptEntriesParsesLegacyTranscriptWithoutSenderLabels(t *testing.T) {
 	snapshot := codexapp.Snapshot{
 		Transcript: "You: summarize this repo\n\nCodex: Here is a deliberately long answer that should wrap inside the pane without repeating the sender name on screen.",
