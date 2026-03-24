@@ -10,6 +10,7 @@ import (
 const (
 	runtimeRunningAttentionWeight   = 10
 	embeddedApprovalAttentionWeight = 120
+	embeddedQuestionAttentionWeight = 100
 )
 
 func (m Model) projectAttentionScore(project model.ProjectSummary) int {
@@ -20,6 +21,9 @@ func (m Model) projectAttentionScore(project model.ProjectSummary) int {
 	if _, _, ok := m.projectPendingEmbeddedApproval(project.Path); ok {
 		score += embeddedApprovalAttentionWeight
 	}
+	if _, _, ok := m.projectPendingEmbeddedQuestion(project.Path); ok {
+		score += embeddedQuestionAttentionWeight
+	}
 	return score
 }
 
@@ -29,6 +33,9 @@ func (m Model) projectAttentionReasons(project model.ProjectSummary, base []mode
 		reasons = append(reasons, *reason)
 	}
 	if reason := m.projectEmbeddedApprovalAttentionReason(project.Path); reason != nil {
+		reasons = append(reasons, *reason)
+	}
+	if reason := m.projectEmbeddedQuestionAttentionReason(project.Path); reason != nil {
 		reasons = append(reasons, *reason)
 	}
 	return reasons
@@ -79,6 +86,21 @@ func (m Model) projectEmbeddedApprovalAttentionReason(projectPath string) *model
 		Code:   "embedded_approval_pending",
 		Text:   text,
 		Weight: embeddedApprovalAttentionWeight,
+	}
+}
+
+func (m Model) projectEmbeddedQuestionAttentionReason(projectPath string) *model.AttentionReason {
+	summary, provider, ok := m.projectPendingEmbeddedQuestion(projectPath)
+	if !ok {
+		return nil
+	}
+
+	text := fmt.Sprintf("%s is asking: %s", provider.Label(), summary)
+
+	return &model.AttentionReason{
+		Code:   "embedded_question_pending",
+		Text:   text,
+		Weight: embeddedQuestionAttentionWeight,
 	}
 }
 

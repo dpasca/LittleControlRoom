@@ -128,6 +128,7 @@ type Model struct {
 	codexPickerEmpty     string
 	codexPickerProject   string
 	codexPickerProvider  codexapp.Provider
+	questionNotify       *questionNotification
 	codexModelPicker     *codexModelPickerState
 	embeddedModelPrefs   map[codexapp.Provider]embeddedModelPreference
 	recentCodexModels    []string
@@ -466,6 +467,35 @@ func (m Model) projectApprovalPulseActive(projectPath string) bool {
 	return m.spinnerFrame%2 == 0
 }
 
+func (m Model) projectPendingEmbeddedQuestion(projectPath string) (string, codexapp.Provider, bool) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return "", "", false
+	}
+	session, ok := m.codexSession(projectPath)
+	if !ok {
+		return "", "", false
+	}
+	snapshot := session.Snapshot()
+	if snapshot.Closed {
+		return "", "", false
+	}
+	if snapshot.PendingToolInput != nil {
+		return snapshot.PendingToolInput.Summary(), embeddedProvider(snapshot), true
+	}
+	if snapshot.PendingElicitation != nil {
+		return snapshot.PendingElicitation.Summary(), embeddedProvider(snapshot), true
+	}
+	return "", "", false
+}
+
+func (m Model) projectQuestionPulseActive(projectPath string) bool {
+	if _, _, ok := m.projectPendingEmbeddedQuestion(projectPath); !ok {
+		return false
+	}
+	return m.spinnerFrame%2 == 0
+}
+
 func (m *Model) refreshUsagePulse() {
 	usage := m.currentUsage()
 	if !usage.Enabled {
@@ -618,6 +648,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.settingsMode {
 			return m.updateSettingsMode(msg)
+		}
+		if m.questionNotify != nil {
+			return m.updateQuestionNotifyMode(msg)
 		}
 		return m.updateNormalMode(msg)
 	case projectsMsg:
@@ -1112,6 +1145,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if ok {
 			if !snapshot.Closed {
 				m.markCodexSessionLive(msg.projectPath)
+				m.detectQuestionNotification(msg.projectPath, snapshot)
 				return m, tea.Batch(cmds...)
 			}
 			if !m.markCodexSessionClosedHandled(msg.projectPath) {
@@ -1755,6 +1789,8 @@ func (m Model) View() string {
 		body = m.renderCodexPickerOverlay(body, layout.width, layout.height)
 	} else if m.ignoredPickerVisible {
 		body = m.renderIgnoredPickerOverlay(body, layout.width, layout.height)
+	} else if m.questionNotify != nil {
+		body = m.renderQuestionNotifyOverlay(body, layout.width, layout.height)
 	}
 	if m.todoDialog != nil {
 		body = m.renderTodoDialogOverlay(body, layout.width, layout.height)
@@ -2040,6 +2076,8 @@ func (m Model) renderProjectList(width, height int) string {
 			style = projectListCellStyle(style, selectedRow)
 			if m.projectApprovalPulseActive(p.Path) {
 				style = approvalPulseStyle(style)
+			} else if m.projectQuestionPulseActive(p.Path) {
+				style = questionPulseStyle(style)
 			}
 			return style
 		}
@@ -2211,6 +2249,10 @@ func projectListCellStyle(style lipgloss.Style, selected bool) lipgloss.Style {
 
 func approvalPulseStyle(style lipgloss.Style) lipgloss.Style {
 	return style.Foreground(lipgloss.Color("255")).Background(lipgloss.Color("160")).Bold(true)
+}
+
+func questionPulseStyle(style lipgloss.Style) lipgloss.Style {
+	return style.Foreground(lipgloss.Color("255")).Background(lipgloss.Color("33")).Bold(true)
 }
 
 var spinnerFrames = []string{"|", "/", "-", `\`}

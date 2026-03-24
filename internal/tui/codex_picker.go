@@ -588,6 +588,9 @@ func (m Model) showCodexProject(projectPath, status string) (tea.Model, tea.Cmd)
 	}
 	m.codexVisibleProject = projectPath
 	m.codexHiddenProject = projectPath
+	if m.questionNotify != nil && m.questionNotify.ProjectPath == projectPath {
+		m.questionNotify = nil
+	}
 	m.loadCodexDraft(projectPath)
 	m.refreshCodexSnapshot(projectPath)
 	m.syncCodexViewport(true)
