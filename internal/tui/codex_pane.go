@@ -2102,7 +2102,7 @@ func renderCodexTranscriptEntry(entry codexapp.TranscriptEntry, width int, expan
 	case codexapp.TranscriptFileChange:
 		return renderCodexDenseBlock("File changes", text, lipgloss.Color("179"), width, expanded)
 	case codexapp.TranscriptTool:
-		return renderCodexCompactTranscriptLine(compactCodexToolTranscriptText(text), lipgloss.Color("141"), width)
+		return renderCodexToolLine(text, width)
 	case codexapp.TranscriptError:
 		return renderCodexMessageBlock("Error", text, lipgloss.Color("203"), lipgloss.Color("252"), width)
 	case codexapp.TranscriptStatus:
@@ -2132,6 +2132,181 @@ func compactCodexToolTranscriptText(text string) string {
 		parts = append(parts, line)
 	}
 	return strings.Join(parts, " | ")
+}
+
+// parsedToolCall holds the decomposed parts of a tool transcript entry.
+type parsedToolCall struct {
+	ToolName string // e.g. "bash", "read", "write", "grep"
+	Status   string // e.g. "completed", "running", ""
+	Summary  string // description or command
+	Prefix   string // e.g. "Tool", "MCP tool", "Web search"
+}
+
+// parseToolTranscriptText extracts tool name, status, and summary from tool text.
+func parseToolTranscriptText(text string) parsedToolCall {
+	text = strings.TrimSpace(text)
+
+	// Handle collapsed summary lines ("Tool activity: ...")
+	if strings.HasPrefix(text, "Tool activity") {
+		return parsedToolCall{Prefix: "Tool", ToolName: "activity", Summary: strings.TrimPrefix(text, "Tool activity: ")}
+	}
+
+	// "Web search: query"
+	if strings.HasPrefix(text, "Web search: ") {
+		return parsedToolCall{Prefix: "Web", ToolName: "search", Summary: strings.TrimPrefix(text, "Web search: ")}
+	}
+
+	// "Viewed image: path"
+	if strings.HasPrefix(text, "Viewed image: ") {
+		return parsedToolCall{Prefix: "Tool", ToolName: "image", Summary: strings.TrimPrefix(text, "Viewed image: ")}
+	}
+
+	// "Image generation [status]\nresult"
+	if strings.HasPrefix(text, "Image generation") {
+		return parsedToolCall{Prefix: "Tool", ToolName: "image_gen", Summary: text}
+	}
+
+	// "MCP tool server/tool [status]"
+	if strings.HasPrefix(text, "MCP tool ") {
+		rest := strings.TrimPrefix(text, "MCP tool ")
+		name, status := "", ""
+		if idx := strings.Index(rest, " ["); idx >= 0 {
+			name = rest[:idx]
+			end := strings.IndexByte(rest[idx+2:], ']')
+			if end >= 0 {
+				status = rest[idx+2 : idx+2+end]
+			}
+		} else {
+			name = rest
+		}
+		return parsedToolCall{Prefix: "MCP", ToolName: name, Status: status}
+	}
+
+	// "Tool <name> [status]" (dynamic tool calls)
+	if strings.HasPrefix(text, "Tool ") && strings.Contains(text, " [") {
+		rest := strings.TrimPrefix(text, "Tool ")
+		if idx := strings.Index(rest, " ["); idx >= 0 {
+			name := rest[:idx]
+			end := strings.IndexByte(rest[idx+2:], ']')
+			status := ""
+			if end >= 0 {
+				status = rest[idx+2 : idx+2+end]
+			}
+			return parsedToolCall{Prefix: "Tool", ToolName: name, Status: status}
+		}
+	}
+
+	// "Tool <name> <status>: <summary>" or "Tool <name>: <summary>" or "Tool <name> <status>" or "Tool <name>"
+	if strings.HasPrefix(text, "Tool ") {
+		rest := strings.TrimPrefix(text, "Tool ")
+		// Try "name status: summary"
+		if colonIdx := strings.Index(rest, ": "); colonIdx >= 0 {
+			before := rest[:colonIdx]
+			summary := rest[colonIdx+2:]
+			parts := strings.SplitN(before, " ", 2)
+			name := parts[0]
+			status := ""
+			if len(parts) > 1 {
+				status = parts[1]
+			}
+			return parsedToolCall{Prefix: "Tool", ToolName: name, Status: status, Summary: summary}
+		}
+		// Try "name status" or just "name"
+		parts := strings.SplitN(rest, " ", 2)
+		name := parts[0]
+		status := ""
+		if len(parts) > 1 {
+			status = parts[1]
+		}
+		return parsedToolCall{Prefix: "Tool", ToolName: name, Status: status}
+	}
+
+	return parsedToolCall{Summary: text}
+}
+
+// toolCategoryColor returns accent color and symbol for a tool name.
+func toolCategoryColor(toolName string) (accent lipgloss.Color, symbol string) {
+	lower := strings.ToLower(toolName)
+	switch {
+	case lower == "bash" || lower == "shell" || lower == "command" || lower == "execute":
+		return lipgloss.Color("111"), "$" // blue
+	case lower == "read" || lower == "cat" || lower == "view":
+		return lipgloss.Color("179"), "→" // yellow/amber
+	case lower == "write" || lower == "edit" || lower == "patch" || lower == "apply_diff":
+		return lipgloss.Color("120"), "+" // green
+	case lower == "grep" || lower == "search" || lower == "find" || lower == "glob" || lower == "rg":
+		return lipgloss.Color("81"), "?" // cyan
+	case strings.Contains(lower, "/"):
+		return lipgloss.Color("141"), "◆" // purple for MCP (server/tool format)
+	case lower == "image" || lower == "image_gen":
+		return lipgloss.Color("179"), "◻" // amber
+	case lower == "search":
+		return lipgloss.Color("214"), "⊕" // orange for web
+	case lower == "activity":
+		return lipgloss.Color("244"), "…" // gray for collapsed summaries
+	default:
+		return lipgloss.Color("141"), "•" // purple default
+	}
+}
+
+// renderCodexToolLine renders a tool transcript entry with structured styling.
+func renderCodexToolLine(text string, width int) string {
+	compacted := compactCodexToolTranscriptText(text)
+	parsed := parseToolTranscriptText(compacted)
+
+	accent, symbol := toolCategoryColor(parsed.ToolName)
+
+	// Build the styled line
+	var parts []string
+
+	// Symbol + tool name (bold)
+	nameStyle := lipgloss.NewStyle().Foreground(accent).Bold(true)
+	if parsed.ToolName != "" {
+		parts = append(parts, nameStyle.Render(symbol+" "+parsed.ToolName))
+	} else {
+		parts = append(parts, nameStyle.Render(symbol+" tool"))
+	}
+
+	// Status (dimmed, skip "completed" as it's noise)
+	if parsed.Status != "" && parsed.Status != "completed" && parsed.Status != "call completed" {
+		statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Faint(true)
+		parts = append(parts, statusStyle.Render("["+parsed.Status+"]"))
+	}
+
+	// Summary (lighter color)
+	if parsed.Summary != "" {
+		summaryStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+		summary := parsed.Summary
+		// Truncate long summaries to fit width (leave room for name + status)
+		usedWidth := len(parsed.ToolName) + 4 // symbol + spaces + margin
+		maxSummary := width - usedWidth - 4
+		if maxSummary > 10 && len(summary) > maxSummary {
+			// Preserve "+N more ..." suffix if present
+			if moreIdx := strings.LastIndex(summary, " | +"); moreIdx >= 0 {
+				suffix := summary[moreIdx+3:] // e.g. "+3 more tool updates"
+				suffixStyled := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Faint(true).Render(suffix)
+				trimmed := summary[:moreIdx]
+				maxTrimmed := maxSummary - len(suffix) - 5
+				if maxTrimmed > 10 && len(trimmed) > maxTrimmed {
+					trimmed = trimmed[:maxTrimmed-1] + "…"
+				}
+				parts = append(parts, summaryStyle.Render(trimmed), suffixStyled)
+			} else {
+				summary = summary[:maxSummary-1] + "…"
+				parts = append(parts, summaryStyle.Render(summary))
+			}
+		} else {
+			parts = append(parts, summaryStyle.Render(summary))
+		}
+	}
+
+	body := strings.Join(parts, " ")
+	return lipgloss.NewStyle().
+		BorderLeft(true).
+		BorderForeground(accent).
+		PaddingLeft(1).
+		Width(width).
+		Render(body)
 }
 
 func collapseOpenCodeToolRuns(entries []codexapp.TranscriptEntry, expanded bool) []codexapp.TranscriptEntry {

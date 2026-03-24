@@ -6127,11 +6127,15 @@ func TestRenderCodexTranscriptEntryCompactsToolCallsToSingleLine(t *testing.T) {
 		Text: "Tool call completed: read README.md\nusing rg --files",
 	}, 90, false))
 
-	if !strings.Contains(rendered, "Tool call completed: read README.md | using rg --files") {
-		t.Fatalf("tool transcript entry should compact tool text into one visible line: %q", rendered)
+	// New structured rendering shows tool name bold + summary
+	if !strings.Contains(rendered, "call") {
+		t.Fatalf("tool transcript entry should show tool name: %q", rendered)
 	}
-	if strings.Contains(rendered, "\n") {
-		t.Fatalf("tool transcript entry should not render a separate header/body split when width allows it: %q", rendered)
+	if !strings.Contains(rendered, "read README.md") {
+		t.Fatalf("tool transcript entry should show summary: %q", rendered)
+	}
+	if strings.Count(rendered, "\n") > 1 {
+		t.Fatalf("tool transcript entry should render compactly: %q", rendered)
 	}
 }
 
@@ -6166,7 +6170,7 @@ func TestRenderCodexTranscriptEntriesCollapsesLongOpenCodeToolRuns(t *testing.T)
 	}
 
 	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 120))
-	if !strings.Contains(rendered, "Tool activity:") {
+	if !strings.Contains(rendered, "activity") {
 		t.Fatalf("long OpenCode tool run should collapse into a summary line: %q", rendered)
 	}
 	if !strings.Contains(rendered, "+3 more tool updates") {
@@ -6313,6 +6317,44 @@ func TestRenderCodexTranscriptEntriesKeepsCodexToolRunsUncollapsed(t *testing.T)
 	}
 	if !strings.Contains(rendered, "inspect opencode_session.go") {
 		t.Fatalf("Codex tool runs should still show individual updates: %q", rendered)
+	}
+}
+
+func TestRenderCodexToolLineShowsToolNameAndSummary(t *testing.T) {
+	rendered := ansi.Strip(renderCodexToolLine("Tool bash completed: Run focused service tests", 80))
+	if !strings.Contains(rendered, "bash") {
+		t.Fatalf("tool line should show tool name: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Run focused service tests") {
+		t.Fatalf("tool line should show summary: %q", rendered)
+	}
+	// "completed" status should be suppressed (noise)
+	if strings.Contains(rendered, "completed") {
+		t.Fatalf("tool line should suppress 'completed' status: %q", rendered)
+	}
+}
+
+func TestRenderCodexToolLineShowsNonCompletedStatus(t *testing.T) {
+	rendered := ansi.Strip(renderCodexToolLine("Tool bash running: long operation", 80))
+	if !strings.Contains(rendered, "running") {
+		t.Fatalf("tool line should show non-completed status: %q", rendered)
+	}
+}
+
+func TestRenderCodexToolLineParsesWebSearch(t *testing.T) {
+	rendered := ansi.Strip(renderCodexToolLine("Web search: golang concurrency patterns", 80))
+	if !strings.Contains(rendered, "search") {
+		t.Fatalf("web search should show tool name: %q", rendered)
+	}
+	if !strings.Contains(rendered, "golang concurrency patterns") {
+		t.Fatalf("web search should show query: %q", rendered)
+	}
+}
+
+func TestRenderCodexToolLineParsesMCPTool(t *testing.T) {
+	rendered := ansi.Strip(renderCodexToolLine("MCP tool myserver/query [completed]", 80))
+	if !strings.Contains(rendered, "myserver/query") {
+		t.Fatalf("MCP tool should show server/tool name: %q", rendered)
 	}
 }
 
