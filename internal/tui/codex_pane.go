@@ -34,12 +34,12 @@ const (
 	openCodeCollapsedCodePreviewMaxText = 240
 	openCodeCollapsedAgentPreviewRatio  = 45
 	// Massive output caps: applied to any entry regardless of content type.
-	openCodeMaxEntryLines           = 200 // hard cap per entry (collapsed mode)
-	openCodeMaxEntryPreviewLines    = 20  // preview lines shown when capped
-	openCodeRepetitionWindowLines   = 6   // sliding window size for repetition detection
-	openCodeRepetitionThreshold     = 4   // consecutive repeated windows to trigger collapse
-	openCodeMaxReasoningLines       = 120 // reasoning blocks get a tighter cap
-	openCodeMaxReasoningPreview     = 12  // preview lines for reasoning
+	openCodeMaxEntryLines         = 200 // hard cap per entry (collapsed mode)
+	openCodeMaxEntryPreviewLines  = 20  // preview lines shown when capped
+	openCodeRepetitionWindowLines = 6   // sliding window size for repetition detection
+	openCodeRepetitionThreshold   = 4   // consecutive repeated windows to trigger collapse
+	openCodeMaxReasoningLines     = 120 // reasoning blocks get a tighter cap
+	openCodeMaxReasoningPreview   = 12  // preview lines for reasoning
 )
 
 func (m *Model) ensureCodexRuntime() {
@@ -2071,7 +2071,7 @@ func (m Model) renderCodexTranscriptEntries(snapshot codexapp.Snapshot, width in
 		if reasoningLineCount == 0 {
 			return
 		}
-		block := renderCodexReasoningIndicator(reasoningLineCount, contentWidth)
+		block := renderReasoningIndicator(reasoningLineCount, contentWidth)
 		if hasPrevious {
 			blocks = append(blocks, codexTranscriptEntrySeparator(previousKind, codexapp.TranscriptReasoning))
 		}
@@ -2120,7 +2120,7 @@ func renderCodexTranscriptEntry(entry codexapp.TranscriptEntry, width int, expan
 	case codexapp.TranscriptPlan:
 		return renderCodexMessageBlock("Plan", text, lipgloss.Color("214"), lipgloss.Color("252"), width)
 	case codexapp.TranscriptReasoning:
-		return renderCodexReasoningBlock(text, width)
+		return renderReasoningBlock(text, width)
 	case codexapp.TranscriptCommand:
 		return renderCodexDenseBlock("Command", text, lipgloss.Color("111"), width, expanded)
 	case codexapp.TranscriptFileChange:
@@ -3333,33 +3333,33 @@ func renderCodexMessageBlockWithStyle(label, body string, accent, bodyColor lipg
 	return style.Render(strings.Join(lines, "\n"))
 }
 
-var codexReasoningBackgroundColor = lipgloss.Color("235")
+var reasoningBackgroundColor = lipgloss.Color("235")
 
-func renderCodexReasoningBlock(body string, width int) string {
+func renderReasoningBlock(body string, width int) string {
 	contentWidth := max(10, width-4)
 	label := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("180")).Faint(true).Render("Reasoning")
-	bodyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Faint(true).Width(contentWidth)
-	wrappedBody := bodyStyle.Render(renderCodexBody(body, lipgloss.Color("244"), contentWidth))
+	bodyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Width(contentWidth)
+	wrappedBody := bodyStyle.Render(renderCodexBody(body, lipgloss.Color("252"), contentWidth))
 	return lipgloss.NewStyle().
 		BorderLeft(true).
 		BorderForeground(lipgloss.Color("180")).
 		PaddingLeft(1).
 		PaddingRight(1).
-		Background(codexReasoningBackgroundColor).
+		Background(reasoningBackgroundColor).
 		Render(label + "\n" + wrappedBody)
 }
 
-// renderCodexReasoningIndicator renders a compact single-line indicator for hidden
+// renderReasoningIndicator renders a compact single-line indicator for hidden
 // reasoning content instead of showing nothing (which causes visible content flashes
 // as reasoning entries appear and disappear during streaming).
-func renderCodexReasoningIndicator(lineCount int, width int) string {
+func renderReasoningIndicator(lineCount int, width int) string {
 	accent := lipgloss.Color("180")
 	label := lipgloss.NewStyle().Foreground(accent).Faint(true).Render("Thinking…")
 	plural := "lines"
 	if lineCount == 1 {
 		plural = "line"
 	}
-	detail := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Faint(true).Render(
+	detail := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(
 		fmt.Sprintf(" (%d %s, Alt+L expands)", lineCount, plural))
 	return lipgloss.NewStyle().
 		BorderLeft(true).
