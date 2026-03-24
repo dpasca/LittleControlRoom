@@ -176,23 +176,21 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 		if err != nil {
 			return CommitPreview{}, err
 		}
-		if len(includedChanges) <= 8 {
-			patch, err = gitops.ReadDiffPatchAllStaged(ctx, projectPath, 6000)
-			if err != nil {
-				return CommitPreview{}, err
-			}
+		patches, err := gitops.ReadDiffPatchPerFile(ctx, projectPath, false, gitChangePaths(includedChanges), 10000)
+		if err != nil {
+			return CommitPreview{}, err
 		}
+		patch = gitops.MergeDiffPatches(patches)
 	} else {
 		diffStat, err = gitops.ReadDiffStat(ctx, projectPath, true)
 		if err != nil {
 			return CommitPreview{}, err
 		}
-		if len(includedChanges) <= 8 {
-			patch, err = gitops.ReadDiffPatch(ctx, projectPath, true, 6000)
-			if err != nil {
-				return CommitPreview{}, err
-			}
+		patches, err := gitops.ReadDiffPatchPerFile(ctx, projectPath, true, gitChangePaths(includedChanges), 10000)
+		if err != nil {
+			return CommitPreview{}, err
 		}
+		patch = gitops.MergeDiffPatches(patches)
 	}
 
 	warnings := []string{}
@@ -221,13 +219,11 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 						if err != nil {
 							return CommitPreview{}, err
 						}
-						patch = ""
-						if len(includedChanges) <= 8 {
-							patch, err = gitops.ReadDiffPatchWithAddedPaths(ctx, projectPath, gitChangePaths(selectedUntracked), 6000)
-							if err != nil {
-								return CommitPreview{}, err
-							}
+						patches, err := gitops.ReadDiffPatchPerFile(ctx, projectPath, true, gitChangePaths(includedChanges), 10000)
+						if err != nil {
+							return CommitPreview{}, err
 						}
+						patch = gitops.MergeDiffPatches(patches)
 						warnings = append(warnings, formatSelectedUntrackedWarning(len(selectedUntracked)))
 						if reviewNote := formatSelectedUntrackedReview(selectedDecisions); reviewNote != "" {
 							warnings = append(warnings, reviewNote)

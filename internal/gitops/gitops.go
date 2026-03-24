@@ -79,6 +79,56 @@ func ReadDiffPatchWithAddedPaths(ctx context.Context, path string, extraPaths []
 	return trimmed, nil
 }
 
+func ReadDiffPatchPerFile(ctx context.Context, path string, cached bool, paths []string, maxBytes int) (map[string]string, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	if maxBytes <= 0 {
+		return nil, nil
+	}
+	perFileBudget := maxBytes / len(paths)
+	results := make(map[string]string, len(paths))
+	for _, relPath := range paths {
+		patch, err := readDiffPatchForSinglePath(ctx, path, cached, relPath, perFileBudget)
+		if err != nil {
+			return nil, err
+		}
+		results[relPath] = patch
+	}
+	return results, nil
+}
+
+func readDiffPatchForSinglePath(ctx context.Context, repoPath string, cached bool, relPath string, maxBytes int) (string, error) {
+	args := []string{"-C", repoPath, "diff"}
+	if cached {
+		args = append(args, "--cached")
+	}
+	args = append(args, "--unified=0", "--no-color", "--find-renames", "--", relPath)
+	out, err := exec.CommandContext(ctx, "git", args...).Output()
+	if err != nil {
+		return "", fmt.Errorf("read git diff patch for %s: %w", relPath, err)
+	}
+	trimmed := strings.TrimSpace(string(out))
+	if maxBytes > 0 && len(trimmed) > maxBytes {
+		trimmed = trimmed[:maxBytes]
+	}
+	return trimmed, nil
+}
+
+func MergeDiffPatches(patches map[string]string) string {
+	if len(patches) == 0 {
+		return ""
+	}
+	var builder strings.Builder
+	for _, patch := range patches {
+		if patch != "" {
+			builder.WriteString(patch)
+			builder.WriteString("\n")
+		}
+	}
+	return strings.TrimSpace(builder.String())
+}
+
 func StageAll(ctx context.Context, path string) error {
 	cmd := exec.CommandContext(ctx, "git", "-C", path, "add", "--all", "--", ".")
 	if out, err := cmd.CombinedOutput(); err != nil {
