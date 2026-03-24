@@ -2081,7 +2081,7 @@ func (m Model) renderCodexTranscriptEntries(snapshot codexapp.Snapshot, width in
 		reasoningLineCount = 0
 	}
 	for _, entry := range entries {
-		if m.hideReasoningSections && entry.Kind == codexapp.TranscriptReasoning {
+		if m.hideReasoningSections && !m.codexDenseExpanded && entry.Kind == codexapp.TranscriptReasoning {
 			// Accumulate reasoning lines for compact indicator
 			text := strings.TrimSpace(entry.Text)
 			if text != "" {
@@ -3355,8 +3355,12 @@ func renderCodexReasoningBlock(body string, width int) string {
 func renderCodexReasoningIndicator(lineCount int, width int) string {
 	accent := lipgloss.Color("180")
 	label := lipgloss.NewStyle().Foreground(accent).Faint(true).Render("Thinking…")
+	plural := "lines"
+	if lineCount == 1 {
+		plural = "line"
+	}
 	detail := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Faint(true).Render(
-		fmt.Sprintf(" (%d lines, Alt+L expands)", lineCount))
+		fmt.Sprintf(" (%d %s, Alt+L expands)", lineCount, plural))
 	return lipgloss.NewStyle().
 		BorderLeft(true).
 		BorderForeground(accent).

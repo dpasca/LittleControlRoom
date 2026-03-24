@@ -6502,6 +6502,41 @@ func TestReasoningShownFullyWhenNotHidden(t *testing.T) {
 	}
 }
 
+func TestReasoningExpandedWithAltL(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderOpenCode,
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptReasoning, Text: "Detailed reasoning step here"},
+		},
+	}
+
+	// hideReasoningSections=true but codexDenseExpanded=true (Alt+L) should show full reasoning
+	rendered := ansi.Strip((Model{hideReasoningSections: true, codexDenseExpanded: true}).renderCodexTranscriptEntries(snapshot, 90))
+	if strings.Contains(rendered, "Thinking") {
+		t.Fatalf("Alt+L should bypass reasoning hiding and show full content: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Detailed reasoning step here") {
+		t.Fatalf("Alt+L should reveal full reasoning content: %q", rendered)
+	}
+}
+
+func TestReasoningIndicatorSingularLine(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderOpenCode,
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptReasoning, Text: "One line of thought"},
+		},
+	}
+
+	rendered := ansi.Strip((Model{hideReasoningSections: true}).renderCodexTranscriptEntries(snapshot, 90))
+	if !strings.Contains(rendered, "1 line,") {
+		t.Fatalf("single-line reasoning should use singular 'line': %q", rendered)
+	}
+	if strings.Contains(rendered, "1 lines") {
+		t.Fatalf("should not say '1 lines': %q", rendered)
+	}
+}
+
 func TestDefaultConfigHidesReasoningSections(t *testing.T) {
 	cfg := config.Default()
 	if !cfg.HideReasoningSections {
