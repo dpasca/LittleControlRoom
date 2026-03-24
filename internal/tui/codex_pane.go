@@ -900,10 +900,10 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = "Closing embedded " + label + " session..."
 		return m, m.closeVisibleCodexCmd()
 	case "pgup":
-		m.codexViewport.PageUp()
+		m.codexViewport.HalfPageUp()
 		return m, nil
 	case "pgdown":
-		m.codexViewport.PageDown()
+		m.codexViewport.HalfPageDown()
 		return m, nil
 	}
 
@@ -1404,7 +1404,7 @@ func (m *Model) syncCodexViewport(resetToBottom bool) {
 	transcriptHeight := codexTranscriptContentHeight(height, lowerHeight)
 
 	projectPath := strings.TrimSpace(m.codexVisibleProject)
-	m.codexViewport.Width = max(24, width-4)
+	m.codexViewport.Width = max(24, width)
 	m.codexViewport.Height = max(1, transcriptHeight)
 
 	offset := m.codexViewport.YOffset
@@ -1446,7 +1446,7 @@ func (m Model) renderCodexView() string {
 
 	transcript := m.codexViewport
 	projectPath := strings.TrimSpace(m.codexVisibleProject)
-	transcript.Width = max(24, width-4)
+	transcript.Width = max(24, width)
 	transcript.Height = max(1, transcriptHeight)
 	switch {
 	case m.codexViewportContentMatches(projectPath, transcript.Width):
@@ -1465,7 +1465,7 @@ func (m Model) renderCodexView() string {
 	default:
 		transcript.SetContent(m.renderCodexTranscriptContentFromSnapshot(snapshot, transcript.Width))
 	}
-	body := m.renderFramedPane(transcript.View(), width, transcriptHeight, true)
+	body := m.renderHFramedPane(transcript.View(), width, transcriptHeight, true)
 
 	lines := []string{m.renderCodexBanner(snapshot, width), body}
 	lines = append(lines, lowerBlocks...)
@@ -1493,11 +1493,11 @@ func (m Model) renderCodexOpeningView(projectPath string) string {
 	label := m.codexPendingOpenProvider().Label()
 	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Render(label + " | " + projectName)
 	bodyHeight := max(3, height-6)
-	body := m.renderFramedPane(strings.Join([]string{
+	body := m.renderHFramedPane(strings.Join([]string{
 		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Render("Opening embedded " + label + " session..."),
 		"",
-		fitFooterWidth("Project: "+projectPath, max(24, width-8)),
-		fitFooterWidth("Waiting for the previous embedded session to settle and for the new session to come online.", max(24, width-8)),
+		fitFooterWidth("Project: "+projectPath, max(24, width-4)),
+		fitFooterWidth("Waiting for the previous embedded session to settle and for the new session to come online.", max(24, width-4)),
 	}, "\n"), width, bodyHeight, true)
 	footer := renderFooterLine(width, renderFooterStatus("Opening embedded "+label+" session"))
 	return strings.Join([]string{renderFooterLine(width, title), body, footer}, "\n")

@@ -526,6 +526,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncCodexViewport(false)
 		m.syncRuntimeViewport(false)
 		return m, nil
+	case tea.MouseMsg:
+		if m.codexVisible() {
+			var cmd tea.Cmd
+			m.codexViewport, cmd = m.codexViewport.Update(msg)
+			return m, cmd
+		}
 	case tea.KeyMsg:
 		if m.codexModelPickerVisible() {
 			return m.updateCodexModelPickerMode(msg)
@@ -1867,6 +1873,23 @@ func (m Model) renderFramedPane(content string, width, innerHeight int, focused 
 	contentWidth := max(0, width-4)
 	content = fitPaneContent(content, contentWidth, innerHeight)
 	return paneBoxStyle(focused).Render(content)
+}
+
+func hFramedPaneStyle(focused bool) lipgloss.Style {
+	borderColor := lipgloss.Color("238")
+	if focused {
+		borderColor = lipgloss.Color("81")
+	}
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		BorderLeft(false).
+		BorderRight(false)
+}
+
+func (m Model) renderHFramedPane(content string, width, innerHeight int, focused bool) string {
+	content = fitPaneContent(content, width, innerHeight)
+	return hFramedPaneStyle(focused).Width(width).Render(content)
 }
 
 func (m Model) selectedProject() (model.ProjectSummary, bool) {
