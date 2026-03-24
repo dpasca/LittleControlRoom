@@ -161,7 +161,7 @@ func (m Model) updateDiffMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.status = "Staging selected file..."
 		}
-		return m, m.toggleDiffStageCmd(m.diffView.ProjectPath, file)
+		return m, m.toggleDiffStageCmd(m.diffView.ProjectPath, file, file.Staged)
 	case "m":
 		m.toggleDiffRenderMode()
 		return m, nil

@@ -229,6 +229,7 @@ type diffStageToggleMsg struct {
 	status       string
 	path         string
 	originalPath string
+	selectStaged bool
 	err          error
 }
 
@@ -856,7 +857,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.err = nil
 		m.diffView.preview = &msg.preview
-		m.diffView.selected = diffPreviewSelectionIndex(msg.preview.Files, msg.path, msg.originalPath, m.diffView.selected)
+		m.diffView.selected = diffPreviewStagedSelectionIndex(msg.preview.Files, msg.path, msg.originalPath, m.diffView.selected, msg.selectStaged)
 		m.diffView.resetRenderCache()
 		m.syncDiffView(true)
 		if strings.TrimSpace(msg.status) != "" {
@@ -2889,11 +2890,11 @@ func (m *Model) startDiffViewFromCommitPreview(preview service.CommitPreview, me
 	return cmd
 }
 
-func (m Model) toggleDiffStageCmd(projectPath string, file service.DiffFilePreview) tea.Cmd {
+func (m Model) toggleDiffStageCmd(projectPath string, file service.DiffFilePreview, selectStaged bool) tea.Cmd {
 	return func() tea.Msg {
 		status, err := m.svc.ToggleDiffFileStage(m.ctx, projectPath, file)
 		if err != nil {
-			return diffStageToggleMsg{status: status, path: file.Path, originalPath: file.OriginalPath, err: err}
+			return diffStageToggleMsg{status: status, path: file.Path, originalPath: file.OriginalPath, selectStaged: selectStaged, err: err}
 		}
 		preview, err := m.svc.PrepareDiff(m.ctx, projectPath)
 		return diffStageToggleMsg{
@@ -2901,6 +2902,7 @@ func (m Model) toggleDiffStageCmd(projectPath string, file service.DiffFilePrevi
 			status:       status,
 			path:         file.Path,
 			originalPath: file.OriginalPath,
+			selectStaged: selectStaged,
 			err:          err,
 		}
 	}
@@ -2954,6 +2956,20 @@ func diffPreviewSelectionIndex(files []service.DiffFilePreview, path, originalPa
 		return len(files) - 1
 	}
 	return fallback
+}
+
+func diffPreviewStagedSelectionIndex(files []service.DiffFilePreview, path, originalPath string, fallback int, selectStaged bool) int {
+	currentIdx := diffPreviewSelectionIndex(files, path, originalPath, fallback)
+	if len(files) == 0 {
+		return 0
+	}
+	for i := 0; i < len(files); i++ {
+		idx := (currentIdx + 1 + i) % len(files)
+		if files[idx].Staged == selectStaged {
+			return idx
+		}
+	}
+	return currentIdx
 }
 
 func (m Model) resolveSubmodulesAndContinueCmd(path string, intent service.GitActionIntent, message string) tea.Cmd {
