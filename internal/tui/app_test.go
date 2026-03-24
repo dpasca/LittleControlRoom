@@ -6170,14 +6170,19 @@ func TestRenderCodexTranscriptEntriesCollapsesLongOpenCodeToolRuns(t *testing.T)
 	}
 
 	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 120))
-	if !strings.Contains(rendered, "activity") {
-		t.Fatalf("long OpenCode tool run should collapse into a summary line: %q", rendered)
+	// Collapsed run should show the common tool name once, not repeat "Tool bash completed:" per entry
+	if !strings.Contains(rendered, "bash") {
+		t.Fatalf("collapsed OpenCode tool run should show the common tool name: %q", rendered)
 	}
 	if !strings.Contains(rendered, "+3 more tool updates") {
 		t.Fatalf("collapsed OpenCode tool run should mention omitted updates: %q", rendered)
 	}
 	if strings.Contains(rendered, "inspect opencode_session.go") {
 		t.Fatalf("collapsed OpenCode tool run should omit later repetitive updates: %q", rendered)
+	}
+	// Should NOT repeat "Tool bash completed:" for each entry
+	if strings.Count(rendered, "bash completed") > 0 {
+		t.Fatalf("collapsed OpenCode tool run should strip redundant prefixes: %q", rendered)
 	}
 }
 
@@ -6355,6 +6360,82 @@ func TestRenderCodexToolLineParsesMCPTool(t *testing.T) {
 	rendered := ansi.Strip(renderCodexToolLine("MCP tool myserver/query [completed]", 80))
 	if !strings.Contains(rendered, "myserver/query") {
 		t.Fatalf("MCP tool should show server/tool name: %q", rendered)
+	}
+}
+
+func TestRenderCodexBodyRendersNumberedList(t *testing.T) {
+	body := "Steps:\n1. First item\n2. Second item\n3. Third item"
+	rendered := ansi.Strip(renderCodexBody(body, lipgloss.Color("252"), 80))
+	if !strings.Contains(rendered, "1.") || !strings.Contains(rendered, "First item") {
+		t.Fatalf("numbered list should render items: %q", rendered)
+	}
+	if !strings.Contains(rendered, "3.") || !strings.Contains(rendered, "Third item") {
+		t.Fatalf("numbered list should render all items: %q", rendered)
+	}
+}
+
+func TestRenderCodexBodyRendersHorizontalRule(t *testing.T) {
+	body := "Above\n---\nBelow"
+	rendered := ansi.Strip(renderCodexBody(body, lipgloss.Color("252"), 80))
+	if !strings.Contains(rendered, "─") {
+		t.Fatalf("horizontal rule should render as box-drawing line: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Above") || !strings.Contains(rendered, "Below") {
+		t.Fatalf("content around horizontal rule should be preserved: %q", rendered)
+	}
+}
+
+func TestRenderCodexDenseBlockHidesSuccessfulExitInCollapsedMode(t *testing.T) {
+	body := "$ git status\n# cwd: /tmp/demo\n M README.md\n[command completed, exit 0]"
+	rendered := ansi.Strip(renderCodexDenseBlock("Command", body, lipgloss.Color("111"), 80, false))
+	if strings.Contains(rendered, "exit 0") {
+		t.Fatalf("collapsed command block should hide successful exit: %q", rendered)
+	}
+	if strings.Contains(rendered, "# cwd:") {
+		t.Fatalf("collapsed command block should hide cwd comment: %q", rendered)
+	}
+	if !strings.Contains(rendered, "git status") {
+		t.Fatalf("collapsed command block should keep the command: %q", rendered)
+	}
+	if !strings.Contains(rendered, "README.md") {
+		t.Fatalf("collapsed command block should keep command output: %q", rendered)
+	}
+}
+
+func TestRenderCodexDenseBlockKeepsFailedExitInCollapsedMode(t *testing.T) {
+	body := "$ make test\nerror: tests failed\n[command completed, exit 1]"
+	rendered := ansi.Strip(renderCodexDenseBlock("Command", body, lipgloss.Color("111"), 80, false))
+	if !strings.Contains(rendered, "exit 1") {
+		t.Fatalf("collapsed command block should keep non-zero exit: %q", rendered)
+	}
+}
+
+func TestRenderCodexDenseBlockShowsAllInExpandedMode(t *testing.T) {
+	body := "$ git status\n# cwd: /tmp/demo\n M README.md\n[command completed, exit 0]"
+	rendered := ansi.Strip(renderCodexDenseBlock("Command", body, lipgloss.Color("111"), 80, true))
+	if !strings.Contains(rendered, "exit 0") {
+		t.Fatalf("expanded command block should show exit status: %q", rendered)
+	}
+	if !strings.Contains(rendered, "# cwd:") {
+		t.Fatalf("expanded command block should show cwd comment: %q", rendered)
+	}
+}
+
+func TestCodexTranscriptEntrySeparatorTightensToolCommandTransitions(t *testing.T) {
+	// tool→command should be tight
+	sep := codexTranscriptEntrySeparator(codexapp.TranscriptTool, codexapp.TranscriptCommand)
+	if sep != "\n" {
+		t.Fatalf("tool→command should use tight separator, got %q", sep)
+	}
+	// command→tool should be tight
+	sep = codexTranscriptEntrySeparator(codexapp.TranscriptCommand, codexapp.TranscriptTool)
+	if sep != "\n" {
+		t.Fatalf("command→tool should use tight separator, got %q", sep)
+	}
+	// agent→tool should still be double
+	sep = codexTranscriptEntrySeparator(codexapp.TranscriptAgent, codexapp.TranscriptTool)
+	if sep != "\n\n" {
+		t.Fatalf("agent→tool should use standard separator, got %q", sep)
 	}
 }
 

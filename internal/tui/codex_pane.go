@@ -2115,10 +2115,27 @@ func renderCodexTranscriptEntry(entry codexapp.TranscriptEntry, width int, expan
 }
 
 func codexTranscriptEntrySeparator(previous, current codexapp.TranscriptKind) string {
-	if previous == codexapp.TranscriptTool && current == codexapp.TranscriptTool {
+	// Tight separator (single newline) for entries that are part of the same action flow
+	switch {
+	case previous == codexapp.TranscriptTool && current == codexapp.TranscriptTool:
 		return "\n"
+	case previous == codexapp.TranscriptTool && current == codexapp.TranscriptCommand:
+		return "\n"
+	case previous == codexapp.TranscriptCommand && current == codexapp.TranscriptTool:
+		return "\n"
+	case previous == codexapp.TranscriptTool && current == codexapp.TranscriptFileChange:
+		return "\n"
+	case previous == codexapp.TranscriptFileChange && current == codexapp.TranscriptTool:
+		return "\n"
+	case previous == codexapp.TranscriptCommand && current == codexapp.TranscriptFileChange:
+		return "\n"
+	case previous == codexapp.TranscriptFileChange && current == codexapp.TranscriptCommand:
+		return "\n"
+	case previous == codexapp.TranscriptReasoning && current == codexapp.TranscriptReasoning:
+		return "\n"
+	default:
+		return "\n\n"
 	}
-	return "\n\n"
 }
 
 func compactCodexToolTranscriptText(text string) string {
@@ -2592,6 +2609,41 @@ func normalizeWindowLines(lines []string) string {
 	return b.String()
 }
 
+// toolEntrySummary extracts the meaningful summary from a tool entry,
+// stripping the redundant "Tool <name> <status>:" prefix so that joined
+// entries don't repeat it on every item.
+func toolEntrySummary(entry codexapp.TranscriptEntry) string {
+	compacted := strings.TrimSpace(compactCodexToolTranscriptText(entry.Text))
+	if compacted == "" {
+		return ""
+	}
+	parsed := parseToolTranscriptText(compacted)
+	if parsed.Summary != "" {
+		return parsed.Summary
+	}
+	// Fallback: use the compacted text if no summary was extracted
+	return compacted
+}
+
+// toolEntryCommonName returns the dominant tool name from a set of entries,
+// used to set the prefix once for a collapsed group.
+func toolEntryCommonName(entries []codexapp.TranscriptEntry) string {
+	counts := map[string]int{}
+	for _, entry := range entries {
+		parsed := parseToolTranscriptText(strings.TrimSpace(compactCodexToolTranscriptText(entry.Text)))
+		if parsed.ToolName != "" {
+			counts[parsed.ToolName]++
+		}
+	}
+	best, bestCount := "", 0
+	for name, count := range counts {
+		if count > bestCount {
+			best, bestCount = name, count
+		}
+	}
+	return best
+}
+
 func summarizeOpenCodeToolRun(entries []codexapp.TranscriptEntry) codexapp.TranscriptEntry {
 	if len(entries) == 0 {
 		return codexapp.TranscriptEntry{}
@@ -2604,11 +2656,11 @@ func summarizeOpenCodeToolRun(entries []codexapp.TranscriptEntry) codexapp.Trans
 	}
 	previews := make([]string, 0, openCodeToolPreviewCount)
 	for _, entry := range entries {
-		preview := strings.TrimSpace(compactCodexToolTranscriptText(entry.Text))
-		if preview == "" {
+		summary := toolEntrySummary(entry)
+		if summary == "" {
 			continue
 		}
-		previews = append(previews, preview)
+		previews = append(previews, summary)
 		if len(previews) >= openCodeToolPreviewCount {
 			break
 		}
@@ -2619,7 +2671,12 @@ func summarizeOpenCodeToolRun(entries []codexapp.TranscriptEntry) codexapp.Trans
 			Text: fmt.Sprintf("Tool activity: %d updates", len(entries)),
 		}
 	}
-	text := "Tool activity: " + strings.Join(previews, " | ")
+	toolName := toolEntryCommonName(entries)
+	prefix := "Tool activity"
+	if toolName != "" {
+		prefix = "Tool " + toolName
+	}
+	text := prefix + ": " + strings.Join(previews, " | ")
 	remaining := len(entries) - len(previews)
 	if remaining > 0 {
 		text += fmt.Sprintf(" | +%d more tool updates", remaining)
@@ -2631,15 +2688,23 @@ func summarizeOpenCodeToolRun(entries []codexapp.TranscriptEntry) codexapp.Trans
 }
 
 func joinOpenCodeToolRun(entries []codexapp.TranscriptEntry) string {
-	parts := make([]string, 0, len(entries))
+	// If all entries share the same tool name, use it as a single prefix
+	commonName := toolEntryCommonName(entries)
+	summaries := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		text := strings.TrimSpace(compactCodexToolTranscriptText(entry.Text))
-		if text == "" {
+		summary := toolEntrySummary(entry)
+		if summary == "" {
 			continue
 		}
-		parts = append(parts, text)
+		summaries = append(summaries, summary)
 	}
-	return strings.Join(parts, " | ")
+	if len(summaries) == 0 {
+		return ""
+	}
+	if commonName != "" {
+		return "Tool " + commonName + ": " + strings.Join(summaries, " | ")
+	}
+	return "Tool: " + strings.Join(summaries, " | ")
 }
 
 func compactCodexUserTranscriptText(text string) string {
@@ -3290,7 +3355,12 @@ func renderCodexMonospaceBlock(label, body string, accent lipgloss.Color, width 
 			renderedLines = append(renderedLines, lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render(line))
 		case strings.HasPrefix(line, "# "):
 			renderedLines = append(renderedLines, lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Faint(true).Render(line))
-		case strings.HasPrefix(line, "[command ") || strings.HasPrefix(line, "[file changes "):
+		case strings.HasPrefix(line, "[command ") && !strings.Contains(line, "exit 0]"):
+			// Non-zero exit — render as warning
+			renderedLines = append(renderedLines, lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true).Render(line))
+		case strings.HasPrefix(line, "[command "):
+			renderedLines = append(renderedLines, lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Faint(true).Render(line))
+		case strings.HasPrefix(line, "[file changes "):
 			renderedLines = append(renderedLines, lipgloss.NewStyle().Foreground(lipgloss.Color("149")).Bold(true).Render(line))
 		default:
 			renderedLines = append(renderedLines, lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Render(line))
@@ -3306,6 +3376,26 @@ func renderCodexMonospaceBlock(label, body string, accent lipgloss.Color, width 
 
 func renderCodexDenseBlock(label, body string, accent lipgloss.Color, width int, expanded bool) string {
 	lines := strings.Split(strings.TrimSpace(body), "\n")
+	if len(lines) == 0 {
+		return ""
+	}
+	// In collapsed mode, strip low-value noise from command blocks
+	if !expanded {
+		filtered := make([]string, 0, len(lines))
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			// Hide successful exit lines — failure is the interesting case
+			if trimmed == "[command completed, exit 0]" {
+				continue
+			}
+			// Dim cwd comments but keep them only in expanded mode
+			if strings.HasPrefix(trimmed, "# cwd:") {
+				continue
+			}
+			filtered = append(filtered, line)
+		}
+		lines = filtered
+	}
 	if len(lines) == 0 {
 		return ""
 	}
@@ -3370,14 +3460,23 @@ func renderCodexBody(body string, color lipgloss.Color, width int) string {
 			switch {
 			case strings.HasPrefix(trimmed, "[attached image]"):
 				out = append(out, renderCodexInlineMarkdown(line, lipgloss.NewStyle().Foreground(lipgloss.Color("179")).Bold(true)))
+			case strings.HasPrefix(trimmed, "### "):
+				out = append(out, renderCodexInlineMarkdown(strings.TrimPrefix(trimmed, "### "), lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)))
 			case strings.HasPrefix(trimmed, "## "):
 				out = append(out, renderCodexInlineMarkdown(strings.TrimPrefix(trimmed, "## "), lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)))
 			case strings.HasPrefix(trimmed, "# "):
 				out = append(out, renderCodexInlineMarkdown(strings.TrimPrefix(trimmed, "# "), lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)))
 			case strings.HasPrefix(trimmed, "> "):
 				out = append(out, renderCodexInlineMarkdown(line, lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Italic(true)))
+			case isMarkdownHorizontalRule(trimmed):
+				rule := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Faint(true).Render(strings.Repeat("─", min(width, 40)))
+				out = append(out, rule)
 			case strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* "):
 				out = append(out, renderCodexInlineMarkdown("• "+strings.TrimSpace(trimmed[2:]), lipgloss.NewStyle().Foreground(lipgloss.Color("151"))))
+			case isMarkdownNumberedListItem(trimmed):
+				num, content := parseMarkdownNumberedListItem(trimmed)
+				numStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+				out = append(out, numStyle.Render(num+".")+renderCodexInlineMarkdown(" "+content, lipgloss.NewStyle().Foreground(lipgloss.Color("151"))))
 			default:
 				out = append(out, renderCodexInlineMarkdown(line, lipgloss.NewStyle().Foreground(color)))
 			}
@@ -3504,6 +3603,48 @@ func renderCodexMarkdownTable(rows []string, color lipgloss.Color, maxWidth int)
 		out = append(out, borderStyle.Render("│ ")+strings.Join(parts, sep)+borderStyle.Render(" │"))
 	}
 	return out
+}
+
+func isMarkdownHorizontalRule(line string) bool {
+	if len(line) < 3 {
+		return false
+	}
+	// Must be only dashes, asterisks, or underscores (with optional spaces)
+	cleaned := strings.ReplaceAll(line, " ", "")
+	if len(cleaned) < 3 {
+		return false
+	}
+	ch := cleaned[0]
+	if ch != '-' && ch != '*' && ch != '_' {
+		return false
+	}
+	for _, r := range cleaned {
+		if byte(r) != ch {
+			return false
+		}
+	}
+	return true
+}
+
+func isMarkdownNumberedListItem(line string) bool {
+	for i, r := range line {
+		if r >= '0' && r <= '9' {
+			continue
+		}
+		if r == '.' && i > 0 && i < len(line)-1 && line[i+1] == ' ' {
+			return true
+		}
+		return false
+	}
+	return false
+}
+
+func parseMarkdownNumberedListItem(line string) (num, content string) {
+	dotIdx := strings.IndexByte(line, '.')
+	if dotIdx < 0 {
+		return "", line
+	}
+	return line[:dotIdx], strings.TrimSpace(line[dotIdx+1:])
 }
 
 func renderCodexInlineMarkdown(text string, style lipgloss.Style) string {
