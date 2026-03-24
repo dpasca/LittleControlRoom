@@ -1465,7 +1465,11 @@ func (m Model) renderCodexView() string {
 	default:
 		transcript.SetContent(m.renderCodexTranscriptContentFromSnapshot(snapshot, transcript.Width))
 	}
-	body := m.renderHFramedPane(transcript.View(), width, transcriptHeight, true)
+	viewOutput := transcript.View()
+	if m.codexSelection.dragging && m.codexSelection.hasRange() {
+		viewOutput = overlaySelectionHighlight(viewOutput, m.codexSelection, transcript.YOffset)
+	}
+	body := m.renderHFramedPane(viewOutput, width, transcriptHeight, true)
 
 	lines := []string{m.renderCodexBanner(snapshot, width), body}
 	lines = append(lines, lowerBlocks...)
@@ -3869,4 +3873,97 @@ func countRenderedBlockLines(blocks []string) int {
 		total += strings.Count(block, "\n") + 1
 	}
 	return total
+}
+
+// codexViewportScreenTop returns the screen Y where the viewport content area
+// begins (banner line + top border of the framed pane).
+const codexViewportScreenTop = 2
+
+// finalizeCodexSelection copies the selected text to the clipboard and
+// clears the dragging state. It is called on mouse release and also as a
+// fallback when a release event is missed (e.g. released over a non-tracked
+// area like the banner).
+func (m *Model) finalizeCodexSelection() {
+	m.codexSelection.dragging = false
+	if m.codexSelection.hasRange() {
+		text := m.codexSelection.extractText(m.codexTranscriptCache.rendered)
+		if text != "" {
+			if err := clipboardTextWriter(text); err == nil {
+				m.status = "Copied selection to clipboard"
+			} else {
+				m.status = "Selection copy failed: " + err.Error()
+			}
+		}
+	}
+}
+
+// handleCodexMouseSelection processes left-button press/drag/release for text
+// selection in the codex viewport. Returns (cmd, true) if the event was
+// consumed, or (nil, false) to let the viewport handle it (e.g. scroll wheel).
+func (m *Model) handleCodexMouseSelection(msg tea.MouseMsg) (tea.Cmd, bool) {
+	switch msg.Action {
+	case tea.MouseActionPress:
+		// If we're still dragging from a previous cycle (missed release),
+		// finalize that selection first.
+		if m.codexSelection.dragging {
+			m.finalizeCodexSelection()
+		}
+		if msg.Button != tea.MouseButtonLeft {
+			m.codexSelection = textSelection{}
+			return nil, false
+		}
+		row, col, ok := m.codexMouseToContent(msg.X, msg.Y)
+		if !ok {
+			m.codexSelection = textSelection{}
+			return nil, false
+		}
+		m.codexSelection = textSelection{
+			anchorRow:  row,
+			anchorCol:  col,
+			currentRow: row,
+			currentCol: col,
+			dragging:   true,
+		}
+		return nil, true
+
+	case tea.MouseActionMotion:
+		if !m.codexSelection.dragging {
+			return nil, false
+		}
+		row, col, ok := m.codexMouseToContent(msg.X, msg.Y)
+		if ok {
+			m.codexSelection.currentRow = row
+			m.codexSelection.currentCol = col
+		}
+		// Always consume motion during drag to prevent fallthrough from
+		// clearing the selection when the mouse leaves the viewport area.
+		return nil, true
+
+	case tea.MouseActionRelease:
+		if !m.codexSelection.dragging {
+			return nil, false
+		}
+		row, col, ok := m.codexMouseToContent(msg.X, msg.Y)
+		if ok {
+			m.codexSelection.currentRow = row
+			m.codexSelection.currentCol = col
+		}
+		m.finalizeCodexSelection()
+		return nil, true
+	}
+	return nil, false
+}
+
+// codexMouseToContent converts screen mouse coordinates to content row/col.
+func (m *Model) codexMouseToContent(screenX, screenY int) (row, col int, ok bool) {
+	visLine := screenY - codexViewportScreenTop
+	if visLine < 0 || visLine >= m.codexViewport.Height {
+		return 0, 0, false
+	}
+	contentRow := visLine + m.codexViewport.YOffset
+	if contentRow >= m.codexViewport.TotalLineCount() {
+		return 0, 0, false
+	}
+	col = max(0, screenX)
+	return contentRow, col, true
 }

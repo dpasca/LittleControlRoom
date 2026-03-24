@@ -104,6 +104,8 @@ type Model struct {
 	lastUsageTotals       model.LLMUsage
 	haveUsageTotals       bool
 
+	mouseEnabled         bool
+	codexSelection       textSelection
 	codexManager         *codexapp.Manager
 	runtimeManager       *projectrun.Manager
 	runtimeSnapshots     map[string]projectrun.Snapshot
@@ -511,6 +513,23 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	mdl, cmd := m.update(msg)
+	mm := mdl.(Model)
+	want := mm.codexVisible()
+	if want != mm.mouseEnabled {
+		mm.mouseEnabled = want
+		var mouseCmd tea.Cmd
+		if want {
+			mouseCmd = tea.EnableMouseCellMotion
+		} else {
+			mouseCmd = tea.DisableMouse
+		}
+		return mm, tea.Batch(cmd, mouseCmd)
+	}
+	return mm, cmd
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -528,6 +547,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.MouseMsg:
 		if m.codexVisible() {
+			if cmd, handled := m.handleCodexMouseSelection(msg); handled {
+				return m, cmd
+			}
+			// Unhandled mouse event (e.g. scroll wheel) — finalize any
+			// pending drag (missed release), clear selection, and forward
+			// to viewport.
+			if m.codexSelection.dragging {
+				m.finalizeCodexSelection()
+			}
+			m.codexSelection = textSelection{}
 			var cmd tea.Cmd
 			m.codexViewport, cmd = m.codexViewport.Update(msg)
 			return m, cmd
