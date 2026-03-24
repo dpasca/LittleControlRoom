@@ -90,8 +90,9 @@ func Default() AppConfig {
 		ConfigPath:        filepath.Join(dataDir, brand.ConfigFileName),
 		SnapshotLimit:     3,
 		ScanInterval:      60 * time.Second,
-		ActiveThreshold:   20 * time.Minute,
-		StuckThreshold:    4 * time.Hour,
+		ActiveThreshold:       20 * time.Minute,
+		StuckThreshold:        4 * time.Hour,
+		HideReasoningSections: true,
 	}
 }
 

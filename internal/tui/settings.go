@@ -35,6 +35,15 @@ type settingsField struct {
 
 const settingsHintMaxLines = 2
 
+// invertBoolString flips "true"→"false" and vice versa, used when the UI label
+// has opposite polarity from the internal config key (e.g. "Show reasoning" vs HideReasoningSections).
+func invertBoolString(s string) string {
+	if strings.EqualFold(strings.TrimSpace(s), "true") {
+		return "false"
+	}
+	return "true"
+}
+
 func (m *Model) openSettingsMode() tea.Cmd {
 	return m.openSettingsModeWithBaseline(m.currentSettingsBaseline())
 }
@@ -80,7 +89,7 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.settingsFieldValue(settingsFieldExcludeProjectPatterns),
 			m.settingsFieldValue(settingsFieldPrivacyPatterns),
 			m.settingsFieldValue(settingsFieldCodexLaunchPreset),
-			m.settingsFieldValue(settingsFieldHideReasoningSections),
+			invertBoolString(m.settingsFieldValue(settingsFieldHideReasoningSections)),
 			m.currentSettingsBaseline().OpenCodeModelTier,
 			m.settingsFieldValue(settingsFieldActiveThreshold),
 			m.settingsFieldValue(settingsFieldStuckThreshold),
@@ -391,9 +400,9 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			24,
 		),
 		newSettingsField(
-			"Hide reasoning",
-			"Accepted values: true, false. When true, hides model reasoning sections (e.g., GLM-5 thinking blocks) in the embedded transcript. Default: true.",
-			strconv.FormatBool(settings.HideReasoningSections),
+			"Show reasoning",
+			"Accepted values: true, false. When true, shows model reasoning/thinking sections in the embedded transcript. Default: false.",
+			strconv.FormatBool(!settings.HideReasoningSections),
 			8,
 		),
 		newSettingsField(

@@ -2065,10 +2065,32 @@ func (m Model) renderCodexTranscriptEntries(snapshot codexapp.Snapshot, width in
 	blocks := make([]string, 0, len(entries)*2)
 	var previousKind codexapp.TranscriptKind
 	hasPrevious := false
+	// Track consecutive reasoning entries to merge into one compact indicator
+	reasoningLineCount := 0
+	flushReasoning := func() {
+		if reasoningLineCount == 0 {
+			return
+		}
+		block := renderCodexReasoningIndicator(reasoningLineCount, contentWidth)
+		if hasPrevious {
+			blocks = append(blocks, codexTranscriptEntrySeparator(previousKind, codexapp.TranscriptReasoning))
+		}
+		blocks = append(blocks, block)
+		previousKind = codexapp.TranscriptReasoning
+		hasPrevious = true
+		reasoningLineCount = 0
+	}
 	for _, entry := range entries {
 		if m.hideReasoningSections && entry.Kind == codexapp.TranscriptReasoning {
+			// Accumulate reasoning lines for compact indicator
+			text := strings.TrimSpace(entry.Text)
+			if text != "" {
+				reasoningLineCount += len(strings.Split(text, "\n"))
+			}
 			continue
 		}
+		// Flush any pending reasoning indicator before a non-reasoning entry
+		flushReasoning()
 		block := renderCodexTranscriptEntry(entry, contentWidth, m.codexDenseExpanded)
 		if strings.TrimSpace(block) != "" {
 			if hasPrevious {
@@ -2079,6 +2101,8 @@ func (m Model) renderCodexTranscriptEntries(snapshot codexapp.Snapshot, width in
 			hasPrevious = true
 		}
 	}
+	// Flush trailing reasoning (model still thinking)
+	flushReasoning()
 	return strings.Join(blocks, "")
 }
 
@@ -3323,6 +3347,22 @@ func renderCodexReasoningBlock(body string, width int) string {
 		PaddingRight(1).
 		Background(codexReasoningBackgroundColor).
 		Render(label + "\n" + wrappedBody)
+}
+
+// renderCodexReasoningIndicator renders a compact single-line indicator for hidden
+// reasoning content instead of showing nothing (which causes visible content flashes
+// as reasoning entries appear and disappear during streaming).
+func renderCodexReasoningIndicator(lineCount int, width int) string {
+	accent := lipgloss.Color("180")
+	label := lipgloss.NewStyle().Foreground(accent).Faint(true).Render("Thinking…")
+	detail := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Faint(true).Render(
+		fmt.Sprintf(" (%d lines, Alt+L expands)", lineCount))
+	return lipgloss.NewStyle().
+		BorderLeft(true).
+		BorderForeground(accent).
+		PaddingLeft(1).
+		Width(width).
+		Render(label + detail)
 }
 
 func renderCodexComposer(input textarea.Model, width int) string {

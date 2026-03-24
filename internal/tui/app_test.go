@@ -6439,6 +6439,76 @@ func TestCodexTranscriptEntrySeparatorTightensToolCommandTransitions(t *testing.
 	}
 }
 
+func TestReasoningIndicatorShownWhenHidden(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderOpenCode,
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptAgent, Text: "Let me think about this..."},
+			{Kind: codexapp.TranscriptReasoning, Text: "Step 1: analyze the problem\nStep 2: consider options\nStep 3: pick the best one"},
+			{Kind: codexapp.TranscriptAgent, Text: "Here is my answer."},
+		},
+	}
+
+	rendered := ansi.Strip((Model{hideReasoningSections: true}).renderCodexTranscriptEntries(snapshot, 90))
+	if !strings.Contains(rendered, "Thinking") {
+		t.Fatalf("hidden reasoning should show compact indicator: %q", rendered)
+	}
+	if !strings.Contains(rendered, "3 lines") {
+		t.Fatalf("reasoning indicator should show line count: %q", rendered)
+	}
+	// Should NOT show the actual reasoning text
+	if strings.Contains(rendered, "Step 1") {
+		t.Fatalf("hidden reasoning should not show reasoning content: %q", rendered)
+	}
+	// Agent messages should still be visible
+	if !strings.Contains(rendered, "Here is my answer") {
+		t.Fatalf("agent messages should still be visible around reasoning indicator: %q", rendered)
+	}
+}
+
+func TestReasoningIndicatorMergesConsecutiveEntries(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderOpenCode,
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptReasoning, Text: "First thought\nSecond thought"},
+			{Kind: codexapp.TranscriptReasoning, Text: "Third thought\nFourth thought\nFifth thought"},
+		},
+	}
+
+	rendered := ansi.Strip((Model{hideReasoningSections: true}).renderCodexTranscriptEntries(snapshot, 90))
+	if !strings.Contains(rendered, "5 lines") {
+		t.Fatalf("consecutive reasoning entries should merge into one indicator with total lines: %q", rendered)
+	}
+	// Should only have one "Thinking" indicator, not two
+	if strings.Count(rendered, "Thinking") != 1 {
+		t.Fatalf("should have exactly one thinking indicator for consecutive reasoning: %q", rendered)
+	}
+}
+
+func TestReasoningShownFullyWhenNotHidden(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderOpenCode,
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptReasoning, Text: "Detailed reasoning step here"},
+		},
+	}
+
+	rendered := ansi.Strip((Model{hideReasoningSections: false}).renderCodexTranscriptEntries(snapshot, 90))
+	if strings.Contains(rendered, "Thinking") {
+		t.Fatalf("non-hidden reasoning should not show compact indicator: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Detailed reasoning step here") {
+		t.Fatalf("non-hidden reasoning should show full content: %q", rendered)
+	}
+}
+
+func TestDefaultConfigHidesReasoningSections(t *testing.T) {
+	cfg := config.Default()
+	if !cfg.HideReasoningSections {
+		t.Fatal("HideReasoningSections should default to true")
+	}
+}
+
 func TestRenderCodexBodyRendersBoldAndItalic(t *testing.T) {
 	rendered := ansi.Strip(renderCodexBody("This is **bold** and *italic* text.", lipgloss.Color("252"), 80))
 	if !strings.Contains(rendered, "bold") {
