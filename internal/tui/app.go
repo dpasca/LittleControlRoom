@@ -1323,11 +1323,6 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.setSortMode(sortByRecent)
 		}
 		return m, m.setSortMode(sortByAttention)
-	case "v":
-		if m.visibility == visibilityAIFolders {
-			return m, m.setVisibilityMode(visibilityAllFolders)
-		}
-		return m, m.setVisibilityMode(visibilityAIFolders)
 	case "p":
 		if p, ok := m.selectedProject(); ok {
 			return m, m.togglePinCmd(p.Path)
@@ -2138,7 +2133,7 @@ func (m Model) renderDetailContent(width int) string {
 	p, ok := m.selectedProject()
 	if !ok {
 		if len(m.allProjects) > 0 && m.visibility == visibilityAIFolders {
-			return "No AI-linked folder selected\nPress v for All folders"
+			return "No AI-linked folder selected\nUse /view to switch folders"
 		}
 		return "Select a project"
 	}
@@ -2177,6 +2172,19 @@ func (m Model) renderDetailContent(width int) string {
 	}
 	lines = append(lines, detailField("Repo", repoCombinedDetailValue(p)))
 	lines = append(lines, detailField("Attention", attentionValue))
+
+	lines = append(lines, detailSectionStyle.Render("Session summary"))
+	summaryText := projectAssessmentTextAt(p, m.currentTime())
+	summaryStyle := detailValueStyle
+	if projectAssessmentRefreshing(p) {
+		summaryStyle = detailMutedStyle
+	}
+	if strings.TrimSpace(summaryText) == "" || summaryText == "-" {
+		lines = append(lines, renderWrappedDetailBullet(detailMutedStyle, width, "not assessed yet"))
+	} else {
+		lines = append(lines, renderWrappedDetailBullet(summaryStyle, width, summaryText))
+	}
+
 	if p.SnoozedUntil != nil {
 		lines = append(lines, detailField("Snoozed until", detailValueStyle.Render(p.SnoozedUntil.Format(time.RFC3339))))
 	}
@@ -2209,18 +2217,6 @@ func (m Model) renderDetailContent(width int) string {
 		for _, r := range reasons {
 			lines = append(lines, detailReasonLine(r))
 		}
-	}
-
-	lines = append(lines, detailSectionStyle.Render("Session summary"))
-	summaryText := projectAssessmentTextAt(p, m.currentTime())
-	summaryStyle := detailValueStyle
-	if projectAssessmentRefreshing(p) {
-		summaryStyle = detailMutedStyle
-	}
-	if strings.TrimSpace(summaryText) == "" || summaryText == "-" {
-		lines = append(lines, renderWrappedDetailBullet(detailMutedStyle, width, "not assessed yet"))
-	} else {
-		lines = append(lines, renderWrappedDetailBullet(summaryStyle, width, summaryText))
 	}
 
 	if m.showSessions {
@@ -4651,7 +4647,6 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 	case width >= 80:
 		if hasHiddenCodex {
 			return joinFooterSegments(
-				renderFooterMeta("Focus: list"),
 				renderFooterActionList(
 					footerPrimaryAction("Enter", launchLabel),
 					footerNavAction("Alt+Down", "picker"),
@@ -4664,14 +4659,13 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 			)
 		}
 		return joinFooterSegments(
-			renderFooterMeta("Focus: list"),
 			renderFooterActionList(
 				footerPrimaryAction("Enter", launchLabel),
 				footerNavAction("Alt+Down", "picker"),
 				footerNavAction("f", "filter"),
 				footerNavAction("/", "command"),
 				footerNavAction("Tab", "switch"),
-				footerNavAction("v", "view"),
+				footerNavAction("t", "TODO"),
 				footerLowAction("?", "help"),
 				footerExitAction("q", "quit"),
 			),
@@ -4679,7 +4673,6 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 	case width >= 60:
 		if hasHiddenCodex {
 			return joinFooterSegments(
-				renderFooterMeta("Focus: list"),
 				renderFooterActionList(
 					footerPrimaryAction("Enter", launchLabel),
 					footerNavAction("Alt+Down", "picker"),
@@ -4691,7 +4684,6 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 			)
 		}
 		return joinFooterSegments(
-			renderFooterMeta("Focus: list"),
 			renderFooterActionList(
 				footerPrimaryAction("Enter", launchLabel),
 				footerNavAction("Alt+Down", "picker"),
@@ -4716,7 +4708,7 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 				footerExitAction("q", "quit"),
 			}
 		}
-		return joinFooterSegments(renderFooterMeta("List"), renderFooterActionList(actions...))
+		return joinFooterSegments(renderFooterActionList(actions...))
 	}
 }
 
