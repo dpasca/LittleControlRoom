@@ -806,6 +806,7 @@ func (m Model) hideCodexSession() (tea.Model, tea.Cmd) {
 		label = "Embedded " + embeddedProvider(snapshot).Label() + " session"
 	}
 	m.persistVisibleCodexDraft()
+	m.stopCodexInputSelection()
 	m.codexHiddenProject = m.codexVisibleProject
 	m.codexVisibleProject = ""
 	m.codexInput.Blur()
@@ -938,6 +939,13 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateCodexElicitationMode(snapshot, msg)
 	}
 
+	// Clear mouse selection on any keypress.
+	m.codexComposerSelection = textSelection{}
+
+	if m.codexInputSelectionActive() {
+		return m.updateCodexInputSelectionMode(msg)
+	}
+
 	if m.codexSlashActive() {
 		switch msg.String() {
 		case "tab":
@@ -1033,6 +1041,9 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.codexInput.InsertString("\n")
 		m.persistVisibleCodexDraft()
 		m.syncCodexComposerSize()
+		return m, nil
+	case "alt+s":
+		m.startCodexInputSelection()
 		return m, nil
 	case "ctrl+v":
 		return m, nil
@@ -1554,7 +1565,13 @@ func (m Model) codexLowerBlocks(snapshot codexapp.Snapshot, width int) []string 
 		input := m.codexInput
 		input.SetWidth(max(20, width-4))
 		input.SetHeight(max(3, min(10, m.codexInput.LineCount()+1)))
-		lines = append(lines, renderCodexComposer(input, width))
+		if m.codexInputSelectionActive() {
+			lines = append(lines, renderCodexComposerWithSelection(input, m.codexInputSelection, width))
+		} else if m.codexComposerSelection.dragging && m.codexComposerSelection.hasRange() {
+			lines = append(lines, renderCodexComposerWithMouseSelection(input, m.codexComposerSelection, width))
+		} else {
+			lines = append(lines, renderCodexComposer(input, width))
+		}
 		return lines
 	}
 }
@@ -1808,6 +1825,12 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		actions = []footerAction{
 			footerHideAction("Alt+Up", "hide"),
 		}
+	case m.codexInputSelectionActive():
+		actions = []footerAction{
+			footerPrimaryAction("Space", "mark"),
+			footerExitAction("Esc", "cancel"),
+			footerNavAction("arrows", "move"),
+		}
 	case snapshot.Busy:
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "steer"),
@@ -1815,6 +1838,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerHideAction("Alt+Up", "hide"),
 			footerNavAction("Alt+Enter", "newline"),
 			footerNavAction("Ctrl+V", "image"),
+			footerLowAction("Alt+S", "select"),
 		}
 	case snapshot.Closed:
 		actions = []footerAction{
@@ -1828,6 +1852,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerHideAction("Alt+Up", "hide"),
 			footerNavAction("Alt+Enter", "newline"),
 			footerNavAction("Ctrl+V", "image"),
+			footerLowAction("Alt+S", "select"),
 		}
 	}
 

@@ -79,13 +79,13 @@ func TestOverlaySelectionHighlight(t *testing.T) {
 
 	result := overlaySelectionHighlight(input, sel, 0)
 
-	// The selection should add reverse video around "one"
+	// The selection should highlight "one" with the selection style.
 	if result == input {
 		t.Fatal("overlay should have modified the output")
 	}
-	// Check that reverse video escape is present
-	if !containsSubstring(result, "\x1b[7m") {
-		t.Fatal("expected reverse video escape in output")
+	// Check that the highlight escape is present (bright yellow bg).
+	if !containsSubstring(result, selectionHighlightStart) {
+		t.Fatalf("expected highlight escape in output, got: %q", result)
 	}
 }
 

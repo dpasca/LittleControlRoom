@@ -129,7 +129,9 @@ type Model struct {
 	codexPickerProject   string
 	codexPickerProvider  codexapp.Provider
 	questionNotify       *questionNotification
-	codexModelPicker     *codexModelPickerState
+	codexInputSelection    *codexInputSelectionState
+	codexComposerSelection textSelection
+	codexModelPicker       *codexModelPickerState
 	embeddedModelPrefs   map[codexapp.Provider]embeddedModelPreference
 	recentCodexModels    []string
 	recentOpenCodeModels []string
@@ -578,7 +580,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.MouseMsg:
 		if m.codexVisible() {
+			// Try composer selection first (bottom area), then viewport.
+			if cmd, handled := m.handleCodexComposerMouseSelection(msg); handled {
+				return m, cmd
+			}
 			if cmd, handled := m.handleCodexMouseSelection(msg); handled {
+				// Clear any stale composer selection when viewport drag starts.
+				m.codexComposerSelection = textSelection{}
 				return m, cmd
 			}
 			// Unhandled mouse event (e.g. scroll wheel) — finalize any
@@ -587,7 +595,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.codexSelection.dragging {
 				m.finalizeCodexSelection()
 			}
+			if m.codexComposerSelection.dragging {
+				m.finalizeCodexComposerSelection()
+			}
 			m.codexSelection = textSelection{}
+			m.codexComposerSelection = textSelection{}
 			var cmd tea.Cmd
 			m.codexViewport, cmd = m.codexViewport.Update(msg)
 			return m, cmd

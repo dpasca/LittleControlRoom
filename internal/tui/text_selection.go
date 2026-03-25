@@ -6,6 +6,16 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+// selectionHighlightStart sets bold, black text on a muted gold background.
+// Uses raw ANSI escapes rather than lipgloss so the highlight works reliably
+// when injected into already-styled content.
+const selectionHighlightStart = "\x1b[1;38;5;16;48;5;178m"
+
+// selectionHighlightEnd resets only the attributes we changed (bold off,
+// default fg, default bg) without a full reset, so surrounding ANSI state
+// in the "after" segment is preserved.
+const selectionHighlightEnd = "\x1b[22;39;49m"
+
 // textSelection tracks a mouse-driven text selection in the codex viewport.
 type textSelection struct {
 	anchorRow  int // content row where the press started
@@ -94,9 +104,9 @@ func overlaySelectionHighlight(viewportOutput string, sel textSelection, yOffset
 		}
 
 		before := ansi.Cut(line, 0, lStart)
-		selected := ansi.Cut(line, lStart, lEnd)
+		selected := ansi.Strip(ansi.Cut(line, lStart, lEnd))
 		after := ansi.Cut(line, lEnd, lineWidth)
-		lines[i] = before + "\x1b[7m" + selected + "\x1b[27m" + after
+		lines[i] = before + selectionHighlightStart + selected + selectionHighlightEnd + after
 	}
 	return strings.Join(lines, "\n")
 }
