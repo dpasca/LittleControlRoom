@@ -14,6 +14,7 @@ import (
 	"lcroom/internal/gitops"
 	"lcroom/internal/model"
 	"lcroom/internal/scanner"
+	"lcroom/internal/sessionclassify"
 )
 
 type GitActionIntent string
@@ -157,6 +158,18 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 			Behind:      repoStatus.Behind,
 			CanPush:     canPush && repoStatus.Ahead > 0,
 			PushWarning: pushWarning,
+		}
+	}
+
+	// When the commit dialog opens, check whether the session classification
+	// is stale relative to the current session content.  If so, trigger an
+	// early refresh and wait for it so the commit message gets fresh context.
+	// This only adds latency when the summary truly needs updating.
+	if stageMode != GitStageStagedOnly {
+		if s.refreshClassificationForCommit(ctx, projectPath, detail) {
+			if freshDetail, err := s.store.GetProjectDetail(ctx, projectPath, 5); err == nil {
+				detail = freshDetail
+			}
 		}
 	}
 
@@ -668,5 +681,110 @@ func eventForPush(now time.Time, projectPath, branch string) model.StoredEvent {
 		ProjectPath: projectPath,
 		Type:        string(events.ActionApplied),
 		Payload:     payload,
+	}
+}
+
+// refreshClassificationForCommit checks whether the latest session
+// classification is fresh relative to the current session content.  If it is
+// stale or still in progress, it triggers (or waits for) a refresh and returns
+// true so the caller knows to re-read the project detail.
+func (s *Service) refreshClassificationForCommit(ctx context.Context, projectPath string, detail model.ProjectDetail) bool {
+	if s.classifier == nil || len(detail.Sessions) == 0 {
+		return false
+	}
+	classification := detail.LatestSessionClassification
+	if classification == nil {
+		return false
+	}
+
+	latestSession := detail.Sessions[0]
+
+	// If a classification is already in progress, just wait for it.
+	if classification.Status == model.ClassificationPending || classification.Status == model.ClassificationRunning {
+		return s.waitForClassification(ctx, latestSession.SessionID)
+	}
+
+	// Classification is completed (or failed).  Compute the current snapshot
+	// hash and compare it with the classification's hash to detect staleness.
+	gitStatus := sessionclassify.NewGitStatusSnapshot(
+		detail.Summary.RepoDirty,
+		detail.Summary.RepoSyncStatus,
+		detail.Summary.RepoAheadCount,
+		detail.Summary.RepoBehindCount,
+	)
+	currentHash, err := sessionclassify.ComputeSnapshotHash(ctx, projectPath, latestSession, gitStatus)
+	if err != nil {
+		return false
+	}
+	if currentHash == classification.SnapshotHash && classification.Status == model.ClassificationCompleted {
+		return false // summary is fresh
+	}
+
+	// Stale — queue a new classification and wait for it.
+	state := projectStateFromDetail(detail)
+	if len(state.Sessions) > 0 {
+		state.Sessions[0].SnapshotHash = currentHash
+	}
+	queued, _ := s.classifier.QueueProject(ctx, state)
+	if queued {
+		s.classifier.Notify()
+	}
+	return s.waitForClassification(ctx, latestSession.SessionID)
+}
+
+const classificationWaitTimeout = 15 * time.Second
+
+// waitForClassification polls until the classification for sessionID reaches a
+// terminal state (completed or failed) or the timeout expires.  Returns true
+// when the classification completed successfully.
+func (s *Service) waitForClassification(ctx context.Context, sessionID string) bool {
+	ctx, cancel := context.WithTimeout(ctx, classificationWaitTimeout)
+	defer cancel()
+
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+			c, err := s.store.GetSessionClassification(ctx, sessionID)
+			if err != nil {
+				return false
+			}
+			if c.Status == model.ClassificationCompleted {
+				return true
+			}
+			if c.Status == model.ClassificationFailed {
+				return false
+			}
+		}
+	}
+}
+
+func projectStateFromDetail(detail model.ProjectDetail) model.ProjectState {
+	return model.ProjectState{
+		Path:            detail.Summary.Path,
+		Name:            detail.Summary.Name,
+		LastActivity:    detail.Summary.LastActivity,
+		Status:          detail.Summary.Status,
+		AttentionScore:  detail.Summary.AttentionScore,
+		PresentOnDisk:   detail.Summary.PresentOnDisk,
+		RepoDirty:       detail.Summary.RepoDirty,
+		RepoSyncStatus:  detail.Summary.RepoSyncStatus,
+		RepoAheadCount:  detail.Summary.RepoAheadCount,
+		RepoBehindCount: detail.Summary.RepoBehindCount,
+		Forgotten:       detail.Summary.Forgotten,
+		ManuallyAdded:   detail.Summary.ManuallyAdded,
+		InScope:         detail.Summary.InScope,
+		Pinned:          detail.Summary.Pinned,
+		SnoozedUntil:    detail.Summary.SnoozedUntil,
+		Note:            detail.Summary.Note,
+		RunCommand:      detail.Summary.RunCommand,
+		MovedFromPath:   detail.Summary.MovedFromPath,
+		MovedAt:         detail.Summary.MovedAt,
+		Sessions:        detail.Sessions,
+		Artifacts:       detail.Artifacts,
 	}
 }
