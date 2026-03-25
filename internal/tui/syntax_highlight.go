@@ -12,6 +12,7 @@ import (
 type syntaxHighlightOptions struct {
 	DefaultColor    lipgloss.Color
 	BackgroundColor lipgloss.Color
+	NoItalic        bool
 }
 
 type syntaxHighlightPlan struct {
@@ -109,7 +110,11 @@ func syntaxTokenStyle(tokenType chroma.TokenType, opts syntaxHighlightOptions) l
 
 	switch {
 	case tokenType.InCategory(chroma.Comment):
-		return style.Foreground(lipgloss.Color("244")).Italic(true)
+		s := style.Foreground(lipgloss.Color("244"))
+		if !opts.NoItalic {
+			s = s.Italic(true)
+		}
+		return s
 	case tokenType.InCategory(chroma.Keyword):
 		return style.Foreground(lipgloss.Color("81")).Bold(true)
 	case tokenType == chroma.NameFunction || tokenType == chroma.NameFunctionMagic:

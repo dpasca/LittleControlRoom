@@ -8,6 +8,8 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"lcroom/internal/scanner"
@@ -57,15 +59,17 @@ const (
 )
 
 type diffSideBySideRow struct {
-	Full      string
-	Left      string
-	Right     string
-	FullTone  diffCellTone
-	LeftTone  diffCellTone
-	RightTone diffCellTone
-	LeftCode  bool
-	RightCode bool
-	FullWidth bool
+	Full        string
+	Left        string
+	Right       string
+	FullTone    diffCellTone
+	LeftTone    diffCellTone
+	RightTone   diffCellTone
+	LeftCode    bool
+	RightCode   bool
+	FullWidth   bool
+	LeftLineNum int // 0 means no line number
+	RightLineNum int
 }
 
 type diffRenderCacheKey struct {
@@ -762,7 +766,7 @@ func renderDiffUnifiedTextBody(body, syntaxFilename string, width int) string {
 	highlightPlan := newSyntaxHighlightPlan("", syntaxFilename, body)
 	renderedLines := make([]string, 0, len(strings.Split(body, "\n")))
 	for _, line := range strings.Split(body, "\n") {
-		renderedLines = append(renderedLines, renderUnifiedDiffLine(line, highlightPlan))
+		renderedLines = append(renderedLines, renderUnifiedDiffLine(line, contentWidth, highlightPlan))
 	}
 	bodyBlock := lipgloss.NewStyle().Width(contentWidth).Render(strings.Join(renderedLines, "\n"))
 	return lipgloss.NewStyle().
@@ -871,7 +875,7 @@ func renderDiffTextSection(section diffTextSection, highlightPlan syntaxHighligh
 	return strings.Join(rendered, "\n")
 }
 
-func renderUnifiedDiffLine(line string, highlightPlan syntaxHighlightPlan) string {
+func renderUnifiedDiffLine(line string, width int, highlightPlan syntaxHighlightPlan) string {
 	switch {
 	case strings.HasPrefix(line, "$ "):
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true).Render(line)
@@ -884,7 +888,7 @@ func renderUnifiedDiffLine(line string, highlightPlan syntaxHighlightPlan) strin
 	case strings.HasPrefix(line, "[command ") || strings.HasPrefix(line, "[file changes "):
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("149")).Bold(true).Render(line)
 	case diffPatchLineKind(line) != "":
-		return renderDiffHighlightedPatchLine(line, diffToneForPatchLine(line), highlightPlan)
+		return renderDiffHighlightedPatchLine(line, width, diffToneForPatchLine(line), highlightPlan)
 	case strings.HasPrefix(line, "+++"):
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render(line)
 	case strings.HasPrefix(line, "---"):
@@ -916,9 +920,16 @@ func buildDiffSideBySideRows(section diffTextSection) []diffSideBySideRow {
 		})
 	}
 
-	var removed []string
-	var added []string
+	type numberedLine struct {
+		text    string
+		lineNum int
+	}
+
+	var removed []numberedLine
+	var added []numberedLine
 	pendingOldPath := ""
+	leftLineNum := 0
+	rightLineNum := 0
 
 	flushPair := func() {
 		if len(removed) == 0 && len(added) == 0 {
@@ -928,19 +939,25 @@ func buildDiffSideBySideRows(section diffTextSection) []diffSideBySideRow {
 		for i := 0; i < pairs; i++ {
 			left := ""
 			right := ""
+			leftNum := 0
+			rightNum := 0
 			if i < len(removed) {
-				left = removed[i]
+				left = removed[i].text
+				leftNum = removed[i].lineNum
 			}
 			if i < len(added) {
-				right = added[i]
+				right = added[i].text
+				rightNum = added[i].lineNum
 			}
 			rows = append(rows, diffSideBySideRow{
-				Left:      left,
-				Right:     right,
-				LeftTone:  diffToneForPatchCell(left, diffCellToneDeleted),
-				RightTone: diffToneForPatchCell(right, diffCellToneAdded),
-				LeftCode:  left != "",
-				RightCode: right != "",
+				Left:         left,
+				Right:        right,
+				LeftTone:     diffToneForPatchCell(left, diffCellToneDeleted),
+				RightTone:    diffToneForPatchCell(right, diffCellToneAdded),
+				LeftCode:     left != "",
+				RightCode:    right != "",
+				LeftLineNum:  leftNum,
+				RightLineNum: rightNum,
 			})
 		}
 		removed = nil
@@ -994,6 +1011,9 @@ func buildDiffSideBySideRows(section diffTextSection) []diffSideBySideRow {
 				})
 				pendingOldPath = ""
 			}
+			oldStart, newStart := parseDiffHunkHeader(line)
+			leftLineNum = oldStart
+			rightLineNum = newStart
 			rows = append(rows, diffSideBySideRow{
 				Full:      line,
 				FullTone:  diffCellToneHunk,
@@ -1002,9 +1022,11 @@ func buildDiffSideBySideRows(section diffTextSection) []diffSideBySideRow {
 		default:
 			switch diffPatchLineKind(line) {
 			case "-":
-				removed = append(removed, line)
+				removed = append(removed, numberedLine{text: line, lineNum: leftLineNum})
+				leftLineNum++
 			case "+":
-				added = append(added, line)
+				added = append(added, numberedLine{text: line, lineNum: rightLineNum})
+				rightLineNum++
 			case " ":
 				flushPair()
 				if pendingOldPath != "" {
@@ -1017,13 +1039,17 @@ func buildDiffSideBySideRows(section diffTextSection) []diffSideBySideRow {
 					pendingOldPath = ""
 				}
 				rows = append(rows, diffSideBySideRow{
-					Left:      line,
-					Right:     line,
-					LeftTone:  diffCellToneNeutral,
-					RightTone: diffCellToneNeutral,
-					LeftCode:  true,
-					RightCode: true,
+					Left:         line,
+					Right:        line,
+					LeftTone:     diffCellToneNeutral,
+					RightTone:    diffCellToneNeutral,
+					LeftCode:     true,
+					RightCode:    true,
+					LeftLineNum:  leftLineNum,
+					RightLineNum: rightLineNum,
 				})
+				leftLineNum++
+				rightLineNum++
 			default:
 				flushPair()
 				if pendingOldPath != "" {
@@ -1054,6 +1080,18 @@ func buildDiffSideBySideRows(section diffTextSection) []diffSideBySideRow {
 		})
 	}
 	return rows
+}
+
+var diffHunkHeaderRegexp = regexp.MustCompile(`@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
+
+func parseDiffHunkHeader(line string) (oldStart, newStart int) {
+	m := diffHunkHeaderRegexp.FindStringSubmatch(line)
+	if m == nil {
+		return 0, 0
+	}
+	oldStart, _ = strconv.Atoi(m[1])
+	newStart, _ = strconv.Atoi(m[2])
+	return oldStart, newStart
 }
 
 func diffSectionUsesSideBySide(lines []string) bool {
@@ -1121,6 +1159,20 @@ func diffToneForFullDiffLine(line string) diffCellTone {
 	}
 }
 
+const diffLineNumWidth = 4
+
+func renderDiffLineNum(num int, tone diffCellTone) string {
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color("239"))
+	if num <= 0 {
+		return style.Width(diffLineNumWidth).Render("")
+	}
+	s := strconv.Itoa(num)
+	if len(s) > diffLineNumWidth {
+		s = s[len(s)-diffLineNumWidth:]
+	}
+	return style.Width(diffLineNumWidth).Align(lipgloss.Right).Render(s)
+}
+
 func renderDiffSideBySideRow(row diffSideBySideRow, width int, highlightPlan syntaxHighlightPlan) string {
 	if row.FullWidth {
 		return renderDiffFullRow(row.Full, width, row.FullTone)
@@ -1128,8 +1180,9 @@ func renderDiffSideBySideRow(row diffSideBySideRow, width int, highlightPlan syn
 
 	gap := lipgloss.NewStyle().Foreground(lipgloss.Color("239")).Render(" │ ")
 	gapWidth := ansi.StringWidth(ansi.Strip(gap))
-	leftWidth := max(1, (width-gapWidth)/2)
-	rightWidth := max(1, width-leftWidth-gapWidth)
+	gutterWidth := diffLineNumWidth + 1 // line number + space
+	leftWidth := max(1, (width-gapWidth-gutterWidth*2)/2)
+	rightWidth := max(1, width-leftWidth-gapWidth-gutterWidth*2)
 
 	leftLines := wrapDiffCell(row.Left, leftWidth)
 	rightLines := wrapDiffCell(row.Right, rightWidth)
@@ -1144,9 +1197,17 @@ func renderDiffSideBySideRow(row diffSideBySideRow, width int, highlightPlan syn
 		if i < len(rightLines) {
 			right = rightLines[i]
 		}
+		leftNum := 0
+		rightNum := 0
+		if i == 0 {
+			leftNum = row.LeftLineNum
+			rightNum = row.RightLineNum
+		}
 		rendered = append(rendered,
-			renderDiffCellLine(left, leftWidth, row.LeftTone, highlightPlan, row.LeftCode)+
+			renderDiffLineNum(leftNum, row.LeftTone)+" "+
+				renderDiffCellLine(left, leftWidth, row.LeftTone, highlightPlan, row.LeftCode)+
 				gap+
+				renderDiffLineNum(rightNum, row.RightTone)+" "+
 				renderDiffCellLine(right, rightWidth, row.RightTone, highlightPlan, row.RightCode),
 		)
 	}
@@ -1191,6 +1252,7 @@ func renderDiffHighlightedCellLine(text string, width int, tone diffCellTone, hi
 	highlighted := diffToneCellStyle(tone).Render(prefix) + highlightPlan.Render(body, syntaxHighlightOptions{
 		DefaultColor:    diffToneCellDefaultColor(tone),
 		BackgroundColor: diffToneBackgroundColor(tone),
+		NoItalic:        true,
 	})
 	strippedWidth := ansi.StringWidth(ansi.Strip(highlighted))
 	if width > 0 && strippedWidth < width {
@@ -1202,11 +1264,24 @@ func renderDiffHighlightedCellLine(text string, width int, tone diffCellTone, hi
 	return highlighted
 }
 
-func renderDiffHighlightedPatchLine(line string, tone diffCellTone, highlightPlan syntaxHighlightPlan) string {
+func renderDiffHighlightedPatchLine(line string, width int, tone diffCellTone, highlightPlan syntaxHighlightPlan) string {
 	prefix, body := splitDiffSyntaxPrefix(line)
-	return diffToneStyle(tone).Render(prefix) + highlightPlan.Render(body, syntaxHighlightOptions{
-		DefaultColor: diffToneDefaultColor(tone),
+	// Unified view: use background color to indicate add/delete, keep foreground neutral
+	prefixStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("250")).
+		Background(diffToneBackgroundColor(tone))
+	highlighted := prefixStyle.Render(prefix) + highlightPlan.Render(body, syntaxHighlightOptions{
+		DefaultColor:    lipgloss.Color("250"),
+		BackgroundColor: diffToneBackgroundColor(tone),
+		NoItalic:        true,
 	})
+	if width > 0 {
+		strippedWidth := ansi.StringWidth(ansi.Strip(highlighted))
+		if strippedWidth < width {
+			highlighted += diffToneFill(tone, width-strippedWidth)
+		}
+	}
+	return highlighted
 }
 
 func splitDiffSyntaxPrefix(text string) (string, string) {
