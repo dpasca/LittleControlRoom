@@ -6,3 +6,4 @@
 *.sqlite-shm
 *.sqlite-wal
 screenshots.local.toml
+.claude/
