@@ -93,11 +93,14 @@ type diffViewState struct {
 	mode     diffRenderMode
 
 	contentViewport viewport.Model
-	renderedWidth   int
-	renderedIndex   int
-	renderedMode    diffRenderMode
-	renderedContent string
 	renderCache     map[diffRenderCacheKey]string
+
+	// Continuous scroll: all files concatenated into one scrollable document.
+	continuousContent   string
+	continuousOffsets   []int          // line offset where each file starts
+	continuousFileOrder []int          // file indices matching continuousOffsets
+	continuousWidth     int
+	continuousMode      diffRenderMode
 }
 
 func (state *diffViewState) hasFiles() bool {
@@ -112,7 +115,6 @@ func newDiffViewState(projectPath, projectName string) *diffViewState {
 		focus:           diffFocusFiles,
 		mode:            diffRenderModeSideBySide,
 		contentViewport: viewport.New(0, 0),
-		renderedIndex:   -1,
 		renderCache:     make(map[diffRenderCacheKey]string),
 	}
 }
@@ -121,11 +123,12 @@ func (state *diffViewState) resetRenderCache() {
 	if state == nil {
 		return
 	}
-	state.renderedWidth = 0
-	state.renderedIndex = -1
-	state.renderedMode = ""
-	state.renderedContent = ""
 	state.renderCache = make(map[diffRenderCacheKey]string)
+	state.continuousContent = ""
+	state.continuousOffsets = nil
+	state.continuousFileOrder = nil
+	state.continuousWidth = 0
+	state.continuousMode = ""
 }
 
 func (m Model) updateDiffMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -183,6 +186,7 @@ func (m Model) updateDiffMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.diffView.contentViewport.LineUp(1)
+		m.updateDiffSelectionFromScroll()
 		return m, nil
 	case "down", "j":
 		if m.diffView.focus == diffFocusFiles {
@@ -190,6 +194,7 @@ func (m Model) updateDiffMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.diffView.contentViewport.LineDown(1)
+		m.updateDiffSelectionFromScroll()
 		return m, nil
 	case "pgup":
 		if m.diffView.focus == diffFocusFiles {
@@ -197,6 +202,7 @@ func (m Model) updateDiffMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.diffView.contentViewport.PageUp()
+		m.updateDiffSelectionFromScroll()
 		return m, nil
 	case "pgdown":
 		if m.diffView.focus == diffFocusFiles {
@@ -204,6 +210,7 @@ func (m Model) updateDiffMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.diffView.contentViewport.PageDown()
+		m.updateDiffSelectionFromScroll()
 		return m, nil
 	case "home":
 		if m.diffView.focus == diffFocusFiles {
@@ -211,6 +218,7 @@ func (m Model) updateDiffMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.diffView.contentViewport.GotoTop()
+		m.updateDiffSelectionFromScroll()
 		return m, nil
 	case "end":
 		if m.diffView.focus == diffFocusFiles {
@@ -222,6 +230,7 @@ func (m Model) updateDiffMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.diffView.contentViewport.GotoBottom()
+		m.updateDiffSelectionFromScroll()
 		return m, nil
 	}
 	return m, nil
@@ -276,9 +285,9 @@ func (m *Model) toggleDiffRenderMode() {
 	} else {
 		m.diffView.mode = diffRenderModeUnified
 	}
-	m.diffView.renderedIndex = -1
-	m.diffView.renderedWidth = 0
-	m.diffView.renderedMode = ""
+	m.diffView.continuousContent = ""
+	m.diffView.continuousWidth = 0
+	m.diffView.continuousMode = ""
 	m.syncDiffView(false)
 	m.status = diffViewReadyStatus(*m.diffView)
 }
@@ -304,9 +313,19 @@ func (m *Model) moveDiffSelectionTo(index int) {
 		return
 	}
 	m.diffView.selected = index
-	m.diffView.renderedIndex = -1
 	m.ensureDiffSelectionVisible()
-	m.syncDiffView(true)
+
+	// Scroll the continuous viewport to the selected file.
+	targetOffset := m.continuousOffsetForFile(index)
+	layout := m.bodyLayout()
+	_, contentPaneW := diffPaneWidths(layout.width)
+	contentWidth := max(20, contentPaneW-4)
+	contentHeight := max(1, max(3, layout.height-2)-2)
+	m.diffView.contentViewport.Width = contentWidth
+	m.diffView.contentViewport.Height = contentHeight
+	m.ensureRenderedContinuousContent(contentWidth)
+	m.diffView.contentViewport.SetContent(m.diffView.continuousContent)
+	m.diffView.contentViewport.SetYOffset(targetOffset)
 }
 
 func (m *Model) ensureDiffSelectionVisible() {
@@ -356,12 +375,13 @@ func (m *Model) syncDiffView(reset bool) {
 
 	m.diffView.contentViewport.Width = contentWidth
 	m.diffView.contentViewport.Height = contentHeight
-	m.ensureRenderedDiffContent(contentWidth)
+	m.ensureRenderedContinuousContent(contentWidth)
 
 	offset := m.diffView.contentViewport.YOffset
-	m.diffView.contentViewport.SetContent(m.diffView.renderedContent)
+	m.diffView.contentViewport.SetContent(m.diffView.continuousContent)
 	if reset {
-		m.diffView.contentViewport.GotoTop()
+		targetOffset := m.continuousOffsetForFile(m.diffView.selected)
+		m.diffView.contentViewport.SetYOffset(targetOffset)
 		return
 	}
 	maxOffset := max(0, m.diffView.contentViewport.TotalLineCount()-m.diffView.contentViewport.Height)
@@ -371,44 +391,131 @@ func (m *Model) syncDiffView(reset bool) {
 	m.diffView.contentViewport.SetYOffset(offset)
 }
 
-func (m *Model) ensureRenderedDiffContent(width int) {
-	if m.diffView == nil {
+func (m *Model) ensureRenderedContinuousContent(width int) {
+	if m.diffView == nil || !m.diffView.hasFiles() {
 		return
 	}
 	if width < 1 {
 		width = 1
 	}
-	if !m.diffView.hasFiles() {
-		m.diffView.renderedContent = renderCodexMessageBlock("Nothing to diff", diffViewEmptyMessage(*m.diffView), lipgloss.Color("81"), lipgloss.Color("252"), width)
-		m.diffView.renderedWidth = width
-		m.diffView.renderedIndex = -1
-		m.diffView.renderedMode = m.diffView.mode
+	if m.diffView.continuousWidth == width && m.diffView.continuousMode == m.diffView.mode && m.diffView.continuousContent != "" {
 		return
 	}
-	if m.diffView.renderedWidth == width && m.diffView.renderedIndex == m.diffView.selected && m.diffView.renderedMode == m.diffView.mode && m.diffView.renderedContent != "" {
+
+	files := m.diffView.preview.Files
+	rows := buildDiffListRows(files)
+
+	var parts []string
+	offsets := make([]int, 0, len(files))
+	fileOrder := make([]int, 0, len(files))
+	currentLine := 0
+	seen := make(map[int]bool)
+
+	for _, row := range rows {
+		if row.FileIndex < 0 {
+			header := renderContinuousSectionHeader(row.Title, width)
+			parts = append(parts, header)
+			currentLine += strings.Count(header, "\n") + 1
+			continue
+		}
+		if seen[row.FileIndex] {
+			continue
+		}
+		seen[row.FileIndex] = true
+
+		file := files[row.FileIndex]
+		fileHeader := renderContinuousFileHeader(file, width)
+		parts = append(parts, fileHeader)
+		currentLine += strings.Count(fileHeader, "\n") + 1
+
+		offsets = append(offsets, currentLine)
+		fileOrder = append(fileOrder, row.FileIndex)
+
+		cacheKey := diffRenderCacheKey{FileIndex: row.FileIndex, Width: width, Mode: m.diffView.mode}
+		body, ok := m.diffView.renderCache[cacheKey]
+		if !ok {
+			body = renderDiffEntryBody(file, width, m.diffView.mode)
+			if m.diffView.renderCache == nil {
+				m.diffView.renderCache = make(map[diffRenderCacheKey]string)
+			}
+			m.diffView.renderCache[cacheKey] = body
+		}
+
+		parts = append(parts, body)
+		currentLine += strings.Count(body, "\n") + 1
+
+		// Blank separator between files.
+		parts = append(parts, "")
+		currentLine++
+	}
+
+	m.diffView.continuousContent = strings.Join(parts, "\n")
+	m.diffView.continuousOffsets = offsets
+	m.diffView.continuousFileOrder = fileOrder
+	m.diffView.continuousWidth = width
+	m.diffView.continuousMode = m.diffView.mode
+}
+
+func renderContinuousSectionHeader(title string, width int) string {
+	line := strings.Repeat("─", max(1, width))
+	header := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("246")).
+		Bold(true).
+		Render(title)
+	rule := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("238")).
+		Render(line)
+	return rule + "\n" + header + "\n" + rule
+}
+
+func renderContinuousFileHeader(file service.DiffFilePreview, width int) string {
+	kindCode := diffFileKindCode(file)
+	state := diffFileStateWord(file)
+	label := kindCode + " " + state + "  " + file.Summary
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252")).
+		Bold(true).
+		Width(width).
+		Render(truncateText(label, max(1, width)))
+}
+
+func (m *Model) continuousFileAtOffset(yOffset int) int {
+	if m.diffView == nil || len(m.diffView.continuousOffsets) == 0 {
+		return 0
+	}
+	// Find the last file whose offset is <= yOffset.
+	result := m.diffView.continuousFileOrder[0]
+	for i, off := range m.diffView.continuousOffsets {
+		if off <= yOffset {
+			result = m.diffView.continuousFileOrder[i]
+		} else {
+			break
+		}
+	}
+	return result
+}
+
+func (m *Model) continuousOffsetForFile(fileIndex int) int {
+	if m.diffView == nil {
+		return 0
+	}
+	for i, idx := range m.diffView.continuousFileOrder {
+		if idx == fileIndex {
+			return m.diffView.continuousOffsets[i]
+		}
+	}
+	return 0
+}
+
+func (m *Model) updateDiffSelectionFromScroll() {
+	if m.diffView == nil || !m.diffView.hasFiles() || len(m.diffView.continuousOffsets) == 0 {
 		return
 	}
-	cacheKey := diffRenderCacheKey{
-		FileIndex: m.diffView.selected,
-		Width:     width,
-		Mode:      m.diffView.mode,
+	fileIndex := m.continuousFileAtOffset(m.diffView.contentViewport.YOffset)
+	if fileIndex != m.diffView.selected {
+		m.diffView.selected = fileIndex
+		m.ensureDiffSelectionVisible()
 	}
-	if cached, ok := m.diffView.renderCache[cacheKey]; ok {
-		m.diffView.renderedContent = cached
-		m.diffView.renderedWidth = width
-		m.diffView.renderedIndex = m.diffView.selected
-		m.diffView.renderedMode = m.diffView.mode
-		return
-	}
-	file := m.diffView.preview.Files[m.diffView.selected]
-	m.diffView.renderedContent = renderDiffEntryBody(file, width, m.diffView.mode)
-	m.diffView.renderedWidth = width
-	m.diffView.renderedIndex = m.diffView.selected
-	m.diffView.renderedMode = m.diffView.mode
-	if m.diffView.renderCache == nil {
-		m.diffView.renderCache = make(map[diffRenderCacheKey]string)
-	}
-	m.diffView.renderCache[cacheKey] = m.diffView.renderedContent
 }
 
 func (m Model) selectedDiffFile() (service.DiffFilePreview, bool) {
@@ -488,34 +595,72 @@ func renderDiffSectionHeader(title string, width int) string {
 }
 
 func renderDiffFileRow(file service.DiffFilePreview, selected bool, width int) string {
+	kindCode := diffFileKindCode(file)
 	state := diffFileStateWord(file)
 	pathWidth := max(8, width-15)
-	base := fmt.Sprintf(" %s %-9s %s", file.Code, state, truncateText(file.Summary, pathWidth))
+	base := fmt.Sprintf(" %s %-9s %s", kindCode, state, truncateText(file.Summary, pathWidth))
 	if selected {
 		return commandPaletteSelectStyle.Width(width).Render(truncateText(base, max(1, width)))
 	}
-	code := diffFileCodeStyle(file).Render(file.Code)
+	code := diffFileCodeStyle(file).Render(kindCode)
 	row := " " + code + " " + commandPaletteHintStyle.Render(fmt.Sprintf("%-9s", state)) + " " + commandPaletteRowStyle.Render(truncateText(file.Summary, pathWidth))
 	return commandPaletteRowStyle.Width(width).Render(row)
 }
 
 func diffFileCodeStyle(file service.DiffFilePreview) lipgloss.Style {
-	switch diffFileStateWord(file) {
-	case "untracked":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
-	case "deleted":
+	switch file.Kind {
+	case scanner.GitChangeDeleted:
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true)
+	case scanner.GitChangeUntracked:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
+	case scanner.GitChangeRenamed, scanner.GitChangeCopied:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
 	default:
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
 	}
 }
 
+func diffFileKindCode(file service.DiffFilePreview) string {
+	switch file.Kind {
+	case scanner.GitChangeModified:
+		return "M"
+	case scanner.GitChangeAdded:
+		return "A"
+	case scanner.GitChangeDeleted:
+		return "D"
+	case scanner.GitChangeRenamed:
+		return "R"
+	case scanner.GitChangeCopied:
+		return "C"
+	case scanner.GitChangeType:
+		return "T"
+	case scanner.GitChangeUnmerged:
+		return "U"
+	case scanner.GitChangeUntracked:
+		return "?"
+	default:
+		return "·"
+	}
+}
+
 func diffFileStateWord(file service.DiffFilePreview) string {
-	switch {
-	case file.Untracked:
-		return "untracked"
-	case file.Kind == scanner.GitChangeDeleted:
+	switch file.Kind {
+	case scanner.GitChangeModified:
+		return "modified"
+	case scanner.GitChangeAdded:
+		return "added"
+	case scanner.GitChangeDeleted:
 		return "deleted"
+	case scanner.GitChangeRenamed:
+		return "renamed"
+	case scanner.GitChangeCopied:
+		return "copied"
+	case scanner.GitChangeType:
+		return "type"
+	case scanner.GitChangeUnmerged:
+		return "unmerged"
+	case scanner.GitChangeUntracked:
+		return "untracked"
 	default:
 		return "changed"
 	}
@@ -533,7 +678,11 @@ func (m Model) renderDiffContentPane(width, height int) string {
 			meta = commandPaletteHintStyle.Render("Loading changed files and previews...")
 			body = renderCodexMessageBlock("Status", "Building the selected project's diff preview.", lipgloss.Color("81"), lipgloss.Color("252"), width)
 		case m.diffView.hasFiles():
-			file := m.diffView.preview.Files[m.diffView.selected]
+			visibleIndex := m.diffView.selected
+			if len(m.diffView.continuousOffsets) > 0 {
+				visibleIndex = m.continuousFileAtOffset(m.diffView.contentViewport.YOffset)
+			}
+			file := m.diffView.preview.Files[visibleIndex]
 			title = commandPaletteTitleStyle.Render(truncateText(file.Summary, max(1, width)))
 			meta = commandPaletteHintStyle.Render(diffFileMeta(file, m.diffView.mode))
 			body = m.diffView.contentViewport.View()
@@ -1390,9 +1539,13 @@ func buildDiffListRows(files []service.DiffFilePreview) []diffListRow {
 		return nil
 	}
 	stagedCount := 0
+	unstagedCount := 0
 	for _, file := range files {
 		if file.Staged {
 			stagedCount++
+		}
+		if file.Unstaged || file.Untracked {
+			unstagedCount++
 		}
 	}
 	rows := make([]diffListRow, 0, len(files)+2)
@@ -1404,11 +1557,10 @@ func buildDiffListRows(files []service.DiffFilePreview) []diffListRow {
 			}
 		}
 	}
-	unstagedCount := len(files) - stagedCount
 	if unstagedCount > 0 {
 		rows = append(rows, diffListRow{Title: fmt.Sprintf("Unstaged (%d)", unstagedCount), FileIndex: -1})
 		for i, file := range files {
-			if !file.Staged {
+			if file.Unstaged || file.Untracked {
 				rows = append(rows, diffListRow{FileIndex: i})
 			}
 		}

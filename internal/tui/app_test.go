@@ -9208,10 +9208,10 @@ func TestRenderDiffFileRowSelectedUsesCompactCodeSpacing(t *testing.T) {
 		Kind:     scanner.GitChangeModified,
 		Unstaged: true,
 	}, true, 28))
-	if strings.Contains(rendered, "M   changed") {
+	if strings.Contains(rendered, "M   modified") {
 		t.Fatalf("selected diff row should not add extra padding before the state label: %q", rendered)
 	}
-	if !strings.Contains(rendered, "M changed") {
+	if !strings.Contains(rendered, "M modified") {
 		t.Fatalf("selected diff row should keep the compact code-to-state spacing: %q", rendered)
 	}
 }
@@ -9409,25 +9409,26 @@ diff --git a/diff_view.go b/diff_view.go
 		Width:     m.diffView.contentViewport.Width,
 		Mode:      diffRenderModeSideBySide,
 	}
-	firstRendered := m.diffView.renderedContent
-	if got := len(m.diffView.renderCache); got != 1 {
-		t.Fatalf("initial render cache size = %d, want 1", got)
+	// Continuous scroll renders all files up front, so both should be cached.
+	if got := len(m.diffView.renderCache); got != 2 {
+		t.Fatalf("initial render cache size = %d, want 2 (continuous scroll caches all files)", got)
 	}
-	if cached := m.diffView.renderCache[cacheKey0]; cached != firstRendered {
-		t.Fatalf("cached render for first file did not match rendered content")
+	if _, ok := m.diffView.renderCache[cacheKey0]; !ok {
+		t.Fatalf("first file should be in the render cache")
 	}
 
+	firstContinuous := m.diffView.continuousContent
 	m.moveDiffSelectionTo(1)
 	if got := len(m.diffView.renderCache); got != 2 {
-		t.Fatalf("cache size after rendering second file = %d, want 2", got)
+		t.Fatalf("cache size after selecting second file = %d, want 2", got)
 	}
 
 	m.moveDiffSelectionTo(0)
 	if got := len(m.diffView.renderCache); got != 2 {
 		t.Fatalf("cache size after revisiting first file = %d, want 2", got)
 	}
-	if m.diffView.renderedContent != firstRendered {
-		t.Fatalf("revisiting a file should reuse the cached render")
+	if m.diffView.continuousContent != firstContinuous {
+		t.Fatalf("revisiting a file should reuse the cached continuous content")
 	}
 }
 
@@ -9466,8 +9467,8 @@ diff --git a/README.md b/README.md
 	if m.diffView.mode != diffRenderModeSideBySide {
 		t.Fatalf("default diff mode = %s, want side-by-side", m.diffView.mode)
 	}
-	if !strings.Contains(ansi.Strip(m.diffView.renderedContent), "Before") {
-		t.Fatalf("default diff renderer should start in side-by-side mode: %q", ansi.Strip(m.diffView.renderedContent))
+	if !strings.Contains(ansi.Strip(m.diffView.continuousContent), "Before") {
+		t.Fatalf("default diff renderer should start in side-by-side mode: %q", ansi.Strip(m.diffView.continuousContent))
 	}
 
 	updated, _ := m.updateDiffMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
@@ -9478,7 +9479,7 @@ diff --git a/README.md b/README.md
 	if !strings.Contains(got.status, "unified") {
 		t.Fatalf("status should mention unified mode after toggling: %q", got.status)
 	}
-	unified := ansi.Strip(got.diffView.renderedContent)
+	unified := ansi.Strip(got.diffView.continuousContent)
 	if strings.Contains(unified, "Before") || strings.Contains(unified, "After") {
 		t.Fatalf("unified mode should not show side-by-side column headers: %q", unified)
 	}
@@ -9491,8 +9492,8 @@ diff --git a/README.md b/README.md
 	if got.diffView.mode != diffRenderModeSideBySide {
 		t.Fatalf("second toggle should switch back to side-by-side, got %s", got.diffView.mode)
 	}
-	if !strings.Contains(ansi.Strip(got.diffView.renderedContent), "Before") {
-		t.Fatalf("side-by-side mode should restore the paired columns: %q", ansi.Strip(got.diffView.renderedContent))
+	if !strings.Contains(ansi.Strip(got.diffView.continuousContent), "Before") {
+		t.Fatalf("side-by-side mode should restore the paired columns: %q", ansi.Strip(got.diffView.continuousContent))
 	}
 }
 
