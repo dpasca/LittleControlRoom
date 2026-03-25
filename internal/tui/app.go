@@ -63,6 +63,7 @@ type Model struct {
 	todoEditor        *todoEditorState
 	todoDeleteConfirm *todoDeleteConfirmState
 	todoLaunchDraft   *todoLaunchDraftState
+	todoCopyDialog    *todoCopyDialogState
 
 	commandMode                  bool
 	commandInput                 textinput.Model
@@ -104,43 +105,43 @@ type Model struct {
 	lastUsageTotals       model.LLMUsage
 	haveUsageTotals       bool
 
-	mouseEnabled         bool
-	codexSelection       textSelection
-	codexManager         *codexapp.Manager
-	runtimeManager       *projectrun.Manager
-	runtimeSnapshots     map[string]projectrun.Snapshot
-	codexSnapshots       map[string]codexapp.Snapshot
-	codexTranscriptRev   map[string]uint64
-	codexVisibleProject  string
-	codexHiddenProject   string
-	codexPendingOpen     *codexPendingOpenState
-	codexInput           textarea.Model
-	codexDrafts          map[string]codexDraft
-	codexPasteTokenSeq   int
-	codexClosedHandled   map[string]struct{}
-	codexPickerVisible   bool
-	codexPickerSelected  int
-	codexPickerChoices   []codexSessionChoice
-	codexPickerLoading   bool
-	codexPickerKind      codexPickerKind
-	codexPickerTitle     string
-	codexPickerHint      string
-	codexPickerEmpty     string
-	codexPickerProject   string
-	codexPickerProvider  codexapp.Provider
-	questionNotify       *questionNotification
+	mouseEnabled           bool
+	codexSelection         textSelection
+	codexManager           *codexapp.Manager
+	runtimeManager         *projectrun.Manager
+	runtimeSnapshots       map[string]projectrun.Snapshot
+	codexSnapshots         map[string]codexapp.Snapshot
+	codexTranscriptRev     map[string]uint64
+	codexVisibleProject    string
+	codexHiddenProject     string
+	codexPendingOpen       *codexPendingOpenState
+	codexInput             textarea.Model
+	codexDrafts            map[string]codexDraft
+	codexPasteTokenSeq     int
+	codexClosedHandled     map[string]struct{}
+	codexPickerVisible     bool
+	codexPickerSelected    int
+	codexPickerChoices     []codexSessionChoice
+	codexPickerLoading     bool
+	codexPickerKind        codexPickerKind
+	codexPickerTitle       string
+	codexPickerHint        string
+	codexPickerEmpty       string
+	codexPickerProject     string
+	codexPickerProvider    codexapp.Provider
+	questionNotify         *questionNotification
 	codexInputSelection    *codexInputSelectionState
 	codexComposerSelection textSelection
 	codexModelPicker       *codexModelPickerState
-	embeddedModelPrefs   map[codexapp.Provider]embeddedModelPreference
-	recentCodexModels    []string
-	recentOpenCodeModels []string
-	codexDenseExpanded   bool
-	codexSlashSelected   int
-	codexToolAnswers     map[string]codexToolAnswerState
-	codexViewport        viewport.Model
-	codexTranscriptCache codexTranscriptRenderCache
-	codexViewportContent codexViewportContentState
+	embeddedModelPrefs     map[codexapp.Provider]embeddedModelPreference
+	recentCodexModels      []string
+	recentOpenCodeModels   []string
+	codexDenseExpanded     bool
+	codexSlashSelected     int
+	codexToolAnswers       map[string]codexToolAnswerState
+	codexViewport          viewport.Model
+	codexTranscriptCache   codexTranscriptRenderCache
+	codexViewportContent   codexViewportContentState
 
 	spinnerFrame int
 	showSessions bool
@@ -625,6 +626,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.todoDeleteConfirm != nil {
 			return m.updateTodoDeleteConfirmMode(msg)
+		}
+		if m.todoCopyDialog != nil {
+			return m.updateTodoCopyDialogMode(msg)
 		}
 		if m.todoEditor != nil {
 			return m.updateTodoEditorMode(msg)
@@ -1808,6 +1812,9 @@ func (m Model) View() string {
 	}
 	if m.todoDeleteConfirm != nil {
 		body = m.renderTodoDeleteConfirmOverlay(body, layout.width, layout.height)
+	}
+	if m.todoCopyDialog != nil {
+		body = m.renderTodoCopyDialogOverlay(body, layout.width, layout.height)
 	}
 	if m.noteDialog != nil {
 		body = m.renderNoteDialogOverlay(body, layout.width, layout.height)

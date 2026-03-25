@@ -3420,8 +3420,17 @@ func TestTodoDialogEnterStartsFreshPreferredProviderWithDraft(t *testing.T) {
 		height:        24,
 	}
 
-	updated, cmd := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
+	if got.todoDialog == nil {
+		t.Fatalf("todo dialog should still be open after Enter (shows copy dialog)")
+	}
+	if got.todoCopyDialog == nil {
+		t.Fatalf("todo copy dialog should open after Enter")
+	}
+
+	updated, cmd := got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
 	if got.todoDialog != nil {
 		t.Fatalf("todo dialog should close when starting the selected TODO")
 	}

@@ -13,6 +13,12 @@ import (
 )
 
 const (
+	todoCopyScopeCodex = iota
+	todoCopyScopeOpenCode
+	todoCopyScopeCancel
+)
+
+const (
 	todoDeleteConfirmFocusDelete = iota
 	todoDeleteConfirmFocusKeep
 )
@@ -43,6 +49,13 @@ type todoDeleteConfirmState struct {
 type todoLaunchDraftState struct {
 	projectPath string
 	provider    codexapp.Provider
+}
+
+type todoCopyDialogState struct {
+	ProjectPath string
+	ProjectName string
+	TodoText    string
+	Selected    int
 }
 
 func normalizeTodoText(text string) string {
@@ -224,6 +237,33 @@ func (m *Model) closeTodoDeleteConfirm(status string) {
 	}
 }
 
+func (m *Model) openTodoCopyDialog(todo model.TodoItem) {
+	if m.todoDialog == nil {
+		return
+	}
+	defaultSelection := todoCopyScopeCodex
+	if project, ok := m.selectedProject(); ok && project.Path == m.todoDialog.ProjectPath {
+		if preferredEmbeddedProviderForProject(project) == codexapp.ProviderOpenCode {
+			defaultSelection = todoCopyScopeOpenCode
+		}
+	}
+	m.todoCopyDialog = &todoCopyDialogState{
+		ProjectPath: m.todoDialog.ProjectPath,
+		ProjectName: m.todoDialog.ProjectName,
+		TodoText:    todo.Text,
+		Selected:    defaultSelection,
+	}
+	m.status = "Copy TODO to clipboard"
+}
+
+func (m *Model) closeTodoCopyDialog(status string) tea.Cmd {
+	m.todoCopyDialog = nil
+	if status != "" {
+		m.status = status
+	}
+	return nil
+}
+
 func (m Model) updateTodoDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
@@ -261,13 +301,91 @@ func (m Model) updateTodoDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = "Updating TODO..."
 		return m, m.toggleTodoDoneCmd(item)
 	case "enter":
-		return m.startSelectedTodoWithProvider("")
+		item, ok := m.selectedTodoItem()
+		if !ok {
+			m.status = "No TODO selected"
+			return m, nil
+		}
+		m.openTodoCopyDialog(item)
+		return m, nil
 	case "c":
-		return m.startSelectedTodoWithProvider(codexapp.ProviderCodex)
-	case "o":
-		return m.startSelectedTodoWithProvider(codexapp.ProviderOpenCode)
+		item, ok := m.selectedTodoItem()
+		if !ok {
+			m.status = "No TODO selected"
+			return m, nil
+		}
+		text := strings.TrimSpace(item.Text)
+		if text == "" {
+			m.status = "Nothing to copy for empty TODO"
+			return m, nil
+		}
+		if err := clipboardTextWriter(text); err != nil {
+			m.err = err
+			m.status = "TODO copy failed"
+			return m, nil
+		}
+		m.err = nil
+		m.status = "TODO copied to clipboard"
+		return m, nil
 	}
 	return m, nil
+}
+
+func (m Model) updateTodoCopyDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	copyDialog := m.todoCopyDialog
+	if copyDialog == nil {
+		return m, nil
+	}
+	switch msg.String() {
+	case "esc":
+		return m, m.closeTodoCopyDialog("TODO start canceled")
+	case "tab", "shift+tab", "left", "right", "up", "down":
+		delta := 1
+		if msg.String() == "shift+tab" || msg.String() == "left" || msg.String() == "up" {
+			delta = -1
+		}
+		return m, m.moveTodoCopyDialogSelection(delta)
+	case "enter", " ":
+		return m.activateTodoCopyDialogSelection()
+	}
+	return m, nil
+}
+
+func (m *Model) moveTodoCopyDialogSelection(delta int) tea.Cmd {
+	copyDialog := m.todoCopyDialog
+	if copyDialog == nil || delta == 0 {
+		return nil
+	}
+	index := copyDialog.Selected + delta
+	if index < todoCopyScopeCodex {
+		index = todoCopyScopeCancel
+	}
+	if index > todoCopyScopeCancel {
+		index = todoCopyScopeCodex
+	}
+	copyDialog.Selected = index
+	return nil
+}
+
+func (m *Model) activateTodoCopyDialogSelection() (tea.Model, tea.Cmd) {
+	copyDialog := m.todoCopyDialog
+	if copyDialog == nil {
+		return m, nil
+	}
+	if copyDialog.Selected == todoCopyScopeCancel {
+		m.todoCopyDialog = nil
+		m.status = "TODO start canceled"
+		return m, nil
+	}
+	var provider codexapp.Provider
+	switch copyDialog.Selected {
+	case todoCopyScopeCodex:
+		provider = codexapp.ProviderCodex
+	case todoCopyScopeOpenCode:
+		provider = codexapp.ProviderOpenCode
+	}
+	m.todoCopyDialog = nil
+	return m.startSelectedTodoWithProvider(provider)
 }
 
 func (m Model) updateTodoEditorMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -529,8 +647,8 @@ func todoDialogLegendLine() string {
 		renderDialogAction("e", "edit", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("space", "done", pushActionKeyStyle, pushActionTextStyle),
 		renderDialogAction("d", "delete", cancelActionKeyStyle, cancelActionTextStyle),
+		renderDialogAction("c", "copy", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("Enter", "start", commitActionKeyStyle, commitActionTextStyle),
-		renderDialogAction("c/o", "provider", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
 	)
 }
@@ -567,4 +685,42 @@ func (m Model) renderTodoDeleteConfirmOverlay(body string, bodyW, bodyH int) str
 	left := max(0, (bodyW-panelW)/2)
 	top := max(0, (bodyH-lipgloss.Height(panel))/2)
 	return overlayBlock(body, panel, bodyW, bodyH, left, top)
+}
+
+func (m Model) renderTodoCopyDialogOverlay(body string, bodyW, bodyH int) string {
+	copyDialog := m.todoCopyDialog
+	if copyDialog == nil {
+		return body
+	}
+	panelW := min(bodyW, min(max(52, bodyW-16), 82))
+	panelInnerW := max(24, panelW-4)
+	lines := []string{
+		renderDialogHeader("Start TODO", copyDialog.ProjectName, "", panelInnerW),
+		detailValueStyle.Render(truncateText(strings.TrimSpace(copyDialog.TodoText), panelInnerW)),
+		"",
+	}
+	options := []int{
+		todoCopyScopeCodex,
+		todoCopyScopeOpenCode,
+		todoCopyScopeCancel,
+	}
+	for _, option := range options {
+		lines = append(lines, renderNoteDialogButton(todoCopyScopeLabel(option), copyDialog.Selected == option))
+	}
+	lines = append(lines, commandPaletteHintStyle.Render("Tab, arrows, or Shift+Tab switch options. Enter runs the selected action. Esc cancels."))
+	panel := renderDialogPanel(panelW, panelInnerW, strings.Join(lines, "\n"))
+	left := max(0, (bodyW-panelW)/2)
+	top := max(0, (bodyH-lipgloss.Height(panel))/3)
+	return overlayBlock(body, panel, bodyW, bodyH, left, top)
+}
+
+func todoCopyScopeLabel(scope int) string {
+	switch scope {
+	case todoCopyScopeCodex:
+		return "Start with Codex"
+	case todoCopyScopeOpenCode:
+		return "Start with OpenCode"
+	default:
+		return "Cancel"
+	}
 }
