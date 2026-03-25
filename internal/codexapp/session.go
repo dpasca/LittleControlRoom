@@ -529,6 +529,8 @@ func newEmbeddedSession(req LaunchRequest, notify func()) (Session, error) {
 	switch req.Provider.Normalized() {
 	case ProviderOpenCode:
 		return newOpenCodeSession(req, notify)
+	case ProviderClaudeCode:
+		return newClaudeCodeSession(req, notify)
 	default:
 		return newAppServerSession(req, notify)
 	}

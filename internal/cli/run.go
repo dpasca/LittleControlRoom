@@ -17,6 +17,7 @@ import (
 	"lcroom/internal/brand"
 	"lcroom/internal/config"
 	"lcroom/internal/detectors"
+	"lcroom/internal/detectors/claudecode"
 	"lcroom/internal/detectors/codex"
 	"lcroom/internal/detectors/opencode"
 	"lcroom/internal/events"
@@ -116,6 +117,7 @@ func Run(programName string, args []string) int {
 	detectorList := []detectors.Detector{
 		codex.New(cfg.CodexHome),
 		opencode.New(cfg.OpenCodeHome),
+		claudecode.New(cfg.ClaudeCodeHome),
 	}
 	svc := service.New(cfg, st, bus, detectorList)
 

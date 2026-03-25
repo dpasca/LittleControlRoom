@@ -32,6 +32,7 @@ type AppConfig struct {
 	RecentOpenCodeModels      []string
 	CodexHome                 string
 	OpenCodeHome              string
+	ClaudeCodeHome            string
 	CodexLaunchPreset         codexcli.Preset
 	DataDir                   string
 	DBPath                    string
@@ -84,6 +85,7 @@ func Default() AppConfig {
 		IncludePaths:      []string{filepath.Join(home, "dev", "repos")},
 		CodexHome:         filepath.Join(home, ".codex"),
 		OpenCodeHome:      filepath.Join(home, ".local", "share", "opencode"),
+		ClaudeCodeHome:    filepath.Join(home, ".claude"),
 		CodexLaunchPreset: codexcli.DefaultPreset(),
 		DataDir:           dataDir,
 		DBPath:            filepath.Join(dataDir, brand.DBFileName),
@@ -130,6 +132,7 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	excludeProjectPatterns := fs.String("exclude-project-patterns", strings.Join(cfg.ExcludeProjectPatterns, ","), "Comma-separated project-name exclude patterns (supports '*' wildcard)")
 	codexHome := fs.String("codex-home", cfg.CodexHome, "Path to Codex home directory")
 	opencodeHome := fs.String("opencode-home", cfg.OpenCodeHome, "Path to OpenCode data directory")
+	claudeCodeHome := fs.String("claude-code-home", cfg.ClaudeCodeHome, "Path to Claude Code home directory")
 	codexLaunchPreset := fs.String("codex-launch-preset", string(cfg.CodexLaunchPreset), "Codex launch preset: yolo, full-auto, or safe")
 	dbPath := fs.String("db", cfg.DBPath, fmt.Sprintf("Path to %s SQLite database", brand.Name))
 	scanInterval := fs.Duration("interval", cfg.ScanInterval, "Scan interval")
@@ -185,6 +188,10 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 		return AppConfig{}, err
 	}
 	cfg.OpenCodeHome, err = expandHome(*opencodeHome)
+	if err != nil {
+		return AppConfig{}, err
+	}
+	cfg.ClaudeCodeHome, err = expandHome(*claudeCodeHome)
 	if err != nil {
 		return AppConfig{}, err
 	}

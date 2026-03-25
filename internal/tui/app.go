@@ -2702,6 +2702,8 @@ func providerForSessionFormat(format string) codexapp.Provider {
 		return codexapp.ProviderCodex
 	case "opencode_db":
 		return codexapp.ProviderOpenCode
+	case "claude_code":
+		return codexapp.ProviderClaudeCode
 	default:
 		return ""
 	}
@@ -5143,6 +5145,12 @@ func sourceStyleForTag(tag string, live bool) lipgloss.Style {
 			style = style.Foreground(lipgloss.Color("172")).Faint(true)
 		}
 		return style
+	case "CC":
+		style := lipgloss.NewStyle().Foreground(lipgloss.Color("215")).Bold(true)
+		if !live {
+			style = style.Foreground(lipgloss.Color("137")).Faint(true)
+		}
+		return style
 	default:
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	}
@@ -5154,6 +5162,8 @@ func sourceTag(format string) string {
 		return "CX"
 	case "opencode_db":
 		return "OC"
+	case "claude_code":
+		return "CC"
 	default:
 		return "--"
 	}
@@ -5165,6 +5175,8 @@ func sourceLabel(format string) string {
 		return "Codex"
 	case "OC":
 		return "OpenCode"
+	case "CC":
+		return "Claude Code"
 	default:
 		return "None"
 	}

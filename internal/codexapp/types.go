@@ -29,8 +29,9 @@ const (
 type Provider string
 
 const (
-	ProviderCodex    Provider = "codex"
-	ProviderOpenCode Provider = "opencode"
+	ProviderCodex     Provider = "codex"
+	ProviderOpenCode  Provider = "opencode"
+	ProviderClaudeCode Provider = "claude_code"
 )
 
 func (p Provider) Normalized() Provider {
@@ -39,6 +40,8 @@ func (p Provider) Normalized() Provider {
 		return ProviderCodex
 	case string(ProviderOpenCode), "open-code":
 		return ProviderOpenCode
+	case string(ProviderClaudeCode), "claude-code", "claude":
+		return ProviderClaudeCode
 	default:
 		return ""
 	}
@@ -48,6 +51,8 @@ func (p Provider) Label() string {
 	switch p.Normalized() {
 	case ProviderOpenCode:
 		return "OpenCode"
+	case ProviderClaudeCode:
+		return "Claude Code"
 	default:
 		return "Codex"
 	}
@@ -57,6 +62,8 @@ func (p Provider) SourceTag() string {
 	switch p.Normalized() {
 	case ProviderOpenCode:
 		return "OC"
+	case ProviderClaudeCode:
+		return "CC"
 	default:
 		return "CX"
 	}
@@ -468,8 +475,10 @@ func (r LaunchRequest) Validate() error {
 		if _, err := codexcli.ParsePreset(string(preset)); err != nil {
 			return err
 		}
+	case ProviderClaudeCode:
+		// Claude Code sessions are read-only; no preset validation needed.
 	default:
-		return fmt.Errorf("embedded provider must be one of: codex, opencode")
+		return fmt.Errorf("embedded provider must be one of: codex, opencode, claude_code")
 	}
 	return nil
 }

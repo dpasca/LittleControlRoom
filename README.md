@@ -1,10 +1,10 @@
 # Little Control Room
 
-Little Control Room (LCR) is a modern day IDE for developers using Codex and OpenCode.
+Little Control Room (LCR) is a modern day IDE for developers using Codex, OpenCode, and Claude Code.
 
 LCR is meant to be a single window where you can coordinate most of your development activity, multitasking across dozens of projects and sessions as well as possible.
 
-LCR shows you in real time the progress of each Codex and OpenCode session, and lets you open, resume, or switch sessions, view diffs, generate commits with automatic messages, and manage per-project runtimes, all without leaving the dashboard.
+LCR shows you in real time the progress of each Codex, OpenCode, and Claude Code session, and lets you open, resume, or switch sessions, view diffs, generate commits with automatic messages, and manage per-project runtimes, all without leaving the dashboard.
 
 ## Screenshots
 
@@ -30,15 +30,17 @@ Click any screenshot to open the full-size PNG on GitHub.
 
 ## What It Does
 
-- Finds recent Codex and OpenCode sessions across your local projects
+- Finds recent Codex, OpenCode, and Claude Code sessions across your local projects
 - Shows which projects are active, idle, or worth revisiting
 - Lets you open, resume, or switch embedded Codex or OpenCode sessions directly from the dashboard
+- Detects Claude Code sessions running in a separate terminal and shows their transcript read-only
 - Keeps common actions close at hand: refresh, pin, snooze, multiline project notes with list badges, managed per-project run commands with runtime/port badges, diff, commit, and push
 
 ## What it doesn't do (yet)
 
 - Many Codex slash-commands are missing.
 - Some OpenCode details are still catching up with Codex.
+- Claude Code integration is read-only (session detection and transcript viewing). Full embedded support depends on Claude Code exposing a server/RPC mode.
 
 ## Quick Start
 
@@ -47,6 +49,7 @@ Requirements:
 - Go 1.25+
 - Codex installed locally, capable of running in the terminal.
 - OpenCode installed locally if you want embedded OpenCode sessions.
+- Claude Code installed locally if you want read-only Claude Code session awareness.
 - At least one AI backend configured: Codex, OpenCode, or an OpenAI API key.
 
 Build and launch from this repo:
@@ -123,7 +126,7 @@ Inside the embedded Codex or OpenCode pane:
 Most day-to-day use falls into a few buckets:
 
 - `🚀 Run and monitor`: Use `/run` or `/start` to launch a saved runtime, `/restart` to bounce it, `/run-edit` to change the command, and `/stop` to shut it down. Press `Tab` or `/runtime` when you want to work directly in the runtime pane.
-- `🤖 Resume agent work`: Use `/codex` or `/opencode` to pick up where you left off, and `/codex-new` or `/opencode-new` when you want a fresh session. Inside the embedded pane, `/resume`, `/session`, and `/reconnect` handle switching sessions or reattaching the helper.
+- `🤖 Resume agent work`: Use `/codex` or `/opencode` to pick up where you left off, and `/codex-new` or `/opencode-new` when you want a fresh session. Inside the embedded pane, `/resume`, `/session`, and `/reconnect` handle switching sessions or reattaching the helper. Projects with Claude Code activity are detected automatically and shown with a `CC` tag; press `Enter` to view the transcript read-only.
 - `🧹 Keep the list clean`: Use `f` or `/filter <text>` to narrow the project list, `/pin` and `/snooze` to control attention, `/ignore` and `/ignored` to hide or restore exact project names, and `/forget` to remove a missing folder.
 - `📝 Review and organize`: Use `/note` or `n` for project notes, `/diff` to inspect git changes, `/commit` and `/push` when you are ready to ship, and `/open` to jump to the project folder.
 - `⚙️ Adjust setup`: Use `/settings` for API keys, paths, and defaults, and `/new-project` when you want to add something new to the dashboard.

@@ -245,6 +245,21 @@ type IgnoredProjectName struct {
 	MatchedProjects int
 }
 
+type ClaudeCodeToolUse struct {
+	ID      string
+	Name    string
+	Summary string
+}
+
+type ClaudeCodeTranscriptEntry struct {
+	UUID      string
+	Kind      string // "user", "assistant"
+	Text      string
+	Model     string
+	Timestamp time.Time
+	ToolUses  []ClaudeCodeToolUse
+}
+
 func StatusRank(s ProjectStatus) int {
 	switch s {
 	case StatusPossiblyStuck:

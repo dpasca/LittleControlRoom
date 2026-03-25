@@ -129,6 +129,8 @@ func embeddedNewCommand(provider codexapp.Provider) string {
 	switch provider.Normalized() {
 	case codexapp.ProviderOpenCode:
 		return "/opencode-new"
+	case codexapp.ProviderClaudeCode:
+		return "" // Claude Code sessions are read-only; no new-session command.
 	default:
 		return "/codex-new"
 	}
@@ -553,7 +555,10 @@ func embeddedSessionOpenStatus(req codexapp.LaunchRequest, threadIDsToAvoid map[
 	case req.ForceNew:
 		return "Fresh embedded " + label + " " + sessionLabel + " opened. Alt+Up hides it."
 	case snapshot.BusyExternal && strings.TrimSpace(req.Prompt) != "":
-		return label + " is already active in another process. Prompt was not sent; use " + embeddedNewCommand(provider) + " for a separate session."
+		if cmd := embeddedNewCommand(provider); cmd != "" {
+			return label + " is already active in another process. Prompt was not sent; use " + cmd + " for a separate session."
+		}
+		return label + " is already active in another process. Prompt was not sent; this is a read-only view."
 	case snapshot.BusyExternal:
 		return label + " is already active in another process. Embedded view is read-only until it finishes."
 	case strings.TrimSpace(req.Prompt) != "":
@@ -1019,7 +1024,11 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if snapshot.BusyExternal {
-			m.status = "This " + label + " session is already active in another process, so the embedded view cannot steer it. Use " + embeddedNewCommand(embeddedProvider(snapshot)) + " for a separate session."
+			if cmd := embeddedNewCommand(embeddedProvider(snapshot)); cmd != "" {
+				m.status = "This " + label + " session is already active in another process, so the embedded view cannot steer it. Use " + cmd + " for a separate session."
+			} else {
+				m.status = "This " + label + " session is read-only."
+			}
 			return m, nil
 		}
 		if snapshot.Phase == codexapp.SessionPhaseFinishing {
@@ -1815,7 +1824,9 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 	case snapshot.BusyExternal:
 		actions = []footerAction{
 			footerHideAction("Alt+Up", "hide"),
-			footerNavAction(embeddedNewCommand(embeddedProvider(snapshot)), "session"),
+		}
+		if cmd := embeddedNewCommand(embeddedProvider(snapshot)); cmd != "" {
+			actions = append(actions, footerNavAction(cmd, "session"))
 		}
 	case snapshot.Phase == codexapp.SessionPhaseReconciling:
 		actions = []footerAction{
