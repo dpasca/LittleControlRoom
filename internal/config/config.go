@@ -51,6 +51,7 @@ type AppConfig struct {
 	SanitizeProject           string
 	SanitizeSessionID         string
 	HideReasoningSections     bool
+	PrivacyMode               bool
 }
 
 func (c AppConfig) EffectiveAIBackend() AIBackend {
@@ -76,25 +77,27 @@ type fileConfig struct {
 	ActiveThreshold           string    `toml:"active-threshold"`
 	StuckThreshold            string    `toml:"stuck-threshold"`
 	HideReasoningSections     *bool     `toml:"hide_reasoning_sections"`
+	PrivacyMode               *bool     `toml:"privacy_mode"`
 }
 
 func Default() AppConfig {
 	home, _ := os.UserHomeDir()
 	dataDir := filepath.Join(home, brand.DataDirName)
 	return AppConfig{
-		IncludePaths:      []string{filepath.Join(home, "dev", "repos")},
-		CodexHome:         filepath.Join(home, ".codex"),
-		OpenCodeHome:      filepath.Join(home, ".local", "share", "opencode"),
-		ClaudeCodeHome:    filepath.Join(home, ".claude"),
-		CodexLaunchPreset: codexcli.DefaultPreset(),
-		DataDir:           dataDir,
-		DBPath:            filepath.Join(dataDir, brand.DBFileName),
-		ConfigPath:        filepath.Join(dataDir, brand.ConfigFileName),
-		SnapshotLimit:     3,
-		ScanInterval:      60 * time.Second,
+		IncludePaths:          []string{filepath.Join(home, "dev", "repos")},
+		CodexHome:             filepath.Join(home, ".codex"),
+		OpenCodeHome:          filepath.Join(home, ".local", "share", "opencode"),
+		ClaudeCodeHome:        filepath.Join(home, ".claude"),
+		CodexLaunchPreset:     codexcli.DefaultPreset(),
+		DataDir:               dataDir,
+		DBPath:                filepath.Join(dataDir, brand.DBFileName),
+		ConfigPath:            filepath.Join(dataDir, brand.ConfigFileName),
+		SnapshotLimit:         3,
+		ScanInterval:          60 * time.Second,
 		ActiveThreshold:       20 * time.Minute,
 		StuckThreshold:        4 * time.Hour,
 		HideReasoningSections: true,
+		PrivacyMode:           false,
 	}
 }
 
@@ -389,6 +392,9 @@ func applyConfigFile(cfg *AppConfig) error {
 	}
 	if fc.HideReasoningSections != nil {
 		cfg.HideReasoningSections = *fc.HideReasoningSections
+	}
+	if fc.PrivacyMode != nil {
+		cfg.PrivacyMode = *fc.PrivacyMode
 	}
 	cfg.ConfigLoaded = true
 	return nil

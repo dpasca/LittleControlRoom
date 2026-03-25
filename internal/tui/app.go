@@ -276,6 +276,12 @@ type setupSnapshotMsg struct {
 	openOnStartup bool
 }
 
+type privacyModeSavedMsg struct {
+	privacyMode bool
+	path        string
+	err         error
+}
+
 type ignoredProjectsMsg struct {
 	items []model.IgnoredProjectName
 	err   error
@@ -388,7 +394,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		sortMode:               sortByAttention,
 		visibility:             visibilityAIFolders,
 		excludeProjectPatterns: currentExcludeProjectPatterns(svc),
-		privacyMode:            false,
+		privacyMode:            initialSettings.PrivacyMode,
 		privacyPatterns:        currentPrivacyPatterns(svc),
 		codexManager:           codexapp.NewManager(),
 		runtimeManager:         projectrun.NewManager(),
@@ -1023,6 +1029,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		saved := cloneEditableSettings(msg.settings)
 		m.settingsBaseline = &saved
 		m.embeddedModelPrefs = embeddedModelPreferencesFromSettings(msg.settings)
+		return m, nil
+	case privacyModeSavedMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			m.status = fmt.Sprintf("Privacy mode saved for this run, but config write failed: %v", msg.err)
+			return m, nil
+		}
+		m.err = nil
+		if m.settingsBaseline != nil {
+			m.settingsBaseline.PrivacyMode = msg.privacyMode
+		}
 		return m, nil
 	case ignoredProjectsMsg:
 		if msg.err != nil {
@@ -2580,7 +2597,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 			selectedPath = p.Path
 		}
 		m.rebuildProjectList(selectedPath)
-		return m, nil
+		return m, m.savePrivacyModeCmd(m.privacyMode)
 	case commands.KindQuit:
 		if m.codexManager != nil {
 			_ = m.codexManager.CloseAll()

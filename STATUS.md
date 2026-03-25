@@ -1,8 +1,26 @@
 # Little Control Room Status
 
-Last updated: 2026-03-23 23:25 JST
+Last updated: 2026-03-25 19:05 JST
 
-## Latest Update (2026-03-23 23:25 JST)
+## Latest Update (2026-03-25 19:05 JST)
+
+- Made privacy mode activation persist across launches:
+  - Added `privacy_mode` boolean to `config.toml` (default: `false`)
+  - Privacy mode now loads from config on startup via `EditableSettings.PrivacyMode`
+  - Privacy mode is now persisted when toggled via `/privacy on|off|toggle` command
+  - Added `privacyModeSavedMsg` type and handler to handle async config saves
+  - Added `savePrivacyModeCmd` function in `settings.go` to persist privacy mode changes
+- Files modified:
+  - `internal/config/config.go`: Added `PrivacyMode` to `AppConfig`, `fileConfig`, `Default()`, and `applyConfigFile`
+  - `internal/config/editable.go`: Added `PrivacyMode` to `EditableSettings`, parsing, and TOML output
+  - `internal/config/config_test.go`: Updated `ParseEditableSettings` calls with new parameter
+  - `internal/tui/app.go`: Initialize `privacyMode` from config, added `privacyModeSavedMsg` handler
+  - `internal/tui/settings.go`: Added `savePrivacyModeCmd` and updated `ParseEditableSettings` call
+- `go test ./internal/config` passes
+- `make scan` and `make doctor` succeed
+- Note: One pre-existing TUI test (`TestViewWithHelpOverlayPreservesBackground`) fails - unrelated to these changes
+
+## Previous Update (2026-03-23 23:25 JST)
 
 - Added additional OpenCode collapse behavior for long streams split into many small transcript chunks.
 - In [internal/tui/codex_pane.go](/Users/davide/dev/repos/LittleControlRoom/internal/tui/codex_pane.go):

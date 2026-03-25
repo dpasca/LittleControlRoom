@@ -90,6 +90,7 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.settingsFieldValue(settingsFieldPrivacyPatterns),
 			m.settingsFieldValue(settingsFieldCodexLaunchPreset),
 			invertBoolString(m.settingsFieldValue(settingsFieldHideReasoningSections)),
+			strconv.FormatBool(m.currentSettingsBaseline().PrivacyMode),
 			m.currentSettingsBaseline().OpenCodeModelTier,
 			m.settingsFieldValue(settingsFieldActiveThreshold),
 			m.settingsFieldValue(settingsFieldStuckThreshold),
@@ -201,6 +202,16 @@ func (m Model) saveEmbeddedModelPreferencesCmd() tea.Cmd {
 	return func() tea.Msg {
 		err := config.SaveEditableSettings(path, settings)
 		return embeddedModelPreferencesSavedMsg{settings: settings, path: path, err: err}
+	}
+}
+
+func (m Model) savePrivacyModeCmd(privacyMode bool) tea.Cmd {
+	settings := m.currentSettingsBaseline()
+	settings.PrivacyMode = privacyMode
+	path := m.currentConfigPath()
+	return func() tea.Msg {
+		err := config.SaveEditableSettings(path, settings)
+		return privacyModeSavedMsg{privacyMode: privacyMode, path: path, err: err}
 	}
 }
 

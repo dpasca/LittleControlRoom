@@ -30,6 +30,7 @@ type EditableSettings struct {
 	ActiveThreshold           time.Duration
 	StuckThreshold            time.Duration
 	HideReasoningSections     bool
+	PrivacyMode               bool
 }
 
 func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
@@ -52,10 +53,11 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		ActiveThreshold:           cfg.ActiveThreshold,
 		StuckThreshold:            cfg.StuckThreshold,
 		HideReasoningSections:     cfg.HideReasoningSections,
+		PrivacyMode:               cfg.PrivacyMode,
 	}
 }
 
-func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, hideReasoningSectionsRaw, openCodeModelTierRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
+func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
 	parsedBackend, err := ParseAIBackend(string(aiBackend))
 	if err != nil {
 		return EditableSettings{}, err
@@ -78,6 +80,7 @@ func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, includeRaw, exc
 	}
 
 	hideReasoningSections := strings.EqualFold(strings.TrimSpace(hideReasoningSectionsRaw), "true")
+	privacyMode := strings.EqualFold(strings.TrimSpace(privacyModeRaw), "true")
 
 	active, err := parseConfigDuration(strings.TrimSpace(activeRaw), "active-threshold")
 	if err != nil {
@@ -104,6 +107,7 @@ func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, includeRaw, exc
 		CodexLaunchPreset:      codexLaunchPreset,
 		OpenCodeModelTier:      strings.TrimSpace(openCodeModelTierRaw),
 		HideReasoningSections:  hideReasoningSections,
+		PrivacyMode:            privacyMode,
 		ScanInterval:           interval,
 		ActiveThreshold:        active,
 		StuckThreshold:         stuck,
@@ -257,6 +261,8 @@ func renderEditableSettings(settings EditableSettings) string {
 	lines = append(lines, fmt.Sprintf("codex_launch_preset = %s", strconv.Quote(string(settings.CodexLaunchPreset))))
 	lines = append(lines, "")
 	lines = append(lines, fmt.Sprintf("hide_reasoning_sections = %t", settings.HideReasoningSections))
+	lines = append(lines, "")
+	lines = append(lines, fmt.Sprintf("privacy_mode = %t", settings.PrivacyMode))
 	lines = append(lines, "")
 	lines = append(lines, fmt.Sprintf("interval = %s", strconv.Quote(formatConfigDuration(settings.ScanInterval))))
 	lines = append(lines, fmt.Sprintf("active-threshold = %s", strconv.Quote(formatConfigDuration(settings.ActiveThreshold))))
