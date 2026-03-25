@@ -83,6 +83,8 @@ func ExtractSnapshot(ctx context.Context, classification model.SessionClassifica
 		items, err = extractCodexTranscript(classification.SessionFile)
 	case "opencode_db":
 		items, err = extractOpenCodeTranscript(ctx, classification.SessionFile)
+	case "claude_code":
+		items, err = extractClaudeCodeTranscript(classification.SessionFile)
 	default:
 		err = fmt.Errorf("unsupported session format: %s", classification.SessionFormat)
 	}
@@ -127,6 +129,8 @@ func ExtractPreview(ctx context.Context, session model.SessionEvidence) (Session
 		return extractCodexPreview(session.SessionFile)
 	case "opencode_db":
 		return extractOpenCodePreview(ctx, session.SessionFile)
+	case "claude_code":
+		return extractClaudeCodePreview(session.SessionFile)
 	default:
 		return SessionPreview{}, fmt.Errorf("unsupported session format: %s", session.Format)
 	}
@@ -1018,6 +1022,182 @@ func truncatePreviewLine(text string) string {
 		return text
 	}
 	return text[:maxPreviewBytes-3] + "..."
+}
+
+func extractClaudeCodeTranscript(path string) ([]TranscriptItem, error) {
+	lines, err := readTailLines(path, codexTailBytes)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]TranscriptItem, 0, len(lines))
+	for _, line := range lines {
+		if item, ok := extractClaudeCodeTranscriptItem(line); ok {
+			items = append(items, item)
+		}
+	}
+	return finalizeTranscript(items), nil
+}
+
+func extractClaudeCodePreview(path string) (SessionPreview, error) {
+	headItems, err := extractClaudeCodeHeadTranscript(path)
+	if err != nil {
+		return SessionPreview{}, err
+	}
+	tailItems, err := extractClaudeCodeTranscript(path)
+	if err != nil {
+		return SessionPreview{}, err
+	}
+	items := append(headItems, tailItems...)
+	if len(items) == 0 {
+		return SessionPreview{}, errors.New("no conversational transcript found")
+	}
+	return previewFromTranscript(items), nil
+}
+
+func extractClaudeCodeHeadTranscript(path string) ([]TranscriptItem, error) {
+	lines, err := readHeadLines(path, previewHeadBytes)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]TranscriptItem, 0, previewItemLimit)
+	for _, line := range lines {
+		item, ok := extractClaudeCodeTranscriptItem(line)
+		if !ok {
+			continue
+		}
+		items = append(items, item)
+		if len(items) >= previewItemLimit {
+			break
+		}
+	}
+	return finalizeTranscript(items), nil
+}
+
+func extractClaudeCodeTranscriptItem(line string) (TranscriptItem, bool) {
+	var raw struct {
+		Type    string `json:"type"`
+		IsMeta  bool   `json:"isMeta"`
+		Message struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(line), &raw); err != nil {
+		return TranscriptItem{}, false
+	}
+	if raw.IsMeta {
+		return TranscriptItem{}, false
+	}
+
+	switch raw.Type {
+	case "user":
+		text := extractClaudeCodeTextContent(raw.Message.Content)
+		if text == "" {
+			return TranscriptItem{}, false
+		}
+		return TranscriptItem{Role: "user", Text: text, Visible: true}, true
+	case "assistant":
+		text := extractClaudeCodeAssistantText(raw.Message.Content)
+		if text == "" {
+			return TranscriptItem{}, false
+		}
+		return TranscriptItem{Role: "assistant", Text: text, Visible: true}, true
+	default:
+		return TranscriptItem{}, false
+	}
+}
+
+func extractClaudeCodeTextContent(content json.RawMessage) string {
+	if len(content) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(content, &s); err == nil {
+		return sanitizeTranscriptText(s)
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(content, &blocks); err != nil {
+		return ""
+	}
+	var parts []string
+	for _, b := range blocks {
+		if b.Type == "text" {
+			if t := sanitizeTranscriptText(b.Text); t != "" {
+				parts = append(parts, t)
+			}
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func extractClaudeCodeAssistantText(content json.RawMessage) string {
+	if len(content) == 0 {
+		return ""
+	}
+	var blocks []struct {
+		Type  string          `json:"type"`
+		Text  string          `json:"text"`
+		Name  string          `json:"name"`
+		Input json.RawMessage `json:"input"`
+	}
+	if err := json.Unmarshal(content, &blocks); err != nil {
+		return ""
+	}
+	var parts []string
+	for _, b := range blocks {
+		switch b.Type {
+		case "text":
+			if t := sanitizeTranscriptText(b.Text); t != "" {
+				parts = append(parts, t)
+			}
+		case "tool_use":
+			summary := ccToolSummaryForClassifier(b.Name, b.Input)
+			if summary != "" {
+				parts = append(parts, fmt.Sprintf("Tool %s: %s", b.Name, summary))
+			} else {
+				parts = append(parts, "Tool "+b.Name)
+			}
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func ccToolSummaryForClassifier(name string, input json.RawMessage) string {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(input, &fields); err != nil {
+		return ""
+	}
+	switch name {
+	case "Read", "Edit", "Write":
+		return ccExtractStringField(fields, "file_path")
+	case "Bash":
+		cmd := ccExtractStringField(fields, "command")
+		if len(cmd) > 120 {
+			return cmd[:120] + "..."
+		}
+		return cmd
+	case "Glob", "Grep":
+		return ccExtractStringField(fields, "pattern")
+	case "Agent":
+		return ccExtractStringField(fields, "description")
+	default:
+		return ""
+	}
+}
+
+func ccExtractStringField(fields map[string]json.RawMessage, key string) string {
+	raw, ok := fields[key]
+	if !ok {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return ""
+	}
+	return sanitizeTranscriptText(s)
 }
 
 func sanitizeTranscriptText(text string) string {

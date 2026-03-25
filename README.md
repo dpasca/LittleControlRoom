@@ -39,7 +39,6 @@ Click any screenshot to open the full-size PNG on GitHub.
 ## What it doesn't do (yet)
 
 - Many Codex slash-commands are missing.
-- Some OpenCode details are still catching up with Codex.
 - Claude Code integration is read-only (session detection and transcript viewing). Full embedded support depends on Claude Code exposing a server/RPC mode.
 
 ## Quick Start

@@ -3641,11 +3641,23 @@ func renderCodexMarkdownTable(rows []string, color lipgloss.Color, maxWidth int)
 	if totalWidth > maxWidth && maxWidth > tableOverhead+numCols {
 		available := maxWidth - tableOverhead
 		for i, w := range colWidths {
-			maxCol := available / (numCols - i)
+			remaining := numCols - i
+			maxCol := available / remaining
+			if maxCol < 1 {
+				maxCol = 1
+			}
 			if w > maxCol {
 				colWidths[i] = maxCol
 			}
 			available -= colWidths[i]
+			if available < 0 {
+				available = 0
+			}
+		}
+	}
+	for i, w := range colWidths {
+		if w < 1 {
+			colWidths[i] = 1
 		}
 	}
 
@@ -3673,10 +3685,19 @@ func renderCodexMarkdownTable(rows []string, color lipgloss.Color, maxWidth int)
 				cell = cells[j]
 			}
 			// Truncate if needed
-			if len(cell) > colWidths[j] {
-				cell = cell[:colWidths[j]-1] + "…"
+			w := colWidths[j]
+			if len(cell) > w {
+				if w > 1 {
+					cell = cell[:w-1] + "…"
+				} else {
+					cell = "…"
+				}
 			}
-			padded := cell + strings.Repeat(" ", colWidths[j]-len(cell))
+			pad := w - len(cell)
+			if pad < 0 {
+				pad = 0
+			}
+			padded := cell + strings.Repeat(" ", pad)
 			if isHeader {
 				parts[j] = headerStyle.Render(padded)
 			} else {
