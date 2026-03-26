@@ -89,6 +89,57 @@ func TestOverlaySelectionHighlight(t *testing.T) {
 	}
 }
 
+func TestCleanCopiedText(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "strip leading space",
+			in:   " Hello\n World",
+			want: "Hello World",
+		},
+		{
+			name: "join soft-wrapped lines",
+			// Lines without trailing spaces are full-width (soft-wrapped).
+			in: "Hello\nWorld",
+			want: "Hello World",
+		},
+		{
+			name: "keep line break on short lines",
+			// Trailing space signals the line was shorter than viewport width.
+			in:   "Hello   \nWorld",
+			want: "Hello\nWorld",
+		},
+		{
+			name: "preserve blank line separators",
+			in:   " First paragraph\n\n Second paragraph",
+			want: "First paragraph\n\nSecond paragraph",
+		},
+		{
+			name: "strip trailing whitespace",
+			in:   " Hello   \n World   ",
+			want: "Hello\nWorld",
+		},
+		{
+			name: "full pipeline",
+			// Two paragraphs separated by blank line. First paragraph has
+			// a soft-wrapped line (no trailing space).
+			in:   " This is a long line that was\n soft-wrapped by the viewport\n\n " + "Second paragraph here.   ",
+			want: "This is a long line that was soft-wrapped by the viewport\n\nSecond paragraph here.",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := cleanCopiedText(tt.in)
+			if got != tt.want {
+				t.Errorf("cleanCopiedText(%q)\n got: %q\nwant: %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func containsSubstring(s, sub string) bool {
 	return len(s) >= len(sub) && findSubstring(s, sub)
 }

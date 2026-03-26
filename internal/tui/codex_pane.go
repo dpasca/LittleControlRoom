@@ -3947,7 +3947,7 @@ const codexViewportScreenTop = 2
 func (m *Model) finalizeCodexSelection() {
 	m.codexSelection.dragging = false
 	if m.codexSelection.hasRange() {
-		text := m.codexSelection.extractText(m.codexTranscriptCache.rendered)
+		text := cleanCopiedText(m.codexSelection.extractText(m.codexTranscriptCache.rendered))
 		if text != "" {
 			if err := clipboardTextWriter(text); err == nil {
 				m.status = "Copied selection to clipboard"

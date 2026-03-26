@@ -72,6 +72,58 @@ func (s textSelection) extractText(fullContent string) string {
 	return strings.Join(result, "\n")
 }
 
+// cleanCopiedText post-processes extracted selection text for a cleaner
+// clipboard result:
+//  1. Strip 1 leading space from each line (from viewport PaddingLeft).
+//  2. Join soft-wrapped lines: when a line does NOT end with trailing whitespace
+//     (meaning it filled the viewport width) and the next line is non-empty,
+//     they belong to the same paragraph and are merged.
+//  3. Strip trailing whitespace from each line.
+func cleanCopiedText(text string) string {
+	lines := strings.Split(text, "\n")
+
+	// Step 1: strip 1 leading space per line.
+	for i, line := range lines {
+		lines[i] = strings.TrimPrefix(line, " ")
+	}
+
+	// Step 2: join soft-wrapped lines. A line that does NOT end with
+	// whitespace was full-width (soft-wrapped); merge it with the next
+	// non-empty line. This must happen before trailing-space stripping.
+	joined := make([]string, 0, len(lines))
+	var buf strings.Builder
+	for _, line := range lines {
+		if line == "" {
+			if buf.Len() > 0 {
+				joined = append(joined, buf.String())
+				buf.Reset()
+			}
+			joined = append(joined, "")
+			continue
+		}
+		if buf.Len() > 0 {
+			buf.WriteByte(' ')
+		}
+		buf.WriteString(line)
+		// If the original line ends with whitespace, it was shorter than
+		// the viewport width — treat it as a natural line break.
+		if strings.HasSuffix(line, " ") || strings.HasSuffix(line, "\t") {
+			joined = append(joined, buf.String())
+			buf.Reset()
+		}
+	}
+	if buf.Len() > 0 {
+		joined = append(joined, buf.String())
+	}
+
+	// Step 3: strip trailing whitespace from each line.
+	for i, line := range joined {
+		joined[i] = strings.TrimRight(line, " \t")
+	}
+
+	return strings.Join(joined, "\n")
+}
+
 // overlaySelectionHighlight applies reverse-video styling to the selected
 // region within the viewport's visible output.
 func overlaySelectionHighlight(viewportOutput string, sel textSelection, yOffset int) string {

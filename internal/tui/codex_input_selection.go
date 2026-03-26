@@ -90,7 +90,7 @@ func (m *Model) toggleCodexInputSelectionMark() tea.Cmd {
 		return nil
 	}
 
-	text := noteSelectedText(m.codexInput, sel.AnchorLine, sel.AnchorCol, line, col)
+	text := cleanCopiedText(noteSelectedText(m.codexInput, sel.AnchorLine, sel.AnchorCol, line, col))
 	if text == "" {
 		m.status = "Selection is empty. Move the cursor and press Space again."
 		return nil
@@ -191,7 +191,7 @@ func (m *Model) codexComposerMouseToContent(screenX, screenY, composerTop, compo
 func (m *Model) finalizeCodexComposerSelection() {
 	m.codexComposerSelection.dragging = false
 	if m.codexComposerSelection.hasRange() {
-		text := m.codexComposerSelection.extractText(m.codexInput.Value())
+		text := cleanCopiedText(m.codexComposerSelection.extractText(m.codexInput.Value()))
 		if text != "" {
 			if err := clipboardTextWriter(text); err == nil {
 				m.status = "Copied composer selection to clipboard"
