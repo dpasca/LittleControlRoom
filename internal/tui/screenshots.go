@@ -153,6 +153,20 @@ func GenerateScreenshots(ctx context.Context, svc *service.Service, cfg config.S
 	commitModel.status = commitPreviewReadyStatus(commitModel.commitPreview.CanPush)
 	assets = append(assets, screenshotAsset("commit-preview", "Commit Preview", commitModel.View(), cfg))
 
+	todoProject := screenshotProjectWithMostTodos(ctx, svc, data, filtered, selectedProject)
+	todoModel, err := buildScreenshotDashboardModel(ctx, svc, data, filtered, todoProject.Path, cfg, now)
+	if err != nil {
+		return ScreenshotReport{}, err
+	}
+	todoModel.todoDialog = &todoDialogState{
+		ProjectPath: todoProject.Path,
+		ProjectName: noteProjectTitle(todoProject.Path, todoProject.Name),
+		Selected:    1,
+	}
+	todoModel.syncTodoDialogSelection()
+	todoModel.status = "TODO list open. Enter starts selected item; a adds, e edits, space toggles"
+	assets = append(assets, screenshotAsset("todo-dialog", "TODO Dialog", todoModel.View(), cfg))
+
 	report := ScreenshotReport{
 		Assets:                assets,
 		MatchedProjects:       screenshotProjectLabels(filtered),
@@ -245,6 +259,22 @@ func buildScreenshotDashboardModel(ctx context.Context, svc *service.Service, da
 	return m, nil
 }
 
+func screenshotProjectWithMostTodos(ctx context.Context, svc *service.Service, data screenshotDataSet, projects []model.ProjectSummary, fallback model.ProjectSummary) model.ProjectSummary {
+	best := fallback
+	bestCount := 0
+	for _, p := range projects {
+		detail, err := data.projectDetail(ctx, svc, p.Path, 1)
+		if err != nil {
+			continue
+		}
+		if len(detail.Todos) > bestCount {
+			bestCount = len(detail.Todos)
+			best = p
+		}
+	}
+	return best
+}
+
 func (d screenshotDataSet) projectDetail(ctx context.Context, svc *service.Service, path string, eventLimit int) (model.ProjectDetail, error) {
 	if d.details != nil {
 		detail, ok := d.details[path]
@@ -267,6 +297,9 @@ func sanitizeScreenshotProjectDetail(detail model.ProjectDetail) model.ProjectDe
 	for i := range detail.Artifacts {
 		detail.Artifacts[i].Path = sanitizeScreenshotPath(detail.Artifacts[i].Path)
 		detail.Artifacts[i].Note = sanitizeScreenshotText(detail.Artifacts[i].Note)
+	}
+	for i := range detail.Todos {
+		detail.Todos[i].ProjectPath = sanitizeScreenshotPath(detail.Todos[i].ProjectPath)
 	}
 	for i := range detail.RecentEvents {
 		detail.RecentEvents[i].ProjectPath = sanitizeScreenshotPath(detail.RecentEvents[i].ProjectPath)

@@ -241,7 +241,7 @@ func screenshotDemoDataSet() screenshotDataSet {
 			LatestSessionSummary:             project.summary,
 		}
 		summaries = append(summaries, summary)
-		details[project.path] = model.ProjectDetail{
+		detail := model.ProjectDetail{
 			Summary: summary,
 			Reasons: append([]model.AttentionReason(nil), project.reasons...),
 			LatestSessionClassification: &model.SessionClassification{
@@ -254,6 +254,15 @@ func screenshotDemoDataSet() screenshotDataSet {
 				CompletedAt: project.last,
 			},
 		}
+		if project.name == screenshotDemoPrimaryProject {
+			detail.Todos = []model.TodoItem{
+				{ID: 1, ProjectPath: project.path, Text: "Add contextual screenshots to README for each workflow section", Done: true, Position: 0, CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now.Add(-30 * time.Minute), CompletedAt: now.Add(-30 * time.Minute)},
+				{ID: 2, ProjectPath: project.path, Text: "Wire /compact slash command to thread/compact/start endpoint", Done: false, Position: 1, CreatedAt: now.Add(-90 * time.Minute), UpdatedAt: now.Add(-90 * time.Minute)},
+				{ID: 3, ProjectPath: project.path, Text: "Implement /review command for embedded code review workflow", Done: false, Position: 2, CreatedAt: now.Add(-80 * time.Minute), UpdatedAt: now.Add(-80 * time.Minute)},
+				{ID: 4, ProjectPath: project.path, Text: "Add /fork to create a new thread from the current conversation point", Done: false, Position: 3, CreatedAt: now.Add(-70 * time.Minute), UpdatedAt: now.Add(-70 * time.Minute)},
+			}
+		}
+		details[project.path] = detail
 	}
 
 	return screenshotDataSet{

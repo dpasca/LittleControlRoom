@@ -6,27 +6,11 @@ LCR is meant to be a single window where you can coordinate most of your develop
 
 LCR shows you in real time the progress of each Codex, OpenCode, and Claude Code session, and lets you open, resume, or switch sessions, view diffs, generate commits with automatic messages, and manage per-project runtimes, all without leaving the dashboard.
 
-## Screenshots
-
-Click any screenshot to open the full-size PNG on GitHub.
-
 <p align="center">
   <a href="docs/screenshots/main-panel.png">
     <img src="docs/screenshots/main-panel.png" alt="Little Control Room main dashboard overview with live agent activity in the list" width="850">
   </a>
 </p>
-
-| Dashboard | Runtime Pane |
-| --- | --- |
-| [![Little Control Room dashboard list view](docs/screenshots/main-panel.png)](docs/screenshots/main-panel.png) | [![Little Control Room runtime pane focused on a running FractalMech session](docs/screenshots/main-panel-live-runtime.png)](docs/screenshots/main-panel-live-runtime.png) |
-
-| Embedded Session | Diff View |
-| --- | --- |
-| [![Little Control Room embedded Codex conversation](docs/screenshots/codex-embedded.png)](docs/screenshots/codex-embedded.png) | [![Little Control Room diff window](docs/screenshots/diff-view.png)](docs/screenshots/diff-view.png) |
-
-| Commit Preview | Image Diff |
-| --- | --- |
-| [![Little Control Room commit preview dialog](docs/screenshots/commit-preview.png)](docs/screenshots/commit-preview.png) | [![Little Control Room diff window showing before and after image previews](docs/screenshots/diff-view-image.png)](docs/screenshots/diff-view-image.png) |
 
 ## What It Does
 
@@ -34,7 +18,7 @@ Click any screenshot to open the full-size PNG on GitHub.
 - Shows which projects are active, idle, or worth revisiting
 - Lets you open, resume, or switch embedded Codex or OpenCode sessions directly from the dashboard
 - Detects Claude Code sessions running in a separate terminal and shows their transcript read-only
-- Keeps common actions close at hand: refresh, pin, snooze, multiline project notes with list badges, managed per-project run commands with runtime/port badges, diff, commit, and push
+- Keeps common actions close at hand: refresh, pin, snooze, project notes, per-project TODO lists, managed per-project run commands with runtime/port badges, diff, commit, and push
 
 ## What it doesn't do (yet)
 
@@ -125,12 +109,26 @@ Inside the embedded Codex or OpenCode pane:
 
 Most day-to-day use falls into a few buckets:
 
-- `🚀 Run and monitor`: Use `/run` or `/start` to launch a saved runtime, `/restart` to bounce it, `/run-edit` to change the command, and `/stop` to shut it down. Press `Tab` or `/runtime` when you want to work directly in the runtime pane.
-- `🤖 Resume agent work`: Use `/codex` or `/opencode` to pick up where you left off, and `/codex-new` or `/opencode-new` when you want a fresh session. Inside the embedded pane, `/resume`, `/session`, and `/reconnect` handle switching sessions or reattaching the helper. Projects with Claude Code activity are detected automatically and shown with a `CC` tag; press `Enter` to view the transcript read-only.
-- `🧹 Keep the list clean`: Use `f` or `/filter <text>` to narrow the project list, `/pin` and `/snooze` to control attention, `/ignore` and `/ignored` to hide or restore exact project names, and `/forget` to remove a missing folder.
-- `📋 TODO-driven sessions`: Press `t` or use `/todo` to open a per-project TODO list. Add items you want an agent to work on, then press `Enter` on any item to start a fresh embedded session with that task as the prompt. The dialog shows the model that will be used and lets you pick the provider (Codex or OpenCode).
-- `📝 Review and organize`: Use `/note` or `n` for project notes, `/diff` to inspect git changes, `/commit` and `/push` when you are ready to ship, and `/open` to jump to the project folder.
-- `⚙️ Adjust setup`: Use `/settings` for API keys, paths, and defaults, and `/new-project` when you want to add something new to the dashboard.
+- **Run and monitor** — Use `/run` or `/start` to launch a saved runtime, `/restart` to bounce it, `/run-edit` to change the command, and `/stop` to shut it down. Press `Tab` or `/runtime` when you want to work directly in the runtime pane.
+
+  [![Runtime pane focused on a running session](docs/screenshots/main-panel-live-runtime.png)](docs/screenshots/main-panel-live-runtime.png)
+
+- **Resume agent work** — Use `/codex` or `/opencode` to pick up where you left off, and `/codex-new` or `/opencode-new` when you want a fresh session. Inside the embedded pane, `/resume`, `/session`, and `/reconnect` handle switching sessions or reattaching the helper. Projects with Claude Code activity are detected automatically and shown with a `CC` tag; press `Enter` to view the transcript read-only.
+
+  [![Embedded Codex conversation](docs/screenshots/codex-embedded.png)](docs/screenshots/codex-embedded.png)
+
+- **TODO-driven sessions** — Press `t` or use `/todo` to open a per-project TODO list. Add items you want an agent to work on, then press `Enter` on any item to start a fresh embedded session with that task as the prompt. The dialog shows the model that will be used and lets you pick the provider (Codex or OpenCode).
+
+  [![TODO dialog with per-project task list](docs/screenshots/todo-dialog.png)](docs/screenshots/todo-dialog.png)
+
+- **Review and organize** — Use `/note` for project notes, `/diff` to inspect git changes, `/commit` and `/push` when you are ready to ship, and `/open` to jump to the project folder.
+
+  | Diff View | Commit Preview | Image Diff |
+  | --- | --- | --- |
+  | [![Diff window](docs/screenshots/diff-view.png)](docs/screenshots/diff-view.png) | [![Commit preview dialog](docs/screenshots/commit-preview.png)](docs/screenshots/commit-preview.png) | [![Image diff with before/after previews](docs/screenshots/diff-view-image.png)](docs/screenshots/diff-view-image.png) |
+
+- **Keep the list clean** — Use `f` or `/filter <text>` to narrow the project list, `/pin` and `/snooze` to control attention, `/ignore` and `/ignored` to hide or restore exact project names, and `/forget` to remove a missing folder.
+- **Adjust setup** — Use `/settings` for API keys, paths, and defaults, and `/new-project` when you want to add something new to the dashboard.
 
 For the full command list and detailed behavior, see [`docs/reference.md`](docs/reference.md).
 
