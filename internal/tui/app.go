@@ -63,7 +63,8 @@ type Model struct {
 	todoEditor        *todoEditorState
 	todoDeleteConfirm *todoDeleteConfirmState
 	todoLaunchDraft   *todoLaunchDraftState
-	todoCopyDialog    *todoCopyDialogState
+	todoCopyDialog         *todoCopyDialogState
+	todoModelPickerReturn  *todoModelPickerReturnState
 
 	commandMode                  bool
 	commandInput                 textinput.Model
@@ -1110,6 +1111,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.provider.Normalized() != "" && (strings.TrimSpace(msg.model) != "" || strings.TrimSpace(msg.reasoning) != "") {
 			m.rememberEmbeddedModelPreference(msg.provider, msg.model, msg.reasoning)
 			m.recordRecentModel(msg.provider, msg.model)
+			m.returnToTodoFromModelPicker()
 			return m, m.saveEmbeddedModelPreferencesCmd()
 		}
 		if msg.closed {
@@ -1136,6 +1138,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.codexModelPicker = nil
 			m.err = msg.err
 			m.status = "Embedded model picker failed"
+			m.returnToTodoFromModelPicker()
 			return m, nil
 		}
 		m.err = nil

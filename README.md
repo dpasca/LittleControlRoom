@@ -87,6 +87,7 @@ The main TUI command palette opens with `/`.
 - `/runtime`: Focus the runtime pane.
 - `/stop`: Stop the selected project's managed runtime.
 - `/note [clear]`: Edit or clear the selected project's note.
+- `/todo`: Open the TODO list for the selected project. Add items, toggle done, and start a fresh embedded session from any item.
 - `/diff`: Open the full-screen git diff.
 - `/commit [message]`: Preview a commit for the selected project.
 - `/push`: Push the selected project's branch.
@@ -127,6 +128,7 @@ Most day-to-day use falls into a few buckets:
 - `🚀 Run and monitor`: Use `/run` or `/start` to launch a saved runtime, `/restart` to bounce it, `/run-edit` to change the command, and `/stop` to shut it down. Press `Tab` or `/runtime` when you want to work directly in the runtime pane.
 - `🤖 Resume agent work`: Use `/codex` or `/opencode` to pick up where you left off, and `/codex-new` or `/opencode-new` when you want a fresh session. Inside the embedded pane, `/resume`, `/session`, and `/reconnect` handle switching sessions or reattaching the helper. Projects with Claude Code activity are detected automatically and shown with a `CC` tag; press `Enter` to view the transcript read-only.
 - `🧹 Keep the list clean`: Use `f` or `/filter <text>` to narrow the project list, `/pin` and `/snooze` to control attention, `/ignore` and `/ignored` to hide or restore exact project names, and `/forget` to remove a missing folder.
+- `📋 TODO-driven sessions`: Press `t` or use `/todo` to open a per-project TODO list. Add items you want an agent to work on, then press `Enter` on any item to start a fresh embedded session with that task as the prompt. The dialog shows the model that will be used and lets you pick the provider (Codex or OpenCode).
 - `📝 Review and organize`: Use `/note` or `n` for project notes, `/diff` to inspect git changes, `/commit` and `/push` when you are ready to ship, and `/open` to jump to the project folder.
 - `⚙️ Adjust setup`: Use `/settings` for API keys, paths, and defaults, and `/new-project` when you want to add something new to the dashboard.
 

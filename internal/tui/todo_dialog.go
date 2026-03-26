@@ -58,6 +58,12 @@ type todoCopyDialogState struct {
 	Selected    int
 }
 
+type todoModelPickerReturnState struct {
+	dialog             todoDialogState
+	copyDialog         todoCopyDialogState
+	prevVisibleProject string
+}
+
 func normalizeTodoText(text string) string {
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 	out := make([]string, 0, len(lines))
@@ -347,6 +353,8 @@ func (m Model) updateTodoCopyDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.moveTodoCopyDialogSelection(delta)
 	case "enter", " ":
 		return m.activateTodoCopyDialogSelection()
+	case "m":
+		return m.openModelPickerFromTodoCopyDialog()
 	}
 	return m, nil
 }
@@ -538,6 +546,62 @@ func (m Model) startSelectedTodoWithProvider(provider codexapp.Provider) (tea.Mo
 	return m.launchEmbeddedForSelection(provider, true, "")
 }
 
+func (m Model) openModelPickerFromTodoCopyDialog() (tea.Model, tea.Cmd) {
+	copyDialog := m.todoCopyDialog
+	if copyDialog == nil || m.todoDialog == nil {
+		return m, nil
+	}
+	projectPath := copyDialog.ProjectPath
+	_, hasSession := m.codexSession(projectPath)
+	if !hasSession {
+		m.status = "No active session – start one first to change models"
+		return m, nil
+	}
+	m.todoModelPickerReturn = &todoModelPickerReturnState{
+		dialog:             *m.todoDialog,
+		copyDialog:         *copyDialog,
+		prevVisibleProject: m.codexVisibleProject,
+	}
+	m.todoCopyDialog = nil
+	m.todoDialog = nil
+	m.codexVisibleProject = projectPath
+	m.openCodexModelPickerLoading()
+	return m, m.openCodexModelPickerCmd()
+}
+
+func (m *Model) returnToTodoFromModelPicker() {
+	ret := m.todoModelPickerReturn
+	if ret == nil {
+		return
+	}
+	m.todoModelPickerReturn = nil
+	m.todoDialog = &ret.dialog
+	m.todoCopyDialog = &ret.copyDialog
+	m.codexVisibleProject = ret.prevVisibleProject
+}
+
+func (m Model) embeddedModelLabelForProject(projectPath string, provider codexapp.Provider) string {
+	if pref, ok := m.embeddedModelPreference(provider); ok && pref.Model != "" {
+		label := pref.Model
+		if pref.Reasoning != "" {
+			label += ", " + pref.Reasoning
+		}
+		return label
+	}
+	if snapshot, ok := m.liveEmbeddedSnapshotForProject(projectPath, provider); ok {
+		model := firstNonEmptyTrimmed(snapshot.PendingModel, snapshot.Model)
+		reasoning := firstNonEmptyTrimmed(snapshot.PendingReasoning, snapshot.ReasoningEffort)
+		if model != "" {
+			label := model
+			if reasoning != "" {
+				label += ", " + reasoning
+			}
+			return label
+		}
+	}
+	return "default"
+}
+
 func (m *Model) syncTodoDialogSize() {
 	if m.todoDialog != nil {
 		m.syncTodoDialogSelection()
@@ -699,15 +763,26 @@ func (m Model) renderTodoCopyDialogOverlay(body string, bodyW, bodyH int) string
 		detailValueStyle.Render(truncateText(strings.TrimSpace(copyDialog.TodoText), panelInnerW)),
 		"",
 	}
+	projectPath := copyDialog.ProjectPath
 	options := []int{
 		todoCopyScopeCodex,
 		todoCopyScopeOpenCode,
 		todoCopyScopeCancel,
 	}
 	for _, option := range options {
-		lines = append(lines, renderNoteDialogButton(todoCopyScopeLabel(option), copyDialog.Selected == option))
+		label := todoCopyScopeLabel(option)
+		if provider := todoCopyScopeProvider(option); provider != "" {
+			modelLabel := m.embeddedModelLabelForProject(projectPath, provider)
+			label += "  (" + modelLabel + ")"
+		}
+		lines = append(lines, renderNoteDialogButton(label, copyDialog.Selected == option))
 	}
-	lines = append(lines, commandPaletteHintStyle.Render("Tab, arrows, or Shift+Tab switch options. Enter runs the selected action. Esc cancels."))
+	_, hasSession := m.codexSession(projectPath)
+	hint := "Tab/arrows switch options. Enter runs. Esc cancels."
+	if hasSession {
+		hint = "Tab/arrows switch options. Enter runs. m changes model. Esc cancels."
+	}
+	lines = append(lines, commandPaletteHintStyle.Render(hint))
 	panel := renderDialogPanel(panelW, panelInnerW, strings.Join(lines, "\n"))
 	left := max(0, (bodyW-panelW)/2)
 	top := max(0, (bodyH-lipgloss.Height(panel))/3)
@@ -722,5 +797,16 @@ func todoCopyScopeLabel(scope int) string {
 		return "Start with OpenCode"
 	default:
 		return "Cancel"
+	}
+}
+
+func todoCopyScopeProvider(scope int) codexapp.Provider {
+	switch scope {
+	case todoCopyScopeCodex:
+		return codexapp.ProviderCodex
+	case todoCopyScopeOpenCode:
+		return codexapp.ProviderOpenCode
+	default:
+		return ""
 	}
 }

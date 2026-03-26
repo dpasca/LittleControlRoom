@@ -115,6 +115,11 @@ func (m *Model) closeCodexModelPicker(status string) {
 	}
 }
 
+func (m *Model) closeCodexModelPickerAndReturnToTodo(status string) {
+	m.closeCodexModelPicker(status)
+	m.returnToTodoFromModelPicker()
+}
+
 func (m *Model) syncCodexModelPickerSelection() {
 	state := m.codexModelPicker
 	if state == nil {
@@ -213,12 +218,12 @@ func (m Model) updateCodexModelPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if state.Loading {
 		switch msg.String() {
 		case "esc":
-			m.closeCodexModelPicker("Embedded model picker canceled")
+			m.closeCodexModelPickerAndReturnToTodo("Embedded model picker canceled")
 		}
 		return m, nil
 	}
 	if len(state.Models) == 0 {
-		m.closeCodexModelPicker("No embedded " + m.currentEmbeddedSessionLabel() + " models are available")
+		m.closeCodexModelPickerAndReturnToTodo("No embedded " + m.currentEmbeddedSessionLabel() + " models are available")
 		return m, nil
 	}
 
@@ -228,7 +233,7 @@ func (m Model) updateCodexModelPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "esc":
-		m.closeCodexModelPicker("Embedded model picker canceled")
+		m.closeCodexModelPickerAndReturnToTodo("Embedded model picker canceled")
 		return m, nil
 	case "tab":
 		m.codexModelPickerFocusNext()
@@ -283,6 +288,11 @@ func (m Model) updateCodexModelPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		if state.Focus == codexModelPickerFocusRecent && len(state.RecentModels) > 0 {
+			if len(m.currentCodexReasoningOptions()) > 0 {
+				state.Focus = codexModelPickerFocusEfforts
+				m.status = "Choose reasoning effort, then press Enter to apply"
+				return m, nil
+			}
 			return m.applyCodexModelPickerSelection()
 		}
 		if state.Focus == codexModelPickerFocusModels && len(m.currentCodexReasoningOptions()) > 0 {
@@ -308,7 +318,7 @@ func (m Model) updateCodexModelPickerFilterMode(msg tea.KeyMsg) (tea.Model, tea.
 
 	switch msg.String() {
 	case "esc":
-		m.closeCodexModelPicker("Embedded model picker canceled")
+		m.closeCodexModelPickerAndReturnToTodo("Embedded model picker canceled")
 		return m, nil
 	case "enter":
 		if len(state.RecentModels) > 0 {
@@ -473,12 +483,12 @@ func (m *Model) moveCodexModelPickerSelection(delta int) {
 func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 	session, ok := m.currentCodexSession()
 	if !ok {
-		m.closeCodexModelPicker("Embedded session unavailable")
+		m.closeCodexModelPickerAndReturnToTodo("Embedded session unavailable")
 		return m, nil
 	}
 	modelOption, ok := m.currentCodexModelOption()
 	if !ok {
-		m.closeCodexModelPicker("No embedded " + m.currentEmbeddedSessionLabel() + " models are available")
+		m.closeCodexModelPickerAndReturnToTodo("No embedded " + m.currentEmbeddedSessionLabel() + " models are available")
 		return m, nil
 	}
 	effort := strings.TrimSpace(modelOption.DefaultReasoningEffort)
