@@ -74,20 +74,14 @@ func (s textSelection) extractText(fullContent string) string {
 
 // cleanCopiedText post-processes extracted selection text for a cleaner
 // clipboard result:
-//  1. Strip 1 leading space from each line (from viewport PaddingLeft).
-//  2. Join soft-wrapped lines: when a line does NOT end with trailing whitespace
+//  1. Join soft-wrapped lines: when a line does NOT end with trailing whitespace
 //     (meaning it filled the viewport width) and the next line is non-empty,
 //     they belong to the same paragraph and are merged.
-//  3. Strip trailing whitespace from each line.
+//  2. Strip trailing whitespace from each line.
 func cleanCopiedText(text string) string {
 	lines := strings.Split(text, "\n")
 
-	// Step 1: strip 1 leading space per line.
-	for i, line := range lines {
-		lines[i] = strings.TrimPrefix(line, " ")
-	}
-
-	// Step 2: join soft-wrapped lines. A line that does NOT end with
+	// Step 1: join soft-wrapped lines. A line that does NOT end with
 	// whitespace was full-width (soft-wrapped); merge it with the next
 	// non-empty line. This must happen before trailing-space stripping.
 	joined := make([]string, 0, len(lines))

@@ -96,14 +96,9 @@ func TestCleanCopiedText(t *testing.T) {
 		want string
 	}{
 		{
-			name: "strip leading space",
-			in:   " Hello\n World",
-			want: "Hello World",
-		},
-		{
 			name: "join soft-wrapped lines",
 			// Lines without trailing spaces are full-width (soft-wrapped).
-			in: "Hello\nWorld",
+			in:   "Hello\nWorld",
 			want: "Hello World",
 		},
 		{
@@ -114,19 +109,19 @@ func TestCleanCopiedText(t *testing.T) {
 		},
 		{
 			name: "preserve blank line separators",
-			in:   " First paragraph\n\n Second paragraph",
+			in:   "First paragraph\n\nSecond paragraph",
 			want: "First paragraph\n\nSecond paragraph",
 		},
 		{
 			name: "strip trailing whitespace",
-			in:   " Hello   \n World   ",
+			in:   "Hello   \nWorld   ",
 			want: "Hello\nWorld",
 		},
 		{
 			name: "full pipeline",
 			// Two paragraphs separated by blank line. First paragraph has
 			// a soft-wrapped line (no trailing space).
-			in:   " This is a long line that was\n soft-wrapped by the viewport\n\n " + "Second paragraph here.   ",
+			in:   "This is a long line that was\nsoft-wrapped by the viewport\n\nSecond paragraph here.   ",
 			want: "This is a long line that was soft-wrapped by the viewport\n\nSecond paragraph here.",
 		},
 	}

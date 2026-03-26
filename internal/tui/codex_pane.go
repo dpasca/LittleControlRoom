@@ -2389,7 +2389,7 @@ func renderCodexToolLine(text string, width int) string {
 	return lipgloss.NewStyle().
 		BorderLeft(true).
 		BorderForeground(accent).
-		PaddingLeft(1).
+		PaddingLeft(0).
 		Width(width).
 		Render(body)
 }
@@ -2983,7 +2983,7 @@ func renderCodexStatusBlock(body string, width int) string {
 	return lipgloss.NewStyle().
 		BorderLeft(true).
 		BorderForeground(lipgloss.Color("81")).
-		PaddingLeft(1).
+		PaddingLeft(0).
 		Render(strings.Join(lines, "\n"))
 }
 
@@ -3387,7 +3387,7 @@ func renderReasoningBlock(body string, width int) string {
 	return lipgloss.NewStyle().
 		BorderLeft(true).
 		BorderForeground(lipgloss.Color("180")).
-		PaddingLeft(1).
+		PaddingLeft(0).
 		PaddingRight(1).
 		Background(reasoningBackgroundColor).
 		Render(label + "\n" + wrappedBody)
@@ -3408,7 +3408,7 @@ func renderReasoningIndicator(lineCount int, width int) string {
 	return lipgloss.NewStyle().
 		BorderLeft(true).
 		BorderForeground(accent).
-		PaddingLeft(1).
+		PaddingLeft(0).
 		Width(width).
 		Render(label + detail)
 }
@@ -3458,7 +3458,7 @@ func renderCodexMonospaceBlock(label, body string, accent lipgloss.Color, width 
 	return lipgloss.NewStyle().
 		BorderLeft(true).
 		BorderForeground(accent).
-		PaddingLeft(1).
+		PaddingLeft(0).
 		Render(title + "\n" + bodyBlock)
 }
 
