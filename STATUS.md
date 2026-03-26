@@ -1,6 +1,26 @@
 # Little Control Room Status
 
-Last updated: 2026-03-25 19:05 JST
+Last updated: 2026-03-26 18:12 JST
+
+## Latest Update (2026-03-26 18:12 JST)
+
+- Added scan sweep behavior in `internal/service/service.go` so periodic scans can refresh projects managed by other agents even when activity appears outside currently configured include paths.
+- In `ScanWithOptions`:
+  - Added full-scope detector sweep branch (excluding configured excluded paths and internal workspace path) when include paths are configured.
+  - Added session recency gate (`recentActivityDiscoveryWindow = 24 * time.Hour`) and merged only recent full-scope discoveries.
+  - Switched state upsert to persist `InScope` as `scope.Allows(path)` instead of always `true`.
+- Added missing helper functions to complete the refactor:
+  - `detectProjectActivities(...)`
+  - `isRecentSessionActivity(...)`
+  - `mergeDetectorActivities(...)`
+  - `finalizeDetectorActivities(...)`
+- Files modified:
+  - `internal/service/service.go`
+  - `STATUS.md`
+- Verification status: no test or command verification run in this pass.
+- Next concrete tasks:
+  - Run interactive verification in `make tui`/`make tui-parallel` and confirm FractalMech's latest session source updates from CC to CX after an external CX update.
+  - If needed, tune `recentActivityDiscoveryWindow` duration for how aggressive periodic cross-agent detection should be.
 
 ## Latest Update (2026-03-25 19:05 JST)
 

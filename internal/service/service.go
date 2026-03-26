@@ -28,6 +28,7 @@ import (
 )
 
 const legacyRepoDirName = "BatonDeck"
+const recentActivityDiscoveryWindow = 24 * time.Hour
 
 type SessionClassifier interface {
 	QueueProject(ctx context.Context, state model.ProjectState) (bool, error)
@@ -323,31 +324,27 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		oldMap[path] = old
 	}
 
-	rawActivities := map[string]*model.DetectorProjectActivity{}
-	for _, detector := range s.detectors {
-		detected, detectErr := detector.Detect(ctx, scope)
-		if detectErr != nil {
-			continue
+	rawActivities, err := s.detectProjectActivities(ctx, scope, internalWorkspaceRoot)
+	if err != nil {
+		return ScanReport{}, err
+	}
+	if len(s.cfg.IncludePaths) > 0 {
+		fullScopeActivities, err := s.detectProjectActivities(ctx, scanner.NewPathScope(nil, s.cfg.ExcludePaths).WithAlwaysExcluded(internalWorkspaceRoot), internalWorkspaceRoot)
+		if err != nil {
+			return ScanReport{}, err
 		}
-		for path, activity := range detected {
-			rawPath := filepath.Clean(path)
-			if appfs.IsManagedInternalPath(rawPath, []string{internalWorkspaceRoot}) {
+		for path, activity := range fullScopeActivities {
+			if !isRecentSessionActivity(now, activity, recentActivityDiscoveryWindow) {
 				continue
 			}
-			normalized := normalizeActivity(activity, rawPath)
-			existing, ok := rawActivities[rawPath]
-			if !ok {
-				rawActivities[rawPath] = normalized
+			if existing, ok := rawActivities[path]; ok {
+				mergeDetectorActivities(existing, activity)
 				continue
 			}
-			if normalized.LastActivity.After(existing.LastActivity) {
-				existing.LastActivity = normalized.LastActivity
-			}
-			existing.ErrorCount += normalized.ErrorCount
-			existing.Sessions = append(existing.Sessions, normalized.Sessions...)
-			existing.Artifacts = append(existing.Artifacts, normalized.Artifacts...)
+			rawActivities[path] = activity
 		}
 	}
+	finalizeDetectorActivities(rawActivities)
 
 	cachedFingerprints, err := s.store.GetProjectGitFingerprints(ctx)
 	if err != nil {
@@ -542,20 +539,20 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		})
 
 		state := model.ProjectState{
-			Path:            path,
-			Name:            filepath.Base(path),
-			LastActivity:    lastActivity,
-			Status:          score.Status,
-			AttentionScore:  score.Score,
-			PresentOnDisk:   presentOnDisk,
+		Path:            path,
+		Name:            filepath.Base(path),
+		LastActivity:    lastActivity,
+		Status:          score.Status,
+		AttentionScore:  score.Score,
+		PresentOnDisk:   presentOnDisk,
 			RepoDirty:       repoDirty,
 			RepoSyncStatus:  repoSyncStatus,
 			RepoAheadCount:  repoAheadCount,
 			RepoBehindCount: repoBehindCount,
 			Forgotten:       forgotten,
 			ManuallyAdded:   old.ManuallyAdded,
-			InScope:         true,
-			Pinned:          old.Pinned,
+		InScope:         scope.Allows(path),
+		Pinned:          old.Pinned,
 			SnoozedUntil:    old.SnoozedUntil,
 			Note:            old.Note,
 			MovedFromPath:   old.MovedFromPath,
@@ -609,6 +606,109 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 	})
 
 	return report, nil
+}
+
+func (s *Service) detectProjectActivities(ctx context.Context, scope scanner.PathScope, internalWorkspaceRoot string) (map[string]*model.DetectorProjectActivity, error) {
+	out := map[string]*model.DetectorProjectActivity{}
+	for _, detector := range s.detectors {
+		if detector == nil {
+			continue
+		}
+		activityByPath, err := detector.Detect(ctx, scope)
+		if err != nil {
+			return nil, fmt.Errorf("detect project activity (%s): %w", detector.Name(), err)
+		}
+		for rawPath, activity := range activityByPath {
+			if activity == nil {
+				continue
+			}
+			path := filepath.Clean(rawPath)
+			if path == "." {
+				path = filepath.Clean(activity.ProjectPath)
+			}
+			if path == "." || path == "" {
+				continue
+			}
+			if appfs.IsManagedInternalPath(path, []string{internalWorkspaceRoot}) {
+				continue
+			}
+			if existing, ok := out[path]; ok {
+				mergeDetectorActivities(existing, activity)
+				continue
+			}
+			activity.ProjectPath = path
+			copyActivity := *activity
+			copyActivity.Sessions = append([]model.SessionEvidence(nil), activity.Sessions...)
+			copyActivity.Artifacts = append([]model.ArtifactEvidence(nil), activity.Artifacts...)
+			out[path] = &copyActivity
+		}
+	}
+	return out, nil
+}
+
+func isRecentSessionActivity(now time.Time, activity *model.DetectorProjectActivity, window time.Duration) bool {
+	if activity == nil {
+		return false
+	}
+	lastActivity := activity.LastActivity
+	for _, session := range activity.Sessions {
+		if session.LastEventAt.After(lastActivity) {
+			lastActivity = session.LastEventAt
+		}
+	}
+	if lastActivity.IsZero() {
+		return false
+	}
+	return now.Sub(lastActivity) <= window
+}
+
+func mergeDetectorActivities(dst *model.DetectorProjectActivity, src *model.DetectorProjectActivity) {
+	if dst == nil || src == nil {
+		return
+	}
+	if src.ProjectPath != "" {
+		dst.ProjectPath = filepath.Clean(src.ProjectPath)
+	}
+	dst.Sessions = append(dst.Sessions, src.Sessions...)
+	dst.Artifacts = append(dst.Artifacts, src.Artifacts...)
+	dst.ErrorCount += src.ErrorCount
+	if src.LastActivity.After(dst.LastActivity) {
+		dst.LastActivity = src.LastActivity
+	}
+	if dst.Source == "" {
+		dst.Source = src.Source
+	}
+}
+
+func finalizeDetectorActivities(activities map[string]*model.DetectorProjectActivity) {
+	for path, activity := range activities {
+		if activity == nil {
+			delete(activities, path)
+			continue
+		}
+		activity.ProjectPath = filepath.Clean(activity.ProjectPath)
+		if activity.ProjectPath == "." || activity.ProjectPath == "" {
+			activity.ProjectPath = filepath.Clean(path)
+		}
+		activity.Sessions = dedupeSessions(activity.Sessions)
+		activity.Artifacts = dedupeArtifacts(activity.Artifacts)
+		if !activity.LastActivity.IsZero() {
+			for _, session := range activity.Sessions {
+				if session.LastEventAt.After(activity.LastActivity) {
+					activity.LastActivity = session.LastEventAt
+				}
+			}
+			continue
+		}
+		for _, session := range activity.Sessions {
+			if session.LastEventAt.After(activity.LastActivity) {
+				activity.LastActivity = session.LastEventAt
+			}
+		}
+		if len(activity.Artifacts) == 0 && len(activity.Sessions) == 0 {
+			delete(activities, path)
+		}
+	}
 }
 
 func (s *Service) queueProjectClassification(ctx context.Context, state model.ProjectState, opts ScanOptions) (bool, error) {

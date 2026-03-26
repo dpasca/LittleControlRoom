@@ -94,6 +94,10 @@ func (d *Detector) Name() string {
 
 func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[string]*model.DetectorProjectActivity, error) {
 	if fastResults, used, err := d.detectFromStateDB(ctx, scope); err == nil && used {
+		// Supplement the DB results with any session files on disk that aren't
+		// already covered. Embedded Codex sessions launched by the app create
+		// rollout JSONL files but may not write to state_5.sqlite.
+		d.mergeOrphanSessionFiles(ctx, scope, fastResults)
 		return fastResults, nil
 	}
 
@@ -166,6 +170,82 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 	return results, nil
 }
 
+// mergeOrphanSessionFiles finds session JSONL files on disk that aren't
+// referenced by any session in the DB results and merges them in. This is
+// cheap because it only parses files whose paths are not already known.
+func (d *Detector) mergeOrphanSessionFiles(ctx context.Context, scope scanner.PathScope, results map[string]*model.DetectorProjectActivity) {
+	knownFiles := map[string]struct{}{}
+	for _, entry := range results {
+		for _, s := range entry.Sessions {
+			if s.SessionFile != "" {
+				knownFiles[s.SessionFile] = struct{}{}
+			}
+		}
+	}
+
+	files, err := d.collectSessionFiles()
+	if err != nil {
+		return
+	}
+
+	for _, f := range files {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		if _, known := knownFiles[f]; known {
+			continue
+		}
+		parsed, err := d.parseWithCache(f)
+		if err != nil {
+			continue
+		}
+		if parsed.cwd == "" || parsed.sessionID == "" {
+			continue
+		}
+		cwd := filepath.Clean(parsed.cwd)
+		if !scope.Allows(cwd) {
+			continue
+		}
+
+		entry, ok := results[cwd]
+		if !ok {
+			entry = &model.DetectorProjectActivity{
+				ProjectPath: cwd,
+				Source:      d.Name(),
+			}
+			results[cwd] = entry
+		}
+
+		session := model.SessionEvidence{
+			SessionID:            parsed.sessionID,
+			ProjectPath:          cwd,
+			DetectedProjectPath:  cwd,
+			SessionFile:          f,
+			Format:               parsed.format,
+			StartedAt:            parsed.startedAt,
+			LastEventAt:          parsed.lastEventAt,
+			ErrorCount:           parsed.errorCount,
+			LatestTurnStartedAt:  parsed.turnStartedAt,
+			LatestTurnStateKnown: parsed.turnKnown,
+			LatestTurnCompleted:  parsed.turnDone,
+		}
+		entry.Sessions = append(entry.Sessions, session)
+		entry.Artifacts = append(entry.Artifacts, parsed.artifacts...)
+		entry.ErrorCount += parsed.errorCount
+		if parsed.lastEventAt.After(entry.LastActivity) {
+			entry.LastActivity = parsed.lastEventAt
+		}
+	}
+
+	for _, entry := range results {
+		sort.Slice(entry.Sessions, func(i, j int) bool {
+			return entry.Sessions[i].LastEventAt.After(entry.Sessions[j].LastEventAt)
+		})
+	}
+}
+
 func (d *Detector) detectFromStateDB(ctx context.Context, scope scanner.PathScope) (map[string]*model.DetectorProjectActivity, bool, error) {
 	dbPath := filepath.Join(d.codexHome, "state_5.sqlite")
 	if _, err := os.Stat(dbPath); err != nil {
@@ -227,12 +307,24 @@ func (d *Detector) detectFromStateDB(ctx context.Context, scope scanner.PathScop
 		updatedTime := time.Unix(updatedAt, 0)
 		startedTime := time.Unix(createdAt, 0)
 
+		// Use the rollout file's modification time if it's more recent than
+		// the threads table updated_at, since Codex appends to the JSONL file
+		// during active sessions but may not update the DB timestamp as often.
+		lastEventAt := updatedTime
+		if rollout != "" {
+			if stat, err := os.Stat(rollout); err == nil {
+				if modTime := stat.ModTime(); modTime.After(lastEventAt) {
+					lastEventAt = modTime
+				}
+			}
+		}
+
 		errorCount := 0
-		if rollout != "" && now.Sub(updatedTime) <= d.errorWindow {
+		if rollout != "" && now.Sub(lastEventAt) <= d.errorWindow {
 			errorCount = d.countErrorsWithCache(rollout)
 		}
 		turnState := turnLifecycleState{}
-		if rollout != "" && now.Sub(updatedTime) <= d.completionWindow {
+		if rollout != "" && now.Sub(lastEventAt) <= d.completionWindow {
 			turnState = d.detectTurnStateWithCache(rollout)
 		}
 
@@ -244,9 +336,11 @@ func (d *Detector) detectFromStateDB(ctx context.Context, scope scanner.PathScop
 			artifactKind = "codex_session_jsonl"
 			artifactNote = "rollout path from state_5.sqlite threads"
 		}
-		artifactUpdated := updatedTime
+		artifactUpdated := lastEventAt
 		if stat, err := os.Stat(artifactPath); err == nil {
-			artifactUpdated = stat.ModTime()
+			if modTime := stat.ModTime(); modTime.After(artifactUpdated) {
+				artifactUpdated = modTime
+			}
 		}
 
 		session := model.SessionEvidence{
@@ -256,7 +350,7 @@ func (d *Detector) detectFromStateDB(ctx context.Context, scope scanner.PathScop
 			SessionFile:          rollout,
 			Format:               "modern",
 			StartedAt:            startedTime,
-			LastEventAt:          updatedTime,
+			LastEventAt:          lastEventAt,
 			ErrorCount:           errorCount,
 			LatestTurnStartedAt:  turnState.startedAt,
 			LatestTurnStateKnown: turnState.known,
@@ -270,8 +364,8 @@ func (d *Detector) detectFromStateDB(ctx context.Context, scope scanner.PathScop
 			Note:      artifactNote,
 		})
 		entry.ErrorCount += errorCount
-		if updatedTime.After(entry.LastActivity) {
-			entry.LastActivity = updatedTime
+		if lastEventAt.After(entry.LastActivity) {
+			entry.LastActivity = lastEventAt
 		}
 	}
 	if err := rows.Err(); err != nil {

@@ -112,11 +112,15 @@ func embeddedProvider(snapshot codexapp.Snapshot) codexapp.Provider {
 }
 
 func (m Model) currentEmbeddedProvider() codexapp.Provider {
+	// A pending open represents the user's explicit intent to switch providers,
+	// so it takes priority over a stale closed snapshot from the previous session.
+	if m.codexPendingOpen != nil {
+		if provider := m.codexPendingOpen.provider.Normalized(); provider != "" {
+			return provider
+		}
+	}
 	if snapshot, ok := m.currentCodexSnapshot(); ok {
 		return embeddedProvider(snapshot)
-	}
-	if provider := m.codexPendingOpenProvider(); provider != "" {
-		return provider
 	}
 	return codexapp.ProviderCodex
 }

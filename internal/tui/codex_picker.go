@@ -237,26 +237,25 @@ func (m Model) loadCodexResumeChoicesCmd(projectPath string, provider codexapp.P
 	projectPath = strings.TrimSpace(projectPath)
 	provider = provider.Normalized()
 	return func() tea.Msg {
+		// Always fetch fresh session data from the DB so that recently detected
+		// sessions (e.g. from a separate shell) are included even if m.detail
+		// was loaded before the scan completed.
 		var detail model.ProjectDetail
-		if currentDetail.Summary.Path == projectPath {
-			detail = currentDetail
-		} else {
-			if svc == nil || svc.Store() == nil {
-				return codexResumeChoicesMsg{
-					projectPath: projectPath,
-					provider:    provider,
-					err:         fmt.Errorf("embedded session store unavailable"),
-				}
-			}
+		if svc != nil && svc.Store() != nil {
 			loaded, err := svc.Store().GetProjectDetail(ctx, projectPath, 1)
-			if err != nil {
-				return codexResumeChoicesMsg{
-					projectPath: projectPath,
-					provider:    provider,
-					err:         err,
-				}
+			if err == nil {
+				detail = loaded
 			}
-			detail = loaded
+		}
+		if detail.Summary.Path == "" && currentDetail.Summary.Path == projectPath {
+			detail = currentDetail
+		}
+		if detail.Summary.Path == "" {
+			return codexResumeChoicesMsg{
+				projectPath: projectPath,
+				provider:    provider,
+				err:         fmt.Errorf("embedded session store unavailable"),
+			}
 		}
 		choices := buildCodexResumeChoices(ctx, detail, provider)
 		return codexResumeChoicesMsg{
