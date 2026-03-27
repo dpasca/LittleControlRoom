@@ -22,21 +22,28 @@ const (
 )
 
 type CommitMessageInput struct {
-	Intent                  string   `json:"intent"`
-	ProjectName             string   `json:"project_name"`
-	Branch                  string   `json:"branch,omitempty"`
-	StageMode               string   `json:"stage_mode"`
-	LatestSessionSummary    string   `json:"latest_session_summary,omitempty"`
-	IncludedFiles           []string `json:"included_files"`
-	SuggestedUntrackedFiles []string `json:"suggested_untracked_files,omitempty"`
-	ExcludedFiles           []string `json:"excluded_files,omitempty"`
-	DiffStat                string   `json:"diff_stat,omitempty"`
-	Patch                   string   `json:"patch,omitempty"`
+	Intent                  string            `json:"intent"`
+	ProjectName             string            `json:"project_name"`
+	Branch                  string            `json:"branch,omitempty"`
+	StageMode               string            `json:"stage_mode"`
+	LatestSessionSummary    string            `json:"latest_session_summary,omitempty"`
+	IncludedFiles           []string          `json:"included_files"`
+	SuggestedUntrackedFiles []string          `json:"suggested_untracked_files,omitempty"`
+	ExcludedFiles           []string          `json:"excluded_files,omitempty"`
+	DiffStat                string            `json:"diff_stat,omitempty"`
+	Patch                   string            `json:"patch,omitempty"`
+	OpenTodos               []CommitTodoRef   `json:"open_todos,omitempty"`
+}
+
+type CommitTodoRef struct {
+	ID   int64  `json:"id"`
+	Text string `json:"text"`
 }
 
 type CommitMessageSuggestion struct {
-	Message string
-	Model   string
+	Message          string
+	Model            string
+	CompletedTodoIDs []int64
 }
 
 type CommitMessageSuggester interface {
@@ -136,29 +143,27 @@ func (c *OpenAICommitMessageClient) Suggest(ctx context.Context, input CommitMes
 		return CommitMessageSuggestion{}, fmt.Errorf("marshal commit message input: %w", err)
 	}
 
+	hasTodos := len(input.OpenTodos) > 0
+	schema := commitMessageSchema(hasTodos)
+	instructions := commitMessageInstructions
+	if hasTodos {
+		instructions += "\n" + commitMessageTodoInstructions
+	}
+
 	response, err := c.runJSONSchemaPrompt(
 		ctx,
-		commitMessageInstructions,
+		instructions,
 		"Draft a git commit subject for this coding task snapshot:\n\n"+string(payload),
 		"git_commit_message",
-		map[string]any{
-			"type":                 "object",
-			"additionalProperties": false,
-			"properties": map[string]any{
-				"message": map[string]any{
-					"type":        "string",
-					"description": "One concise git commit subject line.",
-				},
-			},
-			"required": []string{"message"},
-		},
+		schema,
 	)
 	if err != nil {
 		return CommitMessageSuggestion{}, err
 	}
 
 	var decoded struct {
-		Message string `json:"message"`
+		Message          string  `json:"message"`
+		CompletedTodoIDs []int64 `json:"completed_todo_ids"`
 	}
 	if err := decodeJSONOutput(response.OutputText, &decoded); err != nil {
 		return CommitMessageSuggestion{}, fmt.Errorf("decode commit message result: %w", err)
@@ -168,8 +173,9 @@ func (c *OpenAICommitMessageClient) Suggest(ctx context.Context, input CommitMes
 		return CommitMessageSuggestion{}, errors.New("commit message suggestion was empty")
 	}
 	return CommitMessageSuggestion{
-		Message: message,
-		Model:   response.Model,
+		Message:          message,
+		Model:            response.Model,
+		CompletedTodoIDs: decoded.CompletedTodoIDs,
 	}, nil
 }
 
@@ -269,4 +275,34 @@ Prefer the main user-facing or workflow outcome over an inventory of touched sub
 Avoid subjects that read like changelogs, such as lists joined with commas, "and", or semicolons.
 Avoid mentioning tests or docs unless they are the primary change.
 Do not add prefixes like feat:, fix:, chore:, or trailing punctuation unless the input strongly implies an existing convention.
-Return only the JSON field requested by the schema.`
+Return only the JSON fields requested by the schema.`
+
+const commitMessageTodoInstructions = `The input includes open_todos: a list of the project's open TODO items with their IDs.
+Examine the diff, file list, and session summary to determine whether this commit addresses or completes any of those TODOs.
+Return the IDs of TODOs that this commit clearly addresses in completed_todo_ids.
+Be conservative: only include a TODO if the changes directly and substantially address it.
+Return an empty array if no TODOs are addressed.`
+
+func commitMessageSchema(includeTodos bool) map[string]any {
+	props := map[string]any{
+		"message": map[string]any{
+			"type":        "string",
+			"description": "One concise git commit subject line.",
+		},
+	}
+	required := []string{"message"}
+	if includeTodos {
+		props["completed_todo_ids"] = map[string]any{
+			"type":        "array",
+			"description": "IDs of open_todos that this commit addresses.",
+			"items":       map[string]any{"type": "integer"},
+		}
+		required = append(required, "completed_todo_ids")
+	}
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties":           props,
+		"required":             required,
+	}
+}

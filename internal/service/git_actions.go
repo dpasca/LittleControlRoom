@@ -37,22 +37,28 @@ type CommitFile struct {
 	Summary string
 }
 
+type TodoCompletion struct {
+	ID   int64
+	Text string
+}
+
 type CommitPreview struct {
-	Intent            GitActionIntent
-	ProjectPath       string
-	ProjectName       string
-	Branch            string
-	StageMode         GitStageMode
-	Included          []CommitFile
-	Excluded          []CommitFile
-	SelectedUntracked []CommitFile
-	Message           string
-	DiffStat          string
-	DiffSummary       string
-	LatestSummary     string
-	CanPush           bool
-	Warnings          []string
-	StateHash         string
+	Intent               GitActionIntent
+	ProjectPath          string
+	ProjectName          string
+	Branch               string
+	StageMode            GitStageMode
+	Included             []CommitFile
+	Excluded             []CommitFile
+	SelectedUntracked    []CommitFile
+	Message              string
+	DiffStat             string
+	DiffSummary          string
+	LatestSummary        string
+	CanPush              bool
+	Warnings             []string
+	StateHash            string
+	SuggestedTodos       []TodoCompletion
 }
 
 type CommitResult struct {
@@ -274,6 +280,9 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 	}
 	preview.Warnings = append(preview.Warnings, submodulePreviewWarnings(includedChanges, excludedChanges)...)
 
+	// Collect open TODOs for the AI to evaluate.
+	openTodos := openTodoRefs(detail.Todos)
+
 	messageOverride = normalizeCommitMessage(messageOverride)
 	if messageOverride != "" {
 		preview.Message = messageOverride
@@ -289,11 +298,13 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 			ExcludedFiles:           commitFilePaths(preview.Excluded),
 			DiffStat:                preview.DiffStat,
 			Patch:                   patch,
+			OpenTodos:               openTodos,
 		}
 		if s.commitMessageSuggester != nil {
 			suggestion, suggestErr := s.commitMessageSuggester.Suggest(ctx, input)
 			if suggestErr == nil {
 				preview.Message = normalizeCommitMessage(suggestion.Message)
+				preview.SuggestedTodos = matchSuggestedTodos(openTodos, detail.Todos, suggestion.CompletedTodoIDs)
 			} else {
 				preview.Warnings = append(preview.Warnings, "AI commit message unavailable: "+strings.TrimSpace(suggestErr.Error()))
 			}
@@ -329,7 +340,7 @@ func (s *Service) CommitPreviewStateHash(ctx context.Context, projectPath string
 	return commitPreviewStateHash(projectName, latestSummary, repoStatus), nil
 }
 
-func (s *Service) ApplyCommit(ctx context.Context, preview CommitPreview, pushAfterCommit bool) (CommitResult, error) {
+func (s *Service) ApplyCommit(ctx context.Context, preview CommitPreview, pushAfterCommit bool, completedTodoIDs []int64) (CommitResult, error) {
 	if preview.ProjectPath == "" {
 		return CommitResult{}, fmt.Errorf("project path required")
 	}
@@ -395,6 +406,11 @@ func (s *Service) ApplyCommit(ctx context.Context, preview CommitPreview, pushAf
 			action = "git_finish"
 			status = fmt.Sprintf("commit %s and push", hash)
 		}
+	}
+
+	// Mark TODOs that the user confirmed as completed.
+	for _, todoID := range completedTodoIDs {
+		_ = s.ToggleTodoDone(ctx, preview.ProjectPath, todoID, true)
 	}
 
 	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: preview.ProjectPath, Payload: map[string]string{"action": action, "status": status}})
@@ -787,4 +803,42 @@ func projectStateFromDetail(detail model.ProjectDetail) model.ProjectState {
 		Sessions:        detail.Sessions,
 		Artifacts:       detail.Artifacts,
 	}
+}
+
+func openTodoRefs(todos []model.TodoItem) []gitops.CommitTodoRef {
+	var refs []gitops.CommitTodoRef
+	for _, t := range todos {
+		if !t.Done {
+			refs = append(refs, gitops.CommitTodoRef{ID: t.ID, Text: t.Text})
+		}
+	}
+	return refs
+}
+
+func matchSuggestedTodos(refs []gitops.CommitTodoRef, allTodos []model.TodoItem, completedIDs []int64) []TodoCompletion {
+	if len(completedIDs) == 0 {
+		return nil
+	}
+	// Build a set of open TODO IDs for validation.
+	openSet := make(map[int64]struct{}, len(refs))
+	for _, r := range refs {
+		openSet[r.ID] = struct{}{}
+	}
+	// Build ID→text lookup from all todos.
+	textByID := make(map[int64]string, len(allTodos))
+	for _, t := range allTodos {
+		textByID[t.ID] = t.Text
+	}
+
+	var result []TodoCompletion
+	for _, id := range completedIDs {
+		if _, ok := openSet[id]; !ok {
+			continue // AI hallucinated or referenced a done/nonexistent TODO
+		}
+		result = append(result, TodoCompletion{
+			ID:   id,
+			Text: textByID[id],
+		})
+	}
+	return result
 }

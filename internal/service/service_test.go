@@ -2069,7 +2069,7 @@ func TestPrepareCommitAndApplyCommitLeaveDirtySubmoduleOutOfParentCommit(t *test
 		t.Fatalf("warnings = %#v, want submodule guidance", preview.Warnings)
 	}
 
-	result, err := svc.ApplyCommit(ctx, preview, false)
+	result, err := svc.ApplyCommit(ctx, preview, false, nil)
 	if err != nil {
 		t.Fatalf("apply commit: %v", err)
 	}
@@ -2195,7 +2195,7 @@ func TestApplyCommitStagesRecommendedUntrackedFiles(t *testing.T) {
 		t.Fatalf("prepare commit: %v", err)
 	}
 
-	result, err := svc.ApplyCommit(ctx, preview, false)
+	result, err := svc.ApplyCommit(ctx, preview, false, nil)
 	if err != nil {
 		t.Fatalf("apply commit: %v", err)
 	}
@@ -2259,7 +2259,7 @@ func TestApplyCommitStagesAllAndPushes(t *testing.T) {
 		t.Fatalf("stage mode = %s, want %s", preview.StageMode, GitStageAllChanges)
 	}
 
-	result, err := svc.ApplyCommit(ctx, preview, true)
+	result, err := svc.ApplyCommit(ctx, preview, true, nil)
 	if err != nil {
 		t.Fatalf("apply commit: %v", err)
 	}

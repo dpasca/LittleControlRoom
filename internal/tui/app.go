@@ -85,6 +85,8 @@ type Model struct {
 	commitPreviewMessageOverride string
 	commitPreviewRefreshing      bool
 	commitApplying               bool
+	commitTodoCompletions        []commitTodoItem
+	commitTodoSelected           int
 	setupMode                    bool
 	setupChecked                 bool
 	setupLoading                 bool
@@ -213,6 +215,12 @@ type todoActionMsg struct {
 	projectPath string
 	status      string
 	err         error
+}
+
+type commitTodoItem struct {
+	ID       int64
+	Text     string
+	Selected bool
 }
 
 type commitPreviewMsg struct {
@@ -783,6 +791,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.gitStatusDialog = &dialog
 				m.gitStatusApplying = false
 				m.commitPreview = nil
+				m.commitTodoCompletions = nil
 				m.commitPreviewMessageOverride = ""
 				m.commitApplying = false
 				m.status = gitStatusDialogReadyStatus(dialog)
@@ -796,6 +805,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.gitStatusDialog = &dialog
 				m.gitStatusApplying = false
 				m.commitPreview = nil
+				m.commitTodoCompletions = nil
 				m.commitPreviewMessageOverride = ""
 				m.commitApplying = false
 				m.status = gitStatusDialogReadyStatus(dialog)
@@ -806,6 +816,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.gitStatusDialog = nil
 			m.gitStatusApplying = false
 			m.commitPreview = nil
+			m.commitTodoCompletions = nil
 			m.commitPreviewMessageOverride = ""
 			m.commitApplying = false
 			return m, nil
@@ -817,6 +828,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.commitPreview = &msg.preview
 		m.commitPreviewMessageOverride = msg.message
 		m.commitApplying = false
+		m.commitTodoCompletions = buildCommitTodoItems(msg.preview.SuggestedTodos)
+		m.commitTodoSelected = 0
 		m.status = commitPreviewReadyStatus(msg.preview.CanPush)
 		return m, nil
 	case diffPreviewMsg:
@@ -895,6 +908,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.commitApplying = false
 		m.commitPreviewRefreshing = false
 		m.commitPreview = nil
+		m.commitTodoCompletions = nil
 		m.commitPreviewMessageOverride = ""
 		m.diffView = nil
 		if msg.err != nil {
@@ -1404,6 +1418,7 @@ func (m Model) updateCommitPreviewMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.commitPreview = nil
+		m.commitTodoCompletions = nil
 		m.commitPreviewMessageOverride = ""
 		m.commitPreviewRefreshing = false
 		m.commitApplying = false
@@ -1412,10 +1427,26 @@ func (m Model) updateCommitPreviewMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "d":
 		cmd := m.startDiffViewFromCommitPreview(*m.commitPreview, m.commitPreviewMessageOverride)
 		m.commitPreview = nil
+		m.commitTodoCompletions = nil
 		m.commitPreviewMessageOverride = ""
 		m.commitPreviewRefreshing = false
 		m.commitApplying = false
 		return m, cmd
+	case "up", "k":
+		if len(m.commitTodoCompletions) > 0 && m.commitTodoSelected > 0 {
+			m.commitTodoSelected--
+		}
+		return m, nil
+	case "down", "j":
+		if len(m.commitTodoCompletions) > 0 && m.commitTodoSelected < len(m.commitTodoCompletions)-1 {
+			m.commitTodoSelected++
+		}
+		return m, nil
+	case " ":
+		if len(m.commitTodoCompletions) > 0 {
+			m.commitTodoCompletions[m.commitTodoSelected].Selected = !m.commitTodoCompletions[m.commitTodoSelected].Selected
+		}
+		return m, nil
 	case "shift+enter", "alt+enter":
 		if !m.commitPreview.CanPush {
 			m.status = "Commit & push is unavailable for this repo"
@@ -2876,6 +2907,8 @@ func (m *Model) startCommitPreview(project model.ProjectSummary, intent service.
 	m.diffView = nil
 	m.commitApplying = false
 	m.commitPreview = &preview
+	m.commitTodoCompletions = nil
+	m.commitTodoSelected = 0
 	m.commitPreviewMessageOverride = strings.TrimSpace(messageOverride)
 	m.commitPreviewRefreshing = true
 	m.status = commitPreviewPreparingStatus(intent)
@@ -3017,8 +3050,9 @@ func (m Model) resolveSubmodulesAndContinueCmd(path string, intent service.GitAc
 }
 
 func (m Model) applyCommitPreviewCmd(preview service.CommitPreview, pushAfterCommit bool) tea.Cmd {
+	completedTodoIDs := selectedCommitTodoIDs(m.commitTodoCompletions)
 	return func() tea.Msg {
-		result, err := m.svc.ApplyCommit(m.ctx, preview, pushAfterCommit)
+		result, err := m.svc.ApplyCommit(m.ctx, preview, pushAfterCommit, completedTodoIDs)
 		if err != nil {
 			return actionMsg{status: "Commit failed", err: err}
 		}
@@ -4030,6 +4064,12 @@ func (m Model) renderCommitPreviewContent(width int) string {
 		lines = append(lines, renderCommitPreviewFiles(preview.Excluded, 4, width)...)
 	}
 
+	if !placeholder && len(m.commitTodoCompletions) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, commandPaletteTitleStyle.Render("TODOs addressed"))
+		lines = append(lines, renderCommitTodoCompletions(m.commitTodoCompletions, m.commitTodoSelected, width)...)
+	}
+
 	if len(preview.Warnings) > 0 {
 		lines = append(lines, "")
 		lines = append(lines, commandPaletteTitleStyle.Render("Warnings"))
@@ -4298,6 +4338,50 @@ func renderGitStatusDialogActions(dialog gitStatusDialog) string {
 		renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
 	}
 	return strings.Join(actions, "   ")
+}
+
+func buildCommitTodoItems(suggested []service.TodoCompletion) []commitTodoItem {
+	if len(suggested) == 0 {
+		return nil
+	}
+	items := make([]commitTodoItem, len(suggested))
+	for i, s := range suggested {
+		items[i] = commitTodoItem{ID: s.ID, Text: s.Text, Selected: true}
+	}
+	return items
+}
+
+func selectedCommitTodoIDs(items []commitTodoItem) []int64 {
+	var ids []int64
+	for _, item := range items {
+		if item.Selected {
+			ids = append(ids, item.ID)
+		}
+	}
+	return ids
+}
+
+func renderCommitTodoCompletions(items []commitTodoItem, selected, width int) []string {
+	maxTextWidth := max(12, width-8)
+	lines := make([]string, 0, len(items))
+	for i, item := range items {
+		checkbox := "[ ] "
+		if item.Selected {
+			checkbox = "[x] "
+		}
+		text := truncateText(item.Text, maxTextWidth)
+		row := checkbox + text
+		if i == selected {
+			row = commitPreviewInfoStyle.Bold(true).Render(row)
+		} else if item.Selected {
+			row = commitPreviewInfoStyle.Render(row)
+		} else {
+			row = detailMutedStyle.Render(row)
+		}
+		lines = append(lines, row)
+	}
+	lines = append(lines, commandPaletteHintStyle.Render("Space toggle, ↑↓ navigate"))
+	return lines
 }
 
 func renderCommitPreviewActions(canPush bool) string {
