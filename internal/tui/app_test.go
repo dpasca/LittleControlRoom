@@ -8448,35 +8448,24 @@ func TestViewWithCommitPreviewRespectsHeight(t *testing.T) {
 		t.Fatalf("View() missing commit dialog actions: %q", rendered)
 	}
 	lines := strings.Split(rendered, "\n")
-	messageLabelLine := -1
 	messageLine := -1
 	stageLine := -1
 	for i, line := range lines {
 		switch {
-		case strings.Contains(line, "Message"):
-			messageLabelLine = i
-		case strings.Contains(line, "Ship current repo changes"):
+		case strings.Contains(line, "Message:") && strings.Contains(line, "Ship current repo changes"):
 			messageLine = i
 		case strings.Contains(line, "Stage: stage all current changes"):
 			stageLine = i
 		}
 	}
-	if messageLabelLine < 0 || messageLine < 0 || stageLine < 0 {
-		t.Fatalf("View() missing separated commit message block: %q", rendered)
+	if messageLine < 0 || stageLine < 0 {
+		t.Fatalf("View() missing inline commit message or stage line: %q", rendered)
 	}
-	if !(messageLabelLine < messageLine && messageLine < stageLine) {
-		t.Fatalf("View() should show the commit message block before stage metadata: %q", rendered)
+	if !(messageLine < stageLine) {
+		t.Fatalf("View() should show the commit message before stage metadata: %q", rendered)
 	}
-	blankVisible := strings.TrimSpace(strings.Map(func(r rune) rune {
-		switch r {
-		case '│', '╭', '╮', '╰', '╯', '─':
-			return -1
-		default:
-			return r
-		}
-	}, lines[messageLine+1]))
-	if stageLine-messageLine < 2 || blankVisible != "" {
-		t.Fatalf("View() should leave a blank line after the commit message: %q", rendered)
+	if stageLine != messageLine+1 {
+		t.Fatalf("View() should show stage immediately after the inline commit message line: %q", rendered)
 	}
 	if !strings.Contains(rendered, "Repo: clean") {
 		t.Fatalf("View() should preserve the detail-pane context under the commit preview: %q", rendered)
@@ -8515,7 +8504,7 @@ func TestViewWithCommitPreviewShowsRecommendedUntrackedFiles(t *testing.T) {
 		height: 24,
 	}
 
-	rendered := ansi.Strip(m.renderCommitPreviewContent(72))
+	rendered := ansi.Strip(m.renderCommitPreviewContent(72, 50))
 	if !strings.Contains(rendered, "Stage: commit staged changes plus 1 recommended untracked file") {
 		t.Fatalf("renderCommitPreviewContent() should mention recommended untracked staging: %q", rendered)
 	}
@@ -8545,7 +8534,7 @@ func TestRenderCommitPreviewContentShowsLoadingPlaceholder(t *testing.T) {
 		height:                  24,
 	}
 
-	rendered := ansi.Strip(m.renderCommitPreviewContent(72))
+	rendered := ansi.Strip(m.renderCommitPreviewContent(72, 50))
 	if !strings.Contains(rendered, "Generating commit message...") {
 		t.Fatalf("renderCommitPreviewContent() should show the loading message placeholder: %q", rendered)
 	}

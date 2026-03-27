@@ -3963,14 +3963,16 @@ func (m Model) renderCommandPaletteOverlay(body string, bodyW, bodyH int) string
 	return overlayBlock(body, panel, bodyW, bodyH, left, top)
 }
 
-func (m Model) renderCommitPreview(bodyW int) string {
+func (m Model) renderCommitPreview(bodyW, bodyH int) string {
 	panelWidth := min(bodyW, min(max(54, bodyW-12), 96))
 	panelInnerWidth := max(28, panelWidth-4)
-	return renderDialogPanel(panelWidth, panelInnerWidth, m.renderCommitPreviewContent(panelInnerWidth))
+	// Reserve space for panel border (2) and vertical centering margin.
+	maxContentHeight := max(8, bodyH-4)
+	return renderDialogPanel(panelWidth, panelInnerWidth, m.renderCommitPreviewContent(panelInnerWidth, maxContentHeight))
 }
 
 func (m Model) renderCommitPreviewOverlay(body string, bodyW, bodyH int) string {
-	panel := m.renderCommitPreview(bodyW)
+	panel := m.renderCommitPreview(bodyW, bodyH)
 	panelWidth := lipgloss.Width(panel)
 	panelHeight := lipgloss.Height(panel)
 	left := max(0, (bodyW-panelWidth)/2)
@@ -4026,71 +4028,118 @@ func (m Model) renderGitStatusDialogContent(width int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) renderCommitPreviewContent(width int) string {
+func (m Model) renderCommitPreviewContent(width, maxHeight int) string {
 	if m.commitPreview == nil {
 		return ""
 	}
 	preview := *m.commitPreview
 	placeholder := commitPreviewHasPlaceholderState(preview)
 
+	// --- Fixed lines (always shown) ---
 	lines := []string{
 		renderDialogHeader("Commit Preview", preview.ProjectName, preview.Branch, width),
 		"",
-	}
-	lines = append(lines, renderCommitPreviewMessageBlock("Message", preview.Message, width))
-	lines = append(lines, "")
-	lines = append(lines,
+		renderCommitPreviewMessageInline(preview.Message, width),
 		commitPreviewLine("Stage", stageModeLabel(preview.StageMode, len(preview.SelectedUntracked))),
-	)
+	}
 
 	if strings.TrimSpace(preview.LatestSummary) != "" {
 		lines = append(lines, commitPreviewLine("Context", preview.LatestSummary))
 	}
 
-	lines = append(lines, "")
-	lines = append(lines, commandPaletteTitleStyle.Render("Changes"))
-	if placeholder {
-		lines = append(lines, detailMutedStyle.Render("- Inspecting repo changes..."))
-	} else {
-		lines = append(lines, renderCommitPreviewFiles(preview.Included, 6, width)...)
-	}
-	if !placeholder && strings.TrimSpace(preview.DiffSummary) != "" {
-		lines = append(lines, commandPaletteHintStyle.Render(strings.TrimSpace(preview.DiffSummary)))
-	}
-
-	if !placeholder && len(preview.Excluded) > 0 {
-		lines = append(lines, "")
-		lines = append(lines, commandPaletteTitleStyle.Render("Left out"))
-		lines = append(lines, renderCommitPreviewFiles(preview.Excluded, 4, width)...)
-	}
-
-	if !placeholder && len(m.commitTodoCompletions) > 0 {
-		lines = append(lines, "")
-		lines = append(lines, commandPaletteTitleStyle.Render("TODOs addressed"))
-		lines = append(lines, renderCommitTodoCompletions(m.commitTodoCompletions, m.commitTodoSelected, width)...)
-	}
-
-	if len(preview.Warnings) > 0 {
-		lines = append(lines, "")
-		lines = append(lines, commandPaletteTitleStyle.Render("Warnings"))
-		for _, warning := range preview.Warnings {
-			lines = append(lines, detailWarningStyle.Render("- "+warning))
-		}
-	}
-
-	lines = append(lines, "")
+	// --- Footer (always shown) ---
+	var footer []string
+	footer = append(footer, "")
 	if m.commitApplying {
-		lines = append(lines, commandPaletteHintStyle.Render("Applying git action..."))
+		footer = append(footer, commandPaletteHintStyle.Render("Applying git action..."))
 	} else if m.commitPreviewRefreshing {
 		hint := "Refreshing commit preview..."
 		if placeholder {
 			hint = "Building commit preview..."
 		}
-		lines = append(lines, commandPaletteHintStyle.Render(hint))
+		footer = append(footer, commandPaletteHintStyle.Render(hint))
 	} else {
-		lines = append(lines, renderCommitPreviewActions(preview.CanPush))
+		footer = append(footer, renderCommitPreviewActions(preview.CanPush))
 	}
 
+	// Budget = maxHeight minus fixed header and footer lines.
+	budget := maxHeight - len(lines) - len(footer)
+
+	// --- Optional sections, added in priority order with budget checks ---
+
+	// Changes section (highest priority after message).
+	if budget > 2 {
+		lines = append(lines, "")
+		lines = append(lines, commandPaletteTitleStyle.Render("Changes"))
+		budget -= 2
+		if placeholder {
+			lines = append(lines, detailMutedStyle.Render("- Inspecting repo changes..."))
+			budget--
+		} else if budget >= 3 {
+			// Show individual files when there's room.
+			fileLimit := min(6, budget-1) // reserve 1 for diff summary
+			fileLines := renderCommitPreviewFiles(preview.Included, fileLimit, width)
+			lines = append(lines, fileLines...)
+			budget -= len(fileLines)
+		}
+		if !placeholder && strings.TrimSpace(preview.DiffSummary) != "" && budget > 0 {
+			lines = append(lines, commandPaletteHintStyle.Render(strings.TrimSpace(preview.DiffSummary)))
+			budget--
+		}
+	}
+
+	// Left-out files (lower priority — dropped first when tight).
+	if !placeholder && len(preview.Excluded) > 0 && budget > 3 {
+		lines = append(lines, "")
+		lines = append(lines, commandPaletteTitleStyle.Render("Left out"))
+		budget -= 2
+		fileLimit := min(4, budget)
+		fileLines := renderCommitPreviewFiles(preview.Excluded, fileLimit, width)
+		lines = append(lines, fileLines...)
+		budget -= len(fileLines)
+	}
+
+	// TODO completions — always show at least a summary line so the user
+	// knows TODOs will be marked done on commit.
+	if !placeholder && len(m.commitTodoCompletions) > 0 {
+		selectedCount := len(selectedCommitTodoIDs(m.commitTodoCompletions))
+		if budget > 3 {
+			// Full view: individual items with checkboxes.
+			lines = append(lines, "")
+			lines = append(lines, commandPaletteTitleStyle.Render("TODOs addressed"))
+			budget -= 2
+			todoLimit := min(len(m.commitTodoCompletions), budget-1) // reserve 1 for hint
+			todoLines := renderCommitTodoCompletions(m.commitTodoCompletions, m.commitTodoSelected, width, todoLimit)
+			lines = append(lines, todoLines...)
+			budget -= len(todoLines)
+		} else if budget > 0 {
+			// Collapsed: single summary line.
+			summary := fmt.Sprintf("TODOs: %d will be marked done (↑↓/Space to review)", selectedCount)
+			if selectedCount == 0 {
+				summary = fmt.Sprintf("TODOs: %d suggested, none selected", len(m.commitTodoCompletions))
+			}
+			lines = append(lines, commitPreviewInfoStyle.Render(summary))
+			budget--
+		}
+	}
+
+	// Warnings (compact: collapse to count when very tight).
+	if len(preview.Warnings) > 0 && budget > 2 {
+		lines = append(lines, "")
+		lines = append(lines, commandPaletteTitleStyle.Render("Warnings"))
+		budget -= 2
+		warnLimit := min(len(preview.Warnings), max(1, budget))
+		for i := 0; i < warnLimit; i++ {
+			lines = append(lines, detailWarningStyle.Render("- "+preview.Warnings[i]))
+			budget--
+		}
+		if warnLimit < len(preview.Warnings) {
+			lines = append(lines, detailWarningStyle.Render(fmt.Sprintf("+ %d more", len(preview.Warnings)-warnLimit)))
+			budget--
+		}
+	}
+
+	lines = append(lines, footer...)
 	return strings.Join(lines, "\n")
 }
 
@@ -4153,19 +4202,20 @@ func renderDialogHeader(title, projectName, branch string, width int) string {
 	return strings.Join(parts, "")
 }
 
-func renderCommitPreviewMessageBlock(label, value string, width int) string {
-	lines := []string{detailLabelStyle.Render(label)}
+func renderCommitPreviewMessageInline(value string, width int) string {
 	body := strings.TrimSpace(value)
 	if body == "" {
 		body = "(empty)"
 	}
-	lines = append(lines, lipgloss.NewStyle().
-		Width(max(12, width)).
+	label := detailLabelStyle.Render("Message:")
+	labelWidth := ansi.StringWidth(label) + 1 // +1 for space
+	messageStyle := lipgloss.NewStyle().
+		Width(max(12, width-labelWidth)).
 		Foreground(lipgloss.Color("229")).
-		Bold(true).
-		Render(body))
-	return strings.Join(lines, "\n")
+		Bold(true)
+	return label + " " + messageStyle.Render(body)
 }
+
 
 func renderCommitPreviewFiles(files []service.CommitFile, limit, width int) []string {
 	if len(files) == 0 {
@@ -4361,10 +4411,15 @@ func selectedCommitTodoIDs(items []commitTodoItem) []int64 {
 	return ids
 }
 
-func renderCommitTodoCompletions(items []commitTodoItem, selected, width int) []string {
+func renderCommitTodoCompletions(items []commitTodoItem, selected, width, limit int) []string {
+	if limit <= 0 {
+		limit = len(items)
+	}
+	visible := min(limit, len(items))
 	maxTextWidth := max(12, width-8)
-	lines := make([]string, 0, len(items))
-	for i, item := range items {
+	lines := make([]string, 0, visible+2)
+	for i := 0; i < visible; i++ {
+		item := items[i]
 		checkbox := "[ ] "
 		if item.Selected {
 			checkbox = "[x] "
@@ -4379,6 +4434,9 @@ func renderCommitTodoCompletions(items []commitTodoItem, selected, width int) []
 			row = detailMutedStyle.Render(row)
 		}
 		lines = append(lines, row)
+	}
+	if visible < len(items) {
+		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("+ %d more", len(items)-visible)))
 	}
 	lines = append(lines, commandPaletteHintStyle.Render("Space toggle, ↑↓ navigate"))
 	return lines
