@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"image"
+	"path/filepath"
 	"image/color"
 	_ "image/gif"
 	_ "image/jpeg"
@@ -598,16 +599,50 @@ func renderDiffSectionHeader(title string, width int) string {
 		Render(truncateText(title, max(1, width)))
 }
 
+func diffFileNameDir(summary string) (name, dir string) {
+	// Handle renames like "old/path -> new/path".
+	if idx := strings.Index(summary, " -> "); idx >= 0 {
+		newPath := summary[idx+4:]
+		name = filepath.Base(newPath)
+		dir = filepath.Dir(newPath)
+		oldDir := filepath.Dir(summary[:idx])
+		if oldDir != dir {
+			dir = oldDir + " → " + dir
+		}
+	} else {
+		name = filepath.Base(summary)
+		dir = filepath.Dir(summary)
+	}
+	if dir == "." {
+		dir = ""
+	}
+	return name, dir
+}
+
 func renderDiffFileRow(file service.DiffFilePreview, selected bool, width int) string {
 	kindCode := diffFileKindCode(file)
-	state := diffFileStateWord(file)
-	pathWidth := max(8, width-15)
-	base := fmt.Sprintf(" %s %-9s %s", kindCode, state, truncateText(file.Summary, pathWidth))
+	fileName, fileDir := diffFileNameDir(file.Summary)
+	pathWidth := max(8, width-5)
+	label := truncateText(fileName, pathWidth)
+	if fileDir != "" {
+		remaining := max(0, pathWidth-ansi.StringWidth(fileName)-1)
+		if remaining > 2 {
+			label += " " + truncateText(fileDir, remaining)
+		}
+	}
+	base := fmt.Sprintf(" %s %s", kindCode, label)
 	if selected {
 		return commandPaletteSelectStyle.Width(width).Render(truncateText(base, max(1, width)))
 	}
 	code := diffFileCodeStyle(file).Render(kindCode)
-	row := " " + code + " " + commandPaletteHintStyle.Render(fmt.Sprintf("%-9s", state)) + " " + commandPaletteRowStyle.Render(truncateText(file.Summary, pathWidth))
+	dirPart := ""
+	if fileDir != "" {
+		remaining := max(0, pathWidth-ansi.StringWidth(fileName)-1)
+		if remaining > 2 {
+			dirPart = " " + commandPaletteHintStyle.Render(truncateText(fileDir, remaining))
+		}
+	}
+	row := " " + code + " " + commandPaletteRowStyle.Render(truncateText(fileName, pathWidth)) + dirPart
 	return commandPaletteRowStyle.Width(width).Render(row)
 }
 
