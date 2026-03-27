@@ -551,10 +551,8 @@ func (m Model) renderCodexModelPicker(bodyW, bodyH int) string {
 func (m Model) renderCodexModelPickerContent(width, maxHeight int) string {
 	state := m.codexModelPicker
 	label := m.currentEmbeddedSessionLabel()
-	lines := []string{
-		commandPaletteTitleStyle.Render("Embedded Model Picker"),
-		commandPaletteHintStyle.Render("Choose a model and reasoning effort for upcoming embedded " + label + " prompts."),
-		"",
+	header := []string{
+		commandPaletteTitleStyle.Render("Embedded Model Picker (" + label + ")"),
 		renderDialogAction("Enter", "apply", commitActionKeyStyle, commitActionTextStyle) + "   " +
 			renderDialogAction("Tab", "focus", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
 			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
@@ -562,22 +560,30 @@ func (m Model) renderCodexModelPickerContent(width, maxHeight int) string {
 	}
 
 	if state == nil || state.Loading {
-		lines = append(lines, commandPaletteHintStyle.Render("Loading available embedded "+label+" models..."))
-		return strings.Join(lines, "\n")
+		header = append(header, commandPaletteHintStyle.Render("Loading available embedded "+label+" models..."))
+		return strings.Join(header, "\n")
 	}
 	if len(state.Models) == 0 {
-		lines = append(lines, commandPaletteHintStyle.Render("No embedded "+label+" models are available."))
-		return strings.Join(lines, "\n")
+		header = append(header, commandPaletteHintStyle.Render("No embedded "+label+" models are available."))
+		return strings.Join(header, "\n")
 	}
 
 	if snapshot, ok := m.currentCodexSnapshot(); ok {
 		current := firstNonEmptyTrimmed(snapshot.PendingModel, snapshot.Model)
 		currentReasoning := firstNonEmptyTrimmed(snapshot.PendingReasoning, snapshot.ReasoningEffort)
 		if current != "" {
-			lines = append(lines, detailValueStyle.Render("Current: "+current+"  Reasoning: "+currentReasoning))
-			lines = append(lines, "")
+			header = append(header, detailValueStyle.Render("Current: "+current+"  Reasoning: "+currentReasoning))
+			header = append(header, "")
 		}
 	}
+
+	// Column widths: left gets 60%, right gets the rest, with a separator gap.
+	const sepWidth = 3 // " │ "
+	leftWidth := max(24, (width*60)/100)
+	rightWidth := max(20, width-leftWidth-sepWidth)
+
+	// ── Left column: filter + recent + models ──
+	leftLines := []string{}
 
 	filterLabel := "Filter: "
 	filterValue := state.FilterText
@@ -585,26 +591,27 @@ func (m Model) renderCodexModelPickerContent(width, maxHeight int) string {
 		filterValue += "█"
 	}
 	filterLine := filterLabel + filterValue
-	if len(filterLine) > width {
-		filterLine = filterLine[:width]
+	if len(filterLine) > leftWidth {
+		filterLine = filterLine[:leftWidth]
 	}
-	lines = append(lines, commandPaletteRowStyle.Render(filterLine))
-	lines = append(lines, "")
+	leftLines = append(leftLines, commandPaletteRowStyle.Render(filterLine))
+	leftLines = append(leftLines, "")
 
 	if len(state.RecentModels) > 0 {
-		lines = append(lines, commandPaletteTitleStyle.Render("Recent"))
+		leftLines = append(leftLines, commandPaletteTitleStyle.Render("Recent"))
 		start, end := codexPickerWindowFor(state.RecentIndex, len(state.RecentModels), 5)
 		for i := start; i < end; i++ {
-			lines = append(lines, m.renderCodexModelPickerRow(state.RecentModels[i], i == state.RecentIndex && state.Focus == codexModelPickerFocusRecent, width))
+			leftLines = append(leftLines, m.renderCodexModelPickerRow(state.RecentModels[i], i == state.RecentIndex && state.Focus == codexModelPickerFocusRecent, leftWidth))
 		}
-		lines = append(lines, "")
+		leftLines = append(leftLines, "")
 	}
 
-	lines = append(lines, commandPaletteTitleStyle.Render("Models"))
+	leftLines = append(leftLines, commandPaletteTitleStyle.Render("Models"))
 	if len(state.FilteredModels) == 0 {
-		lines = append(lines, commandPaletteHintStyle.Render("No models match filter."))
+		leftLines = append(leftLines, commandPaletteHintStyle.Render("No models match filter."))
 	} else {
-		modelLimit := maxHeight - len(lines) - 10
+		headerRows := len(header) + len(leftLines)
+		modelLimit := maxHeight - headerRows - 4
 		if modelLimit < 5 {
 			modelLimit = 5
 		}
@@ -613,35 +620,58 @@ func (m Model) renderCodexModelPickerContent(width, maxHeight int) string {
 		}
 		start, end := codexPickerWindowFor(state.ModelIndex, len(state.FilteredModels), modelLimit)
 		if start > 0 {
-			lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d more", start)))
+			leftLines = append(leftLines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d more", start)))
 		}
 		for i := start; i < end; i++ {
-			lines = append(lines, m.renderCodexModelPickerRow(state.FilteredModels[i], i == state.ModelIndex && state.Focus == codexModelPickerFocusModels, width))
+			leftLines = append(leftLines, m.renderCodexModelPickerRow(state.FilteredModels[i], i == state.ModelIndex && state.Focus == codexModelPickerFocusModels, leftWidth))
 		}
 		if end < len(state.FilteredModels) {
-			lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d more", len(state.FilteredModels)-end)))
+			leftLines = append(leftLines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d more", len(state.FilteredModels)-end)))
+		}
+	}
+
+	// ── Right column: reasoning + about ──
+	rightLines := []string{}
+
+	options := m.currentCodexReasoningOptions()
+	rightLines = append(rightLines, commandPaletteTitleStyle.Render("Reasoning"))
+	if len(options) == 0 {
+		rightLines = append(rightLines, commandPaletteHintStyle.Render("No reasoning controls."))
+	} else {
+		for i, option := range options {
+			rightLines = append(rightLines, m.renderCodexReasoningPickerRow(option, i == state.EffortIndex, rightWidth))
 		}
 	}
 
 	selectedModel, _ := m.currentCodexModelOption()
 	if description := strings.TrimSpace(selectedModel.Description); description != "" {
-		lines = append(lines, "")
-		lines = append(lines, commandPaletteTitleStyle.Render("About"))
-		lines = append(lines, commandPaletteHintStyle.Render(description))
+		rightLines = append(rightLines, "")
+		rightLines = append(rightLines, commandPaletteTitleStyle.Render("About"))
+		rightLines = append(rightLines, commandPaletteHintStyle.Render(description))
 	}
 
-	options := m.currentCodexReasoningOptions()
-	lines = append(lines, "")
-	lines = append(lines, commandPaletteTitleStyle.Render("Reasoning"))
-	if len(options) == 0 {
-		lines = append(lines, commandPaletteHintStyle.Render("This model does not advertise separate reasoning controls."))
-	} else {
-		for i, option := range options {
-			lines = append(lines, m.renderCodexReasoningPickerRow(option, i == state.EffortIndex, width))
-		}
+	// Pad columns to equal height, then join side-by-side.
+	leftCol := strings.Join(leftLines, "\n")
+	rightCol := strings.Join(rightLines, "\n")
+	leftH := lipgloss.Height(leftCol)
+	rightH := lipgloss.Height(rightCol)
+	targetH := max(leftH, rightH)
+	if leftH < targetH {
+		leftCol += strings.Repeat("\n", targetH-leftH)
+	}
+	if rightH < targetH {
+		rightCol += strings.Repeat("\n", targetH-rightH)
 	}
 
-	return strings.Join(lines, "\n")
+	leftRendered := lipgloss.NewStyle().Width(leftWidth).Render(leftCol)
+	rightRendered := lipgloss.NewStyle().Width(rightWidth).Render(rightCol)
+	sep := lipgloss.NewStyle().
+		Foreground(dialogPanelBorderColor).
+		Render(strings.Repeat("│\n", targetH-1) + "│")
+	columns := lipgloss.JoinHorizontal(lipgloss.Top, leftRendered, " ", sep, " ", rightRendered)
+
+	header = append(header, columns)
+	return strings.Join(header, "\n")
 }
 
 func (m Model) renderCodexModelPickerRow(option codexapp.ModelOption, selected bool, width int) string {
