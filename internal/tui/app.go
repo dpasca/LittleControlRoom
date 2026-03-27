@@ -564,7 +564,7 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	mdl, cmd := m.update(msg)
 	mm := mdl.(Model)
-	want := mm.codexVisible()
+	want := mm.codexVisible() || mm.diffView != nil
 	if want != mm.mouseEnabled {
 		mm.mouseEnabled = want
 		var mouseCmd tea.Cmd
@@ -595,6 +595,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncRuntimeViewport(false)
 		return m, nil
 	case tea.MouseMsg:
+		if m.diffView != nil && m.diffView.hasFiles() {
+			var cmd tea.Cmd
+			m.diffView.contentViewport, cmd = m.diffView.contentViewport.Update(msg)
+			m.updateDiffSelectionFromScroll()
+			return m, cmd
+		}
 		if m.codexVisible() {
 			// Try composer selection first (bottom area), then viewport.
 			if cmd, handled := m.handleCodexComposerMouseSelection(msg); handled {

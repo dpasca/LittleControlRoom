@@ -116,7 +116,7 @@ func newDiffViewState(projectPath, projectName string) *diffViewState {
 		ProjectPath:     strings.TrimSpace(projectPath),
 		ProjectName:     strings.TrimSpace(projectName),
 		loading:         true,
-		focus:           diffFocusFiles,
+		focus:           diffFocusContent,
 		mode:            diffRenderModeSideBySide,
 		contentViewport: viewport.New(0, 0),
 		renderCache:     make(map[diffRenderCacheKey]string),
