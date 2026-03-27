@@ -2148,7 +2148,8 @@ func (m Model) renderProjectList(width, height int) string {
 			return style
 		}
 		last := formatListActivityTime(now, p.LastActivity)
-		attention := projectAttentionLabelForScore(p, m.projectAttentionScore(p))
+		repoIndicator := projectRepoWarningIndicator(p)
+		attention := projectAttentionLabelForScore(m.projectAttentionScore(p))
 		name := truncateText(p.Name, projectW)
 		assessment := truncateText(projectAssessmentTextAt(p, now), assessmentW)
 		runtimeSnapshot := m.projectRuntimeSnapshot(p.Path)
@@ -2157,7 +2158,7 @@ func (m Model) renderProjectList(width, height int) string {
 		runLabel, runState := projectRunSummary(runtimeSnapshot, p.RunCommand)
 		row := lipgloss.JoinHorizontal(
 			lipgloss.Top,
-			cellStyle(lipgloss.NewStyle().Width(5).Align(lipgloss.Right).Bold(selectedRow)).Render(attention),
+			repoIndicator+cellStyle(lipgloss.NewStyle().Width(4).Align(lipgloss.Right).Bold(selectedRow)).Render(attention),
 			"  ",
 			cellStyle(m.projectListAssessmentStatusStyle(p).Width(8)).Render(projectListStatus(p)),
 			" ",

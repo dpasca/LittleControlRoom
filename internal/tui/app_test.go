@@ -509,23 +509,48 @@ func TestProjectDisplayStatusShowsMissingWhenFolderGone(t *testing.T) {
 
 func TestProjectAttentionLabel(t *testing.T) {
 	project := model.ProjectSummary{AttentionScore: 95, RepoDirty: true}
-	if got := projectAttentionLabel(project); got != "!  95" {
-		t.Fatalf("projectAttentionLabel() = %q, want %q", got, "!  95")
+	if got := projectAttentionLabel(project); got != "  95" {
+		t.Fatalf("projectAttentionLabel() = %q, want %q", got, "  95")
 	}
 
 	project.Pinned = true
-	if got := projectAttentionLabel(project); got != "!  95" {
+	if got := projectAttentionLabel(project); got != "  95" {
 		t.Fatalf("projectAttentionLabel() should ignore pinned rows in the list label, got %q", got)
 	}
 
 	project = model.ProjectSummary{AttentionScore: 100, RepoSyncStatus: model.RepoSyncAhead}
-	if got := projectAttentionLabel(project); got != "! 100" {
-		t.Fatalf("projectAttentionLabel() = %q, want %q", got, "! 100")
+	if got := projectAttentionLabel(project); got != " 100" {
+		t.Fatalf("projectAttentionLabel() = %q, want %q", got, " 100")
 	}
 
 	project = model.ProjectSummary{AttentionScore: 0}
-	if got := projectAttentionLabel(project); got != "    0" {
-		t.Fatalf("projectAttentionLabel() = %q, want %q", got, "    0")
+	if got := projectAttentionLabel(project); got != "   0" {
+		t.Fatalf("projectAttentionLabel() = %q, want %q", got, "   0")
+	}
+}
+
+func TestProjectRepoWarningIndicator(t *testing.T) {
+	// Dirty worktree → styled "!"
+	dirtyIndicator := projectRepoWarningIndicator(model.ProjectSummary{RepoDirty: true})
+	if !strings.Contains(dirtyIndicator, "!") {
+		t.Fatalf("dirty worktree should contain '!', got %q", dirtyIndicator)
+	}
+
+	// Sync-only warning → styled "!"
+	syncIndicator := projectRepoWarningIndicator(model.ProjectSummary{RepoSyncStatus: model.RepoSyncAhead})
+	if !strings.Contains(syncIndicator, "!") {
+		t.Fatalf("sync warning should contain '!', got %q", syncIndicator)
+	}
+
+	// Dirty + sync → same as dirty-only (dirty takes priority)
+	bothIndicator := projectRepoWarningIndicator(model.ProjectSummary{RepoDirty: true, RepoSyncStatus: model.RepoSyncBehind})
+	if bothIndicator != dirtyIndicator {
+		t.Fatalf("dirty+sync should match dirty-only indicator, got %q vs %q", bothIndicator, dirtyIndicator)
+	}
+
+	// No warning → space
+	if got := projectRepoWarningIndicator(model.ProjectSummary{}); got != " " {
+		t.Fatalf("no warning should return space, got %q", got)
 	}
 }
 

@@ -104,14 +104,22 @@ func (m Model) projectEmbeddedQuestionAttentionReason(projectPath string) *model
 	}
 }
 
-func projectAttentionLabelForScore(project model.ProjectSummary, score int) string {
-	label := fmt.Sprintf("%4d", score)
-	if projectHasRepoWarning(project) {
-		return "!" + label
-	}
-	return " " + label
+func projectAttentionLabelForScore(score int) string {
+	return fmt.Sprintf("%4d", score)
 }
 
 func projectAttentionLabel(project model.ProjectSummary) string {
-	return projectAttentionLabelForScore(project, project.AttentionScore)
+	return projectAttentionLabelForScore(project.AttentionScore)
+}
+
+// projectRepoWarningIndicator returns a styled "!" for dirty/unsynced repos.
+// Dirty worktree → red (danger), sync-only → orange (warning), neither → space.
+func projectRepoWarningIndicator(project model.ProjectSummary) string {
+	if project.RepoDirty {
+		return detailDangerStyle.Render("!")
+	}
+	if repoSyncWarning(project.RepoSyncStatus) {
+		return detailWarningStyle.Render("!")
+	}
+	return " "
 }
