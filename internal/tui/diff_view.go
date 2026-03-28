@@ -1196,8 +1196,19 @@ func diffToneForFullDiffLine(line string) diffCellTone {
 
 const diffLineNumWidth = 4
 
+func diffLineNumStyle(tone diffCellTone) lipgloss.Style {
+	switch tone {
+	case diffCellToneAdded:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#5a9e6a")).Background(diffToneBackgroundColor(tone))
+	case diffCellToneDeleted:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#b35b6b")).Background(diffToneBackgroundColor(tone))
+	default:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("239"))
+	}
+}
+
 func renderDiffLineNum(num int, tone diffCellTone) string {
-	style := lipgloss.NewStyle().Foreground(lipgloss.Color("239"))
+	style := diffLineNumStyle(tone)
 	if num <= 0 {
 		return style.Width(diffLineNumWidth).Render("")
 	}
@@ -1206,6 +1217,14 @@ func renderDiffLineNum(num int, tone diffCellTone) string {
 		s = s[len(s)-diffLineNumWidth:]
 	}
 	return style.Width(diffLineNumWidth).Align(lipgloss.Right).Render(s)
+}
+
+func diffGutterSep(tone diffCellTone) string {
+	bg := diffToneBackgroundColor(tone)
+	if bg == "" {
+		return " "
+	}
+	return lipgloss.NewStyle().Background(bg).Render(" ")
 }
 
 func renderDiffSideBySideRow(row diffSideBySideRow, width int, highlightPlan syntaxHighlightPlan) string {
@@ -1238,11 +1257,13 @@ func renderDiffSideBySideRow(row diffSideBySideRow, width int, highlightPlan syn
 			leftNum = row.LeftLineNum
 			rightNum = row.RightLineNum
 		}
+		leftSep := diffGutterSep(row.LeftTone)
+		rightSep := diffGutterSep(row.RightTone)
 		rendered = append(rendered,
-			renderDiffLineNum(leftNum, row.LeftTone)+" "+
+			renderDiffLineNum(leftNum, row.LeftTone)+leftSep+
 				renderDiffCellLine(left, leftWidth, row.LeftTone, highlightPlan, row.LeftCode)+
 				gap+
-				renderDiffLineNum(rightNum, row.RightTone)+" "+
+				renderDiffLineNum(rightNum, row.RightTone)+rightSep+
 				renderDiffCellLine(right, rightWidth, row.RightTone, highlightPlan, row.RightCode),
 		)
 	}
@@ -1303,10 +1324,10 @@ func renderDiffHighlightedPatchLine(line string, width int, tone diffCellTone, h
 	prefix, body := splitDiffSyntaxPrefix(line)
 	// Unified view: use background color to indicate add/delete, keep foreground neutral
 	prefixStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("250")).
+		Foreground(lipgloss.Color("#f8f8f2")).
 		Background(diffToneBackgroundColor(tone))
 	highlighted := prefixStyle.Render(prefix) + highlightPlan.Render(body, syntaxHighlightOptions{
-		DefaultColor:    lipgloss.Color("250"),
+		DefaultColor:    lipgloss.Color("#f8f8f2"),
 		BackgroundColor: diffToneBackgroundColor(tone),
 		NoItalic:        true,
 	})
