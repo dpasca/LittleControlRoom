@@ -4700,7 +4700,7 @@ func TestVisibleCodexCtrlVPastesLargeTextAsPlaceholder(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("ctrl+v large text paste should not queue a command")
 	}
-	if got.codexInput.Value() != "[Paste #1: 1200 characters] " {
+	if got.codexInput.Value() != "[Paste #1: 1 line] " {
 		t.Fatalf("composer = %q, want large paste placeholder", got.codexInput.Value())
 	}
 	pastedTexts := got.currentCodexPastedTexts()
@@ -4710,7 +4710,7 @@ func TestVisibleCodexCtrlVPastesLargeTextAsPlaceholder(t *testing.T) {
 	if pastedTexts[0].Text != strings.Repeat("a", 1200) {
 		t.Fatalf("stored pasted text length = %d, want 1200", len([]rune(pastedTexts[0].Text)))
 	}
-	if got.status != "Pasted [1200 characters] as a placeholder" {
+	if got.status != "Pasted [1 line pasted] as a placeholder" {
 		t.Fatalf("status = %q, want placeholder notice", got.status)
 	}
 }
@@ -4751,7 +4751,7 @@ func TestVisibleCodexBracketedPasteUsesLargeTextPlaceholder(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("bracketed large paste should not queue a command")
 	}
-	if got.codexInput.Value() != "[Paste #1: 800 characters] " {
+	if got.codexInput.Value() != "[Paste #1: 1 line] " {
 		t.Fatalf("composer = %q, want bracketed paste placeholder", got.codexInput.Value())
 	}
 }
@@ -4815,7 +4815,7 @@ func TestVisibleCodexBackspaceRemovesLargePastePlaceholder(t *testing.T) {
 	if len(got.currentCodexPastedTexts()) != 0 {
 		t.Fatalf("pasted texts = %d, want 0", len(got.currentCodexPastedTexts()))
 	}
-	if got.status != "Removed [900 characters] placeholder" {
+	if got.status != "Removed [1 line pasted] placeholder" {
 		t.Fatalf("status = %q, want placeholder removal notice", got.status)
 	}
 }
@@ -4906,7 +4906,7 @@ func TestVisibleCodexSubmissionExpandsLargePastePlaceholder(t *testing.T) {
 	}
 
 	hidden := strings.Repeat("p", 700)
-	token := "[Paste #1: 700 characters]"
+	token := "[Paste #1: 1 line]"
 	input := newCodexTextarea()
 	input.SetValue(token + " summarize this")
 	m := Model{
@@ -4952,7 +4952,8 @@ func TestVisibleCodexSubmissionExpandsLargePastePlaceholder(t *testing.T) {
 	}
 }
 
-func TestRenderCodexTranscriptCollapsesLargeUserPaste(t *testing.T) {
+func TestRenderCodexTranscriptShowsFullTypedText(t *testing.T) {
+	longText := strings.Repeat("z", 650)
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
 		snapshot: codexapp.Snapshot{
@@ -4960,7 +4961,7 @@ func TestRenderCodexTranscriptCollapsesLargeUserPaste(t *testing.T) {
 			Preset:  codexcli.PresetYolo,
 			Status:  "Codex session ready",
 			Entries: []codexapp.TranscriptEntry{
-				{Kind: codexapp.TranscriptUser, Text: strings.Repeat("z", 650)},
+				{Kind: codexapp.TranscriptUser, Text: longText},
 			},
 		},
 	}
@@ -4985,11 +4986,11 @@ func TestRenderCodexTranscriptCollapsesLargeUserPaste(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderCodexView())
-	if !strings.Contains(rendered, "[650 characters]") {
-		t.Fatalf("rendered transcript should collapse the large user message: %q", rendered)
+	if strings.Contains(rendered, "[650 characters]") {
+		t.Fatalf("rendered transcript should NOT collapse typed text: %q", rendered)
 	}
-	if strings.Contains(rendered, strings.Repeat("z", 80)) {
-		t.Fatalf("rendered transcript should not include the full pasted text")
+	if !strings.Contains(rendered, strings.Repeat("z", 80)) {
+		t.Fatalf("rendered transcript should include the full typed text")
 	}
 }
 

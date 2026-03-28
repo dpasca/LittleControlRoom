@@ -122,6 +122,7 @@ func attachmentDisplayLabel(path string) string {
 
 type Submission struct {
 	Text        string
+	DisplayText string // optional; if set, used for transcript display instead of Text
 	Attachments []Attachment
 }
 
@@ -139,7 +140,11 @@ func (s Submission) Empty() bool {
 
 func (s Submission) TranscriptText() string {
 	parts := []string{}
-	if text := strings.TrimSpace(s.Text); text != "" {
+	text := strings.TrimSpace(s.DisplayText)
+	if text == "" {
+		text = strings.TrimSpace(s.Text)
+	}
+	if text != "" {
 		parts = append(parts, text)
 	}
 	for _, attachment := range s.Attachments {

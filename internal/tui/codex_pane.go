@@ -2797,27 +2797,7 @@ func joinOpenCodeToolRun(entries []codexapp.TranscriptEntry) string {
 }
 
 func compactCodexUserTranscriptText(text string) string {
-	if !shouldCollapseCodexPaste(text) {
-		return text
-	}
-	lines := strings.Split(text, "\n")
-	contentLines := make([]string, 0, len(lines))
-	attachmentLines := make([]string, 0, len(lines))
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if isCodexTranscriptAttachmentLine(trimmed) {
-			attachmentLines = append(attachmentLines, trimmed)
-			continue
-		}
-		contentLines = append(contentLines, line)
-	}
-	content := strings.TrimSpace(strings.Join(contentLines, "\n"))
-	if !shouldCollapseCodexPaste(content) {
-		return text
-	}
-	compacted := []string{codexPastedTextPlaceholder(content)}
-	compacted = append(compacted, attachmentLines...)
-	return strings.Join(compacted, "\n")
+	return text
 }
 
 func isCodexTranscriptAttachmentLine(line string) bool {

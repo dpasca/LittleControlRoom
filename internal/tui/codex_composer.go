@@ -54,10 +54,14 @@ func (d codexDraft) Empty() bool {
 func (d codexDraft) Submission() codexapp.Submission {
 	d = d.normalized()
 	displayText := stripCodexAttachmentComposerTokens(d.Text, d.Attachments)
-	return codexapp.Submission{
+	sub := codexapp.Submission{
 		Text:        expandCodexPastedTextTokens(displayText, d.PastedTexts),
 		Attachments: cloneCodexAttachments(d.Attachments),
 	}
+	if len(d.PastedTexts) > 0 {
+		sub.DisplayText = collapseCodexPastedTextTokens(displayText, d.PastedTexts)
+	}
+	return sub
 }
 
 type codexToolAnswerState struct {
@@ -165,11 +169,27 @@ func expandCodexPastedTextTokens(text string, pastedTexts []codexPastedText) str
 }
 
 func codexPastedTextPlaceholder(text string) string {
-	return fmt.Sprintf("[%d characters]", codexVisibleRuneCount(text))
+	n := codexVisibleLineCount(text)
+	if n == 1 {
+		return "[1 line pasted]"
+	}
+	return fmt.Sprintf("[%d lines pasted]", n)
 }
 
 func codexPastedTextComposerToken(id int, text string) string {
-	return fmt.Sprintf("[Paste #%d: %d characters]", id, codexVisibleRuneCount(text))
+	n := codexVisibleLineCount(text)
+	if n == 1 {
+		return fmt.Sprintf("[Paste #%d: 1 line]", id)
+	}
+	return fmt.Sprintf("[Paste #%d: %d lines]", id, n)
+}
+
+func collapseCodexPastedTextTokens(text string, pastedTexts []codexPastedText) string {
+	collapsed := text
+	for _, pasted := range pruneCodexPastedTexts(text, pastedTexts) {
+		collapsed = strings.ReplaceAll(collapsed, pasted.Token, codexPastedTextPlaceholder(pasted.Text))
+	}
+	return strings.TrimSpace(collapsed)
 }
 
 func codexVisibleRuneCount(text string) int {
