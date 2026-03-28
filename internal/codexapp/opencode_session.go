@@ -477,6 +477,19 @@ func (s *openCodeSession) ShowStatus() error {
 	return nil
 }
 
+func (s *openCodeSession) Compact() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return fmt.Errorf("opencode session is closed")
+	}
+	s.appendEntryLocked("", TranscriptSystem, "OpenCode manages conversation compaction automatically; manual /compact is not supported for this provider.")
+	s.status = "Compaction is automatic for OpenCode"
+	s.lastSystemNotice = "Compaction is automatic for OpenCode"
+	s.notify()
+	return nil
+}
+
 func (s *openCodeSession) ListModels() ([]ModelOption, error) {
 	models, err := s.refreshModelOptions(context.Background())
 	if err != nil {

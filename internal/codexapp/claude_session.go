@@ -106,6 +106,10 @@ func (s *claudeCodeSession) ShowStatus() error {
 	return nil
 }
 
+func (s *claudeCodeSession) Compact() error {
+	return fmt.Errorf("Claude Code sessions are read-only")
+}
+
 func (s *claudeCodeSession) ListModels() ([]ModelOption, error) {
 	return nil, nil
 }

@@ -442,6 +442,7 @@ type Session interface {
 	Submit(prompt string) error
 	SubmitInput(input Submission) error
 	ShowStatus() error
+	Compact() error
 	ListModels() ([]ModelOption, error)
 	StageModelOverride(model, reasoningEffort string) error
 	Interrupt() error

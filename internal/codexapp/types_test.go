@@ -46,6 +46,10 @@ func (s *fakeSession) ShowStatus() error {
 	return nil
 }
 
+func (s *fakeSession) Compact() error {
+	return nil
+}
+
 func (s *fakeSession) ListModels() ([]ModelOption, error) {
 	return nil, nil
 }

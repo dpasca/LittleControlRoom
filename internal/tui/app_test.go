@@ -98,6 +98,10 @@ func (s *fakeCodexSession) SubmitInput(input codexapp.Submission) error {
 	return nil
 }
 
+func (s *fakeCodexSession) Compact() error {
+	return nil
+}
+
 func (s *fakeCodexSession) ShowStatus() error {
 	s.statusCalls++
 	s.snapshot.Entries = append(s.snapshot.Entries, codexapp.TranscriptEntry{

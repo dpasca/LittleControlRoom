@@ -567,6 +567,10 @@ func (s *screenshotCodexSession) ShowStatus() error {
 	return nil
 }
 
+func (s *screenshotCodexSession) Compact() error {
+	return nil
+}
+
 func (s *screenshotCodexSession) Interrupt() error {
 	return nil
 }

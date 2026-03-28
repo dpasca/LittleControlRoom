@@ -659,6 +659,24 @@ func (m Model) restartVisibleCodexSessionCmd(prompt string) tea.Cmd {
 	return m.openCodexSessionCmd(req)
 }
 
+func (m Model) compactVisibleCodexSessionCmd() tea.Cmd {
+	session, ok := m.currentCodexSession()
+	if !ok {
+		return nil
+	}
+	projectPath := m.codexVisibleProject
+	label := "Codex"
+	if snapshot, ok := m.currentCodexSnapshot(); ok {
+		label = embeddedProvider(snapshot).Label()
+	}
+	return func() tea.Msg {
+		if err := session.Compact(); err != nil {
+			return codexActionMsg{projectPath: projectPath, err: err}
+		}
+		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " conversation compacted"}
+	}
+}
+
 func (m Model) reconnectVisibleCodexSessionCmd() tea.Cmd {
 	if m.codexManager == nil || strings.TrimSpace(m.codexVisibleProject) == "" {
 		return nil
@@ -973,7 +991,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.clearCodexDraft(m.codexVisibleProject)
-			if snapshot.Closed && (inv.Kind == codexslash.KindModel || inv.Kind == codexslash.KindStatus) {
+			if snapshot.Closed && (inv.Kind == codexslash.KindModel || inv.Kind == codexslash.KindStatus || inv.Kind == codexslash.KindCompact) {
 				m.status = label + " session is closed. Use /resume, /new, or /reconnect to reopen it."
 				return m, nil
 			}
@@ -1003,6 +1021,9 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case codexslash.KindStatus:
 				m.status = "Reading embedded " + label + " status..."
 				return m, m.showVisibleCodexStatusCmd()
+			case codexslash.KindCompact:
+				m.status = "Compacting embedded " + label + " conversation..."
+				return m, m.compactVisibleCodexSessionCmd()
 			default:
 				m.status = "Unsupported embedded slash command"
 				return m, nil

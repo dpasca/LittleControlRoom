@@ -13,6 +13,7 @@ const (
 	KindStatus    Kind = "status"
 	KindModel     Kind = "model"
 	KindReconnect Kind = "reconnect"
+	KindCompact   Kind = "compact"
 )
 
 type Spec struct {
@@ -42,6 +43,7 @@ var specs = []Spec{
 	{Name: "model", Usage: "/model", Summary: "Pick the embedded model and reasoning effort for this and future embedded sessions of the same tool, even after restarting LCR"},
 	{Name: "status", Usage: "/status", Summary: "Show embedded session config, limits, and token usage"},
 	{Name: "reconnect", Usage: "/reconnect", Summary: "Restart the embedded provider helper and reconnect to the current session"},
+	{Name: "compact", Usage: "/compact", Summary: "Compact conversation history to free up context"},
 }
 
 func Specs() []Spec {
@@ -97,6 +99,12 @@ func Suggestions(input string) []Suggestion {
 			Insert:  "/reconnect",
 			Display: "/reconnect",
 			Summary: "Restart the embedded provider helper and reconnect to the current session",
+		}}
+	case "compact":
+		return []Suggestion{{
+			Insert:  "/compact",
+			Display: "/compact",
+			Summary: "Compact conversation history to free up context",
 		}}
 	default:
 		return nameSuggestions(strings.ToLower(fields[0]))
@@ -158,6 +166,14 @@ func Parse(input string) (Invocation, error) {
 		return Invocation{
 			Kind:      KindReconnect,
 			Canonical: "/reconnect",
+		}, nil
+	case "compact":
+		if strings.TrimSpace(rawArgs) != "" {
+			return Invocation{}, fmt.Errorf("usage: /compact")
+		}
+		return Invocation{
+			Kind:      KindCompact,
+			Canonical: "/compact",
 		}, nil
 	default:
 		return Invocation{}, fmt.Errorf("unsupported embedded slash command: /%s", name)

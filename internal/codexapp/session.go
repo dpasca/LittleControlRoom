@@ -275,6 +275,10 @@ type threadReadParams struct {
 	IncludeTurns bool   `json:"includeTurns,omitempty"`
 }
 
+type threadCompactStartParams struct {
+	ThreadID string `json:"threadId"`
+}
+
 type userInput struct {
 	Type         string        `json:"type"`
 	Text         string        `json:"text,omitempty"`
@@ -953,6 +957,47 @@ func (s *appServerSession) ShowStatus() error {
 	s.appendEntryLocked("", TranscriptStatus, statusText)
 	s.lastSystemNotice = "Displayed embedded Codex status"
 	s.status = "Displayed embedded Codex status"
+	s.mu.Unlock()
+	s.notify()
+	return nil
+}
+
+func (s *appServerSession) Compact() error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return fmt.Errorf("codex session is closed")
+	}
+	if s.busy {
+		s.mu.Unlock()
+		return fmt.Errorf("cannot compact while a turn is in progress")
+	}
+	threadID := strings.TrimSpace(s.threadID)
+	if threadID == "" {
+		s.mu.Unlock()
+		return fmt.Errorf("no active thread to compact")
+	}
+	s.touchLocked()
+	s.status = "Compacting conversation history..."
+	s.mu.Unlock()
+	s.notify()
+
+	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
+	defer cancel()
+
+	_, err := s.call(ctx, "thread/compact/start", threadCompactStartParams{
+		ThreadID: threadID,
+	})
+	if err != nil {
+		s.appendSystemError(err)
+		return err
+	}
+
+	s.mu.Lock()
+	s.touchLocked()
+	s.appendEntryLocked("", TranscriptSystem, "Conversation history compacted")
+	s.status = "Conversation history compacted"
+	s.lastSystemNotice = "Conversation history compacted"
 	s.mu.Unlock()
 	s.notify()
 	return nil
