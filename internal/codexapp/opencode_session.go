@@ -309,9 +309,10 @@ func (s *openCodeSession) Snapshot() Snapshot {
 			continue
 		}
 		entries = append(entries, TranscriptEntry{
-			ItemID: entry.ItemID,
-			Kind:   entry.Kind,
-			Text:   text,
+			ItemID:      entry.ItemID,
+			Kind:        entry.Kind,
+			Text:        text,
+			DisplayText: entry.DisplayText,
 		})
 		lines = append(lines, formatTranscriptEntryForProvider(ProviderOpenCode, entry.Kind, text))
 	}

@@ -70,9 +70,10 @@ func (p Provider) SourceTag() string {
 }
 
 type TranscriptEntry struct {
-	ItemID string
-	Kind   TranscriptKind
-	Text   string
+	ItemID      string
+	Kind        TranscriptKind
+	Text        string
+	DisplayText string // optional; if set, used for rendering instead of Text
 }
 
 type SessionPhase string
@@ -126,6 +127,28 @@ type Submission struct {
 	Attachments []Attachment
 }
 
+// TranscriptDisplayText returns the display-friendly transcript text,
+// using DisplayText (collapsed paste placeholders) when available.
+func (s Submission) TranscriptDisplayText() string {
+	parts := []string{}
+	text := strings.TrimSpace(s.DisplayText)
+	if text == "" {
+		text = strings.TrimSpace(s.Text)
+	}
+	if text != "" {
+		parts = append(parts, text)
+	}
+	for _, attachment := range s.Attachments {
+		switch attachment.Kind {
+		case AttachmentLocalImage:
+			parts = append(parts, "[attached image] "+attachment.DisplayLabel())
+		default:
+			parts = append(parts, "[attachment] "+attachment.DisplayLabel())
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
 func (s Submission) Empty() bool {
 	if strings.TrimSpace(s.Text) != "" {
 		return false
@@ -140,11 +163,7 @@ func (s Submission) Empty() bool {
 
 func (s Submission) TranscriptText() string {
 	parts := []string{}
-	text := strings.TrimSpace(s.DisplayText)
-	if text == "" {
-		text = strings.TrimSpace(s.Text)
-	}
-	if text != "" {
+	if text := strings.TrimSpace(s.Text); text != "" {
 		parts = append(parts, text)
 	}
 	for _, attachment := range s.Attachments {

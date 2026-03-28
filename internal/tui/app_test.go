@@ -4947,6 +4947,9 @@ func TestVisibleCodexSubmissionExpandsLargePastePlaceholder(t *testing.T) {
 	if submission.Text != hidden+" summarize this" {
 		t.Fatalf("submission text length = %d, want expanded hidden paste", len([]rune(submission.Text)))
 	}
+	if submission.DisplayText != "[1 line pasted] summarize this" {
+		t.Fatalf("submission display text = %q, want collapsed paste placeholder", submission.DisplayText)
+	}
 	if got.codexInput.Value() != "" {
 		t.Fatalf("composer should clear after submit, got %q", got.codexInput.Value())
 	}

@@ -2178,8 +2178,13 @@ func renderCodexTranscriptEntry(entry codexapp.TranscriptEntry, width int, expan
 	}
 	switch entry.Kind {
 	case codexapp.TranscriptUser:
-		text = compactCodexUserTranscriptText(text)
-		return renderCodexUserMessageBlock(text, width)
+		if dt := strings.TrimSpace(entry.DisplayText); dt != "" {
+			text = dt
+		}
+		divider := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("238")).
+			Render(strings.Repeat("─", max(0, width)))
+		return divider + "\n" + renderCodexUserMessageBlock(text, width)
 	case codexapp.TranscriptAgent:
 		return renderCodexMessageBlock("", text, lipgloss.Color("120"), lipgloss.Color("252"), width)
 	case codexapp.TranscriptPlan:

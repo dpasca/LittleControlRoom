@@ -102,9 +102,10 @@ type appServerSession struct {
 }
 
 type transcriptEntry struct {
-	ItemID string
-	Kind   TranscriptKind
-	Text   string
+	ItemID      string
+	Kind        TranscriptKind
+	Text        string
+	DisplayText string
 }
 
 type turnCompletionState struct {
@@ -487,9 +488,10 @@ func (s *appServerSession) Snapshot() Snapshot {
 			continue
 		}
 		entries = append(entries, TranscriptEntry{
-			ItemID: entry.ItemID,
-			Kind:   entry.Kind,
-			Text:   text,
+			ItemID:      entry.ItemID,
+			Kind:        entry.Kind,
+			Text:        text,
+			DisplayText: entry.DisplayText,
 		})
 		lines = append(lines, formatTranscriptEntry(entry.Kind, text))
 	}
@@ -745,7 +747,7 @@ func (s *appServerSession) SubmitInput(input Submission) error {
 		return fmt.Errorf("this Codex session is already busy in another process; Little Control Room is read-only until it finishes")
 	}
 	s.touchLocked()
-	s.appendEntryLocked("", TranscriptUser, input.TranscriptText())
+	s.appendEntryWithDisplayLocked("", TranscriptUser, input.TranscriptText(), input.TranscriptDisplayText())
 	if !busy {
 		s.status = "Sending prompt to Codex..."
 	}
@@ -2624,6 +2626,20 @@ func (s *appServerSession) appendEntryLocked(itemID string, kind TranscriptKind,
 	s.entries = append(s.entries, transcriptEntry{ItemID: itemID, Kind: kind, Text: text})
 }
 
+func (s *appServerSession) appendEntryWithDisplayLocked(itemID string, kind TranscriptKind, text, displayText string) {
+	if strings.TrimSpace(displayText) == strings.TrimSpace(text) {
+		displayText = ""
+	}
+	if itemID != "" {
+		if index, ok := s.entryIndex[itemID]; ok {
+			s.entries[index].Text += text
+			return
+		}
+		s.entryIndex[itemID] = len(s.entries)
+	}
+	s.entries = append(s.entries, transcriptEntry{ItemID: itemID, Kind: kind, Text: text, DisplayText: displayText})
+}
+
 func (s *appServerSession) ensureItemEntryLocked(itemID string, kind TranscriptKind, text string) {
 	if itemID == "" {
 		s.appendEntryLocked("", kind, text)
@@ -2655,9 +2671,11 @@ func (s *appServerSession) bindOptimisticEntryLocked(itemID string, kind Transcr
 		if strings.TrimSpace(entry.Text) != trimmed {
 			continue
 		}
+		displayText := entry.DisplayText // preserve display text from optimistic entry
 		entry.ItemID = itemID
 		entry.Kind = kind
 		entry.Text = text
+		entry.DisplayText = displayText
 		s.entryIndex[itemID] = i
 		return true
 	}
