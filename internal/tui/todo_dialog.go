@@ -47,8 +47,9 @@ type todoDeleteConfirmState struct {
 }
 
 type todoLaunchDraftState struct {
-	projectPath string
-	provider    codexapp.Provider
+	projectPath    string
+	provider       codexapp.Provider
+	openModelFirst bool
 }
 
 type todoCopyDialogState struct {
@@ -353,8 +354,8 @@ func (m Model) updateTodoCopyDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.moveTodoCopyDialogSelection(delta)
 	case "enter", " ":
 		return m.activateTodoCopyDialogSelection()
-	case "m":
-		return m.openModelPickerFromTodoCopyDialog()
+	case "alt+enter":
+		return m.activateTodoCopyDialogWithModelPicker()
 	}
 	return m, nil
 }
@@ -385,15 +386,22 @@ func (m *Model) activateTodoCopyDialogSelection() (tea.Model, tea.Cmd) {
 		m.status = "TODO start canceled"
 		return m, nil
 	}
-	var provider codexapp.Provider
-	switch copyDialog.Selected {
-	case todoCopyScopeCodex:
-		provider = codexapp.ProviderCodex
-	case todoCopyScopeOpenCode:
-		provider = codexapp.ProviderOpenCode
+	provider := todoCopyScopeProvider(copyDialog.Selected)
+	m.todoCopyDialog = nil
+	return m.startSelectedTodoWithProvider(provider, false)
+}
+
+func (m *Model) activateTodoCopyDialogWithModelPicker() (tea.Model, tea.Cmd) {
+	copyDialog := m.todoCopyDialog
+	if copyDialog == nil {
+		return m, nil
+	}
+	provider := todoCopyScopeProvider(copyDialog.Selected)
+	if provider == "" {
+		return m, nil
 	}
 	m.todoCopyDialog = nil
-	return m.startSelectedTodoWithProvider(provider)
+	return m.startSelectedTodoWithProvider(provider, true)
 }
 
 func (m Model) updateTodoEditorMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -522,7 +530,7 @@ func (m Model) deleteTodoCmd(projectPath string, todoID int64) tea.Cmd {
 	}
 }
 
-func (m Model) startSelectedTodoWithProvider(provider codexapp.Provider) (tea.Model, tea.Cmd) {
+func (m Model) startSelectedTodoWithProvider(provider codexapp.Provider, openModelFirst bool) (tea.Model, tea.Cmd) {
 	item, ok := m.selectedTodoItem()
 	if !ok {
 		m.status = "No TODO selected"
@@ -539,34 +547,11 @@ func (m Model) startSelectedTodoWithProvider(provider codexapp.Provider) (tea.Mo
 		provider = provider.Normalized()
 	}
 	m.restoreCodexDraft(project.Path, codexDraft{Text: strings.TrimSpace(item.Text)})
-	m.todoLaunchDraft = &todoLaunchDraftState{projectPath: project.Path, provider: provider}
+	m.todoLaunchDraft = &todoLaunchDraftState{projectPath: project.Path, provider: provider, openModelFirst: openModelFirst}
 	m.todoEditor = nil
 	m.todoDeleteConfirm = nil
 	m.todoDialog = nil
 	return m.launchEmbeddedForSelection(provider, true, "")
-}
-
-func (m Model) openModelPickerFromTodoCopyDialog() (tea.Model, tea.Cmd) {
-	copyDialog := m.todoCopyDialog
-	if copyDialog == nil || m.todoDialog == nil {
-		return m, nil
-	}
-	projectPath := copyDialog.ProjectPath
-	_, hasSession := m.codexSession(projectPath)
-	if !hasSession {
-		m.status = "No active session – start one first to change models"
-		return m, nil
-	}
-	m.todoModelPickerReturn = &todoModelPickerReturnState{
-		dialog:             *m.todoDialog,
-		copyDialog:         *copyDialog,
-		prevVisibleProject: m.codexVisibleProject,
-	}
-	m.todoCopyDialog = nil
-	m.todoDialog = nil
-	m.codexVisibleProject = projectPath
-	m.openCodexModelPickerLoading()
-	return m, m.openCodexModelPickerCmd()
 }
 
 func (m *Model) returnToTodoFromModelPicker() {
@@ -777,12 +762,13 @@ func (m Model) renderTodoCopyDialogOverlay(body string, bodyW, bodyH int) string
 		}
 		lines = append(lines, renderNoteDialogButton(label, copyDialog.Selected == option))
 	}
-	_, hasSession := m.codexSession(projectPath)
-	hint := "Tab/arrows switch options. Enter runs. Esc cancels."
-	if hasSession {
-		hint = "Tab/arrows switch options. Enter runs. m changes model. Esc cancels."
+	actions := []string{
+		renderDialogAction("Tab/↑↓", "switch", navigateActionKeyStyle, navigateActionTextStyle),
+		renderDialogAction("Enter", "start", commitActionKeyStyle, commitActionTextStyle),
+		renderDialogAction("Alt+Enter", "pick model", pushActionKeyStyle, pushActionTextStyle),
+		renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
 	}
-	lines = append(lines, commandPaletteHintStyle.Render(hint))
+	lines = append(lines, renderHelpPanelActionRow(actions...))
 	panel := renderDialogPanel(panelW, panelInnerW, strings.Join(lines, "\n"))
 	left := max(0, (bodyW-panelW)/2)
 	top := max(0, (bodyH-lipgloss.Height(panel))/3)

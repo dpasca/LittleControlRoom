@@ -1111,8 +1111,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.finishCodexPendingOpen(msg.projectPath, true)
 		if m.todoLaunchDraft != nil && strings.TrimSpace(m.todoLaunchDraft.projectPath) == strings.TrimSpace(msg.projectPath) {
-			m.status = "Fresh " + m.todoLaunchDraft.provider.Label() + " session ready with TODO draft. Edit and press Enter to send."
+			draft := m.todoLaunchDraft
 			m.todoLaunchDraft = nil
+			if draft.openModelFirst {
+				m.openCodexModelPickerLoading()
+				m.status = "Pick a model, then send the TODO draft."
+				return m, m.openCodexModelPickerCmd()
+			}
+			m.status = "Fresh " + draft.provider.Label() + " session ready with TODO draft. Edit and press Enter to send."
 		} else {
 			m.status = msg.status
 		}
