@@ -200,7 +200,11 @@ func codexVisibleLineCount(text string) int {
 	if text == "" {
 		return 0
 	}
-	return strings.Count(text, "\n") + 1
+	// Normalize line endings: \r\n → \n, then standalone \r → \n.
+	// Bracketed paste from terminals often uses \r instead of \n.
+	normalized := strings.ReplaceAll(text, "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
+	return strings.Count(normalized, "\n") + 1
 }
 
 func shouldCollapseCodexPaste(text string) bool {
