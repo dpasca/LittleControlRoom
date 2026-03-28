@@ -1412,8 +1412,6 @@ func (s *Store) QueueSessionClassification(ctx context.Context, classification m
 			snapshot_hash = ?,
 			status = ?,
 			stage = ?,
-			category = '',
-			summary = '',
 			confidence = 0,
 			model = ?,
 			classifier_version = ?,

@@ -1132,6 +1132,19 @@ func TestProjectAssessmentTextUsesFallbackStates(t *testing.T) {
 	}
 }
 
+func TestProjectAssessmentTextPrefersCurrentSummaryDuringRefresh(t *testing.T) {
+	project := model.ProjectSummary{
+		LatestSessionClassification:              model.ClassificationRunning,
+		LatestSessionClassificationStage:         model.ClassificationStageWaitingForModel,
+		LatestSessionSummary:                     "Current session summary.",
+		LatestCompletedSessionClassificationType: model.SessionCategoryCompleted,
+		LatestCompletedSessionSummary:            "Older session summary.",
+	}
+	if got := projectAssessmentText(project); got != "Current session summary." {
+		t.Fatalf("projectAssessmentText(refreshing with current summary) = %q, want current session summary", got)
+	}
+}
+
 func TestProjectListStatusUsesLastCompletedAssessmentWhileRefreshRuns(t *testing.T) {
 	project := model.ProjectSummary{
 		Status:                                   model.StatusIdle,

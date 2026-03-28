@@ -3218,7 +3218,7 @@ func projectAssessmentText(project model.ProjectSummary) string {
 
 func projectAssessmentTextAt(project model.ProjectSummary, now time.Time) string {
 	_ = now
-	if strings.TrimSpace(project.LatestSessionSummary) != "" && project.LatestSessionClassification == model.ClassificationCompleted {
+	if strings.TrimSpace(project.LatestSessionSummary) != "" && (project.LatestSessionClassification == model.ClassificationCompleted || projectAssessmentRefreshing(project)) {
 		return project.LatestSessionSummary
 	}
 	if strings.TrimSpace(project.LatestCompletedSessionSummary) != "" {
