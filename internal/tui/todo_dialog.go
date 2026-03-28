@@ -75,7 +75,7 @@ func normalizeTodoText(text string) string {
 		}
 		out = append(out, line)
 	}
-	return strings.Join(out, " ")
+	return strings.Join(out, "\n")
 }
 
 func newTodoTextInput(value string) textarea.Model {
