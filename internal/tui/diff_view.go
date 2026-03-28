@@ -913,23 +913,23 @@ func renderDiffTextSection(section diffTextSection, highlightPlan syntaxHighligh
 func renderUnifiedDiffLine(line string, width int, highlightPlan syntaxHighlightPlan) string {
 	switch {
 	case strings.HasPrefix(line, "$ "):
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true).Render(line)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#66d9ef")).Bold(true).Render(line)
 	case strings.HasPrefix(line, "diff --git "), strings.HasPrefix(line, "index "):
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Bold(true).Render(line)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#75715e")).Bold(true).Render(line)
 	case strings.HasPrefix(line, "@@"):
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true).Render(line)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#fd971f")).Bold(true).Render(line)
 	case strings.HasPrefix(line, "# "):
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Faint(true).Render(line)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#75715e")).Faint(true).Render(line)
 	case strings.HasPrefix(line, "[command ") || strings.HasPrefix(line, "[file changes "):
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("149")).Bold(true).Render(line)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#a6e22e")).Bold(true).Render(line)
 	case diffPatchLineKind(line) != "":
 		return renderDiffHighlightedPatchLine(line, width, diffToneForPatchLine(line), highlightPlan)
 	case strings.HasPrefix(line, "+++"):
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render(line)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#a6e22e")).Render(line)
 	case strings.HasPrefix(line, "---"):
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render(line)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#f92672")).Render(line)
 	default:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Render(line)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#f8f8f2")).Render(line)
 	}
 }
 
@@ -1340,18 +1340,18 @@ func diffToneFill(tone diffCellTone, width int) string {
 func diffToneDefaultColor(tone diffCellTone) lipgloss.Color {
 	switch tone {
 	case diffCellToneDeleted:
-		return lipgloss.Color("224")
+		return lipgloss.Color("#f8f8f2")
 	case diffCellToneAdded:
-		return lipgloss.Color("194")
+		return lipgloss.Color("#f8f8f2")
 	default:
-		return lipgloss.Color("250")
+		return lipgloss.Color("#f8f8f2")
 	}
 }
 
 func diffToneCellDefaultColor(tone diffCellTone) lipgloss.Color {
 	switch tone {
 	case diffCellToneDeleted, diffCellToneAdded:
-		return lipgloss.Color("252")
+		return lipgloss.Color("#f8f8f2")
 	default:
 		return diffToneDefaultColor(tone)
 	}
@@ -1360,9 +1360,9 @@ func diffToneCellDefaultColor(tone diffCellTone) lipgloss.Color {
 func diffToneBackgroundColor(tone diffCellTone) lipgloss.Color {
 	switch tone {
 	case diffCellToneDeleted:
-		return lipgloss.Color("#4c3438")
+		return lipgloss.Color("#2a1018")
 	case diffCellToneAdded:
-		return lipgloss.Color("#284235")
+		return lipgloss.Color("#122a16")
 	default:
 		return ""
 	}
@@ -1389,19 +1389,19 @@ func renderDiffFullRow(text string, width int, tone diffCellTone) string {
 func diffToneStyle(tone diffCellTone) lipgloss.Style {
 	switch tone {
 	case diffCellToneDeleted:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("224")).Background(lipgloss.Color("#4c3438"))
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#f8f8f2")).Background(lipgloss.Color("#2a1018"))
 	case diffCellToneAdded:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("194")).Background(lipgloss.Color("#284235"))
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#f8f8f2")).Background(lipgloss.Color("#122a16"))
 	case diffCellToneMeta:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Bold(true)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#75715e")).Bold(true)
 	case diffCellToneHunk:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#fd971f")).Bold(true)
 	case diffCellToneHeader:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("246")).Bold(true)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#a6e22e")).Bold(true)
 	case diffCellToneNote:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Faint(true)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#75715e")).Faint(true)
 	default:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#f8f8f2"))
 	}
 }
 

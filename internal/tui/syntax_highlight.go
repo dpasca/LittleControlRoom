@@ -110,29 +110,29 @@ func syntaxTokenStyle(tokenType chroma.TokenType, opts syntaxHighlightOptions) l
 
 	switch {
 	case tokenType.InCategory(chroma.Comment):
-		s := style.Foreground(lipgloss.Color("244"))
+		s := style.Foreground(lipgloss.Color("#75715e"))
 		if !opts.NoItalic {
 			s = s.Italic(true)
 		}
 		return s
 	case tokenType.InCategory(chroma.Keyword):
-		return style.Foreground(lipgloss.Color("81")).Bold(true)
+		return style.Foreground(lipgloss.Color("#f92672")).Bold(true)
 	case tokenType == chroma.NameFunction || tokenType == chroma.NameFunctionMagic:
-		return style.Foreground(lipgloss.Color("117")).Bold(true)
+		return style.Foreground(lipgloss.Color("#a6e22e")).Bold(true)
 	case tokenType == chroma.NameClass || tokenType == chroma.NameNamespace || tokenType == chroma.NameTag || tokenType == chroma.NameDecorator:
-		return style.Foreground(lipgloss.Color("117"))
+		return style.Foreground(lipgloss.Color("#a6e22e"))
 	case tokenType.InSubCategory(chroma.NameBuiltin) || tokenType == chroma.NameBuiltin:
-		return style.Foreground(lipgloss.Color("141"))
+		return style.Foreground(lipgloss.Color("#66d9ef"))
 	case tokenType.InCategory(chroma.LiteralString):
-		return style.Foreground(lipgloss.Color("120"))
+		return style.Foreground(lipgloss.Color("#e6db74"))
 	case tokenType.InCategory(chroma.LiteralNumber):
-		return style.Foreground(lipgloss.Color("179"))
+		return style.Foreground(lipgloss.Color("#be84ff"))
 	case tokenType.InCategory(chroma.Operator):
-		return style.Foreground(lipgloss.Color("215"))
+		return style.Foreground(lipgloss.Color("#f92672"))
 	case tokenType == chroma.Punctuation || tokenType.InCategory(chroma.Punctuation):
-		return style.Foreground(lipgloss.Color("252"))
+		return style.Foreground(lipgloss.Color("#f8f8f2"))
 	case tokenType.InCategory(chroma.Generic):
-		return style.Foreground(lipgloss.Color("221"))
+		return style.Foreground(lipgloss.Color("#fd971f"))
 	default:
 		return style
 	}
