@@ -231,6 +231,21 @@ func (m Model) updateCodexModelPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateCodexModelPickerFilterMode(msg)
 	}
 
+	if m.pendingG {
+		m.pendingG = false
+		if msg.String() == "g" {
+			if state.Focus == codexModelPickerFocusEfforts {
+				state.EffortIndex = 0
+			} else if state.Focus == codexModelPickerFocusRecent {
+				state.RecentIndex = 0
+			} else {
+				state.ModelIndex = 0
+			}
+			m.syncCodexModelPickerSelection()
+			return m, nil
+		}
+	}
+
 	switch msg.String() {
 	case "esc":
 		m.closeCodexModelPickerAndReturnToTodo("Embedded model picker canceled")
@@ -259,10 +274,10 @@ func (m Model) updateCodexModelPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		m.moveCodexModelPickerSelection(1)
 		return m, nil
-	case "pgup":
+	case "pgup", "ctrl+u":
 		m.moveCodexModelPickerSelection(-5)
 		return m, nil
-	case "pgdown":
+	case "pgdown", "ctrl+d":
 		m.moveCodexModelPickerSelection(5)
 		return m, nil
 	case "home":
@@ -275,7 +290,7 @@ func (m Model) updateCodexModelPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.syncCodexModelPickerSelection()
 		return m, nil
-	case "end":
+	case "end", "G":
 		if state.Focus == codexModelPickerFocusEfforts {
 			options := m.currentCodexReasoningOptions()
 			state.EffortIndex = max(0, len(options)-1)
@@ -285,6 +300,9 @@ func (m Model) updateCodexModelPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			state.ModelIndex = max(0, len(state.FilteredModels)-1)
 		}
 		m.syncCodexModelPickerSelection()
+		return m, nil
+	case "g":
+		m.pendingG = true
 		return m, nil
 	case "enter":
 		if state.Focus == codexModelPickerFocusRecent && len(state.RecentModels) > 0 {

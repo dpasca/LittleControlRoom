@@ -868,6 +868,14 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	label := embeddedProvider(snapshot).Label()
 
+	if m.pendingG {
+		m.pendingG = false
+		if msg.String() == "g" {
+			m.codexViewport.GotoTop()
+			return m, nil
+		}
+	}
+
 	switch msg.String() {
 	case "f3":
 		return m.cycleCodexSession(1)
@@ -909,11 +917,17 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.status = "Closing embedded " + label + " session..."
 		return m, m.closeVisibleCodexCmd()
-	case "pgup":
+	case "pgup", "ctrl+u":
 		m.codexViewport.HalfPageUp()
 		return m, nil
-	case "pgdown":
+	case "pgdown", "ctrl+d":
 		m.codexViewport.HalfPageDown()
+		return m, nil
+	case "G":
+		m.codexViewport.GotoBottom()
+		return m, nil
+	case "g":
+		m.pendingG = true
 		return m, nil
 	}
 

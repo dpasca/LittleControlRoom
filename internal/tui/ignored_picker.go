@@ -66,6 +66,14 @@ func (m Model) updateIgnoredPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.ignoredPickerSelected = 0
 	}
 
+	if m.pendingG {
+		m.pendingG = false
+		if msg.String() == "g" {
+			m.ignoredPickerSelected = 0
+			return m, nil
+		}
+	}
+
 	switch msg.String() {
 	case "esc":
 		m.closeIgnoredPicker("Ignored projects closed")
@@ -76,17 +84,20 @@ func (m Model) updateIgnoredPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		m.moveIgnoredPickerSelection(1, len(items))
 		return m, nil
-	case "pgup":
+	case "pgup", "ctrl+u":
 		m.moveIgnoredPickerSelection(-5, len(items))
 		return m, nil
-	case "pgdown":
+	case "pgdown", "ctrl+d":
 		m.moveIgnoredPickerSelection(5, len(items))
 		return m, nil
 	case "home":
 		m.ignoredPickerSelected = 0
 		return m, nil
-	case "end":
+	case "end", "G":
 		m.ignoredPickerSelected = len(items) - 1
+		return m, nil
+	case "g":
+		m.pendingG = true
 		return m, nil
 	case "enter":
 		item, ok := m.currentIgnoredPickerItem()

@@ -126,6 +126,14 @@ func (m Model) updateCodexPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.codexPickerSelected = 0
 	}
 
+	if m.pendingG {
+		m.pendingG = false
+		if msg.String() == "g" {
+			m.codexPickerSelected = 0
+			return m, nil
+		}
+	}
+
 	switch msg.String() {
 	case "esc", "alt+down":
 		m.closeCodexPicker("Embedded session picker closed")
@@ -136,17 +144,20 @@ func (m Model) updateCodexPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		m.moveCodexPickerSelection(1, len(choices))
 		return m, nil
-	case "pgup":
+	case "pgup", "ctrl+u":
 		m.moveCodexPickerSelection(-5, len(choices))
 		return m, nil
-	case "pgdown":
+	case "pgdown", "ctrl+d":
 		m.moveCodexPickerSelection(5, len(choices))
 		return m, nil
 	case "home":
 		m.codexPickerSelected = 0
 		return m, nil
-	case "end":
+	case "end", "G":
 		m.codexPickerSelected = len(choices) - 1
+		return m, nil
+	case "g":
+		m.pendingG = true
 		return m, nil
 	case "enter":
 		choice, ok := m.currentCodexPickerChoice()

@@ -146,6 +146,8 @@ type Model struct {
 	codexTranscriptCache   codexTranscriptRenderCache
 	codexViewportContent   codexViewportContentState
 
+	pendingG bool
+
 	spinnerFrame int
 	showSessions bool
 	showEvents   bool
@@ -1229,6 +1231,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.pendingG {
+		m.pendingG = false
+		if msg.String() == "g" {
+			if m.focusedPane == focusDetail {
+				m.detailViewport.GotoTop()
+				return m, nil
+			}
+			if m.focusedPane == focusRuntime {
+				m.runtimeViewport.GotoTop()
+				return m, nil
+			}
+			return m, m.moveSelectionTo(0)
+		}
+	}
 	switch msg.String() {
 	case "ctrl+c", "q":
 		if m.codexManager != nil {
@@ -1329,6 +1345,26 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.moveSelectionBy(m.rowsVisible())
+	case "ctrl+u":
+		if m.focusedPane == focusDetail {
+			m.detailViewport.HalfPageUp()
+			return m, nil
+		}
+		if m.focusedPane == focusRuntime {
+			m.runtimeViewport.HalfPageUp()
+			return m, nil
+		}
+		return m, m.moveSelectionBy(-m.rowsVisible())
+	case "ctrl+d":
+		if m.focusedPane == focusDetail {
+			m.detailViewport.HalfPageDown()
+			return m, nil
+		}
+		if m.focusedPane == focusRuntime {
+			m.runtimeViewport.HalfPageDown()
+			return m, nil
+		}
+		return m, m.moveSelectionBy(m.rowsVisible())
 	case "home":
 		if m.focusedPane == focusDetail {
 			m.detailViewport.GotoTop()
@@ -1339,7 +1375,7 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.moveSelectionTo(0)
-	case "end":
+	case "end", "G":
 		if m.focusedPane == focusDetail {
 			m.detailViewport.GotoBottom()
 			return m, nil
@@ -1349,6 +1385,9 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.moveSelectionTo(max(0, len(m.projects)-1))
+	case "g":
+		m.pendingG = true
+		return m, nil
 	case "left", "h":
 		if m.focusedPane == focusRuntime {
 			m.moveRuntimeActionSelection(-1)

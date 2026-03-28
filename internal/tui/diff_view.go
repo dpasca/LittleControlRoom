@@ -157,6 +157,19 @@ func (m Model) updateDiffMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.pendingG {
+		m.pendingG = false
+		if msg.String() == "g" {
+			if m.diffView.focus == diffFocusFiles {
+				m.moveDiffSelectionTo(0)
+				return m, nil
+			}
+			m.diffView.contentViewport.GotoTop()
+			m.updateDiffSelectionFromScroll()
+			return m, nil
+		}
+	}
+
 	switch msg.String() {
 	case "-":
 		file, ok := m.selectedDiffFile()
@@ -217,6 +230,22 @@ func (m Model) updateDiffMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.diffView.contentViewport.PageDown()
 		m.updateDiffSelectionFromScroll()
 		return m, nil
+	case "ctrl+u":
+		if m.diffView.focus == diffFocusFiles {
+			m.moveDiffSelectionBy(-m.diffVisibleRows())
+			return m, nil
+		}
+		m.diffView.contentViewport.HalfPageUp()
+		m.updateDiffSelectionFromScroll()
+		return m, nil
+	case "ctrl+d":
+		if m.diffView.focus == diffFocusFiles {
+			m.moveDiffSelectionBy(m.diffVisibleRows())
+			return m, nil
+		}
+		m.diffView.contentViewport.HalfPageDown()
+		m.updateDiffSelectionFromScroll()
+		return m, nil
 	case "home":
 		if m.diffView.focus == diffFocusFiles {
 			m.moveDiffSelectionTo(0)
@@ -225,7 +254,7 @@ func (m Model) updateDiffMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.diffView.contentViewport.GotoTop()
 		m.updateDiffSelectionFromScroll()
 		return m, nil
-	case "end":
+	case "end", "G":
 		if m.diffView.focus == diffFocusFiles {
 			last := 0
 			if m.diffView.preview != nil {
@@ -236,6 +265,9 @@ func (m Model) updateDiffMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.diffView.contentViewport.GotoBottom()
 		m.updateDiffSelectionFromScroll()
+		return m, nil
+	case "g":
+		m.pendingG = true
 		return m, nil
 	}
 	return m, nil
