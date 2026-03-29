@@ -1,6 +1,28 @@
 # Little Control Room Status
 
-Last updated: 2026-03-29 18:33 JST
+Last updated: 2026-03-29 19:21 JST
+
+## Latest Update (2026-03-29 19:21 JST)
+
+- Added a dedicated engineering spec for TODO-driven AI worktree suggestions:
+  - `docs/todo_worktree_suggestions_mvp.md`
+    - defines the repo-vs-worktree product model for the MVP
+    - specifies structured model output for branch/worktree naming suggestions
+    - describes cache/debounce/invalidation rules for background suggestion generation
+    - covers suggested store schema, service responsibilities, TUI states, failure handling, and rollout order
+- Files modified in this pass:
+  - `docs/todo_worktree_suggestions_mvp.md`
+  - `STATUS.md`
+- Verification status:
+  - `make scan` passed at `2026-03-29T19:20:39+09:00`
+  - `make doctor` passed using cached report at `2026-03-29T19:20:39+09:00`
+  - `make test` still fails in the same pre-existing `internal/tui` coverage unrelated to this docs/spec pass:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+- Next concrete tasks:
+  - Review the MVP spec and confirm the first implementation slice order, especially whether store/queue plumbing should land before any TUI affordance changes.
+  - Start the first implementation PR by adding the TODO worktree suggestion model/store schema and stale/ready/failed persistence path.
 
 ## Latest Update (2026-03-29 18:33 JST)
 
