@@ -1,8 +1,32 @@
 # Little Control Room Status
 
-Last updated: 2026-03-30 02:11 JST
+Last updated: 2026-03-30 02:26 JST
 
-## Latest Update (2026-03-30 02:11 JST)
+## Latest Update (2026-03-30 02:26 JST)
+
+- Synced the Claude Code rollout follow-through so the remaining uncommitted repo state is presentation/docs-only:
+  - `README.md`
+    - refreshed the public overview, setup, TODO workflow, and cost notes so Claude Code and the Haiku default are documented consistently
+  - `docs/reference.md`
+    - removed the stale `openai_api_key`-only classify note and updated the embedded-pane wording to include Claude Code
+  - `STATUS.md`
+    - recorded the completed Claude backend rollout and current verification state
+- Checked the current curated screenshot set before deciding whether to regenerate images:
+  - `docs/screenshots/`
+    - already includes `todo-dialog.png`, so there is no blocker for the public site/gallery to show the TODO-driven workflow right now
+  - no new screenshot render was needed in this pass
+- Verification status for this docs/presentation sync:
+  - no new repo tests were run in this pass because the only local changes are docs/status updates
+  - the previously recorded Claude backend verification still stands:
+    - focused Go tests passed for the Claude backend wiring and setup copy
+    - `make scan` passed at `2026-03-30T02:05:32+09:00`
+    - `make doctor` passed at `2026-03-30T02:05:46+09:00`
+    - `make test` still only fails on the same pre-existing unrelated `internal/tui` cases already listed below
+- Next concrete tasks:
+  - Capture a dedicated `/setup` screenshot later if the Claude-first setup flow needs a public-facing image of its own.
+  - If the TODO worktree launch flow grows into a more visible feature, consider replacing one of the current gallery shots with that end-to-end path once the UI settles.
+
+## Latest Update (2026-03-30 02:15 JST)
 
 - Added Claude Code as a first-class AI backend for `/setup`, background summaries/classification, commit help, and TODO worktree suggestions:
   - `internal/config/ai_backend.go`
@@ -28,6 +52,9 @@ Last updated: 2026-03-30 02:11 JST
   - `internal/tui/settings.go`
   - `internal/tui/app.go`
     - updated surrounding UI copy and local-backend usage labels to include Claude Code
+  - `README.md`
+  - `docs/reference.md`
+    - synced the user-facing docs so `/setup`, `lcroom classify`, TODO provider choices, and the cost/setup notes all mention Claude Code and the Haiku default
 - Validated current assumptions before coding:
   - local `claude --help` confirms headless `-p`, `--model`, `--json-schema`, and output-format controls are available in the installed CLI
   - local `claude auth status --json` works on this machine and is suitable for `/setup` readiness checks
@@ -44,6 +71,8 @@ Last updated: 2026-03-30 02:11 JST
     - covers the Claude/Haiku hint text in `/setup`
     - keeps the OpenAI API key hint behavior covered after the copy update
 - Files modified in this pass:
+  - `README.md`
+  - `docs/reference.md`
   - `internal/aibackend/detect.go`
   - `internal/aibackend/detect_test.go`
   - `internal/config/ai_backend.go`

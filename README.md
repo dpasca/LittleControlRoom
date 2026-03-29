@@ -33,7 +33,7 @@ Requirements:
 - Codex installed locally, capable of running in the terminal.
 - OpenCode installed locally if you want embedded OpenCode sessions.
 - Claude Code installed locally if you want embedded Claude Code sessions.
-- At least one AI backend configured: Codex, OpenCode, or an OpenAI API key.
+- At least one AI backend configured: Codex, OpenCode, Claude Code, or an OpenAI API key.
 
 Build and launch from this repo:
 
@@ -49,7 +49,7 @@ make install
 lcroom tui
 ```
 
-On the first run, LCR opens `/setup` if no AI backend is configured. From there you can use Codex, OpenCode, an OpenAI API key, or continue without AI and come back later.
+On the first run, LCR opens `/setup` if no AI backend is configured. From there you can use Codex, OpenCode, Claude Code, an OpenAI API key, or continue without AI and come back later. Claude-backed background inference currently defaults to Haiku to keep usage lighter.
 
 ## Slash Commands
 
@@ -59,7 +59,7 @@ The main TUI command palette opens with `/`.
 - `/refresh`: Rescan projects and retry failed assessments.
 - `/sort <attention|recent>`: Change the project ordering.
 - `/view <ai|all>`: Switch between AI-linked and all tracked folders.
-- `/setup`: Choose and check the AI backend for summaries and commit help.
+- `/setup`: Choose and check the AI backend for summaries, classification, commit help, and other background inference.
 - `/settings`: Edit scope, filters, and scan settings.
 - `/filter [text|clear]`: Temporarily narrow the whole dashboard to matching project names.
 - `/new-project`: Create a project folder, or paste an existing project path to add it directly.
@@ -119,7 +119,7 @@ Most day-to-day use falls into a few buckets:
 
   [![Embedded Codex conversation](docs/screenshots/codex-embedded.png)](docs/screenshots/codex-embedded.png)
 
-- **TODO-driven sessions** — Press `t` or use `/todo` to open a per-project TODO list. Add items you want an agent to work on, then press `Enter` on any item to start a fresh embedded session with that task as the prompt. The dialog shows the model that will be used and lets you pick the provider (Codex or OpenCode).
+- **TODO-driven sessions** — Press `t` or use `/todo` to open a per-project TODO list. Add items you want an agent to work on, then press `Enter` on any item to start a fresh embedded session with that task as the prompt. The dialog shows the model that will be used and lets you pick the provider (Codex, Claude Code, or OpenCode).
 
   [![TODO dialog with per-project task list](docs/screenshots/todo-dialog.png)](docs/screenshots/todo-dialog.png)
 
@@ -136,7 +136,7 @@ For the full command list and detailed behavior, see [`docs/reference.md`](docs/
 
 ## Costs
 
-If Codex or OpenCode is available, LCR can use that local login for summaries and commit help. On a flat-rate plan, that usually means no extra LCR API cost.
+If Codex, OpenCode, or Claude Code is available, LCR can use that local login or subscription path for summaries, classification, commit help, and other background inference. On a flat-rate plan, that usually means no extra LCR API cost. Claude-backed background inference currently defaults to Haiku to keep usage lighter.
 
 If you use an OpenAI API key instead, LCR mainly spends tokens on summaries/classification and commit help. The footer shows a live estimate for that API usage only.
 

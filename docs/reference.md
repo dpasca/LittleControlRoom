@@ -13,7 +13,7 @@ This page keeps the command, keybinding, and configuration details that are usef
 - `lcroom scope` shows the effective include and exclude scope for this run
 - `lcroom serve` starts the optional read-only REST and WebSocket server
 
-`lcroom classify` requires `openai_api_key` in the config file. The TUI will open `/settings` automatically until you save one.
+`lcroom classify` requires a configured AI backend. That can be Codex, OpenCode, Claude Code, or an OpenAI API key. The TUI will open `/setup` automatically until you pick one.
 
 ## Config File
 
@@ -143,7 +143,7 @@ While the project note dialog is open:
 - `Copy...` opens a small menu for either `Whole note` or `Selected text`
 - In note selection mode, press `Space` once to mark the start, move the cursor, and press `Space` again to copy the selected range
 
-While the embedded Codex or OpenCode pane is visible:
+While the embedded Codex, Claude Code, or OpenCode pane is visible:
 
 - `Enter` sends a prompt when idle and steers the active turn when the embedded session is busy
 - `Alt+Enter` or `Ctrl+J` inserts a newline
