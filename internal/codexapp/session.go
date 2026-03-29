@@ -19,10 +19,12 @@ import (
 )
 
 const (
-	rpcTimeout              = 15 * time.Second
-	idleShutdownAfter       = time.Hour
-	idleShutdownNotice      = "Closed embedded Codex session after 1 hour of inactivity."
-	busyStateReconcileAfter = time.Minute
+	rpcTimeout               = 15 * time.Second
+	idleShutdownAfter        = time.Hour
+	idleShutdownNotice       = "Closed embedded Codex session after 1 hour of inactivity."
+	busyStateReconcileAfter  = time.Minute
+	busyStateStallAfter      = 2
+	codexReconnectSuggestion = "Embedded Codex session seems stuck or disconnected. Use /reconnect."
 )
 
 type ForceNewSessionReusedError struct {
@@ -77,6 +79,8 @@ type appServerSession struct {
 	reportedAuth403    bool
 	busySince          time.Time
 	closed             bool
+	stalled            bool
+	stallCount         int
 	status             string
 	lastError          string
 	lastSystemNotice   string
@@ -550,6 +554,8 @@ func (s *appServerSession) phaseLocked() SessionPhase {
 		return SessionPhaseExternal
 	case s.reconciling:
 		return SessionPhaseReconciling
+	case s.stalled:
+		return SessionPhaseStalled
 	case s.pendingCompletion != nil && s.busy:
 		return SessionPhaseFinishing
 	case s.busy:
@@ -576,6 +582,8 @@ func (s *appServerSession) setBusyLocked(turnID string, external bool) {
 	s.busy = true
 	s.busyExternal = external
 	s.reconciling = false
+	s.stalled = false
+	s.stallCount = 0
 	if turnID != "" {
 		s.activeTurnID = turnID
 	}
@@ -605,6 +613,8 @@ func (s *appServerSession) clearBusyLocked(turnID string) {
 	s.busy = false
 	s.busyExternal = false
 	s.reconciling = false
+	s.stalled = false
+	s.stallCount = 0
 	s.busySince = time.Time{}
 	s.lastBusyActivityAt = time.Time{}
 	s.activeItems = nil
@@ -1631,7 +1641,27 @@ func (s *appServerSession) ReconcileBusyState() error {
 	}
 	s.reconciling = false
 	if err == nil {
-		s.syncThreadStatusLocked(threadID, effectiveThreadStatus(thread), true)
+		status := effectiveThreadStatus(thread)
+		s.stalled = false
+		s.stallCount = 0
+		if strings.TrimSpace(status.Type) == "active" && s.busy {
+			s.status = "Codex is working..."
+			if s.lastSystemNotice == codexReconnectSuggestion {
+				s.lastSystemNotice = ""
+			}
+		}
+		s.syncThreadStatusLocked(threadID, status, true)
+	} else {
+		s.stallCount++
+		s.lastError = err.Error()
+		if s.stallCount >= busyStateStallAfter {
+			if !s.stalled {
+				s.appendEntryLocked("", TranscriptSystem, codexReconnectSuggestion)
+			}
+			s.stalled = true
+			s.status = codexReconnectSuggestion
+			s.lastSystemNotice = codexReconnectSuggestion
+		}
 	}
 	s.mu.Unlock()
 	s.notify()
@@ -2318,6 +2348,8 @@ func (s *appServerSession) touchBusyLocked() {
 	now := time.Now()
 	s.lastActivityAt = now
 	s.lastBusyActivityAt = now
+	s.stalled = false
+	s.stallCount = 0
 }
 
 func (s *appServerSession) clearActiveStateLocked() {

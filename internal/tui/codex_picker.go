@@ -498,6 +498,8 @@ func pickerSummaryForLiveSnapshot(snapshot codexapp.Snapshot) string {
 		return "Live elsewhere: embedded view is read-only"
 	case snapshot.Phase == codexapp.SessionPhaseReconciling:
 		return "Rechecking whether the turn has gone idle"
+	case snapshot.Phase == codexapp.SessionPhaseStalled:
+		return "Live now: embedded helper looks stuck; use /reconnect"
 	case snapshot.Phase == codexapp.SessionPhaseFinishing:
 		return "Finishing: waiting for trailing output"
 	case codexSnapshotCanSteer(snapshot):

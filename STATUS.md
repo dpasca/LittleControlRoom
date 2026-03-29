@@ -1,6 +1,112 @@
 # Little Control Room Status
 
-Last updated: 2026-03-29 09:52 JST
+Last updated: 2026-03-29 17:18 JST
+
+## Latest Update (2026-03-29 17:18 JST)
+
+- Added a second-stage historical stalled-session view so old disconnected turns stop reading as healthy `in_progress` work in reporting paths:
+  - Added `internal/sessionclassify/effective.go` with a shared `DeriveEffectiveAssessment(...)` helper.
+  - The helper preserves stored classifier output by default, but upgrades completed `in_progress` assessments to an effective `blocked` view when:
+    - the latest structured turn state is known,
+    - that turn never completed, and
+    - the session has been idle past a derived grace period intended for stale embedded work.
+  - The grace period is now shared via `EffectiveAssessmentStallThreshold(...)`:
+    - starts from the active threshold,
+    - floors at `30m` so we do not flip too aggressively,
+    - and caps at the configured stuck threshold if that is lower.
+- Wired the shared effective assessment into the paths that matter for user trust:
+  - `internal/service/service.go`
+    - attention scoring now treats stale incomplete `in_progress` sessions as effective `blocked` sessions
+  - `internal/cli/run.go`
+    - `doctor` now prints the effective category/summary instead of stale raw `in_progress` wording for wedged turns
+  - `internal/tui/app.go`
+    - project list/detail assessment labels and summaries now use the same effective blocked/stalled view
+- Result on the original repro:
+  - after `doctor --scan`, `2025_high_tax` now renders as:
+    - reason: `Latest session is blocked; idle for 1h 22m`
+    - latest session assessment: `category=blocked`
+    - summary: `Last turn never completed; idle 1h 22m, likely stalled or disconnected.`
+- Added coverage:
+  - `internal/sessionclassify/sessionclassify_test.go`
+    - `TestDeriveEffectiveAssessmentMarksStaleInProgressTurnBlocked`
+    - `TestDeriveEffectiveAssessmentKeepsFreshInProgressTurn`
+  - `internal/service/service_test.go`
+    - `TestLatestSessionClassificationTreatsStaleInProgressTurnAsBlocked`
+  - `internal/tui/app_test.go`
+    - `TestAssessmentStatusLabelAtMarksStaleInProgressBlocked`
+    - `TestProjectAssessmentTextAtUsesDerivedStalledSummary`
+    - `TestProjectListStatusAtShowsBlockedForStaleInProgressTurn`
+- Files modified in this pass:
+  - `internal/sessionclassify/effective.go`
+  - `internal/sessionclassify/sessionclassify_test.go`
+  - `internal/service/service.go`
+  - `internal/service/service_test.go`
+  - `internal/cli/run.go`
+  - `internal/tui/app.go`
+  - `internal/tui/app_test.go`
+  - `STATUS.md`
+- Verification status:
+  - `go test ./internal/sessionclassify -run 'Test(DeriveEffectiveAssessment|ExtractSnapshotModernFixture|ManagerProcessOneSanitizesStatusLikeSummaryFromClassifier)' -count=1` passed
+  - `go test ./internal/service -run 'Test(LatestSessionClassificationUsesPersistedSessionSnapshotHash|LatestSessionClassificationTreatsStaleInProgressTurnAsBlocked)' -count=1` passed
+  - `go test ./internal/tui -run 'Test(AssessmentStatusLabelUsesInProgressName|AssessmentStatusLabelAtMarksStaleInProgressBlocked|ProjectAssessmentTextUsesLatestSummary|ProjectAssessmentTextAtUsesDerivedStalledSummary|ProjectListStatusAtShowsBlockedForStaleInProgressTurn)' -count=1` passed
+  - `make scan` passed at `2026-03-29T17:17:18+09:00`
+  - `make doctor` passed using cached report at `2026-03-29T17:17:18+09:00`
+  - `doctor --scan` confirmed `2025_high_tax` now reports `category=blocked` with the stalled/disconnected summary
+  - `make tui-parallel` rendered successfully when launched with a PTY-backed smoke check
+  - `make test` still fails in the same pre-existing diff/TUI coverage unrelated to this work:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+- Next concrete tasks:
+  - Decide whether the derived blocked/stalled view should remain a runtime presentation override or be written back into stored classification history as an explicit secondary status.
+  - Consider enriching stalled historical detection with structured unfinished-tool-call evidence from the session tail, so summaries can distinguish “waiting on user/tool approval” from “helper disappeared mid-turn.”
+
+## Latest Update (2026-03-29 17:00 JST)
+
+- Tightened embedded Codex stuck-session handling so disconnected helpers stop looking like healthy live turns:
+  - Added a distinct embedded session phase `stalled` in `internal/codexapp/types.go`.
+  - `internal/codexapp/session.go` now tracks repeated failed busy-state health checks during `thread/read` reconciliation.
+  - After two consecutive reconciliation failures for a still-busy embedded session, the session now transitions to `stalled`, keeps the last RPC error, and appends a one-time reconnect guidance notice:
+    - `Embedded Codex session seems stuck or disconnected. Use /reconnect.`
+- Updated the TUI to present stalled sessions explicitly instead of continuing to show a running timer:
+  - `internal/tui/app.go`
+    - project agent badges now render `CX stalled` / `OC stalled` / `CC stalled` for live stalled sessions.
+  - `internal/tui/codex_picker.go`
+    - live picker summaries now say `Live now: embedded helper looks stuck; use /reconnect`.
+  - `internal/tui/codex_pane.go`
+    - footer status now shows `Stalled; use /reconnect`
+    - footer actions now promote `/reconnect recover`
+    - Enter/send is blocked while stalled so the pane does not pretend it can steer a disconnected turn
+- Added regression coverage:
+  - `internal/codexapp/session_test.go`
+    - `TestReconcileBusyStateMarksSessionStalledAfterRepeatedHealthCheckFailures`
+  - `internal/tui/app_test.go`
+    - `TestCodexFooterStatusShowsStalledState`
+    - `TestPickerSummaryForStalledLiveSnapshot`
+    - `TestProjectAgentDisplayShowsStalledLiveSession`
+- Files modified in this pass:
+  - `internal/codexapp/types.go`
+  - `internal/codexapp/session.go`
+  - `internal/codexapp/session_test.go`
+  - `internal/tui/app.go`
+  - `internal/tui/app_test.go`
+  - `internal/tui/codex_pane.go`
+  - `internal/tui/codex_picker.go`
+  - `STATUS.md`
+- Verification status:
+  - `go test ./internal/codexapp -run 'Test(ReconcileBusyStateClearsBusyWhenThreadReadShowsNoActiveTurn|ReconcileBusyStateMarksSessionStalledAfterRepeatedHealthCheckFailures)' -count=1` passed
+  - `go test ./internal/tui -run 'Test(CodexFooterStatusShowsStalledState|PickerSummaryForStalledLiveSnapshot|ProjectAgentDisplayShowsStalledLiveSession|ProjectAgentDisplayUsesLiveBusyTimer)' -count=1` passed
+  - `make scan` passed at `2026-03-29T17:00:12+09:00`
+  - `make doctor` passed using cached report at `2026-03-29T17:00:12+09:00`
+  - `make tui-parallel` launched successfully in the isolated `/tmp/lcroom-parallel-davide` sandbox and rendered before the smoke-check timeout
+  - `make test` still fails in the same pre-existing diff/TUI coverage unrelated to this pass:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+- Next concrete tasks:
+  - Extend historical session/project classification so long-idle interrupted runs can be labeled closer to `stalled/disconnected` instead of only `in_progress` in doctor/reporting views.
+  - Consider surfacing the last successful embedded health-check timestamp in the UI so users can tell whether a session is genuinely progressing or just still marked busy.
+  - Live-check `/reconnect` recovery flow against a real intentionally wedged embedded session and tune the stall threshold if two failed health checks feels too slow or too eager.
 
 ## Latest Update (2026-03-29 09:52 JST)
 

@@ -313,6 +313,18 @@ func TestCodexFooterStatusShowsReconcilingState(t *testing.T) {
 	}
 }
 
+func TestCodexFooterStatusShowsStalledState(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Phase:  codexapp.SessionPhaseStalled,
+		Busy:   true,
+		Status: "Embedded Codex session seems stuck or disconnected. Use /reconnect.",
+	}
+
+	if got := codexFooterStatus(snapshot, time.Now()); got != "Stalled; use /reconnect" {
+		t.Fatalf("codexFooterStatus() = %q, want %q", got, "Stalled; use /reconnect")
+	}
+}
+
 func TestCodexFooterStatusNormalizesLegacyCompletedCopy(t *testing.T) {
 	snapshot := codexapp.Snapshot{Status: "Codex turn completed"}
 
@@ -330,6 +342,18 @@ func TestPickerSummaryForFinishingLiveSnapshot(t *testing.T) {
 
 	if got := pickerSummaryForLiveSnapshot(snapshot); got != "Finishing: waiting for trailing output" {
 		t.Fatalf("pickerSummaryForLiveSnapshot() = %q, want finishing summary", got)
+	}
+}
+
+func TestPickerSummaryForStalledLiveSnapshot(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Phase:  codexapp.SessionPhaseStalled,
+		Busy:   true,
+		Status: "Embedded Codex session seems stuck or disconnected. Use /reconnect.",
+	}
+
+	if got := pickerSummaryForLiveSnapshot(snapshot); got != "Live now: embedded helper looks stuck; use /reconnect" {
+		t.Fatalf("pickerSummaryForLiveSnapshot() = %q, want stalled summary", got)
 	}
 }
 
@@ -494,6 +518,20 @@ func TestAssessmentStatusLabelUsesInProgressName(t *testing.T) {
 	}
 	if got, _, ok := assessmentStatusLabel(project, true); !ok || got != "working" {
 		t.Fatalf("assessmentStatusLabel(compact) = (%q, %v), want (%q, true)", got, ok, "working")
+	}
+}
+
+func TestAssessmentStatusLabelAtMarksStaleInProgressBlocked(t *testing.T) {
+	project := model.ProjectSummary{
+		LatestSessionClassification:     model.ClassificationCompleted,
+		LatestSessionClassificationType: model.SessionCategoryInProgress,
+		LatestSessionLastEventAt:        time.Date(2026, 3, 29, 6, 54, 44, 0, time.UTC),
+		LatestTurnStateKnown:            true,
+		LatestTurnCompleted:             false,
+	}
+
+	if got, _, ok := assessmentStatusLabelAt(project, true, time.Date(2026, 3, 29, 8, 0, 0, 0, time.UTC), 30*time.Minute); !ok || got != "blocked" {
+		t.Fatalf("assessmentStatusLabelAt(compact) = (%q, %v), want (%q, true)", got, ok, "blocked")
 	}
 }
 
@@ -1109,6 +1147,22 @@ func TestProjectAssessmentTextUsesLatestSummary(t *testing.T) {
 	}
 }
 
+func TestProjectAssessmentTextAtUsesDerivedStalledSummary(t *testing.T) {
+	project := model.ProjectSummary{
+		LatestSessionClassification:     model.ClassificationCompleted,
+		LatestSessionClassificationType: model.SessionCategoryInProgress,
+		LatestSessionSummary:            "Checking the latest tool outputs.",
+		LatestSessionLastEventAt:        time.Date(2026, 3, 29, 6, 54, 44, 0, time.UTC),
+		LatestTurnStateKnown:            true,
+		LatestTurnCompleted:             false,
+	}
+
+	got := projectAssessmentTextAt(project, time.Date(2026, 3, 29, 8, 0, 0, 0, time.UTC), 30*time.Minute)
+	if !strings.Contains(got, "likely stalled or disconnected") {
+		t.Fatalf("projectAssessmentTextAt() = %q, want derived stalled/disconnected summary", got)
+	}
+}
+
 func TestProjectAssessmentTextUsesFallbackStates(t *testing.T) {
 	project := model.ProjectSummary{
 		LatestSessionClassification: model.ClassificationRunning,
@@ -1124,7 +1178,7 @@ func TestProjectAssessmentTextUsesFallbackStates(t *testing.T) {
 		LatestCompletedSessionClassificationType:  model.SessionCategoryNeedsFollowUp,
 		LatestCompletedSessionSummary:             "A concrete next step still remains.",
 	}
-	if got := projectAssessmentTextAt(project, time.Date(2026, 3, 10, 12, 0, 37, 0, time.UTC)); got != "A concrete next step still remains." {
+	if got := projectAssessmentTextAt(project, time.Date(2026, 3, 10, 12, 0, 37, 0, time.UTC), 0); got != "A concrete next step still remains." {
 		t.Fatalf("projectAssessmentTextAt(refreshing) = %q, want completed summary", got)
 	}
 
@@ -1165,6 +1219,24 @@ func TestProjectListStatusUsesLastCompletedAssessmentWhileRefreshRuns(t *testing
 	}
 	if got := projectAssessmentText(project); got != project.LatestCompletedSessionSummary {
 		t.Fatalf("projectAssessmentText(refreshing) = %q, want completed summary", got)
+	}
+}
+
+func TestProjectListStatusAtShowsBlockedForStaleInProgressTurn(t *testing.T) {
+	project := model.ProjectSummary{
+		Status:                           model.StatusPossiblyStuck,
+		PresentOnDisk:                    true,
+		LatestSessionClassification:      model.ClassificationCompleted,
+		LatestSessionClassificationType:  model.SessionCategoryInProgress,
+		LatestSessionFormat:              "modern",
+		LatestSessionLastEventAt:         time.Date(2026, 3, 29, 6, 54, 44, 0, time.UTC),
+		LatestTurnStateKnown:             true,
+		LatestTurnCompleted:              false,
+		LatestSessionDetectedProjectPath: "/tmp/demo",
+	}
+
+	if got := projectListStatusAt(project, time.Date(2026, 3, 29, 8, 0, 0, 0, time.UTC), 30*time.Minute); got != "blocked" {
+		t.Fatalf("projectListStatusAt() = %q, want %q", got, "blocked")
 	}
 }
 
@@ -1234,6 +1306,47 @@ func TestProjectAgentDisplayUsesLiveBusyTimer(t *testing.T) {
 	}
 	if label != "CX 00:37" {
 		t.Fatalf("projectAgentDisplay() label = %q, want %q", label, "CX 00:37")
+	}
+}
+
+func TestProjectAgentDisplayShowsStalledLiveSession(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex,
+			Started:  true,
+			Busy:     true,
+			Phase:    codexapp.SessionPhaseStalled,
+			Status:   "Embedded Codex session seems stuck or disconnected. Use /reconnect.",
+			ThreadID: "thread-live",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{codexManager: manager}
+	project := model.ProjectSummary{
+		Path:                "/tmp/demo",
+		PresentOnDisk:       true,
+		LatestSessionFormat: "modern",
+	}
+
+	label, tag, live := m.projectAgentDisplay(project, time.Date(2026, 3, 9, 12, 0, 37, 0, time.UTC))
+	if !live {
+		t.Fatalf("projectAgentDisplay() live = false, want true")
+	}
+	if tag != "CX" {
+		t.Fatalf("projectAgentDisplay() tag = %q, want %q", tag, "CX")
+	}
+	if label != "CX stalled" {
+		t.Fatalf("projectAgentDisplay() label = %q, want %q", label, "CX stalled")
 	}
 }
 

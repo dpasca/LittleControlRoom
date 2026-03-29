@@ -518,7 +518,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 				latestTurnComplete = sessions[0].LatestTurnCompleted
 			}
 		}
-		classificationKnown, classificationCategory := s.latestSessionClassification(ctx, path, sessions)
+		classificationKnown, classificationCategory := s.latestSessionClassification(ctx, path, sessions, now)
 
 		score := attention.Score(attention.Input{
 			Path:                       path,
@@ -539,20 +539,20 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		})
 
 		state := model.ProjectState{
-		Path:            path,
-		Name:            filepath.Base(path),
-		LastActivity:    lastActivity,
-		Status:          score.Status,
-		AttentionScore:  score.Score,
-		PresentOnDisk:   presentOnDisk,
+			Path:            path,
+			Name:            filepath.Base(path),
+			LastActivity:    lastActivity,
+			Status:          score.Status,
+			AttentionScore:  score.Score,
+			PresentOnDisk:   presentOnDisk,
 			RepoDirty:       repoDirty,
 			RepoSyncStatus:  repoSyncStatus,
 			RepoAheadCount:  repoAheadCount,
 			RepoBehindCount: repoBehindCount,
 			Forgotten:       forgotten,
 			ManuallyAdded:   old.ManuallyAdded,
-		InScope:         scope.Allows(path),
-		Pinned:          old.Pinned,
+			InScope:         scope.Allows(path),
+			Pinned:          old.Pinned,
 			SnoozedUntil:    old.SnoozedUntil,
 			Note:            old.Note,
 			MovedFromPath:   old.MovedFromPath,
@@ -1049,7 +1049,7 @@ func projectPathExists(path string) bool {
 	return info.IsDir()
 }
 
-func (s *Service) latestSessionClassification(ctx context.Context, path string, sessions []model.SessionEvidence) (bool, model.SessionCategory) {
+func (s *Service) latestSessionClassification(ctx context.Context, path string, sessions []model.SessionEvidence, now time.Time) (bool, model.SessionCategory) {
 	if len(sessions) == 0 {
 		return false, model.SessionCategoryUnknown
 	}
@@ -1071,7 +1071,17 @@ func (s *Service) latestSessionClassification(ctx context.Context, path string, 
 	if classification.SnapshotHash != expectedHash {
 		return false, model.SessionCategoryUnknown
 	}
-	return true, classification.Category
+	effective := sessionclassify.DeriveEffectiveAssessment(sessionclassify.EffectiveAssessmentInput{
+		Status:               classification.Status,
+		Category:             classification.Category,
+		Summary:              classification.Summary,
+		LastEventAt:          sessions[0].LastEventAt,
+		LatestTurnStateKnown: sessions[0].LatestTurnStateKnown,
+		LatestTurnCompleted:  sessions[0].LatestTurnCompleted,
+		Now:                  now,
+		StuckThreshold:       sessionclassify.EffectiveAssessmentStallThreshold(s.cfg.ActiveThreshold, s.cfg.StuckThreshold),
+	})
+	return true, effective.Category
 }
 
 func reuseLatestSessionSnapshotHash(old model.ProjectSummary, session *model.SessionEvidence, gitStatus sessionclassify.GitStatusSnapshot) {
@@ -1192,7 +1202,7 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 		errorCount += session.ErrorCount
 	}
 
-	classificationKnown, classificationCategory := s.latestSessionClassification(ctx, projectPath, detail.Sessions)
+	classificationKnown, classificationCategory := s.latestSessionClassification(ctx, projectPath, detail.Sessions, now)
 	score := attention.Score(attention.Input{
 		Path:                       detail.Summary.Path,
 		Now:                        now,

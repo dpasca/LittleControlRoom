@@ -1064,6 +1064,10 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = label + " is rechecking the current turn state. Wait for that to finish before sending another prompt."
 			return m, nil
 		}
+		if snapshot.Phase == codexapp.SessionPhaseStalled {
+			m.status = label + " looks stuck or disconnected. Use /reconnect before sending another prompt."
+			return m, nil
+		}
 		m.clearCodexDraft(m.codexVisibleProject)
 		if codexSnapshotCanSteer(snapshot) {
 			m.status = "Sending follow-up to " + label + "..."
@@ -1857,6 +1861,11 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		actions = []footerAction{
 			footerHideAction("Alt+Up", "hide"),
 		}
+	case snapshot.Phase == codexapp.SessionPhaseStalled:
+		actions = []footerAction{
+			footerHideAction("Alt+Up", "hide"),
+			footerNavAction("/reconnect", "recover"),
+		}
 	case snapshot.Phase == codexapp.SessionPhaseFinishing:
 		actions = []footerAction{
 			footerHideAction("Alt+Up", "hide"),
@@ -2067,6 +2076,8 @@ func codexFooterStatus(snapshot codexapp.Snapshot, now time.Time) string {
 	switch snapshot.Phase {
 	case codexapp.SessionPhaseReconciling:
 		return "Rechecking turn status"
+	case codexapp.SessionPhaseStalled:
+		return "Stalled; use /reconnect"
 	case codexapp.SessionPhaseFinishing:
 		if !snapshot.BusySince.IsZero() {
 			return "Finishing " + formatRunningDuration(now.Sub(snapshot.BusySince))

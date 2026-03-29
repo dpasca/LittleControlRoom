@@ -1344,6 +1344,56 @@ func TestReconcileBusyStateClearsBusyWhenThreadReadShowsNoActiveTurn(t *testing.
 	}
 }
 
+func TestReconcileBusyStateMarksSessionStalledAfterRepeatedHealthCheckFailures(t *testing.T) {
+	s := &appServerSession{
+		projectPath:        "/tmp/demo",
+		threadID:           "thread_456",
+		activeTurnID:       "turn_old",
+		busy:               true,
+		status:             "Codex is working...",
+		entryIndex:         make(map[string]int),
+		notify:             func() {},
+		lastBusyActivityAt: time.Now().Add(-2 * time.Minute),
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			if method != "thread/read" {
+				t.Fatalf("method = %q, want thread/read", method)
+			}
+			return nil, errors.New("context deadline exceeded")
+		},
+	}
+
+	if err := s.ReconcileBusyState(); err == nil {
+		t.Fatalf("first ReconcileBusyState() error = nil, want timeout")
+	}
+	first := s.Snapshot()
+	if first.Phase != SessionPhaseRunning {
+		t.Fatalf("phase after first failure = %q, want %q before stall threshold", first.Phase, SessionPhaseRunning)
+	}
+	if first.Status == codexReconnectSuggestion {
+		t.Fatalf("status after first failure = %q, should not promote reconnect suggestion yet", first.Status)
+	}
+
+	if err := s.ReconcileBusyState(); err == nil {
+		t.Fatalf("second ReconcileBusyState() error = nil, want timeout")
+	}
+	snapshot := s.Snapshot()
+	if snapshot.Phase != SessionPhaseStalled {
+		t.Fatalf("phase = %q, want %q", snapshot.Phase, SessionPhaseStalled)
+	}
+	if snapshot.Status != codexReconnectSuggestion {
+		t.Fatalf("status = %q, want %q", snapshot.Status, codexReconnectSuggestion)
+	}
+	if snapshot.LastSystemNotice != codexReconnectSuggestion {
+		t.Fatalf("last system notice = %q, want reconnect suggestion", snapshot.LastSystemNotice)
+	}
+	if !strings.Contains(snapshot.LastError, "context deadline exceeded") {
+		t.Fatalf("last error = %q, want timeout", snapshot.LastError)
+	}
+	if len(snapshot.Entries) == 0 || snapshot.Entries[len(snapshot.Entries)-1].Text != codexReconnectSuggestion {
+		t.Fatalf("entries = %#v, want reconnect guidance entry appended once", snapshot.Entries)
+	}
+}
+
 func TestEnsureFreshThreadRejectsRetainedHistory(t *testing.T) {
 	callCount := 0
 	s := &appServerSession{

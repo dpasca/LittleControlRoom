@@ -499,12 +499,81 @@ func TestLatestSessionClassificationUsesPersistedSessionSnapshotHash(t *testing.
 		Format:       state.Sessions[0].Format,
 		SnapshotHash: "stable-transcript-hash",
 		LastEventAt:  now.Add(20 * time.Minute),
-	}})
+	}}, now.Add(20*time.Minute))
 	if !known {
 		t.Fatalf("expected classification to remain current for timestamp-only updates")
 	}
 	if category != model.SessionCategoryCompleted {
 		t.Fatalf("category = %s, want completed", category)
+	}
+}
+
+func TestLatestSessionClassificationTreatsStaleInProgressTurnAsBlocked(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Date(2026, 3, 29, 8, 0, 0, 0, time.UTC)
+	state := model.ProjectState{
+		Path:           "/tmp/stalled-session",
+		Name:           "stalled-session",
+		Status:         model.StatusPossiblyStuck,
+		AttentionScore: 32,
+		InScope:        true,
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{{
+			SessionID:            "ses_stalled",
+			ProjectPath:          "/tmp/stalled-session",
+			SessionFile:          "/tmp/stalled-session/rollout.jsonl",
+			Format:               "modern",
+			SnapshotHash:         "stable-stalled-hash",
+			LastEventAt:          now.Add(-65 * time.Minute),
+			StartedAt:            now.Add(-2 * time.Hour),
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  false,
+		}},
+	}
+	if err := st.UpsertProjectState(ctx, state); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	if queued, err := st.QueueSessionClassification(ctx, model.SessionClassification{
+		SessionID:         "ses_stalled",
+		ProjectPath:       state.Path,
+		SessionFile:       state.Sessions[0].SessionFile,
+		SessionFormat:     state.Sessions[0].Format,
+		SnapshotHash:      "stable-stalled-hash",
+		Model:             "gpt-5-mini",
+		ClassifierVersion: "v1",
+		SourceUpdatedAt:   state.Sessions[0].LastEventAt,
+	}, time.Minute); err != nil || !queued {
+		t.Fatalf("queue classification: queued=%v err=%v", queued, err)
+	}
+	claimed, err := st.ClaimNextPendingSessionClassification(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("claim classification: %v", err)
+	}
+	claimed.Category = model.SessionCategoryInProgress
+	claimed.Summary = "Checking the latest tool outputs."
+	claimed.Confidence = 0.76
+	if err := st.CompleteSessionClassification(ctx, claimed); err != nil {
+		t.Fatalf("complete classification: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.StuckThreshold = 30 * time.Minute
+	svc := New(cfg, st, events.NewBus(), nil)
+	known, category := svc.latestSessionClassification(ctx, state.Path, state.Sessions, now)
+	if !known {
+		t.Fatalf("expected classification to remain known")
+	}
+	if category != model.SessionCategoryBlocked {
+		t.Fatalf("category = %s, want blocked", category)
 	}
 }
 

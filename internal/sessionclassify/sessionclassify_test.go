@@ -257,6 +257,56 @@ func TestSanitizeClassificationSummaryFallsBackWhenNoTranscriptPreview(t *testin
 	}
 }
 
+func TestDeriveEffectiveAssessmentMarksStaleInProgressTurnBlocked(t *testing.T) {
+	t.Parallel()
+
+	got := DeriveEffectiveAssessment(EffectiveAssessmentInput{
+		Status:               model.ClassificationCompleted,
+		Category:             model.SessionCategoryInProgress,
+		Summary:              "Checking the latest tool outputs.",
+		LastEventAt:          time.Date(2026, 3, 29, 6, 54, 44, 0, time.UTC),
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  false,
+		Now:                  time.Date(2026, 3, 29, 8, 0, 0, 0, time.UTC),
+		StuckThreshold:       30 * time.Minute,
+	})
+
+	if got.Category != model.SessionCategoryBlocked {
+		t.Fatalf("category = %s, want blocked", got.Category)
+	}
+	if !got.Derived {
+		t.Fatalf("Derived = false, want true")
+	}
+	if !strings.Contains(got.Summary, "likely stalled or disconnected") {
+		t.Fatalf("summary = %q, want stalled/disconnected wording", got.Summary)
+	}
+}
+
+func TestDeriveEffectiveAssessmentKeepsFreshInProgressTurn(t *testing.T) {
+	t.Parallel()
+
+	got := DeriveEffectiveAssessment(EffectiveAssessmentInput{
+		Status:               model.ClassificationCompleted,
+		Category:             model.SessionCategoryInProgress,
+		Summary:              "Still working through the current turn.",
+		LastEventAt:          time.Date(2026, 3, 29, 7, 45, 0, 0, time.UTC),
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  false,
+		Now:                  time.Date(2026, 3, 29, 8, 0, 0, 0, time.UTC),
+		StuckThreshold:       30 * time.Minute,
+	})
+
+	if got.Category != model.SessionCategoryInProgress {
+		t.Fatalf("category = %s, want in_progress", got.Category)
+	}
+	if got.Derived {
+		t.Fatalf("Derived = true, want false")
+	}
+	if got.Summary != "Still working through the current turn." {
+		t.Fatalf("summary = %q, want original summary", got.Summary)
+	}
+}
+
 func TestManagerProcessOneSanitizesStatusLikeSummaryFromClassifier(t *testing.T) {
 	t.Parallel()
 

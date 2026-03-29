@@ -21,6 +21,7 @@ import (
 	"lcroom/internal/model"
 	"lcroom/internal/projectrun"
 	"lcroom/internal/service"
+	"lcroom/internal/sessionclassify"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -425,6 +426,14 @@ func (m Model) currentTime() time.Time {
 		return m.nowFn()
 	}
 	return time.Now()
+}
+
+func (m Model) assessmentStallThreshold() time.Duration {
+	if m.svc == nil {
+		return 0
+	}
+	cfg := m.svc.Config()
+	return sessionclassify.EffectiveAssessmentStallThreshold(cfg.ActiveThreshold, cfg.StuckThreshold)
 }
 
 func (m *Model) markAssessmentFlash(projectPath string, at time.Time) {
@@ -2204,7 +2213,7 @@ func (m Model) renderProjectList(width, height int) string {
 		repoIndicator := projectRepoWarningIndicator(p)
 		attention := projectAttentionLabelForScore(m.projectAttentionScore(p))
 		name := truncateText(p.Name, projectW)
-		assessment := truncateText(projectAssessmentTextAt(p, now), assessmentW)
+		assessment := truncateText(projectAssessmentTextAt(p, now, m.assessmentStallThreshold()), assessmentW)
 		runtimeSnapshot := m.projectRuntimeSnapshot(p.Path)
 		agentLabel, agentTag, agentLive := m.projectAgentDisplay(p, now)
 		todoCount := projectTODOCountLabel(p.OpenTODOCount)
@@ -2213,7 +2222,7 @@ func (m Model) renderProjectList(width, height int) string {
 			lipgloss.Top,
 			repoIndicator+cellStyle(lipgloss.NewStyle().Width(4).Align(lipgloss.Right).Bold(selectedRow)).Render(attention),
 			"  ",
-			cellStyle(m.projectListAssessmentStatusStyle(p).Width(8)).Render(projectListStatus(p)),
+			cellStyle(m.projectListAssessmentStatusStyle(p).Width(8)).Render(projectListStatusAt(p, now, m.assessmentStallThreshold())),
 			" ",
 			cellStyle(lipgloss.NewStyle().Width(10)).Render(last),
 			" ",
@@ -2253,7 +2262,7 @@ func (m Model) renderDetailContent(width int) string {
 	if d.Summary.Path != "" && d.Summary.Path != p.Path {
 		d = model.ProjectDetail{}
 	}
-	assessmentValue := assessmentDisplayStyle(p).Render(projectAssessmentLabelAt(p, m.currentTime()))
+	assessmentValue := assessmentDisplayStyle(p, m.currentTime(), m.assessmentStallThreshold()).Render(projectAssessmentLabelWithThreshold(p, m.currentTime(), m.assessmentStallThreshold()))
 	statusValue := activityDisplayStyle(p).Render(projectActivityStatus(p))
 	attentionValue := detailAttentionValueStyle.Render(fmt.Sprintf("%d", m.projectAttentionScore(p)))
 
@@ -2286,7 +2295,7 @@ func (m Model) renderDetailContent(width int) string {
 	lines = append(lines, detailField("Attention", attentionValue))
 
 	lines = append(lines, detailSectionStyle.Render("Session summary"))
-	summaryText := projectAssessmentTextAt(p, m.currentTime())
+	summaryText := projectAssessmentTextAt(p, m.currentTime(), m.assessmentStallThreshold())
 	summaryStyle := detailValueStyle
 	if projectAssessmentRefreshing(p) {
 		summaryStyle = detailMutedStyle
@@ -3229,18 +3238,18 @@ func appendDetailFields(lines []string, width int, fields ...string) []string {
 }
 
 func projectAssessmentText(project model.ProjectSummary) string {
-	return projectAssessmentTextAt(project, time.Time{})
+	return projectAssessmentTextAt(project, time.Time{}, 0)
 }
 
-func projectAssessmentTextAt(project model.ProjectSummary, now time.Time) string {
-	_ = now
-	if strings.TrimSpace(project.LatestSessionSummary) != "" && (project.LatestSessionClassification == model.ClassificationCompleted || projectAssessmentRefreshing(project)) {
-		return project.LatestSessionSummary
+func projectAssessmentTextAt(project model.ProjectSummary, now time.Time, stuckThreshold time.Duration) string {
+	effective := effectiveAssessmentForProject(project, now, stuckThreshold)
+	if strings.TrimSpace(effective.Summary) != "" && (project.LatestSessionClassification == model.ClassificationCompleted || projectAssessmentRefreshing(project)) {
+		return effective.Summary
 	}
 	if strings.TrimSpace(project.LatestCompletedSessionSummary) != "" {
 		return project.LatestCompletedSessionSummary
 	}
-	if label, _, ok := visibleAssessmentStatusLabel(project); ok {
+	if label, _, ok := visibleAssessmentStatusLabelAt(project, now, stuckThreshold); ok {
 		return label
 	}
 	if project.LatestSessionFormat != "" {
@@ -3249,8 +3258,8 @@ func projectAssessmentTextAt(project model.ProjectSummary, now time.Time) string
 	return "-"
 }
 
-func projectAssessmentStyle(project model.ProjectSummary) lipgloss.Style {
-	if _, _, ok := visibleAssessmentStatusLabel(project); ok {
+func projectAssessmentStyle(project model.ProjectSummary, now time.Time, stuckThreshold time.Duration) lipgloss.Style {
+	if _, _, ok := visibleAssessmentStatusLabelAt(project, now, stuckThreshold); ok {
 		if projectAssessmentRefreshing(project) {
 			return detailMutedStyle
 		}
@@ -3320,7 +3329,9 @@ func (m Model) projectAgentDisplay(project model.ProjectSummary, now time.Time) 
 	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
 		tag := embeddedProvider(snapshot).SourceTag()
 		label := tag
-		if snapshot.Busy {
+		if snapshot.Phase == codexapp.SessionPhaseStalled {
+			label += " stalled"
+		} else if snapshot.Busy {
 			startedAt := snapshot.BusySince
 			if startedAt.IsZero() && !project.LatestTurnStartedAt.IsZero() {
 				startedAt = project.LatestTurnStartedAt
@@ -3624,8 +3635,8 @@ func detailReasonLine(reason model.AttentionReason) string {
 	return detailValueStyle.Render("- ") + weightStyle.Render(fmt.Sprintf("[%+d]", reason.Weight)) + detailValueStyle.Render(" "+reason.Text)
 }
 
-func assessmentDisplayStyle(project model.ProjectSummary) lipgloss.Style {
-	if _, category, ok := visibleAssessmentStatusLabel(project); ok {
+func assessmentDisplayStyle(project model.ProjectSummary, now time.Time, stuckThreshold time.Duration) lipgloss.Style {
+	if _, category, ok := visibleAssessmentStatusLabelAt(project, now, stuckThreshold); ok {
 		if projectAssessmentRefreshing(project) {
 			return detailMutedStyle
 		}
@@ -3635,8 +3646,11 @@ func assessmentDisplayStyle(project model.ProjectSummary) lipgloss.Style {
 }
 
 func projectAssessmentLabelAt(project model.ProjectSummary, now time.Time) string {
-	_ = now
-	if label, _, ok := visibleAssessmentStatusLabel(project); ok {
+	return projectAssessmentLabelWithThreshold(project, now, 0)
+}
+
+func projectAssessmentLabelWithThreshold(project model.ProjectSummary, now time.Time, stuckThreshold time.Duration) string {
+	if label, _, ok := visibleAssessmentStatusLabelAt(project, now, stuckThreshold); ok {
 		return label
 	}
 	if project.LatestSessionFormat != "" {
@@ -3646,13 +3660,17 @@ func projectAssessmentLabelAt(project model.ProjectSummary, now time.Time) strin
 }
 
 func projectListStatus(project model.ProjectSummary) string {
+	return projectListStatusAt(project, time.Time{}, 0)
+}
+
+func projectListStatusAt(project model.ProjectSummary, now time.Time, stuckThreshold time.Duration) string {
 	if projectMissing(project) {
 		return "missing"
 	}
 	if moveStatusActive(project.MovedAt, project.Path, project.LatestSessionDetectedProjectPath) {
 		return "moved"
 	}
-	if label, _, ok := visibleAssessmentStatusLabel(project); ok {
+	if label, _, ok := visibleAssessmentStatusLabelAt(project, now, stuckThreshold); ok {
 		return label
 	}
 	if project.LatestSessionFormat != "" {
@@ -5171,12 +5189,12 @@ func moveStatusActive(movedAt time.Time, currentPath, latestDetectedPath string)
 	return filepath.Clean(latestDetectedPath) != filepath.Clean(currentPath)
 }
 
-func statusDisplayStyle(project model.ProjectSummary) lipgloss.Style {
+func statusDisplayStyle(project model.ProjectSummary, now time.Time, stuckThreshold time.Duration) lipgloss.Style {
 	if projectMissing(project) || moveStatusActive(project.MovedAt, project.Path, project.LatestSessionDetectedProjectPath) {
 		return activityDisplayStyle(project)
 	}
-	if _, _, ok := visibleAssessmentStatusLabel(project); ok {
-		return assessmentDisplayStyle(project)
+	if _, _, ok := visibleAssessmentStatusLabelAt(project, now, stuckThreshold); ok {
+		return assessmentDisplayStyle(project, now, stuckThreshold)
 	}
 	if project.LatestSessionFormat != "" {
 		return detailMutedStyle
@@ -5189,7 +5207,7 @@ func assessmentFlashStyle(style lipgloss.Style) lipgloss.Style {
 }
 
 func (m Model) projectListAssessmentStatusStyle(project model.ProjectSummary) lipgloss.Style {
-	style := statusDisplayStyle(project)
+	style := statusDisplayStyle(project, m.currentTime(), m.assessmentStallThreshold())
 	if m.assessmentFlashActive(project.Path) {
 		return assessmentFlashStyle(style)
 	}
@@ -5197,18 +5215,36 @@ func (m Model) projectListAssessmentStatusStyle(project model.ProjectSummary) li
 }
 
 func (m Model) projectListAssessmentSummaryStyle(project model.ProjectSummary) lipgloss.Style {
-	style := projectAssessmentStyle(project)
+	style := projectAssessmentStyle(project, m.currentTime(), m.assessmentStallThreshold())
 	if m.assessmentFlashActive(project.Path) {
 		return assessmentFlashStyle(style)
 	}
 	return style
 }
 
+func effectiveAssessmentForProject(project model.ProjectSummary, now time.Time, stuckThreshold time.Duration) sessionclassify.EffectiveAssessment {
+	return sessionclassify.DeriveEffectiveAssessment(sessionclassify.EffectiveAssessmentInput{
+		Status:               project.LatestSessionClassification,
+		Category:             project.LatestSessionClassificationType,
+		Summary:              project.LatestSessionSummary,
+		LastEventAt:          project.LatestSessionLastEventAt,
+		LatestTurnStateKnown: project.LatestTurnStateKnown,
+		LatestTurnCompleted:  project.LatestTurnCompleted,
+		Now:                  now,
+		StuckThreshold:       stuckThreshold,
+	})
+}
+
 func assessmentStatusLabel(project model.ProjectSummary, compact bool) (string, model.SessionCategory, bool) {
-	if project.LatestSessionClassification != model.ClassificationCompleted {
+	return assessmentStatusLabelAt(project, compact, time.Time{}, 0)
+}
+
+func assessmentStatusLabelAt(project model.ProjectSummary, compact bool, now time.Time, stuckThreshold time.Duration) (string, model.SessionCategory, bool) {
+	effective := effectiveAssessmentForProject(project, now, stuckThreshold)
+	if effective.Status != model.ClassificationCompleted {
 		return "", model.SessionCategoryUnknown, false
 	}
-	return assessmentStatusLabelForCategory(project.LatestSessionClassificationType, compact)
+	return assessmentStatusLabelForCategory(effective.Category, compact)
 }
 
 func assessmentStatusLabelForCategory(category model.SessionCategory, compact bool) (string, model.SessionCategory, bool) {
@@ -5237,7 +5273,11 @@ func latestCompletedAssessmentStatusLabel(project model.ProjectSummary, compact 
 }
 
 func visibleAssessmentStatusLabel(project model.ProjectSummary) (string, model.SessionCategory, bool) {
-	if label, category, ok := assessmentStatusLabel(project, false); ok {
+	return visibleAssessmentStatusLabelAt(project, time.Time{}, 0)
+}
+
+func visibleAssessmentStatusLabelAt(project model.ProjectSummary, now time.Time, stuckThreshold time.Duration) (string, model.SessionCategory, bool) {
+	if label, category, ok := assessmentStatusLabelAt(project, false, now, stuckThreshold); ok {
 		return label, category, true
 	}
 	return latestCompletedAssessmentStatusLabel(project, false)

@@ -314,6 +314,16 @@ func runDoctor(ctx context.Context, svc *service.Service, cfg config.AppConfig) 
 			}
 			classification, err := svc.Store().GetSessionClassification(ctx, s.Sessions[0].SessionID)
 			if err == nil {
+				effective := sessionclassify.DeriveEffectiveAssessment(sessionclassify.EffectiveAssessmentInput{
+					Status:               classification.Status,
+					Category:             classification.Category,
+					Summary:              classification.Summary,
+					LastEventAt:          s.Sessions[0].LastEventAt,
+					LatestTurnStateKnown: s.Sessions[0].LatestTurnStateKnown,
+					LatestTurnCompleted:  s.Sessions[0].LatestTurnCompleted,
+					Now:                  report.At,
+					StuckThreshold:       sessionclassify.EffectiveAssessmentStallThreshold(svc.Config().ActiveThreshold, svc.Config().StuckThreshold),
+				})
 				fmt.Printf("  latest_session_assessment: status=%s", classification.Status)
 				if classification.Stage != "" {
 					fmt.Printf(" stage=%s", classificationStageLabel(classification.Status, classification.Stage))
@@ -321,12 +331,12 @@ func runDoctor(ctx context.Context, svc *service.Service, cfg config.AppConfig) 
 				if elapsed := classificationStageElapsed(classification, report.At); elapsed != "" {
 					fmt.Printf(" elapsed=%s", elapsed)
 				}
-				if classification.Category != "" {
-					fmt.Printf(" category=%s", classification.Category)
+				if effective.Category != "" {
+					fmt.Printf(" category=%s", effective.Category)
 				}
 				fmt.Println()
-				if classification.Summary != "" {
-					fmt.Printf("    %s\n", classification.Summary)
+				if effective.Summary != "" {
+					fmt.Printf("    %s\n", effective.Summary)
 				}
 			} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				fmt.Printf("  latest_session_assessment: error=%v\n", err)

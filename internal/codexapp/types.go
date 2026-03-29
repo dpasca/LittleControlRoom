@@ -29,8 +29,8 @@ const (
 type Provider string
 
 const (
-	ProviderCodex     Provider = "codex"
-	ProviderOpenCode  Provider = "opencode"
+	ProviderCodex      Provider = "codex"
+	ProviderOpenCode   Provider = "opencode"
 	ProviderClaudeCode Provider = "claude_code"
 )
 
@@ -83,6 +83,7 @@ const (
 	SessionPhaseRunning     SessionPhase = "running"
 	SessionPhaseFinishing   SessionPhase = "finishing"
 	SessionPhaseReconciling SessionPhase = "reconciling"
+	SessionPhaseStalled     SessionPhase = "stalled"
 	SessionPhaseExternal    SessionPhase = "external"
 	SessionPhaseClosed      SessionPhase = "closed"
 )
