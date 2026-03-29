@@ -19,6 +19,7 @@ import (
 const (
 	DefaultModel                  = "gpt-5.4-mini"
 	localRunnerDefaultModel       = "gpt-5.4-mini"
+	localRunnerClaudeDefaultModel = "haiku"
 	suggestionHTTPTimeout         = 45 * time.Second
 	suggestionPrimaryReasoning    = "low"
 	defaultOpenSiblingTodoContext = 5
@@ -93,6 +94,13 @@ func NewOpenCodeClientWithFallback(discovery *llm.OpenCodeDiscovery, tier config
 	return &OpenAIClient{
 		model:     "",
 		responses: fallbackRunner,
+	}
+}
+
+func NewClaudeClientWithUsageTrackerInDataDir(dataDir string, usage *llm.UsageTracker) *OpenAIClient {
+	return &OpenAIClient{
+		model:     configuredModel(localRunnerClaudeDefaultModel),
+		responses: llm.NewClaudePrintRunnerInDataDir(dataDir, suggestionHTTPTimeout, usage),
 	}
 }
 

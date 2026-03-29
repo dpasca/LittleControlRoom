@@ -40,6 +40,14 @@ type OpenCodeRunRunner struct {
 	cache     *localRunnerResponseCache
 }
 
+type ClaudePrintRunner struct {
+	timeout   time.Duration
+	usage     *UsageTracker
+	command   string
+	tempDirFn func() string
+	cache     *localRunnerResponseCache
+}
+
 type localRunnerResponseCache struct {
 	mu      sync.Mutex
 	entries map[string]JSONSchemaResponse
@@ -76,6 +84,23 @@ func NewOpenCodeRunRunnerInDataDir(dataDir string, timeout time.Duration, usage 
 		timeout:   timeout,
 		usage:     usage,
 		command:   "opencode",
+		tempDirFn: func() string { return appfs.InternalWorkspaceRoot(dataDir) },
+		cache:     newLocalRunnerResponseCache(64),
+	}
+}
+
+func NewClaudePrintRunner(timeout time.Duration, usage *UsageTracker) *ClaudePrintRunner {
+	return NewClaudePrintRunnerInDataDir("", timeout, usage)
+}
+
+func NewClaudePrintRunnerInDataDir(dataDir string, timeout time.Duration, usage *UsageTracker) *ClaudePrintRunner {
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	return &ClaudePrintRunner{
+		timeout:   timeout,
+		usage:     usage,
+		command:   "claude",
 		tempDirFn: func() string { return appfs.InternalWorkspaceRoot(dataDir) },
 		cache:     newLocalRunnerResponseCache(64),
 	}
@@ -173,6 +198,34 @@ func (r *OpenCodeRunRunner) RunJSONSchema(ctx context.Context, req JSONSchemaReq
 	return response, nil
 }
 
+func (r *ClaudePrintRunner) RunJSONSchema(ctx context.Context, req JSONSchemaRequest) (JSONSchemaResponse, error) {
+	if r == nil {
+		return JSONSchemaResponse{}, errors.New("claude print runner not configured")
+	}
+	if strings.TrimSpace(req.Model) == "" {
+		return JSONSchemaResponse{}, errors.New("claude print runner requires a model")
+	}
+	cacheKey := cacheKeyForJSONSchemaRequest(req)
+	if cached, ok := r.cachedResponse(cacheKey); ok {
+		return cached, nil
+	}
+	if r.usage != nil {
+		r.usage.Start(req.Model)
+	}
+	response, err := r.run(ctx, req)
+	if err != nil {
+		if r.usage != nil {
+			r.usage.Fail(req.Model)
+		}
+		return JSONSchemaResponse{}, err
+	}
+	if r.usage != nil {
+		r.usage.Complete(response.Model, response.Usage)
+	}
+	r.storeCachedResponse(cacheKey, response)
+	return response, nil
+}
+
 func (r *CodexExecRunner) cachedResponse(cacheKey string) (JSONSchemaResponse, bool) {
 	if r == nil || r.cache == nil {
 		return JSONSchemaResponse{}, false
@@ -201,6 +254,20 @@ func (r *OpenCodeRunRunner) storeCachedResponse(cacheKey string, response JSONSc
 	r.cache.Store(cacheKey, response)
 }
 
+func (r *ClaudePrintRunner) cachedResponse(cacheKey string) (JSONSchemaResponse, bool) {
+	if r == nil || r.cache == nil {
+		return JSONSchemaResponse{}, false
+	}
+	return r.cache.Get(cacheKey)
+}
+
+func (r *ClaudePrintRunner) storeCachedResponse(cacheKey string, response JSONSchemaResponse) {
+	if r == nil || r.cache == nil {
+		return
+	}
+	r.cache.Store(cacheKey, response)
+}
+
 func (r *OpenCodeRunRunner) run(parent context.Context, req JSONSchemaRequest) (JSONSchemaResponse, error) {
 	ctx, cancel := withRunnerTimeout(parent, r.timeout)
 	defer cancel()
@@ -223,6 +290,40 @@ func (r *OpenCodeRunRunner) run(parent context.Context, req JSONSchemaRequest) (
 		return JSONSchemaResponse{}, formatRunnerCommandError("opencode run", err, stderr, stdout)
 	}
 	return parseOpenCodeRunJSONL(stdout, req.Model)
+}
+
+func (r *ClaudePrintRunner) run(parent context.Context, req JSONSchemaRequest) (JSONSchemaResponse, error) {
+	ctx, cancel := withRunnerTimeout(parent, r.timeout)
+	defer cancel()
+
+	workDir, cleanup, err := createRunnerWorkspace(r.tempDirFn)
+	if err != nil {
+		return JSONSchemaResponse{}, err
+	}
+	defer cleanup()
+
+	schemaRaw, err := json.Marshal(req.Schema)
+	if err != nil {
+		return JSONSchemaResponse{}, fmt.Errorf("marshal schema for claude print: %w", err)
+	}
+
+	args := []string{
+		"-p",
+		"--no-session-persistence",
+		"--output-format", "json",
+		"--json-schema", string(schemaRaw),
+		"--model", strings.TrimSpace(req.Model),
+		"--tools=",
+	}
+	if effort := strings.TrimSpace(req.ReasoningEffort); effort != "" && claudeModelSupportsEffort(req.Model) {
+		args = append(args, "--effort", effort)
+	}
+
+	stdout, stderr, err := runCommandWithInputAndOutputInDir(ctx, workDir, buildSchemaPrompt(req, true), r.command, args...)
+	if err != nil {
+		return JSONSchemaResponse{}, formatRunnerCommandError("claude print", err, stderr, stdout)
+	}
+	return parseClaudePrintOutput(stdout, req.Model)
 }
 
 func buildSchemaPrompt(req JSONSchemaRequest, schemaEnforced bool) string {
@@ -351,7 +452,19 @@ func createRunnerWorkspace(tempDirFn func() string) (string, func(), error) {
 }
 
 func runCommandWithOutput(ctx context.Context, name string, args ...string) (string, string, error) {
+	return runCommandWithOutputInDir(ctx, "", name, args...)
+}
+
+func runCommandWithOutputInDir(ctx context.Context, dir, name string, args ...string) (string, string, error) {
+	return runCommandWithInputAndOutputInDir(ctx, dir, "", name, args...)
+}
+
+func runCommandWithInputAndOutputInDir(ctx context.Context, dir, input, name string, args ...string) (string, string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = strings.TrimSpace(dir)
+	if input != "" {
+		cmd.Stdin = strings.NewReader(input)
+	}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -496,4 +609,95 @@ func parseOpenCodeRunJSONL(raw, requestedModel string) (JSONSchemaResponse, erro
 		return JSONSchemaResponse{}, errors.New("opencode run returned no assistant output")
 	}
 	return response, nil
+}
+
+func parseClaudePrintOutput(raw, requestedModel string) (JSONSchemaResponse, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return JSONSchemaResponse{}, errors.New("claude print returned no assistant output")
+	}
+
+	var envelope struct {
+		Type             string          `json:"type"`
+		Subtype          string          `json:"subtype"`
+		IsError          bool            `json:"is_error"`
+		Result           string          `json:"result"`
+		StructuredOutput json.RawMessage `json:"structured_output"`
+		Usage            struct {
+			InputTokens              int64 `json:"input_tokens"`
+			CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+			CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+			OutputTokens             int64 `json:"output_tokens"`
+		} `json:"usage"`
+		ModelUsage map[string]struct {
+			InputTokens              int64   `json:"inputTokens"`
+			OutputTokens             int64   `json:"outputTokens"`
+			CacheReadInputTokens     int64   `json:"cacheReadInputTokens"`
+			CacheCreationInputTokens int64   `json:"cacheCreationInputTokens"`
+			CostUSD                  float64 `json:"costUSD"`
+		} `json:"modelUsage"`
+	}
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+		return JSONSchemaResponse{}, fmt.Errorf("decode claude print output: %w", err)
+	}
+	if envelope.IsError {
+		message := strings.TrimSpace(envelope.Result)
+		if message == "" {
+			message = "claude print returned an error result"
+		}
+		return JSONSchemaResponse{}, errors.New(message)
+	}
+
+	response := JSONSchemaResponse{
+		Status: "completed",
+		Model:  strings.TrimSpace(requestedModel),
+	}
+	if subtype := strings.TrimSpace(envelope.Subtype); subtype != "" {
+		response.Status = subtype
+	}
+	if len(envelope.StructuredOutput) > 0 && string(envelope.StructuredOutput) != "null" {
+		response.OutputText = strings.TrimSpace(string(envelope.StructuredOutput))
+	}
+	if response.OutputText == "" {
+		response.OutputText = strings.TrimSpace(envelope.Result)
+	}
+	response.Usage = model.LLMUsage{
+		InputTokens:       envelope.Usage.InputTokens + envelope.Usage.CacheReadInputTokens + envelope.Usage.CacheCreationInputTokens,
+		CachedInputTokens: envelope.Usage.CacheReadInputTokens,
+		OutputTokens:      envelope.Usage.OutputTokens,
+		TotalTokens:       envelope.Usage.InputTokens + envelope.Usage.CacheReadInputTokens + envelope.Usage.CacheCreationInputTokens + envelope.Usage.OutputTokens,
+	}
+	for modelName, usage := range envelope.ModelUsage {
+		if response.Model == "" {
+			response.Model = strings.TrimSpace(modelName)
+		}
+		if response.Usage.InputTokens == 0 && response.Usage.OutputTokens == 0 {
+			response.Usage.InputTokens = usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
+			response.Usage.CachedInputTokens = usage.CacheReadInputTokens
+			response.Usage.OutputTokens = usage.OutputTokens
+			response.Usage.TotalTokens = response.Usage.InputTokens + response.Usage.OutputTokens
+		}
+		if usage.CostUSD > 0 {
+			response.Usage.EstimatedCostUSD = usage.CostUSD
+		}
+		break
+	}
+	if response.OutputText == "" {
+		return JSONSchemaResponse{}, errors.New("claude print returned no assistant output")
+	}
+	return response, nil
+}
+
+func claudeModelSupportsEffort(modelName string) bool {
+	name := strings.ToLower(strings.TrimSpace(modelName))
+	switch {
+	case name == "", name == "haiku", strings.Contains(name, "haiku"):
+		return false
+	case name == "default", name == "sonnet", name == "opus", name == "opusplan":
+		return true
+	case strings.Contains(name, "sonnet"), strings.Contains(name, "opus"):
+		return true
+	default:
+		return false
+	}
 }

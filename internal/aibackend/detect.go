@@ -3,6 +3,7 @@ package aibackend
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os/exec"
 	"strings"
@@ -30,6 +31,7 @@ type Snapshot struct {
 	OpenAIAPI Status
 	Codex     Status
 	OpenCode  Status
+	Claude    Status
 }
 
 func Detect(ctx context.Context, cfg config.AppConfig) Snapshot {
@@ -39,6 +41,7 @@ func Detect(ctx context.Context, cfg config.AppConfig) Snapshot {
 		OpenAIAPI: detectOpenAIAPI(cfg),
 		Codex:     detectCodex(ctx),
 		OpenCode:  detectOpenCode(ctx),
+		Claude:    detectClaudeCode(ctx),
 	}
 }
 
@@ -50,6 +53,8 @@ func (s Snapshot) StatusFor(backend config.AIBackend) Status {
 		return s.Codex
 	case config.AIBackendOpenCode:
 		return s.OpenCode
+	case config.AIBackendClaude:
+		return s.Claude
 	case config.AIBackendDisabled:
 		return Status{
 			Backend: config.AIBackendDisabled,
@@ -156,6 +161,78 @@ func detectOpenCode(ctx context.Context) Status {
 		status.Detail = trimmed
 	}
 	return status
+}
+
+func detectClaudeCode(ctx context.Context) Status {
+	status := Status{
+		Backend:   config.AIBackendClaude,
+		Label:     config.AIBackendClaude.Label(),
+		Detail:    "Claude Code CLI is not installed.",
+		LoginHint: "Run `claude auth login`, then press r to refresh.",
+	}
+	if _, err := exec.LookPath("claude"); err != nil {
+		return status
+	}
+	status.Installed = true
+	status.Detail = "Claude Code installed, but not logged in."
+
+	out, err := runCommand(ctx, "claude", "auth", "status", "--json")
+	trimmed := strings.TrimSpace(out)
+	auth, ok := parseClaudeAuthStatus(trimmed)
+	if !ok {
+		if trimmed != "" {
+			status.Detail = trimmed
+		}
+		return status
+	}
+	if auth.LoggedIn {
+		status.Authenticated = true
+		status.Ready = true
+		status.Detail = claudeAuthDetail(auth)
+		return status
+	}
+	if err == nil && trimmed != "" {
+		status.Detail = trimmed
+	}
+	return status
+}
+
+type claudeAuthStatus struct {
+	LoggedIn         bool   `json:"loggedIn"`
+	AuthMethod       string `json:"authMethod"`
+	APIProvider      string `json:"apiProvider"`
+	SubscriptionType string `json:"subscriptionType"`
+}
+
+func parseClaudeAuthStatus(raw string) (claudeAuthStatus, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return claudeAuthStatus{}, false
+	}
+	var auth claudeAuthStatus
+	if err := json.Unmarshal([]byte(raw), &auth); err == nil {
+		return auth, true
+	}
+	start := strings.Index(raw, "{")
+	end := strings.LastIndex(raw, "}")
+	if start < 0 || end <= start {
+		return claudeAuthStatus{}, false
+	}
+	if err := json.Unmarshal([]byte(raw[start:end+1]), &auth); err != nil {
+		return claudeAuthStatus{}, false
+	}
+	return auth, true
+}
+
+func claudeAuthDetail(auth claudeAuthStatus) string {
+	parts := []string{"Claude Code ready"}
+	if method := strings.TrimSpace(auth.AuthMethod); method != "" {
+		parts = append(parts, "via "+method)
+	}
+	if subscription := strings.TrimSpace(auth.SubscriptionType); subscription != "" {
+		parts = append(parts, "("+subscription+")")
+	}
+	return strings.Join(parts, " ")
 }
 
 func runCommand(parent context.Context, name string, args ...string) (string, error) {

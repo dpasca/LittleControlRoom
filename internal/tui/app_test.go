@@ -7874,6 +7874,71 @@ func TestRenderSetupOptionRowDistinguishesActiveAndReadyBackends(t *testing.T) {
 	}
 }
 
+func TestOpenSetupModeCanPreferReadyClaudeBackend(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendOpenAIAPI
+
+	m := Model{
+		settingsBaseline: &settings,
+		setupSnapshot: aibackend.Snapshot{
+			Selected: config.AIBackendOpenAIAPI,
+			OpenAIAPI: aibackend.Status{
+				Backend: config.AIBackendOpenAIAPI,
+				Label:   "OpenAI API key",
+				Detail:  "No saved OpenAI API key.",
+			},
+			Claude: aibackend.Status{
+				Backend:       config.AIBackendClaude,
+				Label:         "Claude Code",
+				Installed:     true,
+				Authenticated: true,
+				Ready:         true,
+				Detail:        "Claude Code ready via claude.ai (max)",
+			},
+		},
+	}
+
+	_ = m.openSetupMode()
+	if got := m.setupSelectedBackend(); got != config.AIBackendClaude {
+		t.Fatalf("setupSelectedBackend() = %s, want %s", got, config.AIBackendClaude)
+	}
+}
+
+func TestRenderSetupHintExplainsClaudeHaikuDefault(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendClaude
+
+	m := Model{
+		settingsBaseline: &settings,
+		setupSelected:    mSetupSelectionForTest(config.AIBackendClaude),
+		setupSnapshot: aibackend.Snapshot{
+			Selected: config.AIBackendClaude,
+			Claude: aibackend.Status{
+				Backend:       config.AIBackendClaude,
+				Label:         "Claude Code",
+				Installed:     true,
+				Authenticated: true,
+				Ready:         true,
+				Detail:        "Claude Code ready via claude.ai (max)",
+			},
+		},
+	}
+
+	hint := ansi.Strip(m.renderSetupHint(96))
+	if !strings.Contains(hint, "Haiku") {
+		t.Fatalf("renderSetupHint() = %q, want Haiku guidance", hint)
+	}
+}
+
+func mSetupSelectionForTest(backend config.AIBackend) int {
+	for i, option := range setupBackendOptions {
+		if option == backend {
+			return i
+		}
+	}
+	return 0
+}
+
 func TestCommandEnterOpensNoteDialog(t *testing.T) {
 	input := textinput.New()
 	input.SetValue("/note")

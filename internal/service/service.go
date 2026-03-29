@@ -233,6 +233,12 @@ func (s *Service) configureAIClientsLocked() {
 				todoClient = todoworktree.NewOpenCodeClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
 			}
 		}
+	case config.AIBackendClaude:
+		if selectedStatus.Ready {
+			commitAssistant = gitops.NewClaudeCommitMessageClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
+			client = sessionclassify.NewClaudeClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
+			todoClient = todoworktree.NewClaudeClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
+		}
 	}
 	s.commitMessageSuggester = commitAssistant
 	s.untrackedFileRecommender = commitAssistant

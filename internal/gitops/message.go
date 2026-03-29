@@ -18,21 +18,22 @@ import (
 
 const (
 	defaultCommitModel           = "gpt-5.4-mini"
+	defaultClaudeCommitModel     = "haiku"
 	defaultCommitReasoningEffort = "low"
 )
 
 type CommitMessageInput struct {
-	Intent                  string            `json:"intent"`
-	ProjectName             string            `json:"project_name"`
-	Branch                  string            `json:"branch,omitempty"`
-	StageMode               string            `json:"stage_mode"`
-	LatestSessionSummary    string            `json:"latest_session_summary,omitempty"`
-	IncludedFiles           []string          `json:"included_files"`
-	SuggestedUntrackedFiles []string          `json:"suggested_untracked_files,omitempty"`
-	ExcludedFiles           []string          `json:"excluded_files,omitempty"`
-	DiffStat                string            `json:"diff_stat,omitempty"`
-	Patch                   string            `json:"patch,omitempty"`
-	OpenTodos               []CommitTodoRef   `json:"open_todos,omitempty"`
+	Intent                  string          `json:"intent"`
+	ProjectName             string          `json:"project_name"`
+	Branch                  string          `json:"branch,omitempty"`
+	StageMode               string          `json:"stage_mode"`
+	LatestSessionSummary    string          `json:"latest_session_summary,omitempty"`
+	IncludedFiles           []string        `json:"included_files"`
+	SuggestedUntrackedFiles []string        `json:"suggested_untracked_files,omitempty"`
+	ExcludedFiles           []string        `json:"excluded_files,omitempty"`
+	DiffStat                string          `json:"diff_stat,omitempty"`
+	Patch                   string          `json:"patch,omitempty"`
+	OpenTodos               []CommitTodoRef `json:"open_todos,omitempty"`
 }
 
 type CommitTodoRef struct {
@@ -120,6 +121,17 @@ func NewOpenCodeCommitMessageClientWithFallback(discovery *llm.OpenCodeDiscovery
 	return &OpenAICommitMessageClient{
 		model:     "",
 		responses: fallbackRunner,
+	}
+}
+
+func NewClaudeCommitMessageClientWithUsageTrackerInDataDir(dataDir string, usage *llm.UsageTracker) *OpenAICommitMessageClient {
+	model := strings.TrimSpace(os.Getenv(brand.CommitModelEnvVar))
+	if model == "" {
+		model = defaultClaudeCommitModel
+	}
+	return &OpenAICommitMessageClient{
+		model:     model,
+		responses: llm.NewClaudePrintRunnerInDataDir(dataDir, 45*time.Second, usage),
 	}
 }
 

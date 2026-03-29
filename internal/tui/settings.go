@@ -377,7 +377,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 	return []settingsField{
 		newSensitiveSettingsField(
 			"OpenAI API key",
-			"Used when the AI backend is OpenAI API key. Leave blank if you plan to use Codex or OpenCode instead.",
+			"Used when the AI backend is OpenAI API key. Leave blank if you plan to use Codex, Claude Code, or OpenCode instead.",
 			settings.OpenAIAPIKey,
 			512,
 		),
@@ -489,7 +489,7 @@ func (m Model) settingsFieldHint(index int) string {
 	switch index {
 	case settingsFieldOpenAIAPIKey:
 		if suffix := maskedOpenAIKeySuffix(field.input.Value()); suffix != "" {
-			return field.hint + " Stored key ends with " + suffix + "."
+			return "Used for the OpenAI API backend. Stored key ends with " + suffix + "."
 		}
 		if m.currentSettingsBaseline().AIBackend == config.AIBackendOpenAIAPI {
 			return field.hint + " The selected backend still needs a saved key."

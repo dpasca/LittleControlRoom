@@ -13,6 +13,7 @@ const (
 	AIBackendOpenAIAPI AIBackend = "openai_api"
 	AIBackendCodex     AIBackend = "codex"
 	AIBackendOpenCode  AIBackend = "opencode"
+	AIBackendClaude    AIBackend = "claude_code"
 )
 
 type ModelTier string
@@ -48,8 +49,10 @@ func ParseAIBackend(raw string) (AIBackend, error) {
 		return AIBackendCodex, nil
 	case string(AIBackendOpenCode):
 		return AIBackendOpenCode, nil
+	case string(AIBackendClaude):
+		return AIBackendClaude, nil
 	default:
-		return AIBackendUnset, fmt.Errorf("ai_backend must be one of disabled, openai_api, codex, or opencode")
+		return AIBackendUnset, fmt.Errorf("ai_backend must be one of disabled, openai_api, codex, opencode, or claude_code")
 	}
 }
 
@@ -73,6 +76,8 @@ func (b AIBackend) Label() string {
 		return "Codex"
 	case AIBackendOpenCode:
 		return "OpenCode"
+	case AIBackendClaude:
+		return "Claude Code"
 	default:
 		return "Not configured"
 	}

@@ -33,6 +33,7 @@ const (
 	classifierFallbackReasoningEffort = "low"
 	classifierDefaultRetryBackoff     = 750 * time.Millisecond
 	localRunnerDefaultModel           = "gpt-5.4-mini"
+	localRunnerClaudeDefaultModel     = "haiku"
 )
 
 var classifierAttemptPlan = []classifierAttemptConfig{
@@ -115,6 +116,13 @@ func NewOpenCodeClientWithFallback(discovery *llm.OpenCodeDiscovery, tier config
 	return &OpenAIClient{
 		model:     "",
 		responses: fallbackRunner,
+	}
+}
+
+func NewClaudeClientWithUsageTrackerInDataDir(dataDir string, usage *llm.UsageTracker) *OpenAIClient {
+	return &OpenAIClient{
+		model:     configuredClassifierModel(localRunnerClaudeDefaultModel),
+		responses: llm.NewClaudePrintRunnerInDataDir(dataDir, classifierHTTPTimeout, usage),
 	}
 }
 

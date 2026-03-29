@@ -1,6 +1,81 @@
 # Little Control Room Status
 
-Last updated: 2026-03-30 01:40 JST
+Last updated: 2026-03-30 02:11 JST
+
+## Latest Update (2026-03-30 02:11 JST)
+
+- Added Claude Code as a first-class AI backend for `/setup`, background summaries/classification, commit help, and TODO worktree suggestions:
+  - `internal/config/ai_backend.go`
+    - added `claude_code` as a valid `ai_backend` value and labeled it `Claude Code`
+  - `internal/aibackend/detect.go`
+    - added Claude Code readiness detection via `claude auth status --json`
+    - surfaces Claude as a `/setup` option alongside Codex and OpenCode
+  - `internal/service/service.go`
+    - wires the Claude backend into the existing classifier, commit helper, and TODO worktree suggester paths
+  - `internal/sessionclassify/client.go`
+  - `internal/gitops/message.go`
+  - `internal/todoworktree/client.go`
+    - added Claude-backed constructors that use a local Claude CLI runner
+  - `internal/llm/local_cli.go`
+    - added `ClaudePrintRunner`
+    - runs `claude -p` with JSON output, JSON Schema validation, tools disabled, and an isolated internal workspace
+    - parses Claude `structured_output`, actual model IDs, and usage/cost metadata from the result envelope
+    - defaults Claude background inference to the cheaper `haiku` alias
+    - skips `--effort` when the requested Claude model is Haiku, since current Claude docs only advertise effort support on Sonnet/Opus families
+  - `internal/tui/setup.go`
+    - added Claude Code to `/setup`
+    - added a hint that Claude-backed background tasks default to Haiku to reduce usage impact
+  - `internal/tui/settings.go`
+  - `internal/tui/app.go`
+    - updated surrounding UI copy and local-backend usage labels to include Claude Code
+- Validated current assumptions before coding:
+  - local `claude --help` confirms headless `-p`, `--model`, `--json-schema`, and output-format controls are available in the installed CLI
+  - local `claude auth status --json` works on this machine and is suitable for `/setup` readiness checks
+  - current Claude Code docs confirm `haiku` is the fast/efficient alias and that it is appropriate for lighter-weight/background usage
+- Added focused coverage:
+  - `internal/aibackend/detect_test.go`
+    - covers Claude auth-status parsing and readiness detail formatting
+  - `internal/config/ai_backend_test.go`
+    - covers `claude_code` backend parsing and labeling
+  - `internal/llm/local_cli_test.go`
+    - covers Claude runner parsing, caching, and model-effort support rules
+  - `internal/tui/app_test.go`
+    - covers preferring a ready Claude backend in `/setup`
+    - covers the Claude/Haiku hint text in `/setup`
+    - keeps the OpenAI API key hint behavior covered after the copy update
+- Files modified in this pass:
+  - `internal/aibackend/detect.go`
+  - `internal/aibackend/detect_test.go`
+  - `internal/config/ai_backend.go`
+  - `internal/config/ai_backend_test.go`
+  - `internal/gitops/message.go`
+  - `internal/llm/local_cli.go`
+  - `internal/llm/local_cli_test.go`
+  - `internal/service/service.go`
+  - `internal/sessionclassify/client.go`
+  - `internal/todoworktree/client.go`
+  - `internal/tui/app.go`
+  - `internal/tui/app_test.go`
+  - `internal/tui/settings.go`
+  - `internal/tui/setup.go`
+  - `STATUS.md`
+- Verification status:
+  - `go test ./internal/aibackend ./internal/config ./internal/llm -count=1` passed
+  - `go test ./internal/sessionclassify ./internal/gitops ./internal/todoworktree ./internal/service ./internal/tui -run 'Test(OpenSetupModeCanPreferReadyClaudeBackend|RenderSetupHintExplainsClaudeHaikuDefault|SettingsAPIKeyHintShowsMaskedSuffix|OpenSetupModePrefersReadyBackendOverUnavailableCurrentBackend|RenderSetupOptionRowDistinguishesActiveAndReadyBackends)' -count=1` passed
+  - live Claude sanity check passed:
+    - `printf 'Return {"ok":true}.' | claude -p --no-session-persistence --output-format json --json-schema ... --model haiku --tools=`
+    - Claude returned `structured_output={"ok":true}` plus model/usage metadata, confirming the local runner contract
+  - `make scan` passed at `2026-03-30T02:05:32+09:00`
+  - `make doctor` passed using cached report at `2026-03-30T02:05:46+09:00`
+  - `make test` still fails in the same pre-existing `internal/tui` coverage unrelated to this Claude-backend change:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+  - `timeout 10s make tui` could not run an interactive verification pass because another live `lcroom tui` runtime already owned the default DB
+  - `timeout 10s make tui-parallel` still could not complete interactive verification in this environment because opening `/dev/tty` failed (`device not configured`)
+- Next concrete tasks:
+  - Decide whether Claude background inference should stay hard-wired to `haiku` or gain an explicit `/setup` or `/settings` override once the default proves out.
+  - If Claude exposes richer headless usage metadata in a stable format, thread that through `ClaudePrintRunner` so the footer can report Claude token/cost estimates the same way other runners do.
 
 ## Latest Update (2026-03-30 01:40 JST)
 

@@ -13,6 +13,7 @@ import (
 var setupBackendOptions = []config.AIBackend{
 	config.AIBackendCodex,
 	config.AIBackendOpenCode,
+	config.AIBackendClaude,
 	config.AIBackendOpenAIAPI,
 	config.AIBackendDisabled,
 }
@@ -268,6 +269,9 @@ func (m Model) renderSetupHint(width int) string {
 	}
 	if m.setupSelectedBackend() == config.AIBackendOpenCode && selectedStatus.Ready {
 		hint = "OpenCode will use " + string(m.setupModelTier) + " tier models for summaries. Press T to cycle: free → cheap → balanced."
+	}
+	if m.setupSelectedBackend() == config.AIBackendClaude && selectedStatus.Ready {
+		hint = "Claude Code will default to the Haiku alias for these background tasks to keep usage lighter."
 	}
 	if selectedStatus.LoginHint != "" && !selectedStatus.Ready {
 		hint = selectedStatus.LoginHint

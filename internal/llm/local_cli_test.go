@@ -54,6 +54,70 @@ func TestParseOpenCodeRunJSONL(t *testing.T) {
 	}
 }
 
+func TestParseClaudePrintOutput(t *testing.T) {
+	raw := `{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "result": "",
+  "structured_output": {"message":"hello"},
+  "usage": {
+    "input_tokens": 18,
+    "cache_read_input_tokens": 7,
+    "cache_creation_input_tokens": 5,
+    "output_tokens": 3
+  },
+  "modelUsage": {
+    "claude-haiku-4-5-20251001": {
+      "inputTokens": 18,
+      "outputTokens": 3,
+      "cacheReadInputTokens": 7,
+      "cacheCreationInputTokens": 5,
+      "costUSD": 0.01
+    }
+  }
+}`
+
+	got, err := parseClaudePrintOutput(raw, "haiku")
+	if err != nil {
+		t.Fatalf("parseClaudePrintOutput() error = %v", err)
+	}
+	if got.OutputText != "{\"message\":\"hello\"}" {
+		t.Fatalf("output text = %q, want hello json", got.OutputText)
+	}
+	if got.Usage.InputTokens != 30 || got.Usage.CachedInputTokens != 7 || got.Usage.OutputTokens != 3 {
+		t.Fatalf("usage = %#v, want parsed usage totals", got.Usage)
+	}
+	if got.Usage.EstimatedCostUSD != 0.01 {
+		t.Fatalf("estimated cost = %f, want 0.01", got.Usage.EstimatedCostUSD)
+	}
+	if got.Model != "haiku" {
+		t.Fatalf("model = %q, want haiku", got.Model)
+	}
+}
+
+func TestClaudeModelSupportsEffort(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		model string
+		want  bool
+	}{
+		{model: "haiku", want: false},
+		{model: "claude-haiku-4-5", want: false},
+		{model: "sonnet", want: true},
+		{model: "claude-sonnet-4-6", want: true},
+		{model: "opusplan", want: true},
+		{model: "default", want: true},
+	}
+
+	for _, tt := range tests {
+		if got := claudeModelSupportsEffort(tt.model); got != tt.want {
+			t.Fatalf("claudeModelSupportsEffort(%q) = %v, want %v", tt.model, got, tt.want)
+		}
+	}
+}
+
 func TestCodexExecRunnerCachesIdenticalRequests(t *testing.T) {
 	tmp := t.TempDir()
 	countFile := filepath.Join(tmp, "codex-count.txt")
@@ -119,6 +183,51 @@ func TestOpenCodeRunRunnerCachesIdenticalRequests(t *testing.T) {
 
 	req := JSONSchemaRequest{
 		Model:           "gpt-5.4-mini",
+		SystemText:      "system",
+		UserText:        "user",
+		SchemaName:      "demo",
+		Schema:          map[string]any{"type": "object"},
+		ReasoningEffort: "low",
+	}
+
+	first, err := runner.RunJSONSchema(context.Background(), req)
+	if err != nil {
+		t.Fatalf("first RunJSONSchema() error = %v", err)
+	}
+	second, err := runner.RunJSONSchema(context.Background(), req)
+	if err != nil {
+		t.Fatalf("second RunJSONSchema() error = %v", err)
+	}
+	if first.OutputText != second.OutputText {
+		t.Fatalf("cached output = %q, want %q", second.OutputText, first.OutputText)
+	}
+	countRaw, err := os.ReadFile(countFile)
+	if err != nil {
+		t.Fatalf("read count file: %v", err)
+	}
+	if strings.TrimSpace(string(countRaw)) != "1" {
+		t.Fatalf("runner command count = %q, want 1 cached invocation", strings.TrimSpace(string(countRaw)))
+	}
+}
+
+func TestClaudePrintRunnerCachesIdenticalRequests(t *testing.T) {
+	tmp := t.TempDir()
+	countFile := filepath.Join(tmp, "claude-count.txt")
+	scriptPath := filepath.Join(tmp, "claude")
+	writeRunnerScript(t, scriptPath, strings.Join([]string{
+		"#!/bin/sh",
+		"count=0",
+		"if [ -f " + shellQuote(countFile) + " ]; then count=$(cat " + shellQuote(countFile) + "); fi",
+		"count=$((count+1))",
+		"printf '%s' \"$count\" > " + shellQuote(countFile),
+		"printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"structured_output\":{\"message\":\"hello\"},\"usage\":{\"input_tokens\":12,\"cache_read_input_tokens\":4,\"cache_creation_input_tokens\":0,\"output_tokens\":3},\"modelUsage\":{\"claude-haiku-4-5-20251001\":{\"inputTokens\":12,\"outputTokens\":3,\"cacheReadInputTokens\":4,\"cacheCreationInputTokens\":0,\"costUSD\":0.01}}}'",
+	}, "\n"))
+
+	runner := NewClaudePrintRunner(2*time.Second, nil)
+	runner.command = scriptPath
+
+	req := JSONSchemaRequest{
+		Model:           "haiku",
 		SystemText:      "system",
 		UserText:        "user",
 		SchemaName:      "demo",

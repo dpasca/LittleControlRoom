@@ -4721,7 +4721,7 @@ func (m Model) footerUsageLabel() string {
 		return "AI unavailable"
 	default:
 		switch m.setupSnapshot.Selected {
-		case config.AIBackendCodex, config.AIBackendOpenCode:
+		case config.AIBackendCodex, config.AIBackendOpenCode, config.AIBackendClaude:
 			return compactLocalUsageLabel(m.setupSnapshot.Selected.Label(), m.currentUsage())
 		}
 		return compactUsageLabel(m.currentUsage())
