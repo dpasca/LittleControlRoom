@@ -2,56 +2,169 @@ package codexapp
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"lcroom/internal/codexcli"
+)
+
+const (
+	claudeThinkingStatus           = "Claude Code is thinking..."
+	claudeReadyStatus              = "Claude Code session ready"
+	claudeFreshReadyStatus         = "Fresh embedded Claude Code session ready. Send a prompt to start it."
+	claudeSupportStatus            = "Embedded Claude Code session ready"
+	claudeInterruptNotice          = "Interrupted embedded Claude Code turn."
+	claudeCompactUnsupported       = "Embedded Claude Code compact is not supported yet"
+	claudeAttachmentsUnsupported   = "Embedded Claude Code attachments are not supported yet"
+	claudeApprovalUnsupported      = "Embedded Claude Code approval responses are not supported yet"
+	claudeToolInputUnsupported     = "Embedded Claude Code tool-input responses are not supported yet"
+	claudeElicitationUnsupported   = "Embedded Claude Code elicitation responses are not supported yet"
+	claudeSafePresetMappingNotice  = "Embedded Claude Code currently maps Safe/Full Auto presets to Claude's acceptEdits mode until Claude-specific approval prompts are wired."
+	claudeYoloPresetMappingNotice  = "Embedded Claude Code is running in Claude's bypassPermissions mode because the current launch preset is YOLO."
+	claudeStatusTranscriptTemplate = "Claude session %s\nModel: %s\nMode: %s\nSession file: %s"
+	claudeDefaultModelAlias        = "sonnet"
+	claudeDefaultReasoningEffort   = "medium"
 )
 
 type claudeCodeSession struct {
 	projectPath string
+	preset      codexcli.Preset
 	notify      func()
 
-	mu             sync.Mutex
-	claudeHome     string
-	sessionFile    string
-	sessionID      string
-	started        bool
-	closed         bool
-	busyExternal   bool
-	lastActivityAt time.Time
-	model          string
-	entries        []TranscriptEntry
-	lastFileSize   int64
+	mu               sync.Mutex
+	claudeHome       string
+	sessionFile      string
+	sessionID        string
+	started          bool
+	closed           bool
+	busy             bool
+	busyExternal     bool
+	interruptPending bool
+	lastActivityAt   time.Time
+	model            string
+	reasoningEffort  string
+	pendingModel     string
+	pendingReasoning string
+	status           string
+	lastError        string
+	lastSystemNotice string
+	entries          []TranscriptEntry
+	lastFileSize     int64
+	runningPID       int
+	cmd              *exec.Cmd
+	cancel           context.CancelFunc
+	closedCh         chan struct{}
+	closedOnce       sync.Once
+	modeNoticeShown  bool
+
+	assistantBlocks map[string]map[string]struct{}
+	toolCalls       map[string]claudeToolCall
+	toolResults     map[string]struct{}
+}
+
+type claudeToolCall struct {
+	Name    string
+	Summary string
+	Command string
+}
+
+type claudeStreamEnvelope struct {
+	Type        string          `json:"type"`
+	Subtype     string          `json:"subtype"`
+	SessionID   string          `json:"session_id"`
+	UUID        string          `json:"uuid"`
+	Message     json.RawMessage `json:"message"`
+	Result      string          `json:"result"`
+	IsError     bool            `json:"is_error"`
+	StopReason  string          `json:"stop_reason"`
+	LastMessage string          `json:"last_message"`
+}
+
+type claudeStreamMessage struct {
+	ID      string `json:"id"`
+	Model   string `json:"model"`
+	Role    string `json:"role"`
+	Content []struct {
+		Type      string          `json:"type"`
+		Text      string          `json:"text"`
+		Thinking  string          `json:"thinking"`
+		ID        string          `json:"id"`
+		Name      string          `json:"name"`
+		Input     json.RawMessage `json:"input"`
+		ToolUseID string          `json:"tool_use_id"`
+		Content   any             `json:"content"`
+	} `json:"content"`
+}
+
+type claudeActivePIDSession struct {
+	PID       int    `json:"pid"`
+	SessionID string `json:"sessionId"`
 }
 
 func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
+	if _, err := exec.LookPath("claude"); err != nil {
+		return nil, fmt.Errorf("claude executable not found: %w", err)
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("resolve home directory: %w", err)
 	}
 	claudeHome := filepath.Join(home, ".claude")
+	preset := req.Preset
+	if preset == "" {
+		preset = codexcli.DefaultPreset()
+	}
 
 	s := &claudeCodeSession{
-		projectPath: req.ProjectPath,
-		notify:      notify,
-		claudeHome:  claudeHome,
+		projectPath:      req.ProjectPath,
+		preset:           preset,
+		notify:           notify,
+		claudeHome:       claudeHome,
+		pendingModel:     strings.TrimSpace(req.PendingModel),
+		pendingReasoning: strings.TrimSpace(req.PendingReasoning),
+		status:           claudeSupportStatus,
+		closedCh:         make(chan struct{}),
+		assistantBlocks:  make(map[string]map[string]struct{}),
+		toolCalls:        make(map[string]claudeToolCall),
+		toolResults:      make(map[string]struct{}),
 	}
 
-	sessionFile, sessionID, ok := s.findLatestSession()
-	if !ok {
-		return nil, fmt.Errorf("no Claude Code session found for %s", req.ProjectPath)
+	if !req.ForceNew {
+		switch resumeID := strings.TrimSpace(req.ResumeID); {
+		case resumeID != "":
+			s.sessionID = resumeID
+			s.sessionFile = claudeSessionFilePath(s.claudeHome, s.projectPath, resumeID)
+			s.started = true
+		default:
+			sessionFile, sessionID, ok := s.findLatestSession()
+			if ok {
+				s.sessionFile = sessionFile
+				s.sessionID = sessionID
+				s.started = true
+			}
+		}
 	}
-	s.sessionFile = sessionFile
-	s.sessionID = sessionID
-	s.started = true
 
-	s.loadTranscript()
-	s.refreshActive()
+	s.mu.Lock()
+	s.loadTranscriptLocked()
+	s.refreshActiveLocked()
+	s.updateStatusLocked()
+	s.mu.Unlock()
+
+	if strings.TrimSpace(req.Prompt) != "" {
+		if err := s.Submit(req.Prompt); err != nil {
+			return nil, err
+		}
+	}
 
 	return s, nil
 }
@@ -70,90 +183,685 @@ func (s *claudeCodeSession) Snapshot() Snapshot {
 		phase = SessionPhaseClosed
 	case s.busyExternal:
 		phase = SessionPhaseExternal
+	case s.busy:
+		phase = SessionPhaseRunning
+	}
+
+	lines := make([]string, 0, len(s.entries))
+	for _, entry := range s.entries {
+		text := strings.TrimSpace(entry.DisplayText)
+		if text == "" {
+			text = strings.TrimSpace(entry.Text)
+		}
+		if text == "" {
+			continue
+		}
+		lines = append(lines, formatTranscriptEntryForProvider(ProviderClaudeCode, entry.Kind, text))
 	}
 
 	return Snapshot{
-		Provider:       ProviderClaudeCode,
-		ProjectPath:    s.projectPath,
-		ThreadID:       s.sessionID,
-		Phase:          phase,
-		Started:        s.started,
-		Busy:           s.busyExternal,
-		BusyExternal:   s.busyExternal,
-		Closed:         s.closed,
-		Entries:        append([]TranscriptEntry(nil), s.entries...),
-		LastActivityAt: s.lastActivityAt,
-		Model:          s.model,
-		Status:         "Claude Code (read-only)",
-		LastSystemNotice: "Claude Code sessions are read-only. Use a terminal to interact with Claude Code.",
+		Provider:         ProviderClaudeCode,
+		ProjectPath:      s.projectPath,
+		ThreadID:         s.sessionID,
+		Preset:           s.preset,
+		Phase:            phase,
+		Started:          s.started,
+		Busy:             s.busy || s.busyExternal,
+		BusyExternal:     s.busyExternal,
+		Closed:           s.closed,
+		Entries:          append([]TranscriptEntry(nil), s.entries...),
+		Transcript:       strings.Join(lines, "\n"),
+		Status:           s.status,
+		LastError:        s.lastError,
+		LastSystemNotice: s.lastSystemNotice,
+		LastActivityAt:   s.lastActivityAt,
+		Model:            s.model,
+		ReasoningEffort:  s.reasoningEffort,
+		PendingModel:     s.pendingModel,
+		PendingReasoning: s.pendingReasoning,
 	}
 }
 
-func (s *claudeCodeSession) Submit(_ string) error {
-	return fmt.Errorf("Claude Code sessions are read-only")
+func (s *claudeCodeSession) Submit(prompt string) error {
+	return s.SubmitInput(Submission{Text: prompt})
 }
 
-func (s *claudeCodeSession) SubmitInput(_ Submission) error {
-	return fmt.Errorf("Claude Code sessions are read-only")
+func (s *claudeCodeSession) SubmitInput(input Submission) error {
+	if input.Empty() {
+		return nil
+	}
+	if len(input.Attachments) > 0 {
+		return fmt.Errorf(claudeAttachmentsUnsupported)
+	}
+
+	displayText := strings.TrimSpace(input.TranscriptDisplayText())
+	if displayText == "" {
+		return fmt.Errorf("Claude Code prompt required")
+	}
+
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return fmt.Errorf("Claude Code session is closed")
+	}
+	s.refreshActiveLocked()
+	switch {
+	case s.busyExternal:
+		s.mu.Unlock()
+		return fmt.Errorf("this Claude Code session is already busy in another process; Little Control Room is read-only until it finishes")
+	case s.busy:
+		s.mu.Unlock()
+		return fmt.Errorf("Claude Code is already handling a prompt")
+	}
+
+	model := firstNonEmptyTrimmed(strings.TrimSpace(s.pendingModel), strings.TrimSpace(s.model))
+	reasoning := firstNonEmptyTrimmed(strings.TrimSpace(s.pendingReasoning), strings.TrimSpace(s.reasoningEffort))
+	sessionID := strings.TrimSpace(s.sessionID)
+	permissionMode, modeNotice := claudePermissionModeForPreset(s.preset)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd, stdin, stdout, stderr, err := startClaudeTurn(ctx, s.projectPath, sessionID, model, reasoning, permissionMode)
+	if err != nil {
+		cancel()
+		s.mu.Unlock()
+		return err
+	}
+
+	s.busy = true
+	s.busyExternal = false
+	s.interruptPending = false
+	s.status = claudeThinkingStatus
+	s.lastError = ""
+	s.lastSystemNotice = ""
+	s.cmd = cmd
+	s.cancel = cancel
+	s.runningPID = cmd.Process.Pid
+	s.started = s.started || sessionID != ""
+	s.appendEntryLocked(TranscriptEntry{Kind: TranscriptUser, Text: displayText})
+	s.touchLocked()
+	if modeNotice != "" && !s.modeNoticeShown {
+		s.appendSystemNoticeLocked(modeNotice)
+		s.modeNoticeShown = true
+	}
+	s.mu.Unlock()
+
+	payload, err := buildClaudeStreamInput(input.Text)
+	if err != nil {
+		_ = terminateAppServerCommand(cmd)
+		_ = stdin.Close()
+		s.finishClaudeTurn(fmt.Errorf("encode Claude input: %w", err), nil, nil)
+		return err
+	}
+	if _, err := io.WriteString(stdin, payload+"\n"); err != nil {
+		_ = terminateAppServerCommand(cmd)
+		_ = stdin.Close()
+		s.finishClaudeTurn(fmt.Errorf("write Claude input: %w", err), nil, nil)
+		return err
+	}
+	_ = stdin.Close()
+
+	go s.consumeClaudeTurn(ctx, cmd, stdout, stderr)
+	s.notifyAsync()
+	return nil
 }
 
 func (s *claudeCodeSession) ShowStatus() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.loadTranscript()
-	s.refreshActive()
-	s.notify()
+
+	s.loadTranscriptLocked()
+	s.refreshActiveLocked()
+	s.updateStatusLocked()
+
+	sessionID := strings.TrimSpace(s.sessionID)
+	if sessionID == "" {
+		sessionID = "(not started yet)"
+	}
+	model := strings.TrimSpace(s.model)
+	if model == "" {
+		model = "(default)"
+	}
+	mode := claudePermissionModeLabel(s.preset)
+	sessionFile := strings.TrimSpace(s.sessionFile)
+	if sessionFile == "" {
+		sessionFile = "(not created yet)"
+	}
+	s.entries = append(s.entries, TranscriptEntry{
+		Kind: TranscriptStatus,
+		Text: fmt.Sprintf(claudeStatusTranscriptTemplate, sessionID, model, mode, sessionFile),
+	})
+	s.notifyAsync()
 	return nil
 }
 
 func (s *claudeCodeSession) Compact() error {
-	return fmt.Errorf("Claude Code sessions are read-only")
+	return fmt.Errorf(claudeCompactUnsupported)
 }
 
 func (s *claudeCodeSession) ListModels() ([]ModelOption, error) {
-	return nil, nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	models := append([]ModelOption(nil), claudeEmbeddedModelOptions()...)
+	extra := make([]ModelOption, 0, 2)
+	for _, model := range []string{s.pendingModel, s.model} {
+		model = strings.TrimSpace(model)
+		if model == "" || claudeModelOptionExists(models, model) {
+			continue
+		}
+		extra = append(extra, ModelOption{
+			ID:                        model,
+			Model:                     model,
+			DisplayName:               model,
+			Description:               "Current Claude Code model",
+			SupportedReasoningEfforts: claudeReasoningEffortOptions(),
+			DefaultReasoningEffort:    claudeDefaultReasoningEffort,
+		})
+	}
+	models = append(extra, models...)
+	return models, nil
 }
 
-func (s *claudeCodeSession) StageModelOverride(_, _ string) error {
-	return fmt.Errorf("Claude Code sessions are read-only")
+func (s *claudeCodeSession) StageModelOverride(model, reasoning string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed {
+		return fmt.Errorf("Claude Code session is closed")
+	}
+	s.pendingModel = strings.TrimSpace(model)
+	s.pendingReasoning = strings.TrimSpace(reasoning)
+	if s.pendingModel == "" && s.pendingReasoning == "" {
+		s.lastSystemNotice = ""
+		s.updateStatusLocked()
+		return nil
+	}
+	parts := []string{}
+	if s.pendingModel != "" {
+		parts = append(parts, "model "+s.pendingModel)
+	}
+	if s.pendingReasoning != "" {
+		parts = append(parts, "effort "+s.pendingReasoning)
+	}
+	s.lastSystemNotice = "Claude Code will use " + strings.Join(parts, ", ") + " on the next prompt."
+	s.updateStatusLocked()
+	s.notifyAsync()
+	return nil
 }
 
 func (s *claudeCodeSession) Interrupt() error {
-	return fmt.Errorf("Claude Code sessions are read-only")
+	s.mu.Lock()
+	cmd := s.cmd
+	if s.closed {
+		s.mu.Unlock()
+		return fmt.Errorf("Claude Code session is closed")
+	}
+	if cmd == nil || !s.busy {
+		s.mu.Unlock()
+		return fmt.Errorf("Claude Code is not currently running")
+	}
+	s.interruptPending = true
+	s.lastSystemNotice = claudeInterruptNotice
+	s.status = claudeInterruptNotice
+	s.mu.Unlock()
+
+	if err := terminateAppServerCommand(cmd); err != nil {
+		return err
+	}
+	s.notifyAsync()
+	return nil
+}
+
+func claudeEmbeddedModelOptions() []ModelOption {
+	return []ModelOption{
+		{
+			ID:                        claudeDefaultModelAlias,
+			Model:                     claudeDefaultModelAlias,
+			DisplayName:               "Sonnet",
+			Description:               "Latest Claude Sonnet alias for general coding work.",
+			SupportedReasoningEfforts: claudeReasoningEffortOptions(),
+			DefaultReasoningEffort:    claudeDefaultReasoningEffort,
+			IsDefault:                 true,
+		},
+		{
+			ID:                        "opus",
+			Model:                     "opus",
+			DisplayName:               "Opus",
+			Description:               "Latest Claude Opus alias for deeper reasoning.",
+			SupportedReasoningEfforts: claudeReasoningEffortOptions(),
+			DefaultReasoningEffort:    claudeDefaultReasoningEffort,
+		},
+		{
+			ID:                        "haiku",
+			Model:                     "haiku",
+			DisplayName:               "Haiku",
+			Description:               "Latest Claude Haiku alias for faster, lighter turns.",
+			SupportedReasoningEfforts: claudeReasoningEffortOptions(),
+			DefaultReasoningEffort:    claudeDefaultReasoningEffort,
+		},
+	}
+}
+
+func claudeReasoningEffortOptions() []ReasoningEffortOption {
+	return []ReasoningEffortOption{
+		{ReasoningEffort: "low", Description: "Fastest response"},
+		{ReasoningEffort: "medium", Description: "Balanced"},
+		{ReasoningEffort: "high", Description: "More deliberate"},
+		{ReasoningEffort: "max", Description: "Most thorough"},
+	}
+}
+
+func claudeModelOptionExists(models []ModelOption, id string) bool {
+	id = strings.TrimSpace(id)
+	for _, option := range models {
+		if strings.EqualFold(strings.TrimSpace(option.ID), id) ||
+			strings.EqualFold(strings.TrimSpace(option.Model), id) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *claudeCodeSession) RespondApproval(_ ApprovalDecision) error {
-	return fmt.Errorf("Claude Code sessions are read-only")
+	return fmt.Errorf(claudeApprovalUnsupported)
 }
 
 func (s *claudeCodeSession) RespondToolInput(_ map[string][]string) error {
-	return fmt.Errorf("Claude Code sessions are read-only")
+	return fmt.Errorf(claudeToolInputUnsupported)
 }
 
 func (s *claudeCodeSession) RespondElicitation(_ ElicitationDecision, _ json.RawMessage) error {
-	return fmt.Errorf("Claude Code sessions are read-only")
+	return fmt.Errorf(claudeElicitationUnsupported)
 }
 
 func (s *claudeCodeSession) Close() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil
+	}
 	s.closed = true
+	cmd := s.cmd
+	s.updateStatusLocked()
+	if cmd == nil {
+		s.closeClosedCh()
+	}
+	s.mu.Unlock()
+
+	if cmd != nil {
+		return terminateAppServerCommand(cmd)
+	}
 	return nil
+}
+
+func (s *claudeCodeSession) CloseDueToInactivity() error {
+	return s.Close()
+}
+
+func (s *claudeCodeSession) WaitClosed(timeout time.Duration) bool {
+	if timeout <= 0 {
+		timeout = time.Second
+	}
+	select {
+	case <-s.closedCh:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
 }
 
 // RefreshBusyElsewhere implements busyElsewhereRefresher.
 func (s *claudeCodeSession) RefreshBusyElsewhere() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.loadTranscript()
-	s.refreshActive()
-	s.notify()
+	s.loadTranscriptLocked()
+	s.refreshActiveLocked()
+	s.updateStatusLocked()
+	s.notifyAsync()
 	return nil
 }
 
 // ReconcileBusyState implements busyReconciler.
 func (s *claudeCodeSession) ReconcileBusyState() error {
 	return s.RefreshBusyElsewhere()
+}
+
+func (s *claudeCodeSession) consumeClaudeTurn(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.ReadCloser) {
+	stdoutErrCh := make(chan error, 1)
+	stderrErrCh := make(chan error, 1)
+
+	go func() {
+		stdoutErrCh <- s.readClaudeStdout(stdout)
+	}()
+	go func() {
+		stderrErrCh <- s.readClaudeStderr(stderr)
+	}()
+
+	waitErr := cmd.Wait()
+	stdoutErr := <-stdoutErrCh
+	stderrErr := <-stderrErrCh
+
+	if ctx.Err() != nil && waitErr != nil {
+		waitErr = nil
+	}
+	s.finishClaudeTurn(waitErr, stdoutErr, stderrErr)
+}
+
+func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.busy = false
+	s.cmd = nil
+	s.cancel = nil
+	s.runningPID = 0
+	interrupted := s.interruptPending
+	s.interruptPending = false
+
+	if s.sessionID != "" {
+		s.sessionFile = claudeSessionFilePath(s.claudeHome, s.projectPath, s.sessionID)
+	}
+	s.loadTranscriptLocked()
+	s.refreshActiveLocked()
+
+	switch {
+	case interrupted:
+		s.lastError = ""
+		s.lastSystemNotice = claudeInterruptNotice
+		s.status = claudeReadyStatus
+	case waitErr != nil:
+		s.appendSystemErrorLocked(fmt.Sprintf("Claude Code exited with error: %v", waitErr))
+	case stdoutErr != nil:
+		s.appendSystemErrorLocked(fmt.Sprintf("Could not read Claude Code output: %v", stdoutErr))
+	case stderrErr != nil:
+		s.appendSystemErrorLocked(fmt.Sprintf("Could not read Claude Code stderr: %v", stderrErr))
+	default:
+		s.lastError = ""
+		s.lastSystemNotice = "Claude Code turn completed."
+		s.updateStatusLocked()
+	}
+
+	if s.closed {
+		s.closeClosedCh()
+	}
+	s.notifyAsync()
+}
+
+func (s *claudeCodeSession) readClaudeStdout(r io.Reader) error {
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	for sc.Scan() {
+		s.handleClaudeStdoutLine(sc.Text())
+	}
+	return sc.Err()
+}
+
+func (s *claudeCodeSession) readClaudeStderr(r io.Reader) error {
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		s.mu.Lock()
+		s.entries = append(s.entries, TranscriptEntry{
+			Kind: TranscriptError,
+			Text: "claude stderr: " + line,
+		})
+		s.lastError = "claude stderr: " + line
+		s.status = "Claude Code reported an error"
+		s.touchLocked()
+		s.mu.Unlock()
+		s.notifyAsync()
+	}
+	return sc.Err()
+}
+
+func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return
+	}
+
+	var env claudeStreamEnvelope
+	if err := json.Unmarshal([]byte(line), &env); err != nil {
+		s.mu.Lock()
+		s.entries = append(s.entries, TranscriptEntry{
+			Kind: TranscriptOther,
+			Text: line,
+		})
+		s.touchLocked()
+		s.mu.Unlock()
+		s.notifyAsync()
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	switch env.Type {
+	case "system":
+		if env.Subtype == "init" {
+			if sessionID := strings.TrimSpace(env.SessionID); sessionID != "" {
+				s.sessionID = sessionID
+				s.sessionFile = claudeSessionFilePath(s.claudeHome, s.projectPath, sessionID)
+				s.started = true
+			}
+			var initMsg struct {
+				Model          string `json:"model"`
+				PermissionMode string `json:"permissionMode"`
+			}
+			if err := json.Unmarshal(env.Message, &initMsg); err == nil {
+				if model := strings.TrimSpace(initMsg.Model); model != "" {
+					s.model = model
+					s.pendingModel = ""
+				}
+				if effort := strings.TrimSpace(s.pendingReasoning); effort != "" {
+					s.reasoningEffort = effort
+					s.pendingReasoning = ""
+				}
+				if mode := strings.TrimSpace(initMsg.PermissionMode); mode != "" {
+					s.lastSystemNotice = "Claude Code permission mode: " + mode
+				}
+			}
+			s.status = claudeThinkingStatus
+		}
+	case "assistant":
+		s.handleClaudeAssistantLocked(env.Message)
+	case "user":
+		s.handleClaudeUserLocked(env.Message)
+	case "result":
+		if env.IsError {
+			message := strings.TrimSpace(env.Result)
+			if message == "" {
+				message = "Claude Code returned an error result"
+			}
+			s.appendSystemErrorLocked(message)
+		}
+	default:
+	}
+
+	s.touchLocked()
+	s.notifyAsync()
+}
+
+func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage) {
+	var msg claudeStreamMessage
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		return
+	}
+	if model := strings.TrimSpace(msg.Model); model != "" {
+		s.model = model
+		s.pendingModel = ""
+	}
+	if msg.ID == "" {
+		msg.ID = fmt.Sprintf("assistant-%d", len(s.entries))
+	}
+	seen := s.assistantBlocks[msg.ID]
+	if seen == nil {
+		seen = make(map[string]struct{})
+		s.assistantBlocks[msg.ID] = seen
+	}
+	for _, block := range msg.Content {
+		switch block.Type {
+		case "text":
+			text := strings.TrimSpace(block.Text)
+			if text == "" {
+				continue
+			}
+			key := "text:" + text
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			s.entries = append(s.entries, TranscriptEntry{
+				ItemID: msg.ID,
+				Kind:   TranscriptAgent,
+				Text:   text,
+			})
+		case "thinking":
+			thinking := strings.TrimSpace(block.Thinking)
+			if thinking == "" {
+				continue
+			}
+			key := "thinking:" + thinking
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			s.entries = append(s.entries, TranscriptEntry{
+				ItemID: msg.ID,
+				Kind:   TranscriptReasoning,
+				Text:   thinking,
+			})
+		case "tool_use":
+			summary, command := summarizeClaudeToolUse(block.Name, block.Input)
+			key := "tool:" + block.ID + ":" + block.Name + ":" + summary
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			text := block.Name
+			if summary != "" {
+				text = block.Name + ": " + summary
+			}
+			s.entries = append(s.entries, TranscriptEntry{
+				ItemID: msg.ID,
+				Kind:   TranscriptTool,
+				Text:   text,
+			})
+			if block.ID != "" {
+				s.toolCalls[block.ID] = claudeToolCall{
+					Name:    block.Name,
+					Summary: summary,
+					Command: command,
+				}
+			}
+		}
+	}
+}
+
+func (s *claudeCodeSession) handleClaudeUserLocked(raw json.RawMessage) {
+	var msg claudeStreamMessage
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		return
+	}
+	for _, block := range msg.Content {
+		if block.Type != "tool_result" {
+			continue
+		}
+		toolUseID := strings.TrimSpace(block.ToolUseID)
+		if toolUseID == "" {
+			continue
+		}
+		if _, ok := s.toolResults[toolUseID]; ok {
+			continue
+		}
+		s.toolResults[toolUseID] = struct{}{}
+		call := s.toolCalls[toolUseID]
+		if !strings.EqualFold(call.Name, "Bash") {
+			continue
+		}
+		text := strings.TrimSpace(flattenClaudeToolResultContent(block.Content))
+		if text == "" {
+			text = "[command completed]"
+		}
+		command := strings.TrimSpace(call.Command)
+		if command == "" {
+			command = call.Summary
+		}
+		if command != "" {
+			text = "$ " + command + "\n" + text
+		}
+		s.entries = append(s.entries, TranscriptEntry{
+			Kind: TranscriptCommand,
+			Text: text,
+		})
+	}
+}
+
+func (s *claudeCodeSession) appendEntryLocked(entry TranscriptEntry) {
+	s.entries = append(s.entries, entry)
+}
+
+func (s *claudeCodeSession) appendSystemNoticeLocked(text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	s.lastSystemNotice = text
+	s.entries = append(s.entries, TranscriptEntry{
+		Kind: TranscriptSystem,
+		Text: text,
+	})
+	s.updateStatusLocked()
+}
+
+func (s *claudeCodeSession) appendSystemErrorLocked(text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	s.lastError = text
+	s.entries = append(s.entries, TranscriptEntry{
+		Kind: TranscriptError,
+		Text: text,
+	})
+	s.status = "Claude Code error"
+}
+
+func (s *claudeCodeSession) touchLocked() {
+	s.lastActivityAt = time.Now()
+}
+
+func (s *claudeCodeSession) updateStatusLocked() {
+	switch {
+	case s.closed:
+		s.status = "Claude Code session closed"
+	case s.busyExternal:
+		s.status = "Claude Code session active in another terminal"
+	case s.busy:
+		s.status = claudeThinkingStatus
+	case strings.TrimSpace(s.lastError) != "":
+		s.status = "Claude Code error"
+	case s.started:
+		s.status = claudeReadyStatus
+	default:
+		s.status = claudeFreshReadyStatus
+	}
+}
+
+func (s *claudeCodeSession) notifyAsync() {
+	if s.notify != nil {
+		s.notify()
+	}
+}
+
+func (s *claudeCodeSession) closeClosedCh() {
+	s.closedOnce.Do(func() {
+		close(s.closedCh)
+	})
 }
 
 func (s *claudeCodeSession) findLatestSession() (path string, sessionID string, ok bool) {
@@ -190,7 +898,10 @@ func (s *claudeCodeSession) findLatestSession() (path string, sessionID string, 
 	return bestPath, bestID, true
 }
 
-func (s *claudeCodeSession) loadTranscript() {
+func (s *claudeCodeSession) loadTranscriptLocked() {
+	if strings.TrimSpace(s.sessionFile) == "" {
+		return
+	}
 	file, err := os.Open(s.sessionFile)
 	if err != nil {
 		return
@@ -205,8 +916,6 @@ func (s *claudeCodeSession) loadTranscript() {
 		return
 	}
 
-	// Re-read the full file. For very large files we could optimize to
-	// only read from lastFileSize, but for now simplicity wins.
 	sc := bufio.NewScanner(file)
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 
@@ -226,7 +935,6 @@ func (s *claudeCodeSession) loadTranscript() {
 	s.entries = entries
 	s.lastFileSize = stat.Size()
 
-	// Determine if session looks active based on last entry type.
 	switch lastType {
 	case "assistant", "progress":
 		s.busyExternal = true
@@ -235,13 +943,15 @@ func (s *claudeCodeSession) loadTranscript() {
 	}
 
 	if len(entries) > 0 {
-		// Use file mod time as last activity.
 		s.lastActivityAt = stat.ModTime()
 	}
 }
 
-func (s *claudeCodeSession) refreshActive() {
-	// Check if any PID session file references our sessionID.
+func (s *claudeCodeSession) refreshActiveLocked() {
+	if strings.TrimSpace(s.sessionID) == "" {
+		s.busyExternal = false
+		return
+	}
 	sessionsDir := filepath.Join(s.claudeHome, "sessions")
 	entries, err := os.ReadDir(sessionsDir)
 	if err != nil {
@@ -256,14 +966,14 @@ func (s *claudeCodeSession) refreshActive() {
 		if err != nil {
 			continue
 		}
-		var pidSession struct {
-			PID       int    `json:"pid"`
-			SessionID string `json:"sessionId"`
-		}
+		var pidSession claudeActivePIDSession
 		if err := json.Unmarshal(data, &pidSession); err != nil {
 			continue
 		}
 		if pidSession.SessionID != s.sessionID {
+			continue
+		}
+		if pidSession.PID > 0 && pidSession.PID == s.runningPID {
 			continue
 		}
 		if pidSession.PID > 0 && syscall.Kill(pidSession.PID, 0) == nil {
@@ -272,6 +982,150 @@ func (s *claudeCodeSession) refreshActive() {
 		}
 	}
 	s.busyExternal = active
+}
+
+func startClaudeTurn(ctx context.Context, projectPath, resumeID, model, reasoning, permissionMode string) (*exec.Cmd, io.WriteCloser, io.ReadCloser, io.ReadCloser, error) {
+	args := []string{
+		"-p",
+		"--input-format=stream-json",
+		"--output-format=stream-json",
+		"--permission-mode", permissionMode,
+	}
+	if strings.TrimSpace(resumeID) != "" {
+		args = append(args, "--resume", strings.TrimSpace(resumeID))
+	}
+	if strings.TrimSpace(model) != "" {
+		args = append(args, "--model", strings.TrimSpace(model))
+	}
+	if strings.TrimSpace(reasoning) != "" {
+		args = append(args, "--effort", strings.TrimSpace(reasoning))
+	}
+
+	cmd := exec.CommandContext(ctx, "claude", args...)
+	cmd.Dir = projectPath
+	configureAppServerCommand(cmd)
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	return cmd, stdin, stdout, stderr, nil
+}
+
+func buildClaudeStreamInput(prompt string) (string, error) {
+	payload := map[string]any{
+		"type": "user",
+		"message": map[string]any{
+			"role": "user",
+			"content": []map[string]any{
+				{
+					"type": "text",
+					"text": strings.TrimSpace(prompt),
+				},
+			},
+		},
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func claudeSessionFilePath(claudeHome, projectPath, sessionID string) string {
+	if strings.TrimSpace(sessionID) == "" {
+		return ""
+	}
+	return filepath.Join(claudeHome, "projects", encodeCCProjectPath(projectPath), sessionID+".jsonl")
+}
+
+func claudePermissionModeForPreset(preset codexcli.Preset) (mode string, notice string) {
+	switch preset {
+	case codexcli.PresetYolo:
+		return "bypassPermissions", claudeYoloPresetMappingNotice
+	case codexcli.PresetFullAuto, codexcli.PresetSafe:
+		return "acceptEdits", claudeSafePresetMappingNotice
+	default:
+		return "acceptEdits", claudeSafePresetMappingNotice
+	}
+}
+
+func claudePermissionModeLabel(preset codexcli.Preset) string {
+	mode, _ := claudePermissionModeForPreset(preset)
+	return mode
+}
+
+func summarizeClaudeToolUse(name string, input json.RawMessage) (summary string, command string) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(input, &fields); err != nil {
+		return "", ""
+	}
+	switch name {
+	case "Read", "Edit", "Write":
+		return ccExtractString(fields, "file_path"), ""
+	case "Bash":
+		command = ccExtractString(fields, "command")
+		if len(command) > 120 {
+			return command[:120] + "...", command
+		}
+		return command, command
+	case "Glob", "Grep":
+		return ccExtractString(fields, "pattern"), ""
+	case "Agent", "Task":
+		return ccExtractString(fields, "description"), ""
+	case "AskUserQuestion":
+		return ccExtractString(fields, "question"), ""
+	default:
+		return "", ""
+	}
+}
+
+func flattenClaudeToolResultContent(content any) string {
+	switch v := content.(type) {
+	case string:
+		return v
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			part := strings.TrimSpace(flattenClaudeToolResultContent(item))
+			if part != "" {
+				parts = append(parts, part)
+			}
+		}
+		return strings.Join(parts, "\n")
+	case map[string]any:
+		if text, ok := v["text"].(string); ok && strings.TrimSpace(text) != "" {
+			return text
+		}
+		if file, ok := v["file"].(map[string]any); ok {
+			if text, ok := file["content"].(string); ok && strings.TrimSpace(text) != "" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+func firstNonEmptyTrimmed(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func parseCCLine(line string) (TranscriptEntry, string, bool) {
@@ -378,7 +1232,7 @@ func extractCCAssistantContent(content json.RawMessage) (text string, toolLines 
 				textParts = append(textParts, b.Text)
 			}
 		case "tool_use":
-			summary := ccToolSummary(b.Name, b.Input)
+			summary, _ := summarizeClaudeToolUse(b.Name, b.Input)
 			if summary != "" {
 				toolLines = append(toolLines, fmt.Sprintf("[%s] %s", b.Name, summary))
 			} else {
@@ -387,29 +1241,6 @@ func extractCCAssistantContent(content json.RawMessage) (text string, toolLines 
 		}
 	}
 	return strings.Join(textParts, "\n"), toolLines
-}
-
-func ccToolSummary(name string, input json.RawMessage) string {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(input, &fields); err != nil {
-		return ""
-	}
-	switch name {
-	case "Read", "Edit", "Write":
-		return ccExtractString(fields, "file_path")
-	case "Bash":
-		cmd := ccExtractString(fields, "command")
-		if len(cmd) > 120 {
-			return cmd[:120] + "..."
-		}
-		return cmd
-	case "Glob", "Grep":
-		return ccExtractString(fields, "pattern")
-	case "Agent":
-		return ccExtractString(fields, "description")
-	default:
-		return ""
-	}
 }
 
 func ccExtractString(fields map[string]json.RawMessage, key string) string {
@@ -425,8 +1256,6 @@ func ccExtractString(fields map[string]json.RawMessage, key string) string {
 }
 
 func encodeCCProjectPath(projectPath string) string {
-	// Claude Code encodes project paths by replacing "/" with "-" and stripping
-	// the leading slash, e.g. "/Users/davide/dev/repos/Foo" → "-Users-davide-dev-repos-Foo".
 	cleaned := filepath.Clean(projectPath)
 	return strings.ReplaceAll(cleaned, "/", "-")
 }

@@ -56,15 +56,15 @@ type Model struct {
 	nowFn     func() time.Time
 	homeDirFn func() (string, error)
 
-	noteDialog        *noteDialogState
-	noteCopyDialog    *noteCopyDialogState
-	noteClearConfirm  *noteClearConfirmState
-	todoDialog        *todoDialogState
-	todoEditor        *todoEditorState
-	todoDeleteConfirm *todoDeleteConfirmState
-	todoLaunchDraft   *todoLaunchDraftState
-	todoCopyDialog         *todoCopyDialogState
-	todoModelPickerReturn  *todoModelPickerReturnState
+	noteDialog            *noteDialogState
+	noteCopyDialog        *noteCopyDialogState
+	noteClearConfirm      *noteClearConfirmState
+	todoDialog            *todoDialogState
+	todoEditor            *todoEditorState
+	todoDeleteConfirm     *todoDeleteConfirmState
+	todoLaunchDraft       *todoLaunchDraftState
+	todoCopyDialog        *todoCopyDialogState
+	todoModelPickerReturn *todoModelPickerReturnState
 
 	commandMode                  bool
 	commandInput                 textinput.Model
@@ -138,6 +138,7 @@ type Model struct {
 	codexModelPicker       *codexModelPickerState
 	embeddedModelPrefs     map[codexapp.Provider]embeddedModelPreference
 	recentCodexModels      []string
+	recentClaudeModels     []string
 	recentOpenCodeModels   []string
 	codexDenseExpanded     bool
 	codexSlashSelected     int
@@ -411,6 +412,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		runtimeManager:         projectrun.NewManager(),
 		embeddedModelPrefs:     embeddedModelPreferencesFromSettings(initialSettings),
 		recentCodexModels:      append([]string(nil), initialSettings.RecentCodexModels...),
+		recentClaudeModels:     append([]string(nil), initialSettings.RecentClaudeModels...),
 		recentOpenCodeModels:   append([]string(nil), initialSettings.RecentOpenCodeModels...),
 		hideReasoningSections:  initialSettings.HideReasoningSections,
 		nowFn:                  time.Now,
@@ -2587,6 +2589,10 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m.launchCodexForSelection(false, inv.Prompt)
 	case commands.KindCodexNew:
 		return m.launchCodexForSelection(true, inv.Prompt)
+	case commands.KindClaude:
+		return m.launchClaudeForSelection(false, inv.Prompt)
+	case commands.KindClaudeNew:
+		return m.launchClaudeForSelection(true, inv.Prompt)
 	case commands.KindOpenCode:
 		return m.launchOpenCodeForSelection(false, inv.Prompt)
 	case commands.KindOpenCodeNew:
@@ -2707,6 +2713,10 @@ func (m Model) launchCodexForSelection(forceNew bool, prompt string) (tea.Model,
 
 func (m Model) launchOpenCodeForSelection(forceNew bool, prompt string) (tea.Model, tea.Cmd) {
 	return m.launchEmbeddedForSelection(codexapp.ProviderOpenCode, forceNew, prompt)
+}
+
+func (m Model) launchClaudeForSelection(forceNew bool, prompt string) (tea.Model, tea.Cmd) {
+	return m.launchEmbeddedForSelection(codexapp.ProviderClaudeCode, forceNew, prompt)
 }
 
 func (m Model) launchEmbeddedForSelection(provider codexapp.Provider, forceNew bool, prompt string) (tea.Model, tea.Cmd) {
@@ -4268,7 +4278,6 @@ func renderCommitPreviewMessageInline(value string, width int) string {
 	return label + " " + messageStyle.Render(body)
 }
 
-
 func renderCommitPreviewFiles(files []service.CommitFile, limit, width int) []string {
 	if len(files) == 0 {
 		return []string{detailMutedStyle.Render("- none")}
@@ -4978,7 +4987,7 @@ func helpPanelLines() []string {
 			renderDialogAction("Tab", "complete there", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("?", "toggle help", commitActionKeyStyle, commitActionTextStyle),
 		),
-		commandPaletteHintStyle.Render("Try /setup, /codex, /opencode, /todo, /commit, /diff, or /run."),
+		commandPaletteHintStyle.Render("Try /setup, /codex, /claude, /opencode, /todo, /commit, /diff, or /run."),
 		detailSectionStyle.Render("Navigate"),
 		renderHelpPanelActionRow(
 			renderDialogAction("Tab", "switch pane", navigateActionKeyStyle, navigateActionTextStyle),

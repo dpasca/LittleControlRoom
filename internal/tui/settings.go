@@ -197,6 +197,7 @@ func (m Model) saveEmbeddedModelPreferencesCmd() tea.Cmd {
 	settings := m.currentSettingsBaseline()
 	applyEmbeddedModelPreferencesToSettings(&settings, m.embeddedModelPrefs)
 	settings.RecentCodexModels = append([]string(nil), m.recentCodexModels...)
+	settings.RecentClaudeModels = append([]string(nil), m.recentClaudeModels...)
 	settings.RecentOpenCodeModels = append([]string(nil), m.recentOpenCodeModels...)
 	path := m.currentConfigPath()
 	return func() tea.Msg {
@@ -474,6 +475,9 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.ExcludePaths = append([]string(nil), settings.ExcludePaths...)
 	settings.ExcludeProjectPatterns = append([]string(nil), settings.ExcludeProjectPatterns...)
 	settings.PrivacyPatterns = append([]string(nil), settings.PrivacyPatterns...)
+	settings.RecentCodexModels = append([]string(nil), settings.RecentCodexModels...)
+	settings.RecentClaudeModels = append([]string(nil), settings.RecentClaudeModels...)
+	settings.RecentOpenCodeModels = append([]string(nil), settings.RecentOpenCodeModels...)
 	return settings
 }
 

@@ -3410,14 +3410,36 @@ func TestEmbeddedModelPreferencePersistsAcrossFutureSessionsPerProvider(t *testi
 		t.Fatalf("opencode open msg = %#v, want successful codexSessionOpenedMsg", msg)
 	}
 
-	if len(requests) != 2 {
-		t.Fatalf("request count = %d, want 2", len(requests))
+	updated, _ = m.Update(codexActionMsg{
+		projectPath: "/tmp/demo",
+		status:      "Embedded model set to sonnet with max reasoning for the next prompt",
+		provider:    codexapp.ProviderClaudeCode,
+		model:       "sonnet",
+		reasoning:   "max",
+	})
+	m = updated.(Model)
+
+	updated, cmd = m.launchEmbeddedForSelection(codexapp.ProviderClaudeCode, true, "")
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("launchEmbeddedForSelection(claude) should return an open command")
+	}
+	msg = cmd()
+	if opened, ok := msg.(codexSessionOpenedMsg); !ok || opened.err != nil {
+		t.Fatalf("claude open msg = %#v, want successful codexSessionOpenedMsg", msg)
+	}
+
+	if len(requests) != 3 {
+		t.Fatalf("request count = %d, want 3", len(requests))
 	}
 	if requests[0].Provider != codexapp.ProviderCodex || requests[0].PendingModel != "gpt-5.4" || requests[0].PendingReasoning != "high" {
 		t.Fatalf("codex request = %#v, want persisted Codex model preference", requests[0])
 	}
 	if requests[1].Provider != codexapp.ProviderOpenCode || requests[1].PendingModel != "openai/gpt-5.4" || requests[1].PendingReasoning != "medium" {
 		t.Fatalf("opencode request = %#v, want persisted OpenCode model preference", requests[1])
+	}
+	if requests[2].Provider != codexapp.ProviderClaudeCode || requests[2].PendingModel != "sonnet" || requests[2].PendingReasoning != "max" {
+		t.Fatalf("claude request = %#v, want persisted Claude model preference", requests[2])
 	}
 }
 
@@ -3517,6 +3539,69 @@ func TestTodoDialogEnterStartsFreshPreferredProviderWithDraft(t *testing.T) {
 	}
 }
 
+func TestLaunchClaudeForSelectionUsesClaudeProvider(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				ThreadID: "cc-demo",
+				Started:  true,
+				Preset:   req.Preset,
+				Status:   req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/demo",
+			Name:          "demo",
+			PresentOnDisk: true,
+		}},
+		selected:      0,
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, cmd := m.launchClaudeForSelection(true, "continue with the current task")
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("launchClaudeForSelection should return an open command")
+	}
+	if got.codexPendingOpen == nil || got.codexPendingOpen.provider != codexapp.ProviderClaudeCode {
+		t.Fatalf("codexPendingOpen = %#v, want pending Claude launch", got.codexPendingOpen)
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("launchClaudeForSelection returned error = %v", opened.err)
+	}
+
+	if len(requests) != 1 {
+		t.Fatalf("request count = %d, want 1", len(requests))
+	}
+	if requests[0].Provider != codexapp.ProviderClaudeCode {
+		t.Fatalf("provider = %q, want %q", requests[0].Provider, codexapp.ProviderClaudeCode)
+	}
+	if !requests[0].ForceNew {
+		t.Fatalf("ForceNew = false, want true")
+	}
+	if requests[0].Prompt != "continue with the current task" {
+		t.Fatalf("prompt = %q, want Claude prompt", requests[0].Prompt)
+	}
+}
+
 func TestTodoDialogSelectedRowHasNoExtraLeadingSpace(t *testing.T) {
 	m := Model{
 		detail: model.ProjectDetail{
@@ -3556,6 +3641,8 @@ func TestEmbeddedModelPreferenceLoadsFromSavedSettingsOnStartup(t *testing.T) {
 	cfg.ConfigPath = filepath.Join(t.TempDir(), "config.toml")
 	cfg.EmbeddedCodexModel = "gpt-5.4"
 	cfg.EmbeddedCodexReasoning = "high"
+	cfg.EmbeddedClaudeModel = "sonnet"
+	cfg.EmbeddedClaudeReasoning = "max"
 	cfg.EmbeddedOpenCodeModel = "openai/gpt-5.4"
 	cfg.EmbeddedOpenCodeReasoning = "medium"
 
@@ -3598,14 +3685,26 @@ func TestEmbeddedModelPreferenceLoadsFromSavedSettingsOnStartup(t *testing.T) {
 		t.Fatalf("opencode open command should return a message")
 	}
 
-	if len(requests) != 2 {
-		t.Fatalf("request count = %d, want 2", len(requests))
+	updated, cmd = m.launchEmbeddedForSelection(codexapp.ProviderClaudeCode, true, "")
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("launchEmbeddedForSelection(claude) should return an open command")
+	}
+	if msg := cmd(); msg == nil {
+		t.Fatalf("claude open command should return a message")
+	}
+
+	if len(requests) != 3 {
+		t.Fatalf("request count = %d, want 3", len(requests))
 	}
 	if requests[0].PendingModel != "gpt-5.4" || requests[0].PendingReasoning != "high" {
 		t.Fatalf("codex request = %#v, want saved startup preference", requests[0])
 	}
 	if requests[1].PendingModel != "openai/gpt-5.4" || requests[1].PendingReasoning != "medium" {
 		t.Fatalf("opencode request = %#v, want saved startup preference", requests[1])
+	}
+	if requests[2].PendingModel != "sonnet" || requests[2].PendingReasoning != "max" {
+		t.Fatalf("claude request = %#v, want saved startup preference", requests[2])
 	}
 }
 
@@ -8110,6 +8209,8 @@ func TestSettingsSavePreservesEmbeddedModelPreferences(t *testing.T) {
 	cfg.ConfigPath = filepath.Join(home, ".little-control-room", "config.toml")
 	cfg.EmbeddedCodexModel = "gpt-5.4"
 	cfg.EmbeddedCodexReasoning = "high"
+	cfg.EmbeddedClaudeModel = "sonnet"
+	cfg.EmbeddedClaudeReasoning = "max"
 	cfg.EmbeddedOpenCodeModel = "openai/gpt-5.4"
 	cfg.EmbeddedOpenCodeReasoning = "medium"
 
@@ -8146,6 +8247,8 @@ func TestSettingsSavePreservesEmbeddedModelPreferences(t *testing.T) {
 	for _, want := range []string{
 		"embedded_codex_model = \"gpt-5.4\"",
 		"embedded_codex_reasoning_effort = \"high\"",
+		"embedded_claude_model = \"sonnet\"",
+		"embedded_claude_reasoning_effort = \"max\"",
 		"embedded_opencode_model = \"openai/gpt-5.4\"",
 		"embedded_opencode_reasoning_effort = \"medium\"",
 	} {
@@ -8155,6 +8258,9 @@ func TestSettingsSavePreservesEmbeddedModelPreferences(t *testing.T) {
 	}
 	if got.currentSettingsBaseline().EmbeddedCodexModel != "gpt-5.4" {
 		t.Fatalf("baseline embedded codex model = %q, want gpt-5.4", got.currentSettingsBaseline().EmbeddedCodexModel)
+	}
+	if got.currentSettingsBaseline().EmbeddedClaudeModel != "sonnet" {
+		t.Fatalf("baseline embedded claude model = %q, want sonnet", got.currentSettingsBaseline().EmbeddedClaudeModel)
 	}
 }
 
@@ -8926,7 +9032,7 @@ func TestHelpPanelLinesStayMinimal(t *testing.T) {
 	if !strings.Contains(joined, "slash-command palette") {
 		t.Fatalf("helpPanelLines() should explain the slash-command palette: %q", joined)
 	}
-	if !strings.Contains(joined, "/codex, /opencode, /todo, /commit, /diff, or /run") {
+	if !strings.Contains(joined, "/codex, /claude, /opencode, /todo, /commit, /diff, or /run") {
 		t.Fatalf("helpPanelLines() should include concrete slash-command examples: %q", joined)
 	}
 	if !strings.Contains(joined, "interrupt busy session") {
@@ -8994,7 +9100,7 @@ func TestViewWithHelpOverlayPreservesBackground(t *testing.T) {
 	if !strings.Contains(rendered, "Help") || !strings.Contains(rendered, "slash-command palette") {
 		t.Fatalf("View() should show the help overlay content: %q", rendered)
 	}
-	if !strings.Contains(rendered, "ATTN") || !strings.Contains(rendered, "Path:") || !strings.Contains(rendered, "Focus: list") {
+	if !strings.Contains(rendered, "ATTN") || !strings.Contains(rendered, "Path:") || !strings.Contains(rendered, "Session summary") {
 		t.Fatalf("View() should preserve the dashboard behind the help overlay: %q", rendered)
 	}
 }

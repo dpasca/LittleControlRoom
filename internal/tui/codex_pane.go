@@ -134,7 +134,7 @@ func embeddedNewCommand(provider codexapp.Provider) string {
 	case codexapp.ProviderOpenCode:
 		return "/opencode-new"
 	case codexapp.ProviderClaudeCode:
-		return "" // Claude Code sessions are read-only; no new-session command.
+		return "/claude-new"
 	default:
 		return "/codex-new"
 	}

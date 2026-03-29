@@ -98,6 +98,8 @@ func TestParseLoadsEmbeddedModelPreferencesFromConfigFile(t *testing.T) {
 	content := "" +
 		"embedded_codex_model = \"gpt-5.4\"\n" +
 		"embedded_codex_reasoning_effort = \"high\"\n" +
+		"embedded_claude_model = \"sonnet\"\n" +
+		"embedded_claude_reasoning_effort = \"max\"\n" +
 		"embedded_opencode_model = \"openai/gpt-5.4\"\n" +
 		"embedded_opencode_reasoning_effort = \"medium\"\n"
 	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
@@ -114,6 +116,12 @@ func TestParseLoadsEmbeddedModelPreferencesFromConfigFile(t *testing.T) {
 	}
 	if got, want := cfg.EmbeddedCodexReasoning, "high"; got != want {
 		t.Fatalf("embedded codex reasoning = %q, want %q", got, want)
+	}
+	if got, want := cfg.EmbeddedClaudeModel, "sonnet"; got != want {
+		t.Fatalf("embedded claude model = %q, want %q", got, want)
+	}
+	if got, want := cfg.EmbeddedClaudeReasoning, "max"; got != want {
+		t.Fatalf("embedded claude reasoning = %q, want %q", got, want)
 	}
 	if got, want := cfg.EmbeddedOpenCodeModel, "openai/gpt-5.4"; got != want {
 		t.Fatalf("embedded opencode model = %q, want %q", got, want)
@@ -398,6 +406,8 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 		ExcludeProjectPatterns:    []string{"quickgame_*", "secret-demo"},
 		EmbeddedCodexModel:        "gpt-5.4",
 		EmbeddedCodexReasoning:    "high",
+		EmbeddedClaudeModel:       "sonnet",
+		EmbeddedClaudeReasoning:   "max",
 		EmbeddedOpenCodeModel:     "openai/gpt-5.4",
 		EmbeddedOpenCodeReasoning: "medium",
 		CodexLaunchPreset:         codexcli.PresetFullAuto,
@@ -434,6 +444,12 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 	}
 	if !strings.Contains(text, "embedded_codex_reasoning_effort = \"high\"") {
 		t.Fatalf("saved config should include embedded codex reasoning: %q", text)
+	}
+	if !strings.Contains(text, "embedded_claude_model = \"sonnet\"") {
+		t.Fatalf("saved config should include embedded claude model: %q", text)
+	}
+	if !strings.Contains(text, "embedded_claude_reasoning_effort = \"max\"") {
+		t.Fatalf("saved config should include embedded claude reasoning: %q", text)
 	}
 	if !strings.Contains(text, "embedded_opencode_model = \"openai/gpt-5.4\"") {
 		t.Fatalf("saved config should include embedded opencode model: %q", text)

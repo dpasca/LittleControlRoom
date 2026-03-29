@@ -192,6 +192,9 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/codex`
 - `/codex continue from the last breakpoint`
 - `/codex-new sketch a plan for this repo`
+- `/claude`
+- `/claude continue from the last breakpoint`
+- `/claude-new sketch a plan for this repo`
 - `/opencode`
 - `/opencode continue from the last breakpoint`
 - `/opencode-new sketch a plan for this repo`
@@ -242,12 +245,15 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/stop` stops the selected project's managed runtime when one is running.
 - `/codex` resumes the selected project's latest known Codex session when available, otherwise it starts a new one.
 - `/codex-new` always starts a fresh Codex session.
+- `/claude` resumes the selected project's latest known Claude Code session when available, otherwise it starts a new one.
+- `/claude-new` always starts a fresh Claude Code session.
 - `/opencode` resumes the selected project's latest known OpenCode session when available, otherwise it starts a new one.
 - `/opencode-new` always starts a fresh OpenCode session.
-- While an embedded Codex or OpenCode pane is visible, local slash commands include `/new`, `/resume` (`/session` alias), `/reconnect`, `/model`, and `/status`.
+- While an embedded Codex, Claude Code, or OpenCode pane is visible, local slash commands include `/new`, `/resume` (`/session` alias), `/reconnect`, `/model`, and `/status`.
 - `/model` changes the model and reasoning for the current embedded tool and carries that choice forward to future embedded sessions of the same tool, including after restarting LCR.
 - `/resume` with no session ID opens a picker for saved sessions from the current project and provider; `/resume <session-id>` jumps straight to that session.
 - `/reconnect` restarts the current embedded provider helper and reconnects to the same session when possible, which is useful after refreshing `codex login` or other provider auth outside Little Control Room.
+- Embedded Claude Code currently runs through Claude's headless CLI flow. It works for prompt/response turns and session resume, and `/model` now offers a curated Claude alias picker with saved reasoning preferences. Compact, in-pane approvals, and attachments are still MVP-level.
 - The main list uses `N` for a saved note, `RUN` for the saved or active managed runtime summary, and `!` inside `RUN` when Little Control Room detects a managed port conflict.
 - The project detail pane keeps project metadata only, while the dedicated runtime pane shows runtime command, state, ports, URL, conflicts or errors, and the captured output tail.
 - `codex_launch_preset` controls how Codex is launched. The default is `yolo`.

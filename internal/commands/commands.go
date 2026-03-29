@@ -29,6 +29,8 @@ const (
 	KindPush        Kind = "push"
 	KindCodex       Kind = "codex"
 	KindCodexNew    Kind = "codex-new"
+	KindClaude      Kind = "claude"
+	KindClaudeNew   Kind = "claude-new"
 	KindOpenCode    Kind = "opencode"
 	KindOpenCodeNew Kind = "opencode-new"
 	KindTodo        Kind = "todo"
@@ -124,6 +126,8 @@ var specs = []Spec{
 	{Name: "push", Usage: "/push", Summary: "Push the selected project when its branch is ahead"},
 	{Name: "codex", Usage: "/codex [prompt]", Summary: "Resume the selected project's latest Codex session, or start a new one"},
 	{Name: "codex-new", Usage: "/codex-new [prompt]", Summary: "Start a fresh Codex session in the selected project"},
+	{Name: "claude", Usage: "/claude [prompt]", Summary: "Resume the selected project's latest Claude Code session, or start a new one"},
+	{Name: "claude-new", Usage: "/claude-new [prompt]", Summary: "Start a fresh Claude Code session in the selected project"},
 	{Name: "opencode", Usage: "/opencode [prompt]", Summary: "Resume the selected project's latest OpenCode session, or start a new one"},
 	{Name: "opencode-new", Usage: "/opencode-new [prompt]", Summary: "Start a fresh OpenCode session in the selected project"},
 	{Name: "todo", Usage: "/todo", Summary: "Open the selected project's TODO list"},
@@ -402,6 +406,18 @@ func Parse(input string) (Invocation, error) {
 			Kind:      KindCodexNew,
 			Prompt:    strings.TrimSpace(rawArgs),
 			Canonical: canonicalCommand("codex-new", rawArgs),
+		}, nil
+	case "claude":
+		return Invocation{
+			Kind:      KindClaude,
+			Prompt:    strings.TrimSpace(rawArgs),
+			Canonical: canonicalCommand("claude", rawArgs),
+		}, nil
+	case "claude-new", "cc-start":
+		return Invocation{
+			Kind:      KindClaudeNew,
+			Prompt:    strings.TrimSpace(rawArgs),
+			Canonical: canonicalCommand("claude-new", rawArgs),
 		}, nil
 	case "opencode":
 		return Invocation{

@@ -1,6 +1,114 @@
 # Little Control Room Status
 
-Last updated: 2026-03-26 18:12 JST
+Last updated: 2026-03-29 09:52 JST
+
+## Latest Update (2026-03-29 09:52 JST)
+
+- Added a practical embedded Claude model picker path so `/model` no longer dead-ends for Claude sessions:
+  - `internal/codexapp/claude_session.go` now returns a curated Claude alias list (`sonnet`, `opus`, `haiku`) with reasoning options (`low`, `medium`, `high`, `max`).
+  - The picker also prepends the current/pending full Claude model IDs when a session is already using something more specific than an alias.
+  - Claude model selections now persist the same way Codex/OpenCode selections do, so the next embedded Claude session reuses the saved model and reasoning choice automatically.
+- Added Claude-specific embedded preference persistence in config/TUI state:
+  - New saved config fields:
+    - `embedded_claude_model`
+    - `embedded_claude_reasoning_effort`
+    - `recent_claude_models`
+  - `internal/tui/codex_model_picker.go` now uses provider-specific recent-model history for Claude instead of falling back to Codex recents.
+- Updated docs to reflect the new state of the MVP:
+  - `README.md`
+  - `docs/reference.md`
+  - Claude is still MVP-level for approvals, compact, and attachments, but model selection is now usable and persisted.
+- Added/expanded coverage:
+  - `internal/codexapp/claude_session_test.go`
+  - `internal/config/config_test.go`
+  - `internal/tui/app_test.go`
+- Files modified in this pass:
+  - `internal/codexapp/claude_session.go`
+  - `internal/codexapp/claude_session_test.go`
+  - `internal/config/config.go`
+  - `internal/config/editable.go`
+  - `internal/config/config_test.go`
+  - `internal/tui/embedded_model_preferences.go`
+  - `internal/tui/codex_model_picker.go`
+  - `internal/tui/app.go`
+  - `internal/tui/settings.go`
+  - `internal/tui/app_test.go`
+  - `README.md`
+  - `docs/reference.md`
+  - `STATUS.md`
+- Verification status:
+  - `go test ./internal/config -run 'TestParseLoadsEmbeddedModelPreferencesFromConfigFile|TestSaveEditableSettingsWritesReadableTOML'` passed
+  - `go test ./internal/codexapp -run 'TestClaude'` passed
+  - `go test ./internal/tui -run 'TestEmbeddedModelPreferencePersistsAcrossFutureSessionsPerProvider|TestEmbeddedModelPreferenceLoadsFromSavedSettingsOnStartup|TestSettingsSavePreservesEmbeddedModelPreferences|TestLaunchClaudeForSelectionUsesClaudeProvider|TestHelpPanelLinesStayMinimal'` passed
+  - `make scan` passed at `2026-03-29T09:52:56+09:00`
+  - `make doctor` passed using cached report at `2026-03-29T09:52:56+09:00`
+  - `make tui` was attempted but correctly refused because another long-lived TUI runtime is already active for the default DB
+  - `make tui-parallel` launched successfully in the isolated `/tmp/lcroom-parallel-davide` sandbox and rendered the dashboard before exit
+  - `make test` still fails in the same pre-existing diff/TUI coverage unrelated to Claude:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+- Next concrete tasks:
+  - Run `make tui` and live-check `/claude`, `/claude-new`, `/new`, `/reconnect`, and `/model` against the real local Claude CLI.
+  - Add Claude-specific approval / AskUserQuestion handling instead of the current preset-to-permission-mode compromise.
+  - Add Claude attachment support.
+  - Replace or augment the curated model alias picker if Anthropic exposes a machine-readable local model discovery path later.
+
+## Latest Update (2026-03-29 09:19 JST)
+
+- Started the embedded Claude Code MVP so Claude sessions are no longer hard-coded read-only:
+  - Replaced the old `~/.claude` artifact tailer in `internal/codexapp/claude_session.go` with a real headless Claude driver built on `claude -p --input-format stream-json --output-format stream-json`.
+  - Embedded Claude sessions now support:
+    - opening/resuming existing Claude Code sessions
+    - fresh `/new` / force-new Claude sessions that materialize on first prompt
+    - prompt submission and transcript updates from structured Claude stream events
+    - reconnect/resume using Claude `session_id`
+    - interrupting the active Claude turn by killing the current headless Claude process
+  - Preset handling currently maps:
+    - `yolo` -> Claude `bypassPermissions`
+    - `safe` / `full-auto` -> Claude `acceptEdits`
+  - This is intentionally documented in-session as an MVP compromise until Claude-specific approval prompts are wired.
+- Added first-class dashboard command entry points for Claude:
+  - `/claude [prompt]`
+  - `/claude-new [prompt]`
+  - Embedded `/new` now resolves to `/claude-new` when the visible provider is Claude Code.
+- Updated docs to reflect the new MVP support:
+  - `README.md`
+  - `docs/reference.md`
+- Recorded the newly validated Claude transport assumptions below:
+  - headless stream-json flow exists on the installed Claude CLI
+  - `--resume <session-id>` works with normal Claude disk artifacts
+  - current permission handling should be treated as MVP-level rather than approval-parity-complete
+- Added focused coverage:
+  - `internal/codexapp/claude_session_test.go`
+  - command parsing/suggestions for `/claude` and `/claude-new`
+  - TUI launch-path coverage for `launchClaudeForSelection(...)`
+- Files modified:
+  - `internal/codexapp/claude_session.go`
+  - `internal/codexapp/claude_session_test.go`
+  - `internal/detectors/claudecode/detector.go`
+  - `internal/commands/commands.go`
+  - `internal/commands/commands_test.go`
+  - `internal/tui/app.go`
+  - `internal/tui/app_test.go`
+  - `internal/tui/codex_pane.go`
+  - `README.md`
+  - `docs/reference.md`
+  - `STATUS.md`
+- Verification status:
+  - `go test ./internal/codexapp ./internal/commands` passed
+  - `go test ./internal/codexapp -run 'TestClaude'` passed
+  - `go test ./internal/tui -run 'TestLaunchClaudeForSelectionUsesClaudeProvider|TestHelpPanelLinesStayMinimal|TestViewWithHelpOverlayPreservesBackground'` passed
+  - `make scan` passed at `2026-03-29T09:18:39+09:00`
+  - `make doctor` passed using cached report at `2026-03-29T09:18:50+09:00`
+  - `make test` still fails in pre-existing diff/TUI coverage unrelated to Claude:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+- Next concrete tasks:
+  - Run `make tui` and live-check `/claude`, `/claude-new`, `/new`, `/reconnect`, and prompt submission in the embedded pane against the real local Claude CLI.
+  - Add Claude-specific support for attachments, richer tool-result rendering, and explicit approval / AskUserQuestion flows instead of the current preset-to-permission-mode compromise.
+  - Decide whether Claude model discovery should come from the headless CLI, the Agent SDK, or a small curated embedded picker fallback.
 
 ## Latest Update (2026-03-26 18:12 JST)
 
@@ -1432,6 +1540,14 @@ Current OpenCode transport assumption:
 - Observed `opencode.db` session parts are structured rather than text-only, including `text`, `reasoning`, `tool`, `patch`, `file`, `step-start`, and `step-finish`, so OpenCode transcript extraction and the embedded pane should preserve that structure instead of flattening it to plain text.
 - Observed `prompt_async` behavior accepts a follow-up prompt while the session is still busy (returning `204` and later appending a second user/assistant turn), so the embedded pane can treat Enter as a steer/follow-up path much like embedded Codex.
 - OpenCode `FilePartInput` accepts structured file parts and the current embedded implementation sends local image attachments as `data:` URLs; transport support is confirmed, but end-to-end image robustness should still be treated as provisional until more real image cases are exercised.
+
+Current Claude Code transport assumption:
+
+- The installed `claude` CLI on this machine (observed `2.1.86`) exposes a headless session surface via `--print` plus `--input-format stream-json` / `--output-format stream-json`, so embedded Claude support no longer depends on a separate long-lived server or RPC daemon.
+- Observed headless Claude runs emit structured `system:init`, `assistant`, `user` (tool results), `rate_limit_event`, and `result` JSON events with stable `session_id` values, which is sufficient for Little Control Room to drive per-turn embedded Claude requests and update transcript state without scraping terminal text.
+- Observed headless Claude supports `--resume <session-id>` and persists those session ids into the normal Claude Code on-disk session artifacts, so Little Control Room can combine headless turn execution with the existing `~/.claude/projects/.../*.jsonl` transcript files and `~/.claude/sessions/*.json` active-PID detection.
+- The locally installed CLI help confirms `--permission-mode` choices including `acceptEdits`, `dontAsk`, `plan`, and `bypassPermissions`; until Little Control Room wires Claude-specific approval callbacks, initial embedded support should treat permission handling as a provider-specific MVP compromise rather than claiming full Codex/OpenCode approval parity.
+- The locally installed CLI help exposes accepted alias-style model names (for example `sonnet` and `opus`) and `--effort` values, but not a machine-readable model listing API. For now, the embedded Claude `/model` picker should use a small curated alias set (`sonnet`, `opus`, `haiku`) plus any current full model IDs already surfaced by the active session.
 
 Current screenshot workflow assumption:
 

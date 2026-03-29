@@ -369,7 +369,7 @@ func encodeCCProjectPath(projectPath string) string {
 
 // SessionFileForProject returns the most recently modified Claude Code session
 // JSONL file for the given project path, along with its session ID.
-// This is used by the read-only Claude Code session viewer.
+// This is used by the Claude Code session viewer and embedded Claude resume path.
 func (d *Detector) SessionFileForProject(projectPath string) (path string, sessionID string, ok bool) {
 	projectPath = filepath.Clean(projectPath)
 	files, err := d.collectSessionFiles()

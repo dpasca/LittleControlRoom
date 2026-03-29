@@ -16,14 +16,14 @@ LCR shows you in real time the progress of each Codex, OpenCode, and Claude Code
 
 - Finds recent Codex, OpenCode, and Claude Code sessions across your local projects
 - Shows which projects are active, idle, or worth revisiting
-- Lets you open, resume, or switch embedded Codex or OpenCode sessions directly from the dashboard
-- Detects Claude Code sessions running in a separate terminal and shows their transcript read-only
+- Lets you open, resume, or switch embedded Codex, OpenCode, or Claude Code sessions directly from the dashboard
+- Detects Claude Code sessions running in a separate terminal and can reopen those sessions inside the embedded pane
 - Keeps common actions close at hand: refresh, pin, snooze, project notes, per-project TODO lists, managed per-project run commands with runtime/port badges, diff, commit, and push
 
 ## What it doesn't do (yet)
 
 - Many Codex slash-commands are missing.
-- Claude Code integration is read-only (session detection and transcript viewing). Full embedded support depends on Claude Code exposing a server/RPC mode.
+- Embedded Claude Code support is now available through Claude's headless CLI flow, but it is still an MVP: it now has a usable model picker with saved preferences, while approval parity, compact, and attachments are not fully wired yet.
 
 ## Quick Start
 
@@ -32,7 +32,7 @@ Requirements:
 - Go 1.25+
 - Codex installed locally, capable of running in the terminal.
 - OpenCode installed locally if you want embedded OpenCode sessions.
-- Claude Code installed locally if you want read-only Claude Code session awareness.
+- Claude Code installed locally if you want embedded Claude Code sessions.
 - At least one AI backend configured: Codex, OpenCode, or an OpenAI API key.
 
 Build and launch from this repo:
@@ -77,6 +77,8 @@ The main TUI command palette opens with `/`.
 - `/push`: Push the selected project's branch.
 - `/codex [prompt]`: Resume the latest Codex session or start one.
 - `/codex-new [prompt]`: Start a fresh Codex session.
+- `/claude [prompt]`: Resume the latest Claude Code session or start one.
+- `/claude-new [prompt]`: Start a fresh Claude Code session.
 - `/opencode [prompt]`: Resume the latest OpenCode session or start one.
 - `/opencode-new [prompt]`: Start a fresh OpenCode session.
 - `/pin`: Toggle pin on the selected project.
@@ -90,7 +92,7 @@ The main TUI command palette opens with `/`.
 - `/forget`: Forget a selected missing folder.
 - `/quit`: Quit the TUI.
 
-Inside the embedded Codex or OpenCode pane:
+Inside the embedded Codex, Claude Code, or OpenCode pane:
 
 - `/new`: Start a fresh session for the current provider.
 - `/resume [session-id]`: Open the session picker or jump to a saved session.
@@ -113,7 +115,7 @@ Most day-to-day use falls into a few buckets:
 
   [![Runtime pane focused on a running session](docs/screenshots/main-panel-live-runtime.png)](docs/screenshots/main-panel-live-runtime.png)
 
-- **Resume agent work** — Use `/codex` or `/opencode` to pick up where you left off, and `/codex-new` or `/opencode-new` when you want a fresh session. Inside the embedded pane, `/resume`, `/session`, and `/reconnect` handle switching sessions or reattaching the helper. Projects with Claude Code activity are detected automatically and shown with a `CC` tag; press `Enter` to view the transcript read-only.
+- **Resume agent work** — Use `/codex`, `/claude`, or `/opencode` to pick up where you left off, and `/codex-new`, `/claude-new`, or `/opencode-new` when you want a fresh session. Inside the embedded pane, `/resume`, `/session`, and `/reconnect` handle switching sessions or reattaching the helper. Claude Code support currently uses a headless CLI MVP, so approvals and attachments are still less complete than Codex/OpenCode, even though `/model` now offers saved Claude aliases and reasoning levels.
 
   [![Embedded Codex conversation](docs/screenshots/codex-embedded.png)](docs/screenshots/codex-embedded.png)
 

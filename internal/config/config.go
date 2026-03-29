@@ -25,10 +25,13 @@ type AppConfig struct {
 	PrivacyPatterns           []string
 	EmbeddedCodexModel        string
 	EmbeddedCodexReasoning    string
+	EmbeddedClaudeModel       string
+	EmbeddedClaudeReasoning   string
 	EmbeddedOpenCodeModel     string
 	EmbeddedOpenCodeReasoning string
 	OpenCodeModelTier         string
 	RecentCodexModels         []string
+	RecentClaudeModels        []string
 	RecentOpenCodeModels      []string
 	CodexHome                 string
 	OpenCodeHome              string
@@ -67,10 +70,13 @@ type fileConfig struct {
 	PrivacyPatterns           *[]string `toml:"privacy_patterns"`
 	EmbeddedCodexModel        *string   `toml:"embedded_codex_model"`
 	EmbeddedCodexReasoning    *string   `toml:"embedded_codex_reasoning_effort"`
+	EmbeddedClaudeModel       *string   `toml:"embedded_claude_model"`
+	EmbeddedClaudeReasoning   *string   `toml:"embedded_claude_reasoning_effort"`
 	EmbeddedOpenCodeModel     *string   `toml:"embedded_opencode_model"`
 	EmbeddedOpenCodeReasoning *string   `toml:"embedded_opencode_reasoning_effort"`
 	OpenCodeModelTier         *string   `toml:"opencode_model_tier"`
 	RecentCodexModels         *[]string `toml:"recent_codex_models"`
+	RecentClaudeModels        *[]string `toml:"recent_claude_models"`
 	RecentOpenCodeModels      *[]string `toml:"recent_opencode_models"`
 	CodexLaunchPreset         string    `toml:"codex_launch_preset"`
 	ScanInterval              string    `toml:"interval"`
@@ -347,6 +353,12 @@ func applyConfigFile(cfg *AppConfig) error {
 	if fc.EmbeddedCodexReasoning != nil {
 		cfg.EmbeddedCodexReasoning = strings.TrimSpace(*fc.EmbeddedCodexReasoning)
 	}
+	if fc.EmbeddedClaudeModel != nil {
+		cfg.EmbeddedClaudeModel = strings.TrimSpace(*fc.EmbeddedClaudeModel)
+	}
+	if fc.EmbeddedClaudeReasoning != nil {
+		cfg.EmbeddedClaudeReasoning = strings.TrimSpace(*fc.EmbeddedClaudeReasoning)
+	}
 	if fc.EmbeddedOpenCodeModel != nil {
 		cfg.EmbeddedOpenCodeModel = strings.TrimSpace(*fc.EmbeddedOpenCodeModel)
 	}
@@ -358,6 +370,9 @@ func applyConfigFile(cfg *AppConfig) error {
 	}
 	if fc.RecentCodexModels != nil {
 		cfg.RecentCodexModels = trimStrings(*fc.RecentCodexModels)
+	}
+	if fc.RecentClaudeModels != nil {
+		cfg.RecentClaudeModels = trimStrings(*fc.RecentClaudeModels)
 	}
 	if fc.RecentOpenCodeModels != nil {
 		cfg.RecentOpenCodeModels = trimStrings(*fc.RecentOpenCodeModels)

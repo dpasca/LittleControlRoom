@@ -20,10 +20,13 @@ type EditableSettings struct {
 	PrivacyPatterns           []string
 	EmbeddedCodexModel        string
 	EmbeddedCodexReasoning    string
+	EmbeddedClaudeModel       string
+	EmbeddedClaudeReasoning   string
 	EmbeddedOpenCodeModel     string
 	EmbeddedOpenCodeReasoning string
 	OpenCodeModelTier         string
 	RecentCodexModels         []string
+	RecentClaudeModels        []string
 	RecentOpenCodeModels      []string
 	CodexLaunchPreset         codexcli.Preset
 	ScanInterval              time.Duration
@@ -43,10 +46,13 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		PrivacyPatterns:           append([]string(nil), cfg.PrivacyPatterns...),
 		EmbeddedCodexModel:        cfg.EmbeddedCodexModel,
 		EmbeddedCodexReasoning:    cfg.EmbeddedCodexReasoning,
+		EmbeddedClaudeModel:       cfg.EmbeddedClaudeModel,
+		EmbeddedClaudeReasoning:   cfg.EmbeddedClaudeReasoning,
 		EmbeddedOpenCodeModel:     cfg.EmbeddedOpenCodeModel,
 		EmbeddedOpenCodeReasoning: cfg.EmbeddedOpenCodeReasoning,
 		OpenCodeModelTier:         cfg.OpenCodeModelTier,
 		RecentCodexModels:         append([]string(nil), cfg.RecentCodexModels...),
+		RecentClaudeModels:        append([]string(nil), cfg.RecentClaudeModels...),
 		RecentOpenCodeModels:      append([]string(nil), cfg.RecentOpenCodeModels...),
 		CodexLaunchPreset:         cfg.CodexLaunchPreset,
 		ScanInterval:              cfg.ScanInterval,
@@ -165,10 +171,13 @@ func validateEditableSettings(settings EditableSettings) error {
 	cfg.PrivacyPatterns = append([]string(nil), settings.PrivacyPatterns...)
 	cfg.EmbeddedCodexModel = strings.TrimSpace(settings.EmbeddedCodexModel)
 	cfg.EmbeddedCodexReasoning = strings.TrimSpace(settings.EmbeddedCodexReasoning)
+	cfg.EmbeddedClaudeModel = strings.TrimSpace(settings.EmbeddedClaudeModel)
+	cfg.EmbeddedClaudeReasoning = strings.TrimSpace(settings.EmbeddedClaudeReasoning)
 	cfg.EmbeddedOpenCodeModel = strings.TrimSpace(settings.EmbeddedOpenCodeModel)
 	cfg.EmbeddedOpenCodeReasoning = strings.TrimSpace(settings.EmbeddedOpenCodeReasoning)
 	cfg.OpenCodeModelTier = strings.TrimSpace(settings.OpenCodeModelTier)
 	cfg.RecentCodexModels = append([]string(nil), settings.RecentCodexModels...)
+	cfg.RecentClaudeModels = append([]string(nil), settings.RecentClaudeModels...)
 	cfg.RecentOpenCodeModels = append([]string(nil), settings.RecentOpenCodeModels...)
 	cfg.CodexLaunchPreset = settings.CodexLaunchPreset
 	cfg.ScanInterval = settings.ScanInterval
@@ -227,6 +236,12 @@ func renderEditableSettings(settings EditableSettings) string {
 	if value := strings.TrimSpace(settings.EmbeddedCodexReasoning); value != "" {
 		lines = append(lines, fmt.Sprintf("embedded_codex_reasoning_effort = %s", strconv.Quote(value)))
 	}
+	if value := strings.TrimSpace(settings.EmbeddedClaudeModel); value != "" {
+		lines = append(lines, fmt.Sprintf("embedded_claude_model = %s", strconv.Quote(value)))
+	}
+	if value := strings.TrimSpace(settings.EmbeddedClaudeReasoning); value != "" {
+		lines = append(lines, fmt.Sprintf("embedded_claude_reasoning_effort = %s", strconv.Quote(value)))
+	}
 	if value := strings.TrimSpace(settings.EmbeddedOpenCodeModel); value != "" {
 		lines = append(lines, fmt.Sprintf("embedded_opencode_model = %s", strconv.Quote(value)))
 	}
@@ -235,6 +250,8 @@ func renderEditableSettings(settings EditableSettings) string {
 	}
 	if strings.TrimSpace(settings.EmbeddedCodexModel) != "" ||
 		strings.TrimSpace(settings.EmbeddedCodexReasoning) != "" ||
+		strings.TrimSpace(settings.EmbeddedClaudeModel) != "" ||
+		strings.TrimSpace(settings.EmbeddedClaudeReasoning) != "" ||
 		strings.TrimSpace(settings.EmbeddedOpenCodeModel) != "" ||
 		strings.TrimSpace(settings.EmbeddedOpenCodeReasoning) != "" {
 		lines = append(lines, "")
@@ -245,6 +262,14 @@ func renderEditableSettings(settings EditableSettings) string {
 	if len(settings.RecentCodexModels) > 0 {
 		lines = append(lines, "recent_codex_models = [")
 		for _, model := range settings.RecentCodexModels {
+			lines = append(lines, fmt.Sprintf("  %s,", strconv.Quote(model)))
+		}
+		lines = append(lines, "]")
+		lines = append(lines, "")
+	}
+	if len(settings.RecentClaudeModels) > 0 {
+		lines = append(lines, "recent_claude_models = [")
+		for _, model := range settings.RecentClaudeModels {
 			lines = append(lines, fmt.Sprintf("  %s,", strconv.Quote(model)))
 		}
 		lines = append(lines, "]")

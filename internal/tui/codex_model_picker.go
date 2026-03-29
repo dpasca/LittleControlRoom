@@ -58,6 +58,13 @@ func (m Model) currentEmbeddedSessionLabel() string {
 	return "Codex"
 }
 
+func (m Model) currentEmbeddedSessionProvider() codexapp.Provider {
+	if snapshot, ok := m.currentCodexSnapshot(); ok {
+		return embeddedProvider(snapshot)
+	}
+	return codexapp.ProviderCodex
+}
+
 func (m *Model) openCodexModelPickerLoading() {
 	m.codexModelPicker = &codexModelPickerState{
 		Loading: true,
@@ -79,7 +86,10 @@ func (m *Model) openLoadedCodexModelPicker(models []codexapp.ModelOption) {
 	}
 
 	recentModelIDs := m.recentCodexModels
-	if label == "OpenCode" {
+	switch m.currentEmbeddedSessionProvider() {
+	case codexapp.ProviderClaudeCode:
+		recentModelIDs = m.recentClaudeModels
+	case codexapp.ProviderOpenCode:
 		recentModelIDs = m.recentOpenCodeModels
 	}
 	state.RecentModels = codexBuildRecentModels(models, recentModelIDs, 5)

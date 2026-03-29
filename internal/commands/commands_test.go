@@ -252,6 +252,33 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "claude smart resume prompt",
+			raw:  "/claude continue with the latest session",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindClaude {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindClaude)
+				}
+				if inv.Prompt != "continue with the latest session" {
+					t.Fatalf("prompt = %q, want Claude prompt", inv.Prompt)
+				}
+			},
+		},
+		{
+			name: "claude new alias",
+			raw:  "/cc-start summarize the repo",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindClaudeNew {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindClaudeNew)
+				}
+				if inv.Prompt != "summarize the repo" {
+					t.Fatalf("prompt = %q, want Claude prompt", inv.Prompt)
+				}
+				if inv.Canonical != "/claude-new summarize the repo" {
+					t.Fatalf("canonical = %q, want canonical claude-new form", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "opencode smart resume prompt",
 			raw:  "/opencode continue with the latest session",
 			check: func(t *testing.T, inv Invocation) {
@@ -521,6 +548,19 @@ func TestSuggestionsIncludeCodexCommands(t *testing.T) {
 	}
 	if got[1].Insert != "/codex-new" {
 		t.Fatalf("second /cod suggestion = %q, want /codex-new", got[1].Insert)
+	}
+}
+
+func TestSuggestionsIncludeClaudeCommands(t *testing.T) {
+	got := Suggestions("/cla")
+	if len(got) < 2 {
+		t.Fatalf("Suggestions(/cla) len = %d, want at least 2", len(got))
+	}
+	if got[0].Insert != "/claude" {
+		t.Fatalf("first /cla suggestion = %q, want /claude", got[0].Insert)
+	}
+	if got[1].Insert != "/claude-new" {
+		t.Fatalf("second /cla suggestion = %q, want /claude-new", got[1].Insert)
 	}
 }
 
