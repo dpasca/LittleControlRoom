@@ -15,6 +15,7 @@ import (
 const (
 	todoCopyScopeCodex = iota
 	todoCopyScopeOpenCode
+	todoCopyScopeClaudeCode
 	todoCopyScopeCancel
 )
 
@@ -250,8 +251,11 @@ func (m *Model) openTodoCopyDialog(todo model.TodoItem) {
 	}
 	defaultSelection := todoCopyScopeCodex
 	if project, ok := m.selectedProject(); ok && project.Path == m.todoDialog.ProjectPath {
-		if preferredEmbeddedProviderForProject(project) == codexapp.ProviderOpenCode {
+		switch preferredEmbeddedProviderForProject(project) {
+		case codexapp.ProviderOpenCode:
 			defaultSelection = todoCopyScopeOpenCode
+		case codexapp.ProviderClaudeCode:
+			defaultSelection = todoCopyScopeClaudeCode
 		}
 	}
 	m.todoCopyDialog = &todoCopyDialogState{
@@ -752,6 +756,7 @@ func (m Model) renderTodoCopyDialogOverlay(body string, bodyW, bodyH int) string
 	options := []int{
 		todoCopyScopeCodex,
 		todoCopyScopeOpenCode,
+		todoCopyScopeClaudeCode,
 		todoCopyScopeCancel,
 	}
 	for _, option := range options {
@@ -781,6 +786,8 @@ func todoCopyScopeLabel(scope int) string {
 		return "Start with Codex"
 	case todoCopyScopeOpenCode:
 		return "Start with OpenCode"
+	case todoCopyScopeClaudeCode:
+		return "Start with Claude Code"
 	default:
 		return "Cancel"
 	}
@@ -792,6 +799,8 @@ func todoCopyScopeProvider(scope int) codexapp.Provider {
 		return codexapp.ProviderCodex
 	case todoCopyScopeOpenCode:
 		return codexapp.ProviderOpenCode
+	case todoCopyScopeClaudeCode:
+		return codexapp.ProviderClaudeCode
 	default:
 		return ""
 	}

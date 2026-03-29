@@ -3652,6 +3652,86 @@ func TestTodoDialogEnterStartsFreshPreferredProviderWithDraft(t *testing.T) {
 	}
 }
 
+func TestTodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				ThreadID: "ses-claude",
+				Started:  true,
+				Preset:   req.Preset,
+				Status:   req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:                "/tmp/demo",
+			Name:                "demo",
+			PresentOnDisk:       true,
+			LatestSessionFormat: "claude_code",
+		}},
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Todos: []model.TodoItem{{
+				ID:          9,
+				ProjectPath: "/tmp/demo",
+				Text:        "Investigate the TODO dialog launch provider list",
+			}},
+		},
+		selected:      0,
+		todoDialog:    &todoDialogState{ProjectPath: "/tmp/demo", ProjectName: "demo"},
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, _ := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.todoCopyDialog == nil {
+		t.Fatalf("todo copy dialog should open after Enter")
+	}
+	if got.todoCopyDialog.Selected != todoCopyScopeClaudeCode {
+		t.Fatalf("copy dialog selected = %d, want Claude Code option %d", got.todoCopyDialog.Selected, todoCopyScopeClaudeCode)
+	}
+
+	rendered := ansi.Strip(got.renderTodoCopyDialogOverlay("", 100, 24))
+	if !strings.Contains(rendered, "Start with Claude Code") {
+		t.Fatalf("rendered copy dialog = %q, want Claude Code launch option", rendered)
+	}
+
+	updated, cmd := got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if got.codexPendingOpen == nil || got.codexPendingOpen.provider != codexapp.ProviderClaudeCode {
+		t.Fatalf("codexPendingOpen = %#v, want pending Claude Code session", got.codexPendingOpen)
+	}
+	if cmd == nil {
+		t.Fatalf("starting the Claude TODO flow should return an open command")
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("todo launch returned error = %v", opened.err)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("request count = %d, want 1", len(requests))
+	}
+	if requests[0].Provider != codexapp.ProviderClaudeCode || !requests[0].ForceNew {
+		t.Fatalf("launch request = %#v, want fresh Claude Code launch", requests[0])
+	}
+}
+
 func TestLaunchClaudeForSelectionUsesClaudeProvider(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {

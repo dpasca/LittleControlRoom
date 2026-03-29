@@ -1,6 +1,33 @@
 # Little Control Room Status
 
-Last updated: 2026-03-29 17:39 JST
+Last updated: 2026-03-29 18:33 JST
+
+## Latest Update (2026-03-29 18:33 JST)
+
+- Added Claude Code as a first-class TODO dialog launch target:
+  - `internal/tui/todo_dialog.go`
+    - inserted a third `Start TODO` option for Claude Code alongside Codex and OpenCode
+    - mapped the new option to `codexapp.ProviderClaudeCode`
+    - updated the default selection logic so projects whose latest session format is `claude_code` preselect Claude Code when starting from a TODO
+- Added focused TUI regression coverage:
+  - `internal/tui/app_test.go`
+    - `TestTodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider`
+    - verifies the dialog renders `Start with Claude Code`, defaults to it for Claude-backed projects, and launches a fresh embedded Claude session with the TODO draft
+- Files modified in this pass:
+  - `internal/tui/todo_dialog.go`
+  - `internal/tui/app_test.go`
+  - `STATUS.md`
+- Verification status:
+  - `go test ./internal/tui -run 'Test(TodoDialogEnterStartsFreshPreferredProviderWithDraft|TodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider|LaunchClaudeForSelectionUsesClaudeProvider)' -count=1` passed
+  - `make scan` passed at `2026-03-29T18:33:13+09:00`
+  - `make doctor` passed using cached report at `2026-03-29T18:33:13+09:00`
+  - `timeout 10s make tui-parallel` launched the isolated TUI sandbox and rendered the dashboard before the timeout stopped it
+  - `make test` still fails in the same pre-existing `internal/tui` coverage unrelated to this TODO-dialog change:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+- Next concrete tasks:
+  - Live-check the TODO dialog manually inside the TUI so we can confirm the new Claude option feels right in the keyboard flow and model-picker path.
 
 ## Latest Update (2026-03-29 17:39 JST)
 
