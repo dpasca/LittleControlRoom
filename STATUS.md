@@ -1,6 +1,74 @@
 # Little Control Room Status
 
-Last updated: 2026-03-29 19:21 JST
+Last updated: 2026-03-29 21:27 JST
+
+## Latest Update (2026-03-29 21:27 JST)
+
+- Investigated the current hard-freeze report that initially looked like a new Claude Code integration loop:
+  - the `FractalMech` Claude transcript currently has no active `~/.claude/sessions` PID marker
+  - the live stuck `lcroom tui` process had no Claude child process attached
+  - sampling the stuck TUI pointed at TUI-side syntax-highlighting/render work rather than Claude session refresh code
+- Hardened transcript/diff syntax highlighting so risky blocks fall back to plain text instead of driving Chroma into expensive lexer work:
+  - `internal/tui/syntax_highlight.go`
+    - skip syntax highlighting for oversized blocks larger than `12 KiB` or `240` lines
+    - skip content-only lexer auto-detection when no language hint or filename is available, returning plain text instead
+- Added focused regression coverage:
+  - `internal/tui/syntax_highlight_test.go`
+    - `TestSyntaxHighlightPreparedLexerSkipsContentOnlyInference`
+    - `TestSyntaxHighlightPreparedLexerSkipsLargeTypedBlock`
+    - `TestSyntaxHighlightBlockFallsBackToPlainTextForLargeTypedBlock`
+- Files modified in this pass:
+  - `internal/tui/syntax_highlight.go`
+  - `internal/tui/syntax_highlight_test.go`
+  - `STATUS.md`
+- Verification status:
+  - `go test ./internal/tui -run 'TestSyntaxHighlight' -count=1` passed
+  - `make scan` passed at `2026-03-29T21:26:38+09:00`
+  - `make doctor` passed using cached report at `2026-03-29T21:26:39+09:00`
+  - `timeout 10s make tui-parallel` still could not complete interactive verification in this environment because opening `/dev/tty` failed (`device not configured`)
+  - `make test` still fails in the same pre-existing `internal/tui` coverage unrelated to this syntax-highlighting pass:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+- Next concrete tasks:
+  - Reproduce the original stuck TUI flow interactively after this guardrail lands to confirm the freeze is gone.
+  - If a hard freeze still occurs, capture a fresh live sample while the problematic pane is visible so the next pass can distinguish transcript rendering from diff-mode rendering.
+
+## Latest Update (2026-03-29 20:44 JST)
+
+- Implemented the first TODO worktree suggestion slice end-to-end:
+  - added persisted TODO worktree suggestion state and queueing in the store
+  - added a dedicated model-backed TODO worktree suggestion package and manager
+  - wired the service to queue suggestions on TODO create and edit
+  - started the TODO worktree suggester alongside the existing background runtime paths
+  - fixed the startup backfill path so open TODO suggestions are queued without nesting SQLite queries on the single-connection store
+  - surfaced cached suggestion state in the TODO dialog so rows can show either the ready branch name or a preparing/unavailable status
+- Files modified in this pass:
+  - `internal/model/model.go`
+  - `internal/store/store.go`
+  - `internal/store/store_test.go`
+  - `internal/service/service.go`
+  - `internal/cli/run.go`
+  - `internal/tui/todo_dialog.go`
+  - `internal/tui/app_test.go`
+  - `internal/todoworktree/client.go`
+  - `internal/todoworktree/manager.go`
+  - `internal/todoworktree/manager_test.go`
+  - `STATUS.md`
+- Verification status:
+  - `go test ./internal/store ./internal/todoworktree ./internal/service ./internal/tui -run 'Test(TodoWorktreeSuggestionLifecycleAppearsInTodoList|ClaimNextQueuedTodoWorktreeSuggestionRespectsDebounce|ManagerGeneratesReadySuggestion|TodoDialogShowsWorktreeSuggestionState|TodoDialogSelectedRowHasNoExtraLeadingSpace)' -count=1` passed
+  - `go test ./internal/store -count=1` passed
+  - `go test ./internal/todoworktree -count=1` passed
+  - `make scan` passed at `2026-03-29T20:43:59+09:00`
+  - `make doctor` passed using cached report at `2026-03-29T20:44:00+09:00`
+  - `timeout 10s make tui-parallel` could not complete interactive verification in this environment because opening `/dev/tty` failed (`device not configured`)
+  - `make test` still fails in the same pre-existing `internal/tui` coverage unrelated to this TODO worktree suggestion slice:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+- Next concrete tasks:
+  - Add an explicit regenerate/manual-edit path for TODO worktree suggestions inside the start/launch flow.
+  - Implement the actual `Start in new worktree` launch mode so the cached branch/worktree suggestion can create a worktree and open the selected embedded provider inside it.
 
 ## Latest Update (2026-03-29 19:21 JST)
 

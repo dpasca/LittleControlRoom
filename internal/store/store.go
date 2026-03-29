@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -94,6 +96,21 @@ func (s *Store) initSchema(ctx context.Context) error {
 			FOREIGN KEY(project_path) REFERENCES projects(path) ON DELETE CASCADE
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_project_todos_project_path_position ON project_todos(project_path, done, position, id);`,
+		`CREATE TABLE IF NOT EXISTS todo_worktree_suggestions (
+			todo_id INTEGER PRIMARY KEY,
+			status TEXT NOT NULL,
+			todo_text_hash TEXT NOT NULL,
+			branch_name TEXT NOT NULL DEFAULT '',
+			worktree_suffix TEXT NOT NULL DEFAULT '',
+			kind TEXT NOT NULL DEFAULT '',
+			reason TEXT NOT NULL DEFAULT '',
+			confidence REAL NOT NULL DEFAULT 0,
+			model TEXT NOT NULL DEFAULT '',
+			last_error TEXT NOT NULL DEFAULT '',
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY(todo_id) REFERENCES project_todos(id) ON DELETE CASCADE
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_todo_worktree_suggestions_status_updated ON todo_worktree_suggestions(status, updated_at);`,
 		`CREATE TABLE IF NOT EXISTS project_reasons (
 			project_path TEXT NOT NULL,
 			position INTEGER NOT NULL,
@@ -1890,8 +1907,12 @@ func (s *Store) GetProjectDetail(ctx context.Context, path string, eventLimit in
 
 func (s *Store) listTodos(ctx context.Context, path string) ([]model.TodoItem, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, project_path, text, done, position, created_at, updated_at, completed_at
-		FROM project_todos
+		SELECT
+			pt.id, pt.project_path, pt.text, pt.done, pt.position, pt.created_at, pt.updated_at, pt.completed_at,
+			tws.todo_id, tws.status, tws.todo_text_hash, tws.branch_name, tws.worktree_suffix, tws.kind,
+			tws.reason, tws.confidence, tws.model, tws.last_error, tws.updated_at
+		FROM project_todos pt
+		LEFT JOIN todo_worktree_suggestions tws ON tws.todo_id = pt.id
 		WHERE project_path = ?
 		ORDER BY done ASC, position ASC, id ASC
 	`, path)
@@ -1908,8 +1929,22 @@ func (s *Store) listTodos(ctx context.Context, path string) ([]model.TodoItem, e
 			createdAt   int64
 			updatedAt   int64
 			completedAt sql.NullInt64
+			suggestion  sql.NullInt64
+			status      sql.NullString
+			textHash    sql.NullString
+			branchName  sql.NullString
+			suffix      sql.NullString
+			kind        sql.NullString
+			reason      sql.NullString
+			confidence  sql.NullFloat64
+			modelName   sql.NullString
+			lastError   sql.NullString
+			suggestedAt sql.NullInt64
 		)
-		if err := rows.Scan(&item.ID, &item.ProjectPath, &item.Text, &done, &item.Position, &createdAt, &updatedAt, &completedAt); err != nil {
+		if err := rows.Scan(
+			&item.ID, &item.ProjectPath, &item.Text, &done, &item.Position, &createdAt, &updatedAt, &completedAt,
+			&suggestion, &status, &textHash, &branchName, &suffix, &kind, &reason, &confidence, &modelName, &lastError, &suggestedAt,
+		); err != nil {
 			return nil, err
 		}
 		item.Done = done != 0
@@ -1918,9 +1953,36 @@ func (s *Store) listTodos(ctx context.Context, path string) ([]model.TodoItem, e
 		if completedAt.Valid {
 			item.CompletedAt = time.Unix(completedAt.Int64, 0)
 		}
+		if suggestion.Valid {
+			worktreeSuggestion := &model.TodoWorktreeSuggestion{
+				TodoID:         item.ID,
+				ProjectPath:    item.ProjectPath,
+				TodoText:       item.Text,
+				Status:         model.TodoWorktreeSuggestionStatus(strings.TrimSpace(status.String)),
+				TodoTextHash:   strings.TrimSpace(textHash.String),
+				BranchName:     strings.TrimSpace(branchName.String),
+				WorktreeSuffix: strings.TrimSpace(suffix.String),
+				Kind:           strings.TrimSpace(kind.String),
+				Reason:         strings.TrimSpace(reason.String),
+				Model:          strings.TrimSpace(modelName.String),
+				LastError:      strings.TrimSpace(lastError.String),
+			}
+			if confidence.Valid {
+				worktreeSuggestion.Confidence = confidence.Float64
+			}
+			if suggestedAt.Valid {
+				worktreeSuggestion.UpdatedAt = time.Unix(suggestedAt.Int64, 0)
+			}
+			item.WorktreeSuggestion = worktreeSuggestion
+		}
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+func hashTodoText(text string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(text)))
+	return hex.EncodeToString(sum[:])
 }
 
 func (s *Store) listReasons(ctx context.Context, path string) ([]model.AttentionReason, error) {
@@ -2182,6 +2244,295 @@ func (s *Store) AddTodo(ctx context.Context, projectPath, text string) (model.To
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}, nil
+}
+
+func (s *Store) QueueTodoWorktreeSuggestion(ctx context.Context, todoID int64) (bool, error) {
+	if todoID <= 0 {
+		return false, fmt.Errorf("todo id is required")
+	}
+	todo, err := s.GetTodo(ctx, todoID)
+	if err != nil {
+		return false, err
+	}
+	if todo.Done {
+		return false, nil
+	}
+
+	now := time.Now()
+	textHash := hashTodoText(todo.Text)
+	existing, err := s.GetTodoWorktreeSuggestion(ctx, todoID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	if err == nil && existing.TodoTextHash == textHash {
+		switch existing.Status {
+		case model.TodoWorktreeSuggestionQueued,
+			model.TodoWorktreeSuggestionRunning,
+			model.TodoWorktreeSuggestionReady,
+			model.TodoWorktreeSuggestionFailed:
+			return false, nil
+		}
+	}
+
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO todo_worktree_suggestions(
+			todo_id, status, todo_text_hash, branch_name, worktree_suffix, kind, reason,
+			confidence, model, last_error, updated_at
+		)
+		VALUES(?, ?, ?, '', '', '', '', 0, '', '', ?)
+		ON CONFLICT(todo_id) DO UPDATE SET
+			status = excluded.status,
+			todo_text_hash = excluded.todo_text_hash,
+			branch_name = '',
+			worktree_suffix = '',
+			kind = '',
+			reason = '',
+			confidence = 0,
+			model = '',
+			last_error = '',
+			updated_at = excluded.updated_at
+	`, todoID, string(model.TodoWorktreeSuggestionQueued), textHash, now.Unix())
+	return err == nil, err
+}
+
+func (s *Store) QueueOpenTodoWorktreeSuggestions(ctx context.Context) (int, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id
+		FROM project_todos
+		WHERE done = 0
+		ORDER BY updated_at ASC, id ASC
+	`)
+	if err != nil {
+		return 0, err
+	}
+	ids := make([]int64, 0, 16)
+	for rows.Next() {
+		var todoID int64
+		if err := rows.Scan(&todoID); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		ids = append(ids, todoID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	if err := rows.Close(); err != nil {
+		return 0, err
+	}
+
+	queued := 0
+	for _, todoID := range ids {
+		changed, err := s.QueueTodoWorktreeSuggestion(ctx, todoID)
+		if err != nil {
+			return queued, err
+		}
+		if changed {
+			queued++
+		}
+	}
+	return queued, nil
+}
+
+func scanTodoWorktreeSuggestionRow(scanner interface {
+	Scan(dest ...any) error
+}) (model.TodoWorktreeSuggestion, error) {
+	var (
+		suggestion model.TodoWorktreeSuggestion
+		status     string
+		updatedAt  int64
+	)
+	if err := scanner.Scan(
+		&suggestion.TodoID,
+		&suggestion.ProjectPath,
+		&suggestion.TodoText,
+		&status,
+		&suggestion.TodoTextHash,
+		&suggestion.BranchName,
+		&suggestion.WorktreeSuffix,
+		&suggestion.Kind,
+		&suggestion.Reason,
+		&suggestion.Confidence,
+		&suggestion.Model,
+		&suggestion.LastError,
+		&updatedAt,
+	); err != nil {
+		return model.TodoWorktreeSuggestion{}, err
+	}
+	suggestion.Status = model.TodoWorktreeSuggestionStatus(strings.TrimSpace(status))
+	suggestion.TodoText = strings.TrimSpace(suggestion.TodoText)
+	suggestion.TodoTextHash = strings.TrimSpace(suggestion.TodoTextHash)
+	suggestion.BranchName = strings.TrimSpace(suggestion.BranchName)
+	suggestion.WorktreeSuffix = strings.TrimSpace(suggestion.WorktreeSuffix)
+	suggestion.Kind = strings.TrimSpace(suggestion.Kind)
+	suggestion.Reason = strings.TrimSpace(suggestion.Reason)
+	suggestion.Model = strings.TrimSpace(suggestion.Model)
+	suggestion.LastError = strings.TrimSpace(suggestion.LastError)
+	suggestion.UpdatedAt = time.Unix(updatedAt, 0)
+	return suggestion, nil
+}
+
+func (s *Store) GetTodoWorktreeSuggestion(ctx context.Context, todoID int64) (model.TodoWorktreeSuggestion, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT
+			tws.todo_id, pt.project_path, pt.text, tws.status, tws.todo_text_hash, tws.branch_name,
+			tws.worktree_suffix, tws.kind, tws.reason, tws.confidence, tws.model, tws.last_error, tws.updated_at
+		FROM todo_worktree_suggestions tws
+		JOIN project_todos pt ON pt.id = tws.todo_id
+		WHERE tws.todo_id = ?
+	`, todoID)
+	return scanTodoWorktreeSuggestionRow(row)
+}
+
+func (s *Store) ClaimNextQueuedTodoWorktreeSuggestion(ctx context.Context, debounce, staleAfter time.Duration) (model.TodoWorktreeSuggestion, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return model.TodoWorktreeSuggestion{}, err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	now := time.Now()
+	if staleAfter > 0 {
+		_, err = tx.ExecContext(ctx, `
+			UPDATE todo_worktree_suggestions
+			SET status = ?, updated_at = ?
+			WHERE status = ? AND updated_at < ?
+		`, string(model.TodoWorktreeSuggestionQueued), now.Unix(), string(model.TodoWorktreeSuggestionRunning), now.Add(-staleAfter).Unix())
+		if err != nil {
+			return model.TodoWorktreeSuggestion{}, err
+		}
+	}
+
+	row := tx.QueryRowContext(ctx, `
+		SELECT
+			tws.todo_id, pt.project_path, pt.text, tws.status, tws.todo_text_hash, tws.branch_name,
+			tws.worktree_suffix, tws.kind, tws.reason, tws.confidence, tws.model, tws.last_error, tws.updated_at
+		FROM todo_worktree_suggestions tws
+		JOIN project_todos pt ON pt.id = tws.todo_id
+		JOIN projects p ON p.path = pt.project_path
+		WHERE tws.status = ?
+		  AND pt.done = 0
+		  AND p.in_scope = 1
+		  AND tws.updated_at <= ?
+		ORDER BY p.attention_score DESC, pt.updated_at ASC, tws.updated_at ASC
+		LIMIT 1
+	`, string(model.TodoWorktreeSuggestionQueued), now.Add(-debounce).Unix())
+
+	suggestion, err := scanTodoWorktreeSuggestionRow(row)
+	if err != nil {
+		return model.TodoWorktreeSuggestion{}, err
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE todo_worktree_suggestions
+		SET status = ?, updated_at = ?, last_error = ''
+		WHERE todo_id = ? AND status = ? AND updated_at = ?
+	`, string(model.TodoWorktreeSuggestionRunning), now.Unix(), suggestion.TodoID, string(model.TodoWorktreeSuggestionQueued), suggestion.UpdatedAt.Unix())
+	if err != nil {
+		return model.TodoWorktreeSuggestion{}, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return model.TodoWorktreeSuggestion{}, err
+	}
+	if rowsAffected != 1 {
+		return model.TodoWorktreeSuggestion{}, sql.ErrNoRows
+	}
+	if err := tx.Commit(); err != nil {
+		return model.TodoWorktreeSuggestion{}, err
+	}
+	suggestion.Status = model.TodoWorktreeSuggestionRunning
+	suggestion.UpdatedAt = now
+	return suggestion, nil
+}
+
+func (s *Store) CompleteTodoWorktreeSuggestion(ctx context.Context, suggestion model.TodoWorktreeSuggestion) (bool, error) {
+	if suggestion.TodoID <= 0 {
+		return false, errors.New("todo worktree suggestion requires todo_id")
+	}
+	now := time.Now()
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE todo_worktree_suggestions
+		SET status = ?,
+			todo_text_hash = ?,
+			branch_name = ?,
+			worktree_suffix = ?,
+			kind = ?,
+			reason = ?,
+			confidence = ?,
+			model = ?,
+			last_error = '',
+			updated_at = ?
+		WHERE todo_id = ?
+		  AND status = ?
+		  AND todo_text_hash = ?
+		  AND updated_at = ?
+	`, string(model.TodoWorktreeSuggestionReady), strings.TrimSpace(suggestion.TodoTextHash), strings.TrimSpace(suggestion.BranchName),
+		strings.TrimSpace(suggestion.WorktreeSuffix), strings.TrimSpace(suggestion.Kind), strings.TrimSpace(suggestion.Reason),
+		suggestion.Confidence, strings.TrimSpace(suggestion.Model), now.Unix(), suggestion.TodoID,
+		string(model.TodoWorktreeSuggestionRunning), strings.TrimSpace(suggestion.TodoTextHash), suggestion.UpdatedAt.Unix())
+	if err != nil {
+		return false, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected == 1, nil
+}
+
+func (s *Store) FailTodoWorktreeSuggestion(ctx context.Context, suggestion model.TodoWorktreeSuggestion, lastError string) (bool, error) {
+	if suggestion.TodoID <= 0 {
+		return false, errors.New("todo worktree suggestion requires todo_id")
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE todo_worktree_suggestions
+		SET status = ?, last_error = ?, updated_at = ?
+		WHERE todo_id = ?
+		  AND status = ?
+		  AND todo_text_hash = ?
+		  AND updated_at = ?
+	`, string(model.TodoWorktreeSuggestionFailed), strings.TrimSpace(lastError), time.Now().Unix(), suggestion.TodoID,
+		string(model.TodoWorktreeSuggestionRunning), strings.TrimSpace(suggestion.TodoTextHash), suggestion.UpdatedAt.Unix())
+	if err != nil {
+		return false, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected == 1, nil
+}
+
+func (s *Store) GetTodo(ctx context.Context, todoID int64) (model.TodoItem, error) {
+	if todoID <= 0 {
+		return model.TodoItem{}, fmt.Errorf("todo id is required")
+	}
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, project_path, text, done, position, created_at, updated_at, completed_at
+		FROM project_todos
+		WHERE id = ?
+	`, todoID)
+	var (
+		item        model.TodoItem
+		done        int
+		createdAt   int64
+		updatedAt   int64
+		completedAt sql.NullInt64
+	)
+	if err := row.Scan(&item.ID, &item.ProjectPath, &item.Text, &done, &item.Position, &createdAt, &updatedAt, &completedAt); err != nil {
+		return model.TodoItem{}, err
+	}
+	item.Done = done != 0
+	item.CreatedAt = time.Unix(createdAt, 0)
+	item.UpdatedAt = time.Unix(updatedAt, 0)
+	if completedAt.Valid {
+		item.CompletedAt = time.Unix(completedAt.Int64, 0)
+	}
+	return item, nil
 }
 
 func (s *Store) UpdateTodo(ctx context.Context, id int64, text string) error {

@@ -25,6 +25,7 @@ import (
 	"lcroom/internal/scanner"
 	"lcroom/internal/sessionclassify"
 	"lcroom/internal/store"
+	"lcroom/internal/todoworktree"
 )
 
 const legacyRepoDirName = "BatonDeck"
@@ -46,6 +47,7 @@ type Service struct {
 	bus        *events.Bus
 	detectors  []detectors.Detector
 	classifier SessionClassifier
+	todoSuggester *todoworktree.Manager
 
 	commitMessageSuggester   gitops.CommitMessageSuggester
 	untrackedFileRecommender gitops.UntrackedFileRecommender
@@ -161,6 +163,13 @@ func (s *Service) StartBackgroundDiscovery(ctx context.Context) {
 	}()
 }
 
+func (s *Service) StartTodoWorktreeSuggester(ctx context.Context) {
+	if s.todoSuggester == nil {
+		return
+	}
+	s.todoSuggester.Start(ctx)
+}
+
 func (s *Service) HasSessionClassifier() bool {
 	if s.classifier == nil {
 		return false
@@ -195,6 +204,7 @@ func (s *Service) configureAIClientsLocked() {
 	var (
 		client          sessionclassify.Classifier
 		commitAssistant *gitops.OpenAICommitMessageClient
+		todoClient      todoworktree.Suggester
 		selectedBackend = s.cfg.EffectiveAIBackend()
 		selectedStatus  = aibackend.Detect(context.Background(), s.cfg).StatusFor(selectedBackend)
 	)
@@ -203,10 +213,12 @@ func (s *Service) configureAIClientsLocked() {
 		apiKey := strings.TrimSpace(s.cfg.OpenAIAPIKey)
 		commitAssistant = gitops.NewOpenAICommitMessageClientWithUsageTracker(apiKey, s.llmUsageTracker)
 		client = sessionclassify.NewOpenAIClientWithUsageTracker(apiKey, s.llmUsageTracker)
+		todoClient = todoworktree.NewOpenAIClientWithUsageTracker(apiKey, s.llmUsageTracker)
 	case config.AIBackendCodex:
 		if selectedStatus.Ready {
 			commitAssistant = gitops.NewCodexCommitMessageClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
 			client = sessionclassify.NewCodexClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
+			todoClient = todoworktree.NewCodexClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
 		}
 	case config.AIBackendOpenCode:
 		if selectedStatus.Ready {
@@ -214,9 +226,11 @@ func (s *Service) configureAIClientsLocked() {
 			if s.opencodeDiscovery != nil {
 				commitAssistant = gitops.NewOpenCodeCommitMessageClientWithFallback(s.opencodeDiscovery, tier, s.llmUsageTracker)
 				client = sessionclassify.NewOpenCodeClientWithFallback(s.opencodeDiscovery, tier, s.llmUsageTracker)
+				todoClient = todoworktree.NewOpenCodeClientWithFallback(s.opencodeDiscovery, tier, s.llmUsageTracker)
 			} else {
 				commitAssistant = gitops.NewOpenCodeCommitMessageClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
 				client = sessionclassify.NewOpenCodeClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
+				todoClient = todoworktree.NewOpenCodeClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
 			}
 		}
 	}
@@ -225,12 +239,19 @@ func (s *Service) configureAIClientsLocked() {
 	if manager, ok := s.classifier.(*sessionclassify.Manager); ok {
 		manager.ConfigureClient(client)
 		manager.Notify()
+	} else {
+		s.classifier = sessionclassify.NewManager(s.store, s.bus, sessionclassify.Options{
+			Client:           client,
+			OnProjectUpdated: s.RefreshProjectStatus,
+		})
+	}
+	if s.todoSuggester == nil {
+		s.todoSuggester = todoworktree.NewManager(s.store, s.bus, todoworktree.Options{
+			Client: todoClient,
+		})
 		return
 	}
-	s.classifier = sessionclassify.NewManager(s.store, s.bus, sessionclassify.Options{
-		Client:           client,
-		OnProjectUpdated: s.RefreshProjectStatus,
-	})
+	s.todoSuggester.ConfigureClient(todoClient)
 }
 
 func hasMeaningfulLLMUsage(snapshot model.LLMSessionUsage) bool {
@@ -1308,6 +1329,7 @@ func (s *Service) AddTodo(ctx context.Context, projectPath, text string) (model.
 	if err != nil {
 		return model.TodoItem{}, err
 	}
+	s.queueTodoSuggestion(ctx, item.ID)
 	now := time.Now()
 	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "add_todo"}})
 	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: "add_todo"})
@@ -1318,10 +1340,22 @@ func (s *Service) UpdateTodo(ctx context.Context, projectPath string, id int64, 
 	if err := s.store.UpdateTodo(ctx, id, text); err != nil {
 		return err
 	}
+	s.queueTodoSuggestion(ctx, id)
 	now := time.Now()
 	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "update_todo"}})
 	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: "update_todo"})
 	return nil
+}
+
+func (s *Service) queueTodoSuggestion(ctx context.Context, todoID int64) {
+	if s == nil || s.todoSuggester == nil {
+		return
+	}
+	queued, err := s.todoSuggester.QueueTodo(ctx, todoID)
+	if err != nil || !queued {
+		return
+	}
+	s.todoSuggester.Notify()
 }
 
 func (s *Service) ToggleTodoDone(ctx context.Context, projectPath string, id int64, done bool) error {

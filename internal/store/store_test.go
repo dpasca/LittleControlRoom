@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -138,6 +139,125 @@ func TestListProjectsHidesIgnoredProjectNames(t *testing.T) {
 	}
 	if ignored[0].MatchedProjects != 2 {
 		t.Fatalf("matched projects = %d, want 2", ignored[0].MatchedProjects)
+	}
+}
+
+func TestTodoWorktreeSuggestionLifecycleAppearsInTodoList(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           "/tmp/demo",
+		Name:           "demo",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		InScope:        true,
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	item, err := st.AddTodo(ctx, "/tmp/demo", "Fix TODO dialog spacing")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("queue todo worktree suggestion: %v", err)
+	}
+	if !queued {
+		t.Fatalf("queued = false, want true")
+	}
+
+	suggestion, err := st.GetTodoWorktreeSuggestion(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("get todo worktree suggestion: %v", err)
+	}
+	if suggestion.Status != model.TodoWorktreeSuggestionQueued {
+		t.Fatalf("status = %q, want %q", suggestion.Status, model.TodoWorktreeSuggestionQueued)
+	}
+
+	claimed, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, time.Minute)
+	if err != nil {
+		t.Fatalf("claim queued todo worktree suggestion: %v", err)
+	}
+	if claimed.Status != model.TodoWorktreeSuggestionRunning {
+		t.Fatalf("claimed status = %q, want %q", claimed.Status, model.TodoWorktreeSuggestionRunning)
+	}
+
+	claimed.BranchName = "fix/todo-dialog-spacing"
+	claimed.WorktreeSuffix = "fix-todo-dialog-spacing"
+	claimed.Kind = "bugfix"
+	claimed.Reason = "Adjusting the existing TODO dialog layout is a bugfix task."
+	claimed.Confidence = 0.9
+	claimed.Model = "gpt-5.4-mini"
+	completed, err := st.CompleteTodoWorktreeSuggestion(ctx, claimed)
+	if err != nil {
+		t.Fatalf("complete todo worktree suggestion: %v", err)
+	}
+	if !completed {
+		t.Fatalf("completed = false, want true")
+	}
+
+	detail, err := st.GetProjectDetail(ctx, "/tmp/demo", 0)
+	if err != nil {
+		t.Fatalf("get project detail: %v", err)
+	}
+	if len(detail.Todos) != 1 {
+		t.Fatalf("todo count = %d, want 1", len(detail.Todos))
+	}
+	got := detail.Todos[0].WorktreeSuggestion
+	if got == nil {
+		t.Fatalf("todo worktree suggestion = nil, want ready suggestion")
+	}
+	if got.Status != model.TodoWorktreeSuggestionReady {
+		t.Fatalf("ready status = %q, want %q", got.Status, model.TodoWorktreeSuggestionReady)
+	}
+	if got.BranchName != "fix/todo-dialog-spacing" {
+		t.Fatalf("branch = %q, want %q", got.BranchName, "fix/todo-dialog-spacing")
+	}
+}
+
+func TestClaimNextQueuedTodoWorktreeSuggestionRespectsDebounce(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           "/tmp/demo",
+		Name:           "demo",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		InScope:        true,
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+	item, err := st.AddTodo(ctx, "/tmp/demo", "Write worktree spec")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	if _, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
+		t.Fatalf("queue todo worktree suggestion: %v", err)
+	}
+
+	if _, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, time.Hour, time.Minute); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("claim with debounce err = %v, want sql.ErrNoRows", err)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const (
@@ -649,7 +650,7 @@ func (m Model) renderTodoDialogOverlay(body string, bodyW, bodyH int) string {
 				prefix = "[x]"
 				style = detailMutedStyle
 			}
-			line := prefix + " " + truncateText(strings.TrimSpace(item.Text), max(12, panelInnerW-6))
+			line := todoDialogItemLine(item, prefix, max(12, panelInnerW-2))
 			if i == dialog.Selected {
 				line = noteDialogButtonSelectedStyle.UnsetPadding().Width(panelInnerW).Render(line)
 			} else {
@@ -704,6 +705,52 @@ func todoDialogLegendLine() string {
 		renderDialogAction("Enter", "start", commitActionKeyStyle, commitActionTextStyle),
 		renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
 	)
+}
+
+func todoDialogItemLine(item model.TodoItem, prefix string, width int) string {
+	base := prefix + " " + strings.TrimSpace(item.Text)
+	label := todoWorktreeSuggestionLabel(item)
+	if label == "" {
+		return truncateText(base, width)
+	}
+	suffix := " · " + label
+	if width <= 0 {
+		return base + suffix
+	}
+	baseWidth := ansi.StringWidth(base)
+	suffixWidth := ansi.StringWidth(suffix)
+	if baseWidth+suffixWidth <= width {
+		return base + suffix
+	}
+	minBaseWidth := max(12, width/2)
+	if baseWidth > minBaseWidth {
+		base = truncateText(base, minBaseWidth)
+	}
+	remaining := width - ansi.StringWidth(base)
+	if remaining <= 3 {
+		return truncateText(base, width)
+	}
+	return base + truncateText(suffix, remaining)
+}
+
+func todoWorktreeSuggestionLabel(item model.TodoItem) string {
+	suggestion := item.WorktreeSuggestion
+	if suggestion == nil || item.Done {
+		return ""
+	}
+	switch suggestion.Status {
+	case model.TodoWorktreeSuggestionReady:
+		if strings.TrimSpace(suggestion.BranchName) != "" {
+			return suggestion.BranchName
+		}
+		return "suggestion ready"
+	case model.TodoWorktreeSuggestionRunning, model.TodoWorktreeSuggestionQueued:
+		return "preparing suggestion..."
+	case model.TodoWorktreeSuggestionFailed:
+		return "suggestion unavailable"
+	default:
+		return ""
+	}
 }
 
 func todoEditorLegendLine() string {

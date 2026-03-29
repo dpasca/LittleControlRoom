@@ -3829,6 +3829,44 @@ func TestTodoDialogSelectedRowHasNoExtraLeadingSpace(t *testing.T) {
 	}
 }
 
+func TestTodoDialogShowsWorktreeSuggestionState(t *testing.T) {
+	m := Model{
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Todos: []model.TodoItem{
+				{
+					ID:          7,
+					ProjectPath: "/tmp/demo",
+					Text:        "Fix spacing on selected TODO row",
+					WorktreeSuggestion: &model.TodoWorktreeSuggestion{
+						Status:     model.TodoWorktreeSuggestionReady,
+						BranchName: "fix/todo-dialog-spacing",
+					},
+				},
+				{
+					ID:          8,
+					ProjectPath: "/tmp/demo",
+					Text:        "Write launch dialog spec",
+					WorktreeSuggestion: &model.TodoWorktreeSuggestion{
+						Status: model.TodoWorktreeSuggestionQueued,
+					},
+				},
+			},
+		},
+		todoDialog: &todoDialogState{ProjectPath: "/tmp/demo", ProjectName: "demo", Selected: 0},
+		width:      100,
+		height:     24,
+	}
+
+	rendered := ansi.Strip(m.renderTodoDialogOverlay("", 100, 24))
+	if !strings.Contains(rendered, "fix/todo-dialog-spacing") {
+		t.Fatalf("rendered TODO dialog should show ready branch suggestion, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "preparing suggestion...") {
+		t.Fatalf("rendered TODO dialog should show queued suggestion state, got %q", rendered)
+	}
+}
+
 func TestEmbeddedModelPreferenceLoadsFromSavedSettingsOnStartup(t *testing.T) {
 	cfg := config.Default()
 	cfg.ConfigPath = filepath.Join(t.TempDir(), "config.toml")

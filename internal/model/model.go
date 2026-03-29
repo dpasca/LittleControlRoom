@@ -211,14 +211,40 @@ type ProjectSummary struct {
 }
 
 type TodoItem struct {
-	ID          int64
-	ProjectPath string
-	Text        string
-	Done        bool
-	Position    int
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	CompletedAt time.Time
+	ID                 int64
+	ProjectPath        string
+	Text               string
+	Done               bool
+	Position           int
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	CompletedAt        time.Time
+	WorktreeSuggestion *TodoWorktreeSuggestion
+}
+
+type TodoWorktreeSuggestionStatus string
+
+const (
+	TodoWorktreeSuggestionQueued  TodoWorktreeSuggestionStatus = "queued"
+	TodoWorktreeSuggestionRunning TodoWorktreeSuggestionStatus = "running"
+	TodoWorktreeSuggestionReady   TodoWorktreeSuggestionStatus = "ready"
+	TodoWorktreeSuggestionFailed  TodoWorktreeSuggestionStatus = "failed"
+)
+
+type TodoWorktreeSuggestion struct {
+	TodoID          int64
+	ProjectPath     string
+	TodoText        string
+	Status          TodoWorktreeSuggestionStatus
+	TodoTextHash    string
+	BranchName      string
+	WorktreeSuffix  string
+	Kind            string
+	Reason          string
+	Confidence      float64
+	Model           string
+	LastError       string
+	UpdatedAt       time.Time
 }
 
 type ProjectDetail struct {
