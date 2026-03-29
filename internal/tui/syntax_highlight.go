@@ -9,6 +9,11 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const (
+	syntaxHighlightMaxBytes = 12 * 1024
+	syntaxHighlightMaxLines = 240
+)
+
 type syntaxHighlightOptions struct {
 	DefaultColor    lipgloss.Color
 	BackgroundColor lipgloss.Color
@@ -34,11 +39,50 @@ func (plan syntaxHighlightPlan) Render(text string, opts syntaxHighlightOptions)
 }
 
 func syntaxHighlightPreparedLexer(languageHint, filename, text string) chroma.Lexer {
+	if shouldBypassSyntaxHighlighting(languageHint, filename, text) {
+		return nil
+	}
 	lexer := syntaxHighlightLexer(languageHint, filename, text)
 	if lexer == nil {
 		return nil
 	}
 	return chroma.Coalesce(lexer)
+}
+
+func shouldBypassSyntaxHighlighting(languageHint, filename, text string) bool {
+	if syntaxHighlightTextTooLarge(text) {
+		return true
+	}
+	if normalizedSyntaxLanguageHint(languageHint) == "" && normalizedSyntaxFilename(filename) == "" {
+		return true
+	}
+	return false
+}
+
+func syntaxHighlightTextTooLarge(text string) bool {
+	if len(text) > syntaxHighlightMaxBytes {
+		return true
+	}
+	if 1+strings.Count(text, "\n") > syntaxHighlightMaxLines {
+		return true
+	}
+	return false
+}
+
+func normalizedSyntaxLanguageHint(languageHint string) string {
+	return strings.TrimSpace(strings.TrimPrefix(languageHint, "."))
+}
+
+func normalizedSyntaxFilename(filename string) string {
+	filename = strings.TrimSpace(filename)
+	if filename == "" {
+		return ""
+	}
+	name := strings.TrimSpace(filepath.Base(filename))
+	if name == "." {
+		return ""
+	}
+	return name
 }
 
 func syntaxHighlightWithLexer(text string, lexer chroma.Lexer, opts syntaxHighlightOptions) string {
@@ -75,7 +119,7 @@ func syntaxHighlightPlainText(text string, opts syntaxHighlightOptions) string {
 }
 
 func syntaxHighlightLexer(languageHint, filename, text string) chroma.Lexer {
-	hint := strings.TrimSpace(strings.TrimPrefix(languageHint, "."))
+	hint := normalizedSyntaxLanguageHint(languageHint)
 	if hint != "" {
 		switch strings.ToLower(hint) {
 		case "text", "plain", "plaintext", "txt":
@@ -87,7 +131,7 @@ func syntaxHighlightLexer(languageHint, filename, text string) chroma.Lexer {
 		}
 		return lexer
 	}
-	name := strings.TrimSpace(filepath.Base(filename))
+	name := normalizedSyntaxFilename(filename)
 	if name != "" {
 		if lexer := lexers.Match(name); lexer != nil && lexer != lexers.Fallback {
 			return lexer
