@@ -21,6 +21,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"lcroom/internal/aibackend"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/config"
@@ -94,7 +95,7 @@ func GenerateScreenshots(ctx context.Context, svc *service.Service, cfg config.S
 	runtimeSnapshots := screenshotRuntimeSnapshots(runtimeProject, now)
 	dashboardProject := screenshotDashboardSelectionProject(filtered, selectedProject, liveProject, runtimeProject)
 
-	assets := make([]ScreenshotAsset, 0, 6)
+	assets := make([]ScreenshotAsset, 0, 8)
 
 	mainModel, err := buildScreenshotDashboardModel(ctx, svc, data, filtered, dashboardProject.Path, cfg, now)
 	if err != nil {
@@ -166,6 +167,23 @@ func GenerateScreenshots(ctx context.Context, svc *service.Service, cfg config.S
 	todoModel.syncTodoDialogSelection()
 	todoModel.status = "TODO list open. Enter starts selected item; a adds, e edits, space toggles"
 	assets = append(assets, screenshotAsset("todo-dialog", "TODO Dialog", todoModel.View(), cfg))
+
+	setupModel, err := buildScreenshotDashboardModel(ctx, svc, data, filtered, selectedProject.Path, cfg, now)
+	if err != nil {
+		return ScreenshotReport{}, err
+	}
+	setupModel.setupMode = true
+	setupModel.setupChecked = true
+	setupModel.setupLoading = false
+	setupModel.setupSelected = setupModel.setupSelectionForBackend(config.AIBackendClaude)
+	setupModel.setupModelTier = config.ModelTierCheap
+	setupModel.setupSnapshot = screenshotSetupSnapshot()
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendCodex
+	settings.OpenCodeModelTier = string(config.ModelTierCheap)
+	setupModel.settingsBaseline = &settings
+	setupModel.status = "Choose how Little Control Room should run AI summaries, classifications, and commit help."
+	assets = append(assets, screenshotAsset("setup", "Setup", setupModel.View(), cfg))
 
 	report := ScreenshotReport{
 		Assets:                assets,
@@ -273,6 +291,43 @@ func screenshotProjectWithMostTodos(ctx context.Context, svc *service.Service, d
 		}
 	}
 	return best
+}
+
+func screenshotSetupSnapshot() aibackend.Snapshot {
+	return aibackend.Snapshot{
+		Selected: config.AIBackendCodex,
+		Codex: aibackend.Status{
+			Backend:       config.AIBackendCodex,
+			Label:         config.AIBackendCodex.Label(),
+			Installed:     true,
+			Authenticated: true,
+			Ready:         true,
+			Detail:        "Logged in with ChatGPT.",
+		},
+		OpenCode: aibackend.Status{
+			Backend:       config.AIBackendOpenCode,
+			Label:         config.AIBackendOpenCode.Label(),
+			Installed:     true,
+			Authenticated: true,
+			Ready:         true,
+			Detail:        "OpenCode OpenAI OAuth is ready.",
+		},
+		Claude: aibackend.Status{
+			Backend:       config.AIBackendClaude,
+			Label:         config.AIBackendClaude.Label(),
+			Installed:     true,
+			Authenticated: true,
+			Ready:         true,
+			Detail:        "Claude Code ready via claude.ai (max)",
+		},
+		OpenAIAPI: aibackend.Status{
+			Backend:   config.AIBackendOpenAIAPI,
+			Label:     config.AIBackendOpenAIAPI.Label(),
+			Installed: false,
+			Detail:    "No saved OpenAI API key.",
+			LoginHint: "Open /settings and save an OpenAI API key.",
+		},
+	}
 }
 
 func (d screenshotDataSet) projectDetail(ctx context.Context, svc *service.Service, path string, eventLimit int) (model.ProjectDetail, error) {

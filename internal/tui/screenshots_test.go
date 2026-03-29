@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"lcroom/internal/codexapp"
+	"lcroom/internal/config"
 	"lcroom/internal/model"
 	"lcroom/internal/projectrun"
 
@@ -197,6 +198,53 @@ func TestScreenshotRuntimeSnapshotRendersRuntimePane(t *testing.T) {
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("runtime screenshot render missing %q: %q", want, rendered)
+		}
+	}
+}
+
+func TestScreenshotSetupRendersBackendChoicesAndHaikuHint(t *testing.T) {
+	t.Parallel()
+
+	m := Model{
+		width:          112,
+		height:         31,
+		setupMode:      true,
+		setupChecked:   true,
+		setupSelected:  mSetupSelectionForTest(config.AIBackendClaude),
+		setupModelTier: config.ModelTierCheap,
+		setupSnapshot:  screenshotSetupSnapshot(),
+		status:         "Choose how Little Control Room should run AI summaries, classifications, and commit help.",
+		projects: []model.ProjectSummary{
+			{Name: "LittleControlRoom", Path: "/tmp/LittleControlRoom", PresentOnDisk: true},
+		},
+		allProjects: []model.ProjectSummary{
+			{Name: "LittleControlRoom", Path: "/tmp/LittleControlRoom", PresentOnDisk: true},
+		},
+	}
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendCodex
+	settings.OpenCodeModelTier = string(config.ModelTierCheap)
+	m.settingsBaseline = &settings
+	m.detail = model.ProjectDetail{
+		Summary: model.ProjectSummary{Name: "LittleControlRoom", Path: "/tmp/LittleControlRoom", PresentOnDisk: true},
+	}
+	m.syncDetailViewport(false)
+
+	rendered := ansi.Strip(m.View())
+	for _, want := range []string{
+		"Setup",
+		"Config: ~/.little-control-room/config.toml",
+		"Codex",
+		"OpenCode",
+		"Claude Code",
+		"OpenAI API key",
+		"Disabled",
+		"Haiku",
+		"active",
+		"ready",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("setup screenshot render missing %q: %q", want, rendered)
 		}
 	}
 }

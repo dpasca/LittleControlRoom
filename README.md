@@ -51,6 +51,12 @@ lcroom tui
 
 On the first run, LCR opens `/setup` if no AI backend is configured. From there you can use Codex, OpenCode, Claude Code, an OpenAI API key, or continue without AI and come back later. Claude-backed background inference currently defaults to Haiku to keep usage lighter.
 
+<p align="center">
+  <a href="docs/screenshots/setup.png">
+    <img src="docs/screenshots/setup.png" alt="Little Control Room setup screen showing Codex, OpenCode, Claude Code, OpenAI API key, and disabled AI options" width="850">
+  </a>
+</p>
+
 ## Slash Commands
 
 The main TUI command palette opens with `/`.

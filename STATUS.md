@@ -1,6 +1,37 @@
 # Little Control Room Status
 
-Last updated: 2026-03-30 02:26 JST
+Last updated: 2026-03-30 02:37 JST
+
+## Latest Update (2026-03-30 02:37 JST)
+
+- Added a dedicated curated `/setup` screenshot so the docs/gallery can double as a quick-start guide:
+  - `internal/tui/screenshots.go`
+    - added a deterministic `setup` screenshot asset with a guided backend chooser state
+    - the setup fixture shows Codex active, Claude Code highlighted, OpenCode ready, the OpenAI API key option, and the Haiku usage hint
+  - `internal/tui/screenshots_test.go`
+    - added coverage to make sure the setup screenshot render includes the backend choices, the config path, and the Haiku hint
+  - `internal/tui/setup.go`
+  - `internal/tui/settings.go`
+    - compact config-path display now uses `~` for home-relative paths, which keeps both the setup/settings UI and the screenshot output cleaner
+  - `docs/screenshots/setup.png`
+    - generated and added the new setup guide screenshot
+  - `README.md`
+    - added the setup screenshot to the quick-start/setup section
+  - `docs/reference.md`
+    - updated the curated screenshot list to include both `todo-dialog.png` and `setup.png`
+- Verification status:
+  - `go test ./internal/tui -run 'TestScreenshot|TestRenderSetupHintExplainsClaudeHaikuDefault|TestOpenSetupModeCanPreferReadyClaudeBackend|TestRenderSetupOptionRowDistinguishesActiveAndReadyBackends' -count=1` passed
+  - `make screenshots SCREENSHOT_OUTPUT_DIR=/tmp/lcr-setup-shots` passed and generated `setup.png`
+  - `make scan` passed at `2026-03-30T02:36:44+09:00`
+  - `make doctor` passed using cached report at `2026-03-30T02:36:44+09:00`
+  - `make test` still fails only on the same pre-existing unrelated `internal/tui` cases:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+  - `timeout 10s make tui-parallel` still could not complete interactive verification in this environment because opening `/dev/tty` failed (`device not configured`)
+- Next concrete tasks:
+  - If the `/setup` screen changes materially again, regenerate `docs/screenshots/setup.png` so the guide stays current.
+  - Consider whether the setup screenshot should eventually become the Open Graph image for the public LCR page, or stay a secondary guide view behind the main dashboard shot.
 
 ## Latest Update (2026-03-30 02:26 JST)
 

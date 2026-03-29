@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -233,6 +235,27 @@ func (m Model) currentConfigPath() string {
 	return config.Default().ConfigPath
 }
 
+func displayPathWithHomeTilde(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	home = filepath.Clean(home)
+	path = filepath.Clean(path)
+	if path == home {
+		return "~"
+	}
+	prefix := home + string(os.PathSeparator)
+	if strings.HasPrefix(path, prefix) {
+		return "~/" + strings.TrimPrefix(path, prefix)
+	}
+	return path
+}
+
 func (m Model) settingsFieldValue(index int) string {
 	if index < 0 || index >= len(m.settingsFields) {
 		return ""
@@ -259,7 +282,7 @@ func (m Model) renderSettingsPanel(bodyW, bodyH int) string {
 func (m Model) renderSettingsContent(width, maxHeight int) string {
 	lines := []string{
 		commandPaletteTitleStyle.Render("Settings"),
-		commandPaletteHintStyle.Render("Config: " + truncateText(m.currentConfigPath(), max(20, width-8))),
+		commandPaletteHintStyle.Render("Config: " + truncateText(displayPathWithHomeTilde(m.currentConfigPath()), max(20, width-8))),
 	}
 	lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("AI backend: %s. Use /setup to change it. Scope, filters, and API key save here.", m.currentSettingsBaseline().AIBackend.Label())))
 

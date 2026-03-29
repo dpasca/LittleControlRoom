@@ -112,6 +112,8 @@ The generated set currently includes:
 - `diff-view.png`
 - `diff-view-image.png`
 - `commit-preview.png`
+- `todo-dialog.png`
+- `setup.png`
 
 `project_filters`, `selected_project`, `live_codex_project`, and `live_runtime_project` match against the project name, the repo directory name, and simple acronyms such as `LCR` for `LittleControlRoom`.
 Use `demo_data = true` when you want a reproducible sample set, or a local config file when you want screenshots from your own curated projects.

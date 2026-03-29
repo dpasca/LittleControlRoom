@@ -197,7 +197,7 @@ func (m Model) renderSetupPanel(bodyW, bodyH int) string {
 func (m Model) renderSetupContent(width, _ int) string {
 	lines := []string{
 		commandPaletteTitleStyle.Render("Setup"),
-		commandPaletteHintStyle.Render("Config: " + truncateText(m.currentConfigPath(), max(20, width-8))),
+		commandPaletteHintStyle.Render("Config: " + truncateText(displayPathWithHomeTilde(m.currentConfigPath()), max(20, width-8))),
 		commandPaletteHintStyle.Render("Pick the backend Little Control Room should use for summaries, classifications, and commit help."),
 	}
 	if m.setupLoading {
