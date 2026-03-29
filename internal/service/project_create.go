@@ -163,12 +163,14 @@ func (s *Service) trackProjectPath(ctx context.Context, existing model.ProjectSu
 func (s *Service) upsertManualProjectState(ctx context.Context, existing model.ProjectSummary, projectPath string) error {
 	now := time.Now()
 	presentOnDisk := projectPathExists(projectPath)
+	repoBranch := ""
 	repoDirty := false
 	repoSyncStatus := model.RepoSyncStatus("")
 	repoAheadCount := 0
 	repoBehindCount := 0
 	if presentOnDisk && s.gitRepoStatusReader != nil {
 		if repoStatus, err := s.gitRepoStatusReader(ctx, projectPath); err == nil {
+			repoBranch = strings.TrimSpace(repoStatus.Branch)
 			repoDirty = repoStatus.Dirty
 			repoSyncStatus = repoSyncStatusFromGit(repoStatus)
 			repoAheadCount = repoStatus.Ahead
@@ -193,6 +195,7 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 		Status:          score.Status,
 		AttentionScore:  score.Score,
 		PresentOnDisk:   presentOnDisk,
+		RepoBranch:      repoBranch,
 		RepoDirty:       repoDirty,
 		RepoSyncStatus:  repoSyncStatus,
 		RepoAheadCount:  repoAheadCount,

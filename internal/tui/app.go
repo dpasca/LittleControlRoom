@@ -3576,7 +3576,15 @@ func repoCombinedDetailValue(project model.ProjectSummary) string {
 	case model.RepoSyncDiverged:
 		parts = append(parts, repoSyncDetailStyle(project.RepoSyncStatus).Render(fmt.Sprintf("diverged +%d/-%d", project.RepoAheadCount, project.RepoBehindCount)))
 	}
-	return strings.Join(parts, ", ")
+	value := strings.Join(parts, ", ")
+	if branch := strings.TrimSpace(project.RepoBranch); branch != "" {
+		branchValue := detailValueStyle.Render("(" + branch + ")")
+		if value == "" {
+			return branchValue
+		}
+		return value + " " + branchValue
+	}
+	return value
 }
 
 func repoDirtyDetailValue(project model.ProjectSummary) string {

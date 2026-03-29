@@ -42,11 +42,11 @@ type sessionClassifierRetryer interface {
 }
 
 type Service struct {
-	cfg        config.AppConfig
-	store      *store.Store
-	bus        *events.Bus
-	detectors  []detectors.Detector
-	classifier SessionClassifier
+	cfg           config.AppConfig
+	store         *store.Store
+	bus           *events.Bus
+	detectors     []detectors.Detector
+	classifier    SessionClassifier
 	todoSuggester *todoworktree.Manager
 
 	commitMessageSuggester   gitops.CommitMessageSuggester
@@ -487,17 +487,20 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			old.SnoozedUntil = nil
 		}
 		presentOnDisk := projectPathExists(path)
+		repoBranch := ""
 		repoDirty := false
 		repoSyncStatus := model.RepoSyncStatus("")
 		repoAheadCount := 0
 		repoBehindCount := 0
 		if presentOnDisk {
 			if repoStatus, ok := currentRepoStatus[path]; ok {
+				repoBranch = strings.TrimSpace(repoStatus.Branch)
 				repoDirty = repoStatus.Dirty
 				repoSyncStatus = repoSyncStatusFromGit(repoStatus)
 				repoAheadCount = repoStatus.Ahead
 				repoBehindCount = repoStatus.Behind
 			} else {
+				repoBranch = old.RepoBranch
 				repoDirty = old.RepoDirty
 				repoSyncStatus = old.RepoSyncStatus
 				repoAheadCount = old.RepoAheadCount
@@ -566,6 +569,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			Status:          score.Status,
 			AttentionScore:  score.Score,
 			PresentOnDisk:   presentOnDisk,
+			RepoBranch:      repoBranch,
 			RepoDirty:       repoDirty,
 			RepoSyncStatus:  repoSyncStatus,
 			RepoAheadCount:  repoAheadCount,
@@ -792,6 +796,7 @@ func projectStateChanged(old model.ProjectSummary, state model.ProjectState) boo
 		old.Status != state.Status ||
 		old.AttentionScore != state.AttentionScore ||
 		old.PresentOnDisk != state.PresentOnDisk ||
+		old.RepoBranch != state.RepoBranch ||
 		old.RepoDirty != state.RepoDirty ||
 		old.RepoSyncStatus != state.RepoSyncStatus ||
 		old.RepoAheadCount != state.RepoAheadCount ||
@@ -1183,6 +1188,7 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 	}
 
 	presentOnDisk := projectPathExists(detail.Summary.Path)
+	repoBranch := ""
 	repoDirty := false
 	repoSyncStatus := model.RepoSyncStatus("")
 	repoAheadCount := 0
@@ -1190,17 +1196,20 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 	if presentOnDisk {
 		if s.gitRepoStatusReader != nil {
 			if repoStatus, err := s.gitRepoStatusReader(ctx, detail.Summary.Path); err == nil {
+				repoBranch = strings.TrimSpace(repoStatus.Branch)
 				repoDirty = repoStatus.Dirty
 				repoSyncStatus = repoSyncStatusFromGit(repoStatus)
 				repoAheadCount = repoStatus.Ahead
 				repoBehindCount = repoStatus.Behind
 			} else {
+				repoBranch = detail.Summary.RepoBranch
 				repoDirty = detail.Summary.RepoDirty
 				repoSyncStatus = detail.Summary.RepoSyncStatus
 				repoAheadCount = detail.Summary.RepoAheadCount
 				repoBehindCount = detail.Summary.RepoBehindCount
 			}
 		} else {
+			repoBranch = detail.Summary.RepoBranch
 			repoDirty = detail.Summary.RepoDirty
 			repoSyncStatus = detail.Summary.RepoSyncStatus
 			repoAheadCount = detail.Summary.RepoAheadCount
@@ -1249,6 +1258,7 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 		Status:          score.Status,
 		AttentionScore:  score.Score,
 		PresentOnDisk:   presentOnDisk,
+		RepoBranch:      repoBranch,
 		RepoDirty:       repoDirty,
 		RepoSyncStatus:  repoSyncStatus,
 		RepoAheadCount:  repoAheadCount,

@@ -1775,6 +1775,7 @@ func TestViewStacksListAndDetailVertically(t *testing.T) {
 			Path:                             "/tmp/demo",
 			Status:                           model.StatusIdle,
 			PresentOnDisk:                    true,
+			RepoBranch:                       "master",
 			RepoDirty:                        true,
 			RepoSyncStatus:                   model.RepoSyncAhead,
 			RepoAheadCount:                   2,
@@ -1803,8 +1804,11 @@ func TestViewStacksListAndDetailVertically(t *testing.T) {
 	if got := len(strings.Split(rendered, "\n")); got != m.height {
 		t.Fatalf("View() line count = %d, want terminal height %d; render was %q", got, m.height, rendered)
 	}
-	if !strings.Contains(rendered, "Repo: dirty, ahead 2") {
+	if !strings.Contains(rendered, "Repo: dirty, ahead 2 (master)") {
 		t.Fatalf("View() should show combined repo status in the detail pane: %q", rendered)
+	}
+	if strings.Contains(rendered, "Branch: master") {
+		t.Fatalf("View() should fold the current branch into the repo line, got %q", rendered)
 	}
 	if !strings.Contains(rendered, "Runtime - demo") && !strings.Contains(rendered, "Control Room - demo") {
 		t.Fatalf("View() should render the runtime pane beside the detail pane: %q", rendered)

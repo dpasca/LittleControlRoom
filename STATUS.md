@@ -1,6 +1,57 @@
 # Little Control Room Status
 
-Last updated: 2026-03-29 21:27 JST
+Last updated: 2026-03-30 01:40 JST
+
+## Latest Update (2026-03-30 01:40 JST)
+
+- Added current branch visibility to the project details pane even when no explicit worktree UI is active:
+  - `internal/model/model.go`
+    - added `RepoBranch` to `ProjectState` and `ProjectSummary`
+  - `internal/store/store.go`
+    - added persisted `projects.repo_branch` schema support and migration
+    - threaded `repo_branch` through summary/detail queries, upserts, and project moves
+  - `internal/service/service.go`
+    - captured branch from live git status during scans and refreshes
+    - reused stored branch when live git status is unavailable
+    - treated branch changes as project-state updates
+  - `internal/service/project_create.go`
+    - populated branch metadata for newly attached/manual projects
+  - `internal/service/git_actions.go`
+    - preserved branch when rebuilding project state from detail snapshots
+  - `internal/tui/app.go`
+    - folds branch metadata into the existing `Repo:` detail line as `(<branch>)`
+- Added focused coverage:
+  - `internal/tui/app_test.go`
+    - `TestViewStacksListAndDetailVertically` now checks for `Repo: dirty, ahead 2 (master)` and confirms no separate `Branch:` line is rendered
+  - `internal/store/store_test.go`
+    - `TestMoveProjectPathPreservesData` now verifies `RepoBranch` survives project moves
+  - `internal/service/service_test.go`
+    - scan/storage expectations now verify the repo branch is persisted end-to-end
+- Files modified in this pass:
+  - `internal/model/model.go`
+  - `internal/store/store.go`
+  - `internal/store/store_test.go`
+  - `internal/service/service.go`
+  - `internal/service/project_create.go`
+  - `internal/service/git_actions.go`
+  - `internal/service/service_test.go`
+  - `internal/tui/app.go`
+  - `internal/tui/app_test.go`
+  - `STATUS.md`
+- Verification status:
+  - `go test ./internal/store -count=1` passed
+  - `go test ./internal/service -count=1` passed
+  - `go test ./internal/tui -run 'TestViewStacksListAndDetailVertically' -count=1` passed
+  - `make scan` passed at `2026-03-30T01:39:40+09:00`
+  - `make doctor` passed using cached report at `2026-03-30T01:39:40+09:00`
+  - `timeout 10s make tui-parallel` could not complete interactive verification in this environment because opening `/dev/tty` failed (`device not configured`)
+  - `make test` still fails in the same pre-existing `internal/tui` coverage unrelated to this branch-visibility change:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+- Next concrete tasks:
+  - Decide whether branch should also appear in the main project list summary, or stay detail-pane only until worktree rows land.
+  - Continue the worktree launch flow by adding manual edit/regenerate for cached TODO worktree suggestions and the actual `Start in new worktree` path.
 
 ## Latest Update (2026-03-29 21:27 JST)
 

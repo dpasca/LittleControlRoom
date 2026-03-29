@@ -1535,6 +1535,9 @@ func TestScanOnceDetectsRepoAheadOfRemote(t *testing.T) {
 	if found.RepoSyncStatus != model.RepoSyncAhead {
 		t.Fatalf("repo sync status = %s, want %s", found.RepoSyncStatus, model.RepoSyncAhead)
 	}
+	if strings.TrimSpace(found.RepoBranch) == "" {
+		t.Fatalf("expected scan report to include repo branch: %+v", *found)
+	}
 	if found.RepoAheadCount < 1 || found.RepoBehindCount != 0 {
 		t.Fatalf("unexpected ahead/behind counts: %+v", *found)
 	}
@@ -1545,6 +1548,9 @@ func TestScanOnceDetectsRepoAheadOfRemote(t *testing.T) {
 	}
 	if detail.Summary.RepoSyncStatus != model.RepoSyncAhead || detail.Summary.RepoAheadCount < 1 {
 		t.Fatalf("expected stored summary to preserve ahead status, got %#v", detail.Summary)
+	}
+	if strings.TrimSpace(detail.Summary.RepoBranch) == "" {
+		t.Fatalf("expected stored summary to preserve repo branch, got %#v", detail.Summary)
 	}
 }
 

@@ -43,22 +43,22 @@ type TodoCompletion struct {
 }
 
 type CommitPreview struct {
-	Intent               GitActionIntent
-	ProjectPath          string
-	ProjectName          string
-	Branch               string
-	StageMode            GitStageMode
-	Included             []CommitFile
-	Excluded             []CommitFile
-	SelectedUntracked    []CommitFile
-	Message              string
-	DiffStat             string
-	DiffSummary          string
-	LatestSummary        string
-	CanPush              bool
-	Warnings             []string
-	StateHash            string
-	SuggestedTodos       []TodoCompletion
+	Intent            GitActionIntent
+	ProjectPath       string
+	ProjectName       string
+	Branch            string
+	StageMode         GitStageMode
+	Included          []CommitFile
+	Excluded          []CommitFile
+	SelectedUntracked []CommitFile
+	Message           string
+	DiffStat          string
+	DiffSummary       string
+	LatestSummary     string
+	CanPush           bool
+	Warnings          []string
+	StateHash         string
+	SuggestedTodos    []TodoCompletion
 }
 
 type CommitResult struct {
@@ -787,6 +787,7 @@ func projectStateFromDetail(detail model.ProjectDetail) model.ProjectState {
 		Status:          detail.Summary.Status,
 		AttentionScore:  detail.Summary.AttentionScore,
 		PresentOnDisk:   detail.Summary.PresentOnDisk,
+		RepoBranch:      detail.Summary.RepoBranch,
 		RepoDirty:       detail.Summary.RepoDirty,
 		RepoSyncStatus:  detail.Summary.RepoSyncStatus,
 		RepoAheadCount:  detail.Summary.RepoAheadCount,

@@ -1445,6 +1445,7 @@ func TestMoveProjectPathPreservesData(t *testing.T) {
 		LastActivity:   now,
 		Status:         model.StatusIdle,
 		AttentionScore: 12,
+		RepoBranch:     "master",
 		RepoDirty:      true,
 		RepoSyncStatus: model.RepoSyncAhead,
 		RepoAheadCount: 2,
@@ -1524,6 +1525,9 @@ func TestMoveProjectPathPreservesData(t *testing.T) {
 	}
 	if !detail.Summary.RepoDirty {
 		t.Fatalf("expected repo_dirty to survive move: %#v", detail.Summary)
+	}
+	if detail.Summary.RepoBranch != "master" {
+		t.Fatalf("expected repo_branch to survive move: %#v", detail.Summary)
 	}
 	if detail.Summary.RepoSyncStatus != model.RepoSyncAhead || detail.Summary.RepoAheadCount != 2 || detail.Summary.RepoBehindCount != 0 {
 		t.Fatalf("expected repo sync data to survive move: %#v", detail.Summary)

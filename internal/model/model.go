@@ -150,6 +150,7 @@ type ProjectState struct {
 	Status          ProjectStatus
 	AttentionScore  int
 	PresentOnDisk   bool
+	RepoBranch      string
 	RepoDirty       bool
 	RepoSyncStatus  RepoSyncStatus
 	RepoAheadCount  int
@@ -176,6 +177,7 @@ type ProjectSummary struct {
 	Status                                        ProjectStatus
 	AttentionScore                                int
 	PresentOnDisk                                 bool
+	RepoBranch                                    string
 	RepoDirty                                     bool
 	RepoSyncStatus                                RepoSyncStatus
 	RepoAheadCount                                int
@@ -232,19 +234,19 @@ const (
 )
 
 type TodoWorktreeSuggestion struct {
-	TodoID          int64
-	ProjectPath     string
-	TodoText        string
-	Status          TodoWorktreeSuggestionStatus
-	TodoTextHash    string
-	BranchName      string
-	WorktreeSuffix  string
-	Kind            string
-	Reason          string
-	Confidence      float64
-	Model           string
-	LastError       string
-	UpdatedAt       time.Time
+	TodoID         int64
+	ProjectPath    string
+	TodoText       string
+	Status         TodoWorktreeSuggestionStatus
+	TodoTextHash   string
+	BranchName     string
+	WorktreeSuffix string
+	Kind           string
+	Reason         string
+	Confidence     float64
+	Model          string
+	LastError      string
+	UpdatedAt      time.Time
 }
 
 type ProjectDetail struct {
