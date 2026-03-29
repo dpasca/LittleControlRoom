@@ -1,6 +1,36 @@
 # Little Control Room Status
 
-Last updated: 2026-03-29 17:18 JST
+Last updated: 2026-03-29 17:39 JST
+
+## Latest Update (2026-03-29 17:39 JST)
+
+- Fixed the embedded Claude Code launch args so the headless stream-json path matches the currently installed Claude CLI contract:
+  - `internal/codexapp/claude_session.go`
+    - factored Claude launch flag assembly into `claudeTurnArgs(...)`
+    - added `--verbose` alongside `-p --input-format=stream-json --output-format=stream-json`
+    - kept existing resume/model/reasoning/permission-mode wiring unchanged
+- Added a focused regression in `internal/codexapp/claude_session_test.go`:
+  - `TestClaudeTurnArgsIncludeVerboseForStreamJSON`
+  - locks in the exact flag set that avoids the reported Claude CLI parse failure
+- Updated assumptions in `STATUS.md`:
+  - recorded the observed local Claude Code version as `2.1.87`
+  - documented that `--output-format=stream-json` now requires `--verbose` when used with `--print`
+- Files modified in this pass:
+  - `internal/codexapp/claude_session.go`
+  - `internal/codexapp/claude_session_test.go`
+  - `STATUS.md`
+- Verification status:
+  - `go test ./internal/codexapp -run 'TestClaude' -count=1` passed
+  - `claude --help` confirms `--output-format=stream-json` requires `--verbose` with `--print`
+  - `claude -p --verbose --input-format=stream-json --output-format=stream-json --permission-mode acceptEdits --help` exited `0`, confirming the updated flag combination clears the original argument validation error
+  - `make scan` passed at `2026-03-29T17:39:25+09:00`
+  - `make doctor` passed using cached report at `2026-03-29T17:39:24+09:00`
+  - `make test` still fails in the same pre-existing `internal/tui` coverage unrelated to this Claude fix:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+- Next concrete tasks:
+  - Live-check `/claude`, `/claude-new`, `/new`, and `/reconnect` inside `make tui-parallel` against the real local Claude CLI now that the launch flags match the installed CLI behavior.
 
 ## Latest Update (2026-03-29 17:18 JST)
 
@@ -1649,7 +1679,7 @@ Current OpenCode transport assumption:
 
 Current Claude Code transport assumption:
 
-- The installed `claude` CLI on this machine (observed `2.1.86`) exposes a headless session surface via `--print` plus `--input-format stream-json` / `--output-format stream-json`, so embedded Claude support no longer depends on a separate long-lived server or RPC daemon.
+- The installed `claude` CLI on this machine (observed `2.1.87`) exposes a headless session surface via `--print` plus `--input-format stream-json` / `--output-format stream-json`, but current CLI help also requires `--verbose` whenever `--output-format=stream-json` is used with `--print`.
 - Observed headless Claude runs emit structured `system:init`, `assistant`, `user` (tool results), `rate_limit_event`, and `result` JSON events with stable `session_id` values, which is sufficient for Little Control Room to drive per-turn embedded Claude requests and update transcript state without scraping terminal text.
 - Observed headless Claude supports `--resume <session-id>` and persists those session ids into the normal Claude Code on-disk session artifacts, so Little Control Room can combine headless turn execution with the existing `~/.claude/projects/.../*.jsonl` transcript files and `~/.claude/sessions/*.json` active-PID detection.
 - The locally installed CLI help confirms `--permission-mode` choices including `acceptEdits`, `dontAsk`, `plan`, and `bypassPermissions`; until Little Control Room wires Claude-specific approval callbacks, initial embedded support should treat permission handling as a provider-specific MVP compromise rather than claiming full Codex/OpenCode approval parity.

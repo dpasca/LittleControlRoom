@@ -985,21 +985,7 @@ func (s *claudeCodeSession) refreshActiveLocked() {
 }
 
 func startClaudeTurn(ctx context.Context, projectPath, resumeID, model, reasoning, permissionMode string) (*exec.Cmd, io.WriteCloser, io.ReadCloser, io.ReadCloser, error) {
-	args := []string{
-		"-p",
-		"--input-format=stream-json",
-		"--output-format=stream-json",
-		"--permission-mode", permissionMode,
-	}
-	if strings.TrimSpace(resumeID) != "" {
-		args = append(args, "--resume", strings.TrimSpace(resumeID))
-	}
-	if strings.TrimSpace(model) != "" {
-		args = append(args, "--model", strings.TrimSpace(model))
-	}
-	if strings.TrimSpace(reasoning) != "" {
-		args = append(args, "--effort", strings.TrimSpace(reasoning))
-	}
+	args := claudeTurnArgs(resumeID, model, reasoning, permissionMode)
 
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = projectPath
@@ -1022,6 +1008,26 @@ func startClaudeTurn(ctx context.Context, projectPath, resumeID, model, reasonin
 	}
 
 	return cmd, stdin, stdout, stderr, nil
+}
+
+func claudeTurnArgs(resumeID, model, reasoning, permissionMode string) []string {
+	args := []string{
+		"-p",
+		"--verbose",
+		"--input-format=stream-json",
+		"--output-format=stream-json",
+		"--permission-mode", permissionMode,
+	}
+	if strings.TrimSpace(resumeID) != "" {
+		args = append(args, "--resume", strings.TrimSpace(resumeID))
+	}
+	if strings.TrimSpace(model) != "" {
+		args = append(args, "--model", strings.TrimSpace(model))
+	}
+	if strings.TrimSpace(reasoning) != "" {
+		args = append(args, "--effort", strings.TrimSpace(reasoning))
+	}
+	return args
 }
 
 func buildClaudeStreamInput(prompt string) (string, error) {

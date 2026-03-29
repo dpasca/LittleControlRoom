@@ -1,6 +1,7 @@
 package codexapp
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -108,5 +109,22 @@ func TestClaudeListModelsIncludesAliasesAndCurrentModel(t *testing.T) {
 	}
 	if got := models[2].DefaultReasoningEffort; got != claudeDefaultReasoningEffort {
 		t.Fatalf("default reasoning = %q, want %q", got, claudeDefaultReasoningEffort)
+	}
+}
+
+func TestClaudeTurnArgsIncludeVerboseForStreamJSON(t *testing.T) {
+	got := claudeTurnArgs("ses-demo", "sonnet", "high", "bypassPermissions")
+	want := []string{
+		"-p",
+		"--verbose",
+		"--input-format=stream-json",
+		"--output-format=stream-json",
+		"--permission-mode", "bypassPermissions",
+		"--resume", "ses-demo",
+		"--model", "sonnet",
+		"--effort", "high",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("claudeTurnArgs() = %#v, want %#v", got, want)
 	}
 }
