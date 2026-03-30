@@ -69,6 +69,8 @@ type Model struct {
 	todoWorktreeEditor    *todoWorktreeEditorState
 	todoExistingWorktree  *todoExistingWorktreeDialogState
 	todoModelPickerReturn *todoModelPickerReturnState
+	worktreeMergeConfirm  *worktreeMergeConfirmState
+	worktreePostMerge     *worktreePostMergeState
 	worktreeRemoveConfirm *worktreeRemoveConfirmState
 
 	commandMode                  bool
@@ -236,10 +238,14 @@ type todoWorktreeLaunchMsg struct {
 }
 
 type worktreeActionMsg struct {
-	projectPath string
-	selectPath  string
-	status      string
-	err         error
+	projectPath           string
+	selectPath            string
+	status                string
+	offerPostMergeCleanup bool
+	postMergeRootPath     string
+	postMergeSourceBranch string
+	postMergeTargetBranch string
+	err                   error
 }
 
 type commitTodoItem struct {
@@ -681,6 +687,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.runCommandDialog != nil {
 			return m.updateRunCommandDialogMode(msg)
 		}
+		if m.worktreeMergeConfirm != nil {
+			return m.updateWorktreeMergeConfirmMode(msg)
+		}
+		if m.worktreePostMerge != nil {
+			return m.updateWorktreePostMergeMode(msg)
+		}
 		if m.worktreeRemoveConfirm != nil {
 			return m.updateWorktreeRemoveConfirmMode(msg)
 		}
@@ -1081,6 +1093,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 	case worktreeActionMsg:
+		m.worktreeMergeConfirm = nil
+		m.worktreePostMerge = nil
 		m.worktreeRemoveConfirm = nil
 		if msg.err != nil {
 			m.err = msg.err
@@ -1093,6 +1107,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if strings.TrimSpace(msg.status) != "" {
 			m.status = msg.status
+		}
+		if msg.offerPostMergeCleanup {
+			m.worktreePostMerge = &worktreePostMergeState{
+				ProjectPath:  strings.TrimSpace(msg.projectPath),
+				RootPath:     strings.TrimSpace(msg.postMergeRootPath),
+				BranchName:   strings.TrimSpace(msg.postMergeSourceBranch),
+				TargetBranch: strings.TrimSpace(msg.postMergeTargetBranch),
+				Status:       strings.TrimSpace(msg.status),
+				Selected:     worktreePostMergeFocusKeep,
+			}
 		}
 		cmds := []tea.Cmd{m.scanCmd(false), m.loadProjectsCmd()}
 		if strings.TrimSpace(msg.selectPath) != "" {
@@ -1547,6 +1571,8 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.openTodoDialogForSelection()
 	case "w":
 		return m, m.toggleSelectedWorktreeGroup()
+	case "M":
+		return m, m.openWorktreeMergeConfirmForSelection()
 	case "x":
 		return m, m.openWorktreeRemoveConfirmForSelection()
 	case "P":
@@ -2061,6 +2087,12 @@ func (m Model) View() string {
 	if m.todoWorktreeEditor != nil {
 		body = m.renderTodoWorktreeEditorOverlay(body, layout.width, layout.height)
 	}
+	if m.worktreeMergeConfirm != nil {
+		body = m.renderWorktreeMergeConfirmOverlay(body, layout.width, layout.height)
+	}
+	if m.worktreePostMerge != nil {
+		body = m.renderWorktreePostMergeOverlay(body, layout.width, layout.height)
+	}
 	if m.worktreeRemoveConfirm != nil {
 		body = m.renderWorktreeRemoveConfirmOverlay(body, layout.width, layout.height)
 	}
@@ -2450,6 +2482,19 @@ func (m Model) renderDetailContent(width int) string {
 		lines = appendDetailFields(lines, width, movedFields...)
 	}
 	lines = append(lines, detailField("Repo", repoCombinedDetailValue(p)))
+	if p.WorktreeKind == model.WorktreeKindLinked {
+		mergeBackValue := detailMutedStyle.Render("parent branch unavailable")
+		targetBranch := strings.TrimSpace(p.WorktreeParentBranch)
+		sourceBranch := strings.TrimSpace(p.RepoBranch)
+		switch {
+		case targetBranch == "":
+		case sourceBranch != "" && sourceBranch != targetBranch:
+			mergeBackValue = detailValueStyle.Render(sourceBranch + " -> " + targetBranch)
+		default:
+			mergeBackValue = detailValueStyle.Render(targetBranch)
+		}
+		lines = append(lines, detailField("Merge back", mergeBackValue))
+	}
 	lines = append(lines, detailField("Attention", attentionValue))
 	family := m.worktreeFamily(projectWorktreeRootPath(p))
 	if len(family) > 1 || p.WorktreeKind == model.WorktreeKindLinked {
@@ -4275,6 +4320,15 @@ func (m Model) renderFooter(width int) string {
 	}
 	if m.settingsMode {
 		return m.renderModalFooter(width, "Settings: Enter save, Tab next, Esc cancel", filterSegment, usageSegment)
+	}
+	if m.worktreeMergeConfirm != nil {
+		return m.renderModalFooter(width, "Merge worktree: Enter merge, Tab switch, Esc cancel", filterSegment, usageSegment)
+	}
+	if m.worktreePostMerge != nil {
+		return m.renderModalFooter(width, "Merged worktree: Enter remove, Tab keep, Esc keep", filterSegment, usageSegment)
+	}
+	if m.worktreeRemoveConfirm != nil {
+		return m.renderModalFooter(width, "Remove worktree: Enter remove, Tab switch, Esc cancel", filterSegment, usageSegment)
 	}
 	if m.noteClearConfirm != nil {
 		return m.renderModalFooter(width, "Confirm note clear", filterSegment, usageSegment)

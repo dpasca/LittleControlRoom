@@ -20,6 +20,16 @@ const (
 )
 
 const (
+	worktreeMergeConfirmFocusMerge = iota
+	worktreeMergeConfirmFocusKeep
+)
+
+const (
+	worktreePostMergeFocusRemove = iota
+	worktreePostMergeFocusKeep
+)
+
+const (
 	worktreeRemoveConfirmFocusRemove = iota
 	worktreeRemoveConfirmFocusKeep
 )
@@ -40,6 +50,24 @@ type worktreeRemoveConfirmState struct {
 	ProjectName string
 	BranchName  string
 	Selected    int
+}
+
+type worktreeMergeConfirmState struct {
+	ProjectPath  string
+	RootPath     string
+	ProjectName  string
+	BranchName   string
+	TargetBranch string
+	Selected     int
+}
+
+type worktreePostMergeState struct {
+	ProjectPath  string
+	RootPath     string
+	BranchName   string
+	TargetBranch string
+	Status       string
+	Selected     int
 }
 
 func projectWorktreeRootPath(project model.ProjectSummary) string {
@@ -329,16 +357,176 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 	if len(family) > 1 || row.LinkedCount > 0 || row.Kind == projectListRowWorktree {
 		actions = append(actions, footerNavAction("w", "lanes"))
 	}
+	if row.Kind == projectListRowWorktree && m.canMergeWorktreeBack(project) && width >= 80 {
+		actions = append(actions, footerPrimaryAction("M", "merge"))
+	}
 	if row.Kind == projectListRowWorktree &&
 		project.WorktreeKind == model.WorktreeKindLinked &&
 		!m.projectHasLiveCodexSession(project.Path) &&
 		!m.projectRuntimeSnapshot(project.Path).Running {
 		actions = append(actions, footerHideAction("x", "remove"))
 	}
-	if width >= 80 && len(family) > 1 {
+	if width >= 90 && len(family) > 1 {
 		actions = append(actions, footerLowAction("P", "prune"))
 	}
 	return actions
+}
+
+func (m Model) canMergeWorktreeBack(project model.ProjectSummary) bool {
+	if project.WorktreeKind != model.WorktreeKindLinked {
+		return false
+	}
+	targetBranch := strings.TrimSpace(project.WorktreeParentBranch)
+	sourceBranch := strings.TrimSpace(project.RepoBranch)
+	if targetBranch == "" || sourceBranch == "" || sourceBranch == targetBranch {
+		return false
+	}
+	if m.projectHasLiveCodexSession(project.Path) {
+		return false
+	}
+	if snapshot := m.projectRuntimeSnapshot(project.Path); snapshot.Running {
+		return false
+	}
+	return true
+}
+
+func (m Model) mergeBackRulesSummary() string {
+	return "Requires a clean source worktree and clean root checkout. Sibling worktrees can stay dirty."
+}
+
+func (m *Model) openWorktreeMergeConfirmForSelection() tea.Cmd {
+	row, project, ok := m.selectedProjectRow()
+	if !ok {
+		m.status = "No project selected"
+		return nil
+	}
+	if row.Kind != projectListRowWorktree || project.WorktreeKind != model.WorktreeKindLinked {
+		m.status = "Select a linked worktree to merge it back"
+		return nil
+	}
+	if strings.TrimSpace(project.WorktreeParentBranch) == "" {
+		m.status = "This worktree has no recorded parent branch yet"
+		return nil
+	}
+	if strings.TrimSpace(project.RepoBranch) == "" {
+		m.status = "This worktree branch is unavailable right now"
+		return nil
+	}
+	if strings.TrimSpace(project.RepoBranch) == strings.TrimSpace(project.WorktreeParentBranch) {
+		m.status = "This worktree is already on its parent branch"
+		return nil
+	}
+	if m.projectHasLiveCodexSession(project.Path) {
+		m.status = "Close the embedded agent session before merging this worktree back"
+		return nil
+	}
+	if snapshot := m.projectRuntimeSnapshot(project.Path); snapshot.Running {
+		m.status = "Stop the runtime before merging this worktree back"
+		return nil
+	}
+	m.worktreeMergeConfirm = &worktreeMergeConfirmState{
+		ProjectPath:  project.Path,
+		RootPath:     row.RootPath,
+		ProjectName:  project.Name,
+		BranchName:   projectWorktreeLabel(project),
+		TargetBranch: strings.TrimSpace(project.WorktreeParentBranch),
+		Selected:     worktreeMergeConfirmFocusKeep,
+	}
+	m.status = "Confirm worktree merge-back"
+	return nil
+}
+
+func (m Model) updateWorktreeMergeConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	confirm := m.worktreeMergeConfirm
+	if confirm == nil {
+		return m, nil
+	}
+	switch msg.String() {
+	case "esc":
+		m.worktreeMergeConfirm = nil
+		m.status = "Worktree merge-back canceled"
+		return m, nil
+	case "left", "h", "right", "l", "tab", "shift+tab":
+		if confirm.Selected == worktreeMergeConfirmFocusMerge {
+			confirm.Selected = worktreeMergeConfirmFocusKeep
+		} else {
+			confirm.Selected = worktreeMergeConfirmFocusMerge
+		}
+		return m, nil
+	case "enter":
+		if confirm.Selected != worktreeMergeConfirmFocusMerge {
+			m.worktreeMergeConfirm = nil
+			m.status = "Worktree merge-back canceled"
+			return m, nil
+		}
+		m.status = "Merging worktree back..."
+		return m, m.mergeWorktreeBackCmd(confirm.ProjectPath)
+	}
+	return m, nil
+}
+
+func (m Model) mergeWorktreeBackCmd(projectPath string) tea.Cmd {
+	if m.svc == nil {
+		return func() tea.Msg {
+			return worktreeActionMsg{projectPath: projectPath, err: fmt.Errorf("service unavailable")}
+		}
+	}
+	return func() tea.Msg {
+		result, err := m.svc.MergeWorktreeBack(m.ctx, projectPath)
+		if err != nil {
+			return worktreeActionMsg{
+				projectPath: projectPath,
+				err:         err,
+			}
+		}
+		status := fmt.Sprintf("Merged %s into %s", result.SourceBranch, result.TargetBranch)
+		return worktreeActionMsg{
+			projectPath:           projectPath,
+			selectPath:            result.RootProjectPath,
+			status:                status,
+			offerPostMergeCleanup: true,
+			postMergeRootPath:     result.RootProjectPath,
+			postMergeSourceBranch: result.SourceBranch,
+			postMergeTargetBranch: result.TargetBranch,
+		}
+	}
+}
+
+func (m Model) updateWorktreePostMergeMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	prompt := m.worktreePostMerge
+	if prompt == nil {
+		return m, nil
+	}
+	switch msg.String() {
+	case "esc":
+		m.worktreePostMerge = nil
+		if strings.TrimSpace(prompt.Status) != "" {
+			m.status = prompt.Status + ". Worktree kept."
+		} else {
+			m.status = "Merged worktree kept"
+		}
+		return m, nil
+	case "left", "h", "right", "l", "tab", "shift+tab":
+		if prompt.Selected == worktreePostMergeFocusRemove {
+			prompt.Selected = worktreePostMergeFocusKeep
+		} else {
+			prompt.Selected = worktreePostMergeFocusRemove
+		}
+		return m, nil
+	case "enter":
+		if prompt.Selected != worktreePostMergeFocusRemove {
+			m.worktreePostMerge = nil
+			if strings.TrimSpace(prompt.Status) != "" {
+				m.status = prompt.Status + ". Worktree kept."
+			} else {
+				m.status = "Merged worktree kept"
+			}
+			return m, nil
+		}
+		m.status = "Removing merged worktree..."
+		return m, m.removeWorktreeCmd(prompt.ProjectPath, prompt.RootPath)
+	}
+	return m, nil
 }
 
 func (m *Model) openWorktreeRemoveConfirmForSelection() tea.Cmd {
@@ -451,6 +639,69 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 		"",
 		detailValueStyle.Render(truncateText(confirm.BranchName, panelInnerW)),
 		detailMutedStyle.Render(truncateText(confirm.ProjectPath, panelInnerW)),
+		"",
+		buttons,
+	}
+	panel := renderDialogPanel(panelW, panelInnerW, strings.Join(lines, "\n"))
+	left := max(0, (bodyW-panelW)/2)
+	top := max(0, (bodyH-lipgloss.Height(panel))/2)
+	return overlayBlock(body, panel, bodyW, bodyH, left, top)
+}
+
+func (m Model) renderWorktreeMergeConfirmOverlay(body string, bodyW, bodyH int) string {
+	confirm := m.worktreeMergeConfirm
+	if confirm == nil {
+		return body
+	}
+	panelW := min(max(54, bodyW-24), 82)
+	panelInnerW := max(28, panelW-4)
+	buttons := lipgloss.JoinHorizontal(
+		lipgloss.Left,
+		renderNoteDialogButton("Merge", confirm.Selected == worktreeMergeConfirmFocusMerge),
+		" ",
+		renderNoteDialogButton("Keep", confirm.Selected == worktreeMergeConfirmFocusKeep),
+	)
+	lines := []string{
+		detailSectionStyle.Render("Merge worktree back"),
+		"",
+		detailValueStyle.Render(truncateText(confirm.BranchName+" -> "+confirm.TargetBranch, panelInnerW)),
+		detailMutedStyle.Render(truncateText(confirm.ProjectPath, panelInnerW)),
+		"",
+		detailMutedStyle.Render(truncateText("Root must already be on "+confirm.TargetBranch+".", panelInnerW)),
+		detailMutedStyle.Render(truncateText(m.mergeBackRulesSummary(), panelInnerW)),
+		"",
+		buttons,
+	}
+	panel := renderDialogPanel(panelW, panelInnerW, strings.Join(lines, "\n"))
+	left := max(0, (bodyW-panelW)/2)
+	top := max(0, (bodyH-lipgloss.Height(panel))/2)
+	return overlayBlock(body, panel, bodyW, bodyH, left, top)
+}
+
+func (m Model) renderWorktreePostMergeOverlay(body string, bodyW, bodyH int) string {
+	prompt := m.worktreePostMerge
+	if prompt == nil {
+		return body
+	}
+	panelW := min(max(54, bodyW-24), 82)
+	panelInnerW := max(28, panelW-4)
+	buttons := lipgloss.JoinHorizontal(
+		lipgloss.Left,
+		renderNoteDialogButton("Remove", prompt.Selected == worktreePostMergeFocusRemove),
+		" ",
+		renderNoteDialogButton("Keep", prompt.Selected == worktreePostMergeFocusKeep),
+	)
+	statusLine := strings.TrimSpace(prompt.Status)
+	if statusLine == "" {
+		statusLine = "Worktree merged back"
+	}
+	lines := []string{
+		detailSectionStyle.Render("Merge complete"),
+		"",
+		detailValueStyle.Render(truncateText(statusLine, panelInnerW)),
+		detailMutedStyle.Render(truncateText(prompt.ProjectPath, panelInnerW)),
+		"",
+		detailMutedStyle.Render(truncateText("Remove this linked worktree now? You can still keep it and remove it later with x.", panelInnerW)),
 		"",
 		buttons,
 	}

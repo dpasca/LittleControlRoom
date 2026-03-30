@@ -1,6 +1,105 @@
 # Little Control Room Status
 
-Last updated: 2026-03-30 23:05 JST
+Last updated: 2026-03-31 05:31 JST
+
+## Latest Update (2026-03-31 05:31 JST)
+
+- Added the optional post-merge cleanup step so a successful worktree merge-back now immediately offers to remove the linked worktree too, while keeping the workflow explicit:
+  - assumption update:
+    - merge and remove should stay two separate actions under the hood, but the UI can safely chain them as a visible follow-up prompt
+    - merge-back should only care about the selected linked worktree and the root checkout, not about unrelated sibling worktrees in the same family
+    - the guardrails are now explicit:
+      - merge-back requires a clean linked worktree
+      - merge-back requires a clean root checkout already on the recorded parent branch
+      - sibling linked worktrees may remain dirty without blocking that merge
+      - removal still only requires the selected linked worktree itself to be clean
+  - `internal/tui/worktree_ui.go`
+    - added a post-merge prompt that appears after a successful `M` flow and offers `Remove` / `Keep`
+    - added shared merge-rule copy so the confirmation dialog now explains the real rule set instead of implying every worktree lane must be clean
+  - `internal/tui/app.go`
+    - extended `worktreeActionMsg` so merge completion can carry the optional cleanup prompt context
+    - added a dedicated modal footer for the post-merge cleanup step
+  - `internal/tui/app_test.go`
+    - added focused coverage proving:
+      - merge completion opens the post-merge cleanup prompt
+      - choosing `Remove` from that prompt queues the existing linked-worktree removal command
+  - `docs/todo_worktree_suggestions_mvp.md`
+    - documented that unrelated sibling worktrees can stay dirty while a selected linked worktree merges back
+- Verification status:
+  - focused coverage passed:
+    - `go test ./internal/tui -run 'Test(RenderFooterShowsMergeHintForLinkedWorktreeWithParentBranch|UpdateNormalModeMOpensWorktreeMergeConfirm|WorktreeActionMsgOpensPostMergeCleanupPrompt|WorktreePostMergeEnterRemoveQueuesRemoval)$'`
+    - `go test ./internal/service -run 'Test(MergeWorktreeBackMergesIntoRecordedParentBranch)$'`
+  - PTY smoke passed:
+    - `make tui-parallel`
+    - the isolated dashboard launched successfully and exited cleanly via `Ctrl+C`
+  - repo validation:
+    - `make scan` passed at `2026-03-31T05:30:29+09:00`
+    - `make doctor` passed using cached report at `2026-03-31T05:30:29+09:00`
+    - `make test` still fails only on the same pre-existing unrelated `internal/tui` cases:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+    - `git diff --check` passed
+- Next concrete tasks:
+  - Consider whether the post-merge prompt should also surface a one-shot `prune` option, or whether `git worktree remove` is enough cleanup without extra UI.
+  - Add a short help-panel/worktree-lane hint so the lifecycle is discoverable without prior explanation: `TODO -> new worktree -> commit -> M merge -> Enter remove`.
+
+## Latest Update (2026-03-31 05:24 JST)
+
+- Implemented the first local merge-back workflow for linked worktrees so Little Control Room now has one explicit way to finish a task lane without involving GitHub PRs:
+  - assumption update:
+    - worktrees should stay lightweight execution lanes, but Little Control Room still needs to remember enough origin context to help finish them locally
+    - the simplest stable workflow for now is: create linked worktree from the current root branch, commit inside the linked worktree, explicitly merge that worktree branch back into the recorded parent branch in the root checkout, then explicitly remove the worktree
+    - Little Control Room should not silently create temporary merge worktrees or auto-remove lanes after merge yet; merge-back and removal stay separate, visible steps
+    - merge-back should fail loudly unless the root checkout is already on the expected parent branch and both checkouts are clean
+  - `internal/model/model.go`
+    - added `WorktreeParentBranch` to tracked project state/summary so linked worktrees can remember the branch they were created from
+  - `internal/store/store.go`
+    - added persistent `projects.worktree_parent_branch` storage, migration coverage for existing DBs, and a targeted setter used when a new worktree is created
+    - preserved the stored parent branch across scans, refreshes, and project moves instead of dropping it on unrelated updates
+  - `internal/service/project_create.go`
+  - `internal/service/service.go`
+    - threaded `WorktreeParentBranch` through create/scan/refresh paths so tracked summaries keep the recorded merge target
+  - `internal/service/worktree.go`
+    - recorded the root checkout branch as `ParentBranch` when creating a TODO worktree
+    - added `MergeWorktreeBack(...)` which:
+      - only accepts linked worktrees
+      - requires a recorded parent branch
+      - requires the linked worktree and the root checkout to be clean
+      - requires the root checkout to already be on the recorded parent branch
+      - runs a local `git merge --no-edit <source-branch>` in the root checkout
+      - publishes refresh/action events after the merge
+  - `internal/tui/worktree_ui.go`
+  - `internal/tui/app.go`
+    - added linked-worktree merge-back affordance on `M`
+    - added a merge confirmation dialog alongside the existing remove dialog
+    - surfaced merge-back in the detail pane (`source -> target`) and in footer hints when a linked worktree has a recorded parent branch
+  - `internal/service/service_test.go`
+    - added coverage proving:
+      - new TODO worktrees record the parent branch they were created from
+      - merge-back commits from the linked worktree into that recorded parent branch in the root checkout
+  - `internal/tui/app_test.go`
+    - added focused coverage for the new merge footer hint and `M` keybinding
+  - `docs/todo_worktree_suggestions_mvp.md`
+    - documented the current explicit finish flow and narrowed the remaining non-goal to automatic merge-and-cleanup rather than lifecycle UI in general
+- Verification status:
+  - focused coverage passed:
+    - `go test ./internal/service -run 'Test(CreateTodoWorktreeCreatesTrackedSiblingProject|RemoveWorktreeRemovesTrackedLinkedWorktree|MergeWorktreeBackMergesIntoRecordedParentBranch)$'`
+    - `go test ./internal/tui -run 'Test(RenderFooterShowsWorktreeHintsForRepoFamily|RenderFooterShowsRemoveHintForLinkedWorktree|RenderFooterShowsMergeHintForLinkedWorktreeWithParentBranch|UpdateNormalModeMOpensWorktreeMergeConfirm)$'`
+  - PTY smoke passed:
+    - `make tui-parallel`
+    - the isolated dashboard launched successfully and exited cleanly via `Ctrl+C`
+  - repo validation:
+    - `make scan` passed at `2026-03-31T05:23:29+09:00`
+    - `make doctor` passed using cached report at `2026-03-31T05:23:30+09:00`
+    - `make test` still fails only on the same pre-existing unrelated `internal/tui` cases:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+    - `git diff --check` passed
+- Next concrete tasks:
+  - Decide whether merge-back should also offer an optional follow-up remove/prune shortcut after a successful merge, or stay as two fully separate actions.
+  - Add a small live walkthrough/help hint that makes the intended linked-worktree lifecycle obvious: `TODO -> new worktree -> commit -> M merge -> x remove`.
 
 ## Latest Update (2026-03-30 23:05 JST)
 

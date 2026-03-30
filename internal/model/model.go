@@ -152,32 +152,33 @@ type DetectorProjectActivity struct {
 }
 
 type ProjectState struct {
-	Path             string
-	Name             string
-	LastActivity     time.Time
-	Status           ProjectStatus
-	AttentionScore   int
-	PresentOnDisk    bool
-	WorktreeRootPath string
-	WorktreeKind     WorktreeKind
-	RepoBranch       string
-	RepoDirty        bool
-	RepoSyncStatus   RepoSyncStatus
-	RepoAheadCount   int
-	RepoBehindCount  int
-	Forgotten        bool
-	ManuallyAdded    bool
-	InScope          bool
-	Pinned           bool
-	SnoozedUntil     *time.Time
-	Note             string
-	RunCommand       string
-	MovedFromPath    string
-	MovedAt          time.Time
-	AttentionReason  []AttentionReason
-	Sessions         []SessionEvidence
-	Artifacts        []ArtifactEvidence
-	UpdatedAt        time.Time
+	Path                 string
+	Name                 string
+	LastActivity         time.Time
+	Status               ProjectStatus
+	AttentionScore       int
+	PresentOnDisk        bool
+	WorktreeRootPath     string
+	WorktreeKind         WorktreeKind
+	WorktreeParentBranch string
+	RepoBranch           string
+	RepoDirty            bool
+	RepoSyncStatus       RepoSyncStatus
+	RepoAheadCount       int
+	RepoBehindCount      int
+	Forgotten            bool
+	ManuallyAdded        bool
+	InScope              bool
+	Pinned               bool
+	SnoozedUntil         *time.Time
+	Note                 string
+	RunCommand           string
+	MovedFromPath        string
+	MovedAt              time.Time
+	AttentionReason      []AttentionReason
+	Sessions             []SessionEvidence
+	Artifacts            []ArtifactEvidence
+	UpdatedAt            time.Time
 }
 
 type ProjectSummary struct {
@@ -189,6 +190,7 @@ type ProjectSummary struct {
 	PresentOnDisk                                 bool
 	WorktreeRootPath                              string
 	WorktreeKind                                  WorktreeKind
+	WorktreeParentBranch                          string
 	RepoBranch                                    string
 	RepoDirty                                     bool
 	RepoSyncStatus                                RepoSyncStatus

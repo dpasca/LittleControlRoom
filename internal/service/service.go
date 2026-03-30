@@ -532,6 +532,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		presentOnDisk := projectPathExists(path)
 		worktreeRootPath := old.WorktreeRootPath
 		worktreeKind := old.WorktreeKind
+		worktreeParentBranch := old.WorktreeParentBranch
 		repoBranch := ""
 		repoDirty := false
 		repoSyncStatus := model.RepoSyncStatus("")
@@ -619,31 +620,32 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		})
 
 		state := model.ProjectState{
-			Path:             path,
-			Name:             filepath.Base(path),
-			LastActivity:     lastActivity,
-			Status:           score.Status,
-			AttentionScore:   score.Score,
-			PresentOnDisk:    presentOnDisk,
-			WorktreeRootPath: worktreeRootPath,
-			WorktreeKind:     worktreeKind,
-			RepoBranch:       repoBranch,
-			RepoDirty:        repoDirty,
-			RepoSyncStatus:   repoSyncStatus,
-			RepoAheadCount:   repoAheadCount,
-			RepoBehindCount:  repoBehindCount,
-			Forgotten:        forgotten,
-			ManuallyAdded:    old.ManuallyAdded,
-			InScope:          scope.Allows(path),
-			Pinned:           old.Pinned,
-			SnoozedUntil:     old.SnoozedUntil,
-			Note:             old.Note,
-			MovedFromPath:    old.MovedFromPath,
-			MovedAt:          old.MovedAt,
-			AttentionReason:  score.Reasons,
-			Sessions:         sessions,
-			Artifacts:        artifacts,
-			UpdatedAt:        now,
+			Path:                 path,
+			Name:                 filepath.Base(path),
+			LastActivity:         lastActivity,
+			Status:               score.Status,
+			AttentionScore:       score.Score,
+			PresentOnDisk:        presentOnDisk,
+			WorktreeRootPath:     worktreeRootPath,
+			WorktreeKind:         worktreeKind,
+			WorktreeParentBranch: worktreeParentBranch,
+			RepoBranch:           repoBranch,
+			RepoDirty:            repoDirty,
+			RepoSyncStatus:       repoSyncStatus,
+			RepoAheadCount:       repoAheadCount,
+			RepoBehindCount:      repoBehindCount,
+			Forgotten:            forgotten,
+			ManuallyAdded:        old.ManuallyAdded,
+			InScope:              scope.Allows(path),
+			Pinned:               old.Pinned,
+			SnoozedUntil:         old.SnoozedUntil,
+			Note:                 old.Note,
+			MovedFromPath:        old.MovedFromPath,
+			MovedAt:              old.MovedAt,
+			AttentionReason:      score.Reasons,
+			Sessions:             sessions,
+			Artifacts:            artifacts,
+			UpdatedAt:            now,
 		}
 
 		if err := s.store.UpsertProjectState(ctx, state); err != nil {
@@ -856,6 +858,7 @@ func projectStateChanged(old model.ProjectSummary, state model.ProjectState) boo
 		old.PresentOnDisk != state.PresentOnDisk ||
 		old.WorktreeRootPath != state.WorktreeRootPath ||
 		old.WorktreeKind != state.WorktreeKind ||
+		old.WorktreeParentBranch != state.WorktreeParentBranch ||
 		old.RepoBranch != state.RepoBranch ||
 		old.RepoDirty != state.RepoDirty ||
 		old.RepoSyncStatus != state.RepoSyncStatus ||
@@ -1250,6 +1253,7 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 	presentOnDisk := projectPathExists(detail.Summary.Path)
 	worktreeRootPath := detail.Summary.WorktreeRootPath
 	worktreeKind := detail.Summary.WorktreeKind
+	worktreeParentBranch := detail.Summary.WorktreeParentBranch
 	repoBranch := ""
 	repoDirty := false
 	repoSyncStatus := model.RepoSyncStatus("")
@@ -1315,31 +1319,32 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 	})
 
 	state := model.ProjectState{
-		Path:             detail.Summary.Path,
-		Name:             detail.Summary.Name,
-		LastActivity:     detail.Summary.LastActivity,
-		Status:           score.Status,
-		AttentionScore:   score.Score,
-		PresentOnDisk:    presentOnDisk,
-		WorktreeRootPath: worktreeRootPath,
-		WorktreeKind:     worktreeKind,
-		RepoBranch:       repoBranch,
-		RepoDirty:        repoDirty,
-		RepoSyncStatus:   repoSyncStatus,
-		RepoAheadCount:   repoAheadCount,
-		RepoBehindCount:  repoBehindCount,
-		Forgotten:        detail.Summary.Forgotten,
-		ManuallyAdded:    detail.Summary.ManuallyAdded,
-		InScope:          detail.Summary.InScope,
-		Pinned:           detail.Summary.Pinned,
-		SnoozedUntil:     detail.Summary.SnoozedUntil,
-		Note:             detail.Summary.Note,
-		MovedFromPath:    detail.Summary.MovedFromPath,
-		MovedAt:          detail.Summary.MovedAt,
-		AttentionReason:  score.Reasons,
-		Sessions:         detail.Sessions,
-		Artifacts:        detail.Artifacts,
-		UpdatedAt:        now,
+		Path:                 detail.Summary.Path,
+		Name:                 detail.Summary.Name,
+		LastActivity:         detail.Summary.LastActivity,
+		Status:               score.Status,
+		AttentionScore:       score.Score,
+		PresentOnDisk:        presentOnDisk,
+		WorktreeRootPath:     worktreeRootPath,
+		WorktreeKind:         worktreeKind,
+		WorktreeParentBranch: worktreeParentBranch,
+		RepoBranch:           repoBranch,
+		RepoDirty:            repoDirty,
+		RepoSyncStatus:       repoSyncStatus,
+		RepoAheadCount:       repoAheadCount,
+		RepoBehindCount:      repoBehindCount,
+		Forgotten:            detail.Summary.Forgotten,
+		ManuallyAdded:        detail.Summary.ManuallyAdded,
+		InScope:              detail.Summary.InScope,
+		Pinned:               detail.Summary.Pinned,
+		SnoozedUntil:         detail.Summary.SnoozedUntil,
+		Note:                 detail.Summary.Note,
+		MovedFromPath:        detail.Summary.MovedFromPath,
+		MovedAt:              detail.Summary.MovedAt,
+		AttentionReason:      score.Reasons,
+		Sessions:             detail.Sessions,
+		Artifacts:            detail.Artifacts,
+		UpdatedAt:            now,
 	}
 	if err := s.store.UpsertProjectState(ctx, state); err != nil {
 		return fmt.Errorf("persist refreshed project state: %w", err)

@@ -1708,6 +1708,13 @@ func TestCreateTodoWorktreeCreatesTrackedSiblingProject(t *testing.T) {
 	if result.BranchName != "feat/worktree-launch" {
 		t.Fatalf("branch = %q, want %q", result.BranchName, "feat/worktree-launch")
 	}
+	rootStatus, err := scanner.ReadGitRepoStatus(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("read git repo status for root: %v", err)
+	}
+	if result.ParentBranch != strings.TrimSpace(rootStatus.Branch) {
+		t.Fatalf("parent branch = %q, want %q", result.ParentBranch, strings.TrimSpace(rootStatus.Branch))
+	}
 	status, err := scanner.ReadGitRepoStatus(ctx, result.WorktreePath)
 	if err != nil {
 		t.Fatalf("read git repo status for worktree: %v", err)
@@ -1725,6 +1732,9 @@ func TestCreateTodoWorktreeCreatesTrackedSiblingProject(t *testing.T) {
 	}
 	if strings.TrimSpace(detail.Summary.RepoBranch) != "feat/worktree-launch" {
 		t.Fatalf("tracked worktree branch = %q, want %q", detail.Summary.RepoBranch, "feat/worktree-launch")
+	}
+	if strings.TrimSpace(detail.Summary.WorktreeParentBranch) != strings.TrimSpace(rootStatus.Branch) {
+		t.Fatalf("tracked worktree parent branch = %q, want %q", detail.Summary.WorktreeParentBranch, strings.TrimSpace(rootStatus.Branch))
 	}
 }
 
@@ -1805,6 +1815,117 @@ func TestRemoveWorktreeRemovesTrackedLinkedWorktree(t *testing.T) {
 	}
 	if !detail.Summary.Forgotten {
 		t.Fatalf("removed worktree should be marked forgotten: %#v", detail.Summary)
+	}
+}
+
+func TestMergeWorktreeBackMergesIntoRecordedParentBranch(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	svc := New(cfg, st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	item, err := svc.AddTodo(ctx, projectPath, "Implement merge back for linked worktrees")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
+		t.Fatalf("queue todo worktree suggestion: %v", err)
+	} else if !queued {
+		t.Fatalf("expected todo worktree suggestion to queue")
+	}
+	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
+	if err != nil {
+		t.Fatalf("claim todo worktree suggestion: %v", err)
+	}
+	suggestion.BranchName = "feat/merge-worktree-back"
+	suggestion.WorktreeSuffix = "feat-merge-worktree-back"
+	suggestion.Kind = "feature"
+	suggestion.Reason = "Creates a linked worktree so the merge-back flow can be tested."
+	suggestion.Confidence = 0.95
+	suggestion.Model = "test"
+	if completed, err := st.CompleteTodoWorktreeSuggestion(ctx, suggestion); err != nil {
+		t.Fatalf("complete todo worktree suggestion: %v", err)
+	} else if !completed {
+		t.Fatalf("expected todo worktree suggestion to complete")
+	}
+
+	result, err := svc.CreateTodoWorktree(ctx, CreateTodoWorktreeRequest{
+		ProjectPath: projectPath,
+		TodoID:      item.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateTodoWorktree() error = %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(result.WorktreePath, "FEATURE.txt"), []byte("merged from linked worktree\n"), 0o644); err != nil {
+		t.Fatalf("write FEATURE.txt in worktree: %v", err)
+	}
+	runGit(t, result.WorktreePath, "git", "add", "FEATURE.txt")
+	runGit(t, result.WorktreePath, "git", "commit", "-m", "add worktree feature")
+
+	mergeResult, err := svc.MergeWorktreeBack(ctx, result.WorktreePath)
+	if err != nil {
+		t.Fatalf("MergeWorktreeBack() error = %v", err)
+	}
+	if mergeResult.RootProjectPath != projectPath {
+		t.Fatalf("merge root path = %q, want %q", mergeResult.RootProjectPath, projectPath)
+	}
+	if mergeResult.SourceBranch != "feat/merge-worktree-back" {
+		t.Fatalf("merge source branch = %q, want %q", mergeResult.SourceBranch, "feat/merge-worktree-back")
+	}
+	if strings.TrimSpace(mergeResult.TargetBranch) != strings.TrimSpace(result.ParentBranch) {
+		t.Fatalf("merge target branch = %q, want %q", mergeResult.TargetBranch, result.ParentBranch)
+	}
+
+	featurePath := filepath.Join(projectPath, "FEATURE.txt")
+	if got, err := os.ReadFile(featurePath); err != nil {
+		t.Fatalf("read merged file from root: %v", err)
+	} else if strings.TrimSpace(string(got)) != "merged from linked worktree" {
+		t.Fatalf("merged file contents = %q, want merged worktree content", string(got))
+	}
+
+	rootStatus, err := scanner.ReadGitRepoStatus(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("read root git status after merge-back: %v", err)
+	}
+	if rootStatus.Dirty {
+		t.Fatalf("root repo should be clean after merge-back, got %#v", rootStatus)
+	}
+	if strings.TrimSpace(rootStatus.Branch) != strings.TrimSpace(result.ParentBranch) {
+		t.Fatalf("root branch after merge-back = %q, want %q", rootStatus.Branch, result.ParentBranch)
+	}
+
+	rootDetail, err := st.GetProjectDetail(ctx, projectPath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() for root after merge-back error = %v", err)
+	}
+	if strings.TrimSpace(rootDetail.Summary.RepoBranch) != strings.TrimSpace(result.ParentBranch) {
+		t.Fatalf("stored root branch after merge-back = %q, want %q", rootDetail.Summary.RepoBranch, result.ParentBranch)
+	}
+
+	worktreeDetail, err := st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() for worktree after merge-back error = %v", err)
+	}
+	if strings.TrimSpace(worktreeDetail.Summary.WorktreeParentBranch) != strings.TrimSpace(result.ParentBranch) {
+		t.Fatalf("stored worktree parent branch after merge-back = %q, want %q", worktreeDetail.Summary.WorktreeParentBranch, result.ParentBranch)
 	}
 }
 

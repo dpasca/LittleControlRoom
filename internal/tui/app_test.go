@@ -967,6 +967,145 @@ func TestRenderFooterShowsRemoveHintForLinkedWorktree(t *testing.T) {
 	}
 }
 
+func TestRenderFooterShowsMergeHintForLinkedWorktreeWithParentBranch(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		focusedPane: focusProjects,
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 childPath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				RepoBranch:           "feat/parallel-lane",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	rendered := ansi.Strip(m.renderFooter(160))
+	if !strings.Contains(rendered, "M merge") {
+		t.Fatalf("renderFooter() should advertise linked worktree merge-back when a parent branch is known, got %q", rendered)
+	}
+}
+
+func TestUpdateNormalModeMOpensWorktreeMergeConfirm(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		focusedPane: focusProjects,
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 childPath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				RepoBranch:           "feat/parallel-lane",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+		width:      120,
+		height:     28,
+	}
+	m.rebuildProjectList(childPath)
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("merge confirm should open without scheduling a command")
+	}
+	if got.worktreeMergeConfirm == nil {
+		t.Fatalf("M should open the worktree merge-back confirmation dialog")
+	}
+	if got.worktreeMergeConfirm.TargetBranch != "master" {
+		t.Fatalf("merge confirm target branch = %q, want master", got.worktreeMergeConfirm.TargetBranch)
+	}
+}
+
+func TestWorktreeActionMsgOpensPostMergeCleanupPrompt(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	status := "Merged feat/parallel-lane into master"
+
+	updated, cmd := Model{}.Update(worktreeActionMsg{
+		projectPath:           childPath,
+		selectPath:            rootPath,
+		status:                status,
+		offerPostMergeCleanup: true,
+		postMergeRootPath:     rootPath,
+		postMergeSourceBranch: "feat/parallel-lane",
+		postMergeTargetBranch: "master",
+	})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("merge completion should queue a refresh command batch")
+	}
+	if got.worktreePostMerge == nil {
+		t.Fatalf("merge completion should open the post-merge cleanup prompt")
+	}
+	if got.worktreePostMerge.ProjectPath != childPath {
+		t.Fatalf("post-merge cleanup prompt path = %q, want %q", got.worktreePostMerge.ProjectPath, childPath)
+	}
+	if got.worktreePostMerge.RootPath != rootPath {
+		t.Fatalf("post-merge cleanup root = %q, want %q", got.worktreePostMerge.RootPath, rootPath)
+	}
+	if got.worktreePostMerge.Status != status {
+		t.Fatalf("post-merge cleanup status = %q, want %q", got.worktreePostMerge.Status, status)
+	}
+	if got.preferredSelectPath != rootPath {
+		t.Fatalf("preferred select path = %q, want %q", got.preferredSelectPath, rootPath)
+	}
+}
+
+func TestWorktreePostMergeEnterRemoveQueuesRemoval(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+
+	m := Model{
+		worktreePostMerge: &worktreePostMergeState{
+			ProjectPath:  childPath,
+			RootPath:     rootPath,
+			BranchName:   "feat/parallel-lane",
+			TargetBranch: "master",
+			Status:       "Merged feat/parallel-lane into master",
+			Selected:     worktreePostMergeFocusRemove,
+		},
+	}
+
+	updated, cmd := m.updateWorktreePostMergeMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("removing the merged worktree should queue a removal command")
+	}
+	if got.status != "Removing merged worktree..." {
+		t.Fatalf("status = %q, want removal progress", got.status)
+	}
+}
+
 func TestCompactUsageLabel(t *testing.T) {
 	if got := compactUsageLabel(model.LLMSessionUsage{}); got != "cost off" {
 		t.Fatalf("compactUsageLabel(disabled) = %q, want %q", got, "cost off")

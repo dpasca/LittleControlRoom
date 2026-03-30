@@ -27,8 +27,16 @@ type CreateTodoWorktreeRequest struct {
 type CreateTodoWorktreeResult struct {
 	RootProjectPath string
 	WorktreePath    string
+	ParentBranch    string
 	BranchName      string
 	WorktreeSuffix  string
+}
+
+type MergeWorktreeBackResult struct {
+	WorktreePath    string
+	RootProjectPath string
+	SourceBranch    string
+	TargetBranch    string
 }
 
 func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktreeRequest) (CreateTodoWorktreeResult, error) {
@@ -73,10 +81,17 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 	if strings.TrimSpace(worktreeRootPath) == "" {
 		worktreeRootPath = projectPath
 	}
+	parentBranch := ""
+	if s.gitRepoStatusReader != nil {
+		if status, statusErr := s.gitRepoStatusReader(ctx, worktreeRootPath); statusErr == nil {
+			parentBranch = strings.TrimSpace(status.Branch)
+		}
+	}
 	worktreePath := suggestedTodoWorktreePath(worktreeRootPath, worktreeSuffix)
 	result := CreateTodoWorktreeResult{
 		RootProjectPath: worktreeRootPath,
 		WorktreePath:    worktreePath,
+		ParentBranch:    parentBranch,
 		BranchName:      branchName,
 		WorktreeSuffix:  worktreeSuffix,
 	}
@@ -105,6 +120,11 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 	})
 	if attachErr != nil {
 		return result, fmt.Errorf("created worktree at %s but failed to track it in Little Control Room: %w", worktreePath, attachErr)
+	}
+	if strings.TrimSpace(parentBranch) != "" {
+		if err := s.store.SetWorktreeParentBranch(ctx, worktreePath, parentBranch); err != nil {
+			return result, fmt.Errorf("record parent branch for worktree %s: %w", worktreePath, err)
+		}
 	}
 
 	now := time.Now()
@@ -233,6 +253,105 @@ func (s *Service) EnsureTodoWorktreeSuggestion(ctx context.Context, projectPath 
 		s.todoSuggester.Notify()
 	}
 	return true, nil
+}
+
+func (s *Service) MergeWorktreeBack(ctx context.Context, projectPath string) (MergeWorktreeBackResult, error) {
+	if s == nil || s.store == nil {
+		return MergeWorktreeBackResult{}, fmt.Errorf("service unavailable")
+	}
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "" {
+		return MergeWorktreeBackResult{}, fmt.Errorf("project path is required")
+	}
+
+	detail, err := s.store.GetProjectDetail(ctx, projectPath, 0)
+	if err != nil {
+		return MergeWorktreeBackResult{}, err
+	}
+	if detail.Summary.WorktreeKind != model.WorktreeKindLinked {
+		return MergeWorktreeBackResult{}, fmt.Errorf("only linked worktrees can be merged back")
+	}
+
+	rootPath := filepath.Clean(strings.TrimSpace(detail.Summary.WorktreeRootPath))
+	if rootPath == "" {
+		rootPath, _ = s.readProjectWorktreeInfo(ctx, projectPath)
+	}
+	if rootPath == "" || rootPath == "." {
+		return MergeWorktreeBackResult{}, fmt.Errorf("worktree root is unavailable for %s", projectPath)
+	}
+
+	targetBranch := strings.TrimSpace(detail.Summary.WorktreeParentBranch)
+	if targetBranch == "" {
+		return MergeWorktreeBackResult{}, fmt.Errorf("this worktree has no recorded parent branch to merge back into")
+	}
+	if s.gitRepoStatusReader == nil {
+		return MergeWorktreeBackResult{}, fmt.Errorf("git status reader unavailable")
+	}
+
+	sourceStatus, err := s.gitRepoStatusReader(ctx, projectPath)
+	if err != nil {
+		return MergeWorktreeBackResult{}, fmt.Errorf("read worktree status before merge-back: %w", err)
+	}
+	if sourceStatus.Dirty {
+		return MergeWorktreeBackResult{}, fmt.Errorf("worktree is dirty; commit or discard changes before merging back")
+	}
+	sourceBranch := strings.TrimSpace(sourceStatus.Branch)
+	if sourceBranch == "" {
+		return MergeWorktreeBackResult{}, fmt.Errorf("worktree branch is unavailable for %s", projectPath)
+	}
+	if sourceBranch == targetBranch {
+		return MergeWorktreeBackResult{}, fmt.Errorf("worktree branch %s already matches its parent branch", sourceBranch)
+	}
+
+	rootStatus, err := s.gitRepoStatusReader(ctx, rootPath)
+	if err != nil {
+		return MergeWorktreeBackResult{}, fmt.Errorf("read root repo status before merge-back: %w", err)
+	}
+	rootBranch := strings.TrimSpace(rootStatus.Branch)
+	if rootBranch != targetBranch {
+		return MergeWorktreeBackResult{}, fmt.Errorf("root worktree %s is on %s, expected %s", rootPath, rootBranch, targetBranch)
+	}
+	if rootStatus.Dirty {
+		return MergeWorktreeBackResult{}, fmt.Errorf("root worktree is dirty; commit or discard changes before merging back")
+	}
+
+	result := MergeWorktreeBackResult{
+		WorktreePath:    projectPath,
+		RootProjectPath: rootPath,
+		SourceBranch:    sourceBranch,
+		TargetBranch:    targetBranch,
+	}
+	if err := gitMergeBranch(ctx, rootPath, sourceBranch); err != nil {
+		return result, fmt.Errorf("merge %s back into %s at %s: %w", sourceBranch, targetBranch, rootPath, err)
+	}
+
+	now := time.Now()
+	if s.bus != nil {
+		s.bus.Publish(events.Event{
+			Type:        events.ActionApplied,
+			At:          now,
+			ProjectPath: rootPath,
+			Payload: map[string]string{
+				"action":        "merge_worktree_back",
+				"source_path":   projectPath,
+				"source_branch": sourceBranch,
+				"target_branch": targetBranch,
+			},
+		})
+	}
+	_ = s.store.AddEvent(ctx, model.StoredEvent{
+		At:          now,
+		ProjectPath: rootPath,
+		Type:        string(events.ActionApplied),
+		Payload:     fmt.Sprintf("merge_worktree_back source=%s source_branch=%s target_branch=%s", projectPath, sourceBranch, targetBranch),
+	})
+	if err := s.RefreshProjectStatus(ctx, rootPath); err != nil {
+		return result, fmt.Errorf("refresh merged root project: %w", err)
+	}
+	if err := s.RefreshProjectStatus(ctx, projectPath); err != nil {
+		return result, fmt.Errorf("refresh merged worktree project: %w", err)
+	}
+	return result, nil
 }
 
 func (s *Service) RemoveWorktree(ctx context.Context, projectPath string) error {
@@ -477,6 +596,20 @@ func gitWorktreeRemove(ctx context.Context, repoPath, worktreePath string) error
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("remove git worktree %s: %w (%s)", worktreePath, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func gitMergeBranch(ctx context.Context, repoPath, branchName string) error {
+	repoPath = filepath.Clean(strings.TrimSpace(repoPath))
+	branchName = strings.TrimSpace(branchName)
+	if repoPath == "" || branchName == "" {
+		return fmt.Errorf("repo path and branch name are required")
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "merge", "--no-edit", branchName)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("merge branch %s into %s: %w (%s)", branchName, repoPath, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

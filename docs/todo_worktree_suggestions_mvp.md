@@ -14,7 +14,7 @@ The goal is to let a user start parallel work on the same repo without forcing m
 
 ## Non-goals
 
-- Full worktree lifecycle management UI.
+- Automatic finish-and-cleanup flow that merges and removes a worktree in one step.
 - Automatic worktree creation for every TODO.
 - Regex or keyword heuristics that decide whether a task is a fix, feature, chore, or docs task.
 - A large repo/worktree hierarchy redesign in the first pass.
@@ -75,6 +75,19 @@ The user can then:
 ### 4. Worktree creation
 
 Once confirmed, Little Control Room creates the new worktree and starts the chosen embedded provider inside that worktree.
+
+### 5. Worktree finish flow
+
+When the task is done, Little Control Room should support a simple local-only finish path:
+
+- record the parent branch that the worktree was created from
+- let the user explicitly merge the linked worktree branch back into that recorded parent branch
+- require the root checkout to already be on the recorded parent branch
+- require both the root checkout and the linked worktree to be clean before merging
+- allow unrelated sibling worktrees in the same repo family to stay dirty without blocking that merge
+- keep worktree removal as a separate explicit action after merge
+
+This keeps the workflow transparent: the worktree is just a lane, and the merge target is still an ordinary Git branch.
 
 ## AI Contract
 

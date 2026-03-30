@@ -165,6 +165,7 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 	presentOnDisk := projectPathExists(projectPath)
 	worktreeRootPath := ""
 	worktreeKind := model.WorktreeKindNone
+	worktreeParentBranch := strings.TrimSpace(existing.WorktreeParentBranch)
 	repoBranch := ""
 	repoDirty := false
 	repoSyncStatus := model.RepoSyncStatus("")
@@ -193,27 +194,28 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 	})
 
 	state := model.ProjectState{
-		Path:             projectPath,
-		Name:             filepath.Base(projectPath),
-		Status:           score.Status,
-		AttentionScore:   score.Score,
-		PresentOnDisk:    presentOnDisk,
-		WorktreeRootPath: worktreeRootPath,
-		WorktreeKind:     worktreeKind,
-		RepoBranch:       repoBranch,
-		RepoDirty:        repoDirty,
-		RepoSyncStatus:   repoSyncStatus,
-		RepoAheadCount:   repoAheadCount,
-		RepoBehindCount:  repoBehindCount,
-		ManuallyAdded:    true,
-		InScope:          true,
-		Pinned:           existing.Pinned,
-		SnoozedUntil:     existing.SnoozedUntil,
-		Note:             existing.Note,
-		MovedFromPath:    existing.MovedFromPath,
-		MovedAt:          existing.MovedAt,
-		AttentionReason:  score.Reasons,
-		UpdatedAt:        now,
+		Path:                 projectPath,
+		Name:                 filepath.Base(projectPath),
+		Status:               score.Status,
+		AttentionScore:       score.Score,
+		PresentOnDisk:        presentOnDisk,
+		WorktreeRootPath:     worktreeRootPath,
+		WorktreeKind:         worktreeKind,
+		WorktreeParentBranch: worktreeParentBranch,
+		RepoBranch:           repoBranch,
+		RepoDirty:            repoDirty,
+		RepoSyncStatus:       repoSyncStatus,
+		RepoAheadCount:       repoAheadCount,
+		RepoBehindCount:      repoBehindCount,
+		ManuallyAdded:        true,
+		InScope:              true,
+		Pinned:               existing.Pinned,
+		SnoozedUntil:         existing.SnoozedUntil,
+		Note:                 existing.Note,
+		MovedFromPath:        existing.MovedFromPath,
+		MovedAt:              existing.MovedAt,
+		AttentionReason:      score.Reasons,
+		UpdatedAt:            now,
 	}
 	if err := s.store.UpsertProjectState(ctx, state); err != nil {
 		return fmt.Errorf("persist project state: %w", err)
