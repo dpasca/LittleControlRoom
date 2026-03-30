@@ -216,11 +216,9 @@ Possible service entry points:
 
 ### TODO list rows
 
-The TODO dialog should show compact suggestion state under or beside the TODO:
+The TODO dialog should only show a compact cached branch label under or beside the TODO when a ready suggestion exists:
 
 - `branch: fix/diff-pane-empty-preview-scroll`
-- `branch: preparing suggestion...`
-- `branch: unavailable, press r to retry`
 
 ### Launch dialog
 

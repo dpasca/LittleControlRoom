@@ -1064,10 +1064,6 @@ func todoWorktreeSuggestionLabel(item model.TodoItem) string {
 			return suggestion.BranchName
 		}
 		return "suggestion ready"
-	case model.TodoWorktreeSuggestionRunning, model.TodoWorktreeSuggestionQueued:
-		return "preparing suggestion..."
-	case model.TodoWorktreeSuggestionFailed:
-		return "suggestion unavailable"
 	default:
 		return ""
 	}

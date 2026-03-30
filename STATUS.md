@@ -1,6 +1,33 @@
 # Little Control Room Status
 
-Last updated: 2026-03-30 20:37 JST
+Last updated: 2026-03-30 21:23 JST
+
+## Latest Update (2026-03-30 21:23 JST)
+
+- Removed the extra non-ready worktree-suggestion copy from TODO rows so the list only shows a branch label when there is a ready cached suggestion:
+  - `internal/tui/todo_dialog.go`
+    - changed `todoWorktreeSuggestionLabel(...)` so queued/running/failed suggestions return no row suffix instead of rendering:
+      - `preparing suggestion...`
+      - `suggestion unavailable`
+    - kept ready suggestions visible when a cached branch name exists
+  - `internal/tui/app_test.go`
+    - updated the focused TODO dialog rendering test to verify queued suggestions are hidden while ready branch labels still render
+  - `docs/todo_worktree_suggestions_mvp.md`
+    - aligned the TUI behavior note with the current UI so it only documents ready cached branch labels in the TODO list
+- Verification status:
+  - focused coverage passed:
+    - `go test ./internal/tui -run 'TestTodoDialogShowsWorktreeSuggestionState|TestTodoCopyDialogShowsRetryGuidanceForFailedWorktreeSuggestion' -count=1`
+  - repo validation:
+    - `make scan` passed at `2026-03-30T21:22:06+09:00`
+    - `make doctor` passed using cached report at `2026-03-30T21:22:44+09:00`
+    - `make test` still fails only on the same pre-existing unrelated `internal/tui` cases:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+    - `git diff --check` passed
+- Next concrete tasks:
+  - Do a quick live TUI smoke pass to confirm the TODO list reads more cleanly now that intermediate suggestion states are hidden.
+  - Decide after manual use whether ready branch labels should also move fully into the launch flow, or stay visible as the only lightweight TODO-row hint.
 
 ## Latest Update (2026-03-30 20:37 JST)
 

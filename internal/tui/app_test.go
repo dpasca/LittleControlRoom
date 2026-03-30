@@ -4453,8 +4453,8 @@ func TestTodoDialogShowsWorktreeSuggestionState(t *testing.T) {
 	if !strings.Contains(rendered, "fix/todo-dialog-spacing") {
 		t.Fatalf("rendered TODO dialog should show ready branch suggestion, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "preparing suggestion...") {
-		t.Fatalf("rendered TODO dialog should show queued suggestion state, got %q", rendered)
+	if strings.Contains(rendered, "preparing suggestion...") {
+		t.Fatalf("rendered TODO dialog should hide queued suggestion state, got %q", rendered)
 	}
 }
 
