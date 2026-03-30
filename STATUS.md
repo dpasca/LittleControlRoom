@@ -1,6 +1,38 @@
 # Little Control Room Status
 
-Last updated: 2026-03-30 21:23 JST
+Last updated: 2026-03-30 22:17 JST
+
+## Latest Update (2026-03-30 22:17 JST)
+
+- Followed up on the startup/backend confusion after removing the eager setup probe:
+  - assumption update:
+    - the saved user config at `~/.little-control-room/config.toml` is explicitly `ai_backend = "codex"`, so the startup mismatch was not caused by a missing or blank backend selection
+    - opening `/setup` does not reconfigure the service by itself; it only refreshes setup UI state
+    - after the eager startup setup probe was skipped, the footer fell back to the generic `cost ...` label before any setup snapshot existed, which made a configured local backend look like API-backed usage until `/setup` refreshed the snapshot
+    - startup latency may still have other causes, but the saved-backend display now needs to stay consistent even without the expensive setup detection path
+  - `internal/tui/app.go`
+    - kept startup from eagerly probing setup status when AI is already configured
+    - changed the pre-setup footer fallback so explicitly configured local backends (`Codex`, `OpenCode`, `Claude Code`) render their provider label immediately instead of the generic API cost label
+    - kept the old generic cost fallback for unset/default and API-key-backed startup so existing usage displays remain stable
+  - `internal/tui/setup.go`
+    - kept `startupSetupSnapshotCmd()` as the explicit guard around launch-time setup detection
+  - `internal/tui/app_test.go`
+    - added focused coverage proving configured local backends show the correct footer label before setup detection runs
+    - kept startup guard coverage for configured vs unconfigured launches
+- Verification status:
+  - focused coverage passed:
+    - `go test ./internal/tui -run 'Test(FooterUsageLabelShowsLocalBackendActivity|FooterUsageLabelUsesConfiguredLocalBackendBeforeSetupCheck|RenderFooterPulsesWhenUsageIncreases|StartupSetupSnapshotCmdSkippedWhenBackendConfigured|StartupSetupSnapshotCmdRunsWhenBackendUnset|StartupUnconfiguredAIBackendOpensSetupMode)' -count=1`
+  - repo validation:
+    - `make scan` passed at `2026-03-30T22:17:30+09:00`
+    - `make doctor` passed using cached report at `2026-03-30T22:17:30+09:00`
+    - `make test` still fails only on the same pre-existing unrelated `internal/tui` cases:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+    - `git diff --check` passed
+- Next concrete tasks:
+  - Restart LCR and confirm the footer now shows `Codex ...` immediately on startup without needing `/setup` to refresh first.
+  - If launch still feels slow after that, profile `ScanOnce(ctx)`, project list loading, and first detail-pane loads next; backend detection should no longer be the unconditional startup blocker for configured backends.
 
 ## Latest Update (2026-03-30 21:23 JST)
 

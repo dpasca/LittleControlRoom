@@ -4970,7 +4970,14 @@ func (m Model) currentUsage() model.LLMSessionUsage {
 
 func (m Model) footerUsageLabel() string {
 	if !m.setupChecked {
-		return compactUsageLabel(m.currentUsage())
+		switch backend := m.currentSettingsBaseline().AIBackend; backend {
+		case config.AIBackendDisabled:
+			return "AI disabled"
+		case config.AIBackendCodex, config.AIBackendOpenCode, config.AIBackendClaude:
+			return compactLocalUsageLabel(backend.Label(), m.currentUsage())
+		default:
+			return compactUsageLabel(m.currentUsage())
+		}
 	}
 	switch status := m.setupSnapshot.SelectedStatus(); {
 	case m.setupSnapshot.NeedsSetup():
@@ -4990,7 +4997,12 @@ func (m Model) footerUsageLabel() string {
 
 func (m Model) aiBackendStatusNotice() string {
 	if !m.setupChecked {
-		return ""
+		switch m.currentSettingsBaseline().AIBackend {
+		case config.AIBackendDisabled:
+			return "AI disabled"
+		default:
+			return ""
+		}
 	}
 	switch status := m.setupSnapshot.SelectedStatus(); {
 	case m.setupSnapshot.NeedsSetup():

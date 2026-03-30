@@ -1017,6 +1017,16 @@ func TestFooterUsageLabelShowsLocalBackendActivity(t *testing.T) {
 	}
 }
 
+func TestFooterUsageLabelUsesConfiguredLocalBackendBeforeSetupCheck(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendCodex
+
+	m := Model{settingsBaseline: &settings}
+	if got := m.footerUsageLabel(); got != "Codex ready" {
+		t.Fatalf("footerUsageLabel() = %q, want %q", got, "Codex ready")
+	}
+}
+
 func TestFooterUsageLabelShowsUnavailableBackend(t *testing.T) {
 	m := Model{
 		setupChecked: true,
