@@ -4191,7 +4191,10 @@ func TestTodoDialogEnterEnsuresMissingWorktreeSuggestion(t *testing.T) {
 		_ = st.Close()
 	})
 
-	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	cfg := config.Default()
+	cfg.AIBackend = config.AIBackendOpenAIAPI
+	cfg.OpenAIAPIKey = "test-key"
+	svc := service.New(cfg, st, events.NewBus(), nil)
 	if _, err := svc.CreateOrAttachProject(ctx, service.CreateOrAttachProjectRequest{
 		ParentPath: root,
 		Name:       "repo",
@@ -4267,7 +4270,10 @@ func TestTodoDialogEnterRetriesFailedWorktreeSuggestion(t *testing.T) {
 		_ = st.Close()
 	})
 
-	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	cfg := config.Default()
+	cfg.AIBackend = config.AIBackendOpenAIAPI
+	cfg.OpenAIAPIKey = "test-key"
+	svc := service.New(cfg, st, events.NewBus(), nil)
 	if _, err := svc.CreateOrAttachProject(ctx, service.CreateOrAttachProjectRequest{
 		ParentPath: root,
 		Name:       "repo",
@@ -4467,6 +4473,115 @@ func TestTodoDialogCanStartSelectedTodoInNewWorktree(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatalf("handling todoWorktreeLaunchMsg should return an open command")
+	}
+}
+
+func TestTodoCopyDialogEnterWaitsForQueuedWorktreeSuggestion(t *testing.T) {
+	t.Parallel()
+
+	m := Model{
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Todos: []model.TodoItem{{
+				ID:          7,
+				ProjectPath: "/tmp/demo",
+				Text:        "Launch this TODO in a new worktree",
+				WorktreeSuggestion: &model.TodoWorktreeSuggestion{
+					Status: model.TodoWorktreeSuggestionQueued,
+				},
+			}},
+		},
+		todoDialog: &todoDialogState{ProjectPath: "/tmp/demo", ProjectName: "demo"},
+		todoCopyDialog: &todoCopyDialogState{
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			TodoID:      7,
+			TodoText:    "Launch this TODO in a new worktree",
+			RunMode:     todoCopyModeNewWorktree,
+			Provider:    codexapp.ProviderCodex,
+		},
+		width:        100,
+		height:       24,
+		spinnerFrame: 2,
+	}
+
+	updated, cmd := m.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	var got *Model
+	switch v := updated.(type) {
+	case Model:
+		got = &v
+	case *Model:
+		got = v
+	default:
+		t.Fatalf("updated model = %T, want Model or *Model", updated)
+	}
+	if cmd != nil {
+		t.Fatalf("queued worktree suggestion should not start launch")
+	}
+	if got.todoCopyDialog == nil {
+		t.Fatalf("todo copy dialog should stay open while waiting")
+	}
+	if got.todoCopyDialog.Submitting {
+		t.Fatalf("todo copy dialog should not enter submitting state while waiting")
+	}
+	if got.status != "Waiting for worktree suggestion..." {
+		t.Fatalf("status = %q, want waiting message", got.status)
+	}
+
+	blockedUpdate, blockedCmd := got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	var blocked *Model
+	switch v := blockedUpdate.(type) {
+	case Model:
+		blocked = &v
+	case *Model:
+		blocked = v
+	default:
+		t.Fatalf("blocked update model = %T, want Model or *Model", blockedUpdate)
+	}
+	if blockedCmd != nil {
+		t.Fatalf("waiting copy dialog should ignore non-Esc keys")
+	}
+	if blocked.todoCopyDialog == nil || blocked.todoCopyDialog.Provider != codexapp.ProviderCodex {
+		t.Fatalf("waiting copy dialog should keep provider unchanged, got %#v", blocked.todoCopyDialog)
+	}
+
+	rendered := ansi.Strip(got.renderTodoCopyDialogOverlay("", 100, 24))
+	if !strings.Contains(rendered, "wait..") {
+		t.Fatalf("rendered copy dialog should disable Enter with wait label, got %q", rendered)
+	}
+	if strings.Contains(rendered, "toggle worktree") || strings.Contains(rendered, "refresh") || strings.Contains(rendered, "edit") {
+		t.Fatalf("rendered copy dialog should only show waiting/cancel actions while pending, got %q", rendered)
+	}
+}
+
+func TestTodoWorktreeLaunchErrorKeepsCopyDialogOpen(t *testing.T) {
+	t.Parallel()
+
+	m := Model{
+		todoCopyDialog: &todoCopyDialogState{
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			TodoID:      7,
+			TodoText:    "Launch this TODO in a new worktree",
+			RunMode:     todoCopyModeNewWorktree,
+			Provider:    codexapp.ProviderCodex,
+			Submitting:  true,
+		},
+	}
+
+	updated, cmd := m.Update(todoWorktreeLaunchMsg{err: fmt.Errorf("create worktree failed")})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("todo worktree launch error should not return a follow-up command")
+	}
+	if got.todoCopyDialog == nil {
+		t.Fatalf("todo copy dialog should stay open after launch error")
+	}
+	if got.todoCopyDialog.Submitting {
+		t.Fatalf("todo copy dialog submitting should reset after launch error")
+	}
+	if got.status != "create worktree failed" {
+		t.Fatalf("status = %q, want launch error", got.status)
 	}
 }
 

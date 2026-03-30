@@ -65,6 +65,7 @@ type todoCopyDialogState struct {
 	OpenModelFirst         bool
 	BranchOverride         string
 	WorktreeSuffixOverride string
+	Submitting             bool
 }
 
 type todoModelPickerReturnState struct {
@@ -451,6 +452,24 @@ func (m Model) updateTodoCopyDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if copyDialog == nil {
 		return m, nil
 	}
+	if copyDialog.Submitting {
+		return m, nil
+	}
+	if copyDialog.RunMode == todoCopyModeNewWorktree {
+		if item, ok := m.selectedTodoItem(); ok && item.ID == copyDialog.TodoID {
+			readiness, message := m.todoWorktreeLaunchReadiness(*copyDialog, item)
+			if readiness == todoWorktreeLaunchWaiting {
+				switch msg.String() {
+				case "enter", " ":
+					m.status = message
+				}
+				if msg.String() == "esc" {
+					return m, m.closeTodoCopyDialog("TODO start canceled")
+				}
+				return m, nil
+			}
+		}
+	}
 	switch msg.String() {
 	case "esc":
 		return m, m.closeTodoCopyDialog("TODO start canceled")
@@ -541,6 +560,17 @@ func (m *Model) activateTodoCopyDialogSelection() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if copyDialog.RunMode == todoCopyModeNewWorktree {
+		item, ok := m.selectedTodoItem()
+		if !ok {
+			m.status = "No TODO selected"
+			return m, nil
+		}
+		readiness, message := m.todoWorktreeLaunchReadiness(*copyDialog, item)
+		if readiness != todoWorktreeLaunchReady {
+			m.status = message
+			return m, nil
+		}
+		copyDialog.Submitting = true
 		return m.startSelectedTodoInNewWorktree(copyDialog.Provider, copyDialog.OpenModelFirst)
 	}
 	m.todoCopyDialog = nil
@@ -780,6 +810,14 @@ func (m Model) regenerateTodoWorktreeSuggestionCmd(projectPath string, todoID in
 			return todoActionMsg{projectPath: projectPath, err: fmt.Errorf("service unavailable")}
 		}
 	}
+	if !m.svc.HasTodoWorktreeSuggester() {
+		return func() tea.Msg {
+			return todoActionMsg{
+				projectPath: projectPath,
+				status:      "Worktree suggestions are unavailable right now. Press e to enter names manually.",
+			}
+		}
+	}
 	return func() tea.Msg {
 		err := m.svc.RegenerateTodoWorktreeSuggestion(m.ctx, projectPath, todoID)
 		return todoActionMsg{
@@ -793,6 +831,14 @@ func (m Model) regenerateTodoWorktreeSuggestionCmd(projectPath string, todoID in
 func (m Model) ensureTodoWorktreeSuggestionCmd(projectPath string, todoID int64) tea.Cmd {
 	if m.svc == nil {
 		return nil
+	}
+	if !m.svc.HasTodoWorktreeSuggester() {
+		return func() tea.Msg {
+			return todoActionMsg{
+				projectPath: projectPath,
+				status:      "Worktree suggestions are unavailable right now. Press e to enter names manually.",
+			}
+		}
 	}
 	return func() tea.Msg {
 		changed, err := m.svc.EnsureTodoWorktreeSuggestion(m.ctx, projectPath, todoID)
@@ -889,10 +935,6 @@ func (m Model) startSelectedTodoInNewWorktree(provider codexapp.Provider, openMo
 	} else {
 		provider = provider.Normalized()
 	}
-	m.todoEditor = nil
-	m.todoDeleteConfirm = nil
-	m.todoExistingWorktree = nil
-	m.todoDialog = nil
 	m.status = "Creating worktree..."
 	return m, m.createTodoWorktreeCmd(projectPath, item.ID, item.Text, provider, openModelFirst)
 }
@@ -1155,22 +1197,42 @@ func (m Model) renderTodoCopyDialogOverlay(body string, bodyW, bodyH int) string
 			lines = append(lines, m.todoWorktreeLaunchDetails(*copyDialog, item, panelInnerW)...)
 		}
 	}
-	actions := []string{
-		renderDialogAction("w", "toggle worktree", navigateActionKeyStyle, navigateActionTextStyle),
-		renderDialogAction("a", "cycle agent", navigateActionKeyStyle, navigateActionTextStyle),
-		renderDialogAction("m", "change model", pushActionKeyStyle, pushActionTextStyle),
-		renderDialogAction("Enter", "start", commitActionKeyStyle, commitActionTextStyle),
+	enterAction := renderDialogAction("Enter", "start", commitActionKeyStyle, commitActionTextStyle)
+	waitingOnly := false
+	if copyDialog.Submitting {
+		enterAction = renderDialogAction("Enter", todoDialogWaitingLabel(m.spinnerFrame), disabledActionKeyStyle, disabledActionTextStyle)
+	} else if copyDialog.RunMode == todoCopyModeNewWorktree {
+		if item, ok := m.selectedTodoItem(); ok && item.ID == copyDialog.TodoID {
+			readiness, _ := m.todoWorktreeLaunchReadiness(*copyDialog, item)
+			switch readiness {
+			case todoWorktreeLaunchWaiting:
+				enterAction = renderDialogAction("Enter", todoDialogWaitingLabel(m.spinnerFrame), disabledActionKeyStyle, disabledActionTextStyle)
+				waitingOnly = true
+			case todoWorktreeLaunchUnavailable:
+				enterAction = renderDialogAction("Enter", "unavailable", disabledActionKeyStyle, disabledActionTextStyle)
+			}
+		}
 	}
-	if len(candidates) > 0 {
-		actions = append(actions, renderDialogAction("x", "existing", navigateActionKeyStyle, navigateActionTextStyle))
-	}
-	if copyDialog.RunMode == todoCopyModeNewWorktree {
+	actions := []string{enterAction}
+	if waitingOnly {
+		actions = append(actions, renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle))
+	} else {
 		actions = append(actions,
-			renderDialogAction("e", "edit", navigateActionKeyStyle, navigateActionTextStyle),
-			renderDialogAction("r", "refresh", pushActionKeyStyle, pushActionTextStyle),
+			renderDialogAction("w", "toggle worktree", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("a", "cycle agent", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("m", "change model", pushActionKeyStyle, pushActionTextStyle),
 		)
+		if len(candidates) > 0 {
+			actions = append(actions, renderDialogAction("x", "existing", navigateActionKeyStyle, navigateActionTextStyle))
+		}
+		if copyDialog.RunMode == todoCopyModeNewWorktree {
+			actions = append(actions,
+				renderDialogAction("e", "edit", navigateActionKeyStyle, navigateActionTextStyle),
+				renderDialogAction("r", "refresh", pushActionKeyStyle, pushActionTextStyle),
+			)
+		}
+		actions = append(actions, renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle))
 	}
-	actions = append(actions, renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle))
 	lines = append(lines, renderHelpPanelActionRow(actions...))
 	panel := renderDialogPanel(panelW, panelInnerW, strings.Join(lines, "\n"))
 	left := max(0, (bodyW-panelW)/2)
@@ -1341,6 +1403,61 @@ func todoCopyRunModeLabel(mode int) string {
 	}
 }
 
+type todoWorktreeLaunchState int
+
+const (
+	todoWorktreeLaunchReady todoWorktreeLaunchState = iota
+	todoWorktreeLaunchWaiting
+	todoWorktreeLaunchUnavailable
+)
+
+func (m Model) todoWorktreeLaunchReadiness(dialog todoCopyDialogState, item model.TodoItem) (todoWorktreeLaunchState, string) {
+	branchOverride := strings.TrimSpace(dialog.BranchOverride)
+	folderOverride := strings.TrimSpace(dialog.WorktreeSuffixOverride)
+	switch {
+	case branchOverride != "" && folderOverride != "":
+		return todoWorktreeLaunchReady, ""
+	case branchOverride != "" || folderOverride != "":
+		return todoWorktreeLaunchUnavailable, "Branch and folder are required. Press e to finish entering names."
+	}
+
+	suggestion := item.WorktreeSuggestion
+	if suggestion == nil {
+		if m.svc != nil && m.svc.HasTodoWorktreeSuggester() {
+			return todoWorktreeLaunchWaiting, "Waiting for worktree suggestion..."
+		}
+		return todoWorktreeLaunchUnavailable, "Worktree suggestions are unavailable right now. Press e to enter names manually."
+	}
+
+	switch suggestion.Status {
+	case model.TodoWorktreeSuggestionReady:
+		if strings.TrimSpace(suggestion.BranchName) != "" && strings.TrimSpace(suggestion.WorktreeSuffix) != "" {
+			return todoWorktreeLaunchReady, ""
+		}
+		return todoWorktreeLaunchUnavailable, "Worktree suggestion is incomplete. Press r to retry, or e to enter names manually."
+	case model.TodoWorktreeSuggestionQueued, model.TodoWorktreeSuggestionRunning:
+		return todoWorktreeLaunchWaiting, "Waiting for worktree suggestion..."
+	case model.TodoWorktreeSuggestionFailed:
+		return todoWorktreeLaunchUnavailable, "Worktree suggestion is unavailable right now. Press r to retry, or e to enter names manually."
+	default:
+		if m.svc != nil && m.svc.HasTodoWorktreeSuggester() {
+			return todoWorktreeLaunchWaiting, "Waiting for worktree suggestion..."
+		}
+		return todoWorktreeLaunchUnavailable, "Worktree suggestions are unavailable right now. Press e to enter names manually."
+	}
+}
+
+func todoDialogWaitingLabel(frame int) string {
+	switch frame % 3 {
+	case 1:
+		return "wait."
+	case 2:
+		return "wait.."
+	default:
+		return "wait..."
+	}
+}
+
 func (m Model) todoWorktreeLaunchDetails(dialog todoCopyDialogState, item model.TodoItem, width int) []string {
 	suggestion := item.WorktreeSuggestion
 	branchName := strings.TrimSpace(dialog.BranchOverride)
@@ -1357,9 +1474,18 @@ func (m Model) todoWorktreeLaunchDetails(dialog todoCopyDialogState, item model.
 		return lines
 	}
 	if suggestion == nil {
-		return []string{
-			detailMutedStyle.Render("No cached worktree suggestion yet."),
-			detailMutedStyle.Render("Press r to request one, or e to enter names now."),
+		readiness, message := m.todoWorktreeLaunchReadiness(dialog, item)
+		switch readiness {
+		case todoWorktreeLaunchWaiting:
+			return []string{
+				detailMutedStyle.Render("Worktree suggestion is preparing in the background."),
+				detailMutedStyle.Render(message),
+			}
+		default:
+			return []string{
+				detailMutedStyle.Render(message),
+				detailMutedStyle.Render("Press e to enter names now."),
+			}
 		}
 	}
 	switch suggestion.Status {
@@ -1379,7 +1505,7 @@ func (m Model) todoWorktreeLaunchDetails(dialog todoCopyDialogState, item model.
 	case model.TodoWorktreeSuggestionQueued, model.TodoWorktreeSuggestionRunning:
 		return []string{
 			detailMutedStyle.Render("Worktree suggestion is still preparing in the background."),
-			detailMutedStyle.Render("Press e to enter names now, or wait a moment and retry."),
+			detailMutedStyle.Render("Wait a moment, or press e to enter names now."),
 		}
 	case model.TodoWorktreeSuggestionFailed:
 		return []string{

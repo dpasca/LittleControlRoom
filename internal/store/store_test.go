@@ -261,6 +261,48 @@ func TestClaimNextQueuedTodoWorktreeSuggestionRespectsDebounce(t *testing.T) {
 	}
 }
 
+func TestForceQueueTodoWorktreeSuggestionBypassesDebounce(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           "/tmp/demo",
+		Name:           "demo",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		InScope:        true,
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+	item, err := st.AddTodo(ctx, "/tmp/demo", "Write worktree spec")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	if _, err := st.ForceQueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
+		t.Fatalf("force queue todo worktree suggestion: %v", err)
+	}
+
+	claimed, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, time.Hour, time.Minute)
+	if err != nil {
+		t.Fatalf("claim forced queued todo worktree suggestion: %v", err)
+	}
+	if claimed.TodoID != item.ID {
+		t.Fatalf("claimed todo id = %d, want %d", claimed.TodoID, item.ID)
+	}
+	if claimed.Status != model.TodoWorktreeSuggestionRunning {
+		t.Fatalf("claimed status = %q, want %q", claimed.Status, model.TodoWorktreeSuggestionRunning)
+	}
+}
+
 func TestOpenMigratesLegacyProjectNotesIntoTodos(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

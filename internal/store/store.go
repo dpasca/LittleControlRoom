@@ -2359,7 +2359,9 @@ func (s *Store) ForceQueueTodoWorktreeSuggestion(ctx context.Context, todoID int
 		return false, nil
 	}
 
-	now := time.Now()
+	// Force-queued suggestions are user-visible requests (open dialog / retry now),
+	// so make them immediately claimable regardless of the manager debounce window.
+	readyAt := time.Unix(0, 0)
 	textHash := hashTodoText(todo.Text)
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO todo_worktree_suggestions(
@@ -2378,7 +2380,7 @@ func (s *Store) ForceQueueTodoWorktreeSuggestion(ctx context.Context, todoID int
 			model = '',
 			last_error = '',
 			updated_at = excluded.updated_at
-	`, todoID, string(model.TodoWorktreeSuggestionQueued), textHash, now.Unix())
+	`, todoID, string(model.TodoWorktreeSuggestionQueued), textHash, readyAt.Unix())
 	return err == nil, err
 }
 

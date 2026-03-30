@@ -1,6 +1,54 @@
 # Little Control Room Status
 
-Last updated: 2026-03-31 05:31 JST
+Last updated: 2026-03-31 06:12 JST
+
+## Latest Update (2026-03-31 06:12 JST)
+
+- Fixed the TODO -> dedicated worktree launcher so it now behaves like a real waiting flow instead of a dismiss-and-fail flow:
+  - assumption update:
+    - a user-visible "prepare worktree suggestion now" action must bypass debounce entirely, not just the normal 90-second manager window
+    - the TODO launcher should not allow `Enter` to trigger the dedicated-worktree path until branch and folder names are actually available
+    - if the suggester is unavailable, the dialog should say so explicitly and steer the user to manual entry instead of pretending background preparation is happening
+    - a worktree-create failure should leave the launcher open in place so the user can retry or edit names without reopening the flow
+  - `internal/store/store.go`
+    - changed forced/retry worktree suggestion queueing to stamp `updated_at` at the Unix epoch so those requests are immediately claimable regardless of debounce settings
+  - `internal/service/service.go`
+    - added `HasTodoWorktreeSuggester()` so the TUI can distinguish "waiting on a real suggester" from "manual entry only"
+  - `internal/tui/todo_dialog.go`
+    - added explicit worktree-launch readiness states (`ready`, `waiting`, `unavailable`)
+    - blocked `Enter` from launching the dedicated-worktree path while the suggestion is queued/running/missing
+    - rendered a disabled animated `wait...` label for `Enter` while the suggestion is still preparing
+    - while the dedicated-worktree suggestion is still pending, the dialog now behaves like a real waiting state and only exposes `wait...` plus `Esc cancel`
+    - kept the unavailable/manual-entry path when no suggester is configured
+    - stopped clearing the TODO dialog before worktree creation succeeds
+  - `internal/tui/app.go`
+    - changed worktree-launch error handling to keep the copy dialog open and clear the temporary submitting state instead of dismissing the flow
+  - `internal/store/store_test.go`
+    - added coverage proving forced worktree suggestion requests bypass debounce and become claimable immediately
+  - `internal/tui/app_test.go`
+    - updated the suggestion-ensure/retry tests to use an enabled suggester configuration
+    - added regressions proving:
+      - queued worktree suggestions keep the launcher open and disable `Enter`
+      - worktree launch errors keep the launcher open and reset submitting state
+- Verification status:
+  - focused coverage passed:
+    - `go test ./internal/store -run 'Test(ClaimNextQueuedTodoWorktreeSuggestionRespectsDebounce|ForceQueueTodoWorktreeSuggestionBypassesDebounce)$' -count=1`
+    - `go test ./internal/tui -run 'Test(TodoDialogEnterEnsuresMissingWorktreeSuggestion|TodoDialogEnterRetriesFailedWorktreeSuggestion|TodoDialogCanStartSelectedTodoInNewWorktree|TodoCopyDialogEnterWaitsForQueuedWorktreeSuggestion|TodoWorktreeLaunchErrorKeepsCopyDialogOpen|TodoDialogShowsWorktreeSuggestionState|TodoCopyDialogShowsRetryGuidanceForFailedWorktreeSuggestion)$' -count=1`
+    - `go test ./internal/service -run 'Test(CreateTodoWorktreeCreatesTrackedSiblingProject|RemoveWorktreeRemovesTrackedLinkedWorktree|MergeWorktreeBackMergesIntoRecordedParentBranch)$' -count=1`
+  - PTY smoke passed:
+    - `make tui-parallel`
+    - the isolated dashboard launched successfully and exited cleanly via `Ctrl+C`
+  - repo validation:
+    - `make scan` passed at `2026-03-31T06:12:11+09:00`
+    - `make doctor` passed using cached report at `2026-03-31T06:12:11+09:00`
+    - `make test` still fails only on the same pre-existing unrelated `internal/tui` cases:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+    - `git diff --check` passed
+- Next concrete tasks:
+  - Live-test the exact TODO worktree path on a real Little Control Room TODO and confirm the launcher transitions from `wait...` to a ready branch/folder suggestion without needing manual retry.
+  - Decide whether queued/running suggestion rows should also show a tiny inline spinner/status timestamp so long waits are easier to distinguish from a stuck suggester.
 
 ## Latest Update (2026-03-31 05:31 JST)
 

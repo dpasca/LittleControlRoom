@@ -1049,12 +1049,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case todoWorktreeLaunchMsg:
+		if m.todoCopyDialog != nil {
+			m.todoCopyDialog.Submitting = false
+		}
 		if msg.err != nil {
 			m.todoLaunchDraft = nil
-			m.todoCopyDialog = nil
-			m.todoWorktreeEditor = nil
-			m.todoExistingWorktree = nil
-			m.err = msg.err
+			m.err = nil
 			m.status = msg.err.Error()
 			return m, nil
 		}

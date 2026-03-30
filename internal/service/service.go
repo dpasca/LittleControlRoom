@@ -194,6 +194,13 @@ func (s *Service) StartTodoWorktreeSuggester(ctx context.Context) {
 	s.todoSuggester.Start(ctx)
 }
 
+func (s *Service) HasTodoWorktreeSuggester() bool {
+	if s == nil || s.todoSuggester == nil {
+		return false
+	}
+	return s.todoSuggester.Enabled()
+}
+
 func (s *Service) HasSessionClassifier() bool {
 	if s.classifier == nil {
 		return false
