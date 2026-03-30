@@ -2949,6 +2949,10 @@ func (m Model) launchEmbeddedForSelection(provider codexapp.Provider, forceNew b
 		m.status = provider.Label() + " launch requires a folder present on disk"
 		return m, nil
 	}
+	if blockedStatus, blocked := m.embeddedLaunchBlockedStatus(p, provider); blocked {
+		m.status = blockedStatus
+		return m, nil
+	}
 	if !forceNew && strings.TrimSpace(prompt) == "" {
 		if _, ok := m.liveEmbeddedSnapshotForProject(p.Path, provider); ok {
 			return m.showCodexProject(p.Path, "Embedded "+provider.Label()+" session reopened. Alt+Up hides it.")
@@ -2973,6 +2977,72 @@ func (m Model) launchEmbeddedForSelection(provider codexapp.Provider, forceNew b
 	m.err = nil
 	m.status = "Opening embedded " + provider.Label() + " session..."
 	return m, m.openCodexSessionCmd(req)
+}
+
+func (m Model) embeddedLaunchBlockedStatus(project model.ProjectSummary, requested codexapp.Provider) (string, bool) {
+	requested = requested.Normalized()
+	if requested == "" {
+		requested = codexapp.ProviderCodex
+	}
+	if project.Path == "" {
+		return "", false
+	}
+	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
+		liveProvider := embeddedProvider(snapshot)
+		if liveProvider != requested && embeddedSessionBlocksProviderSwitch(snapshot) {
+			return fmt.Sprintf("This project already has an active embedded %s session. Finish or close it before starting %s here.", liveProvider.Label(), requested.Label()), true
+		}
+	}
+	latestProvider := providerForSessionFormat(project.LatestSessionFormat)
+	if latestProvider == "" || latestProvider == requested {
+		return "", false
+	}
+	if !projectLatestSessionBlocksProviderSwitch(project, m.currentTime(), m.embeddedLaunchProtectionWindow()) {
+		return "", false
+	}
+	return fmt.Sprintf("This project already has an unfinished %s session. Finish or close it before starting %s here.", latestProvider.Label(), requested.Label()), true
+}
+
+func embeddedSessionBlocksProviderSwitch(snapshot codexapp.Snapshot) bool {
+	if !snapshot.Started || snapshot.Closed {
+		return false
+	}
+	if snapshot.Busy || snapshot.BusyExternal || strings.TrimSpace(snapshot.ActiveTurnID) != "" {
+		return true
+	}
+	if snapshot.PendingApproval != nil || snapshot.PendingToolInput != nil || snapshot.PendingElicitation != nil {
+		return true
+	}
+	switch snapshot.Phase {
+	case codexapp.SessionPhaseRunning, codexapp.SessionPhaseFinishing, codexapp.SessionPhaseReconciling, codexapp.SessionPhaseStalled, codexapp.SessionPhaseExternal:
+		return true
+	default:
+		return false
+	}
+}
+
+func projectLatestSessionBlocksProviderSwitch(project model.ProjectSummary, now time.Time, protectionWindow time.Duration) bool {
+	if !project.LatestTurnStateKnown || project.LatestTurnCompleted {
+		return false
+	}
+	if project.LatestSessionLastEventAt.IsZero() {
+		return true
+	}
+	if protectionWindow <= 0 || now.IsZero() {
+		return true
+	}
+	return now.Sub(project.LatestSessionLastEventAt) <= protectionWindow
+}
+
+func (m Model) embeddedLaunchProtectionWindow() time.Duration {
+	settings := m.currentSettingsBaseline()
+	if settings.StuckThreshold > 0 {
+		return settings.StuckThreshold
+	}
+	if settings.ActiveThreshold > 0 {
+		return settings.ActiveThreshold
+	}
+	return config.Default().StuckThreshold
 }
 
 func (m Model) selectedProjectCodexSessionID(project model.ProjectSummary) string {

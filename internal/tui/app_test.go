@@ -5075,6 +5075,130 @@ func TestLaunchCodexForSelectionShowsOpeningStateInsteadOfPreviousSession(t *tes
 	}
 }
 
+func TestLaunchEmbeddedForSelectionBlocksWhileAnotherEmbeddedProviderIsActive(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				Started:  true,
+				Busy:     req.Provider.Normalized() == codexapp.ProviderClaudeCode,
+				Status:   req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderClaudeCode,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/demo",
+			Name:          "demo",
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+	}
+
+	updated, cmd := m.launchEmbeddedForSelection(codexapp.ProviderCodex, true, "")
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("launchEmbeddedForSelection() cmd = %#v, want nil when another embedded provider is active", cmd)
+	}
+	wantStatus := "This project already has an active embedded Claude Code session. Finish or close it before starting Codex here."
+	if got.status != wantStatus {
+		t.Fatalf("status = %q, want %q", got.status, wantStatus)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want only the original Claude open", len(requests))
+	}
+}
+
+func TestLaunchEmbeddedForSelectionBlocksWhileAnotherProviderSessionIsUnfinished(t *testing.T) {
+	now := time.Date(2026, 3, 30, 20, 30, 0, 0, time.UTC)
+	m := Model{
+		nowFn: func() time.Time { return now },
+		projects: []model.ProjectSummary{{
+			Path:                     "/tmp/demo",
+			Name:                     "demo",
+			PresentOnDisk:            true,
+			LatestSessionFormat:      "claude_code",
+			LatestSessionLastEventAt: now.Add(-10 * time.Minute),
+			LatestTurnStateKnown:     true,
+			LatestTurnCompleted:      false,
+		}},
+		selected: 0,
+	}
+
+	updated, cmd := m.launchEmbeddedForSelection(codexapp.ProviderCodex, true, "")
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("launchEmbeddedForSelection() cmd = %#v, want nil when another provider session is still unfinished", cmd)
+	}
+	wantStatus := "This project already has an unfinished Claude Code session. Finish or close it before starting Codex here."
+	if got.status != wantStatus {
+		t.Fatalf("status = %q, want %q", got.status, wantStatus)
+	}
+}
+
+func TestLaunchEmbeddedForSelectionAllowsStaleUnfinishedSessionOutsideProtectionWindow(t *testing.T) {
+	now := time.Date(2026, 3, 30, 20, 30, 0, 0, time.UTC)
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				Started:  true,
+				Preset:   req.Preset,
+				Status:   req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+
+	m := Model{
+		nowFn:        func() time.Time { return now },
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:                     "/tmp/demo",
+			Name:                     "demo",
+			PresentOnDisk:            true,
+			LatestSessionFormat:      "claude_code",
+			LatestSessionLastEventAt: now.Add(-6 * time.Hour),
+			LatestTurnStateKnown:     true,
+			LatestTurnCompleted:      false,
+		}},
+		selected: 0,
+	}
+
+	updated, cmd := m.launchEmbeddedForSelection(codexapp.ProviderCodex, true, "")
+	if cmd == nil {
+		t.Fatalf("launchEmbeddedForSelection() should allow stale unfinished sessions outside the protection window")
+	}
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("opened.err = %v, want nil", opened.err)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want 1 fresh Codex open", len(requests))
+	}
+	if requests[0].Provider != codexapp.ProviderCodex {
+		t.Fatalf("provider = %q, want %q", requests[0].Provider, codexapp.ProviderCodex)
+	}
+	_ = updated
+}
+
 func TestLaunchCodexForSelectionForceNewRetriesWhenPreviousThreadReopensFirst(t *testing.T) {
 	const previousThreadID = "019cccc3abcd"
 	const newThreadID = "019dddd4efgh"

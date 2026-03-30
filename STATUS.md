@@ -1,6 +1,39 @@
 # Little Control Room Status
 
-Last updated: 2026-03-30 20:19 JST
+Last updated: 2026-03-30 20:28 JST
+
+## Latest Update (2026-03-30 20:28 JST)
+
+- Added a guardrail for cross-provider embedded launches in the same project so Little Control Room stops trying to start Codex/OpenCode/Claude Code on top of another still-active provider session:
+  - assumption update:
+    - the embedded runtime still keeps a single live session slot per project path, not one slot per provider
+    - external detector state can still show a different provider as the latest unfinished session for the same project path at the same time
+    - FractalMech currently demonstrates the failure shape clearly in `make doctor`: latest Codex session is blocked/stuck while an older Claude Code session for the same repo still exists, which matches the reported confusion pattern
+  - `internal/tui/app.go`
+    - added `embeddedLaunchBlockedStatus(...)` so TUI launch commands refuse a provider switch when:
+      - another embedded provider is still actively running in that project, or
+      - the latest detected session from another provider is still marked unfinished within the protection window
+    - kept stale unfinished sessions outside the protection window launchable so ancient stuck history does not permanently block fresh work
+  - `internal/tui/app_test.go`
+    - added focused coverage for:
+      - blocking Codex when an embedded Claude Code session is still active in the same project
+      - blocking Codex when the latest detected Claude Code session is still unfinished
+      - allowing a fresh Codex launch once that unfinished foreign-provider session is old enough to be treated as stale
+- Verification status:
+  - focused launch-guard coverage passed:
+    - `go test ./internal/tui -run 'Test(LaunchEmbeddedForSelectionBlocksWhileAnotherEmbeddedProviderIsActive|LaunchEmbeddedForSelectionBlocksWhileAnotherProviderSessionIsUnfinished|LaunchEmbeddedForSelectionAllowsStaleUnfinishedSessionOutsideProtectionWindow|EmbeddedModelPreferencePersistsAcrossFutureSessionsPerProvider|EmbeddedModelPreferenceLoadsFromSavedSettingsOnStartup)' -count=1`
+  - repo validation:
+    - `make scan` passed at `2026-03-30T20:28:21+09:00`
+    - `make doctor` passed using cached report at `2026-03-30T20:28:21+09:00`
+    - `make test` still fails only on the same pre-existing unrelated `internal/tui` cases:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+    - `git diff --check` passed
+- Next concrete tasks:
+  - Do a live FractalMech repro pass to confirm Little Control Room now refuses the conflicting provider launch with the new status text instead of switching into the wrong session.
+  - Decide whether the next step should stay as a launch guard only, or whether embedded runtime state should eventually grow from one session slot per project path to one slot per provider.
+  - If the guard feels right in manual use, add a short user-facing note to `docs/reference.md` so the cross-provider rule is discoverable.
 
 ## Latest Update (2026-03-30 20:19 JST)
 
