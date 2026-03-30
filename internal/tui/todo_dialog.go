@@ -295,7 +295,7 @@ func (m *Model) openTodoCopyDialog(todo model.TodoItem) {
 	}
 	provider := codexapp.ProviderCodex
 	if project, ok := m.selectedProject(); ok && project.Path == m.todoDialog.ProjectPath {
-		provider = preferredEmbeddedProviderForProject(project)
+		provider = m.preferredEmbeddedProviderForProject(project)
 	}
 	m.todoCopyDialog = &todoCopyDialogState{
 		ProjectPath: m.todoDialog.ProjectPath,
@@ -801,7 +801,7 @@ func (m Model) startTodoInProjectPath(projectPath, todoText string, provider cod
 		project = model.ProjectSummary{Path: projectPath}
 	}
 	if strings.TrimSpace(string(provider)) == "" {
-		provider = preferredEmbeddedProviderForProject(project)
+		provider = m.preferredEmbeddedProviderForProject(project)
 	} else {
 		provider = provider.Normalized()
 	}
@@ -864,7 +864,7 @@ func (m Model) startSelectedTodoInNewWorktree(provider codexapp.Provider, openMo
 	}
 	if strings.TrimSpace(string(provider)) == "" {
 		if project, ok := m.selectedProject(); ok {
-			provider = preferredEmbeddedProviderForProject(project)
+			provider = m.preferredEmbeddedProviderForProject(project)
 		} else {
 			provider = codexapp.ProviderCodex
 		}

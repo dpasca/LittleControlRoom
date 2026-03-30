@@ -1,38 +1,48 @@
 # Little Control Room Status
 
-Last updated: 2026-03-30 20:28 JST
+Last updated: 2026-03-30 20:37 JST
 
-## Latest Update (2026-03-30 20:28 JST)
+## Latest Update (2026-03-30 20:37 JST)
 
-- Added a guardrail for cross-provider embedded launches in the same project so Little Control Room stops trying to start Codex/OpenCode/Claude Code on top of another still-active provider session:
+- Tightened embedded-session provider selection so the project list now follows the live embedded session you are actually using before it falls back to stale detector history:
   - assumption update:
     - the embedded runtime still keeps a single live session slot per project path, not one slot per provider
     - external detector state can still show a different provider as the latest unfinished session for the same project path at the same time
-    - FractalMech currently demonstrates the failure shape clearly in `make doctor`: latest Codex session is blocked/stuck while an older Claude Code session for the same repo still exists, which matches the reported confusion pattern
+    - project-list `Enter` had still been choosing the provider from stored project-summary recency (`LatestSessionFormat`) even when a different embedded session was already live in memory for that same project
+    - current `make doctor` output demonstrates both shapes clearly:
+      - FractalMech still shows the cross-provider overlap that motivated the original guardrail
+      - LittleControlRoom itself currently shows a newer Claude Code session and a slightly older Codex session, which matches the report that `Enter` kept pulling the user back into Claude Code despite an active Codex pane
   - `internal/tui/app.go`
     - added `embeddedLaunchBlockedStatus(...)` so TUI launch commands refuse a provider switch when:
       - another embedded provider is still actively running in that project, or
       - the latest detected session from another provider is still marked unfinished within the protection window
+    - changed project-list `Enter` and other provider defaults to prefer the live embedded session provider for that project before falling back to stored latest-session history
     - kept stale unfinished sessions outside the protection window launchable so ancient stuck history does not permanently block fresh work
+  - `internal/tui/todo_dialog.go`
+    - updated TODO launch defaults to reuse the same live-session-aware provider preference rule as the main project list
   - `internal/tui/app_test.go`
     - added focused coverage for:
       - blocking Codex when an embedded Claude Code session is still active in the same project
       - blocking Codex when the latest detected Claude Code session is still unfinished
       - allowing a fresh Codex launch once that unfinished foreign-provider session is old enough to be treated as stale
+      - preferring the live Codex session on `Enter` even when stored project history still says the latest provider was Claude Code
 - Verification status:
-  - focused launch-guard coverage passed:
-    - `go test ./internal/tui -run 'Test(LaunchEmbeddedForSelectionBlocksWhileAnotherEmbeddedProviderIsActive|LaunchEmbeddedForSelectionBlocksWhileAnotherProviderSessionIsUnfinished|LaunchEmbeddedForSelectionAllowsStaleUnfinishedSessionOutsideProtectionWindow|EmbeddedModelPreferencePersistsAcrossFutureSessionsPerProvider|EmbeddedModelPreferenceLoadsFromSavedSettingsOnStartup)' -count=1`
+  - focused provider-selection coverage passed:
+    - `go test ./internal/tui -run 'Test(NormalModeEnterOpensPreferredOpenCodeSession|NormalModeEnterPrefersLiveEmbeddedProviderOverStoredLatestProvider|LaunchEmbeddedForSelectionBlocksWhileAnotherEmbeddedProviderIsActive|LaunchEmbeddedForSelectionBlocksWhileAnotherProviderSessionIsUnfinished|LaunchEmbeddedForSelectionAllowsStaleUnfinishedSessionOutsideProtectionWindow|TodoDialogEnterStartsFreshPreferredProviderWithDraft|TodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider|TodoDialogCanStartSelectedTodoInNewWorktree|TodoDialogCanStartSelectedTodoInExistingWorktree)' -count=1`
   - repo validation:
-    - `make scan` passed at `2026-03-30T20:28:21+09:00`
-    - `make doctor` passed using cached report at `2026-03-30T20:28:21+09:00`
+    - `make scan` passed at `2026-03-30T20:36:58+09:00`
+    - `make doctor` passed using cached report at `2026-03-30T20:36:59+09:00`
     - `make test` still fails only on the same pre-existing unrelated `internal/tui` cases:
     - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
     - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
     - `TestDiffModeMovesSelectionAndScrollsContent`
     - `git diff --check` passed
 - Next concrete tasks:
-  - Do a live FractalMech repro pass to confirm Little Control Room now refuses the conflicting provider launch with the new status text instead of switching into the wrong session.
-  - Decide whether the next step should stay as a launch guard only, or whether embedded runtime state should eventually grow from one session slot per project path to one slot per provider.
+  - Do a live LittleControlRoom repro pass to confirm `Enter` now reopens the active Codex pane instead of bouncing back into the newer/staler Claude Code history entry.
+  - Re-test the original FractalMech overlap case to confirm both protections now hold together:
+    - conflicting provider launch is refused when another provider is still active
+    - plain `Enter` prefers the live embedded provider already in use for the project
+  - Decide whether the next step should stay as launch-selection guardrails only, or whether embedded runtime state should eventually grow from one session slot per project path to one slot per provider.
   - If the guard feels right in manual use, add a short user-facing note to `docs/reference.md` so the cross-provider rule is discoverable.
 
 ## Latest Update (2026-03-30 20:19 JST)

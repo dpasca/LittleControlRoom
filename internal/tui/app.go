@@ -1412,7 +1412,7 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.status = "No project selected"
 				return m, nil
 			}
-			return m.launchEmbeddedForSelection(preferredEmbeddedProviderForProject(project), false, "")
+			return m.launchEmbeddedForSelection(m.preferredEmbeddedProviderForProject(project), false, "")
 		}
 		if m.focusedPane == focusRuntime {
 			return m, m.activateRuntimePaneAction()
@@ -3115,16 +3115,23 @@ func providerForSessionFormat(format string) codexapp.Provider {
 	}
 }
 
-func preferredEmbeddedProviderForProject(project model.ProjectSummary) codexapp.Provider {
+func preferredEmbeddedProviderFromProjectSummary(project model.ProjectSummary) codexapp.Provider {
 	if provider := providerForSessionFormat(project.LatestSessionFormat); provider != "" {
 		return provider
 	}
 	return codexapp.ProviderCodex
 }
 
+func (m Model) preferredEmbeddedProviderForProject(project model.ProjectSummary) codexapp.Provider {
+	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
+		return embeddedProvider(snapshot)
+	}
+	return preferredEmbeddedProviderFromProjectSummary(project)
+}
+
 func (m Model) currentEmbeddedLaunchLabel() string {
 	if project, ok := m.selectedProject(); ok {
-		return preferredEmbeddedProviderForProject(project).Label()
+		return m.preferredEmbeddedProviderForProject(project).Label()
 	}
 	return codexapp.ProviderCodex.Label()
 }
