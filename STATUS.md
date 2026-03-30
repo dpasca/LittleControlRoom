@@ -1,6 +1,36 @@
 # Little Control Room Status
 
-Last updated: 2026-03-30 11:31 JST
+Last updated: 2026-03-30 19:12 JST
+
+## Latest Update (2026-03-30 19:12 JST)
+
+- Simplified the TODO launch dialog so it no longer renders the full worktree-provider cross-product:
+  - `internal/tui/todo_dialog.go`
+    - replaced the old matrix of `Start here/new/existing with <provider>` rows with two smaller sections:
+      - `Run in`: `Here` vs `Dedicated worktree`
+      - `Agent`: `Codex`, `OpenCode`, `Claude Code`
+    - the dialog now defaults focus to the run-mode section while still remembering the repo’s preferred embedded provider
+    - generic existing-worktree reuse moved behind the secondary `x` action instead of living in the main choice list
+    - existing-worktree picker now returns to the start dialog on `Esc` instead of dropping the user back to the TODO list
+    - worktree-only actions (`e` edit names / `r` refresh suggestion) now only appear when `Dedicated worktree` is selected
+  - `internal/tui/app_test.go`
+    - updated TODO launch tests to cover the new split selection model and the new `x` path for existing worktrees
+- Verification status:
+  - focused TODO dialog and grouped-list checks passed:
+    - `go test ./internal/tui -run 'Test(TodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider|TodoDialogCanStartSelectedTodoInNewWorktree|TodoDialogCanStartSelectedTodoInExistingWorktree|TodoCopyDialogShowsRetryGuidanceForFailedWorktreeSuggestion|TodoDialogShowsWorktreeSuggestionState)' -count=1`
+    - `go test ./internal/tui -run 'Test(RenderFooterShowsWorktreeHintsForRepoFamily|RenderFooterShowsRemoveHintForLinkedWorktree|RenderProjectListCollapsesLinkedWorktreesUnderRepoRow|RenderProjectListShowsExpandedWorktreeChildren|ViewStacksListAndDetailVertically)' -count=1`
+  - `git diff --check` passed
+  - `make scan` passed at `2026-03-30T19:11:15+09:00`
+  - `make doctor` passed using cached report at `2026-03-30T19:11:42+09:00`
+  - `make test` still fails only on the same pre-existing unrelated `internal/tui` cases:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+  - `timeout 10s make tui-parallel` still could not complete interactive verification in this environment because opening `/dev/tty` failed (`device not configured`)
+- Next concrete tasks:
+  - Do a real-terminal smoke pass on the simplified TODO launcher to see whether the `Run in`/`Agent` split feels obvious without extra instructions.
+  - Decide whether the advanced `x` existing-worktree path should stay generic or eventually become a more explicit `Resume worktree` affordance tied to a TODO.
+  - If the simplified launch dialog feels right in manual use, refresh the docs/screenshots so they show the new two-section chooser instead of the older combined list.
 
 ## Latest Update (2026-03-30 11:31 JST)
 

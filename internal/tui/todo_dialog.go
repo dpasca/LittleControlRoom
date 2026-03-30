@@ -17,16 +17,13 @@ import (
 )
 
 const (
-	todoCopyScopeCodex = iota
-	todoCopyScopeCodexWorktree
-	todoCopyScopeCodexExistingWorktree
-	todoCopyScopeOpenCode
-	todoCopyScopeOpenCodeWorktree
-	todoCopyScopeOpenCodeExistingWorktree
-	todoCopyScopeClaudeCode
-	todoCopyScopeClaudeCodeWorktree
-	todoCopyScopeClaudeCodeExistingWorktree
-	todoCopyScopeCancel
+	todoCopyModeHere = iota
+	todoCopyModeNewWorktree
+)
+
+const (
+	todoCopyFocusRunMode = iota
+	todoCopyFocusProvider
 )
 
 const (
@@ -68,7 +65,9 @@ type todoCopyDialogState struct {
 	ProjectName            string
 	TodoID                 int64
 	TodoText               string
-	Selected               int
+	RunMode                int
+	Provider               codexapp.Provider
+	Focus                  int
 	BranchOverride         string
 	WorktreeSuffixOverride string
 }
@@ -96,6 +95,7 @@ type todoExistingWorktreeDialogState struct {
 	OpenModelFirst bool
 	Selected       int
 	Candidates     []model.ProjectSummary
+	ReturnCopy     *todoCopyDialogState
 }
 
 func normalizeTodoText(text string) string {
@@ -298,21 +298,18 @@ func (m *Model) openTodoCopyDialog(todo model.TodoItem) {
 	if m.todoDialog == nil {
 		return
 	}
-	defaultSelection := todoCopyScopeCodex
+	provider := codexapp.ProviderCodex
 	if project, ok := m.selectedProject(); ok && project.Path == m.todoDialog.ProjectPath {
-		switch preferredEmbeddedProviderForProject(project) {
-		case codexapp.ProviderOpenCode:
-			defaultSelection = todoCopyScopeOpenCode
-		case codexapp.ProviderClaudeCode:
-			defaultSelection = todoCopyScopeClaudeCode
-		}
+		provider = preferredEmbeddedProviderForProject(project)
 	}
 	m.todoCopyDialog = &todoCopyDialogState{
 		ProjectPath: m.todoDialog.ProjectPath,
 		ProjectName: m.todoDialog.ProjectName,
 		TodoID:      todo.ID,
 		TodoText:    todo.Text,
-		Selected:    defaultSelection,
+		RunMode:     todoCopyModeHere,
+		Provider:    provider,
+		Focus:       todoCopyFocusRunMode,
 	}
 	m.status = "Start TODO"
 }
@@ -364,6 +361,7 @@ func (m *Model) openTodoExistingWorktreeDialog(provider codexapp.Provider, openM
 		m.status = "No existing worktrees for this repo yet"
 		return
 	}
+	returnCopy := *m.todoCopyDialog
 	m.todoExistingWorktree = &todoExistingWorktreeDialogState{
 		ProjectPath:    m.todoCopyDialog.ProjectPath,
 		ProjectName:    m.todoCopyDialog.ProjectName,
@@ -371,12 +369,16 @@ func (m *Model) openTodoExistingWorktreeDialog(provider codexapp.Provider, openM
 		Provider:       provider,
 		OpenModelFirst: openModelFirst,
 		Candidates:     candidates,
+		ReturnCopy:     &returnCopy,
 	}
 	m.todoCopyDialog = nil
 	m.status = "Pick an existing worktree"
 }
 
 func (m *Model) closeTodoExistingWorktreeDialog(status string) {
+	if dialog := m.todoExistingWorktree; dialog != nil && dialog.ReturnCopy != nil {
+		m.todoCopyDialog = dialog.ReturnCopy
+	}
 	m.todoExistingWorktree = nil
 	if status != "" {
 		m.status = status
@@ -459,7 +461,7 @@ func (m Model) updateTodoCopyDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		return m, m.closeTodoCopyDialog("TODO start canceled")
 	case "e":
-		if !todoCopyScopeUsesNewWorktree(copyDialog.Selected) {
+		if copyDialog.RunMode != todoCopyModeNewWorktree {
 			return m, nil
 		}
 		item, ok := m.selectedTodoItem()
@@ -469,16 +471,28 @@ func (m Model) updateTodoCopyDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.openTodoWorktreeEditor(item)
 	case "r":
-		if !todoCopyScopeUsesNewWorktree(copyDialog.Selected) {
+		if copyDialog.RunMode != todoCopyModeNewWorktree {
 			return m, nil
 		}
 		copyDialog.BranchOverride = ""
 		copyDialog.WorktreeSuffixOverride = ""
 		m.status = "Refreshing worktree suggestion..."
 		return m, m.regenerateTodoWorktreeSuggestionCmd(copyDialog.ProjectPath, copyDialog.TodoID)
-	case "tab", "shift+tab", "left", "right", "up", "down":
+	case "x":
+		m.openTodoExistingWorktreeDialog(copyDialog.Provider, false)
+		return m, nil
+	case "alt+x":
+		m.openTodoExistingWorktreeDialog(copyDialog.Provider, true)
+		return m, nil
+	case "tab", "shift+tab":
 		delta := 1
-		if msg.String() == "shift+tab" || msg.String() == "left" || msg.String() == "up" {
+		if msg.String() == "shift+tab" {
+			delta = -1
+		}
+		return m, m.moveTodoCopyDialogFocus(delta)
+	case "left", "right", "up", "down":
+		delta := 1
+		if msg.String() == "left" || msg.String() == "up" {
 			delta = -1
 		}
 		return m, m.moveTodoCopyDialogSelection(delta)
@@ -490,19 +504,41 @@ func (m Model) updateTodoCopyDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) moveTodoCopyDialogFocus(delta int) tea.Cmd {
+	copyDialog := m.todoCopyDialog
+	if copyDialog == nil || delta == 0 {
+		return nil
+	}
+	copyDialog.Focus += delta
+	if copyDialog.Focus < todoCopyFocusRunMode {
+		copyDialog.Focus = todoCopyFocusProvider
+	}
+	if copyDialog.Focus > todoCopyFocusProvider {
+		copyDialog.Focus = todoCopyFocusRunMode
+	}
+	return nil
+}
+
 func (m *Model) moveTodoCopyDialogSelection(delta int) tea.Cmd {
 	copyDialog := m.todoCopyDialog
 	if copyDialog == nil || delta == 0 {
 		return nil
 	}
-	index := copyDialog.Selected + delta
-	if index < todoCopyScopeCodex {
-		index = todoCopyScopeCancel
+	switch copyDialog.Focus {
+	case todoCopyFocusRunMode:
+		copyDialog.RunMode = max(todoCopyModeHere, min(todoCopyModeNewWorktree, copyDialog.RunMode+delta))
+	case todoCopyFocusProvider:
+		options := todoCopyDialogProviders()
+		index := 0
+		for i, provider := range options {
+			if provider == copyDialog.Provider {
+				index = i
+				break
+			}
+		}
+		index = max(0, min(len(options)-1, index+delta))
+		copyDialog.Provider = options[index]
 	}
-	if index > todoCopyScopeCancel {
-		index = todoCopyScopeCodex
-	}
-	copyDialog.Selected = index
 	return nil
 }
 
@@ -511,21 +547,11 @@ func (m *Model) activateTodoCopyDialogSelection() (tea.Model, tea.Cmd) {
 	if copyDialog == nil {
 		return m, nil
 	}
-	if copyDialog.Selected == todoCopyScopeCancel {
-		m.todoCopyDialog = nil
-		m.status = "TODO start canceled"
-		return m, nil
-	}
-	provider := todoCopyScopeProvider(copyDialog.Selected)
-	if todoCopyScopeUsesNewWorktree(copyDialog.Selected) {
-		return m.startSelectedTodoInNewWorktree(provider, false)
-	}
-	if todoCopyScopeUsesExistingWorktree(copyDialog.Selected) {
-		m.openTodoExistingWorktreeDialog(provider, false)
-		return m, nil
+	if copyDialog.RunMode == todoCopyModeNewWorktree {
+		return m.startSelectedTodoInNewWorktree(copyDialog.Provider, false)
 	}
 	m.todoCopyDialog = nil
-	return m.startSelectedTodoWithProvider(provider, false)
+	return m.startSelectedTodoWithProvider(copyDialog.Provider, false)
 }
 
 func (m *Model) activateTodoCopyDialogWithModelPicker() (tea.Model, tea.Cmd) {
@@ -533,19 +559,11 @@ func (m *Model) activateTodoCopyDialogWithModelPicker() (tea.Model, tea.Cmd) {
 	if copyDialog == nil {
 		return m, nil
 	}
-	provider := todoCopyScopeProvider(copyDialog.Selected)
-	if provider == "" {
-		return m, nil
-	}
-	if todoCopyScopeUsesNewWorktree(copyDialog.Selected) {
-		return m.startSelectedTodoInNewWorktree(provider, true)
-	}
-	if todoCopyScopeUsesExistingWorktree(copyDialog.Selected) {
-		m.openTodoExistingWorktreeDialog(provider, true)
-		return m, nil
+	if copyDialog.RunMode == todoCopyModeNewWorktree {
+		return m.startSelectedTodoInNewWorktree(copyDialog.Provider, true)
 	}
 	m.todoCopyDialog = nil
-	return m.startSelectedTodoWithProvider(provider, true)
+	return m.startSelectedTodoWithProvider(copyDialog.Provider, true)
 }
 
 func (m Model) updateTodoWorktreeEditorMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1121,49 +1139,42 @@ func (m Model) renderTodoCopyDialogOverlay(body string, bodyW, bodyH int) string
 		"",
 	}
 	projectPath := copyDialog.ProjectPath
-	options := []int{
-		todoCopyScopeCodex,
-		todoCopyScopeCodexWorktree,
-		todoCopyScopeCodexExistingWorktree,
-		todoCopyScopeOpenCode,
-		todoCopyScopeOpenCodeWorktree,
-		todoCopyScopeOpenCodeExistingWorktree,
-		todoCopyScopeClaudeCode,
-		todoCopyScopeClaudeCodeWorktree,
-		todoCopyScopeClaudeCodeExistingWorktree,
-		todoCopyScopeCancel,
+	lines = append(lines, m.renderTodoCopySectionHeader("Run in", copyDialog.Focus == todoCopyFocusRunMode))
+	for _, mode := range []int{todoCopyModeHere, todoCopyModeNewWorktree} {
+		lines = append(lines, renderNoteDialogButton(todoCopyRunModeLabel(mode), copyDialog.RunMode == mode))
 	}
-	for _, option := range options {
-		label := todoCopyScopeLabel(option)
-		if provider := todoCopyScopeProvider(option); provider != "" {
-			modelLabel := m.embeddedModelLabelForProject(projectPath, provider)
-			label += "  (" + modelLabel + ")"
-		}
-		lines = append(lines, renderNoteDialogButton(label, copyDialog.Selected == option))
+	candidates := m.existingWorktreeCandidates(copyDialog.ProjectPath)
+	if len(candidates) > 0 {
+		lines = append(lines, detailField("Other", detailMutedStyle.Render(fmt.Sprintf("Press x to use %d existing worktree(s)", len(candidates)))))
 	}
-	if todoCopyScopeUsesNewWorktree(copyDialog.Selected) {
+	lines = append(lines, "")
+	lines = append(lines, m.renderTodoCopySectionHeader("Agent", copyDialog.Focus == todoCopyFocusProvider))
+	for _, provider := range todoCopyDialogProviders() {
+		label := provider.Label() + "  (" + m.embeddedModelLabelForProject(projectPath, provider) + ")"
+		lines = append(lines, renderNoteDialogButton(label, copyDialog.Provider == provider))
+	}
+	if copyDialog.RunMode == todoCopyModeNewWorktree {
 		lines = append(lines, "")
 		if item, ok := m.selectedTodoItem(); ok && item.ID == copyDialog.TodoID {
 			lines = append(lines, m.todoWorktreeLaunchDetails(*copyDialog, item, panelInnerW)...)
 		}
-	} else if todoCopyScopeUsesExistingWorktree(copyDialog.Selected) {
-		candidates := m.existingWorktreeCandidates(copyDialog.ProjectPath)
-		lines = append(lines, "")
-		if len(candidates) == 0 {
-			lines = append(lines, detailMutedStyle.Render("No sibling worktrees yet for this repo."))
-			lines = append(lines, detailMutedStyle.Render("Use the new worktree option above to create one."))
-		} else {
-			lines = append(lines, detailField("Existing", detailValueStyle.Render(fmt.Sprintf("%d available", len(candidates)))))
-		}
 	}
 	actions := []string{
-		renderDialogAction("Tab/↑↓", "switch", navigateActionKeyStyle, navigateActionTextStyle),
+		renderDialogAction("Tab", "section", navigateActionKeyStyle, navigateActionTextStyle),
+		renderDialogAction("↑↓", "choose", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("Enter", "start", commitActionKeyStyle, commitActionTextStyle),
 		renderDialogAction("Alt+Enter", "pick model", pushActionKeyStyle, pushActionTextStyle),
-		renderDialogAction("e", "edit", navigateActionKeyStyle, navigateActionTextStyle),
-		renderDialogAction("r", "refresh", pushActionKeyStyle, pushActionTextStyle),
-		renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
 	}
+	if len(candidates) > 0 {
+		actions = append(actions, renderDialogAction("x", "existing", navigateActionKeyStyle, navigateActionTextStyle))
+	}
+	if copyDialog.RunMode == todoCopyModeNewWorktree {
+		actions = append(actions,
+			renderDialogAction("e", "edit", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("r", "refresh", pushActionKeyStyle, pushActionTextStyle),
+		)
+	}
+	actions = append(actions, renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle))
 	lines = append(lines, renderHelpPanelActionRow(actions...))
 	panel := renderDialogPanel(panelW, panelInnerW, strings.Join(lines, "\n"))
 	left := max(0, (bodyW-panelW)/2)
@@ -1254,7 +1265,7 @@ func (m Model) renderTodoExistingWorktreeOverlay(body string, bodyW, bodyH int) 
 	lines = append(lines, renderHelpPanelActionRow(
 		renderDialogAction("↑↓", "switch", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("Enter", "start", commitActionKeyStyle, commitActionTextStyle),
-		renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
+		renderDialogAction("Esc", "back", cancelActionKeyStyle, cancelActionTextStyle),
 	))
 	panel := renderDialogPanel(panelW, panelInnerW, strings.Join(lines, "\n"))
 	left := max(0, (bodyW-panelW)/2)
@@ -1262,71 +1273,28 @@ func (m Model) renderTodoExistingWorktreeOverlay(body string, bodyW, bodyH int) 
 	return overlayBlock(body, panel, bodyW, bodyH, left, top)
 }
 
-func todoCopyScopeLabel(scope int) string {
-	switch scope {
-	case todoCopyScopeCodex:
-		return "Start here with Codex"
-	case todoCopyScopeCodexWorktree:
-		return "Start in new worktree with Codex"
-	case todoCopyScopeCodexExistingWorktree:
-		return "Start in existing worktree with Codex"
-	case todoCopyScopeOpenCode:
-		return "Start here with OpenCode"
-	case todoCopyScopeOpenCodeWorktree:
-		return "Start in new worktree with OpenCode"
-	case todoCopyScopeOpenCodeExistingWorktree:
-		return "Start in existing worktree with OpenCode"
-	case todoCopyScopeClaudeCode:
-		return "Start here with Claude Code"
-	case todoCopyScopeClaudeCodeWorktree:
-		return "Start in new worktree with Claude Code"
-	case todoCopyScopeClaudeCodeExistingWorktree:
-		return "Start in existing worktree with Claude Code"
-	default:
-		return "Cancel"
+func (m Model) renderTodoCopySectionHeader(title string, focused bool) string {
+	line := detailSectionStyle.Render(title)
+	if focused {
+		line += "  " + detailMutedStyle.Render("←")
+	}
+	return line
+}
+
+func todoCopyDialogProviders() []codexapp.Provider {
+	return []codexapp.Provider{
+		codexapp.ProviderCodex,
+		codexapp.ProviderOpenCode,
+		codexapp.ProviderClaudeCode,
 	}
 }
 
-func todoCopyScopeProvider(scope int) codexapp.Provider {
-	switch scope {
-	case todoCopyScopeCodex:
-		return codexapp.ProviderCodex
-	case todoCopyScopeCodexWorktree:
-		return codexapp.ProviderCodex
-	case todoCopyScopeCodexExistingWorktree:
-		return codexapp.ProviderCodex
-	case todoCopyScopeOpenCode:
-		return codexapp.ProviderOpenCode
-	case todoCopyScopeOpenCodeWorktree:
-		return codexapp.ProviderOpenCode
-	case todoCopyScopeOpenCodeExistingWorktree:
-		return codexapp.ProviderOpenCode
-	case todoCopyScopeClaudeCode:
-		return codexapp.ProviderClaudeCode
-	case todoCopyScopeClaudeCodeWorktree:
-		return codexapp.ProviderClaudeCode
-	case todoCopyScopeClaudeCodeExistingWorktree:
-		return codexapp.ProviderClaudeCode
+func todoCopyRunModeLabel(mode int) string {
+	switch mode {
+	case todoCopyModeNewWorktree:
+		return "Dedicated worktree"
 	default:
-		return ""
-	}
-}
-
-func todoCopyScopeUsesNewWorktree(scope int) bool {
-	switch scope {
-	case todoCopyScopeCodexWorktree, todoCopyScopeOpenCodeWorktree, todoCopyScopeClaudeCodeWorktree:
-		return true
-	default:
-		return false
-	}
-}
-
-func todoCopyScopeUsesExistingWorktree(scope int) bool {
-	switch scope {
-	case todoCopyScopeCodexExistingWorktree, todoCopyScopeOpenCodeExistingWorktree, todoCopyScopeClaudeCodeExistingWorktree:
-		return true
-	default:
-		return false
+		return "Here"
 	}
 }
 
