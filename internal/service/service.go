@@ -49,6 +49,8 @@ type Service struct {
 	classifier    SessionClassifier
 	todoSuggester *todoworktree.Manager
 
+	backendDetector func(context.Context, config.AppConfig) aibackend.Snapshot
+
 	commitMessageSuggester   gitops.CommitMessageSuggester
 	untrackedFileRecommender gitops.UntrackedFileRecommender
 	llmUsageTracker          *llm.UsageTracker
@@ -89,6 +91,7 @@ func New(cfg config.AppConfig, st *store.Store, bus *events.Bus, detectorList []
 		store:                 st,
 		bus:                   bus,
 		detectors:             detectorList,
+		backendDetector:       aibackend.Detect,
 		llmUsageTracker:       llm.NewUsageTracker(),
 		opencodeDiscovery:     llm.NewOpenCodeDiscovery(),
 		gitFingerprintReader:  scanner.ReadGitFingerprint,
@@ -132,6 +135,8 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	reconfigureAIClients := editableSettingsRequireAIClientRefresh(s.cfg, settings)
+
 	s.cfg.AIBackend = settings.AIBackend
 	s.cfg.OpenAIAPIKey = strings.TrimSpace(settings.OpenAIAPIKey)
 	s.cfg.IncludePaths = append([]string(nil), settings.IncludePaths...)
@@ -139,13 +144,28 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	s.cfg.ExcludeProjectPatterns = append([]string(nil), settings.ExcludeProjectPatterns...)
 	s.cfg.EmbeddedCodexModel = strings.TrimSpace(settings.EmbeddedCodexModel)
 	s.cfg.EmbeddedCodexReasoning = strings.TrimSpace(settings.EmbeddedCodexReasoning)
+	s.cfg.EmbeddedClaudeModel = strings.TrimSpace(settings.EmbeddedClaudeModel)
+	s.cfg.EmbeddedClaudeReasoning = strings.TrimSpace(settings.EmbeddedClaudeReasoning)
 	s.cfg.EmbeddedOpenCodeModel = strings.TrimSpace(settings.EmbeddedOpenCodeModel)
 	s.cfg.EmbeddedOpenCodeReasoning = strings.TrimSpace(settings.EmbeddedOpenCodeReasoning)
+	s.cfg.OpenCodeModelTier = strings.TrimSpace(settings.OpenCodeModelTier)
 	s.cfg.CodexLaunchPreset = settings.CodexLaunchPreset
 	s.cfg.ScanInterval = settings.ScanInterval
 	s.cfg.ActiveThreshold = settings.ActiveThreshold
 	s.cfg.StuckThreshold = settings.StuckThreshold
-	s.configureAIClientsLocked()
+	if reconfigureAIClients {
+		s.configureAIClientsLocked()
+	}
+}
+
+func editableSettingsRequireAIClientRefresh(current config.AppConfig, settings config.EditableSettings) bool {
+	if current.EffectiveAIBackend() != settings.AIBackend {
+		return true
+	}
+	if strings.TrimSpace(current.OpenAIAPIKey) != strings.TrimSpace(settings.OpenAIAPIKey) {
+		return true
+	}
+	return strings.TrimSpace(current.OpenCodeModelTier) != strings.TrimSpace(settings.OpenCodeModelTier)
 }
 
 func (s *Service) StartSessionClassifier(ctx context.Context) {
@@ -210,8 +230,13 @@ func (s *Service) configureAIClientsLocked() {
 		commitAssistant *gitops.OpenAICommitMessageClient
 		todoClient      todoworktree.Suggester
 		selectedBackend = s.cfg.EffectiveAIBackend()
-		selectedStatus  = aibackend.Detect(context.Background(), s.cfg).StatusFor(selectedBackend)
+		detector        = s.backendDetector
+		selectedStatus  aibackend.Status
 	)
+	if detector == nil {
+		detector = aibackend.Detect
+	}
+	selectedStatus = detector(context.Background(), s.cfg).StatusFor(selectedBackend)
 	switch selectedBackend {
 	case config.AIBackendOpenAIAPI:
 		apiKey := strings.TrimSpace(s.cfg.OpenAIAPIKey)

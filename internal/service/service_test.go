@@ -13,12 +13,14 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/aibackend"
 	"lcroom/internal/appfs"
 	"lcroom/internal/brand"
 	"lcroom/internal/config"
 	"lcroom/internal/detectors"
 	"lcroom/internal/events"
 	"lcroom/internal/gitops"
+	"lcroom/internal/llm"
 	"lcroom/internal/model"
 	"lcroom/internal/scanner"
 	"lcroom/internal/sessionclassify"
@@ -62,6 +64,101 @@ func (c *recordingClassifier) QueueProjectRetry(context.Context, model.ProjectSt
 
 func (c *recordingClassifier) Notify()               {}
 func (c *recordingClassifier) Start(context.Context) {}
+
+func TestApplyEditableSettingsSkipsAIClientRefreshForEmbeddedModelPreferences(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.AIBackend = config.AIBackendCodex
+
+	detectCalls := 0
+	svc := &Service{
+		cfg:               cfg,
+		bus:               events.NewBus(),
+		llmUsageTracker:   llm.NewUsageTracker(),
+		opencodeDiscovery: llm.NewOpenCodeDiscovery(),
+		backendDetector: func(context.Context, config.AppConfig) aibackend.Snapshot {
+			detectCalls++
+			return readyBackendSnapshot(config.AIBackendCodex)
+		},
+	}
+
+	settings := config.EditableSettingsFromAppConfig(cfg)
+	settings.EmbeddedCodexModel = "gpt-5.4"
+	settings.EmbeddedCodexReasoning = "high"
+
+	svc.ApplyEditableSettings(settings)
+
+	if detectCalls != 0 {
+		t.Fatalf("backend detector calls = %d, want 0 for embedded model-only changes", detectCalls)
+	}
+	if got := svc.cfg.EmbeddedCodexModel; got != "gpt-5.4" {
+		t.Fatalf("embedded codex model = %q, want gpt-5.4", got)
+	}
+	if got := svc.cfg.EmbeddedCodexReasoning; got != "high" {
+		t.Fatalf("embedded codex reasoning = %q, want high", got)
+	}
+}
+
+func TestApplyEditableSettingsRefreshesAIClientsWhenBackendConfigChanges(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.AIBackend = config.AIBackendCodex
+
+	detectCalls := 0
+	svc := &Service{
+		cfg:               cfg,
+		bus:               events.NewBus(),
+		llmUsageTracker:   llm.NewUsageTracker(),
+		opencodeDiscovery: llm.NewOpenCodeDiscovery(),
+		backendDetector: func(_ context.Context, cfg config.AppConfig) aibackend.Snapshot {
+			detectCalls++
+			return readyBackendSnapshot(cfg.EffectiveAIBackend())
+		},
+	}
+
+	settings := config.EditableSettingsFromAppConfig(cfg)
+	settings.AIBackend = config.AIBackendOpenAIAPI
+	settings.OpenAIAPIKey = "sk-test-example"
+
+	svc.ApplyEditableSettings(settings)
+
+	if detectCalls != 1 {
+		t.Fatalf("backend detector calls = %d, want 1 when backend config changes", detectCalls)
+	}
+	if svc.commitMessageSuggester == nil {
+		t.Fatalf("commitMessageSuggester = nil, want OpenAI client after reconfigure")
+	}
+	if svc.classifier == nil {
+		t.Fatalf("classifier = nil, want OpenAI client after reconfigure")
+	}
+	if svc.todoSuggester == nil {
+		t.Fatalf("todoSuggester = nil, want OpenAI suggester after reconfigure")
+	}
+}
+
+func readyBackendSnapshot(selected config.AIBackend) aibackend.Snapshot {
+	return aibackend.Snapshot{
+		Selected: selected,
+		OpenAIAPI: aibackend.Status{
+			Backend: config.AIBackendOpenAIAPI,
+			Ready:   true,
+		},
+		Codex: aibackend.Status{
+			Backend: config.AIBackendCodex,
+			Ready:   true,
+		},
+		OpenCode: aibackend.Status{
+			Backend: config.AIBackendOpenCode,
+			Ready:   true,
+		},
+		Claude: aibackend.Status{
+			Backend: config.AIBackendClaude,
+			Ready:   true,
+		},
+	}
+}
 
 func TestScanWithOptionsForceRetriesFailedClassifications(t *testing.T) {
 	t.Parallel()
