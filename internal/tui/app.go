@@ -4136,6 +4136,44 @@ func filterProjects(projects []model.ProjectSummary, mode projectVisibilityMode,
 	return filterProjectsByFilter(filterProjectsByName(filtered, excludeProjectPatterns), projectFilter)
 }
 
+func expandVisibleWorktreeFamilies(filtered, sorted []model.ProjectSummary) []model.ProjectSummary {
+	if len(filtered) == 0 {
+		return nil
+	}
+
+	includePaths := make(map[string]struct{}, len(filtered))
+	visibleRoots := map[string]struct{}{}
+	for _, project := range filtered {
+		path := filepath.Clean(strings.TrimSpace(project.Path))
+		if path == "" || path == "." {
+			continue
+		}
+		includePaths[path] = struct{}{}
+		if projectIsWorktreeRoot(project) {
+			visibleRoots[projectWorktreeRootPath(project)] = struct{}{}
+		}
+	}
+	if len(visibleRoots) == 0 {
+		return append([]model.ProjectSummary(nil), filtered...)
+	}
+
+	out := make([]model.ProjectSummary, 0, len(sorted))
+	for _, project := range sorted {
+		path := filepath.Clean(strings.TrimSpace(project.Path))
+		if path == "" || path == "." {
+			continue
+		}
+		if _, ok := includePaths[path]; ok {
+			out = append(out, project)
+			continue
+		}
+		if _, ok := visibleRoots[projectWorktreeRootPath(project)]; ok {
+			out = append(out, project)
+		}
+	}
+	return out
+}
+
 func filterProjectsByPrivacy(projects []model.ProjectSummary, privacyPatterns []string) []model.ProjectSummary {
 	if len(projects) == 0 || len(privacyPatterns) == 0 {
 		return projects

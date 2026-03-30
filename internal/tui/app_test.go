@@ -1828,6 +1828,92 @@ func TestRenderProjectListShowsExpandedWorktreeChildren(t *testing.T) {
 	}
 }
 
+func TestRenderProjectListKeepsVisibleWorktreeFamilyWhenChildMatchesPrivacyPattern(t *testing.T) {
+	rootPath := "/tmp/LittleControlRoom"
+	childPath := "/tmp/LittleControlRoom--make-test-failures"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "LittleControlRoom",
+				Path:             rootPath,
+				Status:           model.StatusIdle,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "feat/worktree-ux",
+			},
+			{
+				Name:             "LittleControlRoom--make-test-failures",
+				Path:             childPath,
+				Status:           model.StatusIdle,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+				RepoBranch:       "tests/make-test-failures",
+			},
+		},
+		worktreeExpanded: map[string]bool{rootPath: false},
+		sortMode:         sortByAttention,
+		visibility:       visibilityAllFolders,
+		privacyMode:      true,
+		privacyPatterns:  []string{"*test*"},
+	}
+
+	m.rebuildProjectList(rootPath)
+	rendered := ansi.Strip(m.renderProjectList(140, 8))
+	lines := strings.Split(rendered, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("renderProjectList() expected header plus grouped root row, got %q", rendered)
+	}
+	if !strings.Contains(lines[1], "2 worktrees") {
+		t.Fatalf("renderProjectList() should keep linked lanes visible under a visible root, got %q", lines[1])
+	}
+}
+
+func TestToggleSelectedWorktreeGroupStillWorksWhenChildMatchesPrivacyPattern(t *testing.T) {
+	rootPath := "/tmp/LittleControlRoom"
+	childPath := "/tmp/LittleControlRoom--make-test-failures"
+	m := Model{
+		focusedPane: focusProjects,
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "LittleControlRoom",
+				Path:             rootPath,
+				Status:           model.StatusIdle,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "feat/worktree-ux",
+			},
+			{
+				Name:             "LittleControlRoom--make-test-failures",
+				Path:             childPath,
+				Status:           model.StatusIdle,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+				RepoBranch:       "tests/make-test-failures",
+			},
+		},
+		sortMode:        sortByAttention,
+		visibility:      visibilityAllFolders,
+		privacyMode:     true,
+		privacyPatterns: []string{"*test*"},
+	}
+
+	m.rebuildProjectList(rootPath)
+	cmd := m.toggleSelectedWorktreeGroup()
+	if m.status != "Worktrees expanded" {
+		t.Fatalf("status = %q, want worktrees expanded", m.status)
+	}
+	if len(m.projectRows) != 2 || m.projectRows[1].Kind != projectListRowWorktree {
+		t.Fatalf("projectRows = %#v, want expanded root + child worktree rows", m.projectRows)
+	}
+	if cmd == nil {
+		t.Fatalf("toggleSelectedWorktreeGroup() should still request a detail refresh after expansion")
+	}
+}
+
 func TestRenderDetailContentKeepsRuntimeInSeparatePane(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{

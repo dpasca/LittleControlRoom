@@ -148,6 +148,7 @@ func (m *Model) rebuildProjectList(selectedPath string) {
 	if m.privacyMode {
 		filtered = filterProjectsByPrivacy(filtered, m.privacyPatterns)
 	}
+	filtered = expandVisibleWorktreeFamilies(filtered, sorted)
 	m.projects, m.projectRows = m.buildProjectRows(filtered, selectedPath)
 	if len(m.projects) == 0 {
 		m.selected = 0

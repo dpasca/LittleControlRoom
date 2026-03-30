@@ -1,6 +1,40 @@
 # Little Control Room Status
 
-Last updated: 2026-03-31 06:12 JST
+Last updated: 2026-03-31 06:47 JST
+
+## Latest Update (2026-03-31 06:47 JST)
+
+- Fixed linked worktree lanes disappearing from the main list when a child lane matched privacy/name filters:
+  - assumption update:
+    - a worktree family should behave as one navigable lane group in the project list; if the root repo is visible, its linked lanes should stay visible too
+    - filtering child worktrees independently before lane grouping makes the root row incorrectly report `no sibling worktrees`, even when Git and the DB already know about the linked lane
+    - the current local config confirmed the real-world trigger: `privacy_mode = true` plus `privacy_patterns = ["*test*", ...]` hid the new `LittleControlRoom--make-test-failures` lane before grouping
+  - `internal/tui/app.go`
+    - added `expandVisibleWorktreeFamilies(...)` so visible root repos pull their linked worktrees back into the filtered project set before row grouping
+  - `internal/tui/worktree_ui.go`
+    - changed `rebuildProjectList(...)` to expand visible worktree families after visibility/privacy filtering and before building grouped rows
+  - `internal/tui/app_test.go`
+    - added focused coverage proving:
+      - a linked worktree lane that matches `*test*` still appears under a visible root repo
+      - `w` still expands the lane group instead of reporting `No sibling worktrees to show`
+- Verification status:
+  - live root-cause check:
+    - `git worktree list --porcelain` confirmed `/Users/davide/dev/repos/LittleControlRoom--make-test-failures`
+    - the main DB already showed it tracked as `linked` with root `/Users/davide/dev/repos/LittleControlRoom`
+    - `make tui-parallel` now renders the LittleControlRoom row as `2 workt.` and shows the linked `tests/...` lane beneath it
+  - focused coverage passed:
+    - `go test ./internal/tui -run 'Test(RenderProjectListCollapsesLinkedWorktreesUnderRepoRow|RenderProjectListShowsExpandedWorktreeChildren|RenderProjectListKeepsVisibleWorktreeFamilyWhenChildMatchesPrivacyPattern|ToggleSelectedWorktreeGroupStillWorksWhenChildMatchesPrivacyPattern|RenderFooterShowsWorktreeHintsForRepoFamily|RenderFooterShowsRemoveHintForLinkedWorktree|RenderFooterShowsMergeHintForLinkedWorktreeWithParentBranch|UpdateNormalModeMOpensWorktreeMergeConfirm)$' -count=1`
+  - repo validation:
+    - `make scan` passed at `2026-03-31T06:45:56+09:00`
+    - `make doctor` passed using cached report at `2026-03-31T06:45:56+09:00`
+    - `make test` still fails only on the same pre-existing unrelated `internal/tui` cases:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+    - `git diff --check` passed
+- Next concrete tasks:
+  - Decide whether worktree-family expansion should also survive an explicit text filter that only matches the root repo name, or whether text filters should intentionally be stricter than privacy/name filters.
+  - Add a tiny footer/detail hint explaining when a lane is being shown because it belongs to the selected repo family, not because its own name passed the current filters.
 
 ## Latest Update (2026-03-31 06:12 JST)
 
