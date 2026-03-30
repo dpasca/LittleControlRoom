@@ -896,6 +896,77 @@ func TestRenderFooterDetailOmitsScrollHint(t *testing.T) {
 	}
 }
 
+func TestRenderFooterShowsWorktreeHintsForRepoFamily(t *testing.T) {
+	rootPath := "/tmp/repo"
+	m := Model{
+		focusedPane: focusProjects,
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+			},
+			{
+				Name:             "repo--feat-parallel-lane",
+				Path:             "/tmp/repo--feat-parallel-lane",
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+				RepoBranch:       "feat/parallel-lane",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(rootPath)
+
+	rendered := ansi.Strip(m.renderFooter(160))
+	if !strings.Contains(rendered, "w lanes") {
+		t.Fatalf("renderFooter() should advertise worktree lane toggling, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "P prune") {
+		t.Fatalf("renderFooter() should advertise worktree pruning on repo families, got %q", rendered)
+	}
+}
+
+func TestRenderFooterShowsRemoveHintForLinkedWorktree(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		focusedPane: focusProjects,
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+			},
+			{
+				Name:             "repo--feat-parallel-lane",
+				Path:             childPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+				RepoBranch:       "feat/parallel-lane",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	rendered := ansi.Strip(m.renderFooter(160))
+	if !strings.Contains(rendered, "w lanes") {
+		t.Fatalf("renderFooter() should keep lane toggling available on a linked worktree row, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "x remove") {
+		t.Fatalf("renderFooter() should advertise linked worktree removal when it is allowed, got %q", rendered)
+	}
+}
+
 func TestCompactUsageLabel(t *testing.T) {
 	if got := compactUsageLabel(model.LLMSessionUsage{}); got != "cost off" {
 		t.Fatalf("compactUsageLabel(disabled) = %q, want %q", got, "cost off")
@@ -1595,7 +1666,7 @@ func TestRenderProjectListShowsExpandedWorktreeChildren(t *testing.T) {
 	}
 
 	m.rebuildProjectList(rootPath)
-	rendered := ansi.Strip(m.renderProjectList(140, 8))
+	rendered := ansi.Strip(m.renderProjectList(160, 8))
 	lines := strings.Split(rendered, "\n")
 	if len(lines) != 3 {
 		t.Fatalf("renderProjectList() expected header plus root and child rows, got %q", rendered)
@@ -1603,7 +1674,7 @@ func TestRenderProjectListShowsExpandedWorktreeChildren(t *testing.T) {
 	if !strings.Contains(lines[1], "▾ repo") {
 		t.Fatalf("renderProjectList() should show an expanded disclosure row, got %q", lines[1])
 	}
-	if !strings.Contains(lines[2], "feat/parallel-lane") {
+	if !strings.Contains(lines[2], "↳ feat/parallel-lane") {
 		t.Fatalf("renderProjectList() should render the child worktree branch label, got %q", lines[2])
 	}
 }
@@ -3813,6 +3884,12 @@ func TestTodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider(t *testin
 	if !strings.Contains(rendered, "Branch: feat/todo-worktree-launch") {
 		t.Fatalf("rendered copy dialog = %q, want ready worktree branch details", rendered)
 	}
+	if !strings.Contains(rendered, "Source: cached AI suggestion") {
+		t.Fatalf("rendered copy dialog = %q, want worktree suggestion source details", rendered)
+	}
+	if !strings.Contains(rendered, "Path: /tmp/demo--feat-todo-worktree-launch") {
+		t.Fatalf("rendered copy dialog = %q, want suggested worktree path details", rendered)
+	}
 
 	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyUp})
 	got = updated.(Model)
@@ -4217,6 +4294,40 @@ func TestTodoDialogShowsWorktreeSuggestionState(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "preparing suggestion...") {
 		t.Fatalf("rendered TODO dialog should show queued suggestion state, got %q", rendered)
+	}
+}
+
+func TestTodoCopyDialogShowsRetryGuidanceForFailedWorktreeSuggestion(t *testing.T) {
+	m := Model{
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Todos: []model.TodoItem{{
+				ID:          7,
+				ProjectPath: "/tmp/demo",
+				Text:        "Fix spacing on selected TODO row",
+				WorktreeSuggestion: &model.TodoWorktreeSuggestion{
+					Status: model.TodoWorktreeSuggestionFailed,
+				},
+			}},
+		},
+		todoDialog: &todoDialogState{ProjectPath: "/tmp/demo", ProjectName: "demo"},
+		todoCopyDialog: &todoCopyDialogState{
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			TodoID:      7,
+			TodoText:    "Fix spacing on selected TODO row",
+			Selected:    todoCopyScopeCodexWorktree,
+		},
+		width:  100,
+		height: 24,
+	}
+
+	rendered := ansi.Strip(m.renderTodoCopyDialogOverlay("", 100, 24))
+	if !strings.Contains(rendered, "Worktree suggestion is unavailable right now.") {
+		t.Fatalf("rendered copy dialog should show the failed suggestion status, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "Press r to retry, or e to enter names now.") {
+		t.Fatalf("rendered copy dialog should explain the next recovery step, got %q", rendered)
 	}
 }
 

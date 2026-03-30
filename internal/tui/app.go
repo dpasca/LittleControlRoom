@@ -2366,7 +2366,7 @@ func (m Model) renderProjectList(width, height int) string {
 				assessmentText = worktreeGroupSummary(rowMeta.LinkedCount+1, rowMeta.ActiveCount, rowMeta.DirtyCount)
 			}
 		case projectListRowWorktree:
-			name = "  " + projectWorktreeLabel(p)
+			name = "  ↳ " + projectWorktreeLabel(p)
 		}
 		name = truncateText(name, projectW)
 		assessment := truncateText(assessmentText, assessmentW)
@@ -4211,7 +4211,7 @@ func (m Model) renderFooter(width int) string {
 	}
 	return renderFooterLine(
 		width,
-		compactFooterBase(width, m.focusedPane, m.detailViewport.ScrollPercent(), m.runtimeViewport.ScrollPercent(), m.hasHiddenCodexSession(), m.currentEmbeddedLaunchLabel()),
+		compactFooterBase(width, m.focusedPane, m.detailViewport.ScrollPercent(), m.runtimeViewport.ScrollPercent(), m.hasHiddenCodexSession(), m.currentEmbeddedLaunchLabel(), m.worktreeFooterActions(width)),
 		filterSegment,
 		usageSegment,
 	)
@@ -4994,7 +4994,7 @@ func (m Model) renderFooterUsageSegment(text string) string {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("59")).Bold(true).Render(text)
 }
 
-func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll float64, hasHiddenCodex bool, launchLabel string) string {
+func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll float64, hasHiddenCodex bool, launchLabel string, projectActions []footerAction) string {
 	if strings.TrimSpace(launchLabel) == "" {
 		launchLabel = "Session"
 	}
@@ -5083,53 +5083,69 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 	switch {
 	case width >= 80:
 		if hasHiddenCodex {
-			return joinFooterSegments(
-				renderFooterActionList(
-					footerPrimaryAction("Enter", launchLabel),
-					footerNavAction("Alt+Down", "picker"),
-					footerNavAction("Alt+[/]", "sessions"),
-					footerNavAction("f", "filter"),
-					footerNavAction("/", "command"),
-					footerLowAction("?", "help"),
-					footerExitAction("q", "quit"),
-				),
-			)
-		}
-		return joinFooterSegments(
-			renderFooterActionList(
+			actions := []footerAction{
 				footerPrimaryAction("Enter", launchLabel),
 				footerNavAction("Alt+Down", "picker"),
+			}
+			actions = append(actions, projectActions...)
+			actions = append(actions,
+				footerNavAction("Alt+[/]", "sessions"),
 				footerNavAction("f", "filter"),
 				footerNavAction("/", "command"),
-				footerNavAction("Tab", "switch"),
-				footerNavAction("t", "TODO"),
 				footerLowAction("?", "help"),
 				footerExitAction("q", "quit"),
-			),
+			)
+			return joinFooterSegments(
+				renderFooterActionList(actions...),
+			)
+		}
+		actions := []footerAction{
+			footerPrimaryAction("Enter", launchLabel),
+			footerNavAction("Alt+Down", "picker"),
+		}
+		actions = append(actions, projectActions...)
+		actions = append(actions,
+			footerNavAction("f", "filter"),
+			footerNavAction("/", "command"),
+			footerNavAction("Tab", "switch"),
+			footerNavAction("t", "TODO"),
+			footerLowAction("?", "help"),
+			footerExitAction("q", "quit"),
+		)
+		return joinFooterSegments(
+			renderFooterActionList(actions...),
 		)
 	case width >= 60:
 		if hasHiddenCodex {
-			return joinFooterSegments(
-				renderFooterActionList(
-					footerPrimaryAction("Enter", launchLabel),
-					footerNavAction("Alt+Down", "picker"),
-					footerNavAction("f", "filter"),
-					footerNavAction("/", "command"),
-					footerLowAction("?", "help"),
-					footerExitAction("q", "quit"),
-				),
-			)
-		}
-		return joinFooterSegments(
-			renderFooterActionList(
+			actions := []footerAction{
 				footerPrimaryAction("Enter", launchLabel),
 				footerNavAction("Alt+Down", "picker"),
+			}
+			actions = append(actions, projectActions...)
+			actions = append(actions,
 				footerNavAction("f", "filter"),
 				footerNavAction("/", "command"),
-				footerNavAction("Tab", "switch"),
 				footerLowAction("?", "help"),
 				footerExitAction("q", "quit"),
-			),
+			)
+			return joinFooterSegments(
+				renderFooterActionList(actions...),
+			)
+		}
+		actions := []footerAction{
+			footerPrimaryAction("Enter", launchLabel),
+			footerNavAction("Alt+Down", "picker"),
+		}
+		actions = append(actions, projectActions...)
+		actions = append(actions,
+			footerNavAction("f", "filter"),
+			footerNavAction("/", "command"),
+			footerNavAction("Tab", "switch"),
+			footerLowAction("?", "help"),
+			footerExitAction("q", "quit"),
+		)
+		return joinFooterSegments(
+			renderFooterActionList(actions...),
 		)
 	default:
 		actions := []footerAction{

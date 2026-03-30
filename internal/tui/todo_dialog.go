@@ -1150,7 +1150,8 @@ func (m Model) renderTodoCopyDialogOverlay(body string, bodyW, bodyH int) string
 		candidates := m.existingWorktreeCandidates(copyDialog.ProjectPath)
 		lines = append(lines, "")
 		if len(candidates) == 0 {
-			lines = append(lines, detailMutedStyle.Render("No existing sibling worktrees yet."))
+			lines = append(lines, detailMutedStyle.Render("No sibling worktrees yet for this repo."))
+			lines = append(lines, detailMutedStyle.Render("Use the new worktree option above to create one."))
 		} else {
 			lines = append(lines, detailField("Existing", detailValueStyle.Render(fmt.Sprintf("%d available", len(candidates)))))
 		}
@@ -1221,10 +1222,12 @@ func (m Model) renderTodoExistingWorktreeOverlay(body string, bodyW, bodyH int) 
 	lines := []string{
 		renderDialogHeader("Existing worktree", dialog.ProjectName, "", panelInnerW),
 		detailValueStyle.Render(truncateText(strings.TrimSpace(dialog.TodoText), panelInnerW)),
+		detailField("Choices", detailValueStyle.Render(fmt.Sprintf("%d sibling worktrees", len(dialog.Candidates)))),
 		"",
 	}
 	for i, candidate := range dialog.Candidates {
 		label := projectWorktreeLabel(candidate)
+		pathLabel := filepath.Base(strings.TrimSpace(candidate.Path))
 		details := []string{}
 		if candidate.RepoDirty {
 			details = append(details, "dirty")
@@ -1237,7 +1240,14 @@ func (m Model) renderTodoExistingWorktreeOverlay(body string, bodyW, bodyH int) 
 		if m.projectHasLiveCodexSession(candidate.Path) {
 			details = append(details, "agent")
 		}
-		button := renderNoteDialogButton(label+"  ("+strings.Join(details, ", ")+")", dialog.Selected == i)
+		buttonLabel := label
+		if pathLabel != "" && pathLabel != "." && pathLabel != label {
+			buttonLabel += "  [" + pathLabel + "]"
+		}
+		if len(details) > 0 {
+			buttonLabel += "  (" + strings.Join(details, ", ") + ")"
+		}
+		button := renderNoteDialogButton(buttonLabel, dialog.Selected == i)
 		lines = append(lines, button)
 	}
 	lines = append(lines, "")
@@ -1328,29 +1338,48 @@ func (m Model) todoWorktreeLaunchDetails(dialog todoCopyDialogState, item model.
 		lines := []string{
 			detailField("Branch", detailValueStyle.Render(branchName)),
 			detailField("Folder", detailValueStyle.Render(truncateText(folderName, width))),
-			detailMutedStyle.Render("Using edited names"),
+			detailField("Source", detailValueStyle.Render("edited for this launch")),
+		}
+		if projectPath := todoSuggestedWorktreePath(dialog.ProjectPath, folderName); strings.TrimSpace(projectPath) != "" {
+			lines = append(lines, detailField("Path", detailMutedStyle.Render(truncateText(projectPath, width))))
 		}
 		return lines
 	}
 	if suggestion == nil {
-		return []string{detailMutedStyle.Render("No cached worktree suggestion yet.")}
+		return []string{
+			detailMutedStyle.Render("No cached worktree suggestion yet."),
+			detailMutedStyle.Render("Press r to request one, or e to enter names now."),
+		}
 	}
 	switch suggestion.Status {
 	case model.TodoWorktreeSuggestionReady:
 		lines := []string{
 			detailField("Branch", detailValueStyle.Render(strings.TrimSpace(suggestion.BranchName))),
+			detailField("Source", detailValueStyle.Render("cached AI suggestion")),
 		}
 		folder := filepath.Base(todoSuggestedWorktreePath(dialog.ProjectPath, suggestion.WorktreeSuffix))
 		if strings.TrimSpace(folder) != "" {
 			lines = append(lines, detailField("Folder", detailValueStyle.Render(truncateText(folder, width))))
 		}
+		if projectPath := todoSuggestedWorktreePath(dialog.ProjectPath, suggestion.WorktreeSuffix); strings.TrimSpace(projectPath) != "" {
+			lines = append(lines, detailField("Path", detailMutedStyle.Render(truncateText(projectPath, width))))
+		}
 		return lines
 	case model.TodoWorktreeSuggestionQueued, model.TodoWorktreeSuggestionRunning:
-		return []string{detailMutedStyle.Render("Worktree suggestion is still preparing in the background.")}
+		return []string{
+			detailMutedStyle.Render("Worktree suggestion is still preparing in the background."),
+			detailMutedStyle.Render("Press e to enter names now, or wait a moment and retry."),
+		}
 	case model.TodoWorktreeSuggestionFailed:
-		return []string{detailWarningStyle.Render("Worktree suggestion is unavailable right now.")}
+		return []string{
+			detailWarningStyle.Render("Worktree suggestion is unavailable right now."),
+			detailMutedStyle.Render("Press r to retry, or e to enter names now."),
+		}
 	default:
-		return []string{detailMutedStyle.Render("Worktree suggestion is not ready yet.")}
+		return []string{
+			detailMutedStyle.Render("Worktree suggestion is not ready yet."),
+			detailMutedStyle.Render("Press r to refresh it, or e to enter names now."),
+		}
 	}
 }
 

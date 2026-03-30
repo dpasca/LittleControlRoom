@@ -1,6 +1,44 @@
 # Little Control Room Status
 
-Last updated: 2026-03-30 11:16 JST
+Last updated: 2026-03-30 11:31 JST
+
+## Latest Update (2026-03-30 11:31 JST)
+
+- Polished the new repo-first worktree UX so the feature is more discoverable and self-explanatory in the TUI:
+  - `internal/tui/app.go`
+    - footer now advertises the relevant worktree actions when a repo family or linked worktree is selected:
+      - `w` for worktree lanes
+      - `x` for linked-worktree removal when removal is allowed
+      - `P` for prune on repo families
+    - child worktree rows now render with a clearer `↳` lane prefix in the project list
+  - `internal/tui/worktree_ui.go`
+    - added `worktreeFooterActions` so footer hints only show worktree actions when they are actually relevant to the current selection
+  - `internal/tui/todo_dialog.go`
+    - improved TODO worktree launch details with more actionable copy:
+      - ready state now shows `Source` and `Path`
+      - edited names now show they are one-off launch overrides
+      - missing/queued/failed suggestion states now explain whether to press `r` or `e`
+    - existing-worktree flows now show clearer empty-state guidance and include the candidate folder basename in the picker
+- Added focused coverage for the polish pass:
+  - `internal/tui/app_test.go`
+    - added footer coverage for repo-family and linked-worktree worktree hints
+    - added dialog-copy coverage for failed suggestion recovery guidance
+    - updated grouped-row expectations for the new child-lane prefix
+- Verification status:
+  - focused polish checks passed:
+    - `go test ./internal/tui -run 'Test(RenderFooterShowsWorktreeHintsForRepoFamily|RenderFooterShowsRemoveHintForLinkedWorktree|TodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider|TodoCopyDialogShowsRetryGuidanceForFailedWorktreeSuggestion|RenderProjectListCollapsesLinkedWorktreesUnderRepoRow|RenderProjectListShowsExpandedWorktreeChildren|TodoDialogCanStartSelectedTodoInExistingWorktree|TodoDialogCanStartSelectedTodoInNewWorktree|TodoDialogShowsWorktreeSuggestionState|ViewStacksListAndDetailVertically)' -count=1`
+    - `go test ./internal/service -run 'Test(CreateTodoWorktreeCreatesTrackedSiblingProject|RemoveWorktreeRemovesTrackedLinkedWorktree)' -count=1`
+  - `make scan` passed at `2026-03-30T11:31:18+09:00`
+  - `make doctor` passed using cached report at `2026-03-30T11:31:18+09:00`
+  - `make test` still fails only on the same pre-existing unrelated `internal/tui` cases:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+  - `timeout 10s make tui-parallel` still could not complete interactive verification in this environment because opening `/dev/tty` failed (`device not configured`)
+- Next concrete tasks:
+  - Do a real-terminal smoke pass to verify the footer hints feel balanced and the existing-worktree picker reads well at live terminal widths.
+  - If the new footer hint density feels too high on medium widths, tune the `60+` and `80+` breakpoints after that manual pass.
+  - If the worktree model is now stable enough, refresh the docs/screenshots so they reflect grouped lanes and the new TODO launch choices.
 
 ## Latest Update (2026-03-30 11:16 JST)
 

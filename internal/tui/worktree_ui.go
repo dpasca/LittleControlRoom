@@ -308,6 +308,39 @@ func worktreeGroupSummary(total, active, dirty int) string {
 	return strings.Join(parts, ", ")
 }
 
+func (m Model) worktreeFooterActions(width int) []footerAction {
+	if width < 60 {
+		return nil
+	}
+	row, project, ok := m.selectedProjectRow()
+	if !ok {
+		return nil
+	}
+	rootPath := row.RootPath
+	if rootPath == "" {
+		rootPath = projectWorktreeRootPath(project)
+	}
+	family := m.worktreeFamily(rootPath)
+	if len(family) <= 1 && row.Kind != projectListRowWorktree && row.LinkedCount == 0 {
+		return nil
+	}
+
+	actions := make([]footerAction, 0, 3)
+	if len(family) > 1 || row.LinkedCount > 0 || row.Kind == projectListRowWorktree {
+		actions = append(actions, footerNavAction("w", "lanes"))
+	}
+	if row.Kind == projectListRowWorktree &&
+		project.WorktreeKind == model.WorktreeKindLinked &&
+		!m.projectHasLiveCodexSession(project.Path) &&
+		!m.projectRuntimeSnapshot(project.Path).Running {
+		actions = append(actions, footerHideAction("x", "remove"))
+	}
+	if width >= 80 && len(family) > 1 {
+		actions = append(actions, footerLowAction("P", "prune"))
+	}
+	return actions
+}
+
 func (m *Model) openWorktreeRemoveConfirmForSelection() tea.Cmd {
 	row, project, ok := m.selectedProjectRow()
 	if !ok {
