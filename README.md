@@ -1,10 +1,10 @@
 # Little Control Room
 
-Little Control Room (LCR) is a modern day IDE for developers using Codex, OpenCode, and Claude Code.
+Little Control Room (LCR) is a terminal control room I built for my own agent-heavy workflow across many repos.
 
-LCR is meant to be a single window where you can coordinate most of your development activity, multitasking across dozens of projects and sessions as well as possible.
+I use it to keep Codex, OpenCode, and Claude Code sessions visible, jump back into work quickly, start fresh sessions from TODOs, review diffs, and ship changes without bouncing between tools.
 
-LCR shows you in real time the progress of each Codex, OpenCode, and Claude Code session, and lets you open, resume, or switch sessions, view diffs, generate commits with automatic messages, and manage per-project runtimes, all without leaving the dashboard.
+It is also used internally, but this is not a commercial product. It is an opinionated open source tool that grew out of day-to-day use.
 
 <p align="center">
   <a href="docs/screenshots/main-panel.png">
@@ -12,15 +12,21 @@ LCR shows you in real time the progress of each Codex, OpenCode, and Claude Code
   </a>
 </p>
 
-## What It Does
+## Why I Built It
 
-- Finds recent Codex, OpenCode, and Claude Code sessions across your local projects
-- Shows which projects are active, idle, or worth revisiting
-- Lets you open, resume, or switch embedded Codex, OpenCode, or Claude Code sessions directly from the dashboard
-- Detects Claude Code sessions running in a separate terminal and can reopen those sessions inside the embedded pane
-- Keeps common actions close at hand: refresh, pin, snooze, project notes, per-project TODO lists, managed per-project run commands with runtime/port badges, diff, commit, and push
+- Too many repos and too many live agent sessions are hard to coordinate from separate terminals and tabs.
+- I wanted one terminal-first place to see what is active, what is worth revisiting, and what I can ship next.
+- I wanted TODOs, diffs, commit help, and embedded sessions to stay close to each other instead of being spread across several tools.
 
-## What it doesn't do (yet)
+## What It Helps With
+
+- Finding recent Codex, OpenCode, and Claude Code sessions across local projects
+- Seeing which projects are active, idle, or worth revisiting
+- Opening, resuming, or switching embedded Codex, OpenCode, or Claude Code sessions directly from the dashboard
+- Reopening Claude Code sessions that are already running in another terminal
+- Keeping common actions close at hand: refresh, pin, snooze, project notes, per-project TODO lists, managed per-project run commands with runtime/port badges, diff, commit, and push
+
+## What It Does Not Do Yet
 
 - Many Codex slash-commands are missing.
 - Embedded Claude Code support is now available through Claude's headless CLI flow, but it is still an MVP: it now has a usable model picker with saved preferences, while approval parity, compact, and attachments are not fully wired yet.
@@ -107,7 +113,7 @@ Inside the embedded Codex, Claude Code, or OpenCode pane:
 - `/model`: Change the model and reasoning settings for this and future embedded sessions of the same tool, including after restarting LCR.
 - `/status`: Show the current provider/session status.
 
-## Everyday Workflow
+## Core Workflows
 
 1. Start the dashboard with `lcroom tui` or `./lcroom tui`.
 2. Move through projects with the arrow keys.

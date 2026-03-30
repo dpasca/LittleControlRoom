@@ -1,6 +1,20 @@
 # Little Control Room Status
 
-Last updated: 2026-03-30 02:37 JST
+Last updated: 2026-03-30 09:06 JST
+
+## Latest Update (2026-03-30 09:06 JST)
+
+- Reframed the public README to position Little Control Room more clearly as a personal open source tool rather than a commercial product:
+  - `README.md`
+    - intro now uses first-person framing (`I`) and explains that LCR grew out of a personal workflow, while still noting internal use
+    - replaced the generic top-level product copy with a `Why I Built It` section and a more practical `What It Helps With` section
+    - renamed `Everyday Workflow` to `Core Workflows`
+- Verification status for this README/messaging pass:
+  - `git diff --check` passed
+  - no Go tests were needed in this pass because the only change in this repo was README copy
+- Next concrete tasks:
+  - Keep the README intro and the public site copy aligned when the external framing of LCR changes again.
+  - If the main user-facing workflow shifts further toward TODO-driven work, consider making that even more explicit near the top of the README.
 
 ## Latest Update (2026-03-30 02:37 JST)
 
