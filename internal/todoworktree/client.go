@@ -34,11 +34,11 @@ type Request struct {
 }
 
 type Result struct {
-	BranchName     string
-	WorktreeSuffix string
-	Kind           string
-	Reason         string
-	Confidence     float64
+	BranchName     string  `json:"branch_name"`
+	WorktreeSuffix string  `json:"worktree_suffix"`
+	Kind           string  `json:"kind"`
+	Reason         string  `json:"reason"`
+	Confidence     float64 `json:"confidence"`
 	Model          string
 	Usage          model.LLMUsage
 }

@@ -4036,6 +4036,172 @@ func TestTodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider(t *testin
 	}
 }
 
+func TestTodoDialogEnterEnsuresMissingWorktreeSuggestion(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	runTUITestGit(t, "", "init", projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = st.Close()
+	})
+
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, service.CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track project: %v", err)
+	}
+
+	item, err := st.AddTodo(ctx, projectPath, "Launch this TODO in a new worktree")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	detail, err := st.GetProjectDetail(ctx, projectPath, 10)
+	if err != nil {
+		t.Fatalf("get project detail: %v", err)
+	}
+
+	m := Model{
+		ctx: ctx,
+		svc: svc,
+		projects: []model.ProjectSummary{{
+			Path:          projectPath,
+			Name:          "repo",
+			PresentOnDisk: true,
+		}},
+		detail:     detail,
+		selected:   0,
+		todoDialog: &todoDialogState{ProjectPath: projectPath, ProjectName: "repo"},
+		width:      100,
+		height:     24,
+	}
+
+	updated, cmd := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.todoCopyDialog == nil {
+		t.Fatalf("todo copy dialog should open after Enter")
+	}
+	if cmd == nil {
+		t.Fatalf("opening the TODO launcher should ensure a missing worktree suggestion")
+	}
+	msg, ok := cmd().(todoActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want todoActionMsg", msg)
+	}
+	if msg.err != nil {
+		t.Fatalf("todoActionMsg.err = %v, want nil", msg.err)
+	}
+	if msg.status != "Preparing worktree suggestion..." {
+		t.Fatalf("todoActionMsg.status = %q, want preparing status", msg.status)
+	}
+
+	suggestion, err := st.GetTodoWorktreeSuggestion(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("get todo worktree suggestion: %v", err)
+	}
+	if suggestion.Status != model.TodoWorktreeSuggestionQueued {
+		t.Fatalf("suggestion.Status = %q, want %q", suggestion.Status, model.TodoWorktreeSuggestionQueued)
+	}
+}
+
+func TestTodoDialogEnterRetriesFailedWorktreeSuggestion(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	runTUITestGit(t, "", "init", projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = st.Close()
+	})
+
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, service.CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track project: %v", err)
+	}
+
+	item, err := st.AddTodo(ctx, projectPath, "Launch this TODO in a new worktree")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
+		t.Fatalf("queue todo worktree suggestion: %v", err)
+	} else if !queued {
+		t.Fatalf("expected todo worktree suggestion to queue")
+	}
+	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
+	if err != nil {
+		t.Fatalf("claim todo worktree suggestion: %v", err)
+	}
+	if failed, err := st.FailTodoWorktreeSuggestion(ctx, suggestion, "todo worktree suggestion missing branch_name"); err != nil {
+		t.Fatalf("fail todo worktree suggestion: %v", err)
+	} else if !failed {
+		t.Fatalf("expected todo worktree suggestion to fail")
+	}
+	detail, err := st.GetProjectDetail(ctx, projectPath, 10)
+	if err != nil {
+		t.Fatalf("get project detail: %v", err)
+	}
+
+	m := Model{
+		ctx: ctx,
+		svc: svc,
+		projects: []model.ProjectSummary{{
+			Path:          projectPath,
+			Name:          "repo",
+			PresentOnDisk: true,
+		}},
+		detail:     detail,
+		selected:   0,
+		todoDialog: &todoDialogState{ProjectPath: projectPath, ProjectName: "repo"},
+		width:      100,
+		height:     24,
+	}
+
+	updated, cmd := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.todoCopyDialog == nil {
+		t.Fatalf("todo copy dialog should open after Enter")
+	}
+	if cmd == nil {
+		t.Fatalf("opening the TODO launcher should retry a failed worktree suggestion")
+	}
+	msg, ok := cmd().(todoActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want todoActionMsg", msg)
+	}
+	if msg.err != nil {
+		t.Fatalf("todoActionMsg.err = %v, want nil", msg.err)
+	}
+	if msg.status != "Preparing worktree suggestion..." {
+		t.Fatalf("todoActionMsg.status = %q, want preparing status", msg.status)
+	}
+
+	retried, err := st.GetTodoWorktreeSuggestion(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("get todo worktree suggestion: %v", err)
+	}
+	if retried.Status != model.TodoWorktreeSuggestionQueued {
+		t.Fatalf("retried.Status = %q, want %q", retried.Status, model.TodoWorktreeSuggestionQueued)
+	}
+}
+
 func TestTodoDialogCanStartSelectedTodoInNewWorktree(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

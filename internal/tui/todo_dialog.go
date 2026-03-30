@@ -289,9 +289,9 @@ func (m *Model) closeTodoDeleteConfirm(status string) {
 	}
 }
 
-func (m *Model) openTodoCopyDialog(todo model.TodoItem) {
+func (m *Model) openTodoCopyDialog(todo model.TodoItem) tea.Cmd {
 	if m.todoDialog == nil {
-		return
+		return nil
 	}
 	provider := codexapp.ProviderCodex
 	if project, ok := m.selectedProject(); ok && project.Path == m.todoDialog.ProjectPath {
@@ -306,6 +306,7 @@ func (m *Model) openTodoCopyDialog(todo model.TodoItem) {
 		Provider:    provider,
 	}
 	m.status = "Start TODO"
+	return m.ensureTodoWorktreeSuggestionCmd(m.todoCopyDialog.ProjectPath, todo.ID)
 }
 
 func (m *Model) closeTodoCopyDialog(status string) tea.Cmd {
@@ -421,8 +422,7 @@ func (m Model) updateTodoDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "No TODO selected"
 			return m, nil
 		}
-		m.openTodoCopyDialog(item)
-		return m, nil
+		return m, m.openTodoCopyDialog(item)
 	case "c":
 		item, ok := m.selectedTodoItem()
 		if !ok {
@@ -785,6 +785,24 @@ func (m Model) regenerateTodoWorktreeSuggestionCmd(projectPath string, todoID in
 		return todoActionMsg{
 			projectPath: projectPath,
 			status:      "Refreshing worktree suggestion...",
+			err:         err,
+		}
+	}
+}
+
+func (m Model) ensureTodoWorktreeSuggestionCmd(projectPath string, todoID int64) tea.Cmd {
+	if m.svc == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		changed, err := m.svc.EnsureTodoWorktreeSuggestion(m.ctx, projectPath, todoID)
+		status := ""
+		if changed {
+			status = "Preparing worktree suggestion..."
+		}
+		return todoActionMsg{
+			projectPath: projectPath,
+			status:      status,
 			err:         err,
 		}
 	}

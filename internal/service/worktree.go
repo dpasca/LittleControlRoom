@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -169,6 +170,69 @@ func (s *Service) RegenerateTodoWorktreeSuggestion(ctx context.Context, projectP
 		s.todoSuggester.Notify()
 	}
 	return nil
+}
+
+func (s *Service) EnsureTodoWorktreeSuggestion(ctx context.Context, projectPath string, todoID int64) (bool, error) {
+	if s == nil || s.store == nil {
+		return false, fmt.Errorf("service unavailable")
+	}
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "" {
+		return false, fmt.Errorf("project path is required")
+	}
+	if todoID <= 0 {
+		return false, fmt.Errorf("todo id is required")
+	}
+	todo, err := s.store.GetTodo(ctx, todoID)
+	if err != nil {
+		return false, err
+	}
+	if filepath.Clean(strings.TrimSpace(todo.ProjectPath)) != projectPath {
+		return false, fmt.Errorf("todo %d belongs to %s, not %s", todoID, todo.ProjectPath, projectPath)
+	}
+	suggestion, err := s.store.GetTodoWorktreeSuggestion(ctx, todoID)
+	switch {
+	case err == nil:
+		switch suggestion.Status {
+		case model.TodoWorktreeSuggestionReady,
+			model.TodoWorktreeSuggestionQueued,
+			model.TodoWorktreeSuggestionRunning:
+			return false, nil
+		}
+	case !errors.Is(err, sql.ErrNoRows):
+		return false, err
+	}
+
+	changed, err := s.store.ForceQueueTodoWorktreeSuggestion(ctx, todoID)
+	if err != nil {
+		return false, err
+	}
+	if !changed {
+		return false, nil
+	}
+
+	now := time.Now()
+	if s.bus != nil {
+		s.bus.Publish(events.Event{
+			Type:        events.ActionApplied,
+			At:          now,
+			ProjectPath: projectPath,
+			Payload: map[string]string{
+				"action":  "ensure_worktree_suggestion",
+				"todo_id": fmt.Sprintf("%d", todoID),
+			},
+		})
+	}
+	_ = s.store.AddEvent(ctx, model.StoredEvent{
+		At:          now,
+		ProjectPath: projectPath,
+		Type:        string(events.ActionApplied),
+		Payload:     fmt.Sprintf("ensure_worktree_suggestion todo_id=%d", todoID),
+	})
+	if s.todoSuggester != nil {
+		s.todoSuggester.Notify()
+	}
+	return true, nil
 }
 
 func (s *Service) RemoveWorktree(ctx context.Context, projectPath string) error {

@@ -1,6 +1,46 @@
 # Little Control Room Status
 
-Last updated: 2026-03-30 22:17 JST
+Last updated: 2026-03-30 23:05 JST
+
+## Latest Update (2026-03-30 23:05 JST)
+
+- Fixed the TODO worktree-name generation path and tightened the launcher so opening a TODO now actually ensures a branch/folder suggestion exists:
+  - assumption update:
+    - the TODO-to-worktree workflow itself is implemented end-to-end (`start here`, `new worktree`, `existing worktree`, worktree grouping/removal/prune), so the user-facing failure was not a missing feature slice
+    - the real breakage was in suggestion decoding: the suggester schema returns snake_case keys (`branch_name`, `worktree_suffix`), but `internal/todoworktree.Result` had no JSON tags, so decoded suggestions came through empty and were marked failed as `todo worktree suggestion missing branch_name`
+    - the live local DB confirmed this exact failure mode on existing LittleControlRoom TODOs, so many cached suggestions were stuck in `failed` until manually retried
+    - opening the TODO start dialog had also not proactively requested a missing/failed suggestion, which made the worktree flow feel inert unless the user knew to press `r`
+  - `internal/todoworktree/client.go`
+    - added JSON tags for `branch_name`, `worktree_suffix`, `kind`, `reason`, and `confidence` so structured suggester output decodes correctly
+  - `internal/todoworktree/client_test.go`
+    - added focused coverage proving schema-shaped JSON populates the suggestion result and passes validation
+  - `internal/service/worktree.go`
+    - added `EnsureTodoWorktreeSuggestion(...)` so the UI can request a suggestion only when it is missing or failed, without clobbering already-ready/queued/running suggestions
+    - publishes an action event when it requeues so the TUI refreshes into the queued/preparing state immediately
+  - `internal/tui/todo_dialog.go`
+    - changed TODO `Enter` / start-dialog opening so it automatically calls the new ensure path while opening the launcher
+    - keeps explicit `r` as the manual force-refresh path
+  - `internal/tui/app_test.go`
+    - added focused coverage for:
+      - opening a TODO with no cached suggestion queues one automatically
+      - opening a TODO with a failed suggestion retries it automatically
+- Verification status:
+  - focused coverage passed:
+    - `go test ./internal/todoworktree ./internal/service ./internal/tui -run 'Test(ResultUnmarshalDecodesSchemaFieldNames|TodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider|TodoDialogEnterEnsuresMissingWorktreeSuggestion|TodoDialogEnterRetriesFailedWorktreeSuggestion|TodoDialogCanStartSelectedTodoInNewWorktree|TodoDialogCanStartSelectedTodoInExistingWorktree|TodoDialogShowsWorktreeSuggestionState|TodoCopyDialogShowsRetryGuidanceForFailedWorktreeSuggestion)' -count=1`
+  - PTY smoke passed:
+    - `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-worktree-smoke INTERVAL=1h`
+    - dashboard opened in the isolated sandbox and exited cleanly via `q`
+  - repo validation:
+    - `make scan` passed at `2026-03-30T23:04:52+09:00`
+    - `make doctor` passed using cached report at `2026-03-30T23:05:16+09:00`
+    - `make test` still fails only on the same pre-existing unrelated `internal/tui` cases:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+    - `git diff --check` passed
+- Next concrete tasks:
+  - Do a live TUI smoke pass on an existing LittleControlRoom TODO that previously showed no worktree name and confirm the launcher now transitions into the preparing/ready suggestion state without needing manual `r`.
+  - Decide whether failed suggestions should also be opportunistically retried during startup/background refresh, or whether retry-on-open is the right boundary.
 
 ## Latest Update (2026-03-30 22:17 JST)
 
