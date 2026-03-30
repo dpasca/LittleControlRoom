@@ -1,6 +1,36 @@
 # Little Control Room Status
 
-Last updated: 2026-03-30 19:12 JST
+Last updated: 2026-03-30 19:24 JST
+
+## Latest Update (2026-03-30 19:24 JST)
+
+- Tightened the TODO launch dialog so worktree and agent changes are explicit instead of relying on section focus:
+  - `internal/tui/todo_dialog.go`
+    - removed the old `Tab`-driven section-focus model from the TODO start dialog
+    - added dedicated selection keys:
+      - `w` toggles `Here` vs `Dedicated worktree`
+      - `a` cycles agents forward and `A` cycles backward
+      - `←/→` now change worktree target directly
+      - `↑/↓` now change agent directly
+    - re-laid the chooser into two side-by-side columns (`Run in` and `Agent`) so the dialog uses less vertical space and the two decisions read as separate controls
+    - updated on-dialog copy so the hotkeys are visible in the section headers and action legend
+  - `internal/tui/app_test.go`
+    - updated TODO launcher tests for the new arrow-key behavior and compact copy
+    - added focused coverage for the new `w`/`a` hotkeys
+- Verification status:
+  - focused TODO launcher coverage passed:
+    - `go test ./internal/tui -run 'Test(TodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider|TodoDialogCanStartSelectedTodoInNewWorktree|TodoDialogCanStartSelectedTodoInExistingWorktree|TodoDialogCopyDialogHotkeysChangeRunModeAndProvider|TodoDialogShowsWorktreeSuggestionState|TodoCopyDialogShowsRetryGuidanceForFailedWorktreeSuggestion)' -count=1`
+  - `git diff --check` passed
+  - `make scan` passed at `2026-03-30T19:24:10+09:00`
+  - `make doctor` passed using cached report at `2026-03-30T19:24:10+09:00`
+  - `make test` still fails only on the same pre-existing unrelated `internal/tui` cases:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+- Next concrete tasks:
+  - Do a real-terminal smoke pass on the two-column TODO launcher to confirm the `w`/`a` scheme feels obvious at live terminal widths.
+  - Decide whether `a/A` is enough for provider cycling or whether direct per-provider shortcuts should be added after manual use.
+  - If the launcher layout now feels settled, refresh the docs/screenshots so they show the two-column chooser and hotkey hints.
 
 ## Latest Update (2026-03-30 19:12 JST)
 
