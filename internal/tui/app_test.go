@@ -8428,6 +8428,23 @@ func TestStartupUnconfiguredAIBackendOpensSetupMode(t *testing.T) {
 	}
 }
 
+func TestStartupSetupSnapshotCmdSkippedWhenBackendConfigured(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendCodex
+
+	m := Model{settingsBaseline: &settings}
+	if cmd := m.startupSetupSnapshotCmd(); cmd != nil {
+		t.Fatalf("startupSetupSnapshotCmd() should skip configured backends")
+	}
+}
+
+func TestStartupSetupSnapshotCmdRunsWhenBackendUnset(t *testing.T) {
+	m := Model{}
+	if cmd := m.startupSetupSnapshotCmd(); cmd == nil {
+		t.Fatalf("startupSetupSnapshotCmd() should run when no backend is configured")
+	}
+}
+
 func TestOpenSetupModePrefersReadyBackendOverUnavailableCurrentBackend(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.AIBackend = config.AIBackendOpenAIAPI

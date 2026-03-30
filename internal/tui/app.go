@@ -587,10 +587,12 @@ func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		m.loadProjectsCmd(),
 		m.loadRecentProjectParentsCmd(),
-		m.refreshSetupSnapshotCmd(true),
 		m.waitBusCmd(),
 		m.waitCodexCmd(),
 		spinnerTickCmd(),
+	}
+	if setupCmd := m.startupSetupSnapshotCmd(); setupCmd != nil {
+		cmds = append(cmds, setupCmd)
 	}
 	return tea.Batch(cmds...)
 }

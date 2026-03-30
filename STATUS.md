@@ -1,41 +1,36 @@
 # Little Control Room Status
 
-Last updated: 2026-03-30 20:12 JST
+Last updated: 2026-03-30 20:19 JST
 
-## Latest Update (2026-03-30 20:12 JST)
+## Latest Update (2026-03-30 20:19 JST)
 
-- Tightened the backend-detection path behind embedded model saves and startup:
+- Removed the remaining eager backend detection that was still running during normal TUI startup:
   - assumption update:
-    - embedded model preference saves were flowing through `Service.ApplyEditableSettings`, which could re-run backend detection/client setup even when only embedded model metadata changed
-    - service startup was also asking for an all-backends detection snapshot even though client configuration only needs readiness for the currently selected backend
-    - because backend detection shells out to local CLI auth/status commands, either path could stall the TUI for a few seconds
-  - `internal/aibackend/detect.go`
-    - added `DetectStatus`, a selected-backend-only status probe for service/client setup paths
-  - `internal/service/service.go`
-    - added a backend-detection test hook so the refresh behavior can be verified directly
-    - made `ApplyEditableSettings` reconfigure AI clients only when backend-affecting settings actually change:
-      - effective AI backend
-      - OpenAI API key
-      - OpenCode model tier
-    - switched service client configuration to ask only for the selected backend status instead of computing a full all-backends snapshot
-  - `internal/service/service_test.go`
+    - the earlier service-side fix removed unnecessary backend probing during embedded model saves and AI client configuration
+    - startup still felt slow because `Model.Init()` always queued `refreshSetupSnapshotCmd(true)`, which called `aibackend.Detect(...)` across all backends even when AI was already configured
+    - that launch-time setup snapshot is only needed to auto-open `/setup` when no backend is configured; it is not needed for normal startup with an existing backend
+  - `internal/tui/app.go`
+    - `Init()` now only queues startup setup detection when a backend is actually unset
+  - `internal/tui/setup.go`
+    - added `startupSetupSnapshotCmd()` so the startup-only setup refresh rule is explicit and testable
+  - `internal/tui/app_test.go`
     - added focused coverage to prove:
-      - embedded model-only saves do not trigger backend detection
-      - real backend config changes still reconfigure AI clients
+      - configured backends skip the startup setup snapshot
+      - unconfigured startup still queues the setup snapshot path
 - Verification status:
-  - focused regression coverage passed:
-    - `go test ./internal/aibackend ./internal/service -run 'Test(ParseClaudeAuthStatusJSON|ParseClaudeAuthStatusExtractsEmbeddedJSON|ClaudeAuthDetailIncludesMethodAndSubscription|ApplyEditableSettingsSkipsAIClientRefreshForEmbeddedModelPreferences|ApplyEditableSettingsRefreshesAIClientsWhenBackendConfigChanges)' -count=1`
+  - focused startup coverage passed:
+    - `go test ./internal/tui -run 'Test(StartupUnconfiguredAIBackendOpensSetupMode|StartupSetupSnapshotCmdSkippedWhenBackendConfigured|StartupSetupSnapshotCmdRunsWhenBackendUnset)' -count=1`
   - repo validation:
-    - `make scan` passed at `2026-03-30T20:12:21+09:00`
-    - `make doctor` passed using cached report at `2026-03-30T20:12:21+09:00`
+    - `make scan` passed at `2026-03-30T20:19:05+09:00`
+    - `make doctor` passed using cached report at `2026-03-30T20:19:05+09:00`
     - `make test` still fails only on the same pre-existing unrelated `internal/tui` cases:
     - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
     - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
     - `TestDiffModeMovesSelectionAndScrollsContent`
     - `git diff --check` passed
 - Next concrete tasks:
-  - Restart LCR and do a real-terminal smoke pass on both startup and embedded Codex `/model` in an already-running session.
-  - If any lag remains after restart, capture whether it is tied to picker open, picker apply, or a later session refresh so the remaining path can be isolated quickly.
+  - Restart LCR and compare launch responsiveness before/after this TUI startup change in a real terminal.
+  - If startup still feels sticky after restart, profile `ScanOnce(ctx)` and any early project/detail loads next, since backend detection should no longer be the unconditional startup blocker for configured backends.
 
 ## Latest Update (2026-03-30 19:42 JST)
 

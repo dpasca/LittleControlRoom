@@ -32,6 +32,13 @@ func (m *Model) openSetupMode() tea.Cmd {
 	return m.refreshSetupSnapshotCmd(false)
 }
 
+func (m Model) startupSetupSnapshotCmd() tea.Cmd {
+	if m.currentSettingsBaseline().AIBackend != config.AIBackendUnset {
+		return nil
+	}
+	return m.refreshSetupSnapshotCmd(true)
+}
+
 func (m *Model) closeSetupMode(status string) {
 	m.setupMode = false
 	if status != "" {
