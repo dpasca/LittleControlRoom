@@ -163,12 +163,15 @@ func (s *Service) trackProjectPath(ctx context.Context, existing model.ProjectSu
 func (s *Service) upsertManualProjectState(ctx context.Context, existing model.ProjectSummary, projectPath string) error {
 	now := time.Now()
 	presentOnDisk := projectPathExists(projectPath)
+	worktreeRootPath := ""
+	worktreeKind := model.WorktreeKindNone
 	repoBranch := ""
 	repoDirty := false
 	repoSyncStatus := model.RepoSyncStatus("")
 	repoAheadCount := 0
 	repoBehindCount := 0
 	if presentOnDisk && s.gitRepoStatusReader != nil {
+		worktreeRootPath, worktreeKind = s.readProjectWorktreeInfo(ctx, projectPath)
 		if repoStatus, err := s.gitRepoStatusReader(ctx, projectPath); err == nil {
 			repoBranch = strings.TrimSpace(repoStatus.Branch)
 			repoDirty = repoStatus.Dirty
@@ -190,25 +193,27 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 	})
 
 	state := model.ProjectState{
-		Path:            projectPath,
-		Name:            filepath.Base(projectPath),
-		Status:          score.Status,
-		AttentionScore:  score.Score,
-		PresentOnDisk:   presentOnDisk,
-		RepoBranch:      repoBranch,
-		RepoDirty:       repoDirty,
-		RepoSyncStatus:  repoSyncStatus,
-		RepoAheadCount:  repoAheadCount,
-		RepoBehindCount: repoBehindCount,
-		ManuallyAdded:   true,
-		InScope:         true,
-		Pinned:          existing.Pinned,
-		SnoozedUntil:    existing.SnoozedUntil,
-		Note:            existing.Note,
-		MovedFromPath:   existing.MovedFromPath,
-		MovedAt:         existing.MovedAt,
-		AttentionReason: score.Reasons,
-		UpdatedAt:       now,
+		Path:             projectPath,
+		Name:             filepath.Base(projectPath),
+		Status:           score.Status,
+		AttentionScore:   score.Score,
+		PresentOnDisk:    presentOnDisk,
+		WorktreeRootPath: worktreeRootPath,
+		WorktreeKind:     worktreeKind,
+		RepoBranch:       repoBranch,
+		RepoDirty:        repoDirty,
+		RepoSyncStatus:   repoSyncStatus,
+		RepoAheadCount:   repoAheadCount,
+		RepoBehindCount:  repoBehindCount,
+		ManuallyAdded:    true,
+		InScope:          true,
+		Pinned:           existing.Pinned,
+		SnoozedUntil:     existing.SnoozedUntil,
+		Note:             existing.Note,
+		MovedFromPath:    existing.MovedFromPath,
+		MovedAt:          existing.MovedAt,
+		AttentionReason:  score.Reasons,
+		UpdatedAt:        now,
 	}
 	if err := s.store.UpsertProjectState(ctx, state); err != nil {
 		return fmt.Errorf("persist project state: %w", err)

@@ -39,6 +39,7 @@ type Model struct {
 
 	allProjects            []model.ProjectSummary
 	projects               []model.ProjectSummary
+	projectRows            []projectListRow
 	detail                 model.ProjectDetail
 	selected               int
 	offset                 int
@@ -65,7 +66,10 @@ type Model struct {
 	todoDeleteConfirm     *todoDeleteConfirmState
 	todoLaunchDraft       *todoLaunchDraftState
 	todoCopyDialog        *todoCopyDialogState
+	todoWorktreeEditor    *todoWorktreeEditorState
+	todoExistingWorktree  *todoExistingWorktreeDialogState
 	todoModelPickerReturn *todoModelPickerReturnState
+	worktreeRemoveConfirm *worktreeRemoveConfirmState
 
 	commandMode                  bool
 	commandInput                 textinput.Model
@@ -158,6 +162,7 @@ type Model struct {
 	hideReasoningSections bool
 
 	newProjectRecentParents []string
+	worktreeExpanded        map[string]bool
 }
 
 type codexTranscriptRenderCache struct {
@@ -217,6 +222,22 @@ type runCommandSavedMsg struct {
 
 type todoActionMsg struct {
 	projectPath string
+	status      string
+	err         error
+}
+
+type todoWorktreeLaunchMsg struct {
+	projectPath    string
+	todoText       string
+	status         string
+	provider       codexapp.Provider
+	openModelFirst bool
+	err            error
+}
+
+type worktreeActionMsg struct {
+	projectPath string
+	selectPath  string
 	status      string
 	err         error
 }
@@ -658,11 +679,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.runCommandDialog != nil {
 			return m.updateRunCommandDialogMode(msg)
 		}
+		if m.worktreeRemoveConfirm != nil {
+			return m.updateWorktreeRemoveConfirmMode(msg)
+		}
 		if m.todoDeleteConfirm != nil {
 			return m.updateTodoDeleteConfirmMode(msg)
 		}
+		if m.todoExistingWorktree != nil {
+			return m.updateTodoExistingWorktreeMode(msg)
+		}
 		if m.todoCopyDialog != nil {
 			return m.updateTodoCopyDialogMode(msg)
+		}
+		if m.todoWorktreeEditor != nil {
+			return m.updateTodoWorktreeEditorMode(msg)
 		}
 		if m.todoEditor != nil {
 			return m.updateTodoEditorMode(msg)
@@ -1004,6 +1034,69 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = msg.status
 		}
 		return m, nil
+	case todoWorktreeLaunchMsg:
+		if msg.err != nil {
+			m.todoLaunchDraft = nil
+			m.todoCopyDialog = nil
+			m.todoWorktreeEditor = nil
+			m.todoExistingWorktree = nil
+			m.err = msg.err
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		provider := msg.provider.Normalized()
+		if provider == "" {
+			provider = codexapp.ProviderCodex
+		}
+		m.todoCopyDialog = nil
+		m.todoWorktreeEditor = nil
+		m.todoExistingWorktree = nil
+		m.err = nil
+		m.restoreCodexDraft(msg.projectPath, codexDraft{Text: strings.TrimSpace(msg.todoText)})
+		m.todoLaunchDraft = &todoLaunchDraftState{
+			projectPath:    msg.projectPath,
+			provider:       provider,
+			openModelFirst: msg.openModelFirst,
+		}
+		req := codexapp.LaunchRequest{
+			Provider:    provider,
+			ProjectPath: strings.TrimSpace(msg.projectPath),
+			ForceNew:    true,
+			Preset:      m.currentCodexLaunchPreset(),
+		}
+		if err := req.Validate(); err != nil {
+			m.todoLaunchDraft = nil
+			m.err = err
+			m.status = err.Error()
+			return m, nil
+		}
+		m.ensureCodexRuntime()
+		m.beginCodexPendingOpen(req.ProjectPath, provider)
+		m.status = "Opening embedded " + provider.Label() + " session in new worktree..."
+		cmds := []tea.Cmd{m.loadProjectsCmd(), m.openCodexSessionCmd(req)}
+		if p, ok := m.selectedProject(); ok {
+			cmds = append(cmds, m.loadDetailCmd(p.Path))
+		}
+		return m, tea.Batch(cmds...)
+	case worktreeActionMsg:
+		m.worktreeRemoveConfirm = nil
+		if msg.err != nil {
+			m.err = msg.err
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.err = nil
+		if strings.TrimSpace(msg.selectPath) != "" {
+			m.preferredSelectPath = strings.TrimSpace(msg.selectPath)
+		}
+		if strings.TrimSpace(msg.status) != "" {
+			m.status = msg.status
+		}
+		cmds := []tea.Cmd{m.scanCmd(false), m.loadProjectsCmd()}
+		if strings.TrimSpace(msg.selectPath) != "" {
+			cmds = append(cmds, m.loadDetailCmd(strings.TrimSpace(msg.selectPath)))
+		}
+		return m, tea.Batch(cmds...)
 	case settingsSavedMsg:
 		m.err = nil
 		if msg.err != nil {
@@ -1410,10 +1503,31 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.moveRuntimeActionSelection(-1)
 			return m, nil
 		}
+		if m.focusedPane == focusProjects {
+			if row, project, ok := m.selectedProjectRow(); ok {
+				if row.Kind == projectListRowWorktree {
+					if m.worktreeExpanded == nil {
+						m.worktreeExpanded = map[string]bool{}
+					}
+					m.worktreeExpanded[row.RootPath] = false
+					m.rebuildProjectList(projectWorktreeRootPath(project))
+					m.status = "Worktrees collapsed"
+					return m, m.loadDetailCmd(projectWorktreeRootPath(project))
+				}
+				if row.Kind == projectListRowRepo && row.LinkedCount > 0 && row.Expanded {
+					return m, m.toggleSelectedWorktreeGroup()
+				}
+			}
+		}
 	case "right", "l":
 		if m.focusedPane == focusRuntime {
 			m.moveRuntimeActionSelection(1)
 			return m, nil
+		}
+		if m.focusedPane == focusProjects {
+			if row, _, ok := m.selectedProjectRow(); ok && row.Kind == projectListRowRepo && row.LinkedCount > 0 && !row.Expanded {
+				return m, m.toggleSelectedWorktreeGroup()
+			}
 		}
 	case "o":
 		if m.focusedPane == focusRuntime {
@@ -1429,6 +1543,16 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "t":
 		return m, m.openTodoDialogForSelection()
+	case "w":
+		return m, m.toggleSelectedWorktreeGroup()
+	case "x":
+		return m, m.openWorktreeRemoveConfirmForSelection()
+	case "P":
+		if project, ok := m.selectedProject(); ok {
+			rootPath := projectWorktreeRootPath(project)
+			m.status = "Pruning stale git worktrees..."
+			return m, m.pruneWorktreesCmd(rootPath, rootPath)
+		}
 	}
 	return m, nil
 }
@@ -1926,8 +2050,17 @@ func (m Model) View() string {
 	if m.todoDeleteConfirm != nil {
 		body = m.renderTodoDeleteConfirmOverlay(body, layout.width, layout.height)
 	}
+	if m.todoExistingWorktree != nil {
+		body = m.renderTodoExistingWorktreeOverlay(body, layout.width, layout.height)
+	}
 	if m.todoCopyDialog != nil {
 		body = m.renderTodoCopyDialogOverlay(body, layout.width, layout.height)
+	}
+	if m.todoWorktreeEditor != nil {
+		body = m.renderTodoWorktreeEditorOverlay(body, layout.width, layout.height)
+	}
+	if m.worktreeRemoveConfirm != nil {
+		body = m.renderWorktreeRemoveConfirmOverlay(body, layout.width, layout.height)
 	}
 	if m.noteDialog != nil {
 		body = m.renderNoteDialogOverlay(body, layout.width, layout.height)
@@ -2199,6 +2332,14 @@ func (m Model) renderProjectList(width, height int) string {
 	end := min(len(m.projects), start+visible)
 	for i := start; i < end; i++ {
 		p := m.projects[i]
+		rowMeta := projectListRow{
+			Kind:        projectListRowStandalone,
+			ProjectPath: p.Path,
+			RootPath:    projectWorktreeRootPath(p),
+		}
+		if i >= 0 && i < len(m.projectRows) {
+			rowMeta = m.projectRows[i]
+		}
 		selectedRow := i == m.selected
 		cellStyle := func(style lipgloss.Style) lipgloss.Style {
 			style = projectListCellStyle(style, selectedRow)
@@ -2212,8 +2353,23 @@ func (m Model) renderProjectList(width, height int) string {
 		last := formatListActivityTime(now, p.LastActivity)
 		repoIndicator := projectRepoWarningIndicator(p)
 		attention := projectAttentionLabelForScore(m.projectAttentionScore(p))
-		name := truncateText(p.Name, projectW)
-		assessment := truncateText(projectAssessmentTextAt(p, now, m.assessmentStallThreshold()), assessmentW)
+		name := p.Name
+		assessmentText := projectAssessmentTextAt(p, now, m.assessmentStallThreshold())
+		switch rowMeta.Kind {
+		case projectListRowRepo:
+			if rowMeta.LinkedCount > 0 {
+				disclosure := "▸ "
+				if rowMeta.Expanded {
+					disclosure = "▾ "
+				}
+				name = disclosure + name
+				assessmentText = worktreeGroupSummary(rowMeta.LinkedCount+1, rowMeta.ActiveCount, rowMeta.DirtyCount)
+			}
+		case projectListRowWorktree:
+			name = "  " + projectWorktreeLabel(p)
+		}
+		name = truncateText(name, projectW)
+		assessment := truncateText(assessmentText, assessmentW)
 		runtimeSnapshot := m.projectRuntimeSnapshot(p.Path)
 		agentLabel, agentTag, agentLive := m.projectAgentDisplay(p, now)
 		todoCount := projectTODOCountLabel(p.OpenTODOCount)
@@ -2293,6 +2449,49 @@ func (m Model) renderDetailContent(width int) string {
 	}
 	lines = append(lines, detailField("Repo", repoCombinedDetailValue(p)))
 	lines = append(lines, detailField("Attention", attentionValue))
+	family := m.worktreeFamily(projectWorktreeRootPath(p))
+	if len(family) > 1 || p.WorktreeKind == model.WorktreeKindLinked {
+		activeCount, dirtyCount := m.worktreeActivityCounts(family)
+		lines = append(lines, detailField("Worktrees", detailValueStyle.Render(worktreeGroupSummary(len(family), activeCount, dirtyCount))))
+		lines = append(lines, detailSectionStyle.Render("Worktree lanes"))
+		family = append([]model.ProjectSummary(nil), family...)
+		sort.SliceStable(family, func(i, j int) bool {
+			leftRoot := projectIsWorktreeRoot(family[i])
+			rightRoot := projectIsWorktreeRoot(family[j])
+			if leftRoot != rightRoot {
+				return leftRoot
+			}
+			if !family[i].LastActivity.Equal(family[j].LastActivity) {
+				return family[i].LastActivity.After(family[j].LastActivity)
+			}
+			return strings.ToLower(family[i].Path) < strings.ToLower(family[j].Path)
+		})
+		for _, member := range family {
+			label := projectWorktreeLabel(member)
+			if projectIsWorktreeRoot(member) {
+				label = "root: " + label
+			}
+			statusParts := []string{}
+			if member.RepoDirty {
+				statusParts = append(statusParts, "dirty")
+			} else {
+				statusParts = append(statusParts, "clean")
+			}
+			if member.Status != model.StatusIdle {
+				statusParts = append(statusParts, string(member.Status))
+			}
+			if m.projectHasLiveCodexSession(member.Path) {
+				statusParts = append(statusParts, "agent")
+			}
+			if snapshot := m.projectRuntimeSnapshot(member.Path); snapshot.Running {
+				statusParts = append(statusParts, "runtime")
+			}
+			if filepath.Clean(member.Path) == filepath.Clean(p.Path) {
+				statusParts = append(statusParts, "current")
+			}
+			lines = append(lines, renderWrappedDetailBullet(detailValueStyle, width, label+" · "+strings.Join(statusParts, ", ")))
+		}
+	}
 
 	lines = append(lines, detailSectionStyle.Render("Session summary"))
 	summaryText := projectAssessmentTextAt(p, m.currentTime(), m.assessmentStallThreshold())
@@ -2309,24 +2508,34 @@ func (m Model) renderDetailContent(width int) string {
 	if p.SnoozedUntil != nil {
 		lines = append(lines, detailField("Snoozed until", detailValueStyle.Render(p.SnoozedUntil.Format(time.RFC3339))))
 	}
+	todoProject := p
+	if rootPath := projectWorktreeRootPath(p); rootPath != "" && filepath.Clean(rootPath) != filepath.Clean(p.Path) {
+		if rootProject, ok := m.projectSummaryByPath(rootPath); ok {
+			todoProject = rootProject
+		}
+	}
 	lines = append(lines, detailSectionStyle.Render("TODO"))
-	if p.TotalTODOCount == 0 {
+	if todoProject.TotalTODOCount == 0 {
 		lines = append(lines, detailMutedStyle.Render("No TODOs yet. Press t or run /todo."))
 	} else {
-		lines = append(lines, detailField("Counts", detailValueStyle.Render(fmt.Sprintf("%d open, %d total", p.OpenTODOCount, p.TotalTODOCount))))
-		openShown := 0
-		for _, item := range d.Todos {
-			if item.Done {
-				continue
+		lines = append(lines, detailField("Counts", detailValueStyle.Render(fmt.Sprintf("%d open, %d total", todoProject.OpenTODOCount, todoProject.TotalTODOCount))))
+		if filepath.Clean(todoProject.Path) != filepath.Clean(p.Path) {
+			lines = append(lines, detailMutedStyle.Render("TODOs are repo-scoped. Press t to open the root repo list."))
+		} else {
+			openShown := 0
+			for _, item := range d.Todos {
+				if item.Done {
+					continue
+				}
+				lines = append(lines, renderWrappedDetailBullet(detailValueStyle, width, "[ ] "+strings.TrimSpace(item.Text)))
+				openShown++
+				if openShown >= 5 {
+					break
+				}
 			}
-			lines = append(lines, renderWrappedDetailBullet(detailValueStyle, width, "[ ] "+strings.TrimSpace(item.Text)))
-			openShown++
-			if openShown >= 5 {
-				break
+			if openShown == 0 {
+				lines = append(lines, detailMutedStyle.Render("All TODOs are done. Press t or run /todo."))
 			}
-		}
-		if openShown == 0 {
-			lines = append(lines, detailMutedStyle.Render("All TODOs are done. Press t or run /todo."))
 		}
 	}
 
@@ -3902,34 +4111,6 @@ func normalizeProjectFilterToken(value string) string {
 		}
 	}
 	return out.String()
-}
-
-func (m *Model) rebuildProjectList(selectedPath string) {
-	sorted := append([]model.ProjectSummary(nil), m.allProjects...)
-	m.sortProjects(sorted)
-	m.projects = filterProjects(sorted, m.visibility, m.excludeProjectPatterns, m.projectFilter)
-	if m.privacyMode {
-		m.projects = filterProjectsByPrivacy(m.projects, m.privacyPatterns)
-	}
-	if len(m.projects) == 0 {
-		m.selected = 0
-		m.offset = 0
-		return
-	}
-	preservedSelection := false
-	if selectedPath != "" {
-		if idx := m.indexByPath(selectedPath); idx >= 0 {
-			m.selected = idx
-			preservedSelection = true
-		}
-	}
-	if selectedPath != "" && !preservedSelection {
-		m.selected = 0
-	}
-	if m.selected >= len(m.projects) {
-		m.selected = max(0, len(m.projects)-1)
-	}
-	m.ensureSelectionVisible()
 }
 
 func (m Model) renderClassificationSummary() string {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -20,6 +21,29 @@ type GitRepoStatus struct {
 	Behind      int
 	Branch      string
 	Changes     []GitChange
+}
+
+type GitWorktreeKind string
+
+const (
+	GitWorktreeKindNone   GitWorktreeKind = ""
+	GitWorktreeKindMain   GitWorktreeKind = "main"
+	GitWorktreeKindLinked GitWorktreeKind = "linked"
+)
+
+type GitWorktreeInfo struct {
+	RootPath string
+	Kind     GitWorktreeKind
+}
+
+type GitWorktree struct {
+	Path           string
+	Branch         string
+	Head           string
+	IsMain         bool
+	Detached       bool
+	LockedReason   string
+	PrunableReason string
 }
 
 type GitChange struct {
@@ -140,6 +164,101 @@ func ReadGitDirty(ctx context.Context, path string) (bool, error) {
 		return false, err
 	}
 	return status.Dirty, nil
+}
+
+func ReadGitWorktreeInfo(ctx context.Context, path string) (GitWorktreeInfo, error) {
+	topLevel, err := readGitSingleLine(ctx, path, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return GitWorktreeInfo{}, fmt.Errorf("read git top-level for %s: %w", path, err)
+	}
+	commonDir, err := readGitSingleLine(ctx, path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return GitWorktreeInfo{}, fmt.Errorf("read git common dir for %s: %w", path, err)
+	}
+	gitDir, err := readGitSingleLine(ctx, path, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return GitWorktreeInfo{}, fmt.Errorf("read git dir for %s: %w", path, err)
+	}
+
+	topLevel = filepath.Clean(strings.TrimSpace(topLevel))
+	commonDir = filepath.Clean(strings.TrimSpace(commonDir))
+	gitDir = filepath.Clean(strings.TrimSpace(gitDir))
+	if topLevel == "" || commonDir == "" {
+		return GitWorktreeInfo{}, fmt.Errorf("read git worktree info for %s: missing paths", path)
+	}
+
+	rootPath := filepath.Dir(commonDir)
+	kind := GitWorktreeKindLinked
+	if gitDir == commonDir || rootPath == topLevel {
+		kind = GitWorktreeKindMain
+		rootPath = topLevel
+	}
+	return GitWorktreeInfo{
+		RootPath: rootPath,
+		Kind:     kind,
+	}, nil
+}
+
+func ListGitWorktrees(ctx context.Context, path string) ([]GitWorktree, error) {
+	cmd := exec.CommandContext(ctx, "git", "-C", path, "worktree", "list", "--porcelain")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("list git worktrees for %s: %w", path, err)
+	}
+	worktrees := parseGitWorktreeListOutput(string(out))
+	if len(worktrees) == 0 {
+		if info, infoErr := ReadGitWorktreeInfo(ctx, path); infoErr == nil && strings.TrimSpace(info.RootPath) != "" {
+			return []GitWorktree{{
+				Path:   info.RootPath,
+				IsMain: true,
+			}}, nil
+		}
+	}
+	return worktrees, nil
+}
+
+func readGitSingleLine(ctx context.Context, path string, args ...string) (string, error) {
+	fullArgs := append([]string{"-C", path}, args...)
+	cmd := exec.CommandContext(ctx, "git", fullArgs...)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func parseGitWorktreeListOutput(out string) []GitWorktree {
+	blocks := strings.Split(strings.TrimSpace(out), "\n\n")
+	worktrees := make([]GitWorktree, 0, len(blocks))
+	for index, block := range blocks {
+		block = strings.TrimSpace(block)
+		if block == "" {
+			continue
+		}
+		entry := GitWorktree{IsMain: index == 0}
+		for _, line := range strings.Split(block, "\n") {
+			line = strings.TrimSpace(line)
+			switch {
+			case strings.HasPrefix(line, "worktree "):
+				entry.Path = filepath.Clean(strings.TrimSpace(strings.TrimPrefix(line, "worktree ")))
+			case strings.HasPrefix(line, "HEAD "):
+				entry.Head = strings.TrimSpace(strings.TrimPrefix(line, "HEAD "))
+			case strings.HasPrefix(line, "branch "):
+				entry.Branch = strings.TrimSpace(strings.TrimPrefix(line, "branch refs/heads/"))
+			case line == "detached":
+				entry.Detached = true
+			case strings.HasPrefix(line, "locked"):
+				entry.LockedReason = strings.TrimSpace(strings.TrimPrefix(line, "locked"))
+			case strings.HasPrefix(line, "prunable"):
+				entry.PrunableReason = strings.TrimSpace(strings.TrimPrefix(line, "prunable"))
+			}
+		}
+		if entry.Path == "" {
+			continue
+		}
+		worktrees = append(worktrees, entry)
+	}
+	return worktrees
 }
 
 func parseGitRepoStatusOutput(out string) GitRepoStatus {

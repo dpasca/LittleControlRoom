@@ -54,9 +54,11 @@ type Service struct {
 	llmUsageTracker          *llm.UsageTracker
 	opencodeDiscovery        *llm.OpenCodeDiscovery
 
-	gitFingerprintReader func(context.Context, string) (scanner.GitFingerprint, error)
-	gitRepoStatusReader  func(context.Context, string) (scanner.GitRepoStatus, error)
-	gitRepoInitializer   func(context.Context, string) error
+	gitFingerprintReader  func(context.Context, string) (scanner.GitFingerprint, error)
+	gitRepoStatusReader   func(context.Context, string) (scanner.GitRepoStatus, error)
+	gitWorktreeInfoReader func(context.Context, string) (scanner.GitWorktreeInfo, error)
+	gitWorktreeListReader func(context.Context, string) ([]scanner.GitWorktree, error)
+	gitRepoInitializer    func(context.Context, string) error
 
 	mu sync.Mutex
 }
@@ -83,15 +85,17 @@ type ScanOptions struct {
 
 func New(cfg config.AppConfig, st *store.Store, bus *events.Bus, detectorList []detectors.Detector) *Service {
 	svc := &Service{
-		cfg:                  cfg,
-		store:                st,
-		bus:                  bus,
-		detectors:            detectorList,
-		llmUsageTracker:      llm.NewUsageTracker(),
-		opencodeDiscovery:    llm.NewOpenCodeDiscovery(),
-		gitFingerprintReader: scanner.ReadGitFingerprint,
-		gitRepoStatusReader:  scanner.ReadGitRepoStatus,
-		gitRepoInitializer:   runGitInit,
+		cfg:                   cfg,
+		store:                 st,
+		bus:                   bus,
+		detectors:             detectorList,
+		llmUsageTracker:       llm.NewUsageTracker(),
+		opencodeDiscovery:     llm.NewOpenCodeDiscovery(),
+		gitFingerprintReader:  scanner.ReadGitFingerprint,
+		gitRepoStatusReader:   scanner.ReadGitRepoStatus,
+		gitWorktreeInfoReader: scanner.ReadGitWorktreeInfo,
+		gitWorktreeListReader: scanner.ListGitWorktrees,
+		gitRepoInitializer:    runGitInit,
 	}
 	svc.configureAIClientsLocked()
 	svc.bestEffortPrepareInternalWorkspaceState()
@@ -329,6 +333,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 	if err != nil {
 		return ScanReport{}, fmt.Errorf("load previous project state: %w", err)
 	}
+	discovered, liveWorktreePathsByRoot := s.expandDiscoveredWorktreePaths(ctx, discovered, oldMap, scope)
 	aliasesChanged, err := s.applyStaticPathAliases(ctx, now, oldMap)
 	if err != nil {
 		return ScanReport{}, err
@@ -454,6 +459,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 	sort.Strings(paths)
 
 	currentRepoStatus := map[string]scanner.GitRepoStatus{}
+	currentWorktreeInfo := map[string]scanner.GitWorktreeInfo{}
 	for _, path := range paths {
 		if !projectPathExists(path) {
 			continue
@@ -477,6 +483,12 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 				currentRepoStatus[path] = repoStatus
 			}
 		}
+		if s.gitWorktreeInfoReader != nil {
+			worktreeInfo, readErr := s.gitWorktreeInfoReader(ctx, path)
+			if readErr == nil {
+				currentWorktreeInfo[path] = worktreeInfo
+			}
+		}
 	}
 
 	updated := []string{}
@@ -493,12 +505,18 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			old.SnoozedUntil = nil
 		}
 		presentOnDisk := projectPathExists(path)
+		worktreeRootPath := old.WorktreeRootPath
+		worktreeKind := old.WorktreeKind
 		repoBranch := ""
 		repoDirty := false
 		repoSyncStatus := model.RepoSyncStatus("")
 		repoAheadCount := 0
 		repoBehindCount := 0
 		if presentOnDisk {
+			if worktreeInfo, ok := currentWorktreeInfo[path]; ok {
+				worktreeRootPath = filepath.Clean(strings.TrimSpace(worktreeInfo.RootPath))
+				worktreeKind = modelWorktreeKindFromGit(worktreeInfo.Kind)
+			}
 			if repoStatus, ok := currentRepoStatus[path]; ok {
 				repoBranch = strings.TrimSpace(repoStatus.Branch)
 				repoDirty = repoStatus.Dirty
@@ -514,6 +532,13 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			}
 		}
 		forgotten := old.Forgotten
+		if !presentOnDisk && old.WorktreeKind == model.WorktreeKindLinked && strings.TrimSpace(old.WorktreeRootPath) != "" {
+			if livePaths := liveWorktreePathsByRoot[old.WorktreeRootPath]; len(livePaths) > 0 {
+				if _, ok := livePaths[path]; !ok {
+					forgotten = true
+				}
+			}
+		}
 		if presentOnDisk && forgotten && scope.Allows(path) {
 			forgotten = false
 		}
@@ -569,29 +594,31 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		})
 
 		state := model.ProjectState{
-			Path:            path,
-			Name:            filepath.Base(path),
-			LastActivity:    lastActivity,
-			Status:          score.Status,
-			AttentionScore:  score.Score,
-			PresentOnDisk:   presentOnDisk,
-			RepoBranch:      repoBranch,
-			RepoDirty:       repoDirty,
-			RepoSyncStatus:  repoSyncStatus,
-			RepoAheadCount:  repoAheadCount,
-			RepoBehindCount: repoBehindCount,
-			Forgotten:       forgotten,
-			ManuallyAdded:   old.ManuallyAdded,
-			InScope:         scope.Allows(path),
-			Pinned:          old.Pinned,
-			SnoozedUntil:    old.SnoozedUntil,
-			Note:            old.Note,
-			MovedFromPath:   old.MovedFromPath,
-			MovedAt:         old.MovedAt,
-			AttentionReason: score.Reasons,
-			Sessions:        sessions,
-			Artifacts:       artifacts,
-			UpdatedAt:       now,
+			Path:             path,
+			Name:             filepath.Base(path),
+			LastActivity:     lastActivity,
+			Status:           score.Status,
+			AttentionScore:   score.Score,
+			PresentOnDisk:    presentOnDisk,
+			WorktreeRootPath: worktreeRootPath,
+			WorktreeKind:     worktreeKind,
+			RepoBranch:       repoBranch,
+			RepoDirty:        repoDirty,
+			RepoSyncStatus:   repoSyncStatus,
+			RepoAheadCount:   repoAheadCount,
+			RepoBehindCount:  repoBehindCount,
+			Forgotten:        forgotten,
+			ManuallyAdded:    old.ManuallyAdded,
+			InScope:          scope.Allows(path),
+			Pinned:           old.Pinned,
+			SnoozedUntil:     old.SnoozedUntil,
+			Note:             old.Note,
+			MovedFromPath:    old.MovedFromPath,
+			MovedAt:          old.MovedAt,
+			AttentionReason:  score.Reasons,
+			Sessions:         sessions,
+			Artifacts:        artifacts,
+			UpdatedAt:        now,
 		}
 
 		if err := s.store.UpsertProjectState(ctx, state); err != nil {
@@ -802,6 +829,8 @@ func projectStateChanged(old model.ProjectSummary, state model.ProjectState) boo
 		old.Status != state.Status ||
 		old.AttentionScore != state.AttentionScore ||
 		old.PresentOnDisk != state.PresentOnDisk ||
+		old.WorktreeRootPath != state.WorktreeRootPath ||
+		old.WorktreeKind != state.WorktreeKind ||
 		old.RepoBranch != state.RepoBranch ||
 		old.RepoDirty != state.RepoDirty ||
 		old.RepoSyncStatus != state.RepoSyncStatus ||
@@ -1194,12 +1223,15 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 	}
 
 	presentOnDisk := projectPathExists(detail.Summary.Path)
+	worktreeRootPath := detail.Summary.WorktreeRootPath
+	worktreeKind := detail.Summary.WorktreeKind
 	repoBranch := ""
 	repoDirty := false
 	repoSyncStatus := model.RepoSyncStatus("")
 	repoAheadCount := 0
 	repoBehindCount := 0
 	if presentOnDisk {
+		worktreeRootPath, worktreeKind = s.readProjectWorktreeInfo(ctx, detail.Summary.Path)
 		if s.gitRepoStatusReader != nil {
 			if repoStatus, err := s.gitRepoStatusReader(ctx, detail.Summary.Path); err == nil {
 				repoBranch = strings.TrimSpace(repoStatus.Branch)
@@ -1258,29 +1290,31 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 	})
 
 	state := model.ProjectState{
-		Path:            detail.Summary.Path,
-		Name:            detail.Summary.Name,
-		LastActivity:    detail.Summary.LastActivity,
-		Status:          score.Status,
-		AttentionScore:  score.Score,
-		PresentOnDisk:   presentOnDisk,
-		RepoBranch:      repoBranch,
-		RepoDirty:       repoDirty,
-		RepoSyncStatus:  repoSyncStatus,
-		RepoAheadCount:  repoAheadCount,
-		RepoBehindCount: repoBehindCount,
-		Forgotten:       detail.Summary.Forgotten,
-		ManuallyAdded:   detail.Summary.ManuallyAdded,
-		InScope:         detail.Summary.InScope,
-		Pinned:          detail.Summary.Pinned,
-		SnoozedUntil:    detail.Summary.SnoozedUntil,
-		Note:            detail.Summary.Note,
-		MovedFromPath:   detail.Summary.MovedFromPath,
-		MovedAt:         detail.Summary.MovedAt,
-		AttentionReason: score.Reasons,
-		Sessions:        detail.Sessions,
-		Artifacts:       detail.Artifacts,
-		UpdatedAt:       now,
+		Path:             detail.Summary.Path,
+		Name:             detail.Summary.Name,
+		LastActivity:     detail.Summary.LastActivity,
+		Status:           score.Status,
+		AttentionScore:   score.Score,
+		PresentOnDisk:    presentOnDisk,
+		WorktreeRootPath: worktreeRootPath,
+		WorktreeKind:     worktreeKind,
+		RepoBranch:       repoBranch,
+		RepoDirty:        repoDirty,
+		RepoSyncStatus:   repoSyncStatus,
+		RepoAheadCount:   repoAheadCount,
+		RepoBehindCount:  repoBehindCount,
+		Forgotten:        detail.Summary.Forgotten,
+		ManuallyAdded:    detail.Summary.ManuallyAdded,
+		InScope:          detail.Summary.InScope,
+		Pinned:           detail.Summary.Pinned,
+		SnoozedUntil:     detail.Summary.SnoozedUntil,
+		Note:             detail.Summary.Note,
+		MovedFromPath:    detail.Summary.MovedFromPath,
+		MovedAt:          detail.Summary.MovedAt,
+		AttentionReason:  score.Reasons,
+		Sessions:         detail.Sessions,
+		Artifacts:        detail.Artifacts,
+		UpdatedAt:        now,
 	}
 	if err := s.store.UpsertProjectState(ctx, state); err != nil {
 		return fmt.Errorf("persist refreshed project state: %w", err)

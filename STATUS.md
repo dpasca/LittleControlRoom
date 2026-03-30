@@ -1,6 +1,96 @@
 # Little Control Room Status
 
-Last updated: 2026-03-30 09:06 JST
+Last updated: 2026-03-30 11:16 JST
+
+## Latest Update (2026-03-30 11:16 JST)
+
+- Completed the main repo-first worktree UX slice so linked worktrees now behave like lanes under one repo instead of noisy duplicate top-level projects:
+  - `internal/scanner/discovery.go`
+    - discovery now recognizes both `.git` directories and linked-worktree `.git` files
+  - `internal/scanner/git.go`
+    - added git worktree inspection helpers for current-worktree identity and `git worktree list --porcelain`
+  - `internal/model/model.go`
+    - added `WorktreeRootPath` and `WorktreeKind` to project state/summary so repo vs linked-worktree identity is explicit
+  - `internal/store/store.go`
+    - persists worktree root/kind on projects
+    - added `ForceQueueTodoWorktreeSuggestion` for explicit user-triggered suggestion refresh
+  - `internal/service/service.go`
+    - scan/refresh flows now capture worktree metadata, expand discovered repo families via `git worktree list`, and forget removed linked worktrees when Git no longer reports them
+  - `internal/service/project_create.go`
+  - `internal/service/git_actions.go`
+    - manual attach and state rebuild paths now preserve worktree identity
+  - `internal/service/worktree.go`
+    - expanded TODO worktree creation to support branch/folder overrides
+    - added `RegenerateTodoWorktreeSuggestion`
+    - added linked-worktree lifecycle operations: `RemoveWorktree` and `PruneWorktrees`
+    - added path-variant reconciliation so `/var/...` vs `/private/var/...` worktree families stay grouped on macOS
+  - `internal/tui/app.go`
+  - `internal/tui/worktree_ui.go`
+    - project list now groups linked worktrees under their repo row with expand/collapse behavior
+    - detail pane now shows repo-family worktree summaries and lane details
+    - added worktree actions: expand/collapse (`w`), remove selected linked worktree (`x`), and prune stale git worktrees (`P`)
+  - `internal/tui/todo_dialog.go`
+    - TODO launch flow now supports:
+      - `Start here`
+      - `Start in new worktree`
+      - `Start in existing worktree`
+    - new-worktree flow now supports cached suggestion display, manual edit (`e`), and regeneration (`r`)
+    - existing-worktree flow now opens a picker and launches the embedded provider directly into the selected sibling worktree
+- Added focused coverage for the new UX and service behavior:
+  - `internal/tui/app_test.go`
+    - added grouped-list coverage for collapsed/expanded repo worktree rows
+    - added existing-worktree TODO launch coverage
+  - `internal/service/service_test.go`
+    - added linked-worktree removal coverage
+- Kept the earlier new-worktree launch coverage in place while correcting the test expectation to preserve the tracked path variant rather than forcing `EvalSymlinks` output on macOS temp paths
+- Verification status:
+  - focused worktree checks passed:
+    - `go test ./internal/service -run 'Test(CreateTodoWorktreeCreatesTrackedSiblingProject|RemoveWorktreeRemovesTrackedLinkedWorktree)' -count=1`
+    - `go test ./internal/tui -run 'Test(RenderProjectListCollapsesLinkedWorktreesUnderRepoRow|RenderProjectListShowsExpandedWorktreeChildren|TodoDialogCanStartSelectedTodoInExistingWorktree|TodoDialogCanStartSelectedTodoInNewWorktree|TodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider|TodoDialogShowsWorktreeSuggestionState|ViewStacksListAndDetailVertically)' -count=1`
+  - `make scan` passed at `2026-03-30T11:15:27+09:00`
+  - `make doctor` passed using cached report at `2026-03-30T11:15:27+09:00`
+  - `make test` still fails only on the same pre-existing unrelated `internal/tui` cases:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+  - `timeout 10s make tui-parallel` still could not complete interactive verification in this environment because opening `/dev/tty` failed (`device not configured`)
+- Next concrete tasks:
+  - Decide whether the new worktree keys (`w`, `x`, `P`) should also be surfaced more explicitly in the footer/help affordances.
+  - Do an interactive TUI smoke pass in a real terminal once `/dev/tty` access is available, especially around grouped-row selection, existing-worktree launch, and remove/prune confirmations.
+  - If repo/worktree grouping remains stable after manual usage, update public/reference docs to show the new grouped-lane model instead of the earlier “duplicate rows for now” limitation.
+
+## Latest Update (2026-03-30 10:33 JST)
+
+- Added the first end-to-end TODO worktree launch flow so a cached AI suggestion can now turn into a real `git worktree` plus an embedded provider session:
+  - `internal/service/worktree.go`
+    - added `CreateTodoWorktree`, which validates the cached TODO worktree suggestion, creates a sibling worktree via `git worktree add`, and immediately tracks the new path in Little Control Room
+    - current managed-path convention is `<repo-parent>/<repo-base>--<worktree-suffix>`
+  - `internal/tui/todo_dialog.go`
+    - expanded the TODO start dialog to offer both `Start here with ...` and `Start in new worktree with ...` for Codex, OpenCode, and Claude Code
+    - when a new-worktree option is highlighted, the dialog now shows the cached branch/folder suggestion or a clear preparation/unavailable state
+  - `internal/tui/app.go`
+    - handles the new worktree-launch message by restoring the TODO draft under the created worktree path and opening a fresh embedded provider session there
+  - `internal/service/service_test.go`
+    - added coverage for creating a tracked sibling worktree from a ready TODO suggestion, including branch verification inside the new checkout
+  - `internal/tui/app_test.go`
+    - added coverage for the new start-dialog options and the end-to-end `Start in new worktree` flow from the TODO overlay
+- Current limitation in this slice:
+  - newly created worktrees are tracked as separate project rows for now
+  - repo/worktree grouping and child-row presentation are still future work
+- Verification status:
+  - `go test ./internal/service -run 'TestCreateTodoWorktreeCreatesTrackedSiblingProject' -count=1` passed
+  - `go test ./internal/tui -run 'Test(TodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider|TodoDialogCanStartSelectedTodoInNewWorktree|TodoDialogShowsWorktreeSuggestionState)' -count=1` passed
+  - `make test` still fails only on the same pre-existing unrelated `internal/tui` cases:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+  - `make scan` passed at `2026-03-30T10:32:12+09:00`
+  - `make doctor` passed using cached report at `2026-03-30T10:32:12+09:00`
+  - `timeout 10s make tui-parallel` still could not complete interactive verification in this environment because opening `/dev/tty` failed (`device not configured`)
+- Next concrete tasks:
+  - Add manual edit/regenerate controls to the TODO worktree launch flow before creating the worktree.
+  - Add `Start in existing worktree` once there is a good picker for sibling worktrees.
+  - Group worktrees under a repo-level row in the main UI so parallel lanes do not appear as noisy duplicate projects.
 
 ## Latest Update (2026-03-30 09:06 JST)
 

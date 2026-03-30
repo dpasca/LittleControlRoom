@@ -32,6 +32,13 @@ func DiscoverGitProjects(cfg Discovery) ([]string, error) {
 				return nil
 			}
 			if !d.IsDir() {
+				if d.Name() == ".git" {
+					project := filepath.Dir(path)
+					if _, ok := seen[project]; !ok {
+						seen[project] = struct{}{}
+						out = append(out, project)
+					}
+				}
 				return nil
 			}
 			if appfs.IsManagedInternalPath(path, cfg.SkipPaths) {

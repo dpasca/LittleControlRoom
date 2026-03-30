@@ -1554,6 +1554,168 @@ func TestScanOnceDetectsRepoAheadOfRemote(t *testing.T) {
 	}
 }
 
+func TestCreateTodoWorktreeCreatesTrackedSiblingProject(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	svc := New(cfg, st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	item, err := svc.AddTodo(ctx, projectPath, "Build the first worktree launch flow")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
+		t.Fatalf("queue todo worktree suggestion: %v", err)
+	} else if !queued {
+		t.Fatalf("expected todo worktree suggestion to queue")
+	}
+	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
+	if err != nil {
+		t.Fatalf("claim todo worktree suggestion: %v", err)
+	}
+	suggestion.BranchName = "feat/worktree-launch"
+	suggestion.WorktreeSuffix = "feat-worktree-launch"
+	suggestion.Kind = "feature"
+	suggestion.Reason = "Implements the first worktree launch flow."
+	suggestion.Confidence = 0.93
+	suggestion.Model = "test"
+	if completed, err := st.CompleteTodoWorktreeSuggestion(ctx, suggestion); err != nil {
+		t.Fatalf("complete todo worktree suggestion: %v", err)
+	} else if !completed {
+		t.Fatalf("expected todo worktree suggestion to complete")
+	}
+
+	result, err := svc.CreateTodoWorktree(ctx, CreateTodoWorktreeRequest{
+		ProjectPath: projectPath,
+		TodoID:      item.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateTodoWorktree() error = %v", err)
+	}
+	expectedPath := filepath.Join(root, "repo--feat-worktree-launch")
+	if result.WorktreePath != expectedPath {
+		t.Fatalf("worktree path = %q, want %q", result.WorktreePath, expectedPath)
+	}
+	if result.BranchName != "feat/worktree-launch" {
+		t.Fatalf("branch = %q, want %q", result.BranchName, "feat/worktree-launch")
+	}
+	status, err := scanner.ReadGitRepoStatus(ctx, result.WorktreePath)
+	if err != nil {
+		t.Fatalf("read git repo status for worktree: %v", err)
+	}
+	if status.Branch != "feat/worktree-launch" {
+		t.Fatalf("worktree branch = %q, want %q", status.Branch, "feat/worktree-launch")
+	}
+
+	detail, err := st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() for worktree error = %v", err)
+	}
+	if detail.Summary.Path != result.WorktreePath {
+		t.Fatalf("tracked worktree path = %q, want %q", detail.Summary.Path, result.WorktreePath)
+	}
+	if strings.TrimSpace(detail.Summary.RepoBranch) != "feat/worktree-launch" {
+		t.Fatalf("tracked worktree branch = %q, want %q", detail.Summary.RepoBranch, "feat/worktree-launch")
+	}
+}
+
+func TestRemoveWorktreeRemovesTrackedLinkedWorktree(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	svc := New(cfg, st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	item, err := svc.AddTodo(ctx, projectPath, "Create a removable linked worktree")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
+		t.Fatalf("queue todo worktree suggestion: %v", err)
+	} else if !queued {
+		t.Fatalf("expected todo worktree suggestion to queue")
+	}
+	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
+	if err != nil {
+		t.Fatalf("claim todo worktree suggestion: %v", err)
+	}
+	suggestion.BranchName = "feat/remove-worktree"
+	suggestion.WorktreeSuffix = "feat-remove-worktree"
+	suggestion.Kind = "feature"
+	suggestion.Reason = "Creates a linked worktree for removal coverage."
+	suggestion.Confidence = 0.92
+	suggestion.Model = "test"
+	if completed, err := st.CompleteTodoWorktreeSuggestion(ctx, suggestion); err != nil {
+		t.Fatalf("complete todo worktree suggestion: %v", err)
+	} else if !completed {
+		t.Fatalf("expected todo worktree suggestion to complete")
+	}
+
+	result, err := svc.CreateTodoWorktree(ctx, CreateTodoWorktreeRequest{
+		ProjectPath: projectPath,
+		TodoID:      item.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateTodoWorktree() error = %v", err)
+	}
+
+	if err := svc.RemoveWorktree(ctx, result.WorktreePath); err != nil {
+		t.Fatalf("RemoveWorktree() error = %v", err)
+	}
+	if _, err := os.Stat(result.WorktreePath); !os.IsNotExist(err) {
+		t.Fatalf("worktree path still exists after removal: stat err = %v", err)
+	}
+	worktrees, err := scanner.ListGitWorktrees(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("ListGitWorktrees() error = %v", err)
+	}
+	for _, worktree := range worktrees {
+		if filepath.Clean(strings.TrimSpace(worktree.Path)) == filepath.Clean(result.WorktreePath) {
+			t.Fatalf("removed worktree %q still present in git worktree list", result.WorktreePath)
+		}
+	}
+	detail, err := st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() after removal error = %v", err)
+	}
+	if !detail.Summary.Forgotten {
+		t.Fatalf("removed worktree should be marked forgotten: %#v", detail.Summary)
+	}
+}
+
 func TestPrepareCommitUsesStagedScopeAndFinishPushState(t *testing.T) {
 	t.Parallel()
 

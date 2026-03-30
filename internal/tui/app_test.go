@@ -1520,6 +1520,94 @@ func TestRenderProjectListShowsTODOCount(t *testing.T) {
 	}
 }
 
+func TestRenderProjectListCollapsesLinkedWorktreesUnderRepoRow(t *testing.T) {
+	rootPath := "/tmp/repo"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				Status:           model.StatusIdle,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:             "repo--feat-parallel-lane",
+				Path:             "/tmp/repo--feat-parallel-lane",
+				Status:           model.StatusActive,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+				RepoBranch:       "feat/parallel-lane",
+				RepoDirty:        true,
+			},
+		},
+		worktreeExpanded: map[string]bool{rootPath: false},
+		sortMode:         sortByAttention,
+		visibility:       visibilityAllFolders,
+	}
+
+	m.rebuildProjectList(rootPath)
+	rendered := ansi.Strip(m.renderProjectList(140, 8))
+	lines := strings.Split(rendered, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("renderProjectList() expected header plus one grouped row, got %q", rendered)
+	}
+	if !strings.Contains(lines[1], "▸ repo") {
+		t.Fatalf("renderProjectList() should show a collapsed disclosure row, got %q", lines[1])
+	}
+	if !strings.Contains(lines[1], "2 worktrees, 1 active, 1 dirty") {
+		t.Fatalf("renderProjectList() should summarize the worktree family, got %q", lines[1])
+	}
+	if strings.Contains(lines[1], "feat/parallel-lane") {
+		t.Fatalf("renderProjectList() should keep child worktree rows hidden while collapsed, got %q", lines[1])
+	}
+}
+
+func TestRenderProjectListShowsExpandedWorktreeChildren(t *testing.T) {
+	rootPath := "/tmp/repo"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				Status:           model.StatusIdle,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:             "repo--feat-parallel-lane",
+				Path:             "/tmp/repo--feat-parallel-lane",
+				Status:           model.StatusActive,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+				RepoBranch:       "feat/parallel-lane",
+			},
+		},
+		worktreeExpanded: map[string]bool{rootPath: true},
+		sortMode:         sortByAttention,
+		visibility:       visibilityAllFolders,
+	}
+
+	m.rebuildProjectList(rootPath)
+	rendered := ansi.Strip(m.renderProjectList(140, 8))
+	lines := strings.Split(rendered, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("renderProjectList() expected header plus root and child rows, got %q", rendered)
+	}
+	if !strings.Contains(lines[1], "▾ repo") {
+		t.Fatalf("renderProjectList() should show an expanded disclosure row, got %q", lines[1])
+	}
+	if !strings.Contains(lines[2], "feat/parallel-lane") {
+		t.Fatalf("renderProjectList() should render the child worktree branch label, got %q", lines[2])
+	}
+}
+
 func TestRenderDetailContentKeepsRuntimeInSeparatePane(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{
@@ -3686,6 +3774,11 @@ func TestTodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider(t *testin
 				ID:          9,
 				ProjectPath: "/tmp/demo",
 				Text:        "Investigate the TODO dialog launch provider list",
+				WorktreeSuggestion: &model.TodoWorktreeSuggestion{
+					Status:         model.TodoWorktreeSuggestionReady,
+					BranchName:     "feat/todo-worktree-launch",
+					WorktreeSuffix: "feat-todo-worktree-launch",
+				},
 			}},
 		},
 		selected:      0,
@@ -3707,9 +3800,22 @@ func TestTodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider(t *testin
 	}
 
 	rendered := ansi.Strip(got.renderTodoCopyDialogOverlay("", 100, 24))
-	if !strings.Contains(rendered, "Start with Claude Code") {
+	if !strings.Contains(rendered, "Start here with Claude Code") {
 		t.Fatalf("rendered copy dialog = %q, want Claude Code launch option", rendered)
 	}
+	if !strings.Contains(rendered, "Start in new worktree with Claude Code") {
+		t.Fatalf("rendered copy dialog = %q, want Claude Code worktree launch option", rendered)
+	}
+
+	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	rendered = ansi.Strip(got.renderTodoCopyDialogOverlay("", 100, 24))
+	if !strings.Contains(rendered, "Branch: feat/todo-worktree-launch") {
+		t.Fatalf("rendered copy dialog = %q, want ready worktree branch details", rendered)
+	}
+
+	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyUp})
+	got = updated.(Model)
 
 	updated, cmd := got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
@@ -3733,6 +3839,249 @@ func TestTodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider(t *testin
 	}
 	if requests[0].Provider != codexapp.ProviderClaudeCode || !requests[0].ForceNew {
 		t.Fatalf("launch request = %#v, want fresh Claude Code launch", requests[0])
+	}
+}
+
+func TestTodoDialogCanStartSelectedTodoInNewWorktree(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	runTUITestGit(t, "", "init", projectPath)
+	runTUITestGit(t, projectPath, "config", "user.name", "Little Control Room Tests")
+	runTUITestGit(t, projectPath, "config", "user.email", "tests@example.com")
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write README.md: %v", err)
+	}
+	runTUITestGit(t, projectPath, "add", "README.md")
+	runTUITestGit(t, projectPath, "commit", "-m", "initial commit")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = st.Close()
+	})
+
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, service.CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track project: %v", err)
+	}
+
+	item, err := svc.AddTodo(ctx, projectPath, "Launch this TODO in a new worktree")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
+		t.Fatalf("queue todo worktree suggestion: %v", err)
+	} else if !queued {
+		t.Fatalf("expected todo worktree suggestion to queue")
+	}
+	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
+	if err != nil {
+		t.Fatalf("claim todo worktree suggestion: %v", err)
+	}
+	suggestion.BranchName = "feat/new-worktree-launch"
+	suggestion.WorktreeSuffix = "feat-new-worktree-launch"
+	suggestion.Kind = "feature"
+	suggestion.Reason = "Implements new worktree launch."
+	suggestion.Confidence = 0.91
+	suggestion.Model = "test"
+	if completed, err := st.CompleteTodoWorktreeSuggestion(ctx, suggestion); err != nil {
+		t.Fatalf("complete todo worktree suggestion: %v", err)
+	} else if !completed {
+		t.Fatalf("expected todo worktree suggestion to complete")
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 10)
+	if err != nil {
+		t.Fatalf("get project detail: %v", err)
+	}
+
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				ThreadID: "ses-worktree",
+				Started:  true,
+				Preset:   req.Preset,
+				Status:   req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+
+	m := Model{
+		ctx:          ctx,
+		svc:          svc,
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:          projectPath,
+			Name:          "repo",
+			PresentOnDisk: true,
+		}},
+		detail:        detail,
+		selected:      0,
+		todoDialog:    &todoDialogState{ProjectPath: projectPath, ProjectName: "repo"},
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, _ := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	updated, cmd := got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("starting the worktree TODO flow should return a command")
+	}
+	msg := cmd()
+	launchMsg, ok := msg.(todoWorktreeLaunchMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want todoWorktreeLaunchMsg", msg)
+	}
+	if launchMsg.err != nil {
+		t.Fatalf("worktree launch returned error = %v", launchMsg.err)
+	}
+	expectedPath := filepath.Join(root, "repo--feat-new-worktree-launch")
+	if launchMsg.projectPath != expectedPath {
+		t.Fatalf("worktree launch path = %q, want %q", launchMsg.projectPath, expectedPath)
+	}
+
+	updated, cmd = got.Update(launchMsg)
+	got = updated.(Model)
+	if got.codexPendingOpen == nil || got.codexPendingOpen.projectPath != expectedPath {
+		t.Fatalf("codexPendingOpen = %#v, want pending open for %q", got.codexPendingOpen, expectedPath)
+	}
+	if got.codexPendingOpen.provider != codexapp.ProviderCodex {
+		t.Fatalf("pending provider = %q, want %q", got.codexPendingOpen.provider, codexapp.ProviderCodex)
+	}
+	if got.todoLaunchDraft == nil || got.todoLaunchDraft.projectPath != expectedPath {
+		t.Fatalf("todoLaunchDraft = %#v, want worktree draft for %q", got.todoLaunchDraft, expectedPath)
+	}
+	if cmd == nil {
+		t.Fatalf("handling todoWorktreeLaunchMsg should return an open command")
+	}
+}
+
+func TestTodoDialogCanStartSelectedTodoInExistingWorktree(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				ThreadID: "ses-existing-worktree",
+				Started:  true,
+				Preset:   req.Preset,
+				Status:   req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+
+	rootPath := "/tmp/repo"
+	worktreePath := "/tmp/repo--feat-reuse-lane"
+	m := Model{
+		codexManager: manager,
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:             "repo--feat-reuse-lane",
+				Path:             worktreePath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+				RepoBranch:       "feat/reuse-lane",
+				RepoDirty:        true,
+			},
+		},
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: rootPath},
+			Todos: []model.TodoItem{{
+				ID:          41,
+				ProjectPath: rootPath,
+				Text:        "Reuse an existing worktree for this TODO",
+			}},
+		},
+		selected:      0,
+		todoDialog:    &todoDialogState{ProjectPath: rootPath, ProjectName: "repo"},
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+		sortMode:      sortByAttention,
+		visibility:    visibilityAllFolders,
+	}
+	m.rebuildProjectList(rootPath)
+
+	updated, _ := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	if got.todoCopyDialog == nil || got.todoCopyDialog.Selected != todoCopyScopeCodexExistingWorktree {
+		t.Fatalf("todoCopyDialog = %#v, want existing-worktree Codex option selected", got.todoCopyDialog)
+	}
+	rendered := ansi.Strip(got.renderTodoCopyDialogOverlay("", 100, 24))
+	if !strings.Contains(rendered, "Existing: 1 available") {
+		t.Fatalf("rendered copy dialog = %q, want existing-worktree availability", rendered)
+	}
+
+	updated, cmd := got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	gotPtr, ok := updated.(*Model)
+	if !ok {
+		t.Fatalf("updateTodoCopyDialogMode() returned %T, want *Model", updated)
+	}
+	got = *gotPtr
+	if cmd != nil {
+		t.Fatalf("opening the existing worktree picker should not launch immediately")
+	}
+	if got.todoExistingWorktree == nil {
+		t.Fatalf("existing worktree picker should open")
+	}
+	rendered = ansi.Strip(got.renderTodoExistingWorktreeOverlay("", 100, 24))
+	if !strings.Contains(rendered, "feat/reuse-lane") {
+		t.Fatalf("rendered existing worktree picker = %q, want branch label", rendered)
+	}
+
+	updated, cmd = got.updateTodoExistingWorktreeMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if got.codexPendingOpen == nil || got.codexPendingOpen.projectPath != worktreePath {
+		t.Fatalf("codexPendingOpen = %#v, want pending open for %q", got.codexPendingOpen, worktreePath)
+	}
+	if cmd == nil {
+		t.Fatalf("starting in an existing worktree should return an open command")
+	}
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("existing worktree launch returned error = %v", opened.err)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("request count = %d, want 1", len(requests))
+	}
+	if requests[0].ProjectPath != worktreePath || requests[0].Provider != codexapp.ProviderCodex {
+		t.Fatalf("launch request = %#v, want Codex launch in %q", requests[0], worktreePath)
 	}
 }
 

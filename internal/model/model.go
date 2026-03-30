@@ -21,6 +21,14 @@ const (
 	RepoSyncDiverged   RepoSyncStatus = "diverged"
 )
 
+type WorktreeKind string
+
+const (
+	WorktreeKindNone   WorktreeKind = ""
+	WorktreeKindMain   WorktreeKind = "main"
+	WorktreeKindLinked WorktreeKind = "linked"
+)
+
 type AttentionReason struct {
 	Code   string `json:"code"`
 	Text   string `json:"text"`
@@ -144,30 +152,32 @@ type DetectorProjectActivity struct {
 }
 
 type ProjectState struct {
-	Path            string
-	Name            string
-	LastActivity    time.Time
-	Status          ProjectStatus
-	AttentionScore  int
-	PresentOnDisk   bool
-	RepoBranch      string
-	RepoDirty       bool
-	RepoSyncStatus  RepoSyncStatus
-	RepoAheadCount  int
-	RepoBehindCount int
-	Forgotten       bool
-	ManuallyAdded   bool
-	InScope         bool
-	Pinned          bool
-	SnoozedUntil    *time.Time
-	Note            string
-	RunCommand      string
-	MovedFromPath   string
-	MovedAt         time.Time
-	AttentionReason []AttentionReason
-	Sessions        []SessionEvidence
-	Artifacts       []ArtifactEvidence
-	UpdatedAt       time.Time
+	Path             string
+	Name             string
+	LastActivity     time.Time
+	Status           ProjectStatus
+	AttentionScore   int
+	PresentOnDisk    bool
+	WorktreeRootPath string
+	WorktreeKind     WorktreeKind
+	RepoBranch       string
+	RepoDirty        bool
+	RepoSyncStatus   RepoSyncStatus
+	RepoAheadCount   int
+	RepoBehindCount  int
+	Forgotten        bool
+	ManuallyAdded    bool
+	InScope          bool
+	Pinned           bool
+	SnoozedUntil     *time.Time
+	Note             string
+	RunCommand       string
+	MovedFromPath    string
+	MovedAt          time.Time
+	AttentionReason  []AttentionReason
+	Sessions         []SessionEvidence
+	Artifacts        []ArtifactEvidence
+	UpdatedAt        time.Time
 }
 
 type ProjectSummary struct {
@@ -177,6 +187,8 @@ type ProjectSummary struct {
 	Status                                        ProjectStatus
 	AttentionScore                                int
 	PresentOnDisk                                 bool
+	WorktreeRootPath                              string
+	WorktreeKind                                  WorktreeKind
 	RepoBranch                                    string
 	RepoDirty                                     bool
 	RepoSyncStatus                                RepoSyncStatus
