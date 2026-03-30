@@ -77,9 +77,9 @@ func TestApplyEditableSettingsSkipsAIClientRefreshForEmbeddedModelPreferences(t 
 		bus:               events.NewBus(),
 		llmUsageTracker:   llm.NewUsageTracker(),
 		opencodeDiscovery: llm.NewOpenCodeDiscovery(),
-		backendDetector: func(context.Context, config.AppConfig) aibackend.Snapshot {
+		backendDetector: func(context.Context, config.AppConfig, config.AIBackend) aibackend.Status {
 			detectCalls++
-			return readyBackendSnapshot(config.AIBackendCodex)
+			return readyBackendStatus(config.AIBackendCodex)
 		},
 	}
 
@@ -112,9 +112,9 @@ func TestApplyEditableSettingsRefreshesAIClientsWhenBackendConfigChanges(t *test
 		bus:               events.NewBus(),
 		llmUsageTracker:   llm.NewUsageTracker(),
 		opencodeDiscovery: llm.NewOpenCodeDiscovery(),
-		backendDetector: func(_ context.Context, cfg config.AppConfig) aibackend.Snapshot {
+		backendDetector: func(_ context.Context, cfg config.AppConfig, backend config.AIBackend) aibackend.Status {
 			detectCalls++
-			return readyBackendSnapshot(cfg.EffectiveAIBackend())
+			return readyBackendStatus(firstNonZeroBackend(backend, cfg.EffectiveAIBackend()))
 		},
 	}
 
@@ -138,26 +138,21 @@ func TestApplyEditableSettingsRefreshesAIClientsWhenBackendConfigChanges(t *test
 	}
 }
 
-func readyBackendSnapshot(selected config.AIBackend) aibackend.Snapshot {
-	return aibackend.Snapshot{
-		Selected: selected,
-		OpenAIAPI: aibackend.Status{
-			Backend: config.AIBackendOpenAIAPI,
-			Ready:   true,
-		},
-		Codex: aibackend.Status{
-			Backend: config.AIBackendCodex,
-			Ready:   true,
-		},
-		OpenCode: aibackend.Status{
-			Backend: config.AIBackendOpenCode,
-			Ready:   true,
-		},
-		Claude: aibackend.Status{
-			Backend: config.AIBackendClaude,
-			Ready:   true,
-		},
+func readyBackendStatus(backend config.AIBackend) aibackend.Status {
+	return aibackend.Status{
+		Backend: backend,
+		Label:   backend.Label(),
+		Ready:   true,
 	}
+}
+
+func firstNonZeroBackend(values ...config.AIBackend) config.AIBackend {
+	for _, value := range values {
+		if value != config.AIBackendUnset {
+			return value
+		}
+	}
+	return config.AIBackendUnset
 }
 
 func TestScanWithOptionsForceRetriesFailedClassifications(t *testing.T) {

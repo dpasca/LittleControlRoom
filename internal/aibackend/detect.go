@@ -45,16 +45,16 @@ func Detect(ctx context.Context, cfg config.AppConfig) Snapshot {
 	}
 }
 
-func (s Snapshot) StatusFor(backend config.AIBackend) Status {
+func DetectStatus(ctx context.Context, cfg config.AppConfig, backend config.AIBackend) Status {
 	switch backend {
 	case config.AIBackendOpenAIAPI:
-		return s.OpenAIAPI
+		return detectOpenAIAPI(cfg)
 	case config.AIBackendCodex:
-		return s.Codex
+		return detectCodex(ctx)
 	case config.AIBackendOpenCode:
-		return s.OpenCode
+		return detectOpenCode(ctx)
 	case config.AIBackendClaude:
-		return s.Claude
+		return detectClaudeCode(ctx)
 	case config.AIBackendDisabled:
 		return Status{
 			Backend: config.AIBackendDisabled,
@@ -68,6 +68,23 @@ func (s Snapshot) StatusFor(backend config.AIBackend) Status {
 			Label:   config.AIBackendUnset.Label(),
 			Detail:  "Pick a backend in /setup to enable AI features.",
 		}
+	}
+}
+
+func (s Snapshot) StatusFor(backend config.AIBackend) Status {
+	switch backend {
+	case config.AIBackendOpenAIAPI:
+		return s.OpenAIAPI
+	case config.AIBackendCodex:
+		return s.Codex
+	case config.AIBackendOpenCode:
+		return s.OpenCode
+	case config.AIBackendClaude:
+		return s.Claude
+	case config.AIBackendDisabled:
+		return DetectStatus(nil, config.AppConfig{}, config.AIBackendDisabled)
+	default:
+		return DetectStatus(nil, config.AppConfig{}, config.AIBackendUnset)
 	}
 }
 

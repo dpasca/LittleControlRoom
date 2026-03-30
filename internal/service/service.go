@@ -49,7 +49,7 @@ type Service struct {
 	classifier    SessionClassifier
 	todoSuggester *todoworktree.Manager
 
-	backendDetector func(context.Context, config.AppConfig) aibackend.Snapshot
+	backendDetector func(context.Context, config.AppConfig, config.AIBackend) aibackend.Status
 
 	commitMessageSuggester   gitops.CommitMessageSuggester
 	untrackedFileRecommender gitops.UntrackedFileRecommender
@@ -91,7 +91,7 @@ func New(cfg config.AppConfig, st *store.Store, bus *events.Bus, detectorList []
 		store:                 st,
 		bus:                   bus,
 		detectors:             detectorList,
-		backendDetector:       aibackend.Detect,
+		backendDetector:       aibackend.DetectStatus,
 		llmUsageTracker:       llm.NewUsageTracker(),
 		opencodeDiscovery:     llm.NewOpenCodeDiscovery(),
 		gitFingerprintReader:  scanner.ReadGitFingerprint,
@@ -234,9 +234,9 @@ func (s *Service) configureAIClientsLocked() {
 		selectedStatus  aibackend.Status
 	)
 	if detector == nil {
-		detector = aibackend.Detect
+		detector = aibackend.DetectStatus
 	}
-	selectedStatus = detector(context.Background(), s.cfg).StatusFor(selectedBackend)
+	selectedStatus = detector(context.Background(), s.cfg, selectedBackend)
 	switch selectedBackend {
 	case config.AIBackendOpenAIAPI:
 		apiKey := strings.TrimSpace(s.cfg.OpenAIAPIKey)

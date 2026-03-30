@@ -1,38 +1,41 @@
 # Little Control Room Status
 
-Last updated: 2026-03-30 19:57 JST
+Last updated: 2026-03-30 20:12 JST
 
-## Latest Update (2026-03-30 19:57 JST)
+## Latest Update (2026-03-30 20:12 JST)
 
-- Traced the embedded Codex `/model` pause to an unnecessary service-side AI backend refresh:
+- Tightened the backend-detection path behind embedded model saves and startup:
   - assumption update:
-    - embedded model preference saves were flowing through `Service.ApplyEditableSettings`, which re-ran backend detection/client setup even when only embedded model metadata changed
-    - because backend detection shells out to CLI auth/status commands, that synchronous refresh can stall the TUI for a few seconds after `/model`
+    - embedded model preference saves were flowing through `Service.ApplyEditableSettings`, which could re-run backend detection/client setup even when only embedded model metadata changed
+    - service startup was also asking for an all-backends detection snapshot even though client configuration only needs readiness for the currently selected backend
+    - because backend detection shells out to local CLI auth/status commands, either path could stall the TUI for a few seconds
+  - `internal/aibackend/detect.go`
+    - added `DetectStatus`, a selected-backend-only status probe for service/client setup paths
   - `internal/service/service.go`
-    - added a test hook for backend detection so service refresh behavior can be verified directly
+    - added a backend-detection test hook so the refresh behavior can be verified directly
     - made `ApplyEditableSettings` reconfigure AI clients only when backend-affecting settings actually change:
       - effective AI backend
       - OpenAI API key
       - OpenCode model tier
-    - kept embedded model/reasoning updates applying immediately without forcing backend detection
+    - switched service client configuration to ask only for the selected backend status instead of computing a full all-backends snapshot
   - `internal/service/service_test.go`
     - added focused coverage to prove:
       - embedded model-only saves do not trigger backend detection
       - real backend config changes still reconfigure AI clients
 - Verification status:
   - focused regression coverage passed:
-    - `go test ./internal/service -run 'TestApplyEditableSettings(SkipsAIClientRefreshForEmbeddedModelPreferences|RefreshesAIClientsWhenBackendConfigChanges)' -count=1`
+    - `go test ./internal/aibackend ./internal/service -run 'Test(ParseClaudeAuthStatusJSON|ParseClaudeAuthStatusExtractsEmbeddedJSON|ClaudeAuthDetailIncludesMethodAndSubscription|ApplyEditableSettingsSkipsAIClientRefreshForEmbeddedModelPreferences|ApplyEditableSettingsRefreshesAIClientsWhenBackendConfigChanges)' -count=1`
   - repo validation:
-    - `make scan` passed at `2026-03-30T19:56:39+09:00`
-    - `make doctor` passed using cached report at `2026-03-30T19:56:39+09:00`
+    - `make scan` passed at `2026-03-30T20:12:21+09:00`
+    - `make doctor` passed using cached report at `2026-03-30T20:12:21+09:00`
     - `make test` still fails only on the same pre-existing unrelated `internal/tui` cases:
     - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
     - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
     - `TestDiffModeMovesSelectionAndScrollsContent`
     - `git diff --check` passed
 - Next concrete tasks:
-  - Do a real-terminal smoke pass on an embedded Codex session and confirm `/model` no longer pauses the pane for several seconds.
-  - If any lag remains in live use, capture whether it happens when opening the picker or only after applying the selection so the remaining path can be isolated further.
+  - Restart LCR and do a real-terminal smoke pass on both startup and embedded Codex `/model` in an already-running session.
+  - If any lag remains after restart, capture whether it is tied to picker open, picker apply, or a later session refresh so the remaining path can be isolated quickly.
 
 ## Latest Update (2026-03-30 19:42 JST)
 
