@@ -62,6 +62,7 @@ type todoCopyDialogState struct {
 	TodoText               string
 	RunMode                int
 	Provider               codexapp.Provider
+	OpenModelFirst         bool
 	BranchOverride         string
 	WorktreeSuffixOverride string
 }
@@ -345,7 +346,7 @@ func (m *Model) closeTodoWorktreeEditor(status string) {
 	}
 }
 
-func (m *Model) openTodoExistingWorktreeDialog(provider codexapp.Provider, openModelFirst bool) {
+func (m *Model) openTodoExistingWorktreeDialog(provider codexapp.Provider) {
 	if m.todoCopyDialog == nil {
 		return
 	}
@@ -360,7 +361,7 @@ func (m *Model) openTodoExistingWorktreeDialog(provider codexapp.Provider, openM
 		ProjectName:    m.todoCopyDialog.ProjectName,
 		TodoText:       m.todoCopyDialog.TodoText,
 		Provider:       provider,
-		OpenModelFirst: openModelFirst,
+		OpenModelFirst: m.todoCopyDialog.OpenModelFirst,
 		Candidates:     candidates,
 		ReturnCopy:     &returnCopy,
 	}
@@ -453,16 +454,14 @@ func (m Model) updateTodoCopyDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		return m, m.closeTodoCopyDialog("TODO start canceled")
-	case "w", "W", "left", "right", "h", "l":
+	case "w", "W":
 		return m, m.cycleTodoCopyDialogRunMode(msg.String())
 	case "a":
 		return m, m.cycleTodoCopyDialogProvider(1)
 	case "A":
 		return m, m.cycleTodoCopyDialogProvider(-1)
-	case "up", "k":
-		return m, m.cycleTodoCopyDialogProvider(-1)
-	case "down", "j", "tab", "shift+tab":
-		return m, m.cycleTodoCopyDialogProvider(1)
+	case "m":
+		return m, m.toggleTodoCopyDialogOpenModelFirst()
 	case "e":
 		if copyDialog.RunMode != todoCopyModeNewWorktree {
 			return m, nil
@@ -482,15 +481,10 @@ func (m Model) updateTodoCopyDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = "Refreshing worktree suggestion..."
 		return m, m.regenerateTodoWorktreeSuggestionCmd(copyDialog.ProjectPath, copyDialog.TodoID)
 	case "x":
-		m.openTodoExistingWorktreeDialog(copyDialog.Provider, false)
-		return m, nil
-	case "alt+x":
-		m.openTodoExistingWorktreeDialog(copyDialog.Provider, true)
+		m.openTodoExistingWorktreeDialog(copyDialog.Provider)
 		return m, nil
 	case "enter", " ":
 		return m.activateTodoCopyDialogSelection()
-	case "alt+enter":
-		return m.activateTodoCopyDialogWithModelPicker()
 	}
 	return m, nil
 }
@@ -500,17 +494,10 @@ func (m *Model) cycleTodoCopyDialogRunMode(key string) tea.Cmd {
 	if copyDialog == nil {
 		return nil
 	}
-	switch key {
-	case "left", "h":
-		copyDialog.RunMode = todoCopyModeHere
-	case "right", "l":
+	if copyDialog.RunMode == todoCopyModeHere {
 		copyDialog.RunMode = todoCopyModeNewWorktree
-	default:
-		if copyDialog.RunMode == todoCopyModeHere {
-			copyDialog.RunMode = todoCopyModeNewWorktree
-		} else {
-			copyDialog.RunMode = todoCopyModeHere
-		}
+	} else {
+		copyDialog.RunMode = todoCopyModeHere
 	}
 	return nil
 }
@@ -539,28 +526,25 @@ func (m *Model) cycleTodoCopyDialogProvider(delta int) tea.Cmd {
 	return nil
 }
 
+func (m *Model) toggleTodoCopyDialogOpenModelFirst() tea.Cmd {
+	copyDialog := m.todoCopyDialog
+	if copyDialog == nil {
+		return nil
+	}
+	copyDialog.OpenModelFirst = !copyDialog.OpenModelFirst
+	return nil
+}
+
 func (m *Model) activateTodoCopyDialogSelection() (tea.Model, tea.Cmd) {
 	copyDialog := m.todoCopyDialog
 	if copyDialog == nil {
 		return m, nil
 	}
 	if copyDialog.RunMode == todoCopyModeNewWorktree {
-		return m.startSelectedTodoInNewWorktree(copyDialog.Provider, false)
+		return m.startSelectedTodoInNewWorktree(copyDialog.Provider, copyDialog.OpenModelFirst)
 	}
 	m.todoCopyDialog = nil
-	return m.startSelectedTodoWithProvider(copyDialog.Provider, false)
-}
-
-func (m *Model) activateTodoCopyDialogWithModelPicker() (tea.Model, tea.Cmd) {
-	copyDialog := m.todoCopyDialog
-	if copyDialog == nil {
-		return m, nil
-	}
-	if copyDialog.RunMode == todoCopyModeNewWorktree {
-		return m.startSelectedTodoInNewWorktree(copyDialog.Provider, true)
-	}
-	m.todoCopyDialog = nil
-	return m.startSelectedTodoWithProvider(copyDialog.Provider, true)
+	return m.startSelectedTodoWithProvider(copyDialog.Provider, copyDialog.OpenModelFirst)
 }
 
 func (m Model) updateTodoWorktreeEditorMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1128,7 +1112,7 @@ func (m Model) renderTodoCopyDialogOverlay(body string, bodyW, bodyH int) string
 	if copyDialog == nil {
 		return body
 	}
-	panelW := min(bodyW, min(max(76, bodyW-10), 108))
+	panelW := min(bodyW, min(max(84, bodyW-6), 116))
 	panelInnerW := max(24, panelW-4)
 	lines := []string{
 		renderDialogHeader("Start TODO", copyDialog.ProjectName, "", panelInnerW),
@@ -1140,7 +1124,6 @@ func (m Model) renderTodoCopyDialogOverlay(body string, bodyW, bodyH int) string
 	for _, mode := range []int{todoCopyModeHere, todoCopyModeNewWorktree} {
 		runButtons = append(runButtons, renderNoteDialogButton(todoCopyRunModeLabel(mode), copyDialog.RunMode == mode))
 	}
-	runButtons = append(runButtons, detailMutedStyle.Render("w or ←→"))
 	candidates := m.existingWorktreeCandidates(copyDialog.ProjectPath)
 	if len(candidates) > 0 {
 		runButtons = append(runButtons, detailMutedStyle.Render(fmt.Sprintf("x for %d existing worktree(s)", len(candidates))))
@@ -1150,8 +1133,8 @@ func (m Model) renderTodoCopyDialogOverlay(body string, bodyW, bodyH int) string
 		label := provider.Label() + "  (" + m.embeddedModelLabelForProject(projectPath, provider) + ")"
 		providerButtons = append(providerButtons, renderNoteDialogButton(label, copyDialog.Provider == provider))
 	}
-	providerButtons = append(providerButtons, detailMutedStyle.Render("a or ↑↓"))
-	lines = append(lines, m.renderTodoCopyChooserColumns(panelInnerW, runButtons, providerButtons))
+	optionButtons := []string{m.renderTodoCopyModelToggle(copyDialog.OpenModelFirst)}
+	lines = append(lines, m.renderTodoCopyChooserColumns(panelInnerW, runButtons, providerButtons, optionButtons))
 	if copyDialog.RunMode == todoCopyModeNewWorktree {
 		lines = append(lines, "")
 		if item, ok := m.selectedTodoItem(); ok && item.ID == copyDialog.TodoID {
@@ -1161,8 +1144,8 @@ func (m Model) renderTodoCopyDialogOverlay(body string, bodyW, bodyH int) string
 	actions := []string{
 		renderDialogAction("w", "toggle worktree", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("a", "cycle agent", navigateActionKeyStyle, navigateActionTextStyle),
+		renderDialogAction("m", "change model", pushActionKeyStyle, pushActionTextStyle),
 		renderDialogAction("Enter", "start", commitActionKeyStyle, commitActionTextStyle),
-		renderDialogAction("Alt+Enter", "pick model", pushActionKeyStyle, pushActionTextStyle),
 	}
 	if len(candidates) > 0 {
 		actions = append(actions, renderDialogAction("x", "existing", navigateActionKeyStyle, navigateActionTextStyle))
@@ -1280,34 +1263,51 @@ func (m Model) renderTodoCopySectionHeader(title, hotkey string) string {
 	return line
 }
 
-func (m Model) renderTodoCopyChooserColumns(width int, runButtons, providerButtons []string) string {
+func (m Model) renderTodoCopyModelToggle(enabled bool) string {
+	value := "[ ] change model"
+	if enabled {
+		value = "[x] change model"
+	}
+	return detailValueStyle.Render(value + "  (m)")
+}
+
+func (m Model) renderTodoCopyChooserColumns(width int, runButtons, providerButtons, optionButtons []string) string {
 	gap := 2
-	leftWidth := max(18, (width-gap)/2)
-	rightWidth := max(18, width-leftWidth-gap)
+	columnCount := 3
+	columnWidth := max(18, (width-gap*(columnCount-1))/columnCount)
+	lastWidth := max(18, width-columnWidth*(columnCount-1)-gap*(columnCount-1))
 
-	leftLines := append([]string{m.renderTodoCopySectionHeader("Run in", "w")}, runButtons...)
-	rightLines := append([]string{m.renderTodoCopySectionHeader("Agent", "a")}, providerButtons...)
-	height := max(len(leftLines), len(rightLines))
-	for len(leftLines) < height {
-		leftLines = append(leftLines, "")
-	}
-	for len(rightLines) < height {
-		rightLines = append(rightLines, "")
-	}
-
-	left := make([]string, 0, len(leftLines))
-	right := make([]string, 0, len(rightLines))
-	for i := 0; i < height; i++ {
-		left = append(left, fitStyledWidth(leftLines[i], leftWidth))
-		right = append(right, fitStyledWidth(rightLines[i], rightWidth))
+	columns := []struct {
+		width int
+		lines []string
+	}{
+		{width: columnWidth, lines: append([]string{m.renderTodoCopySectionHeader("Run in", "w")}, runButtons...)},
+		{width: columnWidth, lines: append([]string{m.renderTodoCopySectionHeader("Agent", "a")}, providerButtons...)},
+		{width: lastWidth, lines: append([]string{m.renderTodoCopySectionHeader("Options", "")}, optionButtons...)},
 	}
 
-	return lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		lipgloss.NewStyle().Width(leftWidth).Render(strings.Join(left, "\n")),
-		strings.Repeat(" ", gap),
-		lipgloss.NewStyle().Width(rightWidth).Render(strings.Join(right, "\n")),
-	)
+	height := 0
+	for _, column := range columns {
+		height = max(height, len(column.lines))
+	}
+
+	parts := make([]string, 0, len(columns)*2-1)
+	for idx, column := range columns {
+		lines := append([]string(nil), column.lines...)
+		for len(lines) < height {
+			lines = append(lines, "")
+		}
+		rendered := make([]string, 0, len(lines))
+		for _, line := range lines {
+			rendered = append(rendered, fitStyledWidth(line, column.width))
+		}
+		parts = append(parts, lipgloss.NewStyle().Width(column.width).Render(strings.Join(rendered, "\n")))
+		if idx < len(columns)-1 {
+			parts = append(parts, strings.Repeat(" ", gap))
+		}
+	}
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, parts...)
 }
 
 func todoCopyDialogProviders() []codexapp.Provider {

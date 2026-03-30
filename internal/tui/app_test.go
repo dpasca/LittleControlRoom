@@ -3815,6 +3815,92 @@ func TestTodoDialogEnterStartsFreshPreferredProviderWithDraft(t *testing.T) {
 	}
 }
 
+func TestTodoDialogModelToggleOpensPickerBeforeDraft(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				ThreadID: "ses-model-toggle",
+				Started:  true,
+				Preset:   req.Preset,
+				Status:   req.Provider.Label() + " session ready",
+			},
+			models: []codexapp.ModelOption{{
+				ID:          "gpt-5",
+				Model:       "gpt-5",
+				DisplayName: "GPT-5",
+				IsDefault:   true,
+			}},
+		}, nil
+	})
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:                "/tmp/demo",
+			Name:                "demo",
+			PresentOnDisk:       true,
+			LatestSessionFormat: "codex",
+		}},
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Todos: []model.TodoItem{{
+				ID:          11,
+				ProjectPath: "/tmp/demo",
+				Text:        "Check model toggle behavior",
+			}},
+		},
+		selected:      0,
+		todoDialog:    &todoDialogState{ProjectPath: "/tmp/demo", ProjectName: "demo"},
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, _ := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	got = updated.(Model)
+	if !got.todoCopyDialog.OpenModelFirst {
+		t.Fatalf("copy dialog should enable model toggle after m")
+	}
+
+	updated, cmd := got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("starting a TODO should return an open command")
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("todo launch returned error = %v", opened.err)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("request count = %d, want 1", len(requests))
+	}
+
+	updated, cmd = got.Update(opened)
+	got = updated.(Model)
+	if got.codexModelPicker == nil || !got.codexModelPicker.Loading {
+		t.Fatalf("model picker should enter loading state when m is enabled")
+	}
+	if got.status != "Pick a model, then send the TODO draft." {
+		t.Fatalf("status = %q, want model picker guidance", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("opening the embedded session should return a model picker command")
+	}
+}
+
 func TestTodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
@@ -3889,8 +3975,17 @@ func TestTodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider(t *testin
 	if !strings.Contains(rendered, "Agent  [a]") {
 		t.Fatalf("rendered copy dialog = %q, want agent hotkey hint", rendered)
 	}
+	if !strings.Contains(rendered, "Options") {
+		t.Fatalf("rendered copy dialog = %q, want options column", rendered)
+	}
+	if strings.Contains(rendered, "Options  [m]") {
+		t.Fatalf("rendered copy dialog = %q, should not show options hotkey badge", rendered)
+	}
+	if !strings.Contains(rendered, "change model") {
+		t.Fatalf("rendered copy dialog = %q, want model toggle row", rendered)
+	}
 
-	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRight})
+	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
 	got = updated.(Model)
 	rendered = ansi.Strip(got.renderTodoCopyDialogOverlay("", 100, 24))
 	if !strings.Contains(rendered, "Branch: feat/todo-worktree-launch") {
@@ -3903,7 +3998,7 @@ func TestTodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider(t *testin
 		t.Fatalf("rendered copy dialog = %q, want suggested worktree path details", rendered)
 	}
 
-	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyLeft})
+	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
 	got = updated.(Model)
 
 	updated, cmd := got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
@@ -4024,7 +4119,7 @@ func TestTodoDialogCanStartSelectedTodoInNewWorktree(t *testing.T) {
 
 	updated, _ := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
-	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRight})
+	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
 	got = updated.(Model)
 	updated, cmd := got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
@@ -4213,6 +4308,12 @@ func TestTodoDialogCopyDialogHotkeysChangeRunModeAndProvider(t *testing.T) {
 	got = updated.(Model)
 	if got.todoCopyDialog.Provider != codexapp.ProviderOpenCode {
 		t.Fatalf("copy dialog provider = %q, want %q after a", got.todoCopyDialog.Provider, codexapp.ProviderOpenCode)
+	}
+
+	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	got = updated.(Model)
+	if !got.todoCopyDialog.OpenModelFirst {
+		t.Fatalf("copy dialog should enable model toggle after m")
 	}
 
 	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})

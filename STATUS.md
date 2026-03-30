@@ -1,6 +1,44 @@
 # Little Control Room Status
 
-Last updated: 2026-03-30 19:24 JST
+Last updated: 2026-03-30 19:42 JST
+
+## Latest Update (2026-03-30 19:42 JST)
+
+- Simplified the TODO launch dialog one more step so it now behaves like a pure hotkey launcher:
+  - `internal/tui/todo_dialog.go`
+    - expanded the chooser to three side-by-side columns:
+      - `Run in`
+      - `Agent`
+      - `Options`
+    - moved `change model` into the new `Options` column, still toggled with `m`
+    - removed copy-dialog arrow navigation so the visible launcher keys are now the whole interaction model:
+      - `w` toggles run mode
+      - `a` cycles agent
+      - `m` toggles model-first
+      - `x` opens existing worktrees
+      - `Enter` launches with the currently visible choices
+    - removed the extra per-column hint lines so the only key legend is the color-coded action row at the bottom
+    - removed the `Options [m]` header badge because `m` toggles the checkbox itself rather than cycling the whole column
+    - kept the model-first flag flowing through start-here, new-worktree, and existing-worktree launches
+  - `internal/tui/app_test.go`
+    - updated launcher render tests for the new `Options` column
+    - updated copy-dialog interaction/render tests so they no longer depend on arrow-key navigation or the older longer option label
+    - kept focused coverage for the `m` toggle opening the embedded model picker before the TODO draft is sent
+- Verification status:
+  - focused TODO launcher coverage passed:
+    - `go test ./internal/tui -run 'Test(TodoDialogEnterStartsFreshPreferredProviderWithDraft|TodoDialogModelToggleOpensPickerBeforeDraft|TodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider|TodoDialogCanStartSelectedTodoInNewWorktree|TodoDialogCanStartSelectedTodoInExistingWorktree|TodoDialogCopyDialogHotkeysChangeRunModeAndProvider|TodoDialogShowsWorktreeSuggestionState|TodoCopyDialogShowsRetryGuidanceForFailedWorktreeSuggestion)' -count=1`
+    - `git diff --check` passed
+  - latest full-repo validation remains:
+    - `make scan` passed at `2026-03-30T19:32:25+09:00`
+    - `make doctor` passed using cached report at `2026-03-30T19:32:25+09:00`
+    - `make test` still fails only on the same pre-existing unrelated `internal/tui` cases:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+- Next concrete tasks:
+  - Do a real-terminal smoke pass to see whether the three-column `Run in / Agent / Options` launcher reads clearly at common terminal widths.
+  - Decide after live use whether `a` should remain a cycling control or eventually become a direct per-agent shortcut.
+  - If the launcher now feels stable, refresh the docs/screenshots to show the three-column hotkey-based flow.
 
 ## Latest Update (2026-03-30 19:24 JST)
 
