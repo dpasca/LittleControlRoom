@@ -1486,19 +1486,20 @@ func TestMoveProjectPathPreservesData(t *testing.T) {
 	newPath := "/tmp/new-project"
 
 	if err := st.UpsertProjectState(ctx, model.ProjectState{
-		Path:           oldPath,
-		Name:           "old-project",
-		LastActivity:   now,
-		Status:         model.StatusIdle,
-		AttentionScore: 12,
-		RepoBranch:     "master",
-		RepoDirty:      true,
-		RepoConflict:   true,
-		RepoSyncStatus: model.RepoSyncAhead,
-		RepoAheadCount: 2,
-		InScope:        true,
-		Pinned:         true,
-		Note:           "keep this note",
+		Path:                oldPath,
+		Name:                "old-project",
+		LastActivity:        now,
+		Status:              model.StatusIdle,
+		AttentionScore:      12,
+		RepoBranch:          "master",
+		WorktreeMergeStatus: model.WorktreeMergeStatusNotMerged,
+		RepoDirty:           true,
+		RepoConflict:        true,
+		RepoSyncStatus:      model.RepoSyncAhead,
+		RepoAheadCount:      2,
+		InScope:             true,
+		Pinned:              true,
+		Note:                "keep this note",
 		AttentionReason: []model.AttentionReason{{
 			Code:   "idle",
 			Text:   "Idle for a while",
@@ -1581,6 +1582,9 @@ func TestMoveProjectPathPreservesData(t *testing.T) {
 	}
 	if detail.Summary.RepoSyncStatus != model.RepoSyncAhead || detail.Summary.RepoAheadCount != 2 || detail.Summary.RepoBehindCount != 0 {
 		t.Fatalf("expected repo sync data to survive move: %#v", detail.Summary)
+	}
+	if detail.Summary.WorktreeMergeStatus != model.WorktreeMergeStatusNotMerged {
+		t.Fatalf("expected worktree_merge_status to survive move: %#v", detail.Summary)
 	}
 	if !detail.Summary.Pinned || detail.Summary.Note != "keep this note" || detail.Summary.RunCommand != "pnpm dev" {
 		t.Fatalf("expected pin/note/run command to survive move: %#v", detail.Summary)

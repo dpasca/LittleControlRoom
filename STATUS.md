@@ -1,6 +1,56 @@
 # Little Control Room Status
 
-Last updated: 2026-03-31 11:19 JST
+Last updated: 2026-03-31 11:41 JST
+
+## Latest Update (2026-03-31 11:41 JST)
+
+- Added a merged-state safety signal for linked worktrees so removal answers “is this already merged back?” before the checkout is deleted:
+  - assumption update:
+    - linked worktree removal should distinguish `already merged`, `not merged yet`, and `unable to verify` from ordinary dirty/clean state
+    - the merged-state signal should be part of normal project summaries, not a one-off dialog check, so it stays current across scans, refreshes, merges, and branch changes
+    - `git worktree prune` remains low-risk cleanup for stale registrations, while `git worktree remove` is the action that needs merge-awareness
+  - `internal/model/model.go`
+    - added `WorktreeMergeStatus` with `merged` / `not_merged` / unknown values on project state and summaries
+  - `internal/store/store.go`
+    - added persisted `projects.worktree_merge_status` schema support plus migration for existing DBs
+    - threaded the new field through project summary/detail scans, upserts, moves, and parent-branch updates
+    - resetting a worktree parent branch now clears the cached merge status until the next refresh recomputes it
+  - `internal/service/worktree.go`
+    - added `gitBranchMergedIntoBranch(...)` and `resolveWorktreeMergeStatus(...)`
+    - refreshed newly created worktrees immediately after recording the parent branch so merge status is available right away
+  - `internal/service/service.go`
+    - scan and refresh now compute linked-worktree merged state relative to the recorded parent branch
+    - project-changed detection/events now include merged-state changes
+  - `internal/service/project_create.go`
+    - manual/attached project upserts now compute the linked-worktree merged state too
+  - `internal/tui/app.go`
+    - linked-worktree detail now shows `Merge status`
+    - worktree family detail bullets now include `merged` / `not merged` for linked lanes
+  - `internal/tui/worktree_ui.go`
+    - worktree remove confirmation now shows a dedicated safety block:
+      - `Merged` when the branch is already merged into its recorded parent branch
+      - `Not merged yet` when it is not
+      - `Merge status unavailable` when LCR cannot confirm
+    - remove confirmation now also makes it explicit that removing the worktree deletes the checkout only; the branch ref remains
+  - `internal/service/service_test.go`
+    - added lifecycle coverage proving a new linked worktree starts merged with its parent branch, becomes `not_merged` after diverging commits, and returns to `merged` after merge-back
+  - `internal/store/store_test.go`
+    - extended move-path coverage to preserve `worktree_merge_status`
+  - `internal/tui/app_test.go`
+    - added detail-pane and remove-dialog coverage for the new merge-safety copy
+- Verification status:
+  - focused coverage passed:
+    - `go test ./internal/store -run 'Test(OpenMigratesLegacyProjectNotesIntoTodos|OpenMigratesProjectsInScopeColumn|MoveProjectPathPreservesRelatedData)$' -count=1`
+    - `go test ./internal/service -run 'Test(MergeWorktreeBackMergesIntoRecordedParentBranch|MergeWorktreeBackReportsConflictAndRefreshesStatus)$' -count=1`
+    - `go test ./internal/tui -run 'Test(RenderDetailContentShowsWorktreeActions|RenderDetailContentShowsWorktreeMergeStatus|DispatchCommandWorktreeRemoveOpensConfirm|RenderWorktreeRemoveConfirmShowsMergeSafetyCopy)$' -count=1`
+  - repo validation:
+    - `make test` passed
+    - `make scan` passed at `2026-03-31T11:41:16+09:00`
+    - `make doctor` passed using cached report at `2026-03-31T11:41:16+09:00`
+    - `git diff --check` passed
+- Next concrete tasks:
+  - Consider a compact merged-state hint directly in the main project list row for linked worktrees if the detail pane/remove dialog still feels one step too hidden.
+  - Decide whether `/wt remove` should eventually say `Remove anyway` when a linked worktree is confirmed `not_merged`, or whether the current warning plus default-focus on `Keep` is enough.
 
 ## Latest Update (2026-03-31 11:19 JST)
 

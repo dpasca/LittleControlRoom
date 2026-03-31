@@ -45,11 +45,13 @@ type projectListRow struct {
 }
 
 type worktreeRemoveConfirmState struct {
-	ProjectPath string
-	RootPath    string
-	ProjectName string
-	BranchName  string
-	Selected    int
+	ProjectPath  string
+	RootPath     string
+	ProjectName  string
+	BranchName   string
+	TargetBranch string
+	MergeStatus  model.WorktreeMergeStatus
+	Selected     int
 }
 
 type worktreeMergeConfirmState struct {
@@ -96,6 +98,27 @@ func projectWorktreeLabel(project model.ProjectSummary) string {
 		return "worktree"
 	}
 	return name
+}
+
+func worktreeMergeStatusSummary(project model.ProjectSummary) string {
+	targetBranch := strings.TrimSpace(project.WorktreeParentBranch)
+	switch project.WorktreeMergeStatus {
+	case model.WorktreeMergeStatusMerged:
+		if targetBranch != "" {
+			return "merged into " + targetBranch
+		}
+		return "merged"
+	case model.WorktreeMergeStatusNotMerged:
+		if targetBranch != "" {
+			return "not merged into " + targetBranch
+		}
+		return "not merged"
+	default:
+		if targetBranch != "" {
+			return "merge status unavailable for " + targetBranch
+		}
+		return "merge status unavailable"
+	}
 }
 
 func (m Model) selectedProjectRow() (projectListRow, model.ProjectSummary, bool) {
@@ -575,6 +598,9 @@ func (m Model) mergeWorktreeBackCmd(projectPath string) tea.Cmd {
 			}
 		}
 		status := fmt.Sprintf("Merged %s into %s", result.SourceBranch, result.TargetBranch)
+		if result.AlreadyMerged {
+			status = fmt.Sprintf("%s is already merged into %s", result.SourceBranch, result.TargetBranch)
+		}
 		return worktreeActionMsg{
 			projectPath:           projectPath,
 			selectPath:            result.RootProjectPath,
@@ -643,11 +669,13 @@ func (m *Model) openWorktreeRemoveConfirmForSelection() tea.Cmd {
 		return nil
 	}
 	m.worktreeRemoveConfirm = &worktreeRemoveConfirmState{
-		ProjectPath: project.Path,
-		RootPath:    row.RootPath,
-		ProjectName: project.Name,
-		BranchName:  projectWorktreeLabel(project),
-		Selected:    worktreeRemoveConfirmFocusKeep,
+		ProjectPath:  project.Path,
+		RootPath:     row.RootPath,
+		ProjectName:  project.Name,
+		BranchName:   projectWorktreeLabel(project),
+		TargetBranch: strings.TrimSpace(project.WorktreeParentBranch),
+		MergeStatus:  project.WorktreeMergeStatus,
+		Selected:     worktreeRemoveConfirmFocusKeep,
 	}
 	m.status = "Confirm worktree removal"
 	return nil
@@ -734,13 +762,44 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 		"",
 		detailValueStyle.Render(truncateText(confirm.BranchName, panelInnerW)),
 		detailMutedStyle.Render(truncateText(confirm.ProjectPath, panelInnerW)),
-		"",
-		buttons,
 	}
+	if statusHeader, statusBody, statusStyle := worktreeRemoveSafetyCopy(confirm.MergeStatus, confirm.TargetBranch); statusHeader != "" || statusBody != "" {
+		lines = append(lines, "")
+		if statusHeader != "" {
+			lines = append(lines, statusStyle.Render(statusHeader))
+		}
+		if statusBody != "" {
+			lines = append(lines, renderWrappedDialogTextLines(statusStyle, panelInnerW, statusBody)...)
+		}
+	}
+	lines = append(lines, "")
+	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "Removing a linked worktree deletes the checkout only. The branch ref stays in the repo.")...)
+	lines = append(lines, "", buttons)
 	panel := renderDialogPanel(panelW, panelInnerW, strings.Join(lines, "\n"))
 	left := max(0, (bodyW-panelW)/2)
 	top := max(0, (bodyH-lipgloss.Height(panel))/2)
 	return overlayBlock(body, panel, bodyW, bodyH, left, top)
+}
+
+func worktreeRemoveSafetyCopy(status model.WorktreeMergeStatus, targetBranch string) (string, string, lipgloss.Style) {
+	targetBranch = strings.TrimSpace(targetBranch)
+	switch status {
+	case model.WorktreeMergeStatusMerged:
+		if targetBranch != "" {
+			return "Merged", "This worktree branch is already merged into " + targetBranch + ".", detailValueStyle
+		}
+		return "Merged", "This worktree branch is already merged back.", detailValueStyle
+	case model.WorktreeMergeStatusNotMerged:
+		if targetBranch != "" {
+			return "Not merged yet", "This worktree branch is not yet merged into " + targetBranch + ". You can still remove the checkout, but you may lose track of unmerged work.", detailWarningStyle
+		}
+		return "Not merged yet", "This worktree branch is not yet merged back. You can still remove the checkout, but you may lose track of unmerged work.", detailWarningStyle
+	default:
+		if targetBranch != "" {
+			return "Merge status unavailable", "Little Control Room could not confirm whether this branch is already merged into " + targetBranch + ".", detailMutedStyle
+		}
+		return "Merge status unavailable", "Little Control Room could not confirm whether this branch is already merged back.", detailMutedStyle
+	}
 }
 
 func (m Model) renderWorktreeMergeConfirmOverlay(body string, bodyW, bodyH int) string {

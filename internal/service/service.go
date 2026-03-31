@@ -540,6 +540,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		worktreeRootPath := old.WorktreeRootPath
 		worktreeKind := old.WorktreeKind
 		worktreeParentBranch := old.WorktreeParentBranch
+		worktreeMergeStatus := old.WorktreeMergeStatus
 		repoBranch := ""
 		repoDirty := false
 		repoConflict := false
@@ -566,6 +567,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 				repoAheadCount = old.RepoAheadCount
 				repoBehindCount = old.RepoBehindCount
 			}
+			worktreeMergeStatus = resolveWorktreeMergeStatus(ctx, worktreeRootPath, worktreeKind, repoBranch, worktreeParentBranch)
 		}
 		forgotten := old.Forgotten
 		if !presentOnDisk && old.WorktreeKind == model.WorktreeKindLinked && strings.TrimSpace(old.WorktreeRootPath) != "" {
@@ -639,6 +641,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			WorktreeRootPath:     worktreeRootPath,
 			WorktreeKind:         worktreeKind,
 			WorktreeParentBranch: worktreeParentBranch,
+			WorktreeMergeStatus:  worktreeMergeStatus,
 			RepoBranch:           repoBranch,
 			RepoDirty:            repoDirty,
 			RepoConflict:         repoConflict,
@@ -870,6 +873,7 @@ func projectStateChanged(old model.ProjectSummary, state model.ProjectState) boo
 		old.WorktreeRootPath != state.WorktreeRootPath ||
 		old.WorktreeKind != state.WorktreeKind ||
 		old.WorktreeParentBranch != state.WorktreeParentBranch ||
+		old.WorktreeMergeStatus != state.WorktreeMergeStatus ||
 		old.RepoBranch != state.RepoBranch ||
 		old.RepoDirty != state.RepoDirty ||
 		old.RepoConflict != state.RepoConflict ||
@@ -887,6 +891,7 @@ func (s *Service) publishProjectChanged(ctx context.Context, now time.Time, stat
 		"score":    fmt.Sprintf("%d", state.AttentionScore),
 		"dirty":    fmt.Sprintf("%t", state.RepoDirty),
 		"conflict": fmt.Sprintf("%t", state.RepoConflict),
+		"merged":   string(state.WorktreeMergeStatus),
 		"remote":   string(state.RepoSyncStatus),
 	}
 	s.bus.Publish(events.Event{Type: events.ProjectChanged, At: now, ProjectPath: state.Path, Payload: payload})
@@ -894,7 +899,7 @@ func (s *Service) publishProjectChanged(ctx context.Context, now time.Time, stat
 		At:          now,
 		ProjectPath: state.Path,
 		Type:        string(events.ProjectChanged),
-		Payload:     fmt.Sprintf("status=%s score=%d dirty=%t conflict=%t remote=%s", state.Status, state.AttentionScore, state.RepoDirty, state.RepoConflict, state.RepoSyncStatus),
+		Payload:     fmt.Sprintf("status=%s score=%d dirty=%t conflict=%t merged=%s remote=%s", state.Status, state.AttentionScore, state.RepoDirty, state.RepoConflict, state.WorktreeMergeStatus, state.RepoSyncStatus),
 	})
 }
 
@@ -1276,6 +1281,7 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 	worktreeRootPath := detail.Summary.WorktreeRootPath
 	worktreeKind := detail.Summary.WorktreeKind
 	worktreeParentBranch := detail.Summary.WorktreeParentBranch
+	worktreeMergeStatus := detail.Summary.WorktreeMergeStatus
 	repoBranch := ""
 	repoDirty := false
 	repoConflict := false
@@ -1308,6 +1314,7 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 			repoAheadCount = detail.Summary.RepoAheadCount
 			repoBehindCount = detail.Summary.RepoBehindCount
 		}
+		worktreeMergeStatus = resolveWorktreeMergeStatus(ctx, worktreeRootPath, worktreeKind, repoBranch, worktreeParentBranch)
 	}
 
 	errorCount := 0
@@ -1354,6 +1361,7 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 		WorktreeRootPath:     worktreeRootPath,
 		WorktreeKind:         worktreeKind,
 		WorktreeParentBranch: worktreeParentBranch,
+		WorktreeMergeStatus:  worktreeMergeStatus,
 		RepoBranch:           repoBranch,
 		RepoDirty:            repoDirty,
 		RepoConflict:         repoConflict,

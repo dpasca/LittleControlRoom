@@ -121,7 +121,7 @@ func projectRepoWarningIndicator(project model.ProjectSummary, spinnerFrame int)
 	if project.RepoDirty {
 		return detailDangerStyle.Render("!")
 	}
-	if repoSyncWarning(project.RepoSyncStatus) {
+	if projectShowsRemoteSyncStatus(project) && repoSyncWarning(project.RepoSyncStatus) {
 		return detailWarningStyle.Render("!")
 	}
 	return " "

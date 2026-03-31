@@ -29,6 +29,14 @@ const (
 	WorktreeKindLinked WorktreeKind = "linked"
 )
 
+type WorktreeMergeStatus string
+
+const (
+	WorktreeMergeStatusUnknown   WorktreeMergeStatus = ""
+	WorktreeMergeStatusMerged    WorktreeMergeStatus = "merged"
+	WorktreeMergeStatusNotMerged WorktreeMergeStatus = "not_merged"
+)
+
 type AttentionReason struct {
 	Code   string `json:"code"`
 	Text   string `json:"text"`
@@ -161,6 +169,7 @@ type ProjectState struct {
 	WorktreeRootPath     string
 	WorktreeKind         WorktreeKind
 	WorktreeParentBranch string
+	WorktreeMergeStatus  WorktreeMergeStatus
 	RepoBranch           string
 	RepoDirty            bool
 	RepoConflict         bool
@@ -192,6 +201,7 @@ type ProjectSummary struct {
 	WorktreeRootPath                              string
 	WorktreeKind                                  WorktreeKind
 	WorktreeParentBranch                          string
+	WorktreeMergeStatus                           WorktreeMergeStatus
 	RepoBranch                                    string
 	RepoDirty                                     bool
 	RepoConflict                                  bool

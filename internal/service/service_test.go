@@ -1874,11 +1874,30 @@ func TestMergeWorktreeBackMergesIntoRecordedParentBranch(t *testing.T) {
 		t.Fatalf("CreateTodoWorktree() error = %v", err)
 	}
 
+	initialWorktreeDetail, err := st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() for worktree after create error = %v", err)
+	}
+	if initialWorktreeDetail.Summary.WorktreeMergeStatus != model.WorktreeMergeStatusMerged {
+		t.Fatalf("new linked worktree should start merged with its parent branch, got %#v", initialWorktreeDetail.Summary)
+	}
+
 	if err := os.WriteFile(filepath.Join(result.WorktreePath, "FEATURE.txt"), []byte("merged from linked worktree\n"), 0o644); err != nil {
 		t.Fatalf("write FEATURE.txt in worktree: %v", err)
 	}
 	runGit(t, result.WorktreePath, "git", "add", "FEATURE.txt")
 	runGit(t, result.WorktreePath, "git", "commit", "-m", "add worktree feature")
+	if err := svc.RefreshProjectStatus(ctx, result.WorktreePath); err != nil {
+		t.Fatalf("RefreshProjectStatus() for worktree after commit error = %v", err)
+	}
+
+	divergedWorktreeDetail, err := st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() for worktree after diverging error = %v", err)
+	}
+	if divergedWorktreeDetail.Summary.WorktreeMergeStatus != model.WorktreeMergeStatusNotMerged {
+		t.Fatalf("diverged linked worktree should be marked not merged, got %#v", divergedWorktreeDetail.Summary)
+	}
 
 	mergeResult, err := svc.MergeWorktreeBack(ctx, result.WorktreePath)
 	if err != nil {
@@ -1926,6 +1945,17 @@ func TestMergeWorktreeBackMergesIntoRecordedParentBranch(t *testing.T) {
 	}
 	if strings.TrimSpace(worktreeDetail.Summary.WorktreeParentBranch) != strings.TrimSpace(result.ParentBranch) {
 		t.Fatalf("stored worktree parent branch after merge-back = %q, want %q", worktreeDetail.Summary.WorktreeParentBranch, result.ParentBranch)
+	}
+	if worktreeDetail.Summary.WorktreeMergeStatus != model.WorktreeMergeStatusMerged {
+		t.Fatalf("stored worktree merge status after merge-back = %q, want %q", worktreeDetail.Summary.WorktreeMergeStatus, model.WorktreeMergeStatusMerged)
+	}
+
+	alreadyMergedResult, err := svc.MergeWorktreeBack(ctx, result.WorktreePath)
+	if err != nil {
+		t.Fatalf("second MergeWorktreeBack() error = %v", err)
+	}
+	if !alreadyMergedResult.AlreadyMerged {
+		t.Fatalf("second MergeWorktreeBack() should report already merged, got %#v", alreadyMergedResult)
 	}
 }
 

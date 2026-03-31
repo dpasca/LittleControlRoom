@@ -37,6 +37,7 @@ type MergeWorktreeBackResult struct {
 	RootProjectPath string
 	SourceBranch    string
 	TargetBranch    string
+	AlreadyMerged   bool
 }
 
 func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktreeRequest) (CreateTodoWorktreeResult, error) {
@@ -124,6 +125,9 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 	if strings.TrimSpace(parentBranch) != "" {
 		if err := s.store.SetWorktreeParentBranch(ctx, worktreePath, parentBranch); err != nil {
 			return result, fmt.Errorf("record parent branch for worktree %s: %w", worktreePath, err)
+		}
+		if err := s.RefreshProjectStatus(ctx, worktreePath); err != nil {
+			return result, fmt.Errorf("refresh tracked worktree %s after recording its parent branch: %w", worktreePath, err)
 		}
 	}
 
@@ -321,6 +325,14 @@ func (s *Service) MergeWorktreeBack(ctx context.Context, projectPath string) (Me
 		SourceBranch:    sourceBranch,
 		TargetBranch:    targetBranch,
 	}
+	alreadyMerged, err := gitBranchMergedIntoHEAD(ctx, rootPath, sourceBranch)
+	if err != nil {
+		return result, err
+	}
+	if alreadyMerged {
+		result.AlreadyMerged = true
+		return result, nil
+	}
 	if err := gitMergeBranch(ctx, rootPath, sourceBranch); err != nil {
 		refreshErr := s.refreshWorktreeMergeStatus(ctx, rootPath, projectPath)
 		if s.gitRepoStatusReader != nil {
@@ -366,6 +378,51 @@ func (s *Service) MergeWorktreeBack(ctx context.Context, projectPath string) (Me
 		return result, fmt.Errorf("refresh merged worktree project: %w", err)
 	}
 	return result, nil
+}
+
+func gitBranchMergedIntoHEAD(ctx context.Context, repoPath, branch string) (bool, error) {
+	return gitBranchMergedIntoBranch(ctx, repoPath, branch, "HEAD")
+}
+
+func gitBranchMergedIntoBranch(ctx context.Context, repoPath, branch, target string) (bool, error) {
+	repoPath = filepath.Clean(strings.TrimSpace(repoPath))
+	branch = strings.TrimSpace(branch)
+	target = strings.TrimSpace(target)
+	if repoPath == "" || branch == "" || target == "" {
+		return false, fmt.Errorf("repo path, branch, and target are required")
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "merge-base", "--is-ancestor", branch, target)
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return false, nil
+		}
+		return false, fmt.Errorf("check whether %s is already merged into %s in %s: %w", branch, target, repoPath, err)
+	}
+	return true, nil
+}
+
+func resolveWorktreeMergeStatus(ctx context.Context, rootPath string, kind model.WorktreeKind, sourceBranch, targetBranch string) model.WorktreeMergeStatus {
+	if kind != model.WorktreeKindLinked {
+		return model.WorktreeMergeStatusUnknown
+	}
+	rootPath = filepath.Clean(strings.TrimSpace(rootPath))
+	sourceBranch = strings.TrimSpace(sourceBranch)
+	targetBranch = strings.TrimSpace(targetBranch)
+	if rootPath == "" || rootPath == "." || sourceBranch == "" || targetBranch == "" {
+		return model.WorktreeMergeStatusUnknown
+	}
+	if sourceBranch == targetBranch {
+		return model.WorktreeMergeStatusMerged
+	}
+	merged, err := gitBranchMergedIntoBranch(ctx, rootPath, sourceBranch, targetBranch)
+	if err != nil {
+		return model.WorktreeMergeStatusUnknown
+	}
+	if merged {
+		return model.WorktreeMergeStatusMerged
+	}
+	return model.WorktreeMergeStatusNotMerged
 }
 
 func (s *Service) refreshWorktreeMergeStatus(ctx context.Context, rootPath, projectPath string) error {

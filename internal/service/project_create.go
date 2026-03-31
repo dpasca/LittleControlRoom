@@ -166,6 +166,7 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 	worktreeRootPath := ""
 	worktreeKind := model.WorktreeKindNone
 	worktreeParentBranch := strings.TrimSpace(existing.WorktreeParentBranch)
+	worktreeMergeStatus := existing.WorktreeMergeStatus
 	repoBranch := ""
 	repoDirty := false
 	repoConflict := false
@@ -182,6 +183,7 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 			repoAheadCount = repoStatus.Ahead
 			repoBehindCount = repoStatus.Behind
 		}
+		worktreeMergeStatus = resolveWorktreeMergeStatus(ctx, worktreeRootPath, worktreeKind, repoBranch, worktreeParentBranch)
 	}
 
 	score := attention.Score(attention.Input{
@@ -204,6 +206,7 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 		WorktreeRootPath:     worktreeRootPath,
 		WorktreeKind:         worktreeKind,
 		WorktreeParentBranch: worktreeParentBranch,
+		WorktreeMergeStatus:  worktreeMergeStatus,
 		RepoBranch:           repoBranch,
 		RepoDirty:            repoDirty,
 		RepoConflict:         repoConflict,

@@ -2510,6 +2510,7 @@ func (m Model) renderDetailContent(width int) string {
 			mergeBackValue = detailValueStyle.Render(targetBranch)
 		}
 		lines = append(lines, detailField("Merge back", mergeBackValue))
+		lines = append(lines, detailField("Merge status", worktreeMergeStatusDetailValue(p)))
 	}
 	lines = append(lines, detailField("Attention", attentionValue))
 	family := m.worktreeFamily(projectWorktreeRootPath(p))
@@ -2552,6 +2553,14 @@ func (m Model) renderDetailContent(width int) string {
 			}
 			if snapshot := m.projectRuntimeSnapshot(member.Path); snapshot.Running {
 				statusParts = append(statusParts, "runtime")
+			}
+			if member.WorktreeKind == model.WorktreeKindLinked {
+				switch member.WorktreeMergeStatus {
+				case model.WorktreeMergeStatusMerged:
+					statusParts = append(statusParts, "merged")
+				case model.WorktreeMergeStatusNotMerged:
+					statusParts = append(statusParts, "not merged")
+				}
 			}
 			if filepath.Clean(member.Path) == filepath.Clean(p.Path) {
 				statusParts = append(statusParts, "current")
@@ -3600,7 +3609,7 @@ func formatRelativeUnit(n int, unit string) string {
 }
 
 func projectHasRepoWarning(project model.ProjectSummary) bool {
-	return project.RepoConflict || project.RepoDirty || repoSyncWarning(project.RepoSyncStatus)
+	return project.RepoConflict || project.RepoDirty || (projectShowsRemoteSyncStatus(project) && repoSyncWarning(project.RepoSyncStatus))
 }
 
 func appendDetailFields(lines []string, width int, fields ...string) []string {
@@ -3983,19 +3992,21 @@ func repoCombinedDetailValue(project model.ProjectSummary) string {
 	} else {
 		parts = append(parts, detailMutedStyle.Render("clean"))
 	}
-	switch project.RepoSyncStatus {
-	case model.RepoSyncNoRemote:
-		parts = append(parts, detailMutedStyle.Render("no remote"))
-	case model.RepoSyncNoUpstream:
-		parts = append(parts, repoSyncDetailStyle(project.RepoSyncStatus).Render("no upstream"))
-	case model.RepoSyncSynced:
-		parts = append(parts, repoSyncDetailStyle(project.RepoSyncStatus).Render("synced"))
-	case model.RepoSyncAhead:
-		parts = append(parts, repoSyncDetailStyle(project.RepoSyncStatus).Render(fmt.Sprintf("ahead %d", project.RepoAheadCount)))
-	case model.RepoSyncBehind:
-		parts = append(parts, repoSyncDetailStyle(project.RepoSyncStatus).Render(fmt.Sprintf("behind %d", project.RepoBehindCount)))
-	case model.RepoSyncDiverged:
-		parts = append(parts, repoSyncDetailStyle(project.RepoSyncStatus).Render(fmt.Sprintf("diverged +%d/-%d", project.RepoAheadCount, project.RepoBehindCount)))
+	if projectShowsRemoteSyncStatus(project) {
+		switch project.RepoSyncStatus {
+		case model.RepoSyncNoRemote:
+			parts = append(parts, detailMutedStyle.Render("no remote"))
+		case model.RepoSyncNoUpstream:
+			parts = append(parts, repoSyncDetailStyle(project.RepoSyncStatus).Render("no upstream"))
+		case model.RepoSyncSynced:
+			parts = append(parts, repoSyncDetailStyle(project.RepoSyncStatus).Render("synced"))
+		case model.RepoSyncAhead:
+			parts = append(parts, repoSyncDetailStyle(project.RepoSyncStatus).Render(fmt.Sprintf("ahead %d", project.RepoAheadCount)))
+		case model.RepoSyncBehind:
+			parts = append(parts, repoSyncDetailStyle(project.RepoSyncStatus).Render(fmt.Sprintf("behind %d", project.RepoBehindCount)))
+		case model.RepoSyncDiverged:
+			parts = append(parts, repoSyncDetailStyle(project.RepoSyncStatus).Render(fmt.Sprintf("diverged +%d/-%d", project.RepoAheadCount, project.RepoBehindCount)))
+		}
 	}
 	value := strings.Join(parts, ", ")
 	if branch := strings.TrimSpace(project.RepoBranch); branch != "" {
@@ -4026,7 +4037,31 @@ func repoConflictDetailValue(project model.ProjectSummary) string {
 	return detailConflictStyle.Render("Unmerged files are present in this " + location + ". Resolve or abort the in-progress Git operation before continuing.")
 }
 
+func worktreeMergeStatusDetailValue(project model.ProjectSummary) string {
+	targetBranch := strings.TrimSpace(project.WorktreeParentBranch)
+	switch project.WorktreeMergeStatus {
+	case model.WorktreeMergeStatusMerged:
+		if targetBranch != "" {
+			return detailValueStyle.Render("merged into " + targetBranch)
+		}
+		return detailValueStyle.Render("merged")
+	case model.WorktreeMergeStatusNotMerged:
+		if targetBranch != "" {
+			return detailWarningStyle.Render("not merged into " + targetBranch)
+		}
+		return detailWarningStyle.Render("not merged")
+	default:
+		if targetBranch != "" {
+			return detailMutedStyle.Render("unavailable for " + targetBranch)
+		}
+		return detailMutedStyle.Render("unavailable")
+	}
+}
+
 func repoSyncDetailValue(project model.ProjectSummary) string {
+	if !projectShowsRemoteSyncStatus(project) {
+		return ""
+	}
 	switch project.RepoSyncStatus {
 	case model.RepoSyncNoRemote:
 		return detailMutedStyle.Render("none")
@@ -4043,6 +4078,10 @@ func repoSyncDetailValue(project model.ProjectSummary) string {
 	default:
 		return ""
 	}
+}
+
+func projectShowsRemoteSyncStatus(project model.ProjectSummary) bool {
+	return project.WorktreeKind != model.WorktreeKindLinked
 }
 
 func repoSyncDetailStyle(status model.RepoSyncStatus) lipgloss.Style {

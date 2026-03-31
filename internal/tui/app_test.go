@@ -603,6 +603,14 @@ func TestProjectRepoWarningIndicator(t *testing.T) {
 		t.Fatalf("sync warning should contain '!', got %q", syncIndicator)
 	}
 
+	linkedSyncIndicator := projectRepoWarningIndicator(model.ProjectSummary{
+		WorktreeKind:   model.WorktreeKindLinked,
+		RepoSyncStatus: model.RepoSyncAhead,
+	}, 0)
+	if linkedSyncIndicator != " " {
+		t.Fatalf("linked worktree sync-only state should not warn, got %q", linkedSyncIndicator)
+	}
+
 	// Dirty + sync → same as dirty-only (dirty takes priority)
 	bothIndicator := projectRepoWarningIndicator(model.ProjectSummary{RepoDirty: true, RepoSyncStatus: model.RepoSyncBehind}, 0)
 	if bothIndicator != dirtyIndicator {
@@ -1058,6 +1066,47 @@ func TestRenderDetailContentShowsWorktreeActions(t *testing.T) {
 	}
 }
 
+func TestRenderDetailContentShowsWorktreeMergeStatus(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 childPath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				WorktreeMergeStatus:  model.WorktreeMergeStatusNotMerged,
+				RepoBranch:           "feat/parallel-lane",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	rendered := ansi.Strip(m.renderDetailContent(100))
+	if !strings.Contains(rendered, "Merge status:") {
+		t.Fatalf("renderDetailContent() should show a merge status field for linked worktrees, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "not merged into master") {
+		t.Fatalf("renderDetailContent() should show the linked worktree merge status, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "not merged") {
+		t.Fatalf("renderDetailContent() should include worktree lane merge status in the family list, got %q", rendered)
+	}
+}
+
 func TestUpdateNormalModeMOpensWorktreeMergeConfirm(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"
@@ -1278,6 +1327,31 @@ func TestDispatchCommandWorktreeRemoveOpensConfirm(t *testing.T) {
 	}
 	if got.worktreeRemoveConfirm == nil {
 		t.Fatalf("dispatchCommand(/wt remove) should open the remove confirmation dialog")
+	}
+}
+
+func TestRenderWorktreeRemoveConfirmShowsMergeSafetyCopy(t *testing.T) {
+	m := Model{
+		worktreeRemoveConfirm: &worktreeRemoveConfirmState{
+			ProjectPath:  "/tmp/repo--feat-parallel-lane",
+			RootPath:     "/tmp/repo",
+			ProjectName:  "repo--feat-parallel-lane",
+			BranchName:   "feat/parallel-lane",
+			TargetBranch: "master",
+			MergeStatus:  model.WorktreeMergeStatusNotMerged,
+			Selected:     worktreeRemoveConfirmFocusKeep,
+		},
+	}
+
+	rendered := ansi.Strip(m.renderWorktreeRemoveConfirmOverlay("body", 90, 24))
+	if !strings.Contains(rendered, "Not merged yet") {
+		t.Fatalf("remove confirm should call out unmerged worktrees, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "not yet merged into master") {
+		t.Fatalf("remove confirm should explain the merge target, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "branch ref stays in the repo") {
+		t.Fatalf("remove confirm should explain that only the checkout is removed, got %q", rendered)
 	}
 }
 
@@ -2640,6 +2714,26 @@ func TestRenderDetailContentShowsRepoConflict(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "Repo: conflict") {
 		t.Fatalf("renderDetailContent() should surface repo conflict state: %q", rendered)
+	}
+}
+
+func TestRenderDetailContentOmitsRemoteSyncForLinkedWorktree(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Path:           "/tmp/repo--lane",
+			Name:           "repo--lane",
+			Status:         model.StatusIdle,
+			PresentOnDisk:  true,
+			WorktreeKind:   model.WorktreeKindLinked,
+			RepoBranch:     "feat/worktree-ux",
+			RepoSyncStatus: model.RepoSyncNoUpstream,
+		}},
+		selected: 0,
+	}
+
+	rendered := ansi.Strip(m.renderDetailContent(100))
+	if strings.Contains(rendered, "no upstream") {
+		t.Fatalf("renderDetailContent() should omit remote sync copy for linked worktrees: %q", rendered)
 	}
 }
 
