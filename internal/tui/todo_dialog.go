@@ -1137,16 +1137,20 @@ func (m Model) renderTodoEditorOverlay(body string, bodyW, bodyH int) string {
 }
 
 func todoDialogLegendLine() string {
-	return renderHelpPanelActionRow(
-		renderDialogAction("a", "add", commitActionKeyStyle, commitActionTextStyle),
-		renderDialogAction("e", "edit", navigateActionKeyStyle, navigateActionTextStyle),
-		renderDialogAction("space", "done", pushActionKeyStyle, pushActionTextStyle),
-		renderDialogAction("d", "delete", cancelActionKeyStyle, cancelActionTextStyle),
-		renderDialogAction("p", "purge done", cancelActionKeyStyle, cancelActionTextStyle),
-		renderDialogAction("c", "copy", navigateActionKeyStyle, navigateActionTextStyle),
-		renderDialogAction("Enter", "start", commitActionKeyStyle, commitActionTextStyle),
-		renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
-	)
+	return strings.Join([]string{
+		renderHelpPanelActionRow(
+			renderDialogAction("a", "add", commitActionKeyStyle, commitActionTextStyle),
+			renderDialogAction("e", "edit", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("space", "done", pushActionKeyStyle, pushActionTextStyle),
+			renderDialogAction("d", "delete", cancelActionKeyStyle, cancelActionTextStyle),
+			renderDialogAction("p", "purge done", cancelActionKeyStyle, cancelActionTextStyle),
+			renderDialogAction("c", "copy", navigateActionKeyStyle, navigateActionTextStyle),
+		),
+		renderHelpPanelActionRow(
+			renderDialogAction("Enter", "start", commitActionKeyStyle, commitActionTextStyle),
+			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
+		),
+	}, "\n")
 }
 
 func (m Model) todoDialogItemLine(item model.TodoItem, prefix string, width int) string {
@@ -1349,27 +1353,32 @@ func (m Model) renderTodoCopyDialogOverlay(body string, bodyW, bodyH int) string
 			}
 		}
 	}
-	actions := []string{enterAction}
-	if waitingOnly {
-		actions = append(actions, renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle))
-	} else {
-		actions = append(actions,
+	primaryActions := make([]string, 0, 6)
+	if !waitingOnly {
+		primaryActions = append(primaryActions,
 			renderDialogAction("w", "toggle worktree", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("a", "cycle agent", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("m", "change model", pushActionKeyStyle, pushActionTextStyle),
 		)
 		if len(candidates) > 0 {
-			actions = append(actions, renderDialogAction("x", "existing", navigateActionKeyStyle, navigateActionTextStyle))
+			primaryActions = append(primaryActions, renderDialogAction("x", "existing", navigateActionKeyStyle, navigateActionTextStyle))
 		}
 		if copyDialog.RunMode == todoCopyModeNewWorktree {
-			actions = append(actions,
+			primaryActions = append(primaryActions,
 				renderDialogAction("e", "edit", navigateActionKeyStyle, navigateActionTextStyle),
 				renderDialogAction("r", "refresh", pushActionKeyStyle, pushActionTextStyle),
 			)
 		}
-		actions = append(actions, renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle))
 	}
-	lines = append(lines, renderHelpPanelActionRow(actions...))
+	actionLines := []string{}
+	if row := renderHelpPanelActionRow(primaryActions...); strings.TrimSpace(row) != "" {
+		actionLines = append(actionLines, row)
+	}
+	actionLines = append(actionLines, renderHelpPanelActionRow(
+		enterAction,
+		renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
+	))
+	lines = append(lines, strings.Join(actionLines, "\n"))
 	panel := renderDialogPanel(panelW, panelInnerW, strings.Join(lines, "\n"))
 	left := max(0, (bodyW-panelW)/2)
 	top := max(0, (bodyH-lipgloss.Height(panel))/3)

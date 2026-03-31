@@ -5268,6 +5268,22 @@ func TestTodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider(t *testin
 	if !strings.Contains(rendered, "change model") {
 		t.Fatalf("rendered copy dialog = %q, want model toggle row", rendered)
 	}
+	lines := strings.Split(rendered, "\n")
+	foundEnterLine := false
+	for _, line := range lines {
+		if strings.Contains(line, "change model") && strings.Contains(line, "Enter") && strings.Contains(line, "start") {
+			t.Fatalf("rendered copy dialog should keep Enter on its own action row, got %q", line)
+		}
+		if strings.Contains(line, "Enter") && strings.Contains(line, "start") {
+			foundEnterLine = true
+			if !strings.Contains(line, "Esc") || !strings.Contains(line, "cancel") {
+				t.Fatalf("rendered copy dialog Enter row should also include Esc cancel, got %q", line)
+			}
+		}
+	}
+	if !foundEnterLine {
+		t.Fatalf("rendered copy dialog should include a dedicated Enter/Esc action row, got %q", rendered)
+	}
 
 	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
 	got = updated.(Model)
@@ -11092,6 +11108,20 @@ func TestTodoDialogLegendUsesDistinctActionTones(t *testing.T) {
 		if !strings.Contains(rendered, bgCode) {
 			t.Fatalf("todo dialog legend should include tone %s, got %q", bgCode, rendered)
 		}
+	}
+	stripped := ansi.Strip(rendered)
+	if !strings.Contains(stripped, "\n") {
+		t.Fatalf("todo dialog legend should split Enter/Esc onto a second line, got %q", stripped)
+	}
+	lines := strings.Split(stripped, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("todo dialog legend line count = %d, want 2; got %q", len(lines), stripped)
+	}
+	if (strings.Contains(lines[0], "Enter") && strings.Contains(lines[0], "start")) || (strings.Contains(lines[0], "Esc") && strings.Contains(lines[0], "close")) {
+		t.Fatalf("todo dialog legend first line should keep Enter/Esc separate, got %q", lines[0])
+	}
+	if !strings.Contains(lines[1], "Enter") || !strings.Contains(lines[1], "start") || !strings.Contains(lines[1], "Esc") || !strings.Contains(lines[1], "close") {
+		t.Fatalf("todo dialog legend second line should contain Enter/Esc, got %q", lines[1])
 	}
 }
 
