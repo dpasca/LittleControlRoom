@@ -190,7 +190,7 @@ func (m *Model) syncTodoDialogSelection() {
 	if dialog.Selected >= len(items) {
 		dialog.Selected = len(items) - 1
 	}
-	listHeight := max(1, m.height-12)
+	listHeight := m.todoDialogListHeight()
 	if dialog.Offset < 0 {
 		dialog.Offset = 0
 	}
@@ -234,6 +234,20 @@ func (m *Model) moveTodoSelection(delta int) {
 	m.syncTodoDialogSelection()
 }
 
+func (m *Model) pageMoveTodoSelection(delta int) {
+	if delta == 0 {
+		return
+	}
+	if m.todoDialog == nil {
+		return
+	}
+	if delta > 0 {
+		m.moveTodoSelection(m.todoDialogListHeight())
+		return
+	}
+	m.moveTodoSelection(-m.todoDialogListHeight())
+}
+
 func (m *Model) closeTodoDialog(status string) {
 	m.todoDialog = nil
 	if status != "" {
@@ -258,6 +272,25 @@ func (m *Model) openTodoEditor(todoID int64, value string) tea.Cmd {
 		m.status = "New TODO"
 	}
 	return m.todoEditor.Input.Focus()
+}
+
+func (m *Model) updateTodoDialogMouseScroll(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.todoDialog == nil {
+		return m, nil
+	}
+	if msg.Action != tea.MouseActionPress {
+		return m, nil
+	}
+	if msg.Button != tea.MouseButtonWheelUp && msg.Button != tea.MouseButtonWheelDown {
+		return m, nil
+	}
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		m.moveTodoSelection(-1)
+	case tea.MouseButtonWheelDown:
+		m.moveTodoSelection(1)
+	}
+	return m, nil
 }
 
 func (m *Model) closeTodoEditor(status string) {
@@ -415,6 +448,23 @@ func (m Model) updateTodoDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "down", "j":
 		m.moveTodoSelection(1)
+		return m, nil
+	case "pgup", "pageup":
+		m.pageMoveTodoSelection(-1)
+		return m, nil
+	case "pgdown", "pagedown":
+		m.pageMoveTodoSelection(1)
+		return m, nil
+	case "home":
+		m.todoDialog.Selected = 0
+		m.syncTodoDialogSelection()
+		return m, nil
+	case "end":
+		if m.todoDialog != nil {
+			items := m.todoItemsFor(m.todoDialog.ProjectPath)
+			m.todoDialog.Selected = len(items) - 1
+			m.syncTodoDialogSelection()
+		}
 		return m, nil
 	case "a":
 		return m, m.openTodoEditor(0, "")
@@ -1037,6 +1087,11 @@ func (m *Model) syncTodoDialogSize() {
 	if m.todoDialog != nil {
 		m.syncTodoDialogSelection()
 	}
+}
+
+func (m Model) todoDialogListHeight() int {
+	_, _, listH := todoDialogPanelLayout(m.width, m.height)
+	return max(1, listH)
 }
 
 func (m *Model) syncTodoEditorSize() {

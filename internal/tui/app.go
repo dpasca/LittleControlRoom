@@ -689,6 +689,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncRuntimeViewport(false)
 		return m, nil
 	case tea.MouseMsg:
+		if m.todoDialog != nil && (msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown) {
+			return m.updateTodoDialogMouseScroll(msg)
+		}
 		if m.diffView != nil && m.diffView.hasFiles() {
 			var cmd tea.Cmd
 			m.diffView.contentViewport, cmd = m.diffView.contentViewport.Update(msg)
