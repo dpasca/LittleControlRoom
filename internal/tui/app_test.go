@@ -5616,6 +5616,7 @@ func TestTodoDialogEnterStartsFreshPreferredProviderWithDraft(t *testing.T) {
 		}, nil
 	})
 
+	todoText := "Change font color to red when there's an error\n\nStack:\n- check logger context\n"
 	m := Model{
 		codexManager: manager,
 		projects: []model.ProjectSummary{{
@@ -5629,7 +5630,7 @@ func TestTodoDialogEnterStartsFreshPreferredProviderWithDraft(t *testing.T) {
 			Todos: []model.TodoItem{{
 				ID:          7,
 				ProjectPath: "/tmp/demo",
-				Text:        "Change font color to red when there's an error",
+				Text:        todoText,
 			}},
 		},
 		selected:      0,
@@ -5658,7 +5659,7 @@ func TestTodoDialogEnterStartsFreshPreferredProviderWithDraft(t *testing.T) {
 	if got.codexPendingOpen == nil || got.codexPendingOpen.provider != codexapp.ProviderOpenCode {
 		t.Fatalf("codexPendingOpen = %#v, want pending OpenCode session", got.codexPendingOpen)
 	}
-	if got.codexDrafts["/tmp/demo"].Text != "Change font color to red when there's an error" {
+	if got.codexDrafts["/tmp/demo"].Text != todoText {
 		t.Fatalf("draft text = %q, want selected TODO text", got.codexDrafts["/tmp/demo"].Text)
 	}
 	if cmd == nil {
@@ -5685,7 +5686,7 @@ func TestTodoDialogEnterStartsFreshPreferredProviderWithDraft(t *testing.T) {
 	if got.codexVisibleProject != "/tmp/demo" {
 		t.Fatalf("codexVisibleProject = %q, want /tmp/demo", got.codexVisibleProject)
 	}
-	if got.codexInput.Value() != "Change font color to red when there's an error" {
+	if got.codexInput.Value() != todoText {
 		t.Fatalf("composer text = %q, want selected TODO draft", got.codexInput.Value())
 	}
 	if got.status != "Fresh OpenCode session ready with TODO draft. Edit and press Enter to send." {
@@ -6148,7 +6149,8 @@ func TestTodoDialogCanStartSelectedTodoInNewWorktree(t *testing.T) {
 		t.Fatalf("track project: %v", err)
 	}
 
-	item, err := svc.AddTodo(ctx, projectPath, "Launch this TODO in a new worktree")
+	todoText := "Launch this TODO in a new worktree\n\nUse log output:\nline 1\nline 2\n"
+	item, err := svc.AddTodo(ctx, projectPath, todoText)
 	if err != nil {
 		t.Fatalf("add todo: %v", err)
 	}
@@ -6227,6 +6229,9 @@ func TestTodoDialogCanStartSelectedTodoInNewWorktree(t *testing.T) {
 	if launchMsg.err != nil {
 		t.Fatalf("worktree launch returned error = %v", launchMsg.err)
 	}
+	if launchMsg.todoText != todoText {
+		t.Fatalf("todoWorktreeLaunchMsg.todoText = %q, want %q", launchMsg.todoText, todoText)
+	}
 	expectedPath := filepath.Join(root, "repo--feat-new-worktree-launch")
 	if launchMsg.projectPath != expectedPath {
 		t.Fatalf("worktree launch path = %q, want %q", launchMsg.projectPath, expectedPath)
@@ -6245,6 +6250,9 @@ func TestTodoDialogCanStartSelectedTodoInNewWorktree(t *testing.T) {
 	}
 	if got.todoLaunchDraft == nil || got.todoLaunchDraft.projectPath != expectedPath {
 		t.Fatalf("todoLaunchDraft = %#v, want worktree draft for %q", got.todoLaunchDraft, expectedPath)
+	}
+	if got.codexDrafts[expectedPath].Text != todoText {
+		t.Fatalf("worktree draft text = %q, want %q", got.codexDrafts[expectedPath].Text, todoText)
 	}
 	if cmd == nil {
 		t.Fatalf("handling todoWorktreeLaunchMsg should return an open command")

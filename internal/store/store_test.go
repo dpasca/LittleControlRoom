@@ -326,6 +326,82 @@ func TestDeleteDoneTodosRemovesOnlyCompletedItems(t *testing.T) {
 	}
 }
 
+func TestAddTodoPreservesBlankLines(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := "/tmp/demo"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "demo",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		InScope:        true,
+		UpdatedAt:      time.Now(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	todoText := "line one\n\nline two\nline three\n"
+	item, err := st.AddTodo(ctx, projectPath, todoText)
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	if item.Text != todoText {
+		t.Fatalf("item.Text = %q, want %q", item.Text, todoText)
+	}
+}
+
+func TestUpdateTodoPreservesBlankLines(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := "/tmp/demo"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "demo",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		InScope:        true,
+		UpdatedAt:      time.Now(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	item, err := st.AddTodo(ctx, projectPath, "initial todo")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+
+	todoText := "patched\n\nwith more lines\n"
+	if err := st.UpdateTodo(ctx, item.ID, todoText); err != nil {
+		t.Fatalf("update todo: %v", err)
+	}
+	todo, err := st.GetTodo(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("get todo: %v", err)
+	}
+	if todo.Text != todoText {
+		t.Fatalf("updated todo.Text = %q, want %q", todo.Text, todoText)
+	}
+}
+
 func TestClaimNextQueuedTodoWorktreeSuggestionRespectsDebounce(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
