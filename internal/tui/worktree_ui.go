@@ -35,13 +35,13 @@ const (
 )
 
 type projectListRow struct {
-	Kind        projectListRowKind
-	ProjectPath string
-	RootPath    string
-	LinkedCount int
-	ActiveCount int
-	DirtyCount  int
-	Expanded    bool
+	Kind              projectListRowKind
+	ProjectPath       string
+	RootPath          string
+	LinkedCount       int
+	LinkedActiveCount int
+	LinkedDirtyCount  int
+	Expanded          bool
 }
 
 type worktreeRemoveConfirmState struct {
@@ -247,19 +247,18 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary, selectedPath st
 			}
 			children = append(children, project)
 		}
-		allMembers := append([]model.ProjectSummary{rootProject}, children...)
-		activeCount, dirtyCount := m.worktreeActivityCounts(allMembers)
+		activeCount, dirtyCount := m.worktreeActivityCounts(children)
 		expanded := m.isWorktreeGroupExpanded(rootPath, children, selectedPath)
 
 		rows = append(rows, rootProject)
 		meta = append(meta, projectListRow{
-			Kind:        projectListRowRepo,
-			ProjectPath: rootProject.Path,
-			RootPath:    rootPath,
-			LinkedCount: len(children),
-			ActiveCount: activeCount,
-			DirtyCount:  dirtyCount,
-			Expanded:    expanded,
+			Kind:              projectListRowRepo,
+			ProjectPath:       rootProject.Path,
+			RootPath:          rootPath,
+			LinkedCount:       len(children),
+			LinkedActiveCount: activeCount,
+			LinkedDirtyCount:  dirtyCount,
+			Expanded:          expanded,
 		})
 		if !expanded {
 			continue
@@ -352,8 +351,37 @@ func (m *Model) toggleSelectedWorktreeGroup() tea.Cmd {
 	return nil
 }
 
-func worktreeGroupSummary(total, active, dirty int) string {
-	parts := []string{fmt.Sprintf("%d worktrees", total)}
+func worktreeLinkedBadgeSummary(linked, active, dirty int) string {
+	if linked <= 0 {
+		return ""
+	}
+	parts := []string{fmt.Sprintf("%d linked", linked)}
+	if active > 0 {
+		parts = append(parts, fmt.Sprintf("%d active", active))
+	} else if dirty > 0 {
+		parts = append(parts, fmt.Sprintf("%d dirty", dirty))
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+func worktreeGroupSummary(projects []model.ProjectSummary, active, dirty int) string {
+	rootCount := 0
+	for _, project := range projects {
+		if projectIsWorktreeRoot(project) {
+			rootCount++
+		}
+	}
+	linkedCount := len(projects) - rootCount
+
+	parts := make([]string, 0, 3)
+	switch {
+	case rootCount > 0 && linkedCount > 0:
+		parts = append(parts, fmt.Sprintf("root + %d linked", linkedCount))
+	case linkedCount > 0:
+		parts = append(parts, fmt.Sprintf("%d linked", linkedCount))
+	default:
+		parts = append(parts, "root only")
+	}
 	if active > 0 {
 		parts = append(parts, fmt.Sprintf("%d active", active))
 	}

@@ -1003,6 +1003,7 @@ func TestRenderFooterShowsMergeHintForLinkedWorktreeWithParentBranch(t *testing.
 			{
 				Name:             "repo",
 				Path:             rootPath,
+				Status:           model.StatusIdle,
 				PresentOnDisk:    true,
 				WorktreeRootPath: rootPath,
 				WorktreeKind:     model.WorktreeKindMain,
@@ -1037,6 +1038,7 @@ func TestRenderDetailContentShowsWorktreeActions(t *testing.T) {
 			{
 				Name:             "repo",
 				Path:             rootPath,
+				Status:           model.StatusIdle,
 				PresentOnDisk:    true,
 				WorktreeRootPath: rootPath,
 				WorktreeKind:     model.WorktreeKindMain,
@@ -1074,6 +1076,7 @@ func TestRenderDetailContentShowsWorktreeMergeStatus(t *testing.T) {
 			{
 				Name:             "repo",
 				Path:             rootPath,
+				Status:           model.StatusIdle,
 				PresentOnDisk:    true,
 				WorktreeRootPath: rootPath,
 				WorktreeKind:     model.WorktreeKindMain,
@@ -1104,6 +1107,45 @@ func TestRenderDetailContentShowsWorktreeMergeStatus(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "not merged") {
 		t.Fatalf("renderDetailContent() should include worktree lane merge status in the family list, got %q", rendered)
+	}
+}
+
+func TestRenderDetailContentShowsRepoCentricWorktreeSummary(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				Status:           model.StatusIdle,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:             "repo--feat-parallel-lane",
+				Path:             childPath,
+				Status:           model.StatusActive,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+				RepoBranch:       "feat/parallel-lane",
+				RepoDirty:        true,
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(rootPath)
+
+	rendered := ansi.Strip(m.renderDetailContent(100))
+	if !strings.Contains(rendered, "Worktrees:") {
+		t.Fatalf("renderDetailContent() should show worktree family details for the repo root, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "root + 1 linked, 1 active, 1 dirty") {
+		t.Fatalf("renderDetailContent() should describe the family without counting the root as a generic worktree, got %q", rendered)
 	}
 }
 
@@ -2146,13 +2188,14 @@ func TestRenderProjectListCollapsesLinkedWorktreesUnderRepoRow(t *testing.T) {
 	m := Model{
 		allProjects: []model.ProjectSummary{
 			{
-				Name:             "repo",
-				Path:             rootPath,
-				Status:           model.StatusIdle,
-				PresentOnDisk:    true,
-				WorktreeRootPath: rootPath,
-				WorktreeKind:     model.WorktreeKindMain,
-				RepoBranch:       "master",
+				Name:                          "repo",
+				Path:                          rootPath,
+				Status:                        model.StatusIdle,
+				PresentOnDisk:                 true,
+				WorktreeRootPath:              rootPath,
+				WorktreeKind:                  model.WorktreeKindMain,
+				RepoBranch:                    "master",
+				LatestCompletedSessionSummary: "Keep root summary",
 			},
 			{
 				Name:             "repo--feat-parallel-lane",
@@ -2179,8 +2222,14 @@ func TestRenderProjectListCollapsesLinkedWorktreesUnderRepoRow(t *testing.T) {
 	if !strings.Contains(lines[1], "▸ repo") {
 		t.Fatalf("renderProjectList() should show a collapsed disclosure row, got %q", lines[1])
 	}
-	if !strings.Contains(lines[1], "2 worktrees, 1 active, 1 dirty") {
-		t.Fatalf("renderProjectList() should summarize the worktree family, got %q", lines[1])
+	if !strings.Contains(lines[1], "Keep root summary") {
+		t.Fatalf("renderProjectList() should keep the root repo assessment text, got %q", lines[1])
+	}
+	if !strings.Contains(lines[1], "[1 linked, 1 active]") {
+		t.Fatalf("renderProjectList() should show a compact linked-worktree badge, got %q", lines[1])
+	}
+	if strings.Contains(lines[1], "2 worktrees") {
+		t.Fatalf("renderProjectList() should not describe the root repo as a generic worktree, got %q", lines[1])
 	}
 	if strings.Contains(lines[1], "feat/parallel-lane") {
 		t.Fatalf("renderProjectList() should keep child worktree rows hidden while collapsed, got %q", lines[1])
@@ -2266,7 +2315,7 @@ func TestRenderProjectListKeepsVisibleWorktreeFamilyWhenChildMatchesPrivacyPatte
 	if len(lines) != 2 {
 		t.Fatalf("renderProjectList() expected header plus grouped root row, got %q", rendered)
 	}
-	if !strings.Contains(lines[1], "2 worktrees") {
+	if !strings.Contains(lines[1], "[1 linked]") {
 		t.Fatalf("renderProjectList() should keep linked lanes visible under a visible root, got %q", lines[1])
 	}
 }

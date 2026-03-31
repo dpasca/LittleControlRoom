@@ -1,6 +1,40 @@
 # Little Control Room Status
 
-Last updated: 2026-03-31 14:07 JST
+Last updated: 2026-03-31 16:44 JST
+
+## Latest Update (2026-03-31 16:44 JST)
+
+- Fixed the repo-root worktree summary copy so linked worktrees no longer overwrite the root project's own assessment summary with text like `2 worktrees, 1 active`:
+  - assumption update:
+    - the root repo row should stay repo-centric even when linked worktrees exist; its primary summary text should remain the repo assessment/session summary
+    - collapsed worktree state in the project list should be a secondary signal, not a replacement for the root repo summary
+    - worktree family detail can count `root + N linked`, but the root repo should not be described as just another generic worktree in user-facing copy
+  - `internal/tui/app.go`
+    - repo rows with linked worktrees now keep their normal assessment summary instead of replacing it with the family count
+    - linked-worktree state is now appended as a compact secondary badge in the repo row summary area
+    - the detail pane `Worktrees` field now renders repo-centric copy like `root + 1 linked, 1 active`
+  - `internal/tui/worktree_ui.go`
+    - changed grouped-row metadata to track linked-lane activity/dirty counts separately from the root repo
+    - replaced the old `N worktrees` copy helper with repo-centric summary helpers for collapsed badges and detail text
+  - `internal/tui/app_test.go`
+    - updated the grouped-root list test so it now asserts the root summary stays visible and the old `2 worktrees` copy is gone
+    - added coverage for the new repo-centric detail summary text
+    - updated the privacy-filter grouped-root test to expect the compact linked-worktree badge instead of the old family-count wording
+- Verification status:
+  - focused coverage passed:
+    - `go test ./internal/tui -run 'TestRenderProjectListCollapsesLinkedWorktreesUnderRepoRow|TestRenderDetailContentShowsRepoCentricWorktreeSummary|TestRenderDetailContentShowsWorktreeMergeStatus|TestRenderProjectListShowsExpandedWorktreeChildren' -count=1`
+    - `go test ./internal/tui -count=1`
+  - repo validation:
+    - `make test` passed
+    - `make scan` passed at `2026-03-31T16:42:09+09:00`
+    - `make doctor` passed using cached report at `2026-03-31T16:42:09+09:00`
+    - `git diff --check` passed
+  - TUI smoke passed:
+    - `COLUMNS=140 LINES=34 make tui CONFIG=/Users/davide/.little-control-room/config.toml DB=/tmp/lcroom-worktree-summary-ui/little-control-room.sqlite INTERVAL=1h`
+    - isolated TUI launched and exited cleanly via `q`
+- Next concrete tasks:
+  - Consider an even shorter collapsed-root linked-worktree marker for narrow split-pane widths if the secondary badge still truncates too often in the list.
+  - Decide whether the root-row disclosure marker should also surface the linked count directly, for example via a tighter `+N` lane hint near the repo name.
 
 ## Latest Update (2026-03-31 14:07 JST)
 

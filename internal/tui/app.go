@@ -2410,7 +2410,13 @@ func (m Model) renderProjectList(width, height int) string {
 					disclosure = "▾ "
 				}
 				name = disclosure + name
-				assessmentText = worktreeGroupSummary(rowMeta.LinkedCount+1, rowMeta.ActiveCount, rowMeta.DirtyCount)
+				if badge := worktreeLinkedBadgeSummary(rowMeta.LinkedCount, rowMeta.LinkedActiveCount, rowMeta.LinkedDirtyCount); badge != "" {
+					if assessmentText == "-" {
+						assessmentText = badge
+					} else {
+						assessmentText += "  " + badge
+					}
+				}
 			}
 		case projectListRowWorktree:
 			name = "  ↳ " + projectWorktreeLabel(p)
@@ -2516,7 +2522,7 @@ func (m Model) renderDetailContent(width int) string {
 	family := m.worktreeFamily(projectWorktreeRootPath(p))
 	if len(family) > 1 || p.WorktreeKind == model.WorktreeKindLinked {
 		activeCount, dirtyCount := m.worktreeActivityCounts(family)
-		lines = append(lines, detailField("Worktrees", detailValueStyle.Render(worktreeGroupSummary(len(family), activeCount, dirtyCount))))
+		lines = append(lines, detailField("Worktrees", detailValueStyle.Render(worktreeGroupSummary(family, activeCount, dirtyCount))))
 		lines = append(lines, detailSectionStyle.Render("Worktree lanes"))
 		family = append([]model.ProjectSummary(nil), family...)
 		sort.SliceStable(family, func(i, j int) bool {
