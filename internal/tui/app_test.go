@@ -1416,6 +1416,16 @@ func TestOpenWorktreeMergeConfirmAutoClosesCompletedSession(t *testing.T) {
 
 func TestBlockedWorktreeMergeEnterOnMergeKeepsDialogOpen(t *testing.T) {
 	m := Model{
+		allProjects: []model.ProjectSummary{{
+			Name:                 "repo--feat-parallel-lane",
+			Path:                 "/tmp/repo--feat-parallel-lane",
+			PresentOnDisk:        true,
+			WorktreeRootPath:     "/tmp/repo",
+			WorktreeKind:         model.WorktreeKindLinked,
+			WorktreeParentBranch: "master",
+			RepoBranch:           "feat/parallel-lane",
+			RepoDirty:            true,
+		}},
 		worktreeMergeConfirm: &worktreeMergeConfirmState{
 			ProjectPath:  "/tmp/repo--feat-parallel-lane",
 			RootPath:     "/tmp/repo",
@@ -1442,6 +1452,16 @@ func TestBlockedWorktreeMergeEnterOnMergeKeepsDialogOpen(t *testing.T) {
 
 func TestBlockedWorktreeMergeEnterOnKeepCancels(t *testing.T) {
 	m := Model{
+		allProjects: []model.ProjectSummary{{
+			Name:                 "repo--feat-parallel-lane",
+			Path:                 "/tmp/repo--feat-parallel-lane",
+			PresentOnDisk:        true,
+			WorktreeRootPath:     "/tmp/repo",
+			WorktreeKind:         model.WorktreeKindLinked,
+			WorktreeParentBranch: "master",
+			RepoBranch:           "feat/parallel-lane",
+			RepoDirty:            true,
+		}},
 		worktreeMergeConfirm: &worktreeMergeConfirmState{
 			ProjectPath:  "/tmp/repo--feat-parallel-lane",
 			RootPath:     "/tmp/repo",
@@ -1515,6 +1535,15 @@ func TestBlockedWorktreeMergeEnterOnCommitOpensCommitPreview(t *testing.T) {
 
 func TestWorktreeMergeEnterLocksDialogWhileRunning(t *testing.T) {
 	m := Model{
+		allProjects: []model.ProjectSummary{{
+			Name:                 "repo--feat-parallel-lane",
+			Path:                 "/tmp/repo--feat-parallel-lane",
+			PresentOnDisk:        true,
+			WorktreeRootPath:     "/tmp/repo",
+			WorktreeKind:         model.WorktreeKindLinked,
+			WorktreeParentBranch: "master",
+			RepoBranch:           "feat/parallel-lane",
+		}},
 		worktreeMergeConfirm: &worktreeMergeConfirmState{
 			ProjectPath:  "/tmp/repo--feat-parallel-lane",
 			RootPath:     "/tmp/repo",
@@ -2347,6 +2376,57 @@ func TestRenderTopStatusLineShowsUnavailableBackendNotice(t *testing.T) {
 	}
 	if strings.Contains(rendered, "OpenAI API key") {
 		t.Fatalf("top status line should keep the warning generic, got %q", rendered)
+	}
+}
+
+func TestRenderTopStatusLinePulsesActionRequiredWarning(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	m := Model{status: "Stop the runtime before merging this worktree back"}
+
+	warnA := m.renderTopStatusLine(160)
+	m.spinnerFrame = 1
+	warnB := m.renderTopStatusLine(160)
+
+	if ansi.Strip(warnA) != ansi.Strip(warnB) {
+		t.Fatalf("warning pulse should preserve banner text, got %q vs %q", ansi.Strip(warnA), ansi.Strip(warnB))
+	}
+	if warnA == warnB {
+		t.Fatalf("action-required warning should animate across spinner frames")
+	}
+}
+
+func TestRenderTopStatusLinePulsesErrorsAsDanger(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	m := Model{
+		status: "Scan failed",
+		err:    errors.New("boom"),
+	}
+
+	errA := m.renderTopStatusLine(160)
+	m.spinnerFrame = 1
+	errB := m.renderTopStatusLine(160)
+
+	if ansi.Strip(errA) != ansi.Strip(errB) {
+		t.Fatalf("danger pulse should preserve banner text, got %q vs %q", ansi.Strip(errA), ansi.Strip(errB))
+	}
+	if errA == errB {
+		t.Fatalf("error banner should animate across spinner frames")
 	}
 }
 

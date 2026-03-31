@@ -2300,14 +2300,20 @@ func splitBottomPaneWidths(totalWidth int, focused paneFocus) (int, int) {
 
 func (m Model) renderTopStatusLine(width int) string {
 	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Render(brand.Name)
-	status := singleLineStatusText(m.status)
+	rawStatus := singleLineStatusText(m.status)
+	status := rawStatus
 	if m.err != nil {
-		status = fmt.Sprintf("%s | error: %s", status, singleLineStatusText(m.err.Error()))
+		errText := singleLineStatusText(m.err.Error())
+		if status == "" {
+			status = "error: " + errText
+		} else {
+			status = fmt.Sprintf("%s | error: %s", status, errText)
+		}
 	}
 
 	statusParts := make([]string, 0, 4)
 	if strings.TrimSpace(status) != "" {
-		statusParts = append(statusParts, renderFooterStatus(status))
+		statusParts = append(statusParts, m.renderTopStatusMessage(rawStatus, status))
 	}
 	if aiNotice := m.renderAIBackendStatusNotice(); aiNotice != "" {
 		statusParts = append(statusParts, aiNotice)
@@ -2325,6 +2331,101 @@ func (m Model) renderTopStatusLine(width int) string {
 		segments = append(segments, joinFooterSegments(statusParts...))
 	}
 	return fitFooterWidth(strings.Join(segments, "  "), width)
+}
+
+type topStatusSeverity int
+
+const (
+	topStatusSeverityNormal topStatusSeverity = iota
+	topStatusSeverityWarning
+	topStatusSeverityDanger
+)
+
+func (m Model) renderTopStatusMessage(rawStatus, displayStatus string) string {
+	displayStatus = strings.TrimSpace(displayStatus)
+	if displayStatus == "" {
+		return ""
+	}
+
+	switch topStatusSeverityForMessage(rawStatus, m.err) {
+	case topStatusSeverityWarning:
+		return renderTopStatusWarningMessage(displayStatus, m.spinnerFrame)
+	case topStatusSeverityDanger:
+		return renderTopStatusDangerMessage(displayStatus, m.spinnerFrame)
+	default:
+		return renderFooterStatus(displayStatus)
+	}
+}
+
+// Until status updates carry structured severity, keep the top-banner alert rules
+// focused on explicit action-required and failure messages that should stand out.
+func topStatusSeverityForMessage(status string, err error) topStatusSeverity {
+	if err != nil {
+		return topStatusSeverityDanger
+	}
+
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return topStatusSeverityNormal
+	}
+
+	lowerStatus := strings.ToLower(status)
+	switch {
+	case strings.Contains(lowerStatus, "failed"),
+		strings.Contains(lowerStatus, "merge conflict"),
+		strings.Contains(lowerStatus, " error"):
+		return topStatusSeverityDanger
+	case topStatusNeedsAttention(status):
+		return topStatusSeverityWarning
+	default:
+		return topStatusSeverityNormal
+	}
+}
+
+func topStatusNeedsAttention(status string) bool {
+	for _, prefix := range []string{
+		"Stop the runtime before ",
+		"Close the embedded agent session before ",
+		"A commit is still in progress.",
+	} {
+		if strings.HasPrefix(status, prefix) {
+			return true
+		}
+	}
+
+	for _, snippet := range []string{
+		"Resolve or abort the in-progress Git operation before ",
+		"Commit or discard changes before ",
+		"Switch it to ",
+	} {
+		if strings.Contains(status, snippet) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func renderTopStatusWarningMessage(text string, spinnerFrame int) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	if spinnerFrame%2 == 0 {
+		return topStatusWarningBadgeStyle.Render(text)
+	}
+	return topStatusWarningPulseBadgeStyle.Render(text)
+}
+
+func renderTopStatusDangerMessage(text string, spinnerFrame int) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	if spinnerFrame%2 == 0 {
+		return topStatusDangerBadgeStyle.Render(text)
+	}
+	return topStatusDangerPulseBadgeStyle.Render(text)
 }
 
 func (m Model) renderTopStatusActions(width int) string {
@@ -2805,23 +2906,26 @@ const (
 )
 
 var (
-	dialogPanelBackground       = lipgloss.Color("235")
-	dialogPanelBorderColor      = lipgloss.Color("81")
-	dialogPanelFillReset        = "\x1b[48;5;235m"
-	dialogPanelResetReplacer    = strings.NewReplacer("\x1b[0m", "\x1b[0m"+dialogPanelFillReset, "\x1b[m", "\x1b[m"+dialogPanelFillReset)
-	dialogPanelFillStyle        = lipgloss.NewStyle().Background(dialogPanelBackground)
-	detailLabelStyle            = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
-	detailSectionStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
-	detailValueStyle            = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	detailMutedStyle            = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	detailWarningStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("178")).Bold(true)
-	detailDangerStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true)
-	detailConflictStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true)
-	topStatusWarningBadgeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("160")).Bold(true).Padding(0, 1)
-	topStatusConflictBadgeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("92")).Bold(true).Padding(0, 1)
-	topStatusSetupBadgeStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("214")).Bold(true).Padding(0, 1)
-	detailAttentionValueStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Bold(true)
-	projectListSelectedRowStyle = lipgloss.NewStyle().
+	dialogPanelBackground           = lipgloss.Color("235")
+	dialogPanelBorderColor          = lipgloss.Color("81")
+	dialogPanelFillReset            = "\x1b[48;5;235m"
+	dialogPanelResetReplacer        = strings.NewReplacer("\x1b[0m", "\x1b[0m"+dialogPanelFillReset, "\x1b[m", "\x1b[m"+dialogPanelFillReset)
+	dialogPanelFillStyle            = lipgloss.NewStyle().Background(dialogPanelBackground)
+	detailLabelStyle                = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
+	detailSectionStyle              = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
+	detailValueStyle                = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	detailMutedStyle                = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	detailWarningStyle              = lipgloss.NewStyle().Foreground(lipgloss.Color("178")).Bold(true)
+	detailDangerStyle               = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true)
+	detailConflictStyle             = lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true)
+	topStatusWarningBadgeStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("214")).Bold(true).Padding(0, 1)
+	topStatusWarningPulseBadgeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("172")).Bold(true).Padding(0, 1)
+	topStatusDangerBadgeStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("160")).Bold(true).Padding(0, 1)
+	topStatusDangerPulseBadgeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("88")).Bold(true).Padding(0, 1)
+	topStatusConflictBadgeStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("92")).Bold(true).Padding(0, 1)
+	topStatusSetupBadgeStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("214")).Bold(true).Padding(0, 1)
+	detailAttentionValueStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Bold(true)
+	projectListSelectedRowStyle     = lipgloss.NewStyle().
 					Background(lipgloss.AdaptiveColor{Light: "255", Dark: "236"})
 	commandPaletteTitleStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
 	commandPaletteHintStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
