@@ -1033,7 +1033,7 @@ func (m Model) renderTodoDialogOverlay(body string, bodyW, bodyH int) string {
 				prefix = "[x]"
 				style = detailMutedStyle
 			}
-			line := todoDialogItemLine(item, prefix, max(12, panelInnerW-2))
+			line := m.todoDialogItemLine(item, prefix, max(12, panelInnerW-2))
 			if i == dialog.Selected {
 				line = noteDialogButtonSelectedStyle.UnsetPadding().Width(panelInnerW).Render(line)
 			} else {
@@ -1090,20 +1090,21 @@ func todoDialogLegendLine() string {
 	)
 }
 
-func todoDialogItemLine(item model.TodoItem, prefix string, width int) string {
+func (m Model) todoDialogItemLine(item model.TodoItem, prefix string, width int) string {
 	base := prefix + " " + strings.TrimSpace(item.Text)
-	label := todoWorktreeSuggestionLabel(item)
+	label, labelStyle := m.todoWorktreeSuggestionLabel(item)
 	if label == "" {
 		return truncateText(base, width)
 	}
-	suffix := " · " + label
+	suffixPlain := " · " + label
+	suffixStyled := labelStyle.Render(suffixPlain)
 	if width <= 0 {
-		return base + suffix
+		return base + suffixStyled
 	}
 	baseWidth := ansi.StringWidth(base)
-	suffixWidth := ansi.StringWidth(suffix)
+	suffixWidth := ansi.StringWidth(suffixPlain)
 	if baseWidth+suffixWidth <= width {
-		return base + suffix
+		return base + suffixStyled
 	}
 	minBaseWidth := max(12, width/2)
 	if baseWidth > minBaseWidth {
@@ -1113,23 +1114,81 @@ func todoDialogItemLine(item model.TodoItem, prefix string, width int) string {
 	if remaining <= 3 {
 		return truncateText(base, width)
 	}
-	return base + truncateText(suffix, remaining)
+	return base + labelStyle.Render(ansi.Truncate(suffixPlain, remaining, ""))
 }
 
-func todoWorktreeSuggestionLabel(item model.TodoItem) string {
-	suggestion := item.WorktreeSuggestion
-	if suggestion == nil || item.Done {
+func (m Model) todoWorktreeSuggestionLabel(item model.TodoItem) (string, lipgloss.Style) {
+	if item.Done {
+		return "", lipgloss.Style{}
+	}
+	if linked, ok := m.todoLinkedWorktreeProject(item.ID); ok {
+		label := strings.TrimSpace(projectWorktreeLabel(linked))
+		if label == "" {
+			label = todoWorktreeSuggestionBranch(item.WorktreeSuggestion)
+		}
+		if label == "" {
+			label = "worktree"
+		}
+		if linked.PresentOnDisk {
+			return label, statusStyle(model.StatusActive)
+		}
+		return label, detailWarningStyle
+	}
+	if label := todoWorktreeSuggestionBranch(item.WorktreeSuggestion); label != "" {
+		return label, detailMutedStyle
+	}
+	return "", lipgloss.Style{}
+}
+
+func todoWorktreeSuggestionBranch(suggestion *model.TodoWorktreeSuggestion) string {
+	if suggestion == nil {
 		return ""
 	}
 	switch suggestion.Status {
 	case model.TodoWorktreeSuggestionReady:
 		if strings.TrimSpace(suggestion.BranchName) != "" {
-			return suggestion.BranchName
+			return strings.TrimSpace(suggestion.BranchName)
 		}
 		return "suggestion ready"
 	default:
 		return ""
 	}
+}
+
+func (m Model) todoLinkedWorktreeProject(todoID int64) (model.ProjectSummary, bool) {
+	if todoID <= 0 {
+		return model.ProjectSummary{}, false
+	}
+	best, ok := todoLinkedWorktreeProjectIn(m.allProjects, todoID)
+	if ok {
+		return best, true
+	}
+	return todoLinkedWorktreeProjectIn(m.projects, todoID)
+}
+
+func todoLinkedWorktreeProjectIn(projects []model.ProjectSummary, todoID int64) (model.ProjectSummary, bool) {
+	best := model.ProjectSummary{}
+	bestRank := -1
+	for _, project := range projects {
+		if project.WorktreeKind != model.WorktreeKindLinked || project.WorktreeOriginTodoID != todoID {
+			continue
+		}
+		rank := 0
+		if project.PresentOnDisk {
+			rank += 2
+		}
+		if strings.TrimSpace(project.RepoBranch) != "" {
+			rank++
+		}
+		if rank > bestRank || (rank == bestRank && strings.TrimSpace(project.Path) < strings.TrimSpace(best.Path)) {
+			best = project
+			bestRank = rank
+		}
+	}
+	if bestRank < 0 {
+		return model.ProjectSummary{}, false
+	}
+	return best, true
 }
 
 func todoEditorLegendLine() string {

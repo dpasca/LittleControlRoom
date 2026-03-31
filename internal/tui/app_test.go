@@ -5897,6 +5897,10 @@ func TestTodoDialogSelectedRowHasNoExtraLeadingSpace(t *testing.T) {
 }
 
 func TestTodoDialogShowsWorktreeSuggestionState(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	defer lipgloss.SetColorProfile(prevProfile)
+
 	m := Model{
 		detail: model.ProjectDetail{
 			Summary: model.ProjectSummary{Path: "/tmp/demo"},
@@ -5925,12 +5929,66 @@ func TestTodoDialogShowsWorktreeSuggestionState(t *testing.T) {
 		height:     24,
 	}
 
-	rendered := ansi.Strip(m.renderTodoDialogOverlay("", 100, 24))
-	if !strings.Contains(rendered, "fix/todo-dialog-spacing") {
-		t.Fatalf("rendered TODO dialog should show ready branch suggestion, got %q", rendered)
+	rendered := m.renderTodoDialogOverlay("", 100, 24)
+	if !strings.Contains(ansi.Strip(rendered), "fix/todo-dialog-spacing") {
+		t.Fatalf("rendered TODO dialog should show ready branch suggestion, got %q", ansi.Strip(rendered))
 	}
-	if strings.Contains(rendered, "preparing suggestion...") {
-		t.Fatalf("rendered TODO dialog should hide queued suggestion state, got %q", rendered)
+	if !strings.Contains(rendered, "38;5;244") {
+		t.Fatalf("rendered TODO dialog should keep suggestion-only worktree labels muted, got %q", rendered)
+	}
+	if strings.Contains(ansi.Strip(rendered), "preparing suggestion...") {
+		t.Fatalf("rendered TODO dialog should hide queued suggestion state, got %q", ansi.Strip(rendered))
+	}
+}
+
+func TestTodoDialogHighlightsActiveLinkedWorktreeState(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	defer lipgloss.SetColorProfile(prevProfile)
+
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Path:             "/tmp/demo",
+				PresentOnDisk:    true,
+				WorktreeRootPath: "/tmp/demo",
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Path:                 "/tmp/demo--fix-todo-dialog-spacing",
+				PresentOnDisk:        true,
+				WorktreeRootPath:     "/tmp/demo",
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeOriginTodoID: 7,
+				RepoBranch:           "fix/todo-dialog-spacing",
+			},
+		},
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Todos: []model.TodoItem{
+				{
+					ID:          7,
+					ProjectPath: "/tmp/demo",
+					Text:        "Fix spacing on selected TODO row",
+					WorktreeSuggestion: &model.TodoWorktreeSuggestion{
+						Status:     model.TodoWorktreeSuggestionReady,
+						BranchName: "fix/todo-dialog-spacing",
+					},
+				},
+			},
+		},
+		todoDialog: &todoDialogState{ProjectPath: "/tmp/demo", ProjectName: "demo", Selected: 0},
+		width:      100,
+		height:     24,
+	}
+
+	rendered := m.renderTodoDialogOverlay("", 100, 24)
+	if !strings.Contains(ansi.Strip(rendered), "fix/todo-dialog-spacing") {
+		t.Fatalf("rendered TODO dialog should show linked worktree label, got %q", ansi.Strip(rendered))
+	}
+	if !strings.Contains(rendered, "38;5;42") {
+		t.Fatalf("rendered TODO dialog should highlight active linked worktree labels, got %q", rendered)
 	}
 }
 
