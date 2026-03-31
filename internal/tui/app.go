@@ -606,9 +606,10 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	mdl, cmd := m.update(msg)
 	mm := mdl.(Model)
+	prevWant := m.codexVisible() || m.diffView != nil
 	want := mm.codexVisible() || mm.diffView != nil
-	if want != mm.mouseEnabled {
-		mm.mouseEnabled = want
+	mm.mouseEnabled = want
+	if want != prevWant {
 		var mouseCmd tea.Cmd
 		if want {
 			mouseCmd = tea.EnableMouseCellMotion

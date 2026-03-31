@@ -1,6 +1,58 @@
 # Little Control Room Status
 
-Last updated: 2026-03-31 10:06 JST
+Last updated: 2026-03-31 10:55 JST
+
+## Latest Update (2026-03-31 10:55 JST)
+
+- Made merge-conflict UX first-class in the worktree flow so conflicts read clearly in the modal and stay visible in the project list/detail panes after refresh:
+  - assumption update:
+    - unmerged Git state should be tracked explicitly as `repo_conflict`, not folded into generic `repo_dirty`, so the TUI can distinguish an active conflict from ordinary local edits
+    - merge conflict errors should be multi-line and wrap inside the merge dialog instead of being truncated with `...`
+    - top-status reporting should stay single-line even when the detailed modal error is multi-line
+  - `internal/model/model.go`
+    - added `RepoConflict` to persisted project state and summary models
+  - `internal/store/store.go`
+    - added `projects.repo_conflict` schema support plus migration for existing DBs
+    - threaded `repo_conflict` through project summary/detail scans, upserts, and path moves
+  - `internal/service/service.go`
+    - derived `repo_conflict` from Git status unmerged entries during scans and refreshes
+    - included the new field in project-change detection and event payloads
+  - `internal/service/project_create.go`
+    - captured repo conflict state when attaching/manual-project rows are created
+  - `internal/service/git_actions.go`
+    - preserved `RepoConflict` when reconstructing project state from detail
+  - `internal/service/worktree.go`
+    - changed merge-conflict errors to a multi-line format with a `Conflicted files:` section
+  - `internal/tui/runtime_attention.go`
+    - gave conflict repos a distinct pulsing violet `!` indicator ahead of plain dirty/sync warnings
+  - `internal/tui/app.go`
+    - kept top status text single-line even when modal errors are multi-line
+    - added a `MERGE CONFLICT` badge in the top status line for the selected conflicted repo
+    - showed conflict state explicitly in the repo detail pane and worktree-lane list
+  - `internal/tui/worktree_ui.go`
+    - made merge readiness distinguish unresolved conflicts from normal dirty state
+    - rendered a dedicated `Merge Conflict` section with wrapped detail instead of truncating the error
+  - `internal/store/store_test.go`
+    - added migration/move coverage for `repo_conflict`
+  - `internal/service/service_test.go`
+    - asserted that merge-conflict refreshes now persist `RepoConflict`
+  - `internal/tui/app_test.go`
+    - added coverage for conflict indicators, top-status conflict badge, detail conflict field, and wrapped merge-conflict modal output
+- Verification status:
+  - focused coverage passed:
+    - `go test ./internal/store -run 'Test(OpenMigratesLegacyProjectNotesIntoTodos|OpenMigratesProjectsInScopeColumn|MoveProjectPathPreservesRelatedData)$' -count=1`
+    - `go test ./internal/service -run 'Test(MergeWorktreeBackReportsConflictAndRefreshesStatus)$' -count=1`
+    - `go test ./internal/tui -run 'Test(ProjectRepoWarningIndicator|RenderTopStatusLineShowsMergeConflictBadge|RenderDetailContentShowsRepoConflict|UpdateNormalModeMShowsBlockedMergeWhenWorktreesDirty|WorktreeActionMsgErrorKeepsMergeDialogOpen)$' -count=1`
+  - repo validation:
+    - `make test` passed
+    - `make scan` passed at `2026-03-31T10:54:19+09:00`
+    - `make doctor` passed using cached report at `2026-03-31T10:54:19+09:00`
+  - PTY smoke passed:
+    - `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-merge-conflict-ui-smoke INTERVAL=1h`
+    - isolated sandbox launched and exited cleanly via `q`
+- Next concrete tasks:
+  - Consider surfacing conflicted file names in the selected project detail pane too, not just in the merge modal, if repeated post-failure triage still feels too modal-centric.
+  - Decide whether worktree-family summaries should count conflicts separately from generic dirty lanes once there are enough active lanes for that extra distinction to matter.
 
 ## Latest Update (2026-03-31 10:06 JST)
 
@@ -172,6 +224,30 @@ Last updated: 2026-03-31 10:06 JST
 - Next concrete tasks:
   - Live-test the exact TODO worktree path on a real Little Control Room TODO and confirm the launcher transitions from `wait...` to a ready branch/folder suggestion without needing manual retry.
   - Decide whether queued/running suggestion rows should also show a tiny inline spinner/status timestamp so long waits are easier to distinguish from a stuck suggester.
+
+## Latest Update (2026-03-31 06:40 JST)
+
+- Fixed the remaining `make test` failures in the diff-view TUI path:
+  - assumption update:
+    - a freshly opened diff view should default keyboard focus to the file list so the first `Up` / `Down` keystroke changes the selected file instead of scrolling content
+    - the selected diff row should keep showing the file state word (`modified`, `untracked`, etc.) instead of collapsing to code-plus-name only
+    - mouse enable/disable commands should follow actual codex/diff visibility transitions, not an out-of-band `mouseEnabled` field that may be stale in directly constructed test models
+  - `internal/tui/diff_view.go`
+    - changed new diff views to start with `diffFocusFiles`
+    - updated selected diff-row rendering to keep compact `code + state` copy, which restores the expected `M modified ...` label
+  - `internal/tui/app.go`
+    - changed the top-level `Update(...)` mouse-toggle guard to compare pre-update vs post-update visible panes, while still syncing `mouseEnabled` to the resolved visibility state
+- Verification status:
+  - focused coverage passed:
+    - `go test ./internal/tui -run 'TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen|TestRenderDiffFileRowSelectedUsesCompactCodeSpacing|TestDiffModeMovesSelectionAndScrollsContent' -count=1`
+  - repo validation:
+    - `make test` passed
+    - `make scan` passed at `2026-03-31T06:39:38+09:00`
+    - `make doctor` passed using cached report at `2026-03-31T06:39:38+09:00`
+    - `git diff --check` passed
+- Next concrete tasks:
+  - Run `make tui` for a quick manual diff-view smoke check so the new default file-list focus still feels right in normal interactive use.
+  - Decide whether unselected diff rows should also show the state word, or whether keeping that extra metadata only on the selected row is the cleaner list density tradeoff.
 
 ## Latest Update (2026-03-31 05:31 JST)
 
