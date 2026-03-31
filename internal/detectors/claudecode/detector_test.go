@@ -194,6 +194,9 @@ func TestDetectActiveSessionOverridesTurnCompletion(t *testing.T) {
 	if sess.LatestTurnCompleted {
 		t.Error("expected LatestTurnCompleted = false when active PID session exists")
 	}
+	if !sess.LatestTurnStartedAt.Equal(ts) {
+		t.Fatalf("LatestTurnStartedAt = %s, want %s from active PID metadata", sess.LatestTurnStartedAt, ts)
+	}
 }
 
 func TestEncodeCCProjectPath(t *testing.T) {
@@ -332,6 +335,9 @@ func TestDetectPendingBackgroundTaskKeepsClaudeSessionInProgress(t *testing.T) {
 	}
 	if sess.LatestTurnCompleted {
 		t.Fatalf("expected LatestTurnCompleted = false while background task is pending")
+	}
+	if want := ts.Add(4 * time.Second); !sess.LatestTurnStartedAt.Equal(want) {
+		t.Fatalf("LatestTurnStartedAt = %s, want %s from the start of the pending background task", sess.LatestTurnStartedAt, want)
 	}
 	if !sess.LastEventAt.Equal(taskMTime) {
 		t.Fatalf("LastEventAt = %s, want %s from task output mtime", sess.LastEventAt, taskMTime)

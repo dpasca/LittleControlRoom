@@ -38,6 +38,7 @@ type parseResult struct {
 	cwd         string
 	startedAt   time.Time
 	lastEventAt time.Time
+	turnStarted time.Time
 	turnDone    bool
 	turnKnown   bool
 }
@@ -99,9 +100,13 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 		// If an active PID session targets this cwd + sessionID, mark turn as in-progress.
 		turnDone := parsed.turnDone
 		turnKnown := parsed.turnKnown
+		turnStarted := parsed.turnStarted
 		if active, ok := activeSessions[parsed.sessionID]; ok && active.cwd == cwd {
 			turnKnown = true
 			turnDone = false
+			if !active.startedAt.IsZero() {
+				turnStarted = active.startedAt
+			}
 		}
 
 		session := model.SessionEvidence{
@@ -112,6 +117,7 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 			Format:               "claude_code",
 			StartedAt:            parsed.startedAt,
 			LastEventAt:          parsed.lastEventAt,
+			LatestTurnStartedAt:  turnStarted,
 			LatestTurnStateKnown: turnKnown,
 			LatestTurnCompleted:  turnDone,
 		}
@@ -284,6 +290,7 @@ func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult,
 
 	turnState := claudeTurnState{}
 	pendingAsync := map[string]struct{}{}
+	pendingAsyncStartedAt := time.Time{}
 	for sc.Scan() {
 		line := sc.Text()
 		var entry claudeSessionEntry
@@ -320,6 +327,9 @@ func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult,
 			}
 		case "user":
 			if taskID := entry.asyncLaunchID(); taskID != "" {
+				if len(pendingAsync) == 0 && !ts.IsZero() {
+					pendingAsyncStartedAt = ts
+				}
 				pendingAsync[taskID] = struct{}{}
 				turnState.set(ts, false)
 				continue
@@ -328,6 +338,9 @@ func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult,
 				turnState.set(ts, false)
 				if isTerminalTaskStatus(status) {
 					delete(pendingAsync, taskID)
+					if len(pendingAsync) == 0 {
+						pendingAsyncStartedAt = time.Time{}
+					}
 				}
 				continue
 			}
@@ -346,11 +359,18 @@ func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult,
 	if len(pendingAsync) > 0 {
 		res.turnKnown = true
 		res.turnDone = false
+		res.turnStarted = pendingAsyncStartedAt
+		if res.turnStarted.IsZero() {
+			res.turnStarted = turnState.startedAt
+		}
 		return res, sc.Err()
 	}
 	if turnState.known {
 		res.turnKnown = true
 		res.turnDone = turnState.completed
+		if !turnState.completed {
+			res.turnStarted = turnState.startedAt
+		}
 	}
 
 	return res, sc.Err()
@@ -359,10 +379,16 @@ func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult,
 type claudeTurnState struct {
 	known     bool
 	completed bool
+	startedAt time.Time
 }
 
-func (s *claudeTurnState) set(_ time.Time, completed bool) {
+func (s *claudeTurnState) set(ts time.Time, completed bool) {
 	s.known = true
+	if completed {
+		s.startedAt = time.Time{}
+	} else if s.completed || s.startedAt.IsZero() {
+		s.startedAt = ts
+	}
 	s.completed = completed
 }
 

@@ -48,6 +48,7 @@ type claudeCodeSession struct {
 	closed           bool
 	busy             bool
 	busyExternal     bool
+	busySince        time.Time
 	interruptPending bool
 	lastActivityAt   time.Time
 	model            string
@@ -108,6 +109,7 @@ type claudeStreamMessage struct {
 type claudeActivePIDSession struct {
 	PID       int    `json:"pid"`
 	SessionID string `json:"sessionId"`
+	StartedAt int64  `json:"startedAt"`
 }
 
 func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
@@ -208,6 +210,7 @@ func (s *claudeCodeSession) Snapshot() Snapshot {
 		Started:          s.started,
 		Busy:             s.busy || s.busyExternal,
 		BusyExternal:     s.busyExternal,
+		BusySince:        s.busySince,
 		Closed:           s.closed,
 		Entries:          append([]TranscriptEntry(nil), s.entries...),
 		Transcript:       strings.Join(lines, "\n"),
@@ -269,6 +272,7 @@ func (s *claudeCodeSession) SubmitInput(input Submission) error {
 
 	s.busy = true
 	s.busyExternal = false
+	s.busySince = time.Now()
 	s.interruptPending = false
 	s.status = claudeThinkingStatus
 	s.lastError = ""
@@ -563,6 +567,9 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 	}
 	s.loadTranscriptLocked()
 	s.refreshActiveLocked()
+	if !s.busy && !s.busyExternal {
+		s.busySince = time.Time{}
+	}
 
 	switch {
 	case interrupted:
@@ -950,6 +957,9 @@ func (s *claudeCodeSession) loadTranscriptLocked() {
 func (s *claudeCodeSession) refreshActiveLocked() {
 	if strings.TrimSpace(s.sessionID) == "" {
 		s.busyExternal = false
+		if !s.busy {
+			s.busySince = time.Time{}
+		}
 		return
 	}
 	sessionsDir := filepath.Join(s.claudeHome, "sessions")
@@ -958,6 +968,7 @@ func (s *claudeCodeSession) refreshActiveLocked() {
 		return
 	}
 	active := false
+	activeStartedAt := time.Time{}
 	for _, e := range entries {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
 			continue
@@ -978,10 +989,19 @@ func (s *claudeCodeSession) refreshActiveLocked() {
 		}
 		if pidSession.PID > 0 && syscall.Kill(pidSession.PID, 0) == nil {
 			active = true
+			if pidSession.StartedAt > 0 {
+				activeStartedAt = time.UnixMilli(pidSession.StartedAt)
+			}
 			break
 		}
 	}
 	s.busyExternal = active
+	switch {
+	case active && !activeStartedAt.IsZero() && s.busySince.IsZero():
+		s.busySince = activeStartedAt
+	case !active && !s.busy:
+		s.busySince = time.Time{}
+	}
 }
 
 func startClaudeTurn(ctx context.Context, projectPath, resumeID, model, reasoning, permissionMode string) (*exec.Cmd, io.WriteCloser, io.ReadCloser, io.ReadCloser, error) {

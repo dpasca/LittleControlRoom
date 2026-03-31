@@ -1,11 +1,13 @@
 package codexapp
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"lcroom/internal/codexcli"
 )
@@ -210,5 +212,63 @@ func TestClaudeTurnArgsIncludeVerboseForStreamJSON(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("claudeTurnArgs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestClaudeSnapshotIncludesBusySinceForInternalTurn(t *testing.T) {
+	startedAt := time.Date(2026, 3, 31, 9, 0, 0, 0, time.UTC)
+	session := &claudeCodeSession{
+		projectPath:     "/tmp/demo",
+		started:         true,
+		busy:            true,
+		busySince:       startedAt,
+		status:          claudeThinkingStatus,
+		assistantBlocks: make(map[string]map[string]struct{}),
+		toolCalls:       make(map[string]claudeToolCall),
+		toolResults:     make(map[string]struct{}),
+	}
+
+	snapshot := session.Snapshot()
+	if !snapshot.BusySince.Equal(startedAt) {
+		t.Fatalf("snapshot.BusySince = %v, want %v", snapshot.BusySince, startedAt)
+	}
+}
+
+func TestClaudeRefreshActiveSetsBusySinceFromPIDSession(t *testing.T) {
+	root := t.TempDir()
+	claudeHome := filepath.Join(root, ".claude")
+	sessionsDir := filepath.Join(claudeHome, "sessions")
+	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions dir: %v", err)
+	}
+
+	startedAt := time.Date(2026, 3, 31, 9, 12, 0, 0, time.UTC)
+	data, err := json.Marshal(map[string]any{
+		"pid":       os.Getpid(),
+		"sessionId": "ses-demo",
+		"startedAt": startedAt.UnixMilli(),
+	})
+	if err != nil {
+		t.Fatalf("marshal pid session: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionsDir, "active.json"), data, 0o644); err != nil {
+		t.Fatalf("write pid session: %v", err)
+	}
+
+	session := &claudeCodeSession{
+		claudeHome:      claudeHome,
+		sessionID:       "ses-demo",
+		assistantBlocks: make(map[string]map[string]struct{}),
+		toolCalls:       make(map[string]claudeToolCall),
+		toolResults:     make(map[string]struct{}),
+	}
+
+	session.refreshActiveLocked()
+
+	if !session.busyExternal {
+		t.Fatalf("busyExternal = false, want true")
+	}
+	if !session.busySince.Equal(startedAt) {
+		t.Fatalf("busySince = %v, want %v", session.busySince, startedAt)
 	}
 }
