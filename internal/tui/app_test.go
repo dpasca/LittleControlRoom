@@ -1946,8 +1946,11 @@ func TestWorktreeActionMsgOpensPostMergeCleanupPrompt(t *testing.T) {
 	if got.worktreePostMerge.TodoID != 42 || got.worktreePostMerge.TodoText != todoText || got.worktreePostMerge.TodoPath != rootPath {
 		t.Fatalf("linked todo prompt metadata = %#v, want todo id/text/path", got.worktreePostMerge)
 	}
-	if got.worktreePostMerge.Selected != worktreePostMergeFocusTertiary {
-		t.Fatalf("post-merge prompt should default to keeping the linked todo open")
+	if got.worktreePostMerge.Selected != worktreePostMergeFocusTodo {
+		t.Fatalf("post-merge prompt should focus the linked todo checkbox first")
+	}
+	if got.worktreePostMerge.MarkTodoDone || got.worktreePostMerge.RemoveNow {
+		t.Fatalf("post-merge prompt should default to no cleanup selections, got %#v", got.worktreePostMerge)
 	}
 	if got.preferredSelectPath != rootPath {
 		t.Fatalf("preferred select path = %q, want %q", got.preferredSelectPath, rootPath)
@@ -2006,7 +2009,8 @@ func TestWorktreePostMergeEnterRemoveQueuesRemoval(t *testing.T) {
 			BranchName:   "feat/parallel-lane",
 			TargetBranch: "master",
 			Status:       "Merged feat/parallel-lane into master",
-			Selected:     worktreePostMergeFocusPrimary,
+			RemoveNow:    true,
+			Selected:     worktreePostMergeFocusRemove,
 		},
 	}
 
@@ -2031,7 +2035,8 @@ func TestWorktreePostMergeEnterRemoveLocksDialogWhileRunning(t *testing.T) {
 			BranchName:   "feat/parallel-lane",
 			TargetBranch: "master",
 			Status:       "Merged feat/parallel-lane into master",
-			Selected:     worktreePostMergeFocusPrimary,
+			RemoveNow:    true,
+			Selected:     worktreePostMergeFocusRemove,
 		},
 		spinnerFrame: 2,
 	}
@@ -2076,8 +2081,9 @@ func TestWorktreePostMergeEnterDoneKeepsWorktreeQueuesTodoUpdate(t *testing.T) {
 			TodoID:       7,
 			TodoText:     "Finish the parallel lane work",
 			TodoPath:     rootPath,
+			MarkTodoDone: true,
 			Status:       "Merged feat/parallel-lane into master",
-			Selected:     worktreePostMergeFocusSecondary,
+			Selected:     worktreePostMergeFocusTodo,
 		},
 	}
 
@@ -2097,7 +2103,42 @@ func TestWorktreePostMergeEnterDoneKeepsWorktreeQueuesTodoUpdate(t *testing.T) {
 	}
 }
 
-func TestRenderWorktreePostMergeOverlayWrapsFullPromptCopy(t *testing.T) {
+func TestWorktreePostMergeSpaceTogglesSelectedOption(t *testing.T) {
+	m := Model{
+		worktreePostMerge: &worktreePostMergeState{
+			ProjectPath:  "/tmp/repo--feat-parallel-lane",
+			RootPath:     "/tmp/repo",
+			BranchName:   "feat/parallel-lane",
+			TargetBranch: "master",
+			TodoID:       7,
+			TodoText:     "Finish the parallel lane work",
+			TodoPath:     "/tmp/repo",
+			Status:       "Merged feat/parallel-lane into master",
+			Selected:     worktreePostMergeFocusTodo,
+		},
+	}
+
+	updated, cmd := m.updateWorktreePostMergeMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("toggling a post-merge option should not queue background work")
+	}
+	if got.worktreePostMerge == nil || !got.worktreePostMerge.MarkTodoDone {
+		t.Fatalf("space should toggle the selected linked todo checkbox")
+	}
+
+	got.worktreePostMerge.Selected = worktreePostMergeFocusRemove
+	updated, cmd = got.updateWorktreePostMergeMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("toggling the remove option should not queue background work")
+	}
+	if got.worktreePostMerge == nil || !got.worktreePostMerge.RemoveNow {
+		t.Fatalf("space should toggle the remove-worktree checkbox")
+	}
+}
+
+func TestRenderWorktreePostMergeOverlayShowsSeparateCleanupChoices(t *testing.T) {
 	rendered := ansi.Strip(Model{
 		worktreePostMerge: &worktreePostMergeState{
 			ProjectPath:  "/tmp/repo--feat-parallel-lane",
@@ -2108,14 +2149,16 @@ func TestRenderWorktreePostMergeOverlayWrapsFullPromptCopy(t *testing.T) {
 			TodoText:     "Finish the parallel lane work",
 			TodoPath:     "/tmp/repo",
 			Status:       "Merged feat/parallel-lane into master",
-			Selected:     worktreePostMergeFocusTertiary,
+			Selected:     worktreePostMergeFocusTodo,
 		},
 	}.renderWorktreePostMergeOverlay("", 72, 24))
 
 	for _, want := range []string{
-		"Mark the linked TODO done now?",
-		"You can remove the",
-		"worktree at the same time or keep the checkout.",
+		"Choose what to clean up now.",
+		"The linked TODO and",
+		"merged worktree are separate actions.",
+		"[ ] Finish the parallel lane work",
+		"[ ] Remove merged worktree now",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("post-merge overlay should render the full wrapped prompt copy, missing %q in %q", want, rendered)
@@ -2137,11 +2180,13 @@ func TestWorktreeActionMsgErrorKeepsPostMergePromptOpen(t *testing.T) {
 			TodoID:       7,
 			TodoText:     "Finish the parallel lane work",
 			TodoPath:     rootPath,
+			MarkTodoDone: true,
+			RemoveNow:    true,
 			Status:       "Merged feat/parallel-lane into master",
 			Busy:         true,
 			BusyTitle:    "Updating TODO and worktree",
 			BusyMessage:  "Please wait while Little Control Room updates the linked TODO.",
-			Selected:     worktreePostMergeFocusPrimary,
+			Selected:     worktreePostMergeFocusTodo,
 		},
 	}
 
