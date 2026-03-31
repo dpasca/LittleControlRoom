@@ -581,8 +581,14 @@ func (m *Model) openWorktreeMergeConfirmForSelection() tea.Cmd {
 		m.status = "This worktree is already on its parent branch"
 		return nil
 	}
-	if m.projectHasLiveCodexSession(project.Path) {
-		m.status = "Close the embedded agent session before merging this worktree back"
+	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
+		m.showSessionBlockedAttentionDialog(
+			project,
+			"Merge blocked",
+			"Close the embedded agent session before merging this worktree back.",
+			"retry the merge",
+			embeddedProvider(snapshot),
+		)
 		return nil
 	}
 	if snapshot := m.projectRuntimeSnapshot(project.Path); snapshot.Running {
@@ -810,8 +816,14 @@ func (m *Model) openWorktreeRemoveConfirmForSelection() tea.Cmd {
 		m.status = "Select a linked worktree to remove it"
 		return nil
 	}
-	if m.projectHasLiveCodexSession(project.Path) {
-		m.status = "Close the embedded agent session before removing this worktree"
+	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
+		m.showSessionBlockedAttentionDialog(
+			project,
+			"Remove blocked",
+			"Close the embedded agent session before removing this worktree.",
+			"retry the removal",
+			embeddedProvider(snapshot),
+		)
 		return nil
 	}
 	if snapshot := m.projectRuntimeSnapshot(project.Path); snapshot.Running {

@@ -72,6 +72,7 @@ type Model struct {
 	worktreeMergeConfirm  *worktreeMergeConfirmState
 	worktreePostMerge     *worktreePostMergeState
 	worktreeRemoveConfirm *worktreeRemoveConfirmState
+	attentionDialog       *attentionDialogState
 
 	commandMode                  bool
 	commandInput                 textinput.Model
@@ -696,6 +697,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.ignoredPickerVisible {
 			return m.updateIgnoredPickerMode(msg)
+		}
+		if m.attentionDialog != nil {
+			return m.updateAttentionDialogMode(msg)
 		}
 		if m.codexVisible() {
 			return m.updateCodexMode(msg)
@@ -2151,6 +2155,9 @@ func (m Model) View() string {
 	if m.noteClearConfirm != nil {
 		body = m.renderNoteClearConfirmOverlay(body, layout.width, layout.height)
 	}
+	if m.attentionDialog != nil {
+		body = m.renderAttentionDialogOverlay(body, layout.width, layout.height)
+	}
 
 	return strings.Join([]string{header, body, m.renderFooter(layout.width)}, "\n")
 }
@@ -3125,8 +3132,21 @@ func (m Model) launchEmbeddedForSelection(provider codexapp.Provider, forceNew b
 		m.status = provider.Label() + " launch requires a folder present on disk"
 		return m, nil
 	}
-	if blockedStatus, blocked := m.embeddedLaunchBlockedStatus(p, provider); blocked {
-		m.status = blockedStatus
+	if block, blocked := m.embeddedLaunchBlock(p, provider); blocked {
+		actionLabel := m.attentionDialogSessionActionLabel(p, block.BlockingProvider)
+		hint := fmt.Sprintf("Finish or close the %s session, then try starting %s here again.", block.BlockingProvider.Label(), provider.Label())
+		if actionLabel != "" {
+			hint = fmt.Sprintf("%s to finish or close it, then try starting %s here again.", actionLabel, provider.Label())
+		}
+		m.showAttentionDialog(attentionDialogState{
+			Title:           "Launch blocked",
+			ProjectName:     projectNameForPicker(p, p.Path),
+			ProjectPath:     p.Path,
+			Message:         block.Message,
+			Hint:            hint,
+			PrimaryLabel:    actionLabel,
+			PrimaryProvider: block.BlockingProvider,
+		})
 		return m, nil
 	}
 	if !forceNew && strings.TrimSpace(prompt) == "" {
@@ -3155,28 +3175,39 @@ func (m Model) launchEmbeddedForSelection(provider codexapp.Provider, forceNew b
 	return m, m.openCodexSessionCmd(req)
 }
 
-func (m Model) embeddedLaunchBlockedStatus(project model.ProjectSummary, requested codexapp.Provider) (string, bool) {
+type embeddedLaunchBlock struct {
+	Message          string
+	BlockingProvider codexapp.Provider
+}
+
+func (m Model) embeddedLaunchBlock(project model.ProjectSummary, requested codexapp.Provider) (embeddedLaunchBlock, bool) {
 	requested = requested.Normalized()
 	if requested == "" {
 		requested = codexapp.ProviderCodex
 	}
 	if project.Path == "" {
-		return "", false
+		return embeddedLaunchBlock{}, false
 	}
 	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
 		liveProvider := embeddedProvider(snapshot)
 		if liveProvider != requested && embeddedSessionBlocksProviderSwitch(snapshot) {
-			return fmt.Sprintf("This project already has an active embedded %s session. Finish or close it before starting %s here.", liveProvider.Label(), requested.Label()), true
+			return embeddedLaunchBlock{
+				Message:          fmt.Sprintf("This project already has an active embedded %s session. Finish or close it before starting %s here.", liveProvider.Label(), requested.Label()),
+				BlockingProvider: liveProvider,
+			}, true
 		}
 	}
 	latestProvider := providerForSessionFormat(project.LatestSessionFormat)
 	if latestProvider == "" || latestProvider == requested {
-		return "", false
+		return embeddedLaunchBlock{}, false
 	}
 	if !projectLatestSessionBlocksProviderSwitch(project, m.currentTime(), m.embeddedLaunchProtectionWindow()) {
-		return "", false
+		return embeddedLaunchBlock{}, false
 	}
-	return fmt.Sprintf("This project already has an unfinished %s session. Finish or close it before starting %s here.", latestProvider.Label(), requested.Label()), true
+	return embeddedLaunchBlock{
+		Message:          fmt.Sprintf("This project already has an unfinished %s session. Finish or close it before starting %s here.", latestProvider.Label(), requested.Label()),
+		BlockingProvider: latestProvider,
+	}, true
 }
 
 func embeddedSessionBlocksProviderSwitch(snapshot codexapp.Snapshot) bool {

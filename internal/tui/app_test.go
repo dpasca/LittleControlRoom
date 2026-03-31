@@ -1415,6 +1415,140 @@ func TestDispatchCommandWorktreeRemoveOpensConfirm(t *testing.T) {
 	}
 }
 
+func TestOpenWorktreeMergeConfirmWithLiveSessionShowsAttentionDialog(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				Started:  true,
+				ThreadID: "thread-live",
+				Status:   req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: childPath,
+		Provider:    codexapp.ProviderClaudeCode,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 childPath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				RepoBranch:           "feat/parallel-lane",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	cmd := m.openWorktreeMergeConfirmForSelection()
+	if cmd != nil {
+		t.Fatalf("blocked merge should not schedule a command")
+	}
+	if m.worktreeMergeConfirm != nil {
+		t.Fatalf("merge confirmation dialog should stay closed when the session warning modal is shown")
+	}
+	if m.attentionDialog == nil {
+		t.Fatalf("blocked merge should show the attention dialog")
+	}
+	if m.attentionDialog.Title != "Merge blocked" {
+		t.Fatalf("attention dialog title = %q, want merge blocked", m.attentionDialog.Title)
+	}
+	if m.attentionDialog.PrimaryLabel != "Open Claude Code" {
+		t.Fatalf("attention dialog primary label = %q, want open action", m.attentionDialog.PrimaryLabel)
+	}
+	if m.status != "Close the embedded agent session before merging this worktree back." {
+		t.Fatalf("status = %q, want merge block warning", m.status)
+	}
+}
+
+func TestOpenWorktreeRemoveConfirmWithLiveSessionShowsAttentionDialog(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				Started:  true,
+				ThreadID: "thread-live",
+				Status:   req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: childPath,
+		Provider:    codexapp.ProviderClaudeCode,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+			},
+			{
+				Name:             "repo--feat-parallel-lane",
+				Path:             childPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+				RepoBranch:       "feat/parallel-lane",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	cmd := m.openWorktreeRemoveConfirmForSelection()
+	if cmd != nil {
+		t.Fatalf("blocked removal should not schedule a command")
+	}
+	if m.worktreeRemoveConfirm != nil {
+		t.Fatalf("remove confirmation dialog should stay closed when the session warning modal is shown")
+	}
+	if m.attentionDialog == nil {
+		t.Fatalf("blocked removal should show the attention dialog")
+	}
+	if m.attentionDialog.Title != "Remove blocked" {
+		t.Fatalf("attention dialog title = %q, want remove blocked", m.attentionDialog.Title)
+	}
+	if m.attentionDialog.PrimaryLabel != "Open Claude Code" {
+		t.Fatalf("attention dialog primary label = %q, want open action", m.attentionDialog.PrimaryLabel)
+	}
+	if m.status != "Close the embedded agent session before removing this worktree." {
+		t.Fatalf("status = %q, want removal block warning", m.status)
+	}
+}
+
 func TestRenderWorktreeRemoveConfirmShowsMergeSafetyCopy(t *testing.T) {
 	m := Model{
 		worktreeRemoveConfirm: &worktreeRemoveConfirmState{
@@ -6457,6 +6591,24 @@ func TestLaunchEmbeddedForSelectionBlocksWhileAnotherEmbeddedProviderIsActive(t 
 	if got.status != wantStatus {
 		t.Fatalf("status = %q, want %q", got.status, wantStatus)
 	}
+	if got.attentionDialog == nil {
+		t.Fatalf("launchEmbeddedForSelection() should show an attention dialog when another embedded provider is active")
+	}
+	if got.attentionDialog.Title != "Launch blocked" {
+		t.Fatalf("attention dialog title = %q, want launch blocked", got.attentionDialog.Title)
+	}
+	if got.attentionDialog.PrimaryProvider != codexapp.ProviderClaudeCode {
+		t.Fatalf("attention dialog provider = %q, want Claude Code", got.attentionDialog.PrimaryProvider)
+	}
+	if got.attentionDialog.PrimaryLabel != "Open Claude Code" {
+		t.Fatalf("attention dialog primary label = %q, want open action", got.attentionDialog.PrimaryLabel)
+	}
+	rendered := ansi.Strip(got.renderAttentionDialogContent(72))
+	if !strings.Contains(rendered, "This project already has an active embedded Claude Code session.") ||
+		!strings.Contains(rendered, "Finish") ||
+		!strings.Contains(rendered, "Open Claude Code") {
+		t.Fatalf("attention dialog should surface the blocked launch and open action, got %q", rendered)
+	}
 	if len(requests) != 1 {
 		t.Fatalf("launch requests = %d, want only the original Claude open", len(requests))
 	}
@@ -6470,6 +6622,7 @@ func TestLaunchEmbeddedForSelectionBlocksWhileAnotherProviderSessionIsUnfinished
 			Path:                     "/tmp/demo",
 			Name:                     "demo",
 			PresentOnDisk:            true,
+			LatestSessionID:          "cc-old",
 			LatestSessionFormat:      "claude_code",
 			LatestSessionLastEventAt: now.Add(-10 * time.Minute),
 			LatestTurnStateKnown:     true,
@@ -6486,6 +6639,66 @@ func TestLaunchEmbeddedForSelectionBlocksWhileAnotherProviderSessionIsUnfinished
 	wantStatus := "This project already has an unfinished Claude Code session. Finish or close it before starting Codex here."
 	if got.status != wantStatus {
 		t.Fatalf("status = %q, want %q", got.status, wantStatus)
+	}
+	if got.attentionDialog == nil {
+		t.Fatalf("launchEmbeddedForSelection() should show an attention dialog for unfinished external sessions")
+	}
+	if got.attentionDialog.PrimaryProvider != codexapp.ProviderClaudeCode {
+		t.Fatalf("attention dialog provider = %q, want Claude Code", got.attentionDialog.PrimaryProvider)
+	}
+	if got.attentionDialog.PrimaryLabel != "Resume Claude Code" {
+		t.Fatalf("attention dialog primary label = %q, want resume action", got.attentionDialog.PrimaryLabel)
+	}
+}
+
+func TestAttentionDialogEnterOpensExistingEmbeddedSession(t *testing.T) {
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				Started:  true,
+				ThreadID: "thread-live",
+				Status:   req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderClaudeCode,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/demo",
+			Name:          "demo",
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+		attentionDialog: &attentionDialogState{
+			Title:           "Launch blocked",
+			ProjectName:     "demo",
+			ProjectPath:     "/tmp/demo",
+			Message:         "This project already has an active embedded Claude Code session. Finish or close it before starting Codex here.",
+			PrimaryLabel:    "Open Claude Code",
+			PrimaryProvider: codexapp.ProviderClaudeCode,
+			Selected:        attentionDialogFocusPrimary,
+		},
+	}
+
+	updated, cmd := m.updateAttentionDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("attention dialog enter on the primary action should return an open command")
+	}
+	if got.attentionDialog != nil {
+		t.Fatalf("attention dialog should close after taking the primary action")
+	}
+	if got.codexVisibleProject != "/tmp/demo" {
+		t.Fatalf("codexVisibleProject = %q, want /tmp/demo", got.codexVisibleProject)
 	}
 }
 

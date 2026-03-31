@@ -38,6 +38,8 @@ Use these checks before finishing:
 
 Run `make tui` for interactive verification when UI behavior is touched.
 
+Interactive TUI verification needs a real PTY-backed terminal. In non-interactive command runners, `make tui` or `make tui-parallel` may fail trying to open `/dev/tty`; treat that as an environment limitation unless the same failure reproduces from an actual terminal session.
+
 ## Debugging Multi-Instance Runs
 
 - By default, long-lived `lcroom` modes such as `tui`, `serve`, and `classify` now refuse to share the same DB with another active runtime.
