@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1815,6 +1816,119 @@ func TestRemoveWorktreeRemovesTrackedLinkedWorktree(t *testing.T) {
 	}
 	if !detail.Summary.Forgotten {
 		t.Fatalf("removed worktree should be marked forgotten: %#v", detail.Summary)
+	}
+}
+
+func TestRemoveWorktreeWaitsForScanAndStaysForgotten(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.IncludePaths = []string{root}
+	svc := New(cfg, st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	item, err := svc.AddTodo(ctx, projectPath, "Create a removable linked worktree")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
+		t.Fatalf("queue todo worktree suggestion: %v", err)
+	} else if !queued {
+		t.Fatalf("expected todo worktree suggestion to queue")
+	}
+	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
+	if err != nil {
+		t.Fatalf("claim todo worktree suggestion: %v", err)
+	}
+	suggestion.BranchName = "feat/remove-during-scan"
+	suggestion.WorktreeSuffix = "feat-remove-during-scan"
+	suggestion.Kind = "feature"
+	suggestion.Reason = "Creates a linked worktree for concurrent removal coverage."
+	suggestion.Confidence = 0.92
+	suggestion.Model = "test"
+	if completed, err := st.CompleteTodoWorktreeSuggestion(ctx, suggestion); err != nil {
+		t.Fatalf("complete todo worktree suggestion: %v", err)
+	} else if !completed {
+		t.Fatalf("expected todo worktree suggestion to complete")
+	}
+
+	result, err := svc.CreateTodoWorktree(ctx, CreateTodoWorktreeRequest{
+		ProjectPath: projectPath,
+		TodoID:      item.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateTodoWorktree() error = %v", err)
+	}
+
+	originalFingerprintReader := svc.gitFingerprintReader
+	if originalFingerprintReader == nil {
+		t.Fatalf("gitFingerprintReader = nil")
+	}
+
+	scanBlocked := make(chan struct{})
+	releaseScan := make(chan struct{})
+	var blockOnce sync.Once
+	svc.gitFingerprintReader = func(ctx context.Context, path string) (scanner.GitFingerprint, error) {
+		if filepath.Clean(path) == filepath.Clean(result.WorktreePath) {
+			blockOnce.Do(func() {
+				close(scanBlocked)
+				<-releaseScan
+			})
+		}
+		return originalFingerprintReader(ctx, path)
+	}
+
+	scanDone := make(chan error, 1)
+	go func() {
+		_, err := svc.ScanOnce(ctx)
+		scanDone <- err
+	}()
+
+	select {
+	case <-scanBlocked:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for scan to block on worktree fingerprint read")
+	}
+
+	removeDone := make(chan error, 1)
+	go func() {
+		removeDone <- svc.RemoveWorktree(ctx, result.WorktreePath)
+	}()
+
+	close(releaseScan)
+
+	if err := <-scanDone; err != nil {
+		t.Fatalf("ScanOnce() error = %v", err)
+	}
+	if err := <-removeDone; err != nil {
+		t.Fatalf("RemoveWorktree() error = %v", err)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() after concurrent removal error = %v", err)
+	}
+	if !detail.Summary.Forgotten {
+		t.Fatalf("removed worktree should stay forgotten after a concurrent scan: %#v", detail.Summary)
+	}
+	if _, err := os.Stat(result.WorktreePath); !os.IsNotExist(err) {
+		t.Fatalf("worktree path still exists after concurrent removal: stat err = %v", err)
 	}
 }
 

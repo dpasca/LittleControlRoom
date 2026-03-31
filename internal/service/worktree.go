@@ -492,6 +492,9 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string) error 
 	if s == nil || s.store == nil {
 		return fmt.Errorf("service unavailable")
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
 	if projectPath == "" {
 		return fmt.Errorf("project path is required")

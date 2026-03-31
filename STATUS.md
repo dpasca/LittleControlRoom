@@ -1,6 +1,31 @@
 # Little Control Room Status
 
-Last updated: 2026-03-31 11:41 JST
+Last updated: 2026-03-31 12:57 JST
+
+## Latest Update (2026-03-31 12:57 JST)
+
+- Fixed the linked-worktree removal race that could resurrect a just-removed lane as `missing` on the next scan or app relaunch:
+  - assumption update:
+    - `RemoveWorktree(...)` must be serialized with `ScanOnce(...)` / `RefreshProjectStatus(...)` writes because scan snapshots can otherwise re-upsert stale pre-removal state after the checkout is deleted
+    - a successful `remove_worktree` event is not enough to keep the row hidden if an overlapping scan already captured the worktree in `git worktree list`; the final DB write order matters
+  - `internal/service/worktree.go`
+    - added service mutex protection around `RemoveWorktree(...)` so removal now waits for an in-flight scan/refresh to finish before deleting the checkout and marking the row forgotten
+  - `internal/service/service_test.go`
+    - added concurrency coverage that blocks a scan after it snapshots the linked worktree, removes the worktree concurrently, then asserts the row still ends `forgotten` instead of being rewritten back to visible `missing`
+- Verification status:
+  - focused coverage passed:
+    - `go test ./internal/service -run 'Test(RemoveWorktreeRemovesTrackedLinkedWorktree|RemoveWorktreeWaitsForScanAndStaysForgotten|MergeWorktreeBackMergesIntoRecordedParentBranch)$' -count=1`
+  - repo validation:
+    - `make test` passed
+    - `make scan` passed at `2026-03-31T12:02:41+09:00`
+    - `make doctor` passed using cached report at `2026-03-31T12:02:41+09:00`
+    - `git diff --check` passed
+  - live-state confirmation:
+    - manually marked the known stale row `/Users/davide/dev/repos/LittleControlRoom--make-test-failures` as forgotten in `~/.little-control-room/little-control-room.sqlite` after confirming it was `present_on_disk=0`, `forgotten=0`, and absent from `git worktree list`
+    - a follow-up `make scan` passed at `2026-03-31T12:57:18+09:00` and the row stayed `forgotten=1`
+- Next concrete tasks:
+  - Consider applying the same scan-serialization rule to other destructive project mutations such as `ForgetProject(...)` if we see similar stale-state resurrection there.
+  - Decide whether the app should auto-forget already-removed linked worktree rows when scan sees a linked path missing from both disk and the live `git worktree list`, even if the row was never explicitly forgotten.
 
 ## Latest Update (2026-03-31 11:41 JST)
 
