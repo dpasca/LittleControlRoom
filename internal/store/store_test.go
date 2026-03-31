@@ -226,6 +226,69 @@ func TestTodoWorktreeSuggestionLifecycleAppearsInTodoList(t *testing.T) {
 	}
 }
 
+func TestDeleteDoneTodosRemovesOnlyCompletedItems(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           "/tmp/demo",
+		Name:           "demo",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		InScope:        true,
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	keepItem, err := st.AddTodo(ctx, "/tmp/demo", "Keep this open")
+	if err != nil {
+		t.Fatalf("add open todo: %v", err)
+	}
+	doneItem, err := st.AddTodo(ctx, "/tmp/demo", "Purge this completed todo")
+	if err != nil {
+		t.Fatalf("add done todo: %v", err)
+	}
+	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, doneItem.ID); err != nil {
+		t.Fatalf("queue todo worktree suggestion: %v", err)
+	} else if !queued {
+		t.Fatalf("expected todo worktree suggestion to queue")
+	}
+	if err := st.ToggleTodoDone(ctx, doneItem.ID, true); err != nil {
+		t.Fatalf("toggle done todo: %v", err)
+	}
+
+	count, err := st.DeleteDoneTodos(ctx, "/tmp/demo")
+	if err != nil {
+		t.Fatalf("DeleteDoneTodos() error = %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("DeleteDoneTodos() count = %d, want 1", count)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, "/tmp/demo", 0)
+	if err != nil {
+		t.Fatalf("get project detail: %v", err)
+	}
+	if len(detail.Todos) != 1 {
+		t.Fatalf("remaining todo count = %d, want 1", len(detail.Todos))
+	}
+	if detail.Todos[0].ID != keepItem.ID {
+		t.Fatalf("remaining todo = %#v, want keep item %#v", detail.Todos[0], keepItem)
+	}
+	if _, err := st.GetTodoWorktreeSuggestion(ctx, doneItem.ID); err != sql.ErrNoRows {
+		t.Fatalf("GetTodoWorktreeSuggestion() after purge = %v, want sql.ErrNoRows", err)
+	}
+}
+
 func TestClaimNextQueuedTodoWorktreeSuggestionRespectsDebounce(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

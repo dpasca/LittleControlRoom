@@ -46,6 +46,7 @@ type todoDeleteConfirmState struct {
 	ProjectName string
 	TodoID      int64
 	TodoText    string
+	DoneCount   int
 	Selected    int
 }
 
@@ -156,7 +157,7 @@ func (m *Model) openTodoDialog(project model.ProjectSummary) tea.Cmd {
 	m.commandMode = false
 	m.showHelp = false
 	m.err = nil
-	m.status = "TODO list open. Enter starts selected item; a adds, e edits, space toggles"
+	m.status = "TODO list open. Enter starts selected item; a adds, e edits, space toggles, p purges done"
 	m.syncTodoDialogSelection()
 	return nil
 }
@@ -283,11 +284,34 @@ func (m *Model) openTodoDeleteConfirm(todo model.TodoItem) {
 	m.status = "Confirm TODO delete"
 }
 
+func (m *Model) openTodoDonePurgeConfirm(doneCount int) {
+	if m.todoDialog == nil || doneCount <= 0 {
+		return
+	}
+	m.todoDeleteConfirm = &todoDeleteConfirmState{
+		ProjectPath: m.todoDialog.ProjectPath,
+		ProjectName: m.todoDialog.ProjectName,
+		DoneCount:   doneCount,
+		Selected:    todoDeleteConfirmFocusKeep,
+	}
+	m.status = "Confirm completed TODO purge"
+}
+
 func (m *Model) closeTodoDeleteConfirm(status string) {
 	m.todoDeleteConfirm = nil
 	if status != "" {
 		m.status = status
 	}
+}
+
+func completedTodoCount(items []model.TodoItem) int {
+	count := 0
+	for _, item := range items {
+		if item.Done {
+			count++
+		}
+	}
+	return count
 }
 
 func (m *Model) openTodoCopyDialog(todo model.TodoItem) tea.Cmd {
@@ -408,6 +432,14 @@ func (m Model) updateTodoDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.openTodoDeleteConfirm(item)
+		return m, nil
+	case "p":
+		doneCount := completedTodoCount(m.todoItemsFor(m.todoDialog.ProjectPath))
+		if doneCount == 0 {
+			m.status = "No completed TODOs to purge"
+			return m, nil
+		}
+		m.openTodoDonePurgeConfirm(doneCount)
 		return m, nil
 	case " ":
 		item, ok := m.selectedTodoItem()
@@ -701,6 +733,10 @@ func (m Model) updateTodoDeleteConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 			m.closeTodoDeleteConfirm("TODO delete canceled")
 			return m, nil
 		}
+		if confirm.TodoID == 0 {
+			m.status = "Purging completed TODOs..."
+			return m, m.purgeDoneTodosCmd(confirm.ProjectPath)
+		}
 		m.status = "Deleting TODO..."
 		return m, m.deleteTodoCmd(confirm.ProjectPath, confirm.TodoID)
 	}
@@ -770,6 +806,28 @@ func (m Model) deleteTodoCmd(projectPath string, todoID int64) tea.Cmd {
 		return todoActionMsg{
 			projectPath: projectPath,
 			status:      "TODO deleted",
+			err:         err,
+		}
+	}
+}
+
+func (m Model) purgeDoneTodosCmd(projectPath string) tea.Cmd {
+	if m.svc == nil {
+		return func() tea.Msg {
+			return todoActionMsg{projectPath: projectPath, err: fmt.Errorf("service unavailable")}
+		}
+	}
+	return func() tea.Msg {
+		count, err := m.svc.PurgeDoneTodos(m.ctx, projectPath)
+		status := "No completed TODOs to purge"
+		if count == 1 {
+			status = "Purged 1 completed TODO"
+		} else if count > 1 {
+			status = fmt.Sprintf("Purged %d completed TODOs", count)
+		}
+		return todoActionMsg{
+			projectPath: projectPath,
+			status:      status,
 			err:         err,
 		}
 	}
@@ -1084,6 +1142,7 @@ func todoDialogLegendLine() string {
 		renderDialogAction("e", "edit", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("space", "done", pushActionKeyStyle, pushActionTextStyle),
 		renderDialogAction("d", "delete", cancelActionKeyStyle, cancelActionTextStyle),
+		renderDialogAction("p", "purge done", cancelActionKeyStyle, cancelActionTextStyle),
 		renderDialogAction("c", "copy", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("Enter", "start", commitActionKeyStyle, commitActionTextStyle),
 		renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
@@ -1206,16 +1265,31 @@ func (m Model) renderTodoDeleteConfirmOverlay(body string, bodyW, bodyH int) str
 	}
 	panelW := min(max(46, bodyW-24), 72)
 	panelInnerW := max(24, panelW-4)
+	title := "Delete TODO"
+	message := detailValueStyle.Render(truncateText(strings.TrimSpace(confirm.TodoText), panelInnerW))
+	actionLabel := "Delete"
+	if confirm.TodoID == 0 {
+		title = "Purge Completed TODOs"
+		actionLabel = "Purge"
+		noun := "TODOs"
+		if confirm.DoneCount == 1 {
+			noun = "TODO"
+		}
+		message = strings.Join([]string{
+			detailValueStyle.Render(fmt.Sprintf("Delete %d completed %s from this project?", confirm.DoneCount, noun)),
+			detailMutedStyle.Render("Only satisfied TODOs will be removed."),
+		}, "\n")
+	}
 	buttons := lipgloss.JoinHorizontal(
 		lipgloss.Left,
-		renderNoteDialogButton("Delete", confirm.Selected == todoDeleteConfirmFocusDelete),
+		renderNoteDialogButton(actionLabel, confirm.Selected == todoDeleteConfirmFocusDelete),
 		" ",
 		renderNoteDialogButton("Keep", confirm.Selected == todoDeleteConfirmFocusKeep),
 	)
 	lines := []string{
-		detailSectionStyle.Render("Delete TODO") + "  " + detailValueStyle.Render(confirm.ProjectName),
+		detailSectionStyle.Render(title) + "  " + detailValueStyle.Render(confirm.ProjectName),
 		"",
-		detailValueStyle.Render(truncateText(strings.TrimSpace(confirm.TodoText), panelInnerW)),
+		message,
 		"",
 		buttons,
 	}
