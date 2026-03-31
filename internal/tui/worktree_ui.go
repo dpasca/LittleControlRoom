@@ -476,6 +476,9 @@ func (m Model) canMergeWorktreeBack(project model.ProjectSummary) bool {
 	if project.WorktreeKind != model.WorktreeKindLinked {
 		return false
 	}
+	if m.commitInFlightForWorktree(project, projectWorktreeRootPath(project)) {
+		return false
+	}
 	targetBranch := strings.TrimSpace(project.WorktreeParentBranch)
 	sourceBranch := strings.TrimSpace(project.RepoBranch)
 	if targetBranch == "" || sourceBranch == "" || sourceBranch == targetBranch {
@@ -488,6 +491,33 @@ func (m Model) canMergeWorktreeBack(project model.ProjectSummary) bool {
 		return false
 	}
 	return true
+}
+
+func (m Model) commitInFlightForWorktree(project model.ProjectSummary, rootPath string) bool {
+	projectPath := filepath.Clean(strings.TrimSpace(project.Path))
+	if projectPath == "." {
+		projectPath = ""
+	}
+	if projectPath != "" && m.pendingGitSummary(projectPath) != "" {
+		return true
+	}
+	rootPath = filepath.Clean(strings.TrimSpace(rootPath))
+	if rootPath == "" || rootPath == "." {
+		rootPath = projectWorktreeRootPath(project)
+	}
+	if rootPath == "" || rootPath == "." {
+		return false
+	}
+	for _, member := range m.worktreeFamily(rootPath) {
+		memberPath := filepath.Clean(strings.TrimSpace(member.Path))
+		if memberPath == "" || memberPath == "." {
+			continue
+		}
+		if m.pendingGitSummary(memberPath) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (m Model) canRemoveWorktree(project model.ProjectSummary) bool {
@@ -645,6 +675,10 @@ func (m *Model) openWorktreeMergeConfirmForSelection() tea.Cmd {
 		m.status = "This worktree is already on its parent branch"
 		return nil
 	}
+	if m.commitInFlightForWorktree(project, row.RootPath) {
+		m.status = "A commit is still in progress. Finish it before merging this worktree back."
+		return nil
+	}
 	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
 		if worktreeMergeCanAutoCloseSnapshot(snapshot) {
 			if err := m.closeEmbeddedSessionForProject(project.Path); err != nil {
@@ -723,6 +757,16 @@ func (m Model) updateWorktreeMergeConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 		}
 		return m, nil
 	case "enter":
+		project, ok := m.projectSummaryByPath(confirm.ProjectPath)
+		if !ok {
+			m.status = "Worktree is unavailable right now"
+			return m, nil
+		}
+		if m.commitInFlightForWorktree(project, confirm.RootPath) {
+			m.status = "A commit is still in progress. Finish it before merging this worktree back."
+			confirm.Busy = false
+			return m, nil
+		}
 		if confirm.MergeReady && confirm.Selected == worktreeMergeConfirmFocusMerge {
 			confirm.Busy = true
 			confirm.BusyMessage = "Please wait while Git merges this worktree back. The dialog is temporarily locked."

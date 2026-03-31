@@ -1030,6 +1030,45 @@ func TestRenderFooterShowsMergeHintForLinkedWorktreeWithParentBranch(t *testing.
 	}
 }
 
+func TestRenderFooterHidesMergeHintDuringCommitInFlight(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		focusedPane: focusProjects,
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				Status:           model.StatusIdle,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 childPath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				RepoBranch:           "feat/parallel-lane",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+		pendingGitSummaries: map[string]string{
+			childPath: "Committing...",
+		},
+	}
+	m.rebuildProjectList(childPath)
+
+	rendered := ansi.Strip(m.renderFooter(160))
+	if strings.Contains(rendered, "M merge") {
+		t.Fatalf("renderFooter() should hide merge action while commit is in flight")
+	}
+}
+
 func TestRenderDetailContentShowsWorktreeActions(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"
@@ -1190,6 +1229,63 @@ func TestUpdateNormalModeMOpensWorktreeMergeConfirm(t *testing.T) {
 	}
 	if got.worktreeMergeConfirm.TargetBranch != "master" {
 		t.Fatalf("merge confirm target branch = %q, want master", got.worktreeMergeConfirm.TargetBranch)
+	}
+}
+
+func TestUpdateNormalModeMBlockedWhenCommitIsInFlight(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	workingPath := "/tmp/repo--feat-parallel-lane-wip"
+	m := Model{
+		focusedPane: focusProjects,
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 childPath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				RepoBranch:           "feat/parallel-lane",
+			},
+			{
+				Name:                 "repo--feat-parallel-lane-wip",
+				Path:                 workingPath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				RepoBranch:           "feat/parallel-lane-wip",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+		width:      120,
+		height:     28,
+		pendingGitSummaries: map[string]string{
+			workingPath: "Committing...",
+		},
+	}
+	m.rebuildProjectList(childPath)
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("commit-in-flight should block merge confirm without scheduling work")
+	}
+	if got.worktreeMergeConfirm != nil {
+		t.Fatalf("merge confirm should remain closed while a commit is running")
+	}
+	if got.status != "A commit is still in progress. Finish it before merging this worktree back." {
+		t.Fatalf("status = %q, want commit in-flight gate message", got.status)
 	}
 }
 
@@ -1495,6 +1591,50 @@ func TestDispatchCommandWorktreeMergeOpensConfirm(t *testing.T) {
 	}
 	if got.worktreeMergeConfirm == nil {
 		t.Fatalf("dispatchCommand(/wt merge) should open the merge confirmation dialog")
+	}
+}
+
+func TestDispatchCommandWorktreeMergeBlockedWhenCommitIsInFlight(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 childPath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				RepoBranch:           "feat/parallel-lane",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+		pendingGitSummaries: map[string]string{
+			childPath: "Committing...",
+		},
+	}
+	m.rebuildProjectList(childPath)
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindWorktreeMerge})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("commit-in-flight should block /wt merge without scheduling work")
+	}
+	if got.worktreeMergeConfirm != nil {
+		t.Fatalf("merge confirmation should remain closed while a commit is running")
+	}
+	if got.status != "A commit is still in progress. Finish it before merging this worktree back." {
+		t.Fatalf("status = %q, want commit in-flight gate message", got.status)
 	}
 }
 
