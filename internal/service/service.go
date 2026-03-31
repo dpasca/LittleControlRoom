@@ -136,6 +136,8 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	defer s.mu.Unlock()
 
 	reconfigureAIClients := editableSettingsRequireAIClientRefresh(s.cfg, settings)
+	currentBackend := s.cfg.EffectiveAIBackend()
+	nextBackend := config.ResolveAIBackend(settings.AIBackend, settings.OpenAIAPIKey)
 
 	s.cfg.AIBackend = settings.AIBackend
 	s.cfg.OpenAIAPIKey = strings.TrimSpace(settings.OpenAIAPIKey)
@@ -155,6 +157,18 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	s.cfg.StuckThreshold = settings.StuckThreshold
 	if reconfigureAIClients {
 		s.configureAIClientsLocked()
+	}
+	if currentBackend != nextBackend {
+		s.resetSessionUsageLocked()
+	}
+}
+
+func (s *Service) resetSessionUsageLocked() {
+	if s.llmUsageTracker != nil {
+		s.llmUsageTracker.Reset()
+	}
+	if resetter, ok := s.classifier.(interface{ ResetUsage() }); ok {
+		resetter.ResetUsage()
 	}
 }
 

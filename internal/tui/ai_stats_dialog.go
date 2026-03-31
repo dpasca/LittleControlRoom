@@ -64,9 +64,13 @@ func (m Model) renderAIStatsContent(width int) string {
 		detailSectionStyle.Render("Assessments"),
 		detailField("Status", m.renderClassificationSummary()),
 		detailField("Calls", aiStatsCallsValue(usage)),
-		detailField(aiStatsCostLabel(backend), aiStatsCostValue(backend, usage)),
-		detailField("Tokens", aiStatsTokensValue(usage)),
 	}
+	if aiStatsShowsCost(backend) {
+		lines = append(lines, detailField("Cost", aiStatsCostValue(usage)))
+	} else {
+		lines = append(lines, detailField("Billing", aiStatsBillingValue(backend)))
+	}
+	lines = append(lines, detailField("Tokens", aiStatsTokensValue(usage)))
 	if billingNotice := aiStatsBillingNotice(backend); billingNotice != "" {
 		lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, width, billingNotice)...)
 	}
@@ -180,24 +184,31 @@ func aiStatsCallsValue(usage model.LLMSessionUsage) string {
 	return detailValueStyle.Render(strings.Join(parts, " | "))
 }
 
-func aiStatsCostLabel(backend config.AIBackend) string {
-	if aiStatsUsesEstimatedBillingCopy(backend) {
-		return "Estimate"
-	}
-	return "Cost"
+func aiStatsShowsCost(backend config.AIBackend) bool {
+	return backend == config.AIBackendOpenAIAPI
 }
 
-func aiStatsCostValue(backend config.AIBackend, usage model.LLMSessionUsage) string {
+func aiStatsCostValue(usage model.LLMSessionUsage) string {
 	if !usage.Enabled {
 		return detailMutedStyle.Render("off")
 	}
 	if estimatedCostUSD, ok := estimatedUsageCostUSD(usage); ok {
-		if aiStatsUsesEstimatedBillingCopy(backend) {
-			return detailValueStyle.Render("approx. " + formatEstimatedCostUSD(estimatedCostUSD))
-		}
 		return detailValueStyle.Render(formatEstimatedCostUSD(estimatedCostUSD))
 	}
 	return detailWarningStyle.Render("unknown")
+}
+
+func aiStatsBillingValue(backend config.AIBackend) string {
+	switch backend {
+	case config.AIBackendCodex, config.AIBackendOpenCode, config.AIBackendClaude:
+		return detailMutedStyle.Render("local provider mode")
+	case config.AIBackendDisabled:
+		return detailMutedStyle.Render("disabled")
+	case config.AIBackendUnset:
+		return detailWarningStyle.Render("not configured")
+	default:
+		return detailMutedStyle.Render("not available")
+	}
 }
 
 func aiStatsBillingNotice(backend config.AIBackend) string {
@@ -205,18 +216,9 @@ func aiStatsBillingNotice(backend config.AIBackend) string {
 	case config.AIBackendOpenAIAPI:
 		return "These numbers are still estimates. Your OpenAI dashboard is the billing source of truth."
 	case config.AIBackendCodex, config.AIBackendOpenCode, config.AIBackendClaude:
-		return fmt.Sprintf("%s is not using your OpenAI API key here. The dollar figure above is only an estimate or provider-reported usage for comparison, not OpenAI API spend.", backend.Label())
+		return fmt.Sprintf("%s is running through its local provider path here, so Little Control Room only shows calls and tokens. Switch to the OpenAI API backend in /setup if you want estimated API-key spend.", backend.Label())
 	default:
 		return ""
-	}
-}
-
-func aiStatsUsesEstimatedBillingCopy(backend config.AIBackend) bool {
-	switch backend {
-	case config.AIBackendCodex, config.AIBackendOpenCode, config.AIBackendClaude:
-		return true
-	default:
-		return false
 	}
 }
 

@@ -609,6 +609,50 @@ func TestManagerProcessOneHeartbeatsWaitingForModel(t *testing.T) {
 	}
 }
 
+type resetUsageTestClient struct {
+	model string
+}
+
+func (c resetUsageTestClient) Classify(context.Context, SessionSnapshot) (Result, error) {
+	return Result{}, nil
+}
+
+func (c resetUsageTestClient) ModelName() string {
+	return c.model
+}
+
+func TestManagerResetUsageClearsCountersAndKeepsCurrentModel(t *testing.T) {
+	t.Parallel()
+
+	manager := NewManager(nil, nil, Options{
+		Client: resetUsageTestClient{model: "gpt-old"},
+	})
+
+	manager.usage.start("gpt-old")
+	manager.usage.complete("gpt-old", model.LLMUsage{
+		InputTokens:  321,
+		OutputTokens: 57,
+		TotalTokens:  378,
+	})
+	manager.ConfigureClient(resetUsageTestClient{model: "gpt-new"})
+
+	manager.ResetUsage()
+
+	usage := manager.UsageSnapshot()
+	if !usage.Enabled {
+		t.Fatalf("usage should stay enabled after reset")
+	}
+	if usage.Model != "gpt-new" {
+		t.Fatalf("usage model after reset = %q, want %q", usage.Model, "gpt-new")
+	}
+	if usage.Started != 0 || usage.Completed != 0 || usage.Failed != 0 || usage.Running != 0 {
+		t.Fatalf("usage counters after reset = %+v, want all zero", usage)
+	}
+	if usage.Totals != (model.LLMUsage{}) {
+		t.Fatalf("usage totals after reset = %+v, want zero totals", usage.Totals)
+	}
+}
+
 func TestSnapshotHashForSnapshotIgnoresLastEventAt(t *testing.T) {
 	t.Parallel()
 

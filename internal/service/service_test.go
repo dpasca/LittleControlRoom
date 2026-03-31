@@ -140,6 +140,43 @@ func TestApplyEditableSettingsRefreshesAIClientsWhenBackendConfigChanges(t *test
 	}
 }
 
+func TestApplyEditableSettingsResetsUsageWhenBackendChanges(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.AIBackend = config.AIBackendCodex
+
+	svc := &Service{
+		cfg:               cfg,
+		bus:               events.NewBus(),
+		llmUsageTracker:   llm.NewUsageTracker(),
+		opencodeDiscovery: llm.NewOpenCodeDiscovery(),
+		backendDetector: func(_ context.Context, cfg config.AppConfig, backend config.AIBackend) aibackend.Status {
+			return readyBackendStatus(firstNonZeroBackend(backend, cfg.EffectiveAIBackend()))
+		},
+	}
+
+	svc.llmUsageTracker.Start("gpt-5-mini")
+	svc.llmUsageTracker.Complete("gpt-5-mini", model.LLMUsage{
+		InputTokens:  120,
+		OutputTokens: 30,
+		TotalTokens:  150,
+	})
+
+	settings := config.EditableSettingsFromAppConfig(cfg)
+	settings.AIBackend = config.AIBackendOpenCode
+
+	svc.ApplyEditableSettings(settings)
+
+	usage := svc.SessionUsage()
+	if usage.Started != 0 || usage.Completed != 0 || usage.Failed != 0 || usage.Running != 0 {
+		t.Fatalf("usage counters after backend switch = %+v, want all zero", usage)
+	}
+	if usage.Totals != (model.LLMUsage{}) {
+		t.Fatalf("usage totals after backend switch = %+v, want zero totals", usage.Totals)
+	}
+}
+
 func readyBackendStatus(backend config.AIBackend) aibackend.Status {
 	return aibackend.Status{
 		Backend: backend,

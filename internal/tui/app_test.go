@@ -2303,19 +2303,16 @@ func TestCompactLocalUsageLabel(t *testing.T) {
 	}
 }
 
-func TestAIStatsCostLabelUsesEstimateCopyForLocalBackends(t *testing.T) {
-	if got := aiStatsCostLabel(config.AIBackendCodex); got != "Estimate" {
-		t.Fatalf("aiStatsCostLabel(codex) = %q, want %q", got, "Estimate")
+func TestAIStatsShowsCostOnlyForOpenAIAPI(t *testing.T) {
+	if aiStatsShowsCost(config.AIBackendCodex) {
+		t.Fatalf("aiStatsShowsCost(codex) = true, want false")
 	}
-	if got := aiStatsCostLabel(config.AIBackendClaude); got != "Estimate" {
-		t.Fatalf("aiStatsCostLabel(claude) = %q, want %q", got, "Estimate")
-	}
-	if got := aiStatsCostLabel(config.AIBackendOpenAIAPI); got != "Cost" {
-		t.Fatalf("aiStatsCostLabel(openai_api) = %q, want %q", got, "Cost")
+	if !aiStatsShowsCost(config.AIBackendOpenAIAPI) {
+		t.Fatalf("aiStatsShowsCost(openai_api) = false, want true")
 	}
 }
 
-func TestAIStatsCostValueUsesApproximateCopyForLocalBackends(t *testing.T) {
+func TestAIStatsCostValue(t *testing.T) {
 	usage := model.LLMSessionUsage{
 		Enabled: true,
 		Model:   "gpt-5-mini",
@@ -2325,21 +2322,24 @@ func TestAIStatsCostValueUsesApproximateCopyForLocalBackends(t *testing.T) {
 		},
 	}
 
-	if got := ansi.Strip(aiStatsCostValue(config.AIBackendCodex, usage)); got != "approx. $0.0012" {
-		t.Fatalf("aiStatsCostValue(codex) = %q, want %q", got, "approx. $0.0012")
+	if got := ansi.Strip(aiStatsCostValue(usage)); got != "$0.0012" {
+		t.Fatalf("aiStatsCostValue() = %q, want %q", got, "$0.0012")
 	}
-	if got := ansi.Strip(aiStatsCostValue(config.AIBackendOpenAIAPI, usage)); got != "$0.0012" {
-		t.Fatalf("aiStatsCostValue(openai_api) = %q, want %q", got, "$0.0012")
+}
+
+func TestAIStatsBillingValueMarksLocalProviderMode(t *testing.T) {
+	if got := ansi.Strip(aiStatsBillingValue(config.AIBackendOpenCode)); got != "local provider mode" {
+		t.Fatalf("aiStatsBillingValue(opencode) = %q, want %q", got, "local provider mode")
 	}
 }
 
 func TestAIStatsBillingNoticeClarifiesLocalBackends(t *testing.T) {
 	got := aiStatsBillingNotice(config.AIBackendClaude)
-	if !strings.Contains(got, "not using your OpenAI API key") {
-		t.Fatalf("local backend notice should mention OpenAI API key billing, got %q", got)
+	if !strings.Contains(got, "local provider path") {
+		t.Fatalf("local backend notice should mention local provider billing semantics, got %q", got)
 	}
-	if !strings.Contains(got, "provider-reported usage") {
-		t.Fatalf("local backend notice should explain the estimate source, got %q", got)
+	if !strings.Contains(got, "estimated API-key spend") {
+		t.Fatalf("local backend notice should explain how to see API-key cost, got %q", got)
 	}
 }
 
@@ -12986,7 +12986,7 @@ func TestRenderAIStatsOverlayPreservesBackground(t *testing.T) {
 	}
 }
 
-func TestRenderAIStatsContentClarifiesLocalBackendEstimate(t *testing.T) {
+func TestRenderAIStatsContentHidesLocalBackendCost(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
 	if err != nil {
@@ -13025,10 +13025,13 @@ func TestRenderAIStatsContentClarifiesLocalBackendEstimate(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderAIStatsContent(76))
-	if !strings.Contains(rendered, "Estimate: approx. $0.0012") {
-		t.Fatalf("renderAIStatsContent() should show estimate copy for local backends: %q", rendered)
+	if strings.Contains(rendered, "Cost:") {
+		t.Fatalf("renderAIStatsContent() should hide cost for local backends: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Codex is not using your OpenAI API key here.") {
+	if !strings.Contains(rendered, "Billing: local provider mode") {
+		t.Fatalf("renderAIStatsContent() should show local provider billing mode: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Codex is running through its local provider path here") {
 		t.Fatalf("renderAIStatsContent() should explain local backend billing semantics: %q", rendered)
 	}
 }

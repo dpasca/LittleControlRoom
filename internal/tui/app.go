@@ -1294,6 +1294,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		saved := cloneEditableSettings(msg.settings)
 		m.settingsBaseline = &saved
 		m.embeddedModelPrefs = embeddedModelPreferencesFromSettings(msg.settings)
+		m.setupSnapshot.Selected = msg.settings.AIBackend
 		m.setupMode = false
 		m.status = fmt.Sprintf("AI setup saved to %s. %s is now selected.", msg.path, msg.settings.AIBackend.Label())
 		return m, m.refreshSetupSnapshotCmd(false)
