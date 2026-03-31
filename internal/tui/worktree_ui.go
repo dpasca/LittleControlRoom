@@ -931,6 +931,20 @@ func worktreePostMergeOptionLine(prompt *worktreePostMergeState, index, width in
 	return style.Render(line)
 }
 
+func worktreePostMergeSectionLines(prompt *worktreePostMergeState, index, width int) []string {
+	title := "Worktree cleanup"
+	description := "Remove this merged checkout now or keep it around for later. Removing it only deletes the checkout."
+	if worktreePostMergeHasTodo(prompt) && index == worktreePostMergeFocusTodo {
+		title = "Linked TODO"
+		description = "Mark the originating TODO complete if this merge finishes the work tracked by that item."
+	}
+
+	lines := []string{commandPaletteTitleStyle.Render(title)}
+	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width, description)...)
+	lines = append(lines, worktreePostMergeOptionLine(prompt, index, width))
+	return lines
+}
+
 func (m Model) completeWorktreePostMergeTodoCmd(todoProjectPath string, todoID int64, worktreePath, rootPath string, removeAfter bool, baseStatus string) tea.Cmd {
 	if m.svc == nil {
 		return func() tea.Msg {
@@ -1238,12 +1252,13 @@ func (m Model) renderWorktreePostMergeOverlay(body string, bodyW, bodyH int) str
 		if worktreePostMergeHasTodo(prompt) {
 			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "Choose what to clean up now. The linked TODO and merged worktree are separate actions.")...)
 			lines = append(lines, "")
-			lines = append(lines, worktreePostMergeOptionLine(prompt, worktreePostMergeFocusTodo, panelInnerW))
-			lines = append(lines, worktreePostMergeOptionLine(prompt, worktreePostMergeFocusRemove, panelInnerW))
+			lines = append(lines, worktreePostMergeSectionLines(prompt, worktreePostMergeFocusTodo, panelInnerW)...)
+			lines = append(lines, "")
+			lines = append(lines, worktreePostMergeSectionLines(prompt, worktreePostMergeFocusRemove, panelInnerW)...)
 		} else {
 			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "Choose whether to remove this merged worktree now or keep it for later.")...)
 			lines = append(lines, "")
-			lines = append(lines, worktreePostMergeOptionLine(prompt, worktreePostMergeFocusRemove, panelInnerW))
+			lines = append(lines, worktreePostMergeSectionLines(prompt, worktreePostMergeFocusRemove, panelInnerW)...)
 		}
 		lines = append(lines, "")
 		lines = append(lines, commandPaletteHintStyle.Render("Space toggle, ↑↓ navigate, Enter apply, Esc later"))

@@ -2157,11 +2157,41 @@ func TestRenderWorktreePostMergeOverlayShowsSeparateCleanupChoices(t *testing.T)
 		"Choose what to clean up now.",
 		"The linked TODO and",
 		"merged worktree are separate actions.",
+		"Linked TODO",
+		"Mark the originating TODO complete",
 		"[ ] Finish the parallel lane work",
+		"Worktree cleanup",
+		"Remove this merged checkout now or keep it around",
+		"for later. Removing it only deletes the checkout.",
 		"[ ] Remove merged worktree now",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("post-merge overlay should render the full wrapped prompt copy, missing %q in %q", want, rendered)
+		}
+	}
+}
+
+func TestRenderWorktreePostMergeOverlayWithoutTodoShowsCleanupSection(t *testing.T) {
+	rendered := ansi.Strip(Model{
+		worktreePostMerge: &worktreePostMergeState{
+			ProjectPath:  "/tmp/repo--feat-parallel-lane",
+			RootPath:     "/tmp/repo",
+			BranchName:   "feat/parallel-lane",
+			TargetBranch: "master",
+			Status:       "Merged feat/parallel-lane into master",
+			Selected:     worktreePostMergeFocusRemove,
+		},
+	}.renderWorktreePostMergeOverlay("", 72, 24))
+
+	for _, want := range []string{
+		"Choose whether to remove this merged worktree now or",
+		"keep it for later.",
+		"Worktree cleanup",
+		"Removing it only deletes the checkout.",
+		"[ ] Remove merged worktree now",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("post-merge overlay without todo should show the cleanup section, missing %q in %q", want, rendered)
 		}
 	}
 }
