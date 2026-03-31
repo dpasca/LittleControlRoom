@@ -313,6 +313,16 @@ func (m *Manager) UsageSnapshot() model.LLMSessionUsage {
 	return m.usage.snapshotFor(m.Enabled())
 }
 
+func (m *Manager) ResetUsage() {
+	if m == nil {
+		return
+	}
+	_, modelName := m.currentClient()
+	if m.usage != nil {
+		m.usage.reset(modelName)
+	}
+}
+
 func (m *Manager) Start(ctx context.Context) {
 	if m == nil {
 		return
@@ -649,6 +659,17 @@ func (u *usageTracker) snapshotFor(enabled bool) model.LLMSessionUsage {
 	snapshot := u.snapshot
 	snapshot.Enabled = enabled
 	return snapshot
+}
+
+func (u *usageTracker) reset(modelName string) {
+	if u == nil {
+		return
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.snapshot = model.LLMSessionUsage{
+		Model: strings.TrimSpace(modelName),
+	}
 }
 
 func clipForStorage(s string, limit int) string {

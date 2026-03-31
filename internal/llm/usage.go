@@ -79,3 +79,12 @@ func (u *UsageTracker) Snapshot(enabled bool) model.LLMSessionUsage {
 	snapshot.Enabled = enabled
 	return snapshot
 }
+
+func (u *UsageTracker) Reset() {
+	if u == nil {
+		return
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.snapshot = model.LLMSessionUsage{}
+}
