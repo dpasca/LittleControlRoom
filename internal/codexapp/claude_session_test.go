@@ -1,6 +1,8 @@
 package codexapp
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -76,6 +78,88 @@ func TestClaudeAssistantBlocksDeduplicateRepeatedEvents(t *testing.T) {
 	}
 	if session.entries[0].Text != "Working on it." {
 		t.Fatalf("assistant text = %q, want original text", session.entries[0].Text)
+	}
+}
+
+func TestParseCCLineEntriesRebuildsStructuredToolEntries(t *testing.T) {
+	toolCalls := make(map[string]claudeToolCall)
+	toolResults := make(map[string]struct{})
+
+	assistantEntries, entryType := parseCCLineEntries(`{"type":"assistant","uuid":"msg_1","message":{"role":"assistant","content":[{"type":"text","text":"Checking logs."},{"type":"tool_use","id":"toolu_1","name":"Grep","input":{"pattern":"refresh"}},{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"make test"}}]}}`, toolCalls, toolResults)
+	if entryType != "assistant" {
+		t.Fatalf("assistant entry type = %q, want assistant", entryType)
+	}
+	if len(assistantEntries) != 3 {
+		t.Fatalf("assistant entry count = %d, want 3", len(assistantEntries))
+	}
+	if assistantEntries[0].Kind != TranscriptAgent || assistantEntries[0].Text != "Checking logs." {
+		t.Fatalf("assistant text entry = %#v, want agent text", assistantEntries[0])
+	}
+	if assistantEntries[1].Kind != TranscriptTool || assistantEntries[1].Text != "Grep: refresh" {
+		t.Fatalf("grep tool entry = %#v, want structured grep tool", assistantEntries[1])
+	}
+	if assistantEntries[2].Kind != TranscriptTool || assistantEntries[2].Text != "Bash: make test" {
+		t.Fatalf("bash tool entry = %#v, want structured bash tool", assistantEntries[2])
+	}
+
+	userEntries, entryType := parseCCLineEntries(`{"type":"user","uuid":"msg_2","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_2","content":"tests passed"}]}}`, toolCalls, toolResults)
+	if entryType != "user" {
+		t.Fatalf("user entry type = %q, want user", entryType)
+	}
+	if len(userEntries) != 1 {
+		t.Fatalf("user entry count = %d, want 1", len(userEntries))
+	}
+	if userEntries[0].Kind != TranscriptCommand {
+		t.Fatalf("user result kind = %q, want %q", userEntries[0].Kind, TranscriptCommand)
+	}
+	if !strings.Contains(userEntries[0].Text, "$ make test") || !strings.Contains(userEntries[0].Text, "tests passed") {
+		t.Fatalf("user result text = %q, want reconstructed command output", userEntries[0].Text)
+	}
+}
+
+func TestClaudeLoadTranscriptKeepsToolEntriesStructuredOnRefresh(t *testing.T) {
+	dir := t.TempDir()
+	sessionFile := filepath.Join(dir, "session.jsonl")
+	lines := []string{
+		`{"type":"assistant","uuid":"msg_1","message":{"role":"assistant","content":[{"type":"text","text":"Checking logs."},{"type":"tool_use","id":"toolu_1","name":"Grep","input":{"pattern":"refresh"}},{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"make test"}}]}}`,
+		`{"type":"user","uuid":"msg_2","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_2","content":"tests passed"}]}}`,
+	}
+	if err := os.WriteFile(sessionFile, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	session := &claudeCodeSession{
+		sessionFile: sessionFile,
+		toolCalls:   make(map[string]claudeToolCall),
+		toolResults: make(map[string]struct{}),
+	}
+
+	session.loadTranscriptLocked()
+
+	if len(session.entries) != 4 {
+		t.Fatalf("entry count after refresh = %d, want 4", len(session.entries))
+	}
+	kinds := []TranscriptKind{
+		session.entries[0].Kind,
+		session.entries[1].Kind,
+		session.entries[2].Kind,
+		session.entries[3].Kind,
+	}
+	wantKinds := []TranscriptKind{TranscriptAgent, TranscriptTool, TranscriptTool, TranscriptCommand}
+	if !reflect.DeepEqual(kinds, wantKinds) {
+		t.Fatalf("entry kinds = %#v, want %#v", kinds, wantKinds)
+	}
+	if session.entries[1].Text != "Grep: refresh" {
+		t.Fatalf("grep entry text = %q, want structured grep tool", session.entries[1].Text)
+	}
+	if session.entries[2].Text != "Bash: make test" {
+		t.Fatalf("bash entry text = %q, want structured bash tool", session.entries[2].Text)
+	}
+	if strings.Contains(session.entries[0].Text, "[Grep]") || strings.Contains(session.entries[0].Text, "[Bash]") {
+		t.Fatalf("assistant text should no longer inline bracketed tool labels: %q", session.entries[0].Text)
+	}
+	if !strings.Contains(session.entries[3].Text, "$ make test") {
+		t.Fatalf("command entry text = %q, want reconstructed bash command", session.entries[3].Text)
 	}
 }
 

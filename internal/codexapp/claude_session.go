@@ -920,13 +920,13 @@ func (s *claudeCodeSession) loadTranscriptLocked() {
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 
 	var entries []TranscriptEntry
+	toolCalls := make(map[string]claudeToolCall)
+	toolResults := make(map[string]struct{})
 	lastType := ""
 	for sc.Scan() {
 		line := sc.Text()
-		entry, entryType, ok := parseCCLine(line)
-		if ok {
-			entries = append(entries, entry)
-		}
+		lineEntries, entryType := parseCCLineEntries(line, toolCalls, toolResults)
+		entries = append(entries, lineEntries...)
 		if entryType != "" {
 			lastType = entryType
 		}
@@ -1134,7 +1134,7 @@ func firstNonEmptyTrimmed(values ...string) string {
 	return ""
 }
 
-func parseCCLine(line string) (TranscriptEntry, string, bool) {
+func parseCCLineEntries(line string, toolCalls map[string]claudeToolCall, toolResults map[string]struct{}) ([]TranscriptEntry, string) {
 	var raw struct {
 		Type    string `json:"type"`
 		Subtype string `json:"subtype"`
@@ -1147,49 +1147,26 @@ func parseCCLine(line string) (TranscriptEntry, string, bool) {
 		} `json:"message"`
 	}
 	if err := json.Unmarshal([]byte(line), &raw); err != nil {
-		return TranscriptEntry{}, "", false
+		return nil, ""
 	}
 
 	if raw.IsMeta {
-		return TranscriptEntry{}, raw.Type, false
+		return nil, raw.Type
 	}
 
 	switch raw.Type {
 	case "user":
-		text := extractCCTextContent(raw.Message.Content)
-		if strings.TrimSpace(text) == "" {
-			return TranscriptEntry{}, raw.Type, false
-		}
-		return TranscriptEntry{
-			ItemID: raw.UUID,
-			Kind:   TranscriptUser,
-			Text:   text,
-		}, raw.Type, true
+		return extractCCUserEntries(raw.Message.Content, raw.UUID, toolCalls, toolResults), raw.Type
 
 	case "assistant":
-		text, toolLines := extractCCAssistantContent(raw.Message.Content)
-		combined := text
-		if len(toolLines) > 0 {
-			if combined != "" {
-				combined += "\n"
-			}
-			combined += strings.Join(toolLines, "\n")
-		}
-		if strings.TrimSpace(combined) == "" {
-			return TranscriptEntry{}, raw.Type, false
-		}
-		return TranscriptEntry{
-			ItemID: raw.UUID,
-			Kind:   TranscriptAgent,
-			Text:   combined,
-		}, raw.Type, true
+		return extractCCAssistantEntries(raw.Message.Content, raw.UUID, toolCalls), raw.Type
 
 	case "progress":
-		return TranscriptEntry{}, raw.Type, false
+		return nil, raw.Type
 	case "system":
-		return TranscriptEntry{}, raw.Type, false
+		return nil, raw.Type
 	default:
-		return TranscriptEntry{}, raw.Type, false
+		return nil, raw.Type
 	}
 }
 
@@ -1217,36 +1194,131 @@ func extractCCTextContent(content json.RawMessage) string {
 	return strings.Join(parts, "\n")
 }
 
-func extractCCAssistantContent(content json.RawMessage) (text string, toolLines []string) {
+func extractCCAssistantEntries(content json.RawMessage, itemID string, toolCalls map[string]claudeToolCall) []TranscriptEntry {
 	if len(content) == 0 {
-		return "", nil
+		return nil
 	}
 	var blocks []struct {
-		Type  string          `json:"type"`
-		Text  string          `json:"text"`
-		Name  string          `json:"name"`
-		Input json.RawMessage `json:"input"`
+		ID       string          `json:"id"`
+		Type     string          `json:"type"`
+		Text     string          `json:"text"`
+		Thinking string          `json:"thinking"`
+		Name     string          `json:"name"`
+		Input    json.RawMessage `json:"input"`
 	}
 	if err := json.Unmarshal(content, &blocks); err != nil {
-		return "", nil
+		return nil
 	}
-	var textParts []string
+	entries := make([]TranscriptEntry, 0, len(blocks))
 	for _, b := range blocks {
 		switch b.Type {
 		case "text":
-			if strings.TrimSpace(b.Text) != "" {
-				textParts = append(textParts, b.Text)
+			if text := strings.TrimSpace(b.Text); text != "" {
+				entries = append(entries, TranscriptEntry{
+					ItemID: itemID,
+					Kind:   TranscriptAgent,
+					Text:   text,
+				})
+			}
+		case "thinking":
+			if thinking := strings.TrimSpace(b.Thinking); thinking != "" {
+				entries = append(entries, TranscriptEntry{
+					ItemID: itemID,
+					Kind:   TranscriptReasoning,
+					Text:   thinking,
+				})
 			}
 		case "tool_use":
-			summary, _ := summarizeClaudeToolUse(b.Name, b.Input)
+			summary, command := summarizeClaudeToolUse(b.Name, b.Input)
+			text := b.Name
 			if summary != "" {
-				toolLines = append(toolLines, fmt.Sprintf("[%s] %s", b.Name, summary))
-			} else {
-				toolLines = append(toolLines, fmt.Sprintf("[%s]", b.Name))
+				text = b.Name + ": " + summary
+			}
+			entries = append(entries, TranscriptEntry{
+				ItemID: itemID,
+				Kind:   TranscriptTool,
+				Text:   text,
+			})
+			if b.ID != "" && toolCalls != nil {
+				toolCalls[b.ID] = claudeToolCall{
+					Name:    b.Name,
+					Summary: summary,
+					Command: command,
+				}
 			}
 		}
 	}
-	return strings.Join(textParts, "\n"), toolLines
+	return entries
+}
+
+func extractCCUserEntries(content json.RawMessage, itemID string, toolCalls map[string]claudeToolCall, toolResults map[string]struct{}) []TranscriptEntry {
+	if len(content) == 0 {
+		return nil
+	}
+	text := extractCCTextContent(content)
+	entries := make([]TranscriptEntry, 0, 2)
+	if strings.TrimSpace(text) != "" {
+		entries = append(entries, TranscriptEntry{
+			ItemID: itemID,
+			Kind:   TranscriptUser,
+			Text:   text,
+		})
+	}
+
+	var blocks []struct {
+		Type      string          `json:"type"`
+		Content   json.RawMessage `json:"content"`
+		ToolUseID string          `json:"tool_use_id"`
+	}
+	if err := json.Unmarshal(content, &blocks); err != nil {
+		return entries
+	}
+	for _, block := range blocks {
+		if block.Type != "tool_result" {
+			continue
+		}
+		toolUseID := strings.TrimSpace(block.ToolUseID)
+		if toolUseID == "" {
+			continue
+		}
+		if _, ok := toolResults[toolUseID]; ok {
+			continue
+		}
+		if toolResults != nil {
+			toolResults[toolUseID] = struct{}{}
+		}
+		call := toolCalls[toolUseID]
+		if !strings.EqualFold(call.Name, "Bash") {
+			continue
+		}
+		result := flattenClaudeToolResultRaw(block.Content)
+		if result == "" {
+			result = "[command completed]"
+		}
+		command := strings.TrimSpace(call.Command)
+		if command == "" {
+			command = strings.TrimSpace(call.Summary)
+		}
+		if command != "" {
+			result = "$ " + command + "\n" + result
+		}
+		entries = append(entries, TranscriptEntry{
+			Kind: TranscriptCommand,
+			Text: result,
+		})
+	}
+	return entries
+}
+
+func flattenClaudeToolResultRaw(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var content any
+	if err := json.Unmarshal(raw, &content); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(flattenClaudeToolResultContent(content))
 }
 
 func ccExtractString(fields map[string]json.RawMessage, key string) string {
