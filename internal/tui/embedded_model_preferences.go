@@ -134,3 +134,27 @@ func (m *Model) recordRecentModel(provider codexapp.Provider, model string) {
 	}
 	*recent = filtered
 }
+
+func embeddedModelSettingsEqual(left, right config.EditableSettings) bool {
+	return strings.TrimSpace(left.EmbeddedCodexModel) == strings.TrimSpace(right.EmbeddedCodexModel) &&
+		strings.TrimSpace(left.EmbeddedCodexReasoning) == strings.TrimSpace(right.EmbeddedCodexReasoning) &&
+		strings.TrimSpace(left.EmbeddedClaudeModel) == strings.TrimSpace(right.EmbeddedClaudeModel) &&
+		strings.TrimSpace(left.EmbeddedClaudeReasoning) == strings.TrimSpace(right.EmbeddedClaudeReasoning) &&
+		strings.TrimSpace(left.EmbeddedOpenCodeModel) == strings.TrimSpace(right.EmbeddedOpenCodeModel) &&
+		strings.TrimSpace(left.EmbeddedOpenCodeReasoning) == strings.TrimSpace(right.EmbeddedOpenCodeReasoning) &&
+		trimmedStringSlicesEqual(left.RecentCodexModels, right.RecentCodexModels) &&
+		trimmedStringSlicesEqual(left.RecentClaudeModels, right.RecentClaudeModels) &&
+		trimmedStringSlicesEqual(left.RecentOpenCodeModels, right.RecentOpenCodeModels)
+}
+
+func trimmedStringSlicesEqual(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if strings.TrimSpace(left[i]) != strings.TrimSpace(right[i]) {
+			return false
+		}
+	}
+	return true
+}
