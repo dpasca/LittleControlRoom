@@ -1,6 +1,43 @@
 # Little Control Room Status
 
-Last updated: 2026-03-31 14:07 JST
+Last updated: 2026-03-31 15:17 JST
+
+## Latest Update (2026-03-31 15:17 JST)
+
+- Moved the global AI classification counters out of the top chrome and into a dedicated recallable dialog, while giving the reclaimed header space to navigation hints:
+  - assumption update:
+    - the top status bar should prioritize always-useful navigation affordances (`f filter`, `/ command`, `Tab switch`) over internal classifier counters
+    - global AI assessment counters (`OK`, `RUN`, `Q`, `ERR`) are still useful, but they belong in an explicit `AI Stats` dialog rather than the always-on header
+    - the footer usage/call segment should become the ambient attention signal for AI failures by flashing red whenever classifier errors are present
+  - `internal/tui/ai_stats_dialog.go`
+    - added the new `AI Stats` modal with assessment counts, backend status, usage/cost/token details, and a short list of failed projects
+  - `internal/tui/app.go`
+    - removed the `AI OK/RUN/Q/ERR` summary from the top status line
+    - added top-bar navigation hints for `f filter`, `/ command`, and `Tab switch`
+    - routed the new AI stats overlay through the existing modal/footer system
+    - made the footer usage segment flash red when any project currently has classifier failures
+    - updated the help copy to advertise `/ai`
+  - `internal/commands/commands.go`
+    - added `/ai` as the canonical recall path for the new stats dialog, with `/stats` as an alias
+  - `internal/tui/app_test.go`
+    - added coverage for the top-bar hint swap, the new AI stats overlay, the `/ai` command dispatch path, and the red footer error pulse
+  - `internal/commands/commands_test.go`
+    - added parse/suggestion coverage for `/ai`
+- Verification status:
+  - focused coverage passed:
+    - `go test ./internal/commands -count=1`
+    - `go test ./internal/tui -count=1`
+  - repo validation:
+    - `make test` passed
+    - `make scan` passed at `2026-03-31T15:16:14+09:00`
+    - `make doctor` passed using cached report at `2026-03-31T15:16:38+09:00`
+    - `git diff --check` passed
+  - TUI smoke passed:
+    - `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-ai-stats-dialog-smoke INTERVAL=1h`
+    - isolated sandbox launched and exited cleanly via `q`
+- Next concrete tasks:
+  - Decide whether the `AI Stats` dialog should add jump actions for failed projects, or stay read-only and lightweight.
+  - Decide whether the red footer pulse needs a tiny explicit error-count suffix if the flash alone feels too subtle in day-to-day use.
 
 ## Latest Update (2026-03-31 14:07 JST)
 

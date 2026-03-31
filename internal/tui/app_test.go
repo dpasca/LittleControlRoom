@@ -1587,6 +1587,18 @@ func TestRenderTopStatusLineShowsUnavailableBackendNotice(t *testing.T) {
 	}
 }
 
+func TestRenderTopStatusLineShowsNavigationHintsInsteadOfAICounts(t *testing.T) {
+	m := Model{status: "Ready"}
+
+	rendered := ansi.Strip(m.renderTopStatusLine(160))
+	if !strings.Contains(rendered, "f filter") || !strings.Contains(rendered, "/ command") || !strings.Contains(rendered, "Tab switch") {
+		t.Fatalf("top status line should surface navigation hints, got %q", rendered)
+	}
+	if strings.Contains(rendered, "OK=") || strings.Contains(rendered, "RUN=") || strings.Contains(rendered, "ERR=") {
+		t.Fatalf("top status line should no longer include AI classification counters, got %q", rendered)
+	}
+}
+
 func TestRenderTopStatusLineShowsMergeConflictBadge(t *testing.T) {
 	m := Model{
 		status: "Ready",
@@ -1732,6 +1744,51 @@ func TestRenderFooterPulsesWhenUsageIncreases(t *testing.T) {
 	settled := m.renderFooter(160)
 	if settled == pulseA || settled == pulseB {
 		t.Fatalf("usage pulse should expire after the pulse window")
+	}
+}
+
+func TestRenderFooterFlashesRedWhenClassificationErrorsExist(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	m := Model{
+		setupChecked: true,
+		setupSnapshot: aibackend.Snapshot{
+			Selected: config.AIBackendCodex,
+			Codex: aibackend.Status{
+				Backend:       config.AIBackendCodex,
+				Label:         "Codex",
+				Installed:     true,
+				Authenticated: true,
+				Ready:         true,
+			},
+		},
+		allProjects: []model.ProjectSummary{{
+			Name:                        "demo",
+			Path:                        "/tmp/demo",
+			LatestSessionClassification: model.ClassificationFailed,
+		}},
+	}
+
+	m.spinnerFrame = 0
+	pulseA := m.renderFooter(160)
+	m.spinnerFrame = 1
+	pulseB := m.renderFooter(160)
+
+	if ansi.Strip(pulseA) != ansi.Strip(pulseB) {
+		t.Fatalf("error pulse should keep the same visible text: %q vs %q", ansi.Strip(pulseA), ansi.Strip(pulseB))
+	}
+	if pulseA == pulseB {
+		t.Fatalf("error pulse should animate across spinner frames")
+	}
+	if pulseA == ansi.Strip(pulseA) {
+		t.Fatalf("error pulse should use ANSI styling: %q", pulseA)
 	}
 }
 
@@ -11185,7 +11242,7 @@ func TestHelpPanelLinesStayMinimal(t *testing.T) {
 	if !strings.Contains(joined, "/wt merge|remove|prune") {
 		t.Fatalf("helpPanelLines() should include concrete worktree slash-command examples: %q", joined)
 	}
-	if !strings.Contains(joined, "/setup, /codex, /todo") || !strings.Contains(joined, "/commit, /diff, or /run") {
+	if !strings.Contains(joined, "/setup, /ai, /codex, /todo") || !strings.Contains(joined, "/commit, /diff, or /run") {
 		t.Fatalf("helpPanelLines() should include concrete slash-command examples: %q", joined)
 	}
 	if !strings.Contains(joined, "interrupt busy session") {
@@ -11255,6 +11312,56 @@ func TestViewWithHelpOverlayPreservesBackground(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "ATTN") || !strings.Contains(rendered, "Path:") || !strings.Contains(rendered, "Session summary") {
 		t.Fatalf("View() should preserve the dashboard behind the help overlay: %q", rendered)
+	}
+}
+
+func TestDispatchAICommandOpensAIStatsDialog(t *testing.T) {
+	m := Model{}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindAIStats})
+	got := updated.(Model)
+	if !got.showAIStats {
+		t.Fatalf("dispatchCommand(/ai) should open the AI stats dialog")
+	}
+	if got.status != "AI stats open. Press Esc to close" {
+		t.Fatalf("status = %q, want AI stats open status", got.status)
+	}
+	if cmd != nil {
+		t.Fatalf("dispatchCommand(/ai) should not return an async command")
+	}
+}
+
+func TestRenderAIStatsOverlayPreservesBackground(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:                             "demo",
+			Path:                             "/tmp/demo",
+			Status:                           model.StatusIdle,
+			PresentOnDisk:                    true,
+			LatestSessionClassification:      model.ClassificationFailed,
+			LatestSessionClassificationType:  model.SessionCategoryBlocked,
+			LatestSessionSummary:             "Classifier failed on the latest session.",
+			LatestSessionFormat:              "modern",
+			LatestSessionDetectedProjectPath: "/tmp/demo",
+		}},
+		allProjects: []model.ProjectSummary{{
+			Name:                        "demo",
+			Path:                        "/tmp/demo",
+			PresentOnDisk:               true,
+			LatestSessionClassification: model.ClassificationFailed,
+		}},
+		showAIStats: true,
+		width:       100,
+		height:      24,
+	}
+	m.syncDetailViewport(false)
+
+	rendered := ansi.Strip(m.View())
+	if !strings.Contains(rendered, "AI Stats") || !strings.Contains(rendered, "Errors") || !strings.Contains(rendered, "demo") {
+		t.Fatalf("View() should show the AI stats overlay content: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Little Control Room") || !strings.Contains(rendered, "╭────╭") {
+		t.Fatalf("View() should keep the dashboard visible around the AI stats overlay: %q", rendered)
 	}
 }
 

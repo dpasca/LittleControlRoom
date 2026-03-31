@@ -12,6 +12,18 @@ func TestParse(t *testing.T) {
 		check func(t *testing.T, inv Invocation)
 	}{
 		{
+			name: "ai stats",
+			raw:  "/ai",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindAIStats {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindAIStats)
+				}
+				if inv.Canonical != "/ai" {
+					t.Fatalf("canonical = %q, want /ai", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "refresh",
 			raw:  "/refresh",
 			check: func(t *testing.T, inv Invocation) {
@@ -515,6 +527,16 @@ func TestSuggestionsIncludeCommitWorkflowCommands(t *testing.T) {
 	}
 	if got[0].Insert != "/filter" {
 		t.Fatalf("first /f suggestion = %q, want /filter", got[0].Insert)
+	}
+}
+
+func TestSuggestionsIncludeAICommand(t *testing.T) {
+	got := Suggestions("/a")
+	if len(got) == 0 {
+		t.Fatalf("Suggestions(/a) returned none")
+	}
+	if got[0].Insert != "/ai" {
+		t.Fatalf("first /a suggestion = %q, want /ai", got[0].Insert)
 	}
 }
 

@@ -160,6 +160,7 @@ type Model struct {
 	showSessions bool
 	showEvents   bool
 	showHelp     bool
+	showAIStats  bool
 
 	hideReasoningSections bool
 
@@ -744,6 +745,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.settingsMode {
 			return m.updateSettingsMode(msg)
+		}
+		if m.showAIStats {
+			return m.updateAIStatsMode(msg)
 		}
 		if m.questionNotify != nil {
 			return m.updateQuestionNotifyMode(msg)
@@ -2066,6 +2070,8 @@ func (m Model) View() string {
 		body = m.renderSetupOverlay(body, layout.width, layout.height)
 	} else if m.settingsMode {
 		body = m.renderSettingsOverlay(body, layout.width, layout.height)
+	} else if m.showAIStats {
+		body = m.renderAIStatsOverlay(body, layout.width, layout.height)
 	} else if m.showHelp {
 		body = m.renderHelpPanelOverlay(body, layout.width, layout.height)
 	} else if m.projectFilterDialog != nil {
@@ -2221,14 +2227,41 @@ func (m Model) renderTopStatusLine(width int) string {
 	if m.err != nil {
 		status = fmt.Sprintf("%s | error: %s", status, singleLineStatusText(m.err.Error()))
 	}
+
+	statusParts := make([]string, 0, 4)
+	if strings.TrimSpace(status) != "" {
+		statusParts = append(statusParts, renderFooterStatus(status))
+	}
 	if aiNotice := m.renderAIBackendStatusNotice(); aiNotice != "" {
-		status = fmt.Sprintf("%s | %s", status, aiNotice)
+		statusParts = append(statusParts, aiNotice)
 	}
 	if project, ok := m.selectedProject(); ok && project.RepoConflict {
-		status = fmt.Sprintf("%s | %s selected repo has unmerged files", status, topStatusConflictBadgeStyle.Render("MERGE CONFLICT"))
+		statusParts = append(statusParts, topStatusConflictBadgeStyle.Render("MERGE CONFLICT"))
+		statusParts = append(statusParts, detailConflictStyle.Render("selected repo has unmerged files"))
 	}
-	status = fmt.Sprintf("%s | AI %s", status, m.renderClassificationSummary())
-	return fitFooterWidth(title+" - "+status, width)
+
+	segments := []string{title}
+	if actions := m.renderTopStatusActions(width); actions != "" {
+		segments = append(segments, actions)
+	}
+	if len(statusParts) > 0 {
+		segments = append(segments, joinFooterSegments(statusParts...))
+	}
+	return fitFooterWidth(strings.Join(segments, "  "), width)
+}
+
+func (m Model) renderTopStatusActions(width int) string {
+	if width < 72 {
+		return ""
+	}
+	actions := []footerAction{
+		footerNavAction("f", "filter"),
+		footerNavAction("/", "command"),
+	}
+	if width >= 96 {
+		actions = append(actions, footerNavAction("Tab", "switch"))
+	}
+	return renderFooterActionList(actions...)
 }
 
 func paneBoxStyle(focused bool) lipgloss.Style {
@@ -2775,9 +2808,12 @@ func (m Model) loadDetailCmd(path string) tea.Cmd {
 func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 	switch inv.Kind {
 	case commands.KindHelp:
+		m.showAIStats = false
 		m.showHelp = true
 		m.status = "Help open. Press ? or Esc to close"
 		return m, nil
+	case commands.KindAIStats:
+		return m, m.openAIStatsDialog()
 	case commands.KindRefresh:
 		m.loading = true
 		m.status = "Scanning and retrying failed assessments..."
@@ -4462,6 +4498,10 @@ func (m Model) classificationCounts() classificationSummary {
 	return counts
 }
 
+func (m Model) classificationFailurePulseActive() bool {
+	return m.classificationCounts().failed > 0
+}
+
 func (m Model) renderFooter(width int) string {
 	usageLabel := m.footerUsageLabel()
 	usageSegment := m.renderFooterUsageSegment(usageLabel)
@@ -4504,6 +4544,9 @@ func (m Model) renderFooter(width int) string {
 	}
 	if m.settingsMode {
 		return m.renderModalFooter(width, "Settings: Enter save, Tab next, Esc cancel", filterSegment, usageSegment)
+	}
+	if m.showAIStats {
+		return m.renderModalFooter(width, "AI stats: Esc close", filterSegment, usageSegment)
 	}
 	if m.worktreeMergeConfirm != nil {
 		label := "Merge worktree: Enter merge, Tab switch, Esc cancel"
@@ -5321,6 +5364,12 @@ func (m Model) renderFooterUsageSegment(text string) string {
 	case "AI disabled":
 		return detailMutedStyle.Render(text)
 	}
+	if m.classificationFailurePulseActive() {
+		if m.spinnerFrame%2 == 0 {
+			return lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("160")).Bold(true).Render(text)
+		}
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("88")).Bold(true).Render(text)
+	}
 	if !m.usagePulseUntil.After(m.currentTime()) {
 		return renderFooterUsage(text)
 	}
@@ -5546,7 +5595,7 @@ func helpPanelLines() []string {
 			renderDialogAction("Tab", "complete there", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("?", "toggle help", commitActionKeyStyle, commitActionTextStyle),
 		),
-		commandPaletteHintStyle.Render("Try /setup, /codex, /todo, /wt merge|remove|prune, /commit, /diff, or /run."),
+		commandPaletteHintStyle.Render("Try /setup, /ai, /codex, /todo, /wt merge|remove|prune, /commit, /diff, or /run."),
 		detailSectionStyle.Render("Navigate"),
 		renderHelpPanelActionRow(
 			renderDialogAction("Tab", "switch pane", navigateActionKeyStyle, navigateActionTextStyle),
