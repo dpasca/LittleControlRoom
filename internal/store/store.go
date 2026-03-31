@@ -2356,11 +2356,10 @@ func (s *Store) SetNote(ctx context.Context, path, note string) error {
 }
 
 func (s *Store) AddTodo(ctx context.Context, projectPath, text string) (model.TodoItem, error) {
-	text = strings.TrimSpace(text)
 	if projectPath == "" {
 		return model.TodoItem{}, fmt.Errorf("project path is required")
 	}
-	if text == "" {
+	if strings.TrimSpace(text) == "" {
 		return model.TodoItem{}, fmt.Errorf("todo text is required")
 	}
 	now := time.Now()
@@ -2725,11 +2724,10 @@ func (s *Store) GetTodo(ctx context.Context, todoID int64) (model.TodoItem, erro
 }
 
 func (s *Store) UpdateTodo(ctx context.Context, id int64, text string) error {
-	text = strings.TrimSpace(text)
 	if id <= 0 {
 		return fmt.Errorf("todo id is required")
 	}
-	if text == "" {
+	if strings.TrimSpace(text) == "" {
 		return fmt.Errorf("todo text is required")
 	}
 	now := time.Now()

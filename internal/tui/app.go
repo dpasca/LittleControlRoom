@@ -1174,7 +1174,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.todoWorktreeEditor = nil
 		m.todoExistingWorktree = nil
 		m.err = nil
-		m.restoreCodexDraft(msg.projectPath, codexDraft{Text: strings.TrimSpace(msg.todoText)})
+		m.restoreCodexDraft(msg.projectPath, codexDraft{Text: msg.todoText})
 		m.todoLaunchDraft = &todoLaunchDraftState{
 			projectPath:    msg.projectPath,
 			provider:       provider,

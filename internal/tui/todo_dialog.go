@@ -26,6 +26,8 @@ const (
 	todoDeleteConfirmFocusKeep
 )
 
+const todoTextCharLimit = 20000
+
 type todoDialogState struct {
 	ProjectPath string
 	ProjectName string
@@ -96,23 +98,16 @@ type todoExistingWorktreeDialogState struct {
 }
 
 func normalizeTodoText(text string) string {
-	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
-	out := make([]string, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		out = append(out, line)
-	}
-	return strings.Join(out, "\n")
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	return text
 }
 
 func newTodoTextInput(value string) textarea.Model {
 	input := textarea.New()
 	input.Prompt = ""
 	input.Placeholder = "Change font color to red when there's an error"
-	input.CharLimit = 1024
+	input.CharLimit = todoTextCharLimit
 	input.ShowLineNumbers = false
 	styleNoteTextarea(&input)
 	input.SetWidth(72)
@@ -745,7 +740,7 @@ func (m Model) updateTodoEditorMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "ctrl+s":
 		text := normalizeTodoText(dialog.Input.Value())
-		if text == "" {
+		if strings.TrimSpace(text) == "" {
 			m.status = "TODO text is required"
 			return m, nil
 		}
@@ -907,7 +902,7 @@ func (m Model) createTodoWorktreeCmd(projectPath string, todoID int64, todoText 
 		}
 		return todoWorktreeLaunchMsg{
 			projectPath:    result.WorktreePath,
-			todoText:       strings.TrimSpace(todoText),
+			todoText:       todoText,
 			status:         "Worktree ready",
 			provider:       provider,
 			openModelFirst: openModelFirst,
@@ -980,7 +975,7 @@ func (m Model) startTodoInProjectPath(projectPath, todoText string, provider cod
 	} else {
 		provider = provider.Normalized()
 	}
-	m.restoreCodexDraft(project.Path, codexDraft{Text: strings.TrimSpace(todoText)})
+	m.restoreCodexDraft(project.Path, codexDraft{Text: todoText})
 	m.todoLaunchDraft = &todoLaunchDraftState{projectPath: project.Path, provider: provider, openModelFirst: openModelFirst}
 	m.todoEditor = nil
 	m.todoDeleteConfirm = nil
