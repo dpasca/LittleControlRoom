@@ -1,8 +1,9 @@
 # Little Control Room Status Archive
 
-This file holds condensed historical notes pruned out of `STATUS.md` on 2026-03-08.
+This file holds condensed historical notes pruned out of `STATUS.md` back when `STATUS.md` still acted as a running handoff log.
 
 Use it when an older decision still matters. For exact raw chronology beyond these summaries, rely on git history.
+New branch-by-branch updates should not be appended here by default; prefer git history or dedicated feature docs.
 
 ## 2026-03-05 to 2026-03-06
 
@@ -56,5 +57,6 @@ Use it when an older decision still matters. For exact raw chronology beyond the
 
 ## Archive Policy
 
-- Keep `STATUS.md` focused on current state and the latest active work burst.
-- Move anything that has become historical context into this archive instead of keeping long raw logs in the primary handoff file.
+- `STATUS.md` is now a stable project snapshot, not a rolling session log.
+- Prefer git history, PR descriptions, and dedicated design docs for chronology.
+- Add archive entries only when older context still matters after the related code and docs change is merged.

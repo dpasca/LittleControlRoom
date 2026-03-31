@@ -46,7 +46,7 @@ func screenshotDemoDataSet() screenshotDataSet {
 			last:      now.Add(-31 * time.Minute),
 			format:    "modern",
 			category:  model.SessionCategoryCompleted,
-			summary:   "Code changes, tests, smoke checks, and STATUS.md update completed; repo is clean and synced.",
+			summary:   "Code changes, tests, and smoke checks completed; repo is clean and synced.",
 			reasons: []model.AttentionReason{
 				{Code: "idle", Text: "Idle for 31m", Weight: 20},
 				{Code: "pinned", Text: "Pinned by user", Weight: 38},

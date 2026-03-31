@@ -10,16 +10,13 @@ Core intent for this repo:
 2. Treat Codex disk artifacts as source-of-truth inputs.
 3. Keep scoring reasons transparent and inspectable.
 
-## Continuity Protocol
+## Project Snapshot Protocol
 
-1. Read `STATUS.md` first at the start of each session.
-2. Before coding, update assumptions in `STATUS.md` if reality has changed.
-3. After coding, update `STATUS.md` with:
-   - date/time snapshot
-   - what changed
-   - verification commands/results
-   - next concrete tasks
-4. Keep `docs/codex_cli_footprint.md` in sync if detector assumptions change.
+1. Read `STATUS.md` first at the start of each session for the current project snapshot.
+2. Treat `STATUS.md` as durable orientation, not a running work log.
+3. Update `STATUS.md` only when project-wide goals, architecture assumptions, or long-lived priorities materially change.
+4. Record branch-specific or session-specific implementation history in git commits, PR descriptions, TODOs, or dedicated docs instead of `STATUS.md`.
+5. Keep `docs/codex_cli_footprint.md` in sync if detector assumptions change.
 
 ## Codex Artifact Assumption
 
