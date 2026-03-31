@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -195,6 +196,13 @@ type projectsMsg struct {
 type detailMsg struct {
 	detail model.ProjectDetail
 	err    error
+}
+
+type projectSummaryMsg struct {
+	path    string
+	summary model.ProjectSummary
+	found   bool
+	err     error
 }
 
 type scanMsg struct {
@@ -897,6 +905,34 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncDetailViewport(false)
 		}
 		return m, nil
+	case projectSummaryMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		selectedPath := ""
+		if p, ok := m.selectedProject(); ok {
+			selectedPath = p.Path
+		}
+		if msg.found {
+			m.loading = false
+			m.upsertProjectSummary(msg.summary)
+		} else {
+			m.removeProjectSummary(msg.path)
+			if filepath.Clean(selectedPath) == filepath.Clean(strings.TrimSpace(msg.path)) {
+				selectedPath = ""
+			}
+		}
+		m.rebuildProjectList(selectedPath)
+		if len(m.projects) > 0 && strings.TrimSpace(m.detail.Summary.Path) == "" {
+			m.syncDetailViewport(false)
+			return m, m.loadDetailCmd(m.projects[m.selected].Path)
+		}
+		if len(m.projects) == 0 {
+			m.detail = model.ProjectDetail{}
+			m.syncDetailViewport(true)
+		}
+		return m, nil
 	case scanMsg:
 		m.loading = false
 		if msg.err != nil {
@@ -1395,20 +1431,36 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyCodexResumeChoices(msg)
 	case busMsg:
 		cmds := []tea.Cmd{m.waitBusCmd()}
-		if msg.Type == events.ClassificationUpdated {
+		switch msg.Type {
+		case events.ClassificationUpdated:
 			if msg.Payload["status"] == "completed" {
 				m.markAssessmentFlash(msg.ProjectPath, msg.At)
 			}
-			cmds = append(cmds, m.loadProjectsCmd())
+			if strings.TrimSpace(msg.ProjectPath) != "" {
+				cmds = append(cmds, m.loadProjectSummaryCmd(msg.ProjectPath))
+			}
 			if p, ok := m.selectedProject(); ok && p.Path == msg.ProjectPath {
+				cmds = append(cmds, m.loadDetailCmd(p.Path))
+			}
+			return m, tea.Batch(cmds...)
+		case events.ProjectChanged, events.ActionApplied:
+			if strings.TrimSpace(msg.ProjectPath) != "" {
+				cmds = append(cmds, m.loadProjectSummaryCmd(msg.ProjectPath))
+			} else {
+				cmds = append(cmds, m.loadProjectsCmd())
+			}
+			if p, ok := m.selectedProject(); ok && p.Path == msg.ProjectPath {
+				cmds = append(cmds, m.loadDetailCmd(p.Path))
+			}
+			return m, tea.Batch(cmds...)
+		case events.ProjectMoved, events.ScanCompleted:
+			cmds = append(cmds, m.loadProjectsCmd())
+			if p, ok := m.selectedProject(); ok {
 				cmds = append(cmds, m.loadDetailCmd(p.Path))
 			}
 			return m, tea.Batch(cmds...)
 		}
 		cmds = append(cmds, m.loadProjectsCmd())
-		if p, ok := m.selectedProject(); ok {
-			cmds = append(cmds, m.loadDetailCmd(p.Path))
-		}
 		return m, tea.Batch(cmds...)
 	case spinnerTickMsg:
 		m.spinnerFrame = (m.spinnerFrame + 1) % spinnerAnimationFrameWrap
@@ -2889,6 +2941,49 @@ func (m Model) loadDetailCmd(path string) tea.Cmd {
 		d, err := m.svc.Store().GetProjectDetail(m.ctx, path, 20)
 		return detailMsg{detail: d, err: err}
 	}
+}
+
+func (m Model) loadProjectSummaryCmd(path string) tea.Cmd {
+	return func() tea.Msg {
+		summary, err := m.svc.Store().GetProjectSummary(m.ctx, path, false)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return projectSummaryMsg{path: path}
+			}
+			return projectSummaryMsg{path: path, err: err}
+		}
+		return projectSummaryMsg{path: path, summary: summary, found: true}
+	}
+}
+
+func (m *Model) upsertProjectSummary(summary model.ProjectSummary) {
+	path := filepath.Clean(strings.TrimSpace(summary.Path))
+	if path == "" {
+		return
+	}
+	summary.Path = path
+	for i := range m.allProjects {
+		if filepath.Clean(m.allProjects[i].Path) == path {
+			m.allProjects[i] = summary
+			return
+		}
+	}
+	m.allProjects = append(m.allProjects, summary)
+}
+
+func (m *Model) removeProjectSummary(projectPath string) {
+	path := filepath.Clean(strings.TrimSpace(projectPath))
+	if path == "" || len(m.allProjects) == 0 {
+		return
+	}
+	filtered := m.allProjects[:0]
+	for _, project := range m.allProjects {
+		if filepath.Clean(project.Path) == path {
+			continue
+		}
+		filtered = append(filtered, project)
+	}
+	m.allProjects = filtered
 }
 
 func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {

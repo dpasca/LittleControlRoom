@@ -767,6 +767,67 @@ func (s *Store) ListProjects(ctx context.Context, includeHistorical bool) ([]mod
 	return out, rows.Err()
 }
 
+func (s *Store) GetProjectSummary(ctx context.Context, projectPath string, includeHistorical bool) (model.ProjectSummary, error) {
+	query := `
+		SELECT
+			p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.worktree_merge_status, p.worktree_origin_todo_id, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until, p.note,
+			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path AND pt.done = 0), 0),
+			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path), 0),
+			p.run_command,
+			p.moved_from_path, p.moved_at,
+			COALESCE(ps.session_id, ''),
+			COALESCE(ps.format, ''),
+			COALESCE(ps.detected_project_path, ''),
+			COALESCE(ps.snapshot_hash, ''),
+			ps.last_event_at,
+			ps.latest_turn_started_at,
+			COALESCE(ps.latest_turn_state_known, 0),
+			COALESCE(ps.latest_turn_completed, 0),
+			COALESCE(sc.status, ''),
+			COALESCE(sc.stage, ''),
+			COALESCE(sc.category, ''),
+			COALESCE(sc.summary, ''),
+			sc.stage_started_at,
+			sc.updated_at,
+			COALESCE(sc_completed.category, ''),
+			COALESCE(sc_completed.summary, ''),
+			sc_completed.updated_at
+		FROM projects p
+		LEFT JOIN project_sessions ps ON ps.session_id = (
+			SELECT ps2.session_id
+			FROM project_sessions ps2
+			WHERE ps2.project_path = p.path
+			ORDER BY ps2.last_event_at DESC
+			LIMIT 1
+		)
+		LEFT JOIN session_classifications sc ON sc.session_id = ps.session_id
+		LEFT JOIN session_classifications sc_completed ON sc_completed.session_id = (
+			SELECT sc2.session_id
+			FROM session_classifications sc2
+			WHERE sc2.project_path = p.path AND sc2.status = 'completed'
+			ORDER BY COALESCE(sc2.completed_at, sc2.updated_at) DESC, sc2.updated_at DESC
+			LIMIT 1
+		)
+		WHERE p.path = ?
+			AND p.forgotten = 0
+			AND NOT EXISTS (
+				SELECT 1
+				FROM ignored_project_names ipn
+				WHERE LOWER(ipn.name) = LOWER(p.name)
+			)
+	`
+	if !includeHistorical {
+		query += ` AND p.in_scope = 1`
+	}
+
+	row := s.db.QueryRowContext(ctx, query, projectPath)
+	summary, err := scanSummaryRow(row)
+	if err != nil {
+		return model.ProjectSummary{}, err
+	}
+	return summary, nil
+}
+
 func scanSummaryRow(scanner interface {
 	Scan(dest ...any) error
 }) (model.ProjectSummary, error) {
