@@ -2053,6 +2053,46 @@ func TestCompactLocalUsageLabel(t *testing.T) {
 	}
 }
 
+func TestAIStatsCostLabelUsesEstimateCopyForLocalBackends(t *testing.T) {
+	if got := aiStatsCostLabel(config.AIBackendCodex); got != "Estimate" {
+		t.Fatalf("aiStatsCostLabel(codex) = %q, want %q", got, "Estimate")
+	}
+	if got := aiStatsCostLabel(config.AIBackendClaude); got != "Estimate" {
+		t.Fatalf("aiStatsCostLabel(claude) = %q, want %q", got, "Estimate")
+	}
+	if got := aiStatsCostLabel(config.AIBackendOpenAIAPI); got != "Cost" {
+		t.Fatalf("aiStatsCostLabel(openai_api) = %q, want %q", got, "Cost")
+	}
+}
+
+func TestAIStatsCostValueUsesApproximateCopyForLocalBackends(t *testing.T) {
+	usage := model.LLMSessionUsage{
+		Enabled: true,
+		Model:   "gpt-5-mini",
+		Totals: model.LLMUsage{
+			InputTokens:  345,
+			OutputTokens: 538,
+		},
+	}
+
+	if got := ansi.Strip(aiStatsCostValue(config.AIBackendCodex, usage)); got != "approx. $0.0012" {
+		t.Fatalf("aiStatsCostValue(codex) = %q, want %q", got, "approx. $0.0012")
+	}
+	if got := ansi.Strip(aiStatsCostValue(config.AIBackendOpenAIAPI, usage)); got != "$0.0012" {
+		t.Fatalf("aiStatsCostValue(openai_api) = %q, want %q", got, "$0.0012")
+	}
+}
+
+func TestAIStatsBillingNoticeClarifiesLocalBackends(t *testing.T) {
+	got := aiStatsBillingNotice(config.AIBackendClaude)
+	if !strings.Contains(got, "not using your OpenAI API key") {
+		t.Fatalf("local backend notice should mention OpenAI API key billing, got %q", got)
+	}
+	if !strings.Contains(got, "provider-reported usage") {
+		t.Fatalf("local backend notice should explain the estimate source, got %q", got)
+	}
+}
+
 func TestFooterUsageLabelShowsLocalBackendActivity(t *testing.T) {
 	m := Model{
 		setupChecked: true,
@@ -12232,6 +12272,53 @@ func TestRenderAIStatsOverlayPreservesBackground(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "Little Control Room") || !strings.Contains(rendered, "╭────╭") {
 		t.Fatalf("View() should keep the dashboard visible around the AI stats overlay: %q", rendered)
+	}
+}
+
+func TestRenderAIStatsContentClarifiesLocalBackendEstimate(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	classifier := &usageSnapshotClassifier{
+		usage: model.LLMSessionUsage{
+			Enabled: true,
+			Model:   "gpt-5-mini",
+			Totals: model.LLMUsage{
+				InputTokens:  345,
+				OutputTokens: 538,
+			},
+		},
+	}
+
+	cfg := config.Default()
+	cfg.AIBackend = config.AIBackendCodex
+	svc := service.New(cfg, st, events.NewBus(), nil)
+	svc.SetSessionClassifier(classifier)
+
+	m := New(ctx, svc)
+	m.setupChecked = true
+	m.setupSnapshot = aibackend.Snapshot{
+		Selected: config.AIBackendCodex,
+		Codex: aibackend.Status{
+			Backend:       config.AIBackendCodex,
+			Label:         "Codex",
+			Installed:     true,
+			Authenticated: true,
+			Ready:         true,
+			Detail:        "Logged in with ChatGPT.",
+		},
+	}
+
+	rendered := ansi.Strip(m.renderAIStatsContent(76))
+	if !strings.Contains(rendered, "Estimate: approx. $0.0012") {
+		t.Fatalf("renderAIStatsContent() should show estimate copy for local backends: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Codex is not using your OpenAI API key here.") {
+		t.Fatalf("renderAIStatsContent() should explain local backend billing semantics: %q", rendered)
 	}
 }
 

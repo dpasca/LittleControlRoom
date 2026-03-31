@@ -64,8 +64,11 @@ func (m Model) renderAIStatsContent(width int) string {
 		detailSectionStyle.Render("Assessments"),
 		detailField("Status", m.renderClassificationSummary()),
 		detailField("Calls", aiStatsCallsValue(usage)),
-		detailField("Cost", aiStatsCostValue(usage)),
+		detailField(aiStatsCostLabel(backend), aiStatsCostValue(backend, usage)),
 		detailField("Tokens", aiStatsTokensValue(usage)),
+	}
+	if billingNotice := aiStatsBillingNotice(backend); billingNotice != "" {
+		lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, width, billingNotice)...)
 	}
 	if modelValue := aiStatsModelValue(usage); modelValue != "" {
 		lines = append(lines, detailField("Model", modelValue))
@@ -177,14 +180,44 @@ func aiStatsCallsValue(usage model.LLMSessionUsage) string {
 	return detailValueStyle.Render(strings.Join(parts, " | "))
 }
 
-func aiStatsCostValue(usage model.LLMSessionUsage) string {
+func aiStatsCostLabel(backend config.AIBackend) string {
+	if aiStatsUsesEstimatedBillingCopy(backend) {
+		return "Estimate"
+	}
+	return "Cost"
+}
+
+func aiStatsCostValue(backend config.AIBackend, usage model.LLMSessionUsage) string {
 	if !usage.Enabled {
 		return detailMutedStyle.Render("off")
 	}
 	if estimatedCostUSD, ok := estimatedUsageCostUSD(usage); ok {
+		if aiStatsUsesEstimatedBillingCopy(backend) {
+			return detailValueStyle.Render("approx. " + formatEstimatedCostUSD(estimatedCostUSD))
+		}
 		return detailValueStyle.Render(formatEstimatedCostUSD(estimatedCostUSD))
 	}
 	return detailWarningStyle.Render("unknown")
+}
+
+func aiStatsBillingNotice(backend config.AIBackend) string {
+	switch backend {
+	case config.AIBackendOpenAIAPI:
+		return "These numbers are still estimates. Your OpenAI dashboard is the billing source of truth."
+	case config.AIBackendCodex, config.AIBackendOpenCode, config.AIBackendClaude:
+		return fmt.Sprintf("%s is not using your OpenAI API key here. The dollar figure above is only an estimate or provider-reported usage for comparison, not OpenAI API spend.", backend.Label())
+	default:
+		return ""
+	}
+}
+
+func aiStatsUsesEstimatedBillingCopy(backend config.AIBackend) bool {
+	switch backend {
+	case config.AIBackendCodex, config.AIBackendOpenCode, config.AIBackendClaude:
+		return true
+	default:
+		return false
+	}
 }
 
 func aiStatsTokensValue(usage model.LLMSessionUsage) string {
