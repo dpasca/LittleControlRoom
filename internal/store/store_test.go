@@ -142,6 +142,43 @@ func TestListProjectsHidesIgnoredProjectNames(t *testing.T) {
 	}
 }
 
+func TestGetProjectSummaryRespectsVisibilityFilters(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now()
+	state := model.ProjectState{
+		Path:           "/tmp/historical-only",
+		Name:           "historical-only",
+		Status:         model.StatusIdle,
+		AttentionScore: 5,
+		InScope:        false,
+		UpdatedAt:      now,
+	}
+	if err := st.UpsertProjectState(ctx, state); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	if _, err := st.GetProjectSummary(ctx, state.Path, false); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("GetProjectSummary(current only) err = %v, want sql.ErrNoRows", err)
+	}
+
+	summary, err := st.GetProjectSummary(ctx, state.Path, true)
+	if err != nil {
+		t.Fatalf("GetProjectSummary(include historical) err = %v", err)
+	}
+	if summary.Path != state.Path {
+		t.Fatalf("summary path = %q, want %q", summary.Path, state.Path)
+	}
+}
+
 func TestTodoWorktreeSuggestionLifecycleAppearsInTodoList(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

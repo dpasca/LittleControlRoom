@@ -3962,6 +3962,81 @@ func TestProjectsMsgShowsStartupFailureStatusWhenInitialLoadFails(t *testing.T) 
 	}
 }
 
+func TestProjectsMsgKeepsInitialLoadingStateWhenStartupCacheIsEmpty(t *testing.T) {
+	m := Model{
+		loading:    true,
+		status:     initialProjectsStatus,
+		sortMode:   sortByAttention,
+		visibility: visibilityAIFolders,
+	}
+
+	updated, _ := m.Update(projectsMsg{projects: nil})
+	got := updated.(Model)
+
+	if !got.loading {
+		t.Fatalf("loading should stay true while the initial background scan is still pending")
+	}
+	if got.status != initialProjectsStatus {
+		t.Fatalf("status = %q, want initial loading status", got.status)
+	}
+}
+
+func TestProjectSummaryMsgAddsProjectDuringInitialScan(t *testing.T) {
+	m := Model{
+		loading:    true,
+		status:     initialProjectsStatus,
+		sortMode:   sortByAttention,
+		visibility: visibilityAIFolders,
+	}
+
+	updated, _ := m.Update(projectSummaryMsg{
+		found: true,
+		summary: model.ProjectSummary{
+			Name:                "demo",
+			Path:                "/tmp/demo",
+			PresentOnDisk:       true,
+			LatestSessionFormat: "modern",
+		},
+	})
+	got := updated.(Model)
+
+	if got.loading {
+		t.Fatalf("loading should stop once the first project summary arrives")
+	}
+	if len(got.allProjects) != 1 || len(got.projects) != 1 {
+		t.Fatalf("expected project summary to be merged into the list, got all=%d visible=%d", len(got.allProjects), len(got.projects))
+	}
+	if got.projects[0].Path != "/tmp/demo" {
+		t.Fatalf("project path = %q, want /tmp/demo", got.projects[0].Path)
+	}
+}
+
+func TestProjectSummaryMsgRemovesProjectWhenItFallsOutOfVisibleSet(t *testing.T) {
+	m := Model{
+		sortMode:   sortByAttention,
+		visibility: visibilityAIFolders,
+		allProjects: []model.ProjectSummary{{
+			Name:                "demo",
+			Path:                "/tmp/demo",
+			PresentOnDisk:       true,
+			LatestSessionFormat: "modern",
+		}},
+		projects: []model.ProjectSummary{{
+			Name:                "demo",
+			Path:                "/tmp/demo",
+			PresentOnDisk:       true,
+			LatestSessionFormat: "modern",
+		}},
+	}
+
+	updated, _ := m.Update(projectSummaryMsg{path: "/tmp/demo"})
+	got := updated.(Model)
+
+	if len(got.allProjects) != 0 || len(got.projects) != 0 {
+		t.Fatalf("expected project summary removal to prune the list, got all=%d visible=%d", len(got.allProjects), len(got.projects))
+	}
+}
+
 func TestProjectsMsgShowsRefreshFailureStatusWhenReloadFails(t *testing.T) {
 	m := Model{
 		loading: false,
