@@ -1237,12 +1237,84 @@ func TestUpdateNormalModeMShowsBlockedMergeWhenWorktreesDirty(t *testing.T) {
 	if got.worktreeMergeConfirm.MergeReady {
 		t.Fatalf("merge confirm should start blocked when source/root are dirty")
 	}
+	if !got.worktreeMergeConfirm.OfferCommit {
+		t.Fatalf("blocked merge should offer a commit when the source worktree is dirty")
+	}
 	if !strings.Contains(got.worktreeMergeConfirm.BlockReason, "This worktree is dirty") {
 		t.Fatalf("blocked reason = %q, want source dirty reason", got.worktreeMergeConfirm.BlockReason)
 	}
 	rendered := ansi.Strip(got.renderWorktreeMergeConfirmOverlay("", 100, 24))
-	if !strings.Contains(rendered, "Merge blocked") || !strings.Contains(rendered, "This worktree is dirty") {
+	if !strings.Contains(rendered, "Merge blocked") || !strings.Contains(rendered, "This worktree is dirty") || !strings.Contains(rendered, "Commit") {
 		t.Fatalf("blocked merge overlay should explain why merge is unavailable, got %q", rendered)
+	}
+}
+
+func TestOpenWorktreeMergeConfirmAutoClosesCompletedSession(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				Started:  true,
+				ThreadID: "thread-live",
+				Status:   "Completed in 12s",
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: childPath,
+		Provider:    codexapp.ProviderCodex,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: childPath,
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 childPath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				RepoBranch:           "feat/parallel-lane",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	cmd := m.openWorktreeMergeConfirmForSelection()
+	if cmd != nil {
+		t.Fatalf("auto-closing a completed session should not need extra background work")
+	}
+	if m.attentionDialog != nil {
+		t.Fatalf("auto-close path should not show the attention dialog")
+	}
+	if m.worktreeMergeConfirm == nil {
+		t.Fatalf("merge confirmation should open after auto-closing the completed session")
+	}
+	if m.status != "Confirm worktree merge-back" {
+		t.Fatalf("status = %q, want merge confirmation", m.status)
+	}
+	if m.codexVisibleProject != "" {
+		t.Fatalf("visible project should be cleared after auto-close, got %q", m.codexVisibleProject)
+	}
+	if _, ok := manager.Session(childPath); ok {
+		t.Fatalf("completed session should be closed before opening merge confirm")
 	}
 }
 
@@ -1295,6 +1367,53 @@ func TestBlockedWorktreeMergeEnterOnKeepCancels(t *testing.T) {
 	}
 	if got.status != "Worktree merge-back canceled" {
 		t.Fatalf("status = %q, want cancel status", got.status)
+	}
+}
+
+func TestBlockedWorktreeMergeEnterOnCommitOpensCommitPreview(t *testing.T) {
+	projectPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 projectPath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     "/tmp/repo",
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				RepoBranch:           "feat/parallel-lane",
+				RepoDirty:            true,
+				LatestSessionSummary: "Updated the merge-back flow.",
+			},
+		},
+		worktreeMergeConfirm: &worktreeMergeConfirmState{
+			ProjectPath:  projectPath,
+			RootPath:     "/tmp/repo",
+			BranchName:   "feat/parallel-lane",
+			TargetBranch: "master",
+			MergeReady:   false,
+			BlockReason:  "This worktree is dirty. Commit or discard changes before merging back.",
+			OfferCommit:  true,
+			Selected:     worktreeMergeConfirmFocusCommit,
+		},
+	}
+
+	updated, cmd := m.updateWorktreeMergeConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("commit handoff should queue the commit preview work")
+	}
+	if got.worktreeMergeConfirm != nil {
+		t.Fatalf("commit handoff should close the merge dialog")
+	}
+	if got.commitPreview == nil {
+		t.Fatalf("commit handoff should open the commit preview")
+	}
+	if got.commitPreview.ProjectPath != projectPath {
+		t.Fatalf("commit preview path = %q, want %q", got.commitPreview.ProjectPath, projectPath)
+	}
+	if got.status != "Preparing commit preview..." {
+		t.Fatalf("status = %q, want commit preview preparation", got.status)
 	}
 }
 
