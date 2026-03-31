@@ -170,6 +170,7 @@ type ProjectState struct {
 	WorktreeKind         WorktreeKind
 	WorktreeParentBranch string
 	WorktreeMergeStatus  WorktreeMergeStatus
+	WorktreeOriginTodoID int64
 	RepoBranch           string
 	RepoDirty            bool
 	RepoConflict         bool
@@ -202,6 +203,7 @@ type ProjectSummary struct {
 	WorktreeKind                                  WorktreeKind
 	WorktreeParentBranch                          string
 	WorktreeMergeStatus                           WorktreeMergeStatus
+	WorktreeOriginTodoID                          int64
 	RepoBranch                                    string
 	RepoDirty                                     bool
 	RepoConflict                                  bool

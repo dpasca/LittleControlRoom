@@ -246,6 +246,9 @@ type worktreeActionMsg struct {
 	postMergeRootPath     string
 	postMergeSourceBranch string
 	postMergeTargetBranch string
+	postMergeTodoID       int64
+	postMergeTodoText     string
+	postMergeTodoPath     string
 	err                   error
 }
 
@@ -1124,6 +1127,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.worktreeRemoveConfirm = nil
 				return m, nil
 			}
+			if m.worktreePostMerge != nil && filepath.Clean(strings.TrimSpace(m.worktreePostMerge.ProjectPath)) == filepath.Clean(strings.TrimSpace(msg.projectPath)) {
+				m.worktreePostMerge.Busy = false
+				m.worktreePostMerge.BusyTitle = ""
+				m.worktreePostMerge.BusyMessage = ""
+				m.worktreePostMerge.ErrorMessage = msg.err.Error()
+				return m, nil
+			}
 			m.worktreeMergeConfirm = nil
 			m.worktreePostMerge = nil
 			m.worktreeRemoveConfirm = nil
@@ -1145,8 +1155,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				RootPath:     strings.TrimSpace(msg.postMergeRootPath),
 				BranchName:   strings.TrimSpace(msg.postMergeSourceBranch),
 				TargetBranch: strings.TrimSpace(msg.postMergeTargetBranch),
+				TodoID:       msg.postMergeTodoID,
+				TodoText:     strings.TrimSpace(msg.postMergeTodoText),
+				TodoPath:     strings.TrimSpace(msg.postMergeTodoPath),
 				Status:       strings.TrimSpace(msg.status),
-				Selected:     worktreePostMergeFocusKeep,
+				Selected:     defaultWorktreePostMergeSelection(msg.postMergeTodoID > 0),
 			}
 		}
 		cmds := []tea.Cmd{m.scanCmd(false), m.loadProjectsCmd()}

@@ -38,6 +38,9 @@ type MergeWorktreeBackResult struct {
 	SourceBranch    string
 	TargetBranch    string
 	AlreadyMerged   bool
+	LinkedTodoID    int64
+	LinkedTodoText  string
+	LinkedTodoPath  string
 }
 
 func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktreeRequest) (CreateTodoWorktreeResult, error) {
@@ -129,6 +132,9 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 		if err := s.RefreshProjectStatus(ctx, worktreePath); err != nil {
 			return result, fmt.Errorf("refresh tracked worktree %s after recording its parent branch: %w", worktreePath, err)
 		}
+	}
+	if err := s.store.SetWorktreeOriginTodoID(ctx, worktreePath, req.TodoID); err != nil {
+		return result, fmt.Errorf("record origin todo for worktree %s: %w", worktreePath, err)
 	}
 
 	now := time.Now()
@@ -324,6 +330,11 @@ func (s *Service) MergeWorktreeBack(ctx context.Context, projectPath string) (Me
 		RootProjectPath: rootPath,
 		SourceBranch:    sourceBranch,
 		TargetBranch:    targetBranch,
+	}
+	if linkedTodo, ok := s.linkedOpenTodoForWorktree(ctx, detail.Summary); ok {
+		result.LinkedTodoID = linkedTodo.ID
+		result.LinkedTodoText = strings.TrimSpace(linkedTodo.Text)
+		result.LinkedTodoPath = strings.TrimSpace(linkedTodo.ProjectPath)
 	}
 	alreadyMerged, err := gitBranchMergedIntoHEAD(ctx, rootPath, sourceBranch)
 	if err != nil {
@@ -601,6 +612,17 @@ func (s *Service) readProjectWorktreeInfo(ctx context.Context, projectPath strin
 		}
 	}
 	return rootPath, kind
+}
+
+func (s *Service) linkedOpenTodoForWorktree(ctx context.Context, summary model.ProjectSummary) (model.TodoItem, bool) {
+	if s == nil || s.store == nil || summary.WorktreeOriginTodoID <= 0 {
+		return model.TodoItem{}, false
+	}
+	todo, err := s.store.GetTodo(ctx, summary.WorktreeOriginTodoID)
+	if err != nil || todo.Done {
+		return model.TodoItem{}, false
+	}
+	return todo, true
 }
 
 func (s *Service) expandDiscoveredWorktreePaths(ctx context.Context, discovered []string, oldMap map[string]model.ProjectSummary, scope scanner.PathScope) ([]string, map[string]map[string]struct{}) {

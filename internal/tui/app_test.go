@@ -1520,6 +1520,7 @@ func TestWorktreeActionMsgOpensPostMergeCleanupPrompt(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"
 	status := "Merged feat/parallel-lane into master"
+	todoText := "Ship the parallel lane work"
 
 	updated, cmd := Model{}.Update(worktreeActionMsg{
 		projectPath:           childPath,
@@ -1529,6 +1530,9 @@ func TestWorktreeActionMsgOpensPostMergeCleanupPrompt(t *testing.T) {
 		postMergeRootPath:     rootPath,
 		postMergeSourceBranch: "feat/parallel-lane",
 		postMergeTargetBranch: "master",
+		postMergeTodoID:       42,
+		postMergeTodoText:     todoText,
+		postMergeTodoPath:     rootPath,
 	})
 	got := updated.(Model)
 	if cmd == nil {
@@ -1545,6 +1549,12 @@ func TestWorktreeActionMsgOpensPostMergeCleanupPrompt(t *testing.T) {
 	}
 	if got.worktreePostMerge.Status != status {
 		t.Fatalf("post-merge cleanup status = %q, want %q", got.worktreePostMerge.Status, status)
+	}
+	if got.worktreePostMerge.TodoID != 42 || got.worktreePostMerge.TodoText != todoText || got.worktreePostMerge.TodoPath != rootPath {
+		t.Fatalf("linked todo prompt metadata = %#v, want todo id/text/path", got.worktreePostMerge)
+	}
+	if got.worktreePostMerge.Selected != worktreePostMergeFocusTertiary {
+		t.Fatalf("post-merge prompt should default to keeping the linked todo open")
 	}
 	if got.preferredSelectPath != rootPath {
 		t.Fatalf("preferred select path = %q, want %q", got.preferredSelectPath, rootPath)
@@ -1603,7 +1613,7 @@ func TestWorktreePostMergeEnterRemoveQueuesRemoval(t *testing.T) {
 			BranchName:   "feat/parallel-lane",
 			TargetBranch: "master",
 			Status:       "Merged feat/parallel-lane into master",
-			Selected:     worktreePostMergeFocusRemove,
+			Selected:     worktreePostMergeFocusPrimary,
 		},
 	}
 
@@ -1628,7 +1638,7 @@ func TestWorktreePostMergeEnterRemoveLocksDialogWhileRunning(t *testing.T) {
 			BranchName:   "feat/parallel-lane",
 			TargetBranch: "master",
 			Status:       "Merged feat/parallel-lane into master",
-			Selected:     worktreePostMergeFocusRemove,
+			Selected:     worktreePostMergeFocusPrimary,
 		},
 		spinnerFrame: 2,
 	}
@@ -1657,6 +1667,81 @@ func TestWorktreePostMergeEnterRemoveLocksDialogWhileRunning(t *testing.T) {
 	}
 	if strings.Contains(rendered, "Keep") {
 		t.Fatalf("busy post-merge overlay should not show active action buttons, got %q", rendered)
+	}
+}
+
+func TestWorktreePostMergeEnterDoneKeepsWorktreeQueuesTodoUpdate(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+
+	m := Model{
+		worktreePostMerge: &worktreePostMergeState{
+			ProjectPath:  childPath,
+			RootPath:     rootPath,
+			BranchName:   "feat/parallel-lane",
+			TargetBranch: "master",
+			TodoID:       7,
+			TodoText:     "Finish the parallel lane work",
+			TodoPath:     rootPath,
+			Status:       "Merged feat/parallel-lane into master",
+			Selected:     worktreePostMergeFocusSecondary,
+		},
+	}
+
+	updated, cmd := m.updateWorktreePostMergeMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("marking the linked todo done should queue an update command")
+	}
+	if got.status != "Marking linked TODO done..." {
+		t.Fatalf("status = %q, want todo progress", got.status)
+	}
+	if got.worktreePostMerge == nil || !got.worktreePostMerge.Busy {
+		t.Fatalf("post-merge dialog should enter busy mode while marking the todo done")
+	}
+	if got.worktreePostMerge.BusyTitle != "Updating TODO" {
+		t.Fatalf("busy title = %q, want TODO update", got.worktreePostMerge.BusyTitle)
+	}
+}
+
+func TestWorktreeActionMsgErrorKeepsPostMergePromptOpen(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	errText := "linked TODO was marked done, but removing the worktree failed: remove git worktree"
+
+	m := Model{
+		worktreePostMerge: &worktreePostMergeState{
+			ProjectPath:  childPath,
+			RootPath:     rootPath,
+			BranchName:   "feat/parallel-lane",
+			TargetBranch: "master",
+			TodoID:       7,
+			TodoText:     "Finish the parallel lane work",
+			TodoPath:     rootPath,
+			Status:       "Merged feat/parallel-lane into master",
+			Busy:         true,
+			BusyTitle:    "Updating TODO and worktree",
+			BusyMessage:  "Please wait while Little Control Room updates the linked TODO.",
+			Selected:     worktreePostMergeFocusPrimary,
+		},
+	}
+
+	updated, cmd := m.Update(worktreeActionMsg{
+		projectPath: childPath,
+		err:         errors.New(errText),
+	})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("post-merge error should not queue follow-up work")
+	}
+	if got.worktreePostMerge == nil {
+		t.Fatalf("post-merge error should keep the prompt open")
+	}
+	if got.worktreePostMerge.Busy {
+		t.Fatalf("post-merge error should unlock the prompt")
+	}
+	if got.worktreePostMerge.ErrorMessage != errText {
+		t.Fatalf("post-merge inline error = %q, want %q", got.worktreePostMerge.ErrorMessage, errText)
 	}
 }
 

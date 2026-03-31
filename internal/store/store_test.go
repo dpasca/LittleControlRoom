@@ -1525,6 +1525,13 @@ func TestMoveProjectPathPreservesData(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("upsert project state: %v", err)
 	}
+	item, err := st.AddTodo(ctx, oldPath, "Move the linked worktree cleanup flow")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	if err := st.SetWorktreeOriginTodoID(ctx, oldPath, item.ID); err != nil {
+		t.Fatalf("set worktree origin todo id: %v", err)
+	}
 	if err := st.SetRunCommand(ctx, oldPath, "pnpm dev"); err != nil {
 		t.Fatalf("set run command: %v", err)
 	}
@@ -1585,6 +1592,9 @@ func TestMoveProjectPathPreservesData(t *testing.T) {
 	}
 	if detail.Summary.WorktreeMergeStatus != model.WorktreeMergeStatusNotMerged {
 		t.Fatalf("expected worktree_merge_status to survive move: %#v", detail.Summary)
+	}
+	if detail.Summary.WorktreeOriginTodoID != item.ID {
+		t.Fatalf("expected worktree origin todo id to survive move: %#v", detail.Summary)
 	}
 	if !detail.Summary.Pinned || detail.Summary.Note != "keep this note" || detail.Summary.RunCommand != "pnpm dev" {
 		t.Fatalf("expected pin/note/run command to survive move: %#v", detail.Summary)

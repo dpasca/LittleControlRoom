@@ -2058,6 +2058,9 @@ func TestMergeWorktreeBackMergesIntoRecordedParentBranch(t *testing.T) {
 	if initialWorktreeDetail.Summary.WorktreeMergeStatus != model.WorktreeMergeStatusMerged {
 		t.Fatalf("new linked worktree should start merged with its parent branch, got %#v", initialWorktreeDetail.Summary)
 	}
+	if initialWorktreeDetail.Summary.WorktreeOriginTodoID != item.ID {
+		t.Fatalf("new linked worktree should remember its origin todo id, got %#v", initialWorktreeDetail.Summary)
+	}
 
 	if err := os.WriteFile(filepath.Join(result.WorktreePath, "FEATURE.txt"), []byte("merged from linked worktree\n"), 0o644); err != nil {
 		t.Fatalf("write FEATURE.txt in worktree: %v", err)
@@ -2088,6 +2091,9 @@ func TestMergeWorktreeBackMergesIntoRecordedParentBranch(t *testing.T) {
 	}
 	if strings.TrimSpace(mergeResult.TargetBranch) != strings.TrimSpace(result.ParentBranch) {
 		t.Fatalf("merge target branch = %q, want %q", mergeResult.TargetBranch, result.ParentBranch)
+	}
+	if mergeResult.LinkedTodoID != item.ID || strings.TrimSpace(mergeResult.LinkedTodoText) != strings.TrimSpace(item.Text) || strings.TrimSpace(mergeResult.LinkedTodoPath) != strings.TrimSpace(item.ProjectPath) {
+		t.Fatalf("merge linked todo = %#v, want todo id/text/path for %#v", mergeResult, item)
 	}
 
 	featurePath := filepath.Join(projectPath, "FEATURE.txt")
@@ -2125,6 +2131,9 @@ func TestMergeWorktreeBackMergesIntoRecordedParentBranch(t *testing.T) {
 	}
 	if worktreeDetail.Summary.WorktreeMergeStatus != model.WorktreeMergeStatusMerged {
 		t.Fatalf("stored worktree merge status after merge-back = %q, want %q", worktreeDetail.Summary.WorktreeMergeStatus, model.WorktreeMergeStatusMerged)
+	}
+	if worktreeDetail.Summary.WorktreeOriginTodoID != item.ID {
+		t.Fatalf("stored worktree origin todo after merge-back = %d, want %d", worktreeDetail.Summary.WorktreeOriginTodoID, item.ID)
 	}
 
 	alreadyMergedResult, err := svc.MergeWorktreeBack(ctx, result.WorktreePath)

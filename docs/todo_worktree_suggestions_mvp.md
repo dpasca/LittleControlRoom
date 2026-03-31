@@ -83,7 +83,9 @@ Once confirmed, Little Control Room creates the new worktree and starts the chos
 When the task is done, Little Control Room should support a simple local-only finish path:
 
 - record the parent branch that the worktree was created from
+- record the originating TODO id on the linked worktree explicitly instead of inferring it from branch or folder names later
 - let the user explicitly merge the linked worktree branch back into that recorded parent branch
+- after a successful merge-back, offer to mark the originating TODO done
 - require the root checkout to already be on the recorded parent branch
 - require both the root checkout and the linked worktree to be clean before merging
 - allow unrelated sibling worktrees in the same repo family to stay dirty without blocking that merge
