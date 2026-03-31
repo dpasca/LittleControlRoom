@@ -322,7 +322,21 @@ func (s *Service) MergeWorktreeBack(ctx context.Context, projectPath string) (Me
 		TargetBranch:    targetBranch,
 	}
 	if err := gitMergeBranch(ctx, rootPath, sourceBranch); err != nil {
-		return result, fmt.Errorf("merge %s back into %s at %s: %w", sourceBranch, targetBranch, rootPath, err)
+		refreshErr := s.refreshWorktreeMergeStatus(ctx, rootPath, projectPath)
+		if s.gitRepoStatusReader != nil {
+			if failedRootStatus, statusErr := s.gitRepoStatusReader(ctx, rootPath); statusErr == nil {
+				if conflictErr := worktreeMergeConflictError(rootPath, sourceBranch, targetBranch, failedRootStatus); conflictErr != nil {
+					if refreshErr != nil {
+						return result, fmt.Errorf("%w (status refresh also failed: %v)", conflictErr, refreshErr)
+					}
+					return result, conflictErr
+				}
+			}
+		}
+		if refreshErr != nil {
+			return result, fmt.Errorf("merge %s back into %s at %s failed: %w (status refresh also failed: %v)", sourceBranch, targetBranch, rootPath, err, refreshErr)
+		}
+		return result, fmt.Errorf("merge %s back into %s at %s failed: %w", sourceBranch, targetBranch, rootPath, err)
 	}
 
 	now := time.Now()
@@ -352,6 +366,54 @@ func (s *Service) MergeWorktreeBack(ctx context.Context, projectPath string) (Me
 		return result, fmt.Errorf("refresh merged worktree project: %w", err)
 	}
 	return result, nil
+}
+
+func (s *Service) refreshWorktreeMergeStatus(ctx context.Context, rootPath, projectPath string) error {
+	var errs []string
+	if err := s.RefreshProjectStatus(ctx, rootPath); err != nil {
+		errs = append(errs, fmt.Sprintf("refresh merged root project: %v", err))
+	}
+	if err := s.RefreshProjectStatus(ctx, projectPath); err != nil {
+		errs = append(errs, fmt.Sprintf("refresh merged worktree project: %v", err))
+	}
+	if len(errs) == 0 {
+		return nil
+	}
+	return errors.New(strings.Join(errs, "; "))
+}
+
+func worktreeMergeConflictError(rootPath, sourceBranch, targetBranch string, status scanner.GitRepoStatus) error {
+	conflicted := conflictedPaths(status)
+	if len(conflicted) == 0 {
+		return nil
+	}
+	summary := conflicted[0]
+	if len(conflicted) > 1 {
+		extra := len(conflicted) - 1
+		summary = fmt.Sprintf("%s (+%d more)", conflicted[0], extra)
+	}
+	return fmt.Errorf("merge conflict while merging %s into %s at %s. Resolve or abort the merge in the root checkout before retrying. Conflicted files include %s.", sourceBranch, targetBranch, rootPath, summary)
+}
+
+func conflictedPaths(status scanner.GitRepoStatus) []string {
+	out := make([]string, 0, len(status.Changes))
+	seen := map[string]struct{}{}
+	for _, change := range status.Changes {
+		if change.Kind != scanner.GitChangeUnmerged {
+			continue
+		}
+		path := strings.TrimSpace(change.Path)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		out = append(out, path)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (s *Service) RemoveWorktree(ctx context.Context, projectPath string) error {

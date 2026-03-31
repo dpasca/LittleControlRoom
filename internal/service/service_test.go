@@ -1929,6 +1929,104 @@ func TestMergeWorktreeBackMergesIntoRecordedParentBranch(t *testing.T) {
 	}
 }
 
+func TestMergeWorktreeBackReportsConflictAndRefreshesStatus(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	item, err := svc.AddTodo(ctx, projectPath, "Create a worktree conflict")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
+		t.Fatalf("queue todo worktree suggestion: %v", err)
+	} else if !queued {
+		t.Fatalf("expected todo worktree suggestion to queue")
+	}
+	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
+	if err != nil {
+		t.Fatalf("claim todo worktree suggestion: %v", err)
+	}
+	suggestion.BranchName = "feat/merge-worktree-conflict"
+	suggestion.WorktreeSuffix = "feat-merge-worktree-conflict"
+	suggestion.Kind = "feature"
+	suggestion.Reason = "Creates a linked worktree so merge conflict handling can be tested."
+	suggestion.Confidence = 0.95
+	suggestion.Model = "test"
+	if completed, err := st.CompleteTodoWorktreeSuggestion(ctx, suggestion); err != nil {
+		t.Fatalf("complete todo worktree suggestion: %v", err)
+	} else if !completed {
+		t.Fatalf("expected todo worktree suggestion to complete")
+	}
+
+	result, err := svc.CreateTodoWorktree(ctx, CreateTodoWorktreeRequest{
+		ProjectPath: projectPath,
+		TodoID:      item.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateTodoWorktree() error = %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("hello from root\n"), 0o644); err != nil {
+		t.Fatalf("write README in root: %v", err)
+	}
+	runGit(t, projectPath, "git", "add", "README.md")
+	runGit(t, projectPath, "git", "commit", "-m", "root change")
+
+	if err := os.WriteFile(filepath.Join(result.WorktreePath, "README.md"), []byte("hello from worktree\n"), 0o644); err != nil {
+		t.Fatalf("write README in worktree: %v", err)
+	}
+	runGit(t, result.WorktreePath, "git", "add", "README.md")
+	runGit(t, result.WorktreePath, "git", "commit", "-m", "worktree change")
+
+	_, err = svc.MergeWorktreeBack(ctx, result.WorktreePath)
+	if err == nil {
+		t.Fatalf("MergeWorktreeBack() expected conflict error")
+	}
+	if !strings.Contains(err.Error(), "merge conflict while merging feat/merge-worktree-conflict") {
+		t.Fatalf("merge conflict error = %q, want actionable conflict message", err)
+	}
+	if !strings.Contains(err.Error(), "README.md") {
+		t.Fatalf("merge conflict error = %q, want conflicted file name", err)
+	}
+
+	rootStatus, err := scanner.ReadGitRepoStatus(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("read root git status after merge conflict: %v", err)
+	}
+	if !rootStatus.Dirty {
+		t.Fatalf("root repo should be dirty after merge conflict, got %#v", rootStatus)
+	}
+	if conflicted := conflictedPaths(rootStatus); len(conflicted) == 0 || conflicted[0] != "README.md" {
+		t.Fatalf("conflicted paths = %#v, want README.md", conflicted)
+	}
+
+	rootDetail, err := st.GetProjectDetail(ctx, projectPath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() for root after merge conflict error = %v", err)
+	}
+	if !rootDetail.Summary.RepoDirty {
+		t.Fatalf("stored root detail should refresh to dirty after merge conflict: %#v", rootDetail.Summary)
+	}
+}
+
 func TestPrepareCommitUsesStagedScopeAndFinishPushState(t *testing.T) {
 	t.Parallel()
 
