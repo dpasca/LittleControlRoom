@@ -1067,6 +1067,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if provider == "" {
 			provider = codexapp.ProviderCodex
 		}
+		m.todoDialog = nil
 		m.todoCopyDialog = nil
 		m.todoWorktreeEditor = nil
 		m.todoExistingWorktree = nil

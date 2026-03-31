@@ -5125,6 +5125,9 @@ func TestTodoDialogCanStartSelectedTodoInNewWorktree(t *testing.T) {
 
 	updated, cmd = got.Update(launchMsg)
 	got = updated.(Model)
+	if got.todoDialog != nil {
+		t.Fatalf("todo dialog should close once the worktree launch succeeds")
+	}
 	if got.codexPendingOpen == nil || got.codexPendingOpen.projectPath != expectedPath {
 		t.Fatalf("codexPendingOpen = %#v, want pending open for %q", got.codexPendingOpen, expectedPath)
 	}
