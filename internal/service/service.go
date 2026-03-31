@@ -1444,7 +1444,6 @@ func (s *Service) AddTodo(ctx context.Context, projectPath, text string) (model.
 	if err != nil {
 		return model.TodoItem{}, err
 	}
-	s.queueTodoSuggestion(ctx, item.ID)
 	now := time.Now()
 	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "add_todo"}})
 	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: "add_todo"})
@@ -1455,22 +1454,13 @@ func (s *Service) UpdateTodo(ctx context.Context, projectPath string, id int64, 
 	if err := s.store.UpdateTodo(ctx, id, text); err != nil {
 		return err
 	}
-	s.queueTodoSuggestion(ctx, id)
+	if err := s.store.DeleteTodoWorktreeSuggestion(ctx, id); err != nil {
+		return err
+	}
 	now := time.Now()
 	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "update_todo"}})
 	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: "update_todo"})
 	return nil
-}
-
-func (s *Service) queueTodoSuggestion(ctx context.Context, todoID int64) {
-	if s == nil || s.todoSuggester == nil {
-		return
-	}
-	queued, err := s.todoSuggester.QueueTodo(ctx, todoID)
-	if err != nil || !queued {
-		return
-	}
-	s.todoSuggester.Notify()
 }
 
 func (s *Service) ToggleTodoDone(ctx context.Context, projectPath string, id int64, done bool) error {

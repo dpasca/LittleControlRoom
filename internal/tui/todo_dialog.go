@@ -307,7 +307,7 @@ func (m *Model) openTodoCopyDialog(todo model.TodoItem) tea.Cmd {
 		Provider:    provider,
 	}
 	m.status = "Start TODO"
-	return m.ensureTodoWorktreeSuggestionCmd(m.todoCopyDialog.ProjectPath, todo.ID)
+	return nil
 }
 
 func (m *Model) closeTodoCopyDialog(status string) tea.Cmd {
@@ -515,9 +515,12 @@ func (m *Model) cycleTodoCopyDialogRunMode(key string) tea.Cmd {
 	}
 	if copyDialog.RunMode == todoCopyModeHere {
 		copyDialog.RunMode = todoCopyModeNewWorktree
-	} else {
-		copyDialog.RunMode = todoCopyModeHere
+		if strings.TrimSpace(copyDialog.BranchOverride) != "" || strings.TrimSpace(copyDialog.WorktreeSuffixOverride) != "" {
+			return nil
+		}
+		return m.ensureTodoWorktreeSuggestionCmd(copyDialog.ProjectPath, copyDialog.TodoID)
 	}
+	copyDialog.RunMode = todoCopyModeHere
 	return nil
 }
 

@@ -7,7 +7,7 @@ The goal is to let a user start parallel work on the same repo without forcing m
 ## Goals
 
 - Generate branch and worktree naming suggestions for TODO items using model-based structured output.
-- Cache suggestions in the background so launching a TODO into a new worktree is usually instant.
+- Cache suggestions once requested so repeated dedicated-worktree launches are usually instant without speculatively generating names for every TODO.
 - Keep the top-level dashboard repo-centric instead of turning each worktree into a noisy duplicate project row.
 - Let the user inspect, edit, accept, or regenerate the suggested names before creating a new worktree.
 - Keep local validation limited to safety and normalization, not semantic intent inference.
@@ -39,21 +39,23 @@ This keeps the user mental model simple: "I have one project with several possib
 
 ### 1. TODO creation or edit
 
-When a TODO is created or its text changes:
+When a TODO is created:
 
-- mark its worktree suggestion state as `stale`
-- schedule background suggestion generation after a debounce window
+- do not generate a worktree suggestion yet
 
-Recommended debounce: `60s` to `120s`
+When a TODO text changes:
 
-### 2. Background suggestion generation
+- clear any cached suggestion for that TODO
+- wait until the user explicitly asks for a dedicated worktree again
 
-The background worker gathers stale TODOs and requests structured suggestions from the model.
+### 2. On-demand suggestion generation
+
+When the user switches the launch dialog to `Dedicated worktree` or explicitly presses `regenerate`, Little Control Room queues suggestion generation for that TODO.
 
 Suggestions should be generated:
 
 - asynchronously
-- in small batches when possible
+- only for explicitly requested TODOs
 - with enough project context to avoid vague names
 
 ### 3. TODO launch
@@ -163,7 +165,6 @@ CREATE TABLE todo_worktree_suggestions (
 
 Suggested status values:
 
-- `stale`
 - `queued`
 - `running`
 - `ready`
@@ -175,17 +176,17 @@ Add a matching model type, for example:
 
 ## Invalidation Rules
 
-A suggestion is stale when:
+A cached suggestion should be discarded when:
 
 - the TODO text changes
-- the stored `todo_text_hash` does not match the current TODO text
+- the user explicitly requests regeneration
 
 A suggestion is still valid when:
 
 - time passes but the TODO text is unchanged
 - the repo remains the same
 
-This should avoid unnecessary model churn.
+This keeps the cache useful without generating names for TODOs that may never be launched into dedicated worktrees.
 
 ## Background Worker
 
@@ -193,34 +194,29 @@ Use a dedicated background manager rather than folding this into session classif
 
 Responsibilities:
 
-- list stale TODO suggestions
-- queue generation work
-- batch a few stale TODOs into one model call when practical
+- process explicitly queued TODO suggestions
 - persist `ready` or `failed` results
 - avoid duplicate concurrent work on the same TODO
 
 Suggested behavior:
 
-- queue after debounce
-- back off after repeated failures
+- avoid startup backfills for every open TODO
 - retry on explicit user request via `regenerate`
 
 ## Service Layer
 
 Suggested service/store capabilities:
 
-- mark a TODO suggestion stale
 - load a TODO suggestion by TODO id
-- queue suggestion generation for one TODO or one project
-- list stale suggestions for background processing
+- clear a cached suggestion when the TODO text changes
+- queue suggestion generation for one TODO on explicit demand
 - ensure a valid suggestion exists when launching into a new worktree
 
 Possible service entry points:
 
-- `MarkTodoSuggestionStale(todoID int64)`
 - `GetTodoWorktreeSuggestion(todoID int64)`
 - `QueueTodoWorktreeSuggestion(todoID int64)`
-- `QueueProjectTodoWorktreeSuggestions(projectPath string)`
+- `DeleteTodoWorktreeSuggestion(todoID int64)`
 - `EnsureTodoWorktreeSuggestion(ctx, todoID int64)`
 
 `Ensure...` should prefer cached results and only wait synchronously when the user explicitly needs a suggestion now.
@@ -300,7 +296,7 @@ Recommended implementation sequence:
 
 1. Add the new store table, model type, and stale/ready/failed persistence.
 2. Add a dedicated background manager that generates cached suggestions.
-3. Update TODO create/edit flows to mark suggestions stale and enqueue work after debounce.
+3. Update TODO create/edit flows so creation stays cheap and text edits invalidate cached suggestions without speculatively enqueueing work.
 4. Surface suggestion state in the TODO dialog.
 5. Add the launch dialog path for `Start in new worktree` with accept/edit/regenerate.
 6. Add actual worktree creation and embedded provider launch using the accepted names.
@@ -313,7 +309,7 @@ Minimum verification for implementation PRs:
 
 - store migration tests for the new table
 - invalidation tests when TODO text changes
-- background queue tests for stale to ready or failed transitions
+- on-demand queue tests for queued to ready or failed transitions
 - TUI tests for ready, queued, and failed suggestion states
 - launch dialog tests covering accept, edit, and regenerate
 

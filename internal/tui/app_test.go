@@ -4708,7 +4708,7 @@ func TestTodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider(t *testin
 	}
 }
 
-func TestTodoDialogEnterEnsuresMissingWorktreeSuggestion(t *testing.T) {
+func TestTodoDialogDedicatedWorktreeEnsuresMissingWorktreeSuggestion(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -4764,8 +4764,20 @@ func TestTodoDialogEnterEnsuresMissingWorktreeSuggestion(t *testing.T) {
 	if got.todoCopyDialog == nil {
 		t.Fatalf("todo copy dialog should open after Enter")
 	}
+	if cmd != nil {
+		t.Fatalf("opening the TODO launcher should not queue a worktree suggestion until dedicated mode is selected")
+	}
+
+	updated, cmd = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+	got = updated.(Model)
+	if got.todoCopyDialog == nil {
+		t.Fatalf("todo copy dialog should stay open after switching to dedicated worktree")
+	}
+	if got.todoCopyDialog.RunMode != todoCopyModeNewWorktree {
+		t.Fatalf("copy dialog run mode = %d, want %d after w", got.todoCopyDialog.RunMode, todoCopyModeNewWorktree)
+	}
 	if cmd == nil {
-		t.Fatalf("opening the TODO launcher should ensure a missing worktree suggestion")
+		t.Fatalf("switching to dedicated worktree should ensure a missing worktree suggestion")
 	}
 	msg, ok := cmd().(todoActionMsg)
 	if !ok {
@@ -4787,7 +4799,7 @@ func TestTodoDialogEnterEnsuresMissingWorktreeSuggestion(t *testing.T) {
 	}
 }
 
-func TestTodoDialogEnterRetriesFailedWorktreeSuggestion(t *testing.T) {
+func TestTodoDialogDedicatedWorktreeRetriesFailedWorktreeSuggestion(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -4857,8 +4869,20 @@ func TestTodoDialogEnterRetriesFailedWorktreeSuggestion(t *testing.T) {
 	if got.todoCopyDialog == nil {
 		t.Fatalf("todo copy dialog should open after Enter")
 	}
+	if cmd != nil {
+		t.Fatalf("opening the TODO launcher should not retry a failed worktree suggestion before dedicated mode is selected")
+	}
+
+	updated, cmd = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+	got = updated.(Model)
+	if got.todoCopyDialog == nil {
+		t.Fatalf("todo copy dialog should stay open after switching to dedicated worktree")
+	}
+	if got.todoCopyDialog.RunMode != todoCopyModeNewWorktree {
+		t.Fatalf("copy dialog run mode = %d, want %d after w", got.todoCopyDialog.RunMode, todoCopyModeNewWorktree)
+	}
 	if cmd == nil {
-		t.Fatalf("opening the TODO launcher should retry a failed worktree suggestion")
+		t.Fatalf("switching to dedicated worktree should retry a failed worktree suggestion")
 	}
 	msg, ok := cmd().(todoActionMsg)
 	if !ok {

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"image"
 	"image/color"
@@ -1644,6 +1645,68 @@ func TestScanOnceDetectsRepoAheadOfRemote(t *testing.T) {
 	}
 	if strings.TrimSpace(detail.Summary.RepoBranch) == "" {
 		t.Fatalf("expected stored summary to preserve repo branch, got %#v", detail.Summary)
+	}
+}
+
+func TestAddTodoAndUpdateDoNotQueueWorktreeSuggestionsSpeculatively(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.AIBackend = config.AIBackendOpenAIAPI
+	cfg.OpenAIAPIKey = "test-key"
+	svc := New(cfg, st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	item, err := svc.AddTodo(ctx, projectPath, "Only create a worktree name when I choose dedicated mode")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	if _, err := st.GetTodoWorktreeSuggestion(ctx, item.ID); err != sql.ErrNoRows {
+		t.Fatalf("GetTodoWorktreeSuggestion() after add = %v, want sql.ErrNoRows", err)
+	}
+
+	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
+		t.Fatalf("queue todo worktree suggestion: %v", err)
+	} else if !queued {
+		t.Fatalf("expected todo worktree suggestion to queue")
+	}
+	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
+	if err != nil {
+		t.Fatalf("claim todo worktree suggestion: %v", err)
+	}
+	suggestion.BranchName = "feat/on-demand-worktree"
+	suggestion.WorktreeSuffix = "feat-on-demand-worktree"
+	suggestion.Kind = "feature"
+	suggestion.Reason = "Creates a worktree on demand."
+	suggestion.Confidence = 0.91
+	suggestion.Model = "test"
+	if completed, err := st.CompleteTodoWorktreeSuggestion(ctx, suggestion); err != nil {
+		t.Fatalf("complete todo worktree suggestion: %v", err)
+	} else if !completed {
+		t.Fatalf("expected todo worktree suggestion to complete")
+	}
+
+	if err := svc.UpdateTodo(ctx, projectPath, item.ID, "Still do not speculate on worktree names"); err != nil {
+		t.Fatalf("update todo: %v", err)
+	}
+	if _, err := st.GetTodoWorktreeSuggestion(ctx, item.ID); err != sql.ErrNoRows {
+		t.Fatalf("GetTodoWorktreeSuggestion() after update = %v, want sql.ErrNoRows", err)
 	}
 }
 

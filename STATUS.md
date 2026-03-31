@@ -1,6 +1,48 @@
 # Little Control Room Status
 
-Last updated: 2026-03-31 12:57 JST
+Last updated: 2026-03-31 14:07 JST
+
+## Latest Update (2026-03-31 14:07 JST)
+
+- Switched TODO worktree naming from speculative background generation to an explicit on-demand flow tied to the `Dedicated worktree` choice:
+  - assumption update:
+    - worktree suggestions should only be generated when the user actually chooses the dedicated-worktree path, not precomputed for unrelated TODO rows
+    - TODO create/edit flows should stay cheap; text edits should invalidate cached worktree suggestions instead of immediately queueing replacement names
+    - the background manager should process only explicitly queued worktree requests and should not prefill the queue with every open TODO at startup
+  - `internal/tui/todo_dialog.go`
+    - stopped requesting a worktree suggestion when the TODO start dialog first opens
+    - moving from `Here` to `Dedicated worktree` now triggers `EnsureTodoWorktreeSuggestion(...)`
+  - `internal/service/service.go`
+    - removed speculative queueing from `AddTodo(...)`
+    - changed `UpdateTodo(...)` to delete any cached worktree suggestion so edited TODO text cannot reuse stale branch/folder names
+  - `internal/store/store.go`
+    - added `DeleteTodoWorktreeSuggestion(...)` for explicit cache invalidation on TODO edits
+  - `internal/todoworktree/manager.go`
+    - removed the startup backfill that used to queue suggestions for all open TODOs when the manager started
+  - `internal/tui/app_test.go`
+    - updated the launcher tests so suggestion generation now happens on `w` / `Dedicated worktree`, not on initial dialog open
+  - `internal/service/service_test.go`
+    - added coverage proving TODO create/update does not speculate and that editing a TODO clears any existing cached suggestion
+  - `internal/todoworktree/manager_test.go`
+    - added coverage proving manager startup no longer queues open TODOs on its own
+  - `docs/todo_worktree_suggestions_mvp.md`
+    - updated the design note to describe on-demand suggestion generation and cache invalidation on TODO edits
+- Verification status:
+  - focused coverage passed:
+    - `go test ./internal/tui -run 'TestTodoDialogDedicatedWorktreeEnsuresMissingWorktreeSuggestion|TestTodoDialogDedicatedWorktreeRetriesFailedWorktreeSuggestion|TestTodoCopyDialogEnterWaitsForQueuedWorktreeSuggestion|TestTodoCopyDialogHotkeysCycleModesProvidersAndModelToggle' -count=1`
+    - `go test ./internal/service -run 'TestAddTodoAndUpdateDoNotQueueWorktreeSuggestionsSpeculatively|TestCreateTodoWorktreeCreatesTrackedSiblingProject' -count=1`
+    - `go test ./internal/todoworktree -run 'TestManagerGeneratesReadySuggestion|TestManagerStartProcessesQueuedSuggestionsInBackground|TestManagerStartDoesNotQueueOpenTodosSpeculatively' -count=1`
+  - repo validation:
+    - `make test` passed
+    - `make scan` passed at `2026-03-31T14:06:26+09:00`
+    - `make doctor` passed using cached report at `2026-03-31T14:06:26+09:00`
+    - `git diff --check` passed
+  - TUI smoke passed:
+    - `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-worktree-on-demand-smoke INTERVAL=1h`
+    - isolated sandbox launched and exited cleanly via `q`
+- Next concrete tasks:
+  - Consider whether explicit user-triggered worktree suggestions should also bypass the normal queue ordering so a just-selected TODO jumps ahead of older queued work.
+  - Decide whether `QueueOpenTodoWorktreeSuggestions(...)` should now be removed entirely or kept as dormant infrastructure for a future opt-in warm-cache mode.
 
 ## Latest Update (2026-03-31 12:57 JST)
 

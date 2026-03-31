@@ -14,10 +14,10 @@ import (
 )
 
 type Options struct {
-	Client      Suggester
-	Workers     int
-	Debounce    time.Duration
-	StaleAfter  time.Duration
+	Client     Suggester
+	Workers    int
+	Debounce   time.Duration
+	StaleAfter time.Duration
 }
 
 type Manager struct {
@@ -112,7 +112,6 @@ func (m *Manager) Start(ctx context.Context) {
 		return
 	}
 	m.startOnce.Do(func() {
-		_, _ = m.store.QueueOpenTodoWorktreeSuggestions(ctx)
 		m.Notify()
 		for i := 0; i < m.workers; i++ {
 			go m.worker(ctx)
@@ -212,7 +211,7 @@ func (m *Manager) publish(projectPath, action string, todoID int64, modelName st
 		return
 	}
 	payload := map[string]string{
-		"action": action,
+		"action":  action,
 		"todo_id": fmt.Sprintf("%d", todoID),
 	}
 	if strings.TrimSpace(modelName) != "" {

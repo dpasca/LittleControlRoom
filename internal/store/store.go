@@ -2492,6 +2492,14 @@ func (s *Store) GetTodoWorktreeSuggestion(ctx context.Context, todoID int64) (mo
 	return scanTodoWorktreeSuggestionRow(row)
 }
 
+func (s *Store) DeleteTodoWorktreeSuggestion(ctx context.Context, todoID int64) error {
+	if todoID <= 0 {
+		return fmt.Errorf("todo id is required")
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM todo_worktree_suggestions WHERE todo_id = ?`, todoID)
+	return err
+}
+
 func (s *Store) ClaimNextQueuedTodoWorktreeSuggestion(ctx context.Context, debounce, staleAfter time.Duration) (model.TodoWorktreeSuggestion, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
