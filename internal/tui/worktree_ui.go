@@ -1261,7 +1261,12 @@ func (m Model) renderWorktreePostMergeOverlay(body string, bodyW, bodyH int) str
 			lines = append(lines, worktreePostMergeSectionLines(prompt, worktreePostMergeFocusRemove, panelInnerW)...)
 		}
 		lines = append(lines, "")
-		lines = append(lines, commandPaletteHintStyle.Render("Space toggle, ↑↓ navigate, Enter apply, Esc later"))
+		lines = append(lines, renderHelpPanelActionRow(
+			renderDialogAction("Space", "toggle", pushActionKeyStyle, pushActionTextStyle),
+			renderDialogAction("↑↓", "navigate", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("Enter", "apply", commitActionKeyStyle, commitActionTextStyle),
+			renderDialogAction("Esc", "later", cancelActionKeyStyle, cancelActionTextStyle),
+		))
 	} else {
 		lines = append(lines, "")
 		lines = append(lines, disabledActionTextStyle.Render("["+todoDialogWaitingLabel(m.spinnerFrame)+"]"))

@@ -2164,6 +2164,9 @@ func TestRenderWorktreePostMergeOverlayShowsSeparateCleanupChoices(t *testing.T)
 		"Remove this merged checkout now or keep it around",
 		"for later. Removing it only deletes the checkout.",
 		"[ ] Remove merged worktree now",
+		"Enter  apply",
+		"Esc",
+		"later",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("post-merge overlay should render the full wrapped prompt copy, missing %q in %q", want, rendered)
@@ -2189,6 +2192,9 @@ func TestRenderWorktreePostMergeOverlayWithoutTodoShowsCleanupSection(t *testing
 		"Worktree cleanup",
 		"Removing it only deletes the checkout.",
 		"[ ] Remove merged worktree now",
+		"Enter  apply",
+		"Esc",
+		"later",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("post-merge overlay without todo should show the cleanup section, missing %q in %q", want, rendered)
