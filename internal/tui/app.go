@@ -1116,6 +1116,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 			m.status = singleLineStatusText(msg.err.Error())
 			if m.worktreeMergeConfirm != nil && filepath.Clean(strings.TrimSpace(m.worktreeMergeConfirm.ProjectPath)) == filepath.Clean(strings.TrimSpace(msg.projectPath)) {
+				m.worktreeMergeConfirm.Busy = false
+				m.worktreeMergeConfirm.BusyMessage = ""
 				m.worktreeMergeConfirm.ErrorMessage = msg.err.Error()
 				m.worktreePostMerge = nil
 				m.worktreeRemoveConfirm = nil
@@ -4569,6 +4571,9 @@ func (m Model) renderFooter(width int) string {
 		return m.renderModalFooter(width, "AI stats: Esc close", filterSegment, usageSegment)
 	}
 	if m.worktreeMergeConfirm != nil {
+		if m.worktreeMergeConfirm.Busy {
+			return m.renderModalFooter(width, "Merge worktree: waiting for git to finish", filterSegment, usageSegment)
+		}
 		label := "Merge worktree: Enter merge, Tab switch, Esc cancel"
 		if !m.worktreeMergeConfirm.MergeReady {
 			label = "Merge blocked: clean root/worktree or fix branch, Esc keep"
@@ -4576,9 +4581,15 @@ func (m Model) renderFooter(width int) string {
 		return m.renderModalFooter(width, label, filterSegment, usageSegment)
 	}
 	if m.worktreePostMerge != nil {
+		if m.worktreePostMerge.Busy {
+			return m.renderModalFooter(width, "Merged worktree: waiting for removal to finish", filterSegment, usageSegment)
+		}
 		return m.renderModalFooter(width, "Merged worktree: Enter remove, Tab keep, Esc keep", filterSegment, usageSegment)
 	}
 	if m.worktreeRemoveConfirm != nil {
+		if m.worktreeRemoveConfirm.Busy {
+			return m.renderModalFooter(width, "Remove worktree: waiting for git to finish", filterSegment, usageSegment)
+		}
 		return m.renderModalFooter(width, "Remove worktree: Enter remove, Tab switch, Esc cancel", filterSegment, usageSegment)
 	}
 	if m.noteClearConfirm != nil {
