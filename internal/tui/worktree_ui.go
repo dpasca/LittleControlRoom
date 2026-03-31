@@ -28,9 +28,8 @@ const (
 )
 
 const (
-	worktreePostMergeFocusPrimary = iota
-	worktreePostMergeFocusSecondary
-	worktreePostMergeFocusTertiary
+	worktreePostMergeFocusTodo = iota
+	worktreePostMergeFocusRemove
 )
 
 const (
@@ -89,6 +88,8 @@ type worktreePostMergeState struct {
 	TodoID       int64
 	TodoText     string
 	TodoPath     string
+	MarkTodoDone bool
+	RemoveNow    bool
 	Status       string
 	ErrorMessage string
 	Busy         bool
@@ -99,20 +100,20 @@ type worktreePostMergeState struct {
 
 func defaultWorktreePostMergeSelection(hasTodo bool) int {
 	if hasTodo {
-		return worktreePostMergeFocusTertiary
+		return worktreePostMergeFocusTodo
 	}
-	return worktreePostMergeFocusSecondary
+	return worktreePostMergeFocusRemove
 }
 
 func worktreePostMergeHasTodo(prompt *worktreePostMergeState) bool {
 	return prompt != nil && prompt.TodoID > 0
 }
 
-func worktreePostMergeLabels(prompt *worktreePostMergeState) []string {
+func worktreePostMergeOptionCount(prompt *worktreePostMergeState) int {
 	if worktreePostMergeHasTodo(prompt) {
-		return []string{"Done + Remove", "Done", "Keep Open"}
+		return 2
 	}
-	return []string{"Remove", "Keep"}
+	return 1
 }
 
 func nextWorktreePostMergeSelection(current, delta, count int) int {
@@ -794,45 +795,44 @@ func (m Model) updateWorktreePostMergeMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 	if prompt.Busy {
 		return m, nil
 	}
-	buttons := worktreePostMergeLabels(prompt)
 	switch msg.String() {
 	case "esc":
 		m.worktreePostMerge = nil
 		m.status = worktreePostMergeDismissStatus(prompt)
 		return m, nil
-	case "left", "h", "right", "l", "tab", "shift+tab":
+	case "left", "h", "right", "l", "up", "k", "down", "j", "tab", "shift+tab":
 		delta := 1
-		if msg.String() == "left" || msg.String() == "h" || msg.String() == "shift+tab" {
+		if msg.String() == "left" || msg.String() == "h" || msg.String() == "up" || msg.String() == "k" || msg.String() == "shift+tab" {
 			delta = -1
 		}
-		prompt.Selected = nextWorktreePostMergeSelection(prompt.Selected, delta, len(buttons))
+		prompt.Selected = nextWorktreePostMergeSelection(prompt.Selected, delta, worktreePostMergeOptionCount(prompt))
+		return m, nil
+	case " ":
+		if worktreePostMergeHasTodo(prompt) && prompt.Selected == worktreePostMergeFocusTodo {
+			prompt.MarkTodoDone = !prompt.MarkTodoDone
+			return m, nil
+		}
+		prompt.RemoveNow = !prompt.RemoveNow
 		return m, nil
 	case "enter":
 		prompt.ErrorMessage = ""
-		if worktreePostMergeHasTodo(prompt) {
-			switch prompt.Selected {
-			case worktreePostMergeFocusPrimary:
-				prompt.Busy = true
+		if !prompt.MarkTodoDone && !prompt.RemoveNow {
+			m.worktreePostMerge = nil
+			m.status = worktreePostMergeDismissStatus(prompt)
+			return m, nil
+		}
+		if prompt.MarkTodoDone {
+			prompt.Busy = true
+			if prompt.RemoveNow {
 				prompt.BusyTitle = "Updating TODO and worktree"
 				prompt.BusyMessage = "Please wait while Little Control Room marks the linked TODO done and removes the merged worktree checkout. The dialog is temporarily locked."
 				m.status = "Marking linked TODO done and removing merged worktree..."
 				return m, m.completeWorktreePostMergeTodoCmd(prompt.TodoPath, prompt.TodoID, prompt.ProjectPath, prompt.RootPath, true, prompt.Status)
-			case worktreePostMergeFocusSecondary:
-				prompt.Busy = true
-				prompt.BusyTitle = "Updating TODO"
-				prompt.BusyMessage = "Please wait while Little Control Room marks the linked TODO done. The dialog is temporarily locked."
-				m.status = "Marking linked TODO done..."
-				return m, m.completeWorktreePostMergeTodoCmd(prompt.TodoPath, prompt.TodoID, prompt.ProjectPath, prompt.RootPath, false, prompt.Status)
-			default:
-				m.worktreePostMerge = nil
-				m.status = worktreePostMergeDismissStatus(prompt)
-				return m, nil
 			}
-		}
-		if prompt.Selected != worktreePostMergeFocusPrimary {
-			m.worktreePostMerge = nil
-			m.status = worktreePostMergeDismissStatus(prompt)
-			return m, nil
+			prompt.BusyTitle = "Updating TODO"
+			prompt.BusyMessage = "Please wait while Little Control Room marks the linked TODO done. The dialog is temporarily locked."
+			m.status = "Marking linked TODO done..."
+			return m, m.completeWorktreePostMergeTodoCmd(prompt.TodoPath, prompt.TodoID, prompt.ProjectPath, prompt.RootPath, false, prompt.Status)
 		}
 		prompt.Busy = true
 		prompt.BusyTitle = "Removal in progress"
@@ -858,6 +858,33 @@ func worktreePostMergeDismissStatus(prompt *worktreePostMergeState) string {
 		return baseStatus + ". Worktree kept."
 	}
 	return "Merged worktree kept"
+}
+
+func worktreePostMergeOptionLine(prompt *worktreePostMergeState, index, width int) string {
+	checked := false
+	text := "Remove merged worktree now"
+	style := detailMutedStyle
+	if worktreePostMergeHasTodo(prompt) && index == worktreePostMergeFocusTodo {
+		checked = prompt.MarkTodoDone
+		text = prompt.TodoText
+		if checked {
+			style = detailValueStyle
+		}
+	} else {
+		checked = prompt.RemoveNow
+		if checked {
+			style = detailWarningStyle
+		}
+	}
+	prefix := "[ ] "
+	if checked {
+		prefix = "[x] "
+	}
+	line := truncateText(prefix+text, width)
+	if prompt.Selected == index {
+		return noteDialogButtonSelectedStyle.UnsetPadding().Width(width).Render(line)
+	}
+	return style.Render(line)
 }
 
 func (m Model) completeWorktreePostMergeTodoCmd(todoProjectPath string, todoID int64, worktreePath, rootPath string, removeAfter bool, baseStatus string) tea.Cmd {
@@ -1140,25 +1167,6 @@ func (m Model) renderWorktreePostMergeOverlay(body string, bodyW, bodyH int) str
 	}
 	panelW := min(max(56, bodyW-20), 88)
 	panelInnerW := max(28, panelW-4)
-	buttons := lipgloss.JoinHorizontal(
-		lipgloss.Left,
-		renderNoteDialogButton(worktreePostMergeLabels(prompt)[0], prompt.Selected == worktreePostMergeFocusPrimary),
-		" ",
-		renderNoteDialogButton(worktreePostMergeLabels(prompt)[1], prompt.Selected == worktreePostMergeFocusSecondary),
-	)
-	if worktreePostMergeHasTodo(prompt) {
-		buttons = lipgloss.JoinHorizontal(
-			lipgloss.Left,
-			renderNoteDialogButton(worktreePostMergeLabels(prompt)[0], prompt.Selected == worktreePostMergeFocusPrimary),
-			" ",
-			renderNoteDialogButton(worktreePostMergeLabels(prompt)[1], prompt.Selected == worktreePostMergeFocusSecondary),
-			" ",
-			renderNoteDialogButton(worktreePostMergeLabels(prompt)[2], prompt.Selected == worktreePostMergeFocusTertiary),
-		)
-	}
-	if prompt.Busy {
-		buttons = disabledActionTextStyle.Render("[" + todoDialogWaitingLabel(m.spinnerFrame) + "]")
-	}
 	statusLine := strings.TrimSpace(prompt.Status)
 	if statusLine == "" {
 		statusLine = "Worktree merged back"
@@ -1169,11 +1177,6 @@ func (m Model) renderWorktreePostMergeOverlay(body string, bodyW, bodyH int) str
 		detailValueStyle.Render(truncateText(statusLine, panelInnerW)),
 		detailMutedStyle.Render(truncateText(prompt.ProjectPath, panelInnerW)),
 		"",
-	}
-	if worktreePostMergeHasTodo(prompt) {
-		lines = append(lines, detailMutedStyle.Render("Linked TODO"))
-		lines = append(lines, renderWrappedDialogTextLines(detailValueStyle, panelInnerW, prompt.TodoText)...)
-		lines = append(lines, "")
 	}
 	if prompt.Busy {
 		busyTitle := strings.TrimSpace(prompt.BusyTitle)
@@ -1189,12 +1192,21 @@ func (m Model) renderWorktreePostMergeOverlay(body string, bodyW, bodyH int) str
 	}
 	if !prompt.Busy {
 		if worktreePostMergeHasTodo(prompt) {
-			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "Mark the linked TODO done now? You can remove the worktree at the same time or keep the checkout.")...)
+			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "Choose what to clean up now. The linked TODO and merged worktree are separate actions.")...)
+			lines = append(lines, "")
+			lines = append(lines, worktreePostMergeOptionLine(prompt, worktreePostMergeFocusTodo, panelInnerW))
+			lines = append(lines, worktreePostMergeOptionLine(prompt, worktreePostMergeFocusRemove, panelInnerW))
 		} else {
-			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "Remove this linked worktree now? You can still keep it and remove it later with x.")...)
+			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "Choose whether to remove this merged worktree now or keep it for later.")...)
+			lines = append(lines, "")
+			lines = append(lines, worktreePostMergeOptionLine(prompt, worktreePostMergeFocusRemove, panelInnerW))
 		}
+		lines = append(lines, "")
+		lines = append(lines, commandPaletteHintStyle.Render("Space toggle, ↑↓ navigate, Enter apply, Esc later"))
+	} else {
+		lines = append(lines, "")
+		lines = append(lines, disabledActionTextStyle.Render("["+todoDialogWaitingLabel(m.spinnerFrame)+"]"))
 	}
-	lines = append(lines, "", buttons)
 	panel := renderDialogPanel(panelW, panelInnerW, strings.Join(lines, "\n"))
 	left := max(0, (bodyW-panelW)/2)
 	top := max(0, (bodyH-lipgloss.Height(panel))/2)
