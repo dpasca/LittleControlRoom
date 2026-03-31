@@ -5,7 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"lcroom/internal/codexapp"
 	"lcroom/internal/model"
+	"lcroom/internal/service"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -21,6 +23,7 @@ const (
 
 const (
 	worktreeMergeConfirmFocusMerge = iota
+	worktreeMergeConfirmFocusCommit
 	worktreeMergeConfirmFocusKeep
 )
 
@@ -65,10 +68,17 @@ type worktreeMergeConfirmState struct {
 	TargetBranch string
 	MergeReady   bool
 	BlockReason  string
+	OfferCommit  bool
 	ErrorMessage string
 	Busy         bool
 	BusyMessage  string
 	Selected     int
+}
+
+type worktreeMergeReadinessState struct {
+	MergeReady  bool
+	BlockReason string
+	SourceDirty bool
 }
 
 type worktreePostMergeState struct {
@@ -531,32 +541,86 @@ func (m Model) mergeBackRulesSummary() string {
 	return "Requires a clean source worktree and clean root checkout. Sibling worktrees can stay dirty."
 }
 
-func (m Model) worktreeMergeReadiness(project model.ProjectSummary, rootPath string) (bool, string) {
+func worktreeMergeSnapshotShowsCompletedTurn(snapshot codexapp.Snapshot) bool {
+	statuses := []string{
+		normalizedCodexStatus(snapshot.Status),
+		normalizedCodexStatus(snapshot.LastSystemNotice),
+	}
+	for _, status := range statuses {
+		status = strings.TrimSpace(status)
+		if status == "Turn completed" || strings.HasPrefix(status, "Completed in ") {
+			return true
+		}
+	}
+	return false
+}
+
+func worktreeMergeCanAutoCloseSnapshot(snapshot codexapp.Snapshot) bool {
+	if !snapshot.Started || snapshot.Closed || snapshot.Busy || snapshot.BusyExternal {
+		return false
+	}
+	if snapshot.PendingApproval != nil || snapshot.PendingToolInput != nil || snapshot.PendingElicitation != nil {
+		return false
+	}
+	return worktreeMergeSnapshotShowsCompletedTurn(snapshot)
+}
+
+func (m *Model) closeEmbeddedSessionForProject(projectPath string) error {
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "" || m.codexManager == nil {
+		return nil
+	}
+	if err := m.codexManager.CloseProject(projectPath); err != nil {
+		return err
+	}
+	delete(m.codexClosedHandled, projectPath)
+	if m.codexVisibleProject == projectPath {
+		m.codexVisibleProject = ""
+		m.codexInput.Blur()
+	}
+	if m.codexHiddenProject == projectPath {
+		m.codexHiddenProject = ""
+	}
+	return nil
+}
+
+func (m Model) worktreeMergeReadiness(project model.ProjectSummary, rootPath string) worktreeMergeReadinessState {
 	if project.RepoConflict {
-		return false, "This worktree has unresolved conflicts. Resolve or abort the in-progress Git operation before merging back."
+		return worktreeMergeReadinessState{
+			BlockReason: "This worktree has unresolved conflicts. Resolve or abort the in-progress Git operation before merging back.",
+		}
 	}
 	if project.RepoDirty {
-		return false, "This worktree is dirty. Commit or discard changes before merging back."
+		return worktreeMergeReadinessState{
+			BlockReason: "This worktree is dirty. Commit or discard changes before merging back.",
+			SourceDirty: true,
+		}
 	}
 	targetBranch := strings.TrimSpace(project.WorktreeParentBranch)
 	if rootPath == "" || targetBranch == "" {
-		return true, ""
+		return worktreeMergeReadinessState{MergeReady: true}
 	}
 	rootProject, ok := m.projectSummaryByPath(rootPath)
 	if !ok {
-		return true, ""
+		return worktreeMergeReadinessState{MergeReady: true}
 	}
 	if rootProject.RepoConflict {
-		return false, "The root checkout has unresolved conflicts. Resolve or abort the in-progress Git operation before retrying."
+		return worktreeMergeReadinessState{
+			BlockReason: "The root checkout has unresolved conflicts. Resolve or abort the in-progress Git operation before retrying.",
+		}
 	}
 	if rootProject.RepoDirty {
-		return false, "The root checkout is dirty. Commit or discard changes before merging back."
+		return worktreeMergeReadinessState{
+			BlockReason: "The root checkout is dirty. Commit or discard changes before merging back.",
+		}
 	}
 	rootBranch := strings.TrimSpace(rootProject.RepoBranch)
 	if rootBranch != "" && rootBranch != targetBranch {
-		return false, fmt.Sprintf("The root checkout is on %s. Switch it to %s before merging back.", rootBranch, targetBranch)
+		return worktreeMergeReadinessState{
+			BlockReason: fmt.Sprintf("The root checkout is on %s. Switch it to %s before merging back.", rootBranch, targetBranch),
+		}
 	}
-	return true, ""
+	return worktreeMergeReadinessState{MergeReady: true}
 }
 
 func (m *Model) openWorktreeMergeConfirmForSelection() tea.Cmd {
@@ -582,34 +646,46 @@ func (m *Model) openWorktreeMergeConfirmForSelection() tea.Cmd {
 		return nil
 	}
 	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
-		m.showSessionBlockedAttentionDialog(
-			project,
-			"Merge blocked",
-			"Close the embedded agent session before merging this worktree back.",
-			"retry the merge",
-			embeddedProvider(snapshot),
-		)
-		return nil
+		if worktreeMergeCanAutoCloseSnapshot(snapshot) {
+			if err := m.closeEmbeddedSessionForProject(project.Path); err != nil {
+				m.err = err
+				m.status = "Embedded session action failed"
+				return nil
+			}
+		} else {
+			m.showSessionBlockedAttentionDialog(
+				project,
+				"Merge blocked",
+				"Close the embedded agent session before merging this worktree back.",
+				"retry the merge",
+				embeddedProvider(snapshot),
+			)
+			return nil
+		}
 	}
 	if snapshot := m.projectRuntimeSnapshot(project.Path); snapshot.Running {
 		m.status = "Stop the runtime before merging this worktree back"
 		return nil
 	}
-	mergeReady, blockReason := m.worktreeMergeReadiness(project, row.RootPath)
+	readiness := m.worktreeMergeReadiness(project, row.RootPath)
 	m.worktreeMergeConfirm = &worktreeMergeConfirmState{
 		ProjectPath:  project.Path,
 		RootPath:     row.RootPath,
 		ProjectName:  project.Name,
 		BranchName:   projectWorktreeLabel(project),
 		TargetBranch: strings.TrimSpace(project.WorktreeParentBranch),
-		MergeReady:   mergeReady,
-		BlockReason:  blockReason,
+		MergeReady:   readiness.MergeReady,
+		BlockReason:  readiness.BlockReason,
+		OfferCommit:  readiness.SourceDirty,
 		Selected:     worktreeMergeConfirmFocusKeep,
 	}
-	if mergeReady {
+	if readiness.SourceDirty {
+		m.worktreeMergeConfirm.Selected = worktreeMergeConfirmFocusCommit
+	}
+	if readiness.MergeReady {
 		m.status = "Confirm worktree merge-back"
 	} else {
-		m.status = blockReason
+		m.status = readiness.BlockReason
 	}
 	return nil
 }
@@ -628,34 +704,51 @@ func (m Model) updateWorktreeMergeConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 		m.status = "Worktree merge-back canceled"
 		return m, nil
 	case "left", "h", "right", "l", "tab", "shift+tab":
-		if !confirm.MergeReady {
+		if confirm.MergeReady {
+			if confirm.Selected == worktreeMergeConfirmFocusMerge {
+				confirm.Selected = worktreeMergeConfirmFocusKeep
+			} else {
+				confirm.Selected = worktreeMergeConfirmFocusMerge
+			}
+			return m, nil
+		}
+		if !confirm.OfferCommit {
 			confirm.Selected = worktreeMergeConfirmFocusKeep
 			return m, nil
 		}
-		if confirm.Selected == worktreeMergeConfirmFocusMerge {
+		if confirm.Selected == worktreeMergeConfirmFocusCommit {
 			confirm.Selected = worktreeMergeConfirmFocusKeep
 		} else {
-			confirm.Selected = worktreeMergeConfirmFocusMerge
+			confirm.Selected = worktreeMergeConfirmFocusCommit
 		}
 		return m, nil
 	case "enter":
-		if confirm.Selected != worktreeMergeConfirmFocusMerge {
+		if confirm.MergeReady && confirm.Selected == worktreeMergeConfirmFocusMerge {
+			confirm.Busy = true
+			confirm.BusyMessage = "Please wait while Git merges this worktree back. The dialog is temporarily locked."
+			m.status = "Merging worktree back..."
+			return m, m.mergeWorktreeBackCmd(confirm.ProjectPath)
+		}
+		if !confirm.MergeReady && confirm.OfferCommit && confirm.Selected == worktreeMergeConfirmFocusCommit {
+			project, ok := m.projectSummaryByPath(confirm.ProjectPath)
+			if !ok {
+				m.status = "Worktree is unavailable right now"
+				return m, nil
+			}
+			m.worktreeMergeConfirm = nil
+			return m, m.startCommitPreview(project, service.GitActionCommit, "")
+		}
+		if confirm.Selected == worktreeMergeConfirmFocusKeep {
 			m.worktreeMergeConfirm = nil
 			m.status = "Worktree merge-back canceled"
 			return m, nil
 		}
-		if !confirm.MergeReady {
-			if strings.TrimSpace(confirm.ErrorMessage) != "" {
-				m.status = confirm.ErrorMessage
-			} else {
-				m.status = confirm.BlockReason
-			}
-			return m, nil
+		if strings.TrimSpace(confirm.ErrorMessage) != "" {
+			m.status = confirm.ErrorMessage
+		} else {
+			m.status = confirm.BlockReason
 		}
-		confirm.Busy = true
-		confirm.BusyMessage = "Please wait while Git merges this worktree back. The dialog is temporarily locked."
-		m.status = "Merging worktree back..."
-		return m, m.mergeWorktreeBackCmd(confirm.ProjectPath)
+		return m, nil
 	}
 	return m, nil
 }
@@ -991,12 +1084,12 @@ func (m Model) renderWorktreeMergeConfirmOverlay(body string, bodyW, bodyH int) 
 	if confirm.Busy {
 		mergeButton = disabledActionTextStyle.Render("[" + todoDialogWaitingLabel(m.spinnerFrame) + "]")
 	}
-	buttons := lipgloss.JoinHorizontal(
-		lipgloss.Left,
-		mergeButton,
-		" ",
-		renderNoteDialogButton("Keep", confirm.Selected == worktreeMergeConfirmFocusKeep),
-	)
+	buttonParts := []string{mergeButton}
+	if !confirm.MergeReady && confirm.OfferCommit {
+		buttonParts = append(buttonParts, renderNoteDialogButton("Commit", confirm.Selected == worktreeMergeConfirmFocusCommit))
+	}
+	buttonParts = append(buttonParts, renderNoteDialogButton("Keep", confirm.Selected == worktreeMergeConfirmFocusKeep))
+	buttons := strings.Join(buttonParts, " ")
 	if confirm.Busy {
 		buttons = mergeButton
 	}
@@ -1015,6 +1108,9 @@ func (m Model) renderWorktreeMergeConfirmOverlay(body string, bodyW, bodyH int) 
 	} else if strings.TrimSpace(confirm.BlockReason) != "" {
 		lines = append(lines, "", detailWarningStyle.Render("Merge blocked"))
 		lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, panelInnerW, confirm.BlockReason)...)
+		if confirm.OfferCommit {
+			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "Open the commit preview first to finish this worktree, then retry the merge-back.")...)
+		}
 	}
 	if strings.TrimSpace(confirm.ErrorMessage) != "" {
 		headerStyle := detailDangerStyle

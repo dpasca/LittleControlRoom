@@ -4621,7 +4621,11 @@ func (m Model) renderFooter(width int) string {
 		}
 		label := "Merge worktree: Enter merge, Tab switch, Esc cancel"
 		if !m.worktreeMergeConfirm.MergeReady {
-			label = "Merge blocked: clean root/worktree or fix branch, Esc keep"
+			if m.worktreeMergeConfirm.OfferCommit {
+				label = "Merge blocked: Tab commit/keep, Enter choose, Esc keep"
+			} else {
+				label = "Merge blocked: clean root/worktree or fix branch, Esc keep"
+			}
 		}
 		return m.renderModalFooter(width, label, filterSegment, usageSegment)
 	}
