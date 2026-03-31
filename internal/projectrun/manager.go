@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -180,6 +181,16 @@ func (m *Manager) Start(req StartRequest) (Snapshot, error) {
 		m.mu.Unlock()
 		return snapshot, ErrAlreadyRunning
 	}
+	m.mu.Unlock()
+
+	if err := ensureRuntimeDependencies(projectPath, command); err != nil {
+		startErr := fmt.Errorf("prepare runtime dependencies: %w", err)
+		m.markRuntimeStartFailure(projectPath, command, startErr)
+		return Snapshot{}, startErr
+	}
+
+	m.mu.Lock()
+	existing = m.runtimes[projectPath]
 	if existing == nil {
 		existing = &managedRuntime{projectPath: projectPath}
 		m.runtimes[projectPath] = existing
