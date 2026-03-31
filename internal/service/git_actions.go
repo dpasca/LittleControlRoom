@@ -791,6 +791,7 @@ func projectStateFromDetail(detail model.ProjectDetail) model.ProjectState {
 		WorktreeKind:     detail.Summary.WorktreeKind,
 		RepoBranch:       detail.Summary.RepoBranch,
 		RepoDirty:        detail.Summary.RepoDirty,
+		RepoConflict:     detail.Summary.RepoConflict,
 		RepoSyncStatus:   detail.Summary.RepoSyncStatus,
 		RepoAheadCount:   detail.Summary.RepoAheadCount,
 		RepoBehindCount:  detail.Summary.RepoBehindCount,

@@ -163,6 +163,7 @@ type ProjectState struct {
 	WorktreeParentBranch string
 	RepoBranch           string
 	RepoDirty            bool
+	RepoConflict         bool
 	RepoSyncStatus       RepoSyncStatus
 	RepoAheadCount       int
 	RepoBehindCount      int
@@ -193,6 +194,7 @@ type ProjectSummary struct {
 	WorktreeParentBranch                          string
 	RepoBranch                                    string
 	RepoDirty                                     bool
+	RepoConflict                                  bool
 	RepoSyncStatus                                RepoSyncStatus
 	RepoAheadCount                                int
 	RepoBehindCount                               int

@@ -573,26 +573,44 @@ func TestProjectAttentionLabel(t *testing.T) {
 }
 
 func TestProjectRepoWarningIndicator(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	conflictPulseA := projectRepoWarningIndicator(model.ProjectSummary{RepoConflict: true, RepoDirty: true}, 0)
+	conflictPulseB := projectRepoWarningIndicator(model.ProjectSummary{RepoConflict: true, RepoDirty: true}, 1)
+	if !strings.Contains(conflictPulseA, "!") || !strings.Contains(conflictPulseB, "!") {
+		t.Fatalf("conflict warning should contain '!', got %q / %q", conflictPulseA, conflictPulseB)
+	}
+	if conflictPulseA == conflictPulseB {
+		t.Fatalf("conflict warning should animate across spinner frames")
+	}
+
 	// Dirty worktree → styled "!"
-	dirtyIndicator := projectRepoWarningIndicator(model.ProjectSummary{RepoDirty: true})
+	dirtyIndicator := projectRepoWarningIndicator(model.ProjectSummary{RepoDirty: true}, 0)
 	if !strings.Contains(dirtyIndicator, "!") {
 		t.Fatalf("dirty worktree should contain '!', got %q", dirtyIndicator)
 	}
 
 	// Sync-only warning → styled "!"
-	syncIndicator := projectRepoWarningIndicator(model.ProjectSummary{RepoSyncStatus: model.RepoSyncAhead})
+	syncIndicator := projectRepoWarningIndicator(model.ProjectSummary{RepoSyncStatus: model.RepoSyncAhead}, 0)
 	if !strings.Contains(syncIndicator, "!") {
 		t.Fatalf("sync warning should contain '!', got %q", syncIndicator)
 	}
 
 	// Dirty + sync → same as dirty-only (dirty takes priority)
-	bothIndicator := projectRepoWarningIndicator(model.ProjectSummary{RepoDirty: true, RepoSyncStatus: model.RepoSyncBehind})
+	bothIndicator := projectRepoWarningIndicator(model.ProjectSummary{RepoDirty: true, RepoSyncStatus: model.RepoSyncBehind}, 0)
 	if bothIndicator != dirtyIndicator {
 		t.Fatalf("dirty+sync should match dirty-only indicator, got %q vs %q", bothIndicator, dirtyIndicator)
 	}
 
 	// No warning → space
-	if got := projectRepoWarningIndicator(model.ProjectSummary{}); got != " " {
+	if got := projectRepoWarningIndicator(model.ProjectSummary{}, 0); got != " " {
 		t.Fatalf("no warning should return space, got %q", got)
 	}
 }
@@ -1334,7 +1352,7 @@ func TestWorktreeActionMsgOpensPostMergeCleanupPrompt(t *testing.T) {
 }
 
 func TestWorktreeActionMsgErrorKeepsMergeDialogOpen(t *testing.T) {
-	errText := "worktree is dirty; commit or discard changes before merging back"
+	errText := "merge conflict while merging feat/parallel-lane into master at /tmp/repo\nResolve or abort the merge in the root checkout before retrying.\nConflicted files:\n- README.md\n- STATUS.md"
 	m := Model{
 		worktreeMergeConfirm: &worktreeMergeConfirmState{
 			ProjectPath:  "/tmp/repo--feat-parallel-lane",
@@ -1361,8 +1379,11 @@ func TestWorktreeActionMsgErrorKeepsMergeDialogOpen(t *testing.T) {
 		t.Fatalf("inline merge error = %q, want %q", got.worktreeMergeConfirm.ErrorMessage, errText)
 	}
 	rendered := ansi.Strip(got.renderWorktreeMergeConfirmOverlay("", 100, 24))
-	if !strings.Contains(rendered, errText) {
-		t.Fatalf("merge overlay should show the service error inline, got %q", rendered)
+	if !strings.Contains(rendered, "Merge Conflict") {
+		t.Fatalf("merge overlay should show a conflict header, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "README.md") || !strings.Contains(rendered, "STATUS.md") {
+		t.Fatalf("merge overlay should show conflicted files inline, got %q", rendered)
 	}
 }
 
@@ -1489,6 +1510,27 @@ func TestRenderTopStatusLineShowsUnavailableBackendNotice(t *testing.T) {
 	}
 	if strings.Contains(rendered, "OpenAI API key") {
 		t.Fatalf("top status line should keep the warning generic, got %q", rendered)
+	}
+}
+
+func TestRenderTopStatusLineShowsMergeConflictBadge(t *testing.T) {
+	m := Model{
+		status: "Ready",
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/demo",
+			Name:          "demo",
+			PresentOnDisk: true,
+			RepoConflict:  true,
+		}},
+		selected: 0,
+	}
+
+	rendered := ansi.Strip(m.renderTopStatusLine(180))
+	if !strings.Contains(rendered, "MERGE CONFLICT") {
+		t.Fatalf("top status line missing merge conflict badge: %q", rendered)
+	}
+	if !strings.Contains(rendered, "selected repo has unmerged files") {
+		t.Fatalf("top status line missing merge conflict summary: %q", rendered)
 	}
 }
 
@@ -2572,6 +2614,32 @@ func TestRenderDetailSimplifiesStateAndAttention(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "Attention:") {
 		t.Fatalf("renderDetailContent() missing attention score field: %q", rendered)
+	}
+}
+
+func TestRenderDetailContentShowsRepoConflict(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/repo",
+			Name:          "repo",
+			Status:        model.StatusIdle,
+			PresentOnDisk: true,
+			RepoConflict:  true,
+			RepoDirty:     true,
+			RepoBranch:    "feat/worktree-ux",
+		}},
+		selected: 0,
+	}
+
+	rendered := ansi.Strip(m.renderDetailContent(100))
+	if !strings.Contains(rendered, "Conflict:") {
+		t.Fatalf("renderDetailContent() missing conflict field: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Unmerged files are present") {
+		t.Fatalf("renderDetailContent() missing conflict explanation: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Repo: conflict") {
+		t.Fatalf("renderDetailContent() should surface repo conflict state: %q", rendered)
 	}
 }
 

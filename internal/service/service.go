@@ -542,6 +542,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		worktreeParentBranch := old.WorktreeParentBranch
 		repoBranch := ""
 		repoDirty := false
+		repoConflict := false
 		repoSyncStatus := model.RepoSyncStatus("")
 		repoAheadCount := 0
 		repoBehindCount := 0
@@ -553,12 +554,14 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			if repoStatus, ok := currentRepoStatus[path]; ok {
 				repoBranch = strings.TrimSpace(repoStatus.Branch)
 				repoDirty = repoStatus.Dirty
+				repoConflict = repoConflictFromGit(repoStatus)
 				repoSyncStatus = repoSyncStatusFromGit(repoStatus)
 				repoAheadCount = repoStatus.Ahead
 				repoBehindCount = repoStatus.Behind
 			} else {
 				repoBranch = old.RepoBranch
 				repoDirty = old.RepoDirty
+				repoConflict = old.RepoConflict
 				repoSyncStatus = old.RepoSyncStatus
 				repoAheadCount = old.RepoAheadCount
 				repoBehindCount = old.RepoBehindCount
@@ -638,6 +641,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			WorktreeParentBranch: worktreeParentBranch,
 			RepoBranch:           repoBranch,
 			RepoDirty:            repoDirty,
+			RepoConflict:         repoConflict,
 			RepoSyncStatus:       repoSyncStatus,
 			RepoAheadCount:       repoAheadCount,
 			RepoBehindCount:      repoBehindCount,
@@ -868,6 +872,7 @@ func projectStateChanged(old model.ProjectSummary, state model.ProjectState) boo
 		old.WorktreeParentBranch != state.WorktreeParentBranch ||
 		old.RepoBranch != state.RepoBranch ||
 		old.RepoDirty != state.RepoDirty ||
+		old.RepoConflict != state.RepoConflict ||
 		old.RepoSyncStatus != state.RepoSyncStatus ||
 		old.RepoAheadCount != state.RepoAheadCount ||
 		old.RepoBehindCount != state.RepoBehindCount ||
@@ -878,17 +883,18 @@ func projectStateChanged(old model.ProjectSummary, state model.ProjectState) boo
 
 func (s *Service) publishProjectChanged(ctx context.Context, now time.Time, state model.ProjectState) {
 	payload := map[string]string{
-		"status": string(state.Status),
-		"score":  fmt.Sprintf("%d", state.AttentionScore),
-		"dirty":  fmt.Sprintf("%t", state.RepoDirty),
-		"remote": string(state.RepoSyncStatus),
+		"status":   string(state.Status),
+		"score":    fmt.Sprintf("%d", state.AttentionScore),
+		"dirty":    fmt.Sprintf("%t", state.RepoDirty),
+		"conflict": fmt.Sprintf("%t", state.RepoConflict),
+		"remote":   string(state.RepoSyncStatus),
 	}
 	s.bus.Publish(events.Event{Type: events.ProjectChanged, At: now, ProjectPath: state.Path, Payload: payload})
 	_ = s.store.AddEvent(ctx, model.StoredEvent{
 		At:          now,
 		ProjectPath: state.Path,
 		Type:        string(events.ProjectChanged),
-		Payload:     fmt.Sprintf("status=%s score=%d dirty=%t remote=%s", state.Status, state.AttentionScore, state.RepoDirty, state.RepoSyncStatus),
+		Payload:     fmt.Sprintf("status=%s score=%d dirty=%t conflict=%t remote=%s", state.Status, state.AttentionScore, state.RepoDirty, state.RepoConflict, state.RepoSyncStatus),
 	})
 }
 
@@ -909,6 +915,15 @@ func repoSyncStatusFromGit(status scanner.GitRepoStatus) model.RepoSyncStatus {
 	default:
 		return model.RepoSyncSynced
 	}
+}
+
+func repoConflictFromGit(status scanner.GitRepoStatus) bool {
+	for _, change := range status.Changes {
+		if change.Kind == scanner.GitChangeUnmerged {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) publishProjectMoved(ctx context.Context, now time.Time, move detectedProjectMove) {
@@ -1263,6 +1278,7 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 	worktreeParentBranch := detail.Summary.WorktreeParentBranch
 	repoBranch := ""
 	repoDirty := false
+	repoConflict := false
 	repoSyncStatus := model.RepoSyncStatus("")
 	repoAheadCount := 0
 	repoBehindCount := 0
@@ -1272,12 +1288,14 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 			if repoStatus, err := s.gitRepoStatusReader(ctx, detail.Summary.Path); err == nil {
 				repoBranch = strings.TrimSpace(repoStatus.Branch)
 				repoDirty = repoStatus.Dirty
+				repoConflict = repoConflictFromGit(repoStatus)
 				repoSyncStatus = repoSyncStatusFromGit(repoStatus)
 				repoAheadCount = repoStatus.Ahead
 				repoBehindCount = repoStatus.Behind
 			} else {
 				repoBranch = detail.Summary.RepoBranch
 				repoDirty = detail.Summary.RepoDirty
+				repoConflict = detail.Summary.RepoConflict
 				repoSyncStatus = detail.Summary.RepoSyncStatus
 				repoAheadCount = detail.Summary.RepoAheadCount
 				repoBehindCount = detail.Summary.RepoBehindCount
@@ -1285,6 +1303,7 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 		} else {
 			repoBranch = detail.Summary.RepoBranch
 			repoDirty = detail.Summary.RepoDirty
+			repoConflict = detail.Summary.RepoConflict
 			repoSyncStatus = detail.Summary.RepoSyncStatus
 			repoAheadCount = detail.Summary.RepoAheadCount
 			repoBehindCount = detail.Summary.RepoBehindCount
@@ -1337,6 +1356,7 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 		WorktreeParentBranch: worktreeParentBranch,
 		RepoBranch:           repoBranch,
 		RepoDirty:            repoDirty,
+		RepoConflict:         repoConflict,
 		RepoSyncStatus:       repoSyncStatus,
 		RepoAheadCount:       repoAheadCount,
 		RepoBehindCount:      repoBehindCount,

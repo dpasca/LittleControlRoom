@@ -443,6 +443,9 @@ func (m Model) mergeBackRulesSummary() string {
 }
 
 func (m Model) worktreeMergeReadiness(project model.ProjectSummary, rootPath string) (bool, string) {
+	if project.RepoConflict {
+		return false, "This worktree has unresolved conflicts. Resolve or abort the in-progress Git operation before merging back."
+	}
 	if project.RepoDirty {
 		return false, "This worktree is dirty. Commit or discard changes before merging back."
 	}
@@ -453,6 +456,9 @@ func (m Model) worktreeMergeReadiness(project model.ProjectSummary, rootPath str
 	rootProject, ok := m.projectSummaryByPath(rootPath)
 	if !ok {
 		return true, ""
+	}
+	if rootProject.RepoConflict {
+		return false, "The root checkout has unresolved conflicts. Resolve or abort the in-progress Git operation before retrying."
 	}
 	if rootProject.RepoDirty {
 		return false, "The root checkout is dirty. Commit or discard changes before merging back."
@@ -764,16 +770,28 @@ func (m Model) renderWorktreeMergeConfirmOverlay(body string, bodyW, bodyH int) 
 		detailMutedStyle.Render(truncateText(m.mergeBackRulesSummary(), panelInnerW)),
 	}
 	if strings.TrimSpace(confirm.BlockReason) != "" {
-		lines = append(lines, "", detailWarningStyle.Render(truncateText(confirm.BlockReason, panelInnerW)))
+		lines = append(lines, "", detailWarningStyle.Render("Merge blocked"))
+		lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, panelInnerW, confirm.BlockReason)...)
 	}
 	if strings.TrimSpace(confirm.ErrorMessage) != "" {
-		lines = append(lines, "", detailDangerStyle.Render(truncateText(confirm.ErrorMessage, panelInnerW)))
+		headerStyle := detailDangerStyle
+		headerText := "Merge error"
+		if worktreeMergeConflictMessage(confirm.ErrorMessage) {
+			headerStyle = detailConflictStyle
+			headerText = "Merge Conflict"
+		}
+		lines = append(lines, "", headerStyle.Render(headerText))
+		lines = append(lines, renderWrappedDialogTextLines(headerStyle, panelInnerW, confirm.ErrorMessage)...)
 	}
 	lines = append(lines, "", buttons)
 	panel := renderDialogPanel(panelW, panelInnerW, strings.Join(lines, "\n"))
 	left := max(0, (bodyW-panelW)/2)
 	top := max(0, (bodyH-lipgloss.Height(panel))/2)
 	return overlayBlock(body, panel, bodyW, bodyH, left, top)
+}
+
+func worktreeMergeConflictMessage(text string) bool {
+	return strings.HasPrefix(strings.TrimSpace(strings.ToLower(text)), "merge conflict while merging ")
 }
 
 func (m Model) renderWorktreePostMergeOverlay(body string, bodyW, bodyH int) string {

@@ -168,6 +168,7 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 	worktreeParentBranch := strings.TrimSpace(existing.WorktreeParentBranch)
 	repoBranch := ""
 	repoDirty := false
+	repoConflict := false
 	repoSyncStatus := model.RepoSyncStatus("")
 	repoAheadCount := 0
 	repoBehindCount := 0
@@ -176,6 +177,7 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 		if repoStatus, err := s.gitRepoStatusReader(ctx, projectPath); err == nil {
 			repoBranch = strings.TrimSpace(repoStatus.Branch)
 			repoDirty = repoStatus.Dirty
+			repoConflict = repoConflictFromGit(repoStatus)
 			repoSyncStatus = repoSyncStatusFromGit(repoStatus)
 			repoAheadCount = repoStatus.Ahead
 			repoBehindCount = repoStatus.Behind
@@ -204,6 +206,7 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 		WorktreeParentBranch: worktreeParentBranch,
 		RepoBranch:           repoBranch,
 		RepoDirty:            repoDirty,
+		RepoConflict:         repoConflict,
 		RepoSyncStatus:       repoSyncStatus,
 		RepoAheadCount:       repoAheadCount,
 		RepoBehindCount:      repoBehindCount,

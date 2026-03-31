@@ -1096,7 +1096,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case worktreeActionMsg:
 		if msg.err != nil {
 			m.err = msg.err
-			m.status = msg.err.Error()
+			m.status = singleLineStatusText(msg.err.Error())
 			if m.worktreeMergeConfirm != nil && filepath.Clean(strings.TrimSpace(m.worktreeMergeConfirm.ProjectPath)) == filepath.Clean(strings.TrimSpace(msg.projectPath)) {
 				m.worktreeMergeConfirm.ErrorMessage = msg.err.Error()
 				m.worktreePostMerge = nil
@@ -2217,12 +2217,15 @@ func splitBottomPaneWidths(totalWidth int, focused paneFocus) (int, int) {
 
 func (m Model) renderTopStatusLine(width int) string {
 	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Render(brand.Name)
-	status := m.status
+	status := singleLineStatusText(m.status)
 	if m.err != nil {
-		status = fmt.Sprintf("%s | error: %v", status, m.err)
+		status = fmt.Sprintf("%s | error: %s", status, singleLineStatusText(m.err.Error()))
 	}
 	if aiNotice := m.renderAIBackendStatusNotice(); aiNotice != "" {
 		status = fmt.Sprintf("%s | %s", status, aiNotice)
+	}
+	if project, ok := m.selectedProject(); ok && project.RepoConflict {
+		status = fmt.Sprintf("%s | %s selected repo has unmerged files", status, topStatusConflictBadgeStyle.Render("MERGE CONFLICT"))
 	}
 	status = fmt.Sprintf("%s | AI %s", status, m.renderClassificationSummary())
 	return fitFooterWidth(title+" - "+status, width)
@@ -2395,7 +2398,7 @@ func (m Model) renderProjectList(width, height int) string {
 			return style
 		}
 		last := formatListActivityTime(now, p.LastActivity)
-		repoIndicator := projectRepoWarningIndicator(p)
+		repoIndicator := projectRepoWarningIndicator(p, m.spinnerFrame)
 		attention := projectAttentionLabelForScore(m.projectAttentionScore(p))
 		name := p.Name
 		assessmentText := projectAssessmentTextAt(p, now, m.assessmentStallThreshold())
@@ -2492,6 +2495,9 @@ func (m Model) renderDetailContent(width int) string {
 		lines = appendDetailFields(lines, width, movedFields...)
 	}
 	lines = append(lines, detailField("Repo", repoCombinedDetailValue(p)))
+	if p.RepoConflict {
+		lines = append(lines, detailField("Conflict", repoConflictDetailValue(p)))
+	}
 	if p.WorktreeKind == model.WorktreeKindLinked {
 		mergeBackValue := detailMutedStyle.Render("parent branch unavailable")
 		targetBranch := strings.TrimSpace(p.WorktreeParentBranch)
@@ -2529,7 +2535,11 @@ func (m Model) renderDetailContent(width int) string {
 				label = "root: " + label
 			}
 			statusParts := []string{}
-			if member.RepoDirty {
+			lineStyle := detailValueStyle
+			if member.RepoConflict {
+				statusParts = append(statusParts, "conflict")
+				lineStyle = detailConflictStyle
+			} else if member.RepoDirty {
 				statusParts = append(statusParts, "dirty")
 			} else {
 				statusParts = append(statusParts, "clean")
@@ -2546,7 +2556,7 @@ func (m Model) renderDetailContent(width int) string {
 			if filepath.Clean(member.Path) == filepath.Clean(p.Path) {
 				statusParts = append(statusParts, "current")
 			}
-			lines = append(lines, renderWrappedDetailBullet(detailValueStyle, width, label+" · "+strings.Join(statusParts, ", ")))
+			lines = append(lines, renderWrappedDetailBullet(lineStyle, width, label+" · "+strings.Join(statusParts, ", ")))
 		}
 		if hints := m.worktreeActionHints(p, family); len(hints) > 0 {
 			lines = append(lines, detailSectionStyle.Render("Worktree actions"))
@@ -2681,7 +2691,9 @@ var (
 	detailMutedStyle            = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	detailWarningStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("178")).Bold(true)
 	detailDangerStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true)
+	detailConflictStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true)
 	topStatusWarningBadgeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("160")).Bold(true).Padding(0, 1)
+	topStatusConflictBadgeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("92")).Bold(true).Padding(0, 1)
 	topStatusSetupBadgeStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("214")).Bold(true).Padding(0, 1)
 	detailAttentionValueStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Bold(true)
 	projectListSelectedRowStyle = lipgloss.NewStyle().
@@ -3588,7 +3600,7 @@ func formatRelativeUnit(n int, unit string) string {
 }
 
 func projectHasRepoWarning(project model.ProjectSummary) bool {
-	return project.RepoDirty || repoSyncWarning(project.RepoSyncStatus)
+	return project.RepoConflict || project.RepoDirty || repoSyncWarning(project.RepoSyncStatus)
 }
 
 func appendDetailFields(lines []string, width int, fields ...string) []string {
@@ -3862,6 +3874,20 @@ func truncateText(text string, width int) string {
 	return string(runes[:width-3]) + "..."
 }
 
+func singleLineStatusText(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	lines := strings.Split(text, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, " | ")
+}
+
 func fitStyledWidth(text string, width int) string {
 	if width <= 0 {
 		return text
@@ -3909,6 +3935,28 @@ func renderWrappedDetailBullet(style lipgloss.Style, width int, text string) str
 	return strings.Join(lines, "\n")
 }
 
+func renderWrappedDialogTextLines(style lipgloss.Style, width int, text string) []string {
+	normalized := strings.ReplaceAll(text, "\r\n", "\n")
+	rawLines := strings.Split(normalized, "\n")
+	out := make([]string, 0, len(rawLines))
+	for _, raw := range rawLines {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			out = append(out, "")
+			continue
+		}
+		if strings.HasPrefix(trimmed, "- ") {
+			out = append(out, strings.Split(renderWrappedDetailBullet(style, width, strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))), "\n")...)
+			continue
+		}
+		wrapped := lipgloss.NewStyle().Width(max(1, width)).Render(trimmed)
+		for _, line := range strings.Split(strings.ReplaceAll(wrapped, "\r\n", "\n"), "\n") {
+			out = append(out, style.Render(line))
+		}
+	}
+	return out
+}
+
 func repoSyncWarning(status model.RepoSyncStatus) bool {
 	switch status {
 	case model.RepoSyncAhead, model.RepoSyncBehind, model.RepoSyncDiverged, model.RepoSyncNoUpstream:
@@ -3928,7 +3976,9 @@ func repoSyncDetailLine(project model.ProjectSummary) string {
 
 func repoCombinedDetailValue(project model.ProjectSummary) string {
 	var parts []string
-	if project.RepoDirty {
+	if project.RepoConflict {
+		parts = append(parts, detailConflictStyle.Render("conflict"))
+	} else if project.RepoDirty {
 		parts = append(parts, detailWarningStyle.Render("dirty"))
 	} else {
 		parts = append(parts, detailMutedStyle.Render("clean"))
@@ -3959,10 +4009,21 @@ func repoCombinedDetailValue(project model.ProjectSummary) string {
 }
 
 func repoDirtyDetailValue(project model.ProjectSummary) string {
+	if project.RepoConflict {
+		return detailConflictStyle.Render("unmerged files")
+	}
 	if project.RepoDirty {
 		return detailWarningStyle.Render("dirty worktree")
 	}
 	return detailMutedStyle.Render("clean")
+}
+
+func repoConflictDetailValue(project model.ProjectSummary) string {
+	location := "repo"
+	if project.WorktreeKind == model.WorktreeKindLinked {
+		location = "worktree"
+	}
+	return detailConflictStyle.Render("Unmerged files are present in this " + location + ". Resolve or abort the in-progress Git operation before continuing.")
 }
 
 func repoSyncDetailValue(project model.ProjectSummary) string {
@@ -3997,6 +4058,14 @@ func repoSyncDetailStyle(status model.RepoSyncStatus) lipgloss.Style {
 	default:
 		return detailValueStyle
 	}
+}
+
+func projectConflictIndicatorStyle(spinnerFrame int) lipgloss.Style {
+	color := lipgloss.Color("141")
+	if spinnerFrame%2 == 0 {
+		color = lipgloss.Color("177")
+	}
+	return lipgloss.NewStyle().Foreground(color).Bold(true)
 }
 
 func detailField(label, value string) string {

@@ -2003,6 +2003,9 @@ func TestMergeWorktreeBackReportsConflictAndRefreshesStatus(t *testing.T) {
 	if !strings.Contains(err.Error(), "merge conflict while merging feat/merge-worktree-conflict") {
 		t.Fatalf("merge conflict error = %q, want actionable conflict message", err)
 	}
+	if !strings.Contains(err.Error(), "Conflicted files:") {
+		t.Fatalf("merge conflict error = %q, want conflicted-files section", err)
+	}
 	if !strings.Contains(err.Error(), "README.md") {
 		t.Fatalf("merge conflict error = %q, want conflicted file name", err)
 	}
@@ -2024,6 +2027,9 @@ func TestMergeWorktreeBackReportsConflictAndRefreshesStatus(t *testing.T) {
 	}
 	if !rootDetail.Summary.RepoDirty {
 		t.Fatalf("stored root detail should refresh to dirty after merge conflict: %#v", rootDetail.Summary)
+	}
+	if !rootDetail.Summary.RepoConflict {
+		t.Fatalf("stored root detail should refresh to conflict after merge conflict: %#v", rootDetail.Summary)
 	}
 }
 

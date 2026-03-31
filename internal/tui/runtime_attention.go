@@ -112,9 +112,12 @@ func projectAttentionLabel(project model.ProjectSummary) string {
 	return projectAttentionLabelForScore(project.AttentionScore)
 }
 
-// projectRepoWarningIndicator returns a styled "!" for dirty/unsynced repos.
-// Dirty worktree → red (danger), sync-only → orange (warning), neither → space.
-func projectRepoWarningIndicator(project model.ProjectSummary) string {
+// projectRepoWarningIndicator returns a styled "!" for conflict/dirty/unsynced repos.
+// Conflict → pulsing violet, dirty worktree → red (danger), sync-only → orange (warning), neither → space.
+func projectRepoWarningIndicator(project model.ProjectSummary, spinnerFrame int) string {
+	if project.RepoConflict {
+		return projectConflictIndicatorStyle(spinnerFrame).Render("!")
+	}
 	if project.RepoDirty {
 		return detailDangerStyle.Render("!")
 	}

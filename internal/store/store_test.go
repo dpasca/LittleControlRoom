@@ -323,6 +323,7 @@ func TestOpenMigratesLegacyProjectNotesIntoTodos(t *testing.T) {
 			attention_score INTEGER NOT NULL,
 			present_on_disk INTEGER NOT NULL DEFAULT 1,
 			repo_dirty INTEGER NOT NULL DEFAULT 0,
+			repo_conflict INTEGER NOT NULL DEFAULT 0,
 			repo_sync_status TEXT NOT NULL DEFAULT '',
 			repo_ahead_count INTEGER NOT NULL DEFAULT 0,
 			repo_behind_count INTEGER NOT NULL DEFAULT 0,
@@ -437,6 +438,9 @@ func TestOpenMigratesProjectsInScopeColumn(t *testing.T) {
 	}
 	if projects[0].RepoDirty {
 		t.Fatalf("expected migrated row to default to repo_dirty=false")
+	}
+	if projects[0].RepoConflict {
+		t.Fatalf("expected migrated row to default to repo_conflict=false")
 	}
 	if projects[0].RepoSyncStatus != "" {
 		t.Fatalf("expected migrated row to default to empty repo_sync_status")
@@ -1489,6 +1493,7 @@ func TestMoveProjectPathPreservesData(t *testing.T) {
 		AttentionScore: 12,
 		RepoBranch:     "master",
 		RepoDirty:      true,
+		RepoConflict:   true,
 		RepoSyncStatus: model.RepoSyncAhead,
 		RepoAheadCount: 2,
 		InScope:        true,
@@ -1567,6 +1572,9 @@ func TestMoveProjectPathPreservesData(t *testing.T) {
 	}
 	if !detail.Summary.RepoDirty {
 		t.Fatalf("expected repo_dirty to survive move: %#v", detail.Summary)
+	}
+	if !detail.Summary.RepoConflict {
+		t.Fatalf("expected repo_conflict to survive move: %#v", detail.Summary)
 	}
 	if detail.Summary.RepoBranch != "master" {
 		t.Fatalf("expected repo_branch to survive move: %#v", detail.Summary)

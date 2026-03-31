@@ -74,6 +74,7 @@ func (s *Store) initSchema(ctx context.Context) error {
 			worktree_parent_branch TEXT NOT NULL DEFAULT '',
 			repo_branch TEXT NOT NULL DEFAULT '',
 			repo_dirty INTEGER NOT NULL DEFAULT 0,
+			repo_conflict INTEGER NOT NULL DEFAULT 0,
 			repo_sync_status TEXT NOT NULL DEFAULT '',
 			repo_ahead_count INTEGER NOT NULL DEFAULT 0,
 			repo_behind_count INTEGER NOT NULL DEFAULT 0,
@@ -308,6 +309,11 @@ func (s *Store) ensureProjectsVisibilityColumns(ctx context.Context) error {
 	if _, ok := columns["repo_dirty"]; !ok {
 		if _, err := s.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN repo_dirty INTEGER NOT NULL DEFAULT 0`); err != nil {
 			return fmt.Errorf("add projects.repo_dirty column: %w", err)
+		}
+	}
+	if _, ok := columns["repo_conflict"]; !ok {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN repo_conflict INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add projects.repo_conflict column: %w", err)
 		}
 	}
 	if _, ok := columns["repo_sync_status"]; !ok {
@@ -624,7 +630,7 @@ func (s *Store) ensureSessionClassificationStageColumns(ctx context.Context) err
 func (s *Store) GetProjectSummaryMap(ctx context.Context) (map[string]model.ProjectSummary, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
-			p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.repo_branch, p.repo_dirty, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until, p.note,
+			p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until, p.note,
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path AND pt.done = 0), 0),
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path), 0),
 			p.run_command,
@@ -682,7 +688,7 @@ func (s *Store) GetProjectSummaryMap(ctx context.Context) (map[string]model.Proj
 func (s *Store) ListProjects(ctx context.Context, includeHistorical bool) ([]model.ProjectSummary, error) {
 	query := `
 		SELECT
-			p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.repo_branch, p.repo_dirty, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until, p.note,
+			p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until, p.note,
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path AND pt.done = 0), 0),
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path), 0),
 			p.run_command,
@@ -766,7 +772,7 @@ func scanSummaryRow(scanner interface {
 		repoSyncStatus                                                                             string
 		attentionScore, repoAheadCount, repoBehindCount, openTODOCount, totalTODOCount             int
 		latestTurnKnown, latestTurnCompleted                                                       int
-		presentOnDisk, repoDirty, forgotten, manuallyAdded, inScope, pinned                        int
+		presentOnDisk, repoDirty, repoConflict, forgotten, manuallyAdded, inScope, pinned          int
 	)
 	if err := scanner.Scan(
 		&path,
@@ -780,6 +786,7 @@ func scanSummaryRow(scanner interface {
 		&worktreeParentBranch,
 		&repoBranch,
 		&repoDirty,
+		&repoConflict,
 		&repoSyncStatus,
 		&repoAheadCount,
 		&repoBehindCount,
@@ -825,6 +832,7 @@ func scanSummaryRow(scanner interface {
 		WorktreeParentBranch:                     strings.TrimSpace(worktreeParentBranch),
 		RepoBranch:                               strings.TrimSpace(repoBranch),
 		RepoDirty:                                repoDirty == 1,
+		RepoConflict:                             repoConflict == 1,
 		RepoSyncStatus:                           model.RepoSyncStatus(repoSyncStatus),
 		RepoAheadCount:                           repoAheadCount,
 		RepoBehindCount:                          repoBehindCount,
@@ -944,8 +952,8 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 	// Notes are user-managed state, so refresh upserts should leave the current
 	// saved note alone on existing rows instead of replaying an older scan copy.
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO projects(path, name, last_activity, status, attention_score, present_on_disk, worktree_root_path, worktree_kind, worktree_parent_branch, repo_branch, repo_dirty, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, pinned, snoozed_until, note, moved_from_path, moved_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO projects(path, name, last_activity, status, attention_score, present_on_disk, worktree_root_path, worktree_kind, worktree_parent_branch, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, pinned, snoozed_until, note, moved_from_path, moved_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(path) DO UPDATE SET
 			name=excluded.name,
 			last_activity=excluded.last_activity,
@@ -960,6 +968,7 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 			END,
 			repo_branch=excluded.repo_branch,
 			repo_dirty=excluded.repo_dirty,
+			repo_conflict=excluded.repo_conflict,
 			repo_sync_status=excluded.repo_sync_status,
 			repo_ahead_count=excluded.repo_ahead_count,
 			repo_behind_count=excluded.repo_behind_count,
@@ -977,7 +986,7 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 				ELSE projects.moved_at
 			END,
 			updated_at=excluded.updated_at
-	`, state.Path, state.Name, lastActivity, string(state.Status), state.AttentionScore, boolToInt(state.PresentOnDisk), strings.TrimSpace(state.WorktreeRootPath), string(state.WorktreeKind), strings.TrimSpace(state.WorktreeParentBranch), strings.TrimSpace(state.RepoBranch), boolToInt(state.RepoDirty), string(state.RepoSyncStatus), state.RepoAheadCount, state.RepoBehindCount, boolToInt(state.Forgotten), boolToInt(state.ManuallyAdded), boolToInt(state.InScope), boolToInt(state.Pinned), snoozedUntil, state.Note, state.MovedFromPath, movedAt, state.UpdatedAt.Unix())
+	`, state.Path, state.Name, lastActivity, string(state.Status), state.AttentionScore, boolToInt(state.PresentOnDisk), strings.TrimSpace(state.WorktreeRootPath), string(state.WorktreeKind), strings.TrimSpace(state.WorktreeParentBranch), strings.TrimSpace(state.RepoBranch), boolToInt(state.RepoDirty), boolToInt(state.RepoConflict), string(state.RepoSyncStatus), state.RepoAheadCount, state.RepoBehindCount, boolToInt(state.Forgotten), boolToInt(state.ManuallyAdded), boolToInt(state.InScope), boolToInt(state.Pinned), snoozedUntil, state.Note, state.MovedFromPath, movedAt, state.UpdatedAt.Unix())
 	if err != nil {
 		return err
 	}
@@ -1175,8 +1184,8 @@ func (s *Store) MoveProjectPath(ctx context.Context, oldPath, newPath string, mo
 	}
 
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO projects(path, name, last_activity, status, attention_score, present_on_disk, worktree_root_path, worktree_kind, worktree_parent_branch, repo_branch, repo_dirty, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, pinned, snoozed_until, note, run_command, moved_from_path, moved_at, updated_at)
-		SELECT ?, ?, last_activity, status, attention_score, present_on_disk, worktree_root_path, worktree_kind, worktree_parent_branch, repo_branch, repo_dirty, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, pinned, snoozed_until, note, run_command, ?, ?, ?
+		INSERT INTO projects(path, name, last_activity, status, attention_score, present_on_disk, worktree_root_path, worktree_kind, worktree_parent_branch, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, pinned, snoozed_until, note, run_command, moved_from_path, moved_at, updated_at)
+		SELECT ?, ?, last_activity, status, attention_score, present_on_disk, worktree_root_path, worktree_kind, worktree_parent_branch, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, pinned, snoozed_until, note, run_command, ?, ?, ?
 		FROM projects
 		WHERE path = ?
 	`, newPath, filepath.Base(newPath), oldPath, movedAt.Unix(), movedAt.Unix(), oldPath)
@@ -1866,7 +1875,7 @@ func (s *Store) GetProjectDetail(ctx context.Context, path string, eventLimit in
 
 	row := s.db.QueryRowContext(ctx, `
 		SELECT
-			p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.repo_branch, p.repo_dirty, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until, p.note,
+			p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until, p.note,
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path AND pt.done = 0), 0),
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path), 0),
 			p.run_command,

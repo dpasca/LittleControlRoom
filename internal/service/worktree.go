@@ -387,12 +387,15 @@ func worktreeMergeConflictError(rootPath, sourceBranch, targetBranch string, sta
 	if len(conflicted) == 0 {
 		return nil
 	}
-	summary := conflicted[0]
-	if len(conflicted) > 1 {
-		extra := len(conflicted) - 1
-		summary = fmt.Sprintf("%s (+%d more)", conflicted[0], extra)
+	lines := []string{
+		fmt.Sprintf("merge conflict while merging %s into %s at %s", sourceBranch, targetBranch, rootPath),
+		"Resolve or abort the merge in the root checkout before retrying.",
+		"Conflicted files:",
 	}
-	return fmt.Errorf("merge conflict while merging %s into %s at %s. Resolve or abort the merge in the root checkout before retrying. Conflicted files include %s.", sourceBranch, targetBranch, rootPath, summary)
+	for _, file := range summarizeConflictedPaths(conflicted, 6) {
+		lines = append(lines, "- "+file)
+	}
+	return errors.New(strings.Join(lines, "\n"))
 }
 
 func conflictedPaths(status scanner.GitRepoStatus) []string {
@@ -414,6 +417,18 @@ func conflictedPaths(status scanner.GitRepoStatus) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func summarizeConflictedPaths(paths []string, limit int) []string {
+	if len(paths) == 0 {
+		return nil
+	}
+	if limit <= 0 || len(paths) <= limit {
+		return append([]string(nil), paths...)
+	}
+	summary := append([]string(nil), paths[:limit]...)
+	summary = append(summary, fmt.Sprintf("+%d more", len(paths)-limit))
+	return summary
 }
 
 func (s *Service) RemoveWorktree(ctx context.Context, projectPath string) error {
