@@ -117,7 +117,7 @@ func newDiffViewState(projectPath, projectName string) *diffViewState {
 		ProjectPath:     strings.TrimSpace(projectPath),
 		ProjectName:     strings.TrimSpace(projectName),
 		loading:         true,
-		focus:           diffFocusContent,
+		focus:           diffFocusFiles,
 		mode:            diffRenderModeSideBySide,
 		contentViewport: viewport.New(0, 0),
 		renderCache:     make(map[diffRenderCacheKey]string),
@@ -653,6 +653,7 @@ func diffFileNameDir(summary string) (name, dir string) {
 
 func renderDiffFileRow(file service.DiffFilePreview, selected bool, width int) string {
 	kindCode := diffFileKindCode(file)
+	stateWord := diffFileStateWord(file)
 	fileName, fileDir := diffFileNameDir(file.Summary)
 	pathWidth := max(8, width-5)
 	label := truncateText(fileName, pathWidth)
@@ -662,7 +663,7 @@ func renderDiffFileRow(file service.DiffFilePreview, selected bool, width int) s
 			label += " " + truncateText(fileDir, remaining)
 		}
 	}
-	base := fmt.Sprintf(" %s %s", kindCode, label)
+	base := fmt.Sprintf(" %s %s %s", kindCode, stateWord, label)
 	if selected {
 		return commandPaletteSelectStyle.Width(width).Render(truncateText(base, max(1, width)))
 	}

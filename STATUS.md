@@ -1,6 +1,30 @@
 # Little Control Room Status
 
-Last updated: 2026-03-31 05:31 JST
+Last updated: 2026-03-31 06:40 JST
+
+## Latest Update (2026-03-31 06:40 JST)
+
+- Fixed the remaining `make test` failures in the diff-view TUI path:
+  - assumption update:
+    - a freshly opened diff view should default keyboard focus to the file list so the first `Up` / `Down` keystroke changes the selected file instead of scrolling content
+    - the selected diff row should keep showing the file state word (`modified`, `untracked`, etc.) instead of collapsing to code-plus-name only
+    - mouse enable/disable commands should follow actual codex/diff visibility transitions, not an out-of-band `mouseEnabled` field that may be stale in directly constructed test models
+  - `internal/tui/diff_view.go`
+    - changed new diff views to start with `diffFocusFiles`
+    - updated selected diff-row rendering to keep compact `code + state` copy, which restores the expected `M modified ...` label
+  - `internal/tui/app.go`
+    - changed the top-level `Update(...)` mouse-toggle guard to compare pre-update vs post-update visible panes, while still syncing `mouseEnabled` to the resolved visibility state
+- Verification status:
+  - focused coverage passed:
+    - `go test ./internal/tui -run 'TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen|TestRenderDiffFileRowSelectedUsesCompactCodeSpacing|TestDiffModeMovesSelectionAndScrollsContent' -count=1`
+  - repo validation:
+    - `make test` passed
+    - `make scan` passed at `2026-03-31T06:39:38+09:00`
+    - `make doctor` passed using cached report at `2026-03-31T06:39:38+09:00`
+    - `git diff --check` passed
+- Next concrete tasks:
+  - Run `make tui` for a quick manual diff-view smoke check so the new default file-list focus still feels right in normal interactive use.
+  - Decide whether unselected diff rows should also show the state word, or whether keeping that extra metadata only on the selected row is the cleaner list density tradeoff.
 
 ## Latest Update (2026-03-31 05:31 JST)
 
