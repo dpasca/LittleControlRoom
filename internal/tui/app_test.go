@@ -6530,6 +6530,124 @@ func TestTodoDialogShowsWorktreeSuggestionState(t *testing.T) {
 	}
 }
 
+func TestTodoDialogPageNavigationRevealsItems(t *testing.T) {
+	todos := make([]model.TodoItem, 40)
+	for i := 0; i < 40; i++ {
+		todos[i] = model.TodoItem{
+			ID:          int64(i + 1),
+			ProjectPath: "/tmp/demo",
+			Text:        fmt.Sprintf("Todo %d", i),
+		}
+	}
+	m := Model{
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Todos:   todos,
+		},
+		todoDialog: &todoDialogState{ProjectPath: "/tmp/demo", ProjectName: "demo"},
+		width:      100,
+		height:     24,
+	}
+
+	updated, _ := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyPgDown})
+	got := updated.(Model)
+	if got.todoDialog == nil {
+		t.Fatalf("todo dialog should stay open after Page Down")
+	}
+	if got.todoDialog.Selected != 14 {
+		t.Fatalf("todo dialog selected = %d, want %d", got.todoDialog.Selected, 14)
+	}
+
+	rendered := ansi.Strip(got.renderTodoDialogOverlay("", 100, 24))
+	if !strings.Contains(rendered, "Todo 14") {
+		t.Fatalf("rendered TODO dialog should include newly selected item, got %q", rendered)
+	}
+}
+
+func TestTodoDialogMouseWheelScrollRevealsHiddenItems(t *testing.T) {
+	todos := make([]model.TodoItem, 40)
+	for i := 0; i < 40; i++ {
+		todos[i] = model.TodoItem{
+			ID:          int64(i + 1),
+			ProjectPath: "/tmp/demo",
+			Text:        fmt.Sprintf("Todo %d", i),
+		}
+	}
+	m := Model{
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Todos:   todos,
+		},
+		todoDialog: &todoDialogState{ProjectPath: "/tmp/demo", ProjectName: "demo"},
+		width:      100,
+		height:     24,
+	}
+
+	msg := tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonWheelDown,
+	}
+	current := m
+	for i := 0; i < 25; i++ {
+		updated, _ := current.Update(msg)
+		next, ok := updated.(Model)
+		if !ok {
+			t.Fatalf("updated model = %T, want Model", updated)
+		}
+		current = next
+	}
+
+	got := current
+	if got.todoDialog.Selected <= 0 {
+		t.Fatalf("todo dialog should move selection on wheel scroll, selected = %d", got.todoDialog.Selected)
+	}
+	if got.todoDialog.Selected != 25 {
+		t.Fatalf("todo dialog selected = %d, want %d", got.todoDialog.Selected, 25)
+	}
+
+	rendered := ansi.Strip(got.renderTodoDialogOverlay("", 100, 24))
+	if !strings.Contains(rendered, "Todo 25") {
+		t.Fatalf("rendered TODO dialog should include the scrolled-into selection, got %q", rendered)
+	}
+}
+
+func TestTodoDialogHomeAndEndJumpToExtremes(t *testing.T) {
+	todos := make([]model.TodoItem, 24)
+	for i := 0; i < 24; i++ {
+		todos[i] = model.TodoItem{
+			ID:          int64(i + 1),
+			ProjectPath: "/tmp/demo",
+			Text:        fmt.Sprintf("Todo %d", i),
+		}
+	}
+	m := Model{
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Todos:   todos,
+		},
+		todoDialog: &todoDialogState{ProjectPath: "/tmp/demo", ProjectName: "demo", Selected: 10},
+		width:      100,
+		height:     24,
+	}
+
+	updated, _ := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyHome})
+	got := updated.(Model)
+	if got.todoDialog.Selected != 0 {
+		t.Fatalf("home should jump to first TODO, selected = %d", got.todoDialog.Selected)
+	}
+
+	updated, _ = got.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyEnd})
+	got = updated.(Model)
+	if got.todoDialog.Selected != len(todos)-1 {
+		t.Fatalf("end should jump to last TODO, selected = %d", got.todoDialog.Selected)
+	}
+
+	rendered := ansi.Strip(got.renderTodoDialogOverlay("", 100, 24))
+	if !strings.Contains(rendered, "Todo 23") {
+		t.Fatalf("rendered TODO dialog should include last item after End, got %q", rendered)
+	}
+}
+
 func TestTodoDialogHighlightsActiveLinkedWorktreeState(t *testing.T) {
 	prevProfile := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.ANSI256)
