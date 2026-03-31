@@ -51,6 +51,8 @@ type worktreeRemoveConfirmState struct {
 	BranchName   string
 	TargetBranch string
 	MergeStatus  model.WorktreeMergeStatus
+	Busy         bool
+	BusyMessage  string
 	Selected     int
 }
 
@@ -63,6 +65,8 @@ type worktreeMergeConfirmState struct {
 	MergeReady   bool
 	BlockReason  string
 	ErrorMessage string
+	Busy         bool
+	BusyMessage  string
 	Selected     int
 }
 
@@ -72,6 +76,8 @@ type worktreePostMergeState struct {
 	BranchName   string
 	TargetBranch string
 	Status       string
+	Busy         bool
+	BusyMessage  string
 	Selected     int
 }
 
@@ -575,6 +581,9 @@ func (m Model) updateWorktreeMergeConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 	if confirm == nil {
 		return m, nil
 	}
+	if confirm.Busy {
+		return m, nil
+	}
 	switch msg.String() {
 	case "esc":
 		m.worktreeMergeConfirm = nil
@@ -605,6 +614,8 @@ func (m Model) updateWorktreeMergeConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 			}
 			return m, nil
 		}
+		confirm.Busy = true
+		confirm.BusyMessage = "Please wait while Git merges this worktree back. The dialog is temporarily locked."
 		m.status = "Merging worktree back..."
 		return m, m.mergeWorktreeBackCmd(confirm.ProjectPath)
 	}
@@ -646,6 +657,9 @@ func (m Model) updateWorktreePostMergeMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 	if prompt == nil {
 		return m, nil
 	}
+	if prompt.Busy {
+		return m, nil
+	}
 	switch msg.String() {
 	case "esc":
 		m.worktreePostMerge = nil
@@ -672,6 +686,8 @@ func (m Model) updateWorktreePostMergeMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 			}
 			return m, nil
 		}
+		prompt.Busy = true
+		prompt.BusyMessage = "Please wait while Git removes the merged worktree checkout. The dialog is temporarily locked."
 		m.status = "Removing merged worktree..."
 		return m, m.removeWorktreeCmd(prompt.ProjectPath, prompt.RootPath)
 	}
@@ -714,6 +730,9 @@ func (m Model) updateWorktreeRemoveConfirmMode(msg tea.KeyMsg) (tea.Model, tea.C
 	if confirm == nil {
 		return m, nil
 	}
+	if confirm.Busy {
+		return m, nil
+	}
 	switch msg.String() {
 	case "esc":
 		m.worktreeRemoveConfirm = nil
@@ -732,6 +751,8 @@ func (m Model) updateWorktreeRemoveConfirmMode(msg tea.KeyMsg) (tea.Model, tea.C
 			m.status = "Worktree removal canceled"
 			return m, nil
 		}
+		confirm.Busy = true
+		confirm.BusyMessage = "Please wait while Git removes this worktree checkout. The dialog is temporarily locked."
 		m.status = "Removing worktree..."
 		return m, m.removeWorktreeCmd(confirm.ProjectPath, confirm.RootPath)
 	}
@@ -785,6 +806,9 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 		" ",
 		renderNoteDialogButton("Keep", confirm.Selected == worktreeRemoveConfirmFocusKeep),
 	)
+	if confirm.Busy {
+		buttons = disabledActionTextStyle.Render("[" + todoDialogWaitingLabel(m.spinnerFrame) + "]")
+	}
 	lines := []string{
 		detailSectionStyle.Render("Remove worktree"),
 		"",
@@ -802,6 +826,11 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 	}
 	lines = append(lines, "")
 	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "Removing a linked worktree deletes the checkout only. The branch ref stays in the repo.")...)
+	if confirm.Busy {
+		lines = append(lines, "")
+		lines = append(lines, detailValueStyle.Render("Removal in progress"))
+		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, confirm.BusyMessage)...)
+	}
 	lines = append(lines, "", buttons)
 	panel := renderDialogPanel(panelW, panelInnerW, strings.Join(lines, "\n"))
 	left := max(0, (bodyW-panelW)/2)
@@ -841,12 +870,18 @@ func (m Model) renderWorktreeMergeConfirmOverlay(body string, bodyW, bodyH int) 
 	if !confirm.MergeReady {
 		mergeButton = disabledActionTextStyle.Render("[Merge blocked]")
 	}
+	if confirm.Busy {
+		mergeButton = disabledActionTextStyle.Render("[" + todoDialogWaitingLabel(m.spinnerFrame) + "]")
+	}
 	buttons := lipgloss.JoinHorizontal(
 		lipgloss.Left,
 		mergeButton,
 		" ",
 		renderNoteDialogButton("Keep", confirm.Selected == worktreeMergeConfirmFocusKeep),
 	)
+	if confirm.Busy {
+		buttons = mergeButton
+	}
 	lines := []string{
 		detailSectionStyle.Render("Merge worktree back"),
 		"",
@@ -856,7 +891,10 @@ func (m Model) renderWorktreeMergeConfirmOverlay(body string, bodyW, bodyH int) 
 		detailMutedStyle.Render(truncateText("Root must already be on "+confirm.TargetBranch+".", panelInnerW)),
 		detailMutedStyle.Render(truncateText(m.mergeBackRulesSummary(), panelInnerW)),
 	}
-	if strings.TrimSpace(confirm.BlockReason) != "" {
+	if confirm.Busy {
+		lines = append(lines, "", detailValueStyle.Render("Merge in progress"))
+		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, confirm.BusyMessage)...)
+	} else if strings.TrimSpace(confirm.BlockReason) != "" {
 		lines = append(lines, "", detailWarningStyle.Render("Merge blocked"))
 		lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, panelInnerW, confirm.BlockReason)...)
 	}
@@ -894,6 +932,9 @@ func (m Model) renderWorktreePostMergeOverlay(body string, bodyW, bodyH int) str
 		" ",
 		renderNoteDialogButton("Keep", prompt.Selected == worktreePostMergeFocusKeep),
 	)
+	if prompt.Busy {
+		buttons = disabledActionTextStyle.Render("[" + todoDialogWaitingLabel(m.spinnerFrame) + "]")
+	}
 	statusLine := strings.TrimSpace(prompt.Status)
 	if statusLine == "" {
 		statusLine = "Worktree merged back"
@@ -904,10 +945,14 @@ func (m Model) renderWorktreePostMergeOverlay(body string, bodyW, bodyH int) str
 		detailValueStyle.Render(truncateText(statusLine, panelInnerW)),
 		detailMutedStyle.Render(truncateText(prompt.ProjectPath, panelInnerW)),
 		"",
-		detailMutedStyle.Render(truncateText("Remove this linked worktree now? You can still keep it and remove it later with x.", panelInnerW)),
-		"",
-		buttons,
 	}
+	if prompt.Busy {
+		lines = append(lines, detailValueStyle.Render("Removal in progress"))
+		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, prompt.BusyMessage)...)
+	} else {
+		lines = append(lines, detailMutedStyle.Render(truncateText("Remove this linked worktree now? You can still keep it and remove it later with x.", panelInnerW)))
+	}
+	lines = append(lines, "", buttons)
 	panel := renderDialogPanel(panelW, panelInnerW, strings.Join(lines, "\n"))
 	left := max(0, (bodyW-panelW)/2)
 	top := max(0, (bodyH-lipgloss.Height(panel))/2)
