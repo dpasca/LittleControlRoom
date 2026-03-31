@@ -2,6 +2,13 @@
 
 This page keeps the command, keybinding, and configuration details that are useful once you are already up and running.
 
+## Detector Notes
+
+Provider artifact and detector-footprint notes live in:
+
+- [`codex_cli_footprint.md`](codex_cli_footprint.md)
+- [`claude_code_footprint.md`](claude_code_footprint.md)
+
 ## CLI Commands
 
 - `lcroom tui` opens the interactive dashboard

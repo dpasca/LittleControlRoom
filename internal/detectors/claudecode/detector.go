@@ -29,6 +29,7 @@ type Detector struct {
 
 type cachedParse struct {
 	modTimeUnix int64
+	auxTimeUnix int64
 	result      parseResult
 }
 
@@ -244,28 +245,30 @@ func (d *Detector) parseWithCache(path string) (parseResult, error) {
 		return parseResult{}, err
 	}
 	modUnix := stat.ModTime().Unix()
+	auxActivity := claudeAuxiliaryActivity(path)
+	auxUnix := auxActivity.Unix()
 
 	d.mu.Lock()
 	cached, ok := d.cache[path]
 	d.mu.Unlock()
 
-	if ok && cached.modTimeUnix == modUnix {
+	if ok && cached.modTimeUnix == modUnix && cached.auxTimeUnix == auxUnix {
 		return cached.result, nil
 	}
 
-	parsed, err := parseSessionFile(path, stat.ModTime())
+	parsed, err := parseSessionFile(path, stat.ModTime(), auxActivity)
 	if err != nil {
 		return parseResult{}, err
 	}
 
 	d.mu.Lock()
-	d.cache[path] = cachedParse{modTimeUnix: modUnix, result: parsed}
+	d.cache[path] = cachedParse{modTimeUnix: modUnix, auxTimeUnix: auxUnix, result: parsed}
 	d.mu.Unlock()
 
 	return parsed, nil
 }
 
-func parseSessionFile(path string, modTime time.Time) (parseResult, error) {
+func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult, error) {
 	res := parseResult{
 		lastEventAt: modTime,
 	}
@@ -279,10 +282,11 @@ func parseSessionFile(path string, modTime time.Time) (parseResult, error) {
 	sc := bufio.NewScanner(file)
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 
-	lastType := ""
+	turnState := claudeTurnState{}
+	pendingAsync := map[string]struct{}{}
 	for sc.Scan() {
 		line := sc.Text()
-		var entry ccEntry
+		var entry claudeSessionEntry
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
 			continue
 		}
@@ -306,33 +310,232 @@ func parseSessionFile(path string, modTime time.Time) (parseResult, error) {
 			}
 		}
 
-		lastType = entry.Type
+		ts := entry.parsedTimestamp()
+		switch entry.Type {
+		case "assistant", "progress":
+			turnState.set(ts, false)
+		case "system":
+			if entry.Subtype == "turn_duration" {
+				turnState.set(ts, true)
+			}
+		case "user":
+			if taskID := entry.asyncLaunchID(); taskID != "" {
+				pendingAsync[taskID] = struct{}{}
+				turnState.set(ts, false)
+				continue
+			}
+			if taskID, status, ok := entry.taskNotification(); ok {
+				turnState.set(ts, false)
+				if isTerminalTaskStatus(status) {
+					delete(pendingAsync, taskID)
+				}
+				continue
+			}
+			turnState.set(ts, true)
+		case "queue-operation":
+			taskID, status, ok := entry.taskNotification()
+			if ok && isTerminalTaskStatus(status) {
+				delete(pendingAsync, taskID)
+			}
+		}
 	}
 
-	// Heuristic: if the last entry is a "system" with subtype "turn_duration", the turn is done.
-	// If the last entry is "assistant" or "progress", the turn might still be running.
-	switch lastType {
-	case "system":
-		res.turnKnown = true
-		res.turnDone = true
-	case "user":
-		// User just sent a message; turn hasn't started or just completed.
-		res.turnKnown = true
-		res.turnDone = true
-	case "assistant", "progress":
+	if auxActivity.After(res.lastEventAt) {
+		res.lastEventAt = auxActivity
+	}
+	if len(pendingAsync) > 0 {
 		res.turnKnown = true
 		res.turnDone = false
+		return res, sc.Err()
+	}
+	if turnState.known {
+		res.turnKnown = true
+		res.turnDone = turnState.completed
 	}
 
-	return res, nil
+	return res, sc.Err()
 }
 
-type ccEntry struct {
+type claudeTurnState struct {
+	known     bool
+	completed bool
+}
+
+func (s *claudeTurnState) set(_ time.Time, completed bool) {
+	s.known = true
+	s.completed = completed
+}
+
+type claudeSessionEntry struct {
 	Type      string `json:"type"`
 	SessionID string `json:"sessionId"`
 	CWD       string `json:"cwd"`
 	Timestamp string `json:"timestamp"`
 	Subtype   string `json:"subtype"`
+	Origin    struct {
+		Kind string `json:"kind"`
+	} `json:"origin"`
+	Operation string `json:"operation"`
+	Content   string `json:"content"`
+	Message   struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	} `json:"message"`
+	ToolUseResult struct {
+		BackgroundTaskID string `json:"backgroundTaskId"`
+		IsAsync          bool   `json:"isAsync"`
+		Status           string `json:"status"`
+		AgentID          string `json:"agentId"`
+	} `json:"toolUseResult"`
+}
+
+func (e claudeSessionEntry) parsedTimestamp() time.Time {
+	if e.Timestamp == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339Nano, e.Timestamp)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+func (e claudeSessionEntry) asyncLaunchID() string {
+	if id := strings.TrimSpace(e.ToolUseResult.BackgroundTaskID); id != "" {
+		return id
+	}
+	if e.ToolUseResult.IsAsync && strings.EqualFold(strings.TrimSpace(e.ToolUseResult.Status), "async_launched") {
+		return strings.TrimSpace(e.ToolUseResult.AgentID)
+	}
+	return ""
+}
+
+func (e claudeSessionEntry) taskNotification() (taskID, status string, ok bool) {
+	raw := ""
+	switch {
+	case strings.EqualFold(strings.TrimSpace(e.Origin.Kind), "task-notification"):
+		raw = extractTextContent(e.Message.Content)
+	case e.Type == "queue-operation":
+		raw = strings.TrimSpace(e.Content)
+	default:
+		return "", "", false
+	}
+	taskID = extractTaggedValue(raw, "task-id")
+	status = strings.ToLower(strings.TrimSpace(extractTaggedValue(raw, "status")))
+	if taskID == "" || status == "" {
+		return "", "", false
+	}
+	return taskID, status, true
+}
+
+func isTerminalTaskStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed", "failed", "error", "errored", "cancelled", "canceled", "interrupted":
+		return true
+	default:
+		return false
+	}
+}
+
+func extractTaggedValue(raw, tag string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || tag == "" {
+		return ""
+	}
+	open := "<" + tag + ">"
+	close := "</" + tag + ">"
+	start := strings.Index(raw, open)
+	if start < 0 {
+		return ""
+	}
+	start += len(open)
+	end := strings.Index(raw[start:], close)
+	if end < 0 {
+		return ""
+	}
+	return strings.TrimSpace(raw[start : start+end])
+}
+
+func claudeAuxiliaryActivity(path string) time.Time {
+	sessionID := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	if sessionID == "" {
+		return time.Time{}
+	}
+	projectDir := filepath.Dir(path)
+	projectKey := filepath.Base(projectDir)
+
+	latest := maxDirEntryModTime(filepath.Join(projectDir, sessionID, "subagents"), func(name string) bool {
+		return filepath.Ext(name) == ".jsonl"
+	})
+	for _, tasksDir := range claudeTaskDirs(projectKey, sessionID) {
+		if m := maxDirEntryModTime(tasksDir, func(name string) bool { return filepath.Ext(name) == ".output" }); m.After(latest) {
+			latest = m
+		}
+	}
+	return latest
+}
+
+func claudeTaskDirs(projectKey, sessionID string) []string {
+	seen := map[string]struct{}{}
+	var dirs []string
+	for _, root := range claudeTaskRootCandidates() {
+		pattern := filepath.Join(root, "claude-*", projectKey, sessionID, "tasks")
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			continue
+		}
+		for _, match := range matches {
+			if _, ok := seen[match]; ok {
+				continue
+			}
+			seen[match] = struct{}{}
+			dirs = append(dirs, match)
+		}
+	}
+	return dirs
+}
+
+func claudeTaskRootCandidates() []string {
+	roots := []string{os.TempDir(), "/tmp", "/private/tmp"}
+	seen := map[string]struct{}{}
+	var deduped []string
+	for _, root := range roots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		root = filepath.Clean(root)
+		if _, ok := seen[root]; ok {
+			continue
+		}
+		seen[root] = struct{}{}
+		deduped = append(deduped, root)
+	}
+	return deduped
+}
+
+func maxDirEntryModTime(dir string, keep func(name string) bool) time.Time {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return time.Time{}
+	}
+	latest := time.Time{}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if keep != nil && !keep(entry.Name()) {
+			continue
+		}
+		info, err := os.Stat(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		if info.ModTime().After(latest) {
+			latest = info.ModTime()
+		}
+	}
+	return latest
 }
 
 func (d *Detector) pruneCache(live map[string]struct{}) {
@@ -550,10 +753,10 @@ func extractAssistantContent(content json.RawMessage) (text string, tools []mode
 		return "", nil
 	}
 	var blocks []struct {
-		Type  string `json:"type"`
-		Text  string `json:"text"`
-		Name  string `json:"name"`
-		ID    string `json:"id"`
+		Type  string          `json:"type"`
+		Text  string          `json:"text"`
+		Name  string          `json:"name"`
+		ID    string          `json:"id"`
 		Input json.RawMessage `json:"input"`
 	}
 	if err := json.Unmarshal(content, &blocks); err != nil {
