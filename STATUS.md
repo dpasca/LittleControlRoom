@@ -1,6 +1,35 @@
 # Little Control Room Status
 
-Last updated: 2026-03-31 10:55 JST
+Last updated: 2026-03-31 11:19 JST
+
+## Latest Update (2026-03-31 11:19 JST)
+
+- Tightened local-only worktree merge feedback so repeated merge attempts are explicit and linked worktrees stop warning about unpushed remote state:
+  - assumption update:
+    - in a local merge-back workflow, re-merging an already-integrated linked worktree should report `already merged` instead of silently behaving like a fresh merge
+    - linked worktrees are local execution lanes by default, so `ahead` / `no upstream` should not raise the same warning signal as the root checkout
+  - `internal/service/worktree.go`
+    - added `AlreadyMerged` to merge-back results
+    - taught merge-back to detect when the source branch is already an ancestor of `HEAD` and return a benign `already merged` result instead of re-running `git merge`
+  - `internal/tui/worktree_ui.go`
+    - changed merge-back success copy so repeated merges now read as `<branch> is already merged into <target>`
+  - `internal/tui/app.go`
+    - suppressed remote-sync warning treatment for linked worktrees in repo warning logic and detail rendering
+    - linked worktree repo detail now omits remote sync copy like `no upstream`, keeping the local-lane UX quieter
+  - `internal/tui/runtime_attention.go`
+    - stopped showing the orange sync-warning `!` for linked worktrees that are merely ahead or untracked upstream
+  - `internal/service/service_test.go`
+    - extended merge-back coverage to assert a second merge reports `AlreadyMerged`
+  - `internal/tui/app_test.go`
+    - added coverage proving linked worktrees no longer emit sync-only warnings or remote-sync copy in detail
+- Verification status:
+  - focused coverage passed:
+    - `go test ./internal/service -run 'Test(MergeWorktreeBackMergesIntoRecordedParentBranch|MergeWorktreeBackReportsConflictAndRefreshesStatus)$' -count=1`
+    - `go test ./internal/tui -run 'Test(ProjectRepoWarningIndicator|RenderDetailContentOmitsRemoteSyncForLinkedWorktree|RenderDetailContentShowsRepoConflict|WorktreeActionMsgErrorKeepsMergeDialogOpen)$' -count=1`
+  - repo validation:
+    - `make test` passed
+    - `make scan` passed at `2026-03-31T11:19:11+09:00`
+    - `make doctor` passed using cached report at `2026-03-31T11:19:11+09:00`
 
 ## Latest Update (2026-03-31 10:55 JST)
 
