@@ -1310,6 +1310,107 @@ func TestSubmitInputStartsNewTurnWhenBusyStateIsStaleAndThreadReadShowsNoActiveT
 	}
 }
 
+func TestSubmitInputRejectsPromptWhileCompacting(t *testing.T) {
+	callCount := 0
+
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		threadID:    "thread_456",
+		compacting:  true,
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			callCount++
+			t.Fatalf("unexpected rpc call during compaction: %s (%#v)", method, params)
+			return nil, nil
+		},
+	}
+
+	err := s.Submit("follow up")
+	if err == nil {
+		t.Fatalf("Submit() error = nil, want compaction guard")
+	}
+	if !strings.Contains(err.Error(), "compaction is in progress") {
+		t.Fatalf("Submit() error = %v, want compaction guidance", err)
+	}
+	if callCount != 0 {
+		t.Fatalf("rpc call count = %d, want 0", callCount)
+	}
+
+	snapshot := s.Snapshot()
+	if len(snapshot.Entries) != 0 {
+		t.Fatalf("entries = %#v, want no optimistic transcript append", snapshot.Entries)
+	}
+}
+
+func TestCompactWaitsForCompletionAndHydratesCompactionEntry(t *testing.T) {
+	callCount := 0
+
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		threadID:    "thread_456",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			callCount++
+			switch callCount {
+			case 1:
+				if method != "thread/compact/start" {
+					t.Fatalf("call 1 method = %q, want thread/compact/start", method)
+				}
+				request, ok := params.(threadCompactStartParams)
+				if !ok {
+					t.Fatalf("call 1 params = %#v, want threadCompactStartParams", params)
+				}
+				if request.ThreadID != "thread_456" {
+					t.Fatalf("call 1 thread id = %q, want thread_456", request.ThreadID)
+				}
+				return json.RawMessage(`{}`), nil
+			case 2:
+				if method != "thread/read" {
+					t.Fatalf("call 2 method = %q, want thread/read", method)
+				}
+				return json.RawMessage(`{"thread":{"id":"thread_456","status":{"type":"active"},"turns":[{"id":"turn_compact","status":"inProgress","items":[{"id":"item_compact","type":"contextCompaction"}]}]}}`), nil
+			case 3:
+				if method != "thread/read" {
+					t.Fatalf("call 3 method = %q, want thread/read", method)
+				}
+				return json.RawMessage(`{"thread":{"id":"thread_456","status":{"type":"idle"},"turns":[{"id":"turn_compact","status":"completed","items":[{"id":"item_compact","type":"contextCompaction"}]}]}}`), nil
+			default:
+				t.Fatalf("unexpected rpc call %d: %s", callCount, method)
+				return nil, nil
+			}
+		},
+	}
+
+	if err := s.Compact(); err != nil {
+		t.Fatalf("Compact() error = %v", err)
+	}
+	if callCount != 3 {
+		t.Fatalf("rpc call count = %d, want 3", callCount)
+	}
+
+	snapshot := s.Snapshot()
+	if snapshot.Phase != SessionPhaseIdle {
+		t.Fatalf("phase = %q, want %q", snapshot.Phase, SessionPhaseIdle)
+	}
+	if snapshot.ActiveTurnID != "" {
+		t.Fatalf("active turn id = %q, want empty", snapshot.ActiveTurnID)
+	}
+	if snapshot.Status != "Conversation history compacted" {
+		t.Fatalf("status = %q, want conversation compacted", snapshot.Status)
+	}
+	if snapshot.LastSystemNotice != "Conversation history compacted" {
+		t.Fatalf("last system notice = %q, want conversation compacted", snapshot.LastSystemNotice)
+	}
+	if len(snapshot.Entries) != 1 {
+		t.Fatalf("entries = %#v, want one compaction entry", snapshot.Entries)
+	}
+	if snapshot.Entries[0].Text != "Conversation history compacted" {
+		t.Fatalf("entry text = %q, want compaction transcript", snapshot.Entries[0].Text)
+	}
+}
+
 func TestReconcileBusyStateClearsBusyWhenThreadReadShowsNoActiveTurn(t *testing.T) {
 	s := &appServerSession{
 		projectPath:        "/tmp/demo",

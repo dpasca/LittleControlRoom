@@ -314,6 +314,17 @@ func TestCodexFooterStatusShowsReconcilingState(t *testing.T) {
 	}
 }
 
+func TestCodexFooterStatusShowsCompactingState(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Phase:  codexapp.SessionPhaseReconciling,
+		Status: "Compacting conversation history...",
+	}
+
+	if got := codexFooterStatus(snapshot, time.Now()); got != "Compacting conversation" {
+		t.Fatalf("codexFooterStatus() = %q, want %q", got, "Compacting conversation")
+	}
+}
+
 func TestCodexFooterStatusShowsStalledState(t *testing.T) {
 	snapshot := codexapp.Snapshot{
 		Phase:  codexapp.SessionPhaseStalled,
@@ -343,6 +354,17 @@ func TestPickerSummaryForFinishingLiveSnapshot(t *testing.T) {
 
 	if got := pickerSummaryForLiveSnapshot(snapshot); got != "Finishing: waiting for trailing output" {
 		t.Fatalf("pickerSummaryForLiveSnapshot() = %q, want finishing summary", got)
+	}
+}
+
+func TestPickerSummaryForCompactingLiveSnapshot(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Phase:  codexapp.SessionPhaseReconciling,
+		Status: "Compacting conversation history...",
+	}
+
+	if got := pickerSummaryForLiveSnapshot(snapshot); got != "Compacting: waiting for conversation history to settle" {
+		t.Fatalf("pickerSummaryForLiveSnapshot() = %q, want compacting summary", got)
 	}
 }
 
@@ -8832,6 +8854,49 @@ func TestVisibleCodexCtrlCDoesNotInterruptExternalBusySession(t *testing.T) {
 	}
 }
 
+func TestVisibleCodexCtrlCDoesNotInterruptCompactingSession(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started: true,
+			Preset:  codexcli.PresetYolo,
+			Phase:   codexapp.SessionPhaseReconciling,
+			Status:  "Compacting conversation history...",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlC})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("ctrl+c should not interrupt a compacting session")
+	}
+	if session.interrupted {
+		t.Fatalf("session should not be interrupted while compacting")
+	}
+	if !strings.Contains(strings.ToLower(got.status), "compacting conversation history") {
+		t.Fatalf("status = %q, want compacting guidance", got.status)
+	}
+}
+
 func TestVisibleCodexEnterDoesNotSteerExternalBusySession(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
@@ -8880,6 +8945,55 @@ func TestVisibleCodexEnterDoesNotSteerExternalBusySession(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(got.status), "another process") {
 		t.Fatalf("status = %q, want clear busy-elsewhere message", got.status)
+	}
+}
+
+func TestVisibleCodexEnterDoesNotSubmitWhileCompacting(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started: true,
+			Preset:  codexcli.PresetYolo,
+			Phase:   codexapp.SessionPhaseReconciling,
+			Status:  "Compacting conversation history...",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("please continue")
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("enter should not submit while compaction is running")
+	}
+	if len(session.submissions) != 0 {
+		t.Fatalf("submissions = %d, want 0", len(session.submissions))
+	}
+	if got.codexInput.Value() != "please continue" {
+		t.Fatalf("composer = %q, want draft preserved", got.codexInput.Value())
+	}
+	if !strings.Contains(strings.ToLower(got.status), "compacting conversation history") {
+		t.Fatalf("status = %q, want compacting guidance", got.status)
 	}
 }
 

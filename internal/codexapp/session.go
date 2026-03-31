@@ -20,6 +20,7 @@ import (
 
 const (
 	rpcTimeout               = 15 * time.Second
+	compactionWaitTimeout    = 2 * time.Minute
 	idleShutdownAfter        = time.Hour
 	idleShutdownNotice       = "Closed embedded Codex session after 1 hour of inactivity."
 	busyStateReconcileAfter  = time.Minute
@@ -75,6 +76,7 @@ type appServerSession struct {
 	started            bool
 	busy               bool
 	busyExternal       bool
+	compacting         bool
 	reconciling        bool
 	reportedAuth403    bool
 	busySince          time.Time
@@ -172,6 +174,11 @@ type resumedThreadStatus struct {
 type threadStatusChangedNotification struct {
 	ThreadID string              `json:"threadId"`
 	Status   resumedThreadStatus `json:"status"`
+}
+
+type threadCompactedNotification struct {
+	ThreadID string `json:"threadId"`
+	TurnID   string `json:"turnId"`
 }
 
 type resumedTurnError struct {
@@ -552,6 +559,8 @@ func (s *appServerSession) phaseLocked() SessionPhase {
 		return SessionPhaseClosed
 	case s.busyExternal:
 		return SessionPhaseExternal
+	case s.compacting:
+		return SessionPhaseReconciling
 	case s.reconciling:
 		return SessionPhaseReconciling
 	case s.stalled:
@@ -742,6 +751,10 @@ func (s *appServerSession) SubmitInput(input Submission) error {
 	if s.closed {
 		s.mu.Unlock()
 		return fmt.Errorf("codex session is closed")
+	}
+	if s.compacting {
+		s.mu.Unlock()
+		return fmt.Errorf("cannot send a prompt while conversation compaction is in progress")
 	}
 	threadID := s.threadID
 	activeTurnID := s.activeTurnID
@@ -980,6 +993,10 @@ func (s *appServerSession) Compact() error {
 		s.mu.Unlock()
 		return fmt.Errorf("codex session is closed")
 	}
+	if s.compacting {
+		s.mu.Unlock()
+		return fmt.Errorf("conversation compaction is already in progress")
+	}
 	if s.busy {
 		s.mu.Unlock()
 		return fmt.Errorf("cannot compact while a turn is in progress")
@@ -990,29 +1007,27 @@ func (s *appServerSession) Compact() error {
 		return fmt.Errorf("no active thread to compact")
 	}
 	s.touchLocked()
+	s.compacting = true
 	s.status = "Compacting conversation history..."
 	s.mu.Unlock()
 	s.notify()
 
-	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
-	defer cancel()
+	startCtx, startCancel := context.WithTimeout(context.Background(), rpcTimeout)
+	defer startCancel()
 
-	_, err := s.call(ctx, "thread/compact/start", threadCompactStartParams{
+	_, err := s.call(startCtx, "thread/compact/start", threadCompactStartParams{
 		ThreadID: threadID,
 	})
 	if err != nil {
+		s.mu.Lock()
+		s.compacting = false
+		s.mu.Unlock()
 		s.appendSystemError(err)
 		return err
 	}
-
-	s.mu.Lock()
-	s.touchLocked()
-	s.appendEntryLocked("", TranscriptSystem, "Conversation history compacted")
-	s.status = "Conversation history compacted"
-	s.lastSystemNotice = "Conversation history compacted"
-	s.mu.Unlock()
-	s.notify()
-	return nil
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), compactionWaitTimeout)
+	defer waitCancel()
+	return s.waitForCompactionCompletion(waitCtx, threadID)
 }
 
 func (s *appServerSession) ListModels() ([]ModelOption, error) {
@@ -1884,6 +1899,21 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 		s.syncThreadStatusLocked(msg.ThreadID, msg.Status, false)
 		s.mu.Unlock()
 		s.notify()
+	case "thread/compacted":
+		var msg threadCompactedNotification
+		if err := json.Unmarshal(params, &msg); err != nil {
+			return
+		}
+		s.mu.Lock()
+		s.touchLocked()
+		if strings.TrimSpace(s.threadID) != "" && strings.TrimSpace(msg.ThreadID) != "" && strings.TrimSpace(s.threadID) != strings.TrimSpace(msg.ThreadID) {
+			s.mu.Unlock()
+			return
+		}
+		s.status = "Conversation history compacted"
+		s.lastSystemNotice = "Conversation history compacted"
+		s.mu.Unlock()
+		s.notify()
 	case "thread/started":
 		var msg threadStartedNotification
 		if err := json.Unmarshal(params, &msg); err == nil && msg.Thread.ID != "" {
@@ -2354,6 +2384,7 @@ func (s *appServerSession) touchBusyLocked() {
 
 func (s *appServerSession) clearActiveStateLocked() {
 	s.clearBusyLocked("")
+	s.compacting = false
 	s.pendingApproval = nil
 	s.pendingToolInput = nil
 	s.pendingElicitation = nil
@@ -2368,12 +2399,15 @@ func (s *appServerSession) syncThreadStatusLocked(threadID string, status resume
 
 	switch strings.TrimSpace(status.Type) {
 	case "idle":
+		compacting := s.compacting
 		hadPendingCompletion := s.pendingCompletion != nil
 		hadActiveTurn := s.busy || strings.TrimSpace(s.activeTurnID) != "" || len(s.activeItems) > 0
 		hadInteractiveState := s.pendingApproval != nil || s.pendingToolInput != nil || s.pendingElicitation != nil
 
 		statusText := ""
-		if hadPendingCompletion {
+		if compacting {
+			statusText = "Conversation history compacted"
+		} else if hadPendingCompletion {
 			statusText = strings.TrimSpace(s.pendingCompletion.Status)
 		} else if hadActiveTurn && recovered {
 			statusText = "Recovered idle after status check"
@@ -2391,7 +2425,7 @@ func (s *appServerSession) syncThreadStatusLocked(threadID string, status resume
 	case "active":
 		s.reconciling = false
 	case "systemError":
-		hadState := s.busy || s.pendingCompletion != nil || strings.TrimSpace(s.activeTurnID) != "" || s.pendingApproval != nil || s.pendingToolInput != nil || s.pendingElicitation != nil
+		hadState := s.compacting || s.busy || s.pendingCompletion != nil || strings.TrimSpace(s.activeTurnID) != "" || s.pendingApproval != nil || s.pendingToolInput != nil || s.pendingElicitation != nil
 		s.clearActiveStateLocked()
 		if hadState {
 			s.status = "Codex thread reported a system error"
@@ -3144,6 +3178,48 @@ func effectiveThreadStatus(thread resumedThread) resumedThreadStatus {
 		return resumedThreadStatus{Type: "idle"}
 	}
 	return thread.Status
+}
+
+func (s *appServerSession) waitForCompactionCompletion(ctx context.Context, threadID string) error {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return nil
+	}
+
+	for {
+		thread, err := s.readThreadState(ctx, threadID)
+		if err != nil {
+			s.appendSystemError(err)
+			return err
+		}
+
+		status := effectiveThreadStatus(thread)
+		if strings.TrimSpace(thread.Status.Type) == "systemError" {
+			status = thread.Status
+		}
+
+		s.mu.Lock()
+		s.hydrateResumedThreadLocked(thread)
+		s.syncThreadStatusLocked(threadID, status, true)
+		s.mu.Unlock()
+		s.notify()
+
+		switch strings.TrimSpace(status.Type) {
+		case "", "idle":
+			return nil
+		case "systemError":
+			err := fmt.Errorf("codex reported a system error while compacting the conversation")
+			s.appendSystemError(err)
+			return err
+		}
+
+		select {
+		case <-ctx.Done():
+			s.appendSystemError(ctx.Err())
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 func threadHasRetainedHistory(thread resumedThread) bool {

@@ -913,6 +913,10 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "This " + label + " session is busy in another process. Interrupt it there or hide it here with Alt+Up."
 			return m, nil
 		}
+		if snapshot.Phase == codexapp.SessionPhaseReconciling && codexStatusIsCompacting(snapshot.Status) {
+			m.status = label + " is compacting conversation history. Wait for it to finish or hide it with Alt+Up."
+			return m, nil
+		}
 		if codexSnapshotCanSteer(snapshot) {
 			m.status = "Interrupting " + label + " turn..."
 			return m, m.interruptVisibleCodexCmd()
@@ -922,6 +926,10 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if snapshot.Phase == codexapp.SessionPhaseReconciling {
+			if codexStatusIsCompacting(snapshot.Status) {
+				m.status = label + " is compacting conversation history. Wait for it to finish before sending another prompt."
+				return m, nil
+			}
 			m.status = label + " is rechecking whether the current turn has gone idle. Please wait a moment."
 			return m, nil
 		}
@@ -1061,6 +1069,10 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if snapshot.Phase == codexapp.SessionPhaseReconciling {
+			if codexStatusIsCompacting(snapshot.Status) {
+				m.status = label + " is compacting conversation history. Wait for it to finish before sending another prompt."
+				return m, nil
+			}
 			m.status = label + " is rechecking the current turn state. Wait for that to finish before sending another prompt."
 			return m, nil
 		}
@@ -2063,6 +2075,10 @@ func normalizedCodexStatus(status string) string {
 	}
 }
 
+func codexStatusIsCompacting(status string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(status)), "compacting conversation history")
+}
+
 func codexSnapshotCanSteer(snapshot codexapp.Snapshot) bool {
 	switch snapshot.Phase {
 	case "", codexapp.SessionPhaseRunning:
@@ -2075,6 +2091,9 @@ func codexSnapshotCanSteer(snapshot codexapp.Snapshot) bool {
 func codexFooterStatus(snapshot codexapp.Snapshot, now time.Time) string {
 	switch snapshot.Phase {
 	case codexapp.SessionPhaseReconciling:
+		if codexStatusIsCompacting(snapshot.Status) {
+			return "Compacting conversation"
+		}
 		return "Rechecking turn status"
 	case codexapp.SessionPhaseStalled:
 		return "Stalled; use /reconnect"
