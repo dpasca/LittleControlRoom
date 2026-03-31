@@ -1838,6 +1838,32 @@ func TestWorktreePostMergeEnterDoneKeepsWorktreeQueuesTodoUpdate(t *testing.T) {
 	}
 }
 
+func TestRenderWorktreePostMergeOverlayWrapsFullPromptCopy(t *testing.T) {
+	rendered := ansi.Strip(Model{
+		worktreePostMerge: &worktreePostMergeState{
+			ProjectPath:  "/tmp/repo--feat-parallel-lane",
+			RootPath:     "/tmp/repo",
+			BranchName:   "feat/parallel-lane",
+			TargetBranch: "master",
+			TodoID:       7,
+			TodoText:     "Finish the parallel lane work",
+			TodoPath:     "/tmp/repo",
+			Status:       "Merged feat/parallel-lane into master",
+			Selected:     worktreePostMergeFocusTertiary,
+		},
+	}.renderWorktreePostMergeOverlay("", 72, 24))
+
+	for _, want := range []string{
+		"Mark the linked TODO done now?",
+		"You can remove the",
+		"worktree at the same time or keep the checkout.",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("post-merge overlay should render the full wrapped prompt copy, missing %q in %q", want, rendered)
+		}
+	}
+}
+
 func TestWorktreeActionMsgErrorKeepsPostMergePromptOpen(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"

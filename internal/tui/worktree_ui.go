@@ -1042,7 +1042,7 @@ func (m Model) renderWorktreePostMergeOverlay(body string, bodyW, bodyH int) str
 	if prompt == nil {
 		return body
 	}
-	panelW := min(max(54, bodyW-24), 82)
+	panelW := min(max(56, bodyW-20), 88)
 	panelInnerW := max(28, panelW-4)
 	buttons := lipgloss.JoinHorizontal(
 		lipgloss.Left,
@@ -1093,9 +1093,9 @@ func (m Model) renderWorktreePostMergeOverlay(body string, bodyW, bodyH int) str
 	}
 	if !prompt.Busy {
 		if worktreePostMergeHasTodo(prompt) {
-			lines = append(lines, detailMutedStyle.Render(truncateText("Mark the linked TODO done now? You can remove the worktree at the same time or keep the checkout.", panelInnerW)))
+			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "Mark the linked TODO done now? You can remove the worktree at the same time or keep the checkout.")...)
 		} else {
-			lines = append(lines, detailMutedStyle.Render(truncateText("Remove this linked worktree now? You can still keep it and remove it later with x.", panelInnerW)))
+			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "Remove this linked worktree now? You can still keep it and remove it later with x.")...)
 		}
 	}
 	lines = append(lines, "", buttons)
