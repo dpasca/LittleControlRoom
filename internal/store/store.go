@@ -2735,6 +2735,36 @@ func (s *Store) DeleteTodo(ctx context.Context, id int64) error {
 	return nil
 }
 
+func (s *Store) DeleteDoneTodos(ctx context.Context, projectPath string) (int, error) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return 0, fmt.Errorf("project path is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx, `DELETE FROM project_todos WHERE project_path = ? AND done = 1`, projectPath)
+	if err != nil {
+		return 0, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if rowsAffected > 0 {
+		if _, err := tx.ExecContext(ctx, `UPDATE projects SET updated_at = ? WHERE path = ?`, time.Now().Unix(), projectPath); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return int(rowsAffected), nil
+}
+
 func (s *Store) nextTodoPosition(ctx context.Context, projectPath string) (int, error) {
 	var next int
 	if err := s.db.QueryRowContext(ctx, `

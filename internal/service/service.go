@@ -1485,6 +1485,20 @@ func (s *Service) DeleteTodo(ctx context.Context, projectPath string, id int64) 
 	return nil
 }
 
+func (s *Service) PurgeDoneTodos(ctx context.Context, projectPath string) (int, error) {
+	count, err := s.store.DeleteDoneTodos(ctx, projectPath)
+	if err != nil {
+		return 0, err
+	}
+	if count == 0 {
+		return 0, nil
+	}
+	now := time.Now()
+	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "purge_done_todos"}})
+	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: "purge_done_todos"})
+	return count, nil
+}
+
 func (s *Service) SetRunCommand(ctx context.Context, projectPath, command string) error {
 	if err := s.store.SetRunCommand(ctx, projectPath, command); err != nil {
 		return err

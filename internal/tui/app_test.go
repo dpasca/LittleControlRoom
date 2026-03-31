@@ -5825,6 +5825,162 @@ func TestTodoDialogCopyDialogHotkeysChangeRunModeAndProvider(t *testing.T) {
 	}
 }
 
+func TestTodoDialogPurgeHotkeyOpensConfirmForCompletedItems(t *testing.T) {
+	m := Model{
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Todos: []model.TodoItem{
+				{
+					ID:          1,
+					ProjectPath: "/tmp/demo",
+					Text:        "Keep this open",
+				},
+				{
+					ID:          2,
+					ProjectPath: "/tmp/demo",
+					Text:        "Purge this done item",
+					Done:        true,
+				},
+			},
+		},
+		todoDialog: &todoDialogState{ProjectPath: "/tmp/demo", ProjectName: "demo"},
+		width:      100,
+		height:     24,
+	}
+
+	updated, _ := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	got := updated.(Model)
+	if got.todoDeleteConfirm == nil {
+		t.Fatalf("purge hotkey should open a confirmation dialog")
+	}
+	if got.todoDeleteConfirm.TodoID != 0 {
+		t.Fatalf("purge confirmation todo id = %d, want bulk mode", got.todoDeleteConfirm.TodoID)
+	}
+	if got.todoDeleteConfirm.DoneCount != 1 {
+		t.Fatalf("purge confirmation done count = %d, want 1", got.todoDeleteConfirm.DoneCount)
+	}
+	if got.todoDeleteConfirm.Selected != todoDeleteConfirmFocusKeep {
+		t.Fatalf("default purge confirmation selection = %d, want keep", got.todoDeleteConfirm.Selected)
+	}
+	if got.status != "Confirm completed TODO purge" {
+		t.Fatalf("status = %q, want purge confirmation", got.status)
+	}
+
+	rendered := ansi.Strip(got.renderTodoDeleteConfirmOverlay("", 100, 24))
+	if !strings.Contains(rendered, "Purge Completed TODOs") {
+		t.Fatalf("rendered purge confirmation should explain the bulk action, got %q", rendered)
+	}
+}
+
+func TestTodoDialogPurgeHotkeyReportsWhenNothingIsCompleted(t *testing.T) {
+	m := Model{
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Todos: []model.TodoItem{{
+				ID:          1,
+				ProjectPath: "/tmp/demo",
+				Text:        "Still in progress",
+			}},
+		},
+		todoDialog: &todoDialogState{ProjectPath: "/tmp/demo", ProjectName: "demo"},
+	}
+
+	updated, cmd := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("purge hotkey should not start a command when nothing is completed")
+	}
+	if got.todoDeleteConfirm != nil {
+		t.Fatalf("purge confirmation should stay closed when there is nothing to purge")
+	}
+	if got.status != "No completed TODOs to purge" {
+		t.Fatalf("status = %q, want no-completed message", got.status)
+	}
+}
+
+func TestTodoDeleteConfirmPurgeQueuesBulkRemoval(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	runTUITestGit(t, "", "init", projectPath)
+	runTUITestGit(t, projectPath, "config", "user.name", "Little Control Room Tests")
+	runTUITestGit(t, projectPath, "config", "user.email", "tests@example.com")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, service.CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	if _, err := svc.AddTodo(ctx, projectPath, "Keep this open"); err != nil {
+		t.Fatalf("add open todo: %v", err)
+	}
+	doneItem, err := svc.AddTodo(ctx, projectPath, "Purge this done item")
+	if err != nil {
+		t.Fatalf("add done todo: %v", err)
+	}
+	if err := svc.ToggleTodoDone(ctx, projectPath, doneItem.ID, true); err != nil {
+		t.Fatalf("mark done todo: %v", err)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 0)
+	if err != nil {
+		t.Fatalf("get project detail: %v", err)
+	}
+
+	m := Model{
+		ctx:    ctx,
+		svc:    svc,
+		detail: detail,
+		todoDialog: &todoDialogState{
+			ProjectPath: projectPath,
+			ProjectName: "repo",
+		},
+	}
+
+	updated, _ := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	got := updated.(Model)
+	if got.todoDeleteConfirm == nil {
+		t.Fatalf("purge hotkey should open the confirmation dialog")
+	}
+
+	updated, _ = got.updateTodoDeleteConfirmMode(tea.KeyMsg{Type: tea.KeyTab})
+	got = updated.(Model)
+	if got.todoDeleteConfirm.Selected != todoDeleteConfirmFocusDelete {
+		t.Fatalf("purge confirmation should move focus to purge")
+	}
+
+	updated, cmd := got.updateTodoDeleteConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if got.status != "Purging completed TODOs..." {
+		t.Fatalf("status = %q, want purge progress", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("purge confirmation should queue a removal command")
+	}
+	rawMsg := cmd()
+	msg, ok := rawMsg.(todoActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want todoActionMsg", rawMsg)
+	}
+	if msg.err != nil {
+		t.Fatalf("todoActionMsg.err = %v, want nil", msg.err)
+	}
+	if msg.status != "Purged 1 completed TODO" {
+		t.Fatalf("todoActionMsg.status = %q, want singular purge status", msg.status)
+	}
+}
+
 func TestLaunchClaudeForSelectionUsesClaudeProvider(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {

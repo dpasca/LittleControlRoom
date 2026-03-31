@@ -1710,6 +1710,61 @@ func TestAddTodoAndUpdateDoNotQueueWorktreeSuggestionsSpeculatively(t *testing.T
 	}
 }
 
+func TestPurgeDoneTodosDeletesOnlyCompletedItems(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	svc := New(cfg, st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	openItem, err := svc.AddTodo(ctx, projectPath, "Keep this task")
+	if err != nil {
+		t.Fatalf("add open todo: %v", err)
+	}
+	doneItem, err := svc.AddTodo(ctx, projectPath, "Remove this completed task")
+	if err != nil {
+		t.Fatalf("add done todo: %v", err)
+	}
+	if err := svc.ToggleTodoDone(ctx, projectPath, doneItem.ID, true); err != nil {
+		t.Fatalf("mark done: %v", err)
+	}
+
+	count, err := svc.PurgeDoneTodos(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("PurgeDoneTodos() error = %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("PurgeDoneTodos() count = %d, want 1", count)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 0)
+	if err != nil {
+		t.Fatalf("get project detail: %v", err)
+	}
+	if len(detail.Todos) != 1 {
+		t.Fatalf("remaining todo count = %d, want 1", len(detail.Todos))
+	}
+	if detail.Todos[0].ID != openItem.ID {
+		t.Fatalf("remaining todo = %#v, want open item %#v", detail.Todos[0], openItem)
+	}
+}
+
 func TestCreateTodoWorktreeCreatesTrackedSiblingProject(t *testing.T) {
 	t.Parallel()
 
