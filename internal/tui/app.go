@@ -130,6 +130,7 @@ type Model struct {
 	codexDrafts            map[string]codexDraft
 	codexPasteTokenSeq     int
 	codexClosedHandled     map[string]struct{}
+	pendingGitSummaries    map[string]string
 	codexPickerVisible     bool
 	codexPickerSelected    int
 	codexPickerChoices     []codexSessionChoice
@@ -202,8 +203,10 @@ type scanMsg struct {
 }
 
 type actionMsg struct {
-	status string
-	err    error
+	projectPath            string
+	status                 string
+	clearPendingGitSummary bool
+	err                    error
 }
 
 type browserOpenMsg struct {
@@ -428,6 +431,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		codexInput:             codexInput,
 		codexDrafts:            make(map[string]codexDraft),
 		codexClosedHandled:     make(map[string]struct{}),
+		pendingGitSummaries:    make(map[string]string),
 		codexSnapshots:         make(map[string]codexapp.Snapshot),
 		codexTranscriptRev:     make(map[string]uint64),
 		codexToolAnswers:       make(map[string]codexToolAnswerState),
@@ -480,6 +484,34 @@ func (m *Model) markAssessmentFlash(projectPath string, at time.Time) {
 		m.assessmentFlashUntil = make(map[string]time.Time)
 	}
 	m.assessmentFlashUntil[projectPath] = at.Add(assessmentFlashDuration)
+}
+
+func (m *Model) setPendingGitSummary(projectPath, summary string) {
+	projectPath = strings.TrimSpace(projectPath)
+	summary = strings.TrimSpace(summary)
+	if projectPath == "" || summary == "" {
+		return
+	}
+	if m.pendingGitSummaries == nil {
+		m.pendingGitSummaries = make(map[string]string)
+	}
+	m.pendingGitSummaries[projectPath] = summary
+}
+
+func (m *Model) clearPendingGitSummary(projectPath string) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" || m.pendingGitSummaries == nil {
+		return
+	}
+	delete(m.pendingGitSummaries, projectPath)
+}
+
+func (m Model) pendingGitSummary(projectPath string) string {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" || m.pendingGitSummaries == nil {
+		return ""
+	}
+	return strings.TrimSpace(m.pendingGitSummaries[projectPath])
 }
 
 func (m Model) assessmentFlashActive(projectPath string) bool {
@@ -996,6 +1028,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.gitStatusDialog = nil
 		m.commitApplying = false
 		m.commitPreviewRefreshing = false
+		if msg.clearPendingGitSummary {
+			m.clearPendingGitSummary(msg.projectPath)
+		}
 		m.commitPreview = nil
 		m.commitTodoCompletions = nil
 		m.commitPreviewMessageOverride = ""
@@ -1715,10 +1750,12 @@ func (m Model) updateCommitPreviewMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.commitApplying = true
+		m.setPendingGitSummary(m.commitPreview.ProjectPath, "Committing and pushing...")
 		m.status = "Committing and pushing..."
 		return m, m.applyCommitPreviewCmd(*m.commitPreview, true)
 	case "enter":
 		m.commitApplying = true
+		m.setPendingGitSummary(m.commitPreview.ProjectPath, "Committing...")
 		m.status = "Committing..."
 		return m, m.applyCommitPreviewCmd(*m.commitPreview, false)
 	}
@@ -2471,7 +2508,7 @@ func (m Model) renderProjectList(width, height int) string {
 		repoIndicator := projectRepoWarningIndicator(p, m.spinnerFrame)
 		attention := projectAttentionLabelForScore(m.projectAttentionScore(p))
 		name := p.Name
-		assessmentText := projectAssessmentTextAt(p, now, m.assessmentStallThreshold())
+		assessmentText := m.projectAssessmentDisplayTextAt(p, now, m.assessmentStallThreshold())
 		switch rowMeta.Kind {
 		case projectListRowRepo:
 			if rowMeta.LinkedCount > 0 {
@@ -2652,7 +2689,7 @@ func (m Model) renderDetailContent(width int) string {
 	}
 
 	lines = append(lines, detailSectionStyle.Render("Session summary"))
-	summaryText := projectAssessmentTextAt(p, m.currentTime(), m.assessmentStallThreshold())
+	summaryText := m.projectAssessmentDisplayTextAt(p, m.currentTime(), m.assessmentStallThreshold())
 	summaryStyle := detailValueStyle
 	if projectAssessmentRefreshing(p) {
 		summaryStyle = detailMutedStyle
@@ -3620,7 +3657,7 @@ func (m Model) applyCommitPreviewCmd(preview service.CommitPreview, pushAfterCom
 	return func() tea.Msg {
 		result, err := m.svc.ApplyCommit(m.ctx, preview, pushAfterCommit, completedTodoIDs)
 		if err != nil {
-			return actionMsg{status: "Commit failed", err: err}
+			return actionMsg{projectPath: preview.ProjectPath, status: "Commit failed", clearPendingGitSummary: true, err: err}
 		}
 		status := "Committed " + result.CommitHash
 		if result.Pushed {
@@ -3629,7 +3666,7 @@ func (m Model) applyCommitPreviewCmd(preview service.CommitPreview, pushAfterCom
 		if result.Warning != "" {
 			status = result.Warning
 		}
-		return actionMsg{status: status, err: nil}
+		return actionMsg{projectPath: preview.ProjectPath, status: status, clearPendingGitSummary: true, err: nil}
 	}
 }
 
@@ -3734,6 +3771,13 @@ func appendDetailFields(lines []string, width int, fields ...string) []string {
 
 func projectAssessmentText(project model.ProjectSummary) string {
 	return projectAssessmentTextAt(project, time.Time{}, 0)
+}
+
+func (m Model) projectAssessmentDisplayTextAt(project model.ProjectSummary, now time.Time, stuckThreshold time.Duration) string {
+	if pending := m.pendingGitSummary(project.Path); pending != "" {
+		return pending
+	}
+	return projectAssessmentTextAt(project, now, stuckThreshold)
 }
 
 func projectAssessmentTextAt(project model.ProjectSummary, now time.Time, stuckThreshold time.Duration) string {

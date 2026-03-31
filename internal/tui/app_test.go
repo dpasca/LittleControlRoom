@@ -2363,6 +2363,24 @@ func TestProjectAssessmentTextUsesLatestSummary(t *testing.T) {
 	}
 }
 
+func TestProjectAssessmentDisplayTextPrefersPendingGitSummary(t *testing.T) {
+	project := model.ProjectSummary{
+		Path:                            "/tmp/demo",
+		LatestSessionClassification:     model.ClassificationCompleted,
+		LatestSessionClassificationType: model.SessionCategoryCompleted,
+		LatestSessionSummary:            "Work appears complete for now.",
+	}
+	m := Model{
+		pendingGitSummaries: map[string]string{
+			project.Path: "Committing...",
+		},
+	}
+
+	if got := m.projectAssessmentDisplayTextAt(project, time.Time{}, 0); got != "Committing..." {
+		t.Fatalf("projectAssessmentDisplayTextAt() = %q, want %q", got, "Committing...")
+	}
+}
+
 func TestProjectAssessmentTextAtUsesDerivedStalledSummary(t *testing.T) {
 	project := model.ProjectSummary{
 		LatestSessionClassification:     model.ClassificationCompleted,
@@ -2482,6 +2500,35 @@ func TestRenderProjectListIncludesAssessmentColumn(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "A concrete next step still remains.") {
 		t.Fatalf("renderProjectList() missing latest assessment summary: %q", rendered)
+	}
+}
+
+func TestRenderProjectListPrefersPendingGitSummary(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:                             "demo",
+			Path:                             "/tmp/demo",
+			Status:                           model.StatusIdle,
+			PresentOnDisk:                    true,
+			LatestSessionClassification:      model.ClassificationCompleted,
+			LatestSessionClassificationType:  model.SessionCategoryCompleted,
+			LatestSessionSummary:             "Work appears complete for now.",
+			LatestSessionFormat:              "modern",
+			LatestSessionDetectedProjectPath: "/tmp/demo",
+		}},
+		pendingGitSummaries: map[string]string{
+			"/tmp/demo": "Committing...",
+		},
+		sortMode:   sortByAttention,
+		visibility: visibilityAIFolders,
+	}
+
+	rendered := ansi.Strip(m.renderProjectList(120, 8))
+	if !strings.Contains(rendered, "Committing...") {
+		t.Fatalf("renderProjectList() missing pending git summary: %q", rendered)
+	}
+	if strings.Contains(rendered, "Work appears complete for now.") {
+		t.Fatalf("renderProjectList() should hide the stored summary while commit is pending: %q", rendered)
 	}
 }
 
@@ -11792,6 +11839,9 @@ func TestCommitPreviewEnterCommitsWithoutPush(t *testing.T) {
 	if !got.commitApplying {
 		t.Fatalf("enter should start applying the commit")
 	}
+	if got.pendingGitSummary("/tmp/demo") != "Committing..." {
+		t.Fatalf("pending git summary = %q, want %q", got.pendingGitSummary("/tmp/demo"), "Committing...")
+	}
 	if got.status != "Committing..." {
 		t.Fatalf("status = %q, want %q", got.status, "Committing...")
 	}
@@ -11832,6 +11882,9 @@ func TestCommitPreviewAltEnterCommitsAndPushes(t *testing.T) {
 	got := updated.(Model)
 	if !got.commitApplying {
 		t.Fatalf("alt+enter should start applying the commit")
+	}
+	if got.pendingGitSummary("/tmp/demo") != "Committing and pushing..." {
+		t.Fatalf("pending git summary = %q, want %q", got.pendingGitSummary("/tmp/demo"), "Committing and pushing...")
 	}
 	if got.status != "Committing and pushing..." {
 		t.Fatalf("status = %q, want %q", got.status, "Committing and pushing...")
@@ -12317,6 +12370,35 @@ func TestDispatchCommitCommandOpensLoadingPreviewImmediately(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatalf("dispatchCommand(/commit) should still return the async preview command")
+	}
+}
+
+func TestActionMsgClearsPendingGitSummary(t *testing.T) {
+	m := Model{
+		pendingGitSummaries: map[string]string{
+			"/tmp/demo": "Committing...",
+		},
+		commitPreview: &service.CommitPreview{
+			ProjectPath: "/tmp/demo",
+			Message:     "Update repo",
+		},
+		commitApplying: true,
+	}
+
+	updated, cmd := m.Update(actionMsg{
+		projectPath:            "/tmp/demo",
+		status:                 "Committed abc12345",
+		clearPendingGitSummary: true,
+	})
+	got := updated.(Model)
+	if got.pendingGitSummary("/tmp/demo") != "" {
+		t.Fatalf("pending git summary = %q, want cleared", got.pendingGitSummary("/tmp/demo"))
+	}
+	if got.status != "Committed abc12345" {
+		t.Fatalf("status = %q, want %q", got.status, "Committed abc12345")
+	}
+	if cmd == nil {
+		t.Fatalf("actionMsg should trigger follow-up refresh commands")
 	}
 }
 
