@@ -5217,6 +5217,35 @@ func TestTodoCopyDialogEnterWaitsForQueuedWorktreeSuggestion(t *testing.T) {
 	}
 }
 
+func TestUpdateTodoCopyDialogHandlesPointerModelReturn(t *testing.T) {
+	t.Parallel()
+
+	m := Model{
+		todoCopyDialog: &todoCopyDialogState{
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			TodoID:      7,
+			TodoText:    "Launch this TODO in a new worktree",
+			RunMode:     todoCopyModeNewWorktree,
+			Provider:    codexapp.ProviderCodex,
+		},
+		width:  100,
+		height: 24,
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("missing TODO selection should not start a command")
+	}
+	if got.status != "No TODO selected" {
+		t.Fatalf("status = %q, want %q", got.status, "No TODO selected")
+	}
+	if got.todoCopyDialog == nil {
+		t.Fatalf("todo copy dialog should stay open after a blocked launch")
+	}
+}
+
 func TestTodoWorktreeLaunchErrorKeepsCopyDialogOpen(t *testing.T) {
 	t.Parallel()
 

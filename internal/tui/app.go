@@ -604,9 +604,23 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+func normalizeUpdateModel(m tea.Model) Model {
+	switch mm := m.(type) {
+	case Model:
+		return mm
+	case *Model:
+		if mm == nil {
+			panic("tui update returned nil *Model")
+		}
+		return *mm
+	default:
+		panic(fmt.Sprintf("tui update returned unsupported model type %T", m))
+	}
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	mdl, cmd := m.update(msg)
-	mm := mdl.(Model)
+	mm := normalizeUpdateModel(mdl)
 	prevWant := m.codexVisible() || m.diffView != nil
 	want := mm.codexVisible() || mm.diffView != nil
 	mm.mouseEnabled = want
