@@ -58,6 +58,9 @@ type worktreeMergeConfirmState struct {
 	ProjectName  string
 	BranchName   string
 	TargetBranch string
+	MergeReady   bool
+	BlockReason  string
+	ErrorMessage string
 	Selected     int
 }
 
@@ -361,10 +364,7 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 	if row.Kind == projectListRowWorktree && m.canMergeWorktreeBack(project) && width >= 80 {
 		actions = append(actions, footerPrimaryAction("M", "merge"))
 	}
-	if row.Kind == projectListRowWorktree &&
-		project.WorktreeKind == model.WorktreeKindLinked &&
-		!m.projectHasLiveCodexSession(project.Path) &&
-		!m.projectRuntimeSnapshot(project.Path).Running {
+	if row.Kind == projectListRowWorktree && m.canRemoveWorktree(project) {
 		actions = append(actions, footerHideAction("x", "remove"))
 	}
 	if width >= 90 && len(family) > 1 {
@@ -391,8 +391,77 @@ func (m Model) canMergeWorktreeBack(project model.ProjectSummary) bool {
 	return true
 }
 
+func (m Model) canRemoveWorktree(project model.ProjectSummary) bool {
+	if project.WorktreeKind != model.WorktreeKindLinked {
+		return false
+	}
+	if m.projectHasLiveCodexSession(project.Path) {
+		return false
+	}
+	if snapshot := m.projectRuntimeSnapshot(project.Path); snapshot.Running {
+		return false
+	}
+	return true
+}
+
+func (m Model) worktreeActionHints(project model.ProjectSummary, family []model.ProjectSummary) []string {
+	hints := make([]string, 0, 4)
+	if len(family) > 1 || project.WorktreeKind == model.WorktreeKindLinked {
+		hints = append(hints, "w or /wt lanes")
+	}
+	if m.canMergeWorktreeBack(project) {
+		hints = append(hints, "M or /wt merge")
+	}
+	if m.canRemoveWorktree(project) {
+		hints = append(hints, "x or /wt remove")
+	}
+	if len(family) > 1 {
+		hints = append(hints, "P or /wt prune")
+	}
+	return hints
+}
+
+func (m Model) worktreeCommandPaletteHint(project model.ProjectSummary, family []model.ProjectSummary) string {
+	hints := m.worktreeActionHints(project, family)
+	if len(hints) == 0 {
+		return ""
+	}
+	commands := make([]string, 0, len(hints))
+	for _, hint := range hints {
+		if slashIndex := strings.Index(hint, "/wt "); slashIndex >= 0 {
+			commands = append(commands, hint[slashIndex:])
+		}
+	}
+	if len(commands) == 0 {
+		return ""
+	}
+	return "Worktrees: try " + strings.Join(commands, ", ") + "."
+}
+
 func (m Model) mergeBackRulesSummary() string {
 	return "Requires a clean source worktree and clean root checkout. Sibling worktrees can stay dirty."
+}
+
+func (m Model) worktreeMergeReadiness(project model.ProjectSummary, rootPath string) (bool, string) {
+	if project.RepoDirty {
+		return false, "This worktree is dirty. Commit or discard changes before merging back."
+	}
+	targetBranch := strings.TrimSpace(project.WorktreeParentBranch)
+	if rootPath == "" || targetBranch == "" {
+		return true, ""
+	}
+	rootProject, ok := m.projectSummaryByPath(rootPath)
+	if !ok {
+		return true, ""
+	}
+	if rootProject.RepoDirty {
+		return false, "The root checkout is dirty. Commit or discard changes before merging back."
+	}
+	rootBranch := strings.TrimSpace(rootProject.RepoBranch)
+	if rootBranch != "" && rootBranch != targetBranch {
+		return false, fmt.Sprintf("The root checkout is on %s. Switch it to %s before merging back.", rootBranch, targetBranch)
+	}
+	return true, ""
 }
 
 func (m *Model) openWorktreeMergeConfirmForSelection() tea.Cmd {
@@ -425,15 +494,22 @@ func (m *Model) openWorktreeMergeConfirmForSelection() tea.Cmd {
 		m.status = "Stop the runtime before merging this worktree back"
 		return nil
 	}
+	mergeReady, blockReason := m.worktreeMergeReadiness(project, row.RootPath)
 	m.worktreeMergeConfirm = &worktreeMergeConfirmState{
 		ProjectPath:  project.Path,
 		RootPath:     row.RootPath,
 		ProjectName:  project.Name,
 		BranchName:   projectWorktreeLabel(project),
 		TargetBranch: strings.TrimSpace(project.WorktreeParentBranch),
+		MergeReady:   mergeReady,
+		BlockReason:  blockReason,
 		Selected:     worktreeMergeConfirmFocusKeep,
 	}
-	m.status = "Confirm worktree merge-back"
+	if mergeReady {
+		m.status = "Confirm worktree merge-back"
+	} else {
+		m.status = blockReason
+	}
 	return nil
 }
 
@@ -448,6 +524,10 @@ func (m Model) updateWorktreeMergeConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 		m.status = "Worktree merge-back canceled"
 		return m, nil
 	case "left", "h", "right", "l", "tab", "shift+tab":
+		if !confirm.MergeReady {
+			confirm.Selected = worktreeMergeConfirmFocusKeep
+			return m, nil
+		}
 		if confirm.Selected == worktreeMergeConfirmFocusMerge {
 			confirm.Selected = worktreeMergeConfirmFocusKeep
 		} else {
@@ -458,6 +538,14 @@ func (m Model) updateWorktreeMergeConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 		if confirm.Selected != worktreeMergeConfirmFocusMerge {
 			m.worktreeMergeConfirm = nil
 			m.status = "Worktree merge-back canceled"
+			return m, nil
+		}
+		if !confirm.MergeReady {
+			if strings.TrimSpace(confirm.ErrorMessage) != "" {
+				m.status = confirm.ErrorMessage
+			} else {
+				m.status = confirm.BlockReason
+			}
 			return m, nil
 		}
 		m.status = "Merging worktree back..."
@@ -656,9 +744,13 @@ func (m Model) renderWorktreeMergeConfirmOverlay(body string, bodyW, bodyH int) 
 	}
 	panelW := min(max(54, bodyW-24), 82)
 	panelInnerW := max(28, panelW-4)
+	mergeButton := renderNoteDialogButton("Merge", confirm.Selected == worktreeMergeConfirmFocusMerge)
+	if !confirm.MergeReady {
+		mergeButton = disabledActionTextStyle.Render("[Merge blocked]")
+	}
 	buttons := lipgloss.JoinHorizontal(
 		lipgloss.Left,
-		renderNoteDialogButton("Merge", confirm.Selected == worktreeMergeConfirmFocusMerge),
+		mergeButton,
 		" ",
 		renderNoteDialogButton("Keep", confirm.Selected == worktreeMergeConfirmFocusKeep),
 	)
@@ -670,9 +762,14 @@ func (m Model) renderWorktreeMergeConfirmOverlay(body string, bodyW, bodyH int) 
 		"",
 		detailMutedStyle.Render(truncateText("Root must already be on "+confirm.TargetBranch+".", panelInnerW)),
 		detailMutedStyle.Render(truncateText(m.mergeBackRulesSummary(), panelInnerW)),
-		"",
-		buttons,
 	}
+	if strings.TrimSpace(confirm.BlockReason) != "" {
+		lines = append(lines, "", detailWarningStyle.Render(truncateText(confirm.BlockReason, panelInnerW)))
+	}
+	if strings.TrimSpace(confirm.ErrorMessage) != "" {
+		lines = append(lines, "", detailDangerStyle.Render(truncateText(confirm.ErrorMessage, panelInnerW)))
+	}
+	lines = append(lines, "", buttons)
 	panel := renderDialogPanel(panelW, panelInnerW, strings.Join(lines, "\n"))
 	left := max(0, (bodyW-panelW)/2)
 	top := max(0, (bodyH-lipgloss.Height(panel))/2)

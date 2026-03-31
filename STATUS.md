@@ -1,6 +1,95 @@
 # Little Control Room Status
 
-Last updated: 2026-03-31 06:47 JST
+Last updated: 2026-03-31 10:06 JST
+
+## Latest Update (2026-03-31 10:06 JST)
+
+- Fixed the blocked merge dialog so `Keep` still works when merge-back is unavailable:
+  - `internal/tui/worktree_ui.go`
+    - changed blocked merge confirm handling so `Enter` on `Keep` closes the dialog normally
+    - kept blocked merge protection in place when the disabled `Merge` side is selected programmatically or via stale state
+  - `internal/tui/app_test.go`
+    - split blocked merge coverage so we now assert both behaviors:
+      - blocked `Merge` keeps the dialog open and repeats the blocking reason
+      - blocked `Keep` closes the dialog with the normal cancel status
+- Verification status:
+  - focused coverage passed:
+    - `go test ./internal/tui -run 'Test(UpdateNormalModeMShowsBlockedMergeWhenWorktreesDirty|BlockedWorktreeMergeEnterOnMergeKeepsDialogOpen|BlockedWorktreeMergeEnterOnKeepCancels|WorktreeActionMsgErrorKeepsMergeDialogOpen)$' -count=1`
+
+## Latest Update (2026-03-31 07:29 JST)
+
+- Tightened merge-back feedback so blocked or failed worktree merges are visible in the dialog instead of disappearing into the top status line:
+  - assumption update:
+    - merge-back guardrails need to be visible at the point of action, not just enforced in the service layer
+    - if merge-back is blocked by dirty state or wrong root branch, the dialog should communicate that before the user presses Enter
+    - if the service still rejects a merge attempt, the merge dialog should remain open and show the error inline so the failure feels actionable rather than silent
+  - `internal/tui/worktree_ui.go`
+    - extended worktree merge confirm state with merge-readiness, block-reason, and inline error fields
+    - added a TUI-side merge readiness check that blocks merge when the selected worktree is dirty, the root checkout is dirty, or the visible root checkout is on the wrong branch
+    - updated the merge dialog to show `Merge blocked`, include the block reason inline, and keep `Keep` as the only active action while blocked
+    - if Enter is pressed while blocked, the dialog now stays open and repeats the blocking reason instead of appearing to do nothing
+  - `internal/tui/app.go`
+    - changed `worktreeActionMsg` handling so merge-back errors keep the merge dialog open and render the service error inline
+    - updated the modal footer copy to reflect blocked merge state explicitly
+  - `internal/tui/app_test.go`
+    - added coverage proving:
+      - dirty source/root state opens a blocked merge dialog with a visible reason
+      - pressing Enter while blocked does not queue a merge and keeps the dialog open
+      - service-side merge errors keep the merge dialog open and show the error inline
+- Verification status:
+  - focused coverage passed:
+    - `go test ./internal/commands ./internal/tui -run 'Test(Parse|Suggestions|RenderFooterShowsWorktreeHintsForRepoFamily|RenderFooterShowsRemoveHintForLinkedWorktree|RenderFooterShowsMergeHintForLinkedWorktreeWithParentBranch|RenderDetailContentShowsWorktreeActions|UpdateNormalModeMOpensWorktreeMergeConfirm|UpdateNormalModeMShowsBlockedMergeWhenWorktreesDirty|BlockedWorktreeMergeEnterKeepsDialogOpen|WorktreeActionMsgErrorKeepsMergeDialogOpen|DispatchCommandWorktreeMergeOpensConfirm|DispatchCommandWorktreeRemoveOpensConfirm|DispatchCommandWorktreePruneQueuesCommand|CommandPaletteShowsWorktreeCommandHintForLinkedWorktree|HelpPanelLinesStayMinimal)$' -count=1`
+  - repo validation:
+    - `make scan` passed at `2026-03-31T07:29:20+09:00`
+    - `make doctor` passed using cached report at `2026-03-31T07:29:19+09:00`
+    - `make test` still fails only on the same pre-existing unrelated `internal/tui` cases:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+    - `git diff --check` passed
+- Next concrete tasks:
+  - consider refreshing project summaries immediately before opening merge-back so the blocked state always reflects the newest git dirtiness without waiting for the next scan
+  - consider giving the blocked merge dialog a more explicit one-line checklist like `commit WT`, `clean root`, `switch root branch`
+
+## Latest Update (2026-03-31 07:04 JST)
+
+- Added a first-class `/wt` slash-command family for local worktree workflow so merge/remove/prune no longer depend on memorizing hotkeys:
+  - assumption update:
+    - worktree actions should be operable from the slash-command palette because that is the primary control surface for power users in Little Control Room
+    - hotkeys remain useful accelerators, but merge/remove/prune need an equally visible slash-command path and in-context hints when a linked worktree is selected
+  - `internal/commands/commands.go`
+    - added `/wt lanes|merge|remove|prune`
+    - added `/worktree ...` as a verbose alias that normalizes to `/wt ...`
+    - taught suggestions to complete worktree subcommands and fixed trailing-space handling so `/wt ` and `/worktree ` can actually expand into subcommands
+  - `internal/tui/app.go`
+    - wired the new worktree command kinds into `dispatchCommand(...)`
+    - added a worktree command hint inside the slash-command palette when the selected project is part of a worktree family
+    - added a `Worktree actions` section in the detail pane that shows both hotkeys and slash commands, e.g. `M or /wt merge`
+    - updated the help panel examples to include `/wt merge|remove|prune`
+  - `internal/tui/worktree_ui.go`
+    - factored shared worktree action eligibility checks so footer/detail/command-palette hints stay consistent
+  - `internal/commands/commands_test.go`
+    - added coverage for `/wt` parsing, `/worktree` alias parsing, incomplete-usage rejection, and subcommand suggestions
+  - `internal/tui/app_test.go`
+    - added coverage for worktree action visibility in the detail pane and command palette
+    - added dispatch coverage for `/wt merge`, `/wt remove`, and `/wt prune`
+- Verification status:
+  - focused coverage passed:
+    - `go test ./internal/commands ./internal/tui -run 'Test(Parse|Suggestions|RenderFooterShowsWorktreeHintsForRepoFamily|RenderFooterShowsRemoveHintForLinkedWorktree|RenderFooterShowsMergeHintForLinkedWorktreeWithParentBranch|RenderDetailContentShowsWorktreeActions|UpdateNormalModeMOpensWorktreeMergeConfirm|DispatchCommandWorktreeMergeOpensConfirm|DispatchCommandWorktreeRemoveOpensConfirm|DispatchCommandWorktreePruneQueuesCommand|CommandPaletteShowsWorktreeCommandHintForLinkedWorktree|HelpPanelLinesStayMinimal)$' -count=1`
+  - repo validation:
+    - `make scan` passed at `2026-03-31T07:03:23+09:00`
+    - `make doctor` passed using cached report at `2026-03-31T07:03:23+09:00`
+    - `make test` still fails only on the same pre-existing unrelated `internal/tui` cases:
+    - `TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen`
+    - `TestRenderDiffFileRowSelectedUsesCompactCodeSpacing`
+    - `TestDiffModeMovesSelectionAndScrollsContent`
+    - `git diff --check` passed
+  - PTY smoke passed:
+    - `env COLUMNS=112 LINES=31 make tui-parallel PARALLEL_DATA_DIR=/tmp/lcroom-worktree-commands-smoke INTERVAL=1h`
+    - parallel sandbox opened and exited cleanly via `q`
+- Next concrete tasks:
+  - consider adding `/wt` examples or a short “worktree” section to any future command-palette onboarding copy if more discoverability is needed
+  - consider a dedicated post-merge shortcut like `/wt finish` only if it stays unambiguous about merge target and cleanup behavior
 
 ## Latest Update (2026-03-31 06:47 JST)
 

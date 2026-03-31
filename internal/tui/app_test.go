@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -1002,6 +1003,43 @@ func TestRenderFooterShowsMergeHintForLinkedWorktreeWithParentBranch(t *testing.
 	}
 }
 
+func TestRenderDetailContentShowsWorktreeActions(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 childPath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				RepoBranch:           "feat/parallel-lane",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	rendered := ansi.Strip(m.renderDetailContent(100))
+	if !strings.Contains(rendered, "Worktree actions") {
+		t.Fatalf("renderDetailContent() should include a worktree actions section, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "M or /wt merge") || !strings.Contains(rendered, "x or /wt remove") || !strings.Contains(rendered, "P or /wt prune") {
+		t.Fatalf("renderDetailContent() should list worktree hotkeys and slash commands, got %q", rendered)
+	}
+}
+
 func TestUpdateNormalModeMOpensWorktreeMergeConfirm(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"
@@ -1046,6 +1084,220 @@ func TestUpdateNormalModeMOpensWorktreeMergeConfirm(t *testing.T) {
 	}
 }
 
+func TestUpdateNormalModeMShowsBlockedMergeWhenWorktreesDirty(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		focusedPane: focusProjects,
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+				RepoDirty:        true,
+			},
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 childPath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				RepoBranch:           "feat/parallel-lane",
+				RepoDirty:            true,
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+		width:      120,
+		height:     28,
+	}
+	m.rebuildProjectList(childPath)
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("blocked merge confirm should open without scheduling work")
+	}
+	if got.worktreeMergeConfirm == nil {
+		t.Fatalf("M should still open the merge-back dialog in blocked state")
+	}
+	if got.worktreeMergeConfirm.MergeReady {
+		t.Fatalf("merge confirm should start blocked when source/root are dirty")
+	}
+	if !strings.Contains(got.worktreeMergeConfirm.BlockReason, "This worktree is dirty") {
+		t.Fatalf("blocked reason = %q, want source dirty reason", got.worktreeMergeConfirm.BlockReason)
+	}
+	rendered := ansi.Strip(got.renderWorktreeMergeConfirmOverlay("", 100, 24))
+	if !strings.Contains(rendered, "Merge blocked") || !strings.Contains(rendered, "This worktree is dirty") {
+		t.Fatalf("blocked merge overlay should explain why merge is unavailable, got %q", rendered)
+	}
+}
+
+func TestBlockedWorktreeMergeEnterOnMergeKeepsDialogOpen(t *testing.T) {
+	m := Model{
+		worktreeMergeConfirm: &worktreeMergeConfirmState{
+			ProjectPath:  "/tmp/repo--feat-parallel-lane",
+			RootPath:     "/tmp/repo",
+			BranchName:   "feat/parallel-lane",
+			TargetBranch: "master",
+			MergeReady:   false,
+			BlockReason:  "This worktree is dirty. Commit or discard changes before merging back.",
+			Selected:     worktreeMergeConfirmFocusMerge,
+		},
+	}
+
+	updated, cmd := m.updateWorktreeMergeConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("blocked merge should not schedule a merge command")
+	}
+	if got.worktreeMergeConfirm == nil {
+		t.Fatalf("blocked merge should keep the dialog open")
+	}
+	if got.status != "This worktree is dirty. Commit or discard changes before merging back." {
+		t.Fatalf("status = %q, want blocked merge reason", got.status)
+	}
+}
+
+func TestBlockedWorktreeMergeEnterOnKeepCancels(t *testing.T) {
+	m := Model{
+		worktreeMergeConfirm: &worktreeMergeConfirmState{
+			ProjectPath:  "/tmp/repo--feat-parallel-lane",
+			RootPath:     "/tmp/repo",
+			BranchName:   "feat/parallel-lane",
+			TargetBranch: "master",
+			MergeReady:   false,
+			BlockReason:  "This worktree is dirty. Commit or discard changes before merging back.",
+			Selected:     worktreeMergeConfirmFocusKeep,
+		},
+	}
+
+	updated, cmd := m.updateWorktreeMergeConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("blocked keep should not schedule a merge command")
+	}
+	if got.worktreeMergeConfirm != nil {
+		t.Fatalf("keep should close the blocked merge dialog")
+	}
+	if got.status != "Worktree merge-back canceled" {
+		t.Fatalf("status = %q, want cancel status", got.status)
+	}
+}
+
+func TestDispatchCommandWorktreeMergeOpensConfirm(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 childPath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				RepoBranch:           "feat/parallel-lane",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindWorktreeMerge})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("dispatchCommand(/wt merge) should open the confirmation dialog without scheduling work")
+	}
+	if got.worktreeMergeConfirm == nil {
+		t.Fatalf("dispatchCommand(/wt merge) should open the merge confirmation dialog")
+	}
+}
+
+func TestDispatchCommandWorktreeRemoveOpensConfirm(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+			},
+			{
+				Name:             "repo--feat-parallel-lane",
+				Path:             childPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+				RepoBranch:       "feat/parallel-lane",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindWorktreeRemove})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("dispatchCommand(/wt remove) should open the confirmation dialog without scheduling work")
+	}
+	if got.worktreeRemoveConfirm == nil {
+		t.Fatalf("dispatchCommand(/wt remove) should open the remove confirmation dialog")
+	}
+}
+
+func TestDispatchCommandWorktreePruneQueuesCommand(t *testing.T) {
+	rootPath := "/tmp/repo"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+			},
+			{
+				Name:             "repo--feat-parallel-lane",
+				Path:             "/tmp/repo--feat-parallel-lane",
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+				RepoBranch:       "feat/parallel-lane",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(rootPath)
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindWorktreePrune})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("dispatchCommand(/wt prune) should queue a prune command")
+	}
+	if got.status != "Pruning stale git worktrees..." {
+		t.Fatalf("status = %q, want pruning status", got.status)
+	}
+}
+
 func TestWorktreeActionMsgOpensPostMergeCleanupPrompt(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"
@@ -1078,6 +1330,39 @@ func TestWorktreeActionMsgOpensPostMergeCleanupPrompt(t *testing.T) {
 	}
 	if got.preferredSelectPath != rootPath {
 		t.Fatalf("preferred select path = %q, want %q", got.preferredSelectPath, rootPath)
+	}
+}
+
+func TestWorktreeActionMsgErrorKeepsMergeDialogOpen(t *testing.T) {
+	errText := "worktree is dirty; commit or discard changes before merging back"
+	m := Model{
+		worktreeMergeConfirm: &worktreeMergeConfirmState{
+			ProjectPath:  "/tmp/repo--feat-parallel-lane",
+			RootPath:     "/tmp/repo",
+			BranchName:   "feat/parallel-lane",
+			TargetBranch: "master",
+			MergeReady:   true,
+			Selected:     worktreeMergeConfirmFocusMerge,
+		},
+	}
+
+	updated, cmd := m.Update(worktreeActionMsg{
+		projectPath: "/tmp/repo--feat-parallel-lane",
+		err:         errors.New(errText),
+	})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("merge error should not queue follow-up work")
+	}
+	if got.worktreeMergeConfirm == nil {
+		t.Fatalf("merge error should keep the merge dialog open")
+	}
+	if got.worktreeMergeConfirm.ErrorMessage != errText {
+		t.Fatalf("inline merge error = %q, want %q", got.worktreeMergeConfirm.ErrorMessage, errText)
+	}
+	rendered := ansi.Strip(got.renderWorktreeMergeConfirmOverlay("", 100, 24))
+	if !strings.Contains(rendered, errText) {
+		t.Fatalf("merge overlay should show the service error inline, got %q", rendered)
 	}
 }
 
@@ -9628,6 +9913,48 @@ func TestCommandPaletteRendersColoredActionLegend(t *testing.T) {
 	}
 }
 
+func TestCommandPaletteShowsWorktreeCommandHintForLinkedWorktree(t *testing.T) {
+	input := textinput.New()
+	input.SetValue("/")
+
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 childPath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				RepoBranch:           "feat/parallel-lane",
+			},
+		},
+		visibility:   visibilityAllFolders,
+		sortMode:     sortByAttention,
+		commandMode:  true,
+		commandInput: input,
+		width:        100,
+		height:       24,
+	}
+	m.rebuildProjectList(childPath)
+	m.syncCommandSelection()
+
+	rendered := ansi.Strip(m.renderCommandPaletteContent(72))
+	if !strings.Contains(rendered, "Worktrees: try /wt lanes, /wt merge, /wt remove, /wt prune.") {
+		t.Fatalf("command palette should hint the worktree slash commands, got %q", rendered)
+	}
+}
+
 func TestRenderDialogPanelRestoresBackgroundAfterStyledResets(t *testing.T) {
 	prevProfile := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.ANSI256)
@@ -10669,7 +10996,10 @@ func TestHelpPanelLinesStayMinimal(t *testing.T) {
 	if !strings.Contains(joined, "slash-command palette") {
 		t.Fatalf("helpPanelLines() should explain the slash-command palette: %q", joined)
 	}
-	if !strings.Contains(joined, "/codex, /claude, /opencode, /todo, /commit, /diff, or /run") {
+	if !strings.Contains(joined, "/wt merge|remove|prune") {
+		t.Fatalf("helpPanelLines() should include concrete worktree slash-command examples: %q", joined)
+	}
+	if !strings.Contains(joined, "/setup, /codex, /todo") || !strings.Contains(joined, "/commit, /diff, or /run") {
 		t.Fatalf("helpPanelLines() should include concrete slash-command examples: %q", joined)
 	}
 	if !strings.Contains(joined, "interrupt busy session") {

@@ -198,6 +198,30 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "wt merge",
+			raw:  "/wt merge",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindWorktreeMerge {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindWorktreeMerge)
+				}
+				if inv.Canonical != "/wt merge" {
+					t.Fatalf("canonical = %q, want /wt merge", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "worktree prune alias",
+			raw:  "/worktree prune",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindWorktreePrune {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindWorktreePrune)
+				}
+				if inv.Canonical != "/wt prune" {
+					t.Fatalf("canonical = %q, want /wt prune", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "clear note",
 			raw:  "/note clear",
 			check: func(t *testing.T, inv Invocation) {
@@ -438,6 +462,12 @@ func TestParseRejectsRemovedFinishCommand(t *testing.T) {
 	}
 }
 
+func TestParseRejectsIncompleteWorktreeCommand(t *testing.T) {
+	if _, err := Parse("/wt"); err == nil {
+		t.Fatalf("Parse(/wt) expected usage error")
+	}
+}
+
 func TestSuggestionsCommandNames(t *testing.T) {
 	got := Suggestions("/s")
 	if len(got) == 0 {
@@ -495,6 +525,26 @@ func TestSuggestionsFilterClearArgument(t *testing.T) {
 	}
 	if got[0].Insert != "/filter clear" {
 		t.Fatalf("suggestion = %q, want /filter clear", got[0].Insert)
+	}
+}
+
+func TestSuggestionsWorktreeArguments(t *testing.T) {
+	got := Suggestions("/wt m")
+	if len(got) != 1 {
+		t.Fatalf("Suggestions(/wt m) len = %d, want 1", len(got))
+	}
+	if got[0].Insert != "/wt merge" {
+		t.Fatalf("suggestion = %q, want /wt merge", got[0].Insert)
+	}
+}
+
+func TestSuggestionsWorktreeAliasArguments(t *testing.T) {
+	got := Suggestions("/worktree ")
+	if len(got) != 4 {
+		t.Fatalf("Suggestions(/worktree ) len = %d, want 4", len(got))
+	}
+	if got[0].Insert != "/wt lanes" {
+		t.Fatalf("first suggestion = %q, want /wt lanes", got[0].Insert)
 	}
 }
 

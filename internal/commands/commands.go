@@ -10,42 +10,46 @@ import (
 type Kind string
 
 const (
-	KindHelp        Kind = "help"
-	KindRefresh     Kind = "refresh"
-	KindSort        Kind = "sort"
-	KindView        Kind = "view"
-	KindSetup       Kind = "setup"
-	KindSettings    Kind = "settings"
-	KindFilter      Kind = "filter"
-	KindNewProject  Kind = "new-project"
-	KindOpen        Kind = "open"
-	KindRun         Kind = "run"
-	KindRestart     Kind = "restart"
-	KindRunEdit     Kind = "run-edit"
-	KindRuntime     Kind = "runtime"
-	KindStop        Kind = "stop"
-	KindDiff        Kind = "diff"
-	KindCommit      Kind = "commit"
-	KindPush        Kind = "push"
-	KindCodex       Kind = "codex"
-	KindCodexNew    Kind = "codex-new"
-	KindClaude      Kind = "claude"
-	KindClaudeNew   Kind = "claude-new"
-	KindOpenCode    Kind = "opencode"
-	KindOpenCodeNew Kind = "opencode-new"
-	KindTodo        Kind = "todo"
-	KindNote        Kind = "note"
-	KindPin         Kind = "pin"
-	KindSnooze      Kind = "snooze"
-	KindClearSnooze Kind = "clear-snooze"
-	KindSessions    Kind = "sessions"
-	KindEvents      Kind = "events"
-	KindIgnore      Kind = "ignore"
-	KindIgnored     Kind = "ignored"
-	KindForget      Kind = "forget"
-	KindFocus       Kind = "focus"
-	KindPrivacy     Kind = "privacy"
-	KindQuit        Kind = "quit"
+	KindHelp           Kind = "help"
+	KindRefresh        Kind = "refresh"
+	KindSort           Kind = "sort"
+	KindView           Kind = "view"
+	KindSetup          Kind = "setup"
+	KindSettings       Kind = "settings"
+	KindFilter         Kind = "filter"
+	KindNewProject     Kind = "new-project"
+	KindOpen           Kind = "open"
+	KindRun            Kind = "run"
+	KindRestart        Kind = "restart"
+	KindRunEdit        Kind = "run-edit"
+	KindRuntime        Kind = "runtime"
+	KindStop           Kind = "stop"
+	KindDiff           Kind = "diff"
+	KindCommit         Kind = "commit"
+	KindPush           Kind = "push"
+	KindCodex          Kind = "codex"
+	KindCodexNew       Kind = "codex-new"
+	KindClaude         Kind = "claude"
+	KindClaudeNew      Kind = "claude-new"
+	KindOpenCode       Kind = "opencode"
+	KindOpenCodeNew    Kind = "opencode-new"
+	KindTodo           Kind = "todo"
+	KindWorktreeLanes  Kind = "worktree-lanes"
+	KindWorktreeMerge  Kind = "worktree-merge"
+	KindWorktreeRemove Kind = "worktree-remove"
+	KindWorktreePrune  Kind = "worktree-prune"
+	KindNote           Kind = "note"
+	KindPin            Kind = "pin"
+	KindSnooze         Kind = "snooze"
+	KindClearSnooze    Kind = "clear-snooze"
+	KindSessions       Kind = "sessions"
+	KindEvents         Kind = "events"
+	KindIgnore         Kind = "ignore"
+	KindIgnored        Kind = "ignored"
+	KindForget         Kind = "forget"
+	KindFocus          Kind = "focus"
+	KindPrivacy        Kind = "privacy"
+	KindQuit           Kind = "quit"
 )
 
 type SortMode string
@@ -131,6 +135,7 @@ var specs = []Spec{
 	{Name: "opencode", Usage: "/opencode [prompt]", Summary: "Resume the selected project's latest OpenCode session, or start a new one"},
 	{Name: "opencode-new", Usage: "/opencode-new [prompt]", Summary: "Start a fresh OpenCode session in the selected project"},
 	{Name: "todo", Usage: "/todo", Summary: "Open the selected project's TODO list"},
+	{Name: "wt", Usage: "/wt lanes|merge|remove|prune", Summary: "Toggle worktree lanes or manage the selected worktree"},
 	{Name: "pin", Usage: "/pin", Summary: "Toggle pin on the selected project"},
 	{Name: "snooze", Usage: "/snooze [duration|off]", Summary: "Snooze the selected project or clear with /snooze off"},
 	{Name: "clear-snooze", Usage: "/clear-snooze", Summary: "Clear snooze on the selected project"},
@@ -152,7 +157,7 @@ func Specs() []Spec {
 }
 
 func Suggestions(input string) []Suggestion {
-	trimmed := strings.TrimSpace(input)
+	trimmed := strings.TrimLeft(input, " \t\r\n")
 	if trimmed == "" {
 		trimmed = "/"
 	}
@@ -247,6 +252,17 @@ func Suggestions(input string) []Suggestion {
 		}
 		return enumSuggestions("/note ", argPrefix,
 			choice("clear", "Remove the selected project's saved note"),
+		)
+	case "wt", "worktree":
+		argPrefix := ""
+		if len(fields) > 1 {
+			argPrefix = strings.ToLower(fields[len(fields)-1])
+		}
+		return enumSuggestions("/wt ", argPrefix,
+			choice("lanes", "Expand or collapse the current worktree family"),
+			choice("merge", "Merge the selected linked worktree back into its parent branch"),
+			choice("remove", "Remove the selected linked worktree"),
+			choice("prune", "Prune stale git worktree registrations for the current repo"),
 		)
 	case "privacy":
 		argPrefix := ""
@@ -370,6 +386,8 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /todo")
 		}
 		return Invocation{Kind: KindTodo, Canonical: "/todo"}, nil
+	case "wt", "worktree":
+		return parseWorktreeCommand(rawArgs)
 	case "note":
 		switch strings.ToLower(strings.TrimSpace(rawArgs)) {
 		case "":
@@ -600,6 +618,21 @@ func parseFocusTarget(raw string) (FocusTarget, error) {
 		return FocusRuntime, nil
 	default:
 		return "", fmt.Errorf("usage: /focus list|detail|runtime")
+	}
+}
+
+func parseWorktreeCommand(raw string) (Invocation, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "lanes":
+		return Invocation{Kind: KindWorktreeLanes, Canonical: "/wt lanes"}, nil
+	case "merge":
+		return Invocation{Kind: KindWorktreeMerge, Canonical: "/wt merge"}, nil
+	case "remove":
+		return Invocation{Kind: KindWorktreeRemove, Canonical: "/wt remove"}, nil
+	case "prune":
+		return Invocation{Kind: KindWorktreePrune, Canonical: "/wt prune"}, nil
+	default:
+		return Invocation{}, fmt.Errorf("usage: /wt lanes|merge|remove|prune")
 	}
 }
 

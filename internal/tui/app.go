@@ -1093,14 +1093,23 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 	case worktreeActionMsg:
-		m.worktreeMergeConfirm = nil
-		m.worktreePostMerge = nil
-		m.worktreeRemoveConfirm = nil
 		if msg.err != nil {
 			m.err = msg.err
 			m.status = msg.err.Error()
+			if m.worktreeMergeConfirm != nil && filepath.Clean(strings.TrimSpace(m.worktreeMergeConfirm.ProjectPath)) == filepath.Clean(strings.TrimSpace(msg.projectPath)) {
+				m.worktreeMergeConfirm.ErrorMessage = msg.err.Error()
+				m.worktreePostMerge = nil
+				m.worktreeRemoveConfirm = nil
+				return m, nil
+			}
+			m.worktreeMergeConfirm = nil
+			m.worktreePostMerge = nil
+			m.worktreeRemoveConfirm = nil
 			return m, nil
 		}
+		m.worktreeMergeConfirm = nil
+		m.worktreePostMerge = nil
+		m.worktreeRemoveConfirm = nil
 		m.err = nil
 		if strings.TrimSpace(msg.selectPath) != "" {
 			m.preferredSelectPath = strings.TrimSpace(msg.selectPath)
@@ -2538,6 +2547,12 @@ func (m Model) renderDetailContent(width int) string {
 			}
 			lines = append(lines, renderWrappedDetailBullet(detailValueStyle, width, label+" · "+strings.Join(statusParts, ", ")))
 		}
+		if hints := m.worktreeActionHints(p, family); len(hints) > 0 {
+			lines = append(lines, detailSectionStyle.Render("Worktree actions"))
+			for _, hint := range hints {
+				lines = append(lines, renderWrappedDetailBullet(detailValueStyle, width, hint))
+			}
+		}
 	}
 
 	lines = append(lines, detailSectionStyle.Render("Session summary"))
@@ -2869,6 +2884,28 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.openTodoDialog(p)
+	case commands.KindWorktreeLanes:
+		return m, m.toggleSelectedWorktreeGroup()
+	case commands.KindWorktreeMerge:
+		return m, m.openWorktreeMergeConfirmForSelection()
+	case commands.KindWorktreeRemove:
+		return m, m.openWorktreeRemoveConfirmForSelection()
+	case commands.KindWorktreePrune:
+		row, project, ok := m.selectedProjectRow()
+		if !ok {
+			m.status = "No project selected"
+			return m, nil
+		}
+		rootPath := row.RootPath
+		if rootPath == "" {
+			rootPath = projectWorktreeRootPath(project)
+		}
+		if rootPath == "" {
+			m.status = "No project selected"
+			return m, nil
+		}
+		m.status = "Pruning stale git worktrees..."
+		return m, m.pruneWorktreesCmd(rootPath, rootPath)
 	case commands.KindNote:
 		p, ok := m.selectedProject()
 		if !ok {
@@ -4360,7 +4397,11 @@ func (m Model) renderFooter(width int) string {
 		return m.renderModalFooter(width, "Settings: Enter save, Tab next, Esc cancel", filterSegment, usageSegment)
 	}
 	if m.worktreeMergeConfirm != nil {
-		return m.renderModalFooter(width, "Merge worktree: Enter merge, Tab switch, Esc cancel", filterSegment, usageSegment)
+		label := "Merge worktree: Enter merge, Tab switch, Esc cancel"
+		if !m.worktreeMergeConfirm.MergeReady {
+			label = "Merge blocked: clean root/worktree or fix branch, Esc keep"
+		}
+		return m.renderModalFooter(width, label, filterSegment, usageSegment)
 	}
 	if m.worktreePostMerge != nil {
 		return m.renderModalFooter(width, "Merged worktree: Enter remove, Tab keep, Esc keep", filterSegment, usageSegment)
@@ -4914,6 +4955,9 @@ func (m Model) renderCommandPaletteContent(width int) string {
 
 	if p, ok := m.selectedProject(); ok {
 		lines = append(lines, commandPaletteHintStyle.Render("Selected project: "+p.Name))
+		if hint := m.worktreeCommandPaletteHint(p, m.worktreeFamily(projectWorktreeRootPath(p))); hint != "" {
+			lines = append(lines, commandPaletteHintStyle.Render(hint))
+		}
 	} else {
 		lines = append(lines, commandPaletteHintStyle.Render("Selected project: none"))
 	}
@@ -5393,7 +5437,7 @@ func helpPanelLines() []string {
 			renderDialogAction("Tab", "complete there", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("?", "toggle help", commitActionKeyStyle, commitActionTextStyle),
 		),
-		commandPaletteHintStyle.Render("Try /setup, /codex, /claude, /opencode, /todo, /commit, /diff, or /run."),
+		commandPaletteHintStyle.Render("Try /setup, /codex, /todo, /wt merge|remove|prune, /commit, /diff, or /run."),
 		detailSectionStyle.Render("Navigate"),
 		renderHelpPanelActionRow(
 			renderDialogAction("Tab", "switch pane", navigateActionKeyStyle, navigateActionTextStyle),
