@@ -7,7 +7,6 @@ import (
 
 	"lcroom/internal/codexapp"
 	"lcroom/internal/model"
-	"lcroom/internal/service"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -775,13 +774,11 @@ func (m Model) updateWorktreeMergeConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 			return m, m.mergeWorktreeBackCmd(confirm.ProjectPath)
 		}
 		if !confirm.MergeReady && confirm.OfferCommit && confirm.Selected == worktreeMergeConfirmFocusCommit {
-			project, ok := m.projectSummaryByPath(confirm.ProjectPath)
-			if !ok {
-				m.status = "Worktree is unavailable right now"
-				return m, nil
-			}
-			m.worktreeMergeConfirm = nil
-			return m, m.startCommitPreview(project, service.GitActionCommit, "")
+			confirm.Busy = true
+			confirm.BusyMessage = "Please wait while Little Control Room commits this worktree and merges it back. The dialog is temporarily locked."
+			m.setPendingGitSummary(confirm.ProjectPath, "Committing and merging worktree back...")
+			m.status = "Committing and merging worktree back..."
+			return m, m.commitAndMergeWorktreeBackCmd(confirm.ProjectPath)
 		}
 		if confirm.Selected == worktreeMergeConfirmFocusKeep {
 			m.worktreeMergeConfirm = nil
@@ -827,6 +824,51 @@ func (m Model) mergeWorktreeBackCmd(projectPath string) tea.Cmd {
 			postMergeTodoID:       result.LinkedTodoID,
 			postMergeTodoText:     result.LinkedTodoText,
 			postMergeTodoPath:     result.LinkedTodoPath,
+		}
+	}
+}
+
+func (m Model) commitAndMergeWorktreeBackCmd(projectPath string) tea.Cmd {
+	if m.svc == nil {
+		return func() tea.Msg {
+			return worktreeActionMsg{
+				projectPath:            projectPath,
+				clearPendingGitSummary: true,
+				err:                    fmt.Errorf("service unavailable"),
+			}
+		}
+	}
+	return func() tea.Msg {
+		result, err := m.svc.CommitAndMergeWorktreeBack(m.ctx, projectPath)
+		if err != nil {
+			return worktreeActionMsg{
+				projectPath:            projectPath,
+				clearPendingGitSummary: true,
+				err:                    err,
+			}
+		}
+		status := fmt.Sprintf("Merged %s into %s", result.SourceBranch, result.TargetBranch)
+		if strings.TrimSpace(result.CommitHash) != "" {
+			status = fmt.Sprintf("Committed %s and merged %s into %s", result.CommitHash, result.SourceBranch, result.TargetBranch)
+		}
+		if result.AlreadyMerged {
+			status = fmt.Sprintf("%s is already merged into %s", result.SourceBranch, result.TargetBranch)
+			if strings.TrimSpace(result.CommitHash) != "" {
+				status = fmt.Sprintf("Committed %s; %s is already merged into %s", result.CommitHash, result.SourceBranch, result.TargetBranch)
+			}
+		}
+		return worktreeActionMsg{
+			projectPath:            projectPath,
+			selectPath:             result.RootProjectPath,
+			status:                 status,
+			clearPendingGitSummary: true,
+			offerPostMergeCleanup:  true,
+			postMergeRootPath:      result.RootProjectPath,
+			postMergeSourceBranch:  result.SourceBranch,
+			postMergeTargetBranch:  result.TargetBranch,
+			postMergeTodoID:        result.LinkedTodoID,
+			postMergeTodoText:      result.LinkedTodoText,
+			postMergeTodoPath:      result.LinkedTodoPath,
 		}
 	}
 }
@@ -1171,7 +1213,7 @@ func (m Model) renderWorktreeMergeConfirmOverlay(body string, bodyW, bodyH int) 
 	}
 	buttonParts := []string{mergeButton}
 	if !confirm.MergeReady && confirm.OfferCommit {
-		buttonParts = append(buttonParts, renderNoteDialogButton("Commit", confirm.Selected == worktreeMergeConfirmFocusCommit))
+		buttonParts = append(buttonParts, renderNoteDialogButton("Commit & Merge", confirm.Selected == worktreeMergeConfirmFocusCommit))
 	}
 	buttonParts = append(buttonParts, renderNoteDialogButton("Keep", confirm.Selected == worktreeMergeConfirmFocusKeep))
 	buttons := strings.Join(buttonParts, " ")
@@ -1194,7 +1236,7 @@ func (m Model) renderWorktreeMergeConfirmOverlay(body string, bodyW, bodyH int) 
 		lines = append(lines, "", detailWarningStyle.Render("Merge blocked"))
 		lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, panelInnerW, confirm.BlockReason)...)
 		if confirm.OfferCommit {
-			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "Open the commit preview first to finish this worktree, then retry the merge-back.")...)
+			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "Commit & Merge will auto-stage this worktree, generate a commit message, wait for the commit to finish, and then continue straight into merge-back.")...)
 		}
 	}
 	if strings.TrimSpace(confirm.ErrorMessage) != "" {

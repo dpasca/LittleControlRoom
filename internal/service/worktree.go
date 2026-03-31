@@ -37,6 +37,7 @@ type MergeWorktreeBackResult struct {
 	RootProjectPath string
 	SourceBranch    string
 	TargetBranch    string
+	CommitHash      string
 	AlreadyMerged   bool
 	LinkedTodoID    int64
 	LinkedTodoText  string
@@ -389,6 +390,84 @@ func (s *Service) MergeWorktreeBack(ctx context.Context, projectPath string) (Me
 		return result, fmt.Errorf("refresh merged worktree project: %w", err)
 	}
 	return result, nil
+}
+
+func (s *Service) CommitAndMergeWorktreeBack(ctx context.Context, projectPath string) (MergeWorktreeBackResult, error) {
+	if s == nil || s.store == nil {
+		return MergeWorktreeBackResult{}, fmt.Errorf("service unavailable")
+	}
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "" {
+		return MergeWorktreeBackResult{}, fmt.Errorf("project path is required")
+	}
+	if s.gitRepoStatusReader == nil {
+		return MergeWorktreeBackResult{}, fmt.Errorf("git status reader unavailable")
+	}
+
+	detail, err := s.store.GetProjectDetail(ctx, projectPath, 5)
+	if err != nil {
+		return MergeWorktreeBackResult{}, err
+	}
+	if detail.Summary.WorktreeKind != model.WorktreeKindLinked {
+		return MergeWorktreeBackResult{}, fmt.Errorf("only linked worktrees can be merged back")
+	}
+
+	rootPath := filepath.Clean(strings.TrimSpace(detail.Summary.WorktreeRootPath))
+	if rootPath == "" {
+		rootPath, _ = s.readProjectWorktreeInfo(ctx, projectPath)
+	}
+	if rootPath == "" || rootPath == "." {
+		return MergeWorktreeBackResult{}, fmt.Errorf("worktree root is unavailable for %s", projectPath)
+	}
+
+	targetBranch := strings.TrimSpace(detail.Summary.WorktreeParentBranch)
+	if targetBranch == "" {
+		return MergeWorktreeBackResult{}, fmt.Errorf("this worktree has no recorded parent branch to merge back into")
+	}
+
+	sourceStatus, err := s.gitRepoStatusReader(ctx, projectPath)
+	if err != nil {
+		return MergeWorktreeBackResult{}, fmt.Errorf("read worktree status before merge-back: %w", err)
+	}
+	sourceBranch := strings.TrimSpace(sourceStatus.Branch)
+	if sourceBranch == "" {
+		return MergeWorktreeBackResult{}, fmt.Errorf("worktree branch is unavailable for %s", projectPath)
+	}
+	if sourceBranch == targetBranch {
+		return MergeWorktreeBackResult{}, fmt.Errorf("worktree branch %s already matches its parent branch", sourceBranch)
+	}
+
+	rootStatus, err := s.gitRepoStatusReader(ctx, rootPath)
+	if err != nil {
+		return MergeWorktreeBackResult{}, fmt.Errorf("read root repo status before merge-back: %w", err)
+	}
+	rootBranch := strings.TrimSpace(rootStatus.Branch)
+	if rootBranch != targetBranch {
+		return MergeWorktreeBackResult{}, fmt.Errorf("root worktree %s is on %s, expected %s", rootPath, rootBranch, targetBranch)
+	}
+	if rootStatus.Dirty {
+		return MergeWorktreeBackResult{}, fmt.Errorf("root worktree is dirty; commit or discard changes before merging back")
+	}
+
+	if !sourceStatus.Dirty {
+		return s.MergeWorktreeBack(ctx, projectPath)
+	}
+
+	preview, err := s.ResolveSubmodulesAndPrepareCommit(ctx, projectPath, GitActionCommit, "")
+	if err != nil {
+		return MergeWorktreeBackResult{}, err
+	}
+	commitResult, err := s.ApplyCommit(ctx, preview, false, nil)
+	if err != nil {
+		return MergeWorktreeBackResult{}, err
+	}
+
+	mergeResult, err := s.MergeWorktreeBack(ctx, projectPath)
+	mergeResult.CommitHash = commitResult.CommitHash
+	if err != nil {
+		return mergeResult, err
+	}
+	return mergeResult, nil
 }
 
 func gitBranchMergedIntoHEAD(ctx context.Context, repoPath, branch string) (bool, error) {

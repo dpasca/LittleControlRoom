@@ -1340,7 +1340,7 @@ func TestUpdateNormalModeMShowsBlockedMergeWhenWorktreesDirty(t *testing.T) {
 		t.Fatalf("blocked reason = %q, want source dirty reason", got.worktreeMergeConfirm.BlockReason)
 	}
 	rendered := ansi.Strip(got.renderWorktreeMergeConfirmOverlay("", 100, 24))
-	if !strings.Contains(rendered, "Merge blocked") || !strings.Contains(rendered, "This worktree is dirty") || !strings.Contains(rendered, "Commit") {
+	if !strings.Contains(rendered, "Merge blocked") || !strings.Contains(rendered, "This worktree is dirty") || !strings.Contains(rendered, "Commit & Merge") {
 		t.Fatalf("blocked merge overlay should explain why merge is unavailable, got %q", rendered)
 	}
 }
@@ -1486,7 +1486,7 @@ func TestBlockedWorktreeMergeEnterOnKeepCancels(t *testing.T) {
 	}
 }
 
-func TestBlockedWorktreeMergeEnterOnCommitOpensCommitPreview(t *testing.T) {
+func TestBlockedWorktreeMergeEnterOnCommitQueuesCommitAndMerge(t *testing.T) {
 	projectPath := "/tmp/repo--feat-parallel-lane"
 	m := Model{
 		allProjects: []model.ProjectSummary{
@@ -1517,19 +1517,25 @@ func TestBlockedWorktreeMergeEnterOnCommitOpensCommitPreview(t *testing.T) {
 	updated, cmd := m.updateWorktreeMergeConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
 	if cmd == nil {
-		t.Fatalf("commit handoff should queue the commit preview work")
+		t.Fatalf("commit & merge should queue background work")
 	}
-	if got.worktreeMergeConfirm != nil {
-		t.Fatalf("commit handoff should close the merge dialog")
+	if got.worktreeMergeConfirm == nil {
+		t.Fatalf("commit & merge should keep the merge dialog open")
 	}
-	if got.commitPreview == nil {
-		t.Fatalf("commit handoff should open the commit preview")
+	if got.worktreeMergeConfirm == nil || !got.worktreeMergeConfirm.Busy {
+		t.Fatalf("commit & merge should lock the merge dialog while git runs")
 	}
-	if got.commitPreview.ProjectPath != projectPath {
-		t.Fatalf("commit preview path = %q, want %q", got.commitPreview.ProjectPath, projectPath)
+	if got.worktreeMergeConfirm.BusyMessage != "Please wait while Little Control Room commits this worktree and merges it back. The dialog is temporarily locked." {
+		t.Fatalf("busy message = %q", got.worktreeMergeConfirm.BusyMessage)
 	}
-	if got.status != "Preparing commit preview..." {
-		t.Fatalf("status = %q, want commit preview preparation", got.status)
+	if got.commitPreview != nil {
+		t.Fatalf("commit & merge should not open the commit preview")
+	}
+	if got.pendingGitSummary(projectPath) != "Committing and merging worktree back..." {
+		t.Fatalf("pending git summary = %q, want commit-and-merge summary", got.pendingGitSummary(projectPath))
+	}
+	if got.status != "Committing and merging worktree back..." {
+		t.Fatalf("status = %q, want commit & merge progress", got.status)
 	}
 }
 

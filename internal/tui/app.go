@@ -251,17 +251,18 @@ type todoWorktreeLaunchMsg struct {
 }
 
 type worktreeActionMsg struct {
-	projectPath           string
-	selectPath            string
-	status                string
-	offerPostMergeCleanup bool
-	postMergeRootPath     string
-	postMergeSourceBranch string
-	postMergeTargetBranch string
-	postMergeTodoID       int64
-	postMergeTodoText     string
-	postMergeTodoPath     string
-	err                   error
+	projectPath            string
+	selectPath             string
+	status                 string
+	clearPendingGitSummary bool
+	offerPostMergeCleanup  bool
+	postMergeRootPath      string
+	postMergeSourceBranch  string
+	postMergeTargetBranch  string
+	postMergeTodoID        int64
+	postMergeTodoText      string
+	postMergeTodoPath      string
+	err                    error
 }
 
 type commitTodoItem struct {
@@ -1200,6 +1201,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 	case worktreeActionMsg:
+		if msg.clearPendingGitSummary {
+			m.clearPendingGitSummary(msg.projectPath)
+		}
 		if msg.err != nil {
 			m.err = msg.err
 			m.status = singleLineStatusText(msg.err.Error())
@@ -4874,7 +4878,7 @@ func (m Model) renderFooter(width int) string {
 		label := "Merge worktree: Enter merge, Tab switch, Esc cancel"
 		if !m.worktreeMergeConfirm.MergeReady {
 			if m.worktreeMergeConfirm.OfferCommit {
-				label = "Merge blocked: Tab commit/keep, Enter choose, Esc keep"
+				label = "Merge blocked: Tab commit & merge/keep, Enter choose, Esc keep"
 			} else {
 				label = "Merge blocked: clean root/worktree or fix branch, Esc keep"
 			}

@@ -2200,6 +2200,115 @@ func TestMergeWorktreeBackMergesIntoRecordedParentBranch(t *testing.T) {
 	}
 }
 
+func TestCommitAndMergeWorktreeBackCommitsDirtyWorktreeBeforeMerge(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	item, err := svc.AddTodo(ctx, projectPath, "Commit dirty worktree and merge it back")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
+		t.Fatalf("queue todo worktree suggestion: %v", err)
+	} else if !queued {
+		t.Fatalf("expected todo worktree suggestion to queue")
+	}
+	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
+	if err != nil {
+		t.Fatalf("claim todo worktree suggestion: %v", err)
+	}
+	suggestion.BranchName = "feat/commit-and-merge-worktree"
+	suggestion.WorktreeSuffix = "feat-commit-and-merge-worktree"
+	suggestion.Kind = "feature"
+	suggestion.Reason = "Creates a linked worktree so auto commit-and-merge can be tested."
+	suggestion.Confidence = 0.95
+	suggestion.Model = "test"
+	if completed, err := st.CompleteTodoWorktreeSuggestion(ctx, suggestion); err != nil {
+		t.Fatalf("complete todo worktree suggestion: %v", err)
+	} else if !completed {
+		t.Fatalf("expected todo worktree suggestion to complete")
+	}
+
+	result, err := svc.CreateTodoWorktree(ctx, CreateTodoWorktreeRequest{
+		ProjectPath: projectPath,
+		TodoID:      item.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateTodoWorktree() error = %v", err)
+	}
+
+	worktreeFile := filepath.Join(result.WorktreePath, "FEATURE.txt")
+	if err := os.WriteFile(worktreeFile, []byte("committed and merged from dirty worktree\n"), 0o644); err != nil {
+		t.Fatalf("write FEATURE.txt in worktree: %v", err)
+	}
+
+	mergeResult, err := svc.CommitAndMergeWorktreeBack(ctx, result.WorktreePath)
+	if err != nil {
+		t.Fatalf("CommitAndMergeWorktreeBack() error = %v", err)
+	}
+	if strings.TrimSpace(mergeResult.CommitHash) == "" {
+		t.Fatalf("CommitAndMergeWorktreeBack() should report the created commit hash, got %#v", mergeResult)
+	}
+	if mergeResult.RootProjectPath != projectPath {
+		t.Fatalf("merge root path = %q, want %q", mergeResult.RootProjectPath, projectPath)
+	}
+	if mergeResult.SourceBranch != "feat/commit-and-merge-worktree" {
+		t.Fatalf("merge source branch = %q, want feat/commit-and-merge-worktree", mergeResult.SourceBranch)
+	}
+	if strings.TrimSpace(mergeResult.TargetBranch) != strings.TrimSpace(result.ParentBranch) {
+		t.Fatalf("merge target branch = %q, want %q", mergeResult.TargetBranch, result.ParentBranch)
+	}
+
+	featurePath := filepath.Join(projectPath, "FEATURE.txt")
+	if got, err := os.ReadFile(featurePath); err != nil {
+		t.Fatalf("read merged file from root: %v", err)
+	} else if strings.TrimSpace(string(got)) != "committed and merged from dirty worktree" {
+		t.Fatalf("merged file contents = %q, want committed dirty-worktree content", string(got))
+	}
+
+	rootStatus, err := scanner.ReadGitRepoStatus(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("read root git status after commit-and-merge: %v", err)
+	}
+	if rootStatus.Dirty {
+		t.Fatalf("root repo should be clean after commit-and-merge, got %#v", rootStatus)
+	}
+
+	worktreeStatus, err := scanner.ReadGitRepoStatus(ctx, result.WorktreePath)
+	if err != nil {
+		t.Fatalf("read worktree git status after commit-and-merge: %v", err)
+	}
+	if worktreeStatus.Dirty {
+		t.Fatalf("worktree should be clean after commit-and-merge, got %#v", worktreeStatus)
+	}
+
+	worktreeDetail, err := st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() for worktree after commit-and-merge error = %v", err)
+	}
+	if worktreeDetail.Summary.WorktreeMergeStatus != model.WorktreeMergeStatusMerged {
+		t.Fatalf("stored worktree merge status after commit-and-merge = %q, want %q", worktreeDetail.Summary.WorktreeMergeStatus, model.WorktreeMergeStatusMerged)
+	}
+}
+
 func TestMergeWorktreeBackReportsConflictAndRefreshesStatus(t *testing.T) {
 	t.Parallel()
 
