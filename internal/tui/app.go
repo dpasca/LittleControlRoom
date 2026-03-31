@@ -426,6 +426,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		svc:                    svc,
 		busCh:                  busCh,
 		unsub:                  unsub,
+		loading:                true,
 		status:                 initialProjectsStatus,
 		commandInput:           commandInput,
 		codexInput:             codexInput,
@@ -629,6 +630,7 @@ func currentPrivacyPatterns(svc *service.Service) []string {
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		m.loadProjectsCmd(),
+		m.scanCmd(false),
 		m.loadRecentProjectParentsCmd(),
 		m.waitBusCmd(),
 		m.waitCodexCmd(),
@@ -807,11 +809,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m.updateNormalMode(msg)
 	case projectsMsg:
-		m.loading = false
 		if msg.err != nil {
+			m.loading = false
 			m.err = msg.err
 			m.status = projectLoadFailedStatus(len(m.projects) > 0)
 			return m, nil
+		}
+		startupEmptyCache := m.status == initialProjectsStatus && len(msg.projects) == 0
+		if !startupEmptyCache {
+			m.loading = false
 		}
 		m.err = msg.filterErr
 		selectedPath := ""
@@ -825,7 +831,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.excludeProjectPatterns = append([]string(nil), msg.excludeProjectPatterns...)
 		m.allProjects = msg.projects
 		m.rebuildProjectList(selectedPath)
-		if strings.TrimSpace(m.status) == "" || m.status == initialProjectsStatus || len(m.projects) == 0 {
+		if !startupEmptyCache && (strings.TrimSpace(m.status) == "" || m.status == initialProjectsStatus || len(m.projects) == 0) {
 			m.status = loadedProjectsStatus(len(m.projects), m.sortMode, m.visibility, m.projectFilter)
 		}
 		if len(m.projects) > 0 {

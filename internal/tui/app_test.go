@@ -3882,6 +3882,25 @@ func TestProjectsMsgShowsStartupFailureStatusWhenInitialLoadFails(t *testing.T) 
 	}
 }
 
+func TestProjectsMsgKeepsInitialLoadingStateWhenStartupCacheIsEmpty(t *testing.T) {
+	m := Model{
+		loading:    true,
+		status:     initialProjectsStatus,
+		sortMode:   sortByAttention,
+		visibility: visibilityAIFolders,
+	}
+
+	updated, _ := m.Update(projectsMsg{projects: nil})
+	got := updated.(Model)
+
+	if !got.loading {
+		t.Fatalf("loading should stay true while the initial background scan is still pending")
+	}
+	if got.status != initialProjectsStatus {
+		t.Fatalf("status = %q, want initial loading status", got.status)
+	}
+}
+
 func TestProjectsMsgShowsRefreshFailureStatusWhenReloadFails(t *testing.T) {
 	m := Model{
 		loading: false,

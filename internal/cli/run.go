@@ -659,7 +659,6 @@ func formatRepoSyncLine(status model.RepoSyncStatus, ahead, behind int) string {
 }
 
 func runTUI(ctx context.Context, svc *service.Service) int {
-	_, _ = svc.ScanOnce(ctx)
 	go svc.StartScheduler(ctx)
 	go svc.StartSessionClassifier(ctx)
 	go svc.StartTodoWorktreeSuggester(ctx)
