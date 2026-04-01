@@ -46,6 +46,12 @@ func TestActionMsgErrorIsLoggedAndHinted(t *testing.T) {
 	if entry.Message != "git push failed: permission denied" {
 		t.Fatalf("entry.Message = %q, want full error text", entry.Message)
 	}
+	if entry.RootCause != "permission denied" {
+		t.Fatalf("entry.RootCause = %q, want permission denied", entry.RootCause)
+	}
+	if len(entry.Context) != 1 || entry.Context[0] != "git push failed" {
+		t.Fatalf("entry.Context = %#v, want git push failed", entry.Context)
+	}
 
 	rendered := ansi.Strip(got.renderTopStatusLine(160))
 	if !strings.Contains(rendered, "Action failed (use /errors)") {
@@ -106,6 +112,12 @@ func TestUpdateErrorLogModeCopiesSelectedEntry(t *testing.T) {
 	if !strings.Contains(copied, "Project: demo") {
 		t.Fatalf("copied text missing project: %q", copied)
 	}
+	if !strings.Contains(copied, "Cause: permission denied") {
+		t.Fatalf("copied text missing root cause: %q", copied)
+	}
+	if !strings.Contains(copied, "Context:\n- git push failed") {
+		t.Fatalf("copied text missing context: %q", copied)
+	}
 	if !strings.Contains(copied, "git push failed: permission denied") {
 		t.Fatalf("copied text missing error message: %q", copied)
 	}
@@ -118,6 +130,8 @@ func TestRenderErrorLogPanelShowsDetails(t *testing.T) {
 			At:          now,
 			Status:      "Action failed",
 			Message:     "git push failed: permission denied",
+			RootCause:   "permission denied",
+			Context:     []string{"git push failed"},
 			ProjectPath: "/tmp/demo",
 			ProjectName: "demo",
 		}},
@@ -132,7 +146,28 @@ func TestRenderErrorLogPanelShowsDetails(t *testing.T) {
 	if !strings.Contains(rendered, "Project: demo") {
 		t.Fatalf("panel missing project detail: %q", rendered)
 	}
+	if !strings.Contains(rendered, "Cause: permission denied") {
+		t.Fatalf("panel missing cause detail: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Context: git push failed") {
+		t.Fatalf("panel missing context detail: %q", rendered)
+	}
 	if !strings.Contains(rendered, "git push failed: permission denied") {
 		t.Fatalf("panel missing error detail: %q", rendered)
+	}
+}
+
+func TestRenderErrorLogRowShowsCausePreview(t *testing.T) {
+	rendered := ansi.Strip(Model{}.renderErrorLogRow(errorLogEntry{
+		At:        time.Date(2026, 4, 1, 20, 30, 0, 0, time.FixedZone("JST", 9*60*60)),
+		Status:    "Scan failed",
+		RootCause: "permission denied",
+	}, false, 80))
+
+	if !strings.Contains(rendered, "04-01 20:30  Scan failed") {
+		t.Fatalf("row missing summary: %q", rendered)
+	}
+	if !strings.Contains(rendered, "permission denied") {
+		t.Fatalf("row missing preview cause: %q", rendered)
 	}
 }

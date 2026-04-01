@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -15,6 +16,8 @@ type errorLogEntry struct {
 	At          time.Time
 	Status      string
 	Message     string
+	RootCause   string
+	Context     []string
 	ProjectPath string
 	ProjectName string
 }
@@ -77,6 +80,8 @@ func (m *Model) appendErrorLogEntry(status string, err error, projectPath string
 		At:          m.currentTime(),
 		Status:      errorSummaryText(status),
 		Message:     strings.TrimSpace(err.Error()),
+		RootCause:   errorLogRootCause(err),
+		Context:     errorLogContextLines(err),
 		ProjectPath: projectPath,
 		ProjectName: strings.TrimSpace(projectName),
 	}
@@ -238,10 +243,7 @@ func (m Model) renderErrorLogContent(width, maxHeight int) string {
 		return strings.Join(lines, "\n")
 	}
 
-	listLimit := min(len(entries), max(3, min(6, maxHeight/3)))
-	if listLimit < 3 {
-		listLimit = min(len(entries), 3)
-	}
+	listLimit := errorLogListLimit(len(entries), maxHeight)
 	start := 0
 	if m.errorLogSelected >= listLimit {
 		start = m.errorLogSelected - listLimit + 1
@@ -278,9 +280,18 @@ func (m Model) renderErrorLogContent(width, maxHeight int) string {
 	if selected.ProjectPath != "" {
 		lines = append(lines, detailField("Path", detailMutedStyle.Render(truncateText(displayPathWithHomeTilde(selected.ProjectPath), max(20, width-6)))))
 	}
+	if rootCause := effectiveErrorLogRootCause(selected); strings.TrimSpace(rootCause) != "" {
+		lines = append(lines, detailField("Cause", detailDangerStyle.Render(rootCause)))
+	}
+	if context := effectiveErrorLogContext(selected); len(context) > 0 {
+		lines = append(lines, detailField("Context", detailMutedStyle.Render(context[0])))
+		for _, line := range context[1:] {
+			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width-2, "- "+line)...)
+		}
+	}
 
 	lines = append(lines, "")
-	lines = append(lines, detailDangerStyle.Render("Error"))
+	lines = append(lines, detailDangerStyle.Render("Full error"))
 	lines = append(lines, renderWrappedDialogTextLines(detailValueStyle, width, selected.Message)...)
 	return strings.Join(lines, "\n")
 }
@@ -291,11 +302,21 @@ func (m Model) renderErrorLogRow(entry errorLogEntry, selected bool, width int) 
 	if entry.ProjectName != "" {
 		summary = summary + " - " + entry.ProjectName
 	}
-	row := truncateText(strings.TrimSpace(timeLabel+"  "+summary), width)
+	lines := []string{
+		truncateText(strings.TrimSpace(timeLabel+"  "+summary), width),
+	}
+	if preview := errorLogPreview(entry); preview != "" {
+		lines = append(lines, truncateText("  "+preview, width))
+	}
+	row := strings.Join(lines, "\n")
 	if selected {
 		return projectListSelectedRowStyle.Render(row)
 	}
-	return row
+	if len(lines) == 1 {
+		return row
+	}
+	lines[1] = detailMutedStyle.Render(lines[1])
+	return strings.Join(lines, "\n")
 }
 
 func formatErrorLogCopyText(entry errorLogEntry) string {
@@ -309,6 +330,174 @@ func formatErrorLogCopyText(entry errorLogEntry) string {
 	if strings.TrimSpace(entry.ProjectPath) != "" {
 		lines = append(lines, "Path: "+entry.ProjectPath)
 	}
-	lines = append(lines, "", "Error:", strings.TrimSpace(entry.Message))
+	if rootCause := effectiveErrorLogRootCause(entry); strings.TrimSpace(rootCause) != "" {
+		lines = append(lines, "Cause: "+rootCause)
+	}
+	if context := effectiveErrorLogContext(entry); len(context) > 0 {
+		lines = append(lines, "Context:")
+		for _, line := range context {
+			lines = append(lines, "- "+line)
+		}
+	}
+	lines = append(lines, "", "Full error:", strings.TrimSpace(entry.Message))
 	return strings.Join(lines, "\n")
+}
+
+func errorLogPreview(entry errorLogEntry) string {
+	switch {
+	case strings.TrimSpace(effectiveErrorLogRootCause(entry)) != "":
+		return effectiveErrorLogRootCause(entry)
+	case strings.TrimSpace(entry.Message) != "":
+		return firstNonEmptyErrorLine(entry.Message)
+	default:
+		return ""
+	}
+}
+
+func effectiveErrorLogRootCause(entry errorLogEntry) string {
+	if rootCause := strings.TrimSpace(entry.RootCause); rootCause != "" {
+		return rootCause
+	}
+	rootCause, _ := splitInlineErrorSummary(entry.Message)
+	return rootCause
+}
+
+func effectiveErrorLogContext(entry errorLogEntry) []string {
+	if len(entry.Context) > 0 {
+		return append([]string(nil), entry.Context...)
+	}
+	_, context := splitInlineErrorSummary(entry.Message)
+	return context
+}
+
+func errorLogListLimit(total, maxHeight int) int {
+	if total <= 0 {
+		return 0
+	}
+	switch {
+	case maxHeight >= 36:
+		return min(total, 5)
+	case maxHeight >= 28:
+		return min(total, 4)
+	default:
+		return min(total, 3)
+	}
+}
+
+func errorLogRootCause(err error) string {
+	chain := unwrapErrorMessages(err)
+	if len(chain) > 1 {
+		return chain[len(chain)-1]
+	}
+	if len(chain) == 1 {
+		root, _ := splitInlineErrorSummary(chain[0])
+		return root
+	}
+	return ""
+}
+
+func errorLogContextLines(err error) []string {
+	chain := unwrapErrorMessages(err)
+	if len(chain) <= 1 {
+		if len(chain) == 1 {
+			_, context := splitInlineErrorSummary(chain[0])
+			return context
+		}
+		return nil
+	}
+	context := make([]string, 0, len(chain)-1)
+	for i := 0; i < len(chain)-1; i++ {
+		line := trimWrappedErrorContext(chain[i], chain[i+1])
+		if line == "" {
+			continue
+		}
+		if len(context) > 0 && context[len(context)-1] == line {
+			continue
+		}
+		context = append(context, line)
+	}
+	return context
+}
+
+func unwrapErrorMessages(err error) []string {
+	if err == nil {
+		return nil
+	}
+	out := []string{}
+	appendMessage := func(message string) {
+		message = strings.TrimSpace(message)
+		if message == "" {
+			return
+		}
+		if len(out) > 0 && out[len(out)-1] == message {
+			return
+		}
+		out = append(out, message)
+	}
+	for current := err; current != nil; current = errors.Unwrap(current) {
+		appendMessage(current.Error())
+	}
+	if len(out) > 0 {
+		return out
+	}
+	appendMessage(err.Error())
+	return out
+}
+
+func trimWrappedErrorContext(outer, inner string) string {
+	outer = strings.TrimSpace(outer)
+	inner = strings.TrimSpace(inner)
+	if outer == "" {
+		return ""
+	}
+	if inner == "" || outer == inner {
+		return firstNonEmptyErrorLine(outer)
+	}
+	for _, prefix := range []string{": ", "; ", " - "} {
+		suffix := prefix + inner
+		if strings.HasSuffix(outer, suffix) {
+			return strings.TrimSpace(strings.TrimSuffix(outer, suffix))
+		}
+	}
+	if idx := strings.LastIndex(outer, ": "+inner); idx >= 0 {
+		return strings.TrimSpace(outer[:idx])
+	}
+	return firstNonEmptyErrorLine(outer)
+}
+
+func firstNonEmptyErrorLine(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+func splitInlineErrorSummary(text string) (string, []string) {
+	line := firstNonEmptyErrorLine(text)
+	if line == "" {
+		return "", nil
+	}
+	remaining := line
+	context := []string{}
+	for i := 0; i < 4; i++ {
+		if strings.Contains(remaining, "://") {
+			break
+		}
+		prefix, suffix, ok := strings.Cut(remaining, ": ")
+		if !ok {
+			break
+		}
+		prefix = strings.TrimSpace(prefix)
+		suffix = strings.TrimSpace(suffix)
+		if prefix == "" || suffix == "" {
+			break
+		}
+		context = append(context, prefix)
+		remaining = suffix
+	}
+	return remaining, context
 }
