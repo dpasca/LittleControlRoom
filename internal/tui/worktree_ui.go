@@ -682,8 +682,7 @@ func (m *Model) openWorktreeMergeConfirmForSelection() tea.Cmd {
 	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
 		if worktreeMergeCanAutoCloseSnapshot(snapshot) {
 			if err := m.closeEmbeddedSessionForProject(project.Path); err != nil {
-				m.err = err
-				m.status = "Embedded session action failed"
+				m.reportError("Embedded session action failed", err, project.Path)
 				return nil
 			}
 		} else {

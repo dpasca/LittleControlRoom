@@ -1271,7 +1271,7 @@ func (m *Model) tryHandleCodexPaste(msg tea.KeyMsg, allowImage bool) (bool, tea.
 
 	text, err := clipboardTextReader()
 	if err != nil {
-		m.status = "Clipboard paste failed: " + err.Error()
+		m.reportError("Clipboard paste failed", err, m.codexVisibleProject)
 		return true, nil
 	}
 	if text == "" {
@@ -3988,7 +3988,7 @@ func (m *Model) finalizeCodexSelection() {
 			if err := clipboardTextWriter(text); err == nil {
 				m.status = "Copied selection to clipboard"
 			} else {
-				m.status = "Selection copy failed: " + err.Error()
+				m.reportError("Selection copy failed", err, m.codexVisibleProject)
 			}
 		}
 	}

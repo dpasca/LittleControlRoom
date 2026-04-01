@@ -97,8 +97,7 @@ func (m *Model) toggleCodexInputSelectionMark() tea.Cmd {
 	}
 
 	if err := clipboardTextWriter(text); err != nil {
-		m.err = err
-		m.status = "Copy failed"
+		m.reportError("Copy failed", err, m.codexVisibleProject)
 		return nil
 	}
 
@@ -196,7 +195,7 @@ func (m *Model) finalizeCodexComposerSelection() {
 			if err := clipboardTextWriter(text); err == nil {
 				m.status = "Copied composer selection to clipboard"
 			} else {
-				m.status = "Selection copy failed: " + err.Error()
+				m.reportError("Selection copy failed", err, m.codexVisibleProject)
 			}
 		}
 	}

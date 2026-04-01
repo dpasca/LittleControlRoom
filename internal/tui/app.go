@@ -75,6 +75,9 @@ type Model struct {
 	commandMode                  bool
 	commandInput                 textinput.Model
 	commandSelected              int
+	errorLogVisible              bool
+	errorLogSelected             int
+	errorLogEntries              []errorLogEntry
 	projectFilter                string
 	projectFilterDialog          *projectFilterDialogState
 	ignoredPickerVisible         bool
@@ -215,8 +218,9 @@ type actionMsg struct {
 }
 
 type browserOpenMsg struct {
-	status string
-	err    error
+	projectPath string
+	status      string
+	err         error
 }
 
 type runtimeActionMsg struct {
@@ -740,6 +744,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.ignoredPickerVisible {
 			return m.updateIgnoredPickerMode(msg)
 		}
+		if m.errorLogVisible {
+			return m.updateErrorLogMode(msg)
+		}
 		if m.attentionDialog != nil {
 			return m.updateAttentionDialogMode(msg)
 		}
@@ -858,8 +865,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.newProjectDialog.Submitting = false
 		}
 		if msg.err != nil {
-			m.err = nil
-			m.status = msg.err.Error()
+			m.reportError("Project setup failed", msg.err, "")
 			return m, nil
 		}
 		m.err = nil
@@ -927,8 +933,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case scanMsg:
 		m.loading = false
 		if msg.err != nil {
-			m.err = msg.err
-			m.status = "Scan failed"
+			m.reportError("Scan failed", msg.err, "")
 			return m, nil
 		}
 		m.status = scanCompleteStatus(msg.report)
@@ -965,8 +970,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = gitStatusDialogReadyStatus(dialog)
 				return m, nil
 			}
-			m.err = msg.err
-			m.status = "Commit preview failed"
+			m.reportError("Commit preview failed", msg.err, msg.projectPath)
 			m.gitStatusDialog = nil
 			m.gitStatusApplying = false
 			m.commitPreview = nil
@@ -1007,9 +1011,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = diffViewReadyStatus(*m.diffView)
 				return m, nil
 			}
-			m.err = msg.err
 			m.diffView = nil
-			m.status = "Diff preview failed"
+			m.reportError("Diff preview failed", msg.err, "")
 			return m, nil
 		}
 		m.err = nil
@@ -1041,8 +1044,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = diffViewReadyStatus(*m.diffView)
 				return m, nil
 			}
-			m.err = msg.err
-			m.status = "Diff staging failed"
+			m.reportError("Diff staging failed", msg.err, "")
 			return m, nil
 		}
 		m.err = nil
@@ -1069,16 +1071,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.commitPreviewMessageOverride = ""
 		m.diffView = nil
 		if msg.err != nil {
-			m.err = msg.err
-			m.status = "Action failed"
+			m.reportError("Action failed", msg.err, msg.projectPath)
 			return m, nil
 		}
 		m.status = msg.status
 		return m, tea.Batch(m.scanCmd(false), m.loadProjectsCmd())
 	case browserOpenMsg:
 		if msg.err != nil {
-			m.err = msg.err
-			m.status = "Open failed"
+			m.reportError("Open failed", msg.err, msg.projectPath)
 			return m, nil
 		}
 		m.err = nil
@@ -1086,8 +1086,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case runtimeActionMsg:
 		if msg.err != nil {
-			m.err = nil
-			m.status = msg.err.Error()
+			m.reportError("Runtime action failed", msg.err, msg.projectPath)
 			return m, nil
 		}
 		m.err = nil
@@ -1108,8 +1107,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.runCommandDialog.Submitting = false
 		}
 		if msg.err != nil {
-			m.err = nil
-			m.status = msg.err.Error()
+			m.reportError("Run command save failed", msg.err, msg.projectPath)
 			return m, nil
 		}
 		m.closeRunCommandDialog("")
@@ -1125,8 +1123,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	case todoActionMsg:
 		if msg.err != nil {
-			m.err = nil
-			m.status = msg.err.Error()
+			m.reportError("TODO action failed", msg.err, msg.projectPath)
 			if m.todoEditor != nil {
 				m.todoEditor.Submitting = false
 			}
@@ -1148,8 +1145,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err != nil {
 			m.todoLaunchDraft = nil
-			m.err = nil
-			m.status = msg.err.Error()
+			m.reportError("TODO launch failed", msg.err, msg.projectPath)
 			return m, nil
 		}
 		provider := msg.provider.Normalized()
@@ -1175,8 +1171,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if err := req.Validate(); err != nil {
 			m.todoLaunchDraft = nil
-			m.err = err
-			m.status = err.Error()
+			m.reportError("Embedded session open failed", err, msg.projectPath)
 			return m, nil
 		}
 		m.ensureCodexRuntime()
@@ -1192,8 +1187,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.clearPendingGitSummary(msg.projectPath)
 		}
 		if msg.err != nil {
-			m.err = msg.err
-			m.status = singleLineStatusText(msg.err.Error())
+			m.reportError("Worktree action failed", msg.err, msg.projectPath)
 			if m.worktreeMergeConfirm != nil && filepath.Clean(strings.TrimSpace(m.worktreeMergeConfirm.ProjectPath)) == filepath.Clean(strings.TrimSpace(msg.projectPath)) {
 				m.worktreeMergeConfirm.Busy = false
 				m.worktreeMergeConfirm.BusyMessage = ""
@@ -1245,7 +1239,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case settingsSavedMsg:
 		m.err = nil
 		if msg.err != nil {
-			m.status = msg.err.Error()
+			m.reportError("Settings save failed", msg.err, "")
 			return m, nil
 		}
 		if m.svc != nil {
@@ -1276,7 +1270,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case setupSavedMsg:
 		m.err = nil
 		if msg.err != nil {
-			m.status = msg.err.Error()
+			m.reportError("AI setup save failed", msg.err, "")
 			return m, nil
 		}
 		if m.svc != nil {
@@ -1291,8 +1285,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.refreshSetupSnapshotCmd(false)
 	case embeddedModelPreferencesSavedMsg:
 		if msg.err != nil {
-			m.err = msg.err
-			m.status = fmt.Sprintf("Embedded model updated for this run, but saving %s failed: %v", msg.path, msg.err)
+			m.reportError("Embedded model updated for this run; config save failed", msg.err, "")
 			return m, nil
 		}
 		m.err = nil
@@ -1305,8 +1298,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case privacyModeSavedMsg:
 		if msg.err != nil {
-			m.err = msg.err
-			m.status = fmt.Sprintf("Privacy mode saved for this run, but config write failed: %v", msg.err)
+			m.reportError("Privacy mode updated for this run; config save failed", msg.err, "")
 			return m, nil
 		}
 		m.err = nil
@@ -1335,7 +1327,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case ignoredProjectActionMsg:
 		if msg.err != nil {
-			m.status = msg.err.Error()
+			m.reportError("Ignore action failed", msg.err, "")
 			return m, nil
 		}
 		m.status = msg.status
@@ -1355,8 +1347,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.showEmbeddedOpenFailure(msg.projectPath, provider, msg.err)
 				}
 			}
-			m.status = "Embedded session open failed"
-			m.err = msg.err
+			m.reportError("Embedded session open failed", msg.err, msg.projectPath)
 			return m, nil
 		}
 		m.finishCodexPendingOpen(msg.projectPath, true)
@@ -1375,8 +1366,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.codexInput.Focus()
 	case codexActionMsg:
 		if msg.err != nil {
-			m.err = msg.err
-			m.status = "Embedded session action failed"
+			m.reportError("Embedded session action failed", msg.err, msg.projectPath)
 			if msg.projectPath != "" && !msg.restoreDraft.Empty() {
 				m.restoreCodexDraft(msg.projectPath, msg.restoreDraft)
 			}
@@ -1414,8 +1404,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err != nil {
 			m.codexModelPicker = nil
-			m.err = msg.err
-			m.status = "Embedded model picker failed"
+			m.reportError("Embedded model picker failed", msg.err, msg.projectPath)
 			m.returnToTodoFromModelPicker()
 			return m, nil
 		}
@@ -2202,6 +2191,8 @@ func (m Model) View() string {
 		body = m.renderProjectFilterOverlay(body, layout.width, layout.height)
 	} else if m.commandMode {
 		body = m.renderCommandPaletteOverlay(body, layout.width, layout.height)
+	} else if m.errorLogVisible {
+		body = m.renderErrorLogOverlay(body, layout.width, layout.height)
 	} else if m.codexPickerVisible {
 		body = m.renderCodexPickerOverlay(body, layout.width, layout.height)
 	} else if m.ignoredPickerVisible {
@@ -2476,6 +2467,9 @@ func (m Model) renderTopStatusActions(width int) string {
 	actions := []footerAction{
 		footerNavAction("f", "filter"),
 		footerNavAction("/", "command"),
+	}
+	if len(m.errorLogEntries) > 0 && width >= 112 {
+		actions = append(actions, footerNavAction("/errors", "log"))
 	}
 	if width >= 96 {
 		actions = append(actions, footerNavAction("Tab", "switch"))
@@ -3085,6 +3079,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, nil
 	case commands.KindAIStats:
 		return m, m.openAIStatsDialog()
+	case commands.KindErrors:
+		return m.openErrorLog()
 	case commands.KindRefresh:
 		m.loading = true
 		m.status = "Scanning and retrying failed assessments..."
@@ -3636,9 +3632,9 @@ func (m Model) ignoreProjectCmd(project model.ProjectSummary) tea.Cmd {
 func (m Model) openProjectDirInBrowserCmd(path string) tea.Cmd {
 	return func() tea.Msg {
 		if err := openProjectDirInBrowser(path); err != nil {
-			return browserOpenMsg{err: err}
+			return browserOpenMsg{projectPath: path, err: err}
 		}
-		return browserOpenMsg{status: "Opened project in browser"}
+		return browserOpenMsg{projectPath: path, status: "Opened project in browser"}
 	}
 }
 
@@ -5877,7 +5873,7 @@ func helpPanelLines() []string {
 			renderDialogAction("Tab", "complete there", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("?", "toggle help", commitActionKeyStyle, commitActionTextStyle),
 		),
-		commandPaletteHintStyle.Render("Try /setup, /ai, /codex, /todo, /wt merge|remove|prune, /commit, /diff, or /run."),
+		commandPaletteHintStyle.Render("Try /setup, /ai, /errors, /codex, /todo, /wt merge|remove|prune, /commit, /diff, or /run."),
 		detailSectionStyle.Render("Navigate"),
 		renderHelpPanelActionRow(
 			renderDialogAction("Tab", "switch pane", navigateActionKeyStyle, navigateActionTextStyle),

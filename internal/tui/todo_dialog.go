@@ -513,8 +513,7 @@ func (m Model) updateTodoDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if err := clipboardTextWriter(text); err != nil {
-			m.err = err
-			m.status = "TODO copy failed"
+			m.reportError("TODO copy failed", err, item.ProjectPath)
 			return m, nil
 		}
 		m.err = nil

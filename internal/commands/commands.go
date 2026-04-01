@@ -12,6 +12,7 @@ type Kind string
 const (
 	KindHelp           Kind = "help"
 	KindAIStats        Kind = "ai-stats"
+	KindErrors         Kind = "errors"
 	KindRefresh        Kind = "refresh"
 	KindSort           Kind = "sort"
 	KindView           Kind = "view"
@@ -112,6 +113,7 @@ type Invocation struct {
 var specs = []Spec{
 	{Name: "help", Usage: "/help", Summary: "Open the help panel"},
 	{Name: "ai", Usage: "/ai", Summary: "Open the internal AI stats dialog"},
+	{Name: "errors", Usage: "/errors", Summary: "Open the recent error log"},
 	{Name: "refresh", Usage: "/refresh", Summary: "Rescan projects and retry failed assessments"},
 	{Name: "sort", Usage: "/sort attention|recent", Summary: "Set list ordering"},
 	{Name: "view", Usage: "/view ai|all", Summary: "Choose AI-linked or all folders"},
@@ -298,6 +300,11 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /ai")
 		}
 		return Invocation{Kind: KindAIStats, Canonical: "/ai"}, nil
+	case "errors", "log":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /errors")
+		}
+		return Invocation{Kind: KindErrors, Canonical: "/errors"}, nil
 	case "refresh":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /refresh")

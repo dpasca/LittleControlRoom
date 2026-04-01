@@ -33,6 +33,30 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "errors",
+			raw:  "/errors",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindErrors {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindErrors)
+				}
+				if inv.Canonical != "/errors" {
+					t.Fatalf("canonical = %q, want /errors", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "log alias",
+			raw:  "/log",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindErrors {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindErrors)
+				}
+				if inv.Canonical != "/errors" {
+					t.Fatalf("canonical = %q, want /errors", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "sort recent",
 			raw:  "/sort recent",
 			check: func(t *testing.T, inv Invocation) {

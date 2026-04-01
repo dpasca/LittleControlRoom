@@ -6420,8 +6420,11 @@ func TestTodoWorktreeLaunchErrorKeepsCopyDialogOpen(t *testing.T) {
 	if got.todoCopyDialog.Submitting {
 		t.Fatalf("todo copy dialog submitting should reset after launch error")
 	}
-	if got.status != "create worktree failed" {
+	if got.status != "TODO launch failed (use /errors)" {
 		t.Fatalf("status = %q, want launch error", got.status)
+	}
+	if len(got.errorLogEntries) == 0 || got.errorLogEntries[0].Message != "create worktree failed" {
+		t.Fatalf("latest error log entry = %#v, want create worktree failed", got.errorLogEntries)
 	}
 }
 
@@ -7456,11 +7459,14 @@ func TestVisibleOpenCodeSlashNewFailureKeepsClosedSessionVisible(t *testing.T) {
 	if !snapshot.Closed {
 		t.Fatalf("snapshot.Closed = false, want the previous OpenCode session to remain as a closed placeholder")
 	}
-	if got.status != "Embedded session open failed" {
+	if got.status != "Embedded session open failed (use /errors)" {
 		t.Fatalf("status = %q, want embedded-session-open-failed notice", got.status)
 	}
-	if got.err == nil || got.err.Error() != "opencode create failed" {
-		t.Fatalf("got.err = %v, want opencode create failed", got.err)
+	if got.err != nil {
+		t.Fatalf("got.err = %v, want nil after logging", got.err)
+	}
+	if len(got.errorLogEntries) == 0 || got.errorLogEntries[0].Message != "opencode create failed" {
+		t.Fatalf("latest error log entry = %#v, want opencode create failed", got.errorLogEntries)
 	}
 	rendered := ansi.Strip(got.renderCodexView())
 	if !strings.Contains(rendered, "OpenCode session closed.") {
@@ -7533,11 +7539,14 @@ func TestLaunchOpenCodeForSelectionFailureKeepsErrorPlaceholderVisible(t *testin
 	if snapshot.LastError != "opencode create failed" {
 		t.Fatalf("snapshot.LastError = %q, want opencode create failed", snapshot.LastError)
 	}
-	if got.status != "Embedded session open failed" {
+	if got.status != "Embedded session open failed (use /errors)" {
 		t.Fatalf("status = %q, want embedded-session-open-failed notice", got.status)
 	}
-	if got.err == nil || got.err.Error() != "opencode create failed" {
-		t.Fatalf("got.err = %v, want opencode create failed", got.err)
+	if got.err != nil {
+		t.Fatalf("got.err = %v, want nil after logging", got.err)
+	}
+	if len(got.errorLogEntries) == 0 || got.errorLogEntries[0].Message != "opencode create failed" {
+		t.Fatalf("latest error log entry = %#v, want opencode create failed", got.errorLogEntries)
 	}
 	rendered := ansi.Strip(got.renderCodexView())
 	if !strings.Contains(rendered, "OpenCode session closed.") {
@@ -12838,7 +12847,7 @@ func TestHelpPanelLinesStayMinimal(t *testing.T) {
 	if !strings.Contains(joined, "/wt merge|remove|prune") {
 		t.Fatalf("helpPanelLines() should include concrete worktree slash-command examples: %q", joined)
 	}
-	if !strings.Contains(joined, "/setup, /ai, /codex, /todo") || !strings.Contains(joined, "/commit, /diff, or /run") {
+	if !strings.Contains(joined, "/setup, /ai, /errors, /codex, /todo") || !strings.Contains(joined, "/commit, /diff, or /run") {
 		t.Fatalf("helpPanelLines() should include concrete slash-command examples: %q", joined)
 	}
 	if !strings.Contains(joined, "interrupt busy session") {
