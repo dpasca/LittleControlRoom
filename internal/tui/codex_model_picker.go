@@ -690,7 +690,7 @@ func (m Model) renderCodexModelPickerContent(width, maxHeight int) string {
 	}
 
 	if state == nil || state.Loading {
-		header = append(header, commandPaletteHintStyle.Render("Loading available embedded "+label+" models..."))
+		header = append(header, commandPaletteHintStyle.Render(spinnerFrames[m.spinnerFrame%len(spinnerFrames)]+" Loading available embedded "+label+" models..."))
 		return strings.Join(header, "\n")
 	}
 	if len(state.Models) == 0 {
