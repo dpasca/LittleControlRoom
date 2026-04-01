@@ -33,6 +33,18 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "error alias",
+			raw:  "/error",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindErrors {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindErrors)
+				}
+				if inv.Canonical != "/errors" {
+					t.Fatalf("canonical = %q, want /errors", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "errors",
 			raw:  "/errors",
 			check: func(t *testing.T, inv Invocation) {

@@ -300,7 +300,7 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /ai")
 		}
 		return Invocation{Kind: KindAIStats, Canonical: "/ai"}, nil
-	case "errors", "log":
+	case "error", "errors", "log":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /errors")
 		}
