@@ -237,22 +237,8 @@ func restartProjectRuntime(manager *projectrun.Manager, req projectrun.StartRequ
 		return projectrun.Snapshot{}, err
 	}
 	if snapshot.Running {
-		if err := manager.Stop(req.ProjectPath); err != nil && !errors.Is(err, projectrun.ErrNotRunning) {
-			return projectrun.Snapshot{}, err
-		}
-		deadline := time.Now().Add(3 * time.Second)
-		for time.Now().Before(deadline) {
-			time.Sleep(100 * time.Millisecond)
-			snapshot, err = manager.Snapshot(req.ProjectPath)
-			if err != nil {
-				return projectrun.Snapshot{}, err
-			}
-			if !snapshot.Running {
-				break
-			}
-		}
-		if snapshot.Running {
-			return snapshot, fmt.Errorf("timed out waiting for runtime to stop")
+		if snapshot, err = stopProjectRuntimeAndWait(manager, req.ProjectPath, 3*time.Second); err != nil {
+			return snapshot, err
 		}
 	}
 	snapshot, err = manager.Start(req)
@@ -260,6 +246,29 @@ func restartProjectRuntime(manager *projectrun.Manager, req projectrun.StartRequ
 		return snapshot, nil
 	}
 	return snapshot, err
+}
+
+func stopProjectRuntimeAndWait(manager *projectrun.Manager, projectPath string, timeout time.Duration) (projectrun.Snapshot, error) {
+	if manager == nil {
+		return projectrun.Snapshot{}, fmt.Errorf("runtime manager unavailable")
+	}
+	if err := manager.Stop(projectPath); err != nil && !errors.Is(err, projectrun.ErrNotRunning) {
+		return projectrun.Snapshot{}, err
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		snapshot, err := manager.Snapshot(projectPath)
+		if err != nil {
+			return projectrun.Snapshot{}, err
+		}
+		if !snapshot.Running {
+			return snapshot, nil
+		}
+		if time.Now().After(deadline) {
+			return snapshot, fmt.Errorf("timed out waiting for runtime to stop")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func (m Model) renderRunCommandOverlay(body string, width, height int) string {

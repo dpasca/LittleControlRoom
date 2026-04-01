@@ -1352,17 +1352,17 @@ func TestUpdateNormalModeMShowsBlockedMergeWhenWorktreesDirty(t *testing.T) {
 	if got.worktreeMergeConfirm == nil {
 		t.Fatalf("M should still open the merge-back dialog in blocked state")
 	}
-	if got.worktreeMergeConfirm.MergeReady {
+	if worktreeMergeConfirmReady(got.worktreeMergeConfirm) {
 		t.Fatalf("merge confirm should start blocked when source/root are dirty")
 	}
-	if !got.worktreeMergeConfirm.OfferCommit {
+	if !got.worktreeMergeConfirm.SourceDirty {
 		t.Fatalf("blocked merge should offer a commit when the source worktree is dirty")
 	}
-	if !strings.Contains(got.worktreeMergeConfirm.BlockReason, "This worktree is dirty") {
-		t.Fatalf("blocked reason = %q, want source dirty reason", got.worktreeMergeConfirm.BlockReason)
+	if !strings.Contains(worktreeMergeConfirmBlockReason(got.worktreeMergeConfirm), "The root checkout is dirty") {
+		t.Fatalf("blocked reason = %q, want root dirty reason", worktreeMergeConfirmBlockReason(got.worktreeMergeConfirm))
 	}
 	rendered := ansi.Strip(got.renderWorktreeMergeConfirmOverlay("", 100, 24))
-	if !strings.Contains(rendered, "Merge blocked") || !strings.Contains(rendered, "This worktree is dirty") || !strings.Contains(rendered, "Commit & Merge") {
+	if !strings.Contains(rendered, "Merge blocked") || !strings.Contains(rendered, "The root checkout is dirty") || !strings.Contains(rendered, "Commit worktree changes first") {
 		t.Fatalf("blocked merge overlay should explain why merge is unavailable, got %q", rendered)
 	}
 }
@@ -1436,7 +1436,125 @@ func TestOpenWorktreeMergeConfirmAutoClosesCompletedSession(t *testing.T) {
 	}
 }
 
-func TestBlockedWorktreeMergeEnterOnMergeKeepsDialogOpen(t *testing.T) {
+func TestOpenWorktreeMergeConfirmIncludesActiveRuntimeShutdown(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-runtime"
+	m := Model{
+		runtimeSnapshots: map[string]projectrun.Snapshot{
+			childPath: {ProjectPath: childPath, Running: true},
+		},
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--feat-runtime",
+				Path:                 childPath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				WorktreeOriginTodoID: 42,
+				RepoBranch:           "feat/runtime",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	cmd := m.openWorktreeMergeConfirmForSelection()
+	if cmd != nil {
+		t.Fatalf("merge confirmation with a running runtime should not need background work")
+	}
+	if m.worktreeMergeConfirm == nil {
+		t.Fatalf("merge confirmation should open even when a runtime is active")
+	}
+	if !m.worktreeMergeConfirm.RuntimeRunning || !m.worktreeMergeConfirm.StopRuntime {
+		t.Fatalf("merge confirmation should default to stopping the active runtime, got %#v", m.worktreeMergeConfirm)
+	}
+	if !m.worktreeMergeConfirm.MarkTodoDone || !m.worktreeMergeConfirm.RemoveNow {
+		t.Fatalf("merge confirmation should default to follow-up cleanup actions, got %#v", m.worktreeMergeConfirm)
+	}
+	if !worktreeMergeConfirmReady(m.worktreeMergeConfirm) {
+		t.Fatalf("merge confirmation should stay runnable when runtime shutdown is selected")
+	}
+	if m.status != "Confirm worktree merge-back" {
+		t.Fatalf("status = %q, want merge confirmation", m.status)
+	}
+}
+
+func TestWorktreeMergePlanStopsRuntimeBeforeRunningGitActions(t *testing.T) {
+	projectPath := t.TempDir()
+	runtimeManager := projectrun.NewManager()
+	defer runtimeManager.CloseAll()
+
+	snapshot, err := runtimeManager.Start(projectrun.StartRequest{
+		ProjectPath: projectPath,
+		Command:     "sleep 30",
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if !snapshot.Running {
+		t.Fatalf("runtime should be running after start, got %+v", snapshot)
+	}
+
+	m := Model{
+		runtimeManager: runtimeManager,
+		allProjects: []model.ProjectSummary{{
+			Name:                 "repo--feat-runtime",
+			Path:                 projectPath,
+			PresentOnDisk:        true,
+			WorktreeRootPath:     "/tmp/repo",
+			WorktreeKind:         model.WorktreeKindLinked,
+			WorktreeParentBranch: "master",
+			RepoBranch:           "feat/runtime",
+		}},
+		worktreeMergeConfirm: &worktreeMergeConfirmState{
+			ProjectPath:    projectPath,
+			RootPath:       "/tmp/repo",
+			BranchName:     "feat/runtime",
+			TargetBranch:   "master",
+			RuntimeRunning: true,
+			StopRuntime:    true,
+			RemoveNow:      true,
+		},
+	}
+	m.worktreeMergeConfirm.Selected = worktreeMergeConfirmApplyIndex(m.worktreeMergeConfirm)
+
+	updated, cmd := m.updateWorktreeMergeConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("applying the merge plan should queue background work")
+	}
+	if got.worktreeMergeConfirm == nil || !got.worktreeMergeConfirm.Busy {
+		t.Fatalf("merge plan should lock the dialog while it runs")
+	}
+
+	msg := cmd()
+	action, ok := msg.(worktreeActionMsg)
+	if !ok {
+		t.Fatalf("merge plan command returned %T, want worktreeActionMsg", msg)
+	}
+	if action.err == nil || !strings.Contains(action.err.Error(), "service unavailable") {
+		t.Fatalf("merge plan should reach the service boundary after stopping the runtime, got %#v", action)
+	}
+	stopped, err := runtimeManager.Snapshot(projectPath)
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	if stopped.Running {
+		t.Fatalf("runtime should be stopped before the merge action returns, got %+v", stopped)
+	}
+}
+
+func TestBlockedWorktreeMergeEnterOnApplyKeepsDialogOpen(t *testing.T) {
 	m := Model{
 		allProjects: []model.ProjectSummary{{
 			Name:                 "repo--feat-parallel-lane",
@@ -1449,15 +1567,16 @@ func TestBlockedWorktreeMergeEnterOnMergeKeepsDialogOpen(t *testing.T) {
 			RepoDirty:            true,
 		}},
 		worktreeMergeConfirm: &worktreeMergeConfirmState{
-			ProjectPath:  "/tmp/repo--feat-parallel-lane",
-			RootPath:     "/tmp/repo",
-			BranchName:   "feat/parallel-lane",
-			TargetBranch: "master",
-			MergeReady:   false,
-			BlockReason:  "This worktree is dirty. Commit or discard changes before merging back.",
-			Selected:     worktreeMergeConfirmFocusMerge,
+			ProjectPath:       "/tmp/repo--feat-parallel-lane",
+			RootPath:          "/tmp/repo",
+			BranchName:        "feat/parallel-lane",
+			TargetBranch:      "master",
+			SourceDirty:       true,
+			CommitBeforeMerge: false,
+			RemoveNow:         true,
 		},
 	}
+	m.worktreeMergeConfirm.Selected = worktreeMergeConfirmApplyIndex(m.worktreeMergeConfirm)
 
 	updated, cmd := m.updateWorktreeMergeConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
@@ -1467,7 +1586,7 @@ func TestBlockedWorktreeMergeEnterOnMergeKeepsDialogOpen(t *testing.T) {
 	if got.worktreeMergeConfirm == nil {
 		t.Fatalf("blocked merge should keep the dialog open")
 	}
-	if got.status != "This worktree is dirty. Commit or discard changes before merging back." {
+	if got.status != "This worktree is dirty. Leave commit checked or clean it manually before merging back." {
 		t.Fatalf("status = %q, want blocked merge reason", got.status)
 	}
 }
@@ -1489,11 +1608,11 @@ func TestBlockedWorktreeMergeEnterOnKeepCancels(t *testing.T) {
 			RootPath:     "/tmp/repo",
 			BranchName:   "feat/parallel-lane",
 			TargetBranch: "master",
-			MergeReady:   false,
-			BlockReason:  "This worktree is dirty. Commit or discard changes before merging back.",
-			Selected:     worktreeMergeConfirmFocusKeep,
+			SourceDirty:  true,
+			RemoveNow:    true,
 		},
 	}
+	m.worktreeMergeConfirm.Selected = worktreeMergeConfirmKeepIndex(m.worktreeMergeConfirm)
 
 	updated, cmd := m.updateWorktreeMergeConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
@@ -1508,7 +1627,7 @@ func TestBlockedWorktreeMergeEnterOnKeepCancels(t *testing.T) {
 	}
 }
 
-func TestBlockedWorktreeMergeEnterOnCommitQueuesCommitAndMerge(t *testing.T) {
+func TestDirtyWorktreeMergeEnterOnApplyQueuesCommitAndMergePlan(t *testing.T) {
 	projectPath := "/tmp/repo--feat-parallel-lane"
 	m := Model{
 		allProjects: []model.ProjectSummary{
@@ -1525,21 +1644,23 @@ func TestBlockedWorktreeMergeEnterOnCommitQueuesCommitAndMerge(t *testing.T) {
 			},
 		},
 		worktreeMergeConfirm: &worktreeMergeConfirmState{
-			ProjectPath:  projectPath,
-			RootPath:     "/tmp/repo",
-			BranchName:   "feat/parallel-lane",
-			TargetBranch: "master",
-			MergeReady:   false,
-			BlockReason:  "This worktree is dirty. Commit or discard changes before merging back.",
-			OfferCommit:  true,
-			Selected:     worktreeMergeConfirmFocusCommit,
+			ProjectPath:       projectPath,
+			RootPath:          "/tmp/repo",
+			BranchName:        "feat/parallel-lane",
+			TargetBranch:      "master",
+			SourceDirty:       true,
+			CommitBeforeMerge: true,
+			HasLinkedTodo:     true,
+			MarkTodoDone:      true,
+			RemoveNow:         true,
 		},
 	}
+	m.worktreeMergeConfirm.Selected = worktreeMergeConfirmApplyIndex(m.worktreeMergeConfirm)
 
 	updated, cmd := m.updateWorktreeMergeConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
 	if cmd == nil {
-		t.Fatalf("commit & merge should queue background work")
+		t.Fatalf("apply should queue the merge plan in the background")
 	}
 	if got.worktreeMergeConfirm == nil {
 		t.Fatalf("commit & merge should keep the merge dialog open")
@@ -1547,7 +1668,7 @@ func TestBlockedWorktreeMergeEnterOnCommitQueuesCommitAndMerge(t *testing.T) {
 	if got.worktreeMergeConfirm == nil || !got.worktreeMergeConfirm.Busy {
 		t.Fatalf("commit & merge should lock the merge dialog while git runs")
 	}
-	if got.worktreeMergeConfirm.BusyMessage != "Please wait while Little Control Room commits this worktree and merges it back. The dialog is temporarily locked." {
+	if got.worktreeMergeConfirm.BusyMessage != "Please wait while Little Control Room commits this worktree, merges it back, marks the linked TODO done, and removes the merged checkout. The dialog is temporarily locked." {
 		t.Fatalf("busy message = %q", got.worktreeMergeConfirm.BusyMessage)
 	}
 	if got.commitPreview != nil {
@@ -1556,8 +1677,8 @@ func TestBlockedWorktreeMergeEnterOnCommitQueuesCommitAndMerge(t *testing.T) {
 	if got.pendingGitSummary(projectPath) != "Committing and merging worktree back..." {
 		t.Fatalf("pending git summary = %q, want commit-and-merge summary", got.pendingGitSummary(projectPath))
 	}
-	if got.status != "Committing and merging worktree back..." {
-		t.Fatalf("status = %q, want commit & merge progress", got.status)
+	if got.status != "Applying worktree merge plan..." {
+		t.Fatalf("status = %q, want merge-plan progress", got.status)
 	}
 }
 
@@ -1577,11 +1698,11 @@ func TestWorktreeMergeEnterLocksDialogWhileRunning(t *testing.T) {
 			RootPath:     "/tmp/repo",
 			BranchName:   "feat/parallel-lane",
 			TargetBranch: "master",
-			MergeReady:   true,
-			Selected:     worktreeMergeConfirmFocusMerge,
+			RemoveNow:    true,
 		},
 		spinnerFrame: 2,
 	}
+	m.worktreeMergeConfirm.Selected = worktreeMergeConfirmApplyIndex(m.worktreeMergeConfirm)
 
 	updated, cmd := m.updateWorktreeMergeConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
@@ -1591,7 +1712,7 @@ func TestWorktreeMergeEnterLocksDialogWhileRunning(t *testing.T) {
 	if got.worktreeMergeConfirm == nil || !got.worktreeMergeConfirm.Busy {
 		t.Fatalf("merge dialog should enter busy mode while merge runs")
 	}
-	if got.status != "Merging worktree back..." {
+	if got.status != "Applying worktree merge plan..." {
 		t.Fatalf("status = %q, want merge progress message", got.status)
 	}
 
@@ -1966,51 +2087,28 @@ func TestDispatchCommandWorktreePruneQueuesCommand(t *testing.T) {
 	}
 }
 
-func TestWorktreeActionMsgOpensPostMergeCleanupPrompt(t *testing.T) {
+func TestWorktreeActionMsgMergeCompletionDoesNotOpenFollowUpPrompt(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"
 	status := "Merged feat/parallel-lane into master"
-	todoText := "Ship the parallel lane work"
 
 	updated, cmd := Model{}.Update(worktreeActionMsg{
-		projectPath:           childPath,
-		selectPath:            rootPath,
-		status:                status,
-		offerPostMergeCleanup: true,
-		postMergeRootPath:     rootPath,
-		postMergeSourceBranch: "feat/parallel-lane",
-		postMergeTargetBranch: "master",
-		postMergeTodoID:       42,
-		postMergeTodoText:     todoText,
-		postMergeTodoPath:     rootPath,
+		projectPath: childPath,
+		selectPath:  rootPath,
+		status:      status,
 	})
 	got := updated.(Model)
 	if cmd == nil {
 		t.Fatalf("merge completion should queue a refresh command batch")
 	}
-	if got.worktreePostMerge == nil {
-		t.Fatalf("merge completion should open the post-merge cleanup prompt")
-	}
-	if got.worktreePostMerge.ProjectPath != childPath {
-		t.Fatalf("post-merge cleanup prompt path = %q, want %q", got.worktreePostMerge.ProjectPath, childPath)
-	}
-	if got.worktreePostMerge.RootPath != rootPath {
-		t.Fatalf("post-merge cleanup root = %q, want %q", got.worktreePostMerge.RootPath, rootPath)
-	}
-	if got.worktreePostMerge.Status != status {
-		t.Fatalf("post-merge cleanup status = %q, want %q", got.worktreePostMerge.Status, status)
-	}
-	if got.worktreePostMerge.TodoID != 42 || got.worktreePostMerge.TodoText != todoText || got.worktreePostMerge.TodoPath != rootPath {
-		t.Fatalf("linked todo prompt metadata = %#v, want todo id/text/path", got.worktreePostMerge)
-	}
-	if got.worktreePostMerge.Selected != worktreePostMergeFocusTodo {
-		t.Fatalf("post-merge prompt should focus the linked todo checkbox first")
-	}
-	if got.worktreePostMerge.MarkTodoDone || got.worktreePostMerge.RemoveNow {
-		t.Fatalf("post-merge prompt should default to no cleanup selections, got %#v", got.worktreePostMerge)
+	if got.worktreePostMerge != nil {
+		t.Fatalf("merge completion should stay in the single merge dialog flow")
 	}
 	if got.preferredSelectPath != rootPath {
 		t.Fatalf("preferred select path = %q, want %q", got.preferredSelectPath, rootPath)
+	}
+	if got.status != status {
+		t.Fatalf("status = %q, want %q", got.status, status)
 	}
 }
 
@@ -2022,12 +2120,12 @@ func TestWorktreeActionMsgErrorKeepsMergeDialogOpen(t *testing.T) {
 			RootPath:     "/tmp/repo",
 			BranchName:   "feat/parallel-lane",
 			TargetBranch: "master",
-			MergeReady:   true,
+			RemoveNow:    true,
 			Busy:         true,
-			BusyMessage:  "Please wait while Git merges this worktree back. The dialog is temporarily locked.",
-			Selected:     worktreeMergeConfirmFocusMerge,
+			BusyMessage:  "Please wait while Little Control Room merges it back and removes the merged checkout. The dialog is temporarily locked.",
 		},
 	}
+	m.worktreeMergeConfirm.Selected = worktreeMergeConfirmApplyIndex(m.worktreeMergeConfirm)
 
 	updated, cmd := m.Update(worktreeActionMsg{
 		projectPath: "/tmp/repo--feat-parallel-lane",
