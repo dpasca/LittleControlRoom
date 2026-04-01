@@ -6394,6 +6394,116 @@ func TestUpdateTodoCopyDialogHandlesPointerModelReturn(t *testing.T) {
 	}
 }
 
+func TestTodoCopyDialogSubmittingEscCancelsPendingLaunch(t *testing.T) {
+	t.Parallel()
+
+	canceled := false
+	m := Model{
+		todoCopyDialog: &todoCopyDialogState{
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			TodoID:      7,
+			TodoText:    "Launch this TODO in a new worktree",
+			RunMode:     todoCopyModeNewWorktree,
+			Provider:    codexapp.ProviderClaudeCode,
+			LaunchID:    11,
+			Submitting:  true,
+		},
+		todoPendingLaunch: &todoPendingLaunchState{
+			ID:     11,
+			Cancel: func() { canceled = true },
+		},
+	}
+
+	updated, cmd := m.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyEsc})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("canceling a pending TODO launch should not queue another command")
+	}
+	if !canceled {
+		t.Fatalf("cancel should be called for the pending TODO launch")
+	}
+	if got.todoCopyDialog != nil {
+		t.Fatalf("todo copy dialog should close after canceling a pending launch")
+	}
+	if got.todoPendingLaunch == nil || !got.todoPendingLaunch.Canceled {
+		t.Fatalf("pending TODO launch should stay tracked as canceled until its completion message arrives")
+	}
+	if got.status != "Canceling TODO start..." {
+		t.Fatalf("status = %q, want canceling status", got.status)
+	}
+}
+
+func TestTodoCopyDialogSubmittingCtrlCCancelsPendingLaunch(t *testing.T) {
+	t.Parallel()
+
+	canceled := false
+	m := Model{
+		todoCopyDialog: &todoCopyDialogState{
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			TodoID:      7,
+			TodoText:    "Launch this TODO in a new worktree",
+			RunMode:     todoCopyModeNewWorktree,
+			Provider:    codexapp.ProviderClaudeCode,
+			LaunchID:    12,
+			Submitting:  true,
+		},
+		todoPendingLaunch: &todoPendingLaunchState{
+			ID:     12,
+			Cancel: func() { canceled = true },
+		},
+	}
+
+	updated, cmd := m.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyCtrlC})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("ctrl+c cancel should not queue another command")
+	}
+	if !canceled {
+		t.Fatalf("ctrl+c should cancel the pending TODO launch")
+	}
+	if got.todoCopyDialog != nil {
+		t.Fatalf("todo copy dialog should close after ctrl+c cancel")
+	}
+	if got.todoPendingLaunch == nil || !got.todoPendingLaunch.Canceled {
+		t.Fatalf("pending TODO launch should remain marked canceled after ctrl+c")
+	}
+	if got.status != "Canceling TODO start..." {
+		t.Fatalf("status = %q, want canceling status", got.status)
+	}
+}
+
+func TestTodoWorktreeLaunchCanceledSkipsErrorReporting(t *testing.T) {
+	t.Parallel()
+
+	m := Model{
+		todoPendingLaunch: &todoPendingLaunchState{
+			ID:       15,
+			Canceled: true,
+		},
+	}
+
+	updated, cmd := m.Update(todoWorktreeLaunchMsg{
+		launchID:    15,
+		projectPath: "/tmp/demo",
+		err:         context.Canceled,
+	})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("canceled todo launch should not queue a follow-up command")
+	}
+	if got.todoPendingLaunch != nil {
+		t.Fatalf("pending TODO launch should clear once the canceled result arrives")
+	}
+	if got.status != "TODO start canceled" {
+		t.Fatalf("status = %q, want canceled status", got.status)
+	}
+	if len(got.errorLogEntries) != 0 {
+		t.Fatalf("canceled todo launch should not add error log entries, got %#v", got.errorLogEntries)
+	}
+}
+
 func TestTodoWorktreeLaunchErrorKeepsCopyDialogOpen(t *testing.T) {
 	t.Parallel()
 

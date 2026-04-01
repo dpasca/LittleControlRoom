@@ -63,6 +63,7 @@ type Model struct {
 	todoEditor            *todoEditorState
 	todoDeleteConfirm     *todoDeleteConfirmState
 	todoLaunchDraft       *todoLaunchDraftState
+	todoPendingLaunch     *todoPendingLaunchState
 	todoCopyDialog        *todoCopyDialogState
 	todoWorktreeEditor    *todoWorktreeEditorState
 	todoExistingWorktree  *todoExistingWorktreeDialogState
@@ -157,7 +158,8 @@ type Model struct {
 	codexTranscriptCache   codexTranscriptRenderCache
 	codexViewportContent   codexViewportContentState
 
-	pendingG bool
+	pendingG      bool
+	todoLaunchSeq int64
 
 	spinnerFrame int
 	showSessions bool
@@ -243,6 +245,7 @@ type todoActionMsg struct {
 }
 
 type todoWorktreeLaunchMsg struct {
+	launchID       int64
 	projectPath    string
 	todoText       string
 	status         string
@@ -1140,8 +1143,38 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case todoWorktreeLaunchMsg:
-		if m.todoCopyDialog != nil {
+		pendingCanceled := false
+		if msg.launchID != 0 {
+			pending := m.todoPendingLaunch
+			if pending == nil || pending.ID != msg.launchID {
+				return m, nil
+			}
+			pendingCanceled = pending.Canceled
+			m.todoPendingLaunch = nil
+		}
+		if m.todoCopyDialog != nil && (msg.launchID == 0 || m.todoCopyDialog.LaunchID == 0 || m.todoCopyDialog.LaunchID == msg.launchID) {
 			m.todoCopyDialog.Submitting = false
+			m.todoCopyDialog.LaunchID = 0
+		}
+		if pendingCanceled {
+			m.err = nil
+			if msg.err == nil {
+				m.status = "TODO start canceled after worktree creation"
+				if m.svc == nil {
+					return m, nil
+				}
+				cmds := []tea.Cmd{m.loadProjectsCmd()}
+				if detailPath := strings.TrimSpace(m.detail.Summary.Path); detailPath != "" {
+					cmds = append(cmds, m.loadDetailCmd(detailPath))
+				}
+				return m, tea.Batch(cmds...)
+			}
+			if errors.Is(msg.err, context.Canceled) {
+				m.status = "TODO start canceled"
+				return m, nil
+			}
+			m.status = "TODO start canceled"
+			return m, nil
 		}
 		if msg.err != nil {
 			m.todoLaunchDraft = nil

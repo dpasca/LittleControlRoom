@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -58,6 +59,12 @@ type todoLaunchDraftState struct {
 	openModelFirst bool
 }
 
+type todoPendingLaunchState struct {
+	ID       int64
+	Cancel   context.CancelFunc
+	Canceled bool
+}
+
 type todoCopyDialogState struct {
 	ProjectPath            string
 	ProjectName            string
@@ -68,6 +75,7 @@ type todoCopyDialogState struct {
 	OpenModelFirst         bool
 	BranchOverride         string
 	WorktreeSuffixOverride string
+	LaunchID               int64
 	Submitting             bool
 }
 
@@ -370,6 +378,35 @@ func (m *Model) closeTodoCopyDialog(status string) tea.Cmd {
 	return nil
 }
 
+func (m *Model) beginTodoPendingLaunch() (int64, context.Context) {
+	m.todoLaunchSeq++
+	parent := m.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	launchCtx, cancel := context.WithCancel(parent)
+	m.todoPendingLaunch = &todoPendingLaunchState{
+		ID:     m.todoLaunchSeq,
+		Cancel: cancel,
+	}
+	if m.todoCopyDialog != nil {
+		m.todoCopyDialog.LaunchID = m.todoLaunchSeq
+		m.todoCopyDialog.Submitting = true
+	}
+	return m.todoLaunchSeq, launchCtx
+}
+
+func (m *Model) cancelTodoPendingLaunch(status string) tea.Cmd {
+	if pending := m.todoPendingLaunch; pending != nil {
+		pending.Canceled = true
+		if pending.Cancel != nil {
+			pending.Cancel()
+			pending.Cancel = nil
+		}
+	}
+	return m.closeTodoCopyDialog(status)
+}
+
 func (m *Model) openTodoWorktreeEditor(item model.TodoItem) tea.Cmd {
 	if m.todoCopyDialog == nil {
 		return nil
@@ -529,6 +566,10 @@ func (m Model) updateTodoCopyDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if copyDialog.Submitting {
+		switch msg.String() {
+		case "esc", "ctrl+c":
+			return m, m.cancelTodoPendingLaunch("Canceling TODO start...")
+		}
 		return m, nil
 	}
 	if copyDialog.RunMode == todoCopyModeNewWorktree {
@@ -539,7 +580,7 @@ func (m Model) updateTodoCopyDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				case "enter", " ":
 					m.status = message
 				}
-				if msg.String() == "esc" {
+				if msg.String() == "esc" || msg.String() == "ctrl+c" {
 					return m, m.closeTodoCopyDialog("TODO start canceled")
 				}
 				return m, nil
@@ -547,7 +588,7 @@ func (m Model) updateTodoCopyDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+c":
 		return m, m.closeTodoCopyDialog("TODO start canceled")
 	case "w", "W":
 		return m, m.cycleTodoCopyDialogRunMode(msg.String())
@@ -649,7 +690,6 @@ func (m *Model) activateTodoCopyDialogSelection() (tea.Model, tea.Cmd) {
 			m.status = message
 			return m, nil
 		}
-		copyDialog.Submitting = true
 		return m.startSelectedTodoInNewWorktree(copyDialog.Provider, copyDialog.OpenModelFirst)
 	}
 	m.todoCopyDialog = nil
@@ -877,7 +917,7 @@ func (m Model) purgeDoneTodosCmd(projectPath string) tea.Cmd {
 	}
 }
 
-func (m Model) createTodoWorktreeCmd(projectPath string, todoID int64, todoText string, provider codexapp.Provider, openModelFirst bool) tea.Cmd {
+func (m Model) createTodoWorktreeCmd(launchCtx context.Context, launchID int64, projectPath string, todoID int64, todoText string, provider codexapp.Provider, openModelFirst bool) tea.Cmd {
 	branchOverride := ""
 	suffixOverride := ""
 	if m.todoCopyDialog != nil {
@@ -886,20 +926,32 @@ func (m Model) createTodoWorktreeCmd(projectPath string, todoID int64, todoText 
 	}
 	if m.svc == nil {
 		return func() tea.Msg {
-			return todoWorktreeLaunchMsg{err: fmt.Errorf("service unavailable")}
+			return todoWorktreeLaunchMsg{
+				launchID:    launchID,
+				projectPath: projectPath,
+				err:         fmt.Errorf("service unavailable"),
+			}
 		}
 	}
+	if launchCtx == nil {
+		launchCtx = context.Background()
+	}
 	return func() tea.Msg {
-		result, err := m.svc.CreateTodoWorktree(m.ctx, service.CreateTodoWorktreeRequest{
+		result, err := m.svc.CreateTodoWorktree(launchCtx, service.CreateTodoWorktreeRequest{
 			ProjectPath:    projectPath,
 			TodoID:         todoID,
 			BranchName:     branchOverride,
 			WorktreeSuffix: suffixOverride,
 		})
 		if err != nil {
-			return todoWorktreeLaunchMsg{err: err}
+			return todoWorktreeLaunchMsg{
+				launchID:    launchID,
+				projectPath: projectPath,
+				err:         err,
+			}
 		}
 		return todoWorktreeLaunchMsg{
+			launchID:       launchID,
 			projectPath:    result.WorktreePath,
 			todoText:       todoText,
 			status:         "Worktree ready",
@@ -1040,8 +1092,9 @@ func (m Model) startSelectedTodoInNewWorktree(provider codexapp.Provider, openMo
 	} else {
 		provider = provider.Normalized()
 	}
+	launchID, launchCtx := m.beginTodoPendingLaunch()
 	m.status = "Creating worktree..."
-	return m, m.createTodoWorktreeCmd(projectPath, item.ID, item.Text, provider, openModelFirst)
+	return m, m.createTodoWorktreeCmd(launchCtx, launchID, projectPath, item.ID, item.Text, provider, openModelFirst)
 }
 
 func (m *Model) returnToTodoFromModelPicker() {
