@@ -4860,15 +4860,11 @@ func (m Model) renderFooter(width int) string {
 	}
 	if m.worktreeMergeConfirm != nil {
 		if m.worktreeMergeConfirm.Busy {
-			return m.renderModalFooter(width, "Merge worktree: waiting for git to finish", filterSegment, usageSegment)
+			return m.renderModalFooter(width, "Merge worktree: waiting for actions to finish", filterSegment, usageSegment)
 		}
-		label := "Merge worktree: Enter merge, Tab switch, Esc cancel"
-		if !m.worktreeMergeConfirm.MergeReady {
-			if m.worktreeMergeConfirm.OfferCommit {
-				label = "Merge blocked: Tab commit & merge/keep, Enter choose, Esc keep"
-			} else {
-				label = "Merge blocked: clean root/worktree or fix branch, Esc keep"
-			}
+		label := "Merge worktree: Space toggle, Tab navigate, Enter choose, Esc cancel"
+		if !worktreeMergeConfirmReady(m.worktreeMergeConfirm) {
+			label = "Merge blocked: adjust options or fix repo state, Space toggle, Esc cancel"
 		}
 		return m.renderModalFooter(width, label, filterSegment, usageSegment)
 	}
