@@ -2,11 +2,15 @@ package codex
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"lcroom/internal/scanner"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestDetectorParsesModernAndLegacyFixtures(t *testing.T) {
@@ -119,5 +123,78 @@ func TestDetectTurnStateFromTailIgnoresControlOnlyTaskStart(t *testing.T) {
 	}
 	if !state.startedAt.IsZero() {
 		t.Fatalf("startedAt = %v, want zero after control-only task start is ignored", state.startedAt)
+	}
+}
+
+func TestDetectFromStateDBPrefersSessionFileCWD(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	codexHome := filepath.Join(root, ".codex")
+	sessionDir := filepath.Join(codexHome, "sessions", "2026", "04", "01")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+
+	correctPath := filepath.Join(root, "correct-project")
+	wrongPath := filepath.Join(root, "wrong-project")
+	for _, path := range []string{correctPath, wrongPath} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+	}
+
+	sessionID := "ses_db_prefers_file"
+	sessionFile := filepath.Join(sessionDir, sessionID+".jsonl")
+	timestamp := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
+	content := "{\"type\":\"session_meta\",\"payload\":{\"id\":\"" + sessionID + "\",\"cwd\":\"" + correctPath + "\",\"timestamp\":\"" + timestamp.Format(time.RFC3339) + "\"}}\n"
+	if err := os.WriteFile(sessionFile, []byte(content), 0o644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	dbPath := filepath.Join(codexHome, "state_5.sqlite")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`
+		CREATE TABLE threads (
+			id TEXT NOT NULL,
+			cwd TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			rollout_path TEXT NOT NULL
+		)
+	`); err != nil {
+		t.Fatalf("create threads table: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO threads(id, cwd, created_at, updated_at, rollout_path) VALUES (?, ?, ?, ?, ?)`,
+		sessionID, wrongPath, timestamp.Unix(), timestamp.Add(2*time.Minute).Unix(), sessionFile,
+	); err != nil {
+		t.Fatalf("insert thread row: %v", err)
+	}
+
+	d := New(codexHome)
+	results, err := d.Detect(context.Background(), scanner.NewPathScope([]string{root}, nil))
+	if err != nil {
+		t.Fatalf("Detect() error = %v", err)
+	}
+
+	if results[wrongPath] != nil {
+		t.Fatalf("wrong-path result = %#v, want session ownership moved to %s", results[wrongPath], correctPath)
+	}
+	entry := results[correctPath]
+	if entry == nil {
+		t.Fatalf("missing corrected project entry for %s", correctPath)
+	}
+	if len(entry.Sessions) != 1 {
+		t.Fatalf("session count = %d, want 1", len(entry.Sessions))
+	}
+	if entry.Sessions[0].DetectedProjectPath != correctPath {
+		t.Fatalf("detected project path = %q, want %q", entry.Sessions[0].DetectedProjectPath, correctPath)
+	}
+	if entry.Sessions[0].ProjectPath != correctPath {
+		t.Fatalf("project path = %q, want %q", entry.Sessions[0].ProjectPath, correctPath)
 	}
 }

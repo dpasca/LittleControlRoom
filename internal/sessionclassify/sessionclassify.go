@@ -195,7 +195,7 @@ func BuildClassificationRequest(state model.ProjectState) (model.SessionClassifi
 	if state.Path == "" || len(state.Sessions) == 0 {
 		return model.SessionClassification{}, false
 	}
-	latest := state.Sessions[0]
+	latest := model.NormalizeSessionEvidenceIdentity(state.Sessions[0])
 	if latest.SessionID == "" || latest.SessionFile == "" {
 		return model.SessionClassification{}, false
 	}
@@ -209,8 +209,10 @@ func BuildClassificationRequest(state model.ProjectState) (model.SessionClassifi
 		return model.SessionClassification{}, false
 	}
 
-	return model.SessionClassification{
+	return model.NormalizeSessionClassificationIdentity(model.SessionClassification{
+		Source:            latest.Source,
 		SessionID:         latest.SessionID,
+		RawSessionID:      latest.RawSessionID,
 		ProjectPath:       state.Path,
 		SessionFile:       latest.SessionFile,
 		SessionFormat:     latest.Format,
@@ -219,7 +221,7 @@ func BuildClassificationRequest(state model.ProjectState) (model.SessionClassifi
 		Model:             DefaultModel,
 		ClassifierVersion: ClassifierVersion,
 		SourceUpdatedAt:   latest.LastEventAt,
-	}, true
+	}), true
 }
 
 func SnapshotHashForSession(session model.SessionEvidence, projectPath string) string {
@@ -230,9 +232,10 @@ func SnapshotHashForSession(session model.SessionEvidence, projectPath string) s
 }
 
 func legacySnapshotHashForSession(session model.SessionEvidence, projectPath string) string {
+	session = model.NormalizeSessionEvidenceIdentity(session)
 	sum := sha256.Sum256([]byte(strings.Join([]string{
 		projectPath,
-		session.SessionID,
+		session.ExternalID(),
 		session.SessionFile,
 		session.Format,
 		session.StartedAt.UTC().Format(time.RFC3339Nano),
@@ -246,7 +249,9 @@ func legacySnapshotHashForSession(session model.SessionEvidence, projectPath str
 
 func ComputeSnapshotHash(ctx context.Context, projectPath string, session model.SessionEvidence, gitStatus GitStatusSnapshot) (string, error) {
 	snapshot, err := ExtractSnapshot(ctx, model.SessionClassification{
+		Source:          session.Source,
 		SessionID:       session.SessionID,
+		RawSessionID:    session.RawSessionID,
 		ProjectPath:     projectPath,
 		SessionFile:     session.SessionFile,
 		SessionFormat:   session.Format,
@@ -378,11 +383,13 @@ func (m *Manager) processOne(ctx context.Context) (bool, error) {
 
 	gitStatus := GitStatusSnapshot{}
 	sessionEvidence := model.SessionEvidence{
-		SessionID:   classification.SessionID,
-		ProjectPath: classification.ProjectPath,
-		SessionFile: classification.SessionFile,
-		Format:      classification.SessionFormat,
-		LastEventAt: classification.SourceUpdatedAt,
+		Source:       classification.Source,
+		SessionID:    classification.SessionID,
+		RawSessionID: classification.RawSessionID,
+		ProjectPath:  classification.ProjectPath,
+		SessionFile:  classification.SessionFile,
+		Format:       classification.SessionFormat,
+		LastEventAt:  classification.SourceUpdatedAt,
 	}
 	if detail, detailErr := m.store.GetProjectDetail(ctx, classification.ProjectPath, 1); detailErr == nil {
 		gitStatus = NewGitStatusSnapshot(detail.Summary.RepoDirty, detail.Summary.RepoSyncStatus, detail.Summary.RepoAheadCount, detail.Summary.RepoBehindCount)
@@ -483,7 +490,7 @@ func (m *Manager) publishClassificationEvent(ctx context.Context, classification
 	now := time.Now()
 	payload := map[string]string{
 		"status":   state,
-		"session":  classification.SessionID,
+		"session":  classification.ExternalID(),
 		"category": string(classification.Category),
 	}
 	if classification.Summary != "" {

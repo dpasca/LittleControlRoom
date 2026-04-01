@@ -3525,13 +3525,14 @@ func (m Model) selectedProjectSessionID(project model.ProjectSummary, provider c
 	}
 	if m.detail.Summary.Path == project.Path {
 		for _, session := range m.detail.Sessions {
-			if providerForSessionFormat(session.Format) == provider.Normalized() && strings.TrimSpace(session.SessionID) != "" {
-				return session.SessionID
+			sessionID := session.ExternalID()
+			if providerForSessionFormat(session.Format) == provider.Normalized() && strings.TrimSpace(sessionID) != "" {
+				return sessionID
 			}
 		}
 	}
 	if providerForSessionFormat(project.LatestSessionFormat) == provider.Normalized() {
-		return strings.TrimSpace(project.LatestSessionID)
+		return strings.TrimSpace(project.ExternalLatestSessionID())
 	}
 	return ""
 }

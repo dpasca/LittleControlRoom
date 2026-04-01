@@ -310,7 +310,7 @@ func runDoctor(ctx context.Context, svc *service.Service, cfg config.AppConfig) 
 			fmt.Println("  session samples:")
 			for i := 0; i < min(3, len(s.Sessions)); i++ {
 				session := s.Sessions[i]
-				fmt.Printf("    - id=%s format=%s last=%s errors=%d file=%s\n", session.SessionID, session.Format, session.LastEventAt.Format(time.RFC3339), session.ErrorCount, session.SessionFile)
+				fmt.Printf("    - id=%s format=%s last=%s errors=%d file=%s\n", session.ExternalID(), session.Format, session.LastEventAt.Format(time.RFC3339), session.ErrorCount, session.SessionFile)
 			}
 			classification, err := svc.Store().GetSessionClassification(ctx, s.Sessions[0].SessionID)
 			if err == nil {
@@ -388,7 +388,7 @@ func runSnapshot(ctx context.Context, svc *service.Service, cfg config.AppConfig
 	for _, choice := range selected {
 		entry := snapshotDumpEntry{
 			ProjectPath:   choice.State.Path,
-			SessionID:     choice.Session.SessionID,
+			SessionID:     choice.Session.ExternalID(),
 			SessionFile:   choice.Session.SessionFile,
 			SessionFormat: choice.Session.Format,
 		}
@@ -402,7 +402,9 @@ func runSnapshot(ctx context.Context, svc *service.Service, cfg config.AppConfig
 			choice.State.RepoBehindCount,
 		)
 		snapshot, err := sessionclassify.ExtractSnapshot(ctx, model.SessionClassification{
+			Source:          choice.Session.Source,
 			SessionID:       choice.Session.SessionID,
+			RawSessionID:    choice.Session.RawSessionID,
 			ProjectPath:     choice.State.Path,
 			SessionFile:     choice.Session.SessionFile,
 			SessionFormat:   choice.Session.Format,
@@ -435,7 +437,7 @@ func selectSnapshotSessions(states []model.ProjectState, projectPath, sessionID 
 			continue
 		}
 		for _, session := range state.Sessions {
-			if sessionID != "" && session.SessionID != sessionID {
+			if sessionID != "" && session.SessionID != sessionID && session.ExternalID() != sessionID {
 				continue
 			}
 			selected = append(selected, snapshotDumpSelection{
@@ -448,7 +450,7 @@ func selectSnapshotSessions(states []model.ProjectState, projectPath, sessionID 
 	sort.Slice(selected, func(i, j int) bool {
 		if selected[i].Session.LastEventAt.Equal(selected[j].Session.LastEventAt) {
 			if selected[i].State.Path == selected[j].State.Path {
-				return selected[i].Session.SessionID < selected[j].Session.SessionID
+				return selected[i].Session.ExternalID() < selected[j].Session.ExternalID()
 			}
 			return selected[i].State.Path < selected[j].State.Path
 		}
@@ -724,7 +726,9 @@ func runSanitizeSummaries(ctx context.Context, st *store.Store, cfg config.AppCo
 			details[project] = detail
 		}
 		session := model.SessionEvidence{
+			Source:       classification.Source,
 			SessionID:    strings.TrimSpace(classification.SessionID),
+			RawSessionID: strings.TrimSpace(classification.RawSessionID),
 			ProjectPath:  strings.TrimSpace(classification.ProjectPath),
 			SessionFile:  strings.TrimSpace(classification.SessionFile),
 			Format:       strings.TrimSpace(classification.SessionFormat),
@@ -738,14 +742,16 @@ func runSanitizeSummaries(ctx context.Context, st *store.Store, cfg config.AppCo
 			detail.Summary.RepoBehindCount,
 		)
 		snapshot, err := sessionclassify.ExtractSnapshot(ctx, model.SessionClassification{
+			Source:          classification.Source,
 			SessionID:       classification.SessionID,
+			RawSessionID:    classification.RawSessionID,
 			ProjectPath:     classification.ProjectPath,
 			SessionFile:     classification.SessionFile,
 			SessionFormat:   classification.SessionFormat,
 			SourceUpdatedAt: classification.SourceUpdatedAt,
 		}, session, gitStatus)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "extract snapshot failed: project=%s session=%s err=%v\n", project, classification.SessionID, err)
+			fmt.Fprintf(os.Stderr, "extract snapshot failed: project=%s session=%s err=%v\n", project, classification.ExternalID(), err)
 			failedCount++
 			continue
 		}
@@ -757,19 +763,19 @@ func runSanitizeSummaries(ctx context.Context, st *store.Store, cfg config.AppCo
 		}
 
 		if dryRun {
-			fmt.Printf("dry-run: would update %s summary\n  old: %q\n  new: %q\n", classification.SessionID, classification.Summary, sanitized)
+			fmt.Printf("dry-run: would update %s summary\n  old: %q\n  new: %q\n", classification.ExternalID(), classification.Summary, sanitized)
 			skippedCount++
 			continue
 		}
 
 		updated, err := st.UpdateSessionClassificationSummary(ctx, classification.SessionID, sanitized)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "update summary failed: project=%s session=%s err=%v\n", classification.ProjectPath, classification.SessionID, err)
+			fmt.Fprintf(os.Stderr, "update summary failed: project=%s session=%s err=%v\n", classification.ProjectPath, classification.ExternalID(), err)
 			failedCount++
 			continue
 		}
 		if updated {
-			fmt.Printf("updated %s summary\n", classification.SessionID)
+			fmt.Printf("updated %s summary\n", classification.ExternalID())
 			changedCount++
 		} else {
 			skippedCount++

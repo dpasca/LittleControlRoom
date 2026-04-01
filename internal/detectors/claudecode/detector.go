@@ -109,7 +109,7 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 			}
 		}
 
-		session := model.SessionEvidence{
+		session := model.NormalizeSessionEvidenceIdentity(model.SessionEvidence{
 			SessionID:            parsed.sessionID,
 			ProjectPath:          cwd,
 			DetectedProjectPath:  cwd,
@@ -120,7 +120,7 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 			LatestTurnStartedAt:  turnStarted,
 			LatestTurnStateKnown: turnKnown,
 			LatestTurnCompleted:  turnDone,
-		}
+		})
 		entry.Sessions = append(entry.Sessions, session)
 		entry.Artifacts = append(entry.Artifacts, model.ArtifactEvidence{
 			Path:      f.path,

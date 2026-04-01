@@ -94,10 +94,10 @@ func (d *Detector) Name() string {
 
 func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[string]*model.DetectorProjectActivity, error) {
 	if fastResults, used, err := d.detectFromStateDB(ctx, scope); err == nil && used {
-		// Supplement the DB results with any session files on disk that aren't
-		// already covered. Embedded Codex sessions launched by the app create
-		// rollout JSONL files but may not write to state_5.sqlite.
-		d.mergeOrphanSessionFiles(ctx, scope, fastResults)
+		// Reconcile state_5.sqlite with rollout files on disk. The JSONL files
+		// are the cwd source of truth, while the DB is a fast path for discovery
+		// and fallback when the rollout file is absent.
+		d.mergeSessionFilesFromDisk(ctx, scope, fastResults)
 		return fastResults, nil
 	}
 
@@ -137,7 +137,7 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 			results[cwd] = entry
 		}
 
-		session := model.SessionEvidence{
+		session := model.NormalizeSessionEvidenceIdentity(model.SessionEvidence{
 			SessionID:            parsed.sessionID,
 			ProjectPath:          cwd,
 			DetectedProjectPath:  cwd,
@@ -149,7 +149,7 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 			LatestTurnStartedAt:  parsed.turnStartedAt,
 			LatestTurnStateKnown: parsed.turnKnown,
 			LatestTurnCompleted:  parsed.turnDone,
-		}
+		})
 		entry.Sessions = append(entry.Sessions, session)
 		entry.Artifacts = append(entry.Artifacts, parsed.artifacts...)
 		entry.ErrorCount += parsed.errorCount
@@ -170,33 +170,33 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 	return results, nil
 }
 
-// mergeOrphanSessionFiles finds session JSONL files on disk that aren't
-// referenced by any session in the DB results and merges them in. This is
-// cheap because it only parses files whose paths are not already known.
-func (d *Detector) mergeOrphanSessionFiles(ctx context.Context, scope scanner.PathScope, results map[string]*model.DetectorProjectActivity) {
-	knownFiles := map[string]struct{}{}
-	for _, entry := range results {
-		for _, s := range entry.Sessions {
-			if s.SessionFile != "" {
-				knownFiles[s.SessionFile] = struct{}{}
-			}
-		}
-	}
-
+// mergeSessionFilesFromDisk reconciles rollout JSONL files with the DB-backed
+// session index. When the DB and JSONL disagree about cwd ownership, the JSONL
+// file wins because session logs are the source of truth.
+func (d *Detector) mergeSessionFilesFromDisk(ctx context.Context, scope scanner.PathScope, results map[string]*model.DetectorProjectActivity) {
 	files, err := d.collectSessionFiles()
 	if err != nil {
 		return
 	}
 
+	sessions := map[string]model.SessionEvidence{}
+	for _, entry := range results {
+		for _, session := range entry.Sessions {
+			if strings.TrimSpace(session.SessionID) == "" {
+				continue
+			}
+			sessions[session.SessionID] = mergeCodexSessionEvidence(sessions[session.SessionID], session)
+		}
+	}
+
+	seenFiles := map[string]struct{}{}
 	for _, f := range files {
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
-		if _, known := knownFiles[f]; known {
-			continue
-		}
+		seenFiles[f] = struct{}{}
 		parsed, err := d.parseWithCache(f)
 		if err != nil {
 			continue
@@ -209,16 +209,7 @@ func (d *Detector) mergeOrphanSessionFiles(ctx context.Context, scope scanner.Pa
 			continue
 		}
 
-		entry, ok := results[cwd]
-		if !ok {
-			entry = &model.DetectorProjectActivity{
-				ProjectPath: cwd,
-				Source:      d.Name(),
-			}
-			results[cwd] = entry
-		}
-
-		session := model.SessionEvidence{
+		session := model.NormalizeSessionEvidenceIdentity(model.SessionEvidence{
 			SessionID:            parsed.sessionID,
 			ProjectPath:          cwd,
 			DetectedProjectPath:  cwd,
@@ -230,20 +221,112 @@ func (d *Detector) mergeOrphanSessionFiles(ctx context.Context, scope scanner.Pa
 			LatestTurnStartedAt:  parsed.turnStartedAt,
 			LatestTurnStateKnown: parsed.turnKnown,
 			LatestTurnCompleted:  parsed.turnDone,
+		})
+		sessions[session.SessionID] = mergeCodexSessionEvidence(sessions[session.SessionID], session)
+	}
+
+	d.pruneCache(seenFiles)
+
+	rebuilt := map[string]*model.DetectorProjectActivity{}
+	dbPath := filepath.Join(d.codexHome, "state_5.sqlite")
+	for _, session := range sessions {
+		projectPath := filepath.Clean(strings.TrimSpace(session.ProjectPath))
+		if projectPath == "" || projectPath == "." || !scope.Allows(projectPath) {
+			continue
+		}
+		entry, ok := rebuilt[projectPath]
+		if !ok {
+			entry = &model.DetectorProjectActivity{
+				ProjectPath: projectPath,
+				Source:      d.Name(),
+			}
+			rebuilt[projectPath] = entry
 		}
 		entry.Sessions = append(entry.Sessions, session)
-		entry.Artifacts = append(entry.Artifacts, parsed.artifacts...)
-		entry.ErrorCount += parsed.errorCount
-		if parsed.lastEventAt.After(entry.LastActivity) {
-			entry.LastActivity = parsed.lastEventAt
+		entry.Artifacts = append(entry.Artifacts, codexArtifactEvidence(dbPath, session))
+		entry.ErrorCount += session.ErrorCount
+		if session.LastEventAt.After(entry.LastActivity) {
+			entry.LastActivity = session.LastEventAt
 		}
 	}
 
+	for path := range results {
+		delete(results, path)
+	}
+	for path, entry := range rebuilt {
+		results[path] = entry
+	}
 	for _, entry := range results {
 		sort.Slice(entry.Sessions, func(i, j int) bool {
 			return entry.Sessions[i].LastEventAt.After(entry.Sessions[j].LastEventAt)
 		})
+		dedupeArtifacts(entry)
 	}
+}
+
+func mergeCodexSessionEvidence(existing, candidate model.SessionEvidence) model.SessionEvidence {
+	if strings.TrimSpace(existing.SessionID) == "" {
+		return candidate
+	}
+	preferred := existing
+	other := candidate
+	if candidate.ProjectPath != "" && candidate.ProjectPath != existing.ProjectPath {
+		preferred = candidate
+		other = existing
+	} else if candidate.LastEventAt.After(existing.LastEventAt) {
+		preferred = candidate
+		other = existing
+	}
+
+	merged := preferred
+	if merged.ProjectPath == "" {
+		merged.ProjectPath = other.ProjectPath
+	}
+	if merged.DetectedProjectPath == "" {
+		merged.DetectedProjectPath = other.DetectedProjectPath
+	}
+	if merged.SessionFile == "" {
+		merged.SessionFile = other.SessionFile
+	}
+	if merged.Format == "" {
+		merged.Format = other.Format
+	}
+	if merged.StartedAt.IsZero() {
+		merged.StartedAt = other.StartedAt
+	}
+	if other.LastEventAt.After(merged.LastEventAt) {
+		merged.LastEventAt = other.LastEventAt
+	}
+	if other.ErrorCount > merged.ErrorCount {
+		merged.ErrorCount = other.ErrorCount
+	}
+	if !merged.LatestTurnStateKnown && other.LatestTurnStateKnown {
+		merged.LatestTurnStateKnown = other.LatestTurnStateKnown
+		merged.LatestTurnCompleted = other.LatestTurnCompleted
+		merged.LatestTurnStartedAt = other.LatestTurnStartedAt
+	}
+	if merged.LatestTurnStartedAt.IsZero() && !other.LatestTurnStartedAt.IsZero() {
+		merged.LatestTurnStartedAt = other.LatestTurnStartedAt
+	}
+	return merged
+}
+
+func codexArtifactEvidence(dbPath string, session model.SessionEvidence) model.ArtifactEvidence {
+	artifact := model.ArtifactEvidence{
+		Path:      dbPath,
+		Kind:      "codex_threads_sqlite",
+		UpdatedAt: session.LastEventAt,
+		Note:      "state_5.sqlite threads table",
+	}
+	if strings.HasSuffix(session.SessionFile, ".jsonl") {
+		artifact.Path = session.SessionFile
+		artifact.Kind = "codex_session_jsonl"
+		artifact.Note = "session log file mtime used for activity"
+	}
+	if stat, err := os.Stat(artifact.Path); err == nil && stat.ModTime().After(artifact.UpdatedAt) {
+		artifact.UpdatedAt = stat.ModTime()
+	}
+	return artifact
 }
 
 func (d *Detector) detectFromStateDB(ctx context.Context, scope scanner.PathScope) (map[string]*model.DetectorProjectActivity, bool, error) {
@@ -343,7 +426,7 @@ func (d *Detector) detectFromStateDB(ctx context.Context, scope scanner.PathScop
 			}
 		}
 
-		session := model.SessionEvidence{
+		session := model.NormalizeSessionEvidenceIdentity(model.SessionEvidence{
 			SessionID:            id,
 			ProjectPath:          projectPath,
 			DetectedProjectPath:  projectPath,
@@ -355,7 +438,7 @@ func (d *Detector) detectFromStateDB(ctx context.Context, scope scanner.PathScop
 			LatestTurnStartedAt:  turnState.startedAt,
 			LatestTurnStateKnown: turnState.known,
 			LatestTurnCompleted:  turnState.completed,
-		}
+		})
 		entry.Sessions = append(entry.Sessions, session)
 		entry.Artifacts = append(entry.Artifacts, model.ArtifactEvidence{
 			Path:      artifactPath,

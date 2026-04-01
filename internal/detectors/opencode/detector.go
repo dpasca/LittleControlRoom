@@ -110,7 +110,7 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 		}
 		updatedAt := unixToTimeFlexible(activityUpdatedAt)
 
-		entry.Sessions = append(entry.Sessions, model.SessionEvidence{
+		session := model.NormalizeSessionEvidenceIdentity(model.SessionEvidence{
 			SessionID:           sessionID,
 			ProjectPath:         projectPath,
 			DetectedProjectPath: projectPath,
@@ -120,6 +120,7 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 			LastEventAt:         updatedAt,
 			ErrorCount:          0,
 		})
+		entry.Sessions = append(entry.Sessions, session)
 		entry.Artifacts = append(entry.Artifacts, model.ArtifactEvidence{
 			Path:      dbPath,
 			Kind:      "opencode_sqlite",

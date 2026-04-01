@@ -3481,6 +3481,64 @@ func TestScanOnceClearsExpiredSnooze(t *testing.T) {
 	}
 }
 
+func TestScanOnceReconcilesDuplicateSessionOwnershipAcrossProjects(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	root := t.TempDir()
+	alphaPath := filepath.Join(root, "alpha")
+	betaPath := filepath.Join(root, "beta")
+	for _, path := range []string{alphaPath, betaPath} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+	}
+
+	older := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
+	newer := older.Add(5 * time.Minute)
+	dupID := "dup-session"
+
+	detector := staticDetector{
+		name: "test",
+		activities: map[string]*model.DetectorProjectActivity{
+			alphaPath: fakeActivity(alphaPath, dupID, older),
+			betaPath:  fakeActivity(betaPath, dupID, newer),
+		},
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = nil
+	svc := New(cfg, st, events.NewBus(), []detectors.Detector{detector})
+
+	if _, err := svc.ScanOnce(ctx); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+
+	if _, err := st.GetProjectDetail(ctx, alphaPath, 10); err == nil {
+		t.Fatalf("expected losing project %s to be dropped once its only session moved away", alphaPath)
+	}
+
+	betaDetail, err := st.GetProjectDetail(ctx, betaPath, 10)
+	if err != nil {
+		t.Fatalf("beta detail: %v", err)
+	}
+	if len(betaDetail.Sessions) != 1 {
+		t.Fatalf("beta session count = %d, want 1", len(betaDetail.Sessions))
+	}
+	if betaDetail.Sessions[0].SessionID != "codex:"+dupID {
+		t.Fatalf("beta session id = %q, want %q", betaDetail.Sessions[0].SessionID, "codex:"+dupID)
+	}
+	if betaDetail.Sessions[0].ProjectPath != betaPath {
+		t.Fatalf("beta session project path = %q, want %q", betaDetail.Sessions[0].ProjectPath, betaPath)
+	}
+}
+
 func TestScanOnceKeepsActiveSnooze(t *testing.T) {
 	t.Parallel()
 

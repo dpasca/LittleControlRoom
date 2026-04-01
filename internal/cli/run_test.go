@@ -91,7 +91,7 @@ func TestLoadStoredProjectStates(t *testing.T) {
 	if len(got.AttentionReason) != 1 || got.AttentionReason[0].Code != "repo_dirty" {
 		t.Fatalf("unexpected reasons: %+v", got.AttentionReason)
 	}
-	if len(got.Sessions) != 1 || got.Sessions[0].SessionID != "ses_1" {
+	if len(got.Sessions) != 1 || got.Sessions[0].SessionID != "codex:ses_1" {
 		t.Fatalf("unexpected sessions: %+v", got.Sessions)
 	}
 	if len(got.Artifacts) != 1 || got.Artifacts[0].Kind != "codex_session_jsonl" {

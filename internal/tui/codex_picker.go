@@ -284,19 +284,21 @@ func buildCodexResumeChoices(ctx context.Context, detail model.ProjectDetail, pr
 		if providerForSessionFormat(session.Format) != provider.Normalized() {
 			continue
 		}
-		if strings.TrimSpace(session.SessionID) == "" {
+		sessionID := session.ExternalID()
+		if strings.TrimSpace(sessionID) == "" {
 			continue
 		}
 		if codexResumeSessionHidden(session, provider) {
 			continue
 		}
+		latestSessionID := detail.Summary.ExternalLatestSessionID()
 		choice := codexSessionChoice{
 			ProjectPath:  project.Path,
 			ProjectName:  projectNameForPicker(project, project.Path),
-			SessionID:    session.SessionID,
+			SessionID:    sessionID,
 			Provider:     provider,
 			LastActivity: session.LastEventAt,
-			Latest:       detail.Summary.LatestSessionID == session.SessionID && providerForSessionFormat(detail.Summary.LatestSessionFormat) == provider,
+			Latest:       latestSessionID == sessionID && providerForSessionFormat(detail.Summary.LatestSessionFormat) == provider,
 			Missing:      !project.PresentOnDisk,
 		}
 		if preview, err := sessionclassify.ExtractPreview(ctx, session); err == nil {
@@ -306,7 +308,7 @@ func buildCodexResumeChoices(ctx context.Context, detail model.ProjectDetail, pr
 		if choice.Title == "" {
 			choice.Title = "Session " + shortID(session.SessionID)
 		}
-		if detail.Summary.LatestSessionID == session.SessionID && providerForSessionFormat(detail.Summary.LatestSessionFormat) == provider {
+		if latestSessionID == sessionID && providerForSessionFormat(detail.Summary.LatestSessionFormat) == provider {
 			if latest := strings.TrimSpace(detail.Summary.LatestSessionSummary); latest != "" {
 				choice.Summary = latest
 			}
@@ -458,7 +460,8 @@ func (m Model) codexSessionChoices() []codexSessionChoice {
 	})
 	for _, project := range recent {
 		provider := providerForSessionFormat(project.LatestSessionFormat)
-		if provider == "" || strings.TrimSpace(project.LatestSessionID) == "" {
+		sessionID := project.ExternalLatestSessionID()
+		if provider == "" || strings.TrimSpace(sessionID) == "" {
 			continue
 		}
 		if _, ok := seen[project.Path]; ok {
@@ -467,7 +470,7 @@ func (m Model) codexSessionChoices() []codexSessionChoice {
 		choices = append(choices, codexSessionChoice{
 			ProjectPath:  project.Path,
 			ProjectName:  projectNameForPicker(project, project.Path),
-			SessionID:    project.LatestSessionID,
+			SessionID:    sessionID,
 			Provider:     provider,
 			LastActivity: project.LastActivity,
 			Summary:      pickerSummaryForProject(project, provider),
@@ -972,7 +975,7 @@ func (m Model) currentResumeChoice() (codexSessionChoice, bool) {
 		Summary:      summary,
 		Live:         true,
 		Current:      true,
-		Latest:       project.LatestSessionID == sessionID && providerForSessionFormat(project.LatestSessionFormat) == provider,
+		Latest:       project.ExternalLatestSessionID() == sessionID && providerForSessionFormat(project.LatestSessionFormat) == provider,
 		Busy:         snapshot.Busy,
 		BusyExternal: snapshot.BusyExternal,
 		Missing:      !project.PresentOnDisk && project.Path != "",

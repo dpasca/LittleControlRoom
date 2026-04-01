@@ -96,8 +96,8 @@ func TestDetectFindsSessionFromJSONL(t *testing.T) {
 		t.Fatalf("expected 1 session, got %d", len(entry.Sessions))
 	}
 	sess := entry.Sessions[0]
-	if sess.SessionID != sessionID {
-		t.Errorf("session ID = %q, want %q", sess.SessionID, sessionID)
+	if sess.SessionID != "claude_code:"+sessionID {
+		t.Errorf("session ID = %q, want %q", sess.SessionID, "claude_code:"+sessionID)
 	}
 	if sess.Format != "claude_code" {
 		t.Errorf("format = %q, want %q", sess.Format, "claude_code")
@@ -376,8 +376,8 @@ func TestDetectUsesSessionFileNameWhenEntriesOmitSessionID(t *testing.T) {
 	if len(entry.Sessions) != 1 {
 		t.Fatalf("expected 1 session, got %d", len(entry.Sessions))
 	}
-	if got := entry.Sessions[0].SessionID; got != sessionID {
-		t.Fatalf("SessionID = %q, want %q from the session filename", got, sessionID)
+	if got := entry.Sessions[0].SessionID; got != "claude_code:"+sessionID {
+		t.Fatalf("SessionID = %q, want %q from the session filename", got, "claude_code:"+sessionID)
 	}
 }
 

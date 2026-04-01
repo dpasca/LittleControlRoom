@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type ProjectStatus string
 
@@ -71,17 +74,28 @@ const (
 	SessionCategoryUnknown        SessionCategory = "unknown"
 )
 
+type SessionSource string
+
+const (
+	SessionSourceUnknown    SessionSource = ""
+	SessionSourceCodex      SessionSource = "codex"
+	SessionSourceOpenCode   SessionSource = "opencode"
+	SessionSourceClaudeCode SessionSource = "claude_code"
+)
+
 type SessionEvidence struct {
-	SessionID           string    `json:"session_id"`
-	ProjectPath         string    `json:"project_path"`
-	DetectedProjectPath string    `json:"detected_project_path"`
-	SessionFile         string    `json:"session_file"`
-	Format              string    `json:"format"`
-	SnapshotHash        string    `json:"snapshot_hash"`
-	StartedAt           time.Time `json:"started_at"`
-	LastEventAt         time.Time `json:"last_event_at"`
-	ErrorCount          int       `json:"error_count"`
-	LatestTurnStartedAt time.Time `json:"latest_turn_started_at"`
+	Source              SessionSource `json:"source"`
+	SessionID           string        `json:"session_id"`
+	RawSessionID        string        `json:"raw_session_id"`
+	ProjectPath         string        `json:"project_path"`
+	DetectedProjectPath string        `json:"detected_project_path"`
+	SessionFile         string        `json:"session_file"`
+	Format              string        `json:"format"`
+	SnapshotHash        string        `json:"snapshot_hash"`
+	StartedAt           time.Time     `json:"started_at"`
+	LastEventAt         time.Time     `json:"last_event_at"`
+	ErrorCount          int           `json:"error_count"`
+	LatestTurnStartedAt time.Time     `json:"latest_turn_started_at"`
 	// Best-effort signal from structured session events (for example task_started/task_complete/turn_aborted).
 	LatestTurnStateKnown bool `json:"latest_turn_state_known"`
 	LatestTurnCompleted  bool `json:"latest_turn_completed"`
@@ -109,7 +123,9 @@ type ArtifactEvidence struct {
 }
 
 type SessionClassification struct {
+	Source            SessionSource               `json:"source"`
 	SessionID         string                      `json:"session_id"`
+	RawSessionID      string                      `json:"raw_session_id"`
 	ProjectPath       string                      `json:"project_path"`
 	SessionFile       string                      `json:"session_file"`
 	SessionFormat     string                      `json:"session_format"`
@@ -219,7 +235,9 @@ type ProjectSummary struct {
 	RunCommand                                    string
 	MovedFromPath                                 string
 	MovedAt                                       time.Time
+	LatestSessionSource                           SessionSource
 	LatestSessionID                               string
+	LatestRawSessionID                            string
 	LatestSessionFormat                           string
 	LatestSessionDetectedProjectPath              string
 	LatestSessionSnapshotHash                     string
@@ -248,6 +266,130 @@ type TodoItem struct {
 	UpdatedAt          time.Time
 	CompletedAt        time.Time
 	WorktreeSuggestion *TodoWorktreeSuggestion
+}
+
+func NormalizeSessionSource(source SessionSource) SessionSource {
+	switch source {
+	case SessionSourceCodex, SessionSourceOpenCode, SessionSourceClaudeCode:
+		return source
+	default:
+		return SessionSourceUnknown
+	}
+}
+
+func SessionSourceFromFormat(format string) SessionSource {
+	switch format {
+	case "modern", "legacy":
+		return SessionSourceCodex
+	case "opencode_db":
+		return SessionSourceOpenCode
+	case "claude_code":
+		return SessionSourceClaudeCode
+	default:
+		return SessionSourceUnknown
+	}
+}
+
+func BuildCanonicalSessionID(source SessionSource, rawSessionID string) string {
+	source = NormalizeSessionSource(source)
+	rawSessionID = strings.TrimSpace(rawSessionID)
+	if rawSessionID == "" {
+		return ""
+	}
+	if source == SessionSourceUnknown {
+		return rawSessionID
+	}
+	if parsedSource, parsedRaw := ParseCanonicalSessionID(rawSessionID); parsedSource != SessionSourceUnknown && parsedRaw != "" {
+		return string(parsedSource) + ":" + parsedRaw
+	}
+	return string(source) + ":" + rawSessionID
+}
+
+func ParseCanonicalSessionID(sessionID string) (SessionSource, string) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return SessionSourceUnknown, ""
+	}
+	parts := strings.SplitN(sessionID, ":", 2)
+	if len(parts) != 2 {
+		return SessionSourceUnknown, sessionID
+	}
+	source := NormalizeSessionSource(SessionSource(parts[0]))
+	if source == SessionSourceUnknown {
+		return SessionSourceUnknown, sessionID
+	}
+	rawSessionID := strings.TrimSpace(parts[1])
+	if rawSessionID == "" {
+		return SessionSourceUnknown, sessionID
+	}
+	return source, rawSessionID
+}
+
+func NormalizeSessionIdentity(source SessionSource, format, sessionID, rawSessionID string) (SessionSource, string, string) {
+	source = NormalizeSessionSource(source)
+	if source == SessionSourceUnknown {
+		source = SessionSourceFromFormat(format)
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	rawSessionID = strings.TrimSpace(rawSessionID)
+
+	if rawSessionID == "" && sessionID != "" {
+		if parsedSource, parsedRaw := ParseCanonicalSessionID(sessionID); parsedRaw != "" {
+			if source == SessionSourceUnknown {
+				source = parsedSource
+			}
+			rawSessionID = parsedRaw
+		} else {
+			rawSessionID = sessionID
+		}
+	}
+	if sessionID == "" {
+		sessionID = BuildCanonicalSessionID(source, rawSessionID)
+	}
+	if rawSessionID == "" {
+		if _, parsedRaw := ParseCanonicalSessionID(sessionID); parsedRaw != "" {
+			rawSessionID = parsedRaw
+		}
+	}
+	if source == SessionSourceUnknown {
+		if parsedSource, _ := ParseCanonicalSessionID(sessionID); parsedSource != SessionSourceUnknown {
+			source = parsedSource
+		}
+	}
+	if source != SessionSourceUnknown && rawSessionID != "" {
+		sessionID = BuildCanonicalSessionID(source, rawSessionID)
+	}
+	return source, sessionID, rawSessionID
+}
+
+func NormalizeSessionEvidenceIdentity(session SessionEvidence) SessionEvidence {
+	session.Source, session.SessionID, session.RawSessionID = NormalizeSessionIdentity(session.Source, session.Format, session.SessionID, session.RawSessionID)
+	return session
+}
+
+func (session SessionEvidence) ExternalID() string {
+	return ExternalSessionID(session.Source, session.Format, session.SessionID, session.RawSessionID)
+}
+
+func NormalizeSessionClassificationIdentity(classification SessionClassification) SessionClassification {
+	classification.Source, classification.SessionID, classification.RawSessionID = NormalizeSessionIdentity(classification.Source, classification.SessionFormat, classification.SessionID, classification.RawSessionID)
+	return classification
+}
+
+func (classification SessionClassification) ExternalID() string {
+	return ExternalSessionID(classification.Source, classification.SessionFormat, classification.SessionID, classification.RawSessionID)
+}
+
+func ExternalSessionID(source SessionSource, format, sessionID, rawSessionID string) string {
+	_, _, rawSessionID = NormalizeSessionIdentity(source, format, sessionID, rawSessionID)
+	if rawSessionID != "" {
+		return rawSessionID
+	}
+	return strings.TrimSpace(sessionID)
+}
+
+func (summary ProjectSummary) ExternalLatestSessionID() string {
+	return ExternalSessionID(summary.LatestSessionSource, summary.LatestSessionFormat, summary.LatestSessionID, summary.LatestRawSessionID)
 }
 
 type TodoWorktreeSuggestionStatus string

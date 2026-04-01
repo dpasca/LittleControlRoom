@@ -128,6 +128,8 @@ func (s *Store) initSchema(ctx context.Context) error {
 		);`,
 		`CREATE TABLE IF NOT EXISTS project_sessions (
 			session_id TEXT PRIMARY KEY,
+			source TEXT NOT NULL DEFAULT '',
+			raw_session_id TEXT NOT NULL DEFAULT '',
 			project_path TEXT NOT NULL,
 			detected_project_path TEXT NOT NULL DEFAULT '',
 			session_file TEXT NOT NULL,
@@ -155,6 +157,8 @@ func (s *Store) initSchema(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_project_artifacts_project_path ON project_artifacts(project_path);`,
 		`CREATE TABLE IF NOT EXISTS session_classifications (
 			session_id TEXT PRIMARY KEY,
+			source TEXT NOT NULL DEFAULT '',
+			raw_session_id TEXT NOT NULL DEFAULT '',
 			project_path TEXT NOT NULL,
 			session_file TEXT NOT NULL,
 			session_format TEXT NOT NULL,
@@ -237,7 +241,13 @@ func (s *Store) initSchema(ctx context.Context) error {
 	if err := s.ensureProjectSessionsTurnLifecycleColumns(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureProjectSessionsIdentityColumns(ctx); err != nil {
+		return err
+	}
 	if err := s.ensureSessionClassificationStageColumns(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureSessionClassificationIdentityColumns(ctx); err != nil {
 		return err
 	}
 	if err := s.repairTerminalSessionClassificationStages(ctx); err != nil {
@@ -501,6 +511,54 @@ func (s *Store) ensureProjectSessionsTurnLifecycleColumns(ctx context.Context) e
 	return nil
 }
 
+func (s *Store) ensureProjectSessionsIdentityColumns(ctx context.Context) error {
+	columns, err := s.projectSessionsTableColumns(ctx)
+	if err != nil {
+		return err
+	}
+	if _, ok := columns["source"]; !ok {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE project_sessions ADD COLUMN source TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add project_sessions.source column: %w", err)
+		}
+	}
+	if _, ok := columns["raw_session_id"]; !ok {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE project_sessions ADD COLUMN raw_session_id TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add project_sessions.raw_session_id column: %w", err)
+		}
+	}
+	return s.normalizeProjectSessionIdentityColumns(ctx)
+}
+
+func (s *Store) normalizeProjectSessionIdentityColumns(ctx context.Context) error {
+	rows, err := s.loadProjectSessionMigrationRows(ctx)
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+	for _, row := range rows {
+		if !row.needsIdentityUpdate() {
+			continue
+		}
+		if err := s.applyProjectSessionIdentityUpdate(ctx, tx, row); err != nil {
+			return fmt.Errorf("normalize project_sessions identity %s: %w", row.originalSessionID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *Store) sessionClassificationTableColumns(ctx context.Context) (map[string]struct{}, error) {
 	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(session_classifications)`)
 	if err != nil {
@@ -548,6 +606,622 @@ func (s *Store) ensureSessionClassificationStageColumns(ctx context.Context) err
 	return nil
 }
 
+func (s *Store) ensureSessionClassificationIdentityColumns(ctx context.Context) error {
+	columns, err := s.sessionClassificationTableColumns(ctx)
+	if err != nil {
+		return err
+	}
+	if _, ok := columns["source"]; !ok {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE session_classifications ADD COLUMN source TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add session_classifications.source column: %w", err)
+		}
+	}
+	if _, ok := columns["raw_session_id"]; !ok {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE session_classifications ADD COLUMN raw_session_id TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add session_classifications.raw_session_id column: %w", err)
+		}
+	}
+	return s.normalizeSessionClassificationIdentityColumns(ctx)
+}
+
+func (s *Store) normalizeSessionClassificationIdentityColumns(ctx context.Context) error {
+	rows, err := s.loadSessionClassificationMigrationRows(ctx)
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+	for _, row := range rows {
+		if !row.needsIdentityUpdate() {
+			continue
+		}
+		if err := s.applySessionClassificationIdentityUpdate(ctx, tx, row); err != nil {
+			return fmt.Errorf("normalize session_classifications identity %s: %w", row.originalSessionID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return nil
+}
+
+type projectSessionMigrationRow struct {
+	originalSessionID    string
+	originalSource       string
+	originalRawSessionID string
+	session              model.SessionEvidence
+	updatedAt            time.Time
+}
+
+func (row projectSessionMigrationRow) needsIdentityUpdate() bool {
+	return strings.TrimSpace(row.originalSessionID) != row.session.SessionID ||
+		strings.TrimSpace(row.originalSource) != string(row.session.Source) ||
+		strings.TrimSpace(row.originalRawSessionID) != row.session.RawSessionID
+}
+
+func (s *Store) loadProjectSessionMigrationRows(ctx context.Context) ([]projectSessionMigrationRow, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			session_id, source, raw_session_id, project_path, detected_project_path, session_file, format,
+			snapshot_hash, started_at, last_event_at, error_count, latest_turn_started_at,
+			latest_turn_state_known, latest_turn_completed, updated_at
+		FROM project_sessions
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("load project_sessions identities: %w", err)
+	}
+	defer rows.Close()
+
+	out := []projectSessionMigrationRow{}
+	for rows.Next() {
+		row, err := scanProjectSessionMigrationRow(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan project_sessions identity: %w", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read project_sessions identities: %w", err)
+	}
+	return out, nil
+}
+
+func scanProjectSessionMigrationRow(scanner interface {
+	Scan(dest ...any) error
+}) (projectSessionMigrationRow, error) {
+	var (
+		row                 projectSessionMigrationRow
+		startedAt           sql.NullInt64
+		lastEventAt         int64
+		latestTurnStartedAt sql.NullInt64
+		latestTurnKnown     int
+		latestTurnDone      int
+		updatedAt           int64
+	)
+	if err := scanner.Scan(
+		&row.originalSessionID,
+		&row.originalSource,
+		&row.originalRawSessionID,
+		&row.session.ProjectPath,
+		&row.session.DetectedProjectPath,
+		&row.session.SessionFile,
+		&row.session.Format,
+		&row.session.SnapshotHash,
+		&startedAt,
+		&lastEventAt,
+		&row.session.ErrorCount,
+		&latestTurnStartedAt,
+		&latestTurnKnown,
+		&latestTurnDone,
+		&updatedAt,
+	); err != nil {
+		return projectSessionMigrationRow{}, err
+	}
+	row.session.Source = model.NormalizeSessionSource(model.SessionSource(strings.TrimSpace(row.originalSource)))
+	row.session.SessionID = strings.TrimSpace(row.originalSessionID)
+	row.session.RawSessionID = strings.TrimSpace(row.originalRawSessionID)
+	if startedAt.Valid {
+		row.session.StartedAt = time.Unix(startedAt.Int64, 0)
+	}
+	row.session.LastEventAt = time.Unix(lastEventAt, 0)
+	if latestTurnStartedAt.Valid {
+		row.session.LatestTurnStartedAt = time.Unix(latestTurnStartedAt.Int64, 0)
+	}
+	row.session.LatestTurnStateKnown = latestTurnKnown != 0
+	row.session.LatestTurnCompleted = latestTurnDone != 0
+	row.updatedAt = time.Unix(updatedAt, 0)
+	row.session = model.NormalizeSessionEvidenceIdentity(row.session)
+	return row, nil
+}
+
+func (s *Store) applyProjectSessionIdentityUpdate(ctx context.Context, tx *sql.Tx, row projectSessionMigrationRow) error {
+	targetID := row.session.SessionID
+	if targetID == "" {
+		return nil
+	}
+	if row.originalSessionID == targetID {
+		return s.updateProjectSessionIdentityMetadata(ctx, tx, row)
+	}
+
+	existing, ok, err := s.loadProjectSessionMigrationRowByID(ctx, tx, targetID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE project_sessions
+			SET session_id = ?, source = ?, raw_session_id = ?
+			WHERE session_id = ?
+		`, targetID, string(row.session.Source), row.session.RawSessionID, row.originalSessionID)
+		return err
+	}
+
+	merged := mergeProjectSessionMigrationRows(existing, row)
+	merged.originalSessionID = targetID
+	if err := s.writeProjectSessionMigrationRow(ctx, tx, merged); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `DELETE FROM project_sessions WHERE session_id = ?`, row.originalSessionID)
+	return err
+}
+
+func (s *Store) updateProjectSessionIdentityMetadata(ctx context.Context, tx *sql.Tx, row projectSessionMigrationRow) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE project_sessions
+		SET source = ?, raw_session_id = ?
+		WHERE session_id = ?
+	`, string(row.session.Source), row.session.RawSessionID, row.originalSessionID)
+	return err
+}
+
+func (s *Store) loadProjectSessionMigrationRowByID(ctx context.Context, tx *sql.Tx, sessionID string) (projectSessionMigrationRow, bool, error) {
+	row := tx.QueryRowContext(ctx, `
+		SELECT
+			session_id, source, raw_session_id, project_path, detected_project_path, session_file, format,
+			snapshot_hash, started_at, last_event_at, error_count, latest_turn_started_at,
+			latest_turn_state_known, latest_turn_completed, updated_at
+		FROM project_sessions
+		WHERE session_id = ?
+	`, sessionID)
+	result, err := scanProjectSessionMigrationRow(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return projectSessionMigrationRow{}, false, nil
+		}
+		return projectSessionMigrationRow{}, false, err
+	}
+	return result, true, nil
+}
+
+func mergeProjectSessionMigrationRows(left, right projectSessionMigrationRow) projectSessionMigrationRow {
+	preferred := left
+	other := right
+	if preferProjectSessionMigrationRow(right, left) {
+		preferred = right
+		other = left
+	}
+	merged := preferred
+	merged.session.Source = preferred.session.Source
+	merged.session.SessionID = preferred.session.SessionID
+	merged.session.RawSessionID = preferred.session.RawSessionID
+	if merged.session.ProjectPath == "" {
+		merged.session.ProjectPath = other.session.ProjectPath
+	}
+	if merged.session.DetectedProjectPath == "" {
+		merged.session.DetectedProjectPath = other.session.DetectedProjectPath
+	}
+	if merged.session.SessionFile == "" {
+		merged.session.SessionFile = other.session.SessionFile
+	}
+	if merged.session.Format == "" {
+		merged.session.Format = other.session.Format
+	}
+	if merged.session.SnapshotHash == "" {
+		merged.session.SnapshotHash = other.session.SnapshotHash
+	}
+	if merged.session.StartedAt.IsZero() || (!other.session.StartedAt.IsZero() && other.session.StartedAt.Before(merged.session.StartedAt)) {
+		merged.session.StartedAt = other.session.StartedAt
+	}
+	if other.session.LastEventAt.After(merged.session.LastEventAt) {
+		merged.session.LastEventAt = other.session.LastEventAt
+	}
+	if other.session.ErrorCount > merged.session.ErrorCount {
+		merged.session.ErrorCount = other.session.ErrorCount
+	}
+	if !merged.session.LatestTurnStateKnown && other.session.LatestTurnStateKnown {
+		merged.session.LatestTurnStateKnown = true
+		merged.session.LatestTurnCompleted = other.session.LatestTurnCompleted
+		merged.session.LatestTurnStartedAt = other.session.LatestTurnStartedAt
+	}
+	if merged.session.LatestTurnStartedAt.IsZero() && !other.session.LatestTurnStartedAt.IsZero() {
+		merged.session.LatestTurnStartedAt = other.session.LatestTurnStartedAt
+	}
+	if other.updatedAt.After(merged.updatedAt) {
+		merged.updatedAt = other.updatedAt
+	}
+	return merged
+}
+
+func preferProjectSessionMigrationRow(candidate, existing projectSessionMigrationRow) bool {
+	if candidate.session.LastEventAt.After(existing.session.LastEventAt) {
+		return true
+	}
+	if existing.session.LastEventAt.After(candidate.session.LastEventAt) {
+		return false
+	}
+	if candidate.updatedAt.After(existing.updatedAt) {
+		return true
+	}
+	if existing.updatedAt.After(candidate.updatedAt) {
+		return false
+	}
+	candidateScore := projectSessionMigrationScore(candidate)
+	existingScore := projectSessionMigrationScore(existing)
+	if candidateScore != existingScore {
+		return candidateScore > existingScore
+	}
+	return strings.Compare(candidate.originalSessionID, existing.originalSessionID) < 0
+}
+
+func projectSessionMigrationScore(row projectSessionMigrationRow) int {
+	score := 0
+	if row.session.Source != model.SessionSourceUnknown {
+		score += 2
+	}
+	if row.session.RawSessionID != "" {
+		score += 2
+	}
+	if row.session.SnapshotHash != "" {
+		score += 2
+	}
+	if row.session.SessionFile != "" {
+		score += 2
+	}
+	if row.session.DetectedProjectPath != "" {
+		score++
+	}
+	if row.session.LatestTurnStateKnown {
+		score++
+	}
+	return score
+}
+
+func (s *Store) writeProjectSessionMigrationRow(ctx context.Context, tx *sql.Tx, row projectSessionMigrationRow) error {
+	var startedAt any
+	if !row.session.StartedAt.IsZero() {
+		startedAt = row.session.StartedAt.Unix()
+	}
+	var latestTurnStartedAt any
+	if !row.session.LatestTurnStartedAt.IsZero() {
+		latestTurnStartedAt = row.session.LatestTurnStartedAt.Unix()
+	}
+	_, err := tx.ExecContext(ctx, `
+		UPDATE project_sessions
+		SET source = ?,
+			raw_session_id = ?,
+			project_path = ?,
+			detected_project_path = ?,
+			session_file = ?,
+			format = ?,
+			snapshot_hash = ?,
+			started_at = ?,
+			last_event_at = ?,
+			error_count = ?,
+			latest_turn_started_at = ?,
+			latest_turn_state_known = ?,
+			latest_turn_completed = ?,
+			updated_at = ?
+		WHERE session_id = ?
+	`, string(row.session.Source), row.session.RawSessionID, row.session.ProjectPath, row.session.DetectedProjectPath, row.session.SessionFile, row.session.Format, row.session.SnapshotHash, startedAt, row.session.LastEventAt.Unix(), row.session.ErrorCount, latestTurnStartedAt, boolToInt(row.session.LatestTurnStateKnown), boolToInt(row.session.LatestTurnCompleted), row.updatedAt.Unix(), row.session.SessionID)
+	return err
+}
+
+type sessionClassificationMigrationRow struct {
+	originalSessionID    string
+	originalSource       string
+	originalRawSessionID string
+	classification       model.SessionClassification
+}
+
+func (row sessionClassificationMigrationRow) needsIdentityUpdate() bool {
+	return strings.TrimSpace(row.originalSessionID) != row.classification.SessionID ||
+		strings.TrimSpace(row.originalSource) != string(row.classification.Source) ||
+		strings.TrimSpace(row.originalRawSessionID) != row.classification.RawSessionID
+}
+
+func (s *Store) loadSessionClassificationMigrationRows(ctx context.Context) ([]sessionClassificationMigrationRow, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			session_id, source, raw_session_id, project_path, session_file, session_format, snapshot_hash,
+			status, stage, category, summary, confidence, model, classifier_version,
+			last_error, source_updated_at, created_at, stage_started_at, updated_at, completed_at
+		FROM session_classifications
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("load session_classifications identities: %w", err)
+	}
+	defer rows.Close()
+
+	out := []sessionClassificationMigrationRow{}
+	for rows.Next() {
+		row, err := scanSessionClassificationMigrationRow(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan session_classifications identity: %w", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read session_classifications identities: %w", err)
+	}
+	return out, nil
+}
+
+func scanSessionClassificationMigrationRow(scanner interface {
+	Scan(dest ...any) error
+}) (sessionClassificationMigrationRow, error) {
+	var (
+		row             sessionClassificationMigrationRow
+		status, stage   string
+		category        string
+		sourceUpdatedAt int64
+		createdAt       int64
+		updatedAt       int64
+		stageStartedAt  sql.NullInt64
+		completedAt     sql.NullInt64
+	)
+	if err := scanner.Scan(
+		&row.originalSessionID,
+		&row.originalSource,
+		&row.originalRawSessionID,
+		&row.classification.ProjectPath,
+		&row.classification.SessionFile,
+		&row.classification.SessionFormat,
+		&row.classification.SnapshotHash,
+		&status,
+		&stage,
+		&category,
+		&row.classification.Summary,
+		&row.classification.Confidence,
+		&row.classification.Model,
+		&row.classification.ClassifierVersion,
+		&row.classification.LastError,
+		&sourceUpdatedAt,
+		&createdAt,
+		&stageStartedAt,
+		&updatedAt,
+		&completedAt,
+	); err != nil {
+		return sessionClassificationMigrationRow{}, err
+	}
+	row.classification.Source = model.NormalizeSessionSource(model.SessionSource(strings.TrimSpace(row.originalSource)))
+	row.classification.SessionID = strings.TrimSpace(row.originalSessionID)
+	row.classification.RawSessionID = strings.TrimSpace(row.originalRawSessionID)
+	row.classification.Status = model.SessionClassificationStatus(status)
+	row.classification.Stage = model.SessionClassificationStage(stage)
+	row.classification.Category = model.SessionCategory(category)
+	row.classification.SourceUpdatedAt = time.Unix(sourceUpdatedAt, 0)
+	row.classification.CreatedAt = time.Unix(createdAt, 0)
+	row.classification.UpdatedAt = time.Unix(updatedAt, 0)
+	if stageStartedAt.Valid {
+		row.classification.StageStartedAt = time.Unix(stageStartedAt.Int64, 0)
+	}
+	if completedAt.Valid {
+		row.classification.CompletedAt = time.Unix(completedAt.Int64, 0)
+	}
+	row.classification = model.NormalizeSessionClassificationIdentity(row.classification)
+	return row, nil
+}
+
+func (s *Store) applySessionClassificationIdentityUpdate(ctx context.Context, tx *sql.Tx, row sessionClassificationMigrationRow) error {
+	targetID := row.classification.SessionID
+	if targetID == "" {
+		return nil
+	}
+	if row.originalSessionID == targetID {
+		return s.updateSessionClassificationIdentityMetadata(ctx, tx, row)
+	}
+
+	existing, ok, err := s.loadSessionClassificationMigrationRowByID(ctx, tx, targetID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE session_classifications
+			SET session_id = ?, source = ?, raw_session_id = ?
+			WHERE session_id = ?
+		`, targetID, string(row.classification.Source), row.classification.RawSessionID, row.originalSessionID)
+		return err
+	}
+
+	merged := mergeSessionClassificationMigrationRows(existing, row)
+	merged.originalSessionID = targetID
+	if err := s.writeSessionClassificationMigrationRow(ctx, tx, merged); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `DELETE FROM session_classifications WHERE session_id = ?`, row.originalSessionID)
+	return err
+}
+
+func (s *Store) updateSessionClassificationIdentityMetadata(ctx context.Context, tx *sql.Tx, row sessionClassificationMigrationRow) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE session_classifications
+		SET source = ?, raw_session_id = ?
+		WHERE session_id = ?
+	`, string(row.classification.Source), row.classification.RawSessionID, row.originalSessionID)
+	return err
+}
+
+func (s *Store) loadSessionClassificationMigrationRowByID(ctx context.Context, tx *sql.Tx, sessionID string) (sessionClassificationMigrationRow, bool, error) {
+	row := tx.QueryRowContext(ctx, `
+		SELECT
+			session_id, source, raw_session_id, project_path, session_file, session_format, snapshot_hash,
+			status, stage, category, summary, confidence, model, classifier_version,
+			last_error, source_updated_at, created_at, stage_started_at, updated_at, completed_at
+		FROM session_classifications
+		WHERE session_id = ?
+	`, sessionID)
+	result, err := scanSessionClassificationMigrationRow(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return sessionClassificationMigrationRow{}, false, nil
+		}
+		return sessionClassificationMigrationRow{}, false, err
+	}
+	return result, true, nil
+}
+
+func mergeSessionClassificationMigrationRows(left, right sessionClassificationMigrationRow) sessionClassificationMigrationRow {
+	preferred := left
+	other := right
+	if preferSessionClassificationMigrationRow(right, left) {
+		preferred = right
+		other = left
+	}
+	merged := preferred
+	merged.classification.Source = preferred.classification.Source
+	merged.classification.SessionID = preferred.classification.SessionID
+	merged.classification.RawSessionID = preferred.classification.RawSessionID
+	if merged.classification.ProjectPath == "" {
+		merged.classification.ProjectPath = other.classification.ProjectPath
+	}
+	if merged.classification.SessionFile == "" {
+		merged.classification.SessionFile = other.classification.SessionFile
+	}
+	if merged.classification.SessionFormat == "" {
+		merged.classification.SessionFormat = other.classification.SessionFormat
+	}
+	if merged.classification.SnapshotHash == "" {
+		merged.classification.SnapshotHash = other.classification.SnapshotHash
+	}
+	if merged.classification.Summary == "" {
+		merged.classification.Summary = other.classification.Summary
+	}
+	if merged.classification.Category == "" {
+		merged.classification.Category = other.classification.Category
+	}
+	if merged.classification.Model == "" {
+		merged.classification.Model = other.classification.Model
+	}
+	if merged.classification.ClassifierVersion == "" {
+		merged.classification.ClassifierVersion = other.classification.ClassifierVersion
+	}
+	if merged.classification.LastError == "" {
+		merged.classification.LastError = other.classification.LastError
+	}
+	if merged.classification.Confidence == 0 && other.classification.Confidence > 0 {
+		merged.classification.Confidence = other.classification.Confidence
+	}
+	if merged.classification.SourceUpdatedAt.IsZero() || other.classification.SourceUpdatedAt.After(merged.classification.SourceUpdatedAt) {
+		merged.classification.SourceUpdatedAt = other.classification.SourceUpdatedAt
+	}
+	if merged.classification.CreatedAt.IsZero() || (!other.classification.CreatedAt.IsZero() && other.classification.CreatedAt.Before(merged.classification.CreatedAt)) {
+		merged.classification.CreatedAt = other.classification.CreatedAt
+	}
+	if merged.classification.StageStartedAt.IsZero() && !other.classification.StageStartedAt.IsZero() {
+		merged.classification.StageStartedAt = other.classification.StageStartedAt
+	}
+	if merged.classification.UpdatedAt.IsZero() || other.classification.UpdatedAt.After(merged.classification.UpdatedAt) {
+		merged.classification.UpdatedAt = other.classification.UpdatedAt
+	}
+	if merged.classification.CompletedAt.IsZero() || (!other.classification.CompletedAt.IsZero() && other.classification.CompletedAt.After(merged.classification.CompletedAt)) {
+		merged.classification.CompletedAt = other.classification.CompletedAt
+	}
+	return merged
+}
+
+func preferSessionClassificationMigrationRow(candidate, existing sessionClassificationMigrationRow) bool {
+	if candidate.classification.UpdatedAt.After(existing.classification.UpdatedAt) {
+		return true
+	}
+	if existing.classification.UpdatedAt.After(candidate.classification.UpdatedAt) {
+		return false
+	}
+	candidateScore := sessionClassificationMigrationScore(candidate)
+	existingScore := sessionClassificationMigrationScore(existing)
+	if candidateScore != existingScore {
+		return candidateScore > existingScore
+	}
+	return strings.Compare(candidate.originalSessionID, existing.originalSessionID) < 0
+}
+
+func sessionClassificationMigrationScore(row sessionClassificationMigrationRow) int {
+	score := 0
+	if row.classification.Source != model.SessionSourceUnknown {
+		score += 2
+	}
+	if row.classification.RawSessionID != "" {
+		score += 2
+	}
+	if row.classification.SnapshotHash != "" {
+		score += 2
+	}
+	if row.classification.Summary != "" {
+		score += 2
+	}
+	if row.classification.Category != "" {
+		score++
+	}
+	switch row.classification.Status {
+	case model.ClassificationCompleted:
+		score += 5
+	case model.ClassificationRunning:
+		score += 4
+	case model.ClassificationPending:
+		score += 3
+	case model.ClassificationFailed:
+		score += 2
+	}
+	if !row.classification.CompletedAt.IsZero() {
+		score++
+	}
+	return score
+}
+
+func (s *Store) writeSessionClassificationMigrationRow(ctx context.Context, tx *sql.Tx, row sessionClassificationMigrationRow) error {
+	var stageStartedAt any
+	if !row.classification.StageStartedAt.IsZero() {
+		stageStartedAt = row.classification.StageStartedAt.Unix()
+	}
+	var completedAt any
+	if !row.classification.CompletedAt.IsZero() {
+		completedAt = row.classification.CompletedAt.Unix()
+	}
+	_, err := tx.ExecContext(ctx, `
+		UPDATE session_classifications
+		SET source = ?,
+			raw_session_id = ?,
+			project_path = ?,
+			session_file = ?,
+			session_format = ?,
+			snapshot_hash = ?,
+			status = ?,
+			stage = ?,
+			category = ?,
+			summary = ?,
+			confidence = ?,
+			model = ?,
+			classifier_version = ?,
+			last_error = ?,
+			source_updated_at = ?,
+			created_at = ?,
+			stage_started_at = ?,
+			updated_at = ?,
+			completed_at = ?
+		WHERE session_id = ?
+	`, string(row.classification.Source), row.classification.RawSessionID, row.classification.ProjectPath, row.classification.SessionFile, row.classification.SessionFormat, row.classification.SnapshotHash, string(row.classification.Status), string(row.classification.Stage), string(row.classification.Category), row.classification.Summary, row.classification.Confidence, row.classification.Model, row.classification.ClassifierVersion, row.classification.LastError, row.classification.SourceUpdatedAt.Unix(), row.classification.CreatedAt.Unix(), stageStartedAt, row.classification.UpdatedAt.Unix(), completedAt, row.classification.SessionID)
+	return err
+}
+
 func (s *Store) GetProjectSummaryMap(ctx context.Context) (map[string]model.ProjectSummary, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
@@ -557,6 +1231,8 @@ func (s *Store) GetProjectSummaryMap(ctx context.Context) (map[string]model.Proj
 			p.run_command,
 			p.moved_from_path, p.moved_at,
 			COALESCE(ps.session_id, ''),
+			COALESCE(ps.source, ''),
+			COALESCE(ps.raw_session_id, ''),
 			COALESCE(ps.format, ''),
 			COALESCE(ps.detected_project_path, ''),
 			COALESCE(ps.snapshot_hash, ''),
@@ -615,6 +1291,8 @@ func (s *Store) ListProjects(ctx context.Context, includeHistorical bool) ([]mod
 			p.run_command,
 			p.moved_from_path, p.moved_at,
 			COALESCE(ps.session_id, ''),
+			COALESCE(ps.source, ''),
+			COALESCE(ps.raw_session_id, ''),
 			COALESCE(ps.format, ''),
 			COALESCE(ps.detected_project_path, ''),
 			COALESCE(ps.snapshot_hash, ''),
@@ -685,6 +1363,8 @@ func (s *Store) GetProjectSummary(ctx context.Context, projectPath string, inclu
 			p.run_command,
 			p.moved_from_path, p.moved_at,
 			COALESCE(ps.session_id, ''),
+			COALESCE(ps.source, ''),
+			COALESCE(ps.raw_session_id, ''),
 			COALESCE(ps.format, ''),
 			COALESCE(ps.detected_project_path, ''),
 			COALESCE(ps.snapshot_hash, ''),
@@ -741,21 +1421,22 @@ func scanSummaryRow(scanner interface {
 	Scan(dest ...any) error
 }) (model.ProjectSummary, error) {
 	var (
-		path, name, status, runCommand, movedFromPath, repoBranch, worktreeRootPath                string
-		worktreeParentBranch, worktreeMergeStatus                                                  string
-		worktreeKind                                                                               string
-		worktreeOriginTodoID                                                                       int64
-		lastActivity, snoozedUntil, movedAt, latestSessionLastEventAt, latestTurnStartedAt         sql.NullInt64
-		latestSessionID, latestSessionFormat, latestSessionDetectedPath, latestSessionSnapshotHash sql.NullString
-		latestClassificationStatus                                                                 sql.NullString
-		latestClassificationStage, latestClassificationCategory, latestClassificationSummary       sql.NullString
-		latestClassificationStageStartedAt, latestClassificationUpdatedAt                          sql.NullInt64
-		latestCompletedClassificationCategory, latestCompletedClassificationSummary                sql.NullString
-		latestCompletedClassificationUpdatedAt                                                     sql.NullInt64
-		repoSyncStatus                                                                             string
-		attentionScore, repoAheadCount, repoBehindCount, openTODOCount, totalTODOCount             int
-		latestTurnKnown, latestTurnCompleted                                                       int
-		presentOnDisk, repoDirty, repoConflict, forgotten, manuallyAdded, inScope, pinned          int
+		path, name, status, runCommand, movedFromPath, repoBranch, worktreeRootPath          string
+		worktreeParentBranch, worktreeMergeStatus                                            string
+		worktreeKind                                                                         string
+		worktreeOriginTodoID                                                                 int64
+		lastActivity, snoozedUntil, movedAt, latestSessionLastEventAt, latestTurnStartedAt   sql.NullInt64
+		latestSessionID, latestSessionSource, latestRawSessionID                             sql.NullString
+		latestSessionFormat, latestSessionDetectedPath, latestSessionSnapshotHash            sql.NullString
+		latestClassificationStatus                                                           sql.NullString
+		latestClassificationStage, latestClassificationCategory, latestClassificationSummary sql.NullString
+		latestClassificationStageStartedAt, latestClassificationUpdatedAt                    sql.NullInt64
+		latestCompletedClassificationCategory, latestCompletedClassificationSummary          sql.NullString
+		latestCompletedClassificationUpdatedAt                                               sql.NullInt64
+		repoSyncStatus                                                                       string
+		attentionScore, repoAheadCount, repoBehindCount, openTODOCount, totalTODOCount       int
+		latestTurnKnown, latestTurnCompleted                                                 int
+		presentOnDisk, repoDirty, repoConflict, forgotten, manuallyAdded, inScope, pinned    int
 	)
 	if err := scanner.Scan(
 		&path,
@@ -786,6 +1467,8 @@ func scanSummaryRow(scanner interface {
 		&movedFromPath,
 		&movedAt,
 		&latestSessionID,
+		&latestSessionSource,
+		&latestRawSessionID,
 		&latestSessionFormat,
 		&latestSessionDetectedPath,
 		&latestSessionSnapshotHash,
@@ -805,6 +1488,12 @@ func scanSummaryRow(scanner interface {
 	); err != nil {
 		return model.ProjectSummary{}, err
 	}
+	normalizedSource, normalizedSessionID, normalizedRawSessionID := model.NormalizeSessionIdentity(
+		model.SessionSource(latestSessionSource.String),
+		latestSessionFormat.String,
+		latestSessionID.String,
+		latestRawSessionID.String,
+	)
 	p := model.ProjectSummary{
 		Path:                                     path,
 		Name:                                     name,
@@ -830,7 +1519,9 @@ func scanSummaryRow(scanner interface {
 		TotalTODOCount:                           totalTODOCount,
 		RunCommand:                               runCommand,
 		MovedFromPath:                            movedFromPath,
-		LatestSessionID:                          latestSessionID.String,
+		LatestSessionSource:                      normalizedSource,
+		LatestSessionID:                          normalizedSessionID,
+		LatestRawSessionID:                       normalizedRawSessionID,
 		LatestSessionFormat:                      latestSessionFormat.String,
 		LatestSessionDetectedProjectPath:         latestSessionDetectedPath.String,
 		LatestSessionSnapshotHash:                latestSessionSnapshotHash.String,
@@ -996,6 +1687,7 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 		return err
 	}
 	for _, session := range state.Sessions {
+		session = model.NormalizeSessionEvidenceIdentity(session)
 		var startedAt any
 		if !session.StartedAt.IsZero() {
 			startedAt = session.StartedAt.Unix()
@@ -1012,9 +1704,9 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 			detectedPath = state.Path
 		}
 		_, err = tx.ExecContext(ctx, `
-			INSERT INTO project_sessions(session_id, project_path, detected_project_path, session_file, format, snapshot_hash, started_at, last_event_at, error_count, latest_turn_started_at, latest_turn_state_known, latest_turn_completed, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, session.SessionID, state.Path, detectedPath, session.SessionFile, session.Format, session.SnapshotHash, startedAt, session.LastEventAt.Unix(), session.ErrorCount, latestTurnStartedAt, boolToInt(session.LatestTurnStateKnown), boolToInt(session.LatestTurnCompleted), state.UpdatedAt.Unix())
+			INSERT INTO project_sessions(session_id, source, raw_session_id, project_path, detected_project_path, session_file, format, snapshot_hash, started_at, last_event_at, error_count, latest_turn_started_at, latest_turn_state_known, latest_turn_completed, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, session.SessionID, string(session.Source), session.RawSessionID, state.Path, detectedPath, session.SessionFile, session.Format, session.SnapshotHash, startedAt, session.LastEventAt.Unix(), session.ErrorCount, latestTurnStartedAt, boolToInt(session.LatestTurnStateKnown), boolToInt(session.LatestTurnCompleted), state.UpdatedAt.Unix())
 		if err != nil {
 			return err
 		}
@@ -1379,6 +2071,7 @@ func timeUnixOrZero(t time.Time) int64 {
 }
 
 func (s *Store) QueueSessionClassification(ctx context.Context, classification model.SessionClassification, retryAfter time.Duration) (bool, error) {
+	classification = model.NormalizeSessionClassificationIdentity(classification)
 	if classification.SessionID == "" {
 		return false, errors.New("session classification requires session_id")
 	}
@@ -1413,12 +2106,12 @@ func (s *Store) QueueSessionClassification(ctx context.Context, classification m
 	if errors.Is(err, sql.ErrNoRows) {
 		_, err = s.db.ExecContext(ctx, `
 			INSERT INTO session_classifications(
-				session_id, project_path, session_file, session_format, snapshot_hash,
+				session_id, source, raw_session_id, project_path, session_file, session_format, snapshot_hash,
 				status, stage, category, summary, confidence, model, classifier_version,
 				last_error, source_updated_at, created_at, stage_started_at, updated_at, completed_at
 			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, '', '', 0, ?, ?, '', ?, ?, ?, ?, NULL)
-		`, classification.SessionID, classification.ProjectPath, classification.SessionFile, classification.SessionFormat,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', 0, ?, ?, '', ?, ?, ?, ?, NULL)
+		`, classification.SessionID, string(classification.Source), classification.RawSessionID, classification.ProjectPath, classification.SessionFile, classification.SessionFormat,
 			classification.SnapshotHash, string(model.ClassificationPending), string(classification.Stage), classification.Model,
 			classification.ClassifierVersion, classification.SourceUpdatedAt.Unix(), classification.CreatedAt.Unix(), nullableTimeUnixValue(classification.StageStartedAt), now.Unix())
 		return err == nil, err
@@ -1466,7 +2159,9 @@ func (s *Store) QueueSessionClassification(ctx context.Context, classification m
 
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE session_classifications
-		SET project_path = ?,
+		SET source = ?,
+			raw_session_id = ?,
+			project_path = ?,
 			session_file = ?,
 			session_format = ?,
 			snapshot_hash = ?,
@@ -1482,7 +2177,7 @@ func (s *Store) QueueSessionClassification(ctx context.Context, classification m
 			updated_at = ?,
 			completed_at = NULL
 		WHERE session_id = ?
-	`, classification.ProjectPath, classification.SessionFile, classification.SessionFormat, classification.SnapshotHash,
+	`, string(classification.Source), classification.RawSessionID, classification.ProjectPath, classification.SessionFile, classification.SessionFormat, classification.SnapshotHash,
 		string(model.ClassificationPending), string(classification.Stage), classification.Model, classification.ClassifierVersion,
 		classification.SourceUpdatedAt.Unix(), createdAt.Unix(), nullableTimeUnixValue(classification.StageStartedAt), now.Unix(), classification.SessionID)
 	return err == nil, err
@@ -1511,7 +2206,7 @@ func (s *Store) ClaimNextPendingSessionClassification(ctx context.Context, stale
 
 	row := tx.QueryRowContext(ctx, `
 		SELECT
-			sc.session_id, sc.project_path, sc.session_file, sc.session_format, sc.snapshot_hash,
+			sc.session_id, sc.source, sc.raw_session_id, sc.project_path, sc.session_file, sc.session_format, sc.snapshot_hash,
 			sc.status, sc.stage, sc.category, sc.summary, sc.confidence, sc.model, sc.classifier_version,
 			sc.last_error, sc.source_updated_at, sc.created_at, sc.stage_started_at, sc.updated_at, sc.completed_at
 		FROM session_classifications sc
@@ -1691,6 +2386,7 @@ func (s *Store) CompleteSessionClassificationAttempt(ctx context.Context, classi
 }
 
 func (s *Store) UpdateSessionEvidenceMetadata(ctx context.Context, session model.SessionEvidence) error {
+	session = model.NormalizeSessionEvidenceIdentity(session)
 	if session.SessionID == "" {
 		return errors.New("session evidence requires session_id")
 	}
@@ -1710,28 +2406,76 @@ func (s *Store) UpdateSessionEvidenceMetadata(ctx context.Context, session model
 }
 
 func (s *Store) UpdateSessionClassificationStage(ctx context.Context, sessionID string, stage model.SessionClassificationStage) error {
-	if sessionID == "" {
-		return errors.New("session classification requires session_id")
+	resolvedSessionID, err := s.resolveSessionClassificationID(ctx, sessionID)
+	if err != nil {
+		return err
 	}
 	now := time.Now()
-	_, err := s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, `
 		UPDATE session_classifications
 		SET stage = ?, stage_started_at = ?, updated_at = ?
 		WHERE session_id = ?
-	`, string(stage), now.Unix(), now.Unix(), sessionID)
+	`, string(stage), now.Unix(), now.Unix(), resolvedSessionID)
 	return err
 }
 
 func (s *Store) FailSessionClassification(ctx context.Context, sessionID, lastError string) error {
-	if sessionID == "" {
-		return errors.New("session classification requires session_id")
+	resolvedSessionID, err := s.resolveSessionClassificationID(ctx, sessionID)
+	if err != nil {
+		return err
 	}
-	_, err := s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, `
 		UPDATE session_classifications
 		SET status = ?, last_error = ?, updated_at = ?
 		WHERE session_id = ?
-	`, string(model.ClassificationFailed), lastError, time.Now().Unix(), sessionID)
+	`, string(model.ClassificationFailed), lastError, time.Now().Unix(), resolvedSessionID)
 	return err
+}
+
+func (s *Store) resolveSessionClassificationID(ctx context.Context, sessionID string) (string, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return "", errors.New("session classification requires session_id")
+	}
+	row := s.db.QueryRowContext(ctx, `SELECT session_id FROM session_classifications WHERE session_id = ?`, sessionID)
+	var resolved string
+	if err := row.Scan(&resolved); err == nil {
+		return resolved, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT session_id
+		FROM session_classifications
+		WHERE raw_session_id = ?
+		ORDER BY session_id ASC
+		LIMIT 2
+	`, sessionID)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	matches := []string{}
+	for rows.Next() {
+		var match string
+		if err := rows.Scan(&match); err != nil {
+			return "", err
+		}
+		matches = append(matches, match)
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	switch len(matches) {
+	case 0:
+		return "", sql.ErrNoRows
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("multiple session classifications match raw session id %q", sessionID)
+	}
 }
 
 func (s *Store) FailSessionClassificationAttempt(ctx context.Context, classification *model.SessionClassification, lastError string) (bool, error) {
@@ -1772,14 +2516,18 @@ func (s *Store) FailSessionClassificationAttempt(ctx context.Context, classifica
 }
 
 func (s *Store) GetSessionClassification(ctx context.Context, sessionID string) (model.SessionClassification, error) {
+	resolvedSessionID, err := s.resolveSessionClassificationID(ctx, sessionID)
+	if err != nil {
+		return model.SessionClassification{}, err
+	}
 	row := s.db.QueryRowContext(ctx, `
 		SELECT
-			session_id, project_path, session_file, session_format, snapshot_hash,
+			session_id, source, raw_session_id, project_path, session_file, session_format, snapshot_hash,
 			status, stage, category, summary, confidence, model, classifier_version,
 			last_error, source_updated_at, created_at, stage_started_at, updated_at, completed_at
 		FROM session_classifications
 		WHERE session_id = ?
-	`, sessionID)
+	`, resolvedSessionID)
 	return scanSessionClassificationRow(row)
 }
 
@@ -1794,13 +2542,13 @@ func (s *Store) ListSessionClassifications(ctx context.Context, projectPath, ses
 		args = append(args, projectPath)
 	}
 	if sessionID != "" {
-		where = append(where, "session_id = ?")
-		args = append(args, sessionID)
+		where = append(where, "(session_id = ? OR raw_session_id = ?)")
+		args = append(args, sessionID, sessionID)
 	}
 
 	query := `
 		SELECT
-			session_id, project_path, session_file, session_format, snapshot_hash,
+			session_id, source, raw_session_id, project_path, session_file, session_format, snapshot_hash,
 			status, stage, category, summary, confidence, model, classifier_version,
 			last_error, source_updated_at, created_at, stage_started_at, updated_at, completed_at
 		FROM session_classifications
@@ -1829,9 +2577,9 @@ func (s *Store) ListSessionClassifications(ctx context.Context, projectPath, ses
 }
 
 func (s *Store) UpdateSessionClassificationSummary(ctx context.Context, sessionID, summary string) (bool, error) {
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		return false, fmt.Errorf("session classification requires session_id")
+	resolvedSessionID, err := s.resolveSessionClassificationID(ctx, sessionID)
+	if err != nil {
+		return false, err
 	}
 	summary = strings.TrimSpace(summary)
 
@@ -1839,7 +2587,7 @@ func (s *Store) UpdateSessionClassificationSummary(ctx context.Context, sessionI
 		UPDATE session_classifications
 		SET summary = ?, updated_at = ?
 		WHERE session_id = ? AND summary != ?
-	`, summary, time.Now().Unix(), sessionID, summary)
+	`, summary, time.Now().Unix(), resolvedSessionID, summary)
 	if err != nil {
 		return false, err
 	}
@@ -1863,6 +2611,8 @@ func (s *Store) GetProjectDetail(ctx context.Context, path string, eventLimit in
 			p.run_command,
 			p.moved_from_path, p.moved_at,
 			COALESCE(ps.session_id, ''),
+			COALESCE(ps.source, ''),
+			COALESCE(ps.raw_session_id, ''),
 			COALESCE(ps.format, ''),
 			COALESCE(ps.detected_project_path, ''),
 			COALESCE(ps.snapshot_hash, ''),
@@ -2053,7 +2803,7 @@ func (s *Store) listReasons(ctx context.Context, path string) ([]model.Attention
 
 func (s *Store) listSessions(ctx context.Context, path string) ([]model.SessionEvidence, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT session_id, project_path, detected_project_path, session_file, format, snapshot_hash, started_at, last_event_at, error_count, latest_turn_started_at, latest_turn_state_known, latest_turn_completed
+		SELECT session_id, source, raw_session_id, project_path, detected_project_path, session_file, format, snapshot_hash, started_at, last_event_at, error_count, latest_turn_started_at, latest_turn_state_known, latest_turn_completed
 		FROM project_sessions
 		WHERE project_path = ?
 		ORDER BY last_event_at DESC
@@ -2068,15 +2818,17 @@ func (s *Store) listSessions(ctx context.Context, path string) ([]model.SessionE
 	for rows.Next() {
 		var (
 			s                   model.SessionEvidence
+			source              string
 			startedAt           sql.NullInt64
 			lastEventAt         int64
 			latestTurnStartedAt sql.NullInt64
 			turnKnown           int
 			turnDone            int
 		)
-		if err := rows.Scan(&s.SessionID, &s.ProjectPath, &s.DetectedProjectPath, &s.SessionFile, &s.Format, &s.SnapshotHash, &startedAt, &lastEventAt, &s.ErrorCount, &latestTurnStartedAt, &turnKnown, &turnDone); err != nil {
+		if err := rows.Scan(&s.SessionID, &source, &s.RawSessionID, &s.ProjectPath, &s.DetectedProjectPath, &s.SessionFile, &s.Format, &s.SnapshotHash, &startedAt, &lastEventAt, &s.ErrorCount, &latestTurnStartedAt, &turnKnown, &turnDone); err != nil {
 			return nil, err
 		}
+		s.Source = model.NormalizeSessionSource(model.SessionSource(source))
 		if startedAt.Valid {
 			s.StartedAt = time.Unix(startedAt.Int64, 0)
 		}
@@ -2086,6 +2838,7 @@ func (s *Store) listSessions(ctx context.Context, path string) ([]model.SessionE
 		}
 		s.LatestTurnStateKnown = turnKnown != 0
 		s.LatestTurnCompleted = turnDone != 0
+		s = model.NormalizeSessionEvidenceIdentity(s)
 		out = append(out, s)
 	}
 	return out, rows.Err()
@@ -2148,12 +2901,15 @@ func scanSessionClassificationRow(scanner interface {
 }) (model.SessionClassification, error) {
 	var (
 		classification                        model.SessionClassification
+		source, rawSessionID                  string
 		status, stage, category               string
 		sourceUpdatedAt, createdAt, updatedAt int64
 		stageStartedAt, completedAt           sql.NullInt64
 	)
 	if err := scanner.Scan(
 		&classification.SessionID,
+		&source,
+		&rawSessionID,
 		&classification.ProjectPath,
 		&classification.SessionFile,
 		&classification.SessionFormat,
@@ -2177,6 +2933,8 @@ func scanSessionClassificationRow(scanner interface {
 	classification.Status = model.SessionClassificationStatus(status)
 	classification.Stage = model.SessionClassificationStage(stage)
 	classification.Category = model.SessionCategory(category)
+	classification.Source = model.NormalizeSessionSource(model.SessionSource(source))
+	classification.RawSessionID = strings.TrimSpace(rawSessionID)
 	classification.SourceUpdatedAt = time.Unix(sourceUpdatedAt, 0)
 	classification.CreatedAt = time.Unix(createdAt, 0)
 	if stageStartedAt.Valid {
@@ -2186,7 +2944,7 @@ func scanSessionClassificationRow(scanner interface {
 	if completedAt.Valid {
 		classification.CompletedAt = time.Unix(completedAt.Int64, 0)
 	}
-	return classification, nil
+	return model.NormalizeSessionClassificationIdentity(classification), nil
 }
 
 func (s *Store) SetPinned(ctx context.Context, path string, pinned bool) error {

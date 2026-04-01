@@ -724,8 +724,8 @@ func TestSessionClassificationQueueAndDetail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claim pending classification: %v", err)
 	}
-	if classification.SessionID != "ses_1" {
-		t.Fatalf("claimed session_id = %s, want ses_1", classification.SessionID)
+	if classification.SessionID != "codex:ses_1" {
+		t.Fatalf("claimed session_id = %s, want codex:ses_1", classification.SessionID)
 	}
 	if classification.Stage != model.ClassificationStagePreparingSnapshot {
 		t.Fatalf("claimed classification stage = %s, want %s", classification.Stage, model.ClassificationStagePreparingSnapshot)
@@ -1025,14 +1025,14 @@ func TestListSessionClassificationsFiltersAndOrders(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("ListSessionClassifications() len = %d, want 3", len(got))
 	}
-	if got[0].ProjectPath != "/tmp/alpha" || got[0].SessionID != "ses_alpha" {
-		t.Fatalf("first classification = %s/%s, want /tmp/alpha/ses_alpha", got[0].ProjectPath, got[0].SessionID)
+	if got[0].ProjectPath != "/tmp/alpha" || got[0].SessionID != "codex:ses_alpha" {
+		t.Fatalf("first classification = %s/%s, want /tmp/alpha/codex:ses_alpha", got[0].ProjectPath, got[0].SessionID)
 	}
-	if got[1].ProjectPath != "/tmp/beta" || got[1].SessionID != "ses_beta_a" {
-		t.Fatalf("second classification = %s/%s, want /tmp/beta/ses_beta_a", got[1].ProjectPath, got[1].SessionID)
+	if got[1].ProjectPath != "/tmp/beta" || got[1].SessionID != "codex:ses_beta_a" {
+		t.Fatalf("second classification = %s/%s, want /tmp/beta/codex:ses_beta_a", got[1].ProjectPath, got[1].SessionID)
 	}
-	if got[2].ProjectPath != "/tmp/beta" || got[2].SessionID != "ses_beta_b" {
-		t.Fatalf("third classification = %s/%s, want /tmp/beta/ses_beta_b", got[2].ProjectPath, got[2].SessionID)
+	if got[2].ProjectPath != "/tmp/beta" || got[2].SessionID != "codex:ses_beta_b" {
+		t.Fatalf("third classification = %s/%s, want /tmp/beta/codex:ses_beta_b", got[2].ProjectPath, got[2].SessionID)
 	}
 
 	filteredByProject, err := st.ListSessionClassifications(ctx, "/tmp/beta", "")
@@ -1050,8 +1050,8 @@ func TestListSessionClassificationsFiltersAndOrders(t *testing.T) {
 	if len(filteredBySession) != 1 {
 		t.Fatalf("filtered by session id len = %d, want 1", len(filteredBySession))
 	}
-	if filteredBySession[0].SessionID != "ses_alpha" {
-		t.Fatalf("filtered by session id = %s, want ses_alpha", filteredBySession[0].SessionID)
+	if filteredBySession[0].SessionID != "codex:ses_alpha" {
+		t.Fatalf("filtered by session id = %s, want codex:ses_alpha", filteredBySession[0].SessionID)
 	}
 }
 
@@ -1299,6 +1299,97 @@ func TestOpenRepairsTerminalSessionClassificationStages(t *testing.T) {
 	}
 }
 
+func TestOpenMergesSessionClassificationIdentityCollisions(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "repair-duplicates.sqlite")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	_, err = db.ExecContext(ctx, `
+		CREATE TABLE session_classifications (
+			session_id TEXT PRIMARY KEY,
+			project_path TEXT NOT NULL,
+			session_file TEXT NOT NULL,
+			session_format TEXT NOT NULL,
+			snapshot_hash TEXT NOT NULL,
+			status TEXT NOT NULL,
+			stage TEXT NOT NULL DEFAULT '',
+			category TEXT NOT NULL DEFAULT '',
+			summary TEXT NOT NULL DEFAULT '',
+			confidence REAL NOT NULL DEFAULT 0,
+			model TEXT NOT NULL DEFAULT '',
+			classifier_version TEXT NOT NULL DEFAULT '',
+			last_error TEXT NOT NULL DEFAULT '',
+			source_updated_at INTEGER NOT NULL,
+			created_at INTEGER NOT NULL,
+			stage_started_at INTEGER,
+			updated_at INTEGER NOT NULL,
+			completed_at INTEGER,
+			source TEXT NOT NULL DEFAULT '',
+			raw_session_id TEXT NOT NULL DEFAULT ''
+		);
+		INSERT INTO session_classifications(
+			session_id, project_path, session_file, session_format, snapshot_hash,
+			status, stage, category, summary, confidence, model, classifier_version,
+			last_error, source_updated_at, created_at, stage_started_at, updated_at, completed_at, source, raw_session_id
+		) VALUES (
+			'ses_dup', '/tmp/repair', '/tmp/repair/session.jsonl', 'modern', 'hash-dup',
+			'completed', '', 'completed', 'legacy summary', 1, 'gpt-5-mini', 'v1',
+			'', 100, 50, NULL, 150, 150, '', ''
+		);
+		INSERT INTO session_classifications(
+			session_id, project_path, session_file, session_format, snapshot_hash,
+			status, stage, category, summary, confidence, model, classifier_version,
+			last_error, source_updated_at, created_at, stage_started_at, updated_at, completed_at, source, raw_session_id
+		) VALUES (
+			'codex:ses_dup', '/tmp/repair', '/tmp/repair/session.jsonl', 'modern', 'hash-dup',
+			'completed', '', 'completed', '', 0, 'gpt-5-mini', 'v1',
+			'', 120, 60, NULL, 200, 200, 'codex', 'ses_dup'
+		);
+	`)
+	if err != nil {
+		t.Fatalf("seed duplicate identities: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close sqlite: %v", err)
+	}
+
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open repaired store: %v", err)
+	}
+	defer st.Close()
+
+	got, err := st.GetSessionClassification(ctx, "ses_dup")
+	if err != nil {
+		t.Fatalf("get repaired classification by raw id: %v", err)
+	}
+	if got.SessionID != "codex:ses_dup" {
+		t.Fatalf("session_id = %q, want %q", got.SessionID, "codex:ses_dup")
+	}
+	if got.RawSessionID != "ses_dup" {
+		t.Fatalf("raw_session_id = %q, want %q", got.RawSessionID, "ses_dup")
+	}
+	if got.Source != model.SessionSourceCodex {
+		t.Fatalf("source = %q, want %q", got.Source, model.SessionSourceCodex)
+	}
+	if got.Summary != "legacy summary" {
+		t.Fatalf("summary = %q, want %q", got.Summary, "legacy summary")
+	}
+
+	all, err := st.ListSessionClassifications(ctx, "/tmp/repair", "")
+	if err != nil {
+		t.Fatalf("list repaired classifications: %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("classification count = %d, want 1", len(all))
+	}
+}
+
 func TestQueueSessionClassificationFailedSameSnapshotCanRetryImmediatelyWhenForced(t *testing.T) {
 	t.Parallel()
 
@@ -1321,6 +1412,7 @@ func TestQueueSessionClassificationFailedSameSnapshotCanRetryImmediatelyWhenForc
 		ClassifierVersion: "v1",
 		SourceUpdatedAt:   now,
 	}
+	classification = model.NormalizeSessionClassificationIdentity(classification)
 	if err := st.UpsertProjectState(ctx, model.ProjectState{
 		Path:         classification.ProjectPath,
 		Name:         "force-retry",

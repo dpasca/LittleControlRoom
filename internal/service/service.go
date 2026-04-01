@@ -486,6 +486,8 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		existing.Sessions = append(existing.Sessions, normalized.Sessions...)
 		existing.Artifacts = append(existing.Artifacts, normalized.Artifacts...)
 	}
+	reconcileGlobalSessionOwnership(activities)
+	finalizeDetectorActivities(activities)
 
 	candidateSet := map[string]struct{}{}
 	for p := range activities {
@@ -824,6 +826,161 @@ func finalizeDetectorActivities(activities map[string]*model.DetectorProjectActi
 	}
 }
 
+func reconcileGlobalSessionOwnership(activities map[string]*model.DetectorProjectActivity) {
+	type ownedSession struct {
+		projectPath string
+		session     model.SessionEvidence
+	}
+
+	if len(activities) == 0 {
+		return
+	}
+
+	resolved := map[string]ownedSession{}
+	for path, activity := range activities {
+		if activity == nil {
+			continue
+		}
+		ownerPath := filepath.Clean(path)
+		for _, session := range activity.Sessions {
+			if strings.TrimSpace(session.SessionID) == "" {
+				continue
+			}
+			session.ProjectPath = ownerPath
+			if existing, ok := resolved[session.SessionID]; ok {
+				merged := mergeSessionEvidence(existing.session, session)
+				resolved[session.SessionID] = ownedSession{
+					projectPath: merged.ProjectPath,
+					session:     merged,
+				}
+				continue
+			}
+			resolved[session.SessionID] = ownedSession{
+				projectPath: ownerPath,
+				session:     session,
+			}
+		}
+		activity.Sessions = nil
+		activity.ErrorCount = 0
+		activity.LastActivity = time.Time{}
+	}
+
+	for _, item := range resolved {
+		ownerPath := filepath.Clean(item.projectPath)
+		if ownerPath == "" || ownerPath == "." {
+			continue
+		}
+		entry, ok := activities[ownerPath]
+		if !ok || entry == nil {
+			entry = &model.DetectorProjectActivity{ProjectPath: ownerPath}
+			activities[ownerPath] = entry
+		}
+		entry.ProjectPath = ownerPath
+		entry.Sessions = append(entry.Sessions, item.session)
+		entry.ErrorCount += item.session.ErrorCount
+		if item.session.LastEventAt.After(entry.LastActivity) {
+			entry.LastActivity = item.session.LastEventAt
+		}
+	}
+}
+
+func mergeSessionEvidence(existing, candidate model.SessionEvidence) model.SessionEvidence {
+	existing = model.NormalizeSessionEvidenceIdentity(existing)
+	candidate = model.NormalizeSessionEvidenceIdentity(candidate)
+	if strings.TrimSpace(existing.SessionID) == "" {
+		return candidate
+	}
+
+	preferred := existing
+	other := candidate
+	if preferSessionEvidence(candidate, existing) {
+		preferred = candidate
+		other = existing
+	}
+
+	merged := preferred
+	if merged.ProjectPath == "" {
+		merged.ProjectPath = other.ProjectPath
+	}
+	if merged.Source == model.SessionSourceUnknown {
+		merged.Source = other.Source
+	}
+	if merged.RawSessionID == "" {
+		merged.RawSessionID = other.RawSessionID
+	}
+	if merged.DetectedProjectPath == "" {
+		merged.DetectedProjectPath = other.DetectedProjectPath
+	}
+	if merged.SessionFile == "" {
+		merged.SessionFile = other.SessionFile
+	}
+	if merged.Format == "" {
+		merged.Format = other.Format
+	}
+	if merged.SnapshotHash == "" {
+		merged.SnapshotHash = other.SnapshotHash
+	}
+	if merged.StartedAt.IsZero() {
+		merged.StartedAt = other.StartedAt
+	}
+	if other.LastEventAt.After(merged.LastEventAt) {
+		merged.LastEventAt = other.LastEventAt
+	}
+	if other.ErrorCount > merged.ErrorCount {
+		merged.ErrorCount = other.ErrorCount
+	}
+	if !merged.LatestTurnStateKnown && other.LatestTurnStateKnown {
+		merged.LatestTurnStateKnown = other.LatestTurnStateKnown
+		merged.LatestTurnCompleted = other.LatestTurnCompleted
+		merged.LatestTurnStartedAt = other.LatestTurnStartedAt
+	}
+	if merged.LatestTurnStartedAt.IsZero() && !other.LatestTurnStartedAt.IsZero() {
+		merged.LatestTurnStartedAt = other.LatestTurnStartedAt
+	}
+	return model.NormalizeSessionEvidenceIdentity(merged)
+}
+
+func preferSessionEvidence(candidate, existing model.SessionEvidence) bool {
+	if candidate.LastEventAt.After(existing.LastEventAt) {
+		return true
+	}
+	if existing.LastEventAt.After(candidate.LastEventAt) {
+		return false
+	}
+	candidateScore := sessionEvidenceScore(candidate)
+	existingScore := sessionEvidenceScore(existing)
+	if candidateScore != existingScore {
+		return candidateScore > existingScore
+	}
+	return strings.Compare(candidate.ProjectPath, existing.ProjectPath) < 0
+}
+
+func sessionEvidenceScore(session model.SessionEvidence) int {
+	score := 0
+	if strings.TrimSpace(session.SessionFile) != "" {
+		score += 4
+	}
+	if !session.StartedAt.IsZero() {
+		score += 2
+	}
+	if strings.TrimSpace(session.DetectedProjectPath) != "" {
+		score += 2
+	}
+	if strings.TrimSpace(session.SnapshotHash) != "" {
+		score += 2
+	}
+	if session.LatestTurnStateKnown {
+		score += 2
+	}
+	if !session.LatestTurnStartedAt.IsZero() {
+		score++
+	}
+	if session.ErrorCount > 0 {
+		score++
+	}
+	return score
+}
+
 func (s *Service) queueProjectClassification(ctx context.Context, state model.ProjectState, opts ScanOptions) (bool, error) {
 	if s.classifier == nil {
 		return false, nil
@@ -837,17 +994,21 @@ func (s *Service) queueProjectClassification(ctx context.Context, state model.Pr
 }
 
 func dedupeSessions(in []model.SessionEvidence) []model.SessionEvidence {
-	seen := map[string]struct{}{}
+	seen := map[string]model.SessionEvidence{}
 	out := make([]model.SessionEvidence, 0, len(in))
 	for _, s := range in {
+		s = model.NormalizeSessionEvidenceIdentity(s)
 		if s.SessionID == "" {
 			continue
 		}
-		if _, ok := seen[s.SessionID]; ok {
+		if existing, ok := seen[s.SessionID]; ok {
+			seen[s.SessionID] = mergeSessionEvidence(existing, s)
 			continue
 		}
-		seen[s.SessionID] = struct{}{}
-		out = append(out, s)
+		seen[s.SessionID] = s
+	}
+	for _, session := range seen {
+		out = append(out, session)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].LastEventAt.After(out[j].LastEventAt)
@@ -1123,6 +1284,7 @@ func normalizeActivity(activity *model.DetectorProjectActivity, projectPath stri
 	normalized.ProjectPath = projectPath
 	normalized.Sessions = append([]model.SessionEvidence(nil), activity.Sessions...)
 	for i := range normalized.Sessions {
+		normalized.Sessions[i] = model.NormalizeSessionEvidenceIdentity(normalized.Sessions[i])
 		detectedPath := normalized.Sessions[i].DetectedProjectPath
 		if detectedPath == "" {
 			detectedPath = normalized.Sessions[i].ProjectPath

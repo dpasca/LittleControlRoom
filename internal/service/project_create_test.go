@@ -213,7 +213,7 @@ func TestCreateOrAttachProjectDoesNotOverwriteTrackedSessions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetProjectDetail() error = %v", err)
 	}
-	if len(detail.Sessions) != 1 || detail.Sessions[0].SessionID != "ses_tracked" {
+	if len(detail.Sessions) != 1 || detail.Sessions[0].SessionID != "codex:ses_tracked" {
 		t.Fatalf("expected tracked sessions to remain intact, got %#v", detail.Sessions)
 	}
 }
@@ -275,7 +275,7 @@ func TestCreateOrAttachProjectRestoresForgottenProjectAsPresentOnDisk(t *testing
 	if !detail.Summary.PresentOnDisk || detail.Summary.Forgotten {
 		t.Fatalf("expected forgotten project to be restored as present on disk, got %#v", detail.Summary)
 	}
-	if len(detail.Sessions) != 1 || detail.Sessions[0].SessionID != "ses_restored" {
+	if len(detail.Sessions) != 1 || detail.Sessions[0].SessionID != "codex:ses_restored" {
 		t.Fatalf("expected sessions to survive restore, got %#v", detail.Sessions)
 	}
 }

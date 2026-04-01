@@ -56,7 +56,8 @@ type TranscriptItem struct {
 }
 
 func ExtractSnapshot(ctx context.Context, classification model.SessionClassification, session model.SessionEvidence, gitStatus GitStatusSnapshot) (SessionSnapshot, error) {
-	recoveredSession := session
+	classification = model.NormalizeSessionClassificationIdentity(classification)
+	recoveredSession := model.NormalizeSessionEvidenceIdentity(session)
 	if strings.TrimSpace(recoveredSession.SessionFile) == "" {
 		recoveredSession.SessionFile = classification.SessionFile
 	}
@@ -66,7 +67,7 @@ func ExtractSnapshot(ctx context.Context, classification model.SessionClassifica
 	_ = RecoverSessionTurnState(&recoveredSession)
 	snapshot := SessionSnapshot{
 		ProjectPath:          classification.ProjectPath,
-		SessionID:            classification.SessionID,
+		SessionID:            classification.ExternalID(),
 		SessionFormat:        classification.SessionFormat,
 		LastEventAt:          classification.SourceUpdatedAt.UTC().Format(time.RFC3339),
 		LatestTurnStateKnown: recoveredSession.LatestTurnStateKnown,
