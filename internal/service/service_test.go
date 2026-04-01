@@ -1103,10 +1103,6 @@ func TestScanOnceAutoMovesProjectAndCanonicalizesOldPathActivity(t *testing.T) {
 	if err := st.SetPinned(ctx, oldPath, true); err != nil {
 		t.Fatalf("set pinned: %v", err)
 	}
-	if err := st.SetNote(ctx, oldPath, "preserve me"); err != nil {
-		t.Fatalf("set note: %v", err)
-	}
-
 	if err := os.Rename(oldPath, newPath); err != nil {
 		t.Fatalf("rename repo: %v", err)
 	}
@@ -1142,8 +1138,8 @@ func TestScanOnceAutoMovesProjectAndCanonicalizesOldPathActivity(t *testing.T) {
 	if secondReport.States[0].LastActivity.Unix() != activityAt.Unix() {
 		t.Fatalf("last activity = %s, want %s", secondReport.States[0].LastActivity, activityAt)
 	}
-	if !secondReport.States[0].Pinned || secondReport.States[0].Note != "preserve me" {
-		t.Fatalf("expected note/pin to survive move, got %#v", secondReport.States[0])
+	if !secondReport.States[0].Pinned {
+		t.Fatalf("expected pin to survive move, got %#v", secondReport.States[0])
 	}
 
 	aliases, err := st.GetPathAliases(ctx)
@@ -1325,7 +1321,6 @@ func TestScanOnceConsolidatesStaticRepoRenameAliasIntoExistingProject(t *testing
 		AttentionScore: 10,
 		InScope:        true,
 		Pinned:         true,
-		Note:           "preserve me",
 		UpdatedAt:      oldUpdatedAt,
 	}); err != nil {
 		t.Fatalf("upsert legacy project state: %v", err)
@@ -1356,8 +1351,8 @@ func TestScanOnceConsolidatesStaticRepoRenameAliasIntoExistingProject(t *testing
 	if len(secondReport.States) != 1 || secondReport.States[0].Path != newPath {
 		t.Fatalf("unexpected second scan states: %#v", secondReport.States)
 	}
-	if !secondReport.States[0].Pinned || secondReport.States[0].Note != "preserve me" {
-		t.Fatalf("expected note/pin to survive consolidation, got %#v", secondReport.States[0])
+	if !secondReport.States[0].Pinned {
+		t.Fatalf("expected pin to survive consolidation, got %#v", secondReport.States[0])
 	}
 	if secondReport.States[0].MovedFromPath != oldPath {
 		t.Fatalf("moved_from_path = %s, want %s", secondReport.States[0].MovedFromPath, oldPath)
@@ -1373,8 +1368,8 @@ func TestScanOnceConsolidatesStaticRepoRenameAliasIntoExistingProject(t *testing
 	if err != nil {
 		t.Fatalf("get merged detail: %v", err)
 	}
-	if !detail.Summary.Pinned || detail.Summary.Note != "preserve me" {
-		t.Fatalf("expected merged summary to preserve note/pin, got %#v", detail.Summary)
+	if !detail.Summary.Pinned {
+		t.Fatalf("expected merged summary to preserve pin, got %#v", detail.Summary)
 	}
 }
 

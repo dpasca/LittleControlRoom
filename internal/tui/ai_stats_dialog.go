@@ -284,7 +284,7 @@ func (m Model) aiStatsFailedProjects(limit int) ([]string, int) {
 		if limit <= 0 || len(failed) >= limit {
 			continue
 		}
-		failed = append(failed, noteProjectTitle(project.Path, project.Name))
+		failed = append(failed, projectTitle(project.Path, project.Name))
 	}
 	return failed, total
 }

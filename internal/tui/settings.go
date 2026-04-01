@@ -59,7 +59,6 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	m.setupMode = false
 	m.commandMode = false
 	m.showHelp = false
-	m.closeNoteDialog("")
 	m.err = nil
 	m.status = "Editing settings. Enter to save, Esc to cancel"
 	return m.setSettingsSelection(0)

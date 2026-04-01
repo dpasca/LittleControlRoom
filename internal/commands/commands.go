@@ -39,7 +39,6 @@ const (
 	KindWorktreeMerge  Kind = "worktree-merge"
 	KindWorktreeRemove Kind = "worktree-remove"
 	KindWorktreePrune  Kind = "worktree-prune"
-	KindNote           Kind = "note"
 	KindPin            Kind = "pin"
 	KindSnooze         Kind = "snooze"
 	KindClearSnooze    Kind = "clear-snooze"
@@ -247,14 +246,6 @@ func Suggestions(input string) []Suggestion {
 			choice("4h", "Snooze for 4 hours"),
 			choice("24h", "Snooze for 24 hours"),
 		)
-	case "note":
-		argPrefix := ""
-		if len(fields) > 1 {
-			argPrefix = strings.ToLower(fields[len(fields)-1])
-		}
-		return enumSuggestions("/note ", argPrefix,
-			choice("clear", "Remove the selected project's saved note"),
-		)
 	case "wt", "worktree":
 		argPrefix := ""
 		if len(fields) > 1 {
@@ -395,15 +386,6 @@ func Parse(input string) (Invocation, error) {
 		return Invocation{Kind: KindTodo, Canonical: "/todo"}, nil
 	case "wt", "worktree":
 		return parseWorktreeCommand(rawArgs)
-	case "note":
-		switch strings.ToLower(strings.TrimSpace(rawArgs)) {
-		case "":
-			return Invocation{Kind: KindNote, Canonical: "/note"}, nil
-		case "clear":
-			return Invocation{Kind: KindNote, Clear: true, Canonical: "/note clear"}, nil
-		default:
-			return Invocation{}, fmt.Errorf("usage: /note [clear]")
-		}
 	case "pin":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /pin")

@@ -803,7 +803,6 @@ func projectStateFromDetail(detail model.ProjectDetail) model.ProjectState {
 		InScope:              detail.Summary.InScope,
 		Pinned:               detail.Summary.Pinned,
 		SnoozedUntil:         detail.Summary.SnoozedUntil,
-		Note:                 detail.Summary.Note,
 		RunCommand:           detail.Summary.RunCommand,
 		MovedFromPath:        detail.Summary.MovedFromPath,
 		MovedAt:              detail.Summary.MovedAt,

@@ -109,7 +109,7 @@ func newTodoTextInput(value string) textarea.Model {
 	input.Placeholder = "Change font color to red when there's an error"
 	input.CharLimit = todoTextCharLimit
 	input.ShowLineNumbers = false
-	styleNoteTextarea(&input)
+	styleDialogTextarea(&input)
 	input.SetWidth(72)
 	input.SetHeight(6)
 	input.SetValue(value)
@@ -145,7 +145,7 @@ func (m *Model) openTodoDialogForSelection() tea.Cmd {
 func (m *Model) openTodoDialog(project model.ProjectSummary) tea.Cmd {
 	m.todoDialog = &todoDialogState{
 		ProjectPath: project.Path,
-		ProjectName: noteProjectTitle(project.Path, project.Name),
+		ProjectName: projectTitle(project.Path, project.Name),
 	}
 	m.todoEditor = nil
 	m.todoDeleteConfirm = nil
@@ -1143,7 +1143,7 @@ func (m Model) renderTodoDialogOverlay(body string, bodyW, bodyH int) string {
 			}
 			line := m.todoDialogItemLine(item, prefix, max(12, panelInnerW-2))
 			if i == dialog.Selected {
-				line = noteDialogButtonSelectedStyle.UnsetPadding().Width(panelInnerW).Render(line)
+				line = dialogButtonSelectedStyle.UnsetPadding().Width(panelInnerW).Render(line)
 			} else {
 				line = style.Render(line)
 			}
@@ -1336,9 +1336,9 @@ func (m Model) renderTodoDeleteConfirmOverlay(body string, bodyW, bodyH int) str
 	}
 	buttons := lipgloss.JoinHorizontal(
 		lipgloss.Left,
-		renderNoteDialogButton(actionLabel, confirm.Selected == todoDeleteConfirmFocusDelete),
+		renderDialogButton(actionLabel, confirm.Selected == todoDeleteConfirmFocusDelete),
 		" ",
-		renderNoteDialogButton("Keep", confirm.Selected == todoDeleteConfirmFocusKeep),
+		renderDialogButton("Keep", confirm.Selected == todoDeleteConfirmFocusKeep),
 	)
 	lines := []string{
 		detailSectionStyle.Render(title) + "  " + detailValueStyle.Render(confirm.ProjectName),
@@ -1368,7 +1368,7 @@ func (m Model) renderTodoCopyDialogOverlay(body string, bodyW, bodyH int) string
 	projectPath := copyDialog.ProjectPath
 	runButtons := make([]string, 0, 3)
 	for _, mode := range []int{todoCopyModeHere, todoCopyModeNewWorktree} {
-		runButtons = append(runButtons, renderNoteDialogButton(todoCopyRunModeLabel(mode), copyDialog.RunMode == mode))
+		runButtons = append(runButtons, renderDialogButton(todoCopyRunModeLabel(mode), copyDialog.RunMode == mode))
 	}
 	candidates := m.existingWorktreeCandidates(copyDialog.ProjectPath)
 	if len(candidates) > 0 {
@@ -1377,7 +1377,7 @@ func (m Model) renderTodoCopyDialogOverlay(body string, bodyW, bodyH int) string
 	providerButtons := make([]string, 0, 4)
 	for _, provider := range todoCopyDialogProviders() {
 		label := provider.Label() + "  (" + m.embeddedModelLabelForProject(projectPath, provider) + ")"
-		providerButtons = append(providerButtons, renderNoteDialogButton(label, copyDialog.Provider == provider))
+		providerButtons = append(providerButtons, renderDialogButton(label, copyDialog.Provider == provider))
 	}
 	optionButtons := []string{m.renderTodoCopyModelToggle(copyDialog.OpenModelFirst)}
 	lines = append(lines, m.renderTodoCopyChooserColumns(panelInnerW, runButtons, providerButtons, optionButtons))
@@ -1471,7 +1471,7 @@ func (m Model) renderTodoWorktreeEditorInput(label string, selected bool, width 
 	}
 	line := fmt.Sprintf("%-*s %s", labelWidth, label+":", rendered)
 	if selected {
-		return noteDialogButtonSelectedStyle.UnsetPadding().Width(width).Render(line)
+		return dialogButtonSelectedStyle.UnsetPadding().Width(width).Render(line)
 	}
 	return detailValueStyle.Render(line)
 }
@@ -1511,7 +1511,7 @@ func (m Model) renderTodoExistingWorktreeOverlay(body string, bodyW, bodyH int) 
 		if len(details) > 0 {
 			buttonLabel += "  (" + strings.Join(details, ", ") + ")"
 		}
-		button := renderNoteDialogButton(buttonLabel, dialog.Selected == i)
+		button := renderDialogButton(buttonLabel, dialog.Selected == i)
 		lines = append(lines, button)
 	}
 	lines = append(lines, "")

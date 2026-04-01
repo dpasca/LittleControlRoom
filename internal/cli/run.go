@@ -562,7 +562,6 @@ func projectStateFromDetail(detail model.ProjectDetail) model.ProjectState {
 		InScope:         summary.InScope,
 		Pinned:          summary.Pinned,
 		SnoozedUntil:    cloneOptionalTime(summary.SnoozedUntil),
-		Note:            summary.Note,
 		MovedFromPath:   summary.MovedFromPath,
 		MovedAt:         summary.MovedAt,
 		AttentionReason: append([]model.AttentionReason(nil), detail.Reasons...),

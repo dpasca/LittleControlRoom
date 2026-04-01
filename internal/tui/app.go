@@ -59,9 +59,6 @@ type Model struct {
 	nowFn     func() time.Time
 	homeDirFn func() (string, error)
 
-	noteDialog            *noteDialogState
-	noteCopyDialog        *noteCopyDialogState
-	noteClearConfirm      *noteClearConfirmState
 	todoDialog            *todoDialogState
 	todoEditor            *todoEditorState
 	todoDeleteConfirm     *todoDeleteConfirmState
@@ -690,7 +687,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.ensureSelectionVisible()
 		m.syncCommandInputWidth()
-		m.syncNoteDialogSize()
 		m.syncTodoDialogSize()
 		m.syncTodoEditorSize()
 		m.syncDiffView(false)
@@ -782,15 +778,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.todoDialog != nil {
 			return m.updateTodoDialogMode(msg)
-		}
-		if m.noteClearConfirm != nil {
-			return m.updateNoteClearConfirmMode(msg)
-		}
-		if m.noteCopyDialog != nil {
-			return m.updateNoteCopyDialogMode(msg)
-		}
-		if m.noteDialog != nil {
-			return m.updateNoteDialogMode(msg)
 		}
 		if m.projectFilterDialog != nil {
 			return m.updateProjectFilterMode(msg)
@@ -2249,15 +2236,6 @@ func (m Model) View() string {
 	if m.worktreeRemoveConfirm != nil {
 		body = m.renderWorktreeRemoveConfirmOverlay(body, layout.width, layout.height)
 	}
-	if m.noteDialog != nil {
-		body = m.renderNoteDialogOverlay(body, layout.width, layout.height)
-	}
-	if m.noteCopyDialog != nil {
-		body = m.renderNoteCopyDialogOverlay(body, layout.width, layout.height)
-	}
-	if m.noteClearConfirm != nil {
-		body = m.renderNoteClearConfirmOverlay(body, layout.width, layout.height)
-	}
 	if m.attentionDialog != nil {
 		body = m.renderAttentionDialogOverlay(body, layout.width, layout.height)
 	}
@@ -2711,7 +2689,7 @@ func (m Model) renderProjectList(width, height int) string {
 			" ",
 			cellStyle(sourceStyleForTag(agentTag, agentLive).Width(projectListAgentWidth).Align(lipgloss.Left)).Render(truncateText(agentLabel, projectListAgentWidth)),
 			" ",
-			cellStyle(noteListIndicatorStyle.Width(projectListTODOWidth).Align(lipgloss.Right)).Render(todoCount),
+			cellStyle(todoListIndicatorStyle.Width(projectListTODOWidth).Align(lipgloss.Right)).Render(todoCount),
 			" ",
 			cellStyle(projectRunStyle(runState).Width(projectListRunWidth).Align(lipgloss.Left)).Render(truncateText(runLabel, projectListRunWidth)),
 			"  ",
@@ -3257,20 +3235,6 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		}
 		m.status = "Pruning stale git worktrees..."
 		return m, m.pruneWorktreesCmd(rootPath, rootPath)
-	case commands.KindNote:
-		p, ok := m.selectedProject()
-		if !ok {
-			m.status = "No project selected"
-			return m, nil
-		}
-		if inv.Clear {
-			if !projectHasNote(p.Note) {
-				m.status = "No note to clear"
-				return m, nil
-			}
-			return m, m.openNoteClearConfirm(p.Path, p.Name)
-		}
-		return m, m.openNoteDialog(p)
 	case commands.KindPin:
 		p, ok := m.selectedProject()
 		if !ok {
@@ -3647,13 +3611,6 @@ func (m Model) clearSnoozeCmd(path string) tea.Cmd {
 	return func() tea.Msg {
 		err := m.svc.ClearSnooze(m.ctx, path)
 		return actionMsg{status: "Snooze cleared", err: err}
-	}
-}
-
-func (m Model) setNoteCmd(path, note string) tea.Cmd {
-	return func() tea.Msg {
-		err := m.svc.SetNote(m.ctx, path, note)
-		return actionMsg{status: "Note saved", err: err}
 	}
 }
 
@@ -4897,18 +4854,6 @@ func (m Model) renderFooter(width int) string {
 			return m.renderModalFooter(width, "Remove worktree: waiting for git to finish", filterSegment, usageSegment)
 		}
 		return m.renderModalFooter(width, "Remove worktree: Enter remove, Tab switch, Esc cancel", filterSegment, usageSegment)
-	}
-	if m.noteClearConfirm != nil {
-		return m.renderModalFooter(width, "Confirm note clear", filterSegment, usageSegment)
-	}
-	if m.noteCopyDialog != nil {
-		return m.renderModalFooter(width, "Copy note text: Enter copy, Tab next, Esc cancel", filterSegment, usageSegment)
-	}
-	if m.noteDialog != nil && m.noteDialog.Selection != nil {
-		return m.renderModalFooter(width, "Note selection: Space mark/copy, arrows move, Esc cancel", filterSegment, usageSegment)
-	}
-	if m.noteDialog != nil {
-		return m.renderModalFooter(width, "Project notes: Ctrl+Y copy, Ctrl+S save, Tab actions, Esc cancel", filterSegment, usageSegment)
 	}
 	return renderFooterLine(
 		width,

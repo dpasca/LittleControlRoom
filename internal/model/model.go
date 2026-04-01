@@ -182,7 +182,6 @@ type ProjectState struct {
 	InScope              bool
 	Pinned               bool
 	SnoozedUntil         *time.Time
-	Note                 string
 	RunCommand           string
 	MovedFromPath        string
 	MovedAt              time.Time
@@ -215,7 +214,6 @@ type ProjectSummary struct {
 	InScope                                       bool
 	Pinned                                        bool
 	SnoozedUntil                                  *time.Time
-	Note                                          string
 	OpenTODOCount                                 int
 	TotalTODOCount                                int
 	RunCommand                                    string

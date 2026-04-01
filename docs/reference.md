@@ -140,17 +140,8 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 - `f` open the temporary project-name filter dialog
 - `o` toggle sort mode between `attention` and `recent activity`
 - `p` pin toggle
-- `n` open the project note dialog
 - `q` quit
 - While the runtime pane is focused, `Left` and `Right` choose the highlighted runtime action and `Enter` runs it
-
-While the project note dialog is open:
-
-- `Ctrl+Y` copies the whole current note to the system clipboard
-- `Tab` or `Shift+Tab` moves between the editor and actions
-- `Enter` adds a newline in the editor or runs the selected action
-- `Copy...` opens a small menu for either `Whole note` or `Selected text`
-- In note selection mode, press `Space` once to mark the start, move the cursor, and press `Space` again to copy the selected range
 
 While the embedded Codex, Claude Code, or OpenCode pane is visible:
 
@@ -195,8 +186,6 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/run-edit`
 - `/runtime`
 - `/stop`
-- `/note`
-- `/note clear`
 - `/diff`
 - `/codex`
 - `/codex continue from the last breakpoint`
@@ -263,7 +252,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/resume` with no session ID opens a picker for saved sessions from the current project and provider; `/resume <session-id>` jumps straight to that session.
 - `/reconnect` restarts the current embedded provider helper and reconnects to the same session when possible, which is useful after refreshing `codex login` or other provider auth outside Little Control Room.
 - Embedded Claude Code currently runs through Claude's headless CLI flow. It works for prompt/response turns and session resume, and `/model` now offers a curated Claude alias picker with saved reasoning preferences. Compact, in-pane approvals, and attachments are still MVP-level.
-- The main list uses `N` for a saved note, `RUN` for the saved or active managed runtime summary, and `!` inside `RUN` when Little Control Room detects a managed port conflict.
+- The main list uses `RUN` for the saved or active managed runtime summary, and `!` inside `RUN` when Little Control Room detects a managed port conflict.
 - The project detail pane keeps project metadata only, while the dedicated runtime pane shows runtime command, state, ports, URL, conflicts or errors, and the captured output tail.
 - `codex_launch_preset` controls how Codex is launched. The default is `yolo`.
 - CLI flags override config file values.

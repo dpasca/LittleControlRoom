@@ -24,7 +24,7 @@ It is also used internally, but this is not a commercial product. It is an opini
 - Seeing which projects are active, idle, or worth revisiting
 - Opening, resuming, or switching embedded Codex, OpenCode, or Claude Code sessions directly from the dashboard
 - Reopening Claude Code sessions that are already running in another terminal
-- Keeping common actions close at hand: refresh, pin, snooze, project notes, per-project TODO lists, managed per-project run commands with runtime/port badges, diff, commit, and push
+- Keeping common actions close at hand: refresh, pin, snooze, per-project TODO lists, managed per-project run commands with runtime/port badges, diff, commit, and push
 
 ## What It Does Not Do Yet
 
@@ -82,7 +82,6 @@ The main TUI command palette opens with `/`.
 - `/run-edit`: Edit the saved runtime command.
 - `/runtime`: Focus the runtime pane.
 - `/stop`: Stop the selected project's managed runtime.
-- `/note [clear]`: Edit or clear the selected project's note.
 - `/todo`: Open the TODO list for the selected project. Add items, toggle done, and start a fresh embedded session from any item.
 - `/diff`: Open the full-screen git diff.
 - `/commit [message]`: Preview a commit for the selected project.
@@ -135,7 +134,7 @@ Most day-to-day use falls into a few buckets:
 
   [![TODO dialog with per-project task list](docs/screenshots/todo-dialog.png)](docs/screenshots/todo-dialog.png)
 
-- **Review and organize** — Use `/note` for project notes, `/diff` to inspect git changes, `/commit` and `/push` when you are ready to ship, and `/open` to jump to the project folder.
+- **Review and organize** — Use `/diff` to inspect git changes, `/commit` and `/push` when you are ready to ship, and `/open` to jump to the project folder.
 
   | Diff View | Commit Preview | Image Diff |
   | --- | --- | --- |

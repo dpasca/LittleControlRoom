@@ -968,7 +968,7 @@ func worktreePostMergeOptionLine(prompt *worktreePostMergeState, index, width in
 	}
 	line := truncateText(prefix+text, width)
 	if prompt.Selected == index {
-		return noteDialogButtonSelectedStyle.UnsetPadding().Width(width).Render(line)
+		return dialogButtonSelectedStyle.UnsetPadding().Width(width).Render(line)
 	}
 	return style.Render(line)
 }
@@ -1140,9 +1140,9 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 	panelInnerW := max(24, panelW-4)
 	buttons := lipgloss.JoinHorizontal(
 		lipgloss.Left,
-		renderNoteDialogButton("Remove", confirm.Selected == worktreeRemoveConfirmFocusRemove),
+		renderDialogButton("Remove", confirm.Selected == worktreeRemoveConfirmFocusRemove),
 		" ",
-		renderNoteDialogButton("Keep", confirm.Selected == worktreeRemoveConfirmFocusKeep),
+		renderDialogButton("Keep", confirm.Selected == worktreeRemoveConfirmFocusKeep),
 	)
 	if confirm.Busy {
 		buttons = disabledActionTextStyle.Render("[" + todoDialogWaitingLabel(m.spinnerFrame) + "]")
@@ -1204,7 +1204,7 @@ func (m Model) renderWorktreeMergeConfirmOverlay(body string, bodyW, bodyH int) 
 	}
 	panelW := min(max(54, bodyW-24), 82)
 	panelInnerW := max(28, panelW-4)
-	mergeButton := renderNoteDialogButton("Merge", confirm.Selected == worktreeMergeConfirmFocusMerge)
+	mergeButton := renderDialogButton("Merge", confirm.Selected == worktreeMergeConfirmFocusMerge)
 	if !confirm.MergeReady {
 		mergeButton = disabledActionTextStyle.Render("[Merge blocked]")
 	}
@@ -1213,9 +1213,9 @@ func (m Model) renderWorktreeMergeConfirmOverlay(body string, bodyW, bodyH int) 
 	}
 	buttonParts := []string{mergeButton}
 	if !confirm.MergeReady && confirm.OfferCommit {
-		buttonParts = append(buttonParts, renderNoteDialogButton("Commit & Merge", confirm.Selected == worktreeMergeConfirmFocusCommit))
+		buttonParts = append(buttonParts, renderDialogButton("Commit & Merge", confirm.Selected == worktreeMergeConfirmFocusCommit))
 	}
-	buttonParts = append(buttonParts, renderNoteDialogButton("Keep", confirm.Selected == worktreeMergeConfirmFocusKeep))
+	buttonParts = append(buttonParts, renderDialogButton("Keep", confirm.Selected == worktreeMergeConfirmFocusKeep))
 	buttons := strings.Join(buttonParts, " ")
 	if confirm.Busy {
 		buttons = mergeButton

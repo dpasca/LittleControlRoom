@@ -63,7 +63,7 @@ func (m *Model) openRunCommandDialog(project model.ProjectSummary, startAfterSav
 
 	m.runCommandDialog = &runCommandDialogState{
 		ProjectPath:      project.Path,
-		ProjectName:      noteProjectTitle(project.Path, project.Name),
+		ProjectName:      projectTitle(project.Path, project.Name),
 		Input:            input,
 		SuggestionReason: suggestionReason,
 		StartAfterSave:   startAfterSave,

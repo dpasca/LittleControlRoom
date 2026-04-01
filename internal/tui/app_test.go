@@ -11533,44 +11533,6 @@ func mSetupSelectionForTest(backend config.AIBackend) int {
 	return 0
 }
 
-func TestCommandEnterOpensNoteDialog(t *testing.T) {
-	input := textinput.New()
-	input.SetValue("/note")
-
-	m := Model{
-		projects: []model.ProjectSummary{{
-			Name:          "demo",
-			Path:          "/tmp/demo",
-			PresentOnDisk: true,
-			Note:          "Remember the release checklist",
-		}},
-		selected:     0,
-		commandMode:  true,
-		commandInput: input,
-		width:        100,
-		height:       24,
-	}
-	m.syncCommandSelection()
-
-	updated, cmd := m.updateCommandMode(tea.KeyMsg{Type: tea.KeyEnter})
-	got := updated.(Model)
-	if got.commandMode {
-		t.Fatalf("command mode should close after /note")
-	}
-	if got.noteDialog == nil {
-		t.Fatalf("note dialog should open after /note")
-	}
-	if got.noteDialog.ProjectPath != "/tmp/demo" {
-		t.Fatalf("note dialog project path = %q, want /tmp/demo", got.noteDialog.ProjectPath)
-	}
-	if got.noteDialog.Editor.Value() != "Remember the release checklist" {
-		t.Fatalf("note dialog value = %q, want saved note", got.noteDialog.Editor.Value())
-	}
-	if cmd == nil {
-		t.Fatalf("/note should return a focus command for the editor")
-	}
-}
-
 func TestCommandEnterOpensRunCommandDialogWhenUnset(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -11655,121 +11617,6 @@ func TestRestartCommandRequiresSavedOrActiveCommand(t *testing.T) {
 	}
 	if cmd != nil {
 		t.Fatalf("dispatchCommand(/restart) should fail locally when no runtime command exists")
-	}
-}
-
-func TestDispatchNoteClearOpensConfirmationDialog(t *testing.T) {
-	m := Model{
-		projects: []model.ProjectSummary{{
-			Name:          "demo",
-			Path:          "/tmp/demo",
-			PresentOnDisk: true,
-			Note:          "Saved note",
-		}},
-		selected: 0,
-	}
-
-	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindNote, Clear: true})
-	got := updated.(Model)
-	if got.noteClearConfirm == nil {
-		t.Fatalf("/note clear should open a confirmation dialog")
-	}
-	if got.noteClearConfirm.ProjectPath != "/tmp/demo" {
-		t.Fatalf("confirmation project path = %q, want /tmp/demo", got.noteClearConfirm.ProjectPath)
-	}
-	if got.noteClearConfirm.Selected != noteClearConfirmFocusCancel {
-		t.Fatalf("default confirmation selection = %d, want cancel", got.noteClearConfirm.Selected)
-	}
-	if cmd != nil {
-		t.Fatalf("/note clear should not clear immediately")
-	}
-}
-
-func TestNoteDialogSaveActionClosesDialogAndReturnsCommand(t *testing.T) {
-	m := Model{
-		noteDialog: &noteDialogState{
-			ProjectPath:  "/tmp/demo",
-			ProjectName:  "demo",
-			OriginalNote: "",
-			Editor:       newNoteTextarea("Capture the next handoff"),
-			Selected:     noteDialogFocusSave,
-		},
-	}
-
-	updated, cmd := m.updateNoteDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
-	got := updated.(Model)
-	if got.noteDialog != nil {
-		t.Fatalf("save should close the note dialog")
-	}
-	if got.status != "Saving note..." {
-		t.Fatalf("status = %q, want saving note status", got.status)
-	}
-	if cmd == nil {
-		t.Fatalf("save should return a note command")
-	}
-}
-
-func TestNoteClearConfirmationConfirmClosesDialogsAndReturnsCommand(t *testing.T) {
-	m := Model{
-		noteDialog: &noteDialogState{
-			ProjectPath:  "/tmp/demo",
-			ProjectName:  "demo",
-			OriginalNote: "Saved note",
-			Editor:       newNoteTextarea("Saved note"),
-			Selected:     noteDialogFocusClear,
-		},
-		noteClearConfirm: &noteClearConfirmState{
-			ProjectPath: "/tmp/demo",
-			ProjectName: "demo",
-			Selected:    noteClearConfirmFocusConfirm,
-		},
-	}
-
-	updated, cmd := m.updateNoteClearConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
-	got := updated.(Model)
-	if got.noteClearConfirm != nil {
-		t.Fatalf("confirm should close the confirmation dialog")
-	}
-	if got.noteDialog != nil {
-		t.Fatalf("confirm should close the note dialog before clearing")
-	}
-	if got.status != "Clearing note..." {
-		t.Fatalf("status = %q, want clearing note status", got.status)
-	}
-	if cmd == nil {
-		t.Fatalf("confirm should return a clear-note command")
-	}
-}
-
-func TestNoteClearConfirmationCancelKeepsNoteDialogOpen(t *testing.T) {
-	m := Model{
-		noteDialog: &noteDialogState{
-			ProjectPath:  "/tmp/demo",
-			ProjectName:  "demo",
-			OriginalNote: "Saved note",
-			Editor:       newNoteTextarea("Saved note"),
-			Selected:     noteDialogFocusClear,
-		},
-		noteClearConfirm: &noteClearConfirmState{
-			ProjectPath: "/tmp/demo",
-			ProjectName: "demo",
-			Selected:    noteClearConfirmFocusCancel,
-		},
-	}
-
-	updated, cmd := m.updateNoteClearConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
-	got := updated.(Model)
-	if got.noteClearConfirm != nil {
-		t.Fatalf("cancel should close the confirmation dialog")
-	}
-	if got.noteDialog == nil {
-		t.Fatalf("cancel should leave the note dialog open")
-	}
-	if got.status != "Note clear canceled" {
-		t.Fatalf("status = %q, want note clear canceled", got.status)
-	}
-	if cmd != nil {
-		t.Fatalf("cancel should not return a command")
 	}
 }
 
@@ -13017,9 +12864,6 @@ func TestRenderHelpPanelOmitsVerboseLegacyHints(t *testing.T) {
 	rendered := ansi.Strip(m.renderHelpPanel(80))
 	if strings.Contains(rendered, "f   forget missing") {
 		t.Fatalf("renderHelpPanel() should not advertise forget while it is unavailable: %q", rendered)
-	}
-	if strings.Contains(rendered, "Ctrl+Y note copy when notes open") {
-		t.Fatalf("renderHelpPanel() should not advertise the old verbose note-copy hint: %q", rendered)
 	}
 	if strings.Contains(rendered, "Runtime pane shows command, ports, URL, logs") {
 		t.Fatalf("renderHelpPanel() should not include verbose runtime prose: %q", rendered)

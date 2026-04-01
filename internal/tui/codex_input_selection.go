@@ -36,7 +36,7 @@ var (
 
 func (m *Model) startCodexInputSelection() {
 	m.codexInputSelection = &codexInputSelectionState{
-		ViewportY: noteSelectionInitialViewport(m.codexInput),
+		ViewportY: textSelectionInitialViewport(m.codexInput),
 	}
 	m.status = "Selection mode: move to the start and press Space"
 }
@@ -64,13 +64,13 @@ func (m Model) updateCodexInputSelectionMode(msg tea.KeyMsg) (tea.Model, tea.Cmd
 		return m, m.toggleCodexInputSelectionMark()
 	}
 
-	if !noteSelectionNavigationKey(msg.String()) {
+	if !textSelectionNavigationKey(msg.String()) {
 		return m, nil
 	}
 
 	var cmd tea.Cmd
 	m.codexInput, cmd = m.codexInput.Update(msg)
-	sel.ViewportY = noteSelectionViewportForCursor(m.codexInput, sel.ViewportY)
+	sel.ViewportY = textSelectionViewportForCursor(m.codexInput, sel.ViewportY)
 	return m, cmd
 }
 
@@ -80,7 +80,7 @@ func (m *Model) toggleCodexInputSelectionMark() tea.Cmd {
 		return nil
 	}
 
-	line, col := noteEditorCursor(m.codexInput)
+	line, col := textEditorCursor(m.codexInput)
 
 	if !sel.AnchorSet {
 		sel.AnchorSet = true
@@ -90,7 +90,7 @@ func (m *Model) toggleCodexInputSelectionMark() tea.Cmd {
 		return nil
 	}
 
-	text := cleanCopiedText(noteSelectedText(m.codexInput, sel.AnchorLine, sel.AnchorCol, line, col))
+	text := cleanCopiedText(textSelectedContent(m.codexInput, sel.AnchorLine, sel.AnchorCol, line, col))
 	if text == "" {
 		m.status = "Selection is empty. Move the cursor and press Space again."
 		return nil
@@ -291,22 +291,17 @@ func renderCodexComposerWithSelection(input textarea.Model, sel *codexInputSelec
 }
 
 func renderCodexInputSelectionEditor(input textarea.Model, sel *codexInputSelectionState) string {
-	displayLines := noteSelectionDisplayLines(input)
+	displayLines := textSelectionDisplayLines(input)
 	height := max(1, input.Height())
 	width := max(1, input.Width())
-	offset := noteSelectionViewportForCursor(input, sel.ViewportY)
+	offset := textSelectionViewportForCursor(input, sel.ViewportY)
 	maxOffset := max(0, len(displayLines)-height)
 	if offset > maxOffset {
 		offset = maxOffset
 	}
 
-	cursorRow, cursorCol := noteSelectionDisplayCursor(input)
-	startLine, startCol, endLine, endCol, hasSelection := noteSelectionRange(input, &noteTextSelectionState{
-		AnchorSet:  sel.AnchorSet,
-		AnchorLine: sel.AnchorLine,
-		AnchorCol:  sel.AnchorCol,
-		ViewportY:  sel.ViewportY,
-	})
+	cursorRow, cursorCol := textSelectionDisplayCursor(input)
+	startLine, startCol, endLine, endCol, hasSelection := textSelectionRange(input, sel.AnchorSet, sel.AnchorLine, sel.AnchorCol)
 
 	lines := make([]string, 0, height)
 	for row := 0; row < height; row++ {
@@ -322,7 +317,7 @@ func renderCodexInputSelectionEditor(input textarea.Model, sel *codexInputSelect
 }
 
 func renderCodexInputSelectionLine(
-	line noteSelectionDisplayLine,
+	line textSelectionDisplayLine,
 	width int,
 	cursorVisible bool,
 	cursorCol int,
@@ -336,8 +331,8 @@ func renderCodexInputSelectionLine(
 	if cursorVisible {
 		baseStyle = codexSelCursorLineStyle
 	}
-	runes := []rune(line.text)
-	selStart, selEnd, ok := noteSelectionRangeForDisplayLine(line, startLine, startCol, endLine, endCol, hasSelection)
+	runes := []rune(line.Text)
+	selStart, selEnd, ok := textSelectionRangeForDisplayLine(line, startLine, startCol, endLine, endCol, hasSelection)
 
 	var out strings.Builder
 	lineWidth := 0

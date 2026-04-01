@@ -218,7 +218,6 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 		InScope:              true,
 		Pinned:               existing.Pinned,
 		SnoozedUntil:         existing.SnoozedUntil,
-		Note:                 existing.Note,
 		MovedFromPath:        existing.MovedFromPath,
 		MovedAt:              existing.MovedAt,
 		AttentionReason:      score.Reasons,

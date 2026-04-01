@@ -161,7 +161,7 @@ func GenerateScreenshots(ctx context.Context, svc *service.Service, cfg config.S
 	}
 	todoModel.todoDialog = &todoDialogState{
 		ProjectPath: todoProject.Path,
-		ProjectName: noteProjectTitle(todoProject.Path, todoProject.Name),
+		ProjectName: projectTitle(todoProject.Path, todoProject.Name),
 		Selected:    1,
 	}
 	todoModel.syncTodoDialogSelection()
@@ -373,7 +373,6 @@ func sanitizeScreenshotProjectDetail(detail model.ProjectDetail) model.ProjectDe
 
 func sanitizeScreenshotProjectSummary(summary model.ProjectSummary) model.ProjectSummary {
 	summary.Path = sanitizeScreenshotPath(summary.Path)
-	summary.Note = sanitizeScreenshotText(summary.Note)
 	summary.MovedFromPath = sanitizeScreenshotPath(summary.MovedFromPath)
 	summary.LatestSessionDetectedProjectPath = sanitizeScreenshotPath(summary.LatestSessionDetectedProjectPath)
 	summary.LatestSessionSummary = sanitizeScreenshotText(summary.LatestSessionSummary)

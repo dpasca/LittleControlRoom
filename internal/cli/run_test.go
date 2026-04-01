@@ -41,7 +41,6 @@ func TestLoadStoredProjectStates(t *testing.T) {
 		InScope:         true,
 		Pinned:          true,
 		SnoozedUntil:    &snoozedUntil,
-		Note:            "hello",
 		MovedFromPath:   "/tmp/old-demo",
 		MovedAt:         lastActivity.Add(-time.Hour),
 		AttentionReason: []model.AttentionReason{{

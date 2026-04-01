@@ -479,88 +479,6 @@ func TestForceQueueTodoWorktreeSuggestionBypassesDebounce(t *testing.T) {
 	}
 }
 
-func TestOpenMigratesLegacyProjectNotesIntoTodos(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-
-	dbPath := filepath.Join(t.TempDir(), "legacy-notes.sqlite")
-	db, err := sql.Open("sqlite", sqliteDSN(dbPath))
-	if err != nil {
-		t.Fatalf("open raw sqlite: %v", err)
-	}
-	defer db.Close()
-
-	if _, err := db.ExecContext(ctx, `
-		CREATE TABLE projects (
-			path TEXT PRIMARY KEY,
-			name TEXT NOT NULL,
-			last_activity INTEGER,
-			status TEXT NOT NULL,
-			attention_score INTEGER NOT NULL,
-			present_on_disk INTEGER NOT NULL DEFAULT 1,
-			repo_dirty INTEGER NOT NULL DEFAULT 0,
-			repo_conflict INTEGER NOT NULL DEFAULT 0,
-			repo_sync_status TEXT NOT NULL DEFAULT '',
-			repo_ahead_count INTEGER NOT NULL DEFAULT 0,
-			repo_behind_count INTEGER NOT NULL DEFAULT 0,
-			forgotten INTEGER NOT NULL DEFAULT 0,
-			manually_added INTEGER NOT NULL DEFAULT 0,
-			in_scope INTEGER NOT NULL DEFAULT 1,
-			pinned INTEGER NOT NULL DEFAULT 0,
-			snoozed_until INTEGER,
-			note TEXT NOT NULL DEFAULT '',
-			run_command TEXT NOT NULL DEFAULT '',
-			moved_from_path TEXT NOT NULL DEFAULT '',
-			moved_at INTEGER,
-			updated_at INTEGER NOT NULL
-		)
-	`); err != nil {
-		t.Fatalf("create legacy projects table: %v", err)
-	}
-	if _, err := db.ExecContext(ctx, `
-		INSERT INTO projects(path, name, status, attention_score, note, updated_at)
-		VALUES('/tmp/demo', 'demo', 'idle', 0, 'First task
-
-Second task', ?)
-	`, time.Now().Unix()); err != nil {
-		t.Fatalf("insert legacy project note: %v", err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("close raw sqlite: %v", err)
-	}
-
-	st, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("open migrated store: %v", err)
-	}
-	defer st.Close()
-
-	projects, err := st.ListProjects(ctx, false)
-	if err != nil {
-		t.Fatalf("list projects: %v", err)
-	}
-	if len(projects) != 1 {
-		t.Fatalf("project count = %d, want 1", len(projects))
-	}
-	if projects[0].OpenTODOCount != 2 || projects[0].TotalTODOCount != 2 {
-		t.Fatalf("todo counts = (%d, %d), want (2, 2)", projects[0].OpenTODOCount, projects[0].TotalTODOCount)
-	}
-	if projects[0].Note != "" {
-		t.Fatalf("legacy note should be cleared after migration, got %q", projects[0].Note)
-	}
-
-	detail, err := st.GetProjectDetail(ctx, "/tmp/demo", 5)
-	if err != nil {
-		t.Fatalf("GetProjectDetail() error = %v", err)
-	}
-	if len(detail.Todos) != 2 {
-		t.Fatalf("todo count = %d, want 2", len(detail.Todos))
-	}
-	if detail.Todos[0].Text != "First task" || detail.Todos[1].Text != "Second task" {
-		t.Fatalf("migrated todos = %#v, want split legacy note lines", detail.Todos)
-	}
-}
-
 func TestOpenMigratesProjectsInScopeColumn(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -1675,7 +1593,6 @@ func TestMoveProjectPathPreservesData(t *testing.T) {
 		RepoAheadCount:      2,
 		InScope:             true,
 		Pinned:              true,
-		Note:                "keep this note",
 		AttentionReason: []model.AttentionReason{{
 			Code:   "idle",
 			Text:   "Idle for a while",
@@ -1772,8 +1689,8 @@ func TestMoveProjectPathPreservesData(t *testing.T) {
 	if detail.Summary.WorktreeOriginTodoID != item.ID {
 		t.Fatalf("expected worktree origin todo id to survive move: %#v", detail.Summary)
 	}
-	if !detail.Summary.Pinned || detail.Summary.Note != "keep this note" || detail.Summary.RunCommand != "pnpm dev" {
-		t.Fatalf("expected pin/note/run command to survive move: %#v", detail.Summary)
+	if !detail.Summary.Pinned || detail.Summary.RunCommand != "pnpm dev" {
+		t.Fatalf("expected pin/run command to survive move: %#v", detail.Summary)
 	}
 	if len(detail.Reasons) != 1 || detail.Reasons[0].Code != "idle" {
 		t.Fatalf("expected reasons to survive move, got %#v", detail.Reasons)
@@ -1797,59 +1714,6 @@ func TestMoveProjectPathPreservesData(t *testing.T) {
 	}
 	if classification.ProjectPath != newPath {
 		t.Fatalf("classification project path = %s, want %s", classification.ProjectPath, newPath)
-	}
-}
-
-func TestUpsertProjectStateDoesNotOverwriteExistingNote(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-
-	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
-	st, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	defer st.Close()
-
-	path := "/tmp/note-race"
-	now := time.Now().UTC().Truncate(time.Second)
-	if err := st.UpsertProjectState(ctx, model.ProjectState{
-		Path:           path,
-		Name:           "note-race",
-		Status:         model.StatusIdle,
-		AttentionScore: 5,
-		InScope:        true,
-		Note:           "old note text",
-		UpdatedAt:      now,
-	}); err != nil {
-		t.Fatalf("upsert initial project state: %v", err)
-	}
-
-	if err := st.SetNote(ctx, path, ""); err != nil {
-		t.Fatalf("clear note: %v", err)
-	}
-
-	if err := st.UpsertProjectState(ctx, model.ProjectState{
-		Path:           path,
-		Name:           "note-race",
-		Status:         model.StatusActive,
-		AttentionScore: 11,
-		InScope:        true,
-		Note:           "old note text",
-		UpdatedAt:      now.Add(time.Minute),
-	}); err != nil {
-		t.Fatalf("upsert refreshed project state: %v", err)
-	}
-
-	detail, err := st.GetProjectDetail(ctx, path, 5)
-	if err != nil {
-		t.Fatalf("get project detail: %v", err)
-	}
-	if detail.Summary.Note != "" {
-		t.Fatalf("note after refreshed upsert = %q, want cleared note to persist", detail.Summary.Note)
-	}
-	if detail.Summary.Status != model.StatusActive || detail.Summary.AttentionScore != 11 {
-		t.Fatalf("summary after refreshed upsert = %#v, want scan-derived fields to update", detail.Summary)
 	}
 }
 

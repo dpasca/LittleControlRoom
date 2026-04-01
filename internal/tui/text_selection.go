@@ -2,30 +2,25 @@ package tui
 
 import (
 	"strings"
+	"unicode"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/x/ansi"
+	rw "github.com/mattn/go-runewidth"
+	"github.com/rivo/uniseg"
 )
 
-// selectionHighlightStart sets bold, black text on a muted gold background.
-// Uses raw ANSI escapes rather than lipgloss so the highlight works reliably
-// when injected into already-styled content.
 const selectionHighlightStart = "\x1b[1;38;5;16;48;5;178m"
-
-// selectionHighlightEnd resets only the attributes we changed (bold off,
-// default fg, default bg) without a full reset, so surrounding ANSI state
-// in the "after" segment is preserved.
 const selectionHighlightEnd = "\x1b[22;39;49m"
 
-// textSelection tracks a mouse-driven text selection in the codex viewport.
 type textSelection struct {
-	anchorRow  int // content row where the press started
-	anchorCol  int // visual column where the press started
-	currentRow int // content row of the current drag position
-	currentCol int // visual column of the current drag position
+	anchorRow  int
+	anchorCol  int
+	currentRow int
+	currentCol int
 	dragging   bool
 }
 
-// normalized returns the selection bounds with start <= end.
 func (s textSelection) normalized() (startRow, startCol, endRow, endCol int) {
 	if s.anchorRow < s.currentRow || (s.anchorRow == s.currentRow && s.anchorCol <= s.currentCol) {
 		return s.anchorRow, s.anchorCol, s.currentRow, s.currentCol
@@ -33,13 +28,10 @@ func (s textSelection) normalized() (startRow, startCol, endRow, endCol int) {
 	return s.currentRow, s.currentCol, s.anchorRow, s.anchorCol
 }
 
-// hasRange reports whether the selection covers at least one character.
 func (s textSelection) hasRange() bool {
 	return s.anchorRow != s.currentRow || s.anchorCol != s.currentCol
 }
 
-// extractText returns the plain text covered by the selection.
-// fullContent is the full viewport content (with ANSI styling).
 func (s textSelection) extractText(fullContent string) string {
 	if !s.hasRange() {
 		return ""
@@ -72,18 +64,9 @@ func (s textSelection) extractText(fullContent string) string {
 	return strings.Join(result, "\n")
 }
 
-// cleanCopiedText post-processes extracted selection text for a cleaner
-// clipboard result:
-//  1. Join soft-wrapped lines: when a line does NOT end with trailing whitespace
-//     (meaning it filled the viewport width) and the next line is non-empty,
-//     they belong to the same paragraph and are merged.
-//  2. Strip trailing whitespace from each line.
 func cleanCopiedText(text string) string {
 	lines := strings.Split(text, "\n")
 
-	// Step 1: join soft-wrapped lines. A line that does NOT end with
-	// whitespace was full-width (soft-wrapped); merge it with the next
-	// non-empty line. This must happen before trailing-space stripping.
 	joined := make([]string, 0, len(lines))
 	var buf strings.Builder
 	for _, line := range lines {
@@ -99,8 +82,6 @@ func cleanCopiedText(text string) string {
 			buf.WriteByte(' ')
 		}
 		buf.WriteString(line)
-		// If the original line ends with whitespace, it was shorter than
-		// the viewport width — treat it as a natural line break.
 		if strings.HasSuffix(line, " ") || strings.HasSuffix(line, "\t") {
 			joined = append(joined, buf.String())
 			buf.Reset()
@@ -110,7 +91,6 @@ func cleanCopiedText(text string) string {
 		joined = append(joined, buf.String())
 	}
 
-	// Step 3: strip trailing whitespace from each line.
 	for i, line := range joined {
 		joined[i] = strings.TrimRight(line, " \t")
 	}
@@ -118,8 +98,6 @@ func cleanCopiedText(text string) string {
 	return strings.Join(joined, "\n")
 }
 
-// overlaySelectionHighlight applies reverse-video styling to the selected
-// region within the viewport's visible output.
 func overlaySelectionHighlight(viewportOutput string, sel textSelection, yOffset int) string {
 	if !sel.hasRange() {
 		return viewportOutput
@@ -155,4 +133,274 @@ func overlaySelectionHighlight(viewportOutput string, sel textSelection, yOffset
 		lines[i] = before + selectionHighlightStart + selected + selectionHighlightEnd + after
 	}
 	return strings.Join(lines, "\n")
+}
+
+type textSelectionDisplayLine struct {
+	RawLine  int
+	StartCol int
+	EndCol   int
+	Text     string
+}
+
+func textSelectionNavigationKey(key string) bool {
+	switch key {
+	case "left", "right", "up", "down", "home", "end",
+		"ctrl+a", "ctrl+e", "ctrl+b", "ctrl+f", "ctrl+n", "ctrl+p",
+		"alt+left", "alt+right", "alt+b", "alt+f",
+		"alt+<", "alt+>", "ctrl+home", "ctrl+end":
+		return true
+	default:
+		return false
+	}
+}
+
+func textEditorCursor(editor textarea.Model) (int, int) {
+	lines := textEditorLines(editor)
+	line := editor.Line()
+	if len(lines) == 0 {
+		return 0, 0
+	}
+	line = max(0, min(line, len(lines)-1))
+	info := editor.LineInfo()
+	col := info.StartColumn + info.ColumnOffset
+	runes := []rune(lines[line])
+	col = max(0, min(col, len(runes)))
+	return line, col
+}
+
+func textEditorLines(editor textarea.Model) []string {
+	lines := strings.Split(strings.ReplaceAll(editor.Value(), "\r\n", "\n"), "\n")
+	if len(lines) == 0 {
+		return []string{""}
+	}
+	return lines
+}
+
+func textSelectedContent(editor textarea.Model, startLine, startCol, endLine, endCol int) string {
+	lines := textEditorLines(editor)
+	startLine = max(0, min(startLine, len(lines)-1))
+	endLine = max(0, min(endLine, len(lines)-1))
+	startCol = max(0, min(startCol, len([]rune(lines[startLine]))))
+	endCol = max(0, min(endCol, len([]rune(lines[endLine]))))
+	if textCursorAfter(startLine, startCol, endLine, endCol) {
+		startLine, endLine = endLine, startLine
+		startCol, endCol = endCol, startCol
+	}
+	if startLine == endLine {
+		return textSliceRunes(lines[startLine], startCol, endCol)
+	}
+	segments := []string{textSliceRunes(lines[startLine], startCol, len([]rune(lines[startLine])))}
+	for line := startLine + 1; line < endLine; line++ {
+		segments = append(segments, lines[line])
+	}
+	segments = append(segments, textSliceRunes(lines[endLine], 0, endCol))
+	return strings.Join(segments, "\n")
+}
+
+func textSliceRunes(line string, startCol, endCol int) string {
+	runes := []rune(line)
+	startCol = max(0, min(startCol, len(runes)))
+	endCol = max(0, min(endCol, len(runes)))
+	if startCol > endCol {
+		startCol, endCol = endCol, startCol
+	}
+	return string(runes[startCol:endCol])
+}
+
+func textCursorAfter(lineA, colA, lineB, colB int) bool {
+	if lineA != lineB {
+		return lineA > lineB
+	}
+	return colA > colB
+}
+
+func textSelectionRangeForDisplayLine(
+	line textSelectionDisplayLine,
+	startLine int,
+	startCol int,
+	endLine int,
+	endCol int,
+	hasSelection bool,
+) (int, int, bool) {
+	if !hasSelection {
+		return 0, 0, false
+	}
+	if textCursorAfter(startLine, startCol, line.RawLine, line.EndCol) || (startLine == line.RawLine && startCol == line.EndCol) {
+		return 0, 0, false
+	}
+	if textCursorAfter(line.RawLine, line.StartCol, endLine, endCol) || (line.RawLine == endLine && line.StartCol == endCol) {
+		return 0, 0, false
+	}
+	selectionStart := line.StartCol
+	if line.RawLine == startLine {
+		selectionStart = max(selectionStart, startCol)
+	}
+	selectionEnd := line.EndCol
+	if line.RawLine == endLine {
+		selectionEnd = min(selectionEnd, endCol)
+	}
+	if selectionStart >= selectionEnd {
+		return 0, 0, false
+	}
+	return selectionStart - line.StartCol, selectionEnd - line.StartCol, true
+}
+
+func textSelectionRange(editor textarea.Model, anchorSet bool, anchorLine, anchorCol int) (int, int, int, int, bool) {
+	if !anchorSet {
+		return 0, 0, 0, 0, false
+	}
+	line, col := textEditorCursor(editor)
+	startLine, startCol := anchorLine, anchorCol
+	endLine, endCol := line, col
+	if textCursorAfter(startLine, startCol, endLine, endCol) {
+		startLine, endLine = endLine, startLine
+		startCol, endCol = endCol, startCol
+	}
+	return startLine, startCol, endLine, endCol, true
+}
+
+func textSelectionDisplayLines(editor textarea.Model) []textSelectionDisplayLine {
+	lines := textEditorLines(editor)
+	width := max(1, editor.Width())
+	displayLines := make([]textSelectionDisplayLine, 0, len(lines))
+	for lineIndex, line := range lines {
+		displayLines = append(displayLines, textWrapDisplayLine(line, lineIndex, width)...)
+	}
+	if len(displayLines) == 0 {
+		return []textSelectionDisplayLine{{}}
+	}
+	return displayLines
+}
+
+func textWrapDisplayLine(line string, rawLine int, width int) []textSelectionDisplayLine {
+	wrapped := textWrapRunes([]rune(line), width)
+	if len(wrapped) == 0 {
+		return []textSelectionDisplayLine{{RawLine: rawLine}}
+	}
+	lineRunes := []rune(line)
+	consumed := 0
+	displayLines := make([]textSelectionDisplayLine, 0, len(wrapped))
+	for _, wrappedLine := range wrapped {
+		actualLen := min(len(wrappedLine), len(lineRunes)-consumed)
+		if actualLen < 0 {
+			actualLen = 0
+		}
+		displayLines = append(displayLines, textSelectionDisplayLine{
+			RawLine:  rawLine,
+			StartCol: consumed,
+			EndCol:   consumed + actualLen,
+			Text:     string(wrappedLine[:actualLen]),
+		})
+		consumed += actualLen
+	}
+	return displayLines
+}
+
+func textSelectionDisplayCursor(editor textarea.Model) (int, int) {
+	displayLines := textSelectionDisplayLines(editor)
+	line, col := textEditorCursor(editor)
+	for row, displayLine := range displayLines {
+		if displayLine.RawLine != line {
+			continue
+		}
+		if col < displayLine.StartCol || col > displayLine.EndCol {
+			continue
+		}
+		if col == displayLine.EndCol && row+1 < len(displayLines) && displayLines[row+1].RawLine == line && displayLines[row+1].StartCol == col {
+			continue
+		}
+		return row, col - displayLine.StartCol
+	}
+	return 0, 0
+}
+
+func textSelectionInitialViewport(editor textarea.Model) int {
+	cursorRow, _ := textSelectionDisplayCursor(editor)
+	return max(0, cursorRow-editor.Height()+1)
+}
+
+func textSelectionViewportForCursor(editor textarea.Model, offset int) int {
+	displayLines := textSelectionDisplayLines(editor)
+	height := max(1, editor.Height())
+	maxOffset := max(0, len(displayLines)-height)
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	cursorRow, _ := textSelectionDisplayCursor(editor)
+	if cursorRow < offset {
+		offset = cursorRow
+	}
+	if cursorRow >= offset+height {
+		offset = cursorRow - height + 1
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	return offset
+}
+
+func textWrapRunes(runes []rune, width int) [][]rune {
+	if width <= 0 {
+		return [][]rune{runes}
+	}
+	var (
+		lines  = [][]rune{{}}
+		word   = []rune{}
+		row    int
+		spaces int
+	)
+
+	for _, r := range runes {
+		if unicode.IsSpace(r) {
+			spaces++
+		} else {
+			word = append(word, r)
+		}
+
+		if spaces > 0 {
+			if uniseg.StringWidth(string(lines[row]))+uniseg.StringWidth(string(word))+spaces > width {
+				row++
+				lines = append(lines, []rune{})
+				lines[row] = append(lines[row], word...)
+				lines[row] = append(lines[row], repeatSpaces(spaces)...)
+				spaces = 0
+				word = nil
+			} else {
+				lines[row] = append(lines[row], word...)
+				lines[row] = append(lines[row], repeatSpaces(spaces)...)
+				spaces = 0
+				word = nil
+			}
+		} else if len(word) > 0 {
+			lastCharLen := rw.RuneWidth(word[len(word)-1])
+			if uniseg.StringWidth(string(word))+lastCharLen > width {
+				if len(lines[row]) > 0 {
+					row++
+					lines = append(lines, []rune{})
+				}
+				lines[row] = append(lines[row], word...)
+				word = nil
+			}
+		}
+	}
+
+	if uniseg.StringWidth(string(lines[row]))+uniseg.StringWidth(string(word))+spaces >= width {
+		lines = append(lines, []rune{})
+		lines[row+1] = append(lines[row+1], word...)
+		spaces++
+		lines[row+1] = append(lines[row+1], repeatSpaces(spaces)...)
+	} else {
+		lines[row] = append(lines[row], word...)
+		spaces++
+		lines[row] = append(lines[row], repeatSpaces(spaces)...)
+	}
+
+	return lines
+}
+
+func repeatSpaces(n int) []rune {
+	return []rune(strings.Repeat(" ", n))
 }

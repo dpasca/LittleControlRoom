@@ -85,7 +85,6 @@ func (s *Store) initSchema(ctx context.Context) error {
 			in_scope INTEGER NOT NULL DEFAULT 1,
 			pinned INTEGER NOT NULL DEFAULT 0,
 			snoozed_until INTEGER,
-			note TEXT NOT NULL DEFAULT '',
 			run_command TEXT NOT NULL DEFAULT '',
 			moved_from_path TEXT NOT NULL DEFAULT '',
 			moved_at INTEGER,
@@ -227,9 +226,6 @@ func (s *Store) initSchema(ctx context.Context) error {
 		return err
 	}
 	if err := s.ensureProjectsRunCommandColumn(ctx); err != nil {
-		return err
-	}
-	if err := s.migrateLegacyProjectNotesToTodos(ctx); err != nil {
 		return err
 	}
 	if err := s.ensureProjectSessionsDetectedPathColumn(ctx); err != nil {
@@ -422,93 +418,6 @@ func (s *Store) ensureProjectsRunCommandColumn(ctx context.Context) error {
 	return nil
 }
 
-func (s *Store) migrateLegacyProjectNotesToTodos(ctx context.Context) error {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT path, note
-		FROM projects
-		WHERE TRIM(note) != ''
-	`)
-	if err != nil {
-		return fmt.Errorf("load legacy project notes: %w", err)
-	}
-	defer rows.Close()
-
-	type legacyNote struct {
-		path string
-		note string
-	}
-	var notes []legacyNote
-	for rows.Next() {
-		var row legacyNote
-		if err := rows.Scan(&row.path, &row.note); err != nil {
-			return fmt.Errorf("scan legacy project note: %w", err)
-		}
-		notes = append(notes, row)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("read legacy project notes: %w", err)
-	}
-	if len(notes) == 0 {
-		return nil
-	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-
-	now := time.Now().Unix()
-	for _, row := range notes {
-		lines := splitLegacyNoteIntoTodos(row.note)
-		if len(lines) == 0 {
-			if _, err = tx.ExecContext(ctx, `UPDATE projects SET note = '' WHERE path = ?`, row.path); err != nil {
-				return fmt.Errorf("clear blank legacy note for %s: %w", row.path, err)
-			}
-			continue
-		}
-		var existing int
-		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_todos WHERE project_path = ?`, row.path).Scan(&existing); err != nil {
-			return fmt.Errorf("count existing todos for %s: %w", row.path, err)
-		}
-		if existing == 0 {
-			for i, line := range lines {
-				if _, err = tx.ExecContext(ctx, `
-					INSERT INTO project_todos(project_path, text, done, position, created_at, updated_at)
-					VALUES(?, ?, 0, ?, ?, ?)
-				`, row.path, line, i, now, now); err != nil {
-					return fmt.Errorf("migrate legacy note todo for %s: %w", row.path, err)
-				}
-			}
-		}
-		if _, err = tx.ExecContext(ctx, `UPDATE projects SET note = '' WHERE path = ?`, row.path); err != nil {
-			return fmt.Errorf("clear legacy note for %s: %w", row.path, err)
-		}
-	}
-
-	if err = tx.Commit(); err != nil {
-		return err
-	}
-	return nil
-}
-
-func splitLegacyNoteIntoTodos(note string) []string {
-	parts := strings.Split(strings.ReplaceAll(note, "\r\n", "\n"), "\n")
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		out = append(out, part)
-	}
-	return out
-}
-
 func (s *Store) projectSessionsTableColumns(ctx context.Context) (map[string]struct{}, error) {
 	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(project_sessions)`)
 	if err != nil {
@@ -642,7 +551,7 @@ func (s *Store) ensureSessionClassificationStageColumns(ctx context.Context) err
 func (s *Store) GetProjectSummaryMap(ctx context.Context) (map[string]model.ProjectSummary, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
-			p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.worktree_merge_status, p.worktree_origin_todo_id, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until, p.note,
+		p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.worktree_merge_status, p.worktree_origin_todo_id, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until,
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path AND pt.done = 0), 0),
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path), 0),
 			p.run_command,
@@ -664,22 +573,22 @@ func (s *Store) GetProjectSummaryMap(ctx context.Context) (map[string]model.Proj
 			COALESCE(sc_completed.category, ''),
 			COALESCE(sc_completed.summary, ''),
 			sc_completed.updated_at
-		FROM projects p
-		LEFT JOIN project_sessions ps ON ps.session_id = (
-			SELECT ps2.session_id
-			FROM project_sessions ps2
-			WHERE ps2.project_path = p.path
-			ORDER BY ps2.last_event_at DESC
-			LIMIT 1
-		)
-		LEFT JOIN session_classifications sc ON sc.session_id = ps.session_id
-		LEFT JOIN session_classifications sc_completed ON sc_completed.session_id = (
-			SELECT sc2.session_id
-			FROM session_classifications sc2
-			WHERE sc2.project_path = p.path AND sc2.status = 'completed'
-			ORDER BY COALESCE(sc2.completed_at, sc2.updated_at) DESC, sc2.updated_at DESC
-			LIMIT 1
-		)
+	FROM projects p
+	LEFT JOIN project_sessions ps ON ps.session_id = (
+		SELECT ps2.session_id
+		FROM project_sessions ps2
+		WHERE ps2.project_path = p.path
+		ORDER BY ps2.last_event_at DESC
+		LIMIT 1
+	)
+	LEFT JOIN session_classifications sc ON sc.session_id = ps.session_id
+	LEFT JOIN session_classifications sc_completed ON sc_completed.session_id = (
+		SELECT sc2.session_id
+		FROM session_classifications sc2
+		WHERE sc2.project_path = p.path AND sc2.status = 'completed'
+		ORDER BY COALESCE(sc2.completed_at, sc2.updated_at) DESC, sc2.updated_at DESC
+		LIMIT 1
+	)
 	`)
 	if err != nil {
 		return nil, err
@@ -700,7 +609,7 @@ func (s *Store) GetProjectSummaryMap(ctx context.Context) (map[string]model.Proj
 func (s *Store) ListProjects(ctx context.Context, includeHistorical bool) ([]model.ProjectSummary, error) {
 	query := `
 		SELECT
-			p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.worktree_merge_status, p.worktree_origin_todo_id, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until, p.note,
+		p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.worktree_merge_status, p.worktree_origin_todo_id, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until,
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path AND pt.done = 0), 0),
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path), 0),
 			p.run_command,
@@ -722,22 +631,22 @@ func (s *Store) ListProjects(ctx context.Context, includeHistorical bool) ([]mod
 			COALESCE(sc_completed.category, ''),
 			COALESCE(sc_completed.summary, ''),
 			sc_completed.updated_at
-		FROM projects p
-		LEFT JOIN project_sessions ps ON ps.session_id = (
-			SELECT ps2.session_id
-			FROM project_sessions ps2
-			WHERE ps2.project_path = p.path
-			ORDER BY ps2.last_event_at DESC
-			LIMIT 1
-		)
-		LEFT JOIN session_classifications sc ON sc.session_id = ps.session_id
-		LEFT JOIN session_classifications sc_completed ON sc_completed.session_id = (
-			SELECT sc2.session_id
-			FROM session_classifications sc2
-			WHERE sc2.project_path = p.path AND sc2.status = 'completed'
-			ORDER BY COALESCE(sc2.completed_at, sc2.updated_at) DESC, sc2.updated_at DESC
-			LIMIT 1
-		)
+	FROM projects p
+	LEFT JOIN project_sessions ps ON ps.session_id = (
+		SELECT ps2.session_id
+		FROM project_sessions ps2
+		WHERE ps2.project_path = p.path
+		ORDER BY ps2.last_event_at DESC
+		LIMIT 1
+	)
+	LEFT JOIN session_classifications sc ON sc.session_id = ps.session_id
+	LEFT JOIN session_classifications sc_completed ON sc_completed.session_id = (
+		SELECT sc2.session_id
+		FROM session_classifications sc2
+		WHERE sc2.project_path = p.path AND sc2.status = 'completed'
+		ORDER BY COALESCE(sc2.completed_at, sc2.updated_at) DESC, sc2.updated_at DESC
+		LIMIT 1
+	)
 	`
 	query += ` WHERE p.forgotten = 0
 		AND NOT EXISTS (
@@ -770,7 +679,7 @@ func (s *Store) ListProjects(ctx context.Context, includeHistorical bool) ([]mod
 func (s *Store) GetProjectSummary(ctx context.Context, projectPath string, includeHistorical bool) (model.ProjectSummary, error) {
 	query := `
 		SELECT
-			p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.worktree_merge_status, p.worktree_origin_todo_id, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until, p.note,
+		p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.worktree_merge_status, p.worktree_origin_todo_id, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until,
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path AND pt.done = 0), 0),
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path), 0),
 			p.run_command,
@@ -792,23 +701,23 @@ func (s *Store) GetProjectSummary(ctx context.Context, projectPath string, inclu
 			COALESCE(sc_completed.category, ''),
 			COALESCE(sc_completed.summary, ''),
 			sc_completed.updated_at
-		FROM projects p
-		LEFT JOIN project_sessions ps ON ps.session_id = (
-			SELECT ps2.session_id
-			FROM project_sessions ps2
-			WHERE ps2.project_path = p.path
-			ORDER BY ps2.last_event_at DESC
-			LIMIT 1
-		)
-		LEFT JOIN session_classifications sc ON sc.session_id = ps.session_id
-		LEFT JOIN session_classifications sc_completed ON sc_completed.session_id = (
-			SELECT sc2.session_id
-			FROM session_classifications sc2
-			WHERE sc2.project_path = p.path AND sc2.status = 'completed'
-			ORDER BY COALESCE(sc2.completed_at, sc2.updated_at) DESC, sc2.updated_at DESC
-			LIMIT 1
-		)
-		WHERE p.path = ?
+	FROM projects p
+	LEFT JOIN project_sessions ps ON ps.session_id = (
+		SELECT ps2.session_id
+		FROM project_sessions ps2
+		WHERE ps2.project_path = p.path
+		ORDER BY ps2.last_event_at DESC
+		LIMIT 1
+	)
+	LEFT JOIN session_classifications sc ON sc.session_id = ps.session_id
+	LEFT JOIN session_classifications sc_completed ON sc_completed.session_id = (
+		SELECT sc2.session_id
+		FROM session_classifications sc2
+		WHERE sc2.project_path = p.path AND sc2.status = 'completed'
+		ORDER BY COALESCE(sc2.completed_at, sc2.updated_at) DESC, sc2.updated_at DESC
+		LIMIT 1
+	)
+	WHERE p.path = ?
 			AND p.forgotten = 0
 			AND NOT EXISTS (
 				SELECT 1
@@ -832,7 +741,7 @@ func scanSummaryRow(scanner interface {
 	Scan(dest ...any) error
 }) (model.ProjectSummary, error) {
 	var (
-		path, name, status, note, runCommand, movedFromPath, repoBranch, worktreeRootPath          string
+		path, name, status, runCommand, movedFromPath, repoBranch, worktreeRootPath                string
 		worktreeParentBranch, worktreeMergeStatus                                                  string
 		worktreeKind                                                                               string
 		worktreeOriginTodoID                                                                       int64
@@ -871,7 +780,6 @@ func scanSummaryRow(scanner interface {
 		&inScope,
 		&pinned,
 		&snoozedUntil,
-		&note,
 		&openTODOCount,
 		&totalTODOCount,
 		&runCommand,
@@ -918,7 +826,6 @@ func scanSummaryRow(scanner interface {
 		ManuallyAdded:                            manuallyAdded == 1,
 		InScope:                                  inScope == 1,
 		Pinned:                                   pinned == 1,
-		Note:                                     note,
 		OpenTODOCount:                            openTODOCount,
 		TotalTODOCount:                           totalTODOCount,
 		RunCommand:                               runCommand,
@@ -1027,11 +934,9 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 		movedAt = state.MovedAt.Unix()
 	}
 
-	// Notes are user-managed state, so refresh upserts should leave the current
-	// saved note alone on existing rows instead of replaying an older scan copy.
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO projects(path, name, last_activity, status, attention_score, present_on_disk, worktree_root_path, worktree_kind, worktree_parent_branch, worktree_merge_status, worktree_origin_todo_id, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, pinned, snoozed_until, note, moved_from_path, moved_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO projects(path, name, last_activity, status, attention_score, present_on_disk, worktree_root_path, worktree_kind, worktree_parent_branch, worktree_merge_status, worktree_origin_todo_id, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, pinned, snoozed_until, moved_from_path, moved_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(path) DO UPDATE SET
 			name=excluded.name,
 			last_activity=excluded.last_activity,
@@ -1069,7 +974,7 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 				ELSE projects.moved_at
 			END,
 			updated_at=excluded.updated_at
-	`, state.Path, state.Name, lastActivity, string(state.Status), state.AttentionScore, boolToInt(state.PresentOnDisk), strings.TrimSpace(state.WorktreeRootPath), string(state.WorktreeKind), strings.TrimSpace(state.WorktreeParentBranch), string(state.WorktreeMergeStatus), state.WorktreeOriginTodoID, strings.TrimSpace(state.RepoBranch), boolToInt(state.RepoDirty), boolToInt(state.RepoConflict), string(state.RepoSyncStatus), state.RepoAheadCount, state.RepoBehindCount, boolToInt(state.Forgotten), boolToInt(state.ManuallyAdded), boolToInt(state.InScope), boolToInt(state.Pinned), snoozedUntil, state.Note, state.MovedFromPath, movedAt, state.UpdatedAt.Unix())
+	`, state.Path, state.Name, lastActivity, string(state.Status), state.AttentionScore, boolToInt(state.PresentOnDisk), strings.TrimSpace(state.WorktreeRootPath), string(state.WorktreeKind), strings.TrimSpace(state.WorktreeParentBranch), string(state.WorktreeMergeStatus), state.WorktreeOriginTodoID, strings.TrimSpace(state.RepoBranch), boolToInt(state.RepoDirty), boolToInt(state.RepoConflict), string(state.RepoSyncStatus), state.RepoAheadCount, state.RepoBehindCount, boolToInt(state.Forgotten), boolToInt(state.ManuallyAdded), boolToInt(state.InScope), boolToInt(state.Pinned), snoozedUntil, state.MovedFromPath, movedAt, state.UpdatedAt.Unix())
 	if err != nil {
 		return err
 	}
@@ -1267,8 +1172,8 @@ func (s *Store) MoveProjectPath(ctx context.Context, oldPath, newPath string, mo
 	}
 
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO projects(path, name, last_activity, status, attention_score, present_on_disk, worktree_root_path, worktree_kind, worktree_parent_branch, worktree_merge_status, worktree_origin_todo_id, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, pinned, snoozed_until, note, run_command, moved_from_path, moved_at, updated_at)
-		SELECT ?, ?, last_activity, status, attention_score, present_on_disk, worktree_root_path, worktree_kind, worktree_parent_branch, worktree_merge_status, worktree_origin_todo_id, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, pinned, snoozed_until, note, run_command, ?, ?, ?
+		INSERT INTO projects(path, name, last_activity, status, attention_score, present_on_disk, worktree_root_path, worktree_kind, worktree_parent_branch, worktree_merge_status, worktree_origin_todo_id, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, pinned, snoozed_until, run_command, moved_from_path, moved_at, updated_at)
+		SELECT ?, ?, last_activity, status, attention_score, present_on_disk, worktree_root_path, worktree_kind, worktree_parent_branch, worktree_merge_status, worktree_origin_todo_id, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, pinned, snoozed_until, run_command, ?, ?, ?
 		FROM projects
 		WHERE path = ?
 	`, newPath, filepath.Base(newPath), oldPath, movedAt.Unix(), movedAt.Unix(), oldPath)
@@ -1330,7 +1235,6 @@ func (s *Store) ConsolidateProjectPath(ctx context.Context, oldPath, newPath str
 		pinned        bool
 		forgotten     bool
 		snoozedUntil  sql.NullInt64
-		note          string
 		runCommand    string
 		movedFromPath string
 		movedAt       sql.NullInt64
@@ -1340,10 +1244,10 @@ func (s *Store) ConsolidateProjectPath(ctx context.Context, oldPath, newPath str
 		var row projectRow
 		var manuallyAdded, pinned, forgotten int
 		err := tx.QueryRowContext(ctx, `
-			SELECT manually_added, pinned, forgotten, snoozed_until, note, run_command, moved_from_path, moved_at
+			SELECT manually_added, pinned, forgotten, snoozed_until, run_command, moved_from_path, moved_at
 			FROM projects
 			WHERE path = ?
-		`, path).Scan(&manuallyAdded, &pinned, &forgotten, &row.snoozedUntil, &row.note, &row.runCommand, &row.movedFromPath, &row.movedAt)
+		`, path).Scan(&manuallyAdded, &pinned, &forgotten, &row.snoozedUntil, &row.runCommand, &row.movedFromPath, &row.movedAt)
 		if err != nil {
 			return projectRow{}, err
 		}
@@ -1371,10 +1275,6 @@ func (s *Store) ConsolidateProjectPath(ctx context.Context, oldPath, newPath str
 	mergedPinned := oldProject.pinned || newProject.pinned
 	mergedForgotten := oldProject.forgotten || newProject.forgotten
 	mergedManuallyAdded := oldProject.manuallyAdded || newProject.manuallyAdded
-	mergedNote := newProject.note
-	if strings.TrimSpace(mergedNote) == "" {
-		mergedNote = oldProject.note
-	}
 	mergedRunCommand := strings.TrimSpace(newProject.runCommand)
 	if mergedRunCommand == "" {
 		mergedRunCommand = strings.TrimSpace(oldProject.runCommand)
@@ -1398,13 +1298,12 @@ func (s *Store) ConsolidateProjectPath(ctx context.Context, oldPath, newPath str
 			pinned = ?,
 			forgotten = ?,
 			snoozed_until = ?,
-			note = ?,
 			run_command = ?,
 			moved_from_path = ?,
 			moved_at = ?,
 			updated_at = ?
 		WHERE path = ?
-	`, boolToInt(mergedManuallyAdded), boolToInt(mergedPinned), boolToInt(mergedForgotten), nullableInt64Value(mergedSnoozedUntil), mergedNote, mergedRunCommand, mergedMovedFromPath, nullableInt64Value(mergedMovedAt), movedAt.Unix(), newPath); err != nil {
+	`, boolToInt(mergedManuallyAdded), boolToInt(mergedPinned), boolToInt(mergedForgotten), nullableInt64Value(mergedSnoozedUntil), mergedRunCommand, mergedMovedFromPath, nullableInt64Value(mergedMovedAt), movedAt.Unix(), newPath); err != nil {
 		return err
 	}
 
@@ -1958,7 +1857,7 @@ func (s *Store) GetProjectDetail(ctx context.Context, path string, eventLimit in
 
 	row := s.db.QueryRowContext(ctx, `
 		SELECT
-			p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.worktree_merge_status, p.worktree_origin_todo_id, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until, p.note,
+			p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.worktree_merge_status, p.worktree_origin_todo_id, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until,
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path AND pt.done = 0), 0),
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path), 0),
 			p.run_command,
@@ -2347,11 +2246,6 @@ func (s *Store) SetSnooze(ctx context.Context, path string, until *time.Time) er
 		v = until.Unix()
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE projects SET snoozed_until = ?, updated_at = ? WHERE path = ?`, v, time.Now().Unix(), path)
-	return err
-}
-
-func (s *Store) SetNote(ctx context.Context, path, note string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE projects SET note = ?, updated_at = ? WHERE path = ?`, note, time.Now().Unix(), path)
 	return err
 }
 

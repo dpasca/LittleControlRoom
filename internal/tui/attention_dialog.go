@@ -140,13 +140,13 @@ func (m Model) renderAttentionDialogContent(width int) string {
 		lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, width, dialog.Hint)...)
 	}
 
-	buttons := renderNoteDialogButton("Keep", true)
+	buttons := renderDialogButton("Keep", true)
 	if dialog.PrimaryLabel != "" && dialog.PrimaryProvider != "" {
 		buttons = lipgloss.JoinHorizontal(
 			lipgloss.Left,
-			renderNoteDialogButton(dialog.PrimaryLabel, dialog.Selected == attentionDialogFocusPrimary),
+			renderDialogButton(dialog.PrimaryLabel, dialog.Selected == attentionDialogFocusPrimary),
 			" ",
-			renderNoteDialogButton("Keep", dialog.Selected == attentionDialogFocusDismiss),
+			renderDialogButton("Keep", dialog.Selected == attentionDialogFocusDismiss),
 		)
 	}
 	lines = append(lines, "", buttons)

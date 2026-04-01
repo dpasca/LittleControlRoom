@@ -668,7 +668,6 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			InScope:              scope.Allows(path),
 			Pinned:               old.Pinned,
 			SnoozedUntil:         old.SnoozedUntil,
-			Note:                 old.Note,
 			MovedFromPath:        old.MovedFromPath,
 			MovedAt:              old.MovedAt,
 			AttentionReason:      score.Reasons,
@@ -1389,7 +1388,6 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 		InScope:              detail.Summary.InScope,
 		Pinned:               detail.Summary.Pinned,
 		SnoozedUntil:         detail.Summary.SnoozedUntil,
-		Note:                 detail.Summary.Note,
 		MovedFromPath:        detail.Summary.MovedFromPath,
 		MovedAt:              detail.Summary.MovedAt,
 		AttentionReason:      score.Reasons,
@@ -1442,16 +1440,6 @@ func (s *Service) ClearSnooze(ctx context.Context, projectPath string) error {
 	now := time.Now()
 	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "clear_snooze"}})
 	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: "clear_snooze"})
-	return nil
-}
-
-func (s *Service) SetNote(ctx context.Context, projectPath, note string) error {
-	if err := s.store.SetNote(ctx, projectPath, note); err != nil {
-		return err
-	}
-	now := time.Now()
-	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "set_note"}})
-	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: "set_note"})
 	return nil
 }
 
