@@ -101,7 +101,7 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 		turnDone := parsed.turnDone
 		turnKnown := parsed.turnKnown
 		turnStarted := parsed.turnStarted
-		if active, ok := activeSessions[parsed.sessionID]; ok && active.cwd == cwd {
+		if active, ok := activeSessions[parsed.sessionID]; ok && (active.cwd == "" || active.cwd == cwd) {
 			turnKnown = true
 			turnDone = false
 			if !active.startedAt.IsZero() {
@@ -177,7 +177,7 @@ func (d *Detector) collectActiveSessions() map[string]activeSession {
 		if err := json.Unmarshal(data, &s); err != nil {
 			continue
 		}
-		if s.PID <= 0 || s.SessionID == "" || s.CWD == "" {
+		if s.PID <= 0 || s.SessionID == "" {
 			continue
 		}
 		// Check if PID is still alive.
@@ -188,10 +188,14 @@ func (d *Detector) collectActiveSessions() map[string]activeSession {
 		if s.StartedAt > 0 {
 			startedAt = time.UnixMilli(s.StartedAt)
 		}
+		cwd := strings.TrimSpace(s.CWD)
+		if cwd != "" {
+			cwd = filepath.Clean(cwd)
+		}
 		result[s.SessionID] = activeSession{
 			pid:       s.PID,
 			sessionID: s.SessionID,
-			cwd:       filepath.Clean(s.CWD),
+			cwd:       cwd,
 			startedAt: startedAt,
 		}
 	}
@@ -319,7 +323,9 @@ func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult,
 
 		ts := entry.parsedTimestamp()
 		switch entry.Type {
-		case "assistant", "progress":
+		case "assistant":
+			turnState.set(ts, entry.assistantTurnCompleted())
+		case "progress":
 			turnState.set(ts, false)
 		case "system":
 			if entry.Subtype == "turn_duration" {
@@ -355,6 +361,9 @@ func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult,
 
 	if auxActivity.After(res.lastEventAt) {
 		res.lastEventAt = auxActivity
+	}
+	if res.sessionID == "" {
+		res.sessionID = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
 	if len(pendingAsync) > 0 {
 		res.turnKnown = true
@@ -404,8 +413,9 @@ type claudeSessionEntry struct {
 	Operation string `json:"operation"`
 	Content   string `json:"content"`
 	Message   struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
+		Role       string          `json:"role"`
+		Content    json.RawMessage `json:"content"`
+		StopReason string          `json:"stop_reason"`
 	} `json:"message"`
 	ToolUseResult struct {
 		BackgroundTaskID string `json:"backgroundTaskId"`
@@ -452,6 +462,14 @@ func (e claudeSessionEntry) taskNotification() (taskID, status string, ok bool) 
 		return "", "", false
 	}
 	return taskID, status, true
+}
+
+func (e claudeSessionEntry) assistantTurnCompleted() bool {
+	if e.Type != "assistant" {
+		return false
+	}
+	stopReason := strings.ToLower(strings.TrimSpace(e.Message.StopReason))
+	return stopReason != "" && stopReason != "tool_use"
 }
 
 func isTerminalTaskStatus(status string) bool {

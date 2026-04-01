@@ -110,6 +110,67 @@ func TestDetectFindsSessionFromJSONL(t *testing.T) {
 	}
 }
 
+func TestDetectTreatsAssistantEndTurnAsCompletedWithoutSystemEntry(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "assistant-end-turn")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	claudeHome := filepath.Join(root, ".claude")
+	sessionID := "assistant-end-turn-001"
+	sessionFile, _ := createClaudeProjectDirs(t, claudeHome, projectPath, sessionID)
+	ts := time.Date(2026, 4, 1, 2, 7, 13, 0, time.UTC)
+
+	writeJSONLines(t, sessionFile, []map[string]any{
+		{
+			"type":      "user",
+			"sessionId": sessionID,
+			"cwd":       projectPath,
+			"timestamp": ts.Add(-20 * time.Second).Format(time.RFC3339Nano),
+			"uuid":      "u1",
+			"message":   map[string]any{"role": "user", "content": "hello"},
+		},
+		{
+			"type":      "assistant",
+			"sessionId": sessionID,
+			"cwd":       projectPath,
+			"timestamp": ts.Format(time.RFC3339Nano),
+			"uuid":      "a1",
+			"message": map[string]any{
+				"role":        "assistant",
+				"stop_reason": "end_turn",
+				"content": []map[string]any{
+					{"type": "text", "text": "All set."},
+				},
+			},
+		},
+	})
+
+	d := New(claudeHome)
+	results, err := d.Detect(context.Background(), scanner.NewPathScope([]string{root}, nil))
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+
+	entry := results[projectPath]
+	if entry == nil {
+		t.Fatalf("expected project %s in results", projectPath)
+	}
+	sess := entry.Sessions[0]
+	if !sess.LatestTurnStateKnown {
+		t.Fatalf("expected LatestTurnStateKnown = true")
+	}
+	if !sess.LatestTurnCompleted {
+		t.Fatalf("expected LatestTurnCompleted = true when assistant stop_reason=end_turn is last")
+	}
+	if sess.LastEventAt.Before(ts) {
+		t.Fatalf("LastEventAt = %s, want at least %s", sess.LastEventAt, ts)
+	}
+}
+
 func TestDetectActiveSessionOverridesTurnCompletion(t *testing.T) {
 	t.Parallel()
 
@@ -196,6 +257,127 @@ func TestDetectActiveSessionOverridesTurnCompletion(t *testing.T) {
 	}
 	if !sess.LatestTurnStartedAt.Equal(ts) {
 		t.Fatalf("LatestTurnStartedAt = %s, want %s from active PID metadata", sess.LatestTurnStartedAt, ts)
+	}
+}
+
+func TestDetectActiveSessionOverridesTurnCompletionWithoutPIDCWD(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "activeproject-no-cwd")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	claudeHome := filepath.Join(root, ".claude")
+	encodedPath := encodeCCProjectPath(projectPath)
+	projectDir := filepath.Join(claudeHome, "projects", encodedPath)
+	sessionsDir := filepath.Join(claudeHome, "sessions")
+	for _, dir := range []string{projectDir, sessionsDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sessionID := "active-session-002"
+	ts := time.Date(2026, 3, 25, 12, 0, 0, 0, time.UTC)
+
+	writeJSONLines(t, filepath.Join(projectDir, sessionID+".jsonl"), []map[string]any{
+		{
+			"type":      "user",
+			"sessionId": sessionID,
+			"cwd":       projectPath,
+			"timestamp": ts.Format(time.RFC3339Nano),
+			"uuid":      "u1",
+			"message":   map[string]any{"role": "user", "content": "do something"},
+		},
+		{
+			"type":      "system",
+			"subtype":   "turn_duration",
+			"sessionId": sessionID,
+			"cwd":       projectPath,
+			"timestamp": ts.Add(10 * time.Second).Format(time.RFC3339Nano),
+			"uuid":      "s1",
+		},
+	})
+
+	pidData, _ := json.Marshal(map[string]any{
+		"pid":       os.Getpid(),
+		"sessionId": sessionID,
+		"startedAt": ts.UnixMilli(),
+	})
+	if err := os.WriteFile(filepath.Join(sessionsDir, "active-no-cwd.json"), pidData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	d := New(claudeHome)
+	results, err := d.Detect(context.Background(), scanner.NewPathScope([]string{root}, nil))
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+
+	entry, ok := results[projectPath]
+	if !ok {
+		t.Fatalf("expected project %s in results", projectPath)
+	}
+	sess := entry.Sessions[0]
+	if !sess.LatestTurnStateKnown {
+		t.Error("expected LatestTurnStateKnown = true")
+	}
+	if sess.LatestTurnCompleted {
+		t.Error("expected LatestTurnCompleted = false when active PID session exists without cwd")
+	}
+	if !sess.LatestTurnStartedAt.Equal(ts) {
+		t.Fatalf("LatestTurnStartedAt = %s, want %s from active PID metadata", sess.LatestTurnStartedAt, ts)
+	}
+}
+
+func TestDetectUsesSessionFileNameWhenEntriesOmitSessionID(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "filename-fallback-project")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	claudeHome := filepath.Join(root, ".claude")
+	sessionID := "filename-fallback-001"
+	sessionFile, _ := createClaudeProjectDirs(t, claudeHome, projectPath, sessionID)
+	ts := time.Date(2026, 3, 31, 8, 15, 0, 0, time.UTC)
+
+	writeJSONLines(t, sessionFile, []map[string]any{
+		{
+			"type":      "user",
+			"cwd":       projectPath,
+			"timestamp": ts.Format(time.RFC3339Nano),
+			"uuid":      "u1",
+			"message":   map[string]any{"role": "user", "content": "hello"},
+		},
+		{
+			"type":      "system",
+			"subtype":   "turn_duration",
+			"cwd":       projectPath,
+			"timestamp": ts.Add(5 * time.Second).Format(time.RFC3339Nano),
+			"uuid":      "s1",
+		},
+	})
+
+	d := New(claudeHome)
+	results, err := d.Detect(context.Background(), scanner.NewPathScope([]string{root}, nil))
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+
+	entry, ok := results[projectPath]
+	if !ok {
+		t.Fatalf("expected project %s in results", projectPath)
+	}
+	if len(entry.Sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(entry.Sessions))
+	}
+	if got := entry.Sessions[0].SessionID; got != sessionID {
+		t.Fatalf("SessionID = %q, want %q from the session filename", got, sessionID)
 	}
 }
 
