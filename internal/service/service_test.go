@@ -1889,6 +1889,79 @@ func TestCreateTodoWorktreeCreatesTrackedSiblingProject(t *testing.T) {
 	}
 }
 
+func TestCreateTodoWorktreeAutoSuffixOnConflict(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	// Pre-create a directory that collides with the default worktree path.
+	conflictingPath := filepath.Join(root, "repo--feat-worktree-launch")
+	if err := os.MkdirAll(conflictingPath, 0o755); err != nil {
+		t.Fatalf("create conflicting directory: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	svc := New(cfg, st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	item, err := svc.AddTodo(ctx, projectPath, "Auto-suffix on conflict")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
+		t.Fatalf("queue todo worktree suggestion: %v", err)
+	} else if !queued {
+		t.Fatalf("expected todo worktree suggestion to queue")
+	}
+	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
+	if err != nil {
+		t.Fatalf("claim todo worktree suggestion: %v", err)
+	}
+	suggestion.BranchName = "feat/worktree-launch"
+	suggestion.WorktreeSuffix = "feat-worktree-launch"
+	suggestion.Kind = "feature"
+	suggestion.Reason = "Auto-suffix test."
+	suggestion.Confidence = 0.93
+	suggestion.Model = "test"
+	if completed, err := st.CompleteTodoWorktreeSuggestion(ctx, suggestion); err != nil {
+		t.Fatalf("complete todo worktree suggestion: %v", err)
+	} else if !completed {
+		t.Fatalf("expected todo worktree suggestion to complete")
+	}
+
+	result, err := svc.CreateTodoWorktree(ctx, CreateTodoWorktreeRequest{
+		ProjectPath: projectPath,
+		TodoID:      item.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateTodoWorktree() error = %v", err)
+	}
+	expectedPath := filepath.Join(root, "repo--feat-worktree-launch-2")
+	if result.WorktreePath != expectedPath {
+		t.Fatalf("worktree path = %q, want %q", result.WorktreePath, expectedPath)
+	}
+	if result.WorktreeSuffix != "feat-worktree-launch-2" {
+		t.Fatalf("worktree suffix = %q, want %q", result.WorktreeSuffix, "feat-worktree-launch-2")
+	}
+	if result.BranchName != "feat/worktree-launch-2" {
+		t.Fatalf("branch = %q, want %q", result.BranchName, "feat/worktree-launch-2")
+	}
+}
+
 func TestRemoveWorktreeRemovesTrackedLinkedWorktree(t *testing.T) {
 	t.Parallel()
 

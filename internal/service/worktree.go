@@ -92,25 +92,16 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 			parentBranch = strings.TrimSpace(status.Branch)
 		}
 	}
-	worktreePath := suggestedTodoWorktreePath(worktreeRootPath, worktreeSuffix)
+	worktreePath, worktreeSuffix, branchName, err := uniqueWorktreeNames(worktreeRootPath, projectPath, worktreeSuffix, branchName)
+	if err != nil {
+		return CreateTodoWorktreeResult{}, err
+	}
 	result := CreateTodoWorktreeResult{
 		RootProjectPath: worktreeRootPath,
 		WorktreePath:    worktreePath,
 		ParentBranch:    parentBranch,
 		BranchName:      branchName,
 		WorktreeSuffix:  worktreeSuffix,
-	}
-
-	if worktreePath == projectPath {
-		return CreateTodoWorktreeResult{}, fmt.Errorf("suggested worktree path matches the current project path")
-	}
-	if info, statErr := os.Stat(worktreePath); statErr == nil {
-		if info.IsDir() {
-			return CreateTodoWorktreeResult{}, fmt.Errorf("worktree path already exists: %s", worktreePath)
-		}
-		return CreateTodoWorktreeResult{}, fmt.Errorf("worktree path already exists and is not a directory: %s", worktreePath)
-	} else if !os.IsNotExist(statErr) {
-		return CreateTodoWorktreeResult{}, fmt.Errorf("check worktree path: %w", statErr)
 	}
 	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
 		return CreateTodoWorktreeResult{}, fmt.Errorf("create worktree parent directory: %w", err)
@@ -801,6 +792,34 @@ func suggestedTodoWorktreePath(projectPath, worktreeSuffix string) string {
 		base = "worktree"
 	}
 	return filepath.Join(filepath.Dir(projectPath), base+"--"+worktreeSuffix)
+}
+
+func uniqueWorktreeNames(rootPath, projectPath, suffix, branch string) (worktreePath, finalSuffix, finalBranch string, _ error) {
+	const maxAttempts = 100
+	baseSuffix := suffix
+	baseBranch := branch
+	for i := 0; i < maxAttempts; i++ {
+		if i > 0 {
+			tag := fmt.Sprintf("-%d", i+1)
+			suffix = baseSuffix + tag
+			branch = baseBranch + tag
+		}
+		worktreePath = suggestedTodoWorktreePath(rootPath, suffix)
+		if worktreePath == projectPath {
+			return "", "", "", fmt.Errorf("suggested worktree path matches the current project path")
+		}
+		info, statErr := os.Stat(worktreePath)
+		if os.IsNotExist(statErr) {
+			return worktreePath, suffix, branch, nil
+		}
+		if statErr != nil {
+			return "", "", "", fmt.Errorf("check worktree path: %w", statErr)
+		}
+		if !info.IsDir() {
+			return "", "", "", fmt.Errorf("worktree path already exists and is not a directory: %s", worktreePath)
+		}
+	}
+	return "", "", "", fmt.Errorf("could not find a unique worktree path after %d attempts (last tried: %s)", maxAttempts, worktreePath)
 }
 
 func gitWorktreeAdd(ctx context.Context, repoPath, worktreePath, branchName string) error {
