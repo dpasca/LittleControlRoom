@@ -423,6 +423,9 @@ Dirty or unsynced git state can be evidence of unfinished follow-up, but transcr
 Do not label a session in_progress only because the worktree is dirty after a completed turn.
 Prefer completed when the assistant clearly wrapped up the asked task and any extra offer is optional.
 Treat optional follow-up offers like “if you want, I can also ...” as optional unless the user actually asked for that extra step or the assistant says it still must happen.
+If the latest assistant message asks the user to choose between options, confirm a proposed plan, approve a next step, or answer a direct implementation question, prefer waiting_for_user over completed.
+Proposal handoffs count as waiting_for_user when the next meaningful action depends on the user's choice, even if the assistant includes a recommendation like “I’d go with 2”.
+Use completed only when the assistant can stop without a reply from the user; if the assistant is clearly waiting for the user's answer before proceeding, do not mark completed.
 Reasoning/tool transcript items can reflect earlier planning; when they conflict with a later user-visible assistant message, trust the latest user-visible assistant message.
 If the latest assistant message says requested repo actions already happened (for example committed, pushed, built, deployed, or published) and the git snapshot agrees, prefer completed over needs_follow_up.
 Return a short factual dashboard summary under 140 characters.
