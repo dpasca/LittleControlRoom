@@ -1223,9 +1223,9 @@ func (s *Store) writeSessionClassificationMigrationRow(ctx context.Context, tx *
 }
 
 func (s *Store) GetProjectSummaryMap(ctx context.Context) (map[string]model.ProjectSummary, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	query := fmt.Sprintf(`
 		SELECT
-		p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.worktree_merge_status, p.worktree_origin_todo_id, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until,
+			p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.worktree_merge_status, p.worktree_origin_todo_id, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until,
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path AND pt.done = 0), 0),
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path), 0),
 			p.run_command,
@@ -1257,15 +1257,16 @@ func (s *Store) GetProjectSummaryMap(ctx context.Context) (map[string]model.Proj
 		ORDER BY ps2.last_event_at DESC
 		LIMIT 1
 	)
-	LEFT JOIN session_classifications sc ON sc.session_id = ps.session_id
+	LEFT JOIN session_classifications sc ON sc.session_id = %s
 	LEFT JOIN session_classifications sc_completed ON sc_completed.session_id = (
 		SELECT sc2.session_id
 		FROM session_classifications sc2
 		WHERE sc2.project_path = p.path AND sc2.status = 'completed'
-		ORDER BY COALESCE(sc2.completed_at, sc2.updated_at) DESC, sc2.updated_at DESC
+		ORDER BY %s DESC, COALESCE(sc2.completed_at, sc2.updated_at) DESC, sc2.updated_at DESC
 		LIMIT 1
 	)
-	`)
+	`, preferredSessionClassificationIDExpr("ps.session_id"), sessionClassificationCanonicalRankExpr("sc2"))
+	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -1283,7 +1284,7 @@ func (s *Store) GetProjectSummaryMap(ctx context.Context) (map[string]model.Proj
 }
 
 func (s *Store) ListProjects(ctx context.Context, includeHistorical bool) ([]model.ProjectSummary, error) {
-	query := `
+	query := fmt.Sprintf(`
 		SELECT
 		p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.worktree_merge_status, p.worktree_origin_todo_id, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until,
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path AND pt.done = 0), 0),
@@ -1317,15 +1318,15 @@ func (s *Store) ListProjects(ctx context.Context, includeHistorical bool) ([]mod
 		ORDER BY ps2.last_event_at DESC
 		LIMIT 1
 	)
-	LEFT JOIN session_classifications sc ON sc.session_id = ps.session_id
+	LEFT JOIN session_classifications sc ON sc.session_id = %s
 	LEFT JOIN session_classifications sc_completed ON sc_completed.session_id = (
 		SELECT sc2.session_id
 		FROM session_classifications sc2
 		WHERE sc2.project_path = p.path AND sc2.status = 'completed'
-		ORDER BY COALESCE(sc2.completed_at, sc2.updated_at) DESC, sc2.updated_at DESC
+		ORDER BY %s DESC, COALESCE(sc2.completed_at, sc2.updated_at) DESC, sc2.updated_at DESC
 		LIMIT 1
 	)
-	`
+	`, preferredSessionClassificationIDExpr("ps.session_id"), sessionClassificationCanonicalRankExpr("sc2"))
 	query += ` WHERE p.forgotten = 0
 		AND NOT EXISTS (
 			SELECT 1
@@ -1355,7 +1356,7 @@ func (s *Store) ListProjects(ctx context.Context, includeHistorical bool) ([]mod
 }
 
 func (s *Store) GetProjectSummary(ctx context.Context, projectPath string, includeHistorical bool) (model.ProjectSummary, error) {
-	query := `
+	query := fmt.Sprintf(`
 		SELECT
 		p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.worktree_merge_status, p.worktree_origin_todo_id, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until,
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path AND pt.done = 0), 0),
@@ -1389,12 +1390,12 @@ func (s *Store) GetProjectSummary(ctx context.Context, projectPath string, inclu
 		ORDER BY ps2.last_event_at DESC
 		LIMIT 1
 	)
-	LEFT JOIN session_classifications sc ON sc.session_id = ps.session_id
+	LEFT JOIN session_classifications sc ON sc.session_id = %s
 	LEFT JOIN session_classifications sc_completed ON sc_completed.session_id = (
 		SELECT sc2.session_id
 		FROM session_classifications sc2
 		WHERE sc2.project_path = p.path AND sc2.status = 'completed'
-		ORDER BY COALESCE(sc2.completed_at, sc2.updated_at) DESC, sc2.updated_at DESC
+		ORDER BY %s DESC, COALESCE(sc2.completed_at, sc2.updated_at) DESC, sc2.updated_at DESC
 		LIMIT 1
 	)
 	WHERE p.path = ?
@@ -1404,7 +1405,7 @@ func (s *Store) GetProjectSummary(ctx context.Context, projectPath string, inclu
 				FROM ignored_project_names ipn
 				WHERE LOWER(ipn.name) = LOWER(p.name)
 			)
-	`
+	`, preferredSessionClassificationIDExpr("ps.session_id"), sessionClassificationCanonicalRankExpr("sc2"))
 	if !includeHistorical {
 		query += ` AND p.in_scope = 1`
 	}
@@ -2070,6 +2071,134 @@ func timeUnixOrZero(t time.Time) int64 {
 	return t.Unix()
 }
 
+func sessionClassificationLogicalIDExpr(alias string) string {
+	alias = strings.TrimSpace(alias)
+	return fmt.Sprintf(
+		`COALESCE(NULLIF(%[1]s.raw_session_id, ''), CASE WHEN instr(%[1]s.session_id, ':') > 0 THEN substr(%[1]s.session_id, instr(%[1]s.session_id, ':') + 1) ELSE %[1]s.session_id END)`,
+		alias,
+	)
+}
+
+func sessionClassificationCanonicalRankExpr(alias string) string {
+	alias = strings.TrimSpace(alias)
+	return fmt.Sprintf(
+		`CASE WHEN %[1]s.source != '' AND %[1]s.raw_session_id != '' AND instr(%[1]s.session_id, ':') > 0 THEN 1 ELSE 0 END`,
+		alias,
+	)
+}
+
+func preferredSessionClassificationIDExpr(sessionIDExpr string) string {
+	sessionIDExpr = strings.TrimSpace(sessionIDExpr)
+	return fmt.Sprintf(`
+		(
+			SELECT sc_lookup.session_id
+			FROM session_classifications sc_lookup
+			WHERE sc_lookup.session_id = %[1]s OR sc_lookup.raw_session_id = %[1]s
+			ORDER BY %[2]s DESC, sc_lookup.updated_at DESC, sc_lookup.session_id ASC
+			LIMIT 1
+		)
+	`, sessionIDExpr, sessionClassificationCanonicalRankExpr("sc_lookup"))
+}
+
+type sessionClassificationLookupMatch struct {
+	sessionID    string
+	source       model.SessionSource
+	rawSessionID string
+	status       model.SessionClassificationStatus
+	summary      string
+	updatedAt    time.Time
+	completedAt  time.Time
+}
+
+func storedSessionClassificationIsCanonical(match sessionClassificationLookupMatch) bool {
+	if match.source == model.SessionSourceUnknown || strings.TrimSpace(match.rawSessionID) == "" {
+		return false
+	}
+	return strings.TrimSpace(match.sessionID) == model.BuildCanonicalSessionID(match.source, match.rawSessionID)
+}
+
+func sessionClassificationLookupRank(match sessionClassificationLookupMatch, requestedID string) int {
+	rank := 0
+	if storedSessionClassificationIsCanonical(match) {
+		rank += 100
+	}
+	switch match.status {
+	case model.ClassificationCompleted:
+		rank += 30
+	case model.ClassificationRunning:
+		rank += 20
+	case model.ClassificationPending:
+		rank += 10
+	case model.ClassificationFailed:
+		rank += 5
+	}
+	if strings.TrimSpace(match.summary) != "" {
+		rank += 3
+	}
+	if strings.TrimSpace(match.sessionID) == strings.TrimSpace(requestedID) {
+		rank++
+	}
+	return rank
+}
+
+func preferSessionClassificationLookupMatch(candidate, existing sessionClassificationLookupMatch, requestedID string) bool {
+	candidateRank := sessionClassificationLookupRank(candidate, requestedID)
+	existingRank := sessionClassificationLookupRank(existing, requestedID)
+	if candidateRank != existingRank {
+		return candidateRank > existingRank
+	}
+	if candidate.completedAt.After(existing.completedAt) {
+		return true
+	}
+	if existing.completedAt.After(candidate.completedAt) {
+		return false
+	}
+	if candidate.updatedAt.After(existing.updatedAt) {
+		return true
+	}
+	if existing.updatedAt.After(candidate.updatedAt) {
+		return false
+	}
+	return strings.Compare(candidate.sessionID, existing.sessionID) < 0
+}
+
+func (s *Store) loadSessionClassificationLookupMatches(ctx context.Context, sessionID string) ([]sessionClassificationLookupMatch, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT session_id, source, raw_session_id, status, summary, updated_at, completed_at
+		FROM session_classifications
+		WHERE session_id = ? OR raw_session_id = ?
+	`, sessionID, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []sessionClassificationLookupMatch{}
+	for rows.Next() {
+		var (
+			match                   sessionClassificationLookupMatch
+			source, status, summary string
+			completedAt             sql.NullInt64
+			updatedAt               int64
+		)
+		if err := rows.Scan(&match.sessionID, &source, &match.rawSessionID, &status, &summary, &updatedAt, &completedAt); err != nil {
+			return nil, err
+		}
+		match.source = model.NormalizeSessionSource(model.SessionSource(source))
+		match.status = model.SessionClassificationStatus(status)
+		match.summary = strings.TrimSpace(summary)
+		match.updatedAt = time.Unix(updatedAt, 0)
+		if completedAt.Valid {
+			match.completedAt = time.Unix(completedAt.Int64, 0)
+		}
+		out = append(out, match)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (s *Store) QueueSessionClassification(ctx context.Context, classification model.SessionClassification, retryAfter time.Duration) (bool, error) {
 	classification = model.NormalizeSessionClassificationIdentity(classification)
 	if classification.SessionID == "" {
@@ -2204,7 +2333,7 @@ func (s *Store) ClaimNextPendingSessionClassification(ctx context.Context, stale
 		}
 	}
 
-	row := tx.QueryRowContext(ctx, `
+	query := fmt.Sprintf(`
 		SELECT
 			sc.session_id, sc.source, sc.raw_session_id, sc.project_path, sc.session_file, sc.session_format, sc.snapshot_hash,
 			sc.status, sc.stage, sc.category, sc.summary, sc.confidence, sc.model, sc.classifier_version,
@@ -2212,9 +2341,17 @@ func (s *Store) ClaimNextPendingSessionClassification(ctx context.Context, stale
 		FROM session_classifications sc
 		JOIN projects p ON p.path = sc.project_path
 		WHERE sc.status = ? AND p.in_scope = 1
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM session_classifications sc_pref
+			WHERE %s = %s
+			  AND %s > %s
+		  )
 		ORDER BY p.attention_score DESC, p.last_activity DESC, sc.updated_at ASC
 		LIMIT 1
-	`, string(model.ClassificationPending))
+	`, sessionClassificationLogicalIDExpr("sc_pref"), sessionClassificationLogicalIDExpr("sc"), sessionClassificationCanonicalRankExpr("sc_pref"), sessionClassificationCanonicalRankExpr("sc"))
+
+	row := tx.QueryRowContext(ctx, query, string(model.ClassificationPending))
 
 	classification, err := scanSessionClassificationRow(row)
 	if err != nil {
@@ -2437,45 +2574,22 @@ func (s *Store) resolveSessionClassificationID(ctx context.Context, sessionID st
 	if sessionID == "" {
 		return "", errors.New("session classification requires session_id")
 	}
-	row := s.db.QueryRowContext(ctx, `SELECT session_id FROM session_classifications WHERE session_id = ?`, sessionID)
-	var resolved string
-	if err := row.Scan(&resolved); err == nil {
-		return resolved, nil
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return "", err
-	}
-
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT session_id
-		FROM session_classifications
-		WHERE raw_session_id = ?
-		ORDER BY session_id ASC
-		LIMIT 2
-	`, sessionID)
+	matches, err := s.loadSessionClassificationLookupMatches(ctx, sessionID)
 	if err != nil {
-		return "", err
-	}
-	defer rows.Close()
-
-	matches := []string{}
-	for rows.Next() {
-		var match string
-		if err := rows.Scan(&match); err != nil {
-			return "", err
-		}
-		matches = append(matches, match)
-	}
-	if err := rows.Err(); err != nil {
 		return "", err
 	}
 	switch len(matches) {
 	case 0:
 		return "", sql.ErrNoRows
-	case 1:
-		return matches[0], nil
-	default:
-		return "", fmt.Errorf("multiple session classifications match raw session id %q", sessionID)
 	}
+
+	best := matches[0]
+	for _, candidate := range matches[1:] {
+		if preferSessionClassificationLookupMatch(candidate, best, sessionID) {
+			best = candidate
+		}
+	}
+	return best.sessionID, nil
 }
 
 func (s *Store) FailSessionClassificationAttempt(ctx context.Context, classification *model.SessionClassification, lastError string) (bool, error) {
@@ -2603,7 +2717,7 @@ func (s *Store) GetProjectDetail(ctx context.Context, path string, eventLimit in
 		eventLimit = 20
 	}
 
-	row := s.db.QueryRowContext(ctx, `
+	query := fmt.Sprintf(`
 		SELECT
 			p.path, p.name, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.worktree_merge_status, p.worktree_origin_todo_id, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until,
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path AND pt.done = 0), 0),
@@ -2637,16 +2751,17 @@ func (s *Store) GetProjectDetail(ctx context.Context, path string, eventLimit in
 			ORDER BY ps2.last_event_at DESC
 			LIMIT 1
 		)
-		LEFT JOIN session_classifications sc ON sc.session_id = ps.session_id
+		LEFT JOIN session_classifications sc ON sc.session_id = %s
 		LEFT JOIN session_classifications sc_completed ON sc_completed.session_id = (
 			SELECT sc2.session_id
 			FROM session_classifications sc2
 			WHERE sc2.project_path = p.path AND sc2.status = 'completed'
-			ORDER BY COALESCE(sc2.completed_at, sc2.updated_at) DESC, sc2.updated_at DESC
+			ORDER BY %s DESC, COALESCE(sc2.completed_at, sc2.updated_at) DESC, sc2.updated_at DESC
 			LIMIT 1
 		)
 		WHERE p.path = ?
-	`, path)
+	`, preferredSessionClassificationIDExpr("ps.session_id"), sessionClassificationCanonicalRankExpr("sc2"))
+	row := s.db.QueryRowContext(ctx, query, path)
 	summary, err := scanSummaryRow(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

@@ -1390,6 +1390,158 @@ func TestOpenMergesSessionClassificationIdentityCollisions(t *testing.T) {
 	}
 }
 
+func TestGetSessionClassificationPrefersCanonicalDuplicateOverRawExactMatch(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	if _, err := st.db.ExecContext(ctx, `
+		INSERT INTO session_classifications(
+			session_id, project_path, session_file, session_format, snapshot_hash,
+			status, stage, category, summary, confidence, model, classifier_version,
+			last_error, source_updated_at, created_at, stage_started_at, updated_at, completed_at, source, raw_session_id
+		) VALUES
+			('ses_dup_lookup', '/tmp/lookup', '/tmp/lookup/session.jsonl', 'modern', 'hash-raw',
+			 'pending', 'queued', '', '', 0, 'gpt-5-mini', 'v1',
+			 '', ?, ?, ?, ?, NULL, '', ''),
+			('codex:ses_dup_lookup', '/tmp/lookup', '/tmp/lookup/session.jsonl', 'modern', 'hash-canonical',
+			 'completed', '', 'completed', 'canonical summary', 0.9, 'gpt-5-mini', 'v1',
+			 '', ?, ?, NULL, ?, ?, 'codex', 'ses_dup_lookup')
+	`, now.Unix(), now.Unix(), now.Unix(), now.Unix(), now.Unix(), now.Unix(), now.Add(time.Second).Unix(), now.Add(time.Second).Unix()); err != nil {
+		t.Fatalf("seed duplicate lookup rows: %v", err)
+	}
+
+	got, err := st.GetSessionClassification(ctx, "ses_dup_lookup")
+	if err != nil {
+		t.Fatalf("get classification by raw id: %v", err)
+	}
+	if got.SessionID != "codex:ses_dup_lookup" {
+		t.Fatalf("session_id = %q, want %q", got.SessionID, "codex:ses_dup_lookup")
+	}
+	if got.Status != model.ClassificationCompleted {
+		t.Fatalf("status = %s, want completed", got.Status)
+	}
+	if got.Summary != "canonical summary" {
+		t.Fatalf("summary = %q, want canonical summary", got.Summary)
+	}
+}
+
+func TestClaimNextPendingSessionClassificationSkipsRawDuplicateWhenCanonicalExists(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:         "/tmp/claim-skip",
+		Name:         "claim-skip",
+		LastActivity: now,
+		Status:       model.StatusIdle,
+		InScope:      true,
+		UpdatedAt:    now,
+	}); err != nil {
+		t.Fatalf("upsert project state: %v", err)
+	}
+
+	if _, err := st.db.ExecContext(ctx, `
+		INSERT INTO session_classifications(
+			session_id, project_path, session_file, session_format, snapshot_hash,
+			status, stage, category, summary, confidence, model, classifier_version,
+			last_error, source_updated_at, created_at, stage_started_at, updated_at, completed_at, source, raw_session_id
+		) VALUES
+			('ses_dup_claim', '/tmp/claim-skip', '/tmp/claim-skip/session.jsonl', 'modern', 'hash-raw',
+			 'pending', 'queued', '', '', 0, 'gpt-5-mini', 'v1',
+			 '', ?, ?, ?, ?, NULL, '', ''),
+			('codex:ses_dup_claim', '/tmp/claim-skip', '/tmp/claim-skip/session.jsonl', 'modern', 'hash-canonical',
+			 'completed', '', 'completed', 'done', 0.9, 'gpt-5-mini', 'v1',
+			 '', ?, ?, NULL, ?, ?, 'codex', 'ses_dup_claim')
+	`, now.Unix(), now.Unix(), now.Unix(), now.Unix(), now.Unix(), now.Unix(), now.Add(time.Second).Unix(), now.Add(time.Second).Unix()); err != nil {
+		t.Fatalf("seed duplicate claim rows: %v", err)
+	}
+
+	if _, err := st.ClaimNextPendingSessionClassification(ctx, time.Minute); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("claim pending duplicate = %v, want sql.ErrNoRows", err)
+	}
+}
+
+func TestGetProjectSummaryPrefersCanonicalLatestClassificationForRawSessionID(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:         "/tmp/summary-canonical",
+		Name:         "summary-canonical",
+		LastActivity: now,
+		Status:       model.StatusActive,
+		InScope:      true,
+		UpdatedAt:    now,
+	}); err != nil {
+		t.Fatalf("upsert project state: %v", err)
+	}
+
+	if _, err := st.db.ExecContext(ctx, `DELETE FROM project_sessions WHERE project_path = ?`, "/tmp/summary-canonical"); err != nil {
+		t.Fatalf("clear project sessions: %v", err)
+	}
+	if _, err := st.db.ExecContext(ctx, `
+		INSERT INTO project_sessions(
+			session_id, source, raw_session_id, project_path, detected_project_path, session_file, format, snapshot_hash,
+			started_at, last_event_at, error_count, latest_turn_started_at, latest_turn_state_known, latest_turn_completed, updated_at
+		) VALUES (
+			'ses_summary_dup', '', '', '/tmp/summary-canonical', '/tmp/summary-canonical', '/tmp/summary-canonical/session.jsonl', 'modern', 'hash-summary',
+			?, ?, 0, NULL, 1, 1, ?
+		)
+	`, now.Unix(), now.Unix(), now.Unix()); err != nil {
+		t.Fatalf("insert raw latest project session: %v", err)
+	}
+	if _, err := st.db.ExecContext(ctx, `
+		INSERT INTO session_classifications(
+			session_id, project_path, session_file, session_format, snapshot_hash,
+			status, stage, category, summary, confidence, model, classifier_version,
+			last_error, source_updated_at, created_at, stage_started_at, updated_at, completed_at, source, raw_session_id
+		) VALUES
+			('ses_summary_dup', '/tmp/summary-canonical', '/tmp/summary-canonical/session.jsonl', 'modern', 'hash-summary',
+			 'pending', 'queued', '', '', 0, 'gpt-5-mini', 'v1',
+			 '', ?, ?, ?, ?, NULL, '', ''),
+			('codex:ses_summary_dup', '/tmp/summary-canonical', '/tmp/summary-canonical/session.jsonl', 'modern', 'hash-summary',
+			 'completed', '', 'completed', 'canonical summary', 0.9, 'gpt-5-mini', 'v1',
+			 '', ?, ?, NULL, ?, ?, 'codex', 'ses_summary_dup')
+	`, now.Unix(), now.Unix(), now.Unix(), now.Unix(), now.Unix(), now.Unix(), now.Add(time.Second).Unix(), now.Add(time.Second).Unix()); err != nil {
+		t.Fatalf("seed summary duplicate rows: %v", err)
+	}
+
+	summary, err := st.GetProjectSummary(ctx, "/tmp/summary-canonical", true)
+	if err != nil {
+		t.Fatalf("get project summary: %v", err)
+	}
+	if summary.LatestSessionClassification != model.ClassificationCompleted {
+		t.Fatalf("latest session classification = %s, want completed", summary.LatestSessionClassification)
+	}
+	if summary.LatestSessionSummary != "canonical summary" {
+		t.Fatalf("latest session summary = %q, want canonical summary", summary.LatestSessionSummary)
+	}
+}
+
 func TestQueueSessionClassificationFailedSameSnapshotCanRetryImmediatelyWhenForced(t *testing.T) {
 	t.Parallel()
 
