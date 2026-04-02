@@ -6045,6 +6045,52 @@ func TestTodoModelPickerApplyRefocusesComposerAndCapturesSettleLatency(t *testin
 	}
 }
 
+func TestSyncCodexViewportRecordsSharedStageLatencies(t *testing.T) {
+	projectPath := "/tmp/demo"
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderOpenCode,
+		Closed:   true,
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "hello",
+		}},
+	}
+
+	now := time.Date(2026, time.April, 3, 11, 0, 0, 0, time.UTC)
+	ticks := 0
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+		nowFn: func() time.Time {
+			value := now.Add(time.Duration(ticks) * 200 * time.Millisecond)
+			ticks++
+			return value
+		},
+	}
+	m.storeCodexSnapshot(projectPath, snapshot)
+
+	m.syncCodexViewport(true)
+
+	gotNames := map[string]bool{}
+	for _, sample := range m.aiLatencyRecent {
+		gotNames[sample.Name] = true
+	}
+	for _, want := range []string{
+		"Embedded lower blocks",
+		"Embedded transcript render",
+		"Embedded viewport content",
+		"Embedded viewport sync",
+	} {
+		if !gotNames[want] {
+			t.Fatalf("syncCodexViewport() missing latency sample %q, got %#v", want, m.aiLatencyRecent)
+		}
+	}
+}
+
 func TestTodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {

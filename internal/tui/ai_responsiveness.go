@@ -118,6 +118,12 @@ func (m *Model) recordAISyncLatency(name, projectPath, detail string, duration t
 	})
 }
 
+func (m *Model) measureAISyncLatency(name, projectPath, detail string, fn func()) {
+	startedAt := m.currentTime()
+	fn()
+	m.recordAISyncLatency(name, projectPath, detail, m.currentTime().Sub(startedAt), "")
+}
+
 func (m *Model) appendAILatencySample(sample aiLatencySample) {
 	if strings.TrimSpace(sample.Name) == "" {
 		return
