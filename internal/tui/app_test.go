@@ -2885,7 +2885,7 @@ func TestRenderFooterPulsesWhenUsageIncreases(t *testing.T) {
 	}
 }
 
-func TestRenderFooterFlashesRedWhenClassificationErrorsExist(t *testing.T) {
+func TestRenderFooterShowsSeparateAssessmentAlertWhenClassificationErrorsExist(t *testing.T) {
 	prevProfile := lipgloss.ColorProfile()
 	prevDarkBackground := lipgloss.HasDarkBackground()
 	lipgloss.SetColorProfile(termenv.ANSI256)
@@ -2920,13 +2920,19 @@ func TestRenderFooterFlashesRedWhenClassificationErrorsExist(t *testing.T) {
 	pulseB := m.renderFooter(160)
 
 	if ansi.Strip(pulseA) != ansi.Strip(pulseB) {
-		t.Fatalf("error pulse should keep the same visible text: %q vs %q", ansi.Strip(pulseA), ansi.Strip(pulseB))
+		t.Fatalf("assessment pulse should keep the same visible text: %q vs %q", ansi.Strip(pulseA), ansi.Strip(pulseB))
 	}
 	if pulseA == pulseB {
-		t.Fatalf("error pulse should animate across spinner frames")
+		t.Fatalf("assessment pulse should animate across spinner frames")
 	}
 	if pulseA == ansi.Strip(pulseA) {
-		t.Fatalf("error pulse should use ANSI styling: %q", pulseA)
+		t.Fatalf("assessment pulse should use ANSI styling: %q", pulseA)
+	}
+	if !strings.Contains(ansi.Strip(pulseA), "Codex ready") {
+		t.Fatalf("footer should keep the backend status visible, got %q", ansi.Strip(pulseA))
+	}
+	if !strings.Contains(ansi.Strip(pulseA), "1 assessment error") {
+		t.Fatalf("footer should surface assessment failures separately, got %q", ansi.Strip(pulseA))
 	}
 }
 

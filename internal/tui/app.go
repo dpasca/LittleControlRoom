@@ -4874,23 +4874,47 @@ func (m Model) classificationCounts() classificationSummary {
 	return counts
 }
 
-func (m Model) classificationFailurePulseActive() bool {
-	return m.classificationCounts().failed > 0
+func (m Model) classificationFailureCount() int {
+	return m.classificationCounts().failed
+}
+
+func (m Model) footerAssessmentAlertLabel() string {
+	failed := m.classificationFailureCount()
+	switch failed {
+	case 0:
+		return ""
+	case 1:
+		return "1 assessment error"
+	default:
+		return fmt.Sprintf("%d assessment errors", failed)
+	}
+}
+
+func (m Model) renderFooterAssessmentSegment() string {
+	text := m.footerAssessmentAlertLabel()
+	if text == "" {
+		return ""
+	}
+	if m.spinnerFrame%2 == 0 {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("160")).Bold(true).Render(text)
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("88")).Bold(true).Render(text)
 }
 
 func (m Model) renderFooter(width int) string {
 	usageLabel := m.footerUsageLabel()
 	usageSegment := m.renderFooterUsageSegment(usageLabel)
+	assessmentSegment := m.renderFooterAssessmentSegment()
 	filterSegment := m.renderFooterProjectFilterSegment()
 	if m.diffView != nil {
-		return renderFooterLine(width, renderDiffFooter(width, *m.diffView, usageSegment), filterSegment)
+		return renderFooterLine(width, renderDiffFooter(width, *m.diffView, usageSegment), filterSegment, assessmentSegment)
 	}
 	if m.gitStatusDialog != nil {
 		label := gitStatusDialogReadyStatus(*m.gitStatusDialog)
 		if m.gitStatusApplying {
 			label = "Applying git action..."
 		}
-		return m.renderModalFooter(width, label, filterSegment, usageSegment)
+		return m.renderModalFooter(width, label, filterSegment, usageSegment, assessmentSegment)
 	}
 	if m.commitPreview != nil {
 		label := commitPreviewReadyStatus(m.commitPreview.CanPush)
@@ -4899,61 +4923,62 @@ func (m Model) renderFooter(width int) string {
 		} else if m.commitPreviewRefreshing {
 			label = "Refreshing commit preview..."
 		}
-		return m.renderModalFooter(width, label, filterSegment, usageSegment)
+		return m.renderModalFooter(width, label, filterSegment, usageSegment, assessmentSegment)
 	}
 	if m.newProjectDialog != nil {
 		label := "New project: Enter create/add, Space toggle git, Alt+1..3 recent, Esc cancel"
 		if m.newProjectDialog.Submitting {
 			label = "New project: applying..."
 		}
-		return m.renderModalFooter(width, label, filterSegment, usageSegment)
+		return m.renderModalFooter(width, label, filterSegment, usageSegment, assessmentSegment)
 	}
 	if m.projectFilterDialog != nil {
 		label := "Project filter: type to narrow, Enter keep, Esc close"
-		return m.renderModalFooter(width, label, filterSegment, usageSegment)
+		return m.renderModalFooter(width, label, filterSegment, usageSegment, assessmentSegment)
 	}
 	if m.commandMode {
-		return m.renderModalFooter(width, "Command palette open", filterSegment, usageSegment)
+		return m.renderModalFooter(width, "Command palette open", filterSegment, usageSegment, assessmentSegment)
 	}
 	if m.setupMode {
-		return m.renderModalFooter(width, "Setup: Enter choose, r refresh, s settings, Esc continue", filterSegment, usageSegment)
+		return m.renderModalFooter(width, "Setup: Enter choose, r refresh, s settings, Esc continue", filterSegment, usageSegment, assessmentSegment)
 	}
 	if m.settingsMode {
-		return m.renderModalFooter(width, "Settings: Enter save, Tab next, Esc cancel", filterSegment, usageSegment)
+		return m.renderModalFooter(width, "Settings: Enter save, Tab next, Esc cancel", filterSegment, usageSegment, assessmentSegment)
 	}
 	if m.showPerf {
-		return m.renderModalFooter(width, "Performance: Esc close", filterSegment, usageSegment)
+		return m.renderModalFooter(width, "Performance: Esc close", filterSegment, usageSegment, assessmentSegment)
 	}
 	if m.showAIStats {
-		return m.renderModalFooter(width, "AI stats: Esc close", filterSegment, usageSegment)
+		return m.renderModalFooter(width, "AI stats: Esc close", filterSegment, usageSegment, assessmentSegment)
 	}
 	if m.worktreeMergeConfirm != nil {
 		if m.worktreeMergeConfirm.Busy {
-			return m.renderModalFooter(width, "Merge worktree: waiting for actions to finish", filterSegment, usageSegment)
+			return m.renderModalFooter(width, "Merge worktree: waiting for actions to finish", filterSegment, usageSegment, assessmentSegment)
 		}
 		label := "Merge worktree: Space toggle, Tab navigate, Enter choose, Esc cancel"
 		if !worktreeMergeConfirmReady(m.worktreeMergeConfirm) {
 			label = "Merge blocked: adjust options or fix repo state, Space toggle, Esc cancel"
 		}
-		return m.renderModalFooter(width, label, filterSegment, usageSegment)
+		return m.renderModalFooter(width, label, filterSegment, usageSegment, assessmentSegment)
 	}
 	if m.worktreePostMerge != nil {
 		if m.worktreePostMerge.Busy {
-			return m.renderModalFooter(width, "Merged worktree: waiting for removal to finish", filterSegment, usageSegment)
+			return m.renderModalFooter(width, "Merged worktree: waiting for removal to finish", filterSegment, usageSegment, assessmentSegment)
 		}
-		return m.renderModalFooter(width, "Merged worktree: Enter remove, Tab keep, Esc keep", filterSegment, usageSegment)
+		return m.renderModalFooter(width, "Merged worktree: Enter remove, Tab keep, Esc keep", filterSegment, usageSegment, assessmentSegment)
 	}
 	if m.worktreeRemoveConfirm != nil {
 		if m.worktreeRemoveConfirm.Busy {
-			return m.renderModalFooter(width, "Remove worktree: waiting for git to finish", filterSegment, usageSegment)
+			return m.renderModalFooter(width, "Remove worktree: waiting for git to finish", filterSegment, usageSegment, assessmentSegment)
 		}
-		return m.renderModalFooter(width, "Remove worktree: Enter remove, Tab switch, Esc cancel", filterSegment, usageSegment)
+		return m.renderModalFooter(width, "Remove worktree: Enter remove, Tab switch, Esc cancel", filterSegment, usageSegment, assessmentSegment)
 	}
 	return renderFooterLine(
 		width,
 		compactFooterBase(width, m.focusedPane, m.detailViewport.ScrollPercent(), m.runtimeViewport.ScrollPercent(), m.hasHiddenCodexSession(), m.currentEmbeddedLaunchLabel(), m.worktreeFooterActions(width)),
 		filterSegment,
 		usageSegment,
+		assessmentSegment,
 	)
 }
 
@@ -5739,12 +5764,6 @@ func (m Model) renderFooterUsageSegment(text string) string {
 		return topStatusWarningBadgeStyle.Render(text)
 	case "AI disabled":
 		return detailMutedStyle.Render(text)
-	}
-	if m.classificationFailurePulseActive() {
-		if m.spinnerFrame%2 == 0 {
-			return lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("160")).Bold(true).Render(text)
-		}
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("88")).Bold(true).Render(text)
 	}
 	if !m.usagePulseUntil.After(m.currentTime()) {
 		return renderFooterUsage(text)
