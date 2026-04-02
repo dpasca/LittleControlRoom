@@ -13493,6 +13493,62 @@ func TestRenderAIStatsContentHidesLocalBackendCost(t *testing.T) {
 	}
 }
 
+func TestRenderAIStatsContentShowsLatencySection(t *testing.T) {
+	now := time.Date(2026, time.April, 2, 17, 30, 0, 0, time.UTC)
+	m := Model{
+		setupChecked: true,
+		setupSnapshot: aibackend.Snapshot{
+			Selected: config.AIBackendCodex,
+			Codex: aibackend.Status{
+				Backend:       config.AIBackendCodex,
+				Label:         "Codex",
+				Installed:     true,
+				Authenticated: true,
+				Ready:         true,
+			},
+		},
+		aiLatencyInFlight: map[int64]aiLatencyOp{
+			1: {
+				ID:          1,
+				Name:        "Embedded open",
+				ProjectPath: "/tmp/demo",
+				Detail:      "Codex",
+				StartedAt:   now.Add(-3200 * time.Millisecond),
+			},
+		},
+		aiLatencyRecent: []aiLatencySample{
+			{
+				Name:        "Model apply",
+				ProjectPath: "/tmp/demo",
+				Detail:      "Codex gpt-5.4 high",
+				Result:      "ok",
+				Duration:    420 * time.Millisecond,
+			},
+			{
+				Name:        "Embedded viewport",
+				ProjectPath: "/tmp/demo",
+				Detail:      "Codex",
+				Result:      "ok",
+				Duration:    2300 * time.Millisecond,
+			},
+		},
+		nowFn: func() time.Time { return now },
+	}
+
+	rendered := ansi.Strip(m.renderAIStatsContent(76))
+	for _, want := range []string{
+		"Latency",
+		"In flight: 1 operation(s)",
+		"Embedded open",
+		"Model apply",
+		"Embedded viewport",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("renderAIStatsContent() missing %q: %q", want, rendered)
+		}
+	}
+}
+
 func TestSectionToggleDevKeysAreNoLongerBound(t *testing.T) {
 	m := Model{
 		showSessions: true,
