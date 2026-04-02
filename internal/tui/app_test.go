@@ -6067,6 +6067,142 @@ func TestTodoDialogModelToggleOpensPickerBeforeDraft(t *testing.T) {
 	}
 }
 
+func TestTodoModelPickerApplyRefocusesComposerAndCapturesSettleLatency(t *testing.T) {
+	now := time.Date(2026, time.April, 2, 17, 30, 0, 0, time.UTC)
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider:        codexapp.ProviderOpenCode,
+			ThreadID:        "ses-model-focus",
+			Started:         true,
+			Preset:          codexcli.PresetYolo,
+			Status:          "OpenCode ready",
+			Model:           "openai/gpt-4.1",
+			ReasoningEffort: "",
+		},
+		models: []codexapp.ModelOption{{
+			ID:          "openai/gpt-5.4",
+			Model:       "openai/gpt-5.4",
+			DisplayName: "GPT-5.4",
+			Description: "Fast enough",
+			IsDefault:   true,
+		}},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		Provider:    codexapp.ProviderOpenCode,
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		codexInput:   newCodexTextarea(),
+		codexDrafts: map[string]codexDraft{
+			"/tmp/demo": {Text: "Line one\nLine two"},
+		},
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        28,
+		nowFn:         func() time.Time { return now },
+		todoLaunchDraft: &todoLaunchDraftState{
+			projectPath:    "/tmp/demo",
+			provider:       codexapp.ProviderOpenCode,
+			openModelFirst: true,
+		},
+	}
+
+	updated, cmd := m.update(codexSessionOpenedMsg{
+		projectPath: "/tmp/demo",
+		status:      "OpenCode session ready",
+	})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("session open should return the model picker command")
+	}
+	if got.codexInput.Focused() {
+		t.Fatalf("composer should not be focused while the model picker is taking over")
+	}
+	if got.codexInput.Value() != "Line one\nLine two" {
+		t.Fatalf("composer text = %q, want preserved multiline TODO draft", got.codexInput.Value())
+	}
+
+	msg := cmd()
+	listMsg, ok := msg.(codexModelListMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexModelListMsg", msg)
+	}
+	updated, _ = got.update(listMsg)
+	got = updated.(Model)
+	if got.codexModelPicker == nil || got.codexModelPicker.Loading {
+		t.Fatalf("model picker should be loaded")
+	}
+
+	updated, _ = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyTab})
+	got = updated.(Model)
+	if got.codexModelPicker.Focus != codexModelPickerFocusModels {
+		t.Fatalf("picker focus = %q, want models", got.codexModelPicker.Focus)
+	}
+
+	updated, cmd = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should apply the selected model")
+	}
+
+	msg = cmd()
+	action, ok := msg.(codexActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexActionMsg", msg)
+	}
+	if !action.awaitSettle {
+		t.Fatalf("model apply should wait for a snapshot settle event")
+	}
+
+	updated, cmd = got.update(action)
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("successful model apply should save preferences and refocus the composer")
+	}
+	if !got.codexInput.Focused() {
+		t.Fatalf("composer should regain focus after applying the model picker selection")
+	}
+	if pending, ok := got.modelSettlePending["/tmp/demo"]; !ok || pending.Model != "openai/gpt-5.4" {
+		t.Fatalf("model settle pending = %#v, want openai/gpt-5.4", got.modelSettlePending["/tmp/demo"])
+	}
+	if len(got.aiLatencyInFlightSnapshot()) != 1 || got.aiLatencyInFlightSnapshot()[0].Name != "Model settle" {
+		t.Fatalf("in-flight latency ops = %#v, want a single model settle op", got.aiLatencyInFlightSnapshot())
+	}
+
+	now = now.Add(650 * time.Millisecond)
+	updated, _ = got.update(codexUpdateMsg{projectPath: "/tmp/demo"})
+	got = updated.(Model)
+	if _, ok := got.modelSettlePending["/tmp/demo"]; ok {
+		t.Fatalf("model settle should complete once the refreshed snapshot reflects the staged model")
+	}
+
+	found := false
+	for _, sample := range got.aiLatencyRecent {
+		if sample.Name != "Model settle" {
+			continue
+		}
+		found = true
+		if sample.ProjectPath != "/tmp/demo" {
+			t.Fatalf("model settle project = %q, want /tmp/demo", sample.ProjectPath)
+		}
+		if sample.Duration != 650*time.Millisecond {
+			t.Fatalf("model settle duration = %v, want 650ms", sample.Duration)
+		}
+	}
+	if !found {
+		t.Fatalf("recent latency samples = %#v, want a completed model settle sample", got.aiLatencyRecent)
+	}
+}
+
 func TestTodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {

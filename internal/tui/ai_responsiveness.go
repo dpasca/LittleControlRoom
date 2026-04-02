@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/codexapp"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -35,6 +37,12 @@ type aiLatencySample struct {
 	StartedAt   time.Time
 	Duration    time.Duration
 	Failed      bool
+}
+
+type pendingModelSettleOp struct {
+	OpID      int64
+	Model     string
+	Reasoning string
 }
 
 func (m *Model) beginAILatencyOp(name, projectPath, detail string) int64 {
@@ -119,6 +127,71 @@ func (m *Model) appendAILatencySample(sample aiLatencySample) {
 	if len(m.aiLatencyRecent) > aiStatsLatencyHistoryLimit {
 		m.aiLatencyRecent = m.aiLatencyRecent[:aiStatsLatencyHistoryLimit]
 	}
+}
+
+func (m *Model) beginModelSettleLatency(projectPath, detail, model, reasoning string) {
+	projectPath = strings.TrimSpace(projectPath)
+	model = strings.TrimSpace(model)
+	reasoning = strings.TrimSpace(reasoning)
+	if projectPath == "" || model == "" {
+		return
+	}
+	if m.modelSettlePending == nil {
+		m.modelSettlePending = make(map[string]pendingModelSettleOp)
+	}
+	if pending, ok := m.modelSettlePending[projectPath]; ok {
+		delete(m.modelSettlePending, projectPath)
+		m.completeAILatencyOp(pending.OpID, 0, nil, "superseded")
+	}
+	opID := m.beginAILatencyOp("Model settle", projectPath, strings.TrimSpace(detail))
+	if opID == 0 {
+		return
+	}
+	m.modelSettlePending[projectPath] = pendingModelSettleOp{
+		OpID:      opID,
+		Model:     model,
+		Reasoning: reasoning,
+	}
+}
+
+func (m *Model) completeModelSettleLatency(projectPath string, snapshot codexapp.Snapshot) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" || len(m.modelSettlePending) == 0 {
+		return
+	}
+	pending, ok := m.modelSettlePending[projectPath]
+	if !ok {
+		return
+	}
+	if !snapshotReflectsModelSelection(snapshot, pending.Model, pending.Reasoning) {
+		return
+	}
+	delete(m.modelSettlePending, projectPath)
+	m.completeAILatencyOp(pending.OpID, 0, nil, "")
+}
+
+func (m *Model) cancelModelSettleLatency(projectPath, result string) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" || len(m.modelSettlePending) == 0 {
+		return
+	}
+	pending, ok := m.modelSettlePending[projectPath]
+	if !ok {
+		return
+	}
+	delete(m.modelSettlePending, projectPath)
+	m.completeAILatencyOp(pending.OpID, 0, nil, firstNonEmptyTrimmed(result, "canceled"))
+}
+
+func snapshotReflectsModelSelection(snapshot codexapp.Snapshot, modelName, reasoning string) bool {
+	modelName = strings.TrimSpace(modelName)
+	reasoning = strings.TrimSpace(reasoning)
+	if modelName == "" {
+		return false
+	}
+	currentModel := firstNonEmptyTrimmed(snapshot.PendingModel, snapshot.Model)
+	currentReasoning := firstNonEmptyTrimmed(snapshot.PendingReasoning, snapshot.ReasoningEffort)
+	return strings.EqualFold(currentModel, modelName) && strings.EqualFold(currentReasoning, reasoning)
 }
 
 func (m Model) aiLatencyInFlightSnapshot() []aiLatencyOp {
