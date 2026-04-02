@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -217,4 +218,57 @@ func formatAILatencyDuration(d time.Duration) string {
 		return d.Round(time.Millisecond).String()
 	}
 	return d.Round(10 * time.Millisecond).String()
+}
+
+func (m *Model) openPerfDialog() tea.Cmd {
+	m.showPerf = true
+	m.showAIStats = false
+	m.showHelp = false
+	m.err = nil
+	m.status = "Performance open. Press Esc to close"
+	return nil
+}
+
+func (m *Model) closePerfDialog(status string) {
+	m.showPerf = false
+	if status != "" {
+		m.status = status
+	}
+}
+
+func (m Model) updatePerfMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "enter", "?":
+		m.closePerfDialog("Performance closed")
+	}
+	return m, nil
+}
+
+func (m Model) renderPerf(bodyW int) string {
+	panelWidth := min(bodyW, min(max(60, bodyW-12), 96))
+	panelInnerWidth := max(32, panelWidth-4)
+	return renderDialogPanel(panelWidth, panelInnerWidth, m.renderPerfContent(panelInnerWidth))
+}
+
+func (m Model) renderPerfOverlay(body string, bodyW, bodyH int) string {
+	panel := m.renderPerf(bodyW)
+	panelWidth := lipgloss.Width(panel)
+	panelHeight := lipgloss.Height(panel)
+	left := max(0, (bodyW-panelWidth)/2)
+	top := max(0, (bodyH-panelHeight)/4)
+	return overlayBlock(body, panel, bodyW, bodyH, left, top)
+}
+
+func (m Model) renderPerfContent(width int) string {
+	lines := []string{
+		renderDialogHeader("Performance", "Latency", "", width),
+	}
+	lines = append(lines, m.aiStatsLatencySection(width)...)
+	lines = append(lines, "")
+	lines = append(lines, commandPaletteHintStyle.Render("Open /perf after a freeze to see whether the wait was backend work or UI-thread rendering."))
+	lines = append(lines, "")
+	lines = append(lines, renderHelpPanelActionRow(
+		renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
+	))
+	return strings.Join(lines, "\n")
 }

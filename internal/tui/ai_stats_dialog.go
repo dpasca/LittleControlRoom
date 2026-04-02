@@ -16,6 +16,7 @@ const aiStatsFailedProjectLimit = 5
 
 func (m *Model) openAIStatsDialog() tea.Cmd {
 	m.showAIStats = true
+	m.showPerf = false
 	m.showHelp = false
 	m.err = nil
 	m.status = "AI stats open. Press Esc to close"
@@ -93,8 +94,6 @@ func (m Model) renderAIStatsContent(width int) string {
 	if hint := strings.TrimSpace(backendStatus.LoginHint); hint != "" && !backendStatus.Ready {
 		lines = append(lines, detailField("Fix", commandPaletteHintStyle.Render(hint)))
 	}
-
-	lines = append(lines, m.aiStatsLatencySection(width)...)
 
 	lines = append(lines, "")
 	lines = append(lines, detailSectionStyle.Render("Errors"))

@@ -169,6 +169,7 @@ type Model struct {
 	showEvents   bool
 	showHelp     bool
 	showAIStats  bool
+	showPerf     bool
 
 	hideReasoningSections bool
 
@@ -832,6 +833,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.settingsMode {
 			return m.updateSettingsMode(msg)
+		}
+		if m.showPerf {
+			return m.updatePerfMode(msg)
 		}
 		if m.showAIStats {
 			return m.updateAIStatsMode(msg)
@@ -2257,6 +2261,8 @@ func (m Model) View() string {
 		body = m.renderSetupOverlay(body, layout.width, layout.height)
 	} else if m.settingsMode {
 		body = m.renderSettingsOverlay(body, layout.width, layout.height)
+	} else if m.showPerf {
+		body = m.renderPerfOverlay(body, layout.width, layout.height)
 	} else if m.showAIStats {
 		body = m.renderAIStatsOverlay(body, layout.width, layout.height)
 	} else if m.showHelp {
@@ -3147,12 +3153,15 @@ func (m *Model) removeProjectSummary(projectPath string) {
 func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 	switch inv.Kind {
 	case commands.KindHelp:
+		m.showPerf = false
 		m.showAIStats = false
 		m.showHelp = true
 		m.status = "Help open. Press ? or Esc to close"
 		return m, nil
 	case commands.KindAIStats:
 		return m, m.openAIStatsDialog()
+	case commands.KindPerf:
+		return m, m.openPerfDialog()
 	case commands.KindErrors:
 		return m.openErrorLog()
 	case commands.KindRefresh:
@@ -4897,6 +4906,9 @@ func (m Model) renderFooter(width int) string {
 	if m.settingsMode {
 		return m.renderModalFooter(width, "Settings: Enter save, Tab next, Esc cancel", filterSegment, usageSegment)
 	}
+	if m.showPerf {
+		return m.renderModalFooter(width, "Performance: Esc close", filterSegment, usageSegment)
+	}
 	if m.showAIStats {
 		return m.renderModalFooter(width, "AI stats: Esc close", filterSegment, usageSegment)
 	}
@@ -5944,7 +5956,7 @@ func helpPanelLines() []string {
 			renderDialogAction("Tab", "complete there", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("?", "toggle help", commitActionKeyStyle, commitActionTextStyle),
 		),
-		commandPaletteHintStyle.Render("Try /setup, /ai, /errors, /codex, /todo, /wt merge|remove|prune, /commit, /diff, or /run."),
+		commandPaletteHintStyle.Render("Try /setup, /ai, /perf, /errors, /codex, /todo, /wt merge|remove|prune, /commit, /diff, or /run."),
 		detailSectionStyle.Render("Navigate"),
 		renderHelpPanelActionRow(
 			renderDialogAction("Tab", "switch pane", navigateActionKeyStyle, navigateActionTextStyle),
