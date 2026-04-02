@@ -651,6 +651,7 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 			}
 		}
 		status := fmt.Sprintf("Embedded model set to %s with %s reasoning for the next prompt", modelName, effort)
+		awaitSettle := true
 		if snapshot.Busy {
 			status = fmt.Sprintf("Embedded model change to %s (%s) is staged for the next fresh prompt", modelName, effort)
 		}
@@ -659,6 +660,7 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 			strings.TrimSpace(snapshot.PendingModel) == "" &&
 			strings.TrimSpace(snapshot.PendingReasoning) == "" {
 			status = fmt.Sprintf("Embedded model remains %s with %s reasoning", modelName, effort)
+			awaitSettle = false
 		}
 		return codexActionMsg{
 			projectPath:  projectPath,
@@ -666,6 +668,7 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 			provider:     provider,
 			model:        modelName,
 			reasoning:    effort,
+			awaitSettle:  awaitSettle,
 			perfOpID:     perfOpID,
 			perfDuration: time.Since(startedAt),
 		}

@@ -160,6 +160,7 @@ type Model struct {
 	aiLatencyNextID        int64
 	aiLatencyInFlight      map[int64]aiLatencyOp
 	aiLatencyRecent        []aiLatencySample
+	modelSettlePending     map[string]pendingModelSettleOp
 
 	pendingG      bool
 	todoLaunchSeq int64
@@ -388,6 +389,7 @@ type codexActionMsg struct {
 	provider     codexapp.Provider
 	model        string
 	reasoning    string
+	awaitSettle  bool
 	err          error
 }
 type codexModelListMsg struct {
@@ -1440,12 +1442,19 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = msg.status
 		}
 		if msg.provider.Normalized() != "" && (strings.TrimSpace(msg.model) != "" || strings.TrimSpace(msg.reasoning) != "") {
+			if msg.awaitSettle {
+				m.beginModelSettleLatency(msg.projectPath, strings.TrimSpace(msg.provider.Label()+" "+msg.model+" "+msg.reasoning), msg.model, msg.reasoning)
+			}
 			m.rememberEmbeddedModelPreference(msg.provider, msg.model, msg.reasoning)
 			m.recordRecentModel(msg.provider, msg.model)
 			m.returnToTodoFromModelPicker()
+			if strings.TrimSpace(m.codexVisibleProject) == strings.TrimSpace(msg.projectPath) && m.todoDialog == nil && m.todoCopyDialog == nil {
+				return m, tea.Batch(m.saveEmbeddedModelPreferencesCmd(), m.codexInput.Focus())
+			}
 			return m, m.saveEmbeddedModelPreferencesCmd()
 		}
 		if msg.closed {
+			m.cancelModelSettleLatency(msg.projectPath, "session closed")
 			delete(m.codexClosedHandled, msg.projectPath)
 			if m.codexVisibleProject == msg.projectPath {
 				m.codexVisibleProject = ""
@@ -1541,11 +1550,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.recordAISyncLatency("Embedded viewport", msg.projectPath, providerLabel, time.Since(viewportStarted), "")
 		}
 		if ok {
+			m.completeModelSettleLatency(msg.projectPath, snapshot)
 			if !snapshot.Closed {
 				m.markCodexSessionLive(msg.projectPath)
 				m.detectQuestionNotification(msg.projectPath, snapshot)
 				return m, tea.Batch(cmds...)
 			}
+			m.cancelModelSettleLatency(msg.projectPath, "session closed")
 			if !m.markCodexSessionClosedHandled(msg.projectPath) {
 				return m, tea.Batch(cmds...)
 			}
@@ -1561,6 +1572,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.scanCmd(false))
 			cmds = append(cmds, m.loadProjectsCmd())
 		} else {
+			m.cancelModelSettleLatency(msg.projectPath, "stale")
 			m.dropCodexSnapshot(msg.projectPath)
 		}
 		return m, tea.Batch(cmds...)
