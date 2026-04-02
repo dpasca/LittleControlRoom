@@ -11548,6 +11548,42 @@ func TestSpinnerTickKeepsHighResolutionAnimationFrames(t *testing.T) {
 	}
 }
 
+func TestSpinnerTickRecordsUIStallLatency(t *testing.T) {
+	now := time.Date(2026, time.April, 3, 10, 0, 0, 0, time.UTC)
+	base := Model{
+		codexVisibleProject: "/tmp/demo",
+		lastSpinnerTickAt:   now,
+		nowFn:               func() time.Time { return now },
+	}
+
+	now = now.Add(10 * time.Second)
+	nextModel, _ := base.Update(spinnerTickMsg{})
+	next, ok := nextModel.(Model)
+	if !ok {
+		t.Fatalf("Update() returned %T, want tui.Model", nextModel)
+	}
+
+	found := false
+	for _, sample := range next.aiLatencyRecent {
+		if sample.Name != "UI stall" {
+			continue
+		}
+		found = true
+		if sample.ProjectPath != "/tmp/demo" {
+			t.Fatalf("UI stall project = %q, want /tmp/demo", sample.ProjectPath)
+		}
+		if sample.Duration != 10*time.Second-spinnerTickInterval {
+			t.Fatalf("UI stall duration = %v, want %v", sample.Duration, 10*time.Second-spinnerTickInterval)
+		}
+		if sample.Result != "event loop blocked" {
+			t.Fatalf("UI stall result = %q, want event loop blocked", sample.Result)
+		}
+	}
+	if !found {
+		t.Fatalf("spinner stall should record a UI stall sample, got %#v", next.aiLatencyRecent)
+	}
+}
+
 func TestRenderCodexBannerPromotesPickerPrevNextAndBlocks(t *testing.T) {
 	rendered := ansi.Strip((Model{}).renderCodexBanner(codexapp.Snapshot{
 		Started:     true,

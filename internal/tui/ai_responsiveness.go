@@ -19,6 +19,8 @@ const (
 	aiStatsLatencyInterestingSyncCost = 150 * time.Millisecond
 	aiStatsLatencySlowCost            = time.Second
 	aiStatsLatencySevereCost          = 5 * time.Second
+	uiStallTickThreshold              = 750 * time.Millisecond
+	uiStallIgnoreGap                  = 45 * time.Second
 )
 
 type aiLatencyOp struct {
@@ -192,6 +194,47 @@ func snapshotReflectsModelSelection(snapshot codexapp.Snapshot, modelName, reaso
 	currentModel := firstNonEmptyTrimmed(snapshot.PendingModel, snapshot.Model)
 	currentReasoning := firstNonEmptyTrimmed(snapshot.PendingReasoning, snapshot.ReasoningEffort)
 	return strings.EqualFold(currentModel, modelName) && strings.EqualFold(currentReasoning, reasoning)
+}
+
+func (m *Model) recordUIStallFromSpinnerTick(now time.Time) {
+	if now.IsZero() {
+		now = m.currentTime()
+	}
+	last := m.lastSpinnerTickAt
+	m.lastSpinnerTickAt = now
+	if last.IsZero() {
+		return
+	}
+	gap := now.Sub(last)
+	if gap <= spinnerTickInterval+uiStallTickThreshold || gap > uiStallIgnoreGap {
+		return
+	}
+	duration := gap - spinnerTickInterval
+	if duration < 0 {
+		duration = gap
+	}
+	projectPath := m.currentLatencyProjectPath()
+	m.appendAILatencySample(aiLatencySample{
+		Name:        "UI stall",
+		ProjectPath: projectPath,
+		Detail:      "spinner tick gap",
+		Result:      "event loop blocked",
+		StartedAt:   now.Add(-duration),
+		Duration:    duration,
+	})
+}
+
+func (m Model) currentLatencyProjectPath() string {
+	if projectPath := strings.TrimSpace(m.codexVisibleProject); projectPath != "" {
+		return projectPath
+	}
+	if projectPath := strings.TrimSpace(m.detail.Summary.Path); projectPath != "" {
+		return projectPath
+	}
+	if project, ok := m.selectedProject(); ok {
+		return strings.TrimSpace(project.Path)
+	}
+	return ""
 }
 
 func (m Model) aiLatencyInFlightSnapshot() []aiLatencyOp {
