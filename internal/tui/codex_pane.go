@@ -443,14 +443,21 @@ func (m Model) refreshBusyElsewhereCmd(projectPath string) tea.Cmd {
 	}
 }
 
-func (m Model) openCodexSessionCmd(req codexapp.LaunchRequest) tea.Cmd {
+func (m *Model) openCodexSessionCmd(req codexapp.LaunchRequest) tea.Cmd {
 	req = m.applyEmbeddedModelPreference(req)
 	manager := m.codexManager
+	provider := req.Provider.Normalized()
+	if provider == "" {
+		provider = codexapp.ProviderCodex
+	}
+	perfOpID := m.beginAILatencyOp("Embedded open", req.ProjectPath, provider.Label())
 	previousThreadID := ""
 	if manager != nil {
+		preflightStarted := time.Now()
 		if existing, ok := manager.Session(req.ProjectPath); ok {
 			previousThreadID = strings.TrimSpace(existing.Snapshot().ThreadID)
 		}
+		m.recordAISyncLatency("Embedded preflight", req.ProjectPath, provider.Label(), time.Since(preflightStarted), "")
 	}
 	threadIDsToAvoid := map[string]struct{}{}
 	if previousThreadID != "" {
@@ -461,13 +468,14 @@ func (m Model) openCodexSessionCmd(req codexapp.LaunchRequest) tea.Cmd {
 		threadIDsToAvoid[resumeID] = struct{}{}
 	}
 	return func() tea.Msg {
-		provider := req.Provider.Normalized()
-		if provider == "" {
-			provider = codexapp.ProviderCodex
-		}
+		startedAt := time.Now()
 		label := provider.Label()
 		if manager == nil {
-			return codexSessionOpenedMsg{err: fmt.Errorf("%s manager unavailable", label)}
+			return codexSessionOpenedMsg{
+				perfOpID:     perfOpID,
+				perfDuration: time.Since(startedAt),
+				err:          fmt.Errorf("%s manager unavailable", label),
+			}
 		}
 		attemptLimit := 1
 		if req.ForceNew {
@@ -488,7 +496,12 @@ func (m Model) openCodexSessionCmd(req codexapp.LaunchRequest) tea.Cmd {
 					}
 					continue
 				}
-				return codexSessionOpenedMsg{projectPath: req.ProjectPath, err: err}
+				return codexSessionOpenedMsg{
+					projectPath:  req.ProjectPath,
+					perfOpID:     perfOpID,
+					perfDuration: time.Since(startedAt),
+					err:          err,
+				}
 			}
 			snapshot = session.Snapshot()
 			// Codex can occasionally hand back the last thread on a forced-new
@@ -504,8 +517,10 @@ func (m Model) openCodexSessionCmd(req codexapp.LaunchRequest) tea.Cmd {
 			break
 		}
 		return codexSessionOpenedMsg{
-			projectPath: req.ProjectPath,
-			status:      embeddedSessionOpenStatus(req, threadIDsToAvoid, reused, snapshot),
+			projectPath:  req.ProjectPath,
+			status:       embeddedSessionOpenStatus(req, threadIDsToAvoid, reused, snapshot),
+			perfOpID:     perfOpID,
+			perfDuration: time.Since(startedAt),
 		}
 	}
 }

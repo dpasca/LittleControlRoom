@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"lcroom/internal/codexapp"
 
@@ -36,18 +37,22 @@ func (m Model) codexModelPickerVisible() bool {
 	return m.codexModelPicker != nil
 }
 
-func (m Model) openCodexModelPickerCmd() tea.Cmd {
+func (m *Model) openCodexModelPickerCmd() tea.Cmd {
 	session, ok := m.currentCodexSession()
 	if !ok {
 		return nil
 	}
 	projectPath := m.codexVisibleProject
+	perfOpID := m.beginAILatencyOp("Model list", projectPath, m.currentEmbeddedSessionLabel())
 	return func() tea.Msg {
+		startedAt := time.Now()
 		models, err := session.ListModels()
 		return codexModelListMsg{
-			projectPath: projectPath,
-			models:      models,
-			err:         err,
+			projectPath:  projectPath,
+			models:       models,
+			perfOpID:     perfOpID,
+			perfDuration: time.Since(startedAt),
+			err:          err,
 		}
 	}
 }
@@ -632,11 +637,18 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 	if provider.Normalized() == "" {
 		provider = codexapp.ProviderCodex
 	}
+	perfOpID := m.beginAILatencyOp("Model apply", projectPath, strings.TrimSpace(provider.Label()+" "+modelName+" "+effort))
 	m.closeCodexModelPicker("")
 	m.status = fmt.Sprintf("Staging %s (%s)...", modelName, effort)
 	return m, func() tea.Msg {
+		startedAt := time.Now()
 		if err := session.StageModelOverride(modelName, effort); err != nil {
-			return codexActionMsg{projectPath: projectPath, err: err}
+			return codexActionMsg{
+				projectPath:  projectPath,
+				perfOpID:     perfOpID,
+				perfDuration: time.Since(startedAt),
+				err:          err,
+			}
 		}
 		status := fmt.Sprintf("Embedded model set to %s with %s reasoning for the next prompt", modelName, effort)
 		if snapshot.Busy {
@@ -649,11 +661,13 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 			status = fmt.Sprintf("Embedded model remains %s with %s reasoning", modelName, effort)
 		}
 		return codexActionMsg{
-			projectPath: projectPath,
-			status:      status,
-			provider:    provider,
-			model:       modelName,
-			reasoning:   effort,
+			projectPath:  projectPath,
+			status:       status,
+			provider:     provider,
+			model:        modelName,
+			reasoning:    effort,
+			perfOpID:     perfOpID,
+			perfDuration: time.Since(startedAt),
 		}
 	}
 }

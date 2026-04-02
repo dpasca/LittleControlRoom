@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"lcroom/internal/codexapp"
 	"lcroom/internal/model"
@@ -917,7 +918,7 @@ func (m Model) purgeDoneTodosCmd(projectPath string) tea.Cmd {
 	}
 }
 
-func (m Model) createTodoWorktreeCmd(launchCtx context.Context, launchID int64, projectPath string, todoID int64, todoText string, provider codexapp.Provider, openModelFirst bool) tea.Cmd {
+func (m *Model) createTodoWorktreeCmd(launchCtx context.Context, launchID int64, projectPath string, todoID int64, todoText string, provider codexapp.Provider, openModelFirst bool) tea.Cmd {
 	branchOverride := ""
 	suffixOverride := ""
 	if m.todoCopyDialog != nil {
@@ -936,7 +937,9 @@ func (m Model) createTodoWorktreeCmd(launchCtx context.Context, launchID int64, 
 	if launchCtx == nil {
 		launchCtx = context.Background()
 	}
+	perfOpID := m.beginAILatencyOp("Worktree create", projectPath, provider.Label())
 	return func() tea.Msg {
+		startedAt := time.Now()
 		result, err := m.svc.CreateTodoWorktree(launchCtx, service.CreateTodoWorktreeRequest{
 			ProjectPath:    projectPath,
 			TodoID:         todoID,
@@ -945,9 +948,11 @@ func (m Model) createTodoWorktreeCmd(launchCtx context.Context, launchID int64, 
 		})
 		if err != nil {
 			return todoWorktreeLaunchMsg{
-				launchID:    launchID,
-				projectPath: projectPath,
-				err:         err,
+				launchID:     launchID,
+				projectPath:  projectPath,
+				perfOpID:     perfOpID,
+				perfDuration: time.Since(startedAt),
+				err:          err,
 			}
 		}
 		return todoWorktreeLaunchMsg{
@@ -957,6 +962,8 @@ func (m Model) createTodoWorktreeCmd(launchCtx context.Context, launchID int64, 
 			status:         "Worktree ready",
 			provider:       provider,
 			openModelFirst: openModelFirst,
+			perfOpID:       perfOpID,
+			perfDuration:   time.Since(startedAt),
 		}
 	}
 }

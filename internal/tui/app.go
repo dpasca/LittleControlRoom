@@ -157,6 +157,9 @@ type Model struct {
 	codexViewport          viewport.Model
 	codexTranscriptCache   codexTranscriptRenderCache
 	codexViewportContent   codexViewportContentState
+	aiLatencyNextID        int64
+	aiLatencyInFlight      map[int64]aiLatencyOp
+	aiLatencyRecent        []aiLatencySample
 
 	pendingG      bool
 	todoLaunchSeq int64
@@ -246,6 +249,8 @@ type todoActionMsg struct {
 
 type todoWorktreeLaunchMsg struct {
 	launchID       int64
+	perfOpID       int64
+	perfDuration   time.Duration
 	projectPath    string
 	todoText       string
 	status         string
@@ -354,9 +359,11 @@ type ignoredProjectActionMsg struct {
 }
 
 type codexSessionOpenedMsg struct {
-	projectPath string
-	status      string
-	err         error
+	projectPath  string
+	status       string
+	perfOpID     int64
+	perfDuration time.Duration
+	err          error
 }
 
 type codexPendingOpenState struct {
@@ -372,6 +379,8 @@ type codexUpdateMsg struct {
 }
 type codexActionMsg struct {
 	projectPath  string
+	perfOpID     int64
+	perfDuration time.Duration
 	status       string
 	closed       bool
 	restoreDraft codexDraft
@@ -381,10 +390,23 @@ type codexActionMsg struct {
 	err          error
 }
 type codexModelListMsg struct {
-	projectPath string
-	models      []codexapp.ModelOption
-	err         error
+	projectPath  string
+	models       []codexapp.ModelOption
+	perfOpID     int64
+	perfDuration time.Duration
+	err          error
 }
+
+func (m codexModelListMsg) statusSummary() string {
+	if m.err != nil {
+		return ""
+	}
+	if len(m.models) == 0 {
+		return "0 models"
+	}
+	return fmt.Sprintf("%d models", len(m.models))
+}
+
 type codexResumeChoicesMsg struct {
 	projectPath string
 	provider    codexapp.Provider
@@ -449,6 +471,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		codexSnapshots:         make(map[string]codexapp.Snapshot),
 		codexTranscriptRev:     make(map[string]uint64),
 		codexToolAnswers:       make(map[string]codexToolAnswerState),
+		aiLatencyInFlight:      make(map[int64]aiLatencyOp),
 		detailViewport:         detailViewport,
 		runtimeViewport:        runtimeViewport,
 		codexViewport:          codexViewport,
@@ -1143,6 +1166,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case todoWorktreeLaunchMsg:
+		m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, msg.err, msg.status)
 		pendingCanceled := false
 		if msg.launchID != 0 {
 			pending := m.todoPendingLaunch
@@ -1370,6 +1394,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 	case codexSessionOpenedMsg:
+		m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, msg.err, msg.status)
 		m.err = nil
 		if msg.err != nil {
 			provider := m.codexPendingOpenProvider()
@@ -1398,6 +1423,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.codexInput.Focus()
 	case codexActionMsg:
+		m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, msg.err, msg.status)
 		if msg.err != nil {
 			m.reportError("Embedded session action failed", msg.err, msg.projectPath)
 			if msg.projectPath != "" && !msg.restoreDraft.Empty() {
@@ -1432,9 +1458,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case codexModelListMsg:
+		result := msg.statusSummary()
 		if strings.TrimSpace(msg.projectPath) != strings.TrimSpace(m.codexVisibleProject) {
+			if result == "" {
+				result = "stale"
+			}
+			m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, msg.err, result)
 			return m, nil
 		}
+		m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, msg.err, result)
 		if msg.err != nil {
 			m.codexModelPicker = nil
 			m.reportError("Embedded model picker failed", msg.err, msg.projectPath)
@@ -1490,10 +1522,19 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.codexManager != nil {
 			m.codexManager.AckUpdate(msg.projectPath)
 		}
+		refreshStarted := time.Now()
 		snapshot, ok := m.refreshCodexSnapshot(msg.projectPath)
+		refreshDuration := time.Since(refreshStarted)
+		providerLabel := ""
+		if ok {
+			providerLabel = embeddedProvider(snapshot).Label()
+		}
+		m.recordAISyncLatency("Embedded snapshot", msg.projectPath, providerLabel, refreshDuration, "")
 		if m.codexVisibleProject == msg.projectPath {
+			viewportStarted := time.Now()
 			m.resetCodexToolAnswerState(msg.projectPath)
 			m.syncCodexViewport(true)
+			m.recordAISyncLatency("Embedded viewport", msg.projectPath, providerLabel, time.Since(viewportStarted), "")
 		}
 		if ok {
 			if !snapshot.Closed {

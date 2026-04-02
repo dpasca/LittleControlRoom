@@ -94,6 +94,8 @@ func (m Model) renderAIStatsContent(width int) string {
 		lines = append(lines, detailField("Fix", commandPaletteHintStyle.Render(hint)))
 	}
 
+	lines = append(lines, m.aiStatsLatencySection(width)...)
+
 	lines = append(lines, "")
 	lines = append(lines, detailSectionStyle.Render("Errors"))
 	if totalFailed == 0 {
