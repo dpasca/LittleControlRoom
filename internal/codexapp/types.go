@@ -433,6 +433,7 @@ type Snapshot struct {
 	ProjectPath        string
 	ThreadID           string
 	Preset             codexcli.Preset
+	TranscriptRevision uint64
 	Phase              SessionPhase
 	Started            bool
 	Busy               bool

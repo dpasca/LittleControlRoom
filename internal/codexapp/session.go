@@ -105,6 +105,8 @@ type appServerSession struct {
 	pendingElicitation *ElicitationRequest
 	entries            []transcriptEntry
 	entryIndex         map[string]int
+	transcriptRevision uint64
+	transcriptCache    transcriptExportCache
 }
 
 type transcriptEntry struct {
@@ -491,21 +493,7 @@ func (s *appServerSession) ProjectPath() string {
 func (s *appServerSession) Snapshot() Snapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	entries := make([]TranscriptEntry, 0, len(s.entries))
-	lines := make([]string, 0, len(s.entries))
-	for _, entry := range s.entries {
-		text := strings.TrimSpace(entry.Text)
-		if text == "" {
-			continue
-		}
-		entries = append(entries, TranscriptEntry{
-			ItemID:      entry.ItemID,
-			Kind:        entry.Kind,
-			Text:        text,
-			DisplayText: entry.DisplayText,
-		})
-		lines = append(lines, formatTranscriptEntry(entry.Kind, text))
-	}
+	entries, transcript := s.exportedTranscriptLocked()
 	tokenUsage := exportedTokenUsageSnapshot(s.tokenUsage)
 	usageWindows := exportedUsageWindowsSnapshot(s.rateLimits, s.rateLimitsByID)
 	return Snapshot{
@@ -513,6 +501,7 @@ func (s *appServerSession) Snapshot() Snapshot {
 		ProjectPath:        s.projectPath,
 		ThreadID:           s.threadID,
 		Preset:             s.preset,
+		TranscriptRevision: s.transcriptRevision,
 		Phase:              s.phaseLocked(),
 		Started:            s.started,
 		Busy:               s.busy,
@@ -525,7 +514,7 @@ func (s *appServerSession) Snapshot() Snapshot {
 		PendingToolInput:   cloneToolInputRequest(s.pendingToolInput),
 		PendingElicitation: cloneElicitationRequest(s.pendingElicitation),
 		Entries:            entries,
-		Transcript:         strings.Join(lines, "\n\n"),
+		Transcript:         transcript,
 		Status:             s.status,
 		LastError:          s.lastError,
 		LastSystemNotice:   s.lastSystemNotice,
@@ -540,6 +529,21 @@ func (s *appServerSession) Snapshot() Snapshot {
 		TokenUsage:         tokenUsage,
 		UsageWindows:       usageWindows,
 	}
+}
+
+func (s *appServerSession) invalidateTranscriptCacheLocked() {
+	s.transcriptCache.invalidate(&s.transcriptRevision)
+}
+
+func (s *appServerSession) exportedTranscriptLocked() ([]TranscriptEntry, string) {
+	if !s.transcriptCache.ready || s.transcriptCache.revision != s.transcriptRevision {
+		entries := exportTranscriptEntries(s.entries)
+		s.transcriptCache.entries = entries
+		s.transcriptCache.transcript = buildTranscriptText(ProviderCodex, entries, "\n\n", false)
+		s.transcriptCache.revision = s.transcriptRevision
+		s.transcriptCache.ready = true
+	}
+	return cloneTranscriptEntries(s.transcriptCache.entries), s.transcriptCache.transcript
 }
 
 func newEmbeddedSession(req LaunchRequest, notify func()) (Session, error) {
@@ -2684,11 +2688,13 @@ func (s *appServerSession) maybeAppendAuth403Diagnosis(message string) {
 func (s *appServerSession) appendEntryLocked(itemID string, kind TranscriptKind, text string) {
 	if itemID != "" {
 		if index, ok := s.entryIndex[itemID]; ok {
+			s.invalidateTranscriptCacheLocked()
 			s.entries[index].Text += text
 			return
 		}
 		s.entryIndex[itemID] = len(s.entries)
 	}
+	s.invalidateTranscriptCacheLocked()
 	s.entries = append(s.entries, transcriptEntry{ItemID: itemID, Kind: kind, Text: text})
 }
 
@@ -2698,11 +2704,13 @@ func (s *appServerSession) appendEntryWithDisplayLocked(itemID string, kind Tran
 	}
 	if itemID != "" {
 		if index, ok := s.entryIndex[itemID]; ok {
+			s.invalidateTranscriptCacheLocked()
 			s.entries[index].Text += text
 			return
 		}
 		s.entryIndex[itemID] = len(s.entries)
 	}
+	s.invalidateTranscriptCacheLocked()
 	s.entries = append(s.entries, transcriptEntry{ItemID: itemID, Kind: kind, Text: text, DisplayText: displayText})
 }
 
@@ -2712,15 +2720,22 @@ func (s *appServerSession) ensureItemEntryLocked(itemID string, kind TranscriptK
 		return
 	}
 	if index, ok := s.entryIndex[itemID]; ok {
+		changed := false
 		if s.entries[index].Kind == "" {
 			s.entries[index].Kind = kind
+			changed = true
 		}
 		if s.entries[index].Text == "" {
 			s.entries[index].Text = text
+			changed = true
+		}
+		if changed {
+			s.invalidateTranscriptCacheLocked()
 		}
 		return
 	}
 	s.entryIndex[itemID] = len(s.entries)
+	s.invalidateTranscriptCacheLocked()
 	s.entries = append(s.entries, transcriptEntry{ItemID: itemID, Kind: kind, Text: text})
 }
 
@@ -2743,6 +2758,7 @@ func (s *appServerSession) bindOptimisticEntryLocked(itemID string, kind Transcr
 		entry.Text = text
 		entry.DisplayText = displayText
 		s.entryIndex[itemID] = i
+		s.invalidateTranscriptCacheLocked()
 		return true
 	}
 	return false
@@ -2754,6 +2770,10 @@ func (s *appServerSession) upsertItemEntryLocked(itemID string, kind TranscriptK
 		return
 	}
 	if index, ok := s.entryIndex[itemID]; ok {
+		if s.entries[index].Kind == kind && s.entries[index].Text == text {
+			return
+		}
+		s.invalidateTranscriptCacheLocked()
 		s.entries[index].Kind = kind
 		s.entries[index].Text = text
 		return
@@ -2762,6 +2782,7 @@ func (s *appServerSession) upsertItemEntryLocked(itemID string, kind TranscriptK
 		return
 	}
 	s.entryIndex[itemID] = len(s.entries)
+	s.invalidateTranscriptCacheLocked()
 	s.entries = append(s.entries, transcriptEntry{ItemID: itemID, Kind: kind, Text: text})
 }
 
@@ -2774,6 +2795,7 @@ func (s *appServerSession) appendDeltaToItemLocked(itemID string, kind Transcrip
 		return
 	}
 	if index, ok := s.entryIndex[itemID]; ok {
+		s.invalidateTranscriptCacheLocked()
 		if s.entries[index].Kind == "" || s.entries[index].Kind == TranscriptOther {
 			s.entries[index].Kind = kind
 		}
@@ -2781,6 +2803,7 @@ func (s *appServerSession) appendDeltaToItemLocked(itemID string, kind Transcrip
 		return
 	}
 	s.entryIndex[itemID] = len(s.entries)
+	s.invalidateTranscriptCacheLocked()
 	s.entries = append(s.entries, transcriptEntry{ItemID: itemID, Kind: kind, Text: text})
 }
 
@@ -2793,21 +2816,29 @@ func (s *appServerSession) mergeHistoryItemLocked(itemID string, kind Transcript
 		return
 	}
 	if index, ok := s.entryIndex[itemID]; ok {
+		changed := false
 		if s.entries[index].Kind == "" {
 			s.entries[index].Kind = kind
+			changed = true
 		}
 		current := s.entries[index].Text
 		switch {
 		case current == "":
 			s.entries[index].Text = text
+			changed = true
 		case strings.HasPrefix(text, current):
 			s.entries[index].Text = text
+			changed = true
 		case strings.HasPrefix(current, text):
 			return
+		}
+		if changed {
+			s.invalidateTranscriptCacheLocked()
 		}
 		return
 	}
 	s.entryIndex[itemID] = len(s.entries)
+	s.invalidateTranscriptCacheLocked()
 	s.entries = append(s.entries, transcriptEntry{ItemID: itemID, Kind: kind, Text: text})
 }
 
@@ -2820,20 +2851,34 @@ func (s *appServerSession) finalizeCommandItemLocked(itemID string, item map[str
 		return
 	}
 	if index, ok := s.entryIndex[itemID]; ok {
+		changed := false
 		s.entries[index].Kind = TranscriptCommand
+		changed = true
 		aggregated := strings.TrimSpace(decodeRawNullableString(item["aggregatedOutput"]))
 		switch {
 		case text == "":
+			if changed {
+				s.invalidateTranscriptCacheLocked()
+			}
 			return
 		case aggregated != "", strings.TrimSpace(s.entries[index].Text) == "":
 			s.entries[index].Text = text
+			changed = true
 		default:
 			statusLine := renderCommandStatusLine(decodeRawString(item["status"]), decodeRawNullableInt(item["exitCode"]))
 			if statusLine == "" {
 				s.entries[index].Text = text
+				changed = true
 			} else {
-				s.entries[index].Text = upsertTrailingSummaryLine(s.entries[index].Text, statusLine, "[command ")
+				nextText := upsertTrailingSummaryLine(s.entries[index].Text, statusLine, "[command ")
+				if nextText != s.entries[index].Text {
+					s.entries[index].Text = nextText
+					changed = true
+				}
 			}
+		}
+		if changed {
+			s.invalidateTranscriptCacheLocked()
 		}
 		return
 	}
@@ -2849,19 +2894,30 @@ func (s *appServerSession) finalizeFileChangeItemLocked(itemID string, item map[
 		return
 	}
 	if index, ok := s.entryIndex[itemID]; ok {
+		changed := false
 		s.entries[index].Kind = TranscriptFileChange
+		changed = true
 		switch {
 		case strings.TrimSpace(s.entries[index].Text) == "":
 			s.entries[index].Text = text
+			changed = true
 		default:
 			statusLine := renderFileChangeStatusLine(decodeRawString(item["status"]))
 			if statusLine == "" {
 				if text != "" {
 					s.entries[index].Text = text
+					changed = true
 				}
 			} else {
-				s.entries[index].Text = upsertTrailingSummaryLine(s.entries[index].Text, statusLine, "[file changes ")
+				nextText := upsertTrailingSummaryLine(s.entries[index].Text, statusLine, "[file changes ")
+				if nextText != s.entries[index].Text {
+					s.entries[index].Text = nextText
+					changed = true
+				}
 			}
+		}
+		if changed {
+			s.invalidateTranscriptCacheLocked()
 		}
 		return
 	}

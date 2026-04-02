@@ -11103,7 +11103,8 @@ func TestStoreCodexSnapshotOnlyInvalidatesTranscriptRevisionWhenTranscriptChange
 	m := Model{}
 	projectPath := "/tmp/demo"
 	base := codexapp.Snapshot{
-		Provider: codexapp.ProviderCodex,
+		Provider:           codexapp.ProviderCodex,
+		TranscriptRevision: 1,
 		Entries: []codexapp.TranscriptEntry{{
 			Kind: codexapp.TranscriptAgent,
 			Text: "First reply",
@@ -11123,6 +11124,7 @@ func TestStoreCodexSnapshotOnlyInvalidatesTranscriptRevisionWhenTranscriptChange
 	}
 
 	changed := base
+	changed.TranscriptRevision = 2
 	changed.Entries = []codexapp.TranscriptEntry{{
 		Kind: codexapp.TranscriptAgent,
 		Text: "Updated reply",
@@ -11130,6 +11132,31 @@ func TestStoreCodexSnapshotOnlyInvalidatesTranscriptRevisionWhenTranscriptChange
 	m.storeCodexSnapshot(projectPath, changed)
 	if got := m.codexTranscriptRevision(projectPath); got != 2 {
 		t.Fatalf("transcript update should bump transcript revision, got %d", got)
+	}
+}
+
+func TestStoreCodexSnapshotIgnoresNoticeOnlyChangesWhenTranscriptHasEntries(t *testing.T) {
+	m := Model{}
+	projectPath := "/tmp/demo"
+	base := codexapp.Snapshot{
+		Provider:           codexapp.ProviderClaudeCode,
+		TranscriptRevision: 7,
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "Existing reply",
+		}},
+	}
+
+	m.storeCodexSnapshot(projectPath, base)
+	if got := m.codexTranscriptRevision(projectPath); got != 1 {
+		t.Fatalf("initial transcript revision = %d, want 1", got)
+	}
+
+	noticeOnly := base
+	noticeOnly.LastSystemNotice = "Claude Code will use opus, effort high on the next prompt."
+	m.storeCodexSnapshot(projectPath, noticeOnly)
+	if got := m.codexTranscriptRevision(projectPath); got != 1 {
+		t.Fatalf("notice-only update with transcript entries should not bump transcript revision, got %d", got)
 	}
 }
 

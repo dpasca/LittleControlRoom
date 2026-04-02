@@ -641,6 +641,38 @@ func TestOpenCodeSessionRefreshKeepsLaunchPendingWhenNoReplayedModel(t *testing.
 	}
 }
 
+func TestOpenCodeStageModelOverrideKeepsTranscriptRevisionStable(t *testing.T) {
+	session := &openCodeSession{
+		projectPath:        "/tmp/demo",
+		model:              "openai/gpt-5",
+		reasoningEffort:    "medium",
+		entryIndex:         make(map[string]int),
+		notify:             func() {},
+		lastActivityAt:     time.Now(),
+		transcriptRevision: 1,
+		entries: []transcriptEntry{{
+			Kind: TranscriptAgent,
+			Text: "Existing reply",
+		}},
+	}
+
+	first := session.Snapshot()
+	if err := session.StageModelOverride("openai/gpt-5.4", "high"); err != nil {
+		t.Fatalf("StageModelOverride() error = %v", err)
+	}
+	second := session.Snapshot()
+
+	if second.TranscriptRevision != first.TranscriptRevision {
+		t.Fatalf("transcript revision changed from %d to %d after model stage", first.TranscriptRevision, second.TranscriptRevision)
+	}
+	if second.Transcript != first.Transcript {
+		t.Fatalf("transcript changed after model stage: %q -> %q", first.Transcript, second.Transcript)
+	}
+	if len(second.Entries) != len(first.Entries) || second.Entries[0].Text != first.Entries[0].Text {
+		t.Fatalf("entries changed after model stage: %#v -> %#v", first.Entries, second.Entries)
+	}
+}
+
 func TestOpenCodeSessionRefreshBusyKeepsExistingBusySince(t *testing.T) {
 	session := newTestOpenCodeSessionWithStatus(t, `[]`, `{"ses_test":{"type":"busy"}}`)
 	startedAt := time.Date(2026, 3, 22, 12, 0, 0, 0, time.UTC)

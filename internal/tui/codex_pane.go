@@ -312,8 +312,16 @@ func (m *Model) resetCodexTranscriptCaches(projectPath string) {
 }
 
 func codexTranscriptStateChanged(prev, next codexapp.Snapshot) bool {
-	if prev.Provider != next.Provider || prev.Closed != next.Closed || prev.LastSystemNotice != next.LastSystemNotice {
+	if prev.Provider != next.Provider || prev.Closed != next.Closed {
 		return true
+	}
+	if codexTranscriptFallsBackToNotice(prev) || codexTranscriptFallsBackToNotice(next) {
+		if prev.LastSystemNotice != next.LastSystemNotice {
+			return true
+		}
+	}
+	if prev.TranscriptRevision != 0 || next.TranscriptRevision != 0 {
+		return prev.TranscriptRevision != next.TranscriptRevision
 	}
 	if !codexTranscriptEntriesEqual(prev.Entries, next.Entries) {
 		return true
@@ -322,6 +330,10 @@ func codexTranscriptStateChanged(prev, next codexapp.Snapshot) bool {
 		return true
 	}
 	return false
+}
+
+func codexTranscriptFallsBackToNotice(snapshot codexapp.Snapshot) bool {
+	return !snapshot.Closed && len(snapshot.Entries) == 0 && strings.TrimSpace(snapshot.Transcript) == ""
 }
 
 func codexTranscriptEntriesEqual(left, right []codexapp.TranscriptEntry) bool {

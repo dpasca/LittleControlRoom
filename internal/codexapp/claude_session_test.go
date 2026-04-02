@@ -198,6 +198,38 @@ func TestClaudeListModelsIncludesAliasesAndCurrentModel(t *testing.T) {
 	}
 }
 
+func TestClaudeStageModelOverrideKeepsTranscriptRevisionStable(t *testing.T) {
+	session := &claudeCodeSession{
+		model:              "sonnet",
+		reasoningEffort:    "medium",
+		lastActivityAt:     time.Now(),
+		transcriptRevision: 1,
+		entries: []TranscriptEntry{{
+			Kind: TranscriptAgent,
+			Text: "Existing reply",
+		}},
+		assistantBlocks: make(map[string]map[string]struct{}),
+		toolCalls:       make(map[string]claudeToolCall),
+		toolResults:     make(map[string]struct{}),
+	}
+
+	first := session.Snapshot()
+	if err := session.StageModelOverride("opus", "high"); err != nil {
+		t.Fatalf("StageModelOverride() error = %v", err)
+	}
+	second := session.Snapshot()
+
+	if second.TranscriptRevision != first.TranscriptRevision {
+		t.Fatalf("transcript revision changed from %d to %d after model stage", first.TranscriptRevision, second.TranscriptRevision)
+	}
+	if second.Transcript != first.Transcript {
+		t.Fatalf("transcript changed after model stage: %q -> %q", first.Transcript, second.Transcript)
+	}
+	if len(second.Entries) != len(first.Entries) || second.Entries[0].Text != first.Entries[0].Text {
+		t.Fatalf("entries changed after model stage: %#v -> %#v", first.Entries, second.Entries)
+	}
+}
+
 func TestClaudeTurnArgsIncludeVerboseForStreamJSON(t *testing.T) {
 	got := claudeTurnArgs("ses-demo", "sonnet", "high", "bypassPermissions")
 	want := []string{

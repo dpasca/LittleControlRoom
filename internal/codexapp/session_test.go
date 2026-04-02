@@ -334,6 +334,38 @@ func TestStageModelOverrideUpdatesSnapshot(t *testing.T) {
 	}
 }
 
+func TestStageModelOverrideKeepsTranscriptRevisionStable(t *testing.T) {
+	s := &appServerSession{
+		projectPath:        "/tmp/demo",
+		model:              "gpt-5",
+		reasoningEffort:    "medium",
+		entryIndex:         make(map[string]int),
+		notify:             func() {},
+		lastActivityAt:     time.Now(),
+		transcriptRevision: 1,
+		entries: []transcriptEntry{{
+			Kind: TranscriptAgent,
+			Text: "Existing reply",
+		}},
+	}
+
+	first := s.Snapshot()
+	if err := s.StageModelOverride("gpt-5-codex", "high"); err != nil {
+		t.Fatalf("StageModelOverride() error = %v", err)
+	}
+	second := s.Snapshot()
+
+	if second.TranscriptRevision != first.TranscriptRevision {
+		t.Fatalf("transcript revision changed from %d to %d after model stage", first.TranscriptRevision, second.TranscriptRevision)
+	}
+	if second.Transcript != first.Transcript {
+		t.Fatalf("transcript changed after model stage: %q -> %q", first.Transcript, second.Transcript)
+	}
+	if len(second.Entries) != len(first.Entries) || second.Entries[0].Text != first.Entries[0].Text {
+		t.Fatalf("entries changed after model stage: %#v -> %#v", first.Entries, second.Entries)
+	}
+}
+
 func TestStagedModelOverride(t *testing.T) {
 	model, reasoning := stagedModelOverride("gpt-5", "medium", "gpt-5-codex", "high")
 	if model != "gpt-5-codex" || reasoning != "high" {

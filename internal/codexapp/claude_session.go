@@ -67,9 +67,11 @@ type claudeCodeSession struct {
 	closedOnce       sync.Once
 	modeNoticeShown  bool
 
-	assistantBlocks map[string]map[string]struct{}
-	toolCalls       map[string]claudeToolCall
-	toolResults     map[string]struct{}
+	assistantBlocks    map[string]map[string]struct{}
+	toolCalls          map[string]claudeToolCall
+	toolResults        map[string]struct{}
+	transcriptRevision uint64
+	transcriptCache    transcriptExportCache
 }
 
 type claudeToolCall struct {
@@ -189,40 +191,46 @@ func (s *claudeCodeSession) Snapshot() Snapshot {
 		phase = SessionPhaseRunning
 	}
 
-	lines := make([]string, 0, len(s.entries))
-	for _, entry := range s.entries {
-		text := strings.TrimSpace(entry.DisplayText)
-		if text == "" {
-			text = strings.TrimSpace(entry.Text)
-		}
-		if text == "" {
-			continue
-		}
-		lines = append(lines, formatTranscriptEntryForProvider(ProviderClaudeCode, entry.Kind, text))
-	}
+	entries, transcript := s.exportedTranscriptLocked()
 
 	return Snapshot{
-		Provider:         ProviderClaudeCode,
-		ProjectPath:      s.projectPath,
-		ThreadID:         s.sessionID,
-		Preset:           s.preset,
-		Phase:            phase,
-		Started:          s.started,
-		Busy:             s.busy || s.busyExternal,
-		BusyExternal:     s.busyExternal,
-		BusySince:        s.busySince,
-		Closed:           s.closed,
-		Entries:          append([]TranscriptEntry(nil), s.entries...),
-		Transcript:       strings.Join(lines, "\n"),
-		Status:           s.status,
-		LastError:        s.lastError,
-		LastSystemNotice: s.lastSystemNotice,
-		LastActivityAt:   s.lastActivityAt,
-		Model:            s.model,
-		ReasoningEffort:  s.reasoningEffort,
-		PendingModel:     s.pendingModel,
-		PendingReasoning: s.pendingReasoning,
+		Provider:           ProviderClaudeCode,
+		ProjectPath:        s.projectPath,
+		ThreadID:           s.sessionID,
+		Preset:             s.preset,
+		TranscriptRevision: s.transcriptRevision,
+		Phase:              phase,
+		Started:            s.started,
+		Busy:               s.busy || s.busyExternal,
+		BusyExternal:       s.busyExternal,
+		BusySince:          s.busySince,
+		Closed:             s.closed,
+		Entries:            entries,
+		Transcript:         transcript,
+		Status:             s.status,
+		LastError:          s.lastError,
+		LastSystemNotice:   s.lastSystemNotice,
+		LastActivityAt:     s.lastActivityAt,
+		Model:              s.model,
+		ReasoningEffort:    s.reasoningEffort,
+		PendingModel:       s.pendingModel,
+		PendingReasoning:   s.pendingReasoning,
 	}
+}
+
+func (s *claudeCodeSession) invalidateTranscriptCacheLocked() {
+	s.transcriptCache.invalidate(&s.transcriptRevision)
+}
+
+func (s *claudeCodeSession) exportedTranscriptLocked() ([]TranscriptEntry, string) {
+	if !s.transcriptCache.ready || s.transcriptCache.revision != s.transcriptRevision {
+		entries := cloneTranscriptEntries(s.entries)
+		s.transcriptCache.entries = entries
+		s.transcriptCache.transcript = buildTranscriptText(ProviderClaudeCode, entries, "\n", true)
+		s.transcriptCache.revision = s.transcriptRevision
+		s.transcriptCache.ready = true
+	}
+	return cloneTranscriptEntries(s.transcriptCache.entries), s.transcriptCache.transcript
 }
 
 func (s *claudeCodeSession) Submit(prompt string) error {
@@ -330,7 +338,7 @@ func (s *claudeCodeSession) ShowStatus() error {
 	if sessionFile == "" {
 		sessionFile = "(not created yet)"
 	}
-	s.entries = append(s.entries, TranscriptEntry{
+	s.appendEntryLocked(TranscriptEntry{
 		Kind: TranscriptStatus,
 		Text: fmt.Sprintf(claudeStatusTranscriptTemplate, sessionID, model, mode, sessionFile),
 	})
@@ -612,7 +620,7 @@ func (s *claudeCodeSession) readClaudeStderr(r io.Reader) error {
 			continue
 		}
 		s.mu.Lock()
-		s.entries = append(s.entries, TranscriptEntry{
+		s.appendEntryLocked(TranscriptEntry{
 			Kind: TranscriptError,
 			Text: "claude stderr: " + line,
 		})
@@ -634,7 +642,7 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 	var env claudeStreamEnvelope
 	if err := json.Unmarshal([]byte(line), &env); err != nil {
 		s.mu.Lock()
-		s.entries = append(s.entries, TranscriptEntry{
+		s.appendEntryLocked(TranscriptEntry{
 			Kind: TranscriptOther,
 			Text: line,
 		})
@@ -722,7 +730,7 @@ func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage) {
 				continue
 			}
 			seen[key] = struct{}{}
-			s.entries = append(s.entries, TranscriptEntry{
+			s.appendEntryLocked(TranscriptEntry{
 				ItemID: msg.ID,
 				Kind:   TranscriptAgent,
 				Text:   text,
@@ -737,7 +745,7 @@ func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage) {
 				continue
 			}
 			seen[key] = struct{}{}
-			s.entries = append(s.entries, TranscriptEntry{
+			s.appendEntryLocked(TranscriptEntry{
 				ItemID: msg.ID,
 				Kind:   TranscriptReasoning,
 				Text:   thinking,
@@ -753,7 +761,7 @@ func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage) {
 			if summary != "" {
 				text = block.Name + ": " + summary
 			}
-			s.entries = append(s.entries, TranscriptEntry{
+			s.appendEntryLocked(TranscriptEntry{
 				ItemID: msg.ID,
 				Kind:   TranscriptTool,
 				Text:   text,
@@ -801,7 +809,7 @@ func (s *claudeCodeSession) handleClaudeUserLocked(raw json.RawMessage) {
 		if command != "" {
 			text = "$ " + command + "\n" + text
 		}
-		s.entries = append(s.entries, TranscriptEntry{
+		s.appendEntryLocked(TranscriptEntry{
 			Kind: TranscriptCommand,
 			Text: text,
 		})
@@ -809,6 +817,7 @@ func (s *claudeCodeSession) handleClaudeUserLocked(raw json.RawMessage) {
 }
 
 func (s *claudeCodeSession) appendEntryLocked(entry TranscriptEntry) {
+	s.invalidateTranscriptCacheLocked()
 	s.entries = append(s.entries, entry)
 }
 
@@ -818,7 +827,7 @@ func (s *claudeCodeSession) appendSystemNoticeLocked(text string) {
 		return
 	}
 	s.lastSystemNotice = text
-	s.entries = append(s.entries, TranscriptEntry{
+	s.appendEntryLocked(TranscriptEntry{
 		Kind: TranscriptSystem,
 		Text: text,
 	})
@@ -831,7 +840,7 @@ func (s *claudeCodeSession) appendSystemErrorLocked(text string) {
 		return
 	}
 	s.lastError = text
-	s.entries = append(s.entries, TranscriptEntry{
+	s.appendEntryLocked(TranscriptEntry{
 		Kind: TranscriptError,
 		Text: text,
 	})
@@ -940,6 +949,7 @@ func (s *claudeCodeSession) loadTranscriptLocked() {
 	}
 
 	s.entries = entries
+	s.invalidateTranscriptCacheLocked()
 	s.lastFileSize = stat.Size()
 
 	switch lastType {
