@@ -24,6 +24,18 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "perf",
+			raw:  "/perf",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindPerf {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindPerf)
+				}
+				if inv.Canonical != "/perf" {
+					t.Fatalf("canonical = %q, want /perf", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "refresh",
 			raw:  "/refresh",
 			check: func(t *testing.T, inv Invocation) {

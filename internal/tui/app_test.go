@@ -13323,7 +13323,7 @@ func TestHelpPanelLinesStayMinimal(t *testing.T) {
 	if !strings.Contains(joined, "/wt merge|remove|prune") {
 		t.Fatalf("helpPanelLines() should include concrete worktree slash-command examples: %q", joined)
 	}
-	if !strings.Contains(joined, "/setup, /ai, /errors, /codex, /todo") || !strings.Contains(joined, "/commit, /diff, or /run") {
+	if !strings.Contains(joined, "/setup, /ai, /perf, /errors, /codex, /todo") || !strings.Contains(joined, "/commit, /diff, or /run") {
 		t.Fatalf("helpPanelLines() should include concrete slash-command examples: %q", joined)
 	}
 	if !strings.Contains(joined, "interrupt busy session") {
@@ -13409,6 +13409,22 @@ func TestDispatchAICommandOpensAIStatsDialog(t *testing.T) {
 	}
 }
 
+func TestDispatchPerfCommandOpensPerfDialog(t *testing.T) {
+	m := Model{}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindPerf})
+	got := updated.(Model)
+	if !got.showPerf {
+		t.Fatalf("dispatchCommand(/perf) should open the performance dialog")
+	}
+	if got.status != "Performance open. Press Esc to close" {
+		t.Fatalf("status = %q, want performance open status", got.status)
+	}
+	if cmd != nil {
+		t.Fatalf("dispatchCommand(/perf) should not return an async command")
+	}
+}
+
 func TestRenderAIStatsOverlayPreservesBackground(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{
@@ -13440,6 +13456,41 @@ func TestRenderAIStatsOverlayPreservesBackground(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "Little Control Room") || !strings.Contains(rendered, "╭────╭") {
 		t.Fatalf("View() should keep the dashboard visible around the AI stats overlay: %q", rendered)
+	}
+}
+
+func TestRenderPerfOverlayPreservesBackground(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:                             "demo",
+			Path:                             "/tmp/demo",
+			Status:                           model.StatusIdle,
+			PresentOnDisk:                    true,
+			LatestSessionClassification:      model.ClassificationCompleted,
+			LatestSessionClassificationType:  model.SessionCategoryCompleted,
+			LatestSessionSummary:             "Work appears complete for now.",
+			LatestSessionFormat:              "modern",
+			LatestSessionDetectedProjectPath: "/tmp/demo",
+		}},
+		showPerf: true,
+		width:    100,
+		height:   24,
+		aiLatencyRecent: []aiLatencySample{{
+			Name:        "Model apply",
+			ProjectPath: "/tmp/demo",
+			Detail:      "Codex gpt-5.4 high",
+			Result:      "ok",
+			Duration:    420 * time.Millisecond,
+		}},
+	}
+	m.syncDetailViewport(false)
+
+	rendered := ansi.Strip(m.View())
+	if !strings.Contains(rendered, "Performance") || !strings.Contains(rendered, "Latency") || !strings.Contains(rendered, "Model apply") {
+		t.Fatalf("View() should show the performance overlay content: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Little Control Room") || !strings.Contains(rendered, "Repo: clean") || !strings.Contains(rendered, "Session summary") {
+		t.Fatalf("View() should keep the dashboard visible around the performance overlay: %q", rendered)
 	}
 }
 
@@ -13491,22 +13542,14 @@ func TestRenderAIStatsContentHidesLocalBackendCost(t *testing.T) {
 	if !strings.Contains(rendered, "Codex is running through its local provider path here") {
 		t.Fatalf("renderAIStatsContent() should explain local backend billing semantics: %q", rendered)
 	}
+	if strings.Contains(rendered, "Latency") {
+		t.Fatalf("renderAIStatsContent() should keep performance details out of AI stats: %q", rendered)
+	}
 }
 
-func TestRenderAIStatsContentShowsLatencySection(t *testing.T) {
+func TestRenderPerfContentShowsLatencySection(t *testing.T) {
 	now := time.Date(2026, time.April, 2, 17, 30, 0, 0, time.UTC)
 	m := Model{
-		setupChecked: true,
-		setupSnapshot: aibackend.Snapshot{
-			Selected: config.AIBackendCodex,
-			Codex: aibackend.Status{
-				Backend:       config.AIBackendCodex,
-				Label:         "Codex",
-				Installed:     true,
-				Authenticated: true,
-				Ready:         true,
-			},
-		},
 		aiLatencyInFlight: map[int64]aiLatencyOp{
 			1: {
 				ID:          1,
@@ -13535,8 +13578,9 @@ func TestRenderAIStatsContentShowsLatencySection(t *testing.T) {
 		nowFn: func() time.Time { return now },
 	}
 
-	rendered := ansi.Strip(m.renderAIStatsContent(76))
+	rendered := ansi.Strip(m.renderPerfContent(76))
 	for _, want := range []string{
+		"Performance",
 		"Latency",
 		"In flight: 1 operation(s)",
 		"Embedded open",
@@ -13544,7 +13588,7 @@ func TestRenderAIStatsContentShowsLatencySection(t *testing.T) {
 		"Embedded viewport",
 	} {
 		if !strings.Contains(rendered, want) {
-			t.Fatalf("renderAIStatsContent() missing %q: %q", want, rendered)
+			t.Fatalf("renderPerfContent() missing %q: %q", want, rendered)
 		}
 	}
 }
