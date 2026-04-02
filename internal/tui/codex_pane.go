@@ -374,7 +374,10 @@ func (m Model) cachedCodexTranscriptContent(projectPath string, width int) (stri
 }
 
 func (m *Model) renderAndCacheCodexTranscript(projectPath string, snapshot codexapp.Snapshot, width int) string {
-	rendered := m.renderCodexTranscriptContentFromSnapshot(snapshot, width)
+	rendered := ""
+	m.measureAISyncLatency("Embedded transcript render", projectPath, embeddedProvider(snapshot).Label(), func() {
+		rendered = m.renderCodexTranscriptContentFromSnapshot(snapshot, width)
+	})
 	m.codexTranscriptCache = codexTranscriptRenderCache{
 		projectPath:   strings.TrimSpace(projectPath),
 		width:         width,
@@ -403,7 +406,9 @@ func (m *Model) setCodexViewportTranscript(projectPath string, snapshot codexapp
 	if !ok {
 		rendered = m.renderAndCacheCodexTranscript(projectPath, snapshot, width)
 	}
-	m.codexViewport.SetContent(rendered)
+	m.measureAISyncLatency("Embedded viewport content", projectPath, embeddedProvider(snapshot).Label(), func() {
+		m.codexViewport.SetContent(rendered)
+	})
 	m.codexViewportContent = codexViewportContentState{
 		projectPath:   projectPath,
 		width:         width,
@@ -1487,17 +1492,23 @@ func (m *Model) syncCodexViewport(resetToBottom bool) {
 		height = 30
 	}
 
-	lowerBlocks := m.codexLowerBlocks(snapshot, width)
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	providerLabel := embeddedProvider(snapshot).Label()
+	lowerBlocks := []string{}
+	m.measureAISyncLatency("Embedded lower blocks", projectPath, providerLabel, func() {
+		lowerBlocks = m.codexLowerBlocks(snapshot, width)
+	})
 	lowerHeight := countRenderedBlockLines(lowerBlocks)
 	transcriptHeight := codexTranscriptContentHeight(height, lowerHeight)
 
-	projectPath := strings.TrimSpace(m.codexVisibleProject)
 	m.codexViewport.Width = max(24, width)
 	m.codexViewport.Height = max(1, transcriptHeight)
 
 	offset := m.codexViewport.YOffset
 	if !m.codexViewportContentMatches(projectPath, m.codexViewport.Width) {
-		m.setCodexViewportTranscript(projectPath, snapshot, m.codexViewport.Width)
+		m.measureAISyncLatency("Embedded viewport sync", projectPath, providerLabel, func() {
+			m.setCodexViewportTranscript(projectPath, snapshot, m.codexViewport.Width)
+		})
 	}
 	if resetToBottom {
 		m.codexViewport.GotoBottom()
