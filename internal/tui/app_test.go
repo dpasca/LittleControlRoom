@@ -3793,17 +3793,42 @@ func TestRenderDetailSimplifiesStateAndAttention(t *testing.T) {
 	if !strings.Contains(rendered, "waiting") {
 		t.Fatalf("renderDetailContent() missing assessment-based label: %q", rendered)
 	}
-	if !strings.Contains(rendered, "idle") {
-		t.Fatalf("renderDetailContent() missing status value: %q", rendered)
+	if strings.Contains(rendered, "(idle)") {
+		t.Fatalf("renderDetailContent() should no longer combine assessment with parenthetical activity: %q", rendered)
+	}
+	if strings.Contains(rendered, "Activity:") {
+		t.Fatalf("renderDetailContent() should hide idle activity noise: %q", rendered)
 	}
 	if strings.Contains(rendered, "Status:") {
-		t.Fatalf("renderDetailContent() should not show separate Status field (now combined with Assessment): %q", rendered)
+		t.Fatalf("renderDetailContent() should not show a generic Status field: %q", rendered)
 	}
 	if strings.Contains(rendered, "Attention status:") {
 		t.Fatalf("renderDetailContent() still shows separate attention status line: %q", rendered)
 	}
 	if !strings.Contains(rendered, "Attention:") {
 		t.Fatalf("renderDetailContent() missing attention score field: %q", rendered)
+	}
+}
+
+func TestRenderDetailShowsActivityWhenItAddsSignal(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Path:                            "/tmp/demo",
+			Name:                            "demo",
+			Status:                          model.StatusPossiblyStuck,
+			PresentOnDisk:                   true,
+			LatestSessionClassification:     model.ClassificationCompleted,
+			LatestSessionClassificationType: model.SessionCategoryInProgress,
+		}},
+		selected: 0,
+	}
+
+	rendered := m.renderDetailContent(80)
+	if !strings.Contains(rendered, "Activity:") {
+		t.Fatalf("renderDetailContent() should show non-idle activity: %q", rendered)
+	}
+	if !strings.Contains(rendered, "stuck") {
+		t.Fatalf("renderDetailContent() missing non-idle activity value: %q", rendered)
 	}
 }
 

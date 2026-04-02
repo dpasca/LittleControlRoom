@@ -2754,9 +2754,11 @@ func (m Model) renderDetailContent(width int) string {
 	statusValue := activityDisplayStyle(p).Render(projectActivityStatus(p))
 	attentionValue := detailAttentionValueStyle.Render(fmt.Sprintf("%d", m.projectAttentionScore(p)))
 
-	combinedAssessmentStatus := assessmentValue + " " + detailMutedStyle.Render("(") + statusValue + detailMutedStyle.Render(")")
 	lines := []string{detailField("Path", detailValueStyle.Render(p.Path))}
-	lines = append(lines, detailField("Assessment", combinedAssessmentStatus))
+	lines = append(lines, detailField("Assessment", assessmentValue))
+	if shouldShowProjectActivity(p) {
+		lines = append(lines, detailField("Activity", statusValue))
+	}
 	if projectMissing(p) {
 		lines = append(lines, detailWarningStyle.Render("Folder: missing on disk"))
 	}
@@ -4588,6 +4590,13 @@ func projectActivityStatus(project model.ProjectSummary) string {
 		return "moved"
 	}
 	return attentionStatusLabel(project.Status)
+}
+
+func shouldShowProjectActivity(project model.ProjectSummary) bool {
+	if projectMissing(project) || moveStatusActive(project.MovedAt, project.Path, project.LatestSessionDetectedProjectPath) {
+		return true
+	}
+	return project.Status != model.StatusIdle
 }
 
 func visibilityLabel(mode projectVisibilityMode) string {
