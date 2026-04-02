@@ -161,6 +161,7 @@ type Model struct {
 	aiLatencyInFlight      map[int64]aiLatencyOp
 	aiLatencyRecent        []aiLatencySample
 	modelSettlePending     map[string]pendingModelSettleOp
+	lastSpinnerTickAt      time.Time
 
 	pendingG      bool
 	todoLaunchSeq int64
@@ -1525,6 +1526,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.loadProjectsCmd())
 		return m, tea.Batch(cmds...)
 	case spinnerTickMsg:
+		m.recordUIStallFromSpinnerTick(m.currentTime())
 		m.spinnerFrame = (m.spinnerFrame + 1) % spinnerAnimationFrameWrap
 		m.refreshUsagePulse()
 		m.pruneTransientHighlights(m.currentTime())
@@ -3070,8 +3072,10 @@ var (
 	disabledActionTextStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 )
 
+const spinnerTickInterval = 120 * time.Millisecond
+
 func spinnerTickCmd() tea.Cmd {
-	return tea.Tick(120*time.Millisecond, func(time.Time) tea.Msg {
+	return tea.Tick(spinnerTickInterval, func(time.Time) tea.Msg {
 		return spinnerTickMsg{}
 	})
 }
