@@ -645,9 +645,6 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 	if row.Kind == projectListRowWorktree && m.canRemoveWorktree(project) {
 		actions = append(actions, footerHideAction("x", "remove"))
 	}
-	if width >= 90 && len(family) > 1 {
-		actions = append(actions, footerLowAction("P", "prune"))
-	}
 	return actions
 }
 
@@ -700,12 +697,6 @@ func (m Model) canRemoveWorktree(project model.ProjectSummary) bool {
 	if project.WorktreeKind != model.WorktreeKindLinked {
 		return false
 	}
-	if m.projectHasLiveCodexSession(project.Path) {
-		return false
-	}
-	if snapshot := m.projectRuntimeSnapshot(project.Path); snapshot.Running {
-		return false
-	}
 	return true
 }
 
@@ -720,8 +711,8 @@ func (m Model) worktreeActionHints(project model.ProjectSummary, family []model.
 	if m.canRemoveWorktree(project) {
 		hints = append(hints, "x or /wt remove")
 	}
-	if len(family) > 1 {
-		hints = append(hints, "P or /wt prune")
+	if project.WorktreeKind != model.WorktreeKindLinked && len(family) > 1 {
+		hints = append(hints, "/wt prune")
 	}
 	return hints
 }

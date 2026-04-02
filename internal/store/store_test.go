@@ -639,6 +639,56 @@ func TestSetRunCommandPersistsInProjectSummaryAndDetail(t *testing.T) {
 	}
 }
 
+func TestSetProjectPresencePersistsInProjectSummary(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now()
+	projectPath := "/tmp/presence-project"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "presence-project",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		InScope:        true,
+		PresentOnDisk:  true,
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("upsert project state: %v", err)
+	}
+
+	if err := st.SetProjectPresence(ctx, projectPath, false); err != nil {
+		t.Fatalf("set project presence: %v", err)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 5)
+	if err != nil {
+		t.Fatalf("get project detail: %v", err)
+	}
+	if detail.Summary.PresentOnDisk {
+		t.Fatalf("present on disk = true, want false")
+	}
+
+	if err := st.SetProjectPresence(ctx, projectPath, true); err != nil {
+		t.Fatalf("set project presence again: %v", err)
+	}
+
+	detail, err = st.GetProjectDetail(ctx, projectPath, 5)
+	if err != nil {
+		t.Fatalf("get project detail after present-on-disk restore: %v", err)
+	}
+	if !detail.Summary.PresentOnDisk {
+		t.Fatalf("present on disk = false, want true")
+	}
+}
+
 func TestSessionClassificationQueueAndDetail(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

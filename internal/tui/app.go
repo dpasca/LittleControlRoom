@@ -1733,12 +1733,6 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.openWorktreeMergeConfirmForSelection()
 	case "x":
 		return m, m.openWorktreeRemoveConfirmForSelection()
-	case "P":
-		if project, ok := m.selectedProject(); ok {
-			rootPath := projectWorktreeRootPath(project)
-			m.status = "Pruning stale git worktrees..."
-			return m, m.pruneWorktreesCmd(rootPath, rootPath)
-		}
 	}
 	return m, nil
 }

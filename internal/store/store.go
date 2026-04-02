@@ -3623,6 +3623,11 @@ func (s *Store) SetForgotten(ctx context.Context, path string, forgotten bool) e
 	return err
 }
 
+func (s *Store) SetProjectPresence(ctx context.Context, path string, presentOnDisk bool) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE projects SET present_on_disk = ?, updated_at = ? WHERE path = ?`, boolToInt(presentOnDisk), time.Now().Unix(), path)
+	return err
+}
+
 func (s *Store) SetIgnoredProjectName(ctx context.Context, name string, ignored bool) error {
 	name = strings.TrimSpace(name)
 	if name == "" {

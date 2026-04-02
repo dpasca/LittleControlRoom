@@ -975,8 +975,8 @@ func TestRenderFooterShowsWorktreeHintsForRepoFamily(t *testing.T) {
 	if !strings.Contains(rendered, "w lanes") {
 		t.Fatalf("renderFooter() should advertise worktree lane toggling, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "P prune") {
-		t.Fatalf("renderFooter() should advertise worktree pruning on repo families, got %q", rendered)
+	if strings.Contains(rendered, "P prune") {
+		t.Fatalf("renderFooter() should not advertise a Prune hotkey, got %q", rendered)
 	}
 }
 
@@ -1006,6 +1006,9 @@ func TestRenderFooterShowsRemoveHintForLinkedWorktree(t *testing.T) {
 		sortMode:   sortByAttention,
 	}
 	m.rebuildProjectList(childPath)
+	if len(m.projects) > 1 {
+		m.selected = 1
+	}
 
 	rendered := ansi.Strip(m.renderFooter(160))
 	if !strings.Contains(rendered, "w lanes") {
@@ -1013,6 +1016,60 @@ func TestRenderFooterShowsRemoveHintForLinkedWorktree(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "x remove") {
 		t.Fatalf("renderFooter() should advertise linked worktree removal when it is allowed, got %q", rendered)
+	}
+}
+
+func TestRenderFooterShowsRemoveHintForLinkedWorktreeWithActiveSession(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				Started:  true,
+				Status:   req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: childPath,
+		Provider:    codexapp.ProviderClaudeCode,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		focusedPane:  focusProjects,
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+			},
+			{
+				Name:             "repo--feat-parallel-lane",
+				Path:             childPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+				RepoBranch:       "feat/parallel-lane",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+	if len(m.projects) > 1 {
+		m.selected = 1
+	}
+
+	rendered := ansi.Strip(m.renderFooter(160))
+	if !strings.Contains(rendered, "x remove") {
+		t.Fatalf("renderFooter() should still advertise linked worktree removal with an active session, got %q", rendered)
 	}
 }
 
@@ -1124,8 +1181,84 @@ func TestRenderDetailContentShowsWorktreeActions(t *testing.T) {
 	if !strings.Contains(rendered, "Worktree actions") {
 		t.Fatalf("renderDetailContent() should include a worktree actions section, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "M or /wt merge") || !strings.Contains(rendered, "x or /wt remove") || !strings.Contains(rendered, "P or /wt prune") {
+	if !strings.Contains(rendered, "M or /wt merge") || !strings.Contains(rendered, "x or /wt remove") {
 		t.Fatalf("renderDetailContent() should list worktree hotkeys and slash commands, got %q", rendered)
+	}
+	if strings.Contains(rendered, "/wt prune") {
+		t.Fatalf("renderDetailContent() should skip prune hint for linked worktree selection, got %q", rendered)
+	}
+}
+
+func TestRenderDetailContentForLinkedWorktreeSkipsPruneHint(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				Status:           model.StatusIdle,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 childPath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				RepoBranch:           "feat/parallel-lane",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	rendered := ansi.Strip(m.renderDetailContent(100))
+	if strings.Contains(rendered, "/wt prune") {
+		t.Fatalf("renderDetailContent() should not include prune for linked worktree selection, got %q", rendered)
+	}
+}
+
+func TestRenderDetailContentForRootProjectShowsPruneSlashCommand(t *testing.T) {
+	rootPath := "/tmp/repo"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				Status:           model.StatusIdle,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+			},
+			{
+				Name:             "repo--feat-parallel-lane",
+				Path:             "/tmp/repo--feat-parallel-lane",
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+				RepoBranch:       "feat/parallel-lane",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(rootPath)
+
+	rendered := ansi.Strip(m.renderDetailContent(100))
+	if !strings.Contains(rendered, "Worktree actions") {
+		t.Fatalf("renderDetailContent() should include a worktree actions section, got %q", rendered)
+	}
+	if strings.Contains(rendered, "M or /wt merge") || strings.Contains(rendered, "x or /wt remove") {
+		t.Fatalf("renderDetailContent() should only show root-level worktree actions, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "/wt prune") {
+		t.Fatalf("renderDetailContent() should include /wt prune for the worktree root, got %q", rendered)
 	}
 }
 
@@ -12038,8 +12171,91 @@ func TestCommandPaletteShowsWorktreeCommandHintForLinkedWorktree(t *testing.T) {
 	m.syncCommandSelection()
 
 	rendered := ansi.Strip(m.renderCommandPaletteContent(72))
-	if !strings.Contains(rendered, "Worktrees: try /wt lanes, /wt merge, /wt remove, /wt prune.") {
+	if !strings.Contains(rendered, "Worktrees: try /wt lanes, /wt merge, /wt remove.") {
 		t.Fatalf("command palette should hint the worktree slash commands, got %q", rendered)
+	}
+}
+
+func TestRenderCommandPaletteContentForLinkedWorktreeSkipsPruneHint(t *testing.T) {
+	input := textinput.New()
+	input.SetValue("/")
+
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 childPath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				RepoBranch:           "feat/parallel-lane",
+			},
+		},
+		visibility:   visibilityAllFolders,
+		sortMode:     sortByAttention,
+		commandMode:  true,
+		commandInput: input,
+		width:        100,
+		height:       24,
+	}
+	m.rebuildProjectList(childPath)
+	m.syncCommandSelection()
+
+	rendered := ansi.Strip(m.renderCommandPaletteContent(72))
+	if strings.Contains(strings.ToLower(rendered), "prune") {
+		t.Fatalf("command palette should not include prune for linked worktree selection, got %q", rendered)
+	}
+}
+
+func TestCommandPaletteShowsWorktreePruneCommandForRepoRoot(t *testing.T) {
+	input := textinput.New()
+	input.SetValue("/")
+
+	rootPath := "/tmp/repo"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 "/tmp/repo--feat-parallel-lane",
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				RepoBranch:           "feat/parallel-lane",
+			},
+		},
+		visibility:   visibilityAllFolders,
+		sortMode:     sortByAttention,
+		commandMode:  true,
+		commandInput: input,
+		width:        100,
+		height:       24,
+	}
+	m.rebuildProjectList(rootPath)
+	m.syncCommandSelection()
+
+	rendered := ansi.Strip(m.renderCommandPaletteContent(72))
+	if !strings.Contains(rendered, "Worktrees: try /wt lanes, /wt prune.") {
+		t.Fatalf("command palette should include prune for repo-root selection, got %q", rendered)
 	}
 }
 

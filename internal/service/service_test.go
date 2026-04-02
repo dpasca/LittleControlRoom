@@ -1475,6 +1475,68 @@ func TestScanOnceForgottenMissingProjectStaysHiddenUntilRediscovered(t *testing.
 	}
 }
 
+func TestScanOnceMarksPrunedLinkedWorktreeAsForgotten(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	worktreePath := filepath.Join(root, "repo--feature")
+
+	initGitRepo(t, projectPath)
+	runGit(t, projectPath, "git", "worktree", "add", "-b", "feature", worktreePath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.IncludePaths = nil
+	svc := New(cfg, st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo--feature",
+	}); err != nil {
+		t.Fatalf("track worktree: %v", err)
+	}
+
+	if err := os.RemoveAll(worktreePath); err != nil {
+		t.Fatalf("remove worktree path: %v", err)
+	}
+	if err := svc.PruneWorktrees(ctx, projectPath); err != nil {
+		t.Fatalf("prune worktrees: %v", err)
+	}
+
+	report, err := svc.ScanOnce(ctx)
+	if err != nil {
+		t.Fatalf("scan after prune: %v", err)
+	}
+	if len(report.States) != 0 {
+		t.Fatalf("expected pruned worktree to be hidden after scan, got %#v", report.States)
+	}
+
+	visibleProjects, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list visible projects: %v", err)
+	}
+	if len(visibleProjects) != 0 {
+		t.Fatalf("expected pruned worktree to be hidden from visible list, got %#v", visibleProjects)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, worktreePath, 5)
+	if err != nil {
+		t.Fatalf("get pruned worktree detail: %v", err)
+	}
+	if !detail.Summary.Forgotten {
+		t.Fatalf("expected pruned worktree to be marked forgotten: %#v", detail.Summary)
+	}
+	if detail.Summary.PresentOnDisk {
+		t.Fatalf("expected pruned worktree to be marked missing on disk: %#v", detail.Summary)
+	}
+}
+
 func TestScanOnceMarksMissingProjectWithoutFreshActivity(t *testing.T) {
 	t.Parallel()
 

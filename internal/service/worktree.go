@@ -719,6 +719,12 @@ func (s *Service) expandDiscoveredWorktreePaths(ctx context.Context, discovered 
 		if projectPathExists(path) {
 			seeds = append(seeds, path)
 		}
+		if summary := oldMap[path]; summary.WorktreeKind == model.WorktreeKindLinked {
+			rootPath := filepath.Clean(strings.TrimSpace(summary.WorktreeRootPath))
+			if rootPath != "" && rootPath != "." && projectPathExists(rootPath) {
+				seeds = append(seeds, rootPath)
+			}
+		}
 	}
 	sort.Strings(seeds)
 

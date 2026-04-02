@@ -597,6 +597,12 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			forgotten = false
 		}
 		if forgotten && !presentOnDisk {
+			if err := s.store.SetForgotten(ctx, path, true); err != nil {
+				return ScanReport{}, fmt.Errorf("mark forgotten worktree: %w", err)
+			}
+			if err := s.store.SetProjectPresence(ctx, path, false); err != nil {
+				return ScanReport{}, fmt.Errorf("mark missing worktree: %w", err)
+			}
 			continue
 		}
 		latestSessionStart := time.Time{}
