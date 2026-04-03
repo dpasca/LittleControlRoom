@@ -219,6 +219,48 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "read selected",
+			raw:  "/read",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindRead {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindRead)
+				}
+				if inv.All {
+					t.Fatalf("all = true, want false")
+				}
+				if inv.Canonical != "/read" {
+					t.Fatalf("canonical = %q, want /read", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "read all",
+			raw:  "/read all",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindRead {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindRead)
+				}
+				if !inv.All {
+					t.Fatalf("all = false, want true")
+				}
+				if inv.Canonical != "/read all" {
+					t.Fatalf("canonical = %q, want /read all", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "unread",
+			raw:  "/unread",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindUnread {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindUnread)
+				}
+				if inv.Canonical != "/unread" {
+					t.Fatalf("canonical = %q, want /unread", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "runtime inspector",
 			raw:  "/runtime",
 			check: func(t *testing.T, inv Invocation) {
@@ -528,6 +570,16 @@ func TestSuggestionsSnoozeArgumentOff(t *testing.T) {
 	}
 	if got[0].Insert != "/snooze off" {
 		t.Fatalf("suggestion = %q, want /snooze off", got[0].Insert)
+	}
+}
+
+func TestSuggestionsReadArgumentAll(t *testing.T) {
+	got := Suggestions("/read a")
+	if len(got) != 1 {
+		t.Fatalf("Suggestions(/read a) len = %d, want 1", len(got))
+	}
+	if got[0].Insert != "/read all" {
+		t.Fatalf("suggestion = %q, want /read all", got[0].Insert)
 	}
 }
 

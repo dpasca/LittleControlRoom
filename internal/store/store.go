@@ -2068,6 +2068,15 @@ func (s *Store) SetProjectSessionSeenAt(ctx context.Context, path string, seenAt
 	return err
 }
 
+func (s *Store) ClearProjectSessionSeenAt(ctx context.Context, path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return errors.New("project path is required")
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE projects SET last_session_seen_at = NULL, updated_at = ? WHERE path = ?`, time.Now().Unix(), path)
+	return err
+}
+
 func boolToInt(v bool) int {
 	if v {
 		return 1

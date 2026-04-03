@@ -191,6 +191,7 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 		Now:             now,
 		RepoDirty:       repoDirty,
 		Pinned:          existing.Pinned,
+		Unread:          attention.AssessmentUnread(existing),
 		SnoozedUntil:    existing.SnoozedUntil,
 		HasActivity:     false,
 		ActiveThreshold: s.cfg.ActiveThreshold,

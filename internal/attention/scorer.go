@@ -14,6 +14,7 @@ type Input struct {
 	LastActivity               time.Time
 	RepoDirty                  bool
 	Pinned                     bool
+	Unread                     bool
 	SnoozedUntil               *time.Time
 	ErrorCount                 int
 	LatestSessionStart         time.Time
@@ -41,6 +42,7 @@ const needsFollowUpAttentionWeight = 28
 const waitingForUserAttentionWeight = 22
 const recentCompletionAttentionWeight = 20
 const recentActivityBonusWeight = 10
+const unreadAttentionWeight = 12
 
 type classifiedIdleOutcome struct {
 	Status model.ProjectStatus
@@ -125,6 +127,12 @@ func Score(in Input) Output {
 		w := 30
 		out.Score += w
 		out.Reasons = append(out.Reasons, model.AttentionReason{Code: "pinned", Text: "Pinned by user", Weight: w})
+	}
+
+	if in.Unread {
+		w := unreadAttentionWeight
+		out.Score += w
+		out.Reasons = append(out.Reasons, model.AttentionReason{Code: "unread", Text: "Latest assessment is unread", Weight: w})
 	}
 
 	if in.SnoozedUntil != nil && in.SnoozedUntil.After(in.Now) {

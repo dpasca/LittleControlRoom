@@ -404,3 +404,30 @@ func TestScoreRepoDirtyAddsAttentionReason(t *testing.T) {
 		t.Fatalf("expected repo_dirty reason, got %#v", out.Reasons)
 	}
 }
+
+func TestScoreUnreadAddsAttentionReason(t *testing.T) {
+	now := time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC)
+	in := Input{
+		Now:             now,
+		Unread:          true,
+		HasActivity:     true,
+		LastActivity:    now.Add(-30 * time.Minute),
+		ActiveThreshold: 20 * time.Minute,
+		StuckThreshold:  4 * time.Hour,
+	}
+
+	out := Score(in)
+	if out.Score != 41 {
+		t.Fatalf("score = %d, want 41", out.Score)
+	}
+	found := false
+	for _, reason := range out.Reasons {
+		if reason.Code == "unread" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected unread reason, got %#v", out.Reasons)
+	}
+}
