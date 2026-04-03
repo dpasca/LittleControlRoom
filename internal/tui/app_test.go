@@ -604,8 +604,10 @@ func TestProjectRepoWarningIndicator(t *testing.T) {
 		lipgloss.SetHasDarkBackground(prevDarkBackground)
 	})
 
-	conflictPulseA := projectRepoWarningIndicator(model.ProjectSummary{RepoConflict: true, RepoDirty: true}, 0)
-	conflictPulseB := projectRepoWarningIndicator(model.ProjectSummary{RepoConflict: true, RepoDirty: true}, 1)
+	m := Model{}
+
+	conflictPulseA := m.projectRepoWarningIndicator(model.ProjectSummary{RepoConflict: true, RepoDirty: true}, 0)
+	conflictPulseB := m.projectRepoWarningIndicator(model.ProjectSummary{RepoConflict: true, RepoDirty: true}, 1)
 	if !strings.Contains(conflictPulseA, "!") || !strings.Contains(conflictPulseB, "!") {
 		t.Fatalf("conflict warning should contain '!', got %q / %q", conflictPulseA, conflictPulseB)
 	}
@@ -614,18 +616,18 @@ func TestProjectRepoWarningIndicator(t *testing.T) {
 	}
 
 	// Dirty worktree → styled "!"
-	dirtyIndicator := projectRepoWarningIndicator(model.ProjectSummary{RepoDirty: true}, 0)
+	dirtyIndicator := m.projectRepoWarningIndicator(model.ProjectSummary{RepoDirty: true}, 0)
 	if !strings.Contains(dirtyIndicator, "!") {
 		t.Fatalf("dirty worktree should contain '!', got %q", dirtyIndicator)
 	}
 
 	// Sync-only warning → styled "!"
-	syncIndicator := projectRepoWarningIndicator(model.ProjectSummary{RepoSyncStatus: model.RepoSyncAhead}, 0)
+	syncIndicator := m.projectRepoWarningIndicator(model.ProjectSummary{RepoSyncStatus: model.RepoSyncAhead}, 0)
 	if !strings.Contains(syncIndicator, "!") {
 		t.Fatalf("sync warning should contain '!', got %q", syncIndicator)
 	}
 
-	linkedSyncIndicator := projectRepoWarningIndicator(model.ProjectSummary{
+	linkedSyncIndicator := m.projectRepoWarningIndicator(model.ProjectSummary{
 		WorktreeKind:   model.WorktreeKindLinked,
 		RepoSyncStatus: model.RepoSyncAhead,
 	}, 0)
@@ -634,13 +636,25 @@ func TestProjectRepoWarningIndicator(t *testing.T) {
 	}
 
 	// Dirty + sync → same as dirty-only (dirty takes priority)
-	bothIndicator := projectRepoWarningIndicator(model.ProjectSummary{RepoDirty: true, RepoSyncStatus: model.RepoSyncBehind}, 0)
+	bothIndicator := m.projectRepoWarningIndicator(model.ProjectSummary{RepoDirty: true, RepoSyncStatus: model.RepoSyncBehind}, 0)
 	if bothIndicator != dirtyIndicator {
 		t.Fatalf("dirty+sync should match dirty-only indicator, got %q vs %q", bothIndicator, dirtyIndicator)
 	}
 
+	pendingIndicator := (Model{
+		pendingGitSummaries: map[string]string{
+			"/tmp/demo": "Committing...",
+		},
+	}).projectRepoWarningIndicator(model.ProjectSummary{Path: "/tmp/demo", RepoDirty: true}, 0)
+	if !strings.Contains(pendingIndicator, "|") {
+		t.Fatalf("pending git op should render spinner indicator, got %q", pendingIndicator)
+	}
+	if strings.Contains(pendingIndicator, "!") {
+		t.Fatalf("pending git op should not render dirty warning indicator, got %q", pendingIndicator)
+	}
+
 	// No warning → space
-	if got := projectRepoWarningIndicator(model.ProjectSummary{}, 0); got != " " {
+	if got := m.projectRepoWarningIndicator(model.ProjectSummary{}, 0); got != " " {
 		t.Fatalf("no warning should return space, got %q", got)
 	}
 }
@@ -2984,6 +2998,32 @@ func TestProjectAssessmentDisplayTextPrefersPendingGitSummary(t *testing.T) {
 
 	if got := m.projectAssessmentDisplayTextAt(project, time.Time{}, 0); got != "Committing..." {
 		t.Fatalf("projectAssessmentDisplayTextAt() = %q, want %q", got, "Committing...")
+	}
+}
+
+func TestRepoCombinedDetailValuePrefersPendingGitOperation(t *testing.T) {
+	project := model.ProjectSummary{
+		Path:           "/tmp/demo",
+		RepoDirty:      true,
+		RepoBranch:     "master",
+		RepoSyncStatus: model.RepoSyncAhead,
+		RepoAheadCount: 2,
+	}
+	m := Model{
+		pendingGitSummaries: map[string]string{
+			project.Path: "Committing...",
+		},
+	}
+
+	rendered := ansi.Strip(m.repoCombinedDetailValue(project))
+	if !strings.Contains(rendered, "Committing...") {
+		t.Fatalf("repoCombinedDetailValue() = %q, want pending git label", rendered)
+	}
+	if strings.Contains(rendered, "dirty") {
+		t.Fatalf("repoCombinedDetailValue() should hide dirty while commit is pending: %q", rendered)
+	}
+	if strings.Contains(rendered, "ahead 2") {
+		t.Fatalf("repoCombinedDetailValue() should hide stale remote sync while git op is pending: %q", rendered)
 	}
 }
 
@@ -13298,6 +13338,29 @@ func TestCommitPreviewAltEnterStaysBlockedWithoutPush(t *testing.T) {
 	}
 }
 
+func TestDispatchCommandPushMarksPendingGitOperation(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindPush})
+	got := updated.(Model)
+	if got.pendingGitSummary("/tmp/demo") != "Pushing..." {
+		t.Fatalf("pending git summary = %q, want push marker", got.pendingGitSummary("/tmp/demo"))
+	}
+	if got.status != "Pushing..." {
+		t.Fatalf("status = %q, want push-in-flight status", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("/push should schedule async work")
+	}
+}
+
 func TestCommitPreviewDOpensDiffView(t *testing.T) {
 	m := Model{
 		commitPreview: &service.CommitPreview{
@@ -13420,6 +13483,9 @@ func TestGitStatusDialogEnterPushesExistingCommits(t *testing.T) {
 	got := updated.(Model)
 	if !got.gitStatusApplying {
 		t.Fatalf("enter should start pushing when the dialog offers a push")
+	}
+	if got.pendingGitSummary("/tmp/demo") != "Pushing existing commits..." {
+		t.Fatalf("pending git summary = %q, want push-in-flight marker", got.pendingGitSummary("/tmp/demo"))
 	}
 	if got.status != "Pushing existing commits..." {
 		t.Fatalf("status = %q, want %q", got.status, "Pushing existing commits...")
