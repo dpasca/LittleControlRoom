@@ -5909,7 +5909,7 @@ func TestTodoDialogModelToggleOpensPickerBeforeDraft(t *testing.T) {
 	}
 }
 
-func TestTodoModelPickerApplyRefocusesComposerAndCapturesSettleLatency(t *testing.T) {
+func TestTodoModelPickerApplyRefocusesComposerAndCapturesSettleLatencyImmediately(t *testing.T) {
 	now := time.Date(2026, time.April, 2, 17, 30, 0, 0, time.UTC)
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
@@ -6013,18 +6013,11 @@ func TestTodoModelPickerApplyRefocusesComposerAndCapturesSettleLatency(t *testin
 	if !got.codexInput.Focused() {
 		t.Fatalf("composer should regain focus after applying the model picker selection")
 	}
-	if pending, ok := got.modelSettlePending["/tmp/demo"]; !ok || pending.Model != "openai/gpt-5.4" {
-		t.Fatalf("model settle pending = %#v, want openai/gpt-5.4", got.modelSettlePending["/tmp/demo"])
-	}
-	if len(got.aiLatencyInFlightSnapshot()) != 1 || got.aiLatencyInFlightSnapshot()[0].Name != "Model settle" {
-		t.Fatalf("in-flight latency ops = %#v, want a single model settle op", got.aiLatencyInFlightSnapshot())
-	}
-
-	now = now.Add(650 * time.Millisecond)
-	updated, _ = got.update(codexUpdateMsg{projectPath: "/tmp/demo"})
-	got = updated.(Model)
 	if _, ok := got.modelSettlePending["/tmp/demo"]; ok {
-		t.Fatalf("model settle should complete once the refreshed snapshot reflects the staged model")
+		t.Fatalf("model settle should complete immediately after the staged snapshot refresh")
+	}
+	if len(got.aiLatencyInFlightSnapshot()) != 0 {
+		t.Fatalf("in-flight latency ops = %#v, want none after the immediate settle refresh", got.aiLatencyInFlightSnapshot())
 	}
 
 	found := false
@@ -6036,8 +6029,8 @@ func TestTodoModelPickerApplyRefocusesComposerAndCapturesSettleLatency(t *testin
 		if sample.ProjectPath != "/tmp/demo" {
 			t.Fatalf("model settle project = %q, want /tmp/demo", sample.ProjectPath)
 		}
-		if sample.Duration != 650*time.Millisecond {
-			t.Fatalf("model settle duration = %v, want 650ms", sample.Duration)
+		if sample.Duration != 0 {
+			t.Fatalf("model settle duration = %v, want immediate completion", sample.Duration)
 		}
 	}
 	if !found {
@@ -6088,6 +6081,55 @@ func TestSyncCodexViewportRecordsSharedStageLatencies(t *testing.T) {
 		if !gotNames[want] {
 			t.Fatalf("syncCodexViewport() missing latency sample %q, got %#v", want, m.aiLatencyRecent)
 		}
+	}
+}
+
+func TestCodexUpdateStatusOnlyPreservesViewportOffset(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex,
+			Started:  true,
+			Status:   "Codex session ready",
+			Entries: []codexapp.TranscriptEntry{{
+				Kind: codexapp.TranscriptAgent,
+				Text: strings.Join([]string{
+					"line 01", "line 02", "line 03", "line 04", "line 05", "line 06", "line 07", "line 08",
+					"line 09", "line 10", "line 11", "line 12", "line 13", "line 14", "line 15", "line 16",
+					"line 17", "line 18", "line 19", "line 20", "line 21", "line 22", "line 23", "line 24",
+					"line 25", "line 26", "line 27", "line 28", "line 29", "line 30", "line 31", "line 32",
+				}, "\n"),
+			}},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: "/tmp/demo"}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              18,
+	}
+	if _, ok := m.refreshCodexSnapshot("/tmp/demo"); !ok {
+		t.Fatalf("refreshCodexSnapshot() failed")
+	}
+	m.syncCodexViewport(true)
+	m.codexViewport.SetYOffset(1)
+
+	session.snapshot.Status = "Codex status changed only"
+
+	updated, _ := m.Update(codexUpdateMsg{projectPath: "/tmp/demo"})
+	got := updated.(Model)
+	if got.codexViewport.YOffset != 1 {
+		t.Fatalf("status-only codex update should preserve viewport offset, got %d", got.codexViewport.YOffset)
 	}
 }
 

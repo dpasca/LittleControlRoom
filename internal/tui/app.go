@@ -1445,6 +1445,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.provider.Normalized() != "" && (strings.TrimSpace(msg.model) != "" || strings.TrimSpace(msg.reasoning) != "") {
 			if msg.awaitSettle {
 				m.beginModelSettleLatency(msg.projectPath, strings.TrimSpace(msg.provider.Label()+" "+msg.model+" "+msg.reasoning), msg.model, msg.reasoning)
+				if snapshot, ok := m.refreshCodexSnapshot(msg.projectPath); ok {
+					m.completeModelSettleLatency(msg.projectPath, snapshot)
+				}
 			}
 			m.rememberEmbeddedModelPreference(msg.provider, msg.model, msg.reasoning)
 			m.recordRecentModel(msg.provider, msg.model)
@@ -1537,18 +1540,21 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.codexManager != nil {
 			m.codexManager.AckUpdate(msg.projectPath)
 		}
+		prevSnapshot, hadPrevSnapshot := m.codexSnapshots[strings.TrimSpace(msg.projectPath)]
 		refreshStarted := time.Now()
 		snapshot, ok := m.refreshCodexSnapshot(msg.projectPath)
 		refreshDuration := time.Since(refreshStarted)
 		providerLabel := ""
+		transcriptChanged := false
 		if ok {
 			providerLabel = embeddedProvider(snapshot).Label()
+			transcriptChanged = !hadPrevSnapshot || codexTranscriptStateChanged(prevSnapshot, snapshot)
 		}
 		m.recordAISyncLatency("Embedded snapshot", msg.projectPath, providerLabel, refreshDuration, "")
 		if m.codexVisibleProject == msg.projectPath {
 			viewportStarted := time.Now()
 			m.resetCodexToolAnswerState(msg.projectPath)
-			m.syncCodexViewport(true)
+			m.syncCodexViewport(transcriptChanged)
 			m.recordAISyncLatency("Embedded viewport", msg.projectPath, providerLabel, time.Since(viewportStarted), "")
 		}
 		if ok {
