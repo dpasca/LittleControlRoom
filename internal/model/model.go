@@ -249,6 +249,7 @@ type ProjectSummary struct {
 	LatestSessionClassificationStage              SessionClassificationStage
 	LatestSessionClassificationType               SessionCategory
 	LatestSessionSummary                          string
+	LastSessionSeenAt                             time.Time
 	LatestSessionClassificationStageStartedAt     time.Time
 	LatestSessionClassificationUpdatedAt          time.Time
 	LatestCompletedSessionClassificationType      SessionCategory

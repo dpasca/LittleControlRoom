@@ -142,6 +142,57 @@ func TestListProjectsHidesIgnoredProjectNames(t *testing.T) {
 	}
 }
 
+func TestProjectSessionSeenAtPersistsAndSurvivesMove(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	oldPath := "/tmp/old"
+	newPath := "/tmp/new"
+	now := time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC)
+	seenAt := now.Add(-15 * time.Minute)
+
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           oldPath,
+		Name:           "demo",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		InScope:        true,
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+	if err := st.SetProjectSessionSeenAt(ctx, oldPath, seenAt); err != nil {
+		t.Fatalf("SetProjectSessionSeenAt() error = %v", err)
+	}
+
+	summary, err := st.GetProjectSummary(ctx, oldPath, false)
+	if err != nil {
+		t.Fatalf("GetProjectSummary() error = %v", err)
+	}
+	if !summary.LastSessionSeenAt.Equal(seenAt) {
+		t.Fatalf("LastSessionSeenAt = %v, want %v", summary.LastSessionSeenAt, seenAt)
+	}
+
+	if err := st.MoveProjectPath(ctx, oldPath, newPath, now); err != nil {
+		t.Fatalf("MoveProjectPath() error = %v", err)
+	}
+
+	moved, err := st.GetProjectSummary(ctx, newPath, false)
+	if err != nil {
+		t.Fatalf("GetProjectSummary(moved) error = %v", err)
+	}
+	if !moved.LastSessionSeenAt.Equal(seenAt) {
+		t.Fatalf("moved LastSessionSeenAt = %v, want %v", moved.LastSessionSeenAt, seenAt)
+	}
+}
+
 func TestGetProjectSummaryRespectsVisibilityFilters(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

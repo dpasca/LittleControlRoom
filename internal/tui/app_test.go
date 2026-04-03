@@ -437,6 +437,60 @@ func TestAssessmentFlashHighlightsListCells(t *testing.T) {
 	}
 }
 
+func TestProjectAssessmentUnreadTracksSeenTimestamp(t *testing.T) {
+	project := model.ProjectSummary{
+		LatestSessionClassification:     model.ClassificationCompleted,
+		LatestSessionClassificationType: model.SessionCategoryCompleted,
+		LatestSessionSummary:            "Work appears complete for now.",
+		LatestSessionFormat:             "modern",
+		LatestSessionLastEventAt:        time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC),
+		LatestTurnStateKnown:            true,
+		LatestTurnCompleted:             true,
+	}
+
+	if !projectAssessmentUnread(project, time.Time{}, 0) {
+		t.Fatalf("expected assessment to be unread before it has been seen")
+	}
+
+	project.LastSessionSeenAt = project.LatestSessionLastEventAt
+	if projectAssessmentUnread(project, time.Time{}, 0) {
+		t.Fatalf("expected assessment to be read once seen_at reaches the completed turn")
+	}
+}
+
+func TestAssessmentDisplayStyleDimsReadAssessments(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	project := model.ProjectSummary{
+		LatestSessionClassification:     model.ClassificationCompleted,
+		LatestSessionClassificationType: model.SessionCategoryWaitingForUser,
+		LatestSessionSummary:            "Waiting on your review.",
+		LatestSessionFormat:             "modern",
+		LatestSessionLastEventAt:        time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC),
+		LatestTurnStateKnown:            true,
+		LatestTurnCompleted:             true,
+	}
+
+	unreadRendered := assessmentDisplayStyle(project, time.Time{}, 0).Render(projectAssessmentLabelWithThreshold(project, time.Time{}, 0))
+
+	project.LastSessionSeenAt = project.LatestSessionLastEventAt
+	readRendered := assessmentDisplayStyle(project, time.Time{}, 0).Render(projectAssessmentLabelWithThreshold(project, time.Time{}, 0))
+
+	if ansi.Strip(unreadRendered) != ansi.Strip(readRendered) {
+		t.Fatalf("read/unread assessment text should stay the same: %q vs %q", ansi.Strip(unreadRendered), ansi.Strip(readRendered))
+	}
+	if unreadRendered == readRendered {
+		t.Fatalf("expected unread assessment styling to differ from the read styling")
+	}
+}
+
 func TestApprovalPulseHighlightsProjectListRow(t *testing.T) {
 	prevProfile := lipgloss.ColorProfile()
 	prevDarkBackground := lipgloss.HasDarkBackground()
@@ -2945,6 +2999,38 @@ func TestSessionCategoryLabel(t *testing.T) {
 	}
 }
 
+func TestShowCodexProjectMarksSessionSeenLocally(t *testing.T) {
+	seenAt := time.Date(2026, 4, 3, 11, 0, 0, 0, time.UTC)
+	project := model.ProjectSummary{
+		Path:                            "/tmp/demo",
+		LatestSessionClassification:     model.ClassificationCompleted,
+		LatestSessionClassificationType: model.SessionCategoryCompleted,
+		LatestSessionFormat:             "modern",
+		LatestSessionLastEventAt:        seenAt.Add(-5 * time.Minute),
+		LatestTurnStateKnown:            true,
+		LatestTurnCompleted:             true,
+	}
+
+	updatedModel, _ := (Model{
+		nowFn:       func() time.Time { return seenAt },
+		allProjects: []model.ProjectSummary{project},
+		projects:    []model.ProjectSummary{project},
+		detail:      model.ProjectDetail{Summary: project},
+		codexInput:  newCodexTextarea(),
+	}).showCodexProject(project.Path, "")
+
+	got := updatedModel.(Model)
+	if !got.allProjects[0].LastSessionSeenAt.Equal(seenAt) {
+		t.Fatalf("allProjects seen_at = %v, want %v", got.allProjects[0].LastSessionSeenAt, seenAt)
+	}
+	if !got.projects[0].LastSessionSeenAt.Equal(seenAt) {
+		t.Fatalf("projects seen_at = %v, want %v", got.projects[0].LastSessionSeenAt, seenAt)
+	}
+	if !got.detail.Summary.LastSessionSeenAt.Equal(seenAt) {
+		t.Fatalf("detail seen_at = %v, want %v", got.detail.Summary.LastSessionSeenAt, seenAt)
+	}
+}
+
 func TestClassificationCategoryStyle(t *testing.T) {
 	if got := fmt.Sprint(classificationCategoryStyle(model.SessionCategoryCompleted).GetForeground()); got != "42" {
 		t.Fatalf("completed foreground = %q, want %q", got, "42")
@@ -3353,7 +3439,7 @@ func TestRenderProjectListShowsRepoWarningInAttentionColumn(t *testing.T) {
 	if len(lines) < 2 {
 		t.Fatalf("renderProjectList() expected header plus one row, got %q", rendered)
 	}
-	if !strings.Contains(lines[1], "!  95") {
+	if !strings.Contains(lines[1], "!   95") {
 		t.Fatalf("renderProjectList() should show repo warnings in ATTN, got %q", lines[1])
 	}
 	if strings.Contains(lines[1], "demo project !") {
