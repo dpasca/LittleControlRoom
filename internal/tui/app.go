@@ -130,6 +130,7 @@ type Model struct {
 	codexPendingOpen       *codexPendingOpenState
 	codexInput             textarea.Model
 	codexDrafts            map[string]codexDraft
+	pendingGitOperations   map[string]pendingGitOperation
 	codexPasteTokenSeq     int
 	codexClosedHandled     map[string]struct{}
 	pendingGitSummaries    map[string]string
@@ -374,6 +375,21 @@ type codexPendingOpenState struct {
 	provider    codexapp.Provider
 }
 
+type pendingGitOperationKind string
+
+const (
+	pendingGitOperationUnknown     pendingGitOperationKind = ""
+	pendingGitOperationCommit      pendingGitOperationKind = "commit"
+	pendingGitOperationCommitPush  pendingGitOperationKind = "commit_push"
+	pendingGitOperationPush        pendingGitOperationKind = "push"
+	pendingGitOperationCommitMerge pendingGitOperationKind = "commit_merge"
+)
+
+type pendingGitOperation struct {
+	Kind    pendingGitOperationKind
+	Summary string
+}
+
 type busMsg events.Event
 
 type spinnerTickMsg struct{}
@@ -471,6 +487,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		codexInput:             codexInput,
 		codexDrafts:            make(map[string]codexDraft),
 		codexClosedHandled:     make(map[string]struct{}),
+		pendingGitOperations:   make(map[string]pendingGitOperation),
 		pendingGitSummaries:    make(map[string]string),
 		codexSnapshots:         make(map[string]codexapp.Snapshot),
 		codexTranscriptRev:     make(map[string]uint64),
@@ -528,11 +545,23 @@ func (m *Model) markAssessmentFlash(projectPath string, at time.Time) {
 }
 
 func (m *Model) setPendingGitSummary(projectPath, summary string) {
+	op := inferPendingGitOperation(summary)
+	m.setPendingGitOperation(projectPath, op.Kind, op.Summary)
+}
+
+func (m *Model) setPendingGitOperation(projectPath string, kind pendingGitOperationKind, summary string) {
 	projectPath = strings.TrimSpace(projectPath)
 	summary = strings.TrimSpace(summary)
 	if projectPath == "" || summary == "" {
 		return
 	}
+	if kind == pendingGitOperationUnknown {
+		kind = inferPendingGitOperation(summary).Kind
+	}
+	if m.pendingGitOperations == nil {
+		m.pendingGitOperations = make(map[string]pendingGitOperation)
+	}
+	m.pendingGitOperations[projectPath] = pendingGitOperation{Kind: kind, Summary: summary}
 	if m.pendingGitSummaries == nil {
 		m.pendingGitSummaries = make(map[string]string)
 	}
@@ -541,10 +570,15 @@ func (m *Model) setPendingGitSummary(projectPath, summary string) {
 
 func (m *Model) clearPendingGitSummary(projectPath string) {
 	projectPath = strings.TrimSpace(projectPath)
-	if projectPath == "" || m.pendingGitSummaries == nil {
+	if projectPath == "" {
 		return
 	}
-	delete(m.pendingGitSummaries, projectPath)
+	if m.pendingGitSummaries != nil {
+		delete(m.pendingGitSummaries, projectPath)
+	}
+	if m.pendingGitOperations != nil {
+		delete(m.pendingGitOperations, projectPath)
+	}
 }
 
 func (m Model) pendingGitSummary(projectPath string) string {
@@ -553,6 +587,73 @@ func (m Model) pendingGitSummary(projectPath string) string {
 		return ""
 	}
 	return strings.TrimSpace(m.pendingGitSummaries[projectPath])
+}
+
+func inferPendingGitOperation(summary string) pendingGitOperation {
+	summary = strings.TrimSpace(summary)
+	switch summary {
+	case "Committing...":
+		return pendingGitOperation{Kind: pendingGitOperationCommit, Summary: summary}
+	case "Committing and pushing...":
+		return pendingGitOperation{Kind: pendingGitOperationCommitPush, Summary: summary}
+	case "Pushing...", "Pushing existing commits...":
+		return pendingGitOperation{Kind: pendingGitOperationPush, Summary: summary}
+	case "Committing and merging worktree back...":
+		return pendingGitOperation{Kind: pendingGitOperationCommitMerge, Summary: summary}
+	default:
+		return pendingGitOperation{Kind: pendingGitOperationUnknown, Summary: summary}
+	}
+}
+
+func normalizePendingGitLabel(summary string) string {
+	summary = strings.TrimSpace(summary)
+	summary = strings.TrimRight(summary, ".")
+	if summary == "" {
+		return "git op"
+	}
+	return strings.ToLower(summary[:1]) + summary[1:]
+}
+
+func (op pendingGitOperation) summaryText() string {
+	return strings.TrimSpace(op.Summary)
+}
+
+func (op pendingGitOperation) shortLabel() string {
+	switch op.Kind {
+	case pendingGitOperationCommit:
+		return "committing"
+	case pendingGitOperationCommitPush:
+		return "commit + push"
+	case pendingGitOperationPush:
+		return "pushing"
+	case pendingGitOperationCommitMerge:
+		return "commit + merge"
+	default:
+		return normalizePendingGitLabel(op.Summary)
+	}
+}
+
+func (m Model) pendingGitOperation(projectPath string) (pendingGitOperation, bool) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return pendingGitOperation{}, false
+	}
+	if m.pendingGitOperations != nil {
+		if op, ok := m.pendingGitOperations[projectPath]; ok && strings.TrimSpace(op.Summary) != "" {
+			if op.Kind == pendingGitOperationUnknown {
+				op.Kind = inferPendingGitOperation(op.Summary).Kind
+			}
+			return op, true
+		}
+	}
+	if summary := m.pendingGitSummary(projectPath); summary != "" {
+		op := inferPendingGitOperation(summary)
+		if strings.TrimSpace(op.Summary) == "" {
+			op.Summary = summary
+		}
+		return op, true
+	}
+	return pendingGitOperation{}, false
 }
 
 func (m Model) assessmentFlashActive(projectPath string) bool {
@@ -1922,6 +2023,7 @@ func (m Model) updateGitStatusDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.gitStatusApplying = true
+		m.setPendingGitOperation(m.gitStatusDialog.ProjectPath, pendingGitOperationPush, "Pushing existing commits...")
 		m.status = "Pushing existing commits..."
 		return m, m.pushCmd(m.gitStatusDialog.ProjectPath)
 	}
@@ -2738,7 +2840,7 @@ func (m Model) renderProjectList(width, height int) string {
 			return style
 		}
 		last := formatListActivityTime(now, p.LastActivity)
-		repoIndicator := projectRepoWarningIndicator(p, m.spinnerFrame)
+		repoIndicator := m.projectRepoWarningIndicator(p, m.spinnerFrame)
 		attention := projectAttentionLabelForScore(m.projectAttentionScore(p))
 		name := p.Name
 		assessmentText := m.projectAssessmentDisplayTextAt(p, now, m.assessmentStallThreshold())
@@ -2842,7 +2944,7 @@ func (m Model) renderDetailContent(width int) string {
 		}
 		lines = appendDetailFields(lines, width, movedFields...)
 	}
-	lines = append(lines, detailField("Repo", repoCombinedDetailValue(p)))
+	lines = append(lines, detailField("Repo", m.repoCombinedDetailValue(p)))
 	if p.RepoConflict {
 		lines = append(lines, detailField("Conflict", repoConflictDetailValue(p)))
 	}
@@ -2885,7 +2987,10 @@ func (m Model) renderDetailContent(width int) string {
 			}
 			statusParts := []string{}
 			lineStyle := detailValueStyle
-			if member.RepoConflict {
+			if op, ok := m.pendingGitOperation(member.Path); ok {
+				statusParts = append(statusParts, op.shortLabel())
+				lineStyle = detailValueStyle
+			} else if member.RepoConflict {
 				statusParts = append(statusParts, "conflict")
 				lineStyle = detailConflictStyle
 			} else if member.RepoDirty {
@@ -3289,6 +3394,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 			m.status = "No project selected"
 			return m, nil
 		}
+		m.setPendingGitOperation(p.Path, pendingGitOperationPush, "Pushing...")
 		m.status = "Pushing..."
 		return m, m.pushCmd(p.Path)
 	case commands.KindCodex:
@@ -3942,13 +4048,13 @@ func (m Model) pushCmd(path string) tea.Cmd {
 	return func() tea.Msg {
 		result, err := m.svc.PushProject(m.ctx, path)
 		if err != nil {
-			return actionMsg{status: "Push failed", err: err}
+			return actionMsg{projectPath: path, status: "Push failed", clearPendingGitSummary: true, err: err}
 		}
 		status := result.Summary
 		if strings.TrimSpace(status) == "" {
 			status = "Push complete"
 		}
-		return actionMsg{status: status, err: nil}
+		return actionMsg{projectPath: path, status: status, clearPendingGitSummary: true, err: nil}
 	}
 }
 
@@ -4398,16 +4504,18 @@ func repoSyncDetailLine(project model.ProjectSummary) string {
 	return "Remote: " + value
 }
 
-func repoCombinedDetailValue(project model.ProjectSummary) string {
+func (m Model) repoCombinedDetailValue(project model.ProjectSummary) string {
 	var parts []string
-	if project.RepoConflict {
+	if op, ok := m.pendingGitOperation(project.Path); ok {
+		parts = append(parts, detailValueStyle.Render(op.summaryText()))
+	} else if project.RepoConflict {
 		parts = append(parts, detailConflictStyle.Render("conflict"))
 	} else if project.RepoDirty {
 		parts = append(parts, detailWarningStyle.Render("dirty"))
 	} else {
 		parts = append(parts, detailMutedStyle.Render("clean"))
 	}
-	if projectShowsRemoteSyncStatus(project) {
+	if projectShowsRemoteSyncStatus(project) && m.pendingGitSummary(project.Path) == "" {
 		switch project.RepoSyncStatus {
 		case model.RepoSyncNoRemote:
 			parts = append(parts, detailMutedStyle.Render("no remote"))

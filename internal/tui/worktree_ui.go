@@ -506,6 +506,10 @@ func (m Model) worktreeActivityCounts(projects []model.ProjectSummary) (int, int
 	active := 0
 	dirty := 0
 	for _, project := range projects {
+		if _, ok := m.pendingGitOperation(project.Path); ok {
+			active++
+			continue
+		}
 		if project.RepoDirty {
 			dirty++
 		}
@@ -525,6 +529,9 @@ func (m Model) isWorktreeGroupExpanded(rootPath string, children []model.Project
 	selectedPath = filepath.Clean(strings.TrimSpace(selectedPath))
 	for _, child := range children {
 		if filepath.Clean(child.Path) == selectedPath {
+			return true
+		}
+		if _, ok := m.pendingGitOperation(child.Path); ok {
 			return true
 		}
 		if child.RepoDirty || child.Status != model.StatusIdle || m.projectHasLiveCodexSession(child.Path) || m.projectRuntimeSnapshot(child.Path).Running {
