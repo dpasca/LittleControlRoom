@@ -1332,17 +1332,25 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.todoWorktreeEditor = nil
 		m.todoExistingWorktree = nil
 		m.err = nil
-		m.restoreCodexDraft(msg.projectPath, codexDraft{Text: msg.todoText})
+		if msg.openModelFirst {
+			m.restoreCodexDraft(msg.projectPath, codexDraft{Text: msg.todoText})
+		} else {
+			m.clearCodexDraft(msg.projectPath)
+		}
 		m.todoLaunchDraft = &todoLaunchDraftState{
 			projectPath:    msg.projectPath,
 			provider:       provider,
 			openModelFirst: msg.openModelFirst,
+			autoSubmit:     !msg.openModelFirst,
 		}
 		req := codexapp.LaunchRequest{
 			Provider:    provider,
 			ProjectPath: strings.TrimSpace(msg.projectPath),
 			ForceNew:    true,
 			Preset:      m.currentCodexLaunchPreset(),
+		}
+		if !msg.openModelFirst {
+			req.Prompt = msg.todoText
 		}
 		if err := req.Validate(); err != nil {
 			m.todoLaunchDraft = nil
@@ -1351,7 +1359,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.ensureCodexRuntime()
 		m.beginCodexPendingOpen(req.ProjectPath, provider)
-		m.status = "Opening embedded " + provider.Label() + " session in new worktree..."
+		if msg.openModelFirst {
+			m.status = "Opening embedded " + provider.Label() + " session in new worktree..."
+		} else {
+			m.status = "Starting TODO in dedicated worktree..."
+		}
 		cmds := []tea.Cmd{m.loadProjectsCmd(), m.openCodexSessionCmd(req)}
 		if p, ok := m.selectedProject(); ok {
 			cmds = append(cmds, m.loadDetailCmd(p.Path))
@@ -1516,7 +1528,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		if msg.err != nil {
 			provider := m.codexPendingOpenProvider()
-			m.finishCodexPendingOpen(msg.projectPath, false)
+			m.finishCodexPendingOpen(msg.projectPath, false, false)
 			m.todoLaunchDraft = nil
 			if strings.TrimSpace(msg.projectPath) != "" {
 				if _, ok := m.codexSession(msg.projectPath); !ok {
@@ -1526,7 +1538,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.reportError("Embedded session open failed", msg.err, msg.projectPath)
 			return m, nil
 		}
-		seenCmd := m.finishCodexPendingOpen(msg.projectPath, true)
+		revealOnOpen := true
+		focusInput := true
+		if m.todoLaunchDraft != nil && strings.TrimSpace(m.todoLaunchDraft.projectPath) == strings.TrimSpace(msg.projectPath) {
+			if m.todoLaunchDraft.openModelFirst {
+				focusInput = false
+			} else if m.todoLaunchDraft.autoSubmit {
+				revealOnOpen = false
+				focusInput = false
+			}
+		}
+		seenCmd := m.finishCodexPendingOpen(msg.projectPath, true, revealOnOpen)
 		if m.todoLaunchDraft != nil && strings.TrimSpace(m.todoLaunchDraft.projectPath) == strings.TrimSpace(msg.projectPath) {
 			draft := m.todoLaunchDraft
 			m.todoLaunchDraft = nil
@@ -1535,11 +1557,22 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = "Pick a model, then send the TODO draft."
 				return m, tea.Batch(seenCmd, m.openCodexModelPickerCmd())
 			}
-			m.status = "Fresh " + draft.provider.Label() + " session ready with TODO draft. Edit and press Enter to send."
+			if draft.autoSubmit {
+				if strings.TrimSpace(msg.status) != "" {
+					m.status = msg.status
+				} else {
+					m.status = "Started TODO in background"
+				}
+			} else {
+				m.status = "Fresh " + draft.provider.Label() + " session ready with TODO draft. Edit and press Enter to send."
+			}
 		} else {
 			m.status = msg.status
 		}
-		return m, tea.Batch(seenCmd, m.codexInput.Focus())
+		if focusInput {
+			return m, tea.Batch(seenCmd, m.codexInput.Focus())
+		}
+		return m, seenCmd
 	case codexActionMsg:
 		m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, msg.err, msg.status)
 		if msg.err != nil {

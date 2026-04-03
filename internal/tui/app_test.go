@@ -178,6 +178,34 @@ func (s *fakeCodexSession) RespondElicitation(decision codexapp.ElicitationDecis
 	return nil
 }
 
+func collectCmdMsgs(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	var msg tea.Msg
+	func() {
+		defer func() {
+			if recover() != nil {
+				msg = nil
+			}
+		}()
+		msg = cmd()
+	}()
+	if msg == nil {
+		return nil
+	}
+	switch v := msg.(type) {
+	case tea.BatchMsg:
+		var out []tea.Msg
+		for _, child := range v {
+			out = append(out, collectCmdMsgs(child)...)
+		}
+		return out
+	default:
+		return []tea.Msg{msg}
+	}
+}
+
 func (s *fakeCodexSession) Close() error {
 	s.snapshot.Closed = true
 	return nil
@@ -1096,7 +1124,9 @@ func TestRenderFooterShowsRemoveHintForLinkedWorktree(t *testing.T) {
 func TestRenderFooterShowsRemoveHintForLinkedWorktreeWithActiveSession(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"
+	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
 		return &fakeCodexSession{
 			projectPath: req.ProjectPath,
 			snapshot: codexapp.Snapshot{
@@ -1577,7 +1607,9 @@ func TestUpdateNormalModeMShowsBlockedMergeWhenWorktreesDirty(t *testing.T) {
 func TestOpenWorktreeMergeConfirmAutoClosesCompletedSession(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"
+	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
 		return &fakeCodexSession{
 			projectPath: req.ProjectPath,
 			snapshot: codexapp.Snapshot{
@@ -2062,7 +2094,9 @@ func TestDispatchCommandWorktreeRemoveOpensConfirm(t *testing.T) {
 func TestOpenWorktreeMergeConfirmWithLiveSessionShowsAttentionDialog(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"
+	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
 		return &fakeCodexSession{
 			projectPath: req.ProjectPath,
 			snapshot: codexapp.Snapshot{
@@ -6888,7 +6922,9 @@ func TestTodoDialogCanStartSelectedTodoInNewWorktree(t *testing.T) {
 		t.Fatalf("get project detail: %v", err)
 	}
 
+	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
 		return &fakeCodexSession{
 			projectPath: req.ProjectPath,
 			snapshot: codexapp.Snapshot{
@@ -6929,6 +6965,15 @@ func TestTodoDialogCanStartSelectedTodoInNewWorktree(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("starting the worktree TODO flow should return a command")
 	}
+	if got.todoDialog != nil {
+		t.Fatalf("todo dialog should close as soon as the dedicated worktree launch starts")
+	}
+	if got.todoCopyDialog != nil {
+		t.Fatalf("todo copy dialog should dismiss as soon as the dedicated worktree launch starts")
+	}
+	if got.status != "Starting TODO in dedicated worktree..." {
+		t.Fatalf("status = %q, want immediate background-start message", got.status)
+	}
 	msg := cmd()
 	launchMsg, ok := msg.(todoWorktreeLaunchMsg)
 	if !ok {
@@ -6947,9 +6992,6 @@ func TestTodoDialogCanStartSelectedTodoInNewWorktree(t *testing.T) {
 
 	updated, cmd = got.Update(launchMsg)
 	got = updated.(Model)
-	if got.todoDialog != nil {
-		t.Fatalf("todo dialog should close once the worktree launch succeeds")
-	}
 	if got.codexPendingOpen == nil || got.codexPendingOpen.projectPath != expectedPath {
 		t.Fatalf("codexPendingOpen = %#v, want pending open for %q", got.codexPendingOpen, expectedPath)
 	}
@@ -6959,11 +7001,148 @@ func TestTodoDialogCanStartSelectedTodoInNewWorktree(t *testing.T) {
 	if got.todoLaunchDraft == nil || got.todoLaunchDraft.projectPath != expectedPath {
 		t.Fatalf("todoLaunchDraft = %#v, want worktree draft for %q", got.todoLaunchDraft, expectedPath)
 	}
-	if got.codexDrafts[expectedPath].Text != todoText {
-		t.Fatalf("worktree draft text = %q, want %q", got.codexDrafts[expectedPath].Text, todoText)
+	if !got.todoLaunchDraft.autoSubmit {
+		t.Fatalf("todoLaunchDraft = %#v, want auto-submit enabled for background launch", got.todoLaunchDraft)
 	}
 	if cmd == nil {
 		t.Fatalf("handling todoWorktreeLaunchMsg should return an open command")
+	}
+	msgs := collectCmdMsgs(cmd)
+	var opened codexSessionOpenedMsg
+	foundOpen := false
+	for _, msg := range msgs {
+		if candidate, ok := msg.(codexSessionOpenedMsg); ok {
+			opened = candidate
+			foundOpen = true
+			break
+		}
+	}
+	if !foundOpen {
+		t.Fatalf("cmd messages did not include codexSessionOpenedMsg: %#v", msgs)
+	}
+	if opened.err != nil {
+		t.Fatalf("embedded session open returned error = %v", opened.err)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("request count = %d, want 1", len(requests))
+	}
+	if requests[0].ProjectPath != expectedPath {
+		t.Fatalf("launch project path = %q, want %q", requests[0].ProjectPath, expectedPath)
+	}
+	if requests[0].Provider != codexapp.ProviderCodex || !requests[0].ForceNew {
+		t.Fatalf("launch request = %#v, want a fresh Codex session", requests[0])
+	}
+	if requests[0].Prompt != todoText {
+		t.Fatalf("launch prompt = %q, want %q", requests[0].Prompt, todoText)
+	}
+
+	updated, cmd = got.Update(opened)
+	got = updated.(Model)
+	if got.codexVisibleProject != "" {
+		t.Fatalf("codexVisibleProject = %q, want background launch to stay hidden", got.codexVisibleProject)
+	}
+	if got.codexHiddenProject != expectedPath {
+		t.Fatalf("codexHiddenProject = %q, want %q", got.codexHiddenProject, expectedPath)
+	}
+	if got.codexInput.Focused() {
+		t.Fatalf("composer should not be focused for background worktree launches")
+	}
+	if got.status != opened.status {
+		t.Fatalf("status = %q, want %q", got.status, opened.status)
+	}
+	if got.todoLaunchDraft != nil {
+		t.Fatalf("todoLaunchDraft should clear after the background session opens, got %#v", got.todoLaunchDraft)
+	}
+	_ = cmd
+}
+
+func TestTodoWorktreeLaunchWithModelPickerKeepsPromptUnsentUntilModelChoice(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				ThreadID: "ses-worktree-model",
+				Started:  true,
+				Preset:   req.Preset,
+				Status:   req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+
+	m := Model{
+		codexManager:  manager,
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/root",
+			Name:          "root",
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+		width:    100,
+		height:   24,
+	}
+
+	updated, cmd := m.Update(todoWorktreeLaunchMsg{
+		projectPath:    "/tmp/root--feat-model-pick",
+		todoText:       "Review the TODO before sending it",
+		provider:       codexapp.ProviderOpenCode,
+		openModelFirst: true,
+	})
+	got := updated.(Model)
+	if got.todoLaunchDraft == nil || !got.todoLaunchDraft.openModelFirst {
+		t.Fatalf("todoLaunchDraft = %#v, want open-model-first launch state", got.todoLaunchDraft)
+	}
+	if got.codexDrafts["/tmp/root--feat-model-pick"].Text != "Review the TODO before sending it" {
+		t.Fatalf("draft text = %q, want TODO text restored for the picker path", got.codexDrafts["/tmp/root--feat-model-pick"].Text)
+	}
+	if cmd == nil {
+		t.Fatalf("worktree launch should return an embedded open command")
+	}
+
+	msgs := collectCmdMsgs(cmd)
+	var opened codexSessionOpenedMsg
+	foundOpen := false
+	for _, msg := range msgs {
+		if candidate, ok := msg.(codexSessionOpenedMsg); ok {
+			opened = candidate
+			foundOpen = true
+			break
+		}
+	}
+	if !foundOpen {
+		t.Fatalf("cmd messages did not include codexSessionOpenedMsg: %#v", msgs)
+	}
+	if opened.err != nil {
+		t.Fatalf("embedded open returned error = %v", opened.err)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("request count = %d, want 1", len(requests))
+	}
+	if requests[0].Provider != codexapp.ProviderOpenCode {
+		t.Fatalf("provider = %q, want %q", requests[0].Provider, codexapp.ProviderOpenCode)
+	}
+	if requests[0].Prompt != "" {
+		t.Fatalf("prompt = %q, want the TODO to stay unsent until after model selection", requests[0].Prompt)
+	}
+
+	updated, cmd = got.Update(opened)
+	got = updated.(Model)
+	if got.codexVisibleProject != "/tmp/root--feat-model-pick" {
+		t.Fatalf("codexVisibleProject = %q, want the worktree session shown for model selection", got.codexVisibleProject)
+	}
+	if got.codexInput.Focused() {
+		t.Fatalf("composer should not be focused while the model picker is opening")
+	}
+	if got.status != "Pick a model, then send the TODO draft." {
+		t.Fatalf("status = %q, want model picker prompt", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("session open should return the model picker command")
 	}
 }
 
@@ -7184,31 +7363,26 @@ func TestTodoWorktreeLaunchCanceledSkipsErrorReporting(t *testing.T) {
 	}
 }
 
-func TestTodoWorktreeLaunchErrorKeepsCopyDialogOpen(t *testing.T) {
+func TestTodoWorktreeLaunchErrorAfterBackgroundStartLeavesDialogsClosed(t *testing.T) {
 	t.Parallel()
 
 	m := Model{
-		todoCopyDialog: &todoCopyDialogState{
-			ProjectPath: "/tmp/demo",
-			ProjectName: "demo",
-			TodoID:      7,
-			TodoText:    "Launch this TODO in a new worktree",
-			RunMode:     todoCopyModeNewWorktree,
-			Provider:    codexapp.ProviderCodex,
-			Submitting:  true,
-		},
+		todoPendingLaunch: &todoPendingLaunchState{ID: 9},
 	}
 
-	updated, cmd := m.Update(todoWorktreeLaunchMsg{err: fmt.Errorf("create worktree failed")})
+	updated, cmd := m.Update(todoWorktreeLaunchMsg{
+		launchID: 9,
+		err:      fmt.Errorf("create worktree failed"),
+	})
 	got := updated.(Model)
 	if cmd != nil {
 		t.Fatalf("todo worktree launch error should not return a follow-up command")
 	}
-	if got.todoCopyDialog == nil {
-		t.Fatalf("todo copy dialog should stay open after launch error")
+	if got.todoCopyDialog != nil {
+		t.Fatalf("todo copy dialog should stay dismissed after the background launch fails")
 	}
-	if got.todoCopyDialog.Submitting {
-		t.Fatalf("todo copy dialog submitting should reset after launch error")
+	if got.todoDialog != nil {
+		t.Fatalf("todo dialog should stay dismissed after the background launch fails")
 	}
 	if got.status != "TODO launch failed (use /errors)" {
 		t.Fatalf("status = %q, want launch error", got.status)

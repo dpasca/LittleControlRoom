@@ -155,7 +155,7 @@ func (m *Model) beginCodexPendingOpen(projectPath string, provider codexapp.Prov
 	}
 }
 
-func (m *Model) finishCodexPendingOpen(projectPath string, opened bool) tea.Cmd {
+func (m *Model) finishCodexPendingOpen(projectPath string, opened bool, reveal bool) tea.Cmd {
 	projectPath = strings.TrimSpace(projectPath)
 	if pending := m.codexPendingOpenProject(); pending != "" && pending == projectPath {
 		m.codexPendingOpen = nil
@@ -165,12 +165,14 @@ func (m *Model) finishCodexPendingOpen(projectPath string, opened bool) tea.Cmd 
 		return nil
 	}
 	m.markCodexSessionLive(projectPath)
-	m.codexVisibleProject = projectPath
 	m.codexHiddenProject = projectPath
-	m.loadCodexDraft(projectPath)
 	m.refreshCodexSnapshot(projectPath)
-	m.syncCodexViewport(true)
-	m.syncCodexComposerSize()
+	if reveal {
+		m.codexVisibleProject = projectPath
+		m.loadCodexDraft(projectPath)
+		m.syncCodexViewport(true)
+		m.syncCodexComposerSize()
+	}
 	return m.markProjectSessionSeen(projectPath)
 }
 

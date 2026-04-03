@@ -58,6 +58,7 @@ type todoLaunchDraftState struct {
 	projectPath    string
 	provider       codexapp.Provider
 	openModelFirst bool
+	autoSubmit     bool
 }
 
 type todoPendingLaunchState struct {
@@ -918,13 +919,9 @@ func (m Model) purgeDoneTodosCmd(projectPath string) tea.Cmd {
 	}
 }
 
-func (m *Model) createTodoWorktreeCmd(launchCtx context.Context, launchID int64, projectPath string, todoID int64, todoText string, provider codexapp.Provider, openModelFirst bool) tea.Cmd {
-	branchOverride := ""
-	suffixOverride := ""
-	if m.todoCopyDialog != nil {
-		branchOverride = strings.TrimSpace(m.todoCopyDialog.BranchOverride)
-		suffixOverride = strings.TrimSpace(m.todoCopyDialog.WorktreeSuffixOverride)
-	}
+func (m *Model) createTodoWorktreeCmd(launchCtx context.Context, launchID int64, projectPath string, todoID int64, todoText string, provider codexapp.Provider, openModelFirst bool, branchOverride, suffixOverride string) tea.Cmd {
+	branchOverride = strings.TrimSpace(branchOverride)
+	suffixOverride = strings.TrimSpace(suffixOverride)
 	if m.svc == nil {
 		return func() tea.Msg {
 			return todoWorktreeLaunchMsg{
@@ -1099,9 +1096,21 @@ func (m Model) startSelectedTodoInNewWorktree(provider codexapp.Provider, openMo
 	} else {
 		provider = provider.Normalized()
 	}
+	branchOverride := ""
+	suffixOverride := ""
+	if copyDialog := m.todoCopyDialog; copyDialog != nil {
+		branchOverride = strings.TrimSpace(copyDialog.BranchOverride)
+		suffixOverride = strings.TrimSpace(copyDialog.WorktreeSuffixOverride)
+	}
 	launchID, launchCtx := m.beginTodoPendingLaunch()
-	m.status = "Creating worktree..."
-	return m, m.createTodoWorktreeCmd(launchCtx, launchID, projectPath, item.ID, item.Text, provider, openModelFirst)
+	m.todoEditor = nil
+	m.todoDeleteConfirm = nil
+	m.todoWorktreeEditor = nil
+	m.todoExistingWorktree = nil
+	m.todoCopyDialog = nil
+	m.todoDialog = nil
+	m.status = "Starting TODO in dedicated worktree..."
+	return m, m.createTodoWorktreeCmd(launchCtx, launchID, projectPath, item.ID, item.Text, provider, openModelFirst, branchOverride, suffixOverride)
 }
 
 func (m *Model) returnToTodoFromModelPicker() {
