@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"lcroom/internal/aibackend"
+	"lcroom/internal/attention"
 	"lcroom/internal/brand"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
@@ -3272,6 +3273,23 @@ func (m Model) markProjectSessionSeenCmd(path string, seenAt time.Time) tea.Cmd 
 	}
 }
 
+func (m Model) markProjectSessionUnreadCmd(path string) tea.Cmd {
+	if m.svc == nil {
+		return nil
+	}
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		return actionMsg{
+			projectPath: path,
+			status:      "Marked unread",
+			err:         m.svc.MarkProjectSessionUnread(m.ctx, path),
+		}
+	}
+}
+
 func (m *Model) markProjectSessionSeen(projectPath string) tea.Cmd {
 	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
 	if projectPath == "" {
@@ -3280,6 +3298,15 @@ func (m *Model) markProjectSessionSeen(projectPath string) tea.Cmd {
 	seenAt := m.currentTime()
 	m.markProjectSessionSeenLocal(projectPath, seenAt)
 	return m.markProjectSessionSeenCmd(projectPath, seenAt)
+}
+
+func (m *Model) markProjectSessionUnread(projectPath string) tea.Cmd {
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "" {
+		return nil
+	}
+	m.clearProjectSessionSeenLocal(projectPath)
+	return m.markProjectSessionUnreadCmd(projectPath)
 }
 
 func (m *Model) upsertProjectSummary(summary model.ProjectSummary) {
@@ -3332,6 +3359,26 @@ func (m *Model) markProjectSessionSeenLocal(projectPath string, seenAt time.Time
 	}
 	if filepath.Clean(m.detail.Summary.Path) == path {
 		m.detail.Summary.LastSessionSeenAt = seenAt
+	}
+}
+
+func (m *Model) clearProjectSessionSeenLocal(projectPath string) {
+	path := filepath.Clean(strings.TrimSpace(projectPath))
+	if path == "" {
+		return
+	}
+	for i := range m.allProjects {
+		if filepath.Clean(m.allProjects[i].Path) == path {
+			m.allProjects[i].LastSessionSeenAt = time.Time{}
+		}
+	}
+	for i := range m.projects {
+		if filepath.Clean(m.projects[i].Path) == path {
+			m.projects[i].LastSessionSeenAt = time.Time{}
+		}
+	}
+	if filepath.Clean(m.detail.Summary.Path) == path {
+		m.detail.Summary.LastSessionSeenAt = time.Time{}
 	}
 }
 
@@ -3507,6 +3554,51 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.togglePinCmd(p.Path)
+	case commands.KindRead:
+		if inv.All {
+			paths := make([]string, 0, len(m.projects))
+			seenAt := m.currentTime()
+			for _, project := range m.projects {
+				if attention.AssessmentUnreadAt(project).IsZero() {
+					continue
+				}
+				paths = append(paths, project.Path)
+				m.markProjectSessionSeenLocal(project.Path, seenAt)
+			}
+			if len(paths) == 0 {
+				m.status = "No visible completed assessments to mark read"
+				return m, nil
+			}
+			cmds := make([]tea.Cmd, 0, len(paths))
+			for _, path := range paths {
+				cmds = append(cmds, m.markProjectSessionSeenCmd(path, seenAt))
+			}
+			m.status = fmt.Sprintf("Marked %d visible project(s) read", len(paths))
+			return m, tea.Batch(cmds...)
+		}
+		p, ok := m.selectedProject()
+		if !ok {
+			m.status = "No project selected"
+			return m, nil
+		}
+		if attention.AssessmentUnreadAt(p).IsZero() {
+			m.status = "Selected project has no completed assessment to mark read"
+			return m, nil
+		}
+		m.status = "Marked read"
+		return m, m.markProjectSessionSeen(p.Path)
+	case commands.KindUnread:
+		p, ok := m.selectedProject()
+		if !ok {
+			m.status = "No project selected"
+			return m, nil
+		}
+		if attention.AssessmentUnreadAt(p).IsZero() {
+			m.status = "Selected project has no completed assessment to mark unread"
+			return m, nil
+		}
+		m.status = "Marked unread"
+		return m, m.markProjectSessionUnread(p.Path)
 	case commands.KindSnooze:
 		p, ok := m.selectedProject()
 		if !ok {
@@ -6415,27 +6507,14 @@ func effectiveAssessmentForProject(project model.ProjectSummary, now time.Time, 
 }
 
 func projectAssessmentUnread(project model.ProjectSummary, now time.Time, stuckThreshold time.Duration) bool {
-	unreadAt := projectAssessmentUnreadAt(project, now, stuckThreshold)
-	if unreadAt.IsZero() {
-		return false
-	}
-	return project.LastSessionSeenAt.IsZero() || project.LastSessionSeenAt.Before(unreadAt)
+	return !projectAssessmentUnreadAt(project, now, stuckThreshold).IsZero() && attention.AssessmentUnread(project)
 }
 
 func projectAssessmentUnreadAt(project model.ProjectSummary, now time.Time, stuckThreshold time.Duration) time.Time {
 	if _, _, ok := visibleAssessmentStatusLabelAt(project, now, stuckThreshold); !ok {
 		return time.Time{}
 	}
-	if project.LatestSessionClassification != model.ClassificationCompleted {
-		return time.Time{}
-	}
-	if project.LatestTurnStateKnown && project.LatestTurnCompleted && !project.LatestSessionLastEventAt.IsZero() {
-		return project.LatestSessionLastEventAt
-	}
-	if !project.LatestSessionClassificationUpdatedAt.IsZero() {
-		return project.LatestSessionClassificationUpdatedAt
-	}
-	return time.Time{}
+	return attention.AssessmentUnreadAt(project)
 }
 
 func assessmentStatusLabel(project model.ProjectSummary, compact bool) (string, model.SessionCategory, bool) {

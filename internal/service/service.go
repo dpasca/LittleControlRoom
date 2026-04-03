@@ -641,6 +641,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			LastActivity:               lastActivity,
 			RepoDirty:                  repoDirty,
 			Pinned:                     old.Pinned,
+			Unread:                     attention.AssessmentUnread(old),
 			SnoozedUntil:               old.SnoozedUntil,
 			ErrorCount:                 errorCount,
 			LatestSessionStart:         latestSessionStart,
@@ -1521,6 +1522,7 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 		LastActivity:               detail.Summary.LastActivity,
 		RepoDirty:                  repoDirty,
 		Pinned:                     detail.Summary.Pinned,
+		Unread:                     attention.AssessmentUnread(detail.Summary),
 		SnoozedUntil:               detail.Summary.SnoozedUntil,
 		ErrorCount:                 errorCount,
 		LatestSessionStart:         latestSessionStart,
@@ -1584,6 +1586,9 @@ func (s *Service) TogglePin(ctx context.Context, projectPath string) error {
 	if err := s.store.SetPinned(ctx, projectPath, !project.Pinned); err != nil {
 		return err
 	}
+	if err := s.RefreshProjectStatus(ctx, projectPath); err != nil {
+		return err
+	}
 	now := time.Now()
 	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "toggle_pin"}})
 	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: "toggle_pin"})
@@ -1615,6 +1620,9 @@ func (s *Service) MarkProjectSessionSeen(ctx context.Context, projectPath string
 	if err := s.store.SetProjectSessionSeenAt(ctx, projectPath, seenAt); err != nil {
 		return err
 	}
+	if err := s.RefreshProjectStatus(ctx, projectPath); err != nil {
+		return err
+	}
 	now := time.Now()
 	s.bus.Publish(events.Event{
 		Type:        events.ActionApplied,
@@ -1630,6 +1638,31 @@ func (s *Service) MarkProjectSessionSeen(ctx context.Context, projectPath string
 		ProjectPath: projectPath,
 		Type:        string(events.ActionApplied),
 		Payload:     "mark_session_seen",
+	})
+	return nil
+}
+
+func (s *Service) MarkProjectSessionUnread(ctx context.Context, projectPath string) error {
+	if err := s.store.ClearProjectSessionSeenAt(ctx, projectPath); err != nil {
+		return err
+	}
+	if err := s.RefreshProjectStatus(ctx, projectPath); err != nil {
+		return err
+	}
+	now := time.Now()
+	s.bus.Publish(events.Event{
+		Type:        events.ActionApplied,
+		At:          now,
+		ProjectPath: projectPath,
+		Payload: map[string]string{
+			"action": "mark_session_unread",
+		},
+	})
+	_ = s.store.AddEvent(ctx, model.StoredEvent{
+		At:          now,
+		ProjectPath: projectPath,
+		Type:        string(events.ActionApplied),
+		Payload:     "mark_session_unread",
 	})
 	return nil
 }

@@ -42,6 +42,8 @@ const (
 	KindWorktreeRemove Kind = "worktree-remove"
 	KindWorktreePrune  Kind = "worktree-prune"
 	KindPin            Kind = "pin"
+	KindRead           Kind = "read"
+	KindUnread         Kind = "unread"
 	KindSnooze         Kind = "snooze"
 	KindClearSnooze    Kind = "clear-snooze"
 	KindSessions       Kind = "sessions"
@@ -107,6 +109,7 @@ type Invocation struct {
 	Prompt    string
 	Command   string
 	Filter    string
+	All       bool
 	Clear     bool
 	Canonical string
 }
@@ -142,6 +145,8 @@ var specs = []Spec{
 	{Name: "todo", Usage: "/todo", Summary: "Open the selected project's TODO list"},
 	{Name: "wt", Usage: "/wt lanes|merge|remove|prune", Summary: "Toggle worktree lanes or manage the selected worktree"},
 	{Name: "pin", Usage: "/pin", Summary: "Toggle pin on the selected project"},
+	{Name: "read", Usage: "/read [all]", Summary: "Mark the selected project, or all visible projects, as read"},
+	{Name: "unread", Usage: "/unread", Summary: "Mark the selected project as unread"},
 	{Name: "snooze", Usage: "/snooze [duration|off]", Summary: "Snooze the selected project or clear with /snooze off"},
 	{Name: "clear-snooze", Usage: "/clear-snooze", Summary: "Clear snooze on the selected project"},
 	{Name: "unsnooze", Usage: "/unsnooze", Summary: "Clear snooze on the selected project"},
@@ -249,6 +254,14 @@ func Suggestions(input string) []Suggestion {
 			choice("1h", "Snooze for 1 hour"),
 			choice("4h", "Snooze for 4 hours"),
 			choice("24h", "Snooze for 24 hours"),
+		)
+	case "read":
+		argPrefix := ""
+		if len(fields) > 1 {
+			argPrefix = strings.ToLower(fields[len(fields)-1])
+		}
+		return enumSuggestions("/read ", argPrefix,
+			choice("all", "Mark all visible projects as read"),
 		)
 	case "wt", "worktree":
 		argPrefix := ""
@@ -405,6 +418,20 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /pin")
 		}
 		return Invocation{Kind: KindPin, Canonical: "/pin"}, nil
+	case "read":
+		switch strings.ToLower(strings.TrimSpace(rawArgs)) {
+		case "":
+			return Invocation{Kind: KindRead, Canonical: "/read"}, nil
+		case "all":
+			return Invocation{Kind: KindRead, All: true, Canonical: "/read all"}, nil
+		default:
+			return Invocation{}, fmt.Errorf("usage: /read [all]")
+		}
+	case "unread":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /unread")
+		}
+		return Invocation{Kind: KindUnread, Canonical: "/unread"}, nil
 	case "commit":
 		return Invocation{
 			Kind:      KindCommit,

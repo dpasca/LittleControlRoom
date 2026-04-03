@@ -93,6 +93,8 @@ The main TUI command palette opens with `/`.
 - `/opencode [prompt]`: Resume the latest OpenCode session or start one.
 - `/opencode-new [prompt]`: Start a fresh OpenCode session.
 - `/pin`: Toggle pin on the selected project.
+- `/read [all]`: Mark the selected project, or all visible projects, as read.
+- `/unread`: Mark the selected project's latest completed assessment as unread.
 - `/snooze [duration|off]`: Snooze the selected project, or clear snooze with `off`.
 - `/unsnooze` (alias: `/clear-snooze`): Clear the selected project's snooze.
 - `/sessions <on|off|toggle>`: Show or hide the Sessions section.

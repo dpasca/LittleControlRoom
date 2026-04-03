@@ -409,11 +409,11 @@ func TestRefreshProjectStatusUsesCompletedClassification(t *testing.T) {
 	if detail.Summary.Status != model.StatusIdle {
 		t.Fatalf("status = %s, want idle", detail.Summary.Status)
 	}
-	if detail.Summary.AttentionScore != 0 {
-		t.Fatalf("attention score = %d, want 0", detail.Summary.AttentionScore)
+	if detail.Summary.AttentionScore != 12 {
+		t.Fatalf("attention score = %d, want 12", detail.Summary.AttentionScore)
 	}
-	if len(detail.Reasons) != 0 {
-		t.Fatalf("expected no attention reasons for stale completed work, got %#v", detail.Reasons)
+	if len(detail.Reasons) != 1 || detail.Reasons[0].Code != "unread" {
+		t.Fatalf("expected unread reason for stale unread completed work, got %#v", detail.Reasons)
 	}
 }
 
@@ -484,11 +484,182 @@ func TestRefreshProjectStatusKeepsRecentCompletedWorkFresh(t *testing.T) {
 	if detail.Summary.Status != model.StatusIdle {
 		t.Fatalf("status = %s, want idle", detail.Summary.Status)
 	}
-	if detail.Summary.AttentionScore != 29 {
-		t.Fatalf("attention score = %d, want 29", detail.Summary.AttentionScore)
+	if detail.Summary.AttentionScore != 41 {
+		t.Fatalf("attention score = %d, want 41", detail.Summary.AttentionScore)
 	}
-	if len(detail.Reasons) != 2 || detail.Reasons[0].Code != "session_completed" || detail.Reasons[1].Code != "recent_activity" {
-		t.Fatalf("expected session_completed + recent_activity reasons, got %#v", detail.Reasons)
+	if len(detail.Reasons) != 3 || detail.Reasons[0].Code != "session_completed" || detail.Reasons[1].Code != "recent_activity" || detail.Reasons[2].Code != "unread" {
+		t.Fatalf("expected session_completed + recent_activity + unread reasons, got %#v", detail.Reasons)
+	}
+}
+
+func TestTogglePinRefreshesAttentionScoreImmediately(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Date(2026, 4, 4, 9, 0, 0, 0, time.UTC)
+	projectPath := "/tmp/pin-demo"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "pin-demo",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		InScope:        true,
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if err := svc.TogglePin(ctx, projectPath); err != nil {
+		t.Fatalf("TogglePin() error = %v", err)
+	}
+
+	summary, err := st.GetProjectSummary(ctx, projectPath, false)
+	if err != nil {
+		t.Fatalf("GetProjectSummary() error = %v", err)
+	}
+	if !summary.Pinned {
+		t.Fatalf("Pinned = false, want true")
+	}
+	if summary.AttentionScore != 40 {
+		t.Fatalf("AttentionScore = %d, want 40", summary.AttentionScore)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 10)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() error = %v", err)
+	}
+	found := false
+	for _, reason := range detail.Reasons {
+		if reason.Code == "pinned" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected pinned reason after TogglePin, got %#v", detail.Reasons)
+	}
+}
+
+func TestMarkProjectSessionReadUnreadRefreshesAttentionScoreImmediately(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	projectPath := "/tmp/unread-demo"
+	state := model.ProjectState{
+		Path:           projectPath,
+		Name:           "unread-demo",
+		LastActivity:   now.Add(-27 * time.Minute),
+		Status:         model.StatusIdle,
+		AttentionScore: 20,
+		InScope:        true,
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{{
+			SessionID:            "ses_unread",
+			ProjectPath:          projectPath,
+			DetectedProjectPath:  projectPath,
+			SessionFile:          filepath.Join(projectPath, "session.jsonl"),
+			Format:               "modern",
+			SnapshotHash:         "unread-session-hash",
+			StartedAt:            now.Add(-42 * time.Minute),
+			LastEventAt:          now.Add(-27 * time.Minute),
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  true,
+		}},
+	}
+	if err := st.UpsertProjectState(ctx, state); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	classification, ok := sessionclassify.BuildClassificationRequest(state)
+	if !ok {
+		t.Fatalf("expected build classification request to succeed")
+	}
+	if queued, err := st.QueueSessionClassification(ctx, classification, time.Minute); err != nil || !queued {
+		t.Fatalf("queue classification: queued=%v err=%v", queued, err)
+	}
+	claimed, err := st.ClaimNextPendingSessionClassification(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("claim classification: %v", err)
+	}
+	claimed.Category = model.SessionCategoryCompleted
+	claimed.Summary = "Work appears complete for now."
+	claimed.Confidence = 0.93
+	if err := st.CompleteSessionClassification(ctx, claimed); err != nil {
+		t.Fatalf("complete classification: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.ActiveThreshold = 20 * time.Minute
+	cfg.StuckThreshold = 4 * time.Hour
+	svc := New(cfg, st, events.NewBus(), nil)
+
+	if err := svc.RefreshProjectStatus(ctx, state.Path); err != nil {
+		t.Fatalf("refresh project status: %v", err)
+	}
+
+	summary, err := st.GetProjectSummary(ctx, state.Path, false)
+	if err != nil {
+		t.Fatalf("GetProjectSummary() error = %v", err)
+	}
+	if summary.AttentionScore != 41 {
+		t.Fatalf("AttentionScore = %d, want 41 for unread completed work", summary.AttentionScore)
+	}
+
+	if err := svc.MarkProjectSessionSeen(ctx, state.Path, time.Now().UTC()); err != nil {
+		t.Fatalf("MarkProjectSessionSeen() error = %v", err)
+	}
+	summary, err = st.GetProjectSummary(ctx, state.Path, false)
+	if err != nil {
+		t.Fatalf("GetProjectSummary() after read error = %v", err)
+	}
+	if summary.AttentionScore != 29 {
+		t.Fatalf("AttentionScore after read = %d, want 29", summary.AttentionScore)
+	}
+	if summary.LastSessionSeenAt.IsZero() {
+		t.Fatalf("LastSessionSeenAt = zero, want populated after read")
+	}
+
+	if err := svc.MarkProjectSessionUnread(ctx, state.Path); err != nil {
+		t.Fatalf("MarkProjectSessionUnread() error = %v", err)
+	}
+	summary, err = st.GetProjectSummary(ctx, state.Path, false)
+	if err != nil {
+		t.Fatalf("GetProjectSummary() after unread error = %v", err)
+	}
+	if summary.AttentionScore != 41 {
+		t.Fatalf("AttentionScore after unread = %d, want 41", summary.AttentionScore)
+	}
+	if !summary.LastSessionSeenAt.IsZero() {
+		t.Fatalf("LastSessionSeenAt = %v, want zero after unread", summary.LastSessionSeenAt)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, state.Path, 10)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() error = %v", err)
+	}
+	found := false
+	for _, reason := range detail.Reasons {
+		if reason.Code == "unread" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected unread reason after MarkProjectSessionUnread, got %#v", detail.Reasons)
 	}
 }
 
