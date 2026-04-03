@@ -48,9 +48,11 @@ type fakeCodexSession struct {
 	toolAnswers   []map[string][]string
 	elicitations  []fakeElicitationResponse
 	statusCalls   int
+	compactCalls  int
 	interrupted   bool
 	refreshCalls  int
 	refreshBusyFn func(*fakeCodexSession) error
+	compactFn     func(*fakeCodexSession) error
 	models        []codexapp.ModelOption
 	modelStages   []struct {
 		Model     string
@@ -100,6 +102,10 @@ func (s *fakeCodexSession) SubmitInput(input codexapp.Submission) error {
 }
 
 func (s *fakeCodexSession) Compact() error {
+	s.compactCalls++
+	if s.compactFn != nil {
+		return s.compactFn(s)
+	}
 	return nil
 }
 
@@ -9560,6 +9566,66 @@ func TestVisibleCodexEnterDoesNotSubmitWhileCompacting(t *testing.T) {
 	}
 }
 
+func TestVisibleCodexCompactSlashUsesStartAndCompletionMessages(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started: true,
+			Preset:  codexcli.PresetYolo,
+			Status:  "Codex session ready",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/compact")
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should queue compaction")
+	}
+	if got.status != "Starting embedded Codex conversation compaction..." {
+		t.Fatalf("status = %q, want explicit compaction start message", got.status)
+	}
+	if session.compactCalls != 0 {
+		t.Fatalf("compact calls = %d before cmd runs, want 0", session.compactCalls)
+	}
+
+	msg := cmd()
+	action, ok := msg.(codexActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexActionMsg", msg)
+	}
+	if action.err != nil {
+		t.Fatalf("compaction returned error = %v", action.err)
+	}
+	if action.status != "Embedded Codex conversation compaction completed" {
+		t.Fatalf("action status = %q, want explicit compaction completion message", action.status)
+	}
+	if session.compactCalls != 1 {
+		t.Fatalf("compact calls = %d, want 1", session.compactCalls)
+	}
+}
+
 func TestVisibleCodexAltUpHidesSession(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
@@ -10462,6 +10528,53 @@ func TestVisibleCodexViewShowsBusyElsewhereWarningBlock(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "Resumed embedded Codex session 019cccc3") {
 		t.Fatalf("busy-elsewhere view should surface the resume warning prominently: %q", rendered)
+	}
+}
+
+func TestVisibleCodexViewShowsCompactingStateInsteadOfBusyElsewhere(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started: true,
+			Preset:  codexcli.PresetYolo,
+			Phase:   codexapp.SessionPhaseReconciling,
+			Busy:    true,
+			Status:  "Compacting conversation history...",
+			Entries: []codexapp.TranscriptEntry{
+				{Kind: codexapp.TranscriptSystem, Text: "Compacting conversation history..."},
+			},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+	m.syncCodexViewport(true)
+
+	rendered := ansi.Strip(m.renderCodexView())
+	if strings.Contains(rendered, "Read-only") {
+		t.Fatalf("compacting view should not show a read-only warning: %q", rendered)
+	}
+	if strings.Contains(rendered, "Working elsewhere") {
+		t.Fatalf("compacting view should not look like an external busy session: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Compacting conversation") {
+		t.Fatalf("compacting view should show an explicit compaction footer: %q", rendered)
 	}
 }
 

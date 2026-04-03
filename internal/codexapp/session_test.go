@@ -1443,6 +1443,57 @@ func TestCompactWaitsForCompletionAndHydratesCompactionEntry(t *testing.T) {
 	}
 }
 
+func TestHydrateCompactingThreadKeepsSessionWritableAndShowsProgress(t *testing.T) {
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		threadID:    "thread_456",
+		compacting:  true,
+		status:      "Compacting conversation history...",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+	}
+
+	thread := resumedThread{
+		ID: "thread_456",
+		Status: resumedThreadStatus{
+			Type: "active",
+		},
+		Turns: []resumedTurn{{
+			ID:     "turn_compact",
+			Status: "inProgress",
+			Items: []map[string]json.RawMessage{{
+				"id":   json.RawMessage(`"item_compact"`),
+				"type": json.RawMessage(`"contextCompaction"`),
+			}},
+		}},
+	}
+
+	s.mu.Lock()
+	s.hydrateResumedThreadLocked(thread)
+	s.syncThreadStatusLocked("thread_456", effectiveThreadStatus(thread), true)
+	s.mu.Unlock()
+
+	snapshot := s.Snapshot()
+	if snapshot.Phase != SessionPhaseReconciling {
+		t.Fatalf("phase = %q, want %q", snapshot.Phase, SessionPhaseReconciling)
+	}
+	if !snapshot.Busy {
+		t.Fatalf("busy = false, want true")
+	}
+	if snapshot.BusyExternal {
+		t.Fatalf("busy external = true, want false during compaction")
+	}
+	if snapshot.Status != "Compacting conversation history..." {
+		t.Fatalf("status = %q, want compaction progress", snapshot.Status)
+	}
+	if len(snapshot.Entries) != 1 {
+		t.Fatalf("entries = %#v, want one compaction progress entry", snapshot.Entries)
+	}
+	if snapshot.Entries[0].Text != "Compacting conversation history..." {
+		t.Fatalf("entry text = %q, want compaction progress transcript", snapshot.Entries[0].Text)
+	}
+}
+
 func TestReconcileBusyStateClearsBusyWhenThreadReadShowsNoActiveTurn(t *testing.T) {
 	s := &appServerSession{
 		projectPath:        "/tmp/demo",

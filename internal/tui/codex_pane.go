@@ -705,7 +705,7 @@ func (m Model) compactVisibleCodexSessionCmd() tea.Cmd {
 		if err := session.Compact(); err != nil {
 			return codexActionMsg{projectPath: projectPath, err: err}
 		}
-		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " conversation compacted"}
+		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " conversation compaction completed"}
 	}
 }
 
@@ -1062,7 +1062,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.status = "Reading embedded " + label + " status..."
 				return m, m.showVisibleCodexStatusCmd()
 			case codexslash.KindCompact:
-				m.status = "Compacting embedded " + label + " conversation..."
+				m.status = "Starting embedded " + label + " conversation compaction..."
 				return m, m.compactVisibleCodexSessionCmd()
 			default:
 				m.status = "Unsupported embedded slash command"

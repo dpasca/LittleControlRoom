@@ -2112,7 +2112,7 @@ func (s *appServerSession) handleItemStarted(params json.RawMessage) {
 	case "agentMessage":
 		s.ensureItemEntryLocked(itemID, TranscriptAgent, "")
 	default:
-		itemID, kind, text := renderResumedThreadItem(msg.Item)
+		itemID, kind, text := renderResumedThreadItemForTurn("inProgress", msg.Item)
 		if strings.TrimSpace(text) != "" && itemType == "commandExecution" && !strings.HasSuffix(text, "\n") {
 			text += "\n"
 		}
@@ -2156,7 +2156,7 @@ func (s *appServerSession) handleItemCompleted(params json.RawMessage) {
 	case "fileChange":
 		s.finalizeFileChangeItemLocked(itemID, msg.Item)
 	default:
-		itemID, kind, text := renderResumedThreadItem(msg.Item)
+		itemID, kind, text := renderResumedThreadItemForTurn("completed", msg.Item)
 		if strings.TrimSpace(text) != "" {
 			s.upsertItemEntryLocked(itemID, kind, text)
 		}
@@ -2831,6 +2831,9 @@ func (s *appServerSession) mergeHistoryItemLocked(itemID string, kind Transcript
 			changed = true
 		case strings.HasPrefix(current, text):
 			return
+		case compactionTranscriptText(current) && compactionTranscriptText(text):
+			s.entries[index].Text = text
+			changed = true
 		}
 		if changed {
 			s.invalidateTranscriptCacheLocked()
@@ -2966,13 +2969,13 @@ func (s *appServerSession) hydrateResumedThreadLocked(thread resumedThread) {
 
 	activeTurnID := activeTurnIDFromThread(thread)
 	busy := activeTurnID != ""
-	busyExternal := busy
+	busyExternal := busy && !s.compacting
 	s.activeItems = nil
 	s.pendingCompletion = nil
 
 	for _, turn := range thread.Turns {
 		for _, item := range turn.Items {
-			itemID, kind, text := renderResumedThreadItem(item)
+			itemID, kind, text := renderResumedThreadItemForTurn(turn.Status, item)
 			s.mergeHistoryItemLocked(itemID, kind, text)
 		}
 		if turn.Status == "failed" && turn.Error != nil && strings.TrimSpace(turn.Error.Message) != "" {
@@ -3359,6 +3362,10 @@ func formatTranscriptEntry(kind TranscriptKind, text string) string {
 }
 
 func renderResumedThreadItem(item map[string]json.RawMessage) (string, TranscriptKind, string) {
+	return renderResumedThreadItemForTurn("", item)
+}
+
+func renderResumedThreadItemForTurn(turnStatus string, item map[string]json.RawMessage) (string, TranscriptKind, string) {
 	itemID := decodeRawString(item["id"])
 	switch decodeRawString(item["type"]) {
 	case "userMessage":
@@ -3457,10 +3464,31 @@ func renderResumedThreadItem(item map[string]json.RawMessage) (string, Transcrip
 		}
 		return itemID, TranscriptSystem, review
 	case "contextCompaction":
+		if compactionStillRunning(item, turnStatus) {
+			return itemID, TranscriptSystem, "Compacting conversation history..."
+		}
 		return itemID, TranscriptSystem, "Conversation history compacted"
 	default:
 		return itemID, TranscriptOther, ""
 	}
+}
+
+func compactionStillRunning(item map[string]json.RawMessage, turnStatus string) bool {
+	status := strings.ToLower(strings.TrimSpace(decodeRawString(item["status"])))
+	if status == "" {
+		status = strings.ToLower(strings.TrimSpace(turnStatus))
+	}
+	switch status {
+	case "active", "inprogress", "in_progress", "pending", "running", "started":
+		return true
+	default:
+		return false
+	}
+}
+
+func compactionTranscriptText(text string) bool {
+	text = strings.TrimSpace(text)
+	return text == "Compacting conversation history..." || text == "Conversation history compacted"
 }
 
 func renderResumedUserMessage(raw json.RawMessage) string {
