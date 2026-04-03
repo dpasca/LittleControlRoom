@@ -1611,6 +1611,29 @@ func (s *Service) ClearSnooze(ctx context.Context, projectPath string) error {
 	return nil
 }
 
+func (s *Service) MarkProjectSessionSeen(ctx context.Context, projectPath string, seenAt time.Time) error {
+	if err := s.store.SetProjectSessionSeenAt(ctx, projectPath, seenAt); err != nil {
+		return err
+	}
+	now := time.Now()
+	s.bus.Publish(events.Event{
+		Type:        events.ActionApplied,
+		At:          now,
+		ProjectPath: projectPath,
+		Payload: map[string]string{
+			"action":  "mark_session_seen",
+			"seen_at": seenAt.Format(time.RFC3339),
+		},
+	})
+	_ = s.store.AddEvent(ctx, model.StoredEvent{
+		At:          now,
+		ProjectPath: projectPath,
+		Type:        string(events.ActionApplied),
+		Payload:     "mark_session_seen",
+	})
+	return nil
+}
+
 func (s *Service) AddTodo(ctx context.Context, projectPath, text string) (model.TodoItem, error) {
 	item, err := s.store.AddTodo(ctx, projectPath, text)
 	if err != nil {

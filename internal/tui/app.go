@@ -214,6 +214,11 @@ type projectSummaryMsg struct {
 	err     error
 }
 
+type projectSessionSeenMsg struct {
+	path string
+	err  error
+}
+
 type scanMsg struct {
 	report service.ScanReport
 	err    error
@@ -1064,6 +1069,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncDetailViewport(true)
 		}
 		return m, nil
+	case projectSessionSeenMsg:
+		if msg.err != nil {
+			m.reportError("Could not mark session as read", msg.err, msg.path)
+		}
+		return m, nil
 	case scanMsg:
 		m.loading = false
 		if msg.err != nil {
@@ -1516,20 +1526,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.reportError("Embedded session open failed", msg.err, msg.projectPath)
 			return m, nil
 		}
-		m.finishCodexPendingOpen(msg.projectPath, true)
+		seenCmd := m.finishCodexPendingOpen(msg.projectPath, true)
 		if m.todoLaunchDraft != nil && strings.TrimSpace(m.todoLaunchDraft.projectPath) == strings.TrimSpace(msg.projectPath) {
 			draft := m.todoLaunchDraft
 			m.todoLaunchDraft = nil
 			if draft.openModelFirst {
 				m.openCodexModelPickerLoading()
 				m.status = "Pick a model, then send the TODO draft."
-				return m, m.openCodexModelPickerCmd()
+				return m, tea.Batch(seenCmd, m.openCodexModelPickerCmd())
 			}
 			m.status = "Fresh " + draft.provider.Label() + " session ready with TODO draft. Edit and press Enter to send."
 		} else {
 			m.status = msg.status
 		}
-		return m, m.codexInput.Focus()
+		return m, tea.Batch(seenCmd, m.codexInput.Focus())
 	case codexActionMsg:
 		m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, msg.err, msg.status)
 		if msg.err != nil {
@@ -2840,7 +2850,7 @@ func (m Model) renderProjectList(width, height int) string {
 			return style
 		}
 		last := formatListActivityTime(now, p.LastActivity)
-		repoIndicator := m.projectRepoWarningIndicator(p, m.spinnerFrame)
+		flagIndicators := m.projectRepoWarningIndicator(p, m.spinnerFrame) + projectUnreadIndicator(p, now, m.assessmentStallThreshold())
 		attention := projectAttentionLabelForScore(m.projectAttentionScore(p))
 		name := p.Name
 		assessmentText := m.projectAssessmentDisplayTextAt(p, now, m.assessmentStallThreshold())
@@ -2871,8 +2881,8 @@ func (m Model) renderProjectList(width, height int) string {
 		runLabel, runState := projectRunSummary(runtimeSnapshot, p.RunCommand)
 		row := lipgloss.JoinHorizontal(
 			lipgloss.Top,
-			repoIndicator+cellStyle(lipgloss.NewStyle().Width(4).Align(lipgloss.Right).Bold(selectedRow)).Render(attention),
-			"  ",
+			flagIndicators+cellStyle(lipgloss.NewStyle().Width(4).Align(lipgloss.Right).Bold(selectedRow)).Render(attention),
+			" ",
 			cellStyle(m.projectListAssessmentStatusStyle(p).Width(8)).Render(projectListStatusAt(p, now, m.assessmentStallThreshold())),
 			" ",
 			cellStyle(lipgloss.NewStyle().Width(10)).Render(last),
@@ -3243,6 +3253,35 @@ func (m Model) loadProjectSummaryCmd(path string) tea.Cmd {
 	}
 }
 
+func (m Model) markProjectSessionSeenCmd(path string, seenAt time.Time) tea.Cmd {
+	if m.svc == nil {
+		return nil
+	}
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "" {
+		return nil
+	}
+	if seenAt.IsZero() {
+		seenAt = m.currentTime()
+	}
+	return func() tea.Msg {
+		return projectSessionSeenMsg{
+			path: path,
+			err:  m.svc.MarkProjectSessionSeen(m.ctx, path, seenAt),
+		}
+	}
+}
+
+func (m *Model) markProjectSessionSeen(projectPath string) tea.Cmd {
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "" {
+		return nil
+	}
+	seenAt := m.currentTime()
+	m.markProjectSessionSeenLocal(projectPath, seenAt)
+	return m.markProjectSessionSeenCmd(projectPath, seenAt)
+}
+
 func (m *Model) upsertProjectSummary(summary model.ProjectSummary) {
 	path := filepath.Clean(strings.TrimSpace(summary.Path))
 	if path == "" {
@@ -3271,6 +3310,29 @@ func (m *Model) removeProjectSummary(projectPath string) {
 		filtered = append(filtered, project)
 	}
 	m.allProjects = filtered
+}
+
+func (m *Model) markProjectSessionSeenLocal(projectPath string, seenAt time.Time) {
+	path := filepath.Clean(strings.TrimSpace(projectPath))
+	if path == "" {
+		return
+	}
+	if seenAt.IsZero() {
+		seenAt = m.currentTime()
+	}
+	for i := range m.allProjects {
+		if filepath.Clean(m.allProjects[i].Path) == path {
+			m.allProjects[i].LastSessionSeenAt = seenAt
+		}
+	}
+	for i := range m.projects {
+		if filepath.Clean(m.projects[i].Path) == path {
+			m.projects[i].LastSessionSeenAt = seenAt
+		}
+	}
+	if filepath.Clean(m.detail.Summary.Path) == path {
+		m.detail.Summary.LastSessionSeenAt = seenAt
+	}
 }
 
 func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
@@ -4176,7 +4238,10 @@ func projectAssessmentStyle(project model.ProjectSummary, now time.Time, stuckTh
 		if projectAssessmentRefreshing(project) {
 			return detailMutedStyle
 		}
-		return detailValueStyle
+		if projectAssessmentUnread(project, now, stuckThreshold) {
+			return detailValueStyle
+		}
+		return detailMutedStyle
 	}
 	return detailMutedStyle
 }
@@ -4650,7 +4715,11 @@ func assessmentDisplayStyle(project model.ProjectSummary, now time.Time, stuckTh
 		if projectAssessmentRefreshing(project) {
 			return detailMutedStyle
 		}
-		return classificationCategoryStyle(category)
+		style := classificationCategoryStyle(category)
+		if projectAssessmentUnread(project, now, stuckThreshold) {
+			return style
+		}
+		return style.Bold(false).Faint(true)
 	}
 	return detailMutedStyle
 }
@@ -4687,6 +4756,13 @@ func projectListStatusAt(project model.ProjectSummary, now time.Time, stuckThres
 		return "new"
 	}
 	return projectActivityStatus(project)
+}
+
+func projectUnreadIndicator(project model.ProjectSummary, now time.Time, stuckThreshold time.Duration) string {
+	if !projectAssessmentUnread(project, now, stuckThreshold) {
+		return " "
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Bold(true).Render("u")
 }
 
 func classificationProgressText(status model.SessionClassificationStatus, stage model.SessionClassificationStage, stageStartedAt, updatedAt, now time.Time, includeAssessmentPrefix bool) string {
@@ -6336,6 +6412,30 @@ func effectiveAssessmentForProject(project model.ProjectSummary, now time.Time, 
 		Now:                  now,
 		StuckThreshold:       stuckThreshold,
 	})
+}
+
+func projectAssessmentUnread(project model.ProjectSummary, now time.Time, stuckThreshold time.Duration) bool {
+	unreadAt := projectAssessmentUnreadAt(project, now, stuckThreshold)
+	if unreadAt.IsZero() {
+		return false
+	}
+	return project.LastSessionSeenAt.IsZero() || project.LastSessionSeenAt.Before(unreadAt)
+}
+
+func projectAssessmentUnreadAt(project model.ProjectSummary, now time.Time, stuckThreshold time.Duration) time.Time {
+	if _, _, ok := visibleAssessmentStatusLabelAt(project, now, stuckThreshold); !ok {
+		return time.Time{}
+	}
+	if project.LatestSessionClassification != model.ClassificationCompleted {
+		return time.Time{}
+	}
+	if project.LatestTurnStateKnown && project.LatestTurnCompleted && !project.LatestSessionLastEventAt.IsZero() {
+		return project.LatestSessionLastEventAt
+	}
+	if !project.LatestSessionClassificationUpdatedAt.IsZero() {
+		return project.LatestSessionClassificationUpdatedAt
+	}
+	return time.Time{}
 }
 
 func assessmentStatusLabel(project model.ProjectSummary, compact bool) (string, model.SessionCategory, bool) {

@@ -612,11 +612,12 @@ func (m Model) showCodexProject(projectPath, status string) (tea.Model, tea.Cmd)
 	m.loadCodexDraft(projectPath)
 	m.refreshCodexSnapshot(projectPath)
 	m.syncCodexViewport(true)
+	seenCmd := m.markProjectSessionSeen(projectPath)
 	if strings.TrimSpace(status) != "" {
 		m.status = status
 	}
 	focusCmd := m.focusProjectPath(projectPath)
-	return m, tea.Batch(m.codexInput.Focus(), focusCmd, m.refreshBusyElsewhereCmd(projectPath))
+	return m, tea.Batch(m.codexInput.Focus(), focusCmd, m.refreshBusyElsewhereCmd(projectPath), seenCmd)
 }
 
 func (m *Model) focusProjectPath(projectPath string) tea.Cmd {
