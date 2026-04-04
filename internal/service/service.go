@@ -30,6 +30,7 @@ import (
 
 const legacyRepoDirName = "BatonDeck"
 const recentActivityDiscoveryWindow = 24 * time.Hour
+const asyncProjectRefreshTimeout = 30 * time.Second
 
 type SessionClassifier interface {
 	QueueProject(ctx context.Context, state model.ProjectState) (bool, error)
@@ -1669,12 +1670,27 @@ func (s *Service) MarkProjectSessionUnread(ctx context.Context, projectPath stri
 	return nil
 }
 
+func (s *Service) refreshProjectStatusAsync(projectPath string) {
+	if s == nil {
+		return
+	}
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "" {
+		return
+	}
+	go func(path string) {
+		ctx, cancel := context.WithTimeout(context.Background(), asyncProjectRefreshTimeout)
+		defer cancel()
+		_ = s.RefreshProjectStatus(ctx, path)
+	}(projectPath)
+}
+
 func (s *Service) AddTodo(ctx context.Context, projectPath, text string) (model.TodoItem, error) {
 	item, err := s.store.AddTodo(ctx, projectPath, text)
 	if err != nil {
 		return model.TodoItem{}, err
 	}
-	_ = s.RefreshProjectStatus(ctx, projectPath)
+	s.refreshProjectStatusAsync(projectPath)
 	now := time.Now()
 	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "add_todo"}})
 	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: "add_todo"})
@@ -1698,7 +1714,7 @@ func (s *Service) ToggleTodoDone(ctx context.Context, projectPath string, id int
 	if err := s.store.ToggleTodoDone(ctx, id, done); err != nil {
 		return err
 	}
-	_ = s.RefreshProjectStatus(ctx, projectPath)
+	s.refreshProjectStatusAsync(projectPath)
 	now := time.Now()
 	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "toggle_todo"}})
 	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: "toggle_todo"})
@@ -1709,7 +1725,7 @@ func (s *Service) DeleteTodo(ctx context.Context, projectPath string, id int64) 
 	if err := s.store.DeleteTodo(ctx, id); err != nil {
 		return err
 	}
-	_ = s.RefreshProjectStatus(ctx, projectPath)
+	s.refreshProjectStatusAsync(projectPath)
 	now := time.Now()
 	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "delete_todo"}})
 	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: "delete_todo"})
@@ -1724,6 +1740,7 @@ func (s *Service) PurgeDoneTodos(ctx context.Context, projectPath string) (int, 
 	if count == 0 {
 		return 0, nil
 	}
+	s.refreshProjectStatusAsync(projectPath)
 	now := time.Now()
 	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "purge_done_todos"}})
 	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: "purge_done_todos"})

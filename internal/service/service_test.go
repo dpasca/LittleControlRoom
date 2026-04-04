@@ -2030,6 +2030,80 @@ func TestPurgeDoneTodosDeletesOnlyCompletedItems(t *testing.T) {
 	}
 }
 
+func TestAddTodoRefreshesProjectStatusAsync(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	svc := New(cfg, st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	const refreshedBranch = "async-refresh-branch"
+	refreshStarted := make(chan struct{}, 1)
+	releaseRefresh := make(chan struct{})
+	svc.gitRepoStatusReader = func(context.Context, string) (scanner.GitRepoStatus, error) {
+		select {
+		case refreshStarted <- struct{}{}:
+		default:
+		}
+		<-releaseRefresh
+		return scanner.GitRepoStatus{Branch: refreshedBranch}, nil
+	}
+
+	addDone := make(chan error, 1)
+	go func() {
+		_, err := svc.AddTodo(ctx, projectPath, "Save should stay responsive")
+		addDone <- err
+	}()
+
+	select {
+	case <-refreshStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for background refresh to reach git status")
+	}
+
+	select {
+	case err := <-addDone:
+		if err != nil {
+			t.Fatalf("AddTodo() error = %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("AddTodo() blocked on project refresh")
+	}
+
+	close(releaseRefresh)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		summary, err := st.GetProjectSummary(ctx, projectPath, false)
+		if err == nil && summary.RepoBranch == refreshedBranch {
+			break
+		}
+		if time.Now().After(deadline) {
+			if err != nil {
+				t.Fatalf("timed out waiting for async refresh summary update: %v", err)
+			}
+			t.Fatalf("repo branch after async refresh = %q, want %q", summary.RepoBranch, refreshedBranch)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestCreateTodoWorktreeCreatesTrackedSiblingProject(t *testing.T) {
 	t.Parallel()
 
