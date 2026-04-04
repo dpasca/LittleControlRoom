@@ -55,6 +55,7 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	saved := cloneEditableSettings(settings)
 	m.settingsBaseline = &saved
 	m.settingsMode = true
+	m.settingsSaving = false
 	m.settingsRevealPrivacy = false
 	m.setupMode = false
 	m.commandMode = false
@@ -67,12 +68,16 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 func (m *Model) closeSettingsMode(status string) {
 	m.blurSettingsFields()
 	m.settingsMode = false
+	m.settingsSaving = false
 	if status != "" {
 		m.status = status
 	}
 }
 
 func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.settingsSaving {
+		return m, nil
+	}
 	switch msg.String() {
 	case "esc":
 		m.closeSettingsMode("Settings edit canceled")
@@ -104,6 +109,7 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		applyEmbeddedModelPreferencesToSettings(&settings, embeddedModelPreferencesFromSettings(m.currentSettingsBaseline()))
 		m.err = nil
+		m.settingsSaving = true
 		m.status = "Saving settings..."
 		return m, m.saveSettingsCmd(settings)
 	case "ctrl+r":
@@ -288,6 +294,10 @@ func (m Model) renderSettingsContent(width, maxHeight int) string {
 		commandPaletteHintStyle.Render("Config: " + truncateText(displayPathWithHomeTilde(m.currentConfigPath()), max(20, width-8))),
 	}
 	lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("AI backend: %s. Use /setup to change it. Scope, filters, and API key save here.", m.currentSettingsBaseline().AIBackend.Label())))
+	if m.settingsSaving {
+		lines = append(lines, "")
+		lines = append(lines, commandPaletteHintStyle.Render("Saving settings..."))
+	}
 
 	labelWidth := m.settingsLabelWidth(width)
 	inputWidth := max(10, width-labelWidth-1)

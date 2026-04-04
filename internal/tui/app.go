@@ -108,10 +108,12 @@ type Model struct {
 	setupMode                    bool
 	setupChecked                 bool
 	setupLoading                 bool
+	setupSaving                  bool
 	setupSelected                int
 	setupModelTier               config.ModelTier
 	setupSnapshot                aibackend.Snapshot
 	settingsMode                 bool
+	settingsSaving               bool
 	settingsFields               []settingsField
 	settingsSelected             int
 	settingsBaseline             *config.EditableSettings
@@ -1658,6 +1660,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 	case settingsSavedMsg:
+		m.settingsSaving = false
 		m.err = nil
 		if msg.err != nil {
 			m.reportError("Settings save failed", msg.err, "")
@@ -1689,6 +1692,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncDetailViewport(true)
 		return m, tea.Batch(cmds...)
 	case setupSavedMsg:
+		m.setupSaving = false
 		m.err = nil
 		if msg.err != nil {
 			m.reportError("AI setup save failed", msg.err, "")

@@ -24,6 +24,7 @@ func (m *Model) openSetupMode() tea.Cmd {
 	m.commandMode = false
 	m.showHelp = false
 	m.err = nil
+	m.setupSaving = false
 	m.setupSelected = m.setupSelectionForBackend(m.recommendedSetupBackend())
 	tier, _ := config.ParseModelTier(m.currentSettingsBaseline().OpenCodeModelTier)
 	m.setupModelTier = tier
@@ -41,6 +42,8 @@ func (m Model) startupSetupSnapshotCmd() tea.Cmd {
 
 func (m *Model) closeSetupMode(status string) {
 	m.setupMode = false
+	m.setupLoading = false
+	m.setupSaving = false
 	if status != "" {
 		m.status = status
 	}
@@ -68,6 +71,9 @@ func (m Model) saveSetupCmd(settings config.EditableSettings) tea.Cmd {
 }
 
 func (m Model) updateSetupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.setupLoading || m.setupSaving {
+		return m, nil
+	}
 	switch msg.String() {
 	case "esc":
 		m.closeSetupMode("AI setup skipped for now. Run /setup anytime.")
@@ -120,6 +126,7 @@ func (m Model) activateSetupSelection() (tea.Model, tea.Cmd) {
 	selectedStatus := m.setupSnapshot.StatusFor(settings.AIBackend)
 	switch settings.AIBackend {
 	case config.AIBackendDisabled:
+		m.setupSaving = true
 		m.status = "Saving AI setup..."
 		return m, m.saveSetupCmd(settings)
 	case config.AIBackendOpenAIAPI:
@@ -127,6 +134,7 @@ func (m Model) activateSetupSelection() (tea.Model, tea.Cmd) {
 			m.status = "OpenAI API key backend selected. Save a key to finish setup."
 			return m, m.openSettingsModeWithBaseline(settings)
 		}
+		m.setupSaving = true
 		m.status = "Saving AI setup..."
 		return m, m.saveSetupCmd(settings)
 	default:
@@ -138,6 +146,7 @@ func (m Model) activateSetupSelection() (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		m.setupSaving = true
 		m.status = "Saving AI setup..."
 		return m, m.saveSetupCmd(settings)
 	}
@@ -210,6 +219,9 @@ func (m Model) renderSetupContent(width, _ int) string {
 	if m.setupLoading {
 		lines = append(lines, "")
 		lines = append(lines, commandPaletteHintStyle.Render("Checking local backend availability..."))
+	} else if m.setupSaving {
+		lines = append(lines, "")
+		lines = append(lines, commandPaletteHintStyle.Render("Saving AI setup..."))
 	}
 	for i, backend := range setupBackendOptions {
 		lines = append(lines, m.renderSetupOptionRow(backend, i == m.setupSelected, width))

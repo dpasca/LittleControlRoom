@@ -12940,6 +12940,60 @@ func TestOpenSetupModeCanPreferReadyClaudeBackend(t *testing.T) {
 	}
 }
 
+func TestSetupLoadingBlocksRepeatRefresh(t *testing.T) {
+	m := Model{
+		setupMode:    true,
+		setupLoading: true,
+		status:       "Refreshing AI backend checks...",
+	}
+
+	updated, cmd := m.updateSetupMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("setup refresh should not queue another command while loading")
+	}
+	if !got.setupLoading {
+		t.Fatalf("setup loading should remain true while the existing refresh is in flight")
+	}
+	if got.status != "Refreshing AI backend checks..." {
+		t.Fatalf("status = %q, want existing refresh status", got.status)
+	}
+}
+
+func TestSetupEnterMarksSavingAndBlocksRepeatEnter(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	m := Model{
+		setupMode:     true,
+		setupSelected: mSetupSelectionForTest(config.AIBackendDisabled),
+		setupSnapshot: aibackend.Snapshot{
+			Selected: config.AIBackendDisabled,
+		},
+	}
+
+	updated, cmd := m.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("setup enter should queue a save command")
+	}
+	if !got.setupSaving {
+		t.Fatalf("setup enter should mark saving in progress")
+	}
+	if got.status != "Saving AI setup..." {
+		t.Fatalf("status = %q, want saving message", got.status)
+	}
+
+	updated, cmd = got.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("setup enter should not queue another save while saving")
+	}
+	if !got.setupSaving {
+		t.Fatalf("setup saving flag should stay true until the save completes")
+	}
+}
+
 func TestRenderSetupHintExplainsClaudeHaikuDefault(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.AIBackend = config.AIBackendClaude
@@ -13473,6 +13527,9 @@ func TestSettingsEnterSavesConfigAndClosesModal(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("expected save command")
 	}
+	if !got.settingsSaving {
+		t.Fatalf("settings enter should mark saving in progress")
+	}
 	if got.status != "Saving settings..." {
 		t.Fatalf("status = %q, want saving message", got.status)
 	}
@@ -13495,6 +13552,30 @@ func TestSettingsEnterSavesConfigAndClosesModal(t *testing.T) {
 	text := string(raw)
 	if !strings.Contains(text, "openai_api_key = \"sk-test-example\"") || !strings.Contains(text, "include_paths = [") || !strings.Contains(text, "exclude_paths = [") || !strings.Contains(text, "exclude_project_patterns = [") || !strings.Contains(text, "codex_launch_preset = \"full-auto\"") || !strings.Contains(text, "interval = \"45s\"") {
 		t.Fatalf("saved config missing edited values: %q", text)
+	}
+}
+
+func TestSettingsSavingBlocksRepeatEnter(t *testing.T) {
+	m := Model{
+		settingsMode:   true,
+		settingsSaving: true,
+		settingsFields: newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
+		status:         "Saving settings...",
+		width:          100,
+		height:         24,
+	}
+	_ = m.setSettingsSelection(0)
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("settings enter should not queue another save while saving")
+	}
+	if !got.settingsSaving {
+		t.Fatalf("settings saving flag should stay true until the save completes")
+	}
+	if got.status != "Saving settings..." {
+		t.Fatalf("status = %q, want existing saving message", got.status)
 	}
 }
 
