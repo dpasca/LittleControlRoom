@@ -240,6 +240,179 @@ func TestProjectRefreshRequestsCoalesceWhileInFlight(t *testing.T) {
 	}
 }
 
+func TestProjectDataRefreshReloadsVisibleDetailOnly(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Path: "/tmp/current",
+			Name: "current",
+		}},
+		selected: 0,
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{
+				Path: "/tmp/current",
+				Name: "current",
+			},
+		},
+	}
+
+	cmd := m.requestProjectDataRefreshCmd("/tmp/current")
+	if cmd == nil {
+		t.Fatal("visible project data refresh should schedule work")
+	}
+	if !m.summaryReloadInFlight["/tmp/current"] {
+		t.Fatal("visible project data refresh should reload the project summary")
+	}
+	if !m.detailReloadInFlight["/tmp/current"] {
+		t.Fatal("visible project data refresh should reload the visible detail pane")
+	}
+
+	hidden := Model{
+		projects: []model.ProjectSummary{{
+			Path: "/tmp/other",
+			Name: "other",
+		}},
+		selected: 0,
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{
+				Path: "/tmp/other",
+				Name: "other",
+			},
+		},
+	}
+
+	cmd = hidden.requestProjectDataRefreshCmd("/tmp/current")
+	if cmd == nil {
+		t.Fatal("hidden project data refresh should still reload summary data")
+	}
+	if !hidden.summaryReloadInFlight["/tmp/current"] {
+		t.Fatal("hidden project data refresh should reload the project summary")
+	}
+	if len(hidden.detailReloadInFlight) != 0 {
+		t.Fatalf("hidden project data refresh should not reload unrelated detail panes: %#v", hidden.detailReloadInFlight)
+	}
+}
+
+func TestRunCommandSavedMsgRefreshesOnlyProjectData(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Path: "/tmp/demo",
+			Name: "demo",
+		}},
+		allProjects: []model.ProjectSummary{{
+			Path: "/tmp/demo",
+			Name: "demo",
+		}},
+		selected: 0,
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{
+				Path: "/tmp/demo",
+				Name: "demo",
+			},
+		},
+		runCommandDialog: &runCommandDialogState{
+			ProjectPath: "/tmp/demo",
+			Submitting:  true,
+		},
+	}
+
+	updated, cmd := m.Update(runCommandSavedMsg{
+		projectPath: "/tmp/demo",
+	})
+	got := updated.(Model)
+
+	if cmd == nil {
+		t.Fatal("run command save should schedule a refresh")
+	}
+	if got.projectsReloadInFlight {
+		t.Fatal("run command save should not force a full project list reload")
+	}
+	if !got.summaryReloadInFlight["/tmp/demo"] {
+		t.Fatal("run command save should reload the updated project summary")
+	}
+	if !got.detailReloadInFlight["/tmp/demo"] {
+		t.Fatal("run command save should reload the visible project detail")
+	}
+	if got.runCommandDialog != nil {
+		t.Fatal("run command dialog should close after a successful save")
+	}
+	if got.status != "Saved run command" {
+		t.Fatalf("status = %q, want saved message", got.status)
+	}
+}
+
+func TestBusProjectChangedRefreshesOnlyProjectDataWhenPathKnown(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Path: "/tmp/demo",
+			Name: "demo",
+		}},
+		selected: 0,
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{
+				Path: "/tmp/demo",
+				Name: "demo",
+			},
+		},
+	}
+
+	updated, cmd := m.Update(busMsg{
+		Type:        events.ProjectChanged,
+		ProjectPath: "/tmp/demo",
+	})
+	got := updated.(Model)
+
+	if cmd == nil {
+		t.Fatal("project changed event should schedule a refresh")
+	}
+	if got.projectsReloadInFlight {
+		t.Fatal("project changed event with a path should not reload the whole project list")
+	}
+	if !got.summaryReloadInFlight["/tmp/demo"] {
+		t.Fatal("project changed event should reload the updated project summary")
+	}
+	if !got.detailReloadInFlight["/tmp/demo"] {
+		t.Fatal("project changed event should reload the visible detail pane")
+	}
+}
+
+func TestBusProjectMovedRefreshesProjectStructureAndSelectedDetail(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Path: "/tmp/demo",
+			Name: "demo",
+		}},
+		selected: 0,
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{
+				Path: "/tmp/demo",
+				Name: "demo",
+			},
+		},
+	}
+
+	updated, cmd := m.Update(busMsg{
+		Type:        events.ProjectMoved,
+		ProjectPath: "/tmp/demo",
+	})
+	got := updated.(Model)
+
+	if cmd == nil {
+		t.Fatal("project moved event should schedule a refresh")
+	}
+	if !got.projectsReloadInFlight {
+		t.Fatal("project moved event should reload the project list")
+	}
+	if got.scanInFlight {
+		t.Fatal("project moved event should not queue a full scan")
+	}
+	if !got.detailReloadInFlight["/tmp/demo"] {
+		t.Fatal("project moved event should reload the selected project detail")
+	}
+	if len(got.summaryReloadInFlight) != 0 {
+		t.Fatalf("project moved event should not queue per-project summary reloads: %#v", got.summaryReloadInFlight)
+	}
+}
+
 func TestDetailMsgIgnoresStaleSelectionResult(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{
