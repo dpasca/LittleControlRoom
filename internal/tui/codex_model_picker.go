@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -38,14 +39,23 @@ func (m Model) codexModelPickerVisible() bool {
 }
 
 func (m *Model) openCodexModelPickerCmd() tea.Cmd {
-	session, ok := m.currentCodexSession()
-	if !ok {
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	if m.codexManager == nil || projectPath == "" {
 		return nil
 	}
-	projectPath := m.codexVisibleProject
 	perfOpID := m.beginAILatencyOp("Model list", projectPath, m.currentEmbeddedSessionLabel())
+	manager := m.codexManager
 	return func() tea.Msg {
 		startedAt := time.Now()
+		session, ok := manager.Session(projectPath)
+		if !ok {
+			return codexModelListMsg{
+				projectPath:  projectPath,
+				perfOpID:     perfOpID,
+				perfDuration: time.Since(startedAt),
+				err:          errors.New("embedded session unavailable"),
+			}
+		}
 		models, err := session.ListModels()
 		return codexModelListMsg{
 			projectPath:  projectPath,
@@ -616,11 +626,6 @@ func (m *Model) moveCodexModelPickerSelection(delta int) {
 }
 
 func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
-	session, ok := m.currentCodexSession()
-	if !ok {
-		m.closeCodexModelPickerAndReturnToTodo("Embedded session unavailable")
-		return m, nil
-	}
 	modelOption, ok := m.currentCodexModelOption()
 	if !ok {
 		m.closeCodexModelPickerAndReturnToTodo("No embedded " + m.currentEmbeddedSessionLabel() + " models are available")
@@ -631,7 +636,7 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 		effort = strings.TrimSpace(selectedEffort.ReasoningEffort)
 	}
 	modelName := strings.TrimSpace(modelOption.Model)
-	projectPath := m.codexVisibleProject
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
 	snapshot, _ := m.currentCodexSnapshot()
 	provider := embeddedProvider(snapshot)
 	if provider.Normalized() == "" {
@@ -640,8 +645,26 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 	perfOpID := m.beginAILatencyOp("Model apply", projectPath, strings.TrimSpace(provider.Label()+" "+modelName+" "+effort))
 	m.closeCodexModelPicker("")
 	m.status = fmt.Sprintf("Staging %s (%s)...", modelName, effort)
+	manager := m.codexManager
 	return m, func() tea.Msg {
 		startedAt := time.Now()
+		if manager == nil {
+			return codexActionMsg{
+				projectPath:  projectPath,
+				perfOpID:     perfOpID,
+				perfDuration: time.Since(startedAt),
+				err:          errors.New("embedded session unavailable"),
+			}
+		}
+		session, ok := manager.Session(projectPath)
+		if !ok {
+			return codexActionMsg{
+				projectPath:  projectPath,
+				perfOpID:     perfOpID,
+				perfDuration: time.Since(startedAt),
+				err:          errors.New("embedded session unavailable"),
+			}
+		}
 		if err := session.StageModelOverride(modelName, effort); err != nil {
 			return codexActionMsg{
 				projectPath:  projectPath,

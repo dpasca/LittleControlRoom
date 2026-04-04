@@ -230,6 +230,24 @@ func (m Model) currentCodexSession() (codexapp.Session, bool) {
 	return m.codexSession(m.codexVisibleProject)
 }
 
+func (m Model) codexSessionCmd(projectPath string, missing func() tea.Msg, run func(codexapp.Session) tea.Msg) tea.Cmd {
+	projectPath = strings.TrimSpace(projectPath)
+	manager := m.codexManager
+	if manager == nil || projectPath == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		session, ok := manager.Session(projectPath)
+		if !ok {
+			if missing != nil {
+				return missing()
+			}
+			return codexActionMsg{projectPath: projectPath, err: errors.New("embedded session unavailable")}
+		}
+		return run(session)
+	}
+}
+
 // codexCachedSnapshot returns the latest cached snapshot for UI/render paths
 // without touching the live manager or session locks.
 func (m Model) codexCachedSnapshot(projectPath string) (codexapp.Snapshot, bool) {
@@ -728,11 +746,10 @@ func embeddedSessionReconnectStatus(req codexapp.LaunchRequest, snapshot codexap
 }
 
 func (m Model) submitVisibleCodexCmd(draft codexDraft) tea.Cmd {
-	session, ok := m.currentCodexSession()
-	if !ok {
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	if projectPath == "" {
 		return nil
 	}
-	projectPath := m.codexVisibleProject
 	submission := draft.Submission()
 	steer := false
 	label := "Codex"
@@ -740,7 +757,9 @@ func (m Model) submitVisibleCodexCmd(draft codexDraft) tea.Cmd {
 		steer = codexSnapshotCanSteer(snapshot)
 		label = embeddedProvider(snapshot).Label()
 	}
-	return func() tea.Msg {
+	return m.codexSessionCmd(projectPath, func() tea.Msg {
+		return codexActionMsg{projectPath: projectPath, restoreDraft: draft, err: errors.New("embedded session unavailable")}
+	}, func(session codexapp.Session) tea.Msg {
 		if err := session.SubmitInput(submission); err != nil {
 			return codexActionMsg{projectPath: projectPath, restoreDraft: draft, err: err}
 		}
@@ -749,25 +768,24 @@ func (m Model) submitVisibleCodexCmd(draft codexDraft) tea.Cmd {
 			status = "Follow-up sent to " + label
 		}
 		return codexActionMsg{projectPath: projectPath, status: status}
-	}
+	})
 }
 
 func (m Model) showVisibleCodexStatusCmd() tea.Cmd {
-	session, ok := m.currentCodexSession()
-	if !ok {
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	if projectPath == "" {
 		return nil
 	}
-	projectPath := m.codexVisibleProject
 	label := "Codex"
 	if snapshot, ok := m.currentCodexSnapshot(); ok {
 		label = embeddedProvider(snapshot).Label()
 	}
-	return func() tea.Msg {
+	return m.codexSessionCmd(projectPath, nil, func(session codexapp.Session) tea.Msg {
 		if err := session.ShowStatus(); err != nil {
 			return codexActionMsg{projectPath: projectPath, err: err}
 		}
 		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " status added to the transcript"}
-	}
+	})
 }
 
 func (m Model) restartVisibleCodexSessionCmd(prompt string) tea.Cmd {
@@ -797,21 +815,20 @@ func (m Model) restartVisibleCodexSessionCmd(prompt string) tea.Cmd {
 }
 
 func (m Model) compactVisibleCodexSessionCmd() tea.Cmd {
-	session, ok := m.currentCodexSession()
-	if !ok {
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	if projectPath == "" {
 		return nil
 	}
-	projectPath := m.codexVisibleProject
 	label := "Codex"
 	if snapshot, ok := m.currentCodexSnapshot(); ok {
 		label = embeddedProvider(snapshot).Label()
 	}
-	return func() tea.Msg {
+	return m.codexSessionCmd(projectPath, nil, func(session codexapp.Session) tea.Msg {
 		if err := session.Compact(); err != nil {
 			return codexActionMsg{projectPath: projectPath, err: err}
 		}
 		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " conversation compaction completed"}
-	}
+	})
 }
 
 func (m Model) reconnectVisibleCodexSessionCmd() tea.Cmd {
@@ -858,20 +875,20 @@ func (m Model) reconnectVisibleCodexSessionCmd() tea.Cmd {
 }
 
 func (m Model) interruptVisibleCodexCmd() tea.Cmd {
-	session, ok := m.currentCodexSession()
-	if !ok {
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	if projectPath == "" {
 		return nil
 	}
 	label := "Codex"
 	if snapshot, ok := m.currentCodexSnapshot(); ok {
 		label = embeddedProvider(snapshot).Label()
 	}
-	return func() tea.Msg {
+	return m.codexSessionCmd(projectPath, nil, func(session codexapp.Session) tea.Msg {
 		if err := session.Interrupt(); err != nil {
-			return codexActionMsg{err: err}
+			return codexActionMsg{projectPath: projectPath, err: err}
 		}
-		return codexActionMsg{status: "Interrupt sent to " + label}
-	}
+		return codexActionMsg{projectPath: projectPath, status: "Interrupt sent to " + label}
+	})
 }
 
 func (m Model) closeVisibleCodexCmd() tea.Cmd {
@@ -897,56 +914,56 @@ func (m Model) closeVisibleCodexCmd() tea.Cmd {
 }
 
 func (m Model) respondVisibleApprovalCmd(decision codexapp.ApprovalDecision) tea.Cmd {
-	session, ok := m.currentCodexSession()
-	if !ok {
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	if projectPath == "" {
 		return nil
 	}
 	label := "Codex"
 	if snapshot, ok := m.currentCodexSnapshot(); ok {
 		label = embeddedProvider(snapshot).Label()
 	}
-	return func() tea.Msg {
+	return m.codexSessionCmd(projectPath, nil, func(session codexapp.Session) tea.Msg {
 		if err := session.RespondApproval(decision); err != nil {
-			return codexActionMsg{err: err}
+			return codexActionMsg{projectPath: projectPath, err: err}
 		}
-		return codexActionMsg{status: "Approval decision sent to " + label}
-	}
+		return codexActionMsg{projectPath: projectPath, status: "Approval decision sent to " + label}
+	})
 }
 
 func (m Model) respondVisibleToolInputCmd(answers map[string][]string) tea.Cmd {
-	session, ok := m.currentCodexSession()
-	if !ok {
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	if projectPath == "" {
 		return nil
 	}
-	projectPath := m.codexVisibleProject
 	label := "Codex"
 	if snapshot, ok := m.currentCodexSnapshot(); ok {
 		label = embeddedProvider(snapshot).Label()
 	}
-	return func() tea.Msg {
+	return m.codexSessionCmd(projectPath, nil, func(session codexapp.Session) tea.Msg {
 		if err := session.RespondToolInput(answers); err != nil {
 			return codexActionMsg{projectPath: projectPath, err: err}
 		}
 		return codexActionMsg{projectPath: projectPath, status: "Structured input sent to " + label}
-	}
+	})
 }
 
 func (m Model) respondVisibleElicitationCmd(decision codexapp.ElicitationDecision, content json.RawMessage, restoreDraft codexDraft) tea.Cmd {
-	session, ok := m.currentCodexSession()
-	if !ok {
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	if projectPath == "" {
 		return nil
 	}
-	projectPath := m.codexVisibleProject
 	label := "Codex"
 	if snapshot, ok := m.currentCodexSnapshot(); ok {
 		label = embeddedProvider(snapshot).Label()
 	}
-	return func() tea.Msg {
+	return m.codexSessionCmd(projectPath, func() tea.Msg {
+		return codexActionMsg{projectPath: projectPath, restoreDraft: restoreDraft, err: errors.New("embedded session unavailable")}
+	}, func(session codexapp.Session) tea.Msg {
 		if err := session.RespondElicitation(decision, content); err != nil {
 			return codexActionMsg{projectPath: projectPath, restoreDraft: restoreDraft, err: err}
 		}
 		return codexActionMsg{projectPath: projectPath, status: "MCP input sent to " + label}
-	}
+	})
 }
 
 func (m Model) toggleCodexVisibility() (tea.Model, tea.Cmd) {

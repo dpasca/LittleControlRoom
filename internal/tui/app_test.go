@@ -5754,6 +5754,57 @@ func TestLiveCodexSnapshotsUseCachedMapInsteadOfManagerSnapshots(t *testing.T) {
 	}
 }
 
+func TestSubmitVisibleCodexCmdDefersSessionLookupUntilRun(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started:     true,
+			Provider:    codexapp.ProviderCodex,
+			ProjectPath: "/tmp/demo",
+			ThreadID:    "thread-demo",
+			Status:      "Codex session ready",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": session.snapshot,
+		},
+	}
+
+	cmd := m.submitVisibleCodexCmd(codexDraft{Text: "summarize this repo"})
+	if cmd == nil {
+		t.Fatalf("submitVisibleCodexCmd() = nil, want deferred command")
+	}
+
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderCodex,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	msg := cmd()
+	action, ok := msg.(codexActionMsg)
+	if !ok {
+		t.Fatalf("submitVisibleCodexCmd() message = %T, want codexActionMsg", msg)
+	}
+	if action.err != nil {
+		t.Fatalf("submitVisibleCodexCmd() err = %v, want nil", action.err)
+	}
+	if len(session.submissions) != 1 {
+		t.Fatalf("submitted inputs = %d, want 1", len(session.submissions))
+	}
+	if got := session.submissions[0].Text; got != "summarize this repo" {
+		t.Fatalf("submitted text = %q, want summarize this repo", got)
+	}
+}
+
 func TestVisibleCodexEnterSubmitsPrompt(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
