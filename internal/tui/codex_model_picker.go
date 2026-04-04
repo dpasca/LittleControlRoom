@@ -439,25 +439,26 @@ func (m Model) updateCodexModelPickerFilterMode(msg tea.KeyMsg) (tea.Model, tea.
 		m.closeCodexModelPickerAndReturnToTodo("Embedded model picker canceled")
 		return m, nil
 	case "enter":
-		if len(state.RecentModels) > 0 {
-			state.Focus = codexModelPickerFocusRecent
-			m.setCodexModelPickerModel(state.RecentModels[state.RecentIndex], "")
-			m.status = "Choosing from recent models"
-		} else if len(state.FilteredModels) > 0 {
-			state.Focus = codexModelPickerFocusModels
-			m.setCodexModelPickerModel(state.FilteredModels[state.ModelIndex], "")
-			m.status = "Choosing embedded model"
-		}
+		m.focusCodexModelPickerListFromFilter()
 		return m, nil
 	case "tab":
-		if len(state.RecentModels) > 0 {
-			state.Focus = codexModelPickerFocusRecent
-			m.setCodexModelPickerModel(state.RecentModels[state.RecentIndex], "")
-			m.status = "Choosing from recent models"
-		} else if len(state.FilteredModels) > 0 {
-			state.Focus = codexModelPickerFocusModels
-			m.setCodexModelPickerModel(state.FilteredModels[state.ModelIndex], "")
-			m.status = "Choosing embedded model"
+		m.focusCodexModelPickerListFromFilter()
+		return m, nil
+	case "down", "j", "pgdown", "ctrl+d", "home", "end":
+		if !m.focusCodexModelPickerListFromFilter() {
+			return m, nil
+		}
+		if msg.String() == "end" {
+			state = m.codexModelPicker
+			if state == nil {
+				return m, nil
+			}
+			if state.Focus == codexModelPickerFocusRecent {
+				state.RecentIndex = max(0, len(state.RecentModels)-1)
+			} else if state.Focus == codexModelPickerFocusModels {
+				state.ModelIndex = max(0, len(state.FilteredModels)-1)
+			}
+			m.syncCodexModelPickerSelection()
 		}
 		return m, nil
 	case "backspace":
@@ -475,6 +476,26 @@ func (m Model) updateCodexModelPickerFilterMode(msg tea.KeyMsg) (tea.Model, tea.
 	}
 
 	return m, nil
+}
+
+func (m *Model) focusCodexModelPickerListFromFilter() bool {
+	state := m.codexModelPicker
+	if state == nil {
+		return false
+	}
+	if len(state.RecentModels) > 0 {
+		state.Focus = codexModelPickerFocusRecent
+		m.setCodexModelPickerModel(state.RecentModels[state.RecentIndex], "")
+		m.status = "Choosing from recent models"
+		return true
+	}
+	if len(state.FilteredModels) > 0 {
+		state.Focus = codexModelPickerFocusModels
+		m.setCodexModelPickerModel(state.FilteredModels[state.ModelIndex], "")
+		m.status = "Choosing embedded model"
+		return true
+	}
+	return false
 }
 
 func (m *Model) applyCodexModelPickerFilter() {
@@ -772,7 +793,7 @@ func (m Model) renderCodexModelPickerContent(width, maxHeight int) string {
 		start, end := codexPickerWindowFor(state.RecentIndex, len(state.RecentModels), 5)
 		selectedModel, _ := m.currentCodexModelOption()
 		for i := start; i < end; i++ {
-			leftLines = append(leftLines, m.renderCodexModelPickerRow(state.RecentModels[i], codexSameModelOption(state.RecentModels[i], selectedModel), leftWidth))
+			leftLines = append(leftLines, m.renderCodexModelPickerRow(state.RecentModels[i], codexSameModelOption(state.RecentModels[i], selectedModel), leftWidth, state.Focus == codexModelPickerFocusRecent))
 		}
 		leftLines = append(leftLines, "")
 	}
@@ -795,7 +816,7 @@ func (m Model) renderCodexModelPickerContent(width, maxHeight int) string {
 		}
 		selectedModel, _ := m.currentCodexModelOption()
 		for i := start; i < end; i++ {
-			leftLines = append(leftLines, m.renderCodexModelPickerRow(state.FilteredModels[i], codexSameModelOption(state.FilteredModels[i], selectedModel), leftWidth))
+			leftLines = append(leftLines, m.renderCodexModelPickerRow(state.FilteredModels[i], codexSameModelOption(state.FilteredModels[i], selectedModel), leftWidth, state.Focus == codexModelPickerFocusModels))
 		}
 		if end < len(state.FilteredModels) {
 			leftLines = append(leftLines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d more", len(state.FilteredModels)-end)))
@@ -846,7 +867,7 @@ func (m Model) renderCodexModelPickerContent(width, maxHeight int) string {
 	return strings.Join(header, "\n")
 }
 
-func (m Model) renderCodexModelPickerRow(option codexapp.ModelOption, selected bool, width int) string {
+func (m Model) renderCodexModelPickerRow(option codexapp.ModelOption, selected bool, width int, focused bool) string {
 	parts := []string{}
 	label := strings.TrimSpace(option.DisplayName)
 	if label == "" {
@@ -862,7 +883,7 @@ func (m Model) renderCodexModelPickerRow(option codexapp.ModelOption, selected b
 	row := strings.Join(parts, "  ")
 	if selected {
 		prefix := "> "
-		if m.codexModelPicker != nil && m.codexModelPicker.Focus == codexModelPickerFocusModels {
+		if focused {
 			prefix = "> "
 		} else {
 			prefix = "* "

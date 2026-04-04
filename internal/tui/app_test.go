@@ -6396,6 +6396,145 @@ func TestVisibleCodexSlashModelKeepsRecentSelectionWhenChoosingReasoning(t *test
 	}
 }
 
+func TestVisibleCodexSlashModelArrowDownEntersRecentModels(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			ThreadID:        "thread-demo",
+			Started:         true,
+			Preset:          codexcli.PresetYolo,
+			Status:          "Codex ready",
+			Model:           "gpt-5",
+			ReasoningEffort: "medium",
+		},
+		models: []codexapp.ModelOption{
+			{
+				ID:          "gpt-5",
+				Model:       "gpt-5",
+				DisplayName: "GPT-5",
+				Description: "Balanced default",
+				IsDefault:   true,
+				SupportedReasoningEfforts: []codexapp.ReasoningEffortOption{
+					{ReasoningEffort: "medium", Description: "Balanced"},
+					{ReasoningEffort: "high", Description: "More deliberate"},
+				},
+				DefaultReasoningEffort: "medium",
+			},
+			{
+				ID:          "gpt-5-codex",
+				Model:       "gpt-5-codex",
+				DisplayName: "GPT-5 Codex",
+				Description: "Specialized coding model",
+				SupportedReasoningEfforts: []codexapp.ReasoningEffortOption{
+					{ReasoningEffort: "low", Description: "Fast"},
+					{ReasoningEffort: "medium", Description: "Balanced"},
+					{ReasoningEffort: "high", Description: "Thorough"},
+				},
+				DefaultReasoningEffort: "medium",
+			},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/model")
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              28,
+		recentCodexModels:   []string{"gpt-5", "gpt-5-codex"},
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should open the embedded /model picker")
+	}
+
+	msg := cmd()
+	listMsg, ok := msg.(codexModelListMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexModelListMsg", msg)
+	}
+	updated, _ = got.Update(listMsg)
+	got = updated.(Model)
+	if !got.codexModelPickerVisible() || got.codexModelPicker.Loading {
+		t.Fatalf("model picker should be visible with loaded models")
+	}
+	if got.codexModelPicker.Focus != codexModelPickerFocusFilter {
+		t.Fatalf("initial picker focus = %q, want filter", got.codexModelPicker.Focus)
+	}
+
+	updated, _ = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	if got.codexModelPicker.Focus != codexModelPickerFocusRecent {
+		t.Fatalf("picker focus after first down = %q, want recent", got.codexModelPicker.Focus)
+	}
+	modelOption, ok := got.currentCodexModelOption()
+	if !ok || modelOption.Model != "gpt-5" {
+		t.Fatalf("selected model after entering recent = %#v, want gpt-5", modelOption)
+	}
+
+	updated, _ = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	if got.codexModelPicker.RecentIndex != 1 {
+		t.Fatalf("recent index after second down = %d, want 1", got.codexModelPicker.RecentIndex)
+	}
+	modelOption, ok = got.currentCodexModelOption()
+	if !ok || modelOption.Model != "gpt-5-codex" {
+		t.Fatalf("selected model after moving within recent = %#v, want gpt-5-codex", modelOption)
+	}
+}
+
+func TestRenderCodexModelPickerMarksRecentFocus(t *testing.T) {
+	models := []codexapp.ModelOption{
+		{
+			ID:                     "gpt-5",
+			Model:                  "gpt-5",
+			DisplayName:            "GPT-5",
+			DefaultReasoningEffort: "medium",
+		},
+		{
+			ID:                     "gpt-5-codex",
+			Model:                  "gpt-5-codex",
+			DisplayName:            "GPT-5 Codex",
+			DefaultReasoningEffort: "medium",
+		},
+	}
+	m := Model{
+		codexModelPicker: &codexModelPickerState{
+			Models:         append([]codexapp.ModelOption(nil), models...),
+			FilteredModels: append([]codexapp.ModelOption(nil), models...),
+			RecentModels:   []codexapp.ModelOption{models[1]},
+			SelectedModel:  "gpt-5-codex",
+			ModelIndex:     1,
+			RecentIndex:    0,
+			Focus:          codexModelPickerFocusRecent,
+		},
+	}
+
+	rendered := ansi.Strip(m.renderCodexModelPickerContent(80, 24))
+	if !strings.Contains(rendered, "> GPT-5 Codex") {
+		t.Fatalf("rendered picker should mark the focused recent row with >: %q", rendered)
+	}
+	if !strings.Contains(rendered, "* GPT-5 Codex") {
+		t.Fatalf("rendered picker should keep the model list row as secondary selection: %q", rendered)
+	}
+}
+
 func TestVisibleCodexSlashResumeOpensPickerAndLoadsChoices(t *testing.T) {
 	modernFixture := filepath.Clean(filepath.Join("..", "..", "testdata", "codex_footprint", "sessions", "2026", "03", "05", "rollout-modern.jsonl"))
 	session := &fakeCodexSession{
