@@ -5377,6 +5377,64 @@ func TestEmbeddedSnapshotHelpersUseCachedSnapshotWhenTrySnapshotIsContended(t *t
 	}
 }
 
+func TestLiveCodexSnapshotsUseCachedMapInsteadOfManagerSnapshots(t *testing.T) {
+	sessionA := &fakeCodexSession{
+		projectPath: "/tmp/demo-a",
+		snapshot: codexapp.Snapshot{
+			Started:        true,
+			ProjectPath:    "/tmp/demo-a",
+			ThreadID:       "thread-a",
+			LastActivityAt: time.Date(2026, 4, 4, 12, 0, 0, 0, time.UTC),
+		},
+	}
+	sessionB := &fakeCodexSession{
+		projectPath: "/tmp/demo-b",
+		snapshot: codexapp.Snapshot{
+			Started:        true,
+			ProjectPath:    "/tmp/demo-b",
+			ThreadID:       "thread-b",
+			LastActivityAt: time.Date(2026, 4, 4, 12, 5, 0, 0, time.UTC),
+		},
+	}
+	sessions := map[string]*fakeCodexSession{
+		sessionA.projectPath: sessionA,
+		sessionB.projectPath: sessionB,
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		session, ok := sessions[req.ProjectPath]
+		if !ok {
+			return nil, fmt.Errorf("unexpected project %q", req.ProjectPath)
+		}
+		return session, nil
+	})
+	for _, projectPath := range []string{sessionA.projectPath, sessionB.projectPath} {
+		if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: projectPath}); err != nil {
+			t.Fatalf("manager.Open(%q) error = %v", projectPath, err)
+		}
+	}
+	sessionA.snapshotCalls = 0
+	sessionB.snapshotCalls = 0
+
+	m := Model{
+		codexManager: manager,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			sessionA.projectPath: sessionA.snapshot,
+			sessionB.projectPath: sessionB.snapshot,
+		},
+	}
+
+	snapshots := m.liveCodexSnapshots()
+	if len(snapshots) != 2 {
+		t.Fatalf("liveCodexSnapshots() len = %d, want 2", len(snapshots))
+	}
+	if snapshots[0].ProjectPath != sessionB.projectPath || snapshots[1].ProjectPath != sessionA.projectPath {
+		t.Fatalf("liveCodexSnapshots() order = [%q, %q], want most recent cached session first", snapshots[0].ProjectPath, snapshots[1].ProjectPath)
+	}
+	if sessionA.snapshotCalls != 0 || sessionB.snapshotCalls != 0 {
+		t.Fatalf("liveCodexSnapshots() should not consult manager session snapshots; calls = %d/%d", sessionA.snapshotCalls, sessionB.snapshotCalls)
+	}
+}
+
 func TestVisibleCodexEnterSubmitsPrompt(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
@@ -10604,11 +10662,15 @@ func TestVisibleCodexF3CyclesLiveSessions(t *testing.T) {
 		codexManager:        manager,
 		codexVisibleProject: "/tmp/a",
 		codexHiddenProject:  "/tmp/a",
-		codexInput:          newCodexTextarea(),
-		codexDrafts:         make(map[string]codexDraft),
-		codexViewport:       viewport.New(0, 0),
-		width:               100,
-		height:              24,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/a": sessionA.snapshot,
+			"/tmp/b": sessionB.snapshot,
+		},
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
 	}
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyF3})
@@ -10666,11 +10728,15 @@ func TestVisibleCodexAltBracketCyclesLiveSessions(t *testing.T) {
 		codexManager:        manager,
 		codexVisibleProject: "/tmp/a",
 		codexHiddenProject:  "/tmp/a",
-		codexInput:          newCodexTextarea(),
-		codexDrafts:         make(map[string]codexDraft),
-		codexViewport:       viewport.New(0, 0),
-		width:               100,
-		height:              24,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/a": sessionA.snapshot,
+			"/tmp/b": sessionB.snapshot,
+		},
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
 	}
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}, Alt: true})
@@ -10740,9 +10806,13 @@ func TestVisibleCodexAltUpReturnsToLastEmbeddedProjectSelection(t *testing.T) {
 		codexManager:        manager,
 		codexVisibleProject: "/tmp/a",
 		codexHiddenProject:  "/tmp/a",
-		codexInput:          newCodexTextarea(),
-		codexDrafts:         make(map[string]codexDraft),
-		codexViewport:       viewport.New(0, 0),
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/a": sessionA.snapshot,
+			"/tmp/b": sessionB.snapshot,
+		},
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
 		projects: []model.ProjectSummary{
 			{Path: "/tmp/a", Name: "a", PresentOnDisk: true},
 			{Path: "/tmp/b", Name: "b", PresentOnDisk: true},

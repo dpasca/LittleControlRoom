@@ -525,12 +525,14 @@ func (m *Model) setCodexComposerValue(text string, cursorOffset int) {
 }
 
 func (m Model) liveCodexSnapshots() []codexapp.Snapshot {
-	if m.codexManager == nil {
+	if len(m.codexSnapshots) == 0 {
 		return nil
 	}
-	snapshots := m.codexManager.Snapshots()
-	live := make([]codexapp.Snapshot, 0, len(snapshots))
-	for _, snapshot := range snapshots {
+	live := make([]codexapp.Snapshot, 0, len(m.codexSnapshots))
+	for projectPath, snapshot := range m.codexSnapshots {
+		if strings.TrimSpace(snapshot.ProjectPath) == "" {
+			snapshot.ProjectPath = strings.TrimSpace(projectPath)
+		}
 		if snapshot.Closed || strings.TrimSpace(snapshot.ProjectPath) == "" {
 			continue
 		}
