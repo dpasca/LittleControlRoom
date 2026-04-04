@@ -84,7 +84,7 @@ func (m Model) waitCodexCmd() tea.Cmd {
 }
 
 func (m Model) codexVisible() bool {
-	return strings.TrimSpace(m.codexVisibleProject) != "" || strings.TrimSpace(m.codexPendingOpenProject()) != ""
+	return strings.TrimSpace(m.codexVisibleProject) != "" || m.codexPendingOpenVisible()
 }
 
 func (m Model) codexPendingOpenProject() string {
@@ -92,6 +92,16 @@ func (m Model) codexPendingOpenProject() string {
 		return ""
 	}
 	return strings.TrimSpace(m.codexPendingOpen.projectPath)
+}
+
+func (m Model) codexPendingOpenVisible() bool {
+	if m.codexPendingOpen == nil {
+		return false
+	}
+	if !m.codexPendingOpen.showWhilePending {
+		return false
+	}
+	return strings.TrimSpace(m.codexPendingOpen.projectPath) != ""
 }
 
 func (m Model) codexPendingOpenProvider() codexapp.Provider {
@@ -141,6 +151,10 @@ func embeddedNewCommand(provider codexapp.Provider) string {
 }
 
 func (m *Model) beginCodexPendingOpen(projectPath string, provider codexapp.Provider) {
+	m.beginCodexPendingOpenWithVisibility(projectPath, provider, true)
+}
+
+func (m *Model) beginCodexPendingOpenWithVisibility(projectPath string, provider codexapp.Provider, showWhilePending bool) {
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
 		m.codexPendingOpen = nil
@@ -150,8 +164,9 @@ func (m *Model) beginCodexPendingOpen(projectPath string, provider codexapp.Prov
 		m.persistVisibleCodexDraft()
 	}
 	m.codexPendingOpen = &codexPendingOpenState{
-		projectPath: projectPath,
-		provider:    provider.Normalized(),
+		projectPath:      projectPath,
+		provider:         provider.Normalized(),
+		showWhilePending: showWhilePending,
 	}
 }
 

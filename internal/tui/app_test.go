@@ -6942,6 +6942,9 @@ func TestTodoDialogCanStartSelectedTodoInNewWorktree(t *testing.T) {
 	if got.codexPendingOpen.provider != codexapp.ProviderCodex {
 		t.Fatalf("pending provider = %q, want %q", got.codexPendingOpen.provider, codexapp.ProviderCodex)
 	}
+	if got.codexVisible() {
+		t.Fatalf("background worktree launch should stay hidden while the session is still opening")
+	}
 	if got.todoLaunchDraft == nil || got.todoLaunchDraft.projectPath != expectedPath {
 		t.Fatalf("todoLaunchDraft = %#v, want worktree draft for %q", got.todoLaunchDraft, expectedPath)
 	}
@@ -7040,6 +7043,9 @@ func TestTodoWorktreeLaunchWithModelPickerKeepsPromptUnsentUntilModelChoice(t *t
 	got := updated.(Model)
 	if got.todoLaunchDraft == nil || !got.todoLaunchDraft.openModelFirst {
 		t.Fatalf("todoLaunchDraft = %#v, want open-model-first launch state", got.todoLaunchDraft)
+	}
+	if !got.codexVisible() {
+		t.Fatalf("model-picker launches should stay visible while the session is opening")
 	}
 	if got.codexDrafts["/tmp/root--feat-model-pick"].Text != "Review the TODO before sending it" {
 		t.Fatalf("draft text = %q, want TODO text restored for the picker path", got.codexDrafts["/tmp/root--feat-model-pick"].Text)

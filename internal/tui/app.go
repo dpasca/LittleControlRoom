@@ -377,8 +377,9 @@ type codexSessionOpenedMsg struct {
 }
 
 type codexPendingOpenState struct {
-	projectPath string
-	provider    codexapp.Provider
+	projectPath      string
+	provider         codexapp.Provider
+	showWhilePending bool
 }
 
 type pendingGitOperationKind string
@@ -1359,7 +1360,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.ensureCodexRuntime()
-		m.beginCodexPendingOpen(req.ProjectPath, provider)
+		m.beginCodexPendingOpenWithVisibility(req.ProjectPath, provider, msg.openModelFirst)
 		if msg.openModelFirst {
 			m.status = "Opening embedded " + provider.Label() + " session in new worktree..."
 		} else {
