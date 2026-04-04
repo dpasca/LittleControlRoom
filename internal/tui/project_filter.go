@@ -108,7 +108,7 @@ func (m *Model) setProjectFilter(filter string) tea.Cmd {
 			m.syncDetailViewport(false)
 			return nil
 		}
-		return m.loadDetailCmd(p.Path)
+		return m.requestDetailReloadCmd(p.Path)
 	}
 	m.detail = model.ProjectDetail{}
 	m.syncDetailViewport(true)

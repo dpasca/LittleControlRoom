@@ -55,7 +55,12 @@ type Model struct {
 	status  string
 	err     error
 
-	startupScanCompleted bool
+	startupScanCompleted   bool
+	projectsReloadInFlight bool
+	projectsReloadQueued   bool
+	scanInFlight           bool
+	scanQueued             bool
+	scanQueuedForceRetry   bool
 
 	width     int
 	height    int
@@ -181,6 +186,10 @@ type Model struct {
 
 	newProjectRecentParents []string
 	worktreeExpanded        map[string]bool
+	detailReloadInFlight    map[string]bool
+	detailReloadQueued      map[string]bool
+	summaryReloadInFlight   map[string]bool
+	summaryReloadQueued     map[string]bool
 }
 
 type codexTranscriptRenderCache struct {
@@ -206,6 +215,7 @@ type projectsMsg struct {
 }
 
 type detailMsg struct {
+	path   string
 	detail model.ProjectDetail
 	err    error
 }
@@ -225,6 +235,14 @@ type projectSessionSeenMsg struct {
 type scanMsg struct {
 	report service.ScanReport
 	err    error
+}
+
+type projectRefreshRequest struct {
+	scan                            bool
+	forceRetryFailedClassifications bool
+	projects                        bool
+	detailPath                      string
+	summaryPaths                    []string
 }
 
 type actionMsg struct {
@@ -529,6 +547,10 @@ func New(ctx context.Context, svc *service.Service) Model {
 		recentClaudeModels:     append([]string(nil), initialSettings.RecentClaudeModels...),
 		recentOpenCodeModels:   append([]string(nil), initialSettings.RecentOpenCodeModels...),
 		hideReasoningSections:  initialSettings.HideReasoningSections,
+		detailReloadInFlight:   make(map[string]bool),
+		detailReloadQueued:     make(map[string]bool),
+		summaryReloadInFlight:  make(map[string]bool),
+		summaryReloadQueued:    make(map[string]bool),
 		nowFn:                  time.Now,
 		homeDirFn:              os.UserHomeDir,
 	}
@@ -787,8 +809,8 @@ func currentPrivacyPatterns(svc *service.Service) []string {
 
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{
-		m.loadProjectsCmd(),
-		m.scanCmd(false),
+		m.requestProjectsReloadCmd(),
+		m.requestScanCmd(false),
 		m.loadRecentProjectParentsCmd(),
 		m.waitBusCmd(),
 		m.waitCodexCmd(),
@@ -798,6 +820,179 @@ func (m Model) Init() tea.Cmd {
 		cmds = append(cmds, setupCmd)
 	}
 	return tea.Batch(cmds...)
+}
+
+func batchCmds(cmds ...tea.Cmd) tea.Cmd {
+	nonNil := make([]tea.Cmd, 0, len(cmds))
+	for _, cmd := range cmds {
+		if cmd != nil {
+			nonNil = append(nonNil, cmd)
+		}
+	}
+	switch len(nonNil) {
+	case 0:
+		return nil
+	case 1:
+		return nonNil[0]
+	default:
+		return tea.Batch(nonNil...)
+	}
+}
+
+func normalizeProjectPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	return filepath.Clean(path)
+}
+
+func (m *Model) ensureRefreshState() {
+	if m.detailReloadInFlight == nil {
+		m.detailReloadInFlight = make(map[string]bool)
+	}
+	if m.detailReloadQueued == nil {
+		m.detailReloadQueued = make(map[string]bool)
+	}
+	if m.summaryReloadInFlight == nil {
+		m.summaryReloadInFlight = make(map[string]bool)
+	}
+	if m.summaryReloadQueued == nil {
+		m.summaryReloadQueued = make(map[string]bool)
+	}
+}
+
+func (m *Model) requestProjectsReloadCmd() tea.Cmd {
+	if m.projectsReloadInFlight {
+		m.projectsReloadQueued = true
+		return nil
+	}
+	m.projectsReloadInFlight = true
+	m.projectsReloadQueued = false
+	return m.loadProjectsCmd()
+}
+
+func (m *Model) finishProjectsReloadCmd() tea.Cmd {
+	m.projectsReloadInFlight = false
+	if !m.projectsReloadQueued {
+		return nil
+	}
+	m.projectsReloadQueued = false
+	return m.requestProjectsReloadCmd()
+}
+
+func (m *Model) requestScanCmd(forceRetryFailedClassifications bool) tea.Cmd {
+	if m.scanInFlight {
+		m.scanQueued = true
+		m.scanQueuedForceRetry = m.scanQueuedForceRetry || forceRetryFailedClassifications
+		return nil
+	}
+	m.scanInFlight = true
+	m.scanQueued = false
+	m.scanQueuedForceRetry = false
+	return m.scanCmd(forceRetryFailedClassifications)
+}
+
+func (m *Model) finishScanCmd() tea.Cmd {
+	m.scanInFlight = false
+	if !m.scanQueued {
+		return nil
+	}
+	forceRetry := m.scanQueuedForceRetry
+	m.scanQueued = false
+	m.scanQueuedForceRetry = false
+	return m.requestScanCmd(forceRetry)
+}
+
+func (m *Model) requestDetailReloadCmd(path string) tea.Cmd {
+	path = normalizeProjectPath(path)
+	if path == "" {
+		return nil
+	}
+	m.ensureRefreshState()
+	if m.detailReloadInFlight[path] {
+		m.detailReloadQueued[path] = true
+		return nil
+	}
+	m.detailReloadInFlight[path] = true
+	delete(m.detailReloadQueued, path)
+	return m.loadDetailCmd(path)
+}
+
+func (m *Model) finishDetailReloadCmd(path string) tea.Cmd {
+	path = normalizeProjectPath(path)
+	if path == "" {
+		return nil
+	}
+	m.ensureRefreshState()
+	delete(m.detailReloadInFlight, path)
+	if !m.detailReloadQueued[path] {
+		delete(m.detailReloadQueued, path)
+		return nil
+	}
+	delete(m.detailReloadQueued, path)
+	return m.requestDetailReloadCmd(path)
+}
+
+func (m *Model) requestProjectSummaryReloadCmd(path string) tea.Cmd {
+	path = normalizeProjectPath(path)
+	if path == "" {
+		return nil
+	}
+	m.ensureRefreshState()
+	if m.summaryReloadInFlight[path] {
+		m.summaryReloadQueued[path] = true
+		return nil
+	}
+	m.summaryReloadInFlight[path] = true
+	delete(m.summaryReloadQueued, path)
+	return m.loadProjectSummaryCmd(path)
+}
+
+func (m *Model) finishProjectSummaryReloadCmd(path string) tea.Cmd {
+	path = normalizeProjectPath(path)
+	if path == "" {
+		return nil
+	}
+	m.ensureRefreshState()
+	delete(m.summaryReloadInFlight, path)
+	if !m.summaryReloadQueued[path] {
+		delete(m.summaryReloadQueued, path)
+		return nil
+	}
+	delete(m.summaryReloadQueued, path)
+	return m.requestProjectSummaryReloadCmd(path)
+}
+
+func (m *Model) requestProjectRefreshCmd(req projectRefreshRequest) tea.Cmd {
+	cmds := make([]tea.Cmd, 0, 2+len(req.summaryPaths))
+	if req.scan {
+		cmds = append(cmds, m.requestScanCmd(req.forceRetryFailedClassifications))
+	}
+	if req.projects {
+		cmds = append(cmds, m.requestProjectsReloadCmd())
+	}
+	seen := make(map[string]struct{}, len(req.summaryPaths))
+	for _, path := range req.summaryPaths {
+		path = normalizeProjectPath(path)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		cmds = append(cmds, m.requestProjectSummaryReloadCmd(path))
+	}
+	cmds = append(cmds, m.requestDetailReloadCmd(req.detailPath))
+	return batchCmds(cmds...)
+}
+
+func (m Model) currentDetailTargetPath() string {
+	if p, ok := m.selectedProject(); ok {
+		return normalizeProjectPath(p.Path)
+	}
+	return normalizeProjectPath(m.detail.Summary.Path)
 }
 
 func normalizeUpdateModel(m tea.Model) Model {
@@ -966,11 +1161,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m.updateNormalMode(msg)
 	case projectsMsg:
+		reloadCmd := m.finishProjectsReloadCmd()
 		if msg.err != nil {
 			m.loading = false
 			m.err = msg.err
 			m.status = projectLoadFailedStatus(len(m.projects) > 0)
-			return m, nil
+			return m, reloadCmd
 		}
 		startupEmptyCache := m.status == initialProjectsStatus && len(msg.projects) == 0
 		if !startupEmptyCache {
@@ -993,11 +1189,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if len(m.projects) > 0 {
 			m.syncDetailViewport(false)
-			return m, m.loadDetailCmd(m.projects[m.selected].Path)
+			return m, batchCmds(reloadCmd, m.requestDetailReloadCmd(m.projects[m.selected].Path))
 		}
 		m.detail = model.ProjectDetail{}
 		m.syncDetailViewport(true)
-		return m, nil
+		return m, reloadCmd
 	case recentProjectParentsMsg:
 		if msg.err == nil {
 			m.newProjectRecentParents = append([]string(nil), msg.paths...)
@@ -1044,19 +1240,24 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = "Project already in the list"
 			}
 		}
-		return m, m.loadProjectsCmd()
+		return m, m.requestProjectsReloadCmd()
 	case detailMsg:
+		reloadCmd := m.finishDetailReloadCmd(msg.path)
+		if targetPath := m.currentDetailTargetPath(); targetPath != "" && normalizeProjectPath(msg.path) != targetPath {
+			return m, reloadCmd
+		}
 		m.err = msg.err
 		if msg.err == nil {
 			m.detail = msg.detail
 			m.syncTodoDialogSelection()
 			m.syncDetailViewport(false)
 		}
-		return m, nil
+		return m, reloadCmd
 	case projectSummaryMsg:
+		reloadCmd := m.finishProjectSummaryReloadCmd(msg.path)
 		if msg.err != nil {
 			m.err = msg.err
-			return m, nil
+			return m, reloadCmd
 		}
 		selectedPath := ""
 		if p, ok := m.selectedProject(); ok {
@@ -1074,27 +1275,28 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.rebuildProjectList(selectedPath)
 		if len(m.projects) > 0 && strings.TrimSpace(m.detail.Summary.Path) == "" {
 			m.syncDetailViewport(false)
-			return m, m.loadDetailCmd(m.projects[m.selected].Path)
+			return m, batchCmds(reloadCmd, m.requestDetailReloadCmd(m.projects[m.selected].Path))
 		}
 		if len(m.projects) == 0 {
 			m.detail = model.ProjectDetail{}
 			m.syncDetailViewport(true)
 		}
-		return m, nil
+		return m, reloadCmd
 	case projectSessionSeenMsg:
 		if msg.err != nil {
 			m.reportError("Could not mark session as read", msg.err, msg.path)
 		}
 		return m, nil
 	case scanMsg:
+		reloadCmd := m.finishScanCmd()
 		m.loading = false
 		if msg.err != nil {
 			m.reportError("Scan failed", msg.err, "")
-			return m, nil
+			return m, reloadCmd
 		}
 		m.startupScanCompleted = true
 		m.status = scanCompleteStatus(msg.report)
-		return m, tea.Batch(m.loadProjectsCmd())
+		return m, batchCmds(reloadCmd, m.requestProjectsReloadCmd())
 	case commitPreviewMsg:
 		m.diffView = nil
 		m.commitPreviewRefreshing = false
@@ -1232,7 +1434,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.status = msg.status
-		return m, tea.Batch(m.scanCmd(false), m.loadProjectsCmd())
+		return m, m.requestProjectRefreshCmd(projectRefreshRequest{
+			scan:     true,
+			projects: true,
+		})
 	case browserOpenMsg:
 		if msg.err != nil {
 			m.reportError("Open failed", msg.err, msg.projectPath)
@@ -1268,9 +1473,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.closeRunCommandDialog("")
-		cmds := []tea.Cmd{m.loadProjectsCmd()}
+		cmds := []tea.Cmd{m.requestProjectsReloadCmd()}
 		if p, ok := m.selectedProject(); ok && p.Path == msg.projectPath {
-			cmds = append(cmds, m.loadDetailCmd(msg.projectPath))
+			cmds = append(cmds, m.requestDetailReloadCmd(msg.projectPath))
 		}
 		if strings.TrimSpace(msg.command) != "" && msg.startAfter {
 			cmds = append(cmds, m.startProjectRuntimeCmd(msg.projectPath, msg.command))
@@ -1303,9 +1508,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmds := []tea.Cmd{}
 		if strings.TrimSpace(msg.projectPath) != "" {
-			cmds = append(cmds, m.loadProjectSummaryCmd(msg.projectPath))
+			cmds = append(cmds, m.requestProjectSummaryReloadCmd(msg.projectPath))
 			if p, ok := m.selectedProject(); ok && p.Path == msg.projectPath {
-				cmds = append(cmds, m.loadDetailCmd(p.Path))
+				cmds = append(cmds, m.requestDetailReloadCmd(p.Path))
 			}
 		}
 		if len(cmds) == 0 {
@@ -1334,9 +1539,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.svc == nil {
 					return m, nil
 				}
-				cmds := []tea.Cmd{m.loadProjectsCmd()}
+				cmds := []tea.Cmd{m.requestProjectsReloadCmd()}
 				if detailPath := strings.TrimSpace(m.detail.Summary.Path); detailPath != "" {
-					cmds = append(cmds, m.loadDetailCmd(detailPath))
+					cmds = append(cmds, m.requestDetailReloadCmd(detailPath))
 				}
 				return m, tea.Batch(cmds...)
 			}
@@ -1393,9 +1598,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.status = "Starting TODO in dedicated worktree..."
 		}
-		cmds := []tea.Cmd{m.loadProjectsCmd(), m.openCodexSessionCmd(req)}
+		cmds := []tea.Cmd{m.requestProjectsReloadCmd(), m.openCodexSessionCmd(req)}
 		if p, ok := m.selectedProject(); ok {
-			cmds = append(cmds, m.loadDetailCmd(p.Path))
+			cmds = append(cmds, m.requestDetailReloadCmd(p.Path))
 		}
 		return m, tea.Batch(cmds...)
 	case worktreeActionMsg:
@@ -1447,9 +1652,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Selected:     defaultWorktreePostMergeSelection(msg.postMergeTodoID > 0),
 			}
 		}
-		cmds := []tea.Cmd{m.scanCmd(false), m.loadProjectsCmd()}
+		cmds := []tea.Cmd{m.requestScanCmd(false), m.requestProjectsReloadCmd()}
 		if strings.TrimSpace(msg.selectPath) != "" {
-			cmds = append(cmds, m.loadDetailCmd(strings.TrimSpace(msg.selectPath)))
+			cmds = append(cmds, m.requestDetailReloadCmd(strings.TrimSpace(msg.selectPath)))
 		}
 		return m, tea.Batch(cmds...)
 	case settingsSavedMsg:
@@ -1477,7 +1682,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds := []tea.Cmd{m.refreshSetupSnapshotCmd(false)}
 		if len(m.projects) > 0 {
 			m.syncDetailViewport(false)
-			cmds = append(cmds, m.loadDetailCmd(m.projects[m.selected].Path))
+			cmds = append(cmds, m.requestDetailReloadCmd(m.projects[m.selected].Path))
 			return m, tea.Batch(cmds...)
 		}
 		m.detail = model.ProjectDetail{}
@@ -1547,7 +1752,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.status = msg.status
-		cmds := []tea.Cmd{m.loadProjectsCmd()}
+		cmds := []tea.Cmd{m.requestProjectsReloadCmd()}
 		if m.ignoredPickerVisible {
 			cmds = append(cmds, m.loadIgnoredProjectsCmd())
 		}
@@ -1645,9 +1850,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.codexHiddenProject == msg.projectPath {
 				m.codexHiddenProject = ""
 			}
-			cmds := []tea.Cmd{m.scanCmd(false), m.loadProjectsCmd()}
+			cmds := []tea.Cmd{m.requestScanCmd(false), m.requestProjectsReloadCmd()}
 			if p, ok := m.selectedProject(); ok {
-				cmds = append(cmds, m.loadDetailCmd(p.Path))
+				cmds = append(cmds, m.requestDetailReloadCmd(p.Path))
 			}
 			return m, tea.Batch(cmds...)
 		}
@@ -1681,30 +1886,30 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.markAssessmentFlash(msg.ProjectPath, msg.At)
 			}
 			if strings.TrimSpace(msg.ProjectPath) != "" {
-				cmds = append(cmds, m.loadProjectSummaryCmd(msg.ProjectPath))
+				cmds = append(cmds, m.requestProjectSummaryReloadCmd(msg.ProjectPath))
 			}
 			if p, ok := m.selectedProject(); ok && p.Path == msg.ProjectPath {
-				cmds = append(cmds, m.loadDetailCmd(p.Path))
+				cmds = append(cmds, m.requestDetailReloadCmd(p.Path))
 			}
 			return m, tea.Batch(cmds...)
 		case events.ProjectChanged, events.ActionApplied:
 			if strings.TrimSpace(msg.ProjectPath) != "" {
-				cmds = append(cmds, m.loadProjectSummaryCmd(msg.ProjectPath))
+				cmds = append(cmds, m.requestProjectSummaryReloadCmd(msg.ProjectPath))
 			} else {
-				cmds = append(cmds, m.loadProjectsCmd())
+				cmds = append(cmds, m.requestProjectsReloadCmd())
 			}
 			if p, ok := m.selectedProject(); ok && p.Path == msg.ProjectPath {
-				cmds = append(cmds, m.loadDetailCmd(p.Path))
+				cmds = append(cmds, m.requestDetailReloadCmd(p.Path))
 			}
 			return m, tea.Batch(cmds...)
 		case events.ProjectMoved, events.ScanCompleted:
-			cmds = append(cmds, m.loadProjectsCmd())
+			cmds = append(cmds, m.requestProjectsReloadCmd())
 			if p, ok := m.selectedProject(); ok {
-				cmds = append(cmds, m.loadDetailCmd(p.Path))
+				cmds = append(cmds, m.requestDetailReloadCmd(p.Path))
 			}
 			return m, tea.Batch(cmds...)
 		}
-		cmds = append(cmds, m.loadProjectsCmd())
+		cmds = append(cmds, m.requestProjectsReloadCmd())
 		return m, tea.Batch(cmds...)
 	case spinnerTickMsg:
 		m.recordUIStallFromSpinnerTick(m.currentTime())
@@ -1758,8 +1963,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = snapshot.Status
 			}
 			m.loading = true
-			cmds = append(cmds, m.scanCmd(false))
-			cmds = append(cmds, m.loadProjectsCmd())
+			cmds = append(cmds, m.requestScanCmd(false))
+			cmds = append(cmds, m.requestProjectsReloadCmd())
 		} else if !needsAsync {
 			m.cancelModelSettleLatency(msg.projectPath, "stale")
 			m.dropCodexSnapshot(msg.projectPath)
@@ -1803,7 +2008,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = snapshot.Status
 		}
 		m.loading = true
-		return m, tea.Batch(m.scanCmd(false), m.loadProjectsCmd())
+		return m, m.requestProjectRefreshCmd(projectRefreshRequest{
+			scan:     true,
+			projects: true,
+		})
 	}
 
 	return m, nil
@@ -1981,7 +2189,7 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.worktreeExpanded[row.RootPath] = false
 					m.rebuildProjectList(projectWorktreeRootPath(project))
 					m.status = "Worktrees collapsed"
-					return m, m.loadDetailCmd(projectWorktreeRootPath(project))
+					return m, m.requestDetailReloadCmd(projectWorktreeRootPath(project))
 				}
 				if row.Kind == projectListRowRepo && row.LinkedCount > 0 && row.Expanded {
 					return m, m.toggleSelectedWorktreeGroup()
@@ -2175,7 +2383,7 @@ func (m *Model) moveSelectionTo(index int) tea.Cmd {
 	m.selected = index
 	m.ensureSelectionVisible()
 	m.syncDetailViewport(true)
-	return m.loadDetailCmd(m.projects[m.selected].Path)
+	return m.requestDetailReloadCmd(m.projects[m.selected].Path)
 }
 
 func (m *Model) cyclePaneFocus(delta int) {
@@ -2246,7 +2454,7 @@ func (m *Model) setSortMode(mode projectSortMode) tea.Cmd {
 	m.syncDetailViewport(false)
 	m.status = fmt.Sprintf("Sort: %s | View: %s", m.sortMode, visibilityLabel(m.visibility))
 	if p, ok := m.selectedProject(); ok {
-		return m.loadDetailCmd(p.Path)
+		return m.requestDetailReloadCmd(p.Path)
 	}
 	m.detail = model.ProjectDetail{}
 	m.syncDetailViewport(true)
@@ -2263,7 +2471,7 @@ func (m *Model) setVisibilityMode(mode projectVisibilityMode) tea.Cmd {
 	m.syncDetailViewport(false)
 	m.status = fmt.Sprintf("Visibility: %s", visibilityLabel(m.visibility))
 	if p, ok := m.selectedProject(); ok {
-		return m.loadDetailCmd(p.Path)
+		return m.requestDetailReloadCmd(p.Path)
 	}
 	m.detail = model.ProjectDetail{}
 	m.syncDetailViewport(true)
@@ -3333,9 +3541,10 @@ func (m Model) loadProjectsCmd() tea.Cmd {
 }
 
 func (m Model) loadDetailCmd(path string) tea.Cmd {
+	path = normalizeProjectPath(path)
 	return func() tea.Msg {
 		d, err := m.svc.Store().GetProjectDetail(m.ctx, path, 20)
-		return detailMsg{detail: d, err: err}
+		return detailMsg{path: path, detail: d, err: err}
 	}
 }
 
@@ -3497,7 +3706,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 	case commands.KindRefresh:
 		m.loading = true
 		m.status = "Scanning and retrying failed assessments..."
-		return m, m.scanCmd(true)
+		return m, m.requestScanCmd(true)
 	case commands.KindSort:
 		return m, m.setSortMode(projectSortMode(inv.Sort))
 	case commands.KindView:

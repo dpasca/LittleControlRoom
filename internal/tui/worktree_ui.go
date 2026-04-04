@@ -587,7 +587,7 @@ func (m *Model) toggleSelectedWorktreeGroup() tea.Cmd {
 		m.worktreeExpanded[rootPath] = false
 		m.rebuildProjectList(rootPath)
 		m.status = "Worktrees collapsed"
-		return m.loadDetailCmd(rootPath)
+		return m.requestDetailReloadCmd(rootPath)
 	}
 	m.worktreeExpanded[rootPath] = next
 	m.rebuildProjectList(project.Path)
@@ -597,7 +597,7 @@ func (m *Model) toggleSelectedWorktreeGroup() tea.Cmd {
 		m.status = "Worktrees collapsed"
 	}
 	if selected, ok := m.selectedProject(); ok {
-		return m.loadDetailCmd(selected.Path)
+		return m.requestDetailReloadCmd(selected.Path)
 	}
 	return nil
 }

@@ -214,6 +214,92 @@ func collectCmdMsgs(cmd tea.Cmd) []tea.Msg {
 	}
 }
 
+func TestProjectRefreshRequestsCoalesceWhileInFlight(t *testing.T) {
+	m := Model{}
+
+	first := m.requestProjectRefreshCmd(projectRefreshRequest{
+		scan:     true,
+		projects: true,
+	})
+	if first == nil {
+		t.Fatal("first refresh request should schedule work")
+	}
+	if !m.scanInFlight || !m.projectsReloadInFlight {
+		t.Fatalf("refresh request should mark scan and project list loads in flight")
+	}
+
+	second := m.requestProjectRefreshCmd(projectRefreshRequest{
+		scan:     true,
+		projects: true,
+	})
+	if second != nil {
+		t.Fatal("duplicate refresh request should coalesce while work is already in flight")
+	}
+	if !m.scanQueued || !m.projectsReloadQueued {
+		t.Fatalf("duplicate refresh request should queue a rerun")
+	}
+}
+
+func TestDetailMsgIgnoresStaleSelectionResult(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Path: "/tmp/current",
+			Name: "current",
+		}},
+		selected: 0,
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{
+				Path: "/tmp/current",
+				Name: "current",
+			},
+		},
+		detailReloadInFlight: map[string]bool{
+			"/tmp/old": true,
+		},
+	}
+
+	updated, cmd := m.Update(detailMsg{
+		path: "/tmp/old",
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{
+				Path: "/tmp/old",
+				Name: "old",
+			},
+		},
+	})
+	got := updated.(Model)
+
+	if cmd != nil {
+		t.Fatal("stale detail result should not schedule follow-up work")
+	}
+	if got.detail.Summary.Path != "/tmp/current" {
+		t.Fatalf("detail path = %q, want current selection to remain visible", got.detail.Summary.Path)
+	}
+	if got.detail.Summary.Name != "current" {
+		t.Fatalf("detail name = %q, want stale result ignored", got.detail.Summary.Name)
+	}
+}
+
+func TestProjectsMsgRerunsQueuedProjectsReload(t *testing.T) {
+	m := Model{
+		projectsReloadInFlight: true,
+		projectsReloadQueued:   true,
+	}
+
+	updated, cmd := m.Update(projectsMsg{})
+	got := updated.(Model)
+
+	if cmd == nil {
+		t.Fatal("queued project reload should schedule a rerun after completion")
+	}
+	if !got.projectsReloadInFlight {
+		t.Fatal("queued rerun should put project reload back in flight")
+	}
+	if got.projectsReloadQueued {
+		t.Fatal("queued rerun flag should clear once the rerun is scheduled")
+	}
+}
+
 func (s *fakeCodexSession) Close() error {
 	s.snapshot.Closed = true
 	return nil
@@ -10584,8 +10670,8 @@ func TestVisibleCodexAltUpReturnsToLastEmbeddedProjectSelection(t *testing.T) {
 
 	updated, hideCmd := got.updateCodexMode(tea.KeyMsg{Type: tea.KeyUp, Alt: true})
 	got = updated.(Model)
-	if hideCmd == nil {
-		t.Fatalf("alt+up should refresh the main list detail for the last embedded project")
+	if hideCmd == nil && !got.detailReloadQueued["/tmp/b"] {
+		t.Fatalf("alt+up should refresh or queue a detail refresh for the last embedded project")
 	}
 	if got.codexVisibleProject != "" {
 		t.Fatalf("codexVisibleProject = %q, want hidden", got.codexVisibleProject)
