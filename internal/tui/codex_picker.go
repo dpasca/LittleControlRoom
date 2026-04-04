@@ -627,14 +627,14 @@ func (m *Model) focusProjectPath(projectPath string) tea.Cmd {
 	}
 	if index == m.selected {
 		if project, ok := m.selectedProject(); ok && project.Path == projectPath {
-			return m.requestDetailReloadCmd(projectPath)
+			return m.requestProjectDetailViewCmd(projectPath)
 		}
 		return nil
 	}
 	m.selected = index
 	m.ensureSelectionVisible()
 	m.syncDetailViewport(true)
-	return m.requestDetailReloadCmd(projectPath)
+	return m.requestProjectDetailViewCmd(projectPath)
 }
 
 func (m Model) renderCodexPickerOverlay(body string, bodyW, bodyH int) string {

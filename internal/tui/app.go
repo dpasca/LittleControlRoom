@@ -1144,6 +1144,14 @@ func (m *Model) requestProjectInvalidationCmd(intent projectInvalidationIntent) 
 	}
 }
 
+func (m *Model) requestProjectDetailViewCmd(path string) tea.Cmd {
+	return m.requestDetailReloadCmd(normalizeProjectPath(path))
+}
+
+func (m *Model) requestSelectedProjectDetailViewCmd() tea.Cmd {
+	return m.requestProjectDetailViewCmd(m.currentSelectedProjectPath())
+}
+
 func (m Model) currentSelectedProjectPath() string {
 	if p, ok := m.selectedProject(); ok {
 		return normalizeProjectPath(p.Path)
@@ -1352,7 +1360,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if len(m.projects) > 0 {
 			m.syncDetailViewport(false)
-			return m, batchCmds(reloadCmd, m.requestDetailReloadCmd(m.projects[m.selected].Path))
+			return m, batchCmds(reloadCmd, m.requestSelectedProjectDetailViewCmd())
 		}
 		m.detail = model.ProjectDetail{}
 		m.syncDetailViewport(true)
@@ -1438,7 +1446,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.rebuildProjectList(selectedPath)
 		if len(m.projects) > 0 && strings.TrimSpace(m.detail.Summary.Path) == "" {
 			m.syncDetailViewport(false)
-			return m, batchCmds(reloadCmd, m.requestDetailReloadCmd(m.projects[m.selected].Path))
+			return m, batchCmds(reloadCmd, m.requestSelectedProjectDetailViewCmd())
 		}
 		if len(m.projects) == 0 {
 			m.detail = model.ProjectDetail{}
@@ -1834,7 +1842,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds := []tea.Cmd{m.refreshSetupSnapshotCmd(false)}
 		if len(m.projects) > 0 {
 			m.syncDetailViewport(false)
-			cmds = append(cmds, m.requestDetailReloadCmd(m.projects[m.selected].Path))
+			cmds = append(cmds, m.requestSelectedProjectDetailViewCmd())
 			return m, tea.Batch(cmds...)
 		}
 		m.detail = model.ProjectDetail{}
@@ -2327,7 +2335,7 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.worktreeExpanded[row.RootPath] = false
 					m.rebuildProjectList(projectWorktreeRootPath(project))
 					m.status = "Worktrees collapsed"
-					return m, m.requestDetailReloadCmd(projectWorktreeRootPath(project))
+					return m, m.requestProjectDetailViewCmd(projectWorktreeRootPath(project))
 				}
 				if row.Kind == projectListRowRepo && row.LinkedCount > 0 && row.Expanded {
 					return m, m.toggleSelectedWorktreeGroup()
@@ -2521,7 +2529,7 @@ func (m *Model) moveSelectionTo(index int) tea.Cmd {
 	m.selected = index
 	m.ensureSelectionVisible()
 	m.syncDetailViewport(true)
-	return m.requestDetailReloadCmd(m.projects[m.selected].Path)
+	return m.requestSelectedProjectDetailViewCmd()
 }
 
 func (m *Model) cyclePaneFocus(delta int) {
@@ -2592,7 +2600,7 @@ func (m *Model) setSortMode(mode projectSortMode) tea.Cmd {
 	m.syncDetailViewport(false)
 	m.status = fmt.Sprintf("Sort: %s | View: %s", m.sortMode, visibilityLabel(m.visibility))
 	if p, ok := m.selectedProject(); ok {
-		return m.requestDetailReloadCmd(p.Path)
+		return m.requestProjectDetailViewCmd(p.Path)
 	}
 	m.detail = model.ProjectDetail{}
 	m.syncDetailViewport(true)
@@ -2609,7 +2617,7 @@ func (m *Model) setVisibilityMode(mode projectVisibilityMode) tea.Cmd {
 	m.syncDetailViewport(false)
 	m.status = fmt.Sprintf("Visibility: %s", visibilityLabel(m.visibility))
 	if p, ok := m.selectedProject(); ok {
-		return m.requestDetailReloadCmd(p.Path)
+		return m.requestProjectDetailViewCmd(p.Path)
 	}
 	m.detail = model.ProjectDetail{}
 	m.syncDetailViewport(true)

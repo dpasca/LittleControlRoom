@@ -152,7 +152,7 @@ func (m *Model) openTodoDialogForSelection() tea.Cmd {
 	}
 	cmd := m.openTodoDialog(project)
 	if filepath.Clean(strings.TrimSpace(m.detail.Summary.Path)) != filepath.Clean(project.Path) {
-		return tea.Batch(cmd, m.requestDetailReloadCmd(project.Path))
+		return tea.Batch(cmd, m.requestProjectDetailViewCmd(project.Path))
 	}
 	return cmd
 }
