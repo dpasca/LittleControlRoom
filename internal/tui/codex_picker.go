@@ -577,18 +577,18 @@ func (m Model) resumeEmbeddedSession(projectPath string, provider codexapp.Provi
 		SessionID:   sessionID,
 		Provider:    provider,
 	}
-	if session, ok := m.codexSession(projectPath); ok {
-		snapshot := session.Snapshot()
-		if embeddedProvider(snapshot) == provider && strings.TrimSpace(snapshot.ThreadID) == sessionID && !snapshot.Closed {
-			title, summary := liveSessionPreview(snapshot)
-			choice.Title = title
-			choice.Summary = summary
-			choice.LastActivity = snapshot.LastActivityAt
-			choice.Live = true
-			choice.Current = true
-			choice.Busy = snapshot.Busy
-			choice.BusyExternal = snapshot.BusyExternal
-		}
+	if snapshot, ok := m.nonBlockingCodexSnapshot(projectPath); ok &&
+		embeddedProvider(snapshot) == provider &&
+		strings.TrimSpace(snapshot.ThreadID) == sessionID &&
+		!snapshot.Closed {
+		title, summary := liveSessionPreview(snapshot)
+		choice.Title = title
+		choice.Summary = summary
+		choice.LastActivity = snapshot.LastActivityAt
+		choice.Live = true
+		choice.Current = true
+		choice.Busy = snapshot.Busy
+		choice.BusyExternal = snapshot.BusyExternal
 	}
 	return m.openCodexSessionChoice(choice)
 }

@@ -631,18 +631,7 @@ func (m *Model) resetCodexToolAnswerState(projectPath string) {
 }
 
 func (m Model) codexSnapshotForProject(projectPath string) (codexapp.Snapshot, bool) {
-	projectPath = strings.TrimSpace(projectPath)
-	if projectPath == "" {
-		return codexapp.Snapshot{}, false
-	}
-	if snapshot, ok := m.codexSnapshots[projectPath]; ok {
-		return snapshot, true
-	}
-	session, ok := m.codexSession(projectPath)
-	if !ok {
-		return codexapp.Snapshot{}, false
-	}
-	return session.Snapshot(), true
+	return m.nonBlockingCodexSnapshot(projectPath)
 }
 
 func (m *Model) ensureToolAnswerState(projectPath string, request *codexapp.ToolInputRequest) codexToolAnswerState {

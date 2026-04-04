@@ -706,11 +706,10 @@ func (m Model) projectPendingEmbeddedApproval(projectPath string) (*codexapp.App
 	if projectPath == "" {
 		return nil, "", false
 	}
-	session, ok := m.codexSession(projectPath)
+	snapshot, ok := m.nonBlockingCodexSnapshot(projectPath)
 	if !ok {
 		return nil, "", false
 	}
-	snapshot := session.Snapshot()
 	if snapshot.Closed || snapshot.PendingApproval == nil {
 		return nil, "", false
 	}
@@ -729,11 +728,10 @@ func (m Model) projectPendingEmbeddedQuestion(projectPath string) (string, codex
 	if projectPath == "" {
 		return "", "", false
 	}
-	session, ok := m.codexSession(projectPath)
+	snapshot, ok := m.nonBlockingCodexSnapshot(projectPath)
 	if !ok {
 		return "", "", false
 	}
-	snapshot := session.Snapshot()
 	if snapshot.Closed {
 		return "", "", false
 	}
@@ -2836,28 +2834,18 @@ func (m Model) selectedProject() (model.ProjectSummary, bool) {
 }
 
 func (m Model) projectHasLiveCodexSession(projectPath string) bool {
-	projectPath = strings.TrimSpace(projectPath)
-	if projectPath == "" || m.codexManager == nil {
-		return false
-	}
-	session, ok := m.codexManager.Session(projectPath)
+	snapshot, ok := m.liveCodexSnapshot(projectPath)
 	if !ok {
 		return false
 	}
-	snapshot := session.Snapshot()
 	return snapshot.Started && !snapshot.Closed
 }
 
 func (m Model) liveCodexSnapshot(projectPath string) (codexapp.Snapshot, bool) {
-	projectPath = strings.TrimSpace(projectPath)
-	if projectPath == "" || m.codexManager == nil {
-		return codexapp.Snapshot{}, false
-	}
-	session, ok := m.codexManager.Session(projectPath)
+	snapshot, ok := m.nonBlockingCodexSnapshot(projectPath)
 	if !ok {
 		return codexapp.Snapshot{}, false
 	}
-	snapshot := session.Snapshot()
 	if !snapshot.Started || snapshot.Closed {
 		return codexapp.Snapshot{}, false
 	}
@@ -3943,11 +3931,10 @@ func (m Model) liveEmbeddedSnapshotForProject(projectPath string, provider codex
 	if projectPath == "" || provider == "" {
 		return codexapp.Snapshot{}, false
 	}
-	session, ok := m.codexSession(projectPath)
+	snapshot, ok := m.nonBlockingCodexSnapshot(projectPath)
 	if !ok {
 		return codexapp.Snapshot{}, false
 	}
-	snapshot := session.Snapshot()
 	if snapshot.Closed || strings.TrimSpace(snapshot.ThreadID) == "" {
 		return codexapp.Snapshot{}, false
 	}

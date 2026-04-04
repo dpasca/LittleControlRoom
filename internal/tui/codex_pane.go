@@ -218,6 +218,27 @@ func (m Model) currentCodexSession() (codexapp.Session, bool) {
 	return m.codexSession(m.codexVisibleProject)
 }
 
+func (m Model) nonBlockingCodexSnapshot(projectPath string) (codexapp.Snapshot, bool) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return codexapp.Snapshot{}, false
+	}
+	session, sessionOK := m.codexSession(projectPath)
+	if !sessionOK {
+		if snapshot, ok := m.codexSnapshots[projectPath]; ok && snapshot.Closed {
+			return snapshot, true
+		}
+		return codexapp.Snapshot{}, false
+	}
+	if snapshot, got := session.TrySnapshot(); got {
+		return snapshot, true
+	}
+	if snapshot, ok := m.codexSnapshots[projectPath]; ok {
+		return snapshot, true
+	}
+	return codexapp.Snapshot{}, false
+}
+
 func (m Model) currentCodexSnapshot() (codexapp.Snapshot, bool) {
 	projectPath := strings.TrimSpace(m.codexVisibleProject)
 	if projectPath != "" {
@@ -489,8 +510,8 @@ func (m Model) refreshBusyElsewhereCmd(projectPath string) tea.Cmd {
 	if !ok {
 		return nil
 	}
-	snapshot := session.Snapshot()
-	if snapshot.Closed || !snapshot.BusyExternal {
+	snapshot, ok := m.nonBlockingCodexSnapshot(projectPath)
+	if !ok || snapshot.Closed || !snapshot.BusyExternal {
 		return nil
 	}
 	refresher, ok := session.(codexBusyElsewhereRefresher)
@@ -514,8 +535,8 @@ func (m *Model) openCodexSessionCmd(req codexapp.LaunchRequest) tea.Cmd {
 	previousThreadID := ""
 	if manager != nil {
 		preflightStarted := time.Now()
-		if existing, ok := manager.Session(req.ProjectPath); ok {
-			previousThreadID = strings.TrimSpace(existing.Snapshot().ThreadID)
+		if snapshot, ok := m.nonBlockingCodexSnapshot(req.ProjectPath); ok {
+			previousThreadID = strings.TrimSpace(snapshot.ThreadID)
 		}
 		m.recordAISyncLatency("Embedded preflight", req.ProjectPath, provider.Label(), time.Since(preflightStarted), "")
 	}

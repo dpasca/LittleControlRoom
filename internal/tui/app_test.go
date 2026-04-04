@@ -42,6 +42,7 @@ type fakeCodexSession struct {
 	projectPath   string
 	snapshot      codexapp.Snapshot
 	snapshotCalls int
+	trySnapshotFn func(*fakeCodexSession) (codexapp.Snapshot, bool)
 	submitted     []string
 	submissions   []codexapp.Submission
 	decisions     []codexapp.ApprovalDecision
@@ -91,6 +92,9 @@ func (s *fakeCodexSession) Snapshot() codexapp.Snapshot {
 }
 
 func (s *fakeCodexSession) TrySnapshot() (codexapp.Snapshot, bool) {
+	if s.trySnapshotFn != nil {
+		return s.trySnapshotFn(s)
+	}
 	return s.Snapshot(), true
 }
 
@@ -5051,6 +5055,9 @@ func TestRefreshBusyElsewhereCmdRechecksVisibleSession(t *testing.T) {
 			ThreadID:     "019cccc3abcdef",
 			Status:       "Busy elsewhere",
 		},
+		trySnapshotFn: func(*fakeCodexSession) (codexapp.Snapshot, bool) {
+			return codexapp.Snapshot{}, false
+		},
 		refreshBusyFn: func(s *fakeCodexSession) error {
 			s.snapshot.Busy = false
 			s.snapshot.BusyExternal = false
@@ -5073,10 +5080,13 @@ func TestRefreshBusyElsewhereCmdRechecksVisibleSession(t *testing.T) {
 		codexManager:        manager,
 		codexVisibleProject: "/tmp/demo",
 		codexHiddenProject:  "/tmp/demo",
-		codexInput:          newCodexTextarea(),
-		codexViewport:       viewport.New(0, 0),
-		width:               100,
-		height:              24,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": session.snapshot,
+		},
+		codexInput:    newCodexTextarea(),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
 	}
 
 	cmd := m.refreshBusyElsewhereCmd("/tmp/demo")
@@ -5094,8 +5104,94 @@ func TestRefreshBusyElsewhereCmdRechecksVisibleSession(t *testing.T) {
 	if session.refreshCalls != 1 {
 		t.Fatalf("refresh calls = %d, want 1", session.refreshCalls)
 	}
+	if session.snapshotCalls != 0 {
+		t.Fatalf("refreshBusyElsewhereCmd() should avoid blocking Snapshot(); snapshot calls = %d", session.snapshotCalls)
+	}
 	if session.snapshot.BusyExternal {
 		t.Fatalf("session should no longer be busy externally after refresh")
+	}
+}
+
+func TestEmbeddedSnapshotHelpersUseCachedSnapshotWhenTrySnapshotIsContended(t *testing.T) {
+	approval := &codexapp.ApprovalRequest{
+		ID:       "approval-1",
+		Kind:     codexapp.ApprovalCommandExecution,
+		Command:  "make test",
+		ThreadID: "thread-demo",
+	}
+	toolInput := &codexapp.ToolInputRequest{
+		ID:       "tool-1",
+		ThreadID: "thread-demo",
+		Questions: []codexapp.ToolInputQuestion{{
+			ID:       "choice",
+			Question: "Select the next action",
+		}},
+	}
+	cached := codexapp.Snapshot{
+		Started:          true,
+		Provider:         codexapp.ProviderOpenCode,
+		ThreadID:         "thread-demo",
+		PendingApproval:  approval,
+		PendingToolInput: toolInput,
+		LastActivityAt:   time.Date(2026, 4, 4, 10, 30, 0, 0, time.UTC),
+	}
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot:    cached,
+		trySnapshotFn: func(*fakeCodexSession) (codexapp.Snapshot, bool) {
+			return codexapp.Snapshot{}, false
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderOpenCode,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": cached,
+		},
+	}
+
+	gotApproval, provider, ok := m.projectPendingEmbeddedApproval("/tmp/demo")
+	if !ok || gotApproval != approval {
+		t.Fatalf("projectPendingEmbeddedApproval() = (%v, %v), want cached approval", gotApproval, ok)
+	}
+	if provider != codexapp.ProviderOpenCode {
+		t.Fatalf("approval provider = %q, want %q", provider, codexapp.ProviderOpenCode)
+	}
+
+	question, provider, ok := m.projectPendingEmbeddedQuestion("/tmp/demo")
+	if !ok {
+		t.Fatalf("projectPendingEmbeddedQuestion() = false, want true")
+	}
+	if question != "Select the next action" {
+		t.Fatalf("question summary = %q, want cached summary", question)
+	}
+	if provider != codexapp.ProviderOpenCode {
+		t.Fatalf("question provider = %q, want %q", provider, codexapp.ProviderOpenCode)
+	}
+
+	if !m.projectHasLiveCodexSession("/tmp/demo") {
+		t.Fatalf("projectHasLiveCodexSession() = false, want true")
+	}
+	if snapshot, ok := m.liveCodexSnapshot("/tmp/demo"); !ok || snapshot.ThreadID != "thread-demo" {
+		t.Fatalf("liveCodexSnapshot() = (%+v, %v), want cached live snapshot", snapshot, ok)
+	}
+	if snapshot, ok := m.liveEmbeddedSnapshotForProject("/tmp/demo", codexapp.ProviderOpenCode); !ok || snapshot.ThreadID != "thread-demo" {
+		t.Fatalf("liveEmbeddedSnapshotForProject() = (%+v, %v), want cached embedded snapshot", snapshot, ok)
+	}
+	if snapshot, ok := m.codexSnapshotForProject("/tmp/demo"); !ok || snapshot.ThreadID != "thread-demo" {
+		t.Fatalf("codexSnapshotForProject() = (%+v, %v), want cached snapshot", snapshot, ok)
+	}
+	if session.snapshotCalls != 0 {
+		t.Fatalf("helpers should avoid blocking Snapshot() while TrySnapshot is contended; snapshot calls = %d", session.snapshotCalls)
 	}
 }
 
