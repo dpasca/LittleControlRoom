@@ -295,6 +295,13 @@ type runCommandSavedMsg struct {
 	err         error
 }
 
+type runCommandSuggestionMsg struct {
+	projectPath string
+	seq         int64
+	suggestion  projectrun.Suggestion
+	err         error
+}
+
 type todoActionMsg struct {
 	projectPath string
 	status      string
@@ -1668,6 +1675,25 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "Saved run command"
 		}
 		return m, refreshCmd
+	case runCommandSuggestionMsg:
+		dialog := m.runCommandDialog
+		if dialog == nil || filepath.Clean(dialog.ProjectPath) != filepath.Clean(msg.projectPath) || dialog.SuggestionSeq != msg.seq {
+			return m, nil
+		}
+		dialog.SuggestionPending = false
+		if msg.err != nil {
+			return m, nil
+		}
+		if strings.TrimSpace(dialog.Input.Value()) != "" {
+			return m, nil
+		}
+		if strings.TrimSpace(msg.suggestion.Command) == "" {
+			return m, nil
+		}
+		dialog.Input.SetValue(msg.suggestion.Command)
+		dialog.Input.CursorEnd()
+		dialog.SuggestionReason = strings.TrimSpace(msg.suggestion.Reason)
+		return m, nil
 	case todoActionMsg:
 		if msg.err != nil {
 			m.reportError("TODO action failed", msg.err, msg.projectPath)

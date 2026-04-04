@@ -13408,6 +13408,84 @@ func TestCommandEnterOpensRunCommandDialogWhenUnset(t *testing.T) {
 	}
 }
 
+func TestOpenRunCommandDialogLoadsSuggestionAsync(t *testing.T) {
+	t.Parallel()
+
+	projectPath := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projectPath, "bin"), 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectPath, "bin", "dev"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write bin/dev: %v", err)
+	}
+
+	m := Model{}
+	cmd := m.openRunCommandDialog(model.ProjectSummary{
+		Name:          "demo",
+		Path:          projectPath,
+		PresentOnDisk: true,
+	}, true)
+	if m.runCommandDialog == nil {
+		t.Fatal("openRunCommandDialog() should open the dialog")
+	}
+	if !m.runCommandDialog.SuggestionPending {
+		t.Fatal("openRunCommandDialog() should mark suggestion loading pending when the command is empty")
+	}
+
+	for _, msg := range collectCmdMsgs(cmd) {
+		updated, _ := m.Update(msg)
+		m = updated.(Model)
+	}
+
+	if got := m.runCommandDialog.Input.Value(); got != "./bin/dev" {
+		t.Fatalf("suggested command = %q, want %q", got, "./bin/dev")
+	}
+	if got := m.runCommandDialog.SuggestionReason; got != "Found bin/dev in the project root." {
+		t.Fatalf("suggestion reason = %q, want bin/dev hint", got)
+	}
+	if m.runCommandDialog.SuggestionPending {
+		t.Fatal("suggestion pending should clear after the async lookup returns")
+	}
+}
+
+func TestRunCommandSuggestionDoesNotOverwriteTypedInput(t *testing.T) {
+	t.Parallel()
+
+	projectPath := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projectPath, "bin"), 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectPath, "bin", "dev"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write bin/dev: %v", err)
+	}
+
+	m := Model{}
+	cmd := m.openRunCommandDialog(model.ProjectSummary{
+		Name:          "demo",
+		Path:          projectPath,
+		PresentOnDisk: true,
+	}, true)
+	if m.runCommandDialog == nil {
+		t.Fatal("openRunCommandDialog() should open the dialog")
+	}
+	m.runCommandDialog.Input.SetValue("npm run local")
+
+	for _, msg := range collectCmdMsgs(cmd) {
+		updated, _ := m.Update(msg)
+		m = updated.(Model)
+	}
+
+	if got := m.runCommandDialog.Input.Value(); got != "npm run local" {
+		t.Fatalf("typed command = %q, want %q", got, "npm run local")
+	}
+	if got := m.runCommandDialog.SuggestionReason; got != "" {
+		t.Fatalf("suggestion reason = %q, want empty when the user has already typed a command", got)
+	}
+	if m.runCommandDialog.SuggestionPending {
+		t.Fatal("suggestion pending should clear even when the suggestion is ignored")
+	}
+}
+
 func TestRestartCommandQueuesRuntimeRestart(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{
