@@ -465,6 +465,11 @@ type Snapshot struct {
 type Session interface {
 	ProjectPath() string
 	Snapshot() Snapshot
+	// TrySnapshot returns the current snapshot without blocking. If the
+	// session's internal lock is contended it returns (Snapshot{}, false)
+	// immediately so the caller can fall back to a cached value instead of
+	// freezing the event loop.
+	TrySnapshot() (Snapshot, bool)
 	Submit(prompt string) error
 	SubmitInput(input Submission) error
 	ShowStatus() error

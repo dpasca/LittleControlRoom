@@ -32,6 +32,10 @@ func (s *fakeSession) Snapshot() Snapshot {
 	return snapshot
 }
 
+func (s *fakeSession) TrySnapshot() (Snapshot, bool) {
+	return s.Snapshot(), true
+}
+
 func (s *fakeSession) Submit(prompt string) error {
 	s.submitted = append(s.submitted, prompt)
 	return nil

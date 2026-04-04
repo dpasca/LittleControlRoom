@@ -218,6 +218,49 @@ func (s *claudeCodeSession) Snapshot() Snapshot {
 	}
 }
 
+func (s *claudeCodeSession) TrySnapshot() (Snapshot, bool) {
+	if !s.mu.TryLock() {
+		return Snapshot{}, false
+	}
+	defer s.mu.Unlock()
+
+	phase := SessionPhaseIdle
+	switch {
+	case s.closed:
+		phase = SessionPhaseClosed
+	case s.busyExternal:
+		phase = SessionPhaseExternal
+	case s.busy:
+		phase = SessionPhaseRunning
+	}
+
+	entries, transcript := s.exportedTranscriptLocked()
+
+	return Snapshot{
+		Provider:           ProviderClaudeCode,
+		ProjectPath:        s.projectPath,
+		ThreadID:           s.sessionID,
+		Preset:             s.preset,
+		TranscriptRevision: s.transcriptRevision,
+		Phase:              phase,
+		Started:            s.started,
+		Busy:               s.busy || s.busyExternal,
+		BusyExternal:       s.busyExternal,
+		BusySince:          s.busySince,
+		Closed:             s.closed,
+		Entries:            entries,
+		Transcript:         transcript,
+		Status:             s.status,
+		LastError:          s.lastError,
+		LastSystemNotice:   s.lastSystemNotice,
+		LastActivityAt:     s.lastActivityAt,
+		Model:              s.model,
+		ReasoningEffort:    s.reasoningEffort,
+		PendingModel:       s.pendingModel,
+		PendingReasoning:   s.pendingReasoning,
+	}, true
+}
+
 func (s *claudeCodeSession) invalidateTranscriptCacheLocked() {
 	s.transcriptCache.invalidate(&s.transcriptRevision)
 }

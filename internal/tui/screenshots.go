@@ -609,6 +609,10 @@ func (s *screenshotCodexSession) Snapshot() codexapp.Snapshot {
 	return snapshot
 }
 
+func (s *screenshotCodexSession) TrySnapshot() (codexapp.Snapshot, bool) {
+	return s.Snapshot(), true
+}
+
 func (s *screenshotCodexSession) Submit(prompt string) error {
 	return nil
 }

@@ -181,7 +181,7 @@ func (m *Model) finishCodexPendingOpen(projectPath string, opened bool, reveal b
 	}
 	m.markCodexSessionLive(projectPath)
 	m.codexHiddenProject = projectPath
-	m.refreshCodexSnapshot(projectPath)
+	m.refreshCodexSnapshot(projectPath) // needsAsync ignored — update cycle will follow shortly
 	if reveal {
 		m.codexVisibleProject = projectPath
 		m.loadCodexDraft(projectPath)
@@ -219,39 +219,76 @@ func (m Model) currentCodexSession() (codexapp.Session, bool) {
 }
 
 func (m Model) currentCodexSnapshot() (codexapp.Snapshot, bool) {
-	session, ok := m.currentCodexSession()
-	if !ok {
-		if projectPath := strings.TrimSpace(m.codexVisibleProject); projectPath != "" {
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	if projectPath != "" {
+		if snapshot, ok := m.codexSnapshots[projectPath]; ok {
+			return snapshot, true
+		}
+	}
+	session, sessionOK := m.currentCodexSession()
+	if !sessionOK {
+		if projectPath != "" {
 			if snapshot, ok := m.codexSnapshots[projectPath]; ok && snapshot.Closed {
 				return snapshot, true
 			}
 		}
 		return codexapp.Snapshot{}, false
 	}
-	if projectPath := strings.TrimSpace(m.codexVisibleProject); projectPath != "" {
-		if snapshot, ok := m.codexSnapshots[projectPath]; ok {
-			return snapshot, true
-		}
+	// Session exists but no cached snapshot yet. Use TrySnapshot to avoid
+	// blocking the event loop when the session lock is contended. If the
+	// lock is free we get a fresh snapshot; otherwise we return empty and
+	// the next codexUpdateMsg will populate the cache.
+	if snapshot, got := session.TrySnapshot(); got {
+		return snapshot, true
 	}
-	return session.Snapshot(), true
+	return codexapp.Snapshot{}, false
 }
 
-func (m *Model) refreshCodexSnapshot(projectPath string) (codexapp.Snapshot, bool) {
+// refreshCodexSnapshot attempts a non-blocking snapshot via TrySnapshot.
+// If the session lock is contended it returns the cached snapshot and sets
+// needsAsync=true so the caller can fire an async retry command.
+func (m *Model) refreshCodexSnapshot(projectPath string) (snapshot codexapp.Snapshot, ok bool, needsAsync bool) {
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
-		return codexapp.Snapshot{}, false
+		return codexapp.Snapshot{}, false, false
+	}
+	session, sessionOK := m.codexSession(projectPath)
+	if !sessionOK {
+		if snapshot, ok := m.codexSnapshots[projectPath]; ok && snapshot.Closed {
+			return snapshot, true, false
+		}
+		m.dropCodexSnapshot(projectPath)
+		return codexapp.Snapshot{}, false, false
+	}
+	if snap, got := session.TrySnapshot(); got {
+		m.storeCodexSnapshot(projectPath, snap)
+		return snap, true, false
+	}
+	// Lock contended — return the cached snapshot (if any) instead of blocking.
+	if cached, ok := m.codexSnapshots[projectPath]; ok {
+		return cached, true, true
+	}
+	return codexapp.Snapshot{}, false, true
+}
+
+// deferredCodexSnapshotCmd spawns a goroutine that takes a blocking
+// session.Snapshot() off the main event loop. Used as a fallback when
+// TrySnapshot reports lock contention.
+func (m Model) deferredCodexSnapshotCmd(projectPath string) tea.Cmd {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return nil
 	}
 	session, ok := m.codexSession(projectPath)
 	if !ok {
-		if snapshot, ok := m.codexSnapshots[projectPath]; ok && snapshot.Closed {
-			return snapshot, true
-		}
-		m.dropCodexSnapshot(projectPath)
-		return codexapp.Snapshot{}, false
+		return nil
 	}
-	snapshot := session.Snapshot()
-	m.storeCodexSnapshot(projectPath, snapshot)
-	return snapshot, true
+	return func() tea.Msg {
+		return codexDeferredSnapshotMsg{
+			projectPath: projectPath,
+			snapshot:    session.Snapshot(),
+		}
+	}
 }
 
 func (m *Model) showEmbeddedOpenFailure(projectPath string, provider codexapp.Provider, err error) {

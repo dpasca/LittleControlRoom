@@ -424,6 +424,16 @@ type codexModelListMsg struct {
 	err          error
 }
 
+// codexDeferredSnapshotMsg is sent when a non-blocking TrySnapshot failed due
+// to lock contention and a goroutine was spawned to acquire the snapshot in
+// the background. When this message arrives, the snapshot is stored in the
+// cache and the normal update-cycle follow-up logic (viewport sync, model
+// settle, etc.) runs.
+type codexDeferredSnapshotMsg struct {
+	projectPath string
+	snapshot    codexapp.Snapshot
+}
+
 func (m codexModelListMsg) statusSummary() string {
 	if m.err != nil {
 		return ""
@@ -1589,19 +1599,24 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = msg.status
 		}
 		if msg.provider.Normalized() != "" && (strings.TrimSpace(msg.model) != "" || strings.TrimSpace(msg.reasoning) != "") {
+			var asyncCmd tea.Cmd
 			if msg.awaitSettle {
 				m.beginModelSettleLatency(msg.projectPath, strings.TrimSpace(msg.provider.Label()+" "+msg.model+" "+msg.reasoning), msg.model, msg.reasoning)
-				if snapshot, ok := m.refreshCodexSnapshot(msg.projectPath); ok {
+				snapshot, ok, needsAsync := m.refreshCodexSnapshot(msg.projectPath)
+				if ok {
 					m.completeModelSettleLatency(msg.projectPath, snapshot)
+				}
+				if needsAsync {
+					asyncCmd = m.deferredCodexSnapshotCmd(msg.projectPath)
 				}
 			}
 			m.rememberEmbeddedModelPreference(msg.provider, msg.model, msg.reasoning)
 			m.recordRecentModel(msg.provider, msg.model)
 			m.returnToTodoFromModelPicker()
 			if strings.TrimSpace(m.codexVisibleProject) == strings.TrimSpace(msg.projectPath) && m.todoDialog == nil && m.todoCopyDialog == nil {
-				return m, tea.Batch(m.saveEmbeddedModelPreferencesCmd(), m.codexInput.Focus())
+				return m, tea.Batch(asyncCmd, m.saveEmbeddedModelPreferencesCmd(), m.codexInput.Focus())
 			}
-			return m, m.saveEmbeddedModelPreferencesCmd()
+			return m, tea.Batch(asyncCmd, m.saveEmbeddedModelPreferencesCmd())
 		}
 		if msg.closed {
 			m.cancelModelSettleLatency(msg.projectPath, "session closed")
@@ -1688,8 +1703,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		prevSnapshot, hadPrevSnapshot := m.codexSnapshots[strings.TrimSpace(msg.projectPath)]
 		refreshStarted := time.Now()
-		snapshot, ok := m.refreshCodexSnapshot(msg.projectPath)
+		snapshot, ok, needsAsync := m.refreshCodexSnapshot(msg.projectPath)
 		refreshDuration := time.Since(refreshStarted)
+		if needsAsync {
+			cmds = append(cmds, m.deferredCodexSnapshotCmd(msg.projectPath))
+		}
 		providerLabel := ""
 		transcriptChanged := false
 		if ok {
@@ -1725,11 +1743,50 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loading = true
 			cmds = append(cmds, m.scanCmd(false))
 			cmds = append(cmds, m.loadProjectsCmd())
-		} else {
+		} else if !needsAsync {
 			m.cancelModelSettleLatency(msg.projectPath, "stale")
 			m.dropCodexSnapshot(msg.projectPath)
 		}
 		return m, tea.Batch(cmds...)
+	case codexDeferredSnapshotMsg:
+		// Deferred snapshot arrived from a background goroutine after
+		// TrySnapshot encountered lock contention. Run the same follow-up
+		// logic that codexUpdateMsg would have done with a fresh snapshot.
+		projectPath := strings.TrimSpace(msg.projectPath)
+		if projectPath == "" {
+			return m, nil
+		}
+		prevSnapshot, hadPrev := m.codexSnapshots[projectPath]
+		m.storeCodexSnapshot(projectPath, msg.snapshot)
+		snapshot := msg.snapshot
+		providerLabel := embeddedProvider(snapshot).Label()
+		transcriptChanged := !hadPrev || codexTranscriptStateChanged(prevSnapshot, snapshot)
+		if m.codexVisibleProject == projectPath {
+			viewportStarted := time.Now()
+			m.resetCodexToolAnswerState(projectPath)
+			m.syncCodexViewport(transcriptChanged)
+			m.recordAISyncLatency("Embedded viewport", projectPath, providerLabel, time.Since(viewportStarted), "deferred")
+		}
+		m.completeModelSettleLatency(projectPath, snapshot)
+		if !snapshot.Closed {
+			m.markCodexSessionLive(projectPath)
+			m.detectQuestionNotification(projectPath, snapshot)
+			return m, nil
+		}
+		m.cancelModelSettleLatency(projectPath, "session closed")
+		if !m.markCodexSessionClosedHandled(projectPath) {
+			return m, nil
+		}
+		if m.codexHiddenProject == projectPath {
+			m.codexHiddenProject = ""
+		}
+		if m.codexVisibleProject == projectPath && strings.TrimSpace(snapshot.Status) != "" {
+			m.status = snapshot.Status
+		} else if strings.TrimSpace(snapshot.Status) != "" {
+			m.status = snapshot.Status
+		}
+		m.loading = true
+		return m, tea.Batch(m.scanCmd(false), m.loadProjectsCmd())
 	}
 
 	return m, nil

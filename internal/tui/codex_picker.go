@@ -610,7 +610,7 @@ func (m Model) showCodexProject(projectPath, status string) (tea.Model, tea.Cmd)
 		m.questionNotify = nil
 	}
 	m.loadCodexDraft(projectPath)
-	m.refreshCodexSnapshot(projectPath)
+	m.refreshCodexSnapshot(projectPath) // needsAsync ignored — update cycle will follow shortly
 	m.syncCodexViewport(true)
 	seenCmd := m.markProjectSessionSeen(projectPath)
 	if strings.TrimSpace(status) != "" {

@@ -20,7 +20,7 @@ const (
 	aiStatsLatencySlowCost            = time.Second
 	aiStatsLatencySevereCost          = 5 * time.Second
 	uiStallTickThreshold              = 750 * time.Millisecond
-	uiStallIgnoreGap                  = 45 * time.Second
+	uiStallIgnoreGap                  = 10 * time.Minute
 )
 
 type aiLatencyOp struct {

@@ -90,6 +90,10 @@ func (s *fakeCodexSession) Snapshot() codexapp.Snapshot {
 	return snapshot
 }
 
+func (s *fakeCodexSession) TrySnapshot() (codexapp.Snapshot, bool) {
+	return s.Snapshot(), true
+}
+
 func (s *fakeCodexSession) Submit(prompt string) error {
 	s.submitted = append(s.submitted, prompt)
 	return nil
@@ -6454,7 +6458,7 @@ func TestCodexUpdateStatusOnlyPreservesViewportOffset(t *testing.T) {
 		width:               100,
 		height:              18,
 	}
-	if _, ok := m.refreshCodexSnapshot("/tmp/demo"); !ok {
+	if _, ok, _ := m.refreshCodexSnapshot("/tmp/demo"); !ok {
 		t.Fatalf("refreshCodexSnapshot() failed")
 	}
 	m.syncCodexViewport(true)
@@ -11981,7 +11985,7 @@ func TestVisibleCodexViewUsesCachedSnapshotWhileTyping(t *testing.T) {
 		width:               100,
 		height:              24,
 	}
-	if _, ok := m.refreshCodexSnapshot("/tmp/demo"); !ok {
+	if _, ok, _ := m.refreshCodexSnapshot("/tmp/demo"); !ok {
 		t.Fatalf("refreshCodexSnapshot() failed")
 	}
 	m.syncCodexViewport(true)

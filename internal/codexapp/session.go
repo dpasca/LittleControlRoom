@@ -531,6 +531,49 @@ func (s *appServerSession) Snapshot() Snapshot {
 	}
 }
 
+func (s *appServerSession) TrySnapshot() (Snapshot, bool) {
+	if !s.mu.TryLock() {
+		return Snapshot{}, false
+	}
+	defer s.mu.Unlock()
+	entries, transcript := s.exportedTranscriptLocked()
+	tokenUsage := exportedTokenUsageSnapshot(s.tokenUsage)
+	usageWindows := exportedUsageWindowsSnapshot(s.rateLimits, s.rateLimitsByID)
+	return Snapshot{
+		Provider:           ProviderCodex,
+		ProjectPath:        s.projectPath,
+		ThreadID:           s.threadID,
+		Preset:             s.preset,
+		TranscriptRevision: s.transcriptRevision,
+		Phase:              s.phaseLocked(),
+		Started:            s.started,
+		Busy:               s.busy,
+		BusyExternal:       s.busyExternal,
+		BusySince:          s.busySince,
+		LastBusyActivityAt: s.lastBusyActivityAt,
+		Closed:             s.closed,
+		ActiveTurnID:       s.activeTurnID,
+		PendingApproval:    cloneApprovalRequest(s.pendingApproval),
+		PendingToolInput:   cloneToolInputRequest(s.pendingToolInput),
+		PendingElicitation: cloneElicitationRequest(s.pendingElicitation),
+		Entries:            entries,
+		Transcript:         transcript,
+		Status:             s.status,
+		LastError:          s.lastError,
+		LastSystemNotice:   s.lastSystemNotice,
+		LastActivityAt:     s.lastActivityAt,
+		CurrentCWD:         s.currentCWD,
+		Model:              s.model,
+		ModelProvider:      s.modelProvider,
+		ReasoningEffort:    s.reasoningEffort,
+		ServiceTier:        s.serviceTier,
+		PendingModel:       s.pendingModel,
+		PendingReasoning:   s.pendingReasoning,
+		TokenUsage:         tokenUsage,
+		UsageWindows:       usageWindows,
+	}, true
+}
+
 func (s *appServerSession) invalidateTranscriptCacheLocked() {
 	s.transcriptCache.invalidate(&s.transcriptRevision)
 }
