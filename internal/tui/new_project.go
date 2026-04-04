@@ -29,6 +29,9 @@ type newProjectDialogState struct {
 	CreateGitRepo      bool
 	Submitting         bool
 	PathManuallyEdited bool
+	Preview            newProjectPreview
+	PreviewPending     bool
+	PreviewSeq         int64
 }
 
 type newProjectResultMsg struct {
@@ -39,6 +42,11 @@ type newProjectResultMsg struct {
 type recentProjectParentsMsg struct {
 	paths []string
 	err   error
+}
+
+type newProjectPreviewMsg struct {
+	seq     int64
+	preview newProjectPreview
 }
 
 type newProjectPreview struct {
@@ -76,7 +84,7 @@ func (m *Model) openNewProjectDialog() tea.Cmd {
 	m.showHelp = false
 	m.err = nil
 	m.status = "New project dialog open. Enter create/add, Esc cancel"
-	return m.setNewProjectSelection(newProjectFieldPath)
+	return batchCmds(m.setNewProjectSelection(newProjectFieldPath), m.refreshNewProjectPreview())
 }
 
 func (m *Model) closeNewProjectDialog(status string) {
@@ -105,7 +113,7 @@ func (m Model) updateNewProjectMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			dialog.PathInput.CursorEnd()
 			dialog.PathManuallyEdited = false
 			m.status = fmt.Sprintf("Using recent parent path %d", index+1)
-			return m, nil
+			return m, m.refreshNewProjectPreview()
 		}
 	}
 
@@ -119,6 +127,10 @@ func (m Model) updateNewProjectMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.moveNewProjectSelection(-1)
 	case "enter":
 		preview := m.currentNewProjectPreview()
+		if dialog.PreviewPending && strings.TrimSpace(preview.Name) == "" {
+			m.status = "Checking project path..."
+			return m, nil
+		}
 		if preview.Error != "" {
 			m.status = preview.Error
 			return m, nil
@@ -152,11 +164,16 @@ func (m Model) updateNewProjectMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		dialog.PathInput = input
 		if dialog.PathInput.Value() != previous {
 			dialog.PathManuallyEdited = true
+			return m, batchCmds(cmd, m.refreshNewProjectPreview())
 		}
 		return m, cmd
 	case newProjectFieldName:
+		previous := dialog.NameInput.Value()
 		input, cmd := dialog.NameInput.Update(msg)
 		dialog.NameInput = input
+		if dialog.NameInput.Value() != previous {
+			return m, batchCmds(cmd, m.refreshNewProjectPreview())
+		}
 		return m, cmd
 	default:
 		return m, nil
@@ -241,39 +258,87 @@ func (m Model) currentNewProjectPreview() newProjectPreview {
 	if dialog == nil {
 		return newProjectPreview{}
 	}
+	return dialog.Preview
+}
 
-	parentPath := normalizeNewProjectPathInput(m.homeDirFn, dialog.PathInput.Value())
-	name := strings.TrimSpace(dialog.NameInput.Value())
-	displayName := name
-	if displayName == "" {
-		displayName = "<name>"
+type newProjectPreviewProbe struct {
+	parentPath string
+	name       string
+}
+
+func (m *Model) refreshNewProjectPreview() tea.Cmd {
+	dialog := m.newProjectDialog
+	if dialog == nil {
+		return nil
+	}
+	dialog.PreviewSeq++
+	preview, probe, needsProbe := buildNewProjectPreviewBase(
+		m.homeDirFn,
+		dialog.PathInput.Value(),
+		dialog.NameInput.Value(),
+		dialog.PathManuallyEdited,
+	)
+	dialog.Preview = preview
+	dialog.PreviewPending = needsProbe
+	if !needsProbe {
+		return nil
+	}
+	return m.inspectNewProjectPreviewCmd(dialog.PreviewSeq, preview, probe)
+}
+
+func buildNewProjectPreviewBase(homeDirFn func() (string, error), rawPath, rawName string, pathManuallyEdited bool) (newProjectPreview, newProjectPreviewProbe, bool) {
+	parentPath := normalizeNewProjectPathInput(homeDirFn, rawPath)
+	name := strings.TrimSpace(rawName)
+	fullPath := filepath.Clean(filepath.Join(parentPath, "<name>"))
+	if name != "" {
+		fullPath = filepath.Clean(filepath.Join(parentPath, name))
+	} else if pathManuallyEdited && strings.TrimSpace(parentPath) != "" {
+		fullPath = parentPath
 	}
 
 	preview := newProjectPreview{
 		ParentPath: parentPath,
 		Name:       name,
-		FullPath:   filepath.Clean(filepath.Join(parentPath, displayName)),
-		Ready:      strings.TrimSpace(parentPath) != "" && name != "",
+		FullPath:   fullPath,
 	}
 	if strings.TrimSpace(parentPath) == "" {
 		preview.Error = "Project path is required"
-		return preview
+		return preview, newProjectPreviewProbe{}, false
 	}
 	if name == "" {
-		if !dialog.PathManuallyEdited {
-			return preview
+		if !pathManuallyEdited {
+			return preview, newProjectPreviewProbe{}, false
 		}
-		if inferred, ok := deriveNewProjectPreviewFromExistingPath(parentPath); ok {
-			return inferred
-		}
-		return preview
+		return preview, newProjectPreviewProbe{parentPath: parentPath}, true
 	}
 	if !validNewProjectFolderName(name) {
 		preview.Error = "Project name must be a single folder name"
-		return preview
+		return preview, newProjectPreviewProbe{}, false
 	}
+	preview.Ready = true
+	return preview, newProjectPreviewProbe{
+		parentPath: parentPath,
+		name:       name,
+	}, true
+}
 
-	preview.FullPath = filepath.Clean(filepath.Join(parentPath, name))
+func (m Model) inspectNewProjectPreviewCmd(seq int64, base newProjectPreview, probe newProjectPreviewProbe) tea.Cmd {
+	return func() tea.Msg {
+		preview := base
+		if strings.TrimSpace(probe.name) == "" {
+			if inferred, ok := deriveNewProjectPreviewFromExistingPath(probe.parentPath); ok {
+				preview = inferred
+			}
+			return newProjectPreviewMsg{seq: seq, preview: preview}
+		}
+		return newProjectPreviewMsg{
+			seq:     seq,
+			preview: inspectNewProjectPreviewPath(base),
+		}
+	}
+}
+
+func inspectNewProjectPreviewPath(preview newProjectPreview) newProjectPreview {
 	info, err := os.Stat(preview.FullPath)
 	switch {
 	case err == nil:
@@ -469,6 +534,8 @@ func (m Model) renderNewProjectStatus(preview newProjectPreview, width int) []st
 	switch {
 	case preview.Error != "":
 		lines = append(lines, detailWarningStyle.Render(preview.Error))
+	case m.newProjectDialog != nil && m.newProjectDialog.PreviewPending:
+		lines = append(lines, commandPaletteHintStyle.Render("Checking the project path in the background..."))
 	case preview.NameDerivedFromPath:
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("Name left blank. Using existing folder name %q from the provided path.", preview.Name)))
 		lines = append(lines, commandPaletteHintStyle.Render("Enter will add that folder to the list directly."))

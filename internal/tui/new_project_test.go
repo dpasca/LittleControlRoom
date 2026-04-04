@@ -16,6 +16,20 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+func applyNewProjectPreviewRefresh(t *testing.T, m Model) Model {
+	t.Helper()
+
+	cmd := m.refreshNewProjectPreview()
+	if cmd == nil {
+		return m
+	}
+	updated, nextCmd := m.Update(cmd())
+	if nextCmd != nil {
+		t.Fatalf("preview refresh should not schedule follow-up work")
+	}
+	return updated.(Model)
+}
+
 func TestDispatchNewProjectCommandOpensDialogWithRecentPathDefault(t *testing.T) {
 	m := Model{
 		width:                   100,
@@ -68,6 +82,7 @@ func TestNewProjectDialogCreatesProjectAndSelectsIt(t *testing.T) {
 	got.newProjectDialog.PathInput.SetValue(parent)
 	got.newProjectDialog.NameInput.SetValue("demo")
 	got.newProjectDialog.CreateGitRepo = false
+	got = applyNewProjectPreviewRefresh(t, got)
 
 	updated, cmd := got.updateNewProjectMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
@@ -140,6 +155,7 @@ func TestNewProjectPreviewDerivesNameFromQuotedExistingPathWhenNameBlank(t *test
 		CreateGitRepo:      true,
 		PathManuallyEdited: true,
 	}
+	m = applyNewProjectPreviewRefresh(t, m)
 
 	preview := m.currentNewProjectPreview()
 	if !preview.Ready {
@@ -174,6 +190,7 @@ func TestNewProjectPreviewDoesNotAutoDeriveNameForDefaultParentPath(t *testing.T
 		PathInput: newNewProjectTextInput(parent, 1024),
 		NameInput: newNewProjectTextInput("", 256),
 	}
+	m = applyNewProjectPreviewRefresh(t, m)
 
 	preview := m.currentNewProjectPreview()
 	if preview.Ready {
@@ -181,5 +198,67 @@ func TestNewProjectPreviewDoesNotAutoDeriveNameForDefaultParentPath(t *testing.T
 	}
 	if preview.NameDerivedFromPath {
 		t.Fatalf("default parent path should not derive a project name: %#v", preview)
+	}
+}
+
+func TestNewProjectPreviewIgnoresStaleProbeResults(t *testing.T) {
+	t.Parallel()
+
+	firstPath := filepath.Join(t.TempDir(), "first-project")
+	if err := os.MkdirAll(firstPath, 0o755); err != nil {
+		t.Fatalf("mkdir first path: %v", err)
+	}
+	secondPath := filepath.Join(t.TempDir(), "second-project")
+	if err := os.MkdirAll(secondPath, 0o755); err != nil {
+		t.Fatalf("mkdir second path: %v", err)
+	}
+
+	m := Model{
+		width:     100,
+		height:    28,
+		homeDirFn: func() (string, error) { return "/Users/tester", nil },
+	}
+	m.newProjectDialog = &newProjectDialogState{
+		PathInput:          newNewProjectTextInput(firstPath, 1024),
+		NameInput:          newNewProjectTextInput("", 256),
+		PathManuallyEdited: true,
+	}
+
+	firstCmd := m.refreshNewProjectPreview()
+	if firstCmd == nil {
+		t.Fatal("first refresh should probe the filesystem")
+	}
+	m.newProjectDialog.PathInput.SetValue(secondPath)
+	secondCmd := m.refreshNewProjectPreview()
+	if secondCmd == nil {
+		t.Fatal("second refresh should probe the filesystem")
+	}
+
+	updated, nextCmd := m.Update(firstCmd())
+	if nextCmd != nil {
+		t.Fatalf("stale preview result should not schedule follow-up work")
+	}
+	m = updated.(Model)
+	if preview := m.currentNewProjectPreview(); preview.ParentPath != secondPath {
+		t.Fatalf("stale preview should be ignored, got %#v", preview)
+	}
+	if !m.newProjectDialog.PreviewPending {
+		t.Fatal("latest probe should still be pending after stale result is ignored")
+	}
+
+	updated, nextCmd = m.Update(secondCmd())
+	if nextCmd != nil {
+		t.Fatalf("latest preview result should not schedule follow-up work")
+	}
+	m = updated.(Model)
+	preview := m.currentNewProjectPreview()
+	if preview.Name != "second-project" {
+		t.Fatalf("preview name = %q, want %q", preview.Name, "second-project")
+	}
+	if !preview.NameDerivedFromPath {
+		t.Fatalf("expected latest preview to derive the project name from the path: %#v", preview)
+	}
+	if m.newProjectDialog.PreviewPending {
+		t.Fatal("preview pending should clear after the latest probe completes")
 	}
 }

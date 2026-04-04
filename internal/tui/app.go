@@ -1370,6 +1370,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.newProjectRecentParents = append([]string(nil), msg.paths...)
 		}
 		return m, nil
+	case newProjectPreviewMsg:
+		if m.newProjectDialog == nil || msg.seq != m.newProjectDialog.PreviewSeq {
+			return m, nil
+		}
+		m.newProjectDialog.Preview = msg.preview
+		m.newProjectDialog.PreviewPending = false
+		return m, nil
 	case setupSnapshotMsg:
 		m.setupChecked = true
 		m.setupLoading = false
