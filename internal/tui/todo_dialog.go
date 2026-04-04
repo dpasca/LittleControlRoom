@@ -370,11 +370,11 @@ func (m *Model) openTodoCopyDialog(todo model.TodoItem) tea.Cmd {
 		ProjectName: m.todoDialog.ProjectName,
 		TodoID:      todo.ID,
 		TodoText:    todo.Text,
-		RunMode:     todoCopyModeHere,
+		RunMode:     todoCopyModeNewWorktree,
 		Provider:    provider,
 	}
 	m.status = "Start TODO"
-	return nil
+	return m.ensureTodoWorktreeSuggestionCmd(m.todoDialog.ProjectPath, todo.ID)
 }
 
 func (m *Model) closeTodoCopyDialog(status string) tea.Cmd {

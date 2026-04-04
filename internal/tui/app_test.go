@@ -6215,6 +6215,15 @@ func TestTodoDialogEnterStartsFreshPreferredProviderWithDraft(t *testing.T) {
 	if got.todoCopyDialog == nil {
 		t.Fatalf("todo copy dialog should open after Enter")
 	}
+	if got.todoCopyDialog.RunMode != todoCopyModeNewWorktree {
+		t.Fatalf("copy dialog run mode = %d, want %d by default", got.todoCopyDialog.RunMode, todoCopyModeNewWorktree)
+	}
+
+	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+	got = updated.(Model)
+	if got.todoCopyDialog.RunMode != todoCopyModeHere {
+		t.Fatalf("copy dialog run mode = %d, want %d after w", got.todoCopyDialog.RunMode, todoCopyModeHere)
+	}
 
 	updated, cmd := got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
@@ -6311,6 +6320,14 @@ func TestTodoDialogModelToggleOpensPickerBeforeDraft(t *testing.T) {
 
 	updated, _ := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
+	if got.todoCopyDialog == nil {
+		t.Fatalf("todo copy dialog should open after Enter")
+	}
+	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+	got = updated.(Model)
+	if got.todoCopyDialog.RunMode != todoCopyModeHere {
+		t.Fatalf("copy dialog run mode = %d, want %d after w", got.todoCopyDialog.RunMode, todoCopyModeHere)
+	}
 	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
 	got = updated.(Model)
 	if !got.todoCopyDialog.OpenModelFirst {
@@ -6626,8 +6643,8 @@ func TestTodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider(t *testin
 	if got.todoCopyDialog.Provider != codexapp.ProviderClaudeCode {
 		t.Fatalf("copy dialog provider = %q, want %q", got.todoCopyDialog.Provider, codexapp.ProviderClaudeCode)
 	}
-	if got.todoCopyDialog.RunMode != todoCopyModeHere {
-		t.Fatalf("copy dialog run mode = %d, want %d", got.todoCopyDialog.RunMode, todoCopyModeHere)
+	if got.todoCopyDialog.RunMode != todoCopyModeNewWorktree {
+		t.Fatalf("copy dialog run mode = %d, want %d", got.todoCopyDialog.RunMode, todoCopyModeNewWorktree)
 	}
 
 	rendered := ansi.Strip(got.renderTodoCopyDialogOverlay("", 100, 24))
@@ -6642,6 +6659,9 @@ func TestTodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider(t *testin
 	}
 	if !strings.Contains(rendered, "Run in  [w]") {
 		t.Fatalf("rendered copy dialog = %q, want dedicated worktree hotkey hint", rendered)
+	}
+	if !strings.Contains(rendered, "Branch: feat/todo-worktree-launch") {
+		t.Fatalf("rendered copy dialog = %q, want ready worktree branch details by default", rendered)
 	}
 	if !strings.Contains(rendered, "Agent  [a]") {
 		t.Fatalf("rendered copy dialog = %q, want agent hotkey hint", rendered)
@@ -6674,6 +6694,12 @@ func TestTodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider(t *testin
 
 	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
 	got = updated.(Model)
+	if got.todoCopyDialog.RunMode != todoCopyModeHere {
+		t.Fatalf("copy dialog run mode = %d, want %d after w", got.todoCopyDialog.RunMode, todoCopyModeHere)
+	}
+
+	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+	got = updated.(Model)
 	rendered = ansi.Strip(got.renderTodoCopyDialogOverlay("", 100, 24))
 	if !strings.Contains(rendered, "Branch: feat/todo-worktree-launch") {
 		t.Fatalf("rendered copy dialog = %q, want ready worktree branch details", rendered)
@@ -6687,6 +6713,9 @@ func TestTodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider(t *testin
 
 	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
 	got = updated.(Model)
+	if got.todoCopyDialog.RunMode != todoCopyModeHere {
+		t.Fatalf("copy dialog run mode = %d, want %d before Enter", got.todoCopyDialog.RunMode, todoCopyModeHere)
+	}
 
 	updated, cmd := got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
@@ -6769,20 +6798,11 @@ func TestTodoDialogDedicatedWorktreeEnsuresMissingWorktreeSuggestion(t *testing.
 	if got.todoCopyDialog == nil {
 		t.Fatalf("todo copy dialog should open after Enter")
 	}
-	if cmd != nil {
-		t.Fatalf("opening the TODO launcher should not queue a worktree suggestion until dedicated mode is selected")
-	}
-
-	updated, cmd = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
-	got = updated.(Model)
-	if got.todoCopyDialog == nil {
-		t.Fatalf("todo copy dialog should stay open after switching to dedicated worktree")
-	}
 	if got.todoCopyDialog.RunMode != todoCopyModeNewWorktree {
-		t.Fatalf("copy dialog run mode = %d, want %d after w", got.todoCopyDialog.RunMode, todoCopyModeNewWorktree)
+		t.Fatalf("copy dialog run mode = %d, want %d by default", got.todoCopyDialog.RunMode, todoCopyModeNewWorktree)
 	}
 	if cmd == nil {
-		t.Fatalf("switching to dedicated worktree should ensure a missing worktree suggestion")
+		t.Fatalf("opening the TODO launcher should ensure a missing worktree suggestion")
 	}
 	msg, ok := cmd().(todoActionMsg)
 	if !ok {
@@ -6874,20 +6894,11 @@ func TestTodoDialogDedicatedWorktreeRetriesFailedWorktreeSuggestion(t *testing.T
 	if got.todoCopyDialog == nil {
 		t.Fatalf("todo copy dialog should open after Enter")
 	}
-	if cmd != nil {
-		t.Fatalf("opening the TODO launcher should not retry a failed worktree suggestion before dedicated mode is selected")
-	}
-
-	updated, cmd = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
-	got = updated.(Model)
-	if got.todoCopyDialog == nil {
-		t.Fatalf("todo copy dialog should stay open after switching to dedicated worktree")
-	}
 	if got.todoCopyDialog.RunMode != todoCopyModeNewWorktree {
-		t.Fatalf("copy dialog run mode = %d, want %d after w", got.todoCopyDialog.RunMode, todoCopyModeNewWorktree)
+		t.Fatalf("copy dialog run mode = %d, want %d by default", got.todoCopyDialog.RunMode, todoCopyModeNewWorktree)
 	}
 	if cmd == nil {
-		t.Fatalf("switching to dedicated worktree should retry a failed worktree suggestion")
+		t.Fatalf("opening the TODO launcher should retry a failed worktree suggestion")
 	}
 	msg, ok := cmd().(todoActionMsg)
 	if !ok {
@@ -7005,8 +7016,6 @@ func TestTodoDialogCanStartSelectedTodoInNewWorktree(t *testing.T) {
 
 	updated, _ := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
-	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
-	got = updated.(Model)
 	updated, cmd := got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
 	if cmd == nil {
@@ -7553,8 +7562,8 @@ func TestTodoDialogCopyDialogHotkeysChangeRunModeAndProvider(t *testing.T) {
 	if got.todoCopyDialog == nil {
 		t.Fatalf("todo copy dialog should open after Enter")
 	}
-	if got.todoCopyDialog.RunMode != todoCopyModeHere {
-		t.Fatalf("copy dialog run mode = %d, want %d", got.todoCopyDialog.RunMode, todoCopyModeHere)
+	if got.todoCopyDialog.RunMode != todoCopyModeNewWorktree {
+		t.Fatalf("copy dialog run mode = %d, want %d", got.todoCopyDialog.RunMode, todoCopyModeNewWorktree)
 	}
 	if got.todoCopyDialog.Provider != codexapp.ProviderCodex {
 		t.Fatalf("copy dialog provider = %q, want %q", got.todoCopyDialog.Provider, codexapp.ProviderCodex)
@@ -7562,8 +7571,8 @@ func TestTodoDialogCopyDialogHotkeysChangeRunModeAndProvider(t *testing.T) {
 
 	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
 	got = updated.(Model)
-	if got.todoCopyDialog.RunMode != todoCopyModeNewWorktree {
-		t.Fatalf("copy dialog run mode = %d, want %d after w", got.todoCopyDialog.RunMode, todoCopyModeNewWorktree)
+	if got.todoCopyDialog.RunMode != todoCopyModeHere {
+		t.Fatalf("copy dialog run mode = %d, want %d after w", got.todoCopyDialog.RunMode, todoCopyModeHere)
 	}
 
 	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
