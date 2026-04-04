@@ -32,6 +32,13 @@ const (
 	worktreeRemoveConfirmFocusKeep
 )
 
+const (
+	worktreeMergePendingSummary       = "Merging worktree back..."
+	worktreeCommitMergePendingSummary = "Committing and merging worktree back..."
+	worktreeRemovePendingSummary      = "Removing worktree..."
+	worktreePostMergeRemoveSummary    = "Removing merged worktree..."
+)
+
 type projectListRow struct {
 	Kind              projectListRowKind
 	ProjectPath       string
@@ -271,6 +278,16 @@ func worktreeMergeConfirmBusyMessage(confirm *worktreeMergeConfirmState) string 
 		return "Please wait while Little Control Room " + steps[0] + " and " + steps[1] + ". The dialog is temporarily locked."
 	}
 	return "Please wait while Little Control Room " + strings.Join(steps[:len(steps)-1], ", ") + ", and " + steps[len(steps)-1] + ". The dialog is temporarily locked."
+}
+
+func (m *Model) beginAsyncWorktreeAction(projectPath, pendingSummary, status string) {
+	m.worktreeMergeConfirm = nil
+	m.worktreePostMerge = nil
+	m.worktreeRemoveConfirm = nil
+	if strings.TrimSpace(pendingSummary) != "" {
+		m.setPendingGitSummary(projectPath, pendingSummary)
+	}
+	m.status = strings.TrimSpace(status)
 }
 
 func worktreeMergeStatusText(result service.MergeWorktreeBackResult) string {
@@ -704,6 +721,9 @@ func (m Model) canRemoveWorktree(project model.ProjectSummary) bool {
 	if project.WorktreeKind != model.WorktreeKindLinked {
 		return false
 	}
+	if _, ok := m.pendingGitOperation(project.Path); ok {
+		return false
+	}
 	return true
 }
 
@@ -937,12 +957,11 @@ func (m Model) updateWorktreeMergeConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 			m.status = worktreeMergeConfirmStatus(confirm)
 			return m, nil
 		}
-		confirm.Busy = true
-		confirm.BusyMessage = worktreeMergeConfirmBusyMessage(confirm)
+		pendingSummary := worktreeMergePendingSummary
 		if confirm.CommitBeforeMerge && confirm.SourceDirty {
-			m.setPendingGitSummary(confirm.ProjectPath, "Committing and merging worktree back...")
+			pendingSummary = worktreeCommitMergePendingSummary
 		}
-		m.status = "Applying worktree merge plan..."
+		m.beginAsyncWorktreeAction(confirm.ProjectPath, pendingSummary, pendingSummary)
 		return m, m.applyWorktreeMergePlanCmd(*confirm)
 	}
 	return m, nil
@@ -954,7 +973,7 @@ func (m Model) applyWorktreeMergePlanCmd(confirm worktreeMergeConfirmState) tea.
 		msg := worktreeActionMsg{
 			projectPath:            projectPath,
 			selectPath:             strings.TrimSpace(confirm.RootPath),
-			clearPendingGitSummary: confirm.CommitBeforeMerge && confirm.SourceDirty,
+			clearPendingGitSummary: true,
 		}
 		if confirm.StopRuntime && confirm.RuntimeRunning {
 			if m.runtimeManager == nil {
@@ -1051,22 +1070,14 @@ func (m Model) updateWorktreePostMergeMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 			return m, nil
 		}
 		if prompt.MarkTodoDone {
-			prompt.Busy = true
 			if prompt.RemoveNow {
-				prompt.BusyTitle = "Updating TODO and worktree"
-				prompt.BusyMessage = "Please wait while Little Control Room marks the linked TODO done and removes the merged worktree checkout. The dialog is temporarily locked."
-				m.status = "Marking linked TODO done and removing merged worktree..."
+				m.beginAsyncWorktreeAction(prompt.ProjectPath, worktreePostMergeRemoveSummary, "Marking linked TODO done and removing merged worktree...")
 				return m, m.completeWorktreePostMergeTodoCmd(prompt.TodoPath, prompt.TodoID, prompt.ProjectPath, prompt.RootPath, true, prompt.Status)
 			}
-			prompt.BusyTitle = "Updating TODO"
-			prompt.BusyMessage = "Please wait while Little Control Room marks the linked TODO done. The dialog is temporarily locked."
-			m.status = "Marking linked TODO done..."
+			m.beginAsyncWorktreeAction(prompt.ProjectPath, "", "Marking linked TODO done...")
 			return m, m.completeWorktreePostMergeTodoCmd(prompt.TodoPath, prompt.TodoID, prompt.ProjectPath, prompt.RootPath, false, prompt.Status)
 		}
-		prompt.Busy = true
-		prompt.BusyTitle = "Removal in progress"
-		prompt.BusyMessage = "Please wait while Git removes the merged worktree checkout. The dialog is temporarily locked."
-		m.status = "Removing merged worktree..."
+		m.beginAsyncWorktreeAction(prompt.ProjectPath, worktreePostMergeRemoveSummary, worktreePostMergeRemoveSummary)
 		return m, m.removeWorktreeCmd(prompt.ProjectPath, prompt.RootPath)
 	}
 	return m, nil
@@ -1147,8 +1158,9 @@ func (m Model) completeWorktreePostMergeTodoCmd(todoProjectPath string, todoID i
 		if removeAfter {
 			if err := m.svc.RemoveWorktree(m.ctx, worktreePath); err != nil {
 				return worktreeActionMsg{
-					projectPath: worktreePath,
-					err:         fmt.Errorf("linked TODO was marked done, but removing the worktree failed: %w", err),
+					projectPath:            worktreePath,
+					clearPendingGitSummary: true,
+					err:                    fmt.Errorf("linked TODO was marked done, but removing the worktree failed: %w", err),
 				}
 			}
 			if strings.TrimSpace(baseStatus) != "" {
@@ -1162,9 +1174,10 @@ func (m Model) completeWorktreePostMergeTodoCmd(todoProjectPath string, todoID i
 			}
 		}
 		return worktreeActionMsg{
-			projectPath: worktreePath,
-			selectPath:  rootPath,
-			status:      status,
+			projectPath:            worktreePath,
+			selectPath:             rootPath,
+			status:                 status,
+			clearPendingGitSummary: removeAfter,
 		}
 	}
 }
@@ -1191,6 +1204,10 @@ func (m *Model) openWorktreeRemoveConfirmForSelection() tea.Cmd {
 	}
 	if snapshot := m.projectRuntimeSnapshot(project.Path); snapshot.Running {
 		m.status = "Stop the runtime before removing this worktree"
+		return nil
+	}
+	if _, ok := m.pendingGitOperation(project.Path); ok {
+		m.status = "A git action is still in progress for this worktree"
 		return nil
 	}
 	m.worktreeRemoveConfirm = &worktreeRemoveConfirmState{
@@ -1232,9 +1249,7 @@ func (m Model) updateWorktreeRemoveConfirmMode(msg tea.KeyMsg) (tea.Model, tea.C
 			m.status = "Worktree removal canceled"
 			return m, nil
 		}
-		confirm.Busy = true
-		confirm.BusyMessage = "Please wait while Git removes this worktree checkout. The dialog is temporarily locked."
-		m.status = "Removing worktree..."
+		m.beginAsyncWorktreeAction(confirm.ProjectPath, worktreeRemovePendingSummary, worktreeRemovePendingSummary)
 		return m, m.removeWorktreeCmd(confirm.ProjectPath, confirm.RootPath)
 	}
 	return m, nil
@@ -1249,10 +1264,11 @@ func (m Model) removeWorktreeCmd(projectPath, rootPath string) tea.Cmd {
 	return func() tea.Msg {
 		err := m.svc.RemoveWorktree(m.ctx, projectPath)
 		return worktreeActionMsg{
-			projectPath: projectPath,
-			selectPath:  rootPath,
-			status:      "Worktree removed",
-			err:         err,
+			projectPath:            projectPath,
+			selectPath:             rootPath,
+			status:                 "Worktree removed",
+			clearPendingGitSummary: true,
+			err:                    err,
 		}
 	}
 }

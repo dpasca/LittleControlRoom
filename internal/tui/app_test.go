@@ -1772,8 +1772,11 @@ func TestWorktreeMergePlanStopsRuntimeBeforeRunningGitActions(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("applying the merge plan should queue background work")
 	}
-	if got.worktreeMergeConfirm == nil || !got.worktreeMergeConfirm.Busy {
-		t.Fatalf("merge plan should lock the dialog while it runs")
+	if got.worktreeMergeConfirm != nil {
+		t.Fatalf("merge plan should dismiss the dialog while it runs")
+	}
+	if got.pendingGitSummary(projectPath) != worktreeMergePendingSummary {
+		t.Fatalf("pending git summary = %q, want merge summary", got.pendingGitSummary(projectPath))
 	}
 
 	msg := cmd()
@@ -1901,27 +1904,21 @@ func TestDirtyWorktreeMergeEnterOnApplyQueuesCommitAndMergePlan(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("apply should queue the merge plan in the background")
 	}
-	if got.worktreeMergeConfirm == nil {
-		t.Fatalf("commit & merge should keep the merge dialog open")
-	}
-	if got.worktreeMergeConfirm == nil || !got.worktreeMergeConfirm.Busy {
-		t.Fatalf("commit & merge should lock the merge dialog while git runs")
-	}
-	if got.worktreeMergeConfirm.BusyMessage != "Please wait while Little Control Room commits this worktree, merges it back, marks the linked TODO done, and removes the merged checkout. The dialog is temporarily locked." {
-		t.Fatalf("busy message = %q", got.worktreeMergeConfirm.BusyMessage)
+	if got.worktreeMergeConfirm != nil {
+		t.Fatalf("commit & merge should dismiss the merge dialog immediately")
 	}
 	if got.commitPreview != nil {
 		t.Fatalf("commit & merge should not open the commit preview")
 	}
-	if got.pendingGitSummary(projectPath) != "Committing and merging worktree back..." {
+	if got.pendingGitSummary(projectPath) != worktreeCommitMergePendingSummary {
 		t.Fatalf("pending git summary = %q, want commit-and-merge summary", got.pendingGitSummary(projectPath))
 	}
-	if got.status != "Applying worktree merge plan..." {
-		t.Fatalf("status = %q, want merge-plan progress", got.status)
+	if got.status != worktreeCommitMergePendingSummary {
+		t.Fatalf("status = %q, want async merge status", got.status)
 	}
 }
 
-func TestWorktreeMergeEnterLocksDialogWhileRunning(t *testing.T) {
+func TestWorktreeMergeEnterDismissesDialogWhileRunning(t *testing.T) {
 	m := Model{
 		allProjects: []model.ProjectSummary{{
 			Name:                 "repo--feat-parallel-lane",
@@ -1948,28 +1945,14 @@ func TestWorktreeMergeEnterLocksDialogWhileRunning(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("ready merge should queue a merge command")
 	}
-	if got.worktreeMergeConfirm == nil || !got.worktreeMergeConfirm.Busy {
-		t.Fatalf("merge dialog should enter busy mode while merge runs")
+	if got.worktreeMergeConfirm != nil {
+		t.Fatalf("merge dialog should close once the background work starts")
 	}
-	if got.status != "Applying worktree merge plan..." {
+	if got.pendingGitSummary("/tmp/repo--feat-parallel-lane") != worktreeMergePendingSummary {
+		t.Fatalf("pending git summary = %q, want merge summary", got.pendingGitSummary("/tmp/repo--feat-parallel-lane"))
+	}
+	if got.status != worktreeMergePendingSummary {
 		t.Fatalf("status = %q, want merge progress message", got.status)
-	}
-
-	blockedUpdate, blockedCmd := got.updateWorktreeMergeConfirmMode(tea.KeyMsg{Type: tea.KeyEsc})
-	blocked := blockedUpdate.(Model)
-	if blockedCmd != nil {
-		t.Fatalf("busy merge dialog should ignore further keys")
-	}
-	if blocked.worktreeMergeConfirm == nil || !blocked.worktreeMergeConfirm.Busy {
-		t.Fatalf("busy merge dialog should stay open and locked")
-	}
-
-	rendered := ansi.Strip(got.renderWorktreeMergeConfirmOverlay("", 100, 24))
-	if !strings.Contains(rendered, "Merge in progress") || !strings.Contains(rendered, "wait..") {
-		t.Fatalf("busy merge overlay should show a waiting state, got %q", rendered)
-	}
-	if strings.Contains(rendered, "Keep") {
-		t.Fatalf("busy merge overlay should not show active action buttons, got %q", rendered)
 	}
 }
 
@@ -2252,7 +2235,7 @@ func TestRenderWorktreeRemoveConfirmShowsMergeSafetyCopy(t *testing.T) {
 	}
 }
 
-func TestWorktreeRemoveEnterLocksDialogWhileRunning(t *testing.T) {
+func TestWorktreeRemoveEnterDismissesDialogWhileRunning(t *testing.T) {
 	m := Model{
 		worktreeRemoveConfirm: &worktreeRemoveConfirmState{
 			ProjectPath: "/tmp/repo--feat-parallel-lane",
@@ -2268,28 +2251,14 @@ func TestWorktreeRemoveEnterLocksDialogWhileRunning(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("remove confirm should queue a removal command")
 	}
-	if got.worktreeRemoveConfirm == nil || !got.worktreeRemoveConfirm.Busy {
-		t.Fatalf("remove dialog should enter busy mode while removal runs")
+	if got.worktreeRemoveConfirm != nil {
+		t.Fatalf("remove dialog should close once the background work starts")
 	}
-	if got.status != "Removing worktree..." {
+	if got.pendingGitSummary("/tmp/repo--feat-parallel-lane") != worktreeRemovePendingSummary {
+		t.Fatalf("pending git summary = %q, want remove summary", got.pendingGitSummary("/tmp/repo--feat-parallel-lane"))
+	}
+	if got.status != worktreeRemovePendingSummary {
 		t.Fatalf("status = %q, want removal progress message", got.status)
-	}
-
-	blockedUpdate, blockedCmd := got.updateWorktreeRemoveConfirmMode(tea.KeyMsg{Type: tea.KeyEsc})
-	blocked := blockedUpdate.(Model)
-	if blockedCmd != nil {
-		t.Fatalf("busy remove dialog should ignore further keys")
-	}
-	if blocked.worktreeRemoveConfirm == nil || !blocked.worktreeRemoveConfirm.Busy {
-		t.Fatalf("busy remove dialog should stay open and locked")
-	}
-
-	rendered := ansi.Strip(got.renderWorktreeRemoveConfirmOverlay("", 100, 24))
-	if !strings.Contains(rendered, "Removal in progress") || !strings.Contains(rendered, "wait..") {
-		t.Fatalf("busy remove overlay should show a waiting state, got %q", rendered)
-	}
-	if strings.Contains(rendered, "Keep") {
-		t.Fatalf("busy remove overlay should not show active action buttons, got %q", rendered)
 	}
 }
 
@@ -2353,44 +2322,37 @@ func TestWorktreeActionMsgMergeCompletionDoesNotOpenFollowUpPrompt(t *testing.T)
 	}
 }
 
-func TestWorktreeActionMsgErrorKeepsMergeDialogOpen(t *testing.T) {
+func TestWorktreeActionMsgErrorLogsAsyncMergeFailure(t *testing.T) {
 	errText := "merge conflict while merging feat/parallel-lane into master at /tmp/repo\nResolve or abort the merge in the root checkout before retrying.\nConflicted files:\n- README.md\n- STATUS.md"
 	m := Model{
-		worktreeMergeConfirm: &worktreeMergeConfirmState{
-			ProjectPath:  "/tmp/repo--feat-parallel-lane",
-			RootPath:     "/tmp/repo",
-			BranchName:   "feat/parallel-lane",
-			TargetBranch: "master",
-			RemoveNow:    true,
-			Busy:         true,
-			BusyMessage:  "Please wait while Little Control Room merges it back and removes the merged checkout. The dialog is temporarily locked.",
+		pendingGitSummaries: map[string]string{
+			"/tmp/repo--feat-parallel-lane": worktreeMergePendingSummary,
 		},
 	}
-	m.worktreeMergeConfirm.Selected = worktreeMergeConfirmApplyIndex(m.worktreeMergeConfirm)
 
 	updated, cmd := m.Update(worktreeActionMsg{
-		projectPath: "/tmp/repo--feat-parallel-lane",
-		err:         errors.New(errText),
+		projectPath:            "/tmp/repo--feat-parallel-lane",
+		clearPendingGitSummary: true,
+		err:                    errors.New(errText),
 	})
 	got := updated.(Model)
 	if cmd != nil {
 		t.Fatalf("merge error should not queue follow-up work")
 	}
-	if got.worktreeMergeConfirm == nil {
-		t.Fatalf("merge error should keep the merge dialog open")
+	if got.worktreeMergeConfirm != nil {
+		t.Fatalf("merge error should not reopen the merge dialog")
 	}
-	if got.worktreeMergeConfirm.Busy {
-		t.Fatalf("merge error should unlock the merge dialog")
+	if got.pendingGitSummary("/tmp/repo--feat-parallel-lane") != "" {
+		t.Fatalf("pending git summary = %q, want cleared", got.pendingGitSummary("/tmp/repo--feat-parallel-lane"))
 	}
-	if got.worktreeMergeConfirm.ErrorMessage != errText {
-		t.Fatalf("inline merge error = %q, want %q", got.worktreeMergeConfirm.ErrorMessage, errText)
+	if got.status != "Worktree action failed (use /errors)" {
+		t.Fatalf("status = %q, want error hint", got.status)
 	}
-	rendered := ansi.Strip(got.renderWorktreeMergeConfirmOverlay("", 100, 24))
-	if !strings.Contains(rendered, "Merge Conflict") {
-		t.Fatalf("merge overlay should show a conflict header, got %q", rendered)
+	if len(got.errorLogEntries) != 1 {
+		t.Fatalf("error log count = %d, want 1", len(got.errorLogEntries))
 	}
-	if !strings.Contains(rendered, "README.md") || !strings.Contains(rendered, "STATUS.md") {
-		t.Fatalf("merge overlay should show conflicted files inline, got %q", rendered)
+	if got.errorLogEntries[0].Message != errText {
+		t.Fatalf("error log message = %q, want %q", got.errorLogEntries[0].Message, errText)
 	}
 }
 
@@ -2415,12 +2377,18 @@ func TestWorktreePostMergeEnterRemoveQueuesRemoval(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("removing the merged worktree should queue a removal command")
 	}
-	if got.status != "Removing merged worktree..." {
+	if got.worktreePostMerge != nil {
+		t.Fatalf("post-merge remove should dismiss the prompt immediately")
+	}
+	if got.pendingGitSummary(childPath) != worktreePostMergeRemoveSummary {
+		t.Fatalf("pending git summary = %q, want merged-worktree remove summary", got.pendingGitSummary(childPath))
+	}
+	if got.status != worktreePostMergeRemoveSummary {
 		t.Fatalf("status = %q, want removal progress", got.status)
 	}
 }
 
-func TestWorktreePostMergeEnterRemoveLocksDialogWhileRunning(t *testing.T) {
+func TestWorktreePostMergeEnterRemoveDismissesDialogWhileRunning(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"
 
@@ -2442,25 +2410,11 @@ func TestWorktreePostMergeEnterRemoveLocksDialogWhileRunning(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("post-merge remove should queue a removal command")
 	}
-	if got.worktreePostMerge == nil || !got.worktreePostMerge.Busy {
-		t.Fatalf("post-merge dialog should enter busy mode while removal runs")
+	if got.worktreePostMerge != nil {
+		t.Fatalf("post-merge dialog should close while removal runs")
 	}
-
-	blockedUpdate, blockedCmd := got.updateWorktreePostMergeMode(tea.KeyMsg{Type: tea.KeyEsc})
-	blocked := blockedUpdate.(Model)
-	if blockedCmd != nil {
-		t.Fatalf("busy post-merge dialog should ignore further keys")
-	}
-	if blocked.worktreePostMerge == nil || !blocked.worktreePostMerge.Busy {
-		t.Fatalf("busy post-merge dialog should stay open and locked")
-	}
-
-	rendered := ansi.Strip(got.renderWorktreePostMergeOverlay("", 100, 24))
-	if !strings.Contains(rendered, "Removal in progress") || !strings.Contains(rendered, "wait..") {
-		t.Fatalf("busy post-merge overlay should show a waiting state, got %q", rendered)
-	}
-	if strings.Contains(rendered, "Keep") {
-		t.Fatalf("busy post-merge overlay should not show active action buttons, got %q", rendered)
+	if got.pendingGitSummary(childPath) != worktreePostMergeRemoveSummary {
+		t.Fatalf("pending git summary = %q, want merged-worktree remove summary", got.pendingGitSummary(childPath))
 	}
 }
 
@@ -2491,11 +2445,8 @@ func TestWorktreePostMergeEnterDoneKeepsWorktreeQueuesTodoUpdate(t *testing.T) {
 	if got.status != "Marking linked TODO done..." {
 		t.Fatalf("status = %q, want todo progress", got.status)
 	}
-	if got.worktreePostMerge == nil || !got.worktreePostMerge.Busy {
-		t.Fatalf("post-merge dialog should enter busy mode while marking the todo done")
-	}
-	if got.worktreePostMerge.BusyTitle != "Updating TODO" {
-		t.Fatalf("busy title = %q, want TODO update", got.worktreePostMerge.BusyTitle)
+	if got.worktreePostMerge != nil {
+		t.Fatalf("post-merge dialog should dismiss while updating the todo")
 	}
 }
 
@@ -2598,46 +2549,39 @@ func TestRenderWorktreePostMergeOverlayWithoutTodoShowsCleanupSection(t *testing
 	}
 }
 
-func TestWorktreeActionMsgErrorKeepsPostMergePromptOpen(t *testing.T) {
-	rootPath := "/tmp/repo"
+func TestWorktreeActionMsgErrorLogsAsyncPostMergeFailure(t *testing.T) {
 	childPath := "/tmp/repo--feat-parallel-lane"
 	errText := "linked TODO was marked done, but removing the worktree failed: remove git worktree"
 
 	m := Model{
-		worktreePostMerge: &worktreePostMergeState{
-			ProjectPath:  childPath,
-			RootPath:     rootPath,
-			BranchName:   "feat/parallel-lane",
-			TargetBranch: "master",
-			TodoID:       7,
-			TodoText:     "Finish the parallel lane work",
-			TodoPath:     rootPath,
-			MarkTodoDone: true,
-			RemoveNow:    true,
-			Status:       "Merged feat/parallel-lane into master",
-			Busy:         true,
-			BusyTitle:    "Updating TODO and worktree",
-			BusyMessage:  "Please wait while Little Control Room updates the linked TODO.",
-			Selected:     worktreePostMergeFocusTodo,
+		pendingGitSummaries: map[string]string{
+			childPath: worktreePostMergeRemoveSummary,
 		},
 	}
 
 	updated, cmd := m.Update(worktreeActionMsg{
-		projectPath: childPath,
-		err:         errors.New(errText),
+		projectPath:            childPath,
+		clearPendingGitSummary: true,
+		err:                    errors.New(errText),
 	})
 	got := updated.(Model)
 	if cmd != nil {
 		t.Fatalf("post-merge error should not queue follow-up work")
 	}
-	if got.worktreePostMerge == nil {
-		t.Fatalf("post-merge error should keep the prompt open")
+	if got.worktreePostMerge != nil {
+		t.Fatalf("post-merge error should not reopen the prompt")
 	}
-	if got.worktreePostMerge.Busy {
-		t.Fatalf("post-merge error should unlock the prompt")
+	if got.pendingGitSummary(childPath) != "" {
+		t.Fatalf("pending git summary = %q, want cleared", got.pendingGitSummary(childPath))
 	}
-	if got.worktreePostMerge.ErrorMessage != errText {
-		t.Fatalf("post-merge inline error = %q, want %q", got.worktreePostMerge.ErrorMessage, errText)
+	if got.status != "Worktree action failed (use /errors)" {
+		t.Fatalf("status = %q, want error hint", got.status)
+	}
+	if len(got.errorLogEntries) != 1 {
+		t.Fatalf("error log count = %d, want 1", len(got.errorLogEntries))
+	}
+	if got.errorLogEntries[0].Message != errText {
+		t.Fatalf("error log message = %q, want %q", got.errorLogEntries[0].Message, errText)
 	}
 }
 
