@@ -113,6 +113,10 @@ func normalizeTodoText(text string) string {
 	return text
 }
 
+func todoPreviewText(text string) string {
+	return strings.Join(strings.Fields(normalizeTodoText(text)), " ")
+}
+
 func newTodoTextInput(value string) textarea.Model {
 	input := textarea.New()
 	input.Prompt = ""
@@ -1272,7 +1276,7 @@ func todoDialogLegendLine() string {
 }
 
 func (m Model) todoDialogItemLine(item model.TodoItem, prefix string, width int) string {
-	base := prefix + " " + strings.TrimSpace(item.Text)
+	base := prefix + " " + todoPreviewText(item.Text)
 	label, labelStyle := m.todoWorktreeSuggestionLabel(item)
 	if label == "" {
 		return truncateText(base, width)
