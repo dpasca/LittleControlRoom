@@ -1678,8 +1678,8 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 			forgotten=excluded.forgotten,
 			manually_added=excluded.manually_added,
 			in_scope=excluded.in_scope,
-			pinned=excluded.pinned,
-			snoozed_until=excluded.snoozed_until,
+			pinned=projects.pinned,
+			snoozed_until=projects.snoozed_until,
 			moved_from_path=CASE
 				WHEN excluded.moved_from_path != '' THEN excluded.moved_from_path
 				ELSE projects.moved_from_path

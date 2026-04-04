@@ -1674,6 +1674,7 @@ func (s *Service) AddTodo(ctx context.Context, projectPath, text string) (model.
 	if err != nil {
 		return model.TodoItem{}, err
 	}
+	_ = s.RefreshProjectStatus(ctx, projectPath)
 	now := time.Now()
 	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "add_todo"}})
 	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: "add_todo"})
@@ -1697,6 +1698,7 @@ func (s *Service) ToggleTodoDone(ctx context.Context, projectPath string, id int
 	if err := s.store.ToggleTodoDone(ctx, id, done); err != nil {
 		return err
 	}
+	_ = s.RefreshProjectStatus(ctx, projectPath)
 	now := time.Now()
 	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "toggle_todo"}})
 	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: "toggle_todo"})
@@ -1707,6 +1709,7 @@ func (s *Service) DeleteTodo(ctx context.Context, projectPath string, id int64) 
 	if err := s.store.DeleteTodo(ctx, id); err != nil {
 		return err
 	}
+	_ = s.RefreshProjectStatus(ctx, projectPath)
 	now := time.Now()
 	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "delete_todo"}})
 	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: "delete_todo"})
