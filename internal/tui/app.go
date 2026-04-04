@@ -55,6 +55,8 @@ type Model struct {
 	status  string
 	err     error
 
+	startupScanCompleted bool
+
 	width     int
 	height    int
 	nowFn     func() time.Time
@@ -1092,6 +1094,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.reportError("Scan failed", msg.err, "")
 			return m, nil
 		}
+		m.startupScanCompleted = true
 		m.status = scanCompleteStatus(msg.report)
 		return m, tea.Batch(m.loadProjectsCmd())
 	case commitPreviewMsg:
@@ -4510,6 +4513,9 @@ func (m Model) projectAgentDisplay(project model.ProjectSummary, now time.Time) 
 	}
 	tag := provider.SourceTag()
 	if project.LatestTurnStateKnown && !project.LatestTurnCompleted {
+		if !m.startupScanCompleted {
+			return tag, tag, false
+		}
 		label := tag
 		if !project.LatestTurnStartedAt.IsZero() && !now.IsZero() {
 			label += " " + formatRunningDuration(now.Sub(project.LatestTurnStartedAt))

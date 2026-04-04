@@ -3395,6 +3395,52 @@ func TestProjectAgentDisplayShowsStalledLiveSession(t *testing.T) {
 	}
 }
 
+func TestProjectAgentDisplayHidesPersistedTurnTimerBeforeStartupScan(t *testing.T) {
+	m := Model{}
+	project := model.ProjectSummary{
+		Path:                 "/tmp/demo",
+		PresentOnDisk:        true,
+		LatestSessionFormat:  "claude_code",
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  false,
+		LatestTurnStartedAt:  time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC),
+	}
+
+	label, tag, live := m.projectAgentDisplay(project, time.Date(2026, 3, 9, 12, 5, 0, 0, time.UTC))
+	if live {
+		t.Fatalf("projectAgentDisplay() live = true, want false before startup scan")
+	}
+	if tag != "CC" {
+		t.Fatalf("projectAgentDisplay() tag = %q, want %q", tag, "CC")
+	}
+	if label != "CC" {
+		t.Fatalf("projectAgentDisplay() label = %q, want %q", label, "CC")
+	}
+}
+
+func TestProjectAgentDisplayShowsPersistedTurnTimerAfterStartupScan(t *testing.T) {
+	m := Model{startupScanCompleted: true}
+	project := model.ProjectSummary{
+		Path:                 "/tmp/demo",
+		PresentOnDisk:        true,
+		LatestSessionFormat:  "claude_code",
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  false,
+		LatestTurnStartedAt:  time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC),
+	}
+
+	label, tag, live := m.projectAgentDisplay(project, time.Date(2026, 3, 9, 12, 5, 0, 0, time.UTC))
+	if !live {
+		t.Fatalf("projectAgentDisplay() live = false, want true after startup scan")
+	}
+	if tag != "CC" {
+		t.Fatalf("projectAgentDisplay() tag = %q, want %q", tag, "CC")
+	}
+	if label != "CC 05:00" {
+		t.Fatalf("projectAgentDisplay() label = %q, want %q", label, "CC 05:00")
+	}
+}
+
 func TestProjectRunSummaryIncludesCommandAndPort(t *testing.T) {
 	got, state := projectRunSummary(projectrun.Snapshot{
 		Running: true,
