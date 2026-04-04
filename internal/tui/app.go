@@ -132,6 +132,8 @@ type Model struct {
 	codexSelection         textSelection
 	codexManager           *codexapp.Manager
 	runtimeManager         *projectrun.Manager
+	runtimeRefreshInFlight bool
+	runtimeRefreshQueued   bool
 	runtimeSnapshots       map[string]projectrun.Snapshot
 	codexSnapshots         map[string]codexapp.Snapshot
 	codexTranscriptRev     map[string]uint64
@@ -264,6 +266,10 @@ type runtimeActionMsg struct {
 	projectPath string
 	status      string
 	err         error
+}
+
+type runtimeSnapshotsMsg struct {
+	snapshots []projectrun.Snapshot
 }
 
 type runCommandSavedMsg struct {
@@ -544,6 +550,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		privacyPatterns:        currentPrivacyPatterns(svc),
 		codexManager:           codexapp.NewManager(),
 		runtimeManager:         projectrun.NewManager(),
+		runtimeSnapshots:       make(map[string]projectrun.Snapshot),
 		embeddedModelPrefs:     embeddedModelPreferencesFromSettings(initialSettings),
 		recentCodexModels:      append([]string(nil), initialSettings.RecentCodexModels...),
 		recentClaudeModels:     append([]string(nil), initialSettings.RecentClaudeModels...),
@@ -814,6 +821,7 @@ func (m Model) Init() tea.Cmd {
 		m.requestProjectsReloadCmd(),
 		m.requestScanCmd(false),
 		m.loadRecentProjectParentsCmd(),
+		m.loadRuntimeSnapshotsCmd(),
 		m.waitBusCmd(),
 		m.waitCodexCmd(),
 		spinnerTickCmd(),
@@ -839,6 +847,75 @@ func batchCmds(cmds ...tea.Cmd) tea.Cmd {
 	default:
 		return tea.Batch(nonNil...)
 	}
+}
+
+func (m Model) loadRuntimeSnapshotsCmd() tea.Cmd {
+	manager := m.runtimeManager
+	if manager == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		return runtimeSnapshotsMsg{snapshots: manager.Snapshots()}
+	}
+}
+
+func (m *Model) requestRuntimeSnapshotsRefreshCmd() tea.Cmd {
+	if m.runtimeManager == nil {
+		return nil
+	}
+	if m.runtimeRefreshInFlight {
+		m.runtimeRefreshQueued = true
+		return nil
+	}
+	m.runtimeRefreshInFlight = true
+	return m.loadRuntimeSnapshotsCmd()
+}
+
+func (m *Model) finishRuntimeSnapshotsRefreshCmd() tea.Cmd {
+	if !m.runtimeRefreshInFlight {
+		return nil
+	}
+	if m.runtimeRefreshQueued {
+		m.runtimeRefreshQueued = false
+		return m.loadRuntimeSnapshotsCmd()
+	}
+	m.runtimeRefreshInFlight = false
+	return nil
+}
+
+func cloneRuntimeSnapshots(snapshots []projectrun.Snapshot) map[string]projectrun.Snapshot {
+	if len(snapshots) == 0 {
+		return make(map[string]projectrun.Snapshot)
+	}
+	cloned := make(map[string]projectrun.Snapshot, len(snapshots))
+	for _, snapshot := range snapshots {
+		path := normalizeProjectPath(snapshot.ProjectPath)
+		if path == "" {
+			continue
+		}
+		snapshot.ProjectPath = path
+		cloned[path] = snapshot
+	}
+	return cloned
+}
+
+func runtimeRunningStateChanged(prev, next map[string]projectrun.Snapshot) bool {
+	seen := make(map[string]struct{}, len(prev))
+	for path, snapshot := range prev {
+		seen[path] = struct{}{}
+		if snapshot.Running != next[path].Running {
+			return true
+		}
+	}
+	for path, snapshot := range next {
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		if snapshot.Running {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeProjectPath(path string) string {
@@ -1465,7 +1542,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.rebuildProjectList(selectedPath)
 		m.syncRuntimeViewport(false)
-		return m, nil
+		return m, m.requestRuntimeSnapshotsRefreshCmd()
+	case runtimeSnapshotsMsg:
+		reloadCmd := m.finishRuntimeSnapshotsRefreshCmd()
+		prevSnapshots := m.runtimeSnapshots
+		m.runtimeSnapshots = cloneRuntimeSnapshots(msg.snapshots)
+		selectedPath := ""
+		if p, ok := m.selectedProject(); ok {
+			selectedPath = p.Path
+		}
+		if runtimeRunningStateChanged(prevSnapshots, m.runtimeSnapshots) {
+			m.rebuildProjectList(selectedPath)
+		}
+		m.syncRuntimeViewport(false)
+		return m, reloadCmd
 	case runCommandSavedMsg:
 		if m.runCommandDialog != nil && m.runCommandDialog.ProjectPath == msg.projectPath {
 			m.runCommandDialog.Submitting = false
@@ -1921,7 +2011,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshUsagePulse()
 		m.pruneTransientHighlights(m.currentTime())
 		m.syncRuntimeViewport(false)
-		return m, spinnerTickCmd()
+		refreshCmd := tea.Cmd(nil)
+		if m.spinnerFrame%runtimeSnapshotRefreshEveryTicks == 0 {
+			refreshCmd = m.requestRuntimeSnapshotsRefreshCmd()
+		}
+		return m, batchCmds(spinnerTickCmd(), refreshCmd)
 	case codexUpdateMsg:
 		cmds := []tea.Cmd{m.waitCodexCmd()}
 		if m.codexManager != nil {
@@ -3505,6 +3599,7 @@ var (
 )
 
 const spinnerTickInterval = 120 * time.Millisecond
+const runtimeSnapshotRefreshEveryTicks = 8
 
 func spinnerTickCmd() tea.Cmd {
 	return tea.Tick(spinnerTickInterval, func(time.Time) tea.Msg {

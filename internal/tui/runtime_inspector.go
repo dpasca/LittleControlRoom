@@ -37,7 +37,7 @@ func (m *Model) openRuntimeInspectorForSelection() tea.Cmd {
 	m.ensureSelectionVisible()
 	m.syncDetailViewport(false)
 	m.syncRuntimeViewport(true)
-	return nil
+	return m.requestRuntimeSnapshotsRefreshCmd()
 }
 
 func (m *Model) syncRuntimeViewport(reset bool) {

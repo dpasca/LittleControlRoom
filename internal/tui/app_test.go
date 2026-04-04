@@ -910,6 +910,88 @@ func TestSortProjectsUsesRunningRuntimeAttentionBoost(t *testing.T) {
 	}
 }
 
+func TestProjectRuntimeSnapshotUsesAsyncCacheOnly(t *testing.T) {
+	projectPath := t.TempDir()
+	manager := projectrun.NewManager()
+	defer func() {
+		if err := manager.CloseAll(); err != nil {
+			t.Fatalf("CloseAll() error = %v", err)
+		}
+	}()
+
+	started, err := manager.Start(projectrun.StartRequest{
+		ProjectPath: projectPath,
+		Command:     "sleep 5",
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if !started.Running {
+		t.Fatalf("Start() snapshot should report running runtime")
+	}
+
+	m := Model{
+		runtimeManager:   manager,
+		runtimeSnapshots: make(map[string]projectrun.Snapshot),
+	}
+
+	if snapshot := m.projectRuntimeSnapshot(projectPath); snapshot.Running {
+		t.Fatalf("projectRuntimeSnapshot() should not consult the live runtime manager on cache miss")
+	}
+
+	cmd := m.loadRuntimeSnapshotsCmd()
+	if cmd == nil {
+		t.Fatalf("loadRuntimeSnapshotsCmd() returned nil")
+	}
+	updated, followup := m.update(cmd())
+	got := updated.(Model)
+	if followup != nil {
+		t.Fatalf("runtime snapshot refresh should not queue a follow-up without an in-flight refresh")
+	}
+	if snapshot := got.projectRuntimeSnapshot(projectPath); !snapshot.Running {
+		t.Fatalf("projectRuntimeSnapshot() should return the asynchronously refreshed cache entry")
+	}
+}
+
+func TestRuntimeSnapshotsMsgRebuildsAttentionSortedProjectsWhenRunningStateChanges(t *testing.T) {
+	idle := model.ProjectSummary{
+		Name:           "idle",
+		Path:           "/tmp/runtime-idle",
+		AttentionScore: 9,
+	}
+	running := model.ProjectSummary{
+		Name:           "running",
+		Path:           "/tmp/runtime-running",
+		AttentionScore: 1,
+	}
+
+	m := Model{
+		allProjects: []model.ProjectSummary{idle, running},
+		sortMode:    sortByAttention,
+		visibility:  visibilityAllFolders,
+		runtimeSnapshots: map[string]projectrun.Snapshot{
+			running.Path: {ProjectPath: running.Path},
+		},
+	}
+	m.rebuildProjectList(idle.Path)
+	if len(m.projects) != 2 || m.projects[0].Path != idle.Path {
+		t.Fatalf("initial project order = %#v, want idle first before runtime refresh", m.projects)
+	}
+
+	updated, followup := m.update(runtimeSnapshotsMsg{
+		snapshots: []projectrun.Snapshot{
+			{ProjectPath: running.Path, Running: true},
+		},
+	})
+	got := updated.(Model)
+	if followup != nil {
+		t.Fatalf("runtime snapshot update should not queue a follow-up without an in-flight refresh")
+	}
+	if len(got.projects) != 2 || got.projects[0].Path != running.Path {
+		t.Fatalf("project order after runtime refresh = %#v, want running project first", got.projects)
+	}
+}
+
 func TestRenderDetailContentShowsRuntimeAttentionReason(t *testing.T) {
 	now := time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC)
 	project := model.ProjectSummary{
@@ -3978,11 +4060,25 @@ func TestRuntimePaneShowsRuntimeOutputAndActions(t *testing.T) {
 			PresentOnDisk: true,
 			RunCommand:    "pnpm dev",
 		}},
-		selected:       0,
-		runtimeManager: manager,
+		allProjects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          dir,
+			PresentOnDisk: true,
+			RunCommand:    "pnpm dev",
+		}},
+		selected:         0,
+		visibility:       visibilityAllFolders,
+		runtimeManager:   manager,
+		runtimeSnapshots: make(map[string]projectrun.Snapshot),
 	}
-	if cmd := m.openRuntimeInspectorForSelection(); cmd != nil {
-		t.Fatalf("openRuntimeInspectorForSelection() should not return a command, got %T", cmd)
+	cmd := m.openRuntimeInspectorForSelection()
+	if cmd == nil {
+		t.Fatalf("openRuntimeInspectorForSelection() should queue a runtime cache refresh")
+	}
+	updated, followup := m.update(cmd())
+	m = updated.(Model)
+	if followup != nil {
+		t.Fatalf("runtime pane refresh should not queue a follow-up without an in-flight refresh")
 	}
 
 	rendered := ansi.Strip(m.View())

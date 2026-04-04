@@ -18,14 +18,7 @@ func (m Model) projectRuntimeSnapshot(projectPath string) projectrun.Snapshot {
 	if snapshot, ok := m.runtimeSnapshots[projectPath]; ok {
 		return snapshot
 	}
-	if m.runtimeManager == nil {
-		return projectrun.Snapshot{ProjectPath: projectPath}
-	}
-	snapshot, err := m.runtimeManager.Snapshot(projectPath)
-	if err != nil {
-		return projectrun.Snapshot{ProjectPath: projectPath}
-	}
-	return snapshot
+	return projectrun.Snapshot{ProjectPath: projectPath}
 }
 
 func runtimeDetailAvailable(savedCommand string, snapshot projectrun.Snapshot) bool {
@@ -105,16 +98,15 @@ func joinPorts(ports []int) string {
 }
 
 func (m Model) runtimeConflictSummary(projectPath string, ports []int) string {
-	if len(ports) == 0 || m.runtimeManager == nil {
+	if len(ports) == 0 {
 		return ""
 	}
-	snapshots := m.runtimeManager.Snapshots()
 	portSet := map[int]struct{}{}
 	for _, port := range ports {
 		portSet[port] = struct{}{}
 	}
 	owners := map[string]struct{}{}
-	for _, snapshot := range snapshots {
+	for _, snapshot := range m.runtimeSnapshots {
 		if snapshot.ProjectPath == projectPath {
 			continue
 		}
