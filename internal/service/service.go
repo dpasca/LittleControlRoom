@@ -652,6 +652,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			HasActivity:                hasActivity,
 			ActiveThreshold:            s.cfg.ActiveThreshold,
 			StuckThreshold:             s.cfg.StuckThreshold,
+			OpenTodoCount:              old.OpenTODOCount,
 		})
 
 		state := model.ProjectState{
@@ -1533,6 +1534,7 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 		HasActivity:                !detail.Summary.LastActivity.IsZero(),
 		ActiveThreshold:            s.cfg.ActiveThreshold,
 		StuckThreshold:             s.cfg.StuckThreshold,
+		OpenTodoCount:              detail.Summary.OpenTODOCount,
 	})
 
 	state := model.ProjectState{

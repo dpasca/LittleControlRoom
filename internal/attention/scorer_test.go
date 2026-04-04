@@ -19,11 +19,11 @@ func TestScoreIgnoresNonZeroCommandExits(t *testing.T) {
 	}
 
 	out := Score(in)
-	if out.Status != "possibly_stuck" {
-		t.Fatalf("status = %s, want possibly_stuck", out.Status)
+	if out.Status != "idle" {
+		t.Fatalf("status = %s, want idle", out.Status)
 	}
-	if out.Score != 49 {
-		t.Fatalf("score = %d, want 49", out.Score)
+	if out.Score != 9 {
+		t.Fatalf("score = %d, want 9", out.Score)
 	}
 	for _, reason := range out.Reasons {
 		if reason.Code == "error_markers" {
@@ -118,7 +118,7 @@ func TestScoreRecentlyCompletedDowngradesStuck(t *testing.T) {
 	}
 }
 
-func TestScoreCompletedButOldStillStuck(t *testing.T) {
+func TestScoreCompletedButOldIsIdle(t *testing.T) {
 	now := time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC)
 	in := Input{
 		Now:                now,
@@ -131,8 +131,8 @@ func TestScoreCompletedButOldStillStuck(t *testing.T) {
 	}
 
 	out := Score(in)
-	if out.Status != "possibly_stuck" {
-		t.Fatalf("status = %s, want possibly_stuck", out.Status)
+	if out.Status != "idle" {
+		t.Fatalf("status = %s, want idle", out.Status)
 	}
 }
 
@@ -332,7 +332,7 @@ func TestScoreReasonUsesDaysHoursMinutes(t *testing.T) {
 	in := Input{
 		Now:             now,
 		HasActivity:     true,
-		LastActivity:    now.Add(-(49*time.Hour + 12*time.Minute + 20*time.Second)),
+		LastActivity:    now.Add(-(2*time.Hour + 12*time.Minute + 20*time.Second)),
 		ActiveThreshold: 20 * time.Minute,
 		StuckThreshold:  4 * time.Hour,
 	}
@@ -341,7 +341,7 @@ func TestScoreReasonUsesDaysHoursMinutes(t *testing.T) {
 	if len(out.Reasons) == 0 {
 		t.Fatalf("expected at least one reason")
 	}
-	if got, want := out.Reasons[0].Text, "No activity for 2d 1h 12m"; got != want {
+	if got, want := out.Reasons[0].Text, "Idle for 2h 12m"; got != want {
 		t.Fatalf("reason text = %q, want %q", got, want)
 	}
 }
@@ -402,6 +402,82 @@ func TestScoreRepoDirtyAddsAttentionReason(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected repo_dirty reason, got %#v", out.Reasons)
+	}
+}
+
+func TestScoreOpenTodosAddsAttentionReason(t *testing.T) {
+	now := time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC)
+	in := Input{
+		Now:             now,
+		HasActivity:     true,
+		LastActivity:    now.Add(-30 * time.Minute),
+		ActiveThreshold: 20 * time.Minute,
+		StuckThreshold:  4 * time.Hour,
+		OpenTodoCount:   3,
+	}
+
+	out := Score(in)
+	found := false
+	for _, reason := range out.Reasons {
+		if reason.Code == "has_open_todos" {
+			found = true
+			if reason.Weight != openTodosAttentionWeight {
+				t.Fatalf("weight = %d, want %d", reason.Weight, openTodosAttentionWeight)
+			}
+			if reason.Text != "3 open TODO items" {
+				t.Fatalf("text = %q, want %q", reason.Text, "3 open TODO items")
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected has_open_todos reason, got %#v", out.Reasons)
+	}
+}
+
+func TestScoreOpenTodosSingularItem(t *testing.T) {
+	now := time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC)
+	in := Input{
+		Now:             now,
+		HasActivity:     true,
+		LastActivity:    now.Add(-30 * time.Minute),
+		ActiveThreshold: 20 * time.Minute,
+		StuckThreshold:  4 * time.Hour,
+		OpenTodoCount:   1,
+	}
+
+	out := Score(in)
+	found := false
+	for _, reason := range out.Reasons {
+		if reason.Code == "has_open_todos" {
+			found = true
+			if reason.Text != "1 open TODO item" {
+				t.Fatalf("text = %q, want %q", reason.Text, "1 open TODO item")
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected has_open_todos reason, got %#v", out.Reasons)
+	}
+}
+
+func TestScoreZeroTodosNoReason(t *testing.T) {
+	now := time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC)
+	in := Input{
+		Now:             now,
+		HasActivity:     true,
+		LastActivity:    now.Add(-30 * time.Minute),
+		ActiveThreshold: 20 * time.Minute,
+		StuckThreshold:  4 * time.Hour,
+		OpenTodoCount:   0,
+	}
+
+	out := Score(in)
+	for _, reason := range out.Reasons {
+		if reason.Code == "has_open_todos" {
+			t.Fatalf("did not expect has_open_todos reason, got %#v", out.Reasons)
+		}
 	}
 }
 

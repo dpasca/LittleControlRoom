@@ -196,6 +196,7 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 		HasActivity:     false,
 		ActiveThreshold: s.cfg.ActiveThreshold,
 		StuckThreshold:  s.cfg.StuckThreshold,
+		OpenTodoCount:   existing.OpenTODOCount,
 	})
 
 	state := model.ProjectState{

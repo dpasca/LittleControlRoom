@@ -3395,6 +3395,59 @@ func TestProjectAgentDisplayShowsStalledLiveSession(t *testing.T) {
 	}
 }
 
+func TestProjectAgentDisplayHidesStaleUnfinishedTurnTimer(t *testing.T) {
+	m := Model{}
+	now := time.Date(2026, 3, 9, 12, 0, 37, 0, time.UTC)
+	project := model.ProjectSummary{
+		Path:                     "/tmp/demo",
+		PresentOnDisk:            true,
+		LatestSessionFormat:      "modern",
+		LatestSessionLastEventAt: now.Add(-95 * time.Minute),
+		LatestTurnStartedAt:      now.Add(-96 * time.Minute),
+		LatestTurnStateKnown:     true,
+		LatestTurnCompleted:      false,
+	}
+
+	label, tag, live := m.projectAgentDisplay(project, now)
+	if live {
+		t.Fatalf("projectAgentDisplay() live = true, want false")
+	}
+	if tag != "CX" {
+		t.Fatalf("projectAgentDisplay() tag = %q, want %q", tag, "CX")
+	}
+	if label != "CX" {
+		t.Fatalf("projectAgentDisplay() label = %q, want %q", label, "CX")
+	}
+}
+
+func TestProjectAgentDisplayHidesWaitingForUserTurnTimer(t *testing.T) {
+	m := Model{}
+	now := time.Date(2026, 3, 9, 12, 0, 37, 0, time.UTC)
+	project := model.ProjectSummary{
+		Path:                            "/tmp/demo",
+		PresentOnDisk:                   true,
+		LatestSessionFormat:             "modern",
+		LatestSessionLastEventAt:        now.Add(-2 * time.Minute),
+		LatestTurnStartedAt:             now.Add(-3 * time.Minute),
+		LatestTurnStateKnown:            true,
+		LatestTurnCompleted:             false,
+		LatestSessionClassification:     model.ClassificationCompleted,
+		LatestSessionClassificationType: model.SessionCategoryWaitingForUser,
+		LatestSessionSummary:            "Waiting for a user decision before editing the scorer.",
+	}
+
+	label, tag, live := m.projectAgentDisplay(project, now)
+	if live {
+		t.Fatalf("projectAgentDisplay() live = true, want false")
+	}
+	if tag != "CX" {
+		t.Fatalf("projectAgentDisplay() tag = %q, want %q", tag, "CX")
+	}
+	if label != "CX" {
+		t.Fatalf("projectAgentDisplay() label = %q, want %q", label, "CX")
+	}
+}
+
 func TestProjectRunSummaryIncludesCommandAndPort(t *testing.T) {
 	got, state := projectRunSummary(projectrun.Snapshot{
 		Running: true,
