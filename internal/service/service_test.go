@@ -4056,6 +4056,70 @@ func TestScanOnceKeepsActiveSnooze(t *testing.T) {
 	}
 }
 
+func TestScanOncePropagatesToRootProjectFromLinkedWorktreeActivity(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	worktreePath := filepath.Join(root, "repo--feature")
+
+	initGitRepo(t, projectPath)
+	runGit(t, projectPath, "git", "worktree", "add", "-b", "feature", worktreePath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	today := time.Now().UTC().Add(-5 * time.Minute).Truncate(time.Second)
+
+	// Only the linked worktree has recent activity; the root has none.
+	detector := staticDetector{
+		name: "test",
+		activities: map[string]*model.DetectorProjectActivity{
+			worktreePath: fakeActivity(worktreePath, "wt-session", today),
+		},
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = nil
+	svc := New(cfg, st, events.NewBus(), []detectors.Detector{detector})
+
+	// First scan: discover both root and worktree.
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root, Name: "repo",
+	}); err != nil {
+		t.Fatalf("track root: %v", err)
+	}
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root, Name: "repo--feature",
+	}); err != nil {
+		t.Fatalf("track worktree: %v", err)
+	}
+
+	report, err := svc.ScanOnce(ctx)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+
+	// Root project should inherit the worktree's more-recent LastActivity.
+	var rootState *model.ProjectState
+	for i := range report.States {
+		if report.States[i].Path == projectPath {
+			rootState = &report.States[i]
+			break
+		}
+	}
+	if rootState == nil {
+		t.Fatalf("root project not in scan report; states = %v", report.States)
+	}
+	if rootState.LastActivity.Before(today) {
+		t.Fatalf("root LastActivity = %v, want >= %v (worktree activity should propagate)", rootState.LastActivity, today)
+	}
+}
+
 func initBareGitRepo(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
