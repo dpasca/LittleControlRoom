@@ -422,6 +422,7 @@ type ignoredProjectActionMsg struct {
 
 type codexSessionOpenedMsg struct {
 	projectPath  string
+	snapshot     codexapp.Snapshot
 	status       string
 	perfOpID     int64
 	perfDuration time.Duration
@@ -1959,7 +1960,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		if msg.err != nil {
 			provider := m.codexPendingOpenProvider()
-			m.finishCodexPendingOpen(msg.projectPath, false, false)
+			m.finishCodexPendingOpen(msg.projectPath, codexapp.Snapshot{}, false, false)
 			m.todoLaunchDraft = nil
 			if strings.TrimSpace(msg.projectPath) != "" {
 				if _, ok := m.codexSession(msg.projectPath); !ok {
@@ -1979,7 +1980,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				focusInput = false
 			}
 		}
-		seenCmd := m.finishCodexPendingOpen(msg.projectPath, true, revealOnOpen)
+		seenCmd := m.finishCodexPendingOpen(msg.projectPath, msg.snapshot, true, revealOnOpen)
 		if m.todoLaunchDraft != nil && strings.TrimSpace(m.todoLaunchDraft.projectPath) == strings.TrimSpace(msg.projectPath) {
 			draft := m.todoLaunchDraft
 			m.todoLaunchDraft = nil

@@ -170,7 +170,7 @@ func (m *Model) beginCodexPendingOpenWithVisibility(projectPath string, provider
 	}
 }
 
-func (m *Model) finishCodexPendingOpen(projectPath string, opened bool, reveal bool) tea.Cmd {
+func (m *Model) finishCodexPendingOpen(projectPath string, snapshot codexapp.Snapshot, opened bool, reveal bool) tea.Cmd {
 	projectPath = strings.TrimSpace(projectPath)
 	if pending := m.codexPendingOpenProject(); pending != "" && pending == projectPath {
 		m.codexPendingOpen = nil
@@ -181,14 +181,22 @@ func (m *Model) finishCodexPendingOpen(projectPath string, opened bool, reveal b
 	}
 	m.markCodexSessionLive(projectPath)
 	m.codexHiddenProject = projectPath
-	m.refreshCodexSnapshot(projectPath) // needsAsync ignored — update cycle will follow shortly
+	asyncCmd := tea.Cmd(nil)
+	if snapshot.Started || strings.TrimSpace(snapshot.ThreadID) != "" || strings.TrimSpace(snapshot.Status) != "" || snapshot.Closed {
+		m.storeCodexSnapshot(projectPath, snapshot)
+	} else {
+		_, _, needsAsync := m.refreshCodexSnapshot(projectPath)
+		if needsAsync {
+			asyncCmd = m.deferredCodexSnapshotCmd(projectPath)
+		}
+	}
 	if reveal {
 		m.codexVisibleProject = projectPath
 		m.loadCodexDraft(projectPath)
 		m.syncCodexViewport(true)
 		m.syncCodexComposerSize()
 	}
-	return m.markProjectSessionSeen(projectPath)
+	return batchCmds(m.markProjectSessionSeen(projectPath), asyncCmd)
 }
 
 func (m *Model) pruneCodexSessionVisibility() {
@@ -615,6 +623,7 @@ func (m *Model) openCodexSessionCmd(req codexapp.LaunchRequest) tea.Cmd {
 		}
 		return codexSessionOpenedMsg{
 			projectPath:  req.ProjectPath,
+			snapshot:     snapshot,
 			status:       embeddedSessionOpenStatus(req, threadIDsToAvoid, reused, snapshot),
 			perfOpID:     perfOpID,
 			perfDuration: time.Since(startedAt),
@@ -835,9 +844,11 @@ func (m Model) reconnectVisibleCodexSessionCmd() tea.Cmd {
 		if err != nil {
 			return codexSessionOpenedMsg{projectPath: projectPath, err: err}
 		}
+		snapshot := session.Snapshot()
 		return codexSessionOpenedMsg{
 			projectPath: projectPath,
-			status:      embeddedSessionReconnectStatus(req, session.Snapshot()),
+			snapshot:    snapshot,
+			status:      embeddedSessionReconnectStatus(req, snapshot),
 		}
 	}
 }

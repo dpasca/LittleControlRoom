@@ -8974,6 +8974,69 @@ func TestVisibleOpenCodeSlashNewStartsFreshSession(t *testing.T) {
 	}
 }
 
+func TestCodexSessionOpenedMsgSeedsSnapshotCache(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex,
+			Started:  true,
+			Status:   "Codex session ready",
+			ThreadID: "thread-demo",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+
+	m := Model{
+		codexManager:  manager,
+		codexInput:    newCodexTextarea(),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	cmd := m.openCodexSessionCmd(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	})
+	if cmd == nil {
+		t.Fatalf("openCodexSessionCmd() returned nil")
+	}
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("opened.err = %v, want nil", opened.err)
+	}
+	if opened.snapshot.ThreadID != "thread-demo" {
+		t.Fatalf("opened.snapshot.ThreadID = %q, want %q", opened.snapshot.ThreadID, "thread-demo")
+	}
+
+	callsAfterOpen := session.snapshotCalls
+	if callsAfterOpen == 0 {
+		t.Fatalf("expected open command to snapshot the session off the UI thread")
+	}
+
+	updated, _ := m.update(opened)
+	got := updated.(Model)
+	if session.snapshotCalls != callsAfterOpen {
+		t.Fatalf("handling codexSessionOpenedMsg should reuse the opened snapshot; snapshot calls = %d, want %d", session.snapshotCalls, callsAfterOpen)
+	}
+	snapshot, ok := got.currentCodexSnapshot()
+	if !ok {
+		t.Fatalf("currentCodexSnapshot() unavailable after handling the opened session")
+	}
+	if snapshot.ThreadID != "thread-demo" {
+		t.Fatalf("current thread id = %q, want %q", snapshot.ThreadID, "thread-demo")
+	}
+	if session.snapshotCalls != callsAfterOpen {
+		t.Fatalf("currentCodexSnapshot() should reuse the cached opened snapshot; snapshot calls = %d, want %d", session.snapshotCalls, callsAfterOpen)
+	}
+}
+
 func TestVisibleOpenCodeSlashNewFailureKeepsClosedSessionVisible(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
