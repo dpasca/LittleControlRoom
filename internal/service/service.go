@@ -489,6 +489,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 	}
 	reconcileGlobalSessionOwnership(activities)
 	finalizeDetectorActivities(activities)
+	propagateWorktreeActivitiesToRoot(activities, oldMap)
 
 	candidateSet := map[string]struct{}{}
 	for p := range activities {
@@ -831,6 +832,36 @@ func finalizeDetectorActivities(activities map[string]*model.DetectorProjectActi
 		}
 		if len(activity.Artifacts) == 0 && len(activity.Sessions) == 0 {
 			delete(activities, path)
+		}
+	}
+}
+
+// propagateWorktreeActivitiesToRoot ensures that activity detected in linked
+// worktrees is reflected in the root project's LastActivity timestamp. Without
+// this, work done exclusively in worktrees leaves the root showing a stale time.
+func propagateWorktreeActivitiesToRoot(activities map[string]*model.DetectorProjectActivity, oldMap map[string]model.ProjectSummary) {
+	for path, activity := range activities {
+		if activity == nil || activity.LastActivity.IsZero() {
+			continue
+		}
+		old, ok := oldMap[path]
+		if !ok || old.WorktreeKind != model.WorktreeKindLinked {
+			continue
+		}
+		rootPath := filepath.Clean(strings.TrimSpace(old.WorktreeRootPath))
+		if rootPath == "" || rootPath == path {
+			continue
+		}
+		existing, ok := activities[rootPath]
+		if !ok {
+			activities[rootPath] = &model.DetectorProjectActivity{
+				ProjectPath:  rootPath,
+				LastActivity: activity.LastActivity,
+			}
+			continue
+		}
+		if activity.LastActivity.After(existing.LastActivity) {
+			existing.LastActivity = activity.LastActivity
 		}
 	}
 }
