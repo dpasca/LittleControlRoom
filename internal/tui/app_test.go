@@ -3374,6 +3374,39 @@ func TestShowCodexProjectMarksSessionSeenLocally(t *testing.T) {
 	}
 }
 
+func TestPruneCodexSessionVisibilityKeepsClosedPlaceholderVisible(t *testing.T) {
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          newCodexTextarea(),
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": {
+				Provider:    codexapp.ProviderOpenCode,
+				ProjectPath: "/tmp/demo",
+				Closed:      true,
+				ThreadID:    "thread-demo",
+				Status:      "OpenCode session closed",
+			},
+		},
+	}
+
+	m.pruneCodexSessionVisibility()
+
+	if m.codexVisibleProject != "/tmp/demo" {
+		t.Fatalf("codexVisibleProject = %q, want /tmp/demo", m.codexVisibleProject)
+	}
+	if m.codexHiddenProject != "/tmp/demo" {
+		t.Fatalf("codexHiddenProject = %q, want /tmp/demo", m.codexHiddenProject)
+	}
+	snapshot, ok := m.currentCodexSnapshot()
+	if !ok {
+		t.Fatalf("currentCodexSnapshot() unavailable after pruning a closed placeholder")
+	}
+	if !snapshot.Closed {
+		t.Fatalf("snapshot.Closed = false, want true")
+	}
+}
+
 func TestCodexSessionOpenedMarksSessionSeenLocally(t *testing.T) {
 	seenAt := time.Date(2026, 4, 4, 9, 0, 0, 0, time.UTC)
 	project := model.ProjectSummary{

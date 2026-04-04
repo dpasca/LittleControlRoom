@@ -1962,8 +1962,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			provider := m.codexPendingOpenProvider()
 			m.finishCodexPendingOpen(msg.projectPath, codexapp.Snapshot{}, false, false)
 			m.todoLaunchDraft = nil
-			if strings.TrimSpace(msg.projectPath) != "" {
-				if _, ok := m.codexSession(msg.projectPath); !ok {
+			if projectPath := strings.TrimSpace(msg.projectPath); projectPath != "" {
+				shouldShowFailure := true
+				if snapshot, ok := m.codexCachedSnapshot(projectPath); ok {
+					shouldShowFailure = snapshot.Closed
+				} else if _, ok := m.codexSession(projectPath); ok {
+					shouldShowFailure = false
+				}
+				if shouldShowFailure {
 					m.showEmbeddedOpenFailure(msg.projectPath, provider, msg.err)
 				}
 			}

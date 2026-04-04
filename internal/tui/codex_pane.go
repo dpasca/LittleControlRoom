@@ -201,14 +201,18 @@ func (m *Model) finishCodexPendingOpen(projectPath string, snapshot codexapp.Sna
 
 func (m *Model) pruneCodexSessionVisibility() {
 	if projectPath := strings.TrimSpace(m.codexVisibleProject); projectPath != "" {
-		if _, ok := m.codexSession(projectPath); !ok {
+		if snapshot, ok := m.codexCachedSnapshot(projectPath); ok && snapshot.Closed {
+			// Keep closed placeholders visible until another action replaces them.
+		} else if _, ok := m.codexSession(projectPath); !ok {
 			m.dropCodexSnapshot(projectPath)
 			m.codexVisibleProject = ""
 			m.codexInput.Blur()
 		}
 	}
 	if projectPath := strings.TrimSpace(m.codexHiddenProject); projectPath != "" {
-		if _, ok := m.codexSession(projectPath); !ok {
+		if snapshot, ok := m.codexCachedSnapshot(projectPath); ok && snapshot.Closed {
+			// Keep closed placeholders restorable without consulting the manager.
+		} else if _, ok := m.codexSession(projectPath); !ok {
 			m.dropCodexSnapshot(projectPath)
 			m.codexHiddenProject = ""
 		}
