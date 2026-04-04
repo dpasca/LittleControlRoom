@@ -5308,6 +5308,86 @@ func TestEnterRestoresHiddenLiveCodexSessionFromFocusedProjectList(t *testing.T)
 	}
 }
 
+func TestShowCodexProjectQueuesDeferredSnapshotWhenRevealSnapshotIsContended(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex,
+			Started:  true,
+			ThreadID: "thread-demo",
+			Status:   "Codex session ready",
+		},
+		trySnapshotFn: func(*fakeCodexSession) (codexapp.Snapshot, bool) {
+			return codexapp.Snapshot{}, false
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/demo",
+			Name:          "demo",
+			PresentOnDisk: true,
+		}},
+		selected:      0,
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, cmd := m.showCodexProject("/tmp/demo", "Embedded session restored")
+	got := updated.(Model)
+	if got.codexVisibleProject != "/tmp/demo" {
+		t.Fatalf("codexVisibleProject = %q, want /tmp/demo", got.codexVisibleProject)
+	}
+	if got.codexHiddenProject != "/tmp/demo" {
+		t.Fatalf("codexHiddenProject = %q, want /tmp/demo", got.codexHiddenProject)
+	}
+	if session.trySnapshotCalls != 1 {
+		t.Fatalf("reveal should attempt exactly one non-blocking snapshot refresh, got %d", session.trySnapshotCalls)
+	}
+	if session.snapshotCalls != 0 {
+		t.Fatalf("showCodexProject() should not take a blocking snapshot on the UI thread; snapshot calls = %d", session.snapshotCalls)
+	}
+	if cmd == nil {
+		t.Fatalf("showCodexProject() should queue follow-up commands")
+	}
+
+	msgs := collectCmdMsgs(cmd)
+	var deferred codexDeferredSnapshotMsg
+	foundDeferred := false
+	for _, msg := range msgs {
+		if candidate, ok := msg.(codexDeferredSnapshotMsg); ok {
+			deferred = candidate
+			foundDeferred = true
+			break
+		}
+	}
+	if !foundDeferred {
+		t.Fatalf("showCodexProject() should queue a deferred snapshot when reveal-time TrySnapshot is contended, got %#v", msgs)
+	}
+	if deferred.projectPath != "/tmp/demo" {
+		t.Fatalf("deferred project path = %q, want /tmp/demo", deferred.projectPath)
+	}
+	if deferred.snapshot.ThreadID != "thread-demo" {
+		t.Fatalf("deferred snapshot thread id = %q, want %q", deferred.snapshot.ThreadID, "thread-demo")
+	}
+	if session.snapshotCalls != 1 {
+		t.Fatalf("deferred snapshot command should perform one blocking snapshot off the UI thread; snapshot calls = %d", session.snapshotCalls)
+	}
+}
+
 func TestEnterDoesNotLaunchCodexFromDetailPane(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{
@@ -5460,6 +5540,43 @@ func TestRefreshBusyElsewhereCmdRechecksVisibleSession(t *testing.T) {
 	}
 	if session.snapshot.BusyExternal {
 		t.Fatalf("session should no longer be busy externally after refresh")
+	}
+}
+
+func TestRefreshBusyElsewhereCmdSkipsLiveLookupWithoutCachedBusyFlag(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started:      true,
+			Busy:         true,
+			BusyExternal: true,
+			ThreadID:     "thread-demo",
+		},
+		trySnapshotFn: func(*fakeCodexSession) (codexapp.Snapshot, bool) {
+			return codexapp.Snapshot{}, false
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{codexManager: manager}
+
+	cmd := m.refreshBusyElsewhereCmd("/tmp/demo")
+	if cmd != nil {
+		t.Fatalf("refreshBusyElsewhereCmd() = %#v, want nil without a cached busy-external snapshot", cmd)
+	}
+	if session.trySnapshotCalls != 0 || session.snapshotCalls != 0 {
+		t.Fatalf("refreshBusyElsewhereCmd() should not probe the live session on cache miss; TrySnapshot/Snapshot calls = %d/%d", session.trySnapshotCalls, session.snapshotCalls)
+	}
+	if session.refreshCalls != 0 {
+		t.Fatalf("refresh calls = %d, want 0", session.refreshCalls)
 	}
 }
 

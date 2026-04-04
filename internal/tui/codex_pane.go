@@ -530,12 +530,12 @@ type codexCloseWaiter interface {
 }
 
 func (m Model) refreshBusyElsewhereCmd(projectPath string) tea.Cmd {
-	session, ok := m.codexSession(projectPath)
-	if !ok {
+	snapshot, ok := m.codexCachedSnapshot(projectPath)
+	if !ok || snapshot.Closed || !snapshot.BusyExternal {
 		return nil
 	}
-	snapshot, ok := m.nonBlockingCodexSnapshot(projectPath)
-	if !ok || snapshot.Closed || !snapshot.BusyExternal {
+	session, ok := m.codexSession(projectPath)
+	if !ok {
 		return nil
 	}
 	refresher, ok := session.(codexBusyElsewhereRefresher)
