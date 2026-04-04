@@ -7090,7 +7090,7 @@ func TestTodoWorktreeLaunchWithModelPickerKeepsPromptUnsentUntilModelChoice(t *t
 	}
 }
 
-func TestTodoCopyDialogEnterWaitsForQueuedWorktreeSuggestion(t *testing.T) {
+func TestTodoCopyDialogEnterStartsImmediatelyWhileWorktreeSuggestionIsQueued(t *testing.T) {
 	t.Parallel()
 
 	m := Model{
@@ -7120,51 +7120,23 @@ func TestTodoCopyDialogEnterWaitsForQueuedWorktreeSuggestion(t *testing.T) {
 	}
 
 	updated, cmd := m.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
-	var got *Model
-	switch v := updated.(type) {
-	case Model:
-		got = &v
-	case *Model:
-		got = v
-	default:
-		t.Fatalf("updated model = %T, want Model or *Model", updated)
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("queued worktree suggestion should still start the background launch")
 	}
-	if cmd != nil {
-		t.Fatalf("queued worktree suggestion should not start launch")
+	if got.todoDialog != nil || got.todoCopyDialog != nil {
+		t.Fatalf("dialogs should dismiss immediately, got todo=%#v copy=%#v", got.todoDialog, got.todoCopyDialog)
 	}
-	if got.todoCopyDialog == nil {
-		t.Fatalf("todo copy dialog should stay open while waiting")
+	if got.status != "Starting TODO in dedicated worktree..." {
+		t.Fatalf("status = %q, want immediate background-start message", got.status)
 	}
-	if got.todoCopyDialog.Submitting {
-		t.Fatalf("todo copy dialog should not enter submitting state while waiting")
+	msg := cmd()
+	launchMsg, ok := msg.(todoWorktreeLaunchMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want todoWorktreeLaunchMsg", msg)
 	}
-	if got.status != "Waiting for worktree suggestion..." {
-		t.Fatalf("status = %q, want waiting message", got.status)
-	}
-
-	blockedUpdate, blockedCmd := got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
-	var blocked *Model
-	switch v := blockedUpdate.(type) {
-	case Model:
-		blocked = &v
-	case *Model:
-		blocked = v
-	default:
-		t.Fatalf("blocked update model = %T, want Model or *Model", blockedUpdate)
-	}
-	if blockedCmd != nil {
-		t.Fatalf("waiting copy dialog should ignore non-Esc keys")
-	}
-	if blocked.todoCopyDialog == nil || blocked.todoCopyDialog.Provider != codexapp.ProviderCodex {
-		t.Fatalf("waiting copy dialog should keep provider unchanged, got %#v", blocked.todoCopyDialog)
-	}
-
-	rendered := ansi.Strip(got.renderTodoCopyDialogOverlay("", 100, 24))
-	if !strings.Contains(rendered, "wait..") {
-		t.Fatalf("rendered copy dialog should disable Enter with wait label, got %q", rendered)
-	}
-	if strings.Contains(rendered, "toggle worktree") || strings.Contains(rendered, "refresh") || strings.Contains(rendered, "edit") {
-		t.Fatalf("rendered copy dialog should only show waiting/cancel actions while pending, got %q", rendered)
+	if launchMsg.err == nil || launchMsg.err.Error() != "service unavailable" {
+		t.Fatalf("launch error = %v, want service unavailable from the stubbed model", launchMsg.err)
 	}
 }
 

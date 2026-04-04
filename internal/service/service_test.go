@@ -2195,6 +2195,57 @@ func TestCreateTodoWorktreeAutoSuffixOnConflict(t *testing.T) {
 	}
 }
 
+func TestCreateTodoWorktreeFallsBackToGeneratedNamesWhileSuggestionQueued(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	item, err := svc.AddTodo(ctx, projectPath, "Async todo launch")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
+		t.Fatalf("queue todo worktree suggestion: %v", err)
+	} else if !queued {
+		t.Fatalf("expected todo worktree suggestion to queue")
+	}
+
+	result, err := svc.CreateTodoWorktree(ctx, CreateTodoWorktreeRequest{
+		ProjectPath: projectPath,
+		TodoID:      item.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateTodoWorktree() error = %v", err)
+	}
+	expectedPath := filepath.Join(root, "repo--todo-async-todo-launch")
+	if result.WorktreePath != expectedPath {
+		t.Fatalf("worktree path = %q, want %q", result.WorktreePath, expectedPath)
+	}
+	if result.WorktreeSuffix != "todo-async-todo-launch" {
+		t.Fatalf("worktree suffix = %q, want %q", result.WorktreeSuffix, "todo-async-todo-launch")
+	}
+	if result.BranchName != "todo/async-todo-launch" {
+		t.Fatalf("branch = %q, want %q", result.BranchName, "todo/async-todo-launch")
+	}
+}
+
 func TestRemoveWorktreeRemovesTrackedLinkedWorktree(t *testing.T) {
 	t.Parallel()
 
