@@ -1792,6 +1792,100 @@ func TestRenderDetailContentShowsRepoCentricWorktreeSummary(t *testing.T) {
 	}
 }
 
+func TestRenderDetailContentShowsSessionSummaryBeforeWorktreeInfo(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:                             "repo",
+				Path:                             rootPath,
+				Status:                           model.StatusIdle,
+				PresentOnDisk:                    true,
+				WorktreeRootPath:                 rootPath,
+				WorktreeKind:                     model.WorktreeKindMain,
+				RepoBranch:                       "master",
+				LatestSessionClassification:      model.ClassificationCompleted,
+				LatestSessionClassificationType:  model.SessionCategoryNeedsFollowUp,
+				LatestSessionSummary:             "Follow the root plan before merging any lane.",
+				LatestSessionFormat:              "modern",
+				LatestSessionDetectedProjectPath: rootPath,
+			},
+			{
+				Name:             "repo--feat-parallel-lane",
+				Path:             childPath,
+				Status:           model.StatusActive,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+				RepoBranch:       "feat/parallel-lane",
+				RepoDirty:        true,
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+		detail: model.ProjectDetail{
+			LatestSessionClassification: &model.SessionClassification{
+				Status:   model.ClassificationCompleted,
+				Category: model.SessionCategoryNeedsFollowUp,
+				Summary:  "Follow the root plan before merging any lane.",
+			},
+		},
+	}
+	m.rebuildProjectList(rootPath)
+
+	rendered := ansi.Strip(m.renderDetailContent(100))
+	summaryIndex := strings.Index(rendered, "Session summary")
+	worktreesIndex := strings.Index(rendered, "Worktrees:")
+	if summaryIndex < 0 || worktreesIndex < 0 {
+		t.Fatalf("renderDetailContent() missing summary or worktree sections: %q", rendered)
+	}
+	if summaryIndex > worktreesIndex {
+		t.Fatalf("renderDetailContent() should show the session summary before worktree info: %q", rendered)
+	}
+}
+
+func TestRenderDetailContentSkipsWorktreeLaneSectionForLinkedSelection(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				Status:           model.StatusIdle,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 childPath,
+				Status:               model.StatusActive,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				WorktreeMergeStatus:  model.WorktreeMergeStatusNotMerged,
+				RepoBranch:           "feat/parallel-lane",
+				RepoDirty:            true,
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	rendered := ansi.Strip(m.renderDetailContent(100))
+	if strings.Contains(rendered, "Worktree lanes") {
+		t.Fatalf("renderDetailContent() should keep the family lane list on the root project only, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "Worktree actions") {
+		t.Fatalf("renderDetailContent() should keep linked-worktree actions available, got %q", rendered)
+	}
+}
+
 func TestUpdateNormalModeMOpensWorktreeMergeConfirm(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"
@@ -15351,7 +15445,7 @@ func TestViewWithHelpOverlayPreservesBackground(t *testing.T) {
 	if !strings.Contains(rendered, "Help") || !strings.Contains(rendered, "slash-command palette") {
 		t.Fatalf("View() should show the help overlay content: %q", rendered)
 	}
-	if !strings.Contains(rendered, "ATTN") || !strings.Contains(rendered, "Path:") || !strings.Contains(rendered, "Session summary") {
+	if !strings.Contains(rendered, "ATTN") || !strings.Contains(rendered, "Path:") || !strings.Contains(rendered, "Session") {
 		t.Fatalf("View() should preserve the dashboard behind the help overlay: %q", rendered)
 	}
 }

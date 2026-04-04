@@ -3428,6 +3428,17 @@ func (m Model) renderDetailContent(width int) string {
 	if shouldShowProjectActivity(p) {
 		lines = append(lines, detailField("Activity", statusValue))
 	}
+	lines = append(lines, detailSectionStyle.Render("Session summary"))
+	summaryText := m.projectAssessmentDisplayTextAt(p, m.currentTime(), m.assessmentStallThreshold())
+	summaryStyle := detailValueStyle
+	if projectAssessmentRefreshing(p) {
+		summaryStyle = detailMutedStyle
+	}
+	if strings.TrimSpace(summaryText) == "" || summaryText == "-" {
+		lines = append(lines, renderWrappedDetailBullet(detailMutedStyle, width, "not assessed yet"))
+	} else {
+		lines = append(lines, renderWrappedDetailBullet(summaryStyle, width, summaryText))
+	}
 	if projectMissing(p) {
 		lines = append(lines, detailWarningStyle.Render("Folder: missing on disk"))
 	}
@@ -3473,58 +3484,60 @@ func (m Model) renderDetailContent(width int) string {
 	if len(family) > 1 || p.WorktreeKind == model.WorktreeKindLinked {
 		activeCount, dirtyCount := m.worktreeActivityCounts(family)
 		lines = append(lines, detailField("Worktrees", detailValueStyle.Render(worktreeGroupSummary(family, activeCount, dirtyCount))))
-		lines = append(lines, detailSectionStyle.Render("Worktree lanes"))
-		family = append([]model.ProjectSummary(nil), family...)
-		sort.SliceStable(family, func(i, j int) bool {
-			leftRoot := projectIsWorktreeRoot(family[i])
-			rightRoot := projectIsWorktreeRoot(family[j])
-			if leftRoot != rightRoot {
-				return leftRoot
-			}
-			if !family[i].LastActivity.Equal(family[j].LastActivity) {
-				return family[i].LastActivity.After(family[j].LastActivity)
-			}
-			return strings.ToLower(family[i].Path) < strings.ToLower(family[j].Path)
-		})
-		for _, member := range family {
-			label := projectWorktreeLabel(member)
-			if projectIsWorktreeRoot(member) {
-				label = "root: " + label
-			}
-			statusParts := []string{}
-			lineStyle := detailValueStyle
-			if op, ok := m.pendingGitOperation(member.Path); ok {
-				statusParts = append(statusParts, op.shortLabel())
-				lineStyle = detailValueStyle
-			} else if member.RepoConflict {
-				statusParts = append(statusParts, "conflict")
-				lineStyle = detailConflictStyle
-			} else if member.RepoDirty {
-				statusParts = append(statusParts, "dirty")
-			} else {
-				statusParts = append(statusParts, "clean")
-			}
-			if member.Status != model.StatusIdle {
-				statusParts = append(statusParts, string(member.Status))
-			}
-			if m.projectHasLiveCodexSession(member.Path) {
-				statusParts = append(statusParts, "agent")
-			}
-			if snapshot := m.projectRuntimeSnapshot(member.Path); snapshot.Running {
-				statusParts = append(statusParts, "runtime")
-			}
-			if member.WorktreeKind == model.WorktreeKindLinked {
-				switch member.WorktreeMergeStatus {
-				case model.WorktreeMergeStatusMerged:
-					statusParts = append(statusParts, "merged")
-				case model.WorktreeMergeStatusNotMerged:
-					statusParts = append(statusParts, "not merged")
+		if projectIsWorktreeRoot(p) {
+			lines = append(lines, detailSectionStyle.Render("Worktree lanes"))
+			family = append([]model.ProjectSummary(nil), family...)
+			sort.SliceStable(family, func(i, j int) bool {
+				leftRoot := projectIsWorktreeRoot(family[i])
+				rightRoot := projectIsWorktreeRoot(family[j])
+				if leftRoot != rightRoot {
+					return leftRoot
 				}
+				if !family[i].LastActivity.Equal(family[j].LastActivity) {
+					return family[i].LastActivity.After(family[j].LastActivity)
+				}
+				return strings.ToLower(family[i].Path) < strings.ToLower(family[j].Path)
+			})
+			for _, member := range family {
+				label := projectWorktreeLabel(member)
+				if projectIsWorktreeRoot(member) {
+					label = "root: " + label
+				}
+				statusParts := []string{}
+				lineStyle := detailValueStyle
+				if op, ok := m.pendingGitOperation(member.Path); ok {
+					statusParts = append(statusParts, op.shortLabel())
+					lineStyle = detailValueStyle
+				} else if member.RepoConflict {
+					statusParts = append(statusParts, "conflict")
+					lineStyle = detailConflictStyle
+				} else if member.RepoDirty {
+					statusParts = append(statusParts, "dirty")
+				} else {
+					statusParts = append(statusParts, "clean")
+				}
+				if member.Status != model.StatusIdle {
+					statusParts = append(statusParts, string(member.Status))
+				}
+				if m.projectHasLiveCodexSession(member.Path) {
+					statusParts = append(statusParts, "agent")
+				}
+				if snapshot := m.projectRuntimeSnapshot(member.Path); snapshot.Running {
+					statusParts = append(statusParts, "runtime")
+				}
+				if member.WorktreeKind == model.WorktreeKindLinked {
+					switch member.WorktreeMergeStatus {
+					case model.WorktreeMergeStatusMerged:
+						statusParts = append(statusParts, "merged")
+					case model.WorktreeMergeStatusNotMerged:
+						statusParts = append(statusParts, "not merged")
+					}
+				}
+				if filepath.Clean(member.Path) == filepath.Clean(p.Path) {
+					statusParts = append(statusParts, "current")
+				}
+				lines = append(lines, renderWrappedDetailBullet(lineStyle, width, label+" · "+strings.Join(statusParts, ", ")))
 			}
-			if filepath.Clean(member.Path) == filepath.Clean(p.Path) {
-				statusParts = append(statusParts, "current")
-			}
-			lines = append(lines, renderWrappedDetailBullet(lineStyle, width, label+" · "+strings.Join(statusParts, ", ")))
 		}
 		if hints := m.worktreeActionHints(p, family); len(hints) > 0 {
 			lines = append(lines, detailSectionStyle.Render("Worktree actions"))
@@ -3532,18 +3545,6 @@ func (m Model) renderDetailContent(width int) string {
 				lines = append(lines, renderWrappedDetailBullet(detailValueStyle, width, hint))
 			}
 		}
-	}
-
-	lines = append(lines, detailSectionStyle.Render("Session summary"))
-	summaryText := m.projectAssessmentDisplayTextAt(p, m.currentTime(), m.assessmentStallThreshold())
-	summaryStyle := detailValueStyle
-	if projectAssessmentRefreshing(p) {
-		summaryStyle = detailMutedStyle
-	}
-	if strings.TrimSpace(summaryText) == "" || summaryText == "-" {
-		lines = append(lines, renderWrappedDetailBullet(detailMutedStyle, width, "not assessed yet"))
-	} else {
-		lines = append(lines, renderWrappedDetailBullet(summaryStyle, width, summaryText))
 	}
 
 	if p.SnoozedUntil != nil {
