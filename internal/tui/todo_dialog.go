@@ -1686,10 +1686,7 @@ func (m Model) todoWorktreeLaunchReadiness(dialog todoCopyDialogState, item mode
 
 	suggestion := item.WorktreeSuggestion
 	if suggestion == nil {
-		if m.svc != nil && m.svc.HasTodoWorktreeSuggester() {
-			return todoWorktreeLaunchWaiting, "Waiting for worktree suggestion..."
-		}
-		return todoWorktreeLaunchUnavailable, "Worktree suggestions are unavailable right now. Press e to enter names manually."
+		return todoWorktreeLaunchReady, "Worktree name will be generated automatically."
 	}
 
 	switch suggestion.Status {
@@ -1697,16 +1694,13 @@ func (m Model) todoWorktreeLaunchReadiness(dialog todoCopyDialogState, item mode
 		if strings.TrimSpace(suggestion.BranchName) != "" && strings.TrimSpace(suggestion.WorktreeSuffix) != "" {
 			return todoWorktreeLaunchReady, ""
 		}
-		return todoWorktreeLaunchUnavailable, "Worktree suggestion is incomplete. Press r to retry, or e to enter names manually."
+		return todoWorktreeLaunchReady, "Worktree name will be generated automatically."
 	case model.TodoWorktreeSuggestionQueued, model.TodoWorktreeSuggestionRunning:
-		return todoWorktreeLaunchWaiting, "Waiting for worktree suggestion..."
+		return todoWorktreeLaunchReady, "Suggested names are still generating; launch will continue with an automatic name."
 	case model.TodoWorktreeSuggestionFailed:
-		return todoWorktreeLaunchUnavailable, "Worktree suggestion is unavailable right now. Press r to retry, or e to enter names manually."
+		return todoWorktreeLaunchReady, "Worktree suggestion is unavailable right now; launch will continue with an automatic name."
 	default:
-		if m.svc != nil && m.svc.HasTodoWorktreeSuggester() {
-			return todoWorktreeLaunchWaiting, "Waiting for worktree suggestion..."
-		}
-		return todoWorktreeLaunchUnavailable, "Worktree suggestions are unavailable right now. Press e to enter names manually."
+		return todoWorktreeLaunchReady, "Worktree name will be generated automatically."
 	}
 }
 
@@ -1738,17 +1732,15 @@ func (m Model) todoWorktreeLaunchDetails(dialog todoCopyDialogState, item model.
 	}
 	if suggestion == nil {
 		readiness, message := m.todoWorktreeLaunchReadiness(dialog, item)
-		switch readiness {
-		case todoWorktreeLaunchWaiting:
-			return []string{
-				detailMutedStyle.Render("Worktree suggestion is preparing in the background."),
-				detailMutedStyle.Render(message),
-			}
-		default:
+		if readiness == todoWorktreeLaunchUnavailable {
 			return []string{
 				detailMutedStyle.Render(message),
 				detailMutedStyle.Render("Press e to enter names now."),
 			}
+		}
+		return []string{
+			detailMutedStyle.Render(message),
+			detailMutedStyle.Render("Press Enter to launch now, or e to set names manually."),
 		}
 	}
 	switch suggestion.Status {
@@ -1768,17 +1760,17 @@ func (m Model) todoWorktreeLaunchDetails(dialog todoCopyDialogState, item model.
 	case model.TodoWorktreeSuggestionQueued, model.TodoWorktreeSuggestionRunning:
 		return []string{
 			detailMutedStyle.Render("Worktree suggestion is still preparing in the background."),
-			detailMutedStyle.Render("Wait a moment, or press e to enter names now."),
+			detailMutedStyle.Render("Press Enter to launch now with an automatic name, or wait for the preview."),
 		}
 	case model.TodoWorktreeSuggestionFailed:
 		return []string{
 			detailWarningStyle.Render("Worktree suggestion is unavailable right now."),
-			detailMutedStyle.Render("Press r to retry, or e to enter names now."),
+			detailMutedStyle.Render("Press Enter to launch with an automatic name, or e to enter names now."),
 		}
 	default:
 		return []string{
 			detailMutedStyle.Render("Worktree suggestion is not ready yet."),
-			detailMutedStyle.Render("Press r to refresh it, or e to enter names now."),
+			detailMutedStyle.Render("Press Enter to launch with an automatic name, or wait for the preview."),
 		}
 	}
 }

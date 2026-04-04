@@ -56,30 +56,38 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 		return CreateTodoWorktreeResult{}, fmt.Errorf("todo id is required")
 	}
 
-	suggestion, err := s.store.GetTodoWorktreeSuggestion(ctx, req.TodoID)
+	todo, err := s.store.GetTodo(ctx, req.TodoID)
 	if err != nil {
-		return CreateTodoWorktreeResult{}, fmt.Errorf("load TODO worktree suggestion: %w", err)
+		return CreateTodoWorktreeResult{}, err
 	}
-	if suggestion.ProjectPath != "" && suggestion.ProjectPath != projectPath {
-		return CreateTodoWorktreeResult{}, fmt.Errorf("todo %d belongs to %s, not %s", req.TodoID, suggestion.ProjectPath, projectPath)
-	}
-	switch suggestion.Status {
-	case model.TodoWorktreeSuggestionReady:
-	case model.TodoWorktreeSuggestionQueued, model.TodoWorktreeSuggestionRunning:
-		return CreateTodoWorktreeResult{}, fmt.Errorf("TODO worktree suggestion is still preparing")
-	case model.TodoWorktreeSuggestionFailed:
-		return CreateTodoWorktreeResult{}, fmt.Errorf("TODO worktree suggestion is unavailable right now")
-	default:
-		return CreateTodoWorktreeResult{}, fmt.Errorf("TODO worktree suggestion is not ready yet")
+	if filepath.Clean(strings.TrimSpace(todo.ProjectPath)) != projectPath {
+		return CreateTodoWorktreeResult{}, fmt.Errorf("todo %d belongs to %s, not %s", req.TodoID, todo.ProjectPath, projectPath)
 	}
 
-	branchName := sanitizeWorktreeBranchName(firstNonEmptyTrimmed(req.BranchName, suggestion.BranchName))
-	worktreeSuffix := sanitizeWorktreeSuffix(firstNonEmptyTrimmed(req.WorktreeSuffix, suggestion.WorktreeSuffix))
+	suggestionBranch := ""
+	suggestionSuffix := ""
+	suggestion, err := s.store.GetTodoWorktreeSuggestion(ctx, req.TodoID)
+	switch {
+	case err == nil:
+		if suggestion.ProjectPath != "" && filepath.Clean(strings.TrimSpace(suggestion.ProjectPath)) != projectPath {
+			return CreateTodoWorktreeResult{}, fmt.Errorf("todo %d belongs to %s, not %s", req.TodoID, suggestion.ProjectPath, projectPath)
+		}
+		if suggestion.Status == model.TodoWorktreeSuggestionReady {
+			suggestionBranch = suggestion.BranchName
+			suggestionSuffix = suggestion.WorktreeSuffix
+		}
+	case !errors.Is(err, sql.ErrNoRows):
+		return CreateTodoWorktreeResult{}, fmt.Errorf("load TODO worktree suggestion: %w", err)
+	}
+
+	fallbackBranch, fallbackSuffix := fallbackTodoWorktreeNames(todo.Text, req.TodoID)
+	branchName := sanitizeWorktreeBranchName(firstNonEmptyTrimmed(req.BranchName, suggestionBranch, fallbackBranch))
+	worktreeSuffix := sanitizeWorktreeSuffix(firstNonEmptyTrimmed(req.WorktreeSuffix, suggestionSuffix, fallbackSuffix))
 	if worktreeSuffix == "" {
 		worktreeSuffix = sanitizeWorktreeSuffix(strings.ReplaceAll(branchName, "/", "-"))
 	}
 	if branchName == "" || worktreeSuffix == "" {
-		return CreateTodoWorktreeResult{}, fmt.Errorf("TODO worktree suggestion is missing branch or folder name")
+		return CreateTodoWorktreeResult{}, fmt.Errorf("could not determine worktree branch or folder name")
 	}
 
 	worktreeRootPath, _ := s.readProjectWorktreeInfo(ctx, projectPath)
@@ -966,6 +974,25 @@ func firstNonEmptyTrimmed(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func fallbackTodoWorktreeNames(todoText string, todoID int64) (branchName, worktreeSuffix string) {
+	fields := strings.Fields(strings.ToLower(strings.TrimSpace(todoText)))
+	if len(fields) > 8 {
+		fields = fields[:8]
+	}
+	slug := sanitizeWorktreeSuffix(strings.Join(fields, " "))
+	if len(slug) > 48 {
+		slug = strings.Trim(slug[:48], "-")
+	}
+	if slug == "" {
+		slug = fmt.Sprintf("todo-%d", todoID)
+	}
+	suffixStem := strings.TrimPrefix(slug, "todo-")
+	if suffixStem == "" {
+		suffixStem = slug
+	}
+	return "todo/" + slug, "todo-" + suffixStem
 }
 
 func preferredKnownPathVariant(candidate string, known []string) string {
