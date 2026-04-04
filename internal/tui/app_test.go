@@ -7741,6 +7741,89 @@ func TestTodoDeleteConfirmPurgeQueuesBulkRemoval(t *testing.T) {
 	}
 }
 
+func TestTodoDialogSpaceBlocksRepeatWhileToggleIsInFlight(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	runTUITestGit(t, "", "init", projectPath)
+	runTUITestGit(t, projectPath, "config", "user.name", "Little Control Room Tests")
+	runTUITestGit(t, projectPath, "config", "user.email", "tests@example.com")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, service.CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	if _, err := svc.AddTodo(ctx, projectPath, "Toggle this item"); err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 0)
+	if err != nil {
+		t.Fatalf("get project detail: %v", err)
+	}
+
+	m := Model{
+		ctx:    ctx,
+		svc:    svc,
+		detail: detail,
+		projects: []model.ProjectSummary{{
+			Path: projectPath,
+			Name: "repo",
+		}},
+		todoDialog: &todoDialogState{
+			ProjectPath: projectPath,
+			ProjectName: "repo",
+		},
+	}
+
+	updated, cmd := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	got := updated.(Model)
+	if got.todoDialog == nil || !got.todoDialog.Busy {
+		t.Fatalf("todo dialog should mark itself busy while the toggle command is in flight, got %#v", got.todoDialog)
+	}
+	if got.status != "Updating TODO..." {
+		t.Fatalf("status = %q, want toggle progress", got.status)
+	}
+	if cmd == nil {
+		t.Fatal("space toggle should queue a command")
+	}
+
+	updated, repeatCmd := got.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	got = updated.(Model)
+	if repeatCmd != nil {
+		t.Fatalf("repeat toggle while busy should not queue another command")
+	}
+	if got.status != "TODO update already in progress" {
+		t.Fatalf("status = %q, want busy warning", got.status)
+	}
+
+	rawMsg := cmd()
+	action, ok := rawMsg.(todoActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want todoActionMsg", rawMsg)
+	}
+	updatedModel, followUp := got.Update(action)
+	got = updatedModel.(Model)
+	if got.todoDialog == nil || got.todoDialog.Busy {
+		t.Fatalf("todo dialog busy flag should clear after the toggle completes, got %#v", got.todoDialog)
+	}
+	if followUp == nil {
+		t.Fatal("completed toggle should refresh project state")
+	}
+}
+
 func TestLaunchClaudeForSelectionUsesClaudeProvider(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {

@@ -177,6 +177,103 @@ func TestApplyEditableSettingsResetsUsageWhenBackendChanges(t *testing.T) {
 	}
 }
 
+func TestRefreshProjectStatusAsyncCoalescesConcurrentRequests(t *testing.T) {
+	t.Parallel()
+
+	started := make(chan int, 4)
+	completed := make(chan int, 4)
+	release := make(chan struct{})
+
+	callCount := 0
+	var callsMu sync.Mutex
+
+	svc := &Service{
+		refreshProjectStatusFn: func(context.Context, string) error {
+			callsMu.Lock()
+			callCount++
+			callID := callCount
+			callsMu.Unlock()
+
+			started <- callID
+			<-release
+			completed <- callID
+			return nil
+		},
+	}
+
+	const projectPath = "/tmp/demo"
+	svc.refreshProjectStatusAsync(projectPath)
+
+	select {
+	case got := <-started:
+		if got != 1 {
+			t.Fatalf("first refresh call = %d, want 1", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first refresh did not start")
+	}
+
+	svc.refreshProjectStatusAsync(projectPath)
+	svc.refreshProjectStatusAsync(projectPath)
+
+	select {
+	case got := <-started:
+		t.Fatalf("unexpected concurrent refresh call %d while first refresh is still running", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	release <- struct{}{}
+
+	select {
+	case got := <-completed:
+		if got != 1 {
+			t.Fatalf("first completed refresh = %d, want 1", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first refresh did not complete")
+	}
+
+	select {
+	case got := <-started:
+		if got != 2 {
+			t.Fatalf("queued refresh call = %d, want 2", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("queued refresh did not start")
+	}
+
+	select {
+	case got := <-started:
+		t.Fatalf("unexpected extra refresh call %d after coalesced rerun started", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	release <- struct{}{}
+
+	select {
+	case got := <-completed:
+		if got != 2 {
+			t.Fatalf("second completed refresh = %d, want 2", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second refresh did not complete")
+	}
+
+	select {
+	case got := <-started:
+		t.Fatalf("unexpected third refresh call %d after queued requests were coalesced", got)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	time.Sleep(20 * time.Millisecond)
+
+	svc.refreshMu.Lock()
+	defer svc.refreshMu.Unlock()
+	if len(svc.refreshState) != 0 {
+		t.Fatalf("refreshState = %#v, want empty after coalesced refresh finishes", svc.refreshState)
+	}
+}
+
 func readyBackendStatus(backend config.AIBackend) aibackend.Status {
 	return aibackend.Status{
 		Backend: backend,

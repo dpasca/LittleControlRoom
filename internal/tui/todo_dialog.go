@@ -35,6 +35,7 @@ type todoDialogState struct {
 	ProjectName string
 	Selected    int
 	Offset      int
+	Busy        bool
 }
 
 type todoEditorState struct {
@@ -477,7 +478,8 @@ func (m *Model) closeTodoExistingWorktreeDialog(status string) {
 }
 
 func (m Model) updateTodoDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
+	key := msg.String()
+	switch key {
 	case "esc":
 		m.closeTodoDialog("TODO list closed")
 		return m, nil
@@ -504,6 +506,15 @@ func (m Model) updateTodoDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.syncTodoDialogSelection()
 		}
 		return m, nil
+	}
+	if m.todoDialog != nil && m.todoDialog.Busy {
+		switch key {
+		case "a", "e", "d", "p", " ", "enter", "c":
+			m.status = "TODO update already in progress"
+			return m, nil
+		}
+	}
+	switch key {
 	case "a":
 		return m, m.openTodoEditor(0, "")
 	case "e":
@@ -534,6 +545,9 @@ func (m Model) updateTodoDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !ok {
 			m.status = "No TODO selected"
 			return m, nil
+		}
+		if m.todoDialog != nil {
+			m.todoDialog.Busy = true
 		}
 		m.status = "Updating TODO..."
 		return m, m.toggleTodoDoneCmd(item)

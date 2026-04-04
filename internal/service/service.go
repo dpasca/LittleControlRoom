@@ -57,13 +57,22 @@ type Service struct {
 	llmUsageTracker          *llm.UsageTracker
 	opencodeDiscovery        *llm.OpenCodeDiscovery
 
-	gitFingerprintReader  func(context.Context, string) (scanner.GitFingerprint, error)
-	gitRepoStatusReader   func(context.Context, string) (scanner.GitRepoStatus, error)
-	gitWorktreeInfoReader func(context.Context, string) (scanner.GitWorktreeInfo, error)
-	gitWorktreeListReader func(context.Context, string) ([]scanner.GitWorktree, error)
-	gitRepoInitializer    func(context.Context, string) error
+	gitFingerprintReader   func(context.Context, string) (scanner.GitFingerprint, error)
+	gitRepoStatusReader    func(context.Context, string) (scanner.GitRepoStatus, error)
+	gitWorktreeInfoReader  func(context.Context, string) (scanner.GitWorktreeInfo, error)
+	gitWorktreeListReader  func(context.Context, string) ([]scanner.GitWorktree, error)
+	gitRepoInitializer     func(context.Context, string) error
+	refreshProjectStatusFn func(context.Context, string) error
 
 	mu sync.Mutex
+
+	refreshMu    sync.Mutex
+	refreshState map[string]asyncProjectRefreshState
+}
+
+type asyncProjectRefreshState struct {
+	running bool
+	queued  bool
 }
 
 type detectedProjectMove struct {
@@ -1678,11 +1687,60 @@ func (s *Service) refreshProjectStatusAsync(projectPath string) {
 	if projectPath == "" {
 		return
 	}
+	if !s.beginAsyncProjectRefresh(projectPath) {
+		return
+	}
 	go func(path string) {
-		ctx, cancel := context.WithTimeout(context.Background(), asyncProjectRefreshTimeout)
-		defer cancel()
-		_ = s.RefreshProjectStatus(ctx, path)
+		for {
+			ctx, cancel := context.WithTimeout(context.Background(), asyncProjectRefreshTimeout)
+			_ = s.projectStatusRefreshRunner()(ctx, path)
+			cancel()
+			if !s.finishAsyncProjectRefresh(path) {
+				return
+			}
+		}
 	}(projectPath)
+}
+
+func (s *Service) projectStatusRefreshRunner() func(context.Context, string) error {
+	if s.refreshProjectStatusFn != nil {
+		return s.refreshProjectStatusFn
+	}
+	return s.RefreshProjectStatus
+}
+
+func (s *Service) beginAsyncProjectRefresh(projectPath string) bool {
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+
+	if s.refreshState == nil {
+		s.refreshState = map[string]asyncProjectRefreshState{}
+	}
+	state := s.refreshState[projectPath]
+	if state.running {
+		state.queued = true
+		s.refreshState[projectPath] = state
+		return false
+	}
+	s.refreshState[projectPath] = asyncProjectRefreshState{running: true}
+	return true
+}
+
+func (s *Service) finishAsyncProjectRefresh(projectPath string) bool {
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+
+	state, ok := s.refreshState[projectPath]
+	if !ok {
+		return false
+	}
+	if state.queued {
+		state.queued = false
+		s.refreshState[projectPath] = state
+		return true
+	}
+	delete(s.refreshState, projectPath)
+	return false
 }
 
 func (s *Service) AddTodo(ctx context.Context, projectPath, text string) (model.TodoItem, error) {

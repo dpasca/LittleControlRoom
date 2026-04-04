@@ -1283,10 +1283,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case todoActionMsg:
 		if msg.err != nil {
 			m.reportError("TODO action failed", msg.err, msg.projectPath)
+			if m.todoDialog != nil && filepath.Clean(strings.TrimSpace(m.todoDialog.ProjectPath)) == filepath.Clean(strings.TrimSpace(msg.projectPath)) {
+				m.todoDialog.Busy = false
+			}
 			if m.todoEditor != nil {
 				m.todoEditor.Submitting = false
 			}
 			return m, nil
+		}
+		if m.todoDialog != nil && filepath.Clean(strings.TrimSpace(m.todoDialog.ProjectPath)) == filepath.Clean(strings.TrimSpace(msg.projectPath)) {
+			m.todoDialog.Busy = false
 		}
 		if m.todoEditor != nil {
 			m.todoEditor.Submitting = false
@@ -1297,7 +1303,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if strings.TrimSpace(msg.status) != "" {
 			m.status = msg.status
 		}
-		return m, nil
+		cmds := []tea.Cmd{}
+		if strings.TrimSpace(msg.projectPath) != "" {
+			cmds = append(cmds, m.loadProjectSummaryCmd(msg.projectPath))
+			if p, ok := m.selectedProject(); ok && p.Path == msg.projectPath {
+				cmds = append(cmds, m.loadDetailCmd(p.Path))
+			}
+		}
+		if len(cmds) == 0 {
+			return m, nil
+		}
+		return m, tea.Batch(cmds...)
 	case todoWorktreeLaunchMsg:
 		m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, msg.err, msg.status)
 		pendingCanceled := false
