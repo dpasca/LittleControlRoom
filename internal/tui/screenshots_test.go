@@ -208,6 +208,7 @@ func TestScreenshotSetupRendersBackendChoicesAndHaikuHint(t *testing.T) {
 	m := Model{
 		width:          112,
 		height:         31,
+		homeDir:        "/Users/davide",
 		setupMode:      true,
 		setupChecked:   true,
 		setupSelected:  mSetupSelectionForTest(config.AIBackendClaude),

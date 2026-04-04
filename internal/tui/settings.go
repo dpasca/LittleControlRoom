@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -244,13 +243,13 @@ func (m Model) currentConfigPath() string {
 	return config.Default().ConfigPath
 }
 
-func displayPathWithHomeTilde(path string) string {
+func displayPathWithHomeTilde(path, homeDir string) string {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return ""
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
+	home := strings.TrimSpace(homeDir)
+	if home == "" {
 		return path
 	}
 	home = filepath.Clean(home)
@@ -258,11 +257,15 @@ func displayPathWithHomeTilde(path string) string {
 	if path == home {
 		return "~"
 	}
-	prefix := home + string(os.PathSeparator)
+	prefix := home + string(filepath.Separator)
 	if strings.HasPrefix(path, prefix) {
 		return "~/" + strings.TrimPrefix(path, prefix)
 	}
 	return path
+}
+
+func (m Model) displayPathWithHomeTilde(path string) string {
+	return displayPathWithHomeTilde(path, m.homeDir)
 }
 
 func (m Model) settingsFieldValue(index int) string {
@@ -291,7 +294,7 @@ func (m Model) renderSettingsPanel(bodyW, bodyH int) string {
 func (m Model) renderSettingsContent(width, maxHeight int) string {
 	lines := []string{
 		commandPaletteTitleStyle.Render("Settings"),
-		commandPaletteHintStyle.Render("Config: " + truncateText(displayPathWithHomeTilde(m.currentConfigPath()), max(20, width-8))),
+		commandPaletteHintStyle.Render("Config: " + truncateText(m.displayPathWithHomeTilde(m.currentConfigPath()), max(20, width-8))),
 	}
 	lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("AI backend: %s. Use /setup to change it. Scope, filters, and API key save here.", m.currentSettingsBaseline().AIBackend.Label())))
 	if m.settingsSaving {

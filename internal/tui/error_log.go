@@ -278,7 +278,7 @@ func (m Model) renderErrorLogContent(width, maxHeight int) string {
 		lines = append(lines, detailField("Project", detailValueStyle.Render(selected.ProjectName)))
 	}
 	if selected.ProjectPath != "" {
-		lines = append(lines, detailField("Path", detailMutedStyle.Render(truncateText(displayPathWithHomeTilde(selected.ProjectPath), max(20, width-6)))))
+		lines = append(lines, detailField("Path", detailMutedStyle.Render(truncateText(m.displayPathWithHomeTilde(selected.ProjectPath), max(20, width-6)))))
 	}
 	if rootCause := effectiveErrorLogRootCause(selected); strings.TrimSpace(rootCause) != "" {
 		lines = append(lines, detailField("Cause", detailDangerStyle.Render(rootCause)))

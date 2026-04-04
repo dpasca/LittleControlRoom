@@ -131,7 +131,7 @@ func (m Model) renderAttentionDialogContent(width int) string {
 		renderDialogHeader(dialog.Title, dialog.ProjectName, "", width),
 	}
 	if strings.TrimSpace(dialog.ProjectPath) != "" {
-		lines = append(lines, detailField("Path", detailMutedStyle.Render(truncateText(displayPathWithHomeTilde(dialog.ProjectPath), max(20, width-6)))))
+		lines = append(lines, detailField("Path", detailMutedStyle.Render(truncateText(m.displayPathWithHomeTilde(dialog.ProjectPath), max(20, width-6)))))
 	}
 	lines = append(lines, "", detailWarningStyle.Render("Action needed"))
 	lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width, dialog.Message)...)

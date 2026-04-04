@@ -66,6 +66,7 @@ type Model struct {
 	height    int
 	nowFn     func() time.Time
 	homeDirFn func() (string, error)
+	homeDir   string
 
 	todoDialog            *todoDialogState
 	todoEditor            *todoEditorState
@@ -543,6 +544,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 	runtimeViewport := viewport.New(0, 0)
 	codexViewport := viewport.New(0, 0)
 	initialSettings := config.EditableSettingsFromAppConfig(svc.Config())
+	homeDir, _ := os.UserHomeDir()
 
 	return Model{
 		ctx:                    ctx,
@@ -585,6 +587,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		summaryReloadQueued:    make(map[string]bool),
 		nowFn:                  time.Now,
 		homeDirFn:              os.UserHomeDir,
+		homeDir:                strings.TrimSpace(homeDir),
 	}
 }
 
