@@ -241,6 +241,22 @@ type scanMsg struct {
 	err    error
 }
 
+type projectInvalidationKind uint8
+
+const (
+	projectInvalidationNone projectInvalidationKind = iota
+	projectInvalidationProjectData
+	projectInvalidationProjectStructure
+	projectInvalidationProjectScan
+)
+
+type projectInvalidationIntent struct {
+	kind                            projectInvalidationKind
+	projectPath                     string
+	detailPath                      string
+	forceRetryFailedClassifications bool
+}
+
 type projectRefreshRequest struct {
 	scan                            bool
 	forceRetryFailedClassifications bool
@@ -1067,6 +1083,28 @@ func (m *Model) requestProjectRefreshCmd(req projectRefreshRequest) tea.Cmd {
 	return batchCmds(cmds...)
 }
 
+func invalidateProjectData(projectPath string) projectInvalidationIntent {
+	return projectInvalidationIntent{
+		kind:        projectInvalidationProjectData,
+		projectPath: projectPath,
+	}
+}
+
+func invalidateProjectStructure(detailPath string) projectInvalidationIntent {
+	return projectInvalidationIntent{
+		kind:       projectInvalidationProjectStructure,
+		detailPath: detailPath,
+	}
+}
+
+func invalidateProjectScan(detailPath string, forceRetryFailedClassifications bool) projectInvalidationIntent {
+	return projectInvalidationIntent{
+		kind:                            projectInvalidationProjectScan,
+		detailPath:                      detailPath,
+		forceRetryFailedClassifications: forceRetryFailedClassifications,
+	}
+}
+
 func (m Model) visibleDetailPathForProject(path string) string {
 	path = normalizeProjectPath(path)
 	if path == "" {
@@ -1078,31 +1116,32 @@ func (m Model) visibleDetailPathForProject(path string) string {
 	return path
 }
 
-func (m *Model) requestProjectDataRefreshCmd(path string) tea.Cmd {
-	path = normalizeProjectPath(path)
-	if path == "" {
+func (m *Model) requestProjectInvalidationCmd(intent projectInvalidationIntent) tea.Cmd {
+	switch intent.kind {
+	case projectInvalidationProjectData:
+		path := normalizeProjectPath(intent.projectPath)
+		if path == "" {
+			return nil
+		}
+		return m.requestProjectRefreshCmd(projectRefreshRequest{
+			detailPath:   m.visibleDetailPathForProject(path),
+			summaryPaths: []string{path},
+		})
+	case projectInvalidationProjectStructure:
+		return m.requestProjectRefreshCmd(projectRefreshRequest{
+			projects:   true,
+			detailPath: normalizeProjectPath(intent.detailPath),
+		})
+	case projectInvalidationProjectScan:
+		return m.requestProjectRefreshCmd(projectRefreshRequest{
+			scan:                            true,
+			forceRetryFailedClassifications: intent.forceRetryFailedClassifications,
+			projects:                        true,
+			detailPath:                      normalizeProjectPath(intent.detailPath),
+		})
+	default:
 		return nil
 	}
-	return m.requestProjectRefreshCmd(projectRefreshRequest{
-		detailPath:   m.visibleDetailPathForProject(path),
-		summaryPaths: []string{path},
-	})
-}
-
-func (m *Model) requestProjectStructureRefreshCmd(detailPath string) tea.Cmd {
-	return m.requestProjectRefreshCmd(projectRefreshRequest{
-		projects:   true,
-		detailPath: detailPath,
-	})
-}
-
-func (m *Model) requestProjectScanRefreshCmd(detailPath string, forceRetryFailedClassifications bool) tea.Cmd {
-	return m.requestProjectRefreshCmd(projectRefreshRequest{
-		scan:                            true,
-		forceRetryFailedClassifications: forceRetryFailedClassifications,
-		projects:                        true,
-		detailPath:                      detailPath,
-	})
 }
 
 func (m Model) currentSelectedProjectPath() string {
@@ -1364,7 +1403,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = "Project already in the list"
 			}
 		}
-		return m, m.requestProjectsReloadCmd()
+		return m, m.requestProjectInvalidationCmd(invalidateProjectStructure(""))
 	case detailMsg:
 		reloadCmd := m.finishDetailReloadCmd(msg.path)
 		if targetPath := m.currentDetailTargetPath(); targetPath != "" && normalizeProjectPath(msg.path) != targetPath {
@@ -1420,7 +1459,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.startupScanCompleted = true
 		m.status = scanCompleteStatus(msg.report)
-		return m, batchCmds(reloadCmd, m.requestProjectsReloadCmd())
+		return m, batchCmds(reloadCmd, m.requestProjectInvalidationCmd(invalidateProjectStructure("")))
 	case commitPreviewMsg:
 		m.diffView = nil
 		m.commitPreviewRefreshing = false
@@ -1558,7 +1597,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.status = msg.status
-		return m, m.requestProjectScanRefreshCmd("", false)
+		return m, m.requestProjectInvalidationCmd(invalidateProjectScan("", false))
 	case browserOpenMsg:
 		if msg.err != nil {
 			m.reportError("Open failed", msg.err, msg.projectPath)
@@ -1607,7 +1646,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.closeRunCommandDialog("")
-		refreshCmd := m.requestProjectDataRefreshCmd(msg.projectPath)
+		refreshCmd := m.requestProjectInvalidationCmd(invalidateProjectData(msg.projectPath))
 		if strings.TrimSpace(msg.command) != "" && msg.startAfter {
 			return m, batchCmds(refreshCmd, m.startProjectRuntimeCmd(msg.projectPath, msg.command))
 		} else {
@@ -1637,7 +1676,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if strings.TrimSpace(msg.status) != "" {
 			m.status = msg.status
 		}
-		return m, m.requestProjectDataRefreshCmd(msg.projectPath)
+		return m, m.requestProjectInvalidationCmd(invalidateProjectData(msg.projectPath))
 	case todoWorktreeLaunchMsg:
 		m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, msg.err, msg.status)
 		pendingCanceled := false
@@ -1660,7 +1699,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.svc == nil {
 					return m, nil
 				}
-				return m, m.requestProjectStructureRefreshCmd(m.detail.Summary.Path)
+				return m, m.requestProjectInvalidationCmd(invalidateProjectStructure(m.detail.Summary.Path))
 			}
 			if errors.Is(msg.err, context.Canceled) {
 				m.status = "TODO start canceled"
@@ -1716,7 +1755,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "Starting TODO in dedicated worktree..."
 		}
 		return m, batchCmds(
-			m.requestProjectStructureRefreshCmd(m.currentSelectedProjectPath()),
+			m.requestProjectInvalidationCmd(invalidateProjectStructure(m.currentSelectedProjectPath())),
 			m.openCodexSessionCmd(req),
 		)
 	case worktreeActionMsg:
@@ -1768,7 +1807,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Selected:     defaultWorktreePostMergeSelection(msg.postMergeTodoID > 0),
 			}
 		}
-		return m, m.requestProjectScanRefreshCmd(msg.selectPath, false)
+		return m, m.requestProjectInvalidationCmd(invalidateProjectScan(msg.selectPath, false))
 	case settingsSavedMsg:
 		m.settingsSaving = false
 		m.err = nil
@@ -1866,7 +1905,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.status = msg.status
-		cmds := []tea.Cmd{m.requestProjectStructureRefreshCmd("")}
+		cmds := []tea.Cmd{m.requestProjectInvalidationCmd(invalidateProjectStructure(""))}
 		if m.ignoredPickerVisible {
 			cmds = append(cmds, m.loadIgnoredProjectsCmd())
 		}
@@ -1964,7 +2003,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.codexHiddenProject == msg.projectPath {
 				m.codexHiddenProject = ""
 			}
-			return m, m.requestProjectScanRefreshCmd(m.currentSelectedProjectPath(), false)
+			return m, m.requestProjectInvalidationCmd(invalidateProjectScan(m.currentSelectedProjectPath(), false))
 		}
 		return m, nil
 	case codexModelListMsg:
@@ -1995,20 +2034,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Payload["status"] == "completed" {
 				m.markAssessmentFlash(msg.ProjectPath, msg.At)
 			}
-			cmds = append(cmds, m.requestProjectDataRefreshCmd(msg.ProjectPath))
+			cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectData(msg.ProjectPath)))
 			return m, batchCmds(cmds...)
 		case events.ProjectChanged, events.ActionApplied:
 			if strings.TrimSpace(msg.ProjectPath) != "" {
-				cmds = append(cmds, m.requestProjectDataRefreshCmd(msg.ProjectPath))
+				cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectData(msg.ProjectPath)))
 			} else {
-				cmds = append(cmds, m.requestProjectStructureRefreshCmd(""))
+				cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectStructure("")))
 			}
 			return m, batchCmds(cmds...)
 		case events.ProjectMoved, events.ScanCompleted:
-			cmds = append(cmds, m.requestProjectStructureRefreshCmd(m.currentSelectedProjectPath()))
+			cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectStructure(m.currentSelectedProjectPath())))
 			return m, batchCmds(cmds...)
 		}
-		cmds = append(cmds, m.requestProjectStructureRefreshCmd(""))
+		cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectStructure("")))
 		return m, batchCmds(cmds...)
 	case spinnerTickMsg:
 		m.recordUIStallFromSpinnerTick(m.currentTime())
@@ -2066,7 +2105,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = snapshot.Status
 			}
 			m.loading = true
-			cmds = append(cmds, m.requestProjectScanRefreshCmd("", false))
+			cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectScan("", false)))
 		} else if !needsAsync {
 			m.cancelModelSettleLatency(msg.projectPath, "stale")
 			m.dropCodexSnapshot(msg.projectPath)
@@ -2110,10 +2149,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = snapshot.Status
 		}
 		m.loading = true
-		return m, m.requestProjectRefreshCmd(projectRefreshRequest{
-			scan:     true,
-			projects: true,
-		})
+		return m, m.requestProjectInvalidationCmd(invalidateProjectScan("", false))
 	}
 
 	return m, nil

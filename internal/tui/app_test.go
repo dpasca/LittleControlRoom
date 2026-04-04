@@ -217,10 +217,7 @@ func collectCmdMsgs(cmd tea.Cmd) []tea.Msg {
 func TestProjectRefreshRequestsCoalesceWhileInFlight(t *testing.T) {
 	m := Model{}
 
-	first := m.requestProjectRefreshCmd(projectRefreshRequest{
-		scan:     true,
-		projects: true,
-	})
+	first := m.requestProjectInvalidationCmd(invalidateProjectScan("", false))
 	if first == nil {
 		t.Fatal("first refresh request should schedule work")
 	}
@@ -228,10 +225,7 @@ func TestProjectRefreshRequestsCoalesceWhileInFlight(t *testing.T) {
 		t.Fatalf("refresh request should mark scan and project list loads in flight")
 	}
 
-	second := m.requestProjectRefreshCmd(projectRefreshRequest{
-		scan:     true,
-		projects: true,
-	})
+	second := m.requestProjectInvalidationCmd(invalidateProjectScan("", false))
 	if second != nil {
 		t.Fatal("duplicate refresh request should coalesce while work is already in flight")
 	}
@@ -240,7 +234,7 @@ func TestProjectRefreshRequestsCoalesceWhileInFlight(t *testing.T) {
 	}
 }
 
-func TestProjectDataRefreshReloadsVisibleDetailOnly(t *testing.T) {
+func TestProjectDataInvalidationReloadsVisibleDetailOnly(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{
 			Path: "/tmp/current",
@@ -255,7 +249,7 @@ func TestProjectDataRefreshReloadsVisibleDetailOnly(t *testing.T) {
 		},
 	}
 
-	cmd := m.requestProjectDataRefreshCmd("/tmp/current")
+	cmd := m.requestProjectInvalidationCmd(invalidateProjectData("/tmp/current"))
 	if cmd == nil {
 		t.Fatal("visible project data refresh should schedule work")
 	}
@@ -280,7 +274,7 @@ func TestProjectDataRefreshReloadsVisibleDetailOnly(t *testing.T) {
 		},
 	}
 
-	cmd = hidden.requestProjectDataRefreshCmd("/tmp/current")
+	cmd = hidden.requestProjectInvalidationCmd(invalidateProjectData("/tmp/current"))
 	if cmd == nil {
 		t.Fatal("hidden project data refresh should still reload summary data")
 	}
