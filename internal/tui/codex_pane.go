@@ -218,22 +218,40 @@ func (m Model) currentCodexSession() (codexapp.Session, bool) {
 	return m.codexSession(m.codexVisibleProject)
 }
 
+// codexCachedSnapshot returns the latest cached snapshot for UI/render paths
+// without touching the live manager or session locks.
+func (m Model) codexCachedSnapshot(projectPath string) (codexapp.Snapshot, bool) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return codexapp.Snapshot{}, false
+	}
+	snapshot, ok := m.codexSnapshots[projectPath]
+	if !ok {
+		return codexapp.Snapshot{}, false
+	}
+	if strings.TrimSpace(snapshot.ProjectPath) == "" {
+		snapshot.ProjectPath = projectPath
+	}
+	return snapshot, true
+}
+
+func (m Model) currentCachedCodexSnapshot() (codexapp.Snapshot, bool) {
+	return m.codexCachedSnapshot(m.codexVisibleProject)
+}
+
 func (m Model) nonBlockingCodexSnapshot(projectPath string) (codexapp.Snapshot, bool) {
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
 		return codexapp.Snapshot{}, false
 	}
+	if snapshot, ok := m.codexCachedSnapshot(projectPath); ok {
+		return snapshot, true
+	}
 	session, sessionOK := m.codexSession(projectPath)
 	if !sessionOK {
-		if snapshot, ok := m.codexSnapshots[projectPath]; ok && snapshot.Closed {
-			return snapshot, true
-		}
 		return codexapp.Snapshot{}, false
 	}
 	if snapshot, got := session.TrySnapshot(); got {
-		return snapshot, true
-	}
-	if snapshot, ok := m.codexSnapshots[projectPath]; ok {
 		return snapshot, true
 	}
 	return codexapp.Snapshot{}, false
@@ -241,15 +259,13 @@ func (m Model) nonBlockingCodexSnapshot(projectPath string) (codexapp.Snapshot, 
 
 func (m Model) currentCodexSnapshot() (codexapp.Snapshot, bool) {
 	projectPath := strings.TrimSpace(m.codexVisibleProject)
-	if projectPath != "" {
-		if snapshot, ok := m.codexSnapshots[projectPath]; ok {
-			return snapshot, true
-		}
+	if snapshot, ok := m.currentCachedCodexSnapshot(); ok {
+		return snapshot, true
 	}
 	session, sessionOK := m.currentCodexSession()
 	if !sessionOK {
 		if projectPath != "" {
-			if snapshot, ok := m.codexSnapshots[projectPath]; ok && snapshot.Closed {
+			if snapshot, ok := m.codexCachedSnapshot(projectPath); ok && snapshot.Closed {
 				return snapshot, true
 			}
 		}

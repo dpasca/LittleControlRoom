@@ -39,23 +39,24 @@ import (
 )
 
 type fakeCodexSession struct {
-	projectPath   string
-	snapshot      codexapp.Snapshot
-	snapshotCalls int
-	trySnapshotFn func(*fakeCodexSession) (codexapp.Snapshot, bool)
-	submitted     []string
-	submissions   []codexapp.Submission
-	decisions     []codexapp.ApprovalDecision
-	toolAnswers   []map[string][]string
-	elicitations  []fakeElicitationResponse
-	statusCalls   int
-	compactCalls  int
-	interrupted   bool
-	refreshCalls  int
-	refreshBusyFn func(*fakeCodexSession) error
-	compactFn     func(*fakeCodexSession) error
-	models        []codexapp.ModelOption
-	modelStages   []struct {
+	projectPath      string
+	snapshot         codexapp.Snapshot
+	snapshotCalls    int
+	trySnapshotCalls int
+	trySnapshotFn    func(*fakeCodexSession) (codexapp.Snapshot, bool)
+	submitted        []string
+	submissions      []codexapp.Submission
+	decisions        []codexapp.ApprovalDecision
+	toolAnswers      []map[string][]string
+	elicitations     []fakeElicitationResponse
+	statusCalls      int
+	compactCalls     int
+	interrupted      bool
+	refreshCalls     int
+	refreshBusyFn    func(*fakeCodexSession) error
+	compactFn        func(*fakeCodexSession) error
+	models           []codexapp.ModelOption
+	modelStages      []struct {
 		Model     string
 		Reasoning string
 	}
@@ -92,6 +93,7 @@ func (s *fakeCodexSession) Snapshot() codexapp.Snapshot {
 }
 
 func (s *fakeCodexSession) TrySnapshot() (codexapp.Snapshot, bool) {
+	s.trySnapshotCalls++
 	if s.trySnapshotFn != nil {
 		return s.trySnapshotFn(s)
 	}
@@ -5539,8 +5541,8 @@ func TestEmbeddedSnapshotHelpersUseCachedSnapshotWhenTrySnapshotIsContended(t *t
 	if snapshot, ok := m.codexSnapshotForProject("/tmp/demo"); !ok || snapshot.ThreadID != "thread-demo" {
 		t.Fatalf("codexSnapshotForProject() = (%+v, %v), want cached snapshot", snapshot, ok)
 	}
-	if session.snapshotCalls != 0 {
-		t.Fatalf("helpers should avoid blocking Snapshot() while TrySnapshot is contended; snapshot calls = %d", session.snapshotCalls)
+	if session.snapshotCalls != 0 || session.trySnapshotCalls != 0 {
+		t.Fatalf("helpers should use cached snapshots without consulting the live session; Snapshot/TrySnapshot calls = %d/%d", session.snapshotCalls, session.trySnapshotCalls)
 	}
 }
 
