@@ -171,7 +171,68 @@ func TestDetectTreatsAssistantEndTurnAsCompletedWithoutSystemEntry(t *testing.T)
 	}
 }
 
-func TestDetectActiveSessionOverridesTurnCompletion(t *testing.T) {
+func TestDetectTreatsTrailingUserPromptAsInProgress(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "user-prompt-project")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	claudeHome := filepath.Join(root, ".claude")
+	sessionID := "user-prompt-001"
+	sessionFile, _ := createClaudeProjectDirs(t, claudeHome, projectPath, sessionID)
+	ts := time.Date(2026, 4, 4, 6, 54, 12, 0, time.UTC)
+
+	writeJSONLines(t, sessionFile, []map[string]any{
+		{
+			"type":      "assistant",
+			"sessionId": sessionID,
+			"cwd":       projectPath,
+			"timestamp": ts.Add(-20 * time.Second).Format(time.RFC3339Nano),
+			"uuid":      "a1",
+			"message": map[string]any{
+				"role":        "assistant",
+				"stop_reason": "end_turn",
+				"content": []map[string]any{
+					{"type": "text", "text": "Previous turn finished."},
+				},
+			},
+		},
+		{
+			"type":      "user",
+			"sessionId": sessionID,
+			"cwd":       projectPath,
+			"timestamp": ts.Format(time.RFC3339Nano),
+			"uuid":      "u1",
+			"message":   map[string]any{"role": "user", "content": "please keep going"},
+		},
+	})
+
+	d := New(claudeHome)
+	results, err := d.Detect(context.Background(), scanner.NewPathScope([]string{root}, nil))
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+
+	entry := results[projectPath]
+	if entry == nil {
+		t.Fatalf("expected project %s in results", projectPath)
+	}
+	sess := entry.Sessions[0]
+	if !sess.LatestTurnStateKnown {
+		t.Fatalf("expected LatestTurnStateKnown = true")
+	}
+	if sess.LatestTurnCompleted {
+		t.Fatalf("expected LatestTurnCompleted = false while waiting for the assistant to answer the latest user prompt")
+	}
+	if !sess.LatestTurnStartedAt.Equal(ts) {
+		t.Fatalf("LatestTurnStartedAt = %s, want %s from the latest user prompt", sess.LatestTurnStartedAt, ts)
+	}
+}
+
+func TestDetectActiveSessionDoesNotOverrideCompletedTurn(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -252,15 +313,15 @@ func TestDetectActiveSessionOverridesTurnCompletion(t *testing.T) {
 	if !sess.LatestTurnStateKnown {
 		t.Error("expected LatestTurnStateKnown = true")
 	}
-	if sess.LatestTurnCompleted {
-		t.Error("expected LatestTurnCompleted = false when active PID session exists")
+	if !sess.LatestTurnCompleted {
+		t.Error("expected LatestTurnCompleted = true when transcript already shows the turn completed")
 	}
-	if !sess.LatestTurnStartedAt.Equal(ts) {
-		t.Fatalf("LatestTurnStartedAt = %s, want %s from active PID metadata", sess.LatestTurnStartedAt, ts)
+	if !sess.LatestTurnStartedAt.IsZero() {
+		t.Fatalf("LatestTurnStartedAt = %s, want zero for a completed turn", sess.LatestTurnStartedAt)
 	}
 }
 
-func TestDetectActiveSessionOverridesTurnCompletionWithoutPIDCWD(t *testing.T) {
+func TestDetectActiveSessionWithoutCWDDoesNotOverrideCompletedTurn(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -324,11 +385,11 @@ func TestDetectActiveSessionOverridesTurnCompletionWithoutPIDCWD(t *testing.T) {
 	if !sess.LatestTurnStateKnown {
 		t.Error("expected LatestTurnStateKnown = true")
 	}
-	if sess.LatestTurnCompleted {
-		t.Error("expected LatestTurnCompleted = false when active PID session exists without cwd")
+	if !sess.LatestTurnCompleted {
+		t.Error("expected LatestTurnCompleted = true when transcript already shows the turn completed")
 	}
-	if !sess.LatestTurnStartedAt.Equal(ts) {
-		t.Fatalf("LatestTurnStartedAt = %s, want %s from active PID metadata", sess.LatestTurnStartedAt, ts)
+	if !sess.LatestTurnStartedAt.IsZero() {
+		t.Fatalf("LatestTurnStartedAt = %s, want zero for a completed turn", sess.LatestTurnStartedAt)
 	}
 }
 
@@ -820,6 +881,124 @@ func TestDetectRefreshesCachedSessionWhenAuxiliaryArtifactsChange(t *testing.T) 
 	}
 	if got := second[projectPath].Sessions[0].LastEventAt; !got.Equal(secondTaskMTime) {
 		t.Fatalf("second LastEventAt = %s, want %s after cache refresh", got, secondTaskMTime)
+	}
+}
+
+func TestDetectRefreshesCachedSessionWhenSessionCompletesWithinSameSecond(t *testing.T) {
+	root := t.TempDir()
+
+	projectPath := filepath.Join(root, "same-second-cache-project")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	claudeHome := filepath.Join(root, ".claude")
+	sessionID := "same-second-cache-001"
+	sessionFile, _ := createClaudeProjectDirs(t, claudeHome, projectPath, sessionID)
+	ts := time.Date(2026, 4, 4, 7, 8, 2, 0, time.UTC)
+	taskID := "same-second-task"
+
+	writeJSONLines(t, sessionFile, []map[string]any{
+		{
+			"type":      "user",
+			"sessionId": sessionID,
+			"cwd":       projectPath,
+			"timestamp": ts.Add(100 * time.Millisecond).Format(time.RFC3339Nano),
+			"uuid":      "u1",
+			"message": map[string]any{
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "tool_result", "tool_use_id": "toolu_1", "content": "Command running in background", "is_error": false},
+				},
+			},
+			"toolUseResult": map[string]any{
+				"backgroundTaskId": taskID,
+			},
+		},
+		{
+			"type":      "system",
+			"subtype":   "turn_duration",
+			"sessionId": sessionID,
+			"cwd":       projectPath,
+			"timestamp": ts.Add(200 * time.Millisecond).Format(time.RFC3339Nano),
+			"uuid":      "s1",
+		},
+	})
+	setModTime(t, sessionFile, ts.Add(200*time.Millisecond))
+
+	d := New(claudeHome)
+	scope := scanner.NewPathScope([]string{root}, nil)
+
+	first, err := d.Detect(context.Background(), scope)
+	if err != nil {
+		t.Fatalf("first Detect: %v", err)
+	}
+	if got := first[projectPath].Sessions[0]; got.LatestTurnCompleted {
+		t.Fatalf("expected first Detect to keep session unfinished, got known=%v completed=%v", got.LatestTurnStateKnown, got.LatestTurnCompleted)
+	}
+
+	writeJSONLines(t, sessionFile, []map[string]any{
+		{
+			"type":      "user",
+			"sessionId": sessionID,
+			"cwd":       projectPath,
+			"timestamp": ts.Add(100 * time.Millisecond).Format(time.RFC3339Nano),
+			"uuid":      "u1",
+			"message": map[string]any{
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "tool_result", "tool_use_id": "toolu_1", "content": "Command running in background", "is_error": false},
+				},
+			},
+			"toolUseResult": map[string]any{
+				"backgroundTaskId": taskID,
+			},
+		},
+		{
+			"type":      "system",
+			"subtype":   "turn_duration",
+			"sessionId": sessionID,
+			"cwd":       projectPath,
+			"timestamp": ts.Add(200 * time.Millisecond).Format(time.RFC3339Nano),
+			"uuid":      "s1",
+		},
+		{
+			"type":      "queue-operation",
+			"operation": "enqueue",
+			"sessionId": sessionID,
+			"timestamp": ts.Add(500 * time.Millisecond).Format(time.RFC3339Nano),
+			"content":   "<task-notification>\n<task-id>" + taskID + "</task-id>\n<status>completed</status>\n</task-notification>",
+		},
+		{
+			"type":      "assistant",
+			"sessionId": sessionID,
+			"cwd":       projectPath,
+			"timestamp": ts.Add(900 * time.Millisecond).Format(time.RFC3339Nano),
+			"uuid":      "a1",
+			"message": map[string]any{
+				"role":        "assistant",
+				"stop_reason": "end_turn",
+				"content": []map[string]any{
+					{"type": "text", "text": "Background task finished."},
+				},
+			},
+		},
+	})
+	setModTime(t, sessionFile, ts.Add(900*time.Millisecond))
+
+	second, err := d.Detect(context.Background(), scope)
+	if err != nil {
+		t.Fatalf("second Detect: %v", err)
+	}
+	got := second[projectPath].Sessions[0]
+	if !got.LatestTurnStateKnown {
+		t.Fatalf("expected second Detect to keep a known turn state")
+	}
+	if !got.LatestTurnCompleted {
+		t.Fatalf("expected second Detect to refresh cached parse after a same-second completion")
+	}
+	if !got.LastEventAt.Equal(ts.Add(900 * time.Millisecond)) {
+		t.Fatalf("LastEventAt = %s, want %s from the completed assistant reply", got.LastEventAt, ts.Add(900*time.Millisecond))
 	}
 }
 

@@ -28,8 +28,8 @@ type Detector struct {
 }
 
 type cachedParse struct {
-	modTimeUnix int64
-	auxTimeUnix int64
+	modTimeKey int64
+	auxTimeKey int64
 	result      parseResult
 }
 
@@ -97,14 +97,19 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 			results[cwd] = entry
 		}
 
-		// If an active PID session targets this cwd + sessionID, mark turn as in-progress.
+		// A live Claude CLI PID only proves the terminal session is still open.
+		// Let explicit transcript lifecycle win when it shows a completed turn,
+		// and only use PID metadata as a fallback when the turn is already
+		// unknown or otherwise incomplete.
 		turnDone := parsed.turnDone
 		turnKnown := parsed.turnKnown
 		turnStarted := parsed.turnStarted
 		if active, ok := activeSessions[parsed.sessionID]; ok && (active.cwd == "" || active.cwd == cwd) {
-			turnKnown = true
-			turnDone = false
-			if !active.startedAt.IsZero() {
+			if !turnKnown {
+				turnKnown = true
+				turnDone = false
+			}
+			if turnKnown && !turnDone && turnStarted.IsZero() && !active.startedAt.IsZero() {
 				turnStarted = active.startedAt
 			}
 		}
@@ -254,15 +259,15 @@ func (d *Detector) parseWithCache(path string) (parseResult, error) {
 	if err != nil {
 		return parseResult{}, err
 	}
-	modUnix := stat.ModTime().Unix()
+	modKey := cacheTimeKey(stat.ModTime())
 	auxActivity := claudeAuxiliaryActivity(path)
-	auxUnix := auxActivity.Unix()
+	auxKey := cacheTimeKey(auxActivity)
 
 	d.mu.Lock()
 	cached, ok := d.cache[path]
 	d.mu.Unlock()
 
-	if ok && cached.modTimeUnix == modUnix && cached.auxTimeUnix == auxUnix {
+	if ok && cached.modTimeKey == modKey && cached.auxTimeKey == auxKey {
 		return cached.result, nil
 	}
 
@@ -272,10 +277,17 @@ func (d *Detector) parseWithCache(path string) (parseResult, error) {
 	}
 
 	d.mu.Lock()
-	d.cache[path] = cachedParse{modTimeUnix: modUnix, auxTimeUnix: auxUnix, result: parsed}
+	d.cache[path] = cachedParse{modTimeKey: modKey, auxTimeKey: auxKey, result: parsed}
 	d.mu.Unlock()
 
 	return parsed, nil
+}
+
+func cacheTimeKey(ts time.Time) int64 {
+	if ts.IsZero() {
+		return 0
+	}
+	return ts.UnixNano()
 }
 
 func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult, error) {
@@ -350,7 +362,7 @@ func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult,
 				}
 				continue
 			}
-			turnState.set(ts, true)
+			turnState.set(ts, false)
 		case "queue-operation":
 			taskID, status, ok := entry.taskNotification()
 			if ok && isTerminalTaskStatus(status) {

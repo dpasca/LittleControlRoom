@@ -49,6 +49,8 @@ Useful stable fields include:
 
 The encoded project directory name under `~/.claude/projects` is derived from the project path, but project association should still come from session metadata such as `cwd`.
 
+PID session metadata under `~/.claude/sessions/*.json` is useful for finding a still-open Claude CLI instance, but on its own it does not prove the latest turn is still running. An external terminal can stay open at the prompt after Claude has already finished the turn.
+
 ## 3. Structured async and subagent signals
 
 Observed machine-readable signals for unfinished delegated work:
@@ -94,7 +96,9 @@ Recommended filesystem-first approach:
 4. Fold auxiliary activity into `LastEventAt` using:
    - `~/.claude/projects/<encoded-project>/<session-id>/subagents/*.jsonl`
    - temp `claude-*` task outputs under `/tmp`, `/private/tmp`, and `os.TempDir()`
-5. Invalidate parser caches when either the parent session JSONL mtime or auxiliary artifact mtimes change.
+5. Treat a trailing ordinary `user` prompt as the start of a new unfinished turn until Claude answers it.
+6. Use live PID metadata only as a fallback when structured transcript state is missing or already incomplete; do not override an explicitly completed turn just because the CLI process is still alive.
+7. Invalidate parser caches when either the parent session JSONL mtime or auxiliary artifact mtimes change, preserving sub-second precision so same-second Claude writes do not get stuck behind stale cached parses.
 
 ## 6. Notes
 
