@@ -4489,6 +4489,43 @@ func renderProjectListHeader(projectW, assessmentW int) string {
 	)
 }
 
+func (m Model) projectTurnLiveWindow() time.Duration {
+	activeThreshold := m.currentSettingsBaseline().ActiveThreshold
+	if activeThreshold > 0 {
+		return activeThreshold
+	}
+	return config.Default().ActiveThreshold
+}
+
+func (m Model) projectUnfinishedTurnLooksLive(project model.ProjectSummary, now time.Time) bool {
+	if !project.LatestTurnStateKnown || project.LatestTurnCompleted {
+		return false
+	}
+
+	if project.LatestSessionClassification == model.ClassificationCompleted {
+		effective := effectiveAssessmentForProject(project, now, m.assessmentStallThreshold())
+		switch effective.Category {
+		case model.SessionCategoryCompleted,
+			model.SessionCategoryBlocked,
+			model.SessionCategoryWaitingForUser,
+			model.SessionCategoryNeedsFollowUp:
+			return false
+		}
+	}
+
+	if now.IsZero() {
+		return true
+	}
+	lastEventAt := project.LatestSessionLastEventAt
+	if lastEventAt.IsZero() {
+		lastEventAt = project.LastActivity
+	}
+	if lastEventAt.IsZero() {
+		return true
+	}
+	return now.Sub(lastEventAt) <= m.projectTurnLiveWindow()
+}
+
 func (m Model) projectAgentDisplay(project model.ProjectSummary, now time.Time) (string, string, bool) {
 	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
 		tag := embeddedProvider(snapshot).SourceTag()
@@ -4516,6 +4553,8 @@ func (m Model) projectAgentDisplay(project model.ProjectSummary, now time.Time) 
 		if !m.startupScanCompleted {
 			return tag, tag, false
 		}
+	}
+	if m.projectUnfinishedTurnLooksLive(project, now) {
 		label := tag
 		if !project.LatestTurnStartedAt.IsZero() && !now.IsZero() {
 			label += " " + formatRunningDuration(now.Sub(project.LatestTurnStartedAt))

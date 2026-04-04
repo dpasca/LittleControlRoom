@@ -25,6 +25,7 @@ type Input struct {
 	HasActivity                bool
 	ActiveThreshold            time.Duration
 	StuckThreshold             time.Duration
+	OpenTodoCount              int
 }
 
 type Output struct {
@@ -35,10 +36,10 @@ type Output struct {
 
 const recentAttentionWindow = 72 * time.Hour
 const activeAttentionWeight = 50
-const genericStuckAttentionWeight = 40
 const blockedAttentionWeight = 40
 const inProgressAttentionWeight = 32
 const needsFollowUpAttentionWeight = 28
+const openTodosAttentionWeight = 25
 const waitingForUserAttentionWeight = 22
 const recentCompletionAttentionWeight = 20
 const recentActivityBonusWeight = 10
@@ -88,17 +89,12 @@ func Score(in Input) Output {
 					break
 				}
 			}
+			out.Status = model.StatusIdle
 			if idleFor <= in.StuckThreshold {
-				out.Status = model.StatusIdle
 				w := 20
 				out.Score += w
 				out.Reasons = append(out.Reasons, model.AttentionReason{Code: "idle", Text: fmt.Sprintf("Idle for %s", formatAttentionDuration(idleFor)), Weight: w})
-				break
 			}
-			out.Status = model.StatusPossiblyStuck
-			w := genericStuckAttentionWeight
-			out.Score += w
-			out.Reasons = append(out.Reasons, model.AttentionReason{Code: "possibly_stuck", Text: fmt.Sprintf("No activity for %s", formatAttentionDuration(idleFor)), Weight: w})
 		}
 	}
 
@@ -133,6 +129,20 @@ func Score(in Input) Output {
 		w := unreadAttentionWeight
 		out.Score += w
 		out.Reasons = append(out.Reasons, model.AttentionReason{Code: "unread", Text: "Latest assessment is unread", Weight: w})
+	}
+
+	if in.OpenTodoCount > 0 {
+		w := openTodosAttentionWeight
+		out.Score += w
+		item := "item"
+		if in.OpenTodoCount > 1 {
+			item = "items"
+		}
+		out.Reasons = append(out.Reasons, model.AttentionReason{
+			Code:   "has_open_todos",
+			Text:   fmt.Sprintf("%d open TODO %s", in.OpenTodoCount, item),
+			Weight: w,
+		})
 	}
 
 	if in.SnoozedUntil != nil && in.SnoozedUntil.After(in.Now) {
