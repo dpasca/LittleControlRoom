@@ -3,6 +3,7 @@ package scanner
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -169,14 +170,23 @@ func ReadGitDirty(ctx context.Context, path string) (bool, error) {
 func ReadGitWorktreeInfo(ctx context.Context, path string) (GitWorktreeInfo, error) {
 	topLevel, err := readGitSingleLine(ctx, path, "rev-parse", "--show-toplevel")
 	if err != nil {
+		if fallback, fallbackErr := readGitWorktreeInfoFromGitFile(path); fallbackErr == nil {
+			return fallback, nil
+		}
 		return GitWorktreeInfo{}, fmt.Errorf("read git top-level for %s: %w", path, err)
 	}
 	commonDir, err := readGitSingleLine(ctx, path, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
+		if fallback, fallbackErr := readGitWorktreeInfoFromGitFile(path); fallbackErr == nil {
+			return fallback, nil
+		}
 		return GitWorktreeInfo{}, fmt.Errorf("read git common dir for %s: %w", path, err)
 	}
 	gitDir, err := readGitSingleLine(ctx, path, "rev-parse", "--absolute-git-dir")
 	if err != nil {
+		if fallback, fallbackErr := readGitWorktreeInfoFromGitFile(path); fallbackErr == nil {
+			return fallback, nil
+		}
 		return GitWorktreeInfo{}, fmt.Errorf("read git dir for %s: %w", path, err)
 	}
 
@@ -196,6 +206,50 @@ func ReadGitWorktreeInfo(ctx context.Context, path string) (GitWorktreeInfo, err
 	return GitWorktreeInfo{
 		RootPath: rootPath,
 		Kind:     kind,
+	}, nil
+}
+
+func readGitWorktreeInfoFromGitFile(path string) (GitWorktreeInfo, error) {
+	gitPath := filepath.Join(path, ".git")
+	info, err := os.Stat(gitPath)
+	if err != nil {
+		return GitWorktreeInfo{}, err
+	}
+	if info.IsDir() {
+		return GitWorktreeInfo{}, fmt.Errorf("%s is a directory", gitPath)
+	}
+
+	content, err := os.ReadFile(gitPath)
+	if err != nil {
+		return GitWorktreeInfo{}, err
+	}
+	line := strings.TrimSpace(string(content))
+	const prefix = "gitdir:"
+	if !strings.HasPrefix(line, prefix) {
+		return GitWorktreeInfo{}, fmt.Errorf("%s does not contain a gitdir pointer", gitPath)
+	}
+
+	gitDir := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+	if gitDir == "" {
+		return GitWorktreeInfo{}, fmt.Errorf("%s contains an empty gitdir pointer", gitPath)
+	}
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(path, gitDir)
+	}
+	gitDir = filepath.Clean(gitDir)
+	worktreesDir := filepath.Dir(gitDir)
+	commonDir := filepath.Dir(worktreesDir)
+	if filepath.Base(worktreesDir) != "worktrees" || filepath.Base(commonDir) != ".git" {
+		return GitWorktreeInfo{}, fmt.Errorf("%s does not point at a linked worktree admin dir", gitPath)
+	}
+
+	rootPath := filepath.Clean(filepath.Dir(commonDir))
+	if rootPath == "" || rootPath == "." {
+		return GitWorktreeInfo{}, fmt.Errorf("%s resolves to an empty worktree root", gitPath)
+	}
+	return GitWorktreeInfo{
+		RootPath: rootPath,
+		Kind:     GitWorktreeKindLinked,
 	}, nil
 }
 

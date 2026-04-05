@@ -1862,6 +1862,79 @@ func TestScanOnceMarksMissingProjectWithoutFreshActivity(t *testing.T) {
 	}
 }
 
+func TestScanOnceForgetsStaleLinkedWorktreeDirectoryStillOnDisk(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	staleWorktreePath := filepath.Join(root, "repo--stale-worktree")
+	if err := os.MkdirAll(staleWorktreePath, 0o755); err != nil {
+		t.Fatalf("mkdir stale worktree path: %v", err)
+	}
+	staleGitDir := filepath.Join(projectPath, ".git", "worktrees", "repo--stale-worktree")
+	if err := os.WriteFile(filepath.Join(staleWorktreePath, ".git"), []byte("gitdir: "+staleGitDir+"\n"), 0o644); err != nil {
+		t.Fatalf("write stale gitfile: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	activityAt := time.Now().Add(-10 * time.Minute).UTC().Truncate(time.Second)
+	detector := staticDetector{
+		activities: map[string]*model.DetectorProjectActivity{
+			staleWorktreePath: fakeActivity(staleWorktreePath, "ses_stale_worktree", activityAt),
+		},
+	}
+	cfg := config.Default()
+	cfg.IncludePaths = []string{root}
+
+	svc := New(cfg, st, events.NewBus(), []detectors.Detector{detector})
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+	report, err := svc.ScanOnce(ctx)
+	if err != nil {
+		t.Fatalf("ScanOnce() error = %v", err)
+	}
+	if len(report.States) == 0 {
+		t.Fatalf("scan should persist at least one project state")
+	}
+
+	detail, err := st.GetProjectDetail(ctx, staleWorktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail(stale worktree) error = %v", err)
+	}
+	if !detail.Summary.Forgotten {
+		t.Fatalf("stale linked worktree should be forgotten: %#v", detail.Summary)
+	}
+	if !detail.Summary.PresentOnDisk {
+		t.Fatalf("stale linked worktree directory should still be marked present on disk: %#v", detail.Summary)
+	}
+	if detail.Summary.WorktreeRootPath != projectPath {
+		t.Fatalf("WorktreeRootPath = %q, want %q", detail.Summary.WorktreeRootPath, projectPath)
+	}
+	if detail.Summary.WorktreeKind != model.WorktreeKindLinked {
+		t.Fatalf("WorktreeKind = %q, want %q", detail.Summary.WorktreeKind, model.WorktreeKindLinked)
+	}
+
+	visible, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	if len(visible) != 1 || visible[0].Path != projectPath {
+		t.Fatalf("visible projects = %#v, want only the repo root", visible)
+	}
+}
+
 func TestScanOnceDetectsDirtyRepoAndClearsWhenClean(t *testing.T) {
 	t.Parallel()
 

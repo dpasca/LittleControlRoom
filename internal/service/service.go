@@ -636,14 +636,16 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			worktreeMergeStatus = resolveWorktreeMergeStatus(ctx, worktreeRootPath, worktreeKind, repoBranch, worktreeParentBranch)
 		}
 		forgotten := old.Forgotten
-		if !presentOnDisk && old.WorktreeKind == model.WorktreeKindLinked && strings.TrimSpace(old.WorktreeRootPath) != "" {
-			if livePaths := liveWorktreePathsByRoot[old.WorktreeRootPath]; len(livePaths) > 0 {
+		staleLinkedWorktree := false
+		if worktreeKind == model.WorktreeKindLinked && strings.TrimSpace(worktreeRootPath) != "" {
+			if livePaths := liveWorktreePathsByRoot[worktreeRootPath]; len(livePaths) > 0 {
 				if _, ok := livePaths[path]; !ok {
+					staleLinkedWorktree = true
 					forgotten = true
 				}
 			}
 		}
-		if presentOnDisk && forgotten && scope.Allows(path) {
+		if presentOnDisk && forgotten && scope.Allows(path) && !staleLinkedWorktree {
 			forgotten = false
 		}
 		if forgotten && !presentOnDisk {

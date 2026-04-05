@@ -1,6 +1,11 @@
 package scanner
 
-import "testing"
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestParseGitRepoStatusOutputAhead(t *testing.T) {
 	status := parseGitRepoStatusOutput(`# branch.oid abc123
@@ -133,5 +138,35 @@ func TestParseGitRepoStatusOutputSubmoduleCommitChangeIsParentCommitEligible(t *
 	}
 	if !change.ParentCommitEligible() {
 		t.Fatalf("submodule commit change should be parent-commit eligible: %#v", change)
+	}
+}
+
+func TestReadGitWorktreeInfoFallsBackToGitFileForStaleLinkedWorktree(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	worktreePath := filepath.Join(root, "repo--feature")
+	if err := os.MkdirAll(repoPath, 0o755); err != nil {
+		t.Fatalf("mkdir repo root: %v", err)
+	}
+	if err := os.MkdirAll(worktreePath, 0o755); err != nil {
+		t.Fatalf("mkdir worktree path: %v", err)
+	}
+
+	gitDir := filepath.Join(repoPath, ".git", "worktrees", "repo--feature")
+	if err := os.WriteFile(filepath.Join(worktreePath, ".git"), []byte("gitdir: "+gitDir+"\n"), 0o644); err != nil {
+		t.Fatalf("write gitfile: %v", err)
+	}
+
+	info, err := ReadGitWorktreeInfo(context.Background(), worktreePath)
+	if err != nil {
+		t.Fatalf("ReadGitWorktreeInfo() error = %v", err)
+	}
+	if info.RootPath != repoPath {
+		t.Fatalf("RootPath = %q, want %q", info.RootPath, repoPath)
+	}
+	if info.Kind != GitWorktreeKindLinked {
+		t.Fatalf("Kind = %q, want %q", info.Kind, GitWorktreeKindLinked)
 	}
 }
