@@ -1927,7 +1927,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.embeddedModelPrefs = embeddedModelPreferencesFromSettings(msg.settings)
 		m.hideReasoningSections = msg.settings.HideReasoningSections
 		m.settingsMode = false
-		m.status = fmt.Sprintf("Settings saved to %s. Filters, API key, and Codex launch mode apply now; the running scheduler keeps its current timing until the next launch of %s.", msg.path, brand.CLIName)
+		m.status = fmt.Sprintf("Settings saved to %s. Filters, API keys, local endpoints, and Codex launch mode apply now; the running scheduler keeps its current timing until the next launch of %s.", msg.path, brand.CLIName)
 		m.rebuildProjectList(selectedPath)
 		cmds := []tea.Cmd{m.refreshSetupSnapshotCmd(false)}
 		if len(m.projects) > 0 {
@@ -6561,9 +6561,10 @@ func (m Model) footerUsageLabel() string {
 		switch backend := m.currentSettingsBaseline().AIBackend; backend {
 		case config.AIBackendDisabled:
 			return "AI disabled"
-		case config.AIBackendCodex, config.AIBackendOpenCode, config.AIBackendClaude:
-			return compactLocalUsageLabel(backend.Label(), m.currentUsage())
 		default:
+			if backend.UsesLocalProviderPath() {
+				return compactLocalUsageLabel(backend.Label(), m.currentUsage())
+			}
 			return compactUsageLabel(m.currentUsage())
 		}
 	}
@@ -6575,8 +6576,7 @@ func (m Model) footerUsageLabel() string {
 	case m.setupSnapshot.Selected != config.AIBackendUnset && !status.Ready:
 		return "AI unavailable"
 	default:
-		switch m.setupSnapshot.Selected {
-		case config.AIBackendCodex, config.AIBackendOpenCode, config.AIBackendClaude:
+		if m.setupSnapshot.Selected.UsesLocalProviderPath() {
 			return compactLocalUsageLabel(m.setupSnapshot.Selected.Label(), m.currentUsage())
 		}
 		return compactUsageLabel(m.currentUsage())

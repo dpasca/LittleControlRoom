@@ -127,6 +127,10 @@ func (s *Service) Config() config.AppConfig {
 	cfg := s.cfg
 	cfg.AIBackend = s.cfg.AIBackend
 	cfg.OpenAIAPIKey = s.cfg.OpenAIAPIKey
+	cfg.MLXBaseURL = s.cfg.MLXBaseURL
+	cfg.MLXAPIKey = s.cfg.MLXAPIKey
+	cfg.OllamaBaseURL = s.cfg.OllamaBaseURL
+	cfg.OllamaAPIKey = s.cfg.OllamaAPIKey
 	cfg.IncludePaths = append([]string(nil), s.cfg.IncludePaths...)
 	cfg.ExcludePaths = append([]string(nil), s.cfg.ExcludePaths...)
 	cfg.ExcludeProjectPatterns = append([]string(nil), s.cfg.ExcludeProjectPatterns...)
@@ -151,6 +155,10 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 
 	s.cfg.AIBackend = settings.AIBackend
 	s.cfg.OpenAIAPIKey = strings.TrimSpace(settings.OpenAIAPIKey)
+	s.cfg.MLXBaseURL = strings.TrimSpace(settings.MLXBaseURL)
+	s.cfg.MLXAPIKey = strings.TrimSpace(settings.MLXAPIKey)
+	s.cfg.OllamaBaseURL = strings.TrimSpace(settings.OllamaBaseURL)
+	s.cfg.OllamaAPIKey = strings.TrimSpace(settings.OllamaAPIKey)
 	s.cfg.IncludePaths = append([]string(nil), settings.IncludePaths...)
 	s.cfg.ExcludePaths = append([]string(nil), settings.ExcludePaths...)
 	s.cfg.ExcludeProjectPatterns = append([]string(nil), settings.ExcludeProjectPatterns...)
@@ -187,6 +195,18 @@ func editableSettingsRequireAIClientRefresh(current config.AppConfig, settings c
 		return true
 	}
 	if strings.TrimSpace(current.OpenAIAPIKey) != strings.TrimSpace(settings.OpenAIAPIKey) {
+		return true
+	}
+	if strings.TrimSpace(current.MLXBaseURL) != strings.TrimSpace(settings.MLXBaseURL) {
+		return true
+	}
+	if strings.TrimSpace(current.MLXAPIKey) != strings.TrimSpace(settings.MLXAPIKey) {
+		return true
+	}
+	if strings.TrimSpace(current.OllamaBaseURL) != strings.TrimSpace(settings.OllamaBaseURL) {
+		return true
+	}
+	if strings.TrimSpace(current.OllamaAPIKey) != strings.TrimSpace(settings.OllamaAPIKey) {
 		return true
 	}
 	return strings.TrimSpace(current.OpenCodeModelTier) != strings.TrimSpace(settings.OpenCodeModelTier)
@@ -298,6 +318,14 @@ func (s *Service) configureAIClientsLocked() {
 			commitAssistant = gitops.NewClaudeCommitMessageClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
 			client = sessionclassify.NewClaudeClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
 			todoClient = todoworktree.NewClaudeClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
+		}
+	case config.AIBackendMLX, config.AIBackendOllama:
+		if selectedStatus.Ready {
+			baseURL := s.cfg.OpenAICompatibleBaseURL(selectedBackend)
+			apiKey := s.cfg.OpenAICompatibleAPIKey(selectedBackend)
+			commitAssistant = gitops.NewOpenAICompatibleCommitMessageClientWithUsageTracker(baseURL, apiKey, s.llmUsageTracker)
+			client = sessionclassify.NewOpenAICompatibleClientWithUsageTracker(baseURL, apiKey, s.llmUsageTracker)
+			todoClient = todoworktree.NewOpenAICompatibleClientWithUsageTracker(baseURL, apiKey, s.llmUsageTracker)
 		}
 	}
 	s.commitMessageSuggester = commitAssistant

@@ -201,13 +201,14 @@ func aiStatsCostValue(usage model.LLMSessionUsage) string {
 
 func aiStatsBillingValue(backend config.AIBackend) string {
 	switch backend {
-	case config.AIBackendCodex, config.AIBackendOpenCode, config.AIBackendClaude:
-		return detailMutedStyle.Render("local provider mode")
 	case config.AIBackendDisabled:
 		return detailMutedStyle.Render("disabled")
 	case config.AIBackendUnset:
 		return detailWarningStyle.Render("not configured")
 	default:
+		if backend.UsesLocalProviderPath() {
+			return detailMutedStyle.Render("local provider mode")
+		}
 		return detailMutedStyle.Render("not available")
 	}
 }
@@ -216,9 +217,10 @@ func aiStatsBillingNotice(backend config.AIBackend) string {
 	switch backend {
 	case config.AIBackendOpenAIAPI:
 		return "These numbers are still estimates. Your OpenAI dashboard is the billing source of truth."
-	case config.AIBackendCodex, config.AIBackendOpenCode, config.AIBackendClaude:
-		return fmt.Sprintf("%s is running through its local provider path here, so Little Control Room only shows calls and tokens. Switch to the OpenAI API backend in /setup if you want estimated API-key spend.", backend.Label())
 	default:
+		if backend.UsesLocalProviderPath() {
+			return fmt.Sprintf("%s is running through its local provider path here, so Little Control Room only shows calls and tokens. Switch to the OpenAI API backend in /setup if you want estimated API-key spend.", backend.Label())
+		}
 		return ""
 	}
 }

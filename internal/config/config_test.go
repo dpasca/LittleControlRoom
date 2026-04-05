@@ -330,7 +330,7 @@ func TestParseRejectsInvalidSnapshotLimit(t *testing.T) {
 func TestParseEditableSettings(t *testing.T) {
 	useTempHome(t)
 
-	settings, err := ParseEditableSettings(AIBackendOpenAIAPI, "sk-test-example", "~/dev/repos,/tmp/other", "/tmp/skip", "quickgame_*,secret-demo", "medical,visa", "yolo", "true", "false", "free", "10m", "2h", "45s")
+	settings, err := ParseEditableSettings(AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "~/dev/repos,/tmp/other", "/tmp/skip", "quickgame_*,secret-demo", "medical,visa", "yolo", "true", "false", "free", "10m", "2h", "45s")
 	if err != nil {
 		t.Fatalf("ParseEditableSettings() error = %v", err)
 	}
@@ -369,7 +369,7 @@ func TestParseEditableSettings(t *testing.T) {
 func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 	useTempHome(t)
 
-	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, "sk-test-example", "/tmp/a", "", "", "", "yolo", "false", "false", "", "20m", "10m", "60s"); err == nil {
+	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "/tmp/a", "", "", "", "yolo", "false", "false", "", "20m", "10m", "60s"); err == nil {
 		t.Fatalf("expected validation error")
 	}
 }
@@ -377,7 +377,7 @@ func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 func TestParseEditableSettingsRejectsInvalidCodexPreset(t *testing.T) {
 	useTempHome(t)
 
-	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, "sk-test-example", "/tmp/a", "", "", "", "turbo", "false", "false", "", "20m", "2h", "60s"); err == nil {
+	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "/tmp/a", "", "", "", "turbo", "false", "false", "", "20m", "2h", "60s"); err == nil {
 		t.Fatalf("expected codex preset validation error")
 	}
 }
@@ -385,7 +385,7 @@ func TestParseEditableSettingsRejectsInvalidCodexPreset(t *testing.T) {
 func TestParseEditableSettingsAllowsMissingOpenAIAPIKeyForNonAPIBackends(t *testing.T) {
 	useTempHome(t)
 
-	settings, err := ParseEditableSettings(AIBackendCodex, "", "/tmp/a", "", "", "", "yolo", "false", "false", "", "20m", "2h", "60s")
+	settings, err := ParseEditableSettings(AIBackendCodex, "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "false", "false", "", "20m", "2h", "60s")
 	if err != nil {
 		t.Fatalf("ParseEditableSettings() error = %v", err)
 	}
@@ -401,6 +401,10 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 	err := SaveEditableSettings(configPath, EditableSettings{
 		AIBackend:                 AIBackendOpenAIAPI,
 		OpenAIAPIKey:              "sk-test-example",
+		MLXBaseURL:                "http://127.0.0.1:8080/v1",
+		MLXAPIKey:                 "mlx",
+		OllamaBaseURL:             "http://127.0.0.1:11434/v1",
+		OllamaAPIKey:              "ollama",
 		IncludePaths:              []string{"/tmp/a", "/tmp/b"},
 		ExcludePaths:              []string{"/tmp/skip"},
 		ExcludeProjectPatterns:    []string{"quickgame_*", "secret-demo"},
@@ -432,6 +436,16 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 	}
 	if !strings.Contains(text, "openai_api_key = \"sk-test-example\"") {
 		t.Fatalf("saved config should include openai api key: %q", text)
+	}
+	for _, want := range []string{
+		"mlx_base_url = \"http://127.0.0.1:8080/v1\"",
+		"mlx_api_key = \"mlx\"",
+		"ollama_base_url = \"http://127.0.0.1:11434/v1\"",
+		"ollama_api_key = \"ollama\"",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("saved config should include %q: %q", want, text)
+		}
 	}
 	if !strings.Contains(text, "exclude_paths = [") {
 		t.Fatalf("saved config should include exclude_paths array: %q", text)
