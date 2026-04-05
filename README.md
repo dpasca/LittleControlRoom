@@ -2,7 +2,7 @@
 
 Little Control Room (LCR) is a terminal control room I built for my own agent-heavy workflow across many repos.
 
-I use it to keep Codex, OpenCode, and Claude Code sessions visible, jump back into work quickly, start fresh sessions from TODOs, review diffs, and ship changes without bouncing between tools.
+I use it to keep Codex, OpenCode, and Claude Code sessions visible, jump back into work quickly, start fresh sessions from TODOs, review diffs, and ship changes without bouncing between tools. For background AI work, it can also route through local MLX or Ollama servers.
 
 It is also used internally, but this is not a commercial product. It is an opinionated open source tool that grew out of day-to-day use.
 
@@ -39,7 +39,7 @@ Requirements:
 - Codex installed locally, capable of running in the terminal.
 - OpenCode installed locally if you want embedded OpenCode sessions.
 - Claude Code installed locally if you want embedded Claude Code sessions.
-- At least one AI backend configured: Codex, OpenCode, Claude Code, or an OpenAI API key.
+- At least one AI backend configured: Codex, OpenCode, Claude Code, MLX, Ollama, or an OpenAI API key.
 
 Build and launch from this repo:
 
@@ -55,11 +55,11 @@ make install
 lcroom tui
 ```
 
-On the first run, LCR opens `/setup` if no AI backend is configured. From there you can use Codex, OpenCode, Claude Code, an OpenAI API key, or continue without AI and come back later. Claude-backed background inference currently defaults to Haiku to keep usage lighter.
+On the first run, LCR opens `/setup` if no AI backend is configured. From there you can use Codex, OpenCode, Claude Code, MLX, Ollama, an OpenAI API key, or continue without AI and come back later. Claude-backed background inference currently defaults to Haiku to keep usage lighter. MLX and Ollama use their OpenAI-compatible local endpoints, with defaults of `http://127.0.0.1:8080/v1` for MLX and `http://127.0.0.1:11434/v1` for Ollama.
 
 <p align="center">
   <a href="docs/screenshots/setup.png">
-    <img src="docs/screenshots/setup.png" alt="Little Control Room setup screen showing Codex, OpenCode, Claude Code, OpenAI API key, and disabled AI options" width="850">
+    <img src="docs/screenshots/setup.png" alt="Little Control Room setup screen showing Codex, OpenCode, Claude Code, MLX, Ollama, OpenAI API key, and disabled AI options" width="850">
   </a>
 </p>
 
@@ -72,7 +72,7 @@ The main TUI command palette opens with `/`.
 - `/sort <attention|recent>`: Change the project ordering.
 - `/view <ai|all>`: Switch between AI-linked and all tracked folders.
 - `/setup`: Choose and check the AI backend for summaries, classification, commit help, and other background inference.
-- `/settings`: Edit scope, filters, and scan settings.
+- `/settings`: Edit scope, API keys, local endpoint overrides, filters, and scan settings.
 - `/filter [text|clear]`: Temporarily narrow the whole dashboard to matching project names.
 - `/new-project`: Create a project folder, or paste an existing project path to add it directly.
 - `/open`: Open the selected project's folder in the system browser.
@@ -143,13 +143,13 @@ Most day-to-day use falls into a few buckets:
   | [![Diff window](docs/screenshots/diff-view.png)](docs/screenshots/diff-view.png) | [![Commit preview dialog](docs/screenshots/commit-preview.png)](docs/screenshots/commit-preview.png) | [![Image diff with before/after previews](docs/screenshots/diff-view-image.png)](docs/screenshots/diff-view-image.png) |
 
 - **Keep the list clean** — Use `f` or `/filter <text>` to narrow the project list, `/pin` and `/snooze` to control attention, `/ignore` and `/ignored` to hide or restore exact project names, and `/forget` to remove a missing folder.
-- **Adjust setup** — Use `/settings` for API keys, paths, and defaults, and `/new-project` when you want to add something new to the dashboard.
+- **Adjust setup** — Use `/settings` for API keys, MLX/Ollama endpoint overrides, paths, and defaults, and `/new-project` when you want to add something new to the dashboard.
 
 For the full command list and detailed behavior, see [`docs/reference.md`](docs/reference.md).
 
 ## Costs
 
-If Codex, OpenCode, or Claude Code is available, LCR can use that local login or subscription path for summaries, classification, commit help, and other background inference. On a flat-rate plan, that usually means no extra LCR API cost. Claude-backed background inference currently defaults to Haiku to keep usage lighter.
+If Codex, OpenCode, Claude Code, MLX, or Ollama is available, LCR can use that local provider path for summaries, classification, commit help, and other background inference. On a flat-rate plan, or when you are running local inference, that usually means no extra LCR API cost from LCR itself. Claude-backed background inference currently defaults to Haiku to keep usage lighter.
 
 If you use an OpenAI API key instead, LCR mainly spends tokens on summaries/classification and commit help. The footer shows a live estimate for that API usage only.
 

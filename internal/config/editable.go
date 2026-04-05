@@ -14,6 +14,10 @@ import (
 type EditableSettings struct {
 	AIBackend                 AIBackend
 	OpenAIAPIKey              string
+	MLXBaseURL                string
+	MLXAPIKey                 string
+	OllamaBaseURL             string
+	OllamaAPIKey              string
 	IncludePaths              []string
 	ExcludePaths              []string
 	ExcludeProjectPatterns    []string
@@ -40,6 +44,10 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 	return EditableSettings{
 		AIBackend:                 cfg.EffectiveAIBackend(),
 		OpenAIAPIKey:              cfg.OpenAIAPIKey,
+		MLXBaseURL:                cfg.MLXBaseURL,
+		MLXAPIKey:                 cfg.MLXAPIKey,
+		OllamaBaseURL:             cfg.OllamaBaseURL,
+		OllamaAPIKey:              cfg.OllamaAPIKey,
 		IncludePaths:              append([]string(nil), cfg.IncludePaths...),
 		ExcludePaths:              append([]string(nil), cfg.ExcludePaths...),
 		ExcludeProjectPatterns:    append([]string(nil), cfg.ExcludeProjectPatterns...),
@@ -63,12 +71,16 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 	}
 }
 
-func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
+func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, mlxBaseURLRaw, mlxAPIKeyRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
 	parsedBackend, err := ParseAIBackend(string(aiBackend))
 	if err != nil {
 		return EditableSettings{}, err
 	}
 	openAIAPIKey := strings.TrimSpace(openAIAPIKeyRaw)
+	mlxBaseURL := strings.TrimSpace(mlxBaseURLRaw)
+	mlxAPIKey := strings.TrimSpace(mlxAPIKeyRaw)
+	ollamaBaseURL := strings.TrimSpace(ollamaBaseURLRaw)
+	ollamaAPIKey := strings.TrimSpace(ollamaAPIKeyRaw)
 
 	includePaths, err := expandAndSplitPaths(includeRaw)
 	if err != nil {
@@ -106,6 +118,10 @@ func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, includeRaw, exc
 	settings := EditableSettings{
 		AIBackend:              parsedBackend,
 		OpenAIAPIKey:           openAIAPIKey,
+		MLXBaseURL:             mlxBaseURL,
+		MLXAPIKey:              mlxAPIKey,
+		OllamaBaseURL:          ollamaBaseURL,
+		OllamaAPIKey:           ollamaAPIKey,
 		IncludePaths:           includePaths,
 		ExcludePaths:           excludePaths,
 		ExcludeProjectPatterns: excludeProjectPatterns,
@@ -165,6 +181,10 @@ func validateEditableSettings(settings EditableSettings) error {
 	cfg := Default()
 	cfg.AIBackend = settings.AIBackend
 	cfg.OpenAIAPIKey = settings.OpenAIAPIKey
+	cfg.MLXBaseURL = settings.MLXBaseURL
+	cfg.MLXAPIKey = settings.MLXAPIKey
+	cfg.OllamaBaseURL = settings.OllamaBaseURL
+	cfg.OllamaAPIKey = settings.OllamaAPIKey
 	cfg.IncludePaths = append([]string(nil), settings.IncludePaths...)
 	cfg.ExcludePaths = append([]string(nil), settings.ExcludePaths...)
 	cfg.ExcludeProjectPatterns = append([]string(nil), settings.ExcludeProjectPatterns...)
@@ -205,6 +225,25 @@ func renderEditableSettings(settings EditableSettings) string {
 	}
 	if settings.OpenAIAPIKey != "" {
 		lines = append(lines, fmt.Sprintf("openai_api_key = %s", strconv.Quote(settings.OpenAIAPIKey)), "")
+	}
+	if value := strings.TrimSpace(settings.MLXBaseURL); value != "" {
+		lines = append(lines, fmt.Sprintf("mlx_base_url = %s", strconv.Quote(value)))
+	}
+	if value := strings.TrimSpace(settings.MLXAPIKey); value != "" {
+		lines = append(lines, fmt.Sprintf("mlx_api_key = %s", strconv.Quote(value)))
+	}
+	if value := strings.TrimSpace(settings.OllamaBaseURL); value != "" {
+		lines = append(lines, fmt.Sprintf("ollama_base_url = %s", strconv.Quote(value)))
+	}
+	if value := strings.TrimSpace(settings.OllamaAPIKey); value != "" {
+		lines = append(lines, fmt.Sprintf("ollama_api_key = %s", strconv.Quote(value)))
+	}
+	if settings.OpenAIAPIKey != "" ||
+		strings.TrimSpace(settings.MLXBaseURL) != "" ||
+		strings.TrimSpace(settings.MLXAPIKey) != "" ||
+		strings.TrimSpace(settings.OllamaBaseURL) != "" ||
+		strings.TrimSpace(settings.OllamaAPIKey) != "" {
+		lines = append(lines, "")
 	}
 	lines = append(lines, "include_paths = [")
 	for _, path := range settings.IncludePaths {

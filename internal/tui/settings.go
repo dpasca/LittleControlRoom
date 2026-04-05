@@ -16,6 +16,10 @@ import (
 
 const (
 	settingsFieldOpenAIAPIKey = iota
+	settingsFieldMLXBaseURL
+	settingsFieldMLXAPIKey
+	settingsFieldOllamaBaseURL
+	settingsFieldOllamaAPIKey
 	settingsFieldIncludePaths
 	settingsFieldExcludePaths
 	settingsFieldExcludeProjectPatterns
@@ -89,6 +93,10 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		settings, err := config.ParseEditableSettings(
 			m.currentSettingsBaseline().AIBackend,
 			m.settingsFieldValue(settingsFieldOpenAIAPIKey),
+			m.settingsFieldValue(settingsFieldMLXBaseURL),
+			m.settingsFieldValue(settingsFieldMLXAPIKey),
+			m.settingsFieldValue(settingsFieldOllamaBaseURL),
+			m.settingsFieldValue(settingsFieldOllamaAPIKey),
 			m.settingsFieldValue(settingsFieldIncludePaths),
 			m.settingsFieldValue(settingsFieldExcludePaths),
 			m.settingsFieldValue(settingsFieldExcludeProjectPatterns),
@@ -296,7 +304,7 @@ func (m Model) renderSettingsContent(width, maxHeight int) string {
 		commandPaletteTitleStyle.Render("Settings"),
 		commandPaletteHintStyle.Render("Config: " + truncateText(m.displayPathWithHomeTilde(m.currentConfigPath()), max(20, width-8))),
 	}
-	lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("AI backend: %s. Use /setup to change it. Scope, filters, and API key save here.", m.currentSettingsBaseline().AIBackend.Label())))
+	lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("AI backend: %s. Use /setup to change it. Scope, API keys, and local endpoint overrides save here.", m.currentSettingsBaseline().AIBackend.Label())))
 	if m.settingsSaving {
 		lines = append(lines, "")
 		lines = append(lines, commandPaletteHintStyle.Render("Saving settings..."))
@@ -421,6 +429,32 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			512,
 		),
 		newSettingsField(
+			"MLX base URL",
+			"Used when the AI backend is MLX. Leave blank to use the default local OpenAI-compatible URL: http://127.0.0.1:8080/v1",
+			settings.MLXBaseURL,
+			512,
+		),
+		newSensitiveSettingsFieldWithPlaceholder(
+			"MLX API key",
+			"Optional API key for the MLX OpenAI-compatible endpoint. Leave blank to use the default value: mlx",
+			settings.MLXAPIKey,
+			512,
+			"Leave blank for mlx",
+		),
+		newSettingsField(
+			"Ollama base URL",
+			"Used when the AI backend is Ollama. Leave blank to use the default OpenAI-compatible URL: http://127.0.0.1:11434/v1",
+			settings.OllamaBaseURL,
+			512,
+		),
+		newSensitiveSettingsFieldWithPlaceholder(
+			"Ollama API key",
+			"Optional API key for the Ollama OpenAI-compatible endpoint. Leave blank to use the default value: ollama",
+			settings.OllamaAPIKey,
+			512,
+			"Leave blank for ollama",
+		),
+		newSettingsField(
 			"Include paths",
 			"Optional comma-separated path prefixes to keep in scope. Leave blank for all detected paths.",
 			strings.Join(settings.IncludePaths, ","),
@@ -490,10 +524,14 @@ func newSettingsField(label, hint, value string, charLimit int) settingsField {
 }
 
 func newSensitiveSettingsField(label, hint, value string, charLimit int) settingsField {
+	return newSensitiveSettingsFieldWithPlaceholder(label, hint, value, charLimit, "Paste OpenAI API key")
+}
+
+func newSensitiveSettingsFieldWithPlaceholder(label, hint, value string, charLimit int, placeholder string) settingsField {
 	field := newSettingsField(label, hint, value, charLimit)
 	field.input.EchoMode = textinput.EchoPassword
 	field.input.EchoCharacter = '*'
-	field.input.Placeholder = "Paste OpenAI API key"
+	field.input.Placeholder = placeholder
 	field.sensitive = true
 	return field
 }
@@ -510,6 +548,10 @@ func newPrivacyPatternsField(label, hint, value string, charLimit int) settingsF
 func cloneEditableSettings(settings config.EditableSettings) config.EditableSettings {
 	settings.AIBackend = config.ResolveAIBackend(settings.AIBackend, settings.OpenAIAPIKey)
 	settings.OpenAIAPIKey = strings.TrimSpace(settings.OpenAIAPIKey)
+	settings.MLXBaseURL = strings.TrimSpace(settings.MLXBaseURL)
+	settings.MLXAPIKey = strings.TrimSpace(settings.MLXAPIKey)
+	settings.OllamaBaseURL = strings.TrimSpace(settings.OllamaBaseURL)
+	settings.OllamaAPIKey = strings.TrimSpace(settings.OllamaAPIKey)
 	settings.IncludePaths = append([]string(nil), settings.IncludePaths...)
 	settings.ExcludePaths = append([]string(nil), settings.ExcludePaths...)
 	settings.ExcludeProjectPatterns = append([]string(nil), settings.ExcludeProjectPatterns...)
@@ -532,6 +574,20 @@ func (m Model) settingsFieldHint(index int) string {
 		}
 		if m.currentSettingsBaseline().AIBackend == config.AIBackendOpenAIAPI {
 			return field.hint + " The selected backend still needs a saved key."
+		}
+		return field.hint
+	case settingsFieldMLXBaseURL:
+		return field.hint
+	case settingsFieldMLXAPIKey:
+		if suffix := maskedOpenAIKeySuffix(field.input.Value()); suffix != "" {
+			return "Used for the MLX backend. Stored key ends with " + suffix + ". Leave blank to use mlx."
+		}
+		return field.hint
+	case settingsFieldOllamaBaseURL:
+		return field.hint
+	case settingsFieldOllamaAPIKey:
+		if suffix := maskedOpenAIKeySuffix(field.input.Value()); suffix != "" {
+			return "Used for the Ollama backend. Stored key ends with " + suffix + ". Leave blank to use ollama."
 		}
 		return field.hint
 	case settingsFieldPrivacyPatterns:

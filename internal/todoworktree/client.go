@@ -72,6 +72,13 @@ func NewOpenAIClientWithUsageTracker(apiKey string, usage *llm.UsageTracker) *Op
 	}
 }
 
+func NewOpenAICompatibleClientWithUsageTracker(baseURL, apiKey string, usage *llm.UsageTracker) *OpenAIClient {
+	return &OpenAIClient{
+		model:     configuredModel(""),
+		responses: llm.NewOpenAICompatibleResponsesRunner(baseURL, apiKey, configuredModel(""), suggestionHTTPTimeout, usage),
+	}
+}
+
 func NewCodexClientWithUsageTrackerInDataDir(dataDir string, usage *llm.UsageTracker) *OpenAIClient {
 	return &OpenAIClient{
 		model:     configuredModel(localRunnerDefaultModel),

@@ -10,13 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-var setupBackendOptions = []config.AIBackend{
-	config.AIBackendCodex,
-	config.AIBackendOpenCode,
-	config.AIBackendClaude,
-	config.AIBackendOpenAIAPI,
-	config.AIBackendDisabled,
-}
+var setupBackendOptions = config.SelectableAIBackends()
 
 func (m *Model) openSetupMode() tea.Cmd {
 	m.setupMode = true
@@ -55,6 +49,10 @@ func (m Model) refreshSetupSnapshotCmd(openOnStartup bool) tea.Cmd {
 		cfg := config.Default()
 		cfg.AIBackend = settings.AIBackend
 		cfg.OpenAIAPIKey = settings.OpenAIAPIKey
+		cfg.MLXBaseURL = settings.MLXBaseURL
+		cfg.MLXAPIKey = settings.MLXAPIKey
+		cfg.OllamaBaseURL = settings.OllamaBaseURL
+		cfg.OllamaAPIKey = settings.OllamaAPIKey
 		return setupSnapshotMsg{
 			snapshot:      aibackend.Detect(m.ctx, cfg),
 			openOnStartup: openOnStartup,
@@ -92,13 +90,13 @@ func (m Model) updateSetupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = "Refreshing AI backend checks..."
 		return m, m.refreshSetupSnapshotCmd(false)
 	case "t":
-		if m.setupSelectedBackend() == config.AIBackendOpenCode {
+		if m.setupSelectedBackend().SupportsModelTier() {
 			m.setupModelTier = m.cycleModelTier(m.setupModelTier)
 			return m, nil
 		}
 	case "s":
 		settings := m.currentSettingsBaseline()
-		if selected := m.setupSelectedBackend(); selected == config.AIBackendOpenAIAPI {
+		if selected := m.setupSelectedBackend(); selected == config.AIBackendOpenAIAPI || selected == config.AIBackendMLX || selected == config.AIBackendOllama {
 			settings.AIBackend = selected
 		}
 		return m, m.openSettingsModeWithBaseline(settings)
@@ -132,6 +130,18 @@ func (m Model) activateSetupSelection() (tea.Model, tea.Cmd) {
 	case config.AIBackendOpenAIAPI:
 		if strings.TrimSpace(settings.OpenAIAPIKey) == "" {
 			m.status = "OpenAI API key backend selected. Save a key to finish setup."
+			return m, m.openSettingsModeWithBaseline(settings)
+		}
+		m.setupSaving = true
+		m.status = "Saving AI setup..."
+		return m, m.saveSetupCmd(settings)
+	case config.AIBackendMLX, config.AIBackendOllama:
+		if strings.TrimSpace(selectedStatus.Detail) == "" || !selectedStatus.Ready {
+			if selectedStatus.LoginHint != "" {
+				m.status = selectedStatus.LoginHint
+			} else {
+				m.status = selectedStatus.Detail
+			}
 			return m, m.openSettingsModeWithBaseline(settings)
 		}
 		m.setupSaving = true
@@ -254,7 +264,7 @@ func (m Model) renderSetupOptionRow(backend config.AIBackend, selected bool, wid
 		detailStyle = detailValueStyle
 	}
 	detailText := status.Detail
-	if backend == config.AIBackendOpenCode && selected {
+	if backend.SupportsModelTier() && selected {
 		tierHint := " [T: " + string(m.setupModelTier) + "]"
 		if len(detailText)+len(tierHint) < detailWidth {
 			detailText = detailText + tierHint
@@ -273,7 +283,7 @@ func (m Model) setupOptionState(backend config.AIBackend, status aibackend.Statu
 		return "off", detailMutedStyle
 	case status.Ready:
 		return "ready", footerPrimaryLabelStyle
-	case !status.Installed && backend != config.AIBackendOpenAIAPI:
+	case !status.Installed && backend.RequiresCLIInstallHint():
 		return "install", detailWarningStyle
 	default:
 		return "setup", commandPaletteHintStyle
@@ -286,11 +296,17 @@ func (m Model) renderSetupHint(width int) string {
 	if m.setupSelectedBackend() == config.AIBackendDisabled {
 		hint = "Disable AI features completely. Little Control Room keeps working, but summaries, classifications, and commit help stay off until you run /setup again."
 	}
-	if m.setupSelectedBackend() == config.AIBackendOpenCode && selectedStatus.Ready {
+	if m.setupSelectedBackend().SupportsModelTier() && selectedStatus.Ready {
 		hint = "OpenCode will use " + string(m.setupModelTier) + " tier models for summaries. Press T to cycle: free → cheap → balanced."
 	}
 	if m.setupSelectedBackend() == config.AIBackendClaude && selectedStatus.Ready {
 		hint = "Claude Code will default to the Haiku alias for these background tasks to keep usage lighter."
+	}
+	if m.setupSelectedBackend() == config.AIBackendMLX {
+		hint = "MLX uses an OpenAI-compatible local server. The default URL is http://127.0.0.1:8080/v1 and /settings lets you override it."
+	}
+	if m.setupSelectedBackend() == config.AIBackendOllama {
+		hint = "Ollama uses its OpenAI-compatible endpoint at http://127.0.0.1:11434/v1 by default. Use /settings if your port or API key differs."
 	}
 	if selectedStatus.LoginHint != "" && !selectedStatus.Ready {
 		hint = selectedStatus.LoginHint
@@ -305,7 +321,7 @@ func (m Model) renderSetupActions() string {
 		renderDialogAction("S", "settings", pushActionKeyStyle, pushActionTextStyle),
 		renderDialogAction("Esc", "continue", cancelActionKeyStyle, cancelActionTextStyle),
 	}
-	if m.setupSelectedBackend() == config.AIBackendOpenCode {
+	if m.setupSelectedBackend().SupportsModelTier() {
 		actions = append(actions[:3], append([]string{
 			renderDialogAction("T", "tier", navigateActionKeyStyle, navigateActionTextStyle),
 		}, actions[3:]...)...)

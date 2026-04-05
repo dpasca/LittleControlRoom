@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os/exec"
 	"strings"
 	"time"
 
 	"lcroom/internal/config"
+	"lcroom/internal/llm"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -32,6 +34,8 @@ type Snapshot struct {
 	Codex     Status
 	OpenCode  Status
 	Claude    Status
+	MLX       Status
+	Ollama    Status
 }
 
 func Detect(ctx context.Context, cfg config.AppConfig) Snapshot {
@@ -42,6 +46,8 @@ func Detect(ctx context.Context, cfg config.AppConfig) Snapshot {
 		Codex:     detectCodex(ctx),
 		OpenCode:  detectOpenCode(ctx),
 		Claude:    detectClaudeCode(ctx),
+		MLX:       detectOpenAICompatibleLocal(ctx, cfg, config.AIBackendMLX),
+		Ollama:    detectOpenAICompatibleLocal(ctx, cfg, config.AIBackendOllama),
 	}
 }
 
@@ -55,6 +61,8 @@ func DetectStatus(ctx context.Context, cfg config.AppConfig, backend config.AIBa
 		return detectOpenCode(ctx)
 	case config.AIBackendClaude:
 		return detectClaudeCode(ctx)
+	case config.AIBackendMLX, config.AIBackendOllama:
+		return detectOpenAICompatibleLocal(ctx, cfg, backend)
 	case config.AIBackendDisabled:
 		return Status{
 			Backend: config.AIBackendDisabled,
@@ -81,6 +89,10 @@ func (s Snapshot) StatusFor(backend config.AIBackend) Status {
 		return s.OpenCode
 	case config.AIBackendClaude:
 		return s.Claude
+	case config.AIBackendMLX:
+		return s.MLX
+	case config.AIBackendOllama:
+		return s.Ollama
 	case config.AIBackendDisabled:
 		return DetectStatus(nil, config.AppConfig{}, config.AIBackendDisabled)
 	default:
@@ -210,6 +222,41 @@ func detectClaudeCode(ctx context.Context) Status {
 	}
 	if err == nil && trimmed != "" {
 		status.Detail = trimmed
+	}
+	return status
+}
+
+func detectOpenAICompatibleLocal(ctx context.Context, cfg config.AppConfig, backend config.AIBackend) Status {
+	baseURL := cfg.OpenAICompatibleBaseURL(backend)
+	label := backend.Label()
+	status := Status{
+		Backend: backend,
+		Label:   label,
+		Detail:  label + " local server is not reachable.",
+	}
+	if baseURL == "" {
+		status.LoginHint = "Open /settings and save a base URL for " + label + "."
+		return status
+	}
+	status.Detail = fmt.Sprintf("%s local server is not reachable at %s.", label, baseURL)
+	status.LoginHint = fmt.Sprintf("Start your %s OpenAI-compatible server, then press r to refresh. Use /settings if you need a different base URL or API key.", label)
+	status.Installed = true
+
+	discovery := llm.NewOpenAICompatibleModelDiscovery(baseURL, cfg.OpenAICompatibleAPIKey(backend), detectTimeout)
+	if err := discovery.Discover(ctx); err != nil {
+		return status
+	}
+	models := discovery.Models()
+	if len(models) == 0 {
+		status.Detail = fmt.Sprintf("%s server at %s returned no models.", label, baseURL)
+		return status
+	}
+
+	status.Authenticated = true
+	status.Ready = true
+	status.Detail = fmt.Sprintf("%s ready at %s (%s)", label, baseURL, models[0])
+	if len(models) > 1 {
+		status.Detail = fmt.Sprintf("%s ready at %s (%s +%d more)", label, baseURL, models[0], len(models)-1)
 	}
 	return status
 }

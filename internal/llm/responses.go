@@ -63,13 +63,34 @@ func NewResponsesClient(apiKey string, timeout time.Duration, usage *UsageTracke
 		timeout = 45 * time.Second
 	}
 
-	endpoint := strings.TrimSpace(os.Getenv("OPENAI_BASE_URL"))
-	if endpoint == "" {
-		endpoint = "https://api.openai.com/v1"
+	baseURL := strings.TrimSpace(os.Getenv("OPENAI_BASE_URL"))
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
 	}
-	endpoint = strings.TrimRight(endpoint, "/") + "/responses"
+	return NewResponsesClientWithBaseURLAndHTTPClient(apiKey, baseURL, &http.Client{Timeout: timeout}, usage)
+}
 
-	return NewResponsesClientWithHTTPClient(apiKey, endpoint, &http.Client{Timeout: timeout}, usage)
+func ResponsesEndpointFromBaseURL(baseURL string) string {
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
+	}
+	baseURL = strings.TrimRight(baseURL, "/")
+	if strings.HasSuffix(baseURL, "/responses") {
+		return baseURL
+	}
+	return baseURL + "/responses"
+}
+
+func NewResponsesClientWithBaseURL(apiKey, baseURL string, timeout time.Duration, usage *UsageTracker) *ResponsesClient {
+	if timeout <= 0 {
+		timeout = 45 * time.Second
+	}
+	return NewResponsesClientWithBaseURLAndHTTPClient(apiKey, baseURL, &http.Client{Timeout: timeout}, usage)
+}
+
+func NewResponsesClientWithBaseURLAndHTTPClient(apiKey, baseURL string, httpClient *http.Client, usage *UsageTracker) *ResponsesClient {
+	return NewResponsesClientWithHTTPClient(apiKey, ResponsesEndpointFromBaseURL(baseURL), httpClient, usage)
 }
 
 func NewResponsesClientWithHTTPClient(apiKey, endpoint string, httpClient *http.Client, usage *UsageTracker) *ResponsesClient {

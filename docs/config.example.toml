@@ -1,5 +1,13 @@
 openai_api_key = "sk-your-openai-api-key"
 
+# Leave blank to use MLX defaults:
+# mlx_base_url = "http://127.0.0.1:8080/v1"
+# mlx_api_key = "mlx"
+
+# Leave blank to use Ollama defaults:
+# ollama_base_url = "http://127.0.0.1:11434/v1"
+# ollama_api_key = "ollama"
+
 include_paths = [
   "~/dev/repos",
 ]
