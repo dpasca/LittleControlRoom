@@ -5707,7 +5707,7 @@ func TestRefreshBusyElsewhereCmdSkipsLiveLookupWithoutCachedBusyFlag(t *testing.
 	}
 }
 
-func TestEmbeddedSnapshotHelpersUseCachedSnapshotWhenTrySnapshotIsContended(t *testing.T) {
+func TestEmbeddedSnapshotHelpersFallBackToCachedSnapshotWhenTrySnapshotIsContended(t *testing.T) {
 	approval := &codexapp.ApprovalRequest{
 		ID:       "approval-1",
 		Kind:     codexapp.ApprovalCommandExecution,
@@ -5785,8 +5785,87 @@ func TestEmbeddedSnapshotHelpersUseCachedSnapshotWhenTrySnapshotIsContended(t *t
 	if snapshot, ok := m.codexSnapshotForProject("/tmp/demo"); !ok || snapshot.ThreadID != "thread-demo" {
 		t.Fatalf("codexSnapshotForProject() = (%+v, %v), want cached snapshot", snapshot, ok)
 	}
-	if session.snapshotCalls != 0 || session.trySnapshotCalls != 0 {
-		t.Fatalf("helpers should use cached snapshots without consulting the live session; Snapshot/TrySnapshot calls = %d/%d", session.snapshotCalls, session.trySnapshotCalls)
+	if session.snapshotCalls != 0 || session.trySnapshotCalls != 6 {
+		t.Fatalf("helpers should try the live session first, then fall back to cache; Snapshot/TrySnapshot calls = %d/%d", session.snapshotCalls, session.trySnapshotCalls)
+	}
+}
+
+func TestEmbeddedSnapshotHelpersIgnoreStaleOpenCacheWithoutBackingSession(t *testing.T) {
+	m := Model{
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": {
+				Started:        true,
+				Provider:       codexapp.ProviderClaudeCode,
+				ProjectPath:    "/tmp/demo",
+				ThreadID:       "ses-demo",
+				Status:         "Claude Code session ready",
+				LastActivityAt: time.Date(2026, 4, 4, 10, 30, 0, 0, time.UTC),
+			},
+		},
+	}
+
+	if m.projectHasLiveCodexSession("/tmp/demo") {
+		t.Fatalf("projectHasLiveCodexSession() = true, want false for stale open cache without a backing session")
+	}
+	if snapshot, ok := m.liveCodexSnapshot("/tmp/demo"); ok {
+		t.Fatalf("liveCodexSnapshot() = (%+v, true), want false for stale open cache", snapshot)
+	}
+	if snapshot, ok := m.liveEmbeddedSnapshotForProject("/tmp/demo", codexapp.ProviderClaudeCode); ok {
+		t.Fatalf("liveEmbeddedSnapshotForProject() = (%+v, true), want false for stale open cache", snapshot)
+	}
+	if snapshot, ok := m.codexSnapshotForProject("/tmp/demo"); ok {
+		t.Fatalf("codexSnapshotForProject() = (%+v, true), want false for stale open cache", snapshot)
+	}
+}
+
+func TestEmbeddedSnapshotHelpersPreferFreshSessionSnapshotOverStaleCache(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started:        true,
+			Closed:         true,
+			Provider:       codexapp.ProviderClaudeCode,
+			ProjectPath:    "/tmp/demo",
+			ThreadID:       "ses-demo",
+			Status:         "Claude Code session closed",
+			LastActivityAt: time.Date(2026, 4, 4, 10, 35, 0, 0, time.UTC),
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderClaudeCode,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": {
+				Started:        true,
+				Provider:       codexapp.ProviderClaudeCode,
+				ProjectPath:    "/tmp/demo",
+				ThreadID:       "ses-demo",
+				Status:         "Claude Code session ready",
+				LastActivityAt: time.Date(2026, 4, 4, 10, 30, 0, 0, time.UTC),
+			},
+		},
+	}
+
+	if m.projectHasLiveCodexSession("/tmp/demo") {
+		t.Fatalf("projectHasLiveCodexSession() = true, want false after the live session reports closed")
+	}
+	if snapshot, ok := m.liveCodexSnapshot("/tmp/demo"); ok {
+		t.Fatalf("liveCodexSnapshot() = (%+v, true), want false after the live session reports closed", snapshot)
+	}
+	if snapshot, ok := m.codexSnapshotForProject("/tmp/demo"); !ok || !snapshot.Closed {
+		t.Fatalf("codexSnapshotForProject() = (%+v, %v), want fresh closed snapshot from the live session", snapshot, ok)
+	}
+	if session.trySnapshotCalls == 0 {
+		t.Fatalf("helpers should consult the live session before trusting stale cached data")
 	}
 }
 

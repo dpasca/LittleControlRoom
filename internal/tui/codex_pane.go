@@ -274,14 +274,17 @@ func (m Model) nonBlockingCodexSnapshot(projectPath string) (codexapp.Snapshot, 
 	if projectPath == "" {
 		return codexapp.Snapshot{}, false
 	}
-	if snapshot, ok := m.codexCachedSnapshot(projectPath); ok {
-		return snapshot, true
-	}
 	session, sessionOK := m.codexSession(projectPath)
-	if !sessionOK {
+	if sessionOK {
+		if snapshot, got := session.TrySnapshot(); got {
+			return snapshot, true
+		}
+		if snapshot, ok := m.codexCachedSnapshot(projectPath); ok {
+			return snapshot, true
+		}
 		return codexapp.Snapshot{}, false
 	}
-	if snapshot, got := session.TrySnapshot(); got {
+	if snapshot, ok := m.codexCachedSnapshot(projectPath); ok && snapshot.Closed {
 		return snapshot, true
 	}
 	return codexapp.Snapshot{}, false
