@@ -113,6 +113,9 @@ type Model struct {
 	setupSelected                int
 	setupModelTier               config.ModelTier
 	setupSnapshot                aibackend.Snapshot
+	localModelPickerVisible      bool
+	localModelPickerBackend      config.AIBackend
+	localModelPickerSelected     int
 	settingsMode                 bool
 	settingsSaving               bool
 	settingsFields               []settingsField
@@ -1310,6 +1313,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.codexPickerVisible {
 			return m.updateCodexPickerMode(msg)
 		}
+		if m.localModelPickerVisible {
+			return m.updateLocalBackendModelPickerMode(msg)
+		}
 		if m.ignoredPickerVisible {
 			return m.updateIgnoredPickerMode(msg)
 		}
@@ -1926,7 +1932,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.embeddedModelPrefs = embeddedModelPreferencesFromSettings(msg.settings)
 		m.hideReasoningSections = msg.settings.HideReasoningSections
 		m.settingsMode = false
-		m.status = fmt.Sprintf("Settings saved to %s. Filters, API keys, local endpoints, and Codex launch mode are applying in the background now; the running scheduler keeps its current timing until the next launch of %s.", msg.path, brand.CLIName)
+		m.status = fmt.Sprintf("Settings saved to %s. Filters, API keys, local endpoint/model overrides, and Codex launch mode are applying in the background now; the running scheduler keeps its current timing until the next launch of %s.", msg.path, brand.CLIName)
 		m.rebuildProjectList(selectedPath)
 		cmds := []tea.Cmd{m.applyEditableSettingsCmd(msg.settings), m.refreshSetupSnapshotCmd(false)}
 		if len(m.projects) > 0 {
@@ -2963,6 +2969,9 @@ func (m Model) View() string {
 		body = m.renderRunCommandOverlay(body, layout.width, layout.height)
 	} else if m.setupMode {
 		body = m.renderSetupOverlay(body, layout.width, layout.height)
+		if m.localModelPickerVisible {
+			body = m.renderLocalBackendModelPickerOverlay(body, layout.width, layout.height)
+		}
 	} else if m.settingsMode {
 		body = m.renderSettingsOverlay(body, layout.width, layout.height)
 	} else if m.showPerf {

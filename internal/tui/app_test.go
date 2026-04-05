@@ -13964,8 +13964,8 @@ func TestCommandEnterOpensSettingsMode(t *testing.T) {
 	if got.commandMode {
 		t.Fatalf("command mode should close after /settings")
 	}
-	if len(got.settingsFields) != 14 {
-		t.Fatalf("settings field count = %d, want 14", len(got.settingsFields))
+	if len(got.settingsFields) != 16 {
+		t.Fatalf("settings field count = %d, want 16", len(got.settingsFields))
 	}
 }
 
@@ -14078,6 +14078,32 @@ func TestRenderSetupOptionRowDistinguishesActiveAndReadyBackends(t *testing.T) {
 	}
 }
 
+func TestRenderSetupOptionRowShowsLocalModelSelection(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendMLX
+	settings.MLXModel = "mlx-community/Qwen3.5-9B-MLX-4bit"
+
+	m := Model{
+		settingsBaseline: &settings,
+		setupSnapshot: aibackend.Snapshot{
+			Selected: config.AIBackendMLX,
+			MLX: aibackend.Status{
+				Backend:     config.AIBackendMLX,
+				Label:       "MLX",
+				Ready:       true,
+				Endpoint:    "http://127.0.0.1:8080/v1",
+				Models:      []string{"mlx-community/Qwen3.5-9B-MLX-4bit", "mlx-community/Qwen3.5-4B-MLX-4bit"},
+				ActiveModel: "mlx-community/Qwen3.5-9B-MLX-4bit",
+			},
+		},
+	}
+
+	row := ansi.Strip(m.renderSetupOptionRow(config.AIBackendMLX, true, 120))
+	if !strings.Contains(row, "using mlx-community/Qwen3.5-9B-MLX-4bit") {
+		t.Fatalf("setup row = %q, want configured local model detail", row)
+	}
+}
+
 func TestOpenSetupModeCanPreferReadyClaudeBackend(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.AIBackend = config.AIBackendOpenAIAPI
@@ -14185,6 +14211,77 @@ func TestRenderSetupHintExplainsClaudeHaikuDefault(t *testing.T) {
 	hint := ansi.Strip(m.renderSetupHint(96))
 	if !strings.Contains(hint, "Haiku") {
 		t.Fatalf("renderSetupHint() = %q, want Haiku guidance", hint)
+	}
+}
+
+func TestRenderSetupHintExplainsLocalModelPicker(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendMLX
+
+	m := Model{
+		settingsBaseline: &settings,
+		setupSelected:    mSetupSelectionForTest(config.AIBackendMLX),
+		setupSnapshot: aibackend.Snapshot{
+			Selected: config.AIBackendMLX,
+			MLX: aibackend.Status{
+				Backend:     config.AIBackendMLX,
+				Label:       "MLX",
+				Ready:       true,
+				Endpoint:    "http://127.0.0.1:8080/v1",
+				Models:      []string{"mlx-community/Qwen3.5-9B-MLX-4bit"},
+				ActiveModel: "mlx-community/Qwen3.5-9B-MLX-4bit",
+			},
+		},
+	}
+
+	hint := ansi.Strip(m.renderSetupHint(120))
+	if !strings.Contains(hint, "Press m to pin a discovered") || !strings.Contains(hint, "model or s to edit endpoint") {
+		t.Fatalf("renderSetupHint() = %q, want local model picker guidance", hint)
+	}
+	if !strings.Contains(hint, "Qwen3.5-9B-MLX-4bit") {
+		t.Fatalf("renderSetupHint() = %q, want current discovered model", hint)
+	}
+}
+
+func TestSetupLocalModelPickerUpdatesBaseline(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendMLX
+
+	m := Model{
+		setupMode:        true,
+		settingsBaseline: &settings,
+		setupSelected:    mSetupSelectionForTest(config.AIBackendMLX),
+		setupSnapshot: aibackend.Snapshot{
+			Selected: config.AIBackendMLX,
+			MLX: aibackend.Status{
+				Backend:     config.AIBackendMLX,
+				Label:       "MLX",
+				Ready:       true,
+				Endpoint:    "http://127.0.0.1:8080/v1",
+				Models:      []string{"mlx-community/Qwen3.5-9B-MLX-4bit", "mlx-community/Qwen3.5-4B-MLX-4bit"},
+				ActiveModel: "mlx-community/Qwen3.5-9B-MLX-4bit",
+			},
+		},
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("m")})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("opening the local model picker should not return a command")
+	}
+	if !got.localModelPickerVisible {
+		t.Fatalf("local model picker should be visible after pressing m in setup")
+	}
+
+	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if got.localModelPickerVisible {
+		t.Fatalf("local model picker should close after choosing a model")
+	}
+	if got.currentSettingsBaseline().MLXModel != "mlx-community/Qwen3.5-9B-MLX-4bit" {
+		t.Fatalf("saved local model = %q, want first discovered model after selecting row 1", got.currentSettingsBaseline().MLXModel)
 	}
 }
 
@@ -14786,7 +14883,7 @@ func TestSettingsEnterSavesConfigAndClosesModal(t *testing.T) {
 	if saved.settingsMode {
 		t.Fatalf("settings mode should close after a successful save")
 	}
-	if !strings.Contains(saved.status, "Filters, API keys, local endpoints, and Codex launch mode are applying in the background now") {
+	if !strings.Contains(saved.status, "Filters, API keys, local endpoint/model overrides, and Codex launch mode are applying in the background now") {
 		t.Fatalf("status = %q, want immediate-apply notice", saved.status)
 	}
 
@@ -15033,7 +15130,7 @@ func TestSettingsSavedMsgAppliesProjectNameFilterImmediately(t *testing.T) {
 	if len(got.projects) != 1 || got.projects[0].Name != "visible-demo" {
 		t.Fatalf("visible projects after settingsSavedMsg = %#v, want only visible-demo", got.projects)
 	}
-	if !strings.Contains(got.status, "Filters, API keys, local endpoints, and Codex launch mode are applying in the background now") {
+	if !strings.Contains(got.status, "Filters, API keys, local endpoint/model overrides, and Codex launch mode are applying in the background now") {
 		t.Fatalf("status = %q, want immediate-apply notice", got.status)
 	}
 }

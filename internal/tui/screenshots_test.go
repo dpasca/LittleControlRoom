@@ -257,8 +257,10 @@ func TestScreenshotSettingsRendersLocalBackendFields(t *testing.T) {
 	settings.AIBackend = config.AIBackendMLX
 	settings.MLXBaseURL = "http://127.0.0.1:8080/v1"
 	settings.MLXAPIKey = "mlx"
+	settings.MLXModel = "mlx-community/Qwen3.5-9B-MLX-4bit"
 	settings.OllamaBaseURL = "http://127.0.0.1:11434/v1"
 	settings.OllamaAPIKey = "ollama"
+	settings.OllamaModel = "qwen3.5:latest"
 
 	m := Model{
 		width:        112,
@@ -287,10 +289,14 @@ func TestScreenshotSettingsRendersLocalBackendFields(t *testing.T) {
 		"AI backend: MLX",
 		"MLX base URL",
 		"MLX API key",
+		"MLX model",
 		"Ollama base URL",
 		"Ollama API key",
+		"Ollama model",
 		"http://127.0.0.1:8080/v1",
 		"http://127.0.0.1:11434/v1",
+		"mlx-community/Qwen3.5-9B-MLX-4bit",
+		"qwen3.5:latest",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("settings screenshot render missing %q: %q", want, rendered)

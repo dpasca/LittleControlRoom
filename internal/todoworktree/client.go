@@ -72,10 +72,14 @@ func NewOpenAIClientWithUsageTracker(apiKey string, usage *llm.UsageTracker) *Op
 	}
 }
 
-func NewOpenAICompatibleClientWithUsageTracker(baseURL, apiKey string, usage *llm.UsageTracker) *OpenAIClient {
+func NewOpenAICompatibleClientWithUsageTracker(baseURL, apiKey, preferredModel string, usage *llm.UsageTracker) *OpenAIClient {
+	model := strings.TrimSpace(preferredModel)
+	if model == "" {
+		model = strings.TrimSpace(os.Getenv(brand.SessionClassifierModelEnvVar))
+	}
 	return &OpenAIClient{
-		model:     configuredModel(""),
-		responses: llm.NewOpenAICompatibleResponsesRunner(baseURL, apiKey, configuredModel(""), suggestionHTTPTimeout, usage),
+		model:     model,
+		responses: llm.NewOpenAICompatibleResponsesRunner(baseURL, apiKey, model, suggestionHTTPTimeout, usage),
 	}
 }
 

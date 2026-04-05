@@ -26,6 +26,9 @@ type Status struct {
 	Ready         bool
 	Detail        string
 	LoginHint     string
+	Endpoint      string
+	Models        []string
+	ActiveModel   string
 }
 
 type Snapshot struct {
@@ -230,9 +233,10 @@ func detectOpenAICompatibleLocal(ctx context.Context, cfg config.AppConfig, back
 	baseURL := cfg.OpenAICompatibleBaseURL(backend)
 	label := backend.Label()
 	status := Status{
-		Backend: backend,
-		Label:   label,
-		Detail:  label + " local server is not reachable.",
+		Backend:  backend,
+		Label:    label,
+		Endpoint: baseURL,
+		Detail:   label + " local server is not reachable.",
 	}
 	if baseURL == "" {
 		status.LoginHint = "Open /settings and save a base URL for " + label + "."
@@ -247,16 +251,33 @@ func detectOpenAICompatibleLocal(ctx context.Context, cfg config.AppConfig, back
 		return status
 	}
 	models := discovery.Models()
+	status.Models = append([]string(nil), models...)
 	if len(models) == 0 {
 		status.Detail = fmt.Sprintf("%s server at %s returned no models.", label, baseURL)
 		return status
 	}
 
 	status.Authenticated = true
+	configuredModel := strings.TrimSpace(cfg.OpenAICompatibleModel(backend))
+	if configuredModel != "" {
+		for _, model := range models {
+			if strings.EqualFold(strings.TrimSpace(model), configuredModel) {
+				status.Ready = true
+				status.ActiveModel = model
+				status.Detail = fmt.Sprintf("%s ready at %s (using %s)", label, baseURL, model)
+				return status
+			}
+		}
+		status.Detail = fmt.Sprintf("%s ready at %s, but configured model %s was not returned by /v1/models.", label, baseURL, configuredModel)
+		status.LoginHint = "Press m in /setup to pick a discovered model, or clear the saved override in /settings."
+		return status
+	}
+
 	status.Ready = true
-	status.Detail = fmt.Sprintf("%s ready at %s (%s)", label, baseURL, models[0])
+	status.ActiveModel = models[0]
+	status.Detail = fmt.Sprintf("%s ready at %s (auto %s)", label, baseURL, models[0])
 	if len(models) > 1 {
-		status.Detail = fmt.Sprintf("%s ready at %s (%s +%d more)", label, baseURL, models[0], len(models)-1)
+		status.Detail = fmt.Sprintf("%s ready at %s (auto %s +%d more)", label, baseURL, models[0], len(models)-1)
 	}
 	return status
 }

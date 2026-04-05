@@ -83,8 +83,11 @@ func NewOpenAICommitMessageClientWithUsageTracker(apiKey string, usage *llm.Usag
 	}
 }
 
-func NewOpenAICompatibleCommitMessageClientWithUsageTracker(baseURL, apiKey string, usage *llm.UsageTracker) *OpenAICommitMessageClient {
-	model := strings.TrimSpace(os.Getenv(brand.CommitModelEnvVar))
+func NewOpenAICompatibleCommitMessageClientWithUsageTracker(baseURL, apiKey, preferredModel string, usage *llm.UsageTracker) *OpenAICommitMessageClient {
+	model := strings.TrimSpace(preferredModel)
+	if model == "" {
+		model = strings.TrimSpace(os.Getenv(brand.CommitModelEnvVar))
+	}
 	return &OpenAICommitMessageClient{
 		model:     model,
 		responses: llm.NewOpenAICompatibleResponsesRunner(baseURL, apiKey, model, 45*time.Second, usage),

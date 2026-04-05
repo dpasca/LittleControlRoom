@@ -1,9 +1,12 @@
 package tui
 
 import (
+	"fmt"
+	"os"
 	"strings"
 
 	"lcroom/internal/aibackend"
+	"lcroom/internal/brand"
 	"lcroom/internal/config"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -19,6 +22,7 @@ func (m *Model) openSetupMode() tea.Cmd {
 	m.showHelp = false
 	m.err = nil
 	m.setupSaving = false
+	m.localModelPickerVisible = false
 	m.setupSelected = m.setupSelectionForBackend(m.recommendedSetupBackend())
 	tier, _ := config.ParseModelTier(m.currentSettingsBaseline().OpenCodeModelTier)
 	m.setupModelTier = tier
@@ -38,6 +42,7 @@ func (m *Model) closeSetupMode(status string) {
 	m.setupMode = false
 	m.setupLoading = false
 	m.setupSaving = false
+	m.localModelPickerVisible = false
 	if status != "" {
 		m.status = status
 	}
@@ -100,6 +105,10 @@ func (m Model) updateSetupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			settings.AIBackend = selected
 		}
 		return m, m.openSettingsModeWithBaseline(settings)
+	case "m":
+		if isLocalBackendModelPickerBackend(m.setupSelectedBackend()) {
+			return m.openLocalBackendModelPicker()
+		}
 	case "enter":
 		return m.activateSetupSelection()
 	}
@@ -263,7 +272,7 @@ func (m Model) renderSetupOptionRow(backend config.AIBackend, selected bool, wid
 	if status.Ready || backend == m.setupCurrentBackend() {
 		detailStyle = detailValueStyle
 	}
-	detailText := status.Detail
+	detailText := m.setupOptionDetail(backend, status)
 	if backend.SupportsModelTier() && selected {
 		tierHint := " [T: " + string(m.setupModelTier) + "]"
 		if len(detailText)+len(tierHint) < detailWidth {
@@ -297,16 +306,16 @@ func (m Model) renderSetupHint(width int) string {
 		hint = "Disable AI features completely. Little Control Room keeps working, but summaries, classifications, and commit help stay off until you run /setup again."
 	}
 	if m.setupSelectedBackend().SupportsModelTier() && selectedStatus.Ready {
-		hint = "OpenCode will use " + string(m.setupModelTier) + " tier models for summaries. Press T to cycle: free → cheap → balanced."
+		hint = "OpenCode will use " + string(m.setupModelTier) + " tier models for summaries. Press t to cycle: free → cheap → balanced."
 	}
 	if m.setupSelectedBackend() == config.AIBackendClaude && selectedStatus.Ready {
 		hint = "Claude Code will default to the Haiku alias for these background tasks to keep usage lighter."
 	}
 	if m.setupSelectedBackend() == config.AIBackendMLX {
-		hint = "MLX uses an OpenAI-compatible local server. The default URL is http://127.0.0.1:8080/v1 and /settings lets you override it."
+		hint = m.localBackendSetupHint(config.AIBackendMLX, selectedStatus)
 	}
 	if m.setupSelectedBackend() == config.AIBackendOllama {
-		hint = "Ollama uses its OpenAI-compatible endpoint at http://127.0.0.1:11434/v1 by default. Use /settings if your port or API key differs."
+		hint = m.localBackendSetupHint(config.AIBackendOllama, selectedStatus)
 	}
 	if selectedStatus.LoginHint != "" && !selectedStatus.Ready {
 		hint = selectedStatus.LoginHint
@@ -317,14 +326,97 @@ func (m Model) renderSetupHint(width int) string {
 func (m Model) renderSetupActions() string {
 	actions := []string{
 		renderDialogAction("Enter", "choose", commitActionKeyStyle, commitActionTextStyle),
-		renderDialogAction("R", "refresh", navigateActionKeyStyle, navigateActionTextStyle),
-		renderDialogAction("S", "settings", pushActionKeyStyle, pushActionTextStyle),
+		renderDialogAction("r", "refresh", navigateActionKeyStyle, navigateActionTextStyle),
+		renderDialogAction("s", "settings", pushActionKeyStyle, pushActionTextStyle),
 		renderDialogAction("Esc", "continue", cancelActionKeyStyle, cancelActionTextStyle),
+	}
+	if isLocalBackendModelPickerBackend(m.setupSelectedBackend()) {
+		actions = append(actions[:2], append([]string{
+			renderDialogAction("m", "model", navigateActionKeyStyle, navigateActionTextStyle),
+		}, actions[2:]...)...)
 	}
 	if m.setupSelectedBackend().SupportsModelTier() {
 		actions = append(actions[:3], append([]string{
-			renderDialogAction("T", "tier", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("t", "tier", navigateActionKeyStyle, navigateActionTextStyle),
 		}, actions[3:]...)...)
 	}
 	return strings.Join(actions, "   ")
+}
+
+func (m Model) setupOptionDetail(backend config.AIBackend, status aibackend.Status) string {
+	if !isLocalBackendModelPickerBackend(backend) {
+		return status.Detail
+	}
+
+	models := localBackendPickerModels(status.Models)
+	if len(models) == 0 {
+		return status.Detail
+	}
+
+	selectedModel := strings.TrimSpace(m.currentSettingsBaseline().OpenAICompatibleModel(backend))
+	endpoint := strings.TrimSpace(status.Endpoint)
+	if selectedModel != "" {
+		if localBackendModelExists(selectedModel, models) {
+			if endpoint != "" {
+				return fmt.Sprintf("using %s @ %s", selectedModel, endpoint)
+			}
+			return "using " + selectedModel
+		}
+		return fmt.Sprintf("configured %s (server offers %s)", selectedModel, summarizeLocalBackendModels(models))
+	}
+
+	if endpoint != "" {
+		return fmt.Sprintf("auto %s @ %s", firstString(models), endpoint)
+	}
+	return "auto " + firstString(models)
+}
+
+func (m Model) localBackendSetupHint(backend config.AIBackend, status aibackend.Status) string {
+	endpoint := strings.TrimSpace(status.Endpoint)
+	if endpoint == "" {
+		endpoint = config.Default().OpenAICompatibleBaseURL(backend)
+	}
+	models := localBackendPickerModels(status.Models)
+	selectedModel := strings.TrimSpace(m.currentSettingsBaseline().OpenAICompatibleModel(backend))
+	if selectedModel != "" && localBackendModelExists(selectedModel, models) {
+		return fmt.Sprintf("%s will use %s for background AI tasks. Press m to pick another discovered model, or s to edit endpoint and manual settings.%s", backend.Label(), selectedModel, localBackendEnvOverrideNotice())
+	}
+	if len(models) == 0 {
+		return fmt.Sprintf("%s uses an OpenAI-compatible local server at %s. Press r after the server is running, then m to pick a model.", backend.Label(), endpoint)
+	}
+	return fmt.Sprintf("%s will auto-use %s from %s. Press m to pin a discovered model or s to edit endpoint and manual settings.%s", backend.Label(), firstString(models), endpoint, localBackendEnvOverrideNotice())
+}
+
+func summarizeLocalBackendModels(models []string) string {
+	if len(models) == 0 {
+		return "no models"
+	}
+	if len(models) == 1 {
+		return models[0]
+	}
+	return fmt.Sprintf("%s +%d more", models[0], len(models)-1)
+}
+
+func localBackendModelExists(target string, models []string) bool {
+	target = strings.TrimSpace(target)
+	for _, model := range models {
+		if strings.EqualFold(strings.TrimSpace(model), target) {
+			return true
+		}
+	}
+	return false
+}
+
+func localBackendEnvOverrideNotice() string {
+	var names []string
+	if strings.TrimSpace(os.Getenv(brand.SessionClassifierModelEnvVar)) != "" {
+		names = append(names, brand.SessionClassifierModelEnvVar)
+	}
+	if strings.TrimSpace(os.Getenv(brand.CommitModelEnvVar)) != "" {
+		names = append(names, brand.CommitModelEnvVar)
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	return " Env overrides are set via " + strings.Join(names, " and ") + "."
 }
