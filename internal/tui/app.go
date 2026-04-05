@@ -406,6 +406,8 @@ type setupSnapshotMsg struct {
 	openOnStartup bool
 }
 
+type editableSettingsAppliedMsg struct{}
+
 type privacyModeSavedMsg struct {
 	privacyMode bool
 	path        string
@@ -1913,9 +1915,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.reportError("Settings save failed", msg.err, "")
 			return m, nil
 		}
-		if m.svc != nil {
-			m.svc.ApplyEditableSettings(msg.settings)
-		}
 		selectedPath := ""
 		if p, ok := m.selectedProject(); ok {
 			selectedPath = p.Path
@@ -1927,9 +1926,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.embeddedModelPrefs = embeddedModelPreferencesFromSettings(msg.settings)
 		m.hideReasoningSections = msg.settings.HideReasoningSections
 		m.settingsMode = false
-		m.status = fmt.Sprintf("Settings saved to %s. Filters, API keys, local endpoints, and Codex launch mode apply now; the running scheduler keeps its current timing until the next launch of %s.", msg.path, brand.CLIName)
+		m.status = fmt.Sprintf("Settings saved to %s. Filters, API keys, local endpoints, and Codex launch mode are applying in the background now; the running scheduler keeps its current timing until the next launch of %s.", msg.path, brand.CLIName)
 		m.rebuildProjectList(selectedPath)
-		cmds := []tea.Cmd{m.refreshSetupSnapshotCmd(false)}
+		cmds := []tea.Cmd{m.applyEditableSettingsCmd(msg.settings), m.refreshSetupSnapshotCmd(false)}
 		if len(m.projects) > 0 {
 			m.syncDetailViewport(false)
 			cmds = append(cmds, m.requestSelectedProjectDetailViewCmd())
@@ -1945,16 +1944,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.reportError("AI setup save failed", msg.err, "")
 			return m, nil
 		}
-		if m.svc != nil {
-			m.svc.ApplyEditableSettings(msg.settings)
-		}
 		saved := cloneEditableSettings(msg.settings)
 		m.settingsBaseline = &saved
 		m.embeddedModelPrefs = embeddedModelPreferencesFromSettings(msg.settings)
 		m.setupSnapshot.Selected = msg.settings.AIBackend
 		m.setupMode = false
 		m.status = fmt.Sprintf("AI setup saved to %s. %s is now selected.", msg.path, msg.settings.AIBackend.Label())
-		return m, m.refreshSetupSnapshotCmd(false)
+		return m, tea.Batch(m.applyEditableSettingsCmd(msg.settings), m.refreshSetupSnapshotCmd(false))
+	case editableSettingsAppliedMsg:
+		return m, nil
 	case embeddedModelPreferencesSavedMsg:
 		if msg.err != nil {
 			m.reportError("Embedded model updated for this run; config save failed", msg.err, "")
@@ -2139,10 +2137,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case events.ClassificationUpdated:
 			if msg.Payload["status"] == "completed" {
 				m.markAssessmentFlash(msg.ProjectPath, msg.At)
+			} else if msg.Payload["status"] == "failed" {
+				m.appendBackgroundErrorLogEntry("Assessment failed", classificationUpdateError(msg.Payload), msg.ProjectPath)
 			}
 			cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectData(msg.ProjectPath)))
 			return m, batchCmds(cmds...)
 		case events.ProjectChanged, events.ActionApplied:
+			if msg.Payload["action"] == "todo_worktree_suggestion_failed" {
+				m.appendBackgroundErrorLogEntry("TODO worktree suggestion failed", todoSuggestionEventError(msg.Payload), msg.ProjectPath)
+			}
 			if strings.TrimSpace(msg.ProjectPath) != "" {
 				cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectData(msg.ProjectPath)))
 			} else {
@@ -5525,6 +5528,50 @@ func classificationFailureText(classification *model.SessionClassification) stri
 		return label
 	}
 	return label + ": " + classification.LastError
+}
+
+func (m *Model) appendBackgroundErrorLogEntry(status string, err error, projectPath string) {
+	if err == nil {
+		return
+	}
+	m.appendErrorLogEntry(status, err, projectPath)
+}
+
+func classificationUpdateError(payload map[string]string) error {
+	errText := strings.TrimSpace(payload["error"])
+	if errText == "" {
+		return nil
+	}
+	err := errors.New(errText)
+	if modelName := strings.TrimSpace(payload["model"]); modelName != "" {
+		err = fmt.Errorf("model %s: %w", modelName, err)
+	}
+	if stage := humanizeStatusToken(payload["stage"]); stage != "" {
+		err = fmt.Errorf("classification stage %s: %w", stage, err)
+	}
+	return err
+}
+
+func todoSuggestionEventError(payload map[string]string) error {
+	errText := strings.TrimSpace(payload["error"])
+	if errText == "" {
+		return nil
+	}
+	err := errors.New(errText)
+	if modelName := strings.TrimSpace(payload["model"]); modelName != "" {
+		err = fmt.Errorf("model %s: %w", modelName, err)
+	}
+	return err
+}
+
+func humanizeStatusToken(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	value = strings.ReplaceAll(value, "_", " ")
+	value = strings.ReplaceAll(value, "-", " ")
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func activityDisplayStyle(project model.ProjectSummary) lipgloss.Style {

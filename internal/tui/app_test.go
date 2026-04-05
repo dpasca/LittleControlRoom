@@ -14786,7 +14786,7 @@ func TestSettingsEnterSavesConfigAndClosesModal(t *testing.T) {
 	if saved.settingsMode {
 		t.Fatalf("settings mode should close after a successful save")
 	}
-	if !strings.Contains(saved.status, "Filters, API keys, local endpoints, and Codex launch mode apply now") {
+	if !strings.Contains(saved.status, "Filters, API keys, local endpoints, and Codex launch mode are applying in the background now") {
 		t.Fatalf("status = %q, want immediate-apply notice", saved.status)
 	}
 
@@ -15033,8 +15033,112 @@ func TestSettingsSavedMsgAppliesProjectNameFilterImmediately(t *testing.T) {
 	if len(got.projects) != 1 || got.projects[0].Name != "visible-demo" {
 		t.Fatalf("visible projects after settingsSavedMsg = %#v, want only visible-demo", got.projects)
 	}
-	if !strings.Contains(got.status, "Filters, API keys, local endpoints, and Codex launch mode apply now") {
+	if !strings.Contains(got.status, "Filters, API keys, local endpoints, and Codex launch mode are applying in the background now") {
 		t.Fatalf("status = %q, want immediate-apply notice", got.status)
+	}
+}
+
+func TestApplyEditableSettingsCmdReturnsCompletionMsg(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	m := Model{svc: svc}
+
+	cmd := m.applyEditableSettingsCmd(config.EditableSettingsFromAppConfig(config.Default()))
+	if cmd == nil {
+		t.Fatal("applyEditableSettingsCmd() should return a command when the service is available")
+	}
+	msg := cmd()
+	if _, ok := msg.(editableSettingsAppliedMsg); !ok {
+		t.Fatalf("cmd() returned %T, want editableSettingsAppliedMsg", msg)
+	}
+}
+
+func TestBusClassificationFailureAddsErrorLogEntry(t *testing.T) {
+	m := Model{
+		nowFn: func() time.Time {
+			return time.Date(2026, 4, 5, 12, 0, 0, 0, time.UTC)
+		},
+		allProjects: []model.ProjectSummary{{
+			Name: "demo",
+			Path: "/tmp/demo",
+		}},
+	}
+
+	updated, cmd := m.Update(busMsg(events.Event{
+		Type:        events.ClassificationUpdated,
+		At:          time.Date(2026, 4, 5, 11, 59, 0, 0, time.UTC),
+		ProjectPath: "/tmp/demo",
+		Payload: map[string]string{
+			"status": "failed",
+			"stage":  "waiting_for_model",
+			"model":  "mlx-community/Qwen3.5-9B-MLX-4bit",
+			"error":  "connection refused",
+		},
+	}))
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("classification update should continue waiting on the bus")
+	}
+	if len(got.errorLogEntries) != 1 {
+		t.Fatalf("error log count = %d, want 1", len(got.errorLogEntries))
+	}
+	entry := got.errorLogEntries[0]
+	if entry.Status != "Assessment failed" {
+		t.Fatalf("error log status = %q, want %q", entry.Status, "Assessment failed")
+	}
+	if entry.Message != "classification stage waiting for model: model mlx-community/Qwen3.5-9B-MLX-4bit: connection refused" {
+		t.Fatalf("error log message = %q", entry.Message)
+	}
+	if entry.RootCause != "connection refused" {
+		t.Fatalf("error log root cause = %q, want %q", entry.RootCause, "connection refused")
+	}
+	if len(entry.Context) != 2 || entry.Context[0] != "classification stage waiting for model" || entry.Context[1] != "model mlx-community/Qwen3.5-9B-MLX-4bit" {
+		t.Fatalf("error log context = %#v", entry.Context)
+	}
+}
+
+func TestBusTodoSuggestionFailureAddsErrorLogEntry(t *testing.T) {
+	m := Model{
+		nowFn: func() time.Time {
+			return time.Date(2026, 4, 5, 12, 0, 0, 0, time.UTC)
+		},
+		allProjects: []model.ProjectSummary{{
+			Name: "demo",
+			Path: "/tmp/demo",
+		}},
+	}
+
+	updated, cmd := m.Update(busMsg(events.Event{
+		Type:        events.ActionApplied,
+		At:          time.Date(2026, 4, 5, 11, 59, 0, 0, time.UTC),
+		ProjectPath: "/tmp/demo",
+		Payload: map[string]string{
+			"action": "todo_worktree_suggestion_failed",
+			"model":  "mlx-community/Qwen3.5-9B-MLX-4bit",
+			"error":  "EOF while reading response body",
+		},
+	}))
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("todo suggestion failure should continue waiting on the bus")
+	}
+	if len(got.errorLogEntries) != 1 {
+		t.Fatalf("error log count = %d, want 1", len(got.errorLogEntries))
+	}
+	entry := got.errorLogEntries[0]
+	if entry.Status != "TODO worktree suggestion failed" {
+		t.Fatalf("error log status = %q, want %q", entry.Status, "TODO worktree suggestion failed")
+	}
+	if entry.RootCause != "EOF while reading response body" {
+		t.Fatalf("error log root cause = %q", entry.RootCause)
+	}
+	if len(entry.Context) != 1 || entry.Context[0] != "model mlx-community/Qwen3.5-9B-MLX-4bit" {
+		t.Fatalf("error log context = %#v", entry.Context)
 	}
 }
 

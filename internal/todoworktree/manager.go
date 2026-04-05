@@ -176,7 +176,7 @@ func (m *Manager) processOne(ctx context.Context) error {
 	result, err := client.Suggest(ctx, request)
 	if err != nil {
 		_, _ = m.store.FailTodoWorktreeSuggestion(ctx, suggestion, err.Error())
-		m.publish(detail.Summary.Path, "todo_worktree_suggestion_failed", suggestion.TodoID, modelName)
+		m.publish(detail.Summary.Path, "todo_worktree_suggestion_failed", suggestion.TodoID, modelName, err.Error())
 		return nil
 	}
 
@@ -191,8 +191,9 @@ func (m *Manager) processOne(ctx context.Context) error {
 	suggestion.Model = strings.TrimSpace(result.Model)
 
 	if suggestion.BranchName == "" || suggestion.WorktreeSuffix == "" {
-		_, _ = m.store.FailTodoWorktreeSuggestion(ctx, suggestion, "todo worktree suggester returned unusable names")
-		m.publish(detail.Summary.Path, "todo_worktree_suggestion_failed", suggestion.TodoID, modelName)
+		lastError := "todo worktree suggester returned unusable names"
+		_, _ = m.store.FailTodoWorktreeSuggestion(ctx, suggestion, lastError)
+		m.publish(detail.Summary.Path, "todo_worktree_suggestion_failed", suggestion.TodoID, modelName, lastError)
 		return nil
 	}
 
@@ -201,12 +202,12 @@ func (m *Manager) processOne(ctx context.Context) error {
 		return err
 	}
 	if completed {
-		m.publish(detail.Summary.Path, "todo_worktree_suggestion_ready", suggestion.TodoID, suggestion.Model)
+		m.publish(detail.Summary.Path, "todo_worktree_suggestion_ready", suggestion.TodoID, suggestion.Model, "")
 	}
 	return nil
 }
 
-func (m *Manager) publish(projectPath, action string, todoID int64, modelName string) {
+func (m *Manager) publish(projectPath, action string, todoID int64, modelName, lastError string) {
 	if m == nil || m.bus == nil {
 		return
 	}
@@ -216,6 +217,9 @@ func (m *Manager) publish(projectPath, action string, todoID int64, modelName st
 	}
 	if strings.TrimSpace(modelName) != "" {
 		payload["model"] = strings.TrimSpace(modelName)
+	}
+	if strings.TrimSpace(lastError) != "" {
+		payload["error"] = strings.TrimSpace(lastError)
 	}
 	m.bus.Publish(events.Event{
 		Type:        events.ActionApplied,

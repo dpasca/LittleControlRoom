@@ -207,6 +207,19 @@ func (m Model) saveSettingsCmd(settings config.EditableSettings) tea.Cmd {
 	}
 }
 
+func (m Model) applyEditableSettingsCmd(settings config.EditableSettings) tea.Cmd {
+	if m.svc == nil {
+		return nil
+	}
+	saved := cloneEditableSettings(settings)
+	return func() tea.Msg {
+		// Apply service-side AI client reconfiguration off the Bubble Tea update
+		// path so local backend probing cannot stall the UI thread.
+		m.svc.ApplyEditableSettings(saved)
+		return editableSettingsAppliedMsg{}
+	}
+}
+
 func (m Model) saveEmbeddedModelPreferencesCmd() tea.Cmd {
 	baseline := m.currentSettingsBaseline()
 	settings := baseline

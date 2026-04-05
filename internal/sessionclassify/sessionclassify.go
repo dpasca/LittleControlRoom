@@ -493,8 +493,17 @@ func (m *Manager) publishClassificationEvent(ctx context.Context, classification
 		"session":  classification.ExternalID(),
 		"category": string(classification.Category),
 	}
+	if classification.Stage != "" {
+		payload["stage"] = string(classification.Stage)
+	}
+	if strings.TrimSpace(classification.Model) != "" {
+		payload["model"] = strings.TrimSpace(classification.Model)
+	}
 	if classification.Summary != "" {
 		payload["summary"] = classification.Summary
+	}
+	if state == "failed" && strings.TrimSpace(classification.LastError) != "" {
+		payload["error"] = strings.TrimSpace(classification.LastError)
 	}
 	if m.bus != nil {
 		m.bus.Publish(events.Event{
@@ -509,8 +518,17 @@ func (m *Manager) publishClassificationEvent(ctx context.Context, classification
 	if classification.Category != "" {
 		eventPayload = fmt.Sprintf("%s category=%s", eventPayload, classification.Category)
 	}
+	if classification.Stage != "" {
+		eventPayload = fmt.Sprintf("%s stage=%s", eventPayload, classification.Stage)
+	}
+	if strings.TrimSpace(classification.Model) != "" {
+		eventPayload = fmt.Sprintf("%s model=%s", eventPayload, strings.TrimSpace(classification.Model))
+	}
 	if classification.Summary != "" {
 		eventPayload = fmt.Sprintf("%s summary=%s", eventPayload, classification.Summary)
+	}
+	if state == "failed" && strings.TrimSpace(classification.LastError) != "" {
+		eventPayload = fmt.Sprintf("%s error=%s", eventPayload, strings.TrimSpace(classification.LastError))
 	}
 	_ = m.store.AddEvent(ctx, model.StoredEvent{
 		At:          now,
