@@ -63,6 +63,31 @@ On the first run, LCR opens `/setup` if no AI backend is configured. From there 
   </a>
 </p>
 
+## Background AI Backends
+
+LCR separates embedded session providers from the backend used for background work such as summaries, classification, commit help, and TODO worktree suggestions.
+
+- Embedded sessions today are Codex, OpenCode, and Claude Code.
+- Background AI can run through Codex, OpenCode, Claude Code, MLX, Ollama, or a direct OpenAI API key.
+- MLX and Ollama use OpenAI-compatible local endpoints, so they fit into the same background inference path without a separate integration surface.
+
+For local inference, the practical setup is:
+
+- Pick `MLX` or `Ollama` in `/setup`.
+- Leave the endpoint fields blank in `/settings` if you want the defaults.
+- Or override them in `/settings` if your local server runs elsewhere.
+
+Default local endpoints:
+
+- MLX: `http://127.0.0.1:8080/v1`
+- Ollama: `http://127.0.0.1:11434/v1`
+
+<p align="center">
+  <a href="docs/screenshots/settings-local-backends.png">
+    <img src="docs/screenshots/settings-local-backends.png" alt="Little Control Room settings screen showing MLX and Ollama local endpoint fields" width="850">
+  </a>
+</p>
+
 ## Slash Commands
 
 The main TUI command palette opens with `/`.

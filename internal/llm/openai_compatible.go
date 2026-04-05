@@ -183,6 +183,19 @@ func (r *AutoModelRunner) RunJSONSchema(ctx context.Context, req JSONSchemaReque
 		return JSONSchemaResponse{}, errors.New("auto model runner could not resolve a model")
 	}
 	req.Model = model
+	response, err := r.baseRunner.RunJSONSchema(ctx, req)
+	if err == nil {
+		return response, nil
+	}
+	var httpErr *HTTPStatusError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusNotFound || r.discovery == nil {
+		return JSONSchemaResponse{}, err
+	}
+	discovered, discoverErr := r.discovery.FirstModel(ctx)
+	if discoverErr != nil || discovered == "" || strings.EqualFold(discovered, req.Model) {
+		return JSONSchemaResponse{}, err
+	}
+	req.Model = discovered
 	return r.baseRunner.RunJSONSchema(ctx, req)
 }
 

@@ -185,6 +185,23 @@ func GenerateScreenshots(ctx context.Context, svc *service.Service, cfg config.S
 	setupModel.status = "Choose how Little Control Room should run AI summaries, classifications, and commit help."
 	assets = append(assets, screenshotAsset("setup", "Setup", setupModel.View(), cfg))
 
+	settingsModel, err := buildScreenshotDashboardModel(ctx, svc, data, filtered, selectedProject.Path, cfg, now)
+	if err != nil {
+		return ScreenshotReport{}, err
+	}
+	localSettings := config.EditableSettingsFromAppConfig(config.Default())
+	localSettings.AIBackend = config.AIBackendMLX
+	localSettings.MLXBaseURL = "http://127.0.0.1:8080/v1"
+	localSettings.MLXAPIKey = "mlx"
+	localSettings.OllamaBaseURL = "http://127.0.0.1:11434/v1"
+	localSettings.OllamaAPIKey = "ollama"
+	settingsModel.settingsMode = true
+	settingsModel.settingsFields = newSettingsFields(localSettings)
+	settingsModel.settingsSelected = settingsFieldMLXBaseURL
+	settingsModel.settingsBaseline = &localSettings
+	settingsModel.status = "Editing settings. Enter to save, Esc to cancel"
+	assets = append(assets, screenshotAsset("settings-local-backends", "Settings - Local Backends", settingsModel.View(), cfg))
+
 	report := ScreenshotReport{
 		Assets:                assets,
 		MatchedProjects:       screenshotProjectLabels(filtered),

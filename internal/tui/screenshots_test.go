@@ -250,6 +250,54 @@ func TestScreenshotSetupRendersBackendChoicesAndHaikuHint(t *testing.T) {
 	}
 }
 
+func TestScreenshotSettingsRendersLocalBackendFields(t *testing.T) {
+	t.Parallel()
+
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendMLX
+	settings.MLXBaseURL = "http://127.0.0.1:8080/v1"
+	settings.MLXAPIKey = "mlx"
+	settings.OllamaBaseURL = "http://127.0.0.1:11434/v1"
+	settings.OllamaAPIKey = "ollama"
+
+	m := Model{
+		width:        112,
+		height:       31,
+		homeDir:      "/Users/davide",
+		settingsMode: true,
+		status:       "Editing settings. Enter to save, Esc to cancel",
+		projects: []model.ProjectSummary{
+			{Name: "LittleControlRoom", Path: "/tmp/LittleControlRoom", PresentOnDisk: true},
+		},
+		allProjects: []model.ProjectSummary{
+			{Name: "LittleControlRoom", Path: "/tmp/LittleControlRoom", PresentOnDisk: true},
+		},
+	}
+	m.settingsFields = newSettingsFields(settings)
+	m.settingsSelected = settingsFieldMLXBaseURL
+	m.settingsBaseline = &settings
+	m.detail = model.ProjectDetail{
+		Summary: model.ProjectSummary{Name: "LittleControlRoom", Path: "/tmp/LittleControlRoom", PresentOnDisk: true},
+	}
+	m.syncDetailViewport(false)
+
+	rendered := ansi.Strip(m.View())
+	for _, want := range []string{
+		"Settings",
+		"AI backend: MLX",
+		"MLX base URL",
+		"MLX API key",
+		"Ollama base URL",
+		"Ollama API key",
+		"http://127.0.0.1:8080/v1",
+		"http://127.0.0.1:11434/v1",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("settings screenshot render missing %q: %q", want, rendered)
+		}
+	}
+}
+
 func TestSanitizeScreenshotProjectSummaryHidesQueuedAssessmentState(t *testing.T) {
 	t.Parallel()
 
