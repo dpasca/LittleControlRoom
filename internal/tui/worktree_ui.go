@@ -483,7 +483,7 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary, selectedPath st
 			continue
 		}
 
-		rootProject := group.members[rootIndex]
+		rootProject := aggregateWorktreeRootRow(group.members[rootIndex], group.members)
 		children := make([]model.ProjectSummary, 0, len(group.members)-1)
 		for i, project := range group.members {
 			if i == rootIndex {
@@ -517,6 +517,16 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary, selectedPath st
 		}
 	}
 	return rows, meta
+}
+
+func aggregateWorktreeRootRow(root model.ProjectSummary, family []model.ProjectSummary) model.ProjectSummary {
+	aggregated := root
+	for _, member := range family {
+		if member.LastActivity.After(aggregated.LastActivity) {
+			aggregated.LastActivity = member.LastActivity
+		}
+	}
+	return aggregated
 }
 
 func (m Model) worktreeActivityCounts(projects []model.ProjectSummary) (int, int) {
