@@ -171,6 +171,7 @@ type Model struct {
 	codexViewport          viewport.Model
 	codexTranscriptCache   codexTranscriptRenderCache
 	codexViewportContent   codexViewportContentState
+	uiDiagnostics          *uiStallDiagnostics
 	aiLatencyNextID        int64
 	aiLatencyInFlight      map[int64]aiLatencyOp
 	aiLatencyRecent        []aiLatencySample
@@ -567,6 +568,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		detailViewport:         detailViewport,
 		runtimeViewport:        runtimeViewport,
 		codexViewport:          codexViewport,
+		uiDiagnostics:          newUIStallDiagnostics(strings.TrimSpace(homeDir), os.Getpid()),
 		focusedPane:            focusProjects,
 		assessmentFlashUntil:   make(map[string]time.Time),
 		sortMode:               sortByAttention,
@@ -844,6 +846,9 @@ func currentPrivacyPatterns(svc *service.Service) []string {
 }
 
 func (m Model) Init() tea.Cmd {
+	m.noteUIProgress("Init")
+	done := m.beginUIPhase("Init", "", "")
+	defer done()
 	cmds := []tea.Cmd{
 		m.requestProjectsReloadCmd(),
 		m.requestScanCmd(false),
@@ -1192,6 +1197,9 @@ func normalizeUpdateModel(m tea.Model) Model {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.noteUIProgress("Update " + uiMessageLabel(msg))
+	done := m.beginUIPhase("Update", m.currentLatencyProjectPath(), uiMessageLabel(msg))
+	defer done()
 	mdl, cmd := m.update(msg)
 	mm := normalizeUpdateModel(mdl)
 	prevWant := m.codexVisible() || m.diffView != nil
@@ -2797,6 +2805,8 @@ func (m Model) resolvedCommandInput() string {
 }
 
 func (m *Model) syncDetailViewport(reset bool) {
+	done := m.beginUIPhase("syncDetailViewport", m.currentLatencyProjectPath(), fmt.Sprintf("reset=%t", reset))
+	defer done()
 	layout := m.bodyLayout()
 	m.detailViewport.Width = layout.detailContentWidth
 	m.detailViewport.Height = max(1, layout.bottomPaneHeight-2)
@@ -2847,6 +2857,9 @@ func (m Model) renderDetailViewport(width, height int) string {
 }
 
 func (m Model) View() string {
+	m.noteUIProgress("View")
+	done := m.beginUIPhase("View", m.currentLatencyProjectPath(), "")
+	defer done()
 	if m.codexVisible() {
 		body := m.renderCodexView()
 		if m.codexModelPickerVisible() {
@@ -3417,6 +3430,8 @@ func (m Model) renderProjectList(width, height int) string {
 }
 
 func (m Model) renderDetailContent(width int) string {
+	done := m.beginUIPhase("renderDetailContent", m.currentLatencyProjectPath(), fmt.Sprintf("width=%d", width))
+	defer done()
 	p, ok := m.selectedProject()
 	if !ok {
 		if len(m.allProjects) > 0 && m.visibility == visibilityAIFolders {

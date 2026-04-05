@@ -296,6 +296,48 @@ func (m Model) aiStatsLatencySection(width int) []string {
 	return lines
 }
 
+func (m Model) uiStallCaptureSection(width int) []string {
+	snapshot := m.uiStallDiagnosticsSnapshot()
+	lines := []string{
+		"",
+		detailSectionStyle.Render("Stall Capture"),
+	}
+	if !snapshot.Enabled {
+		lines = append(lines, detailField("Watchdog", detailMutedStyle.Render("off in this run")))
+		return lines
+	}
+	lines = append(lines, detailField("Watchdog", detailValueStyle.Render("armed at "+snapshot.Threshold.String())))
+	if root := strings.TrimSpace(snapshot.ArtifactRootDir); root != "" {
+		lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, max(12, width-2), "Artifacts: "+m.displayPathWithHomeTilde(root))...)
+	}
+	if snapshot.CaptureInFlight {
+		lines = append(lines, detailField("State", detailWarningStyle.Render("capturing stall artifacts...")))
+	}
+	if !snapshot.HaveLastCapture {
+		lines = append(lines, detailField("Last capture", detailMutedStyle.Render("none yet in this run")))
+		return lines
+	}
+	record := snapshot.LastCapture
+	stallText := strings.TrimSpace(record.StallDuration)
+	if stallText == "" {
+		stallText = "unknown duration"
+	}
+	lines = append(lines, detailField("Last capture", detailWarningStyle.Render(stallText+" at "+record.CapturedAt.Format(time.RFC3339))))
+	if phase := strings.TrimSpace(record.TopActivePhase); phase != "" {
+		lines = append(lines, detailField("Phase", detailValueStyle.Render(phase)))
+	}
+	if project := strings.TrimSpace(record.ActiveProject); project != "" {
+		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, max(12, width-2), "Project: "+m.displayPathWithHomeTilde(project))...)
+	}
+	if path := strings.TrimSpace(record.Directory); path != "" {
+		lines = append(lines, renderWrappedDialogTextLines(detailValueStyle, max(12, width-2), "Capture dir: "+m.displayPathWithHomeTilde(path))...)
+	}
+	if errText := strings.TrimSpace(record.Error); errText != "" {
+		lines = append(lines, renderWrappedDialogTextLines(detailDangerStyle, max(12, width-2), "Capture issue: "+errText)...)
+	}
+	return lines
+}
+
 func aiLatencyLabel(name, projectPath, detail string) string {
 	parts := []string{strings.TrimSpace(name)}
 	if project := aiLatencyProjectLabel(projectPath); project != "" {
@@ -386,8 +428,9 @@ func (m Model) renderPerfContent(width int) string {
 		renderDialogHeader("Performance", "Latency", "", width),
 	}
 	lines = append(lines, m.aiStatsLatencySection(width)...)
+	lines = append(lines, m.uiStallCaptureSection(width)...)
 	lines = append(lines, "")
-	lines = append(lines, commandPaletteHintStyle.Render("Open /perf after a freeze to see whether the wait was backend work or UI-thread rendering."))
+	lines = append(lines, commandPaletteHintStyle.Render("Open /perf after a freeze to see recent waits and any captured stall artifacts for this run."))
 	lines = append(lines, "")
 	lines = append(lines, renderHelpPanelActionRow(
 		renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),

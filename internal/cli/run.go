@@ -666,6 +666,7 @@ func runTUI(ctx context.Context, svc *service.Service) int {
 	svc.StartBackgroundDiscovery(ctx)
 
 	m := tui.New(ctx, svc)
+	m.EnableUIStallWatchdog()
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "tui failed: %v\n", err)

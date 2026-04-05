@@ -1614,6 +1614,8 @@ func (m *Model) syncCodexComposerSize() {
 }
 
 func (m *Model) syncCodexViewport(resetToBottom bool) {
+	done := m.beginUIPhase("syncCodexViewport", strings.TrimSpace(m.codexVisibleProject), fmt.Sprintf("reset=%t", resetToBottom))
+	defer done()
 	if !m.codexVisible() {
 		return
 	}
@@ -1660,6 +1662,8 @@ func (m *Model) syncCodexViewport(resetToBottom bool) {
 }
 
 func (m Model) renderCodexView() string {
+	done := m.beginUIPhase("renderCodexView", strings.TrimSpace(m.codexVisibleProject), "")
+	defer done()
 	if projectPath := m.codexPendingOpenProject(); projectPath != "" {
 		return m.renderCodexOpeningView(projectPath)
 	}

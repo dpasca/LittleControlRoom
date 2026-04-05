@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -41,6 +42,8 @@ func (m *Model) openRuntimeInspectorForSelection() tea.Cmd {
 }
 
 func (m *Model) syncRuntimeViewport(reset bool) {
+	done := m.beginUIPhase("syncRuntimeViewport", m.currentLatencyProjectPath(), fmt.Sprintf("reset=%t", reset))
+	defer done()
 	layout := m.bodyLayout()
 	projectPath := m.runtimePanelProjectPath()
 	m.clampRuntimeActionSelection(projectPath)
