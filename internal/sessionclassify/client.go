@@ -210,12 +210,10 @@ func (c *OpenAIClient) classifyAttempt(ctx context.Context, snapshotJSON []byte,
 		return Result{}, err
 	}
 
-	outputText = stripMarkdownCodeBlock(outputText)
-
 	var result Result
-	if err := json.Unmarshal([]byte(outputText), &result); err != nil {
+	if err := decodeClassifierOutput(outputText, &result); err != nil {
 		return Result{}, &retryableClassificationError{
-			cause: fmt.Errorf("decode classifier result: %w", err),
+			cause: err,
 		}
 	}
 	if err := validateClassificationResult(&result); err != nil {
@@ -460,4 +458,41 @@ func stripMarkdownCodeBlock(s string) string {
 		content = strings.TrimSuffix(content, "```")
 	}
 	return strings.TrimSpace(content)
+}
+
+func decodeClassifierOutput(outputText string, result *Result) error {
+	sanitized := strings.TrimSpace(outputText)
+	if sanitized == "" {
+		return errors.New("decode classifier result: empty JSON output")
+	}
+
+	if err := json.Unmarshal([]byte(sanitized), result); err == nil {
+		return nil
+	}
+
+	if fenced := stripMarkdownCodeBlock(sanitized); fenced != sanitized {
+		if err := json.Unmarshal([]byte(fenced), result); err == nil {
+			return nil
+		}
+	}
+
+	if extracted := extractFirstJSONObject(sanitized); extracted != "" && extracted != sanitized {
+		if err := json.Unmarshal([]byte(extracted), result); err == nil {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("decode classifier result: failed to decode JSON output")
+}
+
+func extractFirstJSONObject(text string) string {
+	start := strings.Index(text, "{")
+	if start < 0 {
+		return ""
+	}
+	end := strings.LastIndex(text, "}")
+	if end <= start {
+		return ""
+	}
+	return strings.TrimSpace(text[start : end+1])
 }

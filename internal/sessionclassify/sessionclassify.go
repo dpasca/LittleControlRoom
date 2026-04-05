@@ -19,7 +19,7 @@ import (
 
 const (
 	DefaultModel      = "gpt-5.4-nano"
-	ClassifierVersion = "session-v3"
+	ClassifierVersion = "session-v4"
 )
 
 type Result struct {

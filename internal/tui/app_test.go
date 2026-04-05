@@ -3406,24 +3406,63 @@ func TestRenderFooterShowsSeparateAssessmentAlertWhenClassificationErrorsExist(t
 	}
 
 	m.spinnerFrame = 0
-	pulseA := m.renderFooter(160)
+	renderedA := m.renderFooter(160)
 	m.spinnerFrame = 1
-	pulseB := m.renderFooter(160)
+	renderedB := m.renderFooter(160)
 
-	if ansi.Strip(pulseA) != ansi.Strip(pulseB) {
-		t.Fatalf("assessment pulse should keep the same visible text: %q vs %q", ansi.Strip(pulseA), ansi.Strip(pulseB))
+	if ansi.Strip(renderedA) != ansi.Strip(renderedB) {
+		t.Fatalf("assessment footer should keep the same visible text: %q vs %q", ansi.Strip(renderedA), ansi.Strip(renderedB))
 	}
-	if pulseA == pulseB {
-		t.Fatalf("assessment pulse should animate across spinner frames")
+	if renderedA != renderedB {
+		t.Fatalf("assessment footer should stay visually stable across spinner frames")
 	}
-	if pulseA == ansi.Strip(pulseA) {
-		t.Fatalf("assessment pulse should use ANSI styling: %q", pulseA)
+	if renderedA == ansi.Strip(renderedA) {
+		t.Fatalf("assessment footer should use ANSI styling: %q", renderedA)
 	}
-	if !strings.Contains(ansi.Strip(pulseA), "Codex ready") {
-		t.Fatalf("footer should keep the backend status visible, got %q", ansi.Strip(pulseA))
+	if !strings.Contains(ansi.Strip(renderedA), "Codex ready") {
+		t.Fatalf("footer should keep the backend status visible, got %q", ansi.Strip(renderedA))
 	}
-	if !strings.Contains(ansi.Strip(pulseA), "1 assessment error") {
-		t.Fatalf("footer should surface assessment failures separately, got %q", ansi.Strip(pulseA))
+	if !strings.Contains(ansi.Strip(renderedA), "1 assessment error") {
+		t.Fatalf("footer should surface assessment failures separately, got %q", ansi.Strip(renderedA))
+	}
+}
+
+func TestRenderFooterHidesAssessmentAlertWhileErrorLogIsOpen(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	m := Model{
+		errorLogVisible: true,
+		setupChecked:    true,
+		setupSnapshot: aibackend.Snapshot{
+			Selected: config.AIBackendCodex,
+			Codex: aibackend.Status{
+				Backend:       config.AIBackendCodex,
+				Label:         "Codex",
+				Installed:     true,
+				Authenticated: true,
+				Ready:         true,
+			},
+		},
+		allProjects: []model.ProjectSummary{{
+			Name:                        "demo",
+			Path:                        "/tmp/demo",
+			LatestSessionClassification: model.ClassificationFailed,
+		}},
+	}
+
+	rendered := ansi.Strip(m.renderFooter(160))
+	if !strings.Contains(rendered, "Error log:") {
+		t.Fatalf("footer should switch to error log guidance, got %q", rendered)
+	}
+	if strings.Contains(rendered, "assessment error") {
+		t.Fatalf("footer should hide assessment alert while error log is open, got %q", rendered)
 	}
 }
 

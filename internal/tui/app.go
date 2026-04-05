@@ -132,55 +132,55 @@ type Model struct {
 	lastUsageTotals       model.LLMUsage
 	haveUsageTotals       bool
 
-	mouseEnabled           bool
-	codexSelection         textSelection
-	codexManager           *codexapp.Manager
-	runtimeManager         *projectrun.Manager
-	runtimeRefreshInFlight bool
-	runtimeRefreshQueued   bool
-	runtimeSnapshots       map[string]projectrun.Snapshot
-	codexSnapshots         map[string]codexapp.Snapshot
-	codexTranscriptRev     map[string]uint64
-	codexVisibleProject    string
-	codexHiddenProject     string
-	codexPendingOpen       *codexPendingOpenState
-	codexInput             textarea.Model
-	codexDrafts            map[string]codexDraft
-	pendingGitOperations   map[string]pendingGitOperation
-	codexPasteTokenSeq     int
-	codexClosedHandled     map[string]struct{}
+	mouseEnabled                bool
+	codexSelection              textSelection
+	codexManager                *codexapp.Manager
+	runtimeManager              *projectrun.Manager
+	runtimeRefreshInFlight      bool
+	runtimeRefreshQueued        bool
+	runtimeSnapshots            map[string]projectrun.Snapshot
+	codexSnapshots              map[string]codexapp.Snapshot
+	codexTranscriptRev          map[string]uint64
+	codexVisibleProject         string
+	codexHiddenProject          string
+	codexPendingOpen            *codexPendingOpenState
+	codexInput                  textarea.Model
+	codexDrafts                 map[string]codexDraft
+	pendingGitOperations        map[string]pendingGitOperation
+	codexPasteTokenSeq          int
+	codexClosedHandled          map[string]struct{}
 	pendingGitSummaries         map[string]string
 	pendingGitSummaryExpireNext map[string]bool
 	codexPickerVisible          bool
-	codexPickerSelected    int
-	codexPickerChoices     []codexSessionChoice
-	codexPickerLoading     bool
-	codexPickerKind        codexPickerKind
-	codexPickerTitle       string
-	codexPickerHint        string
-	codexPickerEmpty       string
-	codexPickerProject     string
-	codexPickerProvider    codexapp.Provider
-	questionNotify         *questionNotification
-	codexInputSelection    *codexInputSelectionState
-	codexComposerSelection textSelection
-	codexModelPicker       *codexModelPickerState
-	embeddedModelPrefs     map[codexapp.Provider]embeddedModelPreference
-	recentCodexModels      []string
-	recentClaudeModels     []string
-	recentOpenCodeModels   []string
-	codexDenseExpanded     bool
-	codexSlashSelected     int
-	codexToolAnswers       map[string]codexToolAnswerState
-	codexViewport          viewport.Model
-	codexTranscriptCache   codexTranscriptRenderCache
-	codexViewportContent   codexViewportContentState
-	uiDiagnostics          *uiStallDiagnostics
-	aiLatencyNextID        int64
-	aiLatencyInFlight      map[int64]aiLatencyOp
-	aiLatencyRecent        []aiLatencySample
-	modelSettlePending     map[string]pendingModelSettleOp
-	lastSpinnerTickAt      time.Time
+	codexPickerSelected         int
+	codexPickerChoices          []codexSessionChoice
+	codexPickerLoading          bool
+	codexPickerKind             codexPickerKind
+	codexPickerTitle            string
+	codexPickerHint             string
+	codexPickerEmpty            string
+	codexPickerProject          string
+	codexPickerProvider         codexapp.Provider
+	questionNotify              *questionNotification
+	codexInputSelection         *codexInputSelectionState
+	codexComposerSelection      textSelection
+	codexModelPicker            *codexModelPickerState
+	embeddedModelPrefs          map[codexapp.Provider]embeddedModelPreference
+	recentCodexModels           []string
+	recentClaudeModels          []string
+	recentOpenCodeModels        []string
+	codexDenseExpanded          bool
+	codexSlashSelected          int
+	codexToolAnswers            map[string]codexToolAnswerState
+	codexViewport               viewport.Model
+	codexTranscriptCache        codexTranscriptRenderCache
+	codexViewportContent        codexViewportContentState
+	uiDiagnostics               *uiStallDiagnostics
+	aiLatencyNextID             int64
+	aiLatencyInFlight           map[int64]aiLatencyOp
+	aiLatencyRecent             []aiLatencySample
+	modelSettlePending          map[string]pendingModelSettleOp
+	lastSpinnerTickAt           time.Time
 
 	pendingG      bool
 	todoLaunchSeq int64
@@ -5850,16 +5850,16 @@ func (m Model) renderFooterAssessmentSegment() string {
 	if text == "" {
 		return ""
 	}
-	if m.spinnerFrame%2 == 0 {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("160")).Bold(true).Render(text)
-	}
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("88")).Bold(true).Render(text)
+	return renderFooterAlert(text)
 }
 
 func (m Model) renderFooter(width int) string {
 	usageLabel := m.footerUsageLabel()
 	usageSegment := m.renderFooterUsageSegment(usageLabel)
-	assessmentSegment := m.renderFooterAssessmentSegment()
+	assessmentSegment := ""
+	if !m.errorLogVisible {
+		assessmentSegment = m.renderFooterAssessmentSegment()
+	}
 	filterSegment := m.renderFooterProjectFilterSegment()
 	if m.diffView != nil {
 		return renderFooterLine(width, renderDiffFooter(width, *m.diffView, usageSegment), filterSegment, assessmentSegment)
@@ -5890,6 +5890,9 @@ func (m Model) renderFooter(width int) string {
 	if m.projectFilterDialog != nil {
 		label := "Project filter: type to narrow, Enter keep, Esc close"
 		return m.renderModalFooter(width, label, filterSegment, usageSegment, assessmentSegment)
+	}
+	if m.errorLogVisible {
+		return m.renderModalFooter(width, "Error log: ↑↓ select, Enter/c copy, Esc close", filterSegment, usageSegment)
 	}
 	if m.commandMode {
 		return m.renderModalFooter(width, "Command palette open", filterSegment, usageSegment, assessmentSegment)

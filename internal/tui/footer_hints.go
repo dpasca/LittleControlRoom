@@ -26,6 +26,7 @@ type footerAction struct {
 var (
 	footerMetaStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	footerStatusStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
+	footerAlertStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
 	footerUsageStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("246"))
 	footerPrimaryKeyStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("42")).Bold(true)
 	footerPrimaryLabelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("120")).Bold(true)
@@ -73,6 +74,14 @@ func renderFooterStatus(text string) string {
 		return ""
 	}
 	return footerStatusStyle.Render(text)
+}
+
+func renderFooterAlert(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	return footerAlertStyle.Render(text)
 }
 
 func renderFooterUsage(text string) string {

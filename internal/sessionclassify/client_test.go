@@ -693,6 +693,46 @@ func TestOpenAIClientClassifyTransportRetriesRemainBounded(t *testing.T) {
 	}
 }
 
+func TestDecodeClassifierOutput(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "plain json",
+			input: `{"category":"completed","summary":"done","confidence":0.9}`,
+		},
+		{
+			name:  "json fenced output",
+			input: "```json\n{\"category\":\"completed\",\"summary\":\"done\",\"confidence\":0.9}\n```",
+		},
+		{
+			name:  "json embedded in prose",
+			input: "Here is the assessment:\n{\"category\":\"completed\",\"summary\":\"done\",\"confidence\":0.9}",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var result Result
+			if err := decodeClassifierOutput(tc.input, &result); err != nil {
+				t.Fatalf("decodeClassifierOutput() error = %v", err)
+			}
+			if result.Category != model.SessionCategoryCompleted {
+				t.Fatalf("category = %q, want completed", result.Category)
+			}
+			if result.Summary != "done" {
+				t.Fatalf("summary = %q, want done", result.Summary)
+			}
+			if result.Confidence != 0.9 {
+				t.Fatalf("confidence = %v, want 0.9", result.Confidence)
+			}
+		})
+	}
+}
+
 func TestStripMarkdownCodeBlock(t *testing.T) {
 	tests := []struct {
 		name  string

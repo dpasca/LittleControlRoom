@@ -200,10 +200,12 @@ func (r *AutoModelRunner) RunJSONSchema(ctx context.Context, req JSONSchemaReque
 }
 
 func NewOpenAICompatibleResponsesRunner(baseURL, apiKey, defaultModel string, timeout time.Duration, usage *UsageTracker) JSONSchemaRunner {
-	client := NewResponsesClientWithBaseURL(apiKey, baseURL, timeout, usage)
-	if client == nil {
+	responsesClient := NewResponsesClientWithBaseURL(apiKey, baseURL, timeout, usage)
+	chatClient := NewOpenAICompatibleChatCompletionsClientWithBaseURL(apiKey, baseURL, timeout, usage)
+	baseRunner := NewOpenAICompatibleStructuredOutputRunner(responsesClient, chatClient)
+	if baseRunner == nil {
 		return nil
 	}
 	discovery := NewOpenAICompatibleModelDiscovery(baseURL, apiKey, timeout)
-	return NewAutoModelRunner(discovery, client, defaultModel)
+	return NewAutoModelRunner(discovery, baseRunner, defaultModel)
 }
