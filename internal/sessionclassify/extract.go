@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"lcroom/internal/model"
 	"lcroom/internal/opencodesqlite"
@@ -24,6 +25,7 @@ const (
 	maxPreviewBytes    = 160
 	previewHeadBytes   = 64 * 1024
 	previewItemLimit   = 6
+	transcriptOmission = " [...] "
 )
 
 type SessionSnapshot struct {
@@ -1217,5 +1219,104 @@ func sanitizeTranscriptText(text string) string {
 	if len(text) <= maxTranscriptBytes {
 		return text
 	}
-	return text[:maxTranscriptBytes-3] + "..."
+	return truncateTranscriptText(text, maxTranscriptBytes)
+}
+
+func truncateTranscriptText(text string, limit int) string {
+	text = strings.TrimSpace(text)
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+
+	marker := []rune(transcriptOmission)
+	if limit <= len(marker)+8 {
+		return truncateTextEnd(text, limit, "...")
+	}
+
+	budget := limit - len(marker)
+	headBudget := (budget * 3) / 5
+	if headBudget < 1 {
+		headBudget = budget / 2
+	}
+	tailBudget := budget - headBudget
+	headEnd := headBudget
+	tailStart := len(runes) - tailBudget
+	headEnd, tailStart = adjustTranscriptSplit(runes, headEnd, tailStart)
+
+	head := strings.TrimRightFunc(string(runes[:headEnd]), unicode.IsSpace)
+	tail := strings.TrimLeftFunc(string(runes[tailStart:]), unicode.IsSpace)
+	if head == "" || tail == "" {
+		return truncateTextEnd(text, limit, "...")
+	}
+	return head + transcriptOmission + tail
+}
+
+func adjustTranscriptSplit(runes []rune, headEnd, tailStart int) (int, int) {
+	if headEnd <= 0 || tailStart >= len(runes) || headEnd >= tailStart {
+		return max(1, min(headEnd, len(runes))), max(0, min(tailStart, len(runes)))
+	}
+
+	if splitInsideWord(runes, headEnd) {
+		if boundary := lastWhitespaceBefore(runes, headEnd); boundary > 0 {
+			headEnd = boundary
+		}
+	}
+	if splitInsideWord(runes, tailStart) {
+		if boundary := firstWhitespaceAfter(runes, tailStart); boundary >= 0 && boundary < len(runes) {
+			tailStart = boundary
+		}
+	}
+	if headEnd <= 0 || tailStart >= len(runes) || headEnd >= tailStart {
+		return max(1, min(headEnd, len(runes))), max(0, min(tailStart, len(runes)))
+	}
+	return headEnd, tailStart
+}
+
+func splitInsideWord(runes []rune, idx int) bool {
+	if idx <= 0 || idx >= len(runes) {
+		return false
+	}
+	return transcriptWordRune(runes[idx-1]) && transcriptWordRune(runes[idx])
+}
+
+func transcriptWordRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r)
+}
+
+func lastWhitespaceBefore(runes []rune, idx int) int {
+	for i := idx - 1; i >= 0; i-- {
+		if unicode.IsSpace(runes[i]) {
+			return i
+		}
+	}
+	return -1
+}
+
+func firstWhitespaceAfter(runes []rune, idx int) int {
+	for i := idx; i < len(runes); i++ {
+		if unicode.IsSpace(runes[i]) {
+			return i + 1
+		}
+	}
+	return -1
+}
+
+func truncateTextEnd(text string, limit int, marker string) string {
+	text = strings.TrimSpace(text)
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	markerRunes := []rune(marker)
+	if limit <= len(markerRunes) {
+		return string(runes[:limit])
+	}
+	return string(runes[:limit-len(markerRunes)]) + marker
 }

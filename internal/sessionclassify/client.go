@@ -434,6 +434,7 @@ If the latest assistant message asks the user to choose between options, confirm
 Proposal handoffs count as waiting_for_user when the next meaningful action depends on the user's choice, even if the assistant includes a recommendation like “I’d go with 2”.
 Use completed only when the assistant can stop without a reply from the user; if the assistant is clearly waiting for the user's answer before proceeding, do not mark completed.
 Reasoning/tool transcript items can reflect earlier planning; when they conflict with a later user-visible assistant message, trust the latest user-visible assistant message.
+If a transcript item contains "[...]", treat it as middle-content compaction for brevity, not evidence that the assistant stopped mid-sentence.
 If the latest assistant message says requested repo actions already happened (for example committed, pushed, built, deployed, or published) and the git snapshot agrees, prefer completed over needs_follow_up.
 Return a short factual dashboard summary under 140 characters.
 Prefer brief direct phrasing over full sentences when natural.

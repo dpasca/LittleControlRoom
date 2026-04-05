@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -195,6 +196,51 @@ func TestExtractSnapshotOpenCodePrefersVisibleAssistantTextOverPlanningParts(t *
 	}
 }
 
+func TestExtractSnapshotLongAssistantMessageKeepsTailContext(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "long-message.jsonl")
+	longAssistant := strings.Repeat("Worked through the fullscreen logo change first. ", 18) +
+		"Disabled the watermark for fullscreen playback. " +
+		strings.Repeat("Checked the player loop and timing next. ", 12) +
+		"Autoplay no longer burns through bullets so quickly."
+	if err := os.WriteFile(fixture, []byte(strings.Join([]string{
+		`{"timestamp":"2026-04-05T11:27:12Z","type":"message","role":"user","content":[{"type":"text","text":"Please disable the fullscreen watermark and fix autoplay."}]}`,
+		fmt.Sprintf(`{"timestamp":"2026-04-05T11:27:13Z","type":"message","role":"assistant","content":[{"type":"text","text":%q}]}`, longAssistant),
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	snapshot, err := ExtractSnapshot(context.Background(), model.SessionClassification{
+		SessionID:       "ses_long_tail",
+		ProjectPath:     "/tmp/fractalmech",
+		SessionFile:     fixture,
+		SessionFormat:   "modern",
+		SourceUpdatedAt: time.Now(),
+	}, model.SessionEvidence{
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  true,
+	}, GitStatusSnapshot{})
+	if err != nil {
+		t.Fatalf("extract snapshot: %v", err)
+	}
+	if len(snapshot.Transcript) != 2 {
+		t.Fatalf("expected 2 transcript items, got %#v", snapshot.Transcript)
+	}
+
+	assistant := snapshot.Transcript[1].Text
+	if !strings.Contains(assistant, transcriptOmission) {
+		t.Fatalf("assistant text = %q, want omission marker", assistant)
+	}
+	if !strings.Contains(assistant, "Autoplay no longer burns through bullets so quickly.") {
+		t.Fatalf("assistant text = %q, want preserved tail context", assistant)
+	}
+	if !strings.Contains(assistant, "Worked through the fullscreen logo change first.") {
+		t.Fatalf("assistant text = %q, want preserved leading context", assistant)
+	}
+}
+
 func TestPreviewFromTranscriptUsesInitialUserAndLatestAssistantSnippets(t *testing.T) {
 	t.Parallel()
 
@@ -254,6 +300,23 @@ func TestSanitizeClassificationSummaryFallsBackWhenNoTranscriptPreview(t *testin
 	got := sanitizeClassificationSummary("OpenCode turn completed", SessionSnapshot{})
 	if got != "Session summary available in transcript, not captured by classifier." {
 		t.Fatalf("sanitize summary = %q, want fallback summary", got)
+	}
+}
+
+func TestSanitizeTranscriptTextUsesMiddleCompactionForLongMessages(t *testing.T) {
+	text := strings.Repeat("We kept iterating on the player timing. ", 24) +
+		"Final validation passed and autoplay behavior is now stable."
+
+	got := sanitizeTranscriptText(text)
+
+	if !strings.Contains(got, transcriptOmission) {
+		t.Fatalf("sanitize transcript = %q, want middle omission marker", got)
+	}
+	if !strings.Contains(got, "Final validation passed and autoplay behavior is now stable.") {
+		t.Fatalf("sanitize transcript = %q, want tail preserved", got)
+	}
+	if strings.HasSuffix(got, "...") {
+		t.Fatalf("sanitize transcript = %q, want compaction marker instead of dangling end ellipsis", got)
 	}
 }
 
