@@ -439,11 +439,14 @@ type codexPendingOpenState struct {
 type pendingGitOperationKind string
 
 const (
-	pendingGitOperationUnknown     pendingGitOperationKind = ""
-	pendingGitOperationCommit      pendingGitOperationKind = "commit"
-	pendingGitOperationCommitPush  pendingGitOperationKind = "commit_push"
-	pendingGitOperationPush        pendingGitOperationKind = "push"
-	pendingGitOperationCommitMerge pendingGitOperationKind = "commit_merge"
+	pendingGitOperationUnknown       pendingGitOperationKind = ""
+	pendingGitOperationCommit        pendingGitOperationKind = "commit"
+	pendingGitOperationCommitPush    pendingGitOperationKind = "commit_push"
+	pendingGitOperationPush          pendingGitOperationKind = "push"
+	pendingGitOperationCommitMerge   pendingGitOperationKind = "commit_merge"
+	pendingGitOperationPrune         pendingGitOperationKind = "prune"
+	pendingGitOperationPrepareCommit pendingGitOperationKind = "prepare_commit"
+	pendingGitOperationPrepareDiff   pendingGitOperationKind = "prepare_diff"
 )
 
 type pendingGitOperation struct {
@@ -679,6 +682,12 @@ func inferPendingGitOperation(summary string) pendingGitOperation {
 		return pendingGitOperation{Kind: pendingGitOperationPush, Summary: summary}
 	case "Committing and merging worktree back...":
 		return pendingGitOperation{Kind: pendingGitOperationCommitMerge, Summary: summary}
+	case "Pruning worktrees...", "Pruning stale git worktrees...":
+		return pendingGitOperation{Kind: pendingGitOperationPrune, Summary: summary}
+	case "Preparing commit preview...", "Preparing finish preview...", "Refreshing commit preview...", "Resolving submodule commits...":
+		return pendingGitOperation{Kind: pendingGitOperationPrepareCommit, Summary: summary}
+	case "Preparing diff view...":
+		return pendingGitOperation{Kind: pendingGitOperationPrepareDiff, Summary: summary}
 	default:
 		return pendingGitOperation{Kind: pendingGitOperationUnknown, Summary: summary}
 	}
@@ -707,6 +716,12 @@ func (op pendingGitOperation) shortLabel() string {
 		return "pushing"
 	case pendingGitOperationCommitMerge:
 		return "commit + merge"
+	case pendingGitOperationPrune:
+		return "pruning"
+	case pendingGitOperationPrepareCommit:
+		return "preparing commit"
+	case pendingGitOperationPrepareDiff:
+		return "preparing diff"
 	default:
 		return normalizePendingGitLabel(op.Summary)
 	}
@@ -1495,6 +1510,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = scanCompleteStatus(msg.report)
 		return m, batchCmds(reloadCmd, m.requestProjectInvalidationCmd(invalidateProjectStructure("")))
 	case commitPreviewMsg:
+		m.clearPendingGitSummary(msg.projectPath)
 		m.diffView = nil
 		m.commitPreviewRefreshing = false
 		if msg.err != nil {
@@ -1550,6 +1566,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.diffView == nil {
 			return m, nil
 		}
+		m.clearPendingGitSummary(m.diffView.ProjectPath)
 		m.diffView.loading = false
 		if msg.err != nil {
 			var noDiffErr service.NoDiffChangesError
@@ -2537,6 +2554,7 @@ func (m Model) updateGitStatusDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if m.gitStatusDialog.ResolveSubmodules {
 			m.gitStatusApplying = true
+			m.setPendingGitSummary(m.gitStatusDialog.ProjectPath, "Resolving submodule commits...")
 			m.status = "Resolving submodule commits..."
 			return m, m.resolveSubmodulesAndContinueCmd(m.gitStatusDialog.ProjectPath, m.gitStatusDialog.CommitIntent, m.gitStatusDialog.CommitMessage)
 		}
@@ -4067,6 +4085,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 			m.status = "No project selected"
 			return m, nil
 		}
+		m.setPendingGitSummary(rootPath, "Pruning worktrees...")
 		m.status = "Pruning stale git worktrees..."
 		return m, m.pruneWorktreesCmd(rootPath, rootPath)
 	case commands.KindPin:
@@ -4563,6 +4582,7 @@ func (m *Model) startCommitPreview(project model.ProjectSummary, intent service.
 	m.commitTodoSelected = 0
 	m.commitPreviewMessageOverride = strings.TrimSpace(messageOverride)
 	m.commitPreviewRefreshing = true
+	m.setPendingGitSummary(project.Path, commitPreviewPreparingStatus(intent))
 	m.status = commitPreviewPreparingStatus(intent)
 	return m.prepareCommitPreviewCmd(project.Path, intent, messageOverride)
 }
@@ -4597,6 +4617,7 @@ func (m *Model) startDiffView(projectPath, projectName string) tea.Cmd {
 	m.showHelp = false
 	m.diffView = newDiffViewState(projectPath, projectName)
 	m.syncDiffView(true)
+	m.setPendingGitSummary(projectPath, "Preparing diff view...")
 	m.status = "Preparing diff view..."
 	return m.prepareDiffPreviewCmd(projectPath)
 }

@@ -1282,10 +1282,11 @@ func (m Model) pruneWorktreesCmd(projectPath, selectPath string) tea.Cmd {
 	return func() tea.Msg {
 		err := m.svc.PruneWorktrees(m.ctx, projectPath)
 		return worktreeActionMsg{
-			projectPath: projectPath,
-			selectPath:  selectPath,
-			status:      "Pruned stale git worktrees",
-			err:         err,
+			projectPath:            projectPath,
+			selectPath:             selectPath,
+			status:                 "Pruned stale git worktrees",
+			clearPendingGitSummary: true,
+			err:                    err,
 		}
 	}
 }

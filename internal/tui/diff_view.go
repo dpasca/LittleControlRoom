@@ -278,6 +278,7 @@ func (m Model) closeDiffView(fallbackStatus string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	cached := m.diffView.returnToCommitPreview
+	m.clearPendingGitSummary(m.diffView.ProjectPath)
 	m.diffView = nil
 	if cached == nil {
 		m.status = fallbackStatus
@@ -289,6 +290,7 @@ func (m Model) closeDiffView(fallbackStatus string) (tea.Model, tea.Cmd) {
 	m.commitPreviewMessageOverride = cached.messageOverride
 	m.commitPreviewRefreshing = true
 	m.commitApplying = false
+	m.setPendingGitSummary(preview.ProjectPath, "Refreshing commit preview...")
 	m.status = "Refreshing commit preview..."
 	return m, m.resumeCommitPreviewCmd(cached.preview, cached.messageOverride)
 }
