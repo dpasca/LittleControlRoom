@@ -189,6 +189,7 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 	score := attention.Score(attention.Input{
 		Path:            projectPath,
 		Now:             now,
+		CreatedAt:       now,
 		RepoDirty:       repoDirty,
 		Pinned:          existing.Pinned,
 		Unread:          attention.AssessmentUnread(existing),
@@ -223,6 +224,7 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 		MovedFromPath:        existing.MovedFromPath,
 		MovedAt:              existing.MovedAt,
 		AttentionReason:      score.Reasons,
+		CreatedAt:            now,
 		UpdatedAt:            now,
 	}
 	if err := s.store.UpsertProjectState(ctx, state); err != nil {

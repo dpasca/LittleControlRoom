@@ -12,6 +12,7 @@ type Input struct {
 	Path                       string
 	Now                        time.Time
 	LastActivity               time.Time
+	CreatedAt                  time.Time
 	RepoDirty                  bool
 	Pinned                     bool
 	Unread                     bool
@@ -35,6 +36,9 @@ type Output struct {
 }
 
 const recentAttentionWindow = 72 * time.Hour
+const newProjectAttentionWindow = 48 * time.Hour
+const newProjectAttentionWeight = 45
+const noActivityBaseWeight = 10
 const activeAttentionWeight = 50
 const blockedAttentionWeight = 40
 const inProgressAttentionWeight = 32
@@ -59,8 +63,17 @@ func Score(in Input) Output {
 
 	if !in.HasActivity || in.LastActivity.IsZero() {
 		out.Status = model.StatusIdle
-		out.Score += 10
-		out.Reasons = append(out.Reasons, model.AttentionReason{Code: "no_activity", Text: "No Codex/OpenCode activity detected yet", Weight: 10})
+		if w, ok := newProjectWeight(in); ok {
+			out.Score += w
+			out.Reasons = append(out.Reasons, model.AttentionReason{
+				Code:   "new_project",
+				Text:   fmt.Sprintf("New project awaiting first agent session (added %s ago)", formatAttentionDuration(in.Now.Sub(in.CreatedAt))),
+				Weight: w,
+			})
+		} else {
+			out.Score += noActivityBaseWeight
+			out.Reasons = append(out.Reasons, model.AttentionReason{Code: "no_activity", Text: "No agent activity detected yet", Weight: noActivityBaseWeight})
+		}
 	} else {
 		idleFor := in.Now.Sub(in.LastActivity)
 		switch {
@@ -286,6 +299,21 @@ func recentActivityReason(in Input) *model.AttentionReason {
 		Text:   fmt.Sprintf("Recent activity %s ago", formatAttentionDuration(idleFor)),
 		Weight: weight,
 	}
+}
+
+func newProjectWeight(in Input) (int, bool) {
+	if in.CreatedAt.IsZero() {
+		return 0, false
+	}
+	age := in.Now.Sub(in.CreatedAt)
+	if age >= newProjectAttentionWindow {
+		return 0, false
+	}
+	w := taperedAttentionWeight(age, 0, newProjectAttentionWindow, newProjectAttentionWeight)
+	if w < noActivityBaseWeight {
+		w = noActivityBaseWeight
+	}
+	return w, true
 }
 
 func taperedAttentionWeight(age, floor, ceiling time.Duration, maxWeight int) int {

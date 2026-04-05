@@ -204,6 +204,7 @@ type ProjectState struct {
 	AttentionReason      []AttentionReason
 	Sessions             []SessionEvidence
 	Artifacts            []ArtifactEvidence
+	CreatedAt            time.Time
 	UpdatedAt            time.Time
 }
 
@@ -249,6 +250,7 @@ type ProjectSummary struct {
 	LatestSessionClassificationStage              SessionClassificationStage
 	LatestSessionClassificationType               SessionCategory
 	LatestSessionSummary                          string
+	CreatedAt                                     time.Time
 	LastSessionSeenAt                             time.Time
 	LatestSessionClassificationStageStartedAt     time.Time
 	LatestSessionClassificationUpdatedAt          time.Time
