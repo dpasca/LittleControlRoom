@@ -481,6 +481,105 @@ func TestScoreZeroTodosNoReason(t *testing.T) {
 	}
 }
 
+func TestScoreNewProjectBoost(t *testing.T) {
+	now := time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC)
+	in := Input{
+		Now:             now,
+		CreatedAt:       now.Add(-1 * time.Hour),
+		HasActivity:     false,
+		ActiveThreshold: 20 * time.Minute,
+		StuckThreshold:  4 * time.Hour,
+	}
+
+	out := Score(in)
+	if out.Status != model.StatusIdle {
+		t.Fatalf("status = %s, want idle", out.Status)
+	}
+	if out.Score < 40 {
+		t.Fatalf("score = %d, want >= 40 for a 1-hour-old project", out.Score)
+	}
+	if len(out.Reasons) != 1 || out.Reasons[0].Code != "new_project" {
+		t.Fatalf("expected new_project reason, got %#v", out.Reasons)
+	}
+}
+
+func TestScoreNewProjectBoostTapersOver48Hours(t *testing.T) {
+	now := time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC)
+	ages := []time.Duration{1 * time.Hour, 24 * time.Hour, 47 * time.Hour}
+	scores := make([]int, 0, len(ages))
+
+	for _, age := range ages {
+		out := Score(Input{
+			Now:             now,
+			CreatedAt:       now.Add(-age),
+			HasActivity:     false,
+			ActiveThreshold: 20 * time.Minute,
+			StuckThreshold:  4 * time.Hour,
+		})
+		scores = append(scores, out.Score)
+	}
+
+	if !(scores[0] > scores[1] && scores[1] > scores[2]) {
+		t.Fatalf("expected new project scores to taper over time, got %v", scores)
+	}
+}
+
+func TestScoreNewProjectAfter48HoursFallsBackToBaseline(t *testing.T) {
+	now := time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC)
+	in := Input{
+		Now:             now,
+		CreatedAt:       now.Add(-49 * time.Hour),
+		HasActivity:     false,
+		ActiveThreshold: 20 * time.Minute,
+		StuckThreshold:  4 * time.Hour,
+	}
+
+	out := Score(in)
+	if out.Score != noActivityBaseWeight {
+		t.Fatalf("score = %d, want %d", out.Score, noActivityBaseWeight)
+	}
+	if len(out.Reasons) != 1 || out.Reasons[0].Code != "no_activity" {
+		t.Fatalf("expected no_activity reason, got %#v", out.Reasons)
+	}
+}
+
+func TestScoreNoActivityNoCreatedAtPreservesBaseline(t *testing.T) {
+	now := time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC)
+	in := Input{
+		Now:             now,
+		HasActivity:     false,
+		ActiveThreshold: 20 * time.Minute,
+		StuckThreshold:  4 * time.Hour,
+	}
+
+	out := Score(in)
+	if out.Score != noActivityBaseWeight {
+		t.Fatalf("score = %d, want %d", out.Score, noActivityBaseWeight)
+	}
+	if len(out.Reasons) != 1 || out.Reasons[0].Code != "no_activity" {
+		t.Fatalf("expected no_activity reason, got %#v", out.Reasons)
+	}
+}
+
+func TestScoreNewProjectNeverBelowBaseline(t *testing.T) {
+	now := time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC)
+	in := Input{
+		Now:             now,
+		CreatedAt:       now.Add(-47*time.Hour - 30*time.Minute),
+		HasActivity:     false,
+		ActiveThreshold: 20 * time.Minute,
+		StuckThreshold:  4 * time.Hour,
+	}
+
+	out := Score(in)
+	if out.Score < noActivityBaseWeight {
+		t.Fatalf("score = %d, want >= %d (baseline)", out.Score, noActivityBaseWeight)
+	}
+	if len(out.Reasons) != 1 || out.Reasons[0].Code != "new_project" {
+		t.Fatalf("expected new_project reason, got %#v", out.Reasons)
+	}
+}
+
 func TestScoreUnreadAddsAttentionReason(t *testing.T) {
 	now := time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC)
 	in := Input{
