@@ -16049,14 +16049,50 @@ func TestActionMsgClearsPendingGitSummary(t *testing.T) {
 		clearPendingGitSummary: true,
 	})
 	got := updated.(Model)
-	if got.pendingGitSummary("/tmp/demo") != "" {
-		t.Fatalf("pending git summary = %q, want cleared", got.pendingGitSummary("/tmp/demo"))
+	// On success, the pending summary stays alive until the next project
+	// list refresh so the spinner keeps animating instead of flashing "!".
+	if got.pendingGitSummary("/tmp/demo") == "" {
+		t.Fatalf("pending git summary should survive until project refresh")
+	}
+	if !got.pendingGitSummaryExpireNext["/tmp/demo"] {
+		t.Fatalf("pending git summary should be marked for expiry on next refresh")
 	}
 	if got.status != "Committed abc12345" {
 		t.Fatalf("status = %q, want %q", got.status, "Committed abc12345")
 	}
 	if cmd == nil {
 		t.Fatalf("actionMsg should trigger follow-up refresh commands")
+	}
+
+	// Simulate project list refresh — pending summary should now be cleared.
+	updated2, _ := got.Update(projectsMsg{})
+	got2 := updated2.(Model)
+	if got2.pendingGitSummary("/tmp/demo") != "" {
+		t.Fatalf("pending git summary = %q, want cleared after project refresh", got2.pendingGitSummary("/tmp/demo"))
+	}
+}
+
+func TestActionMsgErrorClearsPendingGitSummaryImmediately(t *testing.T) {
+	m := Model{
+		pendingGitSummaries: map[string]string{
+			"/tmp/demo": "Committing...",
+		},
+		commitPreview: &service.CommitPreview{
+			ProjectPath: "/tmp/demo",
+			Message:     "Update repo",
+		},
+		commitApplying: true,
+	}
+
+	updated, _ := m.Update(actionMsg{
+		projectPath:            "/tmp/demo",
+		status:                 "Commit failed",
+		clearPendingGitSummary: true,
+		err:                    fmt.Errorf("git error"),
+	})
+	got := updated.(Model)
+	if got.pendingGitSummary("/tmp/demo") != "" {
+		t.Fatalf("pending git summary = %q, want cleared on error", got.pendingGitSummary("/tmp/demo"))
 	}
 }
 

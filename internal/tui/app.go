@@ -146,8 +146,9 @@ type Model struct {
 	pendingGitOperations   map[string]pendingGitOperation
 	codexPasteTokenSeq     int
 	codexClosedHandled     map[string]struct{}
-	pendingGitSummaries    map[string]string
-	codexPickerVisible     bool
+	pendingGitSummaries         map[string]string
+	pendingGitSummaryExpireNext map[string]bool
+	codexPickerVisible          bool
 	codexPickerSelected    int
 	codexPickerChoices     []codexSessionChoice
 	codexPickerLoading     bool
@@ -661,6 +662,24 @@ func (m *Model) clearPendingGitSummary(projectPath string) {
 	if m.pendingGitOperations != nil {
 		delete(m.pendingGitOperations, projectPath)
 	}
+}
+
+func (m *Model) expirePendingGitSummaryOnRefresh(projectPath string) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return
+	}
+	if m.pendingGitSummaryExpireNext == nil {
+		m.pendingGitSummaryExpireNext = make(map[string]bool)
+	}
+	m.pendingGitSummaryExpireNext[projectPath] = true
+}
+
+func (m *Model) flushExpiredPendingGitSummaries() {
+	for path := range m.pendingGitSummaryExpireNext {
+		m.clearPendingGitSummary(path)
+	}
+	m.pendingGitSummaryExpireNext = nil
 }
 
 func (m Model) pendingGitSummary(projectPath string) string {
@@ -1366,6 +1385,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m.updateNormalMode(msg)
 	case projectsMsg:
+		m.flushExpiredPendingGitSummaries()
 		reloadCmd := m.finishProjectsReloadCmd()
 		if msg.err != nil {
 			m.loading = false
@@ -1637,7 +1657,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.commitApplying = false
 		m.commitPreviewRefreshing = false
 		if msg.clearPendingGitSummary {
-			m.clearPendingGitSummary(msg.projectPath)
+			if msg.err != nil {
+				m.clearPendingGitSummary(msg.projectPath)
+			} else {
+				m.expirePendingGitSummaryOnRefresh(msg.projectPath)
+			}
 		}
 		m.commitPreview = nil
 		m.commitTodoCompletions = nil
@@ -1830,7 +1854,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 	case worktreeActionMsg:
 		if msg.clearPendingGitSummary {
-			m.clearPendingGitSummary(msg.projectPath)
+			if msg.err != nil {
+				m.clearPendingGitSummary(msg.projectPath)
+			} else {
+				m.expirePendingGitSummaryOnRefresh(msg.projectPath)
+			}
 		}
 		if msg.err != nil {
 			m.reportError("Worktree action failed", msg.err, msg.projectPath)
