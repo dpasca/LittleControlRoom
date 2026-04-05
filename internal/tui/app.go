@@ -1933,9 +1933,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.err = nil
-		if m.svc != nil {
-			m.svc.ApplyEditableSettings(msg.settings)
-		}
+		// Embedded model preferences are already persisted to disk and mirrored in
+		// the TUI baseline below. Re-entering Service.ApplyEditableSettings here
+		// can block Update behind long-running scan/worktree mutex holders and
+		// freeze the UI during /model changes.
 		saved := cloneEditableSettings(msg.settings)
 		m.settingsBaseline = &saved
 		m.embeddedModelPrefs = embeddedModelPreferencesFromSettings(msg.settings)
@@ -5816,7 +5817,7 @@ func (m Model) renderFooter(width int) string {
 		return m.renderModalFooter(width, "Settings: Enter save, Tab next, Esc cancel", filterSegment, usageSegment, assessmentSegment)
 	}
 	if m.showPerf {
-		return m.renderModalFooter(width, "Performance: Esc close", filterSegment, usageSegment, assessmentSegment)
+		return m.renderModalFooter(width, "Performance: c copy, Esc close", filterSegment, usageSegment, assessmentSegment)
 	}
 	if m.showAIStats {
 		return m.renderModalFooter(width, "AI stats: Esc close", filterSegment, usageSegment, assessmentSegment)

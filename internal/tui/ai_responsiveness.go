@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const (
@@ -389,7 +390,7 @@ func (m *Model) openPerfDialog() tea.Cmd {
 	m.showAIStats = false
 	m.showHelp = false
 	m.err = nil
-	m.status = "Performance open. Press Esc to close"
+	m.status = "Performance open. Press c to copy or Esc to close"
 	return nil
 }
 
@@ -400,8 +401,20 @@ func (m *Model) closePerfDialog(status string) {
 	}
 }
 
+func (m *Model) copyPerfToClipboard() tea.Cmd {
+	if err := clipboardTextWriter(m.formatPerfCopyText()); err != nil {
+		m.reportError("Performance copy failed", err, "")
+		return nil
+	}
+	m.err = nil
+	m.status = "Copied performance details to clipboard"
+	return nil
+}
+
 func (m Model) updatePerfMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case "c":
+		return m, m.copyPerfToClipboard()
 	case "esc", "enter", "?":
 		m.closePerfDialog("Performance closed")
 	}
@@ -433,7 +446,12 @@ func (m Model) renderPerfContent(width int) string {
 	lines = append(lines, commandPaletteHintStyle.Render("Open /perf after a freeze to see recent waits and any captured stall artifacts for this run."))
 	lines = append(lines, "")
 	lines = append(lines, renderHelpPanelActionRow(
+		renderDialogAction("c", "copy", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
 	))
 	return strings.Join(lines, "\n")
+}
+
+func (m Model) formatPerfCopyText() string {
+	return strings.TrimSpace(ansi.Strip(m.renderPerfContent(96)))
 }

@@ -15770,7 +15770,7 @@ func TestDispatchPerfCommandOpensPerfDialog(t *testing.T) {
 	if !got.showPerf {
 		t.Fatalf("dispatchCommand(/perf) should open the performance dialog")
 	}
-	if got.status != "Performance open. Press Esc to close" {
+	if got.status != "Performance open. Press c to copy or Esc to close" {
 		t.Fatalf("status = %q, want performance open status", got.status)
 	}
 	if cmd != nil {
