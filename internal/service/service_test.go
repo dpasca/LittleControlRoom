@@ -1935,6 +1935,70 @@ func TestScanOnceForgetsStaleLinkedWorktreeDirectoryStillOnDisk(t *testing.T) {
 	}
 }
 
+func TestRefreshProjectStatusForgetsStaleLinkedWorktreeDirectoryStillOnDisk(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	staleWorktreePath := filepath.Join(root, "repo--stale-worktree")
+	if err := os.MkdirAll(staleWorktreePath, 0o755); err != nil {
+		t.Fatalf("mkdir stale worktree path: %v", err)
+	}
+	staleGitDir := filepath.Join(projectPath, ".git", "worktrees", "repo--stale-worktree")
+	if err := os.WriteFile(filepath.Join(staleWorktreePath, ".git"), []byte("gitdir: "+staleGitDir+"\n"), 0o644); err != nil {
+		t.Fatalf("write stale gitfile: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.IncludePaths = []string{root}
+	svc := New(cfg, st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          staleWorktreePath,
+		Name:          filepath.Base(staleWorktreePath),
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		ManuallyAdded: true,
+		InScope:       true,
+		UpdatedAt:     time.Now(),
+	}); err != nil {
+		t.Fatalf("seed stale worktree state: %v", err)
+	}
+
+	if err := svc.RefreshProjectStatus(ctx, staleWorktreePath); err != nil {
+		t.Fatalf("RefreshProjectStatus() error = %v", err)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, staleWorktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail(stale worktree) error = %v", err)
+	}
+	if !detail.Summary.Forgotten {
+		t.Fatalf("stale linked worktree should be forgotten after refresh: %#v", detail.Summary)
+	}
+	if detail.Summary.WorktreeRootPath != projectPath {
+		t.Fatalf("WorktreeRootPath = %q, want %q", detail.Summary.WorktreeRootPath, projectPath)
+	}
+	if detail.Summary.WorktreeKind != model.WorktreeKindLinked {
+		t.Fatalf("WorktreeKind = %q, want %q", detail.Summary.WorktreeKind, model.WorktreeKindLinked)
+	}
+}
+
 func TestScanOnceDetectsDirtyRepoAndClearsWhenClean(t *testing.T) {
 	t.Parallel()
 

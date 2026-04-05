@@ -637,13 +637,9 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		}
 		forgotten := old.Forgotten
 		staleLinkedWorktree := false
-		if worktreeKind == model.WorktreeKindLinked && strings.TrimSpace(worktreeRootPath) != "" {
-			if livePaths := liveWorktreePathsByRoot[worktreeRootPath]; len(livePaths) > 0 {
-				if _, ok := livePaths[path]; !ok {
-					staleLinkedWorktree = true
-					forgotten = true
-				}
-			}
+		if worktreeKind == model.WorktreeKindLinked && liveLinkedWorktreeMissing(liveWorktreePathsByRoot, worktreeRootPath, path) {
+			staleLinkedWorktree = true
+			forgotten = true
 		}
 		if presentOnDisk && forgotten && scope.Allows(path) && !staleLinkedWorktree {
 			forgotten = false
@@ -915,6 +911,41 @@ func propagateWorktreeActivitiesToRoot(activities map[string]*model.DetectorProj
 			existing.LastActivity = activity.LastActivity
 		}
 	}
+}
+
+func liveLinkedWorktreeMissing(livePathsByRoot map[string]map[string]struct{}, rootPath, projectPath string) bool {
+	rootPath = filepath.Clean(strings.TrimSpace(rootPath))
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if rootPath == "" || projectPath == "" {
+		return false
+	}
+	livePaths := livePathsByRoot[rootPath]
+	if len(livePaths) == 0 {
+		return false
+	}
+	_, ok := livePaths[projectPath]
+	return !ok
+}
+
+func (s *Service) staleLinkedWorktreeOnDisk(ctx context.Context, rootPath string, kind model.WorktreeKind, projectPath string) bool {
+	if s == nil || s.gitWorktreeListReader == nil || kind != model.WorktreeKindLinked {
+		return false
+	}
+	rootPath = filepath.Clean(strings.TrimSpace(rootPath))
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if rootPath == "" || projectPath == "" {
+		return false
+	}
+	worktrees, err := s.gitWorktreeListReader(ctx, rootPath)
+	if err != nil || len(worktrees) == 0 {
+		return false
+	}
+	for _, worktree := range worktrees {
+		if filepath.Clean(strings.TrimSpace(worktree.Path)) == projectPath {
+			return false
+		}
+	}
+	return true
 }
 
 func reconcileGlobalSessionOwnership(activities map[string]*model.DetectorProjectActivity) {
@@ -1556,7 +1587,10 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 	repoAheadCount := 0
 	repoBehindCount := 0
 	if presentOnDisk {
-		worktreeRootPath, worktreeKind = s.readProjectWorktreeInfo(ctx, detail.Summary.Path)
+		if nextRootPath, nextKind := s.readProjectWorktreeInfo(ctx, detail.Summary.Path); nextRootPath != "" || nextKind != model.WorktreeKindNone {
+			worktreeRootPath = nextRootPath
+			worktreeKind = nextKind
+		}
 		if s.gitRepoStatusReader != nil {
 			if repoStatus, err := s.gitRepoStatusReader(ctx, detail.Summary.Path); err == nil {
 				repoBranch = strings.TrimSpace(repoStatus.Branch)
@@ -1582,6 +1616,14 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 			repoBehindCount = detail.Summary.RepoBehindCount
 		}
 		worktreeMergeStatus = resolveWorktreeMergeStatus(ctx, worktreeRootPath, worktreeKind, repoBranch, worktreeParentBranch)
+	}
+	forgotten := detail.Summary.Forgotten
+	staleLinkedWorktree := presentOnDisk && s.staleLinkedWorktreeOnDisk(ctx, worktreeRootPath, worktreeKind, detail.Summary.Path)
+	if staleLinkedWorktree {
+		forgotten = true
+	}
+	if presentOnDisk && forgotten && detail.Summary.InScope && !staleLinkedWorktree {
+		forgotten = false
 	}
 
 	errorCount := 0
@@ -1639,7 +1681,7 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 		RepoSyncStatus:       repoSyncStatus,
 		RepoAheadCount:       repoAheadCount,
 		RepoBehindCount:      repoBehindCount,
-		Forgotten:            detail.Summary.Forgotten,
+		Forgotten:            forgotten,
 		ManuallyAdded:        detail.Summary.ManuallyAdded,
 		InScope:              detail.Summary.InScope,
 		Pinned:               detail.Summary.Pinned,
