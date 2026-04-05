@@ -5541,6 +5541,127 @@ func TestEnterDoesNotLaunchCodexFromDetailPane(t *testing.T) {
 	}
 }
 
+func TestSyncDetailViewportSkipsHiddenDashboardWhileCodexVisible(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Path:                          "/tmp/demo",
+			Name:                          "demo",
+			PresentOnDisk:                 true,
+			LatestCompletedSessionSummary: "fresh hidden summary",
+		}},
+		selected:            0,
+		codexVisibleProject: "/tmp/demo",
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+		},
+		runtimeSnapshots: map[string]projectrun.Snapshot{
+			"/tmp/demo": {
+				ProjectPath:  "/tmp/demo",
+				RecentOutput: []string{"fresh runtime output"},
+			},
+		},
+		detailViewport:  viewport.New(20, 5),
+		runtimeViewport: viewport.New(20, 5),
+		width:           100,
+		height:          24,
+	}
+	m.detailViewport.SetContent("stale detail cache")
+	m.runtimeViewport.SetContent("stale runtime cache")
+
+	m.syncDetailViewport(false)
+
+	if got := ansi.Strip(m.detailViewport.View()); !strings.Contains(got, "stale detail cache") {
+		t.Fatalf("hidden detail sync should keep the cached detail viewport content, got %q", got)
+	} else if strings.Contains(got, "fresh hidden summary") {
+		t.Fatalf("hidden detail sync should not eagerly rebuild dashboard content while Codex is visible, got %q", got)
+	}
+	if got := ansi.Strip(m.runtimeViewport.View()); !strings.Contains(got, "stale runtime cache") {
+		t.Fatalf("hidden detail sync should leave the cached runtime viewport content alone, got %q", got)
+	} else if strings.Contains(got, "fresh runtime output") {
+		t.Fatalf("hidden detail sync should not eagerly rebuild the runtime viewport while Codex is visible, got %q", got)
+	}
+}
+
+func TestHideCodexSessionResyncsDashboardPanes(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Path:                          "/tmp/demo",
+			Name:                          "demo",
+			PresentOnDisk:                 true,
+			LatestCompletedSessionSummary: "fresh summary after hide",
+		}},
+		selected:            0,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": {
+				ProjectPath: "/tmp/demo",
+				Started:     true,
+				Status:      "Codex session ready",
+			},
+		},
+		codexInput: newCodexTextarea(),
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+		},
+		runtimeSnapshots: map[string]projectrun.Snapshot{
+			"/tmp/demo": {
+				ProjectPath:  "/tmp/demo",
+				RecentOutput: []string{"runtime after hide"},
+			},
+		},
+		detailViewport:  viewport.New(20, 5),
+		runtimeViewport: viewport.New(20, 5),
+		width:           100,
+		height:          24,
+	}
+	m.detailViewport.SetContent("old detail cache")
+	m.runtimeViewport.SetContent("old runtime cache")
+
+	updated, _ := m.hideCodexSession()
+	got := updated.(Model)
+
+	if got.codexVisibleProject != "" {
+		t.Fatalf("codexVisibleProject = %q, want hidden", got.codexVisibleProject)
+	}
+	if got := ansi.Strip(got.detailViewport.View()); !strings.Contains(got, "fresh summary after hide") {
+		t.Fatalf("hiding Codex should resync the detail viewport before returning to the dashboard, got %q", got)
+	}
+	if got := ansi.Strip(got.runtimeViewport.View()); !strings.Contains(got, "runtime after hide") {
+		t.Fatalf("hiding Codex should resync the runtime viewport before returning to the dashboard, got %q", got)
+	}
+}
+
+func TestRenderDetailViewportUsesSyncedCache(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Path:                          "/tmp/demo",
+			Name:                          "demo",
+			PresentOnDisk:                 true,
+			LatestCompletedSessionSummary: "cached detail summary",
+		}},
+		selected: 0,
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+		},
+		detailViewport: viewport.New(20, 5),
+		width:          100,
+		height:         24,
+	}
+
+	m.syncDetailViewport(false)
+	m.projects[0].LatestCompletedSessionSummary = "uncached detail summary"
+
+	layout := m.bodyLayout()
+	rendered := ansi.Strip(m.renderDetailViewport(layout.detailContentWidth, max(1, layout.bottomPaneHeight-2)))
+	if !strings.Contains(rendered, "cached detail summary") {
+		t.Fatalf("renderDetailViewport() should use the synced detail cache until the next explicit sync, got %q", rendered)
+	}
+	if strings.Contains(rendered, "uncached detail summary") {
+		t.Fatalf("renderDetailViewport() should not rebuild detail content on every render, got %q", rendered)
+	}
+}
+
 func TestF2DoesNothingInMainView(t *testing.T) {
 	m := Model{
 		codexHiddenProject: "/tmp/demo",
@@ -13578,6 +13699,42 @@ func TestSpinnerTickRecordsUIStallLatency(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("spinner stall should record a UI stall sample, got %#v", next.aiLatencyRecent)
+	}
+}
+
+func TestSpinnerTickDoesNotResyncRuntimeViewport(t *testing.T) {
+	base := Model{
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/demo",
+			Name:          "demo",
+			PresentOnDisk: true,
+		}},
+		selected:        0,
+		spinnerFrame:    0,
+		runtimeViewport: viewport.New(20, 5),
+		runtimeSnapshots: map[string]projectrun.Snapshot{
+			"/tmp/demo": {
+				ProjectPath:  "/tmp/demo",
+				RecentOutput: []string{"fresh runtime output"},
+			},
+		},
+		width:  100,
+		height: 24,
+	}
+	base.runtimeViewport.SetContent("stale runtime cache")
+
+	nextModel, _ := base.Update(spinnerTickMsg{})
+	next, ok := nextModel.(Model)
+	if !ok {
+		t.Fatalf("Update() returned %T, want tui.Model", nextModel)
+	}
+
+	rendered := ansi.Strip(next.runtimeViewport.View())
+	if !strings.Contains(rendered, "stale runtime cache") {
+		t.Fatalf("spinnerTick should not resync runtime output on the UI thread, got %q", rendered)
+	}
+	if strings.Contains(rendered, "fresh runtime output") {
+		t.Fatalf("spinnerTick should leave runtime viewport refreshes to runtime snapshot updates, got %q", rendered)
 	}
 }
 

@@ -50,6 +50,12 @@ func (m *Model) syncRuntimeViewport(reset bool) {
 	summaryLines := m.renderRuntimePanelSummary(layout.runtimeContentWidth, projectPath)
 	outputHeight := max(3, innerHeight-len(summaryLines)-4)
 	m.runtimeViewport.Height = outputHeight
+	if m.codexVisible() {
+		if reset {
+			m.runtimeViewport.GotoBottom()
+		}
+		return
+	}
 
 	offset := m.runtimeViewport.YOffset
 	m.runtimeViewport.SetContent(m.renderRuntimePanelOutputContent(layout.runtimeContentWidth, projectPath))

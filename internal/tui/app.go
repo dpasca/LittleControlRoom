@@ -2050,6 +2050,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.codexVisibleProject == msg.projectPath {
 				m.codexVisibleProject = ""
 				m.codexInput.Blur()
+				m.syncDetailViewport(false)
 			}
 			if m.codexHiddenProject == msg.projectPath {
 				m.codexHiddenProject = ""
@@ -2105,7 +2106,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinnerFrame = (m.spinnerFrame + 1) % spinnerAnimationFrameWrap
 		m.refreshUsagePulse()
 		m.pruneTransientHighlights(m.currentTime())
-		m.syncRuntimeViewport(false)
 		refreshCmd := tea.Cmd(nil)
 		if m.spinnerFrame%runtimeSnapshotRefreshEveryTicks == 0 {
 			refreshCmd = m.requestRuntimeSnapshotsRefreshCmd()
@@ -2800,6 +2800,12 @@ func (m *Model) syncDetailViewport(reset bool) {
 	layout := m.bodyLayout()
 	m.detailViewport.Width = layout.detailContentWidth
 	m.detailViewport.Height = max(1, layout.bottomPaneHeight-2)
+	if m.codexVisible() {
+		if reset {
+			m.detailViewport.GotoTop()
+		}
+		return
+	}
 
 	offset := m.detailViewport.YOffset
 	m.detailViewport.SetContent(m.renderDetailContent(layout.detailContentWidth))
@@ -2820,21 +2826,24 @@ func (m Model) renderDetailViewport(width, height int) string {
 	if height <= 0 {
 		return ""
 	}
-	content := strings.ReplaceAll(m.renderDetailContent(width), "\r\n", "\n")
-	lines := strings.Split(content, "\n")
-	offset := m.detailViewport.YOffset
-	maxOffset := max(0, len(lines)-height)
-	if offset > maxOffset {
-		offset = maxOffset
+
+	view := m.detailViewport
+	view.Width = max(1, width)
+	view.Height = max(1, height)
+
+	if m.detailViewport.Width != width || m.detailViewport.Height <= 0 {
+		content := strings.ReplaceAll(m.renderDetailContent(width), "\r\n", "\n")
+		view.SetContent(content)
 	}
-	if offset < 0 {
-		offset = 0
+
+	maxOffset := max(0, view.TotalLineCount()-view.Height)
+	if view.YOffset > maxOffset {
+		view.SetYOffset(maxOffset)
 	}
-	end := min(len(lines), offset+height)
-	if offset >= len(lines) {
-		return fitPaneContent("", width, height)
+	if view.YOffset < 0 {
+		view.SetYOffset(0)
 	}
-	return fitPaneContent(strings.Join(lines[offset:end], "\n"), width, height)
+	return fitPaneContent(view.View(), width, height)
 }
 
 func (m Model) View() string {

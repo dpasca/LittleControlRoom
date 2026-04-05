@@ -207,6 +207,7 @@ func (m *Model) pruneCodexSessionVisibility() {
 			m.dropCodexSnapshot(projectPath)
 			m.codexVisibleProject = ""
 			m.codexInput.Blur()
+			m.syncDetailViewport(false)
 		}
 	}
 	if projectPath := strings.TrimSpace(m.codexHiddenProject); projectPath != "" {
@@ -996,6 +997,7 @@ func (m Model) hideCodexSession() (tea.Model, tea.Cmd) {
 	m.codexHiddenProject = m.codexVisibleProject
 	m.codexVisibleProject = ""
 	m.codexInput.Blur()
+	m.syncDetailViewport(false)
 	m.status = label + " hidden."
 	return m, m.focusProjectPath(projectPath)
 }
