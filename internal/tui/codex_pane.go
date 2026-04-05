@@ -1212,29 +1212,38 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if draft.Empty() {
 			return m, nil
 		}
+		refreshCmd := tea.Cmd(nil)
+		if refreshed, ok, needsAsync := m.refreshCodexSubmitSnapshot(m.codexVisibleProject, snapshot); ok {
+			snapshot = refreshed
+			if needsAsync {
+				refreshCmd = m.deferredCodexSnapshotCmd(m.codexVisibleProject)
+			}
+		} else if needsAsync {
+			refreshCmd = m.deferredCodexSnapshotCmd(m.codexVisibleProject)
+		}
 		if snapshot.BusyExternal {
 			if cmd := embeddedNewCommand(embeddedProvider(snapshot)); cmd != "" {
 				m.status = "This " + label + " session is already active in another process, so the embedded view cannot steer it. Use " + cmd + " for a separate session."
 			} else {
 				m.status = "This " + label + " session is read-only."
 			}
-			return m, nil
+			return m, refreshCmd
 		}
 		if snapshot.Phase == codexapp.SessionPhaseFinishing {
 			m.status = label + " is finishing the current turn. Wait for it to settle before sending another prompt."
-			return m, nil
+			return m, refreshCmd
 		}
 		if snapshot.Phase == codexapp.SessionPhaseReconciling {
 			if codexStatusIsCompacting(snapshot.Status) {
 				m.status = label + " is compacting conversation history. Wait for it to finish before sending another prompt."
-				return m, nil
+				return m, refreshCmd
 			}
 			m.status = label + " is rechecking the current turn state. Wait for that to finish before sending another prompt."
-			return m, nil
+			return m, refreshCmd
 		}
 		if snapshot.Phase == codexapp.SessionPhaseStalled {
 			m.status = label + " looks stuck or disconnected. Use /reconnect before sending another prompt."
-			return m, nil
+			return m, refreshCmd
 		}
 		m.clearCodexDraft(m.codexVisibleProject)
 		if codexSnapshotCanSteer(snapshot) {
@@ -1242,7 +1251,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.status = "Sending prompt to " + label + "..."
 		}
-		return m, m.submitVisibleCodexCmd(draft)
+		return m, batchCmds(refreshCmd, m.submitVisibleCodexCmd(draft))
 	case "alt+enter", "ctrl+j":
 		m.codexInput.InsertString("\n")
 		m.persistVisibleCodexDraft()
@@ -2239,6 +2248,26 @@ func normalizedCodexStatus(status string) string {
 
 func codexStatusIsCompacting(status string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(status)), "compacting conversation history")
+}
+
+func (m *Model) refreshCodexSubmitSnapshot(projectPath string, snapshot codexapp.Snapshot) (codexapp.Snapshot, bool, bool) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" || !codexSnapshotNeedsSubmitRefresh(snapshot) {
+		return snapshot, true, false
+	}
+	return m.refreshCodexSnapshot(projectPath)
+}
+
+func codexSnapshotNeedsSubmitRefresh(snapshot codexapp.Snapshot) bool {
+	if snapshot.BusyExternal {
+		return true
+	}
+	switch snapshot.Phase {
+	case codexapp.SessionPhaseFinishing, codexapp.SessionPhaseReconciling, codexapp.SessionPhaseStalled:
+		return true
+	default:
+		return false
+	}
 }
 
 func codexSnapshotCanSteer(snapshot codexapp.Snapshot) bool {

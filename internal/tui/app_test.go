@@ -5944,6 +5944,66 @@ func TestVisibleCodexEnterSubmitsPrompt(t *testing.T) {
 	}
 }
 
+func TestVisibleCodexEnterRefreshesStaleResumedSnapshotBeforeBlockingSubmit(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started:  true,
+			Preset:   codexcli.PresetYolo,
+			ThreadID: "ses_resume",
+			Status:   "Codex session ready",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("please continue")
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": {
+				Started:      true,
+				Preset:       codexcli.PresetYolo,
+				ThreadID:     "ses_resume",
+				Busy:         true,
+				Phase:        codexapp.SessionPhaseReconciling,
+				ActiveTurnID: "turn_old",
+				Status:       "Rechecking turn state...",
+			},
+		},
+		width:  100,
+		height: 24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if session.trySnapshotCalls == 0 {
+		t.Fatalf("enter should refresh the live snapshot before blocking submit")
+	}
+	if cmd == nil {
+		t.Fatalf("enter should submit when the refreshed resumed snapshot is idle")
+	}
+	if got.codexInput.Value() != "" {
+		t.Fatalf("codex input should clear after submit, got %q", got.codexInput.Value())
+	}
+	if got.status != "Sending prompt to Codex..." {
+		t.Fatalf("status = %q, want sending notice after refreshed idle snapshot", got.status)
+	}
+}
+
 func TestVisibleCodexSlashSuggestionsRender(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
