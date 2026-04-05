@@ -77,7 +77,35 @@ func TestDetectOpenAICompatibleLocalReady(t *testing.T) {
 	if !status.Ready {
 		t.Fatalf("status.Ready = false, want true")
 	}
+	if got := status.ActiveModel; got != "qwen-local" {
+		t.Fatalf("status.ActiveModel = %q, want %q", got, "qwen-local")
+	}
+	if len(status.Models) != 1 || status.Models[0] != "qwen-local" {
+		t.Fatalf("status.Models = %#v, want qwen-local", status.Models)
+	}
 	if status.Detail == "" {
 		t.Fatalf("status.Detail should describe the ready server")
+	}
+}
+
+func TestDetectOpenAICompatibleLocalConfiguredModelMustExist(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"qwen-local"},{"id":"qwen-other"}]}`))
+	}))
+	defer server.Close()
+
+	cfg := config.Default()
+	cfg.MLXBaseURL = server.URL + "/v1"
+	cfg.MLXModel = "missing-model"
+
+	status := detectOpenAICompatibleLocal(context.Background(), cfg, config.AIBackendMLX)
+	if status.Ready {
+		t.Fatalf("status.Ready = true, want false when configured model is missing")
+	}
+	if status.LoginHint == "" {
+		t.Fatalf("status.LoginHint should explain how to fix the missing configured model")
 	}
 }

@@ -218,7 +218,7 @@ func BuildClassificationRequest(state model.ProjectState) (model.SessionClassifi
 		SessionFormat:     latest.Format,
 		SnapshotHash:      snapshotHash,
 		Status:            model.ClassificationPending,
-		Model:             DefaultModel,
+		Model:             "",
 		ClassifierVersion: ClassifierVersion,
 		SourceUpdatedAt:   latest.LastEventAt,
 	}), true

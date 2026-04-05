@@ -193,8 +193,10 @@ func GenerateScreenshots(ctx context.Context, svc *service.Service, cfg config.S
 	localSettings.AIBackend = config.AIBackendMLX
 	localSettings.MLXBaseURL = "http://127.0.0.1:8080/v1"
 	localSettings.MLXAPIKey = "mlx"
+	localSettings.MLXModel = "mlx-community/Qwen3.5-9B-MLX-4bit"
 	localSettings.OllamaBaseURL = "http://127.0.0.1:11434/v1"
 	localSettings.OllamaAPIKey = "ollama"
+	localSettings.OllamaModel = "qwen3.5:latest"
 	settingsModel.settingsMode = true
 	settingsModel.settingsFields = newSettingsFields(localSettings)
 	settingsModel.settingsSelected = settingsFieldMLXBaseURL

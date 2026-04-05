@@ -609,6 +609,87 @@ func TestManagerProcessOneHeartbeatsWaitingForModel(t *testing.T) {
 	}
 }
 
+func TestBuildClassificationRequestLeavesModelUnsetUntilClientChoosesOne(t *testing.T) {
+	t.Parallel()
+
+	fixture := filepath.Clean(filepath.Join("..", "..", "testdata", "codex_footprint", "sessions", "2026", "03", "05", "rollout-modern.jsonl"))
+	now := time.Now()
+	classification, ok := BuildClassificationRequest(model.ProjectState{
+		Path: "/tmp/local-mlx",
+		Sessions: []model.SessionEvidence{{
+			SessionID:            "ses_local",
+			ProjectPath:          "/tmp/local-mlx",
+			SessionFile:          fixture,
+			Format:               "modern",
+			LastEventAt:          now,
+			SnapshotHash:         "hash-local",
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  true,
+		}},
+	})
+	if !ok {
+		t.Fatalf("BuildClassificationRequest() = !ok, want ok")
+	}
+	if classification.Model != "" {
+		t.Fatalf("classification.Model = %q, want blank until the active client chooses one", classification.Model)
+	}
+}
+
+func TestManagerQueueProjectUsesClientModelWhenAvailable(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	fixture := filepath.Clean(filepath.Join("..", "..", "testdata", "codex_footprint", "sessions", "2026", "03", "05", "rollout-modern.jsonl"))
+	now := time.Now()
+	state := model.ProjectState{
+		Path:           "/tmp/queue-model",
+		Name:           "queue-model",
+		Status:         model.StatusActive,
+		AttentionScore: 10,
+		InScope:        true,
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{{
+			SessionID:            "ses_queue_model",
+			ProjectPath:          "/tmp/queue-model",
+			SessionFile:          fixture,
+			Format:               "modern",
+			LastEventAt:          now,
+			SnapshotHash:         "hash-queue-model",
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  true,
+		}},
+	}
+	if err := st.UpsertProjectState(ctx, state); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	manager := NewManager(st, events.NewBus(), Options{
+		Client: resetUsageTestClient{model: "qwen-local"},
+	})
+
+	queued, err := manager.QueueProject(ctx, state)
+	if err != nil {
+		t.Fatalf("queue project: %v", err)
+	}
+	if !queued {
+		t.Fatalf("expected queue project to enqueue work")
+	}
+
+	classification, err := st.GetSessionClassification(ctx, "ses_queue_model")
+	if err != nil {
+		t.Fatalf("get classification: %v", err)
+	}
+	if classification.Model != "qwen-local" {
+		t.Fatalf("classification.Model = %q, want %q", classification.Model, "qwen-local")
+	}
+}
+
 type resetUsageTestClient struct {
 	model string
 }

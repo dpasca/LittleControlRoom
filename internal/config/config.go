@@ -21,8 +21,10 @@ type AppConfig struct {
 	OpenAIAPIKey              string
 	MLXBaseURL                string
 	MLXAPIKey                 string
+	MLXModel                  string
 	OllamaBaseURL             string
 	OllamaAPIKey              string
+	OllamaModel               string
 	IncludePaths              []string
 	ExcludePaths              []string
 	ExcludeProjectPatterns    []string
@@ -87,13 +89,26 @@ func (c AppConfig) OpenAICompatibleAPIKey(backend AIBackend) string {
 	}
 }
 
+func (c AppConfig) OpenAICompatibleModel(backend AIBackend) string {
+	switch backend {
+	case AIBackendMLX:
+		return strings.TrimSpace(c.MLXModel)
+	case AIBackendOllama:
+		return strings.TrimSpace(c.OllamaModel)
+	default:
+		return ""
+	}
+}
+
 type fileConfig struct {
 	AIBackend                 string    `toml:"ai_backend"`
 	OpenAIAPIKey              *string   `toml:"openai_api_key"`
 	MLXBaseURL                *string   `toml:"mlx_base_url"`
 	MLXAPIKey                 *string   `toml:"mlx_api_key"`
+	MLXModel                  *string   `toml:"mlx_model"`
 	OllamaBaseURL             *string   `toml:"ollama_base_url"`
 	OllamaAPIKey              *string   `toml:"ollama_api_key"`
+	OllamaModel               *string   `toml:"ollama_model"`
 	IncludePaths              *[]string `toml:"include_paths"`
 	ExcludePaths              *[]string `toml:"exclude_paths"`
 	ExcludeProjectPatterns    *[]string `toml:"exclude_project_patterns"`
@@ -370,11 +385,17 @@ func applyConfigFile(cfg *AppConfig) error {
 	if fc.MLXAPIKey != nil {
 		cfg.MLXAPIKey = strings.TrimSpace(*fc.MLXAPIKey)
 	}
+	if fc.MLXModel != nil {
+		cfg.MLXModel = strings.TrimSpace(*fc.MLXModel)
+	}
 	if fc.OllamaBaseURL != nil {
 		cfg.OllamaBaseURL = strings.TrimSpace(*fc.OllamaBaseURL)
 	}
 	if fc.OllamaAPIKey != nil {
 		cfg.OllamaAPIKey = strings.TrimSpace(*fc.OllamaAPIKey)
+	}
+	if fc.OllamaModel != nil {
+		cfg.OllamaModel = strings.TrimSpace(*fc.OllamaModel)
 	}
 	if fc.ExcludePaths != nil {
 		excludePaths, err := normalizePaths(*fc.ExcludePaths)
