@@ -4185,6 +4185,46 @@ func TestRenderProjectListCollapsesLinkedWorktreesUnderRepoRow(t *testing.T) {
 	}
 }
 
+func TestRebuildProjectListUsesMostRecentWorktreeActivityForRootRow(t *testing.T) {
+	rootPath := "/tmp/repo"
+	rootLast := time.Date(2026, 3, 7, 9, 0, 0, 0, time.UTC)
+	worktreeLast := time.Date(2026, 3, 7, 10, 0, 0, 0, time.UTC)
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				LastActivity:     rootLast,
+				Status:           model.StatusIdle,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+			},
+			{
+				Name:             "repo--feat-parallel-lane",
+				Path:             "/tmp/repo--feat-parallel-lane",
+				LastActivity:     worktreeLast,
+				Status:           model.StatusIdle,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+			},
+		},
+		worktreeExpanded: map[string]bool{rootPath: false},
+		sortMode:         sortByAttention,
+		visibility:       visibilityAllFolders,
+	}
+
+	m.rebuildProjectList(rootPath)
+
+	if len(m.projects) != 1 {
+		t.Fatalf("rebuildProjectList() grouped projects = %#v, want a single root row", m.projects)
+	}
+	if got := m.projects[0].LastActivity; !got.Equal(worktreeLast) {
+		t.Fatalf("root row LastActivity = %v, want %v from the linked worktree", got, worktreeLast)
+	}
+}
+
 func TestRenderProjectListShowsExpandedWorktreeChildren(t *testing.T) {
 	rootPath := "/tmp/repo"
 	m := Model{
