@@ -355,11 +355,12 @@ type commitTodoItem struct {
 }
 
 type commitPreviewMsg struct {
-	preview     service.CommitPreview
-	projectPath string
-	intent      service.GitActionIntent
-	message     string
-	err         error
+	preview               service.CommitPreview
+	projectPath           string
+	intent                service.GitActionIntent
+	message               string
+	refreshedProjectState bool
+	err                   error
 }
 
 type diffPreviewMsg struct {
@@ -1581,6 +1582,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.commitPreviewMessageOverride = ""
 				m.commitApplying = false
 				m.status = gitStatusDialogReadyStatus(dialog)
+				if msg.refreshedProjectState {
+					return m, m.requestProjectInvalidationCmd(invalidateProjectData(noChangesErr.ProjectPath))
+				}
 				return m, m.refreshProjectStatusCmd(noChangesErr.ProjectPath)
 			}
 			var submoduleErr service.SubmoduleAttentionError
@@ -4685,8 +4689,23 @@ func (m Model) openRuntimeURLInBrowserCmd(rawURL string) tea.Cmd {
 
 func (m Model) prepareCommitPreviewCmd(path string, intent service.GitActionIntent, message string) tea.Cmd {
 	return func() tea.Msg {
+		previewMsg := commitPreviewMsg{
+			projectPath: path,
+			intent:      intent,
+			message:     message,
+		}
 		preview, err := m.svc.PrepareCommit(m.ctx, path, intent, message)
-		return commitPreviewMsg{preview: preview, projectPath: path, intent: intent, message: message, err: err}
+		previewMsg.preview = preview
+		previewMsg.err = err
+		if err != nil {
+			var noChangesErr service.NoChangesToCommitError
+			if errors.As(err, &noChangesErr) {
+				if refreshErr := m.svc.RefreshProjectStatus(m.ctx, path); refreshErr == nil {
+					previewMsg.refreshedProjectState = true
+				}
+			}
+		}
+		return previewMsg
 	}
 }
 
@@ -4810,6 +4829,14 @@ func (m Model) resumeCommitPreviewCmd(cached service.CommitPreview, messageOverr
 		preview, err := m.svc.PrepareCommit(m.ctx, cached.ProjectPath, cached.Intent, messageOverride)
 		previewMsg.preview = preview
 		previewMsg.err = err
+		if err != nil {
+			var noChangesErr service.NoChangesToCommitError
+			if errors.As(err, &noChangesErr) {
+				if refreshErr := m.svc.RefreshProjectStatus(m.ctx, cached.ProjectPath); refreshErr == nil {
+					previewMsg.refreshedProjectState = true
+				}
+			}
+		}
 		return previewMsg
 	}
 }
