@@ -13,6 +13,10 @@ import (
 
 const defaultOpenAICompatibleCacheDuration = 30 * time.Second
 
+type OpenAICompatibleResponsesRunnerOptions struct {
+	PreferChatCompletions bool
+}
+
 type OpenAICompatibleModelDiscovery struct {
 	baseURL       string
 	apiKey        string
@@ -200,9 +204,15 @@ func (r *AutoModelRunner) RunJSONSchema(ctx context.Context, req JSONSchemaReque
 }
 
 func NewOpenAICompatibleResponsesRunner(baseURL, apiKey, defaultModel string, timeout time.Duration, usage *UsageTracker) JSONSchemaRunner {
+	return NewOpenAICompatibleResponsesRunnerWithOptions(baseURL, apiKey, defaultModel, timeout, usage, OpenAICompatibleResponsesRunnerOptions{})
+}
+
+func NewOpenAICompatibleResponsesRunnerWithOptions(baseURL, apiKey, defaultModel string, timeout time.Duration, usage *UsageTracker, opts OpenAICompatibleResponsesRunnerOptions) JSONSchemaRunner {
 	responsesClient := NewResponsesClientWithBaseURL(apiKey, baseURL, timeout, usage)
 	chatClient := NewOpenAICompatibleChatCompletionsClientWithBaseURL(apiKey, baseURL, timeout, usage)
-	baseRunner := NewOpenAICompatibleStructuredOutputRunner(responsesClient, chatClient)
+	baseRunner := NewOpenAICompatibleStructuredOutputRunnerWithOptions(responsesClient, chatClient, OpenAICompatibleStructuredOutputOptions{
+		PreferChatCompletions: opts.PreferChatCompletions,
+	})
 	if baseRunner == nil {
 		return nil
 	}
