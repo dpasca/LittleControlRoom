@@ -190,7 +190,7 @@ func (c *OpenAICommitMessageClient) Suggest(ctx context.Context, input CommitMes
 		Message          string  `json:"message"`
 		CompletedTodoIDs []int64 `json:"completed_todo_ids"`
 	}
-	if err := decodeJSONOutput(response.OutputText, &decoded); err != nil {
+	if err := llm.DecodeJSONObjectOutput(response.OutputText, &decoded); err != nil {
 		return CommitMessageSuggestion{}, fmt.Errorf("decode commit message result: %w", err)
 	}
 	message := strings.TrimSpace(decoded.Message)
@@ -220,61 +220,6 @@ func (c *OpenAICommitMessageClient) runJSONSchemaPrompt(ctx context.Context, sys
 		return llm.JSONSchemaResponse{}, fmt.Errorf("openai response missing assistant output (status=%s)", response.Status)
 	}
 	return response, nil
-}
-
-func decodeJSONOutput(outputText string, decoded any) error {
-	sanitized := strings.TrimSpace(outputText)
-	if sanitized == "" {
-		return errors.New("empty JSON output")
-	}
-
-	if err := json.Unmarshal([]byte(sanitized), decoded); err == nil {
-		return nil
-	}
-
-	if fenced := stripMarkdownJSONFence(sanitized); fenced != sanitized {
-		if err := json.Unmarshal([]byte(fenced), decoded); err == nil {
-			return nil
-		}
-	}
-
-	if extracted := extractFirstJSONObject(sanitized); extracted != "" && extracted != sanitized {
-		if err := json.Unmarshal([]byte(extracted), decoded); err == nil {
-			return nil
-		}
-	}
-
-	return fmt.Errorf("failed to decode JSON output")
-}
-
-func stripMarkdownJSONFence(text string) string {
-	trimmed := strings.TrimSpace(text)
-	if !strings.HasPrefix(trimmed, "```") {
-		return trimmed
-	}
-
-	afterOpen := strings.TrimSpace(trimmed[3:])
-	if newline := strings.IndexAny(afterOpen, "\r\n"); newline >= 0 {
-		afterOpen = afterOpen[newline+1:]
-	} else {
-		return ""
-	}
-	if close := strings.LastIndex(afterOpen, "```"); close >= 0 {
-		afterOpen = afterOpen[:close]
-	}
-	return strings.TrimSpace(afterOpen)
-}
-
-func extractFirstJSONObject(text string) string {
-	start := strings.Index(text, "{")
-	if start < 0 {
-		return ""
-	}
-	end := strings.LastIndex(text, "}")
-	if end <= start {
-		return ""
-	}
-	return strings.TrimSpace(text[start : end+1])
 }
 
 func (c *OpenAICommitMessageClient) responsesClient() llm.JSONSchemaRunner {

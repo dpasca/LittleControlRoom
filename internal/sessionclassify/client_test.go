@@ -852,6 +852,8 @@ func TestDecodeClassifierOutputIncludesPreviewOnFailure(t *testing.T) {
 }
 
 func TestStripMarkdownCodeBlock(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		input string
@@ -880,15 +882,17 @@ func TestStripMarkdownCodeBlock(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := stripMarkdownCodeBlock(tt.input)
+			got := llm.StripMarkdownCodeBlock(tt.input)
 			if got != tt.want {
-				t.Errorf("stripMarkdownCodeBlock() = %q, want %q", got, tt.want)
+				t.Errorf("StripMarkdownCodeBlock() = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
 func TestStripThinkingBlocks(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		input string
@@ -917,9 +921,9 @@ func TestStripThinkingBlocks(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := stripThinkingBlocks(tt.input)
+			got := llm.StripThinkingBlocks(tt.input)
 			if got != tt.want {
-				t.Errorf("stripThinkingBlocks() = %q, want %q", got, tt.want)
+				t.Errorf("StripThinkingBlocks() = %q, want %q", got, tt.want)
 			}
 		})
 	}

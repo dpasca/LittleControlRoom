@@ -35,7 +35,6 @@ const (
 	classifierDefaultRetryBackoff     = 750 * time.Millisecond
 	localRunnerDefaultModel           = "gpt-5.4-mini"
 	localRunnerClaudeDefaultModel     = "haiku"
-	classifierErrorPreviewLimit       = 120
 )
 
 var classifierAttemptPlan = []classifierAttemptConfig{
@@ -506,155 +505,11 @@ func buildClassifierRepairPrompt(snapshotJSON []byte, outputText string, previou
 	return b.String()
 }
 
-func stripMarkdownCodeBlock(s string) string {
-	s = strings.TrimSpace(s)
-	if !strings.HasPrefix(s, "```") {
-		return s
-	}
-	idx := strings.Index(s, "\n")
-	if idx == -1 {
-		return s
-	}
-	content := s[idx+1:]
-	if strings.HasSuffix(content, "```") {
-		content = strings.TrimSuffix(content, "```")
-	}
-	return strings.TrimSpace(content)
-}
-
-func stripThinkingBlocks(s string) string {
-	s = strings.TrimSpace(s)
-	for {
-		if !strings.HasPrefix(s, "<think>") {
-			return s
-		}
-		end := strings.Index(s, "</think>")
-		if end == -1 {
-			return s
-		}
-		s = strings.TrimSpace(s[end+len("</think>"):])
-	}
-}
-
 func decodeClassifierOutput(outputText string, result *Result) error {
-	sanitized := strings.TrimSpace(outputText)
-	if sanitized == "" {
-		return errors.New("decode classifier result: empty JSON output")
+	if err := llm.DecodeJSONObjectOutput(outputText, result); err != nil {
+		return fmt.Errorf("decode classifier result: %w", err)
 	}
-
-	candidates := make([]string, 0, 4)
-	candidates = append(candidates, sanitized)
-	if thinkingStripped := stripThinkingBlocks(sanitized); thinkingStripped != "" && thinkingStripped != sanitized {
-		candidates = append(candidates, thinkingStripped)
-	}
-	if fenced := stripMarkdownCodeBlock(sanitized); fenced != "" && fenced != sanitized {
-		candidates = append(candidates, fenced)
-	}
-	for _, extracted := range extractJSONObjectCandidates(sanitized) {
-		if extracted != sanitized {
-			candidates = append(candidates, extracted)
-		}
-	}
-	if len(candidates) > 1 {
-		for _, extracted := range extractJSONObjectCandidates(candidates[1]) {
-			if extracted != candidates[1] {
-				candidates = append(candidates, extracted)
-			}
-		}
-	}
-
-	var firstErr error
-	seen := make(map[string]struct{}, len(candidates))
-	for _, candidate := range candidates {
-		candidate = strings.TrimSpace(candidate)
-		if candidate == "" {
-			continue
-		}
-		if _, ok := seen[candidate]; ok {
-			continue
-		}
-		seen[candidate] = struct{}{}
-		if err := json.Unmarshal([]byte(candidate), result); err == nil {
-			return nil
-		} else if firstErr == nil {
-			firstErr = err
-		}
-	}
-
-	preview := clippedSingleLinePreview(sanitized, classifierErrorPreviewLimit)
-	if firstErr == nil {
-		return fmt.Errorf("decode classifier result: failed to decode JSON output (preview=%q)", preview)
-	}
-	return fmt.Errorf("decode classifier result: failed to decode JSON output (preview=%q): %w", preview, firstErr)
-}
-
-func extractFirstJSONObject(text string) string {
-	candidates := extractJSONObjectCandidates(text)
-	if len(candidates) == 0 {
-		return ""
-	}
-	return candidates[0]
-}
-
-func extractJSONObjectCandidates(text string) []string {
-	start := -1
-	depth := 0
-	inString := false
-	escaped := false
-	candidates := make([]string, 0, 2)
-
-	for i, r := range text {
-		if escaped {
-			escaped = false
-			continue
-		}
-		if r == '\\' {
-			escaped = inString
-			continue
-		}
-		if r == '"' {
-			inString = !inString
-			continue
-		}
-		if inString {
-			continue
-		}
-		switch r {
-		case '{':
-			if depth == 0 {
-				start = i
-			}
-			depth++
-		case '}':
-			if depth == 0 {
-				continue
-			}
-			depth--
-			if depth == 0 && start >= 0 {
-				candidate := strings.TrimSpace(text[start : i+1])
-				if candidate != "" {
-					candidates = append(candidates, candidate)
-				}
-				start = -1
-			}
-		}
-	}
-
-	return candidates
-}
-
-func clippedSingleLinePreview(text string, limit int) string {
-	text = strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
-	if text == "" {
-		return ""
-	}
-	if limit <= 0 || len(text) <= limit {
-		return text
-	}
-	if limit == 1 {
-		return text[:1]
-	}
-	return strings.TrimSpace(text[:limit-1]) + "…"
+	return nil
 }
 
 func addLLMUsage(a, b model.LLMUsage) model.LLMUsage {

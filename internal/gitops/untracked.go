@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"lcroom/internal/llm"
 )
 
 type UntrackedFileCandidate struct {
@@ -104,7 +106,7 @@ func (c *OpenAICommitMessageClient) RecommendUntracked(ctx context.Context, inpu
 	var decoded struct {
 		Files []UntrackedFileDecision `json:"files"`
 	}
-	if err := decodeJSONOutput(response.OutputText, &decoded); err != nil {
+	if err := llm.DecodeJSONObjectOutput(response.OutputText, &decoded); err != nil {
 		return UntrackedFileRecommendationResult{}, fmt.Errorf("decode untracked recommendation result: %w", err)
 	}
 	for i := range decoded.Files {

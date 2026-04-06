@@ -164,13 +164,12 @@ func (c *OpenAIClient) Suggest(ctx context.Context, req Request) (Result, error)
 	if err != nil {
 		return Result{}, err
 	}
-	outputText := stripMarkdownCodeBlock(strings.TrimSpace(response.OutputText))
-	if outputText == "" {
+	if strings.TrimSpace(response.OutputText) == "" {
 		return Result{}, errors.New("todo worktree suggester returned no assistant output")
 	}
 
 	var result Result
-	if err := json.Unmarshal([]byte(outputText), &result); err != nil {
+	if err := llm.DecodeJSONObjectOutput(response.OutputText, &result); err != nil {
 		return Result{}, fmt.Errorf("decode todo worktree suggestion: %w", err)
 	}
 	if err := validateResult(&result); err != nil {
@@ -279,22 +278,3 @@ Rules:
 - When there are sibling open TODOs, use them only to avoid ambiguity, not to combine tasks.
 
 Return only valid JSON matching the schema.`
-
-func stripMarkdownCodeBlock(text string) string {
-	text = strings.TrimSpace(text)
-	if !strings.HasPrefix(text, "```") {
-		return text
-	}
-	text = strings.TrimPrefix(text, "```")
-	text = strings.TrimSpace(text)
-	if newline := strings.IndexByte(text, '\n'); newline >= 0 {
-		firstLine := strings.TrimSpace(text[:newline])
-		if !strings.HasPrefix(firstLine, "{") && !strings.HasPrefix(firstLine, "[") {
-			text = text[newline+1:]
-		}
-	}
-	if end := strings.LastIndex(text, "```"); end >= 0 {
-		text = text[:end]
-	}
-	return strings.TrimSpace(text)
-}

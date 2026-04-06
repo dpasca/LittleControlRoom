@@ -134,7 +134,7 @@ func TestOpenAICommitMessageClientSuggest(t *testing.T) {
 	}
 }
 
-func TestDecodeJSONOutput(t *testing.T) {
+func TestDecodeJSONObjectOutput(t *testing.T) {
 	t.Parallel()
 
 	type commitPayload struct {
@@ -166,8 +166,8 @@ func TestDecodeJSONOutput(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var decoded commitPayload
-			if err := decodeJSONOutput(tc.text, &decoded); err != nil {
-				t.Fatalf("decodeJSONOutput: %v", err)
+			if err := llm.DecodeJSONObjectOutput(tc.text, &decoded); err != nil {
+				t.Fatalf("DecodeJSONObjectOutput: %v", err)
 			}
 			if decoded.Message != "Improve commit message parsing" {
 				t.Fatalf("message = %q, want recovered subject", decoded.Message)
