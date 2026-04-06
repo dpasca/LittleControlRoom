@@ -15053,6 +15053,47 @@ func TestTodoDialogLegendUsesDistinctActionTones(t *testing.T) {
 	}
 }
 
+func TestLocalBackendModelPickerLegendUsesDistinctActionTones(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	defer lipgloss.SetColorProfile(prevProfile)
+
+	m := Model{
+		localModelPickerBackend: config.AIBackendMLX,
+		setupSnapshot: aibackend.Snapshot{
+			MLX: aibackend.Status{
+				Backend:     config.AIBackendMLX,
+				Label:       "MLX",
+				Ready:       true,
+				Endpoint:    "http://127.0.0.1:8080/v1",
+				Models:      []string{"mlx-community/Qwen3.5-9B-MLX-4bit"},
+				ActiveModel: "mlx-community/Qwen3.5-9B-MLX-4bit",
+			},
+		},
+	}
+
+	rendered := m.renderLocalBackendModelPickerContent(80, 16)
+	for _, bgCode := range []string{"48;5;42", "48;5;81", "48;5;214", "48;5;160"} {
+		if !strings.Contains(rendered, bgCode) {
+			t.Fatalf("local backend model picker legend should include tone %s, got %q", bgCode, rendered)
+		}
+	}
+
+	stripped := ansi.Strip(rendered)
+	if !strings.Contains(stripped, "Up/Down") || !strings.Contains(stripped, "move") {
+		t.Fatalf("local backend model picker legend should include navigation guidance, got %q", stripped)
+	}
+	if !strings.Contains(stripped, "Enter") || !strings.Contains(stripped, "choose") {
+		t.Fatalf("local backend model picker legend should include choose guidance, got %q", stripped)
+	}
+	if !strings.Contains(stripped, "a") || !strings.Contains(stripped, "auto") {
+		t.Fatalf("local backend model picker legend should include auto guidance, got %q", stripped)
+	}
+	if !strings.Contains(stripped, "Esc") || !strings.Contains(stripped, "close") {
+		t.Fatalf("local backend model picker legend should include close guidance, got %q", stripped)
+	}
+}
+
 func TestViewWithSettingsModeRespectsHeight(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{

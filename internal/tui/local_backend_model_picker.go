@@ -133,7 +133,10 @@ func (m Model) renderLocalBackendModelPickerContent(width, bodyH int) string {
 	models := localBackendPickerModels(status.Models)
 	lines := []string{
 		commandPaletteTitleStyle.Render(backend.Label() + " Models"),
-		commandPaletteHintStyle.Render("Enter choose  a auto  Esc close"),
+		renderDialogAction("Up/Down", "move", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
+			renderDialogAction("Enter", "choose", commitActionKeyStyle, commitActionTextStyle) + "   " +
+			renderDialogAction("a", "auto", pushActionKeyStyle, pushActionTextStyle) + "   " +
+			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
 	}
 	if len(models) == 0 {
 		lines = append(lines, "", detailMutedStyle.Render("No models discovered."))
