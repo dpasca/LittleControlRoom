@@ -3,9 +3,13 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -161,6 +165,75 @@ func TestChatCompletionsEndpointFromBaseURL(t *testing.T) {
 	}
 }
 
+func TestShouldFallbackResponsesToChat(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "missing endpoint 404",
+			err:  &HTTPStatusError{StatusCode: http.StatusNotFound, Status: "404 Not Found"},
+			want: true,
+		},
+		{
+			name: "missing endpoint 405",
+			err:  &HTTPStatusError{StatusCode: http.StatusMethodNotAllowed, Status: "405 Method Not Allowed"},
+			want: true,
+		},
+		{
+			name: "connection reset while reading",
+			err:  errors.New("read openai response: " + syscall.ECONNRESET.Error()),
+			want: false,
+		},
+		{
+			name: "wrapped connection reset",
+			err:  wrapErr("read openai response", syscall.ECONNRESET),
+			want: true,
+		},
+		{
+			name: "wrapped broken pipe",
+			err:  wrapErr("send openai request", syscall.EPIPE),
+			want: true,
+		},
+		{
+			name: "unexpected eof",
+			err:  wrapErr("read openai response", io.ErrUnexpectedEOF),
+			want: true,
+		},
+		{
+			name: "context canceled",
+			err:  context.Canceled,
+			want: false,
+		},
+		{
+			name: "deadline exceeded",
+			err:  context.DeadlineExceeded,
+			want: false,
+		},
+		{
+			name: "server unavailable",
+			err:  &HTTPStatusError{StatusCode: http.StatusServiceUnavailable, Status: "503 Service Unavailable"},
+			want: false,
+		},
+		{
+			name: "connection refused",
+			err:  wrapErr("send openai request", syscall.ECONNREFUSED),
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldFallbackResponsesToChat(tt.err); got != tt.want {
+				t.Fatalf("shouldFallbackResponsesToChat(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestOpenAICompatibleResponsesRunnerFallsBackToChatCompletions(t *testing.T) {
 	t.Parallel()
 
@@ -268,4 +341,253 @@ func TestOpenAICompatibleResponsesRunnerFallsBackToChatCompletions(t *testing.T)
 	if chatCalls != 2 {
 		t.Fatalf("chat completions endpoint calls = %d, want 2", chatCalls)
 	}
+}
+
+func TestOpenAICompatibleResponsesRunnerFallsBackToChatAfterResponsesTransportReset(t *testing.T) {
+	t.Parallel()
+
+	var responsesCalls int
+	var chatCalls int
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/responses":
+			responsesCalls++
+			hijacker, ok := w.(http.Hijacker)
+			if !ok {
+				t.Fatalf("response writer does not support hijacking")
+			}
+			conn, rw, err := hijacker.Hijack()
+			if err != nil {
+				t.Fatalf("hijack responses connection: %v", err)
+			}
+			if _, err := rw.WriteString("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 512\r\n\r\n{\"status\":\"completed\",\"output\":["); err != nil {
+				t.Fatalf("write partial responses payload: %v", err)
+			}
+			if err := rw.Flush(); err != nil {
+				t.Fatalf("flush partial responses payload: %v", err)
+			}
+			if tcpConn, ok := conn.(*net.TCPConn); ok {
+				_ = tcpConn.SetLinger(0)
+			}
+			_ = conn.Close()
+		case "/v1/chat/completions":
+			chatCalls++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"model":"qwen-local",
+				"choices":[
+					{
+						"message":{
+							"role":"assistant",
+							"content":"{\"message\":\"Use chat fallback after transport reset\"}"
+						}
+					}
+				]
+			}`))
+		case "/v1/models":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"qwen-local"}]}`))
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runner := NewOpenAICompatibleResponsesRunner(server.URL+"/v1", "local-key", "qwen-local", time.Second, nil)
+	if runner == nil {
+		t.Fatalf("expected runner")
+	}
+
+	req := JSONSchemaRequest{
+		Model:      "qwen-local",
+		SystemText: "system",
+		UserText:   "user",
+		SchemaName: "commit_message",
+		Schema: map[string]any{
+			"type": "object",
+		},
+	}
+
+	first, err := runner.RunJSONSchema(context.Background(), req)
+	if err != nil {
+		t.Fatalf("first RunJSONSchema() error = %v", err)
+	}
+	if first.OutputText != "{\"message\":\"Use chat fallback after transport reset\"}" {
+		t.Fatalf("first OutputText = %q, want chat fallback payload", first.OutputText)
+	}
+
+	second, err := runner.RunJSONSchema(context.Background(), req)
+	if err != nil {
+		t.Fatalf("second RunJSONSchema() error = %v", err)
+	}
+	if second.OutputText != "{\"message\":\"Use chat fallback after transport reset\"}" {
+		t.Fatalf("second OutputText = %q, want chat fallback payload", second.OutputText)
+	}
+	if responsesCalls != 1 {
+		t.Fatalf("responses endpoint calls = %d, want 1 after caching chat fallback", responsesCalls)
+	}
+	if chatCalls != 2 {
+		t.Fatalf("chat completions endpoint calls = %d, want 2", chatCalls)
+	}
+}
+
+func TestOpenAICompatibleResponsesRunnerCanPreferChatFromStart(t *testing.T) {
+	t.Parallel()
+
+	var responsesCalls int
+	var chatCalls int
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/responses":
+			responsesCalls++
+			t.Fatalf("responses endpoint should not be called when chat preference succeeds")
+		case "/v1/chat/completions":
+			chatCalls++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"model":"qwen-local",
+				"choices":[
+					{
+						"message":{
+							"role":"assistant",
+							"content":"{\"message\":\"Use preferred chat path\"}"
+						}
+					}
+				]
+			}`))
+		case "/v1/models":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"qwen-local"}]}`))
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runner := NewOpenAICompatibleResponsesRunnerWithOptions(server.URL+"/v1", "local-key", "qwen-local", time.Second, nil, OpenAICompatibleResponsesRunnerOptions{
+		PreferChatCompletions: true,
+	})
+	if runner == nil {
+		t.Fatalf("expected runner")
+	}
+
+	req := JSONSchemaRequest{
+		Model:      "qwen-local",
+		SystemText: "system",
+		UserText:   "user",
+		SchemaName: "commit_message",
+		Schema: map[string]any{
+			"type": "object",
+		},
+	}
+
+	first, err := runner.RunJSONSchema(context.Background(), req)
+	if err != nil {
+		t.Fatalf("first RunJSONSchema() error = %v", err)
+	}
+	if first.OutputText != "{\"message\":\"Use preferred chat path\"}" {
+		t.Fatalf("first OutputText = %q, want preferred chat payload", first.OutputText)
+	}
+
+	second, err := runner.RunJSONSchema(context.Background(), req)
+	if err != nil {
+		t.Fatalf("second RunJSONSchema() error = %v", err)
+	}
+	if second.OutputText != "{\"message\":\"Use preferred chat path\"}" {
+		t.Fatalf("second OutputText = %q, want preferred chat payload", second.OutputText)
+	}
+	if responsesCalls != 0 {
+		t.Fatalf("responses endpoint calls = %d, want 0", responsesCalls)
+	}
+	if chatCalls != 2 {
+		t.Fatalf("chat completions endpoint calls = %d, want 2", chatCalls)
+	}
+}
+
+func TestOpenAICompatibleResponsesRunnerCachesResponsesFallbackWhenPreferredChatIsMissing(t *testing.T) {
+	t.Parallel()
+
+	var responsesCalls int
+	var chatCalls int
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/chat/completions":
+			chatCalls++
+			http.NotFound(w, r)
+		case "/v1/responses":
+			responsesCalls++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"status":"completed",
+				"model":"qwen-local",
+				"output":[
+					{
+						"type":"message",
+						"role":"assistant",
+						"content":[
+							{
+								"type":"output_text",
+								"text":"{\"message\":\"Use responses fallback\"}"
+							}
+						]
+					}
+				]
+			}`))
+		case "/v1/models":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"qwen-local"}]}`))
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runner := NewOpenAICompatibleResponsesRunnerWithOptions(server.URL+"/v1", "local-key", "qwen-local", time.Second, nil, OpenAICompatibleResponsesRunnerOptions{
+		PreferChatCompletions: true,
+	})
+	if runner == nil {
+		t.Fatalf("expected runner")
+	}
+
+	req := JSONSchemaRequest{
+		Model:      "qwen-local",
+		SystemText: "system",
+		UserText:   "user",
+		SchemaName: "commit_message",
+		Schema: map[string]any{
+			"type": "object",
+		},
+	}
+
+	first, err := runner.RunJSONSchema(context.Background(), req)
+	if err != nil {
+		t.Fatalf("first RunJSONSchema() error = %v", err)
+	}
+	if first.OutputText != "{\"message\":\"Use responses fallback\"}" {
+		t.Fatalf("first OutputText = %q, want responses fallback payload", first.OutputText)
+	}
+
+	second, err := runner.RunJSONSchema(context.Background(), req)
+	if err != nil {
+		t.Fatalf("second RunJSONSchema() error = %v", err)
+	}
+	if second.OutputText != "{\"message\":\"Use responses fallback\"}" {
+		t.Fatalf("second OutputText = %q, want responses fallback payload", second.OutputText)
+	}
+	if chatCalls != 1 {
+		t.Fatalf("chat completions endpoint calls = %d, want 1 after caching responses fallback", chatCalls)
+	}
+	if responsesCalls != 2 {
+		t.Fatalf("responses endpoint calls = %d, want 2", responsesCalls)
+	}
+}
+
+func wrapErr(prefix string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", prefix, err)
 }

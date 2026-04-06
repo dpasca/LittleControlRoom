@@ -89,8 +89,10 @@ func NewOpenAICompatibleCommitMessageClientWithUsageTracker(baseURL, apiKey, pre
 		model = strings.TrimSpace(os.Getenv(brand.CommitModelEnvVar))
 	}
 	return &OpenAICommitMessageClient{
-		model:     model,
-		responses: llm.NewOpenAICompatibleResponsesRunner(baseURL, apiKey, model, 45*time.Second, usage),
+		model: model,
+		responses: llm.NewOpenAICompatibleResponsesRunnerWithOptions(baseURL, apiKey, model, 45*time.Second, usage, llm.OpenAICompatibleResponsesRunnerOptions{
+			PreferChatCompletions: true,
+		}),
 	}
 }
 

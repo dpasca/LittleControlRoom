@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"lcroom/internal/model"
@@ -27,6 +28,10 @@ type OpenAICompatibleStructuredOutputRunner struct {
 	preferChat bool
 	responses  JSONSchemaRunner
 	chat       JSONSchemaRunner
+}
+
+type OpenAICompatibleStructuredOutputOptions struct {
+	PreferChatCompletions bool
 }
 
 func ChatCompletionsEndpointFromBaseURL(baseURL string) string {
@@ -204,12 +209,17 @@ func (c *OpenAICompatibleChatCompletionsClient) RunJSONSchema(ctx context.Contex
 }
 
 func NewOpenAICompatibleStructuredOutputRunner(responses, chat JSONSchemaRunner) JSONSchemaRunner {
+	return NewOpenAICompatibleStructuredOutputRunnerWithOptions(responses, chat, OpenAICompatibleStructuredOutputOptions{})
+}
+
+func NewOpenAICompatibleStructuredOutputRunnerWithOptions(responses, chat JSONSchemaRunner, opts OpenAICompatibleStructuredOutputOptions) JSONSchemaRunner {
 	if responses == nil && chat == nil {
 		return nil
 	}
 	return &OpenAICompatibleStructuredOutputRunner{
-		responses: responses,
-		chat:      chat,
+		preferChat: opts.PreferChatCompletions,
+		responses:  responses,
+		chat:       chat,
 	}
 }
 
@@ -221,6 +231,7 @@ func (r *OpenAICompatibleStructuredOutputRunner) RunJSONSchema(ctx context.Conte
 	r.mu.Lock()
 	preferChat := r.preferChat
 	r.mu.Unlock()
+	chatMissingEndpoint := false
 
 	if preferChat && r.chat != nil {
 		resp, err := r.chat.RunJSONSchema(ctx, req)
@@ -230,18 +241,28 @@ func (r *OpenAICompatibleStructuredOutputRunner) RunJSONSchema(ctx context.Conte
 		if !isMissingEndpointHTTPStatus(err) || r.responses == nil {
 			return JSONSchemaResponse{}, err
 		}
+		chatMissingEndpoint = true
 	}
 
 	if r.responses != nil {
 		resp, err := r.responses.RunJSONSchema(ctx, req)
 		if err == nil {
+			if chatMissingEndpoint {
+				r.mu.Lock()
+				r.preferChat = false
+				r.mu.Unlock()
+			}
 			return resp, nil
 		}
-		if isMissingEndpointHTTPStatus(err) && r.chat != nil {
+		if shouldFallbackResponsesToChat(err) && r.chat != nil {
+			chatResp, chatErr := r.chat.RunJSONSchema(ctx, req)
+			if chatErr != nil {
+				return JSONSchemaResponse{}, errors.Join(err, chatErr)
+			}
 			r.mu.Lock()
 			r.preferChat = true
 			r.mu.Unlock()
-			return r.chat.RunJSONSchema(ctx, req)
+			return chatResp, nil
 		}
 		return JSONSchemaResponse{}, err
 	}
@@ -258,4 +279,19 @@ func isMissingEndpointHTTPStatus(err error) bool {
 		return false
 	}
 	return httpErr.StatusCode == http.StatusNotFound || httpErr.StatusCode == http.StatusMethodNotAllowed
+}
+
+func shouldFallbackResponsesToChat(err error) bool {
+	return isMissingEndpointHTTPStatus(err) || isUnsupportedResponsesTransportError(err)
+}
+
+func isUnsupportedResponsesTransportError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	return errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNABORTED) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.EPIPE)
 }

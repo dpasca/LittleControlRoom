@@ -92,8 +92,10 @@ func NewOpenAICompatibleClientWithUsageTracker(baseURL, apiKey, preferredModel s
 		model = strings.TrimSpace(os.Getenv(brand.SessionClassifierModelEnvVar))
 	}
 	return &OpenAIClient{
-		model:     model,
-		responses: llm.NewOpenAICompatibleResponsesRunner(baseURL, apiKey, model, classifierHTTPTimeout, usage),
+		model: model,
+		responses: llm.NewOpenAICompatibleResponsesRunnerWithOptions(baseURL, apiKey, model, classifierHTTPTimeout, usage, llm.OpenAICompatibleResponsesRunnerOptions{
+			PreferChatCompletions: true,
+		}),
 	}
 }
 
