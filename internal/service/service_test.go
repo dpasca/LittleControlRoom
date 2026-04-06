@@ -3491,6 +3491,52 @@ func TestPrepareCommitIncludesRecommendedUntrackedFiles(t *testing.T) {
 	}
 }
 
+func TestPrepareCommitRecordsCommitMessageErrorWhileUsingFallback(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	projectPath := filepath.Join(t.TempDir(), "repo")
+	initGitRepo(t, projectPath)
+
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("hello\npreview\n"), 0o644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "repo",
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	svc.commitMessageSuggester = fakeCommitMessageSuggester{
+		err: errors.New("model mlx-community/Qwen3.5-35B-A3B-4bit: EOF"),
+	}
+
+	preview, err := svc.PrepareCommit(ctx, projectPath, GitActionCommit, "")
+	if err != nil {
+		t.Fatalf("prepare commit: %v", err)
+	}
+	if preview.Message != "Update README.md" {
+		t.Fatalf("commit message = %q, want fallback subject", preview.Message)
+	}
+	if preview.CommitMessageError != "model mlx-community/Qwen3.5-35B-A3B-4bit: EOF" {
+		t.Fatalf("commit message error = %q", preview.CommitMessageError)
+	}
+	if warnings := strings.Join(preview.Warnings, "\n"); !strings.Contains(warnings, "AI commit message unavailable: model mlx-community/Qwen3.5-35B-A3B-4bit: EOF") {
+		t.Fatalf("warnings = %#v, want AI fallback warning", preview.Warnings)
+	}
+}
+
 func TestPrepareCommitReturnsNoChangesErrorWithPushContext(t *testing.T) {
 	t.Parallel()
 
@@ -3920,6 +3966,11 @@ type fakeUntrackedFileRecommender struct {
 	err        error
 }
 
+type fakeCommitMessageSuggester struct {
+	suggestion gitops.CommitMessageSuggestion
+	err        error
+}
+
 func (f *fakeUntrackedFileRecommender) RecommendUntracked(_ context.Context, input gitops.UntrackedFileRecommendationInput) (gitops.UntrackedFileRecommendationResult, error) {
 	f.lastInput = input
 	if f.err != nil {
@@ -3930,6 +3981,17 @@ func (f *fakeUntrackedFileRecommender) RecommendUntracked(_ context.Context, inp
 
 func (f *fakeUntrackedFileRecommender) ModelName() string {
 	return "fake-untracked-reviewer"
+}
+
+func (f fakeCommitMessageSuggester) Suggest(context.Context, gitops.CommitMessageInput) (gitops.CommitMessageSuggestion, error) {
+	if f.err != nil {
+		return gitops.CommitMessageSuggestion{}, f.err
+	}
+	return f.suggestion, nil
+}
+
+func (f fakeCommitMessageSuggester) ModelName() string {
+	return "fake-commit-suggester"
 }
 
 func (d *fakeDetector) Name() string {

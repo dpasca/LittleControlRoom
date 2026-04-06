@@ -17268,6 +17268,52 @@ func TestCommitPreviewMsgClosesDiffView(t *testing.T) {
 	}
 }
 
+func TestCommitPreviewMsgLogsCommitMessageFallbackError(t *testing.T) {
+	m := Model{
+		nowFn: func() time.Time {
+			return time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC)
+		},
+		allProjects: []model.ProjectSummary{{
+			Name: "demo",
+			Path: "/tmp/demo",
+		}},
+		width:  100,
+		height: 24,
+	}
+
+	updated, _ := m.Update(commitPreviewMsg{
+		preview: service.CommitPreview{
+			Intent:             service.GitActionCommit,
+			ProjectPath:        "/tmp/demo",
+			ProjectName:        "demo",
+			Branch:             "master",
+			StageMode:          service.GitStageAllChanges,
+			StateHash:          "state-1",
+			Message:            "Update demo",
+			CommitMessageError: "model mlx-community/Qwen3.5-35B-A3B-4bit: EOF",
+		},
+		projectPath: "/tmp/demo",
+		intent:      service.GitActionCommit,
+	})
+	got := updated.(Model)
+	if got.commitPreview == nil {
+		t.Fatalf("commit preview should be stored when the preview message arrives")
+	}
+	if len(got.errorLogEntries) != 1 {
+		t.Fatalf("error log count = %d, want 1", len(got.errorLogEntries))
+	}
+	entry := got.errorLogEntries[0]
+	if entry.Status != "Commit message fallback used" {
+		t.Fatalf("error log status = %q", entry.Status)
+	}
+	if entry.Message != "model mlx-community/Qwen3.5-35B-A3B-4bit: EOF" {
+		t.Fatalf("error log message = %q", entry.Message)
+	}
+	if entry.RootCause != "EOF" {
+		t.Fatalf("error log root cause = %q", entry.RootCause)
+	}
+}
+
 func mustTestPNG(fill color.RGBA) []byte {
 	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
 	for y := 0; y < 4; y++ {

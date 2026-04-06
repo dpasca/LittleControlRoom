@@ -1584,6 +1584,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.showHelp = false
 		m.gitStatusDialog = nil
 		m.gitStatusApplying = false
+		if errText := strings.TrimSpace(msg.preview.CommitMessageError); errText != "" {
+			previouslyLogged := m.commitPreview != nil &&
+				m.commitPreview.StateHash == msg.preview.StateHash &&
+				strings.TrimSpace(m.commitPreview.CommitMessageError) == errText
+			if !previouslyLogged {
+				m.appendBackgroundErrorLogEntry("Commit message fallback used", errors.New(errText), msg.projectPath)
+			}
+		}
 		m.commitPreview = &msg.preview
 		m.commitPreviewMessageOverride = msg.message
 		m.commitApplying = false

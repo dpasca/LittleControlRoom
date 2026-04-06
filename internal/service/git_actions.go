@@ -43,22 +43,23 @@ type TodoCompletion struct {
 }
 
 type CommitPreview struct {
-	Intent            GitActionIntent
-	ProjectPath       string
-	ProjectName       string
-	Branch            string
-	StageMode         GitStageMode
-	Included          []CommitFile
-	Excluded          []CommitFile
-	SelectedUntracked []CommitFile
-	Message           string
-	DiffStat          string
-	DiffSummary       string
-	LatestSummary     string
-	CanPush           bool
-	Warnings          []string
-	StateHash         string
-	SuggestedTodos    []TodoCompletion
+	Intent             GitActionIntent
+	ProjectPath        string
+	ProjectName        string
+	Branch             string
+	StageMode          GitStageMode
+	Included           []CommitFile
+	Excluded           []CommitFile
+	SelectedUntracked  []CommitFile
+	Message            string
+	DiffStat           string
+	DiffSummary        string
+	LatestSummary      string
+	CanPush            bool
+	Warnings           []string
+	CommitMessageError string
+	StateHash          string
+	SuggestedTodos     []TodoCompletion
 }
 
 type CommitResult struct {
@@ -306,6 +307,7 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 				preview.Message = normalizeCommitMessage(suggestion.Message)
 				preview.SuggestedTodos = matchSuggestedTodos(openTodos, detail.Todos, suggestion.CompletedTodoIDs)
 			} else {
+				preview.CommitMessageError = strings.TrimSpace(suggestErr.Error())
 				preview.Warnings = append(preview.Warnings, "AI commit message unavailable: "+strings.TrimSpace(suggestErr.Error()))
 			}
 		}
