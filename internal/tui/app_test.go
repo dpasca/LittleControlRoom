@@ -7755,10 +7755,12 @@ func TestTodoModelPickerApplyRefocusesComposerAndCapturesSettleLatencyImmediatel
 		width:         100,
 		height:        28,
 		nowFn:         func() time.Time { return now },
-		todoLaunchDraft: &todoLaunchDraftState{
-			projectPath:    "/tmp/demo",
-			provider:       codexapp.ProviderOpenCode,
-			openModelFirst: true,
+		todoLaunchDrafts: map[string]todoLaunchDraftState{
+			"/tmp/demo": {
+				projectPath:    "/tmp/demo",
+				provider:       codexapp.ProviderOpenCode,
+				openModelFirst: true,
+			},
 		},
 	}
 
@@ -8470,11 +8472,12 @@ func TestTodoDialogCanStartSelectedTodoInNewWorktree(t *testing.T) {
 	if got.codexVisible() {
 		t.Fatalf("background worktree launch should stay hidden while the session is still opening")
 	}
-	if got.todoLaunchDraft == nil || got.todoLaunchDraft.projectPath != expectedPath {
-		t.Fatalf("todoLaunchDraft = %#v, want worktree draft for %q", got.todoLaunchDraft, expectedPath)
+	draft, ok := got.todoLaunchDraftFor(expectedPath)
+	if !ok {
+		t.Fatalf("todoLaunchDraftFor(%q) missing", expectedPath)
 	}
-	if !got.todoLaunchDraft.autoSubmit {
-		t.Fatalf("todoLaunchDraft = %#v, want auto-submit enabled for background launch", got.todoLaunchDraft)
+	if !draft.autoSubmit {
+		t.Fatalf("todoLaunchDraftFor(%q) = %#v, want auto-submit enabled for background launch", expectedPath, draft)
 	}
 	if cmd == nil {
 		t.Fatalf("handling todoWorktreeLaunchMsg should return an open command")
@@ -8522,8 +8525,8 @@ func TestTodoDialogCanStartSelectedTodoInNewWorktree(t *testing.T) {
 	if got.status != opened.status {
 		t.Fatalf("status = %q, want %q", got.status, opened.status)
 	}
-	if got.todoLaunchDraft != nil {
-		t.Fatalf("todoLaunchDraft should clear after the background session opens, got %#v", got.todoLaunchDraft)
+	if _, ok := got.todoLaunchDraftFor(expectedPath); ok {
+		t.Fatalf("todoLaunchDraftFor(%q) should clear after the background session opens", expectedPath)
 	}
 	_ = cmd
 }
@@ -8566,8 +8569,9 @@ func TestTodoWorktreeLaunchWithModelPickerKeepsPromptUnsentUntilModelChoice(t *t
 		openModelFirst: true,
 	})
 	got := updated.(Model)
-	if got.todoLaunchDraft == nil || !got.todoLaunchDraft.openModelFirst {
-		t.Fatalf("todoLaunchDraft = %#v, want open-model-first launch state", got.todoLaunchDraft)
+	draft, ok := got.todoLaunchDraftFor("/tmp/root--feat-model-pick")
+	if !ok || !draft.openModelFirst {
+		t.Fatalf("todoLaunchDraftFor(%q) = %#v, want open-model-first launch state", "/tmp/root--feat-model-pick", draft)
 	}
 	if !got.codexVisible() {
 		t.Fatalf("model-picker launches should stay visible while the session is opening")
@@ -8618,6 +8622,120 @@ func TestTodoWorktreeLaunchWithModelPickerKeepsPromptUnsentUntilModelChoice(t *t
 	}
 	if cmd == nil {
 		t.Fatalf("session open should return the model picker command")
+	}
+}
+
+func TestTodoWorktreeLaunchWithModelPickerKeepsPerProjectLaunchStateAcrossOverlap(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		threadID := "ses-" + filepath.Base(req.ProjectPath)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				ThreadID: threadID,
+				Started:  true,
+				Preset:   req.Preset,
+				Status:   req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+
+	m := Model{
+		codexManager:  manager,
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/root",
+			Name:          "root",
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+		width:    100,
+		height:   24,
+	}
+
+	updated, cmd := m.Update(todoWorktreeLaunchMsg{
+		projectPath:    "/tmp/root--feat-a",
+		todoText:       "TODO A",
+		provider:       codexapp.ProviderOpenCode,
+		openModelFirst: true,
+	})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("first worktree launch should return an embedded open command")
+	}
+	msgs := collectCmdMsgs(cmd)
+	if len(msgs) == 0 {
+		t.Fatalf("first launch returned no command messages")
+	}
+	openedA, ok := msgs[0].(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("first cmd message = %T, want codexSessionOpenedMsg", msgs[0])
+	}
+
+	updated, cmd = got.Update(todoWorktreeLaunchMsg{
+		projectPath:    "/tmp/root--feat-b",
+		todoText:       "TODO B",
+		provider:       codexapp.ProviderOpenCode,
+		openModelFirst: true,
+	})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("second worktree launch should return an embedded open command")
+	}
+	msgs = collectCmdMsgs(cmd)
+	if len(msgs) == 0 {
+		t.Fatalf("second launch returned no command messages")
+	}
+	openedB, ok := msgs[0].(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("second cmd message = %T, want codexSessionOpenedMsg", msgs[0])
+	}
+
+	updated, cmd = got.Update(openedA)
+	got = updated.(Model)
+	if got.codexVisibleProject != "/tmp/root--feat-a" {
+		t.Fatalf("codexVisibleProject = %q, want %q after the first session opens", got.codexVisibleProject, "/tmp/root--feat-a")
+	}
+	if got.status != "Pick a model, then send the TODO draft." {
+		t.Fatalf("status = %q, want model picker guidance for the first overlapping launch", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("first overlapping session open should still return the model picker command")
+	}
+	msg := cmd()
+	listA, ok := msg.(codexModelListMsg)
+	if !ok {
+		t.Fatalf("first model-picker cmd returned %T, want codexModelListMsg", msg)
+	}
+	if listA.projectPath != "/tmp/root--feat-a" {
+		t.Fatalf("first model-picker project = %q, want %q", listA.projectPath, "/tmp/root--feat-a")
+	}
+
+	updated, cmd = got.Update(openedB)
+	got = updated.(Model)
+	if got.codexVisibleProject != "/tmp/root--feat-b" {
+		t.Fatalf("codexVisibleProject = %q, want %q after the second session opens", got.codexVisibleProject, "/tmp/root--feat-b")
+	}
+	if got.status != "Pick a model, then send the TODO draft." {
+		t.Fatalf("status = %q, want model picker guidance for the second overlapping launch", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("second overlapping session open should return the model picker command")
+	}
+	msg = cmd()
+	listB, ok := msg.(codexModelListMsg)
+	if !ok {
+		t.Fatalf("second model-picker cmd returned %T, want codexModelListMsg", msg)
+	}
+	if listB.projectPath != "/tmp/root--feat-b" {
+		t.Fatalf("second model-picker project = %q, want %q", listB.projectPath, "/tmp/root--feat-b")
+	}
+	if len(requests) != 2 {
+		t.Fatalf("request count = %d, want 2", len(requests))
 	}
 }
 
