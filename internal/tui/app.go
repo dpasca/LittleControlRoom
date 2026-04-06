@@ -243,6 +243,11 @@ type projectSessionSeenMsg struct {
 	err  error
 }
 
+type projectStatusRefreshedMsg struct {
+	projectPath string
+	err         error
+}
+
 type scanMsg struct {
 	report service.ScanReport
 	err    error
@@ -1116,6 +1121,20 @@ func (m *Model) finishProjectSummaryReloadCmd(path string) tea.Cmd {
 	return m.requestProjectSummaryReloadCmd(path)
 }
 
+func (m Model) refreshProjectStatusCmd(path string) tea.Cmd {
+	if m.svc == nil {
+		return nil
+	}
+	path = normalizeProjectPath(path)
+	if path == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		err := m.svc.RefreshProjectStatus(m.ctx, path)
+		return projectStatusRefreshedMsg{projectPath: path, err: err}
+	}
+}
+
 func (m *Model) requestProjectRefreshCmd(req projectRefreshRequest) tea.Cmd {
 	cmds := make([]tea.Cmd, 0, 2+len(req.summaryPaths))
 	if req.scan {
@@ -1529,6 +1548,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.reportError("Could not mark session as read", msg.err, msg.path)
 		}
 		return m, nil
+	case projectStatusRefreshedMsg:
+		if msg.err != nil {
+			m.reportError("Project status refresh failed", msg.err, msg.projectPath)
+			return m, nil
+		}
+		return m, m.requestProjectInvalidationCmd(invalidateProjectData(msg.projectPath))
 	case scanMsg:
 		reloadCmd := m.finishScanCmd()
 		m.loading = false
@@ -1556,7 +1581,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.commitPreviewMessageOverride = ""
 				m.commitApplying = false
 				m.status = gitStatusDialogReadyStatus(dialog)
-				return m, nil
+				return m, m.refreshProjectStatusCmd(noChangesErr.ProjectPath)
 			}
 			var submoduleErr service.SubmoduleAttentionError
 			if errors.As(msg.err, &submoduleErr) {
@@ -1620,7 +1645,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.diffView.resetRenderCache()
 				m.syncDiffView(true)
 				m.status = diffViewReadyStatus(*m.diffView)
-				return m, nil
+				return m, m.refreshProjectStatusCmd(noDiffErr.ProjectPath)
 			}
 			m.diffView = nil
 			m.reportError("Diff preview failed", msg.err, "")
@@ -1653,7 +1678,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.diffView.resetRenderCache()
 				m.syncDiffView(true)
 				m.status = diffViewReadyStatus(*m.diffView)
-				return m, nil
+				return m, m.refreshProjectStatusCmd(noDiffErr.ProjectPath)
 			}
 			m.reportError("Diff staging failed", msg.err, "")
 			return m, nil
@@ -2213,9 +2238,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		providerLabel := ""
 		transcriptChanged := false
+		statusRefreshCmd := tea.Cmd(nil)
 		if ok {
 			providerLabel = embeddedProvider(snapshot).Label()
 			transcriptChanged = !hadPrevSnapshot || codexTranscriptStateChanged(prevSnapshot, snapshot)
+			if shouldRefreshProjectStatusAfterCodexSnapshot(prevSnapshot, snapshot) {
+				statusRefreshCmd = m.refreshProjectStatusCmd(msg.projectPath)
+			}
 		}
 		m.recordAISyncLatency("Embedded snapshot", msg.projectPath, providerLabel, refreshDuration, "")
 		if m.codexVisibleProject == msg.projectPath {
@@ -2229,7 +2258,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !snapshot.Closed {
 				m.markCodexSessionLive(msg.projectPath)
 				m.detectQuestionNotification(msg.projectPath, snapshot)
-				return m, tea.Batch(cmds...)
+				return m, batchCmds(append(cmds, statusRefreshCmd)...)
 			}
 			m.cancelModelSettleLatency(msg.projectPath, "session closed")
 			if !m.markCodexSessionClosedHandled(msg.projectPath) {
@@ -2263,6 +2292,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		snapshot := msg.snapshot
 		providerLabel := embeddedProvider(snapshot).Label()
 		transcriptChanged := !hadPrev || codexTranscriptStateChanged(prevSnapshot, snapshot)
+		statusRefreshCmd := tea.Cmd(nil)
+		if hadPrev && shouldRefreshProjectStatusAfterCodexSnapshot(prevSnapshot, snapshot) {
+			statusRefreshCmd = m.refreshProjectStatusCmd(projectPath)
+		}
 		if m.codexVisibleProject == projectPath {
 			viewportStarted := time.Now()
 			m.resetCodexToolAnswerState(projectPath)
@@ -2273,7 +2306,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !snapshot.Closed {
 			m.markCodexSessionLive(projectPath)
 			m.detectQuestionNotification(projectPath, snapshot)
-			return m, nil
+			return m, statusRefreshCmd
 		}
 		m.cancelModelSettleLatency(projectPath, "session closed")
 		if !m.markCodexSessionClosedHandled(projectPath) {
@@ -2292,6 +2325,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func shouldRefreshProjectStatusAfterCodexSnapshot(prev, next codexapp.Snapshot) bool {
+	return !prev.Closed && prev.Busy && !next.Closed && !next.Busy
 }
 
 func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
