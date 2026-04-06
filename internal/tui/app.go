@@ -149,6 +149,7 @@ type Model struct {
 	pendingGitOperations        map[string]pendingGitOperation
 	codexPasteTokenSeq          int
 	codexClosedHandled          map[string]struct{}
+	codexSkipNextLiveRefresh    map[string]struct{}
 	pendingGitSummaries         map[string]string
 	pendingGitSummaryExpireNext map[string]bool
 	codexPickerVisible          bool
@@ -2086,13 +2087,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var asyncCmd tea.Cmd
 			if msg.awaitSettle {
 				m.beginModelSettleLatency(msg.projectPath, strings.TrimSpace(msg.provider.Label()+" "+msg.model+" "+msg.reasoning), msg.model, msg.reasoning)
-				snapshot, ok, needsAsync := m.refreshCodexSnapshot(msg.projectPath)
-				if ok {
+				if snapshot, ok := m.stageEmbeddedModelSelectionInCache(msg.projectPath, msg.provider, msg.model, msg.reasoning); ok {
 					m.completeModelSettleLatency(msg.projectPath, snapshot)
 				}
-				if needsAsync {
-					asyncCmd = m.deferredCodexSnapshotCmd(msg.projectPath)
-				}
+				m.markCodexSkipNextLiveRefresh(msg.projectPath)
 			}
 			m.rememberEmbeddedModelPreference(msg.provider, msg.model, msg.reasoning)
 			m.recordRecentModel(msg.provider, msg.model)
@@ -2178,6 +2176,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds := []tea.Cmd{m.waitCodexCmd()}
 		if m.codexManager != nil {
 			m.codexManager.AckUpdate(msg.projectPath)
+		}
+		if m.consumeCodexSkipNextLiveRefresh(msg.projectPath) {
+			if deferred := m.deferredCodexSnapshotCmd(msg.projectPath); deferred != nil {
+				cmds = append(cmds, deferred)
+			}
+			if snapshot, ok := m.codexCachedSnapshot(msg.projectPath); ok {
+				m.completeModelSettleLatency(msg.projectPath, snapshot)
+				if !snapshot.Closed {
+					m.markCodexSessionLive(msg.projectPath)
+					m.detectQuestionNotification(msg.projectPath, snapshot)
+					return m, tea.Batch(cmds...)
+				}
+			}
+			return m, tea.Batch(cmds...)
 		}
 		prevSnapshot, hadPrevSnapshot := m.codexSnapshots[strings.TrimSpace(msg.projectPath)]
 		refreshStarted := time.Now()
