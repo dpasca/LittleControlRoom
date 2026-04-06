@@ -55,7 +55,7 @@ func TestNewOpenCodeClientWithUsageTrackerDefaultsToLocalCompatibleModel(t *test
 	}
 }
 
-func TestOpenAIClientClassifyRetriesWhenStructuredOutputMissesRequiredFields(t *testing.T) {
+func TestOpenAIClientClassifyRepairsStructuredOutputWhenFieldsAreMissing(t *testing.T) {
 	t.Parallel()
 
 	callCount := 0
@@ -74,13 +74,16 @@ func TestOpenAIClientClassifyRetriesWhenStructuredOutputMissesRequiredFields(t *
 						OutputText: `{"classification":"completed","description":"Work is wrapped up."}`,
 					}, nil
 				}
-				if req.ReasoningEffort != classifierFallbackReasoningEffort {
-					t.Fatalf("second reasoning effort = %q, want %q", req.ReasoningEffort, classifierFallbackReasoningEffort)
+				if req.SystemText != sessionClassificationRepairInstructions {
+					t.Fatalf("second system prompt = %q, want repair prompt", req.SystemText)
+				}
+				if req.ReasoningEffort != classifierRepairReasoningEffort {
+					t.Fatalf("second reasoning effort = %q, want %q", req.ReasoningEffort, classifierRepairReasoningEffort)
 				}
 				return llm.JSONSchemaResponse{
 					Status:     "completed",
 					Model:      "gpt-5.4-mini",
-					OutputText: `{"category":"completed","summary":"Work is wrapped up.","confidence":0.88}`,
+					OutputText: `{"category":"completed","summary":"Work is wrapped up."}`,
 				}, nil
 			},
 		},
@@ -102,13 +105,90 @@ func TestOpenAIClientClassifyRetriesWhenStructuredOutputMissesRequiredFields(t *
 		t.Fatalf("Classify() error = %v", err)
 	}
 	if callCount != 2 {
-		t.Fatalf("runner call count = %d, want 2 after retrying malformed output", callCount)
+		t.Fatalf("runner call count = %d, want 2 after repairing malformed output", callCount)
 	}
 	if result.Category != model.SessionCategoryCompleted {
 		t.Fatalf("category = %s, want completed", result.Category)
 	}
 	if result.Summary != "Work is wrapped up." {
 		t.Fatalf("summary = %q, want valid retried summary", result.Summary)
+	}
+}
+
+func TestOpenAIClientClassifyFallsBackAfterRepairFailure(t *testing.T) {
+	t.Parallel()
+
+	callCount := 0
+	client := &OpenAIClient{
+		model: "gpt-5.4-mini",
+		responses: fakeJSONSchemaRunner{
+			run: func(_ context.Context, req llm.JSONSchemaRequest) (llm.JSONSchemaResponse, error) {
+				callCount++
+				switch callCount {
+				case 1:
+					if req.SystemText != sessionClassificationInstructions {
+						t.Fatalf("first system prompt = %q, want classify prompt", req.SystemText)
+					}
+					if req.ReasoningEffort != classifierPrimaryReasoningEffort {
+						t.Fatalf("first reasoning effort = %q, want %q", req.ReasoningEffort, classifierPrimaryReasoningEffort)
+					}
+					return llm.JSONSchemaResponse{
+						Status:     "completed",
+						Model:      "gpt-5.4-mini",
+						OutputText: `{"classification":"completed","description":"Work is wrapped up."}`,
+					}, nil
+				case 2:
+					if req.SystemText != sessionClassificationRepairInstructions {
+						t.Fatalf("second system prompt = %q, want repair prompt", req.SystemText)
+					}
+					if req.ReasoningEffort != classifierRepairReasoningEffort {
+						t.Fatalf("second reasoning effort = %q, want %q", req.ReasoningEffort, classifierRepairReasoningEffort)
+					}
+					return llm.JSONSchemaResponse{
+						Status:     "completed",
+						Model:      "gpt-5.4-mini",
+						OutputText: `{"classification":"completed"}`,
+					}, nil
+				case 3:
+					if req.SystemText != sessionClassificationInstructions {
+						t.Fatalf("third system prompt = %q, want classify prompt", req.SystemText)
+					}
+					if req.ReasoningEffort != classifierFallbackReasoningEffort {
+						t.Fatalf("third reasoning effort = %q, want %q", req.ReasoningEffort, classifierFallbackReasoningEffort)
+					}
+					return llm.JSONSchemaResponse{
+						Status:     "completed",
+						Model:      "gpt-5.4-mini",
+						OutputText: `{"category":"completed","summary":"Work is wrapped up."}`,
+					}, nil
+				default:
+					t.Fatalf("unexpected runner call %d", callCount)
+					return llm.JSONSchemaResponse{}, nil
+				}
+			},
+		},
+	}
+
+	result, err := client.Classify(context.Background(), SessionSnapshot{
+		ProjectPath:          "/tmp/demo",
+		SessionID:            "ses_demo",
+		SessionFormat:        "modern",
+		LastEventAt:          time.Now().UTC().Format(time.RFC3339),
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  true,
+		Transcript: []TranscriptItem{
+			{Role: "user", Text: "Ship the change."},
+			{Role: "assistant", Text: "Done and verified."},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Classify() error = %v", err)
+	}
+	if callCount != 3 {
+		t.Fatalf("runner call count = %d, want 3 after repair then fallback attempt", callCount)
+	}
+	if result.Category != model.SessionCategoryCompleted {
+		t.Fatalf("category = %s, want completed", result.Category)
 	}
 }
 
@@ -188,7 +268,7 @@ func TestOpenAIClientClassifyCapturesUsage(t *testing.T) {
 					"content":[
 						{
 							"type":"output_text",
-							"text":"{\"category\":\"completed\",\"summary\":\"Work is wrapped up.\",\"confidence\":0.84}"
+							"text":"{\"category\":\"completed\",\"summary\":\"Work is wrapped up.\"}"
 						}
 					]
 				}
@@ -285,7 +365,7 @@ func TestOpenAIClientClassifyRequestsImplicitAssistantPOVSummaries(t *testing.T)
 					"content":[
 						{
 							"type":"output_text",
-							"text":"{\"category\":\"in_progress\",\"summary\":\"Actively working on the runtime cleanup.\",\"confidence\":0.78}"
+							"text":"{\"category\":\"in_progress\",\"summary\":\"Actively working on the runtime cleanup.\"}"
 						}
 					]
 				}
@@ -316,6 +396,12 @@ func TestOpenAIClientClassifyRequestsImplicitAssistantPOVSummaries(t *testing.T)
 	}
 	if !strings.Contains(systemText, `Omit leading scaffolding like "Assistant is" or "The assistant is".`) {
 		t.Fatalf("system prompt = %q, want prefix-free summary guidance", systemText)
+	}
+	if !strings.Contains(systemText, "Return exactly one JSON object that matches the response schema.") {
+		t.Fatalf("system prompt = %q, want explicit JSON-only guidance", systemText)
+	}
+	if !strings.Contains(systemText, "Do not include any prose before or after the JSON object.") {
+		t.Fatalf("system prompt = %q, want no-prose JSON-only guidance", systemText)
 	}
 	if !strings.Contains(systemText, "Write from the implicit assistant point of view rather than naming the assistant as the subject.") {
 		t.Fatalf("system prompt = %q, want implicit point-of-view guidance", systemText)
@@ -418,7 +504,7 @@ func TestOpenAIClientClassifyRetriesIncompleteWithFallback(t *testing.T) {
 					"content":[
 						{
 							"type":"output_text",
-							"text":"{\"category\":\"needs_follow_up\",\"summary\":\"One more repo step remains.\",\"confidence\":0.72}"
+							"text":"{\"category\":\"needs_follow_up\",\"summary\":\"One more repo step remains.\"}"
 						}
 					]
 				}
@@ -486,7 +572,7 @@ func TestOpenAIClientClassifyRetriesTransientServerError(t *testing.T) {
 					"content":[
 						{
 							"type":"output_text",
-							"text":"{\"category\":\"completed\",\"summary\":\"Everything is wrapped up.\",\"confidence\":0.89}"
+							"text":"{\"category\":\"completed\",\"summary\":\"Everything is wrapped up.\"}"
 						}
 					]
 				}
@@ -620,8 +706,8 @@ func TestOpenAIClientClassifyRetriesTransientTransportError(t *testing.T) {
 								"role":"assistant",
 								"content":[
 									{
-										"type":"output_text",
-										"text":"{\"category\":\"completed\",\"summary\":\"Everything is wrapped up.\",\"confidence\":0.89}"
+									"type":"output_text",
+										"text":"{\"category\":\"completed\",\"summary\":\"Everything is wrapped up.\"}"
 									}
 								]
 							}
@@ -702,15 +788,31 @@ func TestDecodeClassifierOutput(t *testing.T) {
 	}{
 		{
 			name:  "plain json",
-			input: `{"category":"completed","summary":"done","confidence":0.9}`,
+			input: `{"category":"completed","summary":"done"}`,
 		},
 		{
 			name:  "json fenced output",
-			input: "```json\n{\"category\":\"completed\",\"summary\":\"done\",\"confidence\":0.9}\n```",
+			input: "```json\n{\"category\":\"completed\",\"summary\":\"done\"}\n```",
 		},
 		{
 			name:  "json embedded in prose",
-			input: "Here is the assessment:\n{\"category\":\"completed\",\"summary\":\"done\",\"confidence\":0.9}",
+			input: "Here is the assessment:\n{\"category\":\"completed\",\"summary\":\"done\"}",
+		},
+		{
+			name:  "json with trailing prose",
+			input: "{\"category\":\"completed\",\"summary\":\"done\"}\nThat is the result.",
+		},
+		{
+			name:  "json embedded after reasoning text with braces",
+			input: "Reasoning: keep {notes} private.\n{\"category\":\"completed\",\"summary\":\"done\"}\nTrailing note.",
+		},
+		{
+			name:  "thinking block before json",
+			input: "<think>\nNeed to classify carefully.\n</think>\n{\"category\":\"completed\",\"summary\":\"done\"}",
+		},
+		{
+			name:  "thinking block before fenced json",
+			input: "<think>\nNeed to classify carefully.\n</think>\n```json\n{\"category\":\"completed\",\"summary\":\"done\"}\n```",
 		},
 	}
 
@@ -726,10 +828,26 @@ func TestDecodeClassifierOutput(t *testing.T) {
 			if result.Summary != "done" {
 				t.Fatalf("summary = %q, want done", result.Summary)
 			}
-			if result.Confidence != 0.9 {
-				t.Fatalf("confidence = %v, want 0.9", result.Confidence)
+			if result.Confidence != 0 {
+				t.Fatalf("confidence = %v, want 0 default", result.Confidence)
 			}
 		})
+	}
+}
+
+func TestDecodeClassifierOutputIncludesPreviewOnFailure(t *testing.T) {
+	t.Parallel()
+
+	var result Result
+	err := decodeClassifierOutput("classification=completed", &result)
+	if err == nil {
+		t.Fatalf("expected decodeClassifierOutput() to fail")
+	}
+	if !strings.Contains(err.Error(), `preview="classification=completed"`) {
+		t.Fatalf("error = %q, want preview", err.Error())
+	}
+	if !strings.Contains(err.Error(), "invalid character") {
+		t.Fatalf("error = %q, want JSON parse cause", err.Error())
 	}
 }
 
@@ -765,6 +883,43 @@ func TestStripMarkdownCodeBlock(t *testing.T) {
 			got := stripMarkdownCodeBlock(tt.input)
 			if got != tt.want {
 				t.Errorf("stripMarkdownCodeBlock() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStripThinkingBlocks(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "plain json",
+			input: `{"category": "completed", "summary": "done"}`,
+			want:  `{"category": "completed", "summary": "done"}`,
+		},
+		{
+			name:  "leading thinking block",
+			input: "<think>\ninternal reasoning\n</think>\n{\"category\": \"completed\", \"summary\": \"done\"}",
+			want:  `{"category": "completed", "summary": "done"}`,
+		},
+		{
+			name:  "multiple leading thinking blocks",
+			input: "<think>\nfirst\n</think>\n<think>\nsecond\n</think>\n{\"category\": \"completed\", \"summary\": \"done\"}",
+			want:  `{"category": "completed", "summary": "done"}`,
+		},
+		{
+			name:  "missing closing tag leaves text alone",
+			input: "<think>\ninternal reasoning\n{\"category\": \"completed\", \"summary\": \"done\"}",
+			want:  "<think>\ninternal reasoning\n{\"category\": \"completed\", \"summary\": \"done\"}",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stripThinkingBlocks(tt.input)
+			if got != tt.want {
+				t.Errorf("stripThinkingBlocks() = %q, want %q", got, tt.want)
 			}
 		})
 	}

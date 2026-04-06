@@ -31,9 +31,11 @@ const (
 	classifierHTTPTimeout             = 60 * time.Second
 	classifierPrimaryReasoningEffort  = "medium"
 	classifierFallbackReasoningEffort = "low"
+	classifierRepairReasoningEffort   = "low"
 	classifierDefaultRetryBackoff     = 750 * time.Millisecond
 	localRunnerDefaultModel           = "gpt-5.4-mini"
 	localRunnerClaudeDefaultModel     = "haiku"
+	classifierErrorPreviewLimit       = 120
 )
 
 var classifierAttemptPlan = []classifierAttemptConfig{
@@ -213,17 +215,27 @@ func (c *OpenAIClient) classifyAttempt(ctx context.Context, snapshotJSON []byte,
 	}
 
 	var result Result
-	if err := decodeClassifierOutput(outputText, &result); err != nil {
-		return Result{}, &retryableClassificationError{
-			cause: err,
-		}
+	decodeErr := decodeClassifierOutput(outputText, &result)
+	validateErr := error(nil)
+	if decodeErr == nil {
+		validateErr = validateClassificationResult(&result)
 	}
-	if err := validateClassificationResult(&result); err != nil {
-		return Result{}, &retryableClassificationError{cause: err}
+	if decodeErr == nil && validateErr == nil {
+		result.Model = strings.TrimSpace(response.Model)
+		result.Usage = response.Usage
+		return result, nil
 	}
-	result.Model = strings.TrimSpace(response.Model)
-	result.Usage = response.Usage
-	return result, nil
+
+	repairResult, repairResponse, repairErr := c.repairClassifierOutput(ctx, snapshotJSON, outputText, firstNonNilError(decodeErr, validateErr))
+	if repairErr == nil {
+		repairResult.Model = firstNonEmptyString(strings.TrimSpace(repairResponse.Model), strings.TrimSpace(response.Model))
+		repairResult.Usage = addLLMUsage(response.Usage, repairResponse.Usage)
+		return repairResult, nil
+	}
+
+	return Result{}, &retryableClassificationError{
+		cause: errors.Join(firstNonNilError(decodeErr, validateErr), repairErr),
+	}
 }
 
 func validateClassificationResult(result *Result) error {
@@ -231,6 +243,9 @@ func validateClassificationResult(result *Result) error {
 		return errors.New("classifier result missing")
 	}
 	result.Summary = strings.TrimSpace(result.Summary)
+	if result.Confidence < 0 || result.Confidence > 1 {
+		result.Confidence = 0
+	}
 	switch result.Category {
 	case model.SessionCategoryCompleted,
 		model.SessionCategoryBlocked,
@@ -246,9 +261,6 @@ func validateClassificationResult(result *Result) error {
 	}
 	if result.Summary == "" {
 		return errors.New("classifier result missing summary")
-	}
-	if result.Confidence < 0 || result.Confidence > 1 {
-		return fmt.Errorf("classifier result has invalid confidence %.4f", result.Confidence)
 	}
 	return nil
 }
@@ -310,13 +322,8 @@ func sessionClassificationSchema() map[string]any {
 				"type":        "string",
 				"description": "One concise dashboard-ready summary under 140 characters; brief fragments are fine, write from the implicit assistant point of view, and omit prefixes like 'Assistant is'.",
 			},
-			"confidence": map[string]any{
-				"type":    "number",
-				"minimum": 0,
-				"maximum": 1,
-			},
 		},
-		"required": []string{"category", "summary", "confidence"},
+		"required": []string{"category", "summary"},
 	}
 }
 
@@ -415,7 +422,37 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 	}
 }
 
+func (c *OpenAIClient) repairClassifierOutput(ctx context.Context, snapshotJSON []byte, outputText string, previousErr error) (Result, llm.JSONSchemaResponse, error) {
+	response, err := c.responsesClient().RunJSONSchema(ctx, llm.JSONSchemaRequest{
+		Model:           c.model,
+		SystemText:      sessionClassificationRepairInstructions,
+		UserText:        buildClassifierRepairPrompt(snapshotJSON, outputText, previousErr),
+		SchemaName:      "session_state_classification",
+		Schema:          sessionClassificationSchema(),
+		ReasoningEffort: classifierRepairReasoningEffort,
+	})
+	if err != nil {
+		return Result{}, llm.JSONSchemaResponse{}, err
+	}
+	if strings.TrimSpace(response.OutputText) == "" {
+		return Result{}, response, missingAssistantOutputError(response)
+	}
+
+	var repaired Result
+	if err := decodeClassifierOutput(response.OutputText, &repaired); err != nil {
+		return Result{}, response, err
+	}
+	if err := validateClassificationResult(&repaired); err != nil {
+		return Result{}, response, err
+	}
+	return repaired, response, nil
+}
+
 const sessionClassificationInstructions = `You classify the latest state of a coding assistant session for a project dashboard.
+
+Return exactly one JSON object that matches the response schema.
+Do not wrap the JSON in markdown fences.
+Do not include any prose before or after the JSON object.
 
 Choose exactly one category:
 - completed: the requested work appears complete for now; optional future ideas do not make it incomplete
@@ -446,6 +483,29 @@ Write from the implicit assistant point of view rather than naming the assistant
 Omit leading scaffolding like "Assistant is" or "The assistant is".
 Do not force a stock opener; choose the most direct wording that fits the evidence.`
 
+const sessionClassificationRepairInstructions = `You repair a previous classifier answer so it exactly matches the required response schema.
+
+Return exactly one JSON object that matches the response schema.
+Do not wrap the JSON in markdown fences.
+Do not include any prose before or after the JSON object.
+Preserve the meaning of the previous answer when possible.
+If the previous answer omitted required fields or used the wrong property names, correct it.
+If the previous answer is unusable, infer the best answer from the provided snapshot.`
+
+func buildClassifierRepairPrompt(snapshotJSON []byte, outputText string, previousErr error) string {
+	var b strings.Builder
+	b.WriteString("Original snapshot:\n\n")
+	b.Write(snapshotJSON)
+	b.WriteString("\n\nPrevious invalid model output:\n\n")
+	b.WriteString(strings.TrimSpace(outputText))
+	if previousErr != nil {
+		b.WriteString("\n\nWhy it was invalid:\n\n")
+		b.WriteString(strings.TrimSpace(previousErr.Error()))
+	}
+	b.WriteString("\n\nReturn corrected JSON now.")
+	return b.String()
+}
+
 func stripMarkdownCodeBlock(s string) string {
 	s = strings.TrimSpace(s)
 	if !strings.HasPrefix(s, "```") {
@@ -462,39 +522,166 @@ func stripMarkdownCodeBlock(s string) string {
 	return strings.TrimSpace(content)
 }
 
+func stripThinkingBlocks(s string) string {
+	s = strings.TrimSpace(s)
+	for {
+		if !strings.HasPrefix(s, "<think>") {
+			return s
+		}
+		end := strings.Index(s, "</think>")
+		if end == -1 {
+			return s
+		}
+		s = strings.TrimSpace(s[end+len("</think>"):])
+	}
+}
+
 func decodeClassifierOutput(outputText string, result *Result) error {
 	sanitized := strings.TrimSpace(outputText)
 	if sanitized == "" {
 		return errors.New("decode classifier result: empty JSON output")
 	}
 
-	if err := json.Unmarshal([]byte(sanitized), result); err == nil {
-		return nil
+	candidates := make([]string, 0, 4)
+	candidates = append(candidates, sanitized)
+	if thinkingStripped := stripThinkingBlocks(sanitized); thinkingStripped != "" && thinkingStripped != sanitized {
+		candidates = append(candidates, thinkingStripped)
 	}
-
-	if fenced := stripMarkdownCodeBlock(sanitized); fenced != sanitized {
-		if err := json.Unmarshal([]byte(fenced), result); err == nil {
-			return nil
+	if fenced := stripMarkdownCodeBlock(sanitized); fenced != "" && fenced != sanitized {
+		candidates = append(candidates, fenced)
+	}
+	for _, extracted := range extractJSONObjectCandidates(sanitized) {
+		if extracted != sanitized {
+			candidates = append(candidates, extracted)
+		}
+	}
+	if len(candidates) > 1 {
+		for _, extracted := range extractJSONObjectCandidates(candidates[1]) {
+			if extracted != candidates[1] {
+				candidates = append(candidates, extracted)
+			}
 		}
 	}
 
-	if extracted := extractFirstJSONObject(sanitized); extracted != "" && extracted != sanitized {
-		if err := json.Unmarshal([]byte(extracted), result); err == nil {
+	var firstErr error
+	seen := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		if err := json.Unmarshal([]byte(candidate), result); err == nil {
 			return nil
+		} else if firstErr == nil {
+			firstErr = err
 		}
 	}
 
-	return fmt.Errorf("decode classifier result: failed to decode JSON output")
+	preview := clippedSingleLinePreview(sanitized, classifierErrorPreviewLimit)
+	if firstErr == nil {
+		return fmt.Errorf("decode classifier result: failed to decode JSON output (preview=%q)", preview)
+	}
+	return fmt.Errorf("decode classifier result: failed to decode JSON output (preview=%q): %w", preview, firstErr)
 }
 
 func extractFirstJSONObject(text string) string {
-	start := strings.Index(text, "{")
-	if start < 0 {
+	candidates := extractJSONObjectCandidates(text)
+	if len(candidates) == 0 {
 		return ""
 	}
-	end := strings.LastIndex(text, "}")
-	if end <= start {
+	return candidates[0]
+}
+
+func extractJSONObjectCandidates(text string) []string {
+	start := -1
+	depth := 0
+	inString := false
+	escaped := false
+	candidates := make([]string, 0, 2)
+
+	for i, r := range text {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = inString
+			continue
+		}
+		if r == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		switch r {
+		case '{':
+			if depth == 0 {
+				start = i
+			}
+			depth++
+		case '}':
+			if depth == 0 {
+				continue
+			}
+			depth--
+			if depth == 0 && start >= 0 {
+				candidate := strings.TrimSpace(text[start : i+1])
+				if candidate != "" {
+					candidates = append(candidates, candidate)
+				}
+				start = -1
+			}
+		}
+	}
+
+	return candidates
+}
+
+func clippedSingleLinePreview(text string, limit int) string {
+	text = strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+	if text == "" {
 		return ""
 	}
-	return strings.TrimSpace(text[start : end+1])
+	if limit <= 0 || len(text) <= limit {
+		return text
+	}
+	if limit == 1 {
+		return text[:1]
+	}
+	return strings.TrimSpace(text[:limit-1]) + "…"
+}
+
+func addLLMUsage(a, b model.LLMUsage) model.LLMUsage {
+	return model.LLMUsage{
+		InputTokens:       a.InputTokens + b.InputTokens,
+		OutputTokens:      a.OutputTokens + b.OutputTokens,
+		TotalTokens:       a.TotalTokens + b.TotalTokens,
+		CachedInputTokens: a.CachedInputTokens + b.CachedInputTokens,
+		ReasoningTokens:   a.ReasoningTokens + b.ReasoningTokens,
+		EstimatedCostUSD:  a.EstimatedCostUSD + b.EstimatedCostUSD,
+	}
+}
+
+func firstNonNilError(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
