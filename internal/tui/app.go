@@ -4884,7 +4884,12 @@ func (m Model) pushCmd(path string) tea.Cmd {
 		if strings.TrimSpace(status) == "" {
 			status = "Push complete"
 		}
-		return actionMsg{projectPath: path, status: status, clearPendingGitSummary: true, err: nil}
+		refresh := invalidateProjectData(path)
+		if err := m.svc.RefreshProjectStatus(m.ctx, path); err != nil {
+			status = status + ". Repo status will refresh shortly."
+			refresh = invalidateProjectScan(m.visibleDetailPathForProject(path), false)
+		}
+		return actionMsg{projectPath: path, status: status, clearPendingGitSummary: true, refresh: refresh, err: nil}
 	}
 }
 

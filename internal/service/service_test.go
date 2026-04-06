@@ -4197,6 +4197,38 @@ func TestApplyCommitStagesAllAndPushes(t *testing.T) {
 	}
 }
 
+func TestPushProjectReportsNothingToPushWhenBranchAlreadySynced(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	remotePath := filepath.Join(root, "origin.git")
+	projectPath := filepath.Join(root, "repo")
+	initBareGitRepo(t, remotePath)
+	initGitRepo(t, projectPath)
+	runGit(t, projectPath, "git", "remote", "add", "origin", remotePath)
+	runGit(t, projectPath, "git", "push", "-u", "origin", "master")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+
+	result, err := svc.PushProject(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("push project: %v", err)
+	}
+	if result.Pushed {
+		t.Fatalf("expected no-op push to report Pushed=false, got %#v", result)
+	}
+	if result.Summary != "Nothing to push; branch already synced" {
+		t.Fatalf("summary = %q, want no-op push message", result.Summary)
+	}
+}
+
 type fakeDetector struct {
 	activities map[string]*model.DetectorProjectActivity
 }

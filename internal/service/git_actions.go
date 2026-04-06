@@ -505,7 +505,7 @@ func (s *Service) PushProject(ctx context.Context, projectPath string) (PushResu
 	case repoStatus.Behind > 0:
 		return PushResult{}, fmt.Errorf("branch is behind upstream by %d commit(s)", repoStatus.Behind)
 	case repoStatus.Ahead == 0:
-		result.Summary = "Branch already synced"
+		result.Summary = "Nothing to push; branch already synced"
 		return result, nil
 	}
 
