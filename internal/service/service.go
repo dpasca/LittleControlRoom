@@ -1626,13 +1626,48 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 		forgotten = false
 	}
 
-	errorCount := 0
-	latestSessionStart := time.Time{}
-	latestTurnKnown := false
-	latestTurnComplete := false
 	if len(detail.Sessions) > 0 {
 		ensureLatestSessionTurnState(&detail.Sessions[0])
 		ensureSessionSnapshotHash(ctx, projectPath, &detail.Sessions[0], sessionclassify.NewGitStatusSnapshot(repoDirty, repoSyncStatus, repoAheadCount, repoBehindCount))
+	}
+	return s.persistProjectStateUpdate(ctx, detail, now, projectStatusRefreshOverrides{
+		presentOnDisk:        presentOnDisk,
+		worktreeRootPath:     worktreeRootPath,
+		worktreeKind:         worktreeKind,
+		worktreeParentBranch: worktreeParentBranch,
+		worktreeMergeStatus:  worktreeMergeStatus,
+		repoBranch:           repoBranch,
+		repoDirty:            repoDirty,
+		repoConflict:         repoConflict,
+		repoSyncStatus:       repoSyncStatus,
+		repoAheadCount:       repoAheadCount,
+		repoBehindCount:      repoBehindCount,
+		forgotten:            forgotten,
+	})
+}
+
+type projectStatusRefreshOverrides struct {
+	presentOnDisk        bool
+	worktreeRootPath     string
+	worktreeKind         model.WorktreeKind
+	worktreeParentBranch string
+	worktreeMergeStatus  model.WorktreeMergeStatus
+	repoBranch           string
+	repoDirty            bool
+	repoConflict         bool
+	repoSyncStatus       model.RepoSyncStatus
+	repoAheadCount       int
+	repoBehindCount      int
+	forgotten            bool
+}
+
+func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.ProjectDetail, now time.Time, overrides projectStatusRefreshOverrides) error {
+	projectPath := detail.Summary.Path
+	latestSessionStart := time.Time{}
+	latestTurnKnown := false
+	latestTurnComplete := false
+	errorCount := 0
+	if len(detail.Sessions) > 0 {
 		latestSessionStart = detail.Sessions[0].StartedAt
 		latestTurnKnown = detail.Sessions[0].LatestTurnStateKnown
 		latestTurnComplete = detail.Sessions[0].LatestTurnCompleted
@@ -1647,7 +1682,7 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 		Now:                        now,
 		LastActivity:               detail.Summary.LastActivity,
 		CreatedAt:                  detail.Summary.CreatedAt,
-		RepoDirty:                  repoDirty,
+		RepoDirty:                  overrides.repoDirty,
 		Pinned:                     detail.Summary.Pinned,
 		Unread:                     attention.AssessmentUnread(detail.Summary),
 		SnoozedUntil:               detail.Summary.SnoozedUntil,
@@ -1669,28 +1704,30 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 		LastActivity:         detail.Summary.LastActivity,
 		Status:               score.Status,
 		AttentionScore:       score.Score,
-		PresentOnDisk:        presentOnDisk,
-		WorktreeRootPath:     worktreeRootPath,
-		WorktreeKind:         worktreeKind,
-		WorktreeParentBranch: worktreeParentBranch,
-		WorktreeMergeStatus:  worktreeMergeStatus,
+		PresentOnDisk:        overrides.presentOnDisk,
+		WorktreeRootPath:     overrides.worktreeRootPath,
+		WorktreeKind:         overrides.worktreeKind,
+		WorktreeParentBranch: overrides.worktreeParentBranch,
+		WorktreeMergeStatus:  overrides.worktreeMergeStatus,
 		WorktreeOriginTodoID: detail.Summary.WorktreeOriginTodoID,
-		RepoBranch:           repoBranch,
-		RepoDirty:            repoDirty,
-		RepoConflict:         repoConflict,
-		RepoSyncStatus:       repoSyncStatus,
-		RepoAheadCount:       repoAheadCount,
-		RepoBehindCount:      repoBehindCount,
-		Forgotten:            forgotten,
+		RepoBranch:           overrides.repoBranch,
+		RepoDirty:            overrides.repoDirty,
+		RepoConflict:         overrides.repoConflict,
+		RepoSyncStatus:       overrides.repoSyncStatus,
+		RepoAheadCount:       overrides.repoAheadCount,
+		RepoBehindCount:      overrides.repoBehindCount,
+		Forgotten:            overrides.forgotten,
 		ManuallyAdded:        detail.Summary.ManuallyAdded,
 		InScope:              detail.Summary.InScope,
 		Pinned:               detail.Summary.Pinned,
 		SnoozedUntil:         detail.Summary.SnoozedUntil,
+		RunCommand:           detail.Summary.RunCommand,
 		MovedFromPath:        detail.Summary.MovedFromPath,
 		MovedAt:              detail.Summary.MovedAt,
 		AttentionReason:      score.Reasons,
 		Sessions:             detail.Sessions,
 		Artifacts:            detail.Artifacts,
+		CreatedAt:            detail.Summary.CreatedAt,
 		UpdatedAt:            now,
 	}
 	if err := s.store.UpsertProjectState(ctx, state); err != nil {
@@ -1700,6 +1737,31 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 		s.publishProjectChanged(ctx, now, state)
 	}
 	return nil
+}
+
+func (s *Service) refreshProjectAttention(ctx context.Context, projectPath string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	detail, err := s.store.GetProjectDetail(ctx, projectPath, 20)
+	if err != nil {
+		return err
+	}
+	return s.persistProjectStateUpdate(ctx, detail, now, projectStatusRefreshOverrides{
+		presentOnDisk:        detail.Summary.PresentOnDisk,
+		worktreeRootPath:     detail.Summary.WorktreeRootPath,
+		worktreeKind:         detail.Summary.WorktreeKind,
+		worktreeParentBranch: detail.Summary.WorktreeParentBranch,
+		worktreeMergeStatus:  detail.Summary.WorktreeMergeStatus,
+		repoBranch:           detail.Summary.RepoBranch,
+		repoDirty:            detail.Summary.RepoDirty,
+		repoConflict:         detail.Summary.RepoConflict,
+		repoSyncStatus:       detail.Summary.RepoSyncStatus,
+		repoAheadCount:       detail.Summary.RepoAheadCount,
+		repoBehindCount:      detail.Summary.RepoBehindCount,
+		forgotten:            detail.Summary.Forgotten,
+	})
 }
 
 func (s *Service) TogglePin(ctx context.Context, projectPath string) error {
@@ -1714,7 +1776,7 @@ func (s *Service) TogglePin(ctx context.Context, projectPath string) error {
 	if err := s.store.SetPinned(ctx, projectPath, !project.Pinned); err != nil {
 		return err
 	}
-	if err := s.RefreshProjectStatus(ctx, projectPath); err != nil {
+	if err := s.refreshProjectAttention(ctx, projectPath); err != nil {
 		return err
 	}
 	now := time.Now()
@@ -1728,6 +1790,9 @@ func (s *Service) Snooze(ctx context.Context, projectPath string, duration time.
 	if err := s.store.SetSnooze(ctx, projectPath, &until); err != nil {
 		return err
 	}
+	if err := s.refreshProjectAttention(ctx, projectPath); err != nil {
+		return err
+	}
 	now := time.Now()
 	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "snooze", "until": until.Format(time.RFC3339)}})
 	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: fmt.Sprintf("snooze until %s", until.Format(time.RFC3339))})
@@ -1736,6 +1801,9 @@ func (s *Service) Snooze(ctx context.Context, projectPath string, duration time.
 
 func (s *Service) ClearSnooze(ctx context.Context, projectPath string) error {
 	if err := s.store.SetSnooze(ctx, projectPath, nil); err != nil {
+		return err
+	}
+	if err := s.refreshProjectAttention(ctx, projectPath); err != nil {
 		return err
 	}
 	now := time.Now()
@@ -1748,7 +1816,7 @@ func (s *Service) MarkProjectSessionSeen(ctx context.Context, projectPath string
 	if err := s.store.SetProjectSessionSeenAt(ctx, projectPath, seenAt); err != nil {
 		return err
 	}
-	if err := s.RefreshProjectStatus(ctx, projectPath); err != nil {
+	if err := s.refreshProjectAttention(ctx, projectPath); err != nil {
 		return err
 	}
 	now := time.Now()
@@ -1774,7 +1842,7 @@ func (s *Service) MarkProjectSessionUnread(ctx context.Context, projectPath stri
 	if err := s.store.ClearProjectSessionSeenAt(ctx, projectPath); err != nil {
 		return err
 	}
-	if err := s.RefreshProjectStatus(ctx, projectPath); err != nil {
+	if err := s.refreshProjectAttention(ctx, projectPath); err != nil {
 		return err
 	}
 	now := time.Now()

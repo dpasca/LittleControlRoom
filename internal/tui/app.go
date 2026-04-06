@@ -276,6 +276,7 @@ type actionMsg struct {
 	projectPath            string
 	status                 string
 	clearPendingGitSummary bool
+	refresh                projectInvalidationIntent
 	err                    error
 }
 
@@ -1689,6 +1690,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.status = msg.status
+		if msg.refresh.kind != projectInvalidationNone {
+			return m, m.requestProjectInvalidationCmd(msg.refresh)
+		}
 		return m, m.requestProjectInvalidationCmd(invalidateProjectScan("", false))
 	case browserOpenMsg:
 		if msg.err != nil {
@@ -3902,6 +3906,7 @@ func (m Model) markProjectSessionUnreadCmd(path string) tea.Cmd {
 		return actionMsg{
 			projectPath: path,
 			status:      "Marked unread",
+			refresh:     invalidateProjectData(path),
 			err:         m.svc.MarkProjectSessionUnread(m.ctx, path),
 		}
 	}
@@ -4570,7 +4575,12 @@ func (m Model) scanCmd(forceRetryFailedClassifications bool) tea.Cmd {
 func (m Model) togglePinCmd(path string) tea.Cmd {
 	return func() tea.Msg {
 		err := m.svc.TogglePin(m.ctx, path)
-		return actionMsg{status: "Pin toggled", err: err}
+		return actionMsg{
+			projectPath: path,
+			status:      "Pin toggled",
+			refresh:     invalidateProjectData(path),
+			err:         err,
+		}
 	}
 }
 
@@ -4578,14 +4588,24 @@ func (m Model) snoozeCmd(path string, d time.Duration) tea.Cmd {
 	label := formatSnoozeDuration(d)
 	return func() tea.Msg {
 		err := m.svc.Snooze(m.ctx, path, d)
-		return actionMsg{status: "Snoozed for " + label, err: err}
+		return actionMsg{
+			projectPath: path,
+			status:      "Snoozed for " + label,
+			refresh:     invalidateProjectData(path),
+			err:         err,
+		}
 	}
 }
 
 func (m Model) clearSnoozeCmd(path string) tea.Cmd {
 	return func() tea.Msg {
 		err := m.svc.ClearSnooze(m.ctx, path)
-		return actionMsg{status: "Snooze cleared", err: err}
+		return actionMsg{
+			projectPath: path,
+			status:      "Snooze cleared",
+			refresh:     invalidateProjectData(path),
+			err:         err,
+		}
 	}
 }
 

@@ -644,6 +644,77 @@ func TestTogglePinRefreshesAttentionScoreImmediately(t *testing.T) {
 	}
 }
 
+func TestSnoozeAndClearSnoozeRefreshAttentionImmediately(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Date(2026, 4, 4, 9, 0, 0, 0, time.UTC)
+	projectPath := "/tmp/snooze-demo"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "snooze-demo",
+		Status:         model.StatusIdle,
+		AttentionScore: 40,
+		InScope:        true,
+		Pinned:         true,
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if err := svc.Snooze(ctx, projectPath, time.Hour); err != nil {
+		t.Fatalf("Snooze() error = %v", err)
+	}
+
+	summary, err := st.GetProjectSummary(ctx, projectPath, false)
+	if err != nil {
+		t.Fatalf("GetProjectSummary() after snooze error = %v", err)
+	}
+	if summary.SnoozedUntil == nil {
+		t.Fatalf("SnoozedUntil = nil, want active snooze")
+	}
+	if summary.AttentionScore != 0 {
+		t.Fatalf("AttentionScore after snooze = %d, want 0", summary.AttentionScore)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 10)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() after snooze error = %v", err)
+	}
+	foundSnoozed := false
+	for _, reason := range detail.Reasons {
+		if reason.Code == "snoozed" {
+			foundSnoozed = true
+			break
+		}
+	}
+	if !foundSnoozed {
+		t.Fatalf("expected snoozed reason after Snooze, got %#v", detail.Reasons)
+	}
+
+	if err := svc.ClearSnooze(ctx, projectPath); err != nil {
+		t.Fatalf("ClearSnooze() error = %v", err)
+	}
+
+	summary, err = st.GetProjectSummary(ctx, projectPath, false)
+	if err != nil {
+		t.Fatalf("GetProjectSummary() after clear error = %v", err)
+	}
+	if summary.SnoozedUntil != nil {
+		t.Fatalf("SnoozedUntil after clear = %v, want nil", summary.SnoozedUntil)
+	}
+	if summary.AttentionScore != 40 {
+		t.Fatalf("AttentionScore after clear = %d, want 40", summary.AttentionScore)
+	}
+}
+
 func TestMarkProjectSessionReadUnreadRefreshesAttentionScoreImmediately(t *testing.T) {
 	t.Parallel()
 

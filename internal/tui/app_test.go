@@ -16694,6 +16694,86 @@ func TestActionMsgErrorClearsPendingGitSummaryImmediately(t *testing.T) {
 	}
 }
 
+func TestTogglePinCmdReturnsTargetedProjectRefresh(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := "/tmp/pin-demo"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "pin-demo",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		InScope:        true,
+		UpdatedAt:      time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	m := Model{ctx: ctx, svc: svc}
+
+	cmd := m.togglePinCmd(projectPath)
+	if cmd == nil {
+		t.Fatal("togglePinCmd() should return a command")
+	}
+	raw := cmd()
+	msg, ok := raw.(actionMsg)
+	if !ok {
+		t.Fatalf("cmd() message type = %T, want actionMsg", raw)
+	}
+	if msg.projectPath != projectPath {
+		t.Fatalf("projectPath = %q, want %q", msg.projectPath, projectPath)
+	}
+	if msg.refresh.kind != projectInvalidationProjectData || msg.refresh.projectPath != projectPath {
+		t.Fatalf("refresh = %#v, want targeted project-data invalidation for %q", msg.refresh, projectPath)
+	}
+}
+
+func TestSnoozeCmdReturnsTargetedProjectRefresh(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := "/tmp/snooze-demo"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "snooze-demo",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		InScope:        true,
+		UpdatedAt:      time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	m := Model{ctx: ctx, svc: svc}
+
+	cmd := m.snoozeCmd(projectPath, time.Hour)
+	if cmd == nil {
+		t.Fatal("snoozeCmd() should return a command")
+	}
+	raw := cmd()
+	msg, ok := raw.(actionMsg)
+	if !ok {
+		t.Fatalf("cmd() message type = %T, want actionMsg", raw)
+	}
+	if msg.projectPath != projectPath {
+		t.Fatalf("projectPath = %q, want %q", msg.projectPath, projectPath)
+	}
+	if msg.refresh.kind != projectInvalidationProjectData || msg.refresh.projectPath != projectPath {
+		t.Fatalf("refresh = %#v, want targeted project-data invalidation for %q", msg.refresh, projectPath)
+	}
+}
+
 func TestViewWithDiffScreenUsesFullBody(t *testing.T) {
 	diffState := newDiffViewState("/tmp/demo", "demo")
 	diffState.loading = false
