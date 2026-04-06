@@ -3286,6 +3286,30 @@ func TestRenderTopStatusLinePulsesErrorsAsDanger(t *testing.T) {
 	}
 }
 
+func TestRenderTopStatusLineKeepsRecoveryProgressNeutral(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	m := Model{status: "Scanning and retrying failed assessments..."}
+
+	statusA := m.renderTopStatusLine(160)
+	m.spinnerFrame = 1
+	statusB := m.renderTopStatusLine(160)
+
+	if ansi.Strip(statusA) != ansi.Strip(statusB) {
+		t.Fatalf("recovery progress should preserve banner text, got %q vs %q", ansi.Strip(statusA), ansi.Strip(statusB))
+	}
+	if statusA != statusB {
+		t.Fatalf("recovery progress should not animate like a warning or error")
+	}
+}
+
 func TestRenderTopStatusLineShowsNavigationHintsInsteadOfAICounts(t *testing.T) {
 	m := Model{status: "Ready"}
 

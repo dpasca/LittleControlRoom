@@ -3215,6 +3215,9 @@ func topStatusSeverityForMessage(status string, err error) topStatusSeverity {
 	}
 
 	lowerStatus := strings.ToLower(status)
+	if topStatusShowsRecoveryProgress(lowerStatus) {
+		return topStatusSeverityNormal
+	}
 	switch {
 	case strings.Contains(lowerStatus, "failed"),
 		strings.Contains(lowerStatus, "merge conflict"),
@@ -3225,6 +3228,18 @@ func topStatusSeverityForMessage(status string, err error) topStatusSeverity {
 	default:
 		return topStatusSeverityNormal
 	}
+}
+
+func topStatusShowsRecoveryProgress(status string) bool {
+	for _, prefix := range []string{
+		"scanning and retrying ",
+		"retrying ",
+	} {
+		if strings.HasPrefix(status, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func topStatusNeedsAttention(status string) bool {
