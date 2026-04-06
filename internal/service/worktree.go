@@ -361,6 +361,13 @@ func (s *Service) MergeWorktreeBack(ctx context.Context, projectPath string) (Me
 		}
 		return result, fmt.Errorf("merge %s back into %s at %s failed: %w", sourceBranch, targetBranch, rootPath, err)
 	}
+	if err := gitSubmoduleUpdateInitRecursive(ctx, rootPath); err != nil {
+		refreshErr := s.refreshWorktreeMergeStatus(ctx, rootPath, projectPath)
+		if refreshErr != nil {
+			return result, fmt.Errorf("merged %s back into %s at %s but failed to sync submodules: %w (status refresh also failed: %v)", sourceBranch, targetBranch, rootPath, err, refreshErr)
+		}
+		return result, fmt.Errorf("merged %s back into %s at %s but failed to sync submodules: %w", sourceBranch, targetBranch, rootPath, err)
+	}
 
 	now := time.Now()
 	if s.bus != nil {
@@ -595,6 +602,7 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 	if strings.TrimSpace(rootPath) == "" {
 		return fmt.Errorf("worktree root is unavailable for %s", projectPath)
 	}
+	allowSubmoduleForceFallback := false
 	if !force && s.gitRepoStatusReader != nil {
 		status, err := s.gitRepoStatusReader(ctx, projectPath)
 		if err != nil {
@@ -603,9 +611,15 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 		if status.Dirty {
 			return fmt.Errorf("worktree is dirty; commit or discard changes before removing it")
 		}
+		allowSubmoduleForceFallback = true
 	}
 	if err := gitWorktreeRemove(ctx, rootPath, projectPath, force); err != nil {
-		return err
+		if !(allowSubmoduleForceFallback && isGitWorktreeSubmoduleRemoveError(err)) {
+			return err
+		}
+		if err := gitWorktreeRemove(ctx, rootPath, projectPath, true); err != nil {
+			return err
+		}
 	}
 	if err := s.store.SetForgotten(ctx, projectPath, true); err != nil {
 		return fmt.Errorf("forget removed worktree: %w", err)
@@ -876,6 +890,13 @@ func gitWorktreeRemove(ctx context.Context, repoPath, worktreePath string, force
 	return nil
 }
 
+func isGitWorktreeSubmoduleRemoveError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "working trees containing submodules cannot be moved or removed")
+}
+
 func gitMergeBranch(ctx context.Context, repoPath, branchName string) error {
 	repoPath = filepath.Clean(strings.TrimSpace(repoPath))
 	branchName = strings.TrimSpace(branchName)
@@ -886,6 +907,19 @@ func gitMergeBranch(ctx context.Context, repoPath, branchName string) error {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("merge branch %s into %s: %w (%s)", branchName, repoPath, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func gitSubmoduleUpdateInitRecursive(ctx context.Context, repoPath string) error {
+	repoPath = filepath.Clean(strings.TrimSpace(repoPath))
+	if repoPath == "" {
+		return fmt.Errorf("repo path is required")
+	}
+	cmd := exec.CommandContext(ctx, "git", "-c", "protocol.file.allow=always", "-C", repoPath, "submodule", "update", "--init", "--recursive")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("sync submodules for %s: %w (%s)", repoPath, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
