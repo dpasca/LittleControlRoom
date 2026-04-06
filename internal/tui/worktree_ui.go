@@ -816,6 +816,23 @@ func worktreeMergeSnapshotShowsCompletedTurn(snapshot codexapp.Snapshot) bool {
 	return false
 }
 
+func worktreeMergeSnapshotShowsSettledIdle(snapshot codexapp.Snapshot) bool {
+	if snapshot.Phase != codexapp.SessionPhaseIdle {
+		return false
+	}
+	statuses := []string{
+		normalizedCodexStatus(snapshot.Status),
+		normalizedCodexStatus(snapshot.LastSystemNotice),
+	}
+	for _, status := range statuses {
+		switch strings.TrimSpace(status) {
+		case "Turn finished", "Recovered idle after status check", "Conversation history compacted":
+			return true
+		}
+	}
+	return false
+}
+
 func worktreeMergeCanAutoCloseSnapshot(snapshot codexapp.Snapshot) bool {
 	if !snapshot.Started || snapshot.Closed || snapshot.Busy || snapshot.BusyExternal {
 		return false
@@ -823,7 +840,7 @@ func worktreeMergeCanAutoCloseSnapshot(snapshot codexapp.Snapshot) bool {
 	if snapshot.PendingApproval != nil || snapshot.PendingToolInput != nil || snapshot.PendingElicitation != nil {
 		return false
 	}
-	return worktreeMergeSnapshotShowsCompletedTurn(snapshot)
+	return worktreeMergeSnapshotShowsCompletedTurn(snapshot) || worktreeMergeSnapshotShowsSettledIdle(snapshot)
 }
 
 func (m *Model) closeEmbeddedSessionForProject(projectPath string) error {

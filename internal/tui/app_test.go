@@ -2114,6 +2114,76 @@ func TestOpenWorktreeMergeConfirmAutoClosesCompletedSession(t *testing.T) {
 	}
 }
 
+func TestOpenWorktreeMergeConfirmAutoClosesSettledIdleSession(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				Started:  true,
+				ThreadID: "thread-live",
+				Phase:    codexapp.SessionPhaseIdle,
+				Status:   "Recovered idle after status check",
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: childPath,
+		Provider:    codexapp.ProviderCodex,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: childPath,
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 childPath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				RepoBranch:           "feat/parallel-lane",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	cmd := m.openWorktreeMergeConfirmForSelection()
+	if cmd != nil {
+		t.Fatalf("auto-closing a settled idle session should not need extra background work")
+	}
+	if m.attentionDialog != nil {
+		t.Fatalf("settled idle auto-close path should not show the attention dialog")
+	}
+	if m.worktreeMergeConfirm == nil {
+		t.Fatalf("merge confirmation should open after auto-closing the settled idle session")
+	}
+	if m.status != "Confirm worktree merge-back" {
+		t.Fatalf("status = %q, want merge confirmation", m.status)
+	}
+	if m.codexVisibleProject != "" {
+		t.Fatalf("visible project should be cleared after auto-close, got %q", m.codexVisibleProject)
+	}
+	if _, ok := manager.Session(childPath); ok {
+		t.Fatalf("settled idle session should be closed before opening merge confirm")
+	}
+}
+
 func TestOpenWorktreeMergeConfirmIncludesActiveRuntimeShutdown(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-runtime"
@@ -2658,7 +2728,7 @@ func TestRenderWorktreeRemoveConfirmShowsMergeSafetyCopy(t *testing.T) {
 			BranchName:   "feat/parallel-lane",
 			TargetBranch: "master",
 			MergeStatus:  model.WorktreeMergeStatusNotMerged,
-			Selected:     worktreeRemoveConfirmFocusKeep,
+			Selected:     worktreeRemoveConfirmKeepIndex(nil),
 		},
 	}
 
@@ -2680,7 +2750,7 @@ func TestWorktreeRemoveEnterDismissesDialogWhileRunning(t *testing.T) {
 			ProjectPath: "/tmp/repo--feat-parallel-lane",
 			RootPath:    "/tmp/repo",
 			BranchName:  "feat/parallel-lane",
-			Selected:    worktreeRemoveConfirmFocusRemove,
+			Selected:    worktreeRemoveConfirmRemoveIndex(nil),
 		},
 		spinnerFrame: 2,
 	}
