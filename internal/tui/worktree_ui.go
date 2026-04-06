@@ -27,10 +27,9 @@ const (
 	worktreePostMergeFocusRemove
 )
 
-const (
-	worktreeRemoveConfirmFocusRemove = iota
-	worktreeRemoveConfirmFocusKeep
-)
+// worktreeRemoveConfirm focus indices are computed dynamically via helper
+// functions because the checkbox row is only present when the worktree is
+// dirty.  See worktreeRemoveConfirmRemoveIndex / KeepIndex / FocusCount.
 
 const (
 	worktreeMergePendingSummary       = "Merging worktree back..."
@@ -56,9 +55,37 @@ type worktreeRemoveConfirmState struct {
 	BranchName   string
 	TargetBranch string
 	MergeStatus  model.WorktreeMergeStatus
+	Dirty        bool
+	ForceRemove  bool
 	Busy         bool
 	BusyMessage  string
 	Selected     int
+}
+
+func worktreeRemoveConfirmOptionCount(confirm *worktreeRemoveConfirmState) int {
+	if confirm != nil && confirm.Dirty {
+		return 1 // "Force remove" checkbox
+	}
+	return 0
+}
+
+func worktreeRemoveConfirmRemoveIndex(confirm *worktreeRemoveConfirmState) int {
+	return worktreeRemoveConfirmOptionCount(confirm)
+}
+
+func worktreeRemoveConfirmKeepIndex(confirm *worktreeRemoveConfirmState) int {
+	return worktreeRemoveConfirmOptionCount(confirm) + 1
+}
+
+func worktreeRemoveConfirmFocusCount(confirm *worktreeRemoveConfirmState) int {
+	return worktreeRemoveConfirmOptionCount(confirm) + 2
+}
+
+func worktreeRemoveConfirmReady(confirm *worktreeRemoveConfirmState) bool {
+	if confirm == nil {
+		return false
+	}
+	return !confirm.Dirty || confirm.ForceRemove
 }
 
 type worktreeMergeConfirmState struct {
@@ -1034,7 +1061,7 @@ func (m Model) applyWorktreeMergePlanCmd(confirm worktreeMergeConfirmState) tea.
 			}
 		}
 		if confirm.RemoveNow {
-			if err := m.svc.RemoveWorktree(m.ctx, projectPath); err != nil {
+			if err := m.svc.RemoveWorktree(m.ctx, projectPath, false); err != nil {
 				status = appendWorktreeStatusClause(status, "Could not remove the merged worktree: "+err.Error())
 			} else {
 				status = appendWorktreeStatusClause(status, "Worktree removed.")
@@ -1088,7 +1115,7 @@ func (m Model) updateWorktreePostMergeMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 			return m, m.completeWorktreePostMergeTodoCmd(prompt.TodoPath, prompt.TodoID, prompt.ProjectPath, prompt.RootPath, false, prompt.Status)
 		}
 		m.beginAsyncWorktreeAction(prompt.ProjectPath, worktreePostMergeRemoveSummary, worktreePostMergeRemoveSummary)
-		return m, m.removeWorktreeCmd(prompt.ProjectPath, prompt.RootPath)
+		return m, m.removeWorktreeCmd(prompt.ProjectPath, prompt.RootPath, false)
 	}
 	return m, nil
 }
@@ -1166,7 +1193,7 @@ func (m Model) completeWorktreePostMergeTodoCmd(todoProjectPath string, todoID i
 			status = "Linked TODO marked done"
 		}
 		if removeAfter {
-			if err := m.svc.RemoveWorktree(m.ctx, worktreePath); err != nil {
+			if err := m.svc.RemoveWorktree(m.ctx, worktreePath, false); err != nil {
 				return worktreeActionMsg{
 					projectPath:            worktreePath,
 					clearPendingGitSummary: true,
@@ -1220,15 +1247,17 @@ func (m *Model) openWorktreeRemoveConfirmForSelection() tea.Cmd {
 		m.status = "A git action is still in progress for this worktree"
 		return nil
 	}
-	m.worktreeRemoveConfirm = &worktreeRemoveConfirmState{
+	state := &worktreeRemoveConfirmState{
 		ProjectPath:  project.Path,
 		RootPath:     row.RootPath,
 		ProjectName:  project.Name,
 		BranchName:   projectWorktreeLabel(project),
 		TargetBranch: strings.TrimSpace(project.WorktreeParentBranch),
 		MergeStatus:  project.WorktreeMergeStatus,
-		Selected:     worktreeRemoveConfirmFocusKeep,
+		Dirty:        project.RepoDirty,
 	}
+	state.Selected = worktreeRemoveConfirmKeepIndex(state)
+	m.worktreeRemoveConfirm = state
 	m.status = "Confirm worktree removal"
 	return nil
 }
@@ -1241,38 +1270,52 @@ func (m Model) updateWorktreeRemoveConfirmMode(msg tea.KeyMsg) (tea.Model, tea.C
 	if confirm.Busy {
 		return m, nil
 	}
+	focusCount := worktreeRemoveConfirmFocusCount(confirm)
 	switch msg.String() {
 	case "esc":
 		m.worktreeRemoveConfirm = nil
 		m.status = "Worktree removal canceled"
 		return m, nil
-	case "left", "h", "right", "l", "tab", "shift+tab":
-		if confirm.Selected == worktreeRemoveConfirmFocusRemove {
-			confirm.Selected = worktreeRemoveConfirmFocusKeep
-		} else {
-			confirm.Selected = worktreeRemoveConfirmFocusRemove
+	case "left", "h", "up", "k", "shift+tab":
+		confirm.Selected = ((confirm.Selected-1)%focusCount + focusCount) % focusCount
+		return m, nil
+	case "right", "l", "down", "j", "tab":
+		confirm.Selected = (confirm.Selected + 1) % focusCount
+		return m, nil
+	case " ":
+		if confirm.Dirty && confirm.Selected == 0 {
+			confirm.ForceRemove = !confirm.ForceRemove
 		}
 		return m, nil
 	case "enter":
-		if confirm.Selected != worktreeRemoveConfirmFocusRemove {
+		// Toggle checkbox on enter when focused on it.
+		if confirm.Dirty && confirm.Selected < worktreeRemoveConfirmOptionCount(confirm) {
+			confirm.ForceRemove = !confirm.ForceRemove
+			return m, nil
+		}
+		if confirm.Selected == worktreeRemoveConfirmKeepIndex(confirm) {
 			m.worktreeRemoveConfirm = nil
 			m.status = "Worktree removal canceled"
 			return m, nil
 		}
+		if !worktreeRemoveConfirmReady(confirm) {
+			m.status = "Check \"Force remove\" to discard uncommitted changes"
+			return m, nil
+		}
 		m.beginAsyncWorktreeAction(confirm.ProjectPath, worktreeRemovePendingSummary, worktreeRemovePendingSummary)
-		return m, m.removeWorktreeCmd(confirm.ProjectPath, confirm.RootPath)
+		return m, m.removeWorktreeCmd(confirm.ProjectPath, confirm.RootPath, confirm.ForceRemove)
 	}
 	return m, nil
 }
 
-func (m Model) removeWorktreeCmd(projectPath, rootPath string) tea.Cmd {
+func (m Model) removeWorktreeCmd(projectPath, rootPath string, force bool) tea.Cmd {
 	if m.svc == nil {
 		return func() tea.Msg {
 			return worktreeActionMsg{projectPath: projectPath, err: fmt.Errorf("service unavailable")}
 		}
 	}
 	return func() tea.Msg {
-		err := m.svc.RemoveWorktree(m.ctx, projectPath)
+		err := m.svc.RemoveWorktree(m.ctx, projectPath, force)
 		return worktreeActionMsg{
 			projectPath:            projectPath,
 			selectPath:             rootPath,
@@ -1308,14 +1351,25 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 	}
 	panelW := min(max(48, bodyW-24), 78)
 	panelInnerW := max(24, panelW-4)
+	removeLabel := "Remove"
+	if confirm.Dirty && confirm.ForceRemove {
+		removeLabel = "Force Remove"
+	}
+	removeButton := renderDialogButton(removeLabel, confirm.Selected == worktreeRemoveConfirmRemoveIndex(confirm))
+	if confirm.Dirty && !confirm.ForceRemove {
+		removeButton = disabledActionTextStyle.Render("[Remove blocked]")
+	}
+	if confirm.Busy {
+		removeButton = disabledActionTextStyle.Render("[" + todoDialogWaitingLabel(m.spinnerFrame) + "]")
+	}
 	buttons := lipgloss.JoinHorizontal(
 		lipgloss.Left,
-		renderDialogButton("Remove", confirm.Selected == worktreeRemoveConfirmFocusRemove),
+		removeButton,
 		" ",
-		renderDialogButton("Keep", confirm.Selected == worktreeRemoveConfirmFocusKeep),
+		renderDialogButton("Keep", confirm.Selected == worktreeRemoveConfirmKeepIndex(confirm)),
 	)
 	if confirm.Busy {
-		buttons = disabledActionTextStyle.Render("[" + todoDialogWaitingLabel(m.spinnerFrame) + "]")
+		buttons = removeButton
 	}
 	lines := []string{
 		detailSectionStyle.Render("Remove worktree"),
@@ -1332,12 +1386,39 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 			lines = append(lines, renderWrappedDialogTextLines(statusStyle, panelInnerW, statusBody)...)
 		}
 	}
+	if confirm.Dirty && !confirm.Busy {
+		lines = append(lines, "")
+		lines = append(lines, detailWarningStyle.Render("Uncommitted changes"))
+		lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, panelInnerW, "This worktree has uncommitted changes that will be discarded if you force-remove it.")...)
+		lines = append(lines, "")
+		prefix := "[ ] "
+		style := detailMutedStyle
+		if confirm.ForceRemove {
+			prefix = "[x] "
+			style = detailWarningStyle
+		}
+		line := truncateText(prefix+"Force remove (discard uncommitted changes)", panelInnerW)
+		if confirm.Selected == 0 {
+			lines = append(lines, dialogButtonSelectedStyle.UnsetPadding().Width(panelInnerW).Render(line))
+		} else {
+			lines = append(lines, style.Render(line))
+		}
+	}
 	lines = append(lines, "")
 	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "Removing a linked worktree deletes the checkout only. The branch ref stays in the repo.")...)
 	if confirm.Busy {
 		lines = append(lines, "")
 		lines = append(lines, detailValueStyle.Render("Removal in progress"))
 		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, confirm.BusyMessage)...)
+	}
+	if confirm.Dirty && !confirm.Busy {
+		lines = append(lines, "")
+		lines = append(lines, renderHelpPanelActionRow(
+			renderDialogAction("Space", "toggle", pushActionKeyStyle, pushActionTextStyle),
+			renderDialogAction("↑↓", "navigate", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("Enter", "choose", commitActionKeyStyle, commitActionTextStyle),
+			renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
+		))
 	}
 	lines = append(lines, "", buttons)
 	panel := renderDialogPanel(panelW, panelInnerW, strings.Join(lines, "\n"))

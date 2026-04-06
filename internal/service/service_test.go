@@ -2610,7 +2610,7 @@ func TestRemoveWorktreeRemovesTrackedLinkedWorktree(t *testing.T) {
 		t.Fatalf("CreateTodoWorktree() error = %v", err)
 	}
 
-	if err := svc.RemoveWorktree(ctx, result.WorktreePath); err != nil {
+	if err := svc.RemoveWorktree(ctx, result.WorktreePath, false); err != nil {
 		t.Fatalf("RemoveWorktree() error = %v", err)
 	}
 	if _, err := os.Stat(result.WorktreePath); !os.IsNotExist(err) {
@@ -2723,7 +2723,7 @@ func TestRemoveWorktreeWaitsForScanAndStaysForgotten(t *testing.T) {
 
 	removeDone := make(chan error, 1)
 	go func() {
-		removeDone <- svc.RemoveWorktree(ctx, result.WorktreePath)
+		removeDone <- svc.RemoveWorktree(ctx, result.WorktreePath, false)
 	}()
 
 	close(releaseScan)

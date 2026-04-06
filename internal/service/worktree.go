@@ -577,7 +577,7 @@ func summarizeConflictedPaths(paths []string, limit int) []string {
 	return summary
 }
 
-func (s *Service) RemoveWorktree(ctx context.Context, projectPath string) error {
+func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force bool) error {
 	if s == nil || s.store == nil {
 		return fmt.Errorf("service unavailable")
 	}
@@ -595,7 +595,7 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string) error 
 	if strings.TrimSpace(rootPath) == "" {
 		return fmt.Errorf("worktree root is unavailable for %s", projectPath)
 	}
-	if s.gitRepoStatusReader != nil {
+	if !force && s.gitRepoStatusReader != nil {
 		status, err := s.gitRepoStatusReader(ctx, projectPath)
 		if err != nil {
 			return fmt.Errorf("read git status before removing worktree: %w", err)
@@ -604,7 +604,7 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string) error 
 			return fmt.Errorf("worktree is dirty; commit or discard changes before removing it")
 		}
 	}
-	if err := gitWorktreeRemove(ctx, rootPath, projectPath); err != nil {
+	if err := gitWorktreeRemove(ctx, rootPath, projectPath, force); err != nil {
 		return err
 	}
 	if err := s.store.SetForgotten(ctx, projectPath, true); err != nil {
@@ -862,8 +862,13 @@ func gitWorktreeAdd(ctx context.Context, repoPath, worktreePath, branchName stri
 	return nil
 }
 
-func gitWorktreeRemove(ctx context.Context, repoPath, worktreePath string) error {
-	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "worktree", "remove", worktreePath)
+func gitWorktreeRemove(ctx context.Context, repoPath, worktreePath string, force bool) error {
+	args := []string{"-C", repoPath, "worktree", "remove"}
+	if force {
+		args = append(args, "--force")
+	}
+	args = append(args, worktreePath)
+	cmd := exec.CommandContext(ctx, "git", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("remove git worktree %s: %w (%s)", worktreePath, err, strings.TrimSpace(string(out)))
