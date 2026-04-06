@@ -71,7 +71,7 @@ type Model struct {
 	todoDialog            *todoDialogState
 	todoEditor            *todoEditorState
 	todoDeleteConfirm     *todoDeleteConfirmState
-	todoLaunchDraft       *todoLaunchDraftState
+	todoLaunchDrafts      map[string]todoLaunchDraftState
 	todoPendingLaunch     *todoPendingLaunchState
 	todoCopyDialog        *todoCopyDialogState
 	todoWorktreeEditor    *todoWorktreeEditorState
@@ -1805,6 +1805,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if pendingCanceled {
 			m.err = nil
+			m.clearTodoLaunchDraft(msg.projectPath)
 			if msg.err == nil {
 				m.status = "TODO start canceled after worktree creation"
 				if m.svc == nil {
@@ -1820,7 +1821,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.err != nil {
-			m.todoLaunchDraft = nil
+			m.clearTodoLaunchDraft(msg.projectPath)
 			m.reportError("TODO launch failed", msg.err, msg.projectPath)
 			return m, nil
 		}
@@ -1838,12 +1839,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.clearCodexDraft(msg.projectPath)
 		}
-		m.todoLaunchDraft = &todoLaunchDraftState{
+		m.storeTodoLaunchDraft(todoLaunchDraftState{
 			projectPath:    msg.projectPath,
 			provider:       provider,
 			openModelFirst: msg.openModelFirst,
 			autoSubmit:     !msg.openModelFirst,
-		}
+		})
 		req := codexapp.LaunchRequest{
 			Provider:    provider,
 			ProjectPath: strings.TrimSpace(msg.projectPath),
@@ -1854,7 +1855,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			req.Prompt = msg.todoText
 		}
 		if err := req.Validate(); err != nil {
-			m.todoLaunchDraft = nil
+			m.clearTodoLaunchDraft(msg.projectPath)
 			m.reportError("Embedded session open failed", err, msg.projectPath)
 			return m, nil
 		}
@@ -2028,7 +2029,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			provider := m.codexPendingOpenProvider()
 			m.finishCodexPendingOpen(msg.projectPath, codexapp.Snapshot{}, false, false)
-			m.todoLaunchDraft = nil
+			m.clearTodoLaunchDraft(msg.projectPath)
 			if projectPath := strings.TrimSpace(msg.projectPath); projectPath != "" {
 				shouldShowFailure := true
 				if snapshot, ok := m.codexCachedSnapshot(projectPath); ok {
@@ -2045,18 +2046,18 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		revealOnOpen := true
 		focusInput := true
-		if m.todoLaunchDraft != nil && strings.TrimSpace(m.todoLaunchDraft.projectPath) == strings.TrimSpace(msg.projectPath) {
-			if m.todoLaunchDraft.openModelFirst {
+		draft, hasTodoLaunchDraft := m.todoLaunchDraftFor(msg.projectPath)
+		if hasTodoLaunchDraft {
+			if draft.openModelFirst {
 				focusInput = false
-			} else if m.todoLaunchDraft.autoSubmit {
+			} else if draft.autoSubmit {
 				revealOnOpen = false
 				focusInput = false
 			}
 		}
 		seenCmd := m.finishCodexPendingOpen(msg.projectPath, msg.snapshot, true, revealOnOpen)
-		if m.todoLaunchDraft != nil && strings.TrimSpace(m.todoLaunchDraft.projectPath) == strings.TrimSpace(msg.projectPath) {
-			draft := m.todoLaunchDraft
-			m.todoLaunchDraft = nil
+		if hasTodoLaunchDraft {
+			m.clearTodoLaunchDraft(msg.projectPath)
 			if draft.openModelFirst {
 				m.openCodexModelPickerLoading()
 				m.status = "Pick a model, then send the TODO draft."

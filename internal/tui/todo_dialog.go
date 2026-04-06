@@ -62,6 +62,42 @@ type todoLaunchDraftState struct {
 	autoSubmit     bool
 }
 
+func normalizeTodoLaunchDraftProjectPath(projectPath string) string {
+	return strings.TrimSpace(projectPath)
+}
+
+func (m *Model) todoLaunchDraftFor(projectPath string) (todoLaunchDraftState, bool) {
+	projectPath = normalizeTodoLaunchDraftProjectPath(projectPath)
+	if projectPath == "" || m.todoLaunchDrafts == nil {
+		return todoLaunchDraftState{}, false
+	}
+	draft, ok := m.todoLaunchDrafts[projectPath]
+	return draft, ok
+}
+
+func (m *Model) storeTodoLaunchDraft(draft todoLaunchDraftState) {
+	projectPath := normalizeTodoLaunchDraftProjectPath(draft.projectPath)
+	if projectPath == "" {
+		return
+	}
+	if m.todoLaunchDrafts == nil {
+		m.todoLaunchDrafts = make(map[string]todoLaunchDraftState)
+	}
+	draft.projectPath = projectPath
+	m.todoLaunchDrafts[projectPath] = draft
+}
+
+func (m *Model) clearTodoLaunchDraft(projectPath string) {
+	projectPath = normalizeTodoLaunchDraftProjectPath(projectPath)
+	if projectPath == "" || m.todoLaunchDrafts == nil {
+		return
+	}
+	delete(m.todoLaunchDrafts, projectPath)
+	if len(m.todoLaunchDrafts) == 0 {
+		m.todoLaunchDrafts = nil
+	}
+}
+
 type todoPendingLaunchState struct {
 	ID       int64
 	Cancel   context.CancelFunc
@@ -1049,7 +1085,7 @@ func (m Model) startTodoInProjectPath(projectPath, todoText string, provider cod
 		provider = provider.Normalized()
 	}
 	m.restoreCodexDraft(project.Path, codexDraft{Text: todoText})
-	m.todoLaunchDraft = &todoLaunchDraftState{projectPath: project.Path, provider: provider, openModelFirst: openModelFirst}
+	m.storeTodoLaunchDraft(todoLaunchDraftState{projectPath: project.Path, provider: provider, openModelFirst: openModelFirst})
 	m.todoEditor = nil
 	m.todoDeleteConfirm = nil
 	m.todoExistingWorktree = nil
@@ -1066,6 +1102,7 @@ func (m Model) startTodoInProjectPath(projectPath, todoText string, provider cod
 		Preset:      m.currentCodexLaunchPreset(),
 	}
 	if err := req.Validate(); err != nil {
+		m.clearTodoLaunchDraft(project.Path)
 		m.status = err.Error()
 		return m, nil
 	}
