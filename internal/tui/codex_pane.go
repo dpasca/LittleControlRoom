@@ -414,6 +414,62 @@ func (m *Model) storeCodexSnapshot(projectPath string, snapshot codexapp.Snapsho
 	m.codexSnapshots[projectPath] = snapshot
 }
 
+func (m *Model) stageEmbeddedModelSelectionInCache(projectPath string, provider codexapp.Provider, model, reasoning string) (codexapp.Snapshot, bool) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return codexapp.Snapshot{}, false
+	}
+	snapshot, ok := m.codexCachedSnapshot(projectPath)
+	if !ok {
+		return codexapp.Snapshot{}, false
+	}
+	provider = provider.Normalized()
+	if provider == "" {
+		provider = embeddedProvider(snapshot)
+	}
+	if provider == "" {
+		provider = codexapp.ProviderCodex
+	}
+	snapshot.ProjectPath = projectPath
+	snapshot.Provider = provider
+	currentModel := strings.TrimSpace(snapshot.Model)
+	currentReasoning := strings.TrimSpace(snapshot.ReasoningEffort)
+	model = firstNonEmptyTrimmed(model, currentModel)
+	reasoning = firstNonEmptyTrimmed(reasoning, currentReasoning)
+	if strings.EqualFold(model, currentModel) && strings.EqualFold(reasoning, currentReasoning) {
+		snapshot.PendingModel = ""
+		snapshot.PendingReasoning = ""
+	} else {
+		snapshot.PendingModel = model
+		snapshot.PendingReasoning = reasoning
+	}
+	m.storeCodexSnapshot(projectPath, snapshot)
+	return snapshot, true
+}
+
+func (m *Model) markCodexSkipNextLiveRefresh(projectPath string) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return
+	}
+	if m.codexSkipNextLiveRefresh == nil {
+		m.codexSkipNextLiveRefresh = make(map[string]struct{})
+	}
+	m.codexSkipNextLiveRefresh[projectPath] = struct{}{}
+}
+
+func (m *Model) consumeCodexSkipNextLiveRefresh(projectPath string) bool {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" || len(m.codexSkipNextLiveRefresh) == 0 {
+		return false
+	}
+	if _, ok := m.codexSkipNextLiveRefresh[projectPath]; !ok {
+		return false
+	}
+	delete(m.codexSkipNextLiveRefresh, projectPath)
+	return true
+}
+
 func (m *Model) dropCodexSnapshot(projectPath string) {
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {

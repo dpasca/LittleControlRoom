@@ -7723,6 +7723,8 @@ func TestTodoModelPickerApplyRefocusesComposerAndCapturesSettleLatencyImmediatel
 	if got.codexModelPicker.Focus != codexModelPickerFocusModels {
 		t.Fatalf("picker focus = %q, want models", got.codexModelPicker.Focus)
 	}
+	session.trySnapshotCalls = 0
+	session.snapshotCalls = 0
 
 	updated, cmd = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
@@ -7747,6 +7749,9 @@ func TestTodoModelPickerApplyRefocusesComposerAndCapturesSettleLatencyImmediatel
 	if !got.codexInput.Focused() {
 		t.Fatalf("composer should regain focus after applying the model picker selection")
 	}
+	if session.trySnapshotCalls != 0 {
+		t.Fatalf("model apply should not probe the live session snapshot on the UI thread; TrySnapshot calls = %d", session.trySnapshotCalls)
+	}
 	if _, ok := got.modelSettlePending["/tmp/demo"]; ok {
 		t.Fatalf("model settle should complete immediately after the staged snapshot refresh")
 	}
@@ -7769,6 +7774,66 @@ func TestTodoModelPickerApplyRefocusesComposerAndCapturesSettleLatencyImmediatel
 	}
 	if !found {
 		t.Fatalf("recent latency samples = %#v, want a completed model settle sample", got.aiLatencyRecent)
+	}
+}
+
+func TestCodexUpdateAfterModelApplyDefersLiveSnapshotRefresh(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider:        codexapp.ProviderCodex,
+			ThreadID:        "thread-demo",
+			Started:         true,
+			Status:          "Codex ready",
+			Model:           "gpt-5",
+			ReasoningEffort: "medium",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+	if _, ok, _ := m.refreshCodexSnapshot("/tmp/demo"); !ok {
+		t.Fatalf("refreshCodexSnapshot() failed")
+	}
+	session.trySnapshotCalls = 0
+	session.snapshotCalls = 0
+
+	updated, _ := m.Update(codexActionMsg{
+		projectPath: "/tmp/demo",
+		status:      "Embedded model set to gpt-5.4 with high reasoning for the next prompt",
+		provider:    codexapp.ProviderCodex,
+		model:       "gpt-5.4",
+		reasoning:   "high",
+		awaitSettle: true,
+	})
+	got := updated.(Model)
+	if session.trySnapshotCalls != 0 || session.snapshotCalls != 0 {
+		t.Fatalf("model apply should avoid live snapshot reads on the UI thread; TrySnapshot/Snapshot calls = %d/%d", session.trySnapshotCalls, session.snapshotCalls)
+	}
+
+	updated, _ = got.Update(codexUpdateMsg{projectPath: "/tmp/demo"})
+	got = updated.(Model)
+	if session.trySnapshotCalls != 0 || session.snapshotCalls != 0 {
+		t.Fatalf("the first update after model apply should defer live snapshot refresh off the UI thread; TrySnapshot/Snapshot calls = %d/%d", session.trySnapshotCalls, session.snapshotCalls)
+	}
+	if _, ok := got.codexSkipNextLiveRefresh["/tmp/demo"]; ok {
+		t.Fatalf("codexUpdateMsg should consume the deferred-refresh hint")
 	}
 }
 
