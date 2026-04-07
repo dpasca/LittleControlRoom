@@ -2161,6 +2161,64 @@ func TestRefreshProjectStatusForgetsStaleLinkedWorktreeDirectoryStillOnDisk(t *t
 	}
 }
 
+func TestRefreshProjectStatusForgetsRemovedPrunedLinkedWorktree(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	worktreePath := filepath.Join(root, "repo--feature")
+
+	initGitRepo(t, projectPath)
+	runGit(t, projectPath, "git", "worktree", "add", "-b", "feature", worktreePath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.IncludePaths = nil
+	svc := New(cfg, st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo--feature",
+	}); err != nil {
+		t.Fatalf("track worktree: %v", err)
+	}
+
+	if err := os.RemoveAll(worktreePath); err != nil {
+		t.Fatalf("remove worktree path: %v", err)
+	}
+	if err := svc.PruneWorktrees(ctx, projectPath); err != nil {
+		t.Fatalf("prune worktrees: %v", err)
+	}
+
+	if err := svc.RefreshProjectStatus(ctx, worktreePath); err != nil {
+		t.Fatalf("RefreshProjectStatus() error = %v", err)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, worktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() after refresh error = %v", err)
+	}
+	if !detail.Summary.Forgotten {
+		t.Fatalf("removed linked worktree should be forgotten after refresh: %#v", detail.Summary)
+	}
+	if detail.Summary.PresentOnDisk {
+		t.Fatalf("removed linked worktree should stay marked missing on disk: %#v", detail.Summary)
+	}
+
+	visibleProjects, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list visible projects: %v", err)
+	}
+	if len(visibleProjects) != 0 {
+		t.Fatalf("expected removed linked worktree to stay hidden from visible list, got %#v", visibleProjects)
+	}
+}
+
 func TestScanOnceDetectsDirtyRepoAndClearsWhenClean(t *testing.T) {
 	t.Parallel()
 

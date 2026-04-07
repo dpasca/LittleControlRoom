@@ -1651,7 +1651,11 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 		worktreeMergeStatus = resolveWorktreeMergeStatus(ctx, worktreeRootPath, worktreeKind, repoBranch, worktreeParentBranch)
 	}
 	forgotten := detail.Summary.Forgotten
-	staleLinkedWorktree := presentOnDisk && s.staleLinkedWorktreeOnDiskWithReader(ctx, worktreeRootPath, worktreeKind, detail.Summary.Path, runtime.gitWorktreeListReader)
+	// Keep linked-worktree cleanup consistent with ScanOnce: once a linked
+	// checkout disappears from `git worktree list`, treat it as stale even if
+	// the directory itself is already gone. This prevents async status refreshes
+	// from briefly re-surfacing removed worktrees as plain "missing" folders.
+	staleLinkedWorktree := s.staleLinkedWorktreeOnDiskWithReader(ctx, worktreeRootPath, worktreeKind, detail.Summary.Path, runtime.gitWorktreeListReader)
 	if staleLinkedWorktree {
 		forgotten = true
 	}
