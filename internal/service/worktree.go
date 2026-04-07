@@ -682,10 +682,14 @@ func (s *Service) PruneWorktrees(ctx context.Context, projectPath string) error 
 }
 
 func (s *Service) readProjectWorktreeInfo(ctx context.Context, projectPath string) (string, model.WorktreeKind) {
-	if s == nil || s.gitWorktreeInfoReader == nil || !projectPathExists(projectPath) {
+	return s.readProjectWorktreeInfoWithReader(ctx, projectPath, s.gitWorktreeInfoReader)
+}
+
+func (s *Service) readProjectWorktreeInfoWithReader(ctx context.Context, projectPath string, reader func(context.Context, string) (scanner.GitWorktreeInfo, error)) (string, model.WorktreeKind) {
+	if s == nil || reader == nil || !projectPathExists(projectPath) {
 		return "", model.WorktreeKindNone
 	}
-	info, err := s.gitWorktreeInfoReader(ctx, projectPath)
+	info, err := reader(ctx, projectPath)
 	if err != nil {
 		return "", model.WorktreeKindNone
 	}
@@ -717,7 +721,7 @@ func (s *Service) linkedOpenTodoForWorktree(ctx context.Context, summary model.P
 	return todo, true
 }
 
-func (s *Service) expandDiscoveredWorktreePaths(ctx context.Context, discovered []string, oldMap map[string]model.ProjectSummary, scope scanner.PathScope) ([]string, map[string]map[string]struct{}) {
+func (s *Service) expandDiscoveredWorktreePaths(ctx context.Context, discovered []string, oldMap map[string]model.ProjectSummary, scope scanner.PathScope, worktreeInfoReader func(context.Context, string) (scanner.GitWorktreeInfo, error), worktreeListReader func(context.Context, string) ([]scanner.GitWorktree, error)) ([]string, map[string]map[string]struct{}) {
 	outSet := map[string]struct{}{}
 	for _, path := range discovered {
 		cleanPath := filepath.Clean(path)
@@ -727,7 +731,7 @@ func (s *Service) expandDiscoveredWorktreePaths(ctx context.Context, discovered 
 	}
 
 	liveByRoot := map[string]map[string]struct{}{}
-	if s == nil || s.gitWorktreeListReader == nil {
+	if s == nil || worktreeListReader == nil {
 		return sortedPathKeys(outSet), liveByRoot
 	}
 
@@ -752,14 +756,14 @@ func (s *Service) expandDiscoveredWorktreePaths(ctx context.Context, discovered 
 
 	listedRoots := map[string]struct{}{}
 	for _, seed := range seeds {
-		rootPath, _ := s.readProjectWorktreeInfo(ctx, seed)
+		rootPath, _ := s.readProjectWorktreeInfoWithReader(ctx, seed, worktreeInfoReader)
 		if rootPath == "" {
 			rootPath = filepath.Clean(seed)
 		}
 		if _, seen := listedRoots[rootPath]; seen {
 			continue
 		}
-		worktrees, err := s.gitWorktreeListReader(ctx, seed)
+		worktrees, err := worktreeListReader(ctx, seed)
 		if err != nil {
 			continue
 		}

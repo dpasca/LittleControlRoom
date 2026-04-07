@@ -34,6 +34,11 @@ type staticDetector struct {
 	activities map[string]*model.DetectorProjectActivity
 }
 
+type blockingDetector struct {
+	started chan struct{}
+	release chan struct{}
+}
+
 func (d staticDetector) Name() string {
 	if d.name != "" {
 		return d.name
@@ -47,6 +52,19 @@ func (d staticDetector) Detect(context.Context, scanner.PathScope) (map[string]*
 		out[path] = activity
 	}
 	return out, nil
+}
+
+func (d blockingDetector) Name() string {
+	return "blocking"
+}
+
+func (d blockingDetector) Detect(context.Context, scanner.PathScope) (map[string]*model.DetectorProjectActivity, error) {
+	select {
+	case d.started <- struct{}{}:
+	default:
+	}
+	<-d.release
+	return map[string]*model.DetectorProjectActivity{}, nil
 }
 
 type recordingClassifier struct {
@@ -271,6 +289,79 @@ func TestRefreshProjectStatusAsyncCoalescesConcurrentRequests(t *testing.T) {
 	defer svc.refreshMu.Unlock()
 	if len(svc.refreshState) != 0 {
 		t.Fatalf("refreshState = %#v, want empty after coalesced refresh finishes", svc.refreshState)
+	}
+}
+
+func TestRefreshProjectStatusDoesNotWaitForLongScan(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := filepath.Join(t.TempDir(), "demo-project")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           filepath.Base(projectPath),
+		Status:         model.StatusIdle,
+		AttentionScore: 1,
+		PresentOnDisk:  true,
+		InScope:        true,
+		UpdatedAt:      time.Now(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	svc := &Service{
+		cfg:       config.Default(),
+		store:     st,
+		bus:       events.NewBus(),
+		detectors: []detectors.Detector{blockingDetector{started: started, release: release}},
+	}
+
+	scanDone := make(chan error, 1)
+	go func() {
+		_, err := svc.ScanWithOptions(ctx, ScanOptions{})
+		scanDone <- err
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("scan did not reach blocking detector")
+	}
+
+	refreshDone := make(chan error, 1)
+	go func() {
+		refreshDone <- svc.RefreshProjectStatus(ctx, projectPath)
+	}()
+
+	select {
+	case err := <-refreshDone:
+		if err != nil {
+			t.Fatalf("RefreshProjectStatus() error = %v", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("RefreshProjectStatus blocked behind ScanWithOptions")
+	}
+
+	close(release)
+
+	select {
+	case err := <-scanDone:
+		if err != nil {
+			t.Fatalf("ScanWithOptions() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("scan did not finish after detector release")
 	}
 }
 

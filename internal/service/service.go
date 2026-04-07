@@ -75,6 +75,16 @@ type asyncProjectRefreshState struct {
 	queued  bool
 }
 
+type serviceRuntimeSnapshot struct {
+	cfg                   config.AppConfig
+	classifier            SessionClassifier
+	gitFingerprintReader  func(context.Context, string) (scanner.GitFingerprint, error)
+	gitRepoStatusReader   func(context.Context, string) (scanner.GitRepoStatus, error)
+	gitWorktreeInfoReader func(context.Context, string) (scanner.GitWorktreeInfo, error)
+	gitWorktreeListReader func(context.Context, string) ([]scanner.GitWorktree, error)
+	bus                   *events.Bus
+}
+
 type detectedProjectMove struct {
 	OldPath     string
 	NewPath     string
@@ -124,23 +134,34 @@ func (s *Service) Bus() *events.Bus {
 }
 
 func (s *Service) Config() config.AppConfig {
-	cfg := s.cfg
-	cfg.AIBackend = s.cfg.AIBackend
-	cfg.OpenAIAPIKey = s.cfg.OpenAIAPIKey
-	cfg.MLXBaseURL = s.cfg.MLXBaseURL
-	cfg.MLXAPIKey = s.cfg.MLXAPIKey
-	cfg.MLXModel = s.cfg.MLXModel
-	cfg.OllamaBaseURL = s.cfg.OllamaBaseURL
-	cfg.OllamaAPIKey = s.cfg.OllamaAPIKey
-	cfg.OllamaModel = s.cfg.OllamaModel
-	cfg.IncludePaths = append([]string(nil), s.cfg.IncludePaths...)
-	cfg.ExcludePaths = append([]string(nil), s.cfg.ExcludePaths...)
-	cfg.ExcludeProjectPatterns = append([]string(nil), s.cfg.ExcludeProjectPatterns...)
-	cfg.EmbeddedCodexModel = s.cfg.EmbeddedCodexModel
-	cfg.EmbeddedCodexReasoning = s.cfg.EmbeddedCodexReasoning
-	cfg.EmbeddedOpenCodeModel = s.cfg.EmbeddedOpenCodeModel
-	cfg.EmbeddedOpenCodeReasoning = s.cfg.EmbeddedOpenCodeReasoning
-	return cfg
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return cloneAppConfig(s.cfg)
+}
+
+func cloneAppConfig(cfg config.AppConfig) config.AppConfig {
+	cloned := cfg
+	cloned.IncludePaths = append([]string(nil), cfg.IncludePaths...)
+	cloned.ExcludePaths = append([]string(nil), cfg.ExcludePaths...)
+	cloned.ExcludeProjectPatterns = append([]string(nil), cfg.ExcludeProjectPatterns...)
+	return cloned
+}
+
+func (s *Service) runtimeSnapshot() serviceRuntimeSnapshot {
+	if s == nil {
+		return serviceRuntimeSnapshot{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return serviceRuntimeSnapshot{
+		cfg:                   cloneAppConfig(s.cfg),
+		classifier:            s.classifier,
+		gitFingerprintReader:  s.gitFingerprintReader,
+		gitRepoStatusReader:   s.gitRepoStatusReader,
+		gitWorktreeInfoReader: s.gitWorktreeInfoReader,
+		gitWorktreeListReader: s.gitWorktreeListReader,
+		bus:                   s.bus,
+	}
 }
 
 func (s *Service) SetSessionClassifier(classifier SessionClassifier) {
@@ -405,17 +426,21 @@ func (s *Service) ScanOnce(ctx context.Context) (ScanReport, error) {
 }
 
 func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanReport, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	runtime := s.runtimeSnapshot()
+	cfg := runtime.cfg
+	classifier := runtime.classifier
+	gitFingerprintReader := runtime.gitFingerprintReader
+	gitRepoStatusReader := runtime.gitRepoStatusReader
+	gitWorktreeInfoReader := runtime.gitWorktreeInfoReader
+	bus := runtime.bus
 	now := time.Now()
-	internalWorkspaceRoot := appfs.InternalWorkspaceRoot(s.cfg.DataDir)
-	scope := scanner.NewPathScope(s.cfg.IncludePaths, s.cfg.ExcludePaths).WithAlwaysExcluded(internalWorkspaceRoot)
+	internalWorkspaceRoot := appfs.InternalWorkspaceRoot(cfg.DataDir)
+	scope := scanner.NewPathScope(cfg.IncludePaths, cfg.ExcludePaths).WithAlwaysExcluded(internalWorkspaceRoot)
 	discovered := []string{}
 	var err error
-	if len(s.cfg.IncludePaths) > 0 {
+	if len(cfg.IncludePaths) > 0 {
 		discovered, err = scanner.DiscoverGitProjects(scanner.Discovery{
-			Roots:     s.cfg.IncludePaths,
+			Roots:     cfg.IncludePaths,
 			MaxDepth:  4,
 			SkipPaths: []string{internalWorkspaceRoot},
 		})
@@ -428,8 +453,8 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 	if err != nil {
 		return ScanReport{}, fmt.Errorf("load previous project state: %w", err)
 	}
-	discovered, liveWorktreePathsByRoot := s.expandDiscoveredWorktreePaths(ctx, discovered, oldMap, scope)
-	aliasesChanged, err := s.applyStaticPathAliases(ctx, now, oldMap)
+	discovered, liveWorktreePathsByRoot := s.expandDiscoveredWorktreePaths(ctx, discovered, oldMap, scope, runtime.gitWorktreeInfoReader, runtime.gitWorktreeListReader)
+	aliasesChanged, err := s.applyStaticPathAliases(ctx, now, oldMap, cfg.IncludePaths)
 	if err != nil {
 		return ScanReport{}, err
 	}
@@ -455,8 +480,8 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 	if err != nil {
 		return ScanReport{}, err
 	}
-	if len(s.cfg.IncludePaths) > 0 {
-		fullScopeActivities, err := s.detectProjectActivities(ctx, scanner.NewPathScope(nil, s.cfg.ExcludePaths).WithAlwaysExcluded(internalWorkspaceRoot), internalWorkspaceRoot)
+	if len(cfg.IncludePaths) > 0 {
+		fullScopeActivities, err := s.detectProjectActivities(ctx, scanner.NewPathScope(nil, cfg.ExcludePaths).WithAlwaysExcluded(internalWorkspaceRoot), internalWorkspaceRoot)
 		if err != nil {
 			return ScanReport{}, err
 		}
@@ -483,10 +508,10 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 	for _, path := range discovered {
 		cleanPath := filepath.Clean(path)
 		discoveredSet[cleanPath] = struct{}{}
-		if s.gitFingerprintReader == nil || !projectPathExists(cleanPath) {
+		if gitFingerprintReader == nil || !projectPathExists(cleanPath) {
 			continue
 		}
-		fingerprint, readErr := s.gitFingerprintReader(ctx, cleanPath)
+		fingerprint, readErr := gitFingerprintReader(ctx, cleanPath)
 		if readErr == nil {
 			currentFingerprints[cleanPath] = fingerprint
 		}
@@ -562,8 +587,8 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		if !projectPathExists(path) {
 			continue
 		}
-		if s.gitFingerprintReader != nil {
-			fingerprint, readErr := s.gitFingerprintReader(ctx, path)
+		if gitFingerprintReader != nil {
+			fingerprint, readErr := gitFingerprintReader(ctx, path)
 			if readErr == nil {
 				if err := s.store.UpsertProjectGitFingerprint(ctx, model.ProjectGitFingerprint{
 					ProjectPath:  path,
@@ -575,14 +600,14 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 				}
 			}
 		}
-		if s.gitRepoStatusReader != nil {
-			repoStatus, readErr := s.gitRepoStatusReader(ctx, path)
+		if gitRepoStatusReader != nil {
+			repoStatus, readErr := gitRepoStatusReader(ctx, path)
 			if readErr == nil {
 				currentRepoStatus[path] = repoStatus
 			}
 		}
-		if s.gitWorktreeInfoReader != nil {
-			worktreeInfo, readErr := s.gitWorktreeInfoReader(ctx, path)
+		if gitWorktreeInfoReader != nil {
+			worktreeInfo, readErr := gitWorktreeInfoReader(ctx, path)
 			if readErr == nil {
 				currentWorktreeInfo[path] = worktreeInfo
 			}
@@ -699,8 +724,8 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			LatestSessionCategoryKnown: classificationKnown,
 			LatestSessionCategory:      classificationCategory,
 			HasActivity:                hasActivity,
-			ActiveThreshold:            s.cfg.ActiveThreshold,
-			StuckThreshold:             s.cfg.StuckThreshold,
+			ActiveThreshold:            cfg.ActiveThreshold,
+			StuckThreshold:             cfg.StuckThreshold,
 			OpenTodoCount:              old.OpenTODOCount,
 		})
 
@@ -738,8 +763,8 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		if err := s.store.UpsertProjectState(ctx, state); err != nil {
 			return ScanReport{}, fmt.Errorf("persist project state: %w", err)
 		}
-		if s.classifier != nil {
-			queued, err := s.queueProjectClassification(ctx, state, opts)
+		if classifier != nil {
+			queued, err := queueProjectClassification(ctx, classifier, state, opts)
 			if err != nil {
 				return ScanReport{}, fmt.Errorf("queue session classification: %w", err)
 			}
@@ -764,18 +789,20 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		QueuedClassifications: queuedClassifications,
 		States:                states,
 	}
-	if queuedClassifications > 0 && s.classifier != nil {
-		s.classifier.Notify()
+	if queuedClassifications > 0 && classifier != nil {
+		classifier.Notify()
 	}
 
-	s.bus.Publish(events.Event{
-		Type: events.ScanCompleted,
-		At:   now,
-		Payload: map[string]string{
-			"updated":                fmt.Sprintf("%d", len(updated)),
-			"queued_classifications": fmt.Sprintf("%d", queuedClassifications),
-		},
-	})
+	if bus != nil {
+		bus.Publish(events.Event{
+			Type: events.ScanCompleted,
+			At:   now,
+			Payload: map[string]string{
+				"updated":                fmt.Sprintf("%d", len(updated)),
+				"queued_classifications": fmt.Sprintf("%d", queuedClassifications),
+			},
+		})
+	}
 
 	return report, nil
 }
@@ -928,7 +955,11 @@ func liveLinkedWorktreeMissing(livePathsByRoot map[string]map[string]struct{}, r
 }
 
 func (s *Service) staleLinkedWorktreeOnDisk(ctx context.Context, rootPath string, kind model.WorktreeKind, projectPath string) bool {
-	if s == nil || s.gitWorktreeListReader == nil || kind != model.WorktreeKindLinked {
+	return s.staleLinkedWorktreeOnDiskWithReader(ctx, rootPath, kind, projectPath, s.gitWorktreeListReader)
+}
+
+func (s *Service) staleLinkedWorktreeOnDiskWithReader(ctx context.Context, rootPath string, kind model.WorktreeKind, projectPath string, worktreeListReader func(context.Context, string) ([]scanner.GitWorktree, error)) bool {
+	if s == nil || worktreeListReader == nil || kind != model.WorktreeKindLinked {
 		return false
 	}
 	rootPath = filepath.Clean(strings.TrimSpace(rootPath))
@@ -936,7 +967,7 @@ func (s *Service) staleLinkedWorktreeOnDisk(ctx context.Context, rootPath string
 	if rootPath == "" || projectPath == "" {
 		return false
 	}
-	worktrees, err := s.gitWorktreeListReader(ctx, rootPath)
+	worktrees, err := worktreeListReader(ctx, rootPath)
 	if err != nil || len(worktrees) == 0 {
 		return false
 	}
@@ -1103,16 +1134,16 @@ func sessionEvidenceScore(session model.SessionEvidence) int {
 	return score
 }
 
-func (s *Service) queueProjectClassification(ctx context.Context, state model.ProjectState, opts ScanOptions) (bool, error) {
-	if s.classifier == nil {
+func queueProjectClassification(ctx context.Context, classifier SessionClassifier, state model.ProjectState, opts ScanOptions) (bool, error) {
+	if classifier == nil {
 		return false, nil
 	}
 	if opts.ForceRetryFailedClassifications {
-		if retryer, ok := s.classifier.(sessionClassifierRetryer); ok {
+		if retryer, ok := classifier.(sessionClassifierRetryer); ok {
 			return retryer.QueueProjectRetry(ctx, state, 0)
 		}
 	}
-	return s.classifier.QueueProject(ctx, state)
+	return classifier.QueueProject(ctx, state)
 }
 
 func dedupeSessions(in []model.SessionEvidence) []model.SessionEvidence {
@@ -1351,8 +1382,8 @@ func resolveProjectPath(path string, aliases map[string]model.PathAlias) string 
 	return path
 }
 
-func (s *Service) applyStaticPathAliases(ctx context.Context, now time.Time, oldMap map[string]model.ProjectSummary) (bool, error) {
-	aliases := staticPathAliases(s.cfg.IncludePaths, now)
+func (s *Service) applyStaticPathAliases(ctx context.Context, now time.Time, oldMap map[string]model.ProjectSummary, includePaths []string) (bool, error) {
+	aliases := staticPathAliases(includePaths, now)
 	if len(aliases) == 0 {
 		return false, nil
 	}
@@ -1464,6 +1495,10 @@ func projectPathExists(path string) bool {
 }
 
 func (s *Service) latestSessionClassification(ctx context.Context, path string, sessions []model.SessionEvidence, now time.Time) (bool, model.SessionCategory) {
+	return s.latestSessionClassificationWithConfig(ctx, path, sessions, now, s.runtimeSnapshot().cfg)
+}
+
+func (s *Service) latestSessionClassificationWithConfig(ctx context.Context, path string, sessions []model.SessionEvidence, now time.Time, cfg config.AppConfig) (bool, model.SessionCategory) {
 	if len(sessions) == 0 {
 		return false, model.SessionCategoryUnknown
 	}
@@ -1493,7 +1528,7 @@ func (s *Service) latestSessionClassification(ctx context.Context, path string, 
 		LatestTurnStateKnown: sessions[0].LatestTurnStateKnown,
 		LatestTurnCompleted:  sessions[0].LatestTurnCompleted,
 		Now:                  now,
-		StuckThreshold:       sessionclassify.EffectiveAssessmentStallThreshold(s.cfg.ActiveThreshold, s.cfg.StuckThreshold),
+		StuckThreshold:       sessionclassify.EffectiveAssessmentStallThreshold(cfg.ActiveThreshold, cfg.StuckThreshold),
 	})
 	return true, effective.Category
 }
@@ -1566,9 +1601,7 @@ func ensureSessionSnapshotHash(ctx context.Context, projectPath string, session 
 }
 
 func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	runtime := s.runtimeSnapshot()
 	now := time.Now()
 	detail, err := s.store.GetProjectDetail(ctx, projectPath, 20)
 	if err != nil {
@@ -1587,12 +1620,12 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 	repoAheadCount := 0
 	repoBehindCount := 0
 	if presentOnDisk {
-		if nextRootPath, nextKind := s.readProjectWorktreeInfo(ctx, detail.Summary.Path); nextRootPath != "" || nextKind != model.WorktreeKindNone {
+		if nextRootPath, nextKind := s.readProjectWorktreeInfoWithReader(ctx, detail.Summary.Path, runtime.gitWorktreeInfoReader); nextRootPath != "" || nextKind != model.WorktreeKindNone {
 			worktreeRootPath = nextRootPath
 			worktreeKind = nextKind
 		}
-		if s.gitRepoStatusReader != nil {
-			if repoStatus, err := s.gitRepoStatusReader(ctx, detail.Summary.Path); err == nil {
+		if runtime.gitRepoStatusReader != nil {
+			if repoStatus, err := runtime.gitRepoStatusReader(ctx, detail.Summary.Path); err == nil {
 				repoBranch = strings.TrimSpace(repoStatus.Branch)
 				repoDirty = repoStatus.Dirty
 				repoConflict = repoConflictFromGit(repoStatus)
@@ -1618,7 +1651,7 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 		worktreeMergeStatus = resolveWorktreeMergeStatus(ctx, worktreeRootPath, worktreeKind, repoBranch, worktreeParentBranch)
 	}
 	forgotten := detail.Summary.Forgotten
-	staleLinkedWorktree := presentOnDisk && s.staleLinkedWorktreeOnDisk(ctx, worktreeRootPath, worktreeKind, detail.Summary.Path)
+	staleLinkedWorktree := presentOnDisk && s.staleLinkedWorktreeOnDiskWithReader(ctx, worktreeRootPath, worktreeKind, detail.Summary.Path, runtime.gitWorktreeListReader)
 	if staleLinkedWorktree {
 		forgotten = true
 	}
@@ -1643,7 +1676,7 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 		repoAheadCount:       repoAheadCount,
 		repoBehindCount:      repoBehindCount,
 		forgotten:            forgotten,
-	})
+	}, runtime.cfg)
 }
 
 type projectStatusRefreshOverrides struct {
@@ -1661,7 +1694,7 @@ type projectStatusRefreshOverrides struct {
 	forgotten            bool
 }
 
-func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.ProjectDetail, now time.Time, overrides projectStatusRefreshOverrides) error {
+func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.ProjectDetail, now time.Time, overrides projectStatusRefreshOverrides, cfg config.AppConfig) error {
 	projectPath := detail.Summary.Path
 	latestSessionStart := time.Time{}
 	latestTurnKnown := false
@@ -1676,7 +1709,7 @@ func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.Pr
 		errorCount += session.ErrorCount
 	}
 
-	classificationKnown, classificationCategory := s.latestSessionClassification(ctx, projectPath, detail.Sessions, now)
+	classificationKnown, classificationCategory := s.latestSessionClassificationWithConfig(ctx, projectPath, detail.Sessions, now, cfg)
 	score := attention.Score(attention.Input{
 		Path:                       detail.Summary.Path,
 		Now:                        now,
@@ -1693,8 +1726,8 @@ func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.Pr
 		LatestSessionCategoryKnown: classificationKnown,
 		LatestSessionCategory:      classificationCategory,
 		HasActivity:                !detail.Summary.LastActivity.IsZero(),
-		ActiveThreshold:            s.cfg.ActiveThreshold,
-		StuckThreshold:             s.cfg.StuckThreshold,
+		ActiveThreshold:            cfg.ActiveThreshold,
+		StuckThreshold:             cfg.StuckThreshold,
 		OpenTodoCount:              detail.Summary.OpenTODOCount,
 	})
 
@@ -1740,9 +1773,7 @@ func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.Pr
 }
 
 func (s *Service) refreshProjectAttention(ctx context.Context, projectPath string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	cfg := s.runtimeSnapshot().cfg
 	now := time.Now()
 	detail, err := s.store.GetProjectDetail(ctx, projectPath, 20)
 	if err != nil {
@@ -1761,7 +1792,7 @@ func (s *Service) refreshProjectAttention(ctx context.Context, projectPath strin
 		repoAheadCount:       detail.Summary.RepoAheadCount,
 		repoBehindCount:      detail.Summary.RepoBehindCount,
 		forgotten:            detail.Summary.Forgotten,
-	})
+	}, cfg)
 }
 
 func (s *Service) TogglePin(ctx context.Context, projectPath string) error {
