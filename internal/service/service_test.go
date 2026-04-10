@@ -320,8 +320,10 @@ func TestRefreshProjectStatusDoesNotWaitForLongScan(t *testing.T) {
 
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
+	cfg := config.Default()
+	cfg.IncludePaths = nil
 	svc := &Service{
-		cfg:       config.Default(),
+		cfg:       cfg,
 		store:     st,
 		bus:       events.NewBus(),
 		detectors: []detectors.Detector{blockingDetector{started: started, release: release}},
@@ -362,6 +364,92 @@ func TestRefreshProjectStatusDoesNotWaitForLongScan(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("scan did not finish after detector release")
+	}
+}
+
+func TestRecordEmbeddedSessionActivityClearsStaleStuckState(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Date(2026, 4, 10, 10, 57, 0, 0, time.UTC)
+	staleAt := now.Add(-time.Hour)
+	projectPath := filepath.Join(t.TempDir(), "demo")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+
+	session := model.NormalizeSessionEvidenceIdentity(model.SessionEvidence{
+		Source:               model.SessionSourceCodex,
+		SessionID:            "codex:thread-demo",
+		RawSessionID:         "thread-demo",
+		ProjectPath:          projectPath,
+		DetectedProjectPath:  projectPath,
+		Format:               "modern",
+		SnapshotHash:         "stale-snapshot",
+		StartedAt:            staleAt.Add(-10 * time.Minute),
+		LastEventAt:          staleAt,
+		LatestTurnStartedAt:  staleAt.Add(-5 * time.Minute),
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  false,
+	})
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "demo",
+		LastActivity:   staleAt,
+		Status:         model.StatusPossiblyStuck,
+		AttentionScore: 40,
+		PresentOnDisk:  true,
+		InScope:        true,
+		Sessions:       []model.SessionEvidence{session},
+		AttentionReason: []model.AttentionReason{{
+			Code:   "blocked",
+			Text:   "Latest session is blocked; idle for 1h",
+			Weight: 40,
+		}},
+		CreatedAt: now.Add(-2 * time.Hour),
+		UpdatedAt: staleAt,
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if err := svc.RecordEmbeddedSessionActivity(ctx, EmbeddedSessionActivity{
+		ProjectPath:          projectPath,
+		Source:               model.SessionSourceCodex,
+		SessionID:            "thread-demo",
+		Format:               "modern",
+		LastActivityAt:       now,
+		LatestTurnStartedAt:  staleAt.Add(-5 * time.Minute),
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  false,
+	}); err != nil {
+		t.Fatalf("RecordEmbeddedSessionActivity() error = %v", err)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 20)
+	if err != nil {
+		t.Fatalf("get detail: %v", err)
+	}
+	if !detail.Summary.LastActivity.Equal(now) {
+		t.Fatalf("last activity = %v, want %v", detail.Summary.LastActivity, now)
+	}
+	if detail.Summary.Status != model.StatusActive {
+		t.Fatalf("status = %q, want active", detail.Summary.Status)
+	}
+	if len(detail.Sessions) == 0 || !detail.Sessions[0].LastEventAt.Equal(now) {
+		t.Fatalf("latest session = %#v, want last event %v", detail.Sessions, now)
+	}
+	if detail.Sessions[0].SnapshotHash != "" {
+		t.Fatalf("snapshot hash = %q, want cleared after live activity", detail.Sessions[0].SnapshotHash)
+	}
+	for _, reason := range detail.Reasons {
+		if reason.Code == "blocked" {
+			t.Fatalf("stale blocked reason should be cleared, got %#v", detail.Reasons)
+		}
 	}
 }
 
