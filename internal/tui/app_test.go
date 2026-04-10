@@ -7960,6 +7960,65 @@ func TestShouldRefreshProjectStatusAfterCodexSnapshotWhenTurnSettles(t *testing.
 	}
 }
 
+func TestShouldRecordEmbeddedSessionActivityAfterBusyProgress(t *testing.T) {
+	now := time.Date(2026, 4, 10, 10, 57, 0, 0, time.UTC)
+	prev := codexapp.Snapshot{
+		Started:            true,
+		Busy:               true,
+		LastBusyActivityAt: now.Add(-time.Minute),
+	}
+	next := codexapp.Snapshot{
+		Started:            true,
+		Busy:               true,
+		LastBusyActivityAt: now,
+	}
+	if !shouldRecordEmbeddedSessionActivityAfterCodexSnapshot(true, prev, next) {
+		t.Fatal("busy progress should record embedded activity")
+	}
+	if shouldRecordEmbeddedSessionActivityAfterCodexSnapshot(true, next, next) {
+		t.Fatal("unchanged busy activity should not record another heartbeat")
+	}
+	if shouldRecordEmbeddedSessionActivityAfterCodexSnapshot(true, next, codexapp.Snapshot{
+		Started:            true,
+		Busy:               false,
+		LastBusyActivityAt: now.Add(time.Minute),
+	}) {
+		t.Fatal("idle snapshots should use the existing settle refresh path")
+	}
+}
+
+func TestEmbeddedSessionActivityFromSnapshotUsesBusyActivity(t *testing.T) {
+	now := time.Date(2026, 4, 10, 10, 57, 0, 0, time.UTC)
+	activity, ok := embeddedSessionActivityFromSnapshot("/tmp/demo", codexapp.Snapshot{
+		Provider:           codexapp.ProviderCodex,
+		ProjectPath:        "/tmp/other",
+		ThreadID:           "thread-demo",
+		Started:            true,
+		Busy:               true,
+		BusySince:          now.Add(-5 * time.Minute),
+		LastActivityAt:     now.Add(time.Minute),
+		LastBusyActivityAt: now,
+	})
+	if !ok {
+		t.Fatal("expected snapshot to produce embedded activity")
+	}
+	if activity.ProjectPath != "/tmp/demo" {
+		t.Fatalf("project path = %q, want explicit path", activity.ProjectPath)
+	}
+	if activity.Source != model.SessionSourceCodex {
+		t.Fatalf("source = %q, want codex", activity.Source)
+	}
+	if activity.SessionID != "thread-demo" {
+		t.Fatalf("session id = %q", activity.SessionID)
+	}
+	if !activity.LastActivityAt.Equal(now) {
+		t.Fatalf("last activity = %v, want busy activity %v", activity.LastActivityAt, now)
+	}
+	if !activity.LatestTurnStateKnown || activity.LatestTurnCompleted {
+		t.Fatalf("turn state = known:%t completed:%t, want live incomplete", activity.LatestTurnStateKnown, activity.LatestTurnCompleted)
+	}
+}
+
 func TestSyncCodexViewportRecordsSharedStageLatencies(t *testing.T) {
 	projectPath := "/tmp/demo"
 	snapshot := codexapp.Snapshot{

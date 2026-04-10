@@ -1138,6 +1138,20 @@ func (m Model) refreshProjectStatusCmd(path string) tea.Cmd {
 	}
 }
 
+func (m Model) recordEmbeddedSessionActivityCmd(projectPath string, snapshot codexapp.Snapshot) tea.Cmd {
+	if m.svc == nil {
+		return nil
+	}
+	activity, ok := embeddedSessionActivityFromSnapshot(projectPath, snapshot)
+	if !ok {
+		return nil
+	}
+	return func() tea.Msg {
+		err := m.svc.RecordEmbeddedSessionActivity(m.ctx, activity)
+		return projectStatusRefreshedMsg{projectPath: activity.ProjectPath, err: err}
+	}
+}
+
 func (m *Model) requestProjectRefreshCmd(req projectRefreshRequest) tea.Cmd {
 	cmds := make([]tea.Cmd, 0, 2+len(req.summaryPaths))
 	if req.scan {
@@ -2251,6 +2265,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if ok {
 			providerLabel = embeddedProvider(snapshot).Label()
 			transcriptChanged = !hadPrevSnapshot || codexTranscriptStateChanged(prevSnapshot, snapshot)
+			if shouldRecordEmbeddedSessionActivityAfterCodexSnapshot(hadPrevSnapshot, prevSnapshot, snapshot) {
+				statusRefreshCmd = m.recordEmbeddedSessionActivityCmd(msg.projectPath, snapshot)
+			}
 			if shouldRefreshProjectStatusAfterCodexSnapshot(prevSnapshot, snapshot) {
 				statusRefreshCmd = m.refreshProjectStatusCmd(msg.projectPath)
 			}
@@ -2302,6 +2319,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		providerLabel := embeddedProvider(snapshot).Label()
 		transcriptChanged := !hadPrev || codexTranscriptStateChanged(prevSnapshot, snapshot)
 		statusRefreshCmd := tea.Cmd(nil)
+		if shouldRecordEmbeddedSessionActivityAfterCodexSnapshot(hadPrev, prevSnapshot, snapshot) {
+			statusRefreshCmd = m.recordEmbeddedSessionActivityCmd(projectPath, snapshot)
+		}
 		if hadPrev && shouldRefreshProjectStatusAfterCodexSnapshot(prevSnapshot, snapshot) {
 			statusRefreshCmd = m.refreshProjectStatusCmd(projectPath)
 		}
@@ -2338,6 +2358,67 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func shouldRefreshProjectStatusAfterCodexSnapshot(prev, next codexapp.Snapshot) bool {
 	return !prev.Closed && prev.Busy && !next.Closed && !next.Busy
+}
+
+func shouldRecordEmbeddedSessionActivityAfterCodexSnapshot(hadPrev bool, prev, next codexapp.Snapshot) bool {
+	if next.Closed || !next.Started || !next.Busy || embeddedSnapshotActivityAt(next).IsZero() {
+		return false
+	}
+	if !hadPrev {
+		return true
+	}
+	return embeddedSnapshotActivityAt(next).After(embeddedSnapshotActivityAt(prev))
+}
+
+func embeddedSessionActivityFromSnapshot(projectPath string, snapshot codexapp.Snapshot) (service.EmbeddedSessionActivity, bool) {
+	projectPath = normalizeProjectPath(projectPath)
+	if projectPath == "" {
+		projectPath = normalizeProjectPath(snapshot.ProjectPath)
+	}
+	sessionID := strings.TrimSpace(snapshot.ThreadID)
+	lastActivity := embeddedSnapshotActivityAt(snapshot)
+	if projectPath == "" || sessionID == "" || lastActivity.IsZero() {
+		return service.EmbeddedSessionActivity{}, false
+	}
+	return service.EmbeddedSessionActivity{
+		ProjectPath:          projectPath,
+		Source:               embeddedSessionSource(snapshot.Provider),
+		SessionID:            sessionID,
+		Format:               embeddedSessionFormat(snapshot.Provider),
+		LastActivityAt:       lastActivity,
+		LatestTurnStartedAt:  snapshot.BusySince,
+		LatestTurnStateKnown: snapshot.Busy,
+		LatestTurnCompleted:  false,
+	}, true
+}
+
+func embeddedSessionSource(provider codexapp.Provider) model.SessionSource {
+	switch provider.Normalized() {
+	case codexapp.ProviderOpenCode:
+		return model.SessionSourceOpenCode
+	case codexapp.ProviderClaudeCode:
+		return model.SessionSourceClaudeCode
+	default:
+		return model.SessionSourceCodex
+	}
+}
+
+func embeddedSessionFormat(provider codexapp.Provider) string {
+	switch provider.Normalized() {
+	case codexapp.ProviderOpenCode:
+		return "opencode_db"
+	case codexapp.ProviderClaudeCode:
+		return "claude_code"
+	default:
+		return "modern"
+	}
+}
+
+func embeddedSnapshotActivityAt(snapshot codexapp.Snapshot) time.Time {
+	if !snapshot.LastBusyActivityAt.IsZero() {
+		return snapshot.LastBusyActivityAt
+	}
+	return snapshot.LastActivityAt
 }
 
 func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
