@@ -286,6 +286,7 @@ func (m Model) closeDiffView(fallbackStatus string) (tea.Model, tea.Cmd) {
 	}
 
 	preview := cached.preview
+	m.commitPreviewRequestID++
 	m.commitPreview = &preview
 	m.commitPreviewMessageOverride = cached.messageOverride
 	m.commitPreviewRefreshing = true

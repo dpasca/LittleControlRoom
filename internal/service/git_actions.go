@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -22,6 +23,8 @@ type GitActionIntent string
 const (
 	GitActionCommit GitActionIntent = "commit"
 	GitActionFinish GitActionIntent = "finish"
+
+	defaultCommitAssistantTimeout = 20 * time.Second
 )
 
 type GitStageMode string
@@ -226,9 +229,11 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 			if buildErr != nil {
 				warnings = append(warnings, "AI untracked review unavailable: "+strings.TrimSpace(buildErr.Error()))
 			} else {
-				suggestion, suggestErr := s.untrackedFileRecommender.RecommendUntracked(ctx, input)
+				assistantCtx, cancel := s.withCommitAssistantTimeout(ctx)
+				suggestion, suggestErr := s.untrackedFileRecommender.RecommendUntracked(assistantCtx, input)
+				cancel()
 				if suggestErr != nil {
-					warnings = append(warnings, "AI untracked review unavailable: "+strings.TrimSpace(suggestErr.Error()))
+					warnings = append(warnings, "AI untracked review unavailable: "+formatCommitAssistantError(suggestErr, s.effectiveCommitAssistantTimeout()))
 				} else {
 					var selectedDecisions []gitops.UntrackedFileDecision
 					selectedUntracked, selectedDecisions = selectRecommendedUntracked(untracked, suggestion.Files)
@@ -302,13 +307,16 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 			OpenTodos:               openTodos,
 		}
 		if s.commitMessageSuggester != nil {
-			suggestion, suggestErr := s.commitMessageSuggester.Suggest(ctx, input)
+			assistantCtx, cancel := s.withCommitAssistantTimeout(ctx)
+			suggestion, suggestErr := s.commitMessageSuggester.Suggest(assistantCtx, input)
+			cancel()
 			if suggestErr == nil {
 				preview.Message = normalizeCommitMessage(suggestion.Message)
 				preview.SuggestedTodos = matchSuggestedTodos(openTodos, detail.Todos, suggestion.CompletedTodoIDs)
 			} else {
-				preview.CommitMessageError = strings.TrimSpace(suggestErr.Error())
-				preview.Warnings = append(preview.Warnings, "AI commit message unavailable: "+strings.TrimSpace(suggestErr.Error()))
+				errText := formatCommitAssistantError(suggestErr, s.effectiveCommitAssistantTimeout())
+				preview.CommitMessageError = errText
+				preview.Warnings = append(preview.Warnings, "AI commit message unavailable: "+errText)
 			}
 		}
 		if preview.Message == "" {
@@ -321,6 +329,28 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 		preview.Warnings = append(preview.Warnings, pushWarning)
 	}
 	return preview, nil
+}
+
+func (s *Service) effectiveCommitAssistantTimeout() time.Duration {
+	if s == nil || s.commitAssistantTimeout <= 0 {
+		return defaultCommitAssistantTimeout
+	}
+	return s.commitAssistantTimeout
+}
+
+func (s *Service) withCommitAssistantTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, s.effectiveCommitAssistantTimeout())
+}
+
+func formatCommitAssistantError(err error, timeout time.Duration) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timed out after " + timeout.Round(time.Millisecond).String()
+	}
+	errText := strings.TrimSpace(err.Error())
+	if errText == "" {
+		return "unknown error"
+	}
+	return errText
 }
 
 func (s *Service) CommitPreviewStateHash(ctx context.Context, projectPath string) (string, error) {

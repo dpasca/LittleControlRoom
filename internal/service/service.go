@@ -54,6 +54,7 @@ type Service struct {
 
 	commitMessageSuggester   gitops.CommitMessageSuggester
 	untrackedFileRecommender gitops.UntrackedFileRecommender
+	commitAssistantTimeout   time.Duration
 	llmUsageTracker          *llm.UsageTracker
 	opencodeDiscovery        *llm.OpenCodeDiscovery
 
@@ -107,18 +108,19 @@ type ScanOptions struct {
 
 func New(cfg config.AppConfig, st *store.Store, bus *events.Bus, detectorList []detectors.Detector) *Service {
 	svc := &Service{
-		cfg:                   cfg,
-		store:                 st,
-		bus:                   bus,
-		detectors:             detectorList,
-		backendDetector:       aibackend.DetectStatus,
-		llmUsageTracker:       llm.NewUsageTracker(),
-		opencodeDiscovery:     llm.NewOpenCodeDiscovery(),
-		gitFingerprintReader:  scanner.ReadGitFingerprint,
-		gitRepoStatusReader:   scanner.ReadGitRepoStatus,
-		gitWorktreeInfoReader: scanner.ReadGitWorktreeInfo,
-		gitWorktreeListReader: scanner.ListGitWorktrees,
-		gitRepoInitializer:    runGitInit,
+		cfg:                    cfg,
+		store:                  st,
+		bus:                    bus,
+		detectors:              detectorList,
+		backendDetector:        aibackend.DetectStatus,
+		commitAssistantTimeout: defaultCommitAssistantTimeout,
+		llmUsageTracker:        llm.NewUsageTracker(),
+		opencodeDiscovery:      llm.NewOpenCodeDiscovery(),
+		gitFingerprintReader:   scanner.ReadGitFingerprint,
+		gitRepoStatusReader:    scanner.ReadGitRepoStatus,
+		gitWorktreeInfoReader:  scanner.ReadGitWorktreeInfo,
+		gitWorktreeListReader:  scanner.ListGitWorktrees,
+		gitRepoInitializer:     runGitInit,
 	}
 	svc.configureAIClientsLocked()
 	svc.bestEffortPrepareInternalWorkspaceState()

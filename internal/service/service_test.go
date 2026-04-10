@@ -3927,6 +3927,98 @@ func TestPrepareCommitRecordsCommitMessageErrorWhileUsingFallback(t *testing.T) 
 	}
 }
 
+func TestPrepareCommitTimesOutCommitMessageSuggestionAndUsesFallback(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	projectPath := filepath.Join(t.TempDir(), "repo")
+	initGitRepo(t, projectPath)
+
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("hello\npreview\n"), 0o644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "repo",
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	svc.commitAssistantTimeout = 10 * time.Millisecond
+	svc.commitMessageSuggester = fakeCommitMessageSuggester{waitForContext: true}
+
+	preview, err := svc.PrepareCommit(ctx, projectPath, GitActionCommit, "")
+	if err != nil {
+		t.Fatalf("prepare commit: %v", err)
+	}
+	if preview.Message != "Update README.md" {
+		t.Fatalf("commit message = %q, want fallback subject", preview.Message)
+	}
+	if preview.CommitMessageError != "timed out after 10ms" {
+		t.Fatalf("commit message error = %q", preview.CommitMessageError)
+	}
+	if warnings := strings.Join(preview.Warnings, "\n"); !strings.Contains(warnings, "AI commit message unavailable: timed out after 10ms") {
+		t.Fatalf("warnings = %#v, want timeout warning", preview.Warnings)
+	}
+}
+
+func TestPrepareCommitTimesOutUntrackedReviewAndContinues(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	projectPath := filepath.Join(t.TempDir(), "repo")
+	initGitRepo(t, projectPath)
+
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("hello\npreview\n"), 0o644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectPath, "notes.txt"), []byte("release note\n"), 0o644); err != nil {
+		t.Fatalf("write notes: %v", err)
+	}
+	runGit(t, projectPath, "git", "add", "README.md")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "repo",
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	svc.commitAssistantTimeout = 10 * time.Millisecond
+	svc.commitMessageSuggester = nil
+	svc.untrackedFileRecommender = &fakeUntrackedFileRecommender{waitForContext: true}
+
+	preview, err := svc.PrepareCommit(ctx, projectPath, GitActionCommit, "Update repo")
+	if err != nil {
+		t.Fatalf("prepare commit: %v", err)
+	}
+	if len(preview.SelectedUntracked) != 0 {
+		t.Fatalf("selected untracked = %#v, want none after timeout", preview.SelectedUntracked)
+	}
+	if warnings := strings.Join(preview.Warnings, "\n"); !strings.Contains(warnings, "AI untracked review unavailable: timed out after 10ms") {
+		t.Fatalf("warnings = %#v, want timeout warning", preview.Warnings)
+	}
+}
+
 func TestPrepareCommitReturnsNoChangesErrorWithPushContext(t *testing.T) {
 	t.Parallel()
 
@@ -4383,18 +4475,24 @@ type fakeDetector struct {
 }
 
 type fakeUntrackedFileRecommender struct {
-	lastInput  gitops.UntrackedFileRecommendationInput
-	suggestion gitops.UntrackedFileRecommendationResult
-	err        error
+	lastInput      gitops.UntrackedFileRecommendationInput
+	suggestion     gitops.UntrackedFileRecommendationResult
+	err            error
+	waitForContext bool
 }
 
 type fakeCommitMessageSuggester struct {
-	suggestion gitops.CommitMessageSuggestion
-	err        error
+	suggestion     gitops.CommitMessageSuggestion
+	err            error
+	waitForContext bool
 }
 
-func (f *fakeUntrackedFileRecommender) RecommendUntracked(_ context.Context, input gitops.UntrackedFileRecommendationInput) (gitops.UntrackedFileRecommendationResult, error) {
+func (f *fakeUntrackedFileRecommender) RecommendUntracked(ctx context.Context, input gitops.UntrackedFileRecommendationInput) (gitops.UntrackedFileRecommendationResult, error) {
 	f.lastInput = input
+	if f.waitForContext {
+		<-ctx.Done()
+		return gitops.UntrackedFileRecommendationResult{}, ctx.Err()
+	}
 	if f.err != nil {
 		return gitops.UntrackedFileRecommendationResult{}, f.err
 	}
@@ -4405,7 +4503,11 @@ func (f *fakeUntrackedFileRecommender) ModelName() string {
 	return "fake-untracked-reviewer"
 }
 
-func (f fakeCommitMessageSuggester) Suggest(context.Context, gitops.CommitMessageInput) (gitops.CommitMessageSuggestion, error) {
+func (f fakeCommitMessageSuggester) Suggest(ctx context.Context, _ gitops.CommitMessageInput) (gitops.CommitMessageSuggestion, error) {
+	if f.waitForContext {
+		<-ctx.Done()
+		return gitops.CommitMessageSuggestion{}, ctx.Err()
+	}
 	if f.err != nil {
 		return gitops.CommitMessageSuggestion{}, f.err
 	}

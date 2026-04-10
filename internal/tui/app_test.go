@@ -15979,6 +15979,63 @@ func TestCommitPreviewRefreshingBlocksCommitActions(t *testing.T) {
 	}
 }
 
+func TestCommitPreviewRefreshingAllowsEscCancel(t *testing.T) {
+	m := Model{
+		commitPreview: &service.CommitPreview{
+			ProjectPath: "/tmp/demo",
+			Message:     "Generating commit message...",
+		},
+		commitPreviewRefreshing: true,
+		commitPreviewRequestID:  3,
+		pendingGitSummaries: map[string]string{
+			"/tmp/demo": "Preparing commit preview...",
+		},
+	}
+
+	updated, cmd := m.updateCommitPreviewMode(tea.KeyMsg{Type: tea.KeyEsc})
+	got := updated.(Model)
+	if got.commitPreview != nil {
+		t.Fatalf("Esc should close a refreshing commit preview")
+	}
+	if got.commitPreviewRefreshing {
+		t.Fatalf("Esc should clear refreshing state")
+	}
+	if got.commitPreviewRequestID != 4 {
+		t.Fatalf("request id = %d, want old async result invalidated", got.commitPreviewRequestID)
+	}
+	if got.pendingGitSummary("/tmp/demo") != "" {
+		t.Fatalf("pending git summary should clear when canceling refresh")
+	}
+	if got.status != "Commit preview canceled" {
+		t.Fatalf("status = %q, want cancel status", got.status)
+	}
+	if cmd != nil {
+		t.Fatalf("Esc cancel should not return a command")
+	}
+}
+
+func TestCommitPreviewMsgIgnoresStaleCanceledRequest(t *testing.T) {
+	m := Model{
+		commitPreviewRequestID: 4,
+	}
+
+	updated, cmd := m.Update(commitPreviewMsg{
+		requestID:   3,
+		projectPath: "/tmp/demo",
+		preview: service.CommitPreview{
+			ProjectPath: "/tmp/demo",
+			Message:     "Late result",
+		},
+	})
+	got := updated.(Model)
+	if got.commitPreview != nil {
+		t.Fatalf("stale commit preview result should not reopen the dialog")
+	}
+	if cmd != nil {
+		t.Fatalf("stale commit preview result should not return a command")
+	}
+}
+
 func TestCommitPreviewAltEnterCommitsAndPushes(t *testing.T) {
 	m := Model{
 		commitPreview: &service.CommitPreview{

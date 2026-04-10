@@ -103,6 +103,7 @@ type Model struct {
 	commitPreview                *service.CommitPreview
 	commitPreviewMessageOverride string
 	commitPreviewRefreshing      bool
+	commitPreviewRequestID       int
 	commitApplying               bool
 	commitTodoCompletions        []commitTodoItem
 	commitTodoSelected           int
@@ -359,6 +360,7 @@ type commitPreviewMsg struct {
 	projectPath           string
 	intent                service.GitActionIntent
 	message               string
+	requestID             int
 	refreshedProjectState bool
 	err                   error
 }
@@ -1566,6 +1568,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = scanCompleteStatus(msg.report)
 		return m, batchCmds(reloadCmd, m.requestProjectInvalidationCmd(invalidateProjectStructure("")))
 	case commitPreviewMsg:
+		if msg.requestID != 0 && msg.requestID != m.commitPreviewRequestID {
+			return m, nil
+		}
 		m.clearPendingGitSummary(msg.projectPath)
 		m.diffView = nil
 		m.commitPreviewRefreshing = false
@@ -2589,11 +2594,16 @@ func (m Model) updateCommitPreviewMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.commitPreview == nil {
 		return m, nil
 	}
-	if m.commitApplying || m.commitPreviewRefreshing {
+	if m.commitApplying {
+		return m, nil
+	}
+	if m.commitPreviewRefreshing && msg.String() != "esc" {
 		return m, nil
 	}
 	switch msg.String() {
 	case "esc":
+		m.commitPreviewRequestID++
+		m.clearPendingGitSummary(m.commitPreview.ProjectPath)
 		m.commitPreview = nil
 		m.commitTodoCompletions = nil
 		m.commitPreviewMessageOverride = ""
@@ -4693,6 +4703,7 @@ func (m Model) prepareCommitPreviewCmd(path string, intent service.GitActionInte
 			projectPath: path,
 			intent:      intent,
 			message:     message,
+			requestID:   m.commitPreviewRequestID,
 		}
 		preview, err := m.svc.PrepareCommit(m.ctx, path, intent, message)
 		previewMsg.preview = preview
@@ -4710,6 +4721,7 @@ func (m Model) prepareCommitPreviewCmd(path string, intent service.GitActionInte
 }
 
 func (m *Model) startCommitPreview(project model.ProjectSummary, intent service.GitActionIntent, messageOverride string) tea.Cmd {
+	m.commitPreviewRequestID++
 	projectName := strings.TrimSpace(project.Name)
 	if projectName == "" {
 		projectName = filepath.Base(filepath.Clean(project.Path))
@@ -4810,6 +4822,7 @@ func (m Model) resumeCommitPreviewCmd(cached service.CommitPreview, messageOverr
 			projectPath: cached.ProjectPath,
 			intent:      cached.Intent,
 			message:     messageOverride,
+			requestID:   m.commitPreviewRequestID,
 		}
 		if m.svc == nil {
 			previewMsg.err = fmt.Errorf("service unavailable")
@@ -6170,9 +6183,9 @@ func (m Model) renderCommitPreviewContent(width, maxHeight int) string {
 	if m.commitApplying {
 		footer = append(footer, commandPaletteHintStyle.Render("Applying git action..."))
 	} else if m.commitPreviewRefreshing {
-		hint := "Refreshing commit preview..."
+		hint := "Refreshing commit preview... Esc cancel"
 		if placeholder {
-			hint = "Building commit preview..."
+			hint = "Building commit preview... Esc cancel"
 		}
 		footer = append(footer, commandPaletteHintStyle.Render(hint))
 	} else {
