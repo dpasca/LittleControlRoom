@@ -3716,9 +3716,11 @@ func (m Model) renderDetailContent(width int) string {
 		}
 		lines = appendDetailFields(lines, width, movedFields...)
 	}
-	lines = append(lines, detailField("Repo", m.repoCombinedDetailValue(p)))
-	if p.RepoConflict {
-		lines = append(lines, detailField("Conflict", repoConflictDetailValue(p)))
+	if projectHasGitInfo(p) {
+		lines = append(lines, detailField("Repo", m.repoCombinedDetailValue(p)))
+		if p.RepoConflict {
+			lines = append(lines, detailField("Conflict", repoConflictDetailValue(p)))
+		}
 	}
 	if p.WorktreeKind == model.WorktreeKindLinked {
 		mergeBackValue := detailMutedStyle.Render("parent branch unavailable")
@@ -5076,6 +5078,10 @@ func formatRelativeUnit(n int, unit string) string {
 		return fmt.Sprintf("1 %s", unit)
 	}
 	return fmt.Sprintf("%d %ss", n, unit)
+}
+
+func projectHasGitInfo(project model.ProjectSummary) bool {
+	return project.RepoBranch != "" || project.RepoDirty || project.RepoConflict || project.WorktreeKind != model.WorktreeKindNone
 }
 
 func projectHasRepoWarning(project model.ProjectSummary) bool {
