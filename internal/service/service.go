@@ -630,10 +630,17 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			old.SnoozedUntil = nil
 		}
 		presentOnDisk := projectPathExists(path)
+		isGitRepo := presentOnDisk && projectIsGitRepo(path)
 		worktreeRootPath := old.WorktreeRootPath
 		worktreeKind := old.WorktreeKind
 		worktreeParentBranch := old.WorktreeParentBranch
 		worktreeMergeStatus := old.WorktreeMergeStatus
+		if presentOnDisk && !isGitRepo {
+			worktreeRootPath = ""
+			worktreeKind = model.WorktreeKindNone
+			worktreeParentBranch = ""
+			worktreeMergeStatus = model.WorktreeMergeStatus("")
+		}
 		repoBranch := ""
 		repoDirty := false
 		repoConflict := false
@@ -652,7 +659,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 				repoSyncStatus = repoSyncStatusFromGit(repoStatus)
 				repoAheadCount = repoStatus.Ahead
 				repoBehindCount = repoStatus.Behind
-			} else {
+			} else if isGitRepo {
 				repoBranch = old.RepoBranch
 				repoDirty = old.RepoDirty
 				repoConflict = old.RepoConflict
@@ -1496,6 +1503,14 @@ func projectPathExists(path string) bool {
 	return info.IsDir()
 }
 
+// projectIsGitRepo reports whether path contains a .git entry (file or directory).
+// A directory that exists but lacks .git is not a git repository and should not
+// fall back to cached git state.
+func projectIsGitRepo(path string) bool {
+	_, err := os.Lstat(filepath.Join(path, ".git"))
+	return err == nil
+}
+
 func (s *Service) latestSessionClassification(ctx context.Context, path string, sessions []model.SessionEvidence, now time.Time) (bool, model.SessionCategory) {
 	return s.latestSessionClassificationWithConfig(ctx, path, sessions, now, s.runtimeSnapshot().cfg)
 }
@@ -1611,10 +1626,17 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 	}
 
 	presentOnDisk := projectPathExists(detail.Summary.Path)
+	isGitRepo := presentOnDisk && projectIsGitRepo(detail.Summary.Path)
 	worktreeRootPath := detail.Summary.WorktreeRootPath
 	worktreeKind := detail.Summary.WorktreeKind
 	worktreeParentBranch := detail.Summary.WorktreeParentBranch
 	worktreeMergeStatus := detail.Summary.WorktreeMergeStatus
+	if presentOnDisk && !isGitRepo {
+		worktreeRootPath = ""
+		worktreeKind = model.WorktreeKindNone
+		worktreeParentBranch = ""
+		worktreeMergeStatus = model.WorktreeMergeStatus("")
+	}
 	repoBranch := ""
 	repoDirty := false
 	repoConflict := false
@@ -1634,7 +1656,7 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 				repoSyncStatus = repoSyncStatusFromGit(repoStatus)
 				repoAheadCount = repoStatus.Ahead
 				repoBehindCount = repoStatus.Behind
-			} else {
+			} else if isGitRepo {
 				repoBranch = detail.Summary.RepoBranch
 				repoDirty = detail.Summary.RepoDirty
 				repoConflict = detail.Summary.RepoConflict
@@ -1642,7 +1664,7 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 				repoAheadCount = detail.Summary.RepoAheadCount
 				repoBehindCount = detail.Summary.RepoBehindCount
 			}
-		} else {
+		} else if isGitRepo {
 			repoBranch = detail.Summary.RepoBranch
 			repoDirty = detail.Summary.RepoDirty
 			repoConflict = detail.Summary.RepoConflict

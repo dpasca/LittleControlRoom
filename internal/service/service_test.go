@@ -2380,6 +2380,69 @@ func TestScanOnceDetectsDirtyRepoAndClearsWhenClean(t *testing.T) {
 	}
 }
 
+func TestScanOnceClearsDirtyWhenGitDirRemoved(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "was_git")
+	initGitRepo(t, projectPath)
+
+	// Make the repo dirty so that the first scan records RepoDirty=true.
+	if err := os.WriteFile(filepath.Join(projectPath, "scratch.txt"), []byte("wip\n"), 0o644); err != nil {
+		t.Fatalf("write dirty file: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	activityAt := time.Now().Add(-10 * time.Minute).UTC().Truncate(time.Second)
+	detector := &fakeDetector{
+		activities: map[string]*model.DetectorProjectActivity{
+			projectPath: fakeActivity(projectPath, "ses_gitgone", activityAt),
+		},
+	}
+	cfg := config.Default()
+	cfg.IncludePaths = []string{root}
+
+	svc := New(cfg, st, events.NewBus(), []detectors.Detector{detector})
+	firstReport, err := svc.ScanOnce(ctx)
+	if err != nil {
+		t.Fatalf("first scan: %v", err)
+	}
+	if len(firstReport.States) != 1 {
+		t.Fatalf("expected 1 project, got %d", len(firstReport.States))
+	}
+	if !firstReport.States[0].RepoDirty {
+		t.Fatalf("expected repo to be dirty on first scan")
+	}
+
+	// Remove the .git directory — the project is no longer a git repository.
+	if err := os.RemoveAll(filepath.Join(projectPath, ".git")); err != nil {
+		t.Fatalf("remove .git: %v", err)
+	}
+
+	secondReport, err := svc.ScanOnce(ctx)
+	if err != nil {
+		t.Fatalf("second scan: %v", err)
+	}
+	if len(secondReport.States) != 1 {
+		t.Fatalf("expected 1 project on second scan, got %d", len(secondReport.States))
+	}
+	if secondReport.States[0].RepoDirty {
+		t.Fatalf("expected repo dirty flag to clear after .git removal")
+	}
+	if secondReport.States[0].RepoBranch != "" {
+		t.Fatalf("expected empty branch after .git removal, got %q", secondReport.States[0].RepoBranch)
+	}
+	if secondReport.States[0].WorktreeKind != model.WorktreeKindNone {
+		t.Fatalf("expected worktree kind none after .git removal, got %q", secondReport.States[0].WorktreeKind)
+	}
+}
+
 func TestScanOnceDetectsRepoAheadOfRemote(t *testing.T) {
 	t.Parallel()
 
