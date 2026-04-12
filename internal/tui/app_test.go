@@ -16706,6 +16706,108 @@ func TestPushCmdRefreshesProjectStatusAndTargetsProjectReload(t *testing.T) {
 	}
 }
 
+func TestApplyCommitPreviewCmdRefreshesProjectStatusAndTargetsProjectReload(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	runTUITestGit(t, "", "init", projectPath)
+	runTUITestGit(t, projectPath, "config", "user.name", "Little Control Room Tests")
+	runTUITestGit(t, projectPath, "config", "user.email", "tests@example.com")
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write README.md: %v", err)
+	}
+	runTUITestGit(t, projectPath, "add", "README.md")
+	runTUITestGit(t, projectPath, "commit", "-m", "initial commit")
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("hello\nship\n"), 0o644); err != nil {
+		t.Fatalf("update README.md: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "repo",
+		PresentOnDisk: true,
+		InScope:       true,
+		RepoBranch:    "master",
+		RepoDirty:     true,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("seed stale project state: %v", err)
+	}
+
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	m := Model{
+		ctx: ctx,
+		svc: svc,
+		projects: []model.ProjectSummary{{
+			Path: projectPath,
+			Name: "repo",
+		}},
+		allProjects: []model.ProjectSummary{{
+			Path: projectPath,
+			Name: "repo",
+		}},
+		selected: 0,
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{
+				Path: projectPath,
+				Name: "repo",
+			},
+		},
+	}
+
+	cmd := m.applyCommitPreviewCmd(service.CommitPreview{
+		ProjectPath: projectPath,
+		ProjectName: "repo",
+		Branch:      "master",
+		StageMode:   service.GitStageAllChanges,
+		Message:     "ship",
+	}, false)
+	if cmd == nil {
+		t.Fatal("applyCommitPreviewCmd() should return a command")
+	}
+	raw := cmd()
+	msg, ok := raw.(actionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want actionMsg", raw)
+	}
+	if msg.err != nil {
+		t.Fatalf("commit action err = %v", msg.err)
+	}
+	if msg.status == "" {
+		t.Fatal("status should describe commit result")
+	}
+	if msg.refresh.kind != projectInvalidationProjectData || msg.refresh.projectPath != projectPath {
+		t.Fatalf("refresh = %#v, want targeted project-data invalidation for %q", msg.refresh, projectPath)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 20)
+	if err != nil {
+		t.Fatalf("get detail after commit refresh: %v", err)
+	}
+	if detail.Summary.RepoDirty {
+		t.Fatalf("expected clean repo status after commit refresh, got %#v", detail.Summary)
+	}
+
+	updated, reloadCmd := m.Update(msg)
+	got := updated.(Model)
+	if reloadCmd == nil {
+		t.Fatal("commit action should invalidate project data")
+	}
+	if !got.summaryReloadInFlight[projectPath] {
+		t.Fatalf("summary reload should start for %q", projectPath)
+	}
+	if !got.detailReloadInFlight[projectPath] {
+		t.Fatalf("detail reload should start for visible project %q", projectPath)
+	}
+}
+
 func TestGitStatusDialogEnterClosesWhenPushUnavailable(t *testing.T) {
 	m := Model{
 		gitStatusDialog: &gitStatusDialog{

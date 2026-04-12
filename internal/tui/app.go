@@ -5064,7 +5064,18 @@ func (m Model) applyCommitPreviewCmd(preview service.CommitPreview, pushAfterCom
 		if result.Warning != "" {
 			status = result.Warning
 		}
-		return actionMsg{projectPath: preview.ProjectPath, status: status, clearPendingGitSummary: true, err: nil}
+		refresh := invalidateProjectData(preview.ProjectPath)
+		if err := m.svc.RefreshProjectStatus(m.ctx, preview.ProjectPath); err != nil {
+			status = status + ". Repo status will refresh shortly."
+			refresh = invalidateProjectScan(m.visibleDetailPathForProject(preview.ProjectPath), false)
+		}
+		return actionMsg{
+			projectPath:            preview.ProjectPath,
+			status:                 status,
+			clearPendingGitSummary: true,
+			refresh:                refresh,
+			err:                    nil,
+		}
 	}
 }
 
