@@ -39,17 +39,18 @@ type Model struct {
 	busCh <-chan events.Event
 	unsub func()
 
-	allProjects            []model.ProjectSummary
-	projects               []model.ProjectSummary
-	projectRows            []projectListRow
-	detail                 model.ProjectDetail
-	selected               int
-	offset                 int
-	sortMode               projectSortMode
-	visibility             projectVisibilityMode
-	excludeProjectPatterns []string
-	privacyMode            bool
-	privacyPatterns        []string
+	allProjects             []model.ProjectSummary
+	orphanedWorktreesByRoot map[string][]model.ProjectSummary
+	projects                []model.ProjectSummary
+	projectRows             []projectListRow
+	detail                  model.ProjectDetail
+	selected                int
+	offset                  int
+	sortMode                projectSortMode
+	visibility              projectVisibilityMode
+	excludeProjectPatterns  []string
+	privacyMode             bool
+	privacyPatterns         []string
 
 	loading bool
 	status  string
@@ -220,10 +221,11 @@ type codexViewportContentState struct {
 }
 
 type projectsMsg struct {
-	projects               []model.ProjectSummary
-	excludeProjectPatterns []string
-	err                    error
-	filterErr              error
+	projects                []model.ProjectSummary
+	orphanedWorktreesByRoot map[string][]model.ProjectSummary
+	excludeProjectPatterns  []string
+	err                     error
+	filterErr               error
 }
 
 type detailMsg struct {
@@ -1454,6 +1456,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.excludeProjectPatterns = append([]string(nil), msg.excludeProjectPatterns...)
 		m.allProjects = msg.projects
+		m.orphanedWorktreesByRoot = msg.orphanedWorktreesByRoot
 		m.rebuildProjectList(selectedPath)
 		if !startupEmptyCache && (strings.TrimSpace(m.status) == "" || m.status == initialProjectsStatus || len(m.projects) == 0) {
 			m.status = loadedProjectsStatus(len(m.projects), m.sortMode, m.visibility, m.projectFilter)
@@ -3580,10 +3583,12 @@ func (m Model) renderProjectList(width, height int) string {
 	end := min(len(m.projects), start+visible)
 	for i := start; i < end; i++ {
 		p := m.projects[i]
+		rootPath := projectWorktreeRootPath(p)
+		orphanedCount := m.orphanedWorktreeCount(rootPath)
 		rowMeta := projectListRow{
 			Kind:        projectListRowStandalone,
 			ProjectPath: p.Path,
-			RootPath:    projectWorktreeRootPath(p),
+			RootPath:    rootPath,
 		}
 		if i >= 0 && i < len(m.projectRows) {
 			rowMeta = m.projectRows[i]
@@ -3611,7 +3616,7 @@ func (m Model) renderProjectList(width, height int) string {
 					disclosure = "▾ "
 				}
 				name = disclosure + name
-				if badge := worktreeLinkedBadgeSummary(rowMeta.LinkedCount, rowMeta.LinkedActiveCount, rowMeta.LinkedDirtyCount); badge != "" {
+				if badge := worktreeLinkedBadgeSummary(rowMeta.LinkedCount, rowMeta.LinkedActiveCount, rowMeta.LinkedDirtyCount, orphanedCount); badge != "" {
 					if assessmentText == "-" {
 						assessmentText = badge
 					} else {
@@ -3621,6 +3626,16 @@ func (m Model) renderProjectList(width, height int) string {
 			}
 		case projectListRowWorktree:
 			name = "  ↳ " + projectWorktreeLabel(p)
+		default:
+			if projectIsWorktreeRoot(p) {
+				if badge := worktreeLinkedBadgeSummary(0, 0, 0, orphanedCount); badge != "" {
+					if assessmentText == "-" {
+						assessmentText = badge
+					} else {
+						assessmentText += "  " + badge
+					}
+				}
+			}
 		}
 		name = truncateText(name, projectW)
 		assessment := truncateText(assessmentText, assessmentW)
@@ -3737,10 +3752,13 @@ func (m Model) renderDetailContent(width int) string {
 		lines = append(lines, detailField("Merge status", worktreeMergeStatusDetailValue(p)))
 	}
 	lines = append(lines, detailField("Attention", attentionValue))
-	family := m.worktreeFamily(projectWorktreeRootPath(p))
-	if len(family) > 1 || p.WorktreeKind == model.WorktreeKindLinked {
+	rootPath := projectWorktreeRootPath(p)
+	family := m.worktreeFamily(rootPath)
+	orphanedFamily := m.orphanedWorktreeFamily(rootPath)
+	orphanedCount := len(orphanedFamily)
+	if len(family) > 1 || p.WorktreeKind == model.WorktreeKindLinked || orphanedCount > 0 {
 		activeCount, dirtyCount := m.worktreeActivityCounts(family)
-		lines = append(lines, detailField("Worktrees", detailValueStyle.Render(worktreeGroupSummary(family, activeCount, dirtyCount))))
+		lines = append(lines, detailField("Worktrees", detailValueStyle.Render(worktreeGroupSummary(family, activeCount, dirtyCount, orphanedCount))))
 		if projectIsWorktreeRoot(p) {
 			lines = append(lines, detailSectionStyle.Render("Worktree lanes"))
 			family = append([]model.ProjectSummary(nil), family...)
@@ -3794,6 +3812,22 @@ func (m Model) renderDetailContent(width int) string {
 					statusParts = append(statusParts, "current")
 				}
 				lines = append(lines, renderWrappedDetailBullet(lineStyle, width, label+" · "+strings.Join(statusParts, ", ")))
+			}
+		}
+		if orphanedCount > 0 {
+			lines = append(lines, detailSectionStyle.Render("Worktree warnings"))
+			summary := fmt.Sprintf("%d orphaned checkout(s) still exist on disk. Git no longer tracks them as live worktrees. Remove the leftover folder when you no longer need its files.", orphanedCount)
+			lines = append(lines, renderWrappedDetailBullet(detailWarningStyle, width, summary))
+			for _, orphan := range orphanedFamily {
+				statusParts := []string{"orphaned"}
+				switch orphan.WorktreeMergeStatus {
+				case model.WorktreeMergeStatusMerged:
+					statusParts = append(statusParts, "merged")
+				case model.WorktreeMergeStatusNotMerged:
+					statusParts = append(statusParts, "not merged")
+				}
+				lines = append(lines, renderWrappedDetailBullet(detailWarningStyle, width, projectWorktreeLabel(orphan)+" · "+strings.Join(statusParts, ", ")))
+				lines = append(lines, renderWrappedDetailBullet(detailMutedStyle, width, m.displayPathWithHomeTilde(orphan.Path)))
 			}
 		}
 		if hints := m.worktreeActionHints(p, family); len(hints) > 0 {
@@ -3979,11 +4013,16 @@ func (m Model) loadProjectsCmd() tea.Cmd {
 		if err != nil {
 			return projectsMsg{err: err}
 		}
+		summaries, err := m.svc.Store().GetProjectSummaryMap(m.ctx)
+		if err != nil {
+			return projectsMsg{err: err}
+		}
 		patterns, filterErr := config.LoadExcludeProjectPatterns(m.currentConfigPath(), m.excludeProjectPatterns)
 		return projectsMsg{
-			projects:               projects,
-			excludeProjectPatterns: patterns,
-			filterErr:              filterErr,
+			projects:                projects,
+			orphanedWorktreesByRoot: buildOrphanedWorktreeMap(summaries),
+			excludeProjectPatterns:  patterns,
+			filterErr:               filterErr,
 		}
 	}
 }
@@ -4093,6 +4132,22 @@ func (m *Model) removeProjectSummary(projectPath string) {
 		filtered = append(filtered, project)
 	}
 	m.allProjects = filtered
+}
+
+func (m Model) orphanedWorktreeFamily(rootPath string) []model.ProjectSummary {
+	rootPath = filepath.Clean(strings.TrimSpace(rootPath))
+	if rootPath == "" {
+		return nil
+	}
+	family := m.orphanedWorktreesByRoot[rootPath]
+	if len(family) == 0 {
+		return nil
+	}
+	return append([]model.ProjectSummary(nil), family...)
+}
+
+func (m Model) orphanedWorktreeCount(rootPath string) int {
+	return len(m.orphanedWorktreeFamily(rootPath))
 }
 
 func (m *Model) markProjectSessionSeenLocal(projectPath string, seenAt time.Time) {

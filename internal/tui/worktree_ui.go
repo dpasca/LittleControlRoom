@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -354,6 +355,38 @@ func projectWorktreeRootPath(project model.ProjectSummary) string {
 	return filepath.Clean(strings.TrimSpace(project.Path))
 }
 
+func projectIsOrphanedWorktree(project model.ProjectSummary) bool {
+	return project.WorktreeKind == model.WorktreeKindLinked && project.Forgotten && project.PresentOnDisk
+}
+
+func buildOrphanedWorktreeMap(summaries map[string]model.ProjectSummary) map[string][]model.ProjectSummary {
+	if len(summaries) == 0 {
+		return nil
+	}
+	byRoot := map[string][]model.ProjectSummary{}
+	for _, summary := range summaries {
+		if !projectIsOrphanedWorktree(summary) {
+			continue
+		}
+		rootPath := projectWorktreeRootPath(summary)
+		if rootPath == "" || rootPath == "." {
+			continue
+		}
+		byRoot[rootPath] = append(byRoot[rootPath], summary)
+	}
+	for rootPath := range byRoot {
+		sort.SliceStable(byRoot[rootPath], func(i, j int) bool {
+			left := byRoot[rootPath][i]
+			right := byRoot[rootPath][j]
+			if !left.LastActivity.Equal(right.LastActivity) {
+				return left.LastActivity.After(right.LastActivity)
+			}
+			return strings.ToLower(left.Path) < strings.ToLower(right.Path)
+		})
+	}
+	return byRoot
+}
+
 func projectIsWorktreeRoot(project model.ProjectSummary) bool {
 	path := filepath.Clean(strings.TrimSpace(project.Path))
 	rootPath := projectWorktreeRootPath(project)
@@ -639,11 +672,17 @@ func (m *Model) toggleSelectedWorktreeGroup() tea.Cmd {
 	return nil
 }
 
-func worktreeLinkedBadgeSummary(linked, active, dirty int) string {
-	if linked <= 0 {
+func worktreeLinkedBadgeSummary(linked, active, dirty, orphaned int) string {
+	if linked <= 0 && orphaned <= 0 {
 		return ""
 	}
-	parts := []string{fmt.Sprintf("%d linked", linked)}
+	parts := make([]string, 0, 4)
+	if linked > 0 {
+		parts = append(parts, fmt.Sprintf("%d linked", linked))
+	}
+	if orphaned > 0 {
+		parts = append(parts, fmt.Sprintf("%d orphaned", orphaned))
+	}
 	if active > 0 {
 		parts = append(parts, fmt.Sprintf("%d active", active))
 	} else if dirty > 0 {
@@ -652,7 +691,7 @@ func worktreeLinkedBadgeSummary(linked, active, dirty int) string {
 	return "[" + strings.Join(parts, ", ") + "]"
 }
 
-func worktreeGroupSummary(projects []model.ProjectSummary, active, dirty int) string {
+func worktreeGroupSummary(projects []model.ProjectSummary, active, dirty, orphaned int) string {
 	rootCount := 0
 	for _, project := range projects {
 		if projectIsWorktreeRoot(project) {
@@ -669,6 +708,9 @@ func worktreeGroupSummary(projects []model.ProjectSummary, active, dirty int) st
 		parts = append(parts, fmt.Sprintf("%d linked", linkedCount))
 	default:
 		parts = append(parts, "root only")
+	}
+	if orphaned > 0 {
+		parts = append(parts, fmt.Sprintf("%d orphaned", orphaned))
 	}
 	if active > 0 {
 		parts = append(parts, fmt.Sprintf("%d active", active))

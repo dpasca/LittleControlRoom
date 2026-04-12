@@ -1004,6 +1004,26 @@ func TestProjectRepoWarningIndicator(t *testing.T) {
 		t.Fatalf("pending git op should not render dirty warning indicator, got %q", pendingIndicator)
 	}
 
+	orphanedIndicator := (Model{
+		orphanedWorktreesByRoot: map[string][]model.ProjectSummary{
+			"/tmp/repo": {{
+				Path:             "/tmp/repo--stale-lane",
+				PresentOnDisk:    true,
+				Forgotten:        true,
+				WorktreeRootPath: "/tmp/repo",
+				WorktreeKind:     model.WorktreeKindLinked,
+			}},
+		},
+	}).projectRepoWarningIndicator(model.ProjectSummary{
+		Path:             "/tmp/repo",
+		PresentOnDisk:    true,
+		WorktreeRootPath: "/tmp/repo",
+		WorktreeKind:     model.WorktreeKindMain,
+	}, 0)
+	if !strings.Contains(orphanedIndicator, "!") {
+		t.Fatalf("orphaned linked checkout should warn on the root row, got %q", orphanedIndicator)
+	}
+
 	// No warning → space
 	if got := m.projectRepoWarningIndicator(model.ProjectSummary{}, 0); got != " " {
 		t.Fatalf("no warning should return space, got %q", got)
@@ -1789,6 +1809,54 @@ func TestRenderDetailContentShowsRepoCentricWorktreeSummary(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "root + 1 linked, 1 active, 1 dirty") {
 		t.Fatalf("renderDetailContent() should describe the family without counting the root as a generic worktree, got %q", rendered)
+	}
+}
+
+func TestRenderDetailContentShowsOrphanedWorktreeWarning(t *testing.T) {
+	rootPath := "/tmp/repo"
+	orphanPath := "/tmp/repo--stale-lane"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				Status:           model.StatusIdle,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+		},
+		orphanedWorktreesByRoot: map[string][]model.ProjectSummary{
+			rootPath: {{
+				Name:                "repo--stale-lane",
+				Path:                orphanPath,
+				Status:              model.StatusIdle,
+				PresentOnDisk:       true,
+				Forgotten:           true,
+				WorktreeRootPath:    rootPath,
+				WorktreeKind:        model.WorktreeKindLinked,
+				WorktreeMergeStatus: model.WorktreeMergeStatusMerged,
+				RepoBranch:          "todo/stale-lane",
+			}},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(rootPath)
+
+	rendered := ansi.Strip(m.renderDetailContent(120))
+	if !strings.Contains(rendered, "Worktree warnings") {
+		t.Fatalf("renderDetailContent() should add an orphaned-worktree warning section, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "1 orphaned checkout(s) still exist on disk") {
+		t.Fatalf("renderDetailContent() should explain the orphaned checkout state, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "todo/stale-lane · orphaned, merged") {
+		t.Fatalf("renderDetailContent() should list the orphaned checkout branch and status, got %q", rendered)
+	}
+	if !strings.Contains(rendered, orphanPath) {
+		t.Fatalf("renderDetailContent() should show the orphaned checkout path, got %q", rendered)
 	}
 }
 
@@ -4315,6 +4383,51 @@ func TestRenderProjectListCollapsesLinkedWorktreesUnderRepoRow(t *testing.T) {
 	}
 	if strings.Contains(lines[1], "feat/parallel-lane") {
 		t.Fatalf("renderProjectList() should keep child worktree rows hidden while collapsed, got %q", lines[1])
+	}
+}
+
+func TestRenderProjectListShowsOrphanedWorktreeBadgeOnRootRow(t *testing.T) {
+	rootPath := "/tmp/repo"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:                          "repo",
+				Path:                          rootPath,
+				Status:                        model.StatusIdle,
+				PresentOnDisk:                 true,
+				WorktreeRootPath:              rootPath,
+				WorktreeKind:                  model.WorktreeKindMain,
+				RepoBranch:                    "master",
+				LatestCompletedSessionSummary: "Keep root summary",
+			},
+		},
+		orphanedWorktreesByRoot: map[string][]model.ProjectSummary{
+			rootPath: {{
+				Name:             "repo--stale-lane",
+				Path:             "/tmp/repo--stale-lane",
+				Status:           model.StatusIdle,
+				PresentOnDisk:    true,
+				Forgotten:        true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+				RepoBranch:       "todo/stale-lane",
+			}},
+		},
+		sortMode:   sortByAttention,
+		visibility: visibilityAllFolders,
+	}
+
+	m.rebuildProjectList(rootPath)
+	rendered := ansi.Strip(m.renderProjectList(160, 8))
+	lines := strings.Split(rendered, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("renderProjectList() expected header plus one root row, got %q", rendered)
+	}
+	if !strings.Contains(lines[1], "Keep root summary") {
+		t.Fatalf("renderProjectList() should keep the root summary text, got %q", lines[1])
+	}
+	if !strings.Contains(lines[1], "[1 orphaned]") {
+		t.Fatalf("renderProjectList() should show an orphaned-checkout badge on the root row, got %q", lines[1])
 	}
 }
 
