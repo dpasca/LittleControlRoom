@@ -699,6 +699,21 @@ func (m *Model) flushExpiredPendingGitSummaries() {
 	m.pendingGitSummaryExpireNext = nil
 }
 
+func (m *Model) clearExpiredPendingGitSummaryForPath(projectPath string) {
+	projectPath = normalizeProjectPath(projectPath)
+	if projectPath == "" || m.pendingGitSummaryExpireNext == nil {
+		return
+	}
+	if !m.pendingGitSummaryExpireNext[projectPath] {
+		return
+	}
+	delete(m.pendingGitSummaryExpireNext, projectPath)
+	if len(m.pendingGitSummaryExpireNext) == 0 {
+		m.pendingGitSummaryExpireNext = nil
+	}
+	m.clearPendingGitSummary(projectPath)
+}
+
 func (m Model) pendingGitSummary(projectPath string) string {
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" || m.pendingGitSummaries == nil {
@@ -1536,6 +1551,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, reloadCmd
 	case projectSummaryMsg:
 		reloadCmd := m.finishProjectSummaryReloadCmd(msg.path)
+		m.clearExpiredPendingGitSummaryForPath(msg.path)
 		if msg.err != nil {
 			m.err = msg.err
 			return m, reloadCmd

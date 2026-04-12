@@ -1020,8 +1020,8 @@ func TestProjectRepoWarningIndicator(t *testing.T) {
 		WorktreeRootPath: "/tmp/repo",
 		WorktreeKind:     model.WorktreeKindMain,
 	}, 0)
-	if !strings.Contains(orphanedIndicator, "!") {
-		t.Fatalf("orphaned linked checkout should warn on the root row, got %q", orphanedIndicator)
+	if !strings.Contains(orphanedIndicator, "~") {
+		t.Fatalf("orphaned linked checkout should use a distinct warning marker on the root row, got %q", orphanedIndicator)
 	}
 
 	// No warning → space
@@ -17218,6 +17218,49 @@ func TestActionMsgClearsPendingGitSummary(t *testing.T) {
 	got2 := updated2.(Model)
 	if got2.pendingGitSummary("/tmp/demo") != "" {
 		t.Fatalf("pending git summary = %q, want cleared after project refresh", got2.pendingGitSummary("/tmp/demo"))
+	}
+}
+
+func TestProjectSummaryMsgClearsExpiredPendingGitSummary(t *testing.T) {
+	m := Model{
+		pendingGitSummaries: map[string]string{
+			"/tmp/demo": "Pushing...",
+		},
+		pendingGitSummaryExpireNext: map[string]bool{
+			"/tmp/demo": true,
+		},
+		projects: []model.ProjectSummary{{
+			Path: "/tmp/demo",
+			Name: "demo",
+		}},
+		allProjects: []model.ProjectSummary{{
+			Path: "/tmp/demo",
+			Name: "demo",
+		}},
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{
+				Path: "/tmp/demo",
+				Name: "demo",
+			},
+		},
+	}
+
+	updated, _ := m.Update(projectSummaryMsg{
+		path:  "/tmp/demo",
+		found: true,
+		summary: model.ProjectSummary{
+			Path: "/tmp/demo",
+			Name: "demo",
+		},
+	})
+	got := updated.(Model)
+	if got.pendingGitSummary("/tmp/demo") != "" {
+		t.Fatalf("pending git summary = %q, want cleared after targeted summary refresh", got.pendingGitSummary("/tmp/demo"))
+	}
+	if got.pendingGitSummaryExpireNext != nil {
+		if got.pendingGitSummaryExpireNext["/tmp/demo"] {
+			t.Fatalf("pending git summary expiry should be consumed for refreshed project")
+		}
 	}
 }
 
