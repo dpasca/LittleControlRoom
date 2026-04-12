@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"lcroom/internal/codexcli"
 )
@@ -2056,10 +2057,31 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 		progress := strings.TrimSpace(msg.Message)
 		if progress == "" {
 			s.ensureItemEntryLocked(msg.ItemID, TranscriptTool, "")
-		} else {
-			if index, ok := s.entryIndex[msg.ItemID]; ok && strings.TrimSpace(s.entries[index].Text) != "" {
-				progress = "\n" + progress
+		} else if index, ok := s.entryIndex[msg.ItemID]; ok && strings.TrimSpace(s.entries[index].Text) != "" {
+			// Check if this is a spinner update of the last progress line
+			// (same text, different spinner frame). If so, replace rather than append.
+			existing := s.entries[index].Text
+			lastNL := strings.LastIndex(existing, "\n")
+			var lastLine string
+			if lastNL >= 0 {
+				lastLine = strings.TrimSpace(existing[lastNL+1:])
+			} else {
+				lastLine = strings.TrimSpace(existing)
 			}
+			strippedNew := normalizeProgressLine(progress)
+			strippedOld := normalizeProgressLine(lastLine)
+			if strippedNew != "" && strippedNew == strippedOld {
+				// Replace the last line in-place
+				s.invalidateTranscriptCacheLocked()
+				if lastNL >= 0 {
+					s.entries[index].Text = existing[:lastNL+1] + progress
+				} else {
+					s.entries[index].Text = progress
+				}
+			} else {
+				s.appendDeltaToItemLocked(msg.ItemID, TranscriptTool, "\n"+progress)
+			}
+		} else {
 			s.appendDeltaToItemLocked(msg.ItemID, TranscriptTool, progress)
 		}
 		s.mu.Unlock()
@@ -3527,6 +3549,46 @@ func compactionStillRunning(item map[string]json.RawMessage, turnStatus string) 
 	default:
 		return false
 	}
+}
+
+// normalizeProgressLine produces a skeleton of a progress message so that
+// two lines differing only in spinner frame, percentage, counter, or other
+// numeric value compare as equal.  This lets the progress handler replace
+// transient status updates in-place instead of appending every tick.
+//
+// Examples:
+//
+//	"⠴ Running xcodebuild"  →  "Running xcodebuild"
+//	"⠦ Running xcodebuild"  →  "Running xcodebuild"
+//	"Compiling: 50%"         →  "Compiling: #%"
+//	"Compiling: 75%"         →  "Compiling: #%"
+//	"Processing 3/10 files"  →  "Processing #/# files"
+func normalizeProgressLine(s string) string {
+	// Strip leading braille spinner characters (U+2800–U+28FF).
+	for len(s) > 0 {
+		r, size := utf8.DecodeRuneInString(s)
+		if r >= 0x2800 && r <= 0x28FF {
+			s = s[size:]
+			continue
+		}
+		break
+	}
+	s = strings.TrimSpace(s)
+	// Collapse digit runs into a single '#' placeholder.
+	var b strings.Builder
+	inDigits := false
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			if !inDigits {
+				b.WriteByte('#')
+				inDigits = true
+			}
+			continue
+		}
+		inDigits = false
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func compactionTranscriptText(text string) bool {
