@@ -375,7 +375,7 @@ func TestRecordEmbeddedSessionActivityClearsStaleStuckState(t *testing.T) {
 	}
 	defer st.Close()
 
-	now := time.Date(2026, 4, 10, 10, 57, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Minute)
 	staleAt := now.Add(-time.Hour)
 	projectPath := filepath.Join(t.TempDir(), "demo")
 	if err := os.MkdirAll(projectPath, 0o755); err != nil {

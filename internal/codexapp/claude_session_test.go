@@ -3,6 +3,7 @@ package codexapp
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -11,6 +12,21 @@ import (
 
 	"lcroom/internal/codexcli"
 )
+
+type recordingWriteCloser struct {
+	writes []string
+	closed bool
+}
+
+func (r *recordingWriteCloser) Write(p []byte) (int, error) {
+	r.writes = append(r.writes, string(p))
+	return len(p), nil
+}
+
+func (r *recordingWriteCloser) Close() error {
+	r.closed = true
+	return nil
+}
 
 func TestClaudePermissionModeForPreset(t *testing.T) {
 	tests := []struct {
@@ -250,19 +266,146 @@ func TestClaudeTurnArgsIncludeVerboseForStreamJSON(t *testing.T) {
 func TestClaudeSnapshotIncludesBusySinceForInternalTurn(t *testing.T) {
 	startedAt := time.Date(2026, 3, 31, 9, 0, 0, 0, time.UTC)
 	session := &claudeCodeSession{
+		projectPath:        "/tmp/demo",
+		started:            true,
+		busy:               true,
+		busySince:          startedAt,
+		pendingSubmissions: 1,
+		status:             claudeThinkingStatus,
+		assistantBlocks:    make(map[string]map[string]struct{}),
+		toolCalls:          make(map[string]claudeToolCall),
+		toolResults:        make(map[string]struct{}),
+	}
+
+	snapshot := session.Snapshot()
+	if !snapshot.BusySince.Equal(startedAt) {
+		t.Fatalf("snapshot.BusySince = %v, want %v", snapshot.BusySince, startedAt)
+	}
+	if snapshot.Phase != SessionPhaseRunning {
+		t.Fatalf("snapshot.Phase = %q, want %q", snapshot.Phase, SessionPhaseRunning)
+	}
+}
+
+func TestClaudeSnapshotUsesFinishingPhaseWhenBatchIsDraining(t *testing.T) {
+	session := &claudeCodeSession{
 		projectPath:     "/tmp/demo",
 		started:         true,
 		busy:            true,
-		busySince:       startedAt,
-		status:          claudeThinkingStatus,
+		status:          claudeFinishingStatus,
 		assistantBlocks: make(map[string]map[string]struct{}),
 		toolCalls:       make(map[string]claudeToolCall),
 		toolResults:     make(map[string]struct{}),
 	}
 
 	snapshot := session.Snapshot()
-	if !snapshot.BusySince.Equal(startedAt) {
-		t.Fatalf("snapshot.BusySince = %v, want %v", snapshot.BusySince, startedAt)
+	if snapshot.Phase != SessionPhaseFinishing {
+		t.Fatalf("snapshot.Phase = %q, want %q", snapshot.Phase, SessionPhaseFinishing)
+	}
+}
+
+func TestClaudeSubmitInputSteersActiveStream(t *testing.T) {
+	stdin := &recordingWriteCloser{}
+	session := &claudeCodeSession{
+		projectPath:        "/tmp/demo",
+		busy:               true,
+		pendingSubmissions: 1,
+		cmd:                &exec.Cmd{},
+		stdin:              stdin,
+		status:             claudeThinkingStatus,
+		assistantBlocks:    make(map[string]map[string]struct{}),
+		toolCalls:          make(map[string]claudeToolCall),
+		toolResults:        make(map[string]struct{}),
+	}
+
+	if err := session.SubmitInput(Submission{Text: "keep going"}); err != nil {
+		t.Fatalf("SubmitInput() error = %v", err)
+	}
+
+	if session.pendingSubmissions != 2 {
+		t.Fatalf("pendingSubmissions = %d, want 2", session.pendingSubmissions)
+	}
+	if !session.interruptPending {
+		t.Fatalf("interruptPending = false, want true while steer is in flight")
+	}
+	if len(stdin.writes) != 2 {
+		t.Fatalf("stdin writes = %d, want 2", len(stdin.writes))
+	}
+	if !strings.Contains(stdin.writes[0], `"type":"control_request"`) || !strings.Contains(stdin.writes[0], `"subtype":"interrupt"`) {
+		t.Fatalf("first stdin payload = %q, want interrupt control request", stdin.writes[0])
+	}
+	if !strings.Contains(stdin.writes[1], `"type":"user"`) || !strings.Contains(stdin.writes[1], `"text":"keep going"`) {
+		t.Fatalf("second stdin payload = %q, want steered user message", stdin.writes[1])
+	}
+	if got := session.entries[len(session.entries)-1]; got.Kind != TranscriptUser || got.Text != "keep going" {
+		t.Fatalf("last entry = %#v, want steered user transcript entry", got)
+	}
+}
+
+func TestClaudeInterruptedResultKeepsRunningWhileSteeredFollowUpRemains(t *testing.T) {
+	stdin := &recordingWriteCloser{}
+	session := &claudeCodeSession{
+		projectPath:        "/tmp/demo",
+		busy:               true,
+		pendingSubmissions: 2,
+		interruptPending:   true,
+		stdin:              stdin,
+		status:             claudeThinkingStatus,
+		assistantBlocks:    make(map[string]map[string]struct{}),
+		toolCalls:          make(map[string]claudeToolCall),
+		toolResults:        make(map[string]struct{}),
+	}
+
+	session.handleClaudeStdoutLine(`{"type":"result","subtype":"error_during_execution","is_error":true,"terminal_reason":"aborted_streaming"}`)
+
+	if session.pendingSubmissions != 1 {
+		t.Fatalf("pendingSubmissions = %d, want 1", session.pendingSubmissions)
+	}
+	if session.interruptPending {
+		t.Fatalf("interruptPending = true, want false after interrupted result")
+	}
+	if stdin.closed {
+		t.Fatalf("stdin should remain open while steered follow-up remains")
+	}
+	if session.status != claudeThinkingStatus {
+		t.Fatalf("status = %q, want %q", session.status, claudeThinkingStatus)
+	}
+	if session.lastError != "" {
+		t.Fatalf("lastError = %q, want empty after interrupted result", session.lastError)
+	}
+	if snapshot := session.Snapshot(); snapshot.Phase != SessionPhaseRunning {
+		t.Fatalf("snapshot.Phase = %q, want %q", snapshot.Phase, SessionPhaseRunning)
+	}
+}
+
+func TestClaudeResultMovesSessionToFinishingWhenTurnDrains(t *testing.T) {
+	stdin := &recordingWriteCloser{}
+	session := &claudeCodeSession{
+		projectPath:        "/tmp/demo",
+		busy:               true,
+		pendingSubmissions: 1,
+		stdin:              stdin,
+		status:             claudeThinkingStatus,
+		assistantBlocks:    make(map[string]map[string]struct{}),
+		toolCalls:          make(map[string]claudeToolCall),
+		toolResults:        make(map[string]struct{}),
+	}
+
+	session.handleClaudeStdoutLine(`{"type":"result","subtype":"success","is_error":false,"result":"done"}`)
+
+	if session.pendingSubmissions != 0 {
+		t.Fatalf("pendingSubmissions = %d, want 0", session.pendingSubmissions)
+	}
+	if !stdin.closed {
+		t.Fatalf("stdin should close once the active Claude turn drains")
+	}
+	if session.stdin != nil {
+		t.Fatalf("stdin = %#v, want nil after closing the batch", session.stdin)
+	}
+	if session.status != claudeFinishingStatus {
+		t.Fatalf("status = %q, want %q", session.status, claudeFinishingStatus)
+	}
+	if snapshot := session.Snapshot(); snapshot.Phase != SessionPhaseFinishing {
+		t.Fatalf("snapshot.Phase = %q, want %q", snapshot.Phase, SessionPhaseFinishing)
 	}
 }
 

@@ -825,7 +825,7 @@ func (m Model) submitVisibleCodexCmd(draft codexDraft) tea.Cmd {
 		}
 		status := "Prompt sent to " + label
 		if steer {
-			status = "Follow-up sent to " + label
+			status = "Steer sent to " + label
 		}
 		return codexActionMsg{projectPath: projectPath, status: status}
 	})

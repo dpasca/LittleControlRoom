@@ -19,6 +19,7 @@ import (
 
 const (
 	claudeThinkingStatus           = "Claude Code is thinking..."
+	claudeFinishingStatus          = "Claude Code is finalizing the current turn..."
 	claudeReadyStatus              = "Claude Code session ready"
 	claudeFreshReadyStatus         = "Fresh embedded Claude Code session ready. Send a prompt to start it."
 	claudeSupportStatus            = "Embedded Claude Code session ready"
@@ -40,32 +41,34 @@ type claudeCodeSession struct {
 	preset      codexcli.Preset
 	notify      func()
 
-	mu               sync.Mutex
-	claudeHome       string
-	sessionFile      string
-	sessionID        string
-	started          bool
-	closed           bool
-	busy             bool
-	busyExternal     bool
-	busySince        time.Time
-	interruptPending bool
-	lastActivityAt   time.Time
-	model            string
-	reasoningEffort  string
-	pendingModel     string
-	pendingReasoning string
-	status           string
-	lastError        string
-	lastSystemNotice string
-	entries          []TranscriptEntry
-	lastFileSize     int64
-	runningPID       int
-	cmd              *exec.Cmd
-	cancel           context.CancelFunc
-	closedCh         chan struct{}
-	closedOnce       sync.Once
-	modeNoticeShown  bool
+	mu                 sync.Mutex
+	claudeHome         string
+	sessionFile        string
+	sessionID          string
+	started            bool
+	closed             bool
+	busy               bool
+	busyExternal       bool
+	busySince          time.Time
+	pendingSubmissions int
+	interruptPending   bool
+	lastActivityAt     time.Time
+	model              string
+	reasoningEffort    string
+	pendingModel       string
+	pendingReasoning   string
+	status             string
+	lastError          string
+	lastSystemNotice   string
+	entries            []TranscriptEntry
+	lastFileSize       int64
+	runningPID         int
+	cmd                *exec.Cmd
+	stdin              io.WriteCloser
+	cancel             context.CancelFunc
+	closedCh           chan struct{}
+	closedOnce         sync.Once
+	modeNoticeShown    bool
 
 	assistantBlocks    map[string]map[string]struct{}
 	toolCalls          map[string]claudeToolCall
@@ -188,7 +191,11 @@ func (s *claudeCodeSession) Snapshot() Snapshot {
 	case s.busyExternal:
 		phase = SessionPhaseExternal
 	case s.busy:
-		phase = SessionPhaseRunning
+		if s.pendingSubmissions > 0 {
+			phase = SessionPhaseRunning
+		} else {
+			phase = SessionPhaseFinishing
+		}
 	}
 
 	entries, transcript := s.exportedTranscriptLocked()
@@ -231,7 +238,11 @@ func (s *claudeCodeSession) TrySnapshot() (Snapshot, bool) {
 	case s.busyExternal:
 		phase = SessionPhaseExternal
 	case s.busy:
-		phase = SessionPhaseRunning
+		if s.pendingSubmissions > 0 {
+			phase = SessionPhaseRunning
+		} else {
+			phase = SessionPhaseFinishing
+		}
 	}
 
 	entries, transcript := s.exportedTranscriptLocked()
@@ -303,59 +314,124 @@ func (s *claudeCodeSession) SubmitInput(input Submission) error {
 	case s.busyExternal:
 		s.mu.Unlock()
 		return fmt.Errorf("this Claude Code session is already busy in another process; Little Control Room is read-only until it finishes")
-	case s.busy:
+	case s.busy && s.pendingSubmissions == 0:
 		s.mu.Unlock()
-		return fmt.Errorf("Claude Code is already handling a prompt")
+		return fmt.Errorf("Claude Code is finishing the current turn")
 	}
 
-	model := firstNonEmptyTrimmed(strings.TrimSpace(s.pendingModel), strings.TrimSpace(s.model))
-	reasoning := firstNonEmptyTrimmed(strings.TrimSpace(s.pendingReasoning), strings.TrimSpace(s.reasoningEffort))
-	sessionID := strings.TrimSpace(s.sessionID)
-	permissionMode, modeNotice := claudePermissionModeForPreset(s.preset)
+	var (
+		ctx         context.Context
+		cancel      context.CancelFunc
+		cmd         *exec.Cmd
+		stdin       io.WriteCloser
+		stdout      io.ReadCloser
+		stderr      io.ReadCloser
+		control     string
+		startStream bool
+	)
+	if s.cmd == nil {
+		model := firstNonEmptyTrimmed(strings.TrimSpace(s.pendingModel), strings.TrimSpace(s.model))
+		reasoning := firstNonEmptyTrimmed(strings.TrimSpace(s.pendingReasoning), strings.TrimSpace(s.reasoningEffort))
+		sessionID := strings.TrimSpace(s.sessionID)
+		permissionMode, modeNotice := claudePermissionModeForPreset(s.preset)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	cmd, stdin, stdout, stderr, err := startClaudeTurn(ctx, s.projectPath, sessionID, model, reasoning, permissionMode)
-	if err != nil {
-		cancel()
-		s.mu.Unlock()
-		return err
+		ctx, cancel = context.WithCancel(context.Background())
+		var err error
+		cmd, stdin, stdout, stderr, err = startClaudeTurn(ctx, s.projectPath, sessionID, model, reasoning, permissionMode)
+		if err != nil {
+			cancel()
+			s.mu.Unlock()
+			return err
+		}
+
+		s.cmd = cmd
+		s.stdin = stdin
+		s.cancel = cancel
+		s.runningPID = cmd.Process.Pid
+		s.started = s.started || sessionID != ""
+		s.lastSystemNotice = ""
+		if modeNotice != "" && !s.modeNoticeShown {
+			s.appendSystemNoticeLocked(modeNotice)
+			s.modeNoticeShown = true
+		}
+		startStream = true
+	} else {
+		stdin = s.stdin
+		if stdin == nil {
+			s.mu.Unlock()
+			return fmt.Errorf("Claude Code is finishing the current turn")
+		}
+		var err error
+		control, err = buildClaudeInterruptRequest()
+		if err != nil {
+			s.mu.Unlock()
+			return fmt.Errorf("encode Claude interrupt: %w", err)
+		}
 	}
 
+	if s.busySince.IsZero() {
+		s.busySince = time.Now()
+	}
 	s.busy = true
 	s.busyExternal = false
-	s.busySince = time.Now()
-	s.interruptPending = false
+	s.pendingSubmissions++
+	s.interruptPending = control != ""
 	s.status = claudeThinkingStatus
 	s.lastError = ""
-	s.lastSystemNotice = ""
-	s.cmd = cmd
-	s.cancel = cancel
-	s.runningPID = cmd.Process.Pid
-	s.started = s.started || sessionID != ""
 	s.appendEntryLocked(TranscriptEntry{Kind: TranscriptUser, Text: displayText})
 	s.touchLocked()
-	if modeNotice != "" && !s.modeNoticeShown {
-		s.appendSystemNoticeLocked(modeNotice)
-		s.modeNoticeShown = true
-	}
 	s.mu.Unlock()
+
+	if startStream {
+		go s.consumeClaudeTurn(ctx, cmd, stdout, stderr)
+	}
+
+	if control != "" {
+		if _, err := io.WriteString(stdin, control+"\n"); err != nil {
+			s.mu.Lock()
+			if s.pendingSubmissions > 0 {
+				s.pendingSubmissions--
+			}
+			s.interruptPending = false
+			s.updateStatusLocked()
+			s.mu.Unlock()
+			return fmt.Errorf("write Claude interrupt: %w", err)
+		}
+	}
 
 	payload, err := buildClaudeStreamInput(input.Text)
 	if err != nil {
-		_ = terminateAppServerCommand(cmd)
-		_ = stdin.Close()
-		s.finishClaudeTurn(fmt.Errorf("encode Claude input: %w", err), nil, nil)
+		if startStream {
+			_ = terminateAppServerCommand(cmd)
+			_ = stdin.Close()
+			s.finishClaudeTurn(fmt.Errorf("encode Claude input: %w", err), nil, nil)
+		} else {
+			s.mu.Lock()
+			if s.pendingSubmissions > 0 {
+				s.pendingSubmissions--
+			}
+			s.interruptPending = false
+			s.updateStatusLocked()
+			s.mu.Unlock()
+		}
 		return err
 	}
 	if _, err := io.WriteString(stdin, payload+"\n"); err != nil {
-		_ = terminateAppServerCommand(cmd)
-		_ = stdin.Close()
-		s.finishClaudeTurn(fmt.Errorf("write Claude input: %w", err), nil, nil)
+		if startStream {
+			_ = terminateAppServerCommand(cmd)
+			_ = stdin.Close()
+			s.finishClaudeTurn(fmt.Errorf("write Claude input: %w", err), nil, nil)
+		} else {
+			s.mu.Lock()
+			if s.pendingSubmissions > 0 {
+				s.pendingSubmissions--
+			}
+			s.interruptPending = false
+			s.updateStatusLocked()
+			s.mu.Unlock()
+		}
 		return err
 	}
-	_ = stdin.Close()
-
-	go s.consumeClaudeTurn(ctx, cmd, stdout, stderr)
 	s.notifyAsync()
 	return nil
 }
@@ -606,11 +682,14 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	pendingSubmissions := s.pendingSubmissions
 	s.busy = false
+	s.pendingSubmissions = 0
 	s.cmd = nil
+	s.stdin = nil
 	s.cancel = nil
 	s.runningPID = 0
-	interrupted := s.interruptPending
+	interrupted := s.interruptPending && pendingSubmissions <= 1
 	s.interruptPending = false
 
 	if s.sessionID != "" {
@@ -695,8 +774,8 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 		return
 	}
 
+	var stdinToClose io.WriteCloser
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	switch env.Type {
 	case "system":
@@ -730,17 +809,39 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 	case "user":
 		s.handleClaudeUserLocked(env.Message)
 	case "result":
+		interruptedResult := s.interruptPending
+		if interruptedResult {
+			s.interruptPending = false
+		}
 		if env.IsError {
 			message := strings.TrimSpace(env.Result)
 			if message == "" {
 				message = "Claude Code returned an error result"
 			}
-			s.appendSystemErrorLocked(message)
+			if !interruptedResult {
+				s.appendSystemErrorLocked(message)
+			}
 		}
+		if s.pendingSubmissions > 0 {
+			s.pendingSubmissions--
+		}
+		if interruptedResult && s.pendingSubmissions <= 0 {
+			s.lastError = ""
+			s.lastSystemNotice = claudeInterruptNotice
+		}
+		if s.pendingSubmissions == 0 && s.stdin != nil {
+			stdinToClose = s.stdin
+			s.stdin = nil
+		}
+		s.updateStatusLocked()
 	default:
 	}
 
 	s.touchLocked()
+	s.mu.Unlock()
+	if stdinToClose != nil {
+		_ = stdinToClose.Close()
+	}
 	s.notifyAsync()
 }
 
@@ -901,7 +1002,11 @@ func (s *claudeCodeSession) updateStatusLocked() {
 	case s.busyExternal:
 		s.status = "Claude Code session active in another terminal"
 	case s.busy:
-		s.status = claudeThinkingStatus
+		if s.pendingSubmissions > 0 {
+			s.status = claudeThinkingStatus
+		} else {
+			s.status = claudeFinishingStatus
+		}
 	case strings.TrimSpace(s.lastError) != "":
 		s.status = "Claude Code error"
 	case s.started:
@@ -1114,6 +1219,21 @@ func buildClaudeStreamInput(prompt string) (string, error) {
 					"text": strings.TrimSpace(prompt),
 				},
 			},
+		},
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func buildClaudeInterruptRequest() (string, error) {
+	payload := map[string]any{
+		"type":       "control_request",
+		"request_id": fmt.Sprintf("interrupt-%d", time.Now().UnixNano()),
+		"request": map[string]any{
+			"subtype": "interrupt",
 		},
 	}
 	data, err := json.Marshal(payload)
