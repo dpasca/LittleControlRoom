@@ -219,12 +219,16 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 	warnings := []string{}
 	if stageMode == GitStageStagedOnly {
 		untracked := repoStatus.UntrackedChanges()
+		reviewableUntracked, skippedUntracked := splitAutoReviewableUntracked(untracked)
+		if skippedWarning := formatSkippedUntrackedAutoReviewWarning(skippedUntracked); skippedWarning != "" {
+			warnings = append(warnings, skippedWarning)
+		}
 		switch {
-		case len(untracked) == 0:
+		case len(reviewableUntracked) == 0:
 		case s.untrackedFileRecommender == nil:
 			warnings = append(warnings, "AI untracked review unavailable; untracked files will stay out unless you stage them manually.")
 		default:
-			input, buildWarnings, buildErr := buildUntrackedInclusionInput(projectPath, intent, projectName, branchName, fullLatestSummary, staged, diffStat, patch, untracked)
+			input, buildWarnings, buildErr := buildUntrackedInclusionInput(projectPath, intent, projectName, branchName, fullLatestSummary, staged, diffStat, patch, reviewableUntracked)
 			warnings = append(warnings, buildWarnings...)
 			if buildErr != nil {
 				warnings = append(warnings, "AI untracked review unavailable: "+strings.TrimSpace(buildErr.Error()))
@@ -236,7 +240,7 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 					warnings = append(warnings, "AI untracked review unavailable: "+formatCommitAssistantError(suggestErr, s.effectiveCommitAssistantTimeout()))
 				} else {
 					var selectedDecisions []gitops.UntrackedFileDecision
-					selectedUntracked, selectedDecisions = selectRecommendedUntracked(untracked, suggestion.Files)
+					selectedUntracked, selectedDecisions = selectRecommendedUntracked(reviewableUntracked, suggestion.Files)
 					if len(selectedUntracked) > 0 {
 						includedChanges = append(append([]scanner.GitChange{}, staged...), selectedUntracked...)
 						excludedChanges = excludeChangesByPath(excludedChanges, gitChangePaths(selectedUntracked))

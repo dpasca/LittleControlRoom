@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -18,7 +19,19 @@ const (
 	maxUntrackedPreviewBytesPerFile = 900
 	maxUntrackedPreviewBytesTotal   = 5400
 	maxUntrackedDirectoryEntries    = 5
+	maxSkippedUntrackedWarningPaths = 3
 )
+
+var autoExcludedUntrackedDirectoryNames = map[string]struct{}{
+	"build":    {},
+	"coverage": {},
+	"dist":     {},
+	"out":      {},
+	"output":   {},
+	"target":   {},
+	"temp":     {},
+	"tmp":      {},
+}
 
 func buildUntrackedInclusionInput(projectPath string, _ GitActionIntent, projectName, branch, latestSummary string, staged []scanner.GitChange, diffStat, patch string, candidates []scanner.GitChange) (gitops.UntrackedFileRecommendationInput, []string, error) {
 	remainingBudget := maxUntrackedPreviewBytesTotal
@@ -51,6 +64,32 @@ func buildUntrackedInclusionInput(projectPath string, _ GitActionIntent, project
 		StagedPatch:          patch,
 		Candidates:           reviewCandidates,
 	}, warnings, nil
+}
+
+func splitAutoReviewableUntracked(candidates []scanner.GitChange) ([]scanner.GitChange, []scanner.GitChange) {
+	reviewable := make([]scanner.GitChange, 0, len(candidates))
+	skipped := make([]scanner.GitChange, 0)
+	for _, candidate := range candidates {
+		if shouldAutoExcludeUntrackedDirectory(candidate.Path) {
+			skipped = append(skipped, candidate)
+			continue
+		}
+		reviewable = append(reviewable, candidate)
+	}
+	return reviewable, skipped
+}
+
+func shouldAutoExcludeUntrackedDirectory(relPath string) bool {
+	trimmed := strings.TrimSpace(relPath)
+	if !strings.HasSuffix(trimmed, "/") {
+		return false
+	}
+	base := strings.ToLower(strings.TrimSpace(path.Base(strings.TrimSuffix(trimmed, "/"))))
+	if base == "" || base == "." {
+		return false
+	}
+	_, ok := autoExcludedUntrackedDirectoryNames[base]
+	return ok
 }
 
 func describeUntrackedCandidate(projectPath, relPath string, remainingBudget int) (gitops.UntrackedFileCandidate, int, bool) {
@@ -206,6 +245,24 @@ func formatSelectedUntrackedReview(decisions []gitops.UntrackedFileDecision) str
 		return "AI review: " + reason
 	}
 	return fmt.Sprintf("AI review: selected %d untracked files as part of the current commit.", len(decisions))
+}
+
+func formatSkippedUntrackedAutoReviewWarning(skipped []scanner.GitChange) string {
+	if len(skipped) == 0 {
+		return ""
+	}
+	paths := make([]string, 0, min(len(skipped), maxSkippedUntrackedWarningPaths))
+	for i := 0; i < len(skipped) && i < maxSkippedUntrackedWarningPaths; i++ {
+		paths = append(paths, skipped[i].Path)
+	}
+	if len(skipped) == 1 {
+		return fmt.Sprintf("Skipped automatic review for 1 untracked directory with a common generated/export name: %s. Stage it manually if it belongs in this commit.", paths[0])
+	}
+	pathText := strings.Join(paths, ", ")
+	if len(skipped) > len(paths) {
+		pathText += fmt.Sprintf(", and %d more", len(skipped)-len(paths))
+	}
+	return fmt.Sprintf("Skipped automatic review for %d untracked directories with common generated/export names: %s. Stage them manually if they belong in this commit.", len(skipped), pathText)
 }
 
 func readDirectorySample(path string) []string {
