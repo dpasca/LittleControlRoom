@@ -2,12 +2,16 @@ package gitops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+var defaultPushTimeout = 90 * time.Second
 
 func ReadDiffStat(ctx context.Context, path string, cached bool) (string, error) {
 	args := []string{"-C", path, "diff"}
@@ -174,11 +178,38 @@ func Commit(ctx context.Context, path, message string) (string, error) {
 }
 
 func Push(ctx context.Context, path string) error {
-	cmd := exec.CommandContext(ctx, "git", "-C", path, "push")
+	pushCtx, cancel, appliedTimeout := withDefaultTimeout(ctx, defaultPushTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(pushCtx, "git", "-C", path, "push")
 	if out, err := cmd.CombinedOutput(); err != nil {
+		if appliedTimeout > 0 && errors.Is(pushCtx.Err(), context.DeadlineExceeded) {
+			timeoutText := appliedTimeout.Round(time.Millisecond).String()
+			trimmed := strings.TrimSpace(string(out))
+			if trimmed != "" {
+				return fmt.Errorf("push %s timed out after %s: %w: %s", path, timeoutText, context.DeadlineExceeded, trimmed)
+			}
+			return fmt.Errorf("push %s timed out after %s: %w", path, timeoutText, context.DeadlineExceeded)
+		}
 		return fmt.Errorf("push %s: %w: %s", path, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func withDefaultTimeout(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc, time.Duration) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	if timeout <= 0 {
+		ctx, cancel := context.WithCancel(parent)
+		return ctx, cancel, 0
+	}
+	if _, ok := parent.Deadline(); ok {
+		ctx, cancel := context.WithCancel(parent)
+		return ctx, cancel, 0
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	return ctx, cancel, timeout
 }
 
 func readCachedDiffWithAddedPaths(ctx context.Context, path string, extraPaths []string, diffArgs ...string) ([]byte, error) {
