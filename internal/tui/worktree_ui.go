@@ -355,7 +355,14 @@ func projectWorktreeRootPath(project model.ProjectSummary) string {
 	return filepath.Clean(strings.TrimSpace(project.Path))
 }
 
+func projectUsesRepoUI(project model.ProjectSummary) bool {
+	return model.NormalizeProjectKind(project.Kind) != model.ProjectKindScratchTask
+}
+
 func projectIsOrphanedWorktree(project model.ProjectSummary) bool {
+	if !projectUsesRepoUI(project) {
+		return false
+	}
 	return project.WorktreeKind == model.WorktreeKindLinked && project.Forgotten && project.PresentOnDisk
 }
 
@@ -388,6 +395,9 @@ func buildOrphanedWorktreeMap(summaries map[string]model.ProjectSummary) map[str
 }
 
 func projectIsWorktreeRoot(project model.ProjectSummary) bool {
+	if !projectUsesRepoUI(project) {
+		return false
+	}
 	path := filepath.Clean(strings.TrimSpace(project.Path))
 	rootPath := projectWorktreeRootPath(project)
 	return path != "" && path == rootPath
@@ -447,6 +457,9 @@ func (m Model) worktreeFamily(rootPath string) []model.ProjectSummary {
 	}
 	out := make([]model.ProjectSummary, 0, 4)
 	for _, project := range m.allProjects {
+		if !projectUsesRepoUI(project) {
+			continue
+		}
 		if projectWorktreeRootPath(project) == rootPath {
 			out = append(out, project)
 		}
@@ -502,6 +515,8 @@ func (m *Model) rebuildProjectList(selectedPath string) {
 }
 
 func (m Model) buildProjectRows(projects []model.ProjectSummary, selectedPath string) ([]model.ProjectSummary, []projectListRow) {
+	projects = partitionProjectsByKind(projects)
+
 	type group struct {
 		rootPath string
 		members  []model.ProjectSummary
@@ -509,6 +524,15 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary, selectedPath st
 	order := []string{}
 	groups := map[string]*group{}
 	for _, project := range projects {
+		if !projectUsesRepoUI(project) {
+			key := filepath.Clean(strings.TrimSpace(project.Path))
+			if key == "" || key == "." {
+				key = project.Path
+			}
+			order = append(order, key)
+			groups[key] = &group{rootPath: key, members: []model.ProjectSummary{project}}
+			continue
+		}
 		rootPath := projectWorktreeRootPath(project)
 		if _, ok := groups[rootPath]; !ok {
 			order = append(order, rootPath)
@@ -522,6 +546,16 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary, selectedPath st
 	for _, rootPath := range order {
 		group := groups[rootPath]
 		if group == nil || len(group.members) == 0 {
+			continue
+		}
+		if !projectUsesRepoUI(group.members[0]) {
+			project := group.members[0]
+			rows = append(rows, project)
+			meta = append(meta, projectListRow{
+				Kind:        projectListRowStandalone,
+				ProjectPath: project.Path,
+				RootPath:    project.Path,
+			})
 			continue
 		}
 		rootIndex := -1
@@ -577,6 +611,24 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary, selectedPath st
 		}
 	}
 	return rows, meta
+}
+
+func partitionProjectsByKind(projects []model.ProjectSummary) []model.ProjectSummary {
+	if len(projects) == 0 {
+		return nil
+	}
+	out := make([]model.ProjectSummary, 0, len(projects))
+	for _, project := range projects {
+		if model.NormalizeProjectKind(project.Kind) == model.ProjectKindProject {
+			out = append(out, project)
+		}
+	}
+	for _, project := range projects {
+		if model.NormalizeProjectKind(project.Kind) == model.ProjectKindScratchTask {
+			out = append(out, project)
+		}
+	}
+	return out
 }
 
 func aggregateWorktreeRootRow(root model.ProjectSummary, family []model.ProjectSummary) model.ProjectSummary {
@@ -752,6 +804,9 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 }
 
 func (m Model) canMergeWorktreeBack(project model.ProjectSummary) bool {
+	if !projectUsesRepoUI(project) {
+		return false
+	}
 	if project.WorktreeKind != model.WorktreeKindLinked {
 		return false
 	}
@@ -797,6 +852,9 @@ func (m Model) commitInFlightForWorktree(project model.ProjectSummary, rootPath 
 }
 
 func (m Model) canRemoveWorktree(project model.ProjectSummary) bool {
+	if !projectUsesRepoUI(project) {
+		return false
+	}
 	if project.WorktreeKind != model.WorktreeKindLinked {
 		return false
 	}
@@ -807,6 +865,9 @@ func (m Model) canRemoveWorktree(project model.ProjectSummary) bool {
 }
 
 func (m Model) worktreeActionHints(project model.ProjectSummary, family []model.ProjectSummary) []string {
+	if !projectUsesRepoUI(project) {
+		return nil
+	}
 	hints := make([]string, 0, 4)
 	if len(family) > 1 || project.WorktreeKind == model.WorktreeKindLinked {
 		hints = append(hints, "w or /wt lanes")

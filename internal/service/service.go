@@ -467,7 +467,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		}
 	}
 	for path, old := range oldMap {
-		inScopeNow := scope.Allows(path)
+		inScopeNow := scope.Allows(path) || old.ManuallyAdded
 		if old.InScope == inScopeNow {
 			continue
 		}
@@ -629,6 +629,11 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			}
 			old.SnoozedUntil = nil
 		}
+		projectKind := model.NormalizeProjectKind(old.Kind)
+		projectName := strings.TrimSpace(old.Name)
+		if projectName == "" {
+			projectName = filepath.Base(path)
+		}
 		presentOnDisk := projectPathExists(path)
 		isGitRepo := presentOnDisk && projectIsGitRepo(path)
 		worktreeRootPath := old.WorktreeRootPath
@@ -740,7 +745,8 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 
 		state := model.ProjectState{
 			Path:                 path,
-			Name:                 filepath.Base(path),
+			Name:                 projectName,
+			Kind:                 projectKind,
 			LastActivity:         lastActivity,
 			Status:               score.Status,
 			AttentionScore:       score.Score,
@@ -758,7 +764,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			RepoBehindCount:      repoBehindCount,
 			Forgotten:            forgotten,
 			ManuallyAdded:        old.ManuallyAdded,
-			InScope:              scope.Allows(path),
+			InScope:              scope.Allows(path) || old.ManuallyAdded,
 			Pinned:               old.Pinned,
 			SnoozedUntil:         old.SnoozedUntil,
 			MovedFromPath:        old.MovedFromPath,
@@ -1204,6 +1210,8 @@ func timesEqual(a, b time.Time) bool {
 
 func projectStateChanged(old model.ProjectSummary, state model.ProjectState) bool {
 	return old.Path == "" ||
+		old.Name != state.Name ||
+		model.NormalizeProjectKind(old.Kind) != model.NormalizeProjectKind(state.Kind) ||
 		old.Status != state.Status ||
 		old.AttentionScore != state.AttentionScore ||
 		old.PresentOnDisk != state.PresentOnDisk ||
@@ -1762,6 +1770,7 @@ func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.Pr
 	state := model.ProjectState{
 		Path:                 detail.Summary.Path,
 		Name:                 detail.Summary.Name,
+		Kind:                 model.NormalizeProjectKind(detail.Summary.Kind),
 		LastActivity:         detail.Summary.LastActivity,
 		Status:               score.Status,
 		AttentionScore:       score.Score,

@@ -96,6 +96,7 @@ type Model struct {
 	ignoredPickerSelected        int
 	ignoredPickerItems           []model.IgnoredProjectName
 	newProjectDialog             *newProjectDialogState
+	newTaskDialog                *newTaskDialogState
 	runCommandDialog             *runCommandDialogState
 	preferredSelectPath          string
 	diffView                     *diffViewState
@@ -1383,6 +1384,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.codexVisible() {
 			return m.updateCodexMode(msg)
 		}
+		if m.newTaskDialog != nil {
+			return m.updateNewTaskMode(msg)
+		}
 		if m.newProjectDialog != nil {
 			return m.updateNewProjectMode(msg)
 		}
@@ -1536,6 +1540,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = "Project already in the list"
 			}
 		}
+		return m, m.requestProjectInvalidationCmd(invalidateProjectStructure(""))
+	case newTaskResultMsg:
+		if m.newTaskDialog != nil {
+			m.newTaskDialog.Submitting = false
+		}
+		if msg.err != nil {
+			m.reportError("Scratch task setup failed", msg.err, "")
+			return m, nil
+		}
+		m.err = nil
+		m.newTaskDialog = nil
+		m.focusedPane = focusProjects
+		m.preferredSelectPath = msg.result.TaskPath
+		m.status = "Scratch task created and added to the list"
 		return m, m.requestProjectInvalidationCmd(invalidateProjectStructure(""))
 	case detailMsg:
 		reloadCmd := m.finishDetailReloadCmd(msg.path)
@@ -3139,6 +3157,8 @@ func (m Model) View() string {
 		body = m.renderGitStatusDialogOverlay(body, layout.width, layout.height)
 	} else if m.commitPreview != nil {
 		body = m.renderCommitPreviewOverlay(body, layout.width, layout.height)
+	} else if m.newTaskDialog != nil {
+		body = m.renderNewTaskOverlay(body, layout.width, layout.height)
 	} else if m.newProjectDialog != nil {
 		body = m.renderNewProjectOverlay(body, layout.width, layout.height)
 	} else if m.runCommandDialog != nil {
@@ -3572,6 +3592,7 @@ func (m Model) renderProjectList(width, height int) string {
 	}
 	rows = append(rows, header)
 	now := m.currentTime()
+	showKindSections := projectListHasKindSections(m.projects)
 
 	selected := m.selected
 	if selected < 0 {
@@ -3585,20 +3606,40 @@ func (m Model) renderProjectList(width, height int) string {
 	if start < 0 {
 		start = 0
 	}
-	maxOffset := max(0, len(m.projects)-visible)
+	maxOffset := max(0, len(m.projects)-1)
 	if start > maxOffset {
 		start = maxOffset
 	}
 	if selected < start {
 		start = selected
 	}
-	if selected >= start+visible {
-		start = selected - visible + 1
+	for start < selected && projectListVisibleLineCount(m.projects, start, selected+1, showKindSections) > visible {
+		start++
 	}
-
-	end := min(len(m.projects), start+visible)
+	end := start
+	for end < len(m.projects) {
+		if next := projectListVisibleLineCount(m.projects, start, end+1, showKindSections); next > visible && end > start {
+			break
+		}
+		end++
+		if projectListVisibleLineCount(m.projects, start, end, showKindSections) >= visible {
+			break
+		}
+	}
+	if end <= start {
+		end = min(len(m.projects), start+1)
+	}
+	for start > 0 {
+		if next := projectListVisibleLineCount(m.projects, start-1, end, showKindSections); next > visible {
+			break
+		}
+		start--
+	}
 	for i := start; i < end; i++ {
 		p := m.projects[i]
+		if showKindSections && projectListSectionStartsAt(m.projects, start, i) {
+			rows = append(rows, detailSectionStyle.Render(projectListSectionLabel(p)))
+		}
 		rootPath := projectWorktreeRootPath(p)
 		orphanedCount := m.orphanedWorktreeCount(rootPath)
 		rowMeta := projectListRow{
@@ -3643,6 +3684,9 @@ func (m Model) renderProjectList(width, height int) string {
 		case projectListRowWorktree:
 			name = "  ↳ " + projectWorktreeLabel(p)
 		default:
+			if model.NormalizeProjectKind(p.Kind) == model.ProjectKindScratchTask {
+				name = "[T] " + name
+			}
 			if projectIsWorktreeRoot(p) {
 				if badge := worktreeLinkedBadgeSummary(0, 0, 0, orphanedCount); badge != "" {
 					if assessmentText == "-" {
@@ -3691,6 +3735,56 @@ func (m Model) renderProjectList(width, height int) string {
 	return strings.Join(rows, "\n")
 }
 
+func projectListHasKindSections(projects []model.ProjectSummary) bool {
+	if len(projects) < 2 {
+		return false
+	}
+	first := model.NormalizeProjectKind(projects[0].Kind)
+	for _, project := range projects[1:] {
+		if model.NormalizeProjectKind(project.Kind) != first {
+			return true
+		}
+	}
+	return false
+}
+
+func projectListSectionLabel(project model.ProjectSummary) string {
+	if model.NormalizeProjectKind(project.Kind) == model.ProjectKindScratchTask {
+		return "Scratch Tasks"
+	}
+	return "Projects"
+}
+
+func projectListSectionStartsAt(projects []model.ProjectSummary, start, index int) bool {
+	if index < start || index < 0 || index >= len(projects) {
+		return false
+	}
+	if index == start {
+		return true
+	}
+	return model.NormalizeProjectKind(projects[index].Kind) != model.NormalizeProjectKind(projects[index-1].Kind)
+}
+
+func projectListVisibleLineCount(projects []model.ProjectSummary, start, end int, showSections bool) int {
+	if start < 0 {
+		start = 0
+	}
+	if end > len(projects) {
+		end = len(projects)
+	}
+	if start >= end {
+		return 0
+	}
+	count := 0
+	for i := start; i < end; i++ {
+		if showSections && projectListSectionStartsAt(projects, start, i) {
+			count++
+		}
+		count++
+	}
+	return count
+}
+
 func (m Model) renderDetailContent(width int) string {
 	done := m.beginUIPhase("renderDetailContent", m.currentLatencyProjectPath(), fmt.Sprintf("width=%d", width))
 	defer done()
@@ -3710,6 +3804,9 @@ func (m Model) renderDetailContent(width int) string {
 	attentionValue := detailAttentionValueStyle.Render(fmt.Sprintf("%d", m.projectAttentionScore(p)))
 
 	lines := []string{detailField("Path", detailValueStyle.Render(p.Path))}
+	if model.NormalizeProjectKind(p.Kind) == model.ProjectKindScratchTask {
+		lines = append(lines, detailField("Kind", detailValueStyle.Render("scratch task")))
+	}
 	lines = append(lines, detailField("Assessment", assessmentValue))
 	if shouldShowProjectActivity(p) {
 		lines = append(lines, detailField("Activity", statusValue))
@@ -3753,7 +3850,7 @@ func (m Model) renderDetailContent(width int) string {
 			lines = append(lines, detailField("Conflict", repoConflictDetailValue(p)))
 		}
 	}
-	if p.WorktreeKind == model.WorktreeKindLinked {
+	if projectUsesRepoUI(p) && p.WorktreeKind == model.WorktreeKindLinked {
 		mergeBackValue := detailMutedStyle.Render("parent branch unavailable")
 		targetBranch := strings.TrimSpace(p.WorktreeParentBranch)
 		sourceBranch := strings.TrimSpace(p.RepoBranch)
@@ -3772,7 +3869,7 @@ func (m Model) renderDetailContent(width int) string {
 	family := m.worktreeFamily(rootPath)
 	orphanedFamily := m.orphanedWorktreeFamily(rootPath)
 	orphanedCount := len(orphanedFamily)
-	if len(family) > 1 || p.WorktreeKind == model.WorktreeKindLinked || orphanedCount > 0 {
+	if projectUsesRepoUI(p) && (len(family) > 1 || p.WorktreeKind == model.WorktreeKindLinked || orphanedCount > 0) {
 		activeCount, dirtyCount := m.worktreeActivityCounts(family)
 		lines = append(lines, detailField("Worktrees", detailValueStyle.Render(worktreeGroupSummary(family, activeCount, dirtyCount, orphanedCount))))
 		if projectIsWorktreeRoot(p) {
@@ -4245,6 +4342,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, m.openProjectFilterDialog()
 	case commands.KindNewProject:
 		return m, m.openNewProjectDialog()
+	case commands.KindNewTask:
+		return m, m.openNewTaskDialog()
 	case commands.KindOpen:
 		p, ok := m.selectedProject()
 		if !ok {
@@ -5163,10 +5262,16 @@ func formatRelativeUnit(n int, unit string) string {
 }
 
 func projectHasGitInfo(project model.ProjectSummary) bool {
+	if !projectUsesRepoUI(project) {
+		return false
+	}
 	return project.RepoBranch != "" || project.RepoDirty || project.RepoConflict || project.WorktreeKind != model.WorktreeKindNone
 }
 
 func projectHasRepoWarning(project model.ProjectSummary) bool {
+	if !projectUsesRepoUI(project) {
+		return false
+	}
 	return project.RepoConflict || project.RepoDirty || (projectShowsRemoteSyncStatus(project) && repoSyncWarning(project.RepoSyncStatus))
 }
 
@@ -5693,6 +5798,9 @@ func repoSyncDetailValue(project model.ProjectSummary) string {
 }
 
 func projectShowsRemoteSyncStatus(project model.ProjectSummary) bool {
+	if !projectUsesRepoUI(project) {
+		return false
+	}
 	return project.WorktreeKind != model.WorktreeKindLinked
 }
 
@@ -6191,6 +6299,13 @@ func (m Model) renderFooter(width int) string {
 		label := "New project: Enter create/add, Space toggle git, Alt+1..3 recent, Esc cancel"
 		if m.newProjectDialog.Submitting {
 			label = "New project: applying..."
+		}
+		return m.renderModalFooter(width, label, filterSegment, usageSegment, assessmentSegment)
+	}
+	if m.newTaskDialog != nil {
+		label := "New task: Enter create, Esc cancel"
+		if m.newTaskDialog.Submitting {
+			label = "New task: applying..."
 		}
 		return m.renderModalFooter(width, label, filterSegment, usageSegment, assessmentSegment)
 	}

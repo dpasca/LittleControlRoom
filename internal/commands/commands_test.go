@@ -162,6 +162,15 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "new task",
+			raw:  "/new-task",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindNewTask {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindNewTask)
+				}
+			},
+		},
+		{
 			name: "open",
 			raw:  "/open",
 			check: func(t *testing.T, inv Invocation) {

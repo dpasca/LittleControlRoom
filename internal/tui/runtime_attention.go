@@ -116,6 +116,9 @@ func projectAttentionLabel(project model.ProjectSummary) string {
 // Conflict → pulsing violet "!", in-flight git op → cyan spinner, dirty worktree → red "!",
 // orphaned linked checkout → orange "~", sync-only → orange "!", neither → space.
 func (m Model) projectRepoWarningIndicator(project model.ProjectSummary, spinnerFrame int) string {
+	if !projectUsesRepoUI(project) {
+		return " "
+	}
 	if _, ok := m.pendingGitOperation(project.Path); ok {
 		frame := spinnerFrames[spinnerFrame%len(spinnerFrames)]
 		return detailValueStyle.Render(frame)

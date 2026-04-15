@@ -13,6 +13,13 @@ const (
 	StatusPossiblyStuck ProjectStatus = "possibly_stuck"
 )
 
+type ProjectKind string
+
+const (
+	ProjectKindProject     ProjectKind = "project"
+	ProjectKindScratchTask ProjectKind = "scratch_task"
+)
+
 type RepoSyncStatus string
 
 const (
@@ -178,6 +185,7 @@ type DetectorProjectActivity struct {
 type ProjectState struct {
 	Path                 string
 	Name                 string
+	Kind                 ProjectKind
 	LastActivity         time.Time
 	Status               ProjectStatus
 	AttentionScore       int
@@ -211,6 +219,7 @@ type ProjectState struct {
 type ProjectSummary struct {
 	Path                                          string
 	Name                                          string
+	Kind                                          ProjectKind
 	LastActivity                                  time.Time
 	Status                                        ProjectStatus
 	AttentionScore                                int
@@ -277,6 +286,15 @@ func NormalizeSessionSource(source SessionSource) SessionSource {
 		return source
 	default:
 		return SessionSourceUnknown
+	}
+}
+
+func NormalizeProjectKind(kind ProjectKind) ProjectKind {
+	switch kind {
+	case ProjectKindScratchTask:
+		return kind
+	default:
+		return ProjectKindProject
 	}
 }
 
