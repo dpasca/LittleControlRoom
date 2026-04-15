@@ -151,7 +151,7 @@ func GenerateScreenshots(ctx context.Context, svc *service.Service, cfg config.S
 		return ScreenshotReport{}, err
 	}
 	commitModel.commitPreview = screenshotCommitPreview(selectedProject)
-	commitModel.status = commitPreviewReadyStatus(commitModel.commitPreview.CanPush)
+	commitModel.status = commitPreviewReadyStatus(*commitModel.commitPreview)
 	assets = append(assets, screenshotAsset("commit-preview", "Commit Preview", commitModel.View(), cfg))
 
 	todoProject := screenshotProjectWithMostTodos(ctx, svc, data, filtered, selectedProject)

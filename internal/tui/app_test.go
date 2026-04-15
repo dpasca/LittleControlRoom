@@ -18411,6 +18411,30 @@ func TestCommitPreviewMsgLogsCommitMessageFallbackError(t *testing.T) {
 	if entry.RootCause != "EOF" {
 		t.Fatalf("error log root cause = %q", entry.RootCause)
 	}
+	if !strings.Contains(got.status, "AI fallback") || !strings.Contains(got.status, "/errors") {
+		t.Fatalf("status = %q, want AI fallback hint with /errors", got.status)
+	}
+}
+
+func TestRenderCommitPreviewContentShowsAIFallbackStatusInline(t *testing.T) {
+	m := Model{
+		commitPreview: &service.CommitPreview{
+			Intent:             service.GitActionCommit,
+			ProjectName:        "demo",
+			ProjectPath:        "/tmp/demo",
+			Branch:             "master",
+			StageMode:          service.GitStageStagedOnly,
+			Message:            "Update demo",
+			CommitMessageError: "commit assistant not configured for selected AI backend",
+		},
+		width:  100,
+		height: 24,
+	}
+
+	rendered := ansi.Strip(m.renderCommitPreviewContent(72, 8))
+	if !strings.Contains(rendered, "AI: Fallback subject used; /errors has details") {
+		t.Fatalf("renderCommitPreviewContent() should show inline AI fallback guidance: %q", rendered)
+	}
 }
 
 func mustTestPNG(fill color.RGBA) []byte {

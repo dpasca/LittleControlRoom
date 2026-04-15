@@ -1683,7 +1683,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.commitApplying = false
 		m.commitTodoCompletions = buildCommitTodoItems(msg.preview.SuggestedTodos)
 		m.commitTodoSelected = 0
-		m.status = commitPreviewReadyStatus(msg.preview.CanPush)
+		m.status = commitPreviewReadyStatus(msg.preview)
 		return m, nil
 	case diffPreviewMsg:
 		if m.diffView == nil {
@@ -6287,7 +6287,7 @@ func (m Model) renderFooter(width int) string {
 		return m.renderModalFooter(width, label, filterSegment, usageSegment, assessmentSegment)
 	}
 	if m.commitPreview != nil {
-		label := commitPreviewReadyStatus(m.commitPreview.CanPush)
+		label := commitPreviewReadyStatus(*m.commitPreview)
 		if m.commitApplying {
 			label = "Applying git action..."
 		} else if m.commitPreviewRefreshing {
@@ -6459,6 +6459,9 @@ func (m Model) renderCommitPreviewContent(width, maxHeight int) string {
 
 	if strings.TrimSpace(preview.LatestSummary) != "" {
 		lines = append(lines, commitPreviewLine("Context", preview.LatestSummary))
+	}
+	if aiStatus := commitPreviewAIStatusText(preview); aiStatus != "" {
+		lines = append(lines, commitPreviewLine("AI", aiStatus))
 	}
 
 	// --- Footer (always shown) ---
@@ -6663,11 +6666,23 @@ func stageModeLabel(mode service.GitStageMode, selectedUntracked int) string {
 	}
 }
 
-func commitPreviewReadyStatus(canPush bool) string {
-	if canPush {
-		return "Commit preview ready. Enter commit, Alt+Enter commit & push, d diff, Esc cancel"
+func commitPreviewReadyStatus(preview service.CommitPreview) string {
+	prefix := "Commit preview ready."
+	if commitPreviewAIStatusText(preview) != "" {
+		prefix = "Commit preview ready with AI fallback (use /errors)."
 	}
-	return "Commit preview ready. Enter commit, Alt+Enter unavailable, d diff, Esc cancel"
+	canPush := preview.CanPush
+	if canPush {
+		return prefix + " Enter commit, Alt+Enter commit & push, d diff, Esc cancel"
+	}
+	return prefix + " Enter commit, Alt+Enter unavailable, d diff, Esc cancel"
+}
+
+func commitPreviewAIStatusText(preview service.CommitPreview) string {
+	if strings.TrimSpace(preview.CommitMessageError) == "" {
+		return ""
+	}
+	return "Fallback subject used; /errors has details"
 }
 
 func gitStatusDialogFromNoChanges(err service.NoChangesToCommitError) gitStatusDialog {

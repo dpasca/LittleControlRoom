@@ -167,32 +167,61 @@ func detectOpenCode(ctx context.Context) Status {
 		Backend:   config.AIBackendOpenCode,
 		Label:     config.AIBackendOpenCode.Label(),
 		Detail:    "OpenCode CLI is not installed.",
-		LoginHint: "Install OpenCode, then run `opencode auth login --provider openai` and press r to refresh.",
+		LoginHint: "Install OpenCode, then run `opencode auth login --provider openai` or configure another provider and press r to refresh.",
 	}
 	if _, err := exec.LookPath("opencode"); err != nil {
 		return status
 	}
 	status.Installed = true
-	status.Detail = "OpenCode installed, but no OpenAI auth is configured."
-	status.LoginHint = "Run `opencode auth login --provider openai`, then press r to refresh."
-	out, err := runCommand(ctx, "opencode", "auth", "list")
+	status.Detail = "OpenCode installed, but no authenticated provider is configured."
+	status.LoginHint = "Run `opencode auth login --provider openai` or configure another provider, then press r to refresh."
+	out, err := runCommand(ctx, "opencode", "providers", "list")
 	trimmed := strings.TrimSpace(ansi.Strip(out))
 	if err != nil && trimmed == "" {
 		return status
 	}
-	switch {
-	case strings.Contains(trimmed, "OpenAI oauth"):
+	if ready, detail := openCodeProviderStatus(out); ready {
 		status.Authenticated = true
 		status.Ready = true
-		status.Detail = "OpenCode OpenAI OAuth is ready."
-	case strings.Contains(trimmed, "OpenAI OPENAI_API_KEY"):
-		status.Authenticated = true
-		status.Ready = true
-		status.Detail = "OpenCode can use OPENAI_API_KEY from the environment."
-	case trimmed != "":
+		status.Detail = detail
+		return status
+	}
+	if trimmed != "" {
 		status.Detail = trimmed
 	}
 	return status
+}
+
+func openCodeProviderStatus(raw string) (bool, string) {
+	providers, err := llm.ParseOpenCodeProvidersOutput(raw)
+	if err != nil || len(providers) == 0 {
+		return false, ""
+	}
+	seen := make(map[string]bool)
+	labels := make([]string, 0, len(providers))
+	for _, provider := range providers {
+		label := strings.TrimSpace(provider.Name)
+		switch strings.TrimSpace(provider.Type) {
+		case "oauth":
+			label = strings.TrimSpace(label + " OAuth")
+		case "api_key":
+			label = strings.TrimSpace(label + " API key")
+		case "api":
+			label = strings.TrimSpace(label + " API")
+		}
+		if label == "" || seen[label] {
+			continue
+		}
+		seen[label] = true
+		labels = append(labels, label)
+	}
+	if len(labels) == 0 {
+		return false, ""
+	}
+	if len(labels) == 1 {
+		return true, "OpenCode provider ready: " + labels[0] + "."
+	}
+	return true, "OpenCode providers ready: " + strings.Join(labels, ", ") + "."
 }
 
 func detectClaudeCode(ctx context.Context) Status {

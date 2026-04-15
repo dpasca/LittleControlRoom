@@ -109,3 +109,17 @@ func TestDetectOpenAICompatibleLocalConfiguredModelMustExist(t *testing.T) {
 		t.Fatalf("status.LoginHint should explain how to fix the missing configured model")
 	}
 }
+
+func TestOpenCodeProviderStatusRecognizesNonOpenAIProviders(t *testing.T) {
+	t.Parallel()
+
+	raw := "\x1b[0m\n┌  Credentials\n│\n●  MiniMax (minimax.io) \x1b[90mapi\n│\n●  OpenCode Zen \x1b[90mapi\n│\n└  2 credentials\n"
+
+	ready, detail := openCodeProviderStatus(raw)
+	if !ready {
+		t.Fatalf("openCodeProviderStatus() ready = false, want true")
+	}
+	if got, want := detail, "OpenCode providers ready: MiniMax API, OpenCode Zen API."; got != want {
+		t.Fatalf("openCodeProviderStatus() detail = %q, want %q", got, want)
+	}
+}

@@ -50,7 +50,7 @@ type UntrackedFileRecommender interface {
 
 func (c *OpenAICommitMessageClient) RecommendUntracked(ctx context.Context, input UntrackedFileRecommendationInput) (UntrackedFileRecommendationResult, error) {
 	if c == nil || c.responsesClient() == nil {
-		return UntrackedFileRecommendationResult{}, errors.New("openai commit message client not configured")
+		return UntrackedFileRecommendationResult{}, errors.New(errCommitAssistantNotConfigured)
 	}
 	if strings.TrimSpace(input.ProjectName) == "" && strings.TrimSpace(input.Branch) != "" {
 		input.ProjectName = filepath.Base(strings.TrimSpace(input.Branch))

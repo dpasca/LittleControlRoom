@@ -60,6 +60,8 @@ type OpenAICommitMessageClient struct {
 	responses  llm.JSONSchemaRunner
 }
 
+const errCommitAssistantNotConfigured = "commit assistant not configured for selected AI backend"
+
 func NewOpenAICommitMessageClient(apiKey string) *OpenAICommitMessageClient {
 	return NewOpenAICommitMessageClientWithUsageTracker(apiKey, nil)
 }
@@ -157,7 +159,7 @@ func (c *OpenAICommitMessageClient) ModelName() string {
 
 func (c *OpenAICommitMessageClient) Suggest(ctx context.Context, input CommitMessageInput) (CommitMessageSuggestion, error) {
 	if c == nil || c.responsesClient() == nil {
-		return CommitMessageSuggestion{}, errors.New("openai commit message client not configured")
+		return CommitMessageSuggestion{}, errors.New(errCommitAssistantNotConfigured)
 	}
 	if strings.TrimSpace(input.ProjectName) == "" && strings.TrimSpace(input.Branch) != "" {
 		input.ProjectName = filepath.Base(strings.TrimSpace(input.Branch))

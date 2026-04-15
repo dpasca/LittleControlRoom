@@ -294,6 +294,10 @@ func parseOpenCodeProvidersOutput(raw string) ([]OpenCodeProviderInfo, error) {
 	return providers, nil
 }
 
+func ParseOpenCodeProvidersOutput(raw string) ([]OpenCodeProviderInfo, error) {
+	return parseOpenCodeProvidersOutput(raw)
+}
+
 func stripANSI(s string) string {
 	var result strings.Builder
 	inEscape := false
