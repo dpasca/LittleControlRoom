@@ -39,6 +39,7 @@ type AppConfig struct {
 	RecentCodexModels         []string
 	RecentClaudeModels        []string
 	RecentOpenCodeModels      []string
+	ScratchRoot               string
 	CodexHome                 string
 	OpenCodeHome              string
 	ClaudeCodeHome            string
@@ -136,6 +137,7 @@ func Default() AppConfig {
 	dataDir := filepath.Join(home, brand.DataDirName)
 	return AppConfig{
 		IncludePaths:          []string{filepath.Join(home, "dev", "repos")},
+		ScratchRoot:           filepath.Join(home, "LittleControlRoom", "tasks"),
 		CodexHome:             filepath.Join(home, ".codex"),
 		OpenCodeHome:          filepath.Join(home, ".local", "share", "opencode"),
 		ClaudeCodeHome:        filepath.Join(home, ".claude"),

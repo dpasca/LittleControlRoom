@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -277,5 +278,88 @@ func TestCreateOrAttachProjectRestoresForgottenProjectAsPresentOnDisk(t *testing
 	}
 	if len(detail.Sessions) != 1 || detail.Sessions[0].SessionID != "codex:ses_restored" {
 		t.Fatalf("expected sessions to survive restore, got %#v", detail.Sessions)
+	}
+}
+
+func TestCreateScratchTaskCreatesMetadataAndPersistsKind(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := New(cfg, st, events.NewBus(), nil)
+
+	result, err := svc.CreateScratchTask(ctx, CreateScratchTaskRequest{
+		Title: "Answer Sarah about API docs",
+	})
+	if err != nil {
+		t.Fatalf("CreateScratchTask() error = %v", err)
+	}
+	if result.TaskName != "Answer Sarah about API docs" {
+		t.Fatalf("task name = %q, want title", result.TaskName)
+	}
+	metadataPath := filepath.Join(result.TaskPath, scratchTaskMetadataFileName)
+	content, err := os.ReadFile(metadataPath)
+	if err != nil {
+		t.Fatalf("read task metadata: %v", err)
+	}
+	if got := string(content); !strings.Contains(got, "# Answer Sarah about API docs") || !strings.Contains(got, "Kind: scratch_task") {
+		t.Fatalf("TASK.md = %q, want heading and scratch kind", got)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, result.TaskPath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() error = %v", err)
+	}
+	if detail.Summary.Kind != model.ProjectKindScratchTask {
+		t.Fatalf("kind = %q, want %q", detail.Summary.Kind, model.ProjectKindScratchTask)
+	}
+	if detail.Summary.Name != result.TaskName {
+		t.Fatalf("stored name = %q, want %q", detail.Summary.Name, result.TaskName)
+	}
+	if !detail.Summary.ManuallyAdded || !detail.Summary.InScope || !detail.Summary.PresentOnDisk {
+		t.Fatalf("unexpected scratch task summary: %#v", detail.Summary)
+	}
+}
+
+func TestScanOnceKeepsScratchTaskVisibleOutsideIncludePaths(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	includeRoot := t.TempDir()
+	cfg := config.Default()
+	cfg.IncludePaths = []string{includeRoot}
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := New(cfg, st, events.NewBus(), nil)
+
+	result, err := svc.CreateScratchTask(ctx, CreateScratchTaskRequest{Title: "Quick note"})
+	if err != nil {
+		t.Fatalf("CreateScratchTask() error = %v", err)
+	}
+	if _, err := svc.ScanOnce(ctx); err != nil {
+		t.Fatalf("ScanOnce() error = %v", err)
+	}
+
+	visible, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	if len(visible) != 1 {
+		t.Fatalf("visible projects = %d, want 1 scratch task", len(visible))
+	}
+	if visible[0].Path != result.TaskPath || visible[0].Kind != model.ProjectKindScratchTask {
+		t.Fatalf("visible scratch task = %#v, want path=%q kind=%q", visible[0], result.TaskPath, model.ProjectKindScratchTask)
 	}
 }

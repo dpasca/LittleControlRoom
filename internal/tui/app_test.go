@@ -4333,6 +4333,51 @@ func TestRenderProjectListShowsTODOCount(t *testing.T) {
 	}
 }
 
+func TestRenderProjectListGroupsScratchTasksAndKeepsRepoWarningOffTheirRows(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{
+			{
+				Name:          "alpha",
+				Path:          "/tmp/alpha",
+				Status:        model.StatusIdle,
+				PresentOnDisk: true,
+			},
+			{
+				Name:           "answer Sarah email",
+				Path:           "/tmp/tasks/2026-04-14-answer-sarah-email",
+				Kind:           model.ProjectKindScratchTask,
+				Status:         model.StatusIdle,
+				PresentOnDisk:  true,
+				AttentionScore: 20,
+				RepoDirty:      true,
+				ManuallyAdded:  true,
+			},
+		},
+		selected:   1,
+		sortMode:   sortByAttention,
+		visibility: visibilityAIFolders,
+	}
+
+	rendered := ansi.Strip(m.renderProjectList(120, 8))
+	if !strings.Contains(rendered, "Projects") || !strings.Contains(rendered, "Scratch Tasks") {
+		t.Fatalf("renderProjectList() should show both kind sections, got %q", rendered)
+	}
+	lines := strings.Split(rendered, "\n")
+	scratchLine := ""
+	for _, line := range lines {
+		if strings.Contains(line, "[T]") {
+			scratchLine = line
+			break
+		}
+	}
+	if scratchLine == "" {
+		t.Fatalf("renderProjectList() missing scratch task row, got %q", rendered)
+	}
+	if strings.Contains(scratchLine, "!") {
+		t.Fatalf("scratch task rows should not show repo warning markers, got %q", scratchLine)
+	}
+}
+
 func TestRenderProjectListCollapsesLinkedWorktreesUnderRepoRow(t *testing.T) {
 	rootPath := "/tmp/repo"
 	m := Model{

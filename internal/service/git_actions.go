@@ -819,6 +819,7 @@ func projectStateFromDetail(detail model.ProjectDetail) model.ProjectState {
 	return model.ProjectState{
 		Path:                 detail.Summary.Path,
 		Name:                 detail.Summary.Name,
+		Kind:                 model.NormalizeProjectKind(detail.Summary.Kind),
 		LastActivity:         detail.Summary.LastActivity,
 		Status:               detail.Summary.Status,
 		AttentionScore:       detail.Summary.AttentionScore,

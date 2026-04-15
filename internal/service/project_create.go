@@ -104,7 +104,7 @@ func (s *Service) CreateOrAttachProject(ctx context.Context, req CreateOrAttachP
 		result.Action = CreateOrAttachProjectCreated
 	}
 
-	if err := s.trackProjectPath(ctx, existing, projectPath); err != nil {
+	if err := s.trackProjectPath(ctx, existing, projectPath, projectName, model.ProjectKindProject); err != nil {
 		return CreateOrAttachProjectResult{}, err
 	}
 	if err := s.store.RememberRecentProjectParentPath(ctx, parentPath, recentProjectParentPathLimit); err != nil {
@@ -145,7 +145,7 @@ func (s *Service) CreateOrAttachProject(ctx context.Context, req CreateOrAttachP
 	return result, nil
 }
 
-func (s *Service) trackProjectPath(ctx context.Context, existing model.ProjectSummary, projectPath string) error {
+func (s *Service) trackProjectPath(ctx context.Context, existing model.ProjectSummary, projectPath, name string, kind model.ProjectKind) error {
 	if existing.Path != "" {
 		if existing.Forgotten {
 			if err := s.store.SetForgotten(ctx, projectPath, false); err != nil {
@@ -157,16 +157,18 @@ func (s *Service) trackProjectPath(ctx context.Context, existing model.ProjectSu
 		}
 		return nil
 	}
-	return s.upsertManualProjectState(ctx, existing, projectPath)
+	return s.upsertManualProjectState(ctx, existing, projectPath, name, kind)
 }
 
-func (s *Service) upsertManualProjectState(ctx context.Context, existing model.ProjectSummary, projectPath string) error {
+func (s *Service) upsertManualProjectState(ctx context.Context, existing model.ProjectSummary, projectPath, name string, kind model.ProjectKind) error {
 	now := time.Now()
+	createdAt := firstNonZeroTime(existing.CreatedAt, now)
 	presentOnDisk := projectPathExists(projectPath)
 	worktreeRootPath := ""
 	worktreeKind := model.WorktreeKindNone
 	worktreeParentBranch := strings.TrimSpace(existing.WorktreeParentBranch)
 	worktreeMergeStatus := existing.WorktreeMergeStatus
+	kind = model.NormalizeProjectKind(kind)
 	repoBranch := ""
 	repoDirty := false
 	repoConflict := false
@@ -189,7 +191,7 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 	score := attention.Score(attention.Input{
 		Path:            projectPath,
 		Now:             now,
-		CreatedAt:       now,
+		CreatedAt:       createdAt,
 		RepoDirty:       repoDirty,
 		Pinned:          existing.Pinned,
 		Unread:          attention.AssessmentUnread(existing),
@@ -200,9 +202,18 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 		OpenTodoCount:   existing.OpenTODOCount,
 	})
 
+	displayName := strings.TrimSpace(name)
+	if displayName == "" {
+		displayName = strings.TrimSpace(existing.Name)
+	}
+	if displayName == "" {
+		displayName = filepath.Base(projectPath)
+	}
+
 	state := model.ProjectState{
 		Path:                 projectPath,
-		Name:                 filepath.Base(projectPath),
+		Name:                 displayName,
+		Kind:                 kind,
 		Status:               score.Status,
 		AttentionScore:       score.Score,
 		PresentOnDisk:        presentOnDisk,
@@ -224,7 +235,7 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 		MovedFromPath:        existing.MovedFromPath,
 		MovedAt:              existing.MovedAt,
 		AttentionReason:      score.Reasons,
-		CreatedAt:            now,
+		CreatedAt:            createdAt,
 		UpdatedAt:            now,
 	}
 	if err := s.store.UpsertProjectState(ctx, state); err != nil {
@@ -234,6 +245,15 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 		s.publishProjectChanged(ctx, now, state)
 	}
 	return nil
+}
+
+func firstNonZeroTime(values ...time.Time) time.Time {
+	for _, value := range values {
+		if !value.IsZero() {
+			return value
+		}
+	}
+	return time.Time{}
 }
 
 func normalizeCreateOrAttachProjectRequest(req CreateOrAttachProjectRequest) (normalizedCreateOrAttachProjectRequest, error) {
