@@ -1097,10 +1097,22 @@ func mergeSessionEvidence(existing, candidate model.SessionEvidence) model.Sessi
 	if other.ErrorCount > merged.ErrorCount {
 		merged.ErrorCount = other.ErrorCount
 	}
-	if !merged.LatestTurnStateKnown && other.LatestTurnStateKnown {
-		merged.LatestTurnStateKnown = other.LatestTurnStateKnown
-		merged.LatestTurnCompleted = other.LatestTurnCompleted
-		merged.LatestTurnStartedAt = other.LatestTurnStartedAt
+	if other.LatestTurnStateKnown {
+		adoptTurnState := !merged.LatestTurnStateKnown
+		if !adoptTurnState && other.LastEventAt.After(merged.LastEventAt) {
+			adoptTurnState = true
+		}
+		// Let a settled turn override an unfinished one when both pieces of
+		// evidence describe the same last event. This keeps explicit session
+		// closures from resurfacing stale live timers until the next full scan.
+		if !adoptTurnState && timesEqual(other.LastEventAt, merged.LastEventAt) && other.LatestTurnCompleted && !merged.LatestTurnCompleted {
+			adoptTurnState = true
+		}
+		if adoptTurnState {
+			merged.LatestTurnStateKnown = other.LatestTurnStateKnown
+			merged.LatestTurnCompleted = other.LatestTurnCompleted
+			merged.LatestTurnStartedAt = other.LatestTurnStartedAt
+		}
 	}
 	if merged.LatestTurnStartedAt.IsZero() && !other.LatestTurnStartedAt.IsZero() {
 		merged.LatestTurnStartedAt = other.LatestTurnStartedAt
