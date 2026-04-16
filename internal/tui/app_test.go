@@ -3378,6 +3378,30 @@ func TestRenderTopStatusLineKeepsRecoveryProgressNeutral(t *testing.T) {
 	}
 }
 
+func TestRenderTopStatusLineKeepsClipboardConfirmationNeutral(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	m := Model{status: "Copied error details to clipboard"}
+
+	statusA := m.renderTopStatusLine(160)
+	m.spinnerFrame = 1
+	statusB := m.renderTopStatusLine(160)
+
+	if ansi.Strip(statusA) != ansi.Strip(statusB) {
+		t.Fatalf("clipboard confirmation should preserve banner text, got %q vs %q", ansi.Strip(statusA), ansi.Strip(statusB))
+	}
+	if statusA != statusB {
+		t.Fatalf("clipboard confirmation should not animate like a danger banner")
+	}
+}
+
 func TestRenderTopStatusLineShowsNavigationHintsInsteadOfAICounts(t *testing.T) {
 	m := Model{status: "Ready"}
 
@@ -3625,6 +3649,22 @@ func TestRenderFooterHidesAssessmentAlertWhileErrorLogIsOpen(t *testing.T) {
 	}
 	if strings.Contains(rendered, "assessment error") {
 		t.Fatalf("footer should hide assessment alert while error log is open, got %q", rendered)
+	}
+}
+
+func TestFooterSupplementSegmentsPrioritizeAssessmentBeforeUsage(t *testing.T) {
+	segments := footerSupplementSegments("filter", "1 assessment error", "OpenCode 139 calls")
+	if len(segments) != 3 {
+		t.Fatalf("segment count = %d, want 3", len(segments))
+	}
+	if got := ansi.Strip(segments[0]); got != "filter" {
+		t.Fatalf("segment 0 = %q, want filter", got)
+	}
+	if got := ansi.Strip(segments[1]); got != "1 assessment error" {
+		t.Fatalf("segment 1 = %q, want assessment alert", got)
+	}
+	if got := ansi.Strip(segments[2]); got != "OpenCode 139 calls" {
+		t.Fatalf("segment 2 = %q, want usage label", got)
 	}
 }
 
@@ -15785,6 +15825,9 @@ func TestBusClassificationFailureAddsErrorLogEntry(t *testing.T) {
 	if len(got.errorLogEntries) != 1 {
 		t.Fatalf("error log count = %d, want 1", len(got.errorLogEntries))
 	}
+	if got.status != "Assessment failed (use /errors)" {
+		t.Fatalf("status = %q, want assessment failure hint", got.status)
+	}
 	entry := got.errorLogEntries[0]
 	if entry.Status != "Assessment failed" {
 		t.Fatalf("error log status = %q, want %q", entry.Status, "Assessment failed")
@@ -15827,6 +15870,9 @@ func TestBusTodoSuggestionFailureAddsErrorLogEntry(t *testing.T) {
 	}
 	if len(got.errorLogEntries) != 1 {
 		t.Fatalf("error log count = %d, want 1", len(got.errorLogEntries))
+	}
+	if got.status != "TODO worktree suggestion failed (use /errors)" {
+		t.Fatalf("status = %q, want TODO suggestion failure hint", got.status)
 	}
 	entry := got.errorLogEntries[0]
 	if entry.Status != "TODO worktree suggestion failed" {
