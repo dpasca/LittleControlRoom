@@ -36,6 +36,10 @@ The TUI `/settings` modal writes these values:
 - `exclude_paths`
 - `exclude_project_patterns`
 - `codex_launch_preset`
+- `playwright_management_mode`
+- `playwright_default_browser_mode`
+- `playwright_login_mode`
+- `playwright_isolation_scope`
 - `interval`
 - `active-threshold`
 - `stuck-threshold`
@@ -52,6 +56,10 @@ include_paths = [
 exclude_paths = []
 exclude_project_patterns = []
 codex_launch_preset = "yolo"
+playwright_management_mode = "legacy"
+playwright_default_browser_mode = "headless"
+playwright_login_mode = "manual"
+playwright_isolation_scope = "task"
 ```
 
 Saved-from-TUI example:
@@ -69,6 +77,10 @@ exclude_project_patterns = [
   "archive-*",
 ]
 codex_launch_preset = "yolo"
+playwright_management_mode = "legacy"
+playwright_default_browser_mode = "headless"
+playwright_login_mode = "manual"
+playwright_isolation_scope = "task"
 
 interval = "60s"
 active-threshold = "20m"

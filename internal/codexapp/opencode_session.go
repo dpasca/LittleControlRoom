@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"lcroom/internal/browserctl"
 	"lcroom/internal/codexcli"
 )
 
@@ -747,7 +748,7 @@ func (s *openCodeSession) ReconcileBusyState() error {
 }
 
 func (s *openCodeSession) start(parent context.Context, req LaunchRequest) error {
-	baseURL, cmd, err := startOpenCodeServer(req.ProjectPath, req.Preset)
+	baseURL, cmd, err := startOpenCodeServer(req.ProjectPath, req.Preset, req.PlaywrightPolicy)
 	if err != nil {
 		return err
 	}
@@ -1703,8 +1704,17 @@ func buildOpenCodeServerCommand(projectPath string, preset codexcli.Preset) (*ex
 	return cmd, nil
 }
 
-func startOpenCodeServer(projectPath string, preset codexcli.Preset) (string, *exec.Cmd, error) {
+func buildOpenCodeServerCommandWithPolicy(projectPath string, preset codexcli.Preset, policy browserctl.Policy) (*exec.Cmd, error) {
 	cmd, err := buildOpenCodeServerCommand(projectPath, preset)
+	if err != nil {
+		return nil, err
+	}
+	cmd.Env = browserctl.AppendEnv(cmd.Env, string(ProviderOpenCode), policy)
+	return cmd, nil
+}
+
+func startOpenCodeServer(projectPath string, preset codexcli.Preset, policy browserctl.Policy) (string, *exec.Cmd, error) {
+	cmd, err := buildOpenCodeServerCommandWithPolicy(projectPath, preset, policy)
 	if err != nil {
 		return "", nil, err
 	}

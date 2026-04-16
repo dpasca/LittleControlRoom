@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"lcroom/internal/browserctl"
 	"lcroom/internal/codexcli"
 )
 
@@ -492,11 +493,15 @@ type LaunchRequest struct {
 	Preset           codexcli.Preset
 	PendingModel     string
 	PendingReasoning string
+	PlaywrightPolicy browserctl.Policy
 }
 
 func (r LaunchRequest) Validate() error {
 	if strings.TrimSpace(r.ProjectPath) == "" {
 		return fmt.Errorf("project path required")
+	}
+	if err := r.PlaywrightPolicy.Validate(); err != nil {
+		return err
 	}
 	preset := r.Preset
 	if preset == "" {

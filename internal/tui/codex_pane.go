@@ -854,10 +854,11 @@ func (m Model) restartVisibleCodexSessionCmd(prompt string) tea.Cmd {
 	}
 	projectPath := strings.TrimSpace(m.codexVisibleProject)
 	req := codexapp.LaunchRequest{
-		Provider:    codexapp.ProviderCodex,
-		ProjectPath: projectPath,
-		ForceNew:    true,
-		Prompt:      prompt,
+		Provider:         codexapp.ProviderCodex,
+		ProjectPath:      projectPath,
+		ForceNew:         true,
+		Prompt:           prompt,
+		PlaywrightPolicy: m.currentPlaywrightPolicy(),
 	}
 	if snapshot, ok := m.currentCodexSnapshot(); ok {
 		req.Provider = embeddedProvider(snapshot)
@@ -897,8 +898,9 @@ func (m Model) reconnectVisibleCodexSessionCmd() tea.Cmd {
 	}
 	projectPath := strings.TrimSpace(m.codexVisibleProject)
 	req := codexapp.LaunchRequest{
-		Provider:    codexapp.ProviderCodex,
-		ProjectPath: projectPath,
+		Provider:         codexapp.ProviderCodex,
+		ProjectPath:      projectPath,
+		PlaywrightPolicy: m.currentPlaywrightPolicy(),
 	}
 	if snapshot, ok := m.currentCodexSnapshot(); ok {
 		req.Provider = embeddedProvider(snapshot)

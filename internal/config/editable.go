@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/browserctl"
 	"lcroom/internal/codexcli"
 )
 
@@ -35,6 +36,7 @@ type EditableSettings struct {
 	RecentClaudeModels        []string
 	RecentOpenCodeModels      []string
 	CodexLaunchPreset         codexcli.Preset
+	PlaywrightPolicy          browserctl.Policy
 	ScanInterval              time.Duration
 	ActiveThreshold           time.Duration
 	StuckThreshold            time.Duration
@@ -67,6 +69,7 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		RecentClaudeModels:        append([]string(nil), cfg.RecentClaudeModels...),
 		RecentOpenCodeModels:      append([]string(nil), cfg.RecentOpenCodeModels...),
 		CodexLaunchPreset:         cfg.CodexLaunchPreset,
+		PlaywrightPolicy:          cfg.PlaywrightPolicy.Normalize(),
 		ScanInterval:              cfg.ScanInterval,
 		ActiveThreshold:           cfg.ActiveThreshold,
 		StuckThreshold:            cfg.StuckThreshold,
@@ -99,7 +102,7 @@ func (s *EditableSettings) SetOpenAICompatibleModel(backend AIBackend, model str
 	}
 }
 
-func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
+func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
 	parsedBackend, err := ParseAIBackend(string(aiBackend))
 	if err != nil {
 		return EditableSettings{}, err
@@ -125,6 +128,22 @@ func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, mlxBaseURLRaw, 
 	codexLaunchPreset, err := codexcli.ParsePreset(codexLaunchPresetRaw)
 	if err != nil {
 		return EditableSettings{}, fmt.Errorf("codex launch preset: %w", err)
+	}
+	playwrightManagementMode, err := browserctl.ParseManagementMode(playwrightManagementModeRaw)
+	if err != nil {
+		return EditableSettings{}, err
+	}
+	playwrightDefaultBrowser, err := browserctl.ParseBrowserMode(playwrightDefaultBrowserRaw)
+	if err != nil {
+		return EditableSettings{}, err
+	}
+	playwrightLoginMode, err := browserctl.ParseLoginMode(playwrightLoginModeRaw)
+	if err != nil {
+		return EditableSettings{}, err
+	}
+	playwrightIsolationScope, err := browserctl.ParseIsolationScope(playwrightIsolationScopeRaw)
+	if err != nil {
+		return EditableSettings{}, err
 	}
 
 	hideReasoningSections := strings.EqualFold(strings.TrimSpace(hideReasoningSectionsRaw), "true")
@@ -159,12 +178,18 @@ func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, mlxBaseURLRaw, 
 		ExcludeProjectPatterns: excludeProjectPatterns,
 		PrivacyPatterns:        privacyPatterns,
 		CodexLaunchPreset:      codexLaunchPreset,
-		OpenCodeModelTier:      strings.TrimSpace(openCodeModelTierRaw),
-		HideReasoningSections:  hideReasoningSections,
-		PrivacyMode:            privacyMode,
-		ScanInterval:           interval,
-		ActiveThreshold:        active,
-		StuckThreshold:         stuck,
+		PlaywrightPolicy: browserctl.Policy{
+			ManagementMode:     playwrightManagementMode,
+			DefaultBrowserMode: playwrightDefaultBrowser,
+			LoginMode:          playwrightLoginMode,
+			IsolationScope:     playwrightIsolationScope,
+		},
+		OpenCodeModelTier:     strings.TrimSpace(openCodeModelTierRaw),
+		HideReasoningSections: hideReasoningSections,
+		PrivacyMode:           privacyMode,
+		ScanInterval:          interval,
+		ActiveThreshold:       active,
+		StuckThreshold:        stuck,
 	}
 	if err := validateEditableSettings(settings); err != nil {
 		return EditableSettings{}, err
@@ -234,6 +259,7 @@ func validateEditableSettings(settings EditableSettings) error {
 	cfg.RecentClaudeModels = append([]string(nil), settings.RecentClaudeModels...)
 	cfg.RecentOpenCodeModels = append([]string(nil), settings.RecentOpenCodeModels...)
 	cfg.CodexLaunchPreset = settings.CodexLaunchPreset
+	cfg.PlaywrightPolicy = settings.PlaywrightPolicy.Normalize()
 	cfg.ScanInterval = settings.ScanInterval
 	cfg.ActiveThreshold = settings.ActiveThreshold
 	cfg.StuckThreshold = settings.StuckThreshold
@@ -365,6 +391,12 @@ func renderEditableSettings(settings EditableSettings) string {
 		lines = append(lines, "")
 	}
 	lines = append(lines, fmt.Sprintf("codex_launch_preset = %s", strconv.Quote(string(settings.CodexLaunchPreset))))
+	lines = append(lines, "")
+	normalizedPolicy := settings.PlaywrightPolicy.Normalize()
+	lines = append(lines, fmt.Sprintf("playwright_management_mode = %s", strconv.Quote(string(normalizedPolicy.ManagementMode))))
+	lines = append(lines, fmt.Sprintf("playwright_default_browser_mode = %s", strconv.Quote(string(normalizedPolicy.DefaultBrowserMode))))
+	lines = append(lines, fmt.Sprintf("playwright_login_mode = %s", strconv.Quote(string(normalizedPolicy.LoginMode))))
+	lines = append(lines, fmt.Sprintf("playwright_isolation_scope = %s", strconv.Quote(string(normalizedPolicy.IsolationScope))))
 	lines = append(lines, "")
 	lines = append(lines, fmt.Sprintf("hide_reasoning_sections = %t", settings.HideReasoningSections))
 	lines = append(lines, "")

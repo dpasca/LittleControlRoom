@@ -14588,8 +14588,8 @@ func TestCommandEnterOpensSettingsMode(t *testing.T) {
 	if got.commandMode {
 		t.Fatalf("command mode should close after /settings")
 	}
-	if len(got.settingsFields) != 16 {
-		t.Fatalf("settings field count = %d, want 16", len(got.settingsFields))
+	if len(got.settingsFields) != 20 {
+		t.Fatalf("settings field count = %d, want 20", len(got.settingsFields))
 	}
 }
 
@@ -15548,7 +15548,7 @@ func TestSettingsEnterSavesConfigAndClosesModal(t *testing.T) {
 	if saved.settingsMode {
 		t.Fatalf("settings mode should close after a successful save")
 	}
-	if !strings.Contains(saved.status, "Filters, API keys, local endpoint/model overrides, and Codex launch mode are applying in the background now") {
+	if !strings.Contains(saved.status, "Filters, API keys, local endpoint/model overrides, Codex launch mode, and browser automation policy are applying in the background now") {
 		t.Fatalf("status = %q, want immediate-apply notice", saved.status)
 	}
 
@@ -15795,7 +15795,7 @@ func TestSettingsSavedMsgAppliesProjectNameFilterImmediately(t *testing.T) {
 	if len(got.projects) != 1 || got.projects[0].Name != "visible-demo" {
 		t.Fatalf("visible projects after settingsSavedMsg = %#v, want only visible-demo", got.projects)
 	}
-	if !strings.Contains(got.status, "Filters, API keys, local endpoint/model overrides, and Codex launch mode are applying in the background now") {
+	if !strings.Contains(got.status, "Filters, API keys, local endpoint/model overrides, Codex launch mode, and browser automation policy are applying in the background now") {
 		t.Fatalf("status = %q, want immediate-apply notice", got.status)
 	}
 }

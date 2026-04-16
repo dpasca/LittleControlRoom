@@ -146,6 +146,11 @@ func cloneAppConfig(cfg config.AppConfig) config.AppConfig {
 	cloned.IncludePaths = append([]string(nil), cfg.IncludePaths...)
 	cloned.ExcludePaths = append([]string(nil), cfg.ExcludePaths...)
 	cloned.ExcludeProjectPatterns = append([]string(nil), cfg.ExcludeProjectPatterns...)
+	cloned.PrivacyPatterns = append([]string(nil), cfg.PrivacyPatterns...)
+	cloned.RecentCodexModels = append([]string(nil), cfg.RecentCodexModels...)
+	cloned.RecentClaudeModels = append([]string(nil), cfg.RecentClaudeModels...)
+	cloned.RecentOpenCodeModels = append([]string(nil), cfg.RecentOpenCodeModels...)
+	cloned.PlaywrightPolicy = cfg.PlaywrightPolicy.Normalize()
 	return cloned
 }
 
@@ -197,6 +202,7 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	s.cfg.EmbeddedOpenCodeReasoning = strings.TrimSpace(settings.EmbeddedOpenCodeReasoning)
 	s.cfg.OpenCodeModelTier = strings.TrimSpace(settings.OpenCodeModelTier)
 	s.cfg.CodexLaunchPreset = settings.CodexLaunchPreset
+	s.cfg.PlaywrightPolicy = settings.PlaywrightPolicy.Normalize()
 	s.cfg.ScanInterval = settings.ScanInterval
 	s.cfg.ActiveThreshold = settings.ActiveThreshold
 	s.cfg.StuckThreshold = settings.StuckThreshold

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"lcroom/internal/brand"
+	"lcroom/internal/browserctl"
 	"lcroom/internal/codexcli"
 )
 
@@ -56,6 +57,10 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 		"exclude_paths = [\"/tmp/skip\"]\n" +
 		"exclude_project_patterns = [\"quickgame_*\", \"secret-demo\"]\n" +
 		"codex_launch_preset = \"safe\"\n" +
+		"playwright_management_mode = \"observe\"\n" +
+		"playwright_default_browser_mode = \"headed\"\n" +
+		"playwright_login_mode = \"promote\"\n" +
+		"playwright_isolation_scope = \"project\"\n" +
 		"interval = \"45s\"\n" +
 		"active-threshold = \"15m\"\n" +
 		"stuck-threshold = \"3h\"\n"
@@ -82,6 +87,18 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 	}
 	if got, want := cfg.CodexLaunchPreset, codexcli.PresetSafe; got != want {
 		t.Fatalf("codex launch preset = %s, want %s", got, want)
+	}
+	if got, want := cfg.PlaywrightPolicy.ManagementMode, browserctl.ManagementModeObserve; got != want {
+		t.Fatalf("playwright management mode = %s, want %s", got, want)
+	}
+	if got, want := cfg.PlaywrightPolicy.DefaultBrowserMode, browserctl.BrowserModeHeaded; got != want {
+		t.Fatalf("playwright default browser mode = %s, want %s", got, want)
+	}
+	if got, want := cfg.PlaywrightPolicy.LoginMode, browserctl.LoginModePromote; got != want {
+		t.Fatalf("playwright login mode = %s, want %s", got, want)
+	}
+	if got, want := cfg.PlaywrightPolicy.IsolationScope, browserctl.IsolationScopeProject; got != want {
+		t.Fatalf("playwright isolation scope = %s, want %s", got, want)
 	}
 	if got, want := cfg.ActiveThreshold, 15*time.Minute; got != want {
 		t.Fatalf("active-threshold = %s, want %s", got, want)
@@ -330,7 +347,7 @@ func TestParseRejectsInvalidSnapshotLimit(t *testing.T) {
 func TestParseEditableSettings(t *testing.T) {
 	useTempHome(t)
 
-	settings, err := ParseEditableSettings(AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "~/dev/repos,/tmp/other", "/tmp/skip", "quickgame_*,secret-demo", "medical,visa", "yolo", "true", "false", "free", "10m", "2h", "45s")
+	settings, err := ParseEditableSettings(AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "~/dev/repos,/tmp/other", "/tmp/skip", "quickgame_*,secret-demo", "medical,visa", "yolo", "observe", "headed", "promote", "project", "true", "false", "free", "10m", "2h", "45s")
 	if err != nil {
 		t.Fatalf("ParseEditableSettings() error = %v", err)
 	}
@@ -355,6 +372,18 @@ func TestParseEditableSettings(t *testing.T) {
 	if got, want := settings.CodexLaunchPreset, codexcli.PresetYolo; got != want {
 		t.Fatalf("codex launch preset = %s, want %s", got, want)
 	}
+	if got, want := settings.PlaywrightPolicy.ManagementMode, browserctl.ManagementModeObserve; got != want {
+		t.Fatalf("playwright management mode = %s, want %s", got, want)
+	}
+	if got, want := settings.PlaywrightPolicy.DefaultBrowserMode, browserctl.BrowserModeHeaded; got != want {
+		t.Fatalf("playwright default browser mode = %s, want %s", got, want)
+	}
+	if got, want := settings.PlaywrightPolicy.LoginMode, browserctl.LoginModePromote; got != want {
+		t.Fatalf("playwright login mode = %s, want %s", got, want)
+	}
+	if got, want := settings.PlaywrightPolicy.IsolationScope, browserctl.IsolationScopeProject; got != want {
+		t.Fatalf("playwright isolation scope = %s, want %s", got, want)
+	}
 	if got, want := settings.ActiveThreshold, 10*time.Minute; got != want {
 		t.Fatalf("active-threshold = %s, want %s", got, want)
 	}
@@ -369,7 +398,7 @@ func TestParseEditableSettings(t *testing.T) {
 func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 	useTempHome(t)
 
-	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "false", "false", "", "20m", "10m", "60s"); err == nil {
+	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "20m", "10m", "60s"); err == nil {
 		t.Fatalf("expected validation error")
 	}
 }
@@ -377,7 +406,7 @@ func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 func TestParseEditableSettingsRejectsInvalidCodexPreset(t *testing.T) {
 	useTempHome(t)
 
-	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "/tmp/a", "", "", "", "turbo", "false", "false", "", "20m", "2h", "60s"); err == nil {
+	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "/tmp/a", "", "", "", "turbo", "legacy", "headless", "manual", "task", "false", "false", "", "20m", "2h", "60s"); err == nil {
 		t.Fatalf("expected codex preset validation error")
 	}
 }
@@ -385,7 +414,7 @@ func TestParseEditableSettingsRejectsInvalidCodexPreset(t *testing.T) {
 func TestParseEditableSettingsAllowsMissingOpenAIAPIKeyForNonAPIBackends(t *testing.T) {
 	useTempHome(t)
 
-	settings, err := ParseEditableSettings(AIBackendCodex, "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "false", "false", "", "20m", "2h", "60s")
+	settings, err := ParseEditableSettings(AIBackendCodex, "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "20m", "2h", "60s")
 	if err != nil {
 		t.Fatalf("ParseEditableSettings() error = %v", err)
 	}
@@ -417,9 +446,15 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 		EmbeddedOpenCodeModel:     "openai/gpt-5.4",
 		EmbeddedOpenCodeReasoning: "medium",
 		CodexLaunchPreset:         codexcli.PresetFullAuto,
-		ScanInterval:              45 * time.Second,
-		ActiveThreshold:           15 * time.Minute,
-		StuckThreshold:            3 * time.Hour,
+		PlaywrightPolicy: browserctl.Policy{
+			ManagementMode:     browserctl.ManagementModeObserve,
+			DefaultBrowserMode: browserctl.BrowserModeHeaded,
+			LoginMode:          browserctl.LoginModePromote,
+			IsolationScope:     browserctl.IsolationScopeProject,
+		},
+		ScanInterval:    45 * time.Second,
+		ActiveThreshold: 15 * time.Minute,
+		StuckThreshold:  3 * time.Hour,
 	})
 	if err != nil {
 		t.Fatalf("SaveEditableSettings() error = %v", err)
@@ -456,6 +491,16 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 	}
 	if !strings.Contains(text, "exclude_project_patterns = [") {
 		t.Fatalf("saved config should include exclude_project_patterns array: %q", text)
+	}
+	for _, want := range []string{
+		"playwright_management_mode = \"observe\"",
+		"playwright_default_browser_mode = \"headed\"",
+		"playwright_login_mode = \"promote\"",
+		"playwright_isolation_scope = \"project\"",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("saved config should include %q: %q", want, text)
+		}
 	}
 	if !strings.Contains(text, "embedded_codex_model = \"gpt-5.4\"") {
 		t.Fatalf("saved config should include embedded codex model: %q", text)

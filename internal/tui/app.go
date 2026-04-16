@@ -15,6 +15,7 @@ import (
 	"lcroom/internal/aibackend"
 	"lcroom/internal/attention"
 	"lcroom/internal/brand"
+	"lcroom/internal/browserctl"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/commands"
@@ -1950,10 +1951,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			autoSubmit:     !msg.openModelFirst,
 		})
 		req := codexapp.LaunchRequest{
-			Provider:    provider,
-			ProjectPath: strings.TrimSpace(msg.projectPath),
-			ForceNew:    true,
-			Preset:      m.currentCodexLaunchPreset(),
+			Provider:         provider,
+			ProjectPath:      strings.TrimSpace(msg.projectPath),
+			ForceNew:         true,
+			Preset:           m.currentCodexLaunchPreset(),
+			PlaywrightPolicy: m.currentPlaywrightPolicy(),
 		}
 		if !msg.openModelFirst {
 			req.Prompt = msg.todoText
@@ -2046,7 +2048,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.embeddedModelPrefs = embeddedModelPreferencesFromSettings(msg.settings)
 		m.hideReasoningSections = msg.settings.HideReasoningSections
 		m.settingsMode = false
-		m.status = fmt.Sprintf("Settings saved to %s. Filters, API keys, local endpoint/model overrides, and Codex launch mode are applying in the background now; the running scheduler keeps its current timing until the next launch of %s.", msg.path, brand.CLIName)
+		m.status = fmt.Sprintf("Settings saved to %s. Filters, API keys, local endpoint/model overrides, Codex launch mode, and browser automation policy are applying in the background now; the running scheduler keeps its current timing until the next launch of %s.", msg.path, brand.CLIName)
 		m.rebuildProjectList(selectedPath)
 		cmds := []tea.Cmd{m.applyEditableSettingsCmd(msg.settings), m.refreshSetupSnapshotCmd(false)}
 		if len(m.projects) > 0 {
@@ -4701,12 +4703,13 @@ func (m Model) launchEmbeddedForSelection(provider codexapp.Provider, forceNew b
 	}
 
 	req := codexapp.LaunchRequest{
-		Provider:    provider,
-		ProjectPath: p.Path,
-		ResumeID:    m.selectedProjectSessionID(p, provider),
-		ForceNew:    forceNew,
-		Prompt:      prompt,
-		Preset:      m.currentCodexLaunchPreset(),
+		Provider:         provider,
+		ProjectPath:      p.Path,
+		ResumeID:         m.selectedProjectSessionID(p, provider),
+		ForceNew:         forceNew,
+		Prompt:           prompt,
+		Preset:           m.currentCodexLaunchPreset(),
+		PlaywrightPolicy: m.currentPlaywrightPolicy(),
 	}
 	if err := req.Validate(); err != nil {
 		m.status = err.Error()
@@ -4844,6 +4847,10 @@ func (m Model) currentCodexLaunchPreset() codexcli.Preset {
 		return codexcli.DefaultPreset()
 	}
 	return settings.CodexLaunchPreset
+}
+
+func (m Model) currentPlaywrightPolicy() browserctl.Policy {
+	return m.currentSettingsBaseline().PlaywrightPolicy.Normalize()
 }
 
 func isCodexSessionFormat(format string) bool {

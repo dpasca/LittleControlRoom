@@ -27,6 +27,10 @@ const (
 	settingsFieldExcludeProjectPatterns
 	settingsFieldPrivacyPatterns
 	settingsFieldCodexLaunchPreset
+	settingsFieldPlaywrightManagementMode
+	settingsFieldPlaywrightDefaultBrowserMode
+	settingsFieldPlaywrightLoginMode
+	settingsFieldPlaywrightIsolationScope
 	settingsFieldHideReasoningSections
 	settingsFieldActiveThreshold
 	settingsFieldStuckThreshold
@@ -107,6 +111,10 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.settingsFieldValue(settingsFieldExcludeProjectPatterns),
 			m.settingsFieldValue(settingsFieldPrivacyPatterns),
 			m.settingsFieldValue(settingsFieldCodexLaunchPreset),
+			m.settingsFieldValue(settingsFieldPlaywrightManagementMode),
+			m.settingsFieldValue(settingsFieldPlaywrightDefaultBrowserMode),
+			m.settingsFieldValue(settingsFieldPlaywrightLoginMode),
+			m.settingsFieldValue(settingsFieldPlaywrightIsolationScope),
 			invertBoolString(m.settingsFieldValue(settingsFieldHideReasoningSections)),
 			strconv.FormatBool(m.currentSettingsBaseline().PrivacyMode),
 			m.currentSettingsBaseline().OpenCodeModelTier,
@@ -515,6 +523,30 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			24,
 		),
 		newSettingsField(
+			"Playwright policy",
+			"Accepted values: legacy, observe, managed. Legacy preserves the original provider-owned behavior. Use managed only when you want LCR to start steering Playwright launch policy.",
+			string(settings.PlaywrightPolicy.Normalize().ManagementMode),
+			24,
+		),
+		newSettingsField(
+			"Playwright browser",
+			"Accepted values: headless, headed. This is the default browser mode LCR will advertise to embedded providers when Playwright policy is observe or managed.",
+			string(settings.PlaywrightPolicy.Normalize().DefaultBrowserMode),
+			24,
+		),
+		newSettingsField(
+			"Playwright login",
+			"Accepted values: manual, promote. Manual keeps login handling outside LCR. Promote is the planned future path for relaunching a blocked headless session into a headed login flow.",
+			string(settings.PlaywrightPolicy.Normalize().LoginMode),
+			24,
+		),
+		newSettingsField(
+			"Playwright isolation",
+			"Accepted values: task, project. Task isolation is the safer default because it limits profile sharing when multiple worktrees or agent tasks run in parallel.",
+			string(settings.PlaywrightPolicy.Normalize().IsolationScope),
+			24,
+		),
+		newSettingsField(
 			"Show reasoning",
 			"Accepted values: true, false. When true, shows model reasoning/thinking sections in the embedded transcript. Default: false.",
 			strconv.FormatBool(!settings.HideReasoningSections),
@@ -588,6 +620,7 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.ExcludePaths = append([]string(nil), settings.ExcludePaths...)
 	settings.ExcludeProjectPatterns = append([]string(nil), settings.ExcludeProjectPatterns...)
 	settings.PrivacyPatterns = append([]string(nil), settings.PrivacyPatterns...)
+	settings.PlaywrightPolicy = settings.PlaywrightPolicy.Normalize()
 	settings.RecentCodexModels = append([]string(nil), settings.RecentCodexModels...)
 	settings.RecentClaudeModels = append([]string(nil), settings.RecentClaudeModels...)
 	settings.RecentOpenCodeModels = append([]string(nil), settings.RecentOpenCodeModels...)
@@ -640,6 +673,10 @@ func (m Model) settingsFieldHint(index int) string {
 			hint += " (hidden - press Ctrl+R to reveal)"
 		}
 		return hint
+	case settingsFieldPlaywrightManagementMode:
+		return field.hint + " Current summary: " + m.currentSettingsBaseline().PlaywrightPolicy.Summary()
+	case settingsFieldPlaywrightDefaultBrowserMode, settingsFieldPlaywrightLoginMode, settingsFieldPlaywrightIsolationScope:
+		return field.hint + " Codex is the best current fit for future in-band promotion; OpenCode and Claude still need more embedded tool-input support."
 	default:
 		return field.hint
 	}

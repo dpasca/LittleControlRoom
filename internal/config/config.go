@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"lcroom/internal/brand"
+	"lcroom/internal/browserctl"
 	"lcroom/internal/codexcli"
 
 	toml "github.com/pelletier/go-toml/v2"
@@ -44,6 +45,7 @@ type AppConfig struct {
 	OpenCodeHome              string
 	ClaudeCodeHome            string
 	CodexLaunchPreset         codexcli.Preset
+	PlaywrightPolicy          browserctl.Policy
 	DataDir                   string
 	DBPath                    string
 	ConfigPath                string
@@ -125,6 +127,10 @@ type fileConfig struct {
 	RecentClaudeModels        *[]string `toml:"recent_claude_models"`
 	RecentOpenCodeModels      *[]string `toml:"recent_opencode_models"`
 	CodexLaunchPreset         string    `toml:"codex_launch_preset"`
+	PlaywrightManagementMode  *string   `toml:"playwright_management_mode"`
+	PlaywrightDefaultBrowser  *string   `toml:"playwright_default_browser_mode"`
+	PlaywrightLoginMode       *string   `toml:"playwright_login_mode"`
+	PlaywrightIsolationScope  *string   `toml:"playwright_isolation_scope"`
 	ScanInterval              string    `toml:"interval"`
 	ActiveThreshold           string    `toml:"active-threshold"`
 	StuckThreshold            string    `toml:"stuck-threshold"`
@@ -142,6 +148,7 @@ func Default() AppConfig {
 		OpenCodeHome:          filepath.Join(home, ".local", "share", "opencode"),
 		ClaudeCodeHome:        filepath.Join(home, ".claude"),
 		CodexLaunchPreset:     codexcli.DefaultPreset(),
+		PlaywrightPolicy:      browserctl.DefaultPolicy(),
 		DataDir:               dataDir,
 		DBPath:                filepath.Join(dataDir, brand.DBFileName),
 		ConfigPath:            filepath.Join(dataDir, brand.ConfigFileName),
@@ -449,6 +456,34 @@ func applyConfigFile(cfg *AppConfig) error {
 		}
 		cfg.CodexLaunchPreset = preset
 	}
+	if fc.PlaywrightManagementMode != nil {
+		value, err := browserctl.ParseManagementMode(*fc.PlaywrightManagementMode)
+		if err != nil {
+			return fmt.Errorf("config playwright_management_mode: %w", err)
+		}
+		cfg.PlaywrightPolicy.ManagementMode = value
+	}
+	if fc.PlaywrightDefaultBrowser != nil {
+		value, err := browserctl.ParseBrowserMode(*fc.PlaywrightDefaultBrowser)
+		if err != nil {
+			return fmt.Errorf("config playwright_default_browser_mode: %w", err)
+		}
+		cfg.PlaywrightPolicy.DefaultBrowserMode = value
+	}
+	if fc.PlaywrightLoginMode != nil {
+		value, err := browserctl.ParseLoginMode(*fc.PlaywrightLoginMode)
+		if err != nil {
+			return fmt.Errorf("config playwright_login_mode: %w", err)
+		}
+		cfg.PlaywrightPolicy.LoginMode = value
+	}
+	if fc.PlaywrightIsolationScope != nil {
+		value, err := browserctl.ParseIsolationScope(*fc.PlaywrightIsolationScope)
+		if err != nil {
+			return fmt.Errorf("config playwright_isolation_scope: %w", err)
+		}
+		cfg.PlaywrightPolicy.IsolationScope = value
+	}
 	if strings.TrimSpace(fc.ScanInterval) != "" {
 		d, err := time.ParseDuration(strings.TrimSpace(fc.ScanInterval))
 		if err != nil {
@@ -491,6 +526,9 @@ func validate(cfg AppConfig) error {
 		return errors.New("snapshot limit must be > 0")
 	}
 	if _, err := codexcli.ParsePreset(string(cfg.CodexLaunchPreset)); err != nil {
+		return err
+	}
+	if err := cfg.PlaywrightPolicy.Validate(); err != nil {
 		return err
 	}
 	if _, err := ParseAIBackend(string(cfg.AIBackend)); err != nil {

@@ -1448,6 +1448,7 @@ func (s *appServerSession) start(req LaunchRequest) error {
 	cmd := exec.Command("codex", "app-server")
 	cmd.Dir = req.ProjectPath
 	configureAppServerCommand(cmd)
+	applyPlaywrightPolicyEnvironment(cmd, ProviderCodex, req.PlaywrightPolicy)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

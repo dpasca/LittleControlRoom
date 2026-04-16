@@ -16,6 +16,12 @@ exclude_paths = []
 exclude_project_patterns = []
 codex_launch_preset = "yolo"
 
+# Keep provider-owned Playwright behavior by default.
+playwright_management_mode = "legacy"
+playwright_default_browser_mode = "headless"
+playwright_login_mode = "manual"
+playwright_isolation_scope = "task"
+
 interval = "60s"
 active-threshold = "20m"
 stuck-threshold = "4h"

@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"lcroom/internal/browserctl"
 	"lcroom/internal/codexcli"
 )
 
@@ -37,9 +38,10 @@ const (
 )
 
 type claudeCodeSession struct {
-	projectPath string
-	preset      codexcli.Preset
-	notify      func()
+	projectPath      string
+	preset           codexcli.Preset
+	notify           func()
+	playwrightPolicy browserctl.Policy
 
 	mu                 sync.Mutex
 	claudeHome         string
@@ -135,6 +137,7 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 		projectPath:      req.ProjectPath,
 		preset:           preset,
 		notify:           notify,
+		playwrightPolicy: req.PlaywrightPolicy.Normalize(),
 		claudeHome:       claudeHome,
 		pendingModel:     strings.TrimSpace(req.PendingModel),
 		pendingReasoning: strings.TrimSpace(req.PendingReasoning),
@@ -337,7 +340,7 @@ func (s *claudeCodeSession) SubmitInput(input Submission) error {
 
 		ctx, cancel = context.WithCancel(context.Background())
 		var err error
-		cmd, stdin, stdout, stderr, err = startClaudeTurn(ctx, s.projectPath, sessionID, model, reasoning, permissionMode)
+		cmd, stdin, stdout, stderr, err = startClaudeTurn(ctx, s.projectPath, sessionID, model, reasoning, permissionMode, s.playwrightPolicy)
 		if err != nil {
 			cancel()
 			s.mu.Unlock()
@@ -1162,12 +1165,13 @@ func (s *claudeCodeSession) refreshActiveLocked() {
 	}
 }
 
-func startClaudeTurn(ctx context.Context, projectPath, resumeID, model, reasoning, permissionMode string) (*exec.Cmd, io.WriteCloser, io.ReadCloser, io.ReadCloser, error) {
+func startClaudeTurn(ctx context.Context, projectPath, resumeID, model, reasoning, permissionMode string, policy browserctl.Policy) (*exec.Cmd, io.WriteCloser, io.ReadCloser, io.ReadCloser, error) {
 	args := claudeTurnArgs(resumeID, model, reasoning, permissionMode)
 
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = projectPath
 	configureAppServerCommand(cmd)
+	applyPlaywrightPolicyEnvironment(cmd, ProviderClaudeCode, policy)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
