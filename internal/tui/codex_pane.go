@@ -1057,7 +1057,7 @@ func (m Model) hideCodexSession() (tea.Model, tea.Cmd) {
 	m.codexInput.Blur()
 	m.syncDetailViewport(false)
 	m.status = label + " hidden."
-	return m, m.focusProjectPath(projectPath)
+	return m, batchCmds(m.focusProjectPath(projectPath), m.markProjectSessionSeen(projectPath))
 }
 
 func (m Model) cycleCodexSession(direction int) (tea.Model, tea.Cmd) {

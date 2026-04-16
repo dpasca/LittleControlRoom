@@ -2114,6 +2114,7 @@ func TestUpdateNormalModeMShowsBlockedMergeWhenWorktreesDirty(t *testing.T) {
 func TestOpenWorktreeMergeConfirmAutoClosesCompletedSession(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"
+	seenAt := time.Date(2026, 4, 4, 10, 0, 0, 0, time.UTC)
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
 		requests = append(requests, req)
@@ -2137,6 +2138,7 @@ func TestOpenWorktreeMergeConfirmAutoClosesCompletedSession(t *testing.T) {
 	m := Model{
 		codexManager:        manager,
 		codexVisibleProject: childPath,
+		nowFn:               func() time.Time { return seenAt },
 		allProjects: []model.ProjectSummary{
 			{
 				Name:             "repo",
@@ -2147,13 +2149,19 @@ func TestOpenWorktreeMergeConfirmAutoClosesCompletedSession(t *testing.T) {
 				RepoBranch:       "master",
 			},
 			{
-				Name:                 "repo--feat-parallel-lane",
-				Path:                 childPath,
-				PresentOnDisk:        true,
-				WorktreeRootPath:     rootPath,
-				WorktreeKind:         model.WorktreeKindLinked,
-				WorktreeParentBranch: "master",
-				RepoBranch:           "feat/parallel-lane",
+				Name:                            "repo--feat-parallel-lane",
+				Path:                            childPath,
+				PresentOnDisk:                   true,
+				WorktreeRootPath:                rootPath,
+				WorktreeKind:                    model.WorktreeKindLinked,
+				WorktreeParentBranch:            "master",
+				RepoBranch:                      "feat/parallel-lane",
+				LatestSessionClassification:     model.ClassificationCompleted,
+				LatestSessionClassificationType: model.SessionCategoryCompleted,
+				LatestSessionFormat:             "modern",
+				LatestSessionLastEventAt:        seenAt.Add(-2 * time.Minute),
+				LatestTurnStateKnown:            true,
+				LatestTurnCompleted:             true,
 			},
 		},
 		visibility: visibilityAllFolders,
@@ -2163,7 +2171,7 @@ func TestOpenWorktreeMergeConfirmAutoClosesCompletedSession(t *testing.T) {
 
 	cmd := m.openWorktreeMergeConfirmForSelection()
 	if cmd != nil {
-		t.Fatalf("auto-closing a completed session should not need extra background work")
+		t.Fatalf("auto-closing a completed session should not require background work without a service")
 	}
 	if m.attentionDialog != nil {
 		t.Fatalf("auto-close path should not show the attention dialog")
@@ -2180,11 +2188,18 @@ func TestOpenWorktreeMergeConfirmAutoClosesCompletedSession(t *testing.T) {
 	if _, ok := manager.Session(childPath); ok {
 		t.Fatalf("completed session should be closed before opening merge confirm")
 	}
+	if !m.allProjects[1].LastSessionSeenAt.Equal(seenAt) {
+		t.Fatalf("allProjects seen_at = %v, want %v", m.allProjects[1].LastSessionSeenAt, seenAt)
+	}
+	if !m.projects[1].LastSessionSeenAt.Equal(seenAt) {
+		t.Fatalf("projects seen_at = %v, want %v", m.projects[1].LastSessionSeenAt, seenAt)
+	}
 }
 
 func TestOpenWorktreeMergeConfirmAutoClosesSettledIdleSession(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"
+	seenAt := time.Date(2026, 4, 4, 11, 0, 0, 0, time.UTC)
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
 		return &fakeCodexSession{
 			projectPath: req.ProjectPath,
@@ -2207,6 +2222,7 @@ func TestOpenWorktreeMergeConfirmAutoClosesSettledIdleSession(t *testing.T) {
 	m := Model{
 		codexManager:        manager,
 		codexVisibleProject: childPath,
+		nowFn:               func() time.Time { return seenAt },
 		allProjects: []model.ProjectSummary{
 			{
 				Name:             "repo",
@@ -2217,13 +2233,19 @@ func TestOpenWorktreeMergeConfirmAutoClosesSettledIdleSession(t *testing.T) {
 				RepoBranch:       "master",
 			},
 			{
-				Name:                 "repo--feat-parallel-lane",
-				Path:                 childPath,
-				PresentOnDisk:        true,
-				WorktreeRootPath:     rootPath,
-				WorktreeKind:         model.WorktreeKindLinked,
-				WorktreeParentBranch: "master",
-				RepoBranch:           "feat/parallel-lane",
+				Name:                            "repo--feat-parallel-lane",
+				Path:                            childPath,
+				PresentOnDisk:                   true,
+				WorktreeRootPath:                rootPath,
+				WorktreeKind:                    model.WorktreeKindLinked,
+				WorktreeParentBranch:            "master",
+				RepoBranch:                      "feat/parallel-lane",
+				LatestSessionClassification:     model.ClassificationCompleted,
+				LatestSessionClassificationType: model.SessionCategoryCompleted,
+				LatestSessionFormat:             "modern",
+				LatestSessionLastEventAt:        seenAt.Add(-2 * time.Minute),
+				LatestTurnStateKnown:            true,
+				LatestTurnCompleted:             true,
 			},
 		},
 		visibility: visibilityAllFolders,
@@ -2233,7 +2255,7 @@ func TestOpenWorktreeMergeConfirmAutoClosesSettledIdleSession(t *testing.T) {
 
 	cmd := m.openWorktreeMergeConfirmForSelection()
 	if cmd != nil {
-		t.Fatalf("auto-closing a settled idle session should not need extra background work")
+		t.Fatalf("auto-closing a settled idle session should not require background work without a service")
 	}
 	if m.attentionDialog != nil {
 		t.Fatalf("settled idle auto-close path should not show the attention dialog")
@@ -2249,6 +2271,12 @@ func TestOpenWorktreeMergeConfirmAutoClosesSettledIdleSession(t *testing.T) {
 	}
 	if _, ok := manager.Session(childPath); ok {
 		t.Fatalf("settled idle session should be closed before opening merge confirm")
+	}
+	if !m.allProjects[1].LastSessionSeenAt.Equal(seenAt) {
+		t.Fatalf("allProjects seen_at = %v, want %v", m.allProjects[1].LastSessionSeenAt, seenAt)
+	}
+	if !m.projects[1].LastSessionSeenAt.Equal(seenAt) {
+		t.Fatalf("projects seen_at = %v, want %v", m.projects[1].LastSessionSeenAt, seenAt)
 	}
 }
 
@@ -5954,12 +5982,19 @@ func TestSyncDetailViewportSkipsHiddenDashboardWhileCodexVisible(t *testing.T) {
 }
 
 func TestHideCodexSessionResyncsDashboardPanes(t *testing.T) {
+	seenAt := time.Date(2026, 4, 4, 12, 0, 0, 0, time.UTC)
 	m := Model{
 		projects: []model.ProjectSummary{{
-			Path:                          "/tmp/demo",
-			Name:                          "demo",
-			PresentOnDisk:                 true,
-			LatestCompletedSessionSummary: "fresh summary after hide",
+			Path:                            "/tmp/demo",
+			Name:                            "demo",
+			PresentOnDisk:                   true,
+			LatestCompletedSessionSummary:   "fresh summary after hide",
+			LatestSessionClassification:     model.ClassificationCompleted,
+			LatestSessionClassificationType: model.SessionCategoryCompleted,
+			LatestSessionFormat:             "modern",
+			LatestSessionLastEventAt:        seenAt.Add(-2 * time.Minute),
+			LatestTurnStateKnown:            true,
+			LatestTurnCompleted:             true,
 		}},
 		selected:            0,
 		codexVisibleProject: "/tmp/demo",
@@ -5973,7 +6008,15 @@ func TestHideCodexSessionResyncsDashboardPanes(t *testing.T) {
 		},
 		codexInput: newCodexTextarea(),
 		detail: model.ProjectDetail{
-			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Summary: model.ProjectSummary{
+				Path:                            "/tmp/demo",
+				LatestSessionClassification:     model.ClassificationCompleted,
+				LatestSessionClassificationType: model.SessionCategoryCompleted,
+				LatestSessionFormat:             "modern",
+				LatestSessionLastEventAt:        seenAt.Add(-2 * time.Minute),
+				LatestTurnStateKnown:            true,
+				LatestTurnCompleted:             true,
+			},
 		},
 		runtimeSnapshots: map[string]projectrun.Snapshot{
 			"/tmp/demo": {
@@ -5985,6 +6028,7 @@ func TestHideCodexSessionResyncsDashboardPanes(t *testing.T) {
 		runtimeViewport: viewport.New(20, 5),
 		width:           100,
 		height:          24,
+		nowFn:           func() time.Time { return seenAt },
 	}
 	m.detailViewport.SetContent("old detail cache")
 	m.runtimeViewport.SetContent("old runtime cache")
@@ -6000,6 +6044,12 @@ func TestHideCodexSessionResyncsDashboardPanes(t *testing.T) {
 	}
 	if got := ansi.Strip(got.runtimeViewport.View()); !strings.Contains(got, "runtime after hide") {
 		t.Fatalf("hiding Codex should resync the runtime viewport before returning to the dashboard, got %q", got)
+	}
+	if !got.projects[0].LastSessionSeenAt.Equal(seenAt) {
+		t.Fatalf("projects seen_at = %v, want %v", got.projects[0].LastSessionSeenAt, seenAt)
+	}
+	if !got.detail.Summary.LastSessionSeenAt.Equal(seenAt) {
+		t.Fatalf("detail seen_at = %v, want %v", got.detail.Summary.LastSessionSeenAt, seenAt)
 	}
 }
 

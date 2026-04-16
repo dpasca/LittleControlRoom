@@ -946,13 +946,13 @@ func worktreeMergeCanAutoCloseSnapshot(snapshot codexapp.Snapshot) bool {
 	return worktreeMergeSnapshotShowsCompletedTurn(snapshot) || worktreeMergeSnapshotShowsSettledIdle(snapshot)
 }
 
-func (m *Model) closeEmbeddedSessionForProject(projectPath string) error {
+func (m *Model) closeEmbeddedSessionForProject(projectPath string) (tea.Cmd, error) {
 	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
 	if projectPath == "" || m.codexManager == nil {
-		return nil
+		return nil, nil
 	}
 	if err := m.codexManager.CloseProject(projectPath); err != nil {
-		return err
+		return nil, err
 	}
 	delete(m.codexClosedHandled, projectPath)
 	if m.codexVisibleProject == projectPath {
@@ -962,7 +962,7 @@ func (m *Model) closeEmbeddedSessionForProject(projectPath string) error {
 	if m.codexHiddenProject == projectPath {
 		m.codexHiddenProject = ""
 	}
-	return nil
+	return m.markProjectSessionSeen(projectPath), nil
 }
 
 func (m Model) worktreeMergeReadiness(project model.ProjectSummary, rootPath string) worktreeMergeReadinessState {
@@ -1005,6 +1005,7 @@ func (m *Model) openWorktreeMergeConfirmForSelection() tea.Cmd {
 		m.status = "No project selected"
 		return nil
 	}
+	autoCloseCmd := tea.Cmd(nil)
 	if row.Kind != projectListRowWorktree || project.WorktreeKind != model.WorktreeKindLinked {
 		m.status = "Select a linked worktree to merge it back"
 		return nil
@@ -1027,10 +1028,12 @@ func (m *Model) openWorktreeMergeConfirmForSelection() tea.Cmd {
 	}
 	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
 		if worktreeMergeCanAutoCloseSnapshot(snapshot) {
-			if err := m.closeEmbeddedSessionForProject(project.Path); err != nil {
+			seenCmd, err := m.closeEmbeddedSessionForProject(project.Path)
+			if err != nil {
 				m.reportError("Embedded session action failed", err, project.Path)
 				return nil
 			}
+			autoCloseCmd = batchCmds(autoCloseCmd, seenCmd)
 		} else {
 			m.showSessionBlockedAttentionDialog(
 				project,
@@ -1061,7 +1064,7 @@ func (m *Model) openWorktreeMergeConfirmForSelection() tea.Cmd {
 	m.worktreeMergeConfirm.MarkTodoDone = m.worktreeMergeConfirm.HasLinkedTodo
 	m.worktreeMergeConfirm.Selected = worktreeMergeConfirmApplyIndex(m.worktreeMergeConfirm)
 	m.status = worktreeMergeConfirmStatus(m.worktreeMergeConfirm)
-	return nil
+	return autoCloseCmd
 }
 
 func (m Model) updateWorktreeMergeConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
