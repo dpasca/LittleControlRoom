@@ -3071,6 +3071,9 @@ func TestRemoveWorktreeRemovesTrackedLinkedWorktree(t *testing.T) {
 	if !detail.Summary.Forgotten {
 		t.Fatalf("removed worktree should be marked forgotten: %#v", detail.Summary)
 	}
+	if detail.Summary.PresentOnDisk {
+		t.Fatalf("removed worktree should be marked missing on disk immediately: %#v", detail.Summary)
+	}
 }
 
 func TestRemoveWorktreeRetriesWithForceForInitializedSubmodules(t *testing.T) {
@@ -3253,6 +3256,9 @@ func TestRemoveWorktreeWaitsForScanAndStaysForgotten(t *testing.T) {
 	}
 	if !detail.Summary.Forgotten {
 		t.Fatalf("removed worktree should stay forgotten after a concurrent scan: %#v", detail.Summary)
+	}
+	if detail.Summary.PresentOnDisk {
+		t.Fatalf("removed worktree should stay marked missing after a concurrent scan: %#v", detail.Summary)
 	}
 	if _, err := os.Stat(result.WorktreePath); !os.IsNotExist(err) {
 		t.Fatalf("worktree path still exists after concurrent removal: stat err = %v", err)

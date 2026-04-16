@@ -624,6 +624,11 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 	if err := s.store.SetForgotten(ctx, projectPath, true); err != nil {
 		return fmt.Errorf("forget removed worktree: %w", err)
 	}
+	// Reconcile the persisted presence immediately so merged-and-removed worktrees
+	// do not linger as orphaned checkouts until a later scan happens to revisit them.
+	if err := s.store.SetProjectPresence(ctx, projectPath, projectPathExists(projectPath)); err != nil {
+		return fmt.Errorf("record removed worktree presence: %w", err)
+	}
 
 	now := time.Now()
 	if s.bus != nil {
