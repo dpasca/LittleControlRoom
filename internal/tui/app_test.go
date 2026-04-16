@@ -8217,6 +8217,30 @@ func TestEmbeddedSessionActivityFromSnapshotUsesBusyActivity(t *testing.T) {
 	}
 }
 
+func TestEmbeddedSessionSettledActivityFromSnapshotMarksTurnCompleted(t *testing.T) {
+	now := time.Date(2026, 4, 10, 10, 57, 0, 0, time.UTC)
+	activity, ok := embeddedSessionSettledActivityFromSnapshot("/tmp/demo", codexapp.Snapshot{
+		Provider:       codexapp.ProviderCodex,
+		ProjectPath:    "/tmp/other",
+		ThreadID:       "thread-demo",
+		Started:        true,
+		BusySince:      now.Add(-5 * time.Minute),
+		LastActivityAt: now,
+	})
+	if !ok {
+		t.Fatal("expected settled snapshot to produce embedded activity")
+	}
+	if activity.ProjectPath != "/tmp/demo" {
+		t.Fatalf("project path = %q, want explicit path", activity.ProjectPath)
+	}
+	if !activity.LatestTurnStateKnown || !activity.LatestTurnCompleted {
+		t.Fatalf("turn state = known:%t completed:%t, want settled turn", activity.LatestTurnStateKnown, activity.LatestTurnCompleted)
+	}
+	if !activity.LastActivityAt.Equal(now) {
+		t.Fatalf("last activity = %v, want %v", activity.LastActivityAt, now)
+	}
+}
+
 func TestSyncCodexViewportRecordsSharedStageLatencies(t *testing.T) {
 	projectPath := "/tmp/demo"
 	snapshot := codexapp.Snapshot{

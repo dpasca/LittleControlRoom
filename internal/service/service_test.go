@@ -453,6 +453,74 @@ func TestRecordEmbeddedSessionActivityClearsStaleStuckState(t *testing.T) {
 	}
 }
 
+func TestRecordEmbeddedSessionActivityMarksTurnSettledAtSameLastEvent(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC().Truncate(time.Minute)
+	projectPath := filepath.Join(t.TempDir(), "demo")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+
+	session := model.NormalizeSessionEvidenceIdentity(model.SessionEvidence{
+		Source:               model.SessionSourceCodex,
+		SessionID:            "codex:thread-demo",
+		RawSessionID:         "thread-demo",
+		ProjectPath:          projectPath,
+		DetectedProjectPath:  projectPath,
+		Format:               "modern",
+		StartedAt:            now.Add(-10 * time.Minute),
+		LastEventAt:          now,
+		LatestTurnStartedAt:  now.Add(-5 * time.Minute),
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  false,
+	})
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "demo",
+		LastActivity:   now,
+		Status:         model.StatusActive,
+		AttentionScore: 20,
+		PresentOnDisk:  true,
+		InScope:        true,
+		Sessions:       []model.SessionEvidence{session},
+		CreatedAt:      now.Add(-2 * time.Hour),
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if err := svc.RecordEmbeddedSessionActivity(ctx, EmbeddedSessionActivity{
+		ProjectPath:          projectPath,
+		Source:               model.SessionSourceCodex,
+		SessionID:            "thread-demo",
+		Format:               "modern",
+		LastActivityAt:       now,
+		LatestTurnStartedAt:  now.Add(-5 * time.Minute),
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  true,
+	}); err != nil {
+		t.Fatalf("RecordEmbeddedSessionActivity() error = %v", err)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 20)
+	if err != nil {
+		t.Fatalf("get detail: %v", err)
+	}
+	if len(detail.Sessions) == 0 {
+		t.Fatalf("expected stored session")
+	}
+	if !detail.Sessions[0].LatestTurnStateKnown || !detail.Sessions[0].LatestTurnCompleted {
+		t.Fatalf("turn state = known:%t completed:%t, want settled turn", detail.Sessions[0].LatestTurnStateKnown, detail.Sessions[0].LatestTurnCompleted)
+	}
+}
+
 func readyBackendStatus(backend config.AIBackend) aibackend.Status {
 	return aibackend.Status{
 		Backend: backend,

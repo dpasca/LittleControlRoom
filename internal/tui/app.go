@@ -1164,6 +1164,21 @@ func (m Model) recordEmbeddedSessionActivityCmd(projectPath string, snapshot cod
 	if !ok {
 		return nil
 	}
+	return m.recordEmbeddedSessionStateCmd(activity)
+}
+
+func (m Model) recordEmbeddedSessionSettledCmd(projectPath string, snapshot codexapp.Snapshot) tea.Cmd {
+	if m.svc == nil {
+		return nil
+	}
+	activity, ok := embeddedSessionSettledActivityFromSnapshot(projectPath, snapshot)
+	if !ok {
+		return nil
+	}
+	return m.recordEmbeddedSessionStateCmd(activity)
+}
+
+func (m Model) recordEmbeddedSessionStateCmd(activity service.EmbeddedSessionActivity) tea.Cmd {
 	return func() tea.Msg {
 		err := m.svc.RecordEmbeddedSessionActivity(m.ctx, activity)
 		return projectStatusRefreshedMsg{projectPath: activity.ProjectPath, err: err}
@@ -2336,9 +2351,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = snapshot.Status
 			}
 			m.loading = true
-			cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectScan("", false)))
+			cmds = append(cmds,
+				m.recordEmbeddedSessionSettledCmd(msg.projectPath, snapshot),
+				m.requestProjectInvalidationCmd(invalidateProjectScan("", false)),
+			)
 		} else if !needsAsync {
 			m.cancelModelSettleLatency(msg.projectPath, "stale")
+			if hadPrevSnapshot {
+				cmds = append(cmds, m.recordEmbeddedSessionSettledCmd(msg.projectPath, prevSnapshot))
+			}
 			m.dropCodexSnapshot(msg.projectPath)
 		}
 		return m, tea.Batch(cmds...)
@@ -2387,7 +2408,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = snapshot.Status
 		}
 		m.loading = true
-		return m, m.requestProjectInvalidationCmd(invalidateProjectScan("", false))
+		return m, batchCmds(
+			m.recordEmbeddedSessionSettledCmd(projectPath, snapshot),
+			m.requestProjectInvalidationCmd(invalidateProjectScan("", false)),
+		)
 	}
 
 	return m, nil
@@ -2408,6 +2432,17 @@ func shouldRecordEmbeddedSessionActivityAfterCodexSnapshot(hadPrev bool, prev, n
 }
 
 func embeddedSessionActivityFromSnapshot(projectPath string, snapshot codexapp.Snapshot) (service.EmbeddedSessionActivity, bool) {
+	return embeddedSessionActivityFromSnapshotWithTurnState(projectPath, snapshot, snapshot.Busy, false)
+}
+
+func embeddedSessionSettledActivityFromSnapshot(projectPath string, snapshot codexapp.Snapshot) (service.EmbeddedSessionActivity, bool) {
+	if !snapshot.Started {
+		return service.EmbeddedSessionActivity{}, false
+	}
+	return embeddedSessionActivityFromSnapshotWithTurnState(projectPath, snapshot, true, true)
+}
+
+func embeddedSessionActivityFromSnapshotWithTurnState(projectPath string, snapshot codexapp.Snapshot, latestTurnKnown, latestTurnCompleted bool) (service.EmbeddedSessionActivity, bool) {
 	projectPath = normalizeProjectPath(projectPath)
 	if projectPath == "" {
 		projectPath = normalizeProjectPath(snapshot.ProjectPath)
@@ -2424,8 +2459,8 @@ func embeddedSessionActivityFromSnapshot(projectPath string, snapshot codexapp.S
 		Format:               embeddedSessionFormat(snapshot.Provider),
 		LastActivityAt:       lastActivity,
 		LatestTurnStartedAt:  snapshot.BusySince,
-		LatestTurnStateKnown: snapshot.Busy,
-		LatestTurnCompleted:  false,
+		LatestTurnStateKnown: latestTurnKnown,
+		LatestTurnCompleted:  latestTurnCompleted,
 	}, true
 }
 
