@@ -68,6 +68,10 @@ func (m Model) updateCodexInputSelectionMode(msg tea.KeyMsg) (tea.Model, tea.Cmd
 		return m, nil
 	}
 
+	if codexShouldIgnoreTextareaWordBackward(&m.codexInput, msg) {
+		return m, nil
+	}
+
 	var cmd tea.Cmd
 	m.codexInput, cmd = m.codexInput.Update(msg)
 	sel.ViewportY = textSelectionViewportForCursor(m.codexInput, sel.ViewportY)

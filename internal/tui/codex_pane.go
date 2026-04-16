@@ -1340,6 +1340,10 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if codexShouldIgnoreTextareaWordBackward(&m.codexInput, msg) {
+		return m, nil
+	}
+
 	var cmd tea.Cmd
 	m.codexInput, cmd = m.codexInput.Update(msg)
 	m.persistVisibleCodexDraft()
@@ -1399,6 +1403,10 @@ func (m Model) updateCodexToolInputMode(snapshot codexapp.Snapshot, msg tea.KeyM
 			m.clearCodexDraft(m.codexVisibleProject)
 			return m.finishOrAdvanceToolInput(request, state)
 		}
+	}
+
+	if codexShouldIgnoreTextareaWordBackward(&m.codexInput, msg) {
+		return m, nil
 	}
 
 	var cmd tea.Cmd
@@ -1461,6 +1469,10 @@ func (m Model) updateCodexElicitationMode(snapshot codexapp.Snapshot, msg tea.Ke
 	}
 
 	if request.Mode != codexapp.ElicitationModeForm {
+		return m, nil
+	}
+
+	if codexShouldIgnoreTextareaWordBackward(&m.codexInput, msg) {
 		return m, nil
 	}
 
