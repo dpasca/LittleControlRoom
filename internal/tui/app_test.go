@@ -217,6 +217,18 @@ func collectCmdMsgs(cmd tea.Cmd) []tea.Msg {
 	}
 }
 
+func drainCmdMsgs(m Model, cmd tea.Cmd) Model {
+	queue := collectCmdMsgs(cmd)
+	for len(queue) > 0 {
+		msg := queue[0]
+		queue = queue[1:]
+		updated, next := m.Update(msg)
+		m = updated.(Model)
+		queue = append(queue, collectCmdMsgs(next)...)
+	}
+	return m
+}
+
 func TestProjectRefreshRequestsCoalesceWhileInFlight(t *testing.T) {
 	m := Model{}
 
@@ -2109,6 +2121,135 @@ func TestUpdateNormalModeMShowsBlockedMergeWhenWorktreesDirty(t *testing.T) {
 	rendered := ansi.Strip(got.renderWorktreeMergeConfirmOverlay("", 100, 24))
 	if !strings.Contains(rendered, "Merge blocked") || !strings.Contains(rendered, "The root checkout is dirty") || !strings.Contains(rendered, "Commit worktree changes first") {
 		t.Fatalf("blocked merge overlay should explain why merge is unavailable, got %q", rendered)
+	}
+}
+
+func TestOpenWorktreeMergeConfirmRefreshesLiveRootDirtyStatus(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	rootDir := t.TempDir()
+	rootPath := filepath.Join(rootDir, "repo")
+	worktreePath := filepath.Join(rootDir, "repo--feat-live-dirty")
+
+	runTUITestGit(t, "", "init", rootPath)
+	runTUITestGit(t, rootPath, "config", "user.name", "Little Control Room Tests")
+	runTUITestGit(t, rootPath, "config", "user.email", "tests@example.com")
+	if err := os.WriteFile(filepath.Join(rootPath, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write README.md: %v", err)
+	}
+	runTUITestGit(t, rootPath, "add", "README.md")
+	runTUITestGit(t, rootPath, "commit", "-m", "initial commit")
+	runTUITestGit(t, rootPath, "worktree", "add", "-b", "feat/live-dirty", worktreePath)
+	if err := os.WriteFile(filepath.Join(rootPath, "DIRTY.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatalf("write DIRTY.txt: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:             rootPath,
+		Name:             "repo",
+		PresentOnDisk:    true,
+		InScope:          true,
+		WorktreeRootPath: rootPath,
+		WorktreeKind:     model.WorktreeKindMain,
+		RepoBranch:       "master",
+		UpdatedAt:        now,
+	}); err != nil {
+		t.Fatalf("seed root project state: %v", err)
+	}
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:                 worktreePath,
+		Name:                 "repo--feat-live-dirty",
+		PresentOnDisk:        true,
+		InScope:              true,
+		WorktreeRootPath:     rootPath,
+		WorktreeKind:         model.WorktreeKindLinked,
+		WorktreeParentBranch: "master",
+		RepoBranch:           "feat/live-dirty",
+		UpdatedAt:            now,
+	}); err != nil {
+		t.Fatalf("seed linked worktree state: %v", err)
+	}
+
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	m := Model{
+		ctx: ctx,
+		svc: svc,
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--feat-live-dirty",
+				Path:                 worktreePath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				RepoBranch:           "feat/live-dirty",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+		width:      120,
+		height:     28,
+	}
+	m.rebuildProjectList(worktreePath)
+
+	cmd := m.openWorktreeMergeConfirmForSelection()
+	if cmd == nil {
+		t.Fatal("opening the merge confirmation should refresh live git status when the service is available")
+	}
+	if m.worktreeMergeConfirm == nil {
+		t.Fatal("merge confirmation should open before the async refresh completes")
+	}
+	if !m.worktreeMergeConfirm.Busy {
+		t.Fatal("merge confirmation should stay busy while live git status is loading")
+	}
+	if got := m.status; got != "Checking live worktree status..." {
+		t.Fatalf("status = %q, want live-status refresh message", got)
+	}
+
+	m = drainCmdMsgs(m, cmd)
+
+	if m.worktreeMergeConfirm == nil {
+		t.Fatal("merge confirmation should stay open after the live status refresh")
+	}
+	if m.worktreeMergeConfirm.Busy {
+		t.Fatal("merge confirmation should stop waiting once both worktree statuses refresh")
+	}
+	if worktreeMergeConfirmReady(m.worktreeMergeConfirm) {
+		t.Fatalf("merge confirmation should block once the live root checkout refresh reports dirtiness: %#v", m.worktreeMergeConfirm)
+	}
+	if !strings.Contains(worktreeMergeConfirmBlockReason(m.worktreeMergeConfirm), "The root checkout is dirty") {
+		t.Fatalf("blocked reason = %q, want refreshed root-dirty warning", worktreeMergeConfirmBlockReason(m.worktreeMergeConfirm))
+	}
+	if got := m.status; got != "The root checkout is dirty. Commit or discard changes before merging back." {
+		t.Fatalf("status = %q, want refreshed root-dirty status", got)
+	}
+	rootSummary, ok := m.projectSummaryByPath(rootPath)
+	if !ok {
+		t.Fatalf("root project summary for %q missing after refresh", rootPath)
+	}
+	if !rootSummary.RepoDirty {
+		t.Fatalf("root summary should refresh to dirty after the live status check: %#v", rootSummary)
+	}
+
+	rendered := ansi.Strip(m.renderWorktreeMergeConfirmOverlay("", 100, 24))
+	if !strings.Contains(rendered, "Merge blocked") || !strings.Contains(rendered, "The root checkout is dirty") {
+		t.Fatalf("rendered merge dialog should show the refreshed root-dirty warning, got %q", rendered)
 	}
 }
 

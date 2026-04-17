@@ -95,6 +95,7 @@ type worktreeMergeConfirmState struct {
 	ProjectName       string
 	BranchName        string
 	TargetBranch      string
+	PendingRefresh    map[string]struct{}
 	HardBlockReason   string
 	SourceDirty       bool
 	RuntimeRunning    bool
@@ -270,11 +271,52 @@ func worktreeMergeConfirmBlockReason(confirm *worktreeMergeConfirmState) string 
 	return ""
 }
 
+func worktreeMergeConfirmRefreshing(confirm *worktreeMergeConfirmState) bool {
+	return confirm != nil && len(confirm.PendingRefresh) > 0
+}
+
+func worktreeMergeConfirmTracksPath(confirm *worktreeMergeConfirmState, path string) bool {
+	if confirm == nil {
+		return false
+	}
+	path = normalizeProjectPath(path)
+	if path == "" {
+		return false
+	}
+	return path == normalizeProjectPath(confirm.ProjectPath) || path == normalizeProjectPath(confirm.RootPath)
+}
+
+func worktreeMergeConfirmPendingRefreshSet(paths ...string) map[string]struct{} {
+	seen := map[string]struct{}{}
+	for _, path := range paths {
+		path = normalizeProjectPath(path)
+		if path == "" {
+			continue
+		}
+		seen[path] = struct{}{}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	return seen
+}
+
+func worktreeMergeConfirmMarkRefreshDone(confirm *worktreeMergeConfirmState, path string) bool {
+	if confirm == nil || len(confirm.PendingRefresh) == 0 {
+		return true
+	}
+	delete(confirm.PendingRefresh, normalizeProjectPath(path))
+	return len(confirm.PendingRefresh) == 0
+}
+
 func worktreeMergeConfirmReady(confirm *worktreeMergeConfirmState) bool {
 	return strings.TrimSpace(worktreeMergeConfirmBlockReason(confirm)) == ""
 }
 
 func worktreeMergeConfirmStatus(confirm *worktreeMergeConfirmState) string {
+	if worktreeMergeConfirmRefreshing(confirm) {
+		return "Checking live worktree status..."
+	}
 	if reason := strings.TrimSpace(worktreeMergeConfirmBlockReason(confirm)); reason != "" {
 		return reason
 	}
@@ -316,6 +358,72 @@ func (m *Model) beginAsyncWorktreeAction(projectPath, pendingSummary, status str
 		m.setPendingGitSummary(projectPath, pendingSummary)
 	}
 	m.status = strings.TrimSpace(status)
+}
+
+func (m Model) refreshProjectStatusPathsCmd(paths ...string) tea.Cmd {
+	cmds := make([]tea.Cmd, 0, len(paths))
+	seen := map[string]struct{}{}
+	for _, path := range paths {
+		path = normalizeProjectPath(path)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		cmds = append(cmds, m.refreshProjectStatusCmd(path))
+	}
+	return batchCmds(cmds...)
+}
+
+func (m *Model) syncWorktreeMergeConfirmFromProjects(path string) {
+	confirm := m.worktreeMergeConfirm
+	if !worktreeMergeConfirmTracksPath(confirm, path) {
+		return
+	}
+
+	project, ok := m.projectSummaryByPathAllProjects(confirm.ProjectPath)
+	if ok {
+		confirm.ProjectName = project.Name
+		if rootPath := projectWorktreeRootPath(project); rootPath != "" {
+			confirm.RootPath = rootPath
+		}
+		confirm.BranchName = projectWorktreeLabel(project)
+		confirm.TargetBranch = strings.TrimSpace(project.WorktreeParentBranch)
+		confirm.HasLinkedTodo = project.WorktreeOriginTodoID > 0
+		confirm.RuntimeRunning = m.projectRuntimeSnapshot(project.Path).Running
+	} else {
+		project = model.ProjectSummary{
+			Path:                 confirm.ProjectPath,
+			Name:                 confirm.ProjectName,
+			WorktreeRootPath:     confirm.RootPath,
+			WorktreeKind:         model.WorktreeKindLinked,
+			WorktreeParentBranch: confirm.TargetBranch,
+			RepoDirty:            confirm.SourceDirty,
+		}
+	}
+	rootProject, hasRoot := m.projectSummaryByPathAllProjects(confirm.RootPath)
+	readiness := worktreeMergeReadinessWithRoot(project, strings.TrimSpace(project.WorktreeParentBranch), rootProject, hasRoot)
+	if !confirm.SourceDirty && readiness.SourceDirty {
+		confirm.CommitBeforeMerge = true
+	}
+	confirm.SourceDirty = readiness.SourceDirty
+	confirm.HardBlockReason = readiness.HardBlockReason
+	if worktreeMergeConfirmMarkRefreshDone(confirm, path) {
+		confirm.Busy = false
+		confirm.BusyMessage = ""
+	}
+	m.status = worktreeMergeConfirmStatus(confirm)
+}
+
+func shouldRefreshWorktreeMergeFamilyAfterError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.TrimSpace(err.Error())
+	return strings.Contains(text, "worktree is dirty; commit or discard changes before merging back") ||
+		strings.Contains(text, "root worktree is dirty; commit or discard changes before merging back")
 }
 
 func worktreeMergeStatusText(result service.MergeWorktreeBackResult) string {
@@ -980,7 +1088,21 @@ func (m Model) worktreeMergeReadiness(project model.ProjectSummary, rootPath str
 		return state
 	}
 	rootProject, ok := m.projectSummaryByPath(rootPath)
-	if !ok {
+	return worktreeMergeReadinessWithRoot(project, targetBranch, rootProject, ok)
+}
+
+func worktreeMergeReadinessWithRoot(project model.ProjectSummary, targetBranch string, rootProject model.ProjectSummary, ok bool) worktreeMergeReadinessState {
+	if project.RepoConflict {
+		return worktreeMergeReadinessState{
+			HardBlockReason: "This worktree has unresolved conflicts. Resolve or abort the in-progress Git operation before merging back.",
+		}
+	}
+	state := worktreeMergeReadinessState{}
+	if project.RepoDirty {
+		state.SourceDirty = true
+	}
+	targetBranch = strings.TrimSpace(targetBranch)
+	if targetBranch == "" || !ok {
 		return state
 	}
 	if rootProject.RepoConflict {
@@ -997,6 +1119,24 @@ func (m Model) worktreeMergeReadiness(project model.ProjectSummary, rootPath str
 		return state
 	}
 	return state
+}
+
+func (m Model) projectSummaryByPathAllProjects(projectPath string) (model.ProjectSummary, bool) {
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "" {
+		return model.ProjectSummary{}, false
+	}
+	for _, project := range m.allProjects {
+		if filepath.Clean(strings.TrimSpace(project.Path)) == projectPath {
+			return project, true
+		}
+	}
+	for _, project := range m.projects {
+		if filepath.Clean(strings.TrimSpace(project.Path)) == projectPath {
+			return project, true
+		}
+	}
+	return model.ProjectSummary{}, false
 }
 
 func (m *Model) openWorktreeMergeConfirmForSelection() tea.Cmd {
@@ -1046,12 +1186,17 @@ func (m *Model) openWorktreeMergeConfirmForSelection() tea.Cmd {
 		}
 	}
 	readiness := m.worktreeMergeReadiness(project, row.RootPath)
+	pendingRefresh := map[string]struct{}(nil)
+	if m.svc != nil {
+		pendingRefresh = worktreeMergeConfirmPendingRefreshSet(project.Path, row.RootPath)
+	}
 	m.worktreeMergeConfirm = &worktreeMergeConfirmState{
 		ProjectPath:     project.Path,
 		RootPath:        row.RootPath,
 		ProjectName:     project.Name,
 		BranchName:      projectWorktreeLabel(project),
 		TargetBranch:    strings.TrimSpace(project.WorktreeParentBranch),
+		PendingRefresh:  pendingRefresh,
 		HardBlockReason: readiness.HardBlockReason,
 		SourceDirty:     readiness.SourceDirty,
 		RuntimeRunning:  m.projectRuntimeSnapshot(project.Path).Running,
@@ -1059,12 +1204,16 @@ func (m *Model) openWorktreeMergeConfirmForSelection() tea.Cmd {
 		RemoveNow:       true,
 		Selected:        0,
 	}
+	if len(pendingRefresh) > 0 {
+		m.worktreeMergeConfirm.Busy = true
+		m.worktreeMergeConfirm.BusyMessage = "Checking live git status for this worktree and its root checkout."
+	}
 	m.worktreeMergeConfirm.StopRuntime = m.worktreeMergeConfirm.RuntimeRunning
 	m.worktreeMergeConfirm.CommitBeforeMerge = m.worktreeMergeConfirm.SourceDirty
 	m.worktreeMergeConfirm.MarkTodoDone = m.worktreeMergeConfirm.HasLinkedTodo
 	m.worktreeMergeConfirm.Selected = worktreeMergeConfirmApplyIndex(m.worktreeMergeConfirm)
 	m.status = worktreeMergeConfirmStatus(m.worktreeMergeConfirm)
-	return autoCloseCmd
+	return batchCmds(autoCloseCmd, m.refreshProjectStatusPathsCmd(project.Path, row.RootPath))
 }
 
 func (m Model) updateWorktreeMergeConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1602,7 +1751,11 @@ func (m Model) renderWorktreeMergeConfirmOverlay(body string, bodyW, bodyH int) 
 		detailMutedStyle.Render(truncateText(m.mergeBackRulesSummary(), panelInnerW)),
 	}
 	if confirm.Busy {
-		lines = append(lines, "", detailValueStyle.Render("Merge in progress"))
+		busyTitle := "Merge in progress"
+		if worktreeMergeConfirmRefreshing(confirm) {
+			busyTitle = "Checking merge readiness"
+		}
+		lines = append(lines, "", detailValueStyle.Render(busyTitle))
 		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, confirm.BusyMessage)...)
 	} else {
 		lines = append(lines, "")

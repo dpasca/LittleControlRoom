@@ -1602,8 +1602,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.found {
 			m.loading = false
 			m.upsertProjectSummary(msg.summary)
+			m.syncWorktreeMergeConfirmFromProjects(msg.path)
 		} else {
 			m.removeProjectSummary(msg.path)
+			m.syncWorktreeMergeConfirmFromProjects(msg.path)
 			if filepath.Clean(selectedPath) == filepath.Clean(strings.TrimSpace(msg.path)) {
 				selectedPath = ""
 			}
@@ -1624,6 +1626,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case projectStatusRefreshedMsg:
+		if worktreeMergeConfirmTracksPath(m.worktreeMergeConfirm, msg.projectPath) {
+			if msg.err != nil {
+				m.worktreeMergeConfirm.ErrorMessage = "Could not refresh live git status: " + msg.err.Error()
+			}
+			if worktreeMergeConfirmMarkRefreshDone(m.worktreeMergeConfirm, msg.projectPath) {
+				m.worktreeMergeConfirm.Busy = false
+				m.worktreeMergeConfirm.BusyMessage = ""
+			}
+			m.status = worktreeMergeConfirmStatus(m.worktreeMergeConfirm)
+		}
 		if msg.err != nil {
 			m.reportError("Project status refresh failed", msg.err, msg.projectPath)
 			return m, nil
@@ -1990,6 +2002,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if msg.err != nil {
+			refreshCmd := tea.Cmd(nil)
+			if shouldRefreshWorktreeMergeFamilyAfterError(msg.err) {
+				refreshCmd = m.refreshProjectStatusPathsCmd(msg.projectPath, msg.selectPath)
+			}
 			m.reportError("Worktree action failed", msg.err, msg.projectPath)
 			if m.worktreeMergeConfirm != nil && filepath.Clean(strings.TrimSpace(m.worktreeMergeConfirm.ProjectPath)) == filepath.Clean(strings.TrimSpace(msg.projectPath)) {
 				m.worktreeMergeConfirm.Busy = false
@@ -1997,19 +2013,19 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.worktreeMergeConfirm.ErrorMessage = msg.err.Error()
 				m.worktreePostMerge = nil
 				m.worktreeRemoveConfirm = nil
-				return m, nil
+				return m, refreshCmd
 			}
 			if m.worktreePostMerge != nil && filepath.Clean(strings.TrimSpace(m.worktreePostMerge.ProjectPath)) == filepath.Clean(strings.TrimSpace(msg.projectPath)) {
 				m.worktreePostMerge.Busy = false
 				m.worktreePostMerge.BusyTitle = ""
 				m.worktreePostMerge.BusyMessage = ""
 				m.worktreePostMerge.ErrorMessage = msg.err.Error()
-				return m, nil
+				return m, refreshCmd
 			}
 			m.worktreeMergeConfirm = nil
 			m.worktreePostMerge = nil
 			m.worktreeRemoveConfirm = nil
-			return m, nil
+			return m, refreshCmd
 		}
 		m.worktreeMergeConfirm = nil
 		m.worktreePostMerge = nil
