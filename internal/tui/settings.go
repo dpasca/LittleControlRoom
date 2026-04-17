@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/browserctl"
 	"lcroom/internal/config"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -27,24 +28,60 @@ const (
 	settingsFieldExcludeProjectPatterns
 	settingsFieldPrivacyPatterns
 	settingsFieldCodexLaunchPreset
-	settingsFieldPlaywrightManagementMode
-	settingsFieldPlaywrightDefaultBrowserMode
-	settingsFieldPlaywrightLoginMode
-	settingsFieldPlaywrightIsolationScope
+	settingsFieldBrowserAutomation
 	settingsFieldHideReasoningSections
 	settingsFieldActiveThreshold
 	settingsFieldStuckThreshold
 	settingsFieldInterval
 )
 
+type settingsSectionID string
+
+const (
+	settingsSectionAI      settingsSectionID = "ai"
+	settingsSectionScope   settingsSectionID = "scope"
+	settingsSectionBrowser settingsSectionID = "browser"
+	settingsSectionRefresh settingsSectionID = "refresh"
+)
+
+type settingsSection struct {
+	id         settingsSectionID
+	label      string
+	hint       string
+	fieldOrder []int
+}
+
 type settingsField struct {
 	label     string
 	hint      string
 	input     textinput.Model
 	sensitive bool
+	section   settingsSectionID
 }
 
 const settingsHintMaxLines = 2
+
+const (
+	settingsBrowserAutomationCompatibility = "compatibility"
+	settingsBrowserAutomationAutomatic     = "automatic"
+	settingsBrowserAutomationObserve       = "observe"
+	settingsBrowserAutomationAdvanced      = "advanced"
+)
+
+var (
+	settingsAutomaticPlaywrightPolicy = browserctl.Policy{
+		ManagementMode:     browserctl.ManagementModeManaged,
+		DefaultBrowserMode: browserctl.BrowserModeHeadless,
+		LoginMode:          browserctl.LoginModePromote,
+		IsolationScope:     browserctl.IsolationScopeTask,
+	}
+	settingsObservePlaywrightPolicy = browserctl.Policy{
+		ManagementMode:     browserctl.ManagementModeObserve,
+		DefaultBrowserMode: browserctl.BrowserModeHeadless,
+		LoginMode:          browserctl.LoginModeManual,
+		IsolationScope:     browserctl.IsolationScopeTask,
+	}
+)
 
 // invertBoolString flips "true"→"false" and vice versa, used when the UI label
 // has opposite polarity from the internal config key (e.g. "Show reasoning" vs HideReasoningSections).
@@ -53,6 +90,106 @@ func invertBoolString(s string) string {
 		return "false"
 	}
 	return "true"
+}
+
+func settingsSections() []settingsSection {
+	return []settingsSection{
+		{
+			id:    settingsSectionAI,
+			label: "AI & Models",
+			hint:  "Backend credentials, local model overrides, and embedded assistant launch defaults.",
+			fieldOrder: []int{
+				settingsFieldOpenAIAPIKey,
+				settingsFieldMLXBaseURL,
+				settingsFieldMLXAPIKey,
+				settingsFieldMLXModel,
+				settingsFieldOllamaBaseURL,
+				settingsFieldOllamaAPIKey,
+				settingsFieldOllamaModel,
+				settingsFieldCodexLaunchPreset,
+				settingsFieldHideReasoningSections,
+			},
+		},
+		{
+			id:    settingsSectionScope,
+			label: "Project Scope",
+			hint:  "Choose which folders stay visible and which names should stay hidden or masked in demos.",
+			fieldOrder: []int{
+				settingsFieldIncludePaths,
+				settingsFieldExcludePaths,
+				settingsFieldExcludeProjectPatterns,
+				settingsFieldPrivacyPatterns,
+			},
+		},
+		{
+			id:    settingsSectionBrowser,
+			label: "Browser",
+			hint:  "Keep browser automation quiet by default, with a simple compatibility escape hatch when provider behavior needs to stay untouched.",
+			fieldOrder: []int{
+				settingsFieldBrowserAutomation,
+			},
+		},
+		{
+			id:    settingsSectionRefresh,
+			label: "Refresh",
+			hint:  "Tune how quickly projects move between active, stale, and stuck states.",
+			fieldOrder: []int{
+				settingsFieldActiveThreshold,
+				settingsFieldStuckThreshold,
+				settingsFieldInterval,
+			},
+		},
+	}
+}
+
+func settingsSectionIndexForField(index int) int {
+	for sectionIndex, section := range settingsSections() {
+		for _, fieldIndex := range section.fieldOrder {
+			if fieldIndex == index {
+				return sectionIndex
+			}
+		}
+	}
+	return 0
+}
+
+func settingsBrowserAutomationValue(policy browserctl.Policy) string {
+	normalized := policy.Normalize()
+	switch {
+	case normalized.ManagementMode == browserctl.ManagementModeLegacy:
+		return settingsBrowserAutomationCompatibility
+	case normalized == settingsAutomaticPlaywrightPolicy:
+		return settingsBrowserAutomationAutomatic
+	case normalized == settingsObservePlaywrightPolicy:
+		return settingsBrowserAutomationObserve
+	default:
+		return settingsBrowserAutomationAdvanced
+	}
+}
+
+func parseSettingsBrowserAutomation(raw string, baseline browserctl.Policy) (browserctl.Policy, error) {
+	normalized := normalizeSettingsChoice(raw)
+	switch normalized {
+	case "", settingsBrowserAutomationCompatibility, string(browserctl.ManagementModeLegacy):
+		policy := baseline.Normalize()
+		policy.ManagementMode = browserctl.ManagementModeLegacy
+		return policy, nil
+	case settingsBrowserAutomationAutomatic, string(browserctl.ManagementModeManaged):
+		return settingsAutomaticPlaywrightPolicy, nil
+	case settingsBrowserAutomationObserve:
+		return settingsObservePlaywrightPolicy, nil
+	case settingsBrowserAutomationAdvanced, "custom", "current":
+		return baseline.Normalize(), nil
+	default:
+		return browserctl.Policy{}, fmt.Errorf("browser automation must be one of: compatibility, automatic, observe, advanced")
+	}
+}
+
+func normalizeSettingsChoice(raw string) string {
+	trimmed := strings.ToLower(strings.TrimSpace(raw))
+	trimmed = strings.ReplaceAll(trimmed, "_", "-")
+	trimmed = strings.ReplaceAll(trimmed, " ", "-")
+	return trimmed
 }
 
 func (m *Model) openSettingsMode() tea.Cmd {
@@ -65,6 +202,7 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	m.settingsBaseline = &saved
 	m.settingsMode = true
 	m.settingsSaving = false
+	m.settingsSectionSelected = 0
 	m.settingsRevealPrivacy = false
 	m.localModelPickerVisible = false
 	m.setupMode = false
@@ -92,11 +230,24 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.closeSettingsMode("Settings edit canceled")
 		return m, nil
+	case "pgup", "[", "ctrl+b":
+		return m, m.moveSettingsSection(-1)
+	case "pgdown", "]", "ctrl+f":
+		return m, m.moveSettingsSection(1)
 	case "tab", "down", "ctrl+n":
 		return m, m.moveSettingsSelection(1)
 	case "shift+tab", "up", "ctrl+p":
 		return m, m.moveSettingsSelection(-1)
 	case "enter":
+		playwrightPolicy, err := parseSettingsBrowserAutomation(
+			m.settingsFieldValue(settingsFieldBrowserAutomation),
+			m.currentSettingsBaseline().PlaywrightPolicy,
+		)
+		if err != nil {
+			m.err = nil
+			m.status = err.Error()
+			return m, nil
+		}
 		settings, err := config.ParseEditableSettings(
 			m.currentSettingsBaseline().AIBackend,
 			m.settingsFieldValue(settingsFieldOpenAIAPIKey),
@@ -111,10 +262,10 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.settingsFieldValue(settingsFieldExcludeProjectPatterns),
 			m.settingsFieldValue(settingsFieldPrivacyPatterns),
 			m.settingsFieldValue(settingsFieldCodexLaunchPreset),
-			m.settingsFieldValue(settingsFieldPlaywrightManagementMode),
-			m.settingsFieldValue(settingsFieldPlaywrightDefaultBrowserMode),
-			m.settingsFieldValue(settingsFieldPlaywrightLoginMode),
-			m.settingsFieldValue(settingsFieldPlaywrightIsolationScope),
+			string(playwrightPolicy.ManagementMode),
+			string(playwrightPolicy.DefaultBrowserMode),
+			string(playwrightPolicy.LoginMode),
+			string(playwrightPolicy.IsolationScope),
 			invertBoolString(m.settingsFieldValue(settingsFieldHideReasoningSections)),
 			strconv.FormatBool(m.currentSettingsBaseline().PrivacyMode),
 			m.currentSettingsBaseline().OpenCodeModelTier,
@@ -157,14 +308,25 @@ func (m *Model) moveSettingsSelection(delta int) tea.Cmd {
 	if len(m.settingsFields) == 0 || delta == 0 {
 		return nil
 	}
-	index := m.settingsSelected + delta
-	if index < 0 {
-		index = len(m.settingsFields) - 1
+	fields := m.activeSettingsSection().fieldOrder
+	if len(fields) == 0 {
+		return nil
 	}
-	if index >= len(m.settingsFields) {
-		index = 0
+	position := 0
+	for i, index := range fields {
+		if index == m.settingsSelected {
+			position = i
+			break
+		}
 	}
-	return m.setSettingsSelection(index)
+	position += delta
+	if position < 0 {
+		position = len(fields) - 1
+	}
+	if position >= len(fields) {
+		position = 0
+	}
+	return m.setSettingsSelection(fields[position])
 }
 
 func (m *Model) setSettingsSelection(index int) tea.Cmd {
@@ -180,6 +342,7 @@ func (m *Model) setSettingsSelection(index int) tea.Cmd {
 	}
 
 	m.settingsSelected = index
+	m.settingsSectionSelected = settingsSectionIndexForField(index)
 	cmds := make([]tea.Cmd, 0, 1)
 	for i := range m.settingsFields {
 		if i == index {
@@ -190,6 +353,72 @@ func (m *Model) setSettingsSelection(index int) tea.Cmd {
 		m.settingsFields[i].input.Blur()
 	}
 	return tea.Batch(cmds...)
+}
+
+func (m *Model) moveSettingsSection(delta int) tea.Cmd {
+	sections := settingsSections()
+	if len(sections) == 0 || delta == 0 {
+		return nil
+	}
+	index := m.activeSettingsSectionIndex() + delta
+	if index < 0 {
+		index = len(sections) - 1
+	}
+	if index >= len(sections) {
+		index = 0
+	}
+	return m.setSettingsSection(index)
+}
+
+func (m *Model) setSettingsSection(index int) tea.Cmd {
+	sections := settingsSections()
+	if len(sections) == 0 {
+		m.settingsSectionSelected = 0
+		return nil
+	}
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(sections) {
+		index = len(sections) - 1
+	}
+	m.settingsSectionSelected = index
+	fields := sections[index].fieldOrder
+	if len(fields) == 0 {
+		return nil
+	}
+	for _, fieldIndex := range fields {
+		if fieldIndex == m.settingsSelected {
+			return m.setSettingsSelection(fieldIndex)
+		}
+	}
+	return m.setSettingsSelection(fields[0])
+}
+
+func (m Model) activeSettingsSectionIndex() int {
+	sections := settingsSections()
+	if len(sections) == 0 {
+		return 0
+	}
+	selectedSection := settingsSectionIndexForField(m.settingsSelected)
+	if m.settingsSectionSelected < 0 || m.settingsSectionSelected >= len(sections) {
+		return selectedSection
+	}
+	current := sections[m.settingsSectionSelected]
+	for _, fieldIndex := range current.fieldOrder {
+		if fieldIndex == m.settingsSelected {
+			return m.settingsSectionSelected
+		}
+	}
+	return selectedSection
+}
+
+func (m Model) activeSettingsSection() settingsSection {
+	sections := settingsSections()
+	if len(sections) == 0 {
+		return settingsSection{}
+	}
+	return sections[m.activeSettingsSectionIndex()]
 }
 
 func (m *Model) blurSettingsFields() {
@@ -326,27 +555,32 @@ func (m Model) renderSettingsPanel(bodyW, bodyH int) string {
 }
 
 func (m Model) renderSettingsContent(width, maxHeight int) string {
+	activeSection := m.activeSettingsSection()
 	lines := []string{
 		commandPaletteTitleStyle.Render("Settings"),
 		commandPaletteHintStyle.Render("Config: " + truncateText(m.displayPathWithHomeTilde(m.currentConfigPath()), max(20, width-8))),
 	}
 	lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("AI backend: %s. Use /setup to change it. Scope, API keys, and local endpoint/model overrides save here.", m.currentSettingsBaseline().AIBackend.Label())))
+	lines = append(lines, "")
+	lines = append(lines, m.renderSettingsSectionTabs(width))
+	lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("%s section. %s", activeSection.label, activeSection.hint)))
 	if m.settingsSaving {
 		lines = append(lines, "")
 		lines = append(lines, commandPaletteHintStyle.Render("Saving settings..."))
 	}
 
-	labelWidth := m.settingsLabelWidth(width)
+	fieldIndexes := activeSection.fieldOrder
+	labelWidth := m.settingsLabelWidth(width, fieldIndexes)
 	inputWidth := max(10, width-labelWidth-1)
-	start, end := m.settingsVisibleWindow(m.settingsVisibleFieldCount(maxHeight))
+	start, end := m.settingsVisibleWindow(fieldIndexes, m.settingsVisibleFieldCount(maxHeight))
 	if start > 0 {
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d above", start)))
 	}
-	for i := start; i < end; i++ {
-		lines = append(lines, m.renderSettingsFieldRow(m.settingsFields[i], i == m.settingsSelected, labelWidth, inputWidth))
+	for _, fieldIndex := range fieldIndexes[start:end] {
+		lines = append(lines, m.renderSettingsFieldRow(m.settingsFields[fieldIndex], fieldIndex == m.settingsSelected, labelWidth, inputWidth))
 	}
-	if end < len(m.settingsFields) {
-		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d below", len(m.settingsFields)-end)))
+	if end < len(fieldIndexes) {
+		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d below", len(fieldIndexes)-end)))
 	}
 
 	if hint := m.renderSelectedSettingsHint(width); hint != "" {
@@ -360,14 +594,14 @@ func (m Model) renderSettingsContent(width, maxHeight int) string {
 }
 
 func (m Model) settingsVisibleFieldCount(maxHeight int) int {
-	total := len(m.settingsFields)
+	total := len(m.activeSettingsSection().fieldOrder)
 	if total == 0 {
 		return 0
 	}
 
-	// Header (3), hint block (blank + up to 2 lines), actions (blank + 1),
+	// Header (6), hint block (blank + up to 2 lines), actions (blank + 1),
 	// plus up to 2 scroll indicators when the field list is windowed.
-	reserved := 10
+	reserved := 13
 	visible := maxHeight - reserved
 	if visible < 1 {
 		visible = 1
@@ -378,13 +612,20 @@ func (m Model) settingsVisibleFieldCount(maxHeight int) int {
 	return visible
 }
 
-func (m Model) settingsVisibleWindow(limit int) (int, int) {
-	total := len(m.settingsFields)
+func (m Model) settingsVisibleWindow(fieldIndexes []int, limit int) (int, int) {
+	total := len(fieldIndexes)
 	if total == 0 || limit <= 0 || total <= limit {
 		return 0, total
 	}
 
-	start := m.settingsSelected - limit/2
+	selectedPosition := 0
+	for i, fieldIndex := range fieldIndexes {
+		if fieldIndex == m.settingsSelected {
+			selectedPosition = i
+			break
+		}
+	}
+	start := selectedPosition - limit/2
 	if start < 0 {
 		start = 0
 	}
@@ -395,13 +636,38 @@ func (m Model) settingsVisibleWindow(limit int) (int, int) {
 	return start, start + limit
 }
 
-func (m Model) settingsLabelWidth(width int) int {
+func (m Model) settingsLabelWidth(width int, fieldIndexes []int) int {
 	widest := 0
-	for _, field := range m.settingsFields {
+	for _, fieldIndex := range fieldIndexes {
+		field := m.settingsFields[fieldIndex]
 		widest = max(widest, lipgloss.Width(field.label)+2)
 	}
 	maxAllowed := max(14, width-12)
 	return min(maxAllowed, max(18, widest))
+}
+
+func (m Model) renderSettingsSectionTabs(width int) string {
+	sections := settingsSections()
+	parts := make([]string, 0, len(sections)+1)
+	parts = append(parts, detailLabelStyle.Render("Sections:"))
+	activeStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("16")).
+		Background(lipgloss.Color("81")).
+		Bold(true).
+		Padding(0, 1)
+	inactiveStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252")).
+		Background(lipgloss.Color("238")).
+		Padding(0, 1)
+	for i, section := range sections {
+		label := section.label
+		if i == m.activeSettingsSectionIndex() {
+			parts = append(parts, activeStyle.Render(label))
+			continue
+		}
+		parts = append(parts, inactiveStyle.Render(label))
+	}
+	return fitFooterWidth(strings.Join(parts, " "), width)
 }
 
 func (m Model) renderSettingsFieldRow(field settingsField, selected bool, labelWidth, inputWidth int) string {
@@ -440,7 +706,8 @@ func renderSettingsActions() string {
 	actions := []string{
 		renderDialogAction("Enter", "save", commitActionKeyStyle, commitActionTextStyle),
 		renderDialogAction("Tab", "next", navigateActionKeyStyle, navigateActionTextStyle),
-		renderDialogAction("Up/Down", "choose", pushActionKeyStyle, pushActionTextStyle),
+		renderDialogAction("PgUp/PgDn", "section", pushActionKeyStyle, pushActionTextStyle),
+		renderDialogAction("Up/Down", "move", pushActionKeyStyle, pushActionTextStyle),
 		renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
 	}
 	return strings.Join(actions, "   ")
@@ -453,12 +720,14 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			"Used when the AI backend is OpenAI API key. Leave blank if you plan to use Codex, Claude Code, or OpenCode instead.",
 			settings.OpenAIAPIKey,
 			512,
+			settingsSectionAI,
 		),
 		newSettingsField(
 			"MLX base URL",
 			"Used when the AI backend is MLX. Leave blank to use the default local OpenAI-compatible URL: http://127.0.0.1:8080/v1",
 			settings.MLXBaseURL,
 			512,
+			settingsSectionAI,
 		),
 		newSensitiveSettingsFieldWithPlaceholder(
 			"MLX API key",
@@ -466,18 +735,21 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settings.MLXAPIKey,
 			512,
 			"Leave blank for mlx",
+			settingsSectionAI,
 		),
 		newSettingsField(
 			"MLX model",
 			"Optional exact model ID for the MLX backend. Leave blank to auto-use the first model returned by /v1/models. Use /setup and press M to pick from discovered models.",
 			settings.MLXModel,
 			512,
+			settingsSectionAI,
 		),
 		newSettingsField(
 			"Ollama base URL",
 			"Used when the AI backend is Ollama. Leave blank to use the default OpenAI-compatible URL: http://127.0.0.1:11434/v1",
 			settings.OllamaBaseURL,
 			512,
+			settingsSectionAI,
 		),
 		newSensitiveSettingsFieldWithPlaceholder(
 			"Ollama API key",
@@ -485,112 +757,107 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settings.OllamaAPIKey,
 			512,
 			"Leave blank for ollama",
+			settingsSectionAI,
 		),
 		newSettingsField(
 			"Ollama model",
 			"Optional exact model ID for the Ollama backend. Leave blank to auto-use the first model returned by /v1/models. Use /setup and press M to pick from discovered models.",
 			settings.OllamaModel,
 			512,
+			settingsSectionAI,
 		),
 		newSettingsField(
 			"Include paths",
 			"Optional comma-separated path prefixes to keep in scope. Leave blank for all detected paths.",
 			strings.Join(settings.IncludePaths, ","),
 			2048,
+			settingsSectionScope,
 		),
 		newSettingsField(
 			"Exclude paths",
 			"Optional comma-separated path prefixes to hide. Example: /Users/alice/tmp,/Users/alice/archive",
 			strings.Join(settings.ExcludePaths, ","),
 			2048,
+			settingsSectionScope,
 		),
 		newSettingsField(
 			"Exclude project names",
 			"Optional comma-separated name patterns to hide. Supports '*' wildcards. Example: client-*,secret-demo",
 			strings.Join(settings.ExcludeProjectPatterns, ","),
 			2048,
+			settingsSectionScope,
 		),
 		newPrivacyPatternsField(
 			"Privacy patterns",
 			"Comma-separated patterns to hide in demo mode. Supports '*' wildcards. Example: *medical*,*personal*",
 			strings.Join(settings.PrivacyPatterns, ","),
 			2048,
+			settingsSectionScope,
 		),
 		newSettingsField(
 			"Codex launch mode",
 			"Accepted values: yolo, full-auto, safe. YOLO is the default. Anything else adds a lot more approval prompts and user interaction; safe is the most interruption-heavy.",
 			string(settings.CodexLaunchPreset),
 			24,
+			settingsSectionAI,
 		),
 		newSettingsField(
-			"Playwright policy",
-			"Accepted values: legacy, observe, managed. Legacy preserves the original provider-owned behavior. Use managed only when you want LCR to start steering Playwright launch policy.",
-			string(settings.PlaywrightPolicy.Normalize().ManagementMode),
+			"Browser automation",
+			"Accepted values: compatibility, automatic, observe, advanced. Automatic is the target quiet-background experience. Compatibility preserves the original provider-owned Playwright behavior.",
+			settingsBrowserAutomationValue(settings.PlaywrightPolicy),
 			24,
-		),
-		newSettingsField(
-			"Playwright browser",
-			"Accepted values: headless, headed. This is the default browser mode LCR will advertise to embedded providers when Playwright policy is observe or managed.",
-			string(settings.PlaywrightPolicy.Normalize().DefaultBrowserMode),
-			24,
-		),
-		newSettingsField(
-			"Playwright login",
-			"Accepted values: manual, promote. Manual keeps login handling outside LCR. Promote is the planned future path for relaunching a blocked headless session into a headed login flow.",
-			string(settings.PlaywrightPolicy.Normalize().LoginMode),
-			24,
-		),
-		newSettingsField(
-			"Playwright isolation",
-			"Accepted values: task, project. Task isolation is the safer default because it limits profile sharing when multiple worktrees or agent tasks run in parallel.",
-			string(settings.PlaywrightPolicy.Normalize().IsolationScope),
-			24,
+			settingsSectionBrowser,
 		),
 		newSettingsField(
 			"Show reasoning",
 			"Accepted values: true, false. When true, shows model reasoning/thinking sections in the embedded transcript. Default: false.",
 			strconv.FormatBool(!settings.HideReasoningSections),
 			8,
+			settingsSectionAI,
 		),
 		newSettingsField(
 			"Active threshold",
 			"Projects newer than this count as active. Example: 20m",
 			formatSettingsDuration(settings.ActiveThreshold),
 			24,
+			settingsSectionRefresh,
 		),
 		newSettingsField(
 			"Stuck threshold",
 			"Must be greater than active threshold. Example: 4h",
 			formatSettingsDuration(settings.StuckThreshold),
 			24,
+			settingsSectionRefresh,
 		),
 		newSettingsField(
 			"Scan interval",
 			"Background refresh interval. Example: 60s",
 			formatSettingsDuration(settings.ScanInterval),
 			24,
+			settingsSectionRefresh,
 		),
 	}
 }
 
-func newSettingsField(label, hint, value string, charLimit int) settingsField {
+func newSettingsField(label, hint, value string, charLimit int, section settingsSectionID) settingsField {
 	input := textinput.New()
 	input.Prompt = ""
 	input.SetValue(value)
 	input.CharLimit = charLimit
 	return settingsField{
-		label: label,
-		hint:  hint,
-		input: input,
+		label:   label,
+		hint:    hint,
+		input:   input,
+		section: section,
 	}
 }
 
-func newSensitiveSettingsField(label, hint, value string, charLimit int) settingsField {
-	return newSensitiveSettingsFieldWithPlaceholder(label, hint, value, charLimit, "Paste OpenAI API key")
+func newSensitiveSettingsField(label, hint, value string, charLimit int, section settingsSectionID) settingsField {
+	return newSensitiveSettingsFieldWithPlaceholder(label, hint, value, charLimit, "Paste OpenAI API key", section)
 }
 
-func newSensitiveSettingsFieldWithPlaceholder(label, hint, value string, charLimit int, placeholder string) settingsField {
-	field := newSettingsField(label, hint, value, charLimit)
+func newSensitiveSettingsFieldWithPlaceholder(label, hint, value string, charLimit int, placeholder string, section settingsSectionID) settingsField {
+	field := newSettingsField(label, hint, value, charLimit, section)
 	field.input.EchoMode = textinput.EchoPassword
 	field.input.EchoCharacter = '*'
 	field.input.Placeholder = placeholder
@@ -598,8 +865,8 @@ func newSensitiveSettingsFieldWithPlaceholder(label, hint, value string, charLim
 	return field
 }
 
-func newPrivacyPatternsField(label, hint, value string, charLimit int) settingsField {
-	field := newSettingsField(label, hint, value, charLimit)
+func newPrivacyPatternsField(label, hint, value string, charLimit int, section settingsSectionID) settingsField {
+	field := newSettingsField(label, hint, value, charLimit, section)
 	field.input.EchoMode = textinput.EchoPassword
 	field.input.EchoCharacter = '*'
 	field.input.Placeholder = "e.g., *medical*,*personal*"
@@ -673,10 +940,23 @@ func (m Model) settingsFieldHint(index int) string {
 			hint += " (hidden - press Ctrl+R to reveal)"
 		}
 		return hint
-	case settingsFieldPlaywrightManagementMode:
-		return field.hint + " Current summary: " + m.currentSettingsBaseline().PlaywrightPolicy.Summary()
-	case settingsFieldPlaywrightDefaultBrowserMode, settingsFieldPlaywrightLoginMode, settingsFieldPlaywrightIsolationScope:
-		return field.hint + " Codex is the best current fit for future in-band promotion; OpenCode and Claude still need more embedded tool-input support."
+	case settingsFieldBrowserAutomation:
+		playwrightPolicy, err := parseSettingsBrowserAutomation(field.input.Value(), m.currentSettingsBaseline().PlaywrightPolicy)
+		if err != nil {
+			return field.hint
+		}
+		switch normalizeSettingsChoice(field.input.Value()) {
+		case "", settingsBrowserAutomationCompatibility, string(browserctl.ManagementModeLegacy):
+			return "Compatibility keeps each provider in charge of Playwright. Use this when you want the old behavior or need a quick fallback."
+		case settingsBrowserAutomationAutomatic, string(browserctl.ManagementModeManaged):
+			return "Automatic is the target low-friction path: quiet headless browsing, per-task isolation, and a future visible-login handoff when needed. Current raw policy: " + playwrightPolicy.Summary()
+		case settingsBrowserAutomationObserve:
+			return "Observe is a debug bridge: LCR advertises quiet browser defaults, but the provider still mostly owns the flow. Current raw policy: " + playwrightPolicy.Summary()
+		case settingsBrowserAutomationAdvanced, "custom", "current":
+			return "Advanced preserves the raw Playwright policy already stored in config.toml. Use this if you want to keep custom headed/login/isolation combinations while the simplified UI stays out of the way."
+		default:
+			return field.hint
+		}
 	default:
 		return field.hint
 	}

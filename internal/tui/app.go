@@ -123,6 +123,7 @@ type Model struct {
 	settingsMode                 bool
 	settingsSaving               bool
 	settingsFields               []settingsField
+	settingsSectionSelected      int
 	settingsSelected             int
 	settingsBaseline             *config.EditableSettings
 	settingsRevealPrivacy        bool

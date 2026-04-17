@@ -29,7 +29,7 @@ Provider artifact and detector-footprint notes live in:
 - Example file: [`config.example.toml`](config.example.toml)
 - Supported format: TOML
 
-The TUI `/settings` modal writes these values:
+The TUI `/settings` modal is now split into sections (`AI & Models`, `Project Scope`, `Browser`, `Refresh`) so it stays usable on smaller terminals. The Browser section exposes a simplified `Browser automation` field (`compatibility`, `automatic`, `observe`, `advanced`), but the config file still stores the raw Playwright policy keys below:
 
 - `openai_api_key`
 - `include_paths`

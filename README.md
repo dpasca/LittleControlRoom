@@ -97,7 +97,7 @@ The main TUI command palette opens with `/`.
 - `/sort <attention|recent>`: Change the project ordering.
 - `/view <ai|all>`: Switch between AI-linked and all tracked folders.
 - `/setup`: Choose and check the AI backend for summaries, classification, commit help, and other background inference.
-- `/settings`: Edit scope, API keys, local endpoint overrides, filters, and scan settings.
+- `/settings`: Edit sectioned settings for AI backends, project scope, browser automation, and refresh timing.
 - `/filter [text|clear]`: Temporarily narrow the whole dashboard to matching project names.
 - `/new-project`: Create a project folder, or paste an existing project path to add it directly.
 - `/new-task`: Create a scratch task folder under the default task root.
@@ -169,7 +169,7 @@ Most day-to-day use falls into a few buckets:
   | [![Diff window](docs/screenshots/diff-view.png)](docs/screenshots/diff-view.png) | [![Commit preview dialog](docs/screenshots/commit-preview.png)](docs/screenshots/commit-preview.png) | [![Image diff with before/after previews](docs/screenshots/diff-view-image.png)](docs/screenshots/diff-view-image.png) |
 
 - **Keep the list clean** — Use `f` or `/filter <text>` to narrow the project list, `/pin` and `/snooze` to control attention, `/ignore` and `/ignored` to hide or restore exact project names, and `/forget` to remove a missing folder.
-- **Adjust setup** — Use `/settings` for API keys, MLX/Ollama endpoint overrides, paths, and defaults, `/new-project` for repo-backed work, and `/new-task` for quick scratch work.
+- **Adjust setup** — Use `/settings` for API keys, MLX/Ollama endpoint overrides, paths, refresh timing, and the simplified browser automation mode. Switch browser automation back to `compatibility` if you want the original provider-owned behavior, then use `/new-project` for repo-backed work and `/new-task` for quick scratch work.
 
 For the full command list and detailed behavior, see [`docs/reference.md`](docs/reference.md).
 

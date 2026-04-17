@@ -14638,8 +14638,8 @@ func TestCommandEnterOpensSettingsMode(t *testing.T) {
 	if got.commandMode {
 		t.Fatalf("command mode should close after /settings")
 	}
-	if len(got.settingsFields) != 20 {
-		t.Fatalf("settings field count = %d, want 20", len(got.settingsFields))
+	if len(got.settingsFields) != 17 {
+		t.Fatalf("settings field count = %d, want 17", len(got.settingsFields))
 	}
 }
 
@@ -15509,8 +15509,11 @@ func TestSettingsModalRendersColoredActionLegend(t *testing.T) {
 	if !strings.Contains(rendered, "Tab") || !strings.Contains(rendered, "next") {
 		t.Fatalf("settings modal should render Tab next action: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Up/Down") || !strings.Contains(rendered, "choose") {
-		t.Fatalf("settings modal should render Up/Down choose action: %q", rendered)
+	if !strings.Contains(rendered, "PgUp/PgDn") || !strings.Contains(rendered, "section") {
+		t.Fatalf("settings modal should render PgUp/PgDn section action: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Up/Down") || !strings.Contains(rendered, "move") {
+		t.Fatalf("settings modal should render Up/Down move action: %q", rendered)
 	}
 	if !strings.Contains(rendered, "Esc") || !strings.Contains(rendered, "cancel") {
 		t.Fatalf("settings modal should render Esc cancel action: %q", rendered)
@@ -15539,23 +15542,94 @@ func TestSettingsModalShowsSelectedHintAndWindowsLowerFields(t *testing.T) {
 		width:          100,
 		height:         24,
 	}
-	_ = m.setSettingsSelection(settingsFieldInterval)
+	_ = m.setSettingsSelection(settingsFieldHideReasoningSections)
 
 	rendered := ansi.Strip(m.renderSettingsContent(72, 12))
-	if !strings.Contains(rendered, "Scan interval") {
+	if !strings.Contains(rendered, "Show reasoning") {
 		t.Fatalf("settings modal should keep the selected lower field visible: %q", rendered)
 	}
-	if strings.Contains(rendered, "Include paths") {
+	if strings.Contains(rendered, "OpenAI API key") {
 		t.Fatalf("settings modal should window away upper fields in a short modal: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Background refresh interval. Example: 60s") {
+	if !strings.Contains(rendered, "Accepted values: true, false.") || !strings.Contains(rendered, "reasoning/thinking sections in the embedded transcript. Default: false.") {
 		t.Fatalf("settings modal should show the selected field hint: %q", rendered)
 	}
-	if strings.Contains(rendered, "Optional comma-separated path prefixes to keep in scope") {
+	if strings.Contains(rendered, "Used when the AI backend is OpenAI API key") {
 		t.Fatalf("settings modal should not render every field hint inline anymore: %q", rendered)
 	}
 	if !strings.Contains(rendered, "↑ ") {
 		t.Fatalf("settings modal should show an above-window indicator when earlier fields are hidden: %q", rendered)
+	}
+}
+
+func TestSettingsSectionSwitchChangesVisibleFields(t *testing.T) {
+	m := Model{
+		settingsMode:   true,
+		settingsFields: newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
+		width:          100,
+		height:         24,
+	}
+	_ = m.setSettingsSelection(settingsFieldOpenAIAPIKey)
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyPgDown})
+	if cmd == nil {
+		t.Fatalf("PgDn should move to the next settings section")
+	}
+	got := updated.(Model)
+	if got.settingsSelected != settingsFieldIncludePaths {
+		t.Fatalf("settingsSelected = %d, want include paths field", got.settingsSelected)
+	}
+
+	rendered := ansi.Strip(got.renderSettingsContent(72, 18))
+	if !strings.Contains(rendered, "Sections:") || !strings.Contains(rendered, "Project Scope") {
+		t.Fatalf("settings modal should make the section switcher obvious: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Project Scope section.") {
+		t.Fatalf("settings modal should render the new section hint: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Include paths") {
+		t.Fatalf("settings modal should show scope fields after switching sections: %q", rendered)
+	}
+	if strings.Contains(rendered, "OpenAI API key") {
+		t.Fatalf("settings modal should not keep rendering the old section fields: %q", rendered)
+	}
+}
+
+func TestSettingsLeftRightStayWithFocusedInput(t *testing.T) {
+	m := Model{
+		settingsMode:   true,
+		settingsFields: newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
+		width:          100,
+		height:         24,
+	}
+	_ = m.setSettingsSelection(settingsFieldMLXModel)
+	m.settingsFields[settingsFieldMLXModel].input.SetValue("abcdef")
+	m.settingsFields[settingsFieldMLXModel].input.CursorEnd()
+
+	beforeSection := m.activeSettingsSectionIndex()
+	beforePos := m.settingsFields[settingsFieldMLXModel].input.Position()
+
+	updated, _ := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyLeft})
+	got := updated.(Model)
+	if got.activeSettingsSectionIndex() != beforeSection {
+		t.Fatalf("left arrow should not switch sections")
+	}
+	if got.settingsSelected != settingsFieldMLXModel {
+		t.Fatalf("left arrow should keep the same focused field")
+	}
+	leftPos := got.settingsFields[settingsFieldMLXModel].input.Position()
+	if leftPos != beforePos-1 {
+		t.Fatalf("left arrow cursor position = %d, want %d", leftPos, beforePos-1)
+	}
+
+	updated, _ = got.updateSettingsMode(tea.KeyMsg{Type: tea.KeyRight})
+	got = updated.(Model)
+	if got.activeSettingsSectionIndex() != beforeSection {
+		t.Fatalf("right arrow should not switch sections")
+	}
+	rightPos := got.settingsFields[settingsFieldMLXModel].input.Position()
+	if rightPos != beforePos {
+		t.Fatalf("right arrow cursor position = %d, want %d", rightPos, beforePos)
 	}
 }
 
@@ -15610,6 +15684,53 @@ func TestSettingsEnterSavesConfigAndClosesModal(t *testing.T) {
 	text := string(raw)
 	if !strings.Contains(text, "openai_api_key = \"sk-test-example\"") || !strings.Contains(text, "include_paths = [") || !strings.Contains(text, "exclude_paths = [") || !strings.Contains(text, "exclude_project_patterns = [") || !strings.Contains(text, "codex_launch_preset = \"full-auto\"") || !strings.Contains(text, "interval = \"45s\"") {
 		t.Fatalf("saved config missing edited values: %q", text)
+	}
+}
+
+func TestSettingsBrowserAutomationMapsToManagedPolicy(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	m := Model{
+		settingsMode:   true,
+		settingsFields: newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
+		width:          100,
+		height:         24,
+	}
+	_ = m.setSettingsSelection(settingsFieldBrowserAutomation)
+	m.settingsFields[settingsFieldBrowserAutomation].input.SetValue("automatic")
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("expected save command")
+	}
+	if !got.settingsSaving {
+		t.Fatalf("settings enter should mark saving in progress")
+	}
+
+	msg := cmd()
+	finalModel, _ := got.Update(msg)
+	saved := finalModel.(Model)
+	if saved.settingsMode {
+		t.Fatalf("settings mode should close after a successful save")
+	}
+
+	configPath := filepath.Join(home, ".little-control-room", "config.toml")
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+	text := string(raw)
+	for _, want := range []string{
+		"playwright_management_mode = \"managed\"",
+		"playwright_default_browser_mode = \"headless\"",
+		"playwright_login_mode = \"promote\"",
+		"playwright_isolation_scope = \"task\"",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("saved config missing %q: %q", want, text)
+		}
 	}
 }
 
