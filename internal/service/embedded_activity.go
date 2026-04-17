@@ -80,10 +80,7 @@ func embeddedActivitySession(projectPath string, activity EmbeddedSessionActivit
 	if sessionID == "" {
 		return model.SessionEvidence{}
 	}
-	sessionFile := ""
-	if source == model.SessionSourceOpenCode && rawSessionID != "" && strings.TrimSpace(cfg.OpenCodeHome) != "" {
-		sessionFile = filepath.Join(cfg.OpenCodeHome, "opencode.db") + "#session:" + rawSessionID
-	}
+	sessionFile := resolveEmbeddedSessionFile(source, sessionID, rawSessionID, activity.StartedAt, activity.LastActivityAt, cfg)
 	return model.NormalizeSessionEvidenceIdentity(model.SessionEvidence{
 		Source:               source,
 		SessionID:            sessionID,
@@ -144,4 +141,85 @@ func sameEmbeddedActivitySession(existing, activity model.SessionEvidence) bool 
 		return true
 	}
 	return existing.ExternalID() != "" && existing.ExternalID() == activity.ExternalID()
+}
+
+func resolveEmbeddedSessionFile(source model.SessionSource, sessionID, rawSessionID string, startedAt, lastActivityAt time.Time, cfg config.AppConfig) string {
+	source = model.NormalizeSessionSource(source)
+	sessionID = strings.TrimSpace(sessionID)
+	rawSessionID = strings.TrimSpace(rawSessionID)
+
+	switch source {
+	case model.SessionSourceOpenCode:
+		if rawSessionID != "" && strings.TrimSpace(cfg.OpenCodeHome) != "" {
+			return filepath.Join(cfg.OpenCodeHome, "opencode.db") + "#session:" + rawSessionID
+		}
+	case model.SessionSourceCodex:
+		lookupID := rawSessionID
+		if lookupID == "" {
+			lookupID = sessionID
+		}
+		return resolveCodexSessionFile(cfg.CodexHome, lookupID, startedAt, lastActivityAt)
+	}
+
+	return ""
+}
+
+func resolveCodexSessionFile(codexHome, sessionID string, times ...time.Time) string {
+	codexHome = strings.TrimSpace(codexHome)
+	sessionID = strings.TrimSpace(sessionID)
+	if codexHome == "" || sessionID == "" {
+		return ""
+	}
+
+	candidates := codexSessionDateCandidates(times...)
+	for _, root := range []string{"sessions", "archived_sessions"} {
+		for _, day := range candidates {
+			pattern := filepath.Join(
+				codexHome,
+				root,
+				day.Format("2006"),
+				day.Format("01"),
+				day.Format("02"),
+				"*"+sessionID+"*.jsonl",
+			)
+			matches, err := filepath.Glob(pattern)
+			if err != nil || len(matches) == 0 {
+				continue
+			}
+			sort.Strings(matches)
+			return matches[len(matches)-1]
+		}
+	}
+
+	return ""
+}
+
+func codexSessionDateCandidates(times ...time.Time) []time.Time {
+	seen := map[string]struct{}{}
+	out := make([]time.Time, 0, len(times)*3+1)
+	add := func(t time.Time) {
+		if t.IsZero() {
+			return
+		}
+		day := time.Date(t.UTC().Year(), t.UTC().Month(), t.UTC().Day(), 0, 0, 0, 0, time.UTC)
+		key := day.Format("2006-01-02")
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, day)
+	}
+
+	for _, t := range times {
+		if t.IsZero() {
+			continue
+		}
+		add(t)
+		add(t.Add(-24 * time.Hour))
+		add(t.Add(24 * time.Hour))
+	}
+	if len(out) == 0 {
+		add(time.Now())
+	}
+	return out
 }

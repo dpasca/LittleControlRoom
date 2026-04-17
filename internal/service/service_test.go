@@ -601,6 +601,169 @@ func TestRecordEmbeddedSessionActivityQueuesClassificationForOpenCodeLiveSession
 	}
 }
 
+func TestRecordEmbeddedSessionActivityQueuesClassificationForCodexLiveSession(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Date(2026, 4, 17, 15, 12, 53, 0, time.UTC)
+	projectPath := filepath.Join(t.TempDir(), "demo")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.CodexHome = filepath.Join(t.TempDir(), ".codex")
+	sessionID := "019d9c00-851d-7033-8291-b0c6c7525753"
+	sessionDir := filepath.Join(cfg.CodexHome, "sessions", "2026", "04", "17")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatalf("mkdir codex session dir: %v", err)
+	}
+	fixture := filepath.Clean(filepath.Join("..", "..", "testdata", "codex_footprint", "sessions", "2026", "03", "05", "rollout-modern.jsonl"))
+	fixtureData, err := os.ReadFile(fixture)
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	wantSessionFile := filepath.Join(sessionDir, "rollout-2026-04-17T23-12-53-"+sessionID+".jsonl")
+	if err := os.WriteFile(wantSessionFile, fixtureData, 0o644); err != nil {
+		t.Fatalf("write codex session file: %v", err)
+	}
+
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "demo",
+		LastActivity:   now.Add(-10 * time.Minute),
+		Status:         model.StatusIdle,
+		AttentionScore: 5,
+		PresentOnDisk:  true,
+		InScope:        true,
+		CreatedAt:      now.Add(-2 * time.Hour),
+		UpdatedAt:      now.Add(-10 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	classifier := &recordingClassifier{}
+	svc := New(cfg, st, events.NewBus(), nil)
+	svc.SetSessionClassifier(classifier)
+
+	if err := svc.RecordEmbeddedSessionActivity(ctx, EmbeddedSessionActivity{
+		ProjectPath:          projectPath,
+		Source:               model.SessionSourceCodex,
+		SessionID:            sessionID,
+		Format:               "modern",
+		LastActivityAt:       now,
+		LatestTurnStartedAt:  now.Add(-2 * time.Minute),
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  true,
+	}); err != nil {
+		t.Fatalf("RecordEmbeddedSessionActivity() error = %v", err)
+	}
+
+	if classifier.normalCalls != 1 {
+		t.Fatalf("QueueProject() calls = %d, want 1", classifier.normalCalls)
+	}
+	if classifier.notifyCalls != 1 {
+		t.Fatalf("Notify() calls = %d, want 1", classifier.notifyCalls)
+	}
+	if len(classifier.lastState.Sessions) != 1 {
+		t.Fatalf("queued state sessions = %#v, want one session", classifier.lastState.Sessions)
+	}
+	if got := classifier.lastState.Sessions[0].SessionFile; got != wantSessionFile {
+		t.Fatalf("queued session file = %q, want %q", got, wantSessionFile)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 20)
+	if err != nil {
+		t.Fatalf("get detail: %v", err)
+	}
+	if len(detail.Sessions) != 1 {
+		t.Fatalf("stored sessions = %#v, want one session", detail.Sessions)
+	}
+	if got := detail.Sessions[0].SessionFile; got != wantSessionFile {
+		t.Fatalf("stored session file = %q, want %q", got, wantSessionFile)
+	}
+}
+
+func TestRefreshProjectStatusBackfillsCodexSessionFileFromCodexHome(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Date(2026, 4, 17, 15, 12, 53, 0, time.UTC)
+	projectPath := filepath.Join(t.TempDir(), "demo")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.CodexHome = filepath.Join(t.TempDir(), ".codex")
+	sessionID := "019d9c00-851d-7033-8291-b0c6c7525753"
+	sessionDir := filepath.Join(cfg.CodexHome, "sessions", "2026", "04", "17")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatalf("mkdir codex session dir: %v", err)
+	}
+	fixture := filepath.Clean(filepath.Join("..", "..", "testdata", "codex_footprint", "sessions", "2026", "03", "05", "rollout-modern.jsonl"))
+	fixtureData, err := os.ReadFile(fixture)
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	wantSessionFile := filepath.Join(sessionDir, "rollout-2026-04-17T23-12-53-"+sessionID+".jsonl")
+	if err := os.WriteFile(wantSessionFile, fixtureData, 0o644); err != nil {
+		t.Fatalf("write codex session file: %v", err)
+	}
+
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "demo",
+		LastActivity:   now,
+		Status:         model.StatusIdle,
+		AttentionScore: 5,
+		PresentOnDisk:  true,
+		InScope:        true,
+		CreatedAt:      now.Add(-2 * time.Hour),
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{{
+			Source:               model.SessionSourceCodex,
+			SessionID:            sessionID,
+			RawSessionID:         sessionID,
+			ProjectPath:          projectPath,
+			DetectedProjectPath:  projectPath,
+			Format:               "modern",
+			LastEventAt:          now,
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  true,
+		}},
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	svc := New(cfg, st, events.NewBus(), nil)
+	if err := svc.RefreshProjectStatus(ctx, projectPath); err != nil {
+		t.Fatalf("RefreshProjectStatus() error = %v", err)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 20)
+	if err != nil {
+		t.Fatalf("get detail: %v", err)
+	}
+	if len(detail.Sessions) != 1 {
+		t.Fatalf("stored sessions = %#v, want one session", detail.Sessions)
+	}
+	if got := detail.Sessions[0].SessionFile; got != wantSessionFile {
+		t.Fatalf("stored session file = %q, want %q", got, wantSessionFile)
+	}
+	if strings.TrimSpace(detail.Sessions[0].SnapshotHash) == "" {
+		t.Fatalf("expected stored session snapshot hash after refresh")
+	}
+}
+
 func readyBackendStatus(backend config.AIBackend) aibackend.Status {
 	return aibackend.Status{
 		Backend: backend,

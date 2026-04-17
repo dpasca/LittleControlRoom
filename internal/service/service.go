@@ -1714,6 +1714,16 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 	}
 
 	if len(detail.Sessions) > 0 {
+		if strings.TrimSpace(detail.Sessions[0].SessionFile) == "" {
+			detail.Sessions[0].SessionFile = resolveEmbeddedSessionFile(
+				detail.Sessions[0].Source,
+				detail.Sessions[0].SessionID,
+				detail.Sessions[0].RawSessionID,
+				detail.Sessions[0].StartedAt,
+				detail.Sessions[0].LastEventAt,
+				runtime.cfg,
+			)
+		}
 		ensureLatestSessionTurnState(&detail.Sessions[0])
 		ensureSessionSnapshotHash(ctx, projectPath, &detail.Sessions[0], sessionclassify.NewGitStatusSnapshot(repoDirty, repoSyncStatus, repoAheadCount, repoBehindCount))
 	}

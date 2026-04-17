@@ -5398,10 +5398,26 @@ func projectAssessmentTextAt(project model.ProjectSummary, now time.Time, stuckT
 	if label, _, ok := visibleAssessmentStatusLabelAt(project, now, stuckThreshold); ok {
 		return label
 	}
+	if fallback := projectAssessmentRepoFallback(project); fallback != "" {
+		return fallback
+	}
 	if project.LatestSessionFormat != "" {
 		return "not assessed yet"
 	}
 	return "-"
+}
+
+func projectAssessmentRepoFallback(project model.ProjectSummary) string {
+	if !projectUsesRepoUI(project) {
+		return ""
+	}
+	if project.RepoConflict {
+		return "unmerged files"
+	}
+	if project.RepoDirty {
+		return "dirty worktree"
+	}
+	return ""
 }
 
 func projectAssessmentStyle(project model.ProjectSummary, now time.Time, stuckThreshold time.Duration) lipgloss.Style {

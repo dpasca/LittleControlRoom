@@ -4083,6 +4083,15 @@ func TestProjectAssessmentTextUsesFallbackStates(t *testing.T) {
 	if got := projectAssessmentText(project); got != "not assessed yet" {
 		t.Fatalf("projectAssessmentText(unassessed) = %q, want %q", got, "not assessed yet")
 	}
+
+	project = model.ProjectSummary{
+		LatestSessionFormat: "modern",
+		PresentOnDisk:       true,
+		RepoDirty:           true,
+	}
+	if got := projectAssessmentText(project); got != "dirty worktree" {
+		t.Fatalf("projectAssessmentText(unassessed dirty repo) = %q, want %q", got, "dirty worktree")
+	}
 }
 
 func TestProjectAssessmentTextPrefersCurrentSummaryDuringRefresh(t *testing.T) {
