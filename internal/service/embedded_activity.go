@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/config"
 	"lcroom/internal/model"
 )
 
@@ -42,7 +43,7 @@ func (s *Service) RecordEmbeddedSessionActivity(ctx context.Context, activity Em
 		return err
 	}
 
-	activitySession := embeddedActivitySession(projectPath, activity)
+	activitySession := embeddedActivitySession(projectPath, activity, runtime.cfg)
 	if activitySession.SessionID != "" {
 		detail.Sessions = mergeEmbeddedActivitySession(detail.Sessions, activitySession)
 	}
@@ -66,10 +67,10 @@ func (s *Service) RecordEmbeddedSessionActivity(ctx context.Context, activity Em
 		repoAheadCount:       detail.Summary.RepoAheadCount,
 		repoBehindCount:      detail.Summary.RepoBehindCount,
 		forgotten:            detail.Summary.Forgotten,
-	}, runtime.cfg)
+	}, runtime.cfg, runtime.classifier)
 }
 
-func embeddedActivitySession(projectPath string, activity EmbeddedSessionActivity) model.SessionEvidence {
+func embeddedActivitySession(projectPath string, activity EmbeddedSessionActivity, cfg config.AppConfig) model.SessionEvidence {
 	source := model.NormalizeSessionSource(activity.Source)
 	format := strings.TrimSpace(activity.Format)
 	if format == "" {
@@ -79,12 +80,17 @@ func embeddedActivitySession(projectPath string, activity EmbeddedSessionActivit
 	if sessionID == "" {
 		return model.SessionEvidence{}
 	}
+	sessionFile := ""
+	if source == model.SessionSourceOpenCode && rawSessionID != "" && strings.TrimSpace(cfg.OpenCodeHome) != "" {
+		sessionFile = filepath.Join(cfg.OpenCodeHome, "opencode.db") + "#session:" + rawSessionID
+	}
 	return model.NormalizeSessionEvidenceIdentity(model.SessionEvidence{
 		Source:               source,
 		SessionID:            sessionID,
 		RawSessionID:         rawSessionID,
 		ProjectPath:          projectPath,
 		DetectedProjectPath:  projectPath,
+		SessionFile:          sessionFile,
 		Format:               format,
 		StartedAt:            activity.StartedAt,
 		LastEventAt:          activity.LastActivityAt,

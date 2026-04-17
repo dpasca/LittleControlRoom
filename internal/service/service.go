@@ -1730,7 +1730,7 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 		repoAheadCount:       repoAheadCount,
 		repoBehindCount:      repoBehindCount,
 		forgotten:            forgotten,
-	}, runtime.cfg)
+	}, runtime.cfg, nil)
 }
 
 type projectStatusRefreshOverrides struct {
@@ -1748,7 +1748,7 @@ type projectStatusRefreshOverrides struct {
 	forgotten            bool
 }
 
-func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.ProjectDetail, now time.Time, overrides projectStatusRefreshOverrides, cfg config.AppConfig) error {
+func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.ProjectDetail, now time.Time, overrides projectStatusRefreshOverrides, cfg config.AppConfig, classifier SessionClassifier) error {
 	projectPath := detail.Summary.Path
 	latestSessionStart := time.Time{}
 	latestTurnKnown := false
@@ -1821,6 +1821,15 @@ func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.Pr
 	if err := s.store.UpsertProjectState(ctx, state); err != nil {
 		return fmt.Errorf("persist refreshed project state: %w", err)
 	}
+	if classifier != nil {
+		queued, err := queueProjectClassification(ctx, classifier, state, ScanOptions{})
+		if err != nil {
+			return fmt.Errorf("queue session classification: %w", err)
+		}
+		if queued {
+			classifier.Notify()
+		}
+	}
 	if projectStateChanged(detail.Summary, state) {
 		s.publishProjectChanged(ctx, now, state)
 	}
@@ -1847,7 +1856,7 @@ func (s *Service) refreshProjectAttention(ctx context.Context, projectPath strin
 		repoAheadCount:       detail.Summary.RepoAheadCount,
 		repoBehindCount:      detail.Summary.RepoBehindCount,
 		forgotten:            detail.Summary.Forgotten,
-	}, cfg)
+	}, cfg, nil)
 }
 
 func (s *Service) TogglePin(ctx context.Context, projectPath string) error {

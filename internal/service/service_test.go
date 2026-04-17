@@ -70,10 +70,13 @@ func (d blockingDetector) Detect(context.Context, scanner.PathScope) (map[string
 type recordingClassifier struct {
 	normalCalls int
 	forcedCalls int
+	notifyCalls int
+	lastState   model.ProjectState
 }
 
-func (c *recordingClassifier) QueueProject(context.Context, model.ProjectState) (bool, error) {
+func (c *recordingClassifier) QueueProject(_ context.Context, state model.ProjectState) (bool, error) {
 	c.normalCalls++
+	c.lastState = state
 	return true, nil
 }
 
@@ -82,7 +85,7 @@ func (c *recordingClassifier) QueueProjectRetry(context.Context, model.ProjectSt
 	return true, nil
 }
 
-func (c *recordingClassifier) Notify()               {}
+func (c *recordingClassifier) Notify()               { c.notifyCalls++ }
 func (c *recordingClassifier) Start(context.Context) {}
 
 func TestApplyEditableSettingsSkipsAIClientRefreshForEmbeddedModelPreferences(t *testing.T) {
@@ -518,6 +521,83 @@ func TestRecordEmbeddedSessionActivityMarksTurnSettledAtSameLastEvent(t *testing
 	}
 	if !detail.Sessions[0].LatestTurnStateKnown || !detail.Sessions[0].LatestTurnCompleted {
 		t.Fatalf("turn state = known:%t completed:%t, want settled turn", detail.Sessions[0].LatestTurnStateKnown, detail.Sessions[0].LatestTurnCompleted)
+	}
+}
+
+func TestRecordEmbeddedSessionActivityQueuesClassificationForOpenCodeLiveSession(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC().Truncate(time.Minute)
+	projectPath := filepath.Join(t.TempDir(), "demo")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "demo",
+		LastActivity:   now.Add(-10 * time.Minute),
+		Status:         model.StatusIdle,
+		AttentionScore: 5,
+		PresentOnDisk:  true,
+		InScope:        true,
+		CreatedAt:      now.Add(-2 * time.Hour),
+		UpdatedAt:      now.Add(-10 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.OpenCodeHome = filepath.Join(t.TempDir(), "opencode-home")
+	if err := os.MkdirAll(cfg.OpenCodeHome, 0o755); err != nil {
+		t.Fatalf("mkdir opencode home: %v", err)
+	}
+
+	classifier := &recordingClassifier{}
+	svc := New(cfg, st, events.NewBus(), nil)
+	svc.SetSessionClassifier(classifier)
+
+	if err := svc.RecordEmbeddedSessionActivity(ctx, EmbeddedSessionActivity{
+		ProjectPath:          projectPath,
+		Source:               model.SessionSourceOpenCode,
+		SessionID:            "ses-demo",
+		Format:               "opencode_db",
+		LastActivityAt:       now,
+		LatestTurnStartedAt:  now.Add(-2 * time.Minute),
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  true,
+	}); err != nil {
+		t.Fatalf("RecordEmbeddedSessionActivity() error = %v", err)
+	}
+
+	if classifier.normalCalls != 1 {
+		t.Fatalf("QueueProject() calls = %d, want 1", classifier.normalCalls)
+	}
+	if classifier.notifyCalls != 1 {
+		t.Fatalf("Notify() calls = %d, want 1", classifier.notifyCalls)
+	}
+	if len(classifier.lastState.Sessions) != 1 {
+		t.Fatalf("queued state sessions = %#v, want one session", classifier.lastState.Sessions)
+	}
+	wantSessionFile := filepath.Join(cfg.OpenCodeHome, "opencode.db") + "#session:ses-demo"
+	if got := classifier.lastState.Sessions[0].SessionFile; got != wantSessionFile {
+		t.Fatalf("queued session file = %q, want %q", got, wantSessionFile)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 20)
+	if err != nil {
+		t.Fatalf("get detail: %v", err)
+	}
+	if len(detail.Sessions) != 1 {
+		t.Fatalf("stored sessions = %#v, want one session", detail.Sessions)
+	}
+	if got := detail.Sessions[0].SessionFile; got != wantSessionFile {
+		t.Fatalf("stored session file = %q, want %q", got, wantSessionFile)
 	}
 }
 
