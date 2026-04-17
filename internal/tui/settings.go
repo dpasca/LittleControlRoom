@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"lcroom/internal/browserctl"
+	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -582,6 +583,10 @@ func (m Model) renderSettingsContent(width, maxHeight int) string {
 	if end < len(fieldIndexes) {
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d below", len(fieldIndexes)-end)))
 	}
+	if activeSection.id == settingsSectionBrowser {
+		lines = append(lines, "")
+		lines = append(lines, m.renderBrowserSettingsStatus(width)...)
+	}
 
 	if hint := m.renderSelectedSettingsHint(width); hint != "" {
 		lines = append(lines, "")
@@ -668,6 +673,50 @@ func (m Model) renderSettingsSectionTabs(width int) string {
 		parts = append(parts, inactiveStyle.Render(label))
 	}
 	return fitFooterWidth(strings.Join(parts, " "), width)
+}
+
+type settingsBrowserProviderCapability struct {
+	provider codexapp.Provider
+	summary  string
+	style    lipgloss.Style
+}
+
+func browserProviderCapabilities() []settingsBrowserProviderCapability {
+	return []settingsBrowserProviderCapability{
+		{
+			provider: codexapp.ProviderCodex,
+			summary:  "Launch policy plus approval, tool input, and elicitation replies.",
+			style:    detailValueStyle,
+		},
+		{
+			provider: codexapp.ProviderOpenCode,
+			summary:  "Launch policy plus approval and tool input. Embedded elicitation replies are still missing.",
+			style:    detailWarningStyle,
+		},
+		{
+			provider: codexapp.ProviderClaudeCode,
+			summary:  "Launch policy only. Approval, tool input, and elicitation replies are not wired yet.",
+			style:    detailMutedStyle,
+		},
+	}
+}
+
+func (m Model) renderBrowserSettingsStatus(width int) []string {
+	policy := m.currentSettingsBaseline().PlaywrightPolicy.Normalize()
+	lines := []string{
+		detailField("Effective", detailValueStyle.Render(policy.Summary())),
+	}
+	lines = append(lines, renderWrappedDialogTextLines(
+		detailMutedStyle,
+		max(18, width-2),
+		"Ownership: no LCR browser lease manager yet. New embedded sessions inherit this launch policy, but browser ownership and login promotion are still provider-owned after startup.",
+	)...)
+	lines = append(lines, detailLabelStyle.Render("Provider support:"))
+	for _, capability := range browserProviderCapabilities() {
+		text := fmt.Sprintf("%s: %s", capability.provider.Label(), capability.summary)
+		lines = append(lines, renderWrappedDialogTextLines(capability.style, max(18, width-2), text)...)
+	}
+	return lines
 }
 
 func (m Model) renderSettingsFieldRow(field settingsField, selected bool, labelWidth, inputWidth int) string {

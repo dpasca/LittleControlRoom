@@ -19,6 +19,7 @@ import (
 
 	"lcroom/internal/aibackend"
 	"lcroom/internal/brand"
+	"lcroom/internal/browserctl"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/commands"
@@ -15630,6 +15631,39 @@ func TestSettingsLeftRightStayWithFocusedInput(t *testing.T) {
 	rightPos := got.settingsFields[settingsFieldMLXModel].input.Position()
 	if rightPos != beforePos {
 		t.Fatalf("right arrow cursor position = %d, want %d", rightPos, beforePos)
+	}
+}
+
+func TestSettingsBrowserSectionShowsStatusSummary(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.PlaywrightPolicy = browserctl.Policy{
+		ManagementMode:     browserctl.ManagementModeManaged,
+		DefaultBrowserMode: browserctl.BrowserModeHeadless,
+		LoginMode:          browserctl.LoginModePromote,
+		IsolationScope:     browserctl.IsolationScopeTask,
+	}
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+	_ = m.setSettingsSelection(settingsFieldBrowserAutomation)
+
+	rendered := ansi.Strip(m.renderSettingsContent(84, 22))
+	for _, want := range []string{
+		"Effective:",
+		"Ownership:",
+		"Provider support:",
+		"Codex:",
+		"OpenCode:",
+		"Claude Code:",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("browser settings status is missing %q: %q", want, rendered)
+		}
 	}
 }
 
