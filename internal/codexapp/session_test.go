@@ -1693,6 +1693,104 @@ func TestReconcileBusyStateMarksSessionStalledAfterRepeatedHealthCheckFailures(t
 	}
 }
 
+func TestReconcileBusyStateMarksSessionStalledWhenActiveTurnStaysUnresponsive(t *testing.T) {
+	staleBusy := time.Now().Add(-(busyStateUnresponsiveFor + time.Minute)).Round(0)
+	s := &appServerSession{
+		projectPath:        "/tmp/demo",
+		threadID:           "thread_456",
+		activeTurnID:       "turn_old",
+		busy:               true,
+		status:             "Codex is working...",
+		entryIndex:         make(map[string]int),
+		notify:             func() {},
+		lastBusyActivityAt: staleBusy,
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			if method != "thread/read" {
+				t.Fatalf("method = %q, want thread/read", method)
+			}
+			return json.RawMessage(`{"thread":{"id":"thread_456","status":{"type":"active"},"turns":[{"id":"turn_old","status":"inProgress"}]}}`), nil
+		},
+	}
+
+	if err := s.ReconcileBusyState(); err != nil {
+		t.Fatalf("first ReconcileBusyState() error = %v, want nil", err)
+	}
+	first := s.Snapshot()
+	if first.Phase != SessionPhaseRunning {
+		t.Fatalf("phase after first stale-active check = %q, want %q before stall threshold", first.Phase, SessionPhaseRunning)
+	}
+	if first.Status == codexReconnectSuggestion {
+		t.Fatalf("status after first stale-active check = %q, should not promote reconnect suggestion yet", first.Status)
+	}
+	if !first.LastBusyActivityAt.Equal(staleBusy) {
+		t.Fatalf("last busy activity after first stale-active check = %v, want %v", first.LastBusyActivityAt, staleBusy)
+	}
+
+	if err := s.ReconcileBusyState(); err != nil {
+		t.Fatalf("second ReconcileBusyState() error = %v, want nil", err)
+	}
+	snapshot := s.Snapshot()
+	if snapshot.Phase != SessionPhaseStalled {
+		t.Fatalf("phase = %q, want %q", snapshot.Phase, SessionPhaseStalled)
+	}
+	if snapshot.Status != codexReconnectSuggestion {
+		t.Fatalf("status = %q, want %q", snapshot.Status, codexReconnectSuggestion)
+	}
+	if snapshot.LastSystemNotice != codexReconnectSuggestion {
+		t.Fatalf("last system notice = %q, want reconnect suggestion", snapshot.LastSystemNotice)
+	}
+	if !snapshot.LastBusyActivityAt.Equal(staleBusy) {
+		t.Fatalf("last busy activity = %v, want %v", snapshot.LastBusyActivityAt, staleBusy)
+	}
+	if len(snapshot.Entries) == 0 || snapshot.Entries[len(snapshot.Entries)-1].Text != codexReconnectSuggestion {
+		t.Fatalf("entries = %#v, want reconnect guidance entry appended once", snapshot.Entries)
+	}
+}
+
+func TestSubmitInputRejectsSteerWhenRecoveredTurnLooksStuck(t *testing.T) {
+	staleBusy := time.Now().Add(-(busyStateUnresponsiveFor + time.Minute)).Round(0)
+	callCount := 0
+	s := &appServerSession{
+		projectPath:        "/tmp/demo",
+		threadID:           "thread_456",
+		activeTurnID:       "turn_live",
+		busy:               true,
+		status:             "Codex is working...",
+		entryIndex:         make(map[string]int),
+		notify:             func() {},
+		lastBusyActivityAt: staleBusy,
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			callCount++
+			if method != "thread/read" {
+				t.Fatalf("method = %q, want thread/read", method)
+			}
+			return json.RawMessage(`{"thread":{"id":"thread_456","status":{"type":"active"},"turns":[{"id":"turn_live","status":"inProgress"}]}}`), nil
+		},
+	}
+
+	err := s.Submit("follow up")
+	if !isBusyTurnLikelyStuckError(err) {
+		t.Fatalf("Submit() error = %v, want busy-turn-stuck guidance", err)
+	}
+	if callCount != 1 {
+		t.Fatalf("rpc call count = %d, want only thread/read when steer is rejected", callCount)
+	}
+
+	snapshot := s.Snapshot()
+	if snapshot.Phase != SessionPhaseStalled {
+		t.Fatalf("phase = %q, want %q", snapshot.Phase, SessionPhaseStalled)
+	}
+	if snapshot.Status != codexReconnectSuggestion {
+		t.Fatalf("status = %q, want %q", snapshot.Status, codexReconnectSuggestion)
+	}
+	if !snapshot.LastBusyActivityAt.Equal(staleBusy) {
+		t.Fatalf("last busy activity = %v, want %v", snapshot.LastBusyActivityAt, staleBusy)
+	}
+	if len(snapshot.Entries) == 0 || snapshot.Entries[len(snapshot.Entries)-1].Text != codexReconnectSuggestion {
+		t.Fatalf("entries = %#v, want reconnect guidance appended after the user tries to steer a stuck turn", snapshot.Entries)
+	}
+}
+
 func TestEnsureFreshThreadRejectsRetainedHistory(t *testing.T) {
 	callCount := 0
 	s := &appServerSession{

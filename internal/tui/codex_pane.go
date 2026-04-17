@@ -1140,6 +1140,10 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "Interrupting " + label + " turn..."
 			return m, m.interruptVisibleCodexCmd()
 		}
+		if snapshot.Phase == codexapp.SessionPhaseStalled && snapshot.Busy && strings.TrimSpace(snapshot.ActiveTurnID) != "" {
+			m.status = "Interrupting stuck " + label + " turn..."
+			return m, m.interruptVisibleCodexCmd()
+		}
 		if snapshot.Phase == codexapp.SessionPhaseFinishing {
 			m.status = label + " is finishing the current turn. Wait for the final output to settle or hide it with Alt+Up."
 			return m, nil
@@ -1305,7 +1309,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, refreshCmd
 		}
 		if snapshot.Phase == codexapp.SessionPhaseStalled {
-			m.status = label + " looks stuck or disconnected. Use /reconnect before sending another prompt."
+			m.status = label + " looks stuck or disconnected. Interrupt the current turn with Ctrl+C or use /reconnect before sending another prompt."
 			return m, refreshCmd
 		}
 		m.clearCodexDraft(m.codexVisibleProject)

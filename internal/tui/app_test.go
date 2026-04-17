@@ -11964,6 +11964,60 @@ func TestVisibleCodexCtrlCDoesNotInterruptCompactingSession(t *testing.T) {
 	}
 }
 
+func TestVisibleCodexCtrlCInterruptsStalledBusySession(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started:      true,
+			Preset:       codexcli.PresetYolo,
+			Busy:         true,
+			Phase:        codexapp.SessionPhaseStalled,
+			ActiveTurnID: "turn-live",
+			Status:       "Embedded Codex session seems stuck or disconnected. Use /reconnect.",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlC})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("ctrl+c should interrupt a stalled busy embedded Codex session")
+	}
+	if got.status != "Interrupting stuck Codex turn..." {
+		t.Fatalf("status = %q, want stuck interrupt notice", got.status)
+	}
+
+	msg := cmd()
+	action, ok := msg.(codexActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexActionMsg", msg)
+	}
+	if action.err != nil {
+		t.Fatalf("interrupt action error = %v, want nil", action.err)
+	}
+	if !session.interrupted {
+		t.Fatalf("session should be interrupted")
+	}
+}
+
 func TestVisibleCodexEnterDoesNotSteerExternalBusySession(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",

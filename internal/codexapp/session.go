@@ -26,9 +26,12 @@ const (
 	idleShutdownAfter        = time.Hour
 	idleShutdownNotice       = "Closed embedded Codex session after 1 hour of inactivity."
 	busyStateReconcileAfter  = time.Minute
+	busyStateUnresponsiveFor = 10 * time.Minute
 	busyStateStallAfter      = 2
 	codexReconnectSuggestion = "Embedded Codex session seems stuck or disconnected. Use /reconnect."
 )
+
+var errBusyTurnLikelyStuck = errors.New("embedded Codex session seems stuck or disconnected. Interrupt the current turn or use /reconnect before sending another prompt")
 
 type ForceNewSessionReusedError struct {
 	Provider Provider
@@ -637,6 +640,14 @@ func (s *appServerSession) phaseLocked() SessionPhase {
 }
 
 func (s *appServerSession) setBusyLocked(turnID string, external bool) {
+	s.updateBusyLocked(turnID, external, true)
+}
+
+func (s *appServerSession) restoreBusyLocked(turnID string, external bool) {
+	s.updateBusyLocked(turnID, external, false)
+}
+
+func (s *appServerSession) updateBusyLocked(turnID string, external, refreshActivity bool) {
 	turnID = strings.TrimSpace(turnID)
 	turnChanged := turnID != "" && s.activeTurnID != "" && s.activeTurnID != turnID
 	if turnChanged {
@@ -662,22 +673,71 @@ func (s *appServerSession) setBusyLocked(turnID string, external bool) {
 	if s.busySince.IsZero() {
 		s.busySince = now
 	}
-	s.lastActivityAt = now
-	s.lastBusyActivityAt = now
+	if refreshActivity {
+		s.lastActivityAt = now
+		s.lastBusyActivityAt = now
+	} else if s.lastActivityAt.IsZero() {
+		s.lastActivityAt = now
+	}
 }
 
 func (s *appServerSession) shouldRefreshBusyBeforeSteerLocked(now time.Time) bool {
 	if !s.busy || s.busyExternal || strings.TrimSpace(s.activeTurnID) == "" {
 		return false
 	}
+	age, ok := s.busyActivityAgeLocked(now)
+	if !ok {
+		return false
+	}
+	return age >= busyStateReconcileAfter
+}
+
+func (s *appServerSession) busyActivityAgeLocked(now time.Time) (time.Duration, bool) {
 	lastBusyActivityAt := s.lastActivityAt
 	if !s.lastBusyActivityAt.IsZero() {
 		lastBusyActivityAt = s.lastBusyActivityAt
 	}
 	if lastBusyActivityAt.IsZero() {
+		return 0, false
+	}
+	if now.Before(lastBusyActivityAt) {
+		return 0, true
+	}
+	return now.Sub(lastBusyActivityAt), true
+}
+
+func (s *appServerSession) activeTurnLooksStuckLocked(turnID string, now time.Time) bool {
+	if !s.busy || s.busyExternal || s.pendingApproval != nil || s.pendingToolInput != nil || s.pendingElicitation != nil {
 		return false
 	}
-	return now.Sub(lastBusyActivityAt) >= busyStateReconcileAfter
+	turnID = strings.TrimSpace(turnID)
+	if turnID == "" || strings.TrimSpace(s.activeTurnID) != turnID {
+		return false
+	}
+	age, ok := s.busyActivityAgeLocked(now)
+	if !ok {
+		return false
+	}
+	return age >= busyStateUnresponsiveFor
+}
+
+func (s *appServerSession) setBusyStalledLocked() {
+	if !s.stalled {
+		s.appendEntryLocked("", TranscriptSystem, codexReconnectSuggestion)
+	}
+	s.stalled = true
+	if s.stallCount < busyStateStallAfter {
+		s.stallCount = busyStateStallAfter
+	}
+	s.status = codexReconnectSuggestion
+	s.lastSystemNotice = codexReconnectSuggestion
+}
+
+func (s *appServerSession) noteSuspectedBusyStallLocked() {
+	s.stallCount++
+	if s.stallCount >= busyStateStallAfter {
+		s.setBusyStalledLocked()
+	}
 }
 
 func (s *appServerSession) clearBusyLocked(turnID string) {
@@ -859,6 +919,8 @@ func (s *appServerSession) submitBusyInput(ctx context.Context, threadID, active
 			case recoveredTurnID != "":
 				activeTurnID = recoveredTurnID
 			}
+		} else if isBusyTurnLikelyStuckError(recoveryErr) {
+			return recoveryErr
 		}
 	}
 
@@ -874,6 +936,9 @@ func (s *appServerSession) submitBusyInput(ctx context.Context, threadID, active
 
 	recoveredTurnID, threadIdle, recoveryErr := s.recoverSteerTarget(ctx, threadID)
 	if recoveryErr != nil {
+		if isBusyTurnLikelyStuckError(recoveryErr) {
+			return recoveryErr
+		}
 		combined := fmt.Errorf("%s (and failed to refresh thread state: %v)", err.Error(), recoveryErr)
 		s.appendSystemError(combined)
 		return combined
@@ -970,6 +1035,8 @@ func (s *appServerSession) recoverSteerTarget(ctx context.Context, threadID stri
 	recoveredTurnID := activeTurnIDFromThread(thread)
 	threadIdle := recoveredTurnID == ""
 	status := effectiveThreadStatus(thread)
+	now := time.Now()
+	turnLikelyStuck := false
 
 	s.mu.Lock()
 	s.touchLocked()
@@ -977,14 +1044,25 @@ func (s *appServerSession) recoverSteerTarget(ctx context.Context, threadID stri
 	case threadIdle:
 		s.syncThreadStatusLocked(thread.ID, status, true)
 	case recoveredTurnID != "":
-		s.setBusyLocked(recoveredTurnID, false)
-		s.status = "Codex is working..."
+		if s.activeTurnLooksStuckLocked(recoveredTurnID, now) {
+			s.setBusyStalledLocked()
+			turnLikelyStuck = true
+		} else {
+			s.restoreBusyLocked(recoveredTurnID, false)
+			s.status = "Codex is working..."
+			if s.lastSystemNotice == codexReconnectSuggestion {
+				s.lastSystemNotice = ""
+			}
+		}
 	default:
 		s.syncThreadStatusLocked(thread.ID, status, true)
 	}
 	s.mu.Unlock()
 	s.notify()
 
+	if turnLikelyStuck {
+		return "", false, errBusyTurnLikelyStuck
+	}
 	return recoveredTurnID, threadIdle, nil
 }
 
@@ -1720,12 +1798,20 @@ func (s *appServerSession) ReconcileBusyState() error {
 	s.reconciling = false
 	if err == nil {
 		status := effectiveThreadStatus(thread)
-		s.stalled = false
-		s.stallCount = 0
-		if strings.TrimSpace(status.Type) == "active" && s.busy {
-			s.status = "Codex is working..."
-			if s.lastSystemNotice == codexReconnectSuggestion {
-				s.lastSystemNotice = ""
+		activeTurnID := activeTurnIDFromThread(thread)
+		if strings.TrimSpace(status.Type) == "active" && s.activeTurnLooksStuckLocked(activeTurnID, time.Now()) {
+			s.noteSuspectedBusyStallLocked()
+			if !s.stalled {
+				s.status = "Codex is working..."
+			}
+		} else {
+			s.stalled = false
+			s.stallCount = 0
+			if strings.TrimSpace(status.Type) == "active" && s.busy {
+				s.status = "Codex is working..."
+				if s.lastSystemNotice == codexReconnectSuggestion {
+					s.lastSystemNotice = ""
+				}
 			}
 		}
 		s.syncThreadStatusLocked(threadID, status, true)
@@ -3319,6 +3405,10 @@ func isActiveTurnMismatchError(err error) bool {
 
 func isRecoverableSteerError(err error) bool {
 	return isActiveTurnMismatchError(err) || isNoActiveTurnToSteerError(err)
+}
+
+func isBusyTurnLikelyStuckError(err error) bool {
+	return errors.Is(err, errBusyTurnLikelyStuck)
 }
 
 func parseActiveTurnMismatchError(err error) *activeTurnMismatch {
