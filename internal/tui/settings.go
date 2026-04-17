@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -195,6 +196,23 @@ func normalizeSettingsChoice(raw string) string {
 
 func (m *Model) openSettingsMode() tea.Cmd {
 	return m.openSettingsModeWithBaseline(m.currentSettingsBaseline())
+}
+
+func (m *Model) openBrowserSettingsMode() tea.Cmd {
+	settings := m.currentSettingsBaseline()
+	m.settingsFields = newSettingsFields(settings)
+	saved := cloneEditableSettings(settings)
+	m.settingsBaseline = &saved
+	m.settingsMode = true
+	m.settingsSaving = false
+	m.settingsRevealPrivacy = false
+	m.localModelPickerVisible = false
+	m.setupMode = false
+	m.commandMode = false
+	m.showHelp = false
+	m.err = nil
+	m.status = "Browser settings open. Review browser automation and live activity."
+	return m.setSettingsSelection(settingsFieldBrowserAutomation)
 }
 
 func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) tea.Cmd {
@@ -681,6 +699,12 @@ type settingsBrowserProviderCapability struct {
 	style    lipgloss.Style
 }
 
+type settingsBrowserLiveActivity struct {
+	provider    codexapp.Provider
+	projectPath string
+	activity    browserctl.SessionActivity
+}
+
 func browserProviderCapabilities() []settingsBrowserProviderCapability {
 	return []settingsBrowserProviderCapability{
 		{
@@ -701,6 +725,34 @@ func browserProviderCapabilities() []settingsBrowserProviderCapability {
 	}
 }
 
+func (m Model) browserLiveActivities() []settingsBrowserLiveActivity {
+	if len(m.codexSnapshots) == 0 {
+		return nil
+	}
+	activities := make([]settingsBrowserLiveActivity, 0, len(m.codexSnapshots))
+	for projectPath, snapshot := range m.codexSnapshots {
+		if snapshot.Closed {
+			continue
+		}
+		activity := snapshot.BrowserActivity.Normalize()
+		if !activity.Live() {
+			continue
+		}
+		activities = append(activities, settingsBrowserLiveActivity{
+			provider:    snapshot.Provider,
+			projectPath: projectPath,
+			activity:    activity,
+		})
+	}
+	sort.Slice(activities, func(i, j int) bool {
+		if activities[i].provider != activities[j].provider {
+			return activities[i].provider < activities[j].provider
+		}
+		return activities[i].projectPath < activities[j].projectPath
+	})
+	return activities
+}
+
 func (m Model) renderBrowserSettingsStatus(width int) []string {
 	policy := m.currentSettingsBaseline().PlaywrightPolicy.Normalize()
 	lines := []string{
@@ -711,6 +763,28 @@ func (m Model) renderBrowserSettingsStatus(width int) []string {
 		max(18, width-2),
 		"Ownership: no LCR browser lease manager yet. New embedded sessions inherit this launch policy, but browser ownership and login promotion are still provider-owned after startup.",
 	)...)
+	lines = append(lines, detailLabelStyle.Render("Live activity:"))
+	liveActivities := m.browserLiveActivities()
+	if len(liveActivities) == 0 {
+		lines = append(lines, renderWrappedDialogTextLines(
+			detailMutedStyle,
+			max(18, width-2),
+			"No cached embedded session is currently reporting Playwright activity.",
+		)...)
+	} else {
+		for _, activity := range liveActivities {
+			projectLabel := filepath.Base(strings.TrimSpace(activity.projectPath))
+			if projectLabel == "" {
+				projectLabel = activity.projectPath
+			}
+			text := fmt.Sprintf("%s / %s: %s", activity.provider.Label(), projectLabel, activity.activity.Summary())
+			style := detailValueStyle
+			if activity.activity.Normalize().State == browserctl.SessionActivityStateWaitingForUser {
+				style = detailWarningStyle
+			}
+			lines = append(lines, renderWrappedDialogTextLines(style, max(18, width-2), text)...)
+		}
+	}
 	lines = append(lines, detailLabelStyle.Render("Provider support:"))
 	for _, capability := range browserProviderCapabilities() {
 		text := fmt.Sprintf("%s: %s", capability.provider.Label(), capability.summary)

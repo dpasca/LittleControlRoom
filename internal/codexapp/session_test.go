@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"lcroom/internal/browserctl"
 )
 
 func TestHydrateResumedThreadBuildsTranscript(t *testing.T) {
@@ -806,6 +808,119 @@ func TestHandleItemCompletedUpdatesToolStatus(t *testing.T) {
 	}
 	if text != "Tool request_user_input [completed]" {
 		t.Fatalf("tool text = %q, want completed status", text)
+	}
+}
+
+func TestHandleItemStartedTracksPlaywrightBrowserActivity(t *testing.T) {
+	policy := browserctl.Policy{
+		ManagementMode:     browserctl.ManagementModeManaged,
+		DefaultBrowserMode: browserctl.BrowserModeHeadless,
+		LoginMode:          browserctl.LoginModePromote,
+		IsolationScope:     browserctl.IsolationScopeTask,
+	}
+	s := &appServerSession{
+		projectPath:      "/tmp/demo",
+		entryIndex:       make(map[string]int),
+		notify:           func() {},
+		playwrightPolicy: policy,
+		browserActivity:  browserctl.DefaultSessionActivity(policy),
+	}
+
+	s.handleItemStarted(json.RawMessage(`{
+		"item": {
+			"id": "item_browser",
+			"type": "mcpToolCall",
+			"server": "playwright",
+			"tool": "browser_navigate",
+			"status": "inProgress"
+		}
+	}`))
+
+	snapshot := s.Snapshot()
+	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateActive; got != want {
+		t.Fatalf("browser activity state = %q, want %q", got, want)
+	}
+	if got, want := snapshot.BrowserActivity.ServerName, "playwright"; got != want {
+		t.Fatalf("browser activity server = %q, want %q", got, want)
+	}
+	if got, want := snapshot.BrowserActivity.ToolName, "browser_navigate"; got != want {
+		t.Fatalf("browser activity tool = %q, want %q", got, want)
+	}
+}
+
+func TestPlaywrightElicitationUpdatesBrowserActivity(t *testing.T) {
+	policy := browserctl.Policy{
+		ManagementMode:     browserctl.ManagementModeManaged,
+		DefaultBrowserMode: browserctl.BrowserModeHeadless,
+		LoginMode:          browserctl.LoginModePromote,
+		IsolationScope:     browserctl.IsolationScopeTask,
+	}
+	s := &appServerSession{
+		projectPath:      "/tmp/demo",
+		entryIndex:       make(map[string]int),
+		notify:           func() {},
+		playwrightPolicy: policy,
+		browserActivity:  browserctl.DefaultSessionActivity(policy),
+	}
+
+	s.handleItemStarted(json.RawMessage(`{
+		"item": {
+			"id": "item_browser",
+			"type": "mcpToolCall",
+			"server": "playwright",
+			"tool": "browser_navigate",
+			"status": "inProgress"
+		}
+	}`))
+	s.handleServerRequest(rpcEnvelope{
+		Method: "mcpServer/elicitation/request",
+		ID:     json.RawMessage(`1`),
+		Params: json.RawMessage(`{
+			"serverName": "playwright",
+			"threadId": "thread_1",
+			"turnId": "turn_1",
+			"mode": "form",
+			"message": "Log in to continue",
+			"elicitationId": "elicitation_1",
+			"requestedSchema": {"type":"object"}
+		}`),
+	})
+
+	snapshot := s.Snapshot()
+	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateWaitingForUser; got != want {
+		t.Fatalf("browser activity state = %q, want %q", got, want)
+	}
+	if got, want := snapshot.Status, "Browser needs attention"; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+	if got, want := snapshot.LastSystemNotice, "Playwright requested browser input"; got != want {
+		t.Fatalf("last system notice = %q, want %q", got, want)
+	}
+	if snapshot.PendingElicitation == nil {
+		t.Fatalf("pending elicitation = nil, want request")
+	}
+
+	s.handleNotification("serverRequest/resolved", json.RawMessage(`{
+		"threadId": "thread_1",
+		"requestId": 1
+	}`))
+	snapshot = s.Snapshot()
+	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateActive; got != want {
+		t.Fatalf("browser activity state after resolve = %q, want %q", got, want)
+	}
+
+	s.handleItemCompleted(json.RawMessage(`{
+		"item": {
+			"id": "item_browser",
+			"type": "mcpToolCall",
+			"server": "playwright",
+			"tool": "browser_navigate",
+			"status": "completed"
+		}
+	}`))
+	snapshot = s.Snapshot()
+	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateIdle; got != want {
+		t.Fatalf("browser activity state after completion = %q, want %q", got, want)
 	}
 }
 

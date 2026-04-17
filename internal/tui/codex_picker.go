@@ -607,6 +607,9 @@ func (m Model) showCodexProject(projectPath, status string) (tea.Model, tea.Cmd)
 	}
 	m.codexVisibleProject = projectPath
 	m.codexHiddenProject = projectPath
+	if m.browserAttention != nil && m.browserAttention.ProjectPath == projectPath {
+		m.browserAttention = nil
+	}
 	if m.questionNotify != nil && m.questionNotify.ProjectPath == projectPath {
 		m.questionNotify = nil
 	}

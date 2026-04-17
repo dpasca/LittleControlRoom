@@ -167,6 +167,7 @@ type Model struct {
 	codexPickerEmpty            string
 	codexPickerProject          string
 	codexPickerProvider         codexapp.Provider
+	browserAttention            *browserAttentionNotification
 	questionNotify              *questionNotification
 	codexInputSelection         *codexInputSelectionState
 	codexComposerSelection      textSelection
@@ -1464,6 +1465,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.showAIStats {
 			return m.updateAIStatsMode(msg)
 		}
+		if m.browserAttention != nil {
+			return m.updateBrowserAttentionMode(msg)
+		}
 		if m.questionNotify != nil {
 			return m.updateQuestionNotifyMode(msg)
 		}
@@ -2301,6 +2305,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.completeModelSettleLatency(msg.projectPath, snapshot)
 				if !snapshot.Closed {
 					m.markCodexSessionLive(msg.projectPath)
+					m.detectBrowserAttentionNotification(msg.projectPath, snapshot)
 					m.detectQuestionNotification(msg.projectPath, snapshot)
 					return m, tea.Batch(cmds...)
 				}
@@ -2338,6 +2343,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.completeModelSettleLatency(msg.projectPath, snapshot)
 			if !snapshot.Closed {
 				m.markCodexSessionLive(msg.projectPath)
+				m.detectBrowserAttentionNotification(msg.projectPath, snapshot)
 				m.detectQuestionNotification(msg.projectPath, snapshot)
 				return m, batchCmds(append(cmds, statusRefreshCmd)...)
 			}
@@ -2395,6 +2401,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.completeModelSettleLatency(projectPath, snapshot)
 		if !snapshot.Closed {
 			m.markCodexSessionLive(projectPath)
+			m.detectBrowserAttentionNotification(projectPath, snapshot)
 			m.detectQuestionNotification(projectPath, snapshot)
 			return m, statusRefreshCmd
 		}
@@ -3224,6 +3231,8 @@ func (m Model) View() string {
 		body = m.renderCodexPickerOverlay(body, layout.width, layout.height)
 	} else if m.ignoredPickerVisible {
 		body = m.renderIgnoredPickerOverlay(body, layout.width, layout.height)
+	} else if m.browserAttention != nil {
+		body = m.renderBrowserAttentionOverlay(body, layout.width, layout.height)
 	} else if m.questionNotify != nil {
 		body = m.renderQuestionNotifyOverlay(body, layout.width, layout.height)
 	}

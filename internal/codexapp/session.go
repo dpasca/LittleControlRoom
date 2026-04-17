@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"lcroom/internal/browserctl"
 	"lcroom/internal/codexcli"
 )
 
@@ -53,10 +54,11 @@ func (e *ForceNewSessionReusedError) Error() string {
 }
 
 type appServerSession struct {
-	projectPath string
-	preset      codexcli.Preset
-	notify      func()
-	rpcCallHook func(context.Context, string, any) (json.RawMessage, error)
+	projectPath      string
+	preset           codexcli.Preset
+	notify           func()
+	rpcCallHook      func(context.Context, string, any) (json.RawMessage, error)
+	playwrightPolicy browserctl.Policy
 
 	cmd   *exec.Cmd
 	stdin io.WriteCloser
@@ -104,6 +106,8 @@ type appServerSession struct {
 	pendingApproval    *ApprovalRequest
 	pendingToolInput   *ToolInputRequest
 	pendingElicitation *ElicitationRequest
+	browserActivity    browserctl.SessionActivity
+	browserToolCalls   map[string]browserToolCall
 	entries            []transcriptEntry
 	entryIndex         map[string]int
 	transcriptRevision uint64
@@ -115,6 +119,11 @@ type transcriptEntry struct {
 	Kind        TranscriptKind
 	Text        string
 	DisplayText string
+}
+
+type browserToolCall struct {
+	ServerName string
+	ToolName   string
 }
 
 type turnCompletionState struct {
@@ -469,16 +478,19 @@ type mcpServerElicitationRequestParams struct {
 }
 
 func newAppServerSession(req LaunchRequest, notify func()) (Session, error) {
+	policy := req.PlaywrightPolicy.Normalize()
 	s := &appServerSession{
-		projectPath:    req.ProjectPath,
-		preset:         req.Preset,
-		notify:         notify,
-		pending:        make(map[string]chan rpcEnvelope),
-		exitCh:         make(chan struct{}),
-		activeItems:    make(map[string]struct{}),
-		entryIndex:     make(map[string]int),
-		status:         "Starting Codex app-server...",
-		lastActivityAt: time.Now(),
+		projectPath:      req.ProjectPath,
+		preset:           req.Preset,
+		notify:           notify,
+		playwrightPolicy: policy,
+		pending:          make(map[string]chan rpcEnvelope),
+		exitCh:           make(chan struct{}),
+		activeItems:      make(map[string]struct{}),
+		entryIndex:       make(map[string]int),
+		browserActivity:  browserctl.DefaultSessionActivity(policy),
+		status:           "Starting Codex app-server...",
+		lastActivityAt:   time.Now(),
 	}
 	if err := s.start(req); err != nil {
 		_ = s.Close()
@@ -502,6 +514,7 @@ func (s *appServerSession) Snapshot() Snapshot {
 		ProjectPath:        s.projectPath,
 		ThreadID:           s.threadID,
 		Preset:             s.preset,
+		BrowserActivity:    s.browserActivity.Normalize(),
 		TranscriptRevision: s.transcriptRevision,
 		Phase:              s.phaseLocked(),
 		Started:            s.started,
@@ -545,6 +558,7 @@ func (s *appServerSession) TrySnapshot() (Snapshot, bool) {
 		ProjectPath:        s.projectPath,
 		ThreadID:           s.threadID,
 		Preset:             s.preset,
+		BrowserActivity:    s.browserActivity.Normalize(),
 		TranscriptRevision: s.transcriptRevision,
 		Phase:              s.phaseLocked(),
 		Started:            s.started,
@@ -1926,8 +1940,14 @@ func (s *appServerSession) handleServerRequest(env rpcEnvelope) {
 		s.mu.Lock()
 		s.touchLocked()
 		s.pendingElicitation = request
-		s.status = "Waiting for MCP input"
-		s.lastSystemNotice = "MCP server requested input"
+		s.refreshBrowserActivityLocked(time.Now())
+		if browserctl.IsPlaywrightToolCall(request.ServerName, "") {
+			s.status = "Browser needs attention"
+			s.lastSystemNotice = "Playwright requested browser input"
+		} else {
+			s.status = "Waiting for MCP input"
+			s.lastSystemNotice = "MCP server requested input"
+		}
 		s.mu.Unlock()
 		s.notify()
 	default:
@@ -2055,6 +2075,9 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 		s.mu.Lock()
 		s.touchBusyLocked()
 		s.markItemActiveLocked(msg.TurnID, msg.ItemID)
+		if _, ok := s.browserToolCalls[msg.ItemID]; ok {
+			s.refreshBrowserActivityLocked(time.Now())
+		}
 		progress := strings.TrimSpace(msg.Message)
 		if progress == "" {
 			s.ensureItemEntryLocked(msg.ItemID, TranscriptTool, "")
@@ -2104,6 +2127,7 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 		if s.pendingElicitation != nil && s.pendingElicitation.ID == requestID {
 			s.pendingElicitation = nil
 		}
+		s.refreshBrowserActivityLocked(time.Now())
 		if s.busy {
 			s.status = "Codex is working..."
 		} else {
@@ -2174,6 +2198,15 @@ func (s *appServerSession) handleItemStarted(params json.RawMessage) {
 	if tracksBusyItemLifecycle(itemType) {
 		s.markItemActiveLocked(msg.TurnID, itemID)
 	}
+	if itemType == "mcpToolCall" {
+		if call, ok := s.browserToolCallForItem(msg.Item); ok {
+			if s.browserToolCalls == nil {
+				s.browserToolCalls = make(map[string]browserToolCall)
+			}
+			s.browserToolCalls[itemID] = call
+			s.refreshBrowserActivityLocked(time.Now())
+		}
+	}
 	switch itemType {
 	case "agentMessage":
 		s.ensureItemEntryLocked(itemID, TranscriptAgent, "")
@@ -2216,6 +2249,18 @@ func (s *appServerSession) handleItemCompleted(params json.RawMessage) {
 
 	s.mu.Lock()
 	s.touchBusyLocked()
+	if itemType == "mcpToolCall" {
+		if call, ok := s.browserToolCallForItem(msg.Item); ok {
+			if s.browserToolCalls == nil {
+				s.browserToolCalls = make(map[string]browserToolCall)
+			}
+			s.browserToolCalls[itemID] = call
+		}
+	}
+	if _, ok := s.browserToolCalls[itemID]; ok {
+		delete(s.browserToolCalls, itemID)
+		s.refreshBrowserActivityLocked(time.Now())
+	}
 	switch itemType {
 	case "commandExecution":
 		s.finalizeCommandItemLocked(itemID, msg.Item)
@@ -2458,6 +2503,50 @@ func (s *appServerSession) clearActiveStateLocked() {
 	s.pendingApproval = nil
 	s.pendingToolInput = nil
 	s.pendingElicitation = nil
+	s.browserToolCalls = nil
+	s.browserActivity = browserctl.DefaultSessionActivity(s.playwrightPolicy)
+}
+
+func (s *appServerSession) browserToolCallForItem(item map[string]json.RawMessage) (browserToolCall, bool) {
+	serverName := strings.TrimSpace(decodeRawString(item["server"]))
+	toolName := strings.TrimSpace(decodeRawString(item["tool"]))
+	if !browserctl.IsPlaywrightToolCall(serverName, toolName) {
+		return browserToolCall{}, false
+	}
+	return browserToolCall{
+		ServerName: serverName,
+		ToolName:   toolName,
+	}, true
+}
+
+func (s *appServerSession) refreshBrowserActivityLocked(now time.Time) {
+	activity := browserctl.DefaultSessionActivity(s.playwrightPolicy)
+	previous := s.browserActivity.Normalize()
+	activity.LastEventAt = previous.LastEventAt
+
+	var current browserToolCall
+	for _, call := range s.browserToolCalls {
+		current = call
+		break
+	}
+	if current.ServerName != "" || current.ToolName != "" {
+		activity.State = browserctl.SessionActivityStateActive
+		activity.ServerName = current.ServerName
+		activity.ToolName = current.ToolName
+		activity.LastEventAt = now
+	}
+
+	if request := s.pendingElicitation; request != nil {
+		if browserctl.IsPlaywrightToolCall(request.ServerName, "") || current.ServerName != "" || current.ToolName != "" {
+			activity.State = browserctl.SessionActivityStateWaitingForUser
+			if strings.TrimSpace(request.ServerName) != "" {
+				activity.ServerName = strings.TrimSpace(request.ServerName)
+			}
+			activity.LastEventAt = now
+		}
+	}
+
+	s.browserActivity = activity.Normalize()
 }
 
 func (s *appServerSession) syncThreadStatusLocked(threadID string, status resumedThreadStatus, recovered bool) {

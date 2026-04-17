@@ -15656,6 +15656,7 @@ func TestSettingsBrowserSectionShowsStatusSummary(t *testing.T) {
 	for _, want := range []string{
 		"Effective:",
 		"Ownership:",
+		"Live activity:",
 		"Provider support:",
 		"Codex:",
 		"OpenCode:",
@@ -15664,6 +15665,156 @@ func TestSettingsBrowserSectionShowsStatusSummary(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("browser settings status is missing %q: %q", want, rendered)
 		}
+	}
+}
+
+func TestSettingsBrowserSectionShowsLiveBrowserActivity(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.PlaywrightPolicy = browserctl.Policy{
+		ManagementMode:     browserctl.ManagementModeManaged,
+		DefaultBrowserMode: browserctl.BrowserModeHeadless,
+		LoginMode:          browserctl.LoginModePromote,
+		IsolationScope:     browserctl.IsolationScopeTask,
+	}
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": {
+				Provider: codexapp.ProviderCodex,
+				BrowserActivity: browserctl.SessionActivity{
+					Policy:     settings.PlaywrightPolicy,
+					State:      browserctl.SessionActivityStateWaitingForUser,
+					ServerName: "playwright",
+					ToolName:   "browser_navigate",
+				},
+			},
+		},
+		width:  100,
+		height: 24,
+	}
+	_ = m.setSettingsSelection(settingsFieldBrowserAutomation)
+
+	rendered := ansi.Strip(m.renderSettingsContent(84, 22))
+	for _, want := range []string{
+		"Codex / demo:",
+		"playwright/browser_navigate is waiting for user input.",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("browser settings live activity is missing %q: %q", want, rendered)
+		}
+	}
+}
+
+func TestBrowserAttentionOverlayRendersAndSkipsQuestionNotify(t *testing.T) {
+	m := Model{
+		browserAttention: &browserAttentionNotification{
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			Provider:    codexapp.ProviderCodex,
+			Activity: browserctl.SessionActivity{
+				Policy:     settingsAutomaticPlaywrightPolicy,
+				State:      browserctl.SessionActivityStateWaitingForUser,
+				ServerName: "playwright",
+				ToolName:   "browser_navigate",
+			},
+		},
+	}
+
+	rendered := ansi.Strip(m.renderBrowserAttentionContent(72))
+	for _, want := range []string{
+		"Browser needs attention",
+		"demo",
+		"playwright/browser_navigate",
+		"open session",
+		"browser settings",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("browser attention overlay is missing %q: %q", want, rendered)
+		}
+	}
+
+	waitingSnapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderCodex,
+		BrowserActivity: browserctl.SessionActivity{
+			Policy:     settingsAutomaticPlaywrightPolicy,
+			State:      browserctl.SessionActivityStateWaitingForUser,
+			ServerName: "playwright",
+		},
+		PendingElicitation: &codexapp.ElicitationRequest{ID: "elicitation_1"},
+	}
+	m.detectQuestionNotification("/tmp/demo", waitingSnapshot)
+	if m.questionNotify != nil {
+		t.Fatalf("question notification should stay nil for browser attention waits")
+	}
+}
+
+func TestBrowserAttentionEnterOpensSession(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	m := Model{
+		settingsBaseline: &settings,
+		browserAttention: &browserAttentionNotification{
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			Provider:    codexapp.ProviderCodex,
+			Activity: browserctl.SessionActivity{
+				Policy:     settingsAutomaticPlaywrightPolicy,
+				State:      browserctl.SessionActivityStateWaitingForUser,
+				ServerName: "playwright",
+			},
+		},
+	}
+
+	updated, cmd := m.updateBrowserAttentionMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("browser attention Enter should queue follow-up commands")
+	}
+	if got.browserAttention != nil {
+		t.Fatalf("browser attention should clear after opening the session")
+	}
+	if got.codexVisibleProject != "/tmp/demo" {
+		t.Fatalf("codexVisibleProject = %q, want /tmp/demo", got.codexVisibleProject)
+	}
+	if got.status != "Codex browser needs your attention" {
+		t.Fatalf("status = %q, want browser attention status", got.status)
+	}
+}
+
+func TestBrowserAttentionBrowserSettingsShortcutOpensBrowserSection(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	m := Model{
+		settingsBaseline: &settings,
+		browserAttention: &browserAttentionNotification{
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			Provider:    codexapp.ProviderCodex,
+			Activity: browserctl.SessionActivity{
+				Policy:     settingsAutomaticPlaywrightPolicy,
+				State:      browserctl.SessionActivityStateWaitingForUser,
+				ServerName: "playwright",
+			},
+		},
+	}
+
+	updated, cmd := m.updateBrowserAttentionMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("b")})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("browser attention b should open browser settings")
+	}
+	if got.browserAttention != nil {
+		t.Fatalf("browser attention should clear after opening browser settings")
+	}
+	if !got.settingsMode {
+		t.Fatalf("settings mode should open from browser attention")
+	}
+	if got.settingsSelected != settingsFieldBrowserAutomation {
+		t.Fatalf("settingsSelected = %d, want browser automation field", got.settingsSelected)
+	}
+	if got.activeSettingsSection().id != settingsSectionBrowser {
+		t.Fatalf("active settings section = %q, want browser", got.activeSettingsSection().id)
 	}
 }
 

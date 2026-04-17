@@ -434,6 +434,7 @@ type Snapshot struct {
 	ProjectPath        string
 	ThreadID           string
 	Preset             codexcli.Preset
+	BrowserActivity    browserctl.SessionActivity
 	TranscriptRevision uint64
 	Phase              SessionPhase
 	Started            bool

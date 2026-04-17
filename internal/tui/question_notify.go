@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"lcroom/internal/browserctl"
 	"lcroom/internal/codexapp"
 )
 
@@ -28,6 +29,12 @@ func (m *Model) detectQuestionNotification(projectPath string, snapshot codexapp
 		return
 	}
 	if snapshot.Closed {
+		return
+	}
+	if snapshot.BrowserActivity.Normalize().State == browserctl.SessionActivityStateWaitingForUser {
+		if m.questionNotify != nil && m.questionNotify.ProjectPath == projectPath {
+			m.questionNotify = nil
+		}
 		return
 	}
 
