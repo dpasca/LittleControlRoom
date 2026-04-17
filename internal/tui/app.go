@@ -5005,13 +5005,17 @@ func (m Model) openProjectDirInBrowserCmd(path string) tea.Cmd {
 	}
 }
 
-func (m Model) openRuntimeURLInBrowserCmd(rawURL string) tea.Cmd {
+func (m Model) openBrowserURLCmd(rawURL, action, successStatus string) tea.Cmd {
 	return func() tea.Msg {
-		if err := openRuntimeURLInBrowser(rawURL); err != nil {
+		if err := openBrowserURL(rawURL, action); err != nil {
 			return browserOpenMsg{err: err}
 		}
-		return browserOpenMsg{status: "Opened runtime URL in browser"}
+		return browserOpenMsg{status: successStatus}
 	}
+}
+
+func (m Model) openRuntimeURLInBrowserCmd(rawURL string) tea.Cmd {
+	return m.openBrowserURLCmd(rawURL, "open runtime URL in browser", "Opened runtime URL in browser")
 }
 
 func (m Model) prepareCommitPreviewCmd(path string, intent service.GitActionIntent, message string) tea.Cmd {

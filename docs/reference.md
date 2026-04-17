@@ -31,6 +31,8 @@ Provider artifact and detector-footprint notes live in:
 
 The TUI `/settings` modal is now split into sections (`AI & Models`, `Project Scope`, `Browser`, `Refresh`) so it stays usable on smaller terminals. The Browser section exposes a simplified `Browser automation` field (`compatibility`, `automatic`, `observe`, `advanced`), but the config file still stores the raw Playwright policy keys below:
 
+In `automatic` mode, embedded Codex Playwright waits that expose a URL-based login flow now raise a browser-attention prompt that can open the login page directly in your default browser while bringing the embedded session forward.
+
 - `openai_api_key`
 - `include_paths`
 - `exclude_paths`

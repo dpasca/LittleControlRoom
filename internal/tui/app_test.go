@@ -15751,6 +15751,35 @@ func TestBrowserAttentionOverlayRendersAndSkipsQuestionNotify(t *testing.T) {
 	}
 }
 
+func TestBrowserAttentionOverlayShowsOpenBrowserForManagedLoginURL(t *testing.T) {
+	m := Model{
+		browserAttention: &browserAttentionNotification{
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			Provider:    codexapp.ProviderCodex,
+			Activity: browserctl.SessionActivity{
+				Policy:     settingsAutomaticPlaywrightPolicy,
+				State:      browserctl.SessionActivityStateWaitingForUser,
+				ServerName: "playwright",
+				ToolName:   "browser_navigate",
+			},
+			RequestMode: codexapp.ElicitationModeURL,
+			RequestURL:  "https://example.test/login",
+		},
+	}
+
+	rendered := ansi.Strip(m.renderBrowserAttentionContent(72))
+	for _, want := range []string{
+		"open browser",
+		"open session",
+		"Automatic browser mode can open this login flow",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("browser attention overlay is missing %q: %q", want, rendered)
+		}
+	}
+}
+
 func TestBrowserAttentionEnterOpensSession(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	m := Model{
@@ -15780,6 +15809,72 @@ func TestBrowserAttentionEnterOpensSession(t *testing.T) {
 	}
 	if got.status != "Codex browser needs your attention" {
 		t.Fatalf("status = %q, want browser attention status", got.status)
+	}
+}
+
+func TestBrowserAttentionEnterOpensBrowserAndSessionForManagedLoginURL(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	previousOpener := externalBrowserOpener
+	defer func() { externalBrowserOpener = previousOpener }()
+
+	openedURL := ""
+	externalBrowserOpener = func(rawURL string) error {
+		openedURL = rawURL
+		return nil
+	}
+
+	m := Model{
+		settingsBaseline: &settings,
+		browserAttention: &browserAttentionNotification{
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			Provider:    codexapp.ProviderCodex,
+			Activity: browserctl.SessionActivity{
+				Policy:     settingsAutomaticPlaywrightPolicy,
+				State:      browserctl.SessionActivityStateWaitingForUser,
+				ServerName: "playwright",
+			},
+			RequestMode: codexapp.ElicitationModeURL,
+			RequestURL:  "https://example.test/login",
+		},
+	}
+
+	updated, cmd := m.updateBrowserAttentionMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("browser attention Enter should queue login follow-up commands")
+	}
+	if got.browserAttention != nil {
+		t.Fatalf("browser attention should clear after opening the browser flow")
+	}
+	if got.codexVisibleProject != "/tmp/demo" {
+		t.Fatalf("codexVisibleProject = %q, want /tmp/demo", got.codexVisibleProject)
+	}
+	if got.status != "Opening browser for login and switching to the embedded session..." {
+		t.Fatalf("status = %q, want login-opening status", got.status)
+	}
+
+	msgs := collectCmdMsgs(cmd)
+	var openMsg browserOpenMsg
+	foundOpenMsg := false
+	for _, msg := range msgs {
+		if candidate, ok := msg.(browserOpenMsg); ok {
+			openMsg = candidate
+			foundOpenMsg = true
+			break
+		}
+	}
+	if !foundOpenMsg {
+		t.Fatalf("expected browserOpenMsg in batched login commands, got %#v", msgs)
+	}
+	if openMsg.err != nil {
+		t.Fatalf("browserOpenMsg.err = %v, want nil", openMsg.err)
+	}
+	if openMsg.status != "Opened browser for login. Finish the browser flow, then return to the embedded session if more input is needed." {
+		t.Fatalf("browserOpenMsg.status = %q, want login success status", openMsg.status)
+	}
+	if openedURL != "https://example.test/login" {
+		t.Fatalf("opened URL = %q, want login URL", openedURL)
 	}
 }
 

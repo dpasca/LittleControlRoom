@@ -16,6 +16,8 @@ type browserAttentionNotification struct {
 	ProjectName string
 	Provider    codexapp.Provider
 	Activity    browserctl.SessionActivity
+	RequestMode codexapp.ElicitationMode
+	RequestURL  string
 }
 
 func (m *Model) detectBrowserAttentionNotification(projectPath string, snapshot codexapp.Snapshot) {
@@ -38,6 +40,10 @@ func (m *Model) detectBrowserAttentionNotification(projectPath string, snapshot 
 		Provider:    embeddedProvider(snapshot),
 		Activity:    activity,
 	}
+	if request := snapshot.PendingElicitation; request != nil {
+		m.browserAttention.RequestMode = request.Mode
+		m.browserAttention.RequestURL = strings.TrimSpace(request.URL)
+	}
 	if m.questionNotify != nil && m.questionNotify.ProjectPath == projectPath {
 		m.questionNotify = nil
 	}
@@ -57,9 +63,20 @@ func (m Model) updateBrowserAttentionMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.dismissBrowserAttentionNotification()
 		return m, nil
 	case "enter":
+		if notify.canOpenBrowserForLogin() {
+			return m.openBrowserAttentionLogin(*notify)
+		}
 		m.dismissBrowserAttentionNotification()
 		return m.showCodexProject(notify.ProjectPath, notify.Provider.Label()+" browser needs your attention")
-	case "b", "s":
+	case "o":
+		if notify.canOpenBrowserForLogin() {
+			return m.openBrowserAttentionLogin(*notify)
+		}
+		return m, nil
+	case "s":
+		m.dismissBrowserAttentionNotification()
+		return m.showCodexProject(notify.ProjectPath, notify.Provider.Label()+" browser needs your attention")
+	case "b":
 		m.dismissBrowserAttentionNotification()
 		return m, m.openBrowserSettingsMode()
 	case "ctrl+c":
@@ -67,6 +84,40 @@ func (m Model) updateBrowserAttentionMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateNormalMode(msg)
 	}
 	return m, nil
+}
+
+func (n browserAttentionNotification) canOpenBrowserForLogin() bool {
+	if n.Provider.Normalized() != codexapp.ProviderCodex {
+		return false
+	}
+	policy := n.Activity.Policy.Normalize()
+	if policy.ManagementMode != browserctl.ManagementModeManaged || policy.LoginMode != browserctl.LoginModePromote {
+		return false
+	}
+	return n.RequestMode == codexapp.ElicitationModeURL && strings.TrimSpace(n.RequestURL) != ""
+}
+
+func (m Model) openBrowserAttentionLogin(notify browserAttentionNotification) (tea.Model, tea.Cmd) {
+	loginURL := strings.TrimSpace(notify.RequestURL)
+	if loginURL == "" {
+		m.dismissBrowserAttentionNotification()
+		return m.showCodexProject(notify.ProjectPath, notify.Provider.Label()+" browser needs your attention")
+	}
+
+	m.dismissBrowserAttentionNotification()
+	updated, revealCmd := m.showCodexProject(
+		notify.ProjectPath,
+		"Opening browser for login and switching to the embedded session...",
+	)
+	model := updated.(Model)
+	return model, batchCmds(
+		model.openBrowserURLCmd(
+			loginURL,
+			"open MCP login URL in browser",
+			"Opened browser for login. Finish the browser flow, then return to the embedded session if more input is needed.",
+		),
+		revealCmd,
+	)
 }
 
 func (m Model) renderBrowserAttentionOverlay(body string, width, height int) string {
@@ -113,16 +164,31 @@ func (m Model) renderBrowserAttentionContent(width int) string {
 		notify.Activity.Summary(),
 	)...)
 	lines = append(lines, "")
-	lines = append(lines, renderWrappedDialogTextLines(
-		detailMutedStyle,
-		width,
-		"Open the embedded session to review the request. LCR still does not own the browser window for this flow yet.",
-	)...)
-	lines = append(lines,
-		"",
-		renderDialogAction("Enter", "open session", commitActionKeyStyle, commitActionTextStyle),
-		renderDialogAction("B", "browser settings", pushActionKeyStyle, pushActionTextStyle),
-		renderDialogAction("Esc", "dismiss", cancelActionKeyStyle, cancelActionTextStyle),
-	)
+	if notify.canOpenBrowserForLogin() {
+		lines = append(lines, renderWrappedDialogTextLines(
+			detailMutedStyle,
+			width,
+			"Automatic browser mode can open this login flow in your default browser, then bring the embedded session forward so you can keep an eye on it.",
+		)...)
+		lines = append(lines,
+			"",
+			renderDialogAction("Enter", "open browser", commitActionKeyStyle, commitActionTextStyle),
+			renderDialogAction("S", "open session", pushActionKeyStyle, pushActionTextStyle),
+			renderDialogAction("B", "browser settings", pushActionKeyStyle, pushActionTextStyle),
+			renderDialogAction("Esc", "dismiss", cancelActionKeyStyle, cancelActionTextStyle),
+		)
+	} else {
+		lines = append(lines, renderWrappedDialogTextLines(
+			detailMutedStyle,
+			width,
+			"Open the embedded session to review the request. LCR still does not own the browser window for this flow yet.",
+		)...)
+		lines = append(lines,
+			"",
+			renderDialogAction("Enter", "open session", commitActionKeyStyle, commitActionTextStyle),
+			renderDialogAction("B", "browser settings", pushActionKeyStyle, pushActionTextStyle),
+			renderDialogAction("Esc", "dismiss", cancelActionKeyStyle, cancelActionTextStyle),
+		)
+	}
 	return strings.Join(lines, "\n")
 }
