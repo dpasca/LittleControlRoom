@@ -1047,8 +1047,18 @@ func (m Model) hideCodexSession() (tea.Model, tea.Cmd) {
 	}
 	projectPath := strings.TrimSpace(m.codexVisibleProject)
 	label := "Embedded session"
-	if snapshot, ok := m.currentCodexSnapshot(); ok {
+	refreshCmd := tea.Cmd(nil)
+	snapshot, ok := m.nonBlockingCodexSnapshot(projectPath)
+	if !ok {
+		snapshot, ok = m.codexCachedSnapshot(projectPath)
+	}
+	if ok {
 		label = "Embedded " + embeddedProvider(snapshot).Label() + " session"
+		if !snapshot.Busy {
+			// Returning to the dashboard after an idle embedded turn should
+			// refresh git metadata, not just re-render the last stored state.
+			refreshCmd = m.refreshProjectStatusCmd(projectPath)
+		}
 	}
 	m.persistVisibleCodexDraft()
 	m.stopCodexInputSelection()
@@ -1057,7 +1067,11 @@ func (m Model) hideCodexSession() (tea.Model, tea.Cmd) {
 	m.codexInput.Blur()
 	m.syncDetailViewport(false)
 	m.status = label + " hidden."
-	return m, batchCmds(m.focusProjectPath(projectPath), m.markProjectSessionSeen(projectPath))
+	return m, batchCmds(
+		m.focusProjectPath(projectPath),
+		m.markProjectSessionSeen(projectPath),
+		refreshCmd,
+	)
 }
 
 func (m Model) cycleCodexSession(direction int) (tea.Model, tea.Cmd) {

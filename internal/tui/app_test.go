@@ -6253,6 +6253,103 @@ func TestHideCodexSessionResyncsDashboardPanes(t *testing.T) {
 	}
 }
 
+func TestHideCodexSessionRefreshesProjectStatusWhenIdle(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	projectPath := filepath.Join(t.TempDir(), "repo")
+	runTUITestGit(t, "", "init", projectPath)
+	runTUITestGit(t, projectPath, "config", "user.name", "Little Control Room Tests")
+	runTUITestGit(t, projectPath, "config", "user.email", "tests@example.com")
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write README.md: %v", err)
+	}
+	runTUITestGit(t, projectPath, "add", "README.md")
+	runTUITestGit(t, projectPath, "commit", "-m", "initial commit")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "repo",
+		PresentOnDisk: true,
+		InScope:       true,
+		RepoBranch:    "master",
+		RepoDirty:     false,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("seed clean project state: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("hello\nchanged\n"), 0o644); err != nil {
+		t.Fatalf("update README.md: %v", err)
+	}
+
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	m := Model{
+		ctx: ctx,
+		svc: svc,
+		projects: []model.ProjectSummary{{
+			Path:          projectPath,
+			Name:          "repo",
+			PresentOnDisk: true,
+			RepoBranch:    "master",
+		}},
+		allProjects: []model.ProjectSummary{{
+			Path:          projectPath,
+			Name:          "repo",
+			PresentOnDisk: true,
+			RepoBranch:    "master",
+		}},
+		selected:            0,
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			projectPath: {
+				ProjectPath: projectPath,
+				Started:     true,
+				Status:      "Codex session ready",
+			},
+		},
+		codexInput:      newCodexTextarea(),
+		detailViewport:  viewport.New(20, 5),
+		runtimeViewport: viewport.New(20, 5),
+		width:           100,
+		height:          24,
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{
+				Path:          projectPath,
+				Name:          "repo",
+				PresentOnDisk: true,
+				RepoBranch:    "master",
+			},
+		},
+	}
+
+	updated, cmd := m.hideCodexSession()
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("hideCodexSession() should queue follow-up work")
+	}
+
+	got = drainCmdMsgs(got, cmd)
+
+	if got.detail.Summary.RepoDirty != true {
+		t.Fatalf("detail repo dirty = %t, want refreshed dirty state", got.detail.Summary.RepoDirty)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 20)
+	if err != nil {
+		t.Fatalf("get detail after hide refresh: %v", err)
+	}
+	if !detail.Summary.RepoDirty {
+		t.Fatalf("store detail should reflect dirty repo after hide refresh, got %#v", detail.Summary)
+	}
+}
+
 func TestRenderDetailViewportUsesSyncedCache(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{
@@ -8488,6 +8585,182 @@ func TestEmbeddedSessionSettledActivityFromSnapshotMarksTurnCompleted(t *testing
 	}
 	if !activity.LastActivityAt.Equal(now) {
 		t.Fatalf("last activity = %v, want %v", activity.LastActivityAt, now)
+	}
+}
+
+func TestCodexUpdateBusyToIdleSettlesTurnAndRefreshesProjectStatus(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	projectPath := filepath.Join(t.TempDir(), "repo")
+	runTUITestGit(t, "", "init", projectPath)
+	runTUITestGit(t, projectPath, "config", "user.name", "Little Control Room Tests")
+	runTUITestGit(t, projectPath, "config", "user.email", "tests@example.com")
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write README.md: %v", err)
+	}
+	runTUITestGit(t, projectPath, "add", "README.md")
+	runTUITestGit(t, projectPath, "commit", "-m", "initial commit")
+
+	now := time.Now().UTC().Truncate(time.Second)
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	sessionEvidence := model.NormalizeSessionEvidenceIdentity(model.SessionEvidence{
+		Source:               model.SessionSourceCodex,
+		SessionID:            "codex:thread-demo",
+		RawSessionID:         "thread-demo",
+		ProjectPath:          projectPath,
+		DetectedProjectPath:  projectPath,
+		Format:               "modern",
+		StartedAt:            now.Add(-10 * time.Minute),
+		LastEventAt:          now.Add(-time.Minute),
+		LatestTurnStartedAt:  now.Add(-2 * time.Minute),
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  false,
+	})
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "repo",
+		LastActivity:  now.Add(-time.Minute),
+		Status:        model.StatusActive,
+		PresentOnDisk: true,
+		InScope:       true,
+		RepoBranch:    "master",
+		RepoDirty:     false,
+		Sessions:      []model.SessionEvidence{sessionEvidence},
+		CreatedAt:     now.Add(-2 * time.Hour),
+		UpdatedAt:     now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("seed project state: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("hello\nchanged\n"), 0o644); err != nil {
+		t.Fatalf("update README.md: %v", err)
+	}
+
+	session := &fakeCodexSession{
+		projectPath: projectPath,
+		snapshot: codexapp.Snapshot{
+			Provider:       codexapp.ProviderCodex,
+			ProjectPath:    projectPath,
+			ThreadID:       "thread-demo",
+			Started:        true,
+			Busy:           false,
+			BusySince:      now.Add(-2 * time.Minute),
+			LastActivityAt: now,
+			Status:         "Codex ready",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: projectPath,
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	m := Model{
+		ctx:          ctx,
+		svc:          svc,
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:          projectPath,
+			Name:          "repo",
+			PresentOnDisk: true,
+			RepoBranch:    "master",
+		}},
+		allProjects: []model.ProjectSummary{{
+			Path:          projectPath,
+			Name:          "repo",
+			PresentOnDisk: true,
+			RepoBranch:    "master",
+		}},
+		selected: 0,
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{
+				Path:          projectPath,
+				Name:          "repo",
+				PresentOnDisk: true,
+				RepoBranch:    "master",
+			},
+		},
+		codexSnapshots: map[string]codexapp.Snapshot{
+			projectPath: {
+				Provider:           codexapp.ProviderCodex,
+				ProjectPath:        projectPath,
+				ThreadID:           "thread-demo",
+				Started:            true,
+				Busy:               true,
+				BusySince:          now.Add(-2 * time.Minute),
+				LastBusyActivityAt: now.Add(-30 * time.Second),
+				LastActivityAt:     now.Add(-30 * time.Second),
+			},
+		},
+		codexInput:      newCodexTextarea(),
+		detailViewport:  viewport.New(20, 5),
+		runtimeViewport: viewport.New(20, 5),
+		width:           100,
+		height:          24,
+	}
+
+	updated, cmd := m.Update(codexUpdateMsg{projectPath: projectPath})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("busy-to-idle update should queue follow-up work")
+	}
+	raw := cmd()
+	if raw == nil {
+		t.Fatal("busy-to-idle update should return follow-up messages")
+	}
+	if batch, ok := raw.(tea.BatchMsg); ok {
+		found := false
+		for i := len(batch) - 1; i >= 0; i-- {
+			if batch[i] == nil {
+				continue
+			}
+			msg := batch[i]()
+			refreshMsg, ok := msg.(projectStatusRefreshedMsg)
+			if !ok {
+				continue
+			}
+			updated, followUp := got.Update(refreshMsg)
+			got = updated.(Model)
+			got = drainCmdMsgs(got, followUp)
+			found = true
+			break
+		}
+		if !found {
+			t.Fatalf("busy-to-idle batch should include projectStatusRefreshedMsg, got %#v", raw)
+		}
+	} else {
+		updated, followUp := got.Update(raw)
+		got = updated.(Model)
+		got = drainCmdMsgs(got, followUp)
+	}
+
+	if !got.detail.Summary.RepoDirty {
+		t.Fatalf("detail repo dirty = %t, want refreshed dirty state", got.detail.Summary.RepoDirty)
+	}
+	if !got.detail.Summary.LatestTurnStateKnown || !got.detail.Summary.LatestTurnCompleted {
+		t.Fatalf("detail turn state = known:%t completed:%t, want settled turn", got.detail.Summary.LatestTurnStateKnown, got.detail.Summary.LatestTurnCompleted)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 20)
+	if err != nil {
+		t.Fatalf("get detail after settle refresh: %v", err)
+	}
+	if !detail.Summary.RepoDirty {
+		t.Fatalf("store detail should reflect dirty repo after settle refresh, got %#v", detail.Summary)
+	}
+	if len(detail.Sessions) == 0 || !detail.Sessions[0].LatestTurnStateKnown || !detail.Sessions[0].LatestTurnCompleted {
+		t.Fatalf("stored session turn state = %#v, want settled turn", detail.Sessions)
 	}
 }
 
