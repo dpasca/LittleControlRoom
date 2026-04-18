@@ -1222,6 +1222,11 @@ func (m Model) updateWorktreeMergeConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 		return m, nil
 	}
 	if confirm.Busy {
+		if worktreeMergeConfirmRefreshing(confirm) && msg.String() == "esc" {
+			m.worktreeMergeConfirm = nil
+			m.status = "Worktree merge-back canceled"
+			return m, nil
+		}
 		return m, nil
 	}
 	switch msg.String() {
@@ -1757,6 +1762,12 @@ func (m Model) renderWorktreeMergeConfirmOverlay(body string, bodyW, bodyH int) 
 		}
 		lines = append(lines, "", detailValueStyle.Render(busyTitle))
 		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, confirm.BusyMessage)...)
+		if worktreeMergeConfirmRefreshing(confirm) {
+			lines = append(lines, "")
+			lines = append(lines, renderHelpPanelActionRow(
+				renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
+			))
+		}
 	} else {
 		lines = append(lines, "")
 		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "Choose the merge actions Little Control Room should handle now. Applicable actions start checked so you can press Enter to run the full flow.")...)

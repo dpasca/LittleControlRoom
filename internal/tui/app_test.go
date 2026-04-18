@@ -2253,6 +2253,55 @@ func TestOpenWorktreeMergeConfirmRefreshesLiveRootDirtyStatus(t *testing.T) {
 	}
 }
 
+func TestBusyWorktreeMergeRefreshEscCancelsDialog(t *testing.T) {
+	t.Parallel()
+
+	m := Model{
+		worktreeMergeConfirm: &worktreeMergeConfirmState{
+			ProjectPath:    "/tmp/repo--feat-live-dirty",
+			RootPath:       "/tmp/repo",
+			BranchName:     "feat/live-dirty",
+			TargetBranch:   "master",
+			PendingRefresh: worktreeMergeConfirmPendingRefreshSet("/tmp/repo--feat-live-dirty", "/tmp/repo"),
+			Busy:           true,
+			BusyMessage:    "Checking live git status for this worktree and its root checkout.",
+		},
+	}
+
+	updated, cmd := m.updateWorktreeMergeConfirmMode(tea.KeyMsg{Type: tea.KeyEsc})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("esc during merge readiness refresh should not schedule work")
+	}
+	if got.worktreeMergeConfirm != nil {
+		t.Fatalf("esc during merge readiness refresh should close the dialog")
+	}
+	if got.status != "Worktree merge-back canceled" {
+		t.Fatalf("status = %q, want cancel status", got.status)
+	}
+}
+
+func TestRenderBusyWorktreeMergeRefreshShowsEscHint(t *testing.T) {
+	t.Parallel()
+
+	m := Model{
+		worktreeMergeConfirm: &worktreeMergeConfirmState{
+			ProjectPath:    "/tmp/repo--feat-live-dirty",
+			RootPath:       "/tmp/repo",
+			BranchName:     "feat/live-dirty",
+			TargetBranch:   "master",
+			PendingRefresh: worktreeMergeConfirmPendingRefreshSet("/tmp/repo--feat-live-dirty", "/tmp/repo"),
+			Busy:           true,
+			BusyMessage:    "Checking live git status for this worktree and its root checkout.",
+		},
+	}
+
+	rendered := ansi.Strip(m.renderWorktreeMergeConfirmOverlay("", 100, 24))
+	if !strings.Contains(rendered, "Esc") || !strings.Contains(rendered, "close") {
+		t.Fatalf("rendered busy merge dialog should advertise esc close while refreshing, got %q", rendered)
+	}
+}
+
 func TestOpenWorktreeMergeConfirmAutoClosesCompletedSession(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"

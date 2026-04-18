@@ -34,6 +34,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+const tuiProjectStatusRefreshTimeout = 10 * time.Second
+
 type Model struct {
 	ctx   context.Context
 	svc   *service.Service
@@ -1154,7 +1156,16 @@ func (m Model) refreshProjectStatusCmd(path string) tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		err := m.svc.RefreshProjectStatus(m.ctx, path)
+		ctx := m.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		refreshCtx, cancel := context.WithTimeout(ctx, tuiProjectStatusRefreshTimeout)
+		defer cancel()
+		err := m.svc.RefreshProjectStatus(refreshCtx, path)
+		if errors.Is(err, context.DeadlineExceeded) {
+			err = fmt.Errorf("timed out after %s", tuiProjectStatusRefreshTimeout.Round(time.Millisecond))
+		}
 		return projectStatusRefreshedMsg{projectPath: path, err: err}
 	}
 }
