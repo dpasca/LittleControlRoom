@@ -39,6 +39,7 @@ Make browser automation feel quiet and predictable by default:
 ### Visibility
 
 - Browser status is visible in the `Browser` settings section.
+- The settings view now shows the interactive browser lease owner plus any waiting managed login flows.
 - Codex Playwright activity is tracked live enough to distinguish:
   - idle
   - active
@@ -53,6 +54,10 @@ Make browser automation feel quiet and predictable by default:
 - Visible embedded Codex sessions:
   - can open the same login URL with `o`
   - show footer/request hints that explain the browser-login flow
+- Managed Codex login flows now go through an LCR-owned interactive browser lease:
+  - one session can hold the interactive browser slot at a time
+  - later sessions are blocked cleanly instead of blindly opening another browser login flow
+  - failed browser-open attempts release the slot immediately
 
 ## Current Provider Status
 
@@ -77,7 +82,7 @@ Make browser automation feel quiet and predictable by default:
 ## Immediate Next Steps
 
 1. Polish the post-login flow.
-   - Make "open browser", "waiting for browser", and "ready to continue" wording feel fully consistent.
+   - Make "open browser", "waiting for browser", "blocked by another login", and "ready to continue" wording feel fully consistent.
    - Check whether URL-based accept/done copy in the visible pane can be clearer without becoming noisy.
 
 2. Improve passive visibility outside popups.
@@ -88,17 +93,18 @@ Make browser automation feel quiet and predictable by default:
    - waiting -> open browser -> accept
    - waiting -> decline
    - waiting -> cancel
+   - waiting -> blocked by another interactive lease
    - compatibility mode still avoiding managed behavior
 
-4. Keep the shared rule shared.
-   - Reuse common helpers for "managed login URL" checks.
-   - Avoid letting overlay logic and visible-pane logic drift apart.
+4. Add a small manual-release / reclaim story if needed.
+   - Decide whether the first version should expose a "release browser slot" action when a login flow is abandoned.
+   - Keep this optional until real usage shows the lease can get stuck in practice.
 
 ## Next Phase After That
 
 1. Introduce an LCR-owned browser controller.
-   - Track browser leases explicitly instead of only handoff helpers.
-   - Move toward one interactive browser at a time in managed mode.
+   - Expand the current in-memory lease manager beyond managed Codex login URLs.
+   - Move from "interactive lease only" toward fuller browser/session ownership concepts.
 
 2. Add session/profile ownership.
    - Define where per-task or per-project browser state should live.

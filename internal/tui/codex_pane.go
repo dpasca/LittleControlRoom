@@ -475,6 +475,9 @@ func (m *Model) dropCodexSnapshot(projectPath string) {
 	if projectPath == "" {
 		return
 	}
+	if snapshot, ok := m.codexSnapshots[projectPath]; ok {
+		m.removeManagedBrowserLease(projectPath, snapshot)
+	}
 	delete(m.codexSnapshots, projectPath)
 	delete(m.codexTranscriptRev, projectPath)
 	m.resetCodexTranscriptCaches(projectPath)
@@ -1468,10 +1471,13 @@ func (m Model) updateCodexElicitationMode(snapshot codexapp.Snapshot, msg tea.Ke
 		if loginURL == "" {
 			return m, nil
 		}
-		m.status = "Opening browser for login..."
-		return m, m.openBrowserURLCmd(
+		return m.openManagedBrowserLogin(
+			firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject),
+			embeddedProvider(snapshot),
+			snapshot.ThreadID,
+			snapshot.BrowserActivity,
 			loginURL,
-			"open MCP login URL in browser",
+			"Opening browser for login...",
 			"Opened browser for login. Finish the browser flow here, then press Enter when you are ready to continue.",
 		)
 	case "d":

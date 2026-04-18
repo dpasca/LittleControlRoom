@@ -14,6 +14,7 @@ import (
 type browserAttentionNotification struct {
 	ProjectPath string
 	ProjectName string
+	SessionID   string
 	Provider    codexapp.Provider
 	Activity    browserctl.SessionActivity
 	RequestMode codexapp.ElicitationMode
@@ -37,6 +38,7 @@ func (m *Model) detectBrowserAttentionNotification(projectPath string, snapshot 
 	m.browserAttention = &browserAttentionNotification{
 		ProjectPath: projectPath,
 		ProjectName: strings.TrimSpace(filepath.Base(projectPath)),
+		SessionID:   strings.TrimSpace(snapshot.ThreadID),
 		Provider:    embeddedProvider(snapshot),
 		Activity:    activity,
 	}
@@ -121,14 +123,20 @@ func (m Model) openBrowserAttentionLogin(notify browserAttentionNotification) (t
 		"Opening browser for login and switching to the embedded session...",
 	)
 	model := updated.(Model)
-	return model, batchCmds(
-		model.openBrowserURLCmd(
-			loginURL,
-			"open MCP login URL in browser",
-			"Opened browser for login. Finish the browser flow, then return to the embedded session if more input is needed.",
-		),
-		revealCmd,
+	leaseModel, openCmd := model.openManagedBrowserLogin(
+		notify.ProjectPath,
+		notify.Provider,
+		notify.SessionID,
+		notify.Activity,
+		loginURL,
+		"Opening browser for login and switching to the embedded session...",
+		"Opened browser for login. Finish the browser flow, then return to the embedded session if more input is needed.",
 	)
+	model = leaseModel.(Model)
+	if openCmd == nil {
+		return model, revealCmd
+	}
+	return model, batchCmds(openCmd, revealCmd)
 }
 
 func (m Model) renderBrowserAttentionOverlay(body string, width, height int) string {

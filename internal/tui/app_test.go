@@ -13327,9 +13327,10 @@ func TestVisibleCodexURLBasedElicitationCanOpenBrowser(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
 		snapshot: codexapp.Snapshot{
-			Started: true,
-			Preset:  codexcli.PresetYolo,
-			Status:  "Browser needs attention",
+			Started:  true,
+			ThreadID: "thread-demo",
+			Preset:   codexcli.PresetYolo,
+			Status:   "Browser needs attention",
 			BrowserActivity: browserctl.SessionActivity{
 				Policy:     settingsAutomaticPlaywrightPolicy,
 				State:      browserctl.SessionActivityStateWaitingForUser,
@@ -13394,6 +13395,77 @@ func TestVisibleCodexURLBasedElicitationCanOpenBrowser(t *testing.T) {
 	}
 	if openedURL != "https://example.test/login" {
 		t.Fatalf("opened URL = %q, want login URL", openedURL)
+	}
+}
+
+func TestVisibleCodexURLBasedElicitationBlocksWhenInteractiveLeaseOwnedElsewhere(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started:  true,
+			ThreadID: "thread-demo",
+			Preset:   codexcli.PresetYolo,
+			Status:   "Browser needs attention",
+			BrowserActivity: browserctl.SessionActivity{
+				Policy:     settingsAutomaticPlaywrightPolicy,
+				State:      browserctl.SessionActivityStateWaitingForUser,
+				ServerName: "playwright",
+				ToolName:   "browser_navigate",
+			},
+			PendingElicitation: &codexapp.ElicitationRequest{
+				ID:   "elicitation_1",
+				Mode: codexapp.ElicitationModeURL,
+				URL:  "https://example.test/login",
+			},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	controller := browserctl.NewController()
+	ownerObservation := browserctl.Observation{
+		Ref: browserctl.SessionRef{
+			Provider:    "codex",
+			ProjectPath: "/tmp/owner-demo",
+			SessionID:   "thread-owner",
+		},
+		Policy:   settingsAutomaticPlaywrightPolicy,
+		Activity: browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy, State: browserctl.SessionActivityStateWaitingForUser, ServerName: "playwright", ToolName: "browser_navigate"},
+		LoginURL: "https://example.test/owner",
+	}
+	controller.Observe(ownerObservation)
+	controller.AcquireInteractive(ownerObservation.Ref)
+
+	m := Model{
+		codexManager:         manager,
+		codexVisibleProject:  "/tmp/demo",
+		codexHiddenProject:   "/tmp/demo",
+		codexInput:           newCodexTextarea(),
+		codexViewport:        viewport.New(0, 0),
+		browserController:    controller,
+		browserLeaseSnapshot: controller.Snapshot(),
+		width:                100,
+		height:               24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o")})
+	got := updated.(Model)
+	if cmd != nil {
+		for _, msg := range collectCmdMsgs(cmd) {
+			if _, ok := msg.(browserOpenMsg); ok {
+				t.Fatalf("blocked browser open should not queue a browser-open command")
+			}
+		}
+	}
+	if !strings.Contains(got.status, "Interactive browser is already reserved by Codex / owner-demo") {
+		t.Fatalf("status = %q, want blocked browser ownership status", got.status)
 	}
 }
 
@@ -16414,6 +16486,36 @@ func TestSettingsBrowserAutomationEnterOpensPicker(t *testing.T) {
 	}
 }
 
+func TestSettingsBrowserAutomationPickerHighlightsSelectionAndCurrentMode(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+	_ = m.setSettingsSelection(settingsFieldBrowserAutomation)
+
+	updated, _ := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	updated, _ = got.updateSettingsBrowserAutomationPickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+
+	rendered := ansi.Strip(got.renderSettingsBrowserAutomationPickerContent(56, 18))
+	for _, want := range []string{
+		"› Automatic",
+		"Compatibility  (current)",
+		"About",
+		"Selected: Automatic",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("browser automation picker is missing %q: %q", want, rendered)
+		}
+	}
+}
+
 func TestSettingsBrowserAutomationFieldRendersChooserHint(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 
@@ -16474,6 +16576,56 @@ func TestSettingsBrowserSectionShowsLiveBrowserActivity(t *testing.T) {
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("browser settings live activity is missing %q: %q", want, rendered)
+		}
+	}
+}
+
+func TestSettingsBrowserSectionShowsInteractiveLeaseOwner(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	controller := browserctl.NewController()
+	ownerObservation := browserctl.Observation{
+		Ref: browserctl.SessionRef{
+			Provider:    "codex",
+			ProjectPath: "/tmp/owner-demo",
+			SessionID:   "thread-owner",
+		},
+		Policy:   settingsAutomaticPlaywrightPolicy,
+		Activity: browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy, State: browserctl.SessionActivityStateWaitingForUser, ServerName: "playwright", ToolName: "browser_navigate"},
+		LoginURL: "https://example.test/owner",
+	}
+	waitingObservation := browserctl.Observation{
+		Ref: browserctl.SessionRef{
+			Provider:    "codex",
+			ProjectPath: "/tmp/waiting-demo",
+			SessionID:   "thread-waiting",
+		},
+		Policy:   settingsAutomaticPlaywrightPolicy,
+		Activity: browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy, State: browserctl.SessionActivityStateWaitingForUser, ServerName: "playwright", ToolName: "browser_navigate"},
+		LoginURL: "https://example.test/waiting",
+	}
+	controller.Observe(ownerObservation)
+	controller.Observe(waitingObservation)
+	snapshot := controller.AcquireInteractive(ownerObservation.Ref).Snapshot
+
+	m := Model{
+		settingsMode:         true,
+		settingsFields:       newSettingsFields(settings),
+		settingsBaseline:     &settings,
+		browserController:    controller,
+		browserLeaseSnapshot: snapshot,
+		width:                100,
+		height:               24,
+	}
+	_ = m.setSettingsSelection(settingsFieldBrowserAutomation)
+
+	rendered := ansi.Strip(m.renderSettingsContent(84, 22))
+	for _, want := range []string{
+		"Interactive browser reserved by Codex / owner-demo",
+		"1 managed login flow(s) waiting",
+		"Codex / waiting-demo is waiting to open a browser login flow.",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("browser settings lease status is missing %q: %q", want, rendered)
 		}
 	}
 }
@@ -16645,6 +16797,120 @@ func TestBrowserAttentionEnterOpensBrowserAndSessionForManagedLoginURL(t *testin
 	}
 	if openedURL != "https://example.test/login" {
 		t.Fatalf("opened URL = %q, want login URL", openedURL)
+	}
+}
+
+func TestBrowserAttentionEnterShowsBlockedStatusWhenLeaseOwnedElsewhere(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	controller := browserctl.NewController()
+	ownerObservation := browserctl.Observation{
+		Ref: browserctl.SessionRef{
+			Provider:    "codex",
+			ProjectPath: "/tmp/owner-demo",
+			SessionID:   "thread-owner",
+		},
+		Policy:   settingsAutomaticPlaywrightPolicy,
+		Activity: browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy, State: browserctl.SessionActivityStateWaitingForUser, ServerName: "playwright", ToolName: "browser_navigate"},
+		LoginURL: "https://example.test/owner",
+	}
+	controller.Observe(ownerObservation)
+	controller.AcquireInteractive(ownerObservation.Ref)
+
+	m := Model{
+		settingsBaseline:     &settings,
+		browserController:    controller,
+		browserLeaseSnapshot: controller.Snapshot(),
+		browserAttention: &browserAttentionNotification{
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			SessionID:   "thread-demo",
+			Provider:    codexapp.ProviderCodex,
+			Activity: browserctl.SessionActivity{
+				Policy:     settingsAutomaticPlaywrightPolicy,
+				State:      browserctl.SessionActivityStateWaitingForUser,
+				ServerName: "playwright",
+			},
+			RequestMode: codexapp.ElicitationModeURL,
+			RequestURL:  "https://example.test/login",
+		},
+	}
+
+	updated, cmd := m.updateBrowserAttentionMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("blocked browser attention should still reveal the embedded session")
+	}
+	if got.codexVisibleProject != "/tmp/demo" {
+		t.Fatalf("codexVisibleProject = %q, want /tmp/demo", got.codexVisibleProject)
+	}
+	if !strings.Contains(got.status, "Interactive browser is already reserved by Codex / owner-demo") {
+		t.Fatalf("status = %q, want blocked browser ownership status", got.status)
+	}
+}
+
+func TestOpenManagedBrowserLoginReleasesLeaseOnBrowserOpenFailure(t *testing.T) {
+	controller := browserctl.NewController()
+	observation := browserctl.Observation{
+		Ref: browserctl.SessionRef{
+			Provider:    "codex",
+			ProjectPath: "/tmp/demo",
+			SessionID:   "thread-demo",
+		},
+		Policy:   settingsAutomaticPlaywrightPolicy,
+		Activity: browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy, State: browserctl.SessionActivityStateWaitingForUser, ServerName: "playwright", ToolName: "browser_navigate"},
+		LoginURL: "https://example.test/login",
+	}
+	controller.Observe(observation)
+
+	previousOpener := externalBrowserOpener
+	defer func() { externalBrowserOpener = previousOpener }()
+	externalBrowserOpener = func(rawURL string) error {
+		return errors.New("boom")
+	}
+
+	m := Model{
+		browserController:    controller,
+		browserLeaseSnapshot: controller.Snapshot(),
+	}
+
+	updated, cmd := m.openManagedBrowserLogin(
+		"/tmp/demo",
+		codexapp.ProviderCodex,
+		"thread-demo",
+		browserctl.SessionActivity{
+			Policy:     settingsAutomaticPlaywrightPolicy,
+			State:      browserctl.SessionActivityStateWaitingForUser,
+			ServerName: "playwright",
+			ToolName:   "browser_navigate",
+		},
+		"https://example.test/login",
+		"Opening browser for login...",
+		"Opened browser for login.",
+	)
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("openManagedBrowserLogin should queue a browser-open command")
+	}
+	if got.browserLeaseSnapshot.Interactive == nil {
+		t.Fatalf("interactive lease should be held while browser open is pending")
+	}
+
+	msg := cmd()
+	openMsg, ok := msg.(browserOpenMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want browserOpenMsg", msg)
+	}
+	if openMsg.err == nil {
+		t.Fatalf("browserOpenMsg.err = nil, want open failure")
+	}
+	if !openMsg.browserLeaseSnapshotSet {
+		t.Fatalf("browser open failure should return an updated lease snapshot")
+	}
+	if openMsg.browserLeaseSnapshot.Interactive != nil {
+		t.Fatalf("interactive lease should be released after open failure, got %#v", openMsg.browserLeaseSnapshot.Interactive)
+	}
+	if len(openMsg.browserLeaseSnapshot.Waiting) != 1 {
+		t.Fatalf("waiting leases = %d, want 1 after open failure", len(openMsg.browserLeaseSnapshot.Waiting))
 	}
 }
 

@@ -172,6 +172,8 @@ type Model struct {
 	codexPickerProject          string
 	codexPickerProvider         codexapp.Provider
 	browserAttention            *browserAttentionNotification
+	browserController           *browserctl.Controller
+	browserLeaseSnapshot        browserctl.ControllerSnapshot
 	questionNotify              *questionNotification
 	codexInputSelection         *codexInputSelectionState
 	codexComposerSelection      textSelection
@@ -297,9 +299,11 @@ type actionMsg struct {
 }
 
 type browserOpenMsg struct {
-	projectPath string
-	status      string
-	err         error
+	projectPath             string
+	status                  string
+	err                     error
+	browserLeaseSnapshot    browserctl.ControllerSnapshot
+	browserLeaseSnapshotSet bool
 }
 
 type runtimeActionMsg struct {
@@ -613,6 +617,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		recentClaudeModels:     append([]string(nil), initialSettings.RecentClaudeModels...),
 		recentOpenCodeModels:   append([]string(nil), initialSettings.RecentOpenCodeModels...),
 		hideReasoningSections:  initialSettings.HideReasoningSections,
+		browserController:      browserctl.NewController(),
 		detailReloadInFlight:   make(map[string]bool),
 		detailReloadQueued:     make(map[string]bool),
 		summaryReloadInFlight:  make(map[string]bool),
@@ -1865,6 +1870,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.requestProjectInvalidationCmd(invalidateProjectScan("", false))
 	case browserOpenMsg:
+		if msg.browserLeaseSnapshotSet {
+			m.browserLeaseSnapshot = msg.browserLeaseSnapshot
+		}
 		if msg.err != nil {
 			m.reportError("Open failed", msg.err, msg.projectPath)
 			return m, nil
@@ -2393,6 +2401,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if ok {
 			providerLabel = embeddedProvider(snapshot).Label()
 			transcriptChanged = !hadPrevSnapshot || codexTranscriptStateChanged(prevSnapshot, snapshot)
+			m.observeManagedBrowserLease(msg.projectPath, snapshot)
 			if shouldRecordEmbeddedSessionActivityAfterCodexSnapshot(hadPrevSnapshot, prevSnapshot, snapshot) {
 				statusRefreshCmd = m.recordEmbeddedSessionActivityCmd(msg.projectPath, snapshot)
 			}
@@ -2427,6 +2436,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if strings.TrimSpace(snapshot.Status) != "" {
 				m.status = snapshot.Status
 			}
+			m.removeManagedBrowserLease(msg.projectPath, snapshot)
 			m.loading = true
 			cmds = append(cmds,
 				m.recordEmbeddedSessionSettledCmd(msg.projectPath, snapshot),
@@ -2435,6 +2445,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if !needsAsync {
 			m.cancelModelSettleLatency(msg.projectPath, "stale")
 			if hadPrevSnapshot {
+				m.removeManagedBrowserLease(msg.projectPath, prevSnapshot)
 				cmds = append(cmds, m.recordEmbeddedSessionSettledCmd(msg.projectPath, prevSnapshot))
 			}
 			m.dropCodexSnapshot(msg.projectPath)
@@ -2451,6 +2462,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		prevSnapshot, hadPrev := m.codexSnapshots[projectPath]
 		m.storeCodexSnapshot(projectPath, msg.snapshot)
 		snapshot := msg.snapshot
+		m.observeManagedBrowserLease(projectPath, snapshot)
 		providerLabel := embeddedProvider(snapshot).Label()
 		transcriptChanged := !hadPrev || codexTranscriptStateChanged(prevSnapshot, snapshot)
 		statusRefreshCmd := tea.Cmd(nil)
@@ -2473,6 +2485,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detectQuestionNotification(projectPath, snapshot)
 			return m, statusRefreshCmd
 		}
+		m.removeManagedBrowserLease(projectPath, snapshot)
 		m.cancelModelSettleLatency(projectPath, "session closed")
 		if !m.markCodexSessionClosedHandled(projectPath) {
 			return m, nil

@@ -93,8 +93,8 @@ func (m Model) renderSettingsBrowserAutomationPickerOverlay(body string, bodyW, 
 }
 
 func (m Model) renderSettingsBrowserAutomationPickerPanel(bodyW, bodyH int) string {
-	panelWidth := min(bodyW, min(max(68, bodyW-10), 108))
-	panelInnerWidth := max(34, panelWidth-4)
+	panelWidth := min(bodyW, min(max(56, bodyW-18), 82))
+	panelInnerWidth := max(28, panelWidth-4)
 	return renderDialogPanel(panelWidth, panelInnerWidth, m.renderSettingsBrowserAutomationPickerContent(panelInnerWidth, max(12, bodyH-2)))
 }
 
@@ -116,28 +116,45 @@ func (m Model) renderSettingsBrowserAutomationPickerContent(width, bodyH int) st
 	lines = append(lines, "")
 
 	for i, option := range options {
-		lines = append(lines, m.renderSettingsBrowserAutomationPickerRow(option, i == m.settingsBrowserPickerSelected, width))
+		lines = append(lines, m.renderSettingsBrowserAutomationPickerRow(option, i == m.settingsBrowserPickerSelected, option.Label == currentLabel, width))
 	}
 
 	selected := options[m.settingsBrowserPickerSelected]
 	lines = append(lines, "")
+	lines = append(lines, detailSectionStyle.Render("About"))
+	if strings.TrimSpace(selected.Summary) != "" {
+		lines = append(lines, renderWrappedDialogTextLines(detailValueStyle, max(20, width-2), selected.Summary)...)
+	}
 	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, max(20, width-2), selected.Description)...)
 	if strings.TrimSpace(selected.Summary) != "" {
-		lines = append(lines, renderWrappedDialogTextLines(detailValueStyle, max(20, width-2), "Summary: "+selected.Summary)...)
+		lines = append(lines, "", detailField("Selected", detailValueStyle.Render(selected.Label)))
 	}
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) renderSettingsBrowserAutomationPickerRow(option settingsBrowserAutomationOption, selected bool, width int) string {
-	rightWidth := min(max(18, width/2), max(18, width-20))
-	leftWidth := max(14, width-rightWidth-2)
-	left := detailValueStyle.Bold(true).Render(truncateText(option.Label, leftWidth))
-	right := detailMutedStyle.Render(truncateText(option.Summary, rightWidth))
-	row := fitFooterWidth(lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().Width(leftWidth).Render(left), "  ", right), width)
+func (m Model) renderSettingsBrowserAutomationPickerRow(option settingsBrowserAutomationOption, selected, current bool, width int) string {
+	labelStyle := detailValueStyle.Bold(true)
 	if selected {
-		return projectListSelectedRowStyle.Render(row)
+		labelStyle = labelStyle.Foreground(lipgloss.Color("230"))
 	}
-	return row
+	markerStyle := commandPaletteHintStyle
+	if selected {
+		markerStyle = commandPalettePickStyle
+	}
+	marker := markerStyle.Render(" ")
+	if selected {
+		marker = markerStyle.Render("›")
+	}
+	label := truncateText(option.Label, max(10, width-4))
+	row := marker + " " + labelStyle.Render(label)
+	if current {
+		row += "  " + detailMutedStyle.Render("(current)")
+	}
+	row = fitFooterWidth(row, width)
+	if selected {
+		return projectListSelectedRowStyle.Width(width).Render(row)
+	}
+	return lipgloss.NewStyle().Width(width).Render(row)
 }
 
 func (m Model) renderSettingsBrowserAutomationValue(selected bool, inputWidth int) string {

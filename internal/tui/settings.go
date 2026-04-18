@@ -839,11 +839,24 @@ func (m Model) renderBrowserSettingsStatus(width int) []string {
 	lines := []string{
 		detailField("Effective", detailValueStyle.Render(policy.Summary())),
 	}
-	lines = append(lines, renderWrappedDialogTextLines(
-		detailMutedStyle,
-		max(18, width-2),
-		"Ownership: no LCR browser lease manager yet. New embedded sessions inherit this launch policy, but browser ownership and login promotion are still provider-owned after startup.",
-	)...)
+	if owner := m.currentInteractiveBrowserLeaseOwner(); owner != nil {
+		lines = append(lines, detailField("Ownership", detailWarningStyle.Render("Interactive browser reserved by "+m.describeManagedBrowserLease(*owner))))
+	} else {
+		lines = append(lines, detailField("Ownership", detailValueStyle.Render("Interactive browser is free.")))
+	}
+	if waiting := len(m.browserLeaseSnapshot.Waiting); waiting > 0 {
+		label := fmt.Sprintf("%d managed login flow(s) waiting", waiting)
+		lines = append(lines, detailField("Lease queue", detailMutedStyle.Render(label)))
+		for _, lease := range m.browserLeaseSnapshot.Waiting {
+			lines = append(lines, renderWrappedDialogTextLines(
+				detailMutedStyle,
+				max(18, width-2),
+				m.describeManagedBrowserLease(lease)+" is waiting to open a browser login flow.",
+			)...)
+		}
+	} else {
+		lines = append(lines, detailField("Lease queue", detailMutedStyle.Render("No managed login flows are queued.")))
+	}
 	lines = append(lines, detailLabelStyle.Render("Live activity:"))
 	liveActivities := m.browserLiveActivities()
 	if len(liveActivities) == 0 {
