@@ -1203,6 +1203,38 @@ func (m Model) recordEmbeddedSessionStateCmd(activity service.EmbeddedSessionAct
 	}
 }
 
+func (m Model) recordEmbeddedSessionSettledAndRefreshCmd(projectPath string, snapshot codexapp.Snapshot) tea.Cmd {
+	if m.svc == nil {
+		return nil
+	}
+	projectPath = normalizeProjectPath(projectPath)
+	if projectPath == "" {
+		return nil
+	}
+	activity, ok := embeddedSessionSettledActivityFromSnapshot(projectPath, snapshot)
+	refreshCmd := m.refreshProjectStatusCmd(projectPath)
+	if !ok {
+		return refreshCmd
+	}
+	return func() tea.Msg {
+		var errs []error
+		if err := m.svc.RecordEmbeddedSessionActivity(m.ctx, activity); err != nil {
+			errs = append(errs, err)
+		}
+		if refreshCmd != nil {
+			msg := refreshCmd()
+			if refreshMsg, ok := msg.(projectStatusRefreshedMsg); ok {
+				if refreshMsg.err != nil {
+					errs = append(errs, refreshMsg.err)
+				}
+			} else if msg != nil {
+				errs = append(errs, fmt.Errorf("refresh project status returned %T", msg))
+			}
+		}
+		return projectStatusRefreshedMsg{projectPath: activity.ProjectPath, err: errors.Join(errs...)}
+	}
+}
+
 func (m *Model) requestProjectRefreshCmd(req projectRefreshRequest) tea.Cmd {
 	cmds := make([]tea.Cmd, 0, 2+len(req.summaryPaths))
 	if req.scan {
@@ -2360,7 +2392,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				statusRefreshCmd = m.recordEmbeddedSessionActivityCmd(msg.projectPath, snapshot)
 			}
 			if shouldRefreshProjectStatusAfterCodexSnapshot(prevSnapshot, snapshot) {
-				statusRefreshCmd = m.refreshProjectStatusCmd(msg.projectPath)
+				statusRefreshCmd = m.recordEmbeddedSessionSettledAndRefreshCmd(msg.projectPath, snapshot)
 			}
 		}
 		m.recordAISyncLatency("Embedded snapshot", msg.projectPath, providerLabel, refreshDuration, "")
@@ -2421,7 +2453,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			statusRefreshCmd = m.recordEmbeddedSessionActivityCmd(projectPath, snapshot)
 		}
 		if hadPrev && shouldRefreshProjectStatusAfterCodexSnapshot(prevSnapshot, snapshot) {
-			statusRefreshCmd = m.refreshProjectStatusCmd(projectPath)
+			statusRefreshCmd = m.recordEmbeddedSessionSettledAndRefreshCmd(projectPath, snapshot)
 		}
 		if m.codexVisibleProject == projectPath {
 			viewportStarted := time.Now()
