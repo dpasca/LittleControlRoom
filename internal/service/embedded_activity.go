@@ -67,7 +67,7 @@ func (s *Service) RecordEmbeddedSessionActivity(ctx context.Context, activity Em
 		repoAheadCount:       detail.Summary.RepoAheadCount,
 		repoBehindCount:      detail.Summary.RepoBehindCount,
 		forgotten:            detail.Summary.Forgotten,
-	}, runtime.cfg, runtime.classifier)
+	}, runtime.cfg, runtime.classifier, ScanOptions{})
 }
 
 func embeddedActivitySession(projectPath string, activity EmbeddedSessionActivity, cfg config.AppConfig) model.SessionEvidence {

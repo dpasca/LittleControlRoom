@@ -170,62 +170,47 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 	return results, nil
 }
 
-// mergeSessionFilesFromDisk reconciles rollout JSONL files with the DB-backed
-// session index. When the DB and JSONL disagree about cwd ownership, the JSONL
-// file wins because session logs are the source of truth.
+// mergeSessionFilesFromDisk reconciles rollout JSONL files referenced by the
+// DB-backed session index. When the DB and JSONL disagree about cwd ownership,
+// the JSONL file wins because session logs are the source of truth. Keep this
+// pass narrowly scoped to the rollout files already referenced by the DB so
+// fast-path scans do not have to reparse an entire Codex archive on every run.
 func (d *Detector) mergeSessionFilesFromDisk(ctx context.Context, scope scanner.PathScope, results map[string]*model.DetectorProjectActivity) {
-	files, err := d.collectSessionFiles()
-	if err != nil {
-		return
-	}
-
 	sessions := map[string]model.SessionEvidence{}
+	reconcileFiles := map[string]string{}
 	for _, entry := range results {
 		for _, session := range entry.Sessions {
 			if strings.TrimSpace(session.SessionID) == "" {
 				continue
 			}
 			sessions[session.SessionID] = mergeCodexSessionEvidence(sessions[session.SessionID], session)
+			if strings.HasSuffix(strings.TrimSpace(session.SessionFile), ".jsonl") {
+				reconcileFiles[filepath.Clean(strings.TrimSpace(session.SessionFile))] = session.SessionID
+			}
 		}
 	}
 
-	seenFiles := map[string]struct{}{}
-	for _, f := range files {
+	for path, sessionID := range reconcileFiles {
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
-		seenFiles[f] = struct{}{}
-		parsed, err := d.parseWithCache(f)
-		if err != nil {
-			continue
-		}
-		if parsed.cwd == "" || parsed.sessionID == "" {
-			continue
-		}
-		cwd := filepath.Clean(parsed.cwd)
-		if !scope.Allows(cwd) {
-			continue
-		}
 
-		session := model.NormalizeSessionEvidenceIdentity(model.SessionEvidence{
-			SessionID:            parsed.sessionID,
-			ProjectPath:          cwd,
-			DetectedProjectPath:  cwd,
-			SessionFile:          f,
-			Format:               parsed.format,
-			StartedAt:            parsed.startedAt,
-			LastEventAt:          parsed.lastEventAt,
-			ErrorCount:           parsed.errorCount,
-			LatestTurnStartedAt:  parsed.turnStartedAt,
-			LatestTurnStateKnown: parsed.turnKnown,
-			LatestTurnCompleted:  parsed.turnDone,
-		})
-		sessions[session.SessionID] = mergeCodexSessionEvidence(sessions[session.SessionID], session)
+		owner := sessions[sessionID]
+		if strings.TrimSpace(owner.SessionID) == "" {
+			continue
+		}
+		corrected, ok := reconcileSessionOwnershipFromFile(path, owner)
+		if !ok {
+			continue
+		}
+		cwd := filepath.Clean(strings.TrimSpace(corrected.ProjectPath))
+		if cwd == "" || !scope.Allows(cwd) {
+			continue
+		}
+		sessions[sessionID] = mergeCodexSessionEvidence(owner, corrected)
 	}
-
-	d.pruneCache(seenFiles)
 
 	rebuilt := map[string]*model.DetectorProjectActivity{}
 	dbPath := filepath.Join(d.codexHome, "state_5.sqlite")
@@ -262,6 +247,89 @@ func (d *Detector) mergeSessionFilesFromDisk(ctx context.Context, scope scanner.
 		})
 		dedupeArtifacts(entry)
 	}
+}
+
+func reconcileSessionOwnershipFromFile(path string, base model.SessionEvidence) (model.SessionEvidence, bool) {
+	sessionID, cwd, ok := parseSessionOwnershipFromFile(path)
+	if !ok {
+		return model.SessionEvidence{}, false
+	}
+
+	updated := base
+	if strings.TrimSpace(updated.SessionFile) == "" {
+		updated.SessionFile = path
+	}
+	if sessionID != "" {
+		normalized := model.NormalizeSessionEvidenceIdentity(model.SessionEvidence{
+			Source:       updated.Source,
+			SessionID:    sessionID,
+			RawSessionID: updated.RawSessionID,
+			Format:       updated.Format,
+		})
+		if normalized.SessionID != "" {
+			updated.SessionID = normalized.SessionID
+			if normalized.RawSessionID != "" {
+				updated.RawSessionID = normalized.RawSessionID
+			}
+			if normalized.Source != model.SessionSourceUnknown {
+				updated.Source = normalized.Source
+			}
+		}
+	}
+	if cwd != "" {
+		updated.ProjectPath = cwd
+		updated.DetectedProjectPath = cwd
+	}
+	return model.NormalizeSessionEvidenceIdentity(updated), true
+}
+
+func parseSessionOwnershipFromFile(path string) (string, string, bool) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", "", false
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	lineNo := 0
+	sessionID := ""
+	cwd := ""
+	for scanner.Scan() {
+		line := scanner.Text()
+		lineNo++
+		if lineNo == 1 {
+			switch detectFormat(line) {
+			case "modern":
+				meta, err := parseModernMeta(line)
+				if err == nil {
+					return meta.ID, filepath.Clean(strings.TrimSpace(meta.CWD)), meta.ID != "" || meta.CWD != ""
+				}
+			case "legacy":
+				meta, err := parseLegacyMeta(line)
+				if err == nil {
+					sessionID = meta.ID
+				}
+			}
+		}
+		if cwd == "" {
+			cwd = extractLegacyCWD(line)
+			if sessionID != "" && cwd != "" {
+				return sessionID, filepath.Clean(strings.TrimSpace(cwd)), true
+			}
+		}
+		if lineNo >= 128 && sessionID != "" {
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", "", false
+	}
+	if sessionID == "" && cwd == "" {
+		return "", "", false
+	}
+	return sessionID, filepath.Clean(strings.TrimSpace(cwd)), true
 }
 
 func mergeCodexSessionEvidence(existing, candidate model.SessionEvidence) model.SessionEvidence {

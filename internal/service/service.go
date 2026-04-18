@@ -32,6 +32,8 @@ const legacyRepoDirName = "BatonDeck"
 const recentActivityDiscoveryWindow = 24 * time.Hour
 const asyncProjectRefreshTimeout = 30 * time.Second
 
+var scanGitMetadataTimeout = 1500 * time.Millisecond
+
 type SessionClassifier interface {
 	QueueProject(ctx context.Context, state model.ProjectState) (bool, error)
 	Notify()
@@ -152,6 +154,45 @@ func cloneAppConfig(cfg config.AppConfig) config.AppConfig {
 	cloned.RecentOpenCodeModels = append([]string(nil), cfg.RecentOpenCodeModels...)
 	cloned.PlaywrightPolicy = cfg.PlaywrightPolicy.Normalize()
 	return cloned
+}
+
+func withScanGitMetadataTimeout[T any](reader func(context.Context, string) (T, error), timedOutPaths map[string]struct{}) func(context.Context, string) (T, error) {
+	if reader == nil {
+		return nil
+	}
+	return func(parent context.Context, path string) (T, error) {
+		var zero T
+		cleanPath := filepath.Clean(strings.TrimSpace(path))
+		if timedOutPaths != nil {
+			if _, ok := timedOutPaths[cleanPath]; ok {
+				return zero, fmt.Errorf("skipping git metadata read for %s after earlier timeout", cleanPath)
+			}
+		}
+		timeout := scanGitMetadataTimeout
+		if timeout <= 0 {
+			return reader(parent, path)
+		}
+		if deadline, ok := parent.Deadline(); ok {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				return zero, parent.Err()
+			}
+			if remaining < timeout {
+				timeout = remaining
+			}
+		}
+		ctx, cancel := context.WithTimeout(parent, timeout)
+		defer cancel()
+
+		value, err := reader(ctx, path)
+		if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			if timedOutPaths != nil {
+				timedOutPaths[cleanPath] = struct{}{}
+			}
+			return zero, fmt.Errorf("git metadata read timed out for %s after %s: %w", path, timeout, ctx.Err())
+		}
+		return value, err
+	}
 }
 
 func (s *Service) runtimeSnapshot() serviceRuntimeSnapshot {
@@ -437,9 +478,11 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 	runtime := s.runtimeSnapshot()
 	cfg := runtime.cfg
 	classifier := runtime.classifier
-	gitFingerprintReader := runtime.gitFingerprintReader
-	gitRepoStatusReader := runtime.gitRepoStatusReader
-	gitWorktreeInfoReader := runtime.gitWorktreeInfoReader
+	timedOutGitPaths := map[string]struct{}{}
+	gitFingerprintReader := withScanGitMetadataTimeout(runtime.gitFingerprintReader, timedOutGitPaths)
+	gitRepoStatusReader := withScanGitMetadataTimeout(runtime.gitRepoStatusReader, timedOutGitPaths)
+	gitWorktreeInfoReader := withScanGitMetadataTimeout(runtime.gitWorktreeInfoReader, timedOutGitPaths)
+	gitWorktreeListReader := withScanGitMetadataTimeout(runtime.gitWorktreeListReader, timedOutGitPaths)
 	bus := runtime.bus
 	now := time.Now()
 	internalWorkspaceRoot := appfs.InternalWorkspaceRoot(cfg.DataDir)
@@ -461,7 +504,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 	if err != nil {
 		return ScanReport{}, fmt.Errorf("load previous project state: %w", err)
 	}
-	discovered, liveWorktreePathsByRoot := s.expandDiscoveredWorktreePaths(ctx, discovered, oldMap, scope, runtime.gitWorktreeInfoReader, runtime.gitWorktreeListReader)
+	discovered, liveWorktreePathsByRoot := s.expandDiscoveredWorktreePaths(ctx, discovered, oldMap, scope, gitWorktreeInfoReader, gitWorktreeListReader)
 	aliasesChanged, err := s.applyStaticPathAliases(ctx, now, oldMap, cfg.IncludePaths)
 	if err != nil {
 		return ScanReport{}, err
@@ -1644,7 +1687,14 @@ func ensureSessionSnapshotHash(ctx context.Context, projectPath string, session 
 }
 
 func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) error {
+	return s.RefreshProjectStatusWithOptions(ctx, projectPath, ScanOptions{})
+}
+
+func (s *Service) RefreshProjectStatusWithOptions(ctx context.Context, projectPath string, opts ScanOptions) error {
 	runtime := s.runtimeSnapshot()
+	gitRepoStatusReader := withScanGitMetadataTimeout(runtime.gitRepoStatusReader, nil)
+	gitWorktreeInfoReader := withScanGitMetadataTimeout(runtime.gitWorktreeInfoReader, nil)
+	gitWorktreeListReader := withScanGitMetadataTimeout(runtime.gitWorktreeListReader, nil)
 	now := time.Now()
 	detail, err := s.store.GetProjectDetail(ctx, projectPath, 20)
 	if err != nil {
@@ -1670,12 +1720,12 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 	repoAheadCount := 0
 	repoBehindCount := 0
 	if presentOnDisk {
-		if nextRootPath, nextKind := s.readProjectWorktreeInfoWithReader(ctx, detail.Summary.Path, runtime.gitWorktreeInfoReader); nextRootPath != "" || nextKind != model.WorktreeKindNone {
+		if nextRootPath, nextKind := s.readProjectWorktreeInfoWithReader(ctx, detail.Summary.Path, gitWorktreeInfoReader); nextRootPath != "" || nextKind != model.WorktreeKindNone {
 			worktreeRootPath = nextRootPath
 			worktreeKind = nextKind
 		}
-		if runtime.gitRepoStatusReader != nil {
-			if repoStatus, err := runtime.gitRepoStatusReader(ctx, detail.Summary.Path); err == nil {
+		if gitRepoStatusReader != nil {
+			if repoStatus, err := gitRepoStatusReader(ctx, detail.Summary.Path); err == nil {
 				repoBranch = strings.TrimSpace(repoStatus.Branch)
 				repoDirty = repoStatus.Dirty
 				repoConflict = repoConflictFromGit(repoStatus)
@@ -1705,7 +1755,7 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 	// checkout disappears from `git worktree list`, treat it as stale even if
 	// the directory itself is already gone. This prevents async status refreshes
 	// from briefly re-surfacing removed worktrees as plain "missing" folders.
-	staleLinkedWorktree := s.staleLinkedWorktreeOnDiskWithReader(ctx, worktreeRootPath, worktreeKind, detail.Summary.Path, runtime.gitWorktreeListReader)
+	staleLinkedWorktree := s.staleLinkedWorktreeOnDiskWithReader(ctx, worktreeRootPath, worktreeKind, detail.Summary.Path, gitWorktreeListReader)
 	if staleLinkedWorktree {
 		forgotten = true
 	}
@@ -1740,7 +1790,7 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 		repoAheadCount:       repoAheadCount,
 		repoBehindCount:      repoBehindCount,
 		forgotten:            forgotten,
-	}, runtime.cfg, nil)
+	}, runtime.cfg, runtime.classifier, opts)
 }
 
 type projectStatusRefreshOverrides struct {
@@ -1758,7 +1808,7 @@ type projectStatusRefreshOverrides struct {
 	forgotten            bool
 }
 
-func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.ProjectDetail, now time.Time, overrides projectStatusRefreshOverrides, cfg config.AppConfig, classifier SessionClassifier) error {
+func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.ProjectDetail, now time.Time, overrides projectStatusRefreshOverrides, cfg config.AppConfig, classifier SessionClassifier, opts ScanOptions) error {
 	projectPath := detail.Summary.Path
 	latestSessionStart := time.Time{}
 	latestTurnKnown := false
@@ -1832,7 +1882,7 @@ func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.Pr
 		return fmt.Errorf("persist refreshed project state: %w", err)
 	}
 	if classifier != nil {
-		queued, err := queueProjectClassification(ctx, classifier, state, ScanOptions{})
+		queued, err := queueProjectClassification(ctx, classifier, state, opts)
 		if err != nil {
 			return fmt.Errorf("queue session classification: %w", err)
 		}
@@ -1866,7 +1916,7 @@ func (s *Service) refreshProjectAttention(ctx context.Context, projectPath strin
 		repoAheadCount:       detail.Summary.RepoAheadCount,
 		repoBehindCount:      detail.Summary.RepoBehindCount,
 		forgotten:            detail.Summary.Forgotten,
-	}, cfg, nil)
+	}, cfg, nil, ScanOptions{})
 }
 
 func (s *Service) TogglePin(ctx context.Context, projectPath string) error {

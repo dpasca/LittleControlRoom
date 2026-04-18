@@ -1146,6 +1146,10 @@ func (m *Model) finishProjectSummaryReloadCmd(path string) tea.Cmd {
 }
 
 func (m Model) refreshProjectStatusCmd(path string) tea.Cmd {
+	return m.refreshProjectStatusCmdWithOptions(path, service.ScanOptions{})
+}
+
+func (m Model) refreshProjectStatusCmdWithOptions(path string, opts service.ScanOptions) tea.Cmd {
 	if m.svc == nil {
 		return nil
 	}
@@ -1154,7 +1158,7 @@ func (m Model) refreshProjectStatusCmd(path string) tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		err := m.svc.RefreshProjectStatus(m.ctx, path)
+		err := m.svc.RefreshProjectStatusWithOptions(m.ctx, path, opts)
 		return projectStatusRefreshedMsg{projectPath: path, err: err}
 	}
 }
@@ -4398,7 +4402,12 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 	case commands.KindRefresh:
 		m.loading = true
 		m.status = "Scanning and retrying failed assessments..."
-		return m, m.requestScanCmd(true)
+		return m, batchCmds(
+			m.refreshProjectStatusCmdWithOptions(m.currentSelectedProjectPath(), service.ScanOptions{
+				ForceRetryFailedClassifications: true,
+			}),
+			m.requestScanCmd(true),
+		)
 	case commands.KindSort:
 		return m, m.setSortMode(projectSortMode(inv.Sort))
 	case commands.KindView:

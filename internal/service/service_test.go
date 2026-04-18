@@ -80,8 +80,9 @@ func (c *recordingClassifier) QueueProject(_ context.Context, state model.Projec
 	return true, nil
 }
 
-func (c *recordingClassifier) QueueProjectRetry(context.Context, model.ProjectState, time.Duration) (bool, error) {
+func (c *recordingClassifier) QueueProjectRetry(_ context.Context, state model.ProjectState, _ time.Duration) (bool, error) {
 	c.forcedCalls++
+	c.lastState = state
 	return true, nil
 }
 
@@ -744,9 +745,26 @@ func TestRefreshProjectStatusBackfillsCodexSessionFileFromCodexHome(t *testing.T
 		t.Fatalf("seed project: %v", err)
 	}
 
+	classifier := &recordingClassifier{}
 	svc := New(cfg, st, events.NewBus(), nil)
+	svc.SetSessionClassifier(classifier)
 	if err := svc.RefreshProjectStatus(ctx, projectPath); err != nil {
 		t.Fatalf("RefreshProjectStatus() error = %v", err)
+	}
+	if classifier.normalCalls != 1 {
+		t.Fatalf("QueueProject() calls = %d, want 1", classifier.normalCalls)
+	}
+	if classifier.notifyCalls != 1 {
+		t.Fatalf("Notify() calls = %d, want 1", classifier.notifyCalls)
+	}
+	if len(classifier.lastState.Sessions) != 1 {
+		t.Fatalf("queued state sessions = %#v, want one session", classifier.lastState.Sessions)
+	}
+	if got := classifier.lastState.Sessions[0].SessionFile; got != wantSessionFile {
+		t.Fatalf("queued session file = %q, want %q", got, wantSessionFile)
+	}
+	if strings.TrimSpace(classifier.lastState.Sessions[0].SnapshotHash) == "" {
+		t.Fatalf("expected queued session snapshot hash after refresh")
 	}
 
 	detail, err := st.GetProjectDetail(ctx, projectPath, 20)
@@ -761,6 +779,223 @@ func TestRefreshProjectStatusBackfillsCodexSessionFileFromCodexHome(t *testing.T
 	}
 	if strings.TrimSpace(detail.Sessions[0].SnapshotHash) == "" {
 		t.Fatalf("expected stored session snapshot hash after refresh")
+	}
+}
+
+func TestRefreshProjectStatusWithOptionsForceRetriesFailedClassifications(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Date(2026, 4, 17, 15, 12, 53, 0, time.UTC)
+	projectPath := filepath.Join(t.TempDir(), "demo")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "demo",
+		LastActivity:   now,
+		Status:         model.StatusIdle,
+		AttentionScore: 5,
+		PresentOnDisk:  true,
+		InScope:        true,
+		CreatedAt:      now.Add(-2 * time.Hour),
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{{
+			Source:               model.SessionSourceCodex,
+			SessionID:            "codex:ses_force_refresh",
+			RawSessionID:         "ses_force_refresh",
+			ProjectPath:          projectPath,
+			DetectedProjectPath:  projectPath,
+			SessionFile:          filepath.Join(projectPath, "session.jsonl"),
+			Format:               "modern",
+			SnapshotHash:         "hash-force-refresh",
+			LastEventAt:          now,
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  false,
+		}},
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	classifier := &recordingClassifier{}
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	svc.SetSessionClassifier(classifier)
+	svc.gitFingerprintReader = nil
+	svc.gitRepoStatusReader = nil
+
+	if err := svc.RefreshProjectStatusWithOptions(ctx, projectPath, ScanOptions{ForceRetryFailedClassifications: true}); err != nil {
+		t.Fatalf("RefreshProjectStatusWithOptions() error = %v", err)
+	}
+	if classifier.forcedCalls != 1 {
+		t.Fatalf("forcedCalls = %d, want 1", classifier.forcedCalls)
+	}
+	if classifier.normalCalls != 0 {
+		t.Fatalf("normalCalls = %d, want 0", classifier.normalCalls)
+	}
+	if classifier.notifyCalls != 1 {
+		t.Fatalf("notifyCalls = %d, want 1", classifier.notifyCalls)
+	}
+}
+
+func TestScanWithOptionsTimesOutHungWorktreeReadersAndRepairsCodexSessionFile(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	oldTimeout := scanGitMetadataTimeout
+	scanGitMetadataTimeout = 50 * time.Millisecond
+	defer func() {
+		scanGitMetadataTimeout = oldTimeout
+	}()
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	root := t.TempDir()
+	hungPath := filepath.Join(root, "aaa-hung")
+	projectPath := filepath.Join(root, "bbb-target")
+	for _, path := range []string{hungPath, projectPath} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+	}
+
+	now := time.Date(2026, 4, 17, 15, 12, 53, 0, time.UTC)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           hungPath,
+		Name:           "hung",
+		LastActivity:   now.Add(-30 * time.Minute),
+		Status:         model.StatusIdle,
+		AttentionScore: 5,
+		PresentOnDisk:  true,
+		InScope:        true,
+		CreatedAt:      now.Add(-2 * time.Hour),
+		UpdatedAt:      now.Add(-30 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed hung project: %v", err)
+	}
+
+	sessionID := "019d9c00-851d-7033-8291-b0c6c7525753"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "target",
+		LastActivity:   now,
+		Status:         model.StatusIdle,
+		AttentionScore: 5,
+		PresentOnDisk:  true,
+		InScope:        true,
+		CreatedAt:      now.Add(-2 * time.Hour),
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{{
+			Source:               model.SessionSourceCodex,
+			SessionID:            sessionID,
+			RawSessionID:         sessionID,
+			ProjectPath:          projectPath,
+			DetectedProjectPath:  projectPath,
+			Format:               "modern",
+			LastEventAt:          now,
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  true,
+		}},
+	}); err != nil {
+		t.Fatalf("seed target project: %v", err)
+	}
+
+	fixture := filepath.Clean(filepath.Join("..", "..", "testdata", "codex_footprint", "sessions", "2026", "03", "05", "rollout-modern.jsonl"))
+	fixtureData, err := os.ReadFile(fixture)
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	sessionFile := filepath.Join(root, "rollout-modern.jsonl")
+	if err := os.WriteFile(sessionFile, fixtureData, 0o644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	detector := staticDetector{
+		name: "codex",
+		activities: map[string]*model.DetectorProjectActivity{
+			projectPath: {
+				ProjectPath:  projectPath,
+				LastActivity: now,
+				Sessions: []model.SessionEvidence{{
+					Source:               model.SessionSourceCodex,
+					SessionID:            sessionID,
+					RawSessionID:         sessionID,
+					ProjectPath:          projectPath,
+					DetectedProjectPath:  projectPath,
+					SessionFile:          sessionFile,
+					Format:               "modern",
+					StartedAt:            now.Add(-10 * time.Minute),
+					LastEventAt:          now,
+					LatestTurnStateKnown: true,
+					LatestTurnCompleted:  true,
+				}},
+			},
+		},
+	}
+
+	classifier := &recordingClassifier{}
+	svc := New(config.Default(), st, events.NewBus(), []detectors.Detector{detector})
+	svc.SetSessionClassifier(classifier)
+	svc.gitFingerprintReader = nil
+	svc.gitRepoStatusReader = nil
+	svc.gitWorktreeInfoReader = func(ctx context.Context, path string) (scanner.GitWorktreeInfo, error) {
+		if path != hungPath {
+			return scanner.GitWorktreeInfo{}, errors.New("no worktree metadata")
+		}
+		<-ctx.Done()
+		return scanner.GitWorktreeInfo{}, ctx.Err()
+	}
+	svc.gitWorktreeListReader = func(ctx context.Context, path string) ([]scanner.GitWorktree, error) {
+		if path != hungPath {
+			return nil, errors.New("no worktree list")
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+
+	report, err := svc.ScanWithOptions(ctx, ScanOptions{})
+	if err != nil {
+		t.Fatalf("ScanWithOptions() error = %v", err)
+	}
+	if report.QueuedClassifications != 1 {
+		t.Fatalf("QueuedClassifications = %d, want 1", report.QueuedClassifications)
+	}
+	if classifier.normalCalls != 1 {
+		t.Fatalf("QueueProject() calls = %d, want 1", classifier.normalCalls)
+	}
+	if len(classifier.lastState.Sessions) != 1 {
+		t.Fatalf("queued state sessions = %#v, want one session", classifier.lastState.Sessions)
+	}
+	if got := classifier.lastState.Sessions[0].SessionFile; got != sessionFile {
+		t.Fatalf("queued session file = %q, want %q", got, sessionFile)
+	}
+	if strings.TrimSpace(classifier.lastState.Sessions[0].SnapshotHash) == "" {
+		t.Fatalf("expected queued session snapshot hash after scan")
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 20)
+	if err != nil {
+		t.Fatalf("get detail: %v", err)
+	}
+	if len(detail.Sessions) != 1 {
+		t.Fatalf("stored sessions = %#v, want one session", detail.Sessions)
+	}
+	if got := detail.Sessions[0].SessionFile; got != sessionFile {
+		t.Fatalf("stored session file = %q, want %q", got, sessionFile)
+	}
+	if strings.TrimSpace(detail.Sessions[0].SnapshotHash) == "" {
+		t.Fatalf("expected stored session snapshot hash after scan")
 	}
 }
 
