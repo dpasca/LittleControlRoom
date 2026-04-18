@@ -16386,6 +16386,58 @@ func TestSettingsBrowserSectionShowsStatusSummary(t *testing.T) {
 	}
 }
 
+func TestSettingsBrowserAutomationEnterOpensPicker(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+	_ = m.setSettingsSelection(settingsFieldBrowserAutomation)
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("browser automation enter should not save immediately")
+	}
+	if !got.settingsBrowserPickerVisible {
+		t.Fatalf("browser automation enter should open the chooser")
+	}
+	if got.settingsSaving {
+		t.Fatalf("browser automation enter should not start saving")
+	}
+	if got.status != "Choose how LCR should handle browser automation." {
+		t.Fatalf("status = %q, want chooser status", got.status)
+	}
+}
+
+func TestSettingsBrowserAutomationFieldRendersChooserHint(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+	_ = m.setSettingsSelection(settingsFieldBrowserAutomation)
+
+	rendered := ansi.Strip(m.renderSettingsContent(84, 22))
+	for _, want := range []string{
+		"Compatibility",
+		"Enter to choose",
+		"Ctrl+S",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("browser settings field is missing %q: %q", want, rendered)
+		}
+	}
+}
+
 func TestSettingsBrowserSectionShowsLiveBrowserActivity(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.PlaywrightPolicy = browserctl.Policy{
@@ -16696,15 +16748,40 @@ func TestSettingsBrowserAutomationMapsToManagedPolicy(t *testing.T) {
 		height:         24,
 	}
 	_ = m.setSettingsSelection(settingsFieldBrowserAutomation)
-	m.settingsFields[settingsFieldBrowserAutomation].input.SetValue("automatic")
-
 	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("browser automation enter should not queue a save command")
+	}
+	if !got.settingsBrowserPickerVisible {
+		t.Fatalf("browser automation enter should open the chooser")
+	}
+
+	updated, cmd = got.updateSettingsBrowserAutomationPickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("browser automation down should only move the picker selection")
+	}
+
+	updated, cmd = got.updateSettingsBrowserAutomationPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("browser automation choice apply should not save immediately")
+	}
+	if got.settingsBrowserPickerVisible {
+		t.Fatalf("browser automation chooser should close after choosing")
+	}
+	if got.settingsFields[settingsFieldBrowserAutomation].input.Value() != "automatic" {
+		t.Fatalf("browser automation value = %q, want automatic", got.settingsFields[settingsFieldBrowserAutomation].input.Value())
+	}
+
+	updated, cmd = got.updateSettingsMode(tea.KeyMsg{Type: tea.KeyCtrlS})
+	got = updated.(Model)
 	if cmd == nil {
-		t.Fatalf("expected save command")
+		t.Fatalf("expected save command after choosing browser automation")
 	}
 	if !got.settingsSaving {
-		t.Fatalf("settings enter should mark saving in progress")
+		t.Fatalf("settings ctrl+s should mark saving in progress")
 	}
 
 	msg := cmd()

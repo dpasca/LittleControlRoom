@@ -61,6 +61,13 @@ type settingsField struct {
 	section   settingsSectionID
 }
 
+type settingsBrowserAutomationOption struct {
+	Value       string
+	Label       string
+	Summary     string
+	Description string
+}
+
 const settingsHintMaxLines = 2
 
 const (
@@ -187,6 +194,62 @@ func parseSettingsBrowserAutomation(raw string, baseline browserctl.Policy) (bro
 	}
 }
 
+func settingsBrowserAutomationOptions(baseline browserctl.Policy) []settingsBrowserAutomationOption {
+	normalizedBaseline := baseline.Normalize()
+	return []settingsBrowserAutomationOption{
+		{
+			Value:       settingsBrowserAutomationCompatibility,
+			Label:       "Compatibility",
+			Summary:     "Keep the original provider-owned Playwright behavior.",
+			Description: "Use this as the fallback when you want each embedded assistant to keep handling Playwright exactly as it did before LCR started shaping browser policy.",
+		},
+		{
+			Value:       settingsBrowserAutomationAutomatic,
+			Label:       "Automatic",
+			Summary:     "Quiet headless browsing with managed login handoff.",
+			Description: "This is the target low-friction experience: background browsing by default, per-task isolation, and a visible browser handoff only when a login or manual step is needed.",
+		},
+		{
+			Value:       settingsBrowserAutomationObserve,
+			Label:       "Observe",
+			Summary:     "Advertise quiet defaults while mostly observing provider flow.",
+			Description: "Useful for debugging or staged rollout. LCR exposes a browser policy and status, but the provider still owns most of the real browser flow after startup.",
+		},
+		{
+			Value:       settingsBrowserAutomationAdvanced,
+			Label:       "Advanced",
+			Summary:     "Leave the raw config.toml Playwright policy untouched.",
+			Description: "Preserves the current raw browser policy exactly as stored. Current raw policy: " + normalizedBaseline.Summary(),
+		},
+	}
+}
+
+func settingsBrowserAutomationOptionLabel(raw string, baseline browserctl.Policy) string {
+	normalized := normalizeSettingsChoice(raw)
+	for _, option := range settingsBrowserAutomationOptions(baseline) {
+		if option.Value == normalized {
+			return option.Label
+		}
+	}
+	if normalized == "" {
+		return settingsBrowserAutomationOptions(baseline)[0].Label
+	}
+	words := strings.Split(strings.ReplaceAll(normalized, "-", " "), " ")
+	for i, word := range words {
+		if word == "" {
+			continue
+		}
+		runes := []rune(word)
+		runes[0] = []rune(strings.ToUpper(string(runes[0])))[0]
+		words[i] = string(runes)
+	}
+	return strings.Join(words, " ")
+}
+
+func settingsFieldUsesPicker(index int) bool {
+	return index == settingsFieldBrowserAutomation
+}
+
 func normalizeSettingsChoice(raw string) string {
 	trimmed := strings.ToLower(strings.TrimSpace(raw))
 	trimmed = strings.ReplaceAll(trimmed, "_", "-")
@@ -206,12 +269,14 @@ func (m *Model) openBrowserSettingsMode() tea.Cmd {
 	m.settingsMode = true
 	m.settingsSaving = false
 	m.settingsRevealPrivacy = false
+	m.settingsBrowserPickerVisible = false
+	m.settingsBrowserPickerSelected = 0
 	m.localModelPickerVisible = false
 	m.setupMode = false
 	m.commandMode = false
 	m.showHelp = false
 	m.err = nil
-	m.status = "Browser settings open. Review browser automation and live activity."
+	m.status = "Browser settings open. Press Enter to choose automation mode and Ctrl+S to save."
 	return m.setSettingsSelection(settingsFieldBrowserAutomation)
 }
 
@@ -223,12 +288,14 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	m.settingsSaving = false
 	m.settingsSectionSelected = 0
 	m.settingsRevealPrivacy = false
+	m.settingsBrowserPickerVisible = false
+	m.settingsBrowserPickerSelected = 0
 	m.localModelPickerVisible = false
 	m.setupMode = false
 	m.commandMode = false
 	m.showHelp = false
 	m.err = nil
-	m.status = "Editing settings. Enter to save, Esc to cancel"
+	m.status = "Editing settings. Enter chooses pickers, Ctrl+S saves, Esc cancels."
 	return m.setSettingsSelection(0)
 }
 
@@ -236,6 +303,8 @@ func (m *Model) closeSettingsMode(status string) {
 	m.blurSettingsFields()
 	m.settingsMode = false
 	m.settingsSaving = false
+	m.settingsBrowserPickerVisible = false
+	m.settingsBrowserPickerSelected = 0
 	if status != "" {
 		m.status = status
 	}
@@ -257,51 +326,13 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.moveSettingsSelection(1)
 	case "shift+tab", "up", "ctrl+p":
 		return m, m.moveSettingsSelection(-1)
+	case "ctrl+s":
+		return m.saveSettingsFromFields()
 	case "enter":
-		playwrightPolicy, err := parseSettingsBrowserAutomation(
-			m.settingsFieldValue(settingsFieldBrowserAutomation),
-			m.currentSettingsBaseline().PlaywrightPolicy,
-		)
-		if err != nil {
-			m.err = nil
-			m.status = err.Error()
-			return m, nil
+		if settingsFieldUsesPicker(m.settingsSelected) {
+			return m.openSettingsBrowserAutomationPicker()
 		}
-		settings, err := config.ParseEditableSettings(
-			m.currentSettingsBaseline().AIBackend,
-			m.settingsFieldValue(settingsFieldOpenAIAPIKey),
-			m.settingsFieldValue(settingsFieldMLXBaseURL),
-			m.settingsFieldValue(settingsFieldMLXAPIKey),
-			m.settingsFieldValue(settingsFieldMLXModel),
-			m.settingsFieldValue(settingsFieldOllamaBaseURL),
-			m.settingsFieldValue(settingsFieldOllamaAPIKey),
-			m.settingsFieldValue(settingsFieldOllamaModel),
-			m.settingsFieldValue(settingsFieldIncludePaths),
-			m.settingsFieldValue(settingsFieldExcludePaths),
-			m.settingsFieldValue(settingsFieldExcludeProjectPatterns),
-			m.settingsFieldValue(settingsFieldPrivacyPatterns),
-			m.settingsFieldValue(settingsFieldCodexLaunchPreset),
-			string(playwrightPolicy.ManagementMode),
-			string(playwrightPolicy.DefaultBrowserMode),
-			string(playwrightPolicy.LoginMode),
-			string(playwrightPolicy.IsolationScope),
-			invertBoolString(m.settingsFieldValue(settingsFieldHideReasoningSections)),
-			strconv.FormatBool(m.currentSettingsBaseline().PrivacyMode),
-			m.currentSettingsBaseline().OpenCodeModelTier,
-			m.settingsFieldValue(settingsFieldActiveThreshold),
-			m.settingsFieldValue(settingsFieldStuckThreshold),
-			m.settingsFieldValue(settingsFieldInterval),
-		)
-		if err != nil {
-			m.err = nil
-			m.status = err.Error()
-			return m, nil
-		}
-		applyEmbeddedModelPreferencesToSettings(&settings, embeddedModelPreferencesFromSettings(m.currentSettingsBaseline()))
-		m.err = nil
-		m.settingsSaving = true
-		m.status = "Saving settings..."
-		return m, m.saveSettingsCmd(settings)
+		return m.saveSettingsFromFields()
 	case "ctrl+r":
 		if m.settingsSelected == settingsFieldPrivacyPatterns {
 			m.settingsRevealPrivacy = !m.settingsRevealPrivacy
@@ -318,9 +349,59 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.settingsSelected < 0 || m.settingsSelected >= len(m.settingsFields) {
 		return m, nil
 	}
+	if settingsFieldUsesPicker(m.settingsSelected) {
+		return m, nil
+	}
 	input, cmd := m.settingsFields[m.settingsSelected].input.Update(msg)
 	m.settingsFields[m.settingsSelected].input = input
 	return m, cmd
+}
+
+func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
+	playwrightPolicy, err := parseSettingsBrowserAutomation(
+		m.settingsFieldValue(settingsFieldBrowserAutomation),
+		m.currentSettingsBaseline().PlaywrightPolicy,
+	)
+	if err != nil {
+		m.err = nil
+		m.status = err.Error()
+		return m, nil
+	}
+	settings, err := config.ParseEditableSettings(
+		m.currentSettingsBaseline().AIBackend,
+		m.settingsFieldValue(settingsFieldOpenAIAPIKey),
+		m.settingsFieldValue(settingsFieldMLXBaseURL),
+		m.settingsFieldValue(settingsFieldMLXAPIKey),
+		m.settingsFieldValue(settingsFieldMLXModel),
+		m.settingsFieldValue(settingsFieldOllamaBaseURL),
+		m.settingsFieldValue(settingsFieldOllamaAPIKey),
+		m.settingsFieldValue(settingsFieldOllamaModel),
+		m.settingsFieldValue(settingsFieldIncludePaths),
+		m.settingsFieldValue(settingsFieldExcludePaths),
+		m.settingsFieldValue(settingsFieldExcludeProjectPatterns),
+		m.settingsFieldValue(settingsFieldPrivacyPatterns),
+		m.settingsFieldValue(settingsFieldCodexLaunchPreset),
+		string(playwrightPolicy.ManagementMode),
+		string(playwrightPolicy.DefaultBrowserMode),
+		string(playwrightPolicy.LoginMode),
+		string(playwrightPolicy.IsolationScope),
+		invertBoolString(m.settingsFieldValue(settingsFieldHideReasoningSections)),
+		strconv.FormatBool(m.currentSettingsBaseline().PrivacyMode),
+		m.currentSettingsBaseline().OpenCodeModelTier,
+		m.settingsFieldValue(settingsFieldActiveThreshold),
+		m.settingsFieldValue(settingsFieldStuckThreshold),
+		m.settingsFieldValue(settingsFieldInterval),
+	)
+	if err != nil {
+		m.err = nil
+		m.status = err.Error()
+		return m, nil
+	}
+	applyEmbeddedModelPreferencesToSettings(&settings, embeddedModelPreferencesFromSettings(m.currentSettingsBaseline()))
+	m.err = nil
+	m.settingsSaving = true
+	m.status = "Saving settings..."
+	return m, m.saveSettingsCmd(settings)
 }
 
 func (m *Model) moveSettingsSelection(delta int) tea.Cmd {
@@ -596,7 +677,7 @@ func (m Model) renderSettingsContent(width, maxHeight int) string {
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d above", start)))
 	}
 	for _, fieldIndex := range fieldIndexes[start:end] {
-		lines = append(lines, m.renderSettingsFieldRow(m.settingsFields[fieldIndex], fieldIndex == m.settingsSelected, labelWidth, inputWidth))
+		lines = append(lines, m.renderSettingsFieldRow(fieldIndex, m.settingsFields[fieldIndex], fieldIndex == m.settingsSelected, labelWidth, inputWidth))
 	}
 	if end < len(fieldIndexes) {
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d below", len(fieldIndexes)-end)))
@@ -612,7 +693,7 @@ func (m Model) renderSettingsContent(width, maxHeight int) string {
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, renderSettingsActions())
+	lines = append(lines, m.renderSettingsActions())
 	return strings.Join(lines, "\n")
 }
 
@@ -793,7 +874,7 @@ func (m Model) renderBrowserSettingsStatus(width int) []string {
 	return lines
 }
 
-func (m Model) renderSettingsFieldRow(field settingsField, selected bool, labelWidth, inputWidth int) string {
+func (m Model) renderSettingsFieldRow(fieldIndex int, field settingsField, selected bool, labelWidth, inputWidth int) string {
 	label := "  " + field.label
 	labelStyle := detailLabelStyle
 	if selected {
@@ -801,6 +882,10 @@ func (m Model) renderSettingsFieldRow(field settingsField, selected bool, labelW
 		labelStyle = commandPalettePickStyle
 	}
 	label = truncateText(label, labelWidth)
+
+	if settingsFieldUsesPicker(fieldIndex) {
+		return labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsBrowserAutomationValue(selected, inputWidth)
+	}
 
 	input := field.input
 	input.Width = inputWidth
@@ -825,13 +910,22 @@ func (m Model) renderSelectedSettingsHint(width int) string {
 	return commandPaletteHintStyle.Render(strings.Join(lines, "\n"))
 }
 
-func renderSettingsActions() string {
+func (m Model) renderSettingsActions() string {
 	actions := []string{
-		renderDialogAction("Enter", "save", commitActionKeyStyle, commitActionTextStyle),
+		renderDialogAction("Ctrl+S", "save", commitActionKeyStyle, commitActionTextStyle),
 		renderDialogAction("Tab", "next", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("PgUp/PgDn", "section", pushActionKeyStyle, pushActionTextStyle),
 		renderDialogAction("Up/Down", "move", pushActionKeyStyle, pushActionTextStyle),
 		renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
+	}
+	if settingsFieldUsesPicker(m.settingsSelected) {
+		actions = append([]string{
+			renderDialogAction("Enter", "choose", navigateActionKeyStyle, navigateActionTextStyle),
+		}, actions...)
+	} else {
+		actions = append([]string{
+			renderDialogAction("Enter", "save", commitActionKeyStyle, commitActionTextStyle),
+		}, actions...)
 	}
 	return strings.Join(actions, "   ")
 }
@@ -926,7 +1020,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsField(
 			"Browser automation",
-			"Accepted values: compatibility, automatic, observe, advanced. Automatic is the target quiet-background experience. Compatibility preserves the original provider-owned Playwright behavior.",
+			"Press Enter to choose from compatibility, automatic, observe, or advanced. Automatic is the target quiet-background experience. Compatibility preserves the original provider-owned Playwright behavior.",
 			settingsBrowserAutomationValue(settings.PlaywrightPolicy),
 			24,
 			settingsSectionBrowser,
