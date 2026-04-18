@@ -87,18 +87,29 @@ func (m Model) updateBrowserAttentionMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (n browserAttentionNotification) canOpenBrowserForLogin() bool {
-	if n.Provider.Normalized() != codexapp.ProviderCodex {
-		return false
+	return n.managedLoginURL() != ""
+}
+
+func (n browserAttentionNotification) managedLoginURL() string {
+	return managedBrowserLoginURL(n.Provider, n.Activity.Policy, n.RequestMode, n.RequestURL)
+}
+
+func managedBrowserLoginURL(provider codexapp.Provider, policy browserctl.Policy, requestMode codexapp.ElicitationMode, requestURL string) string {
+	if provider.Normalized() != codexapp.ProviderCodex {
+		return ""
 	}
-	policy := n.Activity.Policy.Normalize()
+	policy = policy.Normalize()
 	if policy.ManagementMode != browserctl.ManagementModeManaged || policy.LoginMode != browserctl.LoginModePromote {
-		return false
+		return ""
 	}
-	return n.RequestMode == codexapp.ElicitationModeURL && strings.TrimSpace(n.RequestURL) != ""
+	if requestMode != codexapp.ElicitationModeURL {
+		return ""
+	}
+	return strings.TrimSpace(requestURL)
 }
 
 func (m Model) openBrowserAttentionLogin(notify browserAttentionNotification) (tea.Model, tea.Cmd) {
-	loginURL := strings.TrimSpace(notify.RequestURL)
+	loginURL := notify.managedLoginURL()
 	if loginURL == "" {
 		m.dismissBrowserAttentionNotification()
 		return m.showCodexProject(notify.ProjectPath, notify.Provider.Label()+" browser needs your attention")

@@ -1441,6 +1441,7 @@ func (m Model) updateCodexElicitationMode(snapshot codexapp.Snapshot, msg tea.Ke
 	if request == nil {
 		return m, nil
 	}
+	loginURL := managedBrowserLoginURL(embeddedProvider(snapshot), snapshot.BrowserActivity.Policy, request.Mode, request.URL)
 
 	if request.Mode == codexapp.ElicitationModeForm {
 		if handled, cmd := m.tryHandleCodexPaste(msg, false); handled {
@@ -1449,6 +1450,16 @@ func (m Model) updateCodexElicitationMode(snapshot codexapp.Snapshot, msg tea.Ke
 	}
 
 	switch msg.String() {
+	case "o":
+		if loginURL == "" {
+			return m, nil
+		}
+		m.status = "Opening browser for login..."
+		return m, m.openBrowserURLCmd(
+			loginURL,
+			"open MCP login URL in browser",
+			"Opened browser for login. Finish the browser flow here, then press Enter when you are ready to continue.",
+		)
 	case "d":
 		m.status = "Declining MCP input request..."
 		return m, m.respondVisibleElicitationCmd(codexapp.ElicitationDecline, nil, codexDraft{})
@@ -1924,8 +1935,15 @@ func (m Model) renderCodexToolInputBlocks(request codexapp.ToolInputRequest, wid
 
 func (m Model) renderCodexElicitationBlocks(request codexapp.ElicitationRequest, width int) []string {
 	lines := []string{fitFooterWidth("MCP input: "+request.Summary(), width)}
+	loginURL := ""
+	if snapshot, ok := m.currentCachedCodexSnapshot(); ok {
+		loginURL = managedBrowserLoginURL(embeddedProvider(snapshot), snapshot.BrowserActivity.Policy, request.Mode, request.URL)
+	}
 	if request.Mode == codexapp.ElicitationModeURL && strings.TrimSpace(request.URL) != "" {
 		lines = append(lines, fitFooterWidth("Open this URL externally: "+request.URL, width))
+		if loginURL != "" {
+			lines = append(lines, fitFooterWidth("Press O to open the browser, then finish the login flow and press Enter when you are done.", width))
+		}
 	}
 	if request.Mode == codexapp.ElicitationModeForm {
 		lines = append(lines, fitFooterWidth("Paste JSON or text into the composer, then press Enter to accept.", width))
@@ -2098,6 +2116,15 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerExitAction("d", "decline"),
 			footerLowAction("c", "cancel"),
 			footerNavAction("Alt+Enter", "newline"),
+		}
+	case snapshot.PendingElicitation != nil && managedBrowserLoginURL(embeddedProvider(snapshot), snapshot.BrowserActivity.Policy, snapshot.PendingElicitation.Mode, snapshot.PendingElicitation.URL) != "":
+		actions = []footerAction{
+			footerPrimaryAction("O", "open browser"),
+			footerPrimaryAction("Enter", "done/accept"),
+			footerExitAction("Ctrl+C", "close"),
+			footerHideAction("Alt+Up", "hide"),
+			footerExitAction("d", "decline"),
+			footerLowAction("c", "cancel"),
 		}
 	case snapshot.PendingElicitation != nil:
 		actions = []footerAction{

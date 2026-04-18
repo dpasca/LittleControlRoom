@@ -13050,6 +13050,125 @@ func TestPendingToolInputEnterSendsStructuredAnswer(t *testing.T) {
 	}
 }
 
+func TestVisibleCodexURLBasedElicitationCanOpenBrowser(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started: true,
+			Preset:  codexcli.PresetYolo,
+			Status:  "Browser needs attention",
+			BrowserActivity: browserctl.SessionActivity{
+				Policy:     settingsAutomaticPlaywrightPolicy,
+				State:      browserctl.SessionActivityStateWaitingForUser,
+				ServerName: "playwright",
+				ToolName:   "browser_navigate",
+			},
+			PendingElicitation: &codexapp.ElicitationRequest{
+				ID:   "elicitation_1",
+				Mode: codexapp.ElicitationModeURL,
+				URL:  "https://example.test/login",
+			},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	previousOpener := externalBrowserOpener
+	defer func() { externalBrowserOpener = previousOpener }()
+
+	openedURL := ""
+	externalBrowserOpener = func(rawURL string) error {
+		openedURL = rawURL
+		return nil
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o")})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("o should queue the browser-open command")
+	}
+	if got.status != "Opening browser for login..." {
+		t.Fatalf("status = %q, want browser opening notice", got.status)
+	}
+
+	msg := cmd()
+	openMsg, ok := msg.(browserOpenMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want browserOpenMsg", msg)
+	}
+	if openMsg.err != nil {
+		t.Fatalf("browserOpenMsg.err = %v, want nil", openMsg.err)
+	}
+	if openMsg.status != "Opened browser for login. Finish the browser flow here, then press Enter when you are ready to continue." {
+		t.Fatalf("browserOpenMsg.status = %q, want login handoff status", openMsg.status)
+	}
+	if openedURL != "https://example.test/login" {
+		t.Fatalf("opened URL = %q, want login URL", openedURL)
+	}
+}
+
+func TestVisibleCodexURLBasedElicitationHintsOpenBrowser(t *testing.T) {
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": {
+				Provider: codexapp.ProviderCodex,
+				BrowserActivity: browserctl.SessionActivity{
+					Policy:     settingsAutomaticPlaywrightPolicy,
+					State:      browserctl.SessionActivityStateWaitingForUser,
+					ServerName: "playwright",
+				},
+			},
+		},
+	}
+
+	request := codexapp.ElicitationRequest{
+		ID:      "elicitation_1",
+		Mode:    codexapp.ElicitationModeURL,
+		Message: "Please log in",
+		URL:     "https://example.test/login",
+	}
+
+	renderedBlocks := strings.Join(m.renderCodexElicitationBlocks(request, 120), "\n")
+	if !strings.Contains(renderedBlocks, "Press O to open the browser, then finish the login flow and press Enter when you are done.") {
+		t.Fatalf("renderCodexElicitationBlocks() missing managed login hint: %q", renderedBlocks)
+	}
+
+	footer := ansi.Strip(m.renderCodexFooter(codexapp.Snapshot{
+		Provider: codexapp.ProviderCodex,
+		Started:  true,
+		Status:   "Browser needs attention",
+		BrowserActivity: browserctl.SessionActivity{
+			Policy:     settingsAutomaticPlaywrightPolicy,
+			State:      browserctl.SessionActivityStateWaitingForUser,
+			ServerName: "playwright",
+		},
+		PendingElicitation: &request,
+	}, 160))
+	for _, want := range []string{"O open browser", "Enter done/accept", "d decline", "c cancel"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("renderCodexFooter() missing %q for managed browser login: %q", want, footer)
+		}
+	}
+}
+
 func TestVisibleCodexViewShowsBannerAndYoloWarning(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
