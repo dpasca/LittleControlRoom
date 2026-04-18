@@ -33,6 +33,8 @@ The TUI `/settings` modal is now split into sections (`AI & Models`, `Project Sc
 
 In `automatic` mode, embedded Codex Playwright waits that expose a URL-based login flow now raise a browser-attention prompt that can open the login page directly in your default browser while bringing the embedded session forward.
 
+Working roadmap for this area: [`browser_automation_working_plan.md`](browser_automation_working_plan.md)
+
 - `openai_api_key`
 - `include_paths`
 - `exclude_paths`
