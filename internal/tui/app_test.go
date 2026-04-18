@@ -14897,6 +14897,79 @@ func TestCommandEnterOpensSettingsMode(t *testing.T) {
 	}
 }
 
+func TestDispatchCommandRefreshAlsoRefreshesSelectedProject(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := filepath.Join(t.TempDir(), "demo")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "demo",
+		Status:         model.StatusIdle,
+		AttentionScore: 5,
+		PresentOnDisk:  true,
+		InScope:        true,
+		UpdatedAt:      time.Now(),
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	svc.SetSessionClassifier(&usageSnapshotClassifier{})
+
+	m := Model{
+		ctx:         ctx,
+		svc:         svc,
+		allProjects: []model.ProjectSummary{{Path: projectPath, Name: "demo", PresentOnDisk: true}},
+		visibility:  visibilityAllFolders,
+		sortMode:    sortByAttention,
+	}
+	m.rebuildProjectList(projectPath)
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindRefresh})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("dispatchCommand(/refresh) should queue refresh work")
+	}
+	if !got.scanInFlight {
+		t.Fatalf("dispatchCommand(/refresh) should mark scan in flight")
+	}
+	if got.status != "Scanning and retrying failed assessments..." {
+		t.Fatalf("status = %q, want refresh status", got.status)
+	}
+
+	msgs := collectCmdMsgs(cmd)
+	foundProjectRefresh := false
+	foundScan := false
+	for _, msg := range msgs {
+		switch typed := msg.(type) {
+		case projectStatusRefreshedMsg:
+			if typed.projectPath == projectPath && typed.err == nil {
+				foundProjectRefresh = true
+			}
+		case scanMsg:
+			if typed.err == nil {
+				foundScan = true
+			}
+		}
+	}
+	if !foundProjectRefresh {
+		t.Fatalf("expected projectStatusRefreshedMsg for selected project, got %#v", msgs)
+	}
+	if !foundScan {
+		t.Fatalf("expected scanMsg from /refresh, got %#v", msgs)
+	}
+}
+
 func TestStartupUnconfiguredAIBackendOpensSetupMode(t *testing.T) {
 	m := Model{
 		width:  100,
