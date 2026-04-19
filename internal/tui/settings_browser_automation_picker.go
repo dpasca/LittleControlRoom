@@ -17,7 +17,7 @@ func (m Model) openSettingsBrowserAutomationPicker() (tea.Model, tea.Cmd) {
 
 	m.settingsBrowserPickerVisible = true
 	m.settingsBrowserPickerSelected = m.settingsBrowserAutomationPickerSelection(options)
-	m.status = "Choose how LCR should handle browser automation."
+	m.status = "Choose when Little Control Room should show browser windows."
 	return m, nil
 }
 
@@ -55,7 +55,7 @@ func (m Model) updateSettingsBrowserAutomationPickerMode(msg tea.KeyMsg) (tea.Mo
 
 	switch msg.String() {
 	case "esc":
-		m.closeSettingsBrowserAutomationPicker("Browser automation chooser closed")
+		m.closeSettingsBrowserAutomationPicker("Browser windows chooser closed")
 		return m, nil
 	case "up", "k", "shift+tab":
 		m.settingsBrowserPickerSelected--
@@ -79,7 +79,7 @@ func (m Model) applySettingsBrowserAutomationPickerSelection(option settingsBrow
 	if len(m.settingsFields) > settingsFieldBrowserAutomation {
 		m.settingsFields[settingsFieldBrowserAutomation].input.SetValue(option.Value)
 	}
-	m.closeSettingsBrowserAutomationPicker(fmt.Sprintf("Browser automation set to %s. Press Ctrl+S to save.", option.Label))
+	m.closeSettingsBrowserAutomationPicker(fmt.Sprintf("Browser windows set to %s. Press Ctrl+S to save.", option.Label))
 	return m, nil
 }
 
@@ -101,7 +101,7 @@ func (m Model) renderSettingsBrowserAutomationPickerPanel(bodyW, bodyH int) stri
 func (m Model) renderSettingsBrowserAutomationPickerContent(width, bodyH int) string {
 	options := settingsBrowserAutomationOptions(m.currentSettingsBaseline().PlaywrightPolicy)
 	lines := []string{
-		commandPaletteTitleStyle.Render("Browser Automation"),
+		commandPaletteTitleStyle.Render("Browser Windows"),
 		renderDialogAction("Up/Down", "move", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
 			renderDialogAction("Enter", "choose", commitActionKeyStyle, commitActionTextStyle) + "   " +
 			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),

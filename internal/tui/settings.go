@@ -71,16 +71,28 @@ type settingsBrowserAutomationOption struct {
 const settingsHintMaxLines = 2
 
 const (
-	settingsBrowserAutomationCompatibility = "compatibility"
-	settingsBrowserAutomationAutomatic     = "automatic"
-	settingsBrowserAutomationObserve       = "observe"
-	settingsBrowserAutomationAdvanced      = "advanced"
+	settingsBrowserAutomationOnlyWhenNeeded = "only-when-needed"
+	settingsBrowserAutomationAlwaysShow     = "always-show"
+	settingsBrowserAutomationClassic        = "classic-browser-behavior"
+	settingsBrowserAutomationCustom         = "use-config-file-as-is"
 )
 
 var (
+	settingsClassicPlaywrightPolicy = browserctl.Policy{
+		ManagementMode:     browserctl.ManagementModeLegacy,
+		DefaultBrowserMode: browserctl.BrowserModeHeadless,
+		LoginMode:          browserctl.LoginModeManual,
+		IsolationScope:     browserctl.IsolationScopeTask,
+	}
 	settingsAutomaticPlaywrightPolicy = browserctl.Policy{
 		ManagementMode:     browserctl.ManagementModeManaged,
 		DefaultBrowserMode: browserctl.BrowserModeHeadless,
+		LoginMode:          browserctl.LoginModePromote,
+		IsolationScope:     browserctl.IsolationScopeTask,
+	}
+	settingsAlwaysShowPlaywrightPolicy = browserctl.Policy{
+		ManagementMode:     browserctl.ManagementModeManaged,
+		DefaultBrowserMode: browserctl.BrowserModeHeaded,
 		LoginMode:          browserctl.LoginModePromote,
 		IsolationScope:     browserctl.IsolationScopeTask,
 	}
@@ -133,7 +145,7 @@ func settingsSections() []settingsSection {
 		{
 			id:    settingsSectionBrowser,
 			label: "Browser",
-			hint:  "Keep browser automation quiet by default, with a simple compatibility escape hatch when provider behavior needs to stay untouched.",
+			hint:  "Keep browser work out of the way by default, or choose to always show browser windows when you prefer to watch every step.",
 			fieldOrder: []int{
 				settingsFieldBrowserAutomation,
 			},
@@ -166,62 +178,67 @@ func settingsBrowserAutomationValue(policy browserctl.Policy) string {
 	normalized := policy.Normalize()
 	switch {
 	case normalized.ManagementMode == browserctl.ManagementModeLegacy:
-		return settingsBrowserAutomationCompatibility
+		return settingsBrowserAutomationClassic
 	case normalized == settingsAutomaticPlaywrightPolicy:
-		return settingsBrowserAutomationAutomatic
-	case normalized == settingsObservePlaywrightPolicy:
-		return settingsBrowserAutomationObserve
+		return settingsBrowserAutomationOnlyWhenNeeded
+	case normalized == settingsAlwaysShowPlaywrightPolicy:
+		return settingsBrowserAutomationAlwaysShow
 	default:
-		return settingsBrowserAutomationAdvanced
+		return settingsBrowserAutomationCustom
 	}
 }
 
 func parseSettingsBrowserAutomation(raw string, baseline browserctl.Policy) (browserctl.Policy, error) {
 	normalized := normalizeSettingsChoice(raw)
 	switch normalized {
-	case "", settingsBrowserAutomationCompatibility, string(browserctl.ManagementModeLegacy):
-		policy := baseline.Normalize()
-		policy.ManagementMode = browserctl.ManagementModeLegacy
-		return policy, nil
-	case settingsBrowserAutomationAutomatic, string(browserctl.ManagementModeManaged):
+	case "", settingsBrowserAutomationClassic, "compatibility", string(browserctl.ManagementModeLegacy):
+		return settingsClassicPlaywrightPolicy, nil
+	case settingsBrowserAutomationOnlyWhenNeeded, "automatic":
 		return settingsAutomaticPlaywrightPolicy, nil
-	case settingsBrowserAutomationObserve:
+	case settingsBrowserAutomationAlwaysShow:
+		return settingsAlwaysShowPlaywrightPolicy, nil
+	case "observe":
 		return settingsObservePlaywrightPolicy, nil
-	case settingsBrowserAutomationAdvanced, "custom", "current":
+	case settingsBrowserAutomationCustom, "advanced", "custom", "current":
 		return baseline.Normalize(), nil
 	default:
-		return browserctl.Policy{}, fmt.Errorf("browser automation must be one of: compatibility, automatic, observe, advanced")
+		return browserctl.Policy{}, fmt.Errorf("browser windows must be one of: only-when-needed, always-show, classic-browser-behavior, use-config-file-as-is")
 	}
 }
 
 func settingsBrowserAutomationOptions(baseline browserctl.Policy) []settingsBrowserAutomationOption {
 	normalizedBaseline := baseline.Normalize()
-	return []settingsBrowserAutomationOption{
+	options := []settingsBrowserAutomationOption{
 		{
-			Value:       settingsBrowserAutomationCompatibility,
-			Label:       "Compatibility",
-			Summary:     "Keep the original provider-owned Playwright behavior.",
-			Description: "Use this as the fallback when you want each embedded assistant to keep handling Playwright exactly as it did before LCR started shaping browser policy.",
+			Value:       settingsBrowserAutomationOnlyWhenNeeded,
+			Label:       "Only when needed",
+			Summary:     "Keep browser windows hidden until a human step is actually needed.",
+			Description: "This is the target low-friction experience: background browsing by default, per-task isolation, and a visible browser handoff only when a login or manual step needs your eyes or hands.",
 		},
 		{
-			Value:       settingsBrowserAutomationAutomatic,
-			Label:       "Automatic",
-			Summary:     "Quiet headless browsing with managed login handoff.",
-			Description: "This is the target low-friction experience: background browsing by default, per-task isolation, and a visible browser handoff only when a login or manual step is needed.",
+			Value:       settingsBrowserAutomationAlwaysShow,
+			Label:       "Always show",
+			Summary:     "Open browser windows up front so you can watch the flow as it runs.",
+			Description: "Use this when you prefer visible browser windows for the full flow instead of letting Little Control Room keep most browser activity in the background.",
 		},
 		{
-			Value:       settingsBrowserAutomationObserve,
-			Label:       "Observe",
-			Summary:     "Advertise quiet defaults while mostly observing provider flow.",
-			Description: "Useful for debugging or staged rollout. LCR exposes a browser policy and status, but the provider still owns most of the real browser flow after startup.",
-		},
-		{
-			Value:       settingsBrowserAutomationAdvanced,
-			Label:       "Advanced",
-			Summary:     "Leave the raw config.toml Playwright policy untouched.",
-			Description: "Preserves the current raw browser policy exactly as stored. Current raw policy: " + normalizedBaseline.Summary(),
+			Value:       settingsBrowserAutomationClassic,
+			Label:       "Classic browser behavior",
+			Summary:     "Fall back to the original provider-owned Playwright behavior.",
+			Description: "Use this as the recovery path when you want each embedded assistant to keep handling Playwright the old way, without Little Control Room trying to shape the browser flow.",
 		},
 	}
+	if normalizedBaseline != settingsClassicPlaywrightPolicy &&
+		normalizedBaseline != settingsAutomaticPlaywrightPolicy &&
+		normalizedBaseline != settingsAlwaysShowPlaywrightPolicy {
+		options = append(options, settingsBrowserAutomationOption{
+			Value:       settingsBrowserAutomationCustom,
+			Label:       "Use config file as-is",
+			Summary:     "Keep the current raw Playwright policy untouched.",
+			Description: "Preserves the current raw browser policy exactly as stored in config.toml. Current raw policy: " + normalizedBaseline.Summary(),
+		})
+	}
+	return options
 }
 
 func settingsBrowserAutomationOptionLabel(raw string, baseline browserctl.Policy) string {
@@ -1032,8 +1049,8 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionAI,
 		),
 		newSettingsField(
-			"Browser automation",
-			"Press Enter to choose from compatibility, automatic, observe, or advanced. Automatic is the target quiet-background experience. Compatibility preserves the original provider-owned Playwright behavior.",
+			"Browser windows",
+			"Press Enter to choose when Little Control Room should show browser windows. Only when needed is the quiet default, Always show keeps them visible, and Classic browser behavior falls back to the old provider-owned flow.",
 			settingsBrowserAutomationValue(settings.PlaywrightPolicy),
 			24,
 			settingsSectionBrowser,
@@ -1176,14 +1193,14 @@ func (m Model) settingsFieldHint(index int) string {
 			return field.hint
 		}
 		switch normalizeSettingsChoice(field.input.Value()) {
-		case "", settingsBrowserAutomationCompatibility, string(browserctl.ManagementModeLegacy):
-			return "Compatibility keeps each provider in charge of Playwright. Use this when you want the old behavior or need a quick fallback."
-		case settingsBrowserAutomationAutomatic, string(browserctl.ManagementModeManaged):
-			return "Automatic is the target low-friction path: quiet headless browsing, per-task isolation, and a future visible-login handoff when needed. Current raw policy: " + playwrightPolicy.Summary()
-		case settingsBrowserAutomationObserve:
-			return "Observe is a debug bridge: LCR advertises quiet browser defaults, but the provider still mostly owns the flow. Current raw policy: " + playwrightPolicy.Summary()
-		case settingsBrowserAutomationAdvanced, "custom", "current":
-			return "Advanced preserves the raw Playwright policy already stored in config.toml. Use this if you want to keep custom headed/login/isolation combinations while the simplified UI stays out of the way."
+		case "", settingsBrowserAutomationClassic, "compatibility", string(browserctl.ManagementModeLegacy):
+			return "Classic browser behavior keeps each provider in charge of Playwright. Use this when you want the familiar fallback path or need to get out of Little Control Room's managed flow quickly."
+		case settingsBrowserAutomationOnlyWhenNeeded, "automatic":
+			return "Only when needed is the target low-friction path: background browsing by default, with a visible browser handoff only when a login or manual step needs you. Current raw policy: " + playwrightPolicy.Summary()
+		case settingsBrowserAutomationAlwaysShow:
+			return "Always show keeps browser windows visible from the start so you can follow the whole flow in real time. Current raw policy: " + playwrightPolicy.Summary()
+		case settingsBrowserAutomationCustom, "observe", "advanced", "custom", "current":
+			return "Use config file as-is preserves the raw Playwright policy already stored in config.toml. Use this when you want to keep a custom provider/browser/login combination while the simplified UI stays out of the way."
 		default:
 			return field.hint
 		}

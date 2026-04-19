@@ -15,7 +15,7 @@ Make browser automation feel quiet and predictable by default:
 - background/headless when possible
 - visible only when a human step is actually needed
 - consistent across embedded assistants as far as each provider allows
-- always reversible back to compatibility behavior
+- always reversible back to classic provider-owned behavior
 
 ## Non-Goals For Now
 
@@ -29,12 +29,12 @@ Make browser automation feel quiet and predictable by default:
 ### Policy And Fallback
 
 - Launch-time Playwright policy is threaded through embedded providers.
-- The simplified `/settings` UI exposes `Browser automation` as:
-  - `compatibility`
-  - `automatic`
-  - `observe`
-  - `advanced`
-- `compatibility` remains the escape hatch for original provider-owned behavior.
+- The simplified `/settings` UI now centers on a plain-language `Browser windows` choice:
+  - `Only when needed`
+  - `Always show`
+  - `Classic browser behavior`
+- A raw `use config file as-is` choice can still appear when the saved Playwright policy does not fit those main modes.
+- `Classic browser behavior` remains the escape hatch for original provider-owned behavior.
 
 ### Visibility
 
@@ -94,7 +94,7 @@ Make browser automation feel quiet and predictable by default:
    - waiting -> decline
    - waiting -> cancel
    - waiting -> blocked by another interactive lease
-   - compatibility mode still avoiding managed behavior
+   - classic browser behavior still avoiding managed behavior
 
 4. Add a small manual-release / reclaim story if needed.
    - Decide whether the first version should expose a "release browser slot" action when a login flow is abandoned.
@@ -122,7 +122,7 @@ Make browser automation feel quiet and predictable by default:
 
 ## Guardrails
 
-- `compatibility` must remain a fast rollback path.
+- `Classic browser behavior` must remain a fast rollback path.
 - Do not block the Bubble Tea update/render path with live browser or session work.
 - Prefer cached or non-blocking snapshot data in TUI rendering.
 - Keep provider-neutral concepts in shared helpers or a dedicated browser-control package.

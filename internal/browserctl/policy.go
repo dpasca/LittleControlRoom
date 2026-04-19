@@ -43,9 +43,9 @@ type Policy struct {
 
 func DefaultPolicy() Policy {
 	return Policy{
-		ManagementMode:     ManagementModeLegacy,
+		ManagementMode:     ManagementModeManaged,
 		DefaultBrowserMode: BrowserModeHeadless,
-		LoginMode:          LoginModeManual,
+		LoginMode:          LoginModePromote,
 		IsolationScope:     IsolationScopeTask,
 	}
 }
@@ -98,33 +98,49 @@ func ParseIsolationScope(raw string) (IsolationScope, error) {
 
 func (p Policy) Normalize() Policy {
 	normalized := DefaultPolicy()
-	if value, err := ParseManagementMode(string(p.ManagementMode)); err == nil {
-		normalized.ManagementMode = value
+	if strings.TrimSpace(string(p.ManagementMode)) != "" {
+		if value, err := ParseManagementMode(string(p.ManagementMode)); err == nil {
+			normalized.ManagementMode = value
+		}
 	}
-	if value, err := ParseBrowserMode(string(p.DefaultBrowserMode)); err == nil {
-		normalized.DefaultBrowserMode = value
+	if strings.TrimSpace(string(p.DefaultBrowserMode)) != "" {
+		if value, err := ParseBrowserMode(string(p.DefaultBrowserMode)); err == nil {
+			normalized.DefaultBrowserMode = value
+		}
 	}
-	if value, err := ParseLoginMode(string(p.LoginMode)); err == nil {
-		normalized.LoginMode = value
+	if strings.TrimSpace(string(p.LoginMode)) != "" {
+		if value, err := ParseLoginMode(string(p.LoginMode)); err == nil {
+			normalized.LoginMode = value
+		}
 	}
-	if value, err := ParseIsolationScope(string(p.IsolationScope)); err == nil {
-		normalized.IsolationScope = value
+	if strings.TrimSpace(string(p.IsolationScope)) != "" {
+		if value, err := ParseIsolationScope(string(p.IsolationScope)); err == nil {
+			normalized.IsolationScope = value
+		}
 	}
 	return normalized
 }
 
 func (p Policy) Validate() error {
-	if _, err := ParseManagementMode(string(p.ManagementMode)); err != nil {
-		return err
+	if strings.TrimSpace(string(p.ManagementMode)) != "" {
+		if _, err := ParseManagementMode(string(p.ManagementMode)); err != nil {
+			return err
+		}
 	}
-	if _, err := ParseBrowserMode(string(p.DefaultBrowserMode)); err != nil {
-		return err
+	if strings.TrimSpace(string(p.DefaultBrowserMode)) != "" {
+		if _, err := ParseBrowserMode(string(p.DefaultBrowserMode)); err != nil {
+			return err
+		}
 	}
-	if _, err := ParseLoginMode(string(p.LoginMode)); err != nil {
-		return err
+	if strings.TrimSpace(string(p.LoginMode)) != "" {
+		if _, err := ParseLoginMode(string(p.LoginMode)); err != nil {
+			return err
+		}
 	}
-	if _, err := ParseIsolationScope(string(p.IsolationScope)); err != nil {
-		return err
+	if strings.TrimSpace(string(p.IsolationScope)) != "" {
+		if _, err := ParseIsolationScope(string(p.IsolationScope)); err != nil {
+			return err
+		}
 	}
 	return nil
 }

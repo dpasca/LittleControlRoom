@@ -5,10 +5,22 @@ import (
 	"testing"
 )
 
-func TestDefaultPolicyUsesLegacyBehavior(t *testing.T) {
+func TestDefaultPolicyUsesManagedOnlyWhenNeededBehavior(t *testing.T) {
 	policy := DefaultPolicy()
-	if !policy.UsesLegacyLaunchBehavior() {
-		t.Fatalf("DefaultPolicy() should preserve legacy launch behavior")
+	if policy.UsesLegacyLaunchBehavior() {
+		t.Fatalf("DefaultPolicy() should default to managed behavior")
+	}
+	if policy.ManagementMode != ManagementModeManaged {
+		t.Fatalf("DefaultPolicy().ManagementMode = %s, want %s", policy.ManagementMode, ManagementModeManaged)
+	}
+	if policy.DefaultBrowserMode != BrowserModeHeadless {
+		t.Fatalf("DefaultPolicy().DefaultBrowserMode = %s, want %s", policy.DefaultBrowserMode, BrowserModeHeadless)
+	}
+	if policy.LoginMode != LoginModePromote {
+		t.Fatalf("DefaultPolicy().LoginMode = %s, want %s", policy.LoginMode, LoginModePromote)
+	}
+	if policy.IsolationScope != IsolationScopeTask {
+		t.Fatalf("DefaultPolicy().IsolationScope = %s, want %s", policy.IsolationScope, IsolationScopeTask)
 	}
 }
 

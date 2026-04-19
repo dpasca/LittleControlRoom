@@ -16512,7 +16512,7 @@ func TestSettingsBrowserAutomationEnterOpensPicker(t *testing.T) {
 	if got.settingsSaving {
 		t.Fatalf("browser automation enter should not start saving")
 	}
-	if got.status != "Choose how LCR should handle browser automation." {
+	if got.status != "Choose when Little Control Room should show browser windows." {
 		t.Fatalf("status = %q, want chooser status", got.status)
 	}
 }
@@ -16536,10 +16536,10 @@ func TestSettingsBrowserAutomationPickerHighlightsSelectionAndCurrentMode(t *tes
 
 	rendered := ansi.Strip(got.renderSettingsBrowserAutomationPickerContent(56, 18))
 	for _, want := range []string{
-		"› Automatic",
-		"Compatibility  (current)",
+		"Only when needed  (current)",
+		"› Always show",
 		"About",
-		"Selected: Automatic",
+		"Selected: Always show",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("browser automation picker is missing %q: %q", want, rendered)
@@ -16561,7 +16561,7 @@ func TestSettingsBrowserAutomationFieldRendersChooserHint(t *testing.T) {
 
 	rendered := ansi.Strip(m.renderSettingsContent(84, 22))
 	for _, want := range []string{
-		"Compatibility",
+		"Only when needed",
 		"Enter to choose",
 		"Ctrl+S",
 	} {
@@ -16725,7 +16725,7 @@ func TestBrowserAttentionOverlayShowsOpenBrowserForManagedLoginURL(t *testing.T)
 	for _, want := range []string{
 		"open browser",
 		"open session",
-		"Automatic browser mode can open this login flow",
+		"Little Control Room can open this login flow",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("browser attention overlay is missing %q: %q", want, rendered)
@@ -17054,12 +17054,6 @@ func TestSettingsBrowserAutomationMapsToManagedPolicy(t *testing.T) {
 		t.Fatalf("browser automation enter should open the chooser")
 	}
 
-	updated, cmd = got.updateSettingsBrowserAutomationPickerMode(tea.KeyMsg{Type: tea.KeyDown})
-	got = updated.(Model)
-	if cmd != nil {
-		t.Fatalf("browser automation down should only move the picker selection")
-	}
-
 	updated, cmd = got.updateSettingsBrowserAutomationPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
 	if cmd != nil {
@@ -17068,8 +17062,8 @@ func TestSettingsBrowserAutomationMapsToManagedPolicy(t *testing.T) {
 	if got.settingsBrowserPickerVisible {
 		t.Fatalf("browser automation chooser should close after choosing")
 	}
-	if got.settingsFields[settingsFieldBrowserAutomation].input.Value() != "automatic" {
-		t.Fatalf("browser automation value = %q, want automatic", got.settingsFields[settingsFieldBrowserAutomation].input.Value())
+	if got.settingsFields[settingsFieldBrowserAutomation].input.Value() != "only-when-needed" {
+		t.Fatalf("browser automation value = %q, want only-when-needed", got.settingsFields[settingsFieldBrowserAutomation].input.Value())
 	}
 
 	updated, cmd = got.updateSettingsMode(tea.KeyMsg{Type: tea.KeyCtrlS})

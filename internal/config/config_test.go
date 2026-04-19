@@ -47,6 +47,23 @@ func TestParseLoadsIncludePathsFromConfigFile(t *testing.T) {
 	}
 }
 
+func TestDefaultUsesManagedPlaywrightPolicy(t *testing.T) {
+	cfg := Default()
+
+	if got, want := cfg.PlaywrightPolicy.ManagementMode, browserctl.ManagementModeManaged; got != want {
+		t.Fatalf("default playwright management mode = %s, want %s", got, want)
+	}
+	if got, want := cfg.PlaywrightPolicy.DefaultBrowserMode, browserctl.BrowserModeHeadless; got != want {
+		t.Fatalf("default playwright default browser mode = %s, want %s", got, want)
+	}
+	if got, want := cfg.PlaywrightPolicy.LoginMode, browserctl.LoginModePromote; got != want {
+		t.Fatalf("default playwright login mode = %s, want %s", got, want)
+	}
+	if got, want := cfg.PlaywrightPolicy.IsolationScope, browserctl.IsolationScopeTask; got != want {
+		t.Fatalf("default playwright isolation scope = %s, want %s", got, want)
+	}
+}
+
 func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 	useTempHome(t)
 	dir := t.TempDir()

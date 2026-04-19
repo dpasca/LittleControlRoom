@@ -187,7 +187,7 @@ func (m Model) renderBrowserAttentionContent(width int) string {
 		lines = append(lines, renderWrappedDialogTextLines(
 			detailMutedStyle,
 			width,
-			"Automatic browser mode can open this login flow in your default browser, then bring the embedded session forward so you can keep an eye on it.",
+			"Little Control Room can open this login flow in your default browser, then bring the embedded session forward so you can keep an eye on it.",
 		)...)
 		lines = append(lines,
 			"",

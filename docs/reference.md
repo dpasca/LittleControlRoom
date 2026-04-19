@@ -29,9 +29,9 @@ Provider artifact and detector-footprint notes live in:
 - Example file: [`config.example.toml`](config.example.toml)
 - Supported format: TOML
 
-The TUI `/settings` modal is now split into sections (`AI & Models`, `Project Scope`, `Browser`, `Refresh`) so it stays usable on smaller terminals. The Browser section exposes a simplified `Browser automation` field (`compatibility`, `automatic`, `observe`, `advanced`), but the config file still stores the raw Playwright policy keys below:
+The TUI `/settings` modal is now split into sections (`AI & Models`, `Project Scope`, `Browser`, `Refresh`) so it stays usable on smaller terminals. The Browser section exposes a simplified `Browser windows` field with plain-language choices such as `Only when needed`, `Always show`, and `Classic browser behavior`, while the config file still stores the raw Playwright policy keys below:
 
-In `automatic` mode, embedded Codex Playwright waits that expose a URL-based login flow now raise a browser-attention prompt that can open the login page directly in your default browser while bringing the embedded session forward.
+In `Only when needed`, embedded Codex Playwright waits that expose a URL-based login flow now raise a browser-attention prompt that can open the login page directly in your default browser while bringing the embedded session forward.
 
 Working roadmap for this area: [`browser_automation_working_plan.md`](browser_automation_working_plan.md)
 
@@ -60,9 +60,9 @@ include_paths = [
 exclude_paths = []
 exclude_project_patterns = []
 codex_launch_preset = "yolo"
-playwright_management_mode = "legacy"
+playwright_management_mode = "managed"
 playwright_default_browser_mode = "headless"
-playwright_login_mode = "manual"
+playwright_login_mode = "promote"
 playwright_isolation_scope = "task"
 ```
 
@@ -81,9 +81,9 @@ exclude_project_patterns = [
   "archive-*",
 ]
 codex_launch_preset = "yolo"
-playwright_management_mode = "legacy"
+playwright_management_mode = "managed"
 playwright_default_browser_mode = "headless"
-playwright_login_mode = "manual"
+playwright_login_mode = "promote"
 playwright_isolation_scope = "task"
 
 interval = "60s"
