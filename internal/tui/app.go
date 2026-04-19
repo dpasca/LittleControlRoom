@@ -34,7 +34,10 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-const tuiProjectStatusRefreshTimeout = 10 * time.Second
+// Interactive project refreshes also repair session snapshot hashes and queue
+// classifier work after embedded turns, so they need a bit more budget than
+// raw git metadata reads alone.
+const tuiProjectStatusRefreshTimeout = 30 * time.Second
 
 type Model struct {
 	ctx   context.Context
