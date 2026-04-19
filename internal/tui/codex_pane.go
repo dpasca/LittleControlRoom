@@ -4117,13 +4117,17 @@ func renderCodexInlineMarkdown(text string, style lipgloss.Style) string {
 	if text == "" {
 		return style.Render(text)
 	}
+	codeStyle := style.Copy().
+		Foreground(lipgloss.Color("223")).
+		Background(lipgloss.Color("236"))
 	var out strings.Builder
 	remaining := text
 	for len(remaining) > 0 {
-		// Find the earliest markdown marker: **, *, or [
+		// Find the earliest markdown marker: **, *, [, or `
 		boldIdx := strings.Index(remaining, "**")
 		italicIdx := -1
 		linkIdx := strings.IndexByte(remaining, '[')
+		codeIdx := strings.IndexByte(remaining, '`')
 
 		// Find standalone * (italic) that is not part of **
 		for i := 0; i < len(remaining); i++ {
@@ -4139,7 +4143,7 @@ func renderCodexInlineMarkdown(text string, style lipgloss.Style) string {
 
 		// Find earliest marker
 		earliest := -1
-		for _, idx := range []int{boldIdx, italicIdx, linkIdx} {
+		for _, idx := range []int{boldIdx, italicIdx, linkIdx, codeIdx} {
 			if idx >= 0 && (earliest < 0 || idx < earliest) {
 				earliest = idx
 			}
@@ -4200,6 +4204,18 @@ func renderCodexInlineMarkdown(text string, style lipgloss.Style) string {
 			}
 			out.WriteString(renderCodexHyperlink(label, target, style))
 			remaining = remaining[earliest+consumed:]
+
+		case codeIdx == earliest:
+			rest := remaining[earliest+1:]
+			close := strings.IndexByte(rest, '`')
+			if close <= 0 {
+				out.WriteString(style.Render("`"))
+				remaining = rest
+				continue
+			}
+			inner := rest[:close]
+			out.WriteString(codeStyle.Render(inner))
+			remaining = rest[close+1:]
 		}
 	}
 	return out.String()

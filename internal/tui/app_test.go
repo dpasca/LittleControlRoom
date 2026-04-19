@@ -14427,6 +14427,26 @@ func TestRenderCodexBodyRendersBoldAndItalic(t *testing.T) {
 	}
 }
 
+func TestRenderCodexBodyRendersInlineCodeWithoutBackticks(t *testing.T) {
+	body := "This workflow is scheduled twice a day (`0 0` and `0 1`) and maps to `02:00 Europe/Rome`."
+	rendered := ansi.Strip(renderCodexBody(body, lipgloss.Color("252"), 52))
+	normalized := strings.Join(strings.Fields(rendered), " ")
+
+	for _, want := range []string{"0 0", "0 1", "02:00 Europe/Rome"} {
+		if !strings.Contains(normalized, want) {
+			t.Fatalf("inline code content should be preserved, missing %q in %q", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "`") {
+		t.Fatalf("inline code markers should be stripped: %q", rendered)
+	}
+	for _, line := range strings.Split(rendered, "\n") {
+		if ansi.StringWidth(line) > 52 {
+			t.Fatalf("wrapped line width = %d, want <= 52: %q", ansi.StringWidth(line), line)
+		}
+	}
+}
+
 func TestRenderCodexBodyRendersMarkdownTable(t *testing.T) {
 	table := "| Name | Value | Status |\n| --- | --- | --- |\n| foo | 42 | ok |\n| bar | 99 | err |"
 	rendered := ansi.Strip(renderCodexBody(table, lipgloss.Color("252"), 80))
