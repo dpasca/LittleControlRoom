@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	persistentCodexHelperIdleTimeout = 2 * time.Minute
+	persistentCodexHelperIdleTimeout = 30 * time.Minute
 	persistentCodexHelperMaxRequests = 24
 )
 
