@@ -3945,26 +3945,26 @@ func (m Model) renderDetailContent(width int) string {
 	assessmentValue := assessmentDisplayStyle(p, m.currentTime(), m.assessmentStallThreshold()).Render(projectAssessmentLabelWithThreshold(p, m.currentTime(), m.assessmentStallThreshold()))
 	statusValue := activityDisplayStyle(p).Render(projectActivityStatus(p))
 	attentionValue := detailAttentionValueStyle.Render(fmt.Sprintf("%d", m.projectAttentionScore(p)))
-
-	lines := []string{detailField("Path", detailValueStyle.Render(p.Path))}
-	if model.NormalizeProjectKind(p.Kind) == model.ProjectKindScratchTask {
-		lines = append(lines, detailField("Kind", detailValueStyle.Render("scratch task")))
-	}
-	lines = append(lines, detailField("Assessment", assessmentValue))
-	if shouldShowProjectActivity(p) {
-		lines = append(lines, detailField("Activity", statusValue))
-	}
-	lines = append(lines, detailSectionStyle.Render("Session summary"))
 	summaryText := m.projectAssessmentDisplayTextAt(p, m.currentTime(), m.assessmentStallThreshold())
 	summaryStyle := detailValueStyle
 	if projectAssessmentRefreshing(p) {
 		summaryStyle = detailMutedStyle
 	}
 	if strings.TrimSpace(summaryText) == "" || summaryText == "-" {
-		lines = append(lines, renderWrappedDetailBullet(detailMutedStyle, width, "not assessed yet"))
-	} else {
-		lines = append(lines, renderWrappedDetailBullet(summaryStyle, width, summaryText))
+		summaryText = "not assessed yet"
+		summaryStyle = detailMutedStyle
 	}
+
+	lines := []string{renderWrappedDetailField("Summary", summaryStyle, width, summaryText)}
+	lines = append(lines, detailField("Path", detailValueStyle.Render(p.Path)))
+	if model.NormalizeProjectKind(p.Kind) == model.ProjectKindScratchTask {
+		lines = append(lines, detailField("Kind", detailValueStyle.Render("scratch task")))
+	}
+	statusFields := []string{detailField("Assessment", assessmentValue)}
+	if shouldShowProjectActivity(p) {
+		statusFields = append(statusFields, detailField("Activity", statusValue))
+	}
+	lines = appendDetailFields(lines, width, statusFields...)
 	if projectMissing(p) {
 		lines = append(lines, detailWarningStyle.Render("Folder: missing on disk"))
 	}
@@ -6002,6 +6002,24 @@ func projectConflictIndicatorStyle(spinnerFrame int) lipgloss.Style {
 
 func detailField(label, value string) string {
 	return detailLabelStyle.Render(label+":") + " " + value
+}
+
+func renderWrappedDetailField(label string, style lipgloss.Style, width int, text string) string {
+	prefixPlain := label + ": "
+	labelRendered := detailLabelStyle.Render(label + ":")
+	if width <= len(prefixPlain) {
+		return labelRendered + " " + style.Render(text)
+	}
+	wrapped := lipgloss.NewStyle().Width(max(1, width-len(prefixPlain))).Render(text)
+	lines := strings.Split(strings.ReplaceAll(wrapped, "\r\n", "\n"), "\n")
+	for i := range lines {
+		if i == 0 {
+			lines[i] = labelRendered + " " + style.Render(lines[i])
+			continue
+		}
+		lines[i] = strings.Repeat(" ", len(prefixPlain)) + style.Render(lines[i])
+	}
+	return strings.Join(lines, "\n")
 }
 
 func detailReasonLine(reason model.AttentionReason) string {

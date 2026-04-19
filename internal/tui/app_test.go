@@ -1916,13 +1916,14 @@ func TestRenderDetailContentShowsSessionSummaryBeforeWorktreeInfo(t *testing.T) 
 	m.rebuildProjectList(rootPath)
 
 	rendered := ansi.Strip(m.renderDetailContent(100))
-	summaryIndex := strings.Index(rendered, "Session summary")
+	summaryIndex := strings.Index(rendered, "Summary:")
+	pathIndex := strings.Index(rendered, "Path:")
 	worktreesIndex := strings.Index(rendered, "Worktrees:")
-	if summaryIndex < 0 || worktreesIndex < 0 {
+	if summaryIndex < 0 || pathIndex < 0 || worktreesIndex < 0 {
 		t.Fatalf("renderDetailContent() missing summary or worktree sections: %q", rendered)
 	}
-	if summaryIndex > worktreesIndex {
-		t.Fatalf("renderDetailContent() should show the session summary before worktree info: %q", rendered)
+	if summaryIndex > pathIndex || summaryIndex > worktreesIndex {
+		t.Fatalf("renderDetailContent() should show the summary at the top before path and worktree info: %q", rendered)
 	}
 }
 
@@ -5325,6 +5326,16 @@ func TestRenderDetailShowsActivityWhenItAddsSignal(t *testing.T) {
 	if !strings.Contains(rendered, "stuck") {
 		t.Fatalf("renderDetailContent() missing non-idle activity value: %q", rendered)
 	}
+	foundCombinedRow := false
+	for _, line := range strings.Split(ansi.Strip(rendered), "\n") {
+		if strings.Contains(line, "Assessment:") && strings.Contains(line, "Activity:") {
+			foundCombinedRow = true
+			break
+		}
+	}
+	if !foundCombinedRow {
+		t.Fatalf("renderDetailContent() should place assessment and activity on the same row when there is room: %q", rendered)
+	}
 }
 
 func TestRenderDetailContentShowsRepoConflict(t *testing.T) {
@@ -5404,7 +5415,7 @@ func TestRenderDetailShowsAssessmentStageTiming(t *testing.T) {
 	if !strings.Contains(rendered, "Assessment: waiting") {
 		t.Fatalf("renderDetailContent() missing visible assessment label: %q", rendered)
 	}
-	if !strings.Contains(rendered, "- Waiting on a design decision before coding resumes.") {
+	if !strings.Contains(rendered, "Summary: Waiting on a design decision before coding resumes.") {
 		t.Fatalf("renderDetailContent() missing visible session summary: %q", rendered)
 	}
 }
@@ -5431,10 +5442,10 @@ func TestRenderDetailWrapsLongSessionSummary(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderDetailContent(40))
-	if !strings.Contains(rendered, "- This is a deliberately long session") {
+	if !strings.Contains(rendered, "Summary: This is a deliberately long") {
 		t.Fatalf("renderDetailContent() missing wrapped summary start: %q", rendered)
 	}
-	if !strings.Contains(rendered, "  detail pane instead of clipping off") {
+	if !strings.Contains(rendered, "         wrap inside the detail pane") {
 		t.Fatalf("renderDetailContent() missing wrapped summary continuation: %q", rendered)
 	}
 	for _, line := range strings.Split(rendered, "\n") {
@@ -18638,7 +18649,7 @@ func TestViewWithHelpOverlayPreservesBackground(t *testing.T) {
 	if !strings.Contains(rendered, "Help") || !strings.Contains(rendered, "slash-command palette") {
 		t.Fatalf("View() should show the help overlay content: %q", rendered)
 	}
-	if !strings.Contains(rendered, "ATTN") || !strings.Contains(rendered, "Path:") || !strings.Contains(rendered, "Session") {
+	if !strings.Contains(rendered, "ATTN") || !strings.Contains(rendered, "Summary") || !strings.Contains(rendered, "Path:") {
 		t.Fatalf("View() should preserve the dashboard behind the help overlay: %q", rendered)
 	}
 }
@@ -18740,7 +18751,7 @@ func TestRenderPerfOverlayPreservesBackground(t *testing.T) {
 	if !strings.Contains(rendered, "Performance") || !strings.Contains(rendered, "Latency") || !strings.Contains(rendered, "Model apply") {
 		t.Fatalf("View() should show the performance overlay content: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Little Control Room") || !strings.Contains(rendered, "Repo: clean") || !strings.Contains(rendered, "Last activity: never") {
+	if !strings.Contains(rendered, "Little Control Room") || !strings.Contains(rendered, "Repo: clean") || !strings.Contains(rendered, "Attention: 0") {
 		t.Fatalf("View() should keep the dashboard visible around the performance overlay: %q", rendered)
 	}
 }
