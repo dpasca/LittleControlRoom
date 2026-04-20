@@ -3,6 +3,7 @@ package gitops
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,26 @@ import (
 
 	"lcroom/internal/llm"
 )
+
+type scriptedJSONSchemaRunner struct {
+	requests []llm.JSONSchemaRequest
+	results  []scriptedJSONSchemaResult
+}
+
+type scriptedJSONSchemaResult struct {
+	response llm.JSONSchemaResponse
+	err      error
+}
+
+func (r *scriptedJSONSchemaRunner) RunJSONSchema(_ context.Context, req llm.JSONSchemaRequest) (llm.JSONSchemaResponse, error) {
+	r.requests = append(r.requests, req)
+	if len(r.results) == 0 {
+		return llm.JSONSchemaResponse{}, errors.New("unexpected RunJSONSchema call")
+	}
+	result := r.results[0]
+	r.results = r.results[1:]
+	return result.response, result.err
+}
 
 func TestOpenAICommitMessageClientSuggest(t *testing.T) {
 	t.Parallel()
@@ -302,5 +323,98 @@ func TestOpenAICommitMessageClientRecommendUntracked(t *testing.T) {
 	}
 	if usage.Totals.EstimatedCostUSD <= 0 {
 		t.Fatalf("usage estimated cost = %f, want positive untracked-review cost", usage.Totals.EstimatedCostUSD)
+	}
+}
+
+func TestOpenAICommitMessageClientSuggestRetriesRetryableHTTPError(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedJSONSchemaRunner{
+		results: []scriptedJSONSchemaResult{
+			{
+				err: &llm.HTTPStatusError{
+					StatusCode: http.StatusInternalServerError,
+					Status:     "500 Internal Server Error",
+					Body:       `{"error":"warmup"}`,
+					RetryAfter: "0",
+				},
+			},
+			{
+				response: llm.JSONSchemaResponse{
+					Status:     "completed",
+					Model:      "gpt-5.4-mini",
+					OutputText: `{"message":"Improve commit preview resilience"}`,
+				},
+			},
+		},
+	}
+
+	client := &OpenAICommitMessageClient{
+		model:     "gpt-5.4-mini",
+		responses: runner,
+	}
+
+	suggestion, err := client.Suggest(context.Background(), CommitMessageInput{
+		Intent:        "commit",
+		ProjectName:   "Little Control Room",
+		Branch:        "master",
+		StageMode:     "staged_only",
+		IncludedFiles: []string{"README.md"},
+	})
+	if err != nil {
+		t.Fatalf("suggest: %v", err)
+	}
+	if suggestion.Message != "Improve commit preview resilience" {
+		t.Fatalf("message = %q, want retried suggestion", suggestion.Message)
+	}
+	if len(runner.requests) != 2 {
+		t.Fatalf("requests = %d, want retry", len(runner.requests))
+	}
+}
+
+func TestOpenAICommitMessageClientRecommendUntrackedRetriesRetryableHTTPError(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedJSONSchemaRunner{
+		results: []scriptedJSONSchemaResult{
+			{
+				err: &llm.HTTPStatusError{
+					StatusCode: http.StatusTooManyRequests,
+					Status:     "429 Too Many Requests",
+					Body:       `{"error":"retry later"}`,
+					RetryAfter: "0",
+				},
+			},
+			{
+				response: llm.JSONSchemaResponse{
+					Status:     "completed",
+					Model:      "gpt-5.4-mini",
+					OutputText: `{"files":[{"path":"notes.txt","include":true,"confidence":0.9,"reason":"notes.txt matches the staged work."}]}`,
+				},
+			},
+		},
+	}
+
+	client := &OpenAICommitMessageClient{
+		model:     "gpt-5.4-mini",
+		responses: runner,
+	}
+
+	suggestion, err := client.RecommendUntracked(context.Background(), UntrackedFileRecommendationInput{
+		ProjectName: "Little Control Room",
+		Branch:      "master",
+		StagedFiles: []string{"README.md"},
+		Candidates: []UntrackedFileCandidate{
+			{Path: "notes.txt", Kind: "file"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("recommend untracked: %v", err)
+	}
+	if len(suggestion.Files) != 1 || suggestion.Files[0].Path != "notes.txt" || !suggestion.Files[0].Include {
+		t.Fatalf("files = %#v, want retried decision for notes.txt", suggestion.Files)
+	}
+	if len(runner.requests) != 2 {
+		t.Fatalf("requests = %d, want retry", len(runner.requests))
 	}
 }

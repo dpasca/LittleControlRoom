@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"lcroom/internal/brand"
@@ -20,7 +23,18 @@ const (
 	defaultCommitModel           = "gpt-5.4-mini"
 	defaultClaudeCommitModel     = "haiku"
 	defaultCommitReasoningEffort = "low"
+	commitAssistantHTTPTimeout   = 45 * time.Second
+	commitAssistantRetryBackoff  = 750 * time.Millisecond
 )
+
+var commitAssistantAttemptPlan = []commitAssistantAttemptConfig{
+	{ReasoningEffort: defaultCommitReasoningEffort},
+	{ReasoningEffort: defaultCommitReasoningEffort},
+}
+
+type commitAssistantAttemptConfig struct {
+	ReasoningEffort string
+}
 
 type CommitMessageInput struct {
 	Intent                  string          `json:"intent"`
@@ -80,8 +94,8 @@ func NewOpenAICommitMessageClientWithUsageTracker(apiKey string, usage *llm.Usag
 	return &OpenAICommitMessageClient{
 		apiKey:     apiKey,
 		model:      model,
-		httpClient: &http.Client{Timeout: 45 * time.Second},
-		responses:  llm.NewResponsesClient(apiKey, 45*time.Second, usage),
+		httpClient: &http.Client{Timeout: commitAssistantHTTPTimeout},
+		responses:  llm.NewResponsesClient(apiKey, commitAssistantHTTPTimeout, usage),
 	}
 }
 
@@ -92,7 +106,7 @@ func NewOpenAICompatibleCommitMessageClientWithUsageTracker(baseURL, apiKey, pre
 	}
 	return &OpenAICommitMessageClient{
 		model: model,
-		responses: llm.NewOpenAICompatibleResponsesRunnerWithOptions(baseURL, apiKey, model, 45*time.Second, usage, llm.OpenAICompatibleResponsesRunnerOptions{
+		responses: llm.NewOpenAICompatibleResponsesRunnerWithOptions(baseURL, apiKey, model, commitAssistantHTTPTimeout, usage, llm.OpenAICompatibleResponsesRunnerOptions{
 			PreferChatCompletions: true,
 		}),
 	}
@@ -109,7 +123,7 @@ func NewCodexCommitMessageClientWithUsageTrackerInDataDir(dataDir string, usage 
 	}
 	return &OpenAICommitMessageClient{
 		model:     model,
-		responses: llm.NewPersistentCodexRunnerInDataDir(dataDir, 45*time.Second, usage),
+		responses: llm.NewPersistentCodexRunnerInDataDir(dataDir, commitAssistantHTTPTimeout, usage),
 	}
 }
 
@@ -124,12 +138,12 @@ func NewOpenCodeCommitMessageClientWithUsageTrackerInDataDir(dataDir string, usa
 	}
 	return &OpenAICommitMessageClient{
 		model:     model,
-		responses: llm.NewOpenCodeRunRunnerInDataDir(dataDir, 45*time.Second, usage),
+		responses: llm.NewOpenCodeRunRunnerInDataDir(dataDir, commitAssistantHTTPTimeout, usage),
 	}
 }
 
 func NewOpenCodeCommitMessageClientWithFallback(discovery *llm.OpenCodeDiscovery, tier config.ModelTier, usage *llm.UsageTracker) *OpenAICommitMessageClient {
-	baseRunner := llm.NewOpenCodeRunRunner(45*time.Second, usage)
+	baseRunner := llm.NewOpenCodeRunRunner(commitAssistantHTTPTimeout, usage)
 	cfg := llm.DefaultModelSelectionConfig()
 	cfg.Tier = llm.ModelTier(tier)
 	fallbackRunner := llm.NewFallbackRunner(discovery, baseRunner, cfg, usage)
@@ -146,7 +160,7 @@ func NewClaudeCommitMessageClientWithUsageTrackerInDataDir(dataDir string, usage
 	}
 	return &OpenAICommitMessageClient{
 		model:     model,
-		responses: llm.NewClaudePrintRunnerInDataDir(dataDir, 45*time.Second, usage),
+		responses: llm.NewClaudePrintRunnerInDataDir(dataDir, commitAssistantHTTPTimeout, usage),
 	}
 }
 
@@ -207,21 +221,37 @@ func (c *OpenAICommitMessageClient) Suggest(ctx context.Context, input CommitMes
 }
 
 func (c *OpenAICommitMessageClient) runJSONSchemaPrompt(ctx context.Context, systemText, userText, schemaName string, schema map[string]any) (llm.JSONSchemaResponse, error) {
-	response, err := c.responsesClient().RunJSONSchema(ctx, llm.JSONSchemaRequest{
-		Model:           c.model,
-		SystemText:      systemText,
-		UserText:        userText,
-		SchemaName:      schemaName,
-		Schema:          schema,
-		ReasoningEffort: defaultCommitReasoningEffort,
-	})
-	if err != nil {
-		return llm.JSONSchemaResponse{}, err
+	for attemptIndex, attempt := range commitAssistantAttemptPlan {
+		response, err := c.responsesClient().RunJSONSchema(ctx, llm.JSONSchemaRequest{
+			Model:           c.model,
+			SystemText:      systemText,
+			UserText:        userText,
+			SchemaName:      schemaName,
+			Schema:          schema,
+			ReasoningEffort: attempt.ReasoningEffort,
+		})
+		if err != nil {
+			if retryable := retryableCommitAssistantErrorForRun(ctx, err); retryable != nil && attemptIndex < len(commitAssistantAttemptPlan)-1 {
+				if err := sleepCommitAssistantRetry(ctx, retryDelayForCommitAssistantError(retryable)); err != nil {
+					return llm.JSONSchemaResponse{}, err
+				}
+				continue
+			}
+			return llm.JSONSchemaResponse{}, err
+		}
+		if strings.TrimSpace(response.OutputText) == "" {
+			err := missingCommitAssistantOutputError(response)
+			if strings.EqualFold(strings.TrimSpace(response.Status), "incomplete") && attemptIndex < len(commitAssistantAttemptPlan)-1 {
+				if err := sleepCommitAssistantRetry(ctx, commitAssistantRetryBackoff); err != nil {
+					return llm.JSONSchemaResponse{}, err
+				}
+				continue
+			}
+			return llm.JSONSchemaResponse{}, err
+		}
+		return response, nil
 	}
-	if strings.TrimSpace(response.OutputText) == "" {
-		return llm.JSONSchemaResponse{}, fmt.Errorf("openai response missing assistant output (status=%s)", response.Status)
-	}
-	return response, nil
+	return llm.JSONSchemaResponse{}, errors.New("commit assistant attempt plan exhausted")
 }
 
 func (c *OpenAICommitMessageClient) responsesClient() llm.JSONSchemaRunner {
@@ -235,6 +265,147 @@ func (c *OpenAICommitMessageClient) responsesClient() llm.JSONSchemaRunner {
 		return nil
 	}
 	return llm.NewResponsesClientWithHTTPClient(c.apiKey, c.endpoint, c.httpClient, nil)
+}
+
+type retryableCommitAssistantError struct {
+	cause error
+	delay time.Duration
+}
+
+func (e *retryableCommitAssistantError) Error() string {
+	if e == nil || e.cause == nil {
+		return ""
+	}
+	return e.cause.Error()
+}
+
+func (e *retryableCommitAssistantError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
+func retryableCommitAssistantErrorForRun(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	var httpErr *llm.HTTPStatusError
+	if errors.As(err, &httpErr) && isRetryableCommitAssistantHTTPStatus(httpErr.StatusCode) {
+		return &retryableCommitAssistantError{
+			cause: err,
+			delay: commitAssistantRetryDelayFromHeader(httpErr.RetryAfter),
+		}
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return nil
+	}
+	if !isRetryableCommitAssistantTransportError(err) {
+		return nil
+	}
+	return &retryableCommitAssistantError{
+		cause: err,
+		delay: commitAssistantRetryBackoff,
+	}
+}
+
+func isRetryableCommitAssistantHTTPStatus(statusCode int) bool {
+	return statusCode == http.StatusRequestTimeout || statusCode == http.StatusTooManyRequests || statusCode >= 500
+}
+
+func isRetryableCommitAssistantTransportError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	var timeoutErr interface{ Timeout() bool }
+	if errors.As(err, &timeoutErr) && timeoutErr.Timeout() {
+		return true
+	}
+	return errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.EADDRNOTAVAIL) ||
+		errors.Is(err, syscall.ECONNABORTED) ||
+		errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.EMFILE) ||
+		errors.Is(err, syscall.ENFILE) ||
+		errors.Is(err, syscall.EHOSTDOWN) ||
+		errors.Is(err, syscall.EHOSTUNREACH) ||
+		errors.Is(err, syscall.ENETDOWN) ||
+		errors.Is(err, syscall.ENETRESET) ||
+		errors.Is(err, syscall.ENETUNREACH) ||
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ETIMEDOUT)
+}
+
+func retryDelayForCommitAssistantError(err error) time.Duration {
+	var retryable *retryableCommitAssistantError
+	if errors.As(err, &retryable) && retryable.delay > 0 {
+		return retryable.delay
+	}
+	return 0
+}
+
+func commitAssistantRetryDelayFromHeader(raw string) time.Duration {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return commitAssistantRetryBackoff
+	}
+	if seconds, err := strconv.Atoi(raw); err == nil {
+		if seconds <= 0 {
+			return 0
+		}
+		return time.Duration(seconds) * time.Second
+	}
+	if when, err := http.ParseTime(raw); err == nil {
+		wait := time.Until(when)
+		if wait < 0 {
+			return 0
+		}
+		return wait
+	}
+	return commitAssistantRetryBackoff
+}
+
+func sleepCommitAssistantRetry(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func missingCommitAssistantOutputError(response llm.JSONSchemaResponse) error {
+	status := strings.TrimSpace(response.Status)
+	if strings.EqualFold(status, "incomplete") {
+		details := []string{"status=incomplete"}
+		if strings.TrimSpace(response.IncompleteReason) != "" {
+			details = append(details, "reason="+strings.TrimSpace(response.IncompleteReason))
+		}
+		if response.MaxOutputTokens != nil && *response.MaxOutputTokens > 0 {
+			details = append(details, fmt.Sprintf("max_output_tokens=%d", *response.MaxOutputTokens))
+		}
+		if response.Usage.OutputTokens > 0 {
+			details = append(details, fmt.Sprintf("output_tokens=%d", response.Usage.OutputTokens))
+		}
+		if response.Usage.ReasoningTokens > 0 {
+			details = append(details, fmt.Sprintf("reasoning_tokens=%d", response.Usage.ReasoningTokens))
+		}
+		return fmt.Errorf("openai response incomplete (%s)", strings.Join(details, ", "))
+	}
+	if status == "" {
+		status = "unknown"
+	}
+	return fmt.Errorf("openai response missing assistant output (status=%s)", status)
 }
 
 const commitMessageInstructions = `You write short git commit subject lines for coding work.
