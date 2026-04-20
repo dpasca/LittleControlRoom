@@ -25,6 +25,7 @@ type OpenAIClient struct {
 	endpoint   string
 	httpClient *http.Client
 	responses  llm.JSONSchemaRunner
+	localCLI   bool
 }
 
 const (
@@ -108,6 +109,7 @@ func NewCodexClientWithUsageTrackerInDataDir(dataDir string, usage *llm.UsageTra
 	return &OpenAIClient{
 		model:     configuredClassifierModel(localRunnerDefaultModel),
 		responses: llm.NewPersistentCodexRunnerInDataDir(dataDir, classifierHTTPTimeout, usage),
+		localCLI:  true,
 	}
 }
 
@@ -119,6 +121,7 @@ func NewOpenCodeClientWithUsageTrackerInDataDir(dataDir string, usage *llm.Usage
 	return &OpenAIClient{
 		model:     configuredClassifierModel(localRunnerDefaultModel),
 		responses: llm.NewOpenCodeRunRunnerInDataDir(dataDir, classifierHTTPTimeout, usage),
+		localCLI:  true,
 	}
 }
 
@@ -137,6 +140,7 @@ func NewClaudeClientWithUsageTrackerInDataDir(dataDir string, usage *llm.UsageTr
 	return &OpenAIClient{
 		model:     configuredClassifierModel(localRunnerClaudeDefaultModel),
 		responses: llm.NewClaudePrintRunnerInDataDir(dataDir, classifierHTTPTimeout, usage),
+		localCLI:  true,
 	}
 }
 
@@ -153,6 +157,10 @@ func (c *OpenAIClient) ModelName() string {
 		return ""
 	}
 	return strings.TrimSpace(c.model)
+}
+
+func (c *OpenAIClient) PreferSingleFlight() bool {
+	return c != nil && c.localCLI
 }
 
 func (c *OpenAIClient) Classify(ctx context.Context, snapshot SessionSnapshot) (Result, error) {
@@ -363,6 +371,8 @@ func isRetryableTransportError(err error) bool {
 		errors.Is(err, syscall.ECONNABORTED) ||
 		errors.Is(err, syscall.ECONNREFUSED) ||
 		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.EMFILE) ||
+		errors.Is(err, syscall.ENFILE) ||
 		errors.Is(err, syscall.EHOSTDOWN) ||
 		errors.Is(err, syscall.EHOSTUNREACH) ||
 		errors.Is(err, syscall.ENETDOWN) ||

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -44,6 +45,36 @@ func (b *blockingClassifier) Classify(_ context.Context, _ SessionSnapshot) (Res
 	close(b.started)
 	<-b.release
 	return b.result, nil
+}
+
+type serialBlockingClassifier struct {
+	result     Result
+	started    chan struct{}
+	release    chan struct{}
+	mu         sync.Mutex
+	startCount int
+}
+
+func (b *serialBlockingClassifier) Classify(_ context.Context, _ SessionSnapshot) (Result, error) {
+	b.mu.Lock()
+	b.startCount++
+	startCount := b.startCount
+	b.mu.Unlock()
+	if startCount == 1 {
+		close(b.started)
+	}
+	<-b.release
+	return b.result, nil
+}
+
+func (b *serialBlockingClassifier) PreferSingleFlight() bool {
+	return true
+}
+
+func (b *serialBlockingClassifier) StartedCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.startCount
 }
 
 func TestExtractSnapshotModernFixture(t *testing.T) {
@@ -669,6 +700,121 @@ func TestManagerProcessOneHeartbeatsWaitingForModel(t *testing.T) {
 	}
 	if classification.Status != model.ClassificationCompleted {
 		t.Fatalf("status = %s, want completed", classification.Status)
+	}
+}
+
+func TestManagerProcessOneSerializesSingleFlightClassifiers(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	fixture := filepath.Clean(filepath.Join("..", "..", "testdata", "codex_footprint", "sessions", "2026", "03", "05", "rollout-modern.jsonl"))
+	now := time.Now()
+	states := []model.ProjectState{
+		{
+			Path:           "/tmp/single-flight-a",
+			Name:           "single-flight-a",
+			Status:         model.StatusActive,
+			AttentionScore: 10,
+			InScope:        true,
+			UpdatedAt:      now,
+			Sessions: []model.SessionEvidence{{
+				SessionID:            "ses_single_flight_a",
+				ProjectPath:          "/tmp/single-flight-a",
+				SessionFile:          fixture,
+				Format:               "modern",
+				LastEventAt:          now,
+				LatestTurnStateKnown: true,
+				LatestTurnCompleted:  true,
+			}},
+		},
+		{
+			Path:           "/tmp/single-flight-b",
+			Name:           "single-flight-b",
+			Status:         model.StatusActive,
+			AttentionScore: 10,
+			InScope:        true,
+			UpdatedAt:      now,
+			Sessions: []model.SessionEvidence{{
+				SessionID:            "ses_single_flight_b",
+				ProjectPath:          "/tmp/single-flight-b",
+				SessionFile:          fixture,
+				Format:               "modern",
+				LastEventAt:          now,
+				LatestTurnStateKnown: true,
+				LatestTurnCompleted:  true,
+			}},
+		},
+	}
+	for _, state := range states {
+		if err := st.UpsertProjectState(ctx, state); err != nil {
+			t.Fatalf("upsert project %s: %v", state.Path, err)
+		}
+	}
+
+	classifier := &serialBlockingClassifier{
+		result: Result{
+			Category:   model.SessionCategoryCompleted,
+			Summary:    "serialized",
+			Confidence: 0.9,
+			Model:      "gpt-test-mini",
+		},
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	manager := NewManager(st, events.NewBus(), Options{
+		Client:  classifier,
+		Workers: 2,
+	})
+
+	for _, state := range states {
+		queued, err := manager.QueueProject(ctx, state)
+		if err != nil {
+			t.Fatalf("queue project %s: %v", state.Path, err)
+		}
+		if !queued {
+			t.Fatalf("expected queue project %s to enqueue work", state.Path)
+		}
+	}
+
+	done := make(chan error, 2)
+	for range states {
+		go func() {
+			_, err := manager.processOne(ctx)
+			done <- err
+		}()
+	}
+
+	select {
+	case <-classifier.started:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("single-flight classifier never started")
+	}
+
+	time.Sleep(150 * time.Millisecond)
+	if got := classifier.StartedCount(); got != 1 {
+		t.Fatalf("single-flight classifier started %d calls before release, want 1", got)
+	}
+
+	close(classifier.release)
+	for i := 0; i < len(states); i++ {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("process one: %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("processOne did not finish")
+		}
+	}
+
+	if got := classifier.StartedCount(); got != len(states) {
+		t.Fatalf("single-flight classifier started %d total calls, want %d", got, len(states))
 	}
 }
 

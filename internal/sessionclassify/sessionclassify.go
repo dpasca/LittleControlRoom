@@ -36,6 +36,10 @@ type Classifier interface {
 
 type ProjectUpdater func(ctx context.Context, projectPath string) error
 
+type singleFlightClassifier interface {
+	PreferSingleFlight() bool
+}
+
 type Options struct {
 	Client           Classifier
 	Workers          int
@@ -57,6 +61,7 @@ type Manager struct {
 	notifyCh         chan struct{}
 	usage            *usageTracker
 	startOnce        sync.Once
+	classifyMu       sync.Mutex
 }
 
 type usageTracker struct {
@@ -438,7 +443,7 @@ func (m *Manager) processOne(ctx context.Context) (bool, error) {
 	defer stopHeartbeat()
 	go m.heartbeatClassification(classifyCtx, &classification)
 
-	result, err := client.Classify(ctx, snapshot)
+	result, err := m.classify(ctx, client, snapshot)
 	stopHeartbeat()
 	if err != nil {
 		if m.usage != nil {
@@ -472,6 +477,17 @@ func (m *Manager) processOne(ctx context.Context) (bool, error) {
 		_ = m.onProjectUpdated(ctx, classification.ProjectPath)
 	}
 	return true, nil
+}
+
+func (m *Manager) classify(ctx context.Context, client Classifier, snapshot SessionSnapshot) (Result, error) {
+	if m == nil || client == nil {
+		return Result{}, errors.New("session classifier not configured")
+	}
+	if singleFlight, ok := client.(singleFlightClassifier); ok && singleFlight.PreferSingleFlight() {
+		m.classifyMu.Lock()
+		defer m.classifyMu.Unlock()
+	}
+	return client.Classify(ctx, snapshot)
 }
 
 func (m *Manager) failClassification(ctx context.Context, classification *model.SessionClassification, err error) {
