@@ -596,15 +596,15 @@ func TestProjectNameExcludedSupportsWildcardPatterns(t *testing.T) {
 	}
 }
 
-func TestParseMigratesLegacyStateIntoPreferredDir(t *testing.T) {
+func TestParseLeavesLegacyStateUntouched(t *testing.T) {
 	home := useTempHome(t)
 
-	legacyDir := filepath.Join(home, brand.LegacyDataDirName)
+	legacyDir := filepath.Join(home, ".batondeck")
 	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
 		t.Fatalf("create legacy dir: %v", err)
 	}
 
-	legacyDB := filepath.Join(legacyDir, brand.LegacyDBFileName)
+	legacyDB := filepath.Join(legacyDir, "batondeck.sqlite")
 	if err := os.WriteFile(legacyDB, []byte("sqlite"), 0o644); err != nil {
 		t.Fatalf("write legacy db: %v", err)
 	}
@@ -632,13 +632,13 @@ func TestParseMigratesLegacyStateIntoPreferredDir(t *testing.T) {
 		t.Fatalf("include paths = %v, want %v", cfg.IncludePaths, wantIncludePaths)
 	}
 	if _, err := os.Stat(preferredConfig); !os.IsNotExist(err) {
-		t.Fatalf("expected no migrated config file, err=%v", err)
+		t.Fatalf("expected no TOML config file to be created, err=%v", err)
 	}
-	if _, err := os.Stat(preferredDB); err != nil {
-		t.Fatalf("expected migrated db file: %v", err)
+	if _, err := os.Stat(preferredDB); !os.IsNotExist(err) {
+		t.Fatalf("expected preferred db to remain absent, err=%v", err)
 	}
-	if _, err := os.Stat(legacyDB); !os.IsNotExist(err) {
-		t.Fatalf("expected legacy db to be moved away, err=%v", err)
+	if _, err := os.Stat(legacyDB); err != nil {
+		t.Fatalf("expected legacy db to remain untouched, err=%v", err)
 	}
 }
 

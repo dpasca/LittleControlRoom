@@ -4,7 +4,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -178,11 +177,6 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	cfg.DBPath, err = expandHome(dbPathHint)
 	if err != nil {
 		return AppConfig{}, err
-	}
-	if shouldMigrateLegacyState(cfg.ConfigPath, cfg.DBPath) {
-		if err := migrateLegacyState(&cfg); err != nil {
-			return AppConfig{}, err
-		}
 	}
 	if err := applyConfigFile(&cfg); err != nil {
 		return AppConfig{}, err
@@ -512,108 +506,6 @@ func expandHome(path string) (string, error) {
 		return filepath.Join(home, strings.TrimPrefix(path, "~/")), nil
 	}
 	return path, nil
-}
-
-func pathExists(path string) bool {
-	if path == "" {
-		return false
-	}
-	_, err := os.Stat(path)
-	return err == nil
-}
-
-func shouldMigrateLegacyState(configPath, dbPath string) bool {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return true
-	}
-	legacyDir := filepath.Join(home, brand.LegacyDataDirName)
-	return !pathWithinDir(configPath, legacyDir) && !pathWithinDir(dbPath, legacyDir)
-}
-
-func pathWithinDir(path, dir string) bool {
-	cleanPath := filepath.Clean(path)
-	cleanDir := filepath.Clean(dir)
-	if cleanPath == cleanDir {
-		return true
-	}
-	return strings.HasPrefix(cleanPath, cleanDir+string(os.PathSeparator))
-}
-
-func migrateLegacyState(cfg *AppConfig) error {
-	if cfg == nil || cfg.DataDir == "" {
-		return nil
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("resolve home directory: %w", err)
-	}
-
-	legacyDir := filepath.Join(home, brand.LegacyDataDirName)
-	if !pathExists(legacyDir) {
-		return nil
-	}
-	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
-		return fmt.Errorf("create %s data directory: %w", brand.ShortName, err)
-	}
-
-	legacyDBBase := filepath.Join(legacyDir, brand.LegacyDBFileName)
-	preferredDBBase := filepath.Join(cfg.DataDir, brand.DBFileName)
-	for _, suffix := range []string{"", "-wal", "-shm"} {
-		if err := moveFileIfMissing(legacyDBBase+suffix, preferredDBBase+suffix); err != nil {
-			return fmt.Errorf("migrate sqlite state%s: %w", suffix, err)
-		}
-	}
-
-	return nil
-}
-
-func moveFileIfMissing(src, dst string) error {
-	if !pathExists(src) || pathExists(dst) {
-		return nil
-	}
-	if err := os.Rename(src, dst); err == nil {
-		return nil
-	}
-
-	in, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("open source %s: %w", src, err)
-	}
-	defer in.Close()
-
-	info, err := in.Stat()
-	if err != nil {
-		return fmt.Errorf("stat source %s: %w", src, err)
-	}
-
-	tmp, err := os.CreateTemp(filepath.Dir(dst), filepath.Base(dst)+".tmp-*")
-	if err != nil {
-		return fmt.Errorf("create temp file for %s: %w", dst, err)
-	}
-	tmpPath := tmp.Name()
-	defer func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-	}()
-
-	if _, err := io.Copy(tmp, in); err != nil {
-		return fmt.Errorf("copy %s to %s: %w", src, dst, err)
-	}
-	if err := tmp.Chmod(info.Mode()); err != nil {
-		return fmt.Errorf("chmod temp file for %s: %w", dst, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp file for %s: %w", dst, err)
-	}
-	if err := os.Rename(tmpPath, dst); err != nil {
-		return fmt.Errorf("install migrated file %s: %w", dst, err)
-	}
-	if err := os.Remove(src); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove legacy file %s: %w", src, err)
-	}
-	return nil
 }
 
 func applyOptionalTrimmedString(dst, src *string) {

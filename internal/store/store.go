@@ -719,10 +719,56 @@ type projectSessionMigrationRow struct {
 	updatedAt            time.Time
 }
 
+type normalizedSessionIdentity struct {
+	sessionID    string
+	source       model.SessionSource
+	rawSessionID string
+}
+
+func normalizedSessionIdentityFrom(originalSessionID, originalSource, originalRawSessionID string) normalizedSessionIdentity {
+	return normalizedSessionIdentity{
+		sessionID:    strings.TrimSpace(originalSessionID),
+		source:       model.NormalizeSessionSource(model.SessionSource(strings.TrimSpace(originalSource))),
+		rawSessionID: strings.TrimSpace(originalRawSessionID),
+	}
+}
+
+func needsNormalizedSessionIdentityUpdate(originalSessionID, originalSource, originalRawSessionID string, normalized normalizedSessionIdentity) bool {
+	return strings.TrimSpace(originalSessionID) != normalized.sessionID ||
+		strings.TrimSpace(originalSource) != string(normalized.source) ||
+		strings.TrimSpace(originalRawSessionID) != normalized.rawSessionID
+}
+
+func loadOptionalMigrationRow[T any](
+	ctx context.Context,
+	tx *sql.Tx,
+	query string,
+	scan func(interface{ Scan(dest ...any) error }) (T, error),
+	args ...any,
+) (T, bool, error) {
+	row := tx.QueryRowContext(ctx, query, args...)
+	result, err := scan(row)
+	if err != nil {
+		var zero T
+		if errors.Is(err, sql.ErrNoRows) {
+			return zero, false, nil
+		}
+		return zero, false, err
+	}
+	return result, true, nil
+}
+
 func (row projectSessionMigrationRow) needsIdentityUpdate() bool {
-	return strings.TrimSpace(row.originalSessionID) != row.session.SessionID ||
-		strings.TrimSpace(row.originalSource) != string(row.session.Source) ||
-		strings.TrimSpace(row.originalRawSessionID) != row.session.RawSessionID
+	return needsNormalizedSessionIdentityUpdate(
+		row.originalSessionID,
+		row.originalSource,
+		row.originalRawSessionID,
+		normalizedSessionIdentity{
+			sessionID:    row.session.SessionID,
+			source:       row.session.Source,
+			rawSessionID: row.session.RawSessionID,
+		},
+	)
 }
 
 func (s *Store) loadProjectSessionMigrationRows(ctx context.Context) ([]projectSessionMigrationRow, error) {
@@ -783,9 +829,10 @@ func scanProjectSessionMigrationRow(scanner interface {
 	); err != nil {
 		return projectSessionMigrationRow{}, err
 	}
-	row.session.Source = model.NormalizeSessionSource(model.SessionSource(strings.TrimSpace(row.originalSource)))
-	row.session.SessionID = strings.TrimSpace(row.originalSessionID)
-	row.session.RawSessionID = strings.TrimSpace(row.originalRawSessionID)
+	identity := normalizedSessionIdentityFrom(row.originalSessionID, row.originalSource, row.originalRawSessionID)
+	row.session.Source = identity.source
+	row.session.SessionID = identity.sessionID
+	row.session.RawSessionID = identity.rawSessionID
 	if startedAt.Valid {
 		row.session.StartedAt = time.Unix(startedAt.Int64, 0)
 	}
@@ -841,22 +888,14 @@ func (s *Store) updateProjectSessionIdentityMetadata(ctx context.Context, tx *sq
 }
 
 func (s *Store) loadProjectSessionMigrationRowByID(ctx context.Context, tx *sql.Tx, sessionID string) (projectSessionMigrationRow, bool, error) {
-	row := tx.QueryRowContext(ctx, `
+	return loadOptionalMigrationRow(ctx, tx, `
 		SELECT
 			session_id, source, raw_session_id, project_path, detected_project_path, session_file, format,
 			snapshot_hash, started_at, last_event_at, error_count, latest_turn_started_at,
 			latest_turn_state_known, latest_turn_completed, updated_at
 		FROM project_sessions
 		WHERE session_id = ?
-	`, sessionID)
-	result, err := scanProjectSessionMigrationRow(row)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return projectSessionMigrationRow{}, false, nil
-		}
-		return projectSessionMigrationRow{}, false, err
-	}
-	return result, true, nil
+	`, scanProjectSessionMigrationRow, sessionID)
 }
 
 func mergeProjectSessionMigrationRows(left, right projectSessionMigrationRow) projectSessionMigrationRow {
@@ -990,9 +1029,16 @@ type sessionClassificationMigrationRow struct {
 }
 
 func (row sessionClassificationMigrationRow) needsIdentityUpdate() bool {
-	return strings.TrimSpace(row.originalSessionID) != row.classification.SessionID ||
-		strings.TrimSpace(row.originalSource) != string(row.classification.Source) ||
-		strings.TrimSpace(row.originalRawSessionID) != row.classification.RawSessionID
+	return needsNormalizedSessionIdentityUpdate(
+		row.originalSessionID,
+		row.originalSource,
+		row.originalRawSessionID,
+		normalizedSessionIdentity{
+			sessionID:    row.classification.SessionID,
+			source:       row.classification.Source,
+			rawSessionID: row.classification.RawSessionID,
+		},
+	)
 }
 
 func (s *Store) loadSessionClassificationMigrationRows(ctx context.Context) ([]sessionClassificationMigrationRow, error) {
@@ -1059,9 +1105,10 @@ func scanSessionClassificationMigrationRow(scanner interface {
 	); err != nil {
 		return sessionClassificationMigrationRow{}, err
 	}
-	row.classification.Source = model.NormalizeSessionSource(model.SessionSource(strings.TrimSpace(row.originalSource)))
-	row.classification.SessionID = strings.TrimSpace(row.originalSessionID)
-	row.classification.RawSessionID = strings.TrimSpace(row.originalRawSessionID)
+	identity := normalizedSessionIdentityFrom(row.originalSessionID, row.originalSource, row.originalRawSessionID)
+	row.classification.Source = identity.source
+	row.classification.SessionID = identity.sessionID
+	row.classification.RawSessionID = identity.rawSessionID
 	row.classification.Status = model.SessionClassificationStatus(status)
 	row.classification.Stage = model.SessionClassificationStage(stage)
 	row.classification.Category = model.SessionCategory(category)
@@ -1119,22 +1166,14 @@ func (s *Store) updateSessionClassificationIdentityMetadata(ctx context.Context,
 }
 
 func (s *Store) loadSessionClassificationMigrationRowByID(ctx context.Context, tx *sql.Tx, sessionID string) (sessionClassificationMigrationRow, bool, error) {
-	row := tx.QueryRowContext(ctx, `
+	return loadOptionalMigrationRow(ctx, tx, `
 		SELECT
 			session_id, source, raw_session_id, project_path, session_file, session_format, snapshot_hash,
 			status, stage, category, summary, confidence, model, classifier_version,
 			last_error, source_updated_at, created_at, stage_started_at, updated_at, completed_at
 		FROM session_classifications
 		WHERE session_id = ?
-	`, sessionID)
-	result, err := scanSessionClassificationMigrationRow(row)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return sessionClassificationMigrationRow{}, false, nil
-		}
-		return sessionClassificationMigrationRow{}, false, err
-	}
-	return result, true, nil
+	`, scanSessionClassificationMigrationRow, sessionID)
 }
 
 func mergeSessionClassificationMigrationRows(left, right sessionClassificationMigrationRow) sessionClassificationMigrationRow {

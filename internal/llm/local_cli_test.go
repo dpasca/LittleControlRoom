@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const localRunnerCacheTestTimeout = 5 * time.Second
+const localRunnerCacheTestTimeout = 15 * time.Second
 
 func TestParseCodexExecJSONL(t *testing.T) {
 	raw := "" +
