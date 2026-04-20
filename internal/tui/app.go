@@ -256,8 +256,9 @@ type projectSummaryMsg struct {
 }
 
 type projectSessionSeenMsg struct {
-	path string
-	err  error
+	path    string
+	refresh projectInvalidationIntent
+	err     error
 }
 
 type projectStatusRefreshedMsg struct {
@@ -1694,8 +1695,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case projectSessionSeenMsg:
 		if msg.err != nil {
 			m.reportError("Could not mark session as read", msg.err, msg.path)
+			return m, nil
 		}
-		return m, nil
+		return m, m.requestProjectInvalidationCmd(msg.refresh)
 	case projectStatusRefreshedMsg:
 		if worktreeMergeConfirmTracksPath(m.worktreeMergeConfirm, msg.projectPath) {
 			if msg.err != nil {
@@ -2336,7 +2338,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.codexHiddenProject == msg.projectPath {
 				m.codexHiddenProject = ""
 			}
-			return m, m.requestProjectInvalidationCmd(invalidateProjectScan(m.currentSelectedProjectPath(), false))
+			refresh := invalidateProjectScan(m.visibleDetailPathForProject(msg.projectPath), false)
+			return m, m.markProjectSessionSeenWithRefresh(msg.projectPath, refresh)
 		}
 		return m, nil
 	case codexModelListMsg:
@@ -4339,7 +4342,7 @@ func (m Model) loadProjectSummaryCmd(path string) tea.Cmd {
 	}
 }
 
-func (m Model) markProjectSessionSeenCmd(path string, seenAt time.Time) tea.Cmd {
+func (m Model) markProjectSessionSeenCmd(path string, seenAt time.Time, refresh projectInvalidationIntent) tea.Cmd {
 	if m.svc == nil {
 		return nil
 	}
@@ -4352,8 +4355,9 @@ func (m Model) markProjectSessionSeenCmd(path string, seenAt time.Time) tea.Cmd 
 	}
 	return func() tea.Msg {
 		return projectSessionSeenMsg{
-			path: path,
-			err:  m.svc.MarkProjectSessionSeen(m.ctx, path, seenAt),
+			path:    path,
+			refresh: refresh,
+			err:     m.svc.MarkProjectSessionSeen(m.ctx, path, seenAt),
 		}
 	}
 }
@@ -4377,13 +4381,17 @@ func (m Model) markProjectSessionUnreadCmd(path string) tea.Cmd {
 }
 
 func (m *Model) markProjectSessionSeen(projectPath string) tea.Cmd {
+	return m.markProjectSessionSeenWithRefresh(projectPath, projectInvalidationIntent{})
+}
+
+func (m *Model) markProjectSessionSeenWithRefresh(projectPath string, refresh projectInvalidationIntent) tea.Cmd {
 	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
 	if projectPath == "" {
 		return nil
 	}
 	seenAt := m.currentTime()
 	m.markProjectSessionSeenLocal(projectPath, seenAt)
-	return m.markProjectSessionSeenCmd(projectPath, seenAt)
+	return m.markProjectSessionSeenCmd(projectPath, seenAt, refresh)
 }
 
 func (m *Model) markProjectSessionUnread(projectPath string) tea.Cmd {
@@ -4681,7 +4689,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 			}
 			cmds := make([]tea.Cmd, 0, len(paths))
 			for _, path := range paths {
-				cmds = append(cmds, m.markProjectSessionSeenCmd(path, seenAt))
+				cmds = append(cmds, m.markProjectSessionSeenCmd(path, seenAt, projectInvalidationIntent{}))
 			}
 			m.status = fmt.Sprintf("Marked %d visible project(s) read", len(paths))
 			return m, tea.Batch(cmds...)

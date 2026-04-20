@@ -12478,6 +12478,139 @@ func TestVisibleCodexCtrlCClosesIdleSession(t *testing.T) {
 	}
 }
 
+func TestVisibleCodexCtrlCMarksClosedSessionSeenAndPersistsIt(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	seenAt := time.Date(2026, 4, 20, 10, 30, 0, 0, time.UTC)
+	projectPath := filepath.Join(t.TempDir(), "demo")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "demo",
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     seenAt.Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("seed project state: %v", err)
+	}
+
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	project := model.ProjectSummary{
+		Path:                            projectPath,
+		Name:                            "demo",
+		PresentOnDisk:                   true,
+		LatestSessionClassification:     model.ClassificationCompleted,
+		LatestSessionClassificationType: model.SessionCategoryCompleted,
+		LatestSessionFormat:             "modern",
+		LatestSessionLastEventAt:        seenAt.Add(-5 * time.Minute),
+		LatestTurnStateKnown:            true,
+		LatestTurnCompleted:             true,
+	}
+
+	session := &fakeCodexSession{
+		projectPath: projectPath,
+		snapshot: codexapp.Snapshot{
+			Started: true,
+			Preset:  codexcli.PresetYolo,
+			Status:  "Codex session ready",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: projectPath,
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		ctx:                 ctx,
+		svc:                 svc,
+		nowFn:               func() time.Time { return seenAt },
+		allProjects:         []model.ProjectSummary{project},
+		projects:            []model.ProjectSummary{project},
+		detail:              model.ProjectDetail{Summary: project},
+		selected:            0,
+		codexManager:        manager,
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlC})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("ctrl+c should close an idle embedded Codex session")
+	}
+
+	msg := cmd()
+	action, ok := msg.(codexActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexActionMsg", msg)
+	}
+	if !action.closed {
+		t.Fatalf("close action should mark the session as closed")
+	}
+
+	updated, followUp := got.Update(action)
+	got = updated.(Model)
+	if !got.projects[0].LastSessionSeenAt.Equal(seenAt) {
+		t.Fatalf("projects seen_at = %v, want %v", got.projects[0].LastSessionSeenAt, seenAt)
+	}
+	if !got.detail.Summary.LastSessionSeenAt.Equal(seenAt) {
+		t.Fatalf("detail seen_at = %v, want %v", got.detail.Summary.LastSessionSeenAt, seenAt)
+	}
+	if followUp == nil {
+		t.Fatalf("close action should queue a seen-state write")
+	}
+
+	var seenMsg projectSessionSeenMsg
+	foundSeenMsg := false
+	for _, followUpMsg := range collectCmdMsgs(followUp) {
+		candidate, ok := followUpMsg.(projectSessionSeenMsg)
+		if !ok {
+			continue
+		}
+		seenMsg = candidate
+		foundSeenMsg = true
+		break
+	}
+	if !foundSeenMsg {
+		t.Fatalf("follow-up work should include projectSessionSeenMsg")
+	}
+	if seenMsg.err != nil {
+		t.Fatalf("mark seen follow-up error = %v, want nil", seenMsg.err)
+	}
+
+	summary, err := st.GetProjectSummary(ctx, projectPath, false)
+	if err != nil {
+		t.Fatalf("GetProjectSummary() error = %v", err)
+	}
+	if !summary.LastSessionSeenAt.Equal(seenAt) {
+		t.Fatalf("stored seen_at = %v, want %v", summary.LastSessionSeenAt, seenAt)
+	}
+
+	updated, refreshCmd := got.Update(seenMsg)
+	got = updated.(Model)
+	if refreshCmd == nil {
+		t.Fatalf("marking the closed session seen should queue a refresh")
+	}
+	if got.codexVisibleProject != "" {
+		t.Fatalf("codexVisibleProject = %q, want closed", got.codexVisibleProject)
+	}
+}
+
 func TestVisibleCodexCtrlCDoesNotInterruptExternalBusySession(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
