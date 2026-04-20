@@ -31,7 +31,7 @@ Provider artifact and detector-footprint notes live in:
 
 The TUI `/settings` modal is now split into sections (`AI & Models`, `Project Scope`, `Browser`, `Refresh`) so it stays usable on smaller terminals. The Browser section exposes a simplified `Browser windows` field with plain-language choices such as `Only when needed`, `Always show`, and `Classic browser behavior`, while the config file still stores the raw Playwright policy keys below:
 
-In `Only when needed`, embedded Codex Playwright waits that expose a URL-based login flow now raise a browser-attention prompt that can open the login page directly in your default browser while bringing the embedded session forward.
+In `Only when needed`, embedded Codex now launches its Playwright MCP server with `--headless --isolated` overrides, so ordinary browser automation stays in the background instead of opening focus-stealing tabs. URL-based login waits still raise a browser-attention prompt that can open the login page directly in your default browser while bringing the embedded session forward.
 
 Working roadmap for this area: [`browser_automation_working_plan.md`](browser_automation_working_plan.md)
 

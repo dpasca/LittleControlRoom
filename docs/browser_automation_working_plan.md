@@ -29,6 +29,7 @@ Make browser automation feel quiet and predictable by default:
 ### Policy And Fallback
 
 - Launch-time Playwright policy is threaded through embedded providers.
+- Embedded Codex now uses per-process MCP config overrides in managed mode, so the `playwright` server can be launched with LCR-controlled flags instead of the stock provider defaults.
 - The simplified `/settings` UI now centers on a plain-language `Browser windows` choice:
   - `Only when needed`
   - `Always show`
@@ -64,6 +65,7 @@ Make browser automation feel quiet and predictable by default:
 ### Codex
 
 - Best current target for managed behavior.
+- Managed mode now overrides the embedded Codex `playwright` MCP launch to enforce headless/isolated browser startup in `Only when needed`.
 - Embedded elicitation replies are wired.
 - Managed login URL handoff is working in both hidden and visible session flows.
 

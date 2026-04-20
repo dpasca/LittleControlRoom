@@ -1539,6 +1539,7 @@ func (s *appServerSession) WaitClosed(timeout time.Duration) bool {
 func (s *appServerSession) start(req LaunchRequest) error {
 	cmd := exec.Command("codex", "app-server")
 	cmd.Dir = req.ProjectPath
+	applyCodexPlaywrightMCPOverrides(cmd, req.PlaywrightPolicy)
 	configureAppServerCommand(cmd)
 	applyPlaywrightPolicyEnvironment(cmd, ProviderCodex, req.PlaywrightPolicy)
 
