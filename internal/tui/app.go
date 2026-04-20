@@ -2370,7 +2370,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Payload["status"] == "completed" {
 				m.markAssessmentFlash(msg.ProjectPath, msg.At)
 			} else if msg.Payload["status"] == "failed" {
-				m.appendBackgroundErrorLogEntry("Assessment failed", classificationUpdateError(msg.Payload), msg.ProjectPath)
+				m.appendBackgroundErrorLogEntry(classificationUpdateStatus(msg.Payload), classificationUpdateError(msg.Payload), msg.ProjectPath)
 			}
 			cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectData(msg.ProjectPath)))
 			return m, batchCmds(cmds...)
@@ -6201,12 +6201,30 @@ func (m *Model) appendBackgroundErrorLogEntry(status string, err error, projectP
 	m.status = errorStatusWithHint(status)
 }
 
+func classificationUpdateStatus(payload map[string]string) string {
+	switch strings.TrimSpace(payload["error_kind"]) {
+	case "timeout":
+		return "Assessment timed out"
+	case "connection_failed":
+		return "Assessment connection failed"
+	case "rate_limited":
+		return "Assessment rate limited"
+	case "service_unavailable":
+		return "Assessment service unavailable"
+	default:
+		return "Assessment failed"
+	}
+}
+
 func classificationUpdateError(payload map[string]string) error {
 	errText := strings.TrimSpace(payload["error"])
 	if errText == "" {
 		return nil
 	}
 	err := errors.New(errText)
+	if diagnosis := strings.TrimSpace(payload["error_diagnosis"]); diagnosis != "" {
+		err = fmt.Errorf("%s: %w", diagnosis, err)
+	}
 	if modelName := strings.TrimSpace(payload["model"]); modelName != "" {
 		err = fmt.Errorf("model %s: %w", modelName, err)
 	}

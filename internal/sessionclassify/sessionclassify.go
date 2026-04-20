@@ -472,7 +472,7 @@ func (m *Manager) processOne(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 
-	m.publishClassificationEvent(ctx, classification, "completed")
+	m.publishClassificationEvent(ctx, classification, "completed", nil)
 	if m.onProjectUpdated != nil {
 		_ = m.onProjectUpdated(ctx, classification.ProjectPath)
 	}
@@ -499,10 +499,10 @@ func (m *Manager) failClassification(ctx context.Context, classification *model.
 	if storeErr != nil || !failed {
 		return
 	}
-	m.publishClassificationEvent(ctx, *classification, "failed")
+	m.publishClassificationEvent(ctx, *classification, "failed", err)
 }
 
-func (m *Manager) publishClassificationEvent(ctx context.Context, classification model.SessionClassification, state string) {
+func (m *Manager) publishClassificationEvent(ctx context.Context, classification model.SessionClassification, state string, cause error) {
 	now := time.Now()
 	payload := map[string]string{
 		"status":   state,
@@ -520,6 +520,10 @@ func (m *Manager) publishClassificationEvent(ctx context.Context, classification
 	}
 	if state == "failed" && strings.TrimSpace(classification.LastError) != "" {
 		payload["error"] = strings.TrimSpace(classification.LastError)
+		if kind, diagnosis := classificationFailureMetadata(cause); kind != "" {
+			payload["error_kind"] = string(kind)
+			payload["error_diagnosis"] = diagnosis
+		}
 	}
 	if m.bus != nil {
 		m.bus.Publish(events.Event{
@@ -545,6 +549,9 @@ func (m *Manager) publishClassificationEvent(ctx context.Context, classification
 	}
 	if state == "failed" && strings.TrimSpace(classification.LastError) != "" {
 		eventPayload = fmt.Sprintf("%s error=%s", eventPayload, strings.TrimSpace(classification.LastError))
+		if kind := strings.TrimSpace(payload["error_kind"]); kind != "" {
+			eventPayload = fmt.Sprintf("%s error_kind=%s", eventPayload, kind)
+		}
 	}
 	_ = m.store.AddEvent(ctx, model.StoredEvent{
 		At:          now,

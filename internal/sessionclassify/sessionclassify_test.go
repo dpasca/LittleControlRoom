@@ -609,6 +609,97 @@ func TestManagerProcessOneCompletesClassification(t *testing.T) {
 	}
 }
 
+func TestManagerProcessOnePublishesFailureDiagnosis(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	fixture := filepath.Clean(filepath.Join("..", "..", "testdata", "codex_footprint", "sessions", "2026", "03", "05", "rollout-modern.jsonl"))
+	now := time.Now()
+	state := model.ProjectState{
+		Path:           "/tmp/failure-demo",
+		Name:           "failure-demo",
+		Status:         model.StatusPossiblyStuck,
+		AttentionScore: 30,
+		InScope:        true,
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{{
+			SessionID:            "ses_failure_demo",
+			ProjectPath:          "/tmp/failure-demo",
+			SessionFile:          fixture,
+			Format:               "modern",
+			LastEventAt:          now,
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  true,
+		}},
+	}
+	if err := st.UpsertProjectState(ctx, state); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	bus := events.NewBus()
+	busCh, unsub := bus.Subscribe(1)
+	defer unsub()
+
+	manager := NewManager(st, bus, Options{
+		Client: &fakeClassifier{
+			model: "gpt-5.4-mini",
+			err:   errors.New("context deadline exceeded"),
+		},
+		Workers: 1,
+	})
+
+	queued, err := manager.QueueProject(ctx, state)
+	if err != nil {
+		t.Fatalf("queue project: %v", err)
+	}
+	if !queued {
+		t.Fatalf("expected queue project to enqueue work")
+	}
+
+	processed, err := manager.processOne(ctx)
+	if err != nil {
+		t.Fatalf("process one: %v", err)
+	}
+	if !processed {
+		t.Fatalf("expected processOne to process work")
+	}
+
+	select {
+	case evt := <-busCh:
+		if evt.Type != events.ClassificationUpdated {
+			t.Fatalf("event type = %s, want %s", evt.Type, events.ClassificationUpdated)
+		}
+		if evt.Payload["status"] != "failed" {
+			t.Fatalf("event status = %q, want failed", evt.Payload["status"])
+		}
+		if evt.Payload["error_kind"] != string(classificationFailureKindTimeout) {
+			t.Fatalf("event error_kind = %q, want %q", evt.Payload["error_kind"], classificationFailureKindTimeout)
+		}
+		if evt.Payload["error_diagnosis"] == "" {
+			t.Fatalf("expected timeout diagnosis in event payload")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for classification failure event")
+	}
+
+	classification, err := st.GetSessionClassification(ctx, "ses_failure_demo")
+	if err != nil {
+		t.Fatalf("get classification: %v", err)
+	}
+	if classification.Status != model.ClassificationFailed {
+		t.Fatalf("status = %s, want failed", classification.Status)
+	}
+	if !strings.Contains(classification.LastError, "context deadline exceeded") {
+		t.Fatalf("last error = %q, want timeout detail", classification.LastError)
+	}
+}
+
 func TestManagerProcessOneHeartbeatsWaitingForModel(t *testing.T) {
 	t.Parallel()
 

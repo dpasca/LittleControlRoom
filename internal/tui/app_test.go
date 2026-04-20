@@ -17682,6 +17682,61 @@ func TestBusClassificationFailureAddsErrorLogEntry(t *testing.T) {
 	}
 }
 
+func TestBusClassificationTimeoutUsesSpecificAssessmentStatus(t *testing.T) {
+	m := Model{
+		nowFn: func() time.Time {
+			return time.Date(2026, 4, 20, 22, 32, 5, 0, time.FixedZone("CST", 8*60*60))
+		},
+		allProjects: []model.ProjectSummary{{
+			Name: "LittleControlRoom--todo-we-v-ebeen-working-a-lot-on-this-project",
+			Path: "/tmp/demo",
+		}},
+	}
+
+	updated, cmd := m.Update(busMsg(events.Event{
+		Type:        events.ClassificationUpdated,
+		At:          time.Date(2026, 4, 20, 22, 32, 5, 0, time.FixedZone("CST", 8*60*60)),
+		ProjectPath: "/tmp/demo",
+		Payload: map[string]string{
+			"status":          "failed",
+			"stage":           "waiting_for_model",
+			"model":           "gpt-5.4-mini",
+			"error":           "context deadline exceeded",
+			"error_kind":      "timeout",
+			"error_diagnosis": "request timed out while contacting the model; network connectivity or provider availability may be degraded",
+		},
+	}))
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("classification timeout should continue waiting on the bus")
+	}
+	if len(got.errorLogEntries) != 1 {
+		t.Fatalf("error log count = %d, want 1", len(got.errorLogEntries))
+	}
+	if got.status != "Assessment timed out (use /errors)" {
+		t.Fatalf("status = %q, want timeout-specific assessment hint", got.status)
+	}
+	entry := got.errorLogEntries[0]
+	if entry.Status != "Assessment timed out" {
+		t.Fatalf("error log status = %q, want %q", entry.Status, "Assessment timed out")
+	}
+	if entry.RootCause != "context deadline exceeded" {
+		t.Fatalf("error log root cause = %q, want %q", entry.RootCause, "context deadline exceeded")
+	}
+	if len(entry.Context) != 3 {
+		t.Fatalf("error log context = %#v, want 3 lines", entry.Context)
+	}
+	if entry.Context[0] != "classification stage waiting for model" {
+		t.Fatalf("context[0] = %q, want stage", entry.Context[0])
+	}
+	if entry.Context[1] != "model gpt-5.4-mini" {
+		t.Fatalf("context[1] = %q, want model", entry.Context[1])
+	}
+	if entry.Context[2] != "request timed out while contacting the model; network connectivity or provider availability may be degraded" {
+		t.Fatalf("context[2] = %q, want diagnosis", entry.Context[2])
+	}
+}
+
 func TestBusTodoSuggestionFailureAddsErrorLogEntry(t *testing.T) {
 	m := Model{
 		nowFn: func() time.Time {
