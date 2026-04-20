@@ -4693,6 +4693,32 @@ func TestScratchTaskHotkeyOpensTaskActionDialog(t *testing.T) {
 	}
 }
 
+func TestDispatchTaskActionsCommandOpensScratchTaskActionDialog(t *testing.T) {
+	t.Parallel()
+
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "answer Sarah email",
+			Path:          "/tmp/tasks/answer-sarah-email",
+			Kind:          model.ProjectKindScratchTask,
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindTaskActions, Canonical: "/task-actions"})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("dispatchCommand(/task-actions) should open a dialog before running any command")
+	}
+	if got.scratchTaskAction == nil {
+		t.Fatalf("dispatchCommand(/task-actions) should open the task action dialog")
+	}
+	if got.scratchTaskAction.Selected != scratchTaskActionFocusKeep {
+		t.Fatalf("default task action selection = %d, want keep", got.scratchTaskAction.Selected)
+	}
+}
+
 func TestScratchTaskActionArchiveQueuesArchiveCommand(t *testing.T) {
 	t.Parallel()
 

@@ -101,6 +101,7 @@ The main TUI command palette opens with `/`.
 - `/filter [text|clear]`: Temporarily narrow the whole dashboard to matching project names.
 - `/new-project`: Create a project folder, or paste an existing project path to add it directly.
 - `/new-task`: Create a scratch task folder under the default task root.
+- `/task-actions`: Open archive/delete actions for the selected scratch task.
 - `/open`: Open the selected project's folder in the system browser.
 - `/run [command]`: Start the selected project's managed runtime.
 - `/start [command]`: Alias for `/run`.

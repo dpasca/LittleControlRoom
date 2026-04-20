@@ -171,6 +171,18 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "task actions",
+			raw:  "/task-actions",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindTaskActions {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindTaskActions)
+				}
+				if inv.Canonical != "/task-actions" {
+					t.Fatalf("canonical = %q, want /task-actions", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "open",
 			raw:  "/open",
 			check: func(t *testing.T, inv Invocation) {

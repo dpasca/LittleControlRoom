@@ -22,6 +22,7 @@ const (
 	KindFilter         Kind = "filter"
 	KindNewProject     Kind = "new-project"
 	KindNewTask        Kind = "new-task"
+	KindTaskActions    Kind = "task-actions"
 	KindOpen           Kind = "open"
 	KindRun            Kind = "run"
 	KindRestart        Kind = "restart"
@@ -128,6 +129,7 @@ var specs = []Spec{
 	{Name: "filter", Usage: "/filter [text|clear]", Summary: "Temporarily show only matching project names"},
 	{Name: "new-project", Usage: "/new-project", Summary: "Create a project folder, or paste an existing path to add it"},
 	{Name: "new-task", Usage: "/new-task", Summary: "Create a scratch task folder under the default task root"},
+	{Name: "task-actions", Usage: "/task-actions", Summary: "Open archive/delete actions for the selected scratch task"},
 	{Name: "open", Usage: "/open", Summary: "Open the selected project's folder in the system browser"},
 	{Name: "run", Usage: "/run [command]", Summary: "Start the selected project's managed runtime"},
 	{Name: "start", Usage: "/start [command]", Summary: "Alias for /run"},
@@ -377,6 +379,11 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /new-task")
 		}
 		return Invocation{Kind: KindNewTask, Canonical: "/new-task"}, nil
+	case "task-actions":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /task-actions")
+		}
+		return Invocation{Kind: KindTaskActions, Canonical: "/task-actions"}, nil
 	case "open":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /open")

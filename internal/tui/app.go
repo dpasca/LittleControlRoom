@@ -4535,6 +4535,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, m.openNewProjectDialog()
 	case commands.KindNewTask:
 		return m, m.openNewTaskDialog()
+	case commands.KindTaskActions:
+		return m, m.openScratchTaskActionConfirmForSelection()
 	case commands.KindOpen:
 		p, ok := m.selectedProject()
 		if !ok {
