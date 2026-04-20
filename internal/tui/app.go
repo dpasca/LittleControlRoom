@@ -2470,15 +2470,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.removeManagedBrowserLease(msg.projectPath, snapshot)
 			m.loading = true
-			cmds = append(cmds,
-				m.recordEmbeddedSessionSettledCmd(msg.projectPath, snapshot),
-				m.requestProjectInvalidationCmd(invalidateProjectScan("", false)),
-			)
+			if shouldRecordEmbeddedSessionSettledAfterClose(hadPrevSnapshot, prevSnapshot, snapshot) {
+				cmds = append(cmds, m.recordEmbeddedSessionSettledCmd(msg.projectPath, snapshot))
+			}
+			cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectScan("", false)))
 		} else if !needsAsync {
 			m.cancelModelSettleLatency(msg.projectPath, "stale")
 			if hadPrevSnapshot {
 				m.removeManagedBrowserLease(msg.projectPath, prevSnapshot)
-				cmds = append(cmds, m.recordEmbeddedSessionSettledCmd(msg.projectPath, prevSnapshot))
+				if shouldRecordEmbeddedSessionSettledAfterDisappearance(prevSnapshot) {
+					cmds = append(cmds, m.recordEmbeddedSessionSettledCmd(msg.projectPath, prevSnapshot))
+				}
 			}
 			m.dropCodexSnapshot(msg.projectPath)
 		}
@@ -2531,10 +2533,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = snapshot.Status
 		}
 		m.loading = true
-		return m, batchCmds(
-			m.recordEmbeddedSessionSettledCmd(projectPath, snapshot),
-			m.requestProjectInvalidationCmd(invalidateProjectScan("", false)),
-		)
+		cmds := []tea.Cmd{m.requestProjectInvalidationCmd(invalidateProjectScan("", false))}
+		if shouldRecordEmbeddedSessionSettledAfterClose(hadPrev, prevSnapshot, snapshot) {
+			cmds = append([]tea.Cmd{m.recordEmbeddedSessionSettledCmd(projectPath, snapshot)}, cmds...)
+		}
+		return m, batchCmds(cmds...)
 	}
 
 	return m, nil
@@ -2542,6 +2545,23 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func shouldRefreshProjectStatusAfterCodexSnapshot(prev, next codexapp.Snapshot) bool {
 	return !prev.Closed && prev.Busy && !next.Closed && !next.Busy
+}
+
+func shouldRecordEmbeddedSessionSettledAfterClose(hadPrev bool, prev, next codexapp.Snapshot) bool {
+	if next.Closed || !next.Started || embeddedSnapshotActivityAt(next).IsZero() {
+		return false
+	}
+	if !hadPrev {
+		return false
+	}
+	return prev.Busy
+}
+
+func shouldRecordEmbeddedSessionSettledAfterDisappearance(prev codexapp.Snapshot) bool {
+	if prev.Closed || !prev.Started || embeddedSnapshotActivityAt(prev).IsZero() {
+		return false
+	}
+	return prev.Busy
 }
 
 func shouldRecordEmbeddedSessionActivityAfterCodexSnapshot(hadPrev bool, prev, next codexapp.Snapshot) bool {

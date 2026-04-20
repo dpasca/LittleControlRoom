@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"lcroom/internal/aibackend"
+	"lcroom/internal/attention"
 	"lcroom/internal/brand"
 	"lcroom/internal/browserctl"
 	"lcroom/internal/codexapp"
@@ -12634,6 +12635,140 @@ func TestVisibleCodexCtrlCMarksClosedSessionSeenAndPersistsIt(t *testing.T) {
 	}
 	if got.codexVisibleProject != "" {
 		t.Fatalf("codexVisibleProject = %q, want closed", got.codexVisibleProject)
+	}
+}
+
+func TestCodexUpdateMissingIdleSessionDoesNotResurfaceUnread(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	projectPath := filepath.Join(t.TempDir(), "demo")
+	baseEventAt := time.Date(2026, 4, 20, 10, 0, 0, 0, time.UTC)
+	seenAt := baseEventAt.Add(5 * time.Minute)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	session := model.NormalizeSessionEvidenceIdentity(model.SessionEvidence{
+		Source:               model.SessionSourceOpenCode,
+		SessionID:            "ses-open",
+		RawSessionID:         "ses-open",
+		ProjectPath:          projectPath,
+		DetectedProjectPath:  projectPath,
+		SessionFile:          filepath.Join(t.TempDir(), "opencode.db") + "#session:ses-open",
+		Format:               "opencode_db",
+		SnapshotHash:         "snapshot-open",
+		StartedAt:            baseEventAt.Add(-10 * time.Minute),
+		LastEventAt:          baseEventAt,
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  true,
+	})
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "demo",
+		LastActivity:   baseEventAt,
+		Status:         model.StatusIdle,
+		AttentionScore: 0,
+		PresentOnDisk:  true,
+		InScope:        true,
+		UpdatedAt:      seenAt.Add(-time.Minute),
+		Sessions:       []model.SessionEvidence{session},
+	}); err != nil {
+		t.Fatalf("seed project state: %v", err)
+	}
+
+	classification := model.SessionClassification{
+		SessionID:         session.SessionID,
+		Source:            session.Source,
+		RawSessionID:      session.RawSessionID,
+		ProjectPath:       projectPath,
+		SessionFile:       session.SessionFile,
+		SessionFormat:     session.Format,
+		SnapshotHash:      session.SnapshotHash,
+		Model:             "gpt-5.4-mini",
+		ClassifierVersion: "v1",
+		SourceUpdatedAt:   baseEventAt,
+	}
+	if queued, err := st.QueueSessionClassification(ctx, classification, time.Minute); err != nil || !queued {
+		t.Fatalf("queue classification: queued=%v err=%v", queued, err)
+	}
+	claimed, err := st.ClaimNextPendingSessionClassification(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("claim classification: %v", err)
+	}
+	claimed.Category = model.SessionCategoryCompleted
+	claimed.Summary = "Done."
+	claimed.Confidence = 0.92
+	if err := st.CompleteSessionClassification(ctx, claimed); err != nil {
+		t.Fatalf("complete classification: %v", err)
+	}
+	if err := st.SetProjectSessionSeenAt(ctx, projectPath, seenAt); err != nil {
+		t.Fatalf("set seen at: %v", err)
+	}
+
+	before, err := st.GetProjectSummary(ctx, projectPath, false)
+	if err != nil {
+		t.Fatalf("summary before update: %v", err)
+	}
+	if !before.LastSessionSeenAt.Equal(seenAt) {
+		t.Fatalf("seen_at before update = %v, want %v", before.LastSessionSeenAt, seenAt)
+	}
+	if !before.LatestSessionLastEventAt.Equal(baseEventAt) {
+		t.Fatalf("last event before update = %v, want %v", before.LatestSessionLastEventAt, baseEventAt)
+	}
+	if attention.AssessmentUnread(before) {
+		t.Fatalf("project should start read, got %#v", before)
+	}
+
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	m := Model{
+		ctx: ctx,
+		svc: svc,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			projectPath: {
+				Provider:       codexapp.ProviderOpenCode,
+				ProjectPath:    projectPath,
+				ThreadID:       "ses-open",
+				Started:        true,
+				Busy:           false,
+				LastActivityAt: seenAt.Add(2 * time.Minute),
+				Status:         "OpenCode session ready",
+			},
+		},
+		codexInput:    newCodexTextarea(),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, cmd := m.Update(codexUpdateMsg{projectPath: projectPath})
+	got := updated.(Model)
+	if _, ok := got.codexSnapshots[projectPath]; ok {
+		t.Fatalf("missing session update should drop the stale cached snapshot")
+	}
+
+	msgs := collectCmdMsgs(cmd)
+	for _, msg := range msgs {
+		if refreshMsg, ok := msg.(projectStatusRefreshedMsg); ok && refreshMsg.err != nil {
+			t.Fatalf("projectStatusRefreshedMsg err = %v", refreshMsg.err)
+		}
+	}
+
+	after, err := st.GetProjectSummary(ctx, projectPath, false)
+	if err != nil {
+		t.Fatalf("summary after update: %v", err)
+	}
+	if !after.LastSessionSeenAt.Equal(seenAt) {
+		t.Fatalf("seen_at after update = %v, want %v", after.LastSessionSeenAt, seenAt)
+	}
+	if !after.LatestSessionLastEventAt.Equal(baseEventAt) {
+		t.Fatalf("last event after update = %v, want %v", after.LatestSessionLastEventAt, baseEventAt)
+	}
+	if attention.AssessmentUnread(after) {
+		t.Fatalf("idle missing session should stay read, got %#v", after)
 	}
 }
 
