@@ -1416,6 +1416,24 @@ func TestRenderFooterListOmitsMoveAndForgetHints(t *testing.T) {
 	}
 }
 
+func TestRenderFooterShowsScratchTaskActionHint(t *testing.T) {
+	m := Model{
+		focusedPane: focusProjects,
+		projects: []model.ProjectSummary{{
+			Name:          "answer Sarah",
+			Path:          "/tmp/tasks/answer-sarah",
+			Kind:          model.ProjectKindScratchTask,
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+	}
+
+	rendered := ansi.Strip(m.renderFooter(160))
+	if !strings.Contains(rendered, "d task") {
+		t.Fatalf("renderFooter() should advertise the scratch task action shortcut, got %q", rendered)
+	}
+}
+
 func TestRenderFooterDetailOmitsScrollHint(t *testing.T) {
 	m := Model{focusedPane: focusDetail}
 
@@ -4602,7 +4620,7 @@ func TestRenderProjectListShowsTODOCount(t *testing.T) {
 	}
 }
 
-func TestRenderProjectListGroupsScratchTasksAndKeepsRepoWarningOffTheirRows(t *testing.T) {
+func TestRenderProjectListKeepsScratchTasksInlineAndKeepsRepoWarningOffTheirRows(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{
 			{
@@ -4628,8 +4646,8 @@ func TestRenderProjectListGroupsScratchTasksAndKeepsRepoWarningOffTheirRows(t *t
 	}
 
 	rendered := ansi.Strip(m.renderProjectList(120, 8))
-	if !strings.Contains(rendered, "Projects") || !strings.Contains(rendered, "Scratch Tasks") {
-		t.Fatalf("renderProjectList() should show both kind sections, got %q", rendered)
+	if strings.Contains(rendered, "Projects") || strings.Contains(rendered, "Scratch Tasks") {
+		t.Fatalf("renderProjectList() should keep scratch tasks in the same list without kind headers, got %q", rendered)
 	}
 	lines := strings.Split(rendered, "\n")
 	scratchLine := ""
@@ -4644,6 +4662,107 @@ func TestRenderProjectListGroupsScratchTasksAndKeepsRepoWarningOffTheirRows(t *t
 	}
 	if strings.Contains(scratchLine, "!") {
 		t.Fatalf("scratch task rows should not show repo warning markers, got %q", scratchLine)
+	}
+}
+
+func TestScratchTaskHotkeyOpensTaskActionDialog(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "answer Sarah email",
+			Path:          "/tmp/tasks/answer-sarah-email",
+			Kind:          model.ProjectKindScratchTask,
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+	}
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("task action hotkey should open a dialog before running any command")
+	}
+	if got.scratchTaskAction == nil {
+		t.Fatalf("scratch task hotkey should open the task action dialog")
+	}
+	if got.scratchTaskAction.Selected != scratchTaskActionFocusKeep {
+		t.Fatalf("default task action selection = %d, want keep", got.scratchTaskAction.Selected)
+	}
+	rendered := ansi.Strip(got.renderScratchTaskActionOverlay("", 100, 24))
+	if !strings.Contains(rendered, "Archive") || !strings.Contains(rendered, "Delete") {
+		t.Fatalf("task action overlay should offer archive and delete, got %q", rendered)
+	}
+}
+
+func TestScratchTaskActionArchiveQueuesArchiveCommand(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := service.New(cfg, st, events.NewBus(), nil)
+	result, err := svc.CreateScratchTask(ctx, service.CreateScratchTaskRequest{Title: "Archive this task"})
+	if err != nil {
+		t.Fatalf("CreateScratchTask() error = %v", err)
+	}
+
+	m := Model{
+		ctx: ctx,
+		svc: svc,
+		projects: []model.ProjectSummary{
+			{
+				Name:          "Archive this task",
+				Path:          result.TaskPath,
+				Kind:          model.ProjectKindScratchTask,
+				PresentOnDisk: true,
+			},
+			{
+				Name:          "neighbor",
+				Path:          "/tmp/neighbor",
+				PresentOnDisk: true,
+			},
+		},
+		selected: 0,
+		scratchTaskAction: &scratchTaskActionConfirmState{
+			ProjectPath:   result.TaskPath,
+			ProjectName:   "Archive this task",
+			PresentOnDisk: true,
+			Selected:      scratchTaskActionFocusKeep,
+		},
+	}
+
+	updated, _ := m.updateScratchTaskActionConfirmMode(tea.KeyMsg{Type: tea.KeyTab})
+	got := updated.(Model)
+	if got.scratchTaskAction.Selected != scratchTaskActionFocusArchive {
+		t.Fatalf("first tab should move focus to archive, got %d", got.scratchTaskAction.Selected)
+	}
+
+	updated, cmd := got.updateScratchTaskActionConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if got.status != "Archiving task..." {
+		t.Fatalf("status = %q, want archive progress", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("archive action should queue a command")
+	}
+	rawMsg := cmd()
+	msg, ok := rawMsg.(scratchTaskActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want scratchTaskActionMsg", rawMsg)
+	}
+	if msg.err != nil {
+		t.Fatalf("scratchTaskActionMsg.err = %v, want nil", msg.err)
+	}
+	if msg.status != "Scratch task archived" {
+		t.Fatalf("scratchTaskActionMsg.status = %q, want archive status", msg.status)
+	}
+	if msg.selectPath != "/tmp/neighbor" {
+		t.Fatalf("scratchTaskActionMsg.selectPath = %q, want neighbor fallback", msg.selectPath)
 	}
 }
 

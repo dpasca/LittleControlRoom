@@ -78,6 +78,7 @@ type Model struct {
 	todoDialog            *todoDialogState
 	todoEditor            *todoEditorState
 	todoDeleteConfirm     *todoDeleteConfirmState
+	scratchTaskAction     *scratchTaskActionConfirmState
 	todoLaunchDrafts      map[string]todoLaunchDraftState
 	todoPendingLaunch     *todoPendingLaunchState
 	todoCopyDialog        *todoCopyDialogState
@@ -335,6 +336,13 @@ type runCommandSuggestionMsg struct {
 
 type todoActionMsg struct {
 	projectPath string
+	status      string
+	err         error
+}
+
+type scratchTaskActionMsg struct {
+	projectPath string
+	selectPath  string
 	status      string
 	err         error
 }
@@ -1480,6 +1488,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.worktreeRemoveConfirm != nil {
 			return m.updateWorktreeRemoveConfirmMode(msg)
 		}
+		if m.scratchTaskAction != nil {
+			return m.updateScratchTaskActionConfirmMode(msg)
+		}
 		if m.todoDeleteConfirm != nil {
 			return m.updateTodoDeleteConfirmMode(msg)
 		}
@@ -1973,6 +1984,21 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = msg.status
 		}
 		return m, m.requestProjectInvalidationCmd(invalidateProjectData(msg.projectPath))
+	case scratchTaskActionMsg:
+		if msg.err != nil {
+			if m.scratchTaskAction != nil && filepath.Clean(strings.TrimSpace(m.scratchTaskAction.ProjectPath)) == filepath.Clean(strings.TrimSpace(msg.projectPath)) {
+				m.scratchTaskAction.Submitting = false
+			}
+			m.reportError("Scratch task action failed", msg.err, msg.projectPath)
+			return m, nil
+		}
+		m.scratchTaskAction = nil
+		m.err = nil
+		m.preferredSelectPath = strings.TrimSpace(msg.selectPath)
+		if strings.TrimSpace(msg.status) != "" {
+			m.status = msg.status
+		}
+		return m, m.requestProjectInvalidationCmd(invalidateProjectStructure(""))
 	case todoWorktreeLaunchMsg:
 		m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, msg.err, msg.status)
 		pendingCanceled := false
@@ -2788,6 +2814,8 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if p, ok := m.selectedProject(); ok {
 			return m, m.togglePinCmd(p.Path)
 		}
+	case "d":
+		return m, m.openScratchTaskActionConfirmForSelection()
 	case "t":
 		return m, m.openTodoDialogForSelection()
 	case "w":
@@ -3332,6 +3360,9 @@ func (m Model) View() string {
 	if m.todoDeleteConfirm != nil {
 		body = m.renderTodoDeleteConfirmOverlay(body, layout.width, layout.height)
 	}
+	if m.scratchTaskAction != nil {
+		body = m.renderScratchTaskActionOverlay(body, layout.width, layout.height)
+	}
 	if m.todoExistingWorktree != nil {
 		body = m.renderTodoExistingWorktreeOverlay(body, layout.width, layout.height)
 	}
@@ -3738,7 +3769,7 @@ func (m Model) renderProjectList(width, height int) string {
 	}
 	rows = append(rows, header)
 	now := m.currentTime()
-	showKindSections := projectListHasKindSections(m.projects)
+	showKindSections := false
 
 	selected := m.selected
 	if selected < 0 {
@@ -3962,6 +3993,7 @@ func (m Model) renderDetailContent(width int) string {
 	lines = append(lines, detailField("Path", detailValueStyle.Render(p.Path)))
 	if model.NormalizeProjectKind(p.Kind) == model.ProjectKindScratchTask {
 		lines = append(lines, detailField("Kind", detailValueStyle.Render("scratch task")))
+		lines = append(lines, detailMutedStyle.Render("Press d to archive or delete this task."))
 	}
 	statusFields := []string{detailField("Assessment", assessmentValue)}
 	if shouldShowProjectActivity(p) {

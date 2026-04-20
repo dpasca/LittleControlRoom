@@ -363,3 +363,103 @@ func TestScanOnceKeepsScratchTaskVisibleOutsideIncludePaths(t *testing.T) {
 		t.Fatalf("visible scratch task = %#v, want path=%q kind=%q", visible[0], result.TaskPath, model.ProjectKindScratchTask)
 	}
 }
+
+func TestArchiveScratchTaskMovesFolderAndHidesOriginalTask(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := New(cfg, st, events.NewBus(), nil)
+
+	result, err := svc.CreateScratchTask(ctx, CreateScratchTaskRequest{Title: "Archive me later"})
+	if err != nil {
+		t.Fatalf("CreateScratchTask() error = %v", err)
+	}
+
+	archivedPath, err := svc.ArchiveScratchTask(ctx, result.TaskPath)
+	if err != nil {
+		t.Fatalf("ArchiveScratchTask() error = %v", err)
+	}
+	if archivedPath == result.TaskPath {
+		t.Fatalf("archived path = %q, want a new location", archivedPath)
+	}
+	if _, err := os.Stat(result.TaskPath); !os.IsNotExist(err) {
+		t.Fatalf("original task path should be gone after archive, stat err = %v", err)
+	}
+	if _, err := os.Stat(archivedPath); err != nil {
+		t.Fatalf("archived path should exist: %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(archivedPath, scratchTaskMetadataFileName))
+	if err != nil {
+		t.Fatalf("read archived task metadata: %v", err)
+	}
+	if got := string(content); !strings.Contains(got, "Status: archived") {
+		t.Fatalf("archived TASK.md = %q, want archived status", got)
+	}
+
+	visible, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	if len(visible) != 0 {
+		t.Fatalf("expected archived task to disappear from visible projects, got %#v", visible)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, result.TaskPath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() error = %v", err)
+	}
+	if !detail.Summary.Forgotten || detail.Summary.PresentOnDisk {
+		t.Fatalf("archived scratch task summary = %#v, want forgotten and missing", detail.Summary)
+	}
+}
+
+func TestDeleteScratchTaskRemovesFolderAndHidesTask(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := New(cfg, st, events.NewBus(), nil)
+
+	result, err := svc.CreateScratchTask(ctx, CreateScratchTaskRequest{Title: "Delete me later"})
+	if err != nil {
+		t.Fatalf("CreateScratchTask() error = %v", err)
+	}
+
+	if err := svc.DeleteScratchTask(ctx, result.TaskPath); err != nil {
+		t.Fatalf("DeleteScratchTask() error = %v", err)
+	}
+	if _, err := os.Stat(result.TaskPath); !os.IsNotExist(err) {
+		t.Fatalf("deleted task path should be gone, stat err = %v", err)
+	}
+
+	visible, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	if len(visible) != 0 {
+		t.Fatalf("expected deleted task to disappear from visible projects, got %#v", visible)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, result.TaskPath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() error = %v", err)
+	}
+	if !detail.Summary.Forgotten || detail.Summary.PresentOnDisk {
+		t.Fatalf("deleted scratch task summary = %#v, want forgotten and missing", detail.Summary)
+	}
+}

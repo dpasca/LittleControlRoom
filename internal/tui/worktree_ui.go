@@ -722,21 +722,7 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary, selectedPath st
 }
 
 func partitionProjectsByKind(projects []model.ProjectSummary) []model.ProjectSummary {
-	if len(projects) == 0 {
-		return nil
-	}
-	out := make([]model.ProjectSummary, 0, len(projects))
-	for _, project := range projects {
-		if model.NormalizeProjectKind(project.Kind) == model.ProjectKindProject {
-			out = append(out, project)
-		}
-	}
-	for _, project := range projects {
-		if model.NormalizeProjectKind(project.Kind) == model.ProjectKindScratchTask {
-			out = append(out, project)
-		}
-	}
-	return out
+	return append([]model.ProjectSummary(nil), projects...)
 }
 
 func aggregateWorktreeRootRow(root model.ProjectSummary, family []model.ProjectSummary) model.ProjectSummary {
@@ -885,9 +871,10 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 	if width < 60 {
 		return nil
 	}
+	actions := append([]footerAction(nil), m.scratchTaskFooterActions(width)...)
 	row, project, ok := m.selectedProjectRow()
 	if !ok {
-		return nil
+		return actions
 	}
 	rootPath := row.RootPath
 	if rootPath == "" {
@@ -895,10 +882,9 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 	}
 	family := m.worktreeFamily(rootPath)
 	if len(family) <= 1 && row.Kind != projectListRowWorktree && row.LinkedCount == 0 {
-		return nil
+		return actions
 	}
 
-	actions := make([]footerAction, 0, 3)
 	if len(family) > 1 || row.LinkedCount > 0 || row.Kind == projectListRowWorktree {
 		actions = append(actions, footerNavAction("w", "lanes"))
 	}
