@@ -8,6 +8,25 @@ It is intentionally different from `STATUS.md`:
 - This doc tracks the active browser-automation roadmap, current design shape, safety rules, and open questions.
 - Git history remains the source of truth for detailed chronology.
 
+## Current Snapshot
+
+- For embedded Codex, `Only when needed` now affects the actual Playwright launch path, not just the surrounding UI.
+- In managed mode, embedded Codex overrides the `playwright` MCP registration per process and launches Playwright with LCR-controlled flags.
+- Current effective quiet default for newly launched embedded Codex sessions is `--headless --isolated`.
+- Existing embedded Codex sessions do not retroactively pick up the new launch behavior; they need to be reopened or reconnected.
+- URL-based login waits already have an LCR-managed attention flow and interactive-browser lease.
+- OpenCode and Claude Code still remain behind Codex in managed-browser support.
+
+## Maintenance Rule
+
+Update this doc whenever browser automation behavior changes in one of these ways:
+
+- the user-facing `Browser windows` experience changes
+- the actual embedded Playwright launch path changes
+- provider support materially changes
+- new rollback or safety behavior is added
+- the near-term roadmap meaningfully changes
+
 ## Goal
 
 Make browser automation feel quiet and predictable by default:
@@ -68,6 +87,7 @@ Make browser automation feel quiet and predictable by default:
 - Managed mode now overrides the embedded Codex `playwright` MCP launch to enforce headless/isolated browser startup in `Only when needed`.
 - Embedded elicitation replies are wired.
 - Managed login URL handoff is working in both hidden and visible session flows.
+- This launch override currently applies to newly started embedded sessions only.
 
 ### OpenCode
 
