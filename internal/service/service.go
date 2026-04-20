@@ -15,7 +15,6 @@ import (
 	"lcroom/internal/aibackend"
 	"lcroom/internal/appfs"
 	"lcroom/internal/attention"
-	"lcroom/internal/brand"
 	"lcroom/internal/config"
 	"lcroom/internal/detectors"
 	"lcroom/internal/events"
@@ -28,7 +27,6 @@ import (
 	"lcroom/internal/todoworktree"
 )
 
-const legacyRepoDirName = "BatonDeck"
 const recentActivityDiscoveryWindow = 24 * time.Hour
 const asyncProjectRefreshTimeout = 30 * time.Second
 
@@ -505,16 +503,6 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		return ScanReport{}, fmt.Errorf("load previous project state: %w", err)
 	}
 	discovered, liveWorktreePathsByRoot := s.expandDiscoveredWorktreePaths(ctx, discovered, oldMap, scope, gitWorktreeInfoReader, gitWorktreeListReader)
-	aliasesChanged, err := s.applyStaticPathAliases(ctx, now, oldMap, cfg.IncludePaths)
-	if err != nil {
-		return ScanReport{}, err
-	}
-	if aliasesChanged {
-		oldMap, err = s.store.GetProjectSummaryMap(ctx)
-		if err != nil {
-			return ScanReport{}, fmt.Errorf("reload project state after path aliases: %w", err)
-		}
-	}
 	for path, old := range oldMap {
 		inScopeNow := scope.Allows(path) || old.ManuallyAdded
 		if old.InScope == inScopeNow {
@@ -1458,53 +1446,6 @@ func resolveProjectPath(path string, aliases map[string]model.PathAlias) string 
 		path = filepath.Clean(alias.NewPath)
 	}
 	return path
-}
-
-func (s *Service) applyStaticPathAliases(ctx context.Context, now time.Time, oldMap map[string]model.ProjectSummary, includePaths []string) (bool, error) {
-	aliases := staticPathAliases(includePaths, now)
-	if len(aliases) == 0 {
-		return false, nil
-	}
-
-	changed := false
-	for _, alias := range aliases {
-		if err := s.store.UpsertPathAlias(ctx, alias); err != nil {
-			return false, fmt.Errorf("persist path alias %s -> %s: %w", alias.OldPath, alias.NewPath, err)
-		}
-		if _, ok := oldMap[alias.OldPath]; !ok {
-			continue
-		}
-		if _, targetExists := oldMap[alias.NewPath]; targetExists {
-			if err := s.store.ConsolidateProjectPath(ctx, alias.OldPath, alias.NewPath, now); err != nil {
-				return false, fmt.Errorf("consolidate project path %s -> %s: %w", alias.OldPath, alias.NewPath, err)
-			}
-		} else {
-			if err := s.store.MoveProjectPath(ctx, alias.OldPath, alias.NewPath, now); err != nil {
-				return false, fmt.Errorf("move project path %s -> %s: %w", alias.OldPath, alias.NewPath, err)
-			}
-		}
-		changed = true
-	}
-	return changed, nil
-}
-
-func staticPathAliases(includePaths []string, now time.Time) []model.PathAlias {
-	out := make([]model.PathAlias, 0, len(includePaths))
-	newRepoDirName := strings.ReplaceAll(brand.Name, " ", "")
-	for _, includePath := range includePaths {
-		cleanIncludePath := filepath.Clean(includePath)
-		newPath := filepath.Join(cleanIncludePath, newRepoDirName)
-		if !projectPathExists(newPath) {
-			continue
-		}
-		out = append(out, model.PathAlias{
-			OldPath:   filepath.Join(cleanIncludePath, legacyRepoDirName),
-			NewPath:   newPath,
-			Reason:    "repo_rename",
-			UpdatedAt: now,
-		})
-	}
-	return out
 }
 
 func normalizeActivity(activity *model.DetectorProjectActivity, projectPath string) *model.DetectorProjectActivity {
