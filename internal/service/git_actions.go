@@ -24,7 +24,7 @@ const (
 	GitActionCommit GitActionIntent = "commit"
 	GitActionFinish GitActionIntent = "finish"
 
-	defaultCommitAssistantTimeout = 20 * time.Second
+	defaultCommitAssistantTimeout = 45 * time.Second
 )
 
 type GitStageMode string
