@@ -1279,8 +1279,8 @@ func (s *Store) writeSessionClassificationMigrationRow(ctx context.Context, tx *
 	return err
 }
 
-func (s *Store) GetProjectSummaryMap(ctx context.Context) (map[string]model.ProjectSummary, error) {
-	query := fmt.Sprintf(`
+func projectSummaryBaseQuery() string {
+	return fmt.Sprintf(`
 		SELECT
 			p.path, p.name, p.kind, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.worktree_merge_status, p.worktree_origin_todo_id, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until, p.last_session_seen_at, p.created_at,
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path AND pt.done = 0), 0),
@@ -1306,23 +1306,44 @@ func (s *Store) GetProjectSummaryMap(ctx context.Context) (map[string]model.Proj
 			COALESCE(sc_completed.category, ''),
 			COALESCE(sc_completed.summary, ''),
 			sc_completed.updated_at
-	FROM projects p
-	LEFT JOIN project_sessions ps ON ps.session_id = (
-		SELECT ps2.session_id
-		FROM project_sessions ps2
-		WHERE ps2.project_path = p.path
-		ORDER BY ps2.last_event_at DESC
-		LIMIT 1
-	)
-	LEFT JOIN session_classifications sc ON sc.session_id = %s
-	LEFT JOIN session_classifications sc_completed ON sc_completed.session_id = (
-		SELECT sc2.session_id
-		FROM session_classifications sc2
-		WHERE sc2.project_path = p.path AND sc2.status = 'completed'
-		ORDER BY %s DESC, COALESCE(sc2.completed_at, sc2.updated_at) DESC, sc2.updated_at DESC
-		LIMIT 1
-	)
+		FROM projects p
+		LEFT JOIN project_sessions ps ON ps.session_id = (
+			SELECT ps2.session_id
+			FROM project_sessions ps2
+			WHERE ps2.project_path = p.path
+			ORDER BY ps2.last_event_at DESC
+			LIMIT 1
+		)
+		LEFT JOIN session_classifications sc ON sc.session_id = %s
+		LEFT JOIN session_classifications sc_completed ON sc_completed.session_id = (
+			SELECT sc2.session_id
+			FROM session_classifications sc2
+			WHERE sc2.project_path = p.path AND sc2.status = 'completed'
+			ORDER BY %s DESC, COALESCE(sc2.completed_at, sc2.updated_at) DESC, sc2.updated_at DESC
+			LIMIT 1
+		)
 	`, preferredSessionClassificationIDExpr("ps.session_id"), sessionClassificationCanonicalRankExpr("sc2"))
+}
+
+func projectSummaryVisibilityConditions(includeHistorical bool) string {
+	conditions := `p.forgotten = 0
+		AND NOT EXISTS (
+			SELECT 1
+			FROM ignored_project_names ipn
+			WHERE LOWER(ipn.name) = LOWER(p.name)
+		)`
+	if !includeHistorical {
+		conditions += ` AND p.in_scope = 1`
+	}
+	return conditions
+}
+
+func projectSummaryVisibilityFilter(includeHistorical bool) string {
+	return ` WHERE ` + projectSummaryVisibilityConditions(includeHistorical)
+}
+
+func (s *Store) GetProjectSummaryMap(ctx context.Context) (map[string]model.ProjectSummary, error) {
+	query := projectSummaryBaseQuery()
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -1341,58 +1362,8 @@ func (s *Store) GetProjectSummaryMap(ctx context.Context) (map[string]model.Proj
 }
 
 func (s *Store) ListProjects(ctx context.Context, includeHistorical bool) ([]model.ProjectSummary, error) {
-	query := fmt.Sprintf(`
-		SELECT
-		p.path, p.name, p.kind, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.worktree_merge_status, p.worktree_origin_todo_id, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until, p.last_session_seen_at, p.created_at,
-			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path AND pt.done = 0), 0),
-			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path), 0),
-			p.run_command,
-			p.moved_from_path, p.moved_at,
-			COALESCE(ps.session_id, ''),
-			COALESCE(ps.source, ''),
-			COALESCE(ps.raw_session_id, ''),
-			COALESCE(ps.format, ''),
-			COALESCE(ps.detected_project_path, ''),
-			COALESCE(ps.snapshot_hash, ''),
-			ps.last_event_at,
-			ps.latest_turn_started_at,
-			COALESCE(ps.latest_turn_state_known, 0),
-			COALESCE(ps.latest_turn_completed, 0),
-			COALESCE(sc.status, ''),
-			COALESCE(sc.stage, ''),
-			COALESCE(sc.category, ''),
-			COALESCE(sc.summary, ''),
-			sc.stage_started_at,
-			sc.updated_at,
-			COALESCE(sc_completed.category, ''),
-			COALESCE(sc_completed.summary, ''),
-			sc_completed.updated_at
-	FROM projects p
-	LEFT JOIN project_sessions ps ON ps.session_id = (
-		SELECT ps2.session_id
-		FROM project_sessions ps2
-		WHERE ps2.project_path = p.path
-		ORDER BY ps2.last_event_at DESC
-		LIMIT 1
-	)
-	LEFT JOIN session_classifications sc ON sc.session_id = %s
-	LEFT JOIN session_classifications sc_completed ON sc_completed.session_id = (
-		SELECT sc2.session_id
-		FROM session_classifications sc2
-		WHERE sc2.project_path = p.path AND sc2.status = 'completed'
-		ORDER BY %s DESC, COALESCE(sc2.completed_at, sc2.updated_at) DESC, sc2.updated_at DESC
-		LIMIT 1
-	)
-	`, preferredSessionClassificationIDExpr("ps.session_id"), sessionClassificationCanonicalRankExpr("sc2"))
-	query += ` WHERE p.forgotten = 0
-		AND NOT EXISTS (
-			SELECT 1
-			FROM ignored_project_names ipn
-			WHERE LOWER(ipn.name) = LOWER(p.name)
-		)`
-	if !includeHistorical {
-		query += ` AND p.in_scope = 1`
-	}
+	query := projectSummaryBaseQuery()
+	query += projectSummaryVisibilityFilter(includeHistorical)
 	query += ` ORDER BY p.attention_score DESC, p.last_activity DESC, p.name ASC`
 
 	rows, err := s.db.QueryContext(ctx, query)
@@ -1413,59 +1384,9 @@ func (s *Store) ListProjects(ctx context.Context, includeHistorical bool) ([]mod
 }
 
 func (s *Store) GetProjectSummary(ctx context.Context, projectPath string, includeHistorical bool) (model.ProjectSummary, error) {
-	query := fmt.Sprintf(`
-		SELECT
-		p.path, p.name, p.kind, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.worktree_merge_status, p.worktree_origin_todo_id, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until, p.last_session_seen_at, p.created_at,
-			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path AND pt.done = 0), 0),
-			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path), 0),
-			p.run_command,
-			p.moved_from_path, p.moved_at,
-			COALESCE(ps.session_id, ''),
-			COALESCE(ps.source, ''),
-			COALESCE(ps.raw_session_id, ''),
-			COALESCE(ps.format, ''),
-			COALESCE(ps.detected_project_path, ''),
-			COALESCE(ps.snapshot_hash, ''),
-			ps.last_event_at,
-			ps.latest_turn_started_at,
-			COALESCE(ps.latest_turn_state_known, 0),
-			COALESCE(ps.latest_turn_completed, 0),
-			COALESCE(sc.status, ''),
-			COALESCE(sc.stage, ''),
-			COALESCE(sc.category, ''),
-			COALESCE(sc.summary, ''),
-			sc.stage_started_at,
-			sc.updated_at,
-			COALESCE(sc_completed.category, ''),
-			COALESCE(sc_completed.summary, ''),
-			sc_completed.updated_at
-	FROM projects p
-	LEFT JOIN project_sessions ps ON ps.session_id = (
-		SELECT ps2.session_id
-		FROM project_sessions ps2
-		WHERE ps2.project_path = p.path
-		ORDER BY ps2.last_event_at DESC
-		LIMIT 1
-	)
-	LEFT JOIN session_classifications sc ON sc.session_id = %s
-	LEFT JOIN session_classifications sc_completed ON sc_completed.session_id = (
-		SELECT sc2.session_id
-		FROM session_classifications sc2
-		WHERE sc2.project_path = p.path AND sc2.status = 'completed'
-		ORDER BY %s DESC, COALESCE(sc2.completed_at, sc2.updated_at) DESC, sc2.updated_at DESC
-		LIMIT 1
-	)
-	WHERE p.path = ?
-			AND p.forgotten = 0
-			AND NOT EXISTS (
-				SELECT 1
-				FROM ignored_project_names ipn
-				WHERE LOWER(ipn.name) = LOWER(p.name)
-			)
-	`, preferredSessionClassificationIDExpr("ps.session_id"), sessionClassificationCanonicalRankExpr("sc2"))
-	if !includeHistorical {
-		query += ` AND p.in_scope = 1`
-	}
+	query := projectSummaryBaseQuery()
+	query += ` WHERE p.path = ?
+		AND ` + projectSummaryVisibilityConditions(includeHistorical)
 
 	row := s.db.QueryRowContext(ctx, query, projectPath)
 	summary, err := scanSummaryRow(row)

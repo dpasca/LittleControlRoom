@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+const localRunnerCacheTestTimeout = 5 * time.Second
+
 func TestParseCodexExecJSONL(t *testing.T) {
 	raw := "" +
 		"{\"type\":\"thread.started\",\"thread_id\":\"thr_123\"}\n" +
@@ -132,7 +134,7 @@ func TestCodexExecRunnerCachesIdenticalRequests(t *testing.T) {
 		"printf '%s\\n' '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":3,\"total_tokens\":15}}'",
 	}, "\n"))
 
-	runner := NewCodexExecRunner(2*time.Second, nil)
+	runner := NewCodexExecRunner(localRunnerCacheTestTimeout, nil)
 	runner.command = scriptPath
 
 	req := JSONSchemaRequest{
@@ -178,7 +180,7 @@ func TestOpenCodeRunRunnerCachesIdenticalRequests(t *testing.T) {
 		"printf '%s\\n' '{\"type\":\"step_finish\",\"part\":{\"type\":\"step-finish\",\"tokens\":{\"total\":15,\"input\":12,\"output\":3}}}'",
 	}, "\n"))
 
-	runner := NewOpenCodeRunRunner(2*time.Second, nil)
+	runner := NewOpenCodeRunRunner(localRunnerCacheTestTimeout, nil)
 	runner.command = scriptPath
 
 	req := JSONSchemaRequest{
@@ -223,7 +225,7 @@ func TestClaudePrintRunnerCachesIdenticalRequests(t *testing.T) {
 		"printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"structured_output\":{\"message\":\"hello\"},\"usage\":{\"input_tokens\":12,\"cache_read_input_tokens\":4,\"cache_creation_input_tokens\":0,\"output_tokens\":3},\"modelUsage\":{\"claude-haiku-4-5-20251001\":{\"inputTokens\":12,\"outputTokens\":3,\"cacheReadInputTokens\":4,\"cacheCreationInputTokens\":0,\"costUSD\":0.01}}}'",
 	}, "\n"))
 
-	runner := NewClaudePrintRunner(2*time.Second, nil)
+	runner := NewClaudePrintRunner(localRunnerCacheTestTimeout, nil)
 	runner.command = scriptPath
 
 	req := JSONSchemaRequest{

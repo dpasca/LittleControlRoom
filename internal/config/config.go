@@ -385,27 +385,13 @@ func applyConfigFile(cfg *AppConfig) error {
 		}
 		cfg.AIBackend = backend
 	}
-	if fc.OpenAIAPIKey != nil {
-		cfg.OpenAIAPIKey = strings.TrimSpace(*fc.OpenAIAPIKey)
-	}
-	if fc.MLXBaseURL != nil {
-		cfg.MLXBaseURL = strings.TrimSpace(*fc.MLXBaseURL)
-	}
-	if fc.MLXAPIKey != nil {
-		cfg.MLXAPIKey = strings.TrimSpace(*fc.MLXAPIKey)
-	}
-	if fc.MLXModel != nil {
-		cfg.MLXModel = strings.TrimSpace(*fc.MLXModel)
-	}
-	if fc.OllamaBaseURL != nil {
-		cfg.OllamaBaseURL = strings.TrimSpace(*fc.OllamaBaseURL)
-	}
-	if fc.OllamaAPIKey != nil {
-		cfg.OllamaAPIKey = strings.TrimSpace(*fc.OllamaAPIKey)
-	}
-	if fc.OllamaModel != nil {
-		cfg.OllamaModel = strings.TrimSpace(*fc.OllamaModel)
-	}
+	applyOptionalTrimmedString(&cfg.OpenAIAPIKey, fc.OpenAIAPIKey)
+	applyOptionalTrimmedString(&cfg.MLXBaseURL, fc.MLXBaseURL)
+	applyOptionalTrimmedString(&cfg.MLXAPIKey, fc.MLXAPIKey)
+	applyOptionalTrimmedString(&cfg.MLXModel, fc.MLXModel)
+	applyOptionalTrimmedString(&cfg.OllamaBaseURL, fc.OllamaBaseURL)
+	applyOptionalTrimmedString(&cfg.OllamaAPIKey, fc.OllamaAPIKey)
+	applyOptionalTrimmedString(&cfg.OllamaModel, fc.OllamaModel)
 	if fc.ExcludePaths != nil {
 		excludePaths, err := normalizePaths(*fc.ExcludePaths)
 		if err != nil {
@@ -419,27 +405,13 @@ func applyConfigFile(cfg *AppConfig) error {
 	if fc.PrivacyPatterns != nil {
 		cfg.PrivacyPatterns = normalizeProjectPatterns(*fc.PrivacyPatterns)
 	}
-	if fc.EmbeddedCodexModel != nil {
-		cfg.EmbeddedCodexModel = strings.TrimSpace(*fc.EmbeddedCodexModel)
-	}
-	if fc.EmbeddedCodexReasoning != nil {
-		cfg.EmbeddedCodexReasoning = strings.TrimSpace(*fc.EmbeddedCodexReasoning)
-	}
-	if fc.EmbeddedClaudeModel != nil {
-		cfg.EmbeddedClaudeModel = strings.TrimSpace(*fc.EmbeddedClaudeModel)
-	}
-	if fc.EmbeddedClaudeReasoning != nil {
-		cfg.EmbeddedClaudeReasoning = strings.TrimSpace(*fc.EmbeddedClaudeReasoning)
-	}
-	if fc.EmbeddedOpenCodeModel != nil {
-		cfg.EmbeddedOpenCodeModel = strings.TrimSpace(*fc.EmbeddedOpenCodeModel)
-	}
-	if fc.EmbeddedOpenCodeReasoning != nil {
-		cfg.EmbeddedOpenCodeReasoning = strings.TrimSpace(*fc.EmbeddedOpenCodeReasoning)
-	}
-	if fc.OpenCodeModelTier != nil {
-		cfg.OpenCodeModelTier = strings.TrimSpace(*fc.OpenCodeModelTier)
-	}
+	applyOptionalTrimmedString(&cfg.EmbeddedCodexModel, fc.EmbeddedCodexModel)
+	applyOptionalTrimmedString(&cfg.EmbeddedCodexReasoning, fc.EmbeddedCodexReasoning)
+	applyOptionalTrimmedString(&cfg.EmbeddedClaudeModel, fc.EmbeddedClaudeModel)
+	applyOptionalTrimmedString(&cfg.EmbeddedClaudeReasoning, fc.EmbeddedClaudeReasoning)
+	applyOptionalTrimmedString(&cfg.EmbeddedOpenCodeModel, fc.EmbeddedOpenCodeModel)
+	applyOptionalTrimmedString(&cfg.EmbeddedOpenCodeReasoning, fc.EmbeddedOpenCodeReasoning)
+	applyOptionalTrimmedString(&cfg.OpenCodeModelTier, fc.OpenCodeModelTier)
 	if fc.RecentCodexModels != nil {
 		cfg.RecentCodexModels = trimStrings(*fc.RecentCodexModels)
 	}
@@ -484,26 +456,14 @@ func applyConfigFile(cfg *AppConfig) error {
 		}
 		cfg.PlaywrightPolicy.IsolationScope = value
 	}
-	if strings.TrimSpace(fc.ScanInterval) != "" {
-		d, err := time.ParseDuration(strings.TrimSpace(fc.ScanInterval))
-		if err != nil {
-			return fmt.Errorf("config interval: %w", err)
-		}
-		cfg.ScanInterval = d
+	if err := applyOptionalConfigDuration(&cfg.ScanInterval, fc.ScanInterval, "interval"); err != nil {
+		return err
 	}
-	if strings.TrimSpace(fc.ActiveThreshold) != "" {
-		d, err := time.ParseDuration(strings.TrimSpace(fc.ActiveThreshold))
-		if err != nil {
-			return fmt.Errorf("config active-threshold: %w", err)
-		}
-		cfg.ActiveThreshold = d
+	if err := applyOptionalConfigDuration(&cfg.ActiveThreshold, fc.ActiveThreshold, "active-threshold"); err != nil {
+		return err
 	}
-	if strings.TrimSpace(fc.StuckThreshold) != "" {
-		d, err := time.ParseDuration(strings.TrimSpace(fc.StuckThreshold))
-		if err != nil {
-			return fmt.Errorf("config stuck-threshold: %w", err)
-		}
-		cfg.StuckThreshold = d
+	if err := applyOptionalConfigDuration(&cfg.StuckThreshold, fc.StuckThreshold, "stuck-threshold"); err != nil {
+		return err
 	}
 	if fc.HideReasoningSections != nil {
 		cfg.HideReasoningSections = *fc.HideReasoningSections
@@ -653,6 +613,29 @@ func moveFileIfMissing(src, dst string) error {
 	if err := os.Remove(src); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove legacy file %s: %w", src, err)
 	}
+	return nil
+}
+
+func applyOptionalTrimmedString(dst, src *string) {
+	if dst == nil || src == nil {
+		return
+	}
+	*dst = strings.TrimSpace(*src)
+}
+
+func applyOptionalConfigDuration(dst *time.Duration, raw, label string) error {
+	if dst == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil
+	}
+	d, err := parseConfigDuration(trimmed, label)
+	if err != nil {
+		return fmt.Errorf("config %w", err)
+	}
+	*dst = d
 	return nil
 }
 
