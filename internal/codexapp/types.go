@@ -624,9 +624,7 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 	}
 
 	projectPath := strings.TrimSpace(req.ProjectPath)
-	if req.ManagedBrowserSessionKey == "" && req.Provider.Normalized() == ProviderCodex && !req.PlaywrightPolicy.Normalize().UsesLegacyLaunchBehavior() {
-		req.ManagedBrowserSessionKey = browserctl.NewManagedSessionKey()
-	}
+	ensureManagedPlaywrightSessionKey(&req)
 
 	m.mu.Lock()
 	existing, ok := m.sessions[projectPath]

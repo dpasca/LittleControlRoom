@@ -17,6 +17,8 @@ It is intentionally different from `STATUS.md`:
 - Newly launched embedded Codex sessions also get a session-local `CODEX_HOME` overlay that shadows only the `playwright` skill, so LCR can steer browser behavior without mutating the user's real `~/.codex`.
 - On macOS, `Only when needed` now runs managed Codex browser work in a backgrounded headed browser so LCR can reveal that same browser context later for login or other human steps.
 - Managed embedded Codex submissions now wait briefly for Playwright MCP tools to become ready before starting the first turn, which avoids a fresh-session race where browser tools could be missing on the first prompt.
+- Newly launched embedded OpenCode sessions now override `mcp.playwright` through `OPENCODE_CONFIG_CONTENT` to point at the same LCR-managed Playwright wrapper, using the same managed session/profile key model as Codex.
+- Newly launched embedded OpenCode sessions also get a session-local `XDG_CONFIG_HOME` overlay that shadows only the `playwright` skill, so OpenCode is steered toward the managed MCP path without changing the user's real `~/.config/opencode`.
 - Existing embedded Codex sessions do not retroactively pick up the new launch behavior; they need to be reopened or reconnected.
 - URL-based login waits already have an LCR-managed attention flow and interactive-browser lease.
 - Embedded Codex sessions now remember the latest Playwright page URL they reached, and the visible pane can reveal that same managed browser window with `Ctrl+O`.
@@ -111,8 +113,10 @@ Make browser automation feel quiet and predictable by default:
 ### OpenCode
 
 - Policy/status plumbing exists.
-- Embedded elicitation control is still weaker.
-- Treat as observe-first until the launch/config and reply path are clearer.
+- Managed Playwright launch now overrides OpenCode's `mcp.playwright` entry to use the LCR wrapper plus persistent managed browser/session keys.
+- Managed sessions now also shadow the OpenCode `playwright` skill per session, which keeps real browser tasks on the managed MCP path instead of falling back to standalone Playwright CLI/browser launches.
+- Embedded elicitation control is still weaker, and browser-attention/reveal UX is not yet at Codex parity.
+- Treat as managed for normal Playwright browsing, but still interaction-limited until the embedded reply path is clearer.
 
 ### Claude Code
 

@@ -34,9 +34,14 @@ const (
 )
 
 type openCodeSession struct {
-	projectPath string
-	preset      codexcli.Preset
-	notify      func()
+	projectPath              string
+	preset                   codexcli.Preset
+	notify                   func()
+	playwrightPolicy         browserctl.Policy
+	managedBrowserSessionKey string
+	browserActivity          browserctl.SessionActivity
+	currentBrowserPageURL    string
+	openCodeConfigOverlay    string
 
 	cmd      *exec.Cmd
 	http     *http.Client
@@ -273,21 +278,26 @@ func newOpenCodeHTTPClient() *http.Client {
 
 func newOpenCodeSession(req LaunchRequest, notify func()) (Session, error) {
 	ctx, cancel := context.WithCancel(context.Background())
+	ensureManagedPlaywrightSessionKey(&req)
+	policy := req.PlaywrightPolicy.Normalize()
 	s := &openCodeSession{
-		projectPath:       req.ProjectPath,
-		preset:            req.Preset,
-		notify:            notify,
-		http:              newOpenCodeHTTPClient(),
-		agent:             openCodeDefaultAgent,
-		cancel:            cancel,
-		exitCh:            make(chan struct{}),
-		entryIndex:        make(map[string]int),
-		messageRole:       make(map[string]string),
-		partKind:          make(map[string]TranscriptKind),
-		partType:          make(map[string]string),
-		modelOptionsByKey: make(map[string]ModelOption),
-		status:            "Starting OpenCode server...",
-		lastActivityAt:    time.Now(),
+		projectPath:              req.ProjectPath,
+		preset:                   req.Preset,
+		notify:                   notify,
+		playwrightPolicy:         policy,
+		managedBrowserSessionKey: strings.TrimSpace(req.ManagedBrowserSessionKey),
+		browserActivity:          browserctl.DefaultSessionActivity(policy),
+		http:                     newOpenCodeHTTPClient(),
+		agent:                    openCodeDefaultAgent,
+		cancel:                   cancel,
+		exitCh:                   make(chan struct{}),
+		entryIndex:               make(map[string]int),
+		messageRole:              make(map[string]string),
+		partKind:                 make(map[string]TranscriptKind),
+		partType:                 make(map[string]string),
+		modelOptionsByKey:        make(map[string]ModelOption),
+		status:                   "Starting OpenCode server...",
+		lastActivityAt:           time.Now(),
 	}
 	if err := s.start(ctx, req); err != nil {
 		_ = s.Close()
@@ -306,34 +316,37 @@ func (s *openCodeSession) Snapshot() Snapshot {
 	entries, transcript := s.exportedTranscriptLocked()
 
 	return Snapshot{
-		Provider:           ProviderOpenCode,
-		ProjectPath:        s.projectPath,
-		ThreadID:           s.sessionID,
-		Preset:             s.preset,
-		TranscriptRevision: s.transcriptRevision,
-		Phase:              s.phaseLocked(),
-		Started:            s.started,
-		Busy:               s.busy,
-		BusyExternal:       s.busyExternal,
-		BusySince:          s.busySinceLocked(),
-		LastBusyActivityAt: s.lastBusyActivityAt,
-		Closed:             s.closed,
-		ActiveTurnID:       s.activeTurnID,
-		PendingApproval:    cloneApprovalRequest(s.pendingApproval),
-		PendingToolInput:   cloneToolInputRequest(s.pendingToolInput),
-		Entries:            entries,
-		Transcript:         transcript,
-		Status:             s.status,
-		LastError:          s.lastError,
-		LastSystemNotice:   s.lastSystemNotice,
-		LastActivityAt:     s.lastActivityAt,
-		CurrentCWD:         s.currentCWD,
-		Model:              s.model,
-		ModelProvider:      s.modelProvider,
-		ReasoningEffort:    s.reasoningEffort,
-		PendingModel:       s.pendingModel,
-		PendingReasoning:   s.pendingReasoning,
-		TokenUsage:         exportedTokenUsageSnapshot(s.tokenUsage),
+		Provider:                 ProviderOpenCode,
+		ProjectPath:              s.projectPath,
+		ThreadID:                 s.sessionID,
+		Preset:                   s.preset,
+		BrowserActivity:          s.browserActivity.Normalize(),
+		ManagedBrowserSessionKey: strings.TrimSpace(s.managedBrowserSessionKey),
+		CurrentBrowserPageURL:    strings.TrimSpace(s.currentBrowserPageURL),
+		TranscriptRevision:       s.transcriptRevision,
+		Phase:                    s.phaseLocked(),
+		Started:                  s.started,
+		Busy:                     s.busy,
+		BusyExternal:             s.busyExternal,
+		BusySince:                s.busySinceLocked(),
+		LastBusyActivityAt:       s.lastBusyActivityAt,
+		Closed:                   s.closed,
+		ActiveTurnID:             s.activeTurnID,
+		PendingApproval:          cloneApprovalRequest(s.pendingApproval),
+		PendingToolInput:         cloneToolInputRequest(s.pendingToolInput),
+		Entries:                  entries,
+		Transcript:               transcript,
+		Status:                   s.status,
+		LastError:                s.lastError,
+		LastSystemNotice:         s.lastSystemNotice,
+		LastActivityAt:           s.lastActivityAt,
+		CurrentCWD:               s.currentCWD,
+		Model:                    s.model,
+		ModelProvider:            s.modelProvider,
+		ReasoningEffort:          s.reasoningEffort,
+		PendingModel:             s.pendingModel,
+		PendingReasoning:         s.pendingReasoning,
+		TokenUsage:               exportedTokenUsageSnapshot(s.tokenUsage),
 	}
 }
 
@@ -345,34 +358,37 @@ func (s *openCodeSession) TrySnapshot() (Snapshot, bool) {
 	entries, transcript := s.exportedTranscriptLocked()
 
 	return Snapshot{
-		Provider:           ProviderOpenCode,
-		ProjectPath:        s.projectPath,
-		ThreadID:           s.sessionID,
-		Preset:             s.preset,
-		TranscriptRevision: s.transcriptRevision,
-		Phase:              s.phaseLocked(),
-		Started:            s.started,
-		Busy:               s.busy,
-		BusyExternal:       s.busyExternal,
-		BusySince:          s.busySinceLocked(),
-		LastBusyActivityAt: s.lastBusyActivityAt,
-		Closed:             s.closed,
-		ActiveTurnID:       s.activeTurnID,
-		PendingApproval:    cloneApprovalRequest(s.pendingApproval),
-		PendingToolInput:   cloneToolInputRequest(s.pendingToolInput),
-		Entries:            entries,
-		Transcript:         transcript,
-		Status:             s.status,
-		LastError:          s.lastError,
-		LastSystemNotice:   s.lastSystemNotice,
-		LastActivityAt:     s.lastActivityAt,
-		CurrentCWD:         s.currentCWD,
-		Model:              s.model,
-		ModelProvider:      s.modelProvider,
-		ReasoningEffort:    s.reasoningEffort,
-		PendingModel:       s.pendingModel,
-		PendingReasoning:   s.pendingReasoning,
-		TokenUsage:         exportedTokenUsageSnapshot(s.tokenUsage),
+		Provider:                 ProviderOpenCode,
+		ProjectPath:              s.projectPath,
+		ThreadID:                 s.sessionID,
+		Preset:                   s.preset,
+		BrowserActivity:          s.browserActivity.Normalize(),
+		ManagedBrowserSessionKey: strings.TrimSpace(s.managedBrowserSessionKey),
+		CurrentBrowserPageURL:    strings.TrimSpace(s.currentBrowserPageURL),
+		TranscriptRevision:       s.transcriptRevision,
+		Phase:                    s.phaseLocked(),
+		Started:                  s.started,
+		Busy:                     s.busy,
+		BusyExternal:             s.busyExternal,
+		BusySince:                s.busySinceLocked(),
+		LastBusyActivityAt:       s.lastBusyActivityAt,
+		Closed:                   s.closed,
+		ActiveTurnID:             s.activeTurnID,
+		PendingApproval:          cloneApprovalRequest(s.pendingApproval),
+		PendingToolInput:         cloneToolInputRequest(s.pendingToolInput),
+		Entries:                  entries,
+		Transcript:               transcript,
+		Status:                   s.status,
+		LastError:                s.lastError,
+		LastSystemNotice:         s.lastSystemNotice,
+		LastActivityAt:           s.lastActivityAt,
+		CurrentCWD:               s.currentCWD,
+		Model:                    s.model,
+		ModelProvider:            s.modelProvider,
+		ReasoningEffort:          s.reasoningEffort,
+		PendingModel:             s.pendingModel,
+		PendingReasoning:         s.pendingReasoning,
+		TokenUsage:               exportedTokenUsageSnapshot(s.tokenUsage),
 	}, true
 }
 
@@ -748,7 +764,17 @@ func (s *openCodeSession) ReconcileBusyState() error {
 }
 
 func (s *openCodeSession) start(parent context.Context, req LaunchRequest) error {
-	baseURL, cmd, err := startOpenCodeServer(req.ProjectPath, req.Preset, req.PlaywrightPolicy)
+	xdgConfigHome := ""
+	if shouldShadowPlaywrightSkill(req.PlaywrightPolicy) {
+		overlay, err := prepareOpenCodeConfigOverlay(req.AppDataDir, "")
+		if err != nil {
+			return err
+		}
+		s.openCodeConfigOverlay = overlay
+		xdgConfigHome = overlay
+	}
+
+	baseURL, cmd, err := startOpenCodeServer(req, xdgConfigHome)
 	if err != nil {
 		return err
 	}
@@ -1384,6 +1410,9 @@ func (s *openCodeSession) waitForExit() {
 
 func (s *openCodeSession) closeExitCh() {
 	s.exitOnce.Do(func() {
+		if strings.TrimSpace(s.openCodeConfigOverlay) != "" {
+			_ = os.RemoveAll(s.openCodeConfigOverlay)
+		}
 		close(s.exitCh)
 	})
 }
@@ -1635,6 +1664,7 @@ type openCodePermissionOverride struct {
 
 type openCodeConfigOverride struct {
 	Permission openCodePermissionOverride `json:"permission,omitempty"`
+	MCP        map[string]json.RawMessage `json:"mcp,omitempty"`
 }
 
 func openCodePermissionOverrideForPreset(preset codexcli.Preset) openCodePermissionOverride {
@@ -1680,6 +1710,24 @@ func openCodeConfigContentForPreset(preset codexcli.Preset) (string, error) {
 	return string(raw), nil
 }
 
+func openCodeConfigContentForLaunch(req LaunchRequest) (string, error) {
+	override := openCodeConfigOverride{
+		Permission: openCodePermissionOverrideForPreset(req.Preset),
+	}
+	if raw, ok, err := openCodePlaywrightMCPOverride(req); err != nil {
+		return "", err
+	} else if ok {
+		override.MCP = map[string]json.RawMessage{
+			"playwright": raw,
+		}
+	}
+	encoded, err := json.Marshal(override)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
+}
+
 func envWithOverride(base []string, key, value string) []string {
 	prefix := key + "="
 	out := make([]string, 0, len(base)+1)
@@ -1694,18 +1742,36 @@ func envWithOverride(base []string, key, value string) []string {
 }
 
 func buildOpenCodeServerCommand(projectPath string, preset codexcli.Preset) (*exec.Cmd, error) {
+	return buildOpenCodeServerCommandForLaunch(LaunchRequest{
+		Provider:    ProviderOpenCode,
+		ProjectPath: projectPath,
+		Preset:      preset,
+	}, "")
+}
+
+func buildOpenCodeServerCommandForLaunch(req LaunchRequest, xdgConfigHome string) (*exec.Cmd, error) {
 	cmd := exec.Command("opencode", "serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs")
-	cmd.Dir = projectPath
-	configContent, err := openCodeConfigContentForPreset(preset)
+	cmd.Dir = req.ProjectPath
+	configContent, err := openCodeConfigContentForLaunch(req)
 	if err != nil {
 		return nil, err
 	}
 	cmd.Env = envWithOverride(os.Environ(), "OPENCODE_CONFIG_CONTENT", configContent)
+	if trimmed := strings.TrimSpace(xdgConfigHome); trimmed != "" {
+		cmd.Env = withEnvOverride(cmd.Env, "XDG_CONFIG_HOME", trimmed)
+	}
 	return cmd, nil
 }
 
 func buildOpenCodeServerCommandWithPolicy(projectPath string, preset codexcli.Preset, policy browserctl.Policy) (*exec.Cmd, error) {
-	cmd, err := buildOpenCodeServerCommand(projectPath, preset)
+	req := LaunchRequest{
+		Provider:         ProviderOpenCode,
+		ProjectPath:      projectPath,
+		Preset:           preset,
+		PlaywrightPolicy: policy,
+	}
+	ensureManagedPlaywrightSessionKey(&req)
+	cmd, err := buildOpenCodeServerCommandForLaunch(req, "")
 	if err != nil {
 		return nil, err
 	}
@@ -1713,11 +1779,12 @@ func buildOpenCodeServerCommandWithPolicy(projectPath string, preset codexcli.Pr
 	return cmd, nil
 }
 
-func startOpenCodeServer(projectPath string, preset codexcli.Preset, policy browserctl.Policy) (string, *exec.Cmd, error) {
-	cmd, err := buildOpenCodeServerCommandWithPolicy(projectPath, preset, policy)
+func startOpenCodeServer(req LaunchRequest, xdgConfigHome string) (string, *exec.Cmd, error) {
+	cmd, err := buildOpenCodeServerCommandForLaunch(req, xdgConfigHome)
 	if err != nil {
 		return "", nil, err
 	}
+	cmd.Env = browserctl.AppendEnv(cmd.Env, string(ProviderOpenCode), req.PlaywrightPolicy)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

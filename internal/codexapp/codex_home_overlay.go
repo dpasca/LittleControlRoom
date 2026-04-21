@@ -18,7 +18,7 @@ description: "Use the embedded Playwright MCP tools already wired through Little
 
 # Embedded Playwright Skill
 
-This embedded Codex session already has a ` + "`playwright`" + ` MCP server registered through Little Control Room.
+This embedded Little Control Room session already has a ` + "`playwright`" + ` MCP server registered through Little Control Room.
 Use the Playwright MCP tools directly.
 
 Do not shell out to ` + "`npx @playwright/mcp`" + `, ` + "`playwright-mcp`" + `, ` + "`playwright_cli.sh`" + `, or any standalone Playwright browser launcher from the terminal unless the user explicitly asks to debug that wrapper itself.

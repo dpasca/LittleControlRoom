@@ -521,9 +521,7 @@ type mcpServerElicitationRequestParams struct {
 
 func newAppServerSession(req LaunchRequest, notify func()) (Session, error) {
 	policy := req.PlaywrightPolicy.Normalize()
-	if req.ManagedBrowserSessionKey == "" && !policy.UsesLegacyLaunchBehavior() {
-		req.ManagedBrowserSessionKey = browserctl.NewManagedSessionKey()
-	}
+	ensureManagedPlaywrightSessionKey(&req)
 	s := &appServerSession{
 		projectPath:              req.ProjectPath,
 		preset:                   req.Preset,

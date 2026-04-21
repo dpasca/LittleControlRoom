@@ -8,10 +8,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"lcroom/internal/browserctl"
 	"lcroom/internal/codexcli"
 )
 
@@ -349,6 +352,204 @@ func TestBuildOpenCodeServerCommandOverridesPreExistingConfigEnv(t *testing.T) {
 	}) {
 		t.Fatalf("cfg.Permission = %#v, want safe preset ask-everything override", got)
 	}
+}
+
+func TestBuildOpenCodeServerCommandWithPolicyInjectsManagedPlaywrightOverride(t *testing.T) {
+	cmd, err := buildOpenCodeServerCommandWithPolicy("/tmp/demo", codexcli.PresetSafe, browserctl.Policy{
+		ManagementMode:     browserctl.ManagementModeManaged,
+		DefaultBrowserMode: browserctl.BrowserModeHeadless,
+		LoginMode:          browserctl.LoginModePromote,
+		IsolationScope:     browserctl.IsolationScopeTask,
+	})
+	if err != nil {
+		t.Fatalf("buildOpenCodeServerCommandWithPolicy() error = %v", err)
+	}
+
+	var configContent string
+	for _, entry := range cmd.Env {
+		if strings.HasPrefix(entry, "OPENCODE_CONFIG_CONTENT=") {
+			configContent = strings.TrimPrefix(entry, "OPENCODE_CONFIG_CONTENT=")
+			break
+		}
+	}
+	if configContent == "" {
+		t.Fatalf("cmd.Env missing OPENCODE_CONFIG_CONTENT: %#v", cmd.Env)
+	}
+
+	var cfg struct {
+		Permission openCodePermissionOverride           `json:"permission"`
+		MCP        map[string]openCodeMCPServerOverride `json:"mcp"`
+	}
+	if err := json.Unmarshal([]byte(configContent), &cfg); err != nil {
+		t.Fatalf("unmarshal injected config: %v", err)
+	}
+	override, ok := cfg.MCP["playwright"]
+	if !ok {
+		t.Fatalf("config MCP override = %#v, want playwright entry", cfg.MCP)
+	}
+	if override.Type != "local" {
+		t.Fatalf("playwright override type = %q, want local", override.Type)
+	}
+	if override.Enabled == nil || !*override.Enabled {
+		t.Fatalf("playwright override enabled = %#v, want true", override.Enabled)
+	}
+	if len(override.Command) < 2 {
+		t.Fatalf("playwright override command = %#v, want executable plus args", override.Command)
+	}
+	if !containsString(override.Command, "playwright-mcp") {
+		t.Fatalf("playwright override command = %#v, want playwright-mcp args", override.Command)
+	}
+	if !containsString(override.Command, "--provider") || !containsString(override.Command, "opencode") {
+		t.Fatalf("playwright override command = %#v, want opencode provider args", override.Command)
+	}
+}
+
+func TestOpenCodeManagedPlaywrightConfigSmoke(t *testing.T) {
+	if _, err := exec.LookPath("opencode"); err != nil {
+		t.Skip("opencode not installed")
+	}
+
+	executablePath, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable() error = %v", err)
+	}
+	req := LaunchRequest{
+		Provider:          ProviderOpenCode,
+		ProjectPath:       "/tmp/demo",
+		AppDataDir:        "/tmp/lcr-data",
+		CLIExecutablePath: executablePath,
+		PlaywrightPolicy: browserctl.Policy{
+			ManagementMode:     browserctl.ManagementModeManaged,
+			DefaultBrowserMode: browserctl.BrowserModeHeadless,
+			LoginMode:          browserctl.LoginModePromote,
+			IsolationScope:     browserctl.IsolationScopeTask,
+		},
+		ManagedBrowserSessionKey: "session-demo",
+	}
+	configContent, err := openCodeConfigContentForLaunch(req)
+	if err != nil {
+		t.Fatalf("openCodeConfigContentForLaunch() error = %v", err)
+	}
+
+	cmd := exec.Command("opencode", "debug", "config")
+	cmd.Env = envWithOverride(os.Environ(), "OPENCODE_CONFIG_CONTENT", configContent)
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("opencode debug config error = %v", err)
+	}
+
+	var cfg struct {
+		MCP map[string]openCodeMCPServerOverride `json:"mcp"`
+	}
+	if err := json.Unmarshal(output, &cfg); err != nil {
+		t.Fatalf("unmarshal opencode debug config: %v\n%s", err, string(output))
+	}
+	override, ok := cfg.MCP["playwright"]
+	if !ok {
+		t.Fatalf("resolved config MCP override = %#v, want playwright entry", cfg.MCP)
+	}
+	if len(override.Command) < 2 || override.Command[0] != executablePath {
+		t.Fatalf("resolved playwright command = %#v, want lcroom executable %q", override.Command, executablePath)
+	}
+	if !containsString(override.Command, "playwright-mcp") {
+		t.Fatalf("resolved playwright command = %#v, want playwright-mcp args", override.Command)
+	}
+}
+
+func TestManagedPlaywrightInEmbeddedOpenCode(t *testing.T) {
+	if os.Getenv("LCROOM_EMBEDDED_OC_BROWSER_SMOKE") == "" {
+		t.Skip("set LCROOM_EMBEDDED_OC_BROWSER_SMOKE=1 to run the real embedded OpenCode Playwright smoke test")
+	}
+	if _, err := exec.LookPath("opencode"); err != nil {
+		t.Skip("opencode binary not available")
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	repoRoot := filepath.Clean(filepath.Join(cwd, "..", ".."))
+	projectPath, err := os.MkdirTemp(repoRoot, "tmp-oc-browser-smoke-*")
+	if err != nil {
+		t.Fatalf("mkdir temp project: %v", err)
+	}
+	defer os.RemoveAll(projectPath)
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("smoke\n"), 0o644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+
+	helperBinary := filepath.Join(t.TempDir(), "lcroom")
+	buildCmd := exec.Command("go", "build", "-o", helperBinary, "./cmd/lcroom")
+	buildCmd.Dir = repoRoot
+	if output, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("build lcroom helper binary: %v\n%s", err, output)
+	}
+
+	dataDir := t.TempDir()
+	sessionAny, err := newOpenCodeSession(LaunchRequest{
+		Provider:          ProviderOpenCode,
+		ProjectPath:       projectPath,
+		ForceNew:          true,
+		Preset:            codexcli.PresetFullAuto,
+		PendingModel:      "openai/gpt-5.3-codex-spark",
+		PendingReasoning:  "low",
+		PlaywrightPolicy:  browserctl.DefaultPolicy(),
+		AppDataDir:        dataDir,
+		CLIExecutablePath: helperBinary,
+	}, func() {})
+	if err != nil {
+		t.Fatalf("newOpenCodeSession() error = %v", err)
+	}
+	defer sessionAny.Close()
+
+	session, ok := sessionAny.(*openCodeSession)
+	if !ok {
+		t.Fatalf("session type = %T, want *openCodeSession", sessionAny)
+	}
+
+	prompt := "Use the Playwright browser tools to navigate to https://example.com and answer with exactly the page title. Do not answer from memory."
+	if err := session.Submit(prompt); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Minute)
+	for time.Now().Before(deadline) {
+		snapshot := session.Snapshot()
+		if !snapshot.Busy && snapshot.PendingApproval == nil && snapshot.PendingToolInput == nil {
+			if strings.TrimSpace(snapshot.LastError) != "" {
+				t.Fatalf("OpenCode session finished with error: status=%q notice=%q error=%q transcript=%q", snapshot.Status, snapshot.LastSystemNotice, snapshot.LastError, snapshot.Transcript)
+			}
+			if strings.TrimSpace(snapshot.ManagedBrowserSessionKey) == "" {
+				t.Fatalf("ManagedBrowserSessionKey = empty, want managed OpenCode browser session")
+			}
+			state, err := browserctl.ReadManagedPlaywrightState(dataDir, snapshot.ManagedBrowserSessionKey)
+			if err != nil {
+				t.Fatalf("ReadManagedPlaywrightState(%q) error = %v", snapshot.ManagedBrowserSessionKey, err)
+			}
+			if got, want := state.Provider, "opencode"; got != want {
+				t.Fatalf("managed browser provider = %q, want %q", got, want)
+			}
+			if strings.TrimSpace(state.ProfileKey) == "" {
+				t.Fatalf("managed browser profile key = empty, want non-empty")
+			}
+
+			usedPlaywright := false
+			for _, entry := range snapshot.Entries {
+				if entry.Kind == TranscriptTool && strings.Contains(entry.Text, "browser_") {
+					usedPlaywright = true
+					break
+				}
+			}
+			if !usedPlaywright {
+				t.Fatalf("snapshot transcript shows no Playwright tool activity; status=%q notice=%q transcript=%q", snapshot.Status, snapshot.LastSystemNotice, snapshot.Transcript)
+			}
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	snapshot := session.Snapshot()
+	t.Fatalf("timed out waiting for OpenCode Playwright smoke to finish: busy=%v status=%q notice=%q error=%q transcript=%q", snapshot.Busy, snapshot.Status, snapshot.LastSystemNotice, snapshot.LastError, snapshot.Transcript)
 }
 
 func TestOpenCodeSessionStatusIdleMarksTurnCompleted(t *testing.T) {
