@@ -8,9 +8,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"lcroom/internal/browserctl"
 )
 
 var externalBrowserOpener = openExternalBrowserURL
+var managedBrowserStateReader = browserctl.ReadManagedPlaywrightState
+var managedBrowserRevealer = browserctl.RevealManagedPlaywrightState
 
 func openProjectDirInBrowser(path string) error {
 	if strings.TrimSpace(path) == "" {
@@ -58,6 +62,21 @@ func openBrowserURL(rawURL, action string) error {
 	}
 	if err := externalBrowserOpener(rawURL); err != nil {
 		return fmt.Errorf("%s: %w", action, err)
+	}
+	return nil
+}
+
+func revealManagedBrowserSession(dataDir, sessionKey string) error {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" {
+		return fmt.Errorf("managed browser session key is required")
+	}
+	state, err := managedBrowserStateReader(dataDir, sessionKey)
+	if err != nil {
+		return fmt.Errorf("read managed browser state: %w", err)
+	}
+	if err := managedBrowserRevealer(state); err != nil {
+		return fmt.Errorf("reveal managed browser: %w", err)
 	}
 	return nil
 }

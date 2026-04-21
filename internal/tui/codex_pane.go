@@ -862,6 +862,8 @@ func (m Model) restartVisibleCodexSessionCmd(prompt string) tea.Cmd {
 		ForceNew:         true,
 		Prompt:           prompt,
 		PlaywrightPolicy: m.currentPlaywrightPolicy(),
+		AppDataDir:       m.appDataDir(),
+		CodexHome:        m.codexHome(),
 	}
 	if snapshot, ok := m.currentCodexSnapshot(); ok {
 		req.Provider = embeddedProvider(snapshot)
@@ -904,6 +906,8 @@ func (m Model) reconnectVisibleCodexSessionCmd() tea.Cmd {
 		Provider:         codexapp.ProviderCodex,
 		ProjectPath:      projectPath,
 		PlaywrightPolicy: m.currentPlaywrightPolicy(),
+		AppDataDir:       m.appDataDir(),
+		CodexHome:        m.codexHome(),
 	}
 	if snapshot, ok := m.currentCodexSnapshot(); ok {
 		req.Provider = embeddedProvider(snapshot)
@@ -1291,6 +1295,18 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
+	case "ctrl+o":
+		pageURL := managedBrowserCurrentPageURL(snapshot)
+		sessionKey := strings.TrimSpace(snapshot.ManagedBrowserSessionKey)
+		if pageURL == "" || sessionKey == "" || snapshot.BusyExternal || snapshot.Closed || snapshot.PendingToolInput != nil || snapshot.PendingElicitation != nil {
+			return m, nil
+		}
+		m.status = "Showing the managed browser window..."
+		return m, m.revealManagedBrowserCmd(
+			sessionKey,
+			managedBrowserLeaseRef(embeddedProvider(snapshot), firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject), snapshot.ThreadID),
+			"Managed browser window is ready. Continue there, then return here when you want Codex to keep going.",
+		)
 	case "enter":
 		draft := m.currentCodexDraft()
 		if draft.Empty() {
@@ -1468,17 +1484,18 @@ func (m Model) updateCodexElicitationMode(snapshot codexapp.Snapshot, msg tea.Ke
 
 	switch msg.String() {
 	case "o":
-		if loginURL == "" {
+		if loginURL == "" || strings.TrimSpace(snapshot.ManagedBrowserSessionKey) == "" {
 			return m, nil
 		}
 		return m.openManagedBrowserLogin(
 			firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject),
 			embeddedProvider(snapshot),
 			snapshot.ThreadID,
+			snapshot.ManagedBrowserSessionKey,
 			snapshot.BrowserActivity,
 			loginURL,
-			"Opening browser for login...",
-			"Opened browser for login. Finish the browser flow here, then press Enter when you are ready to continue.",
+			"Showing the managed browser window...",
+			"Managed browser window is ready. Finish the browser flow there, then press Enter when you are ready to continue.",
 		)
 	case "d":
 		m.status = "Declining MCP input request..."
@@ -1918,7 +1935,7 @@ func (m Model) renderCodexRequestBlocks(snapshot codexapp.Snapshot, width int) [
 	case snapshot.PendingElicitation != nil:
 		return m.renderCodexElicitationBlocks(*snapshot.PendingElicitation, width)
 	default:
-		return nil
+		return m.renderCodexCurrentBrowserPageBlocks(snapshot, width)
 	}
 }
 
@@ -1956,13 +1973,15 @@ func (m Model) renderCodexToolInputBlocks(request codexapp.ToolInputRequest, wid
 func (m Model) renderCodexElicitationBlocks(request codexapp.ElicitationRequest, width int) []string {
 	lines := []string{fitFooterWidth("MCP input: "+request.Summary(), width)}
 	loginURL := ""
+	managedSessionKey := ""
 	if snapshot, ok := m.currentCachedCodexSnapshot(); ok {
 		loginURL = managedBrowserLoginURL(embeddedProvider(snapshot), snapshot.BrowserActivity.Policy, request.Mode, request.URL)
+		managedSessionKey = strings.TrimSpace(snapshot.ManagedBrowserSessionKey)
 	}
 	if request.Mode == codexapp.ElicitationModeURL && strings.TrimSpace(request.URL) != "" {
 		lines = append(lines, fitFooterWidth("Open this URL externally: "+request.URL, width))
-		if loginURL != "" {
-			lines = append(lines, fitFooterWidth("Press O to open the browser, then finish the login flow and press Enter when you are done.", width))
+		if loginURL != "" && managedSessionKey != "" {
+			lines = append(lines, fitFooterWidth("Press O to reveal the managed browser window, then finish the login flow and press Enter when you are done.", width))
 		}
 	}
 	if request.Mode == codexapp.ElicitationModeForm {
@@ -1973,6 +1992,20 @@ func (m Model) renderCodexElicitationBlocks(request codexapp.ElicitationRequest,
 		}
 	}
 	return lines
+}
+
+func (m Model) renderCodexCurrentBrowserPageBlocks(snapshot codexapp.Snapshot, width int) []string {
+	if snapshot.Closed || snapshot.Busy || snapshot.BusyExternal {
+		return nil
+	}
+	pageURL := managedBrowserCurrentPageURL(snapshot)
+	if pageURL == "" || strings.TrimSpace(snapshot.ManagedBrowserSessionKey) == "" {
+		return nil
+	}
+	return []string{
+		fitFooterWidth("Background browser page: "+pageURL, width),
+		fitFooterWidth("Press Ctrl+O to reveal the managed browser window for this same session.", width),
+	}
 }
 
 func (m Model) renderCodexBanner(snapshot codexapp.Snapshot, width int) string {
@@ -2137,9 +2170,11 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerLowAction("c", "cancel"),
 			footerNavAction("Alt+Enter", "newline"),
 		}
-	case snapshot.PendingElicitation != nil && managedBrowserLoginURL(embeddedProvider(snapshot), snapshot.BrowserActivity.Policy, snapshot.PendingElicitation.Mode, snapshot.PendingElicitation.URL) != "":
+	case snapshot.PendingElicitation != nil &&
+		strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" &&
+		managedBrowserLoginURL(embeddedProvider(snapshot), snapshot.BrowserActivity.Policy, snapshot.PendingElicitation.Mode, snapshot.PendingElicitation.URL) != "":
 		actions = []footerAction{
-			footerPrimaryAction("O", "open browser"),
+			footerPrimaryAction("O", "show browser"),
 			footerPrimaryAction("Enter", "done/accept"),
 			footerExitAction("Ctrl+C", "close"),
 			footerHideAction("Alt+Up", "hide"),
@@ -2211,6 +2246,9 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerNavAction("Alt+Enter", "newline"),
 			footerNavAction("Ctrl+V", "image"),
 			footerLowAction("Alt+S", "select"),
+		}
+		if managedBrowserCurrentPageURL(snapshot) != "" && strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" {
+			actions = append(actions, footerNavAction("Ctrl+O", "show browser"))
 		}
 	}
 

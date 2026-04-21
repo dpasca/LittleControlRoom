@@ -12,13 +12,13 @@ import (
 )
 
 type browserAttentionNotification struct {
-	ProjectPath string
-	ProjectName string
-	SessionID   string
-	Provider    codexapp.Provider
-	Activity    browserctl.SessionActivity
-	RequestMode codexapp.ElicitationMode
-	RequestURL  string
+	ProjectPath              string
+	ProjectName              string
+	SessionID                string
+	Provider                 codexapp.Provider
+	Activity                 browserctl.SessionActivity
+	ManagedBrowserSessionKey string
+	OpenURL                  string
 }
 
 func (m *Model) detectBrowserAttentionNotification(projectPath string, snapshot codexapp.Snapshot) {
@@ -36,15 +36,13 @@ func (m *Model) detectBrowserAttentionNotification(projectPath string, snapshot 
 	}
 
 	m.browserAttention = &browserAttentionNotification{
-		ProjectPath: projectPath,
-		ProjectName: strings.TrimSpace(filepath.Base(projectPath)),
-		SessionID:   strings.TrimSpace(snapshot.ThreadID),
-		Provider:    embeddedProvider(snapshot),
-		Activity:    activity,
-	}
-	if request := snapshot.PendingElicitation; request != nil {
-		m.browserAttention.RequestMode = request.Mode
-		m.browserAttention.RequestURL = strings.TrimSpace(request.URL)
+		ProjectPath:              projectPath,
+		ProjectName:              strings.TrimSpace(filepath.Base(projectPath)),
+		SessionID:                strings.TrimSpace(snapshot.ThreadID),
+		Provider:                 embeddedProvider(snapshot),
+		Activity:                 activity,
+		ManagedBrowserSessionKey: strings.TrimSpace(snapshot.ManagedBrowserSessionKey),
+		OpenURL:                  managedBrowserAttentionURL(snapshot),
 	}
 	if m.questionNotify != nil && m.questionNotify.ProjectPath == projectPath {
 		m.questionNotify = nil
@@ -65,13 +63,13 @@ func (m Model) updateBrowserAttentionMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.dismissBrowserAttentionNotification()
 		return m, nil
 	case "enter":
-		if notify.canOpenBrowserForLogin() {
+		if notify.canOpenBrowser() {
 			return m.openBrowserAttentionLogin(*notify)
 		}
 		m.dismissBrowserAttentionNotification()
 		return m.showCodexProject(notify.ProjectPath, notify.Provider.Label()+" browser needs your attention")
 	case "o":
-		if notify.canOpenBrowserForLogin() {
+		if notify.canOpenBrowser() {
 			return m.openBrowserAttentionLogin(*notify)
 		}
 		return m, nil
@@ -88,12 +86,8 @@ func (m Model) updateBrowserAttentionMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (n browserAttentionNotification) canOpenBrowserForLogin() bool {
-	return n.managedLoginURL() != ""
-}
-
-func (n browserAttentionNotification) managedLoginURL() string {
-	return managedBrowserLoginURL(n.Provider, n.Activity.Policy, n.RequestMode, n.RequestURL)
+func (n browserAttentionNotification) canOpenBrowser() bool {
+	return strings.TrimSpace(n.ManagedBrowserSessionKey) != ""
 }
 
 func managedBrowserLoginURL(provider codexapp.Provider, policy browserctl.Policy, requestMode codexapp.ElicitationMode, requestURL string) string {
@@ -110,9 +104,35 @@ func managedBrowserLoginURL(provider codexapp.Provider, policy browserctl.Policy
 	return strings.TrimSpace(requestURL)
 }
 
+func managedBrowserCurrentPageURL(snapshot codexapp.Snapshot) string {
+	return managedBrowserSessionURL(embeddedProvider(snapshot), snapshot.BrowserActivity.Policy, snapshot.CurrentBrowserPageURL)
+}
+
+func managedBrowserAttentionURL(snapshot codexapp.Snapshot) string {
+	if request := snapshot.PendingElicitation; request != nil {
+		if loginURL := managedBrowserLoginURL(embeddedProvider(snapshot), snapshot.BrowserActivity.Policy, request.Mode, request.URL); loginURL != "" {
+			return loginURL
+		}
+	}
+	if snapshot.BrowserActivity.Normalize().State != browserctl.SessionActivityStateWaitingForUser {
+		return ""
+	}
+	return managedBrowserCurrentPageURL(snapshot)
+}
+
+func managedBrowserSessionURL(provider codexapp.Provider, policy browserctl.Policy, rawURL string) string {
+	if provider.Normalized() != codexapp.ProviderCodex {
+		return ""
+	}
+	policy = policy.Normalize()
+	if policy.ManagementMode != browserctl.ManagementModeManaged || policy.LoginMode != browserctl.LoginModePromote {
+		return ""
+	}
+	return strings.TrimSpace(rawURL)
+}
+
 func (m Model) openBrowserAttentionLogin(notify browserAttentionNotification) (tea.Model, tea.Cmd) {
-	loginURL := notify.managedLoginURL()
-	if loginURL == "" {
+	if !notify.canOpenBrowser() {
 		m.dismissBrowserAttentionNotification()
 		return m.showCodexProject(notify.ProjectPath, notify.Provider.Label()+" browser needs your attention")
 	}
@@ -120,17 +140,18 @@ func (m Model) openBrowserAttentionLogin(notify browserAttentionNotification) (t
 	m.dismissBrowserAttentionNotification()
 	updated, revealCmd := m.showCodexProject(
 		notify.ProjectPath,
-		"Opening browser for login and switching to the embedded session...",
+		"Showing the managed browser window and switching to the embedded session...",
 	)
 	model := updated.(Model)
 	leaseModel, openCmd := model.openManagedBrowserLogin(
 		notify.ProjectPath,
 		notify.Provider,
 		notify.SessionID,
+		notify.ManagedBrowserSessionKey,
 		notify.Activity,
-		loginURL,
-		"Opening browser for login and switching to the embedded session...",
-		"Opened browser for login. Finish the browser flow, then return to the embedded session if more input is needed.",
+		notify.OpenURL,
+		"Showing the managed browser window and switching to the embedded session...",
+		"Managed browser window is ready. Finish the browser flow there, then return to the embedded session if more input is needed.",
 	)
 	model = leaseModel.(Model)
 	if openCmd == nil {
@@ -183,15 +204,15 @@ func (m Model) renderBrowserAttentionContent(width int) string {
 		notify.Activity.Summary(),
 	)...)
 	lines = append(lines, "")
-	if notify.canOpenBrowserForLogin() {
+	if notify.canOpenBrowser() {
 		lines = append(lines, renderWrappedDialogTextLines(
 			detailMutedStyle,
 			width,
-			"Little Control Room can open this login flow in your default browser, then bring the embedded session forward so you can keep an eye on it.",
+			"Little Control Room can reveal the managed browser window for this same session, then bring the embedded session forward so you can keep an eye on it.",
 		)...)
 		lines = append(lines,
 			"",
-			renderDialogAction("Enter", "open browser", commitActionKeyStyle, commitActionTextStyle),
+			renderDialogAction("Enter", "show browser", commitActionKeyStyle, commitActionTextStyle),
 			renderDialogAction("S", "open session", pushActionKeyStyle, pushActionTextStyle),
 			renderDialogAction("B", "browser settings", pushActionKeyStyle, pushActionTextStyle),
 			renderDialogAction("Esc", "dismiss", cancelActionKeyStyle, cancelActionTextStyle),

@@ -41,6 +41,12 @@ func Run(programName string, args []string) int {
 	}
 
 	subcmd := args[0]
+	if subcmd == "playwright-mcp" {
+		return runPlaywrightMCP(args[1:])
+	}
+	if subcmd == "browser" {
+		return runBrowser(args[1:])
+	}
 	commonArgs := append([]string(nil), args[1:]...)
 	if subcmd == "screenshots" {
 		var err error
@@ -797,7 +803,7 @@ func printUsage(programName string) {
 	}
 	fmt.Println(brand.Name)
 	fmt.Println(brand.Subtitle)
-	fmt.Printf("Usage: %s <scope|scan|classify|doctor|snapshot|sanitize-summaries|screenshots|tui|serve> [flags]\n", name)
+	fmt.Printf("Usage: %s <scope|scan|classify|doctor|snapshot|sanitize-summaries|screenshots|browser|tui|serve> [flags]\n", name)
 	fmt.Println("Common flags:")
 	fmt.Println("  --config <path>")
 	fmt.Println("  --include-paths <comma-separated-paths>")
@@ -822,6 +828,8 @@ func printUsage(programName string) {
 	fmt.Println("Screenshots flags:")
 	fmt.Println("  --screenshot-config <path>")
 	fmt.Println("  --output-dir <path>")
+	fmt.Println("Browser flags:")
+	fmt.Println("  browser <status|reveal> --session-key <id> [--data-dir <path>]")
 }
 
 func min(a, b int) int {

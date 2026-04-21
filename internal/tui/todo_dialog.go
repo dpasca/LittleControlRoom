@@ -1101,6 +1101,8 @@ func (m Model) startTodoInProjectPath(projectPath, todoText string, provider cod
 		ForceNew:         true,
 		Preset:           m.currentCodexLaunchPreset(),
 		PlaywrightPolicy: m.currentPlaywrightPolicy(),
+		AppDataDir:       m.appDataDir(),
+		CodexHome:        m.codexHome(),
 	}
 	if err := req.Validate(); err != nil {
 		m.clearTodoLaunchDraft(project.Path)

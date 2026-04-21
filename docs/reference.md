@@ -31,9 +31,14 @@ Provider artifact and detector-footprint notes live in:
 
 The TUI `/settings` modal is now split into sections (`AI & Models`, `Project Scope`, `Browser`, `Refresh`) so it stays usable on smaller terminals. The Browser section exposes a simplified `Browser windows` field with plain-language choices such as `Only when needed`, `Always show`, and `Classic browser behavior`, while the config file still stores the raw Playwright policy keys below:
 
-In `Only when needed`, embedded Codex now launches its Playwright MCP server with `--headless --isolated` overrides, so ordinary browser automation stays in the background instead of opening focus-stealing tabs. URL-based login waits still raise a browser-attention prompt that can open the login page directly in your default browser while bringing the embedded session forward.
+In `Only when needed`, newly launched embedded Codex sessions now route Playwright through an LCR-managed wrapper with a persistent browser profile. They also get a session-local `CODEX_HOME` overlay that shadows only the `playwright` skill, so embedded Codex is guided toward the managed MCP path without changing the user's real global Codex skill install. On macOS, LCR backgrounds that managed browser and later reveals the same browser window for login or other human steps, so auth stays in the Playwright session Codex is actually driving. Existing embedded sessions still need to be reopened or reconnected before they pick up the new launch path.
 
 Working roadmap for this area: [`browser_automation_working_plan.md`](browser_automation_working_plan.md)
+
+For managed-browser debugging outside the TUI, Little Control Room also exposes:
+
+- `lcroom browser status --session-key <id>`
+- `lcroom browser reveal --session-key <id>`
 
 - `openai_api_key`
 - `include_paths`

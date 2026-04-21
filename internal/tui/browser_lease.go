@@ -42,10 +42,7 @@ func (m *Model) observeManagedBrowserLease(projectPath string, snapshot codexapp
 		m.browserLeaseSnapshot = controller.Snapshot()
 		return
 	}
-	loginURL := ""
-	if request := snapshot.PendingElicitation; request != nil {
-		loginURL = managedBrowserLoginURL(embeddedProvider(snapshot), snapshot.BrowserActivity.Policy, request.Mode, request.URL)
-	}
+	loginURL := managedBrowserAttentionURL(snapshot)
 	m.browserLeaseSnapshot = controller.Observe(browserctl.Observation{
 		Ref:       ref,
 		Policy:    snapshot.BrowserActivity.Policy.Normalize(),
@@ -100,11 +97,11 @@ func managedBrowserLeaseRef(provider codexapp.Provider, projectPath, threadID st
 	}
 }
 
-func (m Model) openManagedBrowserLogin(projectPath string, provider codexapp.Provider, threadID string, activity browserctl.SessionActivity, loginURL, openingStatus, successStatus string) (tea.Model, tea.Cmd) {
+func (m Model) openManagedBrowserLogin(projectPath string, provider codexapp.Provider, threadID, managedSessionKey string, activity browserctl.SessionActivity, loginURL, openingStatus, successStatus string) (tea.Model, tea.Cmd) {
 	ref := managedBrowserLeaseRef(provider, projectPath, threadID)
 	if !ref.Valid() {
-		m.status = openingStatus
-		return m, m.openBrowserURLCmd(loginURL, "open MCP login URL in browser", successStatus)
+		m.status = "Managed browser control is unavailable for this session."
+		return m, nil
 	}
 	controller := m.ensureBrowserController()
 	if controller != nil {
@@ -122,13 +119,14 @@ func (m Model) openManagedBrowserLogin(projectPath string, provider codexapp.Pro
 		return m, nil
 	}
 	m.status = openingStatus
-	return m, m.openManagedBrowserURLCmd(loginURL, ref, "open MCP login URL in browser", successStatus)
+	return m, m.revealManagedBrowserCmd(managedSessionKey, ref, successStatus)
 }
 
-func (m Model) openManagedBrowserURLCmd(rawURL string, ref browserctl.SessionRef, action, successStatus string) tea.Cmd {
+func (m Model) revealManagedBrowserCmd(managedSessionKey string, ref browserctl.SessionRef, successStatus string) tea.Cmd {
 	controller := m.ensureBrowserController()
+	dataDir := m.appDataDir()
 	return func() tea.Msg {
-		if err := openBrowserURL(rawURL, action); err != nil {
+		if err := revealManagedBrowserSession(dataDir, managedSessionKey); err != nil {
 			msg := browserOpenMsg{err: err}
 			if controller != nil {
 				msg.browserLeaseSnapshot = controller.ReleaseInteractive(ref)

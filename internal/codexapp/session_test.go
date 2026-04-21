@@ -76,6 +76,49 @@ func TestHydrateResumedThreadBuildsTranscript(t *testing.T) {
 	}
 }
 
+func TestHydrateResumedThreadTracksCurrentPlaywrightPageURL(t *testing.T) {
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+	}
+
+	s.hydrateResumedThread(resumedThread{
+		ID: "thread_123",
+		Status: resumedThreadStatus{
+			Type: "idle",
+		},
+		Turns: []resumedTurn{
+			{
+				ID:     "turn_1",
+				Status: "completed",
+				Items: []map[string]json.RawMessage{
+					{
+						"id":     json.RawMessage(`"item_browser"`),
+						"type":   json.RawMessage(`"mcpToolCall"`),
+						"server": json.RawMessage(`"playwright"`),
+						"tool":   json.RawMessage(`"browser_click"`),
+						"status": json.RawMessage(`"completed"`),
+						"result": json.RawMessage(`{
+							"content": [
+								{
+									"type": "text",
+									"text": "### Page state\n- Page URL: https://chartboost.us.auth0.com/u/login?state=demo\n"
+								}
+							]
+						}`),
+					},
+				},
+			},
+		},
+	})
+
+	snapshot := s.Snapshot()
+	if got, want := snapshot.CurrentBrowserPageURL, "https://chartboost.us.auth0.com/u/login?state=demo"; got != want {
+		t.Fatalf("current browser page URL = %q, want %q", got, want)
+	}
+}
+
 func TestHydrateResumedThreadMarksActiveTurnBusy(t *testing.T) {
 	s := &appServerSession{
 		projectPath: "/tmp/demo",
@@ -845,6 +888,45 @@ func TestHandleItemStartedTracksPlaywrightBrowserActivity(t *testing.T) {
 	}
 	if got, want := snapshot.BrowserActivity.ToolName, "browser_navigate"; got != want {
 		t.Fatalf("browser activity tool = %q, want %q", got, want)
+	}
+}
+
+func TestHandleItemCompletedTracksCurrentPlaywrightPageURL(t *testing.T) {
+	policy := browserctl.Policy{
+		ManagementMode:     browserctl.ManagementModeManaged,
+		DefaultBrowserMode: browserctl.BrowserModeHeadless,
+		LoginMode:          browserctl.LoginModePromote,
+		IsolationScope:     browserctl.IsolationScopeTask,
+	}
+	s := &appServerSession{
+		projectPath:      "/tmp/demo",
+		entryIndex:       make(map[string]int),
+		notify:           func() {},
+		playwrightPolicy: policy,
+		browserActivity:  browserctl.DefaultSessionActivity(policy),
+	}
+
+	s.handleItemCompleted(json.RawMessage(`{
+		"item": {
+			"id": "item_browser",
+			"type": "mcpToolCall",
+			"server": "playwright",
+			"tool": "browser_click",
+			"status": "completed",
+			"result": {
+				"content": [
+					{
+						"type": "text",
+						"text": "### Page state\n- Page URL: https://chartboost.us.auth0.com/u/login?state=demo\n- Page Title: Log in | Chartboost\n"
+					}
+				]
+			}
+		}
+	}`))
+
+	snapshot := s.Snapshot()
+	if got, want := snapshot.CurrentBrowserPageURL, "https://chartboost.us.auth0.com/u/login?state=demo"; got != want {
+		t.Fatalf("current browser page URL = %q, want %q", got, want)
 	}
 }
 

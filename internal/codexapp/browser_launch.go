@@ -17,28 +17,48 @@ func applyPlaywrightPolicyEnvironment(cmd *exec.Cmd, provider Provider, policy b
 	cmd.Env = browserctl.AppendEnv(os.Environ(), string(provider.Normalized()), policy)
 }
 
-func applyCodexPlaywrightMCPOverrides(cmd *exec.Cmd, policy browserctl.Policy) {
+func applyCodexPlaywrightMCPOverrides(cmd *exec.Cmd, req LaunchRequest) {
 	if cmd == nil {
 		return
 	}
-	for _, override := range codexPlaywrightMCPConfigOverrides(policy) {
+	for _, override := range codexPlaywrightMCPConfigOverrides(req) {
 		cmd.Args = append(cmd.Args, "-c", override)
 	}
 }
 
-func codexPlaywrightMCPConfigOverrides(policy browserctl.Policy) []string {
-	normalized := policy.Normalize()
+func codexPlaywrightMCPConfigOverrides(req LaunchRequest) []string {
+	normalized := req.PlaywrightPolicy.Normalize()
 	if normalized.ManagementMode != browserctl.ManagementModeManaged {
 		return nil
 	}
 
-	args := []string{"--isolated"}
-	if normalized.DefaultBrowserMode == browserctl.BrowserModeHeadless {
-		args = append([]string{"--headless"}, args...)
+	executablePath, err := os.Executable()
+	if err != nil || strings.TrimSpace(executablePath) == "" {
+		return nil
+	}
+	sessionKey := strings.TrimSpace(req.ManagedBrowserSessionKey)
+	if sessionKey == "" {
+		sessionKey = browserctl.NewManagedSessionKey()
+	}
+	profileKey := browserctl.ManagedProfileKey(
+		normalized,
+		string(ProviderCodex.Normalized()),
+		req.ProjectPath,
+		req.ResumeID,
+		sessionKey,
+	)
+	args := []string{
+		"playwright-mcp",
+		"--provider", string(ProviderCodex.Normalized()),
+		"--project-path", strings.TrimSpace(req.ProjectPath),
+		"--data-dir", browserctl.EffectiveDataDir(req.AppDataDir),
+		"--session-key", sessionKey,
+		"--profile-key", profileKey,
+		"--launch-mode", string(browserctl.ManagedLaunchModeForPolicy(normalized)),
 	}
 
 	return []string{
-		`mcp_servers.playwright.command="mcp-server-playwright"`,
+		fmt.Sprintf("mcp_servers.playwright.command=%s", strconv.Quote(executablePath)),
 		fmt.Sprintf("mcp_servers.playwright.args=%s", formatCodexConfigStringArray(args)),
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -57,11 +58,13 @@ func (e *ForceNewSessionReusedError) Error() string {
 }
 
 type appServerSession struct {
-	projectPath      string
-	preset           codexcli.Preset
-	notify           func()
-	rpcCallHook      func(context.Context, string, any) (json.RawMessage, error)
-	playwrightPolicy browserctl.Policy
+	projectPath              string
+	preset                   codexcli.Preset
+	notify                   func()
+	rpcCallHook              func(context.Context, string, any) (json.RawMessage, error)
+	playwrightPolicy         browserctl.Policy
+	managedBrowserSessionKey string
+	codexHomeOverlay         string
 
 	cmd   *exec.Cmd
 	stdin io.WriteCloser
@@ -74,47 +77,48 @@ type appServerSession struct {
 	exitCh    chan struct{}
 	exitOnce  sync.Once
 
-	mu                 sync.Mutex
-	threadID           string
-	activeTurnID       string
-	activeItems        map[string]struct{}
-	pendingCompletion  *turnCompletionState
-	started            bool
-	busy               bool
-	busyExternal       bool
-	compacting         bool
-	reconciling        bool
-	reportedAuth403    bool
-	busySince          time.Time
-	closed             bool
-	stalled            bool
-	stallCount         int
-	status             string
-	lastError          string
-	lastSystemNotice   string
-	lastActivityAt     time.Time
-	lastBusyActivityAt time.Time
-	currentCWD         string
-	model              string
-	modelProvider      string
-	reasoningEffort    string
-	pendingModel       string
-	pendingReasoning   string
-	serviceTier        string
-	approvalPolicy     json.RawMessage
-	sandboxPolicy      json.RawMessage
-	tokenUsage         *threadTokenUsage
-	rateLimits         *rateLimitSnapshot
-	rateLimitsByID     map[string]rateLimitSnapshot
-	pendingApproval    *ApprovalRequest
-	pendingToolInput   *ToolInputRequest
-	pendingElicitation *ElicitationRequest
-	browserActivity    browserctl.SessionActivity
-	browserToolCalls   map[string]browserToolCall
-	entries            []transcriptEntry
-	entryIndex         map[string]int
-	transcriptRevision uint64
-	transcriptCache    transcriptExportCache
+	mu                    sync.Mutex
+	threadID              string
+	activeTurnID          string
+	activeItems           map[string]struct{}
+	pendingCompletion     *turnCompletionState
+	started               bool
+	busy                  bool
+	busyExternal          bool
+	compacting            bool
+	reconciling           bool
+	reportedAuth403       bool
+	busySince             time.Time
+	closed                bool
+	stalled               bool
+	stallCount            int
+	status                string
+	lastError             string
+	lastSystemNotice      string
+	lastActivityAt        time.Time
+	lastBusyActivityAt    time.Time
+	currentCWD            string
+	model                 string
+	modelProvider         string
+	reasoningEffort       string
+	pendingModel          string
+	pendingReasoning      string
+	serviceTier           string
+	approvalPolicy        json.RawMessage
+	sandboxPolicy         json.RawMessage
+	tokenUsage            *threadTokenUsage
+	rateLimits            *rateLimitSnapshot
+	rateLimitsByID        map[string]rateLimitSnapshot
+	pendingApproval       *ApprovalRequest
+	pendingToolInput      *ToolInputRequest
+	pendingElicitation    *ElicitationRequest
+	browserActivity       browserctl.SessionActivity
+	currentBrowserPageURL string
+	browserToolCalls      map[string]browserToolCall
+	entries               []transcriptEntry
+	entryIndex            map[string]int
+	transcriptRevision    uint64
+	transcriptCache       transcriptExportCache
 }
 
 type transcriptEntry struct {
@@ -482,18 +486,22 @@ type mcpServerElicitationRequestParams struct {
 
 func newAppServerSession(req LaunchRequest, notify func()) (Session, error) {
 	policy := req.PlaywrightPolicy.Normalize()
+	if req.ManagedBrowserSessionKey == "" && !policy.UsesLegacyLaunchBehavior() {
+		req.ManagedBrowserSessionKey = browserctl.NewManagedSessionKey()
+	}
 	s := &appServerSession{
-		projectPath:      req.ProjectPath,
-		preset:           req.Preset,
-		notify:           notify,
-		playwrightPolicy: policy,
-		pending:          make(map[string]chan rpcEnvelope),
-		exitCh:           make(chan struct{}),
-		activeItems:      make(map[string]struct{}),
-		entryIndex:       make(map[string]int),
-		browserActivity:  browserctl.DefaultSessionActivity(policy),
-		status:           "Starting Codex app-server...",
-		lastActivityAt:   time.Now(),
+		projectPath:              req.ProjectPath,
+		preset:                   req.Preset,
+		notify:                   notify,
+		playwrightPolicy:         policy,
+		managedBrowserSessionKey: strings.TrimSpace(req.ManagedBrowserSessionKey),
+		pending:                  make(map[string]chan rpcEnvelope),
+		exitCh:                   make(chan struct{}),
+		activeItems:              make(map[string]struct{}),
+		entryIndex:               make(map[string]int),
+		browserActivity:          browserctl.DefaultSessionActivity(policy),
+		status:                   "Starting Codex app-server...",
+		lastActivityAt:           time.Now(),
 	}
 	if err := s.start(req); err != nil {
 		_ = s.Close()
@@ -513,38 +521,40 @@ func (s *appServerSession) Snapshot() Snapshot {
 	tokenUsage := exportedTokenUsageSnapshot(s.tokenUsage)
 	usageWindows := exportedUsageWindowsSnapshot(s.rateLimits, s.rateLimitsByID)
 	return Snapshot{
-		Provider:           ProviderCodex,
-		ProjectPath:        s.projectPath,
-		ThreadID:           s.threadID,
-		Preset:             s.preset,
-		BrowserActivity:    s.browserActivity.Normalize(),
-		TranscriptRevision: s.transcriptRevision,
-		Phase:              s.phaseLocked(),
-		Started:            s.started,
-		Busy:               s.busy,
-		BusyExternal:       s.busyExternal,
-		BusySince:          s.busySince,
-		LastBusyActivityAt: s.lastBusyActivityAt,
-		Closed:             s.closed,
-		ActiveTurnID:       s.activeTurnID,
-		PendingApproval:    cloneApprovalRequest(s.pendingApproval),
-		PendingToolInput:   cloneToolInputRequest(s.pendingToolInput),
-		PendingElicitation: cloneElicitationRequest(s.pendingElicitation),
-		Entries:            entries,
-		Transcript:         transcript,
-		Status:             s.status,
-		LastError:          s.lastError,
-		LastSystemNotice:   s.lastSystemNotice,
-		LastActivityAt:     s.lastActivityAt,
-		CurrentCWD:         s.currentCWD,
-		Model:              s.model,
-		ModelProvider:      s.modelProvider,
-		ReasoningEffort:    s.reasoningEffort,
-		ServiceTier:        s.serviceTier,
-		PendingModel:       s.pendingModel,
-		PendingReasoning:   s.pendingReasoning,
-		TokenUsage:         tokenUsage,
-		UsageWindows:       usageWindows,
+		Provider:                 ProviderCodex,
+		ProjectPath:              s.projectPath,
+		ThreadID:                 s.threadID,
+		Preset:                   s.preset,
+		BrowserActivity:          s.browserActivity.Normalize(),
+		ManagedBrowserSessionKey: strings.TrimSpace(s.managedBrowserSessionKey),
+		CurrentBrowserPageURL:    strings.TrimSpace(s.currentBrowserPageURL),
+		TranscriptRevision:       s.transcriptRevision,
+		Phase:                    s.phaseLocked(),
+		Started:                  s.started,
+		Busy:                     s.busy,
+		BusyExternal:             s.busyExternal,
+		BusySince:                s.busySince,
+		LastBusyActivityAt:       s.lastBusyActivityAt,
+		Closed:                   s.closed,
+		ActiveTurnID:             s.activeTurnID,
+		PendingApproval:          cloneApprovalRequest(s.pendingApproval),
+		PendingToolInput:         cloneToolInputRequest(s.pendingToolInput),
+		PendingElicitation:       cloneElicitationRequest(s.pendingElicitation),
+		Entries:                  entries,
+		Transcript:               transcript,
+		Status:                   s.status,
+		LastError:                s.lastError,
+		LastSystemNotice:         s.lastSystemNotice,
+		LastActivityAt:           s.lastActivityAt,
+		CurrentCWD:               s.currentCWD,
+		Model:                    s.model,
+		ModelProvider:            s.modelProvider,
+		ReasoningEffort:          s.reasoningEffort,
+		ServiceTier:              s.serviceTier,
+		PendingModel:             s.pendingModel,
+		PendingReasoning:         s.pendingReasoning,
+		TokenUsage:               tokenUsage,
+		UsageWindows:             usageWindows,
 	}
 }
 
@@ -557,38 +567,40 @@ func (s *appServerSession) TrySnapshot() (Snapshot, bool) {
 	tokenUsage := exportedTokenUsageSnapshot(s.tokenUsage)
 	usageWindows := exportedUsageWindowsSnapshot(s.rateLimits, s.rateLimitsByID)
 	return Snapshot{
-		Provider:           ProviderCodex,
-		ProjectPath:        s.projectPath,
-		ThreadID:           s.threadID,
-		Preset:             s.preset,
-		BrowserActivity:    s.browserActivity.Normalize(),
-		TranscriptRevision: s.transcriptRevision,
-		Phase:              s.phaseLocked(),
-		Started:            s.started,
-		Busy:               s.busy,
-		BusyExternal:       s.busyExternal,
-		BusySince:          s.busySince,
-		LastBusyActivityAt: s.lastBusyActivityAt,
-		Closed:             s.closed,
-		ActiveTurnID:       s.activeTurnID,
-		PendingApproval:    cloneApprovalRequest(s.pendingApproval),
-		PendingToolInput:   cloneToolInputRequest(s.pendingToolInput),
-		PendingElicitation: cloneElicitationRequest(s.pendingElicitation),
-		Entries:            entries,
-		Transcript:         transcript,
-		Status:             s.status,
-		LastError:          s.lastError,
-		LastSystemNotice:   s.lastSystemNotice,
-		LastActivityAt:     s.lastActivityAt,
-		CurrentCWD:         s.currentCWD,
-		Model:              s.model,
-		ModelProvider:      s.modelProvider,
-		ReasoningEffort:    s.reasoningEffort,
-		ServiceTier:        s.serviceTier,
-		PendingModel:       s.pendingModel,
-		PendingReasoning:   s.pendingReasoning,
-		TokenUsage:         tokenUsage,
-		UsageWindows:       usageWindows,
+		Provider:                 ProviderCodex,
+		ProjectPath:              s.projectPath,
+		ThreadID:                 s.threadID,
+		Preset:                   s.preset,
+		BrowserActivity:          s.browserActivity.Normalize(),
+		ManagedBrowserSessionKey: strings.TrimSpace(s.managedBrowserSessionKey),
+		CurrentBrowserPageURL:    strings.TrimSpace(s.currentBrowserPageURL),
+		TranscriptRevision:       s.transcriptRevision,
+		Phase:                    s.phaseLocked(),
+		Started:                  s.started,
+		Busy:                     s.busy,
+		BusyExternal:             s.busyExternal,
+		BusySince:                s.busySince,
+		LastBusyActivityAt:       s.lastBusyActivityAt,
+		Closed:                   s.closed,
+		ActiveTurnID:             s.activeTurnID,
+		PendingApproval:          cloneApprovalRequest(s.pendingApproval),
+		PendingToolInput:         cloneToolInputRequest(s.pendingToolInput),
+		PendingElicitation:       cloneElicitationRequest(s.pendingElicitation),
+		Entries:                  entries,
+		Transcript:               transcript,
+		Status:                   s.status,
+		LastError:                s.lastError,
+		LastSystemNotice:         s.lastSystemNotice,
+		LastActivityAt:           s.lastActivityAt,
+		CurrentCWD:               s.currentCWD,
+		Model:                    s.model,
+		ModelProvider:            s.modelProvider,
+		ReasoningEffort:          s.reasoningEffort,
+		ServiceTier:              s.serviceTier,
+		PendingModel:             s.pendingModel,
+		PendingReasoning:         s.pendingReasoning,
+		TokenUsage:               tokenUsage,
+		UsageWindows:             usageWindows,
 	}, true
 }
 
@@ -1539,9 +1551,17 @@ func (s *appServerSession) WaitClosed(timeout time.Duration) bool {
 func (s *appServerSession) start(req LaunchRequest) error {
 	cmd := exec.Command("codex", "app-server")
 	cmd.Dir = req.ProjectPath
-	applyCodexPlaywrightMCPOverrides(cmd, req.PlaywrightPolicy)
+	applyCodexPlaywrightMCPOverrides(cmd, req)
 	configureAppServerCommand(cmd)
 	applyPlaywrightPolicyEnvironment(cmd, ProviderCodex, req.PlaywrightPolicy)
+	if shouldShadowPlaywrightSkill(req.PlaywrightPolicy) {
+		codexHomeOverlay, err := prepareCodexHomeOverlay(req.AppDataDir, req.CodexHome)
+		if err != nil {
+			return err
+		}
+		s.codexHomeOverlay = codexHomeOverlay
+		cmd.Env = withEnvOverride(cmd.Env, "CODEX_HOME", codexHomeOverlay)
+	}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -1891,6 +1911,9 @@ func (s *appServerSession) closeExitCh() {
 		return
 	}
 	s.exitOnce.Do(func() {
+		if strings.TrimSpace(s.codexHomeOverlay) != "" {
+			_ = os.RemoveAll(s.codexHomeOverlay)
+		}
 		if s.exitCh != nil {
 			close(s.exitCh)
 		}
@@ -2342,6 +2365,7 @@ func (s *appServerSession) handleItemCompleted(params json.RawMessage) {
 				s.browserToolCalls = make(map[string]browserToolCall)
 			}
 			s.browserToolCalls[itemID] = call
+			s.updateBrowserPageURLLocked(call, msg.Item)
 		}
 	}
 	if _, ok := s.browserToolCalls[itemID]; ok {
@@ -2604,6 +2628,16 @@ func (s *appServerSession) browserToolCallForItem(item map[string]json.RawMessag
 		ServerName: serverName,
 		ToolName:   toolName,
 	}, true
+}
+
+func (s *appServerSession) updateBrowserPageURLLocked(call browserToolCall, item map[string]json.RawMessage) {
+	if pageURL := extractPlaywrightPageURL(item["result"]); pageURL != "" {
+		s.currentBrowserPageURL = pageURL
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(call.ToolName), "browser_close") {
+		s.currentBrowserPageURL = ""
+	}
 }
 
 func (s *appServerSession) refreshBrowserActivityLocked(now time.Time) {
@@ -3214,9 +3248,17 @@ func (s *appServerSession) hydrateResumedThreadLocked(thread resumedThread) {
 	busyExternal := busy && !s.compacting
 	s.activeItems = nil
 	s.pendingCompletion = nil
+	currentBrowserPageURL := ""
 
 	for _, turn := range thread.Turns {
 		for _, item := range turn.Items {
+			if call, ok := s.browserToolCallForItem(item); ok {
+				if pageURL := extractPlaywrightPageURL(item["result"]); pageURL != "" {
+					currentBrowserPageURL = pageURL
+				} else if strings.EqualFold(strings.TrimSpace(call.ToolName), "browser_close") {
+					currentBrowserPageURL = ""
+				}
+			}
 			itemID, kind, text := renderResumedThreadItemForTurn(turn.Status, item)
 			s.mergeHistoryItemLocked(itemID, kind, text)
 		}
@@ -3240,6 +3282,7 @@ func (s *appServerSession) hydrateResumedThreadLocked(thread resumedThread) {
 	s.busySince = busySince
 	s.lastBusyActivityAt = lastBusyActivityAt
 	s.activeTurnID = activeTurnID
+	s.currentBrowserPageURL = strings.TrimSpace(currentBrowserPageURL)
 }
 
 func readLines(r io.Reader, handle func([]byte)) error {
@@ -3898,6 +3941,40 @@ func decodeRawStringSlice(raw json.RawMessage) []string {
 		}
 	}
 	return out
+}
+
+func extractPlaywrightPageURL(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var result struct {
+		Content []map[string]json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return ""
+	}
+	for _, item := range result.Content {
+		text := strings.TrimSpace(decodeRawString(item["text"]))
+		if text == "" {
+			continue
+		}
+		if pageURL := extractPageURLFromText(text); pageURL != "" {
+			return pageURL
+		}
+	}
+	return ""
+}
+
+func extractPageURLFromText(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		line = strings.TrimSpace(strings.TrimPrefix(line, "-"))
+		if !strings.HasPrefix(line, "Page URL:") {
+			continue
+		}
+		return strings.TrimSpace(strings.TrimPrefix(line, "Page URL:"))
+	}
+	return ""
 }
 
 func decodeRawArrayLen(raw json.RawMessage) int {

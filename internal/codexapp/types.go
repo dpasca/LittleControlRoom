@@ -430,38 +430,40 @@ type ModelOption struct {
 }
 
 type Snapshot struct {
-	Provider           Provider
-	ProjectPath        string
-	ThreadID           string
-	Preset             codexcli.Preset
-	BrowserActivity    browserctl.SessionActivity
-	TranscriptRevision uint64
-	Phase              SessionPhase
-	Started            bool
-	Busy               bool
-	BusyExternal       bool
-	BusySince          time.Time
-	LastBusyActivityAt time.Time
-	Closed             bool
-	ActiveTurnID       string
-	PendingApproval    *ApprovalRequest
-	PendingToolInput   *ToolInputRequest
-	PendingElicitation *ElicitationRequest
-	Entries            []TranscriptEntry
-	Transcript         string
-	Status             string
-	LastError          string
-	LastSystemNotice   string
-	LastActivityAt     time.Time
-	CurrentCWD         string
-	Model              string
-	ModelProvider      string
-	ReasoningEffort    string
-	ServiceTier        string
-	PendingModel       string
-	PendingReasoning   string
-	TokenUsage         *TokenUsageSnapshot
-	UsageWindows       []UsageWindowSnapshot
+	Provider                 Provider
+	ProjectPath              string
+	ThreadID                 string
+	Preset                   codexcli.Preset
+	BrowserActivity          browserctl.SessionActivity
+	ManagedBrowserSessionKey string
+	CurrentBrowserPageURL    string
+	TranscriptRevision       uint64
+	Phase                    SessionPhase
+	Started                  bool
+	Busy                     bool
+	BusyExternal             bool
+	BusySince                time.Time
+	LastBusyActivityAt       time.Time
+	Closed                   bool
+	ActiveTurnID             string
+	PendingApproval          *ApprovalRequest
+	PendingToolInput         *ToolInputRequest
+	PendingElicitation       *ElicitationRequest
+	Entries                  []TranscriptEntry
+	Transcript               string
+	Status                   string
+	LastError                string
+	LastSystemNotice         string
+	LastActivityAt           time.Time
+	CurrentCWD               string
+	Model                    string
+	ModelProvider            string
+	ReasoningEffort          string
+	ServiceTier              string
+	PendingModel             string
+	PendingReasoning         string
+	TokenUsage               *TokenUsageSnapshot
+	UsageWindows             []UsageWindowSnapshot
 }
 
 type Session interface {
@@ -486,15 +488,18 @@ type Session interface {
 }
 
 type LaunchRequest struct {
-	Provider         Provider
-	ProjectPath      string
-	ResumeID         string
-	ForceNew         bool
-	Prompt           string
-	Preset           codexcli.Preset
-	PendingModel     string
-	PendingReasoning string
-	PlaywrightPolicy browserctl.Policy
+	Provider                 Provider
+	ProjectPath              string
+	ResumeID                 string
+	ForceNew                 bool
+	Prompt                   string
+	Preset                   codexcli.Preset
+	PendingModel             string
+	PendingReasoning         string
+	PlaywrightPolicy         browserctl.Policy
+	ManagedBrowserSessionKey string
+	AppDataDir               string
+	CodexHome                string
 }
 
 func (r LaunchRequest) Validate() error {
@@ -618,6 +623,9 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 	}
 
 	projectPath := strings.TrimSpace(req.ProjectPath)
+	if req.ManagedBrowserSessionKey == "" && req.Provider.Normalized() == ProviderCodex && !req.PlaywrightPolicy.Normalize().UsesLegacyLaunchBehavior() {
+		req.ManagedBrowserSessionKey = browserctl.NewManagedSessionKey()
+	}
 
 	m.mu.Lock()
 	existing, ok := m.sessions[projectPath]

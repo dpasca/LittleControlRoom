@@ -549,6 +549,8 @@ func (m Model) openCodexSessionChoice(choice codexSessionChoice) (tea.Model, tea
 		ProjectPath:      choice.ProjectPath,
 		ResumeID:         choice.SessionID,
 		PlaywrightPolicy: m.currentPlaywrightPolicy(),
+		AppDataDir:       m.appDataDir(),
+		CodexHome:        m.codexHome(),
 	}
 	if choice.Provider.Normalized() == codexapp.ProviderCodex {
 		req.Preset = m.currentCodexLaunchPreset()

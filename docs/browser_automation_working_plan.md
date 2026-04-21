@@ -12,9 +12,13 @@ It is intentionally different from `STATUS.md`:
 
 - For embedded Codex, `Only when needed` now affects the actual Playwright launch path, not just the surrounding UI.
 - In managed mode, embedded Codex overrides the `playwright` MCP registration per process and launches Playwright with LCR-controlled flags.
-- Current effective quiet default for newly launched embedded Codex sessions is `--headless --isolated`.
+- Newly launched embedded Codex sessions now go through an LCR-owned `playwright-mcp` wrapper instead of calling `mcp-server-playwright` directly.
+- The managed wrapper now gives each Codex session a stable managed browser/session key plus a persistent Playwright profile directory.
+- Newly launched embedded Codex sessions also get a session-local `CODEX_HOME` overlay that shadows only the `playwright` skill, so LCR can steer browser behavior without mutating the user's real `~/.codex`.
+- On macOS, `Only when needed` now runs managed Codex browser work in a backgrounded headed browser so LCR can reveal that same browser context later for login or other human steps.
 - Existing embedded Codex sessions do not retroactively pick up the new launch behavior; they need to be reopened or reconnected.
 - URL-based login waits already have an LCR-managed attention flow and interactive-browser lease.
+- Embedded Codex sessions now remember the latest Playwright page URL they reached, and the visible pane can reveal that same managed browser window with `Ctrl+O`.
 - OpenCode and Claude Code still remain behind Codex in managed-browser support.
 
 ## Maintenance Rule
@@ -49,6 +53,7 @@ Make browser automation feel quiet and predictable by default:
 
 - Launch-time Playwright policy is threaded through embedded providers.
 - Embedded Codex now uses per-process MCP config overrides in managed mode, so the `playwright` server can be launched with LCR-controlled flags instead of the stock provider defaults.
+- Embedded Codex also uses a session-local `CODEX_HOME` overlay in managed mode, so the `playwright` skill can be shadowed per session without changing the user's global Codex install.
 - The simplified `/settings` UI now centers on a plain-language `Browser windows` choice:
   - `Only when needed`
   - `Always show`
@@ -70,23 +75,35 @@ Make browser automation feel quiet and predictable by default:
 
 - Hidden embedded Codex sessions:
   - can raise a browser-attention popup
-  - can open a managed login URL directly in the default browser when policy is `managed + promote`
+  - can reveal the managed browser window for that same session when policy is `managed + promote`
 - Visible embedded Codex sessions:
-  - can open the same login URL with `o`
+  - can reveal the same managed browser window with `o`
   - show footer/request hints that explain the browser-login flow
+  - can reveal the current managed browser window with `Ctrl+O` after a background navigation finishes
 - Managed Codex login flows now go through an LCR-owned interactive browser lease:
   - one session can hold the interactive browser slot at a time
   - later sessions are blocked cleanly instead of blindly opening another browser login flow
-  - failed browser-open attempts release the slot immediately
+  - failed browser-reveal attempts release the slot immediately
+- Managed browser metadata is now written under the LCR data dir so the TUI can find and reveal the correct browser session instead of opening the URL in a disconnected desktop browser.
+- The shadow Playwright skill now tells embedded Codex to use the already-registered Playwright MCP tools instead of shelling out to a separate CLI browser path.
+- LCR now has a small non-TUI browser control surface:
+  - `lcroom browser status --session-key ...`
+  - `lcroom browser reveal --session-key ...`
+  This makes managed browser state and reveal behavior scriptable for debugging and smoke checks.
+
+### Testing
+
+- Unit coverage now verifies that the session-local `CODEX_HOME` overlay symlinks the original Codex home while replacing only `skills/playwright`.
+- A Codex smoke check can now verify the overlay without a live user session by running `codex debug prompt-input` against that overlay and checking that the shadow Playwright skill is what Codex sees.
 
 ## Current Provider Status
 
 ### Codex
 
 - Best current target for managed behavior.
-- Managed mode now overrides the embedded Codex `playwright` MCP launch to enforce headless/isolated browser startup in `Only when needed`.
+- Managed mode now overrides the embedded Codex `playwright` MCP launch to use the LCR wrapper plus a persistent Playwright profile.
 - Embedded elicitation replies are wired.
-- Managed login URL handoff is working in both hidden and visible session flows.
+- Managed same-context browser reveal is working in both hidden and visible session flows for newly launched embedded sessions.
 - This launch override currently applies to newly started embedded sessions only.
 
 ### OpenCode
@@ -103,16 +120,16 @@ Make browser automation feel quiet and predictable by default:
 
 ## Immediate Next Steps
 
-1. Polish the post-login flow.
-   - Make "open browser", "waiting for browser", "blocked by another login", and "ready to continue" wording feel fully consistent.
-   - Check whether URL-based accept/done copy in the visible pane can be clearer without becoming noisy.
+1. Make the backgrounded browser reveal path feel more robust in real use.
+   - Verify that the macOS hide/reveal behavior is stable across actual login sites.
+   - Decide whether the first reveal should do anything more explicit than just surface the managed browser window.
 
 2. Improve passive visibility outside popups.
    - Surface browser-attention state in the project list or detail pane.
    - Avoid making the popup the only way to notice a login wait.
 
 3. Keep tightening tests around managed Codex transitions.
-   - waiting -> open browser -> accept
+   - waiting -> show browser -> accept
    - waiting -> decline
    - waiting -> cancel
    - waiting -> blocked by another interactive lease
@@ -129,7 +146,7 @@ Make browser automation feel quiet and predictable by default:
    - Move from "interactive lease only" toward fuller browser/session ownership concepts.
 
 2. Add session/profile ownership.
-   - Define where per-task or per-project browser state should live.
+   - Keep refining where per-task or per-project browser state should live.
    - Reuse auth/profile state deliberately instead of implicitly.
 
 3. Extend provider support carefully.

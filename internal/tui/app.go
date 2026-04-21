@@ -2064,6 +2064,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			ForceNew:         true,
 			Preset:           m.currentCodexLaunchPreset(),
 			PlaywrightPolicy: m.currentPlaywrightPolicy(),
+			AppDataDir:       m.appDataDir(),
+			CodexHome:        m.codexHome(),
 		}
 		if !msg.openModelFirst {
 			req.Prompt = msg.todoText
@@ -4874,6 +4876,8 @@ func (m Model) launchEmbeddedForSelection(provider codexapp.Provider, forceNew b
 		Prompt:           prompt,
 		Preset:           m.currentCodexLaunchPreset(),
 		PlaywrightPolicy: m.currentPlaywrightPolicy(),
+		AppDataDir:       m.appDataDir(),
+		CodexHome:        m.codexHome(),
 	}
 	if err := req.Validate(); err != nil {
 		m.status = err.Error()
@@ -4885,6 +4889,20 @@ func (m Model) launchEmbeddedForSelection(provider codexapp.Provider, forceNew b
 	m.err = nil
 	m.status = "Opening embedded " + provider.Label() + " session..."
 	return m, m.openCodexSessionCmd(req)
+}
+
+func (m Model) appDataDir() string {
+	if m.svc != nil {
+		return m.svc.Config().DataDir
+	}
+	return config.Default().DataDir
+}
+
+func (m Model) codexHome() string {
+	if m.svc != nil {
+		return strings.TrimSpace(m.svc.Config().CodexHome)
+	}
+	return strings.TrimSpace(config.Default().CodexHome)
 }
 
 type embeddedLaunchBlock struct {

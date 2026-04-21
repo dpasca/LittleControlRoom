@@ -2,6 +2,7 @@ package browserctl
 
 import (
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -174,6 +175,15 @@ func AppendEnv(base []string, provider string, policy Policy) []string {
 		out = withOverride(out, "LCR_EMBEDDED_PROVIDER", trimmedProvider)
 	}
 	return out
+}
+
+func PolicyFromEnv() Policy {
+	return Policy{
+		ManagementMode:     ManagementMode(strings.TrimSpace(os.Getenv("LCR_PLAYWRIGHT_MANAGEMENT_MODE"))),
+		DefaultBrowserMode: BrowserMode(strings.TrimSpace(os.Getenv("LCR_PLAYWRIGHT_DEFAULT_BROWSER_MODE"))),
+		LoginMode:          LoginMode(strings.TrimSpace(os.Getenv("LCR_PLAYWRIGHT_LOGIN_MODE"))),
+		IsolationScope:     IsolationScope(strings.TrimSpace(os.Getenv("LCR_PLAYWRIGHT_ISOLATION_SCOPE"))),
+	}.Normalize()
 }
 
 func normalize(raw string) string {

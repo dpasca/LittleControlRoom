@@ -13761,6 +13761,7 @@ func TestVisibleCodexURLBasedElicitationCanOpenBrowser(t *testing.T) {
 				ServerName: "playwright",
 				ToolName:   "browser_navigate",
 			},
+			ManagedBrowserSessionKey: "managed-demo",
 			PendingElicitation: &codexapp.ElicitationRequest{
 				ID:   "elicitation_1",
 				Mode: codexapp.ElicitationModeURL,
@@ -13778,12 +13779,19 @@ func TestVisibleCodexURLBasedElicitationCanOpenBrowser(t *testing.T) {
 		t.Fatalf("manager.Open() error = %v", err)
 	}
 
-	previousOpener := externalBrowserOpener
-	defer func() { externalBrowserOpener = previousOpener }()
+	previousStateReader := managedBrowserStateReader
+	previousRevealer := managedBrowserRevealer
+	defer func() {
+		managedBrowserStateReader = previousStateReader
+		managedBrowserRevealer = previousRevealer
+	}()
 
-	openedURL := ""
-	externalBrowserOpener = func(rawURL string) error {
-		openedURL = rawURL
+	revealedSessionKey := ""
+	managedBrowserStateReader = func(_ string, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+		return browserctl.ManagedPlaywrightState{SessionKey: sessionKey, BrowserPID: 123, RevealSupported: true}, nil
+	}
+	managedBrowserRevealer = func(state browserctl.ManagedPlaywrightState) error {
+		revealedSessionKey = state.SessionKey
 		return nil
 	}
 
@@ -13802,8 +13810,8 @@ func TestVisibleCodexURLBasedElicitationCanOpenBrowser(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("o should queue the browser-open command")
 	}
-	if got.status != "Opening browser for login..." {
-		t.Fatalf("status = %q, want browser opening notice", got.status)
+	if got.status != "Showing the managed browser window..." {
+		t.Fatalf("status = %q, want managed browser reveal notice", got.status)
 	}
 
 	msg := cmd()
@@ -13814,11 +13822,85 @@ func TestVisibleCodexURLBasedElicitationCanOpenBrowser(t *testing.T) {
 	if openMsg.err != nil {
 		t.Fatalf("browserOpenMsg.err = %v, want nil", openMsg.err)
 	}
-	if openMsg.status != "Opened browser for login. Finish the browser flow here, then press Enter when you are ready to continue." {
-		t.Fatalf("browserOpenMsg.status = %q, want login handoff status", openMsg.status)
+	if openMsg.status != "Managed browser window is ready. Finish the browser flow there, then press Enter when you are ready to continue." {
+		t.Fatalf("browserOpenMsg.status = %q, want managed browser handoff status", openMsg.status)
 	}
-	if openedURL != "https://example.test/login" {
-		t.Fatalf("opened URL = %q, want login URL", openedURL)
+	if revealedSessionKey != "managed-demo" {
+		t.Fatalf("revealed session key = %q, want managed-demo", revealedSessionKey)
+	}
+}
+
+func TestVisibleCodexCanOpenCurrentBackgroundBrowserPage(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started:                  true,
+			ThreadID:                 "thread-demo",
+			Preset:                   codexcli.PresetYolo,
+			Status:                   "Codex session ready",
+			BrowserActivity:          browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy},
+			ManagedBrowserSessionKey: "managed-demo",
+			CurrentBrowserPageURL:    "https://chartboost.us.auth0.com/u/login?state=demo",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	previousStateReader := managedBrowserStateReader
+	previousRevealer := managedBrowserRevealer
+	defer func() {
+		managedBrowserStateReader = previousStateReader
+		managedBrowserRevealer = previousRevealer
+	}()
+
+	revealedSessionKey := ""
+	managedBrowserStateReader = func(_ string, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+		return browserctl.ManagedPlaywrightState{SessionKey: sessionKey, BrowserPID: 123, RevealSupported: true}, nil
+	}
+	managedBrowserRevealer = func(state browserctl.ManagedPlaywrightState) error {
+		revealedSessionKey = state.SessionKey
+		return nil
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlO})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("ctrl+o should queue the current-page browser-open command")
+	}
+	if got.status != "Showing the managed browser window..." {
+		t.Fatalf("status = %q, want managed browser reveal notice", got.status)
+	}
+
+	msg := cmd()
+	openMsg, ok := msg.(browserOpenMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want browserOpenMsg", msg)
+	}
+	if openMsg.err != nil {
+		t.Fatalf("browserOpenMsg.err = %v, want nil", openMsg.err)
+	}
+	if openMsg.status != "Managed browser window is ready. Continue there, then return here when you want Codex to keep going." {
+		t.Fatalf("browserOpenMsg.status = %q, want current page success status", openMsg.status)
+	}
+	if revealedSessionKey != "managed-demo" {
+		t.Fatalf("revealed session key = %q, want managed-demo", revealedSessionKey)
 	}
 }
 
@@ -13836,6 +13918,7 @@ func TestVisibleCodexURLBasedElicitationBlocksWhenInteractiveLeaseOwnedElsewhere
 				ServerName: "playwright",
 				ToolName:   "browser_navigate",
 			},
+			ManagedBrowserSessionKey: "managed-demo",
 			PendingElicitation: &codexapp.ElicitationRequest{
 				ID:   "elicitation_1",
 				Mode: codexapp.ElicitationModeURL,
@@ -13898,7 +13981,8 @@ func TestVisibleCodexURLBasedElicitationHintsOpenBrowser(t *testing.T) {
 		codexVisibleProject: "/tmp/demo",
 		codexSnapshots: map[string]codexapp.Snapshot{
 			"/tmp/demo": {
-				Provider: codexapp.ProviderCodex,
+				Provider:                 codexapp.ProviderCodex,
+				ManagedBrowserSessionKey: "managed-demo",
 				BrowserActivity: browserctl.SessionActivity{
 					Policy:     settingsAutomaticPlaywrightPolicy,
 					State:      browserctl.SessionActivityStateWaitingForUser,
@@ -13916,14 +14000,15 @@ func TestVisibleCodexURLBasedElicitationHintsOpenBrowser(t *testing.T) {
 	}
 
 	renderedBlocks := strings.Join(m.renderCodexElicitationBlocks(request, 120), "\n")
-	if !strings.Contains(renderedBlocks, "Press O to open the browser, then finish the login flow and press Enter when you are done.") {
+	if !strings.Contains(renderedBlocks, "Press O to reveal the managed browser window, then finish the login flow and press Enter when you are done.") {
 		t.Fatalf("renderCodexElicitationBlocks() missing managed login hint: %q", renderedBlocks)
 	}
 
 	footer := ansi.Strip(m.renderCodexFooter(codexapp.Snapshot{
-		Provider: codexapp.ProviderCodex,
-		Started:  true,
-		Status:   "Browser needs attention",
+		Provider:                 codexapp.ProviderCodex,
+		Started:                  true,
+		Status:                   "Browser needs attention",
+		ManagedBrowserSessionKey: "managed-demo",
 		BrowserActivity: browserctl.SessionActivity{
 			Policy:     settingsAutomaticPlaywrightPolicy,
 			State:      browserctl.SessionActivityStateWaitingForUser,
@@ -13931,10 +14016,35 @@ func TestVisibleCodexURLBasedElicitationHintsOpenBrowser(t *testing.T) {
 		},
 		PendingElicitation: &request,
 	}, 160))
-	for _, want := range []string{"O open browser", "Enter done/accept", "d decline", "c cancel"} {
+	for _, want := range []string{"O show browser", "Enter done/accept", "d decline", "c cancel"} {
 		if !strings.Contains(footer, want) {
 			t.Fatalf("renderCodexFooter() missing %q for managed browser login: %q", want, footer)
 		}
+	}
+}
+
+func TestVisibleCodexCurrentBackgroundBrowserPageHintsOpenPage(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Provider:                 codexapp.ProviderCodex,
+		Started:                  true,
+		Status:                   "Codex session ready",
+		BrowserActivity:          browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy},
+		ManagedBrowserSessionKey: "managed-demo",
+		CurrentBrowserPageURL:    "https://chartboost.us.auth0.com/u/login?state=demo",
+	}
+
+	m := Model{codexVisibleProject: "/tmp/demo"}
+	renderedBlocks := strings.Join(m.renderCodexRequestBlocks(snapshot, 120), "\n")
+	if !strings.Contains(renderedBlocks, "Background browser page: https://chartboost.us.auth0.com/u/login?state=demo") {
+		t.Fatalf("renderCodexRequestBlocks() missing current background page: %q", renderedBlocks)
+	}
+	if !strings.Contains(renderedBlocks, "Press Ctrl+O to reveal the managed browser window for this same session.") {
+		t.Fatalf("renderCodexRequestBlocks() missing Ctrl+O reveal hint: %q", renderedBlocks)
+	}
+
+	footer := ansi.Strip(m.renderCodexFooter(snapshot, 160))
+	if !strings.Contains(footer, "Ctrl+O show browser") {
+		t.Fatalf("renderCodexFooter() missing Ctrl+O show browser action: %q", footer)
 	}
 }
 
@@ -17079,6 +17189,7 @@ func TestBrowserAttentionOverlayRendersAndSkipsQuestionNotify(t *testing.T) {
 		browserAttention: &browserAttentionNotification{
 			ProjectPath: "/tmp/demo",
 			ProjectName: "demo",
+			SessionID:   "thread-demo",
 			Provider:    codexapp.ProviderCodex,
 			Activity: browserctl.SessionActivity{
 				Policy:     settingsAutomaticPlaywrightPolicy,
@@ -17122,6 +17233,7 @@ func TestBrowserAttentionOverlayShowsOpenBrowserForManagedLoginURL(t *testing.T)
 		browserAttention: &browserAttentionNotification{
 			ProjectPath: "/tmp/demo",
 			ProjectName: "demo",
+			SessionID:   "thread-demo",
 			Provider:    codexapp.ProviderCodex,
 			Activity: browserctl.SessionActivity{
 				Policy:     settingsAutomaticPlaywrightPolicy,
@@ -17129,16 +17241,16 @@ func TestBrowserAttentionOverlayShowsOpenBrowserForManagedLoginURL(t *testing.T)
 				ServerName: "playwright",
 				ToolName:   "browser_navigate",
 			},
-			RequestMode: codexapp.ElicitationModeURL,
-			RequestURL:  "https://example.test/login",
+			ManagedBrowserSessionKey: "managed-demo",
+			OpenURL:                  "https://example.test/login",
 		},
 	}
 
 	rendered := ansi.Strip(m.renderBrowserAttentionContent(72))
 	for _, want := range []string{
-		"open browser",
+		"show browser",
 		"open session",
-		"Little Control Room can open this login flow",
+		"Little Control Room can reveal the managed browser window",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("browser attention overlay is missing %q: %q", want, rendered)
@@ -17153,6 +17265,7 @@ func TestBrowserAttentionEnterOpensSession(t *testing.T) {
 		browserAttention: &browserAttentionNotification{
 			ProjectPath: "/tmp/demo",
 			ProjectName: "demo",
+			SessionID:   "thread-demo",
 			Provider:    codexapp.ProviderCodex,
 			Activity: browserctl.SessionActivity{
 				Policy:     settingsAutomaticPlaywrightPolicy,
@@ -17180,29 +17293,38 @@ func TestBrowserAttentionEnterOpensSession(t *testing.T) {
 
 func TestBrowserAttentionEnterOpensBrowserAndSessionForManagedLoginURL(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
-	previousOpener := externalBrowserOpener
-	defer func() { externalBrowserOpener = previousOpener }()
-
-	openedURL := ""
-	externalBrowserOpener = func(rawURL string) error {
-		openedURL = rawURL
-		return nil
-	}
 
 	m := Model{
 		settingsBaseline: &settings,
 		browserAttention: &browserAttentionNotification{
 			ProjectPath: "/tmp/demo",
 			ProjectName: "demo",
+			SessionID:   "thread-demo",
 			Provider:    codexapp.ProviderCodex,
 			Activity: browserctl.SessionActivity{
 				Policy:     settingsAutomaticPlaywrightPolicy,
 				State:      browserctl.SessionActivityStateWaitingForUser,
 				ServerName: "playwright",
 			},
-			RequestMode: codexapp.ElicitationModeURL,
-			RequestURL:  "https://example.test/login",
+			ManagedBrowserSessionKey: "managed-demo",
+			OpenURL:                  "https://example.test/login",
 		},
+	}
+
+	previousStateReader := managedBrowserStateReader
+	previousRevealer := managedBrowserRevealer
+	defer func() {
+		managedBrowserStateReader = previousStateReader
+		managedBrowserRevealer = previousRevealer
+	}()
+
+	revealedSessionKey := ""
+	managedBrowserStateReader = func(_ string, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+		return browserctl.ManagedPlaywrightState{SessionKey: sessionKey, BrowserPID: 123, RevealSupported: true}, nil
+	}
+	managedBrowserRevealer = func(state browserctl.ManagedPlaywrightState) error {
+		revealedSessionKey = state.SessionKey
+		return nil
 	}
 
 	updated, cmd := m.updateBrowserAttentionMode(tea.KeyMsg{Type: tea.KeyEnter})
@@ -17216,8 +17338,8 @@ func TestBrowserAttentionEnterOpensBrowserAndSessionForManagedLoginURL(t *testin
 	if got.codexVisibleProject != "/tmp/demo" {
 		t.Fatalf("codexVisibleProject = %q, want /tmp/demo", got.codexVisibleProject)
 	}
-	if got.status != "Opening browser for login and switching to the embedded session..." {
-		t.Fatalf("status = %q, want login-opening status", got.status)
+	if got.status != "Showing the managed browser window and switching to the embedded session..." {
+		t.Fatalf("status = %q, want browser-reveal status", got.status)
 	}
 
 	msgs := collectCmdMsgs(cmd)
@@ -17236,11 +17358,11 @@ func TestBrowserAttentionEnterOpensBrowserAndSessionForManagedLoginURL(t *testin
 	if openMsg.err != nil {
 		t.Fatalf("browserOpenMsg.err = %v, want nil", openMsg.err)
 	}
-	if openMsg.status != "Opened browser for login. Finish the browser flow, then return to the embedded session if more input is needed." {
-		t.Fatalf("browserOpenMsg.status = %q, want login success status", openMsg.status)
+	if openMsg.status != "Managed browser window is ready. Finish the browser flow there, then return to the embedded session if more input is needed." {
+		t.Fatalf("browserOpenMsg.status = %q, want browser reveal success status", openMsg.status)
 	}
-	if openedURL != "https://example.test/login" {
-		t.Fatalf("opened URL = %q, want login URL", openedURL)
+	if revealedSessionKey != "managed-demo" {
+		t.Fatalf("revealed session key = %q, want managed-demo", revealedSessionKey)
 	}
 }
 
@@ -17274,8 +17396,8 @@ func TestBrowserAttentionEnterShowsBlockedStatusWhenLeaseOwnedElsewhere(t *testi
 				State:      browserctl.SessionActivityStateWaitingForUser,
 				ServerName: "playwright",
 			},
-			RequestMode: codexapp.ElicitationModeURL,
-			RequestURL:  "https://example.test/login",
+			ManagedBrowserSessionKey: "managed-demo",
+			OpenURL:                  "https://example.test/login",
 		},
 	}
 
@@ -17306,9 +17428,16 @@ func TestOpenManagedBrowserLoginReleasesLeaseOnBrowserOpenFailure(t *testing.T) 
 	}
 	controller.Observe(observation)
 
-	previousOpener := externalBrowserOpener
-	defer func() { externalBrowserOpener = previousOpener }()
-	externalBrowserOpener = func(rawURL string) error {
+	previousStateReader := managedBrowserStateReader
+	previousRevealer := managedBrowserRevealer
+	defer func() {
+		managedBrowserStateReader = previousStateReader
+		managedBrowserRevealer = previousRevealer
+	}()
+	managedBrowserStateReader = func(_ string, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+		return browserctl.ManagedPlaywrightState{SessionKey: sessionKey, BrowserPID: 123, RevealSupported: true}, nil
+	}
+	managedBrowserRevealer = func(state browserctl.ManagedPlaywrightState) error {
 		return errors.New("boom")
 	}
 
@@ -17321,6 +17450,7 @@ func TestOpenManagedBrowserLoginReleasesLeaseOnBrowserOpenFailure(t *testing.T) 
 		"/tmp/demo",
 		codexapp.ProviderCodex,
 		"thread-demo",
+		"managed-demo",
 		browserctl.SessionActivity{
 			Policy:     settingsAutomaticPlaywrightPolicy,
 			State:      browserctl.SessionActivityStateWaitingForUser,
@@ -17328,8 +17458,8 @@ func TestOpenManagedBrowserLoginReleasesLeaseOnBrowserOpenFailure(t *testing.T) 
 			ToolName:   "browser_navigate",
 		},
 		"https://example.test/login",
-		"Opening browser for login...",
-		"Opened browser for login.",
+		"Showing the managed browser window...",
+		"Managed browser window is ready.",
 	)
 	got := updated.(Model)
 	if cmd == nil {
