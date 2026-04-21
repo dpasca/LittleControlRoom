@@ -1299,6 +1299,9 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		pageURL := managedBrowserCurrentPageURL(snapshot)
 		sessionKey := strings.TrimSpace(snapshot.ManagedBrowserSessionKey)
 		if pageURL == "" || sessionKey == "" || snapshot.BusyExternal || snapshot.Closed || snapshot.PendingToolInput != nil || snapshot.PendingElicitation != nil {
+			if status := m.codexBrowserReconnectStatus(snapshot); status != "" {
+				m.status = status
+			}
 			return m, nil
 		}
 		m.status = "Showing the managed browser window..."
@@ -1485,6 +1488,9 @@ func (m Model) updateCodexElicitationMode(snapshot codexapp.Snapshot, msg tea.Ke
 	switch msg.String() {
 	case "o":
 		if loginURL == "" || strings.TrimSpace(snapshot.ManagedBrowserSessionKey) == "" {
+			if status := m.codexBrowserReconnectStatus(snapshot); status != "" {
+				m.status = status
+			}
 			return m, nil
 		}
 		return m.openManagedBrowserLogin(
@@ -1913,6 +1919,9 @@ func (m Model) codexLowerBlocks(snapshot codexapp.Snapshot, width int) []string 
 		}
 		lines = append(lines, m.renderCodexFooter(snapshot, width))
 		lines = append(lines, m.renderCodexRequestBlocks(snapshot, width)...)
+		if browser := m.renderCodexBrowserPanel(snapshot, width); browser != "" {
+			lines = append(lines, browser)
+		}
 		lines = append(lines, m.renderCodexSlashBlocks(width)...)
 		input := m.codexInput
 		input.SetWidth(max(20, width-4))
@@ -1932,11 +1941,30 @@ func (m Model) renderCodexRequestBlocks(snapshot codexapp.Snapshot, width int) [
 	switch {
 	case snapshot.PendingToolInput != nil:
 		return m.renderCodexToolInputBlocks(*snapshot.PendingToolInput, width)
-	case snapshot.PendingElicitation != nil:
+	case snapshot.PendingElicitation != nil && snapshot.PendingElicitation.Mode == codexapp.ElicitationModeForm:
 		return m.renderCodexElicitationBlocks(*snapshot.PendingElicitation, width)
 	default:
-		return m.renderCodexCurrentBrowserPageBlocks(snapshot, width)
+		return nil
 	}
+}
+
+func (m Model) renderCodexBrowserPanel(snapshot codexapp.Snapshot, width int) string {
+	lines := []string{}
+	lines = append(lines, m.codexBrowserReconnectLines(snapshot)...)
+	if snapshot.PendingElicitation != nil && snapshot.PendingElicitation.Mode != codexapp.ElicitationModeForm {
+		lines = append(lines, m.renderCodexElicitationBlocks(*snapshot.PendingElicitation, width)...)
+	} else {
+		lines = append(lines, m.renderCodexCurrentBrowserPageBlocks(snapshot, width)...)
+	}
+	lines = compactNonEmptyStrings(lines)
+	if len(lines) == 0 {
+		return ""
+	}
+	accent := lipgloss.Color("81")
+	if m.codexBrowserPolicyMismatch(snapshot) {
+		accent = lipgloss.Color("221")
+	}
+	return renderCodexMessageBlock("Browser", strings.Join(lines, "\n"), accent, lipgloss.Color("252"), max(24, width-4))
 }
 
 func (m Model) renderCodexToolInputBlocks(request codexapp.ToolInputRequest, width int) []string {
@@ -1979,7 +2007,7 @@ func (m Model) renderCodexElicitationBlocks(request codexapp.ElicitationRequest,
 		managedSessionKey = strings.TrimSpace(snapshot.ManagedBrowserSessionKey)
 	}
 	if request.Mode == codexapp.ElicitationModeURL && strings.TrimSpace(request.URL) != "" {
-		lines = append(lines, fitFooterWidth("Open this URL externally: "+request.URL, width))
+		lines = append(lines, fitFooterWidth("Requested URL: "+request.URL, width))
 		if loginURL != "" && managedSessionKey != "" {
 			lines = append(lines, fitFooterWidth("Press O to reveal the managed browser window, then finish the login flow and press Enter when you are done.", width))
 		}
@@ -2007,6 +2035,60 @@ func (m Model) renderCodexCurrentBrowserPageBlocks(snapshot codexapp.Snapshot, w
 		lines = append(lines, fitFooterWidth(hint, width))
 	}
 	return lines
+}
+
+func (m Model) codexBrowserPolicyMismatch(snapshot codexapp.Snapshot) bool {
+	currentPolicy := m.currentPlaywrightPolicy()
+	sessionPolicy := snapshot.BrowserActivity.Policy.Normalize()
+	if currentPolicy != sessionPolicy {
+		return true
+	}
+	return embeddedProvider(snapshot) == codexapp.ProviderCodex &&
+		!currentPolicy.UsesLegacyLaunchBehavior() &&
+		strings.TrimSpace(snapshot.ManagedBrowserSessionKey) == ""
+}
+
+func (m Model) codexBrowserReconnectLines(snapshot codexapp.Snapshot) []string {
+	if !m.codexBrowserPolicyMismatch(snapshot) {
+		return nil
+	}
+	currentPolicy := m.currentPlaywrightPolicy()
+	currentLabel := settingsBrowserAutomationOptionLabel(settingsBrowserAutomationValue(currentPolicy), currentPolicy)
+	newCommand := embeddedNewCommand(embeddedProvider(snapshot))
+	if embeddedProvider(snapshot) == codexapp.ProviderCodex &&
+		!currentPolicy.UsesLegacyLaunchBehavior() &&
+		strings.TrimSpace(snapshot.ManagedBrowserSessionKey) == "" {
+		lines := []string{
+			"Managed browser controls are not attached to this session yet.",
+			"Current browser setting: " + currentLabel + ".",
+		}
+		if newCommand != "" {
+			lines = append(lines, "Use /reconnect to reopen this thread with the current browser behavior, or "+newCommand+" for a fresh session.")
+		} else {
+			lines = append(lines, "Use /reconnect to reopen this thread with the current browser behavior.")
+		}
+		return lines
+	}
+	sessionPolicy := snapshot.BrowserActivity.Policy.Normalize()
+	sessionLabel := settingsBrowserAutomationOptionLabel(settingsBrowserAutomationValue(sessionPolicy), sessionPolicy)
+	lines := []string{
+		"Session browser setting: " + sessionLabel + ".",
+		"Current browser setting: " + currentLabel + ".",
+	}
+	if newCommand != "" {
+		lines = append(lines, "Use /reconnect to reopen this thread with the current browser behavior, or "+newCommand+" for a fresh session.")
+	} else {
+		lines = append(lines, "Use /reconnect to reopen this thread with the current browser behavior.")
+	}
+	return lines
+}
+
+func (m Model) codexBrowserReconnectStatus(snapshot codexapp.Snapshot) string {
+	lines := m.codexBrowserReconnectLines(snapshot)
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.Join(lines, " ")
 }
 
 func (m Model) renderCodexBanner(snapshot codexapp.Snapshot, width int) string {
@@ -2252,6 +2334,12 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			actions = append(actions, footerNavAction("Ctrl+O", m.managedBrowserCurrentPageFooterLabel(snapshot)))
 		}
 	}
+	if mismatchStatus := m.codexBrowserReconnectStatus(snapshot); mismatchStatus != "" && !snapshot.Closed && !snapshot.BusyExternal {
+		actions = append(actions, footerNavAction("/reconnect", "apply browser"))
+		if cmd := embeddedNewCommand(embeddedProvider(snapshot)); cmd != "" {
+			actions = append(actions, footerLowAction(cmd, "fresh"))
+		}
+	}
 
 	segments := []string{}
 	if status != "" {
@@ -2288,6 +2376,17 @@ func (m Model) managedBrowserCurrentPageFooterLabel(snapshot codexapp.Snapshot) 
 		return "focus browser"
 	}
 	return "show browser"
+}
+
+func compactNonEmptyStrings(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
 }
 
 var (

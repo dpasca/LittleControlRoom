@@ -13908,12 +13908,12 @@ func TestVisibleCodexCanOpenCurrentBackgroundBrowserPage(t *testing.T) {
 	if followupCmd != nil {
 		t.Fatalf("browser-open followup should not queue more work")
 	}
-	renderedBlocks := strings.Join(got.renderCodexRequestBlocks(session.snapshot, 120), "\n")
+	renderedBlocks := ansi.Strip(got.renderCodexBrowserPanel(session.snapshot, 120))
 	if strings.Contains(renderedBlocks, "Press Ctrl+O to reveal the managed browser window for this same session.") {
-		t.Fatalf("renderCodexRequestBlocks() kept stale Ctrl+O reveal hint after successful reveal: %q", renderedBlocks)
+		t.Fatalf("renderCodexBrowserPanel() kept stale Ctrl+O reveal hint after successful reveal: %q", renderedBlocks)
 	}
 	if !strings.Contains(renderedBlocks, "Managed browser page: https://chartboost.us.auth0.com/u/login?state=demo") {
-		t.Fatalf("renderCodexRequestBlocks() missing managed browser page label after reveal: %q", renderedBlocks)
+		t.Fatalf("renderCodexBrowserPanel() missing managed browser page label after reveal: %q", renderedBlocks)
 	}
 	footer := ansi.Strip(got.renderCodexFooter(session.snapshot, 160))
 	if !strings.Contains(footer, "Ctrl+O focus browser") {
@@ -14051,12 +14051,12 @@ func TestVisibleCodexCurrentBackgroundBrowserPageHintsOpenPage(t *testing.T) {
 	}
 
 	m := Model{codexVisibleProject: "/tmp/demo"}
-	renderedBlocks := strings.Join(m.renderCodexRequestBlocks(snapshot, 120), "\n")
+	renderedBlocks := ansi.Strip(m.renderCodexBrowserPanel(snapshot, 120))
 	if !strings.Contains(renderedBlocks, "Background browser page: https://chartboost.us.auth0.com/u/login?state=demo") {
-		t.Fatalf("renderCodexRequestBlocks() missing current background page: %q", renderedBlocks)
+		t.Fatalf("renderCodexBrowserPanel() missing current background page: %q", renderedBlocks)
 	}
 	if !strings.Contains(renderedBlocks, "Press Ctrl+O to reveal the managed browser window for this same session.") {
-		t.Fatalf("renderCodexRequestBlocks() missing Ctrl+O reveal hint: %q", renderedBlocks)
+		t.Fatalf("renderCodexBrowserPanel() missing Ctrl+O reveal hint: %q", renderedBlocks)
 	}
 
 	footer := ansi.Strip(m.renderCodexFooter(snapshot, 160))
@@ -14085,17 +14085,107 @@ func TestVisibleCodexCurrentBackgroundBrowserPageUsesVisibleBrowserCopyWhenCache
 			},
 		},
 	}
-	renderedBlocks := strings.Join(m.renderCodexRequestBlocks(snapshot, 120), "\n")
+	renderedBlocks := ansi.Strip(m.renderCodexBrowserPanel(snapshot, 120))
 	if strings.Contains(renderedBlocks, "Press Ctrl+O to reveal the managed browser window for this same session.") {
-		t.Fatalf("renderCodexRequestBlocks() should hide stale Ctrl+O reveal hint when browser is already visible: %q", renderedBlocks)
+		t.Fatalf("renderCodexBrowserPanel() should hide stale Ctrl+O reveal hint when browser is already visible: %q", renderedBlocks)
 	}
 	if !strings.Contains(renderedBlocks, "Managed browser page: https://chartboost.us.auth0.com/u/login?state=demo") {
-		t.Fatalf("renderCodexRequestBlocks() missing managed browser page label: %q", renderedBlocks)
+		t.Fatalf("renderCodexBrowserPanel() missing managed browser page label: %q", renderedBlocks)
 	}
 
 	footer := ansi.Strip(m.renderCodexFooter(snapshot, 160))
 	if !strings.Contains(footer, "Ctrl+O focus browser") {
 		t.Fatalf("renderCodexFooter() should show focus-browser action when browser is already visible: %q", footer)
+	}
+}
+
+func TestVisibleCodexBrowserPanelShowsReconnectHintForChangedBrowserSettings(t *testing.T) {
+	settings := config.EditableSettings{PlaywrightPolicy: settingsAlwaysShowPlaywrightPolicy}
+	snapshot := codexapp.Snapshot{
+		Provider:                 codexapp.ProviderCodex,
+		Started:                  true,
+		Status:                   "Codex session ready",
+		ManagedBrowserSessionKey: "managed-demo",
+		BrowserActivity:          browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy},
+	}
+
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		settingsBaseline:    &settings,
+	}
+
+	rendered := ansi.Strip(m.renderCodexBrowserPanel(snapshot, 140))
+	for _, want := range []string{
+		"Session browser setting: Only when needed.",
+		"Current browser setting: Always show.",
+		"Use /reconnect to reopen this thread with the current browser behavior, or /codex-new for a fresh session.",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("renderCodexBrowserPanel() missing %q: %q", want, rendered)
+		}
+	}
+
+	footer := ansi.Strip(m.renderCodexFooter(snapshot, 180))
+	for _, want := range []string{"/reconnect apply browser", "/codex-new fresh"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("renderCodexFooter() missing %q for browser policy mismatch: %q", want, footer)
+		}
+	}
+}
+
+func TestVisibleCodexBrowserPanelShowsReconnectHintWhenManagedBrowserNotAttached(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider:               codexapp.ProviderCodex,
+			Started:                true,
+			ThreadID:               "thread-demo",
+			Preset:                 codexcli.PresetYolo,
+			Status:                 "Codex session ready",
+			BrowserActivity:        browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy},
+			CurrentBrowserPageURL:  "https://chartboost.us.auth0.com/u/login?state=demo",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	settings := config.EditableSettings{PlaywrightPolicy: settingsAutomaticPlaywrightPolicy}
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		settingsBaseline:    &settings,
+		width:               100,
+		height:              24,
+	}
+
+	rendered := ansi.Strip(m.renderCodexBrowserPanel(session.snapshot, 140))
+	for _, want := range []string{
+		"Managed browser controls are not attached to this session yet.",
+		"Current browser setting: Only when needed.",
+		"Use /reconnect to reopen this thread with the current browser behavior, or /codex-new for a fresh session.",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("renderCodexBrowserPanel() missing %q: %q", want, rendered)
+		}
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlO})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("ctrl+o should not queue a browser-open command when managed browser is not attached")
+	}
+	if !strings.Contains(got.status, "Use /reconnect to reopen this thread with the current browser behavior") {
+		t.Fatalf("status = %q, want reconnect guidance", got.status)
 	}
 }
 
