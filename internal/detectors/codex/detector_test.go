@@ -198,3 +198,78 @@ func TestDetectFromStateDBPrefersSessionFileCWD(t *testing.T) {
 		t.Fatalf("project path = %q, want %q", entry.Sessions[0].ProjectPath, correctPath)
 	}
 }
+
+func TestDetectFromStateDBCanonicalizesOverlayRolloutPath(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	sourceHome := filepath.Join(root, ".codex")
+	sessionDir := filepath.Join(sourceHome, "sessions", "2026", "04", "21")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+
+	projectPath := filepath.Join(root, "project")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+
+	overlayHome := filepath.Join(root, "internal-workspaces", "lcroom-codex-home-123456")
+	if err := os.MkdirAll(overlayHome, 0o755); err != nil {
+		t.Fatalf("mkdir overlay home: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(sourceHome, "state_5.sqlite"), filepath.Join(overlayHome, "state_5.sqlite")); err != nil {
+		t.Fatalf("symlink state db: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(sourceHome, "sessions"), filepath.Join(overlayHome, "sessions")); err != nil {
+		t.Fatalf("symlink sessions: %v", err)
+	}
+
+	sessionID := "ses_overlay_rollout"
+	canonicalSessionFile := filepath.Join(sessionDir, sessionID+".jsonl")
+	timestamp := time.Date(2026, 4, 21, 10, 0, 0, 0, time.UTC)
+	content := "{\"type\":\"session_meta\",\"payload\":{\"id\":\"" + sessionID + "\",\"cwd\":\"" + projectPath + "\",\"timestamp\":\"" + timestamp.Format(time.RFC3339) + "\"}}\n"
+	if err := os.WriteFile(canonicalSessionFile, []byte(content), 0o644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", filepath.Join(sourceHome, "state_5.sqlite"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`
+		CREATE TABLE threads (
+			id TEXT NOT NULL,
+			cwd TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			rollout_path TEXT NOT NULL
+		)
+	`); err != nil {
+		t.Fatalf("create threads table: %v", err)
+	}
+	overlayRollout := filepath.Join(overlayHome, "sessions", "2026", "04", "21", sessionID+".jsonl")
+	if _, err := db.Exec(`INSERT INTO threads(id, cwd, created_at, updated_at, rollout_path) VALUES (?, ?, ?, ?, ?)`,
+		sessionID, projectPath, timestamp.Unix(), timestamp.Add(time.Minute).Unix(), overlayRollout,
+	); err != nil {
+		t.Fatalf("insert thread row: %v", err)
+	}
+
+	d := New(overlayHome)
+	results, err := d.Detect(context.Background(), scanner.NewPathScope([]string{root}, nil))
+	if err != nil {
+		t.Fatalf("Detect() error = %v", err)
+	}
+
+	entry := results[projectPath]
+	if entry == nil || len(entry.Sessions) != 1 {
+		t.Fatalf("entry = %#v, want one session for %s", entry, projectPath)
+	}
+	if got := entry.Sessions[0].SessionFile; got != canonicalSessionFile {
+		t.Fatalf("session file = %q, want %q", got, canonicalSessionFile)
+	}
+	if len(entry.Artifacts) != 1 || entry.Artifacts[0].Path != canonicalSessionFile {
+		t.Fatalf("artifacts = %#v, want canonical session artifact", entry.Artifacts)
+	}
+}

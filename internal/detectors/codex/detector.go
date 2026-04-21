@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"lcroom/internal/codexstate"
 	"lcroom/internal/model"
 	"lcroom/internal/scanner"
 
@@ -77,7 +78,7 @@ type turnLifecycleEvent struct {
 
 func New(codexHome string) *Detector {
 	return &Detector{
-		codexHome:        codexHome,
+		codexHome:        codexstate.ResolveHomeRoot(codexHome),
 		includeArchived:  true,
 		errorWindow:      48 * time.Hour,
 		completionWindow: 48 * time.Hour,
@@ -437,6 +438,7 @@ func (d *Detector) detectFromStateDB(ctx context.Context, scope scanner.PathScop
 		if err := rows.Scan(&id, &cwd, &createdAt, &updatedAt, &rollout); err != nil {
 			continue
 		}
+		rollout = codexstate.NormalizeRolloutPath(d.codexHome, rollout)
 		if cwd == "" {
 			continue
 		}

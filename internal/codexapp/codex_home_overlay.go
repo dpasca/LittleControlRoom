@@ -8,6 +8,7 @@ import (
 
 	"lcroom/internal/appfs"
 	"lcroom/internal/browserctl"
+	"lcroom/internal/codexstate"
 )
 
 const shadowPlaywrightSkillMarkdown = `---
@@ -141,16 +142,16 @@ func installShadowPlaywrightSkill(overlayRoot, sourceHome string) error {
 
 func effectiveCodexHome(requestedHome string) (string, error) {
 	if trimmed := strings.TrimSpace(requestedHome); trimmed != "" {
-		return filepath.Clean(trimmed), nil
+		return codexstate.ResolveHomeRoot(trimmed), nil
 	}
 	if envHome := strings.TrimSpace(os.Getenv("CODEX_HOME")); envHome != "" {
-		return filepath.Clean(envHome), nil
+		return codexstate.ResolveHomeRoot(envHome), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve user home: %w", err)
 	}
-	return filepath.Join(home, ".codex"), nil
+	return codexstate.ResolveHomeRoot(filepath.Join(home, ".codex")), nil
 }
 
 func shouldShadowPlaywrightSkill(policy browserctl.Policy) bool {

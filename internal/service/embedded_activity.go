@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/codexstate"
 	"lcroom/internal/config"
 	"lcroom/internal/model"
 )
@@ -165,7 +166,7 @@ func resolveEmbeddedSessionFile(source model.SessionSource, sessionID, rawSessio
 }
 
 func resolveCodexSessionFile(codexHome, sessionID string, times ...time.Time) string {
-	codexHome = strings.TrimSpace(codexHome)
+	codexHome = codexstate.ResolveHomeRoot(codexHome)
 	sessionID = strings.TrimSpace(sessionID)
 	if codexHome == "" || sessionID == "" {
 		return ""

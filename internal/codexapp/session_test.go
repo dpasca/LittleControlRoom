@@ -1207,6 +1207,27 @@ func TestAppendSystemErrorCompactsRateLimitedStatus(t *testing.T) {
 	}
 }
 
+func TestAppendCodexHomeCleanupWarning(t *testing.T) {
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+	}
+
+	s.appendCodexHomeCleanupWarning("/tmp/.codex", errors.New("database is locked"))
+
+	snapshot := s.Snapshot()
+	if snapshot.Status != codexHomeCleanupWarning {
+		t.Fatalf("status = %q, want %q", snapshot.Status, codexHomeCleanupWarning)
+	}
+	if snapshot.LastSystemNotice != codexHomeCleanupWarning {
+		t.Fatalf("last system notice = %q, want %q", snapshot.LastSystemNotice, codexHomeCleanupWarning)
+	}
+	if len(snapshot.Entries) != 1 || snapshot.Entries[0].Kind != TranscriptSystem || snapshot.Entries[0].Text != codexHomeCleanupWarning {
+		t.Fatalf("entries = %#v, want one cleanup warning entry", snapshot.Entries)
+	}
+}
+
 func TestCompactCodexStatusLabel(t *testing.T) {
 	tests := []struct {
 		name    string

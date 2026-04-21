@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"sort"
@@ -19,6 +20,7 @@ import (
 
 	"lcroom/internal/browserctl"
 	"lcroom/internal/codexcli"
+	"lcroom/internal/codexstate"
 )
 
 const (
@@ -30,6 +32,7 @@ const (
 	busyStateUnresponsiveFor  = 10 * time.Minute
 	busyStateStallAfter       = 2
 	codexReconnectSuggestion  = "Embedded Codex session seems stuck or disconnected. Use /reconnect."
+	codexHomeCleanupWarning   = "Codex home cleanup warning: could not repair stale rollout paths in state_5.sqlite before startup. Saved-session discovery may still show stale paths until a later cleanup succeeds."
 	playwrightMCPReadyTimeout = 12 * time.Second
 )
 
@@ -1662,7 +1665,14 @@ func (s *appServerSession) start(req LaunchRequest) error {
 	configureAppServerCommand(cmd)
 	applyPlaywrightPolicyEnvironment(cmd, ProviderCodex, req.PlaywrightPolicy)
 	if shouldShadowPlaywrightSkill(req.PlaywrightPolicy) {
-		codexHomeOverlay, err := prepareCodexHomeOverlay(req.AppDataDir, req.CodexHome)
+		sourceHome, err := effectiveCodexHome(req.CodexHome)
+		if err != nil {
+			return err
+		}
+		if _, err := codexstate.SanitizeStateRolloutPaths(sourceHome); err != nil {
+			s.appendCodexHomeCleanupWarning(sourceHome, err)
+		}
+		codexHomeOverlay, err := prepareCodexHomeOverlay(req.AppDataDir, sourceHome)
 		if err != nil {
 			return err
 		}
@@ -1745,6 +1755,14 @@ func (s *appServerSession) start(req LaunchRequest) error {
 		return s.Submit(req.Prompt)
 	}
 	return nil
+}
+
+func (s *appServerSession) appendCodexHomeCleanupWarning(codexHome string, err error) {
+	if err == nil {
+		return
+	}
+	log.Printf("WARN codexapp: %s codex_home=%q err=%v", codexHomeCleanupWarning, strings.TrimSpace(codexHome), err)
+	s.appendSystemNotice(codexHomeCleanupWarning)
 }
 
 func (s *appServerSession) ensureFreshThread(ctx context.Context, threadID string) error {
