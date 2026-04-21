@@ -2002,10 +2002,11 @@ func (m Model) renderCodexCurrentBrowserPageBlocks(snapshot codexapp.Snapshot, w
 	if pageURL == "" || strings.TrimSpace(snapshot.ManagedBrowserSessionKey) == "" {
 		return nil
 	}
-	return []string{
-		fitFooterWidth("Background browser page: "+pageURL, width),
-		fitFooterWidth("Press Ctrl+O to reveal the managed browser window for this same session.", width),
+	lines := []string{fitFooterWidth(m.managedBrowserCurrentPageLabel(snapshot)+pageURL, width)}
+	if hint := m.managedBrowserCurrentPageHint(snapshot); hint != "" {
+		lines = append(lines, fitFooterWidth(hint, width))
 	}
+	return lines
 }
 
 func (m Model) renderCodexBanner(snapshot codexapp.Snapshot, width int) string {
@@ -2248,7 +2249,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerLowAction("Alt+S", "select"),
 		}
 		if managedBrowserCurrentPageURL(snapshot) != "" && strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" {
-			actions = append(actions, footerNavAction("Ctrl+O", "show browser"))
+			actions = append(actions, footerNavAction("Ctrl+O", m.managedBrowserCurrentPageFooterLabel(snapshot)))
 		}
 	}
 
@@ -2258,6 +2259,35 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 	}
 	segments = append(segments, renderFooterActionList(actions...))
 	return renderFooterLine(width, segments...)
+}
+
+func (m Model) managedBrowserCurrentPageLabel(snapshot codexapp.Snapshot) string {
+	sessionKey := strings.TrimSpace(snapshot.ManagedBrowserSessionKey)
+	if state, ok := m.cachedManagedBrowserState(sessionKey); ok && state.RevealSupported && !state.Hidden {
+		return "Managed browser page: "
+	}
+	return "Background browser page: "
+}
+
+func (m Model) managedBrowserCurrentPageHint(snapshot codexapp.Snapshot) string {
+	sessionKey := strings.TrimSpace(snapshot.ManagedBrowserSessionKey)
+	if sessionKey == "" {
+		return ""
+	}
+	if state, ok := m.cachedManagedBrowserState(sessionKey); ok {
+		if !state.RevealSupported || !state.Hidden {
+			return ""
+		}
+	}
+	return "Press Ctrl+O to reveal the managed browser window for this same session."
+}
+
+func (m Model) managedBrowserCurrentPageFooterLabel(snapshot codexapp.Snapshot) string {
+	sessionKey := strings.TrimSpace(snapshot.ManagedBrowserSessionKey)
+	if state, ok := m.cachedManagedBrowserState(sessionKey); ok && state.RevealSupported && !state.Hidden {
+		return "focus browser"
+	}
+	return "show browser"
 }
 
 var (

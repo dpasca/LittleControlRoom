@@ -16,6 +16,7 @@ It is intentionally different from `STATUS.md`:
 - The managed wrapper now gives each Codex session a stable managed browser/session key plus a persistent Playwright profile directory.
 - Newly launched embedded Codex sessions also get a session-local `CODEX_HOME` overlay that shadows only the `playwright` skill, so LCR can steer browser behavior without mutating the user's real `~/.codex`.
 - On macOS, `Only when needed` now runs managed Codex browser work in a backgrounded headed browser so LCR can reveal that same browser context later for login or other human steps.
+- Managed embedded Codex submissions now wait briefly for Playwright MCP tools to become ready before starting the first turn, which avoids a fresh-session race where browser tools could be missing on the first prompt.
 - Existing embedded Codex sessions do not retroactively pick up the new launch behavior; they need to be reopened or reconnected.
 - URL-based login waits already have an LCR-managed attention flow and interactive-browser lease.
 - Embedded Codex sessions now remember the latest Playwright page URL they reached, and the visible pane can reveal that same managed browser window with `Ctrl+O`.
@@ -95,6 +96,7 @@ Make browser automation feel quiet and predictable by default:
 
 - Unit coverage now verifies that the session-local `CODEX_HOME` overlay symlinks the original Codex home while replacing only `skills/playwright`.
 - A Codex smoke check can now verify the overlay without a live user session by running `codex debug prompt-input` against that overlay and checking that the shadow Playwright skill is what Codex sees.
+- A managed embedded Codex smoke test now builds a real `lcroom` helper binary and verifies that a fresh trusted session can see Playwright MCP tools before the first turn starts.
 
 ## Current Provider Status
 

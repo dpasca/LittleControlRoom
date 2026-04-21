@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1536,6 +1539,155 @@ func TestSubmitInputStartsNewTurnWhenBusyStateIsStaleAndThreadReadShowsNoActiveT
 	}
 	if snapshot.Status != "Codex is working..." {
 		t.Fatalf("status = %q, want %q", snapshot.Status, "Codex is working...")
+	}
+}
+
+func TestSubmitWaitsForPlaywrightMCPToolsBeforeTurnStart(t *testing.T) {
+	callCount := 0
+
+	s := &appServerSession{
+		projectPath:           "/tmp/demo",
+		threadID:              "thread_456",
+		entryIndex:            make(map[string]int),
+		notify:                func() {},
+		playwrightMCPExpected: true,
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			callCount++
+			switch callCount {
+			case 1:
+				if method != "mcpServerStatus/list" {
+					t.Fatalf("call 1 method = %q, want mcpServerStatus/list", method)
+				}
+				request, ok := params.(mcpServerStatusListParams)
+				if !ok {
+					t.Fatalf("call 1 params = %#v, want mcpServerStatusListParams", params)
+				}
+				if request.Detail != "toolsAndAuthOnly" {
+					t.Fatalf("call 1 detail = %q, want toolsAndAuthOnly", request.Detail)
+				}
+				return json.RawMessage(`{"data":[{"name":"playwright","tools":{}}]}`), nil
+			case 2:
+				if method != "mcpServerStatus/list" {
+					t.Fatalf("call 2 method = %q, want mcpServerStatus/list", method)
+				}
+				return json.RawMessage(`{"data":[{"name":"playwright","tools":{"browser_navigate":{"name":"browser_navigate","inputSchema":{}}}}]}`), nil
+			case 3:
+				if method != "turn/start" {
+					t.Fatalf("call 3 method = %q, want turn/start", method)
+				}
+				return json.RawMessage(`{"turn":{"id":"turn_fresh"}}`), nil
+			default:
+				t.Fatalf("unexpected rpc call %d: %s", callCount, method)
+				return nil, nil
+			}
+		},
+	}
+
+	if err := s.Submit("browse to example.com"); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+	if callCount != 3 {
+		t.Fatalf("rpc call count = %d, want 3", callCount)
+	}
+	if !s.playwrightMCPReady {
+		t.Fatalf("playwrightMCPReady = false, want true")
+	}
+
+	snapshot := s.Snapshot()
+	if !snapshot.Busy {
+		t.Fatalf("busy = false, want true")
+	}
+	if snapshot.ActiveTurnID != "turn_fresh" {
+		t.Fatalf("active turn id = %q, want turn_fresh", snapshot.ActiveTurnID)
+	}
+}
+
+func TestEnsurePlaywrightMCPReadyTimesOutWithNotice(t *testing.T) {
+	s := &appServerSession{
+		projectPath:           "/tmp/demo",
+		entryIndex:            make(map[string]int),
+		notify:                func() {},
+		playwrightMCPExpected: true,
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			if method != "mcpServerStatus/list" {
+				t.Fatalf("method = %q, want mcpServerStatus/list", method)
+			}
+			return json.RawMessage(`{"data":[]}`), nil
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	if err := s.ensurePlaywrightMCPReady(ctx); err != nil {
+		t.Fatalf("ensurePlaywrightMCPReady() error = %v, want nil", err)
+	}
+	snapshot := s.Snapshot()
+	if !strings.Contains(snapshot.LastSystemNotice, "Playwright tools are still starting") {
+		t.Fatalf("last system notice = %q, want timeout notice", snapshot.LastSystemNotice)
+	}
+	if s.playwrightMCPReady {
+		t.Fatalf("playwrightMCPReady = true, want false")
+	}
+}
+
+func TestManagedPlaywrightMCPReadyInTrustedProject(t *testing.T) {
+	if os.Getenv("LCROOM_EMBEDDED_CX_BROWSER_SMOKE") == "" {
+		t.Skip("set LCROOM_EMBEDDED_CX_BROWSER_SMOKE=1 to run the real embedded Codex Playwright smoke test")
+	}
+	if _, err := exec.LookPath("codex"); err != nil {
+		t.Skip("codex binary not available")
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	repoRoot := filepath.Clean(filepath.Join(cwd, "..", ".."))
+	projectPath, err := os.MkdirTemp(repoRoot, "tmp-cx-browser-smoke-*")
+	if err != nil {
+		t.Fatalf("mkdir temp trusted project: %v", err)
+	}
+	defer os.RemoveAll(projectPath)
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("smoke\n"), 0o644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+
+	helperBinary := filepath.Join(t.TempDir(), "lcroom")
+	buildCmd := exec.Command("go", "build", "-o", helperBinary, "./cmd/lcroom")
+	buildCmd.Dir = repoRoot
+	if output, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("build lcroom helper binary: %v\n%s", err, output)
+	}
+
+	dataDir := t.TempDir()
+	sessionAny, err := newAppServerSession(LaunchRequest{
+		Provider:          ProviderCodex,
+		ProjectPath:       projectPath,
+		ForceNew:          true,
+		PlaywrightPolicy:  browserctl.DefaultPolicy(),
+		AppDataDir:        dataDir,
+		CodexHome:         filepath.Join(os.Getenv("HOME"), ".codex"),
+		CLIExecutablePath: helperBinary,
+	}, func() {})
+	if err != nil {
+		t.Fatalf("newAppServerSession() error = %v", err)
+	}
+	defer sessionAny.Close()
+
+	session, ok := sessionAny.(*appServerSession)
+	if !ok {
+		t.Fatalf("session type = %T, want *appServerSession", sessionAny)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := session.ensurePlaywrightMCPReady(ctx); err != nil {
+		t.Fatalf("ensurePlaywrightMCPReady() error = %v", err)
+	}
+	if !session.playwrightMCPReady {
+		snapshot := session.Snapshot()
+		t.Fatalf("playwrightMCPReady = false, want true (status=%q notice=%q startup=%#v)", snapshot.Status, snapshot.LastSystemNotice, session.mcpServerStartup)
 	}
 }
 

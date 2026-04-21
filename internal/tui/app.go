@@ -178,6 +178,7 @@ type Model struct {
 	browserAttention            *browserAttentionNotification
 	browserController           *browserctl.Controller
 	browserLeaseSnapshot        browserctl.ControllerSnapshot
+	managedBrowserStates        map[string]browserctl.ManagedPlaywrightState
 	questionNotify              *questionNotification
 	codexInputSelection         *codexInputSelectionState
 	codexComposerSelection      textSelection
@@ -309,6 +310,8 @@ type browserOpenMsg struct {
 	err                     error
 	browserLeaseSnapshot    browserctl.ControllerSnapshot
 	browserLeaseSnapshotSet bool
+	managedBrowserState     browserctl.ManagedPlaywrightState
+	managedBrowserStateSet  bool
 }
 
 type runtimeActionMsg struct {
@@ -630,6 +633,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		recentOpenCodeModels:   append([]string(nil), initialSettings.RecentOpenCodeModels...),
 		hideReasoningSections:  initialSettings.HideReasoningSections,
 		browserController:      browserctl.NewController(),
+		managedBrowserStates:   make(map[string]browserctl.ManagedPlaywrightState),
 		detailReloadInFlight:   make(map[string]bool),
 		detailReloadQueued:     make(map[string]bool),
 		summaryReloadInFlight:  make(map[string]bool),
@@ -1888,6 +1892,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case browserOpenMsg:
 		if msg.browserLeaseSnapshotSet {
 			m.browserLeaseSnapshot = msg.browserLeaseSnapshot
+		}
+		if msg.managedBrowserStateSet {
+			m.rememberManagedBrowserState(msg.managedBrowserState)
 		}
 		if msg.err != nil {
 			m.reportError("Open failed", msg.err, msg.projectPath)

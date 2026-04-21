@@ -32,7 +32,7 @@ func codexPlaywrightMCPConfigOverrides(req LaunchRequest) []string {
 		return nil
 	}
 
-	executablePath, err := os.Executable()
+	executablePath, err := codexPlaywrightMCPExecutablePath(req)
 	if err != nil || strings.TrimSpace(executablePath) == "" {
 		return nil
 	}
@@ -61,6 +61,13 @@ func codexPlaywrightMCPConfigOverrides(req LaunchRequest) []string {
 		fmt.Sprintf("mcp_servers.playwright.command=%s", strconv.Quote(executablePath)),
 		fmt.Sprintf("mcp_servers.playwright.args=%s", formatCodexConfigStringArray(args)),
 	}
+}
+
+func codexPlaywrightMCPExecutablePath(req LaunchRequest) (string, error) {
+	if configured := strings.TrimSpace(req.CLIExecutablePath); configured != "" {
+		return configured, nil
+	}
+	return os.Executable()
 }
 
 func formatCodexConfigStringArray(values []string) string {

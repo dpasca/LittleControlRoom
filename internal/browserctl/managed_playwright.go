@@ -185,6 +185,39 @@ func ReadManagedPlaywrightState(dataDir, sessionKey string) (ManagedPlaywrightSt
 	return state.Normalize(), nil
 }
 
+func MarkManagedPlaywrightStateRevealed(dataDir, sessionKey string) (ManagedPlaywrightState, error) {
+	state, err := ReadManagedPlaywrightState(dataDir, sessionKey)
+	if err != nil {
+		return ManagedPlaywrightState{}, err
+	}
+	paths, err := ManagedPlaywrightPathsFor(
+		dataDir,
+		state.Provider,
+		state.ProjectPath,
+		managedPlaywrightFirstNonEmpty(state.SessionKey, sessionKey),
+		state.ProfileKey,
+		state.LaunchMode,
+	)
+	if err != nil {
+		return ManagedPlaywrightState{}, err
+	}
+	state.Hidden = false
+	state.UpdatedAt = time.Now().UTC()
+	if err := WriteManagedPlaywrightState(paths, state); err != nil {
+		return ManagedPlaywrightState{}, err
+	}
+	return state.Normalize(), nil
+}
+
+func managedPlaywrightFirstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 func WriteManagedPlaywrightState(paths ManagedPlaywrightPaths, state ManagedPlaywrightState) error {
 	normalized := state.Normalize()
 	if normalized.UpdatedAt.IsZero() {

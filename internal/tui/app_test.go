@@ -13902,6 +13902,23 @@ func TestVisibleCodexCanOpenCurrentBackgroundBrowserPage(t *testing.T) {
 	if revealedSessionKey != "managed-demo" {
 		t.Fatalf("revealed session key = %q, want managed-demo", revealedSessionKey)
 	}
+
+	updated, followupCmd := got.Update(openMsg)
+	got = updated.(Model)
+	if followupCmd != nil {
+		t.Fatalf("browser-open followup should not queue more work")
+	}
+	renderedBlocks := strings.Join(got.renderCodexRequestBlocks(session.snapshot, 120), "\n")
+	if strings.Contains(renderedBlocks, "Press Ctrl+O to reveal the managed browser window for this same session.") {
+		t.Fatalf("renderCodexRequestBlocks() kept stale Ctrl+O reveal hint after successful reveal: %q", renderedBlocks)
+	}
+	if !strings.Contains(renderedBlocks, "Managed browser page: https://chartboost.us.auth0.com/u/login?state=demo") {
+		t.Fatalf("renderCodexRequestBlocks() missing managed browser page label after reveal: %q", renderedBlocks)
+	}
+	footer := ansi.Strip(got.renderCodexFooter(session.snapshot, 160))
+	if !strings.Contains(footer, "Ctrl+O focus browser") {
+		t.Fatalf("renderCodexFooter() should downgrade Ctrl+O to focus browser after reveal: %q", footer)
+	}
 }
 
 func TestVisibleCodexURLBasedElicitationBlocksWhenInteractiveLeaseOwnedElsewhere(t *testing.T) {
@@ -14045,6 +14062,40 @@ func TestVisibleCodexCurrentBackgroundBrowserPageHintsOpenPage(t *testing.T) {
 	footer := ansi.Strip(m.renderCodexFooter(snapshot, 160))
 	if !strings.Contains(footer, "Ctrl+O show browser") {
 		t.Fatalf("renderCodexFooter() missing Ctrl+O show browser action: %q", footer)
+	}
+}
+
+func TestVisibleCodexCurrentBackgroundBrowserPageUsesVisibleBrowserCopyWhenCachedVisible(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Provider:                 codexapp.ProviderCodex,
+		Started:                  true,
+		Status:                   "Codex session ready",
+		BrowserActivity:          browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy},
+		ManagedBrowserSessionKey: "managed-demo",
+		CurrentBrowserPageURL:    "https://chartboost.us.auth0.com/u/login?state=demo",
+	}
+
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
+			"managed-demo": {
+				SessionKey: "managed-demo",
+				BrowserPID: 123,
+				Hidden:     false,
+			},
+		},
+	}
+	renderedBlocks := strings.Join(m.renderCodexRequestBlocks(snapshot, 120), "\n")
+	if strings.Contains(renderedBlocks, "Press Ctrl+O to reveal the managed browser window for this same session.") {
+		t.Fatalf("renderCodexRequestBlocks() should hide stale Ctrl+O reveal hint when browser is already visible: %q", renderedBlocks)
+	}
+	if !strings.Contains(renderedBlocks, "Managed browser page: https://chartboost.us.auth0.com/u/login?state=demo") {
+		t.Fatalf("renderCodexRequestBlocks() missing managed browser page label: %q", renderedBlocks)
+	}
+
+	footer := ansi.Strip(m.renderCodexFooter(snapshot, 160))
+	if !strings.Contains(footer, "Ctrl+O focus browser") {
+		t.Fatalf("renderCodexFooter() should show focus-browser action when browser is already visible: %q", footer)
 	}
 }
 

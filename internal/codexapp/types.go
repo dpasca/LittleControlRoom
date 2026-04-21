@@ -500,6 +500,7 @@ type LaunchRequest struct {
 	ManagedBrowserSessionKey string
 	AppDataDir               string
 	CodexHome                string
+	CLIExecutablePath        string
 }
 
 func (r LaunchRequest) Validate() error {

@@ -22,14 +22,15 @@ import (
 )
 
 const (
-	rpcTimeout               = 15 * time.Second
-	compactionWaitTimeout    = 2 * time.Minute
-	idleShutdownAfter        = time.Hour
-	idleShutdownNotice       = "Closed embedded Codex session after 1 hour of inactivity."
-	busyStateReconcileAfter  = time.Minute
-	busyStateUnresponsiveFor = 10 * time.Minute
-	busyStateStallAfter      = 2
-	codexReconnectSuggestion = "Embedded Codex session seems stuck or disconnected. Use /reconnect."
+	rpcTimeout                = 15 * time.Second
+	compactionWaitTimeout     = 2 * time.Minute
+	idleShutdownAfter         = time.Hour
+	idleShutdownNotice        = "Closed embedded Codex session after 1 hour of inactivity."
+	busyStateReconcileAfter   = time.Minute
+	busyStateUnresponsiveFor  = 10 * time.Minute
+	busyStateStallAfter       = 2
+	codexReconnectSuggestion  = "Embedded Codex session seems stuck or disconnected. Use /reconnect."
+	playwrightMCPReadyTimeout = 12 * time.Second
 )
 
 var errBusyTurnLikelyStuck = errors.New("embedded Codex session seems stuck or disconnected. Interrupt the current turn or use /reconnect before sending another prompt")
@@ -63,6 +64,7 @@ type appServerSession struct {
 	notify                   func()
 	rpcCallHook              func(context.Context, string, any) (json.RawMessage, error)
 	playwrightPolicy         browserctl.Policy
+	playwrightMCPExpected    bool
 	managedBrowserSessionKey string
 	codexHomeOverlay         string
 
@@ -115,6 +117,8 @@ type appServerSession struct {
 	browserActivity       browserctl.SessionActivity
 	currentBrowserPageURL string
 	browserToolCalls      map[string]browserToolCall
+	mcpServerStartup      map[string]mcpServerStartupState
+	playwrightMCPReady    bool
 	entries               []transcriptEntry
 	entryIndex            map[string]int
 	transcriptRevision    uint64
@@ -137,6 +141,15 @@ type turnCompletionState struct {
 	TurnID string
 	Status string
 }
+
+type mcpServerStartupState string
+
+const (
+	mcpServerStartupStateStarting  mcpServerStartupState = "starting"
+	mcpServerStartupStateReady     mcpServerStartupState = "ready"
+	mcpServerStartupStateFailed    mcpServerStartupState = "failed"
+	mcpServerStartupStateCancelled mcpServerStartupState = "cancelled"
+)
 
 type rpcEnvelope struct {
 	Method string          `json:"method,omitempty"`
@@ -198,6 +211,25 @@ type threadStatusChangedNotification struct {
 type threadCompactedNotification struct {
 	ThreadID string `json:"threadId"`
 	TurnID   string `json:"turnId"`
+}
+
+type mcpServerStartupStatusUpdatedNotification struct {
+	Name   string                `json:"name"`
+	Status mcpServerStartupState `json:"status"`
+	Error  *string               `json:"error"`
+}
+
+type mcpServerStatusListParams struct {
+	Detail string `json:"detail,omitempty"`
+}
+
+type mcpServerStatusListResponse struct {
+	Data []mcpServerStatusEntry `json:"data"`
+}
+
+type mcpServerStatusEntry struct {
+	Name  string                     `json:"name"`
+	Tools map[string]json.RawMessage `json:"tools"`
 }
 
 type resumedTurnError struct {
@@ -494,12 +526,14 @@ func newAppServerSession(req LaunchRequest, notify func()) (Session, error) {
 		preset:                   req.Preset,
 		notify:                   notify,
 		playwrightPolicy:         policy,
+		playwrightMCPExpected:    shouldShadowPlaywrightSkill(policy),
 		managedBrowserSessionKey: strings.TrimSpace(req.ManagedBrowserSessionKey),
 		pending:                  make(map[string]chan rpcEnvelope),
 		exitCh:                   make(chan struct{}),
 		activeItems:              make(map[string]struct{}),
 		entryIndex:               make(map[string]int),
 		browserActivity:          browserctl.DefaultSessionActivity(policy),
+		mcpServerStartup:         make(map[string]mcpServerStartupState),
 		status:                   "Starting Codex app-server...",
 		lastActivityAt:           time.Now(),
 	}
@@ -914,6 +948,11 @@ func (s *appServerSession) SubmitInput(input Submission) error {
 	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
 	defer cancel()
 
+	if err := s.ensurePlaywrightMCPReady(ctx); err != nil {
+		s.appendSystemError(err)
+		return err
+	}
+
 	if busy && activeTurnID != "" {
 		return s.submitBusyInput(ctx, threadID, activeTurnID, input, pendingModel, pendingReasoning, currentModel, currentReasoning, refreshBusyBeforeSteer)
 	}
@@ -969,6 +1008,74 @@ func (s *appServerSession) submitBusyInput(ctx context.Context, threadID, active
 
 	s.appendSystemError(err)
 	return err
+}
+
+func (s *appServerSession) ensurePlaywrightMCPReady(parent context.Context) error {
+	if s == nil || !s.playwrightMCPExpected {
+		return nil
+	}
+
+	s.mu.Lock()
+	if s.playwrightMCPReady {
+		s.mu.Unlock()
+		return nil
+	}
+	s.status = "Waiting for Playwright tools..."
+	s.mu.Unlock()
+	s.notify()
+
+	ctx := parent
+	if _, hasDeadline := parent.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(parent, playwrightMCPReadyTimeout)
+		defer cancel()
+	}
+
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		ready, err := s.readPlaywrightMCPReady(ctx)
+		if err == nil && ready {
+			s.mu.Lock()
+			s.playwrightMCPReady = true
+			s.mu.Unlock()
+			return nil
+		}
+
+		s.mu.Lock()
+		status := s.mcpServerStartup["playwright"]
+		s.mu.Unlock()
+		if status == mcpServerStartupStateFailed || status == mcpServerStartupStateCancelled {
+			s.appendSystemNotice("Playwright MCP server did not become ready. Browser tools may need a retry.")
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			s.appendSystemNotice("Playwright tools are still starting. The first browser request may need a retry.")
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *appServerSession) readPlaywrightMCPReady(ctx context.Context) (bool, error) {
+	result, err := s.call(ctx, "mcpServerStatus/list", mcpServerStatusListParams{Detail: "toolsAndAuthOnly"})
+	if err != nil {
+		return false, err
+	}
+	var response mcpServerStatusListResponse
+	if err := json.Unmarshal(result, &response); err != nil {
+		return false, err
+	}
+	for _, entry := range response.Data {
+		if strings.TrimSpace(entry.Name) != "playwright" {
+			continue
+		}
+		return len(entry.Tools) > 0, nil
+	}
+	return false, nil
 }
 
 func (s *appServerSession) startTurnWithInput(ctx context.Context, threadID string, input Submission, pendingModel, pendingReasoning, currentModel, currentReasoning string) error {
@@ -2253,6 +2360,25 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 		s.mu.Lock()
 		s.touchLocked()
 		s.tokenUsage = cloneThreadTokenUsage(&msg.TokenUsage)
+		s.mu.Unlock()
+		s.notify()
+	case "mcpServer/startupStatus/updated":
+		var msg mcpServerStartupStatusUpdatedNotification
+		if err := json.Unmarshal(params, &msg); err != nil {
+			return
+		}
+		s.mu.Lock()
+		s.touchLocked()
+		name := strings.TrimSpace(msg.Name)
+		if name != "" {
+			if s.mcpServerStartup == nil {
+				s.mcpServerStartup = make(map[string]mcpServerStartupState)
+			}
+			s.mcpServerStartup[name] = msg.Status
+			if name == "playwright" && msg.Status == mcpServerStartupStateReady {
+				s.playwrightMCPReady = true
+			}
+		}
 		s.mu.Unlock()
 		s.notify()
 	case "account/rateLimits/updated":

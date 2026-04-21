@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"lcroom/internal/browserctl"
 )
@@ -15,6 +16,7 @@ import (
 var externalBrowserOpener = openExternalBrowserURL
 var managedBrowserStateReader = browserctl.ReadManagedPlaywrightState
 var managedBrowserRevealer = browserctl.RevealManagedPlaywrightState
+var managedBrowserRevealMarker = browserctl.MarkManagedPlaywrightStateRevealed
 
 func openProjectDirInBrowser(path string) error {
 	if strings.TrimSpace(path) == "" {
@@ -66,19 +68,46 @@ func openBrowserURL(rawURL, action string) error {
 	return nil
 }
 
-func revealManagedBrowserSession(dataDir, sessionKey string) error {
+func revealManagedBrowserSession(dataDir, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
 	sessionKey = strings.TrimSpace(sessionKey)
 	if sessionKey == "" {
-		return fmt.Errorf("managed browser session key is required")
+		return browserctl.ManagedPlaywrightState{}, fmt.Errorf("managed browser session key is required")
 	}
 	state, err := managedBrowserStateReader(dataDir, sessionKey)
 	if err != nil {
-		return fmt.Errorf("read managed browser state: %w", err)
+		return browserctl.ManagedPlaywrightState{}, fmt.Errorf("read managed browser state: %w", err)
 	}
 	if err := managedBrowserRevealer(state); err != nil {
-		return fmt.Errorf("reveal managed browser: %w", err)
+		return browserctl.ManagedPlaywrightState{}, fmt.Errorf("reveal managed browser: %w", err)
 	}
-	return nil
+	if updated, err := managedBrowserRevealMarker(dataDir, sessionKey); err == nil {
+		return updated, nil
+	}
+	state.Hidden = false
+	state.UpdatedAt = time.Now().UTC()
+	return state.Normalize(), nil
+}
+
+func (m *Model) rememberManagedBrowserState(state browserctl.ManagedPlaywrightState) {
+	sessionKey := strings.TrimSpace(state.SessionKey)
+	if sessionKey == "" {
+		return
+	}
+	if m.managedBrowserStates == nil {
+		m.managedBrowserStates = make(map[string]browserctl.ManagedPlaywrightState)
+	}
+	m.managedBrowserStates[sessionKey] = state.Normalize()
+}
+
+func (m Model) cachedManagedBrowserState(sessionKey string) (browserctl.ManagedPlaywrightState, bool) {
+	if len(m.managedBrowserStates) == 0 {
+		return browserctl.ManagedPlaywrightState{}, false
+	}
+	state, ok := m.managedBrowserStates[strings.TrimSpace(sessionKey)]
+	if !ok {
+		return browserctl.ManagedPlaywrightState{}, false
+	}
+	return state.Normalize(), true
 }
 
 func openExternalBrowserURL(rawURL string) error {

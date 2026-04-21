@@ -11,6 +11,66 @@ import (
 
 func TestCodexPlaywrightMCPConfigOverridesManagedHeadless(t *testing.T) {
 	req := LaunchRequest{
+		Provider:          ProviderCodex,
+		ProjectPath:       "/tmp/demo",
+		AppDataDir:        "/tmp/lcr-data",
+		CLIExecutablePath: "/tmp/lcroom-test-bin",
+		PlaywrightPolicy: browserctl.Policy{
+			ManagementMode:     browserctl.ManagementModeManaged,
+			DefaultBrowserMode: browserctl.BrowserModeHeadless,
+			LoginMode:          browserctl.LoginModePromote,
+			IsolationScope:     browserctl.IsolationScopeTask,
+		},
+		ManagedBrowserSessionKey: "session-demo",
+	}
+
+	got := codexPlaywrightMCPConfigOverrides(req)
+	if len(got) != 2 {
+		t.Fatalf("codexPlaywrightMCPConfigOverrides() len = %d, want 2", len(got))
+	}
+	if got[0] != `mcp_servers.playwright.command="/tmp/lcroom-test-bin"` {
+		t.Fatalf("command override = %q, want configured lcroom executable path", got[0])
+	}
+	for _, want := range []string{
+		`"playwright-mcp"`,
+		`"--project-path","/tmp/demo"`,
+		`"--data-dir","/tmp/lcr-data"`,
+		`"--session-key","session-demo"`,
+		`"--launch-mode","background"`,
+		`"--profile-key","`,
+	} {
+		if !strings.Contains(got[1], want) {
+			t.Fatalf("args override = %q, want substring %q", got[1], want)
+		}
+	}
+}
+
+func TestCodexPlaywrightMCPConfigOverridesManagedHeaded(t *testing.T) {
+	req := LaunchRequest{
+		Provider:          ProviderCodex,
+		ProjectPath:       "/tmp/demo",
+		AppDataDir:        "/tmp/lcr-data",
+		CLIExecutablePath: "/tmp/lcroom-test-bin",
+		PlaywrightPolicy: browserctl.Policy{
+			ManagementMode:     browserctl.ManagementModeManaged,
+			DefaultBrowserMode: browserctl.BrowserModeHeaded,
+			LoginMode:          browserctl.LoginModePromote,
+			IsolationScope:     browserctl.IsolationScopeProject,
+		},
+		ManagedBrowserSessionKey: "session-demo",
+	}
+
+	got := codexPlaywrightMCPConfigOverrides(req)
+	if len(got) != 2 {
+		t.Fatalf("codexPlaywrightMCPConfigOverrides() len = %d, want 2", len(got))
+	}
+	if !strings.Contains(got[1], `--launch-mode","headed"`) {
+		t.Fatalf("args override = %q, want headed launch mode", got[1])
+	}
+}
+
+func TestCodexPlaywrightMCPConfigOverridesUsesCurrentExecutableByDefault(t *testing.T) {
+	req := LaunchRequest{
 		Provider:    ProviderCodex,
 		ProjectPath: "/tmp/demo",
 		AppDataDir:  "/tmp/lcr-data",
@@ -33,41 +93,6 @@ func TestCodexPlaywrightMCPConfigOverridesManagedHeadless(t *testing.T) {
 	}
 	if got[0] != `mcp_servers.playwright.command="`+executablePath+`"` {
 		t.Fatalf("command override = %q, want lcroom executable %q", got[0], executablePath)
-	}
-	for _, want := range []string{
-		`"playwright-mcp"`,
-		`"--project-path","/tmp/demo"`,
-		`"--data-dir","/tmp/lcr-data"`,
-		`"--session-key","session-demo"`,
-		`"--launch-mode","background"`,
-		`"--profile-key","`,
-	} {
-		if !strings.Contains(got[1], want) {
-			t.Fatalf("args override = %q, want substring %q", got[1], want)
-		}
-	}
-}
-
-func TestCodexPlaywrightMCPConfigOverridesManagedHeaded(t *testing.T) {
-	req := LaunchRequest{
-		Provider:    ProviderCodex,
-		ProjectPath: "/tmp/demo",
-		AppDataDir:  "/tmp/lcr-data",
-		PlaywrightPolicy: browserctl.Policy{
-			ManagementMode:     browserctl.ManagementModeManaged,
-			DefaultBrowserMode: browserctl.BrowserModeHeaded,
-			LoginMode:          browserctl.LoginModePromote,
-			IsolationScope:     browserctl.IsolationScopeProject,
-		},
-		ManagedBrowserSessionKey: "session-demo",
-	}
-
-	got := codexPlaywrightMCPConfigOverrides(req)
-	if len(got) != 2 {
-		t.Fatalf("codexPlaywrightMCPConfigOverrides() len = %d, want 2", len(got))
-	}
-	if !strings.Contains(got[1], `--launch-mode","headed"`) {
-		t.Fatalf("args override = %q, want headed launch mode", got[1])
 	}
 }
 
@@ -95,6 +120,7 @@ func TestApplyCodexPlaywrightMCPOverridesAppendsConfigArgs(t *testing.T) {
 		ProjectPath:              "/tmp/demo",
 		AppDataDir:               "/tmp/lcr-data",
 		ManagedBrowserSessionKey: "session-demo",
+		CLIExecutablePath:        "/tmp/lcroom-test-bin",
 		PlaywrightPolicy: browserctl.Policy{
 			ManagementMode:     browserctl.ManagementModeManaged,
 			DefaultBrowserMode: browserctl.BrowserModeHeadless,

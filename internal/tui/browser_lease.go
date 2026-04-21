@@ -126,7 +126,8 @@ func (m Model) revealManagedBrowserCmd(managedSessionKey string, ref browserctl.
 	controller := m.ensureBrowserController()
 	dataDir := m.appDataDir()
 	return func() tea.Msg {
-		if err := revealManagedBrowserSession(dataDir, managedSessionKey); err != nil {
+		state, err := revealManagedBrowserSession(dataDir, managedSessionKey)
+		if err != nil {
 			msg := browserOpenMsg{err: err}
 			if controller != nil {
 				msg.browserLeaseSnapshot = controller.ReleaseInteractive(ref)
@@ -134,7 +135,11 @@ func (m Model) revealManagedBrowserCmd(managedSessionKey string, ref browserctl.
 			}
 			return msg
 		}
-		return browserOpenMsg{status: successStatus}
+		return browserOpenMsg{
+			status:                 successStatus,
+			managedBrowserState:    state,
+			managedBrowserStateSet: true,
+		}
 	}
 }
 
