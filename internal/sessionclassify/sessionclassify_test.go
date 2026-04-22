@@ -700,6 +700,97 @@ func TestManagerProcessOnePublishesFailureDiagnosis(t *testing.T) {
 	}
 }
 
+func TestManagerProcessOnePublishesOpenFileLimitDiagnosis(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	fixture := filepath.Clean(filepath.Join("..", "..", "testdata", "codex_footprint", "sessions", "2026", "03", "05", "rollout-modern.jsonl"))
+	now := time.Now()
+	state := model.ProjectState{
+		Path:           "/tmp/fdlimit-demo",
+		Name:           "fdlimit-demo",
+		Status:         model.StatusPossiblyStuck,
+		AttentionScore: 30,
+		InScope:        true,
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{{
+			SessionID:            "ses_fdlimit_demo",
+			ProjectPath:          "/tmp/fdlimit-demo",
+			SessionFile:          fixture,
+			Format:               "modern",
+			LastEventAt:          now,
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  true,
+		}},
+	}
+	if err := st.UpsertProjectState(ctx, state); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	bus := events.NewBus()
+	busCh, unsub := bus.Subscribe(1)
+	defer unsub()
+
+	manager := NewManager(st, bus, Options{
+		Client: &fakeClassifier{
+			model: "gpt-5.4-mini",
+			err:   errors.New("model gpt-5.4-mini: error creating thread: Fatal error: Failed to initialize session: Too many open files (os error 24)"),
+		},
+		Workers: 1,
+	})
+
+	queued, err := manager.QueueProject(ctx, state)
+	if err != nil {
+		t.Fatalf("queue project: %v", err)
+	}
+	if !queued {
+		t.Fatalf("expected queue project to enqueue work")
+	}
+
+	processed, err := manager.processOne(ctx)
+	if err != nil {
+		t.Fatalf("process one: %v", err)
+	}
+	if !processed {
+		t.Fatalf("expected processOne to process work")
+	}
+
+	select {
+	case evt := <-busCh:
+		if evt.Type != events.ClassificationUpdated {
+			t.Fatalf("event type = %s, want %s", evt.Type, events.ClassificationUpdated)
+		}
+		if evt.Payload["status"] != "failed" {
+			t.Fatalf("event status = %q, want failed", evt.Payload["status"])
+		}
+		if evt.Payload["error_kind"] != string(classificationFailureKindOpenFileLimit) {
+			t.Fatalf("event error_kind = %q, want %q", evt.Payload["error_kind"], classificationFailureKindOpenFileLimit)
+		}
+		if evt.Payload["error_diagnosis"] != "local open-file limit was reached while assessing the latest session; too many helper processes or open files may already be active" {
+			t.Fatalf("event error_diagnosis = %q", evt.Payload["error_diagnosis"])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for classification failure event")
+	}
+
+	classification, err := st.GetSessionClassification(ctx, "ses_fdlimit_demo")
+	if err != nil {
+		t.Fatalf("get classification: %v", err)
+	}
+	if classification.Status != model.ClassificationFailed {
+		t.Fatalf("status = %s, want failed", classification.Status)
+	}
+	if !strings.Contains(classification.LastError, "Too many open files") {
+		t.Fatalf("last error = %q, want open-file detail", classification.LastError)
+	}
+}
+
 func TestManagerProcessOneHeartbeatsWaitingForModel(t *testing.T) {
 	t.Parallel()
 
