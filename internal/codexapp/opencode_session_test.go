@@ -713,6 +713,45 @@ func TestOpenCodeSessionRefreshReplaysCurrentPlaywrightPageURL(t *testing.T) {
 	}
 }
 
+func TestOpenCodeSessionBrowserQuestionMarksWaitingForUser(t *testing.T) {
+	session := newTestOpenCodeSession(t, "")
+	session.playwrightPolicy = browserctl.DefaultPolicy()
+	session.browserActivity = browserctl.SessionActivity{
+		Policy:     browserctl.DefaultPolicy(),
+		State:      browserctl.SessionActivityStateActive,
+		ServerName: "playwright",
+		ToolName:   "browser_navigate",
+	}
+	session.currentBrowserPageURL = "https://example.com/"
+	session.pendingToolInput = &ToolInputRequest{
+		ID: "question_1",
+		Questions: []ToolInputQuestion{{
+			ID:       "answer",
+			Question: "Finish the sign-in flow and confirm when ready.",
+		}},
+	}
+
+	session.reconcileBrowserInteractiveStateLocked()
+
+	snapshot := session.Snapshot()
+	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateWaitingForUser; got != want {
+		t.Fatalf("snapshot.BrowserActivity.State = %q, want %q", got, want)
+	}
+	if got, want := snapshot.CurrentBrowserPageURL, "https://example.com/"; got != want {
+		t.Fatalf("snapshot.CurrentBrowserPageURL = %q, want %q", got, want)
+	}
+
+	session.pendingToolInput = nil
+	session.busy = true
+	session.activeTurnID = "msg_tool_1"
+	session.reconcileBrowserInteractiveStateLocked()
+
+	snapshot = session.Snapshot()
+	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateActive; got != want {
+		t.Fatalf("snapshot.BrowserActivity.State after question clear = %q, want %q", got, want)
+	}
+}
+
 func TestOpenCodeSessionBusyStatusKeepsExistingBusySince(t *testing.T) {
 	session := newTestOpenCodeSession(t, "")
 	startedAt := time.Date(2026, 3, 22, 12, 0, 0, 0, time.UTC)

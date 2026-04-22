@@ -2244,6 +2244,9 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		if len(snapshot.PendingToolInput.Questions) > 1 {
 			actions = append(actions, footerNavAction("Tab", "next"))
 		}
+		if managedBrowserCurrentPageURL(snapshot) != "" && strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" {
+			actions = append(actions, footerNavAction("Ctrl+O", m.managedBrowserCurrentPageFooterLabel(snapshot)))
+		}
 	case snapshot.PendingElicitation != nil && snapshot.PendingElicitation.Mode == codexapp.ElicitationModeForm:
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "accept"),

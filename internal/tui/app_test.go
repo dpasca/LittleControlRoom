@@ -14268,6 +14268,37 @@ func TestVisibleOpenCodeBrowserPanelShowsReconnectHintWhenManagedBrowserNotAttac
 	}
 }
 
+func TestVisibleOpenCodePendingToolInputKeepsShowBrowserAction(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Provider:                 codexapp.ProviderOpenCode,
+		Started:                  true,
+		Status:                   "Browser needs attention",
+		ManagedBrowserSessionKey: "managed-demo",
+		BrowserActivity: browserctl.SessionActivity{
+			Policy:     settingsAutomaticPlaywrightPolicy,
+			State:      browserctl.SessionActivityStateWaitingForUser,
+			ServerName: "playwright",
+			ToolName:   "browser_navigate",
+		},
+		CurrentBrowserPageURL: "https://example.com/",
+		PendingToolInput: &codexapp.ToolInputRequest{
+			ID: "question_1",
+			Questions: []codexapp.ToolInputQuestion{{
+				ID:       "answer",
+				Question: "Finish the sign-in flow and confirm when ready.",
+			}},
+		},
+	}
+
+	m := Model{codexVisibleProject: "/tmp/demo"}
+	footer := ansi.Strip(m.renderCodexFooter(snapshot, 180))
+	for _, want := range []string{"Enter answer", "Ctrl+O show browser"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("renderCodexFooter() missing %q for OpenCode pending browser question: %q", want, footer)
+		}
+	}
+}
+
 func TestVisibleCodexViewShowsBannerAndYoloWarning(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",

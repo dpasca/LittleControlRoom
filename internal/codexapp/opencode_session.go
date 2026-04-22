@@ -941,6 +941,7 @@ func (s *openCodeSession) refreshSessionState(parent context.Context, external b
 			s.lastSystemNotice = "OpenCode session ready"
 		}
 	}
+	s.reconcileBrowserInteractiveStateLocked()
 	s.mu.Unlock()
 	s.notify()
 	return nil
@@ -1048,6 +1049,7 @@ func (s *openCodeSession) refreshPendingRequests(ctx context.Context) error {
 		s.pendingToolInput = mapOpenCodeQuestion(request)
 		break
 	}
+	s.reconcileBrowserInteractiveStateLocked()
 	return nil
 }
 
@@ -1158,6 +1160,30 @@ func (s *openCodeSession) setBrowserActivityIdleLocked() {
 	s.browserActivity = activity.Normalize()
 }
 
+func (s *openCodeSession) reconcileBrowserInteractiveStateLocked() {
+	activity := s.browserActivity.Normalize()
+	if !activity.Enabled() {
+		s.browserActivity = activity
+		return
+	}
+
+	browserRelevant := activity.SourceLabel() != "" || strings.TrimSpace(s.currentBrowserPageURL) != ""
+	waitingForUser := s.pendingToolInput != nil
+
+	switch {
+	case waitingForUser && browserRelevant:
+		activity.State = browserctl.SessionActivityStateWaitingForUser
+	case activity.State == browserctl.SessionActivityStateWaitingForUser && browserRelevant && (s.busy || strings.TrimSpace(s.activeTurnID) != ""):
+		activity.State = browserctl.SessionActivityStateActive
+	case activity.State == browserctl.SessionActivityStateWaitingForUser:
+		idle := browserctl.DefaultSessionActivity(s.playwrightPolicy)
+		idle.LastEventAt = activity.LastEventAt
+		activity = idle
+	}
+
+	s.browserActivity = activity.Normalize()
+}
+
 func normalizeOpenCodePlaywrightToolName(rawTool string) string {
 	toolName := strings.ToLower(strings.TrimSpace(rawTool))
 	switch {
@@ -1246,6 +1272,8 @@ func (s *openCodeSession) applyPlaywrightToolStateLocked(raw json.RawMessage) {
 	if strings.EqualFold(toolName, "browser_close") {
 		s.currentBrowserPageURL = ""
 	}
+
+	s.reconcileBrowserInteractiveStateLocked()
 }
 
 func (s *openCodeSession) applyPartLocked(role string, raw json.RawMessage, replace bool) {
