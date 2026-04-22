@@ -90,8 +90,17 @@ func (n browserAttentionNotification) canOpenBrowser() bool {
 	return strings.TrimSpace(n.ManagedBrowserSessionKey) != ""
 }
 
+func managedBrowserFlowSupported(provider codexapp.Provider) bool {
+	switch provider.Normalized() {
+	case codexapp.ProviderCodex, codexapp.ProviderOpenCode:
+		return true
+	default:
+		return false
+	}
+}
+
 func managedBrowserLoginURL(provider codexapp.Provider, policy browserctl.Policy, requestMode codexapp.ElicitationMode, requestURL string) string {
-	if provider.Normalized() != codexapp.ProviderCodex {
+	if !managedBrowserFlowSupported(provider) {
 		return ""
 	}
 	policy = policy.Normalize()
@@ -121,7 +130,7 @@ func managedBrowserAttentionURL(snapshot codexapp.Snapshot) string {
 }
 
 func managedBrowserSessionURL(provider codexapp.Provider, policy browserctl.Policy, rawURL string) string {
-	if provider.Normalized() != codexapp.ProviderCodex {
+	if !managedBrowserFlowSupported(provider) {
 		return ""
 	}
 	policy = policy.Normalize()

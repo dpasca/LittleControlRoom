@@ -4034,6 +4034,7 @@ func (m Model) renderDetailContent(width int) string {
 	lines = appendDetailFields(lines, width, statusFields...)
 	if projectMissing(p) {
 		lines = append(lines, detailWarningStyle.Render("Folder: missing on disk"))
+		lines = append(lines, detailMutedStyle.Render("Use /forget to remove this missing folder from the dashboard."))
 	}
 	lastActivityValue := detailMutedStyle.Render("never")
 	if !p.LastActivity.IsZero() {

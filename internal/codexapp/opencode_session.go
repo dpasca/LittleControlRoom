@@ -928,6 +928,7 @@ func (s *openCodeSession) refreshSessionState(parent context.Context, external b
 		}
 	default:
 		s.clearBusyLocked()
+		s.setBrowserActivityIdleLocked()
 		if latestError != "" {
 			s.lastError = latestError
 			s.lastSystemNotice = latestError
@@ -1056,6 +1057,8 @@ func (s *openCodeSession) rebuildTranscriptLocked(messages []openCodeMessage) (s
 	s.messageRole = make(map[string]string)
 	s.partKind = make(map[string]TranscriptKind)
 	s.partType = make(map[string]string)
+	s.browserActivity = browserctl.DefaultSessionActivity(s.playwrightPolicy)
+	s.currentBrowserPageURL = ""
 	s.invalidateTranscriptCacheLocked()
 
 	latestError := ""
@@ -1149,6 +1152,102 @@ func (s *openCodeSession) applyMessageInfoLocked(info openCodeMessageInfo) strin
 	return ""
 }
 
+func (s *openCodeSession) setBrowserActivityIdleLocked() {
+	activity := browserctl.DefaultSessionActivity(s.playwrightPolicy)
+	activity.LastEventAt = s.browserActivity.Normalize().LastEventAt
+	s.browserActivity = activity.Normalize()
+}
+
+func normalizeOpenCodePlaywrightToolName(rawTool string) string {
+	toolName := strings.ToLower(strings.TrimSpace(rawTool))
+	switch {
+	case strings.HasPrefix(toolName, "playwright_"):
+		toolName = strings.TrimPrefix(toolName, "playwright_")
+	case strings.HasPrefix(toolName, "browser_"):
+	default:
+		return ""
+	}
+	if !browserctl.IsPlaywrightToolCall("playwright", toolName) {
+		return ""
+	}
+	return toolName
+}
+
+func decodeOpenCodeToolStateURL(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var payload struct {
+		URL     string `json:"url"`
+		PageURL string `json:"pageURL"`
+	}
+	if err := json.Unmarshal(raw, &payload); err == nil {
+		if url := strings.TrimSpace(payload.URL); url != "" {
+			return url
+		}
+		return strings.TrimSpace(payload.PageURL)
+	}
+	return ""
+}
+
+func extractOpenCodeOutputPageURL(raw json.RawMessage) string {
+	if url := decodeOpenCodeToolStateURL(raw); url != "" {
+		return url
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "Page URL:") {
+			continue
+		}
+		return strings.TrimSpace(strings.TrimPrefix(line, "Page URL:"))
+	}
+	return ""
+}
+
+func (s *openCodeSession) applyPlaywrightToolStateLocked(raw json.RawMessage) {
+	var payload struct {
+		Type  string `json:"type"`
+		Tool  string `json:"tool"`
+		State struct {
+			Status string          `json:"status"`
+			Input  json.RawMessage `json:"input"`
+			Output json.RawMessage `json:"output"`
+		} `json:"state"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return
+	}
+	if !strings.EqualFold(strings.TrimSpace(payload.Type), "tool") {
+		return
+	}
+
+	toolName := normalizeOpenCodePlaywrightToolName(payload.Tool)
+	if toolName == "" {
+		return
+	}
+
+	activity := browserctl.DefaultSessionActivity(s.playwrightPolicy)
+	activity.State = browserctl.SessionActivityStateActive
+	activity.ServerName = "playwright"
+	activity.ToolName = toolName
+	activity.LastEventAt = time.Now()
+	s.browserActivity = activity.Normalize()
+
+	if pageURL := extractOpenCodeOutputPageURL(payload.State.Output); pageURL != "" {
+		s.currentBrowserPageURL = pageURL
+	} else if pageURL := decodeOpenCodeToolStateURL(payload.State.Input); pageURL != "" {
+		s.currentBrowserPageURL = pageURL
+	}
+
+	if strings.EqualFold(toolName, "browser_close") {
+		s.currentBrowserPageURL = ""
+	}
+}
+
 func (s *openCodeSession) applyPartLocked(role string, raw json.RawMessage, replace bool) {
 	var header openCodePartHeader
 	if err := json.Unmarshal(raw, &header); err != nil {
@@ -1164,6 +1263,7 @@ func (s *openCodeSession) applyPartLocked(role string, raw json.RawMessage, repl
 		s.partKind[partID] = kind
 		s.partType[partID] = partType
 	}
+	s.applyPlaywrightToolStateLocked(raw)
 	if strings.TrimSpace(text) == "" {
 		return
 	}
@@ -1428,6 +1528,7 @@ func (s *openCodeSession) markIdleLocked() bool {
 	wasBusy := s.busy || s.activeTurnID != "" || strings.TrimSpace(s.status) == "OpenCode is working..."
 
 	s.clearBusyLocked()
+	s.setBrowserActivityIdleLocked()
 
 	switch {
 	case wasBusyExternal:

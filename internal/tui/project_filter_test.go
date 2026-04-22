@@ -110,10 +110,10 @@ func TestProjectFilterDialogUpdatesVisibleProjectsAsYouType(t *testing.T) {
 func TestRenderedListAndFooterShowActiveProjectFilter(t *testing.T) {
 	m := Model{
 		allProjects: []model.ProjectSummary{
-			{Name: "helper-tools", Path: "/tmp/helper-tools", LastActivity: time.Date(2026, 3, 19, 9, 0, 0, 0, time.UTC)},
+			{Name: "helper-tools", Path: "/tmp/helper-tools", PresentOnDisk: true, LastActivity: time.Date(2026, 3, 19, 9, 0, 0, 0, time.UTC)},
 		},
 		projects: []model.ProjectSummary{
-			{Name: "helper-tools", Path: "/tmp/helper-tools", LastActivity: time.Date(2026, 3, 19, 9, 0, 0, 0, time.UTC)},
+			{Name: "helper-tools", Path: "/tmp/helper-tools", PresentOnDisk: true, LastActivity: time.Date(2026, 3, 19, 9, 0, 0, 0, time.UTC)},
 		},
 		projectFilter: "helper",
 		sortMode:      sortByAttention,

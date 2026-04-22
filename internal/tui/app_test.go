@@ -1412,8 +1412,28 @@ func TestRenderFooterListOmitsMoveAndForgetHints(t *testing.T) {
 	if strings.Contains(rendered, "f forget") {
 		t.Fatalf("renderFooter() should not advertise forget in the main list footer: %q", rendered)
 	}
+	if strings.Contains(rendered, "/forget remove") {
+		t.Fatalf("renderFooter() should not advertise /forget without a missing project selected: %q", rendered)
+	}
 	if strings.Contains(rendered, "r refresh") {
 		t.Fatalf("renderFooter() should not advertise refresh in the main list footer: %q", rendered)
+	}
+}
+
+func TestRenderFooterShowsForgetHintForMissingProject(t *testing.T) {
+	m := Model{
+		focusedPane: focusProjects,
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			PresentOnDisk: false,
+		}},
+		selected: 0,
+	}
+
+	rendered := ansi.Strip(m.renderFooter(160))
+	if !strings.Contains(rendered, "/forget remove") {
+		t.Fatalf("renderFooter() missing /forget action for missing project: %q", rendered)
 	}
 }
 
@@ -5601,7 +5621,7 @@ func TestRenderDetailWrapsLongSessionSummary(t *testing.T) {
 	}
 }
 
-func TestRenderDetailMissingProjectOmitsForgetHint(t *testing.T) {
+func TestRenderDetailMissingProjectShowsForgetHint(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{
 			Path:                            "/tmp/demo",
@@ -5615,8 +5635,8 @@ func TestRenderDetailMissingProjectOmitsForgetHint(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderDetailContent(80))
-	if strings.Contains(rendered, "press f to forget") {
-		t.Fatalf("renderDetailContent() should not show the stale forget hint for missing folders: %q", rendered)
+	if !strings.Contains(rendered, "Use /forget to remove this missing folder from the dashboard.") {
+		t.Fatalf("renderDetailContent() missing /forget guidance for missing folders: %q", rendered)
 	}
 }
 
@@ -14137,13 +14157,13 @@ func TestVisibleCodexBrowserPanelShowsReconnectHintWhenManagedBrowserNotAttached
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
 		snapshot: codexapp.Snapshot{
-			Provider:               codexapp.ProviderCodex,
-			Started:                true,
-			ThreadID:               "thread-demo",
-			Preset:                 codexcli.PresetYolo,
-			Status:                 "Codex session ready",
-			BrowserActivity:        browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy},
-			CurrentBrowserPageURL:  "https://chartboost.us.auth0.com/u/login?state=demo",
+			Provider:              codexapp.ProviderCodex,
+			Started:               true,
+			ThreadID:              "thread-demo",
+			Preset:                codexcli.PresetYolo,
+			Status:                "Codex session ready",
+			BrowserActivity:       browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy},
+			CurrentBrowserPageURL: "https://chartboost.us.auth0.com/u/login?state=demo",
 		},
 	}
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
@@ -14186,6 +14206,65 @@ func TestVisibleCodexBrowserPanelShowsReconnectHintWhenManagedBrowserNotAttached
 	}
 	if !strings.Contains(got.status, "Use /reconnect to reopen this thread with the current browser behavior") {
 		t.Fatalf("status = %q, want reconnect guidance", got.status)
+	}
+}
+
+func TestVisibleOpenCodeCurrentBackgroundBrowserPageHintsOpenPage(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Provider:                 codexapp.ProviderOpenCode,
+		Started:                  true,
+		Status:                   "OpenCode session ready",
+		BrowserActivity:          browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy},
+		ManagedBrowserSessionKey: "managed-demo",
+		CurrentBrowserPageURL:    "https://example.com/",
+	}
+
+	m := Model{codexVisibleProject: "/tmp/demo"}
+	renderedBlocks := ansi.Strip(m.renderCodexBrowserPanel(snapshot, 120))
+	if !strings.Contains(renderedBlocks, "Background browser page: https://example.com/") {
+		t.Fatalf("renderCodexBrowserPanel() missing current background page for OpenCode: %q", renderedBlocks)
+	}
+	if !strings.Contains(renderedBlocks, "Press Ctrl+O to reveal the managed browser window for this same session.") {
+		t.Fatalf("renderCodexBrowserPanel() missing Ctrl+O reveal hint for OpenCode: %q", renderedBlocks)
+	}
+
+	footer := ansi.Strip(m.renderCodexFooter(snapshot, 160))
+	if !strings.Contains(footer, "Ctrl+O show browser") {
+		t.Fatalf("renderCodexFooter() missing Ctrl+O show browser action for OpenCode: %q", footer)
+	}
+}
+
+func TestVisibleOpenCodeBrowserPanelShowsReconnectHintWhenManagedBrowserNotAttached(t *testing.T) {
+	settings := config.EditableSettings{PlaywrightPolicy: settingsAutomaticPlaywrightPolicy}
+	snapshot := codexapp.Snapshot{
+		Provider:              codexapp.ProviderOpenCode,
+		Started:               true,
+		Status:                "OpenCode session ready",
+		BrowserActivity:       browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy},
+		CurrentBrowserPageURL: "https://example.com/",
+	}
+
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		settingsBaseline:    &settings,
+	}
+
+	rendered := ansi.Strip(m.renderCodexBrowserPanel(snapshot, 140))
+	for _, want := range []string{
+		"Managed browser controls are not attached to this session yet.",
+		"Current browser setting: Only when needed.",
+		"Use /reconnect to reopen this thread with the current browser behavior, or /opencode-new for a fresh session.",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("renderCodexBrowserPanel() missing %q for OpenCode: %q", want, rendered)
+		}
+	}
+
+	footer := ansi.Strip(m.renderCodexFooter(snapshot, 180))
+	for _, want := range []string{"/reconnect apply browser", "/opencode-new fresh"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("renderCodexFooter() missing %q for OpenCode browser policy mismatch: %q", want, footer)
+		}
 	}
 }
 

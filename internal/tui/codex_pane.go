@@ -2043,7 +2043,7 @@ func (m Model) codexBrowserPolicyMismatch(snapshot codexapp.Snapshot) bool {
 	if currentPolicy != sessionPolicy {
 		return true
 	}
-	return embeddedProvider(snapshot) == codexapp.ProviderCodex &&
+	return managedBrowserFlowSupported(embeddedProvider(snapshot)) &&
 		!currentPolicy.UsesLegacyLaunchBehavior() &&
 		strings.TrimSpace(snapshot.ManagedBrowserSessionKey) == ""
 }
@@ -2055,7 +2055,7 @@ func (m Model) codexBrowserReconnectLines(snapshot codexapp.Snapshot) []string {
 	currentPolicy := m.currentPlaywrightPolicy()
 	currentLabel := settingsBrowserAutomationOptionLabel(settingsBrowserAutomationValue(currentPolicy), currentPolicy)
 	newCommand := embeddedNewCommand(embeddedProvider(snapshot))
-	if embeddedProvider(snapshot) == codexapp.ProviderCodex &&
+	if managedBrowserFlowSupported(embeddedProvider(snapshot)) &&
 		!currentPolicy.UsesLegacyLaunchBehavior() &&
 		strings.TrimSpace(snapshot.ManagedBrowserSessionKey) == "" {
 		lines := []string{

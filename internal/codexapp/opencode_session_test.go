@@ -626,6 +626,93 @@ func TestOpenCodeSessionIdleAfterExternalBusyMarksSessionReady(t *testing.T) {
 	}
 }
 
+func TestOpenCodeSessionTracksPlaywrightBrowserActivityFromLiveToolPart(t *testing.T) {
+	session := newTestOpenCodeSession(t, "")
+	session.playwrightPolicy = browserctl.DefaultPolicy()
+
+	session.handleEventData(`{
+		"type":"message.part.updated",
+		"properties":{
+			"part":{
+				"id":"part_tool_1",
+				"sessionID":"ses_test",
+				"messageID":"msg_tool_1",
+				"type":"tool",
+				"tool":"playwright_browser_navigate",
+				"state":{
+					"status":"completed",
+					"input":{"url":"https://example.com"},
+					"output":"Page URL: https://example.com/\nPage Title: Example Domain"
+				}
+			}
+		}
+	}`)
+
+	snapshot := session.Snapshot()
+	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateActive; got != want {
+		t.Fatalf("snapshot.BrowserActivity.State = %q, want %q", got, want)
+	}
+	if got, want := snapshot.BrowserActivity.ServerName, "playwright"; got != want {
+		t.Fatalf("snapshot.BrowserActivity.ServerName = %q, want %q", got, want)
+	}
+	if got, want := snapshot.BrowserActivity.ToolName, "browser_navigate"; got != want {
+		t.Fatalf("snapshot.BrowserActivity.ToolName = %q, want %q", got, want)
+	}
+	if got, want := snapshot.CurrentBrowserPageURL, "https://example.com/"; got != want {
+		t.Fatalf("snapshot.CurrentBrowserPageURL = %q, want %q", got, want)
+	}
+
+	session.handleEventData(`{"type":"session.idle","properties":{"sessionID":"ses_test"}}`)
+	snapshot = session.Snapshot()
+	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateIdle; got != want {
+		t.Fatalf("snapshot.BrowserActivity.State after idle = %q, want %q", got, want)
+	}
+	if got, want := snapshot.CurrentBrowserPageURL, "https://example.com/"; got != want {
+		t.Fatalf("snapshot.CurrentBrowserPageURL after idle = %q, want %q", got, want)
+	}
+}
+
+func TestOpenCodeSessionRefreshReplaysCurrentPlaywrightPageURL(t *testing.T) {
+	session := newTestOpenCodeSession(t, `[
+		{
+			"info": {
+				"id": "msg_tool_1",
+				"sessionID": "ses_test",
+				"role": "assistant",
+				"modelID": "gpt-5.4",
+				"providerID": "openai"
+			},
+			"parts": [
+				{
+					"id":"part_tool_1",
+					"sessionID":"ses_test",
+					"messageID":"msg_tool_1",
+					"type":"tool",
+					"tool":"playwright_browser_navigate",
+					"state":{
+						"status":"completed",
+						"input":{"url":"https://example.com"},
+						"output":"Page URL: https://example.com/\nPage Title: Example Domain"
+					}
+				}
+			]
+		}
+	]`)
+	session.playwrightPolicy = browserctl.DefaultPolicy()
+
+	if err := session.refreshSessionState(context.Background(), false); err != nil {
+		t.Fatalf("session.refreshSessionState() error = %v", err)
+	}
+
+	snapshot := session.Snapshot()
+	if got, want := snapshot.CurrentBrowserPageURL, "https://example.com/"; got != want {
+		t.Fatalf("snapshot.CurrentBrowserPageURL = %q, want %q", got, want)
+	}
+	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateIdle; got != want {
+		t.Fatalf("snapshot.BrowserActivity.State = %q, want %q after idle refresh", got, want)
+	}
+}
+
 func TestOpenCodeSessionBusyStatusKeepsExistingBusySince(t *testing.T) {
 	session := newTestOpenCodeSession(t, "")
 	startedAt := time.Date(2026, 3, 22, 12, 0, 0, 0, time.UTC)
