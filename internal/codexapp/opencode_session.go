@@ -1889,6 +1889,9 @@ func buildOpenCodeServerCommandForLaunch(req LaunchRequest, xdgConfigHome string
 	if trimmed := strings.TrimSpace(xdgConfigHome); trimmed != "" {
 		cmd.Env = withEnvOverride(cmd.Env, "XDG_CONFIG_HOME", trimmed)
 	}
+	if trimmed := strings.TrimSpace(req.OpenCodeDataHome); trimmed != "" {
+		cmd.Env = withEnvOverride(cmd.Env, "XDG_DATA_HOME", trimmed)
+	}
 	return cmd, nil
 }
 

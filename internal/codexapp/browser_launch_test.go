@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"lcroom/internal/browserctl"
+	"lcroom/internal/codexcli"
 )
 
 func TestCodexPlaywrightMCPConfigOverridesManagedHeadless(t *testing.T) {
@@ -187,6 +188,27 @@ func TestOpenCodePlaywrightMCPOverrideClassicBrowserBehavior(t *testing.T) {
 		t.Fatalf("openCodePlaywrightMCPOverride() error = %v", err)
 	} else if ok || raw != nil {
 		t.Fatalf("openCodePlaywrightMCPOverride() = (%q, %v), want nil,false", string(raw), ok)
+	}
+}
+
+func TestBuildOpenCodeServerCommandForLaunchAppliesDataHomeOverride(t *testing.T) {
+	req := LaunchRequest{
+		Provider:         ProviderOpenCode,
+		ProjectPath:      "/tmp/demo",
+		Preset:           codexcli.PresetSafe,
+		OpenCodeDataHome: "/tmp/opencode-data-home",
+	}
+
+	cmd, err := buildOpenCodeServerCommandForLaunch(req, "/tmp/opencode-config-home")
+	if err != nil {
+		t.Fatalf("buildOpenCodeServerCommandForLaunch() error = %v", err)
+	}
+
+	if !containsString(cmd.Env, "XDG_CONFIG_HOME=/tmp/opencode-config-home") {
+		t.Fatalf("cmd.Env = %#v, want XDG_CONFIG_HOME override", cmd.Env)
+	}
+	if !containsString(cmd.Env, "XDG_DATA_HOME=/tmp/opencode-data-home") {
+		t.Fatalf("cmd.Env = %#v, want XDG_DATA_HOME override", cmd.Env)
 	}
 }
 

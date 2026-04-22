@@ -486,21 +486,28 @@ func TestManagedPlaywrightInEmbeddedOpenCode(t *testing.T) {
 	}
 
 	dataDir := t.TempDir()
+	openCodeDataHome := t.TempDir()
 	sessionAny, err := newOpenCodeSession(LaunchRequest{
 		Provider:          ProviderOpenCode,
 		ProjectPath:       projectPath,
 		ForceNew:          true,
 		Preset:            codexcli.PresetFullAuto,
-		PendingModel:      "openai/gpt-5.3-codex-spark",
+		PendingModel:      "openai/gpt-5.4",
 		PendingReasoning:  "low",
 		PlaywrightPolicy:  browserctl.DefaultPolicy(),
 		AppDataDir:        dataDir,
+		OpenCodeDataHome:  openCodeDataHome,
 		CLIExecutablePath: helperBinary,
 	}, func() {})
 	if err != nil {
 		t.Fatalf("newOpenCodeSession() error = %v", err)
 	}
-	defer sessionAny.Close()
+	defer func() {
+		_ = sessionAny.Close()
+		if waiter, ok := sessionAny.(closeWaiter); ok {
+			waiter.WaitClosed(10 * time.Second)
+		}
+	}()
 
 	session, ok := sessionAny.(*openCodeSession)
 	if !ok {
@@ -531,6 +538,9 @@ func TestManagedPlaywrightInEmbeddedOpenCode(t *testing.T) {
 			}
 			if strings.TrimSpace(state.ProfileKey) == "" {
 				t.Fatalf("managed browser profile key = empty, want non-empty")
+			}
+			if _, err := os.Stat(filepath.Join(openCodeDataHome, "opencode", "opencode.db")); err != nil {
+				t.Fatalf("managed OpenCode data home missing opencode.db: %v", err)
 			}
 
 			usedPlaywright := false

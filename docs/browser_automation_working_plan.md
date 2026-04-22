@@ -101,6 +101,7 @@ Make browser automation feel quiet and predictable by default:
 - Unit coverage now verifies that the session-local `CODEX_HOME` overlay symlinks the original Codex home while replacing only `skills/playwright`.
 - A Codex smoke check can now verify the overlay without a live user session by running `codex debug prompt-input` against that overlay and checking that the shadow Playwright skill is what Codex sees.
 - A managed embedded Codex smoke test now builds a real `lcroom` helper binary and verifies that a fresh trusted session can see Playwright MCP tools before the first turn starts.
+- The real embedded OpenCode Playwright smoke now launches with its own temporary `XDG_DATA_HOME`, so it exercises the managed browser path without polluting the user's normal OpenCode DB or leaving `tmp-oc-browser-smoke-*` projects in the dashboard.
 
 ## Current Provider Status
 
@@ -119,6 +120,7 @@ Make browser automation feel quiet and predictable by default:
 - Managed sessions now also shadow the OpenCode `playwright` skill per session, which keeps real browser tasks on the managed MCP path instead of falling back to standalone Playwright CLI/browser launches.
 - OpenCode now reports live Playwright tool activity and the current managed browser page URL into the shared embedded browser UI, including `Ctrl+O` reveal/focus handling and reconnect guidance when the session browser wiring no longer matches current settings.
 - OpenCode browser-backed structured-input waits now keep the session in a `waiting for user` browser state, which lets the same browser-attention/reveal flow stay active while the user is answering a browser-related prompt.
+- Managed OpenCode browser smoke coverage is now isolated from the user's real OpenCode data home, so smoke verification no longer depends on or mutates the normal dashboard state.
 - Embedded elicitation control is still weaker than Codex, so browser-attention/login waits are not yet at full parity.
 - Treat as managed for normal Playwright browsing, with improving UI parity but still interaction-limited until the embedded reply path is clearer.
 

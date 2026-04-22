@@ -499,6 +499,7 @@ type LaunchRequest struct {
 	PlaywrightPolicy         browserctl.Policy
 	ManagedBrowserSessionKey string
 	AppDataDir               string
+	OpenCodeDataHome         string
 	CodexHome                string
 	CLIExecutablePath        string
 }
