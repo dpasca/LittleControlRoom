@@ -9036,6 +9036,82 @@ func TestCodexUpdateStatusOnlyPreservesViewportOffset(t *testing.T) {
 	}
 }
 
+func TestCodexUpdateStatusOnlyBrowserPanelKeepsBottomAnchored(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex,
+			Started:  true,
+			Status:   "Codex session ready",
+			Entries: []codexapp.TranscriptEntry{{
+				Kind: codexapp.TranscriptAgent,
+				Text: strings.Join([]string{
+					"line 01", "line 02", "line 03", "line 04", "line 05", "line 06", "line 07", "line 08",
+					"line 09", "line 10", "line 11", "line 12", "line 13", "line 14", "line 15", "line 16",
+					"line 17", "line 18", "line 19", "line 20", "line 21", "line 22", "line 23", "line 24",
+					"line 25", "line 26", "line 27", "line 28", "line 29", "line 30", "line 31", "line 32",
+				}, "\n"),
+			}},
+			BrowserActivity:          browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy},
+			ManagedBrowserSessionKey: "managed-demo",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: "/tmp/demo"}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	settings := config.EditableSettings{PlaywrightPolicy: settingsAutomaticPlaywrightPolicy}
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		settingsBaseline:    &settings,
+		width:               48,
+		height:              20,
+	}
+	if _, ok, _ := m.refreshCodexSnapshot("/tmp/demo"); !ok {
+		t.Fatalf("refreshCodexSnapshot() failed")
+	}
+	m.syncCodexViewport(true)
+	if !m.codexViewport.AtBottom() {
+		t.Fatalf("initial sync should start at the bottom")
+	}
+	beforeLowerBlocks := m.codexLowerBlocks(session.snapshot, m.width)
+	beforeYOffset := m.codexViewport.YOffset
+	beforeHeight := m.codexViewport.Height
+	beforeLowerHeight := countRenderedBlockLines(beforeLowerBlocks)
+
+	session.snapshot.Status = "Codex status changed only"
+	session.snapshot.ManagedBrowserSessionKey = ""
+
+	updated, _ := m.Update(codexUpdateMsg{projectPath: "/tmp/demo"})
+	got := updated.(Model)
+	afterSnapshot, ok := got.currentCodexSnapshot()
+	if !ok {
+		t.Fatalf("currentCodexSnapshot() unavailable after update")
+	}
+	afterLowerBlocks := got.codexLowerBlocks(afterSnapshot, got.width)
+	afterLowerHeight := countRenderedBlockLines(afterLowerBlocks)
+	if afterLowerHeight <= beforeLowerHeight {
+		t.Fatalf("test fixture should add browser panel rows, before=%d after=%d before=%q after=%q", beforeLowerHeight, afterLowerHeight, strings.Join(beforeLowerBlocks, "\n---\n"), strings.Join(afterLowerBlocks, "\n---\n"))
+	}
+	if got.codexViewport.Height >= beforeHeight {
+		t.Fatalf("browser panel should reduce transcript height, before=%d after=%d", beforeHeight, got.codexViewport.Height)
+	}
+	if !got.codexViewport.AtBottom() {
+		maxOffset := max(0, got.codexViewport.TotalLineCount()-got.codexViewport.Height)
+		t.Fatalf("status-only browser update should keep transcript pinned to bottom, offset=%d max=%d", got.codexViewport.YOffset, maxOffset)
+	}
+	if got.codexViewport.YOffset <= beforeYOffset {
+		t.Fatalf("browser panel should advance viewport offset to preserve the bottom, before=%d after=%d", beforeYOffset, got.codexViewport.YOffset)
+	}
+}
+
 func TestTodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {

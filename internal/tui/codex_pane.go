@@ -1762,6 +1762,7 @@ func (m *Model) syncCodexViewport(resetToBottom bool) {
 
 	projectPath := strings.TrimSpace(m.codexVisibleProject)
 	providerLabel := embeddedProvider(snapshot).Label()
+	stickToBottom := resetToBottom || m.codexViewport.AtBottom()
 	lowerBlocks := []string{}
 	m.measureAISyncLatency("Embedded lower blocks", projectPath, providerLabel, func() {
 		lowerBlocks = m.codexLowerBlocks(snapshot, width)
@@ -1778,7 +1779,9 @@ func (m *Model) syncCodexViewport(resetToBottom bool) {
 			m.setCodexViewportTranscript(projectPath, snapshot, m.codexViewport.Width)
 		})
 	}
-	if resetToBottom {
+	// Keep the latest reply visible when lower assistant blocks appear or disappear
+	// while the transcript is already pinned to the end.
+	if stickToBottom {
 		m.codexViewport.GotoBottom()
 		return
 	}
