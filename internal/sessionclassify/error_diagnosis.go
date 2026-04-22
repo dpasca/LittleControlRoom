@@ -16,6 +16,7 @@ type classificationFailureKind string
 const (
 	classificationFailureKindTimeout            classificationFailureKind = "timeout"
 	classificationFailureKindConnectionFailed   classificationFailureKind = "connection_failed"
+	classificationFailureKindOpenFileLimit      classificationFailureKind = "open_file_limit"
 	classificationFailureKindRateLimited        classificationFailureKind = "rate_limited"
 	classificationFailureKindServiceUnavailable classificationFailureKind = "service_unavailable"
 )
@@ -29,6 +30,8 @@ func classificationFailureMetadata(err error) (classificationFailureKind, string
 		return classificationFailureKindServiceUnavailable, "model provider was unavailable while assessing the latest session"
 	case isClassificationTimeoutError(err, normalized):
 		return classificationFailureKindTimeout, "request timed out while contacting the model; network connectivity or provider availability may be degraded"
+	case isClassificationOpenFileLimitError(err, normalized):
+		return classificationFailureKindOpenFileLimit, "local open-file limit was reached while assessing the latest session; too many helper processes or open files may already be active"
 	case isClassificationConnectionFailureError(err, normalized):
 		return classificationFailureKindConnectionFailed, "could not reach the model; network connectivity or provider availability may be degraded"
 	default:
@@ -78,6 +81,13 @@ func isClassificationTimeoutError(err error, normalized string) bool {
 		strings.Contains(normalized, "i/o timeout") ||
 		strings.Contains(normalized, "timeout awaiting response headers") ||
 		strings.Contains(normalized, "client.timeout exceeded")
+}
+
+func isClassificationOpenFileLimitError(err error, normalized string) bool {
+	return errors.Is(err, syscall.EMFILE) ||
+		errors.Is(err, syscall.ENFILE) ||
+		strings.Contains(normalized, "too many open files") ||
+		strings.Contains(normalized, "os error 24")
 }
 
 func isClassificationConnectionFailureError(err error, normalized string) bool {

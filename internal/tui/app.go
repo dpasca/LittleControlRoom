@@ -6253,6 +6253,8 @@ func classificationUpdateStatus(payload map[string]string) string {
 		return "Assessment timed out"
 	case "connection_failed":
 		return "Assessment connection failed"
+	case "open_file_limit":
+		return "Assessment hit open-file limit"
 	case "rate_limited":
 		return "Assessment rate limited"
 	case "service_unavailable":
