@@ -4025,7 +4025,7 @@ func (m Model) renderDetailContent(width int) string {
 	lines = append(lines, detailField("Path", detailValueStyle.Render(p.Path)))
 	if model.NormalizeProjectKind(p.Kind) == model.ProjectKindScratchTask {
 		lines = append(lines, detailField("Kind", detailValueStyle.Render("scratch task")))
-		lines = append(lines, detailMutedStyle.Render("Press d to archive or delete this task."))
+		lines = append(lines, detailMutedStyle.Render("Press d or use /remove to archive or delete this task."))
 	}
 	statusFields := []string{detailField("Assessment", assessmentValue)}
 	if shouldShowProjectActivity(p) {
@@ -4035,9 +4035,9 @@ func (m Model) renderDetailContent(width int) string {
 	if projectMissing(p) {
 		lines = append(lines, detailWarningStyle.Render("Folder: missing on disk"))
 		if p.WorktreeKind == model.WorktreeKindLinked {
-			lines = append(lines, detailMutedStyle.Render("Use x or /wt remove to clean up this missing linked worktree, or /forget to hide it from the dashboard."))
+			lines = append(lines, detailMutedStyle.Render("Use /remove to clean up this missing linked worktree. x and /wt remove still work too."))
 		} else {
-			lines = append(lines, detailMutedStyle.Render("Use /forget to hide this missing folder from the dashboard."))
+			lines = append(lines, detailMutedStyle.Render("Use /remove to take this missing folder off the dashboard."))
 		}
 	}
 	lastActivityValue := detailMutedStyle.Render("never")
@@ -4782,17 +4782,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, m.ignoreProjectCmd(p)
 	case commands.KindIgnored:
 		return m.openIgnoredPicker()
-	case commands.KindForget:
-		p, ok := m.selectedProject()
-		if !ok {
-			m.status = "No project selected"
-			return m, nil
-		}
-		if p.PresentOnDisk {
-			m.status = "Forget only applies to missing folders"
-			return m, nil
-		}
-		return m, m.forgetProjectCmd(p.Path)
+	case commands.KindRemove:
+		return m.openRemoveActionForSelection()
 	case commands.KindFocus:
 		m.setFocusedPaneFromCommand(inv.Focus)
 		return m, nil
@@ -5161,21 +5152,53 @@ func (m Model) clearSnoozeCmd(path string) tea.Cmd {
 	}
 }
 
-func (m Model) forgetProjectCmd(path string) tea.Cmd {
-	return func() tea.Msg {
-		err := m.svc.ForgetProject(m.ctx, path)
-		return actionMsg{status: "Missing folder forgotten", err: err}
+func (m Model) openRemoveActionForSelection() (tea.Model, tea.Cmd) {
+	project, ok := m.selectedProject()
+	if !ok {
+		m.status = "No project selected"
+		return m, nil
 	}
+	if model.NormalizeProjectKind(project.Kind) == model.ProjectKindScratchTask {
+		return m, m.openScratchTaskActionConfirmForSelection()
+	}
+	if row, project, ok := m.selectedProjectRow(); ok && row.Kind == projectListRowWorktree && project.WorktreeKind == model.WorktreeKindLinked {
+		return m, m.openWorktreeRemoveConfirmForSelection()
+	}
+	if !project.PresentOnDisk {
+		return m, m.removeProjectCmd(project.Path)
+	}
+	return m, m.removeProjectFromListCmd(project)
 }
 
-func (m Model) ignoreProjectCmd(project model.ProjectSummary) tea.Cmd {
+func projectRemovalName(project model.ProjectSummary) string {
 	name := strings.TrimSpace(project.Name)
 	if name == "" {
 		name = filepath.Base(filepath.Clean(project.Path))
 	}
+	return name
+}
+
+func (m Model) removeProjectCmd(path string) tea.Cmd {
+	return func() tea.Msg {
+		err := m.svc.ForgetProject(m.ctx, path)
+		return actionMsg{status: "Removed from list", err: err}
+	}
+}
+
+func (m Model) ignoreProjectCmd(project model.ProjectSummary) tea.Cmd {
+	name := projectRemovalName(project)
 	return func() tea.Msg {
 		err := m.svc.Store().SetIgnoredProjectName(m.ctx, name, true)
 		status := fmt.Sprintf("Ignored %q", name)
+		return ignoredProjectActionMsg{status: status, err: err}
+	}
+}
+
+func (m Model) removeProjectFromListCmd(project model.ProjectSummary) tea.Cmd {
+	name := projectRemovalName(project)
+	return func() tea.Msg {
+		err := m.svc.Store().SetIgnoredProjectName(m.ctx, name, true)
+		status := fmt.Sprintf("Removed %q from list", name)
 		return ignoredProjectActionMsg{status: status, err: err}
 	}
 }
@@ -7747,7 +7770,7 @@ func helpPanelLines() []string {
 			renderDialogAction("Tab", "complete there", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("?", "toggle help", commitActionKeyStyle, commitActionTextStyle),
 		),
-		commandPaletteHintStyle.Render("Try /setup, /ai, /perf, /errors, /codex, /todo, /wt merge|remove|prune, /commit, /diff, or /run."),
+		commandPaletteHintStyle.Render("Try /setup, /ai, /perf, /errors, /codex, /todo, /remove, /wt merge|remove|prune, /commit, /diff, or /run."),
 		detailSectionStyle.Render("Navigate"),
 		renderHelpPanelActionRow(
 			renderDialogAction("Tab", "switch pane", navigateActionKeyStyle, navigateActionTextStyle),

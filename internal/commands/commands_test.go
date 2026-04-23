@@ -525,6 +525,42 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "remove",
+			raw:  "/remove",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindRemove {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindRemove)
+				}
+				if inv.Canonical != "/remove" {
+					t.Fatalf("canonical = %q, want /remove", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "delete alias",
+			raw:  "/delete",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindRemove {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindRemove)
+				}
+				if inv.Canonical != "/remove" {
+					t.Fatalf("canonical = %q, want /remove", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "forget alias",
+			raw:  "/forget",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindRemove {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindRemove)
+				}
+				if inv.Canonical != "/remove" {
+					t.Fatalf("canonical = %q, want /remove", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "focus detail alias",
 			raw:  "/focus details",
 			check: func(t *testing.T, inv Invocation) {
