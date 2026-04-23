@@ -3922,6 +3922,7 @@ func (m Model) renderProjectList(width, height int) string {
 		assessmentText := m.projectAssessmentDisplayTextAt(p, now, m.assessmentStallThreshold())
 		statusStyle := m.projectListAssessmentStatusStyle(p)
 		summaryStyle := m.projectListAssessmentSummaryStyle(p)
+		nameStyle := lipgloss.NewStyle().Width(projectW).Bold(selectedRow)
 		if browserAttention, ok := m.projectPendingBrowserAttention(p.Path); ok {
 			statusText = "browser"
 			assessmentText = browserAttentionListSummary(browserAttention)
@@ -3936,7 +3937,11 @@ func (m Model) renderProjectList(width, height int) string {
 					disclosure = "▾ "
 				}
 				name = disclosure + name
-				if badge := worktreeLinkedBadgeSummary(rowMeta.LinkedCount, rowMeta.LinkedActiveCount, rowMeta.LinkedDirtyCount, orphanedCount); badge != "" {
+				if rowMeta.LinkedUnmergedCount > 0 {
+					nameStyle = nameStyle.Inherit(detailWarningStyle).Bold(true)
+					summaryStyle = detailWarningStyle
+				}
+				if badge := worktreeLinkedBadgeSummary(rowMeta.LinkedCount, rowMeta.LinkedActiveCount, rowMeta.LinkedDirtyCount, rowMeta.LinkedUnmergedCount, orphanedCount); badge != "" {
 					if assessmentText == "-" {
 						assessmentText = badge
 					} else {
@@ -3946,12 +3951,16 @@ func (m Model) renderProjectList(width, height int) string {
 			}
 		case projectListRowWorktree:
 			name = "  ↳ " + projectWorktreeLabel(p)
+			if worktreeNeedsMergeBack(p) {
+				nameStyle = nameStyle.Inherit(detailWarningStyle).Bold(true)
+				summaryStyle = detailWarningStyle
+			}
 		default:
 			if model.NormalizeProjectKind(p.Kind) == model.ProjectKindScratchTask {
 				name = "[T] " + name
 			}
 			if projectIsWorktreeRoot(p) {
-				if badge := worktreeLinkedBadgeSummary(0, 0, 0, orphanedCount); badge != "" {
+				if badge := worktreeLinkedBadgeSummary(0, 0, 0, 0, orphanedCount); badge != "" {
 					if assessmentText == "-" {
 						assessmentText = badge
 					} else {
@@ -3980,7 +3989,7 @@ func (m Model) renderProjectList(width, height int) string {
 			" ",
 			cellStyle(projectRunStyle(runState).Width(projectListRunWidth).Align(lipgloss.Left)).Render(truncateText(runLabel, projectListRunWidth)),
 			"  ",
-			cellStyle(lipgloss.NewStyle().Width(projectW).Bold(selectedRow)).Render(name),
+			cellStyle(nameStyle).Render(name),
 			"  ",
 			cellStyle(summaryStyle.Width(assessmentW).Bold(selectedRow)).Render(assessment),
 		)
@@ -4143,7 +4152,8 @@ func (m Model) renderDetailContent(width int) string {
 	orphanedCount := len(orphanedFamily)
 	if projectUsesRepoUI(p) && (len(family) > 1 || p.WorktreeKind == model.WorktreeKindLinked || orphanedCount > 0) {
 		activeCount, dirtyCount := m.worktreeActivityCounts(family)
-		lines = append(lines, detailField("Worktrees", detailValueStyle.Render(worktreeGroupSummary(family, activeCount, dirtyCount, orphanedCount))))
+		unmergedCount := worktreeUnmergedCount(family)
+		lines = append(lines, detailField("Worktrees", detailValueStyle.Render(worktreeGroupSummary(family, activeCount, dirtyCount, unmergedCount, orphanedCount))))
 		if projectIsWorktreeRoot(p) {
 			lines = append(lines, detailSectionStyle.Render("Worktree lanes"))
 			family = append([]model.ProjectSummary(nil), family...)
@@ -5728,6 +5738,9 @@ func projectAssessmentRepoFallback(project model.ProjectSummary) string {
 	}
 	if project.RepoDirty {
 		return "dirty worktree"
+	}
+	if worktreeNeedsMergeBack(project) {
+		return worktreeMergeStatusSummary(project)
 	}
 	return ""
 }

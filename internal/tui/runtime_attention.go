@@ -134,7 +134,8 @@ func projectAttentionLabel(project model.ProjectSummary) string {
 
 // projectRepoWarningIndicator returns a styled repo-state indicator.
 // Conflict → pulsing violet "!", in-flight git op → cyan spinner, dirty worktree → red "!",
-// orphaned linked checkout → orange "~", sync-only → orange "!", neither → space.
+// unmerged linked worktree → orange "M", orphaned linked checkout → orange "~",
+// sync-only → orange "!", neither → space.
 func (m Model) projectRepoWarningIndicator(project model.ProjectSummary, spinnerFrame int) string {
 	if !projectUsesRepoUI(project) {
 		return " "
@@ -148,6 +149,12 @@ func (m Model) projectRepoWarningIndicator(project model.ProjectSummary, spinner
 	}
 	if project.RepoDirty {
 		return detailDangerStyle.Render("!")
+	}
+	if worktreeNeedsMergeBack(project) {
+		return detailWarningStyle.Render("M")
+	}
+	if projectIsWorktreeRoot(project) && worktreeUnmergedCount(m.worktreeFamily(projectWorktreeRootPath(project))) > 0 {
+		return detailWarningStyle.Render("M")
 	}
 	if projectIsWorktreeRoot(project) && m.orphanedWorktreeCount(projectWorktreeRootPath(project)) > 0 {
 		return detailWarningStyle.Render("~")

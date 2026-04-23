@@ -40,13 +40,14 @@ const (
 )
 
 type projectListRow struct {
-	Kind              projectListRowKind
-	ProjectPath       string
-	RootPath          string
-	LinkedCount       int
-	LinkedActiveCount int
-	LinkedDirtyCount  int
-	Expanded          bool
+	Kind                projectListRowKind
+	ProjectPath         string
+	RootPath            string
+	LinkedCount         int
+	LinkedActiveCount   int
+	LinkedDirtyCount    int
+	LinkedUnmergedCount int
+	Expanded            bool
 }
 
 type worktreeRemoveConfirmState struct {
@@ -694,17 +695,19 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary, selectedPath st
 			children = append(children, project)
 		}
 		activeCount, dirtyCount := m.worktreeActivityCounts(children)
+		unmergedCount := worktreeUnmergedCount(children)
 		expanded := m.isWorktreeGroupExpanded(rootPath, children, selectedPath)
 
 		rows = append(rows, rootProject)
 		meta = append(meta, projectListRow{
-			Kind:              projectListRowRepo,
-			ProjectPath:       rootProject.Path,
-			RootPath:          rootPath,
-			LinkedCount:       len(children),
-			LinkedActiveCount: activeCount,
-			LinkedDirtyCount:  dirtyCount,
-			Expanded:          expanded,
+			Kind:                projectListRowRepo,
+			ProjectPath:         rootProject.Path,
+			RootPath:            rootPath,
+			LinkedCount:         len(children),
+			LinkedActiveCount:   activeCount,
+			LinkedDirtyCount:    dirtyCount,
+			LinkedUnmergedCount: unmergedCount,
+			Expanded:            expanded,
 		})
 		if !expanded {
 			continue
@@ -753,6 +756,22 @@ func (m Model) worktreeActivityCounts(projects []model.ProjectSummary) (int, int
 	return active, dirty
 }
 
+func worktreeNeedsMergeBack(project model.ProjectSummary) bool {
+	return projectUsesRepoUI(project) &&
+		project.WorktreeKind == model.WorktreeKindLinked &&
+		project.WorktreeMergeStatus == model.WorktreeMergeStatusNotMerged
+}
+
+func worktreeUnmergedCount(projects []model.ProjectSummary) int {
+	count := 0
+	for _, project := range projects {
+		if worktreeNeedsMergeBack(project) {
+			count++
+		}
+	}
+	return count
+}
+
 func (m Model) isWorktreeGroupExpanded(rootPath string, children []model.ProjectSummary, selectedPath string) bool {
 	if m.worktreeExpanded != nil {
 		if expanded, ok := m.worktreeExpanded[rootPath]; ok {
@@ -765,6 +784,9 @@ func (m Model) isWorktreeGroupExpanded(rootPath string, children []model.Project
 			return true
 		}
 		if _, ok := m.pendingGitOperation(child.Path); ok {
+			return true
+		}
+		if worktreeNeedsMergeBack(child) {
 			return true
 		}
 		if child.RepoDirty || child.Status != model.StatusIdle || m.projectHasLiveCodexSession(child.Path) || m.projectRuntimeSnapshot(child.Path).Running {
@@ -818,7 +840,7 @@ func (m *Model) toggleSelectedWorktreeGroup() tea.Cmd {
 	return nil
 }
 
-func worktreeLinkedBadgeSummary(linked, active, dirty, orphaned int) string {
+func worktreeLinkedBadgeSummary(linked, active, dirty, unmerged, orphaned int) string {
 	if linked <= 0 && orphaned <= 0 {
 		return ""
 	}
@@ -829,6 +851,9 @@ func worktreeLinkedBadgeSummary(linked, active, dirty, orphaned int) string {
 	if orphaned > 0 {
 		parts = append(parts, fmt.Sprintf("%d orphaned", orphaned))
 	}
+	if unmerged > 0 {
+		parts = append(parts, fmt.Sprintf("%d needs merge", unmerged))
+	}
 	if active > 0 {
 		parts = append(parts, fmt.Sprintf("%d active", active))
 	} else if dirty > 0 {
@@ -837,7 +862,7 @@ func worktreeLinkedBadgeSummary(linked, active, dirty, orphaned int) string {
 	return "[" + strings.Join(parts, ", ") + "]"
 }
 
-func worktreeGroupSummary(projects []model.ProjectSummary, active, dirty, orphaned int) string {
+func worktreeGroupSummary(projects []model.ProjectSummary, active, dirty, unmerged, orphaned int) string {
 	rootCount := 0
 	for _, project := range projects {
 		if projectIsWorktreeRoot(project) {
@@ -857,6 +882,9 @@ func worktreeGroupSummary(projects []model.ProjectSummary, active, dirty, orphan
 	}
 	if orphaned > 0 {
 		parts = append(parts, fmt.Sprintf("%d orphaned", orphaned))
+	}
+	if unmerged > 0 {
+		parts = append(parts, fmt.Sprintf("%d needs merge", unmerged))
 	}
 	if active > 0 {
 		parts = append(parts, fmt.Sprintf("%d active", active))

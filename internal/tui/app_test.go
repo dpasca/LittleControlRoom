@@ -1114,6 +1114,38 @@ func TestProjectRepoWarningIndicator(t *testing.T) {
 		t.Fatalf("linked worktree sync-only state should not warn, got %q", linkedSyncIndicator)
 	}
 
+	unmergedIndicator := m.projectRepoWarningIndicator(model.ProjectSummary{
+		WorktreeKind:        model.WorktreeKindLinked,
+		WorktreeMergeStatus: model.WorktreeMergeStatusNotMerged,
+	}, 0)
+	if !strings.Contains(unmergedIndicator, "M") {
+		t.Fatalf("unmerged linked worktree should use a merge marker, got %q", unmergedIndicator)
+	}
+
+	rootPath := "/tmp/repo"
+	rootUnmergedIndicator := (Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Path:             rootPath,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+			},
+			{
+				Path:                "/tmp/repo--lane",
+				WorktreeRootPath:    rootPath,
+				WorktreeKind:        model.WorktreeKindLinked,
+				WorktreeMergeStatus: model.WorktreeMergeStatusNotMerged,
+			},
+		},
+	}).projectRepoWarningIndicator(model.ProjectSummary{
+		Path:             rootPath,
+		WorktreeRootPath: rootPath,
+		WorktreeKind:     model.WorktreeKindMain,
+	}, 0)
+	if !strings.Contains(rootUnmergedIndicator, "M") {
+		t.Fatalf("root row with unmerged linked worktree should use a merge marker, got %q", rootUnmergedIndicator)
+	}
+
 	// Dirty + sync → same as dirty-only (dirty takes priority)
 	bothIndicator := m.projectRepoWarningIndicator(model.ProjectSummary{RepoDirty: true, RepoSyncStatus: model.RepoSyncBehind}, 0)
 	if bothIndicator != dirtyIndicator {
@@ -5384,6 +5416,103 @@ func TestRenderProjectListShowsExpandedWorktreeChildren(t *testing.T) {
 	}
 	if !strings.Contains(lines[2], "↳ feat/parallel-lane") {
 		t.Fatalf("renderProjectList() should render the child worktree branch label, got %q", lines[2])
+	}
+}
+
+func TestRenderProjectListSurfacesCleanUnmergedWorktree(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				Status:           model.StatusIdle,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 childPath,
+				Status:               model.StatusIdle,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				WorktreeMergeStatus:  model.WorktreeMergeStatusNotMerged,
+				RepoBranch:           "feat/parallel-lane",
+			},
+		},
+		sortMode:   sortByAttention,
+		visibility: visibilityAllFolders,
+	}
+
+	m.rebuildProjectList(rootPath)
+	rendered := ansi.Strip(m.renderProjectList(160, 8))
+	lines := strings.Split(rendered, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("renderProjectList() should auto-expand a clean unmerged worktree, got %q", rendered)
+	}
+	if !strings.Contains(lines[1], "▾ repo") || !strings.Contains(lines[1], "M") {
+		t.Fatalf("renderProjectList() should mark the root row when a linked worktree needs merging, got %q", lines[1])
+	}
+	if !strings.Contains(lines[1], "[1 linked, 1 needs merge]") {
+		t.Fatalf("renderProjectList() should count unmerged linked worktrees in the root badge, got %q", lines[1])
+	}
+	if !strings.Contains(lines[2], "↳ feat/parallel-lane") || !strings.Contains(lines[2], "M") {
+		t.Fatalf("renderProjectList() should mark the linked worktree row when it needs merging, got %q", lines[2])
+	}
+	if !strings.Contains(lines[2], "not merged into master") {
+		t.Fatalf("renderProjectList() should show merge status in the linked worktree summary, got %q", lines[2])
+	}
+}
+
+func TestRenderProjectListShowsUnmergedBadgeWhenWorktreeGroupCollapsed(t *testing.T) {
+	rootPath := "/tmp/repo"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				Status:           model.StatusIdle,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 "/tmp/repo--feat-parallel-lane",
+				Status:               model.StatusIdle,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				WorktreeMergeStatus:  model.WorktreeMergeStatusNotMerged,
+				RepoBranch:           "feat/parallel-lane",
+			},
+		},
+		worktreeExpanded: map[string]bool{rootPath: false},
+		sortMode:         sortByAttention,
+		visibility:       visibilityAllFolders,
+	}
+
+	m.rebuildProjectList(rootPath)
+	rendered := ansi.Strip(m.renderProjectList(160, 8))
+	lines := strings.Split(rendered, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("renderProjectList() expected header plus collapsed root row, got %q", rendered)
+	}
+	if !strings.Contains(lines[1], "▸ repo") || !strings.Contains(lines[1], "M") {
+		t.Fatalf("renderProjectList() should mark collapsed root rows with unmerged linked work, got %q", lines[1])
+	}
+	if !strings.Contains(lines[1], "[1 linked, 1 needs merge]") {
+		t.Fatalf("renderProjectList() should keep unmerged linked work visible while collapsed, got %q", lines[1])
+	}
+	if strings.Contains(lines[1], "feat/parallel-lane") {
+		t.Fatalf("renderProjectList() should keep child rows hidden while collapsed, got %q", lines[1])
 	}
 }
 
