@@ -52,7 +52,7 @@ const (
 	KindEvents         Kind = "events"
 	KindIgnore         Kind = "ignore"
 	KindIgnored        Kind = "ignored"
-	KindForget         Kind = "forget"
+	KindRemove         Kind = "remove"
 	KindFocus          Kind = "focus"
 	KindPrivacy        Kind = "privacy"
 	KindQuit           Kind = "quit"
@@ -158,7 +158,7 @@ var specs = []Spec{
 	{Name: "events", Usage: "/events on|off|toggle", Summary: "Show or hide Recent events"},
 	{Name: "ignore", Usage: "/ignore", Summary: "Hide the selected project's exact name"},
 	{Name: "ignored", Usage: "/ignored", Summary: "Review ignored project names and restore them"},
-	{Name: "forget", Usage: "/forget", Summary: "Forget a selected missing folder"},
+	{Name: "remove", Usage: "/remove", Summary: "Make the selected item go away safely"},
 	{Name: "focus", Usage: "/focus list|detail|runtime", Summary: "Move focus between panes"},
 	{Name: "privacy", Usage: "/privacy on|off|toggle", Summary: "Toggle demo privacy mode that hides project name patterns"},
 	{Name: "quit", Usage: "/quit", Summary: "Quit the TUI"},
@@ -537,11 +537,11 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /ignored")
 		}
 		return Invocation{Kind: KindIgnored, Canonical: "/ignored"}, nil
-	case "forget":
+	case "remove", "delete", "forget":
 		if rawArgs != "" {
-			return Invocation{}, fmt.Errorf("usage: /forget")
+			return Invocation{}, fmt.Errorf("usage: /remove")
 		}
-		return Invocation{Kind: KindForget, Canonical: "/forget"}, nil
+		return Invocation{Kind: KindRemove, Canonical: "/remove"}, nil
 	case "focus":
 		target, err := parseFocusTarget(rawArgs)
 		if err != nil {

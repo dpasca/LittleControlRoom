@@ -1402,25 +1402,22 @@ func TestRenderFooterHiddenCodexPrefersEnterOverAltUpRestore(t *testing.T) {
 	}
 }
 
-func TestRenderFooterListOmitsMoveAndForgetHints(t *testing.T) {
+func TestRenderFooterListOmitsMoveAndRemoveHints(t *testing.T) {
 	m := Model{focusedPane: focusProjects}
 
 	rendered := ansi.Strip(m.renderFooter(160))
 	if strings.Contains(rendered, "↑/↓ move") {
 		t.Fatalf("renderFooter() should not advertise obvious arrow movement in the main list footer: %q", rendered)
 	}
-	if strings.Contains(rendered, "f forget") {
-		t.Fatalf("renderFooter() should not advertise forget in the main list footer: %q", rendered)
-	}
-	if strings.Contains(rendered, "/forget hide") {
-		t.Fatalf("renderFooter() should not advertise /forget without a missing project selected: %q", rendered)
+	if strings.Contains(rendered, "/remove remove") {
+		t.Fatalf("renderFooter() should not advertise remove without a missing project selected: %q", rendered)
 	}
 	if strings.Contains(rendered, "r refresh") {
 		t.Fatalf("renderFooter() should not advertise refresh in the main list footer: %q", rendered)
 	}
 }
 
-func TestRenderFooterShowsForgetHintForMissingProject(t *testing.T) {
+func TestRenderFooterShowsRemoveHintForMissingProject(t *testing.T) {
 	m := Model{
 		focusedPane: focusProjects,
 		projects: []model.ProjectSummary{{
@@ -1432,8 +1429,8 @@ func TestRenderFooterShowsForgetHintForMissingProject(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderFooter(160))
-	if !strings.Contains(rendered, "/forget hide") {
-		t.Fatalf("renderFooter() missing /forget action for missing project: %q", rendered)
+	if !strings.Contains(rendered, "/remove remove") {
+		t.Fatalf("renderFooter() missing /remove action for missing project: %q", rendered)
 	}
 }
 
@@ -2932,6 +2929,42 @@ func TestDispatchCommandWorktreeRemoveOpensConfirm(t *testing.T) {
 	}
 	if got.worktreeRemoveConfirm == nil {
 		t.Fatalf("dispatchCommand(/wt remove) should open the remove confirmation dialog")
+	}
+}
+
+func TestDispatchCommandRemoveOpensWorktreeRemoveConfirm(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+			},
+			{
+				Name:             "repo--feat-parallel-lane",
+				Path:             childPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+				RepoBranch:       "feat/parallel-lane",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindRemove, Canonical: "/remove"})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("dispatchCommand(/remove) should open the confirmation dialog without scheduling work")
+	}
+	if got.worktreeRemoveConfirm == nil {
+		t.Fatalf("dispatchCommand(/remove) should open the remove confirmation dialog for linked worktrees")
 	}
 }
 
@@ -4765,6 +4798,32 @@ func TestDispatchTaskActionsCommandOpensScratchTaskActionDialog(t *testing.T) {
 	}
 }
 
+func TestDispatchRemoveCommandOpensScratchTaskActionDialog(t *testing.T) {
+	t.Parallel()
+
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "answer Sarah email",
+			Path:          "/tmp/tasks/answer-sarah-email",
+			Kind:          model.ProjectKindScratchTask,
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindRemove, Canonical: "/remove"})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("dispatchCommand(/remove) should open a dialog before running any command")
+	}
+	if got.scratchTaskAction == nil {
+		t.Fatalf("dispatchCommand(/remove) should open the task action dialog")
+	}
+	if got.scratchTaskAction.Selected != scratchTaskActionFocusKeep {
+		t.Fatalf("default task action selection = %d, want keep", got.scratchTaskAction.Selected)
+	}
+}
+
 func TestScratchTaskActionArchiveQueuesArchiveCommand(t *testing.T) {
 	t.Parallel()
 
@@ -5660,8 +5719,8 @@ func TestRenderDetailMissingProjectShowsForgetHint(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderDetailContent(80))
-	if !strings.Contains(rendered, "Use /forget to hide this missing folder from the dashboard.") {
-		t.Fatalf("renderDetailContent() missing /forget guidance for missing folders: %q", rendered)
+	if !strings.Contains(rendered, "Use /remove to take this missing folder off the dashboard.") {
+		t.Fatalf("renderDetailContent() missing /remove guidance for missing folders: %q", rendered)
 	}
 }
 
@@ -5680,8 +5739,8 @@ func TestRenderDetailShowsMissingLinkedWorktreeGuidance(t *testing.T) {
 		selected: 0,
 	}
 
-	rendered := ansi.Strip(m.renderDetailContent(80))
-	if !strings.Contains(rendered, "Use x or /wt remove to clean up this missing linked worktree") || !strings.Contains(rendered, "/forget to hide") {
+	rendered := ansi.Strip(m.renderDetailContent(120))
+	if !strings.Contains(rendered, "Use /remove to clean up this missing linked worktree.") || !strings.Contains(rendered, "x and /wt remove still work too.") {
 		t.Fatalf("renderDetailContent() missing linked worktree guidance for missing folders: %q", rendered)
 	}
 }
@@ -18470,6 +18529,188 @@ func TestBusTodoSuggestionFailureAddsErrorLogEntry(t *testing.T) {
 	}
 	if len(entry.Context) != 1 || entry.Context[0] != "model mlx-community/Qwen3.5-9B-MLX-4bit" {
 		t.Fatalf("error log context = %#v", entry.Context)
+	}
+}
+
+func TestDispatchRemoveCommandStoresIgnoredNameAndHidesProject(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Date(2026, 3, 17, 9, 0, 0, 0, time.UTC)
+	for _, state := range []model.ProjectState{
+		{
+			Path:           "/tmp/projects_control_center",
+			Name:           "projects_control_center",
+			AttentionScore: 20,
+			PresentOnDisk:  true,
+			InScope:        true,
+			UpdatedAt:      now,
+		},
+		{
+			Path:           "/tmp/worktrees/a1/projects_control_center",
+			Name:           "projects_control_center",
+			AttentionScore: 15,
+			PresentOnDisk:  true,
+			InScope:        true,
+			UpdatedAt:      now,
+		},
+		{
+			Path:           "/tmp/visible-demo",
+			Name:           "visible-demo",
+			AttentionScore: 10,
+			PresentOnDisk:  true,
+			InScope:        true,
+			UpdatedAt:      now,
+		},
+	} {
+		if err := st.UpsertProjectState(ctx, state); err != nil {
+			t.Fatalf("upsert project %s: %v", state.Path, err)
+		}
+	}
+
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	projects, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list projects: %v", err)
+	}
+
+	m := Model{
+		ctx:         ctx,
+		svc:         svc,
+		allProjects: projects,
+		sortMode:    sortByAttention,
+		visibility:  visibilityAllFolders,
+	}
+	m.rebuildProjectList("")
+	if len(m.projects) != 3 || m.projects[0].Name != "projects_control_center" {
+		t.Fatalf("initial projects = %#v, want removable candidate first", m.projects)
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindRemove, Canonical: "/remove"})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("dispatchCommand(/remove) should return a removal command")
+	}
+
+	actionMsg := cmd()
+	afterAction, reloadCmd := got.Update(actionMsg)
+	reloaded := afterAction.(Model)
+	if reloadCmd == nil {
+		t.Fatalf("remove action should trigger a project reload")
+	}
+	projectsMsg := reloadCmd()
+	finalModel, _ := reloaded.Update(projectsMsg)
+	saved := finalModel.(Model)
+	if len(saved.projects) != 1 || saved.projects[0].Name != "visible-demo" {
+		t.Fatalf("visible projects after /remove = %#v, want only visible-demo", saved.projects)
+	}
+	if saved.status != `Removed "projects_control_center" from list` {
+		t.Fatalf("status = %q, want removal confirmation", saved.status)
+	}
+
+	ignored, err := st.ListIgnoredProjectNames(ctx)
+	if err != nil {
+		t.Fatalf("list ignored names: %v", err)
+	}
+	if len(ignored) != 1 || ignored[0].Name != "projects_control_center" {
+		t.Fatalf("ignored names = %#v, want projects_control_center", ignored)
+	}
+}
+
+func TestDispatchRemoveCommandForMissingProjectMarksItForgotten(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Date(2026, 3, 17, 9, 0, 0, 0, time.UTC)
+	missingPath := filepath.Join(t.TempDir(), "missing-demo")
+	visiblePath := filepath.Join(t.TempDir(), "visible-demo")
+	for _, state := range []model.ProjectState{
+		{
+			Path:           missingPath,
+			Name:           "missing-demo",
+			AttentionScore: 20,
+			PresentOnDisk:  false,
+			InScope:        true,
+			UpdatedAt:      now,
+		},
+		{
+			Path:           visiblePath,
+			Name:           "visible-demo",
+			AttentionScore: 10,
+			PresentOnDisk:  true,
+			InScope:        true,
+			UpdatedAt:      now,
+		},
+	} {
+		if err := st.UpsertProjectState(ctx, state); err != nil {
+			t.Fatalf("upsert project %s: %v", state.Path, err)
+		}
+	}
+
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	projects, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list projects: %v", err)
+	}
+
+	m := Model{
+		ctx:         ctx,
+		svc:         svc,
+		allProjects: projects,
+		sortMode:    sortByAttention,
+		visibility:  visibilityAllFolders,
+	}
+	m.rebuildProjectList("")
+	if len(m.projects) != 2 || m.projects[0].Name != "missing-demo" {
+		t.Fatalf("initial projects = %#v, want missing project first", m.projects)
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindRemove, Canonical: "/remove"})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("dispatchCommand(/remove) should return a removal command for missing projects")
+	}
+
+	actionMsg := cmd()
+	afterAction, reloadCmd := got.Update(actionMsg)
+	reloaded := afterAction.(Model)
+	if reloadCmd == nil {
+		t.Fatalf("remove action should trigger a project reload")
+	}
+	if reloaded.status != "Removed from list" {
+		t.Fatalf("status = %q, want missing-project removal confirmation", reloaded.status)
+	}
+
+	visibleProjects, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list visible projects after removal: %v", err)
+	}
+	if len(visibleProjects) != 1 || visibleProjects[0].Path != visiblePath {
+		t.Fatalf("visible projects after removing missing project = %#v, want only visible-demo", visibleProjects)
+	}
+
+	ignored, err := st.ListIgnoredProjectNames(ctx)
+	if err != nil {
+		t.Fatalf("list ignored names: %v", err)
+	}
+	if len(ignored) != 0 {
+		t.Fatalf("ignored names after missing-project removal = %#v, want none", ignored)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, missingPath, 1)
+	if err != nil {
+		t.Fatalf("get missing project detail: %v", err)
+	}
+	if !detail.Summary.Forgotten {
+		t.Fatalf("missing project summary = %#v, want forgotten=true", detail.Summary)
 	}
 }
 

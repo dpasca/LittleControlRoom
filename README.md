@@ -129,7 +129,7 @@ The main TUI command palette opens with `/`.
 - `/focus <list|detail|runtime>`: Move focus between panes.
 - `/ignore`: Hide the selected project's exact name.
 - `/ignored`: Review ignored names and restore them.
-- `/forget`: Forget a selected missing folder.
+- `/remove`: Make the selected item go away safely. Aliases: `/delete`, `/forget`.
 - `/quit`: Quit the TUI.
 
 Inside the embedded Codex, Claude Code, or OpenCode pane:
@@ -169,7 +169,7 @@ Most day-to-day use falls into a few buckets:
   | --- | --- | --- |
   | [![Diff window](docs/screenshots/diff-view.png)](docs/screenshots/diff-view.png) | [![Commit preview dialog](docs/screenshots/commit-preview.png)](docs/screenshots/commit-preview.png) | [![Image diff with before/after previews](docs/screenshots/diff-view-image.png)](docs/screenshots/diff-view-image.png) |
 
-- **Keep the list clean** — Use `f` or `/filter <text>` to narrow the project list, `/pin` and `/snooze` to control attention, `/ignore` and `/ignored` to hide or restore exact project names, and `/forget` to remove a missing folder.
+- **Keep the list clean** — Use `f` or `/filter <text>` to narrow the project list, `/pin` and `/snooze` to control attention, `/remove` to archive/delete/hide the selected item based on context, and `/ignore` and `/ignored` when you want explicit exact-name hide rules.
 - **Adjust setup** — Use `/settings` for API keys, MLX/Ollama endpoint overrides, paths, refresh timing, and the simplified browser windows control. For embedded Codex and OpenCode sessions, LCR can isolate Playwright per session so browser-heavy work multitasks more cleanly in parallel, then surface the right managed browser window only when a human step is actually needed. Switch to `Classic browser behavior` if you want the original provider-owned flow, then use `/new-project` for repo-backed work and `/new-task` for quick scratch work.
 
 For the full command list and detailed behavior, see [`docs/reference.md`](docs/reference.md).
