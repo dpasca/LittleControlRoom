@@ -142,6 +142,55 @@ func TestListProjectsHidesIgnoredProjectNames(t *testing.T) {
 	}
 }
 
+func TestUpsertProjectStateKeepsMissingForgottenProjectForgotten(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := "/tmp/missing-demo"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "missing-demo",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		PresentOnDisk:  false,
+		Forgotten:      true,
+		InScope:        true,
+		UpdatedAt:      time.Unix(100, 0),
+	}); err != nil {
+		t.Fatalf("seed forgotten missing project: %v", err)
+	}
+
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "missing-demo",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		PresentOnDisk:  false,
+		Forgotten:      false,
+		InScope:        true,
+		UpdatedAt:      time.Unix(200, 0),
+	}); err != nil {
+		t.Fatalf("upsert stale missing project snapshot: %v", err)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 1)
+	if err != nil {
+		t.Fatalf("get missing project detail: %v", err)
+	}
+	if !detail.Summary.Forgotten {
+		t.Fatalf("missing forgotten project should stay forgotten, got %#v", detail.Summary)
+	}
+	if detail.Summary.PresentOnDisk {
+		t.Fatalf("missing forgotten project should stay missing, got %#v", detail.Summary)
+	}
+}
+
 func TestProjectSessionSeenAtPersistsAndSurvivesMove(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
