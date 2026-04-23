@@ -1412,7 +1412,7 @@ func TestRenderFooterListOmitsMoveAndForgetHints(t *testing.T) {
 	if strings.Contains(rendered, "f forget") {
 		t.Fatalf("renderFooter() should not advertise forget in the main list footer: %q", rendered)
 	}
-	if strings.Contains(rendered, "/forget remove") {
+	if strings.Contains(rendered, "/forget hide") {
 		t.Fatalf("renderFooter() should not advertise /forget without a missing project selected: %q", rendered)
 	}
 	if strings.Contains(rendered, "r refresh") {
@@ -1432,7 +1432,7 @@ func TestRenderFooterShowsForgetHintForMissingProject(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderFooter(160))
-	if !strings.Contains(rendered, "/forget remove") {
+	if !strings.Contains(rendered, "/forget hide") {
 		t.Fatalf("renderFooter() missing /forget action for missing project: %q", rendered)
 	}
 }
@@ -5635,8 +5635,29 @@ func TestRenderDetailMissingProjectShowsForgetHint(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderDetailContent(80))
-	if !strings.Contains(rendered, "Use /forget to remove this missing folder from the dashboard.") {
+	if !strings.Contains(rendered, "Use /forget to hide this missing folder from the dashboard.") {
 		t.Fatalf("renderDetailContent() missing /forget guidance for missing folders: %q", rendered)
+	}
+}
+
+func TestRenderDetailShowsMissingLinkedWorktreeGuidance(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Path:                            "/tmp/demo--feature",
+			Name:                            "demo--feature",
+			Status:                          model.StatusIdle,
+			PresentOnDisk:                   false,
+			WorktreeKind:                    model.WorktreeKindLinked,
+			WorktreeRootPath:                "/tmp/demo",
+			LatestSessionClassification:     model.ClassificationCompleted,
+			LatestSessionClassificationType: model.SessionCategoryCompleted,
+		}},
+		selected: 0,
+	}
+
+	rendered := ansi.Strip(m.renderDetailContent(80))
+	if !strings.Contains(rendered, "Use x or /wt remove to clean up this missing linked worktree") || !strings.Contains(rendered, "/forget to hide") {
+		t.Fatalf("renderDetailContent() missing linked worktree guidance for missing folders: %q", rendered)
 	}
 }
 

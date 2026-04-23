@@ -3491,6 +3491,94 @@ func TestRemoveWorktreeRemovesTrackedLinkedWorktree(t *testing.T) {
 	}
 }
 
+func TestRemoveWorktreeRemovesMissingTrackedLinkedWorktree(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	svc := New(cfg, st, events.NewBus(), nil)
+	initGitRepo(t, projectPath)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	item, err := svc.AddTodo(ctx, projectPath, "Create a removable linked worktree that has already disappeared on disk")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
+		t.Fatalf("queue todo worktree suggestion: %v", err)
+	} else if !queued {
+		t.Fatalf("expected todo worktree suggestion to queue")
+	}
+	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
+	if err != nil {
+		t.Fatalf("claim todo worktree suggestion: %v", err)
+	}
+	suggestion.BranchName = "feat/remove-missing-worktree"
+	suggestion.WorktreeSuffix = "feat-remove-missing-worktree"
+	suggestion.Kind = "feature"
+	suggestion.Reason = "Creates a linked worktree that will be removed after its checkout disappears."
+	suggestion.Confidence = 0.92
+	suggestion.Model = "test"
+	if completed, err := st.CompleteTodoWorktreeSuggestion(ctx, suggestion); err != nil {
+		t.Fatalf("complete todo worktree suggestion: %v", err)
+	} else if !completed {
+		t.Fatalf("expected todo worktree suggestion to complete")
+	}
+
+	result, err := svc.CreateTodoWorktree(ctx, CreateTodoWorktreeRequest{
+		ProjectPath: projectPath,
+		TodoID:      item.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateTodoWorktree() error = %v", err)
+	}
+
+	if err := os.RemoveAll(result.WorktreePath); err != nil {
+		t.Fatalf("remove worktree path: %v", err)
+	}
+	if _, err := os.Stat(result.WorktreePath); !os.IsNotExist(err) {
+		t.Fatalf("worktree path should be gone before removal: stat err = %v", err)
+	}
+
+	if err := svc.RemoveWorktree(ctx, result.WorktreePath, false); err != nil {
+		t.Fatalf("RemoveWorktree() with missing checkout error = %v", err)
+	}
+
+	worktrees, err := scanner.ListGitWorktrees(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("ListGitWorktrees() error = %v", err)
+	}
+	for _, worktree := range worktrees {
+		if filepath.Clean(strings.TrimSpace(worktree.Path)) == filepath.Clean(result.WorktreePath) {
+			t.Fatalf("removed missing worktree %q still present in git worktree list", result.WorktreePath)
+		}
+	}
+	detail, err := st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() after removal error = %v", err)
+	}
+	if !detail.Summary.Forgotten {
+		t.Fatalf("removed missing worktree should be marked forgotten: %#v", detail.Summary)
+	}
+	if detail.Summary.PresentOnDisk {
+		t.Fatalf("removed missing worktree should stay marked missing on disk: %#v", detail.Summary)
+	}
+}
+
 func TestRemoveWorktreeRetriesWithForceForInitializedSubmodules(t *testing.T) {
 	t.Parallel()
 

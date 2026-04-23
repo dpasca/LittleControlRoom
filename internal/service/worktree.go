@@ -595,7 +595,10 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 	if projectPath == "" {
 		return fmt.Errorf("project path is required")
 	}
-	rootPath, kind := s.readProjectWorktreeInfo(ctx, projectPath)
+	rootPath, kind, presentOnDisk, err := s.removeWorktreeTarget(ctx, projectPath)
+	if err != nil {
+		return err
+	}
 	if kind != model.WorktreeKindLinked {
 		return fmt.Errorf("only linked worktrees can be removed from Little Control Room")
 	}
@@ -603,7 +606,7 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 		return fmt.Errorf("worktree root is unavailable for %s", projectPath)
 	}
 	allowSubmoduleForceFallback := false
-	if !force && s.gitRepoStatusReader != nil {
+	if presentOnDisk && !force && s.gitRepoStatusReader != nil {
 		status, err := s.gitRepoStatusReader(ctx, projectPath)
 		if err != nil {
 			return fmt.Errorf("read git status before removing worktree: %w", err)
@@ -615,10 +618,13 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 	}
 	if err := gitWorktreeRemove(ctx, rootPath, projectPath, force); err != nil {
 		if !(allowSubmoduleForceFallback && isGitWorktreeSubmoduleRemoveError(err)) {
-			return err
-		}
-		if err := gitWorktreeRemove(ctx, rootPath, projectPath, true); err != nil {
-			return err
+			if !s.staleLinkedWorktreeOnDisk(ctx, rootPath, kind, projectPath) {
+				return err
+			}
+		} else if err := gitWorktreeRemove(ctx, rootPath, projectPath, true); err != nil {
+			if !s.staleLinkedWorktreeOnDisk(ctx, rootPath, kind, projectPath) {
+				return err
+			}
 		}
 	}
 	if err := s.store.SetForgotten(ctx, projectPath, true); err != nil {
@@ -649,6 +655,23 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 		Payload:     "remove_worktree",
 	})
 	return nil
+}
+
+func (s *Service) removeWorktreeTarget(ctx context.Context, projectPath string) (string, model.WorktreeKind, bool, error) {
+	presentOnDisk := projectPathExists(projectPath)
+	rootPath, kind := s.readProjectWorktreeInfo(ctx, projectPath)
+	if strings.TrimSpace(rootPath) != "" || kind != model.WorktreeKindNone {
+		return rootPath, kind, presentOnDisk, nil
+	}
+	detail, err := s.store.GetProjectDetail(ctx, projectPath, 1)
+	if err != nil {
+		return "", model.WorktreeKindNone, presentOnDisk, fmt.Errorf("look up tracked worktree: %w", err)
+	}
+	rootPath = filepath.Clean(strings.TrimSpace(detail.Summary.WorktreeRootPath))
+	if rootPath == "." {
+		rootPath = ""
+	}
+	return rootPath, detail.Summary.WorktreeKind, presentOnDisk, nil
 }
 
 func (s *Service) PruneWorktrees(ctx context.Context, projectPath string) error {

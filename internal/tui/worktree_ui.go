@@ -877,7 +877,7 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 		return actions
 	}
 	if projectMissing(project) {
-		actions = append(actions, footerNavAction("/forget", "remove"))
+		actions = append(actions, footerNavAction("/forget", "hide"))
 	}
 	rootPath := row.RootPath
 	if rootPath == "" {

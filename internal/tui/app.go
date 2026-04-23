@@ -4034,7 +4034,11 @@ func (m Model) renderDetailContent(width int) string {
 	lines = appendDetailFields(lines, width, statusFields...)
 	if projectMissing(p) {
 		lines = append(lines, detailWarningStyle.Render("Folder: missing on disk"))
-		lines = append(lines, detailMutedStyle.Render("Use /forget to remove this missing folder from the dashboard."))
+		if p.WorktreeKind == model.WorktreeKindLinked {
+			lines = append(lines, detailMutedStyle.Render("Use x or /wt remove to clean up this missing linked worktree, or /forget to hide it from the dashboard."))
+		} else {
+			lines = append(lines, detailMutedStyle.Render("Use /forget to hide this missing folder from the dashboard."))
+		}
 	}
 	lastActivityValue := detailMutedStyle.Render("never")
 	if !p.LastActivity.IsZero() {
