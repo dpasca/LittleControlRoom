@@ -1331,6 +1331,7 @@ func (m Model) applyWorktreeMergePlanCmd(confirm worktreeMergeConfirmState) tea.
 				status = appendWorktreeStatusClause(status, "Could not remove the merged worktree: "+err.Error())
 			} else {
 				status = appendWorktreeStatusClause(status, "Worktree removed.")
+				msg.removedProjectPath = projectPath
 			}
 		}
 		msg.status = status
@@ -1478,6 +1479,7 @@ func (m Model) completeWorktreePostMergeTodoCmd(todoProjectPath string, todoID i
 		}
 		return worktreeActionMsg{
 			projectPath:            worktreePath,
+			removedProjectPath:     removedWorktreePath(removeAfter, worktreePath),
 			selectPath:             rootPath,
 			status:                 status,
 			clearPendingGitSummary: removeAfter,
@@ -1584,12 +1586,20 @@ func (m Model) removeWorktreeCmd(projectPath, rootPath string, force bool) tea.C
 		err := m.svc.RemoveWorktree(m.ctx, projectPath, force)
 		return worktreeActionMsg{
 			projectPath:            projectPath,
+			removedProjectPath:     removedWorktreePath(err == nil, projectPath),
 			selectPath:             rootPath,
 			status:                 "Worktree removed",
 			clearPendingGitSummary: true,
 			err:                    err,
 		}
 	}
+}
+
+func removedWorktreePath(removed bool, projectPath string) string {
+	if !removed {
+		return ""
+	}
+	return strings.TrimSpace(projectPath)
 }
 
 func (m Model) pruneWorktreesCmd(projectPath, selectPath string) tea.Cmd {
