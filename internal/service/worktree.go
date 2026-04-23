@@ -896,7 +896,15 @@ func gitWorktreeAdd(ctx context.Context, repoPath, worktreePath, branchName stri
 		return err
 	}
 	if !exists {
-		args = append(args, "-b", branchName, worktreePath, "HEAD")
+		headExists, err := gitCommitExistsAtHEAD(ctx, repoPath)
+		if err != nil {
+			return err
+		}
+		if !headExists {
+			args = append(args, "--orphan", "-b", branchName, worktreePath)
+		} else {
+			args = append(args, "-b", branchName, worktreePath, "HEAD")
+		}
 	} else {
 		args = append(args, worktreePath, branchName)
 	}
@@ -1025,6 +1033,18 @@ func gitLocalBranchExists(ctx context.Context, repoPath, branchName string) (boo
 			return false, nil
 		}
 		return false, fmt.Errorf("check git branch %s: %w", branchName, err)
+	}
+	return true, nil
+}
+
+func gitCommitExistsAtHEAD(ctx context.Context, repoPath string) (bool, error) {
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return false, nil
+		}
+		return false, fmt.Errorf("check git HEAD commit: %w", err)
 	}
 	return true, nil
 }
