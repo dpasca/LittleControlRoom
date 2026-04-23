@@ -1928,6 +1928,10 @@ func (s *Service) refreshProjectAttention(ctx context.Context, projectPath strin
 	unlockProjectState := s.lockProjectStateMutation(projectPath)
 	defer unlockProjectState()
 
+	return s.refreshProjectAttentionLocked(ctx, projectPath)
+}
+
+func (s *Service) refreshProjectAttentionLocked(ctx context.Context, projectPath string) error {
 	cfg := s.runtimeSnapshot().cfg
 	now := time.Now()
 	detail, err := s.store.GetProjectDetail(ctx, projectPath, 20)
@@ -1951,6 +1955,9 @@ func (s *Service) refreshProjectAttention(ctx context.Context, projectPath strin
 }
 
 func (s *Service) TogglePin(ctx context.Context, projectPath string) error {
+	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	defer unlockProjectState()
+
 	m, err := s.store.GetProjectSummaryMap(ctx)
 	if err != nil {
 		return err
@@ -1962,7 +1969,7 @@ func (s *Service) TogglePin(ctx context.Context, projectPath string) error {
 	if err := s.store.SetPinned(ctx, projectPath, !project.Pinned); err != nil {
 		return err
 	}
-	if err := s.refreshProjectAttention(ctx, projectPath); err != nil {
+	if err := s.refreshProjectAttentionLocked(ctx, projectPath); err != nil {
 		return err
 	}
 	now := time.Now()
@@ -1972,11 +1979,14 @@ func (s *Service) TogglePin(ctx context.Context, projectPath string) error {
 }
 
 func (s *Service) Snooze(ctx context.Context, projectPath string, duration time.Duration) error {
+	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	defer unlockProjectState()
+
 	until := time.Now().Add(duration)
 	if err := s.store.SetSnooze(ctx, projectPath, &until); err != nil {
 		return err
 	}
-	if err := s.refreshProjectAttention(ctx, projectPath); err != nil {
+	if err := s.refreshProjectAttentionLocked(ctx, projectPath); err != nil {
 		return err
 	}
 	now := time.Now()
@@ -1986,10 +1996,13 @@ func (s *Service) Snooze(ctx context.Context, projectPath string, duration time.
 }
 
 func (s *Service) ClearSnooze(ctx context.Context, projectPath string) error {
+	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	defer unlockProjectState()
+
 	if err := s.store.SetSnooze(ctx, projectPath, nil); err != nil {
 		return err
 	}
-	if err := s.refreshProjectAttention(ctx, projectPath); err != nil {
+	if err := s.refreshProjectAttentionLocked(ctx, projectPath); err != nil {
 		return err
 	}
 	now := time.Now()
@@ -1999,10 +2012,13 @@ func (s *Service) ClearSnooze(ctx context.Context, projectPath string) error {
 }
 
 func (s *Service) MarkProjectSessionSeen(ctx context.Context, projectPath string, seenAt time.Time) error {
+	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	defer unlockProjectState()
+
 	if err := s.store.SetProjectSessionSeenAt(ctx, projectPath, seenAt); err != nil {
 		return err
 	}
-	if err := s.refreshProjectAttention(ctx, projectPath); err != nil {
+	if err := s.refreshProjectAttentionLocked(ctx, projectPath); err != nil {
 		return err
 	}
 	now := time.Now()
@@ -2025,10 +2041,13 @@ func (s *Service) MarkProjectSessionSeen(ctx context.Context, projectPath string
 }
 
 func (s *Service) MarkProjectSessionUnread(ctx context.Context, projectPath string) error {
+	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	defer unlockProjectState()
+
 	if err := s.store.ClearProjectSessionSeenAt(ctx, projectPath); err != nil {
 		return err
 	}
-	if err := s.refreshProjectAttention(ctx, projectPath); err != nil {
+	if err := s.refreshProjectAttentionLocked(ctx, projectPath); err != nil {
 		return err
 	}
 	now := time.Now()
@@ -2199,6 +2218,9 @@ func (s *Service) SetRunCommand(ctx context.Context, projectPath, command string
 }
 
 func (s *Service) ForgetProject(ctx context.Context, projectPath string) error {
+	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	defer unlockProjectState()
+
 	m, err := s.store.GetProjectSummaryMap(ctx)
 	if err != nil {
 		return err
