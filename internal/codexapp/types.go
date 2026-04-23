@@ -9,6 +9,7 @@ import (
 
 	"lcroom/internal/browserctl"
 	"lcroom/internal/codexcli"
+	"lcroom/internal/keyedmutex"
 )
 
 type TranscriptKind string
@@ -552,6 +553,7 @@ type Manager struct {
 	updates         chan string
 	pendingUpdates  map[string]struct{}
 	deferredUpdates map[string]struct{}
+	opLocks         keyedmutex.Locker
 	factory         sessionFactory
 
 	idleTimeout  time.Duration
@@ -626,6 +628,8 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 
 	projectPath := strings.TrimSpace(req.ProjectPath)
 	ensureManagedPlaywrightSessionKey(&req)
+	unlock := m.opLocks.Lock(projectPath)
+	defer unlock()
 
 	m.mu.Lock()
 	existing, ok := m.sessions[projectPath]
@@ -712,6 +716,8 @@ func (m *Manager) CloseProject(projectPath string) error {
 	if projectPath == "" {
 		return nil
 	}
+	unlock := m.opLocks.Lock(projectPath)
+	defer unlock()
 
 	m.mu.Lock()
 	session, ok := m.sessions[projectPath]

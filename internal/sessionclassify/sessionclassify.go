@@ -138,8 +138,8 @@ func (m *Manager) classificationHeartbeatInterval() time.Duration {
 	return 30 * time.Second
 }
 
-func (m *Manager) heartbeatClassification(ctx context.Context, classification *model.SessionClassification) {
-	if m == nil || classification == nil {
+func (m *Manager) heartbeatClassification(ctx context.Context, classification model.SessionClassification) {
+	if m == nil || classification.SessionID == "" {
 		return
 	}
 	interval := m.classificationHeartbeatInterval()
@@ -441,7 +441,7 @@ func (m *Manager) processOne(ctx context.Context) (bool, error) {
 
 	classifyCtx, stopHeartbeat := context.WithCancel(ctx)
 	defer stopHeartbeat()
-	go m.heartbeatClassification(classifyCtx, &classification)
+	go m.heartbeatClassification(classifyCtx, classification)
 
 	result, err := m.classify(ctx, client, snapshot)
 	stopHeartbeat()
