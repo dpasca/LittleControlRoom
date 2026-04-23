@@ -4933,11 +4933,34 @@ func (m Model) launchClaudeForSelection(forceNew bool, prompt string) (tea.Model
 	return m.launchEmbeddedForSelection(codexapp.ProviderClaudeCode, forceNew, prompt)
 }
 
+func (m Model) revealPendingEmbeddedOpen(projectPath string) (Model, bool) {
+	projectPath = normalizeProjectPath(projectPath)
+	if projectPath == "" || m.codexPendingOpen == nil {
+		return m, false
+	}
+	pendingPath := normalizeProjectPath(m.codexPendingOpen.projectPath)
+	if pendingPath == "" || pendingPath != projectPath {
+		return m, false
+	}
+	if current := normalizeProjectPath(m.codexVisibleProject); current != "" && current != pendingPath {
+		m.persistVisibleCodexDraft()
+	}
+	m.codexPendingOpen.showWhilePending = true
+	label := m.codexPendingOpenProvider().Label()
+	m.status = "Embedded " + label + " session is still starting..."
+	return m, true
+}
+
 func (m Model) launchEmbeddedForSelection(provider codexapp.Provider, forceNew bool, prompt string) (tea.Model, tea.Cmd) {
 	p, ok := m.selectedProject()
 	if !ok {
 		m.status = "No project selected"
 		return m, nil
+	}
+	if !forceNew && strings.TrimSpace(prompt) == "" {
+		if updated, ok := m.revealPendingEmbeddedOpen(p.Path); ok {
+			return updated, nil
+		}
 	}
 	if !p.PresentOnDisk {
 		m.status = provider.Label() + " launch requires a folder present on disk"
@@ -4963,6 +4986,9 @@ func (m Model) launchEmbeddedForSelection(provider codexapp.Provider, forceNew b
 	if !forceNew && strings.TrimSpace(prompt) == "" {
 		if _, ok := m.liveEmbeddedSnapshotForProject(p.Path, provider); ok {
 			return m.showCodexProject(p.Path, "Embedded "+provider.Label()+" session reopened. Alt+Up hides it.")
+		}
+		if _, ok := m.codexSession(p.Path); ok {
+			return m.showCodexProject(p.Path, "Embedded session reopened. Alt+Up hides it.")
 		}
 	}
 
