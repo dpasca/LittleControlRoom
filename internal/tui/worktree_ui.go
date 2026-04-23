@@ -1800,7 +1800,13 @@ func (m Model) renderWorktreeMergeConfirmOverlay(body string, bodyW, bodyH int) 
 		))
 	}
 	lines = append(lines, "", buttons)
-	panel := renderDialogPanel(panelW, panelInnerW, strings.Join(lines, "\n"))
+	content := clampDialogContent(
+		strings.Join(lines, "\n"),
+		max(12, bodyH-2),
+		4,
+		dialogOverflowHintLine(panelInnerW, "... more error details in /errors."),
+	)
+	panel := renderDialogPanel(panelW, panelInnerW, content)
 	left := max(0, (bodyW-panelW)/2)
 	top := max(0, (bodyH-lipgloss.Height(panel))/2)
 	return overlayBlock(body, panel, bodyW, bodyH, left, top)
@@ -1863,7 +1869,13 @@ func (m Model) renderWorktreePostMergeOverlay(body string, bodyW, bodyH int) str
 		lines = append(lines, "")
 		lines = append(lines, disabledActionTextStyle.Render("["+todoDialogWaitingLabel(m.spinnerFrame)+"]"))
 	}
-	panel := renderDialogPanel(panelW, panelInnerW, strings.Join(lines, "\n"))
+	content := clampDialogContent(
+		strings.Join(lines, "\n"),
+		max(12, bodyH-2),
+		4,
+		dialogOverflowHintLine(panelInnerW, "... more error details in /errors."),
+	)
+	panel := renderDialogPanel(panelW, panelInnerW, content)
 	left := max(0, (bodyW-panelW)/2)
 	top := max(0, (bodyH-lipgloss.Height(panel))/2)
 	return overlayBlock(body, panel, bodyW, bodyH, left, top)

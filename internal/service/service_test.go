@@ -4228,6 +4228,84 @@ func TestMergeWorktreeBackReportsConflictAndRefreshesStatus(t *testing.T) {
 	}
 }
 
+func TestMergeWorktreeBackReportsGitIndexLockActionably(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	item, err := svc.AddTodo(ctx, projectPath, "Create a merge blocked by a stale git index lock")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
+		t.Fatalf("queue todo worktree suggestion: %v", err)
+	} else if !queued {
+		t.Fatalf("expected todo worktree suggestion to queue")
+	}
+	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
+	if err != nil {
+		t.Fatalf("claim todo worktree suggestion: %v", err)
+	}
+	suggestion.BranchName = "feat/merge-worktree-lock"
+	suggestion.WorktreeSuffix = "feat-merge-worktree-lock"
+	suggestion.Kind = "feature"
+	suggestion.Reason = "Creates a linked worktree so git index.lock handling can be tested."
+	suggestion.Confidence = 0.95
+	suggestion.Model = "test"
+	if completed, err := st.CompleteTodoWorktreeSuggestion(ctx, suggestion); err != nil {
+		t.Fatalf("complete todo worktree suggestion: %v", err)
+	} else if !completed {
+		t.Fatalf("expected todo worktree suggestion to complete")
+	}
+
+	result, err := svc.CreateTodoWorktree(ctx, CreateTodoWorktreeRequest{
+		ProjectPath: projectPath,
+		TodoID:      item.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateTodoWorktree() error = %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(result.WorktreePath, "FEATURE.txt"), []byte("blocked by git lock\n"), 0o644); err != nil {
+		t.Fatalf("write FEATURE.txt in worktree: %v", err)
+	}
+	runGit(t, result.WorktreePath, "git", "add", "FEATURE.txt")
+	runGit(t, result.WorktreePath, "git", "commit", "-m", "prepare merge blocked by lock")
+
+	lockPath := filepath.Join(projectPath, ".git", "index.lock")
+	if err := os.WriteFile(lockPath, []byte("locked\n"), 0o644); err != nil {
+		t.Fatalf("write index.lock: %v", err)
+	}
+
+	_, err = svc.MergeWorktreeBack(ctx, result.WorktreePath)
+	if err == nil {
+		t.Fatalf("MergeWorktreeBack() expected index.lock error")
+	}
+	if !strings.Contains(err.Error(), "git index.lock already exists at ") || !strings.Contains(err.Error(), filepath.ToSlash(filepath.Join("repo", ".git", "index.lock"))) {
+		t.Fatalf("merge-back error = %q, want lock-path guidance", err)
+	}
+	if !strings.Contains(err.Error(), "remove the stale lock") {
+		t.Fatalf("merge-back error = %q, want stale-lock recovery guidance", err)
+	}
+}
+
 func TestPrepareCommitUsesStagedScopeAndFinishPushState(t *testing.T) {
 	t.Parallel()
 

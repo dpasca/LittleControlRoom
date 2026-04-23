@@ -903,7 +903,7 @@ func gitWorktreeAdd(ctx context.Context, repoPath, worktreePath, branchName stri
 	cmd := exec.CommandContext(ctx, "git", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("create git worktree %s on %s: %w (%s)", worktreePath, branchName, err, strings.TrimSpace(string(out)))
+		return gitCommandError(fmt.Sprintf("create git worktree %s on %s", worktreePath, branchName), err, out)
 	}
 	return nil
 }
@@ -917,7 +917,7 @@ func gitWorktreeRemove(ctx context.Context, repoPath, worktreePath string, force
 	cmd := exec.CommandContext(ctx, "git", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("remove git worktree %s: %w (%s)", worktreePath, err, strings.TrimSpace(string(out)))
+		return gitCommandError(fmt.Sprintf("remove git worktree %s", worktreePath), err, out)
 	}
 	return nil
 }
@@ -938,7 +938,7 @@ func gitMergeBranch(ctx context.Context, repoPath, branchName string) error {
 	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "merge", "--no-edit", branchName)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("merge branch %s into %s: %w (%s)", branchName, repoPath, err, strings.TrimSpace(string(out)))
+		return gitCommandError(fmt.Sprintf("merge branch %s into %s", branchName, repoPath), err, out)
 	}
 	return nil
 }
@@ -951,7 +951,7 @@ func gitSubmoduleUpdateInitRecursive(ctx context.Context, repoPath string) error
 	cmd := exec.CommandContext(ctx, "git", "-c", "protocol.file.allow=always", "-C", repoPath, "submodule", "update", "--init", "--recursive")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("sync submodules for %s: %w (%s)", repoPath, err, strings.TrimSpace(string(out)))
+		return gitCommandError(fmt.Sprintf("sync submodules for %s", repoPath), err, out)
 	}
 	return nil
 }
@@ -960,9 +960,61 @@ func gitWorktreePrune(ctx context.Context, repoPath string) error {
 	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "worktree", "prune")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("prune git worktrees for %s: %w (%s)", repoPath, err, strings.TrimSpace(string(out)))
+		return gitCommandError(fmt.Sprintf("prune git worktrees for %s", repoPath), err, out)
 	}
 	return nil
+}
+
+type gitIndexLockError struct {
+	LockPath string
+}
+
+func (e gitIndexLockError) Error() string {
+	lockPath := filepath.Clean(strings.TrimSpace(e.LockPath))
+	if lockPath == "" || lockPath == "." {
+		return "git index.lock already exists; close any other Git process or remove the stale lock if the repo is idle"
+	}
+	return fmt.Sprintf("git index.lock already exists at %s; close any other Git process or remove the stale lock if the repo is idle", lockPath)
+}
+
+func gitCommandError(action string, err error, out []byte) error {
+	action = strings.TrimSpace(action)
+	if err == nil {
+		return nil
+	}
+	output := strings.TrimSpace(string(out))
+	if lockPath, ok := gitIndexLockPath(output); ok {
+		return fmt.Errorf("%s: %w", action, gitIndexLockError{LockPath: lockPath})
+	}
+	if output == "" {
+		return fmt.Errorf("%s: %w", action, err)
+	}
+	return fmt.Errorf("%s: %w (%s)", action, err, output)
+}
+
+func gitIndexLockPath(output string) (string, bool) {
+	output = strings.ReplaceAll(output, "\r\n", "\n")
+	for _, rawLine := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" || !strings.Contains(line, "index.lock") {
+			continue
+		}
+		for _, marker := range []string{"Unable to create '", "Unable to create \""} {
+			if _, remainder, ok := strings.Cut(line, marker); ok {
+				quote := "'"
+				if strings.HasSuffix(marker, "\"") {
+					quote = "\""
+				}
+				if lockPath, _, ok := strings.Cut(remainder, quote); ok {
+					lockPath = filepath.Clean(strings.TrimSpace(lockPath))
+					if lockPath != "" && lockPath != "." {
+						return lockPath, true
+					}
+				}
+			}
+		}
+	}
+	return "", false
 }
 
 func gitLocalBranchExists(ctx context.Context, repoPath, branchName string) (bool, error) {

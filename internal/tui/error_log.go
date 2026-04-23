@@ -228,7 +228,14 @@ func (m Model) renderErrorLogPanel(bodyW, bodyH int) string {
 	panelWidth := min(bodyW, min(max(72, bodyW-12), 108))
 	panelInnerWidth := max(32, panelWidth-4)
 	maxContentHeight := max(12, bodyH-2)
-	return renderDialogPanel(panelWidth, panelInnerWidth, m.renderErrorLogContent(panelInnerWidth, maxContentHeight))
+	content := m.renderErrorLogContent(panelInnerWidth, maxContentHeight)
+	content = clampDialogContent(
+		content,
+		maxContentHeight,
+		min(6, max(0, maxContentHeight/3)),
+		dialogOverflowHintLine(panelInnerWidth, "... more. Enter copies the full error."),
+	)
+	return renderDialogPanel(panelWidth, panelInnerWidth, content)
 }
 
 func (m Model) renderErrorLogContent(width, maxHeight int) string {

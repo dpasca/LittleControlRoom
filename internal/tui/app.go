@@ -5949,6 +5949,46 @@ func renderWrappedDialogTextLines(style lipgloss.Style, width int, text string) 
 	return out
 }
 
+func clampDialogContent(content string, maxLines, tailLines int, overflowLine string) string {
+	if maxLines <= 0 {
+		return ""
+	}
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	lines := strings.Split(content, "\n")
+	if len(lines) <= maxLines {
+		return content
+	}
+	if overflowLine == "" {
+		overflowLine = "..."
+	}
+	if maxLines == 1 {
+		return overflowLine
+	}
+	if tailLines < 0 {
+		tailLines = 0
+	}
+	if tailLines > maxLines-1 {
+		tailLines = maxLines - 1
+	}
+	headLines := maxLines - tailLines - 1
+	if headLines < 0 {
+		headLines = 0
+		tailLines = maxLines - 1
+	}
+
+	clamped := make([]string, 0, maxLines)
+	clamped = append(clamped, lines[:headLines]...)
+	clamped = append(clamped, overflowLine)
+	if tailLines > 0 {
+		clamped = append(clamped, lines[len(lines)-tailLines:]...)
+	}
+	return strings.Join(clamped, "\n")
+}
+
+func dialogOverflowHintLine(width int, text string) string {
+	return commandPaletteHintStyle.Render(truncateText(strings.TrimSpace(text), max(1, width)))
+}
+
 func repoSyncWarning(status model.RepoSyncStatus) bool {
 	switch status {
 	case model.RepoSyncAhead, model.RepoSyncBehind, model.RepoSyncDiverged, model.RepoSyncNoUpstream:

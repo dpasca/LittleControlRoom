@@ -10,6 +10,7 @@ import (
 	"lcroom/internal/model"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -154,6 +155,25 @@ func TestRenderErrorLogPanelShowsDetails(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "git push failed: permission denied") {
 		t.Fatalf("panel missing error detail: %q", rendered)
+	}
+}
+
+func TestRenderErrorLogPanelClampsLongDetailsToViewport(t *testing.T) {
+	longLine := "This is a deliberately long error line that should wrap inside the error log panel instead of running past the viewport edge."
+	longMessage := strings.Repeat(longLine+"\n", 18)
+	rendered := Model{
+		errorLogEntries: []errorLogEntry{{
+			At:      time.Date(2026, 4, 23, 10, 59, 4, 0, time.FixedZone("CST", 8*60*60)),
+			Status:  "Worktree action failed",
+			Message: strings.TrimSpace(longMessage),
+		}},
+	}.renderErrorLogPanel(72, 18)
+
+	if height := lipgloss.Height(rendered); height > 18 {
+		t.Fatalf("error log panel height = %d, want <= 18", height)
+	}
+	if !strings.Contains(ansi.Strip(rendered), "Enter copies the full error.") {
+		t.Fatalf("clamped error log panel should advertise how to access full details, got %q", ansi.Strip(rendered))
 	}
 }
 

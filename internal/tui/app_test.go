@@ -2342,6 +2342,31 @@ func TestRenderBusyWorktreeMergeRefreshShowsEscHint(t *testing.T) {
 	}
 }
 
+func TestRenderWorktreeMergeConfirmClampsLongErrorMessage(t *testing.T) {
+	t.Parallel()
+
+	longLine := "This is a deliberately long merge error line that should wrap inside the dialog instead of falling off the bottom of the screen."
+	m := Model{
+		worktreeMergeConfirm: &worktreeMergeConfirmState{
+			ProjectPath:  "/tmp/repo--feat-live-dirty",
+			RootPath:     "/tmp/repo",
+			BranchName:   "feat/live-dirty",
+			TargetBranch: "master",
+			Selected:     worktreeMergeConfirmKeepIndex(&worktreeMergeConfirmState{}),
+			ErrorMessage: strings.TrimSpace(strings.Repeat(longLine+"\n", 16)),
+		},
+	}
+	m.worktreeMergeConfirm.Selected = worktreeMergeConfirmKeepIndex(m.worktreeMergeConfirm)
+
+	rendered := ansi.Strip(m.renderWorktreeMergeConfirmOverlay("", 72, 18))
+	if !strings.Contains(rendered, "... more error details in /errors.") {
+		t.Fatalf("long merge error should show an overflow hint instead of clipping silently, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "Keep") {
+		t.Fatalf("long merge error should keep the dialog actions visible, got %q", rendered)
+	}
+}
+
 func TestOpenWorktreeMergeConfirmAutoClosesCompletedSession(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"
