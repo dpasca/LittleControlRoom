@@ -336,7 +336,7 @@ func (s *Service) MergeWorktreeBack(ctx context.Context, projectPath string) (Me
 		result.LinkedTodoText = strings.TrimSpace(linkedTodo.Text)
 		result.LinkedTodoPath = strings.TrimSpace(linkedTodo.ProjectPath)
 	}
-	alreadyMerged, err := gitBranchMergedIntoHEAD(ctx, rootPath, sourceBranch)
+	alreadyMerged, err := gitBranchIntegratedIntoHEAD(ctx, rootPath, sourceBranch)
 	if err != nil {
 		return result, err
 	}
@@ -481,8 +481,21 @@ func (s *Service) CommitAndMergeWorktreeBack(ctx context.Context, projectPath st
 	return mergeResult, nil
 }
 
-func gitBranchMergedIntoHEAD(ctx context.Context, repoPath, branch string) (bool, error) {
-	return gitBranchMergedIntoBranch(ctx, repoPath, branch, "HEAD")
+func gitBranchIntegratedIntoHEAD(ctx context.Context, repoPath, branch string) (bool, error) {
+	return gitBranchIntegratedIntoBranch(ctx, repoPath, branch, "HEAD")
+}
+
+func gitBranchIntegratedIntoBranch(ctx context.Context, repoPath, branch, target string) (bool, error) {
+	merged, err := gitBranchMergedIntoBranch(ctx, repoPath, branch, target)
+	if err != nil || merged {
+		return merged, err
+	}
+	patchEquivalent, err := gitBranchPatchEquivalentToBranch(ctx, repoPath, branch, target)
+	if err != nil {
+		// Keep the clear ancestry result if patch-equivalence checking is unavailable.
+		return false, nil
+	}
+	return patchEquivalent, nil
 }
 
 func gitBranchMergedIntoBranch(ctx context.Context, repoPath, branch, target string) (bool, error) {
@@ -503,6 +516,42 @@ func gitBranchMergedIntoBranch(ctx context.Context, repoPath, branch, target str
 	return true, nil
 }
 
+func gitBranchPatchEquivalentToBranch(ctx context.Context, repoPath, branch, target string) (bool, error) {
+	repoPath = filepath.Clean(strings.TrimSpace(repoPath))
+	branch = strings.TrimSpace(branch)
+	target = strings.TrimSpace(target)
+	if repoPath == "" || branch == "" || target == "" {
+		return false, fmt.Errorf("repo path, branch, and target are required")
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "cherry", target, branch)
+	out, err := cmd.Output()
+	if err != nil {
+		return false, fmt.Errorf("check whether %s has patch-equivalent commits in %s in %s: %w", branch, target, repoPath, err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if len(fields) < 2 {
+			return false, nil
+		}
+		switch fields[0] {
+		case "-":
+			continue
+		case "+":
+			return false, nil
+		default:
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func resolveWorktreeMergeStatus(ctx context.Context, rootPath string, kind model.WorktreeKind, sourceBranch, targetBranch string) model.WorktreeMergeStatus {
 	if kind != model.WorktreeKindLinked {
 		return model.WorktreeMergeStatusUnknown
@@ -516,7 +565,7 @@ func resolveWorktreeMergeStatus(ctx context.Context, rootPath string, kind model
 	if sourceBranch == targetBranch {
 		return model.WorktreeMergeStatusMerged
 	}
-	merged, err := gitBranchMergedIntoBranch(ctx, rootPath, sourceBranch, targetBranch)
+	merged, err := gitBranchIntegratedIntoBranch(ctx, rootPath, sourceBranch, targetBranch)
 	if err != nil {
 		return model.WorktreeMergeStatusUnknown
 	}

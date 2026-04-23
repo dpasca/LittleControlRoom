@@ -4313,6 +4313,150 @@ func TestMergeWorktreeBackMergesIntoRecordedParentBranch(t *testing.T) {
 	}
 }
 
+func TestWorktreeMergeStatusTreatsCherryPickedBranchAsMergedOnNonMasterParent(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+	runGit(t, projectPath, "git", "checkout", "-b", "master_mobnext")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	result := createSuggestedTodoWorktreeForTest(t, ctx, svc, st, projectPath, "Cherry-pick a linked worktree back", "feat/cherry-equivalent", "feat-cherry-equivalent")
+	if result.ParentBranch != "master_mobnext" {
+		t.Fatalf("parent branch = %q, want master_mobnext", result.ParentBranch)
+	}
+
+	if err := os.WriteFile(filepath.Join(result.WorktreePath, "FEATURE.txt"), []byte("cherry-picked from linked worktree\n"), 0o644); err != nil {
+		t.Fatalf("write FEATURE.txt in worktree: %v", err)
+	}
+	runGit(t, result.WorktreePath, "git", "add", "FEATURE.txt")
+	runGit(t, result.WorktreePath, "git", "commit", "-m", "add cherry-equivalent worktree feature")
+	if err := os.WriteFile(filepath.Join(projectPath, "ROOT.txt"), []byte("root moved before cherry-pick\n"), 0o644); err != nil {
+		t.Fatalf("write ROOT.txt in root: %v", err)
+	}
+	runGit(t, projectPath, "git", "add", "ROOT.txt")
+	runGit(t, projectPath, "git", "commit", "-m", "advance root before cherry-pick")
+	runGit(t, projectPath, "git", "cherry-pick", "feat/cherry-equivalent")
+
+	if ancestorMerged, err := gitBranchMergedIntoBranch(ctx, projectPath, "feat/cherry-equivalent", "master_mobnext"); err != nil {
+		t.Fatalf("check ancestry merge status: %v", err)
+	} else if ancestorMerged {
+		t.Fatalf("test setup should use a patch-equivalent non-ancestor branch")
+	}
+
+	if err := svc.RefreshProjectStatus(ctx, result.WorktreePath); err != nil {
+		t.Fatalf("RefreshProjectStatus() for cherry-picked worktree error = %v", err)
+	}
+	worktreeDetail, err := st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() for cherry-picked worktree error = %v", err)
+	}
+	if worktreeDetail.Summary.WorktreeMergeStatus != model.WorktreeMergeStatusMerged {
+		t.Fatalf("cherry-picked worktree should be marked merged, got %#v", worktreeDetail.Summary)
+	}
+
+	rootHeadBefore := strings.TrimSpace(gitOutput(t, projectPath, "git", "rev-parse", "HEAD"))
+	mergeResult, err := svc.MergeWorktreeBack(ctx, result.WorktreePath)
+	if err != nil {
+		t.Fatalf("MergeWorktreeBack() after cherry-pick error = %v", err)
+	}
+	if !mergeResult.AlreadyMerged {
+		t.Fatalf("MergeWorktreeBack() should report already merged for patch-equivalent worktree, got %#v", mergeResult)
+	}
+	rootHeadAfter := strings.TrimSpace(gitOutput(t, projectPath, "git", "rev-parse", "HEAD"))
+	if rootHeadAfter != rootHeadBefore {
+		t.Fatalf("already-merged patch-equivalent worktree changed root HEAD from %s to %s", rootHeadBefore, rootHeadAfter)
+	}
+}
+
+func TestWorktreeMergeStatusRecognizesConflictResolvedMergeOnNonMasterParent(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+	runGit(t, projectPath, "git", "checkout", "-b", "master_mobnext")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	result := createSuggestedTodoWorktreeForTest(t, ctx, svc, st, projectPath, "Resolve a linked worktree merge conflict", "feat/conflict-resolved", "feat-conflict-resolved")
+	if result.ParentBranch != "master_mobnext" {
+		t.Fatalf("parent branch = %q, want master_mobnext", result.ParentBranch)
+	}
+
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("hello from root\n"), 0o644); err != nil {
+		t.Fatalf("write README in root: %v", err)
+	}
+	runGit(t, projectPath, "git", "add", "README.md")
+	runGit(t, projectPath, "git", "commit", "-m", "root edit before conflict")
+
+	if err := os.WriteFile(filepath.Join(result.WorktreePath, "README.md"), []byte("hello from worktree\n"), 0o644); err != nil {
+		t.Fatalf("write README in worktree: %v", err)
+	}
+	runGit(t, result.WorktreePath, "git", "add", "README.md")
+	runGit(t, result.WorktreePath, "git", "commit", "-m", "worktree edit before conflict")
+
+	cmd := exec.Command("git", "-C", projectPath, "merge", "--no-ff", "feat/conflict-resolved")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("merge unexpectedly succeeded; output:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "CONFLICT") {
+		t.Fatalf("merge output = %q, want conflict", string(out))
+	}
+
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("hello from root\nhello from worktree\n"), 0o644); err != nil {
+		t.Fatalf("write resolved README in root: %v", err)
+	}
+	runGit(t, projectPath, "git", "add", "README.md")
+	runGit(t, projectPath, "git", "commit", "-m", "merge conflict-resolved worktree")
+
+	if ancestorMerged, err := gitBranchMergedIntoBranch(ctx, projectPath, "feat/conflict-resolved", "master_mobnext"); err != nil {
+		t.Fatalf("check ancestry merge status: %v", err)
+	} else if !ancestorMerged {
+		t.Fatalf("conflict-resolved merge should make the source branch an ancestor")
+	}
+
+	if err := svc.RefreshProjectStatus(ctx, result.WorktreePath); err != nil {
+		t.Fatalf("RefreshProjectStatus() for conflict-resolved worktree error = %v", err)
+	}
+	worktreeDetail, err := st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() for conflict-resolved worktree error = %v", err)
+	}
+	if worktreeDetail.Summary.WorktreeMergeStatus != model.WorktreeMergeStatusMerged {
+		t.Fatalf("conflict-resolved worktree should be marked merged, got %#v", worktreeDetail.Summary)
+	}
+}
+
 func TestMergeWorktreeBackSyncsRootSubmoduleAfterMerge(t *testing.T) {
 	t.Parallel()
 
@@ -6042,6 +6186,42 @@ func TestScanOncePropagatesToRootProjectFromLinkedWorktreeActivity(t *testing.T)
 	if rootState.LastActivity.Before(today) {
 		t.Fatalf("root LastActivity = %v, want >= %v (worktree activity should propagate)", rootState.LastActivity, today)
 	}
+}
+
+func createSuggestedTodoWorktreeForTest(t *testing.T, ctx context.Context, svc *Service, st *store.Store, projectPath, todoText, branchName, worktreeSuffix string) CreateTodoWorktreeResult {
+	t.Helper()
+	item, err := svc.AddTodo(ctx, projectPath, todoText)
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
+		t.Fatalf("queue todo worktree suggestion: %v", err)
+	} else if !queued {
+		t.Fatalf("expected todo worktree suggestion to queue")
+	}
+	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
+	if err != nil {
+		t.Fatalf("claim todo worktree suggestion: %v", err)
+	}
+	suggestion.BranchName = branchName
+	suggestion.WorktreeSuffix = worktreeSuffix
+	suggestion.Kind = "feature"
+	suggestion.Reason = "Creates a linked worktree for test coverage."
+	suggestion.Confidence = 0.95
+	suggestion.Model = "test"
+	if completed, err := st.CompleteTodoWorktreeSuggestion(ctx, suggestion); err != nil {
+		t.Fatalf("complete todo worktree suggestion: %v", err)
+	} else if !completed {
+		t.Fatalf("expected todo worktree suggestion to complete")
+	}
+	result, err := svc.CreateTodoWorktree(ctx, CreateTodoWorktreeRequest{
+		ProjectPath: projectPath,
+		TodoID:      item.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateTodoWorktree() error = %v", err)
+	}
+	return result
 }
 
 func initBareGitRepo(t *testing.T, path string) {
