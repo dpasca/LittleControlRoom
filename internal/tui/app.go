@@ -1343,6 +1343,15 @@ func (m *Model) requestProjectInvalidationCmd(intent projectInvalidationIntent) 
 	}
 }
 
+func actionChangesProjectStructure(action string) bool {
+	switch strings.TrimSpace(action) {
+	case "forget_project", "remove_worktree", "scratch_task_archived", "scratch_task_deleted":
+		return true
+	default:
+		return false
+	}
+}
+
 func (m *Model) requestProjectDetailViewCmd(path string) tea.Cmd {
 	return m.requestDetailReloadCmd(normalizeProjectPath(path))
 }
@@ -2387,7 +2396,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Payload["action"] == "todo_worktree_suggestion_failed" {
 				m.appendBackgroundErrorLogEntry("TODO worktree suggestion failed", todoSuggestionEventError(msg.Payload), msg.ProjectPath)
 			}
-			if strings.TrimSpace(msg.ProjectPath) != "" {
+			if msg.Type == events.ActionApplied && actionChangesProjectStructure(msg.Payload["action"]) {
+				cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectStructure(m.currentSelectedProjectPath())))
+			} else if strings.TrimSpace(msg.ProjectPath) != "" {
 				cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectData(msg.ProjectPath)))
 			} else {
 				cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectStructure("")))
