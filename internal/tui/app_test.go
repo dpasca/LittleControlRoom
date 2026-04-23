@@ -18532,6 +18532,19 @@ func TestBusTodoSuggestionFailureAddsErrorLogEntry(t *testing.T) {
 	}
 }
 
+func TestActionChangesProjectStructure(t *testing.T) {
+	for _, action := range []string{"forget_project", "remove_worktree", "scratch_task_archived", "scratch_task_deleted"} {
+		if !actionChangesProjectStructure(action) {
+			t.Fatalf("actionChangesProjectStructure(%q) = false, want true", action)
+		}
+	}
+	for _, action := range []string{"toggle_pin", "git_push", "todo_worktree_suggestion_failed", ""} {
+		if actionChangesProjectStructure(action) {
+			t.Fatalf("actionChangesProjectStructure(%q) = true, want false", action)
+		}
+	}
+}
+
 func TestDispatchRemoveCommandStoresIgnoredNameAndHidesProject(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
