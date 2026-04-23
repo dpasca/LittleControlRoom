@@ -1686,7 +1686,10 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 			repo_sync_status=excluded.repo_sync_status,
 			repo_ahead_count=excluded.repo_ahead_count,
 			repo_behind_count=excluded.repo_behind_count,
-			forgotten=excluded.forgotten,
+			forgotten=CASE
+				WHEN excluded.present_on_disk = 0 AND projects.present_on_disk = 0 AND projects.forgotten = 1 THEN 1
+				ELSE excluded.forgotten
+			END,
 			manually_added=excluded.manually_added,
 			in_scope=excluded.in_scope,
 			pinned=projects.pinned,

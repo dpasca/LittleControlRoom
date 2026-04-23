@@ -2476,6 +2476,114 @@ func TestScanOnceForgottenMissingProjectStaysHiddenUntilRediscovered(t *testing.
 	}
 }
 
+func TestScanOnceKeepsConcurrentForgottenMissingProjectHidden(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	visiblePath := filepath.Join(root, "alpha-repo")
+	missingPath := filepath.Join(root, "zeta-missing-repo")
+	initGitRepo(t, visiblePath)
+	initGitRepo(t, missingPath)
+	if err := os.RemoveAll(missingPath); err != nil {
+		t.Fatalf("remove missing project path: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC()
+	for _, state := range []model.ProjectState{
+		{
+			Path:           visiblePath,
+			Name:           filepath.Base(visiblePath),
+			Status:         model.StatusIdle,
+			AttentionScore: 10,
+			PresentOnDisk:  true,
+			InScope:        true,
+			UpdatedAt:      now,
+		},
+		{
+			Path:           missingPath,
+			Name:           filepath.Base(missingPath),
+			Status:         model.StatusIdle,
+			AttentionScore: 10,
+			PresentOnDisk:  false,
+			InScope:        true,
+			UpdatedAt:      now,
+		},
+	} {
+		if err := st.UpsertProjectState(ctx, state); err != nil {
+			t.Fatalf("seed project state %s: %v", state.Path, err)
+		}
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = []string{root}
+	svc := New(cfg, st, events.NewBus(), nil)
+
+	originalFingerprintReader := svc.gitFingerprintReader
+	if originalFingerprintReader == nil {
+		t.Fatalf("gitFingerprintReader = nil")
+	}
+
+	scanBlocked := make(chan struct{})
+	releaseScan := make(chan struct{})
+	var blockOnce sync.Once
+	svc.gitFingerprintReader = func(ctx context.Context, path string) (scanner.GitFingerprint, error) {
+		if filepath.Clean(path) == filepath.Clean(visiblePath) {
+			blockOnce.Do(func() {
+				close(scanBlocked)
+				<-releaseScan
+			})
+		}
+		return originalFingerprintReader(ctx, path)
+	}
+
+	scanDone := make(chan error, 1)
+	go func() {
+		_, err := svc.ScanOnce(ctx)
+		scanDone <- err
+	}()
+
+	select {
+	case <-scanBlocked:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for scan to block on visible project fingerprint read")
+	}
+
+	if err := svc.ForgetProject(ctx, missingPath); err != nil {
+		t.Fatalf("ForgetProject() error = %v", err)
+	}
+	close(releaseScan)
+
+	if err := <-scanDone; err != nil {
+		t.Fatalf("ScanOnce() error = %v", err)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, missingPath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() after concurrent forget error = %v", err)
+	}
+	if !detail.Summary.Forgotten {
+		t.Fatalf("missing project should stay forgotten after a concurrent scan: %#v", detail.Summary)
+	}
+	if detail.Summary.PresentOnDisk {
+		t.Fatalf("missing project should stay marked missing after a concurrent scan: %#v", detail.Summary)
+	}
+
+	visibleProjects, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list visible projects after concurrent forget: %v", err)
+	}
+	if len(visibleProjects) != 1 || visibleProjects[0].Path != visiblePath {
+		t.Fatalf("visible projects after concurrent forget = %#v, want only visible repo", visibleProjects)
+	}
+}
+
 func TestScanOnceMarksPrunedLinkedWorktreeAsForgotten(t *testing.T) {
 	t.Parallel()
 
