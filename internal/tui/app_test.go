@@ -500,6 +500,59 @@ func TestDetailMsgIgnoresStaleSelectionResult(t *testing.T) {
 	}
 }
 
+func TestDetailMsgUsesTodoDialogProjectPathWhenLinkedWorktreeSelected(t *testing.T) {
+	rootPath := "/tmp/repo"
+	worktreePath := "/tmp/repo--todo-fix"
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Path:             worktreePath,
+			Name:             "repo--todo-fix",
+			WorktreeRootPath: rootPath,
+			WorktreeKind:     model.WorktreeKindLinked,
+		}},
+		selected: 0,
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{
+				Path: worktreePath,
+				Name: "repo--todo-fix",
+			},
+		},
+		todoDialog: &todoDialogState{
+			ProjectPath: rootPath,
+			ProjectName: "repo",
+		},
+		detailReloadInFlight: map[string]bool{
+			rootPath: true,
+		},
+	}
+
+	updated, cmd := m.Update(detailMsg{
+		path: rootPath,
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{
+				Path: rootPath,
+				Name: "repo",
+			},
+			Todos: []model.TodoItem{{
+				ID:          7,
+				ProjectPath: rootPath,
+				Text:        "Root TODO should stay visible from a linked worktree",
+			}},
+		},
+	})
+	got := updated.(Model)
+
+	if cmd != nil {
+		t.Fatal("detail reload completion should not schedule follow-up work")
+	}
+	if got.detail.Summary.Path != rootPath {
+		t.Fatalf("detail path = %q, want todo dialog project path", got.detail.Summary.Path)
+	}
+	if len(got.todoItemsFor(rootPath)) != 1 {
+		t.Fatalf("todo item count = %d, want 1 for the repo root dialog", len(got.todoItemsFor(rootPath)))
+	}
+}
+
 func TestProjectsMsgRerunsQueuedProjectsReload(t *testing.T) {
 	m := Model{
 		projectsReloadInFlight: true,
@@ -10748,6 +10801,33 @@ func TestTodoDialogCanStartSelectedTodoInExistingWorktree(t *testing.T) {
 	}
 	if requests[0].ProjectPath != worktreePath || requests[0].Provider != codexapp.ProviderCodex {
 		t.Fatalf("launch request = %#v, want Codex launch in %q", requests[0], worktreePath)
+	}
+}
+
+func TestCloseTodoDialogRequestsSelectedWorktreeDetailAfterRootTodoView(t *testing.T) {
+	rootPath := "/tmp/repo"
+	worktreePath := "/tmp/repo--todo-fix"
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Path:             worktreePath,
+			Name:             "repo--todo-fix",
+			WorktreeRootPath: rootPath,
+			WorktreeKind:     model.WorktreeKindLinked,
+		}},
+		selected: 0,
+		todoDialog: &todoDialogState{
+			ProjectPath: rootPath,
+			ProjectName: "repo",
+		},
+	}
+
+	cmd := m.closeTodoDialog("TODO list closed")
+
+	if m.todoDialog != nil {
+		t.Fatalf("todo dialog should close, got %#v", m.todoDialog)
+	}
+	if cmd == nil {
+		t.Fatal("closing a root TODO dialog from a linked worktree should refresh the selected detail view")
 	}
 }
 

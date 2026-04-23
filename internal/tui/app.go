@@ -1391,6 +1391,11 @@ func (m Model) currentSelectedProjectPath() string {
 }
 
 func (m Model) currentDetailTargetPath() string {
+	if m.todoDialog != nil {
+		if path := normalizeProjectPath(m.todoDialog.ProjectPath); path != "" {
+			return path
+		}
+	}
 	if p, ok := m.selectedProject(); ok {
 		return normalizeProjectPath(p.Path)
 	}

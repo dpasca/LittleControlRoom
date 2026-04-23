@@ -305,11 +305,20 @@ func (m *Model) pageMoveTodoSelection(delta int) {
 	m.moveTodoSelection(-m.todoDialogListHeight())
 }
 
-func (m *Model) closeTodoDialog(status string) {
+func (m *Model) closeTodoDialog(status string) tea.Cmd {
+	closedPath := ""
+	if m.todoDialog != nil {
+		closedPath = normalizeProjectPath(m.todoDialog.ProjectPath)
+	}
 	m.todoDialog = nil
 	if status != "" {
 		m.status = status
 	}
+	selectedPath := m.currentSelectedProjectPath()
+	if selectedPath != "" && selectedPath != closedPath {
+		return m.requestProjectDetailViewCmd(selectedPath)
+	}
+	return nil
 }
 
 func (m *Model) openTodoEditor(todoID int64, value string) tea.Cmd {
@@ -566,8 +575,7 @@ func (m Model) updateTodoDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	switch key {
 	case "esc":
-		m.closeTodoDialog("TODO list closed")
-		return m, nil
+		return m, m.closeTodoDialog("TODO list closed")
 	case "up", "k":
 		m.moveTodoSelection(-1)
 		return m, nil
