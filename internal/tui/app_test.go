@@ -14018,6 +14018,49 @@ func TestVisibleCodexAltBracketCyclesLiveSessions(t *testing.T) {
 	}
 }
 
+func TestVisibleCodexAltLCyclesDenseBlockModes(t *testing.T) {
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": {
+				Started: true,
+				Status:  "Codex session ready",
+				Entries: []codexapp.TranscriptEntry{{
+					Kind: codexapp.TranscriptCommand,
+					Text: "$ demo\nline 1\nline 2\nline 3\nline 4\nline 5\nline 6",
+				}},
+			},
+		},
+		codexInput:    newCodexTextarea(),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	for _, want := range []struct {
+		mode   codexDenseBlockMode
+		status string
+	}{
+		{codexDenseBlockPreview, "Showing short transcript block previews"},
+		{codexDenseBlockFull, "Showing full transcript blocks"},
+		{codexDenseBlockSummary, "Hiding transcript block output"},
+	} {
+		updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}, Alt: true})
+		if cmd != nil {
+			t.Fatalf("alt+l should not return an async command")
+		}
+		got := updated.(Model)
+		if got.codexDenseBlockMode != want.mode {
+			t.Fatalf("codexDenseBlockMode = %v, want %v", got.codexDenseBlockMode, want.mode)
+		}
+		if got.status != want.status {
+			t.Fatalf("status = %q, want %q", got.status, want.status)
+		}
+		m = got
+	}
+}
+
 func TestVisibleCodexAltUpReturnsToLastEmbeddedProjectSelection(t *testing.T) {
 	sessionA := &fakeCodexSession{
 		projectPath: "/tmp/a",
@@ -15412,6 +15455,7 @@ func TestVisibleCodexViewStripsTerminalEscapeSequencesFromCommandOutput(t *testi
 		codexHiddenProject:  "/tmp/demo",
 		codexInput:          newCodexTextarea(),
 		codexViewport:       viewport.New(0, 0),
+		codexDenseBlockMode: codexDenseBlockPreview,
 		width:               100,
 		height:              24,
 	}
@@ -15466,7 +15510,7 @@ func TestRenderCodexTranscriptEntryHighlightsUserEchoBlock(t *testing.T) {
 	userRendered := renderCodexTranscriptEntry(codexapp.TranscriptEntry{
 		Kind: codexapp.TranscriptUser,
 		Text: "summarize this repo",
-	}, 36, false)
+	}, 36, codexDenseBlockSummary)
 	if !strings.Contains(userRendered, "48;5;"+string(codexComposerShellColor)) {
 		t.Fatalf("user transcript entry should reuse the composer background color: %q", userRendered)
 	}
@@ -15474,7 +15518,7 @@ func TestRenderCodexTranscriptEntryHighlightsUserEchoBlock(t *testing.T) {
 	agentRendered := renderCodexTranscriptEntry(codexapp.TranscriptEntry{
 		Kind: codexapp.TranscriptAgent,
 		Text: "Here is a quick summary.",
-	}, 36, false)
+	}, 36, codexDenseBlockSummary)
 	if strings.Contains(agentRendered, "48;5;"+string(codexComposerShellColor)) {
 		t.Fatalf("agent transcript entry should not inherit the user echo background: %q", agentRendered)
 	}
@@ -15484,7 +15528,7 @@ func TestRenderCodexTranscriptEntryCompactsToolCallsToSingleLine(t *testing.T) {
 	rendered := ansi.Strip(renderCodexTranscriptEntry(codexapp.TranscriptEntry{
 		Kind: codexapp.TranscriptTool,
 		Text: "Tool call completed: read README.md\nusing rg --files",
-	}, 90, false))
+	}, 90, codexDenseBlockSummary))
 
 	// New structured rendering shows tool name bold + summary
 	if !strings.Contains(rendered, "call") {
@@ -15630,7 +15674,7 @@ func TestRenderCodexTranscriptEntriesExpandsLongOpenCodeAgentCodeBlocksWithDense
 			Text: "```go\n" + strings.Join(codeLines, "\n") + "\n```",
 		}},
 	}
-	m := Model{codexDenseExpanded: true}
+	m := Model{codexDenseBlockMode: codexDenseBlockFull}
 	rendered := ansi.Strip(m.renderCodexTranscriptEntries(snapshot, 120))
 	if strings.Contains(rendered, "Assistant answer includes a long code block") {
 		t.Fatalf("dense-expanded OpenCode should keep the full assistant output: %q", rendered)
@@ -15746,7 +15790,7 @@ func TestRenderCodexBodyRendersHorizontalRule(t *testing.T) {
 
 func TestRenderCodexDenseBlockHidesSuccessfulExitInCollapsedMode(t *testing.T) {
 	body := "$ git status\n# cwd: /tmp/demo\n M README.md\n[command completed, exit 0]"
-	rendered := ansi.Strip(renderCodexDenseBlock("Command", body, lipgloss.Color("111"), 80, false))
+	rendered := ansi.Strip(renderCodexDenseBlock("Command", body, lipgloss.Color("111"), 80, codexDenseBlockPreview))
 	if strings.Contains(rendered, "exit 0") {
 		t.Fatalf("collapsed command block should hide successful exit: %q", rendered)
 	}
@@ -15761,9 +15805,43 @@ func TestRenderCodexDenseBlockHidesSuccessfulExitInCollapsedMode(t *testing.T) {
 	}
 }
 
+func TestRenderCodexDenseBlockHidesOutputByDefault(t *testing.T) {
+	body := "$ git status\n# cwd: /tmp/demo\n M README.md\n?? notes.txt\n[command completed, exit 0]"
+	rendered := ansi.Strip(renderCodexDenseBlock("Command", body, lipgloss.Color("111"), 80, codexDenseBlockSummary))
+	if !strings.Contains(rendered, "$ git status") {
+		t.Fatalf("summary command block should keep the command: %q", rendered)
+	}
+	for _, hidden := range []string{"README.md", "notes.txt", "exit 0", "# cwd:"} {
+		if strings.Contains(rendered, hidden) {
+			t.Fatalf("summary command block should hide %q: %q", hidden, rendered)
+		}
+	}
+	if !strings.Contains(rendered, "2 lines hidden") || !strings.Contains(rendered, "Alt+L previews") {
+		t.Fatalf("summary command block should mention hidden previewable lines: %q", rendered)
+	}
+}
+
+func TestRenderCodexDenseBlockPreviewShowsFiveOutputLines(t *testing.T) {
+	outputLines := make([]string, 0, 7)
+	for i := 1; i <= 7; i++ {
+		outputLines = append(outputLines, fmt.Sprintf("output line %d", i))
+	}
+	body := "$ demo\n" + strings.Join(outputLines, "\n") + "\n[command completed, exit 0]"
+	rendered := ansi.Strip(renderCodexDenseBlock("Command", body, lipgloss.Color("111"), 80, codexDenseBlockPreview))
+	if !strings.Contains(rendered, "output line 5") {
+		t.Fatalf("preview command block should show the fifth output line: %q", rendered)
+	}
+	if strings.Contains(rendered, "output line 6") {
+		t.Fatalf("preview command block should hide output past five lines: %q", rendered)
+	}
+	if !strings.Contains(rendered, "2 lines hidden") || !strings.Contains(rendered, "Alt+L expands") {
+		t.Fatalf("preview command block should mention remaining hidden lines: %q", rendered)
+	}
+}
+
 func TestRenderCodexDenseBlockKeepsFailedExitInCollapsedMode(t *testing.T) {
 	body := "$ make test\nerror: tests failed\n[command completed, exit 1]"
-	rendered := ansi.Strip(renderCodexDenseBlock("Command", body, lipgloss.Color("111"), 80, false))
+	rendered := ansi.Strip(renderCodexDenseBlock("Command", body, lipgloss.Color("111"), 80, codexDenseBlockSummary))
 	if !strings.Contains(rendered, "exit 1") {
 		t.Fatalf("collapsed command block should keep non-zero exit: %q", rendered)
 	}
@@ -15771,7 +15849,7 @@ func TestRenderCodexDenseBlockKeepsFailedExitInCollapsedMode(t *testing.T) {
 
 func TestRenderCodexDenseBlockShowsAllInExpandedMode(t *testing.T) {
 	body := "$ git status\n# cwd: /tmp/demo\n M README.md\n[command completed, exit 0]"
-	rendered := ansi.Strip(renderCodexDenseBlock("Command", body, lipgloss.Color("111"), 80, true))
+	rendered := ansi.Strip(renderCodexDenseBlock("Command", body, lipgloss.Color("111"), 80, codexDenseBlockFull))
 	if !strings.Contains(rendered, "exit 0") {
 		t.Fatalf("expanded command block should show exit status: %q", rendered)
 	}
@@ -15869,8 +15947,8 @@ func TestReasoningExpandedWithAltL(t *testing.T) {
 		},
 	}
 
-	// hideReasoningSections=true but codexDenseExpanded=true (Alt+L) should show full reasoning
-	rendered := ansi.Strip((Model{hideReasoningSections: true, codexDenseExpanded: true}).renderCodexTranscriptEntries(snapshot, 90))
+	// hideReasoningSections=true but full block mode (Alt+L twice) should show full reasoning
+	rendered := ansi.Strip((Model{hideReasoningSections: true, codexDenseBlockMode: codexDenseBlockFull}).renderCodexTranscriptEntries(snapshot, 90))
 	if strings.Contains(rendered, "Thinking") {
 		t.Fatalf("Alt+L should bypass reasoning hiding and show full content: %q", rendered)
 	}
@@ -16037,7 +16115,7 @@ func TestRenderCodexTranscriptEntriesExpandsMassiveOutputWithDenseMode(t *testin
 		}},
 	}
 
-	rendered := ansi.Strip((Model{codexDenseExpanded: true}).renderCodexTranscriptEntries(snapshot, 120))
+	rendered := ansi.Strip((Model{codexDenseBlockMode: codexDenseBlockFull}).renderCodexTranscriptEntries(snapshot, 120))
 	if strings.Contains(rendered, "Long output truncated") {
 		t.Fatalf("dense-expanded mode should show full output: %q", rendered[:200])
 	}
