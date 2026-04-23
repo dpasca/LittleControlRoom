@@ -365,6 +365,7 @@ type todoWorktreeLaunchMsg struct {
 
 type worktreeActionMsg struct {
 	projectPath            string
+	removedProjectPath     string
 	selectPath             string
 	status                 string
 	clearPendingGitSummary bool
@@ -1352,6 +1353,20 @@ func actionChangesProjectStructure(action string) bool {
 	}
 }
 
+func structureActionDetailPath(event events.Event, currentSelectedPath string) string {
+	currentSelectedPath = normalizeProjectPath(currentSelectedPath)
+	switch strings.TrimSpace(event.Payload["action"]) {
+	case "remove_worktree":
+		if rootPath := normalizeProjectPath(event.Payload["root_path"]); rootPath != "" {
+			return rootPath
+		}
+		if currentSelectedPath != "" && currentSelectedPath == normalizeProjectPath(event.ProjectPath) {
+			return ""
+		}
+	}
+	return currentSelectedPath
+}
+
 func (m *Model) requestProjectDetailViewCmd(path string) tea.Cmd {
 	return m.requestDetailReloadCmd(normalizeProjectPath(path))
 }
@@ -2143,6 +2158,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if strings.TrimSpace(msg.selectPath) != "" {
 			m.preferredSelectPath = strings.TrimSpace(msg.selectPath)
 		}
+		if strings.TrimSpace(msg.removedProjectPath) != "" {
+			m.applyRemovedProjectLocally(msg.removedProjectPath, msg.selectPath)
+		}
 		if strings.TrimSpace(msg.status) != "" {
 			m.status = msg.status
 		}
@@ -2397,7 +2415,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.appendBackgroundErrorLogEntry("TODO worktree suggestion failed", todoSuggestionEventError(msg.Payload), msg.ProjectPath)
 			}
 			if msg.Type == events.ActionApplied && actionChangesProjectStructure(msg.Payload["action"]) {
-				cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectStructure(m.currentSelectedProjectPath())))
+				cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectStructure(structureActionDetailPath(events.Event(msg), m.currentSelectedProjectPath()))))
 			} else if strings.TrimSpace(msg.ProjectPath) != "" {
 				cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectData(msg.ProjectPath)))
 			} else {
@@ -4476,6 +4494,40 @@ func (m *Model) removeProjectSummary(projectPath string) {
 		filtered = append(filtered, project)
 	}
 	m.allProjects = filtered
+}
+
+func (m *Model) applyRemovedProjectLocally(projectPath, selectPath string) {
+	projectPath = normalizeProjectPath(projectPath)
+	selectPath = normalizeProjectPath(selectPath)
+	if projectPath == "" {
+		return
+	}
+	currentSelectedPath := m.currentSelectedProjectPath()
+	m.removeProjectSummary(projectPath)
+
+	if normalizeProjectPath(m.detail.Summary.Path) == projectPath {
+		if selectPath != "" {
+			if summary, ok := m.projectSummaryByPathAllProjects(selectPath); ok {
+				m.detail = model.ProjectDetail{Summary: summary}
+			} else {
+				m.detail = model.ProjectDetail{}
+			}
+		} else {
+			m.detail = model.ProjectDetail{}
+		}
+		m.syncTodoDialogSelection()
+	}
+
+	if selectPath == "" && currentSelectedPath != projectPath {
+		selectPath = currentSelectedPath
+	}
+	m.rebuildProjectList(selectPath)
+	if len(m.projects) == 0 {
+		m.detail = model.ProjectDetail{}
+		m.syncDetailViewport(true)
+		return
+	}
+	m.syncDetailViewport(false)
 }
 
 func (m Model) orphanedWorktreeFamily(rootPath string) []model.ProjectSummary {

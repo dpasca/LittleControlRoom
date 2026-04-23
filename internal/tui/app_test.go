@@ -3216,6 +3216,62 @@ func TestWorktreeActionMsgMergeCompletionDoesNotOpenFollowUpPrompt(t *testing.T)
 	}
 }
 
+func TestWorktreeActionMsgRemoveHidesWorktreeImmediately(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+
+	root := model.ProjectSummary{
+		Name:             "repo",
+		Path:             rootPath,
+		Status:           model.StatusIdle,
+		PresentOnDisk:    true,
+		WorktreeRootPath: rootPath,
+		WorktreeKind:     model.WorktreeKindMain,
+		RepoBranch:       "master",
+	}
+	child := model.ProjectSummary{
+		Name:             "repo--feat-parallel-lane",
+		Path:             childPath,
+		Status:           model.StatusIdle,
+		PresentOnDisk:    true,
+		WorktreeRootPath: rootPath,
+		WorktreeKind:     model.WorktreeKindLinked,
+		RepoBranch:       "feat/parallel-lane",
+	}
+	m := Model{
+		allProjects: []model.ProjectSummary{root, child},
+		detail: model.ProjectDetail{
+			Summary: child,
+		},
+		sortMode:   sortByAttention,
+		visibility: visibilityAllFolders,
+	}
+	m.rebuildProjectList(childPath)
+
+	updated, cmd := m.Update(worktreeActionMsg{
+		projectPath:        childPath,
+		removedProjectPath: childPath,
+		selectPath:         rootPath,
+		status:             "Worktree removed",
+	})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("worktree removal completion should queue a refresh command batch")
+	}
+	if got.preferredSelectPath != rootPath {
+		t.Fatalf("preferred select path = %q, want %q", got.preferredSelectPath, rootPath)
+	}
+	if len(got.projects) != 1 || got.projects[0].Path != rootPath {
+		t.Fatalf("visible projects after local removal = %#v, want only the repo root", got.projects)
+	}
+	if _, ok := got.projectSummaryByPath(childPath); ok {
+		t.Fatalf("removed worktree %q should be hidden from local project state", childPath)
+	}
+	if got.detail.Summary.Path != rootPath {
+		t.Fatalf("detail path = %q, want immediate fallback to root %q", got.detail.Summary.Path, rootPath)
+	}
+}
+
 func TestWorktreeActionMsgErrorLogsAsyncMergeFailure(t *testing.T) {
 	errText := "merge conflict while merging feat/parallel-lane into master at /tmp/repo\nResolve or abort the merge in the root checkout before retrying.\nConflicted files:\n- README.md\n- STATUS.md"
 	m := Model{
@@ -18542,6 +18598,60 @@ func TestActionChangesProjectStructure(t *testing.T) {
 		if actionChangesProjectStructure(action) {
 			t.Fatalf("actionChangesProjectStructure(%q) = true, want false", action)
 		}
+	}
+}
+
+func TestBusRemoveWorktreeRefreshTargetsRootDetail(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+			},
+			{
+				Name:             "repo--feat-parallel-lane",
+				Path:             childPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+			},
+		},
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{
+				Name: childPath,
+				Path: childPath,
+			},
+		},
+		sortMode:   sortByAttention,
+		visibility: visibilityAllFolders,
+	}
+	m.rebuildProjectList(childPath)
+
+	updated, cmd := m.Update(busMsg(events.Event{
+		Type:        events.ActionApplied,
+		ProjectPath: childPath,
+		Payload: map[string]string{
+			"action":    "remove_worktree",
+			"root_path": rootPath,
+		},
+	}))
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("remove-worktree bus event should keep waiting on the bus and queue a refresh")
+	}
+	if !got.projectsReloadInFlight {
+		t.Fatalf("remove-worktree bus event should queue a project list reload")
+	}
+	if !got.detailReloadInFlight[rootPath] {
+		t.Fatalf("detail reload should target root path %q, got %#v", rootPath, got.detailReloadInFlight)
+	}
+	if got.detailReloadInFlight[childPath] {
+		t.Fatalf("detail reload should not target removed worktree path %q", childPath)
 	}
 }
 
