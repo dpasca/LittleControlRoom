@@ -2429,7 +2429,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectStructure("")))
 			}
 			return m, batchCmds(cmds...)
-		case events.ProjectMoved, events.ScanCompleted:
+		case events.ProjectMoved, events.ScanCompleted, events.EventsDropped:
 			cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectStructure(m.currentSelectedProjectPath())))
 			return m, batchCmds(cmds...)
 		}

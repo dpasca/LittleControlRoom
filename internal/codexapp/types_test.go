@@ -3,6 +3,7 @@ package codexapp
 import (
 	"encoding/json"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -242,6 +243,101 @@ func TestManagerOpenRefreshesBusyElsewhereSessionBeforeSubmittingPrompt(t *testi
 		t.Fatalf("refresh calls = %d, want 1", session.refreshCalls)
 	}
 	if got := session.submitted; len(got) != 1 || got[0] != "continue" {
+		t.Fatalf("submitted prompts = %#v, want [\"continue\"]", got)
+	}
+}
+
+func TestManagerOpenSerializesConcurrentOpensForSameProject(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	created := []*fakeSession{}
+
+	manager := NewManagerWithFactory(func(req LaunchRequest, notify func()) (Session, error) {
+		once.Do(func() { close(entered) })
+		<-release
+		session := &fakeSession{
+			projectPath: req.ProjectPath,
+			snapshot: Snapshot{
+				Started: true,
+				Preset:  req.Preset,
+			},
+		}
+		created = append(created, session)
+		return session, nil
+	})
+
+	type openResult struct {
+		session Session
+		reused  bool
+		err     error
+	}
+
+	firstDone := make(chan openResult, 1)
+	go func() {
+		session, reused, err := manager.Open(LaunchRequest{
+			ProjectPath: "/tmp/demo",
+			Preset:      codexcli.PresetYolo,
+		})
+		firstDone <- openResult{session: session, reused: reused, err: err}
+	}()
+
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first open never entered session creation")
+	}
+
+	secondDone := make(chan openResult, 1)
+	go func() {
+		session, reused, err := manager.Open(LaunchRequest{
+			ProjectPath: "/tmp/demo",
+			Preset:      codexcli.PresetYolo,
+			Prompt:      "continue",
+		})
+		secondDone <- openResult{session: session, reused: reused, err: err}
+	}()
+
+	select {
+	case result := <-secondDone:
+		t.Fatalf("second open returned before the first finished creating the session: %+v", result)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	close(release)
+
+	var first openResult
+	select {
+	case first = <-firstDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first open did not finish")
+	}
+	if first.err != nil {
+		t.Fatalf("first Open() error = %v", first.err)
+	}
+	if first.reused {
+		t.Fatal("first Open() reused = true, want false")
+	}
+
+	var second openResult
+	select {
+	case second = <-secondDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second open did not finish")
+	}
+	if second.err != nil {
+		t.Fatalf("second Open() error = %v", second.err)
+	}
+	if !second.reused {
+		t.Fatal("second Open() reused = false, want true")
+	}
+	if first.session != second.session {
+		t.Fatal("second open should reuse the session created by the first open")
+	}
+	if len(created) != 1 {
+		t.Fatalf("factory create count = %d, want 1", len(created))
+	}
+	if got := created[0].submitted; len(got) != 1 || got[0] != "continue" {
 		t.Fatalf("submitted prompts = %#v, want [\"continue\"]", got)
 	}
 }

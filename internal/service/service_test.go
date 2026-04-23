@@ -524,6 +524,293 @@ func TestRecordEmbeddedSessionActivityMarksTurnSettledAtSameLastEvent(t *testing
 	}
 }
 
+func TestProjectStateMutationSerializesRefreshAndEmbeddedActivity(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "project")
+	if err := os.MkdirAll(filepath.Join(projectPath, ".git"), 0o755); err != nil {
+		t.Fatalf("create git marker: %v", err)
+	}
+	st, err := store.Open(filepath.Join(root, "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	seededAt := time.Now().Add(-time.Hour)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "project",
+		PresentOnDisk: true,
+		InScope:       true,
+		CreatedAt:     seededAt,
+		UpdatedAt:     seededAt,
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	svc.gitWorktreeInfoReader = func(context.Context, string) (scanner.GitWorktreeInfo, error) {
+		return scanner.GitWorktreeInfo{}, nil
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	svc.gitRepoStatusReader = func(context.Context, string) (scanner.GitRepoStatus, error) {
+		once.Do(func() { close(started) })
+		<-release
+		return scanner.GitRepoStatus{Branch: "master"}, nil
+	}
+
+	refreshDone := make(chan error, 1)
+	go func() {
+		refreshDone <- svc.RefreshProjectStatus(ctx, projectPath)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("refresh never reached git status read")
+	}
+
+	activityAt := time.Now()
+	activityDone := make(chan error, 1)
+	go func() {
+		activityDone <- svc.RecordEmbeddedSessionActivity(ctx, EmbeddedSessionActivity{
+			ProjectPath:          projectPath,
+			Source:               model.SessionSourceCodex,
+			SessionID:            "live-session",
+			Format:               "modern",
+			StartedAt:            activityAt.Add(-time.Minute),
+			LastActivityAt:       activityAt,
+			LatestTurnStartedAt:  activityAt,
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  false,
+		})
+	}()
+
+	select {
+	case err := <-activityDone:
+		t.Fatalf("embedded activity completed while refresh still owned the project-state mutation: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case err := <-refreshDone:
+		if err != nil {
+			t.Fatalf("refresh project status: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("refresh did not finish")
+	}
+	select {
+	case err := <-activityDone:
+		if err != nil {
+			t.Fatalf("record embedded activity: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("embedded activity did not finish")
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 20)
+	if err != nil {
+		t.Fatalf("get project detail: %v", err)
+	}
+	if len(detail.Sessions) != 1 {
+		t.Fatalf("sessions = %#v, want recorded live session preserved", detail.Sessions)
+	}
+	if detail.Sessions[0].SessionID != "codex:live-session" {
+		t.Fatalf("session id = %q, want codex:live-session", detail.Sessions[0].SessionID)
+	}
+	if detail.Summary.RepoBranch != "master" {
+		t.Fatalf("repo branch = %q, want master", detail.Summary.RepoBranch)
+	}
+}
+
+func TestProjectStateMutationSerializesRefreshAndTogglePin(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "project")
+	if err := os.MkdirAll(filepath.Join(projectPath, ".git"), 0o755); err != nil {
+		t.Fatalf("create git marker: %v", err)
+	}
+	st, err := store.Open(filepath.Join(root, "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	seededAt := time.Now().Add(-time.Hour)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "project",
+		PresentOnDisk: true,
+		InScope:       true,
+		CreatedAt:     seededAt,
+		UpdatedAt:     seededAt,
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	svc.gitWorktreeInfoReader = func(context.Context, string) (scanner.GitWorktreeInfo, error) {
+		return scanner.GitWorktreeInfo{}, nil
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	svc.gitRepoStatusReader = func(context.Context, string) (scanner.GitRepoStatus, error) {
+		once.Do(func() { close(started) })
+		<-release
+		return scanner.GitRepoStatus{Branch: "master"}, nil
+	}
+
+	refreshDone := make(chan error, 1)
+	go func() {
+		refreshDone <- svc.RefreshProjectStatus(ctx, projectPath)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("refresh never reached git status read")
+	}
+
+	toggleDone := make(chan error, 1)
+	go func() {
+		toggleDone <- svc.TogglePin(ctx, projectPath)
+	}()
+
+	select {
+	case err := <-toggleDone:
+		t.Fatalf("toggle pin completed while refresh still owned the project-state mutation: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 20)
+	if err != nil {
+		t.Fatalf("get project detail while toggle is blocked: %v", err)
+	}
+	if detail.Summary.Pinned {
+		t.Fatal("toggle pin mutated project flags before acquiring the project-state mutation lock")
+	}
+
+	close(release)
+	select {
+	case err := <-refreshDone:
+		if err != nil {
+			t.Fatalf("refresh project status: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("refresh did not finish")
+	}
+	select {
+	case err := <-toggleDone:
+		if err != nil {
+			t.Fatalf("toggle pin: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("toggle pin did not finish")
+	}
+
+	detail, err = st.GetProjectDetail(ctx, projectPath, 20)
+	if err != nil {
+		t.Fatalf("get final project detail: %v", err)
+	}
+	if !detail.Summary.Pinned {
+		t.Fatal("project should be pinned after toggle")
+	}
+	if detail.Summary.RepoBranch != "master" {
+		t.Fatalf("repo branch = %q, want master", detail.Summary.RepoBranch)
+	}
+}
+
+func TestScanPreservesEmbeddedActivityRecordedDuringScan(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "project")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	st, err := store.Open(filepath.Join(root, "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	seededAt := time.Now().Add(-time.Hour)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "project",
+		PresentOnDisk: true,
+		InScope:       true,
+		CreatedAt:     seededAt,
+		UpdatedAt:     seededAt,
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	cfg := config.Default()
+	cfg.IncludePaths = nil
+	svc := &Service{
+		cfg:       cfg,
+		store:     st,
+		bus:       events.NewBus(),
+		detectors: []detectors.Detector{blockingDetector{started: started, release: release}},
+	}
+
+	scanDone := make(chan error, 1)
+	go func() {
+		_, err := svc.ScanWithOptions(ctx, ScanOptions{})
+		scanDone <- err
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("scan did not reach blocking detector")
+	}
+
+	activityAt := time.Now()
+	if err := svc.RecordEmbeddedSessionActivity(ctx, EmbeddedSessionActivity{
+		ProjectPath:          projectPath,
+		Source:               model.SessionSourceCodex,
+		SessionID:            "scan-live-session",
+		Format:               "modern",
+		StartedAt:            activityAt.Add(-time.Minute),
+		LastActivityAt:       activityAt,
+		LatestTurnStartedAt:  activityAt,
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  false,
+	}); err != nil {
+		t.Fatalf("record embedded activity: %v", err)
+	}
+
+	close(release)
+	select {
+	case err := <-scanDone:
+		if err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("scan did not finish")
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 20)
+	if err != nil {
+		t.Fatalf("get detail: %v", err)
+	}
+	if len(detail.Sessions) != 1 {
+		t.Fatalf("sessions = %#v, want live session preserved", detail.Sessions)
+	}
+	if detail.Sessions[0].SessionID != "codex:scan-live-session" {
+		t.Fatalf("session id = %q, want codex:scan-live-session", detail.Sessions[0].SessionID)
+	}
+}
+
 func TestRecordEmbeddedSessionActivityQueuesClassificationForOpenCodeLiveSession(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))

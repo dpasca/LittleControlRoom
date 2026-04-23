@@ -2509,8 +2509,8 @@ func (s *Store) AdvanceSessionClassificationStage(ctx context.Context, classific
 	return true, nil
 }
 
-func (s *Store) TouchSessionClassification(ctx context.Context, classification *model.SessionClassification) (bool, error) {
-	if classification == nil || classification.SessionID == "" {
+func (s *Store) TouchSessionClassification(ctx context.Context, classification model.SessionClassification) (bool, error) {
+	if classification.SessionID == "" {
 		return false, errors.New("session classification requires session_id")
 	}
 	now := time.Now()
@@ -2532,7 +2532,6 @@ func (s *Store) TouchSessionClassification(ctx context.Context, classification *
 	if rowsAffected != 1 {
 		return false, nil
 	}
-	classification.UpdatedAt = now
 	return true, nil
 }
 

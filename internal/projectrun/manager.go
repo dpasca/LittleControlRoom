@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"lcroom/internal/keyedmutex"
 )
 
 const (
@@ -57,6 +59,8 @@ type Manager struct {
 	runtimes    map[string]*managedRuntime
 	procGroups  processGroupReader
 	portReaders portReader
+	opLocks     keyedmutex.Locker
+	prepare     func(string, string) error
 	done        chan struct{}
 }
 
@@ -86,6 +90,7 @@ func NewManager() *Manager {
 		runtimes:    make(map[string]*managedRuntime),
 		procGroups:  currentProcessGroups,
 		portReaders: currentListeningPorts,
+		prepare:     ensureRuntimeDependencies,
 		done:        make(chan struct{}),
 	}
 	go manager.refreshLoop()
@@ -173,6 +178,8 @@ func (m *Manager) Start(req StartRequest) (Snapshot, error) {
 	if command == "" {
 		return Snapshot{}, errors.New("run command is required")
 	}
+	unlock := m.opLocks.Lock(projectPath)
+	defer unlock()
 
 	m.mu.Lock()
 	existing := m.runtimes[projectPath]
@@ -183,7 +190,11 @@ func (m *Manager) Start(req StartRequest) (Snapshot, error) {
 	}
 	m.mu.Unlock()
 
-	if err := ensureRuntimeDependencies(projectPath, command); err != nil {
+	prepare := m.prepare
+	if prepare == nil {
+		prepare = ensureRuntimeDependencies
+	}
+	if err := prepare(projectPath, command); err != nil {
 		startErr := fmt.Errorf("prepare runtime dependencies: %w", err)
 		m.markRuntimeStartFailure(projectPath, command, startErr)
 		return Snapshot{}, startErr
@@ -270,6 +281,8 @@ func (m *Manager) Stop(projectPath string) error {
 	if projectPath == "" {
 		return errors.New("project path is required")
 	}
+	unlock := m.opLocks.Lock(projectPath)
+	defer unlock()
 
 	m.mu.Lock()
 	runtime := m.runtimes[projectPath]

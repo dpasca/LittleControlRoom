@@ -19,6 +19,7 @@ import (
 	"lcroom/internal/detectors"
 	"lcroom/internal/events"
 	"lcroom/internal/gitops"
+	"lcroom/internal/keyedmutex"
 	"lcroom/internal/llm"
 	"lcroom/internal/model"
 	"lcroom/internal/scanner"
@@ -66,6 +67,8 @@ type Service struct {
 	refreshProjectStatusFn func(context.Context, string) error
 
 	mu sync.Mutex
+
+	projectStateLocks keyedmutex.Locker
 
 	refreshMu    sync.Mutex
 	refreshState map[string]asyncProjectRefreshState
@@ -208,6 +211,17 @@ func (s *Service) runtimeSnapshot() serviceRuntimeSnapshot {
 		gitWorktreeListReader: s.gitWorktreeListReader,
 		bus:                   s.bus,
 	}
+}
+
+func (s *Service) lockProjectStateMutation(projectPath string) func() {
+	if s == nil {
+		return func() {}
+	}
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "" || projectPath == "." {
+		return func() {}
+	}
+	return s.projectStateLocks.Lock(projectPath)
 }
 
 func (s *Service) SetSessionClassifier(classifier SessionClassifier) {
@@ -658,10 +672,20 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 	states := make([]model.ProjectState, 0, len(paths))
 
 	for _, path := range paths {
+		unlockProjectState := s.lockProjectStateMutation(path)
 		activity := activities[path]
 		old := oldMap[path]
+		currentDetail, haveCurrentDetail, err := s.currentProjectDetailForScan(ctx, path)
+		if err != nil {
+			unlockProjectState()
+			return ScanReport{}, err
+		}
+		if haveCurrentDetail {
+			old = currentDetail.Summary
+		}
 		if old.SnoozedUntil != nil && now.After(*old.SnoozedUntil) {
 			if err := s.store.SetSnooze(ctx, path, nil); err != nil {
+				unlockProjectState()
 				return ScanReport{}, fmt.Errorf("clear expired snooze: %w", err)
 			}
 			old.SnoozedUntil = nil
@@ -722,11 +746,14 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		}
 		if forgotten && !presentOnDisk {
 			if err := s.store.SetForgotten(ctx, path, true); err != nil {
+				unlockProjectState()
 				return ScanReport{}, fmt.Errorf("mark forgotten worktree: %w", err)
 			}
 			if err := s.store.SetProjectPresence(ctx, path, false); err != nil {
+				unlockProjectState()
 				return ScanReport{}, fmt.Errorf("mark missing worktree: %w", err)
 			}
+			unlockProjectState()
 			continue
 		}
 		latestSessionStart := time.Time{}
@@ -751,11 +778,21 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 				reuseLatestSessionSnapshotHash(old, &sessions[0], gitStatus)
 				ensureSessionSnapshotHash(ctx, path, &sessions[0], gitStatus)
 			}
-			if len(sessions) > 0 {
-				latestSessionStart = sessions[0].StartedAt
-				latestTurnKnown = sessions[0].LatestTurnStateKnown
-				latestTurnComplete = sessions[0].LatestTurnCompleted
+		}
+		if haveCurrentDetail {
+			sessions = preserveCurrentSessionsNewerThan(sessions, currentDetail.Sessions, now)
+			artifacts = preserveCurrentArtifactsNewerThan(artifacts, currentDetail.Artifacts, now)
+			for _, session := range sessions {
+				if session.LastEventAt.After(lastActivity) {
+					lastActivity = session.LastEventAt
+					hasActivity = true
+				}
 			}
+		}
+		if len(sessions) > 0 {
+			latestSessionStart = sessions[0].StartedAt
+			latestTurnKnown = sessions[0].LatestTurnStateKnown
+			latestTurnComplete = sessions[0].LatestTurnCompleted
 		}
 		classificationKnown, classificationCategory := s.latestSessionClassification(ctx, path, sessions, now)
 
@@ -813,11 +850,13 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		}
 
 		if err := s.store.UpsertProjectState(ctx, state); err != nil {
+			unlockProjectState()
 			return ScanReport{}, fmt.Errorf("persist project state: %w", err)
 		}
 		if classifier != nil {
 			queued, err := queueProjectClassification(ctx, classifier, state, opts)
 			if err != nil {
+				unlockProjectState()
 				return ScanReport{}, fmt.Errorf("queue session classification: %w", err)
 			}
 			if queued {
@@ -831,6 +870,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		}
 
 		states = append(states, state)
+		unlockProjectState()
 	}
 
 	report := ScanReport{
@@ -857,6 +897,17 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 	}
 
 	return report, nil
+}
+
+func (s *Service) currentProjectDetailForScan(ctx context.Context, path string) (model.ProjectDetail, bool, error) {
+	detail, err := s.store.GetProjectDetail(ctx, path, 20)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || strings.HasPrefix(err.Error(), "project not found:") {
+			return model.ProjectDetail{}, false, nil
+		}
+		return model.ProjectDetail{}, false, fmt.Errorf("reload project state for scan: %w", err)
+	}
+	return detail, true, nil
 }
 
 func (s *Service) detectProjectActivities(ctx context.Context, scope scanner.PathScope, internalWorkspaceRoot string) (map[string]*model.DetectorProjectActivity, error) {
@@ -1233,6 +1284,19 @@ func dedupeSessions(in []model.SessionEvidence) []model.SessionEvidence {
 	return out
 }
 
+func preserveCurrentSessionsNewerThan(in, current []model.SessionEvidence, cutoff time.Time) []model.SessionEvidence {
+	if len(current) == 0 || cutoff.IsZero() {
+		return in
+	}
+	out := append([]model.SessionEvidence(nil), in...)
+	for _, session := range current {
+		if timeAtOrAfterStorageSecond(session.LastEventAt, cutoff) {
+			out = append(out, session)
+		}
+	}
+	return dedupeSessions(out)
+}
+
 func dedupeArtifacts(in []model.ArtifactEvidence) []model.ArtifactEvidence {
 	seen := map[string]struct{}{}
 	out := make([]model.ArtifactEvidence, 0, len(in))
@@ -1248,6 +1312,26 @@ func dedupeArtifacts(in []model.ArtifactEvidence) []model.ArtifactEvidence {
 		return out[i].UpdatedAt.After(out[j].UpdatedAt)
 	})
 	return out
+}
+
+func preserveCurrentArtifactsNewerThan(in, current []model.ArtifactEvidence, cutoff time.Time) []model.ArtifactEvidence {
+	if len(current) == 0 || cutoff.IsZero() {
+		return in
+	}
+	out := append([]model.ArtifactEvidence(nil), in...)
+	for _, artifact := range current {
+		if timeAtOrAfterStorageSecond(artifact.UpdatedAt, cutoff) {
+			out = append(out, artifact)
+		}
+	}
+	return dedupeArtifacts(out)
+}
+
+func timeAtOrAfterStorageSecond(value, cutoff time.Time) bool {
+	if value.IsZero() || cutoff.IsZero() {
+		return false
+	}
+	return value.Unix() >= cutoff.Unix()
 }
 
 func timesEqual(a, b time.Time) bool {
@@ -1632,6 +1716,9 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 }
 
 func (s *Service) RefreshProjectStatusWithOptions(ctx context.Context, projectPath string, opts ScanOptions) error {
+	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	defer unlockProjectState()
+
 	runtime := s.runtimeSnapshot()
 	gitRepoStatusReader := withScanGitMetadataTimeout(runtime.gitRepoStatusReader, nil)
 	gitWorktreeInfoReader := withScanGitMetadataTimeout(runtime.gitWorktreeInfoReader, nil)
@@ -1838,6 +1925,13 @@ func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.Pr
 }
 
 func (s *Service) refreshProjectAttention(ctx context.Context, projectPath string) error {
+	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	defer unlockProjectState()
+
+	return s.refreshProjectAttentionLocked(ctx, projectPath)
+}
+
+func (s *Service) refreshProjectAttentionLocked(ctx context.Context, projectPath string) error {
 	cfg := s.runtimeSnapshot().cfg
 	now := time.Now()
 	detail, err := s.store.GetProjectDetail(ctx, projectPath, 20)
@@ -1861,6 +1955,9 @@ func (s *Service) refreshProjectAttention(ctx context.Context, projectPath strin
 }
 
 func (s *Service) TogglePin(ctx context.Context, projectPath string) error {
+	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	defer unlockProjectState()
+
 	m, err := s.store.GetProjectSummaryMap(ctx)
 	if err != nil {
 		return err
@@ -1872,7 +1969,7 @@ func (s *Service) TogglePin(ctx context.Context, projectPath string) error {
 	if err := s.store.SetPinned(ctx, projectPath, !project.Pinned); err != nil {
 		return err
 	}
-	if err := s.refreshProjectAttention(ctx, projectPath); err != nil {
+	if err := s.refreshProjectAttentionLocked(ctx, projectPath); err != nil {
 		return err
 	}
 	now := time.Now()
@@ -1882,11 +1979,14 @@ func (s *Service) TogglePin(ctx context.Context, projectPath string) error {
 }
 
 func (s *Service) Snooze(ctx context.Context, projectPath string, duration time.Duration) error {
+	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	defer unlockProjectState()
+
 	until := time.Now().Add(duration)
 	if err := s.store.SetSnooze(ctx, projectPath, &until); err != nil {
 		return err
 	}
-	if err := s.refreshProjectAttention(ctx, projectPath); err != nil {
+	if err := s.refreshProjectAttentionLocked(ctx, projectPath); err != nil {
 		return err
 	}
 	now := time.Now()
@@ -1896,10 +1996,13 @@ func (s *Service) Snooze(ctx context.Context, projectPath string, duration time.
 }
 
 func (s *Service) ClearSnooze(ctx context.Context, projectPath string) error {
+	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	defer unlockProjectState()
+
 	if err := s.store.SetSnooze(ctx, projectPath, nil); err != nil {
 		return err
 	}
-	if err := s.refreshProjectAttention(ctx, projectPath); err != nil {
+	if err := s.refreshProjectAttentionLocked(ctx, projectPath); err != nil {
 		return err
 	}
 	now := time.Now()
@@ -1909,10 +2012,13 @@ func (s *Service) ClearSnooze(ctx context.Context, projectPath string) error {
 }
 
 func (s *Service) MarkProjectSessionSeen(ctx context.Context, projectPath string, seenAt time.Time) error {
+	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	defer unlockProjectState()
+
 	if err := s.store.SetProjectSessionSeenAt(ctx, projectPath, seenAt); err != nil {
 		return err
 	}
-	if err := s.refreshProjectAttention(ctx, projectPath); err != nil {
+	if err := s.refreshProjectAttentionLocked(ctx, projectPath); err != nil {
 		return err
 	}
 	now := time.Now()
@@ -1935,10 +2041,13 @@ func (s *Service) MarkProjectSessionSeen(ctx context.Context, projectPath string
 }
 
 func (s *Service) MarkProjectSessionUnread(ctx context.Context, projectPath string) error {
+	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	defer unlockProjectState()
+
 	if err := s.store.ClearProjectSessionSeenAt(ctx, projectPath); err != nil {
 		return err
 	}
-	if err := s.refreshProjectAttention(ctx, projectPath); err != nil {
+	if err := s.refreshProjectAttentionLocked(ctx, projectPath); err != nil {
 		return err
 	}
 	now := time.Now()
@@ -2109,6 +2218,9 @@ func (s *Service) SetRunCommand(ctx context.Context, projectPath, command string
 }
 
 func (s *Service) ForgetProject(ctx context.Context, projectPath string) error {
+	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	defer unlockProjectState()
+
 	m, err := s.store.GetProjectSummaryMap(ctx)
 	if err != nil {
 		return err

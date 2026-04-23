@@ -123,6 +123,8 @@ func (s *Service) ArchiveScratchTask(ctx context.Context, projectPath string) (s
 	); err != nil {
 		return "", fmt.Errorf("update archived task metadata: %w", err)
 	}
+	unlockProjectState := s.lockProjectStateMutation(project.Path)
+	defer unlockProjectState()
 	if err := s.store.SetProjectPresence(ctx, project.Path, false); err != nil {
 		return "", err
 	}
@@ -160,6 +162,8 @@ func (s *Service) DeleteScratchTask(ctx context.Context, projectPath string) err
 			return fmt.Errorf("delete scratch task: %w", err)
 		}
 	}
+	unlockProjectState := s.lockProjectStateMutation(project.Path)
+	defer unlockProjectState()
 	if err := s.store.SetProjectPresence(ctx, project.Path, false); err != nil {
 		return err
 	}
