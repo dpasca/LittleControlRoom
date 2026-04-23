@@ -13,6 +13,7 @@ const (
 	ScanCompleted         Type = "scan_completed"
 	ActionApplied         Type = "action_applied"
 	ClassificationUpdated Type = "classification_updated"
+	EventsDropped         Type = "events_dropped"
 )
 
 type Event struct {
@@ -53,9 +54,27 @@ func (b *Bus) Publish(evt Event) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	for _, ch := range b.subs {
-		select {
-		case ch <- evt:
-		default:
-		}
+		publishNonBlocking(ch, evt)
+	}
+}
+
+func publishNonBlocking(ch chan Event, evt Event) {
+	select {
+	case ch <- evt:
+		return
+	default:
+	}
+
+	overflow := Event{Type: EventsDropped, At: evt.At}
+	if overflow.At.IsZero() {
+		overflow.At = time.Now()
+	}
+	select {
+	case <-ch:
+	default:
+	}
+	select {
+	case ch <- overflow:
+	default:
 	}
 }

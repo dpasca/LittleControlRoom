@@ -423,6 +423,43 @@ func TestBusProjectMovedRefreshesProjectStructureAndSelectedDetail(t *testing.T)
 	}
 }
 
+func TestBusEventsDroppedRefreshesProjectStructureAndSelectedDetail(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Path: "/tmp/demo",
+			Name: "demo",
+		}},
+		selected: 0,
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{
+				Path: "/tmp/demo",
+				Name: "demo",
+			},
+		},
+	}
+
+	updated, cmd := m.Update(busMsg{
+		Type: events.EventsDropped,
+	})
+	got := updated.(Model)
+
+	if cmd == nil {
+		t.Fatal("events dropped event should schedule a conservative refresh")
+	}
+	if !got.projectsReloadInFlight {
+		t.Fatal("events dropped event should reload the project list")
+	}
+	if got.scanInFlight {
+		t.Fatal("events dropped event should not queue a full scan")
+	}
+	if !got.detailReloadInFlight["/tmp/demo"] {
+		t.Fatal("events dropped event should reload the selected project detail")
+	}
+	if len(got.summaryReloadInFlight) != 0 {
+		t.Fatalf("events dropped event should not queue per-project summary reloads: %#v", got.summaryReloadInFlight)
+	}
+}
+
 func TestDetailMsgIgnoresStaleSelectionResult(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{
