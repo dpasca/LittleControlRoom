@@ -9837,6 +9837,42 @@ func TestTodoDialogCanStartSelectedTodoInNewWorktree(t *testing.T) {
 	_ = cmd
 }
 
+func TestNormalModeEnterRevealsPendingTodoWorktreeLaunch(t *testing.T) {
+	projectPath := "/tmp/root--feat-background-todo"
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Path:          projectPath,
+			Name:          "root--feat-background-todo",
+			PresentOnDisk: true,
+		}},
+		selected:    0,
+		focusedPane: focusProjects,
+		codexPendingOpen: &codexPendingOpenState{
+			projectPath:      projectPath,
+			provider:         codexapp.ProviderCodex,
+			showWhilePending: false,
+		},
+		width:  100,
+		height: 24,
+	}
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("enter should reveal the pending TODO launch, not queue a second open command")
+	}
+	if !got.codexVisible() {
+		t.Fatalf("pending TODO launch should become visible after Enter")
+	}
+	if got.codexPendingOpen == nil || !got.codexPendingOpen.showWhilePending {
+		t.Fatalf("codexPendingOpen = %#v, want visible pending open", got.codexPendingOpen)
+	}
+	rendered := ansi.Strip(got.renderCodexView())
+	if !strings.Contains(rendered, "Opening embedded Codex session") || !strings.Contains(rendered, projectPath) {
+		t.Fatalf("rendered pending view should show the starting session, got %q", rendered)
+	}
+}
+
 func TestTodoWorktreeLaunchWithModelPickerKeepsPromptUnsentUntilModelChoice(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
@@ -14086,6 +14122,68 @@ func TestNormalModeEnterPrefersLiveEmbeddedProviderOverStoredLatestProvider(t *t
 	}
 	if len(requests) != 1 {
 		t.Fatalf("launch requests = %d, want only the original live Codex open", len(requests))
+	}
+}
+
+func TestNormalModeEnterReusesLiveEmbeddedSessionWhenSnapshotIsContended(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex,
+			Started:  true,
+			ThreadID: "thread-live",
+			Status:   "Codex session ready",
+		},
+		trySnapshotFn: func(*fakeCodexSession) (codexapp.Snapshot, bool) {
+			return codexapp.Snapshot{}, false
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderCodex,
+		Preset:      codexcli.PresetYolo,
+		ResumeID:    "thread-live",
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:                "/tmp/demo",
+			Name:                "demo",
+			PresentOnDisk:       true,
+			LatestSessionID:     "thread-stale",
+			LatestSessionFormat: "modern",
+		}},
+		selected:       0,
+		focusedPane:    focusProjects,
+		codexInput:     newCodexTextarea(),
+		codexDrafts:    make(map[string]codexDraft),
+		codexSnapshots: make(map[string]codexapp.Snapshot),
+		codexViewport:  viewport.New(0, 0),
+		width:          100,
+		height:         24,
+	}
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.codexVisibleProject != "/tmp/demo" {
+		t.Fatalf("codexVisibleProject = %q, want /tmp/demo", got.codexVisibleProject)
+	}
+	if got.status != "Embedded session reopened. Alt+Up hides it." {
+		t.Fatalf("status = %q, want generic live-session reopen status", got.status)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want no replacement open after the original session", len(requests))
+	}
+	if cmd == nil {
+		t.Fatalf("showing a contended live session should queue a deferred snapshot command")
 	}
 }
 
