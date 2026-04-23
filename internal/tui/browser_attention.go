@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -19,6 +20,86 @@ type browserAttentionNotification struct {
 	Activity                 browserctl.SessionActivity
 	ManagedBrowserSessionKey string
 	OpenURL                  string
+}
+
+type projectBrowserAttentionState struct {
+	Provider                 codexapp.Provider
+	Activity                 browserctl.SessionActivity
+	ManagedBrowserSessionKey string
+	OpenURL                  string
+}
+
+func browserAttentionFromSnapshot(snapshot codexapp.Snapshot) (projectBrowserAttentionState, bool) {
+	activity := snapshot.BrowserActivity.Normalize()
+	if snapshot.Closed || activity.State != browserctl.SessionActivityStateWaitingForUser {
+		return projectBrowserAttentionState{}, false
+	}
+	return projectBrowserAttentionState{
+		Provider:                 embeddedProvider(snapshot),
+		Activity:                 activity,
+		ManagedBrowserSessionKey: strings.TrimSpace(snapshot.ManagedBrowserSessionKey),
+		OpenURL:                  managedBrowserAttentionURL(snapshot),
+	}, true
+}
+
+func (m Model) projectPendingBrowserAttention(projectPath string) (projectBrowserAttentionState, bool) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return projectBrowserAttentionState{}, false
+	}
+	snapshot, ok := m.nonBlockingCodexSnapshot(projectPath)
+	if !ok {
+		return projectBrowserAttentionState{}, false
+	}
+	return browserAttentionFromSnapshot(snapshot)
+}
+
+func browserAttentionListSummary(state projectBrowserAttentionState) string {
+	source := state.Activity.Normalize().SourceLabel()
+	if source == "" {
+		source = "browser"
+	}
+	return "browser: " + source + " waiting for input"
+}
+
+func browserAttentionDetailSummary(state projectBrowserAttentionState) string {
+	summary := state.Activity.Summary()
+	if strings.TrimSpace(summary) == "" {
+		summary = "Browser is waiting for user input."
+	}
+	if strings.TrimSpace(state.ManagedBrowserSessionKey) != "" {
+		return summary + " Open the embedded session to show or focus the managed browser."
+	}
+	return summary + " Open the embedded session to review the request."
+}
+
+func (m Model) browserAttentionCount() int {
+	count := 0
+	for _, snapshot := range m.codexSnapshots {
+		if _, ok := browserAttentionFromSnapshot(snapshot); ok {
+			count++
+		}
+	}
+	return count
+}
+
+func (m Model) footerBrowserAttentionLabel() string {
+	switch count := m.browserAttentionCount(); count {
+	case 0:
+		return ""
+	case 1:
+		return "1 browser wait"
+	default:
+		return fmt.Sprintf("%d browser waits", count)
+	}
+}
+
+func (m Model) renderFooterBrowserAttentionSegment() string {
+	text := m.footerBrowserAttentionLabel()
+	if text == "" {
+		return ""
+	}
+	return renderFooterAlert(text)
 }
 
 func (m *Model) detectBrowserAttentionNotification(projectPath string, snapshot codexapp.Snapshot) {

@@ -10,6 +10,7 @@ import (
 const (
 	runtimeRunningAttentionWeight   = 10
 	embeddedApprovalAttentionWeight = 120
+	embeddedBrowserAttentionWeight  = 115
 	embeddedQuestionAttentionWeight = 100
 )
 
@@ -21,7 +22,9 @@ func (m Model) projectAttentionScore(project model.ProjectSummary) int {
 	if _, _, ok := m.projectPendingEmbeddedApproval(project.Path); ok {
 		score += embeddedApprovalAttentionWeight
 	}
-	if _, _, ok := m.projectPendingEmbeddedQuestion(project.Path); ok {
+	if _, ok := m.projectPendingBrowserAttention(project.Path); ok {
+		score += embeddedBrowserAttentionWeight
+	} else if _, _, ok := m.projectPendingEmbeddedQuestion(project.Path); ok {
 		score += embeddedQuestionAttentionWeight
 	}
 	return score
@@ -35,7 +38,9 @@ func (m Model) projectAttentionReasons(project model.ProjectSummary, base []mode
 	if reason := m.projectEmbeddedApprovalAttentionReason(project.Path); reason != nil {
 		reasons = append(reasons, *reason)
 	}
-	if reason := m.projectEmbeddedQuestionAttentionReason(project.Path); reason != nil {
+	if reason := m.projectEmbeddedBrowserAttentionReason(project.Path); reason != nil {
+		reasons = append(reasons, *reason)
+	} else if reason := m.projectEmbeddedQuestionAttentionReason(project.Path); reason != nil {
 		reasons = append(reasons, *reason)
 	}
 	return reasons
@@ -101,6 +106,21 @@ func (m Model) projectEmbeddedQuestionAttentionReason(projectPath string) *model
 		Code:   "embedded_question_pending",
 		Text:   text,
 		Weight: embeddedQuestionAttentionWeight,
+	}
+}
+
+func (m Model) projectEmbeddedBrowserAttentionReason(projectPath string) *model.AttentionReason {
+	state, ok := m.projectPendingBrowserAttention(projectPath)
+	if !ok {
+		return nil
+	}
+
+	text := fmt.Sprintf("%s browser needs attention: %s", state.Provider.Label(), state.Activity.Summary())
+
+	return &model.AttentionReason{
+		Code:   "embedded_browser_attention",
+		Text:   text,
+		Weight: embeddedBrowserAttentionWeight,
 	}
 }
 

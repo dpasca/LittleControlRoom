@@ -905,6 +905,83 @@ func TestApprovalPulseHighlightsProjectListRow(t *testing.T) {
 	}
 }
 
+func TestBrowserAttentionHighlightsProjectListRow(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex,
+			Started:  true,
+			Status:   "Waiting for browser input",
+			BrowserActivity: browserctl.SessionActivity{
+				Policy:     settingsAutomaticPlaywrightPolicy,
+				State:      browserctl.SessionActivityStateWaitingForUser,
+				ServerName: "playwright",
+				ToolName:   "browser_navigate",
+			},
+			ManagedBrowserSessionKey: "managed-demo",
+			CurrentBrowserPageURL:    "https://example.test/login",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderCodex,
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	project := model.ProjectSummary{
+		Path:                             "/tmp/demo",
+		Name:                             "demo",
+		Status:                           model.StatusIdle,
+		PresentOnDisk:                    true,
+		LatestSessionClassification:      model.ClassificationCompleted,
+		LatestSessionClassificationType:  model.SessionCategoryWaitingForUser,
+		LatestSessionSummary:             "Waiting",
+		LatestSessionFormat:              "modern",
+		LatestSessionDetectedProjectPath: "/tmp/demo",
+	}
+
+	plain := Model{
+		nowFn:        func() time.Time { return time.Date(2026, 3, 17, 12, 0, 0, 0, time.UTC) },
+		projects:     []model.ProjectSummary{project},
+		codexManager: manager,
+		width:        140,
+		height:       10,
+		spinnerFrame: 1,
+	}
+	flashing := plain
+	flashing.spinnerFrame = 0
+
+	plainRendered := plain.renderProjectList(140, 6)
+	flashRendered := flashing.renderProjectList(140, 6)
+	stripped := ansi.Strip(plainRendered)
+	if !strings.Contains(stripped, "browser") {
+		t.Fatalf("browser attention row should show browser status: %q", stripped)
+	}
+	if !strings.Contains(stripped, "browser: playwright/browser_navigate") {
+		t.Fatalf("browser attention row should name the browser source: %q", stripped)
+	}
+	if ansi.Strip(plainRendered) != ansi.Strip(flashRendered) {
+		t.Fatalf("browser pulse should keep the same visible text: %q vs %q", ansi.Strip(plainRendered), ansi.Strip(flashRendered))
+	}
+	if plainRendered == flashRendered {
+		t.Fatalf("browser pulse should change the ANSI styling")
+	}
+}
+
 func TestProjectDisplayStatusClearsMovedWhenLatestSessionIsInNewPath(t *testing.T) {
 	now := time.Now().UTC()
 	project := model.ProjectSummary{
@@ -1122,6 +1199,65 @@ func TestProjectAttentionScoreAddsRunningRuntimeWeight(t *testing.T) {
 	}
 }
 
+func TestProjectAttentionScoreUsesBrowserAttentionBeforeGenericQuestion(t *testing.T) {
+	project := model.ProjectSummary{
+		Name:           "demo",
+		Path:           "/tmp/demo",
+		AttentionScore: 7,
+	}
+	session := &fakeCodexSession{
+		projectPath: project.Path,
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex,
+			Started:  true,
+			BrowserActivity: browserctl.SessionActivity{
+				Policy:     settingsAutomaticPlaywrightPolicy,
+				State:      browserctl.SessionActivityStateWaitingForUser,
+				ServerName: "playwright",
+				ToolName:   "browser_navigate",
+			},
+			ManagedBrowserSessionKey: "managed-demo",
+			CurrentBrowserPageURL:    "https://example.test/login",
+			PendingElicitation: &codexapp.ElicitationRequest{
+				ID:         "elicitation-demo",
+				ServerName: "playwright",
+				Mode:       codexapp.ElicitationModeURL,
+				Message:    "Finish the browser login.",
+				URL:        "https://example.test/login",
+			},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: project.Path,
+		Provider:    codexapp.ProviderCodex,
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{codexManager: manager}
+	if got := m.projectAttentionScore(project); got != project.AttentionScore+embeddedBrowserAttentionWeight {
+		t.Fatalf("projectAttentionScore() = %d, want browser-only attention boost", got)
+	}
+
+	reasons := m.projectAttentionReasons(project, nil)
+	if len(reasons) != 1 {
+		t.Fatalf("projectAttentionReasons() len = %d, want 1", len(reasons))
+	}
+	if reasons[0].Code != "embedded_browser_attention" {
+		t.Fatalf("reason code = %q, want embedded_browser_attention", reasons[0].Code)
+	}
+	if reasons[0].Weight != embeddedBrowserAttentionWeight {
+		t.Fatalf("reason weight = %d, want %d", reasons[0].Weight, embeddedBrowserAttentionWeight)
+	}
+	if !strings.Contains(reasons[0].Text, "Codex browser needs attention") {
+		t.Fatalf("reason text = %q, want browser attention copy", reasons[0].Text)
+	}
+}
+
 func TestSortProjectsUsesRunningRuntimeAttentionBoost(t *testing.T) {
 	running := model.ProjectSummary{
 		Name:           "running",
@@ -1268,6 +1404,65 @@ func TestRenderDetailContentShowsRuntimeAttentionReason(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "[+10] Managed runtime running for 05:00 on 3000") {
 		t.Fatalf("renderDetailContent() missing runtime attention reason: %q", rendered)
+	}
+}
+
+func TestRenderDetailContentShowsBrowserAttention(t *testing.T) {
+	project := model.ProjectSummary{
+		Name:           "demo",
+		Path:           "/tmp/demo",
+		AttentionScore: 4,
+		PresentOnDisk:  true,
+	}
+	session := &fakeCodexSession{
+		projectPath: project.Path,
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderOpenCode,
+			Started:  true,
+			BrowserActivity: browserctl.SessionActivity{
+				Policy:     settingsAutomaticPlaywrightPolicy,
+				State:      browserctl.SessionActivityStateWaitingForUser,
+				ServerName: "playwright",
+				ToolName:   "browser_navigate",
+			},
+			ManagedBrowserSessionKey: "managed-demo",
+			CurrentBrowserPageURL:    "https://example.test/login",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: project.Path,
+		Provider:    codexapp.ProviderOpenCode,
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		projects: []model.ProjectSummary{
+			project,
+		},
+		allProjects: []model.ProjectSummary{
+			project,
+		},
+		selected: 0,
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: project.Path},
+		},
+		codexManager: manager,
+	}
+
+	rendered := ansi.Strip(m.renderDetailContent(100))
+	if !strings.Contains(rendered, "Browser: playwright/browser_navigate is waiting for user input.") {
+		t.Fatalf("renderDetailContent() missing browser attention field: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Attention: 119") {
+		t.Fatalf("renderDetailContent() missing browser attention score: %q", rendered)
+	}
+	if !strings.Contains(rendered, "[+115] OpenCode browser needs attention") {
+		t.Fatalf("renderDetailContent() missing browser attention reason: %q", rendered)
 	}
 }
 
@@ -4059,6 +4254,28 @@ func TestRenderFooterHidesAssessmentAlertWhileErrorLogIsOpen(t *testing.T) {
 	}
 	if strings.Contains(rendered, "assessment error") {
 		t.Fatalf("footer should hide assessment alert while error log is open, got %q", rendered)
+	}
+}
+
+func TestRenderFooterShowsBrowserAttentionAlert(t *testing.T) {
+	m := Model{
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": {
+				Provider: codexapp.ProviderCodex,
+				BrowserActivity: browserctl.SessionActivity{
+					Policy:     settingsAutomaticPlaywrightPolicy,
+					State:      browserctl.SessionActivityStateWaitingForUser,
+					ServerName: "playwright",
+					ToolName:   "browser_navigate",
+				},
+				ManagedBrowserSessionKey: "managed-demo",
+			},
+		},
+	}
+
+	rendered := ansi.Strip(m.renderFooter(120))
+	if !strings.Contains(rendered, "1 browser wait") {
+		t.Fatalf("footer should surface browser attention waits, got %q", rendered)
 	}
 }
 

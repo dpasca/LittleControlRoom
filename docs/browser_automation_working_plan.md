@@ -23,6 +23,7 @@ It is intentionally different from `STATUS.md`:
 - OpenCode browser-backed question waits now reuse that same managed browser state, so when OpenCode pauses for user input the session can stay in a `waiting for user` browser state and keep `Ctrl+O` available to reveal or refocus the managed browser window.
 - Existing embedded Codex sessions do not retroactively pick up the new launch behavior; they need to be reopened or reconnected.
 - URL-based login waits already have an LCR-managed attention flow and interactive-browser lease.
+- Live browser waits are now surfaced passively in the project list, detail pane, attention reasons, and footer so the popup is not the only visible signal.
 - Embedded Codex sessions now remember the latest Playwright page URL they reached, and the visible pane can reveal that same managed browser window with `Ctrl+O`.
 - OpenCode and Claude Code still remain behind Codex in managed-browser support.
 
@@ -70,6 +71,8 @@ Make browser automation feel quiet and predictable by default:
 
 - Browser status is visible in the `Browser` settings section.
 - The settings view now shows the interactive browser lease owner plus any waiting managed login flows.
+- Project rows switch the assessment status to `browser`, show the Playwright/browser source in the summary column, pulse with browser-specific styling, and add a footer alert while any cached embedded session is waiting on browser input.
+- The selected project's detail pane shows a dedicated `Browser` field and attention reason for live browser waits.
 - Codex Playwright activity is tracked live enough to distinguish:
   - idle
   - active
@@ -136,9 +139,9 @@ Make browser automation feel quiet and predictable by default:
    - Verify that the macOS hide/reveal behavior is stable across actual login sites.
    - Decide whether the first reveal should do anything more explicit than just surface the managed browser window.
 
-2. Improve passive visibility outside popups.
-   - Surface browser-attention state in the project list or detail pane.
-   - Avoid making the popup the only way to notice a login wait.
+2. Keep refining passive visibility outside popups.
+   - Verify the project-list/detail/footer browser wait signals against real login flows.
+   - Decide whether dismissed browser popups should leave behind a stronger action affordance than the footer alert.
 
 3. Keep tightening tests around managed Codex transitions.
    - waiting -> show browser -> accept

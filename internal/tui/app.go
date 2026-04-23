@@ -880,6 +880,13 @@ func (m Model) projectApprovalPulseActive(projectPath string) bool {
 	return m.spinnerFrame%2 == 0
 }
 
+func (m Model) projectBrowserPulseActive(projectPath string) bool {
+	if _, ok := m.projectPendingBrowserAttention(projectPath); !ok {
+		return false
+	}
+	return m.spinnerFrame%2 == 0
+}
+
 func (m Model) projectPendingEmbeddedQuestion(projectPath string) (string, codexapp.Provider, bool) {
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
@@ -3900,6 +3907,8 @@ func (m Model) renderProjectList(width, height int) string {
 			style = projectListCellStyle(style, selectedRow)
 			if m.projectApprovalPulseActive(p.Path) {
 				style = approvalPulseStyle(style)
+			} else if m.projectBrowserPulseActive(p.Path) {
+				style = browserPulseStyle(style)
 			} else if m.projectQuestionPulseActive(p.Path) {
 				style = questionPulseStyle(style)
 			}
@@ -3909,7 +3918,16 @@ func (m Model) renderProjectList(width, height int) string {
 		flagIndicators := m.projectRepoWarningIndicator(p, m.spinnerFrame) + projectUnreadIndicator(p, now, m.assessmentStallThreshold())
 		attention := projectAttentionLabelForScore(m.projectAttentionScore(p))
 		name := p.Name
+		statusText := projectListStatusAt(p, now, m.assessmentStallThreshold())
 		assessmentText := m.projectAssessmentDisplayTextAt(p, now, m.assessmentStallThreshold())
+		statusStyle := m.projectListAssessmentStatusStyle(p)
+		summaryStyle := m.projectListAssessmentSummaryStyle(p)
+		if browserAttention, ok := m.projectPendingBrowserAttention(p.Path); ok {
+			statusText = "browser"
+			assessmentText = browserAttentionListSummary(browserAttention)
+			statusStyle = detailWarningStyle
+			summaryStyle = detailWarningStyle
+		}
 		switch rowMeta.Kind {
 		case projectListRowRepo:
 			if rowMeta.LinkedCount > 0 {
@@ -3952,7 +3970,7 @@ func (m Model) renderProjectList(width, height int) string {
 			lipgloss.Top,
 			flagIndicators+cellStyle(lipgloss.NewStyle().Width(4).Align(lipgloss.Right).Bold(selectedRow)).Render(attention),
 			" ",
-			cellStyle(m.projectListAssessmentStatusStyle(p).Width(8)).Render(projectListStatusAt(p, now, m.assessmentStallThreshold())),
+			cellStyle(statusStyle.Width(8)).Render(statusText),
 			" ",
 			cellStyle(lipgloss.NewStyle().Width(10)).Render(last),
 			" ",
@@ -3964,7 +3982,7 @@ func (m Model) renderProjectList(width, height int) string {
 			"  ",
 			cellStyle(lipgloss.NewStyle().Width(projectW).Bold(selectedRow)).Render(name),
 			"  ",
-			cellStyle(m.projectListAssessmentSummaryStyle(p).Width(assessmentW).Bold(selectedRow)).Render(assessment),
+			cellStyle(summaryStyle.Width(assessmentW).Bold(selectedRow)).Render(assessment),
 		)
 		if width > 0 {
 			row = fitStyledWidth(row, width)
@@ -4068,6 +4086,9 @@ func (m Model) renderDetailContent(width int) string {
 		statusFields = append(statusFields, detailField("Activity", statusValue))
 	}
 	lines = appendDetailFields(lines, width, statusFields...)
+	if browserAttention, ok := m.projectPendingBrowserAttention(p.Path); ok {
+		lines = append(lines, renderWrappedDetailField("Browser", detailWarningStyle, width, browserAttentionDetailSummary(browserAttention)))
+	}
 	if projectMissing(p) {
 		lines = append(lines, detailWarningStyle.Render("Folder: missing on disk"))
 		if p.WorktreeKind == model.WorktreeKindLinked {
@@ -4289,6 +4310,10 @@ func approvalPulseStyle(style lipgloss.Style) lipgloss.Style {
 
 func questionPulseStyle(style lipgloss.Style) lipgloss.Style {
 	return style.Foreground(lipgloss.Color("255")).Background(lipgloss.Color("33")).Bold(true)
+}
+
+func browserPulseStyle(style lipgloss.Style) lipgloss.Style {
+	return style.Foreground(lipgloss.Color("16")).Background(lipgloss.Color("214")).Bold(true)
 }
 
 var spinnerFrames = []string{"|", "/", "-", `\`}
@@ -6711,30 +6736,27 @@ func (m Model) renderFooterAssessmentSegment() string {
 	return renderFooterAlert(text)
 }
 
-func footerSupplementSegments(filterSegment, assessmentSegment, usageSegment string) []string {
-	segments := make([]string, 0, 3)
-	if filterSegment != "" {
-		segments = append(segments, filterSegment)
-	}
-	if assessmentSegment != "" {
-		segments = append(segments, assessmentSegment)
-	}
-	if usageSegment != "" {
-		segments = append(segments, usageSegment)
+func footerSupplementSegments(rawSegments ...string) []string {
+	segments := make([]string, 0, len(rawSegments))
+	for _, segment := range rawSegments {
+		if segment != "" {
+			segments = append(segments, segment)
+		}
 	}
 	return segments
 }
 
 func (m Model) renderFooter(width int) string {
 	usageSegment := m.renderFooterUsageSegment(m.footerUsageLabel())
+	browserSegment := m.renderFooterBrowserAttentionSegment()
 	assessmentSegment := ""
 	if !m.errorLogVisible {
 		assessmentSegment = m.renderFooterAssessmentSegment()
 	}
 	filterSegment := m.renderFooterProjectFilterSegment()
-	supplementSegments := footerSupplementSegments(filterSegment, assessmentSegment, usageSegment)
+	supplementSegments := footerSupplementSegments(filterSegment, browserSegment, assessmentSegment, usageSegment)
 	if m.diffView != nil {
-		diffSegments := append([]string{renderDiffFooter(width, *m.diffView, usageSegment)}, footerSupplementSegments(filterSegment, assessmentSegment, "")...)
+		diffSegments := append([]string{renderDiffFooter(width, *m.diffView, usageSegment)}, footerSupplementSegments(filterSegment, browserSegment, assessmentSegment, "")...)
 		return renderFooterLine(width, diffSegments...)
 	}
 	if m.gitStatusDialog != nil {
