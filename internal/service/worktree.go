@@ -344,7 +344,12 @@ func (s *Service) MergeWorktreeBack(ctx context.Context, projectPath string) (Me
 		result.AlreadyMerged = true
 		return result, nil
 	}
-	if err := gitMergeBranch(ctx, rootPath, sourceBranch); err != nil {
+	mergeErr := gitMergeBranch(ctx, rootPath, sourceBranch, false)
+	var unrelatedErr gitUnrelatedHistoriesError
+	if mergeErr != nil && errors.As(mergeErr, &unrelatedErr) {
+		mergeErr = gitMergeBranch(ctx, rootPath, sourceBranch, true)
+	}
+	if mergeErr != nil {
 		refreshErr := s.refreshWorktreeMergeStatus(ctx, rootPath, projectPath)
 		if s.gitRepoStatusReader != nil {
 			if failedRootStatus, statusErr := s.gitRepoStatusReader(ctx, rootPath); statusErr == nil {
@@ -357,9 +362,9 @@ func (s *Service) MergeWorktreeBack(ctx context.Context, projectPath string) (Me
 			}
 		}
 		if refreshErr != nil {
-			return result, fmt.Errorf("merge %s back into %s at %s failed: %w (status refresh also failed: %v)", sourceBranch, targetBranch, rootPath, err, refreshErr)
+			return result, fmt.Errorf("merge %s back into %s at %s failed: %w (status refresh also failed: %v)", sourceBranch, targetBranch, rootPath, mergeErr, refreshErr)
 		}
-		return result, fmt.Errorf("merge %s back into %s at %s failed: %w", sourceBranch, targetBranch, rootPath, err)
+		return result, fmt.Errorf("merge %s back into %s at %s failed: %w", sourceBranch, targetBranch, rootPath, mergeErr)
 	}
 	if err := gitSubmoduleUpdateInitRecursive(ctx, rootPath); err != nil {
 		refreshErr := s.refreshWorktreeMergeStatus(ctx, rootPath, projectPath)
@@ -937,18 +942,60 @@ func isGitWorktreeSubmoduleRemoveError(err error) bool {
 	return strings.Contains(err.Error(), "working trees containing submodules cannot be moved or removed")
 }
 
-func gitMergeBranch(ctx context.Context, repoPath, branchName string) error {
+type gitUnrelatedHistoriesError struct {
+	action string
+	err    error
+	output string
+}
+
+func (e gitUnrelatedHistoriesError) Error() string {
+	action := strings.TrimSpace(e.action)
+	output := strings.TrimSpace(e.output)
+	switch {
+	case action == "" && output == "":
+		return "git refused to merge unrelated histories"
+	case action == "":
+		return output
+	case output == "":
+		return action + ": git refused to merge unrelated histories"
+	default:
+		return fmt.Sprintf("%s: %s", action, output)
+	}
+}
+
+func (e gitUnrelatedHistoriesError) Unwrap() error {
+	return e.err
+}
+
+func gitMergeBranch(ctx context.Context, repoPath, branchName string, allowUnrelatedHistories bool) error {
 	repoPath = filepath.Clean(strings.TrimSpace(repoPath))
 	branchName = strings.TrimSpace(branchName)
 	if repoPath == "" || branchName == "" {
 		return fmt.Errorf("repo path and branch name are required")
 	}
-	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "merge", "--no-edit", branchName)
+	args := []string{"-C", repoPath, "merge", "--no-edit"}
+	if allowUnrelatedHistories {
+		args = append(args, "--allow-unrelated-histories")
+	}
+	args = append(args, branchName)
+	cmd := exec.CommandContext(ctx, "git", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return gitCommandError(fmt.Sprintf("merge branch %s into %s", branchName, repoPath), err, out)
+		action := fmt.Sprintf("merge branch %s into %s", branchName, repoPath)
+		if !allowUnrelatedHistories && gitOutputShowsUnrelatedHistories(out) {
+			return gitUnrelatedHistoriesError{
+				action: action,
+				err:    err,
+				output: strings.TrimSpace(string(out)),
+			}
+		}
+		return gitCommandError(action, err, out)
 	}
 	return nil
+}
+
+func gitOutputShowsUnrelatedHistories(out []byte) bool {
+	return strings.Contains(strings.ToLower(string(out)), "refusing to merge unrelated histories")
 }
 
 func gitSubmoduleUpdateInitRecursive(ctx context.Context, repoPath string) error {
