@@ -46,6 +46,13 @@ type todoEditorState struct {
 	Submitting  bool
 }
 
+type todoPendingSaveState struct {
+	ProjectPath string
+	ProjectName string
+	TodoID      int64
+	Text        string
+}
+
 type todoDeleteConfirmState struct {
 	ProjectPath string
 	ProjectName string
@@ -176,6 +183,10 @@ func newTodoWorktreeTextInput(value string, charLimit int) textinput.Model {
 }
 
 func (m *Model) openTodoDialogForSelection() tea.Cmd {
+	if m.todoPendingSave != nil {
+		m.status = "TODO save already in progress"
+		return nil
+	}
 	project, ok := m.selectedProject()
 	if !ok {
 		m.status = "No project selected"
@@ -347,6 +358,44 @@ func (m *Model) closeTodoEditor(status string) {
 	if status != "" {
 		m.status = status
 	}
+}
+
+func (m *Model) startTodoEditorSave(text string) tea.Cmd {
+	dialog := m.todoEditor
+	if dialog == nil {
+		return nil
+	}
+	m.todoPendingSave = &todoPendingSaveState{
+		ProjectPath: dialog.ProjectPath,
+		ProjectName: dialog.ProjectName,
+		TodoID:      dialog.TodoID,
+		Text:        text,
+	}
+	if m.todoDialog != nil && filepath.Clean(strings.TrimSpace(m.todoDialog.ProjectPath)) == filepath.Clean(strings.TrimSpace(dialog.ProjectPath)) {
+		m.todoDialog.Busy = true
+	}
+	m.closeTodoEditor("")
+	if dialog.TodoID > 0 {
+		m.status = "Saving TODO..."
+		return m.updateTodoCmd(dialog.ProjectPath, dialog.TodoID, text)
+	}
+	m.status = "Adding TODO..."
+	return m.addTodoCmd(dialog.ProjectPath, text)
+}
+
+func (m *Model) reopenPendingTodoEditor() tea.Cmd {
+	pending := m.todoPendingSave
+	if pending == nil {
+		return nil
+	}
+	m.todoPendingSave = nil
+	m.todoEditor = &todoEditorState{
+		ProjectPath: pending.ProjectPath,
+		ProjectName: pending.ProjectName,
+		TodoID:      pending.TodoID,
+		Input:       newTodoTextInput(pending.Text),
+	}
+	return m.todoEditor.Input.Focus()
 }
 
 func (m *Model) openTodoDeleteConfirm(todo model.TodoItem) {
@@ -840,12 +889,7 @@ func (m Model) updateTodoEditorMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		dialog.Submitting = true
-		if dialog.TodoID > 0 {
-			m.status = "Saving TODO..."
-			return m, m.updateTodoCmd(dialog.ProjectPath, dialog.TodoID, text)
-		}
-		m.status = "Adding TODO..."
-		return m, m.addTodoCmd(dialog.ProjectPath, text)
+		return m, m.startTodoEditorSave(text)
 	}
 	var cmd tea.Cmd
 	dialog.Input, cmd = dialog.Input.Update(msg)

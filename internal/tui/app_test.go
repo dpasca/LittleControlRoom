@@ -10550,6 +10550,122 @@ func TestTodoDeleteConfirmPurgeQueuesBulkRemoval(t *testing.T) {
 	}
 }
 
+func TestTodoEditorSaveDismissesImmediatelyAndClearsBusyOnSuccess(t *testing.T) {
+	t.Parallel()
+
+	const projectPath = "/tmp/demo"
+	const todoText = "Codex may say model is at capacity. Switch to a higher model with lower reasoning?"
+
+	m := Model{
+		todoDialog: &todoDialogState{
+			ProjectPath: projectPath,
+			ProjectName: "demo",
+		},
+		todoEditor: &todoEditorState{
+			ProjectPath: projectPath,
+			ProjectName: "demo",
+			Input:       newTodoTextInput(todoText),
+		},
+	}
+
+	updated, cmd := m.updateTodoEditorMode(tea.KeyMsg{Type: tea.KeyCtrlS})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("ctrl+s should queue a save command")
+	}
+	if got.todoEditor != nil {
+		t.Fatalf("todo editor should dismiss immediately after save, got %#v", got.todoEditor)
+	}
+	if got.todoPendingSave == nil {
+		t.Fatal("todo save should remain tracked while the command is in flight")
+	}
+	if got.todoPendingSave.Text != todoText {
+		t.Fatalf("pending todo text = %q, want %q", got.todoPendingSave.Text, todoText)
+	}
+	if got.todoDialog == nil || !got.todoDialog.Busy {
+		t.Fatalf("todo dialog should mark itself busy while the save is in flight, got %#v", got.todoDialog)
+	}
+	if got.status != "Adding TODO..." {
+		t.Fatalf("status = %q, want add progress", got.status)
+	}
+
+	updatedModel, followUp := got.Update(todoActionMsg{projectPath: projectPath, status: "TODO added"})
+	got = updatedModel.(Model)
+	if got.todoPendingSave != nil {
+		t.Fatalf("pending todo save should clear after success, got %#v", got.todoPendingSave)
+	}
+	if got.todoDialog == nil || got.todoDialog.Busy {
+		t.Fatalf("todo dialog busy flag should clear after save success, got %#v", got.todoDialog)
+	}
+	if got.todoEditor != nil {
+		t.Fatalf("todo editor should stay dismissed after a successful save, got %#v", got.todoEditor)
+	}
+	if got.status != "TODO added" {
+		t.Fatalf("status = %q, want success status", got.status)
+	}
+	if followUp == nil {
+		t.Fatal("successful save should refresh project state")
+	}
+}
+
+func TestTodoEditorSaveRestoresDraftOnFailure(t *testing.T) {
+	t.Parallel()
+
+	const projectPath = "/tmp/demo"
+	const todoText = "Save should restore this draft after an error"
+
+	m := Model{
+		todoDialog: &todoDialogState{
+			ProjectPath: projectPath,
+			ProjectName: "demo",
+		},
+		todoEditor: &todoEditorState{
+			ProjectPath: projectPath,
+			ProjectName: "demo",
+			Input:       newTodoTextInput(todoText),
+		},
+	}
+
+	updated, cmd := m.updateTodoEditorMode(tea.KeyMsg{Type: tea.KeyCtrlS})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("ctrl+s should queue a save command")
+	}
+
+	rawMsg := cmd()
+	action, ok := rawMsg.(todoActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want todoActionMsg", rawMsg)
+	}
+	if action.err == nil || action.err.Error() != "service unavailable" {
+		t.Fatalf("todoActionMsg.err = %v, want service unavailable", action.err)
+	}
+
+	updatedModel, focusCmd := got.Update(action)
+	got = updatedModel.(Model)
+	if got.todoPendingSave != nil {
+		t.Fatalf("pending todo save should clear after failure recovery, got %#v", got.todoPendingSave)
+	}
+	if got.todoDialog == nil || got.todoDialog.Busy {
+		t.Fatalf("todo dialog busy flag should clear after save failure, got %#v", got.todoDialog)
+	}
+	if got.todoEditor == nil {
+		t.Fatal("todo editor should reopen after save failure")
+	}
+	if got.todoEditor.Input.Value() != todoText {
+		t.Fatalf("reopened todo text = %q, want %q", got.todoEditor.Input.Value(), todoText)
+	}
+	if got.todoEditor.Submitting {
+		t.Fatalf("reopened todo editor should not stay submitting")
+	}
+	if focusCmd == nil {
+		t.Fatal("reopening the todo editor after failure should refocus the input")
+	}
+	if !strings.Contains(got.status, "TODO action failed") {
+		t.Fatalf("status = %q, want todo action failure hint", got.status)
+	}
+}
+
 func TestTodoDialogSpaceBlocksRepeatWhileToggleIsInFlight(t *testing.T) {
 	t.Parallel()
 

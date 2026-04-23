@@ -80,6 +80,7 @@ type Model struct {
 	todoDeleteConfirm     *todoDeleteConfirmState
 	scratchTaskAction     *scratchTaskActionConfirmState
 	todoLaunchDrafts      map[string]todoLaunchDraftState
+	todoPendingSave       *todoPendingSaveState
 	todoPendingLaunch     *todoPendingLaunchState
 	todoCopyDialog        *todoCopyDialogState
 	todoWorktreeEditor    *todoWorktreeEditorState
@@ -1999,6 +2000,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.todoDialog != nil && filepath.Clean(strings.TrimSpace(m.todoDialog.ProjectPath)) == filepath.Clean(strings.TrimSpace(msg.projectPath)) {
 				m.todoDialog.Busy = false
 			}
+			if m.todoPendingSave != nil && filepath.Clean(strings.TrimSpace(m.todoPendingSave.ProjectPath)) == filepath.Clean(strings.TrimSpace(msg.projectPath)) {
+				return m, m.reopenPendingTodoEditor()
+			}
 			if m.todoEditor != nil {
 				m.todoEditor.Submitting = false
 			}
@@ -2006,6 +2010,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.todoDialog != nil && filepath.Clean(strings.TrimSpace(m.todoDialog.ProjectPath)) == filepath.Clean(strings.TrimSpace(msg.projectPath)) {
 			m.todoDialog.Busy = false
+		}
+		if m.todoPendingSave != nil && filepath.Clean(strings.TrimSpace(m.todoPendingSave.ProjectPath)) == filepath.Clean(strings.TrimSpace(msg.projectPath)) {
+			m.todoPendingSave = nil
 		}
 		if m.todoEditor != nil {
 			m.todoEditor.Submitting = false
