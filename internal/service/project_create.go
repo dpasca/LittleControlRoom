@@ -161,6 +161,9 @@ func (s *Service) trackProjectPath(ctx context.Context, existing model.ProjectSu
 }
 
 func (s *Service) upsertManualProjectState(ctx context.Context, existing model.ProjectSummary, projectPath, name string, kind model.ProjectKind) error {
+	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	defer unlockProjectState()
+
 	now := time.Now()
 	createdAt := firstNonZeroTime(existing.CreatedAt, now)
 	presentOnDisk := projectPathExists(projectPath)

@@ -34,6 +34,8 @@ func (s *Service) RecordEmbeddedSessionActivity(ctx context.Context, activity Em
 	if projectPath == "" || projectPath == "." || activity.LastActivityAt.IsZero() {
 		return nil
 	}
+	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	defer unlockProjectState()
 
 	runtime := s.runtimeSnapshot()
 	detail, err := s.store.GetProjectDetail(ctx, projectPath, 20)
