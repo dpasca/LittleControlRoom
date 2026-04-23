@@ -188,7 +188,7 @@ type Model struct {
 	recentCodexModels           []string
 	recentClaudeModels          []string
 	recentOpenCodeModels        []string
-	codexDenseExpanded          bool
+	codexDenseBlockMode         codexDenseBlockMode
 	codexSlashSelected          int
 	codexToolAnswers            map[string]codexToolAnswerState
 	codexViewport               viewport.Model
@@ -222,18 +222,18 @@ type Model struct {
 }
 
 type codexTranscriptRenderCache struct {
-	projectPath   string
-	width         int
-	denseExpanded bool
-	transcriptRev uint64
-	rendered      string
+	projectPath    string
+	width          int
+	denseBlockMode codexDenseBlockMode
+	transcriptRev  uint64
+	rendered       string
 }
 
 type codexViewportContentState struct {
-	projectPath   string
-	width         int
-	denseExpanded bool
-	transcriptRev uint64
+	projectPath    string
+	width          int
+	denseBlockMode codexDenseBlockMode
+	transcriptRev  uint64
 }
 
 type projectsMsg struct {

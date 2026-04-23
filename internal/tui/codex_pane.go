@@ -40,7 +40,62 @@ const (
 	openCodeRepetitionThreshold   = 4   // consecutive repeated windows to trigger collapse
 	openCodeMaxReasoningLines     = 120 // reasoning blocks get a tighter cap
 	openCodeMaxReasoningPreview   = 12  // preview lines for reasoning
+	codexDenseBlockPreviewLines   = 5
 )
+
+type codexDenseBlockMode int
+
+const (
+	codexDenseBlockSummary codexDenseBlockMode = iota
+	codexDenseBlockPreview
+	codexDenseBlockFull
+)
+
+func (mode codexDenseBlockMode) normalized() codexDenseBlockMode {
+	switch mode {
+	case codexDenseBlockPreview, codexDenseBlockFull:
+		return mode
+	default:
+		return codexDenseBlockSummary
+	}
+}
+
+func (mode codexDenseBlockMode) full() bool {
+	return mode.normalized() == codexDenseBlockFull
+}
+
+func (mode codexDenseBlockMode) next() codexDenseBlockMode {
+	switch mode.normalized() {
+	case codexDenseBlockSummary:
+		return codexDenseBlockPreview
+	case codexDenseBlockPreview:
+		return codexDenseBlockFull
+	default:
+		return codexDenseBlockSummary
+	}
+}
+
+func (mode codexDenseBlockMode) statusText() string {
+	switch mode.normalized() {
+	case codexDenseBlockPreview:
+		return "Showing short transcript block previews"
+	case codexDenseBlockFull:
+		return "Showing full transcript blocks"
+	default:
+		return "Hiding transcript block output"
+	}
+}
+
+func (mode codexDenseBlockMode) bannerText() string {
+	switch mode.normalized() {
+	case codexDenseBlockPreview:
+		return "Blocks preview"
+	case codexDenseBlockFull:
+		return "Blocks full"
+	default:
+		return ""
+	}
+}
 
 func (m *Model) ensureCodexRuntime() {
 	if m.codexManager == nil {
@@ -546,7 +601,7 @@ func (m Model) codexTranscriptCacheMatches(projectPath string, width int) bool {
 	return projectPath != "" &&
 		m.codexTranscriptCache.projectPath == projectPath &&
 		m.codexTranscriptCache.width == width &&
-		m.codexTranscriptCache.denseExpanded == m.codexDenseExpanded &&
+		m.codexTranscriptCache.denseBlockMode == m.codexDenseBlockMode.normalized() &&
 		m.codexTranscriptCache.transcriptRev == m.codexTranscriptRevision(projectPath) &&
 		m.codexTranscriptCache.rendered != ""
 }
@@ -564,11 +619,11 @@ func (m *Model) renderAndCacheCodexTranscript(projectPath string, snapshot codex
 		rendered = m.renderCodexTranscriptContentFromSnapshot(snapshot, width)
 	})
 	m.codexTranscriptCache = codexTranscriptRenderCache{
-		projectPath:   strings.TrimSpace(projectPath),
-		width:         width,
-		denseExpanded: m.codexDenseExpanded,
-		transcriptRev: m.codexTranscriptRevision(projectPath),
-		rendered:      rendered,
+		projectPath:    strings.TrimSpace(projectPath),
+		width:          width,
+		denseBlockMode: m.codexDenseBlockMode.normalized(),
+		transcriptRev:  m.codexTranscriptRevision(projectPath),
+		rendered:       rendered,
 	}
 	return rendered
 }
@@ -578,7 +633,7 @@ func (m Model) codexViewportContentMatches(projectPath string, width int) bool {
 	return projectPath != "" &&
 		m.codexViewportContent.projectPath == projectPath &&
 		m.codexViewportContent.width == width &&
-		m.codexViewportContent.denseExpanded == m.codexDenseExpanded &&
+		m.codexViewportContent.denseBlockMode == m.codexDenseBlockMode.normalized() &&
 		m.codexViewportContent.transcriptRev == m.codexTranscriptRevision(projectPath)
 }
 
@@ -595,10 +650,10 @@ func (m *Model) setCodexViewportTranscript(projectPath string, snapshot codexapp
 		m.codexViewport.SetContent(rendered)
 	})
 	m.codexViewportContent = codexViewportContentState{
-		projectPath:   projectPath,
-		width:         width,
-		denseExpanded: m.codexDenseExpanded,
-		transcriptRev: m.codexTranscriptRevision(projectPath),
+		projectPath:    projectPath,
+		width:          width,
+		denseBlockMode: m.codexDenseBlockMode.normalized(),
+		transcriptRev:  m.codexTranscriptRevision(projectPath),
 	}
 }
 
@@ -1140,12 +1195,8 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "alt+]":
 		return m.cycleCodexSession(1)
 	case "alt+l":
-		m.codexDenseExpanded = !m.codexDenseExpanded
-		if m.codexDenseExpanded {
-			m.status = "Expanded dense transcript blocks"
-		} else {
-			m.status = "Collapsed dense transcript blocks"
-		}
+		m.codexDenseBlockMode = m.codexDenseBlockMode.next()
+		m.status = m.codexDenseBlockMode.statusText()
 		m.syncCodexViewport(false)
 		return m, nil
 	case "ctrl+c":
@@ -2103,8 +2154,8 @@ func (m Model) renderCodexBanner(snapshot codexapp.Snapshot, width int) string {
 	if snapshot.BusyExternal {
 		parts = append(parts, "Read-only")
 	}
-	if m.codexDenseExpanded {
-		parts = append(parts, "Blocks expanded")
+	if blockMode := m.codexDenseBlockMode.bannerText(); blockMode != "" {
+		parts = append(parts, blockMode)
 	}
 	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Render(strings.Join(parts, " | "))
 	actions := renderFooterActionList(
@@ -2642,10 +2693,11 @@ func (m Model) renderCodexTranscriptEntries(snapshot codexapp.Snapshot, width in
 		return ""
 	}
 	entries := snapshot.Entries
+	blockMode := m.codexDenseBlockMode.normalized()
 	if snapshot.Provider.Normalized() == codexapp.ProviderOpenCode {
-		entries = collapseOpenCodeToolRuns(entries, m.codexDenseExpanded)
-		entries = collapseOpenCodeLargeCodeBlocks(entries, m.codexDenseExpanded)
-		entries = collapseOpenCodeMassiveEntries(entries, m.codexDenseExpanded)
+		entries = collapseOpenCodeToolRuns(entries, blockMode.full())
+		entries = collapseOpenCodeLargeCodeBlocks(entries, blockMode.full())
+		entries = collapseOpenCodeMassiveEntries(entries, blockMode.full())
 	}
 	if width <= 0 {
 		width = 80
@@ -2670,7 +2722,7 @@ func (m Model) renderCodexTranscriptEntries(snapshot codexapp.Snapshot, width in
 		reasoningLineCount = 0
 	}
 	for _, entry := range entries {
-		if m.hideReasoningSections && !m.codexDenseExpanded && entry.Kind == codexapp.TranscriptReasoning {
+		if m.hideReasoningSections && !blockMode.full() && entry.Kind == codexapp.TranscriptReasoning {
 			// Accumulate reasoning lines for compact indicator
 			text := strings.TrimSpace(entry.Text)
 			if text != "" {
@@ -2680,7 +2732,7 @@ func (m Model) renderCodexTranscriptEntries(snapshot codexapp.Snapshot, width in
 		}
 		// Flush any pending reasoning indicator before a non-reasoning entry
 		flushReasoning()
-		block := renderCodexTranscriptEntry(entry, contentWidth, m.codexDenseExpanded)
+		block := renderCodexTranscriptEntry(entry, contentWidth, blockMode)
 		if strings.TrimSpace(block) != "" {
 			if hasPrevious {
 				blocks = append(blocks, codexTranscriptEntrySeparator(previousKind, entry.Kind))
@@ -2695,7 +2747,7 @@ func (m Model) renderCodexTranscriptEntries(snapshot codexapp.Snapshot, width in
 	return strings.Join(blocks, "")
 }
 
-func renderCodexTranscriptEntry(entry codexapp.TranscriptEntry, width int, expanded bool) string {
+func renderCodexTranscriptEntry(entry codexapp.TranscriptEntry, width int, blockMode codexDenseBlockMode) string {
 	text := strings.TrimSpace(sanitizeCodexRenderedText(entry.Text))
 	if text == "" {
 		return ""
@@ -2716,9 +2768,9 @@ func renderCodexTranscriptEntry(entry codexapp.TranscriptEntry, width int, expan
 	case codexapp.TranscriptReasoning:
 		return renderReasoningBlock(text, width)
 	case codexapp.TranscriptCommand:
-		return renderCodexDenseBlock("Command", text, lipgloss.Color("111"), width, expanded)
+		return renderCodexDenseBlock("Command", text, lipgloss.Color("111"), width, blockMode)
 	case codexapp.TranscriptFileChange:
-		return renderCodexDenseBlock("File changes", text, lipgloss.Color("179"), width, expanded)
+		return renderCodexDenseBlock("File changes", text, lipgloss.Color("179"), width, blockMode)
 	case codexapp.TranscriptTool:
 		return renderCodexToolLine(text, width)
 	case codexapp.TranscriptError:
@@ -3984,7 +4036,15 @@ func renderCodexMonospaceBlock(label, body string, accent lipgloss.Color, width 
 			renderedLines = append(renderedLines, lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Render(line))
 		}
 	}
-	bodyBlock := lipgloss.NewStyle().Width(contentWidth).Render(strings.Join(renderedLines, "\n"))
+	bodyText := strings.Join(renderedLines, "\n")
+	if strings.TrimSpace(bodyText) == "" {
+		return lipgloss.NewStyle().
+			BorderLeft(true).
+			BorderForeground(accent).
+			PaddingLeft(0).
+			Render(title)
+	}
+	bodyBlock := lipgloss.NewStyle().Width(contentWidth).Render(bodyText)
 	return lipgloss.NewStyle().
 		BorderLeft(true).
 		BorderForeground(accent).
@@ -3992,42 +4052,86 @@ func renderCodexMonospaceBlock(label, body string, accent lipgloss.Color, width 
 		Render(title + "\n" + bodyBlock)
 }
 
-func renderCodexDenseBlock(label, body string, accent lipgloss.Color, width int, expanded bool) string {
+func renderCodexDenseBlock(label, body string, accent lipgloss.Color, width int, blockMode codexDenseBlockMode) string {
 	lines := strings.Split(strings.TrimSpace(body), "\n")
 	if len(lines) == 0 {
 		return ""
 	}
-	// In collapsed mode, strip low-value noise from command blocks
-	if !expanded {
-		filtered := make([]string, 0, len(lines))
-		for _, line := range lines {
-			trimmed := strings.TrimSpace(line)
-			// Hide successful exit lines — failure is the interesting case
-			if trimmed == "[command completed, exit 0]" {
-				continue
-			}
-			// Dim cwd comments but keep them only in expanded mode
-			if strings.HasPrefix(trimmed, "# cwd:") {
-				continue
-			}
-			filtered = append(filtered, line)
-		}
-		lines = filtered
+	blockMode = blockMode.normalized()
+	if blockMode.full() {
+		return renderCodexMonospaceBlock(label, strings.Join(lines, "\n"), accent, width)
 	}
-	if len(lines) == 0 {
+	lines, hidden := visibleCodexDenseBlockLines(lines, blockMode)
+	if len(lines) == 0 && hidden == 0 {
 		return ""
-	}
-	const compactLimit = 8
-	hidden := 0
-	if !expanded && len(lines) > compactLimit {
-		hidden = len(lines) - compactLimit
-		lines = lines[:compactLimit]
 	}
 	title := label
 	if hidden > 0 {
-		title = fmt.Sprintf("%s (%d more lines hidden; Alt+L expands)", label, hidden)
+		title = codexDenseBlockHiddenTitle(label, hidden, blockMode)
 	}
 	return renderCodexMonospaceBlock(title, strings.Join(lines, "\n"), accent, width)
+}
+
+func visibleCodexDenseBlockLines(lines []string, blockMode codexDenseBlockMode) ([]string, int) {
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "[command completed, exit 0]" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "# cwd:") {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+
+	visible := make([]string, 0, len(filtered))
+	hidden := 0
+	shownPreviewLines := 0
+	for _, line := range filtered {
+		if isCodexDenseSummaryLine(line) {
+			visible = append(visible, line)
+			continue
+		}
+		switch blockMode.normalized() {
+		case codexDenseBlockPreview:
+			if shownPreviewLines < codexDenseBlockPreviewLines {
+				visible = append(visible, line)
+				shownPreviewLines++
+				continue
+			}
+			hidden++
+		default:
+			hidden++
+		}
+	}
+	return visible, hidden
+}
+
+func isCodexDenseSummaryLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if strings.HasPrefix(trimmed, "$ ") {
+		return true
+	}
+	if strings.HasPrefix(trimmed, "[command ") && trimmed != "[command completed, exit 0]" {
+		return true
+	}
+	if strings.HasPrefix(trimmed, "[file changes ") {
+		return true
+	}
+	return false
+}
+
+func codexDenseBlockHiddenTitle(label string, hidden int, blockMode codexDenseBlockMode) string {
+	plural := "lines"
+	if hidden == 1 {
+		plural = "line"
+	}
+	action := "Alt+L previews"
+	if blockMode.normalized() == codexDenseBlockPreview {
+		action = "Alt+L expands"
+	}
+	return fmt.Sprintf("%s (%d %s hidden; %s)", label, hidden, plural, action)
 }
 
 func renderCodexBody(body string, color lipgloss.Color, width int) string {
