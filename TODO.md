@@ -8,8 +8,6 @@ Implemented already:
 
 Next embedded slash-command backlog:
 
-- `/compact`: wire to `thread/compact/start` and render the compaction result cleanly in the embedded transcript.
-- `/review`: wire to `review/start` and surface review-mode status inside the embedded pane.
 - `/fork`: wire to `thread/fork` and switch the pane to the new forked thread.
 - `/resume`: expose recent/resumable threads directly from the embedded composer flow instead of requiring a separate picker step.
 - `/permissions`: add an embedded preset/approval/sandbox picker that mirrors Codex expectations.

@@ -472,6 +472,10 @@ func (s *claudeCodeSession) Compact() error {
 	return fmt.Errorf(claudeCompactUnsupported)
 }
 
+func (s *claudeCodeSession) Review() error {
+	return fmt.Errorf("Embedded Claude Code review mode is not supported yet")
+}
+
 func (s *claudeCodeSession) ListModels() ([]ModelOption, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

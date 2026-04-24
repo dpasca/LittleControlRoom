@@ -952,6 +952,23 @@ func (m Model) compactVisibleCodexSessionCmd() tea.Cmd {
 	})
 }
 
+func (m Model) reviewVisibleCodexSessionCmd() tea.Cmd {
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	if projectPath == "" {
+		return nil
+	}
+	label := "Codex"
+	if snapshot, ok := m.currentCodexSnapshot(); ok {
+		label = embeddedProvider(snapshot).Label()
+	}
+	return m.codexSessionCmd(projectPath, nil, func(session codexapp.Session) tea.Msg {
+		if err := session.Review(); err != nil {
+			return codexActionMsg{projectPath: projectPath, err: err}
+		}
+		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " review started"}
+	})
+}
+
 func (m Model) reconnectVisibleCodexSessionCmd() tea.Cmd {
 	if m.codexManager == nil || strings.TrimSpace(m.codexVisibleProject) == "" {
 		return nil
@@ -1294,7 +1311,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.clearCodexDraft(m.codexVisibleProject)
-			if snapshot.Closed && (inv.Kind == codexslash.KindModel || inv.Kind == codexslash.KindStatus || inv.Kind == codexslash.KindCompact) {
+			if snapshot.Closed && (inv.Kind == codexslash.KindModel || inv.Kind == codexslash.KindStatus || inv.Kind == codexslash.KindCompact || inv.Kind == codexslash.KindReview) {
 				m.status = label + " session is closed. Use /resume, /new, or /reconnect to reopen it."
 				return m, nil
 			}
@@ -1327,6 +1344,9 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case codexslash.KindCompact:
 				m.status = "Starting embedded " + label + " conversation compaction..."
 				return m, m.compactVisibleCodexSessionCmd()
+			case codexslash.KindReview:
+				m.status = "Starting embedded " + label + " review..."
+				return m, m.reviewVisibleCodexSessionCmd()
 			default:
 				m.status = "Unsupported embedded slash command"
 				return m, nil

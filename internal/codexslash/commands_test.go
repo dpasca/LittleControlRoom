@@ -30,6 +30,20 @@ func TestSuggestionsIncludeReconnectCommand(t *testing.T) {
 	}
 }
 
+func TestSuggestionsIncludeReviewCommand(t *testing.T) {
+	suggestions := Suggestions("/")
+	found := false
+	for _, suggestion := range suggestions {
+		if suggestion.Insert == "/review" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Suggestions(/) should include /review: %#v", suggestions)
+	}
+}
+
 func TestParseModelCommand(t *testing.T) {
 	inv, err := Parse("/model")
 	if err != nil {
@@ -53,6 +67,19 @@ func TestParseReconnectCommand(t *testing.T) {
 	}
 	if inv.Canonical != "/reconnect" {
 		t.Fatalf("Parse(/reconnect) canonical = %q, want /reconnect", inv.Canonical)
+	}
+}
+
+func TestParseReviewCommand(t *testing.T) {
+	inv, err := Parse("/review")
+	if err != nil {
+		t.Fatalf("Parse(/review) error = %v", err)
+	}
+	if inv.Kind != KindReview {
+		t.Fatalf("Parse(/review) kind = %q, want %q", inv.Kind, KindReview)
+	}
+	if inv.Canonical != "/review" {
+		t.Fatalf("Parse(/review) canonical = %q, want /review", inv.Canonical)
 	}
 }
 

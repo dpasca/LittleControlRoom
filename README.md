@@ -140,6 +140,8 @@ Inside the embedded Codex, Claude Code, or OpenCode pane:
 - `/reconnect`: Restart the embedded provider helper and reconnect to the current session.
 - `/model`: Change the model and reasoning settings for this and future embedded sessions of the same tool, including after restarting LCR.
 - `/status`: Show the current provider/session status.
+- `/compact`: Compact the embedded Codex conversation history when supported.
+- `/review`: Ask embedded Codex to review uncommitted changes.
 
 ## Core Workflows
 

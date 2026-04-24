@@ -550,6 +550,10 @@ func (s *openCodeSession) Compact() error {
 	return nil
 }
 
+func (s *openCodeSession) Review() error {
+	return fmt.Errorf("Embedded OpenCode review mode is not supported yet")
+}
+
 func (s *openCodeSession) ListModels() ([]ModelOption, error) {
 	models, err := s.refreshModelOptions(context.Background())
 	if err != nil {

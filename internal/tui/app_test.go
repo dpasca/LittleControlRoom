@@ -53,10 +53,12 @@ type fakeCodexSession struct {
 	elicitations     []fakeElicitationResponse
 	statusCalls      int
 	compactCalls     int
+	reviewCalls      int
 	interrupted      bool
 	refreshCalls     int
 	refreshBusyFn    func(*fakeCodexSession) error
 	compactFn        func(*fakeCodexSession) error
+	reviewFn         func(*fakeCodexSession) error
 	models           []codexapp.ModelOption
 	modelStages      []struct {
 		Model     string
@@ -117,6 +119,14 @@ func (s *fakeCodexSession) Compact() error {
 	s.compactCalls++
 	if s.compactFn != nil {
 		return s.compactFn(s)
+	}
+	return nil
+}
+
+func (s *fakeCodexSession) Review() error {
+	s.reviewCalls++
+	if s.reviewFn != nil {
+		return s.reviewFn(s)
 	}
 	return nil
 }
@@ -7974,6 +7984,67 @@ func TestVisibleCodexSlashStatusRunsLocally(t *testing.T) {
 	rendered := ansi.Strip(got.renderCodexView())
 	if !strings.Contains(rendered, "Status") || !strings.Contains(rendered, "85% left") {
 		t.Fatalf("rendered view should include the local /status transcript block: %q", rendered)
+	}
+}
+
+func TestVisibleCodexSlashReviewRunsLocally(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started:  true,
+			Preset:   codexcli.PresetYolo,
+			Status:   "Codex session ready",
+			ThreadID: "thread_demo",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/rev")
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should run the embedded /review command")
+	}
+	if got.codexInput.Value() != "" {
+		t.Fatalf("codex input should clear after /review, got %q", got.codexInput.Value())
+	}
+	if got.status != "Starting embedded Codex review..." {
+		t.Fatalf("status = %q, want review start notice", got.status)
+	}
+
+	msg := cmd()
+	action, ok := msg.(codexActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexActionMsg", msg)
+	}
+	if action.err != nil {
+		t.Fatalf("/review returned error = %v", action.err)
+	}
+	if session.reviewCalls != 1 {
+		t.Fatalf("review calls = %d, want 1", session.reviewCalls)
+	}
+	if len(session.submissions) != 0 {
+		t.Fatalf("/review should not submit a Codex prompt, submissions = %d", len(session.submissions))
 	}
 }
 

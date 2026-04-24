@@ -648,6 +648,10 @@ func (s *screenshotCodexSession) Compact() error {
 	return nil
 }
 
+func (s *screenshotCodexSession) Review() error {
+	return nil
+}
+
 func (s *screenshotCodexSession) Interrupt() error {
 	return nil
 }

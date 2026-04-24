@@ -1813,6 +1813,55 @@ func TestCompactWaitsForCompletionAndHydratesCompactionEntry(t *testing.T) {
 	}
 }
 
+func TestReviewStartsUncommittedChangesReview(t *testing.T) {
+	callCount := 0
+
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		threadID:    "thread_456",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			callCount++
+			if method != "review/start" {
+				t.Fatalf("method = %q, want review/start", method)
+			}
+			request, ok := params.(reviewStartParams)
+			if !ok {
+				t.Fatalf("params = %#v, want reviewStartParams", params)
+			}
+			if request.ThreadID != "thread_456" {
+				t.Fatalf("thread id = %q, want thread_456", request.ThreadID)
+			}
+			if request.Delivery != "inline" {
+				t.Fatalf("delivery = %q, want inline", request.Delivery)
+			}
+			if request.Target.Type != "uncommittedChanges" {
+				t.Fatalf("target type = %q, want uncommittedChanges", request.Target.Type)
+			}
+			return json.RawMessage(`{"turn":{"id":"turn_review","status":"inProgress","items":[]},"reviewThreadId":"thread_456"}`), nil
+		},
+	}
+
+	if err := s.Review(); err != nil {
+		t.Fatalf("Review() error = %v", err)
+	}
+	if callCount != 1 {
+		t.Fatalf("rpc call count = %d, want 1", callCount)
+	}
+
+	snapshot := s.Snapshot()
+	if snapshot.Phase != SessionPhaseRunning {
+		t.Fatalf("phase = %q, want %q", snapshot.Phase, SessionPhaseRunning)
+	}
+	if snapshot.ActiveTurnID != "turn_review" {
+		t.Fatalf("active turn id = %q, want turn_review", snapshot.ActiveTurnID)
+	}
+	if snapshot.Status != "Codex is reviewing uncommitted changes..." {
+		t.Fatalf("status = %q, want review progress", snapshot.Status)
+	}
+}
+
 func TestHydrateCompactingThreadKeepsSessionWritableAndShowsProgress(t *testing.T) {
 	s := &appServerSession{
 		projectPath: "/tmp/demo",

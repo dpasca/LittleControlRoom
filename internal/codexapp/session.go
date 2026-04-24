@@ -273,6 +273,13 @@ type turnStartResponse struct {
 	} `json:"turn"`
 }
 
+type reviewStartResponse struct {
+	Turn struct {
+		ID string `json:"id"`
+	} `json:"turn"`
+	ReviewThreadID string `json:"reviewThreadId"`
+}
+
 type turnSteerResponse struct {
 	TurnID string `json:"turnId"`
 }
@@ -343,6 +350,16 @@ type threadReadParams struct {
 
 type threadCompactStartParams struct {
 	ThreadID string `json:"threadId"`
+}
+
+type reviewStartParams struct {
+	ThreadID string       `json:"threadId"`
+	Target   reviewTarget `json:"target"`
+	Delivery string       `json:"delivery,omitempty"`
+}
+
+type reviewTarget struct {
+	Type string `json:"type"`
 }
 
 type userInput struct {
@@ -1288,6 +1305,56 @@ func (s *appServerSession) Compact() error {
 	waitCtx, waitCancel := context.WithTimeout(context.Background(), compactionWaitTimeout)
 	defer waitCancel()
 	return s.waitForCompactionCompletion(waitCtx, threadID)
+}
+
+func (s *appServerSession) Review() error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return fmt.Errorf("codex session is closed")
+	}
+	if s.compacting {
+		s.mu.Unlock()
+		return fmt.Errorf("cannot start a review while conversation compaction is in progress")
+	}
+	if s.busy {
+		s.mu.Unlock()
+		return fmt.Errorf("cannot start a review while a turn is in progress")
+	}
+	threadID := strings.TrimSpace(s.threadID)
+	if threadID == "" {
+		s.mu.Unlock()
+		return fmt.Errorf("no active thread to review")
+	}
+	s.touchLocked()
+	s.status = "Starting Codex review..."
+	s.mu.Unlock()
+	s.notify()
+
+	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
+	defer cancel()
+
+	result, err := s.call(ctx, "review/start", reviewStartParams{
+		ThreadID: threadID,
+		Target:   reviewTarget{Type: "uncommittedChanges"},
+		Delivery: "inline",
+	})
+	if err != nil {
+		s.appendSystemError(err)
+		return err
+	}
+	var response reviewStartResponse
+	_ = json.Unmarshal(result, &response)
+
+	s.mu.Lock()
+	if reviewThreadID := strings.TrimSpace(response.ReviewThreadID); reviewThreadID != "" {
+		s.threadID = reviewThreadID
+	}
+	s.setBusyLocked(response.Turn.ID, false)
+	s.status = "Codex is reviewing uncommitted changes..."
+	s.mu.Unlock()
+	s.notify()
+	return nil
 }
 
 func (s *appServerSession) ListModels() ([]ModelOption, error) {

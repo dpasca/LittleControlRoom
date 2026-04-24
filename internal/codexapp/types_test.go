@@ -55,6 +55,10 @@ func (s *fakeSession) Compact() error {
 	return nil
 }
 
+func (s *fakeSession) Review() error {
+	return nil
+}
+
 func (s *fakeSession) ListModels() ([]ModelOption, error) {
 	return nil, nil
 }
