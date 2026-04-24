@@ -6331,6 +6331,82 @@ func TestEnterRestoresHiddenLiveCodexSessionFromFocusedProjectList(t *testing.T)
 	}
 }
 
+func TestEnterReopensClosedEmbeddedSessionByLaunchingAgain(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				Started:  true,
+				ThreadID: req.ResumeID,
+				Status:   req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+	session, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderCodex,
+		Preset:      codexcli.PresetYolo,
+		ResumeID:    "thread-closed",
+	})
+	if err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+	if err := session.Close(); err != nil {
+		t.Fatalf("session.Close() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:                "/tmp/demo",
+			Name:                "demo",
+			PresentOnDisk:       true,
+			LatestSessionID:     "thread-closed",
+			LatestSessionFormat: "modern",
+		}},
+		selected:      0,
+		focusedPane:   focusProjects,
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should launch a replacement for a closed embedded session")
+	}
+	if got.codexPendingOpen == nil || got.codexPendingOpen.projectPath != "/tmp/demo" {
+		t.Fatalf("codexPendingOpen = %#v, want pending replacement open", got.codexPendingOpen)
+	}
+	if got.codexVisibleProject == "/tmp/demo" {
+		t.Fatalf("codexVisibleProject = %q, want closed session not to be merely reopened", got.codexVisibleProject)
+	}
+	if got.status != "Opening embedded Codex session..." {
+		t.Fatalf("status = %q, want embedded open notice", got.status)
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("replacement open returned error = %v", opened.err)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("launch requests = %d, want original plus replacement open", len(requests))
+	}
+	if requests[1].ResumeID != "thread-closed" {
+		t.Fatalf("replacement resume id = %q, want thread-closed", requests[1].ResumeID)
+	}
+}
+
 func TestShowCodexProjectQueuesDeferredSnapshotWhenRevealSnapshotIsContended(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",

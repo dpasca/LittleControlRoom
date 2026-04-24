@@ -582,7 +582,7 @@ func (m Model) launchEmbeddedForSelection(provider codexapp.Provider, forceNew b
 		if _, ok := m.liveEmbeddedSnapshotForProject(p.Path, provider); ok {
 			return m.showCodexProject(p.Path, "Embedded "+provider.Label()+" session reopened. Alt+Up hides it.")
 		}
-		if _, ok := m.codexSession(p.Path); ok {
+		if m.hasRestorableEmbeddedSession(p.Path) {
 			return m.showCodexProject(p.Path, "Embedded session reopened. Alt+Up hides it.")
 		}
 	}
@@ -608,6 +608,19 @@ func (m Model) launchEmbeddedForSelection(provider codexapp.Provider, forceNew b
 	m.err = nil
 	m.status = "Opening embedded " + provider.Label() + " session..."
 	return m, m.openCodexSessionCmd(req)
+}
+
+func (m Model) hasRestorableEmbeddedSession(projectPath string) bool {
+	session, ok := m.codexSession(projectPath)
+	if !ok {
+		return false
+	}
+	if snapshot, got := session.TrySnapshot(); got {
+		return !snapshot.Closed
+	}
+	// If the session lock is contended, assume the helper is still restorable.
+	// A later async snapshot refresh will reconcile the exact state.
+	return true
 }
 
 func (m Model) appDataDir() string {
