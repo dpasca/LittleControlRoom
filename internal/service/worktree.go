@@ -196,8 +196,10 @@ func (s *Service) RegenerateTodoWorktreeSuggestion(ctx context.Context, projectP
 		Type:        string(events.ActionApplied),
 		Payload:     fmt.Sprintf("regenerate_worktree_suggestion todo_id=%d", todoID),
 	})
-	if changed && s.todoSuggester != nil {
-		s.todoSuggester.Notify()
+	if changed {
+		if suggester := s.currentTodoSuggester(); suggester != nil {
+			suggester.Notify()
+		}
 	}
 	return nil
 }
@@ -259,8 +261,8 @@ func (s *Service) EnsureTodoWorktreeSuggestion(ctx context.Context, projectPath 
 		Type:        string(events.ActionApplied),
 		Payload:     fmt.Sprintf("ensure_worktree_suggestion todo_id=%d", todoID),
 	})
-	if s.todoSuggester != nil {
-		s.todoSuggester.Notify()
+	if suggester := s.currentTodoSuggester(); suggester != nil {
+		suggester.Notify()
 	}
 	return true, nil
 }

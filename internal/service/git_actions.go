@@ -220,12 +220,13 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 	if stageMode == GitStageStagedOnly {
 		untracked := repoStatus.UntrackedChanges()
 		reviewableUntracked, skippedUntracked := splitAutoReviewableUntracked(untracked)
+		recommender := s.currentUntrackedFileRecommender()
 		if skippedWarning := formatSkippedUntrackedAutoReviewWarning(skippedUntracked); skippedWarning != "" {
 			warnings = append(warnings, skippedWarning)
 		}
 		switch {
 		case len(reviewableUntracked) == 0:
-		case s.untrackedFileRecommender == nil:
+		case recommender == nil:
 			warnings = append(warnings, "AI untracked review unavailable; untracked files will stay out unless you stage them manually.")
 		default:
 			input, buildWarnings, buildErr := buildUntrackedInclusionInput(projectPath, intent, projectName, branchName, fullLatestSummary, staged, diffStat, patch, reviewableUntracked)
@@ -234,7 +235,7 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 				warnings = append(warnings, "AI untracked review unavailable: "+strings.TrimSpace(buildErr.Error()))
 			} else {
 				assistantCtx, cancel := s.withCommitAssistantTimeout(ctx)
-				suggestion, suggestErr := s.untrackedFileRecommender.RecommendUntracked(assistantCtx, input)
+				suggestion, suggestErr := recommender.RecommendUntracked(assistantCtx, input)
 				cancel()
 				if suggestErr != nil {
 					warnings = append(warnings, "AI untracked review unavailable: "+formatCommitAssistantError(suggestErr, s.effectiveCommitAssistantTimeout()))
@@ -310,9 +311,10 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 			Patch:                   patch,
 			OpenTodos:               openTodos,
 		}
-		if s.commitMessageSuggester != nil {
+		suggester := s.currentCommitMessageSuggester()
+		if suggester != nil {
 			assistantCtx, cancel := s.withCommitAssistantTimeout(ctx)
-			suggestion, suggestErr := s.commitMessageSuggester.Suggest(assistantCtx, input)
+			suggestion, suggestErr := suggester.Suggest(assistantCtx, input)
 			cancel()
 			if suggestErr == nil {
 				preview.Message = normalizeCommitMessage(suggestion.Message)
@@ -741,7 +743,8 @@ func eventForPush(now time.Time, projectPath, branch string) model.StoredEvent {
 // stale or still in progress, it triggers (or waits for) a refresh and returns
 // true so the caller knows to re-read the project detail.
 func (s *Service) refreshClassificationForCommit(ctx context.Context, projectPath string, detail model.ProjectDetail) bool {
-	if s.classifier == nil || len(detail.Sessions) == 0 {
+	classifier := s.currentSessionClassifier()
+	if classifier == nil || len(detail.Sessions) == 0 {
 		return false
 	}
 	classification := detail.LatestSessionClassification
@@ -777,9 +780,9 @@ func (s *Service) refreshClassificationForCommit(ctx context.Context, projectPat
 	if len(state.Sessions) > 0 {
 		state.Sessions[0].SnapshotHash = currentHash
 	}
-	queued, _ := s.classifier.QueueProject(ctx, state)
+	queued, _ := classifier.QueueProject(ctx, state)
 	if queued {
-		s.classifier.Notify()
+		classifier.Notify()
 	}
 	return s.waitForClassification(ctx, latestSession.SessionID)
 }

@@ -195,3 +195,69 @@ func TestManagerStartDoesNotQueueOpenTodosSpeculatively(t *testing.T) {
 		t.Fatalf("GetTodoWorktreeSuggestion() error = %v, want sql.ErrNoRows", err)
 	}
 }
+
+func TestManagerProcessesQueuedSuggestionAfterClientConfigured(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	runCtx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           "/tmp/demo",
+		Name:           "demo",
+		Status:         model.StatusIdle,
+		AttentionScore: 25,
+		InScope:        true,
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+	item, err := st.AddTodo(ctx, "/tmp/demo", "Enable TODO suggester after setup")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	if queued, err := st.ForceQueueTodoWorktreeSuggestion(ctx, item.ID); err != nil || !queued {
+		t.Fatalf("ForceQueueTodoWorktreeSuggestion() = (%t, %v), want (true, nil)", queued, err)
+	}
+
+	manager := NewManager(st, events.NewBus(), Options{
+		Workers:    1,
+		Debounce:   0,
+		StaleAfter: time.Minute,
+	})
+	manager.Start(runCtx)
+	manager.ConfigureClient(fakeSuggester{
+		result: Result{
+			BranchName:     "chore/enable-todo-suggester-after-setup",
+			WorktreeSuffix: "chore-enable-todo-suggester-after-setup",
+			Kind:           "chore",
+			Reason:         "The task wires late setup configuration into the TODO suggester lifecycle.",
+			Confidence:     0.86,
+		},
+	})
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		suggestion, err := st.GetTodoWorktreeSuggestion(ctx, item.ID)
+		if err != nil {
+			t.Fatalf("GetTodoWorktreeSuggestion() error = %v", err)
+		}
+		if suggestion.Status == model.TodoWorktreeSuggestionReady {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	suggestion, err := st.GetTodoWorktreeSuggestion(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("final GetTodoWorktreeSuggestion() error = %v", err)
+	}
+	t.Fatalf("final status = %q, want %q", suggestion.Status, model.TodoWorktreeSuggestionReady)
+}

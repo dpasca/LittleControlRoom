@@ -3191,14 +3191,19 @@ func (s *Store) AddTodo(ctx context.Context, projectPath, text string) (model.To
 		return model.TodoItem{}, fmt.Errorf("todo text is required")
 	}
 	now := time.Now()
-	position, err := s.nextTodoPosition(ctx, projectPath)
+
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return model.TodoItem{}, err
 	}
-	result, err := s.db.ExecContext(ctx, `
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx, `
 		INSERT INTO project_todos(project_path, text, done, position, created_at, updated_at)
-		VALUES(?, ?, 0, ?, ?, ?)
-	`, projectPath, text, position, now.Unix(), now.Unix())
+		SELECT ?, ?, 0, COALESCE(MAX(position), -1) + 1, ?, ?
+		FROM project_todos
+		WHERE project_path = ?
+	`, projectPath, text, now.Unix(), now.Unix(), projectPath)
 	if err != nil {
 		return model.TodoItem{}, err
 	}
@@ -3206,7 +3211,16 @@ func (s *Store) AddTodo(ctx context.Context, projectPath, text string) (model.To
 	if err != nil {
 		return model.TodoItem{}, err
 	}
-	_, _ = s.db.ExecContext(ctx, `UPDATE projects SET updated_at = ? WHERE path = ?`, now.Unix(), projectPath)
+	var position int
+	if err := tx.QueryRowContext(ctx, `SELECT position FROM project_todos WHERE id = ?`, id).Scan(&position); err != nil {
+		return model.TodoItem{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE projects SET updated_at = ? WHERE path = ?`, now.Unix(), projectPath); err != nil {
+		return model.TodoItem{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return model.TodoItem{}, err
+	}
 	return model.TodoItem{
 		ID:          id,
 		ProjectPath: projectPath,
@@ -3650,18 +3664,6 @@ func (s *Store) DeleteDoneTodos(ctx context.Context, projectPath string) (int, e
 		return 0, err
 	}
 	return int(rowsAffected), nil
-}
-
-func (s *Store) nextTodoPosition(ctx context.Context, projectPath string) (int, error) {
-	var next int
-	if err := s.db.QueryRowContext(ctx, `
-		SELECT COALESCE(MAX(position), -1) + 1
-		FROM project_todos
-		WHERE project_path = ?
-	`, projectPath).Scan(&next); err != nil {
-		return 0, err
-	}
-	return next, nil
 }
 
 func (s *Store) SetRunCommand(ctx context.Context, path, command string) error {

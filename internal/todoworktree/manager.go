@@ -74,6 +74,9 @@ func (m *Manager) ConfigureClient(client Suggester) {
 	m.client = client
 	m.modelName = modelName
 	m.mu.Unlock()
+	if client != nil {
+		m.Notify()
+	}
 }
 
 func (m *Manager) currentClient() (Suggester, string) {
@@ -108,7 +111,7 @@ func (m *Manager) Notify() {
 }
 
 func (m *Manager) Start(ctx context.Context) {
-	if m == nil || m.store == nil || !m.Enabled() {
+	if m == nil || m.store == nil {
 		return
 	}
 	m.startOnce.Do(func() {

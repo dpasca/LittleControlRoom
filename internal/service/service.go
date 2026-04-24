@@ -138,6 +138,51 @@ func (s *Service) Bus() *events.Bus {
 	return s.bus
 }
 
+func (s *Service) currentSessionClassifier() SessionClassifier {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.classifier
+}
+
+func (s *Service) currentTodoSuggester() *todoworktree.Manager {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.todoSuggester
+}
+
+func (s *Service) currentCommitMessageSuggester() gitops.CommitMessageSuggester {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.commitMessageSuggester
+}
+
+func (s *Service) currentUntrackedFileRecommender() gitops.UntrackedFileRecommender {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.untrackedFileRecommender
+}
+
+func (s *Service) currentOpenCodeDiscovery() *llm.OpenCodeDiscovery {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.opencodeDiscovery
+}
+
 func (s *Service) Config() config.AppConfig {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -225,6 +270,8 @@ func (s *Service) lockProjectStateMutation(projectPath string) func() {
 }
 
 func (s *Service) SetSessionClassifier(classifier SessionClassifier) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.classifier = classifier
 }
 
@@ -305,63 +352,82 @@ func editableSettingsRequireAIClientRefresh(current config.AppConfig, settings c
 }
 
 func (s *Service) StartSessionClassifier(ctx context.Context) {
-	if s.classifier == nil {
+	classifier := s.currentSessionClassifier()
+	if classifier == nil {
 		return
 	}
-	s.classifier.Start(ctx)
+	classifier.Start(ctx)
 }
 
 func (s *Service) StartBackgroundDiscovery(ctx context.Context) {
-	if s.opencodeDiscovery == nil {
+	discovery := s.currentOpenCodeDiscovery()
+	if discovery == nil {
 		return
 	}
 	go func() {
 		_, _ = ctx.Deadline()
 		bgCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		_ = s.opencodeDiscovery.Discover(bgCtx)
+		_ = discovery.Discover(bgCtx)
 	}()
 }
 
 func (s *Service) StartTodoWorktreeSuggester(ctx context.Context) {
-	if s.todoSuggester == nil {
+	suggester := s.currentTodoSuggester()
+	if suggester == nil {
 		return
 	}
-	s.todoSuggester.Start(ctx)
+	suggester.Start(ctx)
 }
 
 func (s *Service) HasTodoWorktreeSuggester() bool {
-	if s == nil || s.todoSuggester == nil {
+	suggester := s.currentTodoSuggester()
+	if suggester == nil {
 		return false
 	}
-	return s.todoSuggester.Enabled()
+	return suggester.Enabled()
 }
 
 func (s *Service) HasSessionClassifier() bool {
-	if s.classifier == nil {
+	classifier := s.currentSessionClassifier()
+	if classifier == nil {
 		return false
 	}
-	if enabled, ok := s.classifier.(interface{ Enabled() bool }); ok {
+	if enabled, ok := classifier.(interface{ Enabled() bool }); ok {
 		return enabled.Enabled()
 	}
 	return true
 }
 
 func (s *Service) SessionUsage() model.LLMSessionUsage {
-	enabled := s.HasSessionClassifier() || s.commitMessageSuggester != nil
-	if s.llmUsageTracker != nil {
-		snapshot := s.llmUsageTracker.Snapshot(enabled)
+	s.mu.Lock()
+	classifier := s.classifier
+	commitMessageSuggesterConfigured := s.commitMessageSuggester != nil
+	usageTracker := s.llmUsageTracker
+	s.mu.Unlock()
+
+	classifierEnabled := false
+	if classifier != nil {
+		if enabled, ok := classifier.(interface{ Enabled() bool }); ok {
+			classifierEnabled = enabled.Enabled()
+		} else {
+			classifierEnabled = true
+		}
+	}
+	enabled := classifierEnabled || commitMessageSuggesterConfigured
+	if usageTracker != nil {
+		snapshot := usageTracker.Snapshot(enabled)
 		if hasMeaningfulLLMUsage(snapshot) {
 			return snapshot
 		}
 	}
-	if s.classifier == nil {
+	if classifier == nil {
 		if enabled {
 			return model.LLMSessionUsage{Enabled: true}
 		}
 		return model.LLMSessionUsage{}
 	}
-	if usageReader, ok := s.classifier.(interface{ UsageSnapshot() model.LLMSessionUsage }); ok {
+	if usageReader, ok := classifier.(interface{ UsageSnapshot() model.LLMSessionUsage }); ok {
 		return usageReader.UsageSnapshot()
 	}
 	return model.LLMSessionUsage{Enabled: enabled}
