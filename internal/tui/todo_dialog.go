@@ -197,11 +197,7 @@ func (m *Model) openTodoDialogForSelection() tea.Cmd {
 			project = rootProject
 		}
 	}
-	cmd := m.openTodoDialog(project)
-	if filepath.Clean(strings.TrimSpace(m.detail.Summary.Path)) != filepath.Clean(project.Path) {
-		return tea.Batch(cmd, m.requestProjectDetailViewCmd(project.Path))
-	}
-	return cmd
+	return m.openTodoDialog(project)
 }
 
 func (m *Model) openTodoDialog(project model.ProjectSummary) tea.Cmd {
@@ -216,18 +212,29 @@ func (m *Model) openTodoDialog(project model.ProjectSummary) tea.Cmd {
 	m.err = nil
 	m.status = "TODO list open. Enter starts selected item; a adds, e edits, space toggles, p purges done"
 	m.syncTodoDialogSelection()
-	return nil
+	return m.requestProjectDetailViewCmd(project.Path)
 }
 
 func (m Model) todoItemsFor(projectPath string) []model.TodoItem {
-	projectPath = strings.TrimSpace(projectPath)
+	projectPath = normalizeProjectPath(projectPath)
 	if projectPath == "" {
 		return nil
 	}
-	if strings.TrimSpace(m.detail.Summary.Path) == projectPath {
+	if normalizeProjectPath(m.detail.Summary.Path) == projectPath {
 		return append([]model.TodoItem(nil), m.detail.Todos...)
 	}
 	return nil
+}
+
+func (m Model) todoDialogDetailPending(projectPath string) bool {
+	projectPath = normalizeProjectPath(projectPath)
+	if projectPath == "" {
+		return false
+	}
+	if m.detailReloadInFlight[projectPath] || m.detailReloadQueued[projectPath] {
+		return true
+	}
+	return normalizeProjectPath(m.detail.Summary.Path) != projectPath
 }
 
 func (m *Model) syncTodoDialogSelection() {
@@ -1302,12 +1309,26 @@ func (m Model) renderTodoDialogOverlay(body string, bodyW, bodyH int) string {
 			openCount++
 		}
 	}
+	projectSummary, _ := m.projectSummaryByPath(dialog.ProjectPath)
+	displayOpenCount := openCount
+	displayTotalCount := len(items)
+	if len(items) == 0 && projectSummary.TotalTODOCount > 0 {
+		displayOpenCount = projectSummary.OpenTODOCount
+		displayTotalCount = projectSummary.TotalTODOCount
+	}
 	title := detailSectionStyle.Render("TODO") + "  " + detailValueStyle.Render(dialog.ProjectName)
-	summary := detailMutedStyle.Render(fmt.Sprintf("%d open, %d total", openCount, len(items)))
+	summary := detailMutedStyle.Render(fmt.Sprintf("%d open, %d total", displayOpenCount, displayTotalCount))
 	lines := []string{title, summary, ""}
 	if len(items) == 0 {
-		lines = append(lines, detailMutedStyle.Render("No TODOs yet"))
-		lines = append(lines, detailMutedStyle.Render("Press a to add one"))
+		if projectSummary.TotalTODOCount > 0 && m.todoDialogDetailPending(dialog.ProjectPath) {
+			lines = append(lines, detailMutedStyle.Render("Loading TODOs..."))
+		} else if projectSummary.TotalTODOCount > 0 {
+			lines = append(lines, detailWarningStyle.Render(fmt.Sprintf("TODO count says %d total, but the list did not load yet", projectSummary.TotalTODOCount)))
+			lines = append(lines, detailMutedStyle.Render("Close and reopen the dialog to retry"))
+		} else {
+			lines = append(lines, detailMutedStyle.Render("No TODOs yet"))
+			lines = append(lines, detailMutedStyle.Render("Press a to add one"))
+		}
 	} else {
 		start := min(dialog.Offset, len(items))
 		end := min(len(items), start+listH)

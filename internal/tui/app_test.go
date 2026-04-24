@@ -563,6 +563,91 @@ func TestDetailMsgUsesTodoDialogProjectPathWhenLinkedWorktreeSelected(t *testing
 	}
 }
 
+func TestOpenTodoDialogRequestsFreshDetailWhenSummaryHasTodosButDetailIsStale(t *testing.T) {
+	projectPath := "/tmp/demo"
+	project := model.ProjectSummary{
+		Path:           projectPath,
+		Name:           "demo",
+		OpenTODOCount:  1,
+		TotalTODOCount: 1,
+	}
+	m := Model{
+		projects:    []model.ProjectSummary{project},
+		allProjects: []model.ProjectSummary{project},
+		selected:    0,
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: projectPath},
+		},
+		width:  100,
+		height: 24,
+	}
+
+	cmd := m.openTodoDialog(project)
+
+	if cmd == nil {
+		t.Fatal("opening the TODO dialog should request a fresh detail snapshot")
+	}
+	if !m.detailReloadInFlight[projectPath] {
+		t.Fatalf("detail reloads = %#v, want %q in flight", m.detailReloadInFlight, projectPath)
+	}
+	rendered := ansi.Strip(m.renderTodoDialogOverlay("", 100, 24))
+	if !strings.Contains(rendered, "Loading TODOs") {
+		t.Fatalf("dialog should avoid a false empty state while detail reloads, got %q", rendered)
+	}
+	if strings.Contains(rendered, "No TODOs yet") {
+		t.Fatalf("dialog should not claim no TODOs while summary count is non-zero, got %q", rendered)
+	}
+}
+
+func TestSlashTodoUsesRepoRootAndRequestsFreshDetailForLinkedWorktree(t *testing.T) {
+	rootPath := "/tmp/repo"
+	worktreePath := "/tmp/repo--todo-fix"
+	root := model.ProjectSummary{
+		Path:             rootPath,
+		Name:             "repo",
+		WorktreeRootPath: rootPath,
+		WorktreeKind:     model.WorktreeKindMain,
+		OpenTODOCount:    1,
+		TotalTODOCount:   1,
+	}
+	worktree := model.ProjectSummary{
+		Path:             worktreePath,
+		Name:             "repo--todo-fix",
+		WorktreeRootPath: rootPath,
+		WorktreeKind:     model.WorktreeKindLinked,
+	}
+	m := Model{
+		projects:    []model.ProjectSummary{worktree},
+		allProjects: []model.ProjectSummary{root, worktree},
+		selected:    0,
+		detail: model.ProjectDetail{
+			Summary: worktree,
+		},
+		width:  100,
+		height: 24,
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindTodo})
+	got := updated.(Model)
+
+	if cmd == nil {
+		t.Fatal("/todo should request a fresh root detail snapshot")
+	}
+	if got.todoDialog == nil {
+		t.Fatal("/todo should open the TODO dialog")
+	}
+	if got.todoDialog.ProjectPath != rootPath {
+		t.Fatalf("todo dialog project path = %q, want root path %q", got.todoDialog.ProjectPath, rootPath)
+	}
+	if !got.detailReloadInFlight[rootPath] {
+		t.Fatalf("detail reloads = %#v, want root path in flight", got.detailReloadInFlight)
+	}
+	rendered := ansi.Strip(got.renderTodoDialogOverlay("", 100, 24))
+	if !strings.Contains(rendered, "Loading TODOs") {
+		t.Fatalf("dialog should show a pending root TODO load, got %q", rendered)
+	}
+}
+
 func TestProjectsMsgRerunsQueuedProjectsReload(t *testing.T) {
 	m := Model{
 		projectsReloadInFlight: true,

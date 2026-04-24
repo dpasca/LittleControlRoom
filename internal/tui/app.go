@@ -4782,12 +4782,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 	case commands.KindOpenCodeNew:
 		return m.launchOpenCodeForSelection(true, inv.Prompt)
 	case commands.KindTodo:
-		p, ok := m.selectedProject()
-		if !ok {
-			m.status = "No project selected"
-			return m, nil
-		}
-		return m, m.openTodoDialog(p)
+		return m, m.openTodoDialogForSelection()
 	case commands.KindWorktreeLanes:
 		return m, m.toggleSelectedWorktreeGroup()
 	case commands.KindWorktreeMerge:
