@@ -88,7 +88,7 @@ func NewOpenAICompatibleClientWithUsageTracker(baseURL, apiKey, preferredModel s
 func NewCodexClientWithUsageTrackerInDataDir(dataDir string, usage *llm.UsageTracker) *OpenAIClient {
 	return &OpenAIClient{
 		model:     configuredModel(localRunnerDefaultModel),
-		responses: llm.NewPersistentCodexRunnerInDataDir(dataDir, suggestionHTTPTimeout, usage),
+		responses: llm.NewCodexCapacityFallbackRunner(llm.NewPersistentCodexRunnerInDataDir(dataDir, suggestionHTTPTimeout, usage)),
 	}
 }
 

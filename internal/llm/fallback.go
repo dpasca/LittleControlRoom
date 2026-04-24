@@ -20,6 +20,24 @@ type FallbackRunner struct {
 	usage       *UsageTracker
 }
 
+type ModelFallback struct {
+	FromModel       string
+	Model           string
+	ReasoningEffort string
+}
+
+type ModelFallbackRunner struct {
+	baseRunner JSONSchemaRunner
+	fallbacks  []ModelFallback
+}
+
+const (
+	codexMiniCapacityFallbackSourceModel     = "gpt-5.4-mini"
+	codexMiniCapacityFallbackTargetModel     = "gpt-5.4"
+	codexMiniCapacityFallbackReasoningEffort = "low"
+	selectedModelAtCapacityMessage           = "selected model is at capacity. please try a different model."
+)
+
 func NewFallbackRunner(discovery *OpenCodeDiscovery, baseRunner JSONSchemaRunner, config ModelSelectionConfig, usage *UsageTracker) *FallbackRunner {
 	return &FallbackRunner{
 		discovery:  discovery,
@@ -27,6 +45,76 @@ func NewFallbackRunner(discovery *OpenCodeDiscovery, baseRunner JSONSchemaRunner
 		config:     config,
 		usage:      usage,
 	}
+}
+
+func NewModelFallbackRunner(baseRunner JSONSchemaRunner, fallbacks []ModelFallback) *ModelFallbackRunner {
+	return &ModelFallbackRunner{
+		baseRunner: baseRunner,
+		fallbacks:  slicesClone(fallbacks),
+	}
+}
+
+func NewCodexCapacityFallbackRunner(baseRunner JSONSchemaRunner) JSONSchemaRunner {
+	return NewModelFallbackRunner(baseRunner, []ModelFallback{
+		{
+			FromModel:       codexMiniCapacityFallbackSourceModel,
+			Model:           codexMiniCapacityFallbackTargetModel,
+			ReasoningEffort: codexMiniCapacityFallbackReasoningEffort,
+		},
+	})
+}
+
+func (r *ModelFallbackRunner) RunJSONSchema(ctx context.Context, req JSONSchemaRequest) (JSONSchemaResponse, error) {
+	if r == nil || r.baseRunner == nil {
+		return JSONSchemaResponse{}, errors.New("model fallback runner not configured")
+	}
+
+	resp, err := r.baseRunner.RunJSONSchema(ctx, req)
+	if err == nil {
+		return resp, nil
+	}
+	if !isModelFallbackError(err) {
+		return JSONSchemaResponse{}, err
+	}
+
+	lastErr := err
+	primaryModel := strings.TrimSpace(req.Model)
+	tried := map[string]struct{}{}
+	if primaryModel != "" {
+		tried[strings.ToLower(primaryModel)] = struct{}{}
+	}
+
+	for _, fallback := range r.fallbacks {
+		if !modelFallbackApplies(fallback, primaryModel) {
+			continue
+		}
+		fallbackModel := strings.TrimSpace(fallback.Model)
+		if fallbackModel == "" {
+			continue
+		}
+		key := strings.ToLower(fallbackModel)
+		if _, ok := tried[key]; ok {
+			continue
+		}
+		tried[key] = struct{}{}
+
+		attemptReq := req
+		attemptReq.Model = fallbackModel
+		if effort := strings.TrimSpace(fallback.ReasoningEffort); effort != "" {
+			attemptReq.ReasoningEffort = effort
+		}
+
+		resp, err = r.baseRunner.RunJSONSchema(ctx, attemptReq)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if !isModelFallbackError(err) {
+			return JSONSchemaResponse{}, err
+		}
+	}
+
+	return JSONSchemaResponse{}, lastErr
 }
 
 func (r *FallbackRunner) RunJSONSchema(ctx context.Context, req JSONSchemaRequest) (JSONSchemaResponse, error) {
@@ -79,7 +167,7 @@ func (r *FallbackRunner) RunJSONSchema(ctx context.Context, req JSONSchemaReques
 		r.lastError = err
 		r.mu.Unlock()
 
-		if !isRateLimitError(err) {
+		if !isModelFallbackError(err) {
 			return JSONSchemaResponse{}, err
 		}
 
@@ -96,6 +184,22 @@ func (r *FallbackRunner) RunJSONSchema(ctx context.Context, req JSONSchemaReques
 		return JSONSchemaResponse{}, lastErr
 	}
 	return JSONSchemaResponse{}, errors.New("all models in fallback chain failed")
+}
+
+func modelFallbackApplies(fallback ModelFallback, currentModel string) bool {
+	fromModel := strings.TrimSpace(fallback.FromModel)
+	return fromModel == "" || strings.EqualFold(fromModel, strings.TrimSpace(currentModel))
+}
+
+func isModelFallbackError(err error) bool {
+	return isRateLimitError(err) || IsModelCapacityError(err)
+}
+
+func IsModelCapacityError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), selectedModelAtCapacityMessage)
 }
 
 func isRateLimitError(err error) bool {

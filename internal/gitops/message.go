@@ -123,7 +123,7 @@ func NewCodexCommitMessageClientWithUsageTrackerInDataDir(dataDir string, usage 
 	}
 	return &OpenAICommitMessageClient{
 		model:     model,
-		responses: llm.NewPersistentCodexRunnerInDataDir(dataDir, commitAssistantHTTPTimeout, usage),
+		responses: llm.NewCodexCapacityFallbackRunner(llm.NewPersistentCodexRunnerInDataDir(dataDir, commitAssistantHTTPTimeout, usage)),
 	}
 }
 
