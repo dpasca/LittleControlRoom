@@ -108,7 +108,7 @@ func NewCodexClientWithUsageTracker(usage *llm.UsageTracker) *OpenAIClient {
 func NewCodexClientWithUsageTrackerInDataDir(dataDir string, usage *llm.UsageTracker) *OpenAIClient {
 	return &OpenAIClient{
 		model:     configuredClassifierModel(localRunnerDefaultModel),
-		responses: llm.NewPersistentCodexRunnerInDataDir(dataDir, classifierHTTPTimeout, usage),
+		responses: llm.NewCodexCapacityFallbackRunner(llm.NewPersistentCodexRunnerInDataDir(dataDir, classifierHTTPTimeout, usage)),
 		localCLI:  true,
 	}
 }
