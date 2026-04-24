@@ -125,3 +125,22 @@ func TestStartSerializesConcurrentStartsForSameProject(t *testing.T) {
 		t.Fatal("second start did not finish")
 	}
 }
+
+func TestCloseAllIgnoresAlreadyStoppedRuntime(t *testing.T) {
+	dir := t.TempDir()
+	manager := NewManager()
+	defer func() { _ = manager.CloseAll() }()
+
+	manager.mu.Lock()
+	manager.runtimes[dir] = &managedRuntime{
+		projectPath: dir,
+		command:     "true",
+		running:     false,
+		exitedAt:    time.Now(),
+	}
+	manager.mu.Unlock()
+
+	if err := manager.CloseAll(); err != nil {
+		t.Fatalf("CloseAll() error = %v, want nil for stopped runtime", err)
+	}
+}

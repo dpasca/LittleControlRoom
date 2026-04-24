@@ -62,6 +62,7 @@ type Manager struct {
 	opLocks     keyedmutex.Locker
 	prepare     func(string, string) error
 	done        chan struct{}
+	doneOnce    sync.Once
 }
 
 type managedRuntime struct {
@@ -80,6 +81,12 @@ type managedRuntime struct {
 	ports         []int
 	announcedURLs []string
 	recentOutput  []string
+}
+
+type managedRuntimeStopTarget struct {
+	projectPath string
+	runtime     *managedRuntime
+	cmd         *exec.Cmd
 }
 
 type processGroupReader func() (map[int]int, error)
@@ -101,30 +108,27 @@ func (m *Manager) CloseAll() error {
 	if m == nil {
 		return nil
 	}
-	select {
-	case <-m.done:
-	default:
-		close(m.done)
-	}
+	m.doneOnce.Do(func() { close(m.done) })
 
 	m.mu.Lock()
-	runtimes := make([]*managedRuntime, 0, len(m.runtimes))
-	for _, runtime := range m.runtimes {
-		if runtime != nil && runtime.running {
-			runtime.stopRequested = true
+	targets := make([]managedRuntimeStopTarget, 0, len(m.runtimes))
+	for projectPath, runtime := range m.runtimes {
+		if runtime == nil || !runtime.running {
+			continue
 		}
-		runtimes = append(runtimes, runtime)
+		runtime.stopRequested = true
+		targets = append(targets, managedRuntimeStopTarget{
+			projectPath: projectPath,
+			runtime:     runtime,
+			cmd:         runtime.process,
+		})
 	}
 	m.mu.Unlock()
 
 	var firstErr error
-	for _, runtime := range runtimes {
-		if err := stopManagedRuntime(runtime); err != nil {
-			m.mu.Lock()
-			if runtime != nil {
-				runtime.stopRequested = false
-			}
-			m.mu.Unlock()
+	for _, target := range targets {
+		if err := stopManagedCommand(target.cmd); err != nil {
+			m.clearStopRequested(target)
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -286,22 +290,33 @@ func (m *Manager) Stop(projectPath string) error {
 
 	m.mu.Lock()
 	runtime := m.runtimes[projectPath]
-	if runtime != nil && runtime.running {
-		runtime.stopRequested = true
-	}
-	m.mu.Unlock()
 	if runtime == nil || !runtime.running {
+		m.mu.Unlock()
 		return ErrNotRunning
 	}
-	if err := stopManagedRuntime(runtime); err != nil {
-		m.mu.Lock()
-		if current := m.runtimes[projectPath]; current == runtime {
-			current.stopRequested = false
-		}
-		m.mu.Unlock()
+	runtime.stopRequested = true
+	target := managedRuntimeStopTarget{
+		projectPath: projectPath,
+		runtime:     runtime,
+		cmd:         runtime.process,
+	}
+	m.mu.Unlock()
+	if err := stopManagedCommand(target.cmd); err != nil {
+		m.clearStopRequested(target)
 		return err
 	}
 	return nil
+}
+
+func (m *Manager) clearStopRequested(target managedRuntimeStopTarget) {
+	if m == nil || target.runtime == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if current := m.runtimes[target.projectPath]; current == target.runtime {
+		current.stopRequested = false
+	}
 }
 
 func (m *Manager) Snapshot(projectPath string) (Snapshot, error) {
@@ -519,11 +534,11 @@ func snapshotFromRuntime(runtime *managedRuntime, portOwners map[int][]string) S
 	}
 }
 
-func stopManagedRuntime(runtime *managedRuntime) error {
-	if runtime == nil || runtime.process == nil || runtime.process.Process == nil {
+func stopManagedCommand(cmd *exec.Cmd) error {
+	if cmd == nil || cmd.Process == nil {
 		return ErrNotRunning
 	}
-	if err := terminateManagedCommand(runtime.process); err != nil {
+	if err := terminateManagedCommand(cmd); err != nil {
 		return err
 	}
 	return nil
