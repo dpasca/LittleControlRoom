@@ -248,6 +248,14 @@ type browserOpenMsg struct {
 	managedBrowserStateSet  bool
 }
 
+type codexArtifactPreviewMsg struct {
+	projectPath string
+	path        string
+	seq         int64
+	data        []byte
+	err         error
+}
+
 type runtimeActionMsg struct {
 	projectPath string
 	status      string
@@ -1434,6 +1442,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		m.status = msg.status
 		return m, nil
+	case codexArtifactPreviewMsg:
+		return m.applyCodexArtifactPreviewMsg(msg)
 	case runtimeActionMsg:
 		if msg.err != nil {
 			m.reportError("Runtime action failed", msg.err, msg.projectPath)
@@ -4148,13 +4158,13 @@ func (m Model) openProjectDirInBrowserCmd(path string) tea.Cmd {
 	}
 }
 
-func (m Model) openGeneratedImageCmd(path string) tea.Cmd {
+func (m Model) openArtifactCmd(path string) tea.Cmd {
 	projectPath := m.codexVisibleProject
 	return func() tea.Msg {
 		if err := externalPathOpener(path); err != nil {
 			return browserOpenMsg{projectPath: projectPath, err: err}
 		}
-		return browserOpenMsg{projectPath: projectPath, status: "Opened generated image"}
+		return browserOpenMsg{projectPath: projectPath, status: "Opened artifact"}
 	}
 }
 

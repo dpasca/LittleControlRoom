@@ -161,7 +161,7 @@ func renderGeneratedImageOpenHint(width int) string {
 	return lipgloss.NewStyle().
 		Foreground(lipgloss.Color("111")).
 		Width(max(10, width)).
-		Render("Alt+O image picker")
+		Render("Alt+O artifact picker")
 }
 
 func renderGeneratedImageFileLine(path string, width int) string {

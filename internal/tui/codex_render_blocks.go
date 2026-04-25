@@ -632,8 +632,8 @@ func parseCodexMarkdownLinkTarget(text string) (target string, consumed int, ok 
 func renderCodexHyperlink(label, target string, style lipgloss.Style) string {
 	linkStyle := style.Copy().Foreground(lipgloss.Color("111")).Underline(true)
 	if localPath, ok := codexLocalLinkText(target); ok {
-		if isCodexLocalImagePath(localPath) {
-			return renderCodexLocalImageLink(label, localPath, linkStyle)
+		if isCodexOpenableArtifactPath(localPath) {
+			return renderCodexLocalArtifactLink(label, localPath, linkStyle)
 		}
 		return renderCodexLocalLink(label, localPath, linkStyle)
 	}
@@ -651,7 +651,7 @@ func renderCodexLocalLink(label, target string, linkStyle lipgloss.Style) string
 	return ansi.SetHyperlink(target) + renderedLabel + ansi.ResetHyperlink()
 }
 
-func renderCodexLocalImageLink(label, target string, linkStyle lipgloss.Style) string {
+func renderCodexLocalArtifactLink(label, target string, linkStyle lipgloss.Style) string {
 	label = codexLocalLinkLabel(label, target)
 	target = strings.TrimSpace(target)
 	if target == "" || label == target {
@@ -739,10 +739,34 @@ func isCodexLineFragment(text string) bool {
 }
 
 func isCodexLocalImagePath(path string) bool {
+	return codexArtifactKindForPath(path) == "image"
+}
+
+func isCodexOpenableArtifactPath(path string) bool {
+	return codexArtifactKindForPath(path) != ""
+}
+
+func codexArtifactKindForPath(path string) string {
 	switch strings.ToLower(filepath.Ext(strings.TrimSpace(path))) {
-	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".heif":
-		return true
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".heif", ".svg":
+		return "image"
+	case ".pdf":
+		return "pdf"
+	case ".csv", ".tsv", ".xlsx", ".xls", ".ods", ".numbers":
+		return "sheet"
+	case ".doc", ".docx", ".pages", ".rtf":
+		return "doc"
+	case ".ppt", ".pptx", ".key":
+		return "deck"
+	case ".zip", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar":
+		return "archive"
+	case ".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm":
+		return "video"
+	case ".mp3", ".wav", ".m4a", ".aac", ".flac":
+		return "audio"
+	case ".html", ".htm":
+		return "html"
 	default:
-		return false
+		return ""
 	}
 }

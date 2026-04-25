@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -2428,8 +2429,8 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			actions = append(actions, footerNavAction("Ctrl+O", m.managedBrowserCurrentPageFooterLabel(snapshot)))
 		}
 	}
-	if len(codexImageOpenTargets(snapshot)) > 0 && codexArtifactPickerAllowed(snapshot) {
-		actions = append(actions, footerNavAction("Alt+O", "images"))
+	if len(codexArtifactOpenTargets(snapshot)) > 0 && codexArtifactPickerAllowed(snapshot) {
+		actions = append(actions, footerNavAction("Alt+O", "artifacts"))
 	}
 	if mismatchStatus := m.codexBrowserReconnectStatus(snapshot); mismatchStatus != "" && !snapshot.Closed && !snapshot.BusyExternal {
 		actions = append(actions, footerNavAction("/reconnect", "apply browser"))
@@ -2624,34 +2625,42 @@ func (m Model) renderCodexTranscriptContentFromSnapshot(snapshot codexapp.Snapsh
 }
 
 type codexArtifactOpenTarget struct {
-	Kind  string
-	Label string
-	Path  string
+	Kind        string
+	Label       string
+	Path        string
+	PreviewData []byte
 }
 
 type codexArtifactPickerState struct {
-	ProjectPath string
-	Title       string
-	Hint        string
-	Targets     []codexArtifactOpenTarget
-	Selected    int
+	ProjectPath     string
+	Title           string
+	Hint            string
+	Targets         []codexArtifactOpenTarget
+	Selected        int
+	PreviewSeq      int64
+	PreviewRequests map[string]int64
+	PreviewData     map[string][]byte
+	PreviewErrors   map[string]string
 }
 
 func (m Model) openCodexArtifactPicker(snapshot codexapp.Snapshot) (tea.Model, tea.Cmd) {
-	targets := codexImageOpenTargets(snapshot)
+	targets := codexArtifactOpenTargets(snapshot)
 	if len(targets) == 0 {
-		m.status = "No images in this embedded transcript"
+		m.status = "No openable artifacts in this embedded transcript"
 		return m, nil
 	}
 	m.codexArtifactPicker = &codexArtifactPickerState{
-		ProjectPath: strings.TrimSpace(firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject)),
-		Title:       "Open Images",
-		Hint:        "Images from this embedded transcript. Enter opens with the system app.",
-		Targets:     targets,
-		Selected:    len(targets) - 1,
+		ProjectPath:     strings.TrimSpace(firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject)),
+		Title:           "Open Artifacts",
+		Hint:            "Images and linked files from this embedded transcript. Enter opens with the system app.",
+		Targets:         targets,
+		Selected:        len(targets) - 1,
+		PreviewRequests: make(map[string]int64),
+		PreviewData:     make(map[string][]byte),
+		PreviewErrors:   make(map[string]string),
 	}
 	m.status = "Image picker open"
-	return m, nil
+	return m, m.codexArtifactPickerPreviewCmd()
 }
 
 func (m Model) updateCodexArtifactPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -2660,7 +2669,7 @@ func (m Model) updateCodexArtifactPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd
 		return m, nil
 	}
 	if len(picker.Targets) == 0 {
-		m.closeCodexArtifactPicker("No images in this embedded transcript")
+		m.closeCodexArtifactPicker("No openable artifacts in this embedded transcript")
 		return m, nil
 	}
 	if picker.Selected < 0 {
@@ -2675,26 +2684,26 @@ func (m Model) updateCodexArtifactPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd
 		return m, nil
 	case "up", "k":
 		picker.Selected = max(0, picker.Selected-1)
-		return m, nil
+		return m, m.codexArtifactPickerPreviewCmd()
 	case "down", "j":
 		picker.Selected = min(len(picker.Targets)-1, picker.Selected+1)
-		return m, nil
+		return m, m.codexArtifactPickerPreviewCmd()
 	case "pgup", "ctrl+u":
 		picker.Selected = max(0, picker.Selected-5)
-		return m, nil
+		return m, m.codexArtifactPickerPreviewCmd()
 	case "pgdown", "ctrl+d":
 		picker.Selected = min(len(picker.Targets)-1, picker.Selected+5)
-		return m, nil
+		return m, m.codexArtifactPickerPreviewCmd()
 	case "home":
 		picker.Selected = 0
-		return m, nil
+		return m, m.codexArtifactPickerPreviewCmd()
 	case "end":
 		picker.Selected = len(picker.Targets) - 1
-		return m, nil
+		return m, m.codexArtifactPickerPreviewCmd()
 	case "enter", "alt+o":
 		target := picker.Targets[picker.Selected]
 		m.closeCodexArtifactPicker("Opening " + codexArtifactTargetDisplay(target))
-		return m, m.openGeneratedImageCmd(target.Path)
+		return m, m.openArtifactCmd(target.Path)
 	}
 	return m, nil
 }
@@ -2708,6 +2717,85 @@ func (m *Model) closeCodexArtifactPicker(status string) {
 
 func codexArtifactPickerAllowed(snapshot codexapp.Snapshot) bool {
 	return snapshot.PendingApproval == nil && snapshot.PendingToolInput == nil && snapshot.PendingElicitation == nil
+}
+
+func (m *Model) codexArtifactPickerPreviewCmd() tea.Cmd {
+	picker := m.codexArtifactPicker
+	if picker == nil {
+		return nil
+	}
+	target, ok := m.currentCodexArtifactTarget()
+	if !ok {
+		return nil
+	}
+	path := strings.TrimSpace(target.Path)
+	if strings.TrimSpace(target.Kind) != "image" || path == "" || len(target.PreviewData) > 0 {
+		return nil
+	}
+	if len(picker.PreviewData[path]) > 0 || strings.TrimSpace(picker.PreviewErrors[path]) != "" {
+		return nil
+	}
+	if picker.PreviewRequests == nil {
+		picker.PreviewRequests = make(map[string]int64)
+	}
+	if picker.PreviewRequests[path] > 0 {
+		return nil
+	}
+	picker.PreviewSeq++
+	seq := picker.PreviewSeq
+	picker.PreviewRequests[path] = seq
+	projectPath := strings.TrimSpace(picker.ProjectPath)
+	return loadCodexArtifactPreviewCmd(projectPath, path, seq)
+}
+
+const maxCodexArtifactPreviewBytes = 25 * 1024 * 1024
+
+func loadCodexArtifactPreviewCmd(projectPath, path string, seq int64) tea.Cmd {
+	return func() tea.Msg {
+		info, err := os.Stat(path)
+		if err != nil {
+			return codexArtifactPreviewMsg{projectPath: projectPath, path: path, seq: seq, err: fmt.Errorf("inspect preview: %w", err)}
+		}
+		if info.IsDir() {
+			return codexArtifactPreviewMsg{projectPath: projectPath, path: path, seq: seq, err: fmt.Errorf("path is a directory")}
+		}
+		if info.Size() > maxCodexArtifactPreviewBytes {
+			return codexArtifactPreviewMsg{projectPath: projectPath, path: path, seq: seq, err: fmt.Errorf("image is too large for preview")}
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return codexArtifactPreviewMsg{projectPath: projectPath, path: path, seq: seq, err: fmt.Errorf("read preview: %w", err)}
+		}
+		return codexArtifactPreviewMsg{projectPath: projectPath, path: path, seq: seq, data: data}
+	}
+}
+
+func (m Model) applyCodexArtifactPreviewMsg(msg codexArtifactPreviewMsg) (tea.Model, tea.Cmd) {
+	picker := m.codexArtifactPicker
+	if picker == nil {
+		return m, nil
+	}
+	path := strings.TrimSpace(msg.path)
+	if path == "" || strings.TrimSpace(msg.projectPath) != strings.TrimSpace(picker.ProjectPath) {
+		return m, nil
+	}
+	if picker.PreviewRequests == nil || picker.PreviewRequests[path] != msg.seq {
+		return m, nil
+	}
+	delete(picker.PreviewRequests, path)
+	if picker.PreviewData == nil {
+		picker.PreviewData = make(map[string][]byte)
+	}
+	if picker.PreviewErrors == nil {
+		picker.PreviewErrors = make(map[string]string)
+	}
+	if msg.err != nil {
+		picker.PreviewErrors[path] = strings.TrimSpace(msg.err.Error())
+		return m, nil
+	}
+	delete(picker.PreviewErrors, path)
+	picker.PreviewData[path] = append([]byte(nil), msg.data...)
+	return m, nil
 }
 
 func codexArtifactTargetDisplay(target codexArtifactOpenTarget) string {
@@ -2760,7 +2848,7 @@ func (m Model) renderCodexArtifactPickerContent(width, bodyH int) string {
 	}
 	hint := strings.TrimSpace(picker.Hint)
 	if hint == "" {
-		hint = "Artifacts from this embedded transcript."
+		hint = "Images and linked files from this embedded transcript."
 	}
 	lines := []string{
 		commandPaletteTitleStyle.Render(title),
@@ -2792,8 +2880,38 @@ func (m Model) renderCodexArtifactPickerContent(width, bodyH int) string {
 		if path := strings.TrimSpace(selected.Path); path != "" {
 			lines = append(lines, commandPaletteHintStyle.Render(fitFooterWidth(path, width)))
 		}
+		if preview := strings.TrimSpace(m.renderCodexArtifactPreview(selected, width, bodyH)); preview != "" {
+			lines = append(lines, "")
+			lines = append(lines, commandPaletteTitleStyle.Render("Preview"))
+			lines = append(lines, preview)
+		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderCodexArtifactPreview(target codexArtifactOpenTarget, width, bodyH int) string {
+	if strings.TrimSpace(target.Kind) != "image" {
+		return ""
+	}
+	data := target.PreviewData
+	path := strings.TrimSpace(target.Path)
+	picker := m.codexArtifactPicker
+	if len(data) == 0 && picker != nil && path != "" {
+		data = picker.PreviewData[path]
+	}
+	maxRows := max(3, min(8, bodyH/4))
+	if len(data) > 0 {
+		return renderANSIImagePreview(data, max(12, width), maxRows)
+	}
+	if picker != nil && path != "" {
+		if errText := strings.TrimSpace(picker.PreviewErrors[path]); errText != "" {
+			return commandPaletteHintStyle.Render("Preview unavailable: " + truncateText(errText, max(20, width-22)))
+		}
+		if picker.PreviewRequests[path] > 0 {
+			return commandPaletteHintStyle.Render("Loading preview...")
+		}
+	}
+	return commandPaletteHintStyle.Render("Preview unavailable.")
 }
 
 func codexArtifactPickerWindow(selected, total, bodyH int) (int, int) {
@@ -2803,7 +2921,7 @@ func codexArtifactPickerWindow(selected, total, bodyH int) (int, int) {
 	if bodyH <= 0 {
 		bodyH = 30
 	}
-	limit := min(total, max(3, min(10, bodyH-14)))
+	limit := min(total, max(3, min(6, bodyH-18)))
 	start := 0
 	if selected >= limit {
 		start = selected - limit + 1
@@ -2835,7 +2953,7 @@ func renderCodexArtifactPickerRow(target codexArtifactOpenTarget, selected bool,
 	return commandPaletteRowStyle.Width(width).Render(row)
 }
 
-func codexImageOpenTargets(snapshot codexapp.Snapshot) []codexArtifactOpenTarget {
+func codexArtifactOpenTargets(snapshot codexapp.Snapshot) []codexArtifactOpenTarget {
 	targets := make([]codexArtifactOpenTarget, 0)
 	for _, entry := range snapshot.Entries {
 		if image := entry.GeneratedImage; image != nil {
@@ -2844,16 +2962,21 @@ func codexImageOpenTargets(snapshot codexapp.Snapshot) []codexArtifactOpenTarget
 				path = strings.TrimSpace(image.SourcePath)
 			}
 			if path != "" {
-				targets = append(targets, codexArtifactOpenTarget{Kind: "image", Label: "Generated image", Path: path})
+				targets = append(targets, codexArtifactOpenTarget{
+					Kind:        "image",
+					Label:       "Generated image",
+					Path:        path,
+					PreviewData: append([]byte(nil), image.PreviewData...),
+				})
 			}
 			continue
 		}
-		targets = append(targets, codexImageOpenTargetsFromMarkdown(entry.Text)...)
+		targets = append(targets, codexArtifactOpenTargetsFromMarkdown(entry.Text)...)
 	}
 	return targets
 }
 
-func codexImageOpenTargetsFromMarkdown(text string) []codexArtifactOpenTarget {
+func codexArtifactOpenTargetsFromMarkdown(text string) []codexArtifactOpenTarget {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return nil
@@ -2870,8 +2993,10 @@ func codexImageOpenTargetsFromMarkdown(text string) []codexArtifactOpenTarget {
 			remaining = remaining[idx+1:]
 			continue
 		}
-		if localPath, ok := codexLocalLinkText(target); ok && isCodexLocalImagePath(localPath) {
-			targets = append(targets, codexArtifactOpenTarget{Kind: "image", Label: label, Path: localPath})
+		if localPath, ok := codexLocalLinkText(target); ok {
+			if kind := codexArtifactKindForPath(localPath); kind != "" {
+				targets = append(targets, codexArtifactOpenTarget{Kind: kind, Label: label, Path: localPath})
+			}
 		}
 		remaining = remaining[idx+max(1, consumed):]
 	}
