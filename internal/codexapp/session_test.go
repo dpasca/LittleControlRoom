@@ -1,10 +1,15 @@
 package codexapp
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"os"
 	"os/exec"
@@ -79,6 +84,69 @@ func TestHydrateResumedThreadBuildsTranscript(t *testing.T) {
 	}
 }
 
+func TestHydrateResumedThreadMaterializesGeneratedImages(t *testing.T) {
+	dataDir := t.TempDir()
+	imageBytes := mustGeneratedImageTestPNG(t)
+	encoded := base64.StdEncoding.EncodeToString(imageBytes)
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		dataDir:     dataDir,
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+	}
+
+	s.hydrateResumedThread(resumedThread{
+		ID: "thread_demo",
+		Status: resumedThreadStatus{
+			Type: "idle",
+		},
+		Turns: []resumedTurn{
+			{
+				ID:     "turn_1",
+				Status: "completed",
+				Items: []map[string]json.RawMessage{
+					{
+						"id":         json.RawMessage(`"ig_demo"`),
+						"type":       json.RawMessage(`"imageGeneration"`),
+						"status":     json.RawMessage(`"generating"`),
+						"result":     jsonStringRaw(t, encoded),
+						"saved_path": json.RawMessage(`"/tmp/lcroom-codex-home-deleted/generated_images/ig_demo.png"`),
+					},
+				},
+			},
+		},
+	})
+
+	snapshot := s.Snapshot()
+	if len(snapshot.Entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(snapshot.Entries))
+	}
+	entry := snapshot.Entries[0]
+	if entry.GeneratedImage == nil {
+		t.Fatalf("generated image metadata missing from transcript entry: %#v", entry)
+	}
+	wantPath := filepath.Join(dataDir, "artifacts", generatedImageArtifactRootName, "thread_demo", "ig_demo.png")
+	if entry.GeneratedImage.Path != wantPath {
+		t.Fatalf("generated image path = %q, want %q", entry.GeneratedImage.Path, wantPath)
+	}
+	if entry.GeneratedImage.Width != 2 || entry.GeneratedImage.Height != 1 {
+		t.Fatalf("generated image dimensions = %dx%d, want 2x1", entry.GeneratedImage.Width, entry.GeneratedImage.Height)
+	}
+	written, err := os.ReadFile(wantPath)
+	if err != nil {
+		t.Fatalf("expected durable generated image file: %v", err)
+	}
+	if !bytes.Equal(written, imageBytes) {
+		t.Fatalf("durable generated image bytes differ from result bytes")
+	}
+	if strings.Contains(entry.Text, encoded) || strings.Contains(snapshot.Transcript, encoded) {
+		t.Fatalf("transcript should not expose generated image base64")
+	}
+	if strings.Contains(entry.Text, "[generating]") {
+		t.Fatalf("completed image result should not render as still generating: %q", entry.Text)
+	}
+}
+
 func TestHydrateResumedThreadTracksCurrentPlaywrightPageURL(t *testing.T) {
 	s := &appServerSession{
 		projectPath: "/tmp/demo",
@@ -120,6 +188,27 @@ func TestHydrateResumedThreadTracksCurrentPlaywrightPageURL(t *testing.T) {
 	if got, want := snapshot.CurrentBrowserPageURL, "https://chartboost.us.auth0.com/u/login?state=demo"; got != want {
 		t.Fatalf("current browser page URL = %q, want %q", got, want)
 	}
+}
+
+func mustGeneratedImageTestPNG(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 2, 1))
+	img.SetRGBA(0, 0, color.RGBA{R: 255, A: 255})
+	img.SetRGBA(1, 0, color.RGBA{B: 255, A: 255})
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encode png: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func jsonStringRaw(t *testing.T, text string) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(text)
+	if err != nil {
+		t.Fatalf("marshal json string: %v", err)
+	}
+	return raw
 }
 
 func TestHydrateResumedThreadMarksActiveTurnBusy(t *testing.T) {

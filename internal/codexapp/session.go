@@ -69,6 +69,7 @@ type appServerSession struct {
 	playwrightPolicy         browserctl.Policy
 	playwrightMCPExpected    bool
 	managedBrowserSessionKey string
+	dataDir                  string
 	codexHomeOverlay         string
 
 	cmd   *exec.Cmd
@@ -129,10 +130,11 @@ type appServerSession struct {
 }
 
 type transcriptEntry struct {
-	ItemID      string
-	Kind        TranscriptKind
-	Text        string
-	DisplayText string
+	ItemID         string
+	Kind           TranscriptKind
+	Text           string
+	DisplayText    string
+	GeneratedImage *GeneratedImageArtifact
 }
 
 type browserToolCall struct {
@@ -546,6 +548,7 @@ func newAppServerSession(req LaunchRequest, notify func()) (Session, error) {
 		playwrightPolicy:         policy,
 		playwrightMCPExpected:    shouldShadowPlaywrightSkill(policy),
 		managedBrowserSessionKey: strings.TrimSpace(req.ManagedBrowserSessionKey),
+		dataDir:                  strings.TrimSpace(req.AppDataDir),
 		pending:                  make(map[string]chan rpcEnvelope),
 		exitCh:                   make(chan struct{}),
 		activeItems:              make(map[string]struct{}),
@@ -2530,12 +2533,12 @@ func (s *appServerSession) handleItemStarted(params json.RawMessage) {
 	case "agentMessage":
 		s.ensureItemEntryLocked(itemID, TranscriptAgent, "")
 	default:
-		itemID, kind, text := renderResumedThreadItemForTurn("inProgress", msg.Item)
+		itemID, kind, text, image := s.renderThreadItemForTurn("inProgress", msg.Item)
 		if strings.TrimSpace(text) != "" && itemType == "commandExecution" && !strings.HasSuffix(text, "\n") {
 			text += "\n"
 		}
 		if strings.TrimSpace(text) != "" {
-			s.upsertItemEntryLocked(itemID, kind, text)
+			s.upsertRenderedItemEntryLocked(itemID, kind, text, image)
 		}
 	}
 	s.mu.Unlock()
@@ -2587,9 +2590,9 @@ func (s *appServerSession) handleItemCompleted(params json.RawMessage) {
 	case "fileChange":
 		s.finalizeFileChangeItemLocked(itemID, msg.Item)
 	default:
-		itemID, kind, text := renderResumedThreadItemForTurn("completed", msg.Item)
+		itemID, kind, text, image := s.renderThreadItemForTurn("completed", msg.Item)
 		if strings.TrimSpace(text) != "" {
-			s.upsertItemEntryLocked(itemID, kind, text)
+			s.upsertRenderedItemEntryLocked(itemID, kind, text, image)
 		}
 	}
 	s.markItemCompletedLocked(itemID)
@@ -3255,12 +3258,13 @@ func (s *appServerSession) upsertItemEntryLocked(itemID string, kind TranscriptK
 		return
 	}
 	if index, ok := s.entryIndex[itemID]; ok {
-		if s.entries[index].Kind == kind && s.entries[index].Text == text {
+		if s.entries[index].Kind == kind && s.entries[index].Text == text && s.entries[index].GeneratedImage == nil {
 			return
 		}
 		s.invalidateTranscriptCacheLocked()
 		s.entries[index].Kind = kind
 		s.entries[index].Text = text
+		s.entries[index].GeneratedImage = nil
 		return
 	}
 	if s.bindOptimisticEntryLocked(itemID, kind, text) {
@@ -3269,6 +3273,37 @@ func (s *appServerSession) upsertItemEntryLocked(itemID string, kind TranscriptK
 	s.entryIndex[itemID] = len(s.entries)
 	s.invalidateTranscriptCacheLocked()
 	s.entries = append(s.entries, transcriptEntry{ItemID: itemID, Kind: kind, Text: text})
+}
+
+func (s *appServerSession) upsertRenderedItemEntryLocked(itemID string, kind TranscriptKind, text string, image *GeneratedImageArtifact) {
+	if image == nil {
+		s.upsertItemEntryLocked(itemID, kind, text)
+		return
+	}
+	if itemID == "" {
+		s.invalidateTranscriptCacheLocked()
+		s.entries = append(s.entries, transcriptEntry{Kind: kind, Text: text, GeneratedImage: cloneGeneratedImageArtifact(image)})
+		return
+	}
+	if index, ok := s.entryIndex[itemID]; ok {
+		if s.entries[index].Kind == kind && s.entries[index].Text == text && generatedImageArtifactsEqual(s.entries[index].GeneratedImage, image) {
+			return
+		}
+		s.invalidateTranscriptCacheLocked()
+		s.entries[index].Kind = kind
+		s.entries[index].Text = text
+		s.entries[index].DisplayText = ""
+		s.entries[index].GeneratedImage = cloneGeneratedImageArtifact(image)
+		return
+	}
+	s.entryIndex[itemID] = len(s.entries)
+	s.invalidateTranscriptCacheLocked()
+	s.entries = append(s.entries, transcriptEntry{
+		ItemID:         itemID,
+		Kind:           kind,
+		Text:           text,
+		GeneratedImage: cloneGeneratedImageArtifact(image),
+	})
 }
 
 func (s *appServerSession) appendDeltaToItemLocked(itemID string, kind TranscriptKind, text string) {
@@ -3290,6 +3325,17 @@ func (s *appServerSession) appendDeltaToItemLocked(itemID string, kind Transcrip
 	s.entryIndex[itemID] = len(s.entries)
 	s.invalidateTranscriptCacheLocked()
 	s.entries = append(s.entries, transcriptEntry{ItemID: itemID, Kind: kind, Text: text})
+}
+
+func (s *appServerSession) mergeRenderedHistoryItemLocked(itemID string, kind TranscriptKind, text string, image *GeneratedImageArtifact) {
+	if image == nil {
+		s.mergeHistoryItemLocked(itemID, kind, text)
+		return
+	}
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	s.upsertRenderedItemEntryLocked(itemID, kind, text, image)
 }
 
 func (s *appServerSession) mergeHistoryItemLocked(itemID string, kind TranscriptKind, text string) {
@@ -3468,8 +3514,8 @@ func (s *appServerSession) hydrateResumedThreadLocked(thread resumedThread) {
 					currentBrowserPageURL = ""
 				}
 			}
-			itemID, kind, text := renderResumedThreadItemForTurn(turn.Status, item)
-			s.mergeHistoryItemLocked(itemID, kind, text)
+			itemID, kind, text, image := s.renderThreadItemForTurn(turn.Status, item)
+			s.mergeRenderedHistoryItemLocked(itemID, kind, text, image)
 		}
 		if turn.Status == "failed" && turn.Error != nil && strings.TrimSpace(turn.Error.Message) != "" {
 			s.appendEntryLocked("", TranscriptError, turn.Error.Message)
@@ -3939,14 +3985,13 @@ func renderResumedThreadItemForTurn(turnStatus string, item map[string]json.RawM
 		}
 		return itemID, TranscriptTool, "Viewed image: " + path
 	case "imageGeneration":
+		if itemID == "" {
+			itemID = generatedImageItemID(item)
+		}
 		status := strings.TrimSpace(decodeRawString(item["status"]))
-		result := strings.TrimSpace(decodeRawString(item["result"]))
 		text := "Image generation"
 		if status != "" {
 			text += " [" + status + "]"
-		}
-		if result != "" {
-			text += "\n" + result
 		}
 		return itemID, TranscriptTool, text
 	case "enteredReviewMode":

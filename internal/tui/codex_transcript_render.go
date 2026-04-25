@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"unicode"
 
@@ -74,6 +75,9 @@ func (m Model) renderCodexTranscriptEntries(snapshot codexapp.Snapshot, width in
 }
 
 func renderCodexTranscriptEntry(entry codexapp.TranscriptEntry, width int, blockMode codexDenseBlockMode) string {
+	if entry.GeneratedImage != nil {
+		return renderCodexGeneratedImageBlock(entry, width)
+	}
 	text := strings.TrimSpace(sanitizeCodexRenderedText(entry.Text))
 	if text == "" {
 		return ""
@@ -107,6 +111,66 @@ func renderCodexTranscriptEntry(entry codexapp.TranscriptEntry, width int, block
 		return renderCodexMessageBlock("System", text, lipgloss.Color("244"), lipgloss.Color("246"), width)
 	default:
 		return renderCodexMessageBlock("", text, lipgloss.Color("244"), lipgloss.Color("252"), width)
+	}
+}
+
+func renderCodexGeneratedImageBlock(entry codexapp.TranscriptEntry, width int) string {
+	image := entry.GeneratedImage
+	if image == nil {
+		return ""
+	}
+	accent := lipgloss.Color("179")
+	contentWidth := max(10, width-2)
+	title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Generated image")
+	meta := generatedImageMetaText(image)
+	if meta != "" {
+		title += " " + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(meta)
+	}
+	lines := []string{title}
+	if path := strings.TrimSpace(image.Path); path != "" {
+		linkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Underline(true)
+		lines = append(lines, renderCodexLocalLink("Open image", path, linkStyle))
+	} else if sourcePath := strings.TrimSpace(image.SourcePath); sourcePath != "" {
+		linkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Underline(true)
+		lines = append(lines, renderCodexLocalLink(filepath.Base(sourcePath), sourcePath, linkStyle))
+	}
+	if preview := renderANSIImagePreview(image.PreviewData, contentWidth, 16); strings.TrimSpace(preview) != "" {
+		lines = append(lines, preview)
+	}
+	return lipgloss.NewStyle().
+		BorderLeft(true).
+		BorderForeground(accent).
+		PaddingLeft(0).
+		Width(width).
+		Render(strings.Join(lines, "\n"))
+}
+
+func generatedImageMetaText(image *codexapp.GeneratedImageArtifact) string {
+	if image == nil {
+		return ""
+	}
+	parts := make([]string, 0, 2)
+	if image.Width > 0 && image.Height > 0 {
+		parts = append(parts, fmt.Sprintf("%dx%d", image.Width, image.Height))
+	}
+	if image.ByteSize > 0 {
+		parts = append(parts, formatGeneratedImageBytes(image.ByteSize))
+	}
+	return strings.Join(parts, " ")
+}
+
+func formatGeneratedImageBytes(size int64) string {
+	switch {
+	case size >= 1024*1024:
+		return fmt.Sprintf("%.1f MB", float64(size)/float64(1024*1024))
+	case size >= 1024:
+		return fmt.Sprintf("%.1f KB", float64(size)/float64(1024))
+	case size == 1:
+		return "1 byte"
+	case size > 1:
+		return fmt.Sprintf("%d bytes", size)
+	default:
+		return ""
 	}
 }
 

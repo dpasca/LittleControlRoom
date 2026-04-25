@@ -72,10 +72,21 @@ func (p Provider) SourceTag() string {
 }
 
 type TranscriptEntry struct {
-	ItemID      string
-	Kind        TranscriptKind
-	Text        string
-	DisplayText string // optional; if set, used for rendering instead of Text
+	ItemID         string
+	Kind           TranscriptKind
+	Text           string
+	DisplayText    string // optional; if set, used for rendering instead of Text
+	GeneratedImage *GeneratedImageArtifact
+}
+
+type GeneratedImageArtifact struct {
+	ID          string
+	Path        string
+	SourcePath  string
+	Width       int
+	Height      int
+	ByteSize    int64
+	PreviewData []byte
 }
 
 type SessionPhase string

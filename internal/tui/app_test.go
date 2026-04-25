@@ -15842,6 +15842,41 @@ func TestRenderCodexTranscriptEntriesRendersFileURLMarkdownLinksAsRawPathHyperli
 	}
 }
 
+func TestRenderCodexTranscriptEntriesRendersGeneratedImagePreview(t *testing.T) {
+	imageBytes := mustTestPNG(color.RGBA{R: 40, G: 180, B: 220, A: 255})
+	path := "/tmp/demo/generated_images/ig_demo.png"
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptTool,
+				Text: "Generated image\n" + path,
+				GeneratedImage: &codexapp.GeneratedImageArtifact{
+					ID:          "ig_demo",
+					Path:        path,
+					Width:       4,
+					Height:      4,
+					ByteSize:    int64(len(imageBytes)),
+					PreviewData: imageBytes,
+				},
+			},
+		},
+	}
+
+	rendered := (Model{}).renderCodexTranscriptEntries(snapshot, 80)
+	if !strings.Contains(rendered, ansi.SetHyperlink(path)) {
+		t.Fatalf("generated image block should hyperlink the durable raw path: %q", rendered)
+	}
+	if !strings.Contains(rendered, "\x1b[38;2;") {
+		t.Fatalf("generated image block should include an ANSI image preview: %q", rendered)
+	}
+	stripped := ansi.Strip(rendered)
+	for _, want := range []string{"Generated image", "4x4", "Open image"} {
+		if !strings.Contains(stripped, want) {
+			t.Fatalf("generated image block missing %q: %q", want, stripped)
+		}
+	}
+}
+
 func TestRenderCodexTranscriptEntriesKeepsHTTPSMarkdownLinksClickable(t *testing.T) {
 	snapshot := codexapp.Snapshot{
 		Entries: []codexapp.TranscriptEntry{

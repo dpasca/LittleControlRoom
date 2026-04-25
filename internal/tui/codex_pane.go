@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -578,11 +579,28 @@ func codexTranscriptEntriesEqual(left, right []codexapp.TranscriptEntry) bool {
 		return false
 	}
 	for i := range left {
-		if left[i].ItemID != right[i].ItemID || left[i].Kind != right[i].Kind || left[i].Text != right[i].Text {
+		if left[i].ItemID != right[i].ItemID ||
+			left[i].Kind != right[i].Kind ||
+			left[i].Text != right[i].Text ||
+			left[i].DisplayText != right[i].DisplayText ||
+			!codexGeneratedImageArtifactsEqual(left[i].GeneratedImage, right[i].GeneratedImage) {
 			return false
 		}
 	}
 	return true
+}
+
+func codexGeneratedImageArtifactsEqual(left, right *codexapp.GeneratedImageArtifact) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return left.ID == right.ID &&
+		left.Path == right.Path &&
+		left.SourcePath == right.SourcePath &&
+		left.Width == right.Width &&
+		left.Height == right.Height &&
+		left.ByteSize == right.ByteSize &&
+		bytes.Equal(left.PreviewData, right.PreviewData)
 }
 
 func (m Model) codexTranscriptRevision(projectPath string) uint64 {
