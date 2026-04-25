@@ -1231,6 +1231,8 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = m.codexDenseBlockMode.statusText()
 		m.syncCodexViewport(false)
 		return m, nil
+	case "alt+o":
+		return m.openCodexArtifactPicker(snapshot)
 	case "ctrl+c":
 		if snapshot.BusyExternal {
 			m.status = "This " + label + " session is busy in another process. Interrupt it there or hide it here with Alt+Up."
@@ -2426,6 +2428,9 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			actions = append(actions, footerNavAction("Ctrl+O", m.managedBrowserCurrentPageFooterLabel(snapshot)))
 		}
 	}
+	if len(codexImageOpenTargets(snapshot)) > 0 && codexArtifactPickerAllowed(snapshot) {
+		actions = append(actions, footerNavAction("Alt+O", "images"))
+	}
 	if mismatchStatus := m.codexBrowserReconnectStatus(snapshot); mismatchStatus != "" && !snapshot.Closed && !snapshot.BusyExternal {
 		actions = append(actions, footerNavAction("/reconnect", "apply browser"))
 		if cmd := embeddedNewCommand(embeddedProvider(snapshot)); cmd != "" {
@@ -2616,6 +2621,261 @@ func (m Model) renderCodexTranscriptContentFromSnapshot(snapshot codexapp.Snapsh
 		return "[system] " + sanitizeCodexRenderedText(notice)
 	}
 	return "Type a prompt and press Enter."
+}
+
+type codexArtifactOpenTarget struct {
+	Kind  string
+	Label string
+	Path  string
+}
+
+type codexArtifactPickerState struct {
+	ProjectPath string
+	Title       string
+	Hint        string
+	Targets     []codexArtifactOpenTarget
+	Selected    int
+}
+
+func (m Model) openCodexArtifactPicker(snapshot codexapp.Snapshot) (tea.Model, tea.Cmd) {
+	targets := codexImageOpenTargets(snapshot)
+	if len(targets) == 0 {
+		m.status = "No images in this embedded transcript"
+		return m, nil
+	}
+	m.codexArtifactPicker = &codexArtifactPickerState{
+		ProjectPath: strings.TrimSpace(firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject)),
+		Title:       "Open Images",
+		Hint:        "Images from this embedded transcript. Enter opens with the system app.",
+		Targets:     targets,
+		Selected:    len(targets) - 1,
+	}
+	m.status = "Image picker open"
+	return m, nil
+}
+
+func (m Model) updateCodexArtifactPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	picker := m.codexArtifactPicker
+	if picker == nil {
+		return m, nil
+	}
+	if len(picker.Targets) == 0 {
+		m.closeCodexArtifactPicker("No images in this embedded transcript")
+		return m, nil
+	}
+	if picker.Selected < 0 {
+		picker.Selected = 0
+	}
+	if picker.Selected >= len(picker.Targets) {
+		picker.Selected = len(picker.Targets) - 1
+	}
+	switch msg.String() {
+	case "esc":
+		m.closeCodexArtifactPicker("Image picker closed")
+		return m, nil
+	case "up", "k":
+		picker.Selected = max(0, picker.Selected-1)
+		return m, nil
+	case "down", "j":
+		picker.Selected = min(len(picker.Targets)-1, picker.Selected+1)
+		return m, nil
+	case "pgup", "ctrl+u":
+		picker.Selected = max(0, picker.Selected-5)
+		return m, nil
+	case "pgdown", "ctrl+d":
+		picker.Selected = min(len(picker.Targets)-1, picker.Selected+5)
+		return m, nil
+	case "home":
+		picker.Selected = 0
+		return m, nil
+	case "end":
+		picker.Selected = len(picker.Targets) - 1
+		return m, nil
+	case "enter", "alt+o":
+		target := picker.Targets[picker.Selected]
+		m.closeCodexArtifactPicker("Opening " + codexArtifactTargetDisplay(target))
+		return m, m.openGeneratedImageCmd(target.Path)
+	}
+	return m, nil
+}
+
+func (m *Model) closeCodexArtifactPicker(status string) {
+	m.codexArtifactPicker = nil
+	if strings.TrimSpace(status) != "" {
+		m.status = status
+	}
+}
+
+func codexArtifactPickerAllowed(snapshot codexapp.Snapshot) bool {
+	return snapshot.PendingApproval == nil && snapshot.PendingToolInput == nil && snapshot.PendingElicitation == nil
+}
+
+func codexArtifactTargetDisplay(target codexArtifactOpenTarget) string {
+	label := strings.TrimSpace(target.Label)
+	base := filepath.Base(strings.TrimSpace(target.Path))
+	if label == "" || label == base {
+		return base
+	}
+	return label + " (" + base + ")"
+}
+
+func (m Model) currentCodexArtifactTarget() (codexArtifactOpenTarget, bool) {
+	picker := m.codexArtifactPicker
+	if picker == nil || len(picker.Targets) == 0 {
+		return codexArtifactOpenTarget{}, false
+	}
+	index := picker.Selected
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(picker.Targets) {
+		index = len(picker.Targets) - 1
+	}
+	return picker.Targets[index], true
+}
+
+func (m Model) renderCodexArtifactPickerOverlay(body string, bodyW, bodyH int) string {
+	panel := m.renderCodexArtifactPicker(bodyW, bodyH)
+	panelWidth := lipgloss.Width(panel)
+	panelHeight := lipgloss.Height(panel)
+	left := max(0, (bodyW-panelWidth)/2)
+	top := max(0, min((bodyH-panelHeight)/5, bodyH-panelHeight))
+	return overlayBlock(body, panel, bodyW, bodyH, left, top)
+}
+
+func (m Model) renderCodexArtifactPicker(bodyW, bodyH int) string {
+	panelWidth := min(bodyW, min(max(52, bodyW-12), 88))
+	panelInnerWidth := max(28, panelWidth-4)
+	return renderDialogPanel(panelWidth, panelInnerWidth, m.renderCodexArtifactPickerContent(panelInnerWidth, bodyH))
+}
+
+func (m Model) renderCodexArtifactPickerContent(width, bodyH int) string {
+	picker := m.codexArtifactPicker
+	if picker == nil {
+		return ""
+	}
+	title := strings.TrimSpace(picker.Title)
+	if title == "" {
+		title = "Open Artifacts"
+	}
+	hint := strings.TrimSpace(picker.Hint)
+	if hint == "" {
+		hint = "Artifacts from this embedded transcript."
+	}
+	lines := []string{
+		commandPaletteTitleStyle.Render(title),
+		commandPaletteHintStyle.Render(hint),
+		"",
+		renderDialogAction("Enter/Alt+O", "open", commitActionKeyStyle, commitActionTextStyle) + "   " +
+			renderDialogAction("↑↓", "select", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
+			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
+		"",
+	}
+	if len(picker.Targets) == 0 {
+		lines = append(lines, commandPaletteHintStyle.Render("No artifacts found."))
+		return strings.Join(lines, "\n")
+	}
+	start, end := codexArtifactPickerWindow(picker.Selected, len(picker.Targets), bodyH)
+	if start > 0 {
+		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d more", start)))
+	}
+	for i := start; i < end; i++ {
+		lines = append(lines, renderCodexArtifactPickerRow(picker.Targets[i], i == picker.Selected, width))
+	}
+	if end < len(picker.Targets) {
+		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d more", len(picker.Targets)-end)))
+	}
+	if selected, ok := m.currentCodexArtifactTarget(); ok {
+		lines = append(lines, "")
+		lines = append(lines, commandPaletteTitleStyle.Render("Selected"))
+		lines = append(lines, detailValueStyle.Render(fitFooterWidth(codexArtifactTargetDisplay(selected), width)))
+		if path := strings.TrimSpace(selected.Path); path != "" {
+			lines = append(lines, commandPaletteHintStyle.Render(fitFooterWidth(path, width)))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func codexArtifactPickerWindow(selected, total, bodyH int) (int, int) {
+	if total <= 0 {
+		return 0, 0
+	}
+	if bodyH <= 0 {
+		bodyH = 30
+	}
+	limit := min(total, max(3, min(10, bodyH-14)))
+	start := 0
+	if selected >= limit {
+		start = selected - limit + 1
+	}
+	maxStart := total - limit
+	if start > maxStart {
+		start = maxStart
+	}
+	if start < 0 {
+		start = 0
+	}
+	return start, start + limit
+}
+
+func renderCodexArtifactPickerRow(target codexArtifactOpenTarget, selected bool, width int) string {
+	kind := strings.ToUpper(strings.TrimSpace(target.Kind))
+	if kind == "" {
+		kind = "FILE"
+	}
+	kind = fixedBadgeSlot(kind, 5)
+	label := codexArtifactTargetDisplay(target)
+	right := filepath.Base(strings.TrimSpace(target.Path))
+	available := max(12, width-lipgloss.Width(kind)-lipgloss.Width(right)-7)
+	row := fmt.Sprintf("  %s  %s  %s", kind, fitStyledWidth(fitFooterWidth(label, available), available), right)
+	if selected {
+		row = "> " + strings.TrimPrefix(row, "  ")
+		return commandPaletteSelectStyle.Width(width).Render(row)
+	}
+	return commandPaletteRowStyle.Width(width).Render(row)
+}
+
+func codexImageOpenTargets(snapshot codexapp.Snapshot) []codexArtifactOpenTarget {
+	targets := make([]codexArtifactOpenTarget, 0)
+	for _, entry := range snapshot.Entries {
+		if image := entry.GeneratedImage; image != nil {
+			path := strings.TrimSpace(image.Path)
+			if path == "" {
+				path = strings.TrimSpace(image.SourcePath)
+			}
+			if path != "" {
+				targets = append(targets, codexArtifactOpenTarget{Kind: "image", Label: "Generated image", Path: path})
+			}
+			continue
+		}
+		targets = append(targets, codexImageOpenTargetsFromMarkdown(entry.Text)...)
+	}
+	return targets
+}
+
+func codexImageOpenTargetsFromMarkdown(text string) []codexArtifactOpenTarget {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	targets := make([]codexArtifactOpenTarget, 0)
+	remaining := text
+	for len(remaining) > 0 {
+		idx := strings.IndexByte(remaining, '[')
+		if idx < 0 {
+			return targets
+		}
+		label, target, consumed, ok := parseCodexMarkdownLink(remaining[idx:])
+		if !ok {
+			remaining = remaining[idx+1:]
+			continue
+		}
+		if localPath, ok := codexLocalLinkText(target); ok && isCodexLocalImagePath(localPath) {
+			targets = append(targets, codexArtifactOpenTarget{Kind: "image", Label: label, Path: localPath})
+		}
+		remaining = remaining[idx+max(1, consumed):]
+	}
+	return targets
 }
 
 func normalizedCodexStatus(status string) string {

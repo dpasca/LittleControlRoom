@@ -33,6 +33,7 @@ func (m Model) renderCodexTranscriptEntries(snapshot codexapp.Snapshot, width in
 	blocks := make([]string, 0, len(entries)*2)
 	var previousKind codexapp.TranscriptKind
 	hasPrevious := false
+	lastGeneratedImageIndex := lastGeneratedImageEntryIndex(entries)
 	// Track consecutive reasoning entries to merge into one compact indicator
 	reasoningLineCount := 0
 	flushReasoning := func() {
@@ -48,7 +49,7 @@ func (m Model) renderCodexTranscriptEntries(snapshot codexapp.Snapshot, width in
 		hasPrevious = true
 		reasoningLineCount = 0
 	}
-	for _, entry := range entries {
+	for index, entry := range entries {
 		if m.hideReasoningSections && !blockMode.full() && entry.Kind == codexapp.TranscriptReasoning {
 			// Accumulate reasoning lines for compact indicator
 			text := strings.TrimSpace(entry.Text)
@@ -59,7 +60,9 @@ func (m Model) renderCodexTranscriptEntries(snapshot codexapp.Snapshot, width in
 		}
 		// Flush any pending reasoning indicator before a non-reasoning entry
 		flushReasoning()
-		block := renderCodexTranscriptEntry(entry, contentWidth, blockMode)
+		block := renderCodexTranscriptEntryWithOptions(entry, contentWidth, blockMode, codexTranscriptEntryRenderOptions{
+			latestGeneratedImage: index == lastGeneratedImageIndex,
+		})
 		if strings.TrimSpace(block) != "" {
 			if hasPrevious {
 				blocks = append(blocks, codexTranscriptEntrySeparator(previousKind, entry.Kind))
@@ -75,8 +78,16 @@ func (m Model) renderCodexTranscriptEntries(snapshot codexapp.Snapshot, width in
 }
 
 func renderCodexTranscriptEntry(entry codexapp.TranscriptEntry, width int, blockMode codexDenseBlockMode) string {
+	return renderCodexTranscriptEntryWithOptions(entry, width, blockMode, codexTranscriptEntryRenderOptions{})
+}
+
+type codexTranscriptEntryRenderOptions struct {
+	latestGeneratedImage bool
+}
+
+func renderCodexTranscriptEntryWithOptions(entry codexapp.TranscriptEntry, width int, blockMode codexDenseBlockMode, options codexTranscriptEntryRenderOptions) string {
 	if entry.GeneratedImage != nil {
-		return renderCodexGeneratedImageBlock(entry, width)
+		return renderCodexGeneratedImageBlock(entry, width, options.latestGeneratedImage)
 	}
 	text := strings.TrimSpace(sanitizeCodexRenderedText(entry.Text))
 	if text == "" {
@@ -114,7 +125,7 @@ func renderCodexTranscriptEntry(entry codexapp.TranscriptEntry, width int, block
 	}
 }
 
-func renderCodexGeneratedImageBlock(entry codexapp.TranscriptEntry, width int) string {
+func renderCodexGeneratedImageBlock(entry codexapp.TranscriptEntry, width int, latest bool) string {
 	image := entry.GeneratedImage
 	if image == nil {
 		return ""
@@ -128,11 +139,12 @@ func renderCodexGeneratedImageBlock(entry codexapp.TranscriptEntry, width int) s
 	}
 	lines := []string{title}
 	if path := strings.TrimSpace(image.Path); path != "" {
-		linkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Underline(true)
-		lines = append(lines, renderCodexLocalLink("Open image", path, linkStyle))
+		lines = append(lines, renderGeneratedImageFileLine(path, contentWidth))
 	} else if sourcePath := strings.TrimSpace(image.SourcePath); sourcePath != "" {
-		linkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Underline(true)
-		lines = append(lines, renderCodexLocalLink(filepath.Base(sourcePath), sourcePath, linkStyle))
+		lines = append(lines, renderGeneratedImageFileLine(sourcePath, contentWidth))
+	}
+	if latest {
+		lines = append(lines, renderGeneratedImageOpenHint(contentWidth))
 	}
 	if preview := renderANSIImagePreview(image.PreviewData, contentWidth, 16); strings.TrimSpace(preview) != "" {
 		lines = append(lines, preview)
@@ -143,6 +155,33 @@ func renderCodexGeneratedImageBlock(entry codexapp.TranscriptEntry, width int) s
 		PaddingLeft(0).
 		Width(width).
 		Render(strings.Join(lines, "\n"))
+}
+
+func renderGeneratedImageOpenHint(width int) string {
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color("111")).
+		Width(max(10, width)).
+		Render("Alt+O image picker")
+}
+
+func renderGeneratedImageFileLine(path string, width int) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244")).
+		Width(max(10, width)).
+		Render("File: " + filepath.Base(path))
+}
+
+func lastGeneratedImageEntryIndex(entries []codexapp.TranscriptEntry) int {
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].GeneratedImage != nil {
+			return i
+		}
+	}
+	return -1
 }
 
 func generatedImageMetaText(image *codexapp.GeneratedImageArtifact) string {

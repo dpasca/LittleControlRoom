@@ -632,6 +632,9 @@ func parseCodexMarkdownLinkTarget(text string) (target string, consumed int, ok 
 func renderCodexHyperlink(label, target string, style lipgloss.Style) string {
 	linkStyle := style.Copy().Foreground(lipgloss.Color("111")).Underline(true)
 	if localPath, ok := codexLocalLinkText(target); ok {
+		if isCodexLocalImagePath(localPath) {
+			return renderCodexLocalImageLink(label, localPath, linkStyle)
+		}
 		return renderCodexLocalLink(label, localPath, linkStyle)
 	}
 	target = codexHyperlinkTarget(target)
@@ -643,6 +646,22 @@ func renderCodexHyperlink(label, target string, style lipgloss.Style) string {
 }
 
 func renderCodexLocalLink(label, target string, linkStyle lipgloss.Style) string {
+	label = codexLocalLinkLabel(label, target)
+	renderedLabel := linkStyle.Render(label)
+	return ansi.SetHyperlink(target) + renderedLabel + ansi.ResetHyperlink()
+}
+
+func renderCodexLocalImageLink(label, target string, linkStyle lipgloss.Style) string {
+	label = codexLocalLinkLabel(label, target)
+	target = strings.TrimSpace(target)
+	if target == "" || label == target {
+		return linkStyle.Render(label)
+	}
+	pathStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	return linkStyle.Render(label) + pathStyle.Render(" ("+filepath.Base(target)+")")
+}
+
+func codexLocalLinkLabel(label, target string) string {
 	label = strings.TrimSpace(label)
 	target = strings.TrimSpace(target)
 	if label == "" || label == target {
@@ -651,8 +670,7 @@ func renderCodexLocalLink(label, target string, linkStyle lipgloss.Style) string
 			label = target
 		}
 	}
-	renderedLabel := linkStyle.Render(label)
-	return ansi.SetHyperlink(target) + renderedLabel + ansi.ResetHyperlink()
+	return label
 }
 
 func codexHyperlinkTarget(target string) string {
@@ -718,4 +736,13 @@ func isCodexLineFragment(text string) bool {
 		}
 	}
 	return true
+}
+
+func isCodexLocalImagePath(path string) bool {
+	switch strings.ToLower(filepath.Ext(strings.TrimSpace(path))) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".heif":
+		return true
+	default:
+		return false
+	}
 }

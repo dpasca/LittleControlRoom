@@ -182,6 +182,7 @@ type Model struct {
 	recentClaudeModels          []string
 	recentOpenCodeModels        []string
 	codexDenseBlockMode         codexDenseBlockMode
+	codexArtifactPicker         *codexArtifactPickerState
 	codexSlashSelected          int
 	codexToolAnswers            map[string]codexToolAnswerState
 	codexViewport               viewport.Model
@@ -978,6 +979,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	case tea.KeyMsg:
+		if m.codexArtifactPicker != nil {
+			return m.updateCodexArtifactPickerMode(msg)
+		}
 		if m.codexModelPickerVisible() {
 			return m.updateCodexModelPickerMode(msg)
 		}
@@ -2498,6 +2502,17 @@ func (m Model) View() string {
 	defer done()
 	if m.codexVisible() {
 		body := m.renderCodexView()
+		if m.codexArtifactPicker != nil {
+			width := m.width
+			if width <= 0 {
+				width = 120
+			}
+			height := m.height
+			if height <= 0 {
+				height = 30
+			}
+			return m.renderCodexArtifactPickerOverlay(body, width, height)
+		}
 		if m.codexModelPickerVisible() {
 			width := m.width
 			if width <= 0 {
@@ -4130,6 +4145,16 @@ func (m Model) openProjectDirInBrowserCmd(path string) tea.Cmd {
 			return browserOpenMsg{projectPath: path, err: err}
 		}
 		return browserOpenMsg{projectPath: path, status: "Opened project in browser"}
+	}
+}
+
+func (m Model) openGeneratedImageCmd(path string) tea.Cmd {
+	projectPath := m.codexVisibleProject
+	return func() tea.Msg {
+		if err := externalPathOpener(path); err != nil {
+			return browserOpenMsg{projectPath: projectPath, err: err}
+		}
+		return browserOpenMsg{projectPath: projectPath, status: "Opened generated image"}
 	}
 }
 
