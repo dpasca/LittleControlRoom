@@ -16409,6 +16409,22 @@ func TestBossModeEscReturnsToClassicTUI(t *testing.T) {
 	}
 }
 
+func TestBossModeForwardsTypingToChatInput(t *testing.T) {
+	m := Model{
+		bossMode:  true,
+		bossModel: bossui.NewEmbedded(context.Background(), nil),
+		width:     100,
+		height:    24,
+	}
+
+	updated, _ := m.updateBossModeMessage(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h', 'i'}})
+	got := updated.(Model)
+	rendered := ansi.Strip(got.View())
+	if !strings.Contains(rendered, "hi") {
+		t.Fatalf("boss view should show typed input, got %q", rendered)
+	}
+}
+
 func TestDispatchBossOffClosesBossMode(t *testing.T) {
 	m := Model{
 		bossMode:  true,

@@ -144,7 +144,11 @@ func BuildStateBrief(snapshot StateSnapshot, now time.Time) string {
 
 	lines = append(lines, "Hot projects:")
 	for _, project := range snapshot.HotProjects {
-		lines = append(lines, "- "+briefLine(project, now))
+		line := briefLine(project, now)
+		if path := strings.TrimSpace(project.Path); path != "" {
+			line += "; path: " + path
+		}
+		lines = append(lines, "- "+line)
 	}
 	return strings.Join(lines, "\n")
 }

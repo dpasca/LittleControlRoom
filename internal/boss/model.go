@@ -33,6 +33,7 @@ type Model struct {
 	messages     []ChatMessage
 
 	snapshot     StateSnapshot
+	viewContext  ViewContext
 	stateLoaded  bool
 	stateErr     error
 	sending      bool
@@ -78,6 +79,12 @@ func NewEmbedded(ctx context.Context, svc *service.Service) Model {
 	return newModel(ctx, svc, true)
 }
 
+func NewEmbeddedWithViewContext(ctx context.Context, svc *service.Service, view ViewContext) Model {
+	m := newModel(ctx, svc, true)
+	m.viewContext = view
+	return m
+}
+
 func newModel(ctx context.Context, svc *service.Service, embedded bool) Model {
 	input := textarea.New()
 	input.Placeholder = "Ask Mina what needs attention..."
@@ -85,6 +92,7 @@ func newModel(ctx context.Context, svc *service.Service, embedded bool) Model {
 	input.ShowLineNumbers = false
 	input.SetWidth(72)
 	input.SetHeight(3)
+	input.Focus()
 
 	assistant := NewAssistant(svc)
 	m := Model{
@@ -116,7 +124,7 @@ func IsMessage(msg tea.Msg) bool {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.input.Focus(), m.loadStateCmd(), bossTickCmd())
+	return tea.Batch(m.loadStateCmd(), bossTickCmd())
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -235,10 +243,10 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 	m.sending = true
 	m.status = "Mina is thinking..."
 	m.syncLayout(true)
-	return m, m.askAssistantCmd(append([]ChatMessage(nil), m.messages...), m.snapshot)
+	return m, m.askAssistantCmd(append([]ChatMessage(nil), m.messages...), m.snapshot, m.viewContext)
 }
 
-func (m Model) askAssistantCmd(messages []ChatMessage, snapshot StateSnapshot) tea.Cmd {
+func (m Model) askAssistantCmd(messages []ChatMessage, snapshot StateSnapshot, view ViewContext) tea.Cmd {
 	assistant := m.assistant
 	parent := m.ctx
 	return func() tea.Msg {
@@ -246,6 +254,8 @@ func (m Model) askAssistantCmd(messages []ChatMessage, snapshot StateSnapshot) t
 		defer cancel()
 		resp, err := assistant.Reply(ctx, AssistantRequest{
 			StateBrief: BuildStateBrief(snapshot, time.Now()),
+			Snapshot:   snapshot,
+			View:       view,
 			Messages:   messages,
 		})
 		return AssistantReplyMsg{response: resp, err: err}

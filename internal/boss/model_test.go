@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"lcroom/internal/model"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestModelViewRendersBossPanels(t *testing.T) {
@@ -31,5 +33,16 @@ func TestModelViewRendersBossPanels(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
+	}
+}
+
+func TestModelInputAcceptsTypingImmediately(t *testing.T) {
+	t.Parallel()
+
+	m := New(context.Background(), nil)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h', 'i'}})
+	got := updated.(Model)
+	if got.input.Value() != "hi" {
+		t.Fatalf("input value = %q, want typed text", got.input.Value())
 	}
 }

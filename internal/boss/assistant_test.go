@@ -2,10 +2,14 @@ package boss
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
 	"lcroom/internal/llm"
+	"lcroom/internal/model"
 )
 
 type fakeTextRunner struct {
@@ -17,6 +21,65 @@ type fakeTextRunner struct {
 func (r *fakeTextRunner) RunText(_ context.Context, req llm.TextRequest) (llm.TextResponse, error) {
 	r.req = req
 	return r.resp, r.err
+}
+
+type fakeJSONSchemaRunner struct {
+	reqs  []llm.JSONSchemaRequest
+	resp  []llm.JSONSchemaResponse
+	err   error
+	index int
+}
+
+func (r *fakeJSONSchemaRunner) RunJSONSchema(_ context.Context, req llm.JSONSchemaRequest) (llm.JSONSchemaResponse, error) {
+	r.reqs = append(r.reqs, req)
+	if r.err != nil {
+		return llm.JSONSchemaResponse{}, r.err
+	}
+	if r.index >= len(r.resp) {
+		return llm.JSONSchemaResponse{}, errors.New("unexpected structured action request")
+	}
+	resp := r.resp[r.index]
+	r.index++
+	return resp, nil
+}
+
+type fakeBossStore struct {
+	projects        []model.ProjectSummary
+	details         map[string]model.ProjectDetail
+	classifications []model.SessionClassification
+	counts          map[model.SessionClassificationStatus]int
+}
+
+func (s *fakeBossStore) ListProjects(context.Context, bool) ([]model.ProjectSummary, error) {
+	return append([]model.ProjectSummary(nil), s.projects...), nil
+}
+
+func (s *fakeBossStore) GetProjectSummary(_ context.Context, path string, _ bool) (model.ProjectSummary, error) {
+	for _, project := range s.projects {
+		if project.Path == path {
+			return project, nil
+		}
+	}
+	return model.ProjectSummary{}, sql.ErrNoRows
+}
+
+func (s *fakeBossStore) GetProjectDetail(_ context.Context, path string, _ int) (model.ProjectDetail, error) {
+	if detail, ok := s.details[path]; ok {
+		return detail, nil
+	}
+	return model.ProjectDetail{}, sql.ErrNoRows
+}
+
+func (s *fakeBossStore) ListSessionClassifications(context.Context, string, string) ([]model.SessionClassification, error) {
+	return append([]model.SessionClassification(nil), s.classifications...), nil
+}
+
+func (s *fakeBossStore) GetSessionClassificationCounts(context.Context, bool) (map[model.SessionClassificationStatus]int, error) {
+	out := map[model.SessionClassificationStatus]int{}
+	for status, count := range s.counts {
+		out[status] = count
+	}
+	return out, nil
 }
 
 func TestAssistantReplyIncludesStateBriefAndRecentChat(t *testing.T) {
@@ -72,4 +135,89 @@ func TestAssistantReplyLimitsChatHistory(t *testing.T) {
 	if len(runner.req.Messages) != 17 {
 		t.Fatalf("messages len = %d, want state brief plus 16 history messages", len(runner.req.Messages))
 	}
+}
+
+func TestAssistantReplyUsesStructuredToolLoop(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeBossStore{
+		projects: []model.ProjectSummary{{
+			Path:           "/tmp/alpha",
+			Name:           "Alpha",
+			Status:         model.StatusPossiblyStuck,
+			AttentionScore: 44,
+			OpenTODOCount:  1,
+		}},
+		details: map[string]model.ProjectDetail{
+			"/tmp/alpha": {
+				Summary: model.ProjectSummary{
+					Path:           "/tmp/alpha",
+					Name:           "Alpha",
+					Status:         model.StatusPossiblyStuck,
+					AttentionScore: 44,
+					OpenTODOCount:  1,
+				},
+				Reasons: []model.AttentionReason{{Text: "Latest session is waiting for the user", Weight: 15}},
+				Todos:   []model.TodoItem{{ID: 7, ProjectPath: "/tmp/alpha", Text: "Decide rollout shape"}},
+			},
+		},
+	}
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{
+			{
+				Model:      "gpt-test",
+				OutputText: encodedBossAction(t, bossAction{Kind: bossActionProjectDetail, Target: "selected", Limit: 8, Reason: "Need selected project detail"}),
+				Usage:      model.LLMUsage{InputTokens: 10, OutputTokens: 3, TotalTokens: 13},
+			},
+			{
+				Model:      "gpt-test",
+				OutputText: encodedBossAction(t, bossAction{Kind: bossActionAnswer, Answer: "Focus Alpha first; it is waiting on your rollout decision."}),
+				Usage:      model.LLMUsage{InputTokens: 20, OutputTokens: 5, TotalTokens: 25},
+			},
+		},
+	}
+	assistant := &Assistant{
+		planner: planner,
+		query:   newQueryExecutor(store),
+		model:   "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Visible projects: 1.",
+		View: ViewContext{
+			Active: true,
+			SelectedProject: ProjectViewContext{
+				Name: "Alpha",
+				Path: "/tmp/alpha",
+			},
+		},
+		Messages: []ChatMessage{{Role: "user", Content: "What about the selected project?"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.Content != "Focus Alpha first; it is waiting on your rollout decision." {
+		t.Fatalf("Content = %q", resp.Content)
+	}
+	if resp.Usage.TotalTokens != 38 {
+		t.Fatalf("total usage = %d, want 38", resp.Usage.TotalTokens)
+	}
+	if len(planner.reqs) != 2 {
+		t.Fatalf("structured calls = %d, want 2", len(planner.reqs))
+	}
+	if !strings.Contains(planner.reqs[0].UserText, "Current TUI view") {
+		t.Fatalf("first planner request missing TUI context:\n%s", planner.reqs[0].UserText)
+	}
+	if !strings.Contains(planner.reqs[1].UserText, "[project_detail]") || !strings.Contains(planner.reqs[1].UserText, "Decide rollout shape") {
+		t.Fatalf("second planner request missing tool result:\n%s", planner.reqs[1].UserText)
+	}
+}
+
+func encodedBossAction(t *testing.T, action bossAction) string {
+	t.Helper()
+	raw, err := json.Marshal(action)
+	if err != nil {
+		t.Fatalf("marshal action: %v", err)
+	}
+	return string(raw)
 }

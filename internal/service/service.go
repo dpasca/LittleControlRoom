@@ -455,6 +455,25 @@ func (s *Service) NewBossTextRunner() (llm.TextRunner, string, config.AIBackend)
 	}
 }
 
+func (s *Service) NewBossJSONRunner() (llm.JSONSchemaRunner, string, config.AIBackend) {
+	if s == nil {
+		return nil, "", config.AIBackendUnset
+	}
+	s.mu.Lock()
+	cfg := cloneAppConfig(s.cfg)
+	usageTracker := s.llmUsageTracker
+	s.mu.Unlock()
+
+	backend := cfg.EffectiveAIBackend()
+	modelName := configuredBossAssistantModel()
+	switch backend {
+	case config.AIBackendOpenAIAPI:
+		return llm.NewResponsesClient(strings.TrimSpace(cfg.OpenAIAPIKey), bossAssistantHTTPTimeout, usageTracker), modelName, backend
+	default:
+		return nil, modelName, backend
+	}
+}
+
 func configuredBossAssistantModel() string {
 	if modelName := strings.TrimSpace(os.Getenv(brand.BossAssistantModelEnvVar)); modelName != "" {
 		return modelName
