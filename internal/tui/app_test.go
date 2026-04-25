@@ -15741,7 +15741,7 @@ func TestRenderCodexTranscriptEntriesParsesLegacyTranscriptWithoutSenderLabels(t
 	}
 }
 
-func TestRenderCodexTranscriptEntriesRendersLocalMarkdownLinksAsTerminalHyperlinks(t *testing.T) {
+func TestRenderCodexTranscriptEntriesRendersLocalMarkdownLinksAsRawPathHyperlinks(t *testing.T) {
 	snapshot := codexapp.Snapshot{
 		Entries: []codexapp.TranscriptEntry{
 			{
@@ -15752,15 +15752,93 @@ func TestRenderCodexTranscriptEntriesRendersLocalMarkdownLinksAsTerminalHyperlin
 	}
 
 	rendered := (Model{}).renderCodexTranscriptEntries(snapshot, 80)
-	if !strings.Contains(rendered, ansi.SetHyperlink("file:///tmp/demo/README.md")) {
-		t.Fatalf("rendered transcript should include a clickable file hyperlink escape sequence: %q", rendered)
+	if !strings.Contains(rendered, ansi.SetHyperlink("/tmp/demo/README.md")) {
+		t.Fatalf("rendered transcript should use the raw local path as the terminal hyperlink target: %q", rendered)
+	}
+	if strings.Contains(rendered, "file://") {
+		t.Fatalf("rendered transcript should not use file URLs for local paths: %q", rendered)
 	}
 	stripped := ansi.Strip(rendered)
 	if strings.Contains(stripped, "[README](/tmp/demo/README.md)") {
 		t.Fatalf("rendered transcript should hide markdown link syntax once rendered: %q", stripped)
 	}
 	if !strings.Contains(stripped, "See README.") {
-		t.Fatalf("rendered transcript should preserve the local link label in the visible text: %q", stripped)
+		t.Fatalf("rendered transcript should preserve the compact local link label in the visible text: %q", stripped)
+	}
+}
+
+func TestRenderCodexTranscriptEntriesUnwrapsAngleBracketLocalMarkdownLinks(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptAgent,
+				Text: "Open [index.html](</tmp/lcroom mockups/index.html>).",
+			},
+		},
+	}
+
+	rendered := (Model{}).renderCodexTranscriptEntries(snapshot, 80)
+	if !strings.Contains(rendered, ansi.SetHyperlink("/tmp/lcroom mockups/index.html")) {
+		t.Fatalf("rendered transcript should use the unwrapped raw local path as the terminal hyperlink target: %q", rendered)
+	}
+	if strings.Contains(rendered, "file://") {
+		t.Fatalf("rendered transcript should not use file URLs for local paths: %q", rendered)
+	}
+	if strings.Contains(rendered, "%3C") || strings.Contains(rendered, "%3E") || strings.Contains(rendered, "%20") {
+		t.Fatalf("rendered transcript should not include encoded markdown target angle brackets: %q", rendered)
+	}
+	stripped := ansi.Strip(rendered)
+	if strings.Contains(stripped, "[index.html](</tmp/lcroom mockups/index.html>)") {
+		t.Fatalf("rendered transcript should hide markdown link syntax once rendered: %q", stripped)
+	}
+	if !strings.Contains(stripped, "Open index.html.") {
+		t.Fatalf("rendered transcript should preserve the compact local link label in the visible text: %q", stripped)
+	}
+}
+
+func TestRenderCodexTranscriptEntriesKeepsLocalLineSuffixInRawPathHyperlink(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptAgent,
+				Text: "Changed [manager.go](/tmp/demo/manager.go:107).",
+			},
+		},
+	}
+
+	rendered := (Model{}).renderCodexTranscriptEntries(snapshot, 80)
+	if !strings.Contains(rendered, ansi.SetHyperlink("/tmp/demo/manager.go:107")) {
+		t.Fatalf("rendered transcript should keep local line suffixes in the raw terminal hyperlink target: %q", rendered)
+	}
+	if strings.Contains(rendered, "file://") {
+		t.Fatalf("rendered transcript should not use file URLs for local paths: %q", rendered)
+	}
+	stripped := ansi.Strip(rendered)
+	if !strings.Contains(stripped, "Changed manager.go.") {
+		t.Fatalf("rendered transcript should preserve the compact local link label in the visible text: %q", stripped)
+	}
+}
+
+func TestRenderCodexTranscriptEntriesRendersFileURLMarkdownLinksAsRawPathHyperlinks(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptAgent,
+				Text: "Open [image](file://localhost/tmp/demo/image.png).",
+			},
+		},
+	}
+
+	rendered := (Model{}).renderCodexTranscriptEntries(snapshot, 80)
+	if !strings.Contains(rendered, ansi.SetHyperlink("/tmp/demo/image.png")) {
+		t.Fatalf("rendered transcript should convert local file URLs into raw path hyperlink targets: %q", rendered)
+	}
+	if strings.Contains(rendered, "file://") {
+		t.Fatalf("rendered transcript should not preserve file URLs for local paths: %q", rendered)
+	}
+	stripped := ansi.Strip(rendered)
+	if !strings.Contains(stripped, "Open image.") {
+		t.Fatalf("rendered transcript should preserve the compact local link label in the visible text: %q", stripped)
 	}
 }
 

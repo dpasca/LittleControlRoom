@@ -3,7 +3,9 @@ package tui
 import (
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/lipgloss"
@@ -588,25 +590,68 @@ func parseCodexMarkdownLink(text string) (label, target string, consumed int, ok
 	if closeLabel <= 1 {
 		return "", "", 0, false
 	}
-	closeTarget := strings.IndexByte(text[closeLabel+2:], ')')
-	if closeTarget < 0 {
+	targetText := text[closeLabel+2:]
+	target, targetConsumed, ok := parseCodexMarkdownLinkTarget(targetText)
+	if !ok {
 		return "", "", 0, false
 	}
 	label = text[1:closeLabel]
-	target = text[closeLabel+2 : closeLabel+2+closeTarget]
 	if strings.TrimSpace(label) == "" || strings.TrimSpace(target) == "" {
 		return "", "", 0, false
 	}
-	return label, target, closeLabel + 3 + closeTarget, true
+	return label, target, closeLabel + 2 + targetConsumed, true
+}
+
+func parseCodexMarkdownLinkTarget(text string) (target string, consumed int, ok bool) {
+	leading := len(text) - len(strings.TrimLeftFunc(text, unicode.IsSpace))
+	text = text[leading:]
+	if text == "" {
+		return "", 0, false
+	}
+	if strings.HasPrefix(text, "<") {
+		closeAngle := strings.IndexByte(text[1:], '>')
+		if closeAngle < 0 {
+			return "", 0, false
+		}
+		target = text[1 : 1+closeAngle]
+		afterTarget := text[1+closeAngle+1:]
+		trailing := len(afterTarget) - len(strings.TrimLeftFunc(afterTarget, unicode.IsSpace))
+		afterTarget = afterTarget[trailing:]
+		if !strings.HasPrefix(afterTarget, ")") {
+			return "", 0, false
+		}
+		return strings.TrimSpace(target), leading + 1 + closeAngle + 1 + trailing + 1, true
+	}
+	closeTarget := strings.IndexByte(text, ')')
+	if closeTarget < 0 {
+		return "", 0, false
+	}
+	return strings.TrimSpace(text[:closeTarget]), leading + closeTarget + 1, true
 }
 
 func renderCodexHyperlink(label, target string, style lipgloss.Style) string {
-	target = codexHyperlinkTarget(target)
 	linkStyle := style.Copy().Foreground(lipgloss.Color("111")).Underline(true)
+	if localPath, ok := codexLocalLinkText(target); ok {
+		return renderCodexLocalLink(label, localPath, linkStyle)
+	}
+	target = codexHyperlinkTarget(target)
 	renderedLabel := linkStyle.Render(label)
 	if target == "" {
 		return renderedLabel
 	}
+	return ansi.SetHyperlink(target) + renderedLabel + ansi.ResetHyperlink()
+}
+
+func renderCodexLocalLink(label, target string, linkStyle lipgloss.Style) string {
+	label = strings.TrimSpace(label)
+	target = strings.TrimSpace(target)
+	if label == "" || label == target {
+		label = filepath.Base(target)
+		if label == "." || label == string(filepath.Separator) {
+			label = target
+		}
+	}
+	renderedLabel := linkStyle.Render(label)
 	return ansi.SetHyperlink(target) + renderedLabel + ansi.ResetHyperlink()
 }
 
@@ -615,18 +660,62 @@ func codexHyperlinkTarget(target string) string {
 	if target == "" {
 		return ""
 	}
-	if strings.HasPrefix(target, "/") {
-		path := target
-		fragment := ""
-		if before, after, found := strings.Cut(path, "#"); found {
-			path = before
-			fragment = after
-		}
-		return (&url.URL{Scheme: "file", Path: path, Fragment: fragment}).String()
-	}
 	parsed, err := url.Parse(target)
 	if err != nil || parsed.Scheme == "" {
 		return target
 	}
 	return parsed.String()
+}
+
+func codexLocalLinkText(target string) (string, bool) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "", false
+	}
+	if strings.HasPrefix(target, "/") {
+		return codexLocalPathText(target, ""), true
+	}
+	parsed, err := url.Parse(target)
+	if err != nil || parsed.Scheme != "file" {
+		return "", false
+	}
+	pathText := codexLocalPathText(parsed.Path, parsed.Fragment)
+	if parsed.Host != "" && parsed.Host != "localhost" {
+		pathText = parsed.Host + ":" + pathText
+	}
+	return pathText, parsed.Path != ""
+}
+
+func codexLocalPathText(path, fragment string) string {
+	if fragment == "" {
+		if before, after, found := strings.Cut(path, "#"); found {
+			path = before
+			fragment = after
+		}
+	}
+	if fragment != "" {
+		if isCodexLineFragment(fragment) {
+			path += ":" + fragment
+		} else {
+			path += "#" + fragment
+		}
+	}
+	return path
+}
+
+func isCodexLineFragment(text string) bool {
+	if text == "" {
+		return false
+	}
+	for i, part := range strings.Split(text, ":") {
+		if part == "" || (i > 1) {
+			return false
+		}
+		for _, r := range part {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
