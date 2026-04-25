@@ -147,6 +147,86 @@ func TestHydrateResumedThreadMaterializesGeneratedImages(t *testing.T) {
 	}
 }
 
+func TestHandleImageGenerationCompletionRefreshesMissingLiveArtifact(t *testing.T) {
+	oldDelay := generatedImageArtifactRefreshDelay
+	generatedImageArtifactRefreshDelay = 0
+	t.Cleanup(func() { generatedImageArtifactRefreshDelay = oldDelay })
+
+	dataDir := t.TempDir()
+	imageBytes := mustGeneratedImageTestPNG(t)
+	encoded := base64.StdEncoding.EncodeToString(imageBytes)
+	encodedRaw := jsonStringRaw(t, encoded)
+	threadReadCalled := make(chan struct{}, 1)
+
+	s := &appServerSession{
+		projectPath:  "/tmp/demo",
+		threadID:     "thread_demo",
+		dataDir:      dataDir,
+		activeTurnID: "turn_live",
+		busy:         true,
+		entryIndex:   make(map[string]int),
+		notify:       func() {},
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			if method != "thread/read" {
+				return nil, fmt.Errorf("method = %q, want thread/read", method)
+			}
+			request, ok := params.(threadReadParams)
+			if !ok {
+				return nil, fmt.Errorf("params = %#v, want threadReadParams", params)
+			}
+			if request.ThreadID != "thread_demo" || !request.IncludeTurns {
+				return nil, fmt.Errorf("thread/read params = %#v, want thread_demo with turns", request)
+			}
+			select {
+			case threadReadCalled <- struct{}{}:
+			default:
+			}
+			return json.RawMessage(`{"thread":{"id":"thread_demo","status":{"type":"idle"},"turns":[{"id":"turn_live","status":"completed","items":[{"id":"ig_live","type":"imageGeneration","status":"completed","result":` + string(encodedRaw) + `,"saved_path":"/tmp/codex/generated_images/ig_live.png"}]}]}}`), nil
+		},
+	}
+
+	s.handleNotification("item/started", json.RawMessage(`{
+		"threadId":"thread_demo",
+		"turnId":"turn_live",
+		"item":{"id":"ig_live","type":"imageGeneration","status":"generating"}
+	}`))
+	s.handleNotification("item/completed", json.RawMessage(`{
+		"threadId":"thread_demo",
+		"turnId":"turn_live",
+		"item":{"id":"ig_live","type":"imageGeneration","status":"completed"}
+	}`))
+
+	select {
+	case <-threadReadCalled:
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for generated image artifact refresh")
+	}
+
+	var entry TranscriptEntry
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		snapshot := s.Snapshot()
+		if len(snapshot.Entries) == 1 && snapshot.Entries[0].GeneratedImage != nil {
+			entry = snapshot.Entries[0]
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if entry.GeneratedImage == nil {
+		t.Fatalf("generated image metadata missing after live refresh: %#v", s.Snapshot().Entries)
+	}
+	wantPath := filepath.Join(dataDir, "artifacts", generatedImageArtifactRootName, "thread_demo", "ig_live.png")
+	if entry.GeneratedImage.Path != wantPath {
+		t.Fatalf("generated image path = %q, want %q", entry.GeneratedImage.Path, wantPath)
+	}
+	if entry.GeneratedImage.Width != 2 || entry.GeneratedImage.Height != 1 {
+		t.Fatalf("generated image dimensions = %dx%d, want 2x1", entry.GeneratedImage.Width, entry.GeneratedImage.Height)
+	}
+	if strings.Contains(entry.Text, encoded) {
+		t.Fatalf("transcript should not expose generated image base64")
+	}
+}
+
 func TestHydrateResumedThreadTracksCurrentPlaywrightPageURL(t *testing.T) {
 	s := &appServerSession{
 		projectPath: "/tmp/demo",

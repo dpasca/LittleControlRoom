@@ -37,6 +37,7 @@ const (
 )
 
 var errBusyTurnLikelyStuck = errors.New("embedded Codex session seems stuck or disconnected. Interrupt the current turn or use /reconnect before sending another prompt")
+var generatedImageArtifactRefreshDelay = 300 * time.Millisecond
 
 type ForceNewSessionReusedError struct {
 	Provider Provider
@@ -877,7 +878,7 @@ func (s *appServerSession) finishPendingCompletionLocked() {
 
 func tracksBusyItemLifecycle(itemType string) bool {
 	switch strings.TrimSpace(itemType) {
-	case "agentMessage", "commandExecution", "fileChange", "plan", "reasoning", "mcpToolCall":
+	case "agentMessage", "commandExecution", "fileChange", "plan", "reasoning", "mcpToolCall", "imageGeneration":
 		return true
 	default:
 		return false
@@ -1980,6 +1981,58 @@ func (s *appServerSession) readThreadState(ctx context.Context, threadID string)
 	return response.Thread, nil
 }
 
+func (s *appServerSession) canRefreshThreadStateLocked() bool {
+	return !s.closed && (s.rpcCallHook != nil || s.stdin != nil)
+}
+
+func (s *appServerSession) scheduleGeneratedImageArtifactRefresh(threadID string) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return
+	}
+	delay := generatedImageArtifactRefreshDelay
+	exitCh := s.exitCh
+	go func() {
+		if delay > 0 {
+			timer := time.NewTimer(delay)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+			case <-exitCh:
+				return
+			}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
+		defer cancel()
+		if err := s.mergeThreadArtifacts(ctx, threadID); err != nil {
+			log.Printf("WARN codexapp: refresh generated image artifacts thread_id=%q err=%v", threadID, err)
+			return
+		}
+		s.notify()
+	}()
+}
+
+func (s *appServerSession) mergeThreadArtifacts(ctx context.Context, threadID string) error {
+	thread, err := s.readThreadState(ctx, threadID)
+	if err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	currentThreadID := strings.TrimSpace(s.threadID)
+	readThreadID := strings.TrimSpace(thread.ID)
+	if currentThreadID != "" && readThreadID != "" && currentThreadID != readThreadID {
+		return nil
+	}
+	s.mergeResumedThreadItemsLocked(thread)
+	return nil
+}
+
 func (s *appServerSession) ReconcileBusyState() error {
 	s.mu.Lock()
 	if s.closed {
@@ -2560,14 +2613,16 @@ func (s *appServerSession) handleItemDelta(params json.RawMessage, kind Transcri
 
 func (s *appServerSession) handleItemCompleted(params json.RawMessage) {
 	var msg struct {
-		TurnID string                     `json:"turnId"`
-		Item   map[string]json.RawMessage `json:"item"`
+		ThreadID string                     `json:"threadId"`
+		TurnID   string                     `json:"turnId"`
+		Item     map[string]json.RawMessage `json:"item"`
 	}
 	if err := json.Unmarshal(params, &msg); err != nil {
 		return
 	}
 	itemType := decodeRawString(msg.Item["type"])
 	itemID := decodeRawString(msg.Item["id"])
+	refreshGeneratedImageThreadID := ""
 
 	s.mu.Lock()
 	s.touchBusyLocked()
@@ -2594,10 +2649,16 @@ func (s *appServerSession) handleItemCompleted(params json.RawMessage) {
 		if strings.TrimSpace(text) != "" {
 			s.upsertRenderedItemEntryLocked(itemID, kind, text, image)
 		}
+		if itemType == "imageGeneration" && image == nil && s.canRefreshThreadStateLocked() {
+			refreshGeneratedImageThreadID = firstNonEmpty(msg.ThreadID, s.threadID)
+		}
 	}
 	s.markItemCompletedLocked(itemID)
 	s.mu.Unlock()
 	s.notify()
+	if refreshGeneratedImageThreadID != "" {
+		s.scheduleGeneratedImageArtifactRefresh(refreshGeneratedImageThreadID)
+	}
 }
 
 func (s *appServerSession) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
@@ -3503,24 +3564,7 @@ func (s *appServerSession) hydrateResumedThreadLocked(thread resumedThread) {
 	busyExternal := busy && !s.compacting
 	s.activeItems = nil
 	s.pendingCompletion = nil
-	currentBrowserPageURL := ""
-
-	for _, turn := range thread.Turns {
-		for _, item := range turn.Items {
-			if call, ok := s.browserToolCallForItem(item); ok {
-				if pageURL := extractPlaywrightPageURL(item["result"]); pageURL != "" {
-					currentBrowserPageURL = pageURL
-				} else if strings.EqualFold(strings.TrimSpace(call.ToolName), "browser_close") {
-					currentBrowserPageURL = ""
-				}
-			}
-			itemID, kind, text, image := s.renderThreadItemForTurn(turn.Status, item)
-			s.mergeRenderedHistoryItemLocked(itemID, kind, text, image)
-		}
-		if turn.Status == "failed" && turn.Error != nil && strings.TrimSpace(turn.Error.Message) != "" {
-			s.appendEntryLocked("", TranscriptError, turn.Error.Message)
-		}
-	}
+	currentBrowserPageURL := s.mergeResumedThreadItemsLocked(thread)
 
 	busySince := time.Time{}
 	lastBusyActivityAt := time.Time{}
@@ -3538,6 +3582,30 @@ func (s *appServerSession) hydrateResumedThreadLocked(thread resumedThread) {
 	s.lastBusyActivityAt = lastBusyActivityAt
 	s.activeTurnID = activeTurnID
 	s.currentBrowserPageURL = strings.TrimSpace(currentBrowserPageURL)
+}
+
+func (s *appServerSession) mergeResumedThreadItemsLocked(thread resumedThread) string {
+	if thread.ID != "" {
+		s.threadID = thread.ID
+	}
+	currentBrowserPageURL := ""
+	for _, turn := range thread.Turns {
+		for _, item := range turn.Items {
+			if call, ok := s.browserToolCallForItem(item); ok {
+				if pageURL := extractPlaywrightPageURL(item["result"]); pageURL != "" {
+					currentBrowserPageURL = pageURL
+				} else if strings.EqualFold(strings.TrimSpace(call.ToolName), "browser_close") {
+					currentBrowserPageURL = ""
+				}
+			}
+			itemID, kind, text, image := s.renderThreadItemForTurn(turn.Status, item)
+			s.mergeRenderedHistoryItemLocked(itemID, kind, text, image)
+		}
+		if turn.Status == "failed" && turn.Error != nil && strings.TrimSpace(turn.Error.Message) != "" {
+			s.appendEntryLocked("", TranscriptError, turn.Error.Message)
+		}
+	}
+	return currentBrowserPageURL
 }
 
 func readLines(r io.Reader, handle func([]byte)) error {

@@ -15861,8 +15861,33 @@ func TestRenderCodexTranscriptEntriesDoesNotUseTerminalHyperlinksForLocalImageMa
 	if strings.Contains(stripped, path) {
 		t.Fatalf("rendered transcript should not expose long raw image paths that terminals split: %q", stripped)
 	}
-	if !strings.Contains(stripped, "Open image (image.png).") {
+	if !strings.Contains(stripped, "Open image (image.png) Alt+O.") {
 		t.Fatalf("rendered transcript should show the image label and filename: %q", stripped)
+	}
+}
+
+func TestRenderCodexTranscriptEntriesAdvertisesOpenShortcutBesideEachLocalArtifactLink(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptAgent,
+				Text: "New preview: [boss-cabin-game.png](/tmp/demo/boss-cabin-game.png)\nAll previews: [index.html](/tmp/demo/index.html)",
+			},
+		},
+	}
+
+	rendered := (Model{}).renderCodexTranscriptEntries(snapshot, 80)
+	stripped := ansi.Strip(rendered)
+	for _, want := range []string{
+		"New preview: boss-cabin-game.png (boss-cabin-game.png) Alt+O",
+		"All previews: index.html (index.html) Alt+O",
+	} {
+		if !strings.Contains(stripped, want) {
+			t.Fatalf("rendered transcript missing %q: %q", want, stripped)
+		}
+	}
+	if count := strings.Count(stripped, "Alt+O"); count != 2 {
+		t.Fatalf("local artifact shortcut hint count = %d, want 2 in transcript: %q", count, stripped)
 	}
 }
 

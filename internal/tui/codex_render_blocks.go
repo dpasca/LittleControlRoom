@@ -654,11 +654,18 @@ func renderCodexLocalLink(label, target string, linkStyle lipgloss.Style) string
 func renderCodexLocalArtifactLink(label, target string, linkStyle lipgloss.Style) string {
 	label = codexLocalLinkLabel(label, target)
 	target = strings.TrimSpace(target)
+	rendered := linkStyle.Render(label)
 	if target == "" || label == target {
-		return linkStyle.Render(label)
+		return rendered + renderCodexInlineArtifactOpenHint()
 	}
 	pathStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	return linkStyle.Render(label) + pathStyle.Render(" ("+filepath.Base(target)+")")
+	return rendered + pathStyle.Render(" ("+filepath.Base(target)+")") + renderCodexInlineArtifactOpenHint()
+}
+
+func renderCodexInlineArtifactOpenHint() string {
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color("111")).
+		Render(" Alt+O")
 }
 
 func codexLocalLinkLabel(label, target string) string {
