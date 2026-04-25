@@ -13,6 +13,7 @@ import (
 
 	"lcroom/internal/aibackend"
 	"lcroom/internal/attention"
+	bossui "lcroom/internal/boss"
 	"lcroom/internal/brand"
 	"lcroom/internal/browserctl"
 	"lcroom/internal/codexapp"
@@ -87,6 +88,8 @@ type Model struct {
 	commandMode                   bool
 	commandInput                  textinput.Model
 	commandSelected               int
+	bossMode                      bool
+	bossModel                     bossui.Model
 	errorLogVisible               bool
 	errorLogSelected              int
 	errorLogEntries               []errorLogEntry
@@ -941,7 +944,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncCodexComposerSize()
 		m.syncCodexViewport(false)
 		m.syncRuntimeViewport(false)
+		if m.bossMode {
+			return m.updateBossModeMessage(msg)
+		}
 		return m, nil
+	case bossui.ExitMsg:
+		m.closeBossMode("Boss mode closed")
+		return m, nil
+	case bossui.StateLoadedMsg, bossui.AssistantReplyMsg, bossui.TickMsg:
+		if m.bossMode {
+			return m.updateBossModeMessage(msg)
+		}
 	case tea.MouseMsg:
 		if m.todoDialog != nil && (msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown) {
 			return m.updateTodoDialogMouseScroll(msg)
@@ -978,6 +991,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	case tea.KeyMsg:
+		if m.bossMode {
+			return m.updateBossModeMessage(msg)
+		}
 		if m.codexModelPickerVisible() {
 			return m.updateCodexModelPickerMode(msg)
 		}
@@ -2496,6 +2512,9 @@ func (m Model) View() string {
 	m.noteUIProgress("View")
 	done := m.beginUIPhase("View", m.currentLatencyProjectPath(), "")
 	defer done()
+	if m.bossMode {
+		return m.bossModel.View()
+	}
 	if m.codexVisible() {
 		body := m.renderCodexView()
 		if m.codexModelPickerVisible() {
@@ -3729,6 +3748,24 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, m.openPerfDialog()
 	case commands.KindErrors:
 		return m.openErrorLog()
+	case commands.KindBoss:
+		switch inv.Toggle {
+		case commands.ToggleOff:
+			m.closeBossMode("Boss mode closed")
+			return m, nil
+		case commands.ToggleOn:
+			if m.bossMode {
+				m.status = "Boss mode already open"
+				return m, nil
+			}
+			return m.openBossMode()
+		default:
+			if m.bossMode {
+				m.closeBossMode("Boss mode closed")
+				return m, nil
+			}
+			return m.openBossMode()
+		}
 	case commands.KindRefresh:
 		m.loading = true
 		m.status = "Scanning and retrying failed assessments..."

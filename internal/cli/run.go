@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"lcroom/internal/boss"
 	"lcroom/internal/brand"
 	"lcroom/internal/config"
 	"lcroom/internal/detectors"
@@ -46,6 +47,11 @@ func Run(programName string, args []string) int {
 	}
 	if subcmd == "browser" {
 		return runBrowser(args[1:])
+	}
+	if subcmd == "mockups" {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		return runMockups(ctx, args[1:])
 	}
 	commonArgs := append([]string(nil), args[1:]...)
 	if subcmd == "screenshots" {
@@ -140,6 +146,8 @@ func Run(programName string, args []string) int {
 		return runSnapshot(ctx, svc, cfg)
 	case "screenshots":
 		return runScreenshots(ctx, svc, args[1:])
+	case "boss":
+		return runBoss(ctx, svc)
 	case "tui":
 		return runTUI(ctx, svc)
 	case "serve":
@@ -681,6 +689,21 @@ func runTUI(ctx context.Context, svc *service.Service) int {
 	return 0
 }
 
+func runBoss(ctx context.Context, svc *service.Service) int {
+	go svc.StartScheduler(ctx)
+	go svc.StartSessionClassifier(ctx)
+	go svc.StartTodoWorktreeSuggester(ctx)
+	svc.StartBackgroundDiscovery(ctx)
+
+	m := boss.New(ctx, svc)
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "boss mode failed: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
 func runServe(ctx context.Context, svc *service.Service) int {
 	_, _ = svc.ScanOnce(ctx)
 	go svc.StartScheduler(ctx)
@@ -803,7 +826,7 @@ func printUsage(programName string) {
 	}
 	fmt.Println(brand.Name)
 	fmt.Println(brand.Subtitle)
-	fmt.Printf("Usage: %s <scope|scan|classify|doctor|snapshot|sanitize-summaries|screenshots|browser|tui|serve> [flags]\n", name)
+	fmt.Printf("Usage: %s <scope|scan|classify|doctor|snapshot|sanitize-summaries|screenshots|mockups|browser|boss|tui|serve> [flags]\n", name)
 	fmt.Println("Common flags:")
 	fmt.Println("  --config <path>")
 	fmt.Println("  --include-paths <comma-separated-paths>")
@@ -816,6 +839,9 @@ func printUsage(programName string) {
 	fmt.Println("  --active-threshold <duration>")
 	fmt.Println("  --stuck-threshold <duration>")
 	fmt.Println("  --allow-multiple-instances")
+	fmt.Println("Boss mode:")
+	fmt.Println("  lcroom boss opens the chat-first high-level assistant UI")
+	fmt.Println("  Set LCROOM_BOSS_MODEL to override Mina's OpenAI API model")
 	fmt.Println("Sanitize summaries flags:")
 	fmt.Println("  --project <path>")
 	fmt.Println("  --session-id <id>")
@@ -826,6 +852,9 @@ func printUsage(programName string) {
 	fmt.Println("  --project <path>")
 	fmt.Println("  --session-id <id>")
 	fmt.Println("Screenshots flags:")
+	fmt.Println("  --screenshot-config <path>")
+	fmt.Println("  --output-dir <path>")
+	fmt.Println("Mockups flags:")
 	fmt.Println("  --screenshot-config <path>")
 	fmt.Println("  --output-dir <path>")
 	fmt.Println("Browser flags:")
@@ -841,7 +870,7 @@ func min(a, b int) int {
 
 func guardedRuntimeMode(subcmd string) bool {
 	switch subcmd {
-	case "classify", "tui", "serve":
+	case "boss", "classify", "tui", "serve":
 		return true
 	default:
 		return false

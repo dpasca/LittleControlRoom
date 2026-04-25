@@ -17,10 +17,14 @@ Provider artifact and detector-footprint notes live in:
 - `lcroom doctor` prints a diagnostic report from the current cached store
 - `lcroom doctor --scan` rescans first, then prints the diagnostic report
 - `lcroom screenshots` renders the curated docs screenshot set from a screenshot config
+- `lcroom mockups` renders static high-level UI mockups without scanning projects or launching the TUI
+- `lcroom boss` opens the chat-first high-level assistant UI directly, mostly useful for development and smoke checks
 - `lcroom scope` shows the effective include and exclude scope for this run
 - `lcroom serve` starts the optional read-only REST and WebSocket server
 
 `lcroom classify` requires a configured AI backend. That can be Codex, OpenCode, Claude Code, or an OpenAI API key. The TUI will open `/setup` automatically until you pick one.
+
+The usual way to reach boss mode is from the classic TUI with `/boss`. It opens a minimal Mina chat layer over the dashboard, gives each turn a compact plain-text app-state brief, and currently uses direct OpenAI API inference for the live chat. Press `Esc`, submit `/boss off`, or run `/boss off` from the command palette after returning to the dashboard to close it. Set `LCROOM_BOSS_MODEL` to override the default boss-mode chat model.
 
 ## Config File
 
@@ -99,9 +103,12 @@ stuck-threshold = "4h"
 ## Screenshots
 
 - `make screenshots` renders a curated set of fixed-size PNG terminal screenshots for docs.
+- `make mockups` renders static high-level UI mockups to `/tmp/lcroom-mockups` by default.
+- `make boss` opens the chat-first high-level assistant UI directly for development smoke checks.
 - Default local config path: `./screenshots.local.toml`
 - Override the screenshot config path with `lcroom screenshots --screenshot-config /path/to/screenshots.local.toml`
 - Override the output directory with `lcroom screenshots --output-dir /tmp/lcroom-shots`
+- Mockups also accept `--screenshot-config` and `--output-dir`, but do not require a config file.
 - Committed example file: [`screenshots.example.toml`](screenshots.example.toml)
 
 Screenshot config fields:
@@ -150,6 +157,7 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 ## TUI Keys
 
 - `/` open the command palette
+- `/boss` open the chat-first Mina layer; `Esc` returns to the classic TUI
 - `↑/↓` move selection
 - `Enter` open or resume the selected project's latest embedded provider
 - `Esc` hide the visible embedded session pane

@@ -14,6 +14,7 @@ const (
 	KindAIStats        Kind = "ai-stats"
 	KindPerf           Kind = "perf"
 	KindErrors         Kind = "errors"
+	KindBoss           Kind = "boss"
 	KindRefresh        Kind = "refresh"
 	KindSort           Kind = "sort"
 	KindView           Kind = "view"
@@ -121,6 +122,7 @@ var specs = []Spec{
 	{Name: "ai", Usage: "/ai", Summary: "Open the internal AI stats dialog"},
 	{Name: "perf", Usage: "/perf", Summary: "Open the internal responsiveness and wait tracker"},
 	{Name: "errors", Usage: "/errors", Summary: "Open the recent error log"},
+	{Name: "boss", Usage: "/boss [on|off|toggle]", Summary: "Open or close the chat-first Mina layer"},
 	{Name: "refresh", Usage: "/refresh", Summary: "Rescan projects and retry failed assessments"},
 	{Name: "sort", Usage: "/sort attention|recent", Summary: "Set list ordering"},
 	{Name: "view", Usage: "/view ai|all", Summary: "Choose AI-linked or all folders"},
@@ -288,6 +290,16 @@ func Suggestions(input string) []Suggestion {
 			choice("on", "Enable demo privacy mode"),
 			choice("off", "Disable demo privacy mode"),
 		)
+	case "boss":
+		argPrefix := ""
+		if len(fields) > 1 {
+			argPrefix = strings.ToLower(fields[len(fields)-1])
+		}
+		return enumSuggestions("/boss ", argPrefix,
+			choice("on", "Open the Mina boss-mode layer"),
+			choice("off", "Close the Mina boss-mode layer"),
+			choice("toggle", "Toggle the Mina boss-mode layer"),
+		)
 	default:
 		return commandNameSuggestions(namePrefix)
 	}
@@ -329,6 +341,12 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /errors")
 		}
 		return Invocation{Kind: KindErrors, Canonical: "/errors"}, nil
+	case "boss":
+		mode, err := parseToggleMode(rawArgs, "/boss")
+		if err != nil {
+			return Invocation{}, err
+		}
+		return Invocation{Kind: KindBoss, Toggle: mode, Canonical: "/boss " + string(mode)}, nil
 	case "refresh":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /refresh")

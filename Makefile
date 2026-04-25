@@ -18,6 +18,7 @@ ACTIVE_THRESHOLD ?= 20m
 STUCK_THRESHOLD ?= 4h
 SCREENSHOT_CONFIG ?= screenshots.local.toml
 SCREENSHOT_OUTPUT_DIR ?=
+MOCKUP_OUTPUT_DIR ?= /tmp/lcroom-mockups
 PARALLEL_DATA_DIR ?= /tmp/lcroom-parallel-$(shell id -un)
 PARALLEL_DB ?= $(PARALLEL_DATA_DIR)/little-control-room.sqlite
 PARALLEL_CONFIG ?= $(PARALLEL_DATA_DIR)/config.toml
@@ -31,7 +32,7 @@ SCREENSHOT_OUTPUT_FLAG := $(if $(strip $(SCREENSHOT_OUTPUT_DIR)),--output-dir "$
 COMMON_FLAGS := --config "$(CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 PARALLEL_FLAGS := --config "$(PARALLEL_CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(PARALLEL_DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 
-.PHONY: help tidy fmt test build install clean scope scan classify doctor doctor-scan screenshots tui tui-parallel tui-parallel-clean serve
+.PHONY: help tidy fmt test build install clean scope scan classify doctor doctor-scan screenshots mockups boss tui tui-parallel tui-parallel-clean serve
 
 help:
 	@echo "$(APP_NAME) Make Targets"
@@ -48,6 +49,8 @@ help:
 	@echo "  make doctor          - print cached detected artifacts/reasons"
 	@echo "  make doctor-scan     - refresh state, then print detected artifacts/reasons"
 	@echo "  make screenshots     - render curated PNG screenshots for docs"
+	@echo "  make mockups         - render static high-level UI mockups"
+	@echo "  make boss            - run chat-first boss mode"
 	@echo "  make tui             - run TUI dashboard"
 	@echo "  make tui-parallel    - run a second TUI using isolated config/DB under /tmp"
 	@echo "  make tui-parallel-clean - remove stale /tmp TUI sandboxes not used by active runtimes"
@@ -66,6 +69,7 @@ help:
 	@echo "  STUCK_THRESHOLD=$(STUCK_THRESHOLD)"
 	@echo "  SCREENSHOT_CONFIG=$(SCREENSHOT_CONFIG)"
 	@echo "  SCREENSHOT_OUTPUT_DIR=$(SCREENSHOT_OUTPUT_DIR)"
+	@echo "  MOCKUP_OUTPUT_DIR=$(MOCKUP_OUTPUT_DIR)"
 	@echo "  PARALLEL_DATA_DIR=$(PARALLEL_DATA_DIR)"
 	@echo "  PARALLEL_CONFIG=$(PARALLEL_CONFIG)"
 	@echo "  PARALLEL_DB=$(PARALLEL_DB)"
@@ -106,6 +110,12 @@ doctor-scan:
 
 screenshots:
 	$(GO) run ./cmd/$(APP) screenshots $(COMMON_FLAGS) --screenshot-config "$(SCREENSHOT_CONFIG)" $(SCREENSHOT_OUTPUT_FLAG)
+
+mockups:
+	$(GO) run ./cmd/$(APP) mockups --output-dir "$(MOCKUP_OUTPUT_DIR)"
+
+boss:
+	$(GO) run ./cmd/$(APP) boss $(COMMON_FLAGS) $(INTERVAL_FLAG)
 
 tui:
 	$(GO) run ./cmd/$(APP) tui $(COMMON_FLAGS) $(INTERVAL_FLAG)

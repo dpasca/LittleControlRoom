@@ -19,6 +19,7 @@ import (
 
 	"lcroom/internal/aibackend"
 	"lcroom/internal/attention"
+	bossui "lcroom/internal/boss"
 	"lcroom/internal/brand"
 	"lcroom/internal/browserctl"
 	"lcroom/internal/codexapp"
@@ -16348,6 +16349,81 @@ func TestCommandEnterOpensSettingsMode(t *testing.T) {
 	}
 	if len(got.settingsFields) != 17 {
 		t.Fatalf("settings field count = %d, want 17", len(got.settingsFields))
+	}
+}
+
+func TestCommandEnterOpensBossMode(t *testing.T) {
+	input := textinput.New()
+	input.SetValue("/boss")
+
+	m := Model{
+		commandMode:  true,
+		commandInput: input,
+		width:        100,
+		height:       24,
+	}
+	m.syncCommandSelection()
+
+	updated, cmd := m.updateCommandMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if !got.bossMode {
+		t.Fatalf("boss mode should open after /boss")
+	}
+	if got.commandMode {
+		t.Fatalf("command mode should close after /boss")
+	}
+	if cmd == nil {
+		t.Fatalf("/boss should return the embedded boss init command")
+	}
+	rendered := ansi.Strip(got.View())
+	if !strings.Contains(rendered, "Chat With Mina") || !strings.Contains(rendered, "Little Room") {
+		t.Fatalf("boss view missing expected panels: %q", rendered)
+	}
+}
+
+func TestBossModeEscReturnsToClassicTUI(t *testing.T) {
+	m := Model{
+		bossMode:  true,
+		bossModel: bossui.NewEmbedded(context.Background(), nil),
+		width:     100,
+		height:    24,
+	}
+
+	updated, cmd := m.updateBossModeMessage(tea.KeyMsg{Type: tea.KeyEsc})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("boss esc should return an exit command")
+	}
+	msg := cmd()
+	if _, ok := msg.(bossui.ExitMsg); !ok {
+		t.Fatalf("cmd() returned %T, want boss.ExitMsg", msg)
+	}
+
+	updated, _ = got.Update(msg)
+	got = updated.(Model)
+	if got.bossMode {
+		t.Fatalf("boss mode should close after exit message")
+	}
+	if got.status != "Boss mode closed" {
+		t.Fatalf("status = %q, want Boss mode closed", got.status)
+	}
+}
+
+func TestDispatchBossOffClosesBossMode(t *testing.T) {
+	m := Model{
+		bossMode:  true,
+		bossModel: bossui.NewEmbedded(context.Background(), nil),
+		width:     100,
+		height:    24,
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindBoss, Toggle: commands.ToggleOff})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("/boss off should not return async work")
+	}
+	if got.bossMode {
+		t.Fatalf("/boss off should close boss mode")
 	}
 }
 

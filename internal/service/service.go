@@ -15,6 +15,7 @@ import (
 	"lcroom/internal/aibackend"
 	"lcroom/internal/appfs"
 	"lcroom/internal/attention"
+	"lcroom/internal/brand"
 	"lcroom/internal/config"
 	"lcroom/internal/detectors"
 	"lcroom/internal/events"
@@ -30,6 +31,8 @@ import (
 
 const recentActivityDiscoveryWindow = 24 * time.Hour
 const asyncProjectRefreshTimeout = 30 * time.Second
+const bossAssistantHTTPTimeout = 90 * time.Second
+const defaultBossAssistantModel = "gpt-5.4-mini"
 
 var scanGitMetadataTimeout = 1500 * time.Millisecond
 
@@ -431,6 +434,32 @@ func (s *Service) SessionUsage() model.LLMSessionUsage {
 		return usageReader.UsageSnapshot()
 	}
 	return model.LLMSessionUsage{Enabled: enabled}
+}
+
+func (s *Service) NewBossTextRunner() (llm.TextRunner, string, config.AIBackend) {
+	if s == nil {
+		return nil, "", config.AIBackendUnset
+	}
+	s.mu.Lock()
+	cfg := cloneAppConfig(s.cfg)
+	usageTracker := s.llmUsageTracker
+	s.mu.Unlock()
+
+	backend := cfg.EffectiveAIBackend()
+	modelName := configuredBossAssistantModel()
+	switch backend {
+	case config.AIBackendOpenAIAPI:
+		return llm.NewResponsesTextClient(strings.TrimSpace(cfg.OpenAIAPIKey), bossAssistantHTTPTimeout, usageTracker), modelName, backend
+	default:
+		return nil, modelName, backend
+	}
+}
+
+func configuredBossAssistantModel() string {
+	if modelName := strings.TrimSpace(os.Getenv(brand.BossAssistantModelEnvVar)); modelName != "" {
+		return modelName
+	}
+	return defaultBossAssistantModel
 }
 
 func (s *Service) configureAIClientsLocked() {
