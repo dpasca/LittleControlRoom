@@ -2652,7 +2652,7 @@ func (m Model) openCodexArtifactPicker(snapshot codexapp.Snapshot) (tea.Model, t
 	m.codexArtifactPicker = &codexArtifactPickerState{
 		ProjectPath:     strings.TrimSpace(firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject)),
 		Title:           "Open Artifacts",
-		Hint:            "Images and linked files from this embedded transcript. Enter opens with the system app.",
+		Hint:            "Images and linked files or folders from this embedded transcript. Enter opens with the system app.",
 		Targets:         targets,
 		Selected:        len(targets) - 1,
 		PreviewRequests: make(map[string]int64),
@@ -2994,8 +2994,8 @@ func codexArtifactOpenTargetsFromMarkdown(text string) []codexArtifactOpenTarget
 			continue
 		}
 		if localPath, ok := codexLocalLinkText(target); ok {
-			if kind := codexArtifactKindForPath(localPath); kind != "" {
-				targets = append(targets, codexArtifactOpenTarget{Kind: kind, Label: label, Path: localPath})
+			if artifactPath, kind, ok := codexLocalArtifactOpenTarget(label, localPath); ok {
+				targets = append(targets, codexArtifactOpenTarget{Kind: kind, Label: label, Path: artifactPath})
 			}
 		}
 		remaining = remaining[idx+max(1, consumed):]

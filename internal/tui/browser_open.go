@@ -129,12 +129,8 @@ func openExternalPath(path string) error {
 	if path == "" {
 		return fmt.Errorf("path is required")
 	}
-	info, err := os.Stat(path)
-	if err != nil {
+	if _, err := os.Stat(path); err != nil {
 		return fmt.Errorf("inspect path: %w", err)
-	}
-	if info.IsDir() {
-		return fmt.Errorf("path is a directory")
 	}
 	var cmd *exec.Cmd
 	switch runtime.GOOS {

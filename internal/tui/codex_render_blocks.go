@@ -632,8 +632,8 @@ func parseCodexMarkdownLinkTarget(text string) (target string, consumed int, ok 
 func renderCodexHyperlink(label, target string, style lipgloss.Style) string {
 	linkStyle := style.Copy().Foreground(lipgloss.Color("111")).Underline(true)
 	if localPath, ok := codexLocalLinkText(target); ok {
-		if isCodexOpenableArtifactPath(localPath) {
-			return renderCodexLocalArtifactLink(label, localPath, linkStyle)
+		if artifactPath, _, ok := codexLocalArtifactOpenTarget(label, localPath); ok {
+			return renderCodexLocalArtifactLink(label, artifactPath, linkStyle)
 		}
 		return renderCodexLocalLink(label, localPath, linkStyle)
 	}
@@ -654,8 +654,10 @@ func renderCodexLocalLink(label, target string, linkStyle lipgloss.Style) string
 func renderCodexLocalArtifactLink(label, target string, linkStyle lipgloss.Style) string {
 	label = codexLocalLinkLabel(label, target)
 	target = strings.TrimSpace(target)
-	rendered := linkStyle.Render(label)
-	if target == "" || label == target {
+	artifactStyle := linkStyle.Copy().Underline(false)
+	rendered := artifactStyle.Render(label)
+	base := filepath.Base(target)
+	if target == "" || label == target || label == base {
 		return rendered + renderCodexInlineArtifactOpenHint()
 	}
 	pathStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
@@ -749,8 +751,40 @@ func isCodexLocalImagePath(path string) bool {
 	return codexArtifactKindForPath(path) == "image"
 }
 
-func isCodexOpenableArtifactPath(path string) bool {
-	return codexArtifactKindForPath(path) != ""
+func codexLocalArtifactOpenTarget(label, target string) (path, kind string, ok bool) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "", "", false
+	}
+	if dir, ok := codexReadmeDirectoryLinkTarget(label, target); ok {
+		return dir, "dir", true
+	}
+	kind = codexArtifactKindForPath(target)
+	if kind == "" {
+		return "", "", false
+	}
+	return target, kind, true
+}
+
+func codexReadmeDirectoryLinkTarget(label, target string) (string, bool) {
+	base := strings.ToLower(filepath.Base(strings.TrimSpace(target)))
+	if base != "readme.md" && base != "readme.markdown" {
+		return "", false
+	}
+	dir := filepath.Dir(strings.TrimSpace(target))
+	if dir == "" || dir == "." {
+		return "", false
+	}
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return "", false
+	}
+	label = strings.TrimSuffix(label, "/")
+	label = strings.TrimSuffix(label, string(filepath.Separator))
+	if label != filepath.Base(dir) {
+		return "", false
+	}
+	return dir, true
 }
 
 func codexArtifactKindForPath(path string) string {
@@ -761,7 +795,7 @@ func codexArtifactKindForPath(path string) string {
 		return "pdf"
 	case ".csv", ".tsv", ".xlsx", ".xls", ".ods", ".numbers":
 		return "sheet"
-	case ".doc", ".docx", ".pages", ".rtf":
+	case ".doc", ".docx", ".pages", ".rtf", ".md", ".markdown":
 		return "doc"
 	case ".ppt", ".pptx", ".key":
 		return "deck"

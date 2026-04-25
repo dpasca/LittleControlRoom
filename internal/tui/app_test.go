@@ -15741,7 +15741,7 @@ func TestRenderCodexTranscriptEntriesParsesLegacyTranscriptWithoutSenderLabels(t
 	}
 }
 
-func TestRenderCodexTranscriptEntriesRendersLocalMarkdownLinksAsRawPathHyperlinks(t *testing.T) {
+func TestRenderCodexTranscriptEntriesRendersLocalMarkdownLinksAsArtifacts(t *testing.T) {
 	snapshot := codexapp.Snapshot{
 		Entries: []codexapp.TranscriptEntry{
 			{
@@ -15752,8 +15752,8 @@ func TestRenderCodexTranscriptEntriesRendersLocalMarkdownLinksAsRawPathHyperlink
 	}
 
 	rendered := (Model{}).renderCodexTranscriptEntries(snapshot, 80)
-	if !strings.Contains(rendered, ansi.SetHyperlink("/tmp/demo/README.md")) {
-		t.Fatalf("rendered transcript should use the raw local path as the terminal hyperlink target: %q", rendered)
+	if strings.Contains(rendered, ansi.SetHyperlink("/tmp/demo/README.md")) {
+		t.Fatalf("rendered transcript should not rely on terminal hyperlinks for local markdown artifacts: %q", rendered)
 	}
 	if strings.Contains(rendered, "file://") {
 		t.Fatalf("rendered transcript should not use file URLs for local paths: %q", rendered)
@@ -15762,8 +15762,8 @@ func TestRenderCodexTranscriptEntriesRendersLocalMarkdownLinksAsRawPathHyperlink
 	if strings.Contains(stripped, "[README](/tmp/demo/README.md)") {
 		t.Fatalf("rendered transcript should hide markdown link syntax once rendered: %q", stripped)
 	}
-	if !strings.Contains(stripped, "See README.") {
-		t.Fatalf("rendered transcript should preserve the compact local link label in the visible text: %q", stripped)
+	if !strings.Contains(stripped, "See README (README.md) Alt+O.") {
+		t.Fatalf("rendered transcript should preserve the local markdown artifact in the visible text: %q", stripped)
 	}
 }
 
@@ -15778,8 +15778,8 @@ func TestRenderCodexTranscriptEntriesUnwrapsAngleBracketLocalMarkdownLinks(t *te
 	}
 
 	rendered := (Model{}).renderCodexTranscriptEntries(snapshot, 80)
-	if !strings.Contains(rendered, ansi.SetHyperlink("/tmp/lcroom mockups/notes.md")) {
-		t.Fatalf("rendered transcript should use the unwrapped raw local path as the terminal hyperlink target: %q", rendered)
+	if strings.Contains(rendered, ansi.SetHyperlink("/tmp/lcroom mockups/notes.md")) {
+		t.Fatalf("rendered transcript should not rely on terminal hyperlinks for local markdown artifacts: %q", rendered)
 	}
 	if strings.Contains(rendered, "file://") {
 		t.Fatalf("rendered transcript should not use file URLs for local paths: %q", rendered)
@@ -15791,8 +15791,8 @@ func TestRenderCodexTranscriptEntriesUnwrapsAngleBracketLocalMarkdownLinks(t *te
 	if strings.Contains(stripped, "[notes](</tmp/lcroom mockups/notes.md>)") {
 		t.Fatalf("rendered transcript should hide markdown link syntax once rendered: %q", stripped)
 	}
-	if !strings.Contains(stripped, "Open notes.") {
-		t.Fatalf("rendered transcript should preserve the compact local link label in the visible text: %q", stripped)
+	if !strings.Contains(stripped, "Open notes (notes.md) Alt+O.") {
+		t.Fatalf("rendered transcript should preserve the compact local artifact label in the visible text: %q", stripped)
 	}
 }
 
@@ -15879,8 +15879,8 @@ func TestRenderCodexTranscriptEntriesAdvertisesOpenShortcutBesideEachLocalArtifa
 	rendered := (Model{}).renderCodexTranscriptEntries(snapshot, 80)
 	stripped := ansi.Strip(rendered)
 	for _, want := range []string{
-		"New preview: boss-cabin-game.png (boss-cabin-game.png) Alt+O",
-		"All previews: index.html (index.html) Alt+O",
+		"New preview: boss-cabin-game.png Alt+O",
+		"All previews: index.html Alt+O",
 	} {
 		if !strings.Contains(stripped, want) {
 			t.Fatalf("rendered transcript missing %q: %q", want, stripped)
@@ -15889,6 +15889,85 @@ func TestRenderCodexTranscriptEntriesAdvertisesOpenShortcutBesideEachLocalArtifa
 	if count := strings.Count(stripped, "Alt+O"); count != 2 {
 		t.Fatalf("local artifact shortcut hint count = %d, want 2 in transcript: %q", count, stripped)
 	}
+}
+
+func TestCodexArtifactPickerOpensFolderNamedReadmeLinksAsDirectory(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "LittleControlRoom-art-lab")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	readme := filepath.Join(workspace, "README.md")
+	if err := os.WriteFile(readme, []byte("# Art lab\n"), 0o600); err != nil {
+		t.Fatalf("write readme: %v", err)
+	}
+	snapshot := codexapp.Snapshot{
+		ProjectPath: "/tmp/demo",
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptAgent,
+				Text: "Created a sibling art workspace here:\n[LittleControlRoom-art-lab](" + readme + ")",
+			},
+		},
+	}
+
+	rendered := (Model{}).renderCodexTranscriptEntries(snapshot, 80)
+	if strings.Contains(rendered, ansi.SetHyperlink(readme)) {
+		t.Fatalf("folder README links should not rely on terminal hyperlinks: %q", rendered)
+	}
+	stripped := ansi.Strip(rendered)
+	if strings.Contains(stripped, "README.md") {
+		t.Fatalf("folder README link should render as the workspace directory, not the README target: %q", stripped)
+	}
+	if !strings.Contains(stripped, "LittleControlRoom-art-lab Alt+O") {
+		t.Fatalf("folder README link should advertise the artifact picker: %q", stripped)
+	}
+
+	opened := ""
+	oldOpener := externalPathOpener
+	externalPathOpener = func(path string) error {
+		opened = path
+		return nil
+	}
+	t.Cleanup(func() { externalPathOpener = oldOpener })
+
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": snapshot,
+		},
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
+	if cmd != nil {
+		t.Fatalf("directory artifact should not queue a preview command, got %T", cmd)
+	}
+	got := normalizeUpdateModel(updated)
+	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 1 {
+		t.Fatalf("directory artifact picker state = %#v, want one target", got.codexArtifactPicker)
+	}
+	target := got.codexArtifactPicker.Targets[0]
+	if target.Kind != "dir" || target.Path != workspace {
+		t.Fatalf("directory artifact target = %#v, want kind dir path %q", target, workspace)
+	}
+	overlay := ansi.Strip(got.renderCodexArtifactPicker(80, 24))
+	for _, want := range []string{"Open Artifacts", "DIR", "LittleControlRoom-art-lab"} {
+		if !strings.Contains(overlay, want) {
+			t.Fatalf("directory artifact picker missing %q: %q", want, overlay)
+		}
+	}
+
+	updated, cmd = got.updateCodexArtifactPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatalf("Enter on directory artifact should queue open command")
+	}
+	if msg := cmd(); msg == nil {
+		t.Fatalf("directory open command returned nil")
+	}
+	if opened != workspace {
+		t.Fatalf("directory picker opened %q, want %q", opened, workspace)
+	}
+	_ = updated
 }
 
 func TestRenderCodexTranscriptEntriesRendersGeneratedImagePreview(t *testing.T) {
