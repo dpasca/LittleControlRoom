@@ -89,6 +89,14 @@ func (m Model) applyLocalBackendModelSelection(model string) (tea.Model, tea.Cmd
 	settings := cloneEditableSettings(m.currentSettingsBaseline())
 	settings.SetOpenAICompatibleModel(backend, model)
 	m.settingsBaseline = &settings
+	if len(m.settingsFields) > 0 {
+		switch backend {
+		case config.AIBackendMLX:
+			m.settingsFields[settingsFieldMLXModel].input.SetValue(strings.TrimSpace(model))
+		case config.AIBackendOllama:
+			m.settingsFields[settingsFieldOllamaModel].input.SetValue(strings.TrimSpace(model))
+		}
+	}
 	if strings.TrimSpace(model) == "" {
 		active := firstNonEmptyString(m.setupSnapshot.StatusFor(backend).ActiveModel, firstString(localBackendPickerModels(m.setupSnapshot.StatusFor(backend).Models)))
 		m.closeLocalBackendModelPicker(fmt.Sprintf("%s model reset to auto selection%s", backend.Label(), formatAutoModelSuffix(active)))

@@ -16355,12 +16355,16 @@ func TestCommandEnterOpensSettingsMode(t *testing.T) {
 func TestCommandEnterOpensBossMode(t *testing.T) {
 	input := textinput.New()
 	input.SetValue("/boss")
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.BossChatBackend = config.AIBackendOpenAIAPI
+	settings.OpenAIAPIKey = "sk-test-example"
 
 	m := Model{
-		commandMode:  true,
-		commandInput: input,
-		width:        100,
-		height:       24,
+		commandMode:      true,
+		commandInput:     input,
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
 	}
 	m.syncCommandSelection()
 
@@ -16378,6 +16382,66 @@ func TestCommandEnterOpensBossMode(t *testing.T) {
 	rendered := ansi.Strip(got.View())
 	if !strings.Contains(rendered, "Boss Chat") || !strings.Contains(rendered, "Little Room") {
 		t.Fatalf("boss view missing expected panels: %q", rendered)
+	}
+}
+
+func TestCommandEnterBossUnconfiguredShowsSetupPrompt(t *testing.T) {
+	input := textinput.New()
+	input.SetValue("/boss")
+
+	m := Model{
+		commandMode:  true,
+		commandInput: input,
+		width:        100,
+		height:       24,
+	}
+	m.syncCommandSelection()
+
+	updated, cmd := m.updateCommandMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("unconfigured /boss should not start async boss work")
+	}
+	if got.bossMode {
+		t.Fatalf("unconfigured /boss should not open boss mode")
+	}
+	if got.bossSetupPrompt == nil {
+		t.Fatalf("unconfigured /boss should open the setup prompt")
+	}
+	if got.commandMode {
+		t.Fatalf("command mode should close after /boss")
+	}
+	rendered := ansi.Strip(got.View())
+	for _, want := range []string{"Boss Chat Setup", "Open /setup", "Cancel"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("boss setup prompt missing %q: %q", want, rendered)
+		}
+	}
+}
+
+func TestBossSetupPromptEnterOpensSetupFocusedOnBossChat(t *testing.T) {
+	m := Model{
+		bossSetupPrompt: &bossSetupPromptState{Selected: bossSetupPromptOpenSetup},
+		width:           100,
+		height:          24,
+	}
+
+	updated, cmd := m.updateBossSetupPromptMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("opening setup from boss prompt should refresh provider status")
+	}
+	if got.bossSetupPrompt != nil {
+		t.Fatalf("boss setup prompt should close")
+	}
+	if !got.setupMode {
+		t.Fatalf("setup mode should open")
+	}
+	if got.setupFocusedRole != setupRoleBossChat {
+		t.Fatalf("setup focused role = %v, want boss chat", got.setupFocusedRole)
+	}
+	if got.setupSelectedBossBackend() != config.AIBackendOpenAIAPI {
+		t.Fatalf("selected boss backend = %s, want openai_api", got.setupSelectedBossBackend())
 	}
 }
 
@@ -16753,8 +16817,8 @@ func TestSetupTabFocusesBossChatRole(t *testing.T) {
 
 	updated, _ = got.updateSetupMode(tea.KeyMsg{Type: tea.KeyDown})
 	got = updated.(Model)
-	if got.setupSelectedBossBackend() != config.AIBackendDisabled {
-		t.Fatalf("boss chat selected backend = %s, want disabled", got.setupSelectedBossBackend())
+	if got.setupSelectedBossBackend() != config.AIBackendOpenAIAPI {
+		t.Fatalf("boss chat selected backend = %s, want openai_api", got.setupSelectedBossBackend())
 	}
 }
 
@@ -16781,6 +16845,76 @@ func TestSetupBossChatDisabledSavesSeparately(t *testing.T) {
 	}
 	if got.currentSettingsBaseline().AIBackend != config.AIBackendCodex {
 		t.Fatalf("boss chat selection should not change project reports backend")
+	}
+}
+
+func TestSetupOpenAIKeyEditsInlineInsteadOfOpeningSettings(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendCodex
+	settings.OpenAIAPIKey = ""
+
+	m := Model{
+		setupMode:        true,
+		settingsBaseline: &settings,
+		settingsFields:   newSettingsFields(settings),
+		setupFocusedRole: setupRoleProjectReports,
+		setupSelected:    mSetupSelectionForTest(config.AIBackendOpenAIAPI),
+	}
+
+	updated, cmd := m.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("entering OpenAI setup should focus the inline config field")
+	}
+	if !got.setupConfigMode {
+		t.Fatalf("OpenAI setup should enter inline setup config mode")
+	}
+	if got.settingsMode {
+		t.Fatalf("OpenAI setup should not open /settings")
+	}
+	if got.setupSelectedConfigFieldIndex() != settingsFieldOpenAIAPIKey {
+		t.Fatalf("focused setup field = %d, want OpenAI API key", got.setupSelectedConfigFieldIndex())
+	}
+}
+
+func TestSetupInlineConfigSaveUsesEditedFields(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendCodex
+
+	m := Model{
+		setupMode:           true,
+		setupConfigMode:     true,
+		settingsBaseline:    &settings,
+		settingsFields:      newSettingsFields(settings),
+		setupFocusedRole:    setupRoleBossChat,
+		setupBossSelected:   mSetupBossSelectionForTest(config.AIBackendOpenAIAPI),
+		setupConfigSelected: 0,
+	}
+	m.settingsFields[settingsFieldOpenAIAPIKey].input.SetValue("sk-inline-test")
+
+	updated, cmd := m.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("saving inline setup fields should queue a save command")
+	}
+	if !got.setupSaving {
+		t.Fatalf("saving inline setup fields should mark setup saving")
+	}
+	msg := cmd()
+	saved, ok := msg.(setupSavedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want setupSavedMsg", msg)
+	}
+	if saved.err != nil {
+		t.Fatalf("setup save returned error: %v", saved.err)
+	}
+	if saved.settings.OpenAIAPIKey != "sk-inline-test" {
+		t.Fatalf("saved OpenAI key = %q, want edited field", saved.settings.OpenAIAPIKey)
+	}
+	if saved.settings.BossChatBackend != config.AIBackendOpenAIAPI {
+		t.Fatalf("saved boss backend = %s, want openai_api", saved.settings.BossChatBackend)
 	}
 }
 

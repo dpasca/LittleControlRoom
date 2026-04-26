@@ -22,9 +22,9 @@ Provider artifact and detector-footprint notes live in:
 - `lcroom scope` shows the effective include and exclude scope for this run
 - `lcroom serve` starts the optional read-only REST and WebSocket server
 
-`lcroom classify` requires a configured AI backend. That can be Codex, OpenCode, Claude Code, or an OpenAI API key. The TUI will open `/setup` automatically until you pick one.
+`lcroom classify` requires a configured AI backend. That can be Codex, OpenCode, Claude Code, MLX, Ollama, or an OpenAI API key. The TUI will open `/setup` automatically until you pick one.
 
-The usual way to reach boss mode is from the classic TUI with `/boss`. It opens a minimal boss chat layer over the dashboard, gives each turn a compact plain-text app-state brief, and uses its own `boss_chat_backend` setting so live chat can use direct OpenAI API inference while project analysis keeps using Codex, OpenCode, Claude Code, MLX, Ollama, or another configured backend. Press `Esc`, submit `/boss off`, or run `/boss off` from the command palette after returning to the dashboard to close it. Set `boss_chat_model` or `LCROOM_BOSS_MODEL` to override the default boss-mode chat model.
+The usual way to reach boss mode is from the classic TUI with `/boss`. It opens a minimal boss chat layer over the dashboard, gives each turn a compact plain-text app-state brief, and uses its own `boss_chat_backend` setting so live chat can use direct OpenAI API inference while project analysis keeps using Codex, OpenCode, Claude Code, MLX, Ollama, or another configured backend. If boss chat is not configured yet, `/boss` shows a setup prompt with a direct jump to the Boss chat card in `/setup`. Press `Esc`, submit `/boss off`, or run `/boss off` from the command palette after returning to the dashboard to close it. Set `boss_chat_model` or `LCROOM_BOSS_MODEL` to override the default boss-mode chat model.
 
 ## Config File
 
@@ -33,7 +33,7 @@ The usual way to reach boss mode is from the classic TUI with `/boss`. It opens 
 - Example file: [`config.example.toml`](config.example.toml)
 - Supported format: TOML
 
-The TUI `/settings` modal is now split into sections (`AI & Models`, `Project Scope`, `Browser`, `Refresh`) so it stays usable on smaller terminals. The Browser section exposes a simplified `Browser windows` field with plain-language choices such as `Only when needed`, `Always show`, and `Classic browser behavior`, while the config file still stores the raw Playwright policy keys below:
+Use `/setup` for AI roles, API keys, and MLX/Ollama endpoint/model overrides. The TUI `/settings` modal is split into sections for the remaining app configuration, including project scope, browser behavior, refresh timing, and advanced toggles. The Browser section exposes a simplified `Browser windows` field with plain-language choices such as `Only when needed`, `Always show`, and `Classic browser behavior`, while the config file still stores the raw Playwright policy keys below:
 
 In `Only when needed`, newly launched embedded Codex and OpenCode sessions now route Playwright through an LCR-managed wrapper with a persistent browser profile. Codex gets a session-local `CODEX_HOME` overlay and OpenCode gets a session-local `XDG_CONFIG_HOME` overlay, both shadowing only the `playwright` skill so embedded sessions are guided toward the managed MCP path without changing the user's real global installs. On macOS, LCR backgrounds that managed browser and later reveals the same browser window for login or other human steps, so auth stays in the Playwright session the embedded assistant is actually driving. Existing embedded sessions still need to be reopened or reconnected before they pick up the new launch path, and Codex currently has the more complete browser-attention UX.
 
@@ -157,7 +157,7 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 ## TUI Keys
 
 - `/` open the command palette
-- `/boss` open the chat-first boss layer; `Esc` returns to the classic TUI
+- `/boss` opens the chat-first boss layer, or prompts for setup if boss chat is not configured; `Esc` returns to the classic TUI
 - `↑/↓` move selection
 - `Enter` open or resume the selected project's latest embedded provider
 - `Esc` hide the visible embedded session pane

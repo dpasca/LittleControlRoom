@@ -90,6 +90,7 @@ type Model struct {
 	commandSelected                int
 	bossMode                       bool
 	bossModel                      bossui.Model
+	bossSetupPrompt                *bossSetupPromptState
 	errorLogVisible                bool
 	errorLogSelected               int
 	errorLogEntries                []errorLogEntry
@@ -120,6 +121,8 @@ type Model struct {
 	setupFocusedRole               setupRole
 	setupSelected                  int
 	setupBossSelected              int
+	setupConfigMode                bool
+	setupConfigSelected            int
 	setupModelTier                 config.ModelTier
 	setupSnapshot                  aibackend.Snapshot
 	localModelPickerVisible        bool
@@ -997,6 +1000,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.bossMode {
 			return m.updateBossModeMessage(msg)
+		}
+		if m.bossSetupPrompt != nil {
+			return m.updateBossSetupPromptMode(msg)
 		}
 		if m.codexModelPickerVisible() {
 			return m.updateCodexModelPickerMode(msg)
@@ -2575,6 +2581,8 @@ func (m Model) View() string {
 		body = m.renderNewProjectOverlay(body, layout.width, layout.height)
 	} else if m.runCommandDialog != nil {
 		body = m.renderRunCommandOverlay(body, layout.width, layout.height)
+	} else if m.bossSetupPrompt != nil {
+		body = m.renderBossSetupPromptOverlay(body, layout.width, layout.height)
 	} else if m.setupMode {
 		body = m.renderSetupOverlay(body, layout.width, layout.height)
 		if m.localModelPickerVisible {
@@ -3765,6 +3773,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 	case commands.KindBoss:
 		switch inv.Toggle {
 		case commands.ToggleOff:
+			m.bossSetupPrompt = nil
 			m.closeBossMode("Boss mode closed")
 			return m, nil
 		case commands.ToggleOn:
@@ -3772,13 +3781,13 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 				m.status = "Boss mode already open"
 				return m, nil
 			}
-			return m.openBossMode()
+			return m.openBossModeOrSetupPrompt()
 		default:
 			if m.bossMode {
 				m.closeBossMode("Boss mode closed")
 				return m, nil
 			}
-			return m.openBossMode()
+			return m.openBossModeOrSetupPrompt()
 		}
 	case commands.KindRefresh:
 		m.loading = true
@@ -5679,8 +5688,14 @@ func (m Model) renderFooter(width int) string {
 	if m.commandMode {
 		return m.renderModalFooter(width, "Command palette open", supplementSegments...)
 	}
+	if m.bossSetupPrompt != nil {
+		return m.renderModalFooter(width, "Boss chat setup: Enter choose, Tab switch, Esc cancel", supplementSegments...)
+	}
 	if m.setupMode {
-		return m.renderModalFooter(width, "Setup: Tab role, ↑↓ provider, Enter choose, s settings, Esc close", supplementSegments...)
+		if m.setupConfigMode {
+			return m.renderModalFooter(width, "Setup fields: type to edit, Ctrl+S/Enter save, Esc done", supplementSegments...)
+		}
+		return m.renderModalFooter(width, "Setup: Tab role, ↑↓ provider, e edit fields, Enter choose, Esc close", supplementSegments...)
 	}
 	if m.settingsMode {
 		return m.renderModalFooter(width, "Settings: Enter save, Tab next, Esc cancel", supplementSegments...)

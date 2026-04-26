@@ -22,11 +22,17 @@ const (
 
 var setupBackendOptions = config.SelectableAIBackends()
 var setupBossChatOptions = []config.AIBackend{
+	config.AIBackendUnset,
 	config.AIBackendOpenAIAPI,
 	config.AIBackendDisabled,
 }
 
 func (m *Model) openSetupMode() tea.Cmd {
+	settings := m.currentSettingsBaseline()
+	m.settingsFields = newSettingsFields(settings)
+	saved := cloneEditableSettings(settings)
+	m.settingsBaseline = &saved
+	m.blurSettingsFields()
 	m.setupMode = true
 	m.settingsMode = false
 	m.commandMode = false
@@ -35,6 +41,8 @@ func (m *Model) openSetupMode() tea.Cmd {
 	m.setupSaving = false
 	m.localModelPickerVisible = false
 	m.setupFocusedRole = setupRoleProjectReports
+	m.setupConfigMode = false
+	m.setupConfigSelected = 0
 	m.setupSelected = m.setupSelectionForBackend(m.recommendedSetupBackend())
 	m.setupBossSelected = m.setupBossSelectionForBackend(m.recommendedSetupBossBackend())
 	tier, _ := config.ParseModelTier(m.currentSettingsBaseline().OpenCodeModelTier)
@@ -55,7 +63,10 @@ func (m *Model) closeSetupMode(status string) {
 	m.setupMode = false
 	m.setupLoading = false
 	m.setupSaving = false
+	m.setupConfigMode = false
+	m.setupConfigSelected = 0
 	m.localModelPickerVisible = false
+	m.blurSettingsFields()
 	if status != "" {
 		m.status = status
 	}
@@ -90,6 +101,9 @@ func (m Model) updateSetupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.setupLoading || m.setupSaving {
 		return m, nil
 	}
+	if m.setupConfigMode {
+		return m.updateSetupConfigMode(msg)
+	}
 	switch msg.String() {
 	case "esc":
 		m.closeSetupMode("AI setup skipped for now. Run /setup anytime.")
@@ -115,17 +129,8 @@ func (m Model) updateSetupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setupModelTier = m.cycleModelTier(m.setupModelTier)
 			return m, nil
 		}
-	case "s":
-		settings := m.currentSettingsBaseline()
-		switch m.setupFocusedRole {
-		case setupRoleBossChat:
-			settings.BossChatBackend = m.setupSelectedBossBackend()
-		default:
-			if selected := m.setupSelectedBackend(); selected == config.AIBackendOpenAIAPI || selected == config.AIBackendMLX || selected == config.AIBackendOllama {
-				settings.AIBackend = selected
-			}
-		}
-		return m, m.openSettingsModeWithBaseline(settings)
+	case "e":
+		return m.enterSetupConfigMode()
 	case "m":
 		if m.setupFocusedRole == setupRoleProjectReports && isLocalBackendModelPickerBackend(m.setupSelectedBackend()) {
 			return m.openLocalBackendModelPicker()
@@ -134,6 +139,32 @@ func (m Model) updateSetupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.activateSetupSelection()
 	}
 	return m, nil
+}
+
+func (m Model) updateSetupConfigMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.setupConfigMode = false
+		m.blurSettingsFields()
+		m.status = "Setup fields closed. Press e to edit them again."
+		return m, nil
+	case "tab", "down", "ctrl+n":
+		cmd := m.moveSetupConfigSelection(1)
+		return m, cmd
+	case "shift+tab", "up", "ctrl+p":
+		cmd := m.moveSetupConfigSelection(-1)
+		return m, cmd
+	case "ctrl+s", "enter":
+		return m.saveSetupFromCurrentChoices()
+	}
+
+	fieldIndex := m.setupSelectedConfigFieldIndex()
+	if fieldIndex < 0 || fieldIndex >= len(m.settingsFields) {
+		return m, nil
+	}
+	input, cmd := m.settingsFields[fieldIndex].input.Update(msg)
+	m.settingsFields[fieldIndex].input = input
+	return m, cmd
 }
 
 func (m Model) cycleModelTier(tier config.ModelTier) config.ModelTier {
@@ -151,6 +182,9 @@ func (m *Model) moveSetupRole(delta int) {
 	if delta == 0 {
 		return
 	}
+	m.setupConfigMode = false
+	m.setupConfigSelected = 0
+	m.blurSettingsFields()
 	count := int(setupRoleBossChat) + 1
 	next := int(m.setupFocusedRole) + delta
 	if next < 0 {
@@ -166,6 +200,9 @@ func (m *Model) moveSetupProvider(delta int) {
 	if delta == 0 {
 		return
 	}
+	m.setupConfigMode = false
+	m.setupConfigSelected = 0
+	m.blurSettingsFields()
 	if m.setupFocusedRole == setupRoleBossChat {
 		m.setupBossSelected = wrapIndex(m.setupBossSelected+delta, len(setupBossChatOptions))
 		return
@@ -183,27 +220,95 @@ func wrapIndex(index, count int) int {
 	return index % count
 }
 
+func (m Model) enterSetupConfigMode() (tea.Model, tea.Cmd) {
+	fields := m.setupConfigFieldIndexes()
+	if len(fields) == 0 {
+		m.status = "No extra configuration fields for this setup choice."
+		return m, nil
+	}
+	m.setupConfigMode = true
+	if m.setupConfigSelected < 0 || m.setupConfigSelected >= len(fields) {
+		m.setupConfigSelected = 0
+	}
+	m.status = "Editing AI setup fields. Press Ctrl+S or Enter to save."
+	cmd := m.focusSetupConfigField()
+	return m, cmd
+}
+
+func (m *Model) moveSetupConfigSelection(delta int) tea.Cmd {
+	fields := m.setupConfigFieldIndexes()
+	if len(fields) == 0 || delta == 0 {
+		return nil
+	}
+	m.setupConfigSelected = wrapIndex(m.setupConfigSelected+delta, len(fields))
+	return m.focusSetupConfigField()
+}
+
+func (m *Model) focusSetupConfigField() tea.Cmd {
+	fields := m.setupConfigFieldIndexes()
+	if len(fields) == 0 || len(m.settingsFields) == 0 {
+		return nil
+	}
+	m.setupConfigSelected = wrapIndex(m.setupConfigSelected, len(fields))
+	selectedField := fields[m.setupConfigSelected]
+	cmds := make([]tea.Cmd, 0, 1)
+	for i := range m.settingsFields {
+		if i == selectedField {
+			m.settingsFields[i].input.CursorEnd()
+			cmds = append(cmds, m.settingsFields[i].input.Focus())
+			continue
+		}
+		m.settingsFields[i].input.Blur()
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m Model) setupSelectedConfigFieldIndex() int {
+	fields := m.setupConfigFieldIndexes()
+	if len(fields) == 0 {
+		return -1
+	}
+	return fields[wrapIndex(m.setupConfigSelected, len(fields))]
+}
+
+func (m Model) setupConfigFieldIndexes() []int {
+	if len(m.settingsFields) == 0 {
+		return nil
+	}
+	if m.setupFocusedRole == setupRoleBossChat {
+		switch m.setupSelectedBossBackend() {
+		case config.AIBackendUnset, config.AIBackendOpenAIAPI:
+			return []int{settingsFieldOpenAIAPIKey, settingsFieldBossChatModel}
+		default:
+			return nil
+		}
+	}
+	switch m.setupSelectedBackend() {
+	case config.AIBackendOpenAIAPI:
+		return []int{settingsFieldOpenAIAPIKey}
+	case config.AIBackendMLX:
+		return []int{settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel}
+	case config.AIBackendOllama:
+		return []int{settingsFieldOllamaBaseURL, settingsFieldOllamaAPIKey, settingsFieldOllamaModel}
+	default:
+		return nil
+	}
+}
+
 func (m Model) activateSetupSelection() (tea.Model, tea.Cmd) {
 	if m.setupFocusedRole == setupRoleBossChat {
 		return m.activateBossChatSetupSelection()
 	}
-	settings := m.currentSettingsBaseline()
-	settings.AIBackend = m.setupSelectedBackend()
-	settings.OpenCodeModelTier = string(m.setupModelTier)
+	settings := m.setupSettingsFromCurrentChoices()
 	selectedStatus := m.setupSnapshot.StatusFor(settings.AIBackend)
 	switch settings.AIBackend {
 	case config.AIBackendDisabled:
-		m.setupSaving = true
-		m.status = "Saving AI setup..."
-		return m, m.saveSetupCmd(settings)
+		return m.saveSetupFromCurrentChoices()
 	case config.AIBackendOpenAIAPI:
 		if strings.TrimSpace(settings.OpenAIAPIKey) == "" {
-			m.status = "OpenAI API key backend selected. Save a key to finish setup."
-			return m, m.openSettingsModeWithBaseline(settings)
+			return m.enterSetupConfigModeWithStatus("Paste an OpenAI API key here, then press Ctrl+S or Enter to save.")
 		}
-		m.setupSaving = true
-		m.status = "Saving AI setup..."
-		return m, m.saveSetupCmd(settings)
+		return m.saveSetupFromCurrentChoices()
 	case config.AIBackendMLX, config.AIBackendOllama:
 		if strings.TrimSpace(selectedStatus.Detail) == "" || !selectedStatus.Ready {
 			if selectedStatus.LoginHint != "" {
@@ -211,11 +316,9 @@ func (m Model) activateSetupSelection() (tea.Model, tea.Cmd) {
 			} else {
 				m.status = selectedStatus.Detail
 			}
-			return m, m.openSettingsModeWithBaseline(settings)
+			return m.enterSetupConfigMode()
 		}
-		m.setupSaving = true
-		m.status = "Saving AI setup..."
-		return m, m.saveSetupCmd(settings)
+		return m.saveSetupFromCurrentChoices()
 	default:
 		if !selectedStatus.Ready {
 			if selectedStatus.LoginHint != "" {
@@ -225,32 +328,63 @@ func (m Model) activateSetupSelection() (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		m.setupSaving = true
-		m.status = "Saving AI setup..."
-		return m, m.saveSetupCmd(settings)
+		return m.saveSetupFromCurrentChoices()
 	}
 }
 
 func (m Model) activateBossChatSetupSelection() (tea.Model, tea.Cmd) {
-	settings := m.currentSettingsBaseline()
-	settings.BossChatBackend = m.setupSelectedBossBackend()
+	settings := m.setupSettingsFromCurrentChoices()
 	switch settings.BossChatBackend {
+	case config.AIBackendUnset:
+		return m.saveSetupFromCurrentChoices()
 	case config.AIBackendDisabled:
-		m.setupSaving = true
-		m.status = "Saving AI setup..."
-		return m, m.saveSetupCmd(settings)
+		return m.saveSetupFromCurrentChoices()
 	case config.AIBackendOpenAIAPI:
 		if strings.TrimSpace(settings.OpenAIAPIKey) == "" {
-			m.status = "Boss chat selected OpenAI API. Save a key to finish setup."
-			return m, m.openSettingsModeWithBaseline(settings)
+			return m.enterSetupConfigModeWithStatus("Paste an OpenAI API key here, then press Ctrl+S or Enter to save.")
 		}
-		m.setupSaving = true
-		m.status = "Saving AI setup..."
-		return m, m.saveSetupCmd(settings)
+		return m.saveSetupFromCurrentChoices()
 	default:
 		m.status = "Boss chat can use OpenAI API or stay off for now."
 		return m, nil
 	}
+}
+
+func (m Model) enterSetupConfigModeWithStatus(status string) (tea.Model, tea.Cmd) {
+	updated, cmd := m.enterSetupConfigMode()
+	got := updated.(Model)
+	if strings.TrimSpace(status) != "" {
+		got.status = status
+	}
+	return got, cmd
+}
+
+func (m Model) saveSetupFromCurrentChoices() (tea.Model, tea.Cmd) {
+	settings := m.setupSettingsFromCurrentChoices()
+	m.setupSaving = true
+	m.setupConfigMode = false
+	m.blurSettingsFields()
+	m.status = "Saving AI setup..."
+	return m, m.saveSetupCmd(settings)
+}
+
+func (m Model) setupSettingsFromCurrentChoices() config.EditableSettings {
+	settings := m.currentSettingsBaseline()
+	settings.AIBackend = m.setupSelectedBackend()
+	settings.BossChatBackend = m.setupSelectedBossBackend()
+	settings.OpenCodeModelTier = string(m.setupModelTier)
+	if len(m.settingsFields) == 0 {
+		return settings
+	}
+	settings.OpenAIAPIKey = m.settingsFieldValue(settingsFieldOpenAIAPIKey)
+	settings.BossChatModel = m.settingsFieldValue(settingsFieldBossChatModel)
+	settings.MLXBaseURL = m.settingsFieldValue(settingsFieldMLXBaseURL)
+	settings.MLXAPIKey = m.settingsFieldValue(settingsFieldMLXAPIKey)
+	settings.MLXModel = m.settingsFieldValue(settingsFieldMLXModel)
+	settings.OllamaBaseURL = m.settingsFieldValue(settingsFieldOllamaBaseURL)
+	settings.OllamaAPIKey = m.settingsFieldValue(settingsFieldOllamaAPIKey)
+	settings.OllamaModel = m.settingsFieldValue(settingsFieldOllamaModel)
+	return settings
 }
 
 func (m Model) recommendedSetupBackend() config.AIBackend {
@@ -277,7 +411,7 @@ func (m Model) recommendedSetupBossBackend() config.AIBackend {
 	if current != config.AIBackendUnset {
 		return current
 	}
-	return config.AIBackendOpenAIAPI
+	return config.AIBackendUnset
 }
 
 func (m Model) setupCurrentBackend() config.AIBackend {
@@ -358,8 +492,9 @@ func (m Model) renderSetupContent(width, maxHeight int) string {
 	lines = append(lines, detailSectionStyle.Render(m.setupProviderListTitle()))
 	lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, width, m.setupRolePurpose())...)
 
+	configLines := m.renderSetupConfigLines(width)
 	providerRows := m.renderSetupProviderRows(width)
-	providerLimit := max(2, maxHeight-renderedLinesHeight(lines)-5)
+	providerLimit := max(2, maxHeight-renderedLinesHeight(lines)-renderedLinesHeight(configLines)-5)
 	start, end := m.setupProviderWindow(len(providerRows), providerLimit)
 	if start > 0 {
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d above", start)))
@@ -369,6 +504,10 @@ func (m Model) renderSetupContent(width, maxHeight int) string {
 	}
 	if end < len(providerRows) {
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d below", len(providerRows)-end)))
+	}
+	if len(configLines) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, configLines...)
 	}
 	if hint := m.renderSetupHint(width); hint != "" {
 		lines = append(lines, "")
@@ -467,6 +606,51 @@ func (m Model) renderSetupProviderRows(width int) []string {
 	return lines
 }
 
+func (m Model) renderSetupConfigLines(width int) []string {
+	if len(m.settingsFields) == 0 {
+		return nil
+	}
+	fields := m.setupConfigFieldIndexes()
+	lines := []string{detailSectionStyle.Render("Configuration")}
+	if len(fields) == 0 {
+		lines = append(lines, commandPaletteHintStyle.Render(m.setupNoConfigText()))
+		return lines
+	}
+	if m.setupConfigMode {
+		lines = append(lines, commandPaletteHintStyle.Render("Editing here in /setup. Type normally; Ctrl+S or Enter saves."))
+	} else {
+		lines = append(lines, commandPaletteHintStyle.Render("Press e to edit these fields here in /setup."))
+	}
+	labelWidth := m.settingsLabelWidth(width, fields)
+	inputWidth := max(10, width-labelWidth-1)
+	for position, fieldIndex := range fields {
+		selected := m.setupConfigMode && position == wrapIndex(m.setupConfigSelected, len(fields))
+		lines = append(lines, m.renderSettingsFieldRow(fieldIndex, m.settingsFields[fieldIndex], selected, labelWidth, inputWidth))
+	}
+	return lines
+}
+
+func (m Model) setupNoConfigText() string {
+	if m.setupFocusedRole == setupRoleBossChat {
+		if m.setupSelectedBossBackend() == config.AIBackendDisabled {
+			return "Boss chat will be off. No extra fields needed."
+		}
+		return "No extra fields for this boss chat provider."
+	}
+	switch m.setupSelectedBackend() {
+	case config.AIBackendOpenCode:
+		return "OpenCode uses your OpenCode login. Press t to change the model tier."
+	case config.AIBackendCodex:
+		return "Codex uses your Codex login. No API key is stored by Little Control Room."
+	case config.AIBackendClaude:
+		return "Claude Code uses your Claude Code login. Background tasks default to Haiku."
+	case config.AIBackendDisabled:
+		return "Project reports will be off. No extra fields needed."
+	default:
+		return "No extra fields for this provider."
+	}
+}
+
 func (m Model) renderSetupOptionRow(backend config.AIBackend, selected bool, width int) string {
 	status := m.setupSnapshot.StatusFor(backend)
 	label := "  " + backend.Label()
@@ -531,6 +715,9 @@ func (m Model) renderBossChatSetupOptionRow(backend config.AIBackend, selected b
 }
 
 func bossChatBackendSetupLabel(backend config.AIBackend) string {
+	if backend == config.AIBackendUnset {
+		return "Auto"
+	}
 	if backend == config.AIBackendDisabled {
 		return "Off"
 	}
@@ -539,6 +726,8 @@ func bossChatBackendSetupLabel(backend config.AIBackend) string {
 
 func (m Model) bossChatSetupOptionState(backend config.AIBackend, status aibackend.Status) (string, lipgloss.Style) {
 	switch {
+	case backend == config.AIBackendUnset:
+		return "auto", commandPalettePickStyle
 	case backend == m.setupCurrentBossBackend() && backend != config.AIBackendUnset:
 		return "active", commandPalettePickStyle
 	case backend == config.AIBackendDisabled:
@@ -552,6 +741,11 @@ func (m Model) bossChatSetupOptionState(backend config.AIBackend, status aibacke
 
 func (m Model) bossChatSetupOptionDetail(backend config.AIBackend, settings config.EditableSettings) string {
 	switch backend {
+	case config.AIBackendUnset:
+		if strings.TrimSpace(settings.OpenAIAPIKey) == "" {
+			return "save a key to auto-enable boss chat"
+		}
+		return "auto-enables with the saved OpenAI API key"
 	case config.AIBackendDisabled:
 		return "turn off high-level chat inference"
 	case config.AIBackendOpenAIAPI:
@@ -614,11 +808,17 @@ func (m Model) renderBossChatSetupHint(width int) string {
 	selected := m.setupSelectedBossBackend()
 	hint := "Boss chat is the direct high-level conversation in /boss."
 	switch selected {
+	case config.AIBackendUnset:
+		if strings.TrimSpace(settings.OpenAIAPIKey) == "" {
+			hint = "Auto keeps boss chat unconfigured until you save an OpenAI API key here."
+		} else {
+			hint = "Auto will use the saved OpenAI API key for boss chat."
+		}
 	case config.AIBackendDisabled:
 		hint = "Turn boss chat off. Project reports and embedded sessions can still use their own backends."
 	case config.AIBackendOpenAIAPI:
 		if strings.TrimSpace(settings.OpenAIAPIKey) == "" {
-			hint = "Boss chat uses direct OpenAI API inference. Press Enter to choose it and continue to settings for the API key."
+			hint = "Boss chat uses direct OpenAI API inference. Press Enter to add the API key here."
 		} else if settings.AIBackend == config.AIBackendOpenAIAPI {
 			hint = "Boss chat will use the saved OpenAI API key. Project reports are also using OpenAI API."
 		} else {
@@ -629,12 +829,20 @@ func (m Model) renderBossChatSetupHint(width int) string {
 }
 
 func (m Model) renderSetupActions() string {
+	if m.setupConfigMode {
+		return strings.Join([]string{
+			renderDialogAction("Ctrl+S/Enter", "save", commitActionKeyStyle, commitActionTextStyle),
+			renderDialogAction("Tab", "field", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("Up/Down", "field", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("Esc", "done", cancelActionKeyStyle, cancelActionTextStyle),
+		}, "   ")
+	}
 	actions := []string{
 		renderDialogAction("Enter", "choose", commitActionKeyStyle, commitActionTextStyle),
 		renderDialogAction("Tab", "role", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("Up/Down", "provider", navigateActionKeyStyle, navigateActionTextStyle),
+		renderDialogAction("e", "edit fields", pushActionKeyStyle, pushActionTextStyle),
 		renderDialogAction("r", "refresh", navigateActionKeyStyle, navigateActionTextStyle),
-		renderDialogAction("s", "settings", pushActionKeyStyle, pushActionTextStyle),
 		renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
 	}
 	if m.setupFocusedRole == setupRoleProjectReports && isLocalBackendModelPickerBackend(m.setupSelectedBackend()) {

@@ -55,7 +55,7 @@ make install
 lcroom tui
 ```
 
-On the first run, LCR opens `/setup` if no AI backend is configured. From there you can use Codex, OpenCode, Claude Code, MLX, Ollama, an OpenAI API key, or continue without AI and come back later. Claude-backed background inference currently defaults to Haiku to keep usage lighter. MLX and Ollama use their OpenAI-compatible local endpoints, with defaults of `http://127.0.0.1:8080/v1` for MLX and `http://127.0.0.1:11434/v1` for Ollama.
+On the first run, LCR opens `/setup` if no AI backend is configured. From there you can choose AI roles for project reports and boss chat, edit the related API keys/endpoints/models inline, or continue without AI and come back later. Claude-backed background inference currently defaults to Haiku to keep usage lighter. MLX and Ollama use their OpenAI-compatible local endpoints, with defaults of `http://127.0.0.1:8080/v1` for MLX and `http://127.0.0.1:11434/v1` for Ollama.
 
 <p align="center">
   <a href="docs/screenshots/setup.png">
@@ -69,14 +69,14 @@ LCR separates embedded session providers from the backend used for background wo
 
 - Embedded sessions today are Codex, OpenCode, and Claude Code.
 - Background AI can run through Codex, OpenCode, Claude Code, MLX, Ollama, or a direct OpenAI API key.
-- Boss chat has its own `boss_chat_backend`, so interactive high-level chat can use direct API inference without forcing summaries/classification off Codex, OpenCode, Claude Code, MLX, or Ollama.
+- Boss chat has its own `boss_chat_backend`, so interactive high-level chat can use direct API inference without forcing summaries/classification off Codex, OpenCode, Claude Code, MLX, or Ollama. If it is not configured yet, `/boss` offers to jump straight to the Boss chat setup card.
 - MLX and Ollama use OpenAI-compatible local endpoints, so they fit into the same background inference path without a separate integration surface.
 
 For local inference, the practical setup is:
 
 - Pick `MLX` or `Ollama` in `/setup`.
-- Leave the endpoint fields blank in `/settings` if you want the defaults.
-- Or override them in `/settings` if your local server runs elsewhere.
+- Leave the endpoint fields blank in `/setup` if you want the defaults.
+- Or press `e` in `/setup` to override them if your local server runs elsewhere.
 
 Default local endpoints:
 
@@ -98,7 +98,7 @@ The main TUI command palette opens with `/`.
 - `/sort <attention|recent>`: Change the project ordering.
 - `/view <ai|all>`: Switch between AI-linked and all tracked folders.
 - `/setup`: Choose AI roles for project reports and boss chat.
-- `/settings`: Edit sectioned settings for AI backends, project scope, browser automation, and refresh timing.
+- `/settings`: Edit project scope, browser automation, refresh timing, and advanced settings.
 - `/filter [text|clear]`: Temporarily narrow the whole dashboard to matching project names.
 - `/new-project`: Create a project folder, or paste an existing project path to add it directly.
 - `/new-task`: Create a scratch task folder under the default task root.
@@ -173,7 +173,7 @@ Most day-to-day use falls into a few buckets:
   | [![Diff window](docs/screenshots/diff-view.png)](docs/screenshots/diff-view.png) | [![Commit preview dialog](docs/screenshots/commit-preview.png)](docs/screenshots/commit-preview.png) | [![Image diff with before/after previews](docs/screenshots/diff-view-image.png)](docs/screenshots/diff-view-image.png) |
 
 - **Keep the list clean** — Use `f` or `/filter <text>` to narrow the project list, `/pin` and `/snooze` to control attention, `/remove` to archive/delete/hide the selected item based on context, and `/ignore` and `/ignored` when you want explicit exact-name hide rules.
-- **Adjust setup** — Use `/settings` for API keys, MLX/Ollama endpoint overrides, paths, refresh timing, and the simplified browser windows control. For embedded Codex and OpenCode sessions, LCR can isolate Playwright per session so browser-heavy work multitasks more cleanly in parallel, then surface the right managed browser window only when a human step is actually needed. Switch to `Classic browser behavior` if you want the original provider-owned flow, then use `/new-project` for repo-backed work and `/new-task` for quick scratch work.
+- **Adjust setup** — Use `/setup` for AI roles, API keys, and MLX/Ollama endpoint/model overrides. Use `/settings` for paths, refresh timing, advanced toggles, and the simplified browser windows control. For embedded Codex and OpenCode sessions, LCR can isolate Playwright per session so browser-heavy work multitasks more cleanly in parallel, then surface the right managed browser window only when a human step is actually needed. Switch to `Classic browser behavior` if you want the original provider-owned flow, then use `/new-project` for repo-backed work and `/new-task` for quick scratch work.
 
 For the full command list and detailed behavior, see [`docs/reference.md`](docs/reference.md).
 
