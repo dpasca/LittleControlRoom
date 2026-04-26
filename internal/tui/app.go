@@ -952,7 +952,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncCodexViewport(false)
 		m.syncRuntimeViewport(false)
 		if m.bossMode {
-			return m.updateBossModeMessage(msg)
+			return m.updateBossModeWindowSize()
 		}
 		return m, nil
 	case bossui.ExitMsg:
@@ -2526,7 +2526,7 @@ func (m Model) View() string {
 	done := m.beginUIPhase("View", m.currentLatencyProjectPath(), "")
 	defer done()
 	if m.bossMode {
-		return m.bossModel.View()
+		return m.renderBossModeView()
 	}
 	if m.codexVisible() {
 		body := m.renderCodexView()

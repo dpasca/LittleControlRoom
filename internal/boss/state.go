@@ -153,12 +153,12 @@ func BuildStateBrief(snapshot StateSnapshot, now time.Time) string {
 	return strings.Join(lines, "\n")
 }
 
-func OnMyDeskText(snapshot StateSnapshot, now time.Time) string {
+func AttentionText(snapshot StateSnapshot, now time.Time) string {
 	if now.IsZero() {
 		now = time.Now()
 	}
 	if len(snapshot.HotProjects) == 0 {
-		return "Nothing on the desk yet.\nRun a scan or wait for project state to load."
+		return "Nothing needs attention yet.\nRun a scan or wait for project state to load."
 	}
 	lines := make([]string, 0, 5)
 	for i, project := range snapshot.HotProjects {
@@ -177,7 +177,7 @@ func OnMyDeskText(snapshot StateSnapshot, now time.Time) string {
 	return strings.Join(lines, "\n")
 }
 
-func NotebookText(snapshot StateSnapshot) string {
+func NotesText(snapshot StateSnapshot) string {
 	lines := []string{
 		"Chat is the control surface.",
 		"Panels are stationary assistant notes.",

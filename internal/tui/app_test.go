@@ -16380,8 +16380,35 @@ func TestCommandEnterOpensBossMode(t *testing.T) {
 		t.Fatalf("/boss should return the embedded boss init command")
 	}
 	rendered := ansi.Strip(got.View())
-	if !strings.Contains(rendered, "Boss Chat") || !strings.Contains(rendered, "Little Room") {
+	if !strings.Contains(rendered, "Boss Chat") || !strings.Contains(rendered, "Situation") {
 		t.Fatalf("boss view missing expected panels: %q", rendered)
+	}
+	if strings.Contains(rendered, "Little Room") {
+		t.Fatalf("boss view should use the shared TUI panel language, got: %q", rendered)
+	}
+	lines := strings.Split(rendered, "\n")
+	if len(lines) != got.height {
+		t.Fatalf("boss view line count = %d, want terminal height %d: %q", len(lines), got.height, rendered)
+	}
+	if len(lines) < 2 || !strings.Contains(lines[0], "Boss Mode") {
+		t.Fatalf("boss view should use a boss-specific top status line: %q", rendered)
+	}
+	if !strings.HasPrefix(lines[1], "╭") {
+		t.Fatalf("boss frames should start below the boss top status line: %q", rendered)
+	}
+	if strings.Contains(lines[0], brand.Name) {
+		t.Fatalf("boss view should not show the classic app title in the top bar: %q", rendered)
+	}
+	if !strings.Contains(lines[len(lines)-1], "Enter") || !strings.Contains(lines[len(lines)-1], "Esc") {
+		t.Fatalf("boss footer should show boss chat actions: %q", rendered)
+	}
+	if strings.Contains(lines[len(lines)-1], "q quit") {
+		t.Fatalf("boss footer should not show the classic q quit action: %q", rendered)
+	}
+	for _, line := range strings.Split(got.View(), "\n") {
+		if gotWidth := ansi.StringWidth(ansi.Strip(line)); gotWidth > got.width {
+			t.Fatalf("boss view line width = %d, want <= %d: %q", gotWidth, got.width, ansi.Strip(line))
+		}
 	}
 }
 

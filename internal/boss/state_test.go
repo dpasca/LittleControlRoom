@@ -65,12 +65,12 @@ func TestPanelTextsStayCompact(t *testing.T) {
 			{Name: "Beta", Status: model.StatusActive, AttentionScore: 10},
 		},
 	}
-	desk := OnMyDeskText(snapshot, now)
-	if !strings.Contains(desk, "Alpha") || !strings.Contains(desk, "1h ago") {
-		t.Fatalf("unexpected desk text:\n%s", desk)
+	attention := AttentionText(snapshot, now)
+	if !strings.Contains(attention, "Alpha") || !strings.Contains(attention, "1h ago") {
+		t.Fatalf("unexpected attention text:\n%s", attention)
 	}
-	notebook := NotebookText(snapshot)
-	if !strings.Contains(notebook, "Panels are stationary") || !strings.Contains(notebook, "Assessment queue: 1") {
-		t.Fatalf("unexpected notebook text:\n%s", notebook)
+	notes := NotesText(snapshot)
+	if !strings.Contains(notes, "Panels are stationary") || !strings.Contains(notes, "Assessment queue: 1") {
+		t.Fatalf("unexpected notes text:\n%s", notes)
 	}
 }

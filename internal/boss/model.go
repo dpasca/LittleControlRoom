@@ -7,11 +7,13 @@ import (
 	"time"
 
 	"lcroom/internal/service"
+	"lcroom/internal/terminalmd"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const (
@@ -62,7 +64,7 @@ type bossLayout struct {
 	topHeight        int
 	bottomHeight     int
 	chatWidth        int
-	roomWidth        int
+	sideWidth        int
 	deskWidth        int
 	notebookWidth    int
 	chatInnerWidth   int
@@ -87,11 +89,19 @@ func NewEmbeddedWithViewContext(ctx context.Context, svc *service.Service, view 
 
 func newModel(ctx context.Context, svc *service.Service, embedded bool) Model {
 	input := textarea.New()
-	input.Placeholder = "Ask what needs attention..."
+	input.Prompt = "> "
+	input.SetPromptFunc(2, func(line int) string {
+		if line == 0 {
+			return "> "
+		}
+		return "  "
+	})
+	input.Placeholder = ""
 	input.CharLimit = 6000
 	input.ShowLineNumbers = false
 	input.SetWidth(72)
 	input.SetHeight(3)
+	styleBossTextarea(&input)
 	input.Focus()
 
 	assistant := NewAssistant(svc)
@@ -125,6 +135,17 @@ func IsMessage(msg tea.Msg) bool {
 
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(m.loadStateCmd(), bossTickCmd())
+}
+
+func (m Model) StatusText() string {
+	status := strings.TrimSpace(m.status)
+	if status == "" {
+		status = "ready"
+	}
+	if m.sending {
+		status = "thinking " + spinnerDots(m.spinnerFrame)
+	}
+	return status
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -179,10 +200,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "esc":
 			return m, m.exitCmd()
-		case "q":
-			if strings.TrimSpace(m.input.Value()) == "" {
-				return m, m.exitCmd()
-			}
 		case "ctrl+r":
 			m.status = "Refreshing project state..."
 			return m, m.loadStateCmd()
@@ -203,23 +220,45 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) View() string {
 	layout := m.layout()
+	body := ""
 	if layout.narrow {
-		return m.renderNarrow(layout)
-	}
+		body = m.renderNarrow(layout)
+	} else {
+		chat := m.renderChat(layout)
+		situationWidth := layout.sideWidth
+		situation := m.renderSituation(situationWidth, layout.topHeight)
+		top := lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			chat,
+			" ",
+			situation,
+		)
+		if delta := layout.width - blockWidth(top); delta > 0 {
+			situationWidth += delta
+			situation = m.renderSituation(situationWidth, layout.topHeight)
+			top = lipgloss.JoinHorizontal(lipgloss.Top, chat, " ", situation)
+		}
 
-	top := lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		m.renderChat(layout),
-		" ",
-		m.renderRoom(layout.roomWidth, layout.topHeight),
-	)
-	bottom := lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		m.renderPanel("On My Desk", OnMyDeskText(m.snapshot, m.now()), layout.deskWidth, layout.bottomHeight),
-		" ",
-		m.renderPanel("Notebook", NotebookText(m.snapshot), layout.notebookWidth, layout.bottomHeight),
-	)
-	return lipgloss.JoinVertical(lipgloss.Left, top, bottom)
+		attention := m.renderPanel("Attention", AttentionText(m.snapshot, m.now()), layout.deskWidth, layout.bottomHeight)
+		notesWidth := layout.notebookWidth
+		notes := m.renderPanel("Notes", NotesText(m.snapshot), notesWidth, layout.bottomHeight)
+		bottom := lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			attention,
+			" ",
+			notes,
+		)
+		if delta := layout.width - blockWidth(bottom); delta > 0 {
+			notesWidth += delta
+			notes = m.renderPanel("Notes", NotesText(m.snapshot), notesWidth, layout.bottomHeight)
+			bottom = lipgloss.JoinHorizontal(lipgloss.Top, attention, " ", notes)
+		}
+		body = lipgloss.JoinVertical(lipgloss.Left, top, bottom)
+	}
+	if m.embedded {
+		return fitRenderedBlock(body, layout.width, layout.height)
+	}
+	return fitRenderedBlock(lipgloss.JoinVertical(lipgloss.Left, m.renderHeader(layout.width), body), layout.width, layout.height+1)
 }
 
 func (m Model) submit() (tea.Model, tea.Cmd) {
@@ -328,6 +367,14 @@ func (m Model) layout() bossLayout {
 	}
 	width = maxInt(48, width)
 	height = maxInt(18, height)
+	if height > 18 {
+		if !m.embedded {
+			// Standalone boss mode owns its header bar and keeps one row of
+			// slack so exact-height renders do not scroll frames out of view.
+			height -= 2
+		}
+	}
+	inputHeight := 2
 
 	if width < 78 {
 		topHeight := maxInt(8, height/2)
@@ -337,12 +384,12 @@ func (m Model) layout() bossLayout {
 			topHeight:        topHeight,
 			bottomHeight:     maxInt(5, height-topHeight),
 			chatWidth:        width,
-			roomWidth:        width,
+			sideWidth:        width,
 			deskWidth:        width,
 			notebookWidth:    width,
-			chatInnerWidth:   maxInt(1, width-2),
-			transcriptHeight: maxInt(2, topHeight-8),
-			inputHeight:      3,
+			chatInnerWidth:   bossPanelInnerWidth(width),
+			transcriptHeight: maxInt(2, topHeight-inputHeight-5),
+			inputHeight:      inputHeight,
 			narrow:           true,
 		}
 	}
@@ -352,20 +399,19 @@ func (m Model) layout() bossLayout {
 		bottomHeight = clampInt(height/3, 5, 8)
 	}
 	topHeight := maxInt(10, height-bottomHeight)
-	roomWidth := clampInt(width/4, 24, 36)
-	chatWidth := maxInt(40, width-roomWidth-1)
+	sideWidth := clampInt(width/4, 24, 36)
+	chatWidth := maxInt(40, width-sideWidth-1)
 	deskWidth := clampInt(width/3, 26, width/2)
 	notebookWidth := maxInt(24, width-deskWidth-1)
-	chatInnerWidth := maxInt(1, chatWidth-2)
-	inputHeight := 3
-	transcriptHeight := maxInt(2, topHeight-3-inputHeight-1)
+	chatInnerWidth := bossPanelInnerWidth(chatWidth)
+	transcriptHeight := maxInt(2, topHeight-inputHeight-5)
 	return bossLayout{
 		width:            width,
 		height:           height,
 		topHeight:        topHeight,
 		bottomHeight:     bottomHeight,
 		chatWidth:        chatWidth,
-		roomWidth:        roomWidth,
+		sideWidth:        sideWidth,
 		deskWidth:        deskWidth,
 		notebookWidth:    notebookWidth,
 		chatInnerWidth:   chatInnerWidth,
@@ -375,67 +421,72 @@ func (m Model) layout() bossLayout {
 }
 
 func (m Model) renderChat(layout bossLayout) string {
-	hint := "Enter sends | Ctrl+J newline | Ctrl+R refresh | Esc quits"
+	hint := "Enter sends | Ctrl+J newline | Ctrl+R refresh | Esc returns"
 	if m.sending {
 		hint = "Boss chat is thinking " + spinnerDots(m.spinnerFrame)
 	}
 	content := strings.Join([]string{
 		m.chatViewport.View(),
-		fitLine(hint, layout.chatInnerWidth),
-		m.input.View(),
+		bossMutedStyle.Render(fitLine(hint, layout.chatInnerWidth)),
+		renderBossInput(m.input, layout.chatInnerWidth),
 	}, "\n")
 	return m.renderRawPanel("Boss Chat", content, layout.chatWidth, layout.topHeight)
 }
 
-func (m Model) renderRoom(width, height int) string {
+func (m Model) renderHeader(width int) string {
+	text := " Boss Mode  " + m.StatusText() + "  |  Esc returns  Ctrl+R refresh"
+	return bossHeaderStyle.Width(width).Render(fitLine(text, width))
+}
+
+func (m Model) renderSituation(width, height int) string {
 	status := m.status
 	if strings.TrimSpace(status) == "" {
 		status = "Boss chat warming up"
 	}
-	weather := "calm"
+	boardState := "calm"
 	if m.snapshot.ConflictProjects > 0 {
-		weather = "stormy"
+		boardState = "conflicts need attention"
 	} else if m.snapshot.PossiblyStuckProjects > 0 {
-		weather = "foggy"
+		boardState = "some work may be stuck"
 	} else if m.snapshot.ActiveProjects > 0 {
-		weather = "busy"
+		boardState = "active work in progress"
 	}
 	room := []string{
-		"       /\\",
-		"  ____/  \\____",
-		" |  []    []  |",
-		" |  assistant |",
-		" | desk  lamp |",
-		" |__log____#__|",
-		"",
-		"Project weather: " + weather,
-		status,
+		"Board: " + boardState,
+		"Chat: " + status,
+		fmt.Sprintf("Projects: %d total", m.snapshot.TotalProjects),
+		fmt.Sprintf("Active: %d  Stuck: %d", m.snapshot.ActiveProjects, m.snapshot.PossiblyStuckProjects),
+		fmt.Sprintf("Dirty repos: %d", m.snapshot.DirtyProjects),
+		fmt.Sprintf("Conflicts: %d", m.snapshot.ConflictProjects),
+	}
+	if m.snapshot.PendingClassifications > 0 {
+		room = append(room, fmt.Sprintf("Assessments: %d queued/running", m.snapshot.PendingClassifications))
 	}
 	if m.stateErr != nil {
 		room = append(room, "State: "+m.stateErr.Error())
 	} else if m.stateLoaded {
-		room = append(room, fmt.Sprintf("Watching %d projects", m.snapshot.TotalProjects))
+		room = append(room, "State: loaded")
 	} else {
-		room = append(room, "Loading project board...")
+		room = append(room, "State: loading...")
 	}
-	return m.renderPanel("Little Room", strings.Join(room, "\n"), width, height)
+	return m.renderPanel("Situation", strings.Join(room, "\n"), width, height)
 }
 
 func (m Model) renderPanel(title, content string, width, height int) string {
 	width = maxInt(12, width)
 	height = maxInt(4, height)
-	innerWidth := maxInt(1, width-2)
+	innerWidth := bossPanelInnerWidth(width)
 	innerHeight := maxInt(1, height-2)
-	bodyHeight := maxInt(0, innerHeight-1)
+	bodyHeight := maxInt(0, innerHeight-2)
 	titleLine := panelTitleStyle.Render(fitLine(title, innerWidth))
-	body := fitBlock(content, innerWidth, bodyHeight)
+	body := fitWrappedBlock(content, innerWidth, bodyHeight)
 	return panelStyle.Width(innerWidth).Height(innerHeight).Render(titleLine + "\n" + body)
 }
 
 func (m Model) renderRawPanel(title, content string, width, height int) string {
 	width = maxInt(12, width)
 	height = maxInt(4, height)
-	innerWidth := maxInt(1, width-2)
+	innerWidth := bossPanelInnerWidth(width)
 	innerHeight := maxInt(1, height-2)
 	titleLine := panelTitleStyle.Render(fitLine(title, innerWidth))
 	return panelStyle.Width(innerWidth).Height(innerHeight).Render(titleLine + "\n" + content)
@@ -444,8 +495,8 @@ func (m Model) renderRawPanel(title, content string, width, height int) string {
 func (m Model) renderNarrow(layout bossLayout) string {
 	chat := m.renderChat(layout)
 	roomHeight := maxInt(7, layout.bottomHeight/2)
-	room := m.renderRoom(layout.roomWidth, roomHeight)
-	desk := m.renderPanel("On My Desk", OnMyDeskText(m.snapshot, m.now()), layout.deskWidth, roomHeight)
+	room := m.renderSituation(layout.sideWidth, roomHeight)
+	desk := m.renderPanel("Attention", AttentionText(m.snapshot, m.now()), layout.deskWidth, roomHeight)
 	return lipgloss.JoinVertical(lipgloss.Left, chat, room, desk)
 }
 
@@ -453,13 +504,11 @@ func (m Model) renderTranscript(width int) string {
 	width = maxInt(12, width)
 	var blocks []string
 	for _, message := range m.messages {
-		label := "You"
 		if normalizeChatRole(message.Role) == "assistant" {
-			label = "Assistant"
+			blocks = append(blocks, renderAssistantMessage(message.Content, width))
+			continue
 		}
-		blockLines := []string{label + ":"}
-		blockLines = append(blockLines, wrapText(message.Content, width)...)
-		blocks = append(blocks, strings.Join(blockLines, "\n"))
+		blocks = append(blocks, renderUserMessage(message.Content, width))
 	}
 	return strings.Join(blocks, "\n\n")
 }
@@ -472,16 +521,93 @@ func (m Model) now() time.Time {
 }
 
 var (
+	bossPanelBackground           = lipgloss.Color("#000000")
+	bossInputBackground           = lipgloss.Color("#000000")
+	bossInputCursorLineBackground = lipgloss.Color("#101010")
+	bossPanelAccent               = lipgloss.Color("81")
+	bossPanelText                 = lipgloss.Color("252")
+	bossHeaderStyle               = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("16")).
+					Background(bossPanelAccent).
+					Bold(true)
 	panelStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("65")).
-			Foreground(lipgloss.Color("230")).
-			Background(lipgloss.Color("235"))
+			BorderForeground(bossPanelAccent).
+			Padding(0, 1).
+			Foreground(bossPanelText).
+			Background(bossPanelBackground)
 	panelTitleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("229")).
-			Background(lipgloss.Color("58")).
+			Foreground(bossPanelAccent).
 			Bold(true)
+	bossMutedStyle                  = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(bossPanelBackground)
+	bossAssistantMessageBackground  = bossPanelBackground
+	bossUserMessageBackground       = lipgloss.Color("#101010")
+	bossAssistantMessageStyle       = lipgloss.NewStyle().Background(bossAssistantMessageBackground)
+	bossUserMessageStyle            = lipgloss.NewStyle().Background(bossUserMessageBackground)
+	bossUserPrefixStyle             = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Background(bossUserMessageBackground).Bold(true)
+	bossUserContinuationPrefixStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Background(bossUserMessageBackground)
+	bossInputShellStyle             = lipgloss.NewStyle().Background(bossInputBackground).Foreground(bossPanelText)
 )
+
+func bossPanelInnerWidth(width int) int {
+	return maxInt(1, width-4)
+}
+
+func styleBossTextarea(input *textarea.Model) {
+	focused := input.FocusedStyle
+	focused.Base = focused.Base.Background(bossInputBackground).Foreground(bossPanelText)
+	focused.CursorLine = focused.CursorLine.Background(bossInputCursorLineBackground)
+	focused.EndOfBuffer = focused.EndOfBuffer.Foreground(lipgloss.Color("238")).Background(bossInputBackground)
+	focused.Placeholder = focused.Placeholder.Foreground(lipgloss.Color("240")).Background(bossInputBackground)
+	focused.Prompt = focused.Prompt.Foreground(bossPanelAccent).Background(bossInputBackground).Bold(true)
+	focused.Text = focused.Text.Foreground(bossPanelText).Background(bossInputBackground)
+
+	blurred := input.BlurredStyle
+	blurred.Base = blurred.Base.Background(bossInputBackground).Foreground(bossPanelText)
+	blurred.CursorLine = blurred.CursorLine.Background(bossInputBackground)
+	blurred.EndOfBuffer = blurred.EndOfBuffer.Foreground(lipgloss.Color("238")).Background(bossInputBackground)
+	blurred.Placeholder = blurred.Placeholder.Foreground(lipgloss.Color("240")).Background(bossInputBackground)
+	blurred.Prompt = blurred.Prompt.Foreground(lipgloss.Color("244")).Background(bossInputBackground).Bold(true)
+	blurred.Text = blurred.Text.Foreground(bossPanelText).Background(bossInputBackground)
+
+	input.FocusedStyle = focused
+	input.BlurredStyle = blurred
+}
+
+func renderBossInput(input textarea.Model, width int) string {
+	return bossInputShellStyle.Width(width).Render(input.View())
+}
+
+func renderAssistantMessage(content string, width int) string {
+	rendered := terminalmd.RenderBody(content, bossPanelText, maxInt(8, width))
+	return renderMessageLines(rendered, bossAssistantMessageStyle, width)
+}
+
+func renderUserMessage(content string, width int) string {
+	prefix := "You> "
+	contentWidth := maxInt(8, width-len(prefix))
+	rendered := terminalmd.RenderBody(content, bossPanelText, contentWidth)
+	lines := strings.Split(rendered, "\n")
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	for i, line := range lines {
+		if i == 0 {
+			lines[i] = bossUserPrefixStyle.Render(prefix) + line
+			continue
+		}
+		lines[i] = bossUserContinuationPrefixStyle.Render(strings.Repeat(" ", len(prefix))) + line
+	}
+	return renderMessageLines(strings.Join(lines, "\n"), bossUserMessageStyle, width)
+}
+
+func renderMessageLines(content string, style lipgloss.Style, width int) string {
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		lines[i] = style.Render(fitStyledLine(line, width))
+	}
+	return strings.Join(lines, "\n")
+}
 
 func spinnerDots(frame int) string {
 	switch frame % 4 {
@@ -513,6 +639,30 @@ func fitBlock(content string, width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
+func fitWrappedBlock(content string, width, height int) string {
+	if height <= 0 {
+		return ""
+	}
+	var lines []string
+	for _, line := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
+		if strings.TrimSpace(line) == "" {
+			lines = append(lines, "")
+			continue
+		}
+		lines = append(lines, wrapText(line, width)...)
+	}
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	for i, line := range lines {
+		lines[i] = fitLine(line, width)
+	}
+	return strings.Join(lines, "\n")
+}
+
 func fitLine(line string, width int) string {
 	if width <= 0 {
 		return ""
@@ -525,6 +675,45 @@ func fitLine(line string, width int) string {
 		return string(runes[:width-3]) + "..."
 	}
 	return string(runes) + strings.Repeat(" ", width-len(runes))
+}
+
+func fitStyledLine(line string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	line = ansi.Truncate(line, width, "")
+	if padding := width - ansi.StringWidth(ansi.Strip(line)); padding > 0 {
+		line += strings.Repeat(" ", padding)
+	}
+	return line
+}
+
+func blockWidth(content string) int {
+	width := 0
+	for _, line := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
+		if w := ansi.StringWidth(ansi.Strip(line)); w > width {
+			width = w
+		}
+	}
+	return width
+}
+
+func fitRenderedBlock(content string, width, height int) string {
+	if height <= 0 {
+		return ""
+	}
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	for i, line := range lines {
+		lines[i] = fitStyledLine(line, width)
+	}
+	blank := strings.Repeat(" ", maxInt(0, width))
+	for len(lines) < height {
+		lines = append(lines, blank)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func wrapText(text string, width int) []string {
