@@ -16,6 +16,7 @@ type inferenceStatusCard struct {
 	StateStyle  lipgloss.Style
 	Detail      string
 	DetailStyle lipgloss.Style
+	Selected    bool
 }
 
 func (m Model) renderInferenceStatusCards(width int) string {
@@ -39,6 +40,32 @@ func (m Model) renderInferenceStatusCards(width int) string {
 		gap,
 		renderInferenceStatusCard(cards[1], cardWidth),
 	)
+}
+
+func (m Model) renderCompactInferenceSetupSummary(width int) string {
+	settings := m.currentSettingsBaseline()
+	projectCard := m.projectReportsStatusCard(settings)
+	bossCard := m.bossChatStatusCard(settings)
+	summary := "AI setup: Project reports use " + projectCard.Value + " (" + strings.ToLower(projectCard.State) + "); Boss chat uses " + bossCard.Value + " (" + strings.ToLower(bossCard.State) + ")."
+	if relationship := bossChatRelationshipSummary(settings); relationship != "" {
+		summary += " " + relationship
+	}
+	summary += " Run /setup to change roles."
+	return commandPaletteHintStyle.Render(lipgloss.NewStyle().Width(width).Render(summary))
+}
+
+func bossChatRelationshipSummary(settings config.EditableSettings) string {
+	switch settings.BossChatBackend {
+	case config.AIBackendOpenAIAPI:
+		if settings.AIBackend == config.AIBackendOpenAIAPI {
+			return "Both use the saved OpenAI API key."
+		}
+		return "Boss chat uses the saved OpenAI API key; project reports stay separate."
+	case config.AIBackendDisabled:
+		return "Boss chat is off; project reports can still run."
+	default:
+		return ""
+	}
 }
 
 func (m Model) projectReportsStatusCard(settings config.EditableSettings) inferenceStatusCard {
@@ -173,15 +200,25 @@ func inferenceStateForBackend(backend config.AIBackend, status aibackend.Status,
 func renderInferenceStatusCard(card inferenceStatusCard, width int) string {
 	totalWidth := max(26, width)
 	innerWidth := max(10, totalWidth-2)
-	header := card.TitleStyle().Render(truncateText(card.Title, max(8, innerWidth-8)))
+	title := card.Title
+	titleStyle := card.TitleStyle()
+	if card.Selected {
+		titleStyle = titleStyle.Foreground(lipgloss.Color("230"))
+	}
 	state := card.StateStyle.Render(strings.ToUpper(strings.TrimSpace(card.State)))
+	headerWidth := max(8, innerWidth-lipgloss.Width(state)-1)
+	header := titleStyle.Render(truncateText(title, headerWidth))
 	headerLine := fitFooterWidth(lipgloss.JoinHorizontal(lipgloss.Top, header, " ", state), innerWidth)
 	lines := []string{
 		headerLine,
 		detailValueStyle.Render(fitFooterWidth(strings.TrimSpace(card.Value), innerWidth)),
 		card.DetailStyle.Render(fitFooterWidth(strings.TrimSpace(card.Detail), innerWidth)),
 	}
-	return inferenceStatusCardStyle.Width(innerWidth).Render(strings.Join(lines, "\n"))
+	style := inferenceStatusCardStyle
+	if card.Selected {
+		style = inferenceStatusCardSelectedStyle
+	}
+	return style.Width(innerWidth).Render(strings.Join(lines, "\n"))
 }
 
 func (c inferenceStatusCard) TitleStyle() lipgloss.Style {
@@ -192,3 +229,8 @@ var inferenceStatusCardStyle = lipgloss.NewStyle().
 	Border(lipgloss.RoundedBorder()).
 	BorderForeground(dialogPanelBorderColor).
 	Background(dialogPanelBackground)
+
+var inferenceStatusCardSelectedStyle = inferenceStatusCardStyle.
+	Border(lipgloss.ThickBorder()).
+	BorderForeground(lipgloss.Color("214")).
+	Background(lipgloss.Color("237"))

@@ -268,7 +268,7 @@ func settingsBrowserAutomationOptionLabel(raw string, baseline browserctl.Policy
 }
 
 func settingsFieldUsesPicker(index int) bool {
-	return index == settingsFieldBrowserAutomation
+	return index == settingsFieldBossChatBackend || index == settingsFieldBrowserAutomation
 }
 
 func normalizeSettingsChoice(raw string) string {
@@ -290,6 +290,8 @@ func (m *Model) openBrowserSettingsMode() tea.Cmd {
 	m.settingsMode = true
 	m.settingsSaving = false
 	m.settingsRevealPrivacy = false
+	m.settingsBossChatPickerVisible = false
+	m.settingsBossChatPickerSelected = 0
 	m.settingsBrowserPickerVisible = false
 	m.settingsBrowserPickerSelected = 0
 	m.localModelPickerVisible = false
@@ -309,6 +311,8 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	m.settingsSaving = false
 	m.settingsSectionSelected = 0
 	m.settingsRevealPrivacy = false
+	m.settingsBossChatPickerVisible = false
+	m.settingsBossChatPickerSelected = 0
 	m.settingsBrowserPickerVisible = false
 	m.settingsBrowserPickerSelected = 0
 	m.localModelPickerVisible = false
@@ -324,6 +328,8 @@ func (m *Model) closeSettingsMode(status string) {
 	m.blurSettingsFields()
 	m.settingsMode = false
 	m.settingsSaving = false
+	m.settingsBossChatPickerVisible = false
+	m.settingsBossChatPickerSelected = 0
 	m.settingsBrowserPickerVisible = false
 	m.settingsBrowserPickerSelected = 0
 	if status != "" {
@@ -351,7 +357,12 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.saveSettingsFromFields()
 	case "enter":
 		if settingsFieldUsesPicker(m.settingsSelected) {
-			return m.openSettingsBrowserAutomationPicker()
+			switch m.settingsSelected {
+			case settingsFieldBossChatBackend:
+				return m.openSettingsBossChatBackendPicker()
+			case settingsFieldBrowserAutomation:
+				return m.openSettingsBrowserAutomationPicker()
+			}
 		}
 		return m.saveSettingsFromFields()
 	case "ctrl+r":
@@ -683,7 +694,7 @@ func (m Model) renderSettingsContent(width, maxHeight int) string {
 		commandPaletteTitleStyle.Render("Settings"),
 		commandPaletteHintStyle.Render("Config: " + truncateText(m.displayPathWithHomeTilde(m.currentConfigPath()), max(20, width-8))),
 	}
-	lines = append(lines, m.renderInferenceStatusCards(width))
+	lines = append(lines, m.renderCompactInferenceSetupSummary(width))
 	lines = append(lines, "")
 	lines = append(lines, m.renderSettingsSectionTabs(width))
 	lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("%s section. %s", activeSection.label, activeSection.hint)))
@@ -726,9 +737,9 @@ func (m Model) settingsVisibleFieldCount(maxHeight int) int {
 		return 0
 	}
 
-	// Header/cards (10), hint block (blank + up to 2 lines), actions (blank + 1),
+	// Header/summary (5), hint block (blank + up to 2 lines), actions (blank + 1),
 	// plus up to 2 scroll indicators when the field list is windowed.
-	reserved := 17
+	reserved := 12
 	visible := maxHeight - reserved
 	if visible < 1 {
 		visible = 1
@@ -920,12 +931,26 @@ func (m Model) renderSettingsFieldRow(fieldIndex int, field settingsField, selec
 	label = truncateText(label, labelWidth)
 
 	if settingsFieldUsesPicker(fieldIndex) {
-		return labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsBrowserAutomationValue(selected, inputWidth)
+		var row string
+		switch fieldIndex {
+		case settingsFieldBossChatBackend:
+			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsBossChatBackendValue(selected, inputWidth)
+		case settingsFieldBrowserAutomation:
+			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsBrowserAutomationValue(selected, inputWidth)
+		}
+		if selected {
+			return dialogSelectedRowStyle.Width(labelWidth + inputWidth + 1).Render(fitFooterWidth(row, labelWidth+inputWidth+1))
+		}
+		return row
 	}
 
 	input := field.input
 	input.Width = inputWidth
-	return labelStyle.Width(labelWidth).Render(label) + " " + input.View()
+	row := labelStyle.Width(labelWidth).Render(label) + " " + input.View()
+	if selected {
+		return dialogSelectedRowStyle.Width(labelWidth + inputWidth + 1).Render(fitFooterWidth(row, labelWidth+inputWidth+1))
+	}
+	return row
 }
 
 func (m Model) renderSelectedSettingsHint(width int) string {
@@ -977,7 +1002,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsField(
 			"Boss chat backend",
-			"Accepted values: openai_api, disabled. This is separate from project analysis, so summaries can stay on Codex/OpenCode while boss chat uses direct API inference.",
+			"Press Enter to choose Auto, OpenAI API, or Off. This is separate from project analysis, so summaries can stay on Codex/OpenCode while boss chat uses direct API inference.",
 			string(settings.BossChatBackend),
 			32,
 			settingsSectionAI,

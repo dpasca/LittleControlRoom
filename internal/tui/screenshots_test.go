@@ -214,7 +214,7 @@ func TestScreenshotSetupRendersBackendChoicesAndHaikuHint(t *testing.T) {
 		setupSelected:  mSetupSelectionForTest(config.AIBackendClaude),
 		setupModelTier: config.ModelTierCheap,
 		setupSnapshot:  screenshotSetupSnapshot(),
-		status:         "Choose how Little Control Room should run AI summaries, classifications, and commit help.",
+		status:         "Choose AI roles for project reports and boss chat.",
 		projects: []model.ProjectSummary{
 			{Name: "LittleControlRoom", Path: "/tmp/LittleControlRoom", PresentOnDisk: true},
 		},
@@ -234,7 +234,7 @@ func TestScreenshotSetupRendersBackendChoicesAndHaikuHint(t *testing.T) {
 	rendered := ansi.Strip(m.View())
 	for _, want := range []string{
 		"Setup",
-		"Config: ~/.little-control-room/config.toml",
+		"Project Reports Provider",
 		"Codex",
 		"OpenCode",
 		"Claude Code",

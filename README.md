@@ -97,7 +97,7 @@ The main TUI command palette opens with `/`.
 - `/refresh`: Rescan projects and retry failed assessments.
 - `/sort <attention|recent>`: Change the project ordering.
 - `/view <ai|all>`: Switch between AI-linked and all tracked folders.
-- `/setup`: Choose and check the AI backend for summaries, classification, commit help, and other background inference.
+- `/setup`: Choose AI roles for project reports and boss chat.
 - `/settings`: Edit sectioned settings for AI backends, project scope, browser automation, and refresh timing.
 - `/filter [text|clear]`: Temporarily narrow the whole dashboard to matching project names.
 - `/new-project`: Create a project folder, or paste an existing project path to add it directly.

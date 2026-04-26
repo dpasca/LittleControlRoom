@@ -127,7 +127,7 @@ var specs = []Spec{
 	{Name: "sort", Usage: "/sort attention|recent", Summary: "Set list ordering"},
 	{Name: "view", Usage: "/view ai|all", Summary: "Choose AI-linked or all folders"},
 	{Name: "settings", Usage: "/settings", Summary: "Edit the saved OpenAI key, scope, filters, and scan thresholds"},
-	{Name: "setup", Usage: "/setup", Summary: "Choose and check the AI backend for summaries and commit help"},
+	{Name: "setup", Usage: "/setup", Summary: "Choose AI roles for project reports and boss chat"},
 	{Name: "filter", Usage: "/filter [text|clear]", Summary: "Temporarily show only matching project names"},
 	{Name: "new-project", Usage: "/new-project", Summary: "Create a project folder, or paste an existing path to add it"},
 	{Name: "new-task", Usage: "/new-task", Summary: "Create a scratch task folder under the default task root"},

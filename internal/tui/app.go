@@ -85,53 +85,57 @@ type Model struct {
 	worktreeRemoveConfirm *worktreeRemoveConfirmState
 	attentionDialog       *attentionDialogState
 
-	commandMode                   bool
-	commandInput                  textinput.Model
-	commandSelected               int
-	bossMode                      bool
-	bossModel                     bossui.Model
-	errorLogVisible               bool
-	errorLogSelected              int
-	errorLogEntries               []errorLogEntry
-	projectFilter                 string
-	projectFilterDialog           *projectFilterDialogState
-	ignoredPickerVisible          bool
-	ignoredPickerLoading          bool
-	ignoredPickerSelected         int
-	ignoredPickerItems            []model.IgnoredProjectName
-	newProjectDialog              *newProjectDialogState
-	newTaskDialog                 *newTaskDialogState
-	runCommandDialog              *runCommandDialogState
-	preferredSelectPath           string
-	diffView                      *diffViewState
-	gitStatusDialog               *gitStatusDialog
-	gitStatusApplying             bool
-	commitPreview                 *service.CommitPreview
-	commitPreviewMessageOverride  string
-	commitPreviewRefreshing       bool
-	commitPreviewRequestID        int
-	commitApplying                bool
-	commitTodoCompletions         []commitTodoItem
-	commitTodoSelected            int
-	setupMode                     bool
-	setupChecked                  bool
-	setupLoading                  bool
-	setupSaving                   bool
-	setupSelected                 int
-	setupModelTier                config.ModelTier
-	setupSnapshot                 aibackend.Snapshot
-	localModelPickerVisible       bool
-	localModelPickerBackend       config.AIBackend
-	localModelPickerSelected      int
-	settingsMode                  bool
-	settingsSaving                bool
-	settingsFields                []settingsField
-	settingsSectionSelected       int
-	settingsSelected              int
-	settingsBaseline              *config.EditableSettings
-	settingsRevealPrivacy         bool
-	settingsBrowserPickerVisible  bool
-	settingsBrowserPickerSelected int
+	commandMode                    bool
+	commandInput                   textinput.Model
+	commandSelected                int
+	bossMode                       bool
+	bossModel                      bossui.Model
+	errorLogVisible                bool
+	errorLogSelected               int
+	errorLogEntries                []errorLogEntry
+	projectFilter                  string
+	projectFilterDialog            *projectFilterDialogState
+	ignoredPickerVisible           bool
+	ignoredPickerLoading           bool
+	ignoredPickerSelected          int
+	ignoredPickerItems             []model.IgnoredProjectName
+	newProjectDialog               *newProjectDialogState
+	newTaskDialog                  *newTaskDialogState
+	runCommandDialog               *runCommandDialogState
+	preferredSelectPath            string
+	diffView                       *diffViewState
+	gitStatusDialog                *gitStatusDialog
+	gitStatusApplying              bool
+	commitPreview                  *service.CommitPreview
+	commitPreviewMessageOverride   string
+	commitPreviewRefreshing        bool
+	commitPreviewRequestID         int
+	commitApplying                 bool
+	commitTodoCompletions          []commitTodoItem
+	commitTodoSelected             int
+	setupMode                      bool
+	setupChecked                   bool
+	setupLoading                   bool
+	setupSaving                    bool
+	setupFocusedRole               setupRole
+	setupSelected                  int
+	setupBossSelected              int
+	setupModelTier                 config.ModelTier
+	setupSnapshot                  aibackend.Snapshot
+	localModelPickerVisible        bool
+	localModelPickerBackend        config.AIBackend
+	localModelPickerSelected       int
+	settingsMode                   bool
+	settingsSaving                 bool
+	settingsFields                 []settingsField
+	settingsSectionSelected        int
+	settingsSelected               int
+	settingsBaseline               *config.EditableSettings
+	settingsRevealPrivacy          bool
+	settingsBossChatPickerVisible  bool
+	settingsBossChatPickerSelected int
+	settingsBrowserPickerVisible   bool
+	settingsBrowserPickerSelected  int
 
 	detailViewport        viewport.Model
 	runtimeViewport       viewport.Model
@@ -1002,6 +1006,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.localModelPickerVisible {
 			return m.updateLocalBackendModelPickerMode(msg)
+		}
+		if m.settingsBossChatPickerVisible {
+			return m.updateSettingsBossChatBackendPickerMode(msg)
 		}
 		if m.settingsBrowserPickerVisible {
 			return m.updateSettingsBrowserAutomationPickerMode(msg)
@@ -2575,6 +2582,9 @@ func (m Model) View() string {
 		}
 	} else if m.settingsMode {
 		body = m.renderSettingsOverlay(body, layout.width, layout.height)
+		if m.settingsBossChatPickerVisible {
+			body = m.renderSettingsBossChatBackendPickerOverlay(body, layout.width, layout.height)
+		}
 		if m.settingsBrowserPickerVisible {
 			body = m.renderSettingsBrowserAutomationPickerOverlay(body, layout.width, layout.height)
 		}
@@ -3514,6 +3524,10 @@ var (
 	detailAttentionValueStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Bold(true)
 	projectListSelectedRowStyle     = lipgloss.NewStyle().
 					Background(lipgloss.AdaptiveColor{Light: "255", Dark: "236"})
+	dialogSelectedRowStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("230")).
+				Background(lipgloss.Color("24")).
+				Bold(true)
 	commandPaletteTitleStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
 	commandPaletteHintStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	commandPaletteRowStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
@@ -5666,7 +5680,7 @@ func (m Model) renderFooter(width int) string {
 		return m.renderModalFooter(width, "Command palette open", supplementSegments...)
 	}
 	if m.setupMode {
-		return m.renderModalFooter(width, "Setup: Enter choose, r refresh, s settings, Esc continue", supplementSegments...)
+		return m.renderModalFooter(width, "Setup: Tab role, ↑↓ provider, Enter choose, a advanced, Esc close", supplementSegments...)
 	}
 	if m.settingsMode {
 		return m.renderModalFooter(width, "Settings: Enter save, Tab next, Esc cancel", supplementSegments...)

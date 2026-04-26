@@ -16532,7 +16532,7 @@ func TestStartupUnconfiguredAIBackendOpensSetupMode(t *testing.T) {
 	if !got.setupMode {
 		t.Fatalf("setup mode should open when startup detects no configured backend")
 	}
-	if got.status != "Choose how Little Control Room should run AI summaries, classifications, and commit help." {
+	if got.status != "Choose AI roles for project reports and boss chat." {
 		t.Fatalf("status = %q, want startup setup explanation", got.status)
 	}
 	if cmd == nil {
@@ -16735,6 +16735,55 @@ func TestSetupEnterMarksSavingAndBlocksRepeatEnter(t *testing.T) {
 	}
 }
 
+func TestSetupTabFocusesBossChatRole(t *testing.T) {
+	m := Model{
+		setupMode:         true,
+		setupFocusedRole:  setupRoleProjectReports,
+		setupBossSelected: 0,
+	}
+
+	updated, cmd := m.updateSetupMode(tea.KeyMsg{Type: tea.KeyTab})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("switching setup roles should not queue a command")
+	}
+	if got.setupFocusedRole != setupRoleBossChat {
+		t.Fatalf("setup focused role = %v, want boss chat", got.setupFocusedRole)
+	}
+
+	updated, _ = got.updateSetupMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	if got.setupSelectedBossBackend() != config.AIBackendDisabled {
+		t.Fatalf("boss chat selected backend = %s, want disabled", got.setupSelectedBossBackend())
+	}
+}
+
+func TestSetupBossChatDisabledSavesSeparately(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendCodex
+
+	m := Model{
+		setupMode:         true,
+		settingsBaseline:  &settings,
+		setupFocusedRole:  setupRoleBossChat,
+		setupBossSelected: mSetupBossSelectionForTest(config.AIBackendDisabled),
+	}
+
+	updated, cmd := m.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("choosing disabled boss chat should queue a save command")
+	}
+	if !got.setupSaving {
+		t.Fatalf("choosing disabled boss chat should mark setup saving")
+	}
+	if got.currentSettingsBaseline().AIBackend != config.AIBackendCodex {
+		t.Fatalf("boss chat selection should not change project reports backend")
+	}
+}
+
 func TestRenderSetupHintExplainsClaudeHaikuDefault(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.AIBackend = config.AIBackendClaude
@@ -16839,6 +16888,45 @@ func mSetupSelectionForTest(backend config.AIBackend) int {
 		}
 	}
 	return 0
+}
+
+func mSetupBossSelectionForTest(backend config.AIBackend) int {
+	for i, option := range setupBossChatOptions {
+		if option == backend {
+			return i
+		}
+	}
+	return 0
+}
+
+func TestSettingsBossChatBackendPickerUpdatesField(t *testing.T) {
+	m := Model{
+		settingsMode:   true,
+		settingsFields: newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
+		width:          100,
+		height:         24,
+	}
+	_ = m.setSettingsSelection(settingsFieldBossChatBackend)
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("opening boss chat picker should not queue a command")
+	}
+	if !got.settingsBossChatPickerVisible {
+		t.Fatalf("boss chat picker should open")
+	}
+
+	updated, _ = got.updateSettingsBossChatBackendPickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	updated, _ = got.updateSettingsBossChatBackendPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if got.settingsBossChatPickerVisible {
+		t.Fatalf("boss chat picker should close after choosing")
+	}
+	if got.settingsFieldValue(settingsFieldBossChatBackend) != string(config.AIBackendOpenAIAPI) {
+		t.Fatalf("boss chat backend field = %q, want openai_api", got.settingsFieldValue(settingsFieldBossChatBackend))
+	}
 }
 
 func TestCommandEnterOpensRunCommandDialogWhenUnset(t *testing.T) {
