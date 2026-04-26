@@ -244,6 +244,43 @@ func TestBossChatRunnerCanBeDisabledSeparately(t *testing.T) {
 	}
 }
 
+func TestBossChatRunnerSupportsLocalOpenAICompatibleBackend(t *testing.T) {
+	t.Setenv("LCROOM_BOSS_MODEL", "")
+
+	cfg := config.Default()
+	cfg.AIBackend = config.AIBackendOpenCode
+	cfg.BossChatBackend = config.AIBackendMLX
+	cfg.MLXBaseURL = "http://127.0.0.1:8080/v1"
+	cfg.MLXAPIKey = "mlx"
+	cfg.MLXModel = "local-boss-model"
+	svc := &Service{
+		cfg:                  cfg,
+		bossChatUsageTracker: llm.NewUsageTracker(),
+	}
+
+	runner, modelName, backend := svc.NewBossTextRunner()
+	if runner == nil {
+		t.Fatalf("NewBossTextRunner() runner = nil, want local OpenAI-compatible text runner")
+	}
+	if backend != config.AIBackendMLX {
+		t.Fatalf("boss chat backend = %s, want %s", backend, config.AIBackendMLX)
+	}
+	if modelName != "local-boss-model" {
+		t.Fatalf("boss chat model = %q, want local-boss-model", modelName)
+	}
+
+	planner, plannerModel, plannerBackend := svc.NewBossJSONRunner()
+	if planner == nil {
+		t.Fatalf("NewBossJSONRunner() planner = nil, want local OpenAI-compatible structured runner")
+	}
+	if plannerBackend != config.AIBackendMLX {
+		t.Fatalf("boss chat planner backend = %s, want %s", plannerBackend, config.AIBackendMLX)
+	}
+	if plannerModel != "local-boss-model" {
+		t.Fatalf("boss chat planner model = %q, want local-boss-model", plannerModel)
+	}
+}
+
 func TestRefreshProjectStatusAsyncCoalescesConcurrentRequests(t *testing.T) {
 	t.Parallel()
 

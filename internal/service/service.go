@@ -461,10 +461,12 @@ func (s *Service) NewBossTextRunner() (llm.TextRunner, string, config.AIBackend)
 	s.mu.Unlock()
 
 	backend := cfg.EffectiveBossChatBackend()
-	modelName := configuredBossAssistantModel(cfg)
+	modelName := configuredBossAssistantModelForBackend(cfg, backend)
 	switch backend {
 	case config.AIBackendOpenAIAPI:
 		return llm.NewResponsesTextClient(strings.TrimSpace(cfg.OpenAIAPIKey), bossAssistantHTTPTimeout, usageTracker), modelName, backend
+	case config.AIBackendMLX, config.AIBackendOllama:
+		return llm.NewOpenAICompatibleTextRunner(cfg.OpenAICompatibleBaseURL(backend), cfg.OpenAICompatibleAPIKey(backend), modelName, bossAssistantHTTPTimeout, usageTracker), modelName, backend
 	default:
 		return nil, modelName, backend
 	}
@@ -480,21 +482,37 @@ func (s *Service) NewBossJSONRunner() (llm.JSONSchemaRunner, string, config.AIBa
 	s.mu.Unlock()
 
 	backend := cfg.EffectiveBossChatBackend()
-	modelName := configuredBossAssistantModel(cfg)
+	modelName := configuredBossAssistantModelForBackend(cfg, backend)
 	switch backend {
 	case config.AIBackendOpenAIAPI:
 		return llm.NewResponsesClient(strings.TrimSpace(cfg.OpenAIAPIKey), bossAssistantHTTPTimeout, usageTracker), modelName, backend
+	case config.AIBackendMLX, config.AIBackendOllama:
+		return llm.NewOpenAICompatibleResponsesRunner(cfg.OpenAICompatibleBaseURL(backend), cfg.OpenAICompatibleAPIKey(backend), modelName, bossAssistantHTTPTimeout, usageTracker), modelName, backend
 	default:
 		return nil, modelName, backend
 	}
 }
 
 func configuredBossAssistantModel(cfg config.AppConfig) string {
+	return configuredBossAssistantModelForBackend(cfg, cfg.EffectiveBossChatBackend())
+}
+
+func configuredBossAssistantModelForBackend(cfg config.AppConfig, backend config.AIBackend) string {
 	if modelName := strings.TrimSpace(os.Getenv(brand.BossAssistantModelEnvVar)); modelName != "" {
 		return modelName
 	}
+	switch backend {
+	case config.AIBackendMLX, config.AIBackendOllama:
+		if modelName := strings.TrimSpace(cfg.OpenAICompatibleModel(backend)); modelName != "" {
+			return modelName
+		}
+	}
 	if modelName := strings.TrimSpace(cfg.BossChatModel); modelName != "" {
 		return modelName
+	}
+	switch backend {
+	case config.AIBackendMLX, config.AIBackendOllama:
+		return ""
 	}
 	return defaultBossAssistantModel
 }

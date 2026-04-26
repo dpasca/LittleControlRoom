@@ -65,7 +65,7 @@ func NewAssistant(svc *service.Service) *Assistant {
 }
 
 func (a *Assistant) Configured() bool {
-	return a != nil && (a.runner != nil || a.planner != nil) && strings.TrimSpace(a.model) != ""
+	return a != nil && (a.runner != nil || a.planner != nil) && (!a.requiresExplicitModel() || strings.TrimSpace(a.model) != "")
 }
 
 func (a *Assistant) Label() string {
@@ -76,13 +76,18 @@ func (a *Assistant) Label() string {
 		switch a.backend {
 		case config.AIBackendOpenAIAPI:
 			return "Boss chat needs an OpenAI API key"
+		case config.AIBackendMLX, config.AIBackendOllama:
+			return "Boss chat needs " + a.backend.Label()
 		case config.AIBackendUnset:
 			return "Boss chat needs a backend"
 		case config.AIBackendDisabled:
 			return "Boss chat disabled"
 		default:
-			return "Boss chat needs OpenAI API"
+			return "Boss chat needs a supported API backend"
 		}
+	}
+	if strings.TrimSpace(a.model) == "" {
+		return fmt.Sprintf("Boss chat via %s (auto model)", a.backend.Label())
 	}
 	return fmt.Sprintf("Boss chat via %s", a.model)
 }
@@ -96,7 +101,7 @@ func (a *Assistant) Reply(ctx context.Context, req AssistantRequest) (AssistantR
 		return AssistantResponse{}, errors.New(unconfiguredAssistantMessage(backend))
 	}
 	modelName := strings.TrimSpace(a.model)
-	if modelName == "" {
+	if modelName == "" && a.requiresExplicitModel() {
 		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_chat_model or " + brand.BossAssistantModelEnvVar)
 	}
 	if a.planner != nil && a.query != nil {
@@ -110,7 +115,7 @@ func (a *Assistant) replyDirect(ctx context.Context, req AssistantRequest) (Assi
 		return AssistantResponse{}, errors.New("boss chat needs text chat inference for this request")
 	}
 	modelName := strings.TrimSpace(a.model)
-	if modelName == "" {
+	if modelName == "" && a.requiresExplicitModel() {
 		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_chat_model or " + brand.BossAssistantModelEnvVar)
 	}
 
@@ -147,7 +152,7 @@ func (a *Assistant) replyDirect(ctx context.Context, req AssistantRequest) (Assi
 
 func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (AssistantResponse, error) {
 	modelName := strings.TrimSpace(a.model)
-	if modelName == "" {
+	if modelName == "" && a.requiresExplicitModel() {
 		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_chat_model or " + brand.BossAssistantModelEnvVar)
 	}
 
@@ -234,13 +239,29 @@ func (a *Assistant) planAction(ctx context.Context, req AssistantRequest, toolRe
 func unconfiguredAssistantMessage(backend config.AIBackend) string {
 	switch backend {
 	case config.AIBackendOpenAIAPI:
-		return "Boss chat is not connected yet. Configure an OpenAI API key in /settings, then reopen boss mode."
+		return "Boss chat is not connected yet. Configure an OpenAI API key in /setup, then reopen boss mode."
+	case config.AIBackendMLX:
+		return "Boss chat is not connected yet. Choose MLX in /setup and confirm the local endpoint/model."
+	case config.AIBackendOllama:
+		return "Boss chat is not connected yet. Choose Ollama in /setup and confirm the local endpoint/model."
 	case config.AIBackendDisabled:
-		return "Boss chat is disabled. Set boss_chat_backend = \"openai_api\" in /settings or config.toml to enable it."
+		return "Boss chat is disabled. Use /setup to enable a boss chat backend."
 	case config.AIBackendCodex, config.AIBackendOpenCode, config.AIBackendClaude:
-		return "Boss chat currently uses direct API inference, not embedded coding-agent sessions. Set boss_chat_backend = \"openai_api\" while keeping ai_backend on your preferred project-analysis backend."
+		return "Boss chat currently uses direct API inference, not embedded coding-agent sessions. Choose OpenAI API, MLX, or Ollama for boss chat while keeping project reports on your preferred backend."
 	default:
-		return "Boss chat is not connected yet. Boss mode currently supports OpenAI API chat; configure boss_chat_backend = \"openai_api\" and openai_api_key."
+		return "Boss chat is not connected yet. Boss mode supports direct API chat through OpenAI API, MLX, or Ollama."
+	}
+}
+
+func (a *Assistant) requiresExplicitModel() bool {
+	if a == nil {
+		return true
+	}
+	switch a.backend {
+	case config.AIBackendMLX, config.AIBackendOllama:
+		return false
+	default:
+		return true
 	}
 }
 
@@ -263,7 +284,8 @@ func bossActionPlannerSystemPrompt() string {
 		"You decide whether to answer now or request exactly one read-only query before answering.",
 		"Use queries when the user asks about a concrete project, TODOs, assessment status, current TUI state, or anything that requires more than the compact brief.",
 		"Available read-only query kinds: list_projects, project_detail, session_classifications, todo_report, current_tui, assessment_queue.",
-		"For project-specific queries, prefer target=\"selected\" when the user refers to the current/selected project, or project_path when a path is available in context.",
+		"For project-specific queries, use project_path when a path is available or project_name when the user gives an exact project name.",
+		"Do not infer a project from hidden UI cursor state; if the target is ambiguous, ask the user to name the project.",
 		"Do not invent facts. After query results are provided, answer from those results and the app-state brief.",
 		"Never claim you changed files, projects, TODOs, snoozes, panels, or sessions; these tools are report-only.",
 		"Keep final answers concise, concrete, friendly, and focused on what deserves attention next.",

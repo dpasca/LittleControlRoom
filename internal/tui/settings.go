@@ -1207,10 +1207,14 @@ func (m Model) settingsFieldHint(index int) string {
 		switch config.AIBackend(strings.TrimSpace(field.input.Value())) {
 		case config.AIBackendOpenAIAPI:
 			return "Boss chat will use direct OpenAI API inference even if project analysis uses Codex, OpenCode, Claude Code, MLX, or Ollama."
+		case config.AIBackendMLX:
+			return "Boss chat will use the MLX OpenAI-compatible endpoint and model fields below."
+		case config.AIBackendOllama:
+			return "Boss chat will use the Ollama OpenAI-compatible endpoint and model fields below."
 		case config.AIBackendDisabled:
 			return "Boss chat will stay offline, while project analysis keeps using its own configured backend."
 		case config.AIBackendUnset:
-			return "Leave blank to auto-use openai_api when an OpenAI API key is saved; otherwise boss chat stays unconfigured."
+			return "Leave blank to auto-use openai_api when an OpenAI API key is saved; choose MLX or Ollama explicitly for local boss chat."
 		default:
 			return field.hint
 		}

@@ -24,6 +24,8 @@ var setupBackendOptions = config.SelectableAIBackends()
 var setupBossChatOptions = []config.AIBackend{
 	config.AIBackendUnset,
 	config.AIBackendOpenAIAPI,
+	config.AIBackendMLX,
+	config.AIBackendOllama,
 	config.AIBackendDisabled,
 }
 
@@ -80,8 +82,10 @@ func (m Model) refreshSetupSnapshotCmd(openOnStartup bool) tea.Cmd {
 		cfg.OpenAIAPIKey = settings.OpenAIAPIKey
 		cfg.MLXBaseURL = settings.MLXBaseURL
 		cfg.MLXAPIKey = settings.MLXAPIKey
+		cfg.MLXModel = settings.MLXModel
 		cfg.OllamaBaseURL = settings.OllamaBaseURL
 		cfg.OllamaAPIKey = settings.OllamaAPIKey
+		cfg.OllamaModel = settings.OllamaModel
 		return setupSnapshotMsg{
 			snapshot:      aibackend.Detect(m.ctx, cfg),
 			openOnStartup: openOnStartup,
@@ -132,7 +136,7 @@ func (m Model) updateSetupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "e":
 		return m.enterSetupConfigMode()
 	case "m":
-		if m.setupFocusedRole == setupRoleProjectReports && isLocalBackendModelPickerBackend(m.setupSelectedBackend()) {
+		if isLocalBackendModelPickerBackend(m.setupSelectedLocalModelBackend()) {
 			return m.openLocalBackendModelPicker()
 		}
 	case "enter":
@@ -279,6 +283,10 @@ func (m Model) setupConfigFieldIndexes() []int {
 		switch m.setupSelectedBossBackend() {
 		case config.AIBackendUnset, config.AIBackendOpenAIAPI:
 			return []int{settingsFieldOpenAIAPIKey, settingsFieldBossChatModel}
+		case config.AIBackendMLX:
+			return []int{settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel}
+		case config.AIBackendOllama:
+			return []int{settingsFieldOllamaBaseURL, settingsFieldOllamaAPIKey, settingsFieldOllamaModel}
 		default:
 			return nil
 		}
@@ -344,8 +352,19 @@ func (m Model) activateBossChatSetupSelection() (tea.Model, tea.Cmd) {
 			return m.enterSetupConfigModeWithStatus("Paste an OpenAI API key here, then press Ctrl+S or Enter to save.")
 		}
 		return m.saveSetupFromCurrentChoices()
+	case config.AIBackendMLX, config.AIBackendOllama:
+		selectedStatus := m.setupSnapshot.StatusFor(settings.BossChatBackend)
+		if strings.TrimSpace(selectedStatus.Detail) == "" || !selectedStatus.Ready {
+			if selectedStatus.LoginHint != "" {
+				m.status = selectedStatus.LoginHint
+			} else {
+				m.status = selectedStatus.Detail
+			}
+			return m.enterSetupConfigMode()
+		}
+		return m.saveSetupFromCurrentChoices()
 	default:
-		m.status = "Boss chat can use OpenAI API or stay off for now."
+		m.status = "Boss chat can use OpenAI API, MLX, Ollama, or stay off for now."
 		return m, nil
 	}
 }
@@ -437,6 +456,13 @@ func (m Model) setupSelectedBossBackend() config.AIBackend {
 		return config.AIBackendOpenAIAPI
 	}
 	return setupBossChatOptions[m.setupBossSelected]
+}
+
+func (m Model) setupSelectedLocalModelBackend() config.AIBackend {
+	if m.setupFocusedRole == setupRoleBossChat {
+		return m.setupSelectedBossBackend()
+	}
+	return m.setupSelectedBackend()
 }
 
 func (m Model) setupSelectionForBackend(backend config.AIBackend) int {
@@ -756,6 +782,10 @@ func (m Model) bossChatSetupOptionDetail(backend config.AIBackend, settings conf
 			return "uses the shared saved OpenAI API key"
 		}
 		return "direct API chat; project reports stay separate"
+	case config.AIBackendMLX:
+		return "local MLX chat; project reports stay separate"
+	case config.AIBackendOllama:
+		return "local Ollama chat; project reports stay separate"
 	default:
 		return "not available"
 	}
@@ -824,6 +854,10 @@ func (m Model) renderBossChatSetupHint(width int) string {
 		} else {
 			hint = "Boss chat will use the saved OpenAI API key. Project reports stay on " + settings.AIBackend.Label() + "."
 		}
+	case config.AIBackendMLX:
+		hint = "Boss chat will use your MLX OpenAI-compatible endpoint. Press e to edit endpoint/API key/model, or m to pick a discovered model."
+	case config.AIBackendOllama:
+		hint = "Boss chat will use your Ollama OpenAI-compatible endpoint. Press e to edit endpoint/API key/model, or m to pick a discovered model."
 	}
 	return commandPaletteHintStyle.Render(lipgloss.NewStyle().Width(width).Render("Hint: " + hint))
 }
@@ -845,7 +879,7 @@ func (m Model) renderSetupActions() string {
 		renderDialogAction("r", "refresh", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
 	}
-	if m.setupFocusedRole == setupRoleProjectReports && isLocalBackendModelPickerBackend(m.setupSelectedBackend()) {
+	if isLocalBackendModelPickerBackend(m.setupSelectedLocalModelBackend()) {
 		actions = append(actions[:3], append([]string{
 			renderDialogAction("m", "model", navigateActionKeyStyle, navigateActionTextStyle),
 		}, actions[3:]...)...)
@@ -894,12 +928,12 @@ func (m Model) localBackendSetupHint(backend config.AIBackend, status aibackend.
 	models := localBackendPickerModels(status.Models)
 	selectedModel := strings.TrimSpace(m.currentSettingsBaseline().OpenAICompatibleModel(backend))
 	if selectedModel != "" && localBackendModelExists(selectedModel, models) {
-		return fmt.Sprintf("%s will use %s for background AI tasks. Press m to pick another discovered model, or s to edit endpoint and manual settings.%s", backend.Label(), selectedModel, localBackendEnvOverrideNotice())
+		return fmt.Sprintf("%s will use %s for background AI tasks. Press m to pick another discovered model, or e to edit endpoint and manual settings.%s", backend.Label(), selectedModel, localBackendEnvOverrideNotice())
 	}
 	if len(models) == 0 {
 		return fmt.Sprintf("%s uses an OpenAI-compatible local server at %s. Press r after the server is running, then m to pick a model.", backend.Label(), endpoint)
 	}
-	return fmt.Sprintf("%s will auto-use %s from %s. Press m to pin a discovered model or s to edit endpoint and manual settings.%s", backend.Label(), firstString(models), endpoint, localBackendEnvOverrideNotice())
+	return fmt.Sprintf("%s will auto-use %s from %s. Press m to pin a discovered model or e to edit endpoint and manual settings.%s", backend.Label(), firstString(models), endpoint, localBackendEnvOverrideNotice())
 }
 
 func summarizeLocalBackendModels(models []string) string {

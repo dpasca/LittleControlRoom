@@ -32,6 +32,18 @@ func settingsBossChatBackendOptions() []settingsBossChatBackendOption {
 			Description: "Project reports can still use Codex, OpenCode, Claude Code, MLX, Ollama, or another backend. Boss chat only shares the saved API key.",
 		},
 		{
+			Value:       config.AIBackendMLX,
+			Label:       "MLX",
+			Summary:     "Use your local MLX OpenAI-compatible endpoint for boss chat.",
+			Description: "Uses the MLX endpoint, API key, and model fields. Leave the model blank to auto-use the first discovered local model.",
+		},
+		{
+			Value:       config.AIBackendOllama,
+			Label:       "Ollama",
+			Summary:     "Use your local Ollama OpenAI-compatible endpoint for boss chat.",
+			Description: "Uses the Ollama endpoint, API key, and model fields. Leave the model blank to auto-use the first discovered local model.",
+		},
+		{
 			Value:       config.AIBackendDisabled,
 			Label:       "Off",
 			Summary:     "Turn off boss chat inference.",

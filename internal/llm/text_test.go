@@ -118,3 +118,64 @@ func TestResponsesTextClientReportsHTTPStatusError(t *testing.T) {
 		t.Fatalf("unexpected usage snapshot: %+v", snapshot)
 	}
 }
+
+func TestOpenAICompatibleTextRunnerUsesChatCompletionsAndAutoModel(t *testing.T) {
+	t.Parallel()
+
+	var got map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/models":
+			_, _ = w.Write([]byte(`{"data":[{"id":"qwen-local"}]}`))
+		case "/v1/chat/completions":
+			if auth := r.Header.Get("Authorization"); auth != "Bearer local-key" {
+				t.Fatalf("authorization = %q", auth)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			_, _ = w.Write([]byte(`{
+				"model": "qwen-local",
+				"usage": {
+					"prompt_tokens": 5,
+					"prompt_tokens_details": {"cached_tokens": 1},
+					"completion_tokens": 4,
+					"completion_tokens_details": {"reasoning_tokens": 0},
+					"total_tokens": 9
+				},
+				"choices": [{"message": {"content": "Local boss chat ready."}, "finish_reason": "stop"}]
+			}`))
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	usage := NewUsageTracker()
+	runner := NewOpenAICompatibleTextRunner(server.URL+"/v1", "local-key", "", time.Second, usage)
+	resp, err := runner.RunText(context.Background(), TextRequest{
+		SystemText: "You are a local assistant.",
+		Messages:   []TextMessage{{Role: "user", Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("RunText() error = %v", err)
+	}
+	if resp.OutputText != "Local boss chat ready." || resp.Model != "qwen-local" {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	if got["model"] != "qwen-local" {
+		t.Fatalf("request model = %#v, want qwen-local", got["model"])
+	}
+	if _, ok := got["reasoning"]; ok {
+		t.Fatalf("openai-compatible chat text request should not include reasoning: %#v", got)
+	}
+	messages, ok := got["messages"].([]any)
+	if !ok || len(messages) != 2 {
+		t.Fatalf("messages = %#v, want system and user", got["messages"])
+	}
+	snapshot := usage.Snapshot(true)
+	if snapshot.Completed != 1 || snapshot.Totals.TotalTokens != 9 {
+		t.Fatalf("unexpected usage snapshot: %+v", snapshot)
+	}
+}

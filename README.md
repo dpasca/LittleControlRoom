@@ -69,7 +69,7 @@ LCR separates embedded session providers from the backend used for background wo
 
 - Embedded sessions today are Codex, OpenCode, and Claude Code.
 - Background AI can run through Codex, OpenCode, Claude Code, MLX, Ollama, or a direct OpenAI API key.
-- Boss chat has its own `boss_chat_backend`, so interactive high-level chat can use direct API inference without forcing summaries/classification off Codex, OpenCode, Claude Code, MLX, or Ollama. If it is not configured yet, `/boss` offers to jump straight to the Boss chat setup card.
+- Boss chat has its own `boss_chat_backend`, so interactive high-level chat can use direct API inference through OpenAI API, MLX, or Ollama without forcing summaries/classification off Codex, OpenCode, Claude Code, MLX, or Ollama. If it is not configured yet, `/boss` offers to jump straight to the Boss chat setup card.
 - MLX and Ollama use OpenAI-compatible local endpoints, so they fit into the same background inference path without a separate integration surface.
 
 For local inference, the practical setup is:

@@ -31,7 +31,16 @@ func (m Model) openBossModeOrSetupPrompt() (tea.Model, tea.Cmd) {
 
 func (m Model) bossChatConfigured() bool {
 	settings := m.currentSettingsBaseline()
-	return settings.BossChatBackend == config.AIBackendOpenAIAPI && strings.TrimSpace(settings.OpenAIAPIKey) != ""
+	switch settings.BossChatBackend {
+	case config.AIBackendOpenAIAPI:
+		return strings.TrimSpace(settings.OpenAIAPIKey) != ""
+	case config.AIBackendMLX:
+		return strings.TrimSpace(settings.MLXBaseURL) != "" || config.AIBackendMLX.DefaultOpenAICompatibleBaseURL() != ""
+	case config.AIBackendOllama:
+		return strings.TrimSpace(settings.OllamaBaseURL) != "" || config.AIBackendOllama.DefaultOpenAICompatibleBaseURL() != ""
+	default:
+		return false
+	}
 }
 
 func (m *Model) openBossSetupPrompt() {
@@ -54,8 +63,14 @@ func (m Model) bossSetupPromptReason() string {
 	switch {
 	case settings.BossChatBackend == config.AIBackendDisabled:
 		return "Boss chat is currently turned off."
-	case strings.TrimSpace(settings.OpenAIAPIKey) == "":
-		return "Boss chat needs a saved OpenAI API key before it can start."
+	case settings.BossChatBackend == config.AIBackendMLX:
+		return "Boss chat is set to MLX, but the local endpoint still needs setup."
+	case settings.BossChatBackend == config.AIBackendOllama:
+		return "Boss chat is set to Ollama, but the local endpoint still needs setup."
+	case settings.BossChatBackend == config.AIBackendOpenAIAPI && strings.TrimSpace(settings.OpenAIAPIKey) == "":
+		return "Boss chat is set to OpenAI API, but needs a saved OpenAI API key before it can start."
+	case settings.BossChatBackend == config.AIBackendUnset:
+		return "Boss chat is not configured yet. Open /setup to choose a boss chat backend."
 	case settings.BossChatBackend != config.AIBackendOpenAIAPI:
 		return "Boss chat is not connected to a supported direct chat backend yet."
 	default:
@@ -102,8 +117,15 @@ func (m Model) openSetupFromBossSetupPrompt() (tea.Model, tea.Cmd) {
 func (m *Model) openSetupModeForBossChat() tea.Cmd {
 	cmd := m.openSetupMode()
 	m.setupFocusedRole = setupRoleBossChat
-	m.setupBossSelected = m.setupBossSelectionForBackend(config.AIBackendOpenAIAPI)
-	m.status = "Configure boss chat. Save an OpenAI API key here, then run /boss again."
+	settings := m.currentSettingsBaseline()
+	if current := settings.BossChatBackend; current == config.AIBackendMLX || current == config.AIBackendOllama {
+		m.setupBossSelected = m.setupBossSelectionForBackend(current)
+	} else if projectBackend := settings.AIBackend; projectBackend == config.AIBackendMLX || projectBackend == config.AIBackendOllama {
+		m.setupBossSelected = m.setupBossSelectionForBackend(projectBackend)
+	} else {
+		m.setupBossSelected = m.setupBossSelectionForBackend(config.AIBackendOpenAIAPI)
+	}
+	m.status = "Configure boss chat here, then run /boss again."
 	return cmd
 }
 

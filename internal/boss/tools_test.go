@@ -47,12 +47,10 @@ func TestQueryExecutorReportsProjectDetailFromStore(t *testing.T) {
 	executor := newQueryExecutor(st)
 	executor.nowFn = func() time.Time { return now }
 	result, err := executor.Execute(ctx, bossAction{
-		Kind:   bossActionProjectDetail,
-		Target: "selected",
-		Limit:  8,
-	}, StateSnapshot{}, ViewContext{
-		SelectedProject: ProjectViewContext{Path: "/tmp/alpha"},
-	})
+		Kind:        bossActionProjectDetail,
+		ProjectPath: "/tmp/alpha",
+		Limit:       8,
+	}, StateSnapshot{}, ViewContext{})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -62,7 +60,7 @@ func TestQueryExecutorReportsProjectDetailFromStore(t *testing.T) {
 		"/tmp/alpha",
 		"Needs a rollout decision",
 		"Write boss-mode integration tests",
-		"using the project selected in the classic TUI",
+		"exact project path supplied by boss chat",
 	} {
 		if !strings.Contains(result.Text, want) {
 			t.Fatalf("tool result missing %q:\n%s", want, result.Text)
@@ -79,38 +77,36 @@ func TestBuildViewContextBriefIncludesClassicTUIState(t *testing.T) {
 		Embedded:            true,
 		AllProjectCount:     4,
 		VisibleProjectCount: 2,
-		SelectedIndex:       1,
 		FocusedPane:         "detail",
 		SortMode:            "attention",
 		Visibility:          "all_folders",
 		Filter:              "boss",
 		Status:              "Detail focused",
-		SelectedProject: ProjectViewContext{
-			Name:           "Alpha",
-			Path:           "/tmp/alpha",
-			Status:         model.StatusActive,
-			AttentionScore: 9,
-			LastActivity:   now.Add(-time.Hour),
-			OpenTODOCount:  2,
-		},
-		DetailProjectPath:   "/tmp/alpha",
-		DetailReasonCount:   3,
-		DetailOpenTODOCount: 2,
-		DetailSessionCount:  1,
-		DetailRecentEvents:  5,
-		DetailLatestSummary: "The assistant needs a richer report surface.",
 	}, now)
 
 	for _, want := range []string{
 		"embedded over classic TUI",
 		"2 visible of 4 known",
 		"filter=\"boss\"",
-		"selected project #2",
-		"reasons=3 open_todos=2 sessions=1 recent_events=5",
-		"The assistant needs a richer report surface",
 	} {
 		if !strings.Contains(brief, want) {
 			t.Fatalf("brief missing %q:\n%s", want, brief)
 		}
+	}
+	if strings.Contains(brief, "selected project") || strings.Contains(brief, "detail panel") {
+		t.Fatalf("brief should not expose hidden project cursor/detail state:\n%s", brief)
+	}
+}
+
+func TestQueryExecutorDoesNotUseHiddenSelectedProject(t *testing.T) {
+	t.Parallel()
+
+	executor := newQueryExecutor(&fakeBossStore{})
+	_, _, err := executor.resolveProjectPath(context.Background(), bossAction{Target: "selected"}, ViewContext{})
+	if err == nil {
+		t.Fatalf("resolveProjectPath() error = nil, want selected-project rejection")
+	}
+	if !strings.Contains(err.Error(), "hidden classic TUI selection") {
+		t.Fatalf("resolveProjectPath() error = %q, want hidden selection guidance", err)
 	}
 }

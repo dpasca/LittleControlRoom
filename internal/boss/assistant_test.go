@@ -166,7 +166,7 @@ func TestAssistantReplyUsesStructuredToolLoop(t *testing.T) {
 		resp: []llm.JSONSchemaResponse{
 			{
 				Model:      "gpt-test",
-				OutputText: encodedBossAction(t, bossAction{Kind: bossActionProjectDetail, Target: "selected", Limit: 8, Reason: "Need selected project detail"}),
+				OutputText: encodedBossAction(t, bossAction{Kind: bossActionProjectDetail, ProjectPath: "/tmp/alpha", Limit: 8, Reason: "Need Alpha detail"}),
 				Usage:      model.LLMUsage{InputTokens: 10, OutputTokens: 3, TotalTokens: 13},
 			},
 			{
@@ -184,14 +184,8 @@ func TestAssistantReplyUsesStructuredToolLoop(t *testing.T) {
 
 	resp, err := assistant.Reply(context.Background(), AssistantRequest{
 		StateBrief: "Visible projects: 1.",
-		View: ViewContext{
-			Active: true,
-			SelectedProject: ProjectViewContext{
-				Name: "Alpha",
-				Path: "/tmp/alpha",
-			},
-		},
-		Messages: []ChatMessage{{Role: "user", Content: "What about the selected project?"}},
+		View:       ViewContext{Active: true},
+		Messages:   []ChatMessage{{Role: "user", Content: "What about /tmp/alpha?"}},
 	})
 	if err != nil {
 		t.Fatalf("Reply() error = %v", err)

@@ -24,7 +24,7 @@ Provider artifact and detector-footprint notes live in:
 
 `lcroom classify` requires a configured AI backend. That can be Codex, OpenCode, Claude Code, MLX, Ollama, or an OpenAI API key. The TUI will open `/setup` automatically until you pick one.
 
-The usual way to reach boss mode is from the classic TUI with `/boss`. It opens a minimal boss chat layer over the dashboard, gives each turn a compact plain-text app-state brief, and uses its own `boss_chat_backend` setting so live chat can use direct OpenAI API inference while project analysis keeps using Codex, OpenCode, Claude Code, MLX, Ollama, or another configured backend. If boss chat is not configured yet, `/boss` shows a setup prompt with a direct jump to the Boss chat card in `/setup`. Press `Esc`, submit `/boss off`, or run `/boss off` from the command palette after returning to the dashboard to close it. Set `boss_chat_model` or `LCROOM_BOSS_MODEL` to override the default boss-mode chat model.
+The usual way to reach boss mode is from the classic TUI with `/boss`. It opens a minimal boss chat layer over the dashboard, gives each turn a compact plain-text app-state brief, and uses its own `boss_chat_backend` setting so live chat can use direct API inference through OpenAI API, MLX, or Ollama while project analysis keeps using Codex, OpenCode, Claude Code, MLX, Ollama, or another configured backend. If boss chat is not configured yet, `/boss` shows a setup prompt with a direct jump to the Boss chat card in `/setup`. Press `Esc`, submit `/boss off`, or run `/boss off` from the command palette after returning to the dashboard to close it. Set `boss_chat_model` or `LCROOM_BOSS_MODEL` to override the default boss-mode chat model.
 
 ## Config File
 

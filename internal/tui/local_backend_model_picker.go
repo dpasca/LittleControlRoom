@@ -11,7 +11,7 @@ import (
 )
 
 func (m Model) openLocalBackendModelPicker() (tea.Model, tea.Cmd) {
-	backend := m.setupSelectedBackend()
+	backend := m.setupSelectedLocalModelBackend()
 	status := m.setupSnapshot.StatusFor(backend)
 	models := localBackendPickerModels(status.Models)
 	if !isLocalBackendModelPickerBackend(backend) || len(models) == 0 {
@@ -22,8 +22,15 @@ func (m Model) openLocalBackendModelPicker() (tea.Model, tea.Cmd) {
 	m.localModelPickerVisible = true
 	m.localModelPickerBackend = backend
 	m.localModelPickerSelected = m.localBackendModelPickerSelection(backend, models)
-	m.status = "Choose the " + backend.Label() + " model to use for background AI tasks."
+	m.status = "Choose the " + backend.Label() + " model to use for " + m.setupFocusedRoleModelPickerLabel() + "."
 	return m, nil
+}
+
+func (m Model) setupFocusedRoleModelPickerLabel() string {
+	if m.setupFocusedRole == setupRoleBossChat {
+		return "boss chat"
+	}
+	return "background AI tasks"
 }
 
 func (m *Model) closeLocalBackendModelPicker(status string) {

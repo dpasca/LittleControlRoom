@@ -16411,6 +16411,15 @@ func TestCommandEnterBossUnconfiguredShowsSetupPrompt(t *testing.T) {
 	if got.commandMode {
 		t.Fatalf("command mode should close after /boss")
 	}
+	if strings.Contains(got.bossSetupPrompt.Reason, "saved OpenAI API key") {
+		t.Fatalf("default boss setup prompt reason should not imply OpenAI-only setup: %q", got.bossSetupPrompt.Reason)
+	}
+	if strings.Contains(got.bossSetupPrompt.Reason, "OpenAI API") || strings.Contains(got.bossSetupPrompt.Reason, "MLX") || strings.Contains(got.bossSetupPrompt.Reason, "Ollama") {
+		t.Fatalf("default boss setup prompt reason should stay provider-agnostic: %q", got.bossSetupPrompt.Reason)
+	}
+	if !strings.Contains(got.bossSetupPrompt.Reason, "/setup") || !strings.Contains(got.bossSetupPrompt.Reason, "boss chat backend") {
+		t.Fatalf("boss setup prompt reason = %q, want setup guidance", got.bossSetupPrompt.Reason)
+	}
 	rendered := ansi.Strip(got.View())
 	for _, want := range []string{"Boss Chat Setup", "Open /setup", "Cancel"} {
 		if !strings.Contains(rendered, want) {
@@ -16965,7 +16974,7 @@ func TestRenderSetupHintExplainsLocalModelPicker(t *testing.T) {
 	}
 
 	hint := ansi.Strip(m.renderSetupHint(120))
-	if !strings.Contains(hint, "Press m to pin a discovered") || !strings.Contains(hint, "model or s to edit endpoint") {
+	if !strings.Contains(hint, "Press m to pin a discovered") || !strings.Contains(hint, "model or e to edit endpoint") {
 		t.Fatalf("renderSetupHint() = %q, want local model picker guidance", hint)
 	}
 	if !strings.Contains(hint, "Qwen3.5-9B-MLX-4bit") {

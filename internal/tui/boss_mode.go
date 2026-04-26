@@ -42,31 +42,11 @@ func (m Model) bossViewContext() bossui.ViewContext {
 		Loading:             m.loading,
 		AllProjectCount:     len(m.allProjects),
 		VisibleProjectCount: len(m.projects),
-		SelectedIndex:       m.selected,
 		FocusedPane:         string(m.focusedPane),
 		SortMode:            string(m.sortMode),
 		Visibility:          string(m.visibility),
 		Filter:              strings.TrimSpace(m.projectFilter),
 		Status:              strings.TrimSpace(m.status),
-	}
-	if project, ok := m.selectedProject(); ok {
-		view.SelectedProject = bossui.ProjectViewFromSummary(project)
-	}
-	if path := strings.TrimSpace(m.detail.Summary.Path); path != "" {
-		view.DetailProjectPath = path
-		view.DetailReasonCount = len(m.detail.Reasons)
-		view.DetailSessionCount = len(m.detail.Sessions)
-		view.DetailRecentEvents = len(m.detail.RecentEvents)
-		for _, item := range m.detail.Todos {
-			if !item.Done {
-				view.DetailOpenTODOCount++
-			}
-		}
-		if summary := strings.TrimSpace(m.detail.Summary.LatestSessionSummary); summary != "" {
-			view.DetailLatestSummary = summary
-		} else {
-			view.DetailLatestSummary = strings.TrimSpace(m.detail.Summary.LatestCompletedSessionSummary)
-		}
 	}
 	return view
 }

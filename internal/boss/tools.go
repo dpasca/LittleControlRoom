@@ -60,59 +60,11 @@ type ViewContext struct {
 	Loading             bool
 	AllProjectCount     int
 	VisibleProjectCount int
-	SelectedIndex       int
-	SelectedProject     ProjectViewContext
 	FocusedPane         string
 	SortMode            string
 	Visibility          string
 	Filter              string
 	Status              string
-	DetailProjectPath   string
-	DetailOpenTODOCount int
-	DetailReasonCount   int
-	DetailSessionCount  int
-	DetailRecentEvents  int
-	DetailLatestSummary string
-}
-
-type ProjectViewContext struct {
-	Name                 string
-	Path                 string
-	Status               model.ProjectStatus
-	AttentionScore       int
-	LastActivity         time.Time
-	RepoBranch           string
-	RepoDirty            bool
-	RepoConflict         bool
-	RepoSyncStatus       model.RepoSyncStatus
-	RepoAheadCount       int
-	RepoBehindCount      int
-	OpenTODOCount        int
-	LatestSummary        string
-	LatestCompleted      string
-	LatestCategory       model.SessionCategory
-	ClassificationStatus model.SessionClassificationStatus
-}
-
-func ProjectViewFromSummary(project model.ProjectSummary) ProjectViewContext {
-	return ProjectViewContext{
-		Name:                 displayProjectName(project),
-		Path:                 strings.TrimSpace(project.Path),
-		Status:               project.Status,
-		AttentionScore:       project.AttentionScore,
-		LastActivity:         project.LastActivity,
-		RepoBranch:           strings.TrimSpace(project.RepoBranch),
-		RepoDirty:            project.RepoDirty,
-		RepoConflict:         project.RepoConflict,
-		RepoSyncStatus:       project.RepoSyncStatus,
-		RepoAheadCount:       project.RepoAheadCount,
-		RepoBehindCount:      project.RepoBehindCount,
-		OpenTODOCount:        project.OpenTODOCount,
-		LatestSummary:        strings.TrimSpace(project.LatestSessionSummary),
-		LatestCompleted:      strings.TrimSpace(project.LatestCompletedSessionSummary),
-		LatestCategory:       project.LatestSessionClassificationType,
-		ClassificationStatus: project.LatestSessionClassification,
-	}
 }
 
 func newQueryExecutor(store bossStoreReader) *QueryExecutor {
@@ -331,8 +283,7 @@ func (e *QueryExecutor) todoReport(ctx context.Context, action bossAction, view 
 
 	hasTarget := strings.TrimSpace(action.ProjectPath) != "" ||
 		strings.TrimSpace(action.ProjectName) != "" ||
-		strings.EqualFold(strings.TrimSpace(action.Target), "selected") ||
-		strings.TrimSpace(view.SelectedProject.Path) != ""
+		strings.EqualFold(strings.TrimSpace(action.Target), "selected")
 	path, note, err := e.resolveProjectPath(ctx, action, view)
 	if err == nil && path != "" {
 		detail, detailErr := e.store.GetProjectDetail(ctx, path, 0)
@@ -385,10 +336,7 @@ func (e *QueryExecutor) assessmentQueue(ctx context.Context) (bossToolResult, er
 
 func (e *QueryExecutor) resolveProjectPath(ctx context.Context, action bossAction, view ViewContext) (string, string, error) {
 	if strings.EqualFold(strings.TrimSpace(action.Target), "selected") {
-		if path := strings.TrimSpace(view.SelectedProject.Path); path != "" {
-			return path, "using the project selected in the classic TUI", nil
-		}
-		return "", "", errors.New("boss chat asked for the selected project, but the current TUI selection is unavailable")
+		return "", "", errors.New("boss chat cannot use the hidden classic TUI selection; ask for a project name or path")
 	}
 	if path := strings.TrimSpace(action.ProjectPath); path != "" {
 		path = filepath.Clean(path)
@@ -424,17 +372,14 @@ func (e *QueryExecutor) resolveProjectPath(ctx context.Context, action bossActio
 			return "", "", fmt.Errorf("project name %q is ambiguous; matching paths: %s", name, strings.Join(paths, ", "))
 		}
 	}
-	if path := strings.TrimSpace(view.SelectedProject.Path); path != "" {
-		return path, "no explicit target supplied, so using the current TUI selection", nil
-	}
-	return "", "", errors.New("project query needs a project_path, exact project_name, or selected TUI project")
+	return "", "", errors.New("project query needs a project_path or exact project_name")
 }
 
 func BuildViewContextBrief(view ViewContext, now time.Time) string {
 	if now.IsZero() {
 		now = time.Now()
 	}
-	if !view.Active && view.AllProjectCount == 0 && view.VisibleProjectCount == 0 && strings.TrimSpace(view.SelectedProject.Path) == "" {
+	if !view.Active && view.AllProjectCount == 0 && view.VisibleProjectCount == 0 {
 		return "Current TUI view: no embedded classic TUI context was supplied."
 	}
 	mode := "standalone boss mode"
@@ -458,46 +403,7 @@ func BuildViewContextBrief(view ViewContext, now time.Time) string {
 	if status := strings.TrimSpace(view.Status); status != "" {
 		lines = append(lines, "- classic TUI status: "+clipText(status, 220))
 	}
-	if strings.TrimSpace(view.SelectedProject.Path) != "" {
-		selected := view.SelectedProject.toBrief()
-		lines = append(lines, fmt.Sprintf("- selected project #%d: %s | path: %s | %s", view.SelectedIndex+1, selected.Name, selected.Path, briefLine(selected, now)))
-	}
-	if strings.TrimSpace(view.DetailProjectPath) != "" {
-		lines = append(lines, fmt.Sprintf("- detail panel path: %s; reasons=%d open_todos=%d sessions=%d recent_events=%d", view.DetailProjectPath, view.DetailReasonCount, view.DetailOpenTODOCount, view.DetailSessionCount, view.DetailRecentEvents))
-		if summary := strings.TrimSpace(view.DetailLatestSummary); summary != "" {
-			lines = append(lines, "- detail latest: "+clipText(summary, 220))
-		}
-	}
 	return strings.Join(lines, "\n")
-}
-
-func (project ProjectViewContext) toBrief() ProjectBrief {
-	path := strings.TrimSpace(project.Path)
-	name := strings.TrimSpace(project.Name)
-	if name == "" && path != "" {
-		name = filepath.Base(path)
-	}
-	if name == "" {
-		name = "untitled project"
-	}
-	return ProjectBrief{
-		Name:                 name,
-		Path:                 path,
-		Status:               project.Status,
-		AttentionScore:       project.AttentionScore,
-		LastActivity:         project.LastActivity,
-		RepoBranch:           strings.TrimSpace(project.RepoBranch),
-		RepoDirty:            project.RepoDirty,
-		RepoConflict:         project.RepoConflict,
-		RepoSyncStatus:       project.RepoSyncStatus,
-		RepoAheadCount:       project.RepoAheadCount,
-		RepoBehindCount:      project.RepoBehindCount,
-		OpenTODOCount:        project.OpenTODOCount,
-		LatestSummary:        strings.TrimSpace(project.LatestSummary),
-		LatestCompleted:      strings.TrimSpace(project.LatestCompleted),
-		LatestCategory:       project.LatestCategory,
-		ClassificationStatus: project.ClassificationStatus,
-	}
 }
 
 func openTodosOnly(items []model.TodoItem) []model.TodoItem {

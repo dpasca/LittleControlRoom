@@ -90,8 +90,12 @@ func ParseBossChatBackend(raw string) (AIBackend, error) {
 		return AIBackendDisabled, nil
 	case string(AIBackendOpenAIAPI):
 		return AIBackendOpenAIAPI, nil
+	case string(AIBackendMLX):
+		return AIBackendMLX, nil
+	case string(AIBackendOllama):
+		return AIBackendOllama, nil
 	default:
-		return AIBackendUnset, fmt.Errorf("boss_chat_backend must be one of disabled or openai_api")
+		return AIBackendUnset, fmt.Errorf("boss_chat_backend must be one of disabled, openai_api, mlx, or ollama")
 	}
 }
 

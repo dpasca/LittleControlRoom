@@ -2,6 +2,7 @@ openai_api_key = "sk-your-openai-api-key"
 
 # Boss chat is separate from project-analysis inference.
 # Leave boss_chat_backend blank to auto-use openai_api when an OpenAI key exists.
+# You can also use local OpenAI-compatible backends: "mlx" or "ollama".
 # boss_chat_backend = "openai_api"
 # boss_chat_model = "gpt-5.4-mini"
 
