@@ -14,6 +14,7 @@ const (
 	KindAIStats        Kind = "ai-stats"
 	KindPerf           Kind = "perf"
 	KindErrors         Kind = "errors"
+	KindBoss           Kind = "boss"
 	KindRefresh        Kind = "refresh"
 	KindSort           Kind = "sort"
 	KindView           Kind = "view"
@@ -121,11 +122,12 @@ var specs = []Spec{
 	{Name: "ai", Usage: "/ai", Summary: "Open the internal AI stats dialog"},
 	{Name: "perf", Usage: "/perf", Summary: "Open the internal responsiveness and wait tracker"},
 	{Name: "errors", Usage: "/errors", Summary: "Open the recent error log"},
+	{Name: "boss", Usage: "/boss [on|off|toggle]", Summary: "Open boss chat, or prompt for setup if needed"},
 	{Name: "refresh", Usage: "/refresh", Summary: "Rescan projects and retry failed assessments"},
 	{Name: "sort", Usage: "/sort attention|recent", Summary: "Set list ordering"},
 	{Name: "view", Usage: "/view ai|all", Summary: "Choose AI-linked or all folders"},
-	{Name: "settings", Usage: "/settings", Summary: "Edit the saved OpenAI key, scope, filters, and scan thresholds"},
-	{Name: "setup", Usage: "/setup", Summary: "Choose and check the AI backend for summaries and commit help"},
+	{Name: "settings", Usage: "/settings", Summary: "Edit scope, browser, refresh, and advanced settings"},
+	{Name: "setup", Usage: "/setup", Summary: "Choose AI roles for project reports and boss chat"},
 	{Name: "filter", Usage: "/filter [text|clear]", Summary: "Temporarily show only matching project names"},
 	{Name: "new-project", Usage: "/new-project", Summary: "Create a project folder, or paste an existing path to add it"},
 	{Name: "new-task", Usage: "/new-task", Summary: "Create a scratch task folder under the default task root"},
@@ -288,6 +290,16 @@ func Suggestions(input string) []Suggestion {
 			choice("on", "Enable demo privacy mode"),
 			choice("off", "Disable demo privacy mode"),
 		)
+	case "boss":
+		argPrefix := ""
+		if len(fields) > 1 {
+			argPrefix = strings.ToLower(fields[len(fields)-1])
+		}
+		return enumSuggestions("/boss ", argPrefix,
+			choice("on", "Open the boss chat layer"),
+			choice("off", "Close the boss chat layer"),
+			choice("toggle", "Toggle the boss chat layer"),
+		)
 	default:
 		return commandNameSuggestions(namePrefix)
 	}
@@ -329,6 +341,12 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /errors")
 		}
 		return Invocation{Kind: KindErrors, Canonical: "/errors"}, nil
+	case "boss":
+		mode, err := parseToggleMode(rawArgs, "/boss")
+		if err != nil {
+			return Invocation{}, err
+		}
+		return Invocation{Kind: KindBoss, Toggle: mode, Canonical: "/boss " + string(mode)}, nil
 	case "refresh":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /refresh")

@@ -81,6 +81,36 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "boss toggle",
+			raw:  "/boss",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindBoss {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindBoss)
+				}
+				if inv.Toggle != ToggleToggle {
+					t.Fatalf("toggle = %s, want %s", inv.Toggle, ToggleToggle)
+				}
+				if inv.Canonical != "/boss toggle" {
+					t.Fatalf("canonical = %q, want /boss toggle", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "boss off",
+			raw:  "/boss off",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindBoss {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindBoss)
+				}
+				if inv.Toggle != ToggleOff {
+					t.Fatalf("toggle = %s, want %s", inv.Toggle, ToggleOff)
+				}
+				if inv.Canonical != "/boss off" {
+					t.Fatalf("canonical = %q, want /boss off", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "sort recent",
 			raw:  "/sort recent",
 			check: func(t *testing.T, inv Invocation) {
@@ -657,6 +687,26 @@ func TestSuggestionsIncludeAICommand(t *testing.T) {
 	}
 	if got[0].Insert != "/ai" {
 		t.Fatalf("first /a suggestion = %q, want /ai", got[0].Insert)
+	}
+}
+
+func TestSuggestionsIncludeBossCommand(t *testing.T) {
+	got := Suggestions("/b")
+	if len(got) == 0 {
+		t.Fatalf("Suggestions(/b) returned none")
+	}
+	if got[0].Insert != "/boss" {
+		t.Fatalf("first /b suggestion = %q, want /boss", got[0].Insert)
+	}
+}
+
+func TestSuggestionsBossArguments(t *testing.T) {
+	got := Suggestions("/boss o")
+	if len(got) != 2 {
+		t.Fatalf("Suggestions(/boss o) len = %d, want 2", len(got))
+	}
+	if got[0].Insert != "/boss on" || got[1].Insert != "/boss off" {
+		t.Fatalf("suggestions = %#v, want /boss on and /boss off", got)
 	}
 }
 

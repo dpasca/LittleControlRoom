@@ -198,6 +198,89 @@ func TestApplyEditableSettingsResetsUsageWhenBackendChanges(t *testing.T) {
 	}
 }
 
+func TestBossChatRunnerUsesBossChatBackendNotProjectAnalysisBackend(t *testing.T) {
+	t.Setenv("LCROOM_BOSS_MODEL", "")
+
+	cfg := config.Default()
+	cfg.AIBackend = config.AIBackendOpenCode
+	cfg.BossChatBackend = config.AIBackendOpenAIAPI
+	cfg.BossChatModel = "gpt-5.4-mini"
+	cfg.OpenAIAPIKey = "sk-test-example"
+	svc := &Service{
+		cfg:                  cfg,
+		bossChatUsageTracker: llm.NewUsageTracker(),
+	}
+
+	runner, modelName, backend := svc.NewBossTextRunner()
+	if runner == nil {
+		t.Fatalf("NewBossTextRunner() runner = nil, want OpenAI API text runner")
+	}
+	if backend != config.AIBackendOpenAIAPI {
+		t.Fatalf("boss chat backend = %s, want %s", backend, config.AIBackendOpenAIAPI)
+	}
+	if modelName != "gpt-5.4-mini" {
+		t.Fatalf("boss chat model = %q, want gpt-5.4-mini", modelName)
+	}
+}
+
+func TestBossChatRunnerCanBeDisabledSeparately(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.AIBackend = config.AIBackendOpenCode
+	cfg.BossChatBackend = config.AIBackendDisabled
+	cfg.OpenAIAPIKey = "sk-test-example"
+	svc := &Service{
+		cfg:                  cfg,
+		bossChatUsageTracker: llm.NewUsageTracker(),
+	}
+
+	runner, _, backend := svc.NewBossTextRunner()
+	if runner != nil {
+		t.Fatalf("NewBossTextRunner() runner = %#v, want nil when boss chat is disabled", runner)
+	}
+	if backend != config.AIBackendDisabled {
+		t.Fatalf("boss chat backend = %s, want disabled", backend)
+	}
+}
+
+func TestBossChatRunnerSupportsLocalOpenAICompatibleBackend(t *testing.T) {
+	t.Setenv("LCROOM_BOSS_MODEL", "")
+
+	cfg := config.Default()
+	cfg.AIBackend = config.AIBackendOpenCode
+	cfg.BossChatBackend = config.AIBackendMLX
+	cfg.MLXBaseURL = "http://127.0.0.1:8080/v1"
+	cfg.MLXAPIKey = "mlx"
+	cfg.MLXModel = "local-boss-model"
+	svc := &Service{
+		cfg:                  cfg,
+		bossChatUsageTracker: llm.NewUsageTracker(),
+	}
+
+	runner, modelName, backend := svc.NewBossTextRunner()
+	if runner == nil {
+		t.Fatalf("NewBossTextRunner() runner = nil, want local OpenAI-compatible text runner")
+	}
+	if backend != config.AIBackendMLX {
+		t.Fatalf("boss chat backend = %s, want %s", backend, config.AIBackendMLX)
+	}
+	if modelName != "local-boss-model" {
+		t.Fatalf("boss chat model = %q, want local-boss-model", modelName)
+	}
+
+	planner, plannerModel, plannerBackend := svc.NewBossJSONRunner()
+	if planner == nil {
+		t.Fatalf("NewBossJSONRunner() planner = nil, want local OpenAI-compatible structured runner")
+	}
+	if plannerBackend != config.AIBackendMLX {
+		t.Fatalf("boss chat planner backend = %s, want %s", plannerBackend, config.AIBackendMLX)
+	}
+	if plannerModel != "local-boss-model" {
+		t.Fatalf("boss chat planner model = %q, want local-boss-model", plannerModel)
+	}
+}
+
 func TestRefreshProjectStatusAsyncCoalescesConcurrentRequests(t *testing.T) {
 	t.Parallel()
 

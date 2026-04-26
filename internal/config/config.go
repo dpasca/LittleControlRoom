@@ -18,6 +18,8 @@ import (
 
 type AppConfig struct {
 	AIBackend                 AIBackend
+	BossChatBackend           AIBackend
+	BossChatModel             string
 	OpenAIAPIKey              string
 	MLXBaseURL                string
 	MLXAPIKey                 string
@@ -69,6 +71,10 @@ func (c AppConfig) EffectiveAIBackend() AIBackend {
 	return ResolveAIBackend(c.AIBackend, c.OpenAIAPIKey)
 }
 
+func (c AppConfig) EffectiveBossChatBackend() AIBackend {
+	return ResolveBossChatBackend(c.BossChatBackend, c.OpenAIAPIKey)
+}
+
 func (c AppConfig) OpenAICompatibleBaseURL(backend AIBackend) string {
 	switch backend {
 	case AIBackendMLX:
@@ -104,6 +110,8 @@ func (c AppConfig) OpenAICompatibleModel(backend AIBackend) string {
 
 type fileConfig struct {
 	AIBackend                 string    `toml:"ai_backend"`
+	BossChatBackend           string    `toml:"boss_chat_backend"`
+	BossChatModel             *string   `toml:"boss_chat_model"`
 	OpenAIAPIKey              *string   `toml:"openai_api_key"`
 	MLXBaseURL                *string   `toml:"mlx_base_url"`
 	MLXAPIKey                 *string   `toml:"mlx_api_key"`
@@ -379,6 +387,14 @@ func applyConfigFile(cfg *AppConfig) error {
 		}
 		cfg.AIBackend = backend
 	}
+	if strings.TrimSpace(fc.BossChatBackend) != "" {
+		backend, err := ParseBossChatBackend(fc.BossChatBackend)
+		if err != nil {
+			return fmt.Errorf("config boss_chat_backend: %w", err)
+		}
+		cfg.BossChatBackend = backend
+	}
+	applyOptionalTrimmedString(&cfg.BossChatModel, fc.BossChatModel)
 	applyOptionalTrimmedString(&cfg.OpenAIAPIKey, fc.OpenAIAPIKey)
 	applyOptionalTrimmedString(&cfg.MLXBaseURL, fc.MLXBaseURL)
 	applyOptionalTrimmedString(&cfg.MLXAPIKey, fc.MLXAPIKey)
@@ -486,6 +502,9 @@ func validate(cfg AppConfig) error {
 		return err
 	}
 	if _, err := ParseAIBackend(string(cfg.AIBackend)); err != nil {
+		return err
+	}
+	if _, err := ParseBossChatBackend(string(cfg.BossChatBackend)); err != nil {
 		return err
 	}
 	return nil

@@ -182,7 +182,7 @@ func GenerateScreenshots(ctx context.Context, svc *service.Service, cfg config.S
 	settings.AIBackend = config.AIBackendCodex
 	settings.OpenCodeModelTier = string(config.ModelTierCheap)
 	setupModel.settingsBaseline = &settings
-	setupModel.status = "Choose how Little Control Room should run AI summaries, classifications, and commit help."
+	setupModel.status = "Choose AI roles for project reports and boss chat."
 	assets = append(assets, screenshotAsset("setup", "Setup", setupModel.View(), cfg))
 
 	settingsModel, err := buildScreenshotDashboardModel(ctx, svc, data, filtered, selectedProject.Path, cfg, now)

@@ -15,6 +15,7 @@ import (
 	"lcroom/internal/aibackend"
 	"lcroom/internal/appfs"
 	"lcroom/internal/attention"
+	"lcroom/internal/brand"
 	"lcroom/internal/config"
 	"lcroom/internal/detectors"
 	"lcroom/internal/events"
@@ -30,6 +31,8 @@ import (
 
 const recentActivityDiscoveryWindow = 24 * time.Hour
 const asyncProjectRefreshTimeout = 30 * time.Second
+const bossAssistantHTTPTimeout = 90 * time.Second
+const defaultBossAssistantModel = "gpt-5.4-mini"
 
 var scanGitMetadataTimeout = 1500 * time.Millisecond
 
@@ -57,6 +60,7 @@ type Service struct {
 	untrackedFileRecommender gitops.UntrackedFileRecommender
 	commitAssistantTimeout   time.Duration
 	llmUsageTracker          *llm.UsageTracker
+	bossChatUsageTracker     *llm.UsageTracker
 	opencodeDiscovery        *llm.OpenCodeDiscovery
 
 	gitFingerprintReader   func(context.Context, string) (scanner.GitFingerprint, error)
@@ -118,6 +122,7 @@ func New(cfg config.AppConfig, st *store.Store, bus *events.Bus, detectorList []
 		backendDetector:        aibackend.DetectStatus,
 		commitAssistantTimeout: defaultCommitAssistantTimeout,
 		llmUsageTracker:        llm.NewUsageTracker(),
+		bossChatUsageTracker:   llm.NewUsageTracker(),
 		opencodeDiscovery:      llm.NewOpenCodeDiscovery(),
 		gitFingerprintReader:   scanner.ReadGitFingerprint,
 		gitRepoStatusReader:    scanner.ReadGitRepoStatus,
@@ -282,8 +287,12 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	reconfigureAIClients := editableSettingsRequireAIClientRefresh(s.cfg, settings)
 	currentBackend := s.cfg.EffectiveAIBackend()
 	nextBackend := config.ResolveAIBackend(settings.AIBackend, settings.OpenAIAPIKey)
+	currentBossChatBackend := s.cfg.EffectiveBossChatBackend()
+	nextBossChatBackend := config.ResolveBossChatBackend(settings.BossChatBackend, settings.OpenAIAPIKey)
 
 	s.cfg.AIBackend = settings.AIBackend
+	s.cfg.BossChatBackend = settings.BossChatBackend
+	s.cfg.BossChatModel = strings.TrimSpace(settings.BossChatModel)
 	s.cfg.OpenAIAPIKey = strings.TrimSpace(settings.OpenAIAPIKey)
 	s.cfg.MLXBaseURL = strings.TrimSpace(settings.MLXBaseURL)
 	s.cfg.MLXAPIKey = strings.TrimSpace(settings.MLXAPIKey)
@@ -312,6 +321,9 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	if currentBackend != nextBackend {
 		s.resetSessionUsageLocked()
 	}
+	if currentBossChatBackend != nextBossChatBackend {
+		s.resetBossChatUsageLocked()
+	}
 }
 
 func (s *Service) resetSessionUsageLocked() {
@@ -320,6 +332,12 @@ func (s *Service) resetSessionUsageLocked() {
 	}
 	if resetter, ok := s.classifier.(interface{ ResetUsage() }); ok {
 		resetter.ResetUsage()
+	}
+}
+
+func (s *Service) resetBossChatUsageLocked() {
+	if s.bossChatUsageTracker != nil {
+		s.bossChatUsageTracker.Reset()
 	}
 }
 
@@ -431,6 +449,72 @@ func (s *Service) SessionUsage() model.LLMSessionUsage {
 		return usageReader.UsageSnapshot()
 	}
 	return model.LLMSessionUsage{Enabled: enabled}
+}
+
+func (s *Service) NewBossTextRunner() (llm.TextRunner, string, config.AIBackend) {
+	if s == nil {
+		return nil, "", config.AIBackendUnset
+	}
+	s.mu.Lock()
+	cfg := cloneAppConfig(s.cfg)
+	usageTracker := s.bossChatUsageTracker
+	s.mu.Unlock()
+
+	backend := cfg.EffectiveBossChatBackend()
+	modelName := configuredBossAssistantModelForBackend(cfg, backend)
+	switch backend {
+	case config.AIBackendOpenAIAPI:
+		return llm.NewResponsesTextClient(strings.TrimSpace(cfg.OpenAIAPIKey), bossAssistantHTTPTimeout, usageTracker), modelName, backend
+	case config.AIBackendMLX, config.AIBackendOllama:
+		return llm.NewOpenAICompatibleTextRunner(cfg.OpenAICompatibleBaseURL(backend), cfg.OpenAICompatibleAPIKey(backend), modelName, bossAssistantHTTPTimeout, usageTracker), modelName, backend
+	default:
+		return nil, modelName, backend
+	}
+}
+
+func (s *Service) NewBossJSONRunner() (llm.JSONSchemaRunner, string, config.AIBackend) {
+	if s == nil {
+		return nil, "", config.AIBackendUnset
+	}
+	s.mu.Lock()
+	cfg := cloneAppConfig(s.cfg)
+	usageTracker := s.bossChatUsageTracker
+	s.mu.Unlock()
+
+	backend := cfg.EffectiveBossChatBackend()
+	modelName := configuredBossAssistantModelForBackend(cfg, backend)
+	switch backend {
+	case config.AIBackendOpenAIAPI:
+		return llm.NewResponsesClient(strings.TrimSpace(cfg.OpenAIAPIKey), bossAssistantHTTPTimeout, usageTracker), modelName, backend
+	case config.AIBackendMLX, config.AIBackendOllama:
+		return llm.NewOpenAICompatibleResponsesRunner(cfg.OpenAICompatibleBaseURL(backend), cfg.OpenAICompatibleAPIKey(backend), modelName, bossAssistantHTTPTimeout, usageTracker), modelName, backend
+	default:
+		return nil, modelName, backend
+	}
+}
+
+func configuredBossAssistantModel(cfg config.AppConfig) string {
+	return configuredBossAssistantModelForBackend(cfg, cfg.EffectiveBossChatBackend())
+}
+
+func configuredBossAssistantModelForBackend(cfg config.AppConfig, backend config.AIBackend) string {
+	if modelName := strings.TrimSpace(os.Getenv(brand.BossAssistantModelEnvVar)); modelName != "" {
+		return modelName
+	}
+	switch backend {
+	case config.AIBackendMLX, config.AIBackendOllama:
+		if modelName := strings.TrimSpace(cfg.OpenAICompatibleModel(backend)); modelName != "" {
+			return modelName
+		}
+	}
+	if modelName := strings.TrimSpace(cfg.BossChatModel); modelName != "" {
+		return modelName
+	}
+	switch backend {
+	case config.AIBackendMLX, config.AIBackendOllama:
+		return ""
+	}
+	return defaultBossAssistantModel
 }
 
 func (s *Service) configureAIClientsLocked() {

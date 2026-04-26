@@ -19,6 +19,8 @@ import (
 
 const (
 	settingsFieldOpenAIAPIKey = iota
+	settingsFieldBossChatBackend
+	settingsFieldBossChatModel
 	settingsFieldMLXBaseURL
 	settingsFieldMLXAPIKey
 	settingsFieldMLXModel
@@ -118,9 +120,11 @@ func settingsSections() []settingsSection {
 		{
 			id:    settingsSectionAI,
 			label: "AI & Models",
-			hint:  "Backend credentials, local model overrides, and embedded assistant launch defaults.",
+			hint:  "Project-analysis backend credentials, boss-chat inference, local model overrides, and embedded assistant launch defaults.",
 			fieldOrder: []int{
 				settingsFieldOpenAIAPIKey,
+				settingsFieldBossChatBackend,
+				settingsFieldBossChatModel,
 				settingsFieldMLXBaseURL,
 				settingsFieldMLXAPIKey,
 				settingsFieldMLXModel,
@@ -264,7 +268,7 @@ func settingsBrowserAutomationOptionLabel(raw string, baseline browserctl.Policy
 }
 
 func settingsFieldUsesPicker(index int) bool {
-	return index == settingsFieldBrowserAutomation
+	return index == settingsFieldBossChatBackend || index == settingsFieldBrowserAutomation
 }
 
 func normalizeSettingsChoice(raw string) string {
@@ -286,6 +290,8 @@ func (m *Model) openBrowserSettingsMode() tea.Cmd {
 	m.settingsMode = true
 	m.settingsSaving = false
 	m.settingsRevealPrivacy = false
+	m.settingsBossChatPickerVisible = false
+	m.settingsBossChatPickerSelected = 0
 	m.settingsBrowserPickerVisible = false
 	m.settingsBrowserPickerSelected = 0
 	m.localModelPickerVisible = false
@@ -305,6 +311,8 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	m.settingsSaving = false
 	m.settingsSectionSelected = 0
 	m.settingsRevealPrivacy = false
+	m.settingsBossChatPickerVisible = false
+	m.settingsBossChatPickerSelected = 0
 	m.settingsBrowserPickerVisible = false
 	m.settingsBrowserPickerSelected = 0
 	m.localModelPickerVisible = false
@@ -320,6 +328,8 @@ func (m *Model) closeSettingsMode(status string) {
 	m.blurSettingsFields()
 	m.settingsMode = false
 	m.settingsSaving = false
+	m.settingsBossChatPickerVisible = false
+	m.settingsBossChatPickerSelected = 0
 	m.settingsBrowserPickerVisible = false
 	m.settingsBrowserPickerSelected = 0
 	if status != "" {
@@ -347,7 +357,12 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.saveSettingsFromFields()
 	case "enter":
 		if settingsFieldUsesPicker(m.settingsSelected) {
-			return m.openSettingsBrowserAutomationPicker()
+			switch m.settingsSelected {
+			case settingsFieldBossChatBackend:
+				return m.openSettingsBossChatBackendPicker()
+			case settingsFieldBrowserAutomation:
+				return m.openSettingsBrowserAutomationPicker()
+			}
 		}
 		return m.saveSettingsFromFields()
 	case "ctrl+r":
@@ -386,7 +401,9 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 	}
 	settings, err := config.ParseEditableSettings(
 		m.currentSettingsBaseline().AIBackend,
+		config.AIBackend(m.settingsFieldValue(settingsFieldBossChatBackend)),
 		m.settingsFieldValue(settingsFieldOpenAIAPIKey),
+		m.settingsFieldValue(settingsFieldBossChatModel),
 		m.settingsFieldValue(settingsFieldMLXBaseURL),
 		m.settingsFieldValue(settingsFieldMLXAPIKey),
 		m.settingsFieldValue(settingsFieldMLXModel),
@@ -677,7 +694,7 @@ func (m Model) renderSettingsContent(width, maxHeight int) string {
 		commandPaletteTitleStyle.Render("Settings"),
 		commandPaletteHintStyle.Render("Config: " + truncateText(m.displayPathWithHomeTilde(m.currentConfigPath()), max(20, width-8))),
 	}
-	lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("AI backend: %s. Use /setup to change it. Scope, API keys, and local endpoint/model overrides save here.", m.currentSettingsBaseline().AIBackend.Label())))
+	lines = append(lines, m.renderCompactInferenceSetupSummary(width))
 	lines = append(lines, "")
 	lines = append(lines, m.renderSettingsSectionTabs(width))
 	lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("%s section. %s", activeSection.label, activeSection.hint)))
@@ -720,9 +737,9 @@ func (m Model) settingsVisibleFieldCount(maxHeight int) int {
 		return 0
 	}
 
-	// Header (6), hint block (blank + up to 2 lines), actions (blank + 1),
+	// Header/summary (5), hint block (blank + up to 2 lines), actions (blank + 1),
 	// plus up to 2 scroll indicators when the field list is windowed.
-	reserved := 13
+	reserved := 12
 	visible := maxHeight - reserved
 	if visible < 1 {
 		visible = 1
@@ -914,12 +931,26 @@ func (m Model) renderSettingsFieldRow(fieldIndex int, field settingsField, selec
 	label = truncateText(label, labelWidth)
 
 	if settingsFieldUsesPicker(fieldIndex) {
-		return labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsBrowserAutomationValue(selected, inputWidth)
+		var row string
+		switch fieldIndex {
+		case settingsFieldBossChatBackend:
+			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsBossChatBackendValue(selected, inputWidth)
+		case settingsFieldBrowserAutomation:
+			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsBrowserAutomationValue(selected, inputWidth)
+		}
+		if selected {
+			return dialogSelectedRowStyle.Width(labelWidth + inputWidth + 1).Render(fitFooterWidth(row, labelWidth+inputWidth+1))
+		}
+		return row
 	}
 
 	input := field.input
 	input.Width = inputWidth
-	return labelStyle.Width(labelWidth).Render(label) + " " + input.View()
+	row := labelStyle.Width(labelWidth).Render(label) + " " + input.View()
+	if selected {
+		return dialogSelectedRowStyle.Width(labelWidth + inputWidth + 1).Render(fitFooterWidth(row, labelWidth+inputWidth+1))
+	}
+	return row
 }
 
 func (m Model) renderSelectedSettingsHint(width int) string {
@@ -964,9 +995,23 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 	return []settingsField{
 		newSensitiveSettingsField(
 			"OpenAI API key",
-			"Used when the AI backend is OpenAI API key. Leave blank if you plan to use Codex, Claude Code, or OpenCode instead.",
+			"Used by OpenAI API backed features, including boss chat when its backend is openai_api.",
 			settings.OpenAIAPIKey,
 			512,
+			settingsSectionAI,
+		),
+		newSettingsField(
+			"Boss chat backend",
+			"Press Enter to choose Auto, OpenAI API, or Off. This is separate from project analysis, so summaries can stay on Codex/OpenCode while boss chat uses direct API inference.",
+			string(settings.BossChatBackend),
+			32,
+			settingsSectionAI,
+		),
+		newSettingsField(
+			"Boss chat model",
+			"Optional model for boss chat. Leave blank for the built-in default or set LCROOM_BOSS_MODEL as an environment override.",
+			settings.BossChatModel,
+			128,
 			settingsSectionAI,
 		),
 		newSettingsField(
@@ -1123,6 +1168,8 @@ func newPrivacyPatternsField(label, hint, value string, charLimit int, section s
 
 func cloneEditableSettings(settings config.EditableSettings) config.EditableSettings {
 	settings.AIBackend = config.ResolveAIBackend(settings.AIBackend, settings.OpenAIAPIKey)
+	settings.BossChatBackend = config.ResolveBossChatBackend(settings.BossChatBackend, settings.OpenAIAPIKey)
+	settings.BossChatModel = strings.TrimSpace(settings.BossChatModel)
 	settings.OpenAIAPIKey = strings.TrimSpace(settings.OpenAIAPIKey)
 	settings.MLXBaseURL = strings.TrimSpace(settings.MLXBaseURL)
 	settings.MLXAPIKey = strings.TrimSpace(settings.MLXAPIKey)
@@ -1149,10 +1196,31 @@ func (m Model) settingsFieldHint(index int) string {
 	switch index {
 	case settingsFieldOpenAIAPIKey:
 		if suffix := maskedOpenAIKeySuffix(field.input.Value()); suffix != "" {
-			return "Used for the OpenAI API backend. Stored key ends with " + suffix + "."
+			return "Used for OpenAI API backed features. Stored key ends with " + suffix + "."
 		}
-		if m.currentSettingsBaseline().AIBackend == config.AIBackendOpenAIAPI {
-			return field.hint + " The selected backend still needs a saved key."
+		baseline := m.currentSettingsBaseline()
+		if baseline.AIBackend == config.AIBackendOpenAIAPI || baseline.BossChatBackend == config.AIBackendOpenAIAPI {
+			return field.hint + " The selected OpenAI API path still needs a saved key."
+		}
+		return field.hint
+	case settingsFieldBossChatBackend:
+		switch config.AIBackend(strings.TrimSpace(field.input.Value())) {
+		case config.AIBackendOpenAIAPI:
+			return "Boss chat will use direct OpenAI API inference even if project analysis uses Codex, OpenCode, Claude Code, MLX, or Ollama."
+		case config.AIBackendMLX:
+			return "Boss chat will use the MLX OpenAI-compatible endpoint and model fields below."
+		case config.AIBackendOllama:
+			return "Boss chat will use the Ollama OpenAI-compatible endpoint and model fields below."
+		case config.AIBackendDisabled:
+			return "Boss chat will stay offline, while project analysis keeps using its own configured backend."
+		case config.AIBackendUnset:
+			return "Leave blank to auto-use openai_api when an OpenAI API key is saved; choose MLX or Ollama explicitly for local boss chat."
+		default:
+			return field.hint
+		}
+	case settingsFieldBossChatModel:
+		if model := strings.TrimSpace(field.input.Value()); model != "" {
+			return "Boss chat will request model " + model + ". LCROOM_BOSS_MODEL still wins if set in the environment."
 		}
 		return field.hint
 	case settingsFieldMLXBaseURL:

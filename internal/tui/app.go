@@ -13,6 +13,7 @@ import (
 
 	"lcroom/internal/aibackend"
 	"lcroom/internal/attention"
+	bossui "lcroom/internal/boss"
 	"lcroom/internal/brand"
 	"lcroom/internal/browserctl"
 	"lcroom/internal/codexapp"
@@ -84,51 +85,60 @@ type Model struct {
 	worktreeRemoveConfirm *worktreeRemoveConfirmState
 	attentionDialog       *attentionDialogState
 
-	commandMode                   bool
-	commandInput                  textinput.Model
-	commandSelected               int
-	errorLogVisible               bool
-	errorLogSelected              int
-	errorLogEntries               []errorLogEntry
-	projectFilter                 string
-	projectFilterDialog           *projectFilterDialogState
-	ignoredPickerVisible          bool
-	ignoredPickerLoading          bool
-	ignoredPickerSelected         int
-	ignoredPickerItems            []model.IgnoredProjectName
-	newProjectDialog              *newProjectDialogState
-	newTaskDialog                 *newTaskDialogState
-	runCommandDialog              *runCommandDialogState
-	preferredSelectPath           string
-	diffView                      *diffViewState
-	gitStatusDialog               *gitStatusDialog
-	gitStatusApplying             bool
-	commitPreview                 *service.CommitPreview
-	commitPreviewMessageOverride  string
-	commitPreviewRefreshing       bool
-	commitPreviewRequestID        int
-	commitApplying                bool
-	commitTodoCompletions         []commitTodoItem
-	commitTodoSelected            int
-	setupMode                     bool
-	setupChecked                  bool
-	setupLoading                  bool
-	setupSaving                   bool
-	setupSelected                 int
-	setupModelTier                config.ModelTier
-	setupSnapshot                 aibackend.Snapshot
-	localModelPickerVisible       bool
-	localModelPickerBackend       config.AIBackend
-	localModelPickerSelected      int
-	settingsMode                  bool
-	settingsSaving                bool
-	settingsFields                []settingsField
-	settingsSectionSelected       int
-	settingsSelected              int
-	settingsBaseline              *config.EditableSettings
-	settingsRevealPrivacy         bool
-	settingsBrowserPickerVisible  bool
-	settingsBrowserPickerSelected int
+	commandMode                    bool
+	commandInput                   textinput.Model
+	commandSelected                int
+	bossMode                       bool
+	bossModel                      bossui.Model
+	bossSetupPrompt                *bossSetupPromptState
+	errorLogVisible                bool
+	errorLogSelected               int
+	errorLogEntries                []errorLogEntry
+	projectFilter                  string
+	projectFilterDialog            *projectFilterDialogState
+	ignoredPickerVisible           bool
+	ignoredPickerLoading           bool
+	ignoredPickerSelected          int
+	ignoredPickerItems             []model.IgnoredProjectName
+	newProjectDialog               *newProjectDialogState
+	newTaskDialog                  *newTaskDialogState
+	runCommandDialog               *runCommandDialogState
+	preferredSelectPath            string
+	diffView                       *diffViewState
+	gitStatusDialog                *gitStatusDialog
+	gitStatusApplying              bool
+	commitPreview                  *service.CommitPreview
+	commitPreviewMessageOverride   string
+	commitPreviewRefreshing        bool
+	commitPreviewRequestID         int
+	commitApplying                 bool
+	commitTodoCompletions          []commitTodoItem
+	commitTodoSelected             int
+	setupMode                      bool
+	setupChecked                   bool
+	setupLoading                   bool
+	setupSaving                    bool
+	setupFocusedRole               setupRole
+	setupSelected                  int
+	setupBossSelected              int
+	setupConfigMode                bool
+	setupConfigSelected            int
+	setupModelTier                 config.ModelTier
+	setupSnapshot                  aibackend.Snapshot
+	localModelPickerVisible        bool
+	localModelPickerBackend        config.AIBackend
+	localModelPickerSelected       int
+	settingsMode                   bool
+	settingsSaving                 bool
+	settingsFields                 []settingsField
+	settingsSectionSelected        int
+	settingsSelected               int
+	settingsBaseline               *config.EditableSettings
+	settingsRevealPrivacy          bool
+	settingsBossChatPickerVisible  bool
+	settingsBossChatPickerSelected int
+	settingsBrowserPickerVisible   bool
+	settingsBrowserPickerSelected  int
 
 	detailViewport        viewport.Model
 	runtimeViewport       viewport.Model
@@ -950,7 +960,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncCodexComposerSize()
 		m.syncCodexViewport(false)
 		m.syncRuntimeViewport(false)
+		if m.bossMode {
+			return m.updateBossModeWindowSize()
+		}
 		return m, nil
+	case bossui.ExitMsg:
+		m.closeBossMode("Boss mode closed")
+		return m, nil
+	case bossui.StateLoadedMsg, bossui.AssistantReplyMsg, bossui.TickMsg:
+		if m.bossMode {
+			return m.updateBossModeMessage(msg)
+		}
 	case tea.MouseMsg:
 		if m.todoDialog != nil && (msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown) {
 			return m.updateTodoDialogMouseScroll(msg)
@@ -987,6 +1007,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	case tea.KeyMsg:
+		if m.bossMode {
+			return m.updateBossModeMessage(msg)
+		}
+		if m.bossSetupPrompt != nil {
+			return m.updateBossSetupPromptMode(msg)
+		}
 		if m.codexArtifactPicker != nil {
 			return m.updateCodexArtifactPickerMode(msg)
 		}
@@ -998,6 +1024,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.localModelPickerVisible {
 			return m.updateLocalBackendModelPickerMode(msg)
+		}
+		if m.settingsBossChatPickerVisible {
+			return m.updateSettingsBossChatBackendPickerMode(msg)
 		}
 		if m.settingsBrowserPickerVisible {
 			return m.updateSettingsBrowserAutomationPickerMode(msg)
@@ -2510,6 +2539,9 @@ func (m Model) View() string {
 	m.noteUIProgress("View")
 	done := m.beginUIPhase("View", m.currentLatencyProjectPath(), "")
 	defer done()
+	if m.bossMode {
+		return m.renderBossModeView()
+	}
 	if m.codexVisible() {
 		body := m.renderCodexView()
 		if m.codexArtifactPicker != nil {
@@ -2574,6 +2606,8 @@ func (m Model) View() string {
 		body = m.renderNewProjectOverlay(body, layout.width, layout.height)
 	} else if m.runCommandDialog != nil {
 		body = m.renderRunCommandOverlay(body, layout.width, layout.height)
+	} else if m.bossSetupPrompt != nil {
+		body = m.renderBossSetupPromptOverlay(body, layout.width, layout.height)
 	} else if m.setupMode {
 		body = m.renderSetupOverlay(body, layout.width, layout.height)
 		if m.localModelPickerVisible {
@@ -2581,6 +2615,9 @@ func (m Model) View() string {
 		}
 	} else if m.settingsMode {
 		body = m.renderSettingsOverlay(body, layout.width, layout.height)
+		if m.settingsBossChatPickerVisible {
+			body = m.renderSettingsBossChatBackendPickerOverlay(body, layout.width, layout.height)
+		}
 		if m.settingsBrowserPickerVisible {
 			body = m.renderSettingsBrowserAutomationPickerOverlay(body, layout.width, layout.height)
 		}
@@ -3520,6 +3557,10 @@ var (
 	detailAttentionValueStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Bold(true)
 	projectListSelectedRowStyle     = lipgloss.NewStyle().
 					Background(lipgloss.AdaptiveColor{Light: "255", Dark: "236"})
+	dialogSelectedRowStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("230")).
+				Background(lipgloss.Color("24")).
+				Bold(true)
 	commandPaletteTitleStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
 	commandPaletteHintStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	commandPaletteRowStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
@@ -3754,6 +3795,25 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, m.openPerfDialog()
 	case commands.KindErrors:
 		return m.openErrorLog()
+	case commands.KindBoss:
+		switch inv.Toggle {
+		case commands.ToggleOff:
+			m.bossSetupPrompt = nil
+			m.closeBossMode("Boss mode closed")
+			return m, nil
+		case commands.ToggleOn:
+			if m.bossMode {
+				m.status = "Boss mode already open"
+				return m, nil
+			}
+			return m.openBossModeOrSetupPrompt()
+		default:
+			if m.bossMode {
+				m.closeBossMode("Boss mode closed")
+				return m, nil
+			}
+			return m.openBossModeOrSetupPrompt()
+		}
 	case commands.KindRefresh:
 		m.loading = true
 		m.status = "Scanning and retrying failed assessments..."
@@ -5663,8 +5723,14 @@ func (m Model) renderFooter(width int) string {
 	if m.commandMode {
 		return m.renderModalFooter(width, "Command palette open", supplementSegments...)
 	}
+	if m.bossSetupPrompt != nil {
+		return m.renderModalFooter(width, "Boss chat setup: Enter choose, Tab switch, Esc cancel", supplementSegments...)
+	}
 	if m.setupMode {
-		return m.renderModalFooter(width, "Setup: Enter choose, r refresh, s settings, Esc continue", supplementSegments...)
+		if m.setupConfigMode {
+			return m.renderModalFooter(width, "Setup fields: type to edit, Ctrl+S/Enter save, Esc done", supplementSegments...)
+		}
+		return m.renderModalFooter(width, "Setup: Tab role, ↑↓ provider, e edit fields, Enter choose, Esc close", supplementSegments...)
 	}
 	if m.settingsMode {
 		return m.renderModalFooter(width, "Settings: Enter save, Tab next, Esc cancel", supplementSegments...)

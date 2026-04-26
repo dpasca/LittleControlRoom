@@ -14,6 +14,8 @@ import (
 
 type EditableSettings struct {
 	AIBackend                 AIBackend
+	BossChatBackend           AIBackend
+	BossChatModel             string
 	OpenAIAPIKey              string
 	MLXBaseURL                string
 	MLXAPIKey                 string
@@ -47,6 +49,8 @@ type EditableSettings struct {
 func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 	return EditableSettings{
 		AIBackend:                 cfg.EffectiveAIBackend(),
+		BossChatBackend:           cfg.EffectiveBossChatBackend(),
+		BossChatModel:             cfg.BossChatModel,
 		OpenAIAPIKey:              cfg.OpenAIAPIKey,
 		MLXBaseURL:                cfg.MLXBaseURL,
 		MLXAPIKey:                 cfg.MLXAPIKey,
@@ -102,12 +106,17 @@ func (s *EditableSettings) SetOpenAICompatibleModel(backend AIBackend, model str
 	}
 }
 
-func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
+func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, bossChatModelRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
 	parsedBackend, err := ParseAIBackend(string(aiBackend))
 	if err != nil {
 		return EditableSettings{}, err
 	}
+	parsedBossChatBackend, err := ParseBossChatBackend(string(bossChatBackend))
+	if err != nil {
+		return EditableSettings{}, err
+	}
 	openAIAPIKey := strings.TrimSpace(openAIAPIKeyRaw)
+	bossChatModel := strings.TrimSpace(bossChatModelRaw)
 	mlxBaseURL := strings.TrimSpace(mlxBaseURLRaw)
 	mlxAPIKey := strings.TrimSpace(mlxAPIKeyRaw)
 	mlxModel := strings.TrimSpace(mlxModelRaw)
@@ -166,6 +175,8 @@ func ParseEditableSettings(aiBackend AIBackend, openAIAPIKeyRaw, mlxBaseURLRaw, 
 
 	settings := EditableSettings{
 		AIBackend:              parsedBackend,
+		BossChatBackend:        parsedBossChatBackend,
+		BossChatModel:          bossChatModel,
 		OpenAIAPIKey:           openAIAPIKey,
 		MLXBaseURL:             mlxBaseURL,
 		MLXAPIKey:              mlxAPIKey,
@@ -237,6 +248,8 @@ func SaveEditableSettings(path string, settings EditableSettings) error {
 func validateEditableSettings(settings EditableSettings) error {
 	cfg := Default()
 	cfg.AIBackend = settings.AIBackend
+	cfg.BossChatBackend = settings.BossChatBackend
+	cfg.BossChatModel = strings.TrimSpace(settings.BossChatModel)
 	cfg.OpenAIAPIKey = settings.OpenAIAPIKey
 	cfg.MLXBaseURL = settings.MLXBaseURL
 	cfg.MLXAPIKey = settings.MLXAPIKey
@@ -282,6 +295,15 @@ func renderEditableSettings(settings EditableSettings) string {
 	lines := []string{}
 	if settings.AIBackend != AIBackendUnset {
 		lines = append(lines, fmt.Sprintf("ai_backend = %s", strconv.Quote(string(settings.AIBackend))), "")
+	}
+	if settings.BossChatBackend != AIBackendUnset {
+		lines = append(lines, fmt.Sprintf("boss_chat_backend = %s", strconv.Quote(string(settings.BossChatBackend))))
+	}
+	if value := strings.TrimSpace(settings.BossChatModel); value != "" {
+		lines = append(lines, fmt.Sprintf("boss_chat_model = %s", strconv.Quote(value)))
+	}
+	if settings.BossChatBackend != AIBackendUnset || strings.TrimSpace(settings.BossChatModel) != "" {
+		lines = append(lines, "")
 	}
 	if settings.OpenAIAPIKey != "" {
 		lines = append(lines, fmt.Sprintf("openai_api_key = %s", strconv.Quote(settings.OpenAIAPIKey)), "")

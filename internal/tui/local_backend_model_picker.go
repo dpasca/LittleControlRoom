@@ -11,7 +11,7 @@ import (
 )
 
 func (m Model) openLocalBackendModelPicker() (tea.Model, tea.Cmd) {
-	backend := m.setupSelectedBackend()
+	backend := m.setupSelectedLocalModelBackend()
 	status := m.setupSnapshot.StatusFor(backend)
 	models := localBackendPickerModels(status.Models)
 	if !isLocalBackendModelPickerBackend(backend) || len(models) == 0 {
@@ -22,8 +22,15 @@ func (m Model) openLocalBackendModelPicker() (tea.Model, tea.Cmd) {
 	m.localModelPickerVisible = true
 	m.localModelPickerBackend = backend
 	m.localModelPickerSelected = m.localBackendModelPickerSelection(backend, models)
-	m.status = "Choose the " + backend.Label() + " model to use for background AI tasks."
+	m.status = "Choose the " + backend.Label() + " model to use for " + m.setupFocusedRoleModelPickerLabel() + "."
 	return m, nil
+}
+
+func (m Model) setupFocusedRoleModelPickerLabel() string {
+	if m.setupFocusedRole == setupRoleBossChat {
+		return "boss chat"
+	}
+	return "background AI tasks"
 }
 
 func (m *Model) closeLocalBackendModelPicker(status string) {
@@ -89,6 +96,14 @@ func (m Model) applyLocalBackendModelSelection(model string) (tea.Model, tea.Cmd
 	settings := cloneEditableSettings(m.currentSettingsBaseline())
 	settings.SetOpenAICompatibleModel(backend, model)
 	m.settingsBaseline = &settings
+	if len(m.settingsFields) > 0 {
+		switch backend {
+		case config.AIBackendMLX:
+			m.settingsFields[settingsFieldMLXModel].input.SetValue(strings.TrimSpace(model))
+		case config.AIBackendOllama:
+			m.settingsFields[settingsFieldOllamaModel].input.SetValue(strings.TrimSpace(model))
+		}
+	}
 	if strings.TrimSpace(model) == "" {
 		active := firstNonEmptyString(m.setupSnapshot.StatusFor(backend).ActiveModel, firstString(localBackendPickerModels(m.setupSnapshot.StatusFor(backend).Models)))
 		m.closeLocalBackendModelPicker(fmt.Sprintf("%s model reset to auto selection%s", backend.Label(), formatAutoModelSuffix(active)))

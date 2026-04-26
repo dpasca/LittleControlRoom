@@ -9,6 +9,7 @@ const (
 	DataDirName                  = ".little-control-room"
 	ConfigFileName               = "config.toml"
 	DBFileName                   = "little-control-room.sqlite"
+	BossAssistantModelEnvVar     = "LCROOM_BOSS_MODEL"
 	CommitModelEnvVar            = "LCROOM_COMMIT_MODEL"
 	SessionClassifierModelEnvVar = "LCROOM_SESSION_CLASSIFIER_MODEL"
 )
