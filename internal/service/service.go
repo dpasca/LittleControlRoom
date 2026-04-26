@@ -1955,7 +1955,7 @@ func (s *Service) RefreshProjectStatusWithOptions(ctx context.Context, projectPa
 		ensureLatestSessionTurnState(&detail.Sessions[0])
 		ensureSessionSnapshotHash(ctx, projectPath, &detail.Sessions[0], sessionclassify.NewGitStatusSnapshot(repoDirty, repoSyncStatus, repoAheadCount, repoBehindCount))
 	}
-	return s.persistProjectStateUpdate(ctx, detail, now, projectStatusRefreshOverrides{
+	if err := s.persistProjectStateUpdate(ctx, detail, now, projectStatusRefreshOverrides{
 		presentOnDisk:        presentOnDisk,
 		worktreeRootPath:     worktreeRootPath,
 		worktreeKind:         worktreeKind,
@@ -1968,7 +1968,47 @@ func (s *Service) RefreshProjectStatusWithOptions(ctx context.Context, projectPa
 		repoAheadCount:       repoAheadCount,
 		repoBehindCount:      repoBehindCount,
 		forgotten:            forgotten,
-	}, runtime.cfg, runtime.classifier, opts)
+	}, runtime.cfg, runtime.classifier, opts); err != nil {
+		return err
+	}
+	if worktreeKind == model.WorktreeKindMain {
+		return s.refreshLinkedWorktreeStatusesForRoot(ctx, detail.Summary.Path)
+	}
+	return nil
+}
+
+func (s *Service) refreshLinkedWorktreeStatusesForRoot(ctx context.Context, rootPath string) error {
+	if s == nil || s.store == nil {
+		return nil
+	}
+	rootPath = filepath.Clean(strings.TrimSpace(rootPath))
+	if rootPath == "" || rootPath == "." {
+		return nil
+	}
+	projects, err := s.store.GetProjectSummaryMap(ctx)
+	if err != nil {
+		return fmt.Errorf("list linked worktrees for root refresh: %w", err)
+	}
+	var errs []string
+	for _, project := range projects {
+		if project.WorktreeKind != model.WorktreeKindLinked {
+			continue
+		}
+		if filepath.Clean(strings.TrimSpace(project.WorktreeRootPath)) != rootPath {
+			continue
+		}
+		projectPath := filepath.Clean(strings.TrimSpace(project.Path))
+		if projectPath == "" || projectPath == "." || projectPath == rootPath {
+			continue
+		}
+		if err := s.RefreshProjectStatus(ctx, projectPath); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", projectPath, err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("refresh linked worktree statuses for %s: %s", rootPath, strings.Join(errs, "; "))
+	}
+	return nil
 }
 
 type projectStatusRefreshOverrides struct {

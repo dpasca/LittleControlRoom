@@ -4540,6 +4540,58 @@ func TestWorktreeMergeStatusRecognizesConflictResolvedMergeOnNonMasterParent(t *
 	}
 }
 
+func TestRefreshProjectStatusForRootUpdatesLinkedWorktreeMergeStatus(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	result := createSuggestedTodoWorktreeForTest(t, ctx, svc, st, projectPath, "Refresh linked merge status from root", "feat/root-refresh-status", "feat-root-refresh-status")
+	if err := os.WriteFile(filepath.Join(result.WorktreePath, "FEATURE.txt"), []byte("merged by hand\n"), 0o644); err != nil {
+		t.Fatalf("write FEATURE.txt in worktree: %v", err)
+	}
+	runGit(t, result.WorktreePath, "git", "add", "FEATURE.txt")
+	runGit(t, result.WorktreePath, "git", "commit", "-m", "add root-refresh feature")
+	if err := svc.RefreshProjectStatus(ctx, result.WorktreePath); err != nil {
+		t.Fatalf("RefreshProjectStatus() for diverged worktree error = %v", err)
+	}
+	divergedWorktreeDetail, err := st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() for diverged worktree error = %v", err)
+	}
+	if divergedWorktreeDetail.Summary.WorktreeMergeStatus != model.WorktreeMergeStatusNotMerged {
+		t.Fatalf("diverged worktree merge status = %q, want %q", divergedWorktreeDetail.Summary.WorktreeMergeStatus, model.WorktreeMergeStatusNotMerged)
+	}
+
+	runGit(t, projectPath, "git", "merge", "--no-ff", "feat/root-refresh-status", "-m", "merge root-refresh worktree")
+	if err := svc.RefreshProjectStatus(ctx, projectPath); err != nil {
+		t.Fatalf("RefreshProjectStatus() for root after manual merge error = %v", err)
+	}
+	worktreeDetail, err := st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() for worktree after root refresh error = %v", err)
+	}
+	if worktreeDetail.Summary.WorktreeMergeStatus != model.WorktreeMergeStatusMerged {
+		t.Fatalf("root refresh should update linked worktree merge status = %q, want %q", worktreeDetail.Summary.WorktreeMergeStatus, model.WorktreeMergeStatusMerged)
+	}
+}
+
 func TestMergeWorktreeBackSyncsRootSubmoduleAfterMerge(t *testing.T) {
 	t.Parallel()
 
