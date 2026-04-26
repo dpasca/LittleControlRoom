@@ -5680,7 +5680,7 @@ func (m Model) renderFooter(width int) string {
 		return m.renderModalFooter(width, "Command palette open", supplementSegments...)
 	}
 	if m.setupMode {
-		return m.renderModalFooter(width, "Setup: Tab role, ↑↓ provider, Enter choose, a advanced, Esc close", supplementSegments...)
+		return m.renderModalFooter(width, "Setup: Tab role, ↑↓ provider, Enter choose, s settings, Esc close", supplementSegments...)
 	}
 	if m.settingsMode {
 		return m.renderModalFooter(width, "Settings: Enter save, Tab next, Esc cancel", supplementSegments...)

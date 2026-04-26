@@ -74,14 +74,19 @@ func (m Model) projectReportsStatusCard(settings config.EditableSettings) infere
 	state, stateStyle := inferenceStateForBackend(backend, status, known)
 	value := backend.Label()
 	detail := strings.TrimSpace(status.Detail)
-	if status.LoginHint != "" && !status.Ready {
-		detail = strings.TrimSpace(status.LoginHint)
-	}
-	if backend == config.AIBackendUnset {
+	switch {
+	case backend == config.AIBackendUnset:
 		detail = "Choose a backend in /setup for summaries, classifications, TODOs, and commit help."
-	}
-	if backend == config.AIBackendDisabled {
+	case backend == config.AIBackendDisabled:
 		detail = "Project reports and commit help are off."
+	case status.Ready:
+		detail = "Ready for summaries, TODO help, and commit help."
+	case !known:
+		detail = "Selected. Run /setup to refresh availability."
+	case status.LoginHint != "":
+		detail = strings.TrimSpace(status.LoginHint)
+	case detail == "":
+		detail = "Needs setup before project reports can run."
 	}
 	return inferenceStatusCard{
 		Title:       "Project reports",
@@ -101,16 +106,16 @@ func (m Model) bossChatStatusCard(settings config.EditableSettings) inferenceSta
 	detail := strings.TrimSpace(status.Detail)
 	if backend == config.AIBackendUnset {
 		value = "Auto"
-		state = "setup"
+		state = "needs setup"
 		stateStyle = detailWarningStyle
-		detail = "Save an OpenAI API key to enable boss chat, or set boss chat off."
+		detail = "Auto uses OpenAI when a saved key exists; otherwise choose Off."
 	}
 	if backend == config.AIBackendDisabled {
 		detail = "High-level chat is off; project reports can still run."
 	}
 	if backend == config.AIBackendOpenAIAPI {
 		if strings.TrimSpace(settings.OpenAIAPIKey) == "" {
-			state = "setup"
+			state = "needs setup"
 			stateStyle = detailWarningStyle
 			detail = "Needs a saved OpenAI API key."
 		} else if settings.AIBackend == config.AIBackendOpenAIAPI {
@@ -185,7 +190,7 @@ func inferenceStateForBackend(backend config.AIBackend, status aibackend.Status,
 	case backend == config.AIBackendDisabled:
 		return "off", detailMutedStyle
 	case backend == config.AIBackendUnset:
-		return "setup", detailWarningStyle
+		return "needs setup", detailWarningStyle
 	case !known:
 		return "selected", commandPalettePickStyle
 	case status.Ready:
@@ -193,7 +198,7 @@ func inferenceStateForBackend(backend config.AIBackend, status aibackend.Status,
 	case !status.Installed && backend.RequiresCLIInstallHint():
 		return "install", detailWarningStyle
 	default:
-		return "setup", detailWarningStyle
+		return "needs setup", detailWarningStyle
 	}
 }
 
@@ -212,8 +217,8 @@ func renderInferenceStatusCard(card inferenceStatusCard, width int) string {
 	lines := []string{
 		headerLine,
 		detailValueStyle.Render(fitFooterWidth(strings.TrimSpace(card.Value), innerWidth)),
-		card.DetailStyle.Render(fitFooterWidth(strings.TrimSpace(card.Detail), innerWidth)),
 	}
+	lines = append(lines, renderWrappedDialogTextLines(card.DetailStyle, innerWidth, strings.TrimSpace(card.Detail))...)
 	style := inferenceStatusCardStyle
 	if card.Selected {
 		style = inferenceStatusCardSelectedStyle

@@ -115,7 +115,7 @@ func (m Model) updateSetupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setupModelTier = m.cycleModelTier(m.setupModelTier)
 			return m, nil
 		}
-	case "a", "s":
+	case "s":
 		settings := m.currentSettingsBaseline()
 		switch m.setupFocusedRole {
 		case setupRoleBossChat:
@@ -618,7 +618,7 @@ func (m Model) renderBossChatSetupHint(width int) string {
 		hint = "Turn boss chat off. Project reports and embedded sessions can still use their own backends."
 	case config.AIBackendOpenAIAPI:
 		if strings.TrimSpace(settings.OpenAIAPIKey) == "" {
-			hint = "Boss chat uses direct OpenAI API inference. Press Enter to choose it and save an API key in advanced settings."
+			hint = "Boss chat uses direct OpenAI API inference. Press Enter to choose it and continue to settings for the API key."
 		} else if settings.AIBackend == config.AIBackendOpenAIAPI {
 			hint = "Boss chat will use the saved OpenAI API key. Project reports are also using OpenAI API."
 		} else {
@@ -634,7 +634,7 @@ func (m Model) renderSetupActions() string {
 		renderDialogAction("Tab", "role", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("Up/Down", "provider", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("r", "refresh", navigateActionKeyStyle, navigateActionTextStyle),
-		renderDialogAction("a/s", "advanced", pushActionKeyStyle, pushActionTextStyle),
+		renderDialogAction("s", "settings", pushActionKeyStyle, pushActionTextStyle),
 		renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
 	}
 	if m.setupFocusedRole == setupRoleProjectReports && isLocalBackendModelPickerBackend(m.setupSelectedBackend()) {
