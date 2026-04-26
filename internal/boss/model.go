@@ -87,7 +87,7 @@ func NewEmbeddedWithViewContext(ctx context.Context, svc *service.Service, view 
 
 func newModel(ctx context.Context, svc *service.Service, embedded bool) Model {
 	input := textarea.New()
-	input.Placeholder = "Ask Mina what needs attention..."
+	input.Placeholder = "Ask what needs attention..."
 	input.CharLimit = 6000
 	input.ShowLineNumbers = false
 	input.SetWidth(72)
@@ -104,7 +104,7 @@ func newModel(ctx context.Context, svc *service.Service, embedded bool) Model {
 		chatViewport: viewport.New(0, 0),
 		messages: []ChatMessage{{
 			Role:    "assistant",
-			Content: "Hi, I am Mina. Ask me what deserves attention, what to do next, or what can safely wait. I will keep a compact view of the project board in mind on every turn.",
+			Content: "Hi. Ask what deserves attention, what to do next, or what can safely wait. I will keep a compact view of the project board in mind on every turn.",
 			At:      time.Now(),
 		}},
 		status: assistant.Label(),
@@ -153,7 +153,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Content: "I could not reach my chat backend yet: " + msg.err.Error(),
 				At:      m.now(),
 			})
-			m.status = "Mina could not answer"
+			m.status = "Boss chat could not answer"
 		} else {
 			content := strings.TrimSpace(msg.response.Content)
 			if content == "" {
@@ -165,7 +165,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				At:      m.now(),
 			})
 			if modelName := strings.TrimSpace(msg.response.Model); modelName != "" {
-				m.status = "Mina via " + modelName
+				m.status = "Boss chat via " + modelName
 			} else {
 				m.status = m.assistant.Label()
 			}
@@ -241,7 +241,7 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 	})
 	m.input.Reset()
 	m.sending = true
-	m.status = "Mina is thinking..."
+	m.status = "Boss chat is thinking..."
 	m.syncLayout(true)
 	return m, m.askAssistantCmd(append([]ChatMessage(nil), m.messages...), m.snapshot, m.viewContext)
 }
@@ -377,20 +377,20 @@ func (m Model) layout() bossLayout {
 func (m Model) renderChat(layout bossLayout) string {
 	hint := "Enter sends | Ctrl+J newline | Ctrl+R refresh | Esc quits"
 	if m.sending {
-		hint = "Mina is thinking " + spinnerDots(m.spinnerFrame)
+		hint = "Boss chat is thinking " + spinnerDots(m.spinnerFrame)
 	}
 	content := strings.Join([]string{
 		m.chatViewport.View(),
 		fitLine(hint, layout.chatInnerWidth),
 		m.input.View(),
 	}, "\n")
-	return m.renderRawPanel("Chat With Mina", content, layout.chatWidth, layout.topHeight)
+	return m.renderRawPanel("Boss Chat", content, layout.chatWidth, layout.topHeight)
 }
 
 func (m Model) renderRoom(width, height int) string {
 	status := m.status
 	if strings.TrimSpace(status) == "" {
-		status = "Mina warming up"
+		status = "Boss chat warming up"
 	}
 	weather := "calm"
 	if m.snapshot.ConflictProjects > 0 {
@@ -404,7 +404,7 @@ func (m Model) renderRoom(width, height int) string {
 		"       /\\",
 		"  ____/  \\____",
 		" |  []    []  |",
-		" |     Mina   |",
+		" |  assistant |",
 		" | desk  lamp |",
 		" |__log____#__|",
 		"",
@@ -455,7 +455,7 @@ func (m Model) renderTranscript(width int) string {
 	for _, message := range m.messages {
 		label := "You"
 		if normalizeChatRole(message.Role) == "assistant" {
-			label = "Mina"
+			label = "Assistant"
 		}
 		blockLines := []string{label + ":"}
 		blockLines = append(blockLines, wrapText(message.Content, width)...)

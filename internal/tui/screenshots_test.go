@@ -286,7 +286,8 @@ func TestScreenshotSettingsRendersLocalBackendFields(t *testing.T) {
 	rendered := ansi.Strip(m.View())
 	for _, want := range []string{
 		"Settings",
-		"AI backend: MLX",
+		"Project reports",
+		"Boss chat",
 		"MLX base URL",
 		"MLX API key",
 		"MLX model",

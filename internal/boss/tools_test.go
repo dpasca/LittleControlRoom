@@ -98,7 +98,7 @@ func TestBuildViewContextBriefIncludesClassicTUIState(t *testing.T) {
 		DetailOpenTODOCount: 2,
 		DetailSessionCount:  1,
 		DetailRecentEvents:  5,
-		DetailLatestSummary: "Mina needs a richer report surface.",
+		DetailLatestSummary: "The assistant needs a richer report surface.",
 	}, now)
 
 	for _, want := range []string{
@@ -107,7 +107,7 @@ func TestBuildViewContextBriefIncludesClassicTUIState(t *testing.T) {
 		"filter=\"boss\"",
 		"selected project #2",
 		"reasons=3 open_todos=2 sessions=1 recent_events=5",
-		"Mina needs a richer report surface",
+		"The assistant needs a richer report surface",
 	} {
 		if !strings.Contains(brief, want) {
 			t.Fatalf("brief missing %q:\n%s", want, brief)

@@ -82,6 +82,29 @@ func ResolveAIBackend(selected AIBackend, openAIAPIKey string) AIBackend {
 	return AIBackendUnset
 }
 
+func ParseBossChatBackend(raw string) (AIBackend, error) {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case "":
+		return AIBackendUnset, nil
+	case string(AIBackendDisabled):
+		return AIBackendDisabled, nil
+	case string(AIBackendOpenAIAPI):
+		return AIBackendOpenAIAPI, nil
+	default:
+		return AIBackendUnset, fmt.Errorf("boss_chat_backend must be one of disabled or openai_api")
+	}
+}
+
+func ResolveBossChatBackend(selected AIBackend, openAIAPIKey string) AIBackend {
+	if backend, err := ParseBossChatBackend(string(selected)); err == nil && backend != AIBackendUnset {
+		return backend
+	}
+	if strings.TrimSpace(openAIAPIKey) != "" {
+		return AIBackendOpenAIAPI
+	}
+	return AIBackendUnset
+}
+
 func (b AIBackend) Label() string {
 	switch b {
 	case AIBackendDisabled:

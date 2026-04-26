@@ -841,7 +841,7 @@ func printUsage(programName string) {
 	fmt.Println("  --allow-multiple-instances")
 	fmt.Println("Boss mode:")
 	fmt.Println("  lcroom boss opens the chat-first high-level assistant UI")
-	fmt.Println("  Set LCROOM_BOSS_MODEL to override Mina's OpenAI API model")
+	fmt.Println("  Set boss_chat_model or LCROOM_BOSS_MODEL to override the boss chat model")
 	fmt.Println("Sanitize summaries flags:")
 	fmt.Println("  --project <path>")
 	fmt.Println("  --session-id <id>")

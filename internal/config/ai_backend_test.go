@@ -59,3 +59,17 @@ func TestAIBackendLocalProviderHelpers(t *testing.T) {
 		t.Fatalf("AIBackendOllama.DefaultOpenAICompatibleBaseURL() = %q", got)
 	}
 }
+
+func TestResolveBossChatBackendIsSeparateFromProjectBackend(t *testing.T) {
+	t.Parallel()
+
+	if got := ResolveBossChatBackend(AIBackendUnset, "sk-test"); got != AIBackendOpenAIAPI {
+		t.Fatalf("ResolveBossChatBackend(unset, key) = %q, want %q", got, AIBackendOpenAIAPI)
+	}
+	if got := ResolveBossChatBackend(AIBackendDisabled, "sk-test"); got != AIBackendDisabled {
+		t.Fatalf("ResolveBossChatBackend(disabled, key) = %q, want disabled", got)
+	}
+	if _, err := ParseBossChatBackend("opencode"); err == nil {
+		t.Fatalf("ParseBossChatBackend(opencode) error = nil, want unsupported backend error")
+	}
+}

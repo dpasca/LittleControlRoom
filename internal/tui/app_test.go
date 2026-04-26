@@ -16347,8 +16347,8 @@ func TestCommandEnterOpensSettingsMode(t *testing.T) {
 	if got.commandMode {
 		t.Fatalf("command mode should close after /settings")
 	}
-	if len(got.settingsFields) != 17 {
-		t.Fatalf("settings field count = %d, want 17", len(got.settingsFields))
+	if len(got.settingsFields) != 19 {
+		t.Fatalf("settings field count = %d, want 19", len(got.settingsFields))
 	}
 }
 
@@ -16376,7 +16376,7 @@ func TestCommandEnterOpensBossMode(t *testing.T) {
 		t.Fatalf("/boss should return the embedded boss init command")
 	}
 	rendered := ansi.Strip(got.View())
-	if !strings.Contains(rendered, "Chat With Mina") || !strings.Contains(rendered, "Little Room") {
+	if !strings.Contains(rendered, "Boss Chat") || !strings.Contains(rendered, "Little Room") {
 		t.Fatalf("boss view missing expected panels: %q", rendered)
 	}
 }
@@ -17408,6 +17408,65 @@ func TestSettingsModalShowsEscCancel(t *testing.T) {
 	}
 }
 
+func TestInferenceStatusCardsShowProjectAndBossChatSelections(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendOpenCode
+	settings.BossChatBackend = config.AIBackendOpenAIAPI
+	settings.OpenAIAPIKey = "sk-test-example"
+
+	m := Model{
+		settingsBaseline: &settings,
+		setupSnapshot: aibackend.Snapshot{
+			OpenCode: aibackend.Status{
+				Backend: config.AIBackendOpenCode,
+				Label:   config.AIBackendOpenCode.Label(),
+				Ready:   true,
+				Detail:  "OpenCode ready.",
+			},
+			OpenAIAPI: aibackend.Status{
+				Backend: config.AIBackendOpenAIAPI,
+				Label:   config.AIBackendOpenAIAPI.Label(),
+				Ready:   true,
+				Detail:  "Saved OpenAI API key ready.",
+			},
+		},
+	}
+
+	rendered := ansi.Strip(m.renderInferenceStatusCards(140))
+	for _, want := range []string{
+		"Project reports",
+		"OpenCode",
+		"Boss chat",
+		"OpenAI API key",
+		"project reports stay separate",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("inference cards missing %q: %q", want, rendered)
+		}
+	}
+}
+
+func TestInferenceStatusCardsTreatMissingSnapshotAsSelected(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendOpenCode
+	settings.BossChatBackend = config.AIBackendDisabled
+
+	m := Model{
+		settingsBaseline: &settings,
+	}
+
+	rendered := ansi.Strip(m.renderInferenceStatusCards(140))
+	if !strings.Contains(rendered, "SELECTED") {
+		t.Fatalf("inference cards should show stale unknown availability as selected: %q", rendered)
+	}
+	if strings.Contains(rendered, "INSTALL") {
+		t.Fatalf("inference cards should not invent an install warning from an empty snapshot: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Run /setup to refresh availability") {
+		t.Fatalf("inference cards should explain how to refresh stale availability: %q", rendered)
+	}
+}
+
 func TestSettingsModalShowsSelectedHintAndWindowsLowerFields(t *testing.T) {
 	m := Model{
 		settingsMode:   true,
@@ -17421,13 +17480,13 @@ func TestSettingsModalShowsSelectedHintAndWindowsLowerFields(t *testing.T) {
 	if !strings.Contains(rendered, "Show reasoning") {
 		t.Fatalf("settings modal should keep the selected lower field visible: %q", rendered)
 	}
-	if strings.Contains(rendered, "OpenAI API key") {
+	if strings.Contains(rendered, "OpenAI API key    ") {
 		t.Fatalf("settings modal should window away upper fields in a short modal: %q", rendered)
 	}
 	if !strings.Contains(rendered, "Accepted values: true, false.") || !strings.Contains(rendered, "reasoning/thinking sections in the embedded transcript. Default: false.") {
 		t.Fatalf("settings modal should show the selected field hint: %q", rendered)
 	}
-	if strings.Contains(rendered, "Used when the AI backend is OpenAI API key") {
+	if strings.Contains(rendered, "Used by OpenAI API backed features") {
 		t.Fatalf("settings modal should not render every field hint inline anymore: %q", rendered)
 	}
 	if !strings.Contains(rendered, "↑ ") {
@@ -17463,7 +17522,7 @@ func TestSettingsSectionSwitchChangesVisibleFields(t *testing.T) {
 	if !strings.Contains(rendered, "Include paths") {
 		t.Fatalf("settings modal should show scope fields after switching sections: %q", rendered)
 	}
-	if strings.Contains(rendered, "OpenAI API key") {
+	if strings.Contains(rendered, "OpenAI API key    ") {
 		t.Fatalf("settings modal should not keep rendering the old section fields: %q", rendered)
 	}
 }
@@ -18366,7 +18425,7 @@ func TestSettingsAPIKeyHintShowsMaskedSuffix(t *testing.T) {
 	_ = m.setSettingsSelection(settingsFieldOpenAIAPIKey)
 
 	rendered := ansi.Strip(m.renderSettingsContent(72, 18))
-	if !strings.Contains(rendered, "Stored key ends with ...12345.") {
+	if !strings.Contains(rendered, "Stored key ends with") || !strings.Contains(rendered, "...12345.") {
 		t.Fatalf("settings modal should show a masked api key suffix hint: %q", rendered)
 	}
 	if strings.Contains(rendered, "sk-live-12345") {

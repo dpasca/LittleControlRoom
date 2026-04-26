@@ -48,7 +48,7 @@ func TestResponsesTextClientSendsPlainChatRequest(t *testing.T) {
 	client := NewResponsesTextClientWithBaseURL("test-key", server.URL+"/v1", time.Second, usage)
 	resp, err := client.RunText(context.Background(), TextRequest{
 		Model:           "gpt-test",
-		SystemText:      "You are Mina.",
+		SystemText:      "You are a project assistant.",
 		ReasoningEffort: "low",
 		Messages: []TextMessage{
 			{Role: "user", Content: "Current state"},

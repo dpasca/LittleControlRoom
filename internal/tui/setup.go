@@ -233,8 +233,10 @@ func (m Model) renderSetupContent(width, _ int) string {
 	lines := []string{
 		commandPaletteTitleStyle.Render("Setup"),
 		commandPaletteHintStyle.Render("Config: " + truncateText(m.displayPathWithHomeTilde(m.currentConfigPath()), max(20, width-8))),
-		commandPaletteHintStyle.Render("Pick the backend Little Control Room should use for summaries, classifications, and commit help."),
+		commandPaletteHintStyle.Render("Pick the backend Little Control Room should use for project reports."),
 	}
+	lines = append(lines, "")
+	lines = append(lines, m.renderInferenceStatusCards(width))
 	if m.setupLoading {
 		lines = append(lines, "")
 		lines = append(lines, commandPaletteHintStyle.Render("Checking local backend availability..."))

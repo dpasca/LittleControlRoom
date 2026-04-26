@@ -60,6 +60,7 @@ type Service struct {
 	untrackedFileRecommender gitops.UntrackedFileRecommender
 	commitAssistantTimeout   time.Duration
 	llmUsageTracker          *llm.UsageTracker
+	bossChatUsageTracker     *llm.UsageTracker
 	opencodeDiscovery        *llm.OpenCodeDiscovery
 
 	gitFingerprintReader   func(context.Context, string) (scanner.GitFingerprint, error)
@@ -121,6 +122,7 @@ func New(cfg config.AppConfig, st *store.Store, bus *events.Bus, detectorList []
 		backendDetector:        aibackend.DetectStatus,
 		commitAssistantTimeout: defaultCommitAssistantTimeout,
 		llmUsageTracker:        llm.NewUsageTracker(),
+		bossChatUsageTracker:   llm.NewUsageTracker(),
 		opencodeDiscovery:      llm.NewOpenCodeDiscovery(),
 		gitFingerprintReader:   scanner.ReadGitFingerprint,
 		gitRepoStatusReader:    scanner.ReadGitRepoStatus,
@@ -285,8 +287,12 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	reconfigureAIClients := editableSettingsRequireAIClientRefresh(s.cfg, settings)
 	currentBackend := s.cfg.EffectiveAIBackend()
 	nextBackend := config.ResolveAIBackend(settings.AIBackend, settings.OpenAIAPIKey)
+	currentBossChatBackend := s.cfg.EffectiveBossChatBackend()
+	nextBossChatBackend := config.ResolveBossChatBackend(settings.BossChatBackend, settings.OpenAIAPIKey)
 
 	s.cfg.AIBackend = settings.AIBackend
+	s.cfg.BossChatBackend = settings.BossChatBackend
+	s.cfg.BossChatModel = strings.TrimSpace(settings.BossChatModel)
 	s.cfg.OpenAIAPIKey = strings.TrimSpace(settings.OpenAIAPIKey)
 	s.cfg.MLXBaseURL = strings.TrimSpace(settings.MLXBaseURL)
 	s.cfg.MLXAPIKey = strings.TrimSpace(settings.MLXAPIKey)
@@ -315,6 +321,9 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	if currentBackend != nextBackend {
 		s.resetSessionUsageLocked()
 	}
+	if currentBossChatBackend != nextBossChatBackend {
+		s.resetBossChatUsageLocked()
+	}
 }
 
 func (s *Service) resetSessionUsageLocked() {
@@ -323,6 +332,12 @@ func (s *Service) resetSessionUsageLocked() {
 	}
 	if resetter, ok := s.classifier.(interface{ ResetUsage() }); ok {
 		resetter.ResetUsage()
+	}
+}
+
+func (s *Service) resetBossChatUsageLocked() {
+	if s.bossChatUsageTracker != nil {
+		s.bossChatUsageTracker.Reset()
 	}
 }
 
@@ -442,11 +457,11 @@ func (s *Service) NewBossTextRunner() (llm.TextRunner, string, config.AIBackend)
 	}
 	s.mu.Lock()
 	cfg := cloneAppConfig(s.cfg)
-	usageTracker := s.llmUsageTracker
+	usageTracker := s.bossChatUsageTracker
 	s.mu.Unlock()
 
-	backend := cfg.EffectiveAIBackend()
-	modelName := configuredBossAssistantModel()
+	backend := cfg.EffectiveBossChatBackend()
+	modelName := configuredBossAssistantModel(cfg)
 	switch backend {
 	case config.AIBackendOpenAIAPI:
 		return llm.NewResponsesTextClient(strings.TrimSpace(cfg.OpenAIAPIKey), bossAssistantHTTPTimeout, usageTracker), modelName, backend
@@ -461,11 +476,11 @@ func (s *Service) NewBossJSONRunner() (llm.JSONSchemaRunner, string, config.AIBa
 	}
 	s.mu.Lock()
 	cfg := cloneAppConfig(s.cfg)
-	usageTracker := s.llmUsageTracker
+	usageTracker := s.bossChatUsageTracker
 	s.mu.Unlock()
 
-	backend := cfg.EffectiveAIBackend()
-	modelName := configuredBossAssistantModel()
+	backend := cfg.EffectiveBossChatBackend()
+	modelName := configuredBossAssistantModel(cfg)
 	switch backend {
 	case config.AIBackendOpenAIAPI:
 		return llm.NewResponsesClient(strings.TrimSpace(cfg.OpenAIAPIKey), bossAssistantHTTPTimeout, usageTracker), modelName, backend
@@ -474,8 +489,11 @@ func (s *Service) NewBossJSONRunner() (llm.JSONSchemaRunner, string, config.AIBa
 	}
 }
 
-func configuredBossAssistantModel() string {
+func configuredBossAssistantModel(cfg config.AppConfig) string {
 	if modelName := strings.TrimSpace(os.Getenv(brand.BossAssistantModelEnvVar)); modelName != "" {
+		return modelName
+	}
+	if modelName := strings.TrimSpace(cfg.BossChatModel); modelName != "" {
 		return modelName
 	}
 	return defaultBossAssistantModel

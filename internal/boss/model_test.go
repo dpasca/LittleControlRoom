@@ -29,7 +29,7 @@ func TestModelViewRendersBossPanels(t *testing.T) {
 	m.syncLayout(true)
 
 	view := m.View()
-	for _, want := range []string{"Chat With Mina", "Little Room", "On My Desk", "Notebook", "Alpha"} {
+	for _, want := range []string{"Boss Chat", "Little Room", "On My Desk", "Notebook", "Alpha"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}

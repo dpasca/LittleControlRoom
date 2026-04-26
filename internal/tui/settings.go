@@ -19,6 +19,8 @@ import (
 
 const (
 	settingsFieldOpenAIAPIKey = iota
+	settingsFieldBossChatBackend
+	settingsFieldBossChatModel
 	settingsFieldMLXBaseURL
 	settingsFieldMLXAPIKey
 	settingsFieldMLXModel
@@ -118,9 +120,11 @@ func settingsSections() []settingsSection {
 		{
 			id:    settingsSectionAI,
 			label: "AI & Models",
-			hint:  "Backend credentials, local model overrides, and embedded assistant launch defaults.",
+			hint:  "Project-analysis backend credentials, boss-chat inference, local model overrides, and embedded assistant launch defaults.",
 			fieldOrder: []int{
 				settingsFieldOpenAIAPIKey,
+				settingsFieldBossChatBackend,
+				settingsFieldBossChatModel,
 				settingsFieldMLXBaseURL,
 				settingsFieldMLXAPIKey,
 				settingsFieldMLXModel,
@@ -386,7 +390,9 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 	}
 	settings, err := config.ParseEditableSettings(
 		m.currentSettingsBaseline().AIBackend,
+		config.AIBackend(m.settingsFieldValue(settingsFieldBossChatBackend)),
 		m.settingsFieldValue(settingsFieldOpenAIAPIKey),
+		m.settingsFieldValue(settingsFieldBossChatModel),
 		m.settingsFieldValue(settingsFieldMLXBaseURL),
 		m.settingsFieldValue(settingsFieldMLXAPIKey),
 		m.settingsFieldValue(settingsFieldMLXModel),
@@ -677,7 +683,7 @@ func (m Model) renderSettingsContent(width, maxHeight int) string {
 		commandPaletteTitleStyle.Render("Settings"),
 		commandPaletteHintStyle.Render("Config: " + truncateText(m.displayPathWithHomeTilde(m.currentConfigPath()), max(20, width-8))),
 	}
-	lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("AI backend: %s. Use /setup to change it. Scope, API keys, and local endpoint/model overrides save here.", m.currentSettingsBaseline().AIBackend.Label())))
+	lines = append(lines, m.renderInferenceStatusCards(width))
 	lines = append(lines, "")
 	lines = append(lines, m.renderSettingsSectionTabs(width))
 	lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("%s section. %s", activeSection.label, activeSection.hint)))
@@ -720,9 +726,9 @@ func (m Model) settingsVisibleFieldCount(maxHeight int) int {
 		return 0
 	}
 
-	// Header (6), hint block (blank + up to 2 lines), actions (blank + 1),
+	// Header/cards (10), hint block (blank + up to 2 lines), actions (blank + 1),
 	// plus up to 2 scroll indicators when the field list is windowed.
-	reserved := 13
+	reserved := 17
 	visible := maxHeight - reserved
 	if visible < 1 {
 		visible = 1
@@ -964,9 +970,23 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 	return []settingsField{
 		newSensitiveSettingsField(
 			"OpenAI API key",
-			"Used when the AI backend is OpenAI API key. Leave blank if you plan to use Codex, Claude Code, or OpenCode instead.",
+			"Used by OpenAI API backed features, including boss chat when its backend is openai_api.",
 			settings.OpenAIAPIKey,
 			512,
+			settingsSectionAI,
+		),
+		newSettingsField(
+			"Boss chat backend",
+			"Accepted values: openai_api, disabled. This is separate from project analysis, so summaries can stay on Codex/OpenCode while boss chat uses direct API inference.",
+			string(settings.BossChatBackend),
+			32,
+			settingsSectionAI,
+		),
+		newSettingsField(
+			"Boss chat model",
+			"Optional model for boss chat. Leave blank for the built-in default or set LCROOM_BOSS_MODEL as an environment override.",
+			settings.BossChatModel,
+			128,
 			settingsSectionAI,
 		),
 		newSettingsField(
@@ -1123,6 +1143,8 @@ func newPrivacyPatternsField(label, hint, value string, charLimit int, section s
 
 func cloneEditableSettings(settings config.EditableSettings) config.EditableSettings {
 	settings.AIBackend = config.ResolveAIBackend(settings.AIBackend, settings.OpenAIAPIKey)
+	settings.BossChatBackend = config.ResolveBossChatBackend(settings.BossChatBackend, settings.OpenAIAPIKey)
+	settings.BossChatModel = strings.TrimSpace(settings.BossChatModel)
 	settings.OpenAIAPIKey = strings.TrimSpace(settings.OpenAIAPIKey)
 	settings.MLXBaseURL = strings.TrimSpace(settings.MLXBaseURL)
 	settings.MLXAPIKey = strings.TrimSpace(settings.MLXAPIKey)
@@ -1149,10 +1171,27 @@ func (m Model) settingsFieldHint(index int) string {
 	switch index {
 	case settingsFieldOpenAIAPIKey:
 		if suffix := maskedOpenAIKeySuffix(field.input.Value()); suffix != "" {
-			return "Used for the OpenAI API backend. Stored key ends with " + suffix + "."
+			return "Used for OpenAI API backed features. Stored key ends with " + suffix + "."
 		}
-		if m.currentSettingsBaseline().AIBackend == config.AIBackendOpenAIAPI {
-			return field.hint + " The selected backend still needs a saved key."
+		baseline := m.currentSettingsBaseline()
+		if baseline.AIBackend == config.AIBackendOpenAIAPI || baseline.BossChatBackend == config.AIBackendOpenAIAPI {
+			return field.hint + " The selected OpenAI API path still needs a saved key."
+		}
+		return field.hint
+	case settingsFieldBossChatBackend:
+		switch config.AIBackend(strings.TrimSpace(field.input.Value())) {
+		case config.AIBackendOpenAIAPI:
+			return "Boss chat will use direct OpenAI API inference even if project analysis uses Codex, OpenCode, Claude Code, MLX, or Ollama."
+		case config.AIBackendDisabled:
+			return "Boss chat will stay offline, while project analysis keeps using its own configured backend."
+		case config.AIBackendUnset:
+			return "Leave blank to auto-use openai_api when an OpenAI API key is saved; otherwise boss chat stays unconfigured."
+		default:
+			return field.hint
+		}
+	case settingsFieldBossChatModel:
+		if model := strings.TrimSpace(field.input.Value()); model != "" {
+			return "Boss chat will request model " + model + ". LCROOM_BOSS_MODEL still wins if set in the environment."
 		}
 		return field.hint
 	case settingsFieldMLXBaseURL:

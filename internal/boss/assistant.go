@@ -70,19 +70,21 @@ func (a *Assistant) Configured() bool {
 
 func (a *Assistant) Label() string {
 	if a == nil {
-		return "Mina offline"
+		return "Boss chat offline"
 	}
 	if !a.Configured() {
 		switch a.backend {
 		case config.AIBackendOpenAIAPI:
-			return "Mina needs an OpenAI API key"
+			return "Boss chat needs an OpenAI API key"
 		case config.AIBackendUnset:
-			return "Mina needs an AI backend"
+			return "Boss chat needs a backend"
+		case config.AIBackendDisabled:
+			return "Boss chat disabled"
 		default:
-			return "Mina needs OpenAI API chat"
+			return "Boss chat needs OpenAI API"
 		}
 	}
-	return fmt.Sprintf("Mina via %s", a.model)
+	return fmt.Sprintf("Boss chat via %s", a.model)
 }
 
 func (a *Assistant) Reply(ctx context.Context, req AssistantRequest) (AssistantResponse, error) {
@@ -95,7 +97,7 @@ func (a *Assistant) Reply(ctx context.Context, req AssistantRequest) (AssistantR
 	}
 	modelName := strings.TrimSpace(a.model)
 	if modelName == "" {
-		return AssistantResponse{}, errors.New("Mina needs a chat model; set " + brand.BossAssistantModelEnvVar)
+		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_chat_model or " + brand.BossAssistantModelEnvVar)
 	}
 	if a.planner != nil && a.query != nil {
 		return a.replyWithTools(ctx, req)
@@ -105,11 +107,11 @@ func (a *Assistant) Reply(ctx context.Context, req AssistantRequest) (AssistantR
 
 func (a *Assistant) replyDirect(ctx context.Context, req AssistantRequest) (AssistantResponse, error) {
 	if a == nil || a.runner == nil {
-		return AssistantResponse{}, errors.New("Mina needs text chat inference for this request")
+		return AssistantResponse{}, errors.New("boss chat needs text chat inference for this request")
 	}
 	modelName := strings.TrimSpace(a.model)
 	if modelName == "" {
-		return AssistantResponse{}, errors.New("Mina needs a chat model; set " + brand.BossAssistantModelEnvVar)
+		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_chat_model or " + brand.BossAssistantModelEnvVar)
 	}
 
 	messages := []llm.TextMessage{{
@@ -146,7 +148,7 @@ func (a *Assistant) replyDirect(ctx context.Context, req AssistantRequest) (Assi
 func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (AssistantResponse, error) {
 	modelName := strings.TrimSpace(a.model)
 	if modelName == "" {
-		return AssistantResponse{}, errors.New("Mina needs a chat model; set " + brand.BossAssistantModelEnvVar)
+		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_chat_model or " + brand.BossAssistantModelEnvVar)
 	}
 
 	var (
@@ -168,7 +170,7 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 		if normalizeBossActionKind(action.Kind) == bossActionAnswer {
 			answer := strings.TrimSpace(action.Answer)
 			if answer == "" {
-				return AssistantResponse{}, errors.New("Mina returned an empty final answer")
+				return AssistantResponse{}, errors.New("boss chat returned an empty final answer")
 			}
 			return AssistantResponse{
 				Content: answer,
@@ -210,11 +212,11 @@ func (a *Assistant) planAction(ctx context.Context, req AssistantRequest, toolRe
 		return llm.JSONSchemaResponse{}, bossAction{}, err
 	}
 	if strings.TrimSpace(response.OutputText) == "" {
-		return response, bossAction{}, errors.New("Mina returned no structured action")
+		return response, bossAction{}, errors.New("boss chat returned no structured action")
 	}
 	var action bossAction
 	if err := llm.DecodeJSONObjectOutput(response.OutputText, &action); err != nil {
-		return response, bossAction{}, fmt.Errorf("decode Mina action: %w", err)
+		return response, bossAction{}, fmt.Errorf("decode boss chat action: %w", err)
 	}
 	normalizeBossAction(&action)
 	if err := validateBossAction(action); err != nil {
@@ -232,17 +234,19 @@ func (a *Assistant) planAction(ctx context.Context, req AssistantRequest, toolRe
 func unconfiguredAssistantMessage(backend config.AIBackend) string {
 	switch backend {
 	case config.AIBackendOpenAIAPI:
-		return "Mina is not connected yet. Configure an OpenAI API key in /settings, then reopen boss mode."
+		return "Boss chat is not connected yet. Configure an OpenAI API key in /settings, then reopen boss mode."
+	case config.AIBackendDisabled:
+		return "Boss chat is disabled. Set boss_chat_backend = \"openai_api\" in /settings or config.toml to enable it."
 	case config.AIBackendCodex, config.AIBackendOpenCode, config.AIBackendClaude:
-		return "Mina chat currently uses direct API inference, not embedded coding-agent sessions. Switch AI backend to openai_api for this first boss-mode prototype."
+		return "Boss chat currently uses direct API inference, not embedded coding-agent sessions. Set boss_chat_backend = \"openai_api\" while keeping ai_backend on your preferred project-analysis backend."
 	default:
-		return "Mina is not connected yet. Boss mode currently supports OpenAI API chat; configure ai_backend = \"openai_api\" and openai_api_key."
+		return "Boss chat is not connected yet. Boss mode currently supports OpenAI API chat; configure boss_chat_backend = \"openai_api\" and openai_api_key."
 	}
 }
 
 func bossAssistantSystemPrompt() string {
 	return strings.Join([]string{
-		"You are Mina, the calm project-management assistant inside Little Control Room.",
+		"You are the calm project-management assistant inside Little Control Room.",
 		"Help the user decide what deserves attention across coding projects.",
 		"Use the compact app-state brief, but do not invent facts that are not present there.",
 		"Keep replies concise, concrete, and friendly. Prefer clear next steps over dashboards.",
@@ -255,7 +259,7 @@ const bossAssistantMaxToolRounds = 4
 
 func bossActionPlannerSystemPrompt() string {
 	return strings.Join([]string{
-		"You are Mina, the calm project-management assistant inside Little Control Room.",
+		"You are the calm project-management assistant inside Little Control Room.",
 		"You decide whether to answer now or request exactly one read-only query before answering.",
 		"Use queries when the user asks about a concrete project, TODOs, assessment status, current TUI state, or anything that requires more than the compact brief.",
 		"Available read-only query kinds: list_projects, project_detail, session_classifications, todo_report, current_tui, assessment_queue.",
@@ -393,7 +397,7 @@ func validateBossAction(action bossAction) error {
 	case bossActionListProjects, bossActionProjectDetail, bossActionSessionClassifications, bossActionTodoReport, bossActionCurrentTUI, bossActionAssessmentQueue:
 		return nil
 	default:
-		return fmt.Errorf("Mina returned unsupported action kind %q", action.Kind)
+		return fmt.Errorf("boss chat returned unsupported action kind %q", action.Kind)
 	}
 }
 

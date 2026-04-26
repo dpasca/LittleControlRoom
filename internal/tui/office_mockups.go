@@ -140,7 +140,7 @@ func renderOfficeCabinDashboard(width, height, phase int) string {
 	}
 	lines = append(lines, officeAssistantBrief(width, phase)...)
 	lines = append(lines, officeDashboardZones(width)...)
-	lines = append(lines, officeFooterLine(width, "[/] chat with Mina   [a] safe chores   [enter] inspect   [tab] classic TUI"))
+	lines = append(lines, officeFooterLine(width, "[/] boss chat   [a] safe chores   [enter] inspect   [tab] classic TUI"))
 	return strings.Join(lines, "\n")
 }
 
@@ -151,10 +151,10 @@ func renderOfficeCabinChat(width, height, phase int) string {
 	}
 	chatW := max(34, (width*3)/5)
 	sideW := max(24, width-chatW-2)
-	chat := officeCard(chatW, "Conversation With Mina", []string{
+	chat := officeCard(chatW, "Conversation With Assistant", []string{
 		"You: what do we do about LittleControlRoom?",
 		"",
-		"Mina: I would review the office-mode mockup first.",
+		"Assistant: I would review the office-mode mockup first.",
 		"The work is low-risk, but it changes the app's",
 		"personality, so I want your taste before code lands.",
 		"",
@@ -196,7 +196,7 @@ func renderOfficeTinyCorner(width, height, phase int) string {
 		officeTinyTrayPanel(sideW, trayH, false),
 	}, "\n")
 
-	lines := []string{officeTinyHeader(width, "Tiny Control Room", "Mina calm  /  Tab: classic")}
+	lines := []string{officeTinyHeader(width, "Tiny Control Room", "Assistant calm  /  Tab: classic")}
 	lines = append(lines, splitLines(lipgloss.JoinHorizontal(lipgloss.Top, chat, lipgloss.NewStyle().Width(1).Background(officeCabinBG).Render(""), side))...)
 	lines = append(lines, splitLines(officeTinyVerbStrip(width))...)
 	lines = append(lines, officeTinyStatus(width, false))
@@ -221,7 +221,7 @@ func renderOfficeTinyAlert(width, height, phase int) string {
 		officeTinyTrayPanel(sideW, trayH, true),
 	}, "\n")
 
-	lines := []string{officeTinyHeader(width, "Tiny Control Room", "Mina focused  /  1 lamp blinking")}
+	lines := []string{officeTinyHeader(width, "Tiny Control Room", "Assistant focused  /  1 lamp blinking")}
 	lines = append(lines, splitLines(lipgloss.JoinHorizontal(lipgloss.Top, chat, lipgloss.NewStyle().Width(1).Background(officeCabinBG).Render(""), side))...)
 	lines = append(lines, splitLines(officeTinyVerbStrip(width))...)
 	lines = append(lines, officeTinyStatus(width, true))
@@ -261,7 +261,7 @@ func officeTinyChatPanel(width, height int, alert bool) string {
 	body := []string{
 		"You: what needs me?",
 		"",
-		"Mina: I made the room smaller on purpose.",
+		"Assistant: I made the room smaller on purpose.",
 		"The objects are not decoration; they are project state.",
 		"",
 		"Desk    -> decisions for you",
@@ -281,7 +281,7 @@ func officeTinyChatPanel(width, height int, alert bool) string {
 		body = []string{
 			"You: what needs me?",
 			"",
-			"Mina: The desk has two decisions, and the lamp is blinking.",
+			"Assistant: The desk has two decisions, and the lamp is blinking.",
 			"The bench can keep working. I would not interrupt it.",
 			"",
 			"I can summarize the blocked item and keep the quiet shelf parked.",
@@ -295,12 +295,12 @@ func officeTinyChatPanel(width, height int, alert bool) string {
 			"> SNOOZE QUIET SHELF",
 		}
 	}
-	return officeGameSoftPanel(width, height, "Mina, chief of staff", body, officeCabinPanel, officeCabinAmber)
+	return officeGameSoftPanel(width, height, "Assistant, chief of staff", body, officeCabinPanel, officeCabinAmber)
 }
 
 func officeTinyScenePanel(width, height int, alert bool) string {
 	body := officeTinySceneLines(max(10, width-2), alert)
-	return officeTinyBox(width, height, "Mina's office", body, officeCabinPanelDeep, officeCabinAmber)
+	return officeTinyBox(width, height, "Assistant office", body, officeCabinPanelDeep, officeCabinAmber)
 }
 
 func officeTinySceneLines(width int, alert bool) []string {
@@ -319,7 +319,7 @@ func officeTinySceneLines(width int, alert bool) []string {
 		"   desk [D]      bench [W]",
 		"   papers:2      agents:3",
 		"",
-		"          [o_o] Mina",
+		"          [o_o] Assistant",
 	}
 	fitted := make([]string, 0, len(lines))
 	for _, line := range lines {
@@ -360,7 +360,7 @@ func officeTinyTrayPanel(width, height int, alert bool) string {
 			"  Keep shelf snoozed",
 		}
 	}
-	return officeGameSoftPanel(width, height, "Mina's tray", body, officeCabinPanel, officeCabinReview)
+	return officeGameSoftPanel(width, height, "Assistant tray", body, officeCabinPanel, officeCabinReview)
 }
 
 func officeTinyObjectGrid(width, height int, alert bool) string {
@@ -467,10 +467,10 @@ func renderOfficeCabinAdventure(width, height, phase int) string {
 	sceneH := min(13, max(9, bodyH/2))
 	spotsH := max(8, bodyH-sceneH-1)
 
-	chat := officePanel(chatW, bodyH, "Talk To Mina", []string{
+	chat := officePanel(chatW, bodyH, "Boss Chat", []string{
 		"You: what do we do first?",
 		"",
-		"Mina: I would look at LittleControlRoom.",
+		"Assistant: I would look at LittleControlRoom.",
 		"It is not on fire, but it changes the soul of the app.",
 		"The cabin view should feel calm before we wire it to real",
 		"project-management inference.",
@@ -511,10 +511,10 @@ func renderOfficeCabinAdventureStacked(width, height, phase int) string {
 	lines := []string{
 		officeHeaderLine(width, "Little Control Room", "Adventure Boss Mode"),
 		officeScenePanel(width, sceneH, "Cabin Control Room", officeAdventureScene(width, sceneH-1, phase), officeCabinPanelDeep),
-		officePanel(width, chatH, "Talk To Mina", []string{
+		officePanel(width, chatH, "Boss Chat", []string{
 			"You: what do we do first?",
 			"",
-			"Mina: Review the papers on the desk.",
+			"Assistant: Review the papers on the desk.",
 			"The cabin can stay calm while I keep the room sorted.",
 			"",
 			"> REVIEW desk papers",
@@ -543,16 +543,16 @@ func renderOfficeCabinTerminal(width, height, phase int) string {
 	sceneH := min(13, max(10, bodyH/2))
 	spotsH := max(9, bodyH-sceneH)
 
-	chat := officeTermBox(chatW, bodyH, "Mina - your teammate [online]", []string{
-		"  [o_o]  Mina",
+	chat := officeTermBox(chatW, bodyH, "Assistant - your teammate [online]", []string{
+		"  [o_o]  Assistant",
 		"  " + strings.Repeat("-", max(8, chatW-12)),
 		"",
-		"Mina: Hey. Welcome back to Little Control Room.",
+		"Assistant: Hey. Welcome back to Little Control Room.",
 		"      I see four room objects worth attention.",
 		"",
 		"You : Show me what needs attention.",
 		"",
-		"Mina: Sure thing. Here is the quick overview.",
+		"Assistant: Sure thing. Here is the quick overview.",
 		"      [R] Review Table : 2 decisions need you",
 		"      [W] Workbench    : 3 agents are coding",
 		"      [L] Lantern      : 1 item is blocked",
@@ -560,7 +560,7 @@ func renderOfficeCabinTerminal(width, height, phase int) string {
 		"",
 		"You : Let's check the review table.",
 		"",
-		"Mina: Great. I will bring up the open decisions.",
+		"Assistant: Great. I will bring up the open decisions.",
 		"      Take your time. I am here when you are ready.",
 		"",
 		"+ " + truncateText("You: _", max(1, chatW-8)),
@@ -690,7 +690,7 @@ func renderOfficeCabinGameStacked(width, height, phase int) string {
 func officeGameHeader(width int) string {
 	left := " Little Control Room "
 	center := " Boss Cabin "
-	right := " Mina calm  /  Tab: classic "
+	right := " Assistant calm  /  Tab: classic "
 	space := max(1, width-len(left)-len(center)-len(right))
 	text := left + strings.Repeat(" ", space/2) + center + strings.Repeat(" ", space-space/2) + right
 	return lipgloss.NewStyle().
@@ -1221,7 +1221,7 @@ func officeGameLongChatPanel(width, height int) string {
 	body := []string{
 		"You: what do we do about this branch?",
 		"",
-		"Mina: I would keep this as a calm boss view, not a replacement",
+		"Assistant: I would keep this as a calm boss view, not a replacement",
 		"for the detailed TUI. The point is to make attention feel spatial:",
 		"desk for decisions, bench for active agents, shelf for parked work.",
 		"",
@@ -1238,7 +1238,7 @@ func officeGameLongChatPanel(width, height int) string {
 		"> ASK MINA FOR OPTIONS",
 		"> OPEN CLASSIC CONTROL ROOM",
 	}
-	return officeGameSoftPanel(width, height, "Mina, chief of staff", body, officeCabinPanel, officeCabinAmber)
+	return officeGameSoftPanel(width, height, "Assistant, chief of staff", body, officeCabinPanel, officeCabinAmber)
 }
 
 func officeGameAgendaPanel(width, height int) string {
@@ -1253,7 +1253,7 @@ func officeGameAgendaPanel(width, height int) string {
 		"Ask first",
 		"  commit / push / kill process",
 	}
-	return officeGameSoftPanel(width, height, "Mina's tray", body, officeCabinPanel, officeCabinReview)
+	return officeGameSoftPanel(width, height, "Assistant tray", body, officeCabinPanel, officeCabinReview)
 }
 
 func officeGameDialogueRow(width, height int) string {
@@ -1276,7 +1276,7 @@ func officeGameDialoguePanel(width, height int) string {
 		"",
 		"> REVIEW DESK PAPERS",
 	}
-	return officeGameSoftPanel(width, height, "Mina, chief of staff", body, officeCabinPanel, officeCabinAmber)
+	return officeGameSoftPanel(width, height, "Assistant, chief of staff", body, officeCabinPanel, officeCabinAmber)
 }
 
 func officeGameHotspotsPanel(width, height int) string {
@@ -1339,10 +1339,10 @@ func renderOfficeCabinTerminalStacked(width, height, phase int) string {
 	lines := []string{
 		officeTerminalHeader(width),
 		officeTermBox(width, sceneH, "Cabin control room", officeTerminalScene(width-2, sceneH-2, phase), officeCabinPanelDeep, officeCabinWoodSoft),
-		officeTermBox(width, chatH, "Mina - your teammate [online]", []string{
-			"Mina: Four room objects need attention.",
+		officeTermBox(width, chatH, "Assistant - your teammate [online]", []string{
+			"Assistant: Four room objects need attention.",
 			"You : Show me the review table.",
-			"Mina: Ready. I will keep the rest calm.",
+			"Assistant: Ready. I will keep the rest calm.",
 			"",
 			"> REVIEW [R] Review Table",
 		}, officeCabinPanel, officeCabinAmber),
@@ -1357,7 +1357,7 @@ func renderOfficeCabinTerminalStacked(width, height, phase int) string {
 func officeTerminalHeader(width int) string {
 	left := " [^] "
 	title := "Little Control Room"
-	right := " Mina awake  10:42 PM "
+	right := " Assistant awake  10:42 PM "
 	space := max(1, width-len(left)-len(title)-len(right))
 	text := left + strings.Repeat(" ", space/2) + title + strings.Repeat(" ", space-space/2) + right
 	return lipgloss.NewStyle().
@@ -1380,7 +1380,7 @@ func officeTerminalScene(width, height, phase int) []string {
 		"   ____/  \\____          " + flicker + " lamp",
 		"  /  cabin ops \\       +--------+",
 		" |  o  window  |      | shelf  |",
-		" |    [Mina]   |      | [Q][Q] |",
+		" | [Assistant] |      | [Q][Q] |",
 		" | desk  >_    |      +--------+",
 		" | [R] papers  |    stove ####",
 		" | [W] bench   |          ####",
@@ -1458,7 +1458,7 @@ type officeVerb struct {
 func officeVerbBar(width int) string {
 	items := []officeVerb{
 		{Key: "L", Name: "LOOK", Help: "See around"},
-		{Key: "T", Name: "TALK", Help: "Chat with Mina"},
+		{Key: "T", Name: "TALK", Help: "Boss chat"},
 		{Key: "R", Name: "REVIEW", Help: "Check decisions"},
 		{Key: "S", Name: "SNOOZE", Help: "Rest for later"},
 		{Key: "D", Name: "DELEGATE", Help: "Assign work"},
@@ -1704,7 +1704,7 @@ func officeAssistantBrief(width, phase int) []string {
 	if phase%2 == 1 {
 		sprite = "[-_-]"
 	}
-	name := lipgloss.NewStyle().Foreground(officeCabinAmber).Bold(true).Render("Mina")
+	name := lipgloss.NewStyle().Foreground(officeCabinAmber).Bold(true).Render("Assistant")
 	avatar := lipgloss.NewStyle().Foreground(officeCabinCream).Background(officeCabinWoodSoft).Bold(true).Render(" " + sprite + " ")
 	speech := lipgloss.NewStyle().Foreground(officeCabinCream).Render("I see 3 things worth your attention. Everything else can breathe.")
 	if width < 72 {

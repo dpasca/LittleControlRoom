@@ -388,17 +388,17 @@ func (e *QueryExecutor) resolveProjectPath(ctx context.Context, action bossActio
 		if path := strings.TrimSpace(view.SelectedProject.Path); path != "" {
 			return path, "using the project selected in the classic TUI", nil
 		}
-		return "", "", errors.New("Mina asked for the selected project, but the current TUI selection is unavailable")
+		return "", "", errors.New("boss chat asked for the selected project, but the current TUI selection is unavailable")
 	}
 	if path := strings.TrimSpace(action.ProjectPath); path != "" {
 		path = filepath.Clean(path)
 		if _, err := e.store.GetProjectSummary(ctx, path, true); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return path, "exact path supplied by Mina, but no project summary matched", nil
+				return path, "exact path supplied by boss chat, but no project summary matched", nil
 			}
 			return "", "", err
 		}
-		return path, "exact project path supplied by Mina", nil
+		return path, "exact project path supplied by boss chat", nil
 	}
 	if name := strings.TrimSpace(action.ProjectName); name != "" {
 		projects, err := e.store.ListProjects(ctx, true)

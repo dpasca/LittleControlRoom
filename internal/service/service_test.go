@@ -198,6 +198,52 @@ func TestApplyEditableSettingsResetsUsageWhenBackendChanges(t *testing.T) {
 	}
 }
 
+func TestBossChatRunnerUsesBossChatBackendNotProjectAnalysisBackend(t *testing.T) {
+	t.Setenv("LCROOM_BOSS_MODEL", "")
+
+	cfg := config.Default()
+	cfg.AIBackend = config.AIBackendOpenCode
+	cfg.BossChatBackend = config.AIBackendOpenAIAPI
+	cfg.BossChatModel = "gpt-5.4-mini"
+	cfg.OpenAIAPIKey = "sk-test-example"
+	svc := &Service{
+		cfg:                  cfg,
+		bossChatUsageTracker: llm.NewUsageTracker(),
+	}
+
+	runner, modelName, backend := svc.NewBossTextRunner()
+	if runner == nil {
+		t.Fatalf("NewBossTextRunner() runner = nil, want OpenAI API text runner")
+	}
+	if backend != config.AIBackendOpenAIAPI {
+		t.Fatalf("boss chat backend = %s, want %s", backend, config.AIBackendOpenAIAPI)
+	}
+	if modelName != "gpt-5.4-mini" {
+		t.Fatalf("boss chat model = %q, want gpt-5.4-mini", modelName)
+	}
+}
+
+func TestBossChatRunnerCanBeDisabledSeparately(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.AIBackend = config.AIBackendOpenCode
+	cfg.BossChatBackend = config.AIBackendDisabled
+	cfg.OpenAIAPIKey = "sk-test-example"
+	svc := &Service{
+		cfg:                  cfg,
+		bossChatUsageTracker: llm.NewUsageTracker(),
+	}
+
+	runner, _, backend := svc.NewBossTextRunner()
+	if runner != nil {
+		t.Fatalf("NewBossTextRunner() runner = %#v, want nil when boss chat is disabled", runner)
+	}
+	if backend != config.AIBackendDisabled {
+		t.Fatalf("boss chat backend = %s, want disabled", backend)
+	}
+}
+
 func TestRefreshProjectStatusAsyncCoalescesConcurrentRequests(t *testing.T) {
 	t.Parallel()
 
