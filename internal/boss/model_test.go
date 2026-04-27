@@ -89,7 +89,7 @@ func TestEmbeddedModelRendersBodyForHostShell(t *testing.T) {
 			layout,
 			renderedLineCount(m.renderChat(layout)),
 			renderedLineCount(m.renderSituation(layout.sideWidth, layout.topHeight)),
-			renderedLineCount(m.renderPanel("Attention", AttentionText(m.snapshot, m.now()), layout.deskWidth, layout.bottomHeight)),
+			renderedLineCount(m.renderAttention(layout.deskWidth, layout.bottomHeight)),
 			renderedLineCount(m.renderPanel("Notes", NotesText(m.snapshot), layout.notebookWidth, layout.bottomHeight)))
 	}
 	layout := m.layout()
@@ -230,6 +230,10 @@ func TestEmbeddedModelFlowsMediumWidthPanelsFromTop(t *testing.T) {
 			{Name: "social_manager", Status: model.StatusPossiblyStuck, AttentionScore: 92, RepoBranch: "master", RepoDirty: true},
 			{Name: "crypto", Status: model.StatusIdle, AttentionScore: 72, RepoBranch: "feature/tui-trader-mvp", RepoDirty: true, RepoAheadCount: 3},
 			{Name: "okmain", Status: model.StatusIdle, AttentionScore: 70, RepoBranch: "master_mobnext", RepoAheadCount: 3},
+			{Name: "docs_site", Status: model.StatusActive, AttentionScore: 64, RepoBranch: "master"},
+			{Name: "runtime_ui", Status: model.StatusIdle, AttentionScore: 58, RepoBranch: "feature/runtime"},
+			{Name: "inbox_agent", Status: model.StatusIdle, AttentionScore: 42, RepoBranch: "master"},
+			{Name: "release_notes", Status: model.StatusIdle, AttentionScore: 31, RepoBranch: "master"},
 		},
 	}
 	m.status = "Boss chat via gpt-5.4-mini"
@@ -239,11 +243,19 @@ func TestEmbeddedModelFlowsMediumWidthPanelsFromTop(t *testing.T) {
 	if layout.middleGapHeight != 1 {
 		t.Fatalf("medium-width layout should use one separator row, got %d", layout.middleGapHeight)
 	}
+	intrinsicBottomHeight := maxInt(7, panelHeightForWrappedContent(AttentionText(m.snapshot, m.now()), bossPanelInnerWidth(layout.deskWidth)))
+	intrinsicBottomHeight = maxInt(intrinsicBottomHeight, panelHeightForWrappedContent(NotesText(m.snapshot), bossPanelInnerWidth(layout.notebookWidth)))
+	if layout.bottomHeight <= intrinsicBottomHeight {
+		t.Fatalf("medium-width layout should give spare height to lower panels, got bottom height %d intrinsic %d", layout.bottomHeight, intrinsicBottomHeight)
+	}
 	if renderedHeight := layout.topHeight + layout.middleGapHeight + layout.bottomHeight; renderedHeight >= layout.height {
 		t.Fatalf("medium-width panels should flow from the top and leave slack below, got rendered height %d terminal height %d", renderedHeight, layout.height)
 	}
 
 	rendered := ansi.Strip(m.View())
+	if !strings.Contains(rendered, "release_notes") {
+		t.Fatalf("expanded lower panels should show more loaded hot projects:\n%s", rendered)
+	}
 	lines := strings.Split(rendered, "\n")
 	bottomBorderLine := layout.topHeight + layout.middleGapHeight + layout.bottomHeight - 1
 	if bottomBorderLine >= len(lines) {

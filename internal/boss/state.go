@@ -12,7 +12,10 @@ import (
 	"lcroom/internal/service"
 )
 
-const hotProjectLimit = 8
+const (
+	hotProjectLimit              = 8
+	defaultAttentionProjectLimit = 4
+)
 
 type StateSnapshot struct {
 	LoadedAt               time.Time
@@ -154,15 +157,20 @@ func BuildStateBrief(snapshot StateSnapshot, now time.Time) string {
 }
 
 func AttentionText(snapshot StateSnapshot, now time.Time) string {
+	return AttentionTextWithLimit(snapshot, now, defaultAttentionProjectLimit)
+}
+
+func AttentionTextWithLimit(snapshot StateSnapshot, now time.Time, limit int) string {
 	if now.IsZero() {
 		now = time.Now()
 	}
+	limit = clampInt(limit, 1, hotProjectLimit)
 	if len(snapshot.HotProjects) == 0 {
 		return "Nothing needs attention yet.\nRun a scan or wait for project state to load."
 	}
-	lines := make([]string, 0, 5)
+	lines := make([]string, 0, minInt(limit, len(snapshot.HotProjects)))
 	for i, project := range snapshot.HotProjects {
-		if i >= 4 {
+		if i >= limit {
 			break
 		}
 		label := fmt.Sprintf("%s: %s", project.Name, shortProjectState(project))

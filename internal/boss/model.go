@@ -243,7 +243,7 @@ func (m Model) View() string {
 		if layout.bottomHeight < 4 {
 			body = top
 		} else {
-			attention := m.renderPanel("Attention", AttentionText(m.snapshot, m.now()), layout.deskWidth, layout.bottomHeight)
+			attention := m.renderAttention(layout.deskWidth, layout.bottomHeight)
 			notesWidth := layout.notebookWidth
 			notes := m.renderPanel("Notes", NotesText(m.snapshot), notesWidth, layout.bottomHeight)
 			bottom := lipgloss.JoinHorizontal(
@@ -448,6 +448,7 @@ func (m Model) layout() bossLayout {
 			topHeight = height
 			bottomHeight = 0
 		}
+		topHeight, bottomHeight = expandEmbeddedWideRows(height, topHeight, bottomHeight)
 	}
 	transcriptHeight := maxInt(2, topHeight-inputHeight-5)
 	middleGapHeight := 0
@@ -491,6 +492,14 @@ func (m Model) renderHeader(width int) string {
 
 func (m Model) renderSituation(width, height int) string {
 	return m.renderPanel("Situation", m.situationContent(), width, height)
+}
+
+func (m Model) renderAttention(width, height int) string {
+	return m.renderPanel("Attention", m.attentionContent(height), width, height)
+}
+
+func (m Model) attentionContent(height int) string {
+	return AttentionTextWithLimit(m.snapshot, m.now(), attentionProjectLimit(height))
 }
 
 func (m Model) situationContent() string {
@@ -563,7 +572,7 @@ func (m Model) renderNarrow(layout bossLayout) string {
 	roomHeight := remainingHeight / 2
 	deskHeight := remainingHeight - roomHeight
 	room := m.renderSituation(layout.sideWidth, roomHeight)
-	desk := m.renderPanel("Attention", AttentionText(m.snapshot, m.now()), layout.deskWidth, deskHeight)
+	desk := m.renderAttention(layout.deskWidth, deskHeight)
 	return lipgloss.JoinVertical(lipgloss.Left, chat, room, desk)
 }
 
@@ -655,6 +664,31 @@ func panelHeightForRawLines(contentLines int) int {
 
 func panelHeightForWrappedContent(content string, width int) int {
 	return panelHeightForRawLines(countWrappedBlockLines(content, width))
+}
+
+func expandEmbeddedWideRows(height, topHeight, bottomHeight int) (int, int) {
+	if bottomHeight <= 0 {
+		return topHeight, bottomHeight
+	}
+	freeHeight := height - topHeight - bottomHeight
+	if freeHeight <= 1 {
+		return topHeight, bottomHeight
+	}
+	freeHeight--
+	trailingSlack := freeHeight / 5
+	if trailingSlack == 0 && freeHeight > 1 {
+		trailingSlack = 1
+	}
+	bottomHeight += maxInt(0, freeHeight-trailingSlack)
+	return topHeight, bottomHeight
+}
+
+func attentionProjectLimit(height int) int {
+	bodyHeight := maxInt(0, height-4)
+	if bodyHeight <= 0 {
+		return defaultAttentionProjectLimit
+	}
+	return clampInt(bodyHeight, defaultAttentionProjectLimit, hotProjectLimit)
 }
 
 func renderAssistantMessage(content string, width int) string {
