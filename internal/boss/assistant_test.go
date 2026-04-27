@@ -48,6 +48,7 @@ type fakeBossStore struct {
 	details         map[string]model.ProjectDetail
 	classifications []model.SessionClassification
 	counts          map[model.SessionClassificationStatus]int
+	searchResults   []model.ContextSearchResult
 }
 
 func (s *fakeBossStore) ListProjects(context.Context, bool) ([]model.ProjectSummary, error) {
@@ -80,6 +81,10 @@ func (s *fakeBossStore) GetSessionClassificationCounts(context.Context, bool) (m
 		out[status] = count
 	}
 	return out, nil
+}
+
+func (s *fakeBossStore) SearchContext(context.Context, model.ContextSearchRequest) ([]model.ContextSearchResult, error) {
+	return append([]model.ContextSearchResult(nil), s.searchResults...), nil
 }
 
 func TestAssistantReplyIncludesStateBriefAndRecentChat(t *testing.T) {

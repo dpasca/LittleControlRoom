@@ -68,6 +68,55 @@ func TestQueryExecutorReportsProjectDetailFromStore(t *testing.T) {
 	}
 }
 
+func TestQueryExecutorSearchesContext(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Unix(1_800_000_000, 0)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           "/tmp/okmain",
+		Name:           "okmain",
+		LastActivity:   now,
+		Status:         model.StatusIdle,
+		AttentionScore: 18,
+		PresentOnDisk:  true,
+		InScope:        true,
+		AttentionReason: []model.AttentionReason{{
+			Text:   "FCX is the current game codename under discussion",
+			Weight: 12,
+		}},
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	executor := newQueryExecutor(st)
+	executor.nowFn = func() time.Time { return now }
+	result, err := executor.Execute(ctx, bossAction{
+		Kind:  bossActionSearchContext,
+		Query: "FCX",
+		Limit: 4,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	for _, want := range []string{
+		`Context search for "FCX"`,
+		"/tmp/okmain",
+		"FCX",
+	} {
+		if !strings.Contains(result.Text, want) {
+			t.Fatalf("tool result missing %q:\n%s", want, result.Text)
+		}
+	}
+}
+
 func TestBuildViewContextBriefIncludesClassicTUIState(t *testing.T) {
 	t.Parallel()
 

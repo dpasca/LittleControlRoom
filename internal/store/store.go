@@ -148,6 +148,33 @@ func (s *Store) initSchema(ctx context.Context) error {
 			FOREIGN KEY(project_path) REFERENCES projects(path) ON DELETE CASCADE
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_project_sessions_project_path ON project_sessions(project_path);`,
+		`CREATE TABLE IF NOT EXISTS context_session_text_cache (
+			session_id TEXT PRIMARY KEY,
+			source TEXT NOT NULL DEFAULT '',
+			raw_session_id TEXT NOT NULL DEFAULT '',
+			project_path TEXT NOT NULL,
+			project_name TEXT NOT NULL DEFAULT '',
+			session_file TEXT NOT NULL,
+			session_format TEXT NOT NULL,
+			snapshot_hash TEXT NOT NULL DEFAULT '',
+			source_updated_at INTEGER NOT NULL,
+			latest_turn_state_known INTEGER NOT NULL DEFAULT 0,
+			latest_turn_completed INTEGER NOT NULL DEFAULT 0,
+			cached_at INTEGER NOT NULL,
+			text TEXT NOT NULL DEFAULT ''
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_context_session_text_cache_project_path ON context_session_text_cache(project_path);`,
+		`CREATE INDEX IF NOT EXISTS idx_context_session_text_cache_source_updated ON context_session_text_cache(source_updated_at DESC);`,
+		`CREATE VIRTUAL TABLE IF NOT EXISTS context_search_fts USING fts5(
+			source UNINDEXED,
+			project_path UNINDEXED,
+			project_name UNINDEXED,
+			session_id UNINDEXED,
+			title,
+			body,
+			updated_at UNINDEXED,
+			tokenize = 'unicode61'
+		);`,
 		`CREATE TABLE IF NOT EXISTS project_artifacts (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_path TEXT NOT NULL,

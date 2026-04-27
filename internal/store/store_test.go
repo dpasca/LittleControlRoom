@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -72,6 +74,155 @@ func TestListProjectsScopeFiltering(t *testing.T) {
 	}
 	if len(allProjects) != 2 {
 		t.Fatalf("expected 2 non-forgotten projects when including historical, got %d", len(allProjects))
+	}
+}
+
+func TestSearchContextFindsProjectAssessmentSummaries(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now()
+	sessionFile := filepath.Join(t.TempDir(), "fcx-session.jsonl")
+	if err := os.WriteFile(sessionFile, []byte(`{"type":"event_msg","payload":{"type":"user_message","message":"What should we do next?"}}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           "/tmp/okmain",
+		Name:           "okmain",
+		Status:         model.StatusIdle,
+		AttentionScore: 12,
+		PresentOnDisk:  true,
+		InScope:        true,
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{{
+			SessionID:           "ses_fcx_summary",
+			ProjectPath:         "/tmp/okmain",
+			DetectedProjectPath: "/tmp/okmain",
+			SessionFile:         sessionFile,
+			Format:              "modern",
+			SnapshotHash:        "hash-fcx-summary",
+			LastEventAt:         now,
+		}},
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	queued, err := st.QueueSessionClassification(ctx, model.SessionClassification{
+		SessionID:         "ses_fcx_summary",
+		ProjectPath:       "/tmp/okmain",
+		SessionFile:       sessionFile,
+		SessionFormat:     "modern",
+		SnapshotHash:      "hash-fcx-summary",
+		Model:             "gpt-test",
+		ClassifierVersion: "v1",
+		SourceUpdatedAt:   now,
+	}, 15*time.Minute)
+	if err != nil {
+		t.Fatalf("queue classification: %v", err)
+	}
+	if !queued {
+		t.Fatalf("classification was not queued")
+	}
+	claimed, err := st.ClaimNextPendingSessionClassification(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("claim classification: %v", err)
+	}
+	claimed.Category = model.SessionCategoryNeedsFollowUp
+	claimed.Summary = "FCX is the code name for the game work in okmain."
+	claimed.Confidence = 0.92
+	if err := st.CompleteSessionClassification(ctx, claimed); err != nil {
+		t.Fatalf("complete classification: %v", err)
+	}
+
+	results, err := st.SearchContext(ctx, model.ContextSearchRequest{Query: "FCX", Limit: 5})
+	if err != nil {
+		t.Fatalf("search context: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatalf("SearchContext returned no results")
+	}
+	found := false
+	for _, result := range results {
+		if result.ProjectPath == "/tmp/okmain" && strings.Contains(strings.ToLower(result.Snippet), "fcx") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("SearchContext results did not include FCX assessment evidence: %#v", results)
+	}
+}
+
+func TestSearchContextCachesSessionTranscriptWithoutToolOutput(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now()
+	sessionFile := filepath.Join(t.TempDir(), "session.jsonl")
+	transcript := strings.Join([]string{
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Can you explain FCX?"}]}}`,
+		`{"type":"response_item","payload":{"type":"function_call_output","output":"zqxjtoolleak"}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"FCX is the internal game codename."}]}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(sessionFile, []byte(transcript), 0o644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           "/tmp/session-search",
+		Name:           "session-search",
+		Status:         model.StatusIdle,
+		AttentionScore: 8,
+		PresentOnDisk:  true,
+		InScope:        true,
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{{
+			SessionID:           "ses_transcript",
+			ProjectPath:         "/tmp/session-search",
+			DetectedProjectPath: "/tmp/session-search",
+			SessionFile:         sessionFile,
+			Format:              "modern",
+			SnapshotHash:        "hash-transcript",
+			LastEventAt:         now,
+		}},
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	results, err := st.SearchContext(ctx, model.ContextSearchRequest{Query: "FCX", Limit: 5})
+	if err != nil {
+		t.Fatalf("search transcript context: %v", err)
+	}
+	foundSession := false
+	for _, result := range results {
+		if result.Source == "session" && result.SessionID == "codex:ses_transcript" && strings.Contains(strings.ToLower(result.Snippet), "fcx") {
+			foundSession = true
+			break
+		}
+	}
+	if !foundSession {
+		t.Fatalf("SearchContext did not return cached session transcript evidence: %#v", results)
+	}
+
+	toolResults, err := st.SearchContext(ctx, model.ContextSearchRequest{Query: "zqxjtoolleak", Limit: 5})
+	if err != nil {
+		t.Fatalf("search tool output context: %v", err)
+	}
+	if len(toolResults) != 0 {
+		t.Fatalf("tool output should not be indexed, got %#v", toolResults)
 	}
 }
 

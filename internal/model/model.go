@@ -152,6 +152,24 @@ type SessionClassification struct {
 	CompletedAt       time.Time                   `json:"completed_at"`
 }
 
+type ContextSearchRequest struct {
+	Query             string
+	ProjectPath       string
+	IncludeHistorical bool
+	Limit             int
+}
+
+type ContextSearchResult struct {
+	Source      string
+	ProjectPath string
+	ProjectName string
+	SessionID   string
+	Title       string
+	Snippet     string
+	UpdatedAt   time.Time
+	Score       float64
+}
+
 type LLMUsage struct {
 	InputTokens       int64   `json:"input_tokens"`
 	OutputTokens      int64   `json:"output_tokens"`

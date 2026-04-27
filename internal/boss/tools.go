@@ -20,6 +20,7 @@ const (
 	bossActionTodoReport             = "todo_report"
 	bossActionCurrentTUI             = "current_tui"
 	bossActionAssessmentQueue        = "assessment_queue"
+	bossActionSearchContext          = "search_context"
 
 	bossToolResultLimit = 8000
 )
@@ -28,6 +29,7 @@ type bossAction struct {
 	Kind              string `json:"kind"`
 	Answer            string `json:"answer"`
 	Target            string `json:"target"`
+	Query             string `json:"query"`
 	ProjectPath       string `json:"project_path"`
 	ProjectName       string `json:"project_name"`
 	SessionID         string `json:"session_id"`
@@ -47,6 +49,7 @@ type bossStoreReader interface {
 	GetProjectDetail(ctx context.Context, path string, eventLimit int) (model.ProjectDetail, error)
 	ListSessionClassifications(ctx context.Context, projectPath, sessionID string) ([]model.SessionClassification, error)
 	GetSessionClassificationCounts(ctx context.Context, inScopeOnly bool) (map[model.SessionClassificationStatus]int, error)
+	SearchContext(ctx context.Context, req model.ContextSearchRequest) ([]model.ContextSearchResult, error)
 }
 
 type QueryExecutor struct {
@@ -95,6 +98,8 @@ func (e *QueryExecutor) Execute(ctx context.Context, action bossAction, snapshot
 		return bossToolResult{Name: bossActionCurrentTUI, Text: e.currentTUI(snapshot, view)}, nil
 	case bossActionAssessmentQueue:
 		return e.assessmentQueue(ctx)
+	case bossActionSearchContext:
+		return e.searchContext(ctx, action, view)
 	default:
 		return bossToolResult{}, fmt.Errorf("unknown boss action kind %q", strings.TrimSpace(action.Kind))
 	}
@@ -332,6 +337,73 @@ func (e *QueryExecutor) assessmentQueue(ctx context.Context) (bossToolResult, er
 		fmt.Sprintf("- completed: %d", counts[model.ClassificationCompleted]),
 	}
 	return clippedToolResult(bossActionAssessmentQueue, strings.Join(lines, "\n")), nil
+}
+
+func (e *QueryExecutor) searchContext(ctx context.Context, action bossAction, view ViewContext) (bossToolResult, error) {
+	query := strings.TrimSpace(action.Query)
+	if query == "" {
+		query = strings.TrimSpace(action.Target)
+	}
+	if query == "" {
+		return clippedToolResult(bossActionSearchContext, "Context search needs a non-empty query."), nil
+	}
+
+	path := strings.TrimSpace(action.ProjectPath)
+	note := ""
+	if path != "" || strings.TrimSpace(action.ProjectName) != "" || strings.EqualFold(strings.TrimSpace(action.Target), "selected") {
+		resolved, resolvedNote, err := e.resolveProjectPath(ctx, action, view)
+		if err != nil {
+			return bossToolResult{}, err
+		}
+		path = resolved
+		note = resolvedNote
+	}
+
+	results, err := e.store.SearchContext(ctx, model.ContextSearchRequest{
+		Query:             query,
+		ProjectPath:       path,
+		IncludeHistorical: action.IncludeHistorical,
+		Limit:             clampBossLimit(action.Limit, 8, 24),
+	})
+	if err != nil {
+		return bossToolResult{}, err
+	}
+
+	lines := []string{fmt.Sprintf("Context search for %q: %d matches.", query, len(results))}
+	if action.IncludeHistorical {
+		lines[0] += " Historical/out-of-scope projects are included."
+	}
+	if path != "" {
+		lines[0] += " Project path: " + path + "."
+	}
+	if note != "" {
+		lines = append(lines, "Target note: "+note)
+	}
+	now := e.now()
+	for i, result := range results {
+		label := result.Source
+		if label == "" {
+			label = "context"
+		}
+		line := fmt.Sprintf("%d. [%s] %s | path: %s", i+1, label, firstNonEmpty(result.ProjectName, result.Title, result.ProjectPath), result.ProjectPath)
+		if result.SessionID != "" {
+			line += " | session: " + result.SessionID
+		}
+		if !result.UpdatedAt.IsZero() {
+			line += " | updated " + relativeAge(now, result.UpdatedAt)
+		}
+		lines = append(lines, line)
+		if title := strings.TrimSpace(result.Title); title != "" && title != result.ProjectName {
+			lines = append(lines, "   title: "+clipText(title, 220))
+		}
+		if snippet := strings.TrimSpace(result.Snippet); snippet != "" {
+			lines = append(lines, "   snippet: "+clipText(snippet, 420))
+		}
+	}
+	if len(results) == 0 {
+		lines = append(lines, "No project summaries, assessments, or cached session transcripts matched that query.")
+	}
+	return clippedToolResult(bossActionSearchContext, strings.Join(lines, "\n")), nil
 }
 
 func (e *QueryExecutor) resolveProjectPath(ctx context.Context, action bossAction, view ViewContext) (string, string, error) {

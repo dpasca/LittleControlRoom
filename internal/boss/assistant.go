@@ -282,8 +282,9 @@ func bossActionPlannerSystemPrompt() string {
 	return strings.Join([]string{
 		"You are the calm project-management assistant inside Little Control Room.",
 		"You decide whether to answer now or request exactly one read-only query before answering.",
-		"Use queries when the user asks about a concrete project, TODOs, assessment status, current TUI state, or anything that requires more than the compact brief.",
-		"Available read-only query kinds: list_projects, project_detail, session_classifications, todo_report, current_tui, assessment_queue.",
+		"Use queries when the user asks about a concrete project, TODOs, assessment status, current TUI state, codenames, aliases, concepts, or anything that requires more than the compact brief.",
+		"Available read-only query kinds: list_projects, project_detail, session_classifications, todo_report, current_tui, assessment_queue, search_context.",
+		"Use search_context when the user asks what a codename, acronym, feature, branch phrase, or unfamiliar term refers to; it searches project metadata, summaries, assessments, TODOs, and cached assistant-session text.",
 		"For project-specific queries, use project_path when a path is available or project_name when the user gives an exact project name.",
 		"Do not infer a project from hidden UI cursor state; if the target is ambiguous, ask the user to name the project.",
 		"Do not invent facts. After query results are provided, answer from those results and the app-state brief.",
@@ -347,6 +348,7 @@ func bossActionSchema() map[string]any {
 					bossActionTodoReport,
 					bossActionCurrentTUI,
 					bossActionAssessmentQueue,
+					bossActionSearchContext,
 				},
 			},
 			"answer": map[string]any{
@@ -357,6 +359,10 @@ func bossActionSchema() map[string]any {
 				"type":        "string",
 				"enum":        []string{"", "selected"},
 				"description": "Use selected when the query should inspect the project selected in the classic TUI.",
+			},
+			"query": map[string]any{
+				"type":        "string",
+				"description": "Search text when kind is search_context; otherwise empty.",
 			},
 			"project_path": map[string]any{
 				"type":        "string",
@@ -389,6 +395,7 @@ func bossActionSchema() map[string]any {
 			"kind",
 			"answer",
 			"target",
+			"query",
 			"project_path",
 			"project_name",
 			"session_id",
@@ -406,6 +413,7 @@ func normalizeBossAction(action *bossAction) {
 	action.Kind = normalizeBossActionKind(action.Kind)
 	action.Answer = strings.TrimSpace(action.Answer)
 	action.Target = strings.TrimSpace(strings.ToLower(action.Target))
+	action.Query = strings.TrimSpace(action.Query)
 	action.ProjectPath = strings.TrimSpace(action.ProjectPath)
 	action.ProjectName = strings.TrimSpace(action.ProjectName)
 	action.SessionID = strings.TrimSpace(action.SessionID)
@@ -416,7 +424,7 @@ func validateBossAction(action bossAction) error {
 	switch action.Kind {
 	case bossActionAnswer:
 		return nil
-	case bossActionListProjects, bossActionProjectDetail, bossActionSessionClassifications, bossActionTodoReport, bossActionCurrentTUI, bossActionAssessmentQueue:
+	case bossActionListProjects, bossActionProjectDetail, bossActionSessionClassifications, bossActionTodoReport, bossActionCurrentTUI, bossActionAssessmentQueue, bossActionSearchContext:
 		return nil
 	default:
 		return fmt.Errorf("boss chat returned unsupported action kind %q", action.Kind)
