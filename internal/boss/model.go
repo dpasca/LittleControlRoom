@@ -557,7 +557,7 @@ func (m Model) renderRawPanel(title, content string, width, height int) string {
 	innerWidth := bossPanelInnerWidth(width)
 	innerHeight := maxInt(1, height-2)
 	titleLine := panelTitleStyle.Render(fitLine(title, innerWidth))
-	body := fitBlock(content, innerWidth, maxInt(0, innerHeight-2))
+	body := fitRenderedBlock(content, innerWidth, maxInt(0, innerHeight-2))
 	rendered := panelStyle.Width(bossPanelStyleWidth(width)).Height(innerHeight).Render(titleLine + "\n" + body)
 	return fitRenderedBlock(rendered, width, height)
 }

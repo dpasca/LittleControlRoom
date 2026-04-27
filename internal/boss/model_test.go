@@ -290,6 +290,30 @@ func TestEmbeddedModelKeepsMediumWidthLowerPanelsCompact(t *testing.T) {
 	}
 }
 
+func TestChatPanelKeepsStyledTranscriptAndInputVisible(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbedded(context.Background(), nil)
+	m.width = 120
+	m.height = 20
+	m.stateLoaded = true
+	m.messages = []ChatMessage{{
+		Role:    "assistant",
+		Content: "Use the full chat column for this response so styled terminal output does not get mistaken for visible text.",
+	}}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello boss")})
+	m = updated.(Model)
+	m.syncLayout(true)
+
+	rendered := ansi.Strip(m.renderChat(m.layout()))
+	if strings.Contains(rendered, "...") {
+		t.Fatalf("chat panel should not append ellipses while fitting styled content:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "> hello boss") {
+		t.Fatalf("chat input should remain visible while typing:\n%s", rendered)
+	}
+}
+
 func TestModelTranscriptRendersMarkdown(t *testing.T) {
 	t.Parallel()
 
