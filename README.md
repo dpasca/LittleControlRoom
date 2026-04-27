@@ -146,6 +146,7 @@ Inside the embedded Codex, Claude Code, or OpenCode pane:
 
 Inside boss chat:
 
+- `Alt+1` through `Alt+8`: Jump from the bottom attention list into the matching embedded assistant session.
 - `/new [prompt]`: Start a fresh boss chat session, optionally with the first prompt.
 - `/sessions [session-id]`: Open the saved-session picker, or switch directly by ID.
 - `/session [session-id]` and `/resume [session-id]`: Aliases for `/sessions`.

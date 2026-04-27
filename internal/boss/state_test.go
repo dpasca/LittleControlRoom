@@ -111,16 +111,51 @@ func TestPanelTextsStayCompact(t *testing.T) {
 	snapshot := StateSnapshot{
 		PendingClassifications: 1,
 		HotProjects: []ProjectBrief{
-			{Name: "Alpha", Status: model.StatusIdle, AttentionScore: 20, LastActivity: now.Add(-time.Hour)},
+			{Name: "Alpha", Status: model.StatusIdle, AttentionScore: 20, LastActivity: now.Add(-time.Hour), RepoDirty: true, LatestSummary: "Ready for review."},
 			{Name: "Beta", Status: model.StatusActive, AttentionScore: 10},
 		},
 	}
 	attention := AttentionText(snapshot, now)
-	if !strings.Contains(attention, "Alpha") || !strings.Contains(attention, "1h ago") {
+	if !strings.Contains(attention, "idle 20") || !strings.Contains(attention, "dirty") || !strings.Contains(attention, "Ready for review.") {
 		t.Fatalf("unexpected attention text:\n%s", attention)
 	}
-	notes := NotesText(snapshot)
-	if !strings.Contains(notes, "Panels are stationary") || !strings.Contains(notes, "Assessment queue: 1") {
-		t.Fatalf("unexpected notes text:\n%s", notes)
+}
+
+func TestSelectRecentAttentionProjectsPrefersPresentRecentProjects(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	projects := []model.ProjectSummary{
+		{Name: "Missing newest", LastActivity: now, AttentionScore: 99, PresentOnDisk: false},
+		{Name: "Present older", LastActivity: now.Add(-time.Hour), AttentionScore: 10, PresentOnDisk: true},
+		{Name: "Present newest", LastActivity: now.Add(-time.Minute), AttentionScore: 5, PresentOnDisk: true},
+	}
+
+	selected := selectRecentAttentionProjects(projects, 2)
+	if len(selected) != 2 {
+		t.Fatalf("selected len = %d, want 2", len(selected))
+	}
+	if selected[0].Name != "Present newest" || selected[1].Name != "Present older" {
+		t.Fatalf("selected order = %#v, want present projects by recent activity", selected)
+	}
+}
+
+func TestFilterProjectSummariesByPrivacyHidesMatchingProjectNames(t *testing.T) {
+	t.Parallel()
+
+	projects := []model.ProjectSummary{
+		{Name: "PublicApp", Path: "/tmp/public"},
+		{Name: "SecretClient", Path: "/tmp/secret"},
+		{Name: "AnotherPublicApp", Path: "/tmp/public-2"},
+	}
+
+	filtered := filterProjectSummariesByPrivacy(projects, []string{"*secret*"})
+	if len(filtered) != 2 {
+		t.Fatalf("filtered len = %d, want 2: %#v", len(filtered), filtered)
+	}
+	for _, project := range filtered {
+		if project.Name == "SecretClient" {
+			t.Fatalf("private project should not be visible in boss state: %#v", filtered)
+		}
 	}
 }

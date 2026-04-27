@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"lcroom/internal/model"
 
@@ -30,12 +31,12 @@ func TestModelViewRendersBossPanels(t *testing.T) {
 	m.syncLayout(true)
 
 	view := m.View()
-	for _, want := range []string{"Boss Chat", "Situation", "Attention", "Notes", "Alpha"} {
+	for _, want := range []string{"Boss Chat", "Attention", "Alt+1", "Alpha"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
 	}
-	for _, legacy := range []string{"Little Room", "On My Desk", "Notebook"} {
+	for _, legacy := range []string{"Jump", "Situation", "Notes", "Little Room", "On My Desk", "Notebook"} {
 		if strings.Contains(view, legacy) {
 			t.Fatalf("view still contains themed panel %q:\n%s", legacy, view)
 		}
@@ -56,6 +57,98 @@ func TestModelViewRendersBossPanels(t *testing.T) {
 	}
 	if strings.Contains(stripped, "Ctrl+J newline") {
 		t.Fatalf("view should advertise Alt+Enter instead of Ctrl+J:\n%s", stripped)
+	}
+}
+
+func TestModelAttentionRowsUseCompactProjectColumns(t *testing.T) {
+	t.Parallel()
+
+	m := New(context.Background(), nil)
+	now := time.Unix(1_800_000_000, 0)
+	m.nowFn = func() time.Time { return now }
+	m.summaryFlashUntil = map[string]time.Time{"/alpha": now.Add(time.Second)}
+	m.snapshot = StateSnapshot{
+		HotProjects: []ProjectBrief{{
+			Name:                 "Alpha",
+			Path:                 "/alpha",
+			Status:               model.StatusActive,
+			RepoDirty:            true,
+			LatestSummary:        "Needs review before the handoff.",
+			LatestCategory:       model.SessionCategoryWaitingForUser,
+			ClassificationStatus: model.ClassificationCompleted,
+		}},
+	}
+
+	rendered := m.renderAttentionRows(84, 1)
+	stripped := ansi.Strip(rendered)
+	for _, want := range []string{"Alt+1", "!", "waiting", "Alpha", "Needs review before the handoff."} {
+		if !strings.Contains(stripped, want) {
+			t.Fatalf("attention row missing %q:\n%s", want, stripped)
+		}
+	}
+	if !m.summaryFlashActive("/alpha") {
+		t.Fatalf("updated project summary should be inside the flash window:\n%s", rendered)
+	}
+	project := m.snapshot.HotProjects[0]
+	if got, want := bossSummaryStyle(project).GetForeground(), bossSummaryTextStyle.GetForeground(); got != want {
+		t.Fatalf("summary foreground = %v, want neutral text foreground %v", got, want)
+	}
+	if got, unwanted := bossSummaryStyle(project).GetForeground(), bossAssessmentWaitingStyle.GetForeground(); got == unwanted {
+		t.Fatalf("summary should not inherit the assessment foreground %v", got)
+	}
+}
+
+func TestModelSummaryFlashTracksUpdatedProjectSummaries(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	m := New(context.Background(), nil)
+	m.nowFn = func() time.Time { return now }
+	m.snapshot = StateSnapshot{HotProjects: []ProjectBrief{{
+		Name:          "Alpha",
+		Path:          "/alpha",
+		LatestSummary: "old summary",
+	}}}
+
+	m.syncSummaryFlashes(StateSnapshot{HotProjects: []ProjectBrief{{
+		Name:          "Alpha",
+		Path:          "/alpha",
+		LatestSummary: "new summary",
+	}}})
+	if !m.summaryFlashActive("/alpha") {
+		t.Fatalf("summary update should start a flash window")
+	}
+
+	m.nowFn = func() time.Time { return now.Add(summaryFlashDuration + time.Millisecond) }
+	m.pruneSummaryFlashes()
+	if m.summaryFlashActive("/alpha") {
+		t.Fatalf("summary flash should expire after the flash duration")
+	}
+}
+
+func TestModelSummaryFlashIgnoresAssessmentMetadataWhenSummaryDoesNotChange(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	m := New(context.Background(), nil)
+	m.nowFn = func() time.Time { return now }
+	m.snapshot = StateSnapshot{HotProjects: []ProjectBrief{{
+		Name:                 "Alpha",
+		Path:                 "/alpha",
+		LatestSummary:        "same summary",
+		LatestCategory:       model.SessionCategoryWaitingForUser,
+		ClassificationStatus: model.ClassificationCompleted,
+	}}}
+
+	m.syncSummaryFlashes(StateSnapshot{HotProjects: []ProjectBrief{{
+		Name:                 "Alpha",
+		Path:                 "/alpha",
+		LatestSummary:        "same summary",
+		LatestCategory:       model.SessionCategoryNeedsFollowUp,
+		ClassificationStatus: model.ClassificationCompleted,
+	}}})
+	if m.summaryFlashActive("/alpha") {
+		t.Fatalf("summary flash should not start when only assessment metadata changes")
 	}
 }
 
@@ -174,14 +267,12 @@ func TestEmbeddedModelRendersBodyForHostShell(t *testing.T) {
 	}
 	if lineCount := len(lines); lineCount > m.height {
 		layout := m.layout()
-		t.Fatalf("embedded boss view rendered %d lines, want at most %d; layout=%+v chat=%d situation=%d attention=%d notes=%d",
+		t.Fatalf("embedded boss view rendered %d lines, want at most %d; layout=%+v chat=%d attention=%d",
 			lineCount,
 			m.height,
 			layout,
 			renderedLineCount(m.renderChat(layout)),
-			renderedLineCount(m.renderSituation(layout.sideWidth, layout.topHeight)),
-			renderedLineCount(m.renderAttention(layout.deskWidth, layout.bottomHeight)),
-			renderedLineCount(m.renderPanel("Notes", NotesText(m.snapshot), layout.notebookWidth, layout.bottomHeight)))
+			renderedLineCount(m.renderAttention(layout.attentionWidth, layout.bottomHeight)))
 	}
 	layout := m.layout()
 	if !strings.HasSuffix(strings.TrimRight(lines[0], " "), "╮") {
@@ -289,14 +380,14 @@ func TestEmbeddedModelGivesChatMoreHorizontalRoom(t *testing.T) {
 	m.height = 42
 
 	layout := m.layout()
-	if layout.sideWidth > 30 {
-		t.Fatalf("situation panel width = %d, want compact side panel", layout.sideWidth)
+	if layout.chatWidth != layout.width {
+		t.Fatalf("chat width = %d, want full terminal width %d", layout.chatWidth, layout.width)
 	}
-	if layout.chatInnerWidth < 145 {
-		t.Fatalf("chat inner width = %d, want wider transcript column", layout.chatInnerWidth)
+	if layout.chatInnerWidth < 170 {
+		t.Fatalf("chat inner width = %d, want full-width transcript column", layout.chatInnerWidth)
 	}
-	if layout.chatWidth+layout.sideWidth+1 != layout.width {
-		t.Fatalf("top row widths should consume the full row, got chat %d + side %d + gap = %d, width %d", layout.chatWidth, layout.sideWidth, layout.chatWidth+layout.sideWidth+1, layout.width)
+	if layout.attentionWidth != layout.width {
+		t.Fatalf("attention panel width = %d, want full terminal width %d", layout.attentionWidth, layout.width)
 	}
 }
 

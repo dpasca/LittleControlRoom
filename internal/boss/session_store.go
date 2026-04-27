@@ -60,9 +60,16 @@ func (s *bossSessionStore) loadLatestOrCreate(ctx context.Context, now time.Time
 	if now.IsZero() {
 		now = time.Now()
 	}
-	sessions, err := s.listSessions(ctx, 1)
+	sessions, err := s.listSessions(ctx, 0)
 	if err != nil {
 		return bossChatSession{}, nil, false, err
+	}
+	for _, candidate := range sessions {
+		if candidate.MessageCount == 0 {
+			continue
+		}
+		session, messages, err := s.loadSession(ctx, candidate.SessionID)
+		return session, messages, false, err
 	}
 	if len(sessions) > 0 {
 		session, messages, err := s.loadSession(ctx, sessions[0].SessionID)

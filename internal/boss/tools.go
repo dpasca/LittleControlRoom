@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/config"
 	"lcroom/internal/model"
 )
 
@@ -71,6 +72,8 @@ type ViewContext struct {
 	Visibility          string
 	Filter              string
 	Status              string
+	PrivacyMode         bool
+	PrivacyPatterns     []string
 }
 
 func newQueryExecutor(store bossStoreReader) *QueryExecutor {
@@ -101,7 +104,7 @@ func (e *QueryExecutor) Execute(ctx context.Context, action bossAction, snapshot
 	}
 	switch kind {
 	case bossActionListProjects:
-		return e.listProjects(ctx, action)
+		return e.listProjects(ctx, action, view)
 	case bossActionProjectDetail:
 		return e.projectDetail(ctx, action, view)
 	case bossActionSessionClassifications:
@@ -137,11 +140,12 @@ func (e *QueryExecutor) searchBossSessions(ctx context.Context, action bossActio
 	return clippedToolResult(bossActionSearchBossSessions, formatBossSessionSearchXML(query, results, e.now())), nil
 }
 
-func (e *QueryExecutor) listProjects(ctx context.Context, action bossAction) (bossToolResult, error) {
+func (e *QueryExecutor) listProjects(ctx context.Context, action bossAction, view ViewContext) (bossToolResult, error) {
 	projects, err := e.store.ListProjects(ctx, action.IncludeHistorical)
 	if err != nil {
 		return bossToolResult{}, err
 	}
+	projects = filterProjectSummariesForBossPrivacy(projects, view)
 	limit := clampBossLimit(action.Limit, 12, 40)
 	now := e.now()
 	lines := []string{fmt.Sprintf("Project list: showing %d of %d projects.", minInt(limit, len(projects)), len(projects))}
@@ -162,6 +166,13 @@ func (e *QueryExecutor) listProjects(ctx context.Context, action bossAction) (bo
 		lines = append(lines, "No projects matched the current store query.")
 	}
 	return clippedToolResult(bossActionListProjects, strings.Join(lines, "\n")), nil
+}
+
+func filterProjectSummariesForBossPrivacy(projects []model.ProjectSummary, view ViewContext) []model.ProjectSummary {
+	if !view.PrivacyMode {
+		return projects
+	}
+	return filterProjectSummariesByPrivacy(projects, view.PrivacyPatterns)
 }
 
 func (e *QueryExecutor) projectDetail(ctx context.Context, action bossAction, view ViewContext) (bossToolResult, error) {
@@ -294,6 +305,13 @@ func (e *QueryExecutor) sessionClassifications(ctx context.Context, action bossA
 	if err != nil {
 		return bossToolResult{}, err
 	}
+	if view.PrivacyMode && path == "" {
+		privatePaths, err := e.privateProjectPaths(ctx, action.IncludeHistorical, view)
+		if err != nil {
+			return bossToolResult{}, err
+		}
+		items = filterSessionClassificationsForBossPrivacy(items, privatePaths)
+	}
 	limit := clampBossLimit(action.Limit, 10, 40)
 	lines := []string{fmt.Sprintf("Session assessments: showing %d of %d.", minInt(limit, len(items)), len(items))}
 	if path != "" {
@@ -332,6 +350,7 @@ func (e *QueryExecutor) todoReport(ctx context.Context, action bossAction, view 
 	if err != nil {
 		return bossToolResult{}, err
 	}
+	projects = filterProjectSummariesForBossPrivacy(projects, view)
 	limit := clampBossLimit(action.Limit, 8, 20)
 	lines := []string{"TODO report:"}
 	shown := 0
@@ -431,6 +450,13 @@ func (e *QueryExecutor) searchContext(ctx context.Context, action bossAction, vi
 	if err != nil {
 		return bossToolResult{}, err
 	}
+	if view.PrivacyMode {
+		privatePaths, err := e.privateProjectPaths(ctx, action.IncludeHistorical, view)
+		if err != nil {
+			return bossToolResult{}, err
+		}
+		results = filterContextSearchResultsForBossPrivacy(results, view, privatePaths)
+	}
 
 	now := e.now()
 	lines := []string{
@@ -490,11 +516,15 @@ func (e *QueryExecutor) resolveProjectPath(ctx context.Context, action bossActio
 	}
 	if path := strings.TrimSpace(action.ProjectPath); path != "" {
 		path = filepath.Clean(path)
-		if _, err := e.store.GetProjectSummary(ctx, path, true); err != nil {
+		project, err := e.store.GetProjectSummary(ctx, path, true)
+		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return path, "exact path supplied by boss chat, but no project summary matched", nil
 			}
 			return "", "", err
+		}
+		if bossProjectHiddenByPrivacy(project, view) {
+			return "", "", fmt.Errorf("project is hidden while privacy mode is enabled")
 		}
 		return path, "exact project path supplied by boss chat", nil
 	}
@@ -503,6 +533,7 @@ func (e *QueryExecutor) resolveProjectPath(ctx context.Context, action bossActio
 		if err != nil {
 			return "", "", err
 		}
+		projects = filterProjectSummariesForBossPrivacy(projects, view)
 		var matches []model.ProjectSummary
 		for _, project := range projects {
 			if strings.EqualFold(strings.TrimSpace(project.Name), name) || strings.EqualFold(displayProjectName(project), name) {
@@ -511,7 +542,7 @@ func (e *QueryExecutor) resolveProjectPath(ctx context.Context, action bossActio
 		}
 		switch len(matches) {
 		case 0:
-			return e.resolveProjectPathFromContextSearch(ctx, name)
+			return e.resolveProjectPathFromContextSearch(ctx, name, view)
 		case 1:
 			return strings.TrimSpace(matches[0].Path), fmt.Sprintf("resolved exact project name %q", name), nil
 		default:
@@ -525,7 +556,7 @@ func (e *QueryExecutor) resolveProjectPath(ctx context.Context, action bossActio
 	return "", "", errors.New("project query needs a project_path or exact project_name")
 }
 
-func (e *QueryExecutor) resolveProjectPathFromContextSearch(ctx context.Context, name string) (string, string, error) {
+func (e *QueryExecutor) resolveProjectPathFromContextSearch(ctx context.Context, name string, view ViewContext) (string, string, error) {
 	results, err := e.store.SearchContext(ctx, model.ContextSearchRequest{
 		Query:             name,
 		IncludeHistorical: true,
@@ -533,6 +564,13 @@ func (e *QueryExecutor) resolveProjectPathFromContextSearch(ctx context.Context,
 	})
 	if err != nil {
 		return "", "", err
+	}
+	if view.PrivacyMode {
+		privatePaths, err := e.privateProjectPaths(ctx, true, view)
+		if err != nil {
+			return "", "", err
+		}
+		results = filterContextSearchResultsForBossPrivacy(results, view, privatePaths)
 	}
 
 	paths := make([]string, 0, len(results))
@@ -559,6 +597,58 @@ func (e *QueryExecutor) resolveProjectPathFromContextSearch(ctx context.Context,
 	}
 }
 
+func (e *QueryExecutor) privateProjectPaths(ctx context.Context, includeHistorical bool, view ViewContext) (map[string]struct{}, error) {
+	privatePaths := map[string]struct{}{}
+	if !view.PrivacyMode || len(view.PrivacyPatterns) == 0 {
+		return privatePaths, nil
+	}
+	projects, err := e.store.ListProjects(ctx, includeHistorical)
+	if err != nil {
+		return nil, err
+	}
+	for _, project := range projects {
+		if bossProjectHiddenByPrivacy(project, view) {
+			privatePaths[filepath.Clean(strings.TrimSpace(project.Path))] = struct{}{}
+		}
+	}
+	return privatePaths, nil
+}
+
+func bossProjectHiddenByPrivacy(project model.ProjectSummary, view ViewContext) bool {
+	return view.PrivacyMode && config.MatchesPrivacyPattern(project.Name, view.PrivacyPatterns)
+}
+
+func filterSessionClassificationsForBossPrivacy(items []model.SessionClassification, privatePaths map[string]struct{}) []model.SessionClassification {
+	if len(items) == 0 || len(privatePaths) == 0 {
+		return items
+	}
+	filtered := make([]model.SessionClassification, 0, len(items))
+	for _, item := range items {
+		if _, private := privatePaths[filepath.Clean(strings.TrimSpace(item.ProjectPath))]; !private {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
+func filterContextSearchResultsForBossPrivacy(results []model.ContextSearchResult, view ViewContext, privatePaths map[string]struct{}) []model.ContextSearchResult {
+	if len(results) == 0 || (!view.PrivacyMode && len(privatePaths) == 0) {
+		return results
+	}
+	filtered := make([]model.ContextSearchResult, 0, len(results))
+	for _, result := range results {
+		if config.MatchesPrivacyPattern(result.ProjectName, view.PrivacyPatterns) ||
+			config.MatchesPrivacyPattern(result.Title, view.PrivacyPatterns) {
+			continue
+		}
+		if _, private := privatePaths[filepath.Clean(strings.TrimSpace(result.ProjectPath))]; private {
+			continue
+		}
+		filtered = append(filtered, result)
+	}
+	return filtered
+}
+
 func BuildViewContextBrief(view ViewContext, now time.Time) string {
 	if now.IsZero() {
 		now = time.Now()
@@ -577,6 +667,9 @@ func BuildViewContextBrief(view ViewContext, now time.Time) string {
 	}
 	if view.SortMode != "" || view.Visibility != "" || view.Filter != "" {
 		lines = append(lines, fmt.Sprintf("- list controls: sort=%s visibility=%s filter=%q", emptyLabel(view.SortMode), emptyLabel(view.Visibility), strings.TrimSpace(view.Filter)))
+	}
+	if view.PrivacyMode {
+		lines = append(lines, "- privacy mode: enabled")
 	}
 	if view.FocusedPane != "" {
 		lines = append(lines, "- focused pane before boss mode: "+view.FocusedPane)

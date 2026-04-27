@@ -1015,7 +1015,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyMsg:
 		if m.bossMode {
-			return m.updateBossModeMessage(msg)
+			return m.updateBossModeKey(msg)
 		}
 		if m.bossSetupPrompt != nil {
 			return m.updateBossSetupPromptMode(msg)
@@ -1846,6 +1846,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyCodexResumeChoices(msg)
 	case busMsg:
 		cmds := []tea.Cmd{m.waitBusCmd()}
+		if m.bossMode {
+			m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
+			cmds = append(cmds, m.bossModel.RefreshCmd())
+		}
 		switch msg.Type {
 		case events.ClassificationUpdated:
 			if msg.Payload["status"] == "completed" {

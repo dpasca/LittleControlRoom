@@ -33,6 +33,10 @@ func TestBossViewContextCapturesClassicTUIStateWithoutSelection(t *testing.T) {
 		visibility:  visibilityAllFolders,
 		focusedPane: focusDetail,
 		status:      "Detail focused",
+		privacyMode: true,
+		privacyPatterns: []string{
+			"*private*",
+		},
 	}
 
 	view := m.bossViewContext()
@@ -44,5 +48,8 @@ func TestBossViewContextCapturesClassicTUIStateWithoutSelection(t *testing.T) {
 	}
 	if view.FocusedPane != "detail" || view.SortMode != "attention" || view.Visibility != "all_folders" {
 		t.Fatalf("view controls = %#v", view)
+	}
+	if !view.PrivacyMode || len(view.PrivacyPatterns) != 1 || view.PrivacyPatterns[0] != "*private*" {
+		t.Fatalf("privacy state = %#v, want privacy mode and patterns", view)
 	}
 }

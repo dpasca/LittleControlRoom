@@ -101,6 +101,37 @@ func TestBossSessionStoreLoadLatestCreatesFirstSession(t *testing.T) {
 	}
 }
 
+func TestBossSessionStoreLoadLatestPrefersNonEmptySession(t *testing.T) {
+	t.Parallel()
+
+	store := newBossSessionStore(t.TempDir())
+	base := time.Date(2026, 4, 27, 9, 0, 0, 0, time.UTC)
+	older, err := store.createSession(context.Background(), base)
+	if err != nil {
+		t.Fatalf("create older session: %v", err)
+	}
+	if err := store.appendMessage(context.Background(), older.SessionID, ChatMessage{Role: "user", Content: "Keep this conversation alive", At: base.Add(time.Minute)}); err != nil {
+		t.Fatalf("append older message: %v", err)
+	}
+	if _, err := store.createSession(context.Background(), base.Add(time.Hour)); err != nil {
+		t.Fatalf("create newer empty session: %v", err)
+	}
+
+	session, messages, created, err := store.loadLatestOrCreate(context.Background(), base.Add(2*time.Hour))
+	if err != nil {
+		t.Fatalf("loadLatestOrCreate() error = %v", err)
+	}
+	if created {
+		t.Fatalf("loadLatestOrCreate() created a new session, want existing non-empty session")
+	}
+	if session.SessionID != older.SessionID {
+		t.Fatalf("loaded session = %q, want older non-empty %q", session.SessionID, older.SessionID)
+	}
+	if len(messages) != 1 || messages[0].Content != "Keep this conversation alive" {
+		t.Fatalf("messages = %#v, want older transcript", messages)
+	}
+}
+
 func TestBossSessionStoreAppendCreatesReadableMarkdownFile(t *testing.T) {
 	t.Parallel()
 

@@ -552,6 +552,10 @@ func (m Model) launchEmbeddedForSelection(provider codexapp.Provider, forceNew b
 		m.status = "No project selected"
 		return m, nil
 	}
+	return m.launchEmbeddedForProject(p, provider, forceNew, prompt)
+}
+
+func (m Model) launchEmbeddedForProject(p model.ProjectSummary, provider codexapp.Provider, forceNew bool, prompt string) (tea.Model, tea.Cmd) {
 	if !forceNew && strings.TrimSpace(prompt) == "" {
 		if updated, ok := m.revealPendingEmbeddedOpen(p.Path); ok {
 			return updated, nil

@@ -362,6 +362,51 @@ func TestQueryExecutorResolvesProjectNameThroughContextSearch(t *testing.T) {
 	}
 }
 
+func TestQueryExecutorPrivacyModeFiltersProjectTools(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeBossStore{
+		projects: []model.ProjectSummary{
+			{Path: "/tmp/public", Name: "PublicApp", InScope: true},
+			{Path: "/tmp/secret", Name: "SecretClient", InScope: true},
+		},
+		classifications: []model.SessionClassification{
+			{ProjectPath: "/tmp/public", SessionID: "public-session", Summary: "Public summary"},
+			{ProjectPath: "/tmp/secret", SessionID: "secret-session", Summary: "Secret summary"},
+		},
+		searchResults: []model.ContextSearchResult{
+			{ProjectPath: "/tmp/public", ProjectName: "PublicApp", Snippet: "Public snippet"},
+			{ProjectPath: "/tmp/secret", ProjectName: "SecretClient", Snippet: "Secret snippet"},
+		},
+	}
+	executor := newQueryExecutor(store)
+	view := ViewContext{PrivacyMode: true, PrivacyPatterns: []string{"*secret*"}}
+
+	listed, err := executor.Execute(context.Background(), bossAction{Kind: bossActionListProjects}, StateSnapshot{}, view)
+	if err != nil {
+		t.Fatalf("list Execute() error = %v", err)
+	}
+	if strings.Contains(listed.Text, "SecretClient") || !strings.Contains(listed.Text, "PublicApp") {
+		t.Fatalf("privacy-filtered project list = %q", listed.Text)
+	}
+
+	assessments, err := executor.Execute(context.Background(), bossAction{Kind: bossActionSessionClassifications}, StateSnapshot{}, view)
+	if err != nil {
+		t.Fatalf("assessments Execute() error = %v", err)
+	}
+	if strings.Contains(assessments.Text, "Secret summary") || strings.Contains(assessments.Text, "/tmp/secret") {
+		t.Fatalf("privacy-filtered assessments = %q", assessments.Text)
+	}
+
+	search, err := executor.Execute(context.Background(), bossAction{Kind: bossActionSearchContext, Query: "summary"}, StateSnapshot{}, view)
+	if err != nil {
+		t.Fatalf("search Execute() error = %v", err)
+	}
+	if strings.Contains(search.Text, "SecretClient") || strings.Contains(search.Text, "Secret snippet") {
+		t.Fatalf("privacy-filtered context search = %q", search.Text)
+	}
+}
+
 func TestBuildViewContextBriefIncludesClassicTUIState(t *testing.T) {
 	t.Parallel()
 

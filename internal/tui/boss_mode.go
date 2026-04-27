@@ -42,6 +42,33 @@ func (m Model) updateBossModeWindowSize() (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m Model) updateBossModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if !m.bossModel.SessionPickerActive() {
+		if index, ok := bossModeAttentionJumpIndex(msg); ok {
+			return m.openBossAttentionProject(index)
+		}
+	}
+	return m.updateBossModeMessage(msg)
+}
+
+func (m Model) openBossAttentionProject(index int) (tea.Model, tea.Cmd) {
+	projectPath := m.bossModel.HotProjectPath(index)
+	if projectPath == "" {
+		m.status = fmt.Sprintf("No attention project is mapped to Alt+%d", index+1)
+		return m, nil
+	}
+	project, ok := m.projectSummaryByPathAllProjects(projectPath)
+	if !ok {
+		m.status = fmt.Sprintf("Project for Alt+%d is no longer in the list", index+1)
+		return m, nil
+	}
+	m.closeBossMode(fmt.Sprintf("Opening assistant session for %s", projectNameForPicker(project, project.Path)))
+	focusCmd := m.focusProjectPath(project.Path)
+	updated, launchCmd := m.launchEmbeddedForProject(project, m.preferredEmbeddedProviderForProject(project), false, "")
+	m = normalizeUpdateModel(updated)
+	return m, tea.Batch(focusCmd, launchCmd)
+}
+
 func (m Model) bossModeWindowSizeMsg() tea.WindowSizeMsg {
 	layout := m.bodyLayout()
 	return tea.WindowSizeMsg{Width: layout.width, Height: bossModeBodyHeight(layout.height)}
@@ -68,6 +95,7 @@ func (m Model) renderBossModeFooter(width int) string {
 	actions := []footerAction{
 		footerPrimaryAction("Enter", "send"),
 		footerNavAction("Alt+Enter", "newline"),
+		footerNavAction("Alt+1..8", "jump"),
 		footerLowAction("Alt+C", "copy input"),
 		footerNavAction("Ctrl+R", "refresh"),
 		footerHideAction("Alt+Up", "hide"),
@@ -115,6 +143,8 @@ func (m Model) bossViewContext() bossui.ViewContext {
 		Visibility:          string(m.visibility),
 		Filter:              strings.TrimSpace(m.projectFilter),
 		Status:              strings.TrimSpace(m.status),
+		PrivacyMode:         m.privacyMode,
+		PrivacyPatterns:     append([]string(nil), m.privacyPatterns...),
 	}
 	return view
 }
@@ -131,4 +161,18 @@ func normalizeBossModel(model tea.Model) bossui.Model {
 	default:
 		panic(fmt.Sprintf("boss mode update returned unsupported model type %T", model))
 	}
+}
+
+func bossModeAttentionJumpIndex(msg tea.KeyMsg) (int, bool) {
+	if !msg.Alt {
+		return 0, false
+	}
+	key := strings.TrimPrefix(msg.String(), "alt+")
+	if len(key) == 1 && key[0] >= '1' && key[0] <= '8' {
+		return int(key[0] - '1'), true
+	}
+	if len(msg.Runes) == 1 && msg.Runes[0] >= '1' && msg.Runes[0] <= '8' {
+		return int(msg.Runes[0] - '1'), true
+	}
+	return 0, false
 }

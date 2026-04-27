@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/model"
 	"lcroom/internal/service"
 	"lcroom/internal/terminalmd"
 
@@ -18,8 +19,9 @@ import (
 )
 
 const (
-	defaultBossWidth  = 112
-	defaultBossHeight = 32
+	defaultBossWidth     = 112
+	defaultBossHeight    = 32
+	summaryFlashDuration = time.Second
 )
 
 type Model struct {
@@ -57,6 +59,8 @@ type Model struct {
 	status       string
 	spinnerFrame int
 	nowFn        func() time.Time
+
+	summaryFlashUntil map[string]time.Time
 }
 
 type StateLoadedMsg struct {
@@ -97,9 +101,7 @@ type bossLayout struct {
 	bottomHeight     int
 	middleGapHeight  int
 	chatWidth        int
-	sideWidth        int
-	deskWidth        int
-	notebookWidth    int
+	attentionWidth   int
 	chatInnerWidth   int
 	transcriptHeight int
 	inputHeight      int
@@ -173,6 +175,15 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+func (m Model) RefreshCmd() tea.Cmd {
+	return m.loadStateCmd()
+}
+
+func (m Model) WithViewContext(view ViewContext) Model {
+	m.viewContext = view
+	return m
+}
+
 func (m Model) StatusText() string {
 	status := strings.TrimSpace(m.status)
 	if status == "" {
@@ -182,6 +193,13 @@ func (m Model) StatusText() string {
 		status = "thinking " + spinnerDots(m.spinnerFrame)
 	}
 	return status
+}
+
+func (m Model) HotProjectPath(index int) string {
+	if index < 0 || index >= len(m.snapshot.HotProjects) {
+		return ""
+	}
+	return strings.TrimSpace(m.snapshot.HotProjects[index].Path)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -195,6 +213,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stateLoaded = true
 		m.stateErr = msg.err
 		if msg.err == nil {
+			m.syncSummaryFlashes(msg.snapshot)
 			m.snapshot = msg.snapshot
 			m.status = m.assistant.Label()
 		} else {
@@ -262,6 +281,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyBossSessionsListed(msg)
 	case TickMsg:
 		m.spinnerFrame++
+		m.pruneSummaryFlashes()
 		return m, bossTickCmd()
 	case tea.KeyMsg:
 		m.chatSelection = bossTextSelection{}
@@ -334,46 +354,19 @@ func (m Model) View() string {
 		body = m.renderNarrow(layout)
 	} else {
 		chat := m.renderChat(layout)
-		situationWidth := layout.sideWidth
-		situation := m.renderSituation(situationWidth, layout.topHeight)
-		top := lipgloss.JoinHorizontal(
-			lipgloss.Top,
-			chat,
-			" ",
-			situation,
-		)
-		if delta := layout.width - blockWidth(top); delta > 0 {
-			situationWidth += delta
-			situation = m.renderSituation(situationWidth, layout.topHeight)
-			top = lipgloss.JoinHorizontal(lipgloss.Top, chat, " ", situation)
-		}
-
 		if layout.bottomHeight < 4 {
-			body = top
+			body = chat
 		} else {
-			attention := m.renderAttention(layout.deskWidth, layout.bottomHeight)
-			notesWidth := layout.notebookWidth
-			notes := m.renderPanel("Notes", NotesText(m.snapshot), notesWidth, layout.bottomHeight)
-			bottom := lipgloss.JoinHorizontal(
-				lipgloss.Top,
-				attention,
-				" ",
-				notes,
-			)
-			if delta := layout.width - blockWidth(bottom); delta > 0 {
-				notesWidth += delta
-				notes = m.renderPanel("Notes", NotesText(m.snapshot), notesWidth, layout.bottomHeight)
-				bottom = lipgloss.JoinHorizontal(lipgloss.Top, attention, " ", notes)
-			}
+			bottom := m.renderAttention(layout.attentionWidth, layout.bottomHeight)
 			if layout.middleGapHeight > 0 {
 				body = lipgloss.JoinVertical(
 					lipgloss.Left,
-					top,
+					chat,
 					fitRenderedBlock("", layout.width, layout.middleGapHeight),
 					bottom,
 				)
 			} else {
-				body = lipgloss.JoinVertical(lipgloss.Left, top, bottom)
+				body = lipgloss.JoinVertical(lipgloss.Left, chat, bottom)
 			}
 		}
 	}
@@ -419,12 +412,23 @@ func (m Model) askAssistantCmd(messages []ChatMessage, snapshot StateSnapshot, v
 func (m Model) loadStateCmd() tea.Cmd {
 	svc := m.svc
 	parent := m.ctx
+	options := m.stateSnapshotOptions()
 	return func() tea.Msg {
 		ctx, cancel := childContext(parent, 20*time.Second)
 		defer cancel()
-		snapshot, err := LoadStateSnapshot(ctx, svc, time.Now())
+		snapshot, err := LoadStateSnapshot(ctx, svc, time.Now(), options)
 		return StateLoadedMsg{snapshot: snapshot, err: err}
 	}
+}
+
+func (m Model) stateSnapshotOptions() StateSnapshotOptions {
+	if m.viewContext.Active {
+		return StateSnapshotOptions{
+			PrivacyMode:     m.viewContext.PrivacyMode,
+			PrivacyPatterns: append([]string(nil), m.viewContext.PrivacyPatterns...),
+		}
+	}
+	return stateSnapshotOptionsForService(m.svc)
 }
 
 func (m Model) exitCmd() tea.Cmd {
@@ -499,9 +503,7 @@ func (m Model) layout() bossLayout {
 			topHeight:        topHeight,
 			bottomHeight:     maxInt(0, height-topHeight),
 			chatWidth:        width,
-			sideWidth:        width,
-			deskWidth:        width,
-			notebookWidth:    width,
+			attentionWidth:   width,
 			chatInnerWidth:   chatInnerWidth,
 			transcriptHeight: transcriptHeight,
 			inputHeight:      inputHeight,
@@ -524,18 +526,12 @@ func (m Model) layout() bossLayout {
 		}
 	}
 	topHeight := maxInt(1, height-bottomHeight)
-	sideWidth := clampInt(width/4, 24, 36)
-	if m.embedded {
-		sideWidth = clampInt(width/6, 24, 30)
-	}
-	chatWidth := maxInt(40, width-sideWidth-1)
-	deskWidth := clampInt(width/3, 26, width/2)
-	notebookWidth := maxInt(24, width-deskWidth-1)
+	chatWidth := width
+	attentionWidth := width
 	chatInnerWidth := bossPanelInnerWidth(chatWidth)
 	if m.embedded {
-		topNeeded := maxInt(minTopHeight, panelHeightForWrappedContent(m.situationContent(), bossPanelInnerWidth(sideWidth)))
-		bottomNeeded := maxInt(minBottomHeight, panelHeightForWrappedContent(AttentionText(m.snapshot, m.now()), bossPanelInnerWidth(deskWidth)))
-		bottomNeeded = maxInt(bottomNeeded, panelHeightForWrappedContent(NotesText(m.snapshot), bossPanelInnerWidth(notebookWidth)))
+		topNeeded := minTopHeight
+		bottomNeeded := maxInt(minBottomHeight, panelHeightForRawLines(countBlockLines(m.attentionContent(attentionWidth, minBottomHeight))))
 		maxBottomHeight := embeddedBottomPanelMaxHeight(height)
 		bottomHeight = clampInt(bottomNeeded, minBottomHeight, maxBottomHeight)
 		if height-bottomHeight >= topNeeded {
@@ -559,9 +555,7 @@ func (m Model) layout() bossLayout {
 		bottomHeight:     bottomHeight,
 		middleGapHeight:  middleGapHeight,
 		chatWidth:        chatWidth,
-		sideWidth:        sideWidth,
-		deskWidth:        deskWidth,
-		notebookWidth:    notebookWidth,
+		attentionWidth:   attentionWidth,
 		chatInnerWidth:   chatInnerWidth,
 		transcriptHeight: transcriptHeight,
 		inputHeight:      inputHeight,
@@ -614,59 +608,194 @@ func (m Model) renderHeader(width int) string {
 	return bossHeaderStyle.Width(width).Render(fitLine(text, width))
 }
 
-func (m Model) renderSituation(width, height int) string {
-	return m.renderPanel("Situation", m.situationContent(), width, height)
-}
-
 func (m Model) renderAttention(width, height int) string {
-	return m.renderPanel("Attention", m.attentionContent(height), width, height)
+	return m.renderRawPanel("Attention", m.attentionContent(width, height), width, height)
 }
 
-func (m Model) attentionContent(height int) string {
-	return AttentionTextWithLimit(m.snapshot, m.now(), attentionProjectLimit(height))
+func (m Model) attentionContent(width, height int) string {
+	return m.renderAttentionRows(bossPanelInnerWidth(width), attentionProjectLimit(height))
 }
 
-func (m Model) situationContent() string {
-	status := m.status
-	if strings.TrimSpace(status) == "" {
-		status = "Boss chat warming up"
+func (m Model) renderAttentionRows(width, limit int) string {
+	width = maxInt(24, width)
+	limit = clampInt(limit, 1, hotProjectLimit)
+	if len(m.snapshot.HotProjects) == 0 {
+		return bossMutedStyle.Render(fitLine("Alt+1  waiting for projects", width))
 	}
-	boardState := "calm"
-	if m.snapshot.ConflictProjects > 0 {
-		boardState = "conflicts need attention"
-	} else if m.snapshot.PossiblyStuckProjects > 0 {
-		boardState = "some work may be stuck"
-	} else if m.snapshot.ActiveProjects > 0 {
-		boardState = "active work in progress"
+
+	keyW := 5
+	flagW := 2
+	assessmentW := 8
+	fixed := keyW + 1 + flagW + 1 + assessmentW + 2 + 2
+	remaining := maxInt(12, width-fixed)
+	nameW := clampInt(remaining/3, 14, 28)
+	summaryW := maxInt(10, remaining-nameW-2)
+	if summaryW < 14 && nameW > 14 {
+		shift := minInt(nameW-14, 14-summaryW)
+		nameW -= shift
+		summaryW += shift
 	}
-	room := []string{
-		"Board: " + boardState,
-		"Chat: " + status,
-	}
-	if m.sessionLoaded && strings.TrimSpace(m.sessionID) != "" {
-		title := strings.TrimSpace(m.sessionTitle)
-		if title == "" {
-			title = shortBossSessionID(m.sessionID)
+
+	rows := make([]string, 0, minInt(limit, len(m.snapshot.HotProjects)))
+	for i, project := range m.snapshot.HotProjects {
+		if i >= limit {
+			break
 		}
-		room = append(room, "Session: "+clipText(title, 48))
+		key := bossHotkeyStyle.Width(keyW).Render(fmt.Sprintf("Alt+%d", i+1))
+		flags := bossRepoFlagStyle(project).Width(flagW).Align(lipgloss.Left).Render(bossRepoFlagText(project))
+		assessmentText, assessmentStyle := bossAssessmentCell(project)
+		assessment := assessmentStyle.Width(assessmentW).Render(fitLine(assessmentText, assessmentW))
+		name := bossProjectNameStyle.Width(nameW).Render(fitLine(compactProjectName(project), nameW))
+		summaryStyle := bossSummaryStyle(project)
+		if m.summaryFlashActive(project.Path) {
+			summaryStyle = bossSummaryFlashStyle
+		}
+		summary := summaryStyle.Width(summaryW).Render(fitLine(bossProjectSummaryText(project, m.now()), summaryW))
+		rows = append(rows, fitStyledLine(lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			key,
+			" ",
+			flags,
+			" ",
+			assessment,
+			"  ",
+			name,
+			"  ",
+			summary,
+		), width))
 	}
-	room = append(room,
-		fmt.Sprintf("Projects: %d total", m.snapshot.TotalProjects),
-		fmt.Sprintf("Active: %d  Stuck: %d", m.snapshot.ActiveProjects, m.snapshot.PossiblyStuckProjects),
-		fmt.Sprintf("Dirty repos: %d", m.snapshot.DirtyProjects),
-		fmt.Sprintf("Conflicts: %d", m.snapshot.ConflictProjects),
-	)
-	if m.snapshot.PendingClassifications > 0 {
-		room = append(room, fmt.Sprintf("Assessments: %d queued/running", m.snapshot.PendingClassifications))
+	return strings.Join(rows, "\n")
+}
+
+func bossRepoFlagText(project ProjectBrief) string {
+	switch {
+	case project.RepoConflict:
+		return "!"
+	case project.RepoDirty:
+		return "!"
+	case repoSyncFlag(project.RepoSyncStatus, project.RepoAheadCount, project.RepoBehindCount) != "":
+		return "!"
+	default:
+		return ""
 	}
-	if m.stateErr != nil {
-		room = append(room, "State: "+m.stateErr.Error())
-	} else if m.stateLoaded {
-		room = append(room, "State: loaded")
-	} else {
-		room = append(room, "State: loading...")
+}
+
+func bossRepoFlagStyle(project ProjectBrief) lipgloss.Style {
+	style := bossMutedStyle
+	switch {
+	case project.RepoConflict:
+		style = bossRepoConflictStyle
+	case project.RepoDirty:
+		style = bossRepoDangerStyle
+	case repoSyncFlag(project.RepoSyncStatus, project.RepoAheadCount, project.RepoBehindCount) != "":
+		style = bossRepoWarningStyle
 	}
-	return strings.Join(room, "\n")
+	return style
+}
+
+func bossAssessmentCell(project ProjectBrief) (string, lipgloss.Style) {
+	if label, category, ok := bossVisibleAssessmentStatus(project); ok {
+		return label, bossAssessmentCategoryStyle(category)
+	}
+	switch project.ClassificationStatus {
+	case model.ClassificationPending:
+		return "queued", bossAssessmentPendingStyle
+	case model.ClassificationRunning:
+		return "running", bossAssessmentRunningStyle
+	case model.ClassificationFailed:
+		return "failed", bossAssessmentFailedStyle
+	default:
+		if strings.TrimSpace(project.LatestFormat) != "" {
+			return "new", bossMutedStyle
+		}
+		if project.Status != "" {
+			return bossAttentionStatusLabel(project.Status), bossStatusStyle(project.Status)
+		}
+		return "-", bossMutedStyle
+	}
+}
+
+func bossVisibleAssessmentStatus(project ProjectBrief) (string, model.SessionCategory, bool) {
+	if project.ClassificationStatus == model.ClassificationCompleted {
+		if label, ok := bossAssessmentStatusLabel(project.LatestCategory); ok {
+			return label, project.LatestCategory, true
+		}
+	}
+	if label, ok := bossAssessmentStatusLabel(project.LatestCompletedKind); ok {
+		return label, project.LatestCompletedKind, true
+	}
+	return "", model.SessionCategoryUnknown, false
+}
+
+func bossAssessmentStatusLabel(category model.SessionCategory) (string, bool) {
+	switch category {
+	case model.SessionCategoryCompleted:
+		return "done", true
+	case model.SessionCategoryBlocked:
+		return "blocked", true
+	case model.SessionCategoryWaitingForUser:
+		return "waiting", true
+	case model.SessionCategoryNeedsFollowUp:
+		return "followup", true
+	case model.SessionCategoryInProgress:
+		return "working", true
+	default:
+		return "", false
+	}
+}
+
+func bossAssessmentCategoryStyle(category model.SessionCategory) lipgloss.Style {
+	switch category {
+	case model.SessionCategoryCompleted:
+		return bossAssessmentDoneStyle
+	case model.SessionCategoryBlocked:
+		return bossAssessmentBlockedStyle
+	case model.SessionCategoryWaitingForUser:
+		return bossAssessmentWaitingStyle
+	case model.SessionCategoryNeedsFollowUp:
+		return bossAssessmentFollowupStyle
+	case model.SessionCategoryInProgress:
+		return bossAssessmentWorkingStyle
+	default:
+		return bossMutedStyle
+	}
+}
+
+func bossProjectSummaryText(project ProjectBrief, now time.Time) string {
+	if summary := bestProjectSummary(project); summary != "" {
+		return summary
+	}
+	if !project.LastActivity.IsZero() {
+		return relativeAge(now, project.LastActivity)
+	}
+	return "-"
+}
+
+func bossSummaryStyle(project ProjectBrief) lipgloss.Style {
+	if bestProjectSummary(project) == "" {
+		return bossMutedStyle
+	}
+	return bossSummaryTextStyle
+}
+
+func bossAttentionStatusLabel(status model.ProjectStatus) string {
+	switch status {
+	case model.StatusPossiblyStuck:
+		return "stuck"
+	default:
+		return string(status)
+	}
+}
+
+func bossStatusStyle(status model.ProjectStatus) lipgloss.Style {
+	switch status {
+	case model.StatusActive:
+		return bossAssessmentDoneStyle
+	case model.StatusPossiblyStuck:
+		return bossAssessmentBlockedStyle
+	default:
+		return bossAssessmentWaitingStyle
+	}
 }
 
 func (m Model) renderPanel(title, content string, width, height int) string {
@@ -699,14 +828,11 @@ func (m Model) renderNarrow(layout bossLayout) string {
 		return chat
 	}
 	if remainingHeight < 8 {
-		room := m.renderSituation(layout.sideWidth, remainingHeight)
-		return lipgloss.JoinVertical(lipgloss.Left, chat, room)
+		desk := m.renderAttention(layout.attentionWidth, remainingHeight)
+		return lipgloss.JoinVertical(lipgloss.Left, chat, desk)
 	}
-	roomHeight := remainingHeight / 2
-	deskHeight := remainingHeight - roomHeight
-	room := m.renderSituation(layout.sideWidth, roomHeight)
-	desk := m.renderAttention(layout.deskWidth, deskHeight)
-	return lipgloss.JoinVertical(lipgloss.Left, chat, room, desk)
+	desk := m.renderAttention(layout.attentionWidth, remainingHeight)
+	return lipgloss.JoinVertical(lipgloss.Left, chat, desk)
 }
 
 func (m Model) renderTranscript(width int) string {
@@ -727,6 +853,53 @@ func (m Model) now() time.Time {
 		return m.nowFn()
 	}
 	return time.Now()
+}
+
+func (m *Model) syncSummaryFlashes(next StateSnapshot) {
+	now := m.now()
+	if m.summaryFlashUntil == nil {
+		m.summaryFlashUntil = map[string]time.Time{}
+	}
+	previous := map[string]ProjectBrief{}
+	for _, project := range m.snapshot.HotProjects {
+		if path := strings.TrimSpace(project.Path); path != "" {
+			previous[path] = project
+		}
+	}
+	for _, project := range next.HotProjects {
+		path := strings.TrimSpace(project.Path)
+		if path == "" {
+			continue
+		}
+		if prev, ok := previous[path]; ok && bossSummaryFingerprint(prev) != bossSummaryFingerprint(project) {
+			m.summaryFlashUntil[path] = now.Add(summaryFlashDuration)
+		}
+	}
+	m.pruneSummaryFlashes()
+}
+
+func (m *Model) pruneSummaryFlashes() {
+	if len(m.summaryFlashUntil) == 0 {
+		return
+	}
+	now := m.now()
+	for path, until := range m.summaryFlashUntil {
+		if !until.IsZero() && !now.Before(until) {
+			delete(m.summaryFlashUntil, path)
+		}
+	}
+}
+
+func (m Model) summaryFlashActive(projectPath string) bool {
+	if len(m.summaryFlashUntil) == 0 {
+		return false
+	}
+	until, ok := m.summaryFlashUntil[strings.TrimSpace(projectPath)]
+	return ok && m.now().Before(until)
+}
+
+func bossSummaryFingerprint(project ProjectBrief) string {
+	return bestProjectSummary(project)
 }
 
 var (
@@ -750,6 +923,21 @@ var (
 			Foreground(bossPanelAccent).
 			Bold(true)
 	bossMutedStyle                  = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(bossPanelBackground)
+	bossHotkeyStyle                 = lipgloss.NewStyle().Foreground(bossPanelAccent).Background(bossPanelBackground).Bold(true)
+	bossProjectNameStyle            = lipgloss.NewStyle().Foreground(bossPanelText).Background(bossPanelBackground).Bold(true)
+	bossRepoWarningStyle            = lipgloss.NewStyle().Foreground(lipgloss.Color("178")).Background(bossPanelBackground).Bold(true)
+	bossRepoDangerStyle             = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Background(bossPanelBackground).Bold(true)
+	bossRepoConflictStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Background(bossPanelBackground).Bold(true)
+	bossAssessmentDoneStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Background(bossPanelBackground).Bold(true)
+	bossAssessmentBlockedStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Background(bossPanelBackground).Bold(true)
+	bossAssessmentWaitingStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Background(bossPanelBackground).Bold(true)
+	bossAssessmentFollowupStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Background(bossPanelBackground).Bold(true)
+	bossAssessmentWorkingStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Background(bossPanelBackground).Bold(true)
+	bossAssessmentPendingStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Background(bossPanelBackground).Bold(true)
+	bossAssessmentRunningStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Background(bossPanelBackground).Bold(true)
+	bossAssessmentFailedStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Background(bossPanelBackground).Bold(true)
+	bossSummaryTextStyle            = lipgloss.NewStyle().Foreground(bossPanelText).Background(bossPanelBackground)
+	bossSummaryFlashStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("186")).Bold(true)
 	bossAssistantMessageBackground  = bossPanelBackground
 	bossUserMessageBackground       = lipgloss.Color("#101010")
 	bossAssistantMessageStyle       = lipgloss.NewStyle().Background(bossAssistantMessageBackground)

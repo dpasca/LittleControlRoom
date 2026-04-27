@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
+	"lcroom/internal/config"
 	"lcroom/internal/model"
 	"lcroom/internal/service"
 )
@@ -31,6 +33,7 @@ type StateSnapshot struct {
 type ProjectBrief struct {
 	Name                 string
 	Path                 string
+	Kind                 model.ProjectKind
 	Status               model.ProjectStatus
 	AttentionScore       int
 	LastActivity         time.Time
@@ -42,6 +45,7 @@ type ProjectBrief struct {
 	RepoBehindCount      int
 	OpenTODOCount        int
 	SnoozedUntil         *time.Time
+	LatestFormat         string
 	LatestSummary        string
 	LatestCompleted      string
 	LatestCategory       model.SessionCategory
@@ -50,7 +54,12 @@ type ProjectBrief struct {
 	Reasons              []model.AttentionReason
 }
 
-func LoadStateSnapshot(ctx context.Context, svc *service.Service, now time.Time) (StateSnapshot, error) {
+type StateSnapshotOptions struct {
+	PrivacyMode     bool
+	PrivacyPatterns []string
+}
+
+func LoadStateSnapshot(ctx context.Context, svc *service.Service, now time.Time, options ...StateSnapshotOptions) (StateSnapshot, error) {
 	if svc == nil || svc.Store() == nil {
 		return StateSnapshot{}, fmt.Errorf("service store is not available")
 	}
@@ -60,6 +69,13 @@ func LoadStateSnapshot(ctx context.Context, svc *service.Service, now time.Time)
 	projects, err := svc.Store().ListProjects(ctx, false)
 	if err != nil {
 		return StateSnapshot{}, err
+	}
+	opts := stateSnapshotOptionsForService(svc)
+	if len(options) > 0 {
+		opts = options[0]
+	}
+	if opts.PrivacyMode {
+		projects = filterProjectSummariesByPrivacy(projects, opts.PrivacyPatterns)
 	}
 
 	snapshot := StateSnapshot{
@@ -84,7 +100,7 @@ func LoadStateSnapshot(ctx context.Context, svc *service.Service, now time.Time)
 		snapshot.PendingClassifications = counts[model.ClassificationPending] + counts[model.ClassificationRunning]
 	}
 
-	for _, project := range projects {
+	for _, project := range selectRecentAttentionProjects(projects, hotProjectLimit) {
 		if len(snapshot.HotProjects) >= hotProjectLimit {
 			break
 		}
@@ -100,10 +116,22 @@ func LoadStateSnapshot(ctx context.Context, svc *service.Service, now time.Time)
 	return snapshot, nil
 }
 
+func stateSnapshotOptionsForService(svc *service.Service) StateSnapshotOptions {
+	if svc == nil {
+		return StateSnapshotOptions{}
+	}
+	cfg := svc.Config()
+	return StateSnapshotOptions{
+		PrivacyMode:     cfg.PrivacyMode,
+		PrivacyPatterns: append([]string(nil), cfg.PrivacyPatterns...),
+	}
+}
+
 func projectBriefFromSummary(project model.ProjectSummary) ProjectBrief {
 	return ProjectBrief{
 		Name:                 displayProjectName(project),
 		Path:                 strings.TrimSpace(project.Path),
+		Kind:                 model.NormalizeProjectKind(project.Kind),
 		Status:               project.Status,
 		AttentionScore:       project.AttentionScore,
 		LastActivity:         project.LastActivity,
@@ -115,6 +143,7 @@ func projectBriefFromSummary(project model.ProjectSummary) ProjectBrief {
 		RepoBehindCount:      project.RepoBehindCount,
 		OpenTODOCount:        project.OpenTODOCount,
 		SnoozedUntil:         project.SnoozedUntil,
+		LatestFormat:         strings.TrimSpace(project.LatestSessionFormat),
 		LatestSummary:        strings.TrimSpace(project.LatestSessionSummary),
 		LatestCompleted:      strings.TrimSpace(project.LatestCompletedSessionSummary),
 		LatestCategory:       project.LatestSessionClassificationType,
@@ -172,26 +201,16 @@ func AttentionTextWithLimit(snapshot StateSnapshot, now time.Time, limit int) st
 		if i >= limit {
 			break
 		}
-		label := fmt.Sprintf("%s: %s", project.Name, shortProjectState(project))
-		if project.AttentionScore > 0 {
-			label = fmt.Sprintf("%s (%d)", label, project.AttentionScore)
+		parts := []string{shortAttentionState(project)}
+		if repo := compactRepoFlag(project); repo != "" {
+			parts = append(parts, repo)
 		}
-		if !project.LastActivity.IsZero() {
-			label += ", " + relativeAge(now, project.LastActivity)
+		if summary := bestProjectSummary(project); summary != "" {
+			parts = append(parts, clipText(summary, 120))
+		} else if !project.LastActivity.IsZero() {
+			parts = append(parts, relativeAge(now, project.LastActivity))
 		}
-		lines = append(lines, label)
-	}
-	return strings.Join(lines, "\n")
-}
-
-func NotesText(snapshot StateSnapshot) string {
-	lines := []string{
-		"Chat is the control surface.",
-		"Panels are stationary assistant notes.",
-		"Classic TUI stays available for detail work.",
-	}
-	if snapshot.PendingClassifications > 0 {
-		lines = append(lines, fmt.Sprintf("Assessment queue: %d running/pending.", snapshot.PendingClassifications))
+		lines = append(lines, strings.Join(parts, " | "))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -234,6 +253,96 @@ func operationalProjectLineFor(project ProjectBrief, includeName bool) string {
 		parts = append(parts, "no recent summary loaded")
 	}
 	return strings.Join(parts, "; ")
+}
+
+func selectRecentAttentionProjects(projects []model.ProjectSummary, limit int) []model.ProjectSummary {
+	if limit <= 0 || len(projects) == 0 {
+		return nil
+	}
+	candidates := make([]model.ProjectSummary, 0, len(projects))
+	for _, project := range projects {
+		if project.PresentOnDisk {
+			candidates = append(candidates, project)
+		}
+	}
+	if len(candidates) == 0 {
+		candidates = projects
+	}
+	selected := append([]model.ProjectSummary(nil), candidates...)
+	sort.SliceStable(selected, func(i, j int) bool {
+		left := selected[i]
+		right := selected[j]
+		switch {
+		case left.LastActivity.IsZero() != right.LastActivity.IsZero():
+			return !left.LastActivity.IsZero()
+		case !left.LastActivity.Equal(right.LastActivity):
+			return left.LastActivity.After(right.LastActivity)
+		case left.AttentionScore != right.AttentionScore:
+			return left.AttentionScore > right.AttentionScore
+		default:
+			return displayProjectName(left) < displayProjectName(right)
+		}
+	})
+	if len(selected) > limit {
+		selected = selected[:limit]
+	}
+	return selected
+}
+
+func filterProjectSummariesByPrivacy(projects []model.ProjectSummary, privacyPatterns []string) []model.ProjectSummary {
+	if len(projects) == 0 || len(privacyPatterns) == 0 {
+		return projects
+	}
+	filtered := make([]model.ProjectSummary, 0, len(projects))
+	for _, project := range projects {
+		if !config.MatchesPrivacyPattern(project.Name, privacyPatterns) {
+			filtered = append(filtered, project)
+		}
+	}
+	return filtered
+}
+
+func compactProjectName(project ProjectBrief) string {
+	name := strings.TrimSpace(project.Name)
+	if name == "" {
+		name = "untitled project"
+	}
+	if model.NormalizeProjectKind(project.Kind) == model.ProjectKindScratchTask {
+		return "[T] " + name
+	}
+	return name
+}
+
+func shortAttentionState(project ProjectBrief) string {
+	state := string(project.Status)
+	switch project.Status {
+	case model.StatusPossiblyStuck:
+		state = "stuck"
+	case model.StatusActive:
+		state = "active"
+	case model.StatusIdle:
+		state = "idle"
+	case "":
+		state = "unknown"
+	}
+	if project.AttentionScore > 0 {
+		return fmt.Sprintf("%s %d", state, project.AttentionScore)
+	}
+	return state
+}
+
+func compactRepoFlag(project ProjectBrief) string {
+	var parts []string
+	if project.RepoConflict {
+		parts = append(parts, "conflict")
+	}
+	if project.RepoDirty {
+		parts = append(parts, "dirty")
+	}
+	if sync := repoSyncFlag(project.RepoSyncStatus, project.RepoAheadCount, project.RepoBehindCount); sync != "" {
+		parts = append(parts, sync)
+	}
+	return strings.Join(parts, ", ")
 }
 
 func operationalStatusLabel(project ProjectBrief, hasSummary bool) string {
@@ -359,6 +468,15 @@ func repoSyncLabel(status model.RepoSyncStatus, ahead, behind int) string {
 		return fmt.Sprintf("diverged +%d/-%d", ahead, behind)
 	default:
 		return ""
+	}
+}
+
+func repoSyncFlag(status model.RepoSyncStatus, ahead, behind int) string {
+	switch status {
+	case model.RepoSyncNoUpstream:
+		return "no upstream"
+	default:
+		return repoSyncLabel(status, ahead, behind)
 	}
 }
 
