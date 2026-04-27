@@ -5,6 +5,7 @@ import (
 
 	"lcroom/internal/codexslash"
 	"lcroom/internal/commands"
+	"lcroom/internal/slashcmd"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -88,35 +89,12 @@ func (m *Model) cycleAndApplyCodexSlashSuggestion(delta int) bool {
 	}
 	current := strings.TrimSpace(m.codexInput.Value())
 	suggestions := m.codexSlashSuggestions()
-	if len(suggestions) == 0 {
+	suggestion, selectedIndex, ok := slashcmd.CycleSuggestion(current, m.codexSlashSelected, suggestions, codexslash.Suggestions("/"), delta)
+	if !ok {
 		return false
 	}
-	selectedIndex := m.codexSlashSelected
-	if selectedIndex < 0 || selectedIndex >= len(suggestions) {
-		selectedIndex = 0
-	}
-	if index := codexSlashSuggestionIndex(suggestions, current); index >= 0 {
-		selectedIndex = index
-	}
-	if len(suggestions) == 1 {
-		if all := codexslash.Suggestions("/"); len(all) > 1 {
-			if index := codexSlashSuggestionIndex(all, current); index >= 0 {
-				suggestions = all
-				selectedIndex = index
-			}
-		}
-	}
-	if len(suggestions) > 1 && strings.EqualFold(current, suggestions[selectedIndex].Insert) {
-		selectedIndex += delta
-		if selectedIndex < 0 {
-			selectedIndex = len(suggestions) - 1
-		}
-		if selectedIndex >= len(suggestions) {
-			selectedIndex = 0
-		}
-	}
 	m.codexSlashSelected = selectedIndex
-	m.codexInput.SetValue(suggestions[selectedIndex].Insert)
+	m.codexInput.SetValue(suggestion.Insert)
 	m.codexInput.CursorEnd()
 	m.persistVisibleCodexDraft()
 	m.syncCodexComposerSize()
@@ -130,41 +108,14 @@ func (m Model) resolvedCodexSlashInput() string {
 		return raw
 	}
 	suggestion, ok := m.selectedCodexSlashSuggestion()
-	if ok {
-		insert := strings.TrimSpace(suggestion.Insert)
-		if strings.HasPrefix(strings.ToLower(insert), strings.ToLower(raw)) && !strings.EqualFold(insert, raw) {
-			return suggestion.Insert
-		}
-	}
-	if _, err := codexslash.Parse(raw); err == nil {
-		return raw
-	}
-	if !ok {
-		return raw
-	}
-	if strings.HasPrefix(strings.ToLower(suggestion.Insert), strings.ToLower(raw)) {
-		return suggestion.Insert
-	}
-	return raw
+	return slashcmd.ResolveInput(raw, suggestion, ok, func(input string) bool {
+		_, err := codexslash.Parse(input)
+		return err == nil
+	})
 }
 
 func (m Model) codexSlashSuggestionWindow(total int) (int, int) {
-	if total <= 0 {
-		return 0, 0
-	}
-	limit := min(4, total)
-	start := 0
-	if m.codexSlashSelected >= limit {
-		start = m.codexSlashSelected - limit + 1
-	}
-	maxStart := total - limit
-	if start > maxStart {
-		start = maxStart
-	}
-	if start < 0 {
-		start = 0
-	}
-	return start, start + limit
+	return slashcmd.SuggestionWindow(m.codexSlashSelected, total, min(4, total))
 }
 
 func (m Model) renderCodexSlashBlocks(width int) []string {
@@ -215,10 +166,5 @@ func (m Model) renderCodexSlashSuggestionRow(s codexslash.Suggestion, selected b
 }
 
 func codexSlashSuggestionIndex(suggestions []codexslash.Suggestion, raw string) int {
-	for i, suggestion := range suggestions {
-		if strings.EqualFold(strings.TrimSpace(suggestion.Insert), strings.TrimSpace(raw)) {
-			return i
-		}
-	}
-	return -1
+	return slashcmd.SuggestionIndex(suggestions, raw)
 }

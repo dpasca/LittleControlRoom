@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"lcroom/internal/slashcmd"
 )
 
 type Kind string
@@ -89,17 +91,9 @@ const (
 	FocusRuntime FocusTarget = "runtime"
 )
 
-type Spec struct {
-	Name    string
-	Usage   string
-	Summary string
-}
+type Spec = slashcmd.Spec
 
-type Suggestion struct {
-	Insert  string
-	Display string
-	Summary string
-}
+type Suggestion = slashcmd.Suggestion
 
 type Invocation struct {
 	Kind      Kind
@@ -183,14 +177,14 @@ func Suggestions(input string) []Suggestion {
 
 	body := strings.TrimSpace(strings.TrimPrefix(trimmed, "/"))
 	if body == "" {
-		return commandNameSuggestions("")
+		return slashcmd.NameSuggestions(specs, "")
 	}
 
 	hasTrailingSpace := strings.HasSuffix(trimmed, " ")
 	fields := strings.Fields(body)
 	namePrefix := strings.ToLower(fields[0])
 	if len(fields) == 1 && !hasTrailingSpace {
-		return commandNameSuggestions(namePrefix)
+		return slashcmd.NameSuggestions(specs, namePrefix)
 	}
 
 	switch namePrefix {
@@ -199,7 +193,7 @@ func Suggestions(input string) []Suggestion {
 		if len(fields) > 1 {
 			argPrefix = strings.ToLower(fields[len(fields)-1])
 		}
-		return enumSuggestions("/sort ", argPrefix,
+		return slashcmd.EnumSuggestions("/sort ", argPrefix,
 			choice("attention", "Sort by attention score"),
 			choice("recent", "Sort by recent activity"),
 		)
@@ -208,7 +202,7 @@ func Suggestions(input string) []Suggestion {
 		if len(fields) > 1 {
 			argPrefix = strings.ToLower(fields[len(fields)-1])
 		}
-		return enumSuggestions("/view ", argPrefix,
+		return slashcmd.EnumSuggestions("/view ", argPrefix,
 			choice("ai", "Show AI-linked folders only"),
 			choice("all", "Show all discovered folders"),
 		)
@@ -217,7 +211,7 @@ func Suggestions(input string) []Suggestion {
 		if len(fields) > 1 {
 			argPrefix = strings.ToLower(fields[len(fields)-1])
 		}
-		return enumSuggestions("/filter ", argPrefix,
+		return slashcmd.EnumSuggestions("/filter ", argPrefix,
 			choice("clear", "Remove the active project-name filter"),
 		)
 	case "sessions":
@@ -225,7 +219,7 @@ func Suggestions(input string) []Suggestion {
 		if len(fields) > 1 {
 			argPrefix = strings.ToLower(fields[len(fields)-1])
 		}
-		return enumSuggestions("/sessions ", argPrefix,
+		return slashcmd.EnumSuggestions("/sessions ", argPrefix,
 			choice("toggle", "Flip the Sessions section"),
 			choice("on", "Show the Sessions section"),
 			choice("off", "Hide the Sessions section"),
@@ -235,7 +229,7 @@ func Suggestions(input string) []Suggestion {
 		if len(fields) > 1 {
 			argPrefix = strings.ToLower(fields[len(fields)-1])
 		}
-		return enumSuggestions("/events ", argPrefix,
+		return slashcmd.EnumSuggestions("/events ", argPrefix,
 			choice("toggle", "Flip the Recent events section"),
 			choice("on", "Show the Recent events section"),
 			choice("off", "Hide the Recent events section"),
@@ -245,7 +239,7 @@ func Suggestions(input string) []Suggestion {
 		if len(fields) > 1 {
 			argPrefix = strings.ToLower(fields[len(fields)-1])
 		}
-		return enumSuggestions("/focus ", argPrefix,
+		return slashcmd.EnumSuggestions("/focus ", argPrefix,
 			choice("list", "Focus the project list"),
 			choice("detail", "Focus the detail pane"),
 			choice("runtime", "Focus the runtime pane"),
@@ -255,7 +249,7 @@ func Suggestions(input string) []Suggestion {
 		if len(fields) > 1 {
 			argPrefix = strings.ToLower(fields[len(fields)-1])
 		}
-		return enumSuggestions("/snooze ", argPrefix,
+		return slashcmd.EnumSuggestions("/snooze ", argPrefix,
 			choice("off", "Clear snooze"),
 			choice("1h", "Snooze for 1 hour"),
 			choice("4h", "Snooze for 4 hours"),
@@ -266,7 +260,7 @@ func Suggestions(input string) []Suggestion {
 		if len(fields) > 1 {
 			argPrefix = strings.ToLower(fields[len(fields)-1])
 		}
-		return enumSuggestions("/read ", argPrefix,
+		return slashcmd.EnumSuggestions("/read ", argPrefix,
 			choice("all", "Mark all visible projects as read"),
 		)
 	case "wt", "worktree":
@@ -274,7 +268,7 @@ func Suggestions(input string) []Suggestion {
 		if len(fields) > 1 {
 			argPrefix = strings.ToLower(fields[len(fields)-1])
 		}
-		return enumSuggestions("/wt ", argPrefix,
+		return slashcmd.EnumSuggestions("/wt ", argPrefix,
 			choice("lanes", "Expand or collapse the current worktree family"),
 			choice("merge", "Merge the selected linked worktree back into its parent branch"),
 			choice("remove", "Remove the selected linked worktree"),
@@ -285,7 +279,7 @@ func Suggestions(input string) []Suggestion {
 		if len(fields) > 1 {
 			argPrefix = strings.ToLower(fields[len(fields)-1])
 		}
-		return enumSuggestions("/privacy ", argPrefix,
+		return slashcmd.EnumSuggestions("/privacy ", argPrefix,
 			choice("toggle", "Flip demo privacy mode"),
 			choice("on", "Enable demo privacy mode"),
 			choice("off", "Disable demo privacy mode"),
@@ -295,13 +289,13 @@ func Suggestions(input string) []Suggestion {
 		if len(fields) > 1 {
 			argPrefix = strings.ToLower(fields[len(fields)-1])
 		}
-		return enumSuggestions("/boss ", argPrefix,
+		return slashcmd.EnumSuggestions("/boss ", argPrefix,
 			choice("on", "Open the boss chat layer"),
 			choice("off", "Close the boss chat layer"),
 			choice("toggle", "Toggle the boss chat layer"),
 		)
 	default:
-		return commandNameSuggestions(namePrefix)
+		return slashcmd.NameSuggestions(specs, namePrefix)
 	}
 }
 
@@ -319,7 +313,7 @@ func Parse(input string) (Invocation, error) {
 		return Invocation{}, fmt.Errorf("command required")
 	}
 
-	name, rawArgs := splitCommandBody(body)
+	name, rawArgs := slashcmd.SplitCommandBody(body)
 	switch strings.ToLower(name) {
 	case "help":
 		if rawArgs != "" {
@@ -384,7 +378,7 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{
 				Kind:      KindFilter,
 				Filter:    strings.TrimSpace(rawArgs),
-				Canonical: canonicalCommand("filter", rawArgs),
+				Canonical: slashcmd.CanonicalCommand("filter", rawArgs),
 			}, nil
 		}
 	case "new-project":
@@ -411,7 +405,7 @@ func Parse(input string) (Invocation, error) {
 		return Invocation{
 			Kind:      KindRun,
 			Command:   strings.TrimSpace(rawArgs),
-			Canonical: canonicalCommand("run", rawArgs),
+			Canonical: slashcmd.CanonicalCommand("run", rawArgs),
 		}, nil
 	case "restart":
 		if rawArgs != "" {
@@ -468,7 +462,7 @@ func Parse(input string) (Invocation, error) {
 		return Invocation{
 			Kind:      KindCommit,
 			Message:   strings.TrimSpace(rawArgs),
-			Canonical: canonicalCommand("commit", rawArgs),
+			Canonical: slashcmd.CanonicalCommand("commit", rawArgs),
 		}, nil
 	case "push":
 		if rawArgs != "" {
@@ -479,37 +473,37 @@ func Parse(input string) (Invocation, error) {
 		return Invocation{
 			Kind:      KindCodex,
 			Prompt:    strings.TrimSpace(rawArgs),
-			Canonical: canonicalCommand("codex", rawArgs),
+			Canonical: slashcmd.CanonicalCommand("codex", rawArgs),
 		}, nil
 	case "codex-new", "codex-start":
 		return Invocation{
 			Kind:      KindCodexNew,
 			Prompt:    strings.TrimSpace(rawArgs),
-			Canonical: canonicalCommand("codex-new", rawArgs),
+			Canonical: slashcmd.CanonicalCommand("codex-new", rawArgs),
 		}, nil
 	case "claude":
 		return Invocation{
 			Kind:      KindClaude,
 			Prompt:    strings.TrimSpace(rawArgs),
-			Canonical: canonicalCommand("claude", rawArgs),
+			Canonical: slashcmd.CanonicalCommand("claude", rawArgs),
 		}, nil
 	case "claude-new", "cc-start":
 		return Invocation{
 			Kind:      KindClaudeNew,
 			Prompt:    strings.TrimSpace(rawArgs),
-			Canonical: canonicalCommand("claude-new", rawArgs),
+			Canonical: slashcmd.CanonicalCommand("claude-new", rawArgs),
 		}, nil
 	case "opencode":
 		return Invocation{
 			Kind:      KindOpenCode,
 			Prompt:    strings.TrimSpace(rawArgs),
-			Canonical: canonicalCommand("opencode", rawArgs),
+			Canonical: slashcmd.CanonicalCommand("opencode", rawArgs),
 		}, nil
 	case "opencode-new", "oc-start":
 		return Invocation{
 			Kind:      KindOpenCodeNew,
 			Prompt:    strings.TrimSpace(rawArgs),
-			Canonical: canonicalCommand("opencode-new", rawArgs),
+			Canonical: slashcmd.CanonicalCommand("opencode-new", rawArgs),
 		}, nil
 	case "snooze":
 		switch strings.ToLower(strings.TrimSpace(rawArgs)) {
@@ -582,53 +576,8 @@ func Parse(input string) (Invocation, error) {
 	}
 }
 
-func splitCommandBody(body string) (string, string) {
-	for i, r := range body {
-		if r == ' ' || r == '\t' {
-			return body[:i], strings.TrimSpace(body[i+1:])
-		}
-	}
-	return body, ""
-}
-
-func commandNameSuggestions(prefix string) []Suggestion {
-	out := make([]Suggestion, 0, len(specs))
-	for _, spec := range specs {
-		if prefix != "" && !strings.HasPrefix(spec.Name, prefix) {
-			continue
-		}
-		out = append(out, Suggestion{
-			Insert:  "/" + spec.Name,
-			Display: spec.Usage,
-			Summary: spec.Summary,
-		})
-	}
-	return out
-}
-
-type enumChoice struct {
-	Value   string
-	Summary string
-}
-
-func choice(value, summary string) enumChoice {
-	return enumChoice{Value: value, Summary: summary}
-}
-
-func enumSuggestions(prefix, argPrefix string, choices ...enumChoice) []Suggestion {
-	out := make([]Suggestion, 0, len(choices))
-	for _, ch := range choices {
-		if argPrefix != "" && !strings.HasPrefix(ch.Value, argPrefix) {
-			continue
-		}
-		insert := prefix + ch.Value
-		out = append(out, Suggestion{
-			Insert:  insert,
-			Display: insert,
-			Summary: ch.Summary,
-		})
-	}
-	return out
+func choice(value, summary string) slashcmd.Choice {
+	return slashcmd.NewChoice(value, summary)
 }
 
 func parseSortMode(raw string) (SortMode, error) {
@@ -722,12 +671,4 @@ func formatDurationArg(d time.Duration) string {
 		return fmt.Sprintf("%dd", int(d/(24*time.Hour)))
 	}
 	return d.String()
-}
-
-func canonicalCommand(name, rawArgs string) string {
-	args := strings.TrimSpace(rawArgs)
-	if args == "" {
-		return "/" + name
-	}
-	return "/" + name + " " + args
 }

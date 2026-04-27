@@ -144,6 +144,16 @@ Inside the embedded Codex, Claude Code, or OpenCode pane:
 - `/compact`: Compact the embedded Codex conversation history when supported.
 - `/review`: Ask embedded Codex to review uncommitted changes.
 
+Inside boss chat:
+
+- `/new [prompt]`: Start a fresh boss chat session, optionally with the first prompt.
+- `/sessions [session-id]`: List saved boss chat sessions, or switch to one by ID.
+- `/session [session-id]` and `/resume [session-id]`: Aliases for `/sessions`.
+- `/help`: Show boss chat slash commands.
+- `/boss off`: Return to the classic TUI.
+
+Boss chat sessions are saved as JSONL text transcripts under the app data directory, for example `~/.little-control-room/boss-sessions/`.
+
 ## Core Workflows
 
 1. Start the dashboard with `lcroom tui` or `./lcroom tui`.

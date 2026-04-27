@@ -31,10 +31,17 @@ type Model struct {
 	width  int
 	height int
 
-	input         textarea.Model
-	chatViewport  viewport.Model
-	chatSelection bossTextSelection
-	messages      []ChatMessage
+	input             textarea.Model
+	chatViewport      viewport.Model
+	chatSelection     bossTextSelection
+	messages          []ChatMessage
+	bossSlashSelected int
+
+	sessionStore  *bossSessionStore
+	sessionID     string
+	sessionTitle  string
+	sessionLoaded bool
+	sessionErr    error
 
 	snapshot     StateSnapshot
 	viewContext  ViewContext
@@ -56,6 +63,23 @@ type AssistantReplyMsg struct {
 	err      error
 }
 
+type bossSessionLoadedMsg struct {
+	session  bossChatSession
+	messages []ChatMessage
+	created  bool
+	prompt   string
+	err      error
+}
+
+type bossSessionSavedMsg struct {
+	err error
+}
+
+type bossSessionsListedMsg struct {
+	sessions []bossChatSession
+	err      error
+}
+
 type TickMsg time.Time
 
 type ExitMsg struct{}
@@ -73,6 +97,7 @@ type bossLayout struct {
 	chatInnerWidth   int
 	transcriptHeight int
 	inputHeight      int
+	slashHeight      int
 	narrow           bool
 }
 
@@ -108,15 +133,18 @@ func newModel(ctx context.Context, svc *service.Service, embedded bool) Model {
 	input.Focus()
 
 	assistant := NewAssistant(svc)
+	sessionStore := newBossSessionStoreForService(svc)
 	m := Model{
-		ctx:          ctx,
-		svc:          svc,
-		assistant:    assistant,
-		embedded:     embedded,
-		input:        input,
-		chatViewport: viewport.New(0, 0),
-		status:       assistant.Label(),
-		nowFn:        time.Now,
+		ctx:           ctx,
+		svc:           svc,
+		assistant:     assistant,
+		embedded:      embedded,
+		input:         input,
+		chatViewport:  viewport.New(0, 0),
+		status:        assistant.Label(),
+		sessionStore:  sessionStore,
+		sessionLoaded: sessionStore == nil,
+		nowFn:         time.Now,
 	}
 	m.syncLayout(true)
 	return m
@@ -124,7 +152,7 @@ func newModel(ctx context.Context, svc *service.Service, embedded bool) Model {
 
 func IsMessage(msg tea.Msg) bool {
 	switch msg.(type) {
-	case StateLoadedMsg, AssistantReplyMsg, TickMsg, ExitMsg:
+	case StateLoadedMsg, AssistantReplyMsg, TickMsg, ExitMsg, bossSessionLoadedMsg, bossSessionSavedMsg, bossSessionsListedMsg:
 		return true
 	default:
 		return false
@@ -132,7 +160,11 @@ func IsMessage(msg tea.Msg) bool {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.loadStateCmd(), bossTickCmd(), tea.EnableMouseCellMotion)
+	cmds := []tea.Cmd{m.loadStateCmd(), bossTickCmd(), tea.EnableMouseCellMotion}
+	if m.hasPersistentSessions() {
+		cmds = append(cmds, m.loadLatestBossSessionCmd())
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m Model) StatusText() string {
@@ -166,28 +198,67 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case AssistantReplyMsg:
 		m.sending = false
+		var saved ChatMessage
 		if msg.err != nil {
-			m.messages = append(m.messages, ChatMessage{
+			saved = ChatMessage{
 				Role:    "assistant",
 				Content: "I could not reach my chat backend yet: " + msg.err.Error(),
 				At:      m.now(),
-			})
+			}
+			m.messages = append(m.messages, saved)
 			m.status = "Boss chat could not answer"
 		} else {
 			content := strings.TrimSpace(msg.response.Content)
 			if content == "" {
 				content = "I heard you, but the model returned an empty reply."
 			}
-			m.messages = append(m.messages, ChatMessage{
+			saved = ChatMessage{
 				Role:    "assistant",
 				Content: content,
 				At:      m.now(),
-			})
+			}
+			m.messages = append(m.messages, saved)
 			if modelName := strings.TrimSpace(msg.response.Model); modelName != "" {
 				m.status = "Boss chat via " + modelName
 			} else {
 				m.status = m.assistant.Label()
 			}
+		}
+		m.syncLayout(true)
+		return m, m.saveBossChatMessageCmd(saved)
+	case bossSessionLoadedMsg:
+		m.sessionLoaded = true
+		m.sessionErr = msg.err
+		if msg.err != nil {
+			m.status = "Boss chat session storage failed: " + msg.err.Error()
+		} else {
+			m.sessionID = strings.TrimSpace(msg.session.SessionID)
+			m.sessionTitle = strings.TrimSpace(msg.session.Title)
+			m.messages = chatMessagesFromBossMessages(msg.messages)
+			if msg.created {
+				m.status = "Boss chat session ready"
+			} else if len(m.messages) > 0 {
+				m.status = "Resumed boss chat session"
+			}
+		}
+		m.syncLayout(true)
+		if msg.err == nil && strings.TrimSpace(msg.prompt) != "" {
+			return m.submitChatMessage(msg.prompt)
+		}
+		return m, nil
+	case bossSessionSavedMsg:
+		if msg.err != nil {
+			m.sessionErr = msg.err
+			m.status = "Boss chat session save failed: " + msg.err.Error()
+		}
+		return m, nil
+	case bossSessionsListedMsg:
+		if msg.err != nil {
+			m.status = "Boss chat sessions failed: " + msg.err.Error()
+			m.messages = append(m.messages, ChatMessage{Role: "assistant", Content: "I could not load saved boss chat sessions: " + msg.err.Error(), At: m.now()})
+		} else {
+			m.status = "Boss chat sessions loaded"
+			m.messages = append(m.messages, ChatMessage{Role: "assistant", Content: formatBossSessionList(msg.sessions, m.now()), At: m.now()})
 		}
 		m.syncLayout(true)
 		return m, nil
@@ -196,6 +267,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, bossTickCmd()
 	case tea.KeyMsg:
 		m.chatSelection = bossTextSelection{}
+		if m.bossSlashActive() {
+			switch msg.String() {
+			case "tab":
+				if m.cycleAndApplyBossSlashSuggestion(1) {
+					return m, nil
+				}
+			case "shift+tab":
+				if m.cycleAndApplyBossSlashSuggestion(-1) {
+					return m, nil
+				}
+			}
+		}
 		switch msg.String() {
 		case "ctrl+c", "esc", "alt+up":
 			return m, m.exitCmd()
@@ -217,6 +300,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
+		m.syncBossSlashSelection()
 		m.syncLayout(false)
 		return m, cmd
 	case tea.MouseMsg:
@@ -303,20 +387,10 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 	if text == "" {
 		return m, nil
 	}
-	if bossOffCommand(text) {
-		m.input.Reset()
-		return m, m.exitCmd()
+	if strings.HasPrefix(text, "/") {
+		return m.runBossSlashCommand(text)
 	}
-	m.messages = append(m.messages, ChatMessage{
-		Role:    "user",
-		Content: text,
-		At:      m.now(),
-	})
-	m.input.Reset()
-	m.sending = true
-	m.status = "Boss chat is thinking..."
-	m.syncLayout(true)
-	return m, m.askAssistantCmd(append([]ChatMessage(nil), m.messages...), m.snapshot, m.viewContext)
+	return m.submitChatMessage(text)
 }
 
 func (m Model) askAssistantCmd(messages []ChatMessage, snapshot StateSnapshot, view ViewContext) tea.Cmd {
@@ -351,15 +425,6 @@ func (m Model) exitCmd() tea.Cmd {
 		return func() tea.Msg { return ExitMsg{} }
 	}
 	return tea.Sequence(tea.DisableMouse, tea.Quit)
-}
-
-func bossOffCommand(text string) bool {
-	switch strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(text)), " ")) {
-	case "/boss", "/boss off", "/boss close", "/boss exit":
-		return true
-	default:
-		return false
-	}
 }
 
 func childContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
@@ -420,6 +485,7 @@ func (m Model) layout() bossLayout {
 		if height-topHeight < 4 {
 			topHeight = height
 		}
+		transcriptHeight, slashHeight := m.chatAuxiliaryHeights(topHeight, inputHeight, false)
 		return bossLayout{
 			width:            width,
 			height:           height,
@@ -430,8 +496,9 @@ func (m Model) layout() bossLayout {
 			deskWidth:        width,
 			notebookWidth:    width,
 			chatInnerWidth:   chatInnerWidth,
-			transcriptHeight: maxInt(2, topHeight-inputHeight-5),
+			transcriptHeight: transcriptHeight,
 			inputHeight:      inputHeight,
+			slashHeight:      slashHeight,
 			narrow:           true,
 		}
 	}
@@ -476,7 +543,7 @@ func (m Model) layout() bossLayout {
 			}
 		}
 	}
-	transcriptHeight := maxInt(2, topHeight-inputHeight-5)
+	transcriptHeight, slashHeight := m.chatAuxiliaryHeights(topHeight, inputHeight, !m.embedded)
 	middleGapHeight := 0
 	return bossLayout{
 		width:            width,
@@ -491,7 +558,23 @@ func (m Model) layout() bossLayout {
 		chatInnerWidth:   chatInnerWidth,
 		transcriptHeight: transcriptHeight,
 		inputHeight:      inputHeight,
+		slashHeight:      slashHeight,
 	}
+}
+
+func (m Model) chatAuxiliaryHeights(topHeight, inputHeight int, includesHint bool) (int, int) {
+	hintHeight := 0
+	if includesHint {
+		hintHeight = 1
+	}
+	available := maxInt(1, topHeight-inputHeight-hintHeight-4)
+	rawSlashHeight := m.bossSlashBlockHeight()
+	slashHeight := 0
+	if rawSlashHeight > 0 {
+		slashHeight = minInt(rawSlashHeight, maxInt(0, available-1))
+	}
+	transcriptHeight := maxInt(1, available-slashHeight)
+	return transcriptHeight, slashHeight
 }
 
 func (m Model) renderChat(layout bossLayout) string {
@@ -501,8 +584,14 @@ func (m Model) renderChat(layout bossLayout) string {
 		transcript = overlayBossSelectionHighlight(transcript, m.chatSelection, m.chatViewport.YOffset)
 	}
 	parts := []string{transcript}
+	if slashBlock := m.renderBossSlashBlock(layout.chatInnerWidth, layout.slashHeight); slashBlock != "" {
+		parts = append(parts, slashBlock)
+	}
 	if !m.embedded {
 		hint := "Enter sends | Alt+Enter newline | Alt+C copy input | Ctrl+R refresh | Alt+Up exits"
+		if m.bossSlashActive() {
+			hint = "Enter runs command | Tab complete | Shift+Tab previous | Alt+Enter newline"
+		}
 		if m.sending {
 			hint = "Boss chat is thinking " + spinnerDots(m.spinnerFrame)
 		}
@@ -546,11 +635,20 @@ func (m Model) situationContent() string {
 	room := []string{
 		"Board: " + boardState,
 		"Chat: " + status,
+	}
+	if m.sessionLoaded && strings.TrimSpace(m.sessionID) != "" {
+		title := strings.TrimSpace(m.sessionTitle)
+		if title == "" {
+			title = shortBossSessionID(m.sessionID)
+		}
+		room = append(room, "Session: "+clipText(title, 48))
+	}
+	room = append(room,
 		fmt.Sprintf("Projects: %d total", m.snapshot.TotalProjects),
 		fmt.Sprintf("Active: %d  Stuck: %d", m.snapshot.ActiveProjects, m.snapshot.PossiblyStuckProjects),
 		fmt.Sprintf("Dirty repos: %d", m.snapshot.DirtyProjects),
 		fmt.Sprintf("Conflicts: %d", m.snapshot.ConflictProjects),
-	}
+	)
 	if m.snapshot.PendingClassifications > 0 {
 		room = append(room, fmt.Sprintf("Assessments: %d queued/running", m.snapshot.PendingClassifications))
 	}

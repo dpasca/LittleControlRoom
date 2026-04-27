@@ -65,15 +65,26 @@ func (m Model) renderBossModeHeader(width int) string {
 }
 
 func (m Model) renderBossModeFooter(width int) string {
-	return fitStyledWidth(renderFooterLine(
-		width,
-		renderFooterActionList(
-			footerPrimaryAction("Enter", "send"),
+	actions := []footerAction{
+		footerPrimaryAction("Enter", "send"),
+		footerNavAction("Alt+Enter", "newline"),
+		footerLowAction("Alt+C", "copy input"),
+		footerNavAction("Ctrl+R", "refresh"),
+		footerHideAction("Alt+Up", "hide"),
+	}
+	if m.bossModel.SlashActive() {
+		actions = []footerAction{
+			footerPrimaryAction("Enter", "run"),
+			footerNavAction("Tab", "complete"),
+			footerNavAction("Shift+Tab", "previous"),
 			footerNavAction("Alt+Enter", "newline"),
 			footerLowAction("Alt+C", "copy input"),
-			footerNavAction("Ctrl+R", "refresh"),
 			footerHideAction("Alt+Up", "hide"),
-		),
+		}
+	}
+	return fitStyledWidth(renderFooterLine(
+		width,
+		renderFooterActionList(actions...),
 		renderFooterMeta("/boss off also closes"),
 	), width)
 }

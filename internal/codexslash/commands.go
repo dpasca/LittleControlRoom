@@ -3,6 +3,8 @@ package codexslash
 import (
 	"fmt"
 	"strings"
+
+	"lcroom/internal/slashcmd"
 )
 
 type Kind string
@@ -18,18 +20,9 @@ const (
 	KindBoss      Kind = "boss"
 )
 
-type Spec struct {
-	Name    string
-	Usage   string
-	Summary string
-	Hidden  bool
-}
+type Spec = slashcmd.Spec
 
-type Suggestion struct {
-	Insert  string
-	Display string
-	Summary string
-}
+type Suggestion = slashcmd.Suggestion
 
 type Invocation struct {
 	Kind      Kind
@@ -67,12 +60,12 @@ func Suggestions(input string) []Suggestion {
 
 	body := strings.TrimSpace(strings.TrimPrefix(trimmed, "/"))
 	if body == "" {
-		return nameSuggestions("")
+		return slashcmd.NameSuggestions(specs, "")
 	}
 
 	fields := strings.Fields(body)
 	if len(fields) <= 1 && !strings.HasSuffix(trimmed, " ") {
-		return nameSuggestions(strings.ToLower(fields[0]))
+		return slashcmd.NameSuggestions(specs, strings.ToLower(fields[0]))
 	}
 
 	switch strings.ToLower(fields[0]) {
@@ -123,7 +116,7 @@ func Suggestions(input string) []Suggestion {
 			Summary: "Open the high-level boss chat layer",
 		}}
 	default:
-		return nameSuggestions(strings.ToLower(fields[0]))
+		return slashcmd.NameSuggestions(specs, strings.ToLower(fields[0]))
 	}
 }
 
@@ -141,13 +134,13 @@ func Parse(input string) (Invocation, error) {
 		return Invocation{}, fmt.Errorf("slash command required")
 	}
 
-	name, rawArgs := splitCommandBody(body)
+	name, rawArgs := slashcmd.SplitCommandBody(body)
 	switch strings.ToLower(name) {
 	case "new":
 		return Invocation{
 			Kind:      KindNew,
 			Prompt:    strings.TrimSpace(rawArgs),
-			Canonical: canonicalCommand("new", rawArgs),
+			Canonical: slashcmd.CanonicalCommand("new", rawArgs),
 		}, nil
 	case "resume", "session":
 		sessionID := strings.TrimSpace(rawArgs)
@@ -157,7 +150,7 @@ func Parse(input string) (Invocation, error) {
 		return Invocation{
 			Kind:      KindResume,
 			SessionID: sessionID,
-			Canonical: canonicalCommand("resume", rawArgs),
+			Canonical: slashcmd.CanonicalCommand("resume", rawArgs),
 		}, nil
 	case "model":
 		if strings.TrimSpace(rawArgs) != "" {
@@ -212,45 +205,10 @@ func Parse(input string) (Invocation, error) {
 	}
 }
 
-func splitCommandBody(body string) (string, string) {
-	for i, r := range body {
-		if r == ' ' || r == '\t' {
-			return body[:i], strings.TrimSpace(body[i+1:])
-		}
-	}
-	return body, ""
-}
-
-func nameSuggestions(prefix string) []Suggestion {
-	out := make([]Suggestion, 0, len(specs))
-	for _, spec := range specs {
-		if prefix == "" && spec.Hidden {
-			continue
-		}
-		if prefix != "" && !strings.HasPrefix(spec.Name, prefix) {
-			continue
-		}
-		out = append(out, Suggestion{
-			Insert:  "/" + spec.Name,
-			Display: spec.Usage,
-			Summary: spec.Summary,
-		})
-	}
-	return out
-}
-
 func resumeSuggestion(insert string) Suggestion {
 	return Suggestion{
 		Insert:  insert,
 		Display: insert + " [session-id]",
 		Summary: "Resume another embedded session for this project, or open a picker when no session ID is given",
 	}
-}
-
-func canonicalCommand(name, rawArgs string) string {
-	args := strings.TrimSpace(rawArgs)
-	if args == "" {
-		return "/" + name
-	}
-	return "/" + name + " " + args
 }
