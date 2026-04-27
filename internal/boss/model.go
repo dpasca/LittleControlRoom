@@ -431,30 +431,33 @@ func (m Model) layout() bossLayout {
 	}
 	topHeight := maxInt(1, height-bottomHeight)
 	sideWidth := clampInt(width/4, 24, 36)
+	if m.embedded {
+		sideWidth = clampInt(width/6, 24, 30)
+	}
 	chatWidth := maxInt(40, width-sideWidth-1)
 	deskWidth := clampInt(width/3, 26, width/2)
 	notebookWidth := maxInt(24, width-deskWidth-1)
 	chatInnerWidth := bossPanelInnerWidth(chatWidth)
 	if m.embedded {
-		topHeight = maxInt(minTopHeight, panelHeightForRawLines(maxInt(2, countBlockLines(m.renderTranscript(chatInnerWidth)))+1+inputHeight))
-		topHeight = maxInt(topHeight, panelHeightForWrappedContent(m.situationContent(), bossPanelInnerWidth(sideWidth)))
-		if height-topHeight >= 4 {
-			bottomHeight = maxInt(minBottomHeight, panelHeightForWrappedContent(AttentionText(m.snapshot, m.now()), bossPanelInnerWidth(deskWidth)))
-			bottomHeight = maxInt(bottomHeight, panelHeightForWrappedContent(NotesText(m.snapshot), bossPanelInnerWidth(notebookWidth)))
-			if bottomHeight > height-topHeight {
+		topNeeded := maxInt(minTopHeight, panelHeightForWrappedContent(m.situationContent(), bossPanelInnerWidth(sideWidth)))
+		bottomNeeded := maxInt(minBottomHeight, panelHeightForWrappedContent(AttentionText(m.snapshot, m.now()), bossPanelInnerWidth(deskWidth)))
+		bottomNeeded = maxInt(bottomNeeded, panelHeightForWrappedContent(NotesText(m.snapshot), bossPanelInnerWidth(notebookWidth)))
+		maxBottomHeight := embeddedBottomPanelMaxHeight(height)
+		bottomHeight = clampInt(bottomNeeded, minBottomHeight, maxBottomHeight)
+		if height-bottomHeight >= topNeeded {
+			topHeight = height - bottomHeight
+		} else {
+			topHeight = maxInt(topNeeded, height-minBottomHeight)
+			if topHeight >= height || height-topHeight < minBottomHeight {
+				topHeight = height
+				bottomHeight = 0
+			} else {
 				bottomHeight = height - topHeight
 			}
-		} else {
-			topHeight = height
-			bottomHeight = 0
 		}
-		topHeight, bottomHeight = expandEmbeddedWideRows(height, topHeight, bottomHeight)
 	}
 	transcriptHeight := maxInt(2, topHeight-inputHeight-5)
 	middleGapHeight := 0
-	if m.embedded && bottomHeight > 0 && height-topHeight-bottomHeight > 0 {
-		middleGapHeight = 1
-	}
 	return bossLayout{
 		width:            width,
 		height:           height,
@@ -666,21 +669,11 @@ func panelHeightForWrappedContent(content string, width int) int {
 	return panelHeightForRawLines(countWrappedBlockLines(content, width))
 }
 
-func expandEmbeddedWideRows(height, topHeight, bottomHeight int) (int, int) {
-	if bottomHeight <= 0 {
-		return topHeight, bottomHeight
+func embeddedBottomPanelMaxHeight(height int) int {
+	if height < 18 {
+		return maxInt(4, height/3)
 	}
-	freeHeight := height - topHeight - bottomHeight
-	if freeHeight <= 1 {
-		return topHeight, bottomHeight
-	}
-	freeHeight--
-	trailingSlack := freeHeight / 5
-	if trailingSlack == 0 && freeHeight > 1 {
-		trailingSlack = 1
-	}
-	bottomHeight += maxInt(0, freeHeight-trailingSlack)
-	return topHeight, bottomHeight
+	return clampInt(height/4, 8, 11)
 }
 
 func attentionProjectLimit(height int) int {

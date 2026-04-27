@@ -151,7 +151,7 @@ func TestEmbeddedModelHonorsShortHostHeight(t *testing.T) {
 	}
 }
 
-func TestEmbeddedModelKeepsTopRowContentSizedOnTallHosts(t *testing.T) {
+func TestEmbeddedModelGivesSpareHeightToChatOnTallHosts(t *testing.T) {
 	t.Parallel()
 
 	previousTopHeight := 0
@@ -171,29 +171,49 @@ func TestEmbeddedModelKeepsTopRowContentSizedOnTallHosts(t *testing.T) {
 
 		layout := m.layout()
 		renderedHeight := layout.topHeight + layout.middleGapHeight + layout.bottomHeight
-		if renderedHeight >= layout.height {
-			t.Fatalf("content-sized layout should leave terminal slack below the panels on tall hosts, got rendered height %d terminal height %d", renderedHeight, layout.height)
+		if renderedHeight != layout.height {
+			t.Fatalf("embedded layout should use the full host body height, got rendered height %d terminal height %d", renderedHeight, layout.height)
 		}
-		if previousTopHeight > 0 && layout.topHeight != previousTopHeight {
-			t.Fatalf("height %d top panel height = %d, want content-sized top row to stay stable at %d", height, layout.topHeight, previousTopHeight)
+		if layout.middleGapHeight != 0 {
+			t.Fatalf("height %d should not insert a separator row between panel bands, got gap %d", height, layout.middleGapHeight)
 		}
-		if previousTopHeight > 0 && layout.bottomHeight <= 0 {
-			t.Fatalf("height %d bottom panels should remain visible, got bottom height %d", height, layout.bottomHeight)
+		if layout.bottomHeight > embeddedBottomPanelMaxHeight(layout.height) {
+			t.Fatalf("height %d bottom panels = %d, want <= %d", height, layout.bottomHeight, embeddedBottomPanelMaxHeight(layout.height))
 		}
-		if height > 30 && layout.middleGapHeight != 1 {
-			t.Fatalf("height %d should use one separator row between panel bands, got gap %d", height, layout.middleGapHeight)
+		if previousTopHeight > 0 && layout.topHeight <= previousTopHeight {
+			t.Fatalf("height %d top panel height = %d, want chat row to gain spare terminal height beyond %d", height, layout.topHeight, previousTopHeight)
 		}
 		previousTopHeight = layout.topHeight
 	}
 }
 
-func TestEmbeddedModelExpandsTopRowForLongerConversation(t *testing.T) {
+func TestEmbeddedModelGivesChatMoreHorizontalRoom(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbedded(context.Background(), nil)
+	m.width = 180
+	m.height = 42
+
+	layout := m.layout()
+	if layout.sideWidth > 30 {
+		t.Fatalf("situation panel width = %d, want compact side panel", layout.sideWidth)
+	}
+	if layout.chatInnerWidth < 145 {
+		t.Fatalf("chat inner width = %d, want wider transcript column", layout.chatInnerWidth)
+	}
+	if layout.chatWidth+layout.sideWidth+1 != layout.width {
+		t.Fatalf("top row widths should consume the full row, got chat %d + side %d + gap = %d, width %d", layout.chatWidth, layout.sideWidth, layout.chatWidth+layout.sideWidth+1, layout.width)
+	}
+}
+
+func TestEmbeddedModelKeepsLowerPanelsCompactForLongerConversation(t *testing.T) {
 	t.Parallel()
 
 	m := NewEmbedded(context.Background(), nil)
 	m.width = 180
 	m.height = 52
 	baseTopHeight := m.layout().topHeight
+	baseBottomHeight := m.layout().bottomHeight
 
 	m.messages = append(m.messages,
 		ChatMessage{Role: "user", Content: "Give me a compact risk summary for the stuck projects, the active projects, and which dirty repos are probably safe to ignore for now."},
@@ -202,18 +222,18 @@ func TestEmbeddedModelExpandsTopRowForLongerConversation(t *testing.T) {
 	)
 
 	layout := m.layout()
-	if layout.topHeight <= baseTopHeight {
-		t.Fatalf("longer conversation should grow the top row, got base %d current %d", baseTopHeight, layout.topHeight)
+	if layout.topHeight != baseTopHeight {
+		t.Fatalf("longer conversation should scroll within the chat row, got base top %d current %d", baseTopHeight, layout.topHeight)
 	}
-	if layout.bottomHeight < 7 {
-		t.Fatalf("longer conversation should still leave room for lower panels, got bottom height %d", layout.bottomHeight)
+	if layout.bottomHeight != baseBottomHeight {
+		t.Fatalf("longer conversation should not steal height from lower panels, got base bottom %d current %d", baseBottomHeight, layout.bottomHeight)
 	}
-	if layout.topHeight+layout.middleGapHeight+layout.bottomHeight > layout.height {
-		t.Fatalf("longer conversation layout heights = top %d + gap %d + bottom %d, want <= %d", layout.topHeight, layout.middleGapHeight, layout.bottomHeight, layout.height)
+	if layout.topHeight+layout.middleGapHeight+layout.bottomHeight != layout.height {
+		t.Fatalf("longer conversation layout heights = top %d + gap %d + bottom %d, want %d", layout.topHeight, layout.middleGapHeight, layout.bottomHeight, layout.height)
 	}
 }
 
-func TestEmbeddedModelFlowsMediumWidthPanelsFromTop(t *testing.T) {
+func TestEmbeddedModelKeepsMediumWidthLowerPanelsCompact(t *testing.T) {
 	t.Parallel()
 
 	m := NewEmbedded(context.Background(), nil)
@@ -240,21 +260,22 @@ func TestEmbeddedModelFlowsMediumWidthPanelsFromTop(t *testing.T) {
 	m.syncLayout(true)
 
 	layout := m.layout()
-	if layout.middleGapHeight != 1 {
-		t.Fatalf("medium-width layout should use one separator row, got %d", layout.middleGapHeight)
+	if layout.middleGapHeight != 0 {
+		t.Fatalf("medium-width layout should not use a separator row, got %d", layout.middleGapHeight)
 	}
-	intrinsicBottomHeight := maxInt(7, panelHeightForWrappedContent(AttentionText(m.snapshot, m.now()), bossPanelInnerWidth(layout.deskWidth)))
-	intrinsicBottomHeight = maxInt(intrinsicBottomHeight, panelHeightForWrappedContent(NotesText(m.snapshot), bossPanelInnerWidth(layout.notebookWidth)))
-	if layout.bottomHeight <= intrinsicBottomHeight {
-		t.Fatalf("medium-width layout should give spare height to lower panels, got bottom height %d intrinsic %d", layout.bottomHeight, intrinsicBottomHeight)
+	if layout.bottomHeight > embeddedBottomPanelMaxHeight(layout.height) {
+		t.Fatalf("medium-width bottom panels = %d, want <= %d", layout.bottomHeight, embeddedBottomPanelMaxHeight(layout.height))
 	}
-	if renderedHeight := layout.topHeight + layout.middleGapHeight + layout.bottomHeight; renderedHeight >= layout.height {
-		t.Fatalf("medium-width panels should flow from the top and leave slack below, got rendered height %d terminal height %d", renderedHeight, layout.height)
+	if renderedHeight := layout.topHeight + layout.middleGapHeight + layout.bottomHeight; renderedHeight != layout.height {
+		t.Fatalf("medium-width panels should fill the host body, got rendered height %d terminal height %d", renderedHeight, layout.height)
+	}
+	if layout.topHeight <= layout.bottomHeight {
+		t.Fatalf("chat row should be taller than lower panels, got top %d bottom %d", layout.topHeight, layout.bottomHeight)
 	}
 
 	rendered := ansi.Strip(m.View())
-	if !strings.Contains(rendered, "release_notes") {
-		t.Fatalf("expanded lower panels should show more loaded hot projects:\n%s", rendered)
+	if !strings.Contains(rendered, "LittleControlRoom") {
+		t.Fatalf("compact lower panels should still show the highest-attention project:\n%s", rendered)
 	}
 	lines := strings.Split(rendered, "\n")
 	bottomBorderLine := layout.topHeight + layout.middleGapHeight + layout.bottomHeight - 1
@@ -264,10 +285,8 @@ func TestEmbeddedModelFlowsMediumWidthPanelsFromTop(t *testing.T) {
 	if !strings.HasPrefix(lines[bottomBorderLine], "╰") {
 		t.Fatalf("bottom panels should keep their bottom border visible, got %q", lines[bottomBorderLine])
 	}
-	for i := bottomBorderLine + 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) != "" {
-			t.Fatalf("rows after content-sized panels should be blank, line %d = %q", i, lines[i])
-		}
+	if bottomBorderLine != len(lines)-1 {
+		t.Fatalf("bottom panels should finish on the final embedded body row, got border row %d line count %d", bottomBorderLine, len(lines))
 	}
 }
 
