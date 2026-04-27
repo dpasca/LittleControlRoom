@@ -108,6 +108,9 @@ func TestQueryExecutorSearchesContext(t *testing.T) {
 	}
 	for _, want := range []string{
 		`Context search for "FCX"`,
+		"Query time:",
+		"updated_at:",
+		"age_at_query:",
 		"/tmp/okmain",
 		"FCX",
 	} {

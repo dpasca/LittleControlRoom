@@ -326,8 +326,12 @@ func bossActionPlannerUserText(req AssistantRequest, toolResults []bossToolResul
 }
 
 func requestContextBrief(req AssistantRequest) string {
-	parts := []string{"Current app state brief:\n" + strings.TrimSpace(req.StateBrief)}
-	if brief := BuildViewContextBrief(req.View, time.Now()); brief != "" {
+	now := time.Now()
+	parts := []string{
+		"Current exchange time: " + formatBossTimestamp(now),
+		"Current app state brief:\n" + strings.TrimSpace(req.StateBrief),
+	}
+	if brief := BuildViewContextBrief(req.View, now); brief != "" {
 		parts = append(parts, brief)
 	}
 	return strings.Join(parts, "\n\n")

@@ -369,7 +369,11 @@ func (e *QueryExecutor) searchContext(ctx context.Context, action bossAction, vi
 		return bossToolResult{}, err
 	}
 
-	lines := []string{fmt.Sprintf("Context search for %q: %d matches.", query, len(results))}
+	now := e.now()
+	lines := []string{
+		fmt.Sprintf("Context search for %q: %d matches.", query, len(results)),
+		"Query time: " + formatBossTimestamp(now) + ".",
+	}
 	if action.IncludeHistorical {
 		lines[0] += " Historical/out-of-scope projects are included."
 	}
@@ -379,7 +383,6 @@ func (e *QueryExecutor) searchContext(ctx context.Context, action bossAction, vi
 	if note != "" {
 		lines = append(lines, "Target note: "+note)
 	}
-	now := e.now()
 	for i, result := range results {
 		label := result.Source
 		if label == "" {
@@ -390,7 +393,8 @@ func (e *QueryExecutor) searchContext(ctx context.Context, action bossAction, vi
 			line += " | session: " + result.SessionID
 		}
 		if !result.UpdatedAt.IsZero() {
-			line += " | updated " + relativeAge(now, result.UpdatedAt)
+			line += " | updated_at: " + formatBossTimestamp(result.UpdatedAt)
+			line += " | age_at_query: " + ageAtTime(now, result.UpdatedAt)
 		}
 		lines = append(lines, line)
 		if title := strings.TrimSpace(result.Title); title != "" && title != result.ProjectName {

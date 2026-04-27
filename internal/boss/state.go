@@ -303,6 +303,38 @@ func relativeAge(now, at time.Time) string {
 	}
 }
 
+func ageAtTime(now, at time.Time) string {
+	if at.IsZero() {
+		return "unknown"
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	d := now.Sub(at)
+	prefix := ""
+	if d < 0 {
+		d = -d
+		prefix = "-"
+	}
+	switch {
+	case d < time.Minute:
+		return prefix + "under 1m"
+	case d < time.Hour:
+		return fmt.Sprintf("%s%dm", prefix, int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%s%dh", prefix, int(d.Hours()))
+	default:
+		return fmt.Sprintf("%s%dd", prefix, int(d.Hours()/24))
+	}
+}
+
+func formatBossTimestamp(t time.Time) string {
+	if t.IsZero() {
+		return "unknown"
+	}
+	return t.Format(time.RFC3339)
+}
+
 func clipText(text string, limit int) string {
 	text = strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
 	if limit <= 0 {

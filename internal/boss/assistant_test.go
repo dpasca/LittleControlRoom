@@ -114,6 +114,9 @@ func TestAssistantReplyIncludesStateBriefAndRecentChat(t *testing.T) {
 	if len(runner.req.Messages) != 4 {
 		t.Fatalf("messages len = %d, want 4", len(runner.req.Messages))
 	}
+	if !strings.Contains(runner.req.Messages[0].Content, "Current exchange time:") {
+		t.Fatalf("exchange timestamp missing from first message: %+v", runner.req.Messages[0])
+	}
 	if !strings.Contains(runner.req.Messages[0].Content, "Visible projects: 2.") {
 		t.Fatalf("state brief missing from first message: %+v", runner.req.Messages[0])
 	}
