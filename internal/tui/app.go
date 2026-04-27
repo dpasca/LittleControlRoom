@@ -231,6 +231,7 @@ type codexTranscriptRenderCache struct {
 	denseBlockMode codexDenseBlockMode
 	transcriptRev  uint64
 	rendered       string
+	links          []codexTranscriptLinkSpan
 }
 
 type codexViewportContentState struct {
@@ -4230,6 +4231,13 @@ func (m Model) openArtifactCmd(path string) tea.Cmd {
 		}
 		return browserOpenMsg{projectPath: projectPath, status: "Opened artifact"}
 	}
+}
+
+func (m Model) openCodexLinkTargetCmd(target codexArtifactOpenTarget) tea.Cmd {
+	if strings.TrimSpace(target.Kind) == "url" {
+		return m.openBrowserURLCmd(target.Path, "open link", "Opened link")
+	}
+	return m.openArtifactCmd(target.Path)
 }
 
 func (m Model) openBrowserURLCmd(rawURL, action, successStatus string) tea.Cmd {

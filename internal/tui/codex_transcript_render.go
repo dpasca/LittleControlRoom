@@ -13,11 +13,22 @@ import (
 )
 
 func (m Model) renderCodexTranscriptEntries(snapshot codexapp.Snapshot, width int) string {
+	rendered, _ := m.renderCodexTranscriptEntriesWithLinks(snapshot, width)
+	return rendered
+}
+
+type codexTranscriptLinkSpan struct {
+	Target    codexArtifactOpenTarget
+	StartLine int
+	EndLine   int
+}
+
+func (m Model) renderCodexTranscriptEntriesWithLinks(snapshot codexapp.Snapshot, width int) (string, []codexTranscriptLinkSpan) {
 	if len(snapshot.Entries) == 0 {
 		snapshot.Entries = parseLegacyCodexTranscript(snapshot.Transcript)
 	}
 	if len(snapshot.Entries) == 0 {
-		return ""
+		return "", nil
 	}
 	entries := snapshot.Entries
 	blockMode := m.codexDenseBlockMode.normalized()
@@ -31,6 +42,8 @@ func (m Model) renderCodexTranscriptEntries(snapshot codexapp.Snapshot, width in
 	}
 	contentWidth := max(18, width-4)
 	blocks := make([]string, 0, len(entries)*2)
+	links := make([]codexTranscriptLinkSpan, 0)
+	lineIndex := 0
 	var previousKind codexapp.TranscriptKind
 	hasPrevious := false
 	lastGeneratedImageIndex := lastGeneratedImageEntryIndex(entries)
@@ -42,9 +55,12 @@ func (m Model) renderCodexTranscriptEntries(snapshot codexapp.Snapshot, width in
 		}
 		block := renderReasoningIndicator(reasoningLineCount, contentWidth)
 		if hasPrevious {
-			blocks = append(blocks, codexTranscriptEntrySeparator(previousKind, codexapp.TranscriptReasoning))
+			separator := codexTranscriptEntrySeparator(previousKind, codexapp.TranscriptReasoning)
+			blocks = append(blocks, separator)
+			lineIndex += strings.Count(separator, "\n")
 		}
 		blocks = append(blocks, block)
+		lineIndex += strings.Count(block, "\n")
 		previousKind = codexapp.TranscriptReasoning
 		hasPrevious = true
 		reasoningLineCount = 0
@@ -65,16 +81,28 @@ func (m Model) renderCodexTranscriptEntries(snapshot codexapp.Snapshot, width in
 		})
 		if strings.TrimSpace(block) != "" {
 			if hasPrevious {
-				blocks = append(blocks, codexTranscriptEntrySeparator(previousKind, entry.Kind))
+				separator := codexTranscriptEntrySeparator(previousKind, entry.Kind)
+				blocks = append(blocks, separator)
+				lineIndex += strings.Count(separator, "\n")
 			}
+			startLine := lineIndex
 			blocks = append(blocks, block)
+			endLine := startLine + strings.Count(block, "\n") + 1
+			lineIndex += strings.Count(block, "\n")
+			for _, target := range codexOpenTargetsFromTranscriptEntry(entry) {
+				links = append(links, codexTranscriptLinkSpan{
+					Target:    target,
+					StartLine: startLine,
+					EndLine:   endLine,
+				})
+			}
 			previousKind = entry.Kind
 			hasPrevious = true
 		}
 	}
 	// Flush trailing reasoning (model still thinking)
 	flushReasoning()
-	return strings.Join(blocks, "")
+	return strings.Join(blocks, ""), links
 }
 
 func renderCodexTranscriptEntry(entry codexapp.TranscriptEntry, width int, blockMode codexDenseBlockMode) string {
