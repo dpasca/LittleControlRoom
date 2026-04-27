@@ -244,15 +244,20 @@ func TestQueryExecutorSearchesContext(t *testing.T) {
 	}
 	for _, want := range []string{
 		`Context search for "FCX"`,
+		"Internal routing note:",
+		"reference metadata:",
 		"Query time:",
-		"updated_at:",
-		"age_at_query:",
+		"updated_at=",
+		"age_at_query=",
 		"/tmp/okmain",
 		"FCX",
 	} {
 		if !strings.Contains(result.Text, want) {
 			t.Fatalf("tool result missing %q:\n%s", want, result.Text)
 		}
+	}
+	if strings.Contains(result.Text, "okmain | path:") {
+		t.Fatalf("search context should not format alias matches as user-facing project mappings:\n%s", result.Text)
 	}
 }
 

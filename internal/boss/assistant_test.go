@@ -154,22 +154,27 @@ func TestAssistantReplyLimitsChatHistory(t *testing.T) {
 	}
 }
 
-func TestBossPromptsPreferExecutiveBriefAndSearchBeforeUnknown(t *testing.T) {
+func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 	t.Parallel()
 
 	directPrompt := bossAssistantSystemPrompt()
 	for _, want := range []string{
-		"executive-brief assistant",
+		"teammate-style project assistant",
 		"extension of the active Codex, OpenCode, or Claude Code sessions",
 		"ongoing coworker chat",
 		"skip onboarding",
 		"highest-level read first",
-		"operational takeaway",
-		"latest meaningful work",
-		"concrete next validation, decision, or risk",
+		"in-the-know coworker",
+		"what we have working or learned",
+		"what we still need to validate, decide, or watch",
 		"Do not start with mapping phrases",
 		"Treat codenames as shared coworker context",
-		"sharp spoken update to a busy owner",
+		"Alias resolution is private routing",
+		"do not say '<alias> is in <project/repo>'",
+		"sharp but casual coworker update",
+		"Use we/us naturally",
+		"actively being worked",
+		"Do not lead with 'X is actively being worked'",
 		"latest session evidence",
 		"Minimize redundant information",
 		"repo hygiene, counts, scores, branches, freshness, or board stats only when they explain a real blocker or decision",
@@ -188,11 +193,15 @@ func TestBossPromptsPreferExecutiveBriefAndSearchBeforeUnknown(t *testing.T) {
 		"extension of the active Codex, OpenCode, or Claude Code sessions",
 		"after it finds one project path, inspect project_detail before answering",
 		"live assistant session context",
-		"concise executive brief",
+		"concise coworker update",
 		"turn tool output into judgment",
 		"answer the operational substance rather than reciting the lookup",
 		"codenames and aliases as shared coworker context",
-		"latest meaningful work plus the immediate validation, decision, or risk",
+		"Alias resolution is private routing",
+		"avoid phrasing like '<alias> is in <project>'",
+		"what we have working or learned, plus what we still need to validate, decide, or watch",
+		"Use we/us naturally",
+		"Do not lead with 'X is actively being worked'",
 		"Minimize redundant information",
 		"Do not include mappings, paths, dirty/ahead state, branch names, ages, attention scores, confidence, queue, or classification telemetry unless it materially changes what the user should do.",
 		"Treat repo hygiene as material only for conflicts",

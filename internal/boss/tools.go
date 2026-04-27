@@ -404,13 +404,14 @@ func (e *QueryExecutor) searchContext(ctx context.Context, action bossAction, vi
 	now := e.now()
 	lines := []string{
 		fmt.Sprintf("Context search for %q: %d matches.", query, len(results)),
+		"Internal routing note: use matches to choose project/context; do not present alias-to-project/repo mappings unless the user asks what or where the alias is.",
 		"Query time: " + formatBossTimestamp(now) + ".",
 	}
 	if action.IncludeHistorical {
 		lines[0] += " Historical/out-of-scope projects are included."
 	}
 	if path != "" {
-		lines[0] += " Project path: " + path + "."
+		lines[0] += " Reference project path: " + path + "."
 	}
 	if note != "" {
 		lines = append(lines, "Target note: "+note)
@@ -420,15 +421,25 @@ func (e *QueryExecutor) searchContext(ctx context.Context, action bossAction, vi
 		if label == "" {
 			label = "context"
 		}
-		line := fmt.Sprintf("%d. [%s] %s | path: %s", i+1, label, firstNonEmpty(result.ProjectName, result.Title, result.ProjectPath), result.ProjectPath)
+		line := fmt.Sprintf("%d. [%s] internal match", i+1, label)
+		metadata := []string{}
+		if project := strings.TrimSpace(firstNonEmpty(result.ProjectName, result.Title, result.ProjectPath)); project != "" {
+			metadata = append(metadata, "project="+project)
+		}
+		if path := strings.TrimSpace(result.ProjectPath); path != "" {
+			metadata = append(metadata, "path="+path)
+		}
 		if result.SessionID != "" {
-			line += " | session: " + result.SessionID
+			metadata = append(metadata, "session="+result.SessionID)
 		}
 		if !result.UpdatedAt.IsZero() {
-			line += " | updated_at: " + formatBossTimestamp(result.UpdatedAt)
-			line += " | age_at_query: " + ageAtTime(now, result.UpdatedAt)
+			metadata = append(metadata, "updated_at="+formatBossTimestamp(result.UpdatedAt))
+			metadata = append(metadata, "age_at_query="+ageAtTime(now, result.UpdatedAt))
 		}
 		lines = append(lines, line)
+		if len(metadata) > 0 {
+			lines = append(lines, "   reference metadata: "+strings.Join(metadata, "; "))
+		}
 		if title := strings.TrimSpace(result.Title); title != "" && title != result.ProjectName {
 			lines = append(lines, "   title: "+clipText(title, 220))
 		}
