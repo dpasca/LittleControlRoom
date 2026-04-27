@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/uistyle"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -182,9 +184,9 @@ func (m Model) renderBossSessionPicker(bodyW, bodyH int) string {
 func (m Model) renderBossSessionPickerContent(width, bodyH int) string {
 	lines := []string{
 		bossMutedStyle.Render(fitLine("Enter opens the selected session. Esc closes. /new starts fresh.", width)),
-		renderBossSessionPickerAction("Enter", "open") + "   " +
-			renderBossSessionPickerAction("Esc", "close") + "   " +
-			renderBossSessionPickerAction("Up/Down", "select"),
+		renderBossSessionPickerAction("Enter", "open", uistyle.DialogActionPrimary) + "   " +
+			renderBossSessionPickerAction("Esc", "close", uistyle.DialogActionCancel) + "   " +
+			renderBossSessionPickerAction("Up/Down", "select", uistyle.DialogActionNavigate),
 		"",
 	}
 	if m.sessionPickerLoading {
@@ -303,8 +305,8 @@ func formatBossSessionPickerActivity(at time.Time) string {
 	return at.Local().Format("01-02 15:04")
 }
 
-func renderBossSessionPickerAction(key, label string) string {
-	return bossSessionPickerKeyStyle.Render(key) + bossMutedStyle.Render(" "+label)
+func renderBossSessionPickerAction(key, label string, tone uistyle.DialogActionTone) string {
+	return uistyle.RenderDialogActionTone(key, label, tone, bossDialogActionFillStyle)
 }
 
 func overlayBossBlock(base, overlay string, width, height, left, top int) string {
@@ -353,10 +355,7 @@ var (
 						Foreground(lipgloss.Color("16")).
 						Background(bossPanelAccent).
 						Bold(true)
-	bossSessionPickerKeyStyle = lipgloss.NewStyle().
-					Foreground(lipgloss.Color("16")).
-					Background(bossPanelAccent).
-					Bold(true)
+	bossDialogActionFillStyle     = lipgloss.NewStyle().Background(bossPanelBackground)
 	bossSessionPickerSectionStyle = lipgloss.NewStyle().
 					Foreground(bossPanelAccent).
 					Background(bossPanelBackground).

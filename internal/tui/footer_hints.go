@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 
+	"lcroom/internal/uistyle"
+
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -28,16 +30,16 @@ var (
 	footerStatusStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
 	footerAlertStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
 	footerUsageStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("246"))
-	footerPrimaryKeyStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("42")).Bold(true)
-	footerPrimaryLabelStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("120")).Bold(true)
-	footerNavigateKeyStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("81")).Bold(true)
-	footerNavigateLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("153"))
-	footerExitKeyStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("160")).Bold(true)
-	footerExitLabelStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("210")).Bold(true)
-	footerHideKeyStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("214")).Bold(true)
-	footerHideLabelStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("222")).Bold(true)
-	footerLowKeyStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color("238")).Bold(true)
-	footerLowLabelStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	footerPrimaryKeyStyle    = uistyle.DialogActionPrimaryKeyStyle.UnsetPadding()
+	footerPrimaryLabelStyle  = uistyle.DialogActionPrimaryTextStyle
+	footerNavigateKeyStyle   = uistyle.DialogActionNavigateKeyStyle.UnsetPadding()
+	footerNavigateLabelStyle = uistyle.DialogActionNavigateTextStyle
+	footerExitKeyStyle       = uistyle.DialogActionCancelKeyStyle.UnsetPadding()
+	footerExitLabelStyle     = uistyle.DialogActionCancelTextStyle
+	footerHideKeyStyle       = uistyle.DialogActionSecondaryKeyStyle.UnsetPadding()
+	footerHideLabelStyle     = uistyle.DialogActionSecondaryTextStyle
+	footerLowKeyStyle        = uistyle.DialogActionDisabledKeyStyle.UnsetPadding()
+	footerLowLabelStyle      = uistyle.DialogActionDisabledTextStyle
 )
 
 func footerPrimaryAction(key, label string) footerAction {

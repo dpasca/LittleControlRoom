@@ -86,7 +86,7 @@ func (m Model) renderBossModeFooter(width int) string {
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "open"),
 			footerNavAction("Up/Down", "select"),
-			footerLowAction("Esc", "close"),
+			footerExitAction("Esc", "close"),
 			footerHideAction("Alt+Up", "hide"),
 		}
 	}

@@ -24,6 +24,7 @@ import (
 	"lcroom/internal/projectrun"
 	"lcroom/internal/service"
 	"lcroom/internal/sessionclassify"
+	"lcroom/internal/uistyle"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -3575,16 +3576,16 @@ var (
 	commitPreviewInfoStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	commitPreviewValueStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Bold(true)
 	dialogProjectTitleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
-	commitActionKeyStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("42")).Bold(true).Padding(0, 1)
-	commitActionTextStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("120")).Bold(true)
-	navigateActionKeyStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("81")).Bold(true).Padding(0, 1)
-	navigateActionTextStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("153")).Bold(true)
-	pushActionKeyStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("214")).Bold(true).Padding(0, 1)
-	pushActionTextStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("222")).Bold(true)
-	cancelActionKeyStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("160")).Bold(true).Padding(0, 1)
-	cancelActionTextStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("210")).Bold(true)
-	disabledActionKeyStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color("238")).Bold(true).Padding(0, 1)
-	disabledActionTextStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	commitActionKeyStyle      = uistyle.DialogActionPrimaryKeyStyle
+	commitActionTextStyle     = uistyle.DialogActionPrimaryTextStyle
+	navigateActionKeyStyle    = uistyle.DialogActionNavigateKeyStyle
+	navigateActionTextStyle   = uistyle.DialogActionNavigateTextStyle
+	pushActionKeyStyle        = uistyle.DialogActionSecondaryKeyStyle
+	pushActionTextStyle       = uistyle.DialogActionSecondaryTextStyle
+	cancelActionKeyStyle      = uistyle.DialogActionCancelKeyStyle
+	cancelActionTextStyle     = uistyle.DialogActionCancelTextStyle
+	disabledActionKeyStyle    = uistyle.DialogActionDisabledKeyStyle
+	disabledActionTextStyle   = uistyle.DialogActionDisabledTextStyle
 )
 
 const spinnerTickInterval = 120 * time.Millisecond
@@ -6303,7 +6304,7 @@ func renderCommitPreviewActions(canPush bool) string {
 }
 
 func renderDialogAction(key, label string, keyStyle, labelStyle lipgloss.Style) string {
-	return lipgloss.JoinHorizontal(lipgloss.Left, keyStyle.Render(key), dialogPanelFillStyle.Render(" "), labelStyle.Render(label))
+	return uistyle.RenderDialogAction(key, label, keyStyle, labelStyle, dialogPanelFillStyle)
 }
 
 func renderCommandPaletteActions() string {

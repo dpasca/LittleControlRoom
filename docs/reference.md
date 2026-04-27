@@ -8,6 +8,7 @@ Provider artifact and detector-footprint notes live in:
 
 - [`codex_cli_footprint.md`](codex_cli_footprint.md)
 - [`claude_code_footprint.md`](claude_code_footprint.md)
+- [`tui_design_rules.md`](tui_design_rules.md)
 
 ## CLI Commands
 
