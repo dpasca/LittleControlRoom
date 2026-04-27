@@ -17369,6 +17369,50 @@ func TestBossModeForwardsTypingToChatInput(t *testing.T) {
 	}
 }
 
+func TestBossModeRoutesSessionLoadBeforeEnterSubmit(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	st, err := store.Open(filepath.Join(dataDir, "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.DataDir = dataDir
+	cfg.DBPath = filepath.Join(dataDir, "little-control-room.sqlite")
+	svc := service.New(cfg, st, events.NewBus(), nil)
+	m := New(ctx, svc)
+	m.width = 100
+	m.height = 24
+
+	updated, initCmd := m.openBossMode()
+	got := updated.(Model)
+	for _, msg := range collectCmdMsgs(initCmd) {
+		if _, ok := msg.(bossui.TickMsg); ok {
+			continue
+		}
+		if !bossui.IsMessage(msg) {
+			continue
+		}
+		updated, _ = got.Update(msg)
+		got = updated.(Model)
+	}
+
+	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello boss")})
+	got = updated.(Model)
+	updated, cmd := got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should submit after session load; boss status = %q", got.bossModel.StatusText())
+	}
+	if strings.Contains(got.bossModel.StatusText(), "session is still loading") {
+		t.Fatalf("boss status = %q, want submitted chat", got.bossModel.StatusText())
+	}
+}
+
 func TestDispatchBossOffClosesBossMode(t *testing.T) {
 	m := Model{
 		bossMode:  true,

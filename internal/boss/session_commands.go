@@ -91,7 +91,7 @@ func (m Model) listBossSessionsCmd() tea.Cmd {
 		}
 		ctx, cancel := childContext(parent, 20*time.Second)
 		defer cancel()
-		sessions, err := store.listSessions(ctx, 12)
+		sessions, err := store.listSessions(ctx, 40)
 		return bossSessionsListedMsg{sessions: sessions, err: err}
 	}
 }

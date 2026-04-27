@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,7 +18,12 @@ import (
 	"lcroom/internal/service"
 )
 
-const bossSessionsDirName = "boss-sessions"
+const (
+	bossSessionsDirName       = "boss-sessions"
+	bossSessionFileExt        = ".md"
+	bossSessionHeadingPrefix  = "## "
+	bossSessionHeadingDivider = " @ "
+)
 
 type bossChatSession struct {
 	SessionID    string
@@ -32,17 +36,6 @@ type bossChatSession struct {
 
 type bossSessionStore struct {
 	dir string
-}
-
-type bossSessionRecord struct {
-	Type      string    `json:"type"`
-	SessionID string    `json:"session_id,omitempty"`
-	Title     string    `json:"title,omitempty"`
-	CreatedAt time.Time `json:"created_at,omitempty"`
-	UpdatedAt time.Time `json:"updated_at,omitempty"`
-	Role      string    `json:"role,omitempty"`
-	Content   string    `json:"content,omitempty"`
-	At        time.Time `json:"at,omitempty"`
 }
 
 func newBossSessionStore(dataDir string) *bossSessionStore {
@@ -117,12 +110,7 @@ func (s *bossSessionStore) createSession(ctx context.Context, now time.Time) (bo
 			CreatedAt: now,
 			UpdatedAt: now,
 		}
-		writeErr := writeBossSessionRecord(file, bossSessionRecord{
-			Type:      "session",
-			SessionID: sessionID,
-			CreatedAt: now,
-			UpdatedAt: now,
-		})
+		writeErr := writeBossSessionMarkdownHeader(file, sessionID, now)
 		closeErr := file.Close()
 		if writeErr != nil {
 			_ = os.Remove(path)
@@ -180,16 +168,18 @@ func (s *bossSessionStore) appendMessage(ctx context.Context, sessionID string, 
 		return fmt.Errorf("create boss sessions dir: %w", err)
 	}
 
+	needsHeader := false
 	session, _, err := readBossSessionFile(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return err
 		}
-		session = bossChatSession{SessionID: sessionID, CreatedAt: at}
+		session = bossChatSession{SessionID: sessionID}
+		needsHeader = true
 	}
-	title := strings.TrimSpace(session.Title)
-	if title == "" && role == "user" {
-		title = bossSessionTitleFromMessage(content)
+	if session.CreatedAt.IsZero() {
+		session.CreatedAt = at
+		needsHeader = true
 	}
 
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
@@ -198,33 +188,19 @@ func (s *bossSessionStore) appendMessage(ctx context.Context, sessionID string, 
 	}
 	defer file.Close()
 
-	if session.CreatedAt.IsZero() {
-		if err := writeBossSessionRecord(file, bossSessionRecord{
-			Type:      "session",
-			SessionID: sessionID,
-			Title:     title,
-			CreatedAt: at,
-			UpdatedAt: at,
-		}); err != nil {
+	if needsHeader {
+		if err := writeBossSessionMarkdownHeader(file, sessionID, session.CreatedAt); err != nil {
 			return err
 		}
 	}
-	if err := writeBossSessionRecord(file, bossSessionRecord{
-		Type:      "message",
-		SessionID: sessionID,
-		Role:      role,
-		Content:   content,
-		At:        at,
+	if err := writeBossSessionMarkdownMessage(file, ChatMessage{
+		Role:    role,
+		Content: content,
+		At:      at,
 	}); err != nil {
 		return err
 	}
-	return writeBossSessionRecord(file, bossSessionRecord{
-		Type:      "session",
-		SessionID: sessionID,
-		Title:     title,
-		CreatedAt: firstNonZeroTime(session.CreatedAt, at),
-		UpdatedAt: at,
-	})
+	return nil
 }
 
 func (s *bossSessionStore) listSessions(ctx context.Context, limit int) ([]bossChatSession, error) {
@@ -243,7 +219,7 @@ func (s *bossSessionStore) listSessions(ctx context.Context, limit int) ([]bossC
 	}
 	sessions := make([]bossChatSession, 0, len(entries))
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != bossSessionFileExt {
 			continue
 		}
 		session, _, err := readBossSessionFile(filepath.Join(s.dir, entry.Name()))
@@ -269,10 +245,14 @@ func (s *bossSessionStore) sessionPath(sessionID string) (string, error) {
 	if !validBossSessionID(sessionID) {
 		return "", fmt.Errorf("invalid boss chat session id: %s", sessionID)
 	}
-	return filepath.Join(s.dir, sessionID+".jsonl"), nil
+	return filepath.Join(s.dir, sessionID+bossSessionFileExt), nil
 }
 
 func readBossSessionFile(path string) (bossChatSession, []ChatMessage, error) {
+	return readBossSessionMarkdownFile(path)
+}
+
+func readBossSessionMarkdownFile(path string) (bossChatSession, []ChatMessage, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return bossChatSession{}, nil, err
@@ -281,53 +261,55 @@ func readBossSessionFile(path string) (bossChatSession, []ChatMessage, error) {
 
 	session := bossChatSession{Path: path}
 	var messages []ChatMessage
+	var role string
+	var at time.Time
+	var contentLines []string
+	flushMessage := func() {
+		if role == "" {
+			return
+		}
+		content := strings.TrimSpace(strings.Join(contentLines, "\n"))
+		if content == "" {
+			role = ""
+			at = time.Time{}
+			contentLines = nil
+			return
+		}
+		msg := ChatMessage{Role: role, Content: content, At: at}
+		messages = append(messages, msg)
+		session.MessageCount++
+		if msg.At.After(session.UpdatedAt) {
+			session.UpdatedAt = msg.At
+		}
+		if session.CreatedAt.IsZero() || (!msg.At.IsZero() && msg.At.Before(session.CreatedAt)) {
+			session.CreatedAt = msg.At
+		}
+		if session.Title == "" && msg.Role == "user" {
+			session.Title = bossSessionTitleFromMessage(msg.Content)
+		}
+		role = ""
+		at = time.Time{}
+		contentLines = nil
+	}
+
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 1024), 8*1024*1024)
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
+		line := scanner.Text()
+		if nextRole, nextAt, ok := parseBossSessionMarkdownHeading(line); ok {
+			flushMessage()
+			role = nextRole
+			at = nextAt
+			contentLines = nil
 			continue
 		}
-		var record bossSessionRecord
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
-			return bossChatSession{}, nil, fmt.Errorf("decode boss session record %s: %w", filepath.Base(path), err)
+		if role != "" {
+			contentLines = append(contentLines, line)
+			continue
 		}
-		switch record.Type {
-		case "session":
-			if strings.TrimSpace(record.SessionID) != "" {
-				session.SessionID = strings.TrimSpace(record.SessionID)
-			}
-			if strings.TrimSpace(record.Title) != "" {
-				session.Title = strings.TrimSpace(record.Title)
-			}
-			if !record.CreatedAt.IsZero() && (session.CreatedAt.IsZero() || record.CreatedAt.Before(session.CreatedAt)) {
-				session.CreatedAt = record.CreatedAt
-			}
-			if record.UpdatedAt.After(session.UpdatedAt) {
-				session.UpdatedAt = record.UpdatedAt
-			}
-		case "message":
-			msg := ChatMessage{
-				Role:    normalizeChatRole(record.Role),
-				Content: strings.TrimSpace(record.Content),
-				At:      record.At,
-			}
-			if msg.Content == "" {
-				continue
-			}
-			messages = append(messages, msg)
-			session.MessageCount++
-			if msg.At.After(session.UpdatedAt) {
-				session.UpdatedAt = msg.At
-			}
-			if session.CreatedAt.IsZero() || (!msg.At.IsZero() && msg.At.Before(session.CreatedAt)) {
-				session.CreatedAt = msg.At
-			}
-			if session.Title == "" && msg.Role == "user" {
-				session.Title = bossSessionTitleFromMessage(msg.Content)
-			}
-		}
+		parseBossSessionMarkdownMetadata(line, &session)
 	}
+	flushMessage()
 	if err := scanner.Err(); err != nil {
 		return bossChatSession{}, nil, fmt.Errorf("read boss session file %s: %w", filepath.Base(path), err)
 	}
@@ -335,22 +317,111 @@ func readBossSessionFile(path string) (bossChatSession, []ChatMessage, error) {
 		session.SessionID = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
 	if session.UpdatedAt.IsZero() {
+		session.UpdatedAt = session.CreatedAt
+	}
+	if session.UpdatedAt.IsZero() {
 		if info, err := file.Stat(); err == nil {
 			session.UpdatedAt = info.ModTime()
 		}
 	}
+	if session.CreatedAt.IsZero() {
+		session.CreatedAt = session.UpdatedAt
+	}
 	return session, messages, nil
 }
 
-func writeBossSessionRecord(w io.Writer, record bossSessionRecord) error {
-	encoded, err := json.Marshal(record)
-	if err != nil {
-		return fmt.Errorf("encode boss session record: %w", err)
+func parseBossSessionMarkdownMetadata(line string, session *bossChatSession) {
+	key, value, ok := strings.Cut(strings.TrimSpace(line), ":")
+	if !ok {
+		return
 	}
-	if _, err := w.Write(append(encoded, '\n')); err != nil {
-		return fmt.Errorf("write boss session record: %w", err)
+	value = strings.TrimSpace(value)
+	switch strings.TrimSpace(strings.ToLower(key)) {
+	case "session":
+		if value != "" {
+			session.SessionID = value
+		}
+	case "created":
+		if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+			session.CreatedAt = parsed
+		}
+	case "title":
+		if value != "" {
+			session.Title = value
+		}
+	}
+}
+
+func parseBossSessionMarkdownHeading(line string) (string, time.Time, bool) {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, bossSessionHeadingPrefix) {
+		return "", time.Time{}, false
+	}
+	body := strings.TrimSpace(strings.TrimPrefix(line, bossSessionHeadingPrefix))
+	roleText, timeText, ok := strings.Cut(body, bossSessionHeadingDivider)
+	if !ok {
+		return "", time.Time{}, false
+	}
+	role, ok := parseBossSessionMarkdownRole(roleText)
+	if !ok {
+		return "", time.Time{}, false
+	}
+	at, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(timeText))
+	if err != nil {
+		return "", time.Time{}, false
+	}
+	return role, at, true
+}
+
+func parseBossSessionMarkdownRole(role string) (string, bool) {
+	switch strings.TrimSpace(strings.ToLower(role)) {
+	case "user":
+		return "user", true
+	case "assistant":
+		return "assistant", true
+	default:
+		return "", false
+	}
+}
+
+func writeBossSessionMarkdownHeader(w io.Writer, sessionID string, createdAt time.Time) error {
+	if createdAt.IsZero() {
+		createdAt = time.Now()
+	}
+	_, err := fmt.Fprintf(w, "# Boss Chat Session\n\nSession: %s\nCreated: %s\n\n---\n", sessionID, createdAt.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("write boss session header: %w", err)
 	}
 	return nil
+}
+
+func writeBossSessionMarkdownMessage(w io.Writer, message ChatMessage) error {
+	content := strings.TrimSpace(message.Content)
+	if content == "" {
+		return nil
+	}
+	at := message.At
+	if at.IsZero() {
+		at = time.Now()
+	}
+	_, err := fmt.Fprintf(w, "\n%s%s%s%s\n\n%s\n",
+		bossSessionHeadingPrefix,
+		bossSessionMarkdownRole(message.Role),
+		bossSessionHeadingDivider,
+		at.UTC().Format(time.RFC3339Nano),
+		content,
+	)
+	if err != nil {
+		return fmt.Errorf("write boss session message: %w", err)
+	}
+	return nil
+}
+
+func bossSessionMarkdownRole(role string) string {
+	if normalizeChatRole(role) == "assistant" {
+		return "Assistant"
+	}
+	return "User"
 }
 
 func newBossSessionID(now time.Time) (string, error) {
@@ -393,11 +464,4 @@ func bossSessionTitleFromMessage(content string) string {
 		return title
 	}
 	return string(runes[:69]) + "..."
-}
-
-func firstNonZeroTime(first, second time.Time) time.Time {
-	if !first.IsZero() {
-		return first
-	}
-	return second
 }

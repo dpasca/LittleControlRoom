@@ -82,6 +82,14 @@ func (m Model) renderBossModeFooter(width int) string {
 			footerHideAction("Alt+Up", "hide"),
 		}
 	}
+	if m.bossModel.SessionPickerActive() {
+		actions = []footerAction{
+			footerPrimaryAction("Enter", "open"),
+			footerNavAction("Up/Down", "select"),
+			footerLowAction("Esc", "close"),
+			footerHideAction("Alt+Up", "hide"),
+		}
+	}
 	return fitStyledWidth(renderFooterLine(
 		width,
 		renderFooterActionList(actions...),

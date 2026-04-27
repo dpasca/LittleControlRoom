@@ -261,6 +261,52 @@ func TestQueryExecutorSearchesContext(t *testing.T) {
 	}
 }
 
+func TestQueryExecutorSearchesBossSessionsAsXMLSnippets(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	sessionStore := newBossSessionStore(t.TempDir())
+	now := time.Unix(1_800_000_000, 0)
+	session, err := sessionStore.createSession(ctx, now.Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("createSession() error = %v", err)
+	}
+	if err := sessionStore.appendMessage(ctx, session.SessionID, ChatMessage{
+		Role:    "user",
+		Content: "We discussed launch notes with <xml> and \"quotes\".\nKeep this raw for grep.",
+		At:      now.Add(-30 * time.Minute),
+	}); err != nil {
+		t.Fatalf("appendMessage() error = %v", err)
+	}
+
+	executor := newQueryExecutorWithBossSessions(nil, sessionStore)
+	executor.nowFn = func() time.Time { return now }
+	result, err := executor.Execute(ctx, bossAction{
+		Kind:  bossActionSearchBossSessions,
+		Query: "launch",
+		Limit: 4,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	for _, want := range []string{
+		`<boss_session_search query="launch" matches="1"`,
+		`<boss_session id="` + session.SessionID + `"`,
+		`<turn index="1" role="user"`,
+		"<![CDATA[",
+		`<xml>`,
+		`"quotes"`,
+		"Keep this raw for grep.",
+	} {
+		if !strings.Contains(result.Text, want) {
+			t.Fatalf("tool result missing %q:\n%s", want, result.Text)
+		}
+	}
+	if !strings.Contains(result.Text, "with <xml> and \"quotes\".\nKeep this raw") {
+		t.Fatalf("turn content should stay raw inside CDATA:\n%s", result.Text)
+	}
+}
+
 func TestQueryExecutorResolvesProjectNameThroughContextSearch(t *testing.T) {
 	t.Parallel()
 

@@ -948,6 +948,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, ok := msg.(bossui.ExitMsg); ok {
+		m.closeBossMode("Boss mode closed")
+		return m, nil
+	}
+	if m.bossMode && bossui.IsMessage(msg) {
+		return m.updateBossModeMessage(msg)
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -965,13 +973,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateBossModeWindowSize()
 		}
 		return m, nil
-	case bossui.ExitMsg:
-		m.closeBossMode("Boss mode closed")
-		return m, nil
-	case bossui.StateLoadedMsg, bossui.AssistantReplyMsg, bossui.TickMsg:
-		if m.bossMode {
-			return m.updateBossModeMessage(msg)
-		}
 	case tea.MouseMsg:
 		if m.bossMode {
 			msg.Y--

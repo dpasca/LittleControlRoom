@@ -21,6 +21,7 @@ const (
 	bossActionCurrentTUI             = "current_tui"
 	bossActionAssessmentQueue        = "assessment_queue"
 	bossActionSearchContext          = "search_context"
+	bossActionSearchBossSessions     = "search_boss_sessions"
 
 	bossToolResultLimit = 8000
 )
@@ -54,8 +55,9 @@ type bossStoreReader interface {
 }
 
 type QueryExecutor struct {
-	store bossStoreReader
-	nowFn func() time.Time
+	store        bossStoreReader
+	bossSessions *bossSessionStore
+	nowFn        func() time.Time
 }
 
 type ViewContext struct {
@@ -72,20 +74,31 @@ type ViewContext struct {
 }
 
 func newQueryExecutor(store bossStoreReader) *QueryExecutor {
-	if store == nil {
+	return newQueryExecutorWithBossSessions(store, nil)
+}
+
+func newQueryExecutorWithBossSessions(store bossStoreReader, bossSessions *bossSessionStore) *QueryExecutor {
+	if store == nil && bossSessions == nil {
 		return nil
 	}
 	return &QueryExecutor{
-		store: store,
-		nowFn: time.Now,
+		store:        store,
+		bossSessions: bossSessions,
+		nowFn:        time.Now,
 	}
 }
 
 func (e *QueryExecutor) Execute(ctx context.Context, action bossAction, snapshot StateSnapshot, view ViewContext) (bossToolResult, error) {
-	if e == nil || e.store == nil {
+	if e == nil {
 		return bossToolResult{}, errors.New("boss query tools are not connected to the project store")
 	}
 	kind := normalizeBossActionKind(action.Kind)
+	if kind == bossActionSearchBossSessions {
+		return e.searchBossSessions(ctx, action)
+	}
+	if e.store == nil {
+		return bossToolResult{}, errors.New("boss query tools are not connected to the project store")
+	}
 	switch kind {
 	case bossActionListProjects:
 		return e.listProjects(ctx, action)
@@ -104,6 +117,24 @@ func (e *QueryExecutor) Execute(ctx context.Context, action bossAction, snapshot
 	default:
 		return bossToolResult{}, fmt.Errorf("unknown boss action kind %q", strings.TrimSpace(action.Kind))
 	}
+}
+
+func (e *QueryExecutor) searchBossSessions(ctx context.Context, action bossAction) (bossToolResult, error) {
+	if e == nil || e.bossSessions == nil {
+		return clippedToolResult(bossActionSearchBossSessions, `<boss_session_search matches="0"><note>Boss chat session search is not connected.</note></boss_session_search>`), nil
+	}
+	query := strings.TrimSpace(action.Query)
+	if query == "" {
+		query = strings.TrimSpace(action.Target)
+	}
+	if query == "" {
+		return clippedToolResult(bossActionSearchBossSessions, `<boss_session_search matches="0"><note>Boss chat session search needs a non-empty query.</note></boss_session_search>`), nil
+	}
+	results, err := e.bossSessions.searchSessions(ctx, query, clampBossLimit(action.Limit, 6, 16))
+	if err != nil {
+		return bossToolResult{}, err
+	}
+	return clippedToolResult(bossActionSearchBossSessions, formatBossSessionSearchXML(query, results, e.now())), nil
 }
 
 func (e *QueryExecutor) listProjects(ctx context.Context, action bossAction) (bossToolResult, error) {

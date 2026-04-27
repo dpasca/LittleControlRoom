@@ -58,7 +58,7 @@ func NewAssistant(svc *service.Service) *Assistant {
 	return &Assistant{
 		runner:  runner,
 		planner: planner,
-		query:   newQueryExecutor(svc.Store()),
+		query:   newQueryExecutorWithBossSessions(svc.Store(), newBossSessionStoreForService(svc)),
 		model:   strings.TrimSpace(modelName),
 		backend: backend,
 	}
@@ -303,8 +303,9 @@ func bossActionPlannerSystemPrompt() string {
 		"You decide whether to answer now or request exactly one read-only query before answering.",
 		"Act like a high-level extension of the active Codex, OpenCode, or Claude Code sessions.",
 		"Use queries when the user asks about a concrete project, TODOs, assessment status, current TUI state, codenames, aliases, concepts, or anything that requires more than the compact brief.",
-		"Available read-only query kinds: list_projects, project_detail, session_classifications, todo_report, current_tui, assessment_queue, search_context.",
+		"Available read-only query kinds: list_projects, project_detail, session_classifications, todo_report, current_tui, assessment_queue, search_context, search_boss_sessions.",
 		"Use search_context when the user asks what a codename, acronym, feature, branch phrase, or unfamiliar term refers to; it searches project metadata, summaries, assessments, TODOs, and cached assistant-session text.",
+		"Use search_boss_sessions when the user asks to recall, search, or quote earlier boss chat conversations; it returns XML-like boss_session and turn snippets from saved local boss-chat transcripts.",
 		"Do not answer that a concrete term is unknown until search_context has been tried.",
 		"For codename or alias status questions, search_context should usually come first; after it finds one project path, inspect project_detail before answering.",
 		"Prefer project_detail when the answer depends on a project's current state, especially after another query identifies the relevant project.",
@@ -390,6 +391,7 @@ func bossActionSchema() map[string]any {
 					bossActionCurrentTUI,
 					bossActionAssessmentQueue,
 					bossActionSearchContext,
+					bossActionSearchBossSessions,
 				},
 			},
 			"answer": map[string]any{
@@ -403,7 +405,7 @@ func bossActionSchema() map[string]any {
 			},
 			"query": map[string]any{
 				"type":        "string",
-				"description": "Search text when kind is search_context; otherwise empty.",
+				"description": "Search text when kind is search_context or search_boss_sessions; otherwise empty.",
 			},
 			"project_path": map[string]any{
 				"type":        "string",
@@ -465,7 +467,7 @@ func validateBossAction(action bossAction) error {
 	switch action.Kind {
 	case bossActionAnswer:
 		return nil
-	case bossActionListProjects, bossActionProjectDetail, bossActionSessionClassifications, bossActionTodoReport, bossActionCurrentTUI, bossActionAssessmentQueue, bossActionSearchContext:
+	case bossActionListProjects, bossActionProjectDetail, bossActionSessionClassifications, bossActionTodoReport, bossActionCurrentTUI, bossActionAssessmentQueue, bossActionSearchContext, bossActionSearchBossSessions:
 		return nil
 	default:
 		return fmt.Errorf("boss chat returned unsupported action kind %q", action.Kind)

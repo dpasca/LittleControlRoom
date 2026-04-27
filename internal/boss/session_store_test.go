@@ -17,13 +17,13 @@ func TestBossSessionStorePersistsTranscriptFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createSession() error = %v", err)
 	}
-	if session.SessionID == "" || !strings.HasSuffix(session.Path, ".jsonl") {
-		t.Fatalf("session = %#v, want jsonl-backed session", session)
+	if session.SessionID == "" || !strings.HasSuffix(session.Path, ".md") {
+		t.Fatalf("session = %#v, want markdown-backed session", session)
 	}
 
 	if err := store.appendMessage(context.Background(), session.SessionID, ChatMessage{
 		Role:    "user",
-		Content: "Which project needs attention first?",
+		Content: "Which project needs \"attention\" first?\nPlease keep this grep-friendly.",
 		At:      now.Add(time.Minute),
 	}); err != nil {
 		t.Fatalf("appendMessage(user) error = %v", err)
@@ -40,7 +40,7 @@ func TestBossSessionStorePersistsTranscriptFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadSession() error = %v", err)
 	}
-	if loaded.Title != "Which project needs attention first?" {
+	if loaded.Title != "Which project needs \"attention\" first? Please keep this grep-friendly." {
 		t.Fatalf("title = %q", loaded.Title)
 	}
 	if loaded.MessageCount != 2 {
@@ -53,8 +53,12 @@ func TestBossSessionStorePersistsTranscriptFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile(session) error = %v", err)
 	}
-	if !strings.Contains(string(data), `"type":"message"`) || !strings.Contains(string(data), "Alpha needs") {
-		t.Fatalf("session file should be inspectable JSONL, got %q", string(data))
+	text := string(data)
+	if !strings.Contains(text, "## User @ ") || !strings.Contains(text, "Which project needs \"attention\" first?") || strings.Contains(text, `\"attention\"`) {
+		t.Fatalf("session file should be a grep-friendly markdown transcript, got %q", text)
+	}
+	if !strings.Contains(text, "## Assistant @ ") || !strings.Contains(text, "Alpha needs the first look.") {
+		t.Fatalf("session file missing assistant transcript, got %q", text)
 	}
 }
 
@@ -94,6 +98,59 @@ func TestBossSessionStoreLoadLatestCreatesFirstSession(t *testing.T) {
 	}
 	if !created || session.SessionID == "" || len(messages) != 0 {
 		t.Fatalf("loadLatestOrCreate() = (%#v, %d messages, %v), want fresh empty session", session, len(messages), created)
+	}
+}
+
+func TestBossSessionStoreAppendCreatesReadableMarkdownFile(t *testing.T) {
+	t.Parallel()
+
+	store := newBossSessionStore(t.TempDir())
+	now := time.Date(2026, 4, 27, 10, 0, 0, 0, time.UTC)
+	if err := store.appendMessage(context.Background(), "boss_manual_session", ChatMessage{Role: "user", Content: "Find the old launch notes", At: now}); err != nil {
+		t.Fatalf("appendMessage() error = %v", err)
+	}
+	path, err := store.sessionPath("boss_manual_session")
+	if err != nil {
+		t.Fatalf("sessionPath() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(session) error = %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{"# Boss Chat Session", "Session: boss_manual_session", "## User @ ", "Find the old launch notes"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("session markdown missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestBossSessionStoreSearchesMarkdownTurns(t *testing.T) {
+	t.Parallel()
+
+	store := newBossSessionStore(t.TempDir())
+	now := time.Date(2026, 4, 27, 10, 0, 0, 0, time.UTC)
+	session, err := store.createSession(context.Background(), now)
+	if err != nil {
+		t.Fatalf("createSession() error = %v", err)
+	}
+	if err := store.appendMessage(context.Background(), session.SessionID, ChatMessage{
+		Role:    "user",
+		Content: "Remember the launch notes?\nThey mention <xml> and \"quotes\".",
+		At:      now.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("appendMessage() error = %v", err)
+	}
+
+	matches, err := store.searchSessions(context.Background(), "LAUNCH", 4)
+	if err != nil {
+		t.Fatalf("searchSessions() error = %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("matches len = %d, want 1", len(matches))
+	}
+	if matches[0].Turn.Role != "user" || !strings.Contains(matches[0].Snippet, "<xml>") || !strings.Contains(matches[0].Snippet, `"quotes"`) {
+		t.Fatalf("match = %#v, want raw grep-friendly snippet", matches[0])
 	}
 }
 

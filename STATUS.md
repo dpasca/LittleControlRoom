@@ -38,7 +38,7 @@ Older notes from the previous rolling-log workflow live in [docs/status_archive.
 - Project mapping comes from session metadata `cwd` values.
 - OpenCode artifacts live primarily under `~/.local/share/opencode` and are mapped via session and project metadata.
 - Boss chat inference is configured separately from background project-analysis inference, so interactive chat can use direct API inference while summaries/classification continue to use Codex, OpenCode, Claude Code, MLX, Ollama, or another selected backend.
-- Boss chat transcripts are local JSONL text files under the app data directory (`boss-sessions/`), not SQLite rows.
+- Boss chat transcripts are local Markdown text files under the app data directory (`boss-sessions/`), not SQLite rows; assistant recall packages search matches as XML-like snippets at query time.
 - If detector assumptions change, update [docs/codex_cli_footprint.md](docs/codex_cli_footprint.md) in the same change.
 
 ## Status File Policy

@@ -3,7 +3,6 @@ package boss
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"lcroom/internal/bossslash"
 	"lcroom/internal/slashcmd"
@@ -116,8 +115,7 @@ func (m Model) runBossSlashCommand(raw string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if strings.TrimSpace(inv.SessionID) == "" {
-			m.status = "Loading boss chat sessions..."
-			return m, m.listBossSessionsCmd()
+			return m.openBossSessionPicker()
 		}
 		m.status = "Opening boss chat session " + shortBossSessionID(inv.SessionID) + "..."
 		return m, m.loadBossSessionCmd(inv.SessionID)
@@ -203,26 +201,6 @@ func renderBossSlashSuggestionRow(s bossslash.Suggestion, selected bool, width i
 	}
 	line := fmt.Sprintf("%s %-*s %s", marker, displayWidth, s.Display, s.Summary)
 	return style.Render(fitLine(line, width))
-}
-
-func formatBossSessionList(sessions []bossChatSession, now time.Time) string {
-	if len(sessions) == 0 {
-		return "No saved boss chat sessions yet. Use `/new` to start one."
-	}
-	lines := []string{"Recent boss chat sessions:"}
-	for _, session := range sessions {
-		title := strings.TrimSpace(session.Title)
-		if title == "" {
-			title = "untitled boss chat"
-		}
-		meta := []string{fmt.Sprintf("%d messages", session.MessageCount)}
-		if !session.UpdatedAt.IsZero() {
-			meta = append(meta, relativeAge(now, session.UpdatedAt))
-		}
-		lines = append(lines, fmt.Sprintf("- `%s` - %s (%s)", session.SessionID, clipText(title, 96), strings.Join(meta, ", ")))
-	}
-	lines = append(lines, "", "Switch with `/sessions <session-id>` or start over with `/new`.")
-	return strings.Join(lines, "\n")
 }
 
 func formatBossSlashHelp() string {

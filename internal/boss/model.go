@@ -43,6 +43,12 @@ type Model struct {
 	sessionLoaded bool
 	sessionErr    error
 
+	sessionPickerVisible  bool
+	sessionPickerLoading  bool
+	sessionPickerSessions []bossChatSession
+	sessionPickerSelected int
+	sessionPickerErr      error
+
 	snapshot     StateSnapshot
 	viewContext  ViewContext
 	stateLoaded  bool
@@ -253,20 +259,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case bossSessionsListedMsg:
-		if msg.err != nil {
-			m.status = "Boss chat sessions failed: " + msg.err.Error()
-			m.messages = append(m.messages, ChatMessage{Role: "assistant", Content: "I could not load saved boss chat sessions: " + msg.err.Error(), At: m.now()})
-		} else {
-			m.status = "Boss chat sessions loaded"
-			m.messages = append(m.messages, ChatMessage{Role: "assistant", Content: formatBossSessionList(msg.sessions, m.now()), At: m.now()})
-		}
-		m.syncLayout(true)
-		return m, nil
+		return m.applyBossSessionsListed(msg)
 	case TickMsg:
 		m.spinnerFrame++
 		return m, bossTickCmd()
 	case tea.KeyMsg:
 		m.chatSelection = bossTextSelection{}
+		if m.sessionPickerVisible {
+			return m.updateBossSessionPicker(msg)
+		}
 		if m.bossSlashActive() {
 			switch msg.String() {
 			case "tab":
@@ -304,6 +305,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncLayout(false)
 		return m, cmd
 	case tea.MouseMsg:
+		if m.sessionPickerVisible {
+			return m, nil
+		}
 		return m.updateMouse(msg)
 	}
 	return m, nil
@@ -372,6 +376,9 @@ func (m Model) View() string {
 				body = lipgloss.JoinVertical(lipgloss.Left, top, bottom)
 			}
 		}
+	}
+	if m.sessionPickerVisible {
+		body = m.renderBossSessionPickerOverlay(body, layout.width, layout.height)
 	}
 	if m.embedded {
 		return fitRenderedBlock(body, layout.width, layout.height)

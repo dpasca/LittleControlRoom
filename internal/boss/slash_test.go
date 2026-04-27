@@ -102,27 +102,38 @@ func TestBossLoadsLatestFileSessionOnOpen(t *testing.T) {
 	}
 }
 
-func TestBossSlashSessionsListsSavedSessions(t *testing.T) {
+func TestBossSlashSessionsOpensPickerAndLoadsSelection(t *testing.T) {
 	t.Parallel()
 
 	svc := newBossSessionTestService(t)
 	store := newBossSessionStore(svc.Config().DataDir)
 	now := time.Date(2026, 4, 27, 9, 0, 0, 0, time.UTC)
-	session, err := store.createSession(context.Background(), now)
+	older, err := store.createSession(context.Background(), now)
 	if err != nil {
 		t.Fatalf("createSession() error = %v", err)
 	}
-	if err := store.appendMessage(context.Background(), session.SessionID, ChatMessage{Role: "user", Content: "Saved topic", At: now}); err != nil {
+	if err := store.appendMessage(context.Background(), older.SessionID, ChatMessage{Role: "user", Content: "Older topic", At: now}); err != nil {
 		t.Fatalf("append message: %v", err)
+	}
+	newer, err := store.createSession(context.Background(), now.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("createSession() second error = %v", err)
+	}
+	if err := store.appendMessage(context.Background(), newer.SessionID, ChatMessage{Role: "user", Content: "Newer topic", At: now.Add(time.Hour)}); err != nil {
+		t.Fatalf("append second message: %v", err)
 	}
 
 	m := NewEmbedded(context.Background(), svc)
 	m.sessionLoaded = true
+	m.sessionID = newer.SessionID
 	m.input.SetValue("/sessions")
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
 	if cmd == nil {
 		t.Fatalf("/sessions should load the saved session list")
+	}
+	if !got.sessionPickerVisible || !got.sessionPickerLoading {
+		t.Fatalf("/sessions should open a loading picker: visible=%v loading=%v", got.sessionPickerVisible, got.sessionPickerLoading)
 	}
 	msg := cmd()
 	listed, ok := msg.(bossSessionsListedMsg)
@@ -131,8 +142,45 @@ func TestBossSlashSessionsListsSavedSessions(t *testing.T) {
 	}
 	updated, _ = got.Update(listed)
 	got = updated.(Model)
-	if len(got.messages) != 1 || !strings.Contains(got.messages[0].Content, session.SessionID) {
-		t.Fatalf("messages = %#v, want local sessions list", got.messages)
+	if !got.sessionPickerVisible || got.sessionPickerLoading {
+		t.Fatalf("listed sessions should keep picker open and stop loading: visible=%v loading=%v", got.sessionPickerVisible, got.sessionPickerLoading)
+	}
+	if len(got.messages) != 0 {
+		t.Fatalf("messages len = %d, want picker without transcript noise", len(got.messages))
+	}
+	rendered := ansi.Strip(got.View())
+	if !strings.Contains(rendered, "Boss Sessions") || !strings.Contains(rendered, "Newer topic") {
+		t.Fatalf("picker view missing saved sessions:\n%s", rendered)
+	}
+
+	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("down in picker should not queue a command")
+	}
+	if got.sessionPickerSelected != 1 {
+		t.Fatalf("sessionPickerSelected = %d, want 1", got.sessionPickerSelected)
+	}
+	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter in picker should load selected session")
+	}
+	if got.sessionPickerVisible {
+		t.Fatalf("picker should close before loading selected session")
+	}
+	loadMsg := cmd()
+	loaded, ok := loadMsg.(bossSessionLoadedMsg)
+	if !ok {
+		t.Fatalf("load cmd returned %T, want bossSessionLoadedMsg", loadMsg)
+	}
+	updated, _ = got.Update(loaded)
+	got = updated.(Model)
+	if got.sessionID != older.SessionID {
+		t.Fatalf("loaded session id = %q, want selected older session %q", got.sessionID, older.SessionID)
+	}
+	if len(got.messages) != 1 || got.messages[0].Content != "Older topic" {
+		t.Fatalf("messages = %#v, want selected session transcript", got.messages)
 	}
 }
 

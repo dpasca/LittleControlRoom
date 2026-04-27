@@ -147,12 +147,12 @@ Inside the embedded Codex, Claude Code, or OpenCode pane:
 Inside boss chat:
 
 - `/new [prompt]`: Start a fresh boss chat session, optionally with the first prompt.
-- `/sessions [session-id]`: List saved boss chat sessions, or switch to one by ID.
+- `/sessions [session-id]`: Open the saved-session picker, or switch directly by ID.
 - `/session [session-id]` and `/resume [session-id]`: Aliases for `/sessions`.
 - `/help`: Show boss chat slash commands.
 - `/boss off`: Return to the classic TUI.
 
-Boss chat sessions are saved as JSONL text transcripts under the app data directory, for example `~/.little-control-room/boss-sessions/`.
+Boss chat sessions are saved as grep-friendly Markdown transcripts under the app data directory, for example `~/.little-control-room/boss-sessions/`. The `/sessions` picker uses those files for human session switching, and boss-chat recall searches the same transcripts and wraps matching turns into XML-like snippets for the assistant at query time.
 
 ## Core Workflows
 

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"lcroom/internal/llm"
 	"lcroom/internal/model"
@@ -191,6 +192,8 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 	for _, want := range []string{
 		"Do not answer that a concrete term is unknown until search_context has been tried.",
 		"extension of the active Codex, OpenCode, or Claude Code sessions",
+		"search_boss_sessions",
+		"XML-like boss_session and turn snippets",
 		"after it finds one project path, inspect project_detail before answering",
 		"live assistant session context",
 		"concise coworker update",
@@ -282,6 +285,49 @@ func TestAssistantReplyUsesStructuredToolLoop(t *testing.T) {
 	}
 	if !strings.Contains(planner.reqs[1].UserText, "[project_detail]") || !strings.Contains(planner.reqs[1].UserText, "Decide rollout shape") {
 		t.Fatalf("second planner request missing tool result:\n%s", planner.reqs[1].UserText)
+	}
+}
+
+func TestAssistantReplyCanSearchBossSessions(t *testing.T) {
+	t.Parallel()
+
+	sessionStore := newBossSessionStore(t.TempDir())
+	now := time.Date(2026, 4, 27, 10, 0, 0, 0, time.UTC)
+	session, err := sessionStore.createSession(context.Background(), now)
+	if err != nil {
+		t.Fatalf("createSession() error = %v", err)
+	}
+	if err := sessionStore.appendMessage(context.Background(), session.SessionID, ChatMessage{Role: "user", Content: "The launch notes said wait for the API key.", At: now.Add(time.Minute)}); err != nil {
+		t.Fatalf("appendMessage() error = %v", err)
+	}
+
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{
+			{OutputText: encodedBossAction(t, bossAction{Kind: bossActionSearchBossSessions, Query: "launch notes", Limit: 4})},
+			{OutputText: encodedBossAction(t, bossAction{Kind: bossActionAnswer, Answer: "We said to wait for the API key before moving on."})},
+		},
+	}
+	assistant := &Assistant{
+		planner: planner,
+		query:   newQueryExecutorWithBossSessions(nil, sessionStore),
+		model:   "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Visible projects: 1.",
+		Messages:   []ChatMessage{{Role: "user", Content: "What did we say about launch notes?"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.Content != "We said to wait for the API key before moving on." {
+		t.Fatalf("Content = %q", resp.Content)
+	}
+	if len(planner.reqs) != 2 {
+		t.Fatalf("structured calls = %d, want 2", len(planner.reqs))
+	}
+	if !strings.Contains(planner.reqs[1].UserText, "[search_boss_sessions]") || !strings.Contains(planner.reqs[1].UserText, "<boss_session") {
+		t.Fatalf("second planner request missing boss session XML result:\n%s", planner.reqs[1].UserText)
 	}
 }
 
