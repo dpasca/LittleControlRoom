@@ -43,6 +43,11 @@ func TestModelViewRendersBossPanels(t *testing.T) {
 	if strings.Contains(ansi.Strip(view), "Ask what needs attention") {
 		t.Fatalf("view should not render the old input placeholder:\n%s", view)
 	}
+	for _, unwanted := range []string{"Ask what deserves attention", "I will keep a compact view"} {
+		if strings.Contains(ansi.Strip(view), unwanted) {
+			t.Fatalf("view should not render the default assistant greeting %q:\n%s", unwanted, view)
+		}
+	}
 }
 
 func TestModelInputAcceptsTypingImmediately(t *testing.T) {
@@ -311,6 +316,67 @@ func TestChatPanelKeepsStyledTranscriptAndInputVisible(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "> hello boss") {
 		t.Fatalf("chat input should remain visible while typing:\n%s", rendered)
+	}
+}
+
+func TestChatMouseSelectionCopiesOnlyTranscriptText(t *testing.T) {
+	prevWriter := clipboardTextWriter
+	var copied string
+	clipboardTextWriter = func(text string) error {
+		copied = text
+		return nil
+	}
+	defer func() { clipboardTextWriter = prevWriter }()
+
+	m := NewEmbedded(context.Background(), nil)
+	m.width = 120
+	m.height = 24
+	m.stateLoaded = true
+	m.snapshot = StateSnapshot{
+		TotalProjects: 99,
+		DirtyProjects: 42,
+	}
+	m.messages = []ChatMessage{{
+		Role:    "assistant",
+		Content: "alpha beta",
+	}}
+	m.syncLayout(true)
+
+	updated, _ := m.Update(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      bossPanelContentLeft,
+		Y:      bossChatTranscriptTop,
+	})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.MouseMsg{
+		Action: tea.MouseActionMotion,
+		Button: tea.MouseButtonLeft,
+		X:      bossPanelContentLeft + len("alpha"),
+		Y:      bossChatTranscriptTop,
+	})
+	m = updated.(Model)
+	if rendered := m.renderChat(m.layout()); !strings.Contains(rendered, bossSelectionHighlightStart) {
+		t.Fatalf("chat selection should render a scoped highlight:\n%s", ansi.Strip(rendered))
+	}
+
+	updated, _ = m.Update(tea.MouseMsg{
+		Action: tea.MouseActionRelease,
+		Button: tea.MouseButtonLeft,
+		X:      bossPanelContentLeft + len("alpha"),
+		Y:      bossChatTranscriptTop,
+	})
+	m = updated.(Model)
+	if copied != "alpha" {
+		t.Fatalf("copied selection = %q, want %q", copied, "alpha")
+	}
+	for _, unwanted := range []string{"Board:", "Dirty repos", "Projects:"} {
+		if strings.Contains(copied, unwanted) {
+			t.Fatalf("copied selection should not include side panel text %q: %q", unwanted, copied)
+		}
+	}
+	if m.status != "Copied chat selection to clipboard" {
+		t.Fatalf("status = %q, want copy confirmation", m.status)
 	}
 }
 

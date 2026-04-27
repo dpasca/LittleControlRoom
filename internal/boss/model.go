@@ -9,6 +9,7 @@ import (
 	"lcroom/internal/service"
 	"lcroom/internal/terminalmd"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -30,9 +31,10 @@ type Model struct {
 	width  int
 	height int
 
-	input        textarea.Model
-	chatViewport viewport.Model
-	messages     []ChatMessage
+	input         textarea.Model
+	chatViewport  viewport.Model
+	chatSelection bossTextSelection
+	messages      []ChatMessage
 
 	snapshot     StateSnapshot
 	viewContext  ViewContext
@@ -113,13 +115,8 @@ func newModel(ctx context.Context, svc *service.Service, embedded bool) Model {
 		embedded:     embedded,
 		input:        input,
 		chatViewport: viewport.New(0, 0),
-		messages: []ChatMessage{{
-			Role:    "assistant",
-			Content: "Hi. Ask what deserves attention, what to do next, or what can safely wait. I will keep a compact view of the project board in mind on every turn.",
-			At:      time.Now(),
-		}},
-		status: assistant.Label(),
-		nowFn:  time.Now,
+		status:       assistant.Label(),
+		nowFn:        time.Now,
 	}
 	m.syncLayout(true)
 	return m
@@ -135,7 +132,7 @@ func IsMessage(msg tea.Msg) bool {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.loadStateCmd(), bossTickCmd())
+	return tea.Batch(m.loadStateCmd(), bossTickCmd(), tea.EnableMouseCellMotion)
 }
 
 func (m Model) StatusText() string {
@@ -198,6 +195,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinnerFrame++
 		return m, bossTickCmd()
 	case tea.KeyMsg:
+		m.chatSelection = bossTextSelection{}
 		switch msg.String() {
 		case "ctrl+c", "esc":
 			return m, m.exitCmd()
@@ -215,6 +213,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input, cmd = m.input.Update(msg)
 		m.syncLayout(false)
 		return m, cmd
+	case tea.MouseMsg:
+		return m.updateMouse(msg)
 	}
 	return m, nil
 }
@@ -330,7 +330,7 @@ func (m Model) exitCmd() tea.Cmd {
 	if m.embedded {
 		return func() tea.Msg { return ExitMsg{} }
 	}
-	return tea.Quit
+	return tea.Sequence(tea.DisableMouse, tea.Quit)
 }
 
 func bossOffCommand(text string) bool {
@@ -480,8 +480,12 @@ func (m Model) renderChat(layout bossLayout) string {
 		hint = "Boss chat is thinking " + spinnerDots(m.spinnerFrame)
 	}
 	input := fitRenderedBlock(renderBossInput(m.input, layout.chatInnerWidth), layout.chatInnerWidth, layout.inputHeight)
+	transcript := m.chatViewport.View()
+	if m.chatSelection.dragging && m.chatSelection.hasRange() {
+		transcript = overlayBossSelectionHighlight(transcript, m.chatSelection, m.chatViewport.YOffset)
+	}
 	content := strings.Join([]string{
-		m.chatViewport.View(),
+		transcript,
 		bossMutedStyle.Render(fitLine(hint, layout.chatInnerWidth)),
 		input,
 	}, "\n")
@@ -600,6 +604,7 @@ func (m Model) now() time.Time {
 }
 
 var (
+	clipboardTextWriter           = clipboard.WriteAll
 	bossPanelBackground           = lipgloss.Color("#000000")
 	bossInputBackground           = lipgloss.Color("#000000")
 	bossInputCursorLineBackground = lipgloss.Color("#101010")

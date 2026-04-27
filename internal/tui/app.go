@@ -931,8 +931,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	defer done()
 	mdl, cmd := m.update(msg)
 	mm := normalizeUpdateModel(mdl)
-	prevWant := m.codexVisible() || m.diffView != nil
-	want := mm.codexVisible() || mm.diffView != nil
+	prevWant := m.bossMode || m.codexVisible() || m.diffView != nil
+	want := mm.bossMode || mm.codexVisible() || mm.diffView != nil
 	mm.mouseEnabled = want
 	if want != prevWant {
 		var mouseCmd tea.Cmd
@@ -972,6 +972,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateBossModeMessage(msg)
 		}
 	case tea.MouseMsg:
+		if m.bossMode {
+			msg.Y--
+			return m.updateBossModeMessage(msg)
+		}
 		if m.todoDialog != nil && (msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown) {
 			return m.updateTodoDialogMouseScroll(msg)
 		}

@@ -16986,6 +16986,38 @@ func TestCommandEnterOpensBossMode(t *testing.T) {
 	}
 }
 
+func TestCommandEnterOpensBossModeWithMouseCapture(t *testing.T) {
+	input := textinput.New()
+	input.SetValue("/boss")
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.BossChatBackend = config.AIBackendOpenAIAPI
+	settings.OpenAIAPIKey = "sk-test-example"
+
+	m := Model{
+		commandMode:      true,
+		commandInput:     input,
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+	m.syncCommandSelection()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if !got.bossMode {
+		t.Fatalf("boss mode should open after /boss")
+	}
+	if !got.mouseEnabled {
+		t.Fatalf("boss mode should enable mouse capture for scoped chat selection")
+	}
+
+	updated, _ = got.Update(bossui.ExitMsg{})
+	got = updated.(Model)
+	if got.mouseEnabled {
+		t.Fatalf("closing boss mode should release mouse capture")
+	}
+}
+
 func TestCommandEnterBossUnconfiguredShowsSetupPrompt(t *testing.T) {
 	input := textinput.New()
 	input.SetValue("/boss")
