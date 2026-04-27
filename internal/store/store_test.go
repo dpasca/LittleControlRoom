@@ -226,6 +226,73 @@ func TestSearchContextCachesSessionTranscriptWithoutToolOutput(t *testing.T) {
 	}
 }
 
+func TestSearchContextRefreshesSessionCacheFromArtifactMTime(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().Add(-10 * time.Minute).Truncate(time.Second)
+	sessionFile := filepath.Join(t.TempDir(), "running-session.jsonl")
+	initialTranscript := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Initial FCX context"}]}}` + "\n"
+	if err := os.WriteFile(sessionFile, []byte(initialTranscript), 0o644); err != nil {
+		t.Fatalf("write initial session file: %v", err)
+	}
+	if err := os.Chtimes(sessionFile, now, now); err != nil {
+		t.Fatalf("chtime initial session file: %v", err)
+	}
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           "/tmp/live-session",
+		Name:           "live-session",
+		Status:         model.StatusActive,
+		AttentionScore: 14,
+		PresentOnDisk:  true,
+		InScope:        true,
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{{
+			SessionID:            "ses_live",
+			ProjectPath:          "/tmp/live-session",
+			DetectedProjectPath:  "/tmp/live-session",
+			SessionFile:          sessionFile,
+			Format:               "modern",
+			SnapshotHash:         "same-snapshot",
+			LastEventAt:          now,
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  false,
+		}},
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+	if _, err := st.SearchContext(ctx, model.ContextSearchRequest{Query: "initial", Limit: 5}); err != nil {
+		t.Fatalf("prime context cache: %v", err)
+	}
+
+	freshAt := now.Add(5 * time.Minute)
+	freshTranscript := initialTranscript + `{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"FreshTuneVariant is being explored in the currently running FCX turn."}]}}` + "\n"
+	if err := os.WriteFile(sessionFile, []byte(freshTranscript), 0o644); err != nil {
+		t.Fatalf("write fresh session file: %v", err)
+	}
+	if err := os.Chtimes(sessionFile, freshAt, freshAt); err != nil {
+		t.Fatalf("chtime fresh session file: %v", err)
+	}
+
+	results, err := st.SearchContext(ctx, model.ContextSearchRequest{Query: "FreshTuneVariant", Limit: 5})
+	if err != nil {
+		t.Fatalf("search fresh transcript context: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatalf("SearchContext did not refresh stale session cache from session file mtime")
+	}
+	if got := results[0].UpdatedAt.Unix(); got != freshAt.Unix() {
+		t.Fatalf("result updated_at = %d, want artifact mtime %d", got, freshAt.Unix())
+	}
+}
+
 func TestListProjectsHidesIgnoredProjectNames(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

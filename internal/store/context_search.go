@@ -399,6 +399,9 @@ func (s *Store) contextSessionCandidates(ctx context.Context, includeHistorical 
 		}
 		candidate.Source = model.NormalizeSessionSource(model.SessionSource(source))
 		candidate.SourceUpdatedAt = time.Unix(sourceUpdatedAt, 0)
+		if artifactUpdatedAt := contextSessionArtifactUpdatedAt(candidate.SessionFile, candidate.SessionFormat); artifactUpdatedAt.After(candidate.SourceUpdatedAt) {
+			candidate.SourceUpdatedAt = artifactUpdatedAt
+		}
 		candidate.LatestTurnStateKnown = turnKnown != 0
 		candidate.LatestTurnCompleted = turnCompleted != 0
 		if candidate.ProjectName == "" {
@@ -613,6 +616,28 @@ func compactContextSessionText(ctx context.Context, candidate contextSessionCand
 	default:
 		return "", nil
 	}
+}
+
+func contextSessionArtifactUpdatedAt(sessionFile, format string) time.Time {
+	path := strings.TrimSpace(sessionFile)
+	if path == "" {
+		return time.Time{}
+	}
+	if strings.TrimSpace(format) == "opencode_db" {
+		if dbPath, _, err := parseContextOpenCodeSessionRef(path); err == nil {
+			path = dbPath
+		} else if dbPath, _, ok := strings.Cut(path, "#"); ok {
+			path = strings.TrimSpace(dbPath)
+		}
+	}
+	if path == "" {
+		return time.Time{}
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}
+	}
+	return info.ModTime()
 }
 
 func compactContextJSONLTranscript(ctx context.Context, path string, extract func(string) (contextTranscriptItem, bool)) (string, error) {
