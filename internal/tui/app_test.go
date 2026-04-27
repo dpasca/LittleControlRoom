@@ -15861,8 +15861,11 @@ func TestRenderCodexTranscriptEntriesKeepsLocalLineSuffixInRawPathHyperlink(t *t
 	}
 
 	rendered := (Model{}).renderCodexTranscriptEntries(snapshot, 80)
-	if !strings.Contains(rendered, ansi.SetHyperlink("/tmp/demo/manager.go:107")) {
-		t.Fatalf("rendered transcript should keep local line suffixes in the raw terminal hyperlink target: %q", rendered)
+	if strings.Contains(rendered, ansi.SetHyperlink("/tmp/demo/manager.go:107")) {
+		t.Fatalf("rendered transcript should not use line-suffixed local paths as terminal hyperlink targets: %q", rendered)
+	}
+	if !strings.Contains(rendered, ansi.SetHyperlink("/tmp/demo/manager.go")) {
+		t.Fatalf("rendered transcript should use the openable local file as the terminal hyperlink target: %q", rendered)
 	}
 	if strings.Contains(rendered, "file://") {
 		t.Fatalf("rendered transcript should not use file URLs for local paths: %q", rendered)
@@ -15871,6 +15874,65 @@ func TestRenderCodexTranscriptEntriesKeepsLocalLineSuffixInRawPathHyperlink(t *t
 	if !strings.Contains(stripped, "Changed manager.go.") {
 		t.Fatalf("rendered transcript should preserve the compact local link label in the visible text: %q", stripped)
 	}
+}
+
+func TestCodexLinkPickerOpensLineSuffixedLocalMarkdownLinksAsFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sourcefile.go")
+	if err := os.WriteFile(path, []byte("package demo\n"), 0o600); err != nil {
+		t.Fatalf("write source file: %v", err)
+	}
+	snapshot := codexapp.Snapshot{
+		ProjectPath: "/tmp/demo",
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptAgent,
+				Text: "Changed [sourcefile.go](" + path + ":232).",
+			},
+		},
+	}
+
+	opened := ""
+	oldOpener := externalPathOpener
+	externalPathOpener = func(path string) error {
+		opened = path
+		return nil
+	}
+	t.Cleanup(func() { externalPathOpener = oldOpener })
+
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": snapshot,
+		},
+		codexViewport: viewport.New(80, 4),
+	}
+	rendered := m.renderAndCacheCodexTranscript("/tmp/demo", snapshot, 80)
+	m.codexViewport.SetContent(rendered)
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
+	if cmd != nil {
+		t.Fatalf("Alt+O should open the link picker without a command, got %T", cmd)
+	}
+	got := normalizeUpdateModel(updated)
+	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 1 {
+		t.Fatalf("link picker state = %#v, want one source target", got.codexArtifactPicker)
+	}
+	target := got.codexArtifactPicker.Targets[0]
+	if target.Kind != "source" || target.Path != path {
+		t.Fatalf("source target = %#v, want kind source path %q", target, path)
+	}
+
+	updated, cmd = got.updateCodexArtifactPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatalf("Enter on source link should queue open command")
+	}
+	if msg := cmd(); msg == nil {
+		t.Fatalf("source open command returned nil")
+	}
+	if opened != path {
+		t.Fatalf("source picker opened %q, want clean file path %q", opened, path)
+	}
+	_ = updated
 }
 
 func TestRenderCodexTranscriptEntriesRendersFileURLMarkdownLinksAsRawPathHyperlinks(t *testing.T) {
@@ -16005,7 +16067,7 @@ func TestCodexArtifactPickerOpensFolderNamedReadmeLinksAsDirectory(t *testing.T)
 		t.Fatalf("directory artifact target = %#v, want kind dir path %q", target, workspace)
 	}
 	overlay := ansi.Strip(got.renderCodexArtifactPicker(80, 24))
-	for _, want := range []string{"Open Artifacts", "DIR", "LittleControlRoom-art-lab"} {
+	for _, want := range []string{"Open Links", "DIR", "LittleControlRoom-art-lab"} {
 		if !strings.Contains(overlay, want) {
 			t.Fatalf("directory artifact picker missing %q: %q", want, overlay)
 		}
@@ -16146,7 +16208,7 @@ func TestGeneratedImageOpenActionsUseSystemOpen(t *testing.T) {
 	if got.codexArtifactPicker == nil {
 		t.Fatalf("Alt+O should show the artifact picker")
 	}
-	if got.status != "Image picker open" {
+	if got.status != "Link picker open" {
 		t.Fatalf("status = %q, want picker status", got.status)
 	}
 	updated, cmd = got.updateCodexArtifactPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
@@ -16221,7 +16283,7 @@ func TestCodexArtifactPickerOpensSelectedImageTargets(t *testing.T) {
 		t.Fatalf("picker selected = %d, want latest image index 1", got.codexArtifactPicker.Selected)
 	}
 	overlay := ansi.Strip(got.renderCodexArtifactPicker(80, 24))
-	for _, want := range []string{"Open Artifacts", "GPT Image Mockup", "generated.png", "Enter/Alt+O", "open", "Esc", "close"} {
+	for _, want := range []string{"Open Links", "GPT Image Mockup", "generated.png", "Enter/Alt+O", "open", "Esc", "close"} {
 		if !strings.Contains(overlay, want) {
 			t.Fatalf("artifact picker missing %q: %q", want, overlay)
 		}
@@ -16360,7 +16422,7 @@ func TestCodexArtifactPickerListsPDFMarkdownLinksWithoutPreview(t *testing.T) {
 		t.Fatalf("PDF artifact target = %#v, want kind pdf path %q", target, path)
 	}
 	overlay := ansi.Strip(got.renderCodexArtifactPicker(80, 24))
-	for _, want := range []string{"Open Artifacts", "PDF", "brief (brief.pdf)", filepath.Base(path)} {
+	for _, want := range []string{"Open Links", "PDF", "brief (brief.pdf)", filepath.Base(path)} {
 		if !strings.Contains(overlay, want) {
 			t.Fatalf("PDF artifact picker missing %q: %q", want, overlay)
 		}
@@ -16404,6 +16466,66 @@ func TestRenderCodexTranscriptEntriesKeepsHTTPSMarkdownLinksClickable(t *testing
 	if !strings.Contains(stripped, "See docs.") {
 		t.Fatalf("rendered transcript should preserve the external link label in the visible text: %q", stripped)
 	}
+}
+
+func TestCodexLinkPickerListsOnlyVisibleTranscriptLinks(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		ProjectPath: "/tmp/demo",
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptAgent,
+				Text: "Hidden [old docs](https://hidden.example/docs).",
+			},
+			{
+				Kind: codexapp.TranscriptAgent,
+				Text: "Visible [new docs](https://visible.example/docs).",
+			},
+		},
+	}
+
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": snapshot,
+		},
+		codexViewport: viewport.New(80, 1),
+	}
+	rendered := m.renderAndCacheCodexTranscript("/tmp/demo", snapshot, 80)
+	m.codexViewport.SetContent(rendered)
+	m.codexViewport.SetYOffset(2)
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
+	if cmd != nil {
+		t.Fatalf("Alt+O should open the link picker without a command, got %T", cmd)
+	}
+	got := normalizeUpdateModel(updated)
+	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 1 {
+		t.Fatalf("visible link picker state = %#v, want exactly one visible link", got.codexArtifactPicker)
+	}
+	target := got.codexArtifactPicker.Targets[0]
+	if target.Kind != "url" || target.Path != "https://visible.example/docs" {
+		t.Fatalf("visible link target = %#v, want visible URL", target)
+	}
+
+	openedURL := ""
+	oldBrowserOpener := externalBrowserOpener
+	externalBrowserOpener = func(rawURL string) error {
+		openedURL = rawURL
+		return nil
+	}
+	t.Cleanup(func() { externalBrowserOpener = oldBrowserOpener })
+
+	updated, cmd = got.updateCodexArtifactPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatalf("Enter on visible URL should queue open command")
+	}
+	if msg := cmd(); msg == nil {
+		t.Fatalf("visible URL open command returned nil")
+	}
+	if openedURL != "https://visible.example/docs" {
+		t.Fatalf("visible URL opened %q, want visible URL", openedURL)
+	}
+	_ = updated
 }
 
 func TestRenderCodexTranscriptEntriesHighlightsFencedCodeBlocks(t *testing.T) {

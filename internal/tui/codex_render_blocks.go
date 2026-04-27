@@ -647,6 +647,7 @@ func renderCodexHyperlink(label, target string, style lipgloss.Style) string {
 
 func renderCodexLocalLink(label, target string, linkStyle lipgloss.Style) string {
 	label = codexLocalLinkLabel(label, target)
+	target, _ = codexLocalOpenPath(target)
 	renderedLabel := linkStyle.Render(label)
 	return ansi.SetHyperlink(target) + renderedLabel + ansi.ResetHyperlink()
 }
@@ -756,14 +757,62 @@ func codexLocalArtifactOpenTarget(label, target string) (path, kind string, ok b
 	if target == "" {
 		return "", "", false
 	}
-	if dir, ok := codexReadmeDirectoryLinkTarget(label, target); ok {
+	openPath, _ := codexLocalOpenPath(target)
+	if dir, ok := codexReadmeDirectoryLinkTarget(label, openPath); ok {
 		return dir, "dir", true
 	}
-	kind = codexArtifactKindForPath(target)
+	kind = codexArtifactKindForPath(openPath)
 	if kind == "" {
 		return "", "", false
 	}
-	return target, kind, true
+	return openPath, kind, true
+}
+
+func codexLocalOpenPath(target string) (path, location string) {
+	path = strings.TrimSpace(target)
+	if path == "" {
+		return "", ""
+	}
+	if before, after, found := strings.Cut(path, "#"); found {
+		path = before
+		if after != "" {
+			location = "#" + after
+		}
+	}
+	path, lineLocation := codexSplitLocalLineSuffix(path)
+	if lineLocation != "" {
+		location = lineLocation
+	}
+	return path, location
+}
+
+func codexSplitLocalLineSuffix(path string) (string, string) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", ""
+	}
+	base, suffix, ok := codexCutTrailingNumberSuffix(path)
+	if !ok {
+		return path, ""
+	}
+	if nextBase, nextSuffix, ok := codexCutTrailingNumberSuffix(base); ok {
+		return nextBase, nextSuffix + suffix
+	}
+	return base, suffix
+}
+
+func codexCutTrailingNumberSuffix(path string) (base, suffix string, ok bool) {
+	idx := strings.LastIndexByte(path, ':')
+	if idx <= 0 || idx == len(path)-1 {
+		return path, "", false
+	}
+	tail := path[idx+1:]
+	for _, r := range tail {
+		if r < '0' || r > '9' {
+			return path, "", false
+		}
+	}
+	return path[:idx], path[idx:], true
 }
 
 func codexReadmeDirectoryLinkTarget(label, target string) (string, bool) {
