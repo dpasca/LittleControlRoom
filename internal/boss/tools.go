@@ -50,6 +50,7 @@ type bossStoreReader interface {
 	ListSessionClassifications(ctx context.Context, projectPath, sessionID string) ([]model.SessionClassification, error)
 	GetSessionClassificationCounts(ctx context.Context, inScopeOnly bool) (map[model.SessionClassificationStatus]int, error)
 	SearchContext(ctx context.Context, req model.ContextSearchRequest) ([]model.ContextSearchResult, error)
+	SampleProjectSessionContext(ctx context.Context, projectPath string, limit int) ([]model.SessionContextSample, error)
 }
 
 type QueryExecutor struct {
@@ -130,7 +131,7 @@ func (e *QueryExecutor) listProjects(ctx context.Context, action bossAction) (bo
 }
 
 func (e *QueryExecutor) projectDetail(ctx context.Context, action bossAction, view ViewContext) (bossToolResult, error) {
-	path, note, err := e.resolveProjectPath(ctx, action, view)
+	path, _, err := e.resolveProjectPath(ctx, action, view)
 	if err != nil {
 		return bossToolResult{}, err
 	}
@@ -147,14 +148,35 @@ func (e *QueryExecutor) projectDetail(ctx context.Context, action bossAction, vi
 	if len(detail.Reasons) > 0 {
 		brief.Reasons = append([]model.AttentionReason(nil), detail.Reasons...)
 	}
-	lines := []string{
-		"Project detail:",
-		fmt.Sprintf("- name: %s", brief.Name),
-		fmt.Sprintf("- path: %s", brief.Path),
-		fmt.Sprintf("- state: %s", briefLine(brief, now)),
+	lines := []string{"Project detail:"}
+	if samples, err := e.store.SampleProjectSessionContext(ctx, path, 1); err == nil && len(samples) > 0 {
+		lines = append(lines, "Live assistant session context:")
+		for _, sample := range samples {
+			line := fmt.Sprintf("- %s %s", sample.Source, sample.ExternalID())
+			if !sample.UpdatedAt.IsZero() {
+				line += ", sampled artifact updated " + relativeAge(now, sample.UpdatedAt)
+			}
+			if sample.LatestTurnStateKnown && !sample.LatestTurnCompleted {
+				line += ", latest turn open"
+			} else if sample.ArtifactUpdatedAfterScan {
+				line += ", artifact moved since last scan"
+			}
+			lines = append(lines, line)
+			for _, excerptLine := range liveSessionSampleLines(sample.Text) {
+				lines = append(lines, "  "+clipText(excerptLine, 360))
+			}
+		}
 	}
-	if note != "" {
-		lines = append(lines, "- target note: "+note)
+	if detail.LatestSessionClassification != nil {
+		c := detail.LatestSessionClassification
+		lines = append(lines, "Assessment evidence:")
+		if c.Summary != "" {
+			lines = append(lines, "- "+clipText(c.Summary, 260))
+		}
+		if c.LastError != "" {
+			lines = append(lines, "- last error: "+clipText(c.LastError, 260))
+		}
+		lines = append(lines, fmt.Sprintf("- classification metadata: status=%s category=%s confidence=%.2f", c.Status, c.Category, c.Confidence))
 	}
 	if len(detail.Reasons) > 0 {
 		lines = append(lines, "Attention reasons:")
@@ -174,19 +196,12 @@ func (e *QueryExecutor) projectDetail(ctx context.Context, action bossAction, vi
 			lines = append(lines, fmt.Sprintf("- #%d %s", item.ID, clipText(item.Text, 240)))
 		}
 	}
-	if detail.LatestSessionClassification != nil {
-		c := detail.LatestSessionClassification
-		lines = append(lines,
-			"Latest assessment:",
-			fmt.Sprintf("- status: %s; category: %s; confidence: %.2f", c.Status, c.Category, c.Confidence),
-		)
-		if c.Summary != "" {
-			lines = append(lines, "- summary: "+clipText(c.Summary, 260))
-		}
-		if c.LastError != "" {
-			lines = append(lines, "- last error: "+clipText(c.LastError, 260))
-		}
-	}
+	lines = append(lines,
+		"Reference metadata, for disambiguation or material blockers only:",
+		fmt.Sprintf("- name: %s", brief.Name),
+		fmt.Sprintf("- path: %s", brief.Path),
+		fmt.Sprintf("- state: %s", briefLine(brief, now)),
+	)
 	if len(detail.Sessions) > 0 {
 		lines = append(lines, "Recent sessions:")
 		for i, session := range detail.Sessions {
@@ -214,6 +229,17 @@ func (e *QueryExecutor) projectDetail(ctx context.Context, action bossAction, vi
 		}
 	}
 	return clippedToolResult(bossActionProjectDetail, strings.Join(lines, "\n")), nil
+}
+
+func liveSessionSampleLines(text string) []string {
+	rawLines := strings.Split(strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n")), "\n")
+	lines := make([]string, 0, len(rawLines))
+	for _, line := range rawLines {
+		if line = strings.TrimSpace(line); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
 }
 
 func (e *QueryExecutor) sessionClassifications(ctx context.Context, action bossAction, view ViewContext) (bossToolResult, error) {
@@ -437,7 +463,7 @@ func (e *QueryExecutor) resolveProjectPath(ctx context.Context, action bossActio
 		}
 		switch len(matches) {
 		case 0:
-			return "", "", fmt.Errorf("no project exactly matched name %q", name)
+			return e.resolveProjectPathFromContextSearch(ctx, name)
 		case 1:
 			return strings.TrimSpace(matches[0].Path), fmt.Sprintf("resolved exact project name %q", name), nil
 		default:
@@ -449,6 +475,40 @@ func (e *QueryExecutor) resolveProjectPath(ctx context.Context, action bossActio
 		}
 	}
 	return "", "", errors.New("project query needs a project_path or exact project_name")
+}
+
+func (e *QueryExecutor) resolveProjectPathFromContextSearch(ctx context.Context, name string) (string, string, error) {
+	results, err := e.store.SearchContext(ctx, model.ContextSearchRequest{
+		Query:             name,
+		IncludeHistorical: true,
+		Limit:             8,
+	})
+	if err != nil {
+		return "", "", err
+	}
+
+	paths := make([]string, 0, len(results))
+	seen := map[string]struct{}{}
+	for _, result := range results {
+		path := strings.TrimSpace(result.ProjectPath)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+
+	switch len(paths) {
+	case 0:
+		return "", "", fmt.Errorf("no project exactly matched name %q and context search found no project", name)
+	case 1:
+		return paths[0], fmt.Sprintf("resolved %q through context search", name), nil
+	default:
+		return "", "", fmt.Errorf("project name %q did not exactly match; context search matched multiple projects: %s", name, strings.Join(paths, ", "))
+	}
 }
 
 func BuildViewContextBrief(view ViewContext, now time.Time) string {

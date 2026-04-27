@@ -49,6 +49,7 @@ type fakeBossStore struct {
 	classifications []model.SessionClassification
 	counts          map[model.SessionClassificationStatus]int
 	searchResults   []model.ContextSearchResult
+	sessionSamples  []model.SessionContextSample
 }
 
 func (s *fakeBossStore) ListProjects(context.Context, bool) ([]model.ProjectSummary, error) {
@@ -85,6 +86,10 @@ func (s *fakeBossStore) GetSessionClassificationCounts(context.Context, bool) (m
 
 func (s *fakeBossStore) SearchContext(context.Context, model.ContextSearchRequest) ([]model.ContextSearchResult, error) {
 	return append([]model.ContextSearchResult(nil), s.searchResults...), nil
+}
+
+func (s *fakeBossStore) SampleProjectSessionContext(context.Context, string, int) ([]model.SessionContextSample, error) {
+	return append([]model.SessionContextSample(nil), s.sessionSamples...), nil
 }
 
 func TestAssistantReplyIncludesStateBriefAndRecentChat(t *testing.T) {
@@ -142,6 +147,52 @@ func TestAssistantReplyLimitsChatHistory(t *testing.T) {
 	}
 	if len(runner.req.Messages) != 17 {
 		t.Fatalf("messages len = %d, want state brief plus 16 history messages", len(runner.req.Messages))
+	}
+}
+
+func TestBossPromptsPreferExecutiveBriefAndSearchBeforeUnknown(t *testing.T) {
+	t.Parallel()
+
+	directPrompt := bossAssistantSystemPrompt()
+	for _, want := range []string{
+		"executive-brief assistant",
+		"extension of the active Codex, OpenCode, or Claude Code sessions",
+		"ongoing coworker chat",
+		"skip onboarding",
+		"highest-level read first",
+		"operational takeaway",
+		"latest meaningful work",
+		"concrete next validation, decision, or risk",
+		"Do not start with mapping phrases",
+		"Treat codenames as shared coworker context",
+		"sharp spoken update to a busy owner",
+		"latest session evidence",
+		"repo hygiene, counts, scores, branches, freshness, or board stats only when they explain a real blocker or decision",
+		"Prefer verbs from the evidence",
+	} {
+		if !strings.Contains(directPrompt, want) {
+			t.Fatalf("assistant prompt missing %q:\n%s", want, directPrompt)
+		}
+	}
+
+	plannerPrompt := bossActionPlannerSystemPrompt()
+	for _, want := range []string{
+		"Do not answer that a concrete term is unknown until search_context has been tried.",
+		"extension of the active Codex, OpenCode, or Claude Code sessions",
+		"after it finds one project path, inspect project_detail before answering",
+		"live assistant session context",
+		"concise executive brief",
+		"turn tool output into judgment",
+		"answer the operational substance rather than reciting the lookup",
+		"codenames and aliases as shared coworker context",
+		"latest meaningful work plus the immediate validation, decision, or risk",
+		"Do not include mappings, paths, dirty/ahead state, branch names, ages, attention scores, confidence, queue, or classification telemetry unless it materially changes what the user should do.",
+		"Do not hedge a single clear match",
+		"avoid capability pitches or optional menus",
+	} {
+		if !strings.Contains(plannerPrompt, want) {
+			t.Fatalf("planner prompt missing %q:\n%s", want, plannerPrompt)
+		}
 	}
 }
 

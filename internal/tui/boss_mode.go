@@ -13,7 +13,7 @@ import (
 func (m Model) openBossMode() (tea.Model, tea.Cmd) {
 	m.bossMode = true
 	m.bossModel = bossui.NewEmbeddedWithViewContext(m.ctx, m.svc, m.bossViewContext())
-	m.status = "Boss mode open. Esc returns to the classic TUI."
+	m.status = "Boss mode open. Alt+Up returns to the classic TUI."
 	if m.width > 0 && m.height > 0 {
 		updated, _ := m.bossModel.Update(m.bossModeWindowSizeMsg())
 		m.bossModel = normalizeBossModel(updated)
@@ -69,9 +69,9 @@ func (m Model) renderBossModeFooter(width int) string {
 		width,
 		renderFooterActionList(
 			footerPrimaryAction("Enter", "send"),
-			footerNavAction("Ctrl+J", "newline"),
+			footerNavAction("Alt+Enter", "newline"),
 			footerNavAction("Ctrl+R", "refresh"),
-			footerHideAction("Esc", "classic TUI"),
+			footerHideAction("Alt+Up", "hide"),
 		),
 		renderFooterMeta("/boss off also closes"),
 	), width)

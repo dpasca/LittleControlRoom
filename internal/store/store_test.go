@@ -293,6 +293,76 @@ func TestSearchContextRefreshesSessionCacheFromArtifactMTime(t *testing.T) {
 	}
 }
 
+func TestSampleProjectSessionContextIncludesArtifactNewerThanCompletedScan(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	scanAt := time.Now().Add(-10 * time.Minute).Truncate(time.Second)
+	sessionFile := filepath.Join(t.TempDir(), "stale-completed-session.jsonl")
+	initialTranscript := `{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Previous completed FCX work."}]}}` + "\n"
+	if err := os.WriteFile(sessionFile, []byte(initialTranscript), 0o644); err != nil {
+		t.Fatalf("write initial session file: %v", err)
+	}
+	if err := os.Chtimes(sessionFile, scanAt, scanAt); err != nil {
+		t.Fatalf("chtime initial session file: %v", err)
+	}
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          "/tmp/live-session",
+		Name:          "live-session",
+		Status:        model.StatusActive,
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     scanAt,
+		Sessions: []model.SessionEvidence{{
+			SessionID:            "ses_stale_completed",
+			ProjectPath:          "/tmp/live-session",
+			DetectedProjectPath:  "/tmp/live-session",
+			SessionFile:          sessionFile,
+			Format:               "modern",
+			SnapshotHash:         "same-snapshot",
+			LastEventAt:          scanAt,
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  true,
+		}},
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	freshAt := scanAt.Add(5 * time.Minute)
+	freshTranscript := initialTranscript + `{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Currently checking the live FCX cloud restore path."}]}}` + "\n"
+	if err := os.WriteFile(sessionFile, []byte(freshTranscript), 0o644); err != nil {
+		t.Fatalf("write fresh session file: %v", err)
+	}
+	if err := os.Chtimes(sessionFile, freshAt, freshAt); err != nil {
+		t.Fatalf("chtime fresh session file: %v", err)
+	}
+
+	samples, err := st.SampleProjectSessionContext(ctx, "/tmp/live-session", 1)
+	if err != nil {
+		t.Fatalf("sample project session context: %v", err)
+	}
+	if len(samples) != 1 {
+		t.Fatalf("samples len = %d, want 1", len(samples))
+	}
+	sample := samples[0]
+	if !sample.ArtifactUpdatedAfterScan {
+		t.Fatalf("ArtifactUpdatedAfterScan = false, want true: %#v", sample)
+	}
+	if got := sample.UpdatedAt.Unix(); got != freshAt.Unix() {
+		t.Fatalf("sample updated_at = %d, want artifact mtime %d", got, freshAt.Unix())
+	}
+	if !strings.Contains(sample.Text, "Currently checking the live FCX cloud restore path.") {
+		t.Fatalf("sample text missing fresh live transcript:\n%s", sample.Text)
+	}
+}
+
 func TestListProjectsHidesIgnoredProjectNames(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

@@ -197,7 +197,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		m.chatSelection = bossTextSelection{}
 		switch msg.String() {
-		case "ctrl+c", "esc":
+		case "ctrl+c", "esc", "alt+up":
 			return m, m.exitCmd()
 		case "ctrl+r":
 			m.status = "Refreshing project state..."
@@ -208,6 +208,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		case "enter":
 			return m.submit()
+		case "alt+enter", "ctrl+j":
+			m.input.InsertString("\n")
+			m.syncLayout(false)
+			return m, nil
 		}
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
@@ -475,25 +479,26 @@ func (m Model) layout() bossLayout {
 }
 
 func (m Model) renderChat(layout bossLayout) string {
-	hint := "Enter sends | Ctrl+J newline | Ctrl+R refresh | Esc returns"
-	if m.sending {
-		hint = "Boss chat is thinking " + spinnerDots(m.spinnerFrame)
-	}
 	input := fitRenderedBlock(renderBossInput(m.input, layout.chatInnerWidth), layout.chatInnerWidth, layout.inputHeight)
 	transcript := m.chatViewport.View()
 	if m.chatSelection.dragging && m.chatSelection.hasRange() {
 		transcript = overlayBossSelectionHighlight(transcript, m.chatSelection, m.chatViewport.YOffset)
 	}
-	content := strings.Join([]string{
-		transcript,
-		bossMutedStyle.Render(fitLine(hint, layout.chatInnerWidth)),
-		input,
-	}, "\n")
+	parts := []string{transcript}
+	if !m.embedded {
+		hint := "Enter sends | Alt+Enter newline | Ctrl+R refresh | Alt+Up exits"
+		if m.sending {
+			hint = "Boss chat is thinking " + spinnerDots(m.spinnerFrame)
+		}
+		parts = append(parts, bossMutedStyle.Render(fitLine(hint, layout.chatInnerWidth)))
+	}
+	parts = append(parts, input)
+	content := strings.Join(parts, "\n")
 	return m.renderRawPanel("Boss Chat", content, layout.chatWidth, layout.topHeight)
 }
 
 func (m Model) renderHeader(width int) string {
-	text := " Boss Mode  " + m.StatusText() + "  |  Esc returns  Ctrl+R refresh"
+	text := " Boss Mode  " + m.StatusText() + "  |  Alt+Up exits  Ctrl+R refresh"
 	return bossHeaderStyle.Width(width).Render(fitLine(text, width))
 }
 

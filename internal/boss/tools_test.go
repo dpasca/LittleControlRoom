@@ -2,6 +2,7 @@ package boss
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -56,15 +57,87 @@ func TestQueryExecutorReportsProjectDetailFromStore(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Project detail:",
+		"Reference metadata, for disambiguation or material blockers only:",
 		"Alpha",
 		"/tmp/alpha",
 		"Needs a rollout decision",
 		"Write boss-mode integration tests",
-		"exact project path supplied by boss chat",
 	} {
 		if !strings.Contains(result.Text, want) {
 			t.Fatalf("tool result missing %q:\n%s", want, result.Text)
 		}
+	}
+}
+
+func TestQueryExecutorReportsLiveRunningSessionSample(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	st, err := store.Open(filepath.Join(tempDir, "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	sessionFile := filepath.Join(tempDir, "session.jsonl")
+	transcript := strings.Join([]string{
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Keep going on FCX profile migration."}]}}`,
+		`{"type":"response_item","payload":{"type":"function_call_output","output":"tool-output-should-not-leak"}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Currently compiling the compressed JSON profile migration path."}]}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(sessionFile, []byte(transcript), 0o644); err != nil {
+		t.Fatalf("write session: %v", err)
+	}
+
+	now := time.Unix(1_800_000_000, 0)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          "/tmp/live",
+		Name:          "Live",
+		LastActivity:  now,
+		Status:        model.StatusActive,
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     now,
+		Sessions: []model.SessionEvidence{{
+			Source:               model.SessionSourceCodex,
+			SessionID:            "codex:ses_live",
+			RawSessionID:         "ses_live",
+			ProjectPath:          "/tmp/live",
+			SessionFile:          sessionFile,
+			Format:               "modern",
+			LastEventAt:          now,
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  false,
+		}},
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	executor := newQueryExecutor(st)
+	executor.nowFn = func() time.Time { return now }
+	result, err := executor.Execute(ctx, bossAction{
+		Kind:        bossActionProjectDetail,
+		ProjectPath: "/tmp/live",
+		Limit:       8,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	for _, want := range []string{
+		"Live assistant session context:",
+		"latest turn open",
+		"assistant: Currently compiling the compressed JSON profile migration path.",
+	} {
+		if !strings.Contains(result.Text, want) {
+			t.Fatalf("tool result missing %q:\n%s", want, result.Text)
+		}
+	}
+	if strings.Contains(result.Text, "tool-output-should-not-leak") {
+		t.Fatalf("tool output should not appear in live session sample:\n%s", result.Text)
+	}
+	if sampleIndex, metadataIndex := strings.Index(result.Text, "Live assistant session context:"), strings.Index(result.Text, "Reference metadata"); sampleIndex < 0 || metadataIndex < 0 || sampleIndex > metadataIndex {
+		t.Fatalf("live session sample should precede reference metadata:\n%s", result.Text)
 	}
 }
 
@@ -116,6 +189,61 @@ func TestQueryExecutorSearchesContext(t *testing.T) {
 	} {
 		if !strings.Contains(result.Text, want) {
 			t.Fatalf("tool result missing %q:\n%s", want, result.Text)
+		}
+	}
+}
+
+func TestQueryExecutorResolvesProjectNameThroughContextSearch(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Unix(1_800_000_000, 0)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           "/tmp/okmain",
+		Name:           "okmain",
+		LastActivity:   now.Add(-5 * time.Minute),
+		Status:         model.StatusActive,
+		AttentionScore: 31,
+		PresentOnDisk:  true,
+		InScope:        true,
+		AttentionReason: []model.AttentionReason{{
+			Text:   "FCX flight tuning is active in the latest assistant session",
+			Weight: 20,
+		}},
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	executor := newQueryExecutor(st)
+	executor.nowFn = func() time.Time { return now }
+	result, err := executor.Execute(ctx, bossAction{
+		Kind:        bossActionProjectDetail,
+		ProjectName: "FCX",
+		Limit:       8,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	for _, want := range []string{
+		"Project detail:",
+		"okmain",
+		"/tmp/okmain",
+		"FCX flight tuning",
+	} {
+		if !strings.Contains(result.Text, want) {
+			t.Fatalf("tool result missing %q:\n%s", want, result.Text)
+		}
+	}
+	for _, unwanted := range []string{`resolved "FCX" through context search`, "target note:"} {
+		if strings.Contains(result.Text, unwanted) {
+			t.Fatalf("tool result should not expose routing note %q:\n%s", unwanted, result.Text)
 		}
 	}
 }

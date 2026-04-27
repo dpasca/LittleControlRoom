@@ -108,6 +108,24 @@ type SessionEvidence struct {
 	LatestTurnCompleted  bool `json:"latest_turn_completed"`
 }
 
+type SessionContextSample struct {
+	Source                   SessionSource `json:"source"`
+	SessionID                string        `json:"session_id"`
+	RawSessionID             string        `json:"raw_session_id"`
+	ProjectPath              string        `json:"project_path"`
+	SessionFile              string        `json:"session_file"`
+	SessionFormat            string        `json:"session_format"`
+	UpdatedAt                time.Time     `json:"updated_at"`
+	ArtifactUpdatedAfterScan bool          `json:"artifact_updated_after_scan"`
+	LatestTurnStateKnown     bool          `json:"latest_turn_state_known"`
+	LatestTurnCompleted      bool          `json:"latest_turn_completed"`
+	Text                     string        `json:"text"`
+}
+
+func (sample SessionContextSample) ExternalID() string {
+	return ExternalSessionID(sample.Source, sample.SessionFormat, sample.SessionID, sample.RawSessionID)
+}
+
 type ProjectGitFingerprint struct {
 	ProjectPath  string
 	HeadHash     string

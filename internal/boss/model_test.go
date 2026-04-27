@@ -48,6 +48,15 @@ func TestModelViewRendersBossPanels(t *testing.T) {
 			t.Fatalf("view should not render the default assistant greeting %q:\n%s", unwanted, view)
 		}
 	}
+	stripped := ansi.Strip(view)
+	for _, want := range []string{"Alt+Enter newline", "Alt+Up exits"} {
+		if !strings.Contains(stripped, want) {
+			t.Fatalf("view missing boss shortcut %q:\n%s", want, stripped)
+		}
+	}
+	if strings.Contains(stripped, "Ctrl+J newline") {
+		t.Fatalf("view should advertise Alt+Enter instead of Ctrl+J:\n%s", stripped)
+	}
 }
 
 func TestModelInputAcceptsTypingImmediately(t *testing.T) {
@@ -69,6 +78,52 @@ func TestModelQTypesIntoInput(t *testing.T) {
 	got := updated.(Model)
 	if got.input.Value() != "q" {
 		t.Fatalf("input value = %q, want q to type into the chat input", got.input.Value())
+	}
+}
+
+func TestModelAltEnterInsertsNewline(t *testing.T) {
+	t.Parallel()
+
+	m := New(context.Background(), nil)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("line 1")})
+	m = updated.(Model)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("alt+enter should not submit")
+	}
+	if got.input.Value() != "line 1\n" {
+		t.Fatalf("input value = %q, want trailing newline", got.input.Value())
+	}
+	if len(got.messages) != 0 {
+		t.Fatalf("messages len = %d, want no submitted messages", len(got.messages))
+	}
+
+	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyCtrlJ})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("ctrl+j compatibility newline should not submit")
+	}
+	if got.input.Value() != "line 1\n\n" {
+		t.Fatalf("input value = %q, want second trailing newline", got.input.Value())
+	}
+}
+
+func TestEmbeddedModelAltUpExits(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbedded(context.Background(), nil)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyUp, Alt: true})
+	if _, ok := updated.(Model); !ok {
+		t.Fatalf("Update() returned %T, want boss.Model", updated)
+	}
+	if cmd == nil {
+		t.Fatalf("alt+up should return exit command")
+	}
+	msg := cmd()
+	if _, ok := msg.(ExitMsg); !ok {
+		t.Fatalf("alt+up command returned %T, want boss.ExitMsg", msg)
 	}
 }
 
@@ -115,6 +170,9 @@ func TestEmbeddedModelRendersBodyForHostShell(t *testing.T) {
 	}
 	if strings.Contains(m.View(), "\x1b[48;5;0m") {
 		t.Fatalf("boss panels should not use ANSI palette black because themed palettes can render it gray")
+	}
+	if strings.Contains(rendered, "Alt+Enter newline") || strings.Contains(rendered, "Ctrl+R refresh") {
+		t.Fatalf("embedded boss body should not repeat footer hotkeys above the input:\n%s", rendered)
 	}
 }
 

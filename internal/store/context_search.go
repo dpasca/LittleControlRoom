@@ -29,6 +29,10 @@ const (
 	contextSearchMaxTranscriptItemRunes  = 1200
 	contextSearchMaxProjectDocItemRunes  = 1000
 	contextSearchOpenCodeRecentMsgLimit  = 120
+	contextSessionSampleDefaultLimit     = 2
+	contextSessionSampleMaxLimit         = 4
+	contextSessionSampleMaxLines         = 12
+	contextSessionSampleMaxRunes         = 2400
 	contextSearchScannerInitialBuf       = 64 * 1024
 	contextSearchScannerMaxTokenCapacity = 16 * 1024 * 1024
 )
@@ -82,6 +86,77 @@ func (s *Store) SearchContext(ctx context.Context, req model.ContextSearchReques
 		limit = contextSearchMaxLimit
 	}
 	return s.queryContextSearchIndex(ctx, match, req.ProjectPath, limit)
+}
+
+func (s *Store) SampleProjectSessionContext(ctx context.Context, projectPath string, limit int) ([]model.SessionContextSample, error) {
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "." {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = contextSessionSampleDefaultLimit
+	}
+	if limit > contextSessionSampleMaxLimit {
+		limit = contextSessionSampleMaxLimit
+	}
+
+	sessions, err := s.listSessions(ctx, projectPath)
+	if err != nil {
+		return nil, err
+	}
+	samples := make([]model.SessionContextSample, 0, min(limit, len(sessions)))
+	for _, session := range sessions {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if len(samples) >= limit {
+			break
+		}
+		if strings.TrimSpace(session.SessionFile) == "" {
+			continue
+		}
+		artifactUpdatedAt := contextSessionArtifactUpdatedAt(session.SessionFile, session.Format)
+		artifactUpdatedAfterScan := artifactUpdatedAt.After(session.LastEventAt)
+		if !artifactUpdatedAfterScan && (!session.LatestTurnStateKnown || session.LatestTurnCompleted) {
+			continue
+		}
+		text, err := compactContextSessionText(ctx, contextSessionCandidate{
+			SessionID:            session.SessionID,
+			Source:               session.Source,
+			RawSessionID:         session.RawSessionID,
+			ProjectPath:          session.ProjectPath,
+			SessionFile:          session.SessionFile,
+			SessionFormat:        session.Format,
+			SnapshotHash:         session.SnapshotHash,
+			SourceUpdatedAt:      session.LastEventAt,
+			LatestTurnStateKnown: session.LatestTurnStateKnown,
+			LatestTurnCompleted:  session.LatestTurnCompleted,
+		})
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+			continue
+		}
+		text = contextRecentSessionSampleText(text, contextSessionSampleMaxLines, contextSessionSampleMaxRunes)
+		if text == "" {
+			continue
+		}
+		samples = append(samples, model.SessionContextSample{
+			Source:                   session.Source,
+			SessionID:                session.SessionID,
+			RawSessionID:             session.RawSessionID,
+			ProjectPath:              session.ProjectPath,
+			SessionFile:              session.SessionFile,
+			SessionFormat:            session.Format,
+			UpdatedAt:                laterTime(session.LastEventAt, artifactUpdatedAt),
+			ArtifactUpdatedAfterScan: artifactUpdatedAfterScan,
+			LatestTurnStateKnown:     session.LatestTurnStateKnown,
+			LatestTurnCompleted:      session.LatestTurnCompleted,
+			Text:                     text,
+		})
+	}
+	return samples, nil
 }
 
 func contextSearchMatch(query string) string {
@@ -988,6 +1063,27 @@ func contextAppendLine(b *strings.Builder, line string) {
 
 func contextSanitizeText(text string) string {
 	return strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+}
+
+func contextRecentSessionSampleText(text string, maxLines, maxRunes int) string {
+	text = strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n"))
+	if text == "" || maxLines <= 0 || maxRunes <= 0 {
+		return ""
+	}
+	rawLines := strings.Split(text, "\n")
+	lines := make([]string, 0, len(rawLines))
+	for _, line := range rawLines {
+		if line = strings.TrimSpace(line); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	return contextSearchClipRunes(strings.Join(lines, "\n"), maxRunes)
 }
 
 func contextSearchClipRunes(text string, limit int) string {

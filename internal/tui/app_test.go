@@ -16963,8 +16963,11 @@ func TestCommandEnterOpensBossMode(t *testing.T) {
 	if strings.Contains(lines[0], brand.Name) {
 		t.Fatalf("boss view should not show the classic app title in the top bar: %q", rendered)
 	}
-	if !strings.Contains(lines[len(lines)-1], "Enter") || !strings.Contains(lines[len(lines)-1], "Esc") {
+	if !strings.Contains(lines[len(lines)-1], "Enter") || !strings.Contains(lines[len(lines)-1], "Alt+Enter") || !strings.Contains(lines[len(lines)-1], "Alt+Up") {
 		t.Fatalf("boss footer should show boss chat actions: %q", rendered)
+	}
+	if strings.Contains(lines[len(lines)-1], "Ctrl+J") {
+		t.Fatalf("boss footer should advertise Alt+Enter newline, not Ctrl+J: %q", rendered)
 	}
 	if strings.Contains(lines[len(lines)-1], "q quit") {
 		t.Fatalf("boss footer should not show the classic q quit action: %q", rendered)
@@ -17109,6 +17112,34 @@ func TestBossModeEscReturnsToClassicTUI(t *testing.T) {
 	got = updated.(Model)
 	if got.bossMode {
 		t.Fatalf("boss mode should close after exit message")
+	}
+	if got.status != "Boss mode closed" {
+		t.Fatalf("status = %q, want Boss mode closed", got.status)
+	}
+}
+
+func TestBossModeAltUpReturnsToClassicTUI(t *testing.T) {
+	m := Model{
+		bossMode:  true,
+		bossModel: bossui.NewEmbedded(context.Background(), nil),
+		width:     100,
+		height:    24,
+	}
+
+	updated, cmd := m.updateBossModeMessage(tea.KeyMsg{Type: tea.KeyUp, Alt: true})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("boss alt+up should return an exit command")
+	}
+	msg := cmd()
+	if _, ok := msg.(bossui.ExitMsg); !ok {
+		t.Fatalf("cmd() returned %T, want boss.ExitMsg", msg)
+	}
+
+	updated, _ = got.Update(msg)
+	got = updated.(Model)
+	if got.bossMode {
+		t.Fatalf("boss mode should close after alt+up exit message")
 	}
 	if got.status != "Boss mode closed" {
 		t.Fatalf("status = %q, want Boss mode closed", got.status)
