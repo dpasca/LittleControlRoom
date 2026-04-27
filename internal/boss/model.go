@@ -63,6 +63,7 @@ type bossLayout struct {
 	height           int
 	topHeight        int
 	bottomHeight     int
+	middleGapHeight  int
 	chatWidth        int
 	sideWidth        int
 	deskWidth        int
@@ -239,21 +240,34 @@ func (m Model) View() string {
 			top = lipgloss.JoinHorizontal(lipgloss.Top, chat, " ", situation)
 		}
 
-		attention := m.renderPanel("Attention", AttentionText(m.snapshot, m.now()), layout.deskWidth, layout.bottomHeight)
-		notesWidth := layout.notebookWidth
-		notes := m.renderPanel("Notes", NotesText(m.snapshot), notesWidth, layout.bottomHeight)
-		bottom := lipgloss.JoinHorizontal(
-			lipgloss.Top,
-			attention,
-			" ",
-			notes,
-		)
-		if delta := layout.width - blockWidth(bottom); delta > 0 {
-			notesWidth += delta
-			notes = m.renderPanel("Notes", NotesText(m.snapshot), notesWidth, layout.bottomHeight)
-			bottom = lipgloss.JoinHorizontal(lipgloss.Top, attention, " ", notes)
+		if layout.bottomHeight < 4 {
+			body = top
+		} else {
+			attention := m.renderPanel("Attention", AttentionText(m.snapshot, m.now()), layout.deskWidth, layout.bottomHeight)
+			notesWidth := layout.notebookWidth
+			notes := m.renderPanel("Notes", NotesText(m.snapshot), notesWidth, layout.bottomHeight)
+			bottom := lipgloss.JoinHorizontal(
+				lipgloss.Top,
+				attention,
+				" ",
+				notes,
+			)
+			if delta := layout.width - blockWidth(bottom); delta > 0 {
+				notesWidth += delta
+				notes = m.renderPanel("Notes", NotesText(m.snapshot), notesWidth, layout.bottomHeight)
+				bottom = lipgloss.JoinHorizontal(lipgloss.Top, attention, " ", notes)
+			}
+			if layout.middleGapHeight > 0 {
+				body = lipgloss.JoinVertical(
+					lipgloss.Left,
+					top,
+					fitRenderedBlock("", layout.width, layout.middleGapHeight),
+					bottom,
+				)
+			} else {
+				body = lipgloss.JoinVertical(lipgloss.Left, top, bottom)
+			}
 		}
-		body = lipgloss.JoinVertical(lipgloss.Left, top, bottom)
 	}
 	if m.embedded {
 		return fitRenderedBlock(body, layout.width, layout.height)
@@ -366,7 +380,11 @@ func (m Model) layout() bossLayout {
 		height = defaultBossHeight
 	}
 	width = maxInt(48, width)
-	height = maxInt(18, height)
+	minHeight := 18
+	if m.embedded {
+		minHeight = 8
+	}
+	height = maxInt(minHeight, height)
 	if height > 18 {
 		if !m.embedded {
 			// Standalone boss mode owns its header bar and keeps one row of
@@ -377,39 +395,71 @@ func (m Model) layout() bossLayout {
 	inputHeight := 2
 
 	if width < 78 {
-		topHeight := maxInt(8, height/2)
+		chatInnerWidth := bossPanelInnerWidth(width)
+		topHeight := maxInt(8, panelHeightForRawLines(maxInt(2, countBlockLines(m.renderTranscript(chatInnerWidth)))+1+inputHeight))
+		if height-topHeight < 4 {
+			topHeight = height
+		}
 		return bossLayout{
 			width:            width,
 			height:           height,
 			topHeight:        topHeight,
-			bottomHeight:     maxInt(5, height-topHeight),
+			bottomHeight:     maxInt(0, height-topHeight),
 			chatWidth:        width,
 			sideWidth:        width,
 			deskWidth:        width,
 			notebookWidth:    width,
-			chatInnerWidth:   bossPanelInnerWidth(width),
+			chatInnerWidth:   chatInnerWidth,
 			transcriptHeight: maxInt(2, topHeight-inputHeight-5),
 			inputHeight:      inputHeight,
 			narrow:           true,
 		}
 	}
 
-	bottomHeight := clampInt(height/4, 7, 10)
-	if height < 24 {
-		bottomHeight = clampInt(height/3, 5, 8)
+	minTopHeight := 10
+	minBottomHeight := 7
+	if m.embedded && height < 18 {
+		minTopHeight = 8
+		minBottomHeight = 4
 	}
-	topHeight := maxInt(10, height-bottomHeight)
+	bottomHeight := 0
+	if !m.embedded {
+		bottomHeight = clampInt(height/4, 7, 10)
+		if height < 24 {
+			bottomHeight = clampInt(height/3, 5, 8)
+		}
+	}
+	topHeight := maxInt(1, height-bottomHeight)
 	sideWidth := clampInt(width/4, 24, 36)
 	chatWidth := maxInt(40, width-sideWidth-1)
 	deskWidth := clampInt(width/3, 26, width/2)
 	notebookWidth := maxInt(24, width-deskWidth-1)
 	chatInnerWidth := bossPanelInnerWidth(chatWidth)
+	if m.embedded {
+		topHeight = maxInt(minTopHeight, panelHeightForRawLines(maxInt(2, countBlockLines(m.renderTranscript(chatInnerWidth)))+1+inputHeight))
+		topHeight = maxInt(topHeight, panelHeightForWrappedContent(m.situationContent(), bossPanelInnerWidth(sideWidth)))
+		if height-topHeight >= 4 {
+			bottomHeight = maxInt(minBottomHeight, panelHeightForWrappedContent(AttentionText(m.snapshot, m.now()), bossPanelInnerWidth(deskWidth)))
+			bottomHeight = maxInt(bottomHeight, panelHeightForWrappedContent(NotesText(m.snapshot), bossPanelInnerWidth(notebookWidth)))
+			if bottomHeight > height-topHeight {
+				bottomHeight = height - topHeight
+			}
+		} else {
+			topHeight = height
+			bottomHeight = 0
+		}
+	}
 	transcriptHeight := maxInt(2, topHeight-inputHeight-5)
+	middleGapHeight := 0
+	if m.embedded && bottomHeight > 0 && height-topHeight-bottomHeight > 0 {
+		middleGapHeight = 1
+	}
 	return bossLayout{
 		width:            width,
 		height:           height,
 		topHeight:        topHeight,
 		bottomHeight:     bottomHeight,
+		middleGapHeight:  middleGapHeight,
 		chatWidth:        chatWidth,
 		sideWidth:        sideWidth,
 		deskWidth:        deskWidth,
@@ -425,10 +475,11 @@ func (m Model) renderChat(layout bossLayout) string {
 	if m.sending {
 		hint = "Boss chat is thinking " + spinnerDots(m.spinnerFrame)
 	}
+	input := fitRenderedBlock(renderBossInput(m.input, layout.chatInnerWidth), layout.chatInnerWidth, layout.inputHeight)
 	content := strings.Join([]string{
 		m.chatViewport.View(),
 		bossMutedStyle.Render(fitLine(hint, layout.chatInnerWidth)),
-		renderBossInput(m.input, layout.chatInnerWidth),
+		input,
 	}, "\n")
 	return m.renderRawPanel("Boss Chat", content, layout.chatWidth, layout.topHeight)
 }
@@ -439,6 +490,10 @@ func (m Model) renderHeader(width int) string {
 }
 
 func (m Model) renderSituation(width, height int) string {
+	return m.renderPanel("Situation", m.situationContent(), width, height)
+}
+
+func (m Model) situationContent() string {
 	status := m.status
 	if strings.TrimSpace(status) == "" {
 		status = "Boss chat warming up"
@@ -469,7 +524,7 @@ func (m Model) renderSituation(width, height int) string {
 	} else {
 		room = append(room, "State: loading...")
 	}
-	return m.renderPanel("Situation", strings.Join(room, "\n"), width, height)
+	return strings.Join(room, "\n")
 }
 
 func (m Model) renderPanel(title, content string, width, height int) string {
@@ -480,7 +535,8 @@ func (m Model) renderPanel(title, content string, width, height int) string {
 	bodyHeight := maxInt(0, innerHeight-2)
 	titleLine := panelTitleStyle.Render(fitLine(title, innerWidth))
 	body := fitWrappedBlock(content, innerWidth, bodyHeight)
-	return panelStyle.Width(innerWidth).Height(innerHeight).Render(titleLine + "\n" + body)
+	rendered := panelStyle.Width(bossPanelStyleWidth(width)).Height(innerHeight).Render(titleLine + "\n" + body)
+	return fitRenderedBlock(rendered, width, height)
 }
 
 func (m Model) renderRawPanel(title, content string, width, height int) string {
@@ -489,14 +545,25 @@ func (m Model) renderRawPanel(title, content string, width, height int) string {
 	innerWidth := bossPanelInnerWidth(width)
 	innerHeight := maxInt(1, height-2)
 	titleLine := panelTitleStyle.Render(fitLine(title, innerWidth))
-	return panelStyle.Width(innerWidth).Height(innerHeight).Render(titleLine + "\n" + content)
+	body := fitBlock(content, innerWidth, maxInt(0, innerHeight-2))
+	rendered := panelStyle.Width(bossPanelStyleWidth(width)).Height(innerHeight).Render(titleLine + "\n" + body)
+	return fitRenderedBlock(rendered, width, height)
 }
 
 func (m Model) renderNarrow(layout bossLayout) string {
 	chat := m.renderChat(layout)
-	roomHeight := maxInt(7, layout.bottomHeight/2)
+	remainingHeight := maxInt(0, layout.height-layout.topHeight)
+	if remainingHeight < 4 {
+		return chat
+	}
+	if remainingHeight < 8 {
+		room := m.renderSituation(layout.sideWidth, remainingHeight)
+		return lipgloss.JoinVertical(lipgloss.Left, chat, room)
+	}
+	roomHeight := remainingHeight / 2
+	deskHeight := remainingHeight - roomHeight
 	room := m.renderSituation(layout.sideWidth, roomHeight)
-	desk := m.renderPanel("Attention", AttentionText(m.snapshot, m.now()), layout.deskWidth, roomHeight)
+	desk := m.renderPanel("Attention", AttentionText(m.snapshot, m.now()), layout.deskWidth, deskHeight)
 	return lipgloss.JoinVertical(lipgloss.Left, chat, room, desk)
 }
 
@@ -553,6 +620,10 @@ func bossPanelInnerWidth(width int) int {
 	return maxInt(1, width-4)
 }
 
+func bossPanelStyleWidth(width int) int {
+	return maxInt(1, width-2)
+}
+
 func styleBossTextarea(input *textarea.Model) {
 	focused := input.FocusedStyle
 	focused.Base = focused.Base.Background(bossInputBackground).Foreground(bossPanelText)
@@ -576,6 +647,14 @@ func styleBossTextarea(input *textarea.Model) {
 
 func renderBossInput(input textarea.Model, width int) string {
 	return bossInputShellStyle.Width(width).Render(input.View())
+}
+
+func panelHeightForRawLines(contentLines int) int {
+	return maxInt(4, contentLines+4)
+}
+
+func panelHeightForWrappedContent(content string, width int) int {
+	return panelHeightForRawLines(countWrappedBlockLines(content, width))
 }
 
 func renderAssistantMessage(content string, width int) string {
@@ -643,14 +722,7 @@ func fitWrappedBlock(content string, width, height int) string {
 	if height <= 0 {
 		return ""
 	}
-	var lines []string
-	for _, line := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
-		if strings.TrimSpace(line) == "" {
-			lines = append(lines, "")
-			continue
-		}
-		lines = append(lines, wrapText(line, width)...)
-	}
+	lines := wrappedBlockLines(content, width)
 	if len(lines) > height {
 		lines = lines[:height]
 	}
@@ -661,6 +733,29 @@ func fitWrappedBlock(content string, width, height int) string {
 		lines[i] = fitLine(line, width)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func countBlockLines(content string) int {
+	if content == "" {
+		return 0
+	}
+	return strings.Count(strings.ReplaceAll(content, "\r\n", "\n"), "\n") + 1
+}
+
+func countWrappedBlockLines(content string, width int) int {
+	return len(wrappedBlockLines(content, width))
+}
+
+func wrappedBlockLines(content string, width int) []string {
+	var lines []string
+	for _, line := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
+		if strings.TrimSpace(line) == "" {
+			lines = append(lines, "")
+			continue
+		}
+		lines = append(lines, wrapText(line, width)...)
+	}
+	return lines
 }
 
 func fitLine(line string, width int) string {

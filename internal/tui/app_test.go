@@ -16969,6 +16969,16 @@ func TestCommandEnterOpensBossMode(t *testing.T) {
 	if strings.Contains(lines[len(lines)-1], "q quit") {
 		t.Fatalf("boss footer should not show the classic q quit action: %q", rendered)
 	}
+	lastBodyLine := ""
+	for i := len(lines) - 2; i >= 1; i-- {
+		if strings.TrimSpace(lines[i]) != "" {
+			lastBodyLine = lines[i]
+			break
+		}
+	}
+	if lastBodyLine == "" || !strings.Contains(lastBodyLine, "╰") {
+		t.Fatalf("boss footer should consume only one row and leave frame content above it: %q", rendered)
+	}
 	for _, line := range strings.Split(got.View(), "\n") {
 		if gotWidth := ansi.StringWidth(ansi.Strip(line)); gotWidth > got.width {
 			t.Fatalf("boss view line width = %d, want <= %d: %q", gotWidth, got.width, ansi.Strip(line))
@@ -17070,6 +17080,38 @@ func TestBossModeEscReturnsToClassicTUI(t *testing.T) {
 	}
 	if got.status != "Boss mode closed" {
 		t.Fatalf("status = %q, want Boss mode closed", got.status)
+	}
+}
+
+func TestBossModeFooterDoesNotCoverTerminalFrames(t *testing.T) {
+	for _, height := range []int{52, 45, 18, 13} {
+		m := Model{
+			bossMode:  true,
+			bossModel: bossui.NewEmbedded(context.Background(), nil),
+			width:     180,
+			height:    height,
+		}
+
+		updated, _ := m.updateBossModeWindowSize()
+		got := updated.(Model)
+		rendered := ansi.Strip(got.View())
+		lines := strings.Split(rendered, "\n")
+		if len(lines) != got.height {
+			t.Fatalf("boss view line count = %d, want terminal height %d:\n%s", len(lines), got.height, rendered)
+		}
+		if !strings.Contains(lines[len(lines)-1], "Enter") {
+			t.Fatalf("boss footer should be the final row:\n%s", rendered)
+		}
+		lastBodyLine := ""
+		for i := len(lines) - 2; i >= 1; i-- {
+			if strings.TrimSpace(lines[i]) != "" {
+				lastBodyLine = lines[i]
+				break
+			}
+		}
+		if !strings.HasPrefix(lastBodyLine, "╰") {
+			t.Fatalf("boss footer should not cover the bottom frame row at height %d:\n%s", height, rendered)
+		}
 	}
 }
 

@@ -52,8 +52,7 @@ func (m Model) renderBossModeView() string {
 	header := m.renderBossModeHeader(layout.width)
 	bodyHeight := bossModeBodyHeight(layout.height)
 	body := fitPaneContent(m.bossModel.View(), layout.width, bodyHeight)
-	spacer := strings.Repeat(" ", max(0, layout.width))
-	return strings.Join([]string{header, body, spacer, m.renderBossModeFooter(layout.width)}, "\n")
+	return strings.Join([]string{header, body, m.renderBossModeFooter(layout.width)}, "\n")
 }
 
 func (m Model) renderBossModeHeader(width int) string {
@@ -81,7 +80,7 @@ func (m Model) renderBossModeFooter(width int) string {
 var bossModeTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81"))
 
 func bossModeBodyHeight(shellBodyHeight int) int {
-	return max(1, shellBodyHeight-1)
+	return max(1, shellBodyHeight)
 }
 
 func (m Model) bossViewContext() bossui.ViewContext {
