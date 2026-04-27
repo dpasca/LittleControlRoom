@@ -7275,6 +7275,59 @@ func TestVisibleCodexSlashTabCyclesSuggestions(t *testing.T) {
 	}
 }
 
+func TestVisibleCodexSlashBossOpensBossMode(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started: true,
+			Preset:  codexcli.PresetYolo,
+			Status:  "Codex session ready",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.BossChatBackend = config.AIBackendOpenAIAPI
+	settings.OpenAIAPIKey = "sk-test-example"
+
+	input := newCodexTextarea()
+	input.SetValue("/boss")
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		settingsBaseline:    &settings,
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if !got.bossMode {
+		t.Fatalf("embedded /boss should open boss mode")
+	}
+	if got.bossSetupPrompt != nil {
+		t.Fatalf("configured embedded /boss should not show setup prompt")
+	}
+	if got.codexInput.Value() != "" {
+		t.Fatalf("codex input should clear after /boss, got %q", got.codexInput.Value())
+	}
+	if cmd == nil {
+		t.Fatalf("embedded /boss should return the boss init command")
+	}
+}
+
 func TestVisibleOpenCodeSlashReconnectReopensSameSession(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {

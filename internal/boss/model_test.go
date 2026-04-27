@@ -110,6 +110,37 @@ func TestModelAltEnterInsertsNewline(t *testing.T) {
 	}
 }
 
+func TestModelAltCCopiesFullMultilineInput(t *testing.T) {
+	var copied string
+	previousWriter := clipboardTextWriter
+	clipboardTextWriter = func(text string) error {
+		copied = text
+		return nil
+	}
+	t.Cleanup(func() {
+		clipboardTextWriter = previousWriter
+	})
+
+	m := New(context.Background(), nil)
+	m.input.SetHeight(3)
+	m.input.SetValue("line 1\nline 2\nline 3\nline 4")
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}, Alt: true})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("alt+c copy should not queue a command")
+	}
+	if copied != m.input.Value() {
+		t.Fatalf("copied = %q, want full boss input %q", copied, m.input.Value())
+	}
+	if got.input.Value() != m.input.Value() {
+		t.Fatalf("input changed to %q, want %q", got.input.Value(), m.input.Value())
+	}
+	if got.status != "Copied full boss chat input to clipboard" {
+		t.Fatalf("status = %q, want copy confirmation", got.status)
+	}
+}
+
 func TestEmbeddedModelAltUpExits(t *testing.T) {
 	t.Parallel()
 

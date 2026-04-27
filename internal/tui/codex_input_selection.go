@@ -49,6 +49,20 @@ func (m Model) codexInputSelectionActive() bool {
 	return m.codexInputSelection != nil
 }
 
+func (m *Model) copyCodexInputToClipboard() tea.Cmd {
+	text := m.codexInput.Value()
+	if text == "" {
+		m.status = "Composer input is empty"
+		return nil
+	}
+	if err := clipboardTextWriter(text); err != nil {
+		m.reportError("Composer copy failed", err, m.codexVisibleProject)
+		return nil
+	}
+	m.status = "Copied full composer input to clipboard"
+	return nil
+}
+
 func (m Model) updateCodexInputSelectionMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	sel := m.codexInputSelection
 	if sel == nil {
@@ -60,6 +74,9 @@ func (m Model) updateCodexInputSelectionMode(msg tea.KeyMsg) (tea.Model, tea.Cmd
 		m.stopCodexInputSelection()
 		m.status = "Text selection canceled"
 		return m, nil
+	case "alt+c":
+		m.stopCodexInputSelection()
+		return m, m.copyCodexInputToClipboard()
 	case " ":
 		return m, m.toggleCodexInputSelectionMark()
 	}

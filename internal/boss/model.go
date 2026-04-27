@@ -199,6 +199,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "esc", "alt+up":
 			return m, m.exitCmd()
+		case "alt+c":
+			return m.copyInputToClipboard()
 		case "ctrl+r":
 			m.status = "Refreshing project state..."
 			return m, m.loadStateCmd()
@@ -220,6 +222,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseMsg:
 		return m.updateMouse(msg)
 	}
+	return m, nil
+}
+
+func (m Model) copyInputToClipboard() (tea.Model, tea.Cmd) {
+	text := m.input.Value()
+	if text == "" {
+		m.status = "Boss chat input is empty"
+		return m, nil
+	}
+	if err := clipboardTextWriter(text); err != nil {
+		m.status = "Boss chat input copy failed: " + err.Error()
+		return m, nil
+	}
+	m.status = "Copied full boss chat input to clipboard"
 	return m, nil
 }
 
@@ -486,7 +502,7 @@ func (m Model) renderChat(layout bossLayout) string {
 	}
 	parts := []string{transcript}
 	if !m.embedded {
-		hint := "Enter sends | Alt+Enter newline | Ctrl+R refresh | Alt+Up exits"
+		hint := "Enter sends | Alt+Enter newline | Alt+C copy input | Ctrl+R refresh | Alt+Up exits"
 		if m.sending {
 			hint = "Boss chat is thinking " + spinnerDots(m.spinnerFrame)
 		}

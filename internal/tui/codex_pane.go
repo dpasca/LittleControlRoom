@@ -1271,6 +1271,8 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "pgdown", "ctrl+d":
 		m.codexViewport.HalfPageDown()
 		return m, nil
+	case "alt+c":
+		return m, m.copyCodexInputToClipboard()
 	}
 
 	if snapshot.PendingApproval != nil {
@@ -1365,6 +1367,8 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case codexslash.KindReview:
 				m.status = "Starting embedded " + label + " review..."
 				return m, m.reviewVisibleCodexSessionCmd()
+			case codexslash.KindBoss:
+				return m.openBossModeOrSetupPrompt()
 			default:
 				m.status = "Unsupported embedded slash command"
 				return m, nil
@@ -2326,6 +2330,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerPrimaryAction("Enter", "answer"),
 			footerExitAction("Ctrl+C", "close"),
 			footerHideAction("Alt+Up", "hide"),
+			footerLowAction("Alt+C", "copy input"),
 		)
 		state := m.toolAnswerStateFor(m.codexVisibleProject, snapshot.PendingToolInput)
 		if state.QuestionIndex >= 0 && state.QuestionIndex < len(snapshot.PendingToolInput.Questions) {
@@ -2347,6 +2352,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerExitAction("d", "decline"),
 			footerLowAction("c", "cancel"),
 			footerNavAction("Alt+Enter", "newline"),
+			footerLowAction("Alt+C", "copy input"),
 		}
 	case snapshot.PendingElicitation != nil &&
 		strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" &&
@@ -2375,6 +2381,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerNavAction("Tab", "complete"),
 			footerNavAction("Shift+Tab", "previous"),
 			footerNavAction("Alt+Enter", "newline"),
+			footerLowAction("Alt+C", "copy input"),
 		}
 	case snapshot.BusyExternal:
 		actions = []footerAction{
@@ -2401,6 +2408,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerPrimaryAction("Space", "mark"),
 			footerExitAction("Esc", "cancel"),
 			footerNavAction("arrows", "move"),
+			footerLowAction("Alt+C", "copy input"),
 		}
 	case snapshot.Busy:
 		actions = []footerAction{
@@ -2409,6 +2417,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerHideAction("Alt+Up", "hide"),
 			footerNavAction("Alt+Enter", "newline"),
 			footerNavAction("Ctrl+V", "image"),
+			footerLowAction("Alt+C", "copy input"),
 			footerLowAction("Alt+S", "select"),
 		}
 	case snapshot.Closed:
@@ -2423,6 +2432,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerHideAction("Alt+Up", "hide"),
 			footerNavAction("Alt+Enter", "newline"),
 			footerNavAction("Ctrl+V", "image"),
+			footerLowAction("Alt+C", "copy input"),
 			footerLowAction("Alt+S", "select"),
 		}
 		if managedBrowserCurrentPageURL(snapshot) != "" && strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" {

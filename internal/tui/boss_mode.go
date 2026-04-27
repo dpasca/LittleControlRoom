@@ -70,6 +70,7 @@ func (m Model) renderBossModeFooter(width int) string {
 		renderFooterActionList(
 			footerPrimaryAction("Enter", "send"),
 			footerNavAction("Alt+Enter", "newline"),
+			footerLowAction("Alt+C", "copy input"),
 			footerNavAction("Ctrl+R", "refresh"),
 			footerHideAction("Alt+Up", "hide"),
 		),

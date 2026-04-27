@@ -15,6 +15,7 @@ const (
 	KindReconnect Kind = "reconnect"
 	KindCompact   Kind = "compact"
 	KindReview    Kind = "review"
+	KindBoss      Kind = "boss"
 )
 
 type Spec struct {
@@ -46,6 +47,7 @@ var specs = []Spec{
 	{Name: "reconnect", Usage: "/reconnect", Summary: "Restart the embedded provider helper and reconnect to the current session"},
 	{Name: "compact", Usage: "/compact", Summary: "Compact conversation history to free up context"},
 	{Name: "review", Usage: "/review", Summary: "Ask embedded Codex to review uncommitted changes"},
+	{Name: "boss", Usage: "/boss", Summary: "Open the high-level boss chat layer"},
 }
 
 func Specs() []Spec {
@@ -113,6 +115,12 @@ func Suggestions(input string) []Suggestion {
 			Insert:  "/review",
 			Display: "/review",
 			Summary: "Ask embedded Codex to review uncommitted changes",
+		}}
+	case "boss":
+		return []Suggestion{{
+			Insert:  "/boss",
+			Display: "/boss",
+			Summary: "Open the high-level boss chat layer",
 		}}
 	default:
 		return nameSuggestions(strings.ToLower(fields[0]))
@@ -190,6 +198,14 @@ func Parse(input string) (Invocation, error) {
 		return Invocation{
 			Kind:      KindReview,
 			Canonical: "/review",
+		}, nil
+	case "boss":
+		if strings.TrimSpace(rawArgs) != "" {
+			return Invocation{}, fmt.Errorf("usage: /boss")
+		}
+		return Invocation{
+			Kind:      KindBoss,
+			Canonical: "/boss",
 		}, nil
 	default:
 		return Invocation{}, fmt.Errorf("unsupported embedded slash command: /%s", name)
