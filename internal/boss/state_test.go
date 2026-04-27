@@ -54,6 +54,56 @@ func TestBuildStateBriefSummarizesHotProjects(t *testing.T) {
 	}
 }
 
+func TestBuildStateBriefKeepsRoutineRepoStateAsReferenceMetadata(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	snapshot := StateSnapshot{
+		TotalProjects:  1,
+		ActiveProjects: 1,
+		DirtyProjects:  1,
+		HotProjects: []ProjectBrief{{
+			Name:           "FCX",
+			Path:           "/tmp/okmain",
+			Status:         model.StatusActive,
+			RepoBranch:     "okmain",
+			RepoDirty:      true,
+			RepoSyncStatus: model.RepoSyncAhead,
+			RepoAheadCount: 3,
+			LatestSummary:  "Notification visibility fix around the Other tab is ready for validation.",
+		}},
+	}
+
+	brief := BuildStateBrief(snapshot, now)
+	lines := strings.Split(brief, "\n")
+	operational := ""
+	reference := ""
+	for _, line := range lines {
+		if strings.HasPrefix(line, "- FCX") {
+			operational = line
+		}
+		if strings.Contains(line, "Reference metadata") {
+			reference = line
+		}
+	}
+	if operational == "" || reference == "" {
+		t.Fatalf("brief missing operational/reference split:\n%s", brief)
+	}
+	if !strings.Contains(operational, "Notification visibility fix") {
+		t.Fatalf("operational line should lead with work substance:\n%s", operational)
+	}
+	for _, noisy := range []string{"dirty", "ahead +3", "okmain"} {
+		if strings.Contains(operational, noisy) {
+			t.Fatalf("operational line should not include routine repo metadata %q:\n%s", noisy, operational)
+		}
+	}
+	for _, want := range []string{"path=/tmp/okmain", "branch=okmain", "repo=dirty, ahead +3"} {
+		if !strings.Contains(reference, want) {
+			t.Fatalf("reference metadata missing %q:\n%s", want, reference)
+		}
+	}
+}
+
 func TestPanelTextsStayCompact(t *testing.T) {
 	t.Parallel()
 

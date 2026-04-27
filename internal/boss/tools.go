@@ -122,7 +122,10 @@ func (e *QueryExecutor) listProjects(ctx context.Context, action bossAction) (bo
 			break
 		}
 		brief := projectBriefFromSummary(project)
-		lines = append(lines, fmt.Sprintf("%d. path: %s | %s", i+1, brief.Path, briefLine(brief, now)))
+		lines = append(lines, fmt.Sprintf("%d. %s", i+1, operationalProjectLine(brief, now)))
+		if metadata := projectReferenceMetadata(brief, now); metadata != "" {
+			lines = append(lines, "   reference metadata: "+metadata)
+		}
 	}
 	if len(projects) == 0 {
 		lines = append(lines, "No projects matched the current store query.")
@@ -167,6 +170,7 @@ func (e *QueryExecutor) projectDetail(ctx context.Context, action bossAction, vi
 			}
 		}
 	}
+	lines = append(lines, "Operational snapshot:", "- "+operationalProjectSubstanceLine(brief, now))
 	if detail.LatestSessionClassification != nil {
 		c := detail.LatestSessionClassification
 		lines = append(lines, "Assessment evidence:")
@@ -176,7 +180,7 @@ func (e *QueryExecutor) projectDetail(ctx context.Context, action bossAction, vi
 		if c.LastError != "" {
 			lines = append(lines, "- last error: "+clipText(c.LastError, 260))
 		}
-		lines = append(lines, fmt.Sprintf("- classification metadata: status=%s category=%s confidence=%.2f", c.Status, c.Category, c.Confidence))
+		lines = append(lines, fmt.Sprintf("- reference metadata: status=%s category=%s confidence=%.2f", c.Status, c.Category, c.Confidence))
 	}
 	if len(detail.Reasons) > 0 {
 		lines = append(lines, "Attention reasons:")
@@ -196,11 +200,13 @@ func (e *QueryExecutor) projectDetail(ctx context.Context, action bossAction, vi
 			lines = append(lines, fmt.Sprintf("- #%d %s", item.ID, clipText(item.Text, 240)))
 		}
 	}
+	reference := "name=" + brief.Name
+	if metadata := projectReferenceMetadata(brief, now); metadata != "" {
+		reference += "; " + metadata
+	}
 	lines = append(lines,
-		"Reference metadata, for disambiguation or material blockers only:",
-		fmt.Sprintf("- name: %s", brief.Name),
-		fmt.Sprintf("- path: %s", brief.Path),
-		fmt.Sprintf("- state: %s", briefLine(brief, now)),
+		"Reference metadata (use only for disambiguation/blockers):",
+		"- "+reference,
 	)
 	if len(detail.Sessions) > 0 {
 		lines = append(lines, "Recent sessions:")

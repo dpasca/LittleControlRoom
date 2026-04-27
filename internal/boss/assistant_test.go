@@ -95,6 +95,10 @@ func (s *fakeBossStore) SampleProjectSessionContext(context.Context, string, int
 func TestAssistantReplyIncludesStateBriefAndRecentChat(t *testing.T) {
 	t.Parallel()
 
+	if bossAssistantReasoningEffort != "high" {
+		t.Fatalf("boss reasoning effort = %q, want high", bossAssistantReasoningEffort)
+	}
+
 	runner := &fakeTextRunner{
 		resp: llm.TextResponse{Model: "gpt-test", OutputText: "Look at Alpha first."},
 	}
@@ -167,7 +171,10 @@ func TestBossPromptsPreferExecutiveBriefAndSearchBeforeUnknown(t *testing.T) {
 		"Treat codenames as shared coworker context",
 		"sharp spoken update to a busy owner",
 		"latest session evidence",
+		"Minimize redundant information",
 		"repo hygiene, counts, scores, branches, freshness, or board stats only when they explain a real blocker or decision",
+		"dirty working tree, ahead commits, and the current branch are normal background state",
+		"Use reference metadata internally",
 		"Prefer verbs from the evidence",
 	} {
 		if !strings.Contains(directPrompt, want) {
@@ -186,7 +193,10 @@ func TestBossPromptsPreferExecutiveBriefAndSearchBeforeUnknown(t *testing.T) {
 		"answer the operational substance rather than reciting the lookup",
 		"codenames and aliases as shared coworker context",
 		"latest meaningful work plus the immediate validation, decision, or risk",
+		"Minimize redundant information",
 		"Do not include mappings, paths, dirty/ahead state, branch names, ages, attention scores, confidence, queue, or classification telemetry unless it materially changes what the user should do.",
+		"Treat repo hygiene as material only for conflicts",
+		"Use reference metadata only to disambiguate targets and detect blockers",
 		"Do not hedge a single clear match",
 		"avoid capability pitches or optional menus",
 	} {

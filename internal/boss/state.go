@@ -129,13 +129,13 @@ func BuildStateBrief(snapshot StateSnapshot, now time.Time) string {
 	}
 	lines := []string{
 		"Current app state:",
-		fmt.Sprintf("Visible projects: %d. Active: %d. Possibly stuck: %d. Dirty repos: %d. Conflicts: %d.",
+		fmt.Sprintf("Visible projects: %d. Active: %d. Possibly stuck: %d. Conflicts: %d.",
 			snapshot.TotalProjects,
 			snapshot.ActiveProjects,
 			snapshot.PossiblyStuckProjects,
-			snapshot.DirtyProjects,
 			snapshot.ConflictProjects,
 		),
+		"Routine dirty/ahead/branch state is reference metadata; treat it as background unless a blocker is listed or the user asks repo-health.",
 	}
 	if snapshot.PendingClassifications > 0 {
 		lines = append(lines, fmt.Sprintf("AI assessment queue: %d pending/running.", snapshot.PendingClassifications))
@@ -147,11 +147,10 @@ func BuildStateBrief(snapshot StateSnapshot, now time.Time) string {
 
 	lines = append(lines, "Hot projects:")
 	for _, project := range snapshot.HotProjects {
-		line := briefLine(project, now)
-		if path := strings.TrimSpace(project.Path); path != "" {
-			line += "; path: " + path
+		lines = append(lines, "- "+operationalProjectLine(project, now))
+		if metadata := projectReferenceMetadata(project, now); metadata != "" {
+			lines = append(lines, "  Reference metadata (use only for disambiguation/blockers): "+metadata)
 		}
-		lines = append(lines, "- "+line)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -197,37 +196,137 @@ func NotesText(snapshot StateSnapshot) string {
 	return strings.Join(lines, "\n")
 }
 
-func briefLine(project ProjectBrief, now time.Time) string {
-	parts := []string{
-		fmt.Sprintf("%s: %s", project.Name, shortProjectState(project)),
+func operationalProjectLine(project ProjectBrief, _ time.Time) string {
+	return operationalProjectLineFor(project, true)
+}
+
+func operationalProjectSubstanceLine(project ProjectBrief, _ time.Time) string {
+	return operationalProjectLineFor(project, false)
+}
+
+func operationalProjectLineFor(project ProjectBrief, includeName bool) string {
+	name := strings.TrimSpace(project.Name)
+	if name == "" {
+		name = "untitled project"
 	}
-	if project.AttentionScore > 0 {
-		parts = append(parts, fmt.Sprintf("attention %d", project.AttentionScore))
+	var parts []string
+	if includeName {
+		parts = append(parts, name)
+	}
+	hasSummary := false
+	if summary := bestProjectSummary(project); summary != "" {
+		hasSummary = true
+		parts = append(parts, "latest work: "+clipText(summary, 160))
+	}
+	if state := operationalStatusLabel(project, hasSummary); state != "" {
+		parts = append(parts, "state: "+state)
+	}
+	if repoBlockers := materialRepoStatus(project); len(repoBlockers) > 0 {
+		parts = append(parts, "repo blocker: "+strings.Join(repoBlockers, ", "))
 	}
 	if project.OpenTODOCount > 0 {
-		parts = append(parts, fmt.Sprintf("%d open TODOs", project.OpenTODOCount))
+		parts = append(parts, fmt.Sprintf("open TODOs: %d", project.OpenTODOCount))
 	}
-	if !project.LastActivity.IsZero() {
-		parts = append(parts, "last activity "+relativeAge(now, project.LastActivity))
+	if reasons := projectReasonTexts(project, 2); len(reasons) > 0 {
+		parts = append(parts, "signals: "+clipText(strings.Join(reasons, "; "), 180))
 	}
-	if summary := bestProjectSummary(project); summary != "" {
-		parts = append(parts, "latest: "+clipText(summary, 120))
-	}
-	if len(project.Reasons) > 0 {
-		reasons := make([]string, 0, minInt(2, len(project.Reasons)))
-		for i, reason := range project.Reasons {
-			if i >= 2 {
-				break
-			}
-			if text := strings.TrimSpace(reason.Text); text != "" {
-				reasons = append(reasons, text)
-			}
-		}
-		if len(reasons) > 0 {
-			parts = append(parts, "reasons: "+clipText(strings.Join(reasons, "; "), 120))
-		}
+	if (includeName && len(parts) == 1) || (!includeName && len(parts) == 0) {
+		parts = append(parts, "no recent summary loaded")
 	}
 	return strings.Join(parts, "; ")
+}
+
+func operationalStatusLabel(project ProjectBrief, hasSummary bool) string {
+	switch project.Status {
+	case model.StatusPossiblyStuck:
+		return "possibly stuck"
+	case model.StatusActive:
+		if !hasSummary {
+			return "active work in progress"
+		}
+	case model.StatusIdle:
+		if !hasSummary {
+			return "idle"
+		}
+	}
+	if project.SnoozedUntil != nil {
+		return "snoozed"
+	}
+	return ""
+}
+
+func materialRepoStatus(project ProjectBrief) []string {
+	var parts []string
+	if project.RepoConflict {
+		parts = append(parts, "conflict")
+	}
+	switch project.RepoSyncStatus {
+	case model.RepoSyncBehind:
+		parts = append(parts, fmt.Sprintf("behind -%d", project.RepoBehindCount))
+	case model.RepoSyncDiverged:
+		parts = append(parts, fmt.Sprintf("diverged +%d/-%d", project.RepoAheadCount, project.RepoBehindCount))
+	}
+	if project.RepoDirty && project.Status != model.StatusActive {
+		parts = append(parts, "dirty without active work context")
+	}
+	return parts
+}
+
+func projectReferenceMetadata(project ProjectBrief, now time.Time) string {
+	var parts []string
+	if path := strings.TrimSpace(project.Path); path != "" {
+		parts = append(parts, "path="+path)
+	}
+	if project.Status != "" {
+		parts = append(parts, "status="+string(project.Status))
+	}
+	if branch := strings.TrimSpace(project.RepoBranch); branch != "" {
+		parts = append(parts, "branch="+branch)
+	}
+	repoParts := projectRepoReferenceParts(project)
+	if len(repoParts) > 0 {
+		parts = append(parts, "repo="+strings.Join(repoParts, ", "))
+	}
+	if project.AttentionScore > 0 {
+		parts = append(parts, fmt.Sprintf("attention=%d", project.AttentionScore))
+	}
+	if !project.LastActivity.IsZero() {
+		parts = append(parts, "last_activity="+relativeAge(now, project.LastActivity))
+	}
+	if project.SnoozedUntil != nil {
+		parts = append(parts, "snoozed=true")
+	}
+	return strings.Join(parts, "; ")
+}
+
+func projectRepoReferenceParts(project ProjectBrief) []string {
+	var parts []string
+	if project.RepoDirty {
+		parts = append(parts, "dirty")
+	}
+	if project.RepoConflict {
+		parts = append(parts, "conflict")
+	}
+	if sync := repoSyncLabel(project.RepoSyncStatus, project.RepoAheadCount, project.RepoBehindCount); sync != "" {
+		parts = append(parts, sync)
+	}
+	return parts
+}
+
+func projectReasonTexts(project ProjectBrief, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	reasons := make([]string, 0, minInt(limit, len(project.Reasons)))
+	for _, reason := range project.Reasons {
+		if len(reasons) >= limit {
+			break
+		}
+		if text := strings.TrimSpace(reason.Text); text != "" {
+			reasons = append(reasons, text)
+		}
+	}
+	return reasons
 }
 
 func shortProjectState(project ProjectBrief) string {

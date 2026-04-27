@@ -57,7 +57,7 @@ func TestQueryExecutorReportsProjectDetailFromStore(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Project detail:",
-		"Reference metadata, for disambiguation or material blockers only:",
+		"Reference metadata (use only for disambiguation/blockers):",
 		"Alpha",
 		"/tmp/alpha",
 		"Needs a rollout decision",
@@ -65,6 +65,69 @@ func TestQueryExecutorReportsProjectDetailFromStore(t *testing.T) {
 	} {
 		if !strings.Contains(result.Text, want) {
 			t.Fatalf("tool result missing %q:\n%s", want, result.Text)
+		}
+	}
+}
+
+func TestQueryExecutorKeepsRoutineRepoStateOutOfOperationalDetail(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	store := &fakeBossStore{
+		projects: []model.ProjectSummary{{
+			Path:           "/tmp/okmain",
+			Name:           "okmain",
+			Status:         model.StatusActive,
+			RepoBranch:     "okmain",
+			RepoDirty:      true,
+			RepoSyncStatus: model.RepoSyncAhead,
+			RepoAheadCount: 3,
+		}},
+		details: map[string]model.ProjectDetail{
+			"/tmp/okmain": {
+				Summary: model.ProjectSummary{
+					Path:                 "/tmp/okmain",
+					Name:                 "okmain",
+					Status:               model.StatusActive,
+					RepoBranch:           "okmain",
+					RepoDirty:            true,
+					RepoSyncStatus:       model.RepoSyncAhead,
+					RepoAheadCount:       3,
+					LatestSessionSummary: "Notification visibility fix around the Other tab is ready for validation.",
+				},
+			},
+		},
+	}
+
+	executor := newQueryExecutor(store)
+	executor.nowFn = func() time.Time { return now }
+	result, err := executor.Execute(context.Background(), bossAction{
+		Kind:        bossActionProjectDetail,
+		ProjectPath: "/tmp/okmain",
+		Limit:       8,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	operationalIndex := strings.Index(result.Text, "Operational snapshot:")
+	metadataIndex := strings.Index(result.Text, "Reference metadata")
+	if operationalIndex < 0 || metadataIndex < 0 || operationalIndex > metadataIndex {
+		t.Fatalf("project detail should put operational substance before reference metadata:\n%s", result.Text)
+	}
+	operational := result.Text[operationalIndex:metadataIndex]
+	if !strings.Contains(operational, "Notification visibility fix") {
+		t.Fatalf("operational detail missing latest work:\n%s", operational)
+	}
+	for _, noisy := range []string{"dirty", "ahead +3", "branch=okmain", "name=okmain", "path=/tmp/okmain"} {
+		if strings.Contains(operational, noisy) {
+			t.Fatalf("operational detail should not include routine repo metadata %q:\n%s", noisy, operational)
+		}
+	}
+	reference := result.Text[metadataIndex:]
+	for _, want := range []string{"name=okmain", "path=/tmp/okmain", "branch=okmain", "repo=dirty, ahead +3"} {
+		if !strings.Contains(reference, want) {
+			t.Fatalf("reference detail missing %q:\n%s", want, reference)
 		}
 	}
 }
