@@ -85,6 +85,11 @@ func TestResponsesTextClientSendsPlainChatRequest(t *testing.T) {
 	if last["role"] != "user" {
 		t.Fatalf("last role = %#v", last["role"])
 	}
+	for index, want := range []string{"input_text", "input_text", "output_text", "input_text"} {
+		if gotType := responseTextRequestContentType(t, input, index); gotType != want {
+			t.Fatalf("input[%d] content type = %q, want %q", index, gotType, want)
+		}
+	}
 
 	snapshot := usage.Snapshot(true)
 	if snapshot.Completed != 1 || snapshot.Running != 0 || snapshot.Totals.TotalTokens != 18 {
@@ -114,8 +119,12 @@ func TestResponsesTextClientStreamsDeltas(t *testing.T) {
 	client := NewResponsesTextClientWithBaseURL("test-key", server.URL+"/v1", time.Second, usage)
 	var deltas []string
 	resp, err := client.RunTextStream(context.Background(), TextRequest{
-		Model:    "gpt-test",
-		Messages: []TextMessage{{Role: "user", Content: "hello"}},
+		Model: "gpt-test",
+		Messages: []TextMessage{
+			{Role: "user", Content: "hello"},
+			{Role: "assistant", Content: "hi"},
+			{Role: "user", Content: "next"},
+		},
 	}, func(event TextStreamEvent) error {
 		deltas = append(deltas, event.Delta)
 		return nil
@@ -125,6 +134,15 @@ func TestResponsesTextClientStreamsDeltas(t *testing.T) {
 	}
 	if got["stream"] != true {
 		t.Fatalf("stream request field = %#v, want true", got["stream"])
+	}
+	input, ok := got["input"].([]any)
+	if !ok || len(input) != 3 {
+		t.Fatalf("input len = %#v, want 3", got["input"])
+	}
+	for index, want := range []string{"input_text", "output_text", "input_text"} {
+		if gotType := responseTextRequestContentType(t, input, index); gotType != want {
+			t.Fatalf("input[%d] content type = %q, want %q", index, gotType, want)
+		}
 	}
 	if strings.Join(deltas, "") != "Look alive" || resp.OutputText != "Look alive" {
 		t.Fatalf("streamed deltas = %q response = %+v", strings.Join(deltas, ""), resp)
@@ -207,6 +225,27 @@ func TestOpenAICompatibleChatTextClientStreamsDeltas(t *testing.T) {
 	if snapshot.Completed != 1 || snapshot.Totals.TotalTokens != 9 {
 		t.Fatalf("unexpected usage snapshot: %+v", snapshot)
 	}
+}
+
+func responseTextRequestContentType(t *testing.T, input []any, index int) string {
+	t.Helper()
+	item, ok := input[index].(map[string]any)
+	if !ok {
+		t.Fatalf("input[%d] = %#v, want object", index, input[index])
+	}
+	content, ok := item["content"].([]any)
+	if !ok || len(content) != 1 {
+		t.Fatalf("input[%d].content = %#v, want one content item", index, item["content"])
+	}
+	part, ok := content[0].(map[string]any)
+	if !ok {
+		t.Fatalf("input[%d].content[0] = %#v, want object", index, content[0])
+	}
+	contentType, ok := part["type"].(string)
+	if !ok {
+		t.Fatalf("input[%d].content[0].type = %#v, want string", index, part["type"])
+	}
+	return contentType
 }
 
 func TestOpenAICompatibleTextRunnerUsesChatCompletionsAndAutoModel(t *testing.T) {

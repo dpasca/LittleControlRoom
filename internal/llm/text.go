@@ -752,11 +752,15 @@ func runTextStreamWithFallback(ctx context.Context, runner TextRunner, req TextR
 }
 
 func responseTextMessage(role, text string) map[string]any {
+	contentType := "input_text"
+	if strings.TrimSpace(role) == "assistant" {
+		contentType = "output_text"
+	}
 	return map[string]any{
 		"role": role,
 		"content": []any{
 			map[string]any{
-				"type": "input_text",
+				"type": contentType,
 				"text": text,
 			},
 		},
