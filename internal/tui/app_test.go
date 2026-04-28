@@ -19963,12 +19963,34 @@ func TestDispatchRemoveCommandStoresIgnoredNameAndHidesProject(t *testing.T) {
 
 	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindRemove, Canonical: "/remove"})
 	got := updated.(Model)
-	if cmd == nil {
-		t.Fatalf("dispatchCommand(/remove) should return a removal command")
+	if cmd != nil {
+		t.Fatalf("dispatchCommand(/remove) should open confirmation before scheduling work")
+	}
+	if got.projectRemoveConfirm == nil {
+		t.Fatalf("dispatchCommand(/remove) should open the project removal confirmation")
+	}
+	if got.projectRemoveConfirm.Selected != projectRemoveConfirmFocusKeep {
+		t.Fatalf("default removal confirmation selection = %d, want keep", got.projectRemoveConfirm.Selected)
+	}
+	rendered := ansi.Strip(got.renderProjectRemoveConfirmOverlay("", 100, 24))
+	if !strings.Contains(rendered, "does not delete files on disk") {
+		t.Fatalf("project removal confirmation should explain files are kept, got %q", rendered)
 	}
 
-	actionMsg := cmd()
-	afterAction, reloadCmd := got.Update(actionMsg)
+	updated, _ = got.updateProjectRemoveConfirmMode(tea.KeyMsg{Type: tea.KeyTab})
+	got = updated.(Model)
+	if got.projectRemoveConfirm.Selected != projectRemoveConfirmFocusRemove {
+		t.Fatalf("tab should move project removal focus to remove")
+	}
+
+	updated, cmd = got.updateProjectRemoveConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("project removal confirmation should return a removal command")
+	}
+
+	rawMsg := cmd()
+	afterAction, reloadCmd := got.Update(rawMsg)
 	reloaded := afterAction.(Model)
 	if reloadCmd == nil {
 		t.Fatalf("remove action should trigger a project reload")
@@ -20046,12 +20068,34 @@ func TestDispatchRemoveCommandForMissingProjectMarksItForgotten(t *testing.T) {
 
 	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindRemove, Canonical: "/remove"})
 	got := updated.(Model)
-	if cmd == nil {
-		t.Fatalf("dispatchCommand(/remove) should return a removal command for missing projects")
+	if cmd != nil {
+		t.Fatalf("dispatchCommand(/remove) should open confirmation before removing missing projects")
+	}
+	if got.projectRemoveConfirm == nil {
+		t.Fatalf("dispatchCommand(/remove) should open the project removal confirmation")
+	}
+	if got.projectRemoveConfirm.Selected != projectRemoveConfirmFocusKeep {
+		t.Fatalf("default removal confirmation selection = %d, want keep", got.projectRemoveConfirm.Selected)
+	}
+	rendered := ansi.Strip(got.renderProjectRemoveConfirmOverlay("", 100, 24))
+	if !strings.Contains(rendered, "stale dashboard entry") {
+		t.Fatalf("missing project removal confirmation should explain stale entry removal, got %q", rendered)
 	}
 
-	actionMsg := cmd()
-	afterAction, reloadCmd := got.Update(actionMsg)
+	updated, _ = got.updateProjectRemoveConfirmMode(tea.KeyMsg{Type: tea.KeyTab})
+	got = updated.(Model)
+	if got.projectRemoveConfirm.Selected != projectRemoveConfirmFocusRemove {
+		t.Fatalf("tab should move project removal focus to remove")
+	}
+
+	updated, cmd = got.updateProjectRemoveConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("project removal confirmation should return a removal command")
+	}
+
+	rawMsg := cmd()
+	afterAction, reloadCmd := got.Update(rawMsg)
 	reloaded := afterAction.(Model)
 	if reloadCmd == nil {
 		t.Fatalf("remove action should trigger a project reload")

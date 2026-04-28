@@ -154,7 +154,7 @@ var specs = []Spec{
 	{Name: "events", Usage: "/events on|off|toggle", Summary: "Show or hide Recent events"},
 	{Name: "ignore", Usage: "/ignore", Summary: "Hide the selected project's exact name"},
 	{Name: "ignored", Usage: "/ignored", Summary: "Review ignored project names and restore them"},
-	{Name: "remove", Usage: "/remove", Summary: "Make the selected item go away safely"},
+	{Name: "remove", Usage: "/remove", Summary: "Confirm, then make the selected item go away safely"},
 	{Name: "focus", Usage: "/focus list|detail|runtime", Summary: "Move focus between panes"},
 	{Name: "privacy", Usage: "/privacy on|off|toggle", Summary: "Toggle demo privacy mode that hides project name patterns"},
 	{Name: "quit", Usage: "/quit", Summary: "Quit the TUI"},
