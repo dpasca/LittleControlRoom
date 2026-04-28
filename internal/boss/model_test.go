@@ -649,6 +649,26 @@ func TestModelTranscriptRendersMarkdown(t *testing.T) {
 	}
 }
 
+func TestModelTranscriptRendersTemporaryStreamingState(t *testing.T) {
+	t.Parallel()
+
+	m := New(context.Background(), nil)
+	m.messages = []ChatMessage{{Role: "user", Content: "Check alpha"}}
+	m.sending = true
+	m.streamingToolCalls = []string{"tool: project_detail /tmp/alpha", "done: project_detail /tmp/alpha"}
+	m.streamingAssistantText = "Alpha is waiting on the rollout decision."
+
+	rendered := ansi.Strip(m.renderTranscript(84))
+	for _, want := range []string{"You>", "Check alpha", "Tool calls", "project_detail /tmp/alpha", "Alpha is waiting"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("streaming transcript missing %q:\n%s", want, rendered)
+		}
+	}
+	if len(m.messages) != 1 {
+		t.Fatalf("temporary streaming state should not append persisted messages")
+	}
+}
+
 func TestPanelUsesFullAllocatedWidthAndKeepsBottomBorder(t *testing.T) {
 	t.Parallel()
 

@@ -60,6 +60,10 @@ type Model struct {
 	spinnerFrame int
 	nowFn        func() time.Time
 
+	assistantStreamID      int
+	streamingAssistantText string
+	streamingToolCalls     []string
+
 	summaryFlashUntil map[string]time.Time
 }
 
@@ -74,6 +78,27 @@ type AssistantReplyMsg struct {
 	snapshot       StateSnapshot
 	stateErr       error
 	stateRefreshed bool
+}
+
+type assistantStreamStartedMsg struct {
+	streamID int
+	events   <-chan assistantStreamEnvelope
+}
+
+type assistantStreamEnvelope struct {
+	event          AssistantStreamEvent
+	response       AssistantResponse
+	err            error
+	snapshot       StateSnapshot
+	stateErr       error
+	stateRefreshed bool
+	done           bool
+}
+
+type assistantStreamMsg struct {
+	streamID int
+	events   <-chan assistantStreamEnvelope
+	envelope assistantStreamEnvelope
 }
 
 type bossSessionLoadedMsg struct {
@@ -163,7 +188,7 @@ func newModel(ctx context.Context, svc *service.Service, embedded bool) Model {
 
 func IsMessage(msg tea.Msg) bool {
 	switch msg.(type) {
-	case StateLoadedMsg, AssistantReplyMsg, TickMsg, ExitMsg, bossSessionLoadedMsg, bossSessionSavedMsg, bossSessionsListedMsg:
+	case StateLoadedMsg, AssistantReplyMsg, assistantStreamStartedMsg, assistantStreamMsg, TickMsg, ExitMsg, bossSessionLoadedMsg, bossSessionSavedMsg, bossSessionsListedMsg:
 		return true
 	default:
 		return false
@@ -225,43 +250,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncLayout(false)
 		return m, nil
 	case AssistantReplyMsg:
-		m.sending = false
-		if msg.stateRefreshed {
-			m.syncSummaryFlashes(msg.snapshot)
-			m.snapshot = msg.snapshot
-			m.stateLoaded = true
-			m.stateErr = nil
-		} else if msg.stateErr != nil {
-			m.stateErr = msg.stateErr
+		return m.applyAssistantReply(msg.response, msg.err, msg.snapshot, msg.stateErr, msg.stateRefreshed)
+	case assistantStreamStartedMsg:
+		if msg.streamID != m.assistantStreamID || msg.events == nil {
+			return m, nil
 		}
-		var saved ChatMessage
-		if msg.err != nil {
-			saved = ChatMessage{
-				Role:    "assistant",
-				Content: "I could not reach my chat backend yet: " + msg.err.Error(),
-				At:      m.now(),
-			}
-			m.messages = append(m.messages, saved)
-			m.status = "Boss chat could not answer"
-		} else {
-			content := strings.TrimSpace(msg.response.Content)
-			if content == "" {
-				content = "I heard you, but the model returned an empty reply."
-			}
-			saved = ChatMessage{
-				Role:    "assistant",
-				Content: content,
-				At:      m.now(),
-			}
-			m.messages = append(m.messages, saved)
-			if modelName := strings.TrimSpace(msg.response.Model); modelName != "" {
-				m.status = "Boss chat via " + modelName
-			} else {
-				m.status = m.assistant.Label()
-			}
+		return m, waitAssistantStreamCmd(msg.streamID, msg.events)
+	case assistantStreamMsg:
+		if msg.streamID != m.assistantStreamID {
+			return m, nil
 		}
+		if msg.envelope.done {
+			return m.applyAssistantReply(msg.envelope.response, msg.envelope.err, msg.envelope.snapshot, msg.envelope.stateErr, msg.envelope.stateRefreshed)
+		}
+		m.applyAssistantStreamEvent(msg.envelope.event)
 		m.syncLayout(true)
-		return m, m.saveBossChatMessageCmd(saved)
+		return m, waitAssistantStreamCmd(msg.streamID, msg.events)
 	case bossSessionLoadedMsg:
 		m.sessionLoaded = true
 		m.sessionErr = msg.err
@@ -342,6 +346,68 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateMouse(msg)
 	}
 	return m, nil
+}
+
+func (m Model) applyAssistantReply(response AssistantResponse, err error, snapshot StateSnapshot, stateErr error, stateRefreshed bool) (tea.Model, tea.Cmd) {
+	m.sending = false
+	m.streamingAssistantText = ""
+	m.streamingToolCalls = nil
+	if stateRefreshed {
+		m.syncSummaryFlashes(snapshot)
+		m.snapshot = snapshot
+		m.stateLoaded = true
+		m.stateErr = nil
+	} else if stateErr != nil {
+		m.stateErr = stateErr
+	}
+	var saved ChatMessage
+	if err != nil {
+		saved = ChatMessage{
+			Role:    "assistant",
+			Content: "I could not reach my chat backend yet: " + err.Error(),
+			At:      m.now(),
+		}
+		m.messages = append(m.messages, saved)
+		m.status = "Boss chat could not answer"
+	} else {
+		content := strings.TrimSpace(response.Content)
+		if content == "" {
+			content = "I heard you, but the model returned an empty reply."
+		}
+		saved = ChatMessage{
+			Role:    "assistant",
+			Content: content,
+			At:      m.now(),
+		}
+		m.messages = append(m.messages, saved)
+		if modelName := strings.TrimSpace(response.Model); modelName != "" {
+			m.status = "Boss chat via " + modelName
+		} else {
+			m.status = m.assistant.Label()
+		}
+	}
+	m.syncLayout(true)
+	return m, m.saveBossChatMessageCmd(saved)
+}
+
+func (m *Model) applyAssistantStreamEvent(event AssistantStreamEvent) {
+	switch event.Kind {
+	case AssistantStreamTextDelta:
+		m.streamingAssistantText += event.Delta
+		if strings.TrimSpace(m.streamingAssistantText) != "" {
+			m.status = "Boss chat is answering..."
+		}
+	case AssistantStreamToolCall:
+		line := formatAssistantToolCallStatus(event)
+		if line == "" {
+			return
+		}
+		m.streamingToolCalls = append(m.streamingToolCalls, line)
+		if len(m.streamingToolCalls) > 6 {
+			m.streamingToolCalls = append([]string(nil), m.streamingToolCalls[len(m.streamingToolCalls)-6:]...)
+		}
+		m.status = line
+	}
 }
 
 func (m Model) copyInputToClipboard() (tea.Model, tea.Cmd) {
@@ -430,6 +496,63 @@ func (m Model) askAssistantCmd(messages []ChatMessage, snapshot StateSnapshot, v
 			Messages:   messages,
 		})
 		return AssistantReplyMsg{response: resp, err: err, snapshot: snapshot, stateErr: stateErr, stateRefreshed: stateRefreshed}
+	}
+}
+
+func (m Model) askAssistantStreamCmd(streamID int, messages []ChatMessage, snapshot StateSnapshot, view ViewContext) tea.Cmd {
+	assistant := m.assistant
+	parent := m.ctx
+	svc := m.svc
+	options := m.stateSnapshotOptions()
+	return func() tea.Msg {
+		events := make(chan assistantStreamEnvelope, 128)
+		go func() {
+			defer close(events)
+			ctx, cancel := childContext(parent, 120*time.Second)
+			defer cancel()
+			stateErr := error(nil)
+			stateRefreshed := false
+			if svc != nil {
+				refreshed, err := LoadStateSnapshot(ctx, svc, time.Now(), options)
+				if err == nil {
+					snapshot = refreshed
+					stateRefreshed = true
+				} else {
+					stateErr = err
+				}
+			}
+			emit := func(event AssistantStreamEvent) {
+				select {
+				case events <- assistantStreamEnvelope{event: event}:
+				case <-ctx.Done():
+				}
+			}
+			resp, err := assistant.ReplyStream(ctx, AssistantRequest{
+				StateBrief: BuildStateBrief(snapshot, time.Now()),
+				Snapshot:   snapshot,
+				View:       view,
+				Messages:   messages,
+			}, emit)
+			select {
+			case events <- assistantStreamEnvelope{response: resp, err: err, snapshot: snapshot, stateErr: stateErr, stateRefreshed: stateRefreshed, done: true}:
+			case <-ctx.Done():
+				select {
+				case events <- assistantStreamEnvelope{err: ctx.Err(), snapshot: snapshot, stateErr: stateErr, stateRefreshed: stateRefreshed, done: true}:
+				default:
+				}
+			}
+		}()
+		return assistantStreamStartedMsg{streamID: streamID, events: events}
+	}
+}
+
+func waitAssistantStreamCmd(streamID int, events <-chan assistantStreamEnvelope) tea.Cmd {
+	return func() tea.Msg {
+		envelope, ok := <-events
+		if !ok {
+			return assistantStreamMsg{streamID: streamID, events: events, envelope: assistantStreamEnvelope{err: fmt.Errorf("boss chat stream closed before the final response"), done: true}}
+		}
+		return assistantStreamMsg{streamID: streamID, events: events, envelope: envelope}
 	}
 }
 
@@ -869,6 +992,11 @@ func (m Model) renderTranscript(width int) string {
 		}
 		blocks = append(blocks, renderUserMessage(message.Content, width))
 	}
+	if m.sending {
+		if pending := renderStreamingAssistantMessage(m.streamingAssistantText, m.streamingToolCalls, width, m.spinnerFrame); pending != "" {
+			blocks = append(blocks, pending)
+		}
+	}
 	return strings.Join(blocks, "\n\n")
 }
 
@@ -965,6 +1093,7 @@ var (
 	bossAssistantMessageBackground  = bossPanelBackground
 	bossUserMessageBackground       = lipgloss.Color("#101010")
 	bossAssistantMessageStyle       = lipgloss.NewStyle().Background(bossAssistantMessageBackground)
+	bossToolCallStyle               = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(bossPanelBackground)
 	bossUserMessageStyle            = lipgloss.NewStyle().Background(bossUserMessageBackground)
 	bossUserPrefixStyle             = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Background(bossUserMessageBackground).Bold(true)
 	bossUserContinuationPrefixStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Background(bossUserMessageBackground)
@@ -1030,6 +1159,54 @@ func attentionProjectLimit(height int) int {
 func renderAssistantMessage(content string, width int) string {
 	rendered := terminalmd.RenderBody(content, bossPanelText, maxInt(8, width))
 	return renderMessageLines(rendered, bossAssistantMessageStyle, width)
+}
+
+func renderStreamingAssistantMessage(content string, toolCalls []string, width, spinnerFrame int) string {
+	var blocks []string
+	if toolBlock := renderTemporaryToolCalls(toolCalls, width); toolBlock != "" {
+		blocks = append(blocks, toolBlock)
+	}
+	if strings.TrimSpace(content) != "" {
+		blocks = append(blocks, renderAssistantMessage(content, width))
+	}
+	if len(blocks) == 0 {
+		blocks = append(blocks, bossMutedStyle.Render(fitLine("Boss chat is thinking "+spinnerDots(spinnerFrame), width)))
+	}
+	return strings.Join(blocks, "\n")
+}
+
+func renderTemporaryToolCalls(toolCalls []string, width int) string {
+	if len(toolCalls) == 0 {
+		return ""
+	}
+	start := maxInt(0, len(toolCalls)-4)
+	lines := []string{"Tool calls"}
+	for _, call := range toolCalls[start:] {
+		if text := strings.TrimSpace(call); text != "" {
+			lines = append(lines, "  "+text)
+		}
+	}
+	for i, line := range lines {
+		lines[i] = bossToolCallStyle.Render(fitLine(line, width))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatAssistantToolCallStatus(event AssistantStreamEvent) string {
+	call := strings.TrimSpace(event.ToolCall)
+	if call == "" {
+		return ""
+	}
+	switch strings.TrimSpace(event.ToolState) {
+	case "running":
+		return "tool: " + call
+	case "done":
+		return "done: " + call
+	case "error":
+		return "error: " + call
+	default:
+		return "tool: " + call
+	}
 }
 
 func renderUserMessage(content string, width int) string {
