@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -102,7 +103,7 @@ func LoadStateSnapshot(ctx context.Context, svc *service.Service, now time.Time,
 		snapshot.PendingClassifications = counts[model.ClassificationPending] + counts[model.ClassificationRunning]
 	}
 
-	for _, project := range selectRecentAttentionProjects(projects, hotProjectLimit) {
+	for _, project := range selectRecentAttentionProjectsWithPresence(projects, hotProjectLimit, projectCurrentlyPresent) {
 		if len(snapshot.HotProjects) >= hotProjectLimit {
 			break
 		}
@@ -260,12 +261,18 @@ func operationalProjectLineFor(project ProjectBrief, includeName bool) string {
 }
 
 func selectRecentAttentionProjects(projects []model.ProjectSummary, limit int) []model.ProjectSummary {
+	return selectRecentAttentionProjectsWithPresence(projects, limit, func(project model.ProjectSummary) bool {
+		return project.PresentOnDisk
+	})
+}
+
+func selectRecentAttentionProjectsWithPresence(projects []model.ProjectSummary, limit int, present func(model.ProjectSummary) bool) []model.ProjectSummary {
 	if limit <= 0 || len(projects) == 0 {
 		return nil
 	}
 	candidates := make([]model.ProjectSummary, 0, len(projects))
 	for _, project := range projects {
-		if project.PresentOnDisk {
+		if present != nil && present(project) {
 			candidates = append(candidates, project)
 		}
 	}
@@ -291,6 +298,18 @@ func selectRecentAttentionProjects(projects []model.ProjectSummary, limit int) [
 		selected = selected[:limit]
 	}
 	return selected
+}
+
+func projectCurrentlyPresent(project model.ProjectSummary) bool {
+	if !project.PresentOnDisk {
+		return false
+	}
+	path := strings.TrimSpace(project.Path)
+	if path == "" {
+		return true
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func filterProjectSummariesByPrivacy(projects []model.ProjectSummary, privacyPatterns []string) []model.ProjectSummary {

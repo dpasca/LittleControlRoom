@@ -1,6 +1,8 @@
 package boss
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -137,6 +139,34 @@ func TestSelectRecentAttentionProjectsPrefersPresentRecentProjects(t *testing.T)
 	}
 	if selected[0].Name != "Present newest" || selected[1].Name != "Present older" {
 		t.Fatalf("selected order = %#v, want present projects by recent activity", selected)
+	}
+}
+
+func TestSelectRecentAttentionProjectsSkipsCachedPresentPathsMissingOnDisk(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	root := t.TempDir()
+	presentOlder := filepath.Join(root, "present-older")
+	presentNewest := filepath.Join(root, "present-newest")
+	if err := os.Mkdir(presentOlder, 0o755); err != nil {
+		t.Fatalf("mkdir present older: %v", err)
+	}
+	if err := os.Mkdir(presentNewest, 0o755); err != nil {
+		t.Fatalf("mkdir present newest: %v", err)
+	}
+	projects := []model.ProjectSummary{
+		{Name: "Missing newest", Path: filepath.Join(root, "missing-newest"), LastActivity: now, AttentionScore: 99, PresentOnDisk: true},
+		{Name: "Present older", Path: presentOlder, LastActivity: now.Add(-time.Hour), AttentionScore: 10, PresentOnDisk: true},
+		{Name: "Present newest", Path: presentNewest, LastActivity: now.Add(-time.Minute), AttentionScore: 5, PresentOnDisk: true},
+	}
+
+	selected := selectRecentAttentionProjectsWithPresence(projects, 2, projectCurrentlyPresent)
+	if len(selected) != 2 {
+		t.Fatalf("selected len = %d, want 2", len(selected))
+	}
+	if selected[0].Name != "Present newest" || selected[1].Name != "Present older" {
+		t.Fatalf("selected order = %#v, want currently present projects by recent activity", selected)
 	}
 }
 
