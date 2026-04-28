@@ -19,6 +19,16 @@ type TextRunner interface {
 	RunText(ctx context.Context, req TextRequest) (TextResponse, error)
 }
 
+type StreamingTextRunner interface {
+	RunTextStream(ctx context.Context, req TextRequest, handle TextStreamHandler) (TextResponse, error)
+}
+
+type TextStreamHandler func(TextStreamEvent) error
+
+type TextStreamEvent struct {
+	Delta string
+}
+
 type TextMessage struct {
 	Role    string
 	Content string
@@ -337,6 +347,324 @@ func (c *OpenAICompatibleChatTextClient) RunText(ctx context.Context, req TextRe
 	return parsed, nil
 }
 
+func (c *ResponsesTextClient) RunTextStream(ctx context.Context, req TextRequest, handle TextStreamHandler) (TextResponse, error) {
+	if c == nil || c.apiKey == "" {
+		return TextResponse{}, errors.New("openai responses text client not configured")
+	}
+	modelName := strings.TrimSpace(req.Model)
+	if modelName == "" {
+		return TextResponse{}, errors.New("openai responses text request requires a model")
+	}
+	if handle == nil {
+		handle = func(TextStreamEvent) error { return nil }
+	}
+
+	input := make([]any, 0, len(req.Messages)+1)
+	if system := strings.TrimSpace(req.SystemText); system != "" {
+		input = append(input, responseTextMessage("system", system))
+	}
+	for _, message := range req.Messages {
+		content := strings.TrimSpace(message.Content)
+		if content == "" {
+			continue
+		}
+		input = append(input, responseTextMessage(normalizeTextMessageRole(message.Role), content))
+	}
+	if len(input) == 0 {
+		return TextResponse{}, errors.New("openai responses text request requires at least one message")
+	}
+
+	reqBody := map[string]any{
+		"model":  modelName,
+		"input":  input,
+		"store":  false,
+		"stream": true,
+	}
+	if effort := strings.TrimSpace(req.ReasoningEffort); effort != "" {
+		reqBody["reasoning"] = map[string]any{"effort": effort}
+	}
+
+	raw, err := json.Marshal(reqBody)
+	if err != nil {
+		return TextResponse{}, fmt.Errorf("marshal openai text request: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(raw))
+	if err != nil {
+		return TextResponse{}, fmt.Errorf("create openai text request: %w", err)
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
+
+	if c.usage != nil {
+		c.usage.Start(modelName)
+	}
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		if c.usage != nil {
+			c.usage.Fail(modelName)
+		}
+		return TextResponse{}, fmt.Errorf("send openai text request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		body, readErr := io.ReadAll(resp.Body)
+		if c.usage != nil {
+			c.usage.Fail(modelName)
+		}
+		if readErr != nil {
+			return TextResponse{}, fmt.Errorf("read openai text response: %w", readErr)
+		}
+		return TextResponse{}, &HTTPStatusError{
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Body:       string(body),
+			RetryAfter: resp.Header.Get("Retry-After"),
+		}
+	}
+
+	var (
+		result     TextResponse
+		parts      []string
+		doneText   string
+		streamErr  error
+		sawContent bool
+	)
+	streamErr = readServerSentEventData(resp.Body, func(data []byte) error {
+		var event struct {
+			Type     string          `json:"type"`
+			Delta    string          `json:"delta"`
+			Text     string          `json:"text"`
+			Response json.RawMessage `json:"response"`
+			Error    *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(data, &event); err != nil {
+			return fmt.Errorf("decode openai text stream event: %w", err)
+		}
+		if event.Error != nil && strings.TrimSpace(event.Error.Message) != "" {
+			return errors.New(strings.TrimSpace(event.Error.Message))
+		}
+		switch strings.TrimSpace(event.Type) {
+		case "response.output_text.delta":
+			if event.Delta == "" {
+				return nil
+			}
+			parts = append(parts, event.Delta)
+			sawContent = true
+			return handle(TextStreamEvent{Delta: event.Delta})
+		case "response.output_text.done":
+			doneText = event.Text
+			return nil
+		case "response.completed", "response.incomplete", "response.failed":
+			if len(event.Response) == 0 {
+				return nil
+			}
+			parsed, err := parseResponsesTextEnvelope(event.Response)
+			if err != nil {
+				return err
+			}
+			result = parsed
+			return nil
+		default:
+			return nil
+		}
+	})
+	if streamErr != nil {
+		if c.usage != nil {
+			c.usage.Fail(modelName)
+		}
+		return TextResponse{}, streamErr
+	}
+	if result.OutputText == "" {
+		result.OutputText = strings.TrimSpace(strings.Join(parts, ""))
+	}
+	if result.OutputText == "" && strings.TrimSpace(doneText) != "" {
+		result.OutputText = strings.TrimSpace(doneText)
+		if !sawContent {
+			if err := handle(TextStreamEvent{Delta: doneText}); err != nil {
+				if c.usage != nil {
+					c.usage.Fail(modelName)
+				}
+				return TextResponse{}, err
+			}
+		}
+	}
+	if result.Model == "" {
+		result.Model = modelName
+	}
+	if result.OutputText == "" {
+		if c.usage != nil {
+			c.usage.Fail(modelName)
+		}
+		return result, errors.New("openai text response returned no assistant output")
+	}
+	if c.usage != nil {
+		c.usage.Complete(result.Model, result.Usage)
+	}
+	return result, nil
+}
+
+func (c *OpenAICompatibleChatTextClient) RunTextStream(ctx context.Context, req TextRequest, handle TextStreamHandler) (TextResponse, error) {
+	if c == nil || c.apiKey == "" {
+		return TextResponse{}, errors.New("openai-compatible chat text client not configured")
+	}
+	modelName := strings.TrimSpace(req.Model)
+	if modelName == "" {
+		return TextResponse{}, errors.New("openai-compatible chat text request requires a model")
+	}
+	if handle == nil {
+		handle = func(TextStreamEvent) error { return nil }
+	}
+
+	messages := make([]any, 0, len(req.Messages)+1)
+	if system := strings.TrimSpace(req.SystemText); system != "" {
+		messages = append(messages, map[string]any{"role": "system", "content": system})
+	}
+	for _, message := range req.Messages {
+		content := strings.TrimSpace(message.Content)
+		if content == "" {
+			continue
+		}
+		messages = append(messages, map[string]any{
+			"role":    normalizeTextMessageRole(message.Role),
+			"content": content,
+		})
+	}
+	if len(messages) == 0 {
+		return TextResponse{}, errors.New("openai-compatible chat text request requires at least one message")
+	}
+
+	reqBody := map[string]any{
+		"model":    modelName,
+		"messages": messages,
+		"stream":   true,
+	}
+	raw, err := json.Marshal(reqBody)
+	if err != nil {
+		return TextResponse{}, fmt.Errorf("marshal openai-compatible chat text request: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(raw))
+	if err != nil {
+		return TextResponse{}, fmt.Errorf("create openai-compatible chat text request: %w", err)
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
+
+	if c.usage != nil {
+		c.usage.Start(modelName)
+	}
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		if c.usage != nil {
+			c.usage.Fail(modelName)
+		}
+		return TextResponse{}, fmt.Errorf("send openai-compatible chat text request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		body, readErr := io.ReadAll(resp.Body)
+		if c.usage != nil {
+			c.usage.Fail(modelName)
+		}
+		if readErr != nil {
+			return TextResponse{}, fmt.Errorf("read openai-compatible chat text response: %w", readErr)
+		}
+		return TextResponse{}, &HTTPStatusError{
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Body:       string(body),
+			RetryAfter: resp.Header.Get("Retry-After"),
+		}
+	}
+
+	result := TextResponse{Status: "completed"}
+	var parts []string
+	streamErr := readServerSentEventData(resp.Body, func(data []byte) error {
+		var chunk struct {
+			Model string `json:"model"`
+			Error *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+			Usage *struct {
+				PromptTokens        int64 `json:"prompt_tokens"`
+				PromptTokensDetails struct {
+					CachedTokens int64 `json:"cached_tokens"`
+				} `json:"prompt_tokens_details"`
+				CompletionTokens        int64 `json:"completion_tokens"`
+				CompletionTokensDetails struct {
+					ReasoningTokens int64 `json:"reasoning_tokens"`
+				} `json:"completion_tokens_details"`
+				TotalTokens int64 `json:"total_tokens"`
+			} `json:"usage"`
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+				FinishReason string `json:"finish_reason"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal(data, &chunk); err != nil {
+			return fmt.Errorf("decode openai-compatible chat text stream event: %w", err)
+		}
+		if chunk.Error != nil && strings.TrimSpace(chunk.Error.Message) != "" {
+			return errors.New(strings.TrimSpace(chunk.Error.Message))
+		}
+		if strings.TrimSpace(chunk.Model) != "" {
+			result.Model = strings.TrimSpace(chunk.Model)
+		}
+		if chunk.Usage != nil {
+			result.Usage = model.LLMUsage{
+				InputTokens:       chunk.Usage.PromptTokens,
+				OutputTokens:      chunk.Usage.CompletionTokens,
+				TotalTokens:       chunk.Usage.TotalTokens,
+				CachedInputTokens: chunk.Usage.PromptTokensDetails.CachedTokens,
+				ReasoningTokens:   chunk.Usage.CompletionTokensDetails.ReasoningTokens,
+			}
+		}
+		for _, choice := range chunk.Choices {
+			if reason := strings.TrimSpace(choice.FinishReason); reason != "" {
+				result.IncompleteReason = reason
+			}
+			if choice.Delta.Content == "" {
+				continue
+			}
+			parts = append(parts, choice.Delta.Content)
+			if err := handle(TextStreamEvent{Delta: choice.Delta.Content}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if streamErr != nil {
+		if c.usage != nil {
+			c.usage.Fail(modelName)
+		}
+		return TextResponse{}, streamErr
+	}
+	result.OutputText = strings.TrimSpace(strings.Join(parts, ""))
+	if result.Model == "" {
+		result.Model = modelName
+	}
+	if estimatedCostUSD, ok := model.EstimateLLMCostUSD(result.Model, result.Usage); ok {
+		result.Usage.EstimatedCostUSD = estimatedCostUSD
+	}
+	if result.OutputText == "" {
+		if c.usage != nil {
+			c.usage.Fail(modelName)
+		}
+		return result, errors.New("openai-compatible chat text response returned no assistant output")
+	}
+	if c.usage != nil {
+		c.usage.Complete(result.Model, result.Usage)
+	}
+	return result, nil
+}
+
 func (r *AutoTextRunner) RunText(ctx context.Context, req TextRequest) (TextResponse, error) {
 	if r == nil || r.baseRunner == nil {
 		return TextResponse{}, errors.New("auto text runner not configured")
@@ -372,6 +700,57 @@ func (r *AutoTextRunner) RunText(ctx context.Context, req TextRequest) (TextResp
 	return r.baseRunner.RunText(ctx, req)
 }
 
+func (r *AutoTextRunner) RunTextStream(ctx context.Context, req TextRequest, handle TextStreamHandler) (TextResponse, error) {
+	if r == nil || r.baseRunner == nil {
+		return TextResponse{}, errors.New("auto text runner not configured")
+	}
+	model := strings.TrimSpace(req.Model)
+	if model == "" {
+		model = r.defaultModel
+	}
+	if model == "" && r.discovery != nil {
+		discovered, err := r.discovery.FirstModel(ctx)
+		if err != nil {
+			return TextResponse{}, err
+		}
+		model = discovered
+	}
+	if model == "" {
+		return TextResponse{}, errors.New("auto text runner could not resolve a model")
+	}
+	req.Model = model
+	response, err := runTextStreamWithFallback(ctx, r.baseRunner, req, handle)
+	if err == nil {
+		return response, nil
+	}
+	var httpErr *HTTPStatusError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusNotFound || r.discovery == nil {
+		return TextResponse{}, err
+	}
+	discovered, discoverErr := r.discovery.FirstModel(ctx)
+	if discoverErr != nil || discovered == "" || strings.EqualFold(discovered, req.Model) {
+		return TextResponse{}, err
+	}
+	req.Model = discovered
+	return runTextStreamWithFallback(ctx, r.baseRunner, req, handle)
+}
+
+func runTextStreamWithFallback(ctx context.Context, runner TextRunner, req TextRequest, handle TextStreamHandler) (TextResponse, error) {
+	if streamer, ok := runner.(StreamingTextRunner); ok {
+		return streamer.RunTextStream(ctx, req, handle)
+	}
+	resp, err := runner.RunText(ctx, req)
+	if err != nil {
+		return TextResponse{}, err
+	}
+	if handle != nil && strings.TrimSpace(resp.OutputText) != "" {
+		if err := handle(TextStreamEvent{Delta: resp.OutputText}); err != nil {
+			return TextResponse{}, err
+		}
+	}
+	return resp, nil
+}
+
 func responseTextMessage(role, text string) map[string]any {
 	return map[string]any{
 		"role": role,
@@ -395,7 +774,7 @@ func normalizeTextMessageRole(role string) string {
 	}
 }
 
-func decodeResponsesTextEnvelope(body []byte) (TextResponse, error) {
+func parseResponsesTextEnvelope(body []byte) (TextResponse, error) {
 	var envelope struct {
 		Status            string `json:"status"`
 		Model             string `json:"model"`
@@ -451,6 +830,14 @@ func decodeResponsesTextEnvelope(body []byte) (TextResponse, error) {
 		if estimatedCostUSD, ok := model.EstimateLLMCostUSD(result.Model, result.Usage); ok {
 			result.Usage.EstimatedCostUSD = estimatedCostUSD
 		}
+	}
+	return result, nil
+}
+
+func decodeResponsesTextEnvelope(body []byte) (TextResponse, error) {
+	result, err := parseResponsesTextEnvelope(body)
+	if err != nil {
+		return TextResponse{}, err
 	}
 	if result.OutputText == "" {
 		return result, errors.New("openai text response returned no assistant output")

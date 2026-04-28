@@ -30,11 +30,15 @@ func (m Model) submitChatMessage(text string) (tea.Model, tea.Cmd) {
 	m.input.Reset()
 	m.bossSlashSelected = 0
 	m.sending = true
+	m.assistantStreamID++
+	streamID := m.assistantStreamID
+	m.streamingAssistantText = ""
+	m.streamingToolCalls = nil
 	m.status = "Boss chat is thinking..."
 	m.syncLayout(true)
 	return m, tea.Batch(
 		m.saveBossChatMessageCmd(userMessage),
-		m.askAssistantCmd(append([]ChatMessage(nil), m.messages...), m.snapshot, m.viewContext),
+		m.askAssistantStreamCmd(streamID, append([]ChatMessage(nil), m.messages...), m.snapshot, m.viewContext),
 	)
 }
 

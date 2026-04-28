@@ -35,6 +35,20 @@ type AssistantResponse struct {
 	Usage   model.LLMUsage
 }
 
+type AssistantStreamEventKind string
+
+const (
+	AssistantStreamTextDelta AssistantStreamEventKind = "text_delta"
+	AssistantStreamToolCall  AssistantStreamEventKind = "tool_call"
+)
+
+type AssistantStreamEvent struct {
+	Kind      AssistantStreamEventKind
+	Delta     string
+	ToolCall  string
+	ToolState string
+}
+
 type Assistant struct {
 	runner  llm.TextRunner
 	planner llm.JSONSchemaRunner
@@ -110,6 +124,24 @@ func (a *Assistant) Reply(ctx context.Context, req AssistantRequest) (AssistantR
 	return a.replyDirect(ctx, req)
 }
 
+func (a *Assistant) ReplyStream(ctx context.Context, req AssistantRequest, emit func(AssistantStreamEvent)) (AssistantResponse, error) {
+	if a == nil || (a.runner == nil && a.planner == nil) {
+		backend := config.AIBackendUnset
+		if a != nil {
+			backend = a.backend
+		}
+		return AssistantResponse{}, errors.New(unconfiguredAssistantMessage(backend))
+	}
+	modelName := strings.TrimSpace(a.model)
+	if modelName == "" && a.requiresExplicitModel() {
+		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_chat_model or " + brand.BossAssistantModelEnvVar)
+	}
+	if a.planner != nil && a.query != nil {
+		return a.replyWithToolsStream(ctx, req, emit)
+	}
+	return a.replyDirectStream(ctx, req, emit)
+}
+
 func (a *Assistant) replyDirect(ctx context.Context, req AssistantRequest) (AssistantResponse, error) {
 	if a == nil || a.runner == nil {
 		return AssistantResponse{}, errors.New("boss chat needs text chat inference for this request")
@@ -140,6 +172,31 @@ func (a *Assistant) replyDirect(ctx context.Context, req AssistantRequest) (Assi
 		Messages:        messages,
 		ReasoningEffort: bossAssistantReasoningEffort,
 	})
+	if err != nil {
+		return AssistantResponse{}, err
+	}
+	return AssistantResponse{
+		Content: strings.TrimSpace(resp.OutputText),
+		Model:   strings.TrimSpace(resp.Model),
+		Usage:   resp.Usage,
+	}, nil
+}
+
+func (a *Assistant) replyDirectStream(ctx context.Context, req AssistantRequest, emit func(AssistantStreamEvent)) (AssistantResponse, error) {
+	if a == nil || a.runner == nil {
+		return AssistantResponse{}, errors.New("boss chat needs text chat inference for this request")
+	}
+	modelName := strings.TrimSpace(a.model)
+	if modelName == "" && a.requiresExplicitModel() {
+		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_chat_model or " + brand.BossAssistantModelEnvVar)
+	}
+
+	resp, err := runBossText(ctx, a.runner, llm.TextRequest{
+		Model:           modelName,
+		SystemText:      bossAssistantSystemPrompt(),
+		Messages:        bossDirectMessages(req),
+		ReasoningEffort: bossAssistantReasoningEffort,
+	}, emit)
 	if err != nil {
 		return AssistantResponse{}, err
 	}
@@ -201,6 +258,100 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 		Content: synthesizeToolLoopFallback(toolResults),
 		Model:   firstNonEmpty(usedModel, modelName),
 		Usage:   totalUsage,
+	}, nil
+}
+
+func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantRequest, emit func(AssistantStreamEvent)) (AssistantResponse, error) {
+	modelName := strings.TrimSpace(a.model)
+	if modelName == "" && a.requiresExplicitModel() {
+		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_chat_model or " + brand.BossAssistantModelEnvVar)
+	}
+
+	var (
+		toolResults []bossToolResult
+		totalUsage  model.LLMUsage
+		usedModel   string
+	)
+	for round := 0; round < bossAssistantMaxToolRounds; round++ {
+		forceAnswer := round == bossAssistantMaxToolRounds-1
+		response, action, err := a.planAction(ctx, req, toolResults, forceAnswer)
+		if err != nil {
+			return AssistantResponse{}, err
+		}
+		addLLMUsage(&totalUsage, response.Usage)
+		if modelName := strings.TrimSpace(response.Model); modelName != "" {
+			usedModel = modelName
+		}
+
+		if normalizeBossActionKind(action.Kind) == bossActionAnswer {
+			answer := strings.TrimSpace(action.Answer)
+			if answer == "" {
+				return AssistantResponse{}, errors.New("boss chat returned an empty final answer")
+			}
+			if a.runner == nil {
+				emitAssistantDelta(emit, answer)
+				return AssistantResponse{
+					Content: answer,
+					Model:   firstNonEmpty(usedModel, modelName),
+					Usage:   totalUsage,
+				}, nil
+			}
+			final, err := a.streamFinalAnswer(ctx, req, toolResults, answer, emit)
+			if err != nil {
+				return AssistantResponse{}, err
+			}
+			addLLMUsage(&totalUsage, final.Usage)
+			return AssistantResponse{
+				Content: strings.TrimSpace(final.Content),
+				Model:   firstNonEmpty(final.Model, usedModel, modelName),
+				Usage:   totalUsage,
+			}, nil
+		}
+
+		toolCall := describeBossAction(action)
+		emitToolCall(emit, toolCall, "running")
+		result, err := a.query.Execute(ctx, action, req.Snapshot, req.View)
+		if err != nil {
+			result = bossToolResult{
+				Name: normalizeBossActionKind(action.Kind),
+				Text: "Tool error: " + err.Error(),
+			}
+			emitToolCall(emit, toolCall, "error")
+		} else {
+			emitToolCall(emit, toolCall, "done")
+		}
+		if reason := strings.TrimSpace(action.Reason); reason != "" {
+			result.Text = "Query reason: " + clipText(reason, 220) + "\n" + strings.TrimSpace(result.Text)
+		}
+		toolResults = append(toolResults, result)
+	}
+
+	fallback := synthesizeToolLoopFallback(toolResults)
+	emitAssistantDelta(emit, fallback)
+	return AssistantResponse{
+		Content: fallback,
+		Model:   firstNonEmpty(usedModel, modelName),
+		Usage:   totalUsage,
+	}, nil
+}
+
+func (a *Assistant) streamFinalAnswer(ctx context.Context, req AssistantRequest, toolResults []bossToolResult, plannerAnswer string, emit func(AssistantStreamEvent)) (AssistantResponse, error) {
+	if a == nil || a.runner == nil {
+		return AssistantResponse{}, errors.New("boss chat needs text chat inference for this request")
+	}
+	resp, err := runBossText(ctx, a.runner, llm.TextRequest{
+		Model:           strings.TrimSpace(a.model),
+		SystemText:      bossAssistantSystemPrompt(),
+		Messages:        bossFinalAnswerMessages(req, toolResults, plannerAnswer),
+		ReasoningEffort: bossAssistantReasoningEffort,
+	}, emit)
+	if err != nil {
+		return AssistantResponse{}, err
+	}
+	return AssistantResponse{
+		Content: strings.TrimSpace(resp.OutputText),
+		Model:   strings.TrimSpace(resp.Model),
+		Usage:   resp.Usage,
 	}, nil
 }
 
@@ -372,6 +523,50 @@ func bossActionPlannerUserText(req AssistantRequest, toolResults []bossToolResul
 	return strings.TrimSpace(b.String())
 }
 
+func bossDirectMessages(req AssistantRequest) []llm.TextMessage {
+	messages := []llm.TextMessage{{
+		Role:    "user",
+		Content: strings.TrimSpace(requestContextBrief(req)),
+	}}
+	for _, message := range trimChatHistory(req.Messages, 16) {
+		content := strings.TrimSpace(message.Content)
+		if content == "" {
+			continue
+		}
+		messages = append(messages, llm.TextMessage{
+			Role:    normalizeChatRole(message.Role),
+			Content: content,
+		})
+	}
+	return messages
+}
+
+func bossFinalAnswerMessages(req AssistantRequest, toolResults []bossToolResult, plannerAnswer string) []llm.TextMessage {
+	messages := bossDirectMessages(req)
+	var b strings.Builder
+	if len(toolResults) > 0 {
+		b.WriteString("Read-only tool results gathered for this turn:\n")
+		for _, result := range toolResults {
+			b.WriteString("[")
+			b.WriteString(strings.TrimSpace(result.Name))
+			b.WriteString("]\n")
+			b.WriteString(strings.TrimSpace(result.Text))
+			b.WriteString("\n\n")
+		}
+	}
+	if draft := strings.TrimSpace(plannerAnswer); draft != "" {
+		b.WriteString("Structured planner draft:\n")
+		b.WriteString(draft)
+		b.WriteString("\n\n")
+	}
+	b.WriteString("Answer the user's latest Boss Chat message now. Use the gathered data, keep the coworker-update style, and do not mention tool calls unless the user asks about them.")
+	messages = append(messages, llm.TextMessage{
+		Role:    "user",
+		Content: strings.TrimSpace(b.String()),
+	})
+	return messages
+}
+
 func requestContextBrief(req AssistantRequest) string {
 	now := time.Now()
 	parts := []string{
@@ -524,6 +719,81 @@ func addLLMUsage(total *model.LLMUsage, usage model.LLMUsage) {
 	total.CachedInputTokens += usage.CachedInputTokens
 	total.ReasoningTokens += usage.ReasoningTokens
 	total.EstimatedCostUSD += usage.EstimatedCostUSD
+}
+
+func runBossText(ctx context.Context, runner llm.TextRunner, req llm.TextRequest, emit func(AssistantStreamEvent)) (llm.TextResponse, error) {
+	if runner == nil {
+		return llm.TextResponse{}, errors.New("boss chat needs text chat inference for this request")
+	}
+	if streamer, ok := runner.(llm.StreamingTextRunner); ok {
+		return streamer.RunTextStream(ctx, req, func(event llm.TextStreamEvent) error {
+			emitAssistantDelta(emit, event.Delta)
+			return nil
+		})
+	}
+	resp, err := runner.RunText(ctx, req)
+	if err != nil {
+		return llm.TextResponse{}, err
+	}
+	emitAssistantDelta(emit, resp.OutputText)
+	return resp, nil
+}
+
+func emitAssistantDelta(emit func(AssistantStreamEvent), delta string) {
+	if emit == nil || delta == "" {
+		return
+	}
+	emit(AssistantStreamEvent{
+		Kind:  AssistantStreamTextDelta,
+		Delta: delta,
+	})
+}
+
+func emitToolCall(emit func(AssistantStreamEvent), call, state string) {
+	if emit == nil || strings.TrimSpace(call) == "" {
+		return
+	}
+	emit(AssistantStreamEvent{
+		Kind:      AssistantStreamToolCall,
+		ToolCall:  strings.TrimSpace(call),
+		ToolState: strings.TrimSpace(state),
+	})
+}
+
+func describeBossAction(action bossAction) string {
+	kind := normalizeBossActionKind(action.Kind)
+	switch kind {
+	case bossActionProjectDetail:
+		target := firstNonEmpty(action.ProjectName, action.ProjectPath, action.Target)
+		if target != "" {
+			return kind + " " + clipText(target, 80)
+		}
+	case bossActionSearchContext, bossActionSearchBossSessions:
+		if query := strings.TrimSpace(action.Query); query != "" {
+			return kind + " " + quoteForStatus(clipText(query, 80))
+		}
+	case bossActionContextCommand:
+		if command := strings.TrimSpace(action.Command); command != "" {
+			return kind + " " + clipText(command, 120)
+		}
+	case bossActionSessionClassifications, bossActionTodoReport:
+		target := firstNonEmpty(action.ProjectName, action.ProjectPath, action.SessionID, action.Target)
+		if target != "" {
+			return kind + " " + clipText(target, 80)
+		}
+	}
+	if kind == "" {
+		return "tool"
+	}
+	return kind
+}
+
+func quoteForStatus(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return fmt.Sprintf("%q", value)
 }
 
 func firstNonEmpty(values ...string) string {

@@ -24,6 +24,31 @@ func (r *fakeTextRunner) RunText(_ context.Context, req llm.TextRequest) (llm.Te
 	return r.resp, r.err
 }
 
+type fakeStreamingTextRunner struct {
+	req    llm.TextRequest
+	resp   llm.TextResponse
+	err    error
+	deltas []string
+}
+
+func (r *fakeStreamingTextRunner) RunText(_ context.Context, req llm.TextRequest) (llm.TextResponse, error) {
+	r.req = req
+	return r.resp, r.err
+}
+
+func (r *fakeStreamingTextRunner) RunTextStream(_ context.Context, req llm.TextRequest, handle llm.TextStreamHandler) (llm.TextResponse, error) {
+	r.req = req
+	if r.err != nil {
+		return llm.TextResponse{}, r.err
+	}
+	for _, delta := range r.deltas {
+		if err := handle(llm.TextStreamEvent{Delta: delta}); err != nil {
+			return llm.TextResponse{}, err
+		}
+	}
+	return r.resp, nil
+}
+
 type fakeJSONSchemaRunner struct {
 	reqs  []llm.JSONSchemaRequest
 	resp  []llm.JSONSchemaResponse
@@ -302,6 +327,92 @@ func TestAssistantReplyUsesStructuredToolLoop(t *testing.T) {
 	}
 	if !strings.Contains(planner.reqs[1].UserText, "[project_detail]") || !strings.Contains(planner.reqs[1].UserText, "Decide rollout shape") {
 		t.Fatalf("second planner request missing tool result:\n%s", planner.reqs[1].UserText)
+	}
+}
+
+func TestAssistantReplyStreamEmitsToolCallsAndTextDeltas(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeBossStore{
+		projects: []model.ProjectSummary{{
+			Path:   "/tmp/alpha",
+			Name:   "Alpha",
+			Status: model.StatusPossiblyStuck,
+		}},
+		details: map[string]model.ProjectDetail{
+			"/tmp/alpha": {
+				Summary: model.ProjectSummary{
+					Path:   "/tmp/alpha",
+					Name:   "Alpha",
+					Status: model.StatusPossiblyStuck,
+				},
+				Todos: []model.TodoItem{{ID: 7, ProjectPath: "/tmp/alpha", Text: "Decide rollout shape"}},
+			},
+		},
+	}
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{
+			{
+				Model:      "gpt-test",
+				OutputText: encodedBossAction(t, bossAction{Kind: bossActionProjectDetail, ProjectPath: "/tmp/alpha", Limit: 8, Reason: "Need Alpha detail"}),
+				Usage:      model.LLMUsage{InputTokens: 10, OutputTokens: 3, TotalTokens: 13},
+			},
+			{
+				Model:      "gpt-test",
+				OutputText: encodedBossAction(t, bossAction{Kind: bossActionAnswer, Answer: "Focus Alpha first."}),
+				Usage:      model.LLMUsage{InputTokens: 20, OutputTokens: 5, TotalTokens: 25},
+			},
+		},
+	}
+	runner := &fakeStreamingTextRunner{
+		deltas: []string{"Focus ", "Alpha first."},
+		resp: llm.TextResponse{
+			Model:      "gpt-test",
+			OutputText: "Focus Alpha first.",
+			Usage:      model.LLMUsage{InputTokens: 4, OutputTokens: 3, TotalTokens: 7},
+		},
+	}
+	assistant := &Assistant{
+		runner:  runner,
+		planner: planner,
+		query:   newQueryExecutor(store),
+		model:   "gpt-test",
+	}
+
+	var events []AssistantStreamEvent
+	resp, err := assistant.ReplyStream(context.Background(), AssistantRequest{
+		StateBrief: "Visible projects: 1.",
+		Messages:   []ChatMessage{{Role: "user", Content: "What about /tmp/alpha?"}},
+	}, func(event AssistantStreamEvent) {
+		events = append(events, event)
+	})
+	if err != nil {
+		t.Fatalf("ReplyStream() error = %v", err)
+	}
+	if resp.Content != "Focus Alpha first." {
+		t.Fatalf("Content = %q", resp.Content)
+	}
+	if resp.Usage.TotalTokens != 45 {
+		t.Fatalf("total usage = %d, want 45", resp.Usage.TotalTokens)
+	}
+	var toolStates []string
+	var text string
+	for _, event := range events {
+		if event.Kind == AssistantStreamToolCall {
+			toolStates = append(toolStates, event.ToolState+":"+event.ToolCall)
+		}
+		if event.Kind == AssistantStreamTextDelta {
+			text += event.Delta
+		}
+	}
+	if strings.Join(toolStates, "|") != "running:project_detail /tmp/alpha|done:project_detail /tmp/alpha" {
+		t.Fatalf("tool events = %#v", toolStates)
+	}
+	if text != "Focus Alpha first." {
+		t.Fatalf("streamed text = %q", text)
+	}
+	if !strings.Contains(runner.req.Messages[len(runner.req.Messages)-1].Content, "Decide rollout shape") {
+		t.Fatalf("final text request missing tool result:\n%s", runner.req.Messages[len(runner.req.Messages)-1].Content)
 	}
 }
 

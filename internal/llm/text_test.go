@@ -92,6 +92,52 @@ func TestResponsesTextClientSendsPlainChatRequest(t *testing.T) {
 	}
 }
 
+func TestResponsesTextClientStreamsDeltas(t *testing.T) {
+	t.Parallel()
+
+	var got map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			t.Fatalf("path = %q, want /v1/responses", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"Look\"}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\" alive\"}\n\n"))
+		_, _ = w.Write([]byte(`data: {"type":"response.completed","response":{"status":"completed","model":"gpt-test","usage":{"input_tokens":9,"input_tokens_details":{"cached_tokens":2},"output_tokens":4,"output_tokens_details":{"reasoning_tokens":1},"total_tokens":13},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Look alive"}]}]}}` + "\n\n"))
+	}))
+	defer server.Close()
+
+	usage := NewUsageTracker()
+	client := NewResponsesTextClientWithBaseURL("test-key", server.URL+"/v1", time.Second, usage)
+	var deltas []string
+	resp, err := client.RunTextStream(context.Background(), TextRequest{
+		Model:    "gpt-test",
+		Messages: []TextMessage{{Role: "user", Content: "hello"}},
+	}, func(event TextStreamEvent) error {
+		deltas = append(deltas, event.Delta)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("RunTextStream() error = %v", err)
+	}
+	if got["stream"] != true {
+		t.Fatalf("stream request field = %#v, want true", got["stream"])
+	}
+	if strings.Join(deltas, "") != "Look alive" || resp.OutputText != "Look alive" {
+		t.Fatalf("streamed deltas = %q response = %+v", strings.Join(deltas, ""), resp)
+	}
+	if resp.Usage.TotalTokens != 13 || resp.Usage.CachedInputTokens != 2 || resp.Usage.ReasoningTokens != 1 {
+		t.Fatalf("unexpected usage: %+v", resp.Usage)
+	}
+	snapshot := usage.Snapshot(true)
+	if snapshot.Completed != 1 || snapshot.Running != 0 || snapshot.Totals.TotalTokens != 13 {
+		t.Fatalf("unexpected usage snapshot: %+v", snapshot)
+	}
+}
+
 func TestResponsesTextClientReportsHTTPStatusError(t *testing.T) {
 	t.Parallel()
 
@@ -115,6 +161,50 @@ func TestResponsesTextClientReportsHTTPStatusError(t *testing.T) {
 	}
 	snapshot := usage.Snapshot(true)
 	if snapshot.Failed != 1 || snapshot.Running != 0 {
+		t.Fatalf("unexpected usage snapshot: %+v", snapshot)
+	}
+}
+
+func TestOpenAICompatibleChatTextClientStreamsDeltas(t *testing.T) {
+	t.Parallel()
+
+	var got map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"model\":\"qwen-local\",\"choices\":[{\"delta\":{\"content\":\"Local\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"model\":\"qwen-local\",\"choices\":[{\"delta\":{\"content\":\" stream\"},\"finish_reason\":\"stop\"}]}\n\n"))
+		_, _ = w.Write([]byte(`data: {"model":"qwen-local","choices":[],"usage":{"prompt_tokens":5,"prompt_tokens_details":{"cached_tokens":1},"completion_tokens":4,"completion_tokens_details":{"reasoning_tokens":0},"total_tokens":9}}` + "\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	usage := NewUsageTracker()
+	client := NewOpenAICompatibleChatTextClientWithHTTPClient("local-key", server.URL, server.Client(), usage)
+	var deltas []string
+	resp, err := client.RunTextStream(context.Background(), TextRequest{
+		Model:    "qwen-local",
+		Messages: []TextMessage{{Role: "user", Content: "hello"}},
+	}, func(event TextStreamEvent) error {
+		deltas = append(deltas, event.Delta)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("RunTextStream() error = %v", err)
+	}
+	if got["stream"] != true {
+		t.Fatalf("stream request field = %#v, want true", got["stream"])
+	}
+	if strings.Join(deltas, "") != "Local stream" || resp.OutputText != "Local stream" || resp.Model != "qwen-local" {
+		t.Fatalf("unexpected streamed response: deltas=%q resp=%+v", strings.Join(deltas, ""), resp)
+	}
+	if resp.Usage.TotalTokens != 9 || resp.Usage.CachedInputTokens != 1 {
+		t.Fatalf("unexpected usage: %+v", resp.Usage)
+	}
+	snapshot := usage.Snapshot(true)
+	if snapshot.Completed != 1 || snapshot.Totals.TotalTokens != 9 {
 		t.Fatalf("unexpected usage snapshot: %+v", snapshot)
 	}
 }
