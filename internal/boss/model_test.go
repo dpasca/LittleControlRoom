@@ -2,11 +2,16 @@ package boss
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"lcroom/internal/config"
+	"lcroom/internal/events"
 	"lcroom/internal/model"
+	"lcroom/internal/service"
+	"lcroom/internal/store"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -149,6 +154,65 @@ func TestModelSummaryFlashIgnoresAssessmentMetadataWhenSummaryDoesNotChange(t *t
 	}}})
 	if m.summaryFlashActive("/alpha") {
 		t.Fatalf("summary flash should not start when only assessment metadata changes")
+	}
+}
+
+func TestAskAssistantRefreshesStateBeforeReply(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           "/tmp/fresh",
+		Name:           "Fresh",
+		Status:         model.StatusActive,
+		AttentionScore: 80,
+		LastActivity:   now,
+		PresentOnDisk:  true,
+		InScope:        true,
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	svc := service.New(cfg, st, events.NewBus(), nil)
+	runner := &fakeTextRunner{}
+	m := New(ctx, svc)
+	m.assistant = &Assistant{runner: runner, model: "gpt-test"}
+	m.snapshot = StateSnapshot{
+		TotalProjects: 1,
+		HotProjects: []ProjectBrief{{
+			Name: "Old",
+		}},
+	}
+
+	cmd := m.askAssistantCmd([]ChatMessage{{Role: "user", Content: "any changes?"}}, m.snapshot, ViewContext{})
+	msg := cmd()
+	reply, ok := msg.(AssistantReplyMsg)
+	if !ok {
+		t.Fatalf("askAssistantCmd() returned %T, want AssistantReplyMsg", msg)
+	}
+	if reply.stateErr != nil {
+		t.Fatalf("state refresh error = %v", reply.stateErr)
+	}
+	if !reply.stateRefreshed {
+		t.Fatalf("expected assistant command to refresh state before replying")
+	}
+
+	prompt := runner.req.Messages[0].Content
+	if !strings.Contains(prompt, "Fresh") {
+		t.Fatalf("assistant prompt missing refreshed project:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "Old") {
+		t.Fatalf("assistant prompt used stale project snapshot:\n%s", prompt)
 	}
 }
 

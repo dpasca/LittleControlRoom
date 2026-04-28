@@ -37,6 +37,8 @@ type ProjectBrief struct {
 	Status               model.ProjectStatus
 	AttentionScore       int
 	LastActivity         time.Time
+	WorktreeRootPath     string
+	WorktreeKind         model.WorktreeKind
 	RepoBranch           string
 	RepoDirty            bool
 	RepoConflict         bool
@@ -135,6 +137,8 @@ func projectBriefFromSummary(project model.ProjectSummary) ProjectBrief {
 		Status:               project.Status,
 		AttentionScore:       project.AttentionScore,
 		LastActivity:         project.LastActivity,
+		WorktreeRootPath:     strings.TrimSpace(project.WorktreeRootPath),
+		WorktreeKind:         project.WorktreeKind,
 		RepoBranch:           strings.TrimSpace(project.RepoBranch),
 		RepoDirty:            project.RepoDirty,
 		RepoConflict:         project.RepoConflict,
@@ -385,6 +389,12 @@ func projectReferenceMetadata(project ProjectBrief, now time.Time) string {
 	var parts []string
 	if path := strings.TrimSpace(project.Path); path != "" {
 		parts = append(parts, "path="+path)
+	}
+	if project.WorktreeKind != "" {
+		parts = append(parts, "worktree="+string(project.WorktreeKind))
+		if root := strings.TrimSpace(project.WorktreeRootPath); root != "" && filepath.Clean(root) != filepath.Clean(project.Path) {
+			parts = append(parts, "worktree_root="+root)
+		}
 	}
 	if project.Status != "" {
 		parts = append(parts, "status="+string(project.Status))

@@ -69,8 +69,11 @@ type StateLoadedMsg struct {
 }
 
 type AssistantReplyMsg struct {
-	response AssistantResponse
-	err      error
+	response       AssistantResponse
+	err            error
+	snapshot       StateSnapshot
+	stateErr       error
+	stateRefreshed bool
 }
 
 type bossSessionLoadedMsg struct {
@@ -223,6 +226,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case AssistantReplyMsg:
 		m.sending = false
+		if msg.stateRefreshed {
+			m.syncSummaryFlashes(msg.snapshot)
+			m.snapshot = msg.snapshot
+			m.stateLoaded = true
+			m.stateErr = nil
+		} else if msg.stateErr != nil {
+			m.stateErr = msg.stateErr
+		}
 		var saved ChatMessage
 		if msg.err != nil {
 			saved = ChatMessage{
@@ -396,16 +407,29 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 func (m Model) askAssistantCmd(messages []ChatMessage, snapshot StateSnapshot, view ViewContext) tea.Cmd {
 	assistant := m.assistant
 	parent := m.ctx
+	svc := m.svc
+	options := m.stateSnapshotOptions()
 	return func() tea.Msg {
 		ctx, cancel := childContext(parent, 120*time.Second)
 		defer cancel()
+		stateErr := error(nil)
+		stateRefreshed := false
+		if svc != nil {
+			refreshed, err := LoadStateSnapshot(ctx, svc, time.Now(), options)
+			if err == nil {
+				snapshot = refreshed
+				stateRefreshed = true
+			} else {
+				stateErr = err
+			}
+		}
 		resp, err := assistant.Reply(ctx, AssistantRequest{
 			StateBrief: BuildStateBrief(snapshot, time.Now()),
 			Snapshot:   snapshot,
 			View:       view,
 			Messages:   messages,
 		})
-		return AssistantReplyMsg{response: resp, err: err}
+		return AssistantReplyMsg{response: resp, err: err, snapshot: snapshot, stateErr: stateErr, stateRefreshed: stateRefreshed}
 	}
 }
 

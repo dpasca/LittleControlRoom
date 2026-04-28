@@ -69,6 +69,70 @@ func TestQueryExecutorReportsProjectDetailFromStore(t *testing.T) {
 	}
 }
 
+func TestQueryExecutorProjectDetailIncludesLinkedWorktreeActivity(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	root := "/tmp/lcr"
+	linked := "/tmp/lcr--streaming"
+	store := &fakeBossStore{
+		projects: []model.ProjectSummary{
+			{
+				Path:             root,
+				Name:             "LittleControlRoom",
+				Status:           model.StatusActive,
+				LastActivity:     now.Add(-30 * time.Minute),
+				PresentOnDisk:    true,
+				WorktreeRootPath: root,
+				WorktreeKind:     model.WorktreeKindMain,
+			},
+			{
+				Path:                 linked,
+				Name:                 "LittleControlRoom--streaming",
+				Status:               model.StatusIdle,
+				LastActivity:         now.Add(-2 * time.Minute),
+				PresentOnDisk:        true,
+				WorktreeRootPath:     root,
+				WorktreeKind:         model.WorktreeKindLinked,
+				LatestSessionSummary: "Added Boss Chat streaming and verified the checks.",
+			},
+		},
+		details: map[string]model.ProjectDetail{
+			root: {
+				Summary: model.ProjectSummary{
+					Path:             root,
+					Name:             "LittleControlRoom",
+					Status:           model.StatusActive,
+					WorktreeRootPath: root,
+					WorktreeKind:     model.WorktreeKindMain,
+				},
+			},
+		},
+	}
+
+	executor := newQueryExecutor(store)
+	executor.nowFn = func() time.Time { return now }
+	result, err := executor.Execute(context.Background(), bossAction{
+		Kind:        bossActionProjectDetail,
+		ProjectPath: root,
+		Limit:       8,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	for _, want := range []string{
+		"Worktree family activity:",
+		"linked: LittleControlRoom--streaming",
+		"Added Boss Chat streaming",
+		"worktree=linked",
+		"worktree_root=/tmp/lcr",
+	} {
+		if !strings.Contains(result.Text, want) {
+			t.Fatalf("tool result missing %q:\n%s", want, result.Text)
+		}
+	}
+}
+
 func TestQueryExecutorKeepsRoutineRepoStateOutOfOperationalDetail(t *testing.T) {
 	t.Parallel()
 

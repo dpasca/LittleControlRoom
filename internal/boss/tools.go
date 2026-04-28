@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -239,6 +240,10 @@ func (e *QueryExecutor) projectDetail(ctx context.Context, action bossAction, vi
 			}
 		}
 	}
+	if familyLines, err := e.worktreeFamilyActivity(ctx, detail.Summary, action.IncludeHistorical, view, now, 4); err == nil && len(familyLines) > 0 {
+		lines = append(lines, "Worktree family activity:")
+		lines = append(lines, familyLines...)
+	}
 	openTodos := openTodosOnly(detail.Todos)
 	if len(openTodos) > 0 {
 		lines = append(lines, fmt.Sprintf("Open TODOs (%d):", len(openTodos)))
@@ -284,6 +289,77 @@ func (e *QueryExecutor) projectDetail(ctx context.Context, action bossAction, vi
 		}
 	}
 	return clippedToolResult(bossActionProjectDetail, strings.Join(lines, "\n")), nil
+}
+
+func (e *QueryExecutor) worktreeFamilyActivity(ctx context.Context, project model.ProjectSummary, includeHistorical bool, view ViewContext, now time.Time, limit int) ([]string, error) {
+	if e == nil || e.store == nil {
+		return nil, nil
+	}
+	rootPath := projectWorktreeRootPath(project)
+	if rootPath == "" {
+		return nil, nil
+	}
+	projects, err := e.store.ListProjects(ctx, includeHistorical)
+	if err != nil {
+		return nil, err
+	}
+	projects = filterProjectSummariesForBossPrivacy(projects, view)
+	selectedPath := filepath.Clean(strings.TrimSpace(project.Path))
+	family := make([]model.ProjectSummary, 0, len(projects))
+	for _, candidate := range projects {
+		if filepath.Clean(strings.TrimSpace(candidate.Path)) == selectedPath {
+			continue
+		}
+		if projectWorktreeRootPath(candidate) == rootPath {
+			family = append(family, candidate)
+		}
+	}
+	if len(family) == 0 {
+		return nil, nil
+	}
+	sort.SliceStable(family, func(i, j int) bool {
+		left := family[i]
+		right := family[j]
+		switch {
+		case left.LastActivity.IsZero() != right.LastActivity.IsZero():
+			return !left.LastActivity.IsZero()
+		case !left.LastActivity.Equal(right.LastActivity):
+			return left.LastActivity.After(right.LastActivity)
+		default:
+			return displayProjectName(left) < displayProjectName(right)
+		}
+	})
+	limit = clampBossLimit(limit, 3, 8)
+	lines := make([]string, 0, minInt(limit, len(family))*2)
+	for i, member := range family {
+		if i >= limit {
+			break
+		}
+		brief := projectBriefFromSummary(member)
+		label := "worktree"
+		switch member.WorktreeKind {
+		case model.WorktreeKindMain:
+			label = "root"
+		case model.WorktreeKindLinked:
+			label = "linked"
+		}
+		lines = append(lines, "- "+label+": "+operationalProjectLine(brief, now))
+		if metadata := projectReferenceMetadata(brief, now); metadata != "" {
+			lines = append(lines, "  reference metadata: "+metadata)
+		}
+	}
+	return lines, nil
+}
+
+func projectWorktreeRootPath(project model.ProjectSummary) string {
+	rootPath := strings.TrimSpace(project.WorktreeRootPath)
+	if rootPath == "" {
+		rootPath = strings.TrimSpace(project.Path)
+	}
+	if rootPath == "" {
+		return ""
+	}
+	return filepath.Clean(rootPath)
 }
 
 func liveSessionSampleLines(text string) []string {
