@@ -74,6 +74,7 @@ type Model struct {
 	todoEditor            *todoEditorState
 	todoDeleteConfirm     *todoDeleteConfirmState
 	scratchTaskAction     *scratchTaskActionConfirmState
+	projectRemoveConfirm  *projectRemoveConfirmState
 	todoLaunchDrafts      map[string]todoLaunchDraftState
 	todoPendingSave       *todoPendingSaveState
 	todoPendingLaunch     *todoPendingLaunchState
@@ -301,6 +302,12 @@ type todoActionMsg struct {
 type scratchTaskActionMsg struct {
 	projectPath string
 	selectPath  string
+	status      string
+	err         error
+}
+
+type projectRemoveActionMsg struct {
+	projectPath string
 	status      string
 	err         error
 }
@@ -1071,6 +1078,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.scratchTaskAction != nil {
 			return m.updateScratchTaskActionConfirmMode(msg)
 		}
+		if m.projectRemoveConfirm != nil {
+			return m.updateProjectRemoveConfirmMode(msg)
+		}
 		if m.todoDeleteConfirm != nil {
 			return m.updateTodoDeleteConfirmMode(msg)
 		}
@@ -1587,6 +1597,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.scratchTaskAction = nil
 		m.err = nil
 		m.preferredSelectPath = strings.TrimSpace(msg.selectPath)
+		if strings.TrimSpace(msg.status) != "" {
+			m.status = msg.status
+		}
+		return m, m.requestProjectInvalidationCmd(invalidateProjectStructure(""))
+	case projectRemoveActionMsg:
+		if msg.err != nil {
+			if m.projectRemoveConfirm != nil && filepath.Clean(strings.TrimSpace(m.projectRemoveConfirm.ProjectPath)) == filepath.Clean(strings.TrimSpace(msg.projectPath)) {
+				m.projectRemoveConfirm.Submitting = false
+			}
+			m.reportError("Remove action failed", msg.err, msg.projectPath)
+			return m, nil
+		}
+		m.projectRemoveConfirm = nil
+		m.err = nil
 		if strings.TrimSpace(msg.status) != "" {
 			m.status = msg.status
 		}
@@ -2664,6 +2688,9 @@ func (m Model) View() string {
 	}
 	if m.scratchTaskAction != nil {
 		body = m.renderScratchTaskActionOverlay(body, layout.width, layout.height)
+	}
+	if m.projectRemoveConfirm != nil {
+		body = m.renderProjectRemoveConfirmOverlay(body, layout.width, layout.height)
 	}
 	if m.todoExistingWorktree != nil {
 		body = m.renderTodoExistingWorktreeOverlay(body, layout.width, layout.height)
@@ -4182,9 +4209,9 @@ func (m Model) openRemoveActionForSelection() (tea.Model, tea.Cmd) {
 		return m, m.openWorktreeRemoveConfirmForSelection()
 	}
 	if !project.PresentOnDisk {
-		return m, m.removeProjectCmd(project.Path)
+		return m, m.openProjectRemoveConfirmForSelection()
 	}
-	return m, m.removeProjectFromListCmd(project)
+	return m, m.openProjectRemoveConfirmForSelection()
 }
 
 func projectRemovalName(project model.ProjectSummary) string {
@@ -4198,7 +4225,7 @@ func projectRemovalName(project model.ProjectSummary) string {
 func (m Model) removeProjectCmd(path string) tea.Cmd {
 	return func() tea.Msg {
 		err := m.svc.ForgetProject(m.ctx, path)
-		return actionMsg{status: "Removed from list", err: err}
+		return projectRemoveActionMsg{projectPath: path, status: "Removed from list", err: err}
 	}
 }
 
@@ -4216,7 +4243,7 @@ func (m Model) removeProjectFromListCmd(project model.ProjectSummary) tea.Cmd {
 	return func() tea.Msg {
 		err := m.svc.Store().SetIgnoredProjectName(m.ctx, name, true)
 		status := fmt.Sprintf("Removed %q from list", name)
-		return ignoredProjectActionMsg{status: status, err: err}
+		return projectRemoveActionMsg{projectPath: project.Path, status: status, err: err}
 	}
 }
 
@@ -5780,6 +5807,12 @@ func (m Model) renderFooter(width int) string {
 			return m.renderModalFooter(width, "Remove worktree: waiting for git to finish", supplementSegments...)
 		}
 		return m.renderModalFooter(width, "Remove worktree: Enter remove, Tab switch, Esc cancel", supplementSegments...)
+	}
+	if m.projectRemoveConfirm != nil {
+		if m.projectRemoveConfirm.Submitting {
+			return m.renderModalFooter(width, "Remove project: waiting for the list update", supplementSegments...)
+		}
+		return m.renderModalFooter(width, "Remove project: Enter choose, Tab switch, Esc cancel", supplementSegments...)
 	}
 	baseSegments := append([]string{
 		compactFooterBase(width, m.focusedPane, m.detailViewport.ScrollPercent(), m.runtimeViewport.ScrollPercent(), m.hasHiddenCodexSession(), m.currentEmbeddedLaunchLabel(), m.worktreeFooterActions(width)),
