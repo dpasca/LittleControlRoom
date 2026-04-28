@@ -247,7 +247,7 @@ func unconfiguredAssistantMessage(backend config.AIBackend) string {
 	case config.AIBackendDisabled:
 		return "Boss chat is disabled. Use /setup to enable a boss chat backend."
 	case config.AIBackendCodex, config.AIBackendOpenCode, config.AIBackendClaude:
-		return "Boss chat currently uses direct API inference, not embedded coding-agent sessions. Choose OpenAI API, MLX, or Ollama for boss chat while keeping project reports on your preferred backend."
+		return "Boss chat currently uses direct API inference, not embedded engineer sessions. Choose OpenAI API, MLX, or Ollama for boss chat while keeping project reports on your preferred backend."
 	default:
 		return "Boss chat is not connected yet. Boss mode supports direct API chat through OpenAI API, MLX, or Ollama."
 	}
@@ -267,10 +267,13 @@ func (a *Assistant) requiresExplicitModel() bool {
 
 func bossAssistantSystemPrompt() string {
 	return strings.Join([]string{
-		"You are a teammate-style project assistant inside Little Control Room.",
+		"You are the unnamed Boss Chat helper inside Little Control Room; the user is the boss.",
 		"Help the user decide what deserves attention across coding projects.",
 		"Use the compact app-state brief, but do not invent facts that are not present there.",
-		"Act like a high-level extension of the active Codex, OpenCode, or Claude Code sessions.",
+		"Codex, OpenCode, and Claude Code work-session transcripts are called engineer sessions.",
+		"Your own prior messages are Boss Chat messages. Engineer-session messages are separate and may need engineer transcript lookup.",
+		"If the user says 'the assistant' or 'the AI assistant' about project work, treat that as likely meaning the engineer session unless they clearly mean Boss Chat.",
+		"Act like a high-level extension of the active engineer sessions.",
 		"Assume an ongoing coworker chat: skip onboarding, capability pitches, generic menus, and optional handoff offers.",
 		"Assume the user tracks many things and wants the highest-level read first, not implementation telemetry.",
 		"Minimize redundant information. Treat routine work-in-progress repo hygiene as background, not news.",
@@ -299,17 +302,23 @@ const bossAssistantMaxToolRounds = 4
 
 func bossActionPlannerSystemPrompt() string {
 	return strings.Join([]string{
-		"You are a teammate-style project assistant inside Little Control Room.",
+		"You are the unnamed Boss Chat helper inside Little Control Room; the user is the boss.",
 		"You decide whether to answer now or request exactly one read-only query before answering.",
-		"Act like a high-level extension of the active Codex, OpenCode, or Claude Code sessions.",
+		"Codex, OpenCode, and Claude Code work-session transcripts are called engineer sessions.",
+		"Your own prior messages are Boss Chat messages. Engineer-session messages are separate and may need engineer transcript lookup.",
+		"If the user says 'the assistant' or 'the AI assistant' about project work, treat that as likely meaning the engineer session unless they clearly mean Boss Chat.",
+		"Act like a high-level extension of the active engineer sessions.",
 		"Use queries when the user asks about a concrete project, TODOs, assessment status, current TUI state, codenames, aliases, concepts, or anything that requires more than the compact brief.",
-		"Available read-only query kinds: list_projects, project_detail, session_classifications, todo_report, current_tui, assessment_queue, search_context, search_boss_sessions.",
-		"Use search_context when the user asks what a codename, acronym, feature, branch phrase, or unfamiliar term refers to; it searches project metadata, summaries, assessments, TODOs, and cached assistant-session text.",
+		"Available read-only query kinds: list_projects, project_detail, session_classifications, todo_report, current_tui, assessment_queue, search_context, search_boss_sessions, context_command.",
+		"Use context_command for command-shaped context lookup: ctx search engineer, ctx show, ctx recent engineer, or ctx search boss.",
+		"Use ctx search engineer when the user asks to recall, quote, verify, or inspect what an engineer session said. Use ctx show on the returned handle before quoting or correcting exact details.",
+		"Use ctx search boss only when the user asks to recall, search, or quote earlier Boss Chat conversations.",
+		"Use search_context when the user asks what a codename, acronym, feature, branch phrase, or unfamiliar term refers to; it searches project metadata, summaries, assessments, TODOs, and cached engineer-session text.",
 		"Use search_boss_sessions when the user asks to recall, search, or quote earlier boss chat conversations; it returns XML-like boss_session and turn snippets from saved local boss-chat transcripts.",
 		"Do not answer that a concrete term is unknown until search_context has been tried.",
 		"For codename or alias status questions, search_context should usually come first; after it finds one project path, inspect project_detail before answering.",
 		"Prefer project_detail when the answer depends on a project's current state, especially after another query identifies the relevant project.",
-		"When project_detail includes live assistant session context, treat it as fresher than stored assessments or board stats.",
+		"When project_detail includes live engineer session context, treat it as fresher than stored assessments or board stats.",
 		"For project-specific queries, use project_path when a path is available or project_name when the user gives an exact project name.",
 		"Do not infer a project from hidden UI cursor state; if the target is ambiguous, ask the user to name the project.",
 		"Do not invent facts. After query results are provided, answer from those results and the app-state brief.",
@@ -392,6 +401,7 @@ func bossActionSchema() map[string]any {
 					bossActionAssessmentQueue,
 					bossActionSearchContext,
 					bossActionSearchBossSessions,
+					bossActionContextCommand,
 				},
 			},
 			"answer": map[string]any{
@@ -405,7 +415,11 @@ func bossActionSchema() map[string]any {
 			},
 			"query": map[string]any{
 				"type":        "string",
-				"description": "Search text when kind is search_context or search_boss_sessions; otherwise empty.",
+				"description": "Search text when kind is search_context or search_boss_sessions; optional fallback command text when kind is context_command; otherwise empty.",
+			},
+			"command": map[string]any{
+				"type":        "string",
+				"description": "For kind=context_command, one tiny command such as: ctx search engineer \"query\" --project \"LittleControlRoom\" --limit 5; ctx show engineer:<session-id> --query \"query\" --before 1 --after 2 --max-chars 6000; ctx recent engineer --project \"LittleControlRoom\" --limit 5; ctx search boss \"query\" --limit 5. Otherwise empty.",
 			},
 			"project_path": map[string]any{
 				"type":        "string",
@@ -439,6 +453,7 @@ func bossActionSchema() map[string]any {
 			"answer",
 			"target",
 			"query",
+			"command",
 			"project_path",
 			"project_name",
 			"session_id",
@@ -457,6 +472,7 @@ func normalizeBossAction(action *bossAction) {
 	action.Answer = strings.TrimSpace(action.Answer)
 	action.Target = strings.TrimSpace(strings.ToLower(action.Target))
 	action.Query = strings.TrimSpace(action.Query)
+	action.Command = strings.TrimSpace(action.Command)
 	action.ProjectPath = strings.TrimSpace(action.ProjectPath)
 	action.ProjectName = strings.TrimSpace(action.ProjectName)
 	action.SessionID = strings.TrimSpace(action.SessionID)
@@ -467,7 +483,7 @@ func validateBossAction(action bossAction) error {
 	switch action.Kind {
 	case bossActionAnswer:
 		return nil
-	case bossActionListProjects, bossActionProjectDetail, bossActionSessionClassifications, bossActionTodoReport, bossActionCurrentTUI, bossActionAssessmentQueue, bossActionSearchContext, bossActionSearchBossSessions:
+	case bossActionListProjects, bossActionProjectDetail, bossActionSessionClassifications, bossActionTodoReport, bossActionCurrentTUI, bossActionAssessmentQueue, bossActionSearchContext, bossActionSearchBossSessions, bossActionContextCommand:
 		return nil
 	default:
 		return fmt.Errorf("boss chat returned unsupported action kind %q", action.Kind)

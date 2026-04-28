@@ -126,6 +126,40 @@ func (sample SessionContextSample) ExternalID() string {
 	return ExternalSessionID(sample.Source, sample.SessionFormat, sample.SessionID, sample.RawSessionID)
 }
 
+type SessionContextExcerptRequest struct {
+	SessionID   string
+	Query       string
+	BeforeTurns int
+	AfterTurns  int
+	MaxChars    int
+}
+
+type SessionContextTurn struct {
+	Index int
+	Role  string
+	Text  string
+}
+
+type SessionContextExcerpt struct {
+	Source        SessionSource
+	SessionID     string
+	RawSessionID  string
+	ProjectPath   string
+	ProjectName   string
+	SessionFile   string
+	SessionFormat string
+	UpdatedAt     time.Time
+	Query         string
+	AnchorIndex   int
+	AnchorMatched bool
+	Turns         []SessionContextTurn
+	Truncated     bool
+}
+
+func (excerpt SessionContextExcerpt) ExternalID() string {
+	return ExternalSessionID(excerpt.Source, excerpt.SessionFormat, excerpt.SessionID, excerpt.RawSessionID)
+}
+
 type ProjectGitFingerprint struct {
 	ProjectPath  string
 	HeadHash     string

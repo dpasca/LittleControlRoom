@@ -62,7 +62,7 @@ func (m Model) openBossAttentionProject(index int) (tea.Model, tea.Cmd) {
 		m.status = fmt.Sprintf("Project for Alt+%d is no longer in the list", index+1)
 		return m, nil
 	}
-	m.closeBossMode(fmt.Sprintf("Opening assistant session for %s", projectNameForPicker(project, project.Path)))
+	m.closeBossMode(fmt.Sprintf("Opening engineer session for %s", projectNameForPicker(project, project.Path)))
 	focusCmd := m.focusProjectPath(project.Path)
 	updated, launchCmd := m.launchEmbeddedForProject(project, m.preferredEmbeddedProviderForProject(project), false, "")
 	m = normalizeUpdateModel(updated)

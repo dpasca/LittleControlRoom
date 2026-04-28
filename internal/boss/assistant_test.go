@@ -51,6 +51,8 @@ type fakeBossStore struct {
 	counts          map[model.SessionClassificationStatus]int
 	searchResults   []model.ContextSearchResult
 	sessionSamples  []model.SessionContextSample
+	excerpt         model.SessionContextExcerpt
+	excerptErr      error
 }
 
 func (s *fakeBossStore) ListProjects(context.Context, bool) ([]model.ProjectSummary, error) {
@@ -91,6 +93,13 @@ func (s *fakeBossStore) SearchContext(context.Context, model.ContextSearchReques
 
 func (s *fakeBossStore) SampleProjectSessionContext(context.Context, string, int) ([]model.SessionContextSample, error) {
 	return append([]model.SessionContextSample(nil), s.sessionSamples...), nil
+}
+
+func (s *fakeBossStore) GetSessionContextExcerpt(context.Context, model.SessionContextExcerptRequest) (model.SessionContextExcerpt, error) {
+	if s.excerptErr != nil {
+		return model.SessionContextExcerpt{}, s.excerptErr
+	}
+	return s.excerpt, nil
 }
 
 func TestAssistantReplyIncludesStateBriefAndRecentChat(t *testing.T) {
@@ -160,8 +169,12 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 
 	directPrompt := bossAssistantSystemPrompt()
 	for _, want := range []string{
-		"teammate-style project assistant",
-		"extension of the active Codex, OpenCode, or Claude Code sessions",
+		"unnamed Boss Chat helper",
+		"the user is the boss",
+		"engineer sessions",
+		"Boss Chat messages",
+		"the AI assistant",
+		"extension of the active engineer sessions",
 		"ongoing coworker chat",
 		"skip onboarding",
 		"highest-level read first",
@@ -191,11 +204,15 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 	plannerPrompt := bossActionPlannerSystemPrompt()
 	for _, want := range []string{
 		"Do not answer that a concrete term is unknown until search_context has been tried.",
-		"extension of the active Codex, OpenCode, or Claude Code sessions",
+		"extension of the active engineer sessions",
+		"context_command",
+		"ctx search engineer",
+		"ctx show",
+		"Use ctx search boss",
 		"search_boss_sessions",
 		"XML-like boss_session and turn snippets",
 		"after it finds one project path, inspect project_detail before answering",
-		"live assistant session context",
+		"live engineer session context",
 		"concise coworker update",
 		"turn tool output into judgment",
 		"answer the operational substance rather than reciting the lookup",
@@ -328,6 +345,56 @@ func TestAssistantReplyCanSearchBossSessions(t *testing.T) {
 	}
 	if !strings.Contains(planner.reqs[1].UserText, "[search_boss_sessions]") || !strings.Contains(planner.reqs[1].UserText, "<boss_session") {
 		t.Fatalf("second planner request missing boss session XML result:\n%s", planner.reqs[1].UserText)
+	}
+}
+
+func TestAssistantReplyCanUseContextCommandForEngineerTranscripts(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeBossStore{
+		searchResults: []model.ContextSearchResult{{
+			Source:      "session",
+			ProjectPath: "/tmp/lcr",
+			ProjectName: "LittleControlRoom",
+			SessionID:   "codex:ses_engineer",
+			Snippet:     `assistant: The summary flash was the boss attention row update cue.`,
+			UpdatedAt:   time.Unix(1_800_000_000, 0),
+		}},
+	}
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{
+			{OutputText: encodedBossAction(t, bossAction{
+				Kind:    bossActionContextCommand,
+				Command: `ctx search engineer "summary flash" --project LittleControlRoom --limit 5`,
+			})},
+			{OutputText: encodedBossAction(t, bossAction{
+				Kind:   bossActionAnswer,
+				Answer: "That was from the engineer session, not Boss Chat: the flash was the attention-row update cue.",
+			})},
+		},
+	}
+	assistant := &Assistant{
+		planner: planner,
+		query:   newQueryExecutor(store),
+		model:   "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Visible projects: 1.",
+		Messages:   []ChatMessage{{Role: "user", Content: "What did the AI assistant say about summary flash?"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if !strings.Contains(resp.Content, "engineer session") {
+		t.Fatalf("Content = %q", resp.Content)
+	}
+	if len(planner.reqs) != 2 {
+		t.Fatalf("structured calls = %d, want 2", len(planner.reqs))
+	}
+	if !strings.Contains(planner.reqs[1].UserText, "[context_command]") ||
+		!strings.Contains(planner.reqs[1].UserText, "handle: engineer:codex:ses_engineer") {
+		t.Fatalf("second planner request missing context command result:\n%s", planner.reqs[1].UserText)
 	}
 }
 

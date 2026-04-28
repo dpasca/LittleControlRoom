@@ -33,6 +33,8 @@ const (
 	contextSessionSampleMaxLimit         = 4
 	contextSessionSampleMaxLines         = 12
 	contextSessionSampleMaxRunes         = 2400
+	contextSessionExcerptDefaultChars    = 6000
+	contextSessionExcerptMaxChars        = 12000
 	contextSearchScannerInitialBuf       = 64 * 1024
 	contextSearchScannerMaxTokenCapacity = 16 * 1024 * 1024
 )
@@ -157,6 +159,157 @@ func (s *Store) SampleProjectSessionContext(ctx context.Context, projectPath str
 		})
 	}
 	return samples, nil
+}
+
+func (s *Store) GetSessionContextExcerpt(ctx context.Context, req model.SessionContextExcerptRequest) (model.SessionContextExcerpt, error) {
+	sessionID := strings.TrimSpace(req.SessionID)
+	if sessionID == "" {
+		return model.SessionContextExcerpt{}, errors.New("session excerpt needs a session_id")
+	}
+	candidate, err := s.sessionContextCandidate(ctx, sessionID)
+	if err != nil {
+		return model.SessionContextExcerpt{}, err
+	}
+	items, err := sessionContextTranscriptItems(ctx, candidate)
+	if err != nil {
+		return model.SessionContextExcerpt{}, err
+	}
+	if len(items) == 0 {
+		return model.SessionContextExcerpt{}, errors.New("no engineer transcript text found for session")
+	}
+
+	before := req.BeforeTurns
+	if before < 0 {
+		before = 0
+	}
+	after := req.AfterTurns
+	if after < 0 {
+		after = 0
+	}
+	maxChars := req.MaxChars
+	if maxChars <= 0 {
+		maxChars = contextSessionExcerptDefaultChars
+	}
+	if maxChars > contextSessionExcerptMaxChars {
+		maxChars = contextSessionExcerptMaxChars
+	}
+
+	query := strings.TrimSpace(req.Query)
+	anchor, matched := sessionContextAnchorIndex(items, query)
+	start := anchor - before
+	if start < 0 {
+		start = 0
+	}
+	end := anchor + after + 1
+	if end > len(items) {
+		end = len(items)
+	}
+
+	turns := make([]model.SessionContextTurn, 0, end-start)
+	remaining := maxChars
+	truncated := false
+	for i := start; i < end; i++ {
+		text := strings.TrimSpace(items[i].Text)
+		if text == "" {
+			continue
+		}
+		if remaining <= 0 {
+			truncated = true
+			break
+		}
+		if len([]rune(text)) > remaining {
+			text = contextSearchClipRunes(text, remaining)
+			truncated = true
+		}
+		remaining -= len([]rune(text))
+		turns = append(turns, model.SessionContextTurn{
+			Index: i + 1,
+			Role:  strings.TrimSpace(strings.ToLower(items[i].Role)),
+			Text:  text,
+		})
+	}
+	if len(turns) == 0 {
+		return model.SessionContextExcerpt{}, errors.New("session excerpt was empty after applying limits")
+	}
+
+	updatedAt := candidate.SourceUpdatedAt
+	if artifactUpdatedAt := contextSessionArtifactUpdatedAt(candidate.SessionFile, candidate.SessionFormat); artifactUpdatedAt.After(updatedAt) {
+		updatedAt = artifactUpdatedAt
+	}
+	return model.SessionContextExcerpt{
+		Source:        candidate.Source,
+		SessionID:     candidate.SessionID,
+		RawSessionID:  candidate.RawSessionID,
+		ProjectPath:   candidate.ProjectPath,
+		ProjectName:   candidate.ProjectName,
+		SessionFile:   candidate.SessionFile,
+		SessionFormat: candidate.SessionFormat,
+		UpdatedAt:     updatedAt,
+		Query:         query,
+		AnchorIndex:   anchor + 1,
+		AnchorMatched: matched,
+		Turns:         turns,
+		Truncated:     truncated,
+	}, nil
+}
+
+func (s *Store) sessionContextCandidate(ctx context.Context, sessionID string) (contextSessionCandidate, error) {
+	query := `
+		SELECT
+			ps.session_id,
+			COALESCE(ps.source, ''),
+			COALESCE(ps.raw_session_id, ''),
+			ps.project_path,
+			p.name,
+			ps.session_file,
+			ps.format,
+			COALESCE(ps.snapshot_hash, ''),
+			ps.last_event_at,
+			COALESCE(ps.latest_turn_state_known, 0),
+			COALESCE(ps.latest_turn_completed, 0)
+		FROM project_sessions ps
+		JOIN projects p ON p.path = ps.project_path
+		WHERE ps.session_id = ? OR ps.raw_session_id = ?
+		ORDER BY ps.last_event_at DESC
+		LIMIT 1
+	`
+	var (
+		candidate       contextSessionCandidate
+		source          string
+		sourceUpdatedAt int64
+		turnKnown       int
+		turnCompleted   int
+	)
+	err := s.db.QueryRowContext(ctx, query, sessionID, sessionID).Scan(
+		&candidate.SessionID,
+		&source,
+		&candidate.RawSessionID,
+		&candidate.ProjectPath,
+		&candidate.ProjectName,
+		&candidate.SessionFile,
+		&candidate.SessionFormat,
+		&candidate.SnapshotHash,
+		&sourceUpdatedAt,
+		&turnKnown,
+		&turnCompleted,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return contextSessionCandidate{}, fmt.Errorf("engineer session not found: %s", sessionID)
+		}
+		return contextSessionCandidate{}, err
+	}
+	candidate.Source = model.NormalizeSessionSource(model.SessionSource(source))
+	candidate.SourceUpdatedAt = time.Unix(sourceUpdatedAt, 0)
+	candidate.LatestTurnStateKnown = turnKnown != 0
+	candidate.LatestTurnCompleted = turnCompleted != 0
+	if candidate.ProjectName == "" {
+		candidate.ProjectName = contextProjectName(candidate.ProjectPath, "")
+	}
+	if strings.TrimSpace(candidate.SessionFile) == "" {
+		return contextSessionCandidate{}, fmt.Errorf("engineer session has no readable transcript artifact: %s", sessionID)
+	}
+	return candidate, nil
 }
 
 func contextSearchMatch(query string) string {
@@ -691,6 +844,156 @@ func compactContextSessionText(ctx context.Context, candidate contextSessionCand
 	default:
 		return "", nil
 	}
+}
+
+func sessionContextTranscriptItems(ctx context.Context, candidate contextSessionCandidate) ([]contextTranscriptItem, error) {
+	switch strings.TrimSpace(candidate.SessionFormat) {
+	case "modern", "legacy":
+		return contextJSONLTranscriptItems(ctx, candidate.SessionFile, extractContextCodexTranscriptItem)
+	case "claude_code":
+		return contextJSONLTranscriptItems(ctx, candidate.SessionFile, extractContextClaudeTranscriptItem)
+	case "opencode_db":
+		return contextOpenCodeTranscriptItems(ctx, candidate.SessionFile)
+	default:
+		return nil, fmt.Errorf("unsupported engineer session format: %s", candidate.SessionFormat)
+	}
+}
+
+func contextJSONLTranscriptItems(ctx context.Context, path string, extract func(string) (contextTranscriptItem, bool)) ([]contextTranscriptItem, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	stat, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if stat.Size() > contextSearchJSONLTailBytes {
+		if _, err := file.Seek(stat.Size()-contextSearchJSONLTailBytes, io.SeekStart); err != nil {
+			return nil, err
+		}
+	}
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, contextSearchScannerInitialBuf), contextSearchScannerMaxTokenCapacity)
+	items := []contextTranscriptItem{}
+	lastLine := ""
+	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		item, ok := extract(scanner.Text())
+		if !ok {
+			continue
+		}
+		line := contextTranscriptLine(item)
+		if line == "" || line == lastLine {
+			continue
+		}
+		lastLine = line
+		items = append(items, item)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func contextOpenCodeTranscriptItems(ctx context.Context, sessionRef string) ([]contextTranscriptItem, error) {
+	dbPath, sessionID, err := parseContextOpenCodeSessionRef(sessionRef)
+	if err != nil {
+		return nil, err
+	}
+	db, err := opencodesqlite.Open(dbPath)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	rows, err := db.QueryContext(ctx, fmt.Sprintf(`
+		WITH recent_messages AS (
+			SELECT id, time_created, data
+			FROM message
+			WHERE session_id = ?
+			ORDER BY time_created DESC
+			LIMIT %d
+		)
+		SELECT rm.id, rm.data, p.data
+		FROM recent_messages rm
+		LEFT JOIN part p ON p.message_id = rm.id
+		ORDER BY rm.time_created ASC, p.time_created ASC
+	`, contextSearchOpenCodeRecentMsgLimit), sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type messageEntry struct {
+		Role  string
+		Parts []string
+	}
+	order := []string{}
+	entries := map[string]*messageEntry{}
+	for rows.Next() {
+		var (
+			messageID   string
+			messageData string
+			partData    sql.NullString
+		)
+		if err := rows.Scan(&messageID, &messageData, &partData); err != nil {
+			return nil, err
+		}
+		entry, ok := entries[messageID]
+		if !ok {
+			entry = &messageEntry{Role: parseContextOpenCodeRole(messageData)}
+			entries[messageID] = entry
+			order = append(order, messageID)
+		}
+		if !partData.Valid {
+			continue
+		}
+		if text := parseContextOpenCodeTextPart(partData.String); text != "" {
+			entry.Parts = append(entry.Parts, text)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	items := []contextTranscriptItem{}
+	lastLine := ""
+	for _, id := range order {
+		entry := entries[id]
+		item := contextTranscriptItem{
+			Role: entry.Role,
+			Text: strings.Join(entry.Parts, "\n\n"),
+		}
+		line := contextTranscriptLine(item)
+		if line == "" || line == lastLine {
+			continue
+		}
+		lastLine = line
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func sessionContextAnchorIndex(items []contextTranscriptItem, query string) (int, bool) {
+	if len(items) == 0 {
+		return 0, false
+	}
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return len(items) - 1, false
+	}
+	for i := len(items) - 1; i >= 0; i-- {
+		if strings.Contains(strings.ToLower(items[i].Text), query) {
+			return i, true
+		}
+	}
+	return len(items) - 1, false
 }
 
 func contextSessionArtifactUpdatedAt(sessionFile, format string) time.Time {

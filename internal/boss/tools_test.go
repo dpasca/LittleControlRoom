@@ -188,9 +188,9 @@ func TestQueryExecutorReportsLiveRunningSessionSample(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	for _, want := range []string{
-		"Live assistant session context:",
+		"Live engineer session context:",
 		"latest turn open",
-		"assistant: Currently compiling the compressed JSON profile migration path.",
+		"engineer: Currently compiling the compressed JSON profile migration path.",
 	} {
 		if !strings.Contains(result.Text, want) {
 			t.Fatalf("tool result missing %q:\n%s", want, result.Text)
@@ -199,7 +199,7 @@ func TestQueryExecutorReportsLiveRunningSessionSample(t *testing.T) {
 	if strings.Contains(result.Text, "tool-output-should-not-leak") {
 		t.Fatalf("tool output should not appear in live session sample:\n%s", result.Text)
 	}
-	if sampleIndex, metadataIndex := strings.Index(result.Text, "Live assistant session context:"), strings.Index(result.Text, "Reference metadata"); sampleIndex < 0 || metadataIndex < 0 || sampleIndex > metadataIndex {
+	if sampleIndex, metadataIndex := strings.Index(result.Text, "Live engineer session context:"), strings.Index(result.Text, "Reference metadata"); sampleIndex < 0 || metadataIndex < 0 || sampleIndex > metadataIndex {
 		t.Fatalf("live session sample should precede reference metadata:\n%s", result.Text)
 	}
 }
@@ -258,6 +258,135 @@ func TestQueryExecutorSearchesContext(t *testing.T) {
 	}
 	if strings.Contains(result.Text, "okmain | path:") {
 		t.Fatalf("search context should not format alias matches as user-facing project mappings:\n%s", result.Text)
+	}
+}
+
+func TestQueryExecutorContextCommandSearchesEngineerTranscriptsWithHandles(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	st, err := store.Open(filepath.Join(tempDir, "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	sessionFile := filepath.Join(tempDir, "engineer-session.jsonl")
+	transcript := strings.Join([]string{
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"what was the summary flash about?"}]}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The summary flash was about the boss attention row update cue, not an error badge."}]}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(sessionFile, []byte(transcript), 0o644); err != nil {
+		t.Fatalf("write session: %v", err)
+	}
+
+	now := time.Unix(1_800_000_000, 0)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          "/tmp/lcr",
+		Name:          "LittleControlRoom",
+		LastActivity:  now,
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     now,
+		Sessions: []model.SessionEvidence{{
+			Source:      model.SessionSourceCodex,
+			SessionID:   "ses_ctx",
+			ProjectPath: "/tmp/lcr",
+			SessionFile: sessionFile,
+			Format:      "modern",
+			LastEventAt: now,
+		}},
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	executor := newQueryExecutor(st)
+	executor.nowFn = func() time.Time { return now }
+	result, err := executor.Execute(ctx, bossAction{
+		Kind:    bossActionContextCommand,
+		Command: `ctx search engineer "summary flash" --project LittleControlRoom --limit 4`,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	for _, want := range []string{
+		`ctx search engineer "summary flash": 1 matches.`,
+		"Engineer means Codex, OpenCode, or Claude Code work-session transcripts.",
+		"handle: engineer:codex:ses_ctx",
+		"summary flash",
+		`show: ctx show engineer:codex:ses_ctx --query "summary flash" --before 1 --after 2 --max-chars 6000`,
+	} {
+		if !strings.Contains(result.Text, want) {
+			t.Fatalf("tool result missing %q:\n%s", want, result.Text)
+		}
+	}
+}
+
+func TestQueryExecutorContextCommandShowsEngineerExchange(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	st, err := store.Open(filepath.Join(tempDir, "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	sessionFile := filepath.Join(tempDir, "engineer-session.jsonl")
+	transcript := strings.Join([]string{
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"what was the summary flash about?"}]}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The summary flash was about the boss attention row update cue, not an error badge."}]}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"are you sure?"}]}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(sessionFile, []byte(transcript), 0o644); err != nil {
+		t.Fatalf("write session: %v", err)
+	}
+
+	now := time.Unix(1_800_000_000, 0)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          "/tmp/lcr",
+		Name:          "LittleControlRoom",
+		LastActivity:  now,
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     now,
+		Sessions: []model.SessionEvidence{{
+			Source:      model.SessionSourceCodex,
+			SessionID:   "ses_show",
+			ProjectPath: "/tmp/lcr",
+			SessionFile: sessionFile,
+			Format:      "modern",
+			LastEventAt: now,
+		}},
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	executor := newQueryExecutor(st)
+	executor.nowFn = func() time.Time { return now }
+	result, err := executor.Execute(ctx, bossAction{
+		Kind:    bossActionContextCommand,
+		Command: `ctx show engineer:codex:ses_show --query "summary flash" --before 0 --after 1 --max-chars 1000`,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	for _, want := range []string{
+		"Engineer exchange:",
+		"handle: engineer:codex:ses_show",
+		`role="boss"`,
+		`role="engineer"`,
+		"The summary flash was about the boss attention row update cue, not an error badge.",
+		`anchor: turn 2 matched "summary flash"`,
+	} {
+		if !strings.Contains(result.Text, want) {
+			t.Fatalf("tool result missing %q:\n%s", want, result.Text)
+		}
+	}
+	if strings.Contains(result.Text, `role="assistant"`) || strings.Contains(result.Text, `role="user"`) {
+		t.Fatalf("engineer excerpt should use Boss Chat vocabulary for roles:\n%s", result.Text)
 	}
 }
 
@@ -327,7 +456,7 @@ func TestQueryExecutorResolvesProjectNameThroughContextSearch(t *testing.T) {
 		PresentOnDisk:  true,
 		InScope:        true,
 		AttentionReason: []model.AttentionReason{{
-			Text:   "FCX flight tuning is active in the latest assistant session",
+			Text:   "FCX flight tuning is active in the latest engineer session",
 			Weight: 20,
 		}},
 		UpdatedAt: now,
@@ -404,6 +533,14 @@ func TestQueryExecutorPrivacyModeFiltersProjectTools(t *testing.T) {
 	}
 	if strings.Contains(search.Text, "SecretClient") || strings.Contains(search.Text, "Secret snippet") {
 		t.Fatalf("privacy-filtered context search = %q", search.Text)
+	}
+
+	commandSearch, err := executor.Execute(context.Background(), bossAction{Kind: bossActionContextCommand, Command: `ctx search engineer "summary" --limit 5`}, StateSnapshot{}, view)
+	if err != nil {
+		t.Fatalf("context command Execute() error = %v", err)
+	}
+	if strings.Contains(commandSearch.Text, "SecretClient") || strings.Contains(commandSearch.Text, "Secret snippet") {
+		t.Fatalf("privacy-filtered context command search = %q", commandSearch.Text)
 	}
 }
 

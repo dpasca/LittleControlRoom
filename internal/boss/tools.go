@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,6 +24,7 @@ const (
 	bossActionAssessmentQueue        = "assessment_queue"
 	bossActionSearchContext          = "search_context"
 	bossActionSearchBossSessions     = "search_boss_sessions"
+	bossActionContextCommand         = "context_command"
 
 	bossToolResultLimit = 8000
 )
@@ -32,6 +34,7 @@ type bossAction struct {
 	Answer            string `json:"answer"`
 	Target            string `json:"target"`
 	Query             string `json:"query"`
+	Command           string `json:"command"`
 	ProjectPath       string `json:"project_path"`
 	ProjectName       string `json:"project_name"`
 	SessionID         string `json:"session_id"`
@@ -53,6 +56,7 @@ type bossStoreReader interface {
 	GetSessionClassificationCounts(ctx context.Context, inScopeOnly bool) (map[model.SessionClassificationStatus]int, error)
 	SearchContext(ctx context.Context, req model.ContextSearchRequest) ([]model.ContextSearchResult, error)
 	SampleProjectSessionContext(ctx context.Context, projectPath string, limit int) ([]model.SessionContextSample, error)
+	GetSessionContextExcerpt(ctx context.Context, req model.SessionContextExcerptRequest) (model.SessionContextExcerpt, error)
 }
 
 type QueryExecutor struct {
@@ -98,6 +102,9 @@ func (e *QueryExecutor) Execute(ctx context.Context, action bossAction, snapshot
 	kind := normalizeBossActionKind(action.Kind)
 	if kind == bossActionSearchBossSessions {
 		return e.searchBossSessions(ctx, action)
+	}
+	if kind == bossActionContextCommand {
+		return e.contextCommand(ctx, action, view)
 	}
 	if e.store == nil {
 		return bossToolResult{}, errors.New("boss query tools are not connected to the project store")
@@ -195,7 +202,7 @@ func (e *QueryExecutor) projectDetail(ctx context.Context, action bossAction, vi
 	}
 	lines := []string{"Project detail:"}
 	if samples, err := e.store.SampleProjectSessionContext(ctx, path, 1); err == nil && len(samples) > 0 {
-		lines = append(lines, "Live assistant session context:")
+		lines = append(lines, "Live engineer session context:")
 		for _, sample := range samples {
 			line := fmt.Sprintf("- %s %s", sample.Source, sample.ExternalID())
 			if !sample.UpdatedAt.IsZero() {
@@ -208,7 +215,7 @@ func (e *QueryExecutor) projectDetail(ctx context.Context, action bossAction, vi
 			}
 			lines = append(lines, line)
 			for _, excerptLine := range liveSessionSampleLines(sample.Text) {
-				lines = append(lines, "  "+clipText(excerptLine, 360))
+				lines = append(lines, "  "+clipText(engineerRoleLine(excerptLine), 360))
 			}
 		}
 	}
@@ -508,6 +515,502 @@ func (e *QueryExecutor) searchContext(ctx context.Context, action bossAction, vi
 		lines = append(lines, "No project summaries, assessments, or cached session transcripts matched that query.")
 	}
 	return clippedToolResult(bossActionSearchContext, strings.Join(lines, "\n")), nil
+}
+
+type parsedContextCommand struct {
+	Verb              string
+	Domain            string
+	Query             string
+	Handle            string
+	Project           string
+	Limit             int
+	BeforeTurns       int
+	AfterTurns        int
+	MaxChars          int
+	IncludeHistorical bool
+}
+
+func (e *QueryExecutor) contextCommand(ctx context.Context, action bossAction, view ViewContext) (bossToolResult, error) {
+	command := strings.TrimSpace(action.Command)
+	if command == "" {
+		command = strings.TrimSpace(action.Query)
+	}
+	parsed, err := parseContextCommand(command)
+	if err != nil {
+		return clippedToolResult(bossActionContextCommand, "Context command error: "+err.Error()+"\nAllowed forms:\n- ctx search engineer \"query\" --project <name-or-path> --limit 5\n- ctx show engineer:<session-id> --query \"query\" --before 1 --after 2 --max-chars 6000\n- ctx recent engineer --project <name-or-path> --limit 5\n- ctx search boss \"query\" --limit 5"), nil
+	}
+	switch parsed.Verb {
+	case "search":
+		switch normalizeContextCommandDomain(parsed.Domain) {
+		case "boss":
+			return e.contextCommandSearchBoss(ctx, parsed)
+		case "engineer":
+			return e.contextCommandSearchEngineer(ctx, parsed, view)
+		default:
+			return clippedToolResult(bossActionContextCommand, "Context command error: search domain must be boss or engineer."), nil
+		}
+	case "show":
+		return e.contextCommandShow(ctx, parsed, view)
+	case "recent":
+		if normalizeContextCommandDomain(parsed.Domain) != "engineer" {
+			return clippedToolResult(bossActionContextCommand, "Context command error: recent currently supports only engineer sessions."), nil
+		}
+		return e.contextCommandRecentEngineer(ctx, parsed, view)
+	default:
+		return clippedToolResult(bossActionContextCommand, "Context command error: unknown verb "+parsed.Verb+"."), nil
+	}
+}
+
+func (e *QueryExecutor) contextCommandSearchBoss(ctx context.Context, parsed parsedContextCommand) (bossToolResult, error) {
+	if e == nil || e.bossSessions == nil {
+		return clippedToolResult(bossActionContextCommand, "Boss Chat transcript search is not connected."), nil
+	}
+	query := strings.TrimSpace(parsed.Query)
+	if query == "" {
+		return clippedToolResult(bossActionContextCommand, "Context command error: ctx search boss needs a query."), nil
+	}
+	results, err := e.bossSessions.searchSessions(ctx, query, clampBossLimit(parsed.Limit, 5, 12))
+	if err != nil {
+		return bossToolResult{}, err
+	}
+	return clippedToolResult(bossActionContextCommand, formatBossSessionSearchXML(query, results, e.now())), nil
+}
+
+func (e *QueryExecutor) contextCommandSearchEngineer(ctx context.Context, parsed parsedContextCommand, view ViewContext) (bossToolResult, error) {
+	if e == nil || e.store == nil {
+		return clippedToolResult(bossActionContextCommand, "Engineer transcript search is not connected."), nil
+	}
+	query := strings.TrimSpace(parsed.Query)
+	if query == "" {
+		return clippedToolResult(bossActionContextCommand, "Context command error: ctx search engineer needs a query."), nil
+	}
+	projectPath, note, err := e.contextCommandProjectPath(ctx, parsed, view)
+	if err != nil {
+		return bossToolResult{}, err
+	}
+	results, err := e.store.SearchContext(ctx, model.ContextSearchRequest{
+		Query:             query,
+		ProjectPath:       projectPath,
+		IncludeHistorical: parsed.IncludeHistorical,
+		Limit:             clampBossLimit(parsed.Limit, 8, 24),
+	})
+	if err != nil {
+		return bossToolResult{}, err
+	}
+	if view.PrivacyMode {
+		privatePaths, err := e.privateProjectPaths(ctx, parsed.IncludeHistorical, view)
+		if err != nil {
+			return bossToolResult{}, err
+		}
+		results = filterContextSearchResultsForBossPrivacy(results, view, privatePaths)
+	}
+	sessionResults := make([]model.ContextSearchResult, 0, len(results))
+	for _, result := range results {
+		if strings.EqualFold(strings.TrimSpace(result.Source), "session") && strings.TrimSpace(result.SessionID) != "" {
+			sessionResults = append(sessionResults, result)
+		}
+	}
+	limit := clampBossLimit(parsed.Limit, 5, 12)
+	if len(sessionResults) > limit {
+		sessionResults = sessionResults[:limit]
+	}
+
+	now := e.now()
+	lines := []string{
+		fmt.Sprintf("ctx search engineer %q: %d matches.", query, len(sessionResults)),
+		"Engineer means Codex, OpenCode, or Claude Code work-session transcripts. Boss Chat transcripts are separate.",
+		"Use the handle with ctx show to fetch a bounded nearby exchange before quoting or correcting details.",
+	}
+	if projectPath != "" {
+		lines[0] += " Project path: " + projectPath + "."
+	}
+	if note != "" {
+		lines = append(lines, "Target note: "+note)
+	}
+	for i, result := range sessionResults {
+		handle := contextEngineerHandle(result.SessionID)
+		lines = append(lines, fmt.Sprintf("%d. handle: %s", i+1, handle))
+		metadata := []string{}
+		if project := strings.TrimSpace(firstNonEmpty(result.ProjectName, result.ProjectPath)); project != "" {
+			metadata = append(metadata, "project="+project)
+		}
+		if path := strings.TrimSpace(result.ProjectPath); path != "" {
+			metadata = append(metadata, "path="+path)
+		}
+		if !result.UpdatedAt.IsZero() {
+			metadata = append(metadata, "updated_at="+formatBossTimestamp(result.UpdatedAt))
+			metadata = append(metadata, "age_at_query="+ageAtTime(now, result.UpdatedAt))
+		}
+		if len(metadata) > 0 {
+			lines = append(lines, "   reference metadata: "+strings.Join(metadata, "; "))
+		}
+		if snippet := strings.TrimSpace(result.Snippet); snippet != "" {
+			lines = append(lines, "   snippet: "+clipText(snippet, 420))
+		}
+		lines = append(lines, "   show: "+formatContextShowCommand(handle, query))
+	}
+	if len(sessionResults) == 0 {
+		lines = append(lines, "No engineer transcript matches found.")
+	}
+	return clippedToolResult(bossActionContextCommand, strings.Join(lines, "\n")), nil
+}
+
+func (e *QueryExecutor) contextCommandShow(ctx context.Context, parsed parsedContextCommand, view ViewContext) (bossToolResult, error) {
+	if e == nil || e.store == nil {
+		return clippedToolResult(bossActionContextCommand, "Engineer exchange lookup is not connected."), nil
+	}
+	sessionID, ok := strings.CutPrefix(strings.TrimSpace(parsed.Handle), "engineer:")
+	if !ok || strings.TrimSpace(sessionID) == "" {
+		return clippedToolResult(bossActionContextCommand, "Context command error: ctx show needs an engineer:<session-id> handle."), nil
+	}
+	excerpt, err := e.store.GetSessionContextExcerpt(ctx, model.SessionContextExcerptRequest{
+		SessionID:   sessionID,
+		Query:       parsed.Query,
+		BeforeTurns: clampContextCommandCount(parsed.BeforeTurns, 1, 6),
+		AfterTurns:  clampContextCommandCount(parsed.AfterTurns, 2, 6),
+		MaxChars:    clampContextCommandCount(parsed.MaxChars, 6000, 12000),
+	})
+	if err != nil {
+		return bossToolResult{}, err
+	}
+	if e.excerptHiddenByPrivacy(ctx, excerpt, view) {
+		return clippedToolResult(bossActionContextCommand, "Engineer exchange is hidden while privacy mode is enabled."), nil
+	}
+	return clippedToolResult(bossActionContextCommand, formatEngineerExcerpt(excerpt, e.now())), nil
+}
+
+func (e *QueryExecutor) contextCommandRecentEngineer(ctx context.Context, parsed parsedContextCommand, view ViewContext) (bossToolResult, error) {
+	if e == nil || e.store == nil {
+		return clippedToolResult(bossActionContextCommand, "Recent engineer session lookup is not connected."), nil
+	}
+	projectPath, note, err := e.contextCommandProjectPath(ctx, parsed, view)
+	if err != nil {
+		return bossToolResult{}, err
+	}
+	if projectPath == "" {
+		return clippedToolResult(bossActionContextCommand, "Context command error: ctx recent engineer needs --project <name-or-path>."), nil
+	}
+	samples, err := e.store.SampleProjectSessionContext(ctx, projectPath, clampBossLimit(parsed.Limit, 3, 6))
+	if err != nil {
+		return bossToolResult{}, err
+	}
+	now := e.now()
+	lines := []string{
+		fmt.Sprintf("ctx recent engineer: %d recent sessions for %s.", len(samples), projectPath),
+		"Engineer means Codex, OpenCode, or Claude Code work-session transcripts.",
+	}
+	if note != "" {
+		lines = append(lines, "Target note: "+note)
+	}
+	for i, sample := range samples {
+		handle := contextEngineerHandle(sample.SessionID)
+		line := fmt.Sprintf("%d. handle: %s", i+1, handle)
+		line += fmt.Sprintf(" | source=%s | updated=%s", sample.Source, ageAtTime(now, sample.UpdatedAt))
+		if sample.LatestTurnStateKnown && !sample.LatestTurnCompleted {
+			line += " | latest turn open"
+		}
+		lines = append(lines, line)
+		for _, excerptLine := range liveSessionSampleLines(sample.Text) {
+			lines = append(lines, "   "+clipText(engineerRoleLine(excerptLine), 360))
+		}
+		lines = append(lines, "   show: "+formatContextShowCommand(handle, ""))
+	}
+	if len(samples) == 0 {
+		lines = append(lines, "No recent live engineer session samples found for that project.")
+	}
+	return clippedToolResult(bossActionContextCommand, strings.Join(lines, "\n")), nil
+}
+
+func (e *QueryExecutor) contextCommandProjectPath(ctx context.Context, parsed parsedContextCommand, view ViewContext) (string, string, error) {
+	project := strings.TrimSpace(parsed.Project)
+	if project == "" {
+		return "", "", nil
+	}
+	action := bossAction{}
+	if strings.HasPrefix(project, "/") || strings.HasPrefix(project, ".") {
+		action.ProjectPath = project
+	} else {
+		action.ProjectName = project
+	}
+	return e.resolveProjectPath(ctx, action, view)
+}
+
+func (e *QueryExecutor) excerptHiddenByPrivacy(ctx context.Context, excerpt model.SessionContextExcerpt, view ViewContext) bool {
+	if !view.PrivacyMode {
+		return false
+	}
+	if config.MatchesPrivacyPattern(excerpt.ProjectName, view.PrivacyPatterns) {
+		return true
+	}
+	privatePaths, err := e.privateProjectPaths(ctx, true, view)
+	if err != nil {
+		return true
+	}
+	_, private := privatePaths[filepath.Clean(strings.TrimSpace(excerpt.ProjectPath))]
+	return private
+}
+
+func parseContextCommand(command string) (parsedContextCommand, error) {
+	tokens, err := contextCommandTokens(command)
+	if err != nil {
+		return parsedContextCommand{}, err
+	}
+	if len(tokens) < 2 || strings.ToLower(tokens[0]) != "ctx" {
+		return parsedContextCommand{}, errors.New(`command must start with "ctx"`)
+	}
+	parsed := parsedContextCommand{Verb: strings.ToLower(tokens[1])}
+	switch parsed.Verb {
+	case "search":
+		if len(tokens) < 4 {
+			return parsedContextCommand{}, errors.New("ctx search needs a domain and query")
+		}
+		parsed.Domain = normalizeContextCommandDomain(tokens[2])
+		parsed.Query = tokens[3]
+		if err := parseContextCommandFlags(tokens[4:], &parsed); err != nil {
+			return parsedContextCommand{}, err
+		}
+	case "show":
+		if len(tokens) < 3 {
+			return parsedContextCommand{}, errors.New("ctx show needs a handle")
+		}
+		parsed.Handle = tokens[2]
+		if err := parseContextCommandFlags(tokens[3:], &parsed); err != nil {
+			return parsedContextCommand{}, err
+		}
+	case "recent":
+		if len(tokens) < 3 {
+			return parsedContextCommand{}, errors.New("ctx recent needs a domain")
+		}
+		parsed.Domain = normalizeContextCommandDomain(tokens[2])
+		if err := parseContextCommandFlags(tokens[3:], &parsed); err != nil {
+			return parsedContextCommand{}, err
+		}
+	default:
+		return parsedContextCommand{}, fmt.Errorf("unknown ctx verb %q", parsed.Verb)
+	}
+	return parsed, nil
+}
+
+func parseContextCommandFlags(tokens []string, parsed *parsedContextCommand) error {
+	for i := 0; i < len(tokens); i++ {
+		token := strings.TrimSpace(tokens[i])
+		switch token {
+		case "--project":
+			value, next, err := contextCommandFlagValue(tokens, i)
+			if err != nil {
+				return err
+			}
+			parsed.Project = value
+			i = next
+		case "--query":
+			value, next, err := contextCommandFlagValue(tokens, i)
+			if err != nil {
+				return err
+			}
+			parsed.Query = value
+			i = next
+		case "--limit":
+			value, next, err := contextCommandIntFlag(tokens, i)
+			if err != nil {
+				return err
+			}
+			parsed.Limit = value
+			i = next
+		case "--before":
+			value, next, err := contextCommandIntFlag(tokens, i)
+			if err != nil {
+				return err
+			}
+			parsed.BeforeTurns = value
+			i = next
+		case "--after":
+			value, next, err := contextCommandIntFlag(tokens, i)
+			if err != nil {
+				return err
+			}
+			parsed.AfterTurns = value
+			i = next
+		case "--max-chars":
+			value, next, err := contextCommandIntFlag(tokens, i)
+			if err != nil {
+				return err
+			}
+			parsed.MaxChars = value
+			i = next
+		case "--historical", "--include-historical":
+			parsed.IncludeHistorical = true
+		default:
+			return fmt.Errorf("unknown ctx flag %q", token)
+		}
+	}
+	return nil
+}
+
+func contextCommandFlagValue(tokens []string, i int) (string, int, error) {
+	if i+1 >= len(tokens) || strings.HasPrefix(tokens[i+1], "--") {
+		return "", i, fmt.Errorf("ctx flag %s needs a value", tokens[i])
+	}
+	return strings.TrimSpace(tokens[i+1]), i + 1, nil
+}
+
+func contextCommandIntFlag(tokens []string, i int) (int, int, error) {
+	value, next, err := contextCommandFlagValue(tokens, i)
+	if err != nil {
+		return 0, i, err
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, i, fmt.Errorf("ctx flag %s needs an integer value", tokens[i])
+	}
+	return parsed, next, nil
+}
+
+func contextCommandTokens(command string) ([]string, error) {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return nil, errors.New("empty context command")
+	}
+	tokens := []string{}
+	var b strings.Builder
+	var quote rune
+	escaped := false
+	for _, r := range command {
+		switch {
+		case escaped:
+			b.WriteRune(r)
+			escaped = false
+		case r == '\\' && quote != 0:
+			escaped = true
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				b.WriteRune(r)
+			}
+		case r == '"' || r == '\'':
+			quote = r
+		case r == ' ' || r == '\t' || r == '\n':
+			if b.Len() > 0 {
+				tokens = append(tokens, b.String())
+				b.Reset()
+			}
+		default:
+			b.WriteRune(r)
+		}
+	}
+	if escaped {
+		b.WriteRune('\\')
+	}
+	if quote != 0 {
+		return nil, errors.New("unterminated quote in context command")
+	}
+	if b.Len() > 0 {
+		tokens = append(tokens, b.String())
+	}
+	return tokens, nil
+}
+
+func normalizeContextCommandDomain(domain string) string {
+	switch strings.ToLower(strings.TrimSpace(domain)) {
+	case "engineer", "engineers", "work", "agent", "agents", "assistant", "assistants", "ai":
+		return "engineer"
+	case "boss", "boss-chat", "boss_chat", "chat", "desk":
+		return "boss"
+	default:
+		return strings.ToLower(strings.TrimSpace(domain))
+	}
+}
+
+func contextEngineerHandle(sessionID string) string {
+	return "engineer:" + strings.TrimSpace(sessionID)
+}
+
+func formatContextShowCommand(handle, query string) string {
+	command := "ctx show " + shellQuoteContextToken(handle)
+	if strings.TrimSpace(query) != "" {
+		command += " --query " + shellQuoteContextToken(query)
+	}
+	return command + " --before 1 --after 2 --max-chars 6000"
+}
+
+func shellQuoteContextToken(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return `""`
+	}
+	if !strings.ContainsAny(value, " \t\n\"'") {
+		return value
+	}
+	return `"` + strings.ReplaceAll(value, `"`, `\"`) + `"`
+}
+
+func formatEngineerExcerpt(excerpt model.SessionContextExcerpt, now time.Time) string {
+	lines := []string{
+		"Engineer exchange:",
+		fmt.Sprintf("- handle: %s", contextEngineerHandle(excerpt.SessionID)),
+		fmt.Sprintf("- source: %s", excerpt.Source),
+	}
+	if project := strings.TrimSpace(firstNonEmpty(excerpt.ProjectName, excerpt.ProjectPath)); project != "" {
+		lines = append(lines, "- project: "+project)
+	}
+	if path := strings.TrimSpace(excerpt.ProjectPath); path != "" {
+		lines = append(lines, "- path: "+path)
+	}
+	if !excerpt.UpdatedAt.IsZero() {
+		lines = append(lines, "- updated: "+ageAtTime(now, excerpt.UpdatedAt))
+	}
+	if query := strings.TrimSpace(excerpt.Query); query != "" {
+		if excerpt.AnchorMatched {
+			lines = append(lines, fmt.Sprintf("- anchor: turn %d matched %q", excerpt.AnchorIndex, query))
+		} else {
+			lines = append(lines, fmt.Sprintf("- anchor: latest turn; query %q was not found inside fetched transcript text", query))
+		}
+	}
+	lines = append(lines, "Transcript excerpt:")
+	for _, turn := range excerpt.Turns {
+		role := engineerTranscriptRole(turn.Role)
+		lines = append(lines, fmt.Sprintf("<turn index=\"%d\" role=\"%s\"><![CDATA[%s]]></turn>", turn.Index, role, cdataSafe(turn.Text)))
+	}
+	if excerpt.Truncated {
+		lines = append(lines, "<note>Excerpt truncated by max-chars.</note>")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func engineerTranscriptRole(role string) string {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "assistant":
+		return "engineer"
+	case "user":
+		return "boss"
+	default:
+		return strings.ToLower(strings.TrimSpace(role))
+	}
+}
+
+func engineerRoleLine(line string) string {
+	line = strings.TrimSpace(line)
+	if strings.HasPrefix(line, "assistant:") {
+		return "engineer:" + strings.TrimPrefix(line, "assistant:")
+	}
+	if strings.HasPrefix(line, "user:") {
+		return "boss:" + strings.TrimPrefix(line, "user:")
+	}
+	return line
+}
+
+func cdataSafe(text string) string {
+	return strings.ReplaceAll(text, "]]>", "]]]]><![CDATA[>")
+}
+
+func clampContextCommandCount(value, defaultValue, maxValue int) int {
+	if value <= 0 {
+		value = defaultValue
+	}
+	if value > maxValue {
+		value = maxValue
+	}
+	return value
 }
 
 func (e *QueryExecutor) resolveProjectPath(ctx context.Context, action bossAction, view ViewContext) (string, string, error) {

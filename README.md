@@ -146,14 +146,14 @@ Inside the embedded Codex, Claude Code, or OpenCode pane:
 
 Inside boss chat:
 
-- `Alt+1` through `Alt+8`: Jump from the bottom attention list into the matching embedded assistant session.
+- `Alt+1` through `Alt+8`: Jump from the bottom attention list into the matching embedded engineer session.
 - `/new [prompt]`: Start a fresh boss chat session, optionally with the first prompt.
 - `/sessions [session-id]`: Open the saved-session picker, or switch directly by ID.
 - `/session [session-id]` and `/resume [session-id]`: Aliases for `/sessions`.
 - `/help`: Show boss chat slash commands.
 - `/boss off`: Return to the classic TUI.
 
-Boss chat sessions are saved as grep-friendly Markdown transcripts under the app data directory, for example `~/.little-control-room/boss-sessions/`. The `/sessions` picker uses those files for human session switching, and boss-chat recall searches the same transcripts and wraps matching turns into XML-like snippets for the assistant at query time.
+Boss chat sessions are saved as grep-friendly Markdown transcripts under the app data directory, for example `~/.little-control-room/boss-sessions/`. The `/sessions` picker uses those files for human session switching, and Boss Chat recall searches the same transcripts. Codex, OpenCode, and Claude Code transcripts are called engineer sessions in Boss Chat so they stay distinct from Boss Chat's own transcript.
 
 ## Core Workflows
 
