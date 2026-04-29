@@ -63,3 +63,35 @@ func TestManagedBrowserCandidateRecognizesChromeAppProcess(t *testing.T) {
 		t.Fatalf("candidate AppPath = %q, want Google Chrome.app", candidate.AppPath)
 	}
 }
+
+func TestMacApplicationProcessVisibilityScriptRaisesTargetWindowWhenFrontmost(t *testing.T) {
+	args, err := macApplicationProcessVisibilityScript(49916, true, true)
+	if err != nil {
+		t.Fatalf("macApplicationProcessVisibilityScript() error = %v", err)
+	}
+	script := strings.Join(args, "\n")
+	for _, want := range []string{
+		"unix id is 49916",
+		"set visible of targetProcess to true",
+		`perform action "AXRaise" of window 1 of targetProcess`,
+		"set frontmost of targetProcess to true",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("script missing %q:\n%s", want, script)
+		}
+	}
+}
+
+func TestMacApplicationProcessVisibilityScriptDoesNotRaiseWindowWhenHiding(t *testing.T) {
+	args, err := macApplicationProcessVisibilityScript(49916, false, false)
+	if err != nil {
+		t.Fatalf("macApplicationProcessVisibilityScript() error = %v", err)
+	}
+	script := strings.Join(args, "\n")
+	if strings.Contains(script, "AXRaise") {
+		t.Fatalf("hide script should not raise windows:\n%s", script)
+	}
+	if !strings.Contains(script, "set visible of targetProcess to false") {
+		t.Fatalf("script should hide the target process:\n%s", script)
+	}
+}

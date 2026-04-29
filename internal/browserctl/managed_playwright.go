@@ -273,8 +273,16 @@ func HideManagedBrowserProcess(pid int) error {
 }
 
 func setMacApplicationProcessVisible(pid int, visible, frontmost bool) error {
+	args, err := macApplicationProcessVisibilityScript(pid, visible, frontmost)
+	if err != nil {
+		return err
+	}
+	return exec.Command("osascript", args...).Run()
+}
+
+func macApplicationProcessVisibilityScript(pid int, visible, frontmost bool) ([]string, error) {
 	if pid <= 0 {
-		return fmt.Errorf("managed browser pid required")
+		return nil, fmt.Errorf("managed browser pid required")
 	}
 	pidLiteral := strconv.Itoa(pid)
 	visibleLiteral := "false"
@@ -287,14 +295,22 @@ func setMacApplicationProcessVisible(pid int, visible, frontmost bool) error {
 		`set visible of targetProcess to ` + visibleLiteral,
 	}
 	if frontmost {
-		lines = append(lines, `set frontmost of targetProcess to true`)
+		lines = append(lines,
+			`set frontmost of targetProcess to true`,
+			`try`,
+			`if (count of windows of targetProcess) > 0 then`,
+			`perform action "AXRaise" of window 1 of targetProcess`,
+			`end if`,
+			`end try`,
+			`set frontmost of targetProcess to true`,
+		)
 	}
 	lines = append(lines, `end tell`)
 	args := make([]string, 0, len(lines)*2)
 	for _, line := range lines {
 		args = append(args, "-e", line)
 	}
-	return exec.Command("osascript", args...).Run()
+	return args, nil
 }
 
 func DetectManagedBrowserProcess(rootPID int) (ManagedBrowserProcess, bool, error) {
