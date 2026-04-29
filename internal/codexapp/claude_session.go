@@ -186,37 +186,44 @@ func (s *claudeCodeSession) ProjectPath() string {
 func (s *claudeCodeSession) Snapshot() Snapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	phase := SessionPhaseIdle
-	switch {
-	case s.closed:
-		phase = SessionPhaseClosed
-	case s.busyExternal:
-		phase = SessionPhaseExternal
-	case s.busy:
-		if s.pendingSubmissions > 0 {
-			phase = SessionPhaseRunning
-		} else {
-			phase = SessionPhaseFinishing
-		}
-	}
-
 	entries, transcript := s.exportedTranscriptLocked()
+	snapshot := s.stateSnapshotLocked()
+	snapshot.Entries = entries
+	snapshot.Transcript = transcript
+	return snapshot
+}
 
+func (s *claudeCodeSession) TrySnapshot() (Snapshot, bool) {
+	if !s.mu.TryLock() {
+		return Snapshot{}, false
+	}
+	defer s.mu.Unlock()
+	entries, transcript := s.exportedTranscriptLocked()
+	snapshot := s.stateSnapshotLocked()
+	snapshot.Entries = entries
+	snapshot.Transcript = transcript
+	return snapshot, true
+}
+
+func (s *claudeCodeSession) StateSnapshot() Snapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stateSnapshotLocked()
+}
+
+func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 	return Snapshot{
 		Provider:           ProviderClaudeCode,
 		ProjectPath:        s.projectPath,
 		ThreadID:           s.sessionID,
 		Preset:             s.preset,
 		TranscriptRevision: s.transcriptRevision,
-		Phase:              phase,
+		Phase:              s.phaseLocked(),
 		Started:            s.started,
 		Busy:               s.busy || s.busyExternal,
 		BusyExternal:       s.busyExternal,
 		BusySince:          s.busySince,
 		Closed:             s.closed,
-		Entries:            entries,
-		Transcript:         transcript,
 		Status:             s.status,
 		LastError:          s.lastError,
 		LastSystemNotice:   s.lastSystemNotice,
@@ -228,12 +235,7 @@ func (s *claudeCodeSession) Snapshot() Snapshot {
 	}
 }
 
-func (s *claudeCodeSession) TrySnapshot() (Snapshot, bool) {
-	if !s.mu.TryLock() {
-		return Snapshot{}, false
-	}
-	defer s.mu.Unlock()
-
+func (s *claudeCodeSession) phaseLocked() SessionPhase {
 	phase := SessionPhaseIdle
 	switch {
 	case s.closed:
@@ -247,32 +249,7 @@ func (s *claudeCodeSession) TrySnapshot() (Snapshot, bool) {
 			phase = SessionPhaseFinishing
 		}
 	}
-
-	entries, transcript := s.exportedTranscriptLocked()
-
-	return Snapshot{
-		Provider:           ProviderClaudeCode,
-		ProjectPath:        s.projectPath,
-		ThreadID:           s.sessionID,
-		Preset:             s.preset,
-		TranscriptRevision: s.transcriptRevision,
-		Phase:              phase,
-		Started:            s.started,
-		Busy:               s.busy || s.busyExternal,
-		BusyExternal:       s.busyExternal,
-		BusySince:          s.busySince,
-		Closed:             s.closed,
-		Entries:            entries,
-		Transcript:         transcript,
-		Status:             s.status,
-		LastError:          s.lastError,
-		LastSystemNotice:   s.lastSystemNotice,
-		LastActivityAt:     s.lastActivityAt,
-		Model:              s.model,
-		ReasoningEffort:    s.reasoningEffort,
-		PendingModel:       s.pendingModel,
-		PendingReasoning:   s.pendingReasoning,
-	}, true
+	return phase
 }
 
 func (s *claudeCodeSession) invalidateTranscriptCacheLocked() {

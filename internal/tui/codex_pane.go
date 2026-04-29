@@ -359,6 +359,73 @@ func (m Model) nonBlockingCodexSnapshot(projectPath string) (codexapp.Snapshot, 
 	return codexapp.Snapshot{}, false
 }
 
+type codexStateSnapshooter interface {
+	StateSnapshot() codexapp.Snapshot
+}
+
+func stateSnapshotForCodexSession(session codexapp.Session) (codexapp.Snapshot, bool) {
+	if session == nil {
+		return codexapp.Snapshot{}, false
+	}
+	state, ok := session.(codexStateSnapshooter)
+	if !ok {
+		return codexapp.Snapshot{}, false
+	}
+	return state.StateSnapshot(), true
+}
+
+func (m Model) cachedLiveCodexSnapshot(projectPath string) (codexapp.Snapshot, bool) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return codexapp.Snapshot{}, false
+	}
+	session, ok := m.codexSession(projectPath)
+	if !ok {
+		return codexapp.Snapshot{}, false
+	}
+	cached, hasCached := m.codexCachedSnapshot(projectPath)
+	if state, ok := stateSnapshotForCodexSession(session); ok {
+		if state.Closed || !state.Started {
+			return codexapp.Snapshot{}, false
+		}
+		if !hasCached {
+			cached = state
+			hasCached = true
+		}
+		cached.Closed = state.Closed
+		cached.Started = state.Started
+		cached.Busy = state.Busy
+		cached.BusyExternal = state.BusyExternal
+		cached.BusySince = state.BusySince
+		cached.LastBusyActivityAt = state.LastBusyActivityAt
+		cached.Phase = state.Phase
+		cached.ActiveTurnID = state.ActiveTurnID
+		cached.PendingApproval = state.PendingApproval
+		cached.PendingToolInput = state.PendingToolInput
+		cached.PendingElicitation = state.PendingElicitation
+		cached.BrowserActivity = state.BrowserActivity
+		cached.CurrentBrowserPageURL = state.CurrentBrowserPageURL
+		cached.ManagedBrowserSessionKey = state.ManagedBrowserSessionKey
+		cached.Status = state.Status
+		cached.LastError = state.LastError
+		cached.LastSystemNotice = state.LastSystemNotice
+		cached.LastActivityAt = state.LastActivityAt
+		if strings.TrimSpace(state.ThreadID) != "" {
+			cached.ThreadID = state.ThreadID
+		}
+		if state.Provider.Normalized() != "" {
+			cached.Provider = state.Provider
+		}
+	}
+	if !hasCached {
+		return codexapp.Snapshot{}, false
+	}
+	if !cached.Started || cached.Closed {
+		return codexapp.Snapshot{}, false
+	}
+	return cached, true
+}
+
 func (m Model) currentCodexSnapshot() (codexapp.Snapshot, bool) {
 	projectPath := strings.TrimSpace(m.codexVisibleProject)
 	if snapshot, ok := m.currentCachedCodexSnapshot(); ok {

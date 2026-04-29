@@ -314,40 +314,10 @@ func (s *openCodeSession) Snapshot() Snapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entries, transcript := s.exportedTranscriptLocked()
-
-	return Snapshot{
-		Provider:                 ProviderOpenCode,
-		ProjectPath:              s.projectPath,
-		ThreadID:                 s.sessionID,
-		Preset:                   s.preset,
-		BrowserActivity:          s.browserActivity.Normalize(),
-		ManagedBrowserSessionKey: strings.TrimSpace(s.managedBrowserSessionKey),
-		CurrentBrowserPageURL:    strings.TrimSpace(s.currentBrowserPageURL),
-		TranscriptRevision:       s.transcriptRevision,
-		Phase:                    s.phaseLocked(),
-		Started:                  s.started,
-		Busy:                     s.busy,
-		BusyExternal:             s.busyExternal,
-		BusySince:                s.busySinceLocked(),
-		LastBusyActivityAt:       s.lastBusyActivityAt,
-		Closed:                   s.closed,
-		ActiveTurnID:             s.activeTurnID,
-		PendingApproval:          cloneApprovalRequest(s.pendingApproval),
-		PendingToolInput:         cloneToolInputRequest(s.pendingToolInput),
-		Entries:                  entries,
-		Transcript:               transcript,
-		Status:                   s.status,
-		LastError:                s.lastError,
-		LastSystemNotice:         s.lastSystemNotice,
-		LastActivityAt:           s.lastActivityAt,
-		CurrentCWD:               s.currentCWD,
-		Model:                    s.model,
-		ModelProvider:            s.modelProvider,
-		ReasoningEffort:          s.reasoningEffort,
-		PendingModel:             s.pendingModel,
-		PendingReasoning:         s.pendingReasoning,
-		TokenUsage:               exportedTokenUsageSnapshot(s.tokenUsage),
-	}
+	snapshot := s.stateSnapshotLocked()
+	snapshot.Entries = entries
+	snapshot.Transcript = transcript
+	return snapshot
 }
 
 func (s *openCodeSession) TrySnapshot() (Snapshot, bool) {
@@ -356,7 +326,19 @@ func (s *openCodeSession) TrySnapshot() (Snapshot, bool) {
 	}
 	defer s.mu.Unlock()
 	entries, transcript := s.exportedTranscriptLocked()
+	snapshot := s.stateSnapshotLocked()
+	snapshot.Entries = entries
+	snapshot.Transcript = transcript
+	return snapshot, true
+}
 
+func (s *openCodeSession) StateSnapshot() Snapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stateSnapshotLocked()
+}
+
+func (s *openCodeSession) stateSnapshotLocked() Snapshot {
 	return Snapshot{
 		Provider:                 ProviderOpenCode,
 		ProjectPath:              s.projectPath,
@@ -376,8 +358,6 @@ func (s *openCodeSession) TrySnapshot() (Snapshot, bool) {
 		ActiveTurnID:             s.activeTurnID,
 		PendingApproval:          cloneApprovalRequest(s.pendingApproval),
 		PendingToolInput:         cloneToolInputRequest(s.pendingToolInput),
-		Entries:                  entries,
-		Transcript:               transcript,
 		Status:                   s.status,
 		LastError:                s.lastError,
 		LastSystemNotice:         s.lastSystemNotice,
@@ -389,7 +369,7 @@ func (s *openCodeSession) TrySnapshot() (Snapshot, bool) {
 		PendingModel:             s.pendingModel,
 		PendingReasoning:         s.pendingReasoning,
 		TokenUsage:               exportedTokenUsageSnapshot(s.tokenUsage),
-	}, true
+	}
 }
 
 func (s *openCodeSession) invalidateTranscriptCacheLocked() {

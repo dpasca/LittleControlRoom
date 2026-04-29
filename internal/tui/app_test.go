@@ -97,6 +97,12 @@ func (s *fakeCodexSession) Snapshot() codexapp.Snapshot {
 	return snapshot
 }
 
+func (s *fakeCodexSession) StateSnapshot() codexapp.Snapshot {
+	snapshot := s.snapshot
+	snapshot.ProjectPath = s.projectPath
+	return snapshot
+}
+
 func (s *fakeCodexSession) TrySnapshot() (codexapp.Snapshot, bool) {
 	s.trySnapshotCalls++
 	if s.trySnapshotFn != nil {
@@ -14179,8 +14185,8 @@ func TestNormalModeEnterReusesLiveEmbeddedSessionWhenSnapshotIsContended(t *test
 	if got.codexVisibleProject != "/tmp/demo" {
 		t.Fatalf("codexVisibleProject = %q, want /tmp/demo", got.codexVisibleProject)
 	}
-	if got.status != "Embedded session reopened. Alt+Up hides it." {
-		t.Fatalf("status = %q, want generic live-session reopen status", got.status)
+	if got.status != "Embedded Codex session reopened. Alt+Up hides it." {
+		t.Fatalf("status = %q, want live Codex reopen status", got.status)
 	}
 	if len(requests) != 1 {
 		t.Fatalf("launch requests = %d, want no replacement open after the original session", len(requests))

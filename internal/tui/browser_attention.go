@@ -47,7 +47,7 @@ func (m Model) projectPendingBrowserAttention(projectPath string) (projectBrowse
 	if projectPath == "" {
 		return projectBrowserAttentionState{}, false
 	}
-	snapshot, ok := m.nonBlockingCodexSnapshot(projectPath)
+	snapshot, ok := m.cachedLiveCodexSnapshot(projectPath)
 	if !ok {
 		return projectBrowserAttentionState{}, false
 	}

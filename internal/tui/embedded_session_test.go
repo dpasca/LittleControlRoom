@@ -9,7 +9,7 @@ import (
 	"lcroom/internal/model"
 )
 
-func TestEmbeddedSnapshotHelpersFallBackToCachedSnapshotWhenTrySnapshotIsContended(t *testing.T) {
+func TestEmbeddedSnapshotHelpersUseCachedStateWithoutTranscriptSnapshot(t *testing.T) {
 	approval := &codexapp.ApprovalRequest{
 		ID:       "approval-1",
 		Kind:     codexapp.ApprovalCommandExecution,
@@ -87,8 +87,8 @@ func TestEmbeddedSnapshotHelpersFallBackToCachedSnapshotWhenTrySnapshotIsContend
 	if snapshot, ok := m.codexSnapshotForProject("/tmp/demo"); !ok || snapshot.ThreadID != "thread-demo" {
 		t.Fatalf("codexSnapshotForProject() = (%+v, %v), want cached snapshot", snapshot, ok)
 	}
-	if session.snapshotCalls != 0 || session.trySnapshotCalls != 6 {
-		t.Fatalf("helpers should try the live session first, then fall back to cache; Snapshot/TrySnapshot calls = %d/%d", session.snapshotCalls, session.trySnapshotCalls)
+	if session.snapshotCalls != 0 || session.trySnapshotCalls != 0 {
+		t.Fatalf("helpers should avoid full transcript snapshots; Snapshot/TrySnapshot calls = %d/%d", session.snapshotCalls, session.trySnapshotCalls)
 	}
 }
 
@@ -120,7 +120,7 @@ func TestEmbeddedSnapshotHelpersIgnoreStaleOpenCacheWithoutBackingSession(t *tes
 	}
 }
 
-func TestEmbeddedSnapshotHelpersPreferFreshSessionSnapshotOverStaleCache(t *testing.T) {
+func TestEmbeddedSnapshotHelpersUseLightStateToRejectClosedLiveSession(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
 		snapshot: codexapp.Snapshot{
@@ -163,11 +163,11 @@ func TestEmbeddedSnapshotHelpersPreferFreshSessionSnapshotOverStaleCache(t *test
 	if snapshot, ok := m.liveCodexSnapshot("/tmp/demo"); ok {
 		t.Fatalf("liveCodexSnapshot() = (%+v, true), want false after the live session reports closed", snapshot)
 	}
-	if snapshot, ok := m.codexSnapshotForProject("/tmp/demo"); !ok || !snapshot.Closed {
-		t.Fatalf("codexSnapshotForProject() = (%+v, %v), want fresh closed snapshot from the live session", snapshot, ok)
+	if snapshot, ok := m.codexSnapshotForProject("/tmp/demo"); ok {
+		t.Fatalf("codexSnapshotForProject() = (%+v, true), want false after the live session reports closed", snapshot)
 	}
-	if session.trySnapshotCalls == 0 {
-		t.Fatalf("helpers should consult the live session before trusting stale cached data")
+	if session.snapshotCalls != 0 || session.trySnapshotCalls != 0 {
+		t.Fatalf("helpers should consult lightweight session state, not full snapshots; Snapshot/TrySnapshot calls = %d/%d", session.snapshotCalls, session.trySnapshotCalls)
 	}
 }
 

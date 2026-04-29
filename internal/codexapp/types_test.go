@@ -33,6 +33,10 @@ func (s *fakeSession) Snapshot() Snapshot {
 	return snapshot
 }
 
+func (s *fakeSession) StateSnapshot() Snapshot {
+	return s.Snapshot()
+}
+
 func (s *fakeSession) TrySnapshot() (Snapshot, bool) {
 	return s.Snapshot(), true
 }

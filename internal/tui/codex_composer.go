@@ -633,7 +633,7 @@ func (m *Model) resetCodexToolAnswerState(projectPath string) {
 }
 
 func (m Model) codexSnapshotForProject(projectPath string) (codexapp.Snapshot, bool) {
-	return m.nonBlockingCodexSnapshot(projectPath)
+	return m.cachedLiveCodexSnapshot(projectPath)
 }
 
 func (m *Model) ensureToolAnswerState(projectPath string, request *codexapp.ToolInputRequest) codexToolAnswerState {

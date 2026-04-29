@@ -2082,7 +2082,7 @@ func TestHydrateCompactingThreadKeepsSessionWritableAndShowsProgress(t *testing.
 	}
 }
 
-func TestReconcileBusyStateClearsBusyWhenThreadReadShowsNoActiveTurn(t *testing.T) {
+func TestReconcileBusyStateClearsBusyWithLightweightIdleStatus(t *testing.T) {
 	s := &appServerSession{
 		projectPath:        "/tmp/demo",
 		threadID:           "thread_456",
@@ -2096,7 +2096,14 @@ func TestReconcileBusyStateClearsBusyWhenThreadReadShowsNoActiveTurn(t *testing.
 			if method != "thread/read" {
 				t.Fatalf("method = %q, want thread/read", method)
 			}
-			return json.RawMessage(`{"thread":{"id":"thread_456","status":{"type":"active"},"turns":[]}}`), nil
+			request, ok := params.(threadReadParams)
+			if !ok {
+				t.Fatalf("params = %#v, want threadReadParams", params)
+			}
+			if request.IncludeTurns {
+				t.Fatalf("includeTurns = true, want false for lightweight busy reconciliation")
+			}
+			return json.RawMessage(`{"thread":{"id":"thread_456","status":{"type":"idle"}}}`), nil
 		},
 	}
 
@@ -2129,6 +2136,13 @@ func TestReconcileBusyStateMarksSessionStalledAfterRepeatedHealthCheckFailures(t
 		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
 			if method != "thread/read" {
 				t.Fatalf("method = %q, want thread/read", method)
+			}
+			request, ok := params.(threadReadParams)
+			if !ok {
+				t.Fatalf("params = %#v, want threadReadParams", params)
+			}
+			if request.IncludeTurns {
+				t.Fatalf("includeTurns = true, want false for lightweight busy reconciliation")
 			}
 			return nil, errors.New("context deadline exceeded")
 		},
@@ -2180,6 +2194,13 @@ func TestReconcileBusyStateMarksSessionStalledWhenActiveTurnStaysUnresponsive(t 
 		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
 			if method != "thread/read" {
 				t.Fatalf("method = %q, want thread/read", method)
+			}
+			request, ok := params.(threadReadParams)
+			if !ok {
+				t.Fatalf("params = %#v, want threadReadParams", params)
+			}
+			if request.IncludeTurns {
+				t.Fatalf("includeTurns = true, want false for lightweight busy reconciliation")
 			}
 			return json.RawMessage(`{"thread":{"id":"thread_456","status":{"type":"active"},"turns":[{"id":"turn_old","status":"inProgress"}]}}`), nil
 		},

@@ -574,44 +574,10 @@ func (s *appServerSession) Snapshot() Snapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entries, transcript := s.exportedTranscriptLocked()
-	tokenUsage := exportedTokenUsageSnapshot(s.tokenUsage)
-	usageWindows := exportedUsageWindowsSnapshot(s.rateLimits, s.rateLimitsByID)
-	return Snapshot{
-		Provider:                 ProviderCodex,
-		ProjectPath:              s.projectPath,
-		ThreadID:                 s.threadID,
-		Preset:                   s.preset,
-		BrowserActivity:          s.browserActivity.Normalize(),
-		ManagedBrowserSessionKey: strings.TrimSpace(s.managedBrowserSessionKey),
-		CurrentBrowserPageURL:    strings.TrimSpace(s.currentBrowserPageURL),
-		TranscriptRevision:       s.transcriptRevision,
-		Phase:                    s.phaseLocked(),
-		Started:                  s.started,
-		Busy:                     s.busy,
-		BusyExternal:             s.busyExternal,
-		BusySince:                s.busySince,
-		LastBusyActivityAt:       s.lastBusyActivityAt,
-		Closed:                   s.closed,
-		ActiveTurnID:             s.activeTurnID,
-		PendingApproval:          cloneApprovalRequest(s.pendingApproval),
-		PendingToolInput:         cloneToolInputRequest(s.pendingToolInput),
-		PendingElicitation:       cloneElicitationRequest(s.pendingElicitation),
-		Entries:                  entries,
-		Transcript:               transcript,
-		Status:                   s.status,
-		LastError:                s.lastError,
-		LastSystemNotice:         s.lastSystemNotice,
-		LastActivityAt:           s.lastActivityAt,
-		CurrentCWD:               s.currentCWD,
-		Model:                    s.model,
-		ModelProvider:            s.modelProvider,
-		ReasoningEffort:          s.reasoningEffort,
-		ServiceTier:              s.serviceTier,
-		PendingModel:             s.pendingModel,
-		PendingReasoning:         s.pendingReasoning,
-		TokenUsage:               tokenUsage,
-		UsageWindows:             usageWindows,
-	}
+	snapshot := s.stateSnapshotLocked()
+	snapshot.Entries = entries
+	snapshot.Transcript = transcript
+	return snapshot
 }
 
 func (s *appServerSession) TrySnapshot() (Snapshot, bool) {
@@ -620,6 +586,19 @@ func (s *appServerSession) TrySnapshot() (Snapshot, bool) {
 	}
 	defer s.mu.Unlock()
 	entries, transcript := s.exportedTranscriptLocked()
+	snapshot := s.stateSnapshotLocked()
+	snapshot.Entries = entries
+	snapshot.Transcript = transcript
+	return snapshot, true
+}
+
+func (s *appServerSession) StateSnapshot() Snapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stateSnapshotLocked()
+}
+
+func (s *appServerSession) stateSnapshotLocked() Snapshot {
 	tokenUsage := exportedTokenUsageSnapshot(s.tokenUsage)
 	usageWindows := exportedUsageWindowsSnapshot(s.rateLimits, s.rateLimitsByID)
 	return Snapshot{
@@ -642,8 +621,6 @@ func (s *appServerSession) TrySnapshot() (Snapshot, bool) {
 		PendingApproval:          cloneApprovalRequest(s.pendingApproval),
 		PendingToolInput:         cloneToolInputRequest(s.pendingToolInput),
 		PendingElicitation:       cloneElicitationRequest(s.pendingElicitation),
-		Entries:                  entries,
-		Transcript:               transcript,
 		Status:                   s.status,
 		LastError:                s.lastError,
 		LastSystemNotice:         s.lastSystemNotice,
@@ -657,7 +634,7 @@ func (s *appServerSession) TrySnapshot() (Snapshot, bool) {
 		PendingReasoning:         s.pendingReasoning,
 		TokenUsage:               tokenUsage,
 		UsageWindows:             usageWindows,
-	}, true
+	}
 }
 
 func (s *appServerSession) invalidateTranscriptCacheLocked() {
@@ -1981,6 +1958,27 @@ func (s *appServerSession) readThreadState(ctx context.Context, threadID string)
 	return response.Thread, nil
 }
 
+func (s *appServerSession) readThreadStatus(ctx context.Context, threadID string) (resumedThreadStatus, error) {
+	result, err := s.call(ctx, "thread/read", threadReadParams{
+		ThreadID: strings.TrimSpace(threadID),
+	})
+	if err != nil {
+		return resumedThreadStatus{}, err
+	}
+	var response threadReadResponse
+	if err := json.Unmarshal(result, &response); err != nil {
+		return resumedThreadStatus{}, err
+	}
+	if strings.TrimSpace(response.Thread.ID) == "" {
+		return resumedThreadStatus{}, fmt.Errorf("thread/read returned no thread id")
+	}
+	status := response.Thread.Status
+	if strings.TrimSpace(status.Type) == "" {
+		status = effectiveThreadStatus(response.Thread)
+	}
+	return status, nil
+}
+
 func (s *appServerSession) canRefreshThreadStateLocked() bool {
 	return !s.closed && (s.rpcCallHook != nil || s.stdin != nil)
 }
@@ -2055,7 +2053,7 @@ func (s *appServerSession) ReconcileBusyState() error {
 	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
 	defer cancel()
 
-	thread, err := s.readThreadState(ctx, threadID)
+	status, err := s.readThreadStatus(ctx, threadID)
 
 	s.mu.Lock()
 	if s.closed {
@@ -2064,8 +2062,7 @@ func (s *appServerSession) ReconcileBusyState() error {
 	}
 	s.reconciling = false
 	if err == nil {
-		status := effectiveThreadStatus(thread)
-		activeTurnID := activeTurnIDFromThread(thread)
+		activeTurnID := strings.TrimSpace(s.activeTurnID)
 		if strings.TrimSpace(status.Type) == "active" && s.activeTurnLooksStuckLocked(activeTurnID, time.Now()) {
 			s.noteSuspectedBusyStallLocked()
 			if !s.stalled {

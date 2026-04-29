@@ -360,7 +360,7 @@ func (m Model) projectPendingEmbeddedApproval(projectPath string) (*codexapp.App
 	if projectPath == "" {
 		return nil, "", false
 	}
-	snapshot, ok := m.nonBlockingCodexSnapshot(projectPath)
+	snapshot, ok := m.cachedLiveCodexSnapshot(projectPath)
 	if !ok {
 		return nil, "", false
 	}
@@ -382,7 +382,7 @@ func (m Model) projectPendingEmbeddedQuestion(projectPath string) (string, codex
 	if projectPath == "" {
 		return "", "", false
 	}
-	snapshot, ok := m.nonBlockingCodexSnapshot(projectPath)
+	snapshot, ok := m.cachedLiveCodexSnapshot(projectPath)
 	if !ok {
 		return "", "", false
 	}
@@ -507,11 +507,8 @@ func (m Model) projectHasLiveCodexSession(projectPath string) bool {
 }
 
 func (m Model) liveCodexSnapshot(projectPath string) (codexapp.Snapshot, bool) {
-	snapshot, ok := m.nonBlockingCodexSnapshot(projectPath)
+	snapshot, ok := m.cachedLiveCodexSnapshot(projectPath)
 	if !ok {
-		return codexapp.Snapshot{}, false
-	}
-	if !snapshot.Started || snapshot.Closed {
 		return codexapp.Snapshot{}, false
 	}
 	return snapshot, true
@@ -737,11 +734,11 @@ func (m Model) liveEmbeddedSnapshotForProject(projectPath string, provider codex
 	if projectPath == "" || provider == "" {
 		return codexapp.Snapshot{}, false
 	}
-	snapshot, ok := m.nonBlockingCodexSnapshot(projectPath)
+	snapshot, ok := m.cachedLiveCodexSnapshot(projectPath)
 	if !ok {
 		return codexapp.Snapshot{}, false
 	}
-	if snapshot.Closed || strings.TrimSpace(snapshot.ThreadID) == "" {
+	if strings.TrimSpace(snapshot.ThreadID) == "" {
 		return codexapp.Snapshot{}, false
 	}
 	if embeddedProvider(snapshot) != provider {

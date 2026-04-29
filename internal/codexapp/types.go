@@ -559,6 +559,20 @@ type busyReconciler interface {
 	ReconcileBusyState() error
 }
 
+type stateSnapshooter interface {
+	StateSnapshot() Snapshot
+}
+
+func sessionStateSnapshot(session Session) Snapshot {
+	if session == nil {
+		return Snapshot{}
+	}
+	if state, ok := session.(stateSnapshooter); ok {
+		return state.StateSnapshot()
+	}
+	return session.Snapshot()
+}
+
 type Manager struct {
 	mu              sync.Mutex
 	sessions        map[string]Session
@@ -646,13 +660,17 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 	m.mu.Lock()
 	existing, ok := m.sessions[projectPath]
 	replaceExisting := false
-	if ok && existing.Snapshot().Closed {
+	existingState := Snapshot{}
+	if ok {
+		existingState = sessionStateSnapshot(existing)
+	}
+	if ok && existingState.Closed {
 		delete(m.sessions, projectPath)
 		existing = nil
 		ok = false
 	}
 	if ok {
-		existingProvider := existing.Snapshot().Provider.Normalized()
+		existingProvider := existingState.Provider.Normalized()
 		if existingProvider == "" {
 			existingProvider = ProviderCodex
 		}
@@ -668,7 +686,7 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 	if ok && !req.ForceNew {
 		requestedResumeID := strings.TrimSpace(req.ResumeID)
 		if requestedResumeID != "" {
-			existingThreadID := strings.TrimSpace(existing.Snapshot().ThreadID)
+			existingThreadID := strings.TrimSpace(existingState.ThreadID)
 			if existingThreadID == "" || existingThreadID != requestedResumeID {
 				replaceExisting = true
 				ok = false
@@ -677,7 +695,7 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 	}
 	if ok && !req.ForceNew {
 		m.mu.Unlock()
-		if existing.Snapshot().BusyExternal {
+		if existingState.BusyExternal {
 			if refresher, ok := existing.(busyElsewhereRefresher); ok {
 				_ = refresher.RefreshBusyElsewhere()
 			}
@@ -854,7 +872,7 @@ func (m *Manager) reconcileBusySessions(now time.Time) {
 		if !ok {
 			continue
 		}
-		snapshot := session.Snapshot()
+		snapshot := sessionStateSnapshot(session)
 		if snapshot.Closed || snapshot.BusyExternal || !snapshot.Busy {
 			continue
 		}
@@ -888,7 +906,7 @@ func (m *Manager) reapIdleSessions(now time.Time) {
 	m.mu.Unlock()
 
 	for _, session := range sessions {
-		snapshot := session.Snapshot()
+		snapshot := sessionStateSnapshot(session)
 		if snapshot.Closed || snapshot.Busy || snapshot.PendingApproval != nil {
 			continue
 		}
