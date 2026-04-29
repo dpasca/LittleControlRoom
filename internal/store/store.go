@@ -2385,6 +2385,8 @@ func (s *Store) QueueSessionClassification(ctx context.Context, classification m
 			snapshot_hash = ?,
 			status = ?,
 			stage = ?,
+			category = '',
+			summary = '',
 			confidence = 0,
 			model = ?,
 			classifier_version = ?,
@@ -2399,6 +2401,121 @@ func (s *Store) QueueSessionClassification(ctx context.Context, classification m
 		string(model.ClassificationPending), string(classification.Stage), classification.Model, classification.ClassifierVersion,
 		classification.SourceUpdatedAt.Unix(), createdAt.Unix(), nullableTimeUnixValue(classification.StageStartedAt), now.Unix(), classification.SessionID)
 	return err == nil, err
+}
+
+func (s *Store) RecordSessionClassificationFailure(ctx context.Context, classification *model.SessionClassification, lastError string, retryAfter time.Duration) (bool, error) {
+	if classification == nil {
+		return false, errors.New("session classification requires session_id")
+	}
+	normalized := model.NormalizeSessionClassificationIdentity(*classification)
+	*classification = normalized
+	if classification.SessionID == "" {
+		return false, errors.New("session classification requires session_id")
+	}
+	if classification.ProjectPath == "" {
+		return false, errors.New("session classification requires project_path")
+	}
+	if classification.SnapshotHash == "" {
+		return false, errors.New("session classification requires snapshot_hash")
+	}
+	lastError = strings.TrimSpace(lastError)
+	if lastError == "" {
+		lastError = "session classification failed"
+	}
+
+	now := time.Now()
+	if classification.CreatedAt.IsZero() {
+		classification.CreatedAt = now
+	}
+	if classification.SourceUpdatedAt.IsZero() {
+		classification.SourceUpdatedAt = now
+	}
+
+	existing, err := s.GetSessionClassification(ctx, classification.SessionID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		_, err = s.db.ExecContext(ctx, `
+			INSERT INTO session_classifications(
+				session_id, source, raw_session_id, project_path, session_file, session_format, snapshot_hash,
+				status, stage, category, summary, confidence, model, classifier_version,
+				last_error, source_updated_at, created_at, stage_started_at, updated_at, completed_at
+			)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', '', '', 0, ?, ?, ?, ?, ?, NULL, ?, NULL)
+		`, classification.SessionID, string(classification.Source), classification.RawSessionID, classification.ProjectPath, classification.SessionFile, classification.SessionFormat,
+			classification.SnapshotHash, string(model.ClassificationFailed), classification.Model, classification.ClassifierVersion, lastError,
+			classification.SourceUpdatedAt.Unix(), classification.CreatedAt.Unix(), now.Unix())
+		if err != nil {
+			return false, err
+		}
+		applyRecordedSessionClassificationFailure(classification, lastError, now)
+		return true, nil
+	}
+
+	sameSnapshot := existing.SnapshotHash == classification.SnapshotHash &&
+		sameClassificationModel(existing.Model, classification.Model) &&
+		existing.ClassifierVersion == classification.ClassifierVersion
+	sameSnapshotHash := existing.SnapshotHash == classification.SnapshotHash
+
+	if sameSnapshotHash && existing.Status == model.ClassificationCompleted && strings.TrimSpace(existing.Summary) != "" {
+		return false, nil
+	}
+	if sameSnapshot && existing.Status == model.ClassificationFailed && retryAfter > 0 &&
+		strings.TrimSpace(existing.LastError) == lastError &&
+		!existing.UpdatedAt.IsZero() && now.Sub(existing.UpdatedAt) < retryAfter {
+		*classification = existing
+		return false, nil
+	}
+
+	createdAt := existing.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = classification.CreatedAt
+	}
+
+	_, err = s.db.ExecContext(ctx, `
+		UPDATE session_classifications
+		SET source = ?,
+			raw_session_id = ?,
+			project_path = ?,
+			session_file = ?,
+			session_format = ?,
+			snapshot_hash = ?,
+			status = ?,
+			stage = '',
+			category = '',
+			summary = '',
+			confidence = 0,
+			model = ?,
+			classifier_version = ?,
+			last_error = ?,
+			source_updated_at = ?,
+			created_at = ?,
+			stage_started_at = NULL,
+			updated_at = ?,
+			completed_at = NULL
+		WHERE session_id = ?
+	`, string(classification.Source), classification.RawSessionID, classification.ProjectPath, classification.SessionFile, classification.SessionFormat, classification.SnapshotHash,
+		string(model.ClassificationFailed), classification.Model, classification.ClassifierVersion, lastError,
+		classification.SourceUpdatedAt.Unix(), createdAt.Unix(), now.Unix(), classification.SessionID)
+	if err != nil {
+		return false, err
+	}
+	classification.CreatedAt = createdAt
+	applyRecordedSessionClassificationFailure(classification, lastError, now)
+	return true, nil
+}
+
+func applyRecordedSessionClassificationFailure(classification *model.SessionClassification, lastError string, updatedAt time.Time) {
+	classification.Status = model.ClassificationFailed
+	classification.Stage = ""
+	classification.Category = ""
+	classification.Summary = ""
+	classification.Confidence = 0
+	classification.LastError = lastError
+	classification.StageStartedAt = time.Time{}
+	classification.UpdatedAt = updatedAt
+	classification.CompletedAt = time.Time{}
 }
 
 func (s *Store) ClaimNextPendingSessionClassification(ctx context.Context, staleAfter time.Duration) (model.SessionClassification, error) {
@@ -2651,7 +2768,15 @@ func (s *Store) FailSessionClassification(ctx context.Context, sessionID, lastEr
 	}
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE session_classifications
-		SET status = ?, last_error = ?, updated_at = ?
+		SET status = ?,
+			stage = '',
+			category = '',
+			summary = '',
+			confidence = 0,
+			last_error = ?,
+			stage_started_at = NULL,
+			updated_at = ?,
+			completed_at = NULL
 		WHERE session_id = ?
 	`, string(model.ClassificationFailed), lastError, time.Now().Unix(), resolvedSessionID)
 	return err
@@ -2689,6 +2814,9 @@ func (s *Store) FailSessionClassificationAttempt(ctx context.Context, classifica
 		UPDATE session_classifications
 		SET status = ?,
 			stage = '',
+			category = '',
+			summary = '',
+			confidence = 0,
 			last_error = ?,
 			stage_started_at = NULL,
 			updated_at = ?,
@@ -2710,6 +2838,9 @@ func (s *Store) FailSessionClassificationAttempt(ctx context.Context, classifica
 	}
 	classification.Status = model.ClassificationFailed
 	classification.Stage = ""
+	classification.Category = ""
+	classification.Summary = ""
+	classification.Confidence = 0
 	classification.StageStartedAt = time.Time{}
 	classification.LastError = lastError
 	classification.UpdatedAt = now
@@ -3165,6 +3296,17 @@ func (s *Store) repairTerminalSessionClassificationStages(ctx context.Context) e
 	`, string(model.ClassificationCompleted), string(model.ClassificationFailed))
 	if err != nil {
 		return fmt.Errorf("repair terminal session classification stages: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, `
+		UPDATE session_classifications
+		SET category = '',
+			summary = '',
+			confidence = 0
+		WHERE status = ?
+		  AND (category != '' OR summary != '' OR confidence != 0)
+	`, string(model.ClassificationFailed))
+	if err != nil {
+		return fmt.Errorf("repair failed session classification payloads: %w", err)
 	}
 	return nil
 }

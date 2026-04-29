@@ -2094,6 +2094,90 @@ func TestQueueSessionClassificationFailedSameSnapshotCanRetryImmediatelyWhenForc
 	}
 }
 
+func TestQueueSessionClassificationNewSnapshotClearsStaleAssessmentPayload(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	classification := model.NormalizeSessionClassificationIdentity(model.SessionClassification{
+		SessionID:         "ses_clear_stale_payload",
+		ProjectPath:       "/tmp/clear-stale-payload",
+		SessionFile:       "/tmp/clear-stale-payload/session.jsonl",
+		SessionFormat:     "modern",
+		SnapshotHash:      "hash-old",
+		Model:             "gpt-5-mini",
+		ClassifierVersion: "v1",
+		SourceUpdatedAt:   now,
+	})
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:         classification.ProjectPath,
+		Name:         "clear-stale-payload",
+		LastActivity: now,
+		Status:       model.StatusIdle,
+		InScope:      true,
+		UpdatedAt:    now,
+		Sessions: []model.SessionEvidence{{
+			SessionID:   classification.SessionID,
+			ProjectPath: classification.ProjectPath,
+			SessionFile: classification.SessionFile,
+			Format:      classification.SessionFormat,
+			LastEventAt: now,
+		}},
+	}); err != nil {
+		t.Fatalf("upsert project state: %v", err)
+	}
+
+	if queued, err := st.QueueSessionClassification(ctx, classification, 15*time.Minute); err != nil || !queued {
+		t.Fatalf("initial queue: queued=%v err=%v", queued, err)
+	}
+	classification.Category = model.SessionCategoryCompleted
+	classification.Summary = "Old completed assessment should not leak into a new attempt."
+	classification.Confidence = 0.91
+	classification.CompletedAt = now
+	if err := st.CompleteSessionClassification(ctx, classification); err != nil {
+		t.Fatalf("complete classification: %v", err)
+	}
+
+	classification.SnapshotHash = "hash-new"
+	if queued, err := st.QueueSessionClassification(ctx, classification, 15*time.Minute); err != nil {
+		t.Fatalf("queue new snapshot: %v", err)
+	} else if !queued {
+		t.Fatalf("expected new snapshot to queue")
+	}
+	requeued, err := st.GetSessionClassification(ctx, classification.SessionID)
+	if err != nil {
+		t.Fatalf("get requeued classification: %v", err)
+	}
+	if requeued.Status != model.ClassificationPending {
+		t.Fatalf("status = %s, want pending", requeued.Status)
+	}
+	if requeued.Category != "" || requeued.Summary != "" || requeued.Confidence != 0 {
+		t.Fatalf("stale assessment payload leaked into pending row: %#v", requeued)
+	}
+
+	claimed, err := st.ClaimNextPendingSessionClassification(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("claim requeued classification: %v", err)
+	}
+	if err := st.FailSessionClassification(ctx, claimed.SessionID, "model unavailable"); err != nil {
+		t.Fatalf("fail classification: %v", err)
+	}
+	failed, err := st.GetSessionClassification(ctx, classification.SessionID)
+	if err != nil {
+		t.Fatalf("get failed classification: %v", err)
+	}
+	if failed.Category != "" || failed.Summary != "" || failed.Confidence != 0 {
+		t.Fatalf("stale assessment payload leaked into failed row: %#v", failed)
+	}
+}
+
 func TestQueueSessionClassificationCompletedSameSnapshotWithBlankSummaryRequeues(t *testing.T) {
 	t.Parallel()
 

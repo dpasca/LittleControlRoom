@@ -525,6 +525,20 @@ func projectWorktreeLabel(project model.ProjectSummary) string {
 
 func worktreeMergeStatusSummary(project model.ProjectSummary) string {
 	targetBranch := strings.TrimSpace(project.WorktreeParentBranch)
+	if project.RepoDirty {
+		switch project.WorktreeMergeStatus {
+		case model.WorktreeMergeStatusMerged:
+			if targetBranch != "" {
+				return "merged into " + targetBranch + ", but uncommitted changes remain"
+			}
+			return "merged, but uncommitted changes remain"
+		default:
+			if targetBranch != "" {
+				return "dirty; commit changes before merging into " + targetBranch
+			}
+			return "dirty; commit changes before merging back"
+		}
+	}
 	switch project.WorktreeMergeStatus {
 	case model.WorktreeMergeStatusMerged:
 		if targetBranch != "" {
@@ -920,7 +934,11 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 		actions = append(actions, footerNavAction("w", "lanes"))
 	}
 	if row.Kind == projectListRowWorktree && m.canMergeWorktreeBack(project) && width >= 80 {
-		actions = append(actions, footerPrimaryAction("M", "merge"))
+		label := "merge"
+		if project.RepoDirty {
+			label = "commit+merge"
+		}
+		actions = append(actions, footerPrimaryAction("M", label))
 	}
 	if row.Kind == projectListRowWorktree && m.canRemoveWorktree(project) {
 		actions = append(actions, footerHideAction("x", "remove"))
@@ -998,7 +1016,11 @@ func (m Model) worktreeActionHints(project model.ProjectSummary, family []model.
 		hints = append(hints, "w or /wt lanes")
 	}
 	if m.canMergeWorktreeBack(project) {
-		hints = append(hints, "M or /wt merge")
+		hint := "M or /wt merge"
+		if project.RepoDirty {
+			hint += " (commit dirty changes first)"
+		}
+		hints = append(hints, hint)
 	}
 	if m.canRemoveWorktree(project) {
 		hints = append(hints, "x or /wt remove")
@@ -1016,14 +1038,29 @@ func (m Model) worktreeCommandPaletteHint(project model.ProjectSummary, family [
 	}
 	commands := make([]string, 0, len(hints))
 	for _, hint := range hints {
-		if slashIndex := strings.Index(hint, "/wt "); slashIndex >= 0 {
-			commands = append(commands, hint[slashIndex:])
+		if command := worktreeSlashCommandFromHint(hint); command != "" {
+			commands = append(commands, command)
 		}
 	}
 	if len(commands) == 0 {
 		return ""
 	}
 	return "Worktrees: try " + strings.Join(commands, ", ") + "."
+}
+
+func worktreeSlashCommandFromHint(hint string) string {
+	fields := strings.Fields(hint)
+	for i := 0; i < len(fields)-1; i++ {
+		if fields[i] != "/wt" {
+			continue
+		}
+		command := strings.Trim(fields[i+1], ".,;:)")
+		if command == "" {
+			return ""
+		}
+		return "/wt " + command
+	}
+	return ""
 }
 
 func (m Model) mergeBackRulesSummary() string {

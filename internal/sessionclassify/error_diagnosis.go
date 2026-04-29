@@ -3,6 +3,7 @@ package sessionclassify
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -19,11 +20,32 @@ const (
 	classificationFailureKindOpenFileLimit      classificationFailureKind = "open_file_limit"
 	classificationFailureKindRateLimited        classificationFailureKind = "rate_limited"
 	classificationFailureKindServiceUnavailable classificationFailureKind = "service_unavailable"
+	classificationFailureKindBackendUnavailable classificationFailureKind = "backend_unavailable"
 )
+
+var ErrClassifierUnavailable = errors.New("session classifier unavailable")
+
+type ClassifierUnavailableError struct {
+	Reason string
+}
+
+func (e *ClassifierUnavailableError) Error() string {
+	reason := strings.TrimSpace(e.Reason)
+	if reason == "" {
+		return "session classifier unavailable: no AI assessment backend is configured or ready"
+	}
+	return fmt.Sprintf("session classifier unavailable: %s", reason)
+}
+
+func (e *ClassifierUnavailableError) Unwrap() error {
+	return ErrClassifierUnavailable
+}
 
 func classificationFailureMetadata(err error) (classificationFailureKind, string) {
 	normalized := normalizedClassificationErrorMessage(err)
 	switch {
+	case errors.Is(err, ErrClassifierUnavailable):
+		return classificationFailureKindBackendUnavailable, "AI assessment backend is not configured or not ready; open /setup to select a working backend"
 	case isClassificationRateLimitedError(err, normalized):
 		return classificationFailureKindRateLimited, "model provider rate limited the assessment request"
 	case isClassificationServiceUnavailableError(err, normalized):

@@ -1612,6 +1612,43 @@ func TestRenderFooterShowsMergeHintForLinkedWorktreeWithParentBranch(t *testing.
 	}
 }
 
+func TestRenderFooterShowsCommitMergeHintForDirtyLinkedWorktree(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		focusedPane: focusProjects,
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				Status:           model.StatusIdle,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 childPath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				RepoBranch:           "feat/parallel-lane",
+				RepoDirty:            true,
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	rendered := ansi.Strip(m.renderFooter(160))
+	if !strings.Contains(rendered, "M commit+merge") {
+		t.Fatalf("renderFooter() should advertise commit+merge for dirty linked worktrees, got %q", rendered)
+	}
+}
+
 func TestRenderFooterHidesMergeHintDuringCommitInFlight(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"
@@ -1804,6 +1841,49 @@ func TestRenderDetailContentShowsWorktreeMergeStatus(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "not merged") {
 		t.Fatalf("renderDetailContent() should include worktree lane merge status in the family list, got %q", rendered)
+	}
+}
+
+func TestRenderDetailContentPrioritizesDirtyWorktreeMergeReadiness(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				Status:           model.StatusIdle,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 childPath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				WorktreeMergeStatus:  model.WorktreeMergeStatusNotMerged,
+				RepoBranch:           "feat/parallel-lane",
+				RepoDirty:            true,
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	rendered := ansi.Strip(m.renderDetailContent(100))
+	if !strings.Contains(rendered, "dirty; commit changes before merging into master") {
+		t.Fatalf("renderDetailContent() should put dirty merge readiness first, got %q", rendered)
+	}
+	if strings.Contains(rendered, "Merge status: not merged into master") {
+		t.Fatalf("renderDetailContent() should not present dirty worktrees as merge-ready, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "M or /wt merge (commit dirty changes first)") {
+		t.Fatalf("renderDetailContent() should describe the commit+merge action for dirty worktrees, got %q", rendered)
 	}
 }
 
@@ -18303,6 +18383,7 @@ func TestCommandPaletteShowsWorktreeCommandHintForLinkedWorktree(t *testing.T) {
 				WorktreeKind:         model.WorktreeKindLinked,
 				WorktreeParentBranch: "master",
 				RepoBranch:           "feat/parallel-lane",
+				RepoDirty:            true,
 			},
 		},
 		visibility:   visibilityAllFolders,
@@ -19802,6 +19883,43 @@ func TestBusClassificationOpenFileLimitUsesSpecificAssessmentStatus(t *testing.T
 	}
 	if entry.Context[2] != "local open-file limit was reached while assessing the latest session; too many helper processes or open files may already be active" {
 		t.Fatalf("context[2] = %q, want diagnosis", entry.Context[2])
+	}
+}
+
+func TestBusClassificationBackendUnavailableUsesSpecificAssessmentStatus(t *testing.T) {
+	m := Model{
+		nowFn: func() time.Time {
+			return time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
+		},
+		allProjects: []model.ProjectSummary{{
+			Name: "LittleControlRoom",
+			Path: "/tmp/demo",
+		}},
+	}
+
+	updated, cmd := m.Update(busMsg(events.Event{
+		Type:        events.ClassificationUpdated,
+		At:          time.Date(2026, 4, 29, 11, 59, 0, 0, time.UTC),
+		ProjectPath: "/tmp/demo",
+		Payload: map[string]string{
+			"status":          "failed",
+			"error":           "session classifier unavailable: Codex assessment backend is not ready",
+			"error_kind":      "backend_unavailable",
+			"error_diagnosis": "AI assessment backend is not configured or not ready; open /setup to select a working backend",
+		},
+	}))
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("classification backend-unavailable failure should continue waiting on the bus")
+	}
+	if got.status != "Assessment backend unavailable (use /errors)" {
+		t.Fatalf("status = %q, want backend-unavailable assessment hint", got.status)
+	}
+	if len(got.errorLogEntries) != 1 {
+		t.Fatalf("error log count = %d, want 1", len(got.errorLogEntries))
+	}
+	if got.errorLogEntries[0].Status != "Assessment backend unavailable" {
+		t.Fatalf("error log status = %q", got.errorLogEntries[0].Status)
 	}
 }
 

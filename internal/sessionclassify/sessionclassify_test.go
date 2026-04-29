@@ -1081,6 +1081,123 @@ func TestManagerQueueProjectUsesClientModelWhenAvailable(t *testing.T) {
 	}
 }
 
+func TestManagerQueueProjectRecordsFailureWhenClientUnavailable(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	fixture := filepath.Clean(filepath.Join("..", "..", "testdata", "codex_footprint", "sessions", "2026", "03", "05", "rollout-modern.jsonl"))
+	now := time.Now()
+	state := model.ProjectState{
+		Path:           "/tmp/unavailable-classifier",
+		Name:           "unavailable-classifier",
+		Status:         model.StatusActive,
+		AttentionScore: 10,
+		InScope:        true,
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{{
+			SessionID:            "ses_unavailable_classifier",
+			ProjectPath:          "/tmp/unavailable-classifier",
+			SessionFile:          fixture,
+			Format:               "modern",
+			LastEventAt:          now,
+			SnapshotHash:         "hash-unavailable-classifier",
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  true,
+		}},
+	}
+	if err := st.UpsertProjectState(ctx, state); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	bus := events.NewBus()
+	busCh, unsub := bus.Subscribe(1)
+	defer unsub()
+	manager := NewManager(st, bus, Options{
+		UnavailableReason: "Codex assessment backend is not ready: Codex CLI is not authenticated",
+	})
+
+	queued, err := manager.QueueProject(ctx, state)
+	if err != nil {
+		t.Fatalf("queue project: %v", err)
+	}
+	if queued {
+		t.Fatalf("unavailable classifier should not report queued work")
+	}
+
+	classification, err := st.GetSessionClassification(ctx, "ses_unavailable_classifier")
+	if err != nil {
+		t.Fatalf("get classification: %v", err)
+	}
+	if classification.Status != model.ClassificationFailed {
+		t.Fatalf("status = %s, want failed", classification.Status)
+	}
+	if !strings.Contains(classification.LastError, "Codex assessment backend is not ready") {
+		t.Fatalf("last error = %q, want backend availability detail", classification.LastError)
+	}
+
+	select {
+	case evt := <-busCh:
+		if evt.Type != events.ClassificationUpdated {
+			t.Fatalf("event type = %s, want %s", evt.Type, events.ClassificationUpdated)
+		}
+		if evt.Payload["status"] != "failed" {
+			t.Fatalf("event status = %q, want failed", evt.Payload["status"])
+		}
+		if evt.Payload["error_kind"] != string(classificationFailureKindBackendUnavailable) {
+			t.Fatalf("event error_kind = %q, want %q", evt.Payload["error_kind"], classificationFailureKindBackendUnavailable)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for classification failure event")
+	}
+}
+
+func TestManagerForceRetryReturnsErrorWhenClientUnavailable(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	fixture := filepath.Clean(filepath.Join("..", "..", "testdata", "codex_footprint", "sessions", "2026", "03", "05", "rollout-modern.jsonl"))
+	now := time.Now()
+	state := model.ProjectState{
+		Path:      "/tmp/unconfigured-force-retry",
+		Name:      "unconfigured-force-retry",
+		Status:    model.StatusActive,
+		InScope:   true,
+		UpdatedAt: now,
+		Sessions: []model.SessionEvidence{{
+			SessionID:    "ses_unconfigured_force_retry",
+			ProjectPath:  "/tmp/unconfigured-force-retry",
+			SessionFile:  fixture,
+			Format:       "modern",
+			LastEventAt:  now,
+			SnapshotHash: "hash-unconfigured-force-retry",
+		}},
+	}
+	if err := st.UpsertProjectState(ctx, state); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	manager := NewManager(st, events.NewBus(), Options{})
+	queued, err := manager.QueueProjectRetry(ctx, state, 0)
+	if queued {
+		t.Fatalf("unavailable classifier should not report queued work")
+	}
+	if !errors.Is(err, ErrClassifierUnavailable) {
+		t.Fatalf("QueueProjectRetry() error = %v, want ErrClassifierUnavailable", err)
+	}
+}
+
 type resetUsageTestClient struct {
 	model string
 }

@@ -5151,6 +5151,20 @@ func repoConflictDetailValue(project model.ProjectSummary) string {
 
 func worktreeMergeStatusDetailValue(project model.ProjectSummary) string {
 	targetBranch := strings.TrimSpace(project.WorktreeParentBranch)
+	if project.RepoDirty {
+		switch project.WorktreeMergeStatus {
+		case model.WorktreeMergeStatusMerged:
+			if targetBranch != "" {
+				return detailWarningStyle.Render("merged into " + targetBranch + ", but uncommitted changes remain")
+			}
+			return detailWarningStyle.Render("merged, but uncommitted changes remain")
+		default:
+			if targetBranch != "" {
+				return detailWarningStyle.Render("dirty; commit changes before merging into " + targetBranch)
+			}
+			return detailWarningStyle.Render("dirty; commit changes before merging back")
+		}
+	}
 	switch project.WorktreeMergeStatus {
 	case model.WorktreeMergeStatusMerged:
 		if targetBranch != "" {
@@ -5390,6 +5404,8 @@ func classificationUpdateStatus(payload map[string]string) string {
 		return "Assessment rate limited"
 	case "service_unavailable":
 		return "Assessment service unavailable"
+	case "backend_unavailable":
+		return "Assessment backend unavailable"
 	default:
 		return "Assessment failed"
 	}

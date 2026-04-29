@@ -41,27 +41,29 @@ type singleFlightClassifier interface {
 }
 
 type Options struct {
-	Client           Classifier
-	Workers          int
-	RetryAfter       time.Duration
-	StaleAfter       time.Duration
-	OnProjectUpdated ProjectUpdater
+	Client            Classifier
+	UnavailableReason string
+	Workers           int
+	RetryAfter        time.Duration
+	StaleAfter        time.Duration
+	OnProjectUpdated  ProjectUpdater
 }
 
 type Manager struct {
-	store            *store.Store
-	bus              *events.Bus
-	mu               sync.RWMutex
-	client           Classifier
-	modelName        string
-	workers          int
-	retryAfter       time.Duration
-	staleAfter       time.Duration
-	onProjectUpdated ProjectUpdater
-	notifyCh         chan struct{}
-	usage            *usageTracker
-	startOnce        sync.Once
-	classifyMu       sync.Mutex
+	store             *store.Store
+	bus               *events.Bus
+	mu                sync.RWMutex
+	client            Classifier
+	modelName         string
+	unavailableReason string
+	workers           int
+	retryAfter        time.Duration
+	staleAfter        time.Duration
+	onProjectUpdated  ProjectUpdater
+	notifyCh          chan struct{}
+	usage             *usageTracker
+	startOnce         sync.Once
+	classifyMu        sync.Mutex
 }
 
 type usageTracker struct {
@@ -89,20 +91,25 @@ func NewManager(st *store.Store, bus *events.Bus, opts Options) *Manager {
 	}
 
 	return &Manager{
-		store:            st,
-		bus:              bus,
-		client:           opts.Client,
-		modelName:        modelName,
-		workers:          workers,
-		retryAfter:       retryAfter,
-		staleAfter:       staleAfter,
-		onProjectUpdated: opts.OnProjectUpdated,
-		notifyCh:         make(chan struct{}, 1),
-		usage:            newUsageTracker(modelName),
+		store:             st,
+		bus:               bus,
+		client:            opts.Client,
+		modelName:         modelName,
+		unavailableReason: strings.TrimSpace(opts.UnavailableReason),
+		workers:           workers,
+		retryAfter:        retryAfter,
+		staleAfter:        staleAfter,
+		onProjectUpdated:  opts.OnProjectUpdated,
+		notifyCh:          make(chan struct{}, 1),
+		usage:             newUsageTracker(modelName),
 	}
 }
 
 func (m *Manager) ConfigureClient(client Classifier) {
+	m.ConfigureClientWithUnavailableReason(client, "")
+}
+
+func (m *Manager) ConfigureClientWithUnavailableReason(client Classifier, unavailableReason string) {
 	if m == nil {
 		return
 	}
@@ -113,16 +120,22 @@ func (m *Manager) ConfigureClient(client Classifier) {
 	m.mu.Lock()
 	m.client = client
 	m.modelName = modelName
+	m.unavailableReason = strings.TrimSpace(unavailableReason)
 	m.mu.Unlock()
 }
 
 func (m *Manager) currentClient() (Classifier, string) {
+	client, modelName, _ := m.currentClientState()
+	return client, modelName
+}
+
+func (m *Manager) currentClientState() (Classifier, string, string) {
 	if m == nil {
-		return nil, ""
+		return nil, "", ""
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.client, m.modelName
+	return m.client, m.modelName, m.unavailableReason
 }
 
 func (m *Manager) classificationHeartbeatInterval() time.Duration {
@@ -172,10 +185,7 @@ func (m *Manager) QueueProject(ctx context.Context, state model.ProjectState) (b
 }
 
 func (m *Manager) QueueProjectRetry(ctx context.Context, state model.ProjectState, retryAfter time.Duration) (bool, error) {
-	_, modelName := m.currentClient()
-	if !m.Enabled() {
-		return false, nil
-	}
+	client, modelName, unavailableReason := m.currentClientState()
 	prepared := state
 	if len(prepared.Sessions) > 0 && strings.TrimSpace(prepared.Sessions[0].SnapshotHash) == "" {
 		gitStatus := NewGitStatusSnapshot(prepared.RepoDirty, prepared.RepoSyncStatus, prepared.RepoAheadCount, prepared.RepoBehindCount)
@@ -192,6 +202,22 @@ func (m *Manager) QueueProjectRetry(ctx context.Context, state model.ProjectStat
 	}
 	if retryAfter < 0 {
 		retryAfter = 0
+	}
+	if client == nil {
+		unavailableErr := &ClassifierUnavailableError{Reason: unavailableReason}
+		if strings.TrimSpace(unavailableReason) != "" {
+			recorded, err := m.store.RecordSessionClassificationFailure(ctx, &classification, unavailableErr.Error(), retryAfter)
+			if err != nil {
+				return false, err
+			}
+			if recorded {
+				m.publishClassificationEvent(ctx, classification, "failed", unavailableErr)
+			}
+		}
+		if retryAfter <= 0 {
+			return false, unavailableErr
+		}
+		return false, nil
 	}
 	return m.store.QueueSessionClassification(ctx, classification, retryAfter)
 }

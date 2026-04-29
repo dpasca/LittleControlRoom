@@ -571,15 +571,20 @@ func (s *Service) configureAIClientsLocked() {
 			todoClient = todoworktree.NewOpenAICompatibleClientWithUsageTracker(baseURL, apiKey, model, s.llmUsageTracker)
 		}
 	}
+	unavailableReason := ""
+	if client == nil {
+		unavailableReason = sessionClassifierUnavailableReason(selectedBackend, selectedStatus)
+	}
 	s.commitMessageSuggester = commitAssistant
 	s.untrackedFileRecommender = commitAssistant
 	if manager, ok := s.classifier.(*sessionclassify.Manager); ok {
-		manager.ConfigureClient(client)
+		manager.ConfigureClientWithUnavailableReason(client, unavailableReason)
 		manager.Notify()
 	} else {
 		s.classifier = sessionclassify.NewManager(s.store, s.bus, sessionclassify.Options{
-			Client:           client,
-			OnProjectUpdated: s.RefreshProjectStatus,
+			Client:            client,
+			UnavailableReason: unavailableReason,
+			OnProjectUpdated:  s.RefreshProjectStatus,
 		})
 	}
 	if s.todoSuggester == nil {
@@ -589,6 +594,26 @@ func (s *Service) configureAIClientsLocked() {
 		return
 	}
 	s.todoSuggester.ConfigureClient(todoClient)
+}
+
+func sessionClassifierUnavailableReason(backend config.AIBackend, status aibackend.Status) string {
+	switch backend {
+	case config.AIBackendUnset, config.AIBackendDisabled:
+		return ""
+	}
+	var parts []string
+	label := strings.TrimSpace(backend.Label())
+	if label == "" {
+		label = "selected"
+	}
+	parts = append(parts, label+" assessment backend is not ready")
+	if detail := strings.TrimSpace(status.Detail); detail != "" {
+		parts = append(parts, detail)
+	}
+	if hint := strings.TrimSpace(status.LoginHint); hint != "" {
+		parts = append(parts, hint)
+	}
+	return strings.Join(parts, ": ")
 }
 
 func hasMeaningfulLLMUsage(snapshot model.LLMSessionUsage) bool {
