@@ -93,6 +93,7 @@ Make browser automation feel quiet and predictable by default:
   - later sessions are blocked cleanly instead of blindly opening another browser login flow
   - failed browser-reveal attempts release the slot immediately
 - Managed browser metadata is now written under the LCR data dir so the TUI can find and reveal the correct browser session instead of opening the URL in a disconnected desktop browser.
+- On macOS, managed browser reveal now raises the target process window after un-hiding it, which keeps parallel Chrome-backed Playwright sessions from falling back to whichever Chrome window was last active.
 - The shadow Playwright skill now tells embedded Codex to use the already-registered Playwright MCP tools instead of shelling out to a separate CLI browser path.
 - LCR now has a small non-TUI browser control surface:
   - `lcroom browser status --session-key ...`
