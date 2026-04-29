@@ -119,5 +119,6 @@ func isClassificationConnectionFailureError(err error, normalized string) bool {
 		strings.Contains(normalized, "broken pipe") ||
 		strings.Contains(normalized, "dial tcp") ||
 		strings.Contains(normalized, "no such host") ||
-		strings.Contains(normalized, "network is unreachable")
+		strings.Contains(normalized, "network is unreachable") ||
+		isRetryableTransportErrorMessage(normalized)
 }
