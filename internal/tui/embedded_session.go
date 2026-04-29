@@ -34,6 +34,7 @@ type codexPendingOpenState struct {
 	projectPath      string
 	provider         codexapp.Provider
 	showWhilePending bool
+	newSession       bool
 }
 
 type codexUpdateMsg struct {
@@ -608,9 +609,17 @@ func (m Model) launchEmbeddedForProject(p model.ProjectSummary, provider codexap
 	}
 
 	m.ensureCodexRuntime()
-	m.beginCodexPendingOpen(p.Path, provider)
+	if forceNew {
+		m.beginNewCodexPendingOpen(p.Path, provider)
+	} else {
+		m.beginCodexPendingOpen(p.Path, provider)
+	}
 	m.err = nil
-	m.status = "Opening embedded " + provider.Label() + " session..."
+	if forceNew {
+		m.status = "Starting a new embedded " + provider.Label() + " session..."
+	} else {
+		m.status = "Opening embedded " + provider.Label() + " session..."
+	}
 	return m, m.openCodexSessionCmd(req)
 }
 

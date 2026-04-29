@@ -209,7 +209,19 @@ func (m *Model) beginCodexPendingOpen(projectPath string, provider codexapp.Prov
 	m.beginCodexPendingOpenWithVisibility(projectPath, provider, true)
 }
 
+func (m *Model) beginNewCodexPendingOpen(projectPath string, provider codexapp.Provider) {
+	m.beginNewCodexPendingOpenWithVisibility(projectPath, provider, true)
+}
+
 func (m *Model) beginCodexPendingOpenWithVisibility(projectPath string, provider codexapp.Provider, showWhilePending bool) {
+	m.beginCodexPendingOpenWithOptions(projectPath, provider, showWhilePending, false)
+}
+
+func (m *Model) beginNewCodexPendingOpenWithVisibility(projectPath string, provider codexapp.Provider, showWhilePending bool) {
+	m.beginCodexPendingOpenWithOptions(projectPath, provider, showWhilePending, true)
+}
+
+func (m *Model) beginCodexPendingOpenWithOptions(projectPath string, provider codexapp.Provider, showWhilePending, newSession bool) {
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
 		m.codexPendingOpen = nil
@@ -222,6 +234,7 @@ func (m *Model) beginCodexPendingOpenWithVisibility(projectPath string, provider
 		projectPath:      projectPath,
 		provider:         provider.Normalized(),
 		showWhilePending: showWhilePending,
+		newSession:       newSession,
 	}
 }
 
@@ -1340,8 +1353,8 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			switch inv.Kind {
 			case codexslash.KindNew:
-				m.status = "Starting a fresh embedded " + label + " session..."
-				m.beginCodexPendingOpen(m.codexVisibleProject, embeddedProvider(snapshot))
+				m.status = "Starting a new embedded " + label + " session..."
+				m.beginNewCodexPendingOpen(m.codexVisibleProject, embeddedProvider(snapshot))
 				return m, m.restartVisibleCodexSessionCmd(inv.Prompt)
 			case codexslash.KindResume:
 				if strings.TrimSpace(inv.SessionID) == "" {
@@ -1963,15 +1976,24 @@ func (m Model) renderCodexOpeningView(projectPath string) string {
 		projectName = projectPath
 	}
 	label := m.codexPendingOpenProvider().Label()
+	headline := "Opening embedded " + label + " session..."
+	detail := "Waiting for the requested embedded session to come online."
+	footerStatus := "Opening embedded " + label + " session"
+	if m.codexPendingOpen != nil && m.codexPendingOpen.newSession {
+		headline = "Starting a new embedded " + label + " session..."
+		detail = "Preparing the new embedded session."
+		footerStatus = "Starting a new embedded " + label + " session"
+	}
+	spinner := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
 	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Render(label + " | " + projectName)
 	bodyHeight := max(3, height-6)
 	body := m.renderHFramedPane(strings.Join([]string{
-		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Render("Opening embedded " + label + " session..."),
+		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Render(spinner + " " + headline),
 		"",
 		fitFooterWidth("Project: "+projectPath, max(24, width-4)),
-		fitFooterWidth("Waiting for the previous embedded session to settle and for the new session to come online.", max(24, width-4)),
+		fitFooterWidth(detail, max(24, width-4)),
 	}, "\n"), width, bodyHeight, true)
-	footer := renderFooterLine(width, renderFooterStatus("Opening embedded "+label+" session"))
+	footer := renderFooterLine(width, renderFooterStatus(spinner+" "+footerStatus))
 	return strings.Join([]string{renderFooterLine(width, title), body, footer}, "\n")
 }
 

@@ -1169,9 +1169,9 @@ func (m Model) startTodoInProjectPath(projectPath, todoText string, provider cod
 		return m, nil
 	}
 	m.ensureCodexRuntime()
-	m.beginCodexPendingOpen(project.Path, provider)
+	m.beginNewCodexPendingOpen(project.Path, provider)
 	m.err = nil
-	m.status = "Opening embedded " + provider.Label() + " session..."
+	m.status = "Starting a new embedded " + provider.Label() + " session..."
 	return m, m.openCodexSessionCmd(req)
 }
 

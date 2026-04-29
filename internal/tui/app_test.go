@@ -9616,6 +9616,9 @@ func TestTodoDialogCanStartSelectedTodoInNewWorktree(t *testing.T) {
 	if got.codexPendingOpen.provider != codexapp.ProviderCodex {
 		t.Fatalf("pending provider = %q, want %q", got.codexPendingOpen.provider, codexapp.ProviderCodex)
 	}
+	if !got.codexPendingOpen.newSession {
+		t.Fatalf("codexPendingOpen.newSession = false, want true for dedicated worktree launch")
+	}
 	if got.codexVisible() {
 		t.Fatalf("background worktree launch should stay hidden while the session is still opening")
 	}
@@ -9692,6 +9695,7 @@ func TestNormalModeEnterRevealsPendingTodoWorktreeLaunch(t *testing.T) {
 			projectPath:      projectPath,
 			provider:         codexapp.ProviderCodex,
 			showWhilePending: false,
+			newSession:       true,
 		},
 		width:  100,
 		height: 24,
@@ -9709,8 +9713,16 @@ func TestNormalModeEnterRevealsPendingTodoWorktreeLaunch(t *testing.T) {
 		t.Fatalf("codexPendingOpen = %#v, want visible pending open", got.codexPendingOpen)
 	}
 	rendered := ansi.Strip(got.renderCodexView())
-	if !strings.Contains(rendered, "Opening embedded Codex session") || !strings.Contains(rendered, projectPath) {
+	if !strings.Contains(rendered, "Starting a new embedded Codex session") || !strings.Contains(rendered, projectPath) {
 		t.Fatalf("rendered pending view should show the starting session, got %q", rendered)
+	}
+	if strings.Contains(rendered, "previous embedded session") {
+		t.Fatalf("rendered pending view should not imply a previous embedded session is settling, got %q", rendered)
+	}
+	got.spinnerFrame++
+	animated := ansi.Strip(got.renderCodexView())
+	if rendered == animated {
+		t.Fatalf("rendered pending view should animate across spinner frames, got %q", rendered)
 	}
 }
 
@@ -11216,14 +11228,14 @@ func TestVisibleCodexSlashNewStartsFreshSession(t *testing.T) {
 	if got.codexInput.Value() != "" {
 		t.Fatalf("codex input should clear after /new, got %q", got.codexInput.Value())
 	}
-	if got.status != "Starting a fresh embedded Codex session..." {
+	if got.status != "Starting a new embedded Codex session..." {
 		t.Fatalf("status = %q, want fresh-session notice", got.status)
 	}
 	if got.codexPendingOpen == nil || got.codexPendingOpen.projectPath != "/tmp/demo" {
 		t.Fatalf("codexPendingOpen = %#v, want pending open for /tmp/demo", got.codexPendingOpen)
 	}
 	rendered := ansi.Strip(got.renderCodexView())
-	if !strings.Contains(rendered, "Opening embedded Codex session...") {
+	if !strings.Contains(rendered, "Starting a new embedded Codex session...") {
 		t.Fatalf("rendered view should show opening state, got %q", rendered)
 	}
 
@@ -11293,7 +11305,7 @@ func TestVisibleOpenCodeSlashNewStartsFreshSession(t *testing.T) {
 	if got.codexPendingOpen == nil || got.codexPendingOpen.provider != codexapp.ProviderOpenCode {
 		t.Fatalf("codexPendingOpen = %#v, want pending OpenCode session", got.codexPendingOpen)
 	}
-	if got.status != "Starting a fresh embedded OpenCode session..." {
+	if got.status != "Starting a new embedded OpenCode session..." {
 		t.Fatalf("status = %q, want fresh OpenCode session notice", got.status)
 	}
 

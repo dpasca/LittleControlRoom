@@ -1690,9 +1690,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.ensureCodexRuntime()
-		m.beginCodexPendingOpenWithVisibility(req.ProjectPath, provider, msg.openModelFirst)
+		m.beginNewCodexPendingOpenWithVisibility(req.ProjectPath, provider, msg.openModelFirst)
 		if msg.openModelFirst {
-			m.status = "Opening embedded " + provider.Label() + " session in new worktree..."
+			m.status = "Starting a new embedded " + provider.Label() + " session in new worktree..."
 		} else {
 			m.status = "Starting TODO in dedicated worktree..."
 		}
