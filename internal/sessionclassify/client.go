@@ -34,6 +34,7 @@ const (
 	classifierFallbackReasoningEffort = "low"
 	classifierRepairReasoningEffort   = "low"
 	classifierDefaultRetryBackoff     = 750 * time.Millisecond
+	classifierTransientRetryAttempts  = 3
 	localRunnerDefaultModel           = "gpt-5.4-mini"
 	localRunnerClaudeDefaultModel     = "haiku"
 )
@@ -51,9 +52,17 @@ type classifierAttemptConfig struct {
 	ReasoningEffort string
 }
 
+type classificationRetryKind string
+
+const (
+	classificationRetryKindGeneric   classificationRetryKind = ""
+	classificationRetryKindTransient classificationRetryKind = "transient"
+)
+
 type retryableClassificationError struct {
-	cause error
-	delay time.Duration
+	cause     error
+	delay     time.Duration
+	retryKind classificationRetryKind
 }
 
 func (e *retryableClassificationError) Error() string {
@@ -173,12 +182,20 @@ func (c *OpenAIClient) Classify(ctx context.Context, snapshot SessionSnapshot) (
 		return Result{}, fmt.Errorf("marshal session snapshot: %w", err)
 	}
 
-	for attemptIndex, attempt := range classifierAttemptPlan {
+	maxAttempts := len(classifierAttemptPlan)
+	for attemptIndex := 0; attemptIndex < maxAttempts; attemptIndex++ {
+		attempt := classifierAttemptForIndex(attemptIndex)
 		result, err := c.classifyAttempt(ctx, snapshotJSON, attempt)
 		if err == nil {
 			return result, nil
 		}
-		if !isRetryableClassificationError(err) || attemptIndex == len(classifierAttemptPlan)-1 {
+		if !isRetryableClassificationError(err) {
+			return Result{}, err
+		}
+		if retryMax := maxAttemptsForClassificationRetry(err); retryMax > maxAttempts {
+			maxAttempts = retryMax
+		}
+		if attemptIndex == maxAttempts-1 {
 			return Result{}, err
 		}
 		if err := sleepContext(ctx, retryDelayForClassificationError(err)); err != nil {
@@ -187,6 +204,19 @@ func (c *OpenAIClient) Classify(ctx context.Context, snapshot SessionSnapshot) (
 	}
 
 	return Result{}, errors.New("classifier attempt plan exhausted")
+}
+
+func classifierAttemptForIndex(index int) classifierAttemptConfig {
+	if len(classifierAttemptPlan) == 0 {
+		return classifierAttemptConfig{}
+	}
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(classifierAttemptPlan) {
+		index = len(classifierAttemptPlan) - 1
+	}
+	return classifierAttemptPlan[index]
 }
 
 func (c *OpenAIClient) classifyAttempt(ctx context.Context, snapshotJSON []byte, attempt classifierAttemptConfig) (Result, error) {
@@ -202,8 +232,9 @@ func (c *OpenAIClient) classifyAttempt(ctx context.Context, snapshotJSON []byte,
 		var httpErr *llm.HTTPStatusError
 		if errors.As(err, &httpErr) && isRetryableHTTPStatus(httpErr.StatusCode) {
 			return Result{}, &retryableClassificationError{
-				cause: err,
-				delay: retryDelayFromHeader(httpErr.RetryAfter),
+				cause:     err,
+				delay:     retryDelayFromHeader(httpErr.RetryAfter),
+				retryKind: classificationRetryKindTransient,
 			}
 		}
 		if retryable := retryableTransportClassificationError(ctx, err); retryable != nil {
@@ -349,8 +380,9 @@ func retryableTransportClassificationError(ctx context.Context, err error) error
 		return nil
 	}
 	return &retryableClassificationError{
-		cause: err,
-		delay: classifierDefaultRetryBackoff,
+		cause:     err,
+		delay:     classifierDefaultRetryBackoff,
+		retryKind: classificationRetryKindTransient,
 	}
 }
 
@@ -379,7 +411,19 @@ func isRetryableTransportError(err error) bool {
 		errors.Is(err, syscall.ENETRESET) ||
 		errors.Is(err, syscall.ENETUNREACH) ||
 		errors.Is(err, syscall.EPIPE) ||
-		errors.Is(err, syscall.ETIMEDOUT)
+		errors.Is(err, syscall.ETIMEDOUT) ||
+		isRetryableTransportErrorMessage(normalizedClassificationErrorMessage(err))
+}
+
+func isRetryableTransportErrorMessage(normalized string) bool {
+	normalized = strings.TrimSpace(normalized)
+	if normalized == "" {
+		return false
+	}
+	return strings.Contains(normalized, "stream disconnected before completion") ||
+		strings.Contains(normalized, "error sending request for url") ||
+		strings.Contains(normalized, "unexpected eof") ||
+		strings.Contains(normalized, "connection closed before message completed")
 }
 
 func retryDelayForClassificationError(err error) time.Duration {
@@ -393,6 +437,20 @@ func retryDelayForClassificationError(err error) time.Duration {
 func isRetryableClassificationError(err error) bool {
 	var retryable *retryableClassificationError
 	return errors.As(err, &retryable)
+}
+
+func maxAttemptsForClassificationRetry(err error) int {
+	var retryable *retryableClassificationError
+	if !errors.As(err, &retryable) {
+		return 1
+	}
+	switch retryable.retryKind {
+	case classificationRetryKindTransient:
+		if classifierTransientRetryAttempts > len(classifierAttemptPlan) {
+			return classifierTransientRetryAttempts
+		}
+	}
+	return len(classifierAttemptPlan)
 }
 
 func retryDelayFromHeader(raw string) time.Duration {

@@ -3,6 +3,7 @@ package sessionclassify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -743,6 +744,52 @@ func TestOpenAIClientClassifyRetriesTransientTransportError(t *testing.T) {
 	}
 }
 
+func TestOpenAIClientClassifyRetriesCodexStreamDisconnect(t *testing.T) {
+	t.Parallel()
+
+	attempts := make([]string, 0, len(classifierAttemptPlan))
+	client := &OpenAIClient{
+		model: "gpt-5.4-mini",
+		responses: fakeJSONSchemaRunner{
+			run: func(_ context.Context, req llm.JSONSchemaRequest) (llm.JSONSchemaResponse, error) {
+				attempts = append(attempts, req.ReasoningEffort)
+				if len(attempts) == 1 {
+					return llm.JSONSchemaResponse{}, errors.New("stream disconnected before completion: error sending request for url (https://chatgpt.com/backend-api/codex/responses)")
+				}
+				return llm.JSONSchemaResponse{
+					Status:     "completed",
+					Model:      "gpt-5.4-mini",
+					OutputText: `{"category":"completed","summary":"Everything is wrapped up."}`,
+				}, nil
+			},
+		},
+	}
+
+	result, err := client.Classify(context.Background(), SessionSnapshot{
+		ProjectPath: "/tmp/demo",
+		SessionID:   "ses_demo",
+		Transcript: []TranscriptItem{
+			{Role: "user", Text: "Please verify whether this is finished."},
+			{Role: "assistant", Text: "Yes, the requested work is complete."},
+		},
+	})
+	if err != nil {
+		t.Fatalf("classify: %v", err)
+	}
+	if result.Category != model.SessionCategoryCompleted {
+		t.Fatalf("category = %s, want completed", result.Category)
+	}
+	if len(attempts) != 2 {
+		t.Fatalf("attempts = %d, want 2", len(attempts))
+	}
+	if attempts[0] != classifierPrimaryReasoningEffort {
+		t.Fatalf("first attempt effort = %q, want %q", attempts[0], classifierPrimaryReasoningEffort)
+	}
+	if attempts[1] != classifierFallbackReasoningEffort {
+		t.Fatalf("second attempt effort = %q, want %q", attempts[1], classifierFallbackReasoningEffort)
+	}
+}
+
 func TestOpenAIClientClassifyTransportRetriesRemainBounded(t *testing.T) {
 	t.Parallel()
 
@@ -771,11 +818,23 @@ func TestOpenAIClientClassifyTransportRetriesRemainBounded(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected classify to fail after bounded retries")
 	}
-	if attempts != len(classifierAttemptPlan) {
-		t.Fatalf("attempts = %d, want %d", attempts, len(classifierAttemptPlan))
+	if attempts != classifierTransientRetryAttempts {
+		t.Fatalf("attempts = %d, want %d", attempts, classifierTransientRetryAttempts)
 	}
 	if !strings.Contains(err.Error(), "can't assign requested address") {
 		t.Fatalf("error = %q, want transport detail", err.Error())
+	}
+}
+
+func TestClassificationFailureMetadataTreatsCodexStreamDisconnectAsConnectionFailure(t *testing.T) {
+	t.Parallel()
+
+	kind, diagnosis := classificationFailureMetadata(errors.New("stream disconnected before completion: error sending request for url (https://chatgpt.com/backend-api/codex/responses)"))
+	if kind != classificationFailureKindConnectionFailed {
+		t.Fatalf("kind = %q, want %q", kind, classificationFailureKindConnectionFailed)
+	}
+	if diagnosis == "" {
+		t.Fatalf("expected connection failure diagnosis")
 	}
 }
 
