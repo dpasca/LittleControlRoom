@@ -1303,6 +1303,10 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	label := embeddedProvider(snapshot).Label()
 
+	if m.codexInputCopyDialog != nil {
+		return m.updateCodexInputCopyDialogMode(msg)
+	}
+
 	switch msg.String() {
 	case "f3":
 		return m.cycleCodexSession(1)
@@ -1361,7 +1365,11 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.codexViewport.HalfPageDown()
 		return m, nil
 	case "alt+c":
-		return m, m.copyCodexInputToClipboard()
+		if snapshot.PendingApproval != nil || snapshot.Closed {
+			return m, nil
+		}
+		m.openCodexInputCopyDialog()
+		return m, nil
 	}
 
 	if snapshot.PendingApproval != nil {
@@ -1387,6 +1395,10 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if m.codexInputSelectionActive() {
+		return m.updateCodexInputSelectionMode(msg)
+	}
+
 	if snapshot.PendingToolInput != nil {
 		return m.updateCodexToolInputMode(snapshot, msg)
 	}
@@ -1397,10 +1409,6 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Clear mouse selection on any keypress.
 	m.codexComposerSelection = textSelection{}
-
-	if m.codexInputSelectionActive() {
-		return m.updateCodexInputSelectionMode(msg)
-	}
 
 	if m.codexSlashActive() {
 		switch msg.String() {
@@ -1543,7 +1551,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.syncCodexComposerSize()
 		return m, nil
 	case "alt+s":
-		m.startCodexInputSelection()
+		m.status = "Use Alt+C to copy or select input"
 		return m, nil
 	case "ctrl+v":
 		return m, nil
@@ -2430,7 +2438,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerPrimaryAction("Enter", "answer"),
 			footerExitAction("Ctrl+C", "close"),
 			footerHideAction("Alt+Up", "hide"),
-			footerLowAction("Alt+C", "copy input"),
+			footerLowAction("Alt+C", "copy/select"),
 		)
 		state := m.toolAnswerStateFor(m.codexVisibleProject, snapshot.PendingToolInput)
 		if state.QuestionIndex >= 0 && state.QuestionIndex < len(snapshot.PendingToolInput.Questions) {
@@ -2452,7 +2460,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerExitAction("d", "decline"),
 			footerLowAction("c", "cancel"),
 			footerNavAction("Alt+Enter", "newline"),
-			footerLowAction("Alt+C", "copy input"),
+			footerLowAction("Alt+C", "copy/select"),
 		}
 	case snapshot.PendingElicitation != nil &&
 		strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" &&
@@ -2481,7 +2489,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerNavAction("Tab", "complete"),
 			footerNavAction("Shift+Tab", "previous"),
 			footerNavAction("Alt+Enter", "newline"),
-			footerLowAction("Alt+C", "copy input"),
+			footerLowAction("Alt+C", "copy/select"),
 		}
 	case snapshot.BusyExternal:
 		actions = []footerAction{
@@ -2508,7 +2516,6 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerPrimaryAction("Space", "mark"),
 			footerExitAction("Esc", "cancel"),
 			footerNavAction("arrows", "move"),
-			footerLowAction("Alt+C", "copy input"),
 		}
 	case snapshot.Busy:
 		actions = []footerAction{
@@ -2517,8 +2524,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerHideAction("Alt+Up", "hide"),
 			footerNavAction("Alt+Enter", "newline"),
 			footerNavAction("Ctrl+V", "image"),
-			footerLowAction("Alt+C", "copy input"),
-			footerLowAction("Alt+S", "select"),
+			footerLowAction("Alt+C", "copy/select"),
 		}
 	case snapshot.Closed:
 		actions = []footerAction{
@@ -2532,8 +2538,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerHideAction("Alt+Up", "hide"),
 			footerNavAction("Alt+Enter", "newline"),
 			footerNavAction("Ctrl+V", "image"),
-			footerLowAction("Alt+C", "copy input"),
-			footerLowAction("Alt+S", "select"),
+			footerLowAction("Alt+C", "copy/select"),
 		}
 		if managedBrowserCurrentPageURL(snapshot) != "" && strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" {
 			actions = append(actions, footerNavAction("Ctrl+O", m.managedBrowserCurrentPageFooterLabel(snapshot)))
