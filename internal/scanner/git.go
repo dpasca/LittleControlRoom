@@ -168,31 +168,23 @@ func ReadGitDirty(ctx context.Context, path string) (bool, error) {
 }
 
 func ReadGitWorktreeInfo(ctx context.Context, path string) (GitWorktreeInfo, error) {
-	topLevel, err := readGitSingleLine(ctx, path, "rev-parse", "--show-toplevel")
+	lines, err := readGitLines(ctx, path, "rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--absolute-git-dir")
 	if err != nil {
 		if fallback, fallbackErr := readGitWorktreeInfoFromGitFile(path); fallbackErr == nil {
 			return fallback, nil
 		}
-		return GitWorktreeInfo{}, fmt.Errorf("read git top-level for %s: %w", path, err)
+		return GitWorktreeInfo{}, fmt.Errorf("read git worktree info for %s: %w", path, err)
 	}
-	commonDir, err := readGitSingleLine(ctx, path, "rev-parse", "--path-format=absolute", "--git-common-dir")
-	if err != nil {
+	if len(lines) < 3 {
 		if fallback, fallbackErr := readGitWorktreeInfoFromGitFile(path); fallbackErr == nil {
 			return fallback, nil
 		}
-		return GitWorktreeInfo{}, fmt.Errorf("read git common dir for %s: %w", path, err)
-	}
-	gitDir, err := readGitSingleLine(ctx, path, "rev-parse", "--absolute-git-dir")
-	if err != nil {
-		if fallback, fallbackErr := readGitWorktreeInfoFromGitFile(path); fallbackErr == nil {
-			return fallback, nil
-		}
-		return GitWorktreeInfo{}, fmt.Errorf("read git dir for %s: %w", path, err)
+		return GitWorktreeInfo{}, fmt.Errorf("read git worktree info for %s: expected 3 lines, got %d", path, len(lines))
 	}
 
-	topLevel = filepath.Clean(strings.TrimSpace(topLevel))
-	commonDir = filepath.Clean(strings.TrimSpace(commonDir))
-	gitDir = filepath.Clean(strings.TrimSpace(gitDir))
+	topLevel := filepath.Clean(strings.TrimSpace(lines[0]))
+	commonDir := filepath.Clean(strings.TrimSpace(lines[1]))
+	gitDir := filepath.Clean(strings.TrimSpace(lines[2]))
 	if topLevel == "" || commonDir == "" {
 		return GitWorktreeInfo{}, fmt.Errorf("read git worktree info for %s: missing paths", path)
 	}
@@ -272,13 +264,29 @@ func ListGitWorktrees(ctx context.Context, path string) ([]GitWorktree, error) {
 }
 
 func readGitSingleLine(ctx context.Context, path string, args ...string) (string, error) {
+	lines, err := readGitLines(ctx, path, args...)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n")), nil
+}
+
+func readGitLines(ctx context.Context, path string, args ...string) ([]string, error) {
 	fullArgs := append([]string{"-C", path}, args...)
 	cmd := exec.CommandContext(ctx, "git", fullArgs...)
 	out, err := cmd.Output()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return strings.TrimSpace(string(out)), nil
+	raw := strings.TrimSpace(string(out))
+	if raw == "" {
+		return nil, nil
+	}
+	lines := strings.Split(raw, "\n")
+	for i := range lines {
+		lines[i] = strings.TrimSpace(lines[i])
+	}
+	return lines, nil
 }
 
 func parseGitWorktreeListOutput(out string) []GitWorktree {

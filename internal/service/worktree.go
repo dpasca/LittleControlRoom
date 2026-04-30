@@ -774,6 +774,10 @@ func (s *Service) readProjectWorktreeInfo(ctx context.Context, projectPath strin
 }
 
 func (s *Service) readProjectWorktreeInfoWithReader(ctx context.Context, projectPath string, reader func(context.Context, string) (scanner.GitWorktreeInfo, error)) (string, model.WorktreeKind) {
+	return s.readProjectWorktreeInfoWithResolver(ctx, projectPath, reader, nil)
+}
+
+func (s *Service) readProjectWorktreeInfoWithResolver(ctx context.Context, projectPath string, reader func(context.Context, string) (scanner.GitWorktreeInfo, error), resolver *knownPathVariantResolver) (string, model.WorktreeKind) {
 	if s == nil || reader == nil || !projectPathExists(projectPath) {
 		return "", model.WorktreeKindNone
 	}
@@ -786,13 +790,11 @@ func (s *Service) readProjectWorktreeInfoWithReader(ctx context.Context, project
 	if kind == model.WorktreeKindMain {
 		rootPath = filepath.Clean(strings.TrimSpace(projectPath))
 	}
-	if rootPath != "" && s.store != nil {
+	if rootPath != "" && resolver != nil {
+		rootPath = resolver.preferred(rootPath)
+	} else if rootPath != "" && s.store != nil {
 		if summaries, err := s.store.GetProjectSummaryMap(ctx); err == nil {
-			known := make([]string, 0, len(summaries))
-			for path := range summaries {
-				known = append(known, path)
-			}
-			rootPath = preferredKnownPathVariant(rootPath, known)
+			rootPath = preferredKnownPathVariant(rootPath, mapKeys(summaries))
 		}
 	}
 	return rootPath, kind
@@ -817,6 +819,8 @@ func (s *Service) expandDiscoveredWorktreePaths(ctx context.Context, discovered 
 			outSet[cleanPath] = struct{}{}
 		}
 	}
+	resolver := newKnownPathVariantResolver(sortedPathKeys(outSet))
+	resolver.addAll(mapKeys(oldMap), false)
 
 	liveByRoot := map[string]map[string]struct{}{}
 	if s == nil || worktreeListReader == nil {
@@ -844,7 +848,7 @@ func (s *Service) expandDiscoveredWorktreePaths(ctx context.Context, discovered 
 
 	listedRoots := map[string]struct{}{}
 	for _, seed := range seeds {
-		rootPath, _ := s.readProjectWorktreeInfoWithReader(ctx, seed, worktreeInfoReader)
+		rootPath, _ := s.readProjectWorktreeInfoWithResolver(ctx, seed, worktreeInfoReader, resolver)
 		if rootPath == "" {
 			rootPath = filepath.Clean(seed)
 		}
@@ -862,13 +866,14 @@ func (s *Service) expandDiscoveredWorktreePaths(ctx context.Context, discovered 
 			liveByRoot[rootPath] = rootSet
 		}
 		for _, worktree := range worktrees {
-			worktreePath := preferredKnownPathVariant(filepath.Clean(strings.TrimSpace(worktree.Path)), append(sortedPathKeys(outSet), mapKeys(oldMap)...))
+			worktreePath := resolver.preferred(filepath.Clean(strings.TrimSpace(worktree.Path)))
 			if worktreePath == "" || worktreePath == "." {
 				continue
 			}
 			rootSet[worktreePath] = struct{}{}
 			if scope.Allows(worktreePath) || oldMap[worktreePath].Path != "" || oldMap[rootPath].Path != "" {
 				outSet[worktreePath] = struct{}{}
+				resolver.add(worktreePath, true)
 			}
 		}
 	}
@@ -891,6 +896,60 @@ func mapKeys(values map[string]model.ProjectSummary) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+type knownPathVariantResolver struct {
+	resolvedToPath map[string]string
+}
+
+func newKnownPathVariantResolver(paths []string) *knownPathVariantResolver {
+	r := &knownPathVariantResolver{resolvedToPath: map[string]string{}}
+	r.addAll(paths, false)
+	return r
+}
+
+func (r *knownPathVariantResolver) addAll(paths []string, prefer bool) {
+	if r == nil {
+		return
+	}
+	for _, path := range paths {
+		r.add(path, prefer)
+	}
+}
+
+func (r *knownPathVariantResolver) add(path string, prefer bool) {
+	if r == nil {
+		return
+	}
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "" || path == "." {
+		return
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return
+	}
+	if _, exists := r.resolvedToPath[resolved]; !exists || prefer {
+		r.resolvedToPath[resolved] = path
+	}
+}
+
+func (r *knownPathVariantResolver) preferred(candidate string) string {
+	candidate = filepath.Clean(strings.TrimSpace(candidate))
+	if candidate == "" || candidate == "." {
+		return candidate
+	}
+	if r == nil {
+		return candidate
+	}
+	resolvedCandidate, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return candidate
+	}
+	if path, ok := r.resolvedToPath[resolvedCandidate]; ok {
+		return path
+	}
+	return candidate
 }
 
 func modelWorktreeKindFromGit(kind scanner.GitWorktreeKind) model.WorktreeKind {
