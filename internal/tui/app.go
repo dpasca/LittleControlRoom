@@ -20,6 +20,7 @@ import (
 	"lcroom/internal/commands"
 	"lcroom/internal/config"
 	"lcroom/internal/events"
+	"lcroom/internal/inputcomposer"
 	"lcroom/internal/model"
 	"lcroom/internal/projectrun"
 	"lcroom/internal/service"
@@ -186,6 +187,7 @@ type Model struct {
 	browserLeaseSnapshot        browserctl.ControllerSnapshot
 	managedBrowserStates        map[string]browserctl.ManagedPlaywrightState
 	questionNotify              *questionNotification
+	codexInputCopyDialog        *inputcomposer.CopyDialogState
 	codexInputSelection         *codexInputSelectionState
 	codexComposerSelection      textSelection
 	codexModelPicker            *codexModelPickerState
@@ -2611,6 +2613,17 @@ func (m Model) View() string {
 				height = 30
 			}
 			return m.renderCodexPickerOverlay(body, width, height)
+		}
+		if m.codexInputCopyDialog != nil {
+			width := m.width
+			if width <= 0 {
+				width = 120
+			}
+			height := m.height
+			if height <= 0 {
+				height = 30
+			}
+			return m.renderCodexInputCopyDialogOverlay(body, width, height)
 		}
 		return body
 	}

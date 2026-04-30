@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/inputcomposer"
 	"lcroom/internal/model"
 	"lcroom/internal/service"
 	"lcroom/internal/terminalmd"
@@ -34,6 +35,8 @@ type Model struct {
 	height int
 
 	input             textarea.Model
+	inputCopyDialog   *inputcomposer.CopyDialogState
+	inputSelection    *inputcomposer.SelectionState
 	chatViewport      viewport.Model
 	chatSelection     bossTextSelection
 	messages          []ChatMessage
@@ -303,6 +306,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.sessionPickerVisible {
 			return m.updateBossSessionPicker(msg)
 		}
+		if m.inputCopyDialog != nil {
+			return m.updateInputCopyDialog(msg)
+		}
+		if m.inputSelection != nil {
+			return m.updateInputSelection(msg)
+		}
 		if m.bossSlashActive() {
 			switch msg.String() {
 			case "tab":
@@ -319,7 +328,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "esc", "alt+up":
 			return m, m.exitCmd()
 		case "alt+c":
-			return m.copyInputToClipboard()
+			m.openInputCopyDialog()
+			return m, nil
+		case "alt+s":
+			m.status = "Use Alt+C to copy or select input"
+			return m, nil
 		case "ctrl+r":
 			m.status = "Refreshing project state..."
 			return m, m.loadStateCmd()
@@ -449,6 +462,9 @@ func (m Model) View() string {
 	}
 	if m.sessionPickerVisible {
 		body = m.renderBossSessionPickerOverlay(body, layout.width, layout.height)
+	}
+	if m.inputCopyDialog != nil {
+		body = m.renderInputCopyDialogOverlay(body, layout.width, layout.height)
 	}
 	if m.embedded {
 		return fitRenderedBlock(body, layout.width, layout.height)
@@ -726,7 +742,7 @@ func (m Model) chatAuxiliaryHeights(topHeight, inputHeight int, includesHint boo
 }
 
 func (m Model) renderChat(layout bossLayout) string {
-	input := fitRenderedBlock(renderBossInput(m.input, layout.chatInnerWidth), layout.chatInnerWidth, layout.inputHeight)
+	input := fitRenderedBlock(renderBossInputWithSelection(m.input, m.inputSelection, layout.chatInnerWidth), layout.chatInnerWidth, layout.inputHeight)
 	transcript := m.chatViewport.View()
 	if m.chatSelection.dragging && m.chatSelection.hasRange() {
 		transcript = overlayBossSelectionHighlight(transcript, m.chatSelection, m.chatViewport.YOffset)
@@ -736,7 +752,7 @@ func (m Model) renderChat(layout bossLayout) string {
 		parts = append(parts, slashBlock)
 	}
 	if !m.embedded {
-		hint := "Enter sends | Alt+Enter newline | Alt+C copy input | Ctrl+R refresh | Alt+Up exits"
+		hint := "Enter sends | Alt+Enter newline | Alt+C copy/select | Ctrl+R refresh | Alt+Up exits"
 		if m.bossSlashActive() {
 			hint = "Enter runs command | Tab complete | Shift+Tab previous | Alt+Enter newline"
 		}

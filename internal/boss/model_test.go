@@ -267,7 +267,7 @@ func TestModelAltEnterInsertsNewline(t *testing.T) {
 	}
 }
 
-func TestModelAltCCopiesFullMultilineInput(t *testing.T) {
+func TestModelAltCOpensDialogAndCopiesFullMultilineInput(t *testing.T) {
 	var copied string
 	previousWriter := clipboardTextWriter
 	clipboardTextWriter = func(text string) error {
@@ -285,16 +285,56 @@ func TestModelAltCCopiesFullMultilineInput(t *testing.T) {
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}, Alt: true})
 	got := updated.(Model)
 	if cmd != nil {
-		t.Fatalf("alt+c copy should not queue a command")
+		t.Fatalf("alt+c dialog should not queue a command")
+	}
+	if got.inputCopyDialog == nil {
+		t.Fatalf("alt+c should open the input copy dialog")
+	}
+	if copied != "" {
+		t.Fatalf("alt+c should not copy before a dialog choice, copied %q", copied)
+	}
+
+	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("copy all should not queue a command")
 	}
 	if copied != m.input.Value() {
 		t.Fatalf("copied = %q, want full boss input %q", copied, m.input.Value())
+	}
+	if got.inputCopyDialog != nil {
+		t.Fatalf("copy dialog should close after choosing copy all")
 	}
 	if got.input.Value() != m.input.Value() {
 		t.Fatalf("input changed to %q, want %q", got.input.Value(), m.input.Value())
 	}
 	if got.status != "Copied full boss chat input to clipboard" {
 		t.Fatalf("status = %q, want copy confirmation", got.status)
+	}
+}
+
+func TestModelAltCDialogCanStartInputSelection(t *testing.T) {
+	m := New(context.Background(), nil)
+	m.input.SetHeight(3)
+	m.input.SetValue("line 1\nline 2")
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}, Alt: true})
+	got := updated.(Model)
+	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyTab})
+	got = updated.(Model)
+	updated, cmd := got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("starting selection should not queue a command")
+	}
+	if got.inputCopyDialog != nil {
+		t.Fatalf("copy dialog should close after choosing selection")
+	}
+	if got.inputSelection == nil {
+		t.Fatalf("selection mode should be active")
+	}
+	if got.status != "Selection mode: move to the start and press Space" {
+		t.Fatalf("status = %q, want selection instructions", got.status)
 	}
 }
 

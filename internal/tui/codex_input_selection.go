@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 
+	"lcroom/internal/inputcomposer"
+
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -10,13 +12,8 @@ import (
 )
 
 // codexInputSelectionState tracks keyboard-driven text selection state for the
-// codex composer (Alt+S mode).
-type codexInputSelectionState struct {
-	AnchorSet  bool
-	AnchorLine int
-	AnchorCol  int
-	ViewportY  int
-}
+// codex composer.
+type codexInputSelectionState = inputcomposer.SelectionState
 
 // Prompt width used by the codex textarea ("> " or "  ").
 const codexComposerPromptWidth = 2
@@ -32,12 +29,10 @@ var (
 	codexSelCursorRangeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("222")).Bold(true).Inline(true)
 )
 
-// --- Keyboard selection (Alt+S) ---
+// --- Keyboard selection ---
 
 func (m *Model) startCodexInputSelection() {
-	m.codexInputSelection = &codexInputSelectionState{
-		ViewportY: textSelectionInitialViewport(m.codexInput),
-	}
+	m.codexInputSelection = inputcomposer.NewSelectionState(m.codexInput)
 	m.status = "Selection mode: move to the start and press Space"
 }
 
@@ -47,6 +42,18 @@ func (m *Model) stopCodexInputSelection() {
 
 func (m Model) codexInputSelectionActive() bool {
 	return m.codexInputSelection != nil
+}
+
+func (m *Model) openCodexInputCopyDialog() {
+	m.codexInputCopyDialog = inputcomposer.NewCopyDialogState()
+	m.status = "Choose how to copy the composer input"
+}
+
+func (m *Model) closeCodexInputCopyDialog(status string) {
+	m.codexInputCopyDialog = nil
+	if strings.TrimSpace(status) != "" {
+		m.status = status
+	}
 }
 
 func (m *Model) copyCodexInputToClipboard() tea.Cmd {
@@ -63,6 +70,48 @@ func (m *Model) copyCodexInputToClipboard() tea.Cmd {
 	return nil
 }
 
+func (m Model) updateCodexInputCopyDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.codexInputCopyDialog == nil {
+		return m, nil
+	}
+	switch msg.String() {
+	case "esc", "ctrl+c":
+		m.closeCodexInputCopyDialog("Input copy canceled")
+		return m, nil
+	case "tab", "down", "right", "j":
+		m.codexInputCopyDialog.Move(1)
+		return m, nil
+	case "shift+tab", "up", "left", "k":
+		m.codexInputCopyDialog.Move(-1)
+		return m, nil
+	case "a":
+		m.codexInputCopyDialog.Selected = inputcomposer.CopyChoiceAll
+		return m.applyCodexInputCopyChoice()
+	case "s":
+		m.codexInputCopyDialog.Selected = inputcomposer.CopyChoiceSelection
+		return m.applyCodexInputCopyChoice()
+	case "enter":
+		return m.applyCodexInputCopyChoice()
+	default:
+		return m, nil
+	}
+}
+
+func (m Model) applyCodexInputCopyChoice() (tea.Model, tea.Cmd) {
+	if m.codexInputCopyDialog == nil {
+		return m, nil
+	}
+	choice := m.codexInputCopyDialog.Selected
+	m.codexInputCopyDialog = nil
+	switch choice {
+	case inputcomposer.CopyChoiceSelection:
+		m.startCodexInputSelection()
+		return m, nil
+	default:
+		return m, m.copyCodexInputToClipboard()
+	}
+}
+
 func (m Model) updateCodexInputSelectionMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	sel := m.codexInputSelection
 	if sel == nil {
@@ -76,12 +125,13 @@ func (m Model) updateCodexInputSelectionMode(msg tea.KeyMsg) (tea.Model, tea.Cmd
 		return m, nil
 	case "alt+c":
 		m.stopCodexInputSelection()
-		return m, m.copyCodexInputToClipboard()
+		m.openCodexInputCopyDialog()
+		return m, nil
 	case " ":
 		return m, m.toggleCodexInputSelectionMark()
 	}
 
-	if !textSelectionNavigationKey(msg.String()) {
+	if !inputcomposer.NavigationKey(msg.String()) {
 		return m, nil
 	}
 
@@ -91,7 +141,7 @@ func (m Model) updateCodexInputSelectionMode(msg tea.KeyMsg) (tea.Model, tea.Cmd
 
 	var cmd tea.Cmd
 	m.codexInput, cmd = m.codexInput.Update(msg)
-	sel.ViewportY = textSelectionViewportForCursor(m.codexInput, sel.ViewportY)
+	sel.ViewportY = inputcomposer.SelectionViewportForCursor(m.codexInput, sel.ViewportY)
 	return m, cmd
 }
 
@@ -101,7 +151,7 @@ func (m *Model) toggleCodexInputSelectionMark() tea.Cmd {
 		return nil
 	}
 
-	line, col := textEditorCursor(m.codexInput)
+	line, col := inputcomposer.EditorCursor(m.codexInput)
 
 	if !sel.AnchorSet {
 		sel.AnchorSet = true
@@ -111,7 +161,7 @@ func (m *Model) toggleCodexInputSelectionMark() tea.Cmd {
 		return nil
 	}
 
-	text := cleanCopiedText(textSelectedContent(m.codexInput, sel.AnchorLine, sel.AnchorCol, line, col))
+	text := inputcomposer.CleanCopiedText(inputcomposer.SelectedContent(m.codexInput, sel.AnchorLine, sel.AnchorCol, line, col))
 	if text == "" {
 		m.status = "Selection is empty. Move the cursor and press Space again."
 		return nil
@@ -293,7 +343,7 @@ func isInMouseSelection(row, col, startRow, startCol, endRow, endCol int) bool {
 }
 
 // renderCodexComposerWithSelection renders the composer with a per-character
-// highlight for the keyboard-driven selection (Alt+S mode).
+// highlight for the keyboard-driven selection.
 func renderCodexComposerWithSelection(input textarea.Model, sel *codexInputSelectionState, width int) string {
 	if width <= 0 {
 		width = input.Width() + 4
@@ -301,86 +351,17 @@ func renderCodexComposerWithSelection(input textarea.Model, sel *codexInputSelec
 	innerWidth := max(20, width-4)
 	input.SetWidth(innerWidth)
 
-	editorView := renderCodexInputSelectionEditor(input, sel)
+	editorView := inputcomposer.RenderSelectionEditor(input, sel, inputcomposer.SelectionStyles{
+		Line:        codexSelLineStyle,
+		CursorLine:  codexSelCursorLineStyle,
+		Range:       codexSelRangeStyle,
+		Cursor:      codexSelCursorStyle,
+		CursorRange: codexSelCursorRangeStyle,
+	})
 	return lipgloss.NewStyle().
 		Width(width).
 		Padding(0, 1).
 		Background(codexComposerShellColor).
 		Foreground(lipgloss.Color("252")).
 		Render(editorView)
-}
-
-func renderCodexInputSelectionEditor(input textarea.Model, sel *codexInputSelectionState) string {
-	displayLines := textSelectionDisplayLines(input)
-	height := max(1, input.Height())
-	width := max(1, input.Width())
-	offset := textSelectionViewportForCursor(input, sel.ViewportY)
-	maxOffset := max(0, len(displayLines)-height)
-	if offset > maxOffset {
-		offset = maxOffset
-	}
-
-	cursorRow, cursorCol := textSelectionDisplayCursor(input)
-	startLine, startCol, endLine, endCol, hasSelection := textSelectionRange(input, sel.AnchorSet, sel.AnchorLine, sel.AnchorCol)
-
-	lines := make([]string, 0, height)
-	for row := 0; row < height; row++ {
-		index := offset + row
-		if index >= len(displayLines) {
-			lines = append(lines, codexSelLineStyle.Render(strings.Repeat(" ", width)))
-			continue
-		}
-		line := displayLines[index]
-		lines = append(lines, renderCodexInputSelectionLine(line, width, index == cursorRow, cursorCol, startLine, startCol, endLine, endCol, hasSelection))
-	}
-	return strings.Join(lines, "\n")
-}
-
-func renderCodexInputSelectionLine(
-	line textSelectionDisplayLine,
-	width int,
-	cursorVisible bool,
-	cursorCol int,
-	startLine int,
-	startCol int,
-	endLine int,
-	endCol int,
-	hasSelection bool,
-) string {
-	baseStyle := codexSelLineStyle
-	if cursorVisible {
-		baseStyle = codexSelCursorLineStyle
-	}
-	runes := []rune(line.Text)
-	selStart, selEnd, ok := textSelectionRangeForDisplayLine(line, startLine, startCol, endLine, endCol, hasSelection)
-
-	var out strings.Builder
-	lineWidth := 0
-	for index, r := range runes {
-		style := baseStyle
-		if ok && index >= selStart && index < selEnd {
-			style = codexSelRangeStyle
-		}
-		if cursorVisible && index == cursorCol {
-			if ok && index >= selStart && index < selEnd {
-				style = codexSelCursorRangeStyle
-			} else {
-				style = codexSelCursorStyle
-			}
-		}
-		out.WriteString(style.Render(string(r)))
-		lineWidth += rw.RuneWidth(r)
-	}
-	if cursorVisible && cursorCol == len(runes) {
-		style := codexSelCursorStyle
-		if ok && cursorCol >= selStart && cursorCol < selEnd {
-			style = codexSelCursorRangeStyle
-		}
-		out.WriteString(style.Render(" "))
-		lineWidth++
-	}
-	if lineWidth < width {
-		out.WriteString(baseStyle.Render(strings.Repeat(" ", width-lineWidth)))
-	}
-	return out.String()
 }
