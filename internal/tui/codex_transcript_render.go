@@ -32,11 +32,12 @@ func (m Model) renderCodexTranscriptEntriesWithLinks(snapshot codexapp.Snapshot,
 	}
 	entries := snapshot.Entries
 	blockMode := m.codexDenseBlockMode.normalized()
+	entries = limitCodexTranscriptEntriesForLiveView(entries)
 	if snapshot.Provider.Normalized() == codexapp.ProviderOpenCode {
 		entries = collapseOpenCodeToolRuns(entries, blockMode.full())
 		entries = collapseOpenCodeLargeCodeBlocks(entries, blockMode.full())
-		entries = collapseOpenCodeMassiveEntries(entries, blockMode.full())
 	}
+	entries = collapseMassiveTranscriptEntries(entries, blockMode.full())
 	if width <= 0 {
 		width = 80
 	}
@@ -641,9 +642,9 @@ func isLikelyCodeLine(line string) bool {
 	return false
 }
 
-// collapseOpenCodeMassiveEntries caps oversized entries and detects repetitive content.
+// collapseMassiveTranscriptEntries caps oversized entries and detects repetitive content.
 // Applied after code-block collapsing as a safety net for verbose/broken model output.
-func collapseOpenCodeMassiveEntries(entries []codexapp.TranscriptEntry, expanded bool) []codexapp.TranscriptEntry {
+func collapseMassiveTranscriptEntries(entries []codexapp.TranscriptEntry, expanded bool) []codexapp.TranscriptEntry {
 	if expanded || len(entries) == 0 {
 		return entries
 	}
@@ -694,6 +695,73 @@ func collapseOpenCodeMassiveEntries(entries []codexapp.TranscriptEntry, expanded
 		}
 	}
 	return out
+}
+
+func limitCodexTranscriptEntriesForLiveView(entries []codexapp.TranscriptEntry) []codexapp.TranscriptEntry {
+	if len(entries) == 0 {
+		return entries
+	}
+
+	start := len(entries)
+	keptEntries := 0
+	keptLines := 0
+	keptBytes := 0
+	for i := len(entries) - 1; i >= 0; i-- {
+		entryLines := codexTranscriptEntryApproxLineCount(entries[i])
+		entryBytes := codexTranscriptEntryApproxByteCount(entries[i])
+		if keptEntries > 0 && (keptEntries >= codexTranscriptLiveEntryLimit ||
+			keptLines+entryLines > codexTranscriptLiveLineLimit ||
+			keptBytes+entryBytes > codexTranscriptLiveByteLimit) {
+			break
+		}
+		start = i
+		keptEntries++
+		keptLines += entryLines
+		keptBytes += entryBytes
+	}
+	if start <= 0 {
+		return entries
+	}
+
+	hidden := start
+	out := make([]codexapp.TranscriptEntry, 0, len(entries)-start+1)
+	out = append(out, codexapp.TranscriptEntry{
+		Kind: codexapp.TranscriptSystem,
+		Text: fmt.Sprintf("Older transcript hidden from live view (%d entries).", hidden),
+	})
+	out = append(out, entries[start:]...)
+	return out
+}
+
+func codexTranscriptEntryApproxLineCount(entry codexapp.TranscriptEntry) int {
+	text := entry.Text
+	if strings.TrimSpace(entry.DisplayText) != "" {
+		text = entry.DisplayText
+	}
+	lines := transcriptApproxLineCount(text)
+	if entry.GeneratedImage != nil {
+		lines += 3
+	}
+	return max(1, lines)
+}
+
+func codexTranscriptEntryApproxByteCount(entry codexapp.TranscriptEntry) int {
+	n := len(entry.Text)
+	if strings.TrimSpace(entry.DisplayText) != "" {
+		n += len(entry.DisplayText)
+	}
+	if entry.GeneratedImage != nil {
+		n += len(entry.GeneratedImage.PreviewData)
+	}
+	return n
+}
+
+func transcriptApproxLineCount(text string) int {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return 0
+	}
+	return strings.Count(text, "\n") + 1
 }
 
 // detectRepetitiveContent looks for repeated blocks of lines using a sliding window.

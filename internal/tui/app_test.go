@@ -16856,6 +16856,63 @@ func TestVisibleCodexViewUsesCachedSnapshotWhileTyping(t *testing.T) {
 	}
 }
 
+func TestRenderCodexViewDoesNotRenderTranscriptOnCacheMiss(t *testing.T) {
+	projectPath := "/tmp/demo"
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		width:               80,
+		height:              20,
+	}
+	entries := make([]codexapp.TranscriptEntry, 0, codexCacheMissEntryLimit+1)
+	for i := 0; i <= codexCacheMissEntryLimit; i++ {
+		entries = append(entries, codexapp.TranscriptEntry{
+			Kind: codexapp.TranscriptAgent,
+			Text: fmt.Sprintf("expensive transcript content %02d should not render from View", i),
+		})
+	}
+	m.storeCodexSnapshot(projectPath, codexapp.Snapshot{
+		Provider: codexapp.ProviderCodex,
+		Started:  true,
+		Entries:  entries,
+	})
+
+	rendered := ansi.Strip(m.renderCodexView())
+	if strings.Contains(rendered, "expensive transcript content") {
+		t.Fatalf("renderCodexView() should not render transcript content on cache miss: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Transcript is updating") {
+		t.Fatalf("renderCodexView() should show a small cache-miss placeholder: %q", rendered)
+	}
+}
+
+func TestRenderCodexTranscriptEntriesLimitsLiveTail(t *testing.T) {
+	entries := make([]codexapp.TranscriptEntry, 0, codexTranscriptLiveEntryLimit+24)
+	for i := 0; i < codexTranscriptLiveEntryLimit+24; i++ {
+		entries = append(entries, codexapp.TranscriptEntry{
+			Kind: codexapp.TranscriptAgent,
+			Text: fmt.Sprintf("old reply %03d", i),
+		})
+	}
+	entries = append(entries, codexapp.TranscriptEntry{
+		Kind: codexapp.TranscriptAgent,
+		Text: "latest reply survives the live-view cap",
+	})
+
+	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(codexapp.Snapshot{Entries: entries}, 80))
+	if !strings.Contains(rendered, "Older transcript hidden from live view") {
+		t.Fatalf("rendered transcript should include an omission marker: %q", rendered)
+	}
+	if strings.Contains(rendered, "old reply 000") {
+		t.Fatalf("rendered transcript should omit the oldest entries: %q", rendered)
+	}
+	if !strings.Contains(rendered, "latest reply survives the live-view cap") {
+		t.Fatalf("rendered transcript should keep the latest entry: %q", rendered)
+	}
+}
+
 func TestRenderCodexFooterPrioritizesSendCloseHideAndDefersDenseBlocks(t *testing.T) {
 	rendered := ansi.Strip((Model{}).renderCodexFooter(codexapp.Snapshot{
 		Started: true,

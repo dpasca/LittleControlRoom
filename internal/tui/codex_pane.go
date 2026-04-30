@@ -41,6 +41,12 @@ const (
 	openCodeMaxReasoningLines     = 120 // reasoning blocks get a tighter cap
 	openCodeMaxReasoningPreview   = 12  // preview lines for reasoning
 	codexDenseBlockPreviewLines   = 5
+	codexTranscriptLiveEntryLimit = 180
+	codexTranscriptLiveLineLimit  = 1600
+	codexTranscriptLiveByteLimit  = 256 * 1024
+	codexCacheMissEntryLimit      = 24
+	codexCacheMissLineLimit       = 240
+	codexCacheMissByteLimit       = 32 * 1024
 )
 
 type codexDenseBlockMode int
@@ -2010,8 +2016,10 @@ func (m Model) renderCodexView() string {
 		transcript.SetContent(rendered)
 		return true
 	}():
-	default:
+	case codexTranscriptCacheMissCanRender(snapshot):
 		transcript.SetContent(m.renderCodexTranscriptContentFromSnapshot(snapshot, transcript.Width))
+	default:
+		transcript.SetContent(renderCodexTranscriptCacheMissContent(snapshot))
 	}
 	viewOutput := transcript.View()
 	if m.codexSelection.dragging && m.codexSelection.hasRange() {
@@ -2729,6 +2737,48 @@ func (m Model) renderCodexTranscriptContentFromSnapshotWithLinks(snapshot codexa
 		return "[system] " + sanitizeCodexRenderedText(notice), nil
 	}
 	return "Type a prompt and press Enter.", nil
+}
+
+func renderCodexTranscriptCacheMissContent(snapshot codexapp.Snapshot) string {
+	if snapshot.Closed {
+		return embeddedProvider(snapshot).Label() + " session closed."
+	}
+	if len(snapshot.Entries) == 0 && strings.TrimSpace(snapshot.Transcript) == "" {
+		if notice := strings.TrimSpace(snapshot.LastSystemNotice); notice != "" {
+			return "[system] " + sanitizeCodexRenderedText(notice)
+		}
+		return "Type a prompt and press Enter."
+	}
+	return "Transcript is updating..."
+}
+
+func codexTranscriptCacheMissCanRender(snapshot codexapp.Snapshot) bool {
+	if len(snapshot.Entries) > 0 {
+		if len(snapshot.Entries) > codexCacheMissEntryLimit {
+			return false
+		}
+		lines := 0
+		bytes := 0
+		for _, entry := range snapshot.Entries {
+			bytes += codexTranscriptEntryApproxByteCount(entry)
+			if bytes > codexCacheMissByteLimit {
+				return false
+			}
+			lines += codexTranscriptEntryApproxLineCount(entry)
+			if lines > codexCacheMissLineLimit {
+				return false
+			}
+		}
+		return true
+	}
+	transcript := strings.TrimSpace(snapshot.Transcript)
+	if transcript == "" {
+		return true
+	}
+	if len(transcript) > codexCacheMissByteLimit {
+		return false
+	}
+	return transcriptApproxLineCount(transcript) <= codexCacheMissLineLimit
 }
 
 type codexArtifactOpenTarget struct {
