@@ -4434,14 +4434,19 @@ func TestProjectAssessmentTextUsesFallbackStates(t *testing.T) {
 
 func TestProjectAssessmentTextPrefersCurrentSummaryDuringRefresh(t *testing.T) {
 	project := model.ProjectSummary{
+		PresentOnDisk:                            true,
 		LatestSessionClassification:              model.ClassificationRunning,
 		LatestSessionClassificationStage:         model.ClassificationStageWaitingForModel,
+		LatestSessionClassificationType:          model.SessionCategoryNeedsFollowUp,
 		LatestSessionSummary:                     "Current session summary.",
 		LatestCompletedSessionClassificationType: model.SessionCategoryCompleted,
 		LatestCompletedSessionSummary:            "Older session summary.",
 	}
 	if got := projectAssessmentText(project); got != "Current session summary." {
 		t.Fatalf("projectAssessmentText(refreshing with current summary) = %q, want current session summary", got)
+	}
+	if got := projectListStatus(project); got != "followup" {
+		t.Fatalf("projectListStatus(refreshing with current summary) = %q, want current assessment label", got)
 	}
 }
 
@@ -4461,6 +4466,66 @@ func TestProjectListStatusUsesLastCompletedAssessmentWhileRefreshRuns(t *testing
 	}
 	if got := projectAssessmentText(project); got != project.LatestCompletedSessionSummary {
 		t.Fatalf("projectAssessmentText(refreshing) = %q, want completed summary", got)
+	}
+}
+
+func TestProjectSummaryMsgKeepsLatestAssessmentDisplayDuringRefresh(t *testing.T) {
+	previous := model.ProjectSummary{
+		Path:                            "/tmp/demo",
+		Name:                            "demo",
+		PresentOnDisk:                   true,
+		LatestSessionID:                 "codex:ses_current",
+		LatestSessionFormat:             "modern",
+		LatestSessionClassification:     model.ClassificationCompleted,
+		LatestSessionClassificationType: model.SessionCategoryWaitingForUser,
+		LatestSessionSummary:            "Current session is waiting on review.",
+	}
+	refreshing := model.ProjectSummary{
+		Path:                                     previous.Path,
+		Name:                                     previous.Name,
+		PresentOnDisk:                            true,
+		LatestSessionID:                          previous.LatestSessionID,
+		LatestSessionFormat:                      previous.LatestSessionFormat,
+		LatestSessionClassification:              model.ClassificationRunning,
+		LatestSessionClassificationStage:         model.ClassificationStageWaitingForModel,
+		LatestCompletedSessionClassificationType: model.SessionCategoryNeedsFollowUp,
+		LatestCompletedSessionSummary:            "Older session needs follow-up.",
+	}
+	m := Model{
+		allProjects: []model.ProjectSummary{previous},
+		projects:    []model.ProjectSummary{previous},
+		sortMode:    sortByAttention,
+		visibility:  visibilityAllFolders,
+	}
+
+	updated, _ := m.Update(projectSummaryMsg{path: previous.Path, summary: refreshing, found: true})
+	got := updated.(Model)
+	project, ok := got.selectedProject()
+	if !ok {
+		t.Fatal("expected selected project after summary update")
+	}
+	if project.LatestSessionSummary != previous.LatestSessionSummary {
+		t.Fatalf("latest summary = %q, want preserved current summary", project.LatestSessionSummary)
+	}
+	if project.LatestSessionClassificationType != previous.LatestSessionClassificationType {
+		t.Fatalf("latest assessment type = %s, want preserved current assessment type", project.LatestSessionClassificationType)
+	}
+	if gotText := projectAssessmentText(project); gotText != previous.LatestSessionSummary {
+		t.Fatalf("projectAssessmentText() = %q, want preserved current summary", gotText)
+	}
+	if gotStatus := projectListStatus(project); gotStatus != "waiting" {
+		t.Fatalf("projectListStatus() = %q, want preserved current assessment label", gotStatus)
+	}
+
+	refreshing.LatestSessionClassificationStage = model.ClassificationStagePreparingSnapshot
+	updatedAgain, _ := got.Update(projectSummaryMsg{path: previous.Path, summary: refreshing, found: true})
+	gotAgain := updatedAgain.(Model)
+	projectAgain, ok := gotAgain.selectedProject()
+	if !ok {
+		t.Fatal("expected selected project after repeated summary update")
+	}
+	if projectAgain.LatestSessionSummary != previous.LatestSessionSummary {
+		t.Fatalf("repeated latest summary = %q, want preserved current summary", projectAgain.LatestSessionSummary)
 	}
 }
 

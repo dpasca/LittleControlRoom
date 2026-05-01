@@ -1191,7 +1191,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.excludeProjectPatterns = append([]string(nil), msg.excludeProjectPatterns...)
-		m.allProjects = msg.projects
+		m.allProjects = m.preserveRefreshingAssessmentDisplays(msg.projects)
 		m.orphanedWorktreesByRoot = msg.orphanedWorktreesByRoot
 		m.rebuildProjectList(selectedPath)
 		if !startupEmptyCache && (strings.TrimSpace(m.status) == "" || m.status == initialProjectsStatus || len(m.projects) == 0) {
@@ -1297,7 +1297,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.found {
 			m.loading = false
-			m.upsertProjectSummary(msg.summary)
+			m.upsertProjectSummary(m.preserveRefreshingAssessmentDisplay(msg.summary))
 			m.syncWorktreeMergeConfirmFromProjects(msg.path)
 		} else {
 			m.removeProjectSummary(msg.path)
@@ -3761,6 +3761,67 @@ func (m *Model) upsertProjectSummary(summary model.ProjectSummary) {
 		}
 	}
 	m.allProjects = append(m.allProjects, summary)
+}
+
+func (m Model) preserveRefreshingAssessmentDisplays(summaries []model.ProjectSummary) []model.ProjectSummary {
+	if len(summaries) == 0 {
+		return summaries
+	}
+	out := make([]model.ProjectSummary, len(summaries))
+	for i, summary := range summaries {
+		out[i] = m.preserveRefreshingAssessmentDisplay(summary)
+	}
+	return out
+}
+
+func (m Model) preserveRefreshingAssessmentDisplay(summary model.ProjectSummary) model.ProjectSummary {
+	previous, ok := m.projectSummaryByPathAllProjects(summary.Path)
+	if !ok {
+		return summary
+	}
+	return preserveRefreshingAssessmentDisplay(summary, previous)
+}
+
+func preserveRefreshingAssessmentDisplay(summary, previous model.ProjectSummary) model.ProjectSummary {
+	if !projectAssessmentRefreshing(summary) || !sameProjectSummaryLatestSession(summary, previous) {
+		return summary
+	}
+	if !previousAssessmentDisplayCanCarryDuringRefresh(previous) {
+		return summary
+	}
+	if strings.TrimSpace(summary.LatestSessionSummary) == "" {
+		summary.LatestSessionSummary = previous.LatestSessionSummary
+	}
+	if !assessmentCategoryHasLabel(summary.LatestSessionClassificationType) {
+		summary.LatestSessionClassificationType = previous.LatestSessionClassificationType
+	}
+	return summary
+}
+
+func previousAssessmentDisplayCanCarryDuringRefresh(project model.ProjectSummary) bool {
+	if strings.TrimSpace(project.LatestSessionSummary) == "" {
+		return false
+	}
+	return project.LatestSessionClassification == model.ClassificationCompleted || projectAssessmentRefreshing(project)
+}
+
+func sameProjectSummaryLatestSession(left, right model.ProjectSummary) bool {
+	leftPath := normalizeProjectPath(left.Path)
+	rightPath := normalizeProjectPath(right.Path)
+	if leftPath == "" || leftPath != rightPath {
+		return false
+	}
+	leftID := canonicalProjectLatestSessionID(left)
+	rightID := canonicalProjectLatestSessionID(right)
+	return leftID != "" && leftID == rightID
+}
+
+func canonicalProjectLatestSessionID(project model.ProjectSummary) string {
+	_, sessionID, rawSessionID := model.NormalizeSessionIdentity(project.LatestSessionSource, project.LatestSessionFormat, project.LatestSessionID, project.LatestRawSessionID)
+	if strings.TrimSpace(sessionID) != "" {
+		return strings.TrimSpace(sessionID)
+	}
+	return strings.TrimSpace(rawSessionID)
 }
 
 func (m *Model) removeProjectSummary(projectPath string) {
@@ -7192,6 +7253,11 @@ func assessmentStatusLabelForCategory(category model.SessionCategory, compact bo
 	}
 }
 
+func assessmentCategoryHasLabel(category model.SessionCategory) bool {
+	_, _, ok := assessmentStatusLabelForCategory(category, false)
+	return ok
+}
+
 func latestCompletedAssessmentStatusLabel(project model.ProjectSummary, compact bool) (string, model.SessionCategory, bool) {
 	if project.LatestCompletedSessionClassificationType == "" || project.LatestCompletedSessionClassificationType == model.SessionCategoryUnknown {
 		return "", model.SessionCategoryUnknown, false
@@ -7206,6 +7272,11 @@ func visibleAssessmentStatusLabel(project model.ProjectSummary) (string, model.S
 func visibleAssessmentStatusLabelAt(project model.ProjectSummary, now time.Time, stuckThreshold time.Duration) (string, model.SessionCategory, bool) {
 	if label, category, ok := assessmentStatusLabelAt(project, false, now, stuckThreshold); ok {
 		return label, category, true
+	}
+	if projectAssessmentRefreshing(project) && strings.TrimSpace(project.LatestSessionSummary) != "" {
+		if label, category, ok := assessmentStatusLabelForCategory(project.LatestSessionClassificationType, false); ok {
+			return label, category, true
+		}
 	}
 	return latestCompletedAssessmentStatusLabel(project, false)
 }
