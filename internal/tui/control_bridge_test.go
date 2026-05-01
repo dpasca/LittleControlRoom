@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	bossui "lcroom/internal/boss"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/control"
 	"lcroom/internal/model"
@@ -183,6 +184,66 @@ func TestExecuteControlEngineerSendPromptRejectsDisabledClaudeCode(t *testing.T)
 	}
 	if !strings.Contains(got.status, "Claude Code") || !strings.Contains(got.status, "disabled") {
 		t.Fatalf("status = %q, want disabled Claude Code message", got.status)
+	}
+}
+
+func TestExecuteBossControlInvocationBatchesOpenAndBossResult(t *testing.T) {
+	projectPath := "/tmp/control-boss-result"
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:       req.Provider,
+				ThreadID:       "oc-session-result",
+				Started:        true,
+				LastActivityAt: time.Now(),
+			},
+		}, nil
+	})
+	m := Model{
+		allProjects: []model.ProjectSummary{{
+			Path:          projectPath,
+			Name:          "control-boss-result",
+			PresentOnDisk: true,
+		}},
+		codexManager: manager,
+	}
+
+	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{
+		Invocation: controlInvocationForTest(t, control.EngineerSendPromptInput{
+			ProjectPath: projectPath,
+			Provider:    control.ProviderOpenCode,
+			SessionMode: control.SessionModeResumeOrNew,
+			Prompt:      "please run the next step",
+			Reveal:      false,
+		}),
+	})
+	_ = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("executeBossControlInvocation() cmd = nil, want wrapped open command")
+	}
+	msgs := collectCmdMsgs(cmd)
+	var sawOpen bool
+	var result bossui.ControlInvocationResultMsg
+	for _, msg := range msgs {
+		switch typed := msg.(type) {
+		case codexSessionOpenedMsg:
+			sawOpen = true
+		case bossui.ControlInvocationResultMsg:
+			result = typed
+		}
+	}
+	if !sawOpen {
+		t.Fatalf("wrapped command messages = %#v, want codexSessionOpenedMsg", msgs)
+	}
+	if result.Invocation.Capability != control.CapabilityEngineerSendPrompt {
+		t.Fatalf("result invocation = %#v", result.Invocation)
+	}
+	if result.Err != nil {
+		t.Fatalf("result err = %v", result.Err)
+	}
+	if !strings.Contains(result.Status, "Prompt sent to embedded OpenCode") {
+		t.Fatalf("result status = %q", result.Status)
 	}
 }
 

@@ -41,6 +41,7 @@ type Model struct {
 	chatSelection     bossTextSelection
 	messages          []ChatMessage
 	bossSlashSelected int
+	pendingControl    *ControlProposal
 
 	sessionStore  *bossSessionStore
 	sessionID     string
@@ -191,7 +192,7 @@ func newModel(ctx context.Context, svc *service.Service, embedded bool) Model {
 
 func IsMessage(msg tea.Msg) bool {
 	switch msg.(type) {
-	case StateLoadedMsg, AssistantReplyMsg, assistantStreamStartedMsg, assistantStreamMsg, TickMsg, ExitMsg, bossSessionLoadedMsg, bossSessionSavedMsg, bossSessionsListedMsg:
+	case StateLoadedMsg, AssistantReplyMsg, assistantStreamStartedMsg, assistantStreamMsg, TickMsg, ExitMsg, bossSessionLoadedMsg, bossSessionSavedMsg, bossSessionsListedMsg, ControlInvocationResultMsg:
 		return true
 	default:
 		return false
@@ -297,12 +298,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case bossSessionsListedMsg:
 		return m.applyBossSessionsListed(msg)
+	case ControlInvocationResultMsg:
+		return m.applyControlInvocationResult(msg)
 	case TickMsg:
 		m.spinnerFrame++
 		m.pruneSummaryFlashes()
 		return m, bossTickCmd()
 	case tea.KeyMsg:
 		m.chatSelection = bossTextSelection{}
+		if m.pendingControl != nil {
+			return m.updateControlConfirmation(msg)
+		}
 		if m.sessionPickerVisible {
 			return m.updateBossSessionPicker(msg)
 		}
@@ -375,6 +381,7 @@ func (m Model) applyAssistantReply(response AssistantResponse, err error, snapsh
 	}
 	var saved ChatMessage
 	if err != nil {
+		m.pendingControl = nil
 		saved = ChatMessage{
 			Role:    "assistant",
 			Content: "I could not reach my chat backend yet: " + err.Error(),
@@ -393,9 +400,17 @@ func (m Model) applyAssistantReply(response AssistantResponse, err error, snapsh
 			At:      m.now(),
 		}
 		m.messages = append(m.messages, saved)
-		if modelName := strings.TrimSpace(response.Model); modelName != "" {
+		if response.ControlInvocation != nil {
+			m.pendingControl = &ControlProposal{
+				Invocation: copyControlInvocation(*response.ControlInvocation),
+				Preview:    content,
+			}
+			m.status = "Confirm engineer prompt with Enter, or Esc to cancel"
+		} else if modelName := strings.TrimSpace(response.Model); modelName != "" {
+			m.pendingControl = nil
 			m.status = "Boss chat via " + modelName
 		} else {
+			m.pendingControl = nil
 			m.status = m.assistant.Label()
 		}
 	}
@@ -755,6 +770,9 @@ func (m Model) renderChat(layout bossLayout) string {
 		hint := "Enter sends | Alt+Enter newline | Alt+C copy/select | Ctrl+R refresh | Alt+Up exits"
 		if m.bossSlashActive() {
 			hint = "Enter runs command | Tab complete | Shift+Tab previous | Alt+Enter newline"
+		}
+		if m.pendingControl != nil {
+			hint = "Enter confirms engineer prompt | Esc cancels | Alt+Up exits"
 		}
 		if m.sending {
 			hint = "Boss chat is thinking " + spinnerDots(m.spinnerFrame)

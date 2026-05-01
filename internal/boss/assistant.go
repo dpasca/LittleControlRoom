@@ -9,6 +9,7 @@ import (
 
 	"lcroom/internal/brand"
 	"lcroom/internal/config"
+	"lcroom/internal/control"
 	"lcroom/internal/llm"
 	"lcroom/internal/model"
 	"lcroom/internal/service"
@@ -30,9 +31,10 @@ type AssistantRequest struct {
 }
 
 type AssistantResponse struct {
-	Content string
-	Model   string
-	Usage   model.LLMUsage
+	Content           string
+	Model             string
+	Usage             model.LLMUsage
+	ControlInvocation *control.Invocation
 }
 
 type AssistantStreamEventKind string
@@ -240,6 +242,18 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 				Usage:   totalUsage,
 			}, nil
 		}
+		if normalizeBossActionKind(action.Kind) == bossActionProposeControl {
+			inv, content, err := controlProposalFromBossAction(action)
+			if err != nil {
+				return AssistantResponse{}, err
+			}
+			return AssistantResponse{
+				Content:           content,
+				Model:             firstNonEmpty(usedModel, modelName),
+				Usage:             totalUsage,
+				ControlInvocation: &inv,
+			}, nil
+		}
 
 		result, err := a.query.Execute(ctx, action, req.Snapshot, req.View)
 		if err != nil {
@@ -305,6 +319,20 @@ func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantReque
 				Content: strings.TrimSpace(final.Content),
 				Model:   firstNonEmpty(final.Model, usedModel, modelName),
 				Usage:   totalUsage,
+			}, nil
+		}
+		if normalizeBossActionKind(action.Kind) == bossActionProposeControl {
+			inv, content, err := controlProposalFromBossAction(action)
+			if err != nil {
+				return AssistantResponse{}, err
+			}
+			emitToolCall(emit, describeBossAction(action), "ready")
+			emitAssistantDelta(emit, content)
+			return AssistantResponse{
+				Content:           content,
+				Model:             firstNonEmpty(usedModel, modelName),
+				Usage:             totalUsage,
+				ControlInvocation: &inv,
 			}, nil
 		}
 
@@ -378,7 +406,7 @@ func (a *Assistant) planAction(ctx context.Context, req AssistantRequest, toolRe
 	if err := validateBossAction(action); err != nil {
 		return response, bossAction{}, err
 	}
-	if forceAnswer && action.Kind != bossActionAnswer {
+	if forceAnswer && action.Kind != bossActionAnswer && action.Kind != bossActionProposeControl {
 		action = bossAction{
 			Kind:   bossActionAnswer,
 			Answer: synthesizeToolLoopFallback(toolResults),
@@ -446,7 +474,8 @@ func bossAssistantSystemPrompt() string {
 		"Use reference metadata internally for disambiguation and blockers; do not recite it in the answer.",
 		"Prefer verbs from the evidence: extracted, fixed, blocked, waiting, testing, validating. Do not pad with status adjectives.",
 		"Use confident wording when the evidence is direct; reserve hedging for genuinely uncertain mappings or stale data.",
-		"You cannot change projects or panels yet. State the next useful check directly when follow-up work is needed.",
+		"You can propose sending a prompt to an engineer session through a structured control action, but the user must confirm before anything is sent.",
+		"State the next useful check directly when follow-up work is needed.",
 	}, "\n")
 }
 
@@ -455,7 +484,7 @@ const bossAssistantMaxToolRounds = 4
 func bossActionPlannerSystemPrompt() string {
 	return strings.Join([]string{
 		"You are the unnamed Boss Chat helper inside Little Control Room; the user is the boss.",
-		"You decide whether to answer now or request exactly one read-only query before answering.",
+		"You decide whether to answer now, request exactly one read-only query, or propose exactly one control action for user confirmation.",
 		"Codex, OpenCode, and Claude Code work-session transcripts are called engineer sessions.",
 		"Your own prior messages are Boss Chat messages. Engineer-session messages are separate and may need engineer transcript lookup.",
 		"Linked worktrees under the same worktree root are part of the same repo effort; treat their recent work as relevant to repo-level status.",
@@ -463,6 +492,11 @@ func bossActionPlannerSystemPrompt() string {
 		"Act like a high-level extension of the active engineer sessions.",
 		"Use queries when the user asks about a concrete project, TODOs, assessment status, current TUI state, codenames, aliases, concepts, or anything that requires more than the compact brief.",
 		"Available read-only query kinds: list_projects, project_detail, session_classifications, todo_report, current_tui, assessment_queue, search_context, search_boss_sessions, context_command.",
+		"Available control action kind: propose_control with control_capability=\"engineer.send_prompt\".",
+		"Use propose_control only when the user asks Boss Chat to delegate work to an engineer session. Do not use it for ordinary status, explanation, recall, or planning questions.",
+		"Before propose_control, resolve ambiguous targets with read-only queries or ask the user to name the project. Do not infer a project from hidden UI cursor state.",
+		"For propose_control, set provider to auto unless the user explicitly names Codex, OpenCode, or Claude Code. Set session_mode to new only when the user asks for a fresh/new session; otherwise use resume_or_new. Set reveal true only when the user asks to show/open the session.",
+		"For propose_control, the prompt field is the exact instruction to send to the engineer session. Keep it actionable and include only the relevant project work request.",
 		"Use context_command for command-shaped context lookup: ctx search engineer, ctx show, ctx recent engineer, or ctx search boss.",
 		"Use ctx search engineer when the user asks to recall, quote, verify, or inspect what an engineer session said. Use ctx show on the returned handle before quoting or correcting exact details.",
 		"Use ctx search boss only when the user asks to recall, search, or quote earlier Boss Chat conversations.",
@@ -476,7 +510,7 @@ func bossActionPlannerSystemPrompt() string {
 		"For project-specific queries, use project_path when a path is available or project_name when the user gives an exact project name.",
 		"Do not infer a project from hidden UI cursor state; if the target is ambiguous, ask the user to name the project.",
 		"Do not invent facts. After query results are provided, answer from those results and the app-state brief.",
-		"Never claim you changed files, projects, TODOs, snoozes, panels, or sessions; these tools are report-only.",
+		"Never claim you changed files, projects, TODOs, snoozes, panels, or sessions. Read-only query tools are report-only; control actions are proposals that need user confirmation before execution.",
 		"Final answers should sound like a concise coworker update: turn tool output into judgment instead of mirroring its bullet structure, and avoid capability pitches or optional menus.",
 		"When answering from project_detail or search_context, use name/path/status metadata to choose the target, then answer the operational substance rather than reciting the lookup.",
 		"Treat codenames and aliases as shared coworker context; for status questions, do not explain what the codename maps to unless the user asks for the definition.",
@@ -519,9 +553,9 @@ func bossActionPlannerUserText(req AssistantRequest, toolResults []bossToolResul
 		}
 	}
 	if forceAnswer {
-		b.WriteString("\nYou must choose kind=\"answer\" now. Use the gathered data; do not request more queries.\n")
+		b.WriteString("\nYou must choose kind=\"answer\" or kind=\"propose_control\" now. Use the gathered data; do not request more read-only queries.\n")
 	} else {
-		b.WriteString("\nChoose kind=\"answer\" if you have enough data, otherwise choose one read-only query kind.\n")
+		b.WriteString("\nChoose kind=\"answer\" if you have enough data, choose kind=\"propose_control\" if the user asked to delegate work to an engineer session and the target is clear, otherwise choose one read-only query kind.\n")
 	}
 	return strings.TrimSpace(b.String())
 }
@@ -600,6 +634,7 @@ func bossActionSchema() map[string]any {
 					bossActionSearchContext,
 					bossActionSearchBossSessions,
 					bossActionContextCommand,
+					bossActionProposeControl,
 				},
 			},
 			"answer": map[string]any{
@@ -631,6 +666,33 @@ func bossActionSchema() map[string]any {
 				"type":        "string",
 				"description": "Exact session ID for assessment queries, or empty.",
 			},
+			"control_capability": map[string]any{
+				"type":        "string",
+				"enum":        []string{"", string(control.CapabilityEngineerSendPrompt)},
+				"description": "For kind=propose_control, the control capability to propose. Otherwise empty.",
+			},
+			"request_id": map[string]any{
+				"type":        "string",
+				"description": "Optional stable idempotency key for kind=propose_control; otherwise empty.",
+			},
+			"engineer_provider": map[string]any{
+				"type":        "string",
+				"enum":        []string{"", string(control.ProviderAuto), string(control.ProviderCodex), string(control.ProviderOpenCode), string(control.ProviderClaudeCode)},
+				"description": "For engineer.send_prompt proposals: auto, codex, opencode, claude_code. Empty is treated as auto.",
+			},
+			"session_mode": map[string]any{
+				"type":        "string",
+				"enum":        []string{"", string(control.SessionModeResumeOrNew), string(control.SessionModeNew)},
+				"description": "For engineer.send_prompt proposals: resume_or_new unless the user explicitly asks for a new session.",
+			},
+			"prompt": map[string]any{
+				"type":        "string",
+				"description": "For engineer.send_prompt proposals, the exact prompt to send to the engineer session. Otherwise empty.",
+			},
+			"reveal": map[string]any{
+				"type":        "boolean",
+				"description": "For engineer.send_prompt proposals, whether to reveal the engineer session after sending.",
+			},
 			"include_historical": map[string]any{
 				"type":        "boolean",
 				"description": "Whether to include out-of-scope/historical projects.",
@@ -655,6 +717,12 @@ func bossActionSchema() map[string]any {
 			"project_path",
 			"project_name",
 			"session_id",
+			"control_capability",
+			"request_id",
+			"engineer_provider",
+			"session_mode",
+			"prompt",
+			"reveal",
 			"include_historical",
 			"limit",
 			"reason",
@@ -674,6 +742,19 @@ func normalizeBossAction(action *bossAction) {
 	action.ProjectPath = strings.TrimSpace(action.ProjectPath)
 	action.ProjectName = strings.TrimSpace(action.ProjectName)
 	action.SessionID = strings.TrimSpace(action.SessionID)
+	action.ControlCapability = strings.TrimSpace(action.ControlCapability)
+	action.RequestID = strings.TrimSpace(action.RequestID)
+	if provider := control.NormalizeProvider(action.EngineerProvider); provider != "" {
+		action.EngineerProvider = string(provider)
+	} else {
+		action.EngineerProvider = strings.TrimSpace(action.EngineerProvider)
+	}
+	if mode := control.NormalizeSessionMode(action.SessionMode); mode != "" {
+		action.SessionMode = string(mode)
+	} else {
+		action.SessionMode = strings.TrimSpace(action.SessionMode)
+	}
+	action.Prompt = strings.TrimSpace(action.Prompt)
 	action.Reason = strings.TrimSpace(action.Reason)
 }
 
@@ -683,6 +764,9 @@ func validateBossAction(action bossAction) error {
 		return nil
 	case bossActionListProjects, bossActionProjectDetail, bossActionSessionClassifications, bossActionTodoReport, bossActionCurrentTUI, bossActionAssessmentQueue, bossActionSearchContext, bossActionSearchBossSessions, bossActionContextCommand:
 		return nil
+	case bossActionProposeControl:
+		_, _, err := controlProposalFromBossAction(action)
+		return err
 	default:
 		return fmt.Errorf("boss chat returned unsupported action kind %q", action.Kind)
 	}
@@ -778,6 +862,10 @@ func describeBossAction(action bossAction) string {
 	case bossActionContextCommand:
 		if command := strings.TrimSpace(action.Command); command != "" {
 			return kind + " " + clipText(command, 120)
+		}
+	case bossActionProposeControl:
+		if capability := strings.TrimSpace(action.ControlCapability); capability != "" {
+			return kind + " " + capability
 		}
 	case bossActionSessionClassifications, bossActionTodoReport:
 		target := firstNonEmpty(action.ProjectName, action.ProjectPath, action.SessionID, action.Target)

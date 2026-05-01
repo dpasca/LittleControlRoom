@@ -962,6 +962,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.closeBossMode("Boss mode closed")
 		return m, nil
 	}
+	if msg, ok := msg.(bossui.ControlInvocationConfirmedMsg); ok {
+		return m.executeBossControlInvocation(msg)
+	}
 	if m.bossMode && bossui.IsMessage(msg) {
 		return m.updateBossModeMessage(msg)
 	}

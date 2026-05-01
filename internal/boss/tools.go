@@ -26,6 +26,7 @@ const (
 	bossActionSearchContext          = "search_context"
 	bossActionSearchBossSessions     = "search_boss_sessions"
 	bossActionContextCommand         = "context_command"
+	bossActionProposeControl         = "propose_control"
 
 	bossToolResultLimit = 8000
 )
@@ -39,6 +40,12 @@ type bossAction struct {
 	ProjectPath       string `json:"project_path"`
 	ProjectName       string `json:"project_name"`
 	SessionID         string `json:"session_id"`
+	ControlCapability string `json:"control_capability"`
+	RequestID         string `json:"request_id"`
+	EngineerProvider  string `json:"engineer_provider"`
+	SessionMode       string `json:"session_mode"`
+	Prompt            string `json:"prompt"`
+	Reveal            bool   `json:"reveal"`
 	IncludeHistorical bool   `json:"include_historical"`
 	Limit             int    `json:"limit"`
 	Reason            string `json:"reason"`

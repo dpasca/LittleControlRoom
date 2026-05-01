@@ -7,12 +7,28 @@ import (
 	"path/filepath"
 	"strings"
 
+	bossui "lcroom/internal/boss"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/control"
 	"lcroom/internal/model"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+func (m Model) executeBossControlInvocation(msg bossui.ControlInvocationConfirmedMsg) (tea.Model, tea.Cmd) {
+	inv, err := control.ValidateInvocation(msg.Invocation)
+	if err != nil {
+		status := "Control request invalid: " + err.Error()
+		m.status = status
+		return m, bossControlResultCmd(msg.Invocation, status, err)
+	}
+	updated, cmd := m.executeControlInvocation(inv)
+	m = normalizeUpdateModel(updated)
+	if cmd == nil {
+		return m, bossControlResultCmd(inv, m.status, nil)
+	}
+	return m, bossControlExecutionCmd(inv, cmd)
+}
 
 func (m Model) executeControlInvocation(inv control.Invocation) (tea.Model, tea.Cmd) {
 	normalized, err := control.ValidateInvocation(inv)
@@ -33,6 +49,48 @@ func (m Model) executeControlInvocation(inv control.Invocation) (tea.Model, tea.
 		m.status = "Control request unsupported: " + string(normalized.Capability)
 		return m, nil
 	}
+}
+
+func bossControlExecutionCmd(inv control.Invocation, cmd tea.Cmd) tea.Cmd {
+	return func() tea.Msg {
+		msg := cmd()
+		status := "Control request sent to the engineer session."
+		var err error
+		if opened, ok := msg.(codexSessionOpenedMsg); ok {
+			status = strings.TrimSpace(opened.status)
+			err = opened.err
+		}
+		result := bossui.ControlInvocationResultMsg{
+			Invocation: copyControlInvocationForBoss(inv),
+			Status:     status,
+			Err:        err,
+		}
+		if msg == nil {
+			return result
+		}
+		return tea.BatchMsg{
+			func() tea.Msg { return msg },
+			func() tea.Msg { return result },
+		}
+	}
+}
+
+func bossControlResultCmd(inv control.Invocation, status string, err error) tea.Cmd {
+	return func() tea.Msg {
+		return bossui.ControlInvocationResultMsg{
+			Invocation: copyControlInvocationForBoss(inv),
+			Status:     strings.TrimSpace(status),
+			Err:        err,
+		}
+	}
+}
+
+func copyControlInvocationForBoss(inv control.Invocation) control.Invocation {
+	out := inv
+	if inv.Args != nil {
+		out.Args = append([]byte(nil), inv.Args...)
+	}
+	return out
 }
 
 func (m Model) executeEngineerSendPromptControl(input control.EngineerSendPromptInput) (tea.Model, tea.Cmd) {
