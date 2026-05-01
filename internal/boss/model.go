@@ -338,7 +338,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.openInputCopyDialog()
 			return m, nil
 		case "alt+s":
-			m.status = "Use Alt+C to copy or select input"
+			m.status = "Use Alt+C to copy input or output"
 			return m, nil
 		case "ctrl+r":
 			m.status = "Refreshing project state..."
@@ -780,7 +780,7 @@ func (m Model) renderChat(layout bossLayout) string {
 		parts = append(parts, slashBlock)
 	}
 	if !m.embedded {
-		hint := "Enter sends | Alt+Enter newline | Alt+C copy/select | Ctrl+R refresh | Alt+Up exits"
+		hint := "Enter sends | Alt+Enter newline | Alt+C copy menu | Ctrl+R refresh | Alt+Up exits"
 		if m.bossSlashActive() {
 			hint = "Enter runs command | Tab complete | Shift+Tab previous | Alt+Enter newline"
 		}

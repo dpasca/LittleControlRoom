@@ -96,7 +96,7 @@ func (m Model) renderBossModeFooter(width int) string {
 		footerPrimaryAction("Enter", "send"),
 		footerNavAction("Alt+Enter", "newline"),
 		footerNavAction("Alt+1..8", "jump"),
-		footerLowAction("Alt+C", "copy/select"),
+		footerLowAction("Alt+C", "copy menu"),
 		footerNavAction("Ctrl+R", "refresh"),
 		footerHideAction("Alt+Up", "hide"),
 	}
@@ -106,7 +106,7 @@ func (m Model) renderBossModeFooter(width int) string {
 			footerNavAction("Tab", "complete"),
 			footerNavAction("Shift+Tab", "previous"),
 			footerNavAction("Alt+Enter", "newline"),
-			footerLowAction("Alt+C", "copy/select"),
+			footerLowAction("Alt+C", "copy menu"),
 			footerHideAction("Alt+Up", "hide"),
 		}
 	}

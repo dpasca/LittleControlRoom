@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 var (
@@ -21,7 +22,7 @@ var (
 
 func (m *Model) openInputCopyDialog() {
 	m.inputCopyDialog = inputcomposer.NewCopyDialogState()
-	m.status = "Choose how to copy the boss chat input"
+	m.status = "Choose what to copy"
 }
 
 func (m *Model) closeInputCopyDialog(status string) {
@@ -60,6 +61,9 @@ func (m Model) updateInputCopyDialog(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "s":
 		m.inputCopyDialog.Selected = inputcomposer.CopyChoiceSelection
 		return m.applyInputCopyChoice()
+	case "o":
+		m.inputCopyDialog.Selected = inputcomposer.CopyChoiceVisibleOutput
+		return m.applyInputCopyChoice()
 	case "enter":
 		return m.applyInputCopyChoice()
 	default:
@@ -78,9 +82,57 @@ func (m Model) applyInputCopyChoice() (tea.Model, tea.Cmd) {
 		m.startInputSelection()
 		m.syncLayout(false)
 		return m, nil
+	case inputcomposer.CopyChoiceVisibleOutput:
+		return m.copyVisibleOutputToClipboard()
 	default:
 		return m.copyInputToClipboard()
 	}
+}
+
+func (m Model) copyVisibleOutputToClipboard() (tea.Model, tea.Cmd) {
+	text := visibleBossOutputCopyText(m.chatViewport.View())
+	if text == "" {
+		m.status = "No visible output to copy"
+		return m, nil
+	}
+	if err := clipboardTextWriter(text); err != nil {
+		m.status = "Boss chat output copy failed: " + err.Error()
+		return m, nil
+	}
+	m.status = "Copied visible output to clipboard"
+	return m, nil
+}
+
+func visibleBossOutputCopyText(view string) string {
+	return trimBlankBossCopyLines(trimRightBossCopyLines(ansi.Strip(view)))
+}
+
+func trimRightBossCopyLines(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, " \t")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func trimBlankBossCopyLines(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	lines := strings.Split(text, "\n")
+	start := 0
+	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	end := len(lines)
+	for end > start && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
+	if start >= end {
+		return ""
+	}
+	return strings.Join(lines[start:end], "\n")
 }
 
 func (m Model) updateInputSelection(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -174,7 +226,7 @@ func (m Model) renderInputCopyDialog(bodyW int) string {
 	panelInnerW := maxInt(28, panelW-4)
 	content := m.renderInputCopyDialogContent(panelInnerW)
 	panelH := maxInt(8, countBlockLines(content)+4)
-	return m.renderRawPanel("Copy Input", content, panelW, panelH)
+	return m.renderRawPanel("Copy", content, panelW, panelH)
 }
 
 func (m Model) renderInputCopyDialogContent(width int) string {

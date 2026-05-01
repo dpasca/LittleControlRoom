@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	rw "github.com/mattn/go-runewidth"
 )
 
@@ -46,7 +47,7 @@ func (m Model) codexInputSelectionActive() bool {
 
 func (m *Model) openCodexInputCopyDialog() {
 	m.codexInputCopyDialog = inputcomposer.NewCopyDialogState()
-	m.status = "Choose how to copy the composer input"
+	m.status = "Choose what to copy"
 }
 
 func (m *Model) closeCodexInputCopyDialog(status string) {
@@ -57,7 +58,7 @@ func (m *Model) closeCodexInputCopyDialog(status string) {
 }
 
 func (m *Model) copyCodexInputToClipboard() tea.Cmd {
-	text := m.codexInput.Value()
+	text := m.codexInputCopyText()
 	if text == "" {
 		m.status = "Composer input is empty"
 		return nil
@@ -68,6 +69,67 @@ func (m *Model) copyCodexInputToClipboard() tea.Cmd {
 	}
 	m.status = "Copied full composer input to clipboard"
 	return nil
+}
+
+func (m *Model) codexInputCopyText() string {
+	text := m.codexInput.Value()
+	if text == "" {
+		return ""
+	}
+	return expandCodexPastedTextTokensPreservingSpace(text, m.currentCodexPastedTexts())
+}
+
+func (m *Model) expandCodexInputCopiedText(text string) string {
+	if text == "" {
+		return ""
+	}
+	return expandCodexPastedTextTokensPreservingSpace(text, m.currentCodexPastedTexts())
+}
+
+func (m *Model) copyVisibleCodexOutputToClipboard() tea.Cmd {
+	text := visibleCodexOutputCopyText(m.codexViewport.View())
+	if text == "" {
+		m.status = "No visible output to copy"
+		return nil
+	}
+	if err := clipboardTextWriter(text); err != nil {
+		m.reportError("Output copy failed", err, m.codexVisibleProject)
+		return nil
+	}
+	m.status = "Copied visible output to clipboard"
+	return nil
+}
+
+func visibleCodexOutputCopyText(view string) string {
+	return trimBlankCopyLines(trimRightCopyLines(ansi.Strip(view)))
+}
+
+func trimRightCopyLines(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, " \t")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func trimBlankCopyLines(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	lines := strings.Split(text, "\n")
+	start := 0
+	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	end := len(lines)
+	for end > start && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
+	if start >= end {
+		return ""
+	}
+	return strings.Join(lines[start:end], "\n")
 }
 
 func (m Model) updateCodexInputCopyDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -90,6 +152,9 @@ func (m Model) updateCodexInputCopyDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 	case "s":
 		m.codexInputCopyDialog.Selected = inputcomposer.CopyChoiceSelection
 		return m.applyCodexInputCopyChoice()
+	case "o":
+		m.codexInputCopyDialog.Selected = inputcomposer.CopyChoiceVisibleOutput
+		return m.applyCodexInputCopyChoice()
 	case "enter":
 		return m.applyCodexInputCopyChoice()
 	default:
@@ -107,6 +172,8 @@ func (m Model) applyCodexInputCopyChoice() (tea.Model, tea.Cmd) {
 	case inputcomposer.CopyChoiceSelection:
 		m.startCodexInputSelection()
 		return m, nil
+	case inputcomposer.CopyChoiceVisibleOutput:
+		return m, m.copyVisibleCodexOutputToClipboard()
 	default:
 		return m, m.copyCodexInputToClipboard()
 	}
@@ -161,7 +228,7 @@ func (m *Model) toggleCodexInputSelectionMark() tea.Cmd {
 		return nil
 	}
 
-	text := inputcomposer.CleanCopiedText(inputcomposer.SelectedContent(m.codexInput, sel.AnchorLine, sel.AnchorCol, line, col))
+	text := m.expandCodexInputCopiedText(inputcomposer.CleanCopiedText(inputcomposer.SelectedContent(m.codexInput, sel.AnchorLine, sel.AnchorCol, line, col)))
 	if text == "" {
 		m.status = "Selection is empty. Move the cursor and press Space again."
 		return nil
@@ -262,6 +329,7 @@ func (m *Model) finalizeCodexComposerSelection() {
 	m.codexComposerSelection.dragging = false
 	if m.codexComposerSelection.hasRange() {
 		text := cleanCopiedText(m.codexComposerSelection.extractText(m.codexInput.Value()))
+		text = m.expandCodexInputCopiedText(text)
 		if text != "" {
 			if err := clipboardTextWriter(text); err == nil {
 				m.status = "Copied composer selection to clipboard"

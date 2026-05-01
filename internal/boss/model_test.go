@@ -376,6 +376,41 @@ func TestModelAltCDialogCanStartInputSelection(t *testing.T) {
 	}
 }
 
+func TestModelAltCDialogCanCopyVisibleOutput(t *testing.T) {
+	var copied string
+	previousWriter := clipboardTextWriter
+	clipboardTextWriter = func(text string) error {
+		copied = text
+		return nil
+	}
+	t.Cleanup(func() {
+		clipboardTextWriter = previousWriter
+	})
+
+	m := New(context.Background(), nil)
+	m.chatViewport.Width = 80
+	m.chatViewport.Height = 2
+	m.chatViewport.SetContent("older\nvisible one\nvisible two\nnewer")
+	m.chatViewport.SetYOffset(1)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}, Alt: true})
+	got := updated.(Model)
+	updated, cmd := got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("copy visible output should not queue a command")
+	}
+	if copied != "visible one\nvisible two" {
+		t.Fatalf("copied visible output = %q", copied)
+	}
+	if got.inputCopyDialog != nil {
+		t.Fatalf("copy dialog should close after copying output")
+	}
+	if got.status != "Copied visible output to clipboard" {
+		t.Fatalf("status = %q, want output copy confirmation", got.status)
+	}
+}
+
 func TestEmbeddedModelConfirmsControlInvocation(t *testing.T) {
 	t.Parallel()
 

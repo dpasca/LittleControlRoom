@@ -161,11 +161,15 @@ func pruneCodexPastedTexts(text string, in []codexPastedText) []codexPastedText 
 }
 
 func expandCodexPastedTextTokens(text string, pastedTexts []codexPastedText) string {
+	return strings.TrimSpace(expandCodexPastedTextTokensPreservingSpace(text, pastedTexts))
+}
+
+func expandCodexPastedTextTokensPreservingSpace(text string, pastedTexts []codexPastedText) string {
 	expanded := text
 	for _, pasted := range pruneCodexPastedTexts(text, pastedTexts) {
 		expanded = strings.ReplaceAll(expanded, pasted.Token, pasted.Text)
 	}
-	return strings.TrimSpace(expanded)
+	return expanded
 }
 
 func codexPastedTextPlaceholder(text string) string {

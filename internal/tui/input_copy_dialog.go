@@ -29,7 +29,7 @@ func (m Model) renderCodexInputCopyDialogContent(width int) string {
 		return ""
 	}
 	lines := []string{
-		renderDialogHeader("Copy Input", "", "", width),
+		renderDialogHeader("Copy", "", "", width),
 		commandPaletteHintStyle.Render("Choose what to put on the clipboard."),
 		"",
 	}
