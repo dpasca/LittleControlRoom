@@ -220,14 +220,22 @@ func (m *Model) beginNewCodexPendingOpen(projectPath string, provider codexapp.P
 }
 
 func (m *Model) beginCodexPendingOpenWithVisibility(projectPath string, provider codexapp.Provider, showWhilePending bool) {
-	m.beginCodexPendingOpenWithOptions(projectPath, provider, showWhilePending, false)
+	m.beginCodexPendingOpenWithOptions(projectPath, provider, showWhilePending, false, true)
 }
 
 func (m *Model) beginNewCodexPendingOpenWithVisibility(projectPath string, provider codexapp.Provider, showWhilePending bool) {
-	m.beginCodexPendingOpenWithOptions(projectPath, provider, showWhilePending, true)
+	m.beginCodexPendingOpenWithOptions(projectPath, provider, showWhilePending, true, true)
 }
 
-func (m *Model) beginCodexPendingOpenWithOptions(projectPath string, provider codexapp.Provider, showWhilePending, newSession bool) {
+func (m *Model) beginCodexPendingOpenWithVisibilityAndReveal(projectPath string, provider codexapp.Provider, showWhilePending, revealOnOpen bool) {
+	m.beginCodexPendingOpenWithOptions(projectPath, provider, showWhilePending, false, revealOnOpen)
+}
+
+func (m *Model) beginNewCodexPendingOpenWithVisibilityAndReveal(projectPath string, provider codexapp.Provider, showWhilePending, revealOnOpen bool) {
+	m.beginCodexPendingOpenWithOptions(projectPath, provider, showWhilePending, true, revealOnOpen)
+}
+
+func (m *Model) beginCodexPendingOpenWithOptions(projectPath string, provider codexapp.Provider, showWhilePending, newSession, revealOnOpen bool) {
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
 		m.codexPendingOpen = nil
@@ -241,7 +249,19 @@ func (m *Model) beginCodexPendingOpenWithOptions(projectPath string, provider co
 		provider:         provider.Normalized(),
 		showWhilePending: showWhilePending,
 		newSession:       newSession,
+		hideOnOpen:       !revealOnOpen,
 	}
+}
+
+func (m Model) revealPendingEmbeddedOpenOnSuccess(projectPath string) bool {
+	projectPath = normalizeProjectPath(projectPath)
+	if projectPath == "" || m.codexPendingOpen == nil {
+		return true
+	}
+	if normalizeProjectPath(m.codexPendingOpen.projectPath) != projectPath {
+		return true
+	}
+	return !m.codexPendingOpen.hideOnOpen
 }
 
 func (m *Model) finishCodexPendingOpen(projectPath string, snapshot codexapp.Snapshot, opened bool, reveal bool) tea.Cmd {

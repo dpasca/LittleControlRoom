@@ -35,6 +35,7 @@ type codexPendingOpenState struct {
 	provider         codexapp.Provider
 	showWhilePending bool
 	newSession       bool
+	hideOnOpen       bool
 }
 
 type codexUpdateMsg struct {
@@ -111,7 +112,7 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 		m.reportError("Embedded session open failed", msg.err, msg.projectPath)
 		return m, nil
 	}
-	revealOnOpen := true
+	revealOnOpen := m.revealPendingEmbeddedOpenOnSuccess(msg.projectPath)
 	focusInput := true
 	draft, hasTodoLaunchDraft := m.todoLaunchDraftFor(msg.projectPath)
 	if hasTodoLaunchDraft {
@@ -554,7 +555,21 @@ func (m Model) launchEmbeddedForSelection(provider codexapp.Provider, forceNew b
 }
 
 func (m Model) launchEmbeddedForProject(p model.ProjectSummary, provider codexapp.Provider, forceNew bool, prompt string) (tea.Model, tea.Cmd) {
-	if !forceNew && strings.TrimSpace(prompt) == "" {
+	return m.launchEmbeddedForProjectWithOptions(p, provider, embeddedLaunchOptions{
+		forceNew: forceNew,
+		prompt:   prompt,
+		reveal:   true,
+	})
+}
+
+type embeddedLaunchOptions struct {
+	forceNew bool
+	prompt   string
+	reveal   bool
+}
+
+func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provider codexapp.Provider, options embeddedLaunchOptions) (tea.Model, tea.Cmd) {
+	if !options.forceNew && strings.TrimSpace(options.prompt) == "" {
 		if updated, ok := m.revealPendingEmbeddedOpen(p.Path); ok {
 			return updated, nil
 		}
@@ -580,11 +595,19 @@ func (m Model) launchEmbeddedForProject(p model.ProjectSummary, provider codexap
 		})
 		return m, nil
 	}
-	if !forceNew && strings.TrimSpace(prompt) == "" {
+	if !options.forceNew && strings.TrimSpace(options.prompt) == "" {
 		if _, ok := m.liveEmbeddedSnapshotForProject(p.Path, provider); ok {
+			if !options.reveal {
+				m.status = "Embedded " + provider.Label() + " session is already open in the background"
+				return m, nil
+			}
 			return m.showCodexProject(p.Path, "Embedded "+provider.Label()+" session reopened. Alt+Up hides it.")
 		}
 		if m.hasRestorableEmbeddedSession(p.Path) {
+			if !options.reveal {
+				m.status = "Embedded session is already available in the background"
+				return m, nil
+			}
 			return m.showCodexProject(p.Path, "Embedded session reopened. Alt+Up hides it.")
 		}
 	}
@@ -593,8 +616,8 @@ func (m Model) launchEmbeddedForProject(p model.ProjectSummary, provider codexap
 		Provider:         provider,
 		ProjectPath:      p.Path,
 		ResumeID:         m.selectedProjectSessionID(p, provider),
-		ForceNew:         forceNew,
-		Prompt:           prompt,
+		ForceNew:         options.forceNew,
+		Prompt:           options.prompt,
 		Preset:           m.currentCodexLaunchPreset(),
 		PlaywrightPolicy: m.currentPlaywrightPolicy(),
 		AppDataDir:       m.appDataDir(),
@@ -606,13 +629,13 @@ func (m Model) launchEmbeddedForProject(p model.ProjectSummary, provider codexap
 	}
 
 	m.ensureCodexRuntime()
-	if forceNew {
-		m.beginNewCodexPendingOpen(p.Path, provider)
+	if options.forceNew {
+		m.beginNewCodexPendingOpenWithVisibilityAndReveal(p.Path, provider, options.reveal, options.reveal)
 	} else {
-		m.beginCodexPendingOpen(p.Path, provider)
+		m.beginCodexPendingOpenWithVisibilityAndReveal(p.Path, provider, options.reveal, options.reveal)
 	}
 	m.err = nil
-	if forceNew {
+	if options.forceNew {
 		m.status = "Starting a new embedded " + provider.Label() + " session..."
 	} else {
 		m.status = "Opening embedded " + provider.Label() + " session..."
