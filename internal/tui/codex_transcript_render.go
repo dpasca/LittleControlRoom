@@ -42,7 +42,6 @@ func (m Model) renderCodexTranscriptEntriesWithLinksOptions(snapshot codexapp.Sn
 	}
 	if snapshot.Provider.Normalized() == codexapp.ProviderOpenCode {
 		entries = collapseOpenCodeToolRuns(entries, blockMode.full())
-		entries = collapseOpenCodeLargeCodeBlocks(entries, blockMode.full())
 	}
 	entries = collapseMassiveTranscriptEntries(entries, blockMode.full())
 	if width <= 0 {
@@ -468,7 +467,7 @@ func renderCodexToolLine(text string, width int) string {
 		Render(body)
 }
 
-func collapseOpenCodeToolRuns(entries []codexapp.TranscriptEntry, expanded bool) []codexapp.TranscriptEntry {
+func collapseOpenCodeToolRuns(entries []codexapp.TranscriptEntry, _ bool) []codexapp.TranscriptEntry {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -487,22 +486,7 @@ func collapseOpenCodeToolRuns(entries []codexapp.TranscriptEntry, expanded bool)
 			return
 		}
 		run := entries[agentRunStart:end]
-		if expanded {
-			out = append(out, run...)
-		} else {
-			parts := make([]string, 0, len(run))
-			for _, entry := range run {
-				parts = append(parts, strings.TrimSpace(entry.Text))
-			}
-			if collapsedText, ok := collapseOpenCodeLargeCodeBlock(strings.Join(parts, "\n")); ok {
-				out = append(out, codexapp.TranscriptEntry{
-					Kind: codexapp.TranscriptAgent,
-					Text: collapsedText,
-				})
-			} else {
-				out = append(out, run...)
-			}
-		}
+		out = append(out, run...)
 		agentRunStart = -1
 	}
 	for i, entry := range entries {
@@ -528,136 +512,10 @@ func collapseOpenCodeToolRuns(entries []codexapp.TranscriptEntry, expanded bool)
 	return out
 }
 
-func collapseOpenCodeLargeCodeBlocks(entries []codexapp.TranscriptEntry, expanded bool) []codexapp.TranscriptEntry {
-	if expanded || len(entries) == 0 {
-		return entries
-	}
-	out := make([]codexapp.TranscriptEntry, 0, len(entries))
-	for _, entry := range entries {
-		if entry.Kind != codexapp.TranscriptAgent {
-			out = append(out, entry)
-			continue
-		}
-		toolText, ok := collapseOpenCodeLargeCodeBlock(entry.Text)
-		if !ok {
-			out = append(out, entry)
-			continue
-		}
-		out = append(out, codexapp.TranscriptEntry{
-			Kind: entry.Kind,
-			Text: toolText,
-		})
-	}
-	return out
-}
-
-func collapseOpenCodeLargeCodeBlock(text string) (string, bool) {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return "", false
-	}
-	lines := strings.Split(text, "\n")
-	if len(lines) <= openCodeCollapsedAgentCodeLineLimit {
-		return "", false
-	}
-	inCodeFence := false
-	foundCodeFence := false
-	codeLineCount := 0
-	previewLines := make([]string, 0, openCodeAgentCodePreviewLines)
-	for _, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "```") {
-			foundCodeFence = true
-			inCodeFence = !inCodeFence
-			continue
-		}
-		if !inCodeFence {
-			if foundCodeFence {
-				continue
-			}
-			if isLikelyCodeLine(line) {
-				codeLineCount++
-				if len(previewLines) < openCodeAgentCodePreviewLines {
-					previewLines = append(previewLines, line)
-				}
-			}
-			continue
-		}
-		codeLineCount++
-		if len(previewLines) < openCodeAgentCodePreviewLines {
-			previewLines = append(previewLines, line)
-		}
-	}
-	if !foundCodeFence {
-		if !looksLikeCodeBlock(lines) {
-			return "", false
-		}
-		if codeLineCount == 0 {
-			codeLineCount = len(lines)
-			previewLines = make([]string, 0, openCodeAgentCodePreviewLines)
-			for _, line := range lines {
-				if len(previewLines) >= openCodeAgentCodePreviewLines {
-					break
-				}
-				previewLines = append(previewLines, line)
-			}
-		}
-	}
-	if codeLineCount <= openCodeCollapsedAgentCodeLineLimit {
-		return "", false
-	}
-	totalCodeLines := codeLineCount
-	shownPreview := len(previewLines)
-	hiddenLines := totalCodeLines - shownPreview
-	if shownPreview > 0 {
-		return fmt.Sprintf("Assistant answer includes a long code block (%d lines, %d shown, %d hidden). Alt+L expands the full output.\n\nPreview:\n%s", totalCodeLines, shownPreview, hiddenLines, truncateText(strings.Join(previewLines, "\n"), openCodeCollapsedCodePreviewMaxText)), true
-	}
-	return fmt.Sprintf("Assistant answer includes a long code block (%d lines). Alt+L expands the full output.", totalCodeLines), true
-}
-
-func looksLikeCodeBlock(lines []string) bool {
-	if len(lines) <= openCodeCollapsedAgentCodeLineLimit {
-		return false
-	}
-	codeLike := 0
-	total := 0
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		total++
-		if isLikelyCodeLine(line) {
-			codeLike++
-		}
-	}
-	if total == 0 {
-		return false
-	}
-	return codeLike*100/total >= openCodeCollapsedAgentPreviewRatio
-}
-
-func isLikelyCodeLine(line string) bool {
-	trimmed := strings.TrimSpace(line)
-	if trimmed == "" {
-		return false
-	}
-	if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "*") || strings.HasPrefix(trimmed, "}") || strings.HasPrefix(trimmed, "{") {
-		return true
-	}
-	if strings.HasPrefix(trimmed, "const ") || strings.HasPrefix(trimmed, "let ") || strings.HasPrefix(trimmed, "var ") || strings.HasPrefix(trimmed, "func ") || strings.HasPrefix(trimmed, "function ") || strings.HasPrefix(trimmed, "for ") || strings.HasPrefix(trimmed, "if ") {
-		return true
-	}
-	if strings.HasSuffix(trimmed, "{") || strings.HasSuffix(trimmed, "}") {
-		return true
-	}
-	if strings.ContainsAny(trimmed, "{}();[]<>+=-*/!?:") {
-		return true
-	}
-	return false
-}
-
-// collapseMassiveTranscriptEntries caps oversized entries and detects repetitive content.
-// Applied after code-block collapsing as a safety net for verbose/broken model output.
+// collapseMassiveTranscriptEntries caps oversized non-answer entries and detects
+// repetitive assistant output. Assistant answers are not line-capped: truncating
+// their tail makes resumed sessions lose readable content unless the user knows
+// to expand hidden detail.
 func collapseMassiveTranscriptEntries(entries []codexapp.TranscriptEntry, expanded bool) []codexapp.TranscriptEntry {
 	if expanded || len(entries) == 0 {
 		return entries
@@ -665,25 +523,15 @@ func collapseMassiveTranscriptEntries(entries []codexapp.TranscriptEntry, expand
 	out := make([]codexapp.TranscriptEntry, 0, len(entries))
 	for _, entry := range entries {
 		switch entry.Kind {
-		case codexapp.TranscriptAgent, codexapp.TranscriptReasoning:
+		case codexapp.TranscriptAgent:
 			text := strings.TrimSpace(entry.Text)
 			lines := strings.Split(text, "\n")
 
-			maxLines := openCodeMaxEntryLines
-			previewLines := openCodeMaxEntryPreviewLines
-			kindLabel := "output"
-			if entry.Kind == codexapp.TranscriptReasoning {
-				maxLines = openCodeMaxReasoningLines
-				previewLines = openCodeMaxReasoningPreview
-				kindLabel = "reasoning"
-			}
-
-			// Check for repetitive content first (catches it even under the line cap)
 			if repIdx, repCount := detectRepetitiveContent(lines); repIdx >= 0 {
 				kept := lines[:repIdx]
 				omitted := len(lines) - repIdx
 				summary := fmt.Sprintf("\n[Repetitive %s detected: %d similar blocks omitted (%d lines). Alt+L expands.]",
-					kindLabel, repCount, omitted)
+					"output", repCount, omitted)
 				out = append(out, codexapp.TranscriptEntry{
 					Kind: entry.Kind,
 					Text: strings.Join(kept, "\n") + summary,
@@ -691,18 +539,33 @@ func collapseMassiveTranscriptEntries(entries []codexapp.TranscriptEntry, expand
 				continue
 			}
 
-			// Apply line cap
-			if len(lines) > maxLines {
-				preview := strings.Join(lines[:previewLines], "\n")
-				summary := fmt.Sprintf("%s\n\n[Long %s truncated: %d lines total, %d shown. Alt+L expands the full output.]",
-					preview, kindLabel, len(lines), previewLines)
+			out = append(out, entry)
+		case codexapp.TranscriptReasoning:
+			text := strings.TrimSpace(entry.Text)
+			lines := strings.Split(text, "\n")
+
+			if repIdx, repCount := detectRepetitiveContent(lines); repIdx >= 0 {
+				kept := lines[:repIdx]
+				omitted := len(lines) - repIdx
+				summary := fmt.Sprintf("\n[Repetitive %s detected: %d similar blocks omitted (%d lines). Alt+L expands.]",
+					"reasoning", repCount, omitted)
+				out = append(out, codexapp.TranscriptEntry{
+					Kind: entry.Kind,
+					Text: strings.Join(kept, "\n") + summary,
+				})
+				continue
+			}
+
+			if len(lines) > openCodeMaxReasoningLines {
+				preview := strings.Join(lines[:openCodeMaxReasoningPreview], "\n")
+				summary := fmt.Sprintf("%s\n\n[Long reasoning truncated: %d lines total, %d shown. Alt+L expands the full output.]",
+					preview, len(lines), openCodeMaxReasoningPreview)
 				out = append(out, codexapp.TranscriptEntry{
 					Kind: entry.Kind,
 					Text: summary,
 				})
 				continue
 			}
-
 			out = append(out, entry)
 		default:
 			out = append(out, entry)

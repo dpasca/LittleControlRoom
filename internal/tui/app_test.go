@@ -15376,7 +15376,7 @@ func TestRenderCodexTranscriptEntriesCollapsesLongOpenCodeToolRuns(t *testing.T)
 	}
 }
 
-func TestRenderCodexTranscriptEntriesCollapsesLongOpenCodeAgentCodeBlocks(t *testing.T) {
+func TestRenderCodexTranscriptEntriesKeepsLongOpenCodeAgentCodeBlocks(t *testing.T) {
 	codeLines := make([]string, 0, 95)
 	for i := 1; i <= 95; i++ {
 		codeLines = append(codeLines, fmt.Sprintf("    line_%d", i))
@@ -15390,18 +15390,15 @@ func TestRenderCodexTranscriptEntriesCollapsesLongOpenCodeAgentCodeBlocks(t *tes
 	}
 
 	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 120))
-	if !strings.Contains(rendered, "Assistant answer includes a long code block") {
-		t.Fatalf("long assistant code block should collapse: %q", rendered)
+	if strings.Contains(rendered, "Assistant answer includes a long code block") {
+		t.Fatalf("long assistant code block should not collapse: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Alt+L expands") {
-		t.Fatalf("collapsed summary should mention expansion: %q", rendered)
-	}
-	if strings.Contains(rendered, "line_95") {
-		t.Fatalf("collapsed summary should hide most lines: %q", rendered)
+	if !strings.Contains(rendered, "line_95") {
+		t.Fatalf("long assistant code block should preserve the final line: %q", rendered)
 	}
 }
 
-func TestRenderCodexTranscriptEntriesCollapsesLongOpenCodeAgentCodeBlocksWithoutFence(t *testing.T) {
+func TestRenderCodexTranscriptEntriesKeepsLongOpenCodeAgentCodeBlocksWithoutFence(t *testing.T) {
 	codeLines := make([]string, 0, 120)
 	for i := 1; i <= 120; i++ {
 		codeLines = append(codeLines, "if (i == "+fmt.Sprintf("%d", i)+") { const shake = scene.cameras.main.shake(0, 0); }")
@@ -15415,18 +15412,15 @@ func TestRenderCodexTranscriptEntriesCollapsesLongOpenCodeAgentCodeBlocksWithout
 	}
 
 	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 120))
-	if !strings.Contains(rendered, "Assistant answer includes a long code block") {
-		t.Fatalf("long non-fenced OpenCode code block should collapse: %q", rendered)
+	if strings.Contains(rendered, "Assistant answer includes a long code block") {
+		t.Fatalf("long non-fenced OpenCode code block should not collapse: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Alt+L expands") {
-		t.Fatalf("collapsed summary should mention expansion: %q", rendered)
-	}
-	if strings.Contains(rendered, "i == 120") {
-		t.Fatalf("collapsed summary should hide most lines for non-fenced code: %q", rendered)
+	if !strings.Contains(rendered, "i == 120") {
+		t.Fatalf("long non-fenced assistant code should preserve the final line: %q", rendered)
 	}
 }
 
-func TestRenderCodexTranscriptEntriesCollapsesLongOpenCodeConsecutiveAgentChunks(t *testing.T) {
+func TestRenderCodexTranscriptEntriesKeepsLongOpenCodeConsecutiveAgentChunks(t *testing.T) {
 	chunk := make([]string, 0, 16)
 	for i := 1; i <= 16; i++ {
 		chunk = append(chunk, fmt.Sprintf("if (cond_%d) { const shake = scene.cameras.main.shake(0, 0); }", i))
@@ -15441,15 +15435,15 @@ func TestRenderCodexTranscriptEntriesCollapsesLongOpenCodeConsecutiveAgentChunks
 	}
 
 	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 120))
-	if !strings.Contains(rendered, "Assistant answer includes a long code block") {
-		t.Fatalf("consecutive OpenCode agent chunks should collapse to summary: %q", rendered)
+	if strings.Contains(rendered, "Assistant answer includes a long code block") {
+		t.Fatalf("consecutive OpenCode agent chunks should not collapse to summary: %q", rendered)
 	}
-	if strings.Count(rendered, "cond_") > 20 {
-		t.Fatalf("collapsed output should not duplicate every chunk: %q", rendered)
+	if count := strings.Count(rendered, "cond_"); count != 160 {
+		t.Fatalf("assistant chunks should preserve all code lines, got %d cond_ markers: %q", count, rendered)
 	}
 }
 
-func TestRenderCodexTranscriptEntriesExpandsLongOpenCodeAgentCodeBlocksWithDenseMode(t *testing.T) {
+func TestRenderCodexTranscriptEntriesKeepsLongOpenCodeAgentCodeBlocksWithDenseMode(t *testing.T) {
 	codeLines := make([]string, 0, 95)
 	for i := 1; i <= 95; i++ {
 		codeLines = append(codeLines, fmt.Sprintf("    line_%d", i))
@@ -15816,7 +15810,7 @@ func TestRenderCodexBodyRendersMarkdownTable(t *testing.T) {
 	}
 }
 
-func TestRenderCodexTranscriptEntriesCollapsesMassiveAgentOutput(t *testing.T) {
+func TestRenderCodexTranscriptEntriesKeepsMassiveAgentOutput(t *testing.T) {
 	lines := make([]string, 1200)
 	for i := range lines {
 		lines[i] = fmt.Sprintf("This is output line %d with some content.", i)
@@ -15830,11 +15824,11 @@ func TestRenderCodexTranscriptEntriesCollapsesMassiveAgentOutput(t *testing.T) {
 	}
 
 	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 120))
-	if !strings.Contains(rendered, "Long output truncated") {
-		t.Fatalf("massive agent output should be truncated: %q", rendered)
+	if strings.Contains(rendered, "Long output truncated") {
+		t.Fatalf("assistant output should not be bottom-clipped: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Alt+L expands") {
-		t.Fatalf("truncated output should mention Alt+L: %q", rendered)
+	if !strings.Contains(rendered, "This is output line 1199 with some content.") {
+		t.Fatalf("assistant output should preserve the final line: %q", rendered)
 	}
 }
 

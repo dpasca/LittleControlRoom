@@ -30,18 +30,12 @@ const (
 	maxOpenCodeCollapsedToolRun         = 5
 	openCodeToolPreviewCount            = 3
 	openCodeCollapsedToolPreviewMaxText = 180
-	openCodeCollapsedAgentCodeLineLimit = 80
-	openCodeAgentCodePreviewLines       = 14
-	openCodeCollapsedCodePreviewMaxText = 240
-	openCodeCollapsedAgentPreviewRatio  = 45
-	// Massive output caps: assistant answers get enough room for long readable Markdown,
-	// while truly runaway entries still collapse in the live transcript.
-	openCodeMaxEntryLines         = 1000 // hard cap per assistant entry (collapsed mode)
-	openCodeMaxEntryPreviewLines  = 20   // preview lines shown when capped
-	openCodeRepetitionWindowLines = 6    // sliding window size for repetition detection
-	openCodeRepetitionThreshold   = 4    // consecutive repeated windows to trigger collapse
-	openCodeMaxReasoningLines     = 120  // reasoning blocks get a tighter cap
-	openCodeMaxReasoningPreview   = 12   // preview lines for reasoning
+	// Massive output caps apply only to non-answer internals. Assistant answers are
+	// transcript content and should not have their tail clipped in collapsed mode.
+	openCodeRepetitionWindowLines = 6   // sliding window size for repetition detection
+	openCodeRepetitionThreshold   = 4   // consecutive repeated windows to trigger collapse
+	openCodeMaxReasoningLines     = 120 // reasoning blocks get a tighter cap
+	openCodeMaxReasoningPreview   = 12  // preview lines for reasoning
 	codexDenseBlockPreviewLines   = 5
 	codexTranscriptLiveEntryLimit = 480
 	codexTranscriptLiveLineLimit  = 6000
