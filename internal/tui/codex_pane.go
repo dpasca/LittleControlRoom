@@ -17,6 +17,7 @@ import (
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/codexslash"
+	"lcroom/internal/viewportnav"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -1387,11 +1388,18 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.status = "Closing embedded " + label + " session..."
 		return m, m.closeVisibleCodexCmd()
-	case "pgup", "ctrl+u":
+	case "pgup":
+		viewportnav.PageUp(&m.codexViewport)
+		m.maybeLoadFullCodexHistoryAtViewportTop()
+		return m, nil
+	case "pgdown":
+		viewportnav.PageDown(&m.codexViewport)
+		return m, nil
+	case "ctrl+u":
 		m.codexViewport.HalfPageUp()
 		m.maybeLoadFullCodexHistoryAtViewportTop()
 		return m, nil
-	case "pgdown", "ctrl+d":
+	case "ctrl+d":
 		m.codexViewport.HalfPageDown()
 		return m, nil
 	case "alt+c":

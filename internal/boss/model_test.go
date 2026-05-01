@@ -2,6 +2,7 @@ package boss
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -63,6 +64,41 @@ func TestModelViewRendersBossPanels(t *testing.T) {
 	if strings.Contains(stripped, "Ctrl+J newline") {
 		t.Fatalf("view should advertise Alt+Enter instead of Ctrl+J:\n%s", stripped)
 	}
+}
+
+func TestPageKeysScrollChatByEightyPercent(t *testing.T) {
+	t.Parallel()
+
+	m := New(context.Background(), nil)
+	m.chatViewport.Width = 80
+	m.chatViewport.Height = 10
+	m.chatViewport.SetContent(bossTestViewportLines(40))
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	if cmd != nil {
+		t.Fatalf("Page Down should not return a command")
+	}
+	got := updated.(Model)
+	if got.chatViewport.YOffset != 8 {
+		t.Fatalf("Page Down offset = %d, want 8", got.chatViewport.YOffset)
+	}
+
+	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	if cmd != nil {
+		t.Fatalf("Page Up should not return a command")
+	}
+	got = updated.(Model)
+	if got.chatViewport.YOffset != 0 {
+		t.Fatalf("Page Up offset = %d, want 0", got.chatViewport.YOffset)
+	}
+}
+
+func bossTestViewportLines(count int) string {
+	lines := make([]string, count)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line %02d", i)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func TestModelAttentionRowsUseCompactProjectColumns(t *testing.T) {

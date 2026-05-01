@@ -9161,6 +9161,44 @@ func TestCodexUpdateStatusOnlyPreservesViewportOffset(t *testing.T) {
 	}
 }
 
+func TestCodexPageKeysScrollTranscriptByEightyPercent(t *testing.T) {
+	vp := viewport.New(80, 10)
+	vp.SetContent(testViewportLines(40))
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": {Provider: codexapp.ProviderCodex, ProjectPath: "/tmp/demo", Started: true},
+		},
+		codexViewport: vp,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyPgDown})
+	if cmd != nil {
+		t.Fatalf("Page Down should not return a command")
+	}
+	got := updated.(Model)
+	if got.codexViewport.YOffset != 8 {
+		t.Fatalf("Page Down offset = %d, want 8", got.codexViewport.YOffset)
+	}
+
+	updated, cmd = got.updateCodexMode(tea.KeyMsg{Type: tea.KeyPgUp})
+	if cmd != nil {
+		t.Fatalf("Page Up should not return a command")
+	}
+	got = updated.(Model)
+	if got.codexViewport.YOffset != 0 {
+		t.Fatalf("Page Up offset = %d, want 0", got.codexViewport.YOffset)
+	}
+}
+
+func testViewportLines(count int) string {
+	lines := make([]string, count)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line %02d", i)
+	}
+	return strings.Join(lines, "\n")
+}
+
 func TestCodexUpdateStatusOnlyBrowserPanelKeepsBottomAnchored(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",

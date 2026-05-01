@@ -10,6 +10,7 @@ import (
 	"lcroom/internal/model"
 	"lcroom/internal/service"
 	"lcroom/internal/terminalmd"
+	"lcroom/internal/viewportnav"
 
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -336,7 +337,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+r":
 			m.status = "Refreshing project state..."
 			return m, m.loadStateCmd()
-		case "pgup", "pgdown", "home", "end":
+		case "pgup":
+			viewportnav.PageUp(&m.chatViewport)
+			return m, nil
+		case "pgdown":
+			viewportnav.PageDown(&m.chatViewport)
+			return m, nil
+		case "home", "end":
 			var cmd tea.Cmd
 			m.chatViewport, cmd = m.chatViewport.Update(msg)
 			return m, cmd
