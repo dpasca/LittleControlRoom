@@ -1614,7 +1614,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.syncCodexComposerSize()
 		return m, nil
 	case "alt+s":
-		m.status = "Use Alt+C to copy or select input"
+		m.status = "Use Alt+C to copy input or output"
 		return m, nil
 	case "ctrl+v":
 		return m, nil
@@ -2533,7 +2533,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerPrimaryAction("Enter", "answer"),
 			footerExitAction("Ctrl+C", "close"),
 			footerHideAction("Alt+Up", "hide"),
-			footerLowAction("Alt+C", "copy/select"),
+			footerLowAction("Alt+C", "copy menu"),
 		)
 		state := m.toolAnswerStateFor(m.codexVisibleProject, snapshot.PendingToolInput)
 		if state.QuestionIndex >= 0 && state.QuestionIndex < len(snapshot.PendingToolInput.Questions) {
@@ -2555,7 +2555,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerExitAction("d", "decline"),
 			footerLowAction("c", "cancel"),
 			footerNavAction("Alt+Enter", "newline"),
-			footerLowAction("Alt+C", "copy/select"),
+			footerLowAction("Alt+C", "copy menu"),
 		}
 	case snapshot.PendingElicitation != nil &&
 		strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" &&
@@ -2584,7 +2584,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerNavAction("Tab", "complete"),
 			footerNavAction("Shift+Tab", "previous"),
 			footerNavAction("Alt+Enter", "newline"),
-			footerLowAction("Alt+C", "copy/select"),
+			footerLowAction("Alt+C", "copy menu"),
 		}
 	case snapshot.BusyExternal:
 		actions = []footerAction{
@@ -2619,7 +2619,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerHideAction("Alt+Up", "hide"),
 			footerNavAction("Alt+Enter", "newline"),
 			footerNavAction("Ctrl+V", "image"),
-			footerLowAction("Alt+C", "copy/select"),
+			footerLowAction("Alt+C", "copy menu"),
 		}
 	case snapshot.Closed:
 		actions = []footerAction{
@@ -2633,7 +2633,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerHideAction("Alt+Up", "hide"),
 			footerNavAction("Alt+Enter", "newline"),
 			footerNavAction("Ctrl+V", "image"),
-			footerLowAction("Alt+C", "copy/select"),
+			footerLowAction("Alt+C", "copy menu"),
 		}
 		if managedBrowserCurrentPageURL(snapshot) != "" && strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" {
 			actions = append(actions, footerNavAction("Ctrl+O", m.managedBrowserCurrentPageFooterLabel(snapshot)))

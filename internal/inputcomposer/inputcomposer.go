@@ -18,6 +18,7 @@ type CopyChoice int
 const (
 	CopyChoiceAll CopyChoice = iota
 	CopyChoiceSelection
+	CopyChoiceVisibleOutput
 )
 
 type CopyDialogState struct {
@@ -45,13 +46,15 @@ func (s *CopyDialogState) Move(delta int) {
 }
 
 func CopyChoices() []CopyChoice {
-	return []CopyChoice{CopyChoiceAll, CopyChoiceSelection}
+	return []CopyChoice{CopyChoiceAll, CopyChoiceSelection, CopyChoiceVisibleOutput}
 }
 
 func CopyChoiceLabel(choice CopyChoice) string {
 	switch choice {
 	case CopyChoiceSelection:
 		return "Select to copy"
+	case CopyChoiceVisibleOutput:
+		return "Copy output"
 	default:
 		return "Copy all"
 	}
@@ -61,6 +64,8 @@ func CopyChoiceSummary(choice CopyChoice) string {
 	switch choice {
 	case CopyChoiceSelection:
 		return "Move through the input, mark the start and end with Space, then copy only that range."
+	case CopyChoiceVisibleOutput:
+		return "Copy the currently visible transcript output to the clipboard."
 	default:
 		return "Copy the full current input text to the clipboard."
 	}
