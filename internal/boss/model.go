@@ -394,19 +394,22 @@ func (m Model) applyAssistantReply(response AssistantResponse, err error, snapsh
 		if content == "" {
 			content = "I heard you, but the model returned an empty reply."
 		}
-		saved = ChatMessage{
-			Role:    "assistant",
-			Content: content,
-			At:      m.now(),
-		}
-		m.messages = append(m.messages, saved)
 		if response.ControlInvocation != nil {
 			m.pendingControl = &ControlProposal{
 				Invocation: copyControlInvocation(*response.ControlInvocation),
 				Preview:    content,
 			}
 			m.status = "Confirm engineer prompt with Enter, or Esc to cancel"
-		} else if modelName := strings.TrimSpace(response.Model); modelName != "" {
+			m.syncLayout(true)
+			return m, nil
+		}
+		saved = ChatMessage{
+			Role:    "assistant",
+			Content: content,
+			At:      m.now(),
+		}
+		m.messages = append(m.messages, saved)
+		if modelName := strings.TrimSpace(response.Model); modelName != "" {
 			m.pendingControl = nil
 			m.status = "Boss chat via " + modelName
 		} else {
@@ -480,6 +483,9 @@ func (m Model) View() string {
 	}
 	if m.inputCopyDialog != nil {
 		body = m.renderInputCopyDialogOverlay(body, layout.width, layout.height)
+	}
+	if m.pendingControl != nil {
+		body = m.renderControlConfirmationOverlay(body, layout.width, layout.height)
 	}
 	if m.embedded {
 		return fitRenderedBlock(body, layout.width, layout.height)
