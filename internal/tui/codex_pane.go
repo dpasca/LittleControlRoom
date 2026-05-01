@@ -124,6 +124,9 @@ func (m *Model) ensureCodexRuntime() {
 	if m.codexTranscriptFullHistory == nil {
 		m.codexTranscriptFullHistory = make(map[string]struct{})
 	}
+	if m.codexArtifactLinkScans == nil {
+		m.codexArtifactLinkScans = make(map[string]codexArtifactLinkScanState)
+	}
 	if m.codexViewport.Width == 0 && m.codexViewport.Height == 0 {
 		m.codexViewport = viewport.New(0, 0)
 	}
@@ -289,7 +292,13 @@ func (m *Model) finishCodexPendingOpen(projectPath string, snapshot codexapp.Sna
 		m.syncCodexViewport(true)
 		m.syncCodexComposerSize()
 	}
-	return batchCmds(m.markProjectSessionSeen(projectPath), asyncCmd)
+	linkScanCmd := tea.Cmd(nil)
+	if reveal {
+		if cached, ok := m.codexCachedSnapshot(projectPath); ok {
+			linkScanCmd = m.maybeStartCodexArtifactLinkScan(projectPath, cached)
+		}
+	}
+	return batchCmds(m.markProjectSessionSeen(projectPath), asyncCmd, linkScanCmd)
 }
 
 func (m *Model) pruneCodexSessionVisibility() {
@@ -655,6 +664,7 @@ func (m *Model) resetCodexTranscriptCaches(projectPath string) {
 	if m.codexViewportContent.projectPath == projectPath {
 		m.codexViewportContent = codexViewportContentState{}
 	}
+	delete(m.codexArtifactLinkScans, projectPath)
 }
 
 func codexTranscriptStateChanged(prev, next codexapp.Snapshot) bool {
@@ -2629,7 +2639,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			actions = append(actions, footerNavAction("Ctrl+O", m.managedBrowserCurrentPageFooterLabel(snapshot)))
 		}
 	}
-	if len(codexArtifactOpenTargets(snapshot)) > 0 && codexArtifactPickerAllowed(snapshot) {
+	if len(m.cachedCodexOpenTargetsForPicker(snapshot)) > 0 && codexArtifactPickerAllowed(snapshot) {
 		actions = append(actions, footerNavAction("Alt+O", "links"))
 	}
 	if mismatchStatus := m.codexBrowserReconnectStatus(snapshot); mismatchStatus != "" && !snapshot.Closed && !snapshot.BusyExternal {
@@ -2903,15 +2913,31 @@ type codexArtifactPickerState struct {
 }
 
 func (m Model) openCodexArtifactPicker(snapshot codexapp.Snapshot) (tea.Model, tea.Cmd) {
-	targets := m.visibleCodexOpenTargets(snapshot)
+	projectPath := strings.TrimSpace(firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject))
+	targets := m.codexOpenTargetsForPicker(snapshot)
 	if len(targets) == 0 {
-		m.status = "No openable links visible in this embedded transcript"
-		return m, nil
+		scanCmd := m.maybeStartCodexArtifactLinkScan(projectPath, snapshot)
+		if scanCmd == nil && !m.codexArtifactLinkScanInFlight(projectPath, m.codexTranscriptRevision(projectPath)) {
+			m.status = "No openable links in this embedded transcript"
+			return m, nil
+		}
+		m.codexArtifactPicker = &codexArtifactPickerState{
+			ProjectPath:     projectPath,
+			Title:           "Open Links",
+			Hint:            "Scanning this embedded transcript for links.",
+			Targets:         nil,
+			Selected:        0,
+			PreviewRequests: make(map[string]int64),
+			PreviewData:     make(map[string][]byte),
+			PreviewErrors:   make(map[string]string),
+		}
+		m.status = "Scanning transcript links..."
+		return m, scanCmd
 	}
 	m.codexArtifactPicker = &codexArtifactPickerState{
-		ProjectPath:     strings.TrimSpace(firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject)),
+		ProjectPath:     projectPath,
 		Title:           "Open Links",
-		Hint:            "Links visible in this embedded transcript. Enter opens with the system app or browser.",
+		Hint:            "Links found in this embedded transcript. Enter opens with the system app or browser.",
 		Targets:         targets,
 		Selected:        len(targets) - 1,
 		PreviewRequests: make(map[string]int64),
@@ -2928,7 +2954,7 @@ func (m Model) updateCodexArtifactPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd
 		return m, nil
 	}
 	if len(picker.Targets) == 0 {
-		m.closeCodexArtifactPicker("No openable links visible in this embedded transcript")
+		m.closeCodexArtifactPicker("No openable links in this embedded transcript")
 		return m, nil
 	}
 	if picker.Selected < 0 {
@@ -2968,6 +2994,43 @@ func (m Model) updateCodexArtifactPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd
 }
 
 func (m Model) visibleCodexOpenTargets(snapshot codexapp.Snapshot) []codexArtifactOpenTarget {
+	return m.visibleCodexOpenTargetsWithCachePolicy(snapshot, true)
+}
+
+func (m Model) cachedVisibleCodexOpenTargets(snapshot codexapp.Snapshot) []codexArtifactOpenTarget {
+	return m.visibleCodexOpenTargetsWithCachePolicy(snapshot, false)
+}
+
+func (m Model) codexOpenTargetsForPicker(snapshot codexapp.Snapshot) []codexArtifactOpenTarget {
+	return mergeCodexArtifactOpenTargets(append(m.visibleCodexOpenTargets(snapshot), m.cachedProgressiveCodexOpenTargets(snapshot)...))
+}
+
+func (m Model) cachedCodexOpenTargetsForPicker(snapshot codexapp.Snapshot) []codexArtifactOpenTarget {
+	return mergeCodexArtifactOpenTargets(append(m.cachedVisibleCodexOpenTargets(snapshot), m.cachedProgressiveCodexOpenTargets(snapshot)...))
+}
+
+func (m Model) cachedProgressiveCodexOpenTargets(snapshot codexapp.Snapshot) []codexArtifactOpenTarget {
+	projectPath := strings.TrimSpace(firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject))
+	if projectPath == "" {
+		return nil
+	}
+	state, ok := m.codexArtifactLinkScans[projectPath]
+	if !ok || state.transcriptRev != m.codexTranscriptRevision(projectPath) || len(state.targets) == 0 {
+		return nil
+	}
+	return append([]codexArtifactOpenTarget(nil), state.targets...)
+}
+
+func (m Model) codexArtifactLinkScanInFlight(projectPath string, transcriptRev uint64) bool {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return false
+	}
+	state, ok := m.codexArtifactLinkScans[projectPath]
+	return ok && state.transcriptRev == transcriptRev && state.inFlight
+}
+
+func (m Model) visibleCodexOpenTargetsWithCachePolicy(snapshot codexapp.Snapshot, renderOnMiss bool) []codexArtifactOpenTarget {
 	projectPath := strings.TrimSpace(firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject))
 	width := m.codexViewport.Width
 	if width <= 0 {
@@ -2977,6 +3040,9 @@ func (m Model) visibleCodexOpenTargets(snapshot codexapp.Snapshot) []codexArtifa
 		width = 80
 	}
 	if projectPath == "" || !m.codexTranscriptCacheMatches(projectPath, width) {
+		if !renderOnMiss {
+			return nil
+		}
 		_ = m.renderAndCacheCodexTranscript(projectPath, snapshot, width)
 	}
 	links := m.codexTranscriptCache.links
@@ -3004,6 +3070,153 @@ func codexTargetsFromLinkSpans(links []codexTranscriptLinkSpan) []codexArtifactO
 		targets = append(targets, link.Target)
 	}
 	return targets
+}
+
+const (
+	codexArtifactLinkScanEntryBudget = 24
+	codexArtifactLinkScanByteBudget  = 128 * 1024
+)
+
+func (m *Model) maybeStartCodexArtifactLinkScan(projectPath string, snapshot codexapp.Snapshot) tea.Cmd {
+	projectPath = strings.TrimSpace(firstNonEmptyString(projectPath, snapshot.ProjectPath, m.codexVisibleProject))
+	if projectPath == "" {
+		return nil
+	}
+	transcriptRev := m.codexTranscriptRevision(projectPath)
+	entries := codexTranscriptEntriesFromSnapshot(snapshot)
+	if m.codexArtifactLinkScans == nil {
+		m.codexArtifactLinkScans = make(map[string]codexArtifactLinkScanState)
+	}
+	state := m.codexArtifactLinkScans[projectPath]
+	if state.transcriptRev != transcriptRev {
+		state = codexArtifactLinkScanState{transcriptRev: transcriptRev}
+	}
+	if len(entries) == 0 {
+		state.complete = true
+		state.inFlight = false
+		m.codexArtifactLinkScans[projectPath] = state
+		return nil
+	}
+	if state.complete || state.inFlight {
+		m.codexArtifactLinkScans[projectPath] = state
+		return nil
+	}
+	state.inFlight = true
+	m.codexArtifactLinkScanSeq++
+	state.scanSeq = m.codexArtifactLinkScanSeq
+	startEntry := max(0, state.nextEntry)
+	startOffset := max(0, state.nextTextOffset)
+	m.codexArtifactLinkScans[projectPath] = state
+	return codexArtifactLinkScanCmd(projectPath, state.scanSeq, transcriptRev, entries, startEntry, startOffset)
+}
+
+func codexArtifactLinkScanCmd(projectPath string, scanSeq int64, transcriptRev uint64, entries []codexapp.TranscriptEntry, startEntry, startTextOffset int) tea.Cmd {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return nil
+	}
+	entries = append([]codexapp.TranscriptEntry(nil), entries...)
+	return func() tea.Msg {
+		targets, nextEntry, nextTextOffset, complete := scanCodexArtifactLinksChunk(entries, startEntry, startTextOffset)
+		return codexArtifactLinkScanMsg{
+			projectPath:    projectPath,
+			scanSeq:        scanSeq,
+			transcriptRev:  transcriptRev,
+			nextEntry:      nextEntry,
+			nextTextOffset: nextTextOffset,
+			complete:       complete,
+			targets:        targets,
+		}
+	}
+}
+
+func scanCodexArtifactLinksChunk(entries []codexapp.TranscriptEntry, startEntry, startTextOffset int) ([]codexArtifactOpenTarget, int, int, bool) {
+	if len(entries) == 0 {
+		return nil, 0, 0, true
+	}
+	entryIndex := max(0, startEntry)
+	textOffset := max(0, startTextOffset)
+	if entryIndex >= len(entries) {
+		return nil, len(entries), 0, true
+	}
+	targets := make([]codexArtifactOpenTarget, 0)
+	entriesScanned := 0
+	bytesScanned := 0
+	for entryIndex < len(entries) && entriesScanned < codexArtifactLinkScanEntryBudget && bytesScanned < codexArtifactLinkScanByteBudget {
+		entry := entries[entryIndex]
+		if textOffset == 0 {
+			if target, ok := codexGeneratedImageOpenTarget(entry.GeneratedImage); ok {
+				targets = append(targets, target)
+			}
+		}
+		text := codexFullTranscriptEntryLinkScanText(entry)
+		if textOffset >= len(text) {
+			entryIndex++
+			textOffset = 0
+			entriesScanned++
+			continue
+		}
+		remainingBudget := codexArtifactLinkScanByteBudget - bytesScanned
+		if remainingBudget <= 0 {
+			break
+		}
+		scanLen := min(len(text)-textOffset, remainingBudget)
+		parseEnd := min(len(text), textOffset+scanLen+codexMarkdownLinkLabelScanLimit+codexMarkdownLinkTargetScanLimit+4)
+		targets = append(targets, codexArtifactOpenTargetsFromMarkdownPrefix(text[textOffset:parseEnd], scanLen)...)
+		bytesScanned += scanLen
+		if textOffset+scanLen < len(text) {
+			textOffset += scanLen
+			return mergeCodexArtifactOpenTargets(targets), entryIndex, textOffset, false
+		}
+		entryIndex++
+		textOffset = 0
+		entriesScanned++
+	}
+	complete := entryIndex >= len(entries)
+	return mergeCodexArtifactOpenTargets(targets), entryIndex, textOffset, complete
+}
+
+func (m Model) applyCodexArtifactLinkScanMsg(msg codexArtifactLinkScanMsg) (tea.Model, tea.Cmd) {
+	projectPath := strings.TrimSpace(msg.projectPath)
+	if projectPath == "" || msg.transcriptRev != m.codexTranscriptRevision(projectPath) {
+		return m, nil
+	}
+	if m.codexArtifactLinkScans == nil {
+		m.codexArtifactLinkScans = make(map[string]codexArtifactLinkScanState)
+	}
+	state := m.codexArtifactLinkScans[projectPath]
+	if state.transcriptRev != msg.transcriptRev || state.scanSeq != msg.scanSeq || !state.inFlight {
+		return m, nil
+	}
+	state.targets = mergeCodexArtifactOpenTargets(append(state.targets, msg.targets...))
+	state.nextEntry = max(0, msg.nextEntry)
+	state.nextTextOffset = max(0, msg.nextTextOffset)
+	state.complete = msg.complete
+	state.inFlight = false
+	m.codexArtifactLinkScans[projectPath] = state
+
+	previewCmd := tea.Cmd(nil)
+	if picker := m.codexArtifactPicker; picker != nil && strings.TrimSpace(picker.ProjectPath) == projectPath {
+		previousCount := len(picker.Targets)
+		picker.Targets = mergeCodexArtifactOpenTargets(append(picker.Targets, msg.targets...))
+		if previousCount == 0 && len(picker.Targets) > 0 {
+			picker.Selected = len(picker.Targets) - 1
+			picker.Hint = "Links found in this embedded transcript. Enter opens with the system app or browser."
+			m.status = "Link picker open"
+			previewCmd = m.codexArtifactPickerPreviewCmd()
+		}
+		if len(picker.Targets) == 0 && state.complete {
+			m.closeCodexArtifactPicker("No openable links in this embedded transcript")
+		}
+	}
+
+	nextScanCmd := tea.Cmd(nil)
+	if !state.complete {
+		if snapshot, ok := m.codexCachedSnapshot(projectPath); ok {
+			nextScanCmd = m.maybeStartCodexArtifactLinkScan(projectPath, snapshot)
+		}
+	}
+	return m, batchCmds(previewCmd, nextScanCmd)
 }
 
 func (m *Model) closeCodexArtifactPicker(status string) {
@@ -3171,7 +3384,7 @@ func (m Model) renderCodexArtifactPickerContent(width, bodyH int) string {
 	}
 	hint := strings.TrimSpace(picker.Hint)
 	if hint == "" {
-		hint = "Links visible in this embedded transcript."
+		hint = "Links found in this embedded transcript."
 	}
 	lines := []string{
 		commandPaletteTitleStyle.Render(title),
@@ -3278,35 +3491,85 @@ func renderCodexArtifactPickerRow(target codexArtifactOpenTarget, selected bool,
 
 func codexArtifactOpenTargets(snapshot codexapp.Snapshot) []codexArtifactOpenTarget {
 	targets := make([]codexArtifactOpenTarget, 0)
-	for _, entry := range snapshot.Entries {
-		targets = append(targets, codexOpenTargetsFromTranscriptEntry(entry)...)
+	for _, entry := range codexTranscriptEntriesFromSnapshot(snapshot) {
+		targets = append(targets, codexOpenTargetsFromTranscriptEntryFull(entry)...)
 	}
-	return targets
+	return mergeCodexArtifactOpenTargets(targets)
 }
 
 func codexOpenTargetsFromTranscriptEntry(entry codexapp.TranscriptEntry) []codexArtifactOpenTarget {
-	if image := entry.GeneratedImage; image != nil {
-		path := strings.TrimSpace(image.Path)
-		if path == "" {
-			path = strings.TrimSpace(image.SourcePath)
-		}
-		if path == "" {
-			return nil
-		}
+	return codexOpenTargetsFromTranscriptEntryForBlockMode(entry, codexDenseBlockSummary)
+}
+
+func codexOpenTargetsFromTranscriptEntryForBlockMode(entry codexapp.TranscriptEntry, blockMode codexDenseBlockMode) []codexArtifactOpenTarget {
+	if target, ok := codexGeneratedImageOpenTarget(entry.GeneratedImage); ok {
 		return []codexArtifactOpenTarget{{
-			Kind:        "image",
-			Label:       "Generated image",
-			Path:        path,
-			PreviewData: append([]byte(nil), image.PreviewData...),
+			Kind:        target.Kind,
+			Label:       target.Label,
+			Path:        target.Path,
+			PreviewData: append([]byte(nil), target.PreviewData...),
 		}}
 	}
-	text := entry.Text
-	if entry.Kind == codexapp.TranscriptUser {
-		if displayText := strings.TrimSpace(entry.DisplayText); displayText != "" {
-			text = displayText
-		}
+	text, ok := codexTranscriptEntryLinkScanText(entry, blockMode)
+	if !ok {
+		return nil
 	}
 	return codexArtifactOpenTargetsFromMarkdown(text)
+}
+
+func codexOpenTargetsFromTranscriptEntryFull(entry codexapp.TranscriptEntry) []codexArtifactOpenTarget {
+	targets := make([]codexArtifactOpenTarget, 0, 1)
+	if target, ok := codexGeneratedImageOpenTarget(entry.GeneratedImage); ok {
+		targets = append(targets, target)
+	}
+	if text := codexFullTranscriptEntryLinkScanText(entry); strings.TrimSpace(text) != "" {
+		targets = append(targets, codexArtifactOpenTargetsFromMarkdown(text)...)
+	}
+	return mergeCodexArtifactOpenTargets(targets)
+}
+
+func codexGeneratedImageOpenTarget(image *codexapp.GeneratedImageArtifact) (codexArtifactOpenTarget, bool) {
+	if image == nil {
+		return codexArtifactOpenTarget{}, false
+	}
+	path := strings.TrimSpace(image.Path)
+	if path == "" {
+		path = strings.TrimSpace(image.SourcePath)
+	}
+	if path == "" {
+		return codexArtifactOpenTarget{}, false
+	}
+	return codexArtifactOpenTarget{
+		Kind:        "image",
+		Label:       "Generated image",
+		Path:        path,
+		PreviewData: append([]byte(nil), image.PreviewData...),
+	}, true
+}
+
+func codexFullTranscriptEntryLinkScanText(entry codexapp.TranscriptEntry) string {
+	if entry.Kind == codexapp.TranscriptUser {
+		if displayText := strings.TrimSpace(entry.DisplayText); displayText != "" {
+			return displayText
+		}
+	}
+	return entry.Text
+}
+
+func codexTranscriptEntryLinkScanText(entry codexapp.TranscriptEntry, blockMode codexDenseBlockMode) (string, bool) {
+	if entry.Kind == codexapp.TranscriptUser {
+		if displayText := strings.TrimSpace(entry.DisplayText); displayText != "" {
+			return displayText, true
+		}
+	}
+	switch entry.Kind {
+	case codexapp.TranscriptCommand, codexapp.TranscriptFileChange:
+		return "", false
+	case codexapp.TranscriptTool, codexapp.TranscriptReasoning:
+		return "", false
+	default:
+		return entry.Text, true
+	}
 }
 
 func codexArtifactOpenTargetsFromMarkdown(text string) []codexArtifactOpenTarget {
@@ -3314,16 +3577,28 @@ func codexArtifactOpenTargetsFromMarkdown(text string) []codexArtifactOpenTarget
 	if text == "" {
 		return nil
 	}
+	return codexArtifactOpenTargetsFromMarkdownPrefix(text, len(text))
+}
+
+func codexArtifactOpenTargetsFromMarkdownPrefix(text string, scanLimit int) []codexArtifactOpenTarget {
+	if scanLimit <= 0 || strings.TrimSpace(text) == "" {
+		return nil
+	}
+	if scanLimit > len(text) {
+		scanLimit = len(text)
+	}
 	targets := make([]codexArtifactOpenTarget, 0)
 	remaining := text
-	for len(remaining) > 0 {
-		idx := strings.IndexByte(remaining, '[')
+	remainingScanLimit := scanLimit
+	for len(remaining) > 0 && remainingScanLimit > 0 {
+		idx := strings.IndexByte(remaining[:min(len(remaining), remainingScanLimit)], '[')
 		if idx < 0 {
 			return targets
 		}
 		label, target, consumed, ok := parseCodexMarkdownLink(remaining[idx:])
 		if !ok {
 			remaining = remaining[idx+1:]
+			remainingScanLimit -= idx + 1
 			continue
 		}
 		if localPath, ok := codexLocalLinkText(target); ok {
@@ -3339,9 +3614,40 @@ func codexArtifactOpenTargetsFromMarkdown(text string) []codexArtifactOpenTarget
 		} else if externalTarget, ok := codexExternalLinkTarget(target); ok {
 			targets = append(targets, codexArtifactOpenTarget{Kind: "url", Label: label, Path: externalTarget})
 		}
-		remaining = remaining[idx+max(1, consumed):]
+		advance := idx + max(1, consumed)
+		remaining = remaining[advance:]
+		remainingScanLimit -= advance
 	}
 	return targets
+}
+
+func mergeCodexArtifactOpenTargets(targets []codexArtifactOpenTarget) []codexArtifactOpenTarget {
+	if len(targets) == 0 {
+		return nil
+	}
+	merged := make([]codexArtifactOpenTarget, 0, len(targets))
+	seen := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		path := strings.TrimSpace(target.Path)
+		if path == "" {
+			continue
+		}
+		kind := strings.TrimSpace(target.Kind)
+		label := strings.TrimSpace(target.Label)
+		key := kind + "\x00" + path + "\x00" + label
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		target.Kind = kind
+		target.Label = label
+		target.Path = path
+		if len(target.PreviewData) > 0 {
+			target.PreviewData = append([]byte(nil), target.PreviewData...)
+		}
+		merged = append(merged, target)
+	}
+	return merged
 }
 
 func codexExternalLinkTarget(target string) (string, bool) {

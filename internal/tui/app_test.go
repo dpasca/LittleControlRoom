@@ -16032,6 +16032,76 @@ func TestRenderCodexTranscriptEntriesRendersLocalMarkdownLinksAsArtifacts(t *tes
 	}
 }
 
+func TestCodexLinkExtractionIgnoresHiddenDenseCommandOutput(t *testing.T) {
+	hiddenOutput := strings.Repeat("[not a markdown link\n", 2000) + "[hidden](https://hidden.example/docs)"
+	entry := codexapp.TranscriptEntry{
+		Kind: codexapp.TranscriptCommand,
+		Text: "$ generate-large-output\n" + hiddenOutput,
+	}
+
+	if scanText, ok := codexTranscriptEntryLinkScanText(entry, codexDenseBlockSummary); ok || scanText != "" {
+		t.Fatalf("command entries should not participate in link scanning: text=%q ok=%t", scanText, ok)
+	}
+	if targets := codexOpenTargetsFromTranscriptEntryForBlockMode(entry, codexDenseBlockSummary); len(targets) != 0 {
+		t.Fatalf("hidden command links should not be discoverable in summary mode: %#v", targets)
+	}
+}
+
+func TestCodexProgressiveLinkScanFindsHiddenDenseCommandOutput(t *testing.T) {
+	projectPath := "/tmp/demo"
+	hiddenOutput := strings.Repeat("[not a markdown link\n", 2000) + "[hidden](https://hidden.example/docs)"
+	snapshot := codexapp.Snapshot{
+		ProjectPath: projectPath,
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptCommand,
+				Text: "$ generate-large-output\n" + hiddenOutput,
+			},
+		},
+	}
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexViewport:       viewport.New(80, 4),
+	}
+	m.storeCodexSnapshot(projectPath, snapshot)
+	cmd := m.maybeStartCodexArtifactLinkScan(projectPath, snapshot)
+	if cmd == nil {
+		t.Fatalf("progressive link scan should start for transcript entries")
+	}
+	got := drainCmdMsgs(m, cmd)
+	targets := got.cachedProgressiveCodexOpenTargets(snapshot)
+	if len(targets) != 1 {
+		t.Fatalf("progressive targets = %#v, want one hidden URL", targets)
+	}
+	if targets[0].Kind != "url" || targets[0].Path != "https://hidden.example/docs" {
+		t.Fatalf("hidden target = %#v, want hidden URL", targets[0])
+	}
+
+	updated, cmd := got.openCodexArtifactPicker(snapshot)
+	if cmd != nil {
+		t.Fatalf("cached hidden target should open picker without a command, got %T", cmd)
+	}
+	got = normalizeUpdateModel(updated)
+	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 1 {
+		t.Fatalf("hidden link picker state = %#v, want one progressive target", got.codexArtifactPicker)
+	}
+}
+
+func TestCodexMarkdownLinkParserBoundsMalformedBrackets(t *testing.T) {
+	longLabel := "[" + strings.Repeat("x", codexMarkdownLinkLabelScanLimit+1) + "](https://example.com/docs)"
+	if _, _, _, ok := parseCodexMarkdownLink(longLabel); ok {
+		t.Fatalf("over-limit markdown labels should not parse")
+	}
+
+	label, target, consumed, ok := parseCodexMarkdownLink("[docs](https://example.com/docs)")
+	if !ok {
+		t.Fatalf("valid markdown link did not parse")
+	}
+	if label != "docs" || target != "https://example.com/docs" || consumed != len("[docs](https://example.com/docs)") {
+		t.Fatalf("parsed link = (%q, %q, %d), want docs/example/full length", label, target, consumed)
+	}
+}
+
 func TestRenderCodexTranscriptEntriesUnwrapsAngleBracketLocalMarkdownLinks(t *testing.T) {
 	snapshot := codexapp.Snapshot{
 		Entries: []codexapp.TranscriptEntry{

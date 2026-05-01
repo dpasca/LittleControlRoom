@@ -12,6 +12,11 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+const (
+	codexMarkdownLinkLabelScanLimit  = 512
+	codexMarkdownLinkTargetScanLimit = 8192
+)
+
 func renderCodexMessageBlock(label, body string, accent, bodyColor lipgloss.Color, width int) string {
 	return renderCodexMessageBlockWithStyle(label, body, accent, bodyColor, width, false)
 }
@@ -586,8 +591,15 @@ func parseCodexMarkdownLink(text string) (label, target string, consumed int, ok
 	if !strings.HasPrefix(text, "[") {
 		return "", "", 0, false
 	}
-	closeLabel := strings.Index(text, "](")
+	closeLabelOffset := boundedIndexByte(text[1:], ']', codexMarkdownLinkLabelScanLimit)
+	if closeLabelOffset < 0 {
+		return "", "", 0, false
+	}
+	closeLabel := 1 + closeLabelOffset
 	if closeLabel <= 1 {
+		return "", "", 0, false
+	}
+	if closeLabel+1 >= len(text) || text[closeLabel+1] != '(' {
 		return "", "", 0, false
 	}
 	targetText := text[closeLabel+2:]
@@ -604,17 +616,17 @@ func parseCodexMarkdownLink(text string) (label, target string, consumed int, ok
 
 func parseCodexMarkdownLinkTarget(text string) (target string, consumed int, ok bool) {
 	leading := len(text) - len(strings.TrimLeftFunc(text, unicode.IsSpace))
-	text = text[leading:]
-	if text == "" {
+	if leading >= len(text) || leading > codexMarkdownLinkTargetScanLimit {
 		return "", 0, false
 	}
-	if strings.HasPrefix(text, "<") {
-		closeAngle := strings.IndexByte(text[1:], '>')
+	trimmed := text[leading:]
+	if strings.HasPrefix(trimmed, "<") {
+		closeAngle := boundedIndexByte(trimmed[1:], '>', codexMarkdownLinkTargetScanLimit)
 		if closeAngle < 0 {
 			return "", 0, false
 		}
-		target = text[1 : 1+closeAngle]
-		afterTarget := text[1+closeAngle+1:]
+		target = trimmed[1 : 1+closeAngle]
+		afterTarget := trimmed[1+closeAngle+1:]
 		trailing := len(afterTarget) - len(strings.TrimLeftFunc(afterTarget, unicode.IsSpace))
 		afterTarget = afterTarget[trailing:]
 		if !strings.HasPrefix(afterTarget, ")") {
@@ -622,11 +634,18 @@ func parseCodexMarkdownLinkTarget(text string) (target string, consumed int, ok 
 		}
 		return strings.TrimSpace(target), leading + 1 + closeAngle + 1 + trailing + 1, true
 	}
-	closeTarget := strings.IndexByte(text, ')')
+	closeTarget := boundedIndexByte(trimmed, ')', codexMarkdownLinkTargetScanLimit)
 	if closeTarget < 0 {
 		return "", 0, false
 	}
-	return strings.TrimSpace(text[:closeTarget]), leading + closeTarget + 1, true
+	return strings.TrimSpace(trimmed[:closeTarget]), leading + closeTarget + 1, true
+}
+
+func boundedIndexByte(text string, c byte, limit int) int {
+	if limit > 0 && len(text) > limit {
+		text = text[:limit]
+	}
+	return strings.IndexByte(text, c)
 }
 
 func renderCodexHyperlink(label, target string, style lipgloss.Style) string {

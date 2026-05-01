@@ -197,6 +197,8 @@ type Model struct {
 	recentOpenCodeModels        []string
 	codexDenseBlockMode         codexDenseBlockMode
 	codexArtifactPicker         *codexArtifactPickerState
+	codexArtifactLinkScans      map[string]codexArtifactLinkScanState
+	codexArtifactLinkScanSeq    int64
 	codexSlashSelected          int
 	codexToolAnswers            map[string]codexToolAnswerState
 	codexViewport               viewport.Model
@@ -248,6 +250,16 @@ type codexViewportContentState struct {
 	transcriptRev  uint64
 }
 
+type codexArtifactLinkScanState struct {
+	scanSeq        int64
+	transcriptRev  uint64
+	inFlight       bool
+	complete       bool
+	nextEntry      int
+	nextTextOffset int
+	targets        []codexArtifactOpenTarget
+}
+
 type actionMsg struct {
 	projectPath            string
 	status                 string
@@ -272,6 +284,16 @@ type codexArtifactPreviewMsg struct {
 	seq         int64
 	data        []byte
 	err         error
+}
+
+type codexArtifactLinkScanMsg struct {
+	projectPath    string
+	scanSeq        int64
+	transcriptRev  uint64
+	nextEntry      int
+	nextTextOffset int
+	complete       bool
+	targets        []codexArtifactOpenTarget
 }
 
 type runtimeActionMsg struct {
@@ -508,6 +530,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		codexSnapshots:             make(map[string]codexapp.Snapshot),
 		codexTranscriptRev:         make(map[string]uint64),
 		codexTranscriptFullHistory: make(map[string]struct{}),
+		codexArtifactLinkScans:     make(map[string]codexArtifactLinkScanState),
 		codexToolAnswers:           make(map[string]codexToolAnswerState),
 		aiLatencyInFlight:          make(map[int64]aiLatencyOp),
 		detailViewport:             detailViewport,
@@ -1502,6 +1525,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case codexArtifactPreviewMsg:
 		return m.applyCodexArtifactPreviewMsg(msg)
+	case codexArtifactLinkScanMsg:
+		return m.applyCodexArtifactLinkScanMsg(msg)
 	case runtimeActionMsg:
 		if msg.err != nil {
 			m.reportError("Runtime action failed", msg.err, msg.projectPath)

@@ -96,7 +96,7 @@ func (m Model) renderCodexTranscriptEntriesWithLinksOptions(snapshot codexapp.Sn
 			blocks = append(blocks, block)
 			endLine := startLine + strings.Count(block, "\n") + 1
 			lineIndex += strings.Count(block, "\n")
-			for _, target := range codexOpenTargetsFromTranscriptEntry(entry) {
+			for _, target := range codexOpenTargetsFromTranscriptEntryForBlockMode(entry, blockMode) {
 				links = append(links, codexTranscriptLinkSpan{
 					Target:    target,
 					StartLine: startLine,

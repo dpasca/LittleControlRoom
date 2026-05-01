@@ -264,6 +264,9 @@ func (m Model) applyCodexUpdateMsg(msg codexUpdateMsg) (tea.Model, tea.Cmd) {
 		m.resetCodexToolAnswerState(msg.projectPath)
 		m.syncCodexViewport(transcriptChanged)
 		m.recordAISyncLatency("Embedded viewport", msg.projectPath, providerLabel, time.Since(viewportStarted), "")
+		if ok {
+			cmds = append(cmds, m.maybeStartCodexArtifactLinkScan(msg.projectPath, snapshot))
+		}
 	}
 	if ok {
 		m.completeModelSettleLatency(msg.projectPath, snapshot)
@@ -328,12 +331,16 @@ func (m Model) applyCodexDeferredSnapshotMsg(msg codexDeferredSnapshotMsg) (tea.
 		m.syncCodexViewport(transcriptChanged)
 		m.recordAISyncLatency("Embedded viewport", projectPath, providerLabel, time.Since(viewportStarted), "deferred")
 	}
+	linkScanCmd := tea.Cmd(nil)
+	if m.codexVisibleProject == projectPath {
+		linkScanCmd = m.maybeStartCodexArtifactLinkScan(projectPath, snapshot)
+	}
 	m.completeModelSettleLatency(projectPath, snapshot)
 	if !snapshot.Closed {
 		m.markCodexSessionLive(projectPath)
 		m.detectBrowserAttentionNotification(projectPath, snapshot)
 		m.detectQuestionNotification(projectPath, snapshot)
-		return m, statusRefreshCmd
+		return m, batchCmds(statusRefreshCmd, linkScanCmd)
 	}
 	m.removeManagedBrowserLease(projectPath, snapshot)
 	m.cancelModelSettleLatency(projectPath, "session closed")
@@ -349,7 +356,7 @@ func (m Model) applyCodexDeferredSnapshotMsg(msg codexDeferredSnapshotMsg) (tea.
 		m.status = snapshot.Status
 	}
 	m.loading = true
-	cmds := []tea.Cmd{m.requestProjectInvalidationCmd(invalidateProjectScan("", false))}
+	cmds := []tea.Cmd{linkScanCmd, m.requestProjectInvalidationCmd(invalidateProjectScan("", false))}
 	if shouldRecordEmbeddedSessionSettledAfterClose(hadPrev, prevSnapshot, snapshot) {
 		cmds = append([]tea.Cmd{m.recordEmbeddedSessionSettledCmd(projectPath, snapshot)}, cmds...)
 	}
