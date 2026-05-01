@@ -15817,7 +15817,7 @@ func TestRenderCodexBodyRendersMarkdownTable(t *testing.T) {
 }
 
 func TestRenderCodexTranscriptEntriesCollapsesMassiveAgentOutput(t *testing.T) {
-	lines := make([]string, 250)
+	lines := make([]string, 1200)
 	for i := range lines {
 		lines[i] = fmt.Sprintf("This is output line %d with some content.", i)
 	}
@@ -15835,6 +15835,45 @@ func TestRenderCodexTranscriptEntriesCollapsesMassiveAgentOutput(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "Alt+L expands") {
 		t.Fatalf("truncated output should mention Alt+L: %q", rendered)
+	}
+}
+
+func TestRenderCodexTranscriptEntriesKeepsLongReadableMarkdownAgentOutput(t *testing.T) {
+	lines := []string{
+		"That is probably much more model-native than a custom graph API with bespoke object types. LLMs already understand:",
+		"",
+		"```bash",
+		"ls",
+		"cat",
+		"grep",
+		"find",
+		"mkdir",
+		"cp",
+		"mv",
+		"touch",
+		"sed",
+		"jq",
+		"git",
+		"```",
+		"",
+	}
+	for i := len(lines); i < 217; i++ {
+		lines = append(lines, fmt.Sprintf("Readable explanation line %d.", i))
+	}
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderOpenCode,
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: strings.Join(lines, "\n"),
+		}},
+	}
+
+	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 120))
+	if strings.Contains(rendered, "Long output truncated") {
+		t.Fatalf("readable assistant Markdown should not be treated as dense output: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Readable explanation line 216.") {
+		t.Fatalf("readable assistant Markdown should preserve the final line: %q", rendered)
 	}
 }
 
