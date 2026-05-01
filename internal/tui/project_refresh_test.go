@@ -536,6 +536,50 @@ func TestProjectSummaryMsgAddsProjectDuringInitialScan(t *testing.T) {
 	}
 }
 
+func TestProjectsMsgKeepsLatestAssessmentDisplayDuringRefresh(t *testing.T) {
+	previous := model.ProjectSummary{
+		Path:                            "/tmp/demo",
+		Name:                            "demo",
+		PresentOnDisk:                   true,
+		LatestSessionID:                 "codex:ses_current",
+		LatestSessionFormat:             "modern",
+		LatestSessionClassification:     model.ClassificationCompleted,
+		LatestSessionClassificationType: model.SessionCategoryWaitingForUser,
+		LatestSessionSummary:            "Current session is waiting on review.",
+	}
+	refreshing := model.ProjectSummary{
+		Path:                                     previous.Path,
+		Name:                                     previous.Name,
+		PresentOnDisk:                            true,
+		LatestSessionID:                          previous.LatestSessionID,
+		LatestSessionFormat:                      previous.LatestSessionFormat,
+		LatestSessionClassification:              model.ClassificationPending,
+		LatestSessionClassificationStage:         model.ClassificationStageQueued,
+		LatestCompletedSessionClassificationType: model.SessionCategoryNeedsFollowUp,
+		LatestCompletedSessionSummary:            "Older session needs follow-up.",
+	}
+	m := Model{
+		allProjects: []model.ProjectSummary{previous},
+		projects:    []model.ProjectSummary{previous},
+		sortMode:    sortByAttention,
+		visibility:  visibilityAllFolders,
+	}
+
+	updated, _ := m.Update(projectsMsg{projects: []model.ProjectSummary{refreshing}})
+	got := updated.(Model)
+
+	if len(got.projects) != 1 {
+		t.Fatalf("projects len = %d, want 1", len(got.projects))
+	}
+	project := got.projects[0]
+	if project.LatestSessionSummary != previous.LatestSessionSummary {
+		t.Fatalf("latest summary = %q, want preserved current summary", project.LatestSessionSummary)
+	}
+	if gotStatus := projectListStatus(project); gotStatus != "waiting" {
+		t.Fatalf("projectListStatus() = %q, want preserved current assessment label", gotStatus)
+	}
+}
+
 func TestProjectSummaryMsgRemovesProjectWhenItFallsOutOfVisibleSet(t *testing.T) {
 	m := Model{
 		sortMode:   sortByAttention,
