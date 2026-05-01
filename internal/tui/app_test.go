@@ -16913,6 +16913,68 @@ func TestRenderCodexTranscriptEntriesLimitsLiveTail(t *testing.T) {
 	}
 }
 
+func TestRenderCodexTranscriptEntriesBudgetsDenseCommandByRenderedSummary(t *testing.T) {
+	noisyOutput := make([]string, 0, codexTranscriptLiveLineLimit+16)
+	noisyOutput = append(noisyOutput, "$ make test")
+	for i := 0; i < codexTranscriptLiveLineLimit+15; i++ {
+		noisyOutput = append(noisyOutput, fmt.Sprintf("noisy validation line %04d", i))
+	}
+	entries := []codexapp.TranscriptEntry{
+		{Kind: codexapp.TranscriptAgent, Text: "important design explanation remains visible"},
+		{Kind: codexapp.TranscriptCommand, Text: strings.Join(noisyOutput, "\n")},
+		{Kind: codexapp.TranscriptAgent, Text: "final closeout"},
+	}
+
+	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(codexapp.Snapshot{Entries: entries}, 80))
+	if strings.Contains(rendered, "Older transcript hidden from live view") {
+		t.Fatalf("dense command output should not consume the live history budget: %q", rendered)
+	}
+	if !strings.Contains(rendered, "important design explanation remains visible") {
+		t.Fatalf("rendered transcript should keep the earlier explanation: %q", rendered)
+	}
+}
+
+func TestCodexViewportLoadsFullHistoryWhenScrolledToHiddenMarker(t *testing.T) {
+	projectPath := "/tmp/demo"
+	entries := make([]codexapp.TranscriptEntry, 0, codexTranscriptLiveEntryLimit+2)
+	for i := 0; i < codexTranscriptLiveEntryLimit+2; i++ {
+		entries = append(entries, codexapp.TranscriptEntry{
+			Kind: codexapp.TranscriptAgent,
+			Text: fmt.Sprintf("reply %03d", i),
+		})
+	}
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		width:               80,
+		height:              16,
+	}
+	m.storeCodexSnapshot(projectPath, codexapp.Snapshot{
+		Provider:    codexapp.ProviderCodex,
+		ProjectPath: projectPath,
+		Started:     true,
+		Entries:     entries,
+	})
+	m.syncCodexViewport(true)
+
+	if strings.Contains(ansi.Strip(m.codexViewport.View()), "reply 000") {
+		t.Fatalf("tail-limited viewport should not start with the oldest reply")
+	}
+	m.codexViewport.GotoTop()
+	if !m.maybeLoadFullCodexHistoryAtViewportTop() {
+		t.Fatal("expected viewport top to load full transcript history")
+	}
+	if !m.codexTranscriptFullHistoryLoaded(projectPath) {
+		t.Fatal("full transcript history should be marked loaded for the project")
+	}
+	rendered := ansi.Strip(m.codexViewport.View())
+	if !strings.Contains(rendered, "reply 000") {
+		t.Fatalf("full history viewport should show the oldest reply after expansion: %q", rendered)
+	}
+}
+
 func TestRenderCodexFooterPrioritizesSendCloseHideAndDefersDenseBlocks(t *testing.T) {
 	rendered := ansi.Strip((Model{}).renderCodexFooter(codexapp.Snapshot{
 		Started: true,

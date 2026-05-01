@@ -202,6 +202,7 @@ type Model struct {
 	codexViewport               viewport.Model
 	codexTranscriptCache        codexTranscriptRenderCache
 	codexViewportContent        codexViewportContentState
+	codexTranscriptFullHistory  map[string]struct{}
 	uiDiagnostics               *uiStallDiagnostics
 	aiLatencyNextID             int64
 	aiLatencyInFlight           map[int64]aiLatencyOp
@@ -233,6 +234,7 @@ type codexTranscriptRenderCache struct {
 	projectPath    string
 	width          int
 	denseBlockMode codexDenseBlockMode
+	fullHistory    bool
 	transcriptRev  uint64
 	rendered       string
 	links          []codexTranscriptLinkSpan
@@ -242,6 +244,7 @@ type codexViewportContentState struct {
 	projectPath    string
 	width          int
 	denseBlockMode codexDenseBlockMode
+	fullHistory    bool
 	transcriptRev  uint64
 }
 
@@ -490,50 +493,51 @@ func New(ctx context.Context, svc *service.Service) Model {
 	homeDir, _ := os.UserHomeDir()
 
 	return Model{
-		ctx:                    ctx,
-		svc:                    svc,
-		busCh:                  busCh,
-		unsub:                  unsub,
-		loading:                true,
-		status:                 initialProjectsStatus,
-		commandInput:           commandInput,
-		codexInput:             codexInput,
-		codexDrafts:            make(map[string]codexDraft),
-		codexClosedHandled:     make(map[string]struct{}),
-		pendingGitOperations:   make(map[string]pendingGitOperation),
-		pendingGitSummaries:    make(map[string]string),
-		codexSnapshots:         make(map[string]codexapp.Snapshot),
-		codexTranscriptRev:     make(map[string]uint64),
-		codexToolAnswers:       make(map[string]codexToolAnswerState),
-		aiLatencyInFlight:      make(map[int64]aiLatencyOp),
-		detailViewport:         detailViewport,
-		runtimeViewport:        runtimeViewport,
-		codexViewport:          codexViewport,
-		uiDiagnostics:          newUIStallDiagnostics(strings.TrimSpace(homeDir), os.Getpid()),
-		focusedPane:            focusProjects,
-		assessmentFlashUntil:   make(map[string]time.Time),
-		sortMode:               sortByAttention,
-		visibility:             visibilityAIFolders,
-		excludeProjectPatterns: currentExcludeProjectPatterns(svc),
-		privacyMode:            initialSettings.PrivacyMode,
-		privacyPatterns:        currentPrivacyPatterns(svc),
-		codexManager:           codexapp.NewManager(),
-		runtimeManager:         projectrun.NewManager(),
-		runtimeSnapshots:       make(map[string]projectrun.Snapshot),
-		embeddedModelPrefs:     embeddedModelPreferencesFromSettings(initialSettings),
-		recentCodexModels:      append([]string(nil), initialSettings.RecentCodexModels...),
-		recentClaudeModels:     append([]string(nil), initialSettings.RecentClaudeModels...),
-		recentOpenCodeModels:   append([]string(nil), initialSettings.RecentOpenCodeModels...),
-		hideReasoningSections:  initialSettings.HideReasoningSections,
-		browserController:      browserctl.NewController(),
-		managedBrowserStates:   make(map[string]browserctl.ManagedPlaywrightState),
-		detailReloadInFlight:   make(map[string]bool),
-		detailReloadQueued:     make(map[string]bool),
-		summaryReloadInFlight:  make(map[string]bool),
-		summaryReloadQueued:    make(map[string]bool),
-		nowFn:                  time.Now,
-		homeDirFn:              os.UserHomeDir,
-		homeDir:                strings.TrimSpace(homeDir),
+		ctx:                        ctx,
+		svc:                        svc,
+		busCh:                      busCh,
+		unsub:                      unsub,
+		loading:                    true,
+		status:                     initialProjectsStatus,
+		commandInput:               commandInput,
+		codexInput:                 codexInput,
+		codexDrafts:                make(map[string]codexDraft),
+		codexClosedHandled:         make(map[string]struct{}),
+		pendingGitOperations:       make(map[string]pendingGitOperation),
+		pendingGitSummaries:        make(map[string]string),
+		codexSnapshots:             make(map[string]codexapp.Snapshot),
+		codexTranscriptRev:         make(map[string]uint64),
+		codexTranscriptFullHistory: make(map[string]struct{}),
+		codexToolAnswers:           make(map[string]codexToolAnswerState),
+		aiLatencyInFlight:          make(map[int64]aiLatencyOp),
+		detailViewport:             detailViewport,
+		runtimeViewport:            runtimeViewport,
+		codexViewport:              codexViewport,
+		uiDiagnostics:              newUIStallDiagnostics(strings.TrimSpace(homeDir), os.Getpid()),
+		focusedPane:                focusProjects,
+		assessmentFlashUntil:       make(map[string]time.Time),
+		sortMode:                   sortByAttention,
+		visibility:                 visibilityAIFolders,
+		excludeProjectPatterns:     currentExcludeProjectPatterns(svc),
+		privacyMode:                initialSettings.PrivacyMode,
+		privacyPatterns:            currentPrivacyPatterns(svc),
+		codexManager:               codexapp.NewManager(),
+		runtimeManager:             projectrun.NewManager(),
+		runtimeSnapshots:           make(map[string]projectrun.Snapshot),
+		embeddedModelPrefs:         embeddedModelPreferencesFromSettings(initialSettings),
+		recentCodexModels:          append([]string(nil), initialSettings.RecentCodexModels...),
+		recentClaudeModels:         append([]string(nil), initialSettings.RecentClaudeModels...),
+		recentOpenCodeModels:       append([]string(nil), initialSettings.RecentOpenCodeModels...),
+		hideReasoningSections:      initialSettings.HideReasoningSections,
+		browserController:          browserctl.NewController(),
+		managedBrowserStates:       make(map[string]browserctl.ManagedPlaywrightState),
+		detailReloadInFlight:       make(map[string]bool),
+		detailReloadQueued:         make(map[string]bool),
+		summaryReloadInFlight:      make(map[string]bool),
+		summaryReloadQueued:        make(map[string]bool),
+		nowFn:                      time.Now,
+		homeDirFn:                  os.UserHomeDir,
+		homeDir:                    strings.TrimSpace(homeDir),
 	}
 }
 
@@ -1020,6 +1024,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.codexComposerSelection = textSelection{}
 			var cmd tea.Cmd
 			m.codexViewport, cmd = m.codexViewport.Update(msg)
+			if msg.Button == tea.MouseButtonWheelUp {
+				m.maybeLoadFullCodexHistoryAtViewportTop()
+			}
 			return m, cmd
 		}
 	case tea.KeyMsg:

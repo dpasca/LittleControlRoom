@@ -41,9 +41,9 @@ const (
 	openCodeMaxReasoningLines     = 120 // reasoning blocks get a tighter cap
 	openCodeMaxReasoningPreview   = 12  // preview lines for reasoning
 	codexDenseBlockPreviewLines   = 5
-	codexTranscriptLiveEntryLimit = 180
-	codexTranscriptLiveLineLimit  = 1600
-	codexTranscriptLiveByteLimit  = 256 * 1024
+	codexTranscriptLiveEntryLimit = 480
+	codexTranscriptLiveLineLimit  = 6000
+	codexTranscriptLiveByteLimit  = 768 * 1024
 	codexCacheMissEntryLimit      = 24
 	codexCacheMissLineLimit       = 240
 	codexCacheMissByteLimit       = 32 * 1024
@@ -124,6 +124,9 @@ func (m *Model) ensureCodexRuntime() {
 	}
 	if m.codexTranscriptRev == nil {
 		m.codexTranscriptRev = make(map[string]uint64)
+	}
+	if m.codexTranscriptFullHistory == nil {
+		m.codexTranscriptFullHistory = make(map[string]struct{})
 	}
 	if m.codexViewport.Width == 0 && m.codexViewport.Height == 0 {
 		m.codexViewport = viewport.New(0, 0)
@@ -621,6 +624,7 @@ func (m *Model) dropCodexSnapshot(projectPath string) {
 	}
 	delete(m.codexSnapshots, projectPath)
 	delete(m.codexTranscriptRev, projectPath)
+	delete(m.codexTranscriptFullHistory, projectPath)
 	m.resetCodexTranscriptCaches(projectPath)
 }
 
@@ -699,12 +703,34 @@ func (m Model) codexTranscriptRevision(projectPath string) uint64 {
 	return m.codexTranscriptRev[projectPath]
 }
 
+func (m Model) codexTranscriptFullHistoryLoaded(projectPath string) bool {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" || len(m.codexTranscriptFullHistory) == 0 {
+		return false
+	}
+	_, ok := m.codexTranscriptFullHistory[projectPath]
+	return ok
+}
+
+func (m *Model) loadFullCodexTranscriptHistory(projectPath string) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return
+	}
+	if m.codexTranscriptFullHistory == nil {
+		m.codexTranscriptFullHistory = make(map[string]struct{})
+	}
+	m.codexTranscriptFullHistory[projectPath] = struct{}{}
+	m.resetCodexTranscriptCaches(projectPath)
+}
+
 func (m Model) codexTranscriptCacheMatches(projectPath string, width int) bool {
 	projectPath = strings.TrimSpace(projectPath)
 	return projectPath != "" &&
 		m.codexTranscriptCache.projectPath == projectPath &&
 		m.codexTranscriptCache.width == width &&
 		m.codexTranscriptCache.denseBlockMode == m.codexDenseBlockMode.normalized() &&
+		m.codexTranscriptCache.fullHistory == m.codexTranscriptFullHistoryLoaded(projectPath) &&
 		m.codexTranscriptCache.transcriptRev == m.codexTranscriptRevision(projectPath) &&
 		m.codexTranscriptCache.rendered != ""
 }
@@ -720,12 +746,13 @@ func (m *Model) renderAndCacheCodexTranscript(projectPath string, snapshot codex
 	rendered := ""
 	links := []codexTranscriptLinkSpan(nil)
 	m.measureAISyncLatency("Embedded transcript render", projectPath, embeddedProvider(snapshot).Label(), func() {
-		rendered, links = m.renderCodexTranscriptContentFromSnapshotWithLinks(snapshot, width)
+		rendered, links = m.renderCodexTranscriptContentFromSnapshotWithLinksForProject(projectPath, snapshot, width)
 	})
 	m.codexTranscriptCache = codexTranscriptRenderCache{
 		projectPath:    strings.TrimSpace(projectPath),
 		width:          width,
 		denseBlockMode: m.codexDenseBlockMode.normalized(),
+		fullHistory:    m.codexTranscriptFullHistoryLoaded(projectPath),
 		transcriptRev:  m.codexTranscriptRevision(projectPath),
 		rendered:       rendered,
 		links:          links,
@@ -739,6 +766,7 @@ func (m Model) codexViewportContentMatches(projectPath string, width int) bool {
 		m.codexViewportContent.projectPath == projectPath &&
 		m.codexViewportContent.width == width &&
 		m.codexViewportContent.denseBlockMode == m.codexDenseBlockMode.normalized() &&
+		m.codexViewportContent.fullHistory == m.codexTranscriptFullHistoryLoaded(projectPath) &&
 		m.codexViewportContent.transcriptRev == m.codexTranscriptRevision(projectPath)
 }
 
@@ -758,6 +786,7 @@ func (m *Model) setCodexViewportTranscript(projectPath string, snapshot codexapp
 		projectPath:    projectPath,
 		width:          width,
 		denseBlockMode: m.codexDenseBlockMode.normalized(),
+		fullHistory:    m.codexTranscriptFullHistoryLoaded(projectPath),
 		transcriptRev:  m.codexTranscriptRevision(projectPath),
 	}
 }
@@ -1360,6 +1389,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.closeVisibleCodexCmd()
 	case "pgup", "ctrl+u":
 		m.codexViewport.HalfPageUp()
+		m.maybeLoadFullCodexHistoryAtViewportTop()
 		return m, nil
 	case "pgdown", "ctrl+d":
 		m.codexViewport.HalfPageDown()
@@ -1982,6 +2012,38 @@ func (m *Model) syncCodexViewport(resetToBottom bool) {
 	m.codexViewport.SetYOffset(offset)
 }
 
+func (m *Model) maybeLoadFullCodexHistoryAtViewportTop() bool {
+	if !m.codexVisible() || m.codexViewport.YOffset > 0 {
+		return false
+	}
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	if projectPath == "" || m.codexTranscriptFullHistoryLoaded(projectPath) {
+		return false
+	}
+	snapshot, ok := m.currentCodexSnapshot()
+	if !ok {
+		return false
+	}
+	entries := codexTranscriptEntriesFromSnapshot(snapshot)
+	if !codexTranscriptLiveViewWouldLimit(entries, m.codexDenseBlockMode.normalized()) {
+		return false
+	}
+
+	width := m.codexViewport.Width
+	if width <= 0 {
+		width = m.width
+	}
+	if width <= 0 {
+		width = 120
+	}
+	m.codexViewport.Width = max(24, width)
+	m.loadFullCodexTranscriptHistory(projectPath)
+	m.setCodexViewportTranscript(projectPath, snapshot, m.codexViewport.Width)
+	m.codexViewport.SetYOffset(0)
+	m.status = "Loaded full transcript history"
+	return true
+}
+
 func (m Model) renderCodexView() string {
 	done := m.beginUIPhase("renderCodexView", strings.TrimSpace(m.codexVisibleProject), "")
 	defer done()
@@ -2025,7 +2087,7 @@ func (m Model) renderCodexView() string {
 		return true
 	}():
 	case codexTranscriptCacheMissCanRender(snapshot):
-		transcript.SetContent(m.renderCodexTranscriptContentFromSnapshot(snapshot, transcript.Width))
+		transcript.SetContent(m.renderCodexTranscriptContentFromSnapshotForProject(projectPath, snapshot, transcript.Width))
 	default:
 		transcript.SetContent(renderCodexTranscriptCacheMissContent(snapshot))
 	}
@@ -2723,16 +2785,28 @@ func (m Model) renderCodexTranscriptContent(width int) string {
 	if !ok {
 		return "Embedded session unavailable"
 	}
-	return m.renderCodexTranscriptContentFromSnapshot(snapshot, width)
+	return m.renderCodexTranscriptContentFromSnapshotForProject(m.codexVisibleProject, snapshot, width)
 }
 
 func (m Model) renderCodexTranscriptContentFromSnapshot(snapshot codexapp.Snapshot, width int) string {
-	rendered, _ := m.renderCodexTranscriptContentFromSnapshotWithLinks(snapshot, width)
+	return m.renderCodexTranscriptContentFromSnapshotForProject("", snapshot, width)
+}
+
+func (m Model) renderCodexTranscriptContentFromSnapshotForProject(projectPath string, snapshot codexapp.Snapshot, width int) string {
+	rendered, _ := m.renderCodexTranscriptContentFromSnapshotWithLinksForProject(projectPath, snapshot, width)
 	return rendered
 }
 
 func (m Model) renderCodexTranscriptContentFromSnapshotWithLinks(snapshot codexapp.Snapshot, width int) (string, []codexTranscriptLinkSpan) {
-	if rendered, links := m.renderCodexTranscriptEntriesWithLinks(snapshot, width); strings.TrimSpace(rendered) != "" {
+	return m.renderCodexTranscriptContentFromSnapshotWithLinksForProject("", snapshot, width)
+}
+
+func (m Model) renderCodexTranscriptContentFromSnapshotWithLinksForProject(projectPath string, snapshot codexapp.Snapshot, width int) (string, []codexTranscriptLinkSpan) {
+	projectPath = strings.TrimSpace(firstNonEmptyString(projectPath, snapshot.ProjectPath))
+	options := codexTranscriptRenderOptions{
+		fullHistory: m.codexTranscriptFullHistoryLoaded(projectPath),
+	}
+	if rendered, links := m.renderCodexTranscriptEntriesWithLinksOptions(snapshot, width, options); strings.TrimSpace(rendered) != "" {
 		return rendered, links
 	}
 	if snapshot.Closed {

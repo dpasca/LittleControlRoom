@@ -17,6 +17,10 @@ func (m Model) renderCodexTranscriptEntries(snapshot codexapp.Snapshot, width in
 	return rendered
 }
 
+type codexTranscriptRenderOptions struct {
+	fullHistory bool
+}
+
 type codexTranscriptLinkSpan struct {
 	Target    codexArtifactOpenTarget
 	StartLine int
@@ -24,15 +28,18 @@ type codexTranscriptLinkSpan struct {
 }
 
 func (m Model) renderCodexTranscriptEntriesWithLinks(snapshot codexapp.Snapshot, width int) (string, []codexTranscriptLinkSpan) {
-	if len(snapshot.Entries) == 0 {
-		snapshot.Entries = parseLegacyCodexTranscript(snapshot.Transcript)
-	}
-	if len(snapshot.Entries) == 0 {
+	return m.renderCodexTranscriptEntriesWithLinksOptions(snapshot, width, codexTranscriptRenderOptions{})
+}
+
+func (m Model) renderCodexTranscriptEntriesWithLinksOptions(snapshot codexapp.Snapshot, width int, options codexTranscriptRenderOptions) (string, []codexTranscriptLinkSpan) {
+	entries := codexTranscriptEntriesFromSnapshot(snapshot)
+	if len(entries) == 0 {
 		return "", nil
 	}
-	entries := snapshot.Entries
 	blockMode := m.codexDenseBlockMode.normalized()
-	entries = limitCodexTranscriptEntriesForLiveView(entries)
+	if !options.fullHistory {
+		entries = limitCodexTranscriptEntriesForLiveView(entries, blockMode)
+	}
 	if snapshot.Provider.Normalized() == codexapp.ProviderOpenCode {
 		entries = collapseOpenCodeToolRuns(entries, blockMode.full())
 		entries = collapseOpenCodeLargeCodeBlocks(entries, blockMode.full())
@@ -104,6 +111,13 @@ func (m Model) renderCodexTranscriptEntriesWithLinks(snapshot codexapp.Snapshot,
 	// Flush trailing reasoning (model still thinking)
 	flushReasoning()
 	return strings.Join(blocks, ""), links
+}
+
+func codexTranscriptEntriesFromSnapshot(snapshot codexapp.Snapshot) []codexapp.TranscriptEntry {
+	if len(snapshot.Entries) > 0 {
+		return snapshot.Entries
+	}
+	return parseLegacyCodexTranscript(snapshot.Transcript)
 }
 
 func renderCodexTranscriptEntry(entry codexapp.TranscriptEntry, width int, blockMode codexDenseBlockMode) string {
@@ -697,9 +711,33 @@ func collapseMassiveTranscriptEntries(entries []codexapp.TranscriptEntry, expand
 	return out
 }
 
-func limitCodexTranscriptEntriesForLiveView(entries []codexapp.TranscriptEntry) []codexapp.TranscriptEntry {
+func limitCodexTranscriptEntriesForLiveView(entries []codexapp.TranscriptEntry, blockMode codexDenseBlockMode) []codexapp.TranscriptEntry {
 	if len(entries) == 0 {
 		return entries
+	}
+
+	start := codexTranscriptLiveViewStart(entries, blockMode)
+	if start <= 0 {
+		return entries
+	}
+
+	hidden := start
+	out := make([]codexapp.TranscriptEntry, 0, len(entries)-start+1)
+	out = append(out, codexapp.TranscriptEntry{
+		Kind: codexapp.TranscriptSystem,
+		Text: fmt.Sprintf("Older transcript hidden from live view (%d entries). Scroll to this marker to load full history.", hidden),
+	})
+	out = append(out, entries[start:]...)
+	return out
+}
+
+func codexTranscriptLiveViewWouldLimit(entries []codexapp.TranscriptEntry, blockMode codexDenseBlockMode) bool {
+	return codexTranscriptLiveViewStart(entries, blockMode) > 0
+}
+
+func codexTranscriptLiveViewStart(entries []codexapp.TranscriptEntry, blockMode codexDenseBlockMode) int {
+	if len(entries) == 0 {
+		return 0
 	}
 
 	start := len(entries)
@@ -707,8 +745,8 @@ func limitCodexTranscriptEntriesForLiveView(entries []codexapp.TranscriptEntry) 
 	keptLines := 0
 	keptBytes := 0
 	for i := len(entries) - 1; i >= 0; i-- {
-		entryLines := codexTranscriptEntryApproxLineCount(entries[i])
-		entryBytes := codexTranscriptEntryApproxByteCount(entries[i])
+		entryLines := codexTranscriptLiveEntryApproxLineCount(entries[i], blockMode)
+		entryBytes := codexTranscriptLiveEntryApproxByteCount(entries[i], blockMode)
 		if keptEntries > 0 && (keptEntries >= codexTranscriptLiveEntryLimit ||
 			keptLines+entryLines > codexTranscriptLiveLineLimit ||
 			keptBytes+entryBytes > codexTranscriptLiveByteLimit) {
@@ -719,18 +757,45 @@ func limitCodexTranscriptEntriesForLiveView(entries []codexapp.TranscriptEntry) 
 		keptLines += entryLines
 		keptBytes += entryBytes
 	}
-	if start <= 0 {
-		return entries
-	}
+	return start
+}
 
-	hidden := start
-	out := make([]codexapp.TranscriptEntry, 0, len(entries)-start+1)
-	out = append(out, codexapp.TranscriptEntry{
-		Kind: codexapp.TranscriptSystem,
-		Text: fmt.Sprintf("Older transcript hidden from live view (%d entries).", hidden),
-	})
-	out = append(out, entries[start:]...)
-	return out
+func codexTranscriptLiveEntryApproxLineCount(entry codexapp.TranscriptEntry, blockMode codexDenseBlockMode) int {
+	switch entry.Kind {
+	case codexapp.TranscriptCommand, codexapp.TranscriptFileChange:
+		if blockMode.full() {
+			return codexTranscriptEntryApproxLineCount(entry)
+		}
+		lines := strings.Split(strings.TrimSpace(entry.Text), "\n")
+		visible, hidden := visibleCodexDenseBlockLines(lines, blockMode)
+		if hidden > 0 || len(visible) > 0 {
+			return max(1, 1+len(visible))
+		}
+		return 1
+	case codexapp.TranscriptTool:
+		return max(1, transcriptApproxLineCount(compactCodexToolTranscriptText(entry.Text)))
+	default:
+		return codexTranscriptEntryApproxLineCount(entry)
+	}
+}
+
+func codexTranscriptLiveEntryApproxByteCount(entry codexapp.TranscriptEntry, blockMode codexDenseBlockMode) int {
+	switch entry.Kind {
+	case codexapp.TranscriptCommand, codexapp.TranscriptFileChange:
+		if blockMode.full() {
+			return codexTranscriptEntryApproxByteCount(entry)
+		}
+		lines := strings.Split(strings.TrimSpace(entry.Text), "\n")
+		visible, hidden := visibleCodexDenseBlockLines(lines, blockMode)
+		if hidden > 0 || len(visible) > 0 {
+			return len(strings.Join(visible, "\n")) + 96
+		}
+		return 96
+	case codexapp.TranscriptTool:
+		return len(compactCodexToolTranscriptText(entry.Text)) + 32
+	default:
+		return codexTranscriptEntryApproxByteCount(entry)
+	}
 }
 
 func codexTranscriptEntryApproxLineCount(entry codexapp.TranscriptEntry) int {
