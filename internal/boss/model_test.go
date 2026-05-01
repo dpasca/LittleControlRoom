@@ -417,6 +417,36 @@ func TestEmbeddedModelConfirmsControlInvocation(t *testing.T) {
 	}
 }
 
+func TestEmbeddedModelRendersControlConfirmationDialog(t *testing.T) {
+	t.Parallel()
+
+	inv := bossControlInvocationForTest(t)
+	m := NewEmbedded(context.Background(), nil)
+	m.width = 96
+	m.height = 28
+	updated, _ := m.Update(AssistantReplyMsg{
+		response: AssistantResponse{
+			Content:           "Send this to OpenCode?",
+			ControlInvocation: &inv,
+		},
+	})
+	got := updated.(Model)
+
+	rendered := ansi.Strip(got.View())
+	if !strings.Contains(rendered, "Confirm Engineer Action") {
+		t.Fatalf("rendered view should show control confirmation dialog, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "External action") || !strings.Contains(rendered, "Enter") || !strings.Contains(rendered, "Esc") {
+		t.Fatalf("rendered dialog should show action framing and keys, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "Please fix the failing tests.") {
+		t.Fatalf("rendered dialog should show prompt, got %q", rendered)
+	}
+	if len(got.messages) != 0 {
+		t.Fatalf("control proposal preview should not be saved as normal chat, got %#v", got.messages)
+	}
+}
+
 func TestEmbeddedModelCanCancelControlInvocation(t *testing.T) {
 	t.Parallel()
 
