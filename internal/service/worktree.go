@@ -567,6 +567,9 @@ func resolveWorktreeMergeStatus(ctx context.Context, rootPath string, kind model
 	if sourceBranch == targetBranch {
 		return model.WorktreeMergeStatusMerged
 	}
+	if merging, err := gitBranchInProgressMerge(ctx, rootPath, sourceBranch); err == nil && merging {
+		return model.WorktreeMergeStatusMergeInProgress
+	}
 	merged, err := gitBranchIntegratedIntoBranch(ctx, rootPath, sourceBranch, targetBranch)
 	if err != nil {
 		return model.WorktreeMergeStatusUnknown
@@ -575,6 +578,70 @@ func resolveWorktreeMergeStatus(ctx context.Context, rootPath string, kind model
 		return model.WorktreeMergeStatusMerged
 	}
 	return model.WorktreeMergeStatusNotMerged
+}
+
+func gitBranchInProgressMerge(ctx context.Context, repoPath, branch string) (bool, error) {
+	repoPath = filepath.Clean(strings.TrimSpace(repoPath))
+	branch = strings.TrimSpace(branch)
+	if repoPath == "" || branch == "" {
+		return false, fmt.Errorf("repo path and branch are required")
+	}
+	branchHash, err := gitCommitHash(ctx, repoPath, branch)
+	if err != nil {
+		return false, err
+	}
+	mergeHeadPath, err := gitPath(ctx, repoPath, "MERGE_HEAD")
+	if err != nil {
+		return false, err
+	}
+	content, err := os.ReadFile(mergeHeadPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read merge head for %s: %w", repoPath, err)
+	}
+	for _, mergeHead := range strings.Fields(string(content)) {
+		if strings.EqualFold(strings.TrimSpace(mergeHead), branchHash) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func gitCommitHash(ctx context.Context, repoPath, ref string) (string, error) {
+	repoPath = filepath.Clean(strings.TrimSpace(repoPath))
+	ref = strings.TrimSpace(ref)
+	if repoPath == "" || ref == "" {
+		return "", fmt.Errorf("repo path and ref are required")
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "rev-parse", "--verify", ref+"^{commit}")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("resolve git ref %s in %s: %w", ref, repoPath, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func gitPath(ctx context.Context, repoPath, name string) (string, error) {
+	repoPath = filepath.Clean(strings.TrimSpace(repoPath))
+	name = strings.TrimSpace(name)
+	if repoPath == "" || name == "" {
+		return "", fmt.Errorf("repo path and git path name are required")
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "rev-parse", "--git-path", name)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("resolve git path %s in %s: %w", name, repoPath, err)
+	}
+	path := strings.TrimSpace(string(out))
+	if path == "" {
+		return "", fmt.Errorf("resolve git path %s in %s: empty path", name, repoPath)
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(repoPath, path)
+	}
+	return filepath.Clean(path), nil
 }
 
 func (s *Service) refreshWorktreeMergeStatus(ctx context.Context, rootPath, projectPath string) error {

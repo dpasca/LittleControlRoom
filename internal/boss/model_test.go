@@ -2,6 +2,7 @@ package boss
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"lcroom/internal/config"
+	"lcroom/internal/control"
 	"lcroom/internal/events"
 	"lcroom/internal/model"
 	"lcroom/internal/service"
@@ -374,6 +376,76 @@ func TestModelAltCDialogCanStartInputSelection(t *testing.T) {
 	}
 }
 
+func TestEmbeddedModelConfirmsControlInvocation(t *testing.T) {
+	t.Parallel()
+
+	inv := bossControlInvocationForTest(t)
+	m := NewEmbedded(context.Background(), nil)
+
+	updated, cmd := m.Update(AssistantReplyMsg{
+		response: AssistantResponse{
+			Content:           "Send this to OpenCode?",
+			ControlInvocation: &inv,
+		},
+	})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("assistant reply should only update local confirmation state")
+	}
+	if got.pendingControl == nil {
+		t.Fatalf("pendingControl = nil, want confirmation state")
+	}
+	if got.status != "Confirm engineer prompt with Enter, or Esc to cancel" {
+		t.Fatalf("status = %q", got.status)
+	}
+
+	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if got.pendingControl != nil {
+		t.Fatalf("pendingControl should clear after confirmation")
+	}
+	if cmd == nil {
+		t.Fatalf("confirmation should emit a host command")
+	}
+	msg := cmd()
+	confirmed, ok := msg.(ControlInvocationConfirmedMsg)
+	if !ok {
+		t.Fatalf("confirmation command returned %T, want ControlInvocationConfirmedMsg", msg)
+	}
+	if confirmed.Invocation.Capability != control.CapabilityEngineerSendPrompt {
+		t.Fatalf("confirmed capability = %q", confirmed.Invocation.Capability)
+	}
+}
+
+func TestEmbeddedModelCanCancelControlInvocation(t *testing.T) {
+	t.Parallel()
+
+	inv := bossControlInvocationForTest(t)
+	m := NewEmbedded(context.Background(), nil)
+	updated, _ := m.Update(AssistantReplyMsg{
+		response: AssistantResponse{
+			Content:           "Send this to OpenCode?",
+			ControlInvocation: &inv,
+		},
+	})
+	got := updated.(Model)
+
+	updated, cmd := got.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	got = updated.(Model)
+	if got.pendingControl != nil {
+		t.Fatalf("pendingControl should clear after cancel")
+	}
+	if cmd != nil {
+		t.Fatalf("cancel should not emit a host command without persistent sessions")
+	}
+	if got.status != "Engineer prompt canceled" {
+		t.Fatalf("status = %q", got.status)
+	}
+	if got.messages[len(got.messages)-1].Content != "Canceled. I did not send anything to the engineer session." {
+		t.Fatalf("last message = %#v", got.messages[len(got.messages)-1])
+	}
+}
+
 func TestEmbeddedModelAltUpExits(t *testing.T) {
 	t.Parallel()
 
@@ -388,6 +460,24 @@ func TestEmbeddedModelAltUpExits(t *testing.T) {
 	msg := cmd()
 	if _, ok := msg.(ExitMsg); !ok {
 		t.Fatalf("alt+up command returned %T, want boss.ExitMsg", msg)
+	}
+}
+
+func bossControlInvocationForTest(t *testing.T) control.Invocation {
+	t.Helper()
+	args, err := json.Marshal(control.EngineerSendPromptInput{
+		ProjectPath: "/tmp/alpha",
+		Provider:    control.ProviderOpenCode,
+		SessionMode: control.SessionModeResumeOrNew,
+		Prompt:      "Please fix the failing tests.",
+		Reveal:      false,
+	})
+	if err != nil {
+		t.Fatalf("marshal control input: %v", err)
+	}
+	return control.Invocation{
+		Capability: control.CapabilityEngineerSendPrompt,
+		Args:       args,
 	}
 }
 

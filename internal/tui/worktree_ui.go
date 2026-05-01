@@ -532,6 +532,11 @@ func worktreeMergeStatusSummary(project model.ProjectSummary) string {
 				return "merged into " + targetBranch + ", but uncommitted changes remain"
 			}
 			return "merged, but uncommitted changes remain"
+		case model.WorktreeMergeStatusMergeInProgress:
+			if targetBranch != "" {
+				return "merge in progress into " + targetBranch + ", but uncommitted changes remain"
+			}
+			return "merge in progress, but uncommitted changes remain"
 		default:
 			if targetBranch != "" {
 				return "dirty; commit changes before merging into " + targetBranch
@@ -545,6 +550,11 @@ func worktreeMergeStatusSummary(project model.ProjectSummary) string {
 			return "merged into " + targetBranch
 		}
 		return "merged"
+	case model.WorktreeMergeStatusMergeInProgress:
+		if targetBranch != "" {
+			return "merge in progress into " + targetBranch
+		}
+		return "merge in progress"
 	case model.WorktreeMergeStatusNotMerged:
 		if targetBranch != "" {
 			return "not merged into " + targetBranch
@@ -951,6 +961,9 @@ func (m Model) canMergeWorktreeBack(project model.ProjectSummary) bool {
 		return false
 	}
 	if project.WorktreeKind != model.WorktreeKindLinked {
+		return false
+	}
+	if project.WorktreeMergeStatus == model.WorktreeMergeStatusMergeInProgress {
 		return false
 	}
 	if m.commitInFlightForWorktree(project, projectWorktreeRootPath(project)) {
@@ -1776,6 +1789,11 @@ func worktreeRemoveSafetyCopy(status model.WorktreeMergeStatus, targetBranch str
 			return "Merged", "This worktree branch is already merged into " + targetBranch + ".", detailValueStyle
 		}
 		return "Merged", "This worktree branch is already merged back.", detailValueStyle
+	case model.WorktreeMergeStatusMergeInProgress:
+		if targetBranch != "" {
+			return "Merge in progress", "This worktree branch is already being merged into " + targetBranch + ". Finish or abort the root merge before removing the checkout.", detailWarningStyle
+		}
+		return "Merge in progress", "This worktree branch is already being merged back. Finish or abort the root merge before removing the checkout.", detailWarningStyle
 	case model.WorktreeMergeStatusNotMerged:
 		if targetBranch != "" {
 			return "Not merged yet", "This worktree branch is not yet merged into " + targetBranch + ". You can still remove the checkout, but you may lose track of unmerged work.", detailWarningStyle

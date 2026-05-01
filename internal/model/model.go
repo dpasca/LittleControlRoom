@@ -42,9 +42,10 @@ const (
 type WorktreeMergeStatus string
 
 const (
-	WorktreeMergeStatusUnknown   WorktreeMergeStatus = ""
-	WorktreeMergeStatusMerged    WorktreeMergeStatus = "merged"
-	WorktreeMergeStatusNotMerged WorktreeMergeStatus = "not_merged"
+	WorktreeMergeStatusUnknown         WorktreeMergeStatus = ""
+	WorktreeMergeStatusMerged          WorktreeMergeStatus = "merged"
+	WorktreeMergeStatusNotMerged       WorktreeMergeStatus = "not_merged"
+	WorktreeMergeStatusMergeInProgress WorktreeMergeStatus = "merge_in_progress"
 )
 
 type AttentionReason struct {

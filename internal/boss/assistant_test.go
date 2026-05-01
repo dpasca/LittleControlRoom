@@ -220,6 +220,8 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"dirty working tree, ahead commits, and the current branch are normal background state",
 		"Use reference metadata internally",
 		"Prefer verbs from the evidence",
+		"structured control action",
+		"user must confirm",
 	} {
 		if !strings.Contains(directPrompt, want) {
 			t.Fatalf("assistant prompt missing %q:\n%s", want, directPrompt)
@@ -230,6 +232,10 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 	for _, want := range []string{
 		"Do not answer that a concrete term is unknown until search_context has been tried.",
 		"extension of the active engineer sessions",
+		"propose_control",
+		"control_capability=\"engineer.send_prompt\"",
+		"delegate work to an engineer session",
+		"user confirmation",
 		"context_command",
 		"ctx search engineer",
 		"ctx show",
@@ -253,6 +259,7 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"Use reference metadata only to disambiguate targets and detect blockers",
 		"Do not hedge a single clear match",
 		"avoid capability pitches or optional menus",
+		"Read-only query tools are report-only; control actions are proposals",
 	} {
 		if !strings.Contains(plannerPrompt, want) {
 			t.Fatalf("planner prompt missing %q:\n%s", want, plannerPrompt)
@@ -327,6 +334,56 @@ func TestAssistantReplyUsesStructuredToolLoop(t *testing.T) {
 	}
 	if !strings.Contains(planner.reqs[1].UserText, "[project_detail]") || !strings.Contains(planner.reqs[1].UserText, "Decide rollout shape") {
 		t.Fatalf("second planner request missing tool result:\n%s", planner.reqs[1].UserText)
+	}
+}
+
+func TestAssistantReplyCanProposeEngineerSendPromptControl(t *testing.T) {
+	t.Parallel()
+
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model: "gpt-test",
+			OutputText: encodedBossAction(t, bossAction{
+				Kind:              bossActionProposeControl,
+				ControlCapability: "engineer.send_prompt",
+				ProjectPath:       "/tmp/alpha",
+				EngineerProvider:  "opencode",
+				SessionMode:       "resume_or_new",
+				Prompt:            "Please fix the failing tests and report what changed.",
+				Reveal:            false,
+				Reason:            "The user asked to delegate the fix.",
+			}),
+			Usage: model.LLMUsage{TotalTokens: 17},
+		}},
+	}
+	assistant := &Assistant{
+		planner: planner,
+		query:   newQueryExecutor(&fakeBossStore{}),
+		model:   "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Visible projects: 1.",
+		Messages:   []ChatMessage{{Role: "user", Content: "Tell OpenCode to fix Alpha's tests"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.ControlInvocation == nil {
+		t.Fatalf("ControlInvocation = nil, want engineer.send_prompt proposal")
+	}
+	if resp.ControlInvocation.Capability != "engineer.send_prompt" {
+		t.Fatalf("capability = %q", resp.ControlInvocation.Capability)
+	}
+	if !strings.Contains(resp.Content, "Send this to OpenCode") || !strings.Contains(resp.Content, "Enter confirms") {
+		t.Fatalf("proposal content = %q, want confirmation preview", resp.Content)
+	}
+	if !strings.Contains(string(resp.ControlInvocation.Args), `"provider":"opencode"`) ||
+		!strings.Contains(string(resp.ControlInvocation.Args), `"prompt":"Please fix the failing tests and report what changed."`) {
+		t.Fatalf("invocation args = %s", resp.ControlInvocation.Args)
+	}
+	if resp.Usage.TotalTokens != 17 {
+		t.Fatalf("usage total = %d, want 17", resp.Usage.TotalTokens)
 	}
 }
 

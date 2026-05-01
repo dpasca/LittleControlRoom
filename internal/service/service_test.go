@@ -4520,6 +4520,18 @@ func TestWorktreeMergeStatusRecognizesConflictResolvedMergeOnNonMasterParent(t *
 		t.Fatalf("write resolved README in root: %v", err)
 	}
 	runGit(t, projectPath, "git", "add", "README.md")
+
+	if err := svc.RefreshProjectStatus(ctx, result.WorktreePath); err != nil {
+		t.Fatalf("RefreshProjectStatus() for conflict-resolved worktree before merge commit error = %v", err)
+	}
+	inProgressDetail, err := st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() for conflict-resolved worktree before merge commit error = %v", err)
+	}
+	if inProgressDetail.Summary.WorktreeMergeStatus != model.WorktreeMergeStatusMergeInProgress {
+		t.Fatalf("conflict-resolved-but-uncommitted worktree merge status = %q, want %q", inProgressDetail.Summary.WorktreeMergeStatus, model.WorktreeMergeStatusMergeInProgress)
+	}
+
 	runGit(t, projectPath, "git", "commit", "-m", "merge conflict-resolved worktree")
 
 	if ancestorMerged, err := gitBranchMergedIntoBranch(ctx, projectPath, "feat/conflict-resolved", "master_mobnext"); err != nil {
@@ -4899,6 +4911,14 @@ func TestMergeWorktreeBackReportsConflictAndRefreshesStatus(t *testing.T) {
 	}
 	if !rootDetail.Summary.RepoConflict {
 		t.Fatalf("stored root detail should refresh to conflict after merge conflict: %#v", rootDetail.Summary)
+	}
+
+	worktreeDetail, err := st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() for worktree after merge conflict error = %v", err)
+	}
+	if worktreeDetail.Summary.WorktreeMergeStatus != model.WorktreeMergeStatusMergeInProgress {
+		t.Fatalf("stored worktree merge status after merge conflict = %q, want %q", worktreeDetail.Summary.WorktreeMergeStatus, model.WorktreeMergeStatusMergeInProgress)
 	}
 }
 

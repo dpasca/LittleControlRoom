@@ -110,6 +110,13 @@ func (m Model) renderBossModeFooter(width int) string {
 			footerHideAction("Alt+Up", "hide"),
 		}
 	}
+	if m.bossModel.ControlConfirmationActive() {
+		actions = []footerAction{
+			footerPrimaryAction("Enter", "send"),
+			footerExitAction("Esc", "cancel"),
+			footerHideAction("Alt+Up", "hide"),
+		}
+	}
 	if m.bossModel.SessionPickerActive() {
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "open"),

@@ -966,6 +966,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.closeBossMode("Boss mode closed")
 		return m, nil
 	}
+	if msg, ok := msg.(bossui.ControlInvocationConfirmedMsg); ok {
+		return m.executeBossControlInvocation(msg)
+	}
 	if m.bossMode && bossui.IsMessage(msg) {
 		return m.updateBossModeMessage(msg)
 	}
@@ -3454,6 +3457,8 @@ func (m Model) renderDetailContent(width int) string {
 					switch member.WorktreeMergeStatus {
 					case model.WorktreeMergeStatusMerged:
 						statusParts = append(statusParts, "merged")
+					case model.WorktreeMergeStatusMergeInProgress:
+						statusParts = append(statusParts, "merge in progress")
 					case model.WorktreeMergeStatusNotMerged:
 						statusParts = append(statusParts, "not merged")
 					}
@@ -3473,6 +3478,8 @@ func (m Model) renderDetailContent(width int) string {
 				switch orphan.WorktreeMergeStatus {
 				case model.WorktreeMergeStatusMerged:
 					statusParts = append(statusParts, "merged")
+				case model.WorktreeMergeStatusMergeInProgress:
+					statusParts = append(statusParts, "merge in progress")
 				case model.WorktreeMergeStatusNotMerged:
 					statusParts = append(statusParts, "not merged")
 				}
@@ -5178,6 +5185,11 @@ func worktreeMergeStatusDetailValue(project model.ProjectSummary) string {
 				return detailWarningStyle.Render("merged into " + targetBranch + ", but uncommitted changes remain")
 			}
 			return detailWarningStyle.Render("merged, but uncommitted changes remain")
+		case model.WorktreeMergeStatusMergeInProgress:
+			if targetBranch != "" {
+				return detailWarningStyle.Render("merge in progress into " + targetBranch + ", but uncommitted changes remain")
+			}
+			return detailWarningStyle.Render("merge in progress, but uncommitted changes remain")
 		default:
 			if targetBranch != "" {
 				return detailWarningStyle.Render("dirty; commit changes before merging into " + targetBranch)
@@ -5191,6 +5203,11 @@ func worktreeMergeStatusDetailValue(project model.ProjectSummary) string {
 			return detailValueStyle.Render("merged into " + targetBranch)
 		}
 		return detailValueStyle.Render("merged")
+	case model.WorktreeMergeStatusMergeInProgress:
+		if targetBranch != "" {
+			return detailWarningStyle.Render("merge in progress into " + targetBranch)
+		}
+		return detailWarningStyle.Render("merge in progress")
 	case model.WorktreeMergeStatusNotMerged:
 		if targetBranch != "" {
 			return detailWarningStyle.Render("not merged into " + targetBranch)

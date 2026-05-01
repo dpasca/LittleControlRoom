@@ -1850,6 +1850,48 @@ func TestRenderDetailContentShowsWorktreeMergeStatus(t *testing.T) {
 	}
 }
 
+func TestRenderDetailContentShowsWorktreeMergeInProgress(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				Status:           model.StatusIdle,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 childPath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				WorktreeMergeStatus:  model.WorktreeMergeStatusMergeInProgress,
+				RepoBranch:           "feat/parallel-lane",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	rendered := ansi.Strip(m.renderDetailContent(100))
+	if !strings.Contains(rendered, "merge in progress into master") {
+		t.Fatalf("renderDetailContent() should show in-progress merge status, got %q", rendered)
+	}
+	if strings.Contains(rendered, "not merged into master") {
+		t.Fatalf("renderDetailContent() should not show in-progress merges as unmerged, got %q", rendered)
+	}
+	if worktreeNeedsMergeBack(m.allProjects[1]) {
+		t.Fatalf("merge-in-progress worktree should not be counted as still needing merge-back")
+	}
+}
+
 func TestRenderDetailContentPrioritizesDirtyWorktreeMergeReadiness(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"
