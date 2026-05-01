@@ -247,6 +247,52 @@ func TestExecuteBossControlInvocationBatchesOpenAndBossResult(t *testing.T) {
 	}
 }
 
+func TestExecuteBossControlInvocationReportsBlockedLaunch(t *testing.T) {
+	projectPath := "/tmp/control-boss-blocked"
+	m := Model{
+		allProjects: []model.ProjectSummary{{
+			Path:                     projectPath,
+			Name:                     "control-boss-blocked",
+			PresentOnDisk:            true,
+			LatestSessionFormat:      "modern",
+			LatestSessionLastEventAt: time.Now(),
+			LatestTurnStateKnown:     true,
+			LatestTurnCompleted:      false,
+		}},
+	}
+
+	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{
+		Invocation: controlInvocationForTest(t, control.EngineerSendPromptInput{
+			ProjectPath: projectPath,
+			Provider:    control.ProviderOpenCode,
+			SessionMode: control.SessionModeResumeOrNew,
+			Prompt:      "please run the next step",
+			Reveal:      false,
+		}),
+	})
+	got := updated.(Model)
+	if got.attentionDialog != nil {
+		t.Fatalf("attentionDialog = %#v, want boss control failure to stay in boss transcript", got.attentionDialog)
+	}
+	if cmd == nil {
+		t.Fatalf("executeBossControlInvocation() cmd = nil, want immediate result")
+	}
+	msgs := collectCmdMsgs(cmd)
+	var result bossui.ControlInvocationResultMsg
+	for _, msg := range msgs {
+		if typed, ok := msg.(bossui.ControlInvocationResultMsg); ok {
+			result = typed
+			break
+		}
+	}
+	if result.Err == nil {
+		t.Fatalf("result err = nil, want blocked launch error")
+	}
+	if !strings.Contains(result.Status, "unfinished Codex session") {
+		t.Fatalf("result status = %q, want unfinished Codex session", result.Status)
+	}
+}
+
 func controlInvocationForTest(t *testing.T, input control.EngineerSendPromptInput) control.Invocation {
 	t.Helper()
 	if input.Provider == "" {
