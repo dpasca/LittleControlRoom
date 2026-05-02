@@ -2512,6 +2512,7 @@ func (s *Store) QueueSessionClassification(ctx context.Context, classification m
 	if createdAt.IsZero() {
 		createdAt = classification.CreatedAt
 	}
+	displayCategory, displaySummary := refreshingClassificationDisplayPayload(existing)
 
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE session_classifications
@@ -2523,8 +2524,8 @@ func (s *Store) QueueSessionClassification(ctx context.Context, classification m
 			snapshot_hash = ?,
 			status = ?,
 			stage = ?,
-			category = '',
-			summary = '',
+			category = ?,
+			summary = ?,
 			confidence = 0,
 			model = ?,
 			classifier_version = ?,
@@ -2536,9 +2537,24 @@ func (s *Store) QueueSessionClassification(ctx context.Context, classification m
 			completed_at = NULL
 		WHERE session_id = ?
 	`, string(classification.Source), classification.RawSessionID, classification.ProjectPath, classification.SessionFile, classification.SessionFormat, classification.SnapshotHash,
-		string(model.ClassificationPending), string(classification.Stage), classification.Model, classification.ClassifierVersion,
+		string(model.ClassificationPending), string(classification.Stage), string(displayCategory), displaySummary, classification.Model, classification.ClassifierVersion,
 		classification.SourceUpdatedAt.Unix(), createdAt.Unix(), nullableTimeUnixValue(classification.StageStartedAt), now.Unix(), classification.SessionID)
 	return err == nil, err
+}
+
+func refreshingClassificationDisplayPayload(existing model.SessionClassification) (model.SessionCategory, string) {
+	summary := strings.TrimSpace(existing.Summary)
+	if summary == "" {
+		return "", ""
+	}
+	// Keep the last visible assessment on screen while a newer snapshot is
+	// queued or running; status/stage still identify it as a refresh.
+	switch existing.Status {
+	case model.ClassificationCompleted, model.ClassificationPending, model.ClassificationRunning, model.ClassificationFailed:
+		return existing.Category, summary
+	default:
+		return "", ""
+	}
 }
 
 func (s *Store) RecordSessionClassificationFailure(ctx context.Context, classification *model.SessionClassification, lastError string, retryAfter time.Duration) (bool, error) {
@@ -2610,6 +2626,7 @@ func (s *Store) RecordSessionClassificationFailure(ctx context.Context, classifi
 	if createdAt.IsZero() {
 		createdAt = classification.CreatedAt
 	}
+	displayCategory, displaySummary := refreshingClassificationDisplayPayload(existing)
 
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE session_classifications
@@ -2621,8 +2638,8 @@ func (s *Store) RecordSessionClassificationFailure(ctx context.Context, classifi
 			snapshot_hash = ?,
 			status = ?,
 			stage = '',
-			category = '',
-			summary = '',
+			category = ?,
+			summary = ?,
 			confidence = 0,
 			model = ?,
 			classifier_version = ?,
@@ -2634,13 +2651,15 @@ func (s *Store) RecordSessionClassificationFailure(ctx context.Context, classifi
 			completed_at = NULL
 		WHERE session_id = ?
 	`, string(classification.Source), classification.RawSessionID, classification.ProjectPath, classification.SessionFile, classification.SessionFormat, classification.SnapshotHash,
-		string(model.ClassificationFailed), classification.Model, classification.ClassifierVersion, lastError,
+		string(model.ClassificationFailed), string(displayCategory), displaySummary, classification.Model, classification.ClassifierVersion, lastError,
 		classification.SourceUpdatedAt.Unix(), createdAt.Unix(), now.Unix(), classification.SessionID)
 	if err != nil {
 		return false, err
 	}
 	classification.CreatedAt = createdAt
 	applyRecordedSessionClassificationFailure(classification, lastError, now)
+	classification.Category = displayCategory
+	classification.Summary = displaySummary
 	return true, nil
 }
 
@@ -2908,8 +2927,6 @@ func (s *Store) FailSessionClassification(ctx context.Context, sessionID, lastEr
 		UPDATE session_classifications
 		SET status = ?,
 			stage = '',
-			category = '',
-			summary = '',
 			confidence = 0,
 			last_error = ?,
 			stage_started_at = NULL,
@@ -2952,8 +2969,6 @@ func (s *Store) FailSessionClassificationAttempt(ctx context.Context, classifica
 		UPDATE session_classifications
 		SET status = ?,
 			stage = '',
-			category = '',
-			summary = '',
 			confidence = 0,
 			last_error = ?,
 			stage_started_at = NULL,
@@ -2976,8 +2991,6 @@ func (s *Store) FailSessionClassificationAttempt(ctx context.Context, classifica
 	}
 	classification.Status = model.ClassificationFailed
 	classification.Stage = ""
-	classification.Category = ""
-	classification.Summary = ""
 	classification.Confidence = 0
 	classification.StageStartedAt = time.Time{}
 	classification.LastError = lastError
@@ -3437,14 +3450,12 @@ func (s *Store) repairTerminalSessionClassificationStages(ctx context.Context) e
 	}
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE session_classifications
-		SET category = '',
-			summary = '',
-			confidence = 0
+		SET confidence = 0
 		WHERE status = ?
-		  AND (category != '' OR summary != '' OR confidence != 0)
+		  AND confidence != 0
 	`, string(model.ClassificationFailed))
 	if err != nil {
-		return fmt.Errorf("repair failed session classification payloads: %w", err)
+		return fmt.Errorf("repair failed session classification confidence: %w", err)
 	}
 	return nil
 }

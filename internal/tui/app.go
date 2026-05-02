@@ -4815,8 +4815,16 @@ func (m Model) projectAssessmentDisplayTextAt(project model.ProjectSummary, now 
 
 func projectAssessmentTextAt(project model.ProjectSummary, now time.Time, stuckThreshold time.Duration) string {
 	effective := effectiveAssessmentForProject(project, now, stuckThreshold)
-	if strings.TrimSpace(effective.Summary) != "" && (project.LatestSessionClassification == model.ClassificationCompleted || projectAssessmentRefreshing(project)) {
+	if strings.TrimSpace(effective.Summary) != "" && projectAssessmentUsesLatestSummary(project) {
 		return effective.Summary
+	}
+	if projectAssessmentRefreshing(project) {
+		if progress := classificationProgressText(project.LatestSessionClassification, project.LatestSessionClassificationStage, project.LatestSessionClassificationStageStartedAt, project.LatestSessionClassificationUpdatedAt, now, true); progress != "" {
+			return progress
+		}
+	}
+	if projectAssessmentFailed(project) {
+		return "assessment failed"
 	}
 	if strings.TrimSpace(project.LatestCompletedSessionSummary) != "" {
 		return project.LatestCompletedSessionSummary
@@ -5466,6 +5474,15 @@ func projectAssessmentLabelWithThreshold(project model.ProjectSummary, now time.
 	if label, _, ok := visibleAssessmentStatusLabelAt(project, now, stuckThreshold); ok {
 		return label
 	}
+	if projectAssessmentRefreshing(project) {
+		if label := classificationProgressText(project.LatestSessionClassification, project.LatestSessionClassificationStage, project.LatestSessionClassificationStageStartedAt, project.LatestSessionClassificationUpdatedAt, now, false); label != "" {
+			return label
+		}
+		return "assessment"
+	}
+	if projectAssessmentFailed(project) {
+		return "failed"
+	}
 	if project.LatestSessionFormat != "" {
 		return "not assessed yet"
 	}
@@ -5485,6 +5502,15 @@ func projectListStatusAt(project model.ProjectSummary, now time.Time, stuckThres
 	}
 	if label, _, ok := visibleAssessmentStatusLabelAt(project, now, stuckThreshold); ok {
 		return label
+	}
+	if projectAssessmentRefreshing(project) {
+		if project.LatestSessionClassification == model.ClassificationPending {
+			return "queued"
+		}
+		return classificationProgressCompactLabel(project.LatestSessionClassificationStage)
+	}
+	if projectAssessmentFailed(project) {
+		return "failed"
 	}
 	if project.LatestSessionFormat != "" {
 		return "new"
@@ -7332,10 +7358,21 @@ func visibleAssessmentStatusLabelAt(project model.ProjectSummary, now time.Time,
 	if label, category, ok := assessmentStatusLabelAt(project, false, now, stuckThreshold); ok {
 		return label, category, true
 	}
-	if projectAssessmentRefreshing(project) && strings.TrimSpace(project.LatestSessionSummary) != "" {
+	if project.LatestSessionClassification == model.ClassificationFailed && strings.TrimSpace(project.LatestSessionSummary) != "" {
 		if label, category, ok := assessmentStatusLabelForCategory(project.LatestSessionClassificationType, false); ok {
 			return label, category, true
 		}
+	}
+	if projectAssessmentRefreshing(project) {
+		if strings.TrimSpace(project.LatestSessionSummary) != "" {
+			if label, category, ok := assessmentStatusLabelForCategory(project.LatestSessionClassificationType, false); ok {
+				return label, category, true
+			}
+		}
+		return "", model.SessionCategoryUnknown, false
+	}
+	if projectAssessmentFailed(project) {
+		return "", model.SessionCategoryUnknown, false
 	}
 	return latestCompletedAssessmentStatusLabel(project, false)
 }
@@ -7346,6 +7383,19 @@ func projectAssessmentRefreshing(project model.ProjectSummary) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func projectAssessmentFailed(project model.ProjectSummary) bool {
+	return project.LatestSessionClassification == model.ClassificationFailed
+}
+
+func projectAssessmentUsesLatestSummary(project model.ProjectSummary) bool {
+	switch project.LatestSessionClassification {
+	case model.ClassificationCompleted, model.ClassificationFailed:
+		return true
+	default:
+		return projectAssessmentRefreshing(project)
 	}
 }
 

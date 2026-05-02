@@ -2161,7 +2161,7 @@ func TestQueueSessionClassificationFailedSameSnapshotCanRetryImmediatelyWhenForc
 	}
 }
 
-func TestQueueSessionClassificationNewSnapshotClearsStaleAssessmentPayload(t *testing.T) {
+func TestQueueSessionClassificationNewSnapshotCarriesCurrentAssessmentDisplay(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -2225,13 +2225,32 @@ func TestQueueSessionClassificationNewSnapshotClearsStaleAssessmentPayload(t *te
 	if requeued.Status != model.ClassificationPending {
 		t.Fatalf("status = %s, want pending", requeued.Status)
 	}
-	if requeued.Category != "" || requeued.Summary != "" || requeued.Confidence != 0 {
-		t.Fatalf("stale assessment payload leaked into pending row: %#v", requeued)
+	if requeued.Category != model.SessionCategoryCompleted {
+		t.Fatalf("category = %s, want carried completed category", requeued.Category)
+	}
+	if requeued.Summary != classification.Summary {
+		t.Fatalf("summary = %q, want carried current assessment", requeued.Summary)
+	}
+	if requeued.Confidence != 0 {
+		t.Fatalf("confidence = %v, want 0 while refresh is pending", requeued.Confidence)
+	}
+	project, err := st.GetProjectSummary(ctx, classification.ProjectPath, false)
+	if err != nil {
+		t.Fatalf("get project summary during refresh: %v", err)
+	}
+	if project.LatestSessionSummary != classification.Summary {
+		t.Fatalf("project latest summary = %q, want carried current assessment", project.LatestSessionSummary)
+	}
+	if project.LatestSessionClassificationType != model.SessionCategoryCompleted {
+		t.Fatalf("project latest assessment = %s, want carried completed category", project.LatestSessionClassificationType)
 	}
 
 	claimed, err := st.ClaimNextPendingSessionClassification(ctx, time.Minute)
 	if err != nil {
 		t.Fatalf("claim requeued classification: %v", err)
+	}
+	if claimed.Category != model.SessionCategoryCompleted || claimed.Summary != classification.Summary {
+		t.Fatalf("claimed assessment display = %s/%q, want carried current assessment", claimed.Category, claimed.Summary)
 	}
 	if err := st.FailSessionClassification(ctx, claimed.SessionID, "model unavailable"); err != nil {
 		t.Fatalf("fail classification: %v", err)
@@ -2240,8 +2259,14 @@ func TestQueueSessionClassificationNewSnapshotClearsStaleAssessmentPayload(t *te
 	if err != nil {
 		t.Fatalf("get failed classification: %v", err)
 	}
-	if failed.Category != "" || failed.Summary != "" || failed.Confidence != 0 {
-		t.Fatalf("stale assessment payload leaked into failed row: %#v", failed)
+	if failed.Category != model.SessionCategoryCompleted {
+		t.Fatalf("failed category = %s, want carried completed category", failed.Category)
+	}
+	if failed.Summary != classification.Summary {
+		t.Fatalf("failed summary = %q, want carried current assessment", failed.Summary)
+	}
+	if failed.Confidence != 0 {
+		t.Fatalf("failed confidence = %v, want 0", failed.Confidence)
 	}
 }
 

@@ -4582,8 +4582,8 @@ func TestProjectAssessmentTextUsesFallbackStates(t *testing.T) {
 	project := model.ProjectSummary{
 		LatestSessionClassification: model.ClassificationRunning,
 	}
-	if got := projectAssessmentText(project); got != "-" {
-		t.Fatalf("projectAssessmentText(running) = %q, want %q", got, "-")
+	if got := projectAssessmentText(project); got != "assessment running" {
+		t.Fatalf("projectAssessmentText(running) = %q, want %q", got, "assessment running")
 	}
 
 	project = model.ProjectSummary{
@@ -4593,8 +4593,21 @@ func TestProjectAssessmentTextUsesFallbackStates(t *testing.T) {
 		LatestCompletedSessionClassificationType:  model.SessionCategoryNeedsFollowUp,
 		LatestCompletedSessionSummary:             "A concrete next step still remains.",
 	}
-	if got := projectAssessmentTextAt(project, time.Date(2026, 3, 10, 12, 0, 37, 0, time.UTC), 0); got != "A concrete next step still remains." {
-		t.Fatalf("projectAssessmentTextAt(refreshing) = %q, want completed summary", got)
+	if got := projectAssessmentTextAt(project, time.Date(2026, 3, 10, 12, 0, 37, 0, time.UTC), 0); got != "assessment waiting for model 00:37" {
+		t.Fatalf("projectAssessmentTextAt(refreshing) = %q, want assessment progress", got)
+	}
+
+	project = model.ProjectSummary{
+		PresentOnDisk:                            true,
+		LatestSessionClassification:              model.ClassificationFailed,
+		LatestCompletedSessionClassificationType: model.SessionCategoryNeedsFollowUp,
+		LatestCompletedSessionSummary:            "A concrete next step still remains.",
+	}
+	if got := projectAssessmentText(project); got != "assessment failed" {
+		t.Fatalf("projectAssessmentText(failed) = %q, want assessment failed", got)
+	}
+	if got := projectListStatus(project); got != "failed" {
+		t.Fatalf("projectListStatus(failed) = %q, want failed", got)
 	}
 
 	project = model.ProjectSummary{
@@ -4632,7 +4645,7 @@ func TestProjectAssessmentTextPrefersCurrentSummaryDuringRefresh(t *testing.T) {
 	}
 }
 
-func TestProjectListStatusUsesLastCompletedAssessmentWhileRefreshRuns(t *testing.T) {
+func TestProjectListStatusShowsProgressWhileRefreshRunsWithoutCurrentSummary(t *testing.T) {
 	project := model.ProjectSummary{
 		Status:                                   model.StatusIdle,
 		PresentOnDisk:                            true,
@@ -4643,11 +4656,11 @@ func TestProjectListStatusUsesLastCompletedAssessmentWhileRefreshRuns(t *testing
 		LatestCompletedSessionSummary:            "Waiting on a design decision before coding resumes.",
 	}
 
-	if got := projectListStatus(project); got != "waiting" {
-		t.Fatalf("projectListStatus(refreshing) = %q, want %q", got, "waiting")
+	if got := projectListStatus(project); got != "model" {
+		t.Fatalf("projectListStatus(refreshing) = %q, want %q", got, "model")
 	}
-	if got := projectAssessmentText(project); got != project.LatestCompletedSessionSummary {
-		t.Fatalf("projectAssessmentText(refreshing) = %q, want completed summary", got)
+	if got := projectAssessmentText(project); got != "assessment waiting for model" {
+		t.Fatalf("projectAssessmentText(refreshing) = %q, want assessment progress", got)
 	}
 }
 
@@ -6228,11 +6241,11 @@ func TestRenderDetailShowsAssessmentStageTiming(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderDetailContent(100))
-	if !strings.Contains(rendered, "Assessment: waiting") {
-		t.Fatalf("renderDetailContent() missing visible assessment label: %q", rendered)
+	if !strings.Contains(rendered, "Assessment: waiting for model 00:37") {
+		t.Fatalf("renderDetailContent() missing assessment progress label: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Summary: Waiting on a design decision before coding resumes.") {
-		t.Fatalf("renderDetailContent() missing visible session summary: %q", rendered)
+	if !strings.Contains(rendered, "Summary: assessment waiting for model 00:37") {
+		t.Fatalf("renderDetailContent() missing assessment progress summary: %q", rendered)
 	}
 }
 

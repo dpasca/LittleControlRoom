@@ -531,9 +531,11 @@ func (m *Manager) failClassification(ctx context.Context, classification *model.
 func (m *Manager) publishClassificationEvent(ctx context.Context, classification model.SessionClassification, state string, cause error) {
 	now := time.Now()
 	payload := map[string]string{
-		"status":   state,
-		"session":  classification.ExternalID(),
-		"category": string(classification.Category),
+		"status":  state,
+		"session": classification.ExternalID(),
+	}
+	if state == "completed" {
+		payload["category"] = string(classification.Category)
 	}
 	if classification.Stage != "" {
 		payload["stage"] = string(classification.Stage)
@@ -541,7 +543,7 @@ func (m *Manager) publishClassificationEvent(ctx context.Context, classification
 	if strings.TrimSpace(classification.Model) != "" {
 		payload["model"] = strings.TrimSpace(classification.Model)
 	}
-	if classification.Summary != "" {
+	if state == "completed" && classification.Summary != "" {
 		payload["summary"] = classification.Summary
 	}
 	if state == "failed" && strings.TrimSpace(classification.LastError) != "" {
@@ -561,7 +563,7 @@ func (m *Manager) publishClassificationEvent(ctx context.Context, classification
 	}
 
 	eventPayload := fmt.Sprintf("classification %s", state)
-	if classification.Category != "" {
+	if state == "completed" && classification.Category != "" {
 		eventPayload = fmt.Sprintf("%s category=%s", eventPayload, classification.Category)
 	}
 	if classification.Stage != "" {
@@ -570,7 +572,7 @@ func (m *Manager) publishClassificationEvent(ctx context.Context, classification
 	if strings.TrimSpace(classification.Model) != "" {
 		eventPayload = fmt.Sprintf("%s model=%s", eventPayload, strings.TrimSpace(classification.Model))
 	}
-	if classification.Summary != "" {
+	if state == "completed" && classification.Summary != "" {
 		eventPayload = fmt.Sprintf("%s summary=%s", eventPayload, classification.Summary)
 	}
 	if state == "failed" && strings.TrimSpace(classification.LastError) != "" {
