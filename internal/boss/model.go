@@ -2,6 +2,7 @@ package boss
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -389,13 +390,20 @@ func (m Model) applyAssistantReply(response AssistantResponse, err error, snapsh
 	var saved ChatMessage
 	if err != nil {
 		m.pendingControl = nil
+		content := "I could not reach my chat backend yet: " + err.Error()
+		status := "Boss chat could not answer"
+		var proposalErr controlProposalError
+		if errors.As(err, &proposalErr) {
+			content = "I could not prepare that engineer-session action: " + proposalErr.Unwrap().Error()
+			status = "Engineer action proposal failed"
+		}
 		saved = ChatMessage{
 			Role:    "assistant",
-			Content: "I could not reach my chat backend yet: " + err.Error(),
+			Content: content,
 			At:      m.now(),
 		}
 		m.messages = append(m.messages, saved)
-		m.status = "Boss chat could not answer"
+		m.status = status
 	} else {
 		content := strings.TrimSpace(response.Content)
 		if content == "" {

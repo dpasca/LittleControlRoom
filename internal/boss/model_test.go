@@ -452,6 +452,31 @@ func TestEmbeddedModelConfirmsControlInvocation(t *testing.T) {
 	}
 }
 
+func TestEmbeddedModelLabelsControlProposalErrors(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbedded(context.Background(), nil)
+
+	updated, _ := m.Update(AssistantReplyMsg{
+		err: wrapControlProposalError(fmt.Errorf("project_path or project_name is required")),
+	})
+	got := updated.(Model)
+	if got.status != "Engineer action proposal failed" {
+		t.Fatalf("status = %q, want proposal failure status", got.status)
+	}
+	if len(got.messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(got.messages))
+	}
+	content := got.messages[0].Content
+	if strings.Contains(content, "chat backend") {
+		t.Fatalf("content = %q, should not report backend failure", content)
+	}
+	if !strings.Contains(content, "I could not prepare that engineer-session action") ||
+		!strings.Contains(content, "project_path or project_name is required") {
+		t.Fatalf("content = %q, want proposal failure detail", content)
+	}
+}
+
 func TestEmbeddedModelRendersControlConfirmationDialog(t *testing.T) {
 	t.Parallel()
 

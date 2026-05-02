@@ -389,6 +389,43 @@ func TestAssistantReplyCanProposeEngineerSendPromptControl(t *testing.T) {
 	}
 }
 
+func TestAssistantReplyReportsInvalidControlProposalAsActionError(t *testing.T) {
+	t.Parallel()
+
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model: "gpt-test",
+			OutputText: encodedBossAction(t, bossAction{
+				Kind:              bossActionProposeControl,
+				ControlCapability: "engineer.send_prompt",
+				EngineerProvider:  "codex",
+				SessionMode:       "resume_or_new",
+				Prompt:            "Kill the runaway processes.",
+			}),
+		}},
+	}
+	assistant := &Assistant{
+		planner: planner,
+		query:   newQueryExecutor(&fakeBossStore{}),
+		model:   "gpt-test",
+	}
+
+	_, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Visible projects: 2.",
+		Messages:   []ChatMessage{{Role: "user", Content: "Let's do it"}},
+	})
+	if err == nil {
+		t.Fatalf("Reply() error = nil, want invalid control proposal")
+	}
+	var proposalErr controlProposalError
+	if !errors.As(err, &proposalErr) {
+		t.Fatalf("Reply() error = %T %v, want controlProposalError", err, err)
+	}
+	if !strings.Contains(err.Error(), "project_path or project_name is required") {
+		t.Fatalf("Reply() error = %q, want project target detail", err.Error())
+	}
+}
+
 func TestAssistantReplyStreamEmitsToolCallsAndTextDeltas(t *testing.T) {
 	t.Parallel()
 

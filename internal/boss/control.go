@@ -26,6 +26,28 @@ type ControlInvocationResultMsg struct {
 	Err        error
 }
 
+type controlProposalError struct {
+	err error
+}
+
+func (e controlProposalError) Error() string {
+	if e.err == nil {
+		return "control proposal failed"
+	}
+	return "control proposal failed: " + e.err.Error()
+}
+
+func (e controlProposalError) Unwrap() error {
+	return e.err
+}
+
+func wrapControlProposalError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return controlProposalError{err: err}
+}
+
 func controlProposalFromBossAction(action bossAction) (control.Invocation, string, error) {
 	capability := control.CapabilityName(strings.TrimSpace(action.ControlCapability))
 	if capability == "" {

@@ -245,7 +245,7 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 		if normalizeBossActionKind(action.Kind) == bossActionProposeControl {
 			inv, content, err := controlProposalFromBossAction(action)
 			if err != nil {
-				return AssistantResponse{}, err
+				return AssistantResponse{}, wrapControlProposalError(err)
 			}
 			return AssistantResponse{
 				Content:           content,
@@ -324,7 +324,7 @@ func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantReque
 		if normalizeBossActionKind(action.Kind) == bossActionProposeControl {
 			inv, content, err := controlProposalFromBossAction(action)
 			if err != nil {
-				return AssistantResponse{}, err
+				return AssistantResponse{}, wrapControlProposalError(err)
 			}
 			emitToolCall(emit, describeBossAction(action), "ready")
 			emitAssistantDelta(emit, content)
@@ -404,6 +404,9 @@ func (a *Assistant) planAction(ctx context.Context, req AssistantRequest, toolRe
 	}
 	normalizeBossAction(&action)
 	if err := validateBossAction(action); err != nil {
+		if normalizeBossActionKind(action.Kind) == bossActionProposeControl {
+			return response, bossAction{}, wrapControlProposalError(err)
+		}
 		return response, bossAction{}, err
 	}
 	if forceAnswer && action.Kind != bossActionAnswer && action.Kind != bossActionProposeControl {
