@@ -153,15 +153,23 @@ const (
 	ResourceProject         ResourceKind = "project"
 	ResourceEngineerSession ResourceKind = "engineer_session"
 	ResourceTodo            ResourceKind = "todo"
+	ResourceAgentTask       ResourceKind = "agent_task"
+	ResourceProcess         ResourceKind = "process"
+	ResourcePort            ResourceKind = "port"
+	ResourceFile            ResourceKind = "file"
 )
 
 type ResourceRef struct {
 	Kind        ResourceKind `json:"kind"`
+	ID          string       `json:"id,omitempty"`
 	Path        string       `json:"path,omitempty"`
 	ProjectPath string       `json:"project_path,omitempty"`
 	Provider    Provider     `json:"provider,omitempty"`
 	SessionID   string       `json:"session_id,omitempty"`
 	TodoID      int64        `json:"todo_id,omitempty"`
+	PID         int          `json:"pid,omitempty"`
+	Port        int          `json:"port,omitempty"`
+	Label       string       `json:"label,omitempty"`
 }
 
 type Operation struct {

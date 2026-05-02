@@ -237,6 +237,39 @@ func (s *Store) initSchema(ctx context.Context) error {
 			name TEXT PRIMARY KEY,
 			created_at INTEGER NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS agent_tasks (
+			id TEXT PRIMARY KEY,
+			title TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			status TEXT NOT NULL,
+			summary TEXT NOT NULL DEFAULT '',
+			provider TEXT NOT NULL DEFAULT '',
+			session_id TEXT NOT NULL DEFAULT '',
+			workspace_path TEXT NOT NULL DEFAULT '',
+			expires_at INTEGER,
+			created_at INTEGER NOT NULL,
+			last_touched_at INTEGER NOT NULL,
+			completed_at INTEGER,
+			archived_at INTEGER,
+			updated_at INTEGER NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_tasks_status_touched ON agent_tasks(status, last_touched_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_tasks_kind_status ON agent_tasks(kind, status);`,
+		`CREATE TABLE IF NOT EXISTS agent_task_resources (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			task_id TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			project_path TEXT NOT NULL DEFAULT '',
+			path TEXT NOT NULL DEFAULT '',
+			pid INTEGER NOT NULL DEFAULT 0,
+			port INTEGER NOT NULL DEFAULT 0,
+			provider TEXT NOT NULL DEFAULT '',
+			session_id TEXT NOT NULL DEFAULT '',
+			label TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			FOREIGN KEY(task_id) REFERENCES agent_tasks(id) ON DELETE CASCADE
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_task_resources_task_id ON agent_task_resources(task_id, id);`,
 	}
 
 	for _, stmt := range stmts {

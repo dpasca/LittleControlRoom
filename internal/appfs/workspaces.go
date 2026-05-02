@@ -11,7 +11,12 @@ import (
 
 const internalWorkspaceDirName = "internal-workspaces"
 
+var persistentWorkspacePrefixes = []string{
+	"lcroom-agent-task-",
+}
+
 var reservedWorkspacePrefixes = []string{
+	"lcroom-agent-task-",
 	"lcroom-codex-helper-",
 	"lcroom-ai-",
 	"lcroom-index-",
@@ -87,6 +92,9 @@ func CleanupStaleInternalWorkspaces(dataDir string, maxAge time.Duration) error 
 		if !entry.IsDir() {
 			continue
 		}
+		if hasPersistentWorkspacePrefix(entry.Name()) {
+			continue
+		}
 		info, err := entry.Info()
 		if err != nil {
 			continue
@@ -115,4 +123,13 @@ func isWithinRoot(path string, root string) bool {
 	}
 	rel, err := filepath.Rel(root, path)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func hasPersistentWorkspacePrefix(name string) bool {
+	for _, prefix := range persistentWorkspacePrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }

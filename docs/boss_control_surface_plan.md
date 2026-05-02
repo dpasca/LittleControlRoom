@@ -106,7 +106,39 @@ Examples:
 {"kind":"project","path":"/path/to/project"}
 {"kind":"engineer_session","project_path":"/path/to/project","provider":"opencode","session_id":"ses_123"}
 {"kind":"todo","project_path":"/path/to/project","id":42}
+{"kind":"agent_task","id":"agt_20260502T091500_ab12cd34ef"}
+{"kind":"process","pid":49995,"label":"ts-node-dev"}
 ```
+
+## Agent Task Threads
+
+Project paths should not be mandatory for every delegated action.
+Boss Chat needs a lightweight venue for temporary work that may take several turns but should not become a dashboard project.
+
+Use `agent_task` as the durable envelope Boss owns:
+
+- id
+- title
+- kind: `ephemeral`, `project`, `scratch_task`, or `system_ops`
+- status: `active`, `waiting`, `completed`, or `archived`
+- summary / rolling brief
+- current provider and engineer session id, if any
+- workspace path, when the task needs a small managed directory
+- related resources such as projects, PIDs, ports, files, TODOs, or engineer sessions
+- created, touched, completed, archived, and expiry timestamps
+
+Engineer sessions attach to an agent task; they are not the task itself.
+Boss can continue the same task with the same provider session, start a fresh provider session under the same task, or close/archive the task once the work is done.
+
+Venue guidance:
+
+- `project`: normal repo/project work.
+- `scratch_task`: durable folder-backed task already visible in the dashboard.
+- `ephemeral`: temporary multi-turn task, hidden from the project list by default.
+- `system_ops`: host/LCR operation or investigation with no natural repo.
+
+Ephemeral and system-ops task workspaces live under Little Control Room app data internal workspaces and are treated as managed internal paths so scanning does not promote them to normal projects.
+Completed ephemeral tasks should remain recallable through a short summary, then be auto-archived or purged by later lifecycle code.
 
 ## Provider Model
 
@@ -260,10 +292,15 @@ After `engineer.send_prompt`, add capabilities only when the control lifecycle h
 
 Likely next actions:
 
+- `engineer.delegate_task`
+- `agent_task.create`
+- `agent_task.continue`
+- `agent_task.close`
 - `project.add_todo`
 - `todo.mark_done`
 - `todo.create_worktree`
 - `todo.create_worktree_and_start_engineer`
+- `process.terminate`
 - `runtime.start`
 - `runtime.stop`
 - `project.snooze`

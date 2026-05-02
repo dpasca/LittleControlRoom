@@ -30,7 +30,8 @@ func TestCleanupStaleInternalWorkspaces(t *testing.T) {
 
 	oldPath := filepath.Join(root, "lcroom-codex-helper-old")
 	newPath := filepath.Join(root, "lcroom-codex-helper-new")
-	for _, path := range []string{oldPath, newPath} {
+	taskPath := filepath.Join(root, "lcroom-agent-task-old")
+	for _, path := range []string{oldPath, newPath, taskPath} {
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			t.Fatalf("mkdir %s: %v", path, err)
 		}
@@ -38,6 +39,9 @@ func TestCleanupStaleInternalWorkspaces(t *testing.T) {
 	oldTime := time.Now().Add(-48 * time.Hour)
 	if err := os.Chtimes(oldPath, oldTime, oldTime); err != nil {
 		t.Fatalf("chtimes old workspace: %v", err)
+	}
+	if err := os.Chtimes(taskPath, oldTime, oldTime); err != nil {
+		t.Fatalf("chtimes old agent task workspace: %v", err)
 	}
 
 	if err := CleanupStaleInternalWorkspaces(dataDir, 24*time.Hour); err != nil {
@@ -48,5 +52,8 @@ func TestCleanupStaleInternalWorkspaces(t *testing.T) {
 	}
 	if _, err := os.Stat(newPath); err != nil {
 		t.Fatalf("expected fresh workspace to remain, stat err = %v", err)
+	}
+	if _, err := os.Stat(taskPath); err != nil {
+		t.Fatalf("expected agent task workspace to remain for lifecycle GC, stat err = %v", err)
 	}
 }
