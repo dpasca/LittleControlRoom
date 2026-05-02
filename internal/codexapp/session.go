@@ -31,6 +31,7 @@ const (
 	busyStateReconcileAfter   = time.Minute
 	busyStateUnresponsiveFor  = 10 * time.Minute
 	busyStateStallAfter       = 2
+	busyStateHardStallAfter   = busyStateUnresponsiveFor + time.Duration(busyStateStallAfter)*busyStateReconcileAfter
 	codexReconnectSuggestion  = "Embedded Codex session seems stuck or disconnected. Use /reconnect."
 	codexHomeCleanupWarning   = "Codex home cleanup warning: could not repair stale rollout paths in state_5.sqlite before startup. Saved-session discovery may still show stale paths until a later cleanup succeeds."
 	playwrightMCPReadyTimeout = 12 * time.Second
@@ -573,6 +574,7 @@ func (s *appServerSession) ProjectPath() string {
 func (s *appServerSession) Snapshot() Snapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.promoteHardStalledBusyLocked(time.Now())
 	entries, transcript := s.exportedTranscriptLocked()
 	snapshot := s.stateSnapshotLocked()
 	snapshot.Entries = entries
@@ -585,6 +587,7 @@ func (s *appServerSession) TrySnapshot() (Snapshot, bool) {
 		return Snapshot{}, false
 	}
 	defer s.mu.Unlock()
+	s.promoteHardStalledBusyLocked(time.Now())
 	entries, transcript := s.exportedTranscriptLocked()
 	snapshot := s.stateSnapshotLocked()
 	snapshot.Entries = entries
@@ -595,6 +598,7 @@ func (s *appServerSession) TrySnapshot() (Snapshot, bool) {
 func (s *appServerSession) StateSnapshot() Snapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.promoteHardStalledBusyLocked(time.Now())
 	return s.stateSnapshotLocked()
 }
 
@@ -671,10 +675,10 @@ func (s *appServerSession) phaseLocked() SessionPhase {
 		return SessionPhaseExternal
 	case s.compacting:
 		return SessionPhaseReconciling
-	case s.reconciling:
-		return SessionPhaseReconciling
 	case s.stalled:
 		return SessionPhaseStalled
+	case s.reconciling:
+		return SessionPhaseReconciling
 	case s.pendingCompletion != nil && s.busy:
 		return SessionPhaseFinishing
 	case s.busy:
@@ -776,6 +780,21 @@ func (s *appServerSession) setBusyStalledLocked() {
 	}
 	s.status = codexReconnectSuggestion
 	s.lastSystemNotice = codexReconnectSuggestion
+}
+
+func (s *appServerSession) promoteHardStalledBusyLocked(now time.Time) {
+	if !s.busy || s.busyExternal || s.pendingApproval != nil || s.pendingToolInput != nil || s.pendingElicitation != nil {
+		return
+	}
+	if strings.TrimSpace(s.activeTurnID) == "" {
+		return
+	}
+	age, ok := s.busyActivityAgeLocked(now)
+	if !ok || age < busyStateHardStallAfter {
+		return
+	}
+	s.reconciling = false
+	s.setBusyStalledLocked()
 }
 
 func (s *appServerSession) noteSuspectedBusyStallLocked() {

@@ -2241,6 +2241,35 @@ func TestReconcileBusyStateMarksSessionStalledWhenActiveTurnStaysUnresponsive(t 
 	}
 }
 
+func TestSnapshotMarksLongSilentBusySessionStalled(t *testing.T) {
+	staleBusy := time.Now().Add(-(busyStateHardStallAfter + time.Minute)).Round(0)
+	s := &appServerSession{
+		projectPath:        "/tmp/demo",
+		threadID:           "thread_456",
+		activeTurnID:       "turn_old",
+		busy:               true,
+		reconciling:        true,
+		status:             "Codex is working...",
+		entryIndex:         make(map[string]int),
+		notify:             func() {},
+		lastBusyActivityAt: staleBusy,
+	}
+
+	snapshot := s.Snapshot()
+	if snapshot.Phase != SessionPhaseStalled {
+		t.Fatalf("phase = %q, want %q", snapshot.Phase, SessionPhaseStalled)
+	}
+	if snapshot.Status != codexReconnectSuggestion {
+		t.Fatalf("status = %q, want %q", snapshot.Status, codexReconnectSuggestion)
+	}
+	if snapshot.LastSystemNotice != codexReconnectSuggestion {
+		t.Fatalf("last system notice = %q, want reconnect suggestion", snapshot.LastSystemNotice)
+	}
+	if len(snapshot.Entries) == 0 || snapshot.Entries[len(snapshot.Entries)-1].Text != codexReconnectSuggestion {
+		t.Fatalf("entries = %#v, want reconnect guidance appended after hard stall", snapshot.Entries)
+	}
+}
+
 func TestSubmitInputRejectsSteerWhenRecoveredTurnLooksStuck(t *testing.T) {
 	staleBusy := time.Now().Add(-(busyStateUnresponsiveFor + time.Minute)).Round(0)
 	callCount := 0
