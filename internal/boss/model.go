@@ -782,6 +782,9 @@ func (m Model) chatAuxiliaryHeights(topHeight, inputHeight int, includesHint boo
 func (m Model) renderChat(layout bossLayout) string {
 	input := fitRenderedBlock(renderBossInputWithSelection(m.input, m.inputSelection, layout.chatInnerWidth), layout.chatInnerWidth, layout.inputHeight)
 	transcript := m.chatViewport.View()
+	if !m.chatSelection.dragging {
+		transcript = m.renderChatCompanion(transcript, layout)
+	}
 	if m.chatSelection.dragging && m.chatSelection.hasRange() {
 		transcript = overlayBossSelectionHighlight(transcript, m.chatSelection, m.chatViewport.YOffset)
 	}
