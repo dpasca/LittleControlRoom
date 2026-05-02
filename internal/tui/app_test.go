@@ -4290,10 +4290,20 @@ func TestRenderFooterShowsProcessWarningSystemNotice(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderFooter(220))
-	for _, want := range []string{"Processes:", "1 suspicious", "1 hot"} {
+	for _, want := range []string{"PIDs 1", "hot1"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("footer missing process warning %q: %q", want, rendered)
 		}
+	}
+	if strings.Contains(rendered, "suspicious project process") || strings.Contains(rendered, "Processes:") {
+		t.Fatalf("footer process warning should stay compact, got %q", rendered)
+	}
+}
+
+func TestProcessWarningStatusIsCompact(t *testing.T) {
+	status := processWarningStatus(processWarningStats{Total: 6, HighCPU: 2, PortListeners: 1})
+	if status != "PIDs 6 hot2 port1; /pids" {
+		t.Fatalf("processWarningStatus() = %q, want compact PID status", status)
 	}
 }
 

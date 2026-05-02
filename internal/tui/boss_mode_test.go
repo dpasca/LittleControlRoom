@@ -82,7 +82,7 @@ func TestBossViewContextIncludesProcessSystemNotice(t *testing.T) {
 	if notice.Code != "process_suspicious" || notice.Severity != "warning" || notice.Count != 1 {
 		t.Fatalf("notice = %#v, want process warning", notice)
 	}
-	if !strings.Contains(notice.Summary, "Processes: 1 suspicious") || !strings.Contains(notice.Summary, "process_report") {
+	if !strings.Contains(notice.Summary, "1 suspicious project-local PID") || !strings.Contains(notice.Summary, "process_report") {
 		t.Fatalf("notice summary = %q, want process report guidance", notice.Summary)
 	}
 }

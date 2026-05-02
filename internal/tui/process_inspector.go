@@ -544,28 +544,21 @@ func processWarningFooterLabel(stats processWarningStats) string {
 	if stats.Total == 0 {
 		return ""
 	}
-	parts := []string{fmt.Sprintf("%d suspicious", stats.Total)}
+	parts := []string{fmt.Sprintf("PIDs %d", stats.Total)}
 	if stats.HighCPU > 0 {
-		parts = append(parts, fmt.Sprintf("%d hot", stats.HighCPU))
+		parts = append(parts, fmt.Sprintf("hot%d", stats.HighCPU))
 	}
 	if stats.PortListeners > 0 {
-		parts = append(parts, fmt.Sprintf("%d ports", stats.PortListeners))
+		parts = append(parts, fmt.Sprintf("port%d", stats.PortListeners))
 	}
-	if stats.Projects > 1 {
-		parts = append(parts, fmt.Sprintf("%d projects", stats.Projects))
-	}
-	return "Processes: " + strings.Join(parts, ", ")
+	return strings.Join(parts, " ")
 }
 
 func processWarningSystemNoticeSummary(stats processWarningStats) string {
 	if stats.Total == 0 {
 		return ""
 	}
-	summary := processWarningFooterLabel(stats)
-	if summary == "" {
-		return ""
-	}
-	return summary + "; use process_report or /pids for PID details"
+	return processWarningDetailLabel(stats) + " outside LCR control; use process_report or /pids for PID details"
 }
 
 func formatCount(count int, label string) string {
@@ -624,13 +617,11 @@ func processDialogReadyStatus(count int, scope string) string {
 }
 
 func processWarningStatus(stats processWarningStats) string {
-	if stats.Total == 1 {
-		return "1 suspicious project process found; use /pids"
+	label := processWarningFooterLabel(stats)
+	if label == "" {
+		return ""
 	}
-	if stats.HighCPU > 0 {
-		return fmt.Sprintf("%d suspicious project processes found (%d hot); use /pids", stats.Total, stats.HighCPU)
-	}
-	return fmt.Sprintf("%d suspicious project processes found; use /pids", stats.Total)
+	return label + "; /pids"
 }
 
 func sameDialogProcessPath(left, right string) bool {
