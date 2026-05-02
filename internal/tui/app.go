@@ -3481,11 +3481,11 @@ func (m Model) renderDetailContent(width int) string {
 				if member.WorktreeKind == model.WorktreeKindLinked {
 					switch member.WorktreeMergeStatus {
 					case model.WorktreeMergeStatusMerged:
-						statusParts = append(statusParts, "merged")
+						statusParts = append(statusParts, "no unmerged commits")
 					case model.WorktreeMergeStatusMergeInProgress:
 						statusParts = append(statusParts, "merge in progress")
 					case model.WorktreeMergeStatusNotMerged:
-						statusParts = append(statusParts, "not merged")
+						statusParts = append(statusParts, "unmerged commits")
 					}
 				}
 				if filepath.Clean(member.Path) == filepath.Clean(p.Path) {
@@ -3502,11 +3502,11 @@ func (m Model) renderDetailContent(width int) string {
 				statusParts := []string{"orphaned"}
 				switch orphan.WorktreeMergeStatus {
 				case model.WorktreeMergeStatusMerged:
-					statusParts = append(statusParts, "merged")
+					statusParts = append(statusParts, "no unmerged commits")
 				case model.WorktreeMergeStatusMergeInProgress:
 					statusParts = append(statusParts, "merge in progress")
 				case model.WorktreeMergeStatusNotMerged:
-					statusParts = append(statusParts, "not merged")
+					statusParts = append(statusParts, "unmerged commits")
 				}
 				lines = append(lines, renderWrappedDetailBullet(detailWarningStyle, width, projectWorktreeLabel(orphan)+" · "+strings.Join(statusParts, ", ")))
 				lines = append(lines, renderWrappedDetailBullet(detailMutedStyle, width, m.displayPathWithHomeTilde(orphan.Path)))
@@ -5267,10 +5267,7 @@ func worktreeMergeStatusDetailValue(project model.ProjectSummary) string {
 	if project.RepoDirty {
 		switch project.WorktreeMergeStatus {
 		case model.WorktreeMergeStatusMerged:
-			if targetBranch != "" {
-				return detailWarningStyle.Render("merged into " + targetBranch + ", but uncommitted changes remain")
-			}
-			return detailWarningStyle.Render("merged, but uncommitted changes remain")
+			return detailWarningStyle.Render(worktreeNoUnmergedCommitsText(targetBranch) + "; uncommitted changes remain")
 		case model.WorktreeMergeStatusMergeInProgress:
 			if targetBranch != "" {
 				return detailWarningStyle.Render("merge in progress into " + targetBranch + ", but uncommitted changes remain")
@@ -5285,20 +5282,14 @@ func worktreeMergeStatusDetailValue(project model.ProjectSummary) string {
 	}
 	switch project.WorktreeMergeStatus {
 	case model.WorktreeMergeStatusMerged:
-		if targetBranch != "" {
-			return detailValueStyle.Render("merged into " + targetBranch)
-		}
-		return detailValueStyle.Render("merged")
+		return detailValueStyle.Render(worktreeNoUnmergedCommitsText(targetBranch))
 	case model.WorktreeMergeStatusMergeInProgress:
 		if targetBranch != "" {
 			return detailWarningStyle.Render("merge in progress into " + targetBranch)
 		}
 		return detailWarningStyle.Render("merge in progress")
 	case model.WorktreeMergeStatusNotMerged:
-		if targetBranch != "" {
-			return detailWarningStyle.Render("not merged into " + targetBranch)
-		}
-		return detailWarningStyle.Render("not merged")
+		return detailWarningStyle.Render(worktreeHasUnmergedCommitsText(targetBranch))
 	default:
 		if targetBranch != "" {
 			return detailMutedStyle.Render("unavailable for " + targetBranch)

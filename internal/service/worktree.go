@@ -513,7 +513,7 @@ func gitBranchMergedIntoBranch(ctx context.Context, repoPath, branch, target str
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
 			return false, nil
 		}
-		return false, fmt.Errorf("check whether %s is already merged into %s in %s: %w", branch, target, repoPath, err)
+		return false, fmt.Errorf("check whether %s has unmerged commits relative to %s in %s: %w", branch, target, repoPath, err)
 	}
 	return true, nil
 }

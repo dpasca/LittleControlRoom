@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"lcroom/internal/appfs"
+	"lcroom/internal/browserctl"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/model"
 )
@@ -48,12 +49,7 @@ func NewPromptHelperInDataDir(dataDir string) (*PromptHelper, error) {
 	}
 
 	notifyCh := make(chan struct{}, 1)
-	sessionAny, err := newAppServerSession(LaunchRequest{
-		Provider:    ProviderCodex,
-		ProjectPath: workspace,
-		ForceNew:    true,
-		Preset:      codexcli.PresetSafe,
-	}, func() {
+	sessionAny, err := newAppServerSession(promptHelperLaunchRequest(workspace), func() {
 		select {
 		case notifyCh <- struct{}{}:
 		default:
@@ -76,6 +72,18 @@ func NewPromptHelperInDataDir(dataDir string) (*PromptHelper, error) {
 		notifyCh:  notifyCh,
 		workspace: workspace,
 	}, nil
+}
+
+func promptHelperLaunchRequest(workspace string) LaunchRequest {
+	return LaunchRequest{
+		Provider:    ProviderCodex,
+		ProjectPath: workspace,
+		ForceNew:    true,
+		Preset:      codexcli.PresetSafe,
+		PlaywrightPolicy: browserctl.Policy{
+			ManagementMode: browserctl.ManagementModeLegacy,
+		},
+	}
 }
 
 func (h *PromptHelper) Run(ctx context.Context, req PromptHelperRequest) (PromptHelperResponse, error) {
