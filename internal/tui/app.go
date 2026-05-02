@@ -1753,7 +1753,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.ensureCodexRuntime()
-		m.beginNewCodexPendingOpenWithVisibility(req.ProjectPath, provider, msg.openModelFirst)
+		m.beginNewCodexPendingOpenWithVisibilityAndReveal(req.ProjectPath, provider, msg.openModelFirst, msg.openModelFirst)
 		if msg.openModelFirst {
 			m.status = "Starting a new embedded " + provider.Label() + " session in new worktree..."
 		} else {
@@ -1761,7 +1761,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, batchCmds(
 			m.requestProjectInvalidationCmd(invalidateProjectStructure(m.currentSelectedProjectPath())),
-			m.openCodexSessionCmd(req),
+			m.openCodexSessionCmdWithVisibility(req, msg.openModelFirst),
 		)
 	case worktreeActionMsg:
 		if msg.clearPendingGitSummary {

@@ -849,6 +849,10 @@ func (m Model) refreshBusyElsewhereCmd(projectPath string) tea.Cmd {
 }
 
 func (m *Model) openCodexSessionCmd(req codexapp.LaunchRequest) tea.Cmd {
+	return m.openCodexSessionCmdWithVisibility(req, true)
+}
+
+func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, revealOnOpen bool) tea.Cmd {
 	req = m.applyEmbeddedModelPreference(req)
 	manager := m.codexManager
 	provider := req.Provider.Normalized()
@@ -921,12 +925,20 @@ func (m *Model) openCodexSessionCmd(req codexapp.LaunchRequest) tea.Cmd {
 			}
 			break
 		}
+		visibleStatus := embeddedSessionOpenStatus(req, threadIDsToAvoid, reused, snapshot, true)
+		backgroundStatus := embeddedSessionOpenStatus(req, threadIDsToAvoid, reused, snapshot, false)
+		status := visibleStatus
+		if !revealOnOpen {
+			status = backgroundStatus
+		}
 		return codexSessionOpenedMsg{
-			projectPath:  req.ProjectPath,
-			snapshot:     snapshot,
-			status:       embeddedSessionOpenStatus(req, threadIDsToAvoid, reused, snapshot),
-			perfOpID:     perfOpID,
-			perfDuration: time.Since(startedAt),
+			projectPath:      req.ProjectPath,
+			snapshot:         snapshot,
+			status:           status,
+			visibleStatus:    visibleStatus,
+			backgroundStatus: backgroundStatus,
+			perfOpID:         perfOpID,
+			perfDuration:     time.Since(startedAt),
 		}
 	}
 }
@@ -966,7 +978,7 @@ func forceNewMatchedExistingThread(threadIDsToAvoid map[string]struct{}, snapsho
 	return ok
 }
 
-func embeddedSessionOpenStatus(req codexapp.LaunchRequest, threadIDsToAvoid map[string]struct{}, reused bool, snapshot codexapp.Snapshot) string {
+func embeddedSessionOpenStatus(req codexapp.LaunchRequest, threadIDsToAvoid map[string]struct{}, reused bool, snapshot codexapp.Snapshot, revealOnOpen bool) string {
 	provider := req.Provider.Normalized()
 	if provider == "" {
 		provider = embeddedProvider(snapshot)
@@ -988,9 +1000,9 @@ func embeddedSessionOpenStatus(req codexapp.LaunchRequest, threadIDsToAvoid map[
 	case req.ForceNew && matchedExisting:
 		return "Could not start a fresh embedded " + label + " session; " + sessionLabel + " reopened instead."
 	case req.ForceNew && strings.TrimSpace(req.Prompt) != "":
-		return "Prompt sent to " + freshSessionLabel + ". Alt+Up hides it."
+		return embeddedSessionOpenedStatus("Prompt sent to "+freshSessionLabel, revealOnOpen)
 	case req.ForceNew:
-		return "Fresh embedded " + label + " " + sessionLabel + " opened. Alt+Up hides it."
+		return embeddedSessionOpenedStatus("Fresh embedded "+label+" "+sessionLabel+" opened", revealOnOpen)
 	case snapshot.BusyExternal && strings.TrimSpace(req.Prompt) != "":
 		if cmd := embeddedNewCommand(provider); cmd != "" {
 			return label + " is already active in another process. Prompt was not sent; use " + cmd + " for a separate session."
@@ -999,12 +1011,19 @@ func embeddedSessionOpenStatus(req codexapp.LaunchRequest, threadIDsToAvoid map[
 	case snapshot.BusyExternal:
 		return label + " is already active in another process. Embedded view is read-only until it finishes."
 	case strings.TrimSpace(req.Prompt) != "":
-		return "Prompt sent to embedded " + label + ". Alt+Up hides it."
+		return embeddedSessionOpenedStatus("Prompt sent to embedded "+label, revealOnOpen)
 	case reused:
-		return "Embedded " + label + " session reopened. Alt+Up hides it."
+		return embeddedSessionOpenedStatus("Embedded "+label+" session reopened", revealOnOpen)
 	default:
-		return "Embedded " + label + " session opened. Alt+Up hides it."
+		return embeddedSessionOpenedStatus("Embedded "+label+" session opened", revealOnOpen)
 	}
+}
+
+func embeddedSessionOpenedStatus(action string, revealOnOpen bool) string {
+	if revealOnOpen {
+		return action + ". Alt+Up hides it."
+	}
+	return action + " in the background."
 }
 
 func embeddedSessionReconnectStatus(req codexapp.LaunchRequest, snapshot codexapp.Snapshot) string {

@@ -80,6 +80,9 @@ func TestExecuteControlEngineerSendPromptRoutesOpenCodeHidden(t *testing.T) {
 	if opened.err != nil {
 		t.Fatalf("codexSessionOpenedMsg.err = %v", opened.err)
 	}
+	if opened.status != "Prompt sent to embedded OpenCode in the background." {
+		t.Fatalf("opened.status = %q, want hidden background prompt status", opened.status)
+	}
 	if len(requests) != 1 {
 		t.Fatalf("launch requests = %d, want 1", len(requests))
 	}
@@ -248,8 +251,8 @@ func TestExecuteBossControlInvocationBatchesOpenAndBossResult(t *testing.T) {
 	if result.Err != nil {
 		t.Fatalf("result err = %v", result.Err)
 	}
-	if !strings.Contains(result.Status, "Prompt sent to embedded OpenCode") {
-		t.Fatalf("result status = %q", result.Status)
+	if result.Status != "Prompt sent to embedded OpenCode in the background." {
+		t.Fatalf("result status = %q, want hidden background prompt status", result.Status)
 	}
 }
 
@@ -416,7 +419,7 @@ func TestExecuteBossControlInvocationCreatesAgentTaskAndTracksSession(t *testing
 	if result.Err != nil {
 		t.Fatalf("result err = %v", result.Err)
 	}
-	if !strings.Contains(result.Status, "Created agent task") || !strings.Contains(result.Status, "prompt sent") {
+	if !strings.Contains(result.Status, "Created agent task") || !strings.Contains(result.Status, "prompt sent") || strings.Contains(result.Status, "Alt+Up hides it") {
 		t.Fatalf("result status = %q, want created task launch status", result.Status)
 	}
 	if len(requests) != 1 {

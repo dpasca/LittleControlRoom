@@ -22,12 +22,14 @@ type embeddedModelPreferencesSavedMsg struct {
 }
 
 type codexSessionOpenedMsg struct {
-	projectPath  string
-	snapshot     codexapp.Snapshot
-	status       string
-	perfOpID     int64
-	perfDuration time.Duration
-	err          error
+	projectPath      string
+	snapshot         codexapp.Snapshot
+	status           string
+	visibleStatus    string
+	backgroundStatus string
+	perfOpID         int64
+	perfDuration     time.Duration
+	err              error
 }
 
 type codexPendingOpenState struct {
@@ -84,6 +86,17 @@ func (m codexModelListMsg) statusSummary() string {
 	return fmt.Sprintf("%d models", len(m.models))
 }
 
+func (m codexSessionOpenedMsg) statusForReveal(reveal bool) string {
+	if reveal {
+		if status := strings.TrimSpace(m.visibleStatus); status != "" {
+			return status
+		}
+	} else if status := strings.TrimSpace(m.backgroundStatus); status != "" {
+		return status
+	}
+	return strings.TrimSpace(m.status)
+}
+
 type codexResumeChoicesMsg struct {
 	projectPath string
 	provider    codexapp.Provider
@@ -123,6 +136,7 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 			focusInput = false
 		}
 	}
+	status := msg.statusForReveal(revealOnOpen)
 	seenCmd := m.finishCodexPendingOpen(msg.projectPath, msg.snapshot, true, revealOnOpen)
 	if hasTodoLaunchDraft {
 		m.clearTodoLaunchDraft(msg.projectPath)
@@ -132,8 +146,8 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 			return m, tea.Batch(seenCmd, m.openCodexModelPickerCmd())
 		}
 		if draft.autoSubmit {
-			if strings.TrimSpace(msg.status) != "" {
-				m.status = msg.status
+			if status != "" {
+				m.status = status
 			} else {
 				m.status = "Started TODO in background"
 			}
@@ -141,7 +155,7 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 			m.status = "Fresh " + draft.provider.Label() + " session ready with TODO draft. Edit and press Enter to send."
 		}
 	} else {
-		m.status = msg.status
+		m.status = status
 	}
 	if focusInput {
 		return m, tea.Batch(seenCmd, m.codexInput.Focus())
@@ -547,6 +561,7 @@ func (m Model) revealPendingEmbeddedOpen(projectPath string) (Model, bool) {
 		m.persistVisibleCodexDraft()
 	}
 	m.codexPendingOpen.showWhilePending = true
+	m.codexPendingOpen.hideOnOpen = false
 	label := m.codexPendingOpenProvider().Label()
 	m.status = "Embedded " + label + " session is still starting..."
 	return m, true
@@ -648,7 +663,7 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 	} else {
 		m.status = "Opening embedded " + provider.Label() + " session..."
 	}
-	return m, m.openCodexSessionCmd(req)
+	return m, m.openCodexSessionCmdWithVisibility(req, options.reveal)
 }
 
 func (m Model) hasRestorableEmbeddedSession(projectPath string) bool {
