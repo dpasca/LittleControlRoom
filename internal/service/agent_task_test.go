@@ -13,7 +13,7 @@ import (
 	"lcroom/internal/store"
 )
 
-func TestServiceCreatesEphemeralAgentTaskWorkspace(t *testing.T) {
+func TestServiceCreatesAgentTaskWorkspace(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
@@ -29,7 +29,7 @@ func TestServiceCreatesEphemeralAgentTaskWorkspace(t *testing.T) {
 
 	task, err := svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
 		Title: "Investigate runaway local processes",
-		Kind:  model.AgentTaskKindEphemeral,
+		Kind:  model.AgentTaskKindAgent,
 		Resources: []model.AgentTaskResource{
 			{Kind: model.AgentTaskResourceProcess, PID: 93624},
 		},
@@ -37,11 +37,11 @@ func TestServiceCreatesEphemeralAgentTaskWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateAgentTask() error = %v", err)
 	}
-	if task.Kind != model.AgentTaskKindEphemeral || task.Status != model.AgentTaskStatusActive {
+	if task.Kind != model.AgentTaskKindAgent || task.Status != model.AgentTaskStatusActive {
 		t.Fatalf("task kind/status = %q/%q", task.Kind, task.Status)
 	}
 	if task.WorkspacePath == "" {
-		t.Fatalf("ephemeral task should get a workspace path")
+		t.Fatalf("agent task should get a workspace path")
 	}
 	if _, err := os.Stat(task.WorkspacePath); err != nil {
 		t.Fatalf("workspace path should exist: %v", err)

@@ -1,15 +1,21 @@
 package tui
 
 import (
+	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	bossui "lcroom/internal/boss"
 	"lcroom/internal/codexapp"
+	"lcroom/internal/config"
 	"lcroom/internal/control"
+	"lcroom/internal/events"
 	"lcroom/internal/model"
+	"lcroom/internal/service"
+	"lcroom/internal/store"
 )
 
 func TestExecuteControlEngineerSendPromptRoutesOpenCodeHidden(t *testing.T) {
@@ -359,6 +365,165 @@ func TestExecuteBossControlInvocationRefusesActiveEmbeddedSessionPrompt(t *testi
 	}
 }
 
+func TestExecuteBossControlInvocationCreatesAgentTaskAndTracksSession(t *testing.T) {
+	ctx := context.Background()
+	svc := newControlTestService(t)
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:       req.Provider,
+				ThreadID:       "thread-agent-1",
+				Started:        true,
+				LastActivityAt: time.Now(),
+			},
+		}, nil
+	})
+	m := Model{
+		ctx:          ctx,
+		svc:          svc,
+		codexManager: manager,
+	}
+
+	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{
+		Invocation: controlInvocationRawForTest(t, control.CapabilityAgentTaskCreate, control.AgentTaskCreateInput{
+			Title:        "Clean suspicious local processes",
+			Kind:         control.AgentTaskKindAgent,
+			Provider:     control.ProviderCodex,
+			Prompt:       "Inspect the suspicious processes and stop only the clearly stale ones.",
+			Reveal:       false,
+			Capabilities: []string{"process.inspect", "process.terminate"},
+			Resources: []control.ResourceRef{
+				{Kind: control.ResourceProcess, PID: 93624, Label: "hot python"},
+				{Kind: control.ResourcePort, Port: 9229, Label: "debug listener"},
+			},
+		}),
+	})
+	_ = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("executeBossControlInvocation() cmd = nil, want task launch command")
+	}
+	msgs := collectCmdMsgs(cmd)
+	var result bossui.ControlInvocationResultMsg
+	for _, msg := range msgs {
+		if typed, ok := msg.(bossui.ControlInvocationResultMsg); ok {
+			result = typed
+			break
+		}
+	}
+	if result.Err != nil {
+		t.Fatalf("result err = %v", result.Err)
+	}
+	if !strings.Contains(result.Status, "Created agent task") || !strings.Contains(result.Status, "prompt sent") {
+		t.Fatalf("result status = %q, want created task launch status", result.Status)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want 1", len(requests))
+	}
+	if !requests[0].ForceNew {
+		t.Fatalf("request ForceNew = false, want fresh task session")
+	}
+	if !strings.Contains(requests[0].Prompt, "Little Control Room agent task:") ||
+		!strings.Contains(requests[0].Prompt, "process.terminate") ||
+		!strings.Contains(requests[0].Prompt, "pid 93624 hot python") {
+		t.Fatalf("launch prompt missing task context:\n%s", requests[0].Prompt)
+	}
+	tasks, err := svc.ListOpenAgentTasks(ctx, 5)
+	if err != nil {
+		t.Fatalf("ListOpenAgentTasks() error = %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("open tasks = %#v, want one task", tasks)
+	}
+	task := tasks[0]
+	if task.Kind != model.AgentTaskKindAgent || task.Provider != model.SessionSourceCodex || task.SessionID != "thread-agent-1" {
+		t.Fatalf("tracked task = %#v", task)
+	}
+	if task.WorkspacePath == "" || requests[0].ProjectPath != task.WorkspacePath {
+		t.Fatalf("workspace/request path = %q/%q", task.WorkspacePath, requests[0].ProjectPath)
+	}
+	var sawSession bool
+	for _, resource := range task.Resources {
+		if resource.Kind == model.AgentTaskResourceEngineerSession && resource.SessionID == "thread-agent-1" {
+			sawSession = true
+		}
+	}
+	if !sawSession {
+		t.Fatalf("task resources missing engineer session: %#v", task.Resources)
+	}
+}
+
+func TestExecuteBossControlInvocationContinuesAgentTaskWithTrackedSession(t *testing.T) {
+	ctx := context.Background()
+	svc := newControlTestService(t)
+	task, err := svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+		Title:        "Keep checking temp process cleanup",
+		Kind:         model.AgentTaskKindAgent,
+		Capabilities: []string{"process.inspect"},
+	})
+	if err != nil {
+		t.Fatalf("CreateAgentTask() error = %v", err)
+	}
+	if _, err := svc.AttachAgentTaskEngineerSession(ctx, task.ID, model.SessionSourceCodex, "thread-agent-existing"); err != nil {
+		t.Fatalf("AttachAgentTaskEngineerSession() error = %v", err)
+	}
+	task, err = svc.GetAgentTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetAgentTask() error = %v", err)
+	}
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:       req.Provider,
+				ThreadID:       "thread-agent-existing",
+				Started:        true,
+				LastActivityAt: time.Now(),
+			},
+		}, nil
+	})
+	m := Model{
+		ctx:          ctx,
+		svc:          svc,
+		codexManager: manager,
+	}
+
+	_, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{
+		Invocation: controlInvocationRawForTest(t, control.CapabilityAgentTaskContinue, control.AgentTaskContinueInput{
+			TaskID:      task.ID,
+			Provider:    control.ProviderAuto,
+			SessionMode: control.SessionModeResumeOrNew,
+			Prompt:      "Check whether the ports stayed clear.",
+			Reveal:      false,
+		}),
+	})
+	if cmd == nil {
+		t.Fatalf("executeBossControlInvocation() cmd = nil, want continue command")
+	}
+	msgs := collectCmdMsgs(cmd)
+	for _, msg := range msgs {
+		if result, ok := msg.(bossui.ControlInvocationResultMsg); ok && result.Err != nil {
+			t.Fatalf("result err = %v", result.Err)
+		}
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want 1", len(requests))
+	}
+	if requests[0].ProjectPath != task.WorkspacePath {
+		t.Fatalf("request ProjectPath = %q, want task workspace %q", requests[0].ProjectPath, task.WorkspacePath)
+	}
+	if requests[0].ResumeID != "thread-agent-existing" {
+		t.Fatalf("request ResumeID = %q, want tracked session", requests[0].ResumeID)
+	}
+	if requests[0].ForceNew {
+		t.Fatalf("request ForceNew = true, want resume")
+	}
+}
+
 func controlInvocationForTest(t *testing.T, input control.EngineerSendPromptInput) control.Invocation {
 	t.Helper()
 	if input.Provider == "" {
@@ -376,4 +541,32 @@ func controlInvocationForTest(t *testing.T, input control.EngineerSendPromptInpu
 		Capability: control.CapabilityEngineerSendPrompt,
 		Args:       args,
 	}
+}
+
+func controlInvocationRawForTest(t *testing.T, capability control.CapabilityName, input any) control.Invocation {
+	t.Helper()
+	args, err := json.Marshal(input)
+	if err != nil {
+		t.Fatalf("marshal control input: %v", err)
+	}
+	return control.Invocation{
+		RequestID:  "test-request",
+		Capability: capability,
+		Args:       args,
+	}
+}
+
+func newControlTestService(t *testing.T) *service.Service {
+	t.Helper()
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	cfg.DBPath = filepath.Join(cfg.DataDir, "little-control-room.sqlite")
+	st, err := store.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = st.Close()
+	})
+	return service.New(cfg, st, events.NewBus(), nil)
 }

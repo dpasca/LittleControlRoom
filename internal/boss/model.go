@@ -394,8 +394,8 @@ func (m Model) applyAssistantReply(response AssistantResponse, err error, snapsh
 		status := "Boss chat could not answer"
 		var proposalErr controlProposalError
 		if errors.As(err, &proposalErr) {
-			content = "I could not prepare that engineer-session action: " + proposalErr.Unwrap().Error()
-			status = "Engineer action proposal failed"
+			content = "I could not prepare that control action: " + proposalErr.Unwrap().Error()
+			status = "Control action proposal failed"
 		}
 		saved = ChatMessage{
 			Role:    "assistant",
@@ -414,7 +414,7 @@ func (m Model) applyAssistantReply(response AssistantResponse, err error, snapsh
 				Invocation: copyControlInvocation(*response.ControlInvocation),
 				Preview:    content,
 			}
-			m.status = "Confirm engineer prompt with Enter, or Esc to cancel"
+			m.status = "Confirm control action with Enter, or Esc to cancel"
 			m.syncLayout(true)
 			return m, nil
 		}

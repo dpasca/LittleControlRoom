@@ -20,7 +20,7 @@ Older notes from the previous rolling-log workflow live in [docs/status_archive.
 - Artifact-first scanning persists project and session state in SQLite and surfaces transparent attention reasons.
 - The TUI supports multi-project list/detail workflows, slash commands, project notes and TODOs, diff and commit helpers, and repo-health visibility.
 - Embedded Codex and OpenCode panes support live sessions, resume and new flows, model selection, approval and input handling, and mixed-provider project workflows.
-- Boss mode provides a chat-first high-level layer over the classic TUI, with read-only project-state queries, bounded context-command lookup, file-backed chat sessions, and a separate boss-chat inference configuration. In Boss Chat, Codex/OpenCode/Claude Code work sessions are called engineer sessions to distinguish them from Boss Chat transcripts.
+- Boss mode provides a chat-first high-level layer over the classic TUI, with read-only project-state queries, bounded context-command lookup, confirmable control proposals, generic agent-task delegation, file-backed chat sessions, and a separate boss-chat inference configuration. In Boss Chat, Codex/OpenCode/Claude Code work sessions are called engineer sessions to distinguish them from Boss Chat transcripts.
 - Linked worktrees are first-class: grouped under repo roots, merge-aware, and surfaced with explicit conflict and status feedback.
 - Managed runtime commands can launch, stop, inspect, and follow project-local processes from the TUI.
 - Screenshot and export tooling exists for deterministic UI captures.

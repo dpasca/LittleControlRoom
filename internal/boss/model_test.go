@@ -430,7 +430,7 @@ func TestEmbeddedModelConfirmsControlInvocation(t *testing.T) {
 	if got.pendingControl == nil {
 		t.Fatalf("pendingControl = nil, want confirmation state")
 	}
-	if got.status != "Confirm engineer prompt with Enter, or Esc to cancel" {
+	if got.status != "Confirm control action with Enter, or Esc to cancel" {
 		t.Fatalf("status = %q", got.status)
 	}
 
@@ -461,7 +461,7 @@ func TestEmbeddedModelLabelsControlProposalErrors(t *testing.T) {
 		err: wrapControlProposalError(fmt.Errorf("project_path or project_name is required")),
 	})
 	got := updated.(Model)
-	if got.status != "Engineer action proposal failed" {
+	if got.status != "Control action proposal failed" {
 		t.Fatalf("status = %q, want proposal failure status", got.status)
 	}
 	if len(got.messages) != 1 {
@@ -471,7 +471,7 @@ func TestEmbeddedModelLabelsControlProposalErrors(t *testing.T) {
 	if strings.Contains(content, "chat backend") {
 		t.Fatalf("content = %q, should not report backend failure", content)
 	}
-	if !strings.Contains(content, "I could not prepare that engineer-session action") ||
+	if !strings.Contains(content, "I could not prepare that control action") ||
 		!strings.Contains(content, "project_path or project_name is required") {
 		t.Fatalf("content = %q, want proposal failure detail", content)
 	}
@@ -493,7 +493,7 @@ func TestEmbeddedModelRendersControlConfirmationDialog(t *testing.T) {
 	got := updated.(Model)
 
 	rendered := ansi.Strip(got.View())
-	if !strings.Contains(rendered, "Confirm Engineer Action") {
+	if !strings.Contains(rendered, "Confirm Control Action") {
 		t.Fatalf("rendered view should show control confirmation dialog, got %q", rendered)
 	}
 	if !strings.Contains(rendered, "External action") || !strings.Contains(rendered, "Enter") || !strings.Contains(rendered, "Esc") {
@@ -528,10 +528,10 @@ func TestEmbeddedModelCanCancelControlInvocation(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("cancel should not emit a host command without persistent sessions")
 	}
-	if got.status != "Engineer prompt canceled" {
+	if got.status != "Control action canceled" {
 		t.Fatalf("status = %q", got.status)
 	}
-	if got.messages[len(got.messages)-1].Content != "Canceled. I did not send anything to the engineer session." {
+	if got.messages[len(got.messages)-1].Content != "Canceled. I did not run that control action." {
 		t.Fatalf("last message = %#v", got.messages[len(got.messages)-1])
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -35,12 +36,12 @@ func (s *Store) CreateAgentTask(ctx context.Context, input model.CreateAgentTask
 
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO agent_tasks(
-			id, title, kind, status, summary, provider, session_id, workspace_path,
+			id, parent_task_id, title, kind, status, summary, capabilities, provider, session_id, workspace_path,
 			expires_at, created_at, last_touched_at, completed_at, archived_at, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, normalized.ID, normalized.Title, string(normalized.Kind), string(normalized.Status), normalized.Summary,
-		string(normalized.Provider), normalized.SessionID, normalized.WorkspacePath, nullableTimeUnixValue(normalized.ExpiresAt),
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, normalized.ID, normalized.ParentTaskID, normalized.Title, string(normalized.Kind), string(normalized.Status), normalized.Summary,
+		encodeAgentTaskCapabilities(normalized.Capabilities), string(normalized.Provider), normalized.SessionID, normalized.WorkspacePath, nullableTimeUnixValue(normalized.ExpiresAt),
 		now.Unix(), now.Unix(), nullableTimeUnixValue(time.Time{}), nullableTimeUnixValue(time.Time{}), now.Unix())
 	if err != nil {
 		return model.AgentTask{}, fmt.Errorf("create agent task: %w", err)
@@ -61,7 +62,7 @@ func (s *Store) GetAgentTask(ctx context.Context, id string) (model.AgentTask, e
 	}
 	task, err := scanAgentTask(s.db.QueryRowContext(ctx, `
 		SELECT
-			id, title, kind, status, summary, provider, session_id, workspace_path,
+			id, parent_task_id, title, kind, status, summary, capabilities, provider, session_id, workspace_path,
 			expires_at, created_at, last_touched_at, completed_at, archived_at, updated_at
 		FROM agent_tasks
 		WHERE id = ?
@@ -98,7 +99,7 @@ func (s *Store) ListAgentTasks(ctx context.Context, filter model.AgentTaskFilter
 
 	query := `
 		SELECT
-			id, title, kind, status, summary, provider, session_id, workspace_path,
+			id, parent_task_id, title, kind, status, summary, capabilities, provider, session_id, workspace_path,
 			expires_at, created_at, last_touched_at, completed_at, archived_at, updated_at
 		FROM agent_tasks
 	`
@@ -140,6 +141,57 @@ func (s *Store) ListAgentTasks(ctx context.Context, filter model.AgentTaskFilter
 	return tasks, nil
 }
 
+func (s *Store) ListExpiredAgentTasks(ctx context.Context, now time.Time) ([]model.AgentTask, error) {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			id, parent_task_id, title, kind, status, summary, capabilities, provider, session_id, workspace_path,
+			expires_at, created_at, last_touched_at, completed_at, archived_at, updated_at
+		FROM agent_tasks
+		WHERE status = ? AND expires_at IS NOT NULL AND expires_at <= ?
+		ORDER BY expires_at ASC
+	`, string(model.AgentTaskStatusArchived), now.Unix())
+	if err != nil {
+		return nil, fmt.Errorf("list expired agent tasks: %w", err)
+	}
+	defer rows.Close()
+
+	tasks := []model.AgentTask{}
+	taskIDs := []string{}
+	for rows.Next() {
+		task, err := scanAgentTask(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan expired agent task: %w", err)
+		}
+		tasks = append(tasks, task)
+		taskIDs = append(taskIDs, task.ID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read expired agent tasks: %w", err)
+	}
+	resources, err := s.listAgentTaskResources(ctx, taskIDs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range tasks {
+		tasks[i].Resources = resources[tasks[i].ID]
+	}
+	return tasks, nil
+}
+
+func (s *Store) DeleteAgentTask(ctx context.Context, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return errors.New("agent task id is required")
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM agent_tasks WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("delete agent task: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) UpdateAgentTask(ctx context.Context, input model.UpdateAgentTaskInput) (model.AgentTask, error) {
 	id := strings.TrimSpace(input.ID)
 	if id == "" {
@@ -156,6 +208,10 @@ func (s *Store) UpdateAgentTask(ctx context.Context, input model.UpdateAgentTask
 		}
 		set = append(set, "title = ?")
 		args = append(args, title)
+	}
+	if input.ParentTaskID != nil {
+		set = append(set, "parent_task_id = ?")
+		args = append(args, strings.TrimSpace(*input.ParentTaskID))
 	}
 	if input.Status != nil {
 		status := model.NormalizeAgentTaskStatus(*input.Status)
@@ -177,6 +233,10 @@ func (s *Store) UpdateAgentTask(ctx context.Context, input model.UpdateAgentTask
 	if input.Summary != nil {
 		set = append(set, "summary = ?")
 		args = append(args, strings.TrimSpace(*input.Summary))
+	}
+	if input.ReplaceCapabilities {
+		set = append(set, "capabilities = ?")
+		args = append(args, encodeAgentTaskCapabilities(input.Capabilities))
 	}
 	if input.Provider != nil {
 		set = append(set, "provider = ?")
@@ -236,6 +296,7 @@ func (s *Store) UpdateAgentTask(ctx context.Context, input model.UpdateAgentTask
 
 func normalizeCreateAgentTaskInput(input model.CreateAgentTaskInput) (model.CreateAgentTaskInput, error) {
 	input.ID = strings.TrimSpace(input.ID)
+	input.ParentTaskID = strings.TrimSpace(input.ParentTaskID)
 	input.Title = strings.TrimSpace(input.Title)
 	if input.Title == "" {
 		return model.CreateAgentTaskInput{}, errors.New("agent task title is required")
@@ -243,6 +304,7 @@ func normalizeCreateAgentTaskInput(input model.CreateAgentTaskInput) (model.Crea
 	input.Kind = model.NormalizeAgentTaskKind(input.Kind)
 	input.Status = model.NormalizeAgentTaskStatus(input.Status)
 	input.Summary = strings.TrimSpace(input.Summary)
+	input.Capabilities = normalizeAgentTaskCapabilities(input.Capabilities)
 	input.Provider = model.NormalizeSessionSource(input.Provider)
 	input.SessionID = strings.TrimSpace(input.SessionID)
 	input.WorkspacePath = cleanOptionalPath(input.WorkspacePath)
@@ -257,10 +319,10 @@ func insertAgentTaskResources(ctx context.Context, tx *sql.Tx, taskID string, re
 		}
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO agent_task_resources(
-				task_id, kind, project_path, path, pid, port, provider, session_id, label, created_at
+				task_id, kind, ref_id, project_path, path, pid, port, provider, session_id, label, created_at
 			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, taskID, string(resource.Kind), resource.ProjectPath, resource.Path, resource.PID, resource.Port,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, taskID, string(resource.Kind), resource.RefID, resource.ProjectPath, resource.Path, resource.PID, resource.Port,
 			string(resource.Provider), resource.SessionID, resource.Label, now.Unix())
 		if err != nil {
 			return fmt.Errorf("insert agent task resource: %w", err)
@@ -272,6 +334,7 @@ func insertAgentTaskResources(ctx context.Context, tx *sql.Tx, taskID string, re
 func normalizeAgentTaskResource(taskID string, resource model.AgentTaskResource) model.AgentTaskResource {
 	resource.TaskID = strings.TrimSpace(taskID)
 	resource.Kind = model.NormalizeAgentTaskResourceKind(resource.Kind)
+	resource.RefID = strings.TrimSpace(resource.RefID)
 	resource.ProjectPath = cleanOptionalPath(resource.ProjectPath)
 	resource.Path = cleanOptionalPath(resource.Path)
 	resource.Provider = model.NormalizeSessionSource(resource.Provider)
@@ -287,6 +350,7 @@ func scanAgentTask(scanner interface {
 		task          model.AgentTask
 		kind          string
 		status        string
+		capabilities  string
 		provider      string
 		expiresAt     sql.NullInt64
 		createdAt     int64
@@ -297,10 +361,12 @@ func scanAgentTask(scanner interface {
 	)
 	if err := scanner.Scan(
 		&task.ID,
+		&task.ParentTaskID,
 		&task.Title,
 		&kind,
 		&status,
 		&task.Summary,
+		&capabilities,
 		&provider,
 		&task.SessionID,
 		&task.WorkspacePath,
@@ -315,6 +381,7 @@ func scanAgentTask(scanner interface {
 	}
 	task.Kind = model.NormalizeAgentTaskKind(model.AgentTaskKind(kind))
 	task.Status = model.NormalizeAgentTaskStatus(model.AgentTaskStatus(status))
+	task.Capabilities = decodeAgentTaskCapabilities(capabilities)
 	task.Provider = model.NormalizeSessionSource(model.SessionSource(provider))
 	if expiresAt.Valid {
 		task.ExpiresAt = time.Unix(expiresAt.Int64, 0)
@@ -351,7 +418,7 @@ func (s *Store) listAgentTaskResources(ctx context.Context, taskIDs []string) (m
 		return out, nil
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, task_id, kind, project_path, path, pid, port, provider, session_id, label, created_at
+		SELECT id, task_id, kind, ref_id, project_path, path, pid, port, provider, session_id, label, created_at
 		FROM agent_task_resources
 		WHERE task_id IN (`+strings.Join(placeholders, ", ")+`)
 		ORDER BY task_id ASC, id ASC
@@ -387,6 +454,7 @@ func scanAgentTaskResource(scanner interface {
 		&resource.ID,
 		&resource.TaskID,
 		&kind,
+		&resource.RefID,
 		&resource.ProjectPath,
 		&resource.Path,
 		&resource.PID,
@@ -402,6 +470,39 @@ func scanAgentTaskResource(scanner interface {
 	resource.Provider = model.NormalizeSessionSource(model.SessionSource(provider))
 	resource.CreatedAt = time.Unix(createdAt, 0)
 	return resource, nil
+}
+
+func normalizeAgentTaskCapabilities(capabilities []string) []string {
+	out := make([]string, 0, len(capabilities))
+	seen := map[string]struct{}{}
+	for _, capability := range capabilities {
+		capability = strings.TrimSpace(capability)
+		if capability == "" {
+			continue
+		}
+		if _, ok := seen[capability]; ok {
+			continue
+		}
+		seen[capability] = struct{}{}
+		out = append(out, capability)
+	}
+	return out
+}
+
+func encodeAgentTaskCapabilities(capabilities []string) string {
+	encoded, err := json.Marshal(normalizeAgentTaskCapabilities(capabilities))
+	if err != nil {
+		return "[]"
+	}
+	return string(encoded)
+}
+
+func decodeAgentTaskCapabilities(raw string) []string {
+	var capabilities []string
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &capabilities); err != nil {
+		return nil
+	}
+	return normalizeAgentTaskCapabilities(capabilities)
 }
 
 func cleanOptionalPath(path string) string {

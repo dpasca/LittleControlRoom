@@ -28,7 +28,7 @@ func (m Model) renderControlConfirmationDialog(bodyW, bodyH int) string {
 	if bodyH > 0 {
 		panelH = minInt(panelH, maxInt(8, bodyH-2))
 	}
-	return renderBossControlPanel("Confirm Engineer Action", content, panelW, panelH)
+	return renderBossControlPanel("Confirm Control Action", content, panelW, panelH)
 }
 
 func (m Model) renderControlConfirmationContent(width int) string {
@@ -36,10 +36,13 @@ func (m Model) renderControlConfirmationContent(width int) string {
 		return ""
 	}
 	input, err := engineerSendPromptInputFromInvocation(m.pendingControl.Invocation)
-	if err != nil {
-		return m.renderFallbackControlConfirmationContent(width)
+	if err == nil {
+		return renderEngineerSendPromptConfirmation(input, width)
 	}
+	return m.renderStructuredControlConfirmationContent(width)
+}
 
+func renderEngineerSendPromptConfirmation(input control.EngineerSendPromptInput, width int) string {
 	provider := input.Provider.Label()
 	if input.Provider == control.ProviderAuto {
 		provider = "Auto"
@@ -75,6 +78,83 @@ func (m Model) renderControlConfirmationContent(width int) string {
 		}, "   "),
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderStructuredControlConfirmationContent(width int) string {
+	if m.pendingControl == nil {
+		return ""
+	}
+	switch m.pendingControl.Invocation.Capability {
+	case control.CapabilityAgentTaskCreate:
+		var input control.AgentTaskCreateInput
+		if err := json.Unmarshal(m.pendingControl.Invocation.Args, &input); err == nil {
+			capabilities := strings.Join(input.Capabilities, ", ")
+			if capabilities == "" {
+				capabilities = "none"
+			}
+			lines := []string{
+				bossControlNoticeStyle.Render(fitLine("External action: create an agent task", width)),
+				"",
+				renderBossControlDetail("Task", input.Title, width),
+				renderBossControlDetail("Kind", string(input.Kind), width),
+				renderBossControlDetail("Provider", input.Provider.Label(), width),
+				renderBossControlDetail("Caps", capabilities, width),
+				"",
+				bossControlSectionStyle.Render(fitLine("Prompt", width)),
+				renderBossControlPromptBox(input.Prompt, width),
+				"",
+				strings.Join([]string{
+					renderBossControlAction("Enter", "run", uistyle.DialogActionPrimary),
+					renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
+					renderBossControlAction("Alt+Up", "hide", uistyle.DialogActionNavigate),
+				}, "   "),
+			}
+			return strings.Join(lines, "\n")
+		}
+	case control.CapabilityAgentTaskContinue:
+		var input control.AgentTaskContinueInput
+		if err := json.Unmarshal(m.pendingControl.Invocation.Args, &input); err == nil {
+			lines := []string{
+				bossControlNoticeStyle.Render(fitLine("External action: continue an agent task", width)),
+				"",
+				renderBossControlDetail("Task", input.TaskID, width),
+				renderBossControlDetail("Provider", input.Provider.Label(), width),
+				renderBossControlDetail("Mode", string(input.SessionMode), width),
+				"",
+				bossControlSectionStyle.Render(fitLine("Prompt", width)),
+				renderBossControlPromptBox(input.Prompt, width),
+				"",
+				strings.Join([]string{
+					renderBossControlAction("Enter", "run", uistyle.DialogActionPrimary),
+					renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
+					renderBossControlAction("Alt+Up", "hide", uistyle.DialogActionNavigate),
+				}, "   "),
+			}
+			return strings.Join(lines, "\n")
+		}
+	case control.CapabilityAgentTaskClose:
+		var input control.AgentTaskCloseInput
+		if err := json.Unmarshal(m.pendingControl.Invocation.Args, &input); err == nil {
+			lines := []string{
+				bossControlNoticeStyle.Render(fitLine("External action: close an agent task", width)),
+				"",
+				renderBossControlDetail("Task", input.TaskID, width),
+				renderBossControlDetail("Status", string(input.Status), width),
+				renderBossControlDetail("Session", fmt.Sprintf("close: %t", input.CloseSession), width),
+				"",
+				bossControlSectionStyle.Render(fitLine("Summary", width)),
+				renderBossControlPromptBox(input.Summary, width),
+				"",
+				strings.Join([]string{
+					renderBossControlAction("Enter", "run", uistyle.DialogActionPrimary),
+					renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
+					renderBossControlAction("Alt+Up", "hide", uistyle.DialogActionNavigate),
+				}, "   "),
+			}
+			return strings.Join(lines, "\n")
+		}
+	}
+	return m.renderFallbackControlConfirmationContent(width)
 }
 
 func (m Model) renderFallbackControlConfirmationContent(width int) string {

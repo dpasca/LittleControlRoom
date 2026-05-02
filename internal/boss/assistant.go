@@ -477,7 +477,7 @@ func bossAssistantSystemPrompt() string {
 		"Use reference metadata internally for disambiguation and blockers; do not recite it in the answer.",
 		"Prefer verbs from the evidence: extracted, fixed, blocked, waiting, testing, validating. Do not pad with status adjectives.",
 		"Use confident wording when the evidence is direct; reserve hedging for genuinely uncertain mappings or stale data.",
-		"You can propose sending a prompt to an engineer session through a structured control action, but the user must confirm before anything is sent.",
+		"You can propose project engineer prompts or generic agent-task actions through structured control actions, but the user must confirm before anything is sent or changed.",
 		"State the next useful check directly when follow-up work is needed.",
 	}, "\n")
 }
@@ -496,13 +496,16 @@ func bossActionPlannerSystemPrompt() string {
 		"Use queries when the user asks about a concrete project, TODOs, assessment status, current TUI state, suspicious PIDs/processes/CPU, codenames, aliases, concepts, or anything that requires more than the compact brief.",
 		"Available read-only query kinds: list_projects, project_detail, session_classifications, todo_report, current_tui, assessment_queue, process_report, search_context, search_boss_sessions, context_command.",
 		"Use process_report when the user asks about suspicious PIDs, hot CPU, orphaned processes, project-local Node/server processes, or whether stale dev servers are still running.",
-		"Available control action kind: propose_control with control_capability=\"engineer.send_prompt\".",
-		"Use propose_control only when the user asks Boss Chat to delegate project/repo work to an engineer session. Do not use it for ordinary status, explanation, recall, or planning questions.",
-		"Do not use engineer.send_prompt for host or system operations such as killing PIDs, stopping ports, adb cleanup, GUI leftovers, local machine maintenance, or Little Control Room app control. For those, use read-only process_report when useful, then answer that direct system-ops control is not available yet.",
-		"Do not use the Little Control Room project or another currently active engineer session as a proxy venue for system-ops work.",
+		"Available control action kind: propose_control with control_capability equal to engineer.send_prompt, agent_task.create, agent_task.continue, or agent_task.close.",
+		"Use engineer.send_prompt only for explicit project/repo work on a loaded project. Do not use it for host operations or generic temporary work.",
+		"Use agent_task.create for temporary delegated work with no natural loaded project, including host/process/browser/system investigation. Use a generic agent task with resources and capabilities; do not encode special domains as task kinds.",
+		"Use agent_task.continue when the user asks to hit an existing open agent task again. Use agent_task.close when the task is done, should wait, or should be archived.",
+		"Do not use the Little Control Room project or another unrelated active engineer session as a proxy venue for generic or host-level work.",
 		"Before propose_control, resolve ambiguous targets with read-only queries or ask the user to name the project. Do not infer a project from hidden UI cursor state.",
-		"For propose_control, set provider to auto unless the user explicitly names Codex, OpenCode, or Claude Code. Set session_mode to new only when the user asks for a fresh/new session; otherwise use resume_or_new. Set reveal true only when the user asks to show/open the session.",
-		"For propose_control, the prompt field is the exact instruction to send to the engineer session. Keep it actionable and include only the relevant project work request.",
+		"For engineer.send_prompt, set provider to auto unless the user explicitly names Codex, OpenCode, or Claude Code. Set session_mode to new only when the user asks for a fresh/new session; otherwise use resume_or_new. Set reveal true only when the user asks to show/open the session.",
+		"For agent_task.create, task_kind must be agent unless parent_task_id is set and the user asked for a subagent; put affected projects, PIDs, ports, files, sessions, or related tasks in resources; put allowed action namespaces such as process.inspect, process.terminate, repo.edit, test.run, browser.inspect in capabilities.",
+		"For agent_task.continue, include task_id and a fresh prompt. For agent_task.close, include task_id, task_close_status, task_summary, and close_session.",
+		"For propose_control, the prompt field is the exact instruction to send to the engineer session or task. Keep it actionable and include only the relevant work request.",
 		"Use context_command for command-shaped context lookup: ctx search engineer, ctx show, ctx recent engineer, or ctx search boss.",
 		"Use ctx search engineer when the user asks to recall, quote, verify, or inspect what an engineer session said. Use ctx show on the returned handle before quoting or correcting exact details.",
 		"Use ctx search boss only when the user asks to recall, search, or quote earlier Boss Chat conversations.",
@@ -561,7 +564,7 @@ func bossActionPlannerUserText(req AssistantRequest, toolResults []bossToolResul
 	if forceAnswer {
 		b.WriteString("\nYou must choose kind=\"answer\" or kind=\"propose_control\" now. Use the gathered data; do not request more read-only queries.\n")
 	} else {
-		b.WriteString("\nChoose kind=\"answer\" if you have enough data, choose kind=\"propose_control\" if the user asked to delegate work to an engineer session and the target is clear, otherwise choose one read-only query kind.\n")
+		b.WriteString("\nChoose kind=\"answer\" if you have enough data, choose kind=\"propose_control\" if the user asked to delegate project work or manage an agent task and the target is clear, otherwise choose one read-only query kind.\n")
 	}
 	return strings.TrimSpace(b.String())
 }
@@ -675,17 +678,43 @@ func bossActionSchema() map[string]any {
 			},
 			"control_capability": map[string]any{
 				"type":        "string",
-				"enum":        []string{"", string(control.CapabilityEngineerSendPrompt)},
+				"enum":        []string{"", string(control.CapabilityEngineerSendPrompt), string(control.CapabilityAgentTaskCreate), string(control.CapabilityAgentTaskContinue), string(control.CapabilityAgentTaskClose)},
 				"description": "For kind=propose_control, the control capability to propose. Otherwise empty.",
 			},
 			"request_id": map[string]any{
 				"type":        "string",
 				"description": "Optional stable idempotency key for kind=propose_control; otherwise empty.",
 			},
+			"task_id": map[string]any{
+				"type":        "string",
+				"description": "For agent_task.continue or agent_task.close proposals, the exact task id. Otherwise empty.",
+			},
+			"task_title": map[string]any{
+				"type":        "string",
+				"description": "For agent_task.create proposals, a concise task title. Otherwise empty.",
+			},
+			"task_kind": map[string]any{
+				"type":        "string",
+				"enum":        []string{"", string(control.AgentTaskKindAgent), string(control.AgentTaskKindSubagent)},
+				"description": "For agent_task.create proposals: agent or subagent. Empty is treated as agent.",
+			},
+			"parent_task_id": map[string]any{
+				"type":        "string",
+				"description": "For subagent task creation, the parent agent task id. Otherwise empty.",
+			},
+			"task_close_status": map[string]any{
+				"type":        "string",
+				"enum":        []string{"", string(control.AgentTaskCloseCompleted), string(control.AgentTaskCloseArchived), string(control.AgentTaskCloseWaiting)},
+				"description": "For agent_task.close proposals: completed, archived, or waiting. Empty is treated as completed.",
+			},
+			"task_summary": map[string]any{
+				"type":        "string",
+				"description": "For agent_task.close proposals, a concise durable summary. Otherwise empty.",
+			},
 			"engineer_provider": map[string]any{
 				"type":        "string",
 				"enum":        []string{"", string(control.ProviderAuto), string(control.ProviderCodex), string(control.ProviderOpenCode), string(control.ProviderClaudeCode)},
-				"description": "For engineer.send_prompt proposals: auto, codex, opencode, claude_code. Empty is treated as auto.",
+				"description": "For engineer.send_prompt and agent task launch proposals: auto, codex, opencode, claude_code. Empty is treated as auto.",
 			},
 			"session_mode": map[string]any{
 				"type":        "string",
@@ -694,11 +723,41 @@ func bossActionSchema() map[string]any {
 			},
 			"prompt": map[string]any{
 				"type":        "string",
-				"description": "For engineer.send_prompt proposals, the exact prompt to send to the engineer session. Otherwise empty.",
+				"description": "For engineer.send_prompt, agent_task.create, or agent_task.continue proposals, the exact prompt to send. Otherwise empty.",
 			},
 			"reveal": map[string]any{
 				"type":        "boolean",
-				"description": "For engineer.send_prompt proposals, whether to reveal the engineer session after sending.",
+				"description": "For engineer.send_prompt and agent task launch proposals, whether to reveal the engineer session after sending.",
+			},
+			"close_session": map[string]any{
+				"type":        "boolean",
+				"description": "For agent_task.close proposals, whether Little Control Room should close the task's idle embedded engineer session too.",
+			},
+			"capabilities": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string"},
+				"description": "For agent_task.create proposals, allowed action namespaces such as process.inspect, process.terminate, repo.edit, test.run, browser.inspect.",
+			},
+			"resources": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"kind":         map[string]any{"type": "string", "enum": []string{string(control.ResourceProject), string(control.ResourceEngineerSession), string(control.ResourceTodo), string(control.ResourceAgentTask), string(control.ResourceProcess), string(control.ResourcePort), string(control.ResourceFile)}},
+						"id":           map[string]any{"type": "string"},
+						"path":         map[string]any{"type": "string"},
+						"project_path": map[string]any{"type": "string"},
+						"provider":     map[string]any{"type": "string", "enum": []string{"", string(control.ProviderAuto), string(control.ProviderCodex), string(control.ProviderOpenCode), string(control.ProviderClaudeCode)}},
+						"session_id":   map[string]any{"type": "string"},
+						"todo_id":      map[string]any{"type": "integer"},
+						"pid":          map[string]any{"type": "integer"},
+						"port":         map[string]any{"type": "integer"},
+						"label":        map[string]any{"type": "string"},
+					},
+					"required": []string{"kind", "id", "path", "project_path", "provider", "session_id", "todo_id", "pid", "port", "label"},
+				},
+				"description": "For agent_task.create proposals, resources touched by the task.",
 			},
 			"include_historical": map[string]any{
 				"type":        "boolean",
@@ -726,10 +785,19 @@ func bossActionSchema() map[string]any {
 			"session_id",
 			"control_capability",
 			"request_id",
+			"task_id",
+			"task_title",
+			"task_kind",
+			"parent_task_id",
+			"task_close_status",
+			"task_summary",
 			"engineer_provider",
 			"session_mode",
 			"prompt",
 			"reveal",
+			"close_session",
+			"capabilities",
+			"resources",
 			"include_historical",
 			"limit",
 			"reason",
@@ -751,6 +819,20 @@ func normalizeBossAction(action *bossAction) {
 	action.SessionID = strings.TrimSpace(action.SessionID)
 	action.ControlCapability = strings.TrimSpace(action.ControlCapability)
 	action.RequestID = strings.TrimSpace(action.RequestID)
+	action.TaskID = strings.TrimSpace(action.TaskID)
+	action.TaskTitle = strings.TrimSpace(action.TaskTitle)
+	if taskKind := control.NormalizeAgentTaskKind(action.TaskKind); taskKind != "" {
+		action.TaskKind = string(taskKind)
+	} else {
+		action.TaskKind = strings.TrimSpace(action.TaskKind)
+	}
+	action.ParentTaskID = strings.TrimSpace(action.ParentTaskID)
+	if closeStatus := control.NormalizeAgentTaskCloseStatus(action.TaskCloseStatus); closeStatus != "" {
+		action.TaskCloseStatus = string(closeStatus)
+	} else {
+		action.TaskCloseStatus = strings.TrimSpace(action.TaskCloseStatus)
+	}
+	action.TaskSummary = strings.TrimSpace(action.TaskSummary)
 	if provider := control.NormalizeProvider(action.EngineerProvider); provider != "" {
 		action.EngineerProvider = string(provider)
 	} else {
@@ -762,7 +844,44 @@ func normalizeBossAction(action *bossAction) {
 		action.SessionMode = strings.TrimSpace(action.SessionMode)
 	}
 	action.Prompt = strings.TrimSpace(action.Prompt)
+	action.Capabilities = normalizeBossActionStringList(action.Capabilities)
+	action.Resources = normalizeBossActionResources(action.Resources)
 	action.Reason = strings.TrimSpace(action.Reason)
+}
+
+func normalizeBossActionStringList(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func normalizeBossActionResources(resources []control.ResourceRef) []control.ResourceRef {
+	out := make([]control.ResourceRef, 0, len(resources))
+	for _, resource := range resources {
+		resource.Kind = control.ResourceKind(strings.TrimSpace(string(resource.Kind)))
+		resource.ID = strings.TrimSpace(resource.ID)
+		resource.Path = strings.TrimSpace(resource.Path)
+		resource.ProjectPath = strings.TrimSpace(resource.ProjectPath)
+		resource.Provider = resource.Provider.Normalized()
+		resource.SessionID = strings.TrimSpace(resource.SessionID)
+		resource.Label = strings.TrimSpace(resource.Label)
+		if resource.Kind == "" {
+			continue
+		}
+		out = append(out, resource)
+	}
+	return out
 }
 
 func validateBossAction(action bossAction) error {

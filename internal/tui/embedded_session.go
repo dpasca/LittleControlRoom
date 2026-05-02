@@ -573,6 +573,7 @@ type embeddedLaunchOptions struct {
 	forceNew bool
 	prompt   string
 	reveal   bool
+	resumeID string
 }
 
 func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provider codexapp.Provider, options embeddedLaunchOptions) (tea.Model, tea.Cmd) {
@@ -622,7 +623,7 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 	req := codexapp.LaunchRequest{
 		Provider:         provider,
 		ProjectPath:      p.Path,
-		ResumeID:         m.selectedProjectSessionID(p, provider),
+		ResumeID:         firstNonEmptyTrimmed(options.resumeID, m.selectedProjectSessionID(p, provider)),
 		ForceNew:         options.forceNew,
 		Prompt:           options.prompt,
 		Preset:           m.currentCodexLaunchPreset(),

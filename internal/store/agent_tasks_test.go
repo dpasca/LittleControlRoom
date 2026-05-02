@@ -20,9 +20,11 @@ func TestAgentTaskLifecyclePersistsResources(t *testing.T) {
 
 	task, err := st.CreateAgentTask(ctx, model.CreateAgentTaskInput{
 		ID:            "agt_test",
+		ParentTaskID:  "agt_parent",
 		Title:         " Investigate runaway processes ",
-		Kind:          model.AgentTaskKindSystemOps,
+		Kind:          model.AgentTaskKindAgent,
 		Summary:       "First pass.",
+		Capabilities:  []string{"process.inspect", "process.terminate", "process.inspect"},
 		Provider:      model.SessionSourceCodex,
 		SessionID:     "codex:ses-1",
 		WorkspacePath: "/tmp/agent-task",
@@ -38,8 +40,14 @@ func TestAgentTaskLifecyclePersistsResources(t *testing.T) {
 	if task.ID != "agt_test" || task.Title != "Investigate runaway processes" {
 		t.Fatalf("created task identity = %#v", task)
 	}
-	if task.Kind != model.AgentTaskKindSystemOps || task.Status != model.AgentTaskStatusActive {
+	if task.ParentTaskID != "agt_parent" {
+		t.Fatalf("parent task id = %q, want agt_parent", task.ParentTaskID)
+	}
+	if task.Kind != model.AgentTaskKindAgent || task.Status != model.AgentTaskStatusActive {
 		t.Fatalf("created task kind/status = %q/%q", task.Kind, task.Status)
+	}
+	if len(task.Capabilities) != 2 || task.Capabilities[0] != "process.inspect" || task.Capabilities[1] != "process.terminate" {
+		t.Fatalf("capabilities = %#v", task.Capabilities)
 	}
 	if len(task.Resources) != 3 {
 		t.Fatalf("created resources = %d, want 3", len(task.Resources))

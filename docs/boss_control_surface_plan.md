@@ -119,9 +119,11 @@ Use `agent_task` as the durable envelope Boss owns:
 
 - id
 - title
-- kind: `ephemeral`, `project`, `scratch_task`, or `system_ops`
+- kind: `agent` or `subagent`
+- parent task id, for subagent tasks
 - status: `active`, `waiting`, `completed`, or `archived`
 - summary / rolling brief
+- allowed capability namespaces, such as `process.inspect`, `process.terminate`, `repo.edit`, `test.run`, or `browser.inspect`
 - current provider and engineer session id, if any
 - workspace path, when the task needs a small managed directory
 - related resources such as projects, PIDs, ports, files, TODOs, or engineer sessions
@@ -132,13 +134,14 @@ Boss can continue the same task with the same provider session, start a fresh pr
 
 Venue guidance:
 
-- `project`: normal repo/project work.
-- `scratch_task`: durable folder-backed task already visible in the dashboard.
-- `ephemeral`: temporary multi-turn task, hidden from the project list by default.
-- `system_ops`: host/LCR operation or investigation with no natural repo.
+- `agent`: a temporary Boss-owned task with its own lifecycle and optional internal workspace.
+- `subagent`: a child task under another agent task, used when Boss splits or redirects part of the work.
 
-Ephemeral and system-ops task workspaces live under Little Control Room app data internal workspaces and are treated as managed internal paths so scanning does not promote them to normal projects.
-Completed ephemeral tasks should remain recallable through a short summary, then be auto-archived or purged by later lifecycle code.
+Domain-specific work such as host/process cleanup is represented by resources and capabilities, not by special task kinds.
+For example, a process cleanup task is an `agent` task with process and port resources plus `process.inspect` and `process.terminate` capabilities.
+
+Agent task workspaces live under Little Control Room app data internal workspaces and are treated as managed internal paths so scanning does not promote them to normal projects.
+Completed or archived temporary tasks should remain recallable through a short summary, then be purged after their expiry.
 
 ## System Notices
 

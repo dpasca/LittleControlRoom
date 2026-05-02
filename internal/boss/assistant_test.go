@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/control"
 	"lcroom/internal/llm"
 	"lcroom/internal/model"
 )
@@ -233,10 +234,11 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"Do not answer that a concrete term is unknown until search_context has been tried.",
 		"extension of the active engineer sessions",
 		"propose_control",
-		"control_capability=\"engineer.send_prompt\"",
-		"delegate project/repo work to an engineer session",
-		"Do not use engineer.send_prompt for host or system operations",
-		"Do not use the Little Control Room project or another currently active engineer session as a proxy venue for system-ops work.",
+		"agent_task.create",
+		"Use engineer.send_prompt only for explicit project/repo work",
+		"Use agent_task.create for temporary delegated work",
+		"do not encode special domains as task kinds",
+		"Do not use the Little Control Room project or another unrelated active engineer session as a proxy venue",
 		"user confirmation",
 		"context_command",
 		"ctx search engineer",
@@ -388,6 +390,58 @@ func TestAssistantReplyCanProposeEngineerSendPromptControl(t *testing.T) {
 	}
 	if resp.Usage.TotalTokens != 17 {
 		t.Fatalf("usage total = %d, want 17", resp.Usage.TotalTokens)
+	}
+}
+
+func TestAssistantReplyCanProposeAgentTaskCreateControl(t *testing.T) {
+	t.Parallel()
+
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model: "gpt-test",
+			OutputText: encodedBossAction(t, bossAction{
+				Kind:              bossActionProposeControl,
+				ControlCapability: "agent_task.create",
+				TaskTitle:         "Clean suspicious local processes",
+				TaskKind:          "agent",
+				EngineerProvider:  "codex",
+				Prompt:            "Inspect the suspicious PIDs and terminate only clearly stale processes.",
+				Capabilities:      []string{"process.inspect", "process.terminate"},
+				Resources: []control.ResourceRef{
+					{Kind: control.ResourceProcess, PID: 93624, Label: "hot python"},
+					{Kind: control.ResourcePort, Port: 9229, Label: "debug listener"},
+				},
+				Reason: "The user asked Boss to delegate temporary machine work.",
+			}),
+			Usage: model.LLMUsage{TotalTokens: 19},
+		}},
+	}
+	assistant := &Assistant{
+		planner: planner,
+		query:   newQueryExecutor(&fakeBossStore{}),
+		model:   "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Open agent tasks: none.",
+		Messages:   []ChatMessage{{Role: "user", Content: "Clean up those stale processes"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.ControlInvocation == nil {
+		t.Fatalf("ControlInvocation = nil, want agent_task.create proposal")
+	}
+	if resp.ControlInvocation.Capability != control.CapabilityAgentTaskCreate {
+		t.Fatalf("capability = %q", resp.ControlInvocation.Capability)
+	}
+	if !strings.Contains(resp.Content, "Create agent task") || !strings.Contains(resp.Content, "process.terminate") {
+		t.Fatalf("proposal content = %q, want agent task confirmation preview", resp.Content)
+	}
+	if !strings.Contains(string(resp.ControlInvocation.Args), `"title":"Clean suspicious local processes"`) ||
+		!strings.Contains(string(resp.ControlInvocation.Args), `"kind":"agent"`) ||
+		!strings.Contains(string(resp.ControlInvocation.Args), `"capabilities":["`) {
+		t.Fatalf("invocation args = %s", resp.ControlInvocation.Args)
 	}
 }
 

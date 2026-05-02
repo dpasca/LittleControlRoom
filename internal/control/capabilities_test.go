@@ -94,6 +94,27 @@ func TestEngineerSendPromptCapabilityMetadata(t *testing.T) {
 	}
 }
 
+func TestAgentTaskCapabilitiesMetadata(t *testing.T) {
+	for _, name := range []CapabilityName{CapabilityAgentTaskCreate, CapabilityAgentTaskContinue, CapabilityAgentTaskClose} {
+		capability, ok := CapabilityByName(name)
+		if !ok {
+			t.Fatalf("CapabilityByName(%q) not found", name)
+		}
+		if capability.Name != name {
+			t.Fatalf("Name = %q, want %q", capability.Name, name)
+		}
+		if capability.Confirmation != ConfirmationRequired {
+			t.Fatalf("%s confirmation = %q, want required", name, capability.Confirmation)
+		}
+		if !capability.RequiresHost {
+			t.Fatalf("%s RequiresHost = false, want true", name)
+		}
+		if capability.InputSchema["type"] != "object" || capability.OutputSchema["type"] != "object" {
+			t.Fatalf("%s schemas should be object schemas", name)
+		}
+	}
+}
+
 func TestNormalizeEngineerSendPromptInput(t *testing.T) {
 	input, err := NormalizeEngineerSendPromptInput(EngineerSendPromptInput{
 		RequestID:   " req-1 ",
@@ -216,6 +237,46 @@ func TestValidateInvocationNormalizesEngineerSendPromptArgs(t *testing.T) {
 	}
 	if !input.Reveal {
 		t.Fatalf("Reveal = false, want true")
+	}
+}
+
+func TestValidateInvocationNormalizesAgentTaskCreateArgs(t *testing.T) {
+	rawArgs := json.RawMessage(`{
+		"title": " Clean suspicious processes ",
+		"kind": "",
+		"parent_task_id": "",
+		"prompt": "  Inspect and terminate stale PIDs.  ",
+		"provider": "",
+		"reveal": false,
+		"capabilities": ["process.inspect", "process.terminate", "process.inspect"],
+		"resources": [
+			{"kind": "process", "id": "", "path": "", "project_path": "", "provider": "", "session_id": "", "todo_id": 0, "pid": 93624, "port": 0, "label": " hot python "},
+			{"kind": "port", "id": "", "path": "", "project_path": "", "provider": "", "session_id": "", "todo_id": 0, "pid": 0, "port": 9229, "label": " debug "}
+		]
+	}`)
+	inv, err := ValidateInvocation(Invocation{
+		RequestID:  " boss-turn-task ",
+		Capability: CapabilityAgentTaskCreate,
+		Args:       rawArgs,
+	})
+	if err != nil {
+		t.Fatalf("ValidateInvocation() error = %v", err)
+	}
+	var input AgentTaskCreateInput
+	if err := json.Unmarshal(inv.Args, &input); err != nil {
+		t.Fatalf("decode normalized args: %v", err)
+	}
+	if input.RequestID != "boss-turn-task" || input.Title != "Clean suspicious processes" {
+		t.Fatalf("normalized identity = %#v", input)
+	}
+	if input.Kind != AgentTaskKindAgent || input.Provider != ProviderAuto {
+		t.Fatalf("kind/provider = %q/%q", input.Kind, input.Provider)
+	}
+	if len(input.Capabilities) != 2 {
+		t.Fatalf("capabilities = %#v, want deduped list", input.Capabilities)
+	}
+	if len(input.Resources) != 2 || input.Resources[0].PID != 93624 || input.Resources[1].Port != 9229 {
+		t.Fatalf("resources = %#v", input.Resources)
 	}
 }
 

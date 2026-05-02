@@ -11,6 +11,9 @@ type CapabilityName string
 
 const (
 	CapabilityEngineerSendPrompt CapabilityName = "engineer.send_prompt"
+	CapabilityAgentTaskCreate    CapabilityName = "agent_task.create"
+	CapabilityAgentTaskContinue  CapabilityName = "agent_task.continue"
+	CapabilityAgentTaskClose     CapabilityName = "agent_task.close"
 )
 
 type Provider string
@@ -140,6 +143,12 @@ func ValidateInvocation(inv Invocation) (Invocation, error) {
 	switch inv.Capability {
 	case CapabilityEngineerSendPrompt:
 		return validateEngineerSendPromptInvocation(inv)
+	case CapabilityAgentTaskCreate:
+		return validateAgentTaskCreateInvocation(inv)
+	case CapabilityAgentTaskContinue:
+		return validateAgentTaskContinueInvocation(inv)
+	case CapabilityAgentTaskClose:
+		return validateAgentTaskCloseInvocation(inv)
 	case "":
 		return Invocation{}, fmt.Errorf("capability is required")
 	default:

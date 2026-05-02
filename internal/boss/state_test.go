@@ -120,9 +120,10 @@ func TestBuildStateBriefIncludesOpenAgentTasks(t *testing.T) {
 		OpenAgentTasks: []AgentTaskBrief{{
 			ID:            "agt_processes",
 			Title:         "Investigate runaway dev processes",
-			Kind:          model.AgentTaskKindSystemOps,
+			Kind:          model.AgentTaskKindAgent,
 			Status:        model.AgentTaskStatusActive,
 			Summary:       "Node debug listener is still hot; Python process needs a cwd check.",
+			Capabilities:  []string{"process.inspect", "process.terminate"},
 			Provider:      model.SessionSourceCodex,
 			SessionID:     "codex:ses-1",
 			LastTouchedAt: now.Add(-8 * time.Minute),
@@ -139,8 +140,9 @@ func TestBuildStateBriefIncludesOpenAgentTasks(t *testing.T) {
 		"Open agent tasks:",
 		"Investigate runaway dev processes",
 		"agt_processes",
-		"system_ops/active",
+		"agent/active",
 		"touched 8m ago",
+		"process.inspect, process.terminate",
 		"pid 49995 ts-node-dev",
 		"port 9229 debug listener",
 		"codex session codex:ses-1",
@@ -167,7 +169,7 @@ func TestLoadStateSnapshotIncludesOpenAgentTasksOutsidePrivacyMode(t *testing.T)
 
 	if _, err := svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
 		Title: "Follow up on temp process investigation",
-		Kind:  model.AgentTaskKindSystemOps,
+		Kind:  model.AgentTaskKindAgent,
 	}); err != nil {
 		t.Fatalf("CreateAgentTask() error = %v", err)
 	}

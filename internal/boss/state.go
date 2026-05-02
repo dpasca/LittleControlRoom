@@ -61,10 +61,12 @@ type ProjectBrief struct {
 
 type AgentTaskBrief struct {
 	ID            string
+	ParentTaskID  string
 	Title         string
 	Kind          model.AgentTaskKind
 	Status        model.AgentTaskStatus
 	Summary       string
+	Capabilities  []string
 	Provider      model.SessionSource
 	SessionID     string
 	LastTouchedAt time.Time
@@ -185,10 +187,12 @@ func agentTaskBriefFromTask(task model.AgentTask) AgentTaskBrief {
 	}
 	return AgentTaskBrief{
 		ID:            strings.TrimSpace(task.ID),
+		ParentTaskID:  strings.TrimSpace(task.ParentTaskID),
 		Title:         strings.TrimSpace(task.Title),
 		Kind:          model.NormalizeAgentTaskKind(task.Kind),
 		Status:        model.NormalizeAgentTaskStatus(task.Status),
 		Summary:       strings.TrimSpace(task.Summary),
+		Capabilities:  append([]string(nil), task.Capabilities...),
 		Provider:      model.NormalizeSessionSource(task.Provider),
 		SessionID:     strings.TrimSpace(task.SessionID),
 		LastTouchedAt: task.LastTouchedAt,
@@ -311,6 +315,9 @@ func operationalAgentTaskLine(task AgentTaskBrief, now time.Time) string {
 		title = "untitled task"
 	}
 	parts := []string{fmt.Sprintf("%s (%s)", title, strings.TrimSpace(task.ID))}
+	if parent := strings.TrimSpace(task.ParentTaskID); parent != "" {
+		parts = append(parts, "parent: "+parent)
+	}
 	parts = append(parts, fmt.Sprintf("kind/status: %s/%s", task.Kind, task.Status))
 	if !task.LastTouchedAt.IsZero() {
 		parts = append(parts, "touched "+relativeAge(now, task.LastTouchedAt))
@@ -328,6 +335,9 @@ func operationalAgentTaskLine(task AgentTaskBrief, now time.Time) string {
 	}
 	if summary := strings.TrimSpace(task.Summary); summary != "" {
 		parts = append(parts, "brief: "+clipText(summary, 140))
+	}
+	if len(task.Capabilities) > 0 {
+		parts = append(parts, "capabilities: "+clipText(strings.Join(task.Capabilities, ", "), 100))
 	}
 	if resources := compactAgentTaskResources(task.Resources); resources != "" {
 		parts = append(parts, "resources: "+resources)
@@ -367,6 +377,8 @@ func compactAgentTaskResource(resource model.AgentTaskResource) string {
 		}
 	case model.AgentTaskResourceFile:
 		return "file " + firstNonEmpty(resource.Path, resource.Label)
+	case model.AgentTaskResourceAgentTask:
+		return "task " + firstNonEmpty(resource.RefID, resource.Label)
 	case model.AgentTaskResourceEngineerSession:
 		session := strings.TrimSpace(resource.SessionID)
 		if session == "" {

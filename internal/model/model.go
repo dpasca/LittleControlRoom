@@ -94,10 +94,10 @@ const (
 type AgentTaskKind string
 
 const (
-	AgentTaskKindEphemeral AgentTaskKind = "ephemeral"
-	AgentTaskKindProject   AgentTaskKind = "project"
-	AgentTaskKindScratch   AgentTaskKind = "scratch_task"
-	AgentTaskKindSystemOps AgentTaskKind = "system_ops"
+	AgentTaskKindAgent    AgentTaskKind = "agent"
+	AgentTaskKindSubagent AgentTaskKind = "subagent"
+	AgentTaskKindProject  AgentTaskKind = "project"
+	AgentTaskKindScratch  AgentTaskKind = "scratch_task"
 )
 
 type AgentTaskStatus string
@@ -116,6 +116,7 @@ const (
 	AgentTaskResourceProcess         AgentTaskResourceKind = "process"
 	AgentTaskResourcePort            AgentTaskResourceKind = "port"
 	AgentTaskResourceFile            AgentTaskResourceKind = "file"
+	AgentTaskResourceAgentTask       AgentTaskResourceKind = "agent_task"
 	AgentTaskResourceEngineerSession AgentTaskResourceKind = "engineer_session"
 )
 
@@ -198,10 +199,12 @@ type ProjectGitFingerprint struct {
 
 type AgentTask struct {
 	ID            string
+	ParentTaskID  string
 	Title         string
 	Kind          AgentTaskKind
 	Status        AgentTaskStatus
 	Summary       string
+	Capabilities  []string
 	Provider      SessionSource
 	SessionID     string
 	WorkspacePath string
@@ -218,6 +221,7 @@ type AgentTaskResource struct {
 	ID          int64
 	TaskID      string
 	Kind        AgentTaskResourceKind
+	RefID       string
 	ProjectPath string
 	Path        string
 	PID         int
@@ -230,10 +234,12 @@ type AgentTaskResource struct {
 
 type CreateAgentTaskInput struct {
 	ID            string
+	ParentTaskID  string
 	Title         string
 	Kind          AgentTaskKind
 	Status        AgentTaskStatus
 	Summary       string
+	Capabilities  []string
 	Provider      SessionSource
 	SessionID     string
 	WorkspacePath string
@@ -242,19 +248,22 @@ type CreateAgentTaskInput struct {
 }
 
 type UpdateAgentTaskInput struct {
-	ID               string
-	Title            *string
-	Status           *AgentTaskStatus
-	Summary          *string
-	Provider         *SessionSource
-	SessionID        *string
-	WorkspacePath    *string
-	ExpiresAt        *time.Time
-	CompletedAt      *time.Time
-	ArchivedAt       *time.Time
-	Resources        []AgentTaskResource
-	ReplaceResources bool
-	Touch            bool
+	ID                  string
+	ParentTaskID        *string
+	Title               *string
+	Status              *AgentTaskStatus
+	Summary             *string
+	Capabilities        []string
+	ReplaceCapabilities bool
+	Provider            *SessionSource
+	SessionID           *string
+	WorkspacePath       *string
+	ExpiresAt           *time.Time
+	CompletedAt         *time.Time
+	ArchivedAt          *time.Time
+	Resources           []AgentTaskResource
+	ReplaceResources    bool
+	Touch               bool
 }
 
 type AgentTaskFilter struct {
@@ -467,10 +476,10 @@ func NormalizeProjectKind(kind ProjectKind) ProjectKind {
 
 func NormalizeAgentTaskKind(kind AgentTaskKind) AgentTaskKind {
 	switch kind {
-	case AgentTaskKindProject, AgentTaskKindScratch, AgentTaskKindSystemOps:
+	case AgentTaskKindSubagent, AgentTaskKindProject, AgentTaskKindScratch:
 		return kind
 	default:
-		return AgentTaskKindEphemeral
+		return AgentTaskKindAgent
 	}
 }
 
@@ -485,7 +494,7 @@ func NormalizeAgentTaskStatus(status AgentTaskStatus) AgentTaskStatus {
 
 func NormalizeAgentTaskResourceKind(kind AgentTaskResourceKind) AgentTaskResourceKind {
 	switch kind {
-	case AgentTaskResourceProject, AgentTaskResourceProcess, AgentTaskResourcePort, AgentTaskResourceFile, AgentTaskResourceEngineerSession:
+	case AgentTaskResourceProject, AgentTaskResourceProcess, AgentTaskResourcePort, AgentTaskResourceFile, AgentTaskResourceAgentTask, AgentTaskResourceEngineerSession:
 		return kind
 	default:
 		return ""

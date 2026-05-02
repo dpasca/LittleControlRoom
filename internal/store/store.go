@@ -239,10 +239,12 @@ func (s *Store) initSchema(ctx context.Context) error {
 		);`,
 		`CREATE TABLE IF NOT EXISTS agent_tasks (
 			id TEXT PRIMARY KEY,
+			parent_task_id TEXT NOT NULL DEFAULT '',
 			title TEXT NOT NULL,
 			kind TEXT NOT NULL,
 			status TEXT NOT NULL,
 			summary TEXT NOT NULL DEFAULT '',
+			capabilities TEXT NOT NULL DEFAULT '[]',
 			provider TEXT NOT NULL DEFAULT '',
 			session_id TEXT NOT NULL DEFAULT '',
 			workspace_path TEXT NOT NULL DEFAULT '',
@@ -259,6 +261,7 @@ func (s *Store) initSchema(ctx context.Context) error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			task_id TEXT NOT NULL,
 			kind TEXT NOT NULL,
+			ref_id TEXT NOT NULL DEFAULT '',
 			project_path TEXT NOT NULL DEFAULT '',
 			path TEXT NOT NULL DEFAULT '',
 			pid INTEGER NOT NULL DEFAULT 0,
@@ -319,11 +322,104 @@ func (s *Store) initSchema(ctx context.Context) error {
 	if err := s.ensureSessionClassificationIdentityColumns(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureAgentTaskMetadataColumns(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureAgentTaskResourceMetadataColumns(ctx); err != nil {
+		return err
+	}
 	if err := s.repairTerminalSessionClassificationStages(ctx); err != nil {
 		return err
 	}
 	if err := s.ensureProjectsCreatedAtColumn(ctx); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (s *Store) agentTaskTableColumns(ctx context.Context) (map[string]struct{}, error) {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(agent_tasks)`)
+	if err != nil {
+		return nil, fmt.Errorf("check agent_tasks schema: %w", err)
+	}
+	defer rows.Close()
+
+	columns := map[string]struct{}{}
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			typeName  string
+			notNull   int
+			defaultV  sql.NullString
+			isPrimary int
+		)
+		if err := rows.Scan(&cid, &name, &typeName, &notNull, &defaultV, &isPrimary); err != nil {
+			return nil, fmt.Errorf("scan agent_tasks schema: %w", err)
+		}
+		columns[name] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read agent_tasks schema: %w", err)
+	}
+	return columns, nil
+}
+
+func (s *Store) ensureAgentTaskMetadataColumns(ctx context.Context) error {
+	columns, err := s.agentTaskTableColumns(ctx)
+	if err != nil {
+		return err
+	}
+	if _, ok := columns["parent_task_id"]; !ok {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE agent_tasks ADD COLUMN parent_task_id TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add agent_tasks.parent_task_id column: %w", err)
+		}
+	}
+	if _, ok := columns["capabilities"]; !ok {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE agent_tasks ADD COLUMN capabilities TEXT NOT NULL DEFAULT '[]'`); err != nil {
+			return fmt.Errorf("add agent_tasks.capabilities column: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) agentTaskResourceTableColumns(ctx context.Context) (map[string]struct{}, error) {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(agent_task_resources)`)
+	if err != nil {
+		return nil, fmt.Errorf("check agent_task_resources schema: %w", err)
+	}
+	defer rows.Close()
+
+	columns := map[string]struct{}{}
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			typeName  string
+			notNull   int
+			defaultV  sql.NullString
+			isPrimary int
+		)
+		if err := rows.Scan(&cid, &name, &typeName, &notNull, &defaultV, &isPrimary); err != nil {
+			return nil, fmt.Errorf("scan agent_task_resources schema: %w", err)
+		}
+		columns[name] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read agent_task_resources schema: %w", err)
+	}
+	return columns, nil
+}
+
+func (s *Store) ensureAgentTaskResourceMetadataColumns(ctx context.Context) error {
+	columns, err := s.agentTaskResourceTableColumns(ctx)
+	if err != nil {
+		return err
+	}
+	if _, ok := columns["ref_id"]; !ok {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE agent_task_resources ADD COLUMN ref_id TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add agent_task_resources.ref_id column: %w", err)
+		}
 	}
 	return nil
 }
