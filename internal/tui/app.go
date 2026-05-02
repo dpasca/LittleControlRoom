@@ -3283,6 +3283,14 @@ func (m Model) renderProjectList(width, height int) string {
 		agentLabel, agentTag, agentLive := m.projectAgentDisplay(p, now)
 		todoCount := projectTODOCountLabel(p.OpenTODOCount)
 		runLabel, runState := projectRunSummary(runtimeSnapshot, p.RunCommand)
+		if processFlag := m.projectProcessRunFlag(p.Path); processFlag != "" {
+			if runLabel == "" {
+				runLabel = processFlag
+			} else {
+				runLabel = processFlag + " " + runLabel
+			}
+			runState = projectRunError
+		}
 		row := lipgloss.JoinHorizontal(
 			lipgloss.Top,
 			flagIndicators+cellStyle(lipgloss.NewStyle().Width(4).Align(lipgloss.Right).Bold(selectedRow)).Render(attention),
@@ -5879,14 +5887,15 @@ func footerSupplementSegments(rawSegments ...string) []string {
 func (m Model) renderFooter(width int) string {
 	usageSegment := m.renderFooterUsageSegment(m.footerUsageLabel())
 	browserSegment := m.renderFooterBrowserAttentionSegment()
+	processSegment := m.renderFooterProcessWarningSegment()
 	assessmentSegment := ""
 	if !m.errorLogVisible {
 		assessmentSegment = m.renderFooterAssessmentSegment()
 	}
 	filterSegment := m.renderFooterProjectFilterSegment()
-	supplementSegments := footerSupplementSegments(filterSegment, browserSegment, assessmentSegment, usageSegment)
+	supplementSegments := footerSupplementSegments(filterSegment, processSegment, browserSegment, assessmentSegment, usageSegment)
 	if m.diffView != nil {
-		diffSegments := append([]string{renderDiffFooter(width, *m.diffView, usageSegment)}, footerSupplementSegments(filterSegment, browserSegment, assessmentSegment, "")...)
+		diffSegments := append([]string{renderDiffFooter(width, *m.diffView, usageSegment)}, footerSupplementSegments(filterSegment, processSegment, browserSegment, assessmentSegment, "")...)
 		return renderFooterLine(width, diffSegments...)
 	}
 	if m.gitStatusDialog != nil {

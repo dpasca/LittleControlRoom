@@ -9,6 +9,8 @@ import (
 
 const (
 	runtimeRunningAttentionWeight   = 10
+	processWarningAttentionWeight   = 45
+	processHotCPUAttentionWeight    = 90
 	embeddedApprovalAttentionWeight = 120
 	embeddedBrowserAttentionWeight  = 115
 	embeddedQuestionAttentionWeight = 100
@@ -18,6 +20,9 @@ func (m Model) projectAttentionScore(project model.ProjectSummary) int {
 	score := project.AttentionScore
 	if snapshot := m.projectRuntimeSnapshot(project.Path); snapshot.Running {
 		score += runtimeRunningAttentionWeight
+	}
+	if reason := m.projectProcessAttentionReason(project.Path); reason != nil {
+		score += reason.Weight
 	}
 	if _, _, ok := m.projectPendingEmbeddedApproval(project.Path); ok {
 		score += embeddedApprovalAttentionWeight
@@ -33,6 +38,9 @@ func (m Model) projectAttentionScore(project model.ProjectSummary) int {
 func (m Model) projectAttentionReasons(project model.ProjectSummary, base []model.AttentionReason) []model.AttentionReason {
 	reasons := append([]model.AttentionReason(nil), base...)
 	if reason := m.projectRuntimeAttentionReason(project.Path); reason != nil {
+		reasons = append(reasons, *reason)
+	}
+	if reason := m.projectProcessAttentionReason(project.Path); reason != nil {
 		reasons = append(reasons, *reason)
 	}
 	if reason := m.projectEmbeddedApprovalAttentionReason(project.Path); reason != nil {
@@ -64,6 +72,28 @@ func (m Model) projectRuntimeAttentionReason(projectPath string) *model.Attentio
 		Code:   "runtime_running",
 		Text:   text,
 		Weight: runtimeRunningAttentionWeight,
+	}
+}
+
+func (m Model) projectProcessAttentionReason(projectPath string) *model.AttentionReason {
+	stats := m.projectProcessWarningStats(projectPath)
+	if stats.Total == 0 {
+		return nil
+	}
+
+	weight := processWarningAttentionWeight
+	if stats.HighCPU > 0 {
+		weight = processHotCPUAttentionWeight
+	}
+	if stats.PortListeners > 0 && weight < processHotCPUAttentionWeight {
+		weight = processWarningAttentionWeight + 15
+	}
+
+	text := processWarningDetailLabel(stats)
+	return &model.AttentionReason{
+		Code:   "process_suspicious",
+		Text:   text,
+		Weight: weight,
 	}
 }
 

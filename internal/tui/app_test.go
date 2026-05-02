@@ -959,6 +959,42 @@ func TestProjectAttentionScoreAddsRunningRuntimeWeight(t *testing.T) {
 	}
 }
 
+func TestProjectAttentionScoreAddsProcessWarningWeight(t *testing.T) {
+	project := model.ProjectSummary{
+		Name:           "demo",
+		Path:           "/tmp/demo",
+		AttentionScore: 7,
+	}
+	m := Model{
+		processReports: map[string]procinspect.ProjectReport{
+			project.Path: {
+				ProjectPath: project.Path,
+				Findings: []procinspect.Finding{{
+					Process:     procinspect.Process{PID: 49995, PPID: 1, CPU: 98.5, Ports: []int{9229}},
+					ProjectPath: project.Path,
+				}},
+			},
+		},
+	}
+
+	if got := m.projectAttentionScore(project); got != project.AttentionScore+processHotCPUAttentionWeight {
+		t.Fatalf("projectAttentionScore() = %d, want hot process boost", got)
+	}
+	reasons := m.projectAttentionReasons(project, nil)
+	if len(reasons) != 1 {
+		t.Fatalf("projectAttentionReasons() len = %d, want 1", len(reasons))
+	}
+	if reasons[0].Code != "process_suspicious" {
+		t.Fatalf("reason code = %q, want process_suspicious", reasons[0].Code)
+	}
+	if reasons[0].Weight != processHotCPUAttentionWeight {
+		t.Fatalf("reason weight = %d, want %d", reasons[0].Weight, processHotCPUAttentionWeight)
+	}
+	if !strings.Contains(reasons[0].Text, "hot CPU") || !strings.Contains(reasons[0].Text, "orphaned") {
+		t.Fatalf("reason text should summarize process risk, got %q", reasons[0].Text)
+	}
+}
+
 func TestProjectAttentionScoreUsesBrowserAttentionBeforeGenericQuestion(t *testing.T) {
 	project := model.ProjectSummary{
 		Name:           "demo",
@@ -1125,6 +1161,42 @@ func TestRuntimeSnapshotsMsgRebuildsAttentionSortedProjectsWhenRunningStateChang
 	}
 	if len(got.projects) != 2 || got.projects[0].Path != running.Path {
 		t.Fatalf("project order after runtime refresh = %#v, want running project first", got.projects)
+	}
+}
+
+func TestProcessScanMsgRebuildsAttentionSortedProjectsWhenWarningsChange(t *testing.T) {
+	idle := model.ProjectSummary{
+		Name:           "idle",
+		Path:           "/tmp/process-idle",
+		AttentionScore: 20,
+	}
+	hot := model.ProjectSummary{
+		Name:           "hot",
+		Path:           "/tmp/process-hot",
+		AttentionScore: 1,
+	}
+	m := Model{
+		allProjects: []model.ProjectSummary{idle, hot},
+		sortMode:    sortByAttention,
+		visibility:  visibilityAllFolders,
+	}
+	m.rebuildProjectList(idle.Path)
+	if len(m.projects) != 2 || m.projects[0].Path != idle.Path {
+		t.Fatalf("initial project order = %#v, want idle first before process scan", m.projects)
+	}
+
+	_ = m.applyProcessScanMsg(processScanMsg{
+		reports: []procinspect.ProjectReport{{
+			ProjectPath: hot.Path,
+			Findings: []procinspect.Finding{{
+				Process:     procinspect.Process{PID: 49995, PPID: 1, CPU: 99},
+				ProjectPath: hot.Path,
+			}},
+		}},
+	})
+
+	if len(m.projects) != 2 || m.projects[0].Path != hot.Path {
+		t.Fatalf("project order after process scan = %#v, want hot process project first", m.projects)
 	}
 }
 
@@ -4201,7 +4273,7 @@ func TestRenderFooterShowsBrowserAttentionAlert(t *testing.T) {
 	}
 }
 
-func TestRenderFooterDoesNotReserveProcessWarningSpace(t *testing.T) {
+func TestRenderFooterShowsProcessWarningSystemNotice(t *testing.T) {
 	m := Model{
 		projects:    []model.ProjectSummary{{Path: "/tmp/demo", Name: "demo"}},
 		selected:    0,
@@ -4218,8 +4290,10 @@ func TestRenderFooterDoesNotReserveProcessWarningSpace(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderFooter(220))
-	if strings.Contains(rendered, "suspicious PID") {
-		t.Fatalf("footer should not reserve permanent process-warning space, got %q", rendered)
+	for _, want := range []string{"Processes:", "1 suspicious", "1 hot"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("footer missing process warning %q: %q", want, rendered)
+		}
 	}
 }
 
@@ -5050,6 +5124,37 @@ func TestRenderProjectListShowsTODOCount(t *testing.T) {
 	}
 	if !strings.Contains(lines[1], " 3 ") {
 		t.Fatalf("renderProjectList() should show the open TODO count in the row, got %q", lines[1])
+	}
+}
+
+func TestRenderProjectListShowsProcessWarningInRunColumn(t *testing.T) {
+	project := model.ProjectSummary{
+		Name:          "alpha",
+		Path:          "/tmp/alpha",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+	}
+	m := Model{
+		projects: []model.ProjectSummary{project},
+		selected: 0,
+		processReports: map[string]procinspect.ProjectReport{
+			project.Path: {
+				ProjectPath: project.Path,
+				Findings: []procinspect.Finding{{
+					Process:     procinspect.Process{PID: 49995, PPID: 1, CPU: 98.5, Ports: []int{9229}},
+					ProjectPath: project.Path,
+				}},
+			},
+		},
+	}
+
+	rendered := ansi.Strip(m.renderProjectList(90, 6))
+	lines := strings.Split(rendered, "\n")
+	if len(lines) < 2 {
+		t.Fatalf("renderProjectList() expected header plus one row, got %q", rendered)
+	}
+	if !strings.Contains(lines[1], "HOT!") {
+		t.Fatalf("renderProjectList() should flag suspicious hot PIDs in RUN, got %q", lines[1])
 	}
 }
 

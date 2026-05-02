@@ -83,11 +83,15 @@ func (m Model) renderBossModeView() string {
 }
 
 func (m Model) renderBossModeHeader(width int) string {
-	line := strings.Join([]string{
+	parts := []string{
 		bossModeTitleStyle.Render("Boss Mode"),
 		renderFooterStatus(m.bossModel.StatusText()),
 		renderFooterMeta("high-level project chat"),
-	}, "  ")
+	}
+	if notice := processWarningFooterLabel(m.totalProcessWarningStats()); notice != "" {
+		parts = append(parts, renderFooterAlert(notice))
+	}
+	line := strings.Join(parts, "  ")
 	return fitStyledWidth(line, width)
 }
 
@@ -152,6 +156,14 @@ func (m Model) bossViewContext() bossui.ViewContext {
 		Status:              strings.TrimSpace(m.status),
 		PrivacyMode:         m.privacyMode,
 		PrivacyPatterns:     append([]string(nil), m.privacyPatterns...),
+	}
+	if notice := processWarningSystemNoticeSummary(m.totalProcessWarningStats()); notice != "" {
+		view.SystemNotices = append(view.SystemNotices, bossui.ViewSystemNotice{
+			Code:     "process_suspicious",
+			Severity: "warning",
+			Summary:  notice,
+			Count:    m.totalProcessWarningCount(),
+		})
 	}
 	return view
 }

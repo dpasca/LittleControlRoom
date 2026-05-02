@@ -88,6 +88,14 @@ type ViewContext struct {
 	Status              string
 	PrivacyMode         bool
 	PrivacyPatterns     []string
+	SystemNotices       []ViewSystemNotice
+}
+
+type ViewSystemNotice struct {
+	Code     string
+	Severity string
+	Summary  string
+	Count    int
 }
 
 func newQueryExecutor(store bossStoreReader) *QueryExecutor {
@@ -1270,6 +1278,37 @@ func BuildViewContextBrief(view ViewContext, now time.Time) string {
 	}
 	if status := strings.TrimSpace(view.Status); status != "" {
 		lines = append(lines, "- classic TUI status: "+clipText(status, 220))
+	}
+	noticeLines := []string{}
+	if len(view.SystemNotices) > 0 {
+		limit := minInt(len(view.SystemNotices), 5)
+		for i := 0; i < limit; i++ {
+			notice := view.SystemNotices[i]
+			summary := strings.TrimSpace(notice.Summary)
+			if summary == "" {
+				continue
+			}
+			severity := strings.TrimSpace(notice.Severity)
+			if severity == "" {
+				severity = "notice"
+			}
+			code := strings.TrimSpace(notice.Code)
+			if code == "" {
+				code = "system"
+			}
+			count := ""
+			if notice.Count > 0 {
+				count = fmt.Sprintf(" count=%d", notice.Count)
+			}
+			noticeLines = append(noticeLines, fmt.Sprintf("  - %s/%s%s: %s", severity, code, count, clipText(summary, 220)))
+		}
+		if len(view.SystemNotices) > limit {
+			noticeLines = append(noticeLines, fmt.Sprintf("  - ... %d more", len(view.SystemNotices)-limit))
+		}
+	}
+	if len(noticeLines) > 0 {
+		lines = append(lines, "- system notices:")
+		lines = append(lines, noticeLines...)
 	}
 	return strings.Join(lines, "\n")
 }

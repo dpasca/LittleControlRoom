@@ -739,6 +739,33 @@ func TestBuildViewContextBriefIncludesClassicTUIState(t *testing.T) {
 	}
 }
 
+func TestBuildViewContextBriefIncludesSystemNotices(t *testing.T) {
+	t.Parallel()
+
+	brief := BuildViewContextBrief(ViewContext{
+		Active:              true,
+		Embedded:            true,
+		AllProjectCount:     4,
+		VisibleProjectCount: 4,
+		SystemNotices: []ViewSystemNotice{{
+			Code:     "process_suspicious",
+			Severity: "warning",
+			Summary:  "Processes: 2 suspicious, 1 hot; use process_report or /pids for PID details",
+			Count:    2,
+		}},
+	}, time.Unix(1_800_000_000, 0))
+
+	for _, want := range []string{
+		"system notices",
+		"warning/process_suspicious count=2",
+		"Processes: 2 suspicious, 1 hot",
+	} {
+		if !strings.Contains(brief, want) {
+			t.Fatalf("brief missing %q:\n%s", want, brief)
+		}
+	}
+}
+
 func TestQueryExecutorDoesNotUseHiddenSelectedProject(t *testing.T) {
 	t.Parallel()
 

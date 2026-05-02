@@ -18,6 +18,15 @@ import (
 
 const processScanTimeout = 2 * time.Second
 
+type processWarningStats struct {
+	Total         int
+	Projects      int
+	HighCPU       int
+	Orphaned      int
+	PortListeners int
+	MaxCPU        float64
+}
+
 type processDialogState struct {
 	ProjectPath string
 	ProjectName string
@@ -209,11 +218,17 @@ func (m *Model) applyProcessScanMsg(msg processScanMsg) tea.Cmd {
 			m.status = processDialogReadyStatus(len(m.processDialog.Findings), "project")
 		}
 	}
-	total := m.totalProcessWarningCount()
-	if strings.TrimSpace(msg.dialogProjectPath) == "" && m.processDialog == nil && total > 0 && total != m.processWarningLastCount {
-		m.status = processWarningStatus(total)
+	stats := m.totalProcessWarningStats()
+	if strings.TrimSpace(msg.dialogProjectPath) == "" && m.processDialog == nil && stats.Total > 0 && stats.Total != m.processWarningLastCount {
+		m.status = processWarningStatus(stats)
 	}
-	m.processWarningLastCount = total
+	if msg.err == nil && m.sortMode == sortByAttention {
+		m.rebuildProjectList(m.currentSelectedProjectPath())
+	}
+	if m.bossMode {
+		m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
+	}
+	m.processWarningLastCount = stats.Total
 	return reloadCmd
 }
 
@@ -393,28 +408,197 @@ func (m Model) projectProcessWarningCount(projectPath string) int {
 	return len(report.Findings)
 }
 
+func (m Model) projectProcessWarningStats(projectPath string) processWarningStats {
+	report, ok := m.projectProcessReport(projectPath)
+	if !ok {
+		return processWarningStats{}
+	}
+	stats := processWarningStatsForFindings(report.Findings)
+	if stats.Total > 0 {
+		stats.Projects = 1
+	}
+	return stats
+}
+
 func (m Model) totalProcessWarningCount() int {
+	return m.totalProcessWarningStats().Total
+}
+
+func (m Model) totalProcessWarningStats() processWarningStats {
 	if len(m.processReports) == 0 {
-		return 0
+		return processWarningStats{}
 	}
-	paths := m.processScanProjectPaths("")
-	count := 0
+	paths := m.processNoticeProjectPaths()
+	return m.processWarningStatsForPaths(paths)
+}
+
+func (m Model) processWarningStatsForPaths(paths []string) processWarningStats {
+	stats := processWarningStats{}
 	for _, path := range paths {
-		count += m.projectProcessWarningCount(path)
+		projectStats := m.projectProcessWarningStats(path)
+		stats.Total += projectStats.Total
+		stats.HighCPU += projectStats.HighCPU
+		stats.Orphaned += projectStats.Orphaned
+		stats.PortListeners += projectStats.PortListeners
+		if projectStats.Total > 0 {
+			stats.Projects++
+		}
+		if projectStats.MaxCPU > stats.MaxCPU {
+			stats.MaxCPU = projectStats.MaxCPU
+		}
 	}
-	return count
+	return stats
+}
+
+func processWarningStatsForFindings(findings []procinspect.Finding) processWarningStats {
+	stats := processWarningStats{Total: len(findings)}
+	for _, finding := range findings {
+		if processFindingIsHighCPU(finding) {
+			stats.HighCPU++
+		}
+		if processFindingIsOrphaned(finding) {
+			stats.Orphaned++
+		}
+		if processFindingHasPorts(finding) {
+			stats.PortListeners++
+		}
+		if finding.CPU > stats.MaxCPU {
+			stats.MaxCPU = finding.CPU
+		}
+	}
+	return stats
+}
+
+func processFindingIsHighCPU(finding procinspect.Finding) bool {
+	return finding.CPU >= procinspect.DefaultHighCPUThreshold
+}
+
+func processFindingIsOrphaned(finding procinspect.Finding) bool {
+	return finding.PPID == 1
+}
+
+func processFindingHasPorts(finding procinspect.Finding) bool {
+	return len(finding.Ports) > 0
+}
+
+func (m Model) processNoticeProjectPaths() []string {
+	projects := m.allProjects
+	if len(projects) == 0 {
+		projects = m.projects
+	}
+	if m.privacyMode {
+		projects = filterProjectsByPrivacy(projects, m.privacyPatterns)
+	}
+	seen := map[string]struct{}{}
+	paths := make([]string, 0, len(projects))
+	for _, project := range projects {
+		path := filepath.Clean(strings.TrimSpace(project.Path))
+		if path == "" || path == "." {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+	return paths
 }
 
 func (m Model) projectProcessWarningSummary(projectPath string) string {
-	count := m.projectProcessWarningCount(projectPath)
-	switch count {
-	case 0:
+	stats := m.projectProcessWarningStats(projectPath)
+	if stats.Total == 0 {
 		return ""
-	case 1:
-		return "1 suspicious project-local PID outside LCR control. Use /pids to inspect it."
-	default:
-		return fmt.Sprintf("%d suspicious project-local PIDs outside LCR control. Use /pids to inspect them.", count)
 	}
+	return fmt.Sprintf("%s outside LCR control. Use /pids to inspect.", processWarningDetailLabel(stats))
+}
+
+func processWarningDetailLabel(stats processWarningStats) string {
+	subject := "suspicious project-local PID"
+	if stats.Total != 1 {
+		subject = "suspicious project-local PIDs"
+	}
+	parts := []string{fmt.Sprintf("%d %s", stats.Total, subject)}
+	qualifiers := processWarningQualifiers(stats)
+	if len(qualifiers) > 0 {
+		parts = append(parts, "("+strings.Join(qualifiers, ", ")+")")
+	}
+	return strings.Join(parts, " ")
+}
+
+func processWarningQualifiers(stats processWarningStats) []string {
+	qualifiers := []string{}
+	if stats.HighCPU > 0 {
+		qualifiers = append(qualifiers, formatCount(stats.HighCPU, "hot CPU"))
+	}
+	if stats.Orphaned > 0 {
+		qualifiers = append(qualifiers, formatCount(stats.Orphaned, "orphaned"))
+	}
+	if stats.PortListeners > 0 {
+		qualifiers = append(qualifiers, formatCount(stats.PortListeners, "port listener"))
+	}
+	return qualifiers
+}
+
+func processWarningFooterLabel(stats processWarningStats) string {
+	if stats.Total == 0 {
+		return ""
+	}
+	parts := []string{fmt.Sprintf("%d suspicious", stats.Total)}
+	if stats.HighCPU > 0 {
+		parts = append(parts, fmt.Sprintf("%d hot", stats.HighCPU))
+	}
+	if stats.PortListeners > 0 {
+		parts = append(parts, fmt.Sprintf("%d ports", stats.PortListeners))
+	}
+	if stats.Projects > 1 {
+		parts = append(parts, fmt.Sprintf("%d projects", stats.Projects))
+	}
+	return "Processes: " + strings.Join(parts, ", ")
+}
+
+func processWarningSystemNoticeSummary(stats processWarningStats) string {
+	if stats.Total == 0 {
+		return ""
+	}
+	summary := processWarningFooterLabel(stats)
+	if summary == "" {
+		return ""
+	}
+	return summary + "; use process_report or /pids for PID details"
+}
+
+func formatCount(count int, label string) string {
+	if count == 1 {
+		return "1 " + label
+	}
+	if strings.HasSuffix(label, "CPU") || strings.HasSuffix(label, "ed") {
+		return fmt.Sprintf("%d %s", count, label)
+	}
+	return fmt.Sprintf("%d %ss", count, label)
+}
+
+func (m Model) renderFooterProcessWarningSegment() string {
+	label := processWarningFooterLabel(m.totalProcessWarningStats())
+	if label == "" {
+		return ""
+	}
+	return renderFooterAlert(label)
+}
+
+func (m Model) projectProcessRunFlag(projectPath string) string {
+	stats := m.projectProcessWarningStats(projectPath)
+	if stats.Total == 0 {
+		return ""
+	}
+	prefix := "PID!"
+	if stats.HighCPU > 0 {
+		prefix = "HOT!"
+	}
+	if stats.Total == 1 {
+		return prefix
+	}
+	return fmt.Sprintf("%s%d", prefix, stats.Total)
 }
 
 func processDialogCountLabel(count int) string {
@@ -439,11 +623,14 @@ func processDialogReadyStatus(count int, scope string) string {
 	}
 }
 
-func processWarningStatus(count int) string {
-	if count == 1 {
+func processWarningStatus(stats processWarningStats) string {
+	if stats.Total == 1 {
 		return "1 suspicious project process found; use /pids"
 	}
-	return fmt.Sprintf("%d suspicious project processes found; use /pids", count)
+	if stats.HighCPU > 0 {
+		return fmt.Sprintf("%d suspicious project processes found (%d hot); use /pids", stats.Total, stats.HighCPU)
+	}
+	return fmt.Sprintf("%d suspicious project processes found; use /pids", stats.Total)
 }
 
 func sameDialogProcessPath(left, right string) bool {

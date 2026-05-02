@@ -140,6 +140,25 @@ Venue guidance:
 Ephemeral and system-ops task workspaces live under Little Control Room app data internal workspaces and are treated as managed internal paths so scanning does not promote them to normal projects.
 Completed ephemeral tasks should remain recallable through a short summary, then be auto-archived or purged by later lifecycle code.
 
+## System Notices
+
+Boss Chat should receive a compact, privacy-filtered system-notice feed from the active host view.
+These notices are not tasks by themselves; they are short-lived operational signals that should remain visible until the underlying condition clears.
+
+Initial notice source:
+
+- suspicious project-local processes outside Little Control Room control
+
+Notice consumers:
+
+- classic TUI footer / system status area
+- Boss mode header
+- Boss Chat view context brief
+- project attention scoring and reason lists when a notice maps to a project
+
+The notice feed should use cached host state only.
+Detection can be asynchronous and periodically refreshed, but render paths and Boss context construction must not scan processes, inspect ports, read git state, or perform other blocking work.
+
 ## Provider Model
 
 The protocol should not expose internal package names such as `codexapp`.
