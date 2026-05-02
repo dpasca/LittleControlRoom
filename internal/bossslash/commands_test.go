@@ -4,7 +4,7 @@ import "testing"
 
 func TestSuggestionsIncludeSessionCommands(t *testing.T) {
 	suggestions := Suggestions("/")
-	for _, want := range []string{"/new", "/sessions", "/help", "/boss"} {
+	for _, want := range []string{"/new", "/sessions", "/skills", "/help", "/boss"} {
 		found := false
 		for _, suggestion := range suggestions {
 			if suggestion.Insert == want {
@@ -57,6 +57,19 @@ func TestParseSessionAliases(t *testing.T) {
 		if inv.Canonical != "/sessions boss_123" {
 			t.Fatalf("Parse(%q) canonical = %q, want /sessions boss_123", raw, inv.Canonical)
 		}
+	}
+}
+
+func TestParseSkills(t *testing.T) {
+	inv, err := Parse("/skills")
+	if err != nil {
+		t.Fatalf("Parse(/skills) error = %v", err)
+	}
+	if inv.Kind != KindSkills {
+		t.Fatalf("kind = %q, want skills", inv.Kind)
+	}
+	if inv.Canonical != "/skills" {
+		t.Fatalf("canonical = %q, want /skills", inv.Canonical)
 	}
 }
 

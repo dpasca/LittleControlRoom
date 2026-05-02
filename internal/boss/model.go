@@ -194,7 +194,7 @@ func newModel(ctx context.Context, svc *service.Service, embedded bool) Model {
 
 func IsMessage(msg tea.Msg) bool {
 	switch msg.(type) {
-	case StateLoadedMsg, AssistantReplyMsg, assistantStreamStartedMsg, assistantStreamMsg, TickMsg, ExitMsg, bossSessionLoadedMsg, bossSessionSavedMsg, bossSessionsListedMsg, ControlInvocationResultMsg:
+	case StateLoadedMsg, AssistantReplyMsg, assistantStreamStartedMsg, assistantStreamMsg, TickMsg, ExitMsg, bossSessionLoadedMsg, bossSessionSavedMsg, bossSessionsListedMsg, bossSkillsInventoryMsg, ControlInvocationResultMsg:
 		return true
 	default:
 		return false
@@ -300,6 +300,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case bossSessionsListedMsg:
 		return m.applyBossSessionsListed(msg)
+	case bossSkillsInventoryMsg:
+		return m.applyBossSkillsInventoryMsg(msg)
 	case ControlInvocationResultMsg:
 		return m.applyControlInvocationResult(msg)
 	case TickMsg:

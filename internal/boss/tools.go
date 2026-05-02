@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/codexskills"
 	"lcroom/internal/config"
 	"lcroom/internal/control"
 	"lcroom/internal/model"
@@ -28,6 +29,7 @@ const (
 	bossActionSearchContext          = "search_context"
 	bossActionSearchBossSessions     = "search_boss_sessions"
 	bossActionContextCommand         = "context_command"
+	bossActionSkillsInventory        = "skills_inventory"
 	bossActionProposeControl         = "propose_control"
 
 	bossToolResultLimit = 8000
@@ -83,6 +85,7 @@ type QueryExecutor struct {
 	bossSessions    *bossSessionStore
 	processReporter processReportFunc
 	nowFn           func() time.Time
+	codexHome       string
 }
 
 type ViewContext struct {
@@ -135,6 +138,9 @@ func (e *QueryExecutor) Execute(ctx context.Context, action bossAction, snapshot
 	if kind == bossActionContextCommand {
 		return e.contextCommand(ctx, action, view)
 	}
+	if kind == bossActionSkillsInventory {
+		return e.skillsInventory(ctx, action)
+	}
 	if e.store == nil {
 		return bossToolResult{}, errors.New("boss query tools are not connected to the project store")
 	}
@@ -158,6 +164,14 @@ func (e *QueryExecutor) Execute(ctx context.Context, action bossAction, snapshot
 	default:
 		return bossToolResult{}, fmt.Errorf("unknown boss action kind %q", strings.TrimSpace(action.Kind))
 	}
+}
+
+func (e *QueryExecutor) skillsInventory(ctx context.Context, action bossAction) (bossToolResult, error) {
+	inv, err := codexskills.LoadInventory(ctx, e.codexHome, e.now())
+	if err != nil {
+		return bossToolResult{}, err
+	}
+	return clippedToolResult(bossActionSkillsInventory, codexskills.FormatInventoryReport(inv, clampBossLimit(action.Limit, 20, 40))), nil
 }
 
 func (e *QueryExecutor) searchBossSessions(ctx context.Context, action bossAction) (bossToolResult, error) {

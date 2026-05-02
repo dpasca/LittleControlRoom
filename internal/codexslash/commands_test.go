@@ -58,6 +58,20 @@ func TestSuggestionsIncludeBossCommand(t *testing.T) {
 	}
 }
 
+func TestSuggestionsIncludeSkillsCommand(t *testing.T) {
+	suggestions := Suggestions("/")
+	found := false
+	for _, suggestion := range suggestions {
+		if suggestion.Insert == "/skills" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Suggestions(/) should include /skills: %#v", suggestions)
+	}
+}
+
 func TestParseModelCommand(t *testing.T) {
 	inv, err := Parse("/model")
 	if err != nil {
@@ -107,6 +121,19 @@ func TestParseBossCommand(t *testing.T) {
 	}
 	if inv.Canonical != "/boss" {
 		t.Fatalf("Parse(/boss) canonical = %q, want /boss", inv.Canonical)
+	}
+}
+
+func TestParseSkillsCommand(t *testing.T) {
+	inv, err := Parse("/skills")
+	if err != nil {
+		t.Fatalf("Parse(/skills) error = %v", err)
+	}
+	if inv.Kind != KindSkills {
+		t.Fatalf("Parse(/skills) kind = %q, want %q", inv.Kind, KindSkills)
+	}
+	if inv.Canonical != "/skills" {
+		t.Fatalf("Parse(/skills) canonical = %q, want /skills", inv.Canonical)
 	}
 }
 

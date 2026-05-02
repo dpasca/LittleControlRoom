@@ -129,6 +129,18 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "skills",
+			raw:  "/skills",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindSkills {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindSkills)
+				}
+				if inv.Canonical != "/skills" {
+					t.Fatalf("canonical = %q, want /skills", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "settings",
 			raw:  "/settings",
 			check: func(t *testing.T, inv Invocation) {
@@ -771,6 +783,16 @@ func TestSuggestionsIncludeSettingsCommand(t *testing.T) {
 	}
 	if got[0].Insert != "/settings" {
 		t.Fatalf("first /set suggestion = %q, want /settings", got[0].Insert)
+	}
+}
+
+func TestSuggestionsIncludeSkillsCommand(t *testing.T) {
+	got := Suggestions("/ski")
+	if len(got) == 0 {
+		t.Fatalf("Suggestions(/ski) returned none")
+	}
+	if got[0].Insert != "/skills" {
+		t.Fatalf("first /ski suggestion = %q, want /skills", got[0].Insert)
 	}
 }
 

@@ -12,6 +12,7 @@ type Kind string
 const (
 	KindNew      Kind = "new"
 	KindSessions Kind = "sessions"
+	KindSkills   Kind = "skills"
 	KindHelp     Kind = "help"
 	KindClose    Kind = "close"
 )
@@ -32,6 +33,7 @@ var specs = []Spec{
 	{Name: "sessions", Usage: "/sessions [session-id]", Summary: "List recent boss chat sessions, or switch to one by ID"},
 	{Name: "session", Usage: "/session [session-id]", Summary: "Alias for /sessions", Hidden: true},
 	{Name: "resume", Usage: "/resume [session-id]", Summary: "Alias for /sessions", Hidden: true},
+	{Name: "skills", Usage: "/skills", Summary: "Show Codex skills and local duplicates that may be stale"},
 	{Name: "help", Usage: "/help", Summary: "Show boss chat slash commands"},
 	{Name: "boss", Usage: "/boss off", Summary: "Close boss mode"},
 }
@@ -74,6 +76,12 @@ func Suggestions(input string) []Suggestion {
 		return []Suggestion{sessionSuggestion("/session")}
 	case "resume":
 		return []Suggestion{sessionSuggestion("/resume")}
+	case "skills":
+		return []Suggestion{{
+			Insert:  "/skills",
+			Display: "/skills",
+			Summary: "Show Codex skills and local duplicates that may be stale",
+		}}
 	case "help":
 		return []Suggestion{{
 			Insert:  "/help",
@@ -124,6 +132,14 @@ func Parse(input string) (Invocation, error) {
 			Kind:      KindSessions,
 			SessionID: sessionID,
 			Canonical: slashcmd.CanonicalCommand("sessions", sessionID),
+		}, nil
+	case "skills":
+		if strings.TrimSpace(rawArgs) != "" {
+			return Invocation{}, fmt.Errorf("usage: /skills")
+		}
+		return Invocation{
+			Kind:      KindSkills,
+			Canonical: "/skills",
 		}, nil
 	case "help":
 		if strings.TrimSpace(rawArgs) != "" {

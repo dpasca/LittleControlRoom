@@ -501,6 +501,31 @@ func TestQueryExecutorSearchesBossSessionsAsXMLSnippets(t *testing.T) {
 	}
 }
 
+func TestQueryExecutorReportsCodexSkillsInventory(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeBossSkill(t, root, filepath.Join("skills", "openai-docs", "SKILL.md"), "openai-docs", "Old docs")
+	writeBossSkill(t, root, filepath.Join("skills", ".system", "openai-docs", "SKILL.md"), "openai-docs", "New docs")
+
+	executor := newQueryExecutor(&fakeBossStore{})
+	executor.codexHome = root
+	result, err := executor.Execute(context.Background(), bossAction{Kind: bossActionSkillsInventory}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute(skills_inventory) error = %v", err)
+	}
+	for _, want := range []string{
+		"Codex skills inventory:",
+		"Review suggested",
+		"openai-docs",
+		"possible stale local duplicate",
+	} {
+		if !strings.Contains(result.Text, want) {
+			t.Fatalf("skills inventory missing %q:\n%s", want, result.Text)
+		}
+	}
+}
+
 func TestQueryExecutorResolvesProjectNameThroughContextSearch(t *testing.T) {
 	t.Parallel()
 
@@ -553,6 +578,18 @@ func TestQueryExecutorResolvesProjectNameThroughContextSearch(t *testing.T) {
 		if strings.Contains(result.Text, unwanted) {
 			t.Fatalf("tool result should not expose routing note %q:\n%s", unwanted, result.Text)
 		}
+	}
+}
+
+func writeBossSkill(t *testing.T, root, rel, name, description string) {
+	t.Helper()
+	path := filepath.Join(root, rel)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	content := "---\nname: \"" + name + "\"\ndescription: \"" + description + "\"\n---\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
 	}
 }
 

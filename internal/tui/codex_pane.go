@@ -1529,6 +1529,8 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, m.reviewVisibleCodexSessionCmd()
 			case codexslash.KindBoss:
 				return m.openBossModeOrSetupPrompt()
+			case codexslash.KindSkills:
+				return m, m.openSkillsDialog()
 			default:
 				m.status = "Unsupported embedded slash command"
 				return m, nil

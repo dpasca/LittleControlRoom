@@ -125,6 +125,9 @@ func (m Model) runBossSlashCommand(raw string) (tea.Model, tea.Cmd) {
 		m.status = "Boss chat slash commands"
 		m.syncLayout(true)
 		return m, nil
+	case bossslash.KindSkills:
+		m.status = "Loading Codex skills..."
+		return m, m.loadSkillsInventoryCmd()
 	case bossslash.KindClose:
 		return m, m.exitCmd()
 	default:
@@ -172,7 +175,7 @@ func (m Model) renderBossSlashBlock(width, height int) string {
 	}
 	suggestions := m.bossSlashSuggestions()
 	if len(suggestions) == 0 {
-		lines = append(lines, bossMutedStyle.Render(fitLine("No supported boss slash commands match. Try /new, /sessions, or /help.", width)))
+		lines = append(lines, bossMutedStyle.Render(fitLine("No supported boss slash commands match. Try /new, /sessions, /skills, or /help.", width)))
 	} else {
 		start, end := m.bossSlashSuggestionWindow(len(suggestions))
 		if start > 0 {

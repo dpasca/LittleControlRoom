@@ -22,6 +22,7 @@ const (
 	KindView           Kind = "view"
 	KindSetup          Kind = "setup"
 	KindSettings       Kind = "settings"
+	KindSkills         Kind = "skills"
 	KindFilter         Kind = "filter"
 	KindNewProject     Kind = "new-project"
 	KindNewTask        Kind = "new-task"
@@ -122,6 +123,7 @@ var specs = []Spec{
 	{Name: "sort", Usage: "/sort attention|recent", Summary: "Set list ordering"},
 	{Name: "view", Usage: "/view ai|all", Summary: "Choose AI-linked or all folders"},
 	{Name: "settings", Usage: "/settings", Summary: "Edit scope, browser, refresh, and advanced settings"},
+	{Name: "skills", Usage: "/skills", Summary: "Review Codex skills and local duplicates that may be stale"},
 	{Name: "setup", Usage: "/setup", Summary: "Choose AI roles for project reports and boss chat"},
 	{Name: "filter", Usage: "/filter [text|clear]", Summary: "Temporarily show only matching project names"},
 	{Name: "new-project", Usage: "/new-project", Summary: "Create a project folder, or paste an existing path to add it"},
@@ -370,6 +372,11 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /settings")
 		}
 		return Invocation{Kind: KindSettings, Canonical: "/settings"}, nil
+	case "skills":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /skills")
+		}
+		return Invocation{Kind: KindSkills, Canonical: "/skills"}, nil
 	case "filter":
 		switch strings.ToLower(strings.TrimSpace(rawArgs)) {
 		case "":

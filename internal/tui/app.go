@@ -107,6 +107,7 @@ type Model struct {
 	newProjectDialog               *newProjectDialogState
 	newTaskDialog                  *newTaskDialogState
 	runCommandDialog               *runCommandDialogState
+	skillsDialog                   *skillsDialogState
 	preferredSelectPath            string
 	diffView                       *diffViewState
 	gitStatusDialog                *gitStatusDialog
@@ -218,6 +219,7 @@ type Model struct {
 	aiLatencyRecent             []aiLatencySample
 	modelSettlePending          map[string]pendingModelSettleOp
 	lastSpinnerTickAt           time.Time
+	skillsInventorySeq          int64
 
 	pendingG      bool
 	todoLaunchSeq int64
@@ -1103,6 +1105,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.processDialog != nil {
 			return m.updateProcessDialogMode(msg)
 		}
+		if m.skillsDialog != nil {
+			return m.updateSkillsDialogMode(msg)
+		}
 		if m.attentionDialog != nil {
 			return m.updateAttentionDialogMode(msg)
 		}
@@ -1577,6 +1582,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, reloadCmd
 	case processScanMsg:
 		return m, m.applyProcessScanMsg(msg)
+	case skillsInventoryMsg:
+		return m.applySkillsInventoryMsg(msg)
 	case runCommandSavedMsg:
 		if m.runCommandDialog != nil && m.runCommandDialog.ProjectPath == msg.projectPath {
 			m.runCommandDialog.Submitting = false
@@ -2639,6 +2646,17 @@ func (m Model) View() string {
 	}
 	if m.codexVisible() {
 		body := m.renderCodexView()
+		if m.skillsDialog != nil {
+			width := m.width
+			if width <= 0 {
+				width = 120
+			}
+			height := m.height
+			if height <= 0 {
+				height = 30
+			}
+			return m.renderSkillsDialogOverlay(body, width, height)
+		}
 		if m.codexArtifactPicker != nil {
 			width := m.width
 			if width <= 0 {
@@ -2741,6 +2759,8 @@ func (m Model) View() string {
 		body = m.renderErrorLogOverlay(body, layout.width, layout.height)
 	} else if m.processDialog != nil {
 		body = m.renderProcessDialogOverlay(body, layout.width, layout.height)
+	} else if m.skillsDialog != nil {
+		body = m.renderSkillsDialogOverlay(body, layout.width, layout.height)
 	} else if m.codexPickerVisible {
 		body = m.renderCodexPickerOverlay(body, layout.width, layout.height)
 	} else if m.ignoredPickerVisible {
@@ -4019,6 +4039,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, m.openSetupMode()
 	case commands.KindSettings:
 		return m, m.openSettingsMode()
+	case commands.KindSkills:
+		return m, m.openSkillsDialog()
 	case commands.KindFilter:
 		if inv.Clear {
 			return m, m.setProjectFilter("")
@@ -5938,6 +5960,9 @@ func (m Model) renderFooter(width int) string {
 	if m.processDialog != nil {
 		return m.renderModalFooter(width, "Process inspector: ↑↓ select, r refresh, Esc close", supplementSegments...)
 	}
+	if m.skillsDialog != nil {
+		return m.renderModalFooter(width, "Codex skills: ↑↓ select, c copy path, r refresh, Esc close", supplementSegments...)
+	}
 	if m.commandMode {
 		return m.renderModalFooter(width, "Command palette open", supplementSegments...)
 	}
@@ -7016,7 +7041,7 @@ func helpPanelLines() []string {
 			renderDialogAction("Tab", "complete there", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("?", "toggle help", commitActionKeyStyle, commitActionTextStyle),
 		),
-		commandPaletteHintStyle.Render("Try /setup, /ai, /perf, /errors, /codex, /todo, /pids, /remove, /wt merge|remove|prune, /commit, /diff, or /run."),
+		commandPaletteHintStyle.Render("Try /setup, /ai, /perf, /errors, /codex, /todo, /skills, /pids, /remove, /wt merge|remove|prune, /commit, /diff, or /run."),
 		detailSectionStyle.Render("Navigate"),
 		renderHelpPanelActionRow(
 			renderDialogAction("Tab", "switch pane", navigateActionKeyStyle, navigateActionTextStyle),

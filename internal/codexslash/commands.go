@@ -18,6 +18,7 @@ const (
 	KindCompact   Kind = "compact"
 	KindReview    Kind = "review"
 	KindBoss      Kind = "boss"
+	KindSkills    Kind = "skills"
 )
 
 type Spec = slashcmd.Spec
@@ -41,6 +42,7 @@ var specs = []Spec{
 	{Name: "compact", Usage: "/compact", Summary: "Compact conversation history to free up context"},
 	{Name: "review", Usage: "/review", Summary: "Ask embedded Codex to review uncommitted changes"},
 	{Name: "boss", Usage: "/boss", Summary: "Open the high-level boss chat layer"},
+	{Name: "skills", Usage: "/skills", Summary: "Open the local Codex skills inventory"},
 }
 
 func Specs() []Spec {
@@ -114,6 +116,12 @@ func Suggestions(input string) []Suggestion {
 			Insert:  "/boss",
 			Display: "/boss",
 			Summary: "Open the high-level boss chat layer",
+		}}
+	case "skills":
+		return []Suggestion{{
+			Insert:  "/skills",
+			Display: "/skills",
+			Summary: "Open the local Codex skills inventory",
 		}}
 	default:
 		return slashcmd.NameSuggestions(specs, strings.ToLower(fields[0]))
@@ -199,6 +207,14 @@ func Parse(input string) (Invocation, error) {
 		return Invocation{
 			Kind:      KindBoss,
 			Canonical: "/boss",
+		}, nil
+	case "skills":
+		if strings.TrimSpace(rawArgs) != "" {
+			return Invocation{}, fmt.Errorf("usage: /skills")
+		}
+		return Invocation{
+			Kind:      KindSkills,
+			Canonical: "/skills",
 		}, nil
 	default:
 		return Invocation{}, fmt.Errorf("unsupported embedded slash command: /%s", name)

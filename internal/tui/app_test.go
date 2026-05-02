@@ -17800,6 +17800,31 @@ func TestCommandEnterOpensSettingsMode(t *testing.T) {
 	}
 }
 
+func TestCommandEnterOpensSkillsDialog(t *testing.T) {
+	input := textinput.New()
+	input.SetValue("/skills")
+
+	m := Model{
+		commandMode:  true,
+		commandInput: input,
+		width:        100,
+		height:       24,
+	}
+	m.syncCommandSelection()
+
+	updated, cmd := m.updateCommandMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.skillsDialog == nil || !got.skillsDialog.Loading {
+		t.Fatalf("skills dialog should open loading after /skills, got %#v", got.skillsDialog)
+	}
+	if got.commandMode {
+		t.Fatalf("command mode should close after /skills")
+	}
+	if cmd == nil {
+		t.Fatalf("/skills should return a skills inventory load command")
+	}
+}
+
 func TestCommandEnterOpensBossMode(t *testing.T) {
 	input := textinput.New()
 	input.SetValue("/boss")
