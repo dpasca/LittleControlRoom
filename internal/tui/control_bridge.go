@@ -90,7 +90,7 @@ func bossControlExecutionCmd(inv control.Invocation, cmd tea.Cmd) tea.Cmd {
 		status := "Control action completed."
 		var err error
 		if opened, ok := msg.(codexSessionOpenedMsg); ok {
-			status = strings.TrimSpace(opened.status)
+			status = bossControlOpenedSessionStatus(inv, opened)
 			err = opened.err
 		}
 		result := bossui.ControlInvocationResultMsg{
@@ -106,6 +106,70 @@ func bossControlExecutionCmd(inv control.Invocation, cmd tea.Cmd) tea.Cmd {
 			func() tea.Msg { return result },
 		}
 	}
+}
+
+func bossControlOpenedSessionStatus(inv control.Invocation, opened codexSessionOpenedMsg) string {
+	fallback := strings.TrimSpace(opened.status)
+	if opened.err != nil {
+		return fallback
+	}
+	normalized, err := control.ValidateInvocation(inv)
+	if err != nil {
+		return fallback
+	}
+	switch normalized.Capability {
+	case control.CapabilityEngineerSendPrompt:
+		var input control.EngineerSendPromptInput
+		if err := json.Unmarshal(normalized.Args, &input); err != nil {
+			return fallback
+		}
+		return bossEngineerPromptSentStatus(input, opened)
+	default:
+		if fallback != "" {
+			return fallback
+		}
+		return "Control action completed."
+	}
+}
+
+func bossEngineerPromptSentStatus(input control.EngineerSendPromptInput, opened codexSessionOpenedMsg) string {
+	sessionLabel := "engineer session"
+	if providerLabel := bossControlOpenedProviderLabel(input.Provider, opened.snapshot); providerLabel != "" {
+		sessionLabel = providerLabel + " engineer session"
+	}
+	target := bossControlProjectTargetLabel(input.ProjectName, input.ProjectPath, opened.projectPath)
+	targetPhrase := ""
+	if target != "" {
+		targetPhrase = " for " + target
+	}
+	if strings.TrimSpace(input.Prompt) == "" {
+		return "Opened the " + sessionLabel + targetPhrase + ". Boss Chat stayed open."
+	}
+	return "Handed this off to the " + sessionLabel + targetPhrase + ". Boss Chat stayed open; the session is working on it now."
+}
+
+func bossControlOpenedProviderLabel(requested control.Provider, snapshot codexapp.Snapshot) string {
+	if provider := embeddedProvider(snapshot).Normalized(); provider != "" {
+		return provider.Label()
+	}
+	if provider := codexProviderFromControlProvider(requested); provider != "" {
+		return provider.Label()
+	}
+	return ""
+}
+
+func bossControlProjectTargetLabel(values ...string) string {
+	target := firstNonEmptyTrimmed(values...)
+	if target == "" {
+		return ""
+	}
+	if strings.Contains(target, "/") || strings.Contains(target, string(filepath.Separator)) {
+		base := filepath.Base(target)
+		if base != "." && base != string(filepath.Separator) {
+			return base
+		}
+	}
+	return target
 }
 
 func bossControlResultCmd(inv control.Invocation, status string, err error) tea.Cmd {
@@ -184,6 +248,19 @@ func controlPromptTargetsActiveEmbeddedSession(input control.EngineerSendPromptI
 		return false
 	}
 	return embeddedSessionBlocksProviderSwitch(snapshot)
+}
+
+func codexProviderFromControlProvider(provider control.Provider) codexapp.Provider {
+	switch provider.Normalized() {
+	case control.ProviderCodex:
+		return codexapp.ProviderCodex
+	case control.ProviderOpenCode:
+		return codexapp.ProviderOpenCode
+	case control.ProviderClaudeCode:
+		return codexapp.ProviderClaudeCode
+	default:
+		return ""
+	}
 }
 
 func (m Model) executeAgentTaskCreateControlWithOutcome(input control.AgentTaskCreateInput) controlInvocationOutcome {
