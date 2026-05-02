@@ -1915,10 +1915,10 @@ func TestRenderDetailContentShowsWorktreeMergeStatus(t *testing.T) {
 	if !strings.Contains(rendered, "Merge status:") {
 		t.Fatalf("renderDetailContent() should show a merge status field for linked worktrees, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "has unmerged commits vs master") {
+	if !strings.Contains(rendered, "ready to merge into master") {
 		t.Fatalf("renderDetailContent() should show the linked worktree merge status, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "unmerged commits") {
+	if !strings.Contains(rendered, "needs merge") {
 		t.Fatalf("renderDetailContent() should include worktree lane merge status in the family list, got %q", rendered)
 	}
 }
@@ -1954,10 +1954,10 @@ func TestRenderDetailContentShowsWorktreeMergeInProgress(t *testing.T) {
 	m.rebuildProjectList(childPath)
 
 	rendered := ansi.Strip(m.renderDetailContent(100))
-	if !strings.Contains(rendered, "merge in progress into master") {
+	if !strings.Contains(rendered, "merging into master") {
 		t.Fatalf("renderDetailContent() should show in-progress merge status, got %q", rendered)
 	}
-	if strings.Contains(rendered, "has unmerged commits vs master") {
+	if strings.Contains(rendered, "ready to merge into master") {
 		t.Fatalf("renderDetailContent() should not show in-progress merges as unmerged, got %q", rendered)
 	}
 	if worktreeNeedsMergeBack(m.allProjects[1]) {
@@ -1997,10 +1997,10 @@ func TestRenderDetailContentPrioritizesDirtyWorktreeMergeReadiness(t *testing.T)
 	m.rebuildProjectList(childPath)
 
 	rendered := ansi.Strip(m.renderDetailContent(100))
-	if !strings.Contains(rendered, "dirty; commit changes before merging into master") {
+	if !strings.Contains(rendered, "commit changes before merging into master") {
 		t.Fatalf("renderDetailContent() should put dirty merge readiness first, got %q", rendered)
 	}
-	if strings.Contains(rendered, "Merge status: has unmerged commits vs master") {
+	if strings.Contains(rendered, "Merge status: ready to merge into master") {
 		t.Fatalf("renderDetailContent() should not present dirty worktrees as merge-ready, got %q", rendered)
 	}
 	if !strings.Contains(rendered, "M or /wt merge (commit dirty changes first)") {
@@ -2040,7 +2040,7 @@ func TestRenderDetailContentDoesNotImplyDirtyIntegratedWorktreeWasMerged(t *test
 	m.rebuildProjectList(childPath)
 
 	rendered := ansi.Strip(m.renderDetailContent(100))
-	if !strings.Contains(rendered, "no unmerged commits vs master; uncommitted changes remain") {
+	if !strings.Contains(rendered, "nothing to merge; local changes") {
 		t.Fatalf("renderDetailContent() should describe branch ancestry without implying a merge happened, got %q", rendered)
 	}
 	if strings.Contains(rendered, "merged into master") {
@@ -2127,7 +2127,7 @@ func TestRenderDetailContentShowsOrphanedWorktreeWarning(t *testing.T) {
 	if !strings.Contains(rendered, "1 orphaned checkout(s) still exist on disk") {
 		t.Fatalf("renderDetailContent() should explain the orphaned checkout state, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "todo/stale-lane · orphaned, no unmerged commits") {
+	if !strings.Contains(rendered, "todo/stale-lane · orphaned, nothing to merge") {
 		t.Fatalf("renderDetailContent() should list the orphaned checkout branch and status, got %q", rendered)
 	}
 	if !strings.Contains(rendered, orphanPath) {
@@ -3344,10 +3344,10 @@ func TestRenderWorktreeRemoveConfirmShowsMergeSafetyCopy(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderWorktreeRemoveConfirmOverlay("body", 90, 24))
-	if !strings.Contains(rendered, "Unmerged commits") {
+	if !strings.Contains(rendered, "Pending merge") {
 		t.Fatalf("remove confirm should call out unmerged worktrees, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "has commits that are not in master yet") {
+	if !strings.Contains(rendered, "still has commits to merge into master") {
 		t.Fatalf("remove confirm should explain the merge target, got %q", rendered)
 	}
 	if !strings.Contains(rendered, "branch ref stays in the repo") {
@@ -5604,7 +5604,7 @@ func TestRenderProjectListSurfacesCleanUnmergedWorktree(t *testing.T) {
 	if !strings.Contains(lines[2], "↳ feat/parallel-lane") || !strings.Contains(lines[2], "M") {
 		t.Fatalf("renderProjectList() should mark the linked worktree row when it needs merging, got %q", lines[2])
 	}
-	if !strings.Contains(lines[2], "has unmerged commits vs master") {
+	if !strings.Contains(lines[2], "ready to merge into master") {
 		t.Fatalf("renderProjectList() should show merge status in the linked worktree summary, got %q", lines[2])
 	}
 }

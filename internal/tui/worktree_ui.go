@@ -433,7 +433,7 @@ func worktreeMergeStatusText(result service.MergeWorktreeBackResult) string {
 		status = fmt.Sprintf("Committed %s and merged %s into %s", result.CommitHash, result.SourceBranch, result.TargetBranch)
 	}
 	if result.AlreadyMerged {
-		status = worktreeNoUnmergedCommitsStatus(result.SourceBranch, result.TargetBranch)
+		status = worktreeNothingToMergeStatus(result.SourceBranch, result.TargetBranch)
 		if strings.TrimSpace(result.CommitHash) != "" {
 			status = fmt.Sprintf("Committed %s; %s", result.CommitHash, status)
 		}
@@ -528,29 +528,20 @@ func worktreeMergeStatusSummary(project model.ProjectSummary) string {
 	if project.RepoDirty {
 		switch project.WorktreeMergeStatus {
 		case model.WorktreeMergeStatusMerged:
-			return worktreeNoUnmergedCommitsText(targetBranch) + "; uncommitted changes remain"
+			return worktreeNothingToMergeText() + "; local changes"
 		case model.WorktreeMergeStatusMergeInProgress:
-			if targetBranch != "" {
-				return "merge in progress into " + targetBranch + ", but uncommitted changes remain"
-			}
-			return "merge in progress, but uncommitted changes remain"
+			return worktreeMergingText(targetBranch) + "; local changes"
 		default:
-			if targetBranch != "" {
-				return "dirty; commit changes before merging into " + targetBranch
-			}
-			return "dirty; commit changes before merging back"
+			return worktreeCommitBeforeMergeText(targetBranch)
 		}
 	}
 	switch project.WorktreeMergeStatus {
 	case model.WorktreeMergeStatusMerged:
-		return worktreeNoUnmergedCommitsText(targetBranch)
+		return worktreeNothingToMergeText()
 	case model.WorktreeMergeStatusMergeInProgress:
-		if targetBranch != "" {
-			return "merge in progress into " + targetBranch
-		}
-		return "merge in progress"
+		return worktreeMergingText(targetBranch)
 	case model.WorktreeMergeStatusNotMerged:
-		return worktreeHasUnmergedCommitsText(targetBranch)
+		return worktreeReadyToMergeText(targetBranch)
 	default:
 		if targetBranch != "" {
 			return "merge status unavailable for " + targetBranch
@@ -559,29 +550,44 @@ func worktreeMergeStatusSummary(project model.ProjectSummary) string {
 	}
 }
 
-func worktreeNoUnmergedCommitsText(targetBranch string) string {
-	targetBranch = strings.TrimSpace(targetBranch)
-	if targetBranch != "" {
-		return "no unmerged commits vs " + targetBranch
-	}
-	return "no unmerged commits"
+func worktreeNothingToMergeText() string {
+	return "nothing to merge"
 }
 
-func worktreeHasUnmergedCommitsText(targetBranch string) string {
+func worktreeReadyToMergeText(targetBranch string) string {
 	targetBranch = strings.TrimSpace(targetBranch)
 	if targetBranch != "" {
-		return "has unmerged commits vs " + targetBranch
+		return "ready to merge into " + targetBranch
 	}
-	return "has unmerged commits"
+	return "ready to merge"
 }
 
-func worktreeNoUnmergedCommitsStatus(sourceBranch, targetBranch string) string {
+func worktreeMergingText(targetBranch string) string {
+	targetBranch = strings.TrimSpace(targetBranch)
+	if targetBranch != "" {
+		return "merging into " + targetBranch
+	}
+	return "merge in progress"
+}
+
+func worktreeCommitBeforeMergeText(targetBranch string) string {
+	targetBranch = strings.TrimSpace(targetBranch)
+	if targetBranch != "" {
+		return "commit changes before merging into " + targetBranch
+	}
+	return "commit changes before merging back"
+}
+
+func worktreeNothingToMergeStatus(sourceBranch, targetBranch string) string {
 	sourceBranch = strings.TrimSpace(sourceBranch)
-	text := worktreeNoUnmergedCommitsText(targetBranch)
+	targetBranch = strings.TrimSpace(targetBranch)
 	if sourceBranch == "" {
-		return text
+		return worktreeNothingToMergeText()
 	}
-	return sourceBranch + " has " + text
+	if targetBranch == "" {
+		return sourceBranch + " has nothing to merge"
+	}
+	return "Nothing to merge from " + sourceBranch + " into " + targetBranch
 }
 
 func (m Model) selectedProjectRow() (projectListRow, model.ProjectSummary, bool) {
@@ -1802,24 +1808,24 @@ func worktreeRemoveSafetyCopy(status model.WorktreeMergeStatus, targetBranch str
 	switch status {
 	case model.WorktreeMergeStatusMerged:
 		if targetBranch != "" {
-			return "No unmerged commits", "This worktree branch has no unmerged commits relative to " + targetBranch + ".", detailValueStyle
+			return "Nothing to merge", "This branch has no pending commits for " + targetBranch + ".", detailValueStyle
 		}
-		return "No unmerged commits", "This worktree branch has no unmerged commits relative to its merge target.", detailValueStyle
+		return "Nothing to merge", "This branch has no pending commits for its merge target.", detailValueStyle
 	case model.WorktreeMergeStatusMergeInProgress:
 		if targetBranch != "" {
-			return "Merge in progress", "A merge for this worktree branch is in progress into " + targetBranch + ". Finish or abort the root merge before removing the checkout.", detailWarningStyle
+			return "Merge in progress", "This branch is merging into " + targetBranch + ". Finish or abort the root merge before removing the checkout.", detailWarningStyle
 		}
-		return "Merge in progress", "A merge for this worktree branch is in progress. Finish or abort the root merge before removing the checkout.", detailWarningStyle
+		return "Merge in progress", "This branch is mid-merge. Finish or abort the root merge before removing the checkout.", detailWarningStyle
 	case model.WorktreeMergeStatusNotMerged:
 		if targetBranch != "" {
-			return "Unmerged commits", "This worktree branch has commits that are not in " + targetBranch + " yet. You can still remove the checkout, but you may lose track of that work.", detailWarningStyle
+			return "Pending merge", "This branch still has commits to merge into " + targetBranch + ". You can still remove the checkout, but you may lose track of that work.", detailWarningStyle
 		}
-		return "Unmerged commits", "This worktree branch has commits that are not in its merge target yet. You can still remove the checkout, but you may lose track of that work.", detailWarningStyle
+		return "Pending merge", "This branch still has commits to merge back. You can still remove the checkout, but you may lose track of that work.", detailWarningStyle
 	default:
 		if targetBranch != "" {
-			return "Commit status unavailable", "Little Control Room could not confirm whether this branch has unmerged commits relative to " + targetBranch + ".", detailMutedStyle
+			return "Commit status unavailable", "Little Control Room could not confirm whether this branch has commits to merge into " + targetBranch + ".", detailMutedStyle
 		}
-		return "Commit status unavailable", "Little Control Room could not confirm whether this branch has unmerged commits relative to its merge target.", detailMutedStyle
+		return "Commit status unavailable", "Little Control Room could not confirm whether this branch still has commits to merge back.", detailMutedStyle
 	}
 }
 
