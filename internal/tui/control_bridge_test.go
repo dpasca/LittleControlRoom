@@ -197,7 +197,7 @@ func TestExecuteControlEngineerSendPromptRejectsDisabledClaudeCode(t *testing.T)
 }
 
 func TestExecuteBossControlInvocationBatchesOpenAndBossResult(t *testing.T) {
-	projectPath := "/tmp/control-boss-result"
+	projectPath := "/tmp/cn3"
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
 		return &fakeCodexSession{
 			projectPath: req.ProjectPath,
@@ -212,7 +212,7 @@ func TestExecuteBossControlInvocationBatchesOpenAndBossResult(t *testing.T) {
 	m := Model{
 		allProjects: []model.ProjectSummary{{
 			Path:          projectPath,
-			Name:          "control-boss-result",
+			Name:          "cn3",
 			PresentOnDisk: true,
 		}},
 		codexManager: manager,
@@ -221,10 +221,11 @@ func TestExecuteBossControlInvocationBatchesOpenAndBossResult(t *testing.T) {
 	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{
 		Invocation: controlInvocationForTest(t, control.EngineerSendPromptInput{
 			ProjectPath: projectPath,
-			Provider:    control.ProviderOpenCode,
+			ProjectName: "cn3",
+			Provider:    control.ProviderCodex,
 			SessionMode: control.SessionModeResumeOrNew,
 			Prompt:      "please run the next step",
-			Reveal:      false,
+			Reveal:      true,
 		}),
 	})
 	_ = updated.(Model)
@@ -232,18 +233,21 @@ func TestExecuteBossControlInvocationBatchesOpenAndBossResult(t *testing.T) {
 		t.Fatalf("executeBossControlInvocation() cmd = nil, want wrapped open command")
 	}
 	msgs := collectCmdMsgs(cmd)
-	var sawOpen bool
+	var opened codexSessionOpenedMsg
 	var result bossui.ControlInvocationResultMsg
 	for _, msg := range msgs {
 		switch typed := msg.(type) {
 		case codexSessionOpenedMsg:
-			sawOpen = true
+			opened = typed
 		case bossui.ControlInvocationResultMsg:
 			result = typed
 		}
 	}
-	if !sawOpen {
+	if opened.projectPath == "" {
 		t.Fatalf("wrapped command messages = %#v, want codexSessionOpenedMsg", msgs)
+	}
+	if !strings.Contains(opened.status, "Alt+Up hides it") {
+		t.Fatalf("opened.status = %q, want embedded-pane status to remain visible-pane specific", opened.status)
 	}
 	if result.Invocation.Capability != control.CapabilityEngineerSendPrompt {
 		t.Fatalf("result invocation = %#v", result.Invocation)
@@ -251,8 +255,12 @@ func TestExecuteBossControlInvocationBatchesOpenAndBossResult(t *testing.T) {
 	if result.Err != nil {
 		t.Fatalf("result err = %v", result.Err)
 	}
-	if result.Status != "Prompt sent to embedded OpenCode in the background." {
-		t.Fatalf("result status = %q, want hidden background prompt status", result.Status)
+	wantStatus := "Handed this off to the Codex engineer session for cn3. Boss Chat stayed open; the session is working on it now."
+	if result.Status != wantStatus {
+		t.Fatalf("result status = %q, want %q", result.Status, wantStatus)
+	}
+	if strings.Contains(result.Status, "Alt+Up") || strings.Contains(result.Status, "Prompt sent to embedded") {
+		t.Fatalf("result status leaked embedded-pane copy: %q", result.Status)
 	}
 }
 
