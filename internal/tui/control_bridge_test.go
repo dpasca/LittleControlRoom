@@ -293,6 +293,72 @@ func TestExecuteBossControlInvocationReportsBlockedLaunch(t *testing.T) {
 	}
 }
 
+func TestExecuteBossControlInvocationRefusesActiveEmbeddedSessionPrompt(t *testing.T) {
+	projectPath := "/tmp/control-active-session"
+	liveSession := &fakeCodexSession{
+		projectPath: projectPath,
+		snapshot: codexapp.Snapshot{
+			Provider:     codexapp.ProviderCodex,
+			ThreadID:     "thread-live",
+			Started:      true,
+			Busy:         true,
+			Phase:        codexapp.SessionPhaseRunning,
+			ActiveTurnID: "turn-live",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return liveSession, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: projectPath,
+		Provider:    codexapp.ProviderCodex,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+	m := Model{
+		allProjects: []model.ProjectSummary{{
+			Path:          projectPath,
+			Name:          "control-active-session",
+			PresentOnDisk: true,
+		}},
+		codexManager: manager,
+	}
+
+	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{
+		Invocation: controlInvocationForTest(t, control.EngineerSendPromptInput{
+			ProjectPath: projectPath,
+			Provider:    control.ProviderCodex,
+			SessionMode: control.SessionModeResumeOrNew,
+			Prompt:      "please take over this machine-level cleanup",
+			Reveal:      false,
+		}),
+	})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("executeBossControlInvocation() cmd = nil, want immediate result")
+	}
+	if !strings.Contains(got.status, "will not send prompts into an active embedded Codex session") {
+		t.Fatalf("status = %q, want active-session refusal", got.status)
+	}
+	if len(liveSession.submitted) != 0 {
+		t.Fatalf("active session received submissions: %#v", liveSession.submitted)
+	}
+	msgs := collectCmdMsgs(cmd)
+	var result bossui.ControlInvocationResultMsg
+	for _, msg := range msgs {
+		if typed, ok := msg.(bossui.ControlInvocationResultMsg); ok {
+			result = typed
+			break
+		}
+	}
+	if result.Err == nil {
+		t.Fatalf("result err = nil, want active-session refusal")
+	}
+	if !strings.Contains(result.Status, "active embedded Codex session") {
+		t.Fatalf("result status = %q, want active-session refusal", result.Status)
+	}
+}
+
 func controlInvocationForTest(t *testing.T, input control.EngineerSendPromptInput) control.Invocation {
 	t.Helper()
 	if input.Provider == "" {

@@ -131,6 +131,11 @@ func (m Model) executeEngineerSendPromptControlWithOutcome(input control.Enginee
 		m.status = block.Message
 		return controlInvocationOutcome{model: m, err: err}
 	}
+	if controlPromptTargetsActiveEmbeddedSession(input, m, project.Path, provider) {
+		err := fmt.Errorf("Boss control will not send prompts into an active embedded %s session. Start a fresh session or open the target session and send manually.", provider.Label())
+		m.status = err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
 
 	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{
 		forceNew: input.SessionMode == control.SessionModeNew,
@@ -147,6 +152,17 @@ func (m Model) executeEngineerSendPromptControlWithOutcome(input control.Enginee
 		return controlInvocationOutcome{model: m, err: err}
 	}
 	return controlInvocationOutcome{model: m, cmd: cmd}
+}
+
+func controlPromptTargetsActiveEmbeddedSession(input control.EngineerSendPromptInput, m Model, projectPath string, provider codexapp.Provider) bool {
+	if input.SessionMode == control.SessionModeNew || strings.TrimSpace(input.Prompt) == "" {
+		return false
+	}
+	snapshot, ok := m.liveEmbeddedSnapshotForProject(projectPath, provider)
+	if !ok {
+		return false
+	}
+	return embeddedSessionBlocksProviderSwitch(snapshot)
 }
 
 func (m Model) resolveControlProject(input control.EngineerSendPromptInput) (model.ProjectSummary, error) {
