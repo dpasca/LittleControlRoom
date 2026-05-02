@@ -423,7 +423,12 @@ func isRetryableTransportErrorMessage(normalized string) bool {
 	return strings.Contains(normalized, "stream disconnected before completion") ||
 		strings.Contains(normalized, "error sending request for url") ||
 		strings.Contains(normalized, "unexpected eof") ||
-		strings.Contains(normalized, "connection closed before message completed")
+		strings.Contains(normalized, "connection closed before message completed") ||
+		isCodexReconnectExhaustedMessage(normalized)
+}
+
+func isCodexReconnectExhaustedMessage(normalized string) bool {
+	return strings.Contains(strings.TrimSpace(normalized), "reconnecting... 5/5")
 }
 
 func retryDelayForClassificationError(err error) time.Duration {

@@ -20204,6 +20204,61 @@ func TestBusClassificationTimeoutUsesSpecificAssessmentStatus(t *testing.T) {
 	}
 }
 
+func TestBusClassificationConnectionFailureUsesSpecificAssessmentStatus(t *testing.T) {
+	m := Model{
+		nowFn: func() time.Time {
+			return time.Date(2026, 5, 2, 15, 25, 47, 0, time.FixedZone("JST", 9*60*60))
+		},
+		allProjects: []model.ProjectSummary{{
+			Name: "LittleControlRoom",
+			Path: "/tmp/demo",
+		}},
+	}
+
+	updated, cmd := m.Update(busMsg(events.Event{
+		Type:        events.ClassificationUpdated,
+		At:          time.Date(2026, 5, 2, 15, 25, 47, 0, time.FixedZone("JST", 9*60*60)),
+		ProjectPath: "/tmp/demo",
+		Payload: map[string]string{
+			"status":          "failed",
+			"stage":           "waiting_for_model",
+			"model":           "gpt-5.4-mini",
+			"error":           "Reconnecting... 5/5",
+			"error_kind":      "connection_failed",
+			"error_diagnosis": "could not reach the model; network connectivity or provider availability may be degraded",
+		},
+	}))
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("classification connection failure should continue waiting on the bus")
+	}
+	if got.status != "Assessment connection failed (use /errors)" {
+		t.Fatalf("status = %q, want connection-specific assessment hint", got.status)
+	}
+	if len(got.errorLogEntries) != 1 {
+		t.Fatalf("error log count = %d, want 1", len(got.errorLogEntries))
+	}
+	entry := got.errorLogEntries[0]
+	if entry.Status != "Assessment connection failed" {
+		t.Fatalf("error log status = %q, want %q", entry.Status, "Assessment connection failed")
+	}
+	if entry.RootCause != "Reconnecting... 5/5" {
+		t.Fatalf("error log root cause = %q, want reconnect detail", entry.RootCause)
+	}
+	if len(entry.Context) != 3 {
+		t.Fatalf("error log context = %#v, want 3 lines", entry.Context)
+	}
+	if entry.Context[0] != "classification stage waiting for model" {
+		t.Fatalf("context[0] = %q, want stage", entry.Context[0])
+	}
+	if entry.Context[1] != "model gpt-5.4-mini" {
+		t.Fatalf("context[1] = %q, want model", entry.Context[1])
+	}
+	if entry.Context[2] != "could not reach the model; network connectivity or provider availability may be degraded" {
+		t.Fatalf("context[2] = %q, want diagnosis", entry.Context[2])
+	}
+}
+
 func TestBusClassificationOpenFileLimitUsesSpecificAssessmentStatus(t *testing.T) {
 	m := Model{
 		nowFn: func() time.Time {
