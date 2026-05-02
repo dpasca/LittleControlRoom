@@ -23,6 +23,7 @@ const (
 	bossActionTodoReport             = "todo_report"
 	bossActionCurrentTUI             = "current_tui"
 	bossActionAssessmentQueue        = "assessment_queue"
+	bossActionProcessReport          = "process_report"
 	bossActionSearchContext          = "search_context"
 	bossActionSearchBossSessions     = "search_boss_sessions"
 	bossActionContextCommand         = "context_command"
@@ -68,9 +69,10 @@ type bossStoreReader interface {
 }
 
 type QueryExecutor struct {
-	store        bossStoreReader
-	bossSessions *bossSessionStore
-	nowFn        func() time.Time
+	store           bossStoreReader
+	bossSessions    *bossSessionStore
+	processReporter processReportFunc
+	nowFn           func() time.Time
 }
 
 type ViewContext struct {
@@ -97,9 +99,10 @@ func newQueryExecutorWithBossSessions(store bossStoreReader, bossSessions *bossS
 		return nil
 	}
 	return &QueryExecutor{
-		store:        store,
-		bossSessions: bossSessions,
-		nowFn:        time.Now,
+		store:           store,
+		bossSessions:    bossSessions,
+		processReporter: defaultProcessReporter,
+		nowFn:           time.Now,
 	}
 }
 
@@ -130,6 +133,8 @@ func (e *QueryExecutor) Execute(ctx context.Context, action bossAction, snapshot
 		return bossToolResult{Name: bossActionCurrentTUI, Text: e.currentTUI(snapshot, view)}, nil
 	case bossActionAssessmentQueue:
 		return e.assessmentQueue(ctx)
+	case bossActionProcessReport:
+		return e.processReport(ctx, action, view)
 	case bossActionSearchContext:
 		return e.searchContext(ctx, action, view)
 	default:

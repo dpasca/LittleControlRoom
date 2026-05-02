@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"lcroom/internal/model"
+	"lcroom/internal/procinspect"
 	"lcroom/internal/store"
 )
 
@@ -605,6 +606,106 @@ func TestQueryExecutorPrivacyModeFiltersProjectTools(t *testing.T) {
 	}
 	if strings.Contains(commandSearch.Text, "SecretClient") || strings.Contains(commandSearch.Text, "Secret snippet") {
 		t.Fatalf("privacy-filtered context command search = %q", commandSearch.Text)
+	}
+}
+
+func TestQueryExecutorReportsSuspiciousProcesses(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	store := &fakeBossStore{
+		projects: []model.ProjectSummary{
+			{Path: "/tmp/alpha", Name: "Alpha", InScope: true},
+			{Path: "/tmp/beta", Name: "Beta", InScope: true},
+		},
+	}
+	executor := newQueryExecutor(store)
+	executor.nowFn = func() time.Time { return now }
+	var gotOpts procinspect.ScanOptions
+	executor.processReporter = func(_ context.Context, opts procinspect.ScanOptions) ([]procinspect.ProjectReport, error) {
+		gotOpts = opts
+		return []procinspect.ProjectReport{{
+			ProjectPath: "/tmp/alpha",
+			ScannedAt:   now,
+			Findings: []procinspect.Finding{{
+				Process: procinspect.Process{
+					PID:     42,
+					PPID:    1,
+					PGID:    42,
+					CPU:     97.2,
+					Mem:     1.3,
+					CWD:     "/tmp/alpha/server",
+					Ports:   []int{3000},
+					Command: "node server.js",
+				},
+				ProjectPath: "/tmp/alpha",
+				Reasons:     []string{"orphaned under PID 1", "high CPU 97.2%"},
+			}},
+		}, {
+			ProjectPath: "/tmp/beta",
+			ScannedAt:   now,
+		}}, nil
+	}
+
+	result, err := executor.Execute(context.Background(), bossAction{
+		Kind:  bossActionProcessReport,
+		Limit: 5,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if gotOpts.OwnPID <= 0 {
+		t.Fatalf("OwnPID = %d, want current process pid", gotOpts.OwnPID)
+	}
+	if strings.Join(gotOpts.ProjectPaths, ",") != "/tmp/alpha,/tmp/beta" {
+		t.Fatalf("ProjectPaths = %#v, want both visible projects", gotOpts.ProjectPaths)
+	}
+	for _, want := range []string{
+		"Process report: 1 suspicious project-local process across visible projects.",
+		"Safety note: report-only",
+		"PID 42",
+		"CPU 97.2%",
+		"project: Alpha",
+		"orphaned under PID 1",
+		"ports: 3000",
+		"node server.js",
+	} {
+		if !strings.Contains(result.Text, want) {
+			t.Fatalf("process report missing %q:\n%s", want, result.Text)
+		}
+	}
+}
+
+func TestQueryExecutorProcessReportRespectsPrivacyMode(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeBossStore{
+		projects: []model.ProjectSummary{
+			{Path: "/tmp/public", Name: "PublicApp", InScope: true},
+			{Path: "/tmp/secret", Name: "SecretClient", InScope: true},
+		},
+	}
+	executor := newQueryExecutor(store)
+	var gotPaths []string
+	executor.processReporter = func(_ context.Context, opts procinspect.ScanOptions) ([]procinspect.ProjectReport, error) {
+		gotPaths = append([]string(nil), opts.ProjectPaths...)
+		return []procinspect.ProjectReport{{
+			ProjectPath: "/tmp/public",
+			ScannedAt:   time.Unix(1_800_000_000, 0),
+		}}, nil
+	}
+
+	result, err := executor.Execute(context.Background(), bossAction{
+		Kind: bossActionProcessReport,
+	}, StateSnapshot{}, ViewContext{PrivacyMode: true, PrivacyPatterns: []string{"*secret*"}})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if strings.Join(gotPaths, ",") != "/tmp/public" {
+		t.Fatalf("ProjectPaths = %#v, want only public project", gotPaths)
+	}
+	if strings.Contains(result.Text, "SecretClient") || strings.Contains(result.Text, "/tmp/secret") {
+		t.Fatalf("process report leaked private project:\n%s", result.Text)
 	}
 }
 

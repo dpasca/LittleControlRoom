@@ -261,6 +261,30 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "pids",
+			raw:  "/pids",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindProcesses {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindProcesses)
+				}
+				if inv.Canonical != "/pids" {
+					t.Fatalf("canonical = %q, want /pids", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "processes alias",
+			raw:  "/processes",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindProcesses {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindProcesses)
+				}
+				if inv.Canonical != "/pids" {
+					t.Fatalf("canonical = %q, want /pids", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "run edit",
 			raw:  "/run-edit",
 			check: func(t *testing.T, inv Invocation) {

@@ -28,6 +28,7 @@ import (
 	"lcroom/internal/config"
 	"lcroom/internal/events"
 	"lcroom/internal/model"
+	"lcroom/internal/procinspect"
 	"lcroom/internal/projectrun"
 	"lcroom/internal/scanner"
 	"lcroom/internal/service"
@@ -4200,6 +4201,63 @@ func TestRenderFooterShowsBrowserAttentionAlert(t *testing.T) {
 	}
 }
 
+func TestRenderFooterDoesNotReserveProcessWarningSpace(t *testing.T) {
+	m := Model{
+		projects:    []model.ProjectSummary{{Path: "/tmp/demo", Name: "demo"}},
+		selected:    0,
+		allProjects: []model.ProjectSummary{{Path: "/tmp/demo", Name: "demo"}},
+		processReports: map[string]procinspect.ProjectReport{
+			"/tmp/demo": {
+				ProjectPath: "/tmp/demo",
+				Findings: []procinspect.Finding{{
+					Process: procinspect.Process{PID: 49995, CPU: 98.5},
+					Reasons: []string{"orphaned under PID 1", "high CPU 98.5%"},
+				}},
+			},
+		},
+	}
+
+	rendered := ansi.Strip(m.renderFooter(220))
+	if strings.Contains(rendered, "suspicious PID") {
+		t.Fatalf("footer should not reserve permanent process-warning space, got %q", rendered)
+	}
+}
+
+func TestGlobalProcessFindingsIncludeAllProjects(t *testing.T) {
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{Path: "/tmp/selected", Name: "selected"},
+			{Path: "/tmp/other", Name: "other"},
+		},
+		processReports: map[string]procinspect.ProjectReport{
+			"/tmp/selected": {
+				ProjectPath: "/tmp/selected",
+				Findings: []procinspect.Finding{{
+					Process:     procinspect.Process{PID: 1, CPU: 1.2},
+					ProjectPath: "/tmp/selected",
+					Reasons:     []string{"orphaned under PID 1"},
+				}},
+			},
+			"/tmp/other": {
+				ProjectPath: "/tmp/other",
+				Findings: []procinspect.Finding{{
+					Process:     procinspect.Process{PID: 2, CPU: 99.0},
+					ProjectPath: "/tmp/other",
+					Reasons:     []string{"high CPU 99.0%"},
+				}},
+			},
+		},
+	}
+
+	findings, _ := m.globalProcessFindings()
+	if len(findings) != 2 {
+		t.Fatalf("global findings len = %d, want 2", len(findings))
+	}
+	if findings[0].ProjectPath != "/tmp/other" || findings[0].PID != 2 {
+		t.Fatalf("first finding = project %q PID %d, want /tmp/other PID 2", findings[0].ProjectPath, findings[0].PID)
+	}
+}
+
 func TestFooterSupplementSegmentsPrioritizeAssessmentBeforeUsage(t *testing.T) {
 	segments := footerSupplementSegments("filter", "1 assessment error", "OpenCode 139 calls")
 	if len(segments) != 3 {
@@ -6370,6 +6428,37 @@ func TestRuntimeCommandFocusesRuntimePane(t *testing.T) {
 	}
 	if got.status != "Focus: runtime pane" {
 		t.Fatalf("status = %q, want runtime focus status", got.status)
+	}
+}
+
+func TestPIDsCommandOpensProcessInspector(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+		width:    100,
+		height:   24,
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindProcesses})
+	got := updated.(Model)
+	if got.processDialog == nil {
+		t.Fatalf("/pids should open the process inspector")
+	}
+	if got.processDialog.ProjectPath != "" {
+		t.Fatalf("dialog project path = %q, want global scope", got.processDialog.ProjectPath)
+	}
+	if got.processDialog.ProjectName != "All Projects" {
+		t.Fatalf("dialog project name = %q, want All Projects", got.processDialog.ProjectName)
+	}
+	if !got.processDialog.Loading {
+		t.Fatalf("dialog should start in loading state")
+	}
+	if cmd == nil {
+		t.Fatalf("/pids should queue an async process scan")
 	}
 }
 

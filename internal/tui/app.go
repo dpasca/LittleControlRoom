@@ -22,6 +22,7 @@ import (
 	"lcroom/internal/events"
 	"lcroom/internal/inputcomposer"
 	"lcroom/internal/model"
+	"lcroom/internal/procinspect"
 	"lcroom/internal/projectrun"
 	"lcroom/internal/service"
 	"lcroom/internal/sessionclassify"
@@ -159,6 +160,12 @@ type Model struct {
 	runtimeRefreshInFlight      bool
 	runtimeRefreshQueued        bool
 	runtimeSnapshots            map[string]projectrun.Snapshot
+	processScanInFlight         bool
+	processScanQueued           bool
+	processScanQueuedDialogPath string
+	processReports              map[string]procinspect.ProjectReport
+	processDialog               *processDialogState
+	processWarningLastCount     int
 	codexSnapshots              map[string]codexapp.Snapshot
 	codexTranscriptRev          map[string]uint64
 	codexVisibleProject         string
@@ -304,6 +311,12 @@ type runtimeActionMsg struct {
 
 type runtimeSnapshotsMsg struct {
 	snapshots []projectrun.Snapshot
+}
+
+type processScanMsg struct {
+	reports           []procinspect.ProjectReport
+	dialogProjectPath string
+	err               error
 }
 
 type runCommandSavedMsg struct {
@@ -547,6 +560,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		codexManager:               codexapp.NewManager(),
 		runtimeManager:             projectrun.NewManager(),
 		runtimeSnapshots:           make(map[string]projectrun.Snapshot),
+		processReports:             make(map[string]procinspect.ProjectReport),
 		embeddedModelPrefs:         embeddedModelPreferencesFromSettings(initialSettings),
 		recentCodexModels:          append([]string(nil), initialSettings.RecentCodexModels...),
 		recentClaudeModels:         append([]string(nil), initialSettings.RecentClaudeModels...),
@@ -1086,6 +1100,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.errorLogVisible {
 			return m.updateErrorLogMode(msg)
 		}
+		if m.processDialog != nil {
+			return m.updateProcessDialogMode(msg)
+		}
 		if m.attentionDialog != nil {
 			return m.updateAttentionDialogMode(msg)
 		}
@@ -1199,7 +1216,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if len(m.projects) > 0 {
 			m.syncDetailViewport(false)
-			return m, batchCmds(reloadCmd, m.requestSelectedProjectDetailViewCmd())
+			return m, batchCmds(reloadCmd, m.requestSelectedProjectDetailViewCmd(), m.requestProcessScanCmd(""))
 		}
 		m.detail = model.ProjectDetail{}
 		m.syncDetailViewport(true)
@@ -1558,6 +1575,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.syncRuntimeViewport(false)
 		return m, reloadCmd
+	case processScanMsg:
+		return m, m.applyProcessScanMsg(msg)
 	case runCommandSavedMsg:
 		if m.runCommandDialog != nil && m.runCommandDialog.ProjectPath == msg.projectPath {
 			m.runCommandDialog.Submitting = false
@@ -1947,7 +1966,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.spinnerFrame%runtimeSnapshotRefreshEveryTicks == 0 {
 			refreshCmd = m.requestRuntimeSnapshotsRefreshCmd()
 		}
-		return m, batchCmds(spinnerTickCmd(), refreshCmd)
+		processScanCmd := tea.Cmd(nil)
+		if m.spinnerFrame%processScanRefreshEveryTicks == 0 {
+			processScanCmd = m.requestProcessScanCmd("")
+		}
+		return m, batchCmds(spinnerTickCmd(), refreshCmd, processScanCmd)
 	case codexUpdateMsg:
 		return m.applyCodexUpdateMsg(msg)
 	case codexDeferredSnapshotMsg:
@@ -2716,6 +2739,8 @@ func (m Model) View() string {
 		body = m.renderCommandPaletteOverlay(body, layout.width, layout.height)
 	} else if m.errorLogVisible {
 		body = m.renderErrorLogOverlay(body, layout.width, layout.height)
+	} else if m.processDialog != nil {
+		body = m.renderProcessDialogOverlay(body, layout.width, layout.height)
 	} else if m.codexPickerVisible {
 		body = m.renderCodexPickerOverlay(body, layout.width, layout.height)
 	} else if m.ignoredPickerVisible {
@@ -3381,6 +3406,9 @@ func (m Model) renderDetailContent(width int) string {
 	if browserAttention, ok := m.projectPendingBrowserAttention(p.Path); ok {
 		lines = append(lines, renderWrappedDetailField("Browser", detailWarningStyle, width, browserAttentionDetailSummary(browserAttention)))
 	}
+	if summary := m.projectProcessWarningSummary(p.Path); summary != "" {
+		lines = append(lines, renderWrappedDetailField("Processes", detailWarningStyle, width, summary))
+	}
 	if projectMissing(p) {
 		lines = append(lines, detailWarningStyle.Render("Folder: missing on disk"))
 		if p.WorktreeKind == model.WorktreeKindLinked {
@@ -3673,6 +3701,7 @@ var (
 
 const spinnerTickInterval = 120 * time.Millisecond
 const runtimeSnapshotRefreshEveryTicks = 8
+const processScanRefreshEveryTicks = 500
 
 func spinnerTickCmd() tea.Cmd {
 	return tea.Tick(spinnerTickInterval, func(time.Time) tea.Msg {
@@ -4050,6 +4079,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, m.openRunCommandDialog(p, false)
 	case commands.KindRuntime:
 		return m, m.openRuntimeInspectorForSelection()
+	case commands.KindProcesses:
+		return m, m.openProcessDialogForSelection()
 	case commands.KindStop:
 		p, ok := m.selectedProject()
 		if !ok {
@@ -5895,6 +5926,9 @@ func (m Model) renderFooter(width int) string {
 	if m.errorLogVisible {
 		return m.renderModalFooter(width, "Error log: ↑↓ select, Enter/c copy, Esc close", supplementSegments...)
 	}
+	if m.processDialog != nil {
+		return m.renderModalFooter(width, "Process inspector: ↑↓ select, r refresh, Esc close", supplementSegments...)
+	}
 	if m.commandMode {
 		return m.renderModalFooter(width, "Command palette open", supplementSegments...)
 	}
@@ -6973,7 +7007,7 @@ func helpPanelLines() []string {
 			renderDialogAction("Tab", "complete there", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("?", "toggle help", commitActionKeyStyle, commitActionTextStyle),
 		),
-		commandPaletteHintStyle.Render("Try /setup, /ai, /perf, /errors, /codex, /todo, /remove, /wt merge|remove|prune, /commit, /diff, or /run."),
+		commandPaletteHintStyle.Render("Try /setup, /ai, /perf, /errors, /codex, /todo, /pids, /remove, /wt merge|remove|prune, /commit, /diff, or /run."),
 		detailSectionStyle.Render("Navigate"),
 		renderHelpPanelActionRow(
 			renderDialogAction("Tab", "switch pane", navigateActionKeyStyle, navigateActionTextStyle),

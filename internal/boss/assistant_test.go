@@ -241,6 +241,8 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"ctx show",
 		"Use ctx search boss",
 		"search_boss_sessions",
+		"process_report",
+		"suspicious PIDs",
 		"XML-like boss_session and turn snippets",
 		"after it finds one project path, inspect project_detail before answering",
 		"live engineer session context",

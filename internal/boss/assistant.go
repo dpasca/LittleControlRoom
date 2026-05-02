@@ -490,8 +490,9 @@ func bossActionPlannerSystemPrompt() string {
 		"Linked worktrees under the same worktree root are part of the same repo effort; treat their recent work as relevant to repo-level status.",
 		"If the user says 'the assistant' or 'the AI assistant' about project work, treat that as likely meaning the engineer session unless they clearly mean Boss Chat.",
 		"Act like a high-level extension of the active engineer sessions.",
-		"Use queries when the user asks about a concrete project, TODOs, assessment status, current TUI state, codenames, aliases, concepts, or anything that requires more than the compact brief.",
-		"Available read-only query kinds: list_projects, project_detail, session_classifications, todo_report, current_tui, assessment_queue, search_context, search_boss_sessions, context_command.",
+		"Use queries when the user asks about a concrete project, TODOs, assessment status, current TUI state, suspicious PIDs/processes/CPU, codenames, aliases, concepts, or anything that requires more than the compact brief.",
+		"Available read-only query kinds: list_projects, project_detail, session_classifications, todo_report, current_tui, assessment_queue, process_report, search_context, search_boss_sessions, context_command.",
+		"Use process_report when the user asks about suspicious PIDs, hot CPU, orphaned processes, project-local Node/server processes, or whether stale dev servers are still running.",
 		"Available control action kind: propose_control with control_capability=\"engineer.send_prompt\".",
 		"Use propose_control only when the user asks Boss Chat to delegate work to an engineer session. Do not use it for ordinary status, explanation, recall, or planning questions.",
 		"Before propose_control, resolve ambiguous targets with read-only queries or ask the user to name the project. Do not infer a project from hidden UI cursor state.",
@@ -631,6 +632,7 @@ func bossActionSchema() map[string]any {
 					bossActionTodoReport,
 					bossActionCurrentTUI,
 					bossActionAssessmentQueue,
+					bossActionProcessReport,
 					bossActionSearchContext,
 					bossActionSearchBossSessions,
 					bossActionContextCommand,
@@ -762,7 +764,7 @@ func validateBossAction(action bossAction) error {
 	switch action.Kind {
 	case bossActionAnswer:
 		return nil
-	case bossActionListProjects, bossActionProjectDetail, bossActionSessionClassifications, bossActionTodoReport, bossActionCurrentTUI, bossActionAssessmentQueue, bossActionSearchContext, bossActionSearchBossSessions, bossActionContextCommand:
+	case bossActionListProjects, bossActionProjectDetail, bossActionSessionClassifications, bossActionTodoReport, bossActionCurrentTUI, bossActionAssessmentQueue, bossActionProcessReport, bossActionSearchContext, bossActionSearchBossSessions, bossActionContextCommand:
 		return nil
 	case bossActionProposeControl:
 		_, _, err := controlProposalFromBossAction(action)
@@ -862,6 +864,11 @@ func describeBossAction(action bossAction) string {
 	case bossActionContextCommand:
 		if command := strings.TrimSpace(action.Command); command != "" {
 			return kind + " " + clipText(command, 120)
+		}
+	case bossActionProcessReport:
+		target := firstNonEmpty(action.ProjectName, action.ProjectPath, action.Target)
+		if target != "" {
+			return kind + " " + clipText(target, 80)
 		}
 	case bossActionProposeControl:
 		if capability := strings.TrimSpace(action.ControlCapability); capability != "" {
