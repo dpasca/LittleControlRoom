@@ -1,13 +1,18 @@
 package boss
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"lcroom/internal/config"
+	"lcroom/internal/events"
 	"lcroom/internal/model"
+	"lcroom/internal/service"
+	"lcroom/internal/store"
 )
 
 func TestBuildStateBriefSummarizesHotProjects(t *testing.T) {
@@ -103,6 +108,84 @@ func TestBuildStateBriefKeepsRoutineRepoStateAsReferenceMetadata(t *testing.T) {
 		if !strings.Contains(reference, want) {
 			t.Fatalf("reference metadata missing %q:\n%s", want, reference)
 		}
+	}
+}
+
+func TestBuildStateBriefIncludesOpenAgentTasks(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	snapshot := StateSnapshot{
+		TotalProjects: 1,
+		OpenAgentTasks: []AgentTaskBrief{{
+			ID:            "agt_processes",
+			Title:         "Investigate runaway dev processes",
+			Kind:          model.AgentTaskKindSystemOps,
+			Status:        model.AgentTaskStatusActive,
+			Summary:       "Node debug listener is still hot; Python process needs a cwd check.",
+			Provider:      model.SessionSourceCodex,
+			SessionID:     "codex:ses-1",
+			LastTouchedAt: now.Add(-8 * time.Minute),
+			Resources: []model.AgentTaskResource{
+				{Kind: model.AgentTaskResourceProcess, PID: 49995, Label: "ts-node-dev"},
+				{Kind: model.AgentTaskResourcePort, Port: 9229, Label: "debug listener"},
+				{Kind: model.AgentTaskResourceEngineerSession, Provider: model.SessionSourceCodex, SessionID: "codex:ses-1"},
+			},
+		}},
+	}
+
+	brief := BuildStateBrief(snapshot, now)
+	for _, want := range []string{
+		"Open agent tasks:",
+		"Investigate runaway dev processes",
+		"agt_processes",
+		"system_ops/active",
+		"touched 8m ago",
+		"pid 49995 ts-node-dev",
+		"port 9229 debug listener",
+		"codex session codex:ses-1",
+	} {
+		if !strings.Contains(brief, want) {
+			t.Fatalf("brief missing %q:\n%s", want, brief)
+		}
+	}
+}
+
+func TestLoadStateSnapshotIncludesOpenAgentTasksOutsidePrivacyMode(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	cfg.DBPath = filepath.Join(cfg.DataDir, "little-control-room.sqlite")
+	st, err := store.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	svc := service.New(cfg, st, events.NewBus(), nil)
+
+	if _, err := svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+		Title: "Follow up on temp process investigation",
+		Kind:  model.AgentTaskKindSystemOps,
+	}); err != nil {
+		t.Fatalf("CreateAgentTask() error = %v", err)
+	}
+
+	snapshot, err := LoadStateSnapshot(ctx, svc, time.Unix(1_800_000_000, 0))
+	if err != nil {
+		t.Fatalf("LoadStateSnapshot() error = %v", err)
+	}
+	if len(snapshot.OpenAgentTasks) != 1 || snapshot.OpenAgentTasks[0].Title != "Follow up on temp process investigation" {
+		t.Fatalf("open agent tasks = %#v, want created task", snapshot.OpenAgentTasks)
+	}
+
+	privateSnapshot, err := LoadStateSnapshot(ctx, svc, time.Unix(1_800_000_000, 0), StateSnapshotOptions{PrivacyMode: true})
+	if err != nil {
+		t.Fatalf("LoadStateSnapshot() with privacy error = %v", err)
+	}
+	if len(privateSnapshot.OpenAgentTasks) != 0 {
+		t.Fatalf("privacy mode should not include agent tasks, got %#v", privateSnapshot.OpenAgentTasks)
 	}
 }
 

@@ -18,6 +18,7 @@ import (
 const (
 	hotProjectLimit              = 8
 	defaultAttentionProjectLimit = 4
+	openAgentTaskLimit           = 4
 )
 
 type StateSnapshot struct {
@@ -29,6 +30,7 @@ type StateSnapshot struct {
 	ConflictProjects       int
 	PendingClassifications int
 	HotProjects            []ProjectBrief
+	OpenAgentTasks         []AgentTaskBrief
 }
 
 type ProjectBrief struct {
@@ -55,6 +57,18 @@ type ProjectBrief struct {
 	LatestCompletedKind  model.SessionCategory
 	ClassificationStatus model.SessionClassificationStatus
 	Reasons              []model.AttentionReason
+}
+
+type AgentTaskBrief struct {
+	ID            string
+	Title         string
+	Kind          model.AgentTaskKind
+	Status        model.AgentTaskStatus
+	Summary       string
+	Provider      model.SessionSource
+	SessionID     string
+	LastTouchedAt time.Time
+	Resources     []model.AgentTaskResource
 }
 
 type StateSnapshotOptions struct {
@@ -101,6 +115,13 @@ func LoadStateSnapshot(ctx context.Context, svc *service.Service, now time.Time,
 	}
 	if counts, err := svc.Store().GetSessionClassificationCounts(ctx, true); err == nil {
 		snapshot.PendingClassifications = counts[model.ClassificationPending] + counts[model.ClassificationRunning]
+	}
+	if !opts.PrivacyMode {
+		if tasks, err := svc.ListOpenAgentTasks(ctx, openAgentTaskLimit); err == nil {
+			for _, task := range tasks {
+				snapshot.OpenAgentTasks = append(snapshot.OpenAgentTasks, agentTaskBriefFromTask(task))
+			}
+		}
 	}
 
 	for _, project := range selectRecentAttentionProjectsWithPresence(projects, hotProjectLimit, projectCurrentlyPresent) {
@@ -157,6 +178,24 @@ func projectBriefFromSummary(project model.ProjectSummary) ProjectBrief {
 	}
 }
 
+func agentTaskBriefFromTask(task model.AgentTask) AgentTaskBrief {
+	resources := append([]model.AgentTaskResource(nil), task.Resources...)
+	if len(resources) > 4 {
+		resources = resources[:4]
+	}
+	return AgentTaskBrief{
+		ID:            strings.TrimSpace(task.ID),
+		Title:         strings.TrimSpace(task.Title),
+		Kind:          model.NormalizeAgentTaskKind(task.Kind),
+		Status:        model.NormalizeAgentTaskStatus(task.Status),
+		Summary:       strings.TrimSpace(task.Summary),
+		Provider:      model.NormalizeSessionSource(task.Provider),
+		SessionID:     strings.TrimSpace(task.SessionID),
+		LastTouchedAt: task.LastTouchedAt,
+		Resources:     resources,
+	}
+}
+
 func BuildStateBrief(snapshot StateSnapshot, now time.Time) string {
 	if now.IsZero() {
 		now = time.Now()
@@ -173,6 +212,12 @@ func BuildStateBrief(snapshot StateSnapshot, now time.Time) string {
 	}
 	if snapshot.PendingClassifications > 0 {
 		lines = append(lines, fmt.Sprintf("AI assessment queue: %d pending/running.", snapshot.PendingClassifications))
+	}
+	if len(snapshot.OpenAgentTasks) > 0 {
+		lines = append(lines, "Open agent tasks:")
+		for _, task := range snapshot.OpenAgentTasks {
+			lines = append(lines, "- "+operationalAgentTaskLine(task, now))
+		}
 	}
 	if len(snapshot.HotProjects) == 0 {
 		lines = append(lines, "Hot projects: none loaded.")
@@ -258,6 +303,82 @@ func operationalProjectLineFor(project ProjectBrief, includeName bool) string {
 		parts = append(parts, "no recent summary loaded")
 	}
 	return strings.Join(parts, "; ")
+}
+
+func operationalAgentTaskLine(task AgentTaskBrief, now time.Time) string {
+	title := strings.TrimSpace(task.Title)
+	if title == "" {
+		title = "untitled task"
+	}
+	parts := []string{fmt.Sprintf("%s (%s)", title, strings.TrimSpace(task.ID))}
+	parts = append(parts, fmt.Sprintf("kind/status: %s/%s", task.Kind, task.Status))
+	if !task.LastTouchedAt.IsZero() {
+		parts = append(parts, "touched "+relativeAge(now, task.LastTouchedAt))
+	}
+	if task.Provider != "" || strings.TrimSpace(task.SessionID) != "" {
+		session := strings.TrimSpace(task.SessionID)
+		if session == "" {
+			session = "none"
+		}
+		provider := string(task.Provider)
+		if provider == "" {
+			provider = "none"
+		}
+		parts = append(parts, "engineer: "+provider+" "+session)
+	}
+	if summary := strings.TrimSpace(task.Summary); summary != "" {
+		parts = append(parts, "brief: "+clipText(summary, 140))
+	}
+	if resources := compactAgentTaskResources(task.Resources); resources != "" {
+		parts = append(parts, "resources: "+resources)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func compactAgentTaskResources(resources []model.AgentTaskResource) string {
+	if len(resources) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, minInt(len(resources), 4))
+	for _, resource := range resources {
+		label := compactAgentTaskResource(resource)
+		if label == "" {
+			continue
+		}
+		parts = append(parts, label)
+		if len(parts) >= 4 {
+			break
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+func compactAgentTaskResource(resource model.AgentTaskResource) string {
+	switch model.NormalizeAgentTaskResourceKind(resource.Kind) {
+	case model.AgentTaskResourceProject:
+		return "project " + firstNonEmpty(resource.ProjectPath, resource.Path, resource.Label)
+	case model.AgentTaskResourceProcess:
+		if resource.PID > 0 {
+			return strings.TrimSpace(fmt.Sprintf("pid %d %s", resource.PID, strings.TrimSpace(resource.Label)))
+		}
+	case model.AgentTaskResourcePort:
+		if resource.Port > 0 {
+			return strings.TrimSpace(fmt.Sprintf("port %d %s", resource.Port, strings.TrimSpace(resource.Label)))
+		}
+	case model.AgentTaskResourceFile:
+		return "file " + firstNonEmpty(resource.Path, resource.Label)
+	case model.AgentTaskResourceEngineerSession:
+		session := strings.TrimSpace(resource.SessionID)
+		if session == "" {
+			return ""
+		}
+		provider := string(model.NormalizeSessionSource(resource.Provider))
+		if provider == "" {
+			return "session " + session
+		}
+		return provider + " session " + session
+	}
+	return strings.TrimSpace(resource.Label)
 }
 
 func selectRecentAttentionProjects(projects []model.ProjectSummary, limit int) []model.ProjectSummary {
