@@ -819,6 +819,65 @@ func TestChatPanelKeepsStyledTranscriptAndInputVisible(t *testing.T) {
 	}
 }
 
+func TestChatPanelRendersCompanionInSpareTranscriptSpace(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbedded(context.Background(), nil)
+	m.width = 120
+	m.height = 20
+	m.stateLoaded = true
+	m.syncLayout(true)
+
+	rendered := m.renderChat(m.layout())
+	if !strings.Contains(rendered, "\x1b[38;2;") {
+		t.Fatalf("chat panel should render the truecolor companion when there is spare space:\n%s", ansi.Strip(rendered))
+	}
+	if !strings.Contains(ansi.Strip(rendered), "\u2588") {
+		t.Fatalf("chat panel should render pixel block glyphs for the companion:\n%s", ansi.Strip(rendered))
+	}
+	if count := strings.Count(rendered, "\x1b[38;2;"); count > 80 {
+		t.Fatalf("companion should render as a compact overlay, got %d truecolor fragments", count)
+	}
+	if strings.Contains(m.renderTranscript(m.layout().chatInnerWidth), "\u2588") {
+		t.Fatalf("companion should stay out of the durable transcript")
+	}
+}
+
+func TestChatPanelHidesCompanionInCrampedTranscript(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbedded(context.Background(), nil)
+	m.width = 58
+	m.height = 14
+	m.stateLoaded = true
+	m.syncLayout(true)
+
+	rendered := m.renderChat(m.layout())
+	if strings.Contains(rendered, "\x1b[38;2;") || strings.Contains(ansi.Strip(rendered), "\u2588") {
+		t.Fatalf("chat panel should not force the companion into a cramped transcript:\n%s", ansi.Strip(rendered))
+	}
+}
+
+func TestChatCompanionDoesNotOverwriteTranscriptText(t *testing.T) {
+	t.Parallel()
+
+	width := 60
+	height := 8
+	sprite := renderBossCompanionSprite(bossCompanionIdle, 0)
+	x := width - sprite.width - 1
+	y := 0
+	collidingRow := strings.Repeat(" ", x+3) + "X" + strings.Repeat(" ", width-x-4)
+	lines := []string{collidingRow}
+	for len(lines) < height {
+		lines = append(lines, strings.Repeat(" ", width))
+	}
+	base := strings.Join(lines, "\n")
+
+	if got := overlayBossCompanion(base, width, height, x, y, sprite); got != base {
+		t.Fatalf("companion overlay should leave transcript unchanged when a sprite cell would hit text:\n%s", ansi.Strip(got))
+	}
+}
+
 func TestChatMouseSelectionCopiesOnlyTranscriptText(t *testing.T) {
 	prevWriter := clipboardTextWriter
 	var copied string
