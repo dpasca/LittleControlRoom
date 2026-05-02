@@ -20705,7 +20705,7 @@ func TestBusRemoveWorktreeRefreshTargetsRootDetail(t *testing.T) {
 	}
 }
 
-func TestDispatchRemoveCommandStoresIgnoredNameAndHidesProject(t *testing.T) {
+func TestDispatchRemoveCommandStoresIgnoredPathAndHidesOnlySelectedProject(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
 	if err != nil {
@@ -20775,7 +20775,7 @@ func TestDispatchRemoveCommandStoresIgnoredNameAndHidesProject(t *testing.T) {
 		t.Fatalf("default removal confirmation selection = %d, want keep", got.projectRemoveConfirm.Selected)
 	}
 	rendered := ansi.Strip(got.renderProjectRemoveConfirmOverlay("", 100, 24))
-	if !strings.Contains(rendered, "does not delete files on disk") {
+	if !strings.Contains(rendered, "only this exact project path") || !strings.Contains(rendered, "does not delete files") {
 		t.Fatalf("project removal confirmation should explain files are kept, got %q", rendered)
 	}
 
@@ -20800,19 +20800,27 @@ func TestDispatchRemoveCommandStoresIgnoredNameAndHidesProject(t *testing.T) {
 	projectsMsg := reloadCmd()
 	finalModel, _ := reloaded.Update(projectsMsg)
 	saved := finalModel.(Model)
-	if len(saved.projects) != 1 || saved.projects[0].Name != "visible-demo" {
-		t.Fatalf("visible projects after /remove = %#v, want only visible-demo", saved.projects)
+	if len(saved.projects) != 2 || saved.projects[0].Path != "/tmp/worktrees/a1/projects_control_center" || saved.projects[1].Name != "visible-demo" {
+		t.Fatalf("visible projects after /remove = %#v, want same-name worktree plus visible-demo", saved.projects)
 	}
 	if saved.status != `Removed "projects_control_center" from list` {
 		t.Fatalf("status = %q, want removal confirmation", saved.status)
 	}
 
-	ignored, err := st.ListIgnoredProjectNames(ctx)
+	ignoredNames, err := st.ListIgnoredProjectNames(ctx)
 	if err != nil {
 		t.Fatalf("list ignored names: %v", err)
 	}
-	if len(ignored) != 1 || ignored[0].Name != "projects_control_center" {
-		t.Fatalf("ignored names = %#v, want projects_control_center", ignored)
+	if len(ignoredNames) != 0 {
+		t.Fatalf("ignored names = %#v, want none for path-specific remove", ignoredNames)
+	}
+
+	ignored, err := st.ListIgnoredProjects(ctx)
+	if err != nil {
+		t.Fatalf("list ignored projects: %v", err)
+	}
+	if len(ignored) != 1 || ignored[0].Scope != model.ProjectIgnoreScopePath || ignored[0].Path != "/tmp/projects_control_center" {
+		t.Fatalf("ignored projects = %#v, want exact path /tmp/projects_control_center", ignored)
 	}
 }
 
@@ -21070,6 +21078,67 @@ func TestIgnoredPickerListsAndRestoresIgnoredNames(t *testing.T) {
 	}
 	if len(ignored) != 0 {
 		t.Fatalf("ignored names after restore = %#v, want none", ignored)
+	}
+}
+
+func TestIgnoredPickerListsAndRestoresIgnoredPaths(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := "/tmp/projects_control_center"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "projects_control_center",
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Date(2026, 3, 17, 9, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+	if err := st.SetIgnoredProjectPath(ctx, projectPath, true); err != nil {
+		t.Fatalf("seed ignored project path: %v", err)
+	}
+
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	m := Model{ctx: ctx, svc: svc}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindIgnored})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("/ignored should load ignored projects")
+	}
+
+	loadedModel, _ := got.Update(cmd())
+	loaded := loadedModel.(Model)
+	if len(loaded.ignoredPickerItems) != 1 || loaded.ignoredPickerItems[0].Scope != model.ProjectIgnoreScopePath || loaded.ignoredPickerItems[0].Path != projectPath {
+		t.Fatalf("ignored picker items = %#v, want exact path", loaded.ignoredPickerItems)
+	}
+
+	nextModel, restoreCmd := loaded.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next := nextModel.(Model)
+	if restoreCmd == nil {
+		t.Fatalf("enter in ignored picker should restore the path")
+	}
+	if !next.ignoredPickerLoading {
+		t.Fatalf("ignored picker should return to loading while restoring")
+	}
+
+	restoredModel, _ := next.Update(restoreCmd())
+	restored := restoredModel.(Model)
+	if restored.status != `Restored "/tmp/projects_control_center"` {
+		t.Fatalf("status = %q, want restore confirmation", restored.status)
+	}
+
+	ignored, err := st.ListIgnoredProjects(ctx)
+	if err != nil {
+		t.Fatalf("list ignored projects after restore: %v", err)
+	}
+	if len(ignored) != 0 {
+		t.Fatalf("ignored projects after restore = %#v, want none", ignored)
 	}
 }
 

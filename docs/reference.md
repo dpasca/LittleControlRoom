@@ -266,11 +266,11 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 
 - `Enter` on the selected project opens that project's latest embedded provider inside Little Control Room.
 - `/open` opens the selected project's folder in the system browser.
-- `/remove` asks for confirmation, then makes the selected item go away using the safest matching action: it opens scratch-task archive/delete actions, cleans up linked worktrees, removes missing folders from the dashboard, or hides a regular project's exact name from the list. `/delete` and `/forget` are aliases.
+- `/remove` asks for confirmation, then makes the selected item go away using the safest matching action: it opens scratch-task archive/delete actions, cleans up linked worktrees, removes missing folders from the dashboard, or hides a regular project's exact path from the list. `/delete` and `/forget` are aliases.
 - `/ignore` hides the selected project's exact name inside Little Control Room, which is handy for Codex-generated worktrees or other old projects that share a stable folder name.
 - `/snooze [duration|off]` snoozes the selected project for a period, and `/unsnooze` clears any active snooze.
 - `f` opens a live project-name filter dialog for the whole dashboard; `/filter <text>` applies the same temporary filter from the command palette, and `/filter clear` removes it.
-- `/ignored` opens a reversible picker of hidden project names; press `Enter` there to restore one.
+- `/ignored` opens a reversible picker of hidden project names and paths; press `Enter` there to restore one.
 - `/run` starts the selected project's saved managed runtime. If no command is saved yet, Little Control Room opens a small dialog with an auto-suggested command when it can infer one from common files like `bin/dev`, `package.json`, `Makefile`, `justfile`, or a simple Go entrypoint.
 - `/start` is an alias for `/run`.
 - `/run <command>` saves that command as the selected project's default runtime command and starts it immediately.

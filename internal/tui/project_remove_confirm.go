@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	"lcroom/internal/model"
@@ -105,7 +104,7 @@ func (m Model) renderProjectRemoveConfirmOverlay(body string, bodyW, bodyH int) 
 	panelW := min(max(50, bodyW-24), 76)
 	panelInnerW := max(28, panelW-4)
 	title := "Remove from list"
-	description := fmt.Sprintf("This hides every project with the exact name %q. It does not delete files on disk.", confirm.ProjectName)
+	description := "This hides only this exact project path. It does not delete files on disk."
 	descriptionStyle := detailMutedStyle
 	if !confirm.PresentOnDisk {
 		title = "Remove missing project"

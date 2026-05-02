@@ -33,15 +33,21 @@ func (m *Model) closeIgnoredPicker(status string) {
 
 func (m Model) loadIgnoredProjectsCmd() tea.Cmd {
 	return func() tea.Msg {
-		items, err := m.svc.Store().ListIgnoredProjectNames(m.ctx)
+		items, err := m.svc.Store().ListIgnoredProjects(m.ctx)
 		return ignoredProjectsMsg{items: items, err: err}
 	}
 }
 
-func (m Model) unignoreProjectNameCmd(name string) tea.Cmd {
+func (m Model) unignoreProjectCmd(item model.IgnoredProject) tea.Cmd {
 	return func() tea.Msg {
-		err := m.svc.Store().SetIgnoredProjectName(m.ctx, name, false)
-		return ignoredProjectActionMsg{status: fmt.Sprintf("Restored %q", name), err: err}
+		switch item.Scope {
+		case model.ProjectIgnoreScopePath:
+			err := m.svc.Store().SetIgnoredProjectPath(m.ctx, item.Path, false)
+			return ignoredProjectActionMsg{status: fmt.Sprintf("Restored %q", item.Path), err: err}
+		default:
+			err := m.svc.Store().SetIgnoredProjectName(m.ctx, item.Name, false)
+			return ignoredProjectActionMsg{status: fmt.Sprintf("Restored %q", item.Name), err: err}
+		}
 	}
 }
 
@@ -105,8 +111,8 @@ func (m Model) updateIgnoredPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.ignoredPickerLoading = true
-		m.status = fmt.Sprintf("Restoring %q...", item.Name)
-		return m, m.unignoreProjectNameCmd(item.Name)
+		m.status = fmt.Sprintf("Restoring %q...", ignoredProjectLabel(item))
+		return m, m.unignoreProjectCmd(item)
 	}
 	return m, nil
 }
@@ -124,14 +130,14 @@ func (m *Model) moveIgnoredPickerSelection(delta, total int) {
 	}
 }
 
-func (m Model) currentIgnoredPickerItems() []model.IgnoredProjectName {
-	return append([]model.IgnoredProjectName(nil), m.ignoredPickerItems...)
+func (m Model) currentIgnoredPickerItems() []model.IgnoredProject {
+	return append([]model.IgnoredProject(nil), m.ignoredPickerItems...)
 }
 
-func (m Model) currentIgnoredPickerItem() (model.IgnoredProjectName, bool) {
+func (m Model) currentIgnoredPickerItem() (model.IgnoredProject, bool) {
 	items := m.currentIgnoredPickerItems()
 	if len(items) == 0 {
-		return model.IgnoredProjectName{}, false
+		return model.IgnoredProject{}, false
 	}
 	index := m.ignoredPickerSelected
 	if index < 0 {
@@ -165,7 +171,7 @@ func (m Model) renderIgnoredPickerContent(width, bodyH int) string {
 		commandPaletteHintStyle.Render("Enter restore  Esc close"),
 	}
 	if m.ignoredPickerLoading {
-		lines = append(lines, "", detailMutedStyle.Render("Loading ignored project names..."))
+		lines = append(lines, "", detailMutedStyle.Render("Loading ignored projects..."))
 		return strings.Join(lines, "\n")
 	}
 
@@ -197,7 +203,17 @@ func (m Model) renderIgnoredPickerContent(width, bodyH int) string {
 
 	if selected, ok := m.currentIgnoredPickerItem(); ok {
 		lines = append(lines, "")
-		lines = append(lines, detailField("Name", detailValueStyle.Render(selected.Name)))
+		switch selected.Scope {
+		case model.ProjectIgnoreScopePath:
+			lines = append(lines, detailField("Type", detailValueStyle.Render("exact path")))
+			lines = append(lines, detailField("Path", detailMutedStyle.Render(truncateText(m.displayPathWithHomeTilde(selected.Path), width-8))))
+			if strings.TrimSpace(selected.Name) != "" {
+				lines = append(lines, detailField("Name", detailValueStyle.Render(selected.Name)))
+			}
+		default:
+			lines = append(lines, detailField("Type", detailValueStyle.Render("exact name")))
+			lines = append(lines, detailField("Name", detailValueStyle.Render(selected.Name)))
+		}
 		lines = append(lines, detailField("Matches", detailMutedStyle.Render(fmt.Sprintf("%d tracked project(s)", selected.MatchedProjects))))
 		if !selected.CreatedAt.IsZero() {
 			lines = append(lines, detailField("Ignored", detailMutedStyle.Render(selected.CreatedAt.Format("2006-01-02 15:04"))))
@@ -207,12 +223,12 @@ func (m Model) renderIgnoredPickerContent(width, bodyH int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) renderIgnoredPickerRow(item model.IgnoredProjectName, selected bool, width int) string {
-	left := strings.TrimSpace(item.Name)
+func (m Model) renderIgnoredPickerRow(item model.IgnoredProject, selected bool, width int) string {
+	left := ignoredProjectLabel(item)
 	if left == "" {
 		left = "(unnamed)"
 	}
-	right := fmt.Sprintf("%d", max(0, item.MatchedProjects))
+	right := fmt.Sprintf("%s %d", ignoredProjectScopeLabel(item.Scope), max(0, item.MatchedProjects))
 	leftWidth := max(8, width-lipgloss.Width(right)-2)
 	row := lipgloss.JoinHorizontal(
 		lipgloss.Top,
@@ -224,4 +240,18 @@ func (m Model) renderIgnoredPickerRow(item model.IgnoredProjectName, selected bo
 		return projectListSelectedRowStyle.Render(row)
 	}
 	return row
+}
+
+func ignoredProjectLabel(item model.IgnoredProject) string {
+	if item.Scope == model.ProjectIgnoreScopePath {
+		return strings.TrimSpace(item.Path)
+	}
+	return strings.TrimSpace(item.Name)
+}
+
+func ignoredProjectScopeLabel(scope model.ProjectIgnoreScope) string {
+	if scope == model.ProjectIgnoreScopePath {
+		return "path"
+	}
+	return "name"
 }

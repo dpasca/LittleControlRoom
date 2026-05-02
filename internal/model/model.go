@@ -665,6 +665,21 @@ type IgnoredProjectName struct {
 	MatchedProjects int
 }
 
+type ProjectIgnoreScope string
+
+const (
+	ProjectIgnoreScopeName ProjectIgnoreScope = "name"
+	ProjectIgnoreScopePath ProjectIgnoreScope = "path"
+)
+
+type IgnoredProject struct {
+	Scope           ProjectIgnoreScope
+	Name            string
+	Path            string
+	CreatedAt       time.Time
+	MatchedProjects int
+}
+
 type ClaudeCodeToolUse struct {
 	ID      string
 	Name    string

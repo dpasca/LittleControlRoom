@@ -237,6 +237,10 @@ func (s *Store) initSchema(ctx context.Context) error {
 			name TEXT PRIMARY KEY,
 			created_at INTEGER NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS ignored_project_paths (
+			path TEXT PRIMARY KEY,
+			created_at INTEGER NOT NULL
+		);`,
 		`CREATE TABLE IF NOT EXISTS agent_tasks (
 			id TEXT PRIMARY KEY,
 			parent_task_id TEXT NOT NULL DEFAULT '',
@@ -1526,6 +1530,11 @@ func projectSummaryVisibilityConditions(includeHistorical bool) string {
 			SELECT 1
 			FROM ignored_project_names ipn
 			WHERE LOWER(ipn.name) = LOWER(p.name)
+		)
+		AND NOT EXISTS (
+			SELECT 1
+			FROM ignored_project_paths ipp
+			WHERE ipp.path = p.path
 		)`
 	if !includeHistorical {
 		conditions += ` AND p.in_scope = 1`
@@ -4007,6 +4016,28 @@ func (s *Store) SetIgnoredProjectName(ctx context.Context, name string, ignored 
 	return err
 }
 
+func (s *Store) SetIgnoredProjectPath(ctx context.Context, path string, ignored bool) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("ignored project path is required")
+	}
+	path = filepath.Clean(path)
+	if path == "." {
+		return fmt.Errorf("ignored project path is required")
+	}
+	now := time.Now().Unix()
+	if ignored {
+		_, err := s.db.ExecContext(ctx, `
+			INSERT INTO ignored_project_paths(path, created_at)
+			VALUES(?, ?)
+			ON CONFLICT(path) DO NOTHING
+		`, path, now)
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM ignored_project_paths WHERE path = ?`, path)
+	return err
+}
+
 func (s *Store) ListIgnoredProjectNames(ctx context.Context) ([]model.IgnoredProjectName, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
@@ -4037,6 +4068,57 @@ func (s *Store) ListIgnoredProjectNames(ctx context.Context) ([]model.IgnoredPro
 			Name:            name,
 			CreatedAt:       time.Unix(createdAtUnix, 0),
 			MatchedProjects: matched,
+		}
+		out = append(out, entry)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListIgnoredProjects(ctx context.Context) ([]model.IgnoredProject, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			'name' AS scope,
+			ipn.name AS name,
+			'' AS path,
+			ipn.created_at AS created_at,
+			COUNT(p.path) AS matched_projects
+		FROM ignored_project_names ipn
+		LEFT JOIN projects p ON LOWER(p.name) = LOWER(ipn.name)
+		GROUP BY ipn.name, ipn.created_at
+		UNION ALL
+		SELECT
+			'path' AS scope,
+			COALESCE(MAX(p.name), '') AS name,
+			ipp.path AS path,
+			ipp.created_at AS created_at,
+			COUNT(p.path) AS matched_projects
+		FROM ignored_project_paths ipp
+		LEFT JOIN projects p ON p.path = ipp.path
+		GROUP BY ipp.path, ipp.created_at
+		ORDER BY created_at DESC, scope ASC, name ASC, path ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []model.IgnoredProject{}
+	for rows.Next() {
+		var (
+			scope     string
+			createdAt int64
+			entry     model.IgnoredProject
+		)
+		if err := rows.Scan(&scope, &entry.Name, &entry.Path, &createdAt, &entry.MatchedProjects); err != nil {
+			return nil, err
+		}
+		switch scope {
+		case string(model.ProjectIgnoreScopePath):
+			entry.Scope = model.ProjectIgnoreScopePath
+		default:
+			entry.Scope = model.ProjectIgnoreScopeName
+		}
+		if createdAt > 0 {
+			entry.CreatedAt = time.Unix(createdAt, 0)
 		}
 		out = append(out, entry)
 	}

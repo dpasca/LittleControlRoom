@@ -103,7 +103,7 @@ type Model struct {
 	ignoredPickerVisible           bool
 	ignoredPickerLoading           bool
 	ignoredPickerSelected          int
-	ignoredPickerItems             []model.IgnoredProjectName
+	ignoredPickerItems             []model.IgnoredProject
 	newProjectDialog               *newProjectDialogState
 	newTaskDialog                  *newTaskDialogState
 	runCommandDialog               *runCommandDialogState
@@ -453,7 +453,7 @@ type privacyModeSavedMsg struct {
 }
 
 type ignoredProjectsMsg struct {
-	items []model.IgnoredProjectName
+	items []model.IgnoredProject
 	err   error
 }
 
@@ -1896,7 +1896,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.ignoredPickerLoading = false
-		m.ignoredPickerItems = append([]model.IgnoredProjectName(nil), msg.items...)
+		m.ignoredPickerItems = append([]model.IgnoredProject(nil), msg.items...)
 		if m.ignoredPickerSelected >= len(m.ignoredPickerItems) {
 			m.ignoredPickerSelected = len(m.ignoredPickerItems) - 1
 		}
@@ -4393,7 +4393,7 @@ func (m Model) ignoreProjectCmd(project model.ProjectSummary) tea.Cmd {
 func (m Model) removeProjectFromListCmd(project model.ProjectSummary) tea.Cmd {
 	name := projectRemovalName(project)
 	return func() tea.Msg {
-		err := m.svc.Store().SetIgnoredProjectName(m.ctx, name, true)
+		err := m.svc.Store().SetIgnoredProjectPath(m.ctx, project.Path, true)
 		status := fmt.Sprintf("Removed %q from list", name)
 		return projectRemoveActionMsg{projectPath: project.Path, status: status, err: err}
 	}

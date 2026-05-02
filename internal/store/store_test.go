@@ -430,6 +430,73 @@ func TestListProjectsHidesIgnoredProjectNames(t *testing.T) {
 	}
 }
 
+func TestListProjectsHidesIgnoredProjectPaths(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now()
+	for _, state := range []model.ProjectState{
+		{
+			Path:           "/tmp/projects_control_center",
+			Name:           "projects_control_center",
+			Status:         model.StatusIdle,
+			AttentionScore: 20,
+			InScope:        true,
+			UpdatedAt:      now,
+		},
+		{
+			Path:           "/tmp/worktrees/abcd/projects_control_center",
+			Name:           "projects_control_center",
+			Status:         model.StatusIdle,
+			AttentionScore: 10,
+			InScope:        true,
+			UpdatedAt:      now,
+		},
+		{
+			Path:           "/tmp/visible-demo",
+			Name:           "visible-demo",
+			Status:         model.StatusIdle,
+			AttentionScore: 5,
+			InScope:        true,
+			UpdatedAt:      now,
+		},
+	} {
+		if err := st.UpsertProjectState(ctx, state); err != nil {
+			t.Fatalf("upsert project %s: %v", state.Path, err)
+		}
+	}
+
+	if err := st.SetIgnoredProjectPath(ctx, "/tmp/projects_control_center", true); err != nil {
+		t.Fatalf("ignore project path: %v", err)
+	}
+
+	projects, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list projects: %v", err)
+	}
+	if len(projects) != 2 || projects[0].Path != "/tmp/worktrees/abcd/projects_control_center" || projects[1].Name != "visible-demo" {
+		t.Fatalf("visible projects = %#v, want only exact ignored path hidden", projects)
+	}
+
+	ignored, err := st.ListIgnoredProjects(ctx)
+	if err != nil {
+		t.Fatalf("list ignored projects: %v", err)
+	}
+	if len(ignored) != 1 || ignored[0].Scope != model.ProjectIgnoreScopePath || ignored[0].Path != "/tmp/projects_control_center" {
+		t.Fatalf("ignored projects = %#v, want exact path", ignored)
+	}
+	if ignored[0].MatchedProjects != 1 {
+		t.Fatalf("matched projects = %d, want 1", ignored[0].MatchedProjects)
+	}
+}
+
 func TestUpsertProjectStateKeepsMissingForgottenProjectForgotten(t *testing.T) {
 	t.Parallel()
 
