@@ -13,10 +13,11 @@ import (
 )
 
 var (
-	managedBrowserStateReader           = browserctl.ReadManagedPlaywrightState
-	managedBrowserRevealer              = browserctl.RevealManagedPlaywrightState
-	browserStdout             io.Writer = os.Stdout
-	browserStderr             io.Writer = os.Stderr
+	managedBrowserStateReader            = browserctl.ReadManagedPlaywrightState
+	managedBrowserRevealer               = browserctl.RevealManagedPlaywrightState
+	managedBrowserRevealMarker           = browserctl.MarkManagedPlaywrightStateRevealed
+	browserStdout              io.Writer = os.Stdout
+	browserStderr              io.Writer = os.Stderr
 )
 
 func runBrowser(args []string) int {
@@ -68,6 +69,10 @@ func runBrowser(args []string) int {
 	case "reveal":
 		if err := managedBrowserRevealer(state); err != nil {
 			fmt.Fprintf(browserStderr, "browser reveal failed: %v\n", err)
+			return 1
+		}
+		if _, err := managedBrowserRevealMarker(*dataDir, *sessionKey); err != nil {
+			fmt.Fprintf(browserStderr, "browser reveal failed: mark revealed: %v\n", err)
 			return 1
 		}
 		fmt.Fprintf(browserStdout, "revealed managed browser session %s\n", strings.TrimSpace(*sessionKey))

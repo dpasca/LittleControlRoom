@@ -14,6 +14,18 @@ import (
 	"lcroom/internal/browserctl"
 )
 
+var (
+	detectManagedBrowserProcess = browserctl.DetectManagedBrowserProcess
+	hideManagedBrowserProcess   = browserctl.HideManagedBrowserProcess
+	readManagedPlaywrightState  = browserctl.ReadManagedPlaywrightState
+	writeManagedPlaywrightState = browserctl.WriteManagedPlaywrightState
+)
+
+const (
+	managedBrowserMonitorInterval           = 100 * time.Millisecond
+	managedBrowserHiddenEnforcementInterval = 250 * time.Millisecond
+)
+
 type playwrightMCPOptions struct {
 	dataDir     string
 	projectPath string
@@ -52,7 +64,7 @@ func runPlaywrightMCP(args []string) int {
 		Policy:      browserctl.PolicyFromEnv(),
 		UpdatedAt:   time.Now().UTC(),
 	}
-	if err := browserctl.WriteManagedPlaywrightState(paths, state); err != nil {
+	if err := writeManagedPlaywrightState(paths, state); err != nil {
 		fmt.Fprintf(os.Stderr, "playwright-mcp state init failed: %v\n", err)
 		return 1
 	}
@@ -78,7 +90,7 @@ func runPlaywrightMCP(args []string) int {
 
 	state.MCPPID = cmd.Process.Pid
 	state.UpdatedAt = time.Now().UTC()
-	if err := browserctl.WriteManagedPlaywrightState(paths, state); err != nil {
+	if err := writeManagedPlaywrightState(paths, state); err != nil {
 		fmt.Fprintf(os.Stderr, "playwright-mcp state update failed: %v\n", err)
 	}
 
@@ -92,7 +104,7 @@ func runPlaywrightMCP(args []string) int {
 
 	state.UpdatedAt = time.Now().UTC()
 	state.MCPPID = 0
-	_ = browserctl.WriteManagedPlaywrightState(paths, state)
+	_ = writeManagedPlaywrightState(paths, state)
 
 	if err == nil {
 		return 0
@@ -156,43 +168,81 @@ func monitorManagedPlaywrightBrowser(ctx context.Context, paths browserctl.Manag
 	if rootPID <= 0 {
 		return
 	}
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(managedBrowserMonitorInterval)
 	defer ticker.Stop()
 
-	hidden := false
+	state := managedBrowserMonitorState{}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			detected, ok, err := browserctl.DetectManagedBrowserProcess(rootPID)
-			if err != nil || !ok {
-				continue
-			}
-			state, readErr := browserctl.ReadManagedPlaywrightState(paths.DataDir, paths.SessionKey)
-			if readErr != nil {
-				state = browserctl.ManagedPlaywrightState{
-					SessionKey:  paths.SessionKey,
-					ProfileKey:  paths.ProfileKey,
-					Provider:    paths.Provider,
-					ProjectPath: paths.ProjectPath,
-					LaunchMode:  paths.LaunchMode,
-					Policy:      browserctl.PolicyFromEnv(),
-				}
-			}
-			state.BrowserPID = detected.PID
-			state.BrowserAppPath = detected.AppPath
-			state.BrowserAppName = detected.AppName
-			state.BrowserExecutable = detected.ExecutablePath
-			state.RevealSupported = detected.PID > 0 || detected.AppPath != "" || detected.AppName != ""
-			state.UpdatedAt = time.Now().UTC()
-			if hideOnFirstDetect && !hidden {
-				if err := browserctl.HideManagedBrowserProcess(detected.PID); err == nil {
-					state.Hidden = true
-					hidden = true
-				}
-			}
-			_ = browserctl.WriteManagedPlaywrightState(paths, state)
+			_ = reconcileManagedPlaywrightBrowser(paths, rootPID, hideOnFirstDetect, &state, time.Now().UTC())
 		}
 	}
+}
+
+type managedBrowserMonitorState struct {
+	hiddenByLCR     bool
+	lastHideAttempt time.Time
+}
+
+func reconcileManagedPlaywrightBrowser(paths browserctl.ManagedPlaywrightPaths, rootPID int, keepHidden bool, monitorState *managedBrowserMonitorState, now time.Time) error {
+	if rootPID <= 0 {
+		return nil
+	}
+	detected, ok, err := detectManagedBrowserProcess(rootPID)
+	if err != nil || !ok {
+		return err
+	}
+	state, readErr := readManagedPlaywrightState(paths.DataDir, paths.SessionKey)
+	if readErr != nil {
+		state = browserctl.ManagedPlaywrightState{
+			SessionKey:  paths.SessionKey,
+			ProfileKey:  paths.ProfileKey,
+			Provider:    paths.Provider,
+			ProjectPath: paths.ProjectPath,
+			LaunchMode:  paths.LaunchMode,
+			Policy:      browserctl.PolicyFromEnv(),
+		}
+		if monitorState != nil && monitorState.hiddenByLCR {
+			state.Hidden = true
+		}
+	}
+	state.BrowserPID = detected.PID
+	state.BrowserAppPath = detected.AppPath
+	state.BrowserAppName = detected.AppName
+	state.BrowserExecutable = detected.ExecutablePath
+	state.RevealSupported = detected.PID > 0 || detected.AppPath != "" || detected.AppName != ""
+	state.UpdatedAt = now
+	if shouldHideManagedBrowser(keepHidden, state, monitorState, now) {
+		if monitorState != nil {
+			monitorState.lastHideAttempt = now
+		}
+		if err := hideManagedBrowserProcess(detected.PID); err == nil {
+			state.Hidden = true
+			if monitorState != nil {
+				monitorState.hiddenByLCR = true
+			}
+		}
+	}
+	return writeManagedPlaywrightState(paths, state)
+}
+
+func shouldHideManagedBrowser(keepHidden bool, state browserctl.ManagedPlaywrightState, monitorState *managedBrowserMonitorState, now time.Time) bool {
+	if !keepHidden {
+		return false
+	}
+	if monitorState != nil &&
+		!monitorState.lastHideAttempt.IsZero() &&
+		now.Sub(monitorState.lastHideAttempt) < managedBrowserHiddenEnforcementInterval {
+		return false
+	}
+	if monitorState == nil || !monitorState.hiddenByLCR {
+		return true
+	}
+	if !state.Normalize().Hidden {
+		return false
+	}
+	return true
 }

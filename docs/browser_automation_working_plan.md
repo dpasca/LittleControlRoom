@@ -16,6 +16,7 @@ It is intentionally different from `STATUS.md`:
 - The managed wrapper now gives each Codex session a stable managed browser/session key plus a persistent Playwright profile directory.
 - Newly launched embedded Codex sessions also get a session-local `CODEX_HOME` overlay that shadows only the `playwright` skill, so LCR can steer browser behavior without mutating the user's real `~/.codex`.
 - On macOS, `Only when needed` now runs managed Codex browser work in a backgrounded headed browser so LCR can reveal that same browser context later for login or other human steps.
+- The macOS background browser monitor keeps re-hiding a managed browser while LCR still marks it hidden, because Chrome/Playwright can re-show or refocus the app after the initial launch hide. An explicit LCR reveal clears that hidden state.
 - Managed embedded Codex submissions now wait briefly for Playwright MCP tools to become ready before starting the first turn, which avoids a fresh-session race where browser tools could be missing on the first prompt.
 - Newly launched embedded OpenCode sessions now override `mcp.playwright` through `OPENCODE_CONFIG_CONTENT` to point at the same LCR-managed Playwright wrapper, using the same managed session/profile key model as Codex.
 - Newly launched embedded OpenCode sessions also get a session-local `XDG_CONFIG_HOME` overlay that shadows only the `playwright` skill, so OpenCode is steered toward the managed MCP path without changing the user's real `~/.config/opencode`.
@@ -94,6 +95,7 @@ Make browser automation feel quiet and predictable by default:
   - failed browser-reveal attempts release the slot immediately
 - Managed browser metadata is now written under the LCR data dir so the TUI can find and reveal the correct browser session instead of opening the URL in a disconnected desktop browser.
 - On macOS, managed browser reveal now raises the target process window after un-hiding it, which keeps parallel Chrome-backed Playwright sessions from falling back to whichever Chrome window was last active.
+- On macOS, managed background browsers are re-hidden until the user reveals them through LCR, which reduces focus stealing from later Playwright navigations or newly created browser windows.
 - The shadow Playwright skill now tells embedded Codex to use the already-registered Playwright MCP tools instead of shelling out to a separate CLI browser path.
 - LCR now has a small non-TUI browser control surface:
   - `lcroom browser status --session-key ...`

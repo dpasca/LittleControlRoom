@@ -52,11 +52,13 @@ func TestRunBrowserStatusPrintsJSON(t *testing.T) {
 func TestRunBrowserRevealUsesManagedBrowserRevealer(t *testing.T) {
 	origReader := managedBrowserStateReader
 	origRevealer := managedBrowserRevealer
+	origRevealMarker := managedBrowserRevealMarker
 	origStdout := browserStdout
 	origStderr := browserStderr
 	t.Cleanup(func() {
 		managedBrowserStateReader = origReader
 		managedBrowserRevealer = origRevealer
+		managedBrowserRevealMarker = origRevealMarker
 		browserStdout = origStdout
 		browserStderr = origStderr
 	})
@@ -74,6 +76,13 @@ func TestRunBrowserRevealUsesManagedBrowserRevealer(t *testing.T) {
 		revealed = state
 		return nil
 	}
+	markedDataDir := ""
+	markedSessionKey := ""
+	managedBrowserRevealMarker = func(dataDir, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+		markedDataDir = dataDir
+		markedSessionKey = sessionKey
+		return browserctl.ManagedPlaywrightState{SessionKey: sessionKey, Hidden: false}, nil
+	}
 
 	var stdout, stderr bytes.Buffer
 	browserStdout = &stdout
@@ -85,6 +94,9 @@ func TestRunBrowserRevealUsesManagedBrowserRevealer(t *testing.T) {
 	}
 	if revealed.SessionKey != "session-demo" {
 		t.Fatalf("revealed session key = %q, want session-demo", revealed.SessionKey)
+	}
+	if markedDataDir != browserctl.DefaultDataDir() || markedSessionKey != "session-demo" {
+		t.Fatalf("marked reveal = dataDir %q sessionKey %q, want default data dir and session-demo", markedDataDir, markedSessionKey)
 	}
 	if got := stdout.String(); got != "revealed managed browser session session-demo\n" {
 		t.Fatalf("stdout = %q, want reveal confirmation", got)
@@ -115,11 +127,13 @@ func TestRunBrowserRequiresSessionKey(t *testing.T) {
 func TestRunBrowserPropagatesRevealFailure(t *testing.T) {
 	origReader := managedBrowserStateReader
 	origRevealer := managedBrowserRevealer
+	origRevealMarker := managedBrowserRevealMarker
 	origStdout := browserStdout
 	origStderr := browserStderr
 	t.Cleanup(func() {
 		managedBrowserStateReader = origReader
 		managedBrowserRevealer = origRevealer
+		managedBrowserRevealMarker = origRevealMarker
 		browserStdout = origStdout
 		browserStderr = origStderr
 	})
