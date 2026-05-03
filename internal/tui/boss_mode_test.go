@@ -237,7 +237,7 @@ func TestLatestEngineerTranscriptOutputDropsMalformedInlineFence(t *testing.T) {
 	}
 }
 
-func TestBossEngineerCompletionAutoCompletesAgentTask(t *testing.T) {
+func TestBossEngineerCompletionLeavesAgentTaskReadyForReview(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -305,17 +305,17 @@ func TestBossEngineerCompletionAutoCompletesAgentTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAgentTask() after completion error = %v", err)
 	}
-	if completed.Status != model.AgentTaskStatusCompleted {
-		t.Fatalf("agent task status = %s, want completed", completed.Status)
+	if completed.Status != model.AgentTaskStatusWaiting {
+		t.Fatalf("agent task status = %s, want waiting", completed.Status)
 	}
-	if _, ok := got.agentTaskForProjectPath(task.WorkspacePath); ok {
-		t.Fatalf("completed agent task still appears in open task list: %#v", got.openAgentTasks)
+	if _, ok := got.agentTaskForProjectPath(task.WorkspacePath); !ok {
+		t.Fatalf("returned agent task should stay open for review: %#v", got.openAgentTasks)
 	}
 	view := got.bossModel.View()
 	for _, want := range []string{
 		"Engineer is back on Kill stale roguellm dev server.",
 		"No stale roguellm dev server is running now.",
-		"I marked it complete.",
+		"I left it open for review.",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("boss view missing %q:\n%s", want, view)
@@ -323,6 +323,21 @@ func TestBossEngineerCompletionAutoCompletesAgentTask(t *testing.T) {
 	}
 	if strings.Contains(view, "port 8127") || strings.Contains(view, "```") {
 		t.Fatalf("boss view leaked raw output:\n%s", view)
+	}
+}
+
+func TestLatestEngineerTranscriptOutputDropsLowInformationDone(t *testing.T) {
+	t.Parallel()
+
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "Done.",
+		}},
+	}
+
+	if got := latestEngineerTranscriptOutput(snapshot); got != "" {
+		t.Fatalf("latestEngineerTranscriptOutput() = %q, want empty low-information summary", got)
 	}
 }
 

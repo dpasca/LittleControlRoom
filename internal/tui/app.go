@@ -1229,10 +1229,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detail = model.ProjectDetail{}
 		m.syncDetailViewport(true)
 		return m, reloadCmd
-	case agentTaskEngineerCompletedMsg:
+	case agentTaskEngineerReturnedMsg:
 		if msg.err != nil {
-			m.status = fmt.Sprintf("Agent task %s completion update failed: %v", msg.taskID, msg.err)
-			notice := bossEngineerCompletionNotice(msg.label, msg.summary) + "\n\nI couldn't mark it complete: " + msg.err.Error()
+			m.status = fmt.Sprintf("Agent task %s review update failed: %v", msg.taskID, msg.err)
+			notice := bossEngineerCompletionNotice(msg.label, msg.summary) + "\n\nI couldn't mark it ready for review: " + msg.err.Error()
 			var cmd tea.Cmd
 			m, cmd = m.updateBossHostNotice(notice)
 			return m, cmd
@@ -1245,7 +1245,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if label == "" {
 			label = "agent task"
 		}
-		m.status = "Completed agent task " + label
+		m.status = "Agent task " + label + " is ready for review"
 		var cmd tea.Cmd
 		m, cmd = m.updateBossHostNotice(msg.notice)
 		if m.bossMode {

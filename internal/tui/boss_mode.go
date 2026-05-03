@@ -101,7 +101,7 @@ func (m Model) updateBossModeWindowSize() (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-type agentTaskEngineerCompletedMsg struct {
+type agentTaskEngineerReturnedMsg struct {
 	projectPath string
 	taskID      string
 	label       string
@@ -467,9 +467,6 @@ func (m Model) bossEngineerTurnCompletionHostNotice(projectPath string, hadPrev 
 	if output != "" {
 		return bossEngineerCompletionNotice(label, output)
 	}
-	if status := normalizedCodexStatus(snapshot.Status); status != "" {
-		return "Engineer is back on " + label + ": " + status
-	}
 	return bossEngineerCompletionNotice(label, "")
 }
 
@@ -479,7 +476,7 @@ func (m Model) handleBossEngineerTurnCompletion(projectPath string, hadPrev bool
 	}
 	task, isAgentTask := m.agentTaskForProjectPath(projectPath)
 	if isAgentTask && m.svc != nil {
-		return m, m.completeAgentTaskFromEngineerCmd(projectPath, task, snapshot)
+		return m, m.markAgentTaskReadyForReviewCmd(projectPath, task, snapshot)
 	}
 	notice := m.bossEngineerTurnCompletionHostNotice(projectPath, hadPrev, prevSnapshot, snapshot)
 	if notice == "" {
@@ -488,17 +485,14 @@ func (m Model) handleBossEngineerTurnCompletion(projectPath string, hadPrev bool
 	return m.updateBossHostNotice(notice)
 }
 
-func (m Model) completeAgentTaskFromEngineerCmd(projectPath string, task model.AgentTask, snapshot codexapp.Snapshot) tea.Cmd {
+func (m Model) markAgentTaskReadyForReviewCmd(projectPath string, task model.AgentTask, snapshot codexapp.Snapshot) tea.Cmd {
 	taskID := strings.TrimSpace(task.ID)
-	if taskID == "" || m.svc == nil {
+	if taskID == "" || m.svc == nil || m.svc.Store() == nil {
 		return nil
 	}
 	label := bossAgentTaskCompletionLabel(task)
 	summary := latestEngineerTranscriptOutput(snapshot)
-	if summary == "" {
-		summary = normalizedCodexStatus(snapshot.Status)
-	}
-	notice := bossEngineerCompletionNotice(label, summary) + "\n\nI marked it complete."
+	notice := bossAgentTaskReviewNotice(label, summary)
 	svc := m.svc
 	parent := m.ctx
 	return func() tea.Msg {
@@ -508,17 +502,30 @@ func (m Model) completeAgentTaskFromEngineerCmd(projectPath string, task model.A
 		}
 		completeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		completed, err := svc.CompleteAgentTask(completeCtx, taskID, summary)
-		return agentTaskEngineerCompletedMsg{
+		status := model.AgentTaskStatusWaiting
+		updated, err := svc.Store().UpdateAgentTask(completeCtx, model.UpdateAgentTaskInput{
+			ID:      taskID,
+			Status:  &status,
+			Summary: &summary,
+			Touch:   true,
+		})
+		return agentTaskEngineerReturnedMsg{
 			projectPath: strings.TrimSpace(projectPath),
 			taskID:      taskID,
 			label:       label,
 			summary:     summary,
 			notice:      notice,
-			task:        completed,
+			task:        updated,
 			err:         err,
 		}
 	}
+}
+
+func bossAgentTaskReviewNotice(label, output string) string {
+	if strings.TrimSpace(output) == "" {
+		return bossEngineerCompletionNotice(label, "") + "\n\nNo detailed result came back, so I left it open for review."
+	}
+	return bossEngineerCompletionNotice(label, output) + "\n\nI left it open for review."
 }
 
 func bossAgentTaskCompletionLabel(task model.AgentTask) string {
@@ -577,9 +584,18 @@ func latestEngineerTranscriptOutput(snapshot codexapp.Snapshot) string {
 		if text == "" {
 			continue
 		}
-		return compactEngineerNoticeText(engineerNoticeSummaryText(text), 220)
+		summary := compactEngineerNoticeText(engineerNoticeSummaryText(text), 220)
+		if !engineerNoticeHasUsefulDetail(summary) {
+			return ""
+		}
+		return summary
 	}
 	return ""
+}
+
+func engineerNoticeHasUsefulDetail(text string) bool {
+	text = strings.TrimSpace(text)
+	return len([]rune(text)) >= 16 && strings.Contains(text, " ")
 }
 
 func engineerNoticeSummaryText(text string) string {
