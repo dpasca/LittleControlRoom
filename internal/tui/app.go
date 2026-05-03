@@ -1229,6 +1229,29 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detail = model.ProjectDetail{}
 		m.syncDetailViewport(true)
 		return m, reloadCmd
+	case agentTaskEngineerCompletedMsg:
+		if msg.err != nil {
+			m.status = fmt.Sprintf("Agent task %s completion update failed: %v", msg.taskID, msg.err)
+			notice := bossEngineerCompletionNotice(msg.label, msg.summary) + "\n\nI couldn't mark it complete: " + msg.err.Error()
+			var cmd tea.Cmd
+			m, cmd = m.updateBossHostNotice(notice)
+			return m, cmd
+		}
+		m.upsertOpenAgentTask(msg.task)
+		label := strings.TrimSpace(msg.label)
+		if label == "" {
+			label = strings.TrimSpace(msg.taskID)
+		}
+		if label == "" {
+			label = "agent task"
+		}
+		m.status = "Completed agent task " + label
+		var cmd tea.Cmd
+		m, cmd = m.updateBossHostNotice(msg.notice)
+		if m.bossMode {
+			cmd = batchCmds(cmd, m.bossModel.RefreshCmd())
+		}
+		return m, cmd
 	case recentProjectParentsMsg:
 		if msg.err == nil {
 			m.newProjectRecentParents = append([]string(nil), msg.paths...)

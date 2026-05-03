@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -98,6 +99,16 @@ func (m Model) updateBossModeWindowSize() (tea.Model, tea.Cmd) {
 	updated, cmd := m.bossModel.Update(m.bossModeWindowSizeMsg())
 	m.bossModel = normalizeBossModel(updated)
 	return m, cmd
+}
+
+type agentTaskEngineerCompletedMsg struct {
+	projectPath string
+	taskID      string
+	label       string
+	summary     string
+	notice      string
+	task        model.AgentTask
+	err         error
 }
 
 func (m Model) updateBossModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -454,10 +465,80 @@ func (m Model) bossEngineerTurnCompletionHostNotice(projectPath string, hadPrev 
 	label := m.bossEngineerCompletionLabel(projectPath)
 	output := latestEngineerTranscriptOutput(snapshot)
 	if output != "" {
-		return "Engineer is back on " + label + ".\n\n" + output
+		return bossEngineerCompletionNotice(label, output)
 	}
 	if status := normalizedCodexStatus(snapshot.Status); status != "" {
 		return "Engineer is back on " + label + ": " + status
+	}
+	return bossEngineerCompletionNotice(label, "")
+}
+
+func (m Model) handleBossEngineerTurnCompletion(projectPath string, hadPrev bool, prevSnapshot, snapshot codexapp.Snapshot) (Model, tea.Cmd) {
+	if !hadPrev || !bossEngineerSnapshotActive(prevSnapshot) || bossEngineerSnapshotActive(snapshot) {
+		return m, nil
+	}
+	task, isAgentTask := m.agentTaskForProjectPath(projectPath)
+	if isAgentTask && m.svc != nil {
+		return m, m.completeAgentTaskFromEngineerCmd(projectPath, task, snapshot)
+	}
+	notice := m.bossEngineerTurnCompletionHostNotice(projectPath, hadPrev, prevSnapshot, snapshot)
+	if notice == "" {
+		return m, nil
+	}
+	return m.updateBossHostNotice(notice)
+}
+
+func (m Model) completeAgentTaskFromEngineerCmd(projectPath string, task model.AgentTask, snapshot codexapp.Snapshot) tea.Cmd {
+	taskID := strings.TrimSpace(task.ID)
+	if taskID == "" || m.svc == nil {
+		return nil
+	}
+	label := bossAgentTaskCompletionLabel(task)
+	summary := latestEngineerTranscriptOutput(snapshot)
+	if summary == "" {
+		summary = normalizedCodexStatus(snapshot.Status)
+	}
+	notice := bossEngineerCompletionNotice(label, summary) + "\n\nI marked it complete."
+	svc := m.svc
+	parent := m.ctx
+	return func() tea.Msg {
+		ctx := parent
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		completeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		completed, err := svc.CompleteAgentTask(completeCtx, taskID, summary)
+		return agentTaskEngineerCompletedMsg{
+			projectPath: strings.TrimSpace(projectPath),
+			taskID:      taskID,
+			label:       label,
+			summary:     summary,
+			notice:      notice,
+			task:        completed,
+			err:         err,
+		}
+	}
+}
+
+func bossAgentTaskCompletionLabel(task model.AgentTask) string {
+	if title := strings.TrimSpace(task.Title); title != "" {
+		return title
+	}
+	if id := strings.TrimSpace(task.ID); id != "" {
+		return id
+	}
+	return "agent task"
+}
+
+func bossEngineerCompletionNotice(label, output string) string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		label = "engineer session"
+	}
+	output = strings.TrimSpace(output)
+	if output != "" {
+		return "Engineer is back on " + label + ".\n\n" + output
 	}
 	return "Engineer is back on " + label + "."
 }
@@ -496,22 +577,83 @@ func latestEngineerTranscriptOutput(snapshot codexapp.Snapshot) string {
 		if text == "" {
 			continue
 		}
-		return compactEngineerNoticeText(firstEngineerNoticeParagraph(text), 260)
+		return compactEngineerNoticeText(engineerNoticeSummaryText(text), 220)
 	}
 	return ""
 }
 
-func firstEngineerNoticeParagraph(text string) string {
-	text = strings.ReplaceAll(text, "```", "")
-	text = strings.ReplaceAll(text, "`", "")
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	for _, paragraph := range strings.Split(text, "\n\n") {
-		paragraph = strings.TrimSpace(paragraph)
-		if paragraph != "" {
-			return paragraph
+func engineerNoticeSummaryText(text string) string {
+	for _, paragraph := range engineerNoticeProseParagraphs(text) {
+		for _, sentence := range engineerNoticeSentences(paragraph) {
+			if strings.TrimSpace(sentence) != "" {
+				return sentence
+			}
 		}
 	}
-	return strings.TrimSpace(text)
+	return strings.TrimSpace(strings.ReplaceAll(text, "`", ""))
+}
+
+func engineerNoticeProseParagraphs(text string) []string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	lines := strings.Split(text, "\n")
+	outLines := make([]string, 0, len(lines))
+	inFence := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "``") {
+			if !fenceMarkerClosesOnSameLine(trimmed) {
+				inFence = !inFence
+			}
+			continue
+		}
+		if inFence {
+			continue
+		}
+		outLines = append(outLines, strings.ReplaceAll(line, "`", ""))
+	}
+	paragraphs := strings.Split(strings.Join(outLines, "\n"), "\n\n")
+	out := make([]string, 0, len(paragraphs))
+	for _, paragraph := range paragraphs {
+		paragraph = strings.TrimSpace(paragraph)
+		if paragraph != "" {
+			out = append(out, paragraph)
+		}
+	}
+	return out
+}
+
+func fenceMarkerClosesOnSameLine(line string) bool {
+	if !(strings.HasPrefix(line, "```") || strings.HasPrefix(line, "``")) {
+		return false
+	}
+	return len(line) > 3 && (strings.HasSuffix(line, "```") || strings.HasSuffix(line, "``"))
+}
+
+func engineerNoticeSentences(text string) []string {
+	text = strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+	if text == "" {
+		return nil
+	}
+	sentences := []string{}
+	start := 0
+	for i, r := range text {
+		if r != '.' && r != '!' && r != '?' {
+			continue
+		}
+		end := i + len(string(r))
+		sentence := strings.TrimSpace(text[start:end])
+		if sentence != "" {
+			sentences = append(sentences, sentence)
+		}
+		start = end
+		for start < len(text) && text[start] == ' ' {
+			start++
+		}
+	}
+	if len(sentences) == 0 {
+		return []string{text}
+	}
+	return sentences
 }
 
 func compactEngineerNoticeText(text string, limit int) string {

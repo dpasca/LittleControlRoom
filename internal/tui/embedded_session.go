@@ -286,12 +286,10 @@ func (m Model) applyCodexUpdateMsg(msg codexUpdateMsg) (tea.Model, tea.Cmd) {
 				m, cmd = m.updateBossHostNotice(notice)
 				bossNoticeCmd = batchCmds(bossNoticeCmd, cmd)
 			}
-			if notice := m.bossEngineerTurnCompletionHostNotice(msg.projectPath, hadPrevSnapshot, prevSnapshot, snapshot); notice != "" {
-				var cmd tea.Cmd
-				m, cmd = m.updateBossHostNotice(notice)
-				bossNoticeCmd = batchCmds(bossNoticeCmd, cmd)
-			}
 		}
+		var cmd tea.Cmd
+		m, cmd = m.handleBossEngineerTurnCompletion(msg.projectPath, hadPrevSnapshot, prevSnapshot, snapshot)
+		bossNoticeCmd = batchCmds(bossNoticeCmd, cmd)
 	}
 	m.recordAISyncLatency("Embedded snapshot", msg.projectPath, providerLabel, refreshDuration, "")
 	if m.codexVisibleProject == msg.projectPath {
@@ -367,12 +365,10 @@ func (m Model) applyCodexDeferredSnapshotMsg(msg codexDeferredSnapshotMsg) (tea.
 			m, cmd = m.updateBossHostNotice(notice)
 			bossNoticeCmd = batchCmds(bossNoticeCmd, cmd)
 		}
-		if notice := m.bossEngineerTurnCompletionHostNotice(projectPath, hadPrev, prevSnapshot, snapshot); notice != "" {
-			var cmd tea.Cmd
-			m, cmd = m.updateBossHostNotice(notice)
-			bossNoticeCmd = batchCmds(bossNoticeCmd, cmd)
-		}
 	}
+	var cmd tea.Cmd
+	m, cmd = m.handleBossEngineerTurnCompletion(projectPath, hadPrev, prevSnapshot, snapshot)
+	bossNoticeCmd = batchCmds(bossNoticeCmd, cmd)
 	if m.codexVisibleProject == projectPath {
 		viewportStarted := time.Now()
 		m.resetCodexToolAnswerState(projectPath)

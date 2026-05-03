@@ -197,6 +197,135 @@ func TestBossChatNoticesEngineerTurnCompletion(t *testing.T) {
 	}
 }
 
+func TestLatestEngineerTranscriptOutputDropsCodeBlocks(t *testing.T) {
+	t.Parallel()
+
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "No stale roguellm dev server is running now. Checked:\n```text\n/Users/davide/dev/repos/roguellm cwd processes: none\nport 8127: no listener\n```\nTerminated: nothing this pass. The server is fully stopped.",
+		}},
+	}
+
+	got := latestEngineerTranscriptOutput(snapshot)
+	if got != "No stale roguellm dev server is running now." {
+		t.Fatalf("latestEngineerTranscriptOutput() = %q", got)
+	}
+	for _, unwanted := range []string{"`", "```", "``text", "/Users/davide", "port 8127", "Terminated:"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("summary leaked %q: %q", unwanted, got)
+		}
+	}
+}
+
+func TestLatestEngineerTranscriptOutputDropsMalformedInlineFence(t *testing.T) {
+	t.Parallel()
+
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "No stale roguellm dev server is running now. Checked:\n``text /Users/davide/dev/repos/roguellm cwd processes: none port 8127: no listener ``\nThe server is fully stopped.",
+		}},
+	}
+
+	got := latestEngineerTranscriptOutput(snapshot)
+	if got != "No stale roguellm dev server is running now." {
+		t.Fatalf("latestEngineerTranscriptOutput() = %q", got)
+	}
+	if strings.Contains(got, "``") || strings.Contains(got, "/Users/davide") {
+		t.Fatalf("summary leaked malformed fence content: %q", got)
+	}
+}
+
+func TestBossEngineerCompletionAutoCompletesAgentTask(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	now := time.Unix(1_800_000_000, 0)
+	svc := newControlTestService(t)
+	task, err := svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+		Title: "Kill stale roguellm dev server",
+		Kind:  model.AgentTaskKindAgent,
+	})
+	if err != nil {
+		t.Fatalf("CreateAgentTask() error = %v", err)
+	}
+	if _, err := svc.AttachAgentTaskEngineerSession(ctx, task.ID, model.SessionSourceCodex, "thread-agent-1"); err != nil {
+		t.Fatalf("AttachAgentTaskEngineerSession() error = %v", err)
+	}
+	task, err = svc.GetAgentTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetAgentTask() error = %v", err)
+	}
+	idleSnapshot := codexapp.Snapshot{
+		Provider:       codexapp.ProviderCodex,
+		ProjectPath:    task.WorkspacePath,
+		ThreadID:       "thread-agent-1",
+		Started:        true,
+		Status:         "Codex turn completed",
+		LastActivityAt: now,
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "No stale roguellm dev server is running now. Checked:\n```text\nport 8127: no listener\n```\nThe server is fully stopped.",
+		}},
+	}
+	session := &fakeCodexSession{projectPath: task.WorkspacePath, snapshot: idleSnapshot}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: task.WorkspacePath, Provider: codexapp.ProviderCodex}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+	prevSnapshot := idleSnapshot
+	prevSnapshot.Busy = true
+	prevSnapshot.BusySince = now.Add(-2 * time.Minute)
+	prevSnapshot.ActiveTurnID = "turn-live"
+	prevSnapshot.Phase = codexapp.SessionPhaseRunning
+	m := Model{
+		ctx:          ctx,
+		svc:          svc,
+		bossMode:     true,
+		bossModel:    bossui.NewEmbedded(ctx, nil),
+		codexManager: manager,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			task.WorkspacePath: prevSnapshot,
+		},
+		openAgentTasks: []model.AgentTask{task},
+	}
+	m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
+
+	updated, cmd := m.update(codexUpdateMsg{projectPath: task.WorkspacePath})
+	got := updated.(Model)
+	for _, msg := range collectCmdMsgs(cmd) {
+		updated, _ = got.Update(msg)
+		got = updated.(Model)
+	}
+
+	completed, err := svc.GetAgentTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetAgentTask() after completion error = %v", err)
+	}
+	if completed.Status != model.AgentTaskStatusCompleted {
+		t.Fatalf("agent task status = %s, want completed", completed.Status)
+	}
+	if _, ok := got.agentTaskForProjectPath(task.WorkspacePath); ok {
+		t.Fatalf("completed agent task still appears in open task list: %#v", got.openAgentTasks)
+	}
+	view := got.bossModel.View()
+	for _, want := range []string{
+		"Engineer is back on Kill stale roguellm dev server.",
+		"No stale roguellm dev server is running now.",
+		"I marked it complete.",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("boss view missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "port 8127") || strings.Contains(view, "```") {
+		t.Fatalf("boss view leaked raw output:\n%s", view)
+	}
+}
+
 func TestBossHostNoticeQueuedWhileClosedAppearsOnOpen(t *testing.T) {
 	t.Parallel()
 
