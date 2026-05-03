@@ -125,6 +125,14 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 		m.reportError("Embedded session open failed", msg.err, msg.projectPath)
 		return m, nil
 	}
+	if task, ok := m.agentTaskForProjectPath(msg.projectPath); ok {
+		selectedPath := m.currentSelectedProjectPath()
+		task.Provider = modelSessionSourceFromCodexProvider(embeddedProvider(msg.snapshot))
+		task.SessionID = strings.TrimSpace(msg.snapshot.ThreadID)
+		task.LastTouchedAt = m.currentTime()
+		m.openAgentTasks = upsertAgentTask(m.openAgentTasks, task)
+		m.rebuildProjectList(selectedPath)
+	}
 	revealOnOpen := m.revealPendingEmbeddedOpenOnSuccess(msg.projectPath)
 	focusInput := true
 	draft, hasTodoLaunchDraft := m.todoLaunchDraftFor(msg.projectPath)
@@ -261,6 +269,7 @@ func (m Model) applyCodexUpdateMsg(msg codexUpdateMsg) (tea.Model, tea.Cmd) {
 	providerLabel := ""
 	transcriptChanged := false
 	statusRefreshCmd := tea.Cmd(nil)
+	bossNoticeCmd := tea.Cmd(nil)
 	if ok {
 		providerLabel = embeddedProvider(snapshot).Label()
 		transcriptChanged = !hadPrevSnapshot || codexTranscriptStateChanged(prevSnapshot, snapshot)
@@ -270,6 +279,13 @@ func (m Model) applyCodexUpdateMsg(msg codexUpdateMsg) (tea.Model, tea.Cmd) {
 		}
 		if shouldRefreshProjectStatusAfterCodexSnapshot(prevSnapshot, snapshot) {
 			statusRefreshCmd = m.recordEmbeddedSessionSettledAndRefreshCmd(msg.projectPath, snapshot)
+		}
+		if m.bossMode {
+			if notice := bossBrowserAttentionHostNoticeForSnapshot(msg.projectPath, hadPrevSnapshot, prevSnapshot, snapshot); notice != "" {
+				var cmd tea.Cmd
+				m, cmd = m.updateBossHostNotice(notice)
+				bossNoticeCmd = cmd
+			}
 		}
 	}
 	m.recordAISyncLatency("Embedded snapshot", msg.projectPath, providerLabel, refreshDuration, "")
@@ -288,7 +304,7 @@ func (m Model) applyCodexUpdateMsg(msg codexUpdateMsg) (tea.Model, tea.Cmd) {
 			m.markCodexSessionLive(msg.projectPath)
 			m.detectBrowserAttentionNotification(msg.projectPath, snapshot)
 			m.detectQuestionNotification(msg.projectPath, snapshot)
-			return m, batchCmds(append(cmds, statusRefreshCmd)...)
+			return m, batchCmds(append(cmds, statusRefreshCmd, bossNoticeCmd)...)
 		}
 		m.cancelModelSettleLatency(msg.projectPath, "session closed")
 		if !m.markCodexSessionClosedHandled(msg.projectPath) {
@@ -333,11 +349,19 @@ func (m Model) applyCodexDeferredSnapshotMsg(msg codexDeferredSnapshotMsg) (tea.
 	providerLabel := embeddedProvider(snapshot).Label()
 	transcriptChanged := !hadPrev || codexTranscriptStateChanged(prevSnapshot, snapshot)
 	statusRefreshCmd := tea.Cmd(nil)
+	bossNoticeCmd := tea.Cmd(nil)
 	if shouldRecordEmbeddedSessionActivityAfterCodexSnapshot(hadPrev, prevSnapshot, snapshot) {
 		statusRefreshCmd = m.recordEmbeddedSessionActivityCmd(projectPath, snapshot)
 	}
 	if hadPrev && shouldRefreshProjectStatusAfterCodexSnapshot(prevSnapshot, snapshot) {
 		statusRefreshCmd = m.recordEmbeddedSessionSettledAndRefreshCmd(projectPath, snapshot)
+	}
+	if m.bossMode {
+		if notice := bossBrowserAttentionHostNoticeForSnapshot(projectPath, hadPrev, prevSnapshot, snapshot); notice != "" {
+			var cmd tea.Cmd
+			m, cmd = m.updateBossHostNotice(notice)
+			bossNoticeCmd = cmd
+		}
 	}
 	if m.codexVisibleProject == projectPath {
 		viewportStarted := time.Now()
@@ -354,7 +378,7 @@ func (m Model) applyCodexDeferredSnapshotMsg(msg codexDeferredSnapshotMsg) (tea.
 		m.markCodexSessionLive(projectPath)
 		m.detectBrowserAttentionNotification(projectPath, snapshot)
 		m.detectQuestionNotification(projectPath, snapshot)
-		return m, batchCmds(statusRefreshCmd, linkScanCmd)
+		return m, batchCmds(statusRefreshCmd, linkScanCmd, bossNoticeCmd)
 	}
 	m.removeManagedBrowserLease(projectPath, snapshot)
 	m.cancelModelSettleLatency(projectPath, "session closed")

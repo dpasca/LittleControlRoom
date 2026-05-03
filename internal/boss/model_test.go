@@ -141,6 +141,72 @@ func TestModelAttentionRowsUseCompactProjectColumns(t *testing.T) {
 	}
 }
 
+func TestModelAttentionRowsIncludeOpenAgentTasks(t *testing.T) {
+	t.Parallel()
+
+	m := New(context.Background(), nil)
+	m.snapshot = StateSnapshot{
+		OpenAgentTasks: []AgentTaskBrief{{
+			ID:        "agt_demo",
+			Title:     "Revoke Cursor GitHub access",
+			Status:    model.AgentTaskStatusActive,
+			Provider:  model.SessionSourceCodex,
+			SessionID: "thread-agent-1",
+		}},
+		HotProjects: []ProjectBrief{{
+			Name:          "Alpha",
+			Path:          "/alpha",
+			Status:        model.StatusActive,
+			LatestSummary: "Needs review before handoff.",
+		}},
+	}
+
+	rendered := m.renderAttentionRows(90, 2)
+	stripped := ansi.Strip(rendered)
+	for _, want := range []string{"Alt+1", "T", "working", "Revoke Cursor GitHub", "Alt+2", "Alpha"} {
+		if !strings.Contains(stripped, want) {
+			t.Fatalf("attention rows missing %q:\n%s", want, stripped)
+		}
+	}
+	if got := m.HotAttentionItem(0); got.Kind != AttentionItemAgentTask || got.TaskID != "agt_demo" {
+		t.Fatalf("first attention item = %#v, want agent task", got)
+	}
+	if got := m.HotAttentionItem(1); got.Kind != AttentionItemProject || got.ProjectPath != "/alpha" {
+		t.Fatalf("second attention item = %#v, want project", got)
+	}
+}
+
+func TestControlResultEchoesAgentTaskInstructions(t *testing.T) {
+	t.Parallel()
+
+	args, err := json.Marshal(control.AgentTaskCreateInput{
+		Title:  "Revoke Cursor GitHub access",
+		Prompt: "Open GitHub settings and revoke Cursor's OAuth access.",
+	})
+	if err != nil {
+		t.Fatalf("marshal input: %v", err)
+	}
+	content := controlResultContent(ControlInvocationResultMsg{
+		Invocation: control.Invocation{
+			Capability: control.CapabilityAgentTaskCreate,
+			Args:       args,
+		},
+		Status: "Created agent task agt_demo and prompt sent to fresh embedded Codex session thread-agent-1 in the background.",
+	})
+
+	for _, want := range []string{
+		"Created agent task agt_demo",
+		"Sent to the engineer:",
+		"Open GitHub settings and revoke Cursor's OAuth access.",
+		"source of truth",
+		"Attention list",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("control result missing %q:\n%s", want, content)
+		}
+	}
+}
+
 func TestModelSummaryFlashTracksUpdatedProjectSummaries(t *testing.T) {
 	t.Parallel()
 

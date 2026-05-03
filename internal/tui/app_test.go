@@ -5226,6 +5226,164 @@ func TestRenderProjectListKeepsScratchTasksInlineAndKeepsRepoWarningOffTheirRows
 	}
 }
 
+func TestRebuildProjectListIncludesOpenAgentTasksWithDetails(t *testing.T) {
+	now := time.Date(2026, 5, 3, 2, 30, 0, 0, time.UTC)
+	task := model.AgentTask{
+		ID:            "agt_cursor_access",
+		Title:         "Revoke Cursor GitHub access",
+		Status:        model.AgentTaskStatusWaiting,
+		Summary:       "Waiting for browser confirmation in GitHub settings",
+		Capabilities:  []string{"browser.control", "github.inspect"},
+		Provider:      model.SessionSourceCodex,
+		SessionID:     "thread-agent-123456789",
+		WorkspacePath: "/tmp/lcroom-agent-task-cursor",
+		LastTouchedAt: now,
+		Resources: []model.AgentTaskResource{{
+			Kind:      model.AgentTaskResourceEngineerSession,
+			Provider:  model.SessionSourceCodex,
+			SessionID: "thread-agent-123456789",
+			Label:     "current engineer session",
+		}},
+	}
+	m := Model{
+		nowFn: func() time.Time { return now },
+		allProjects: []model.ProjectSummary{{
+			Name:           "alpha",
+			Path:           "/tmp/alpha",
+			Status:         model.StatusIdle,
+			PresentOnDisk:  true,
+			ManuallyAdded:  true,
+			AttentionScore: 10,
+		}},
+		openAgentTasks: []model.AgentTask{task},
+		sortMode:       sortByAttention,
+		visibility:     visibilityAIFolders,
+	}
+
+	m.rebuildProjectList(task.WorkspacePath)
+	if len(m.projects) != 2 {
+		t.Fatalf("visible projects = %#v, want regular project plus agent task", m.projects)
+	}
+	if selected, ok := m.selectedProject(); !ok || selected.Path != task.WorkspacePath || selected.Kind != model.ProjectKindAgentTask {
+		t.Fatalf("selected project = %#v, want agent task row", selected)
+	}
+	if cmd := m.requestProjectDetailViewCmd(task.WorkspacePath); cmd != nil {
+		t.Fatalf("agent task detail should render from cached task state without loading project detail")
+	}
+
+	rendered := ansi.Strip(m.renderProjectList(150, 8))
+	if strings.Contains(rendered, "Agent Tasks") {
+		t.Fatalf("agent tasks should stay inline with projects, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "[A] Revoke Cursor") ||
+		!strings.Contains(rendered, "waiting") ||
+		!strings.Contains(rendered, "Waiting for browser confirmation") {
+		t.Fatalf("renderProjectList() missing agent task row details, got %q", rendered)
+	}
+
+	detail := ansi.Strip(m.renderDetailContent(110))
+	for _, want := range []string{"agent task", "agt_cursor_access", "browser.control", "Codex thread-a", "Press Enter to open"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("renderDetailContent() missing %q in %q", want, detail)
+		}
+	}
+}
+
+func TestProjectsMsgThreadsOpenAgentTasksIntoClassicList(t *testing.T) {
+	task := model.AgentTask{
+		ID:            "agt_loaded",
+		Title:         "Loaded background task",
+		Status:        model.AgentTaskStatusActive,
+		WorkspacePath: "/tmp/lcroom-agent-task-loaded",
+		LastTouchedAt: time.Date(2026, 5, 3, 2, 40, 0, 0, time.UTC),
+	}
+	m := Model{
+		sortMode:   sortByAttention,
+		visibility: visibilityAIFolders,
+	}
+
+	updated, _ := m.Update(projectsMsg{openAgentTasks: []model.AgentTask{task}})
+	got := updated.(Model)
+	if len(got.projects) != 1 {
+		t.Fatalf("visible projects = %#v, want one agent task", got.projects)
+	}
+	if got.projects[0].Kind != model.ProjectKindAgentTask || got.projects[0].Path != task.WorkspacePath {
+		t.Fatalf("project row = %#v, want agent task synthetic summary", got.projects[0])
+	}
+	if _, ok := got.agentTaskForProjectPath(task.WorkspacePath); !ok {
+		t.Fatalf("open agent task cache missing %q", task.WorkspacePath)
+	}
+}
+
+func TestAgentTaskSelectionOpensTrackedEngineerSession(t *testing.T) {
+	task := model.AgentTask{
+		ID:            "agt_open_engineer",
+		Title:         "Inspect delegated work",
+		Status:        model.AgentTaskStatusActive,
+		Provider:      model.SessionSourceCodex,
+		SessionID:     "thread-agent-existing",
+		WorkspacePath: "/tmp/lcroom-agent-task-open",
+		LastTouchedAt: time.Date(2026, 5, 3, 2, 35, 0, 0, time.UTC),
+		Resources: []model.AgentTaskResource{{
+			Kind:      model.AgentTaskResourceEngineerSession,
+			Provider:  model.SessionSourceCodex,
+			SessionID: "thread-agent-existing",
+		}},
+	}
+	project, err := projectSummaryForAgentTask(task)
+	if err != nil {
+		t.Fatalf("projectSummaryForAgentTask() error = %v", err)
+	}
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:       req.Provider,
+				ThreadID:       firstNonEmptyTrimmed(req.ResumeID, "thread-agent-new"),
+				Started:        true,
+				LastActivityAt: time.Now(),
+			},
+		}, nil
+	})
+	m := Model{
+		projects:       []model.ProjectSummary{project},
+		openAgentTasks: []model.AgentTask{task},
+		selected:       0,
+		codexManager:   manager,
+	}
+
+	updated, cmd := m.launchEmbeddedForSelection(codexapp.ProviderCodex, false, "")
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("launchEmbeddedForSelection() cmd = nil, want launch command")
+	}
+	msgs := collectCmdMsgs(cmd)
+	var opened codexSessionOpenedMsg
+	for _, msg := range msgs {
+		if typed, ok := msg.(codexSessionOpenedMsg); ok {
+			opened = typed
+			break
+		}
+	}
+	if opened.projectPath == "" || opened.err != nil {
+		t.Fatalf("open messages = %#v, want successful codexSessionOpenedMsg", msgs)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want 1", len(requests))
+	}
+	if requests[0].ProjectPath != task.WorkspacePath {
+		t.Fatalf("request ProjectPath = %q, want %q", requests[0].ProjectPath, task.WorkspacePath)
+	}
+	if requests[0].ResumeID != "thread-agent-existing" {
+		t.Fatalf("request ResumeID = %q, want tracked engineer session", requests[0].ResumeID)
+	}
+	if got.codexPendingOpen == nil || got.codexPendingOpen.projectPath != task.WorkspacePath {
+		t.Fatalf("pending open = %#v, want agent task workspace", got.codexPendingOpen)
+	}
+}
+
 func TestScratchTaskHotkeyOpensTaskActionDialog(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{

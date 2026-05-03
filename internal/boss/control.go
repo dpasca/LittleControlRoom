@@ -251,7 +251,46 @@ func controlResultContent(msg ControlInvocationResultMsg) string {
 	if status == "" {
 		status = "Control action completed."
 	}
+	switch msg.Invocation.Capability {
+	case control.CapabilityAgentTaskCreate:
+		var input control.AgentTaskCreateInput
+		if err := json.Unmarshal(msg.Invocation.Args, &input); err == nil {
+			return controlAgentTaskCreateResultContent(status, input)
+		}
+	case control.CapabilityAgentTaskContinue:
+		var input control.AgentTaskContinueInput
+		if err := json.Unmarshal(msg.Invocation.Args, &input); err == nil {
+			return controlAgentTaskContinueResultContent(status, input)
+		}
+	}
 	return status
+}
+
+func controlAgentTaskCreateResultContent(status string, input control.AgentTaskCreateInput) string {
+	lines := []string{status}
+	if prompt := strings.TrimSpace(input.Prompt); prompt != "" {
+		lines = append(lines, "", "Sent to the engineer:", fencedTextBlock(clipText(prompt, 1200)))
+	}
+	lines = append(lines, "", "I will treat the engineer session as the source of truth for this task. When it has output, ask me what it found and I will read the task transcript before guiding the next step.")
+	lines = append(lines, "The task now appears in the Attention list with the regular project items.")
+	return strings.Join(lines, "\n")
+}
+
+func controlAgentTaskContinueResultContent(status string, input control.AgentTaskContinueInput) string {
+	lines := []string{status}
+	if prompt := strings.TrimSpace(input.Prompt); prompt != "" {
+		lines = append(lines, "", "Sent to the engineer:", fencedTextBlock(clipText(prompt, 1200)))
+	}
+	lines = append(lines, "", "I will check this task's engineer output before recommending what to do next.")
+	return strings.Join(lines, "\n")
+}
+
+func fencedTextBlock(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "```text\n\n```"
+	}
+	return "```text\n" + strings.ReplaceAll(text, "```", "`\u200b``") + "\n```"
 }
 
 func copyControlInvocation(inv control.Invocation) control.Invocation {
@@ -314,6 +353,26 @@ func (m Model) applyControlInvocationResult(msg ControlInvocationResultMsg) (tea
 	} else {
 		m.status = "Control action completed"
 	}
+	m.syncLayout(true)
+	cmds := []tea.Cmd{m.saveBossChatMessageCmd(message)}
+	if m.svc != nil {
+		cmds = append(cmds, m.loadStateCmd())
+	}
+	return m, tea.Batch(cmds...)
+}
+
+func (m Model) applyHostNotice(msg HostNoticeMsg) (tea.Model, tea.Cmd) {
+	content := strings.TrimSpace(msg.Content)
+	if content == "" {
+		return m, nil
+	}
+	message := ChatMessage{
+		Role:    "assistant",
+		Content: content,
+		At:      m.now(),
+	}
+	m.messages = append(m.messages, message)
+	m.status = "Host update"
 	m.syncLayout(true)
 	return m, m.saveBossChatMessageCmd(message)
 }

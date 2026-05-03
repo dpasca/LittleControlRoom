@@ -455,6 +455,171 @@ func TestQueryExecutorContextCommandShowsEngineerExchange(t *testing.T) {
 	}
 }
 
+func TestQueryExecutorContextCommandShowsAgentTaskExchange(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	st, err := store.Open(filepath.Join(tempDir, "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	codexHome := filepath.Join(tempDir, ".codex")
+	sessionID := "019agenttaskshow"
+	writeBossCodexSession(t, codexHome, sessionID, []string{
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Diff the duplicate skills and summarize the difference."}]}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The local openai-docs copy is a stale override; keep the system copy and remove the duplicate after checking custom edits."}]}}`,
+	})
+	workspace := filepath.Join(tempDir, "agent-workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	if _, err := st.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+		ID:            "agt_show",
+		Title:         "Diff duplicate Codex skills",
+		Kind:          model.AgentTaskKindAgent,
+		Provider:      model.SessionSourceCodex,
+		SessionID:     sessionID,
+		WorkspacePath: workspace,
+	}); err != nil {
+		t.Fatalf("CreateAgentTask() error = %v", err)
+	}
+
+	executor := newQueryExecutor(st)
+	executor.codexHome = codexHome
+	executor.nowFn = func() time.Time { return time.Unix(1_800_000_000, 0) }
+	result, err := executor.Execute(ctx, bossAction{
+		Kind:    bossActionContextCommand,
+		Command: `ctx show agent_task:agt_show --before 1 --after 1 --max-chars 2000`,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	for _, want := range []string{
+		"Engineer exchange:",
+		"handle: engineer:codex:" + sessionID,
+		"Diff duplicate Codex skills",
+		`role="boss"`,
+		`role="engineer"`,
+		"stale override",
+	} {
+		if !strings.Contains(result.Text, want) {
+			t.Fatalf("tool result missing %q:\n%s", want, result.Text)
+		}
+	}
+}
+
+func TestQueryExecutorContextCommandShowsAgentTaskExchangeFromCodexFallbackHome(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	st, err := store.Open(filepath.Join(tempDir, "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	overlayCodexHome := filepath.Join(tempDir, "overlay-codex-home")
+	realCodexHome := filepath.Join(tempDir, "real-codex-home")
+	sessionID := "019agenttaskfallbackhome"
+	writeBossCodexSession(t, realCodexHome, sessionID, []string{
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Diff the duplicate skills and summarize the difference."}]}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The fallback Codex home transcript says the user skill is stale and the system skill should win."}]}}`,
+	})
+	workspace := filepath.Join(tempDir, "agent-workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	if _, err := st.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+		ID:            "agt_fallback_home",
+		Title:         "Diff duplicate Codex skills",
+		Kind:          model.AgentTaskKindAgent,
+		Provider:      model.SessionSourceCodex,
+		SessionID:     sessionID,
+		WorkspacePath: workspace,
+	}); err != nil {
+		t.Fatalf("CreateAgentTask() error = %v", err)
+	}
+
+	executor := newQueryExecutor(st)
+	executor.codexHome = overlayCodexHome
+	executor.codexHomeFallbacks = []string{realCodexHome}
+	result, err := executor.Execute(ctx, bossAction{
+		Kind:    bossActionContextCommand,
+		Command: `ctx show agent_task:agt_fallback_home --before 1 --after 1 --max-chars 2000`,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	for _, want := range []string{
+		"Engineer exchange:",
+		"handle: engineer:codex:" + sessionID,
+		"Diff duplicate Codex skills",
+		"fallback Codex home transcript",
+		"system skill should win",
+	} {
+		if !strings.Contains(result.Text, want) {
+			t.Fatalf("tool result missing %q:\n%s", want, result.Text)
+		}
+	}
+}
+
+func TestQueryExecutorContextCommandFallsBackFromEngineerSessionToAgentTask(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	st, err := store.Open(filepath.Join(tempDir, "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	codexHome := filepath.Join(tempDir, ".codex")
+	sessionID := "019agenttaskfallback"
+	writeBossCodexSession(t, codexHome, sessionID, []string{
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Explain the stale skill copy."}]}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The user copy predates the system copy and should be treated as a stale local duplicate."}]}}`,
+	})
+	workspace := filepath.Join(tempDir, "agent-workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	if _, err := st.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+		ID:            "agt_fallback",
+		Title:         "Explain stale skill copy",
+		Kind:          model.AgentTaskKindAgent,
+		Provider:      model.SessionSourceCodex,
+		SessionID:     sessionID,
+		WorkspacePath: workspace,
+	}); err != nil {
+		t.Fatalf("CreateAgentTask() error = %v", err)
+	}
+
+	executor := newQueryExecutor(st)
+	executor.codexHome = codexHome
+	result, err := executor.Execute(ctx, bossAction{
+		Kind:    bossActionContextCommand,
+		Command: `ctx show engineer:019agenttaskfallback --query stale --before 0 --after 1 --max-chars 2000`,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	for _, want := range []string{
+		"Engineer exchange:",
+		"handle: engineer:codex:" + sessionID,
+		`anchor: turn 2 matched "stale"`,
+		"stale local duplicate",
+	} {
+		if !strings.Contains(result.Text, want) {
+			t.Fatalf("tool result missing %q:\n%s", want, result.Text)
+		}
+	}
+}
+
 func TestQueryExecutorSearchesBossSessionsAsXMLSnippets(t *testing.T) {
 	t.Parallel()
 
@@ -591,6 +756,20 @@ func writeBossSkill(t *testing.T, root, rel, name, description string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
+}
+
+func writeBossCodexSession(t *testing.T, codexHome, sessionID string, lines []string) string {
+	t.Helper()
+	now := time.Now().UTC()
+	sessionDir := filepath.Join(codexHome, "sessions", now.Format("2006"), now.Format("01"), now.Format("02"))
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", sessionDir, err)
+	}
+	path := filepath.Join(sessionDir, "rollout-"+now.Format("2006-01-02T15-04-05")+"-"+sessionID+".jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+	return path
 }
 
 func TestQueryExecutorPrivacyModeFiltersProjectTools(t *testing.T) {

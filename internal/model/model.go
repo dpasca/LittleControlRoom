@@ -18,6 +18,7 @@ type ProjectKind string
 const (
 	ProjectKindProject     ProjectKind = "project"
 	ProjectKindScratchTask ProjectKind = "scratch_task"
+	ProjectKindAgentTask   ProjectKind = "agent_task"
 )
 
 type RepoSyncStatus string
@@ -162,6 +163,20 @@ type SessionContextExcerptRequest struct {
 	BeforeTurns int
 	AfterTurns  int
 	MaxChars    int
+}
+
+type SessionContextExcerptCandidateRequest struct {
+	Source        SessionSource
+	SessionID     string
+	RawSessionID  string
+	ProjectPath   string
+	ProjectName   string
+	SessionFile   string
+	SessionFormat string
+	Query         string
+	BeforeTurns   int
+	AfterTurns    int
+	MaxChars      int
 }
 
 type SessionContextTurn struct {
@@ -467,7 +482,7 @@ func NormalizeSessionSource(source SessionSource) SessionSource {
 
 func NormalizeProjectKind(kind ProjectKind) ProjectKind {
 	switch kind {
-	case ProjectKindScratchTask:
+	case ProjectKindScratchTask, ProjectKindAgentTask:
 		return kind
 	default:
 		return ProjectKindProject

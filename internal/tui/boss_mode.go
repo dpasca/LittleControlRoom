@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	bossui "lcroom/internal/boss"
+	"lcroom/internal/codexapp"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -36,6 +37,16 @@ func (m Model) updateBossModeMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m Model) updateBossHostNotice(content string) (Model, tea.Cmd) {
+	content = strings.TrimSpace(content)
+	if !m.bossMode || content == "" {
+		return m, nil
+	}
+	updated, cmd := m.bossModel.Update(bossui.HostNoticeMsg{Content: content})
+	m.bossModel = normalizeBossModel(updated)
+	return m, cmd
+}
+
 func (m Model) updateBossModeWindowSize() (tea.Model, tea.Cmd) {
 	updated, cmd := m.bossModel.Update(m.bossModeWindowSizeMsg())
 	m.bossModel = normalizeBossModel(updated)
@@ -52,7 +63,20 @@ func (m Model) updateBossModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) openBossAttentionProject(index int) (tea.Model, tea.Cmd) {
-	projectPath := m.bossModel.HotProjectPath(index)
+	item := m.bossModel.HotAttentionItem(index)
+	switch item.Kind {
+	case bossui.AttentionItemAgentTask:
+		return m.openBossAttentionAgentTask(index, item.TaskID)
+	case bossui.AttentionItemProject:
+		return m.openBossAttentionProjectItem(index, item.ProjectPath)
+	default:
+		m.status = fmt.Sprintf("No attention item is mapped to Alt+%d", index+1)
+		return m, nil
+	}
+}
+
+func (m Model) openBossAttentionProjectItem(index int, projectPath string) (tea.Model, tea.Cmd) {
+	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
 		m.status = fmt.Sprintf("No attention project is mapped to Alt+%d", index+1)
 		return m, nil
@@ -67,6 +91,39 @@ func (m Model) openBossAttentionProject(index int) (tea.Model, tea.Cmd) {
 	updated, launchCmd := m.launchEmbeddedForProject(project, m.preferredEmbeddedProviderForProject(project), false, "")
 	m = normalizeUpdateModel(updated)
 	return m, tea.Batch(focusCmd, launchCmd)
+}
+
+func (m Model) openBossAttentionAgentTask(index int, taskID string) (tea.Model, tea.Cmd) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" || m.svc == nil {
+		m.status = fmt.Sprintf("Agent task for Alt+%d is no longer available", index+1)
+		return m, nil
+	}
+	task, err := m.svc.GetAgentTask(m.ctx, taskID)
+	if err != nil {
+		m.status = fmt.Sprintf("Agent task for Alt+%d is no longer available: %v", index+1, err)
+		return m, nil
+	}
+	project, err := projectSummaryForAgentTask(task)
+	if err != nil {
+		m.status = err.Error()
+		return m, nil
+	}
+	provider := codexProviderFromSessionSource(task.Provider)
+	if provider == "" {
+		provider = codexapp.ProviderCodex
+	}
+	title := strings.TrimSpace(task.Title)
+	if title == "" {
+		title = task.ID
+	}
+	m.closeBossMode(fmt.Sprintf("Opening engineer session for task %s", title))
+	updated, launchCmd := m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{
+		reveal:   true,
+		resumeID: taskSessionIDForProvider(task, provider),
+	})
+	m = normalizeUpdateModel(updated)
+	return m, launchCmd
 }
 
 func (m Model) bossModeWindowSizeMsg() tea.WindowSizeMsg {
@@ -165,7 +222,60 @@ func (m Model) bossViewContext() bossui.ViewContext {
 			Count:    m.totalProcessWarningCount(),
 		})
 	}
+	if m.browserAttention != nil {
+		view.SystemNotices = append(view.SystemNotices, bossui.ViewSystemNotice{
+			Code:     "browser_waiting",
+			Severity: "warning",
+			Summary:  bossBrowserAttentionNoticeSummary(*m.browserAttention),
+			Count:    1,
+		})
+	}
+	if m.questionNotify != nil {
+		view.SystemNotices = append(view.SystemNotices, bossui.ViewSystemNotice{
+			Code:     "engineer_input_waiting",
+			Severity: "warning",
+			Summary:  bossQuestionNoticeSummary(*m.questionNotify),
+			Count:    1,
+		})
+	}
 	return view
+}
+
+func bossBrowserAttentionNoticeSummary(notify browserAttentionNotification) string {
+	projectName := strings.TrimSpace(notify.ProjectName)
+	if projectName == "" {
+		projectName = strings.TrimSpace(notify.ProjectPath)
+	}
+	source := notify.Activity.SourceLabel()
+	if source == "" {
+		source = "browser"
+	}
+	summary := strings.TrimSpace(notify.Activity.Summary())
+	if summary == "" {
+		summary = source + " is waiting for user input."
+	}
+	if projectName != "" {
+		summary = projectName + ": " + summary
+	}
+	if notify.canOpenBrowser() {
+		return summary + " The managed browser can be shown for this same engineer session."
+	}
+	return summary + " Open the engineer session to review it."
+}
+
+func bossQuestionNoticeSummary(notify questionNotification) string {
+	projectName := strings.TrimSpace(notify.ProjectName)
+	if projectName == "" {
+		projectName = strings.TrimSpace(notify.ProjectPath)
+	}
+	summary := strings.TrimSpace(notify.Summary)
+	if summary == "" {
+		summary = notify.Provider.Label() + " is waiting for user input."
+	}
+	if projectName != "" {
+		return projectName + ": " + summary
+	}
+	return summary
 }
 
 func normalizeBossModel(model tea.Model) bossui.Model {

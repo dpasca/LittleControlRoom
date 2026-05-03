@@ -247,12 +247,18 @@ func AttentionTextWithLimit(snapshot StateSnapshot, now time.Time, limit int) st
 		now = time.Now()
 	}
 	limit = clampInt(limit, 1, hotProjectLimit)
-	if len(snapshot.HotProjects) == 0 {
+	if len(snapshot.OpenAgentTasks) == 0 && len(snapshot.HotProjects) == 0 {
 		return "Nothing needs attention yet.\nRun a scan or wait for project state to load."
 	}
-	lines := make([]string, 0, minInt(limit, len(snapshot.HotProjects)))
-	for i, project := range snapshot.HotProjects {
-		if i >= limit {
+	lines := make([]string, 0, minInt(limit, len(snapshot.OpenAgentTasks)+len(snapshot.HotProjects)))
+	for _, task := range snapshot.OpenAgentTasks {
+		if len(lines) >= limit {
+			break
+		}
+		lines = append(lines, "task | "+compactAttentionAgentTaskLine(task, now))
+	}
+	for _, project := range snapshot.HotProjects {
+		if len(lines) >= limit {
 			break
 		}
 		parts := []string{shortAttentionState(project)}
@@ -267,6 +273,36 @@ func AttentionTextWithLimit(snapshot StateSnapshot, now time.Time, limit int) st
 		lines = append(lines, strings.Join(parts, " | "))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func compactAttentionAgentTaskLine(task AgentTaskBrief, now time.Time) string {
+	parts := []string{strings.TrimSpace(task.Title)}
+	if parts[0] == "" {
+		parts[0] = strings.TrimSpace(task.ID)
+	}
+	if parts[0] == "" {
+		parts[0] = "agent task"
+	}
+	status := model.NormalizeAgentTaskStatus(task.Status)
+	if status != "" {
+		parts = append(parts, string(status))
+	}
+	if summary := strings.TrimSpace(task.Summary); summary != "" {
+		parts = append(parts, clipText(summary, 120))
+	} else if task.Provider != "" || strings.TrimSpace(task.SessionID) != "" {
+		provider := string(model.NormalizeSessionSource(task.Provider))
+		session := strings.TrimSpace(task.SessionID)
+		parts = append(parts, strings.TrimSpace(provider+" "+session))
+	} else if !task.LastTouchedAt.IsZero() {
+		parts = append(parts, relativeAge(now, task.LastTouchedAt))
+	}
+	filtered := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if text := strings.TrimSpace(part); text != "" {
+			filtered = append(filtered, text)
+		}
+	}
+	return strings.Join(filtered, " | ")
 }
 
 func operationalProjectLine(project ProjectBrief, _ time.Time) string {
@@ -314,7 +350,11 @@ func operationalAgentTaskLine(task AgentTaskBrief, now time.Time) string {
 	if title == "" {
 		title = "untitled task"
 	}
-	parts := []string{fmt.Sprintf("%s (%s)", title, strings.TrimSpace(task.ID))}
+	taskID := strings.TrimSpace(task.ID)
+	parts := []string{fmt.Sprintf("%s (%s)", title, taskID)}
+	if taskID != "" {
+		parts = append(parts, "show: agent_task:"+taskID)
+	}
 	if parent := strings.TrimSpace(task.ParentTaskID); parent != "" {
 		parts = append(parts, "parent: "+parent)
 	}

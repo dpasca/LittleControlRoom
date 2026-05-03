@@ -43,6 +43,7 @@ type Model struct {
 	unsub func()
 
 	allProjects             []model.ProjectSummary
+	openAgentTasks          []model.AgentTask
 	orphanedWorktreesByRoot map[string][]model.ProjectSummary
 	projects                []model.ProjectSummary
 	projectRows             []projectListRow
@@ -1214,6 +1215,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.excludeProjectPatterns = append([]string(nil), msg.excludeProjectPatterns...)
 		m.allProjects = m.preserveRefreshingAssessmentDisplays(msg.projects)
+		m.openAgentTasks = append([]model.AgentTask(nil), msg.openAgentTasks...)
 		m.orphanedWorktreesByRoot = msg.orphanedWorktreesByRoot
 		m.rebuildProjectList(selectedPath)
 		if !startupEmptyCache && (strings.TrimSpace(m.status) == "" || m.status == initialProjectsStatus || len(m.projects) == 0) {
@@ -1544,6 +1546,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.err = nil
 		m.status = msg.status
+		if m.bossMode && strings.TrimSpace(msg.status) != "" {
+			var hostCmd tea.Cmd
+			m, hostCmd = m.updateBossHostNotice("Browser handoff: " + strings.TrimSpace(msg.status))
+			return m, hostCmd
+		}
 		return m, nil
 	case codexArtifactPreviewMsg:
 		return m.applyCodexArtifactPreviewMsg(msg)
@@ -3251,6 +3258,15 @@ func (m Model) renderProjectList(width, height int) string {
 		statusStyle := m.projectListAssessmentStatusStyle(p)
 		summaryStyle := m.projectListAssessmentSummaryStyle(p)
 		nameStyle := lipgloss.NewStyle().Width(projectW).Bold(selectedRow)
+		if task, ok := m.agentTaskForProjectPath(p.Path); ok {
+			statusText = agentTaskListStatus(task)
+			assessmentText = agentTaskListSummary(task)
+			statusStyle = agentTaskStatusStyle(task)
+			summaryStyle = detailValueStyle
+			if model.NormalizeAgentTaskStatus(task.Status) == model.AgentTaskStatusWaiting {
+				summaryStyle = detailWarningStyle
+			}
+		}
 		if browserAttention, ok := m.projectPendingBrowserAttention(p.Path); ok {
 			statusText = "browser"
 			assessmentText = browserAttentionListSummary(browserAttention)
@@ -3284,8 +3300,11 @@ func (m Model) renderProjectList(width, height int) string {
 				summaryStyle = detailWarningStyle
 			}
 		default:
-			if model.NormalizeProjectKind(p.Kind) == model.ProjectKindScratchTask {
+			switch model.NormalizeProjectKind(p.Kind) {
+			case model.ProjectKindScratchTask:
 				name = "[T] " + name
+			case model.ProjectKindAgentTask:
+				name = "[A] " + name
 			}
 			if projectIsWorktreeRoot(p) {
 				if badge := worktreeLinkedBadgeSummary(0, 0, 0, 0, orphanedCount); badge != "" {
@@ -3357,8 +3376,11 @@ func projectListHasKindSections(projects []model.ProjectSummary) bool {
 }
 
 func projectListSectionLabel(project model.ProjectSummary) string {
-	if model.NormalizeProjectKind(project.Kind) == model.ProjectKindScratchTask {
+	switch model.NormalizeProjectKind(project.Kind) {
+	case model.ProjectKindScratchTask:
 		return "Scratch Tasks"
+	case model.ProjectKindAgentTask:
+		return "Agent Tasks"
 	}
 	return "Projects"
 }
@@ -3402,6 +3424,9 @@ func (m Model) renderDetailContent(width int) string {
 			return "No AI-linked folder selected\nUse /view to switch folders"
 		}
 		return "Select a project"
+	}
+	if task, ok := m.agentTaskForProjectPath(p.Path); ok {
+		return m.renderAgentTaskDetailContent(task, width)
 	}
 	d := m.detail
 	if d.Summary.Path != "" && d.Summary.Path != p.Path {
@@ -4378,6 +4403,10 @@ func (m Model) openRemoveActionForSelection() (tea.Model, tea.Cmd) {
 	}
 	if model.NormalizeProjectKind(project.Kind) == model.ProjectKindScratchTask {
 		return m, m.openScratchTaskActionConfirmForSelection()
+	}
+	if model.NormalizeProjectKind(project.Kind) == model.ProjectKindAgentTask {
+		m.status = "Agent tasks are managed from Boss Chat for now"
+		return m, nil
 	}
 	if row, project, ok := m.selectedProjectRow(); ok && row.Kind == projectListRowWorktree && project.WorktreeKind == model.WorktreeKindLinked {
 		return m, m.openWorktreeRemoveConfirmForSelection()

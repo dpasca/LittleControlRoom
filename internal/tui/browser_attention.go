@@ -73,6 +73,48 @@ func browserAttentionDetailSummary(state projectBrowserAttentionState) string {
 	return summary + " Open the embedded session to review the request."
 }
 
+func bossBrowserAttentionHostNoticeForSnapshot(projectPath string, hadPrevious bool, previous, snapshot codexapp.Snapshot) string {
+	state, ok := browserAttentionFromSnapshot(snapshot)
+	if !ok {
+		return ""
+	}
+	if previousState, previousWaiting := browserAttentionFromSnapshot(previous); hadPrevious && previousWaiting {
+		if bossBrowserAttentionFingerprint(previousState) == bossBrowserAttentionFingerprint(state) {
+			return ""
+		}
+	}
+	projectName := strings.TrimSpace(filepath.Base(projectPath))
+	if projectName == "." || projectName == string(filepath.Separator) {
+		projectName = strings.TrimSpace(projectPath)
+	}
+	provider := embeddedProvider(snapshot).Label()
+	if provider == "" {
+		provider = "engineer"
+	}
+	summary := strings.TrimSpace(state.Activity.Summary())
+	if summary == "" {
+		summary = "Browser is waiting for user input."
+	}
+	lines := []string{
+		fmt.Sprintf("%s browser update for %s: %s", provider, projectName, summary),
+		"",
+		"If the browser window is open, finish that browser step there. Then come back to Boss Chat and ask what the engineer found; I will read the task output before recommending the next move.",
+	}
+	return strings.Join(lines, "\n")
+}
+
+func bossBrowserAttentionFingerprint(state projectBrowserAttentionState) string {
+	activity := state.Activity.Normalize()
+	return strings.Join([]string{
+		string(state.Provider.Normalized()),
+		string(activity.State),
+		strings.TrimSpace(activity.ServerName),
+		strings.TrimSpace(activity.ToolName),
+		strings.TrimSpace(state.ManagedBrowserSessionKey),
+		strings.TrimSpace(state.OpenURL),
+	}, "\x00")
+}
+
 func (m Model) browserAttentionCount() int {
 	count := 0
 	for _, snapshot := range m.codexSnapshots {

@@ -21,9 +21,11 @@ import (
 // classifier work after embedded turns, so they need a bit more budget than
 // raw git metadata reads alone.
 const tuiProjectStatusRefreshTimeout = 30 * time.Second
+const tuiOpenAgentTaskLimit = 50
 
 type projectsMsg struct {
 	projects                []model.ProjectSummary
+	openAgentTasks          []model.AgentTask
 	orphanedWorktreesByRoot map[string][]model.ProjectSummary
 	excludeProjectPatterns  []string
 	err                     error
@@ -406,6 +408,9 @@ func structureActionDetailPath(event events.Event, currentSelectedPath string) s
 }
 
 func (m *Model) requestProjectDetailViewCmd(path string) tea.Cmd {
+	if _, ok := m.agentTaskForProjectPath(path); ok {
+		return nil
+	}
 	return m.requestDetailReloadCmd(normalizeProjectPath(path))
 }
 
@@ -433,9 +438,14 @@ func (m Model) loadProjectsCmd() tea.Cmd {
 		if err != nil {
 			return projectsMsg{err: err}
 		}
+		openAgentTasks, agentTaskErr := m.svc.ListOpenAgentTasks(m.ctx, tuiOpenAgentTaskLimit)
 		patterns, filterErr := config.LoadExcludeProjectPatterns(m.currentConfigPath(), m.excludeProjectPatterns)
+		if filterErr == nil && agentTaskErr != nil {
+			filterErr = fmt.Errorf("agent tasks unavailable: %w", agentTaskErr)
+		}
 		return projectsMsg{
 			projects:                projects,
+			openAgentTasks:          openAgentTasks,
 			orphanedWorktreesByRoot: buildOrphanedWorktreeMap(summaries),
 			excludeProjectPatterns:  patterns,
 			filterErr:               filterErr,

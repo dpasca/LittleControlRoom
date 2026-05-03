@@ -170,6 +170,48 @@ func (s *Store) GetSessionContextExcerpt(ctx context.Context, req model.SessionC
 	if err != nil {
 		return model.SessionContextExcerpt{}, err
 	}
+	return sessionContextExcerptFromCandidate(ctx, candidate, model.SessionContextExcerptRequest{
+		SessionID:   candidate.SessionID,
+		Query:       req.Query,
+		BeforeTurns: req.BeforeTurns,
+		AfterTurns:  req.AfterTurns,
+		MaxChars:    req.MaxChars,
+	})
+}
+
+func (s *Store) GetSessionContextExcerptFromCandidate(ctx context.Context, req model.SessionContextExcerptCandidateRequest) (model.SessionContextExcerpt, error) {
+	source, sessionID, rawSessionID := model.NormalizeSessionIdentity(req.Source, req.SessionFormat, req.SessionID, req.RawSessionID)
+	if strings.TrimSpace(sessionID) == "" {
+		return model.SessionContextExcerpt{}, errors.New("session excerpt needs a session_id")
+	}
+	candidate := contextSessionCandidate{
+		SessionID:     sessionID,
+		Source:        source,
+		RawSessionID:  rawSessionID,
+		ProjectPath:   filepath.Clean(strings.TrimSpace(req.ProjectPath)),
+		ProjectName:   strings.TrimSpace(req.ProjectName),
+		SessionFile:   strings.TrimSpace(req.SessionFile),
+		SessionFormat: strings.TrimSpace(req.SessionFormat),
+	}
+	if candidate.ProjectPath == "." {
+		candidate.ProjectPath = ""
+	}
+	if candidate.ProjectName == "" {
+		candidate.ProjectName = contextProjectName(candidate.ProjectPath, "")
+	}
+	if strings.TrimSpace(candidate.SessionFile) == "" {
+		return model.SessionContextExcerpt{}, fmt.Errorf("engineer session has no readable transcript artifact: %s", sessionID)
+	}
+	return sessionContextExcerptFromCandidate(ctx, candidate, model.SessionContextExcerptRequest{
+		SessionID:   candidate.SessionID,
+		Query:       req.Query,
+		BeforeTurns: req.BeforeTurns,
+		AfterTurns:  req.AfterTurns,
+		MaxChars:    req.MaxChars,
+	})
+}
+
+func sessionContextExcerptFromCandidate(ctx context.Context, candidate contextSessionCandidate, req model.SessionContextExcerptRequest) (model.SessionContextExcerpt, error) {
 	items, err := sessionContextTranscriptItems(ctx, candidate)
 	if err != nil {
 		return model.SessionContextExcerpt{}, err

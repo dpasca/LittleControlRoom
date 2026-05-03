@@ -465,7 +465,12 @@ func projectWorktreeRootPath(project model.ProjectSummary) string {
 }
 
 func projectUsesRepoUI(project model.ProjectSummary) bool {
-	return model.NormalizeProjectKind(project.Kind) != model.ProjectKindScratchTask
+	switch model.NormalizeProjectKind(project.Kind) {
+	case model.ProjectKindScratchTask, model.ProjectKindAgentTask:
+		return false
+	default:
+		return true
+	}
 }
 
 func projectIsOrphanedWorktree(project model.ProjectSummary) bool {
@@ -641,6 +646,7 @@ func (m Model) existingWorktreeCandidates(projectPath string) []model.ProjectSum
 
 func (m *Model) rebuildProjectList(selectedPath string) {
 	sorted := append([]model.ProjectSummary(nil), m.allProjects...)
+	sorted = append(sorted, m.agentTaskProjectSummaries()...)
 	m.sortProjects(sorted)
 	filtered := filterProjects(sorted, m.visibility, m.excludeProjectPatterns, m.projectFilter)
 	if m.privacyMode {

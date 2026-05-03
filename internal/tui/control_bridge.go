@@ -290,6 +290,7 @@ func (m Model) executeAgentTaskCreateControlWithOutcome(input control.AgentTaskC
 		m.status = "Control request failed: " + err.Error()
 		return controlInvocationOutcome{model: m, err: err}
 	}
+	m.upsertOpenAgentTask(task)
 	if strings.TrimSpace(input.Prompt) == "" {
 		m.status = "Created agent task " + task.ID
 		return controlInvocationOutcome{model: m}
@@ -405,6 +406,7 @@ func (m Model) executeAgentTaskCloseControlWithOutcome(input control.AgentTaskCl
 		m.status = "Control request failed: " + err.Error()
 		return controlInvocationOutcome{model: m, err: err}
 	}
+	m.upsertOpenAgentTask(task)
 	m.status = fmt.Sprintf("Agent task %s is now %s", task.ID, task.Status)
 	return controlInvocationOutcome{model: m}
 }
@@ -516,10 +518,27 @@ func projectSummaryForAgentTask(task model.AgentTask) (model.ProjectSummary, err
 	if name == "" {
 		name = task.ID
 	}
+	source := agentTaskDisplaySource(task)
+	provider := codexProviderFromSessionSource(source)
+	sessionID := taskSessionIDForProvider(task, provider)
+	format := agentTaskSessionFormat(source)
+	summary := agentTaskListSummary(task)
 	return model.ProjectSummary{
-		Path:          path,
-		Name:          name,
-		PresentOnDisk: true,
+		Path:                            path,
+		Name:                            name,
+		Kind:                            model.ProjectKindAgentTask,
+		LastActivity:                    agentTaskLastActivity(task),
+		Status:                          agentTaskProjectStatus(task),
+		AttentionScore:                  agentTaskAttentionScore(task),
+		PresentOnDisk:                   true,
+		ManuallyAdded:                   true,
+		LatestSessionSource:             source,
+		LatestSessionID:                 sessionID,
+		LatestRawSessionID:              sessionID,
+		LatestSessionFormat:             format,
+		LatestSessionClassification:     model.ClassificationCompleted,
+		LatestSessionClassificationType: agentTaskClassificationType(task),
+		LatestSessionSummary:            summary,
 	}, nil
 }
 

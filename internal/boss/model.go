@@ -78,6 +78,10 @@ type StateLoadedMsg struct {
 	err      error
 }
 
+type HostNoticeMsg struct {
+	Content string
+}
+
 type AssistantReplyMsg struct {
 	response       AssistantResponse
 	err            error
@@ -127,6 +131,19 @@ type bossSessionsListedMsg struct {
 type TickMsg time.Time
 
 type ExitMsg struct{}
+
+type AttentionItemKind string
+
+const (
+	AttentionItemProject   AttentionItemKind = "project"
+	AttentionItemAgentTask AttentionItemKind = "agent_task"
+)
+
+type AttentionItem struct {
+	Kind        AttentionItemKind
+	ProjectPath string
+	TaskID      string
+}
 
 type bossLayout struct {
 	width            int
@@ -194,7 +211,7 @@ func newModel(ctx context.Context, svc *service.Service, embedded bool) Model {
 
 func IsMessage(msg tea.Msg) bool {
 	switch msg.(type) {
-	case StateLoadedMsg, AssistantReplyMsg, assistantStreamStartedMsg, assistantStreamMsg, TickMsg, ExitMsg, bossSessionLoadedMsg, bossSessionSavedMsg, bossSessionsListedMsg, bossSkillsInventoryMsg, ControlInvocationResultMsg:
+	case StateLoadedMsg, HostNoticeMsg, AssistantReplyMsg, assistantStreamStartedMsg, assistantStreamMsg, TickMsg, ExitMsg, bossSessionLoadedMsg, bossSessionSavedMsg, bossSessionsListedMsg, bossSkillsInventoryMsg, ControlInvocationResultMsg:
 		return true
 	default:
 		return false
@@ -230,10 +247,32 @@ func (m Model) StatusText() string {
 }
 
 func (m Model) HotProjectPath(index int) string {
-	if index < 0 || index >= len(m.snapshot.HotProjects) {
+	item := m.HotAttentionItem(index)
+	if item.Kind != AttentionItemProject {
 		return ""
 	}
-	return strings.TrimSpace(m.snapshot.HotProjects[index].Path)
+	return strings.TrimSpace(item.ProjectPath)
+}
+
+func (m Model) HotAttentionItem(index int) AttentionItem {
+	if index < 0 {
+		return AttentionItem{}
+	}
+	if index < len(m.snapshot.OpenAgentTasks) {
+		task := m.snapshot.OpenAgentTasks[index]
+		return AttentionItem{
+			Kind:   AttentionItemAgentTask,
+			TaskID: strings.TrimSpace(task.ID),
+		}
+	}
+	projectIndex := index - len(m.snapshot.OpenAgentTasks)
+	if projectIndex < 0 || projectIndex >= len(m.snapshot.HotProjects) {
+		return AttentionItem{}
+	}
+	return AttentionItem{
+		Kind:        AttentionItemProject,
+		ProjectPath: strings.TrimSpace(m.snapshot.HotProjects[projectIndex].Path),
+	}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -255,6 +294,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.syncLayout(false)
 		return m, nil
+	case HostNoticeMsg:
+		return m.applyHostNotice(msg)
 	case AssistantReplyMsg:
 		return m.applyAssistantReply(msg.response, msg.err, msg.snapshot, msg.stateErr, msg.stateRefreshed)
 	case assistantStreamStartedMsg:
@@ -826,8 +867,9 @@ func (m Model) attentionContent(width, height int) string {
 func (m Model) renderAttentionRows(width, limit int) string {
 	width = maxInt(24, width)
 	limit = clampInt(limit, 1, hotProjectLimit)
-	if len(m.snapshot.HotProjects) == 0 {
-		return bossMutedStyle.Render(fitLine("Alt+1  waiting for projects", width))
+	totalRows := len(m.snapshot.OpenAgentTasks) + len(m.snapshot.HotProjects)
+	if totalRows == 0 {
+		return bossMutedStyle.Render(fitLine("Alt+1  waiting for projects or tasks", width))
 	}
 
 	keyW := 5
@@ -843,35 +885,66 @@ func (m Model) renderAttentionRows(width, limit int) string {
 		summaryW += shift
 	}
 
-	rows := make([]string, 0, minInt(limit, len(m.snapshot.HotProjects)))
-	for i, project := range m.snapshot.HotProjects {
-		if i >= limit {
+	rows := make([]string, 0, minInt(limit, totalRows))
+	for _, task := range m.snapshot.OpenAgentTasks {
+		if len(rows) >= limit {
 			break
 		}
-		key := bossHotkeyStyle.Width(keyW).Render(fmt.Sprintf("Alt+%d", i+1))
-		flags := bossRepoFlagStyle(project).Width(flagW).Align(lipgloss.Left).Render(bossRepoFlagText(project))
-		assessmentText, assessmentStyle := bossAssessmentCell(project)
-		assessment := assessmentStyle.Width(assessmentW).Render(fitLine(assessmentText, assessmentW))
-		name := bossProjectNameStyle.Width(nameW).Render(fitLine(compactProjectName(project), nameW))
-		summaryStyle := bossSummaryStyle(project)
-		if m.summaryFlashActive(project.Path) {
-			summaryStyle = bossSummaryFlashStyle
+		rows = append(rows, m.renderAgentTaskAttentionRow(task, len(rows), keyW, flagW, assessmentW, nameW, summaryW, width))
+	}
+	for _, project := range m.snapshot.HotProjects {
+		if len(rows) >= limit {
+			break
 		}
-		summary := summaryStyle.Width(summaryW).Render(fitLine(bossProjectSummaryText(project, m.now()), summaryW))
-		rows = append(rows, fitStyledLine(lipgloss.JoinHorizontal(
-			lipgloss.Top,
-			key,
-			" ",
-			flags,
-			" ",
-			assessment,
-			"  ",
-			name,
-			"  ",
-			summary,
-		), width))
+		rows = append(rows, m.renderProjectAttentionRow(project, len(rows), keyW, flagW, assessmentW, nameW, summaryW, width))
 	}
 	return strings.Join(rows, "\n")
+}
+
+func (m Model) renderProjectAttentionRow(project ProjectBrief, index, keyW, flagW, assessmentW, nameW, summaryW, width int) string {
+	key := bossHotkeyStyle.Width(keyW).Render(fmt.Sprintf("Alt+%d", index+1))
+	flags := bossRepoFlagStyle(project).Width(flagW).Align(lipgloss.Left).Render(bossRepoFlagText(project))
+	assessmentText, assessmentStyle := bossAssessmentCell(project)
+	assessment := assessmentStyle.Width(assessmentW).Render(fitLine(assessmentText, assessmentW))
+	name := bossProjectNameStyle.Width(nameW).Render(fitLine(compactProjectName(project), nameW))
+	summaryStyle := bossSummaryStyle(project)
+	if m.summaryFlashActive(project.Path) {
+		summaryStyle = bossSummaryFlashStyle
+	}
+	summary := summaryStyle.Width(summaryW).Render(fitLine(bossProjectSummaryText(project, m.now()), summaryW))
+	return fitStyledLine(lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		key,
+		" ",
+		flags,
+		" ",
+		assessment,
+		"  ",
+		name,
+		"  ",
+		summary,
+	), width)
+}
+
+func (m Model) renderAgentTaskAttentionRow(task AgentTaskBrief, index, keyW, flagW, assessmentW, nameW, summaryW, width int) string {
+	key := bossHotkeyStyle.Width(keyW).Render(fmt.Sprintf("Alt+%d", index+1))
+	flags := bossTaskFlagStyle.Width(flagW).Align(lipgloss.Left).Render("T")
+	assessmentText, assessmentStyle := bossAgentTaskStatusCell(task)
+	assessment := assessmentStyle.Width(assessmentW).Render(fitLine(assessmentText, assessmentW))
+	name := bossTaskNameStyle.Width(nameW).Render(fitLine(compactAgentTaskTitle(task), nameW))
+	summary := bossSummaryTextStyle.Width(summaryW).Render(fitLine(bossAgentTaskSummaryText(task, m.now()), summaryW))
+	return fitStyledLine(lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		key,
+		" ",
+		flags,
+		" ",
+		assessment,
+		"  ",
+		name,
+		"  ",
+		summary,
+	), width)
 }
 
 func bossRepoFlagText(project ProjectBrief) string {
@@ -983,6 +1056,60 @@ func bossSummaryStyle(project ProjectBrief) lipgloss.Style {
 		return bossMutedStyle
 	}
 	return bossSummaryTextStyle
+}
+
+func compactAgentTaskTitle(task AgentTaskBrief) string {
+	title := strings.TrimSpace(task.Title)
+	if title == "" {
+		title = strings.TrimSpace(task.ID)
+	}
+	if title == "" {
+		return "agent task"
+	}
+	return title
+}
+
+func bossAgentTaskStatusCell(task AgentTaskBrief) (string, lipgloss.Style) {
+	switch model.NormalizeAgentTaskStatus(task.Status) {
+	case model.AgentTaskStatusWaiting:
+		return "waiting", bossAssessmentWaitingStyle
+	case model.AgentTaskStatusCompleted:
+		return "done", bossAssessmentDoneStyle
+	case model.AgentTaskStatusArchived:
+		return "archived", bossMutedStyle
+	default:
+		if task.Provider != "" || strings.TrimSpace(task.SessionID) != "" {
+			return "working", bossAssessmentWorkingStyle
+		}
+		return "active", bossAssessmentRunningStyle
+	}
+}
+
+func bossAgentTaskSummaryText(task AgentTaskBrief, now time.Time) string {
+	if summary := strings.TrimSpace(task.Summary); summary != "" {
+		return summary
+	}
+	parts := make([]string, 0, 4)
+	if taskID := strings.TrimSpace(task.ID); taskID != "" {
+		parts = append(parts, taskID)
+	}
+	if provider := model.NormalizeSessionSource(task.Provider); provider != "" {
+		label := string(provider)
+		if session := strings.TrimSpace(task.SessionID); session != "" {
+			label += " " + session
+		}
+		parts = append(parts, label)
+	}
+	if resources := compactAgentTaskResources(task.Resources); resources != "" {
+		parts = append(parts, resources)
+	}
+	if len(parts) == 0 && !task.LastTouchedAt.IsZero() {
+		parts = append(parts, "touched "+relativeAge(now, task.LastTouchedAt))
+	}
+	if len(parts) == 0 {
+		return "open delegated task"
+	}
+	return strings.Join(parts, " | ")
 }
 
 func bossAttentionStatusLabel(status model.ProjectStatus) string {
@@ -1137,6 +1264,8 @@ var (
 	bossMutedStyle                  = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(bossPanelBackground)
 	bossHotkeyStyle                 = lipgloss.NewStyle().Foreground(bossPanelAccent).Background(bossPanelBackground).Bold(true)
 	bossProjectNameStyle            = lipgloss.NewStyle().Foreground(bossPanelText).Background(bossPanelBackground).Bold(true)
+	bossTaskFlagStyle               = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Background(bossPanelBackground).Bold(true)
+	bossTaskNameStyle               = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Background(bossPanelBackground).Bold(true)
 	bossRepoWarningStyle            = lipgloss.NewStyle().Foreground(lipgloss.Color("178")).Background(bossPanelBackground).Bold(true)
 	bossRepoDangerStyle             = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Background(bossPanelBackground).Bold(true)
 	bossRepoConflictStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Background(bossPanelBackground).Bold(true)

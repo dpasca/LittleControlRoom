@@ -208,6 +208,39 @@ func TestPanelTextsStayCompact(t *testing.T) {
 	}
 }
 
+func TestAttentionTextIncludesAgentTasksBeforeProjects(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	snapshot := StateSnapshot{
+		OpenAgentTasks: []AgentTaskBrief{{
+			ID:        "agt_cursor",
+			Title:     "Revoke Cursor GitHub access",
+			Status:    model.AgentTaskStatusActive,
+			Provider:  model.SessionSourceCodex,
+			SessionID: "thread-agent-1",
+		}},
+		HotProjects: []ProjectBrief{{
+			Name:           "Alpha",
+			Status:         model.StatusIdle,
+			AttentionScore: 20,
+			LatestSummary:  "Ready for review.",
+		}},
+	}
+
+	attention := AttentionTextWithLimit(snapshot, now, 2)
+	lines := strings.Split(attention, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("attention lines = %d, want 2:\n%s", len(lines), attention)
+	}
+	if !strings.Contains(lines[0], "task | Revoke Cursor GitHub access") || !strings.Contains(lines[0], "codex thread-agent-1") {
+		t.Fatalf("first attention line should describe agent task:\n%s", attention)
+	}
+	if !strings.Contains(lines[1], "Ready for review.") {
+		t.Fatalf("second attention line should keep project item:\n%s", attention)
+	}
+}
+
 func TestSelectRecentAttentionProjectsPrefersPresentRecentProjects(t *testing.T) {
 	t.Parallel()
 

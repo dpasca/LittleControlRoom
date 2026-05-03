@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"lcroom/internal/codexskills"
+	"lcroom/internal/codexstate"
 	"lcroom/internal/config"
 	"lcroom/internal/control"
 	"lcroom/internal/model"
@@ -80,12 +81,23 @@ type bossStoreReader interface {
 	GetSessionContextExcerpt(ctx context.Context, req model.SessionContextExcerptRequest) (model.SessionContextExcerpt, error)
 }
 
+type bossAgentTaskReader interface {
+	GetAgentTask(ctx context.Context, id string) (model.AgentTask, error)
+	ListAgentTasks(ctx context.Context, filter model.AgentTaskFilter) ([]model.AgentTask, error)
+}
+
+type bossCandidateExcerptReader interface {
+	GetSessionContextExcerptFromCandidate(ctx context.Context, req model.SessionContextExcerptCandidateRequest) (model.SessionContextExcerpt, error)
+}
+
 type QueryExecutor struct {
-	store           bossStoreReader
-	bossSessions    *bossSessionStore
-	processReporter processReportFunc
-	nowFn           func() time.Time
-	codexHome       string
+	store              bossStoreReader
+	bossSessions       *bossSessionStore
+	processReporter    processReportFunc
+	nowFn              func() time.Time
+	codexHome          string
+	codexHomeFallbacks []string
+	openCodeHome       string
 }
 
 type ViewContext struct {
@@ -657,7 +669,7 @@ func (e *QueryExecutor) contextCommand(ctx context.Context, action bossAction, v
 	}
 	parsed, err := parseContextCommand(command)
 	if err != nil {
-		return clippedToolResult(bossActionContextCommand, "Context command error: "+err.Error()+"\nAllowed forms:\n- ctx search engineer \"query\" --project <name-or-path> --limit 5\n- ctx show engineer:<session-id> --query \"query\" --before 1 --after 2 --max-chars 6000\n- ctx recent engineer --project <name-or-path> --limit 5\n- ctx search boss \"query\" --limit 5"), nil
+		return clippedToolResult(bossActionContextCommand, "Context command error: "+err.Error()+"\nAllowed forms:\n- ctx search engineer \"query\" --project <name-or-path> --limit 5\n- ctx show engineer:<session-id> --query \"query\" --before 1 --after 2 --max-chars 6000\n- ctx show agent_task:<task-id> --before 1 --after 4 --max-chars 6000\n- ctx recent engineer --project <name-or-path> --limit 5\n- ctx search boss \"query\" --limit 5"), nil
 	}
 	switch parsed.Verb {
 	case "search":
@@ -779,9 +791,16 @@ func (e *QueryExecutor) contextCommandShow(ctx context.Context, parsed parsedCon
 	if e == nil || e.store == nil {
 		return clippedToolResult(bossActionContextCommand, "Engineer exchange lookup is not connected."), nil
 	}
-	sessionID, ok := strings.CutPrefix(strings.TrimSpace(parsed.Handle), "engineer:")
+	handle := strings.TrimSpace(parsed.Handle)
+	if taskID, ok := strings.CutPrefix(handle, "agent_task:"); ok {
+		if strings.TrimSpace(taskID) == "" {
+			return clippedToolResult(bossActionContextCommand, "Context command error: ctx show needs an agent_task:<task-id> handle."), nil
+		}
+		return e.contextCommandShowAgentTask(ctx, taskID, parsed, view)
+	}
+	sessionID, ok := strings.CutPrefix(handle, "engineer:")
 	if !ok || strings.TrimSpace(sessionID) == "" {
-		return clippedToolResult(bossActionContextCommand, "Context command error: ctx show needs an engineer:<session-id> handle."), nil
+		return clippedToolResult(bossActionContextCommand, "Context command error: ctx show needs an engineer:<session-id> or agent_task:<task-id> handle."), nil
 	}
 	excerpt, err := e.store.GetSessionContextExcerpt(ctx, model.SessionContextExcerptRequest{
 		SessionID:   sessionID,
@@ -791,12 +810,93 @@ func (e *QueryExecutor) contextCommandShow(ctx context.Context, parsed parsedCon
 		MaxChars:    clampContextCommandCount(parsed.MaxChars, 6000, 12000),
 	})
 	if err != nil {
-		return bossToolResult{}, err
+		var fallbackErr error
+		excerpt, fallbackErr = e.contextCommandShowEngineerViaAgentTask(ctx, sessionID, parsed, view)
+		if fallbackErr != nil {
+			return bossToolResult{}, fallbackErr
+		}
 	}
 	if e.excerptHiddenByPrivacy(ctx, excerpt, view) {
 		return clippedToolResult(bossActionContextCommand, "Engineer exchange is hidden while privacy mode is enabled."), nil
 	}
 	return clippedToolResult(bossActionContextCommand, formatEngineerExcerpt(excerpt, e.now())), nil
+}
+
+func (e *QueryExecutor) contextCommandShowAgentTask(ctx context.Context, taskID string, parsed parsedContextCommand, view ViewContext) (bossToolResult, error) {
+	excerpt, err := e.agentTaskContextExcerpt(ctx, strings.TrimSpace(taskID), parsed, view)
+	if err != nil {
+		return bossToolResult{}, err
+	}
+	return clippedToolResult(bossActionContextCommand, formatEngineerExcerpt(excerpt, e.now())), nil
+}
+
+func (e *QueryExecutor) contextCommandShowEngineerViaAgentTask(ctx context.Context, sessionID string, parsed parsedContextCommand, view ViewContext) (model.SessionContextExcerpt, error) {
+	if view.PrivacyMode {
+		return model.SessionContextExcerpt{}, errors.New("engineer exchange is hidden while privacy mode is enabled")
+	}
+	taskReader, ok := e.store.(bossAgentTaskReader)
+	if !ok {
+		return model.SessionContextExcerpt{}, errors.New("agent task lookup is not connected")
+	}
+	tasks, err := taskReader.ListAgentTasks(ctx, model.AgentTaskFilter{IncludeArchived: true, Limit: 100})
+	if err != nil {
+		return model.SessionContextExcerpt{}, err
+	}
+	for _, task := range tasks {
+		provider, matchedSessionID, ok := agentTaskMatchingEngineerSession(task, sessionID)
+		if !ok {
+			continue
+		}
+		return e.agentTaskContextExcerptForSession(ctx, task, provider, matchedSessionID, parsed, view)
+	}
+	return model.SessionContextExcerpt{}, fmt.Errorf("engineer session not found: %s", strings.TrimSpace(sessionID))
+}
+
+func (e *QueryExecutor) agentTaskContextExcerpt(ctx context.Context, taskID string, parsed parsedContextCommand, view ViewContext) (model.SessionContextExcerpt, error) {
+	if view.PrivacyMode {
+		return model.SessionContextExcerpt{}, errors.New("agent task exchange is hidden while privacy mode is enabled")
+	}
+	taskReader, ok := e.store.(bossAgentTaskReader)
+	if !ok {
+		return model.SessionContextExcerpt{}, errors.New("agent task lookup is not connected")
+	}
+	task, err := taskReader.GetAgentTask(ctx, taskID)
+	if err != nil {
+		return model.SessionContextExcerpt{}, err
+	}
+	provider, sessionID, ok := primaryAgentTaskEngineerSession(task)
+	if !ok {
+		return model.SessionContextExcerpt{}, fmt.Errorf("agent task %s has no tracked engineer session yet", task.ID)
+	}
+	return e.agentTaskContextExcerptForSession(ctx, task, provider, sessionID, parsed, view)
+}
+
+func (e *QueryExecutor) agentTaskContextExcerptForSession(ctx context.Context, task model.AgentTask, provider model.SessionSource, sessionID string, parsed parsedContextCommand, view ViewContext) (model.SessionContextExcerpt, error) {
+	if view.PrivacyMode {
+		return model.SessionContextExcerpt{}, errors.New("agent task exchange is hidden while privacy mode is enabled")
+	}
+	excerptReader, ok := e.store.(bossCandidateExcerptReader)
+	if !ok {
+		return model.SessionContextExcerpt{}, errors.New("agent task transcript lookup is not connected")
+	}
+	source, canonicalSessionID, rawSessionID := model.NormalizeSessionIdentity(provider, agentTaskSessionFormat(provider), sessionID, "")
+	sessionFile := e.agentTaskSessionFile(source, rawSessionID, task)
+	if strings.TrimSpace(sessionFile) == "" {
+		return model.SessionContextExcerpt{}, fmt.Errorf("agent task %s has %s session %s, but no transcript artifact was found", task.ID, source, rawSessionID)
+	}
+	return excerptReader.GetSessionContextExcerptFromCandidate(ctx, model.SessionContextExcerptCandidateRequest{
+		Source:        source,
+		SessionID:     canonicalSessionID,
+		RawSessionID:  rawSessionID,
+		ProjectPath:   task.WorkspacePath,
+		ProjectName:   task.Title,
+		SessionFile:   sessionFile,
+		SessionFormat: agentTaskSessionFormat(source),
+		Query:         parsed.Query,
+		BeforeTurns:   clampContextCommandCount(parsed.BeforeTurns, 1, 6),
+		AfterTurns:    clampContextCommandCount(parsed.AfterTurns, 2, 6),
+		MaxChars:      clampContextCommandCount(parsed.MaxChars, 6000, 12000),
+	})
 }
 
 func (e *QueryExecutor) contextCommandRecentEngineer(ctx context.Context, parsed parsedContextCommand, view ViewContext) (bossToolResult, error) {
@@ -853,6 +953,189 @@ func (e *QueryExecutor) contextCommandProjectPath(ctx context.Context, parsed pa
 		action.ProjectName = project
 	}
 	return e.resolveProjectPath(ctx, action, view)
+}
+
+func primaryAgentTaskEngineerSession(task model.AgentTask) (model.SessionSource, string, bool) {
+	provider := model.NormalizeSessionSource(task.Provider)
+	sessionID := strings.TrimSpace(task.SessionID)
+	if provider != model.SessionSourceUnknown && sessionID != "" {
+		return provider, sessionID, true
+	}
+	for _, resource := range task.Resources {
+		if model.NormalizeAgentTaskResourceKind(resource.Kind) != model.AgentTaskResourceEngineerSession {
+			continue
+		}
+		provider := model.NormalizeSessionSource(resource.Provider)
+		sessionID := strings.TrimSpace(resource.SessionID)
+		if sessionID == "" {
+			sessionID = strings.TrimSpace(resource.RefID)
+		}
+		if provider != model.SessionSourceUnknown && sessionID != "" {
+			return provider, sessionID, true
+		}
+	}
+	return model.SessionSourceUnknown, "", false
+}
+
+func agentTaskMatchingEngineerSession(task model.AgentTask, wantedSessionID string) (model.SessionSource, string, bool) {
+	wantedSource, _, wantedRaw := model.NormalizeSessionIdentity(model.SessionSourceUnknown, "", wantedSessionID, "")
+	matches := func(provider model.SessionSource, sessionID string) bool {
+		source, canonical, raw := model.NormalizeSessionIdentity(provider, agentTaskSessionFormat(provider), sessionID, "")
+		if canonical == "" && raw == "" {
+			return false
+		}
+		if wantedSource != model.SessionSourceUnknown && source != wantedSource {
+			return false
+		}
+		return strings.TrimSpace(wantedSessionID) == canonical || wantedRaw == raw || strings.TrimSpace(wantedSessionID) == raw
+	}
+	if provider := model.NormalizeSessionSource(task.Provider); provider != model.SessionSourceUnknown && strings.TrimSpace(task.SessionID) != "" {
+		if matches(provider, task.SessionID) {
+			return provider, strings.TrimSpace(task.SessionID), true
+		}
+	}
+	for _, resource := range task.Resources {
+		if model.NormalizeAgentTaskResourceKind(resource.Kind) != model.AgentTaskResourceEngineerSession {
+			continue
+		}
+		provider := model.NormalizeSessionSource(resource.Provider)
+		sessionID := strings.TrimSpace(resource.SessionID)
+		if sessionID == "" {
+			sessionID = strings.TrimSpace(resource.RefID)
+		}
+		if provider != model.SessionSourceUnknown && sessionID != "" && matches(provider, sessionID) {
+			return provider, sessionID, true
+		}
+	}
+	return model.SessionSourceUnknown, "", false
+}
+
+func (e *QueryExecutor) agentTaskSessionFile(source model.SessionSource, rawSessionID string, task model.AgentTask) string {
+	source = model.NormalizeSessionSource(source)
+	rawSessionID = strings.TrimSpace(rawSessionID)
+	if rawSessionID == "" {
+		return ""
+	}
+	switch source {
+	case model.SessionSourceOpenCode:
+		if home := strings.TrimSpace(e.openCodeHome); home != "" {
+			return filepath.Join(home, "opencode.db") + "#session:" + rawSessionID
+		}
+	case model.SessionSourceCodex:
+		for _, codexHome := range e.bossCodexHomes() {
+			if sessionFile := resolveBossCodexSessionFile(codexHome, rawSessionID, task.CreatedAt, task.LastTouchedAt, task.UpdatedAt); sessionFile != "" {
+				return sessionFile
+			}
+		}
+	}
+	return ""
+}
+
+func (e *QueryExecutor) bossCodexHomes() []string {
+	if e == nil {
+		return nil
+	}
+	homes := make([]string, 0, 1+len(e.codexHomeFallbacks))
+	seen := map[string]struct{}{}
+	add := func(home string) {
+		home = normalizeBossCodexHome(home)
+		if home == "" {
+			return
+		}
+		if _, ok := seen[home]; ok {
+			return
+		}
+		seen[home] = struct{}{}
+		homes = append(homes, home)
+	}
+	add(e.codexHome)
+	for _, fallback := range e.codexHomeFallbacks {
+		add(fallback)
+	}
+	return homes
+}
+
+func bossDefaultCodexHomeFallbacks(primary string) []string {
+	defaultHome := normalizeBossCodexHome(config.Default().CodexHome)
+	if defaultHome == "" || defaultHome == normalizeBossCodexHome(primary) {
+		return nil
+	}
+	return []string{defaultHome}
+}
+
+func normalizeBossCodexHome(home string) string {
+	home = strings.TrimSpace(home)
+	if home == "" {
+		return ""
+	}
+	home = strings.TrimSpace(codexstate.ResolveHomeRoot(home))
+	if home == "" || home == "." {
+		return ""
+	}
+	return filepath.Clean(home)
+}
+
+func agentTaskSessionFormat(source model.SessionSource) string {
+	switch model.NormalizeSessionSource(source) {
+	case model.SessionSourceOpenCode:
+		return "opencode_db"
+	case model.SessionSourceClaudeCode:
+		return "claude_code"
+	default:
+		return "modern"
+	}
+}
+
+func resolveBossCodexSessionFile(codexHome, sessionID string, times ...time.Time) string {
+	codexHome = codexstate.ResolveHomeRoot(codexHome)
+	sessionID = strings.TrimSpace(sessionID)
+	if codexHome == "" || sessionID == "" {
+		return ""
+	}
+	for _, root := range []string{"sessions", "archived_sessions"} {
+		for _, day := range bossCodexSessionDateCandidates(times...) {
+			pattern := filepath.Join(
+				codexHome,
+				root,
+				day.Format("2006"),
+				day.Format("01"),
+				day.Format("02"),
+				"*"+sessionID+"*.jsonl",
+			)
+			matches, err := filepath.Glob(pattern)
+			if err != nil || len(matches) == 0 {
+				continue
+			}
+			sort.Strings(matches)
+			return matches[len(matches)-1]
+		}
+	}
+	return ""
+}
+
+func bossCodexSessionDateCandidates(times ...time.Time) []time.Time {
+	seen := map[string]struct{}{}
+	out := make([]time.Time, 0, len(times)*3+1)
+	add := func(t time.Time) {
+		if t.IsZero() {
+			return
+		}
+		day := time.Date(t.UTC().Year(), t.UTC().Month(), t.UTC().Day(), 0, 0, 0, 0, time.UTC)
+		key := day.Format("2006-01-02")
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, day)
+	}
+	for _, t := range times {
+		add(t)
+	}
+	now := time.Now().UTC()
+	add(now)
+	add(now.Add(-24 * time.Hour))
+	add(now.Add(24 * time.Hour))
+	return out
 }
 
 func (e *QueryExecutor) excerptHiddenByPrivacy(ctx context.Context, excerpt model.SessionContextExcerpt, view ViewContext) bool {

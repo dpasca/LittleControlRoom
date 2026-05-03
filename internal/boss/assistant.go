@@ -74,6 +74,8 @@ func NewAssistant(svc *service.Service) *Assistant {
 	query := newQueryExecutorWithBossSessions(svc.Store(), newBossSessionStoreForService(svc))
 	if query != nil {
 		query.codexHome = svc.Config().CodexHome
+		query.codexHomeFallbacks = bossDefaultCodexHomeFallbacks(query.codexHome)
+		query.openCodeHome = svc.Config().OpenCodeHome
 	}
 	return &Assistant{
 		runner:  runner,
@@ -512,8 +514,10 @@ func bossActionPlannerSystemPrompt() string {
 		"For agent_task.create, task_kind must be agent unless parent_task_id is set and the user asked for a subagent; put affected projects, PIDs, ports, files, sessions, or related tasks in resources; put allowed action namespaces such as process.inspect, process.terminate, repo.edit, test.run, browser.inspect in capabilities.",
 		"For agent_task.continue, include task_id and a fresh prompt. For agent_task.close, include task_id, task_close_status, task_summary, and close_session.",
 		"For propose_control, the prompt field is the exact instruction to send to the engineer session or task. Keep it actionable and include only the relevant work request.",
-		"Use context_command for command-shaped context lookup: ctx search engineer, ctx show, ctx recent engineer, or ctx search boss.",
+		"Use context_command for command-shaped context lookup: ctx search engineer, ctx show, ctx show agent_task, ctx recent engineer, or ctx search boss.",
 		"Use ctx search engineer when the user asks to recall, quote, verify, or inspect what an engineer session said. Use ctx show on the returned handle before quoting or correcting exact details.",
+		"When the user asks for the output or result of an open agent task, use ctx show agent_task:<task-id>; if only an engineer session id is available, use ctx show engineer:<session-id>.",
+		"If the latest Boss Chat assistant message says an agent task was created or continued, and the user follows up with a vague request like \"please try again\" without new work instructions, first read the task output with ctx show agent_task:<task-id> instead of proposing agent_task.continue.",
 		"Use ctx search boss only when the user asks to recall, search, or quote earlier Boss Chat conversations.",
 		"Use search_context when the user asks what a codename, acronym, feature, branch phrase, or unfamiliar term refers to; it searches project metadata, summaries, assessments, TODOs, and cached engineer-session text.",
 		"Use search_boss_sessions when the user asks to recall, search, or quote earlier boss chat conversations; it returns XML-like boss_session and turn snippets from saved local boss-chat transcripts.",
@@ -669,7 +673,7 @@ func bossActionSchema() map[string]any {
 			},
 			"command": map[string]any{
 				"type":        "string",
-				"description": "For kind=context_command, one tiny command such as: ctx search engineer \"query\" --project \"LittleControlRoom\" --limit 5; ctx show engineer:<session-id> --query \"query\" --before 1 --after 2 --max-chars 6000; ctx recent engineer --project \"LittleControlRoom\" --limit 5; ctx search boss \"query\" --limit 5. Otherwise empty.",
+				"description": "For kind=context_command, one tiny command such as: ctx search engineer \"query\" --project \"LittleControlRoom\" --limit 5; ctx show engineer:<session-id> --query \"query\" --before 1 --after 2 --max-chars 6000; ctx show agent_task:<task-id> --before 1 --after 4 --max-chars 6000; ctx recent engineer --project \"LittleControlRoom\" --limit 5; ctx search boss \"query\" --limit 5. Otherwise empty.",
 			},
 			"project_path": map[string]any{
 				"type":        "string",
