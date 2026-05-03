@@ -1310,6 +1310,32 @@ func TestBossHandoffStyleIsNotMutedToolChrome(t *testing.T) {
 	if got, muted := bossHandoffPrefixStyle.GetForeground(), bossToolCallStyle.GetForeground(); got == muted {
 		t.Fatalf("handoff prefix foreground = %v, should not reuse muted tool-call color", got)
 	}
+	if got, want := bossHandoffPrefixStyle.GetForeground(), bossAssistantPrefixStyle.GetForeground(); got != want {
+		t.Fatalf("handoff Boss prefix foreground = %v, want normal Boss foreground %v", got, want)
+	}
+	if got, user := bossHandoffPrefixStyle.GetForeground(), bossUserPrefixStyle.GetForeground(); got == user {
+		t.Fatalf("handoff Boss prefix foreground = %v, should not reuse You foreground", got)
+	}
+}
+
+func TestBossMessagesDoNotIndentContinuationLines(t *testing.T) {
+	t.Parallel()
+
+	for name, rendered := range map[string]string{
+		"assistant": renderAssistantMessage("Alpha\nBeta", 80),
+		"handoff":   renderBossHandoffMessage("Alpha\nBeta", 80),
+	} {
+		lines := strings.Split(ansi.Strip(rendered), "\n")
+		if len(lines) < 2 {
+			t.Fatalf("%s rendered %d lines, want continuation:\n%s", name, len(lines), ansi.Strip(rendered))
+		}
+		if got := strings.TrimRight(lines[0], " "); got != "Boss> Alpha" {
+			t.Fatalf("%s first line = %q, want Boss label", name, lines[0])
+		}
+		if got := strings.TrimRight(lines[1], " "); got != "Beta" {
+			t.Fatalf("%s continuation line = %q, want no Boss-label inset", name, lines[1])
+		}
+	}
 }
 
 func TestModelTranscriptKeepsEngineerActivityWhileBossIsThinking(t *testing.T) {

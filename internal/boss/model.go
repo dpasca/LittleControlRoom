@@ -1405,7 +1405,7 @@ var (
 	bossAssistantPrefixStyle        = lipgloss.NewStyle().Foreground(bossPanelAccent).Background(bossAssistantMessageBackground).Bold(true)
 	bossAssistantContinuationStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Background(bossAssistantMessageBackground)
 	bossHandoffMessageStyle         = lipgloss.NewStyle().Background(bossPanelBackground)
-	bossHandoffPrefixStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Background(bossPanelBackground).Bold(true)
+	bossHandoffPrefixStyle          = lipgloss.NewStyle().Foreground(bossPanelAccent).Background(bossPanelBackground).Bold(true)
 	bossHandoffContinuationStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Background(bossPanelBackground)
 	bossHandoffText                 = lipgloss.Color("229")
 	bossToolCallStyle               = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(bossPanelBackground)
@@ -1472,7 +1472,7 @@ func attentionProjectLimit(height int) int {
 }
 
 func renderAssistantMessage(content string, width int) string {
-	return renderPrefixedMessage(content, "Boss> ", bossPanelText, bossAssistantPrefixStyle, bossAssistantContinuationStyle, bossAssistantMessageStyle, width)
+	return renderPrefixedMessage(content, "Boss> ", bossPanelText, bossAssistantPrefixStyle, bossAssistantContinuationStyle, bossAssistantMessageStyle, width, false)
 }
 
 func renderStreamingAssistantMessage(content string, toolCalls []string, width, spinnerFrame int) string {
@@ -1524,14 +1524,14 @@ func formatAssistantToolCallStatus(event AssistantStreamEvent) string {
 }
 
 func renderUserMessage(content string, width int) string {
-	return renderPrefixedMessage(content, "You> ", bossPanelText, bossUserPrefixStyle, bossUserContinuationPrefixStyle, bossUserMessageStyle, width)
+	return renderPrefixedMessage(content, "You> ", bossPanelText, bossUserPrefixStyle, bossUserContinuationPrefixStyle, bossUserMessageStyle, width, true)
 }
 
 func renderBossHandoffMessage(content string, width int) string {
-	return renderPrefixedMessage(content, "Boss> ", bossHandoffText, bossHandoffPrefixStyle, bossHandoffContinuationStyle, bossHandoffMessageStyle, width)
+	return renderPrefixedMessage(content, "Boss> ", bossHandoffText, bossHandoffPrefixStyle, bossHandoffContinuationStyle, bossHandoffMessageStyle, width, false)
 }
 
-func renderPrefixedMessage(content, prefix string, bodyColor lipgloss.Color, prefixStyle, continuationStyle, lineStyle lipgloss.Style, width int) string {
+func renderPrefixedMessage(content, prefix string, bodyColor lipgloss.Color, prefixStyle, continuationStyle, lineStyle lipgloss.Style, width int, indentContinuation bool) string {
 	contentWidth := maxInt(8, width-len(prefix))
 	rendered := terminalmd.RenderBody(content, bodyColor, contentWidth)
 	lines := strings.Split(rendered, "\n")
@@ -1543,7 +1543,9 @@ func renderPrefixedMessage(content, prefix string, bodyColor lipgloss.Color, pre
 			lines[i] = prefixStyle.Render(prefix) + line
 			continue
 		}
-		lines[i] = continuationStyle.Render(strings.Repeat(" ", len(prefix))) + line
+		if indentContinuation {
+			lines[i] = continuationStyle.Render(strings.Repeat(" ", len(prefix))) + line
+		}
 	}
 	return renderMessageLines(strings.Join(lines, "\n"), lineStyle, width)
 }
