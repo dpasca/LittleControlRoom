@@ -1234,8 +1234,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.storeCodexSnapshot(msg.projectPath, msg.snapshot)
 		}
 		if msg.err != nil {
-			m.status = fmt.Sprintf("Agent task %s review update failed: %v", msg.taskID, msg.err)
-			notice := bossEngineerCompletionNotice(msg.label, msg.summary, msg.engineerName) + "\n\nI couldn't mark it ready for review: " + msg.err.Error()
+			m.status = fmt.Sprintf("Agent task %s handoff failed: %v", msg.taskID, msg.err)
+			notice := bossEngineerCompletionNotice(msg.label, msg.summary, msg.engineerName) + "\n\nI couldn't save that review handoff: " + msg.err.Error()
 			var cmd tea.Cmd
 			m, cmd = m.updateBossHostNotice(notice)
 			return m, cmd
@@ -1248,7 +1248,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if label == "" {
 			label = "agent task"
 		}
-		m.status = "Agent task " + label + " is ready for review"
+		m.status = "Agent task " + label + " needs your call"
 		var cmd tea.Cmd
 		m, cmd = m.updateBossHostNotice(msg.notice)
 		if m.bossMode {

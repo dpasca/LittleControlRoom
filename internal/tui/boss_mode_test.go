@@ -313,7 +313,7 @@ func TestLatestEngineerTranscriptOutputDropsMalformedInlineFence(t *testing.T) {
 	}
 }
 
-func TestBossEngineerCompletionLeavesAgentTaskReadyForReview(t *testing.T) {
+func TestBossEngineerCompletionLeavesAgentTaskWaitingForDecision(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -385,14 +385,14 @@ func TestBossEngineerCompletionLeavesAgentTaskReadyForReview(t *testing.T) {
 		t.Fatalf("agent task status = %s, want waiting", completed.Status)
 	}
 	if _, ok := got.agentTaskForProjectPath(task.WorkspacePath); !ok {
-		t.Fatalf("returned agent task should stay open for review: %#v", got.openAgentTasks)
+		t.Fatalf("returned agent task should stay open for a close-or-continue decision: %#v", got.openAgentTasks)
 	}
 	view := got.bossModel.View()
 	engineerName := bossui.EngineerNameForKey("agent_task", task.ID)
 	for _, want := range []string{
 		engineerName + " is back from Kill stale roguellm dev server.",
 		"No stale roguellm dev server is running now.",
-		"I left it open for review.",
+		"Should I close it, or send " + engineerName + " back in?",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("boss view missing %q:\n%s", want, view)

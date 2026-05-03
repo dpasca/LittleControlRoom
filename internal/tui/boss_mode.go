@@ -593,9 +593,25 @@ func snapshotWithCompletionProjectPath(projectPath string, snapshot codexapp.Sna
 
 func bossAgentTaskReviewNotice(label, output, engineerName string) string {
 	if strings.TrimSpace(output) == "" {
-		return bossEngineerCompletionNotice(label, "", engineerName) + "\n\nNo detailed result came back, so I left it open for review."
+		return bossEngineerCompletionNotice(label, "", engineerName) + "\n\nI don't have a useful summary yet. " + bossAgentTaskMissingSummaryQuestion(engineerName)
 	}
-	return bossEngineerCompletionNotice(label, output, engineerName) + "\n\nI left it open for review."
+	return bossEngineerCompletionNotice(label, output, engineerName) + "\n\n" + bossAgentTaskDecisionQuestion(engineerName)
+}
+
+func bossAgentTaskDecisionQuestion(engineerName string) string {
+	engineerName = strings.TrimSpace(engineerName)
+	if engineerName == "" || strings.EqualFold(engineerName, "Engineer") {
+		return "Should I close it, or send the engineer back in?"
+	}
+	return "Should I close it, or send " + engineerName + " back in?"
+}
+
+func bossAgentTaskMissingSummaryQuestion(engineerName string) string {
+	engineerName = strings.TrimSpace(engineerName)
+	if engineerName == "" || strings.EqualFold(engineerName, "Engineer") {
+		return "Should I send the engineer back in for a clearer report, or close it anyway?"
+	}
+	return "Should I send " + engineerName + " back in for a clearer report, or close it anyway?"
 }
 
 func bossAgentTaskCompletionLabel(task model.AgentTask) string {

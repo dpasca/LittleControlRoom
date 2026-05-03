@@ -263,6 +263,7 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"structured control action",
 		"user must confirm",
 		"Do not say agent work will be done",
+		"ask naturally whether to close it or send the named engineer back in",
 	} {
 		if !strings.Contains(directPrompt, want) {
 			t.Fatalf("assistant prompt missing %q:\n%s", want, directPrompt)
@@ -309,6 +310,7 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"Do not describe UI mechanics",
 		"paraphrase the intent at boss level",
 		"meaningful result and what still needs attention",
+		"ask naturally whether to close it or send the named engineer back in",
 		"answer the operational substance rather than reciting the lookup",
 		"codenames and aliases as shared coworker context",
 		"Alias resolution is private routing",

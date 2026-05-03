@@ -362,26 +362,27 @@ func compactAttentionAgentTaskLine(task AgentTaskBrief, now time.Time) string {
 	if parts[0] == "" {
 		parts[0] = "agent task"
 	}
-	if name := strings.TrimSpace(task.EngineerName); name != "" {
-		parts = append(parts, name)
+	engineerName := strings.TrimSpace(task.EngineerName)
+	if engineerName != "" {
+		parts = append(parts, engineerName)
 	}
 	status := model.NormalizeAgentTaskStatus(task.Status)
-	if status != "" && status != model.AgentTaskStatusWaiting {
+	if status == model.AgentTaskStatusWaiting {
+		parts = append(parts, agentTaskDecisionQuestion(engineerName))
+	} else if status != "" {
 		parts = append(parts, agentTaskBriefStatusLabel(status))
 	}
 	if summary := strings.TrimSpace(task.Summary); summary != "" {
 		parts = append(parts, clipText(summary, 120))
-	} else if task.Provider != "" || strings.TrimSpace(task.SessionID) != "" {
-		if status == model.AgentTaskStatusWaiting {
-			parts = append(parts, "waiting for close or continue decision")
+	} else if status == model.AgentTaskStatusWaiting {
+		if !task.LastTouchedAt.IsZero() {
+			parts = append(parts, "touched "+relativeAge(now, task.LastTouchedAt))
 		}
+	} else if task.Provider != "" || strings.TrimSpace(task.SessionID) != "" {
 		provider := string(model.NormalizeSessionSource(task.Provider))
 		session := strings.TrimSpace(task.SessionID)
 		parts = append(parts, strings.TrimSpace(provider+" "+session))
 	} else if !task.LastTouchedAt.IsZero() {
-		if status == model.AgentTaskStatusWaiting {
-			parts = append(parts, "waiting for close or continue decision")
-		}
 		parts = append(parts, relativeAge(now, task.LastTouchedAt))
 	}
 	filtered := make([]string, 0, len(parts))

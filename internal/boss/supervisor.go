@@ -127,7 +127,7 @@ func supervisorTaskLine(task AgentTaskBrief, now time.Time) string {
 	detail := supervisorTaskDetail(task, now)
 	switch model.NormalizeAgentTaskStatus(task.Status) {
 	case model.AgentTaskStatusWaiting:
-		return supervisorJoinLine(name+" finished "+title+"; decide close or continue", detail)
+		return supervisorJoinLine(name+" finished "+title+". "+agentTaskDecisionQuestion(name), detail)
 	case model.AgentTaskStatusActive:
 		return supervisorJoinLine(name+" has "+title+" open", detail)
 	default:
@@ -143,9 +143,9 @@ func supervisorTaskDetail(task AgentTaskBrief, now time.Time) string {
 		return "no live engineer session right now"
 	}
 	if !task.LastTouchedAt.IsZero() {
-		return "waiting for your decision; touched " + relativeAge(now, task.LastTouchedAt)
+		return "touched " + relativeAge(now, task.LastTouchedAt)
 	}
-	return "waiting for your decision"
+	return ""
 }
 
 func supervisorJoinLine(head, detail string) string {
@@ -158,6 +158,14 @@ func supervisorJoinLine(head, detail string) string {
 		return head
 	}
 	return fmt.Sprintf("%s - %s", head, detail)
+}
+
+func agentTaskDecisionQuestion(engineerName string) string {
+	engineerName = strings.TrimSpace(engineerName)
+	if engineerName == "" || strings.EqualFold(engineerName, "Engineer") {
+		return "Should I close it, or send the engineer back in?"
+	}
+	return "Should I close it, or send " + engineerName + " back in?"
 }
 
 func (m Model) shouldRefreshSupervisorState() bool {
