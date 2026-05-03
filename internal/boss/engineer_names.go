@@ -22,6 +22,20 @@ var engineerNamePool = []string{
 	"Ken",
 	"Dennis",
 	"Tim",
+	"Niklaus",
+	"Amuro",
+	"Char",
+	"Sayla",
+	"Mirai",
+	"Duke",
+	"Daisuke",
+	"Koji",
+	"Hikaru",
+	"Maria",
+	"Tetsuya",
+	"Jun",
+	"Hiroshi",
+	"Miwa",
 }
 
 func EngineerNameForKey(parts ...string) string {
