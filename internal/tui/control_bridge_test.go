@@ -255,11 +255,11 @@ func TestExecuteBossControlInvocationBatchesOpenAndBossResult(t *testing.T) {
 	if result.Err != nil {
 		t.Fatalf("result err = %v", result.Err)
 	}
-	wantStatus := "Handed this off to the Codex engineer session for cn3. Boss Chat stayed open; the session is working on it now."
+	wantStatus := "Ok, cn3 is with the Codex engineer session now."
 	if result.Status != wantStatus {
 		t.Fatalf("result status = %q, want %q", result.Status, wantStatus)
 	}
-	if strings.Contains(result.Status, "Alt+Up") || strings.Contains(result.Status, "Prompt sent to embedded") {
+	if strings.Contains(result.Status, "Alt+Up") || strings.Contains(result.Status, "Prompt sent to embedded") || strings.Contains(result.Status, "Boss Chat stayed open") {
 		t.Fatalf("result status leaked embedded-pane copy: %q", result.Status)
 	}
 }
@@ -427,10 +427,11 @@ func TestExecuteBossControlInvocationCreatesAgentTaskAndTracksSession(t *testing
 	if result.Err != nil {
 		t.Fatalf("result err = %v", result.Err)
 	}
-	if !strings.Contains(result.Status, "Created agent task") ||
-		!strings.Contains(result.Status, "prompt sent") ||
+	if !strings.Contains(result.Status, "Ok, Clean suspicious local processes is with the engineer now") ||
+		strings.Contains(result.Status, "Created agent task") ||
+		strings.Contains(result.Status, "prompt sent") ||
 		strings.Contains(result.Status, "Alt+Up hides it") {
-		t.Fatalf("result status = %q, want created task launch status", result.Status)
+		t.Fatalf("result status = %q, want high-level task launch status", result.Status)
 	}
 	if len(requests) != 1 {
 		t.Fatalf("launch requests = %d, want 1", len(requests))
@@ -527,9 +528,10 @@ func TestExecuteBossControlInvocationContinuesAgentTaskWithTrackedSession(t *tes
 			}
 		}
 	}
-	if !strings.Contains(result.Status, "Continued agent task") ||
+	if !strings.Contains(result.Status, "Ok, Keep checking temp process cleanup is with the engineer now") ||
+		strings.Contains(result.Status, "Continued agent task") ||
 		strings.Contains(result.Status, "Attention row shows") {
-		t.Fatalf("result status = %q, want continued task launch status without UI narration", result.Status)
+		t.Fatalf("result status = %q, want high-level continued task launch status without UI narration", result.Status)
 	}
 	if len(requests) != 1 {
 		t.Fatalf("launch requests = %d, want 1", len(requests))

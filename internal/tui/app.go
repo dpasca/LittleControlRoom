@@ -221,6 +221,7 @@ type Model struct {
 	modelSettlePending          map[string]pendingModelSettleOp
 	lastSpinnerTickAt           time.Time
 	skillsInventorySeq          int64
+	pendingBossHostNotices      []string
 
 	pendingG      bool
 	todoLaunchSeq int64

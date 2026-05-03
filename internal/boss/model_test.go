@@ -220,6 +220,38 @@ func TestModelAttentionRowsShowActiveAgentTaskTimer(t *testing.T) {
 	}
 }
 
+func TestBossTickRefreshesTemporaryEngineerActivityTimer(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	m := NewEmbeddedWithViewContext(context.Background(), nil, ViewContext{
+		Active: true,
+		EngineerActivities: []ViewEngineerActivity{{
+			Kind:      "agent_task",
+			TaskID:    "agt_demo",
+			Title:     "Cursor cleanup",
+			Status:    "working",
+			Active:    true,
+			StartedAt: now.Add(-3 * time.Second),
+		}},
+	})
+	m.width = 96
+	m.height = 24
+	m.nowFn = func() time.Time { return now }
+	m.syncLayout(true)
+	if !strings.Contains(ansi.Strip(m.chatViewport.View()), "00:03") {
+		t.Fatalf("initial temporary activity missing timer:\n%s", ansi.Strip(m.chatViewport.View()))
+	}
+
+	now = now.Add(time.Second)
+	updated, _ := m.Update(TickMsg(now))
+	got := updated.(Model)
+	rendered := ansi.Strip(got.chatViewport.View())
+	if !strings.Contains(rendered, "00:04") || strings.Contains(rendered, "00:03") {
+		t.Fatalf("temporary activity timer did not refresh on tick:\n%s", rendered)
+	}
+}
+
 func TestModelAttentionRowsShowActiveProjectEngineerTimer(t *testing.T) {
 	t.Parallel()
 
@@ -256,7 +288,7 @@ func TestModelAttentionRowsShowActiveProjectEngineerTimer(t *testing.T) {
 	}
 }
 
-func TestControlResultEchoesAgentTaskInstructions(t *testing.T) {
+func TestControlResultSummarizesAgentTaskHandoff(t *testing.T) {
 	t.Parallel()
 
 	args, err := json.Marshal(control.AgentTaskCreateInput{
@@ -271,17 +303,19 @@ func TestControlResultEchoesAgentTaskInstructions(t *testing.T) {
 			Capability: control.CapabilityAgentTaskCreate,
 			Args:       args,
 		},
-		Status: "Created agent task agt_demo and prompt sent to fresh embedded Codex session thread-agent-1 in the background.",
+		Status: "Ok, Revoke Cursor GitHub access is with the engineer now.",
 	})
 
-	for _, want := range []string{
-		"Created agent task agt_demo",
+	if content != "Ok, Revoke Cursor GitHub access is with the engineer now." {
+		t.Fatalf("control result = %q", content)
+	}
+	for _, unwanted := range []string{
 		"Sent to the engineer:",
 		"Open GitHub settings and revoke Cursor's OAuth access.",
-		"The task is linked to this engineer session.",
+		"The task is linked",
 	} {
-		if !strings.Contains(content, want) {
-			t.Fatalf("control result missing %q:\n%s", want, content)
+		if strings.Contains(content, unwanted) {
+			t.Fatalf("control result leaked %q:\n%s", unwanted, content)
 		}
 	}
 }

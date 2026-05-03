@@ -153,7 +153,7 @@ func TestBossChatNoticesEngineerTurnCompletion(t *testing.T) {
 		LastActivityAt: now,
 		Entries: []codexapp.TranscriptEntry{{
 			Kind: codexapp.TranscriptAgent,
-			Text: "Killed the stale dev server on port 5173 and left the project clean.",
+			Text: "Killed the stale dev server on port 5173 and left the project clean.\n\nPID 12345 was unrelated diagnostic noise.",
 		}},
 	}
 	session := &fakeCodexSession{projectPath: projectPath, snapshot: idleSnapshot}
@@ -185,11 +185,47 @@ func TestBossChatNoticesEngineerTurnCompletion(t *testing.T) {
 	got := updated.(Model)
 	view := got.bossModel.View()
 	for _, want := range []string{
-		"Engineer finished for Project Task.",
+		"Engineer is back on Project Task.",
 		"Killed the stale dev server on port 5173",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("boss chat completion notice missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "PID 12345") {
+		t.Fatalf("boss chat completion notice should keep only the top-level paragraph:\n%s", view)
+	}
+}
+
+func TestBossHostNoticeQueuedWhileClosedAppearsOnOpen(t *testing.T) {
+	t.Parallel()
+
+	m := Model{
+		ctx:    context.Background(),
+		width:  100,
+		height: 30,
+	}
+	updated, cmd := m.updateBossHostNotice("Engineer is back on Cursor cleanup.\n\nCursor access still needs user-side confirmation.")
+	if cmd != nil {
+		t.Fatalf("updateBossHostNotice() cmd = %T, want nil while Boss Chat is closed", cmd)
+	}
+	m = updated
+	if len(m.pendingBossHostNotices) != 1 {
+		t.Fatalf("pending notices = %#v, want one queued notice", m.pendingBossHostNotices)
+	}
+
+	reopened, _ := m.openBossMode()
+	got := reopened.(Model)
+	if len(got.pendingBossHostNotices) != 0 {
+		t.Fatalf("pending notices after open = %#v, want drained", got.pendingBossHostNotices)
+	}
+	view := got.bossModel.View()
+	for _, want := range []string{
+		"Engineer is back on Cursor cleanup.",
+		"Cursor access still needs user-side confirmation.",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("reopened Boss Chat missing queued notice %q:\n%s", want, view)
 		}
 	}
 }

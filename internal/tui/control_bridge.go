@@ -151,9 +151,12 @@ func bossEngineerPromptSentStatus(input control.EngineerSendPromptInput, opened 
 		targetPhrase = " for " + target
 	}
 	if strings.TrimSpace(input.Prompt) == "" {
-		return "Opened the " + sessionLabel + targetPhrase + ". Boss Chat stayed open."
+		return "Opened the " + sessionLabel + targetPhrase + "."
 	}
-	return "Handed this off to the " + sessionLabel + targetPhrase + ". Boss Chat stayed open; the session is working on it now."
+	if target != "" {
+		return "Ok, " + target + " is with the " + sessionLabel + " now."
+	}
+	return "Ok, the " + sessionLabel + " is working on it now."
 }
 
 func bossAgentTaskLaunchOpenedStatus(taskID, fallback string) string {
@@ -161,12 +164,23 @@ func bossAgentTaskLaunchOpenedStatus(taskID, fallback string) string {
 	if status == "" {
 		taskID = strings.TrimSpace(taskID)
 		if taskID != "" {
-			status = "Agent task " + taskID + " is moving in the engineer session now"
+			status = "Ok, " + taskID + " is with the engineer now"
 		} else {
-			status = "The agent task is moving in the engineer session now"
+			status = "Ok, the task is with the engineer now"
 		}
 	}
 	return strings.TrimRight(status, ".") + "."
+}
+
+func bossAgentTaskHandoffStatus(task model.AgentTask) string {
+	label := strings.TrimSpace(task.Title)
+	if label == "" {
+		label = strings.TrimSpace(task.ID)
+	}
+	if label == "" {
+		label = "the task"
+	}
+	return "Ok, " + label + " is with the engineer now"
 }
 
 func bossControlOpenedProviderLabel(requested control.Provider, snapshot codexapp.Snapshot) string {
@@ -336,7 +350,7 @@ func (m Model) executeAgentTaskCreateControlWithOutcome(input control.AgentTaskC
 		err := errors.New(status)
 		return controlInvocationOutcome{model: m, err: err}
 	}
-	return controlInvocationOutcome{model: m, cmd: m.agentTaskLaunchTrackingCmd(task.ID, cmd, "Created agent task "+task.ID)}
+	return controlInvocationOutcome{model: m, cmd: m.agentTaskLaunchTrackingCmd(task.ID, cmd, bossAgentTaskHandoffStatus(task))}
 }
 
 func (m Model) executeAgentTaskContinueControlWithOutcome(input control.AgentTaskContinueInput) controlInvocationOutcome {
@@ -384,7 +398,7 @@ func (m Model) executeAgentTaskContinueControlWithOutcome(input control.AgentTas
 		err := errors.New(status)
 		return controlInvocationOutcome{model: m, err: err}
 	}
-	return controlInvocationOutcome{model: m, cmd: m.agentTaskLaunchTrackingCmd(task.ID, cmd, "Continued agent task "+task.ID)}
+	return controlInvocationOutcome{model: m, cmd: m.agentTaskLaunchTrackingCmd(task.ID, cmd, bossAgentTaskHandoffStatus(task))}
 }
 
 func (m Model) executeAgentTaskCloseControlWithOutcome(input control.AgentTaskCloseInput) controlInvocationOutcome {
@@ -450,7 +464,7 @@ func (m Model) liveAgentTaskSnapshot(task model.AgentTask) (codexapp.Snapshot, b
 	return codexapp.Snapshot{}, false
 }
 
-func (m Model) agentTaskLaunchTrackingCmd(taskID string, cmd tea.Cmd, prefix string) tea.Cmd {
+func (m Model) agentTaskLaunchTrackingCmd(taskID string, cmd tea.Cmd, successStatus string) tea.Cmd {
 	return func() tea.Msg {
 		msg := cmd()
 		opened, ok := msg.(codexSessionOpenedMsg)
@@ -463,16 +477,16 @@ func (m Model) agentTaskLaunchTrackingCmd(taskID string, cmd tea.Cmd, prefix str
 			opened.err = err
 			opened.status = strings.TrimSpace(opened.status)
 			if opened.status == "" {
-				opened.status = prefix
+				opened.status = successStatus
 			}
 			opened.status += "; task tracking update failed"
 			return opened
 		}
-		status := strings.TrimSpace(opened.status)
+		status := strings.TrimSpace(successStatus)
 		if status == "" {
-			status = "engineer session opened"
+			status = "Ok, the task is with the engineer now"
 		}
-		opened.status = prefix + " and " + lowerFirst(status)
+		opened.status = status
 		return opened
 	}
 }
@@ -698,14 +712,6 @@ func modelSessionSourceFromControlProvider(provider control.Provider) model.Sess
 	default:
 		return model.SessionSourceUnknown
 	}
-}
-
-func lowerFirst(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	return strings.ToLower(value[:1]) + value[1:]
 }
 
 func (m Model) resolveControlProject(input control.EngineerSendPromptInput) (model.ProjectSummary, error) {

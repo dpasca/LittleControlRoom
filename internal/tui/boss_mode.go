@@ -22,7 +22,9 @@ func (m Model) openBossMode() (tea.Model, tea.Cmd) {
 		updated, _ := m.bossModel.Update(m.bossModeWindowSizeMsg())
 		m.bossModel = normalizeBossModel(updated)
 	}
-	return m, m.bossModel.Init()
+	initCmd := m.bossModel.Init()
+	m, noticeCmd := m.drainPendingBossHostNotices()
+	return m, tea.Batch(initCmd, noticeCmd)
 }
 
 func (m *Model) closeBossMode(status string) {
@@ -38,18 +40,57 @@ func (m Model) updateBossModeMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
 	updated, cmd := m.bossModel.Update(msg)
 	m.bossModel = normalizeBossModel(updated)
-	return m, cmd
+	m, noticeCmd := m.drainPendingBossHostNotices()
+	return m, tea.Batch(cmd, noticeCmd)
 }
 
 func (m Model) updateBossHostNotice(content string) (Model, tea.Cmd) {
 	content = strings.TrimSpace(content)
-	if !m.bossMode || content == "" {
+	if content == "" {
 		return m, nil
 	}
+	if !m.bossMode || !m.bossModel.HostNoticesReady() {
+		m.pendingBossHostNotices = appendPendingBossHostNotice(m.pendingBossHostNotices, content)
+		return m, nil
+	}
+	return m.applyBossHostNotice(content)
+}
+
+func (m Model) applyBossHostNotice(content string) (Model, tea.Cmd) {
 	m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
 	updated, cmd := m.bossModel.Update(bossui.HostNoticeMsg{Content: content})
 	m.bossModel = normalizeBossModel(updated)
 	return m, cmd
+}
+
+func (m Model) drainPendingBossHostNotices() (Model, tea.Cmd) {
+	if !m.bossMode || len(m.pendingBossHostNotices) == 0 || !m.bossModel.HostNoticesReady() {
+		return m, nil
+	}
+	notices := append([]string(nil), m.pendingBossHostNotices...)
+	m.pendingBossHostNotices = nil
+	cmds := make([]tea.Cmd, 0, len(notices))
+	for _, notice := range notices {
+		var cmd tea.Cmd
+		m, cmd = m.applyBossHostNotice(notice)
+		cmds = append(cmds, cmd)
+	}
+	return m, tea.Batch(cmds...)
+}
+
+func appendPendingBossHostNotice(notices []string, content string) []string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return notices
+	}
+	if len(notices) > 0 && notices[len(notices)-1] == content {
+		return notices
+	}
+	notices = append(notices, content)
+	if len(notices) > 8 {
+		notices = append([]string(nil), notices[len(notices)-8:]...)
+	}
+	return notices
 }
 
 func (m Model) updateBossModeWindowSize() (tea.Model, tea.Cmd) {
@@ -413,12 +454,12 @@ func (m Model) bossEngineerTurnCompletionHostNotice(projectPath string, hadPrev 
 	label := m.bossEngineerCompletionLabel(projectPath)
 	output := latestEngineerTranscriptOutput(snapshot)
 	if output != "" {
-		return "Engineer finished for " + label + ".\n\nLatest output: " + output
+		return "Engineer is back on " + label + ".\n\n" + output
 	}
 	if status := normalizedCodexStatus(snapshot.Status); status != "" {
-		return "Engineer finished for " + label + ": " + status
+		return "Engineer is back on " + label + ": " + status
 	}
-	return "Engineer finished for " + label + "."
+	return "Engineer is back on " + label + "."
 }
 
 func (m Model) bossEngineerCompletionLabel(projectPath string) string {
@@ -455,9 +496,22 @@ func latestEngineerTranscriptOutput(snapshot codexapp.Snapshot) string {
 		if text == "" {
 			continue
 		}
-		return compactEngineerNoticeText(text, 420)
+		return compactEngineerNoticeText(firstEngineerNoticeParagraph(text), 260)
 	}
 	return ""
+}
+
+func firstEngineerNoticeParagraph(text string) string {
+	text = strings.ReplaceAll(text, "```", "")
+	text = strings.ReplaceAll(text, "`", "")
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	for _, paragraph := range strings.Split(text, "\n\n") {
+		paragraph = strings.TrimSpace(paragraph)
+		if paragraph != "" {
+			return paragraph
+		}
+	}
+	return strings.TrimSpace(text)
 }
 
 func compactEngineerNoticeText(text string, limit int) string {

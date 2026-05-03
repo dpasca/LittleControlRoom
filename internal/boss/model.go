@@ -235,6 +235,13 @@ func (m Model) WithViewContext(view ViewContext) Model {
 	return m
 }
 
+func (m Model) HostNoticesReady() bool {
+	if !m.hasPersistentSessions() {
+		return true
+	}
+	return m.sessionLoaded && m.sessionErr == nil && strings.TrimSpace(m.sessionID) != ""
+}
+
 func (m Model) StatusText() string {
 	status := strings.TrimSpace(m.status)
 	if status == "" {
@@ -348,6 +355,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TickMsg:
 		m.spinnerFrame++
 		m.pruneSummaryFlashes()
+		if m.sending || len(m.activeEngineerActivities()) > 0 {
+			m.syncLayout(false)
+		}
 		return m, bossTickCmd()
 	case tea.KeyMsg:
 		m.chatSelection = bossTextSelection{}

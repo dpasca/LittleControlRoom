@@ -251,44 +251,7 @@ func controlResultContent(msg ControlInvocationResultMsg) string {
 	if status == "" {
 		status = "Control action completed."
 	}
-	switch msg.Invocation.Capability {
-	case control.CapabilityAgentTaskCreate:
-		var input control.AgentTaskCreateInput
-		if err := json.Unmarshal(msg.Invocation.Args, &input); err == nil {
-			return controlAgentTaskCreateResultContent(status, input)
-		}
-	case control.CapabilityAgentTaskContinue:
-		var input control.AgentTaskContinueInput
-		if err := json.Unmarshal(msg.Invocation.Args, &input); err == nil {
-			return controlAgentTaskContinueResultContent(status, input)
-		}
-	}
 	return status
-}
-
-func controlAgentTaskCreateResultContent(status string, input control.AgentTaskCreateInput) string {
-	lines := []string{status}
-	if prompt := strings.TrimSpace(input.Prompt); prompt != "" {
-		lines = append(lines, "", "Sent to the engineer:", fencedTextBlock(clipText(prompt, 1200)))
-	}
-	lines = append(lines, "", "The task is linked to this engineer session.")
-	return strings.Join(lines, "\n")
-}
-
-func controlAgentTaskContinueResultContent(status string, input control.AgentTaskContinueInput) string {
-	lines := []string{status}
-	if prompt := strings.TrimSpace(input.Prompt); prompt != "" {
-		lines = append(lines, "", "Sent to the engineer:", fencedTextBlock(clipText(prompt, 1200)))
-	}
-	return strings.Join(lines, "\n")
-}
-
-func fencedTextBlock(text string) string {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return "```text\n\n```"
-	}
-	return "```text\n" + strings.ReplaceAll(text, "```", "`\u200b``") + "\n```"
 }
 
 func copyControlInvocation(inv control.Invocation) control.Invocation {
