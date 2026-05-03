@@ -118,11 +118,12 @@ func LoadStateSnapshot(ctx context.Context, svc *service.Service, now time.Time,
 	if counts, err := svc.Store().GetSessionClassificationCounts(ctx, true); err == nil {
 		snapshot.PendingClassifications = counts[model.ClassificationPending] + counts[model.ClassificationRunning]
 	}
-	if !opts.PrivacyMode {
-		if tasks, err := svc.ListOpenAgentTasks(ctx, openAgentTaskLimit); err == nil {
-			for _, task := range tasks {
-				snapshot.OpenAgentTasks = append(snapshot.OpenAgentTasks, agentTaskBriefFromTask(task))
-			}
+	if tasks, err := svc.ListOpenAgentTasks(ctx, openAgentTaskLimit); err == nil {
+		if opts.PrivacyMode {
+			tasks = filterAgentTasksForBossPrivacy(tasks, opts.PrivacyPatterns)
+		}
+		for _, task := range tasks {
+			snapshot.OpenAgentTasks = append(snapshot.OpenAgentTasks, agentTaskBriefFromTask(task))
 		}
 	}
 
@@ -198,6 +199,71 @@ func agentTaskBriefFromTask(task model.AgentTask) AgentTaskBrief {
 		LastTouchedAt: task.LastTouchedAt,
 		Resources:     resources,
 	}
+}
+
+func filterAgentTasksForBossPrivacy(tasks []model.AgentTask, patterns []string) []model.AgentTask {
+	if len(tasks) == 0 || len(patterns) == 0 {
+		return tasks
+	}
+	filtered := make([]model.AgentTask, 0, len(tasks))
+	for _, task := range tasks {
+		if !agentTaskHiddenByPrivacy(task, patterns) {
+			filtered = append(filtered, task)
+		}
+	}
+	return filtered
+}
+
+func filterAgentTaskBriefsForBossPrivacy(tasks []AgentTaskBrief, patterns []string) []AgentTaskBrief {
+	if len(tasks) == 0 || len(patterns) == 0 {
+		return tasks
+	}
+	filtered := make([]AgentTaskBrief, 0, len(tasks))
+	for _, task := range tasks {
+		if !agentTaskBriefHiddenByPrivacy(task, patterns) {
+			filtered = append(filtered, task)
+		}
+	}
+	return filtered
+}
+
+func agentTaskHiddenByPrivacy(task model.AgentTask, patterns []string) bool {
+	if len(patterns) == 0 {
+		return false
+	}
+	if bossPrivacyMatchesAny(patterns, task.Title, task.Summary, task.WorkspacePath) {
+		return true
+	}
+	for _, resource := range task.Resources {
+		if bossPrivacyMatchesAny(patterns, resource.ProjectPath, resource.Path, resource.Label, resource.RefID) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentTaskBriefHiddenByPrivacy(task AgentTaskBrief, patterns []string) bool {
+	if len(patterns) == 0 {
+		return false
+	}
+	if bossPrivacyMatchesAny(patterns, task.Title, task.Summary) {
+		return true
+	}
+	for _, resource := range task.Resources {
+		if bossPrivacyMatchesAny(patterns, resource.ProjectPath, resource.Path, resource.Label, resource.RefID) {
+			return true
+		}
+	}
+	return false
+}
+
+func bossPrivacyMatchesAny(patterns []string, values ...string) bool {
+	for _, value := range values {
+		if config.MatchesPrivacyPattern(value, patterns) {
+			return true
+		}
+	}
+	return false
 }
 
 func BuildStateBrief(snapshot StateSnapshot, now time.Time) string {

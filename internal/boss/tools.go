@@ -541,11 +541,11 @@ func (e *QueryExecutor) todoReport(ctx context.Context, action bossAction, view 
 }
 
 func (e *QueryExecutor) agentTaskReport(ctx context.Context, action bossAction, snapshot StateSnapshot, view ViewContext) (bossToolResult, error) {
-	if view.PrivacyMode {
-		return clippedToolResult(bossActionAgentTaskReport, "Agent task report is hidden while privacy mode is enabled."), nil
-	}
 	limit := clampBossLimit(action.Limit, 20, 40)
 	tasks := append([]AgentTaskBrief(nil), snapshot.OpenAgentTasks...)
+	if view.PrivacyMode {
+		tasks = filterAgentTaskBriefsForBossPrivacy(tasks, view.PrivacyPatterns)
+	}
 	if taskReader, ok := e.store.(bossAgentTaskReader); ok {
 		loaded, err := taskReader.ListAgentTasks(ctx, model.AgentTaskFilter{
 			Statuses: []model.AgentTaskStatus{
@@ -556,6 +556,9 @@ func (e *QueryExecutor) agentTaskReport(ctx context.Context, action bossAction, 
 		})
 		if err != nil {
 			return bossToolResult{}, err
+		}
+		if view.PrivacyMode {
+			loaded = filterAgentTasksForBossPrivacy(loaded, view.PrivacyPatterns)
 		}
 		tasks = make([]AgentTaskBrief, 0, len(loaded))
 		for _, task := range loaded {
@@ -570,6 +573,9 @@ func (e *QueryExecutor) agentTaskReport(ctx context.Context, action bossAction, 
 	lines := []string{
 		fmt.Sprintf("Agent task report: %d open delegated agent %s.", len(tasks), taskNoun),
 		"Note: delegated agent tasks are separate from project TODOs.",
+	}
+	if view.PrivacyMode {
+		lines = append(lines, "Privacy mode is enabled; agent tasks matching private titles, summaries, or resources are omitted.")
 	}
 	if len(tasks) == 0 {
 		lines = append(lines, "- no open agent tasks")

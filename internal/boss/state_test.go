@@ -153,7 +153,7 @@ func TestBuildStateBriefIncludesOpenAgentTasks(t *testing.T) {
 	}
 }
 
-func TestLoadStateSnapshotIncludesOpenAgentTasksOutsidePrivacyMode(t *testing.T) {
+func TestLoadStateSnapshotIncludesOpenAgentTasksWithPrivacyFiltering(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
@@ -167,27 +167,37 @@ func TestLoadStateSnapshotIncludesOpenAgentTasksOutsidePrivacyMode(t *testing.T)
 	defer st.Close()
 	svc := service.New(cfg, st, events.NewBus(), nil)
 
+	publicTitle := "Follow up on temp process investigation"
 	if _, err := svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
-		Title: "Follow up on temp process investigation",
+		Title: publicTitle,
 		Kind:  model.AgentTaskKindAgent,
 	}); err != nil {
 		t.Fatalf("CreateAgentTask() error = %v", err)
+	}
+	if _, err := svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+		Title: "Private delegated cleanup",
+		Kind:  model.AgentTaskKindAgent,
+	}); err != nil {
+		t.Fatalf("CreateAgentTask(private) error = %v", err)
 	}
 
 	snapshot, err := LoadStateSnapshot(ctx, svc, time.Unix(1_800_000_000, 0))
 	if err != nil {
 		t.Fatalf("LoadStateSnapshot() error = %v", err)
 	}
-	if len(snapshot.OpenAgentTasks) != 1 || snapshot.OpenAgentTasks[0].Title != "Follow up on temp process investigation" {
-		t.Fatalf("open agent tasks = %#v, want created task", snapshot.OpenAgentTasks)
+	if len(snapshot.OpenAgentTasks) != 2 {
+		t.Fatalf("open agent tasks = %#v, want both created tasks", snapshot.OpenAgentTasks)
 	}
 
-	privateSnapshot, err := LoadStateSnapshot(ctx, svc, time.Unix(1_800_000_000, 0), StateSnapshotOptions{PrivacyMode: true})
+	privateSnapshot, err := LoadStateSnapshot(ctx, svc, time.Unix(1_800_000_000, 0), StateSnapshotOptions{
+		PrivacyMode:     true,
+		PrivacyPatterns: []string{"*private*"},
+	})
 	if err != nil {
 		t.Fatalf("LoadStateSnapshot() with privacy error = %v", err)
 	}
-	if len(privateSnapshot.OpenAgentTasks) != 0 {
-		t.Fatalf("privacy mode should not include agent tasks, got %#v", privateSnapshot.OpenAgentTasks)
+	if len(privateSnapshot.OpenAgentTasks) != 1 || privateSnapshot.OpenAgentTasks[0].Title != publicTitle {
+		t.Fatalf("privacy mode should include only non-private agent tasks, got %#v", privateSnapshot.OpenAgentTasks)
 	}
 }
 

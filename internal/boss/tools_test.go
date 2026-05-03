@@ -142,6 +142,11 @@ func TestQueryExecutorAgentTaskReportRespectsPrivacyMode(t *testing.T) {
 
 	store := &fakeBossStore{
 		agentTasks: []model.AgentTask{{
+			ID:     "agt_public",
+			Title:  "Public delegated work",
+			Kind:   model.AgentTaskKindAgent,
+			Status: model.AgentTaskStatusActive,
+		}, {
 			ID:     "agt_secret",
 			Title:  "Private delegated work",
 			Kind:   model.AgentTaskKindAgent,
@@ -153,12 +158,24 @@ func TestQueryExecutorAgentTaskReportRespectsPrivacyMode(t *testing.T) {
 	result, err := executor.Execute(context.Background(), bossAction{
 		Kind: bossActionAgentTaskReport,
 	}, StateSnapshot{
-		OpenAgentTasks: []AgentTaskBrief{{ID: "agt_secret", Title: "Private delegated work"}},
-	}, ViewContext{PrivacyMode: true})
+		OpenAgentTasks: []AgentTaskBrief{
+			{ID: "agt_public", Title: "Public delegated work"},
+			{ID: "agt_secret", Title: "Private delegated work"},
+		},
+	}, ViewContext{PrivacyMode: true, PrivacyPatterns: []string{"*private*"}})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	if !strings.Contains(result.Text, "hidden while privacy mode is enabled") || strings.Contains(result.Text, "Private delegated work") {
+	for _, want := range []string{
+		"Agent task report: 1 open delegated agent task.",
+		"Privacy mode is enabled",
+		"Public delegated work",
+	} {
+		if !strings.Contains(result.Text, want) {
+			t.Fatalf("privacy-mode agent task report missing %q:\n%s", want, result.Text)
+		}
+	}
+	if strings.Contains(result.Text, "Private delegated work") || strings.Contains(result.Text, "hidden while privacy mode is enabled") {
 		t.Fatalf("privacy-mode agent task report = %q", result.Text)
 	}
 }
