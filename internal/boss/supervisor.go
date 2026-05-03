@@ -15,30 +15,24 @@ const (
 )
 
 type bossSupervisorItem struct {
-	Text  string
-	State bossSupervisorItemState
+	Text string
 }
-
-type bossSupervisorItemState string
-
-const (
-	bossSupervisorItemActive  bossSupervisorItemState = "active"
-	bossSupervisorItemWaiting bossSupervisorItemState = "waiting"
-	bossSupervisorItemOpen    bossSupervisorItemState = "open"
-)
 
 func (m Model) renderSupervisorBrief(width int) string {
 	items := m.supervisorItems(m.now())
 	if len(items) == 0 {
 		return ""
 	}
-	lines := []string{supervisorHeader(items, m.spinnerFrame)}
+	lines := make([]string, 0, len(items))
 	for _, item := range items {
 		text := strings.TrimSpace(item.Text)
 		if text == "" {
 			continue
 		}
-		lines = append(lines, "  "+text)
+		lines = append(lines, text)
+	}
+	if len(lines) == 0 {
+		return ""
 	}
 	for i, line := range lines {
 		lines[i] = bossToolCallStyle.Render(fitLine(line, width))
@@ -60,7 +54,7 @@ func (m Model) supervisorItems(now time.Time) []bossSupervisorItem {
 			activeTaskIDs[taskID] = struct{}{}
 		}
 		if text := supervisorActivityLine(activity, now); text != "" {
-			items = append(items, bossSupervisorItem{Text: text, State: bossSupervisorItemActive})
+			items = append(items, bossSupervisorItem{Text: text})
 		}
 	}
 	for _, task := range m.snapshot.OpenAgentTasks {
@@ -71,71 +65,44 @@ func (m Model) supervisorItems(now time.Time) []bossSupervisorItem {
 			continue
 		}
 		if text := supervisorTaskLine(task, now); text != "" {
-			items = append(items, bossSupervisorItem{Text: text, State: supervisorTaskItemState(task)})
+			items = append(items, bossSupervisorItem{Text: text})
 		}
 	}
 	return items
 }
 
-func supervisorHeader(items []bossSupervisorItem, spinnerFrame int) string {
-	if supervisorItemsIncludeState(items, bossSupervisorItemActive) {
-		return "Supervisor: tracking work " + spinnerDots(spinnerFrame)
-	}
-	if supervisorItemsIncludeState(items, bossSupervisorItemWaiting) {
-		return "Supervisor: needs your call"
-	}
-	return "Supervisor: open handoffs"
-}
-
-func supervisorItemsIncludeState(items []bossSupervisorItem, state bossSupervisorItemState) bool {
-	for _, item := range items {
-		if item.State == state {
-			return true
-		}
-	}
-	return false
-}
-
-func supervisorTaskItemState(task AgentTaskBrief) bossSupervisorItemState {
-	if model.NormalizeAgentTaskStatus(task.Status) == model.AgentTaskStatusWaiting {
-		return bossSupervisorItemWaiting
-	}
-	return bossSupervisorItemOpen
-}
-
 func supervisorActivityLine(activity ViewEngineerActivity, now time.Time) string {
 	title := strings.TrimSpace(firstNonEmpty(activity.Title, activity.ProjectPath, activity.TaskID, "engineer session"))
 	name := strings.TrimSpace(firstNonEmpty(activity.EngineerName, "Engineer"))
-	status := supervisorActivityStatus(activity, now)
-	if status == "" {
-		return ""
-	}
-	provider := strings.TrimSpace(string(model.NormalizeSessionSource(activity.Provider)))
-	if provider != "" {
-		status = provider + " " + status
-	}
-	return name + " on " + title + " - " + status
-}
-
-func supervisorActivityStatus(activity ViewEngineerActivity, now time.Time) string {
 	status := strings.TrimSpace(activity.Status)
 	if status == "" {
 		status = "working"
 	}
-	switch status {
-	case "stalled", "waiting", "working elsewhere":
-		if elapsed := bossEngineerActivityElapsedText(activity, now); elapsed != "" {
-			return status + " " + elapsed
-		}
-		return status
-	}
 	if quietFor := supervisorActivityQuietFor(activity, now); quietFor >= bossSupervisorQuietAfter {
-		return "quiet " + bossRunningDuration(quietFor)
+		return name + " has gone quiet on " + title + " for " + bossRunningDuration(quietFor)
 	}
-	if elapsed := bossEngineerActivityElapsedText(activity, now); elapsed != "" {
-		return status + " " + elapsed
+	elapsed := bossEngineerActivityElapsedText(activity, now)
+	switch status {
+	case "stalled":
+		return supervisorActivitySentence(name, "is stalled on", title, elapsed)
+	case "waiting":
+		return supervisorActivitySentence(name, "is waiting on", title, elapsed)
+	case "working elsewhere":
+		return supervisorActivitySentence(name, "is working elsewhere from", title, elapsed)
+	default:
+		if status != "working" {
+			return supervisorActivitySentence(name, "is "+status+" on", title, elapsed)
+		}
+		return supervisorActivitySentence(name, "is working on", title, elapsed)
 	}
-	return status
+}
+
+func supervisorActivitySentence(name, action, title, elapsed string) string {
+	line := strings.TrimSpace(name + " " + action + " " + title)
+	if elapsed != "" {
+		line += " for " + elapsed
+	}
+	return line
 }
 
 func supervisorActivityQuietFor(activity ViewEngineerActivity, now time.Time) time.Duration {
@@ -164,7 +131,7 @@ func supervisorTaskLine(task AgentTaskBrief, now time.Time) string {
 	case model.AgentTaskStatusWaiting:
 		return supervisorJoinLine(name+" finished "+title+". "+agentTaskDecisionQuestion(name), detail)
 	case model.AgentTaskStatusActive:
-		return supervisorJoinLine(name+" has "+title+" open", detail)
+		return supervisorJoinLine(title+" is still open", detail)
 	default:
 		return ""
 	}
@@ -175,7 +142,7 @@ func supervisorTaskDetail(task AgentTaskBrief, now time.Time) string {
 		return clipText(summary, 140)
 	}
 	if model.NormalizeAgentTaskStatus(task.Status) == model.AgentTaskStatusActive {
-		return "no live engineer session right now"
+		return "no engineer is working on it right now"
 	}
 	if !task.LastTouchedAt.IsZero() {
 		return "touched " + relativeAge(now, task.LastTouchedAt)
