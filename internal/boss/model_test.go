@@ -214,7 +214,7 @@ func TestModelAttentionRowsShowActiveAgentTaskTimer(t *testing.T) {
 		}
 	}
 	transcript := ansi.Strip(m.renderTranscript(90))
-	for _, want := range []string{"Supervisor", "Ada on Revoke Cursor GitHub access - codex working 00:37"} {
+	for _, want := range []string{"Supervisor: tracking work", "Ada on Revoke Cursor GitHub access - codex working 00:37"} {
 		if !strings.Contains(transcript, want) {
 			t.Fatalf("active agent transcript status missing %q:\n%s", want, transcript)
 		}
@@ -272,10 +272,13 @@ func TestModelSupervisorShowsReviewAgentTasks(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderTranscript(180))
-	for _, want := range []string{"Supervisor", "Jun finished Diff duplicate Codex skills. Should I close it, or send Jun back in?", "Found one canonical skill"} {
+	for _, want := range []string{"Supervisor: needs your call", "Jun finished Diff duplicate Codex skills. Should I close it, or send Jun back in?", "Found one canonical skill"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("supervisor review block missing %q:\n%s", want, rendered)
 		}
+	}
+	if strings.Contains(rendered, "Supervisor ..") || strings.Contains(rendered, "Supervisor ...") {
+		t.Fatalf("passive supervisor review block should not look like an activity spinner:\n%s", rendered)
 	}
 }
 
@@ -296,7 +299,7 @@ func TestModelSupervisorReviewAgentTaskWithoutSummaryShowsDecision(t *testing.T)
 	}
 
 	rendered := ansi.Strip(m.renderTranscript(180))
-	for _, want := range []string{"Dennis finished Diff duplicate Codex skills. Should I close it, or send Dennis back in?", "touched 1h ago"} {
+	for _, want := range []string{"Supervisor: needs your call", "Dennis finished Diff duplicate Codex skills. Should I close it, or send Dennis back in?", "touched 1h ago"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("supervisor review decision block missing %q:\n%s", want, rendered)
 		}
@@ -324,7 +327,7 @@ func TestModelSupervisorMarksQuietEngineerActivity(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderTranscript(90))
-	for _, want := range []string{"Supervisor", "Tem on Alpha - codex quiet 11:00"} {
+	for _, want := range []string{"Supervisor: tracking work", "Tem on Alpha - codex quiet 11:00"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("supervisor quiet block missing %q:\n%s", want, rendered)
 		}

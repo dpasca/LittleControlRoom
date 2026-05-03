@@ -15,15 +15,24 @@ const (
 )
 
 type bossSupervisorItem struct {
-	Text string
+	Text  string
+	State bossSupervisorItemState
 }
+
+type bossSupervisorItemState string
+
+const (
+	bossSupervisorItemActive  bossSupervisorItemState = "active"
+	bossSupervisorItemWaiting bossSupervisorItemState = "waiting"
+	bossSupervisorItemOpen    bossSupervisorItemState = "open"
+)
 
 func (m Model) renderSupervisorBrief(width int) string {
 	items := m.supervisorItems(m.now())
 	if len(items) == 0 {
 		return ""
 	}
-	lines := []string{"Supervisor " + spinnerDots(m.spinnerFrame)}
+	lines := []string{supervisorHeader(items, m.spinnerFrame)}
 	for _, item := range items {
 		text := strings.TrimSpace(item.Text)
 		if text == "" {
@@ -51,7 +60,7 @@ func (m Model) supervisorItems(now time.Time) []bossSupervisorItem {
 			activeTaskIDs[taskID] = struct{}{}
 		}
 		if text := supervisorActivityLine(activity, now); text != "" {
-			items = append(items, bossSupervisorItem{Text: text})
+			items = append(items, bossSupervisorItem{Text: text, State: bossSupervisorItemActive})
 		}
 	}
 	for _, task := range m.snapshot.OpenAgentTasks {
@@ -62,10 +71,36 @@ func (m Model) supervisorItems(now time.Time) []bossSupervisorItem {
 			continue
 		}
 		if text := supervisorTaskLine(task, now); text != "" {
-			items = append(items, bossSupervisorItem{Text: text})
+			items = append(items, bossSupervisorItem{Text: text, State: supervisorTaskItemState(task)})
 		}
 	}
 	return items
+}
+
+func supervisorHeader(items []bossSupervisorItem, spinnerFrame int) string {
+	if supervisorItemsIncludeState(items, bossSupervisorItemActive) {
+		return "Supervisor: tracking work " + spinnerDots(spinnerFrame)
+	}
+	if supervisorItemsIncludeState(items, bossSupervisorItemWaiting) {
+		return "Supervisor: needs your call"
+	}
+	return "Supervisor: open handoffs"
+}
+
+func supervisorItemsIncludeState(items []bossSupervisorItem, state bossSupervisorItemState) bool {
+	for _, item := range items {
+		if item.State == state {
+			return true
+		}
+	}
+	return false
+}
+
+func supervisorTaskItemState(task AgentTaskBrief) bossSupervisorItemState {
+	if model.NormalizeAgentTaskStatus(task.Status) == model.AgentTaskStatusWaiting {
+		return bossSupervisorItemWaiting
+	}
+	return bossSupervisorItemOpen
 }
 
 func supervisorActivityLine(activity ViewEngineerActivity, now time.Time) string {
