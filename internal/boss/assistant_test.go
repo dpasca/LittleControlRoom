@@ -262,6 +262,7 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"Prefer verbs from the evidence",
 		"structured control action",
 		"user must confirm",
+		"Do not say agent work will be done",
 	} {
 		if !strings.Contains(directPrompt, want) {
 			t.Fatalf("assistant prompt missing %q:\n%s", want, directPrompt)
@@ -281,6 +282,10 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"Use engineer.send_prompt only for explicit project/repo work",
 		"Use agent_task.create for temporary delegated work",
 		"do not encode special domains as task kinds",
+		"treat that as a request to manage those agent tasks",
+		"propose exactly one agent_task.continue",
+		"assents to a prior Boss Chat plan",
+		"Do not answer with only a priority order",
 		"Do not use the Little Control Room project or another unrelated active engineer session as a proxy venue",
 		"user confirmation",
 		"context_command",
@@ -545,6 +550,55 @@ func TestAssistantReplyCanProposeAgentTaskCreateControl(t *testing.T) {
 	if !strings.Contains(string(resp.ControlInvocation.Args), `"title":"Clean suspicious local processes"`) ||
 		!strings.Contains(string(resp.ControlInvocation.Args), `"kind":"agent"`) ||
 		!strings.Contains(string(resp.ControlInvocation.Args), `"capabilities":["`) {
+		t.Fatalf("invocation args = %s", resp.ControlInvocation.Args)
+	}
+}
+
+func TestAssistantReplyCanProposeAgentTaskContinueControl(t *testing.T) {
+	t.Parallel()
+
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model: "gpt-test",
+			OutputText: encodedBossAction(t, bossAction{
+				Kind:              bossActionProposeControl,
+				ControlCapability: "agent_task.continue",
+				TaskID:            "agt_roguellm",
+				EngineerProvider:  "codex",
+				SessionMode:       "resume_or_new",
+				Prompt:            "Continue the stale roguellm dev-server cleanup. Verify whether the server process is still running, terminate only clearly stale project-local processes, and report the result.",
+				Reason:            "The user asked to solve the open agent tasks, starting with the stalest one.",
+			}),
+			Usage: model.LLMUsage{TotalTokens: 21},
+		}},
+	}
+	assistant := &Assistant{
+		planner: planner,
+		query:   newQueryExecutor(&fakeBossStore{}),
+		model:   "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Open delegated agent tasks (separate from project TODOs):\n- Kill stale roguellm dev server (agt_roguellm); show: agent_task:agt_roguellm; touched 9h ago",
+		Messages: []ChatMessage{
+			{Role: "assistant", Content: "We should clear the stale roguellm dev server first, then the duplicate Codex skills, then Cursor."},
+			{Role: "user", Content: "cool"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.ControlInvocation == nil {
+		t.Fatalf("ControlInvocation = nil, want agent_task.continue proposal")
+	}
+	if resp.ControlInvocation.Capability != control.CapabilityAgentTaskContinue {
+		t.Fatalf("capability = %q", resp.ControlInvocation.Capability)
+	}
+	if !strings.Contains(resp.Content, "Continue agent task agt_roguellm?") || !strings.Contains(resp.Content, "Enter confirms") {
+		t.Fatalf("proposal content = %q, want agent task continuation confirmation", resp.Content)
+	}
+	if !strings.Contains(string(resp.ControlInvocation.Args), `"task_id":"agt_roguellm"`) ||
+		!strings.Contains(string(resp.ControlInvocation.Args), `"prompt":"Continue the stale roguellm dev-server cleanup.`) {
 		t.Fatalf("invocation args = %s", resp.ControlInvocation.Args)
 	}
 }

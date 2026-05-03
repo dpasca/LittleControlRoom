@@ -485,6 +485,7 @@ func bossAssistantSystemPrompt() string {
 		"Prefer verbs from the evidence: extracted, fixed, blocked, waiting, testing, validating. Do not pad with status adjectives.",
 		"Use confident wording when the evidence is direct; reserve hedging for genuinely uncertain mappings or stale data.",
 		"You can propose project engineer prompts or generic agent-task actions through structured control actions, but the user must confirm before anything is sent or changed.",
+		"Do not say agent work will be done unless you are returning a control proposal for that work or clearly saying it still needs confirmation.",
 		"State the next useful check directly when follow-up work is needed.",
 	}, "\n")
 }
@@ -511,6 +512,10 @@ func bossActionPlannerSystemPrompt() string {
 		"Use engineer.send_prompt only for explicit project/repo work on a loaded project. Do not use it for host operations or generic temporary work.",
 		"Use agent_task.create for temporary delegated work with no natural loaded project, including host/process/browser/system investigation. Use a generic agent task with resources and capabilities; do not encode special domains as task kinds.",
 		"Use agent_task.continue when the user asks to hit an existing open agent task again. Use agent_task.close when the task is done, should wait, or should be archived.",
+		"When the user asks to solve, clear, finish, continue, or make progress on open agent tasks, treat that as a request to manage those agent tasks, not as a request for only a status answer.",
+		"If the user asks to solve or clear multiple open agent tasks, propose exactly one agent_task.continue for the next concrete task. Prefer the user-named task; otherwise choose the stalest or highest-risk task from the available agent-task evidence, and mention that the remaining tasks can follow after this one is confirmed.",
+		"If the user assents to a prior Boss Chat plan for clearing open agent tasks, propose agent_task.continue for the next task in that plan instead of restating the plan.",
+		"Do not answer with only a priority order when the user asks Boss to get open agent tasks solved and a task id is visible.",
 		"Do not use the Little Control Room project or another unrelated active engineer session as a proxy venue for generic or host-level work.",
 		"Before propose_control, resolve ambiguous targets with read-only queries or ask the user to name the project. Do not infer a project from hidden UI cursor state.",
 		"For engineer.send_prompt, set provider to auto unless the user explicitly names Codex, OpenCode, or Claude Code. Set session_mode to new only when the user asks for a fresh/new session; otherwise use resume_or_new. Set reveal true only when the user asks to show/open the session.",
@@ -578,7 +583,7 @@ func bossActionPlannerUserText(req AssistantRequest, toolResults []bossToolResul
 	if forceAnswer {
 		b.WriteString("\nYou must choose kind=\"answer\" or kind=\"propose_control\" now. Use the gathered data; do not request more read-only queries.\n")
 	} else {
-		b.WriteString("\nChoose kind=\"answer\" if you have enough data, choose kind=\"propose_control\" if the user asked to delegate project work or manage an agent task and the target is clear, otherwise choose one read-only query kind.\n")
+		b.WriteString("\nChoose kind=\"answer\" if you have enough data, choose kind=\"propose_control\" if the user asked to delegate project work or manage/continue/clear/solve an agent task and a task id or project target is clear, otherwise choose one read-only query kind. For multiple open agent tasks, propose one concrete next agent_task.continue rather than only giving an order.\n")
 	}
 	return strings.TrimSpace(b.String())
 }
