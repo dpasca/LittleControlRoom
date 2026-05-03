@@ -271,8 +271,7 @@ func controlAgentTaskCreateResultContent(status string, input control.AgentTaskC
 	if prompt := strings.TrimSpace(input.Prompt); prompt != "" {
 		lines = append(lines, "", "Sent to the engineer:", fencedTextBlock(clipText(prompt, 1200)))
 	}
-	lines = append(lines, "", "I will treat the engineer session as the source of truth for this task. When it has output, ask me what it found and I will read the task transcript before guiding the next step.")
-	lines = append(lines, "The task now appears in the Attention list with the regular project items.")
+	lines = append(lines, "", "The task is linked to this engineer session.")
 	return strings.Join(lines, "\n")
 }
 
@@ -281,7 +280,6 @@ func controlAgentTaskContinueResultContent(status string, input control.AgentTas
 	if prompt := strings.TrimSpace(input.Prompt); prompt != "" {
 		lines = append(lines, "", "Sent to the engineer:", fencedTextBlock(clipText(prompt, 1200)))
 	}
-	lines = append(lines, "", "I will check this task's engineer output before recommending what to do next.")
 	return strings.Join(lines, "\n")
 }
 

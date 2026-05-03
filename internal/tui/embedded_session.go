@@ -284,7 +284,12 @@ func (m Model) applyCodexUpdateMsg(msg codexUpdateMsg) (tea.Model, tea.Cmd) {
 			if notice := bossBrowserAttentionHostNoticeForSnapshot(msg.projectPath, hadPrevSnapshot, prevSnapshot, snapshot); notice != "" {
 				var cmd tea.Cmd
 				m, cmd = m.updateBossHostNotice(notice)
-				bossNoticeCmd = cmd
+				bossNoticeCmd = batchCmds(bossNoticeCmd, cmd)
+			}
+			if notice := m.bossEngineerTurnCompletionHostNotice(msg.projectPath, hadPrevSnapshot, prevSnapshot, snapshot); notice != "" {
+				var cmd tea.Cmd
+				m, cmd = m.updateBossHostNotice(notice)
+				bossNoticeCmd = batchCmds(bossNoticeCmd, cmd)
 			}
 		}
 	}
@@ -360,7 +365,12 @@ func (m Model) applyCodexDeferredSnapshotMsg(msg codexDeferredSnapshotMsg) (tea.
 		if notice := bossBrowserAttentionHostNoticeForSnapshot(projectPath, hadPrev, prevSnapshot, snapshot); notice != "" {
 			var cmd tea.Cmd
 			m, cmd = m.updateBossHostNotice(notice)
-			bossNoticeCmd = cmd
+			bossNoticeCmd = batchCmds(bossNoticeCmd, cmd)
+		}
+		if notice := m.bossEngineerTurnCompletionHostNotice(projectPath, hadPrev, prevSnapshot, snapshot); notice != "" {
+			var cmd tea.Cmd
+			m, cmd = m.updateBossHostNotice(notice)
+			bossNoticeCmd = batchCmds(bossNoticeCmd, cmd)
 		}
 	}
 	if m.codexVisibleProject == projectPath {

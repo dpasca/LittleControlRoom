@@ -905,13 +905,22 @@ func (m Model) renderProjectAttentionRow(project ProjectBrief, index, keyW, flag
 	key := bossHotkeyStyle.Width(keyW).Render(fmt.Sprintf("Alt+%d", index+1))
 	flags := bossRepoFlagStyle(project).Width(flagW).Align(lipgloss.Left).Render(bossRepoFlagText(project))
 	assessmentText, assessmentStyle := bossAssessmentCell(project)
+	activity, active := m.engineerActivityForProject(project.Path)
+	if active {
+		assessmentText, assessmentStyle = bossEngineerActivityCell(activity, m.now())
+	}
 	assessment := assessmentStyle.Width(assessmentW).Render(fitLine(assessmentText, assessmentW))
 	name := bossProjectNameStyle.Width(nameW).Render(fitLine(compactProjectName(project), nameW))
 	summaryStyle := bossSummaryStyle(project)
 	if m.summaryFlashActive(project.Path) {
 		summaryStyle = bossSummaryFlashStyle
 	}
-	summary := summaryStyle.Width(summaryW).Render(fitLine(bossProjectSummaryText(project, m.now()), summaryW))
+	summaryText := bossProjectSummaryText(project, m.now())
+	if active {
+		summaryText = bossEngineerActivitySummaryText(summaryText, activity, m.now())
+		summaryStyle = bossSummaryTextStyle
+	}
+	summary := summaryStyle.Width(summaryW).Render(fitLine(summaryText, summaryW))
 	return fitStyledLine(lipgloss.JoinHorizontal(
 		lipgloss.Top,
 		key,
@@ -930,9 +939,17 @@ func (m Model) renderAgentTaskAttentionRow(task AgentTaskBrief, index, keyW, fla
 	key := bossHotkeyStyle.Width(keyW).Render(fmt.Sprintf("Alt+%d", index+1))
 	flags := bossTaskFlagStyle.Width(flagW).Align(lipgloss.Left).Render("T")
 	assessmentText, assessmentStyle := bossAgentTaskStatusCell(task)
+	activity, active := m.engineerActivityForAgentTask(task.ID)
+	if active {
+		assessmentText, assessmentStyle = bossEngineerActivityCell(activity, m.now())
+	}
 	assessment := assessmentStyle.Width(assessmentW).Render(fitLine(assessmentText, assessmentW))
 	name := bossTaskNameStyle.Width(nameW).Render(fitLine(compactAgentTaskTitle(task), nameW))
-	summary := bossSummaryTextStyle.Width(summaryW).Render(fitLine(bossAgentTaskSummaryText(task, m.now()), summaryW))
+	summaryText := bossAgentTaskSummaryText(task, m.now())
+	if active {
+		summaryText = bossEngineerActivitySummaryText(summaryText, activity, m.now())
+	}
+	summary := bossSummaryTextStyle.Width(summaryW).Render(fitLine(summaryText, summaryW))
 	return fitStyledLine(lipgloss.JoinHorizontal(
 		lipgloss.Top,
 		key,
@@ -945,6 +962,32 @@ func (m Model) renderAgentTaskAttentionRow(task AgentTaskBrief, index, keyW, fla
 		"  ",
 		summary,
 	), width)
+}
+
+func (m Model) engineerActivityForAgentTask(taskID string) (ViewEngineerActivity, bool) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return ViewEngineerActivity{}, false
+	}
+	for _, activity := range m.viewContext.EngineerActivities {
+		if strings.TrimSpace(activity.TaskID) == taskID && activity.Active {
+			return activity, true
+		}
+	}
+	return ViewEngineerActivity{}, false
+}
+
+func (m Model) engineerActivityForProject(projectPath string) (ViewEngineerActivity, bool) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return ViewEngineerActivity{}, false
+	}
+	for _, activity := range m.viewContext.EngineerActivities {
+		if strings.TrimSpace(activity.ProjectPath) == projectPath && activity.Active {
+			return activity, true
+		}
+	}
+	return ViewEngineerActivity{}, false
 }
 
 func bossRepoFlagText(project ProjectBrief) string {
@@ -1085,6 +1128,47 @@ func bossAgentTaskStatusCell(task AgentTaskBrief) (string, lipgloss.Style) {
 	}
 }
 
+func bossEngineerActivityCell(activity ViewEngineerActivity, now time.Time) (string, lipgloss.Style) {
+	status := strings.TrimSpace(activity.Status)
+	switch status {
+	case "stalled":
+		return "stalled", bossAssessmentBlockedStyle
+	case "waiting":
+		return "waiting", bossAssessmentWaitingStyle
+	case "finishing", "rechecking":
+		if elapsed := bossEngineerActivityElapsedText(activity, now); elapsed != "" {
+			return elapsed, bossAssessmentRunningStyle
+		}
+		return status, bossAssessmentRunningStyle
+	default:
+		if elapsed := bossEngineerActivityElapsedText(activity, now); elapsed != "" {
+			return elapsed, bossAssessmentWorkingStyle
+		}
+		return "working", bossAssessmentWorkingStyle
+	}
+}
+
+func bossEngineerActivitySummaryText(base string, activity ViewEngineerActivity, now time.Time) string {
+	status := strings.TrimSpace(activity.Status)
+	if status == "" {
+		status = "working"
+	}
+	if elapsed := bossEngineerActivityElapsedText(activity, now); elapsed != "" {
+		status += " " + elapsed
+	}
+	if strings.TrimSpace(base) == "" || base == "-" {
+		return status
+	}
+	return status + " | " + base
+}
+
+func bossEngineerActivityElapsedText(activity ViewEngineerActivity, now time.Time) string {
+	if activity.StartedAt.IsZero() || now.IsZero() {
+		return ""
+	}
+	return bossRunningDuration(now.Sub(activity.StartedAt))
+}
+
 func bossAgentTaskSummaryText(task AgentTaskBrief, now time.Time) string {
 	if summary := strings.TrimSpace(task.Summary); summary != "" {
 		return summary
@@ -1179,12 +1263,68 @@ func (m Model) renderTranscript(width int) string {
 		}
 		blocks = append(blocks, renderUserMessage(message.Content, width))
 	}
+	if !m.sending {
+		if activity := m.renderTemporaryEngineerActivity(width); activity != "" {
+			blocks = append(blocks, activity)
+		}
+	}
 	if m.sending {
 		if pending := renderStreamingAssistantMessage(m.streamingAssistantText, m.streamingToolCalls, width, m.spinnerFrame); pending != "" {
 			blocks = append(blocks, pending)
 		}
 	}
 	return strings.Join(blocks, "\n\n")
+}
+
+func (m Model) renderTemporaryEngineerActivity(width int) string {
+	activities := m.activeEngineerActivities()
+	if len(activities) == 0 {
+		return ""
+	}
+	start := maxInt(0, len(activities)-3)
+	lines := []string{"Engineer activity " + spinnerDots(m.spinnerFrame)}
+	now := m.now()
+	for _, activity := range activities[start:] {
+		title := strings.TrimSpace(activity.Title)
+		if title == "" {
+			title = strings.TrimSpace(activity.ProjectPath)
+		}
+		if title == "" {
+			title = strings.TrimSpace(activity.TaskID)
+		}
+		if title == "" {
+			title = "engineer session"
+		}
+		status := strings.TrimSpace(activity.Status)
+		if status == "" {
+			status = "working"
+		}
+		if elapsed := bossEngineerActivityElapsedText(activity, now); elapsed != "" {
+			status += " " + elapsed
+		}
+		provider := strings.TrimSpace(string(model.NormalizeSessionSource(activity.Provider)))
+		if provider != "" {
+			status = provider + " " + status
+		}
+		lines = append(lines, "  "+title+" - "+status)
+	}
+	for i, line := range lines {
+		lines[i] = bossToolCallStyle.Render(fitLine(line, width))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) activeEngineerActivities() []ViewEngineerActivity {
+	if len(m.viewContext.EngineerActivities) == 0 {
+		return nil
+	}
+	out := make([]ViewEngineerActivity, 0, len(m.viewContext.EngineerActivities))
+	for _, activity := range m.viewContext.EngineerActivities {
+		if activity.Active {
+			out = append(out, activity)
+		}
+	}
+	return out
 }
 
 func (m Model) now() time.Time {

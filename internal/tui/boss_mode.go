@@ -2,10 +2,13 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
+	"time"
 
 	bossui "lcroom/internal/boss"
 	"lcroom/internal/codexapp"
+	"lcroom/internal/model"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -32,6 +35,7 @@ func (m *Model) closeBossMode(status string) {
 }
 
 func (m Model) updateBossModeMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
 	updated, cmd := m.bossModel.Update(msg)
 	m.bossModel = normalizeBossModel(updated)
 	return m, cmd
@@ -42,12 +46,14 @@ func (m Model) updateBossHostNotice(content string) (Model, tea.Cmd) {
 	if !m.bossMode || content == "" {
 		return m, nil
 	}
+	m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
 	updated, cmd := m.bossModel.Update(bossui.HostNoticeMsg{Content: content})
 	m.bossModel = normalizeBossModel(updated)
 	return m, cmd
 }
 
 func (m Model) updateBossModeWindowSize() (tea.Model, tea.Cmd) {
+	m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
 	updated, cmd := m.bossModel.Update(m.bossModeWindowSizeMsg())
 	m.bossModel = normalizeBossModel(updated)
 	return m, cmd
@@ -213,6 +219,7 @@ func (m Model) bossViewContext() bossui.ViewContext {
 		Status:              strings.TrimSpace(m.status),
 		PrivacyMode:         m.privacyMode,
 		PrivacyPatterns:     append([]string(nil), m.privacyPatterns...),
+		EngineerActivities:  m.bossEngineerActivities(),
 	}
 	if notice := processWarningSystemNoticeSummary(m.totalProcessWarningStats()); notice != "" {
 		view.SystemNotices = append(view.SystemNotices, bossui.ViewSystemNotice{
@@ -239,6 +246,229 @@ func (m Model) bossViewContext() bossui.ViewContext {
 		})
 	}
 	return view
+}
+
+func (m Model) bossEngineerActivities() []bossui.ViewEngineerActivity {
+	activities := make([]bossui.ViewEngineerActivity, 0, len(m.openAgentTasks)+len(m.codexSnapshots))
+	seen := map[string]bool{}
+	for _, task := range m.openAgentTasks {
+		if !agentTaskIsOpen(task) {
+			continue
+		}
+		snapshot, ok := m.cachedAgentTaskSnapshot(task)
+		if !ok {
+			continue
+		}
+		activity, ok := bossAgentTaskActivityFromSnapshot(task, snapshot)
+		if ok {
+			seen[bossEngineerActivityKey(activity)] = true
+			activities = append(activities, activity)
+		}
+	}
+	for _, snapshot := range m.liveCodexSnapshots() {
+		activity, ok := m.bossProjectEngineerActivityFromSnapshot(snapshot)
+		if !ok {
+			continue
+		}
+		key := bossEngineerActivityKey(activity)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		activities = append(activities, activity)
+	}
+	return activities
+}
+
+func (m Model) cachedAgentTaskSnapshot(task model.AgentTask) (codexapp.Snapshot, bool) {
+	path := strings.TrimSpace(task.WorkspacePath)
+	if path == "" {
+		return codexapp.Snapshot{}, false
+	}
+	snapshot, ok := m.codexCachedSnapshot(path)
+	if !ok || !snapshot.Started || snapshot.Closed {
+		return codexapp.Snapshot{}, false
+	}
+	provider := codexProviderFromSessionSource(task.Provider)
+	if provider != "" && embeddedProvider(snapshot) != provider {
+		return codexapp.Snapshot{}, false
+	}
+	return snapshot, true
+}
+
+func bossAgentTaskActivityFromSnapshot(task model.AgentTask, snapshot codexapp.Snapshot) (bossui.ViewEngineerActivity, bool) {
+	if !bossEngineerSnapshotActive(snapshot) {
+		return bossui.ViewEngineerActivity{}, false
+	}
+	return bossui.ViewEngineerActivity{
+		Kind:        "agent_task",
+		TaskID:      strings.TrimSpace(task.ID),
+		ProjectPath: strings.TrimSpace(task.WorkspacePath),
+		Title:       strings.TrimSpace(task.Title),
+		Provider:    modelSessionSourceFromCodexProvider(embeddedProvider(snapshot)),
+		SessionID:   strings.TrimSpace(snapshot.ThreadID),
+		Status:      bossEngineerActivityStatus(snapshot),
+		Active:      true,
+		StartedAt:   bossEngineerActivityStartedAt(snapshot),
+		LastEventAt: embeddedSnapshotActivityAt(snapshot),
+	}, true
+}
+
+func (m Model) bossProjectEngineerActivityFromSnapshot(snapshot codexapp.Snapshot) (bossui.ViewEngineerActivity, bool) {
+	if !bossEngineerSnapshotActive(snapshot) {
+		return bossui.ViewEngineerActivity{}, false
+	}
+	projectPath := strings.TrimSpace(snapshot.ProjectPath)
+	if projectPath == "" {
+		return bossui.ViewEngineerActivity{}, false
+	}
+	title := filepath.Base(projectPath)
+	if project, ok := m.projectSummaryByPathAllProjects(projectPath); ok {
+		title = projectNameForPicker(project, projectPath)
+	}
+	return bossui.ViewEngineerActivity{
+		Kind:        "project",
+		ProjectPath: projectPath,
+		Title:       strings.TrimSpace(title),
+		Provider:    modelSessionSourceFromCodexProvider(embeddedProvider(snapshot)),
+		SessionID:   strings.TrimSpace(snapshot.ThreadID),
+		Status:      bossEngineerActivityStatus(snapshot),
+		Active:      true,
+		StartedAt:   bossEngineerActivityStartedAt(snapshot),
+		LastEventAt: embeddedSnapshotActivityAt(snapshot),
+	}, true
+}
+
+func bossEngineerActivityKey(activity bossui.ViewEngineerActivity) string {
+	return strings.Join([]string{
+		strings.TrimSpace(activity.ProjectPath),
+		strings.TrimSpace(string(model.NormalizeSessionSource(activity.Provider))),
+		strings.TrimSpace(activity.SessionID),
+	}, "\x00")
+}
+
+func bossEngineerActivityStartedAt(snapshot codexapp.Snapshot) time.Time {
+	startedAt := snapshot.BusySince
+	if startedAt.IsZero() {
+		startedAt = snapshot.LastBusyActivityAt
+	}
+	if startedAt.IsZero() {
+		startedAt = snapshot.LastActivityAt
+	}
+	return startedAt
+}
+
+func bossEngineerSnapshotActive(snapshot codexapp.Snapshot) bool {
+	if !snapshot.Started || snapshot.Closed {
+		return false
+	}
+	if snapshot.Busy || snapshot.BusyExternal || strings.TrimSpace(snapshot.ActiveTurnID) != "" {
+		return true
+	}
+	if snapshot.PendingApproval != nil || snapshot.PendingToolInput != nil || snapshot.PendingElicitation != nil {
+		return true
+	}
+	switch snapshot.Phase {
+	case codexapp.SessionPhaseRunning,
+		codexapp.SessionPhaseFinishing,
+		codexapp.SessionPhaseReconciling,
+		codexapp.SessionPhaseStalled,
+		codexapp.SessionPhaseExternal:
+		return true
+	default:
+		return false
+	}
+}
+
+func bossEngineerActivityStatus(snapshot codexapp.Snapshot) string {
+	switch snapshot.Phase {
+	case codexapp.SessionPhaseStalled:
+		return "stalled"
+	case codexapp.SessionPhaseFinishing:
+		return "finishing"
+	case codexapp.SessionPhaseReconciling:
+		return "rechecking"
+	case codexapp.SessionPhaseExternal:
+		return "working elsewhere"
+	}
+	if snapshot.PendingApproval != nil || snapshot.PendingToolInput != nil || snapshot.PendingElicitation != nil {
+		return "waiting"
+	}
+	if snapshot.BusyExternal {
+		return "working elsewhere"
+	}
+	if snapshot.Busy || strings.TrimSpace(snapshot.ActiveTurnID) != "" {
+		return "working"
+	}
+	if status := normalizedCodexStatus(snapshot.Status); status != "" {
+		return status
+	}
+	return "working"
+}
+
+func (m Model) bossEngineerTurnCompletionHostNotice(projectPath string, hadPrev bool, prevSnapshot, snapshot codexapp.Snapshot) string {
+	if !hadPrev || !bossEngineerSnapshotActive(prevSnapshot) || bossEngineerSnapshotActive(snapshot) {
+		return ""
+	}
+	label := m.bossEngineerCompletionLabel(projectPath)
+	output := latestEngineerTranscriptOutput(snapshot)
+	if output != "" {
+		return "Engineer finished for " + label + ".\n\nLatest output: " + output
+	}
+	if status := normalizedCodexStatus(snapshot.Status); status != "" {
+		return "Engineer finished for " + label + ": " + status
+	}
+	return "Engineer finished for " + label + "."
+}
+
+func (m Model) bossEngineerCompletionLabel(projectPath string) string {
+	projectPath = strings.TrimSpace(projectPath)
+	if task, ok := m.agentTaskForProjectPath(projectPath); ok {
+		if title := strings.TrimSpace(task.Title); title != "" {
+			return title
+		}
+		if id := strings.TrimSpace(task.ID); id != "" {
+			return id
+		}
+	}
+	if project, ok := m.projectSummaryByPathAllProjects(projectPath); ok {
+		if name := projectNameForPicker(project, projectPath); strings.TrimSpace(name) != "" {
+			return name
+		}
+	}
+	if base := strings.TrimSpace(filepath.Base(projectPath)); base != "" && base != "." && base != string(filepath.Separator) {
+		return base
+	}
+	if projectPath != "" {
+		return projectPath
+	}
+	return "engineer session"
+}
+
+func latestEngineerTranscriptOutput(snapshot codexapp.Snapshot) string {
+	for i := len(snapshot.Entries) - 1; i >= 0; i-- {
+		entry := snapshot.Entries[i]
+		if entry.Kind != codexapp.TranscriptAgent && entry.Kind != codexapp.TranscriptPlan {
+			continue
+		}
+		text := strings.TrimSpace(firstNonEmptyTrimmed(entry.DisplayText, entry.Text))
+		if text == "" {
+			continue
+		}
+		return compactEngineerNoticeText(text, 420)
+	}
+	return ""
+}
+
+func compactEngineerNoticeText(text string, limit int) string {
+	text = strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+	if limit <= 0 || len(text) <= limit {
+		return text
+	}
+	if limit <= 1 {
+		return text[:limit]
+	}
+	return strings.TrimSpace(text[:limit-1]) + "..."
 }
 
 func bossBrowserAttentionNoticeSummary(notify browserAttentionNotification) string {

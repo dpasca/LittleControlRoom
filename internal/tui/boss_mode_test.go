@@ -60,6 +60,140 @@ func TestBossViewContextCapturesClassicTUIStateWithoutSelection(t *testing.T) {
 	}
 }
 
+func TestBossViewContextIncludesActiveAgentTaskEngineerActivity(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	task := model.AgentTask{
+		ID:            "agt_demo",
+		Title:         "Revoke Cursor GitHub access",
+		Status:        model.AgentTaskStatusActive,
+		Provider:      model.SessionSourceCodex,
+		SessionID:     "thread-agent-1",
+		WorkspacePath: "/tmp/agent-task",
+	}
+	m := Model{
+		openAgentTasks: []model.AgentTask{task},
+		codexSnapshots: map[string]codexapp.Snapshot{
+			task.WorkspacePath: {
+				Provider:           codexapp.ProviderCodex,
+				ProjectPath:        task.WorkspacePath,
+				ThreadID:           task.SessionID,
+				Started:            true,
+				Busy:               true,
+				BusySince:          now.Add(-37 * time.Second),
+				ActiveTurnID:       "turn-live",
+				LastBusyActivityAt: now.Add(-5 * time.Second),
+				LastActivityAt:     now.Add(-5 * time.Second),
+			},
+		},
+	}
+
+	view := m.bossViewContext()
+	if len(view.EngineerActivities) != 1 {
+		t.Fatalf("EngineerActivities len = %d, want 1: %#v", len(view.EngineerActivities), view.EngineerActivities)
+	}
+	activity := view.EngineerActivities[0]
+	if activity.Kind != "agent_task" || activity.TaskID != task.ID || activity.ProjectPath != task.WorkspacePath || activity.Title != task.Title || activity.Provider != model.SessionSourceCodex || activity.SessionID != task.SessionID {
+		t.Fatalf("activity identity = %#v, want task/session identity", activity)
+	}
+	if !activity.Active || activity.Status != "working" || !activity.StartedAt.Equal(now.Add(-37*time.Second)) {
+		t.Fatalf("activity state = %#v, want active working with started time", activity)
+	}
+}
+
+func TestBossViewContextIncludesActiveProjectEngineerActivity(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	project := model.ProjectSummary{Path: "/tmp/project-task", Name: "Project Task"}
+	m := Model{
+		allProjects: []model.ProjectSummary{project},
+		projects:    []model.ProjectSummary{project},
+		codexSnapshots: map[string]codexapp.Snapshot{
+			project.Path: {
+				Provider:           codexapp.ProviderCodex,
+				ProjectPath:        project.Path,
+				ThreadID:           "thread-project-1",
+				Started:            true,
+				Busy:               true,
+				BusySince:          now.Add(-2 * time.Minute),
+				ActiveTurnID:       "turn-live",
+				LastBusyActivityAt: now.Add(-5 * time.Second),
+				LastActivityAt:     now.Add(-5 * time.Second),
+			},
+		},
+	}
+
+	view := m.bossViewContext()
+	if len(view.EngineerActivities) != 1 {
+		t.Fatalf("EngineerActivities len = %d, want 1: %#v", len(view.EngineerActivities), view.EngineerActivities)
+	}
+	activity := view.EngineerActivities[0]
+	if activity.Kind != "project" || activity.ProjectPath != project.Path || activity.Title != "Project Task" || activity.Provider != model.SessionSourceCodex || activity.SessionID != "thread-project-1" {
+		t.Fatalf("activity identity = %#v, want project session identity", activity)
+	}
+	if !activity.Active || activity.Status != "working" || !activity.StartedAt.Equal(now.Add(-2*time.Minute)) {
+		t.Fatalf("activity state = %#v, want active working with started time", activity)
+	}
+}
+
+func TestBossChatNoticesEngineerTurnCompletion(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	now := time.Unix(1_800_000_000, 0)
+	projectPath := "/tmp/project-task"
+	idleSnapshot := codexapp.Snapshot{
+		Provider:       codexapp.ProviderCodex,
+		ProjectPath:    projectPath,
+		ThreadID:       "thread-project-1",
+		Started:        true,
+		Status:         "Codex turn completed",
+		LastActivityAt: now,
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "Killed the stale dev server on port 5173 and left the project clean.",
+		}},
+	}
+	session := &fakeCodexSession{projectPath: projectPath, snapshot: idleSnapshot}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: projectPath, Provider: codexapp.ProviderCodex}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+	prevSnapshot := idleSnapshot
+	prevSnapshot.Busy = true
+	prevSnapshot.BusySince = now.Add(-2 * time.Minute)
+	prevSnapshot.ActiveTurnID = "turn-live"
+	prevSnapshot.Phase = codexapp.SessionPhaseRunning
+	m := Model{
+		ctx:          ctx,
+		bossMode:     true,
+		bossModel:    bossui.NewEmbedded(ctx, nil),
+		codexManager: manager,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			projectPath: prevSnapshot,
+		},
+		allProjects: []model.ProjectSummary{{Path: projectPath, Name: "Project Task"}},
+		projects:    []model.ProjectSummary{{Path: projectPath, Name: "Project Task"}},
+	}
+	m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
+
+	updated, _ := m.update(codexUpdateMsg{projectPath: projectPath})
+	got := updated.(Model)
+	view := got.bossModel.View()
+	for _, want := range []string{
+		"Engineer finished for Project Task.",
+		"Killed the stale dev server on port 5173",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("boss chat completion notice missing %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestBossViewContextIncludesProcessSystemNotice(t *testing.T) {
 	t.Parallel()
 

@@ -1092,6 +1092,39 @@ func TestBuildViewContextBriefIncludesSystemNotices(t *testing.T) {
 	}
 }
 
+func TestBuildViewContextBriefIncludesEngineerActivity(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	brief := BuildViewContextBrief(ViewContext{
+		Active:              true,
+		Embedded:            true,
+		AllProjectCount:     4,
+		VisibleProjectCount: 4,
+		EngineerActivities: []ViewEngineerActivity{{
+			Kind:        "agent_task",
+			TaskID:      "agt_demo",
+			ProjectPath: "/tmp/agent-task",
+			Title:       "Revoke Cursor GitHub access",
+			Provider:    model.SessionSourceCodex,
+			SessionID:   "thread-agent-1",
+			Status:      "working",
+			Active:      true,
+			StartedAt:   now.Add(-37 * time.Second),
+		}},
+	}, now)
+
+	for _, want := range []string{
+		"active engineer sessions",
+		"Revoke Cursor GitHub access",
+		"working 00:37 via codex",
+	} {
+		if !strings.Contains(brief, want) {
+			t.Fatalf("brief missing %q:\n%s", want, brief)
+		}
+	}
+}
+
 func TestQueryExecutorDoesNotUseHiddenSelectedProject(t *testing.T) {
 	t.Parallel()
 

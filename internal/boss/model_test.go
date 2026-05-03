@@ -176,6 +176,86 @@ func TestModelAttentionRowsIncludeOpenAgentTasks(t *testing.T) {
 	}
 }
 
+func TestModelAttentionRowsShowActiveAgentTaskTimer(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	m := New(context.Background(), nil)
+	m.nowFn = func() time.Time { return now }
+	m.viewContext = ViewContext{
+		EngineerActivities: []ViewEngineerActivity{{
+			Kind:        "agent_task",
+			TaskID:      "agt_demo",
+			ProjectPath: "/tmp/agent-task",
+			Title:       "Revoke Cursor GitHub access",
+			Provider:    model.SessionSourceCodex,
+			SessionID:   "thread-agent-1",
+			Status:      "working",
+			Active:      true,
+			StartedAt:   now.Add(-37 * time.Second),
+		}},
+	}
+	m.snapshot = StateSnapshot{
+		OpenAgentTasks: []AgentTaskBrief{{
+			ID:        "agt_demo",
+			Title:     "Revoke Cursor GitHub access",
+			Status:    model.AgentTaskStatusActive,
+			Provider:  model.SessionSourceCodex,
+			SessionID: "thread-agent-1",
+		}},
+	}
+
+	rendered := m.renderAttentionRows(90, 1)
+	stripped := ansi.Strip(rendered)
+	for _, want := range []string{"Alt+1", "00:37", "working 00:37", "Revoke Cursor GitHub"} {
+		if !strings.Contains(stripped, want) {
+			t.Fatalf("active agent attention row missing %q:\n%s", want, stripped)
+		}
+	}
+	transcript := ansi.Strip(m.renderTranscript(90))
+	for _, want := range []string{"Engineer activity", "Revoke Cursor GitHub access - codex working 00:37"} {
+		if !strings.Contains(transcript, want) {
+			t.Fatalf("active agent transcript status missing %q:\n%s", want, transcript)
+		}
+	}
+}
+
+func TestModelAttentionRowsShowActiveProjectEngineerTimer(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	m := New(context.Background(), nil)
+	m.nowFn = func() time.Time { return now }
+	m.viewContext = ViewContext{
+		EngineerActivities: []ViewEngineerActivity{{
+			Kind:        "project",
+			ProjectPath: "/alpha",
+			Title:       "Alpha",
+			Provider:    model.SessionSourceCodex,
+			SessionID:   "thread-project-1",
+			Status:      "working",
+			Active:      true,
+			StartedAt:   now.Add(-2 * time.Minute),
+		}},
+	}
+	m.snapshot = StateSnapshot{
+		HotProjects: []ProjectBrief{{
+			Name:          "Alpha",
+			Path:          "/alpha",
+			Status:        model.StatusActive,
+			LatestSummary: "Needs review before handoff.",
+		}},
+	}
+
+	rendered := m.renderAttentionRows(90, 1)
+	stripped := ansi.Strip(rendered)
+	for _, want := range []string{"Alt+1", "02:00", "working 02:00", "Alpha"} {
+		if !strings.Contains(stripped, want) {
+			t.Fatalf("active project attention row missing %q:\n%s", want, stripped)
+		}
+	}
+}
+
 func TestControlResultEchoesAgentTaskInstructions(t *testing.T) {
 	t.Parallel()
 
@@ -198,8 +278,7 @@ func TestControlResultEchoesAgentTaskInstructions(t *testing.T) {
 		"Created agent task agt_demo",
 		"Sent to the engineer:",
 		"Open GitHub settings and revoke Cursor's OAuth access.",
-		"source of truth",
-		"Attention list",
+		"The task is linked to this engineer session.",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("control result missing %q:\n%s", want, content)

@@ -115,6 +115,7 @@ type ViewContext struct {
 	PrivacyMode         bool
 	PrivacyPatterns     []string
 	SystemNotices       []ViewSystemNotice
+	EngineerActivities  []ViewEngineerActivity
 }
 
 type ViewSystemNotice struct {
@@ -122,6 +123,19 @@ type ViewSystemNotice struct {
 	Severity string
 	Summary  string
 	Count    int
+}
+
+type ViewEngineerActivity struct {
+	Kind        string
+	TaskID      string
+	ProjectPath string
+	Title       string
+	Provider    model.SessionSource
+	SessionID   string
+	Status      string
+	Active      bool
+	StartedAt   time.Time
+	LastEventAt time.Time
 }
 
 func newQueryExecutor(store bossStoreReader) *QueryExecutor {
@@ -1641,6 +1655,27 @@ func BuildViewContextBrief(view ViewContext, now time.Time) string {
 	if status := strings.TrimSpace(view.Status); status != "" {
 		lines = append(lines, "- classic TUI status: "+clipText(status, 220))
 	}
+	if len(view.EngineerActivities) > 0 {
+		limit := minInt(len(view.EngineerActivities), 5)
+		lines = append(lines, "- active engineer sessions:")
+		for i := 0; i < limit; i++ {
+			activity := view.EngineerActivities[i]
+			label := strings.TrimSpace(firstNonEmpty(activity.Title, activity.ProjectPath, activity.TaskID, "engineer session"))
+			status := strings.TrimSpace(firstNonEmpty(activity.Status, "working"))
+			timer := ""
+			if !activity.StartedAt.IsZero() {
+				timer = " " + bossRunningDuration(now.Sub(activity.StartedAt))
+			}
+			provider := strings.TrimSpace(string(model.NormalizeSessionSource(activity.Provider)))
+			if provider == "" {
+				provider = "engineer"
+			}
+			lines = append(lines, fmt.Sprintf("  - %s: %s%s via %s", clipText(label, 120), status, timer, provider))
+		}
+		if len(view.EngineerActivities) > limit {
+			lines = append(lines, fmt.Sprintf("  - ... %d more", len(view.EngineerActivities)-limit))
+		}
+	}
 	noticeLines := []string{}
 	if len(view.SystemNotices) > 0 {
 		limit := minInt(len(view.SystemNotices), 5)
@@ -1712,6 +1747,29 @@ func emptyLabel(value string) string {
 		return "unset"
 	}
 	return value
+}
+
+func bossRunningDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	totalSeconds := int64(d / time.Second)
+	days := totalSeconds / (24 * 60 * 60)
+	hours := (totalSeconds % (24 * 60 * 60)) / (60 * 60)
+	minutes := (totalSeconds % (60 * 60)) / 60
+	seconds := totalSeconds % 60
+
+	switch {
+	case days > 0:
+		if hours > 0 {
+			return fmt.Sprintf("%dd %02dh", days, hours)
+		}
+		return fmt.Sprintf("%dd", days)
+	case totalSeconds >= int64(time.Hour/time.Second):
+		return fmt.Sprintf("%d:%02d:%02d", hours, minutes, seconds)
+	default:
+		return fmt.Sprintf("%02d:%02d", minutes, seconds)
+	}
 }
 
 func clipToolText(text string, limit int) string {

@@ -124,6 +124,14 @@ func bossControlOpenedSessionStatus(inv control.Invocation, opened codexSessionO
 			return fallback
 		}
 		return bossEngineerPromptSentStatus(input, opened)
+	case control.CapabilityAgentTaskCreate:
+		return bossAgentTaskLaunchOpenedStatus("", fallback)
+	case control.CapabilityAgentTaskContinue:
+		var input control.AgentTaskContinueInput
+		if err := json.Unmarshal(normalized.Args, &input); err != nil {
+			return bossAgentTaskLaunchOpenedStatus("", fallback)
+		}
+		return bossAgentTaskLaunchOpenedStatus(input.TaskID, fallback)
 	default:
 		if fallback != "" {
 			return fallback
@@ -146,6 +154,19 @@ func bossEngineerPromptSentStatus(input control.EngineerSendPromptInput, opened 
 		return "Opened the " + sessionLabel + targetPhrase + ". Boss Chat stayed open."
 	}
 	return "Handed this off to the " + sessionLabel + targetPhrase + ". Boss Chat stayed open; the session is working on it now."
+}
+
+func bossAgentTaskLaunchOpenedStatus(taskID, fallback string) string {
+	status := strings.TrimSpace(fallback)
+	if status == "" {
+		taskID = strings.TrimSpace(taskID)
+		if taskID != "" {
+			status = "Agent task " + taskID + " is moving in the engineer session now"
+		} else {
+			status = "The agent task is moving in the engineer session now"
+		}
+	}
+	return strings.TrimRight(status, ".") + "."
 }
 
 func bossControlOpenedProviderLabel(requested control.Provider, snapshot codexapp.Snapshot) string {

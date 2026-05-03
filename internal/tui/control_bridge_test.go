@@ -427,7 +427,9 @@ func TestExecuteBossControlInvocationCreatesAgentTaskAndTracksSession(t *testing
 	if result.Err != nil {
 		t.Fatalf("result err = %v", result.Err)
 	}
-	if !strings.Contains(result.Status, "Created agent task") || !strings.Contains(result.Status, "prompt sent") || strings.Contains(result.Status, "Alt+Up hides it") {
+	if !strings.Contains(result.Status, "Created agent task") ||
+		!strings.Contains(result.Status, "prompt sent") ||
+		strings.Contains(result.Status, "Alt+Up hides it") {
 		t.Fatalf("result status = %q, want created task launch status", result.Status)
 	}
 	if len(requests) != 1 {
@@ -516,10 +518,18 @@ func TestExecuteBossControlInvocationContinuesAgentTaskWithTrackedSession(t *tes
 		t.Fatalf("executeBossControlInvocation() cmd = nil, want continue command")
 	}
 	msgs := collectCmdMsgs(cmd)
+	var result bossui.ControlInvocationResultMsg
 	for _, msg := range msgs {
-		if result, ok := msg.(bossui.ControlInvocationResultMsg); ok && result.Err != nil {
-			t.Fatalf("result err = %v", result.Err)
+		if typed, ok := msg.(bossui.ControlInvocationResultMsg); ok {
+			result = typed
+			if result.Err != nil {
+				t.Fatalf("result err = %v", result.Err)
+			}
 		}
+	}
+	if !strings.Contains(result.Status, "Continued agent task") ||
+		strings.Contains(result.Status, "Attention row shows") {
+		t.Fatalf("result status = %q, want continued task launch status without UI narration", result.Status)
 	}
 	if len(requests) != 1 {
 		t.Fatalf("launch requests = %d, want 1", len(requests))
