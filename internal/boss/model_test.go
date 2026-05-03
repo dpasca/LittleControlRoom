@@ -184,15 +184,16 @@ func TestModelAttentionRowsShowActiveAgentTaskTimer(t *testing.T) {
 	m.nowFn = func() time.Time { return now }
 	m.viewContext = ViewContext{
 		EngineerActivities: []ViewEngineerActivity{{
-			Kind:        "agent_task",
-			TaskID:      "agt_demo",
-			ProjectPath: "/tmp/agent-task",
-			Title:       "Revoke Cursor GitHub access",
-			Provider:    model.SessionSourceCodex,
-			SessionID:   "thread-agent-1",
-			Status:      "working",
-			Active:      true,
-			StartedAt:   now.Add(-37 * time.Second),
+			Kind:         "agent_task",
+			TaskID:       "agt_demo",
+			ProjectPath:  "/tmp/agent-task",
+			Title:        "Revoke Cursor GitHub access",
+			EngineerName: "Ada",
+			Provider:     model.SessionSourceCodex,
+			SessionID:    "thread-agent-1",
+			Status:       "working",
+			Active:       true,
+			StartedAt:    now.Add(-37 * time.Second),
 		}},
 	}
 	m.snapshot = StateSnapshot{
@@ -207,13 +208,13 @@ func TestModelAttentionRowsShowActiveAgentTaskTimer(t *testing.T) {
 
 	rendered := m.renderAttentionRows(90, 1)
 	stripped := ansi.Strip(rendered)
-	for _, want := range []string{"Alt+1", "00:37", "working 00:37", "Revoke Cursor GitHub"} {
+	for _, want := range []string{"Alt+1", "00:37", "working 00:37", "Ada working 00:37", "Revoke Cursor GitHub"} {
 		if !strings.Contains(stripped, want) {
 			t.Fatalf("active agent attention row missing %q:\n%s", want, stripped)
 		}
 	}
 	transcript := ansi.Strip(m.renderTranscript(90))
-	for _, want := range []string{"Engineer activity", "Revoke Cursor GitHub access - codex working 00:37"} {
+	for _, want := range []string{"Engineer activity", "Ada on Revoke Cursor GitHub access - codex working 00:37"} {
 		if !strings.Contains(transcript, want) {
 			t.Fatalf("active agent transcript status missing %q:\n%s", want, transcript)
 		}
@@ -227,12 +228,13 @@ func TestBossTickRefreshesTemporaryEngineerActivityTimer(t *testing.T) {
 	m := NewEmbeddedWithViewContext(context.Background(), nil, ViewContext{
 		Active: true,
 		EngineerActivities: []ViewEngineerActivity{{
-			Kind:      "agent_task",
-			TaskID:    "agt_demo",
-			Title:     "Cursor cleanup",
-			Status:    "working",
-			Active:    true,
-			StartedAt: now.Add(-3 * time.Second),
+			Kind:         "agent_task",
+			TaskID:       "agt_demo",
+			Title:        "Cursor cleanup",
+			EngineerName: "Grace",
+			Status:       "working",
+			Active:       true,
+			StartedAt:    now.Add(-3 * time.Second),
 		}},
 	})
 	m.width = 96
@@ -260,14 +262,15 @@ func TestModelAttentionRowsShowActiveProjectEngineerTimer(t *testing.T) {
 	m.nowFn = func() time.Time { return now }
 	m.viewContext = ViewContext{
 		EngineerActivities: []ViewEngineerActivity{{
-			Kind:        "project",
-			ProjectPath: "/alpha",
-			Title:       "Alpha",
-			Provider:    model.SessionSourceCodex,
-			SessionID:   "thread-project-1",
-			Status:      "working",
-			Active:      true,
-			StartedAt:   now.Add(-2 * time.Minute),
+			Kind:         "project",
+			ProjectPath:  "/alpha",
+			Title:        "Alpha",
+			EngineerName: "Hedy",
+			Provider:     model.SessionSourceCodex,
+			SessionID:    "thread-project-1",
+			Status:       "working",
+			Active:       true,
+			StartedAt:    now.Add(-2 * time.Minute),
 		}},
 	}
 	m.snapshot = StateSnapshot{
@@ -281,7 +284,7 @@ func TestModelAttentionRowsShowActiveProjectEngineerTimer(t *testing.T) {
 
 	rendered := m.renderAttentionRows(90, 1)
 	stripped := ansi.Strip(rendered)
-	for _, want := range []string{"Alt+1", "02:00", "working 02:00", "Alpha"} {
+	for _, want := range []string{"Alt+1", "02:00", "working 02:00", "Hedy working 02:00", "Alpha"} {
 		if !strings.Contains(stripped, want) {
 			t.Fatalf("active project attention row missing %q:\n%s", want, stripped)
 		}
@@ -303,10 +306,10 @@ func TestControlResultSummarizesAgentTaskHandoff(t *testing.T) {
 			Capability: control.CapabilityAgentTaskCreate,
 			Args:       args,
 		},
-		Status: "Ok, Revoke Cursor GitHub access is with the engineer now.",
+		Status: "Ok, Ada is working on Revoke Cursor GitHub access.",
 	})
 
-	if content != "Ok, Revoke Cursor GitHub access is with the engineer now." {
+	if content != "Ok, Ada is working on Revoke Cursor GitHub access." {
 		t.Fatalf("control result = %q", content)
 	}
 	for _, unwanted := range []string{
@@ -1160,6 +1163,36 @@ func TestModelTranscriptRendersTemporaryStreamingState(t *testing.T) {
 	}
 	if len(m.messages) != 1 {
 		t.Fatalf("temporary streaming state should not append persisted messages")
+	}
+}
+
+func TestModelTranscriptKeepsEngineerActivityWhileBossIsThinking(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	m := New(context.Background(), nil)
+	m.nowFn = func() time.Time { return now }
+	m.messages = []ChatMessage{{Role: "user", Content: "What next?"}}
+	m.sending = true
+	m.streamingToolCalls = []string{"tool: agent_task_report"}
+	m.viewContext = ViewContext{
+		EngineerActivities: []ViewEngineerActivity{{
+			Kind:         "agent_task",
+			TaskID:       "agt_demo",
+			Title:        "Diff duplicate Codex skills",
+			EngineerName: "Ada",
+			Provider:     model.SessionSourceCodex,
+			Status:       "working",
+			Active:       true,
+			StartedAt:    now.Add(-9 * time.Second),
+		}},
+	}
+
+	rendered := ansi.Strip(m.renderTranscript(90))
+	for _, want := range []string{"Ada on Diff duplicate Codex skills - codex working 00:09", "Tool calls", "agent_task_report"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("thinking transcript missing %q:\n%s", want, rendered)
+		}
 	}
 }
 

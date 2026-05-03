@@ -125,7 +125,7 @@ func TestQueryExecutorReportsOpenAgentTasks(t *testing.T) {
 		"Waiting on GitHub OAuth settings",
 		"browser.inspect, account.manage",
 		"Diff duplicate Codex skills (agt_diff)",
-		"kind/status: agent/waiting",
+		"kind/status: agent/review",
 		"Transcript hint: use ctx show agent_task:<task-id>",
 	} {
 		if !strings.Contains(result.Text, want) {

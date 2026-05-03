@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	bossui "lcroom/internal/boss"
 	"lcroom/internal/model"
 
 	"github.com/charmbracelet/lipgloss"
@@ -166,7 +167,7 @@ func agentTaskLastActivity(task model.AgentTask) time.Time {
 func agentTaskListStatus(task model.AgentTask) string {
 	switch model.NormalizeAgentTaskStatus(task.Status) {
 	case model.AgentTaskStatusWaiting:
-		return "waiting"
+		return "review"
 	case model.AgentTaskStatusCompleted:
 		return "done"
 	case model.AgentTaskStatusArchived:
@@ -180,7 +181,10 @@ func agentTaskListSummary(task model.AgentTask) string {
 	if summary := strings.TrimSpace(task.Summary); summary != "" {
 		return summary
 	}
-	parts := []string{fmt.Sprintf("%s task", model.NormalizeAgentTaskStatus(task.Status))}
+	parts := []string{fmt.Sprintf("%s task", agentTaskListStatus(task))}
+	if name := bossui.EngineerNameForKey("agent_task", task.ID); name != "" {
+		parts = append(parts, name)
+	}
 	if source := agentTaskDisplaySource(task); source != model.SessionSourceUnknown {
 		if provider := codexProviderFromSessionSource(source); provider != "" {
 			parts = append(parts, provider.Label())

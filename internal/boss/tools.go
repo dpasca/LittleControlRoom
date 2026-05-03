@@ -126,16 +126,17 @@ type ViewSystemNotice struct {
 }
 
 type ViewEngineerActivity struct {
-	Kind        string
-	TaskID      string
-	ProjectPath string
-	Title       string
-	Provider    model.SessionSource
-	SessionID   string
-	Status      string
-	Active      bool
-	StartedAt   time.Time
-	LastEventAt time.Time
+	Kind         string
+	TaskID       string
+	ProjectPath  string
+	Title        string
+	EngineerName string
+	Provider     model.SessionSource
+	SessionID    string
+	Status       string
+	Active       bool
+	StartedAt    time.Time
+	LastEventAt  time.Time
 }
 
 func newQueryExecutor(store bossStoreReader) *QueryExecutor {
@@ -1661,6 +1662,7 @@ func BuildViewContextBrief(view ViewContext, now time.Time) string {
 		for i := 0; i < limit; i++ {
 			activity := view.EngineerActivities[i]
 			label := strings.TrimSpace(firstNonEmpty(activity.Title, activity.ProjectPath, activity.TaskID, "engineer session"))
+			name := strings.TrimSpace(firstNonEmpty(activity.EngineerName, "Engineer"))
 			status := strings.TrimSpace(firstNonEmpty(activity.Status, "working"))
 			timer := ""
 			if !activity.StartedAt.IsZero() {
@@ -1670,7 +1672,7 @@ func BuildViewContextBrief(view ViewContext, now time.Time) string {
 			if provider == "" {
 				provider = "engineer"
 			}
-			lines = append(lines, fmt.Sprintf("  - %s: %s%s via %s", clipText(label, 120), status, timer, provider))
+			lines = append(lines, fmt.Sprintf("  - %s on %s: %s%s via %s", name, clipText(label, 120), status, timer, provider))
 		}
 		if len(view.EngineerActivities) > limit {
 			lines = append(lines, fmt.Sprintf("  - ... %d more", len(view.EngineerActivities)-limit))

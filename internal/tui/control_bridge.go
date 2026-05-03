@@ -146,6 +146,7 @@ func bossEngineerPromptSentStatus(input control.EngineerSendPromptInput, opened 
 		sessionLabel = providerLabel + " engineer session"
 	}
 	target := bossControlProjectTargetLabel(input.ProjectName, input.ProjectPath, opened.projectPath)
+	name := bossui.EngineerNameForKey("project", opened.projectPath, opened.snapshot.ThreadID)
 	targetPhrase := ""
 	if target != "" {
 		targetPhrase = " for " + target
@@ -154,25 +155,27 @@ func bossEngineerPromptSentStatus(input control.EngineerSendPromptInput, opened 
 		return "Opened the " + sessionLabel + targetPhrase + "."
 	}
 	if target != "" {
-		return "Ok, " + target + " is with the " + sessionLabel + " now."
+		return "Ok, " + name + " is working on " + target + "."
 	}
-	return "Ok, the " + sessionLabel + " is working on it now."
+	return "Ok, " + name + " is working on it now."
 }
 
 func bossAgentTaskLaunchOpenedStatus(taskID, fallback string) string {
 	status := strings.TrimSpace(fallback)
 	if status == "" {
 		taskID = strings.TrimSpace(taskID)
+		name := bossui.EngineerNameForKey("agent_task", taskID)
 		if taskID != "" {
-			status = "Ok, " + taskID + " is with the engineer now"
+			status = "Ok, " + name + " is working on " + taskID
 		} else {
-			status = "Ok, the task is with the engineer now"
+			status = "Ok, the engineer is working on the task"
 		}
 	}
 	return strings.TrimRight(status, ".") + "."
 }
 
 func bossAgentTaskHandoffStatus(task model.AgentTask) string {
+	name := bossEngineerNameForAgentTask(task)
 	label := strings.TrimSpace(task.Title)
 	if label == "" {
 		label = strings.TrimSpace(task.ID)
@@ -180,7 +183,7 @@ func bossAgentTaskHandoffStatus(task model.AgentTask) string {
 	if label == "" {
 		label = "the task"
 	}
-	return "Ok, " + label + " is with the engineer now"
+	return "Ok, " + name + " is working on " + label
 }
 
 func bossControlOpenedProviderLabel(requested control.Provider, snapshot codexapp.Snapshot) string {
@@ -484,7 +487,7 @@ func (m Model) agentTaskLaunchTrackingCmd(taskID string, cmd tea.Cmd, successSta
 		}
 		status := strings.TrimSpace(successStatus)
 		if status == "" {
-			status = "Ok, the task is with the engineer now"
+			status = "Ok, the engineer is working on the task"
 		}
 		opened.status = status
 		return opened

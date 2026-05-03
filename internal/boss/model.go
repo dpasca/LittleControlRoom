@@ -1125,7 +1125,7 @@ func compactAgentTaskTitle(task AgentTaskBrief) string {
 func bossAgentTaskStatusCell(task AgentTaskBrief) (string, lipgloss.Style) {
 	switch model.NormalizeAgentTaskStatus(task.Status) {
 	case model.AgentTaskStatusWaiting:
-		return "waiting", bossAssessmentWaitingStyle
+		return "review", bossAssessmentWaitingStyle
 	case model.AgentTaskStatusCompleted:
 		return "done", bossAssessmentDoneStyle
 	case model.AgentTaskStatusArchived:
@@ -1166,6 +1166,9 @@ func bossEngineerActivitySummaryText(base string, activity ViewEngineerActivity,
 	if elapsed := bossEngineerActivityElapsedText(activity, now); elapsed != "" {
 		status += " " + elapsed
 	}
+	if name := strings.TrimSpace(activity.EngineerName); name != "" {
+		status = name + " " + status
+	}
 	if strings.TrimSpace(base) == "" || base == "-" {
 		return status
 	}
@@ -1184,6 +1187,9 @@ func bossAgentTaskSummaryText(task AgentTaskBrief, now time.Time) string {
 		return summary
 	}
 	parts := make([]string, 0, 4)
+	if name := strings.TrimSpace(task.EngineerName); name != "" {
+		parts = append(parts, name)
+	}
 	if taskID := strings.TrimSpace(task.ID); taskID != "" {
 		parts = append(parts, taskID)
 	}
@@ -1273,10 +1279,8 @@ func (m Model) renderTranscript(width int) string {
 		}
 		blocks = append(blocks, renderUserMessage(message.Content, width))
 	}
-	if !m.sending {
-		if activity := m.renderTemporaryEngineerActivity(width); activity != "" {
-			blocks = append(blocks, activity)
-		}
+	if activity := m.renderTemporaryEngineerActivity(width); activity != "" {
+		blocks = append(blocks, activity)
 	}
 	if m.sending {
 		if pending := renderStreamingAssistantMessage(m.streamingAssistantText, m.streamingToolCalls, width, m.spinnerFrame); pending != "" {
@@ -1295,6 +1299,7 @@ func (m Model) renderTemporaryEngineerActivity(width int) string {
 	lines := []string{"Engineer activity " + spinnerDots(m.spinnerFrame)}
 	now := m.now()
 	for _, activity := range activities[start:] {
+		name := strings.TrimSpace(activity.EngineerName)
 		title := strings.TrimSpace(activity.Title)
 		if title == "" {
 			title = strings.TrimSpace(activity.ProjectPath)
@@ -1315,6 +1320,9 @@ func (m Model) renderTemporaryEngineerActivity(width int) string {
 		provider := strings.TrimSpace(string(model.NormalizeSessionSource(activity.Provider)))
 		if provider != "" {
 			status = provider + " " + status
+		}
+		if name != "" {
+			title = name + " on " + title
 		}
 		lines = append(lines, "  "+title+" - "+status)
 	}

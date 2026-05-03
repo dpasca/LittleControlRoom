@@ -102,13 +102,14 @@ func (m Model) updateBossModeWindowSize() (tea.Model, tea.Cmd) {
 }
 
 type agentTaskEngineerReturnedMsg struct {
-	projectPath string
-	taskID      string
-	label       string
-	summary     string
-	notice      string
-	task        model.AgentTask
-	err         error
+	projectPath  string
+	taskID       string
+	label        string
+	engineerName string
+	summary      string
+	notice       string
+	task         model.AgentTask
+	err          error
 }
 
 func (m Model) updateBossModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -353,16 +354,17 @@ func bossAgentTaskActivityFromSnapshot(task model.AgentTask, snapshot codexapp.S
 		return bossui.ViewEngineerActivity{}, false
 	}
 	return bossui.ViewEngineerActivity{
-		Kind:        "agent_task",
-		TaskID:      strings.TrimSpace(task.ID),
-		ProjectPath: strings.TrimSpace(task.WorkspacePath),
-		Title:       strings.TrimSpace(task.Title),
-		Provider:    modelSessionSourceFromCodexProvider(embeddedProvider(snapshot)),
-		SessionID:   strings.TrimSpace(snapshot.ThreadID),
-		Status:      bossEngineerActivityStatus(snapshot),
-		Active:      true,
-		StartedAt:   bossEngineerActivityStartedAt(snapshot),
-		LastEventAt: embeddedSnapshotActivityAt(snapshot),
+		Kind:         "agent_task",
+		TaskID:       strings.TrimSpace(task.ID),
+		ProjectPath:  strings.TrimSpace(task.WorkspacePath),
+		Title:        strings.TrimSpace(task.Title),
+		EngineerName: bossEngineerNameForAgentTask(task),
+		Provider:     modelSessionSourceFromCodexProvider(embeddedProvider(snapshot)),
+		SessionID:    strings.TrimSpace(snapshot.ThreadID),
+		Status:       bossEngineerActivityStatus(snapshot),
+		Active:       true,
+		StartedAt:    bossEngineerActivityStartedAt(snapshot),
+		LastEventAt:  embeddedSnapshotActivityAt(snapshot),
 	}, true
 }
 
@@ -379,15 +381,16 @@ func (m Model) bossProjectEngineerActivityFromSnapshot(snapshot codexapp.Snapsho
 		title = projectNameForPicker(project, projectPath)
 	}
 	return bossui.ViewEngineerActivity{
-		Kind:        "project",
-		ProjectPath: projectPath,
-		Title:       strings.TrimSpace(title),
-		Provider:    modelSessionSourceFromCodexProvider(embeddedProvider(snapshot)),
-		SessionID:   strings.TrimSpace(snapshot.ThreadID),
-		Status:      bossEngineerActivityStatus(snapshot),
-		Active:      true,
-		StartedAt:   bossEngineerActivityStartedAt(snapshot),
-		LastEventAt: embeddedSnapshotActivityAt(snapshot),
+		Kind:         "project",
+		ProjectPath:  projectPath,
+		Title:        strings.TrimSpace(title),
+		EngineerName: bossui.EngineerNameForKey("project", projectPath, snapshot.ThreadID),
+		Provider:     modelSessionSourceFromCodexProvider(embeddedProvider(snapshot)),
+		SessionID:    strings.TrimSpace(snapshot.ThreadID),
+		Status:       bossEngineerActivityStatus(snapshot),
+		Active:       true,
+		StartedAt:    bossEngineerActivityStartedAt(snapshot),
+		LastEventAt:  embeddedSnapshotActivityAt(snapshot),
 	}, true
 }
 
@@ -397,6 +400,10 @@ func bossEngineerActivityKey(activity bossui.ViewEngineerActivity) string {
 		strings.TrimSpace(string(model.NormalizeSessionSource(activity.Provider))),
 		strings.TrimSpace(activity.SessionID),
 	}, "\x00")
+}
+
+func bossEngineerNameForAgentTask(task model.AgentTask) string {
+	return bossui.EngineerNameForKey("agent_task", task.ID)
 }
 
 func bossEngineerActivityStartedAt(snapshot codexapp.Snapshot) time.Time {
@@ -463,11 +470,12 @@ func (m Model) bossEngineerTurnCompletionHostNotice(projectPath string, hadPrev 
 		return ""
 	}
 	label := m.bossEngineerCompletionLabel(projectPath)
+	engineerName := m.bossEngineerCompletionName(projectPath, snapshot)
 	output := latestEngineerTranscriptOutput(snapshot)
 	if output != "" {
-		return bossEngineerCompletionNotice(label, output)
+		return bossEngineerCompletionNotice(label, output, engineerName)
 	}
-	return bossEngineerCompletionNotice(label, "")
+	return bossEngineerCompletionNotice(label, "", engineerName)
 }
 
 func (m Model) handleBossEngineerTurnCompletion(projectPath string, hadPrev bool, prevSnapshot, snapshot codexapp.Snapshot) (Model, tea.Cmd) {
@@ -491,8 +499,9 @@ func (m Model) markAgentTaskReadyForReviewCmd(projectPath string, task model.Age
 		return nil
 	}
 	label := bossAgentTaskCompletionLabel(task)
+	engineerName := bossEngineerNameForAgentTask(task)
 	summary := latestEngineerTranscriptOutput(snapshot)
-	notice := bossAgentTaskReviewNotice(label, summary)
+	notice := bossAgentTaskReviewNotice(label, summary, engineerName)
 	svc := m.svc
 	parent := m.ctx
 	return func() tea.Msg {
@@ -510,22 +519,23 @@ func (m Model) markAgentTaskReadyForReviewCmd(projectPath string, task model.Age
 			Touch:   true,
 		})
 		return agentTaskEngineerReturnedMsg{
-			projectPath: strings.TrimSpace(projectPath),
-			taskID:      taskID,
-			label:       label,
-			summary:     summary,
-			notice:      notice,
-			task:        updated,
-			err:         err,
+			projectPath:  strings.TrimSpace(projectPath),
+			taskID:       taskID,
+			label:        label,
+			engineerName: engineerName,
+			summary:      summary,
+			notice:       notice,
+			task:         updated,
+			err:          err,
 		}
 	}
 }
 
-func bossAgentTaskReviewNotice(label, output string) string {
+func bossAgentTaskReviewNotice(label, output, engineerName string) string {
 	if strings.TrimSpace(output) == "" {
-		return bossEngineerCompletionNotice(label, "") + "\n\nNo detailed result came back, so I left it open for review."
+		return bossEngineerCompletionNotice(label, "", engineerName) + "\n\nNo detailed result came back, so I left it open for review."
 	}
-	return bossEngineerCompletionNotice(label, output) + "\n\nI left it open for review."
+	return bossEngineerCompletionNotice(label, output, engineerName) + "\n\nI left it open for review."
 }
 
 func bossAgentTaskCompletionLabel(task model.AgentTask) string {
@@ -538,16 +548,20 @@ func bossAgentTaskCompletionLabel(task model.AgentTask) string {
 	return "agent task"
 }
 
-func bossEngineerCompletionNotice(label, output string) string {
+func bossEngineerCompletionNotice(label, output, engineerName string) string {
 	label = strings.TrimSpace(label)
 	if label == "" {
 		label = "engineer session"
 	}
+	engineerName = strings.TrimSpace(engineerName)
+	if engineerName == "" {
+		engineerName = "Engineer"
+	}
 	output = strings.TrimSpace(output)
 	if output != "" {
-		return "Engineer is back on " + label + ".\n\n" + output
+		return engineerName + " is back from " + label + ".\n\n" + output
 	}
-	return "Engineer is back on " + label + "."
+	return engineerName + " is back from " + label + "."
 }
 
 func (m Model) bossEngineerCompletionLabel(projectPath string) string {
@@ -572,6 +586,14 @@ func (m Model) bossEngineerCompletionLabel(projectPath string) string {
 		return projectPath
 	}
 	return "engineer session"
+}
+
+func (m Model) bossEngineerCompletionName(projectPath string, snapshot codexapp.Snapshot) string {
+	projectPath = strings.TrimSpace(projectPath)
+	if task, ok := m.agentTaskForProjectPath(projectPath); ok {
+		return bossEngineerNameForAgentTask(task)
+	}
+	return bossui.EngineerNameForKey("project", projectPath, snapshot.ThreadID)
 }
 
 func latestEngineerTranscriptOutput(snapshot codexapp.Snapshot) string {

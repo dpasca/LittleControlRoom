@@ -1232,7 +1232,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case agentTaskEngineerReturnedMsg:
 		if msg.err != nil {
 			m.status = fmt.Sprintf("Agent task %s review update failed: %v", msg.taskID, msg.err)
-			notice := bossEngineerCompletionNotice(msg.label, msg.summary) + "\n\nI couldn't mark it ready for review: " + msg.err.Error()
+			notice := bossEngineerCompletionNotice(msg.label, msg.summary, msg.engineerName) + "\n\nI couldn't mark it ready for review: " + msg.err.Error()
 			var cmd tea.Cmd
 			m, cmd = m.updateBossHostNotice(notice)
 			return m, cmd

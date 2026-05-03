@@ -63,6 +63,7 @@ type AgentTaskBrief struct {
 	ID            string
 	ParentTaskID  string
 	Title         string
+	EngineerName  string
 	Kind          model.AgentTaskKind
 	Status        model.AgentTaskStatus
 	Summary       string
@@ -190,6 +191,7 @@ func agentTaskBriefFromTask(task model.AgentTask) AgentTaskBrief {
 		ID:            strings.TrimSpace(task.ID),
 		ParentTaskID:  strings.TrimSpace(task.ParentTaskID),
 		Title:         strings.TrimSpace(task.Title),
+		EngineerName:  EngineerNameForKey("agent_task", task.ID),
 		Kind:          model.NormalizeAgentTaskKind(task.Kind),
 		Status:        model.NormalizeAgentTaskStatus(task.Status),
 		Summary:       strings.TrimSpace(task.Summary),
@@ -351,9 +353,12 @@ func compactAttentionAgentTaskLine(task AgentTaskBrief, now time.Time) string {
 	if parts[0] == "" {
 		parts[0] = "agent task"
 	}
+	if name := strings.TrimSpace(task.EngineerName); name != "" {
+		parts = append(parts, name)
+	}
 	status := model.NormalizeAgentTaskStatus(task.Status)
 	if status != "" {
-		parts = append(parts, string(status))
+		parts = append(parts, agentTaskBriefStatusLabel(status))
 	}
 	if summary := strings.TrimSpace(task.Summary); summary != "" {
 		parts = append(parts, clipText(summary, 120))
@@ -420,13 +425,16 @@ func operationalAgentTaskLine(task AgentTaskBrief, now time.Time) string {
 	}
 	taskID := strings.TrimSpace(task.ID)
 	parts := []string{fmt.Sprintf("%s (%s)", title, taskID)}
+	if name := strings.TrimSpace(task.EngineerName); name != "" {
+		parts = append(parts, "assigned: "+name)
+	}
 	if taskID != "" {
 		parts = append(parts, "show: agent_task:"+taskID)
 	}
 	if parent := strings.TrimSpace(task.ParentTaskID); parent != "" {
 		parts = append(parts, "parent: "+parent)
 	}
-	parts = append(parts, fmt.Sprintf("kind/status: %s/%s", task.Kind, task.Status))
+	parts = append(parts, fmt.Sprintf("kind/status: %s/%s", task.Kind, agentTaskBriefStatusLabel(model.NormalizeAgentTaskStatus(task.Status))))
 	if !task.LastTouchedAt.IsZero() {
 		parts = append(parts, "touched "+relativeAge(now, task.LastTouchedAt))
 	}
@@ -451,6 +459,19 @@ func operationalAgentTaskLine(task AgentTaskBrief, now time.Time) string {
 		parts = append(parts, "resources: "+resources)
 	}
 	return strings.Join(parts, "; ")
+}
+
+func agentTaskBriefStatusLabel(status model.AgentTaskStatus) string {
+	switch model.NormalizeAgentTaskStatus(status) {
+	case model.AgentTaskStatusWaiting:
+		return "review"
+	case model.AgentTaskStatusCompleted:
+		return "done"
+	case model.AgentTaskStatusArchived:
+		return "archived"
+	default:
+		return "active"
+	}
 }
 
 func compactAgentTaskResources(resources []model.AgentTaskResource) string {

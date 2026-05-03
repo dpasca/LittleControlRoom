@@ -100,6 +100,9 @@ func TestBossViewContextIncludesActiveAgentTaskEngineerActivity(t *testing.T) {
 	if !activity.Active || activity.Status != "working" || !activity.StartedAt.Equal(now.Add(-37*time.Second)) {
 		t.Fatalf("activity state = %#v, want active working with started time", activity)
 	}
+	if activity.EngineerName != bossui.EngineerNameForKey("agent_task", task.ID) {
+		t.Fatalf("activity engineer name = %q, want deterministic task name", activity.EngineerName)
+	}
 }
 
 func TestBossViewContextIncludesActiveProjectEngineerActivity(t *testing.T) {
@@ -135,6 +138,9 @@ func TestBossViewContextIncludesActiveProjectEngineerActivity(t *testing.T) {
 	}
 	if !activity.Active || activity.Status != "working" || !activity.StartedAt.Equal(now.Add(-2*time.Minute)) {
 		t.Fatalf("activity state = %#v, want active working with started time", activity)
+	}
+	if activity.EngineerName != bossui.EngineerNameForKey("project", project.Path, "thread-project-1") {
+		t.Fatalf("activity engineer name = %q, want deterministic project session name", activity.EngineerName)
 	}
 }
 
@@ -184,8 +190,9 @@ func TestBossChatNoticesEngineerTurnCompletion(t *testing.T) {
 	updated, _ := m.update(codexUpdateMsg{projectPath: projectPath})
 	got := updated.(Model)
 	view := got.bossModel.View()
+	engineerName := bossui.EngineerNameForKey("project", projectPath, idleSnapshot.ThreadID)
 	for _, want := range []string{
-		"Engineer is back on Project Task.",
+		engineerName + " is back from Project Task.",
 		"Killed the stale dev server on port 5173",
 	} {
 		if !strings.Contains(view, want) {
@@ -312,8 +319,9 @@ func TestBossEngineerCompletionLeavesAgentTaskReadyForReview(t *testing.T) {
 		t.Fatalf("returned agent task should stay open for review: %#v", got.openAgentTasks)
 	}
 	view := got.bossModel.View()
+	engineerName := bossui.EngineerNameForKey("agent_task", task.ID)
 	for _, want := range []string{
-		"Engineer is back on Kill stale roguellm dev server.",
+		engineerName + " is back from Kill stale roguellm dev server.",
 		"No stale roguellm dev server is running now.",
 		"I left it open for review.",
 	} {
@@ -349,7 +357,7 @@ func TestBossHostNoticeQueuedWhileClosedAppearsOnOpen(t *testing.T) {
 		width:  100,
 		height: 30,
 	}
-	updated, cmd := m.updateBossHostNotice("Engineer is back on Cursor cleanup.\n\nCursor access still needs user-side confirmation.")
+	updated, cmd := m.updateBossHostNotice("Ada is back from Cursor cleanup.\n\nCursor access still needs user-side confirmation.")
 	if cmd != nil {
 		t.Fatalf("updateBossHostNotice() cmd = %T, want nil while Boss Chat is closed", cmd)
 	}
@@ -365,7 +373,7 @@ func TestBossHostNoticeQueuedWhileClosedAppearsOnOpen(t *testing.T) {
 	}
 	view := got.bossModel.View()
 	for _, want := range []string{
-		"Engineer is back on Cursor cleanup.",
+		"Ada is back from Cursor cleanup.",
 		"Cursor access still needs user-side confirmation.",
 	} {
 		if !strings.Contains(view, want) {

@@ -255,7 +255,7 @@ func TestExecuteBossControlInvocationBatchesOpenAndBossResult(t *testing.T) {
 	if result.Err != nil {
 		t.Fatalf("result err = %v", result.Err)
 	}
-	wantStatus := "Ok, cn3 is with the Codex engineer session now."
+	wantStatus := "Ok, " + bossui.EngineerNameForKey("project", projectPath, "oc-session-result") + " is working on cn3."
 	if result.Status != wantStatus {
 		t.Fatalf("result status = %q, want %q", result.Status, wantStatus)
 	}
@@ -427,7 +427,7 @@ func TestExecuteBossControlInvocationCreatesAgentTaskAndTracksSession(t *testing
 	if result.Err != nil {
 		t.Fatalf("result err = %v", result.Err)
 	}
-	if !strings.Contains(result.Status, "Ok, Clean suspicious local processes is with the engineer now") ||
+	if !strings.Contains(result.Status, "is working on Clean suspicious local processes") ||
 		strings.Contains(result.Status, "Created agent task") ||
 		strings.Contains(result.Status, "prompt sent") ||
 		strings.Contains(result.Status, "Alt+Up hides it") {
@@ -528,7 +528,8 @@ func TestExecuteBossControlInvocationContinuesAgentTaskWithTrackedSession(t *tes
 			}
 		}
 	}
-	if !strings.Contains(result.Status, "Ok, Keep checking temp process cleanup is with the engineer now") ||
+	engineerName := bossui.EngineerNameForKey("agent_task", task.ID)
+	if !strings.Contains(result.Status, "Ok, "+engineerName+" is working on Keep checking temp process cleanup") ||
 		strings.Contains(result.Status, "Continued agent task") ||
 		strings.Contains(result.Status, "Attention row shows") {
 		t.Fatalf("result status = %q, want high-level continued task launch status without UI narration", result.Status)

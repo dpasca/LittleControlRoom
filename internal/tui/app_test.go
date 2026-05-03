@@ -5276,7 +5276,7 @@ func TestRebuildProjectListIncludesOpenAgentTasksWithDetails(t *testing.T) {
 		t.Fatalf("agent tasks should stay inline with projects, got %q", rendered)
 	}
 	if !strings.Contains(rendered, "[A] Revoke Cursor") ||
-		!strings.Contains(rendered, "waiting") ||
+		!strings.Contains(rendered, "review") ||
 		!strings.Contains(rendered, "Waiting for browser confirmation") {
 		t.Fatalf("renderProjectList() missing agent task row details, got %q", rendered)
 	}
