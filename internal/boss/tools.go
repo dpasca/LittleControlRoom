@@ -24,6 +24,7 @@ const (
 	bossActionProjectDetail          = "project_detail"
 	bossActionSessionClassifications = "session_classifications"
 	bossActionTodoReport             = "todo_report"
+	bossActionAgentTaskReport        = "agent_task_report"
 	bossActionCurrentTUI             = "current_tui"
 	bossActionAssessmentQueue        = "assessment_queue"
 	bossActionProcessReport          = "process_report"
@@ -165,6 +166,8 @@ func (e *QueryExecutor) Execute(ctx context.Context, action bossAction, snapshot
 		return e.sessionClassifications(ctx, action, view)
 	case bossActionTodoReport:
 		return e.todoReport(ctx, action, view)
+	case bossActionAgentTaskReport:
+		return e.agentTaskReport(ctx, action, snapshot, view)
 	case bossActionCurrentTUI:
 		return bossToolResult{Name: bossActionCurrentTUI, Text: e.currentTUI(snapshot, view)}, nil
 	case bossActionAssessmentQueue:
@@ -491,7 +494,7 @@ func (e *QueryExecutor) todoReport(ctx context.Context, action bossAction, view 
 	}
 	projects = filterProjectSummariesForBossPrivacy(projects, view)
 	limit := clampBossLimit(action.Limit, 8, 20)
-	lines := []string{"TODO report:"}
+	lines := []string{"TODO report (project TODOs, not delegated agent tasks):"}
 	shown := 0
 	for _, project := range projects {
 		if project.OpenTODOCount <= 0 {
@@ -504,7 +507,7 @@ func (e *QueryExecutor) todoReport(ctx context.Context, action bossAction, view 
 		}
 	}
 	if shown == 0 {
-		lines = append(lines, "No open TODOs found in the visible project set.")
+		lines = append(lines, "No open project TODOs found in the visible project set.")
 	}
 
 	hasTarget := strings.TrimSpace(action.ProjectPath) != "" ||
@@ -535,6 +538,52 @@ func (e *QueryExecutor) todoReport(ctx context.Context, action bossAction, view 
 		lines = append(lines, "", "Target project TODO detail unavailable: "+err.Error())
 	}
 	return clippedToolResult(bossActionTodoReport, strings.Join(lines, "\n")), nil
+}
+
+func (e *QueryExecutor) agentTaskReport(ctx context.Context, action bossAction, snapshot StateSnapshot, view ViewContext) (bossToolResult, error) {
+	if view.PrivacyMode {
+		return clippedToolResult(bossActionAgentTaskReport, "Agent task report is hidden while privacy mode is enabled."), nil
+	}
+	limit := clampBossLimit(action.Limit, 20, 40)
+	tasks := append([]AgentTaskBrief(nil), snapshot.OpenAgentTasks...)
+	if taskReader, ok := e.store.(bossAgentTaskReader); ok {
+		loaded, err := taskReader.ListAgentTasks(ctx, model.AgentTaskFilter{
+			Statuses: []model.AgentTaskStatus{
+				model.AgentTaskStatusActive,
+				model.AgentTaskStatusWaiting,
+			},
+			Limit: limit,
+		})
+		if err != nil {
+			return bossToolResult{}, err
+		}
+		tasks = make([]AgentTaskBrief, 0, len(loaded))
+		for _, task := range loaded {
+			tasks = append(tasks, agentTaskBriefFromTask(task))
+		}
+	}
+
+	taskNoun := "tasks"
+	if len(tasks) == 1 {
+		taskNoun = "task"
+	}
+	lines := []string{
+		fmt.Sprintf("Agent task report: %d open delegated agent %s.", len(tasks), taskNoun),
+		"Note: delegated agent tasks are separate from project TODOs.",
+	}
+	if len(tasks) == 0 {
+		lines = append(lines, "- no open agent tasks")
+		return clippedToolResult(bossActionAgentTaskReport, strings.Join(lines, "\n")), nil
+	}
+	now := e.now()
+	for i, task := range tasks {
+		if i >= limit {
+			break
+		}
+		lines = append(lines, "- "+operationalAgentTaskLine(task, now))
+	}
+	lines = append(lines, "Transcript hint: use ctx show agent_task:<task-id> before describing an agent's exact output.")
+	return clippedToolResult(bossActionAgentTaskReport, strings.Join(lines, "\n")), nil
 }
 
 func (e *QueryExecutor) currentTUI(snapshot StateSnapshot, view ViewContext) string {

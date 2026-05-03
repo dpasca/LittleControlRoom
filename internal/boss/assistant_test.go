@@ -79,6 +79,7 @@ type fakeBossStore struct {
 	sessionSamples  []model.SessionContextSample
 	excerpt         model.SessionContextExcerpt
 	excerptErr      error
+	agentTasks      []model.AgentTask
 }
 
 func (s *fakeBossStore) ListProjects(context.Context, bool) ([]model.ProjectSummary, error) {
@@ -126,6 +127,42 @@ func (s *fakeBossStore) GetSessionContextExcerpt(context.Context, model.SessionC
 		return model.SessionContextExcerpt{}, s.excerptErr
 	}
 	return s.excerpt, nil
+}
+
+func (s *fakeBossStore) GetAgentTask(_ context.Context, id string) (model.AgentTask, error) {
+	for _, task := range s.agentTasks {
+		if task.ID == id {
+			return task, nil
+		}
+	}
+	return model.AgentTask{}, sql.ErrNoRows
+}
+
+func (s *fakeBossStore) ListAgentTasks(_ context.Context, filter model.AgentTaskFilter) ([]model.AgentTask, error) {
+	statuses := map[model.AgentTaskStatus]struct{}{}
+	for _, status := range filter.Statuses {
+		statuses[model.NormalizeAgentTaskStatus(status)] = struct{}{}
+	}
+	out := make([]model.AgentTask, 0, len(s.agentTasks))
+	for _, task := range s.agentTasks {
+		task.Kind = model.NormalizeAgentTaskKind(task.Kind)
+		task.Status = model.NormalizeAgentTaskStatus(task.Status)
+		if filter.Kind != "" && task.Kind != model.NormalizeAgentTaskKind(filter.Kind) {
+			continue
+		}
+		if len(statuses) > 0 {
+			if _, ok := statuses[task.Status]; !ok {
+				continue
+			}
+		} else if !filter.IncludeArchived && task.Status == model.AgentTaskStatusArchived {
+			continue
+		}
+		out = append(out, task)
+		if filter.Limit > 0 && len(out) >= filter.Limit {
+			break
+		}
+	}
+	return out, nil
 }
 
 func TestAssistantReplyIncludesStateBriefAndRecentChat(t *testing.T) {
@@ -199,6 +236,8 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"the user is the boss",
 		"engineer sessions",
 		"Boss Chat messages",
+		"Open agent tasks are delegated engineer work items",
+		"separate from project TODOs",
 		"the AI assistant",
 		"extension of the active engineer sessions",
 		"ongoing coworker chat",
@@ -235,6 +274,10 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"extension of the active engineer sessions",
 		"propose_control",
 		"agent_task.create",
+		"agent_task_report",
+		"Use agent_task_report when the user asks about open or active agent tasks",
+		"project TODOs are separate from delegated agent tasks",
+		"Do not answer that there are no open agent tasks",
 		"Use engineer.send_prompt only for explicit project/repo work",
 		"Use agent_task.create for temporary delegated work",
 		"do not encode special domains as task kinds",
@@ -347,6 +390,63 @@ func TestAssistantReplyUsesStructuredToolLoop(t *testing.T) {
 	}
 }
 
+func TestAssistantReplyCanReportAgentTasks(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	store := &fakeBossStore{
+		agentTasks: []model.AgentTask{{
+			ID:            "agt_cursor",
+			Title:         "Revoke Cursor GitHub access",
+			Kind:          model.AgentTaskKindAgent,
+			Status:        model.AgentTaskStatusActive,
+			Summary:       "Cursor OAuth removal is waiting on the browser-side GitHub settings check.",
+			Capabilities:  []string{"browser.inspect"},
+			Provider:      model.SessionSourceCodex,
+			SessionID:     "019deb93",
+			LastTouchedAt: now.Add(-5 * time.Minute),
+		}},
+	}
+	query := newQueryExecutor(store)
+	query.nowFn = func() time.Time { return now }
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{
+			{OutputText: encodedBossAction(t, bossAction{Kind: bossActionAgentTaskReport, Limit: 8})},
+			{OutputText: encodedBossAction(t, bossAction{Kind: bossActionAnswer, Answer: "We have the Cursor/GitHub delegated agent task open; it is waiting on the browser-side settings check."})},
+		},
+	}
+	assistant := &Assistant{
+		planner: planner,
+		query:   query,
+		model:   "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Open delegated agent tasks (separate from project TODOs):\n- Revoke Cursor GitHub access (agt_cursor)",
+		Messages:   []ChatMessage{{Role: "user", Content: "what about the agents?"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if !strings.Contains(resp.Content, "Cursor/GitHub delegated agent task") {
+		t.Fatalf("Content = %q", resp.Content)
+	}
+	if len(planner.reqs) != 2 {
+		t.Fatalf("structured calls = %d, want 2", len(planner.reqs))
+	}
+	second := planner.reqs[1].UserText
+	for _, want := range []string{
+		"[agent_task_report]",
+		"Agent task report: 1 open delegated agent task.",
+		"Revoke Cursor GitHub access",
+		"show: agent_task:agt_cursor",
+	} {
+		if !strings.Contains(second, want) {
+			t.Fatalf("second planner request missing %q:\n%s", want, second)
+		}
+	}
+}
+
 func TestAssistantReplyCanProposeEngineerSendPromptControl(t *testing.T) {
 	t.Parallel()
 
@@ -427,7 +527,7 @@ func TestAssistantReplyCanProposeAgentTaskCreateControl(t *testing.T) {
 	}
 
 	resp, err := assistant.Reply(context.Background(), AssistantRequest{
-		StateBrief: "Open agent tasks: none.",
+		StateBrief: "Open delegated agent tasks: none visible.",
 		Messages:   []ChatMessage{{Role: "user", Content: "Clean up those stale processes"}},
 	})
 	if err != nil {

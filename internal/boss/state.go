@@ -218,10 +218,12 @@ func BuildStateBrief(snapshot StateSnapshot, now time.Time) string {
 		lines = append(lines, fmt.Sprintf("AI assessment queue: %d pending/running.", snapshot.PendingClassifications))
 	}
 	if len(snapshot.OpenAgentTasks) > 0 {
-		lines = append(lines, "Open agent tasks:")
+		lines = append(lines, "Open delegated agent tasks (separate from project TODOs):")
 		for _, task := range snapshot.OpenAgentTasks {
 			lines = append(lines, "- "+operationalAgentTaskLine(task, now))
 		}
+	} else {
+		lines = append(lines, "Open delegated agent tasks: none visible.")
 	}
 	if len(snapshot.HotProjects) == 0 {
 		lines = append(lines, "Hot projects: none loaded.")

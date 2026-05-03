@@ -137,7 +137,7 @@ func TestBuildStateBriefIncludesOpenAgentTasks(t *testing.T) {
 
 	brief := BuildStateBrief(snapshot, now)
 	for _, want := range []string{
-		"Open agent tasks:",
+		"Open delegated agent tasks (separate from project TODOs):",
 		"Investigate runaway dev processes",
 		"agt_processes",
 		"agent/active",

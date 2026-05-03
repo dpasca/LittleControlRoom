@@ -460,6 +460,7 @@ func bossAssistantSystemPrompt() string {
 		"Use the compact app-state brief, but do not invent facts that are not present there.",
 		"Codex, OpenCode, and Claude Code work-session transcripts are called engineer sessions.",
 		"Your own prior messages are Boss Chat messages. Engineer-session messages are separate and may need engineer transcript lookup.",
+		"Open agent tasks are delegated engineer work items, separate from project TODOs; include them when the user asks about active tasks, background agents, or delegated work.",
 		"Linked worktrees under the same worktree root are part of the same repo effort; treat their recent work as relevant to repo-level status.",
 		"If the user says 'the assistant' or 'the AI assistant' about project work, treat that as likely meaning the engineer session unless they clearly mean Boss Chat.",
 		"Act like a high-level extension of the active engineer sessions.",
@@ -499,8 +500,11 @@ func bossActionPlannerSystemPrompt() string {
 		"Linked worktrees under the same worktree root are part of the same repo effort; treat their recent work as relevant to repo-level status.",
 		"If the user says 'the assistant' or 'the AI assistant' about project work, treat that as likely meaning the engineer session unless they clearly mean Boss Chat.",
 		"Act like a high-level extension of the active engineer sessions.",
-		"Use queries when the user asks about a concrete project, TODOs, assessment status, current TUI state, Codex skills, suspicious PIDs/processes/CPU, codenames, aliases, concepts, or anything that requires more than the compact brief.",
-		"Available read-only query kinds: list_projects, project_detail, session_classifications, todo_report, current_tui, assessment_queue, process_report, search_context, search_boss_sessions, context_command, skills_inventory.",
+		"Use queries when the user asks about a concrete project, project TODOs, open agent tasks, delegated/background agents, assessment status, current TUI state, Codex skills, suspicious PIDs/processes/CPU, codenames, aliases, concepts, or anything that requires more than the compact brief.",
+		"Available read-only query kinds: list_projects, project_detail, session_classifications, todo_report, agent_task_report, current_tui, assessment_queue, process_report, search_context, search_boss_sessions, context_command, skills_inventory.",
+		"Use agent_task_report when the user asks about open or active agent tasks, delegated tasks, background agents, or what the agents are doing.",
+		"Use todo_report for project TODOs; project TODOs are separate from delegated agent tasks.",
+		"Do not answer that there are no open agent tasks when the app-state brief lists open delegated agent tasks.",
 		"Use process_report when the user asks about suspicious PIDs, hot CPU, orphaned processes, project-local Node/server processes, or whether stale dev servers are still running.",
 		"Use skills_inventory when the user asks about Codex skills, stale skills, installed skills, skill duplicates, or skill management.",
 		"Available control action kind: propose_control with control_capability equal to engineer.send_prompt, agent_task.create, agent_task.continue, or agent_task.close.",
@@ -648,6 +652,7 @@ func bossActionSchema() map[string]any {
 					bossActionProjectDetail,
 					bossActionSessionClassifications,
 					bossActionTodoReport,
+					bossActionAgentTaskReport,
 					bossActionCurrentTUI,
 					bossActionAssessmentQueue,
 					bossActionProcessReport,
@@ -899,7 +904,7 @@ func validateBossAction(action bossAction) error {
 	switch action.Kind {
 	case bossActionAnswer:
 		return nil
-	case bossActionListProjects, bossActionProjectDetail, bossActionSessionClassifications, bossActionTodoReport, bossActionCurrentTUI, bossActionAssessmentQueue, bossActionProcessReport, bossActionSearchContext, bossActionSearchBossSessions, bossActionContextCommand, bossActionSkillsInventory:
+	case bossActionListProjects, bossActionProjectDetail, bossActionSessionClassifications, bossActionTodoReport, bossActionAgentTaskReport, bossActionCurrentTUI, bossActionAssessmentQueue, bossActionProcessReport, bossActionSearchContext, bossActionSearchBossSessions, bossActionContextCommand, bossActionSkillsInventory:
 		return nil
 	case bossActionProposeControl:
 		_, _, err := controlProposalFromBossAction(action)
@@ -1016,6 +1021,8 @@ func describeBossAction(action bossAction) string {
 		if target != "" {
 			return kind + " " + clipText(target, 80)
 		}
+	case bossActionAgentTaskReport:
+		return kind
 	}
 	if kind == "" {
 		return "tool"

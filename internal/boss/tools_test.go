@@ -70,6 +70,99 @@ func TestQueryExecutorReportsProjectDetailFromStore(t *testing.T) {
 	}
 }
 
+func TestQueryExecutorReportsOpenAgentTasks(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	store := &fakeBossStore{
+		agentTasks: []model.AgentTask{{
+			ID:            "agt_cursor",
+			Title:         "Revoke Cursor GitHub access",
+			Kind:          model.AgentTaskKindAgent,
+			Status:        model.AgentTaskStatusActive,
+			Summary:       "Waiting on GitHub OAuth settings in the browser.",
+			Capabilities:  []string{"browser.inspect", "account.manage"},
+			Provider:      model.SessionSourceCodex,
+			SessionID:     "019deb93",
+			LastTouchedAt: now.Add(-4 * time.Minute),
+			Resources: []model.AgentTaskResource{
+				{Kind: model.AgentTaskResourceEngineerSession, Provider: model.SessionSourceCodex, SessionID: "019deb93"},
+			},
+		}, {
+			ID:            "agt_diff",
+			Title:         "Diff duplicate Codex skills",
+			Kind:          model.AgentTaskKindAgent,
+			Status:        model.AgentTaskStatusWaiting,
+			Summary:       "Needs a decision on whether to remove the stale local copy.",
+			Provider:      model.SessionSourceCodex,
+			SessionID:     "019deaf3",
+			LastTouchedAt: now.Add(-2 * time.Hour),
+		}, {
+			ID:     "agt_closed",
+			Title:  "Already closed",
+			Kind:   model.AgentTaskKindAgent,
+			Status: model.AgentTaskStatusCompleted,
+		}},
+	}
+
+	executor := newQueryExecutor(store)
+	executor.nowFn = func() time.Time { return now }
+	result, err := executor.Execute(context.Background(), bossAction{
+		Kind:  bossActionAgentTaskReport,
+		Limit: 8,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	for _, want := range []string{
+		"Agent task report: 2 open delegated agent tasks.",
+		"separate from project TODOs",
+		"Revoke Cursor GitHub access (agt_cursor)",
+		"show: agent_task:agt_cursor",
+		"kind/status: agent/active",
+		"touched 4m ago",
+		"engineer: codex 019deb93",
+		"Waiting on GitHub OAuth settings",
+		"browser.inspect, account.manage",
+		"Diff duplicate Codex skills (agt_diff)",
+		"kind/status: agent/waiting",
+		"Transcript hint: use ctx show agent_task:<task-id>",
+	} {
+		if !strings.Contains(result.Text, want) {
+			t.Fatalf("agent task report missing %q:\n%s", want, result.Text)
+		}
+	}
+	if strings.Contains(result.Text, "Already closed") {
+		t.Fatalf("agent task report included completed task:\n%s", result.Text)
+	}
+}
+
+func TestQueryExecutorAgentTaskReportRespectsPrivacyMode(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeBossStore{
+		agentTasks: []model.AgentTask{{
+			ID:     "agt_secret",
+			Title:  "Private delegated work",
+			Kind:   model.AgentTaskKindAgent,
+			Status: model.AgentTaskStatusActive,
+		}},
+	}
+
+	executor := newQueryExecutor(store)
+	result, err := executor.Execute(context.Background(), bossAction{
+		Kind: bossActionAgentTaskReport,
+	}, StateSnapshot{
+		OpenAgentTasks: []AgentTaskBrief{{ID: "agt_secret", Title: "Private delegated work"}},
+	}, ViewContext{PrivacyMode: true})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !strings.Contains(result.Text, "hidden while privacy mode is enabled") || strings.Contains(result.Text, "Private delegated work") {
+		t.Fatalf("privacy-mode agent task report = %q", result.Text)
+	}
+}
+
 func TestQueryExecutorProjectDetailIncludesLinkedWorktreeActivity(t *testing.T) {
 	t.Parallel()
 
