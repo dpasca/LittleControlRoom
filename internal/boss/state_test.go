@@ -243,11 +243,31 @@ func TestAttentionTextIncludesAgentTasksBeforeProjects(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("attention lines = %d, want 2:\n%s", len(lines), attention)
 	}
-	if !strings.Contains(lines[0], "task | Revoke Cursor GitHub access") || !strings.Contains(lines[0], "codex thread-agent-1") {
+	if !strings.Contains(lines[0], "agent | Revoke Cursor GitHub access") || !strings.Contains(lines[0], "codex thread-agent-1") {
 		t.Fatalf("first attention line should describe agent task:\n%s", attention)
 	}
 	if !strings.Contains(lines[1], "Ready for review.") {
 		t.Fatalf("second attention line should keep project item:\n%s", attention)
+	}
+}
+
+func TestAttentionTextLabelsWaitingAgentTasksAsReview(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	snapshot := StateSnapshot{
+		OpenAgentTasks: []AgentTaskBrief{{
+			ID:      "agt_diff",
+			Title:   "Diff duplicate Codex skills",
+			Status:  model.AgentTaskStatusWaiting,
+			Summary: "Found one canonical skill and one stale duplicate.",
+		}},
+	}
+
+	attention := AttentionText(snapshot, now)
+	if !strings.Contains(attention, "review | Diff duplicate Codex skills") ||
+		!strings.Contains(attention, "Found one canonical skill") {
+		t.Fatalf("waiting agent task should read as a review handoff:\n%s", attention)
 	}
 }
 

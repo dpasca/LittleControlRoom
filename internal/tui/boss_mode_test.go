@@ -204,6 +204,75 @@ func TestBossChatNoticesEngineerTurnCompletion(t *testing.T) {
 	}
 }
 
+func TestBossChatFetchesFreshEngineerReportBeforeNotice(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	now := time.Unix(1_800_000_000, 0)
+	projectPath := "/tmp/chatnext3"
+	staleIdleSnapshot := codexapp.Snapshot{
+		Provider:       codexapp.ProviderCodex,
+		ProjectPath:    projectPath,
+		ThreadID:       "thread-project-1",
+		Started:        true,
+		Status:         "Codex turn completed",
+		LastActivityAt: now,
+	}
+	freshIdleSnapshot := staleIdleSnapshot
+	freshIdleSnapshot.Entries = []codexapp.TranscriptEntry{{
+		Kind: codexapp.TranscriptAgent,
+		Text: "The broken preview is caused by the SVG being written as an HTML error page. I regenerated the SVG and verified the preview opens cleanly.",
+	}}
+	session := &fakeCodexSession{
+		projectPath: projectPath,
+		snapshot:    freshIdleSnapshot,
+		trySnapshotFn: func(_ *fakeCodexSession) (codexapp.Snapshot, bool) {
+			return staleIdleSnapshot, true
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: projectPath, Provider: codexapp.ProviderCodex}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+	prevSnapshot := staleIdleSnapshot
+	prevSnapshot.Busy = true
+	prevSnapshot.BusySince = now.Add(-2 * time.Minute)
+	prevSnapshot.ActiveTurnID = "turn-live"
+	prevSnapshot.Phase = codexapp.SessionPhaseRunning
+	m := Model{
+		ctx:          ctx,
+		bossMode:     true,
+		bossModel:    bossui.NewEmbedded(ctx, nil),
+		codexManager: manager,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			projectPath: prevSnapshot,
+		},
+		allProjects: []model.ProjectSummary{{Path: projectPath, Name: "ChatNext3"}},
+		projects:    []model.ProjectSummary{{Path: projectPath, Name: "ChatNext3"}},
+	}
+	m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
+
+	updated, cmd := m.update(codexUpdateMsg{projectPath: projectPath})
+	got := updated.(Model)
+	for _, msg := range collectCmdMsgs(cmd) {
+		updated, _ = got.Update(msg)
+		got = updated.(Model)
+	}
+
+	view := got.bossModel.View()
+	engineerName := bossui.EngineerNameForKey("project", projectPath, staleIdleSnapshot.ThreadID)
+	for _, want := range []string{
+		engineerName + " is back from ChatNext3.",
+		"The broken preview is caused by the SVG",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("boss chat fresh completion notice missing %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestLatestEngineerTranscriptOutputDropsCodeBlocks(t *testing.T) {
 	t.Parallel()
 

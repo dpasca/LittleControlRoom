@@ -108,8 +108,18 @@ type agentTaskEngineerReturnedMsg struct {
 	engineerName string
 	summary      string
 	notice       string
+	snapshot     codexapp.Snapshot
 	task         model.AgentTask
 	err          error
+}
+
+type bossEngineerReturnedMsg struct {
+	projectPath  string
+	label        string
+	engineerName string
+	summary      string
+	notice       string
+	snapshot     codexapp.Snapshot
 }
 
 func (m Model) updateBossModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -482,9 +492,13 @@ func (m Model) handleBossEngineerTurnCompletion(projectPath string, hadPrev bool
 	if !hadPrev || !bossEngineerSnapshotActive(prevSnapshot) || bossEngineerSnapshotActive(snapshot) {
 		return m, nil
 	}
+	session, _ := m.codexSession(projectPath)
 	task, isAgentTask := m.agentTaskForProjectPath(projectPath)
 	if isAgentTask && m.svc != nil {
-		return m, m.markAgentTaskReadyForReviewCmd(projectPath, task, snapshot)
+		return m, m.markAgentTaskReadyForReviewCmd(projectPath, task, snapshot, session)
+	}
+	if latestEngineerTranscriptOutput(snapshot) == "" && session != nil {
+		return m, m.bossEngineerCompletionNoticeCmd(projectPath, snapshot, session)
 	}
 	notice := m.bossEngineerTurnCompletionHostNotice(projectPath, hadPrev, prevSnapshot, snapshot)
 	if notice == "" {
@@ -493,18 +507,19 @@ func (m Model) handleBossEngineerTurnCompletion(projectPath string, hadPrev bool
 	return m.updateBossHostNotice(notice)
 }
 
-func (m Model) markAgentTaskReadyForReviewCmd(projectPath string, task model.AgentTask, snapshot codexapp.Snapshot) tea.Cmd {
+func (m Model) markAgentTaskReadyForReviewCmd(projectPath string, task model.AgentTask, snapshot codexapp.Snapshot, session codexapp.Session) tea.Cmd {
 	taskID := strings.TrimSpace(task.ID)
 	if taskID == "" || m.svc == nil || m.svc.Store() == nil {
 		return nil
 	}
 	label := bossAgentTaskCompletionLabel(task)
 	engineerName := bossEngineerNameForAgentTask(task)
-	summary := latestEngineerTranscriptOutput(snapshot)
-	notice := bossAgentTaskReviewNotice(label, summary, engineerName)
 	svc := m.svc
 	parent := m.ctx
 	return func() tea.Msg {
+		snapshot = freshEngineerCompletionSnapshot(projectPath, snapshot, session)
+		summary := latestEngineerTranscriptOutput(snapshot)
+		notice := bossAgentTaskReviewNotice(label, summary, engineerName)
 		ctx := parent
 		if ctx == nil {
 			ctx = context.Background()
@@ -525,10 +540,55 @@ func (m Model) markAgentTaskReadyForReviewCmd(projectPath string, task model.Age
 			engineerName: engineerName,
 			summary:      summary,
 			notice:       notice,
+			snapshot:     snapshot,
 			task:         updated,
 			err:          err,
 		}
 	}
+}
+
+func (m Model) bossEngineerCompletionNoticeCmd(projectPath string, snapshot codexapp.Snapshot, session codexapp.Session) tea.Cmd {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" || session == nil {
+		return nil
+	}
+	label := m.bossEngineerCompletionLabel(projectPath)
+	engineerName := m.bossEngineerCompletionName(projectPath, snapshot)
+	return func() tea.Msg {
+		snapshot = freshEngineerCompletionSnapshot(projectPath, snapshot, session)
+		summary := latestEngineerTranscriptOutput(snapshot)
+		return bossEngineerReturnedMsg{
+			projectPath:  projectPath,
+			label:        label,
+			engineerName: engineerName,
+			summary:      summary,
+			notice:       bossEngineerCompletionNotice(label, summary, engineerName),
+			snapshot:     snapshot,
+		}
+	}
+}
+
+func freshEngineerCompletionSnapshot(projectPath string, snapshot codexapp.Snapshot, session codexapp.Session) codexapp.Snapshot {
+	projectPath = strings.TrimSpace(projectPath)
+	snapshot = snapshotWithCompletionProjectPath(projectPath, snapshot)
+	if latestEngineerTranscriptOutput(snapshot) != "" || session == nil {
+		return snapshot
+	}
+	fresh := snapshotWithCompletionProjectPath(projectPath, session.Snapshot())
+	if latestEngineerTranscriptOutput(fresh) != "" {
+		return fresh
+	}
+	if len(fresh.Entries) > len(snapshot.Entries) || fresh.TranscriptRevision > snapshot.TranscriptRevision {
+		return fresh
+	}
+	return snapshot
+}
+
+func snapshotWithCompletionProjectPath(projectPath string, snapshot codexapp.Snapshot) codexapp.Snapshot {
+	if strings.TrimSpace(snapshot.ProjectPath) == "" {
+		snapshot.ProjectPath = strings.TrimSpace(projectPath)
+	}
+	return snapshot
 }
 
 func bossAgentTaskReviewNotice(label, output, engineerName string) string {

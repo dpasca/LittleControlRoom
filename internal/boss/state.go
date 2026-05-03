@@ -325,7 +325,7 @@ func AttentionTextWithLimit(snapshot StateSnapshot, now time.Time, limit int) st
 		if len(lines) >= limit {
 			break
 		}
-		lines = append(lines, "task | "+compactAttentionAgentTaskLine(task, now))
+		lines = append(lines, compactAttentionAgentTaskKind(task)+" | "+compactAttentionAgentTaskLine(task, now))
 	}
 	for _, project := range snapshot.HotProjects {
 		if len(lines) >= limit {
@@ -345,6 +345,15 @@ func AttentionTextWithLimit(snapshot StateSnapshot, now time.Time, limit int) st
 	return strings.Join(lines, "\n")
 }
 
+func compactAttentionAgentTaskKind(task AgentTaskBrief) string {
+	switch model.NormalizeAgentTaskStatus(task.Status) {
+	case model.AgentTaskStatusWaiting:
+		return "review"
+	default:
+		return "agent"
+	}
+}
+
 func compactAttentionAgentTaskLine(task AgentTaskBrief, now time.Time) string {
 	parts := []string{strings.TrimSpace(task.Title)}
 	if parts[0] == "" {
@@ -357,7 +366,7 @@ func compactAttentionAgentTaskLine(task AgentTaskBrief, now time.Time) string {
 		parts = append(parts, name)
 	}
 	status := model.NormalizeAgentTaskStatus(task.Status)
-	if status != "" {
+	if status != "" && status != model.AgentTaskStatusWaiting {
 		parts = append(parts, agentTaskBriefStatusLabel(status))
 	}
 	if summary := strings.TrimSpace(task.Summary); summary != "" {
