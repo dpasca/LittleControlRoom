@@ -373,7 +373,7 @@ func compactAttentionAgentTaskLine(task AgentTaskBrief, now time.Time) string {
 		parts = append(parts, agentTaskBriefStatusLabel(status))
 	}
 	if summary := strings.TrimSpace(task.Summary); summary != "" {
-		parts = append(parts, clipText(summary, 120))
+		parts = append(parts, clipText(cleanHandoffSummary(summary), 120))
 	} else if status == model.AgentTaskStatusWaiting {
 		if !task.LastTouchedAt.IsZero() {
 			parts = append(parts, "touched "+relativeAge(now, task.LastTouchedAt))
@@ -466,7 +466,7 @@ func operationalAgentTaskLine(task AgentTaskBrief, now time.Time) string {
 		parts = append(parts, "engineer: "+provider+" "+session)
 	}
 	if summary := strings.TrimSpace(task.Summary); summary != "" {
-		parts = append(parts, "brief: "+clipText(summary, 140))
+		parts = append(parts, "brief: "+clipText(cleanHandoffSummary(summary), 140))
 	}
 	if len(task.Capabilities) > 0 {
 		parts = append(parts, "capabilities: "+clipText(strings.Join(task.Capabilities, ", "), 100))
@@ -872,6 +872,20 @@ func clipText(text string, limit int) string {
 		return string(runes[:limit])
 	}
 	return string(runes[:limit-3]) + "..."
+}
+
+func cleanHandoffSummary(text string) string {
+	text = strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+	text = strings.TrimRight(text, " \t\r\n:;,")
+	text = strings.TrimSpace(text)
+	if text == "" || strings.HasSuffix(text, "...") || strings.HasSuffix(text, "…") {
+		return text
+	}
+	last := text[len(text)-1]
+	if last == '.' || last == '!' || last == '?' {
+		return text
+	}
+	return text + "."
 }
 
 func minInt(a, b int) int {

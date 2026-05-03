@@ -35,7 +35,7 @@ func (m Model) renderSupervisorBrief(width int) string {
 		return ""
 	}
 	for i, line := range lines {
-		lines[i] = bossToolCallStyle.Render(fitLine(line, width))
+		lines[i] = renderBossHandoffMessage(line, width)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -139,7 +139,7 @@ func supervisorTaskLine(task AgentTaskBrief, now time.Time) string {
 
 func supervisorTaskDetail(task AgentTaskBrief, now time.Time) string {
 	if summary := strings.TrimSpace(task.Summary); summary != "" {
-		return clipText(summary, 140)
+		return clipText(cleanHandoffSummary(summary), 140)
 	}
 	if model.NormalizeAgentTaskStatus(task.Status) == model.AgentTaskStatusActive {
 		return "no engineer is working on it right now"

@@ -313,6 +313,22 @@ func TestLatestEngineerTranscriptOutputDropsMalformedInlineFence(t *testing.T) {
 	}
 }
 
+func TestLatestEngineerTranscriptOutputCleansDanglingColon(t *testing.T) {
+	t.Parallel()
+
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "Confirmed: the removed imagegen copy was the user-local directory:",
+		}},
+	}
+
+	got := latestEngineerTranscriptOutput(snapshot)
+	if got != "Confirmed: the removed imagegen copy was the user-local directory." {
+		t.Fatalf("latestEngineerTranscriptOutput() = %q", got)
+	}
+}
+
 func TestBossEngineerCompletionLeavesAgentTaskWaitingForDecision(t *testing.T) {
 	t.Parallel()
 

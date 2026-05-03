@@ -312,6 +312,29 @@ func TestModelSupervisorReviewAgentTaskWithoutSummaryShowsDecision(t *testing.T)
 	}
 }
 
+func TestModelSupervisorCleansWaitingSummaryPunctuation(t *testing.T) {
+	t.Parallel()
+
+	m := New(context.Background(), nil)
+	m.snapshot = StateSnapshot{
+		OpenAgentTasks: []AgentTaskBrief{{
+			ID:           "agt_diff",
+			Title:        "Diff duplicate Codex skills",
+			EngineerName: "Dennis",
+			Status:       model.AgentTaskStatusWaiting,
+			Summary:      "Confirmed: the removed imagegen copy was the user-local directory:",
+		}},
+	}
+
+	rendered := ansi.Strip(m.renderTranscript(180))
+	if !strings.Contains(rendered, "Confirmed: the removed imagegen copy was the user-local directory.") {
+		t.Fatalf("supervisor summary should end naturally:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "directory:") {
+		t.Fatalf("supervisor summary kept dangling colon:\n%s", rendered)
+	}
+}
+
 func TestModelSupervisorMarksQuietEngineerActivity(t *testing.T) {
 	t.Parallel()
 
@@ -1201,14 +1224,14 @@ func TestChatMouseSelectionCopiesOnlyTranscriptText(t *testing.T) {
 	updated, _ := m.Update(tea.MouseMsg{
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,
-		X:      bossPanelContentLeft,
+		X:      bossPanelContentLeft + len("Boss> "),
 		Y:      bossChatTranscriptTop,
 	})
 	m = updated.(Model)
 	updated, _ = m.Update(tea.MouseMsg{
 		Action: tea.MouseActionMotion,
 		Button: tea.MouseButtonLeft,
-		X:      bossPanelContentLeft + len("alpha"),
+		X:      bossPanelContentLeft + len("Boss> ") + len("alpha"),
 		Y:      bossChatTranscriptTop,
 	})
 	m = updated.(Model)
@@ -1219,7 +1242,7 @@ func TestChatMouseSelectionCopiesOnlyTranscriptText(t *testing.T) {
 	updated, _ = m.Update(tea.MouseMsg{
 		Action: tea.MouseActionRelease,
 		Button: tea.MouseButtonLeft,
-		X:      bossPanelContentLeft + len("alpha"),
+		X:      bossPanelContentLeft + len("Boss> ") + len("alpha"),
 		Y:      bossChatTranscriptTop,
 	})
 	m = updated.(Model)
@@ -1249,7 +1272,7 @@ func TestModelTranscriptRendersMarkdown(t *testing.T) {
 	}}
 
 	rendered := ansi.Strip(m.renderTranscript(72))
-	for _, want := range []string{"Plan", "Ship", "boss", "You>", "markdown"} {
+	for _, want := range []string{"Boss>", "Plan", "Ship", "boss", "You>", "markdown"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered transcript missing %q:\n%s", want, rendered)
 		}
@@ -1271,13 +1294,21 @@ func TestModelTranscriptRendersTemporaryStreamingState(t *testing.T) {
 	m.streamingAssistantText = "Alpha is waiting on the rollout decision."
 
 	rendered := ansi.Strip(m.renderTranscript(84))
-	for _, want := range []string{"You>", "Check alpha", "Tool calls", "project_detail /tmp/alpha", "Alpha is waiting"} {
+	for _, want := range []string{"You>", "Check alpha", "Tool calls", "project_detail /tmp/alpha", "Boss>", "Alpha is waiting"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("streaming transcript missing %q:\n%s", want, rendered)
 		}
 	}
 	if len(m.messages) != 1 {
 		t.Fatalf("temporary streaming state should not append persisted messages")
+	}
+}
+
+func TestBossHandoffStyleIsNotMutedToolChrome(t *testing.T) {
+	t.Parallel()
+
+	if got, muted := bossHandoffPrefixStyle.GetForeground(), bossToolCallStyle.GetForeground(); got == muted {
+		t.Fatalf("handoff prefix foreground = %v, should not reuse muted tool-call color", got)
 	}
 }
 

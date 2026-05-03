@@ -295,6 +295,28 @@ func TestAttentionTextShowsWaitingAgentTaskDecisionWhenSummaryMissing(t *testing
 	}
 }
 
+func TestAttentionTextCleansWaitingAgentTaskSummaryPunctuation(t *testing.T) {
+	t.Parallel()
+
+	snapshot := StateSnapshot{
+		OpenAgentTasks: []AgentTaskBrief{{
+			ID:           "agt_diff",
+			Title:        "Diff duplicate Codex skills",
+			EngineerName: "Dennis",
+			Status:       model.AgentTaskStatusWaiting,
+			Summary:      "Confirmed: the removed imagegen copy was the user-local directory:",
+		}},
+	}
+
+	attention := AttentionText(snapshot, time.Unix(1_800_000_000, 0))
+	if !strings.Contains(attention, "Confirmed: the removed imagegen copy was the user-local directory.") {
+		t.Fatalf("waiting agent summary should end naturally:\n%s", attention)
+	}
+	if strings.Contains(attention, "directory:") {
+		t.Fatalf("waiting agent summary kept dangling colon:\n%s", attention)
+	}
+}
+
 func TestSelectRecentAttentionProjectsPrefersPresentRecentProjects(t *testing.T) {
 	t.Parallel()
 

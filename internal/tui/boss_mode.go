@@ -682,7 +682,7 @@ func latestEngineerTranscriptOutput(snapshot codexapp.Snapshot) string {
 		if text == "" {
 			continue
 		}
-		summary := compactEngineerNoticeText(engineerNoticeSummaryText(text), 220)
+		summary := cleanEngineerNoticeSummary(compactEngineerNoticeText(engineerNoticeSummaryText(text), 220))
 		if !engineerNoticeHasUsefulDetail(summary) {
 			return ""
 		}
@@ -779,6 +779,20 @@ func compactEngineerNoticeText(text string, limit int) string {
 		return text[:limit]
 	}
 	return strings.TrimSpace(text[:limit-1]) + "..."
+}
+
+func cleanEngineerNoticeSummary(text string) string {
+	text = strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+	text = strings.TrimRight(text, " \t\r\n:;,")
+	text = strings.TrimSpace(text)
+	if text == "" || strings.HasSuffix(text, "...") || strings.HasSuffix(text, "…") {
+		return text
+	}
+	last := text[len(text)-1]
+	if last == '.' || last == '!' || last == '?' {
+		return text
+	}
+	return text + "."
 }
 
 func bossBrowserAttentionNoticeSummary(notify browserAttentionNotification) string {
