@@ -282,6 +282,8 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"Use engineer.send_prompt only for explicit project/repo work",
 		"Use agent_task.create for temporary delegated work",
 		"do not encode special domains as task kinds",
+		"fresh read-only evidence resolves it with no remaining work",
+		"A status or situation question is enough to close a review/waiting agent task",
 		"treat that as a request to manage those agent tasks",
 		"propose exactly one agent_task.continue",
 		"assents to a prior Boss Chat plan",
@@ -324,6 +326,26 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 	} {
 		if !strings.Contains(plannerPrompt, want) {
 			t.Fatalf("planner prompt missing %q:\n%s", want, plannerPrompt)
+		}
+	}
+}
+
+func TestAssistantPlannerUserTextAllowsClosingResolvedReviewTasks(t *testing.T) {
+	t.Parallel()
+
+	req := AssistantRequest{
+		StateBrief: "Open delegated agent tasks (separate from project TODOs):\n- Diff duplicate Codex skills (agt_diff); kind/status: agent/review; show: agent_task:agt_diff",
+		Messages:   []ChatMessage{{Role: "user", Content: "what's the situation with the skills?"}},
+	}
+	normal := bossActionPlannerUserText(req, nil, false)
+	forced := bossActionPlannerUserText(req, []bossToolResult{{
+		Name: bossActionSkillsInventory,
+		Text: "Codex skills inventory: clean. No duplicate or metadata issues.",
+	}}, true)
+	for _, got := range []string{normal, forced} {
+		if !strings.Contains(got, "resolves a visible review/waiting agent task") ||
+			!strings.Contains(got, `control_capability="agent_task.close"`) {
+			t.Fatalf("planner user text should steer resolved review tasks toward close proposals:\n%s", got)
 		}
 	}
 }
@@ -603,6 +625,57 @@ func TestAssistantReplyCanProposeAgentTaskContinueControl(t *testing.T) {
 	if !strings.Contains(string(resp.ControlInvocation.Args), `"task_id":"agt_roguellm"`) ||
 		!strings.Contains(string(resp.ControlInvocation.Args), `"prompt":"Continue the stale roguellm dev-server cleanup.`) {
 		t.Fatalf("invocation args = %s", resp.ControlInvocation.Args)
+	}
+}
+
+func TestAssistantReplyCanProposeAgentTaskCloseControl(t *testing.T) {
+	t.Parallel()
+
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model: "gpt-test",
+			OutputText: encodedBossAction(t, bossAction{
+				Kind:              bossActionProposeControl,
+				ControlCapability: "agent_task.close",
+				TaskID:            "agt_diff",
+				TaskCloseStatus:   "completed",
+				TaskSummary:       "Skills inventory is clean; no duplicate or stale skill metadata remains.",
+				CloseSession:      true,
+				Reason:            "The status check resolved the review task.",
+			}),
+			Usage: model.LLMUsage{TotalTokens: 23},
+		}},
+	}
+	assistant := &Assistant{
+		planner: planner,
+		query:   newQueryExecutor(&fakeBossStore{}),
+		model:   "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Open delegated agent tasks (separate from project TODOs):\n- Diff duplicate Codex skills (agt_diff); kind/status: agent/review; show: agent_task:agt_diff",
+		Messages:   []ChatMessage{{Role: "user", Content: "what's the situation with the skills?"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.ControlInvocation == nil {
+		t.Fatalf("ControlInvocation = nil, want agent_task.close proposal")
+	}
+	if resp.ControlInvocation.Capability != control.CapabilityAgentTaskClose {
+		t.Fatalf("capability = %q", resp.ControlInvocation.Capability)
+	}
+	if !strings.Contains(resp.Content, "Mark agent task agt_diff as completed?") ||
+		!strings.Contains(resp.Content, "Skills inventory is clean") {
+		t.Fatalf("proposal content = %q, want close-task confirmation", resp.Content)
+	}
+	if !strings.Contains(string(resp.ControlInvocation.Args), `"task_id":"agt_diff"`) ||
+		!strings.Contains(string(resp.ControlInvocation.Args), `"status":"completed"`) ||
+		!strings.Contains(string(resp.ControlInvocation.Args), `"close_session":true`) {
+		t.Fatalf("invocation args = %s", resp.ControlInvocation.Args)
+	}
+	if resp.Usage.TotalTokens != 23 {
+		t.Fatalf("usage total = %d, want 23", resp.Usage.TotalTokens)
 	}
 }
 

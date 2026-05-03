@@ -517,6 +517,8 @@ func bossActionPlannerSystemPrompt() string {
 		"Use engineer.send_prompt only for explicit project/repo work on a loaded project. Do not use it for host operations or generic temporary work.",
 		"Use agent_task.create for temporary delegated work with no natural loaded project, including host/process/browser/system investigation. Use a generic agent task with resources and capabilities; do not encode special domains as task kinds.",
 		"Use agent_task.continue when the user asks to hit an existing open agent task again. Use agent_task.close when the task is done, should wait, or should be archived.",
+		"If a visible agent task is in review/waiting and fresh read-only evidence resolves it with no remaining work, propose agent_task.close with status completed instead of merely answering that the task is still open.",
+		"A status or situation question is enough to close a review/waiting agent task when the gathered evidence directly says the review found no issue, completed the check, or needs no further action.",
 		"When the user asks to solve, clear, finish, continue, or make progress on open agent tasks, treat that as a request to manage those agent tasks, not as a request for only a status answer.",
 		"If the user asks to solve or clear multiple open agent tasks, propose exactly one agent_task.continue for the next concrete task. Prefer the user-named task; otherwise choose the stalest or highest-risk task from the available agent-task evidence, and mention that the remaining tasks can follow after this one is confirmed.",
 		"If the user assents to a prior Boss Chat plan for clearing open agent tasks, propose agent_task.continue for the next task in that plan instead of restating the plan.",
@@ -589,9 +591,9 @@ func bossActionPlannerUserText(req AssistantRequest, toolResults []bossToolResul
 		}
 	}
 	if forceAnswer {
-		b.WriteString("\nYou must choose kind=\"answer\" or kind=\"propose_control\" now. Use the gathered data; do not request more read-only queries.\n")
+		b.WriteString("\nYou must choose kind=\"answer\" or kind=\"propose_control\" now. Use the gathered data; do not request more read-only queries. If the gathered data resolves a visible review/waiting agent task with no remaining work, choose kind=\"propose_control\" with control_capability=\"agent_task.close\" instead of a plain answer.\n")
 	} else {
-		b.WriteString("\nChoose kind=\"answer\" if you have enough data, choose kind=\"propose_control\" if the user asked to delegate project work or manage/continue/clear/solve an agent task and a task id or project target is clear, otherwise choose one read-only query kind. For multiple open agent tasks, propose one concrete next agent_task.continue rather than only giving an order.\n")
+		b.WriteString("\nChoose kind=\"answer\" if you have enough data, choose kind=\"propose_control\" if the user asked to delegate project work or manage/continue/clear/solve an agent task or if fresh gathered data resolves a visible review/waiting agent task and a task id is clear; for a resolved review/waiting task use control_capability=\"agent_task.close\". Otherwise choose one read-only query kind. For multiple open agent tasks, propose one concrete next agent_task.continue rather than only giving an order.\n")
 	}
 	return strings.TrimSpace(b.String())
 }
