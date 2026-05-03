@@ -355,10 +355,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TickMsg:
 		m.spinnerFrame++
 		m.pruneSummaryFlashes()
-		if m.sending || len(m.activeEngineerActivities()) > 0 {
+		if m.sending || len(m.supervisorItems(m.now())) > 0 {
 			m.syncLayout(false)
 		}
-		return m, bossTickCmd()
+		cmds := []tea.Cmd{bossTickCmd()}
+		if m.shouldRefreshSupervisorState() {
+			cmds = append(cmds, m.loadStateCmd())
+		}
+		return m, tea.Batch(cmds...)
 	case tea.KeyMsg:
 		m.chatSelection = bossTextSelection{}
 		if m.pendingControl != nil {
@@ -1279,7 +1283,7 @@ func (m Model) renderTranscript(width int) string {
 		}
 		blocks = append(blocks, renderUserMessage(message.Content, width))
 	}
-	if activity := m.renderTemporaryEngineerActivity(width); activity != "" {
+	if activity := m.renderSupervisorBrief(width); activity != "" {
 		blocks = append(blocks, activity)
 	}
 	if m.sending {
@@ -1288,48 +1292,6 @@ func (m Model) renderTranscript(width int) string {
 		}
 	}
 	return strings.Join(blocks, "\n\n")
-}
-
-func (m Model) renderTemporaryEngineerActivity(width int) string {
-	activities := m.activeEngineerActivities()
-	if len(activities) == 0 {
-		return ""
-	}
-	start := maxInt(0, len(activities)-3)
-	lines := []string{"Engineer activity " + spinnerDots(m.spinnerFrame)}
-	now := m.now()
-	for _, activity := range activities[start:] {
-		name := strings.TrimSpace(activity.EngineerName)
-		title := strings.TrimSpace(activity.Title)
-		if title == "" {
-			title = strings.TrimSpace(activity.ProjectPath)
-		}
-		if title == "" {
-			title = strings.TrimSpace(activity.TaskID)
-		}
-		if title == "" {
-			title = "engineer session"
-		}
-		status := strings.TrimSpace(activity.Status)
-		if status == "" {
-			status = "working"
-		}
-		if elapsed := bossEngineerActivityElapsedText(activity, now); elapsed != "" {
-			status += " " + elapsed
-		}
-		provider := strings.TrimSpace(string(model.NormalizeSessionSource(activity.Provider)))
-		if provider != "" {
-			status = provider + " " + status
-		}
-		if name != "" {
-			title = name + " on " + title
-		}
-		lines = append(lines, "  "+title+" - "+status)
-	}
-	for i, line := range lines {
-		lines[i] = bossToolCallStyle.Render(fitLine(line, width))
-	}
-	return strings.Join(lines, "\n")
 }
 
 func (m Model) activeEngineerActivities() []ViewEngineerActivity {

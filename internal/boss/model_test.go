@@ -214,14 +214,14 @@ func TestModelAttentionRowsShowActiveAgentTaskTimer(t *testing.T) {
 		}
 	}
 	transcript := ansi.Strip(m.renderTranscript(90))
-	for _, want := range []string{"Engineer activity", "Ada on Revoke Cursor GitHub access - codex working 00:37"} {
+	for _, want := range []string{"Supervisor", "Ada on Revoke Cursor GitHub access - codex working 00:37"} {
 		if !strings.Contains(transcript, want) {
 			t.Fatalf("active agent transcript status missing %q:\n%s", want, transcript)
 		}
 	}
 }
 
-func TestBossTickRefreshesTemporaryEngineerActivityTimer(t *testing.T) {
+func TestBossTickRefreshesSupervisorTimer(t *testing.T) {
 	t.Parallel()
 
 	now := time.Unix(1_800_000_000, 0)
@@ -242,7 +242,7 @@ func TestBossTickRefreshesTemporaryEngineerActivityTimer(t *testing.T) {
 	m.nowFn = func() time.Time { return now }
 	m.syncLayout(true)
 	if !strings.Contains(ansi.Strip(m.chatViewport.View()), "00:03") {
-		t.Fatalf("initial temporary activity missing timer:\n%s", ansi.Strip(m.chatViewport.View()))
+		t.Fatalf("initial supervisor block missing timer:\n%s", ansi.Strip(m.chatViewport.View()))
 	}
 
 	now = now.Add(time.Second)
@@ -250,7 +250,89 @@ func TestBossTickRefreshesTemporaryEngineerActivityTimer(t *testing.T) {
 	got := updated.(Model)
 	rendered := ansi.Strip(got.chatViewport.View())
 	if !strings.Contains(rendered, "00:04") || strings.Contains(rendered, "00:03") {
-		t.Fatalf("temporary activity timer did not refresh on tick:\n%s", rendered)
+		t.Fatalf("supervisor timer did not refresh on tick:\n%s", rendered)
+	}
+}
+
+func TestModelSupervisorShowsReviewAgentTasks(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	m := New(context.Background(), nil)
+	m.nowFn = func() time.Time { return now }
+	m.snapshot = StateSnapshot{
+		OpenAgentTasks: []AgentTaskBrief{{
+			ID:            "agt_diff",
+			Title:         "Diff duplicate Codex skills",
+			EngineerName:  "Jun",
+			Status:        model.AgentTaskStatusWaiting,
+			Summary:       "Found one canonical skill and one stale duplicate.",
+			LastTouchedAt: now.Add(-2 * time.Minute),
+		}},
+	}
+
+	rendered := ansi.Strip(m.renderTranscript(90))
+	for _, want := range []string{"Supervisor", "Jun has Diff duplicate Codex skills ready for review", "Found one canonical skill"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("supervisor review block missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestModelSupervisorMarksQuietEngineerActivity(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	m := New(context.Background(), nil)
+	m.nowFn = func() time.Time { return now }
+	m.viewContext = ViewContext{
+		EngineerActivities: []ViewEngineerActivity{{
+			Kind:         "project",
+			ProjectPath:  "/alpha",
+			Title:        "Alpha",
+			EngineerName: "Tem",
+			Provider:     model.SessionSourceCodex,
+			Status:       "working",
+			Active:       true,
+			StartedAt:    now.Add(-30 * time.Minute),
+			LastEventAt:  now.Add(-11 * time.Minute),
+		}},
+	}
+
+	rendered := ansi.Strip(m.renderTranscript(90))
+	for _, want := range []string{"Supervisor", "Tem on Alpha - codex quiet 11:00"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("supervisor quiet block missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestBossSupervisorStateRefreshCadenceRequiresStore(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	cfg.DBPath = filepath.Join(cfg.DataDir, "little-control-room.sqlite")
+	st, err := store.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	svc := service.New(cfg, st, events.NewBus(), nil)
+
+	m := New(context.Background(), svc)
+	m.spinnerFrame = bossSupervisorStateRefreshEveryTicks
+	if !m.shouldRefreshSupervisorState() {
+		t.Fatalf("shouldRefreshSupervisorState() = false, want refresh at cadence")
+	}
+	m.spinnerFrame = bossSupervisorStateRefreshEveryTicks - 1
+	if m.shouldRefreshSupervisorState() {
+		t.Fatalf("shouldRefreshSupervisorState() = true before cadence")
+	}
+	m.svc = nil
+	m.spinnerFrame = bossSupervisorStateRefreshEveryTicks
+	if m.shouldRefreshSupervisorState() {
+		t.Fatalf("shouldRefreshSupervisorState() = true without service")
 	}
 }
 
@@ -1189,7 +1271,7 @@ func TestModelTranscriptKeepsEngineerActivityWhileBossIsThinking(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderTranscript(90))
-	for _, want := range []string{"Ada on Diff duplicate Codex skills - codex working 00:09", "Tool calls", "agent_task_report"} {
+	for _, want := range []string{"Supervisor", "Ada on Diff duplicate Codex skills - codex working 00:09", "Tool calls", "agent_task_report"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("thinking transcript missing %q:\n%s", want, rendered)
 		}
