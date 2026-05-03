@@ -271,6 +271,30 @@ func TestAttentionTextLabelsWaitingAgentTasksAsReview(t *testing.T) {
 	}
 }
 
+func TestAttentionTextShowsWaitingAgentTaskDecisionWhenSummaryMissing(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	snapshot := StateSnapshot{
+		OpenAgentTasks: []AgentTaskBrief{{
+			ID:            "agt_diff",
+			Title:         "Diff duplicate Codex skills",
+			EngineerName:  "Dennis",
+			Status:        model.AgentTaskStatusWaiting,
+			Provider:      model.SessionSourceCodex,
+			SessionID:     "thread-agent-1",
+			LastTouchedAt: now.Add(-time.Hour),
+		}},
+	}
+
+	attention := AttentionText(snapshot, now)
+	for _, want := range []string{"review | Diff duplicate Codex skills", "Dennis", "waiting for close or continue decision"} {
+		if !strings.Contains(attention, want) {
+			t.Fatalf("waiting agent task should show the needed decision %q:\n%s", want, attention)
+		}
+	}
+}
+
 func TestSelectRecentAttentionProjectsPrefersPresentRecentProjects(t *testing.T) {
 	t.Parallel()
 

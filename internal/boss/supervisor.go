@@ -127,7 +127,7 @@ func supervisorTaskLine(task AgentTaskBrief, now time.Time) string {
 	detail := supervisorTaskDetail(task, now)
 	switch model.NormalizeAgentTaskStatus(task.Status) {
 	case model.AgentTaskStatusWaiting:
-		return supervisorJoinLine(name+" has "+title+" ready for review", detail)
+		return supervisorJoinLine(name+" finished "+title+"; decide close or continue", detail)
 	case model.AgentTaskStatusActive:
 		return supervisorJoinLine(name+" has "+title+" open", detail)
 	default:
@@ -143,9 +143,9 @@ func supervisorTaskDetail(task AgentTaskBrief, now time.Time) string {
 		return "no live engineer session right now"
 	}
 	if !task.LastTouchedAt.IsZero() {
-		return "touched " + relativeAge(now, task.LastTouchedAt)
+		return "waiting for your decision; touched " + relativeAge(now, task.LastTouchedAt)
 	}
-	return "needs review"
+	return "waiting for your decision"
 }
 
 func supervisorJoinLine(head, detail string) string {

@@ -372,10 +372,16 @@ func compactAttentionAgentTaskLine(task AgentTaskBrief, now time.Time) string {
 	if summary := strings.TrimSpace(task.Summary); summary != "" {
 		parts = append(parts, clipText(summary, 120))
 	} else if task.Provider != "" || strings.TrimSpace(task.SessionID) != "" {
+		if status == model.AgentTaskStatusWaiting {
+			parts = append(parts, "waiting for close or continue decision")
+		}
 		provider := string(model.NormalizeSessionSource(task.Provider))
 		session := strings.TrimSpace(task.SessionID)
 		parts = append(parts, strings.TrimSpace(provider+" "+session))
 	} else if !task.LastTouchedAt.IsZero() {
+		if status == model.AgentTaskStatusWaiting {
+			parts = append(parts, "waiting for close or continue decision")
+		}
 		parts = append(parts, relativeAge(now, task.LastTouchedAt))
 	}
 	filtered := make([]string, 0, len(parts))

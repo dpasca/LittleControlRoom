@@ -271,10 +271,34 @@ func TestModelSupervisorShowsReviewAgentTasks(t *testing.T) {
 		}},
 	}
 
-	rendered := ansi.Strip(m.renderTranscript(90))
-	for _, want := range []string{"Supervisor", "Jun has Diff duplicate Codex skills ready for review", "Found one canonical skill"} {
+	rendered := ansi.Strip(m.renderTranscript(160))
+	for _, want := range []string{"Supervisor", "Jun finished Diff duplicate Codex skills; decide close or continue", "Found one canonical skill"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("supervisor review block missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestModelSupervisorReviewAgentTaskWithoutSummaryShowsDecision(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	m := New(context.Background(), nil)
+	m.nowFn = func() time.Time { return now }
+	m.snapshot = StateSnapshot{
+		OpenAgentTasks: []AgentTaskBrief{{
+			ID:            "agt_diff",
+			Title:         "Diff duplicate Codex skills",
+			EngineerName:  "Dennis",
+			Status:        model.AgentTaskStatusWaiting,
+			LastTouchedAt: now.Add(-time.Hour),
+		}},
+	}
+
+	rendered := ansi.Strip(m.renderTranscript(180))
+	for _, want := range []string{"Dennis finished Diff duplicate Codex skills; decide close or continue", "waiting for your decision; touched 1h ago"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("supervisor review decision block missing %q:\n%s", want, rendered)
 		}
 	}
 }
