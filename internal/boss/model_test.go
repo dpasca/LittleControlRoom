@@ -539,6 +539,54 @@ func TestControlResultCanAnnounceEngineerStartInChat(t *testing.T) {
 	}
 }
 
+func TestControlResultDoesNotDuplicateMatchingErrorStatus(t *testing.T) {
+	t.Parallel()
+
+	const detail = "The embedded Codex engineer session is already running, so I did not send the prompt into it. Start a fresh session or open the target session and send manually."
+	m := NewEmbedded(context.Background(), nil)
+
+	updated, _ := m.Update(ControlInvocationResultMsg{
+		Status:         detail,
+		Err:            fmt.Errorf("%s", detail),
+		AnnounceInChat: true,
+	})
+	got := updated.(Model)
+	if len(got.messages) != 1 {
+		t.Fatalf("messages = %d, want one announced failure", len(got.messages))
+	}
+	content := got.messages[0].Content
+	if strings.Count(content, detail) != 1 {
+		t.Fatalf("content repeated failure detail %d times: %q", strings.Count(content, detail), content)
+	}
+}
+
+func TestAssistantViewContextIncludesTransientEngineerActivity(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	m := NewEmbedded(context.Background(), nil)
+	m.nowFn = func() time.Time { return now }
+	m = m.recordTransientEngineerActivity(ViewEngineerActivity{
+		Kind:         "project",
+		ProjectPath:  "/tmp/oyk-aso",
+		Title:        "oyk-aso",
+		EngineerName: "Niklaus",
+		Provider:     model.SessionSourceCodex,
+		SessionID:    "thread-oyk",
+		Status:       "working",
+		Active:       true,
+		StartedAt:    now.Add(-15 * time.Second),
+		LastEventAt:  now.Add(-15 * time.Second),
+	})
+
+	brief := BuildViewContextBrief(m.assistantViewContext(), now)
+	for _, want := range []string{"active engineer work", "Niklaus on oyk-aso", "via codex"} {
+		if !strings.Contains(brief, want) {
+			t.Fatalf("assistant view context missing %q:\n%s", want, brief)
+		}
+	}
+}
+
 func TestBossLogShowsHostAndStateEvents(t *testing.T) {
 	t.Parallel()
 

@@ -286,10 +286,12 @@ func controlResourceSummary(resources []control.ResourceRef) string {
 func controlResultContent(msg ControlInvocationResultMsg) string {
 	status := strings.TrimSpace(msg.Status)
 	if msg.Err != nil {
-		if status == "" {
-			status = msg.Err.Error()
-		} else {
-			status += ": " + msg.Err.Error()
+		errText := strings.TrimSpace(msg.Err.Error())
+		switch {
+		case status == "":
+			status = errText
+		case errText != "" && status != errText:
+			status += ": " + errText
 		}
 		return "I could not complete that control action: " + status
 	}

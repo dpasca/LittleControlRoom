@@ -250,11 +250,35 @@ func (m Model) OperationalNotices() []ViewSystemNotice {
 
 func (m Model) assistantViewContext() ViewContext {
 	view := m.viewContext
+	view.EngineerActivities = m.assistantEngineerActivities()
 	if len(m.operationalNotices) == 0 {
 		return view
 	}
 	view.SystemNotices = append(append([]ViewSystemNotice(nil), view.SystemNotices...), m.operationalNotices...)
 	return view
+}
+
+func (m Model) assistantEngineerActivities() []ViewEngineerActivity {
+	out := append([]ViewEngineerActivity(nil), m.viewContext.EngineerActivities...)
+	seen := map[string]bool{}
+	for _, activity := range out {
+		if key := viewEngineerActivityKey(activity); key != "" {
+			seen[key] = true
+		}
+	}
+	now := m.now()
+	for _, activity := range m.transientActivities {
+		if !activity.Active || transientEngineerActivityExpired(activity, now) {
+			continue
+		}
+		key := viewEngineerActivityKey(activity)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, activity)
+	}
+	return out
 }
 
 func (m Model) recordOperationalNotice(code, severity, summary string) Model {

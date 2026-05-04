@@ -294,6 +294,8 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"project TODOs are separate from delegated agent tasks",
 		"Do not answer that there are no open agent tasks",
 		"Use engineer.send_prompt only for explicit project/repo work",
+		"operator note meant to steer that work",
+		"The host will steer the active Codex turn when possible",
 		"Use agent_task.create for temporary delegated work",
 		"do not encode special domains as task kinds",
 		"fresh read-only evidence resolves it with no remaining work",

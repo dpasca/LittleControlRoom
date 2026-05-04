@@ -313,7 +313,7 @@ func TestExecuteBossControlInvocationReportsBlockedLaunch(t *testing.T) {
 	}
 }
 
-func TestExecuteBossControlInvocationRefusesActiveEmbeddedSessionPrompt(t *testing.T) {
+func TestExecuteBossControlInvocationSteersActiveCodexSessionPrompt(t *testing.T) {
 	projectPath := "/tmp/control-active-session"
 	liveSession := &fakeCodexSession{
 		projectPath: projectPath,
@@ -349,6 +349,75 @@ func TestExecuteBossControlInvocationRefusesActiveEmbeddedSessionPrompt(t *testi
 			ProjectPath: projectPath,
 			Provider:    control.ProviderCodex,
 			SessionMode: control.SessionModeResumeOrNew,
+			Prompt:      "I can log in to Appfigures if necessary.",
+			Reveal:      false,
+		}),
+	})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("executeBossControlInvocation() cmd = nil, want wrapped open command")
+	}
+	if !strings.Contains(got.status, "Opening embedded Codex session") {
+		t.Fatalf("status = %q, want background open/steer status", got.status)
+	}
+	if len(liveSession.submitted) != 0 {
+		t.Fatalf("submission should happen inside the returned command, got early submissions: %#v", liveSession.submitted)
+	}
+	msgs := collectCmdMsgs(cmd)
+	if len(liveSession.submitted) != 1 || liveSession.submitted[0] != "I can log in to Appfigures if necessary." {
+		t.Fatalf("active session submissions = %#v, want steering note", liveSession.submitted)
+	}
+	var result bossui.ControlInvocationResultMsg
+	for _, msg := range msgs {
+		if typed, ok := msg.(bossui.ControlInvocationResultMsg); ok {
+			result = typed
+			break
+		}
+	}
+	if result.Err != nil {
+		t.Fatalf("result err = %v, want successful steering note", result.Err)
+	}
+	if !strings.Contains(result.Status, "is working on control-active-session") {
+		t.Fatalf("result status = %q, want engineer work status", result.Status)
+	}
+}
+
+func TestExecuteBossControlInvocationRefusesNonSteerableActiveEmbeddedSessionPrompt(t *testing.T) {
+	projectPath := "/tmp/control-active-opencode"
+	liveSession := &fakeCodexSession{
+		projectPath: projectPath,
+		snapshot: codexapp.Snapshot{
+			Provider:     codexapp.ProviderOpenCode,
+			ThreadID:     "thread-live",
+			Started:      true,
+			Busy:         true,
+			Phase:        codexapp.SessionPhaseRunning,
+			ActiveTurnID: "turn-live",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return liveSession, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: projectPath,
+		Provider:    codexapp.ProviderOpenCode,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+	m := Model{
+		allProjects: []model.ProjectSummary{{
+			Path:          projectPath,
+			Name:          "control-active-opencode",
+			PresentOnDisk: true,
+		}},
+		codexManager: manager,
+	}
+
+	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{
+		Invocation: controlInvocationForTest(t, control.EngineerSendPromptInput{
+			ProjectPath: projectPath,
+			Provider:    control.ProviderOpenCode,
+			SessionMode: control.SessionModeResumeOrNew,
 			Prompt:      "please take over this machine-level cleanup",
 			Reveal:      false,
 		}),
@@ -357,7 +426,7 @@ func TestExecuteBossControlInvocationRefusesActiveEmbeddedSessionPrompt(t *testi
 	if cmd == nil {
 		t.Fatalf("executeBossControlInvocation() cmd = nil, want immediate result")
 	}
-	if !strings.Contains(got.status, "will not send prompts into an active embedded Codex session") {
+	if !strings.Contains(got.status, "embedded OpenCode engineer session is already running") {
 		t.Fatalf("status = %q, want active-session refusal", got.status)
 	}
 	if len(liveSession.submitted) != 0 {
@@ -374,7 +443,7 @@ func TestExecuteBossControlInvocationRefusesActiveEmbeddedSessionPrompt(t *testi
 	if result.Err == nil {
 		t.Fatalf("result err = nil, want active-session refusal")
 	}
-	if !strings.Contains(result.Status, "active embedded Codex session") {
+	if !strings.Contains(result.Status, "embedded OpenCode engineer session is already running") {
 		t.Fatalf("result status = %q, want active-session refusal", result.Status)
 	}
 }

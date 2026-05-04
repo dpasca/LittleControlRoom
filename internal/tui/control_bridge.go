@@ -348,8 +348,8 @@ func (m Model) executeEngineerSendPromptControlWithOutcome(input control.Enginee
 		m.status = block.Message
 		return controlInvocationOutcome{model: m, err: err}
 	}
-	if controlPromptTargetsActiveEmbeddedSession(input, m, project.Path, provider) {
-		err := fmt.Errorf("Boss control will not send prompts into an active embedded %s session. Start a fresh session or open the target session and send manually.", provider.Label())
+	if controlPromptTargetsNonSteerableActiveEmbeddedSession(input, m, project.Path, provider) {
+		err := fmt.Errorf("The embedded %s engineer session is already running, so I did not send the prompt into it. Start a fresh session or open the target session and send manually.", provider.Label())
 		m.status = err.Error()
 		return controlInvocationOutcome{model: m, err: err}
 	}
@@ -371,7 +371,7 @@ func (m Model) executeEngineerSendPromptControlWithOutcome(input control.Enginee
 	return controlInvocationOutcome{model: m, cmd: cmd}
 }
 
-func controlPromptTargetsActiveEmbeddedSession(input control.EngineerSendPromptInput, m Model, projectPath string, provider codexapp.Provider) bool {
+func controlPromptTargetsNonSteerableActiveEmbeddedSession(input control.EngineerSendPromptInput, m Model, projectPath string, provider codexapp.Provider) bool {
 	if input.SessionMode == control.SessionModeNew || strings.TrimSpace(input.Prompt) == "" {
 		return false
 	}
@@ -379,7 +379,14 @@ func controlPromptTargetsActiveEmbeddedSession(input control.EngineerSendPromptI
 	if !ok {
 		return false
 	}
-	return embeddedSessionBlocksProviderSwitch(snapshot)
+	if !embeddedSessionBlocksProviderSwitch(snapshot) {
+		return false
+	}
+	return !controlPromptCanSteerActiveEmbeddedSession(snapshot)
+}
+
+func controlPromptCanSteerActiveEmbeddedSession(snapshot codexapp.Snapshot) bool {
+	return embeddedProvider(snapshot) == codexapp.ProviderCodex && codexSnapshotCanSteer(snapshot)
 }
 
 func codexProviderFromControlProvider(provider control.Provider) codexapp.Provider {
@@ -471,11 +478,11 @@ func (m Model) executeAgentTaskContinueControlWithOutcome(input control.AgentTas
 		m.status = "Control request failed: " + err.Error()
 		return controlInvocationOutcome{model: m, err: err}
 	}
-	if controlPromptTargetsActiveEmbeddedSession(control.EngineerSendPromptInput{
+	if controlPromptTargetsNonSteerableActiveEmbeddedSession(control.EngineerSendPromptInput{
 		SessionMode: input.SessionMode,
 		Prompt:      input.Prompt,
 	}, m, project.Path, provider) {
-		err := fmt.Errorf("Boss control will not send prompts into an active embedded %s session for agent task %s. Wait for it to finish or start a fresh session.", provider.Label(), task.ID)
+		err := fmt.Errorf("The embedded %s engineer session for agent task %s is already running, so I did not send the prompt into it. Wait for it to finish or start a fresh session.", provider.Label(), task.ID)
 		m.status = err.Error()
 		return controlInvocationOutcome{model: m, err: err}
 	}
