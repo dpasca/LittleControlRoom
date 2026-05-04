@@ -189,7 +189,7 @@ func TestBossChatNoticesEngineerTurnCompletion(t *testing.T) {
 
 	updated, _ := m.update(codexUpdateMsg{projectPath: projectPath})
 	got := updated.(Model)
-	view := got.bossModel.View()
+	view := bossChatPanelText(got.bossModel.View())
 	noticeText := bossOperationalNoticeText(got.bossModel)
 	engineerName := bossui.EngineerNameForKey("project", projectPath, idleSnapshot.ThreadID)
 	for _, want := range []string{
@@ -265,7 +265,7 @@ func TestBossChatFetchesFreshEngineerReportBeforeNotice(t *testing.T) {
 		got = updated.(Model)
 	}
 
-	view := got.bossModel.View()
+	view := bossChatPanelText(got.bossModel.View())
 	noticeText := bossOperationalNoticeText(got.bossModel)
 	engineerName := bossui.EngineerNameForKey("project", projectPath, staleIdleSnapshot.ThreadID)
 	for _, want := range []string{
@@ -411,7 +411,7 @@ func TestBossEngineerCompletionLeavesAgentTaskWaitingForDecision(t *testing.T) {
 	if _, ok := got.agentTaskForProjectPath(task.WorkspacePath); !ok {
 		t.Fatalf("returned agent task should stay open for a close-or-continue decision: %#v", got.openAgentTasks)
 	}
-	view := got.bossModel.View()
+	view := bossChatPanelText(got.bossModel.View())
 	noticeText := bossOperationalNoticeText(got.bossModel)
 	engineerName := bossui.EngineerNameForKey("agent_task", task.ID)
 	for _, want := range []string{
@@ -492,7 +492,7 @@ func TestBossHostNoticeQueuedWhileClosedAppearsOnOpen(t *testing.T) {
 	if len(got.pendingBossHostNotices) != 0 {
 		t.Fatalf("pending notices after open = %#v, want drained", got.pendingBossHostNotices)
 	}
-	view := got.bossModel.View()
+	view := bossChatPanelText(got.bossModel.View())
 	noticeText := bossOperationalNoticeText(got.bossModel)
 	for _, want := range []string{
 		"Ada is back from Cursor cleanup.",
@@ -615,7 +615,7 @@ func TestBossBrowserOpenResultIsRecordedAsOperationalNotice(t *testing.T) {
 		}
 	}
 	got := updated.(Model)
-	view := got.bossModel.View()
+	view := bossChatPanelText(got.bossModel.View())
 	noticeText := bossOperationalNoticeText(got.bossModel)
 	if strings.Contains(view, "Browser handoff") || strings.Contains(view, "Finish the browser flow there.") {
 		t.Fatalf("boss chat transcript should not echo browser handoff:\n%s", view)
@@ -623,6 +623,13 @@ func TestBossBrowserOpenResultIsRecordedAsOperationalNotice(t *testing.T) {
 	if !strings.Contains(noticeText, "Browser handoff") || !strings.Contains(noticeText, "Finish the browser flow there.") {
 		t.Fatalf("operational notice did not capture browser handoff:\n%s", noticeText)
 	}
+}
+
+func bossChatPanelText(view string) string {
+	if before, _, ok := strings.Cut(view, "Boss Desk"); ok {
+		return before
+	}
+	return view
 }
 
 func bossOperationalNoticeText(model bossui.Model) string {

@@ -287,6 +287,7 @@ func (m Model) updateControlConfirmation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.pendingControl = nil
 		m.status = "Control action canceled"
 		m = m.recordOperationalNotice("control_canceled", "notice", "The user canceled a pending control action.")
+		m.appendDeskEvent("control", "cancel", "The pending control action was canceled.")
 		m.syncLayout(false)
 		return m, nil
 	case "alt+up":
@@ -303,11 +304,15 @@ func (m Model) applyControlInvocationResult(msg ControlInvocationResultMsg) (tea
 	if msg.Err != nil {
 		m.status = operationalStatusLine(content, "Control action failed")
 		m = m.recordOperationalNotice("control_failed", "error", content)
+		m.appendDeskEvent("control", "failed", content)
 	} else {
 		m.status = operationalStatusLine(content, "Control action completed")
 		m = m.recordOperationalNotice("control_completed", "notice", content)
 		if msg.Activity != nil {
 			m = m.recordTransientEngineerActivity(*msg.Activity)
+			m.appendDeskEvent("engineer", "start", bossDeskActivityEventSummary(*msg.Activity, content))
+		} else {
+			m.appendDeskEvent("control", "done", content)
 		}
 	}
 	m.syncLayout(false)
@@ -324,6 +329,7 @@ func (m Model) applyHostNotice(msg HostNoticeMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m = m.recordOperationalNotice("host_update", "notice", content)
+	m.appendDeskEvent("host", "update", content)
 	m.status = operationalStatusLine(content, "Host update")
 	m.syncLayout(false)
 	return m, nil

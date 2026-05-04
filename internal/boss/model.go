@@ -63,6 +63,7 @@ type Model struct {
 	viewContext         ViewContext
 	operationalNotices  []ViewSystemNotice
 	transientActivities []ViewEngineerActivity
+	deskEvents          []bossDeskEvent
 	stateLoaded         bool
 	stateErr            error
 	sending             bool
@@ -161,8 +162,6 @@ type bossLayout struct {
 	transcriptHeight int
 	inputHeight      int
 	slashHeight      int
-	narrow           bool
-	splitDesk        bool
 }
 
 func New(ctx context.Context, svc *service.Service) Model {
@@ -641,34 +640,19 @@ func (m Model) copyInputToClipboard() (tea.Model, tea.Cmd) {
 
 func (m Model) View() string {
 	layout := m.layout()
-	body := ""
-	if layout.narrow {
-		body = m.renderNarrow(layout)
-	} else if layout.splitDesk {
-		chat := m.renderChat(layout)
-		desk := m.renderBossDesk(layout.attentionWidth, layout.topHeight)
-		body = lipgloss.JoinHorizontal(
-			lipgloss.Top,
-			chat,
-			fitRenderedBlock("", 1, layout.topHeight),
-			desk,
-		)
-	} else {
-		chat := m.renderChat(layout)
-		if layout.bottomHeight < 4 {
-			body = chat
+	chat := m.renderChat(layout)
+	body := chat
+	if layout.bottomHeight >= 4 {
+		bottom := m.renderAttention(layout.attentionWidth, layout.bottomHeight)
+		if layout.middleGapHeight > 0 {
+			body = lipgloss.JoinVertical(
+				lipgloss.Left,
+				chat,
+				fitRenderedBlock("", layout.width, layout.middleGapHeight),
+				bottom,
+			)
 		} else {
-			bottom := m.renderAttention(layout.attentionWidth, layout.bottomHeight)
-			if layout.middleGapHeight > 0 {
-				body = lipgloss.JoinVertical(
-					lipgloss.Left,
-					chat,
-					fitRenderedBlock("", layout.width, layout.middleGapHeight),
-					bottom,
-				)
-			} else {
-				body = lipgloss.JoinVertical(lipgloss.Left, chat, bottom)
-			}
+			body = lipgloss.JoinVertical(lipgloss.Left, chat, bottom)
 		}
 	}
 	if m.sessionPickerVisible {
@@ -885,66 +869,24 @@ func (m Model) layout() bossLayout {
 			transcriptHeight: transcriptHeight,
 			inputHeight:      inputHeight,
 			slashHeight:      slashHeight,
-			narrow:           true,
-		}
-	}
-
-	if width >= 96 && height >= 16 {
-		deskWidth := clampInt(width/3, 32, 48)
-		gapWidth := 1
-		chatWidth := maxInt(48, width-deskWidth-gapWidth)
-		chatInnerWidth := bossPanelInnerWidth(chatWidth)
-		transcriptHeight, slashHeight := m.chatAuxiliaryHeights(height, inputHeight, !m.embedded)
-		return bossLayout{
-			width:            width,
-			height:           height,
-			topHeight:        height,
-			bottomHeight:     0,
-			middleGapHeight:  0,
-			chatWidth:        chatWidth,
-			attentionWidth:   width - chatWidth - gapWidth,
-			chatInnerWidth:   chatInnerWidth,
-			transcriptHeight: transcriptHeight,
-			inputHeight:      inputHeight,
-			slashHeight:      slashHeight,
-			splitDesk:        true,
 		}
 	}
 
 	minTopHeight := 10
-	minBottomHeight := 7
 	if m.embedded && height < 18 {
 		minTopHeight = 8
-		minBottomHeight = 4
 	}
 	bottomHeight := 0
-	if !m.embedded {
-		bottomHeight = clampInt(height/4, 7, 10)
-		if height < 24 {
-			bottomHeight = clampInt(height/3, 5, 8)
+	if height >= minTopHeight+4 {
+		bottomHeight = bossDeskTargetHeight(height, m.embedded)
+		if height-bottomHeight < minTopHeight {
+			bottomHeight = maxInt(4, height-minTopHeight)
 		}
 	}
 	topHeight := maxInt(1, height-bottomHeight)
 	chatWidth := width
 	attentionWidth := width
 	chatInnerWidth := bossPanelInnerWidth(chatWidth)
-	if m.embedded {
-		topNeeded := minTopHeight
-		bottomNeeded := maxInt(minBottomHeight, panelHeightForRawLines(countBlockLines(m.deskContent(attentionWidth, minBottomHeight))))
-		maxBottomHeight := embeddedBottomPanelMaxHeight(height)
-		bottomHeight = clampInt(bottomNeeded, minBottomHeight, maxBottomHeight)
-		if height-bottomHeight >= topNeeded {
-			topHeight = height - bottomHeight
-		} else {
-			topHeight = maxInt(topNeeded, height-minBottomHeight)
-			if topHeight >= height || height-topHeight < minBottomHeight {
-				topHeight = height
-				bottomHeight = 0
-			} else {
-				bottomHeight = height - topHeight
-			}
-		}
-	}
 	transcriptHeight, slashHeight := m.chatAuxiliaryHeights(topHeight, inputHeight, !m.embedded)
 	middleGapHeight := 0
 	return bossLayout{
@@ -960,6 +902,23 @@ func (m Model) layout() bossLayout {
 		inputHeight:      inputHeight,
 		slashHeight:      slashHeight,
 	}
+}
+
+func bossDeskTargetHeight(height int, embedded bool) int {
+	if height < 12 {
+		return maxInt(4, height/3)
+	}
+	minHeight := 7
+	maxHeight := 12
+	if height >= 34 {
+		minHeight = 9
+		maxHeight = 14
+	}
+	if embedded && height < 18 {
+		minHeight = 4
+		maxHeight = 6
+	}
+	return clampInt(height/3, minHeight, maxHeight)
 }
 
 func (m Model) chatAuxiliaryHeights(topHeight, inputHeight int, includesHint bool) (int, int) {
@@ -1402,20 +1361,6 @@ func (m Model) renderRawPanel(title, content string, width, height int) string {
 	return fitRenderedBlock(rendered, width, height)
 }
 
-func (m Model) renderNarrow(layout bossLayout) string {
-	chat := m.renderChat(layout)
-	remainingHeight := maxInt(0, layout.height-layout.topHeight)
-	if remainingHeight < 4 {
-		return chat
-	}
-	if remainingHeight < 8 {
-		desk := m.renderAttention(layout.attentionWidth, remainingHeight)
-		return lipgloss.JoinVertical(lipgloss.Left, chat, desk)
-	}
-	desk := m.renderAttention(layout.attentionWidth, remainingHeight)
-	return lipgloss.JoinVertical(lipgloss.Left, chat, desk)
-}
-
 func (m Model) renderTranscript(width int) string {
 	width = maxInt(12, width)
 	var blocks []string
@@ -1503,6 +1448,7 @@ func (m *Model) syncSummaryFlashes(next StateSnapshot) {
 		}
 		if prev, ok := previous[path]; ok && bossSummaryFingerprint(prev) != bossSummaryFingerprint(project) {
 			m.summaryFlashUntil[path] = now.Add(summaryFlashDuration)
+			m.appendDeskEvent("project", "update", bossDeskTextWithDetail(compactProjectName(project), bestProjectSummary(project)))
 		}
 	}
 	m.pruneSummaryFlashes()
@@ -1625,13 +1571,6 @@ func panelHeightForRawLines(contentLines int) int {
 
 func panelHeightForWrappedContent(content string, width int) int {
 	return panelHeightForRawLines(countWrappedBlockLines(content, width))
-}
-
-func embeddedBottomPanelMaxHeight(height int) int {
-	if height < 18 {
-		return maxInt(4, height/3)
-	}
-	return clampInt(height/4, 8, 11)
 }
 
 func attentionProjectLimit(height int) int {

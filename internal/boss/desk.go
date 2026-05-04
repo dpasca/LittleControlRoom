@@ -2,6 +2,7 @@ package boss
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,8 +14,17 @@ import (
 const (
 	bossDeskActiveLimit   = 4
 	bossDeskDecisionLimit = 4
+	bossDeskRecentLimit   = 5
 	bossDeskWatchingLimit = 5
+	maxBossDeskEvents     = 16
 )
+
+type bossDeskEvent struct {
+	At      time.Time
+	Kind    string
+	Label   string
+	Summary string
+}
 
 func (m Model) renderBossDesk(width, height int) string {
 	return m.renderRawPanel("Boss Desk", m.deskContent(width, height), width, height)
@@ -22,7 +32,8 @@ func (m Model) renderBossDesk(width, height int) string {
 
 func (m Model) deskContent(width, height int) string {
 	innerWidth := bossPanelInnerWidth(width)
-	lines := m.bossDeskLines(innerWidth, height)
+	bodyHeight := maxInt(1, height-4)
+	lines := m.bossDeskLines(innerWidth, bodyHeight)
 	if len(lines) == 0 {
 		return bossMutedStyle.Render(fitLine("Nothing on the desk yet.", innerWidth))
 	}
@@ -33,31 +44,53 @@ func (m Model) bossDeskLines(width, height int) []string {
 	width = maxInt(24, width)
 	now := m.now()
 	var lines []string
+	nowLimit, decisionLimit, recentLimit, watchingLimit := bossDeskSectionLimits(height)
 
-	if rows := m.bossDeskNowRows(width, now); len(rows) > 0 {
+	if rows := takeDeskRows(m.bossDeskNowRows(width, now), nowLimit); len(rows) > 0 {
 		lines = appendDeskSection(lines, "Now", rows, width)
 	}
-	if rows := m.bossDeskNeedsUserRows(width, now); len(rows) > 0 {
+	if rows := takeDeskRows(m.bossDeskNeedsUserRows(width, now), decisionLimit); len(rows) > 0 {
 		lines = appendDeskSection(lines, "Needs You", rows, width)
 	}
-	if rows := m.bossDeskReadyRows(width, now); len(rows) > 0 {
-		lines = appendDeskSection(lines, "Ready To Close", rows, width)
+	if rows := m.bossDeskRecentRows(width, now, recentLimit); len(rows) > 0 {
+		lines = appendDeskSection(lines, "Recent", rows, width)
 	}
-	if rows := m.bossDeskWatchingRows(width, now); len(rows) > 0 {
-		lines = appendDeskSection(lines, "Watching", rows, width)
+	if rows := takeDeskRows(m.bossDeskReadyRows(width, now), decisionLimit); len(rows) > 0 {
+		lines = appendDeskSection(lines, "Ready To Close", rows, width)
 	}
 	if next := m.bossDeskNextLine(width, now); next != "" {
 		lines = appendDeskSection(lines, "Next", []string{next}, width)
 	}
+	if rows := takeDeskRows(m.bossDeskWatchingRows(width, now), watchingLimit); len(rows) > 0 {
+		lines = appendDeskSection(lines, "Watching", rows, width)
+	}
 	return lines
+}
+
+func bossDeskSectionLimits(height int) (nowLimit, decisionLimit, recentLimit, watchingLimit int) {
+	switch {
+	case height <= 6:
+		return 1, 1, 2, 1
+	case height <= 9:
+		return 2, 2, 3, 1
+	default:
+		return bossDeskActiveLimit, bossDeskDecisionLimit, bossDeskRecentLimit, bossDeskWatchingLimit
+	}
+}
+
+func takeDeskRows(rows []string, limit int) []string {
+	if limit <= 0 || len(rows) == 0 {
+		return nil
+	}
+	if len(rows) <= limit {
+		return rows
+	}
+	return rows[:limit]
 }
 
 func appendDeskSection(lines []string, title string, rows []string, width int) []string {
 	if len(rows) == 0 {
 		return lines
-	}
-	if len(lines) > 0 {
-		lines = append(lines, "")
 	}
 	lines = append(lines, bossDeskSectionStyle.Render(fitLine(title, width)))
 	lines = append(lines, rows...)
@@ -100,9 +133,9 @@ func (m Model) bossDeskNeedsUserRows(width int, now time.Time) []string {
 		if detail == "" {
 			detail = agentTaskDecisionQuestion(task.EngineerName)
 		}
-		rows = append(rows, bossDeskRow(bossAssessmentWaitingStyle, "review", title+" - "+cleanHandoffSummary(detail), width))
+		rows = append(rows, bossDeskRow(bossAssessmentWaitingStyle, "review", bossDeskTextWithDetail(title, detail), width))
 	}
-	for _, notice := range m.viewContext.SystemNotices {
+	for _, notice := range m.bossDeskSystemNotices() {
 		if len(rows) >= bossDeskDecisionLimit {
 			break
 		}
@@ -132,18 +165,119 @@ func (m Model) bossDeskReadyRows(width int, now time.Time) []string {
 		if detail == "" {
 			detail = "ready to close"
 		}
-		rows = append(rows, bossDeskRow(bossAssessmentDoneStyle, "close", title+" - "+cleanHandoffSummary(detail), width))
+		rows = append(rows, bossDeskRow(bossAssessmentDoneStyle, "close", bossDeskTextWithDetail(title, detail), width))
+	}
+	return rows
+}
+
+type bossDeskRecentCandidate struct {
+	At      time.Time
+	Label   string
+	Text    string
+	Style   lipgloss.Style
+	SortSeq int
+}
+
+func (m Model) bossDeskRecentRows(width int, now time.Time, limit int) []string {
+	limit = clampInt(limit, 1, bossDeskRecentLimit)
+	candidates := make([]bossDeskRecentCandidate, 0, len(m.deskEvents)+len(m.snapshot.OpenAgentTasks)+len(m.snapshot.HotProjects))
+	seq := 0
+	for _, event := range m.deskEvents {
+		summary := strings.TrimSpace(event.Summary)
+		if summary == "" {
+			continue
+		}
+		candidates = append(candidates, bossDeskRecentCandidate{
+			At:      event.At,
+			Label:   firstNonEmpty(strings.TrimSpace(event.Label), "event"),
+			Text:    summary,
+			Style:   bossDeskEventStyle(event.Label),
+			SortSeq: seq,
+		})
+		seq++
+	}
+	for _, task := range m.snapshot.OpenAgentTasks {
+		status := model.NormalizeAgentTaskStatus(task.Status)
+		switch status {
+		case model.AgentTaskStatusWaiting, model.AgentTaskStatusCompleted:
+		default:
+			continue
+		}
+		label, style := bossAgentTaskStatusCell(task)
+		text := bossDeskTextWithDetail(compactAgentTaskTitle(task), task.Summary)
+		candidates = append(candidates, bossDeskRecentCandidate{
+			At:      task.LastTouchedAt,
+			Label:   label,
+			Text:    text,
+			Style:   style,
+			SortSeq: seq,
+		})
+		seq++
+	}
+	for _, project := range m.snapshot.HotProjects {
+		summary := bestProjectSummary(project)
+		if summary == "" {
+			continue
+		}
+		label, style := bossAssessmentCell(project)
+		if label == "-" {
+			label = "update"
+		}
+		candidates = append(candidates, bossDeskRecentCandidate{
+			At:      project.LastActivity,
+			Label:   label,
+			Text:    bossDeskTextWithDetail(compactProjectName(project), summary),
+			Style:   style,
+			SortSeq: seq,
+		})
+		seq++
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		left, right := candidates[i], candidates[j]
+		if left.At.IsZero() && !right.At.IsZero() {
+			return false
+		}
+		if !left.At.IsZero() && right.At.IsZero() {
+			return true
+		}
+		if !left.At.Equal(right.At) {
+			return left.At.After(right.At)
+		}
+		return left.SortSeq > right.SortSeq
+	})
+	rows := make([]string, 0, minInt(limit, len(candidates)))
+	seen := map[string]struct{}{}
+	for _, candidate := range candidates {
+		if len(rows) >= limit {
+			break
+		}
+		key := strings.TrimSpace(candidate.Label) + "\x00" + strings.TrimSpace(candidate.Text)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		label := bossDeskEventTimeLabel(candidate.At, now)
+		if label == "" {
+			label = candidate.Label
+		}
+		rows = append(rows, bossDeskRow(candidate.Style, label, candidate.Text, width))
 	}
 	return rows
 }
 
 func (m Model) bossDeskWatchingRows(width int, now time.Time) []string {
 	rows := make([]string, 0, bossDeskWatchingLimit)
-	for _, notice := range m.viewContext.SystemNotices {
+	for _, notice := range m.bossDeskSystemNotices() {
 		if len(rows) >= bossDeskWatchingLimit {
 			break
 		}
 		if strings.TrimSpace(notice.Severity) == "warning" {
+			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(notice.Code), "control_") || strings.TrimSpace(notice.Code) == "host_update" {
 			continue
 		}
 		code := strings.TrimSpace(notice.Code)
@@ -196,6 +330,114 @@ func (m Model) bossDeskNextLine(width int, now time.Time) string {
 		return bossDeskRow(bossAssessmentFollowupStyle, "next", "Check "+compactProjectName(m.snapshot.HotProjects[0]), width)
 	}
 	return bossDeskRow(bossMutedStyle, "next", "No obvious move right now", width)
+}
+
+func (m Model) bossDeskSystemNotices() []ViewSystemNotice {
+	if len(m.operationalNotices) == 0 {
+		return append([]ViewSystemNotice(nil), m.viewContext.SystemNotices...)
+	}
+	out := make([]ViewSystemNotice, 0, len(m.viewContext.SystemNotices)+len(m.operationalNotices))
+	out = append(out, m.viewContext.SystemNotices...)
+	out = append(out, m.operationalNotices...)
+	return out
+}
+
+func (m *Model) appendDeskEvent(kind, label, summary string) {
+	summary = cleanHandoffSummary(summary)
+	if summary == "" {
+		return
+	}
+	kind = strings.TrimSpace(kind)
+	label = strings.TrimSpace(label)
+	if label == "" {
+		label = "event"
+	}
+	now := m.now()
+	if len(m.deskEvents) > 0 {
+		last := m.deskEvents[len(m.deskEvents)-1]
+		if last.Kind == kind && last.Label == label && last.Summary == summary {
+			return
+		}
+	}
+	m.deskEvents = append(m.deskEvents, bossDeskEvent{
+		At:      now,
+		Kind:    kind,
+		Label:   label,
+		Summary: summary,
+	})
+	if len(m.deskEvents) > maxBossDeskEvents {
+		m.deskEvents = append([]bossDeskEvent(nil), m.deskEvents[len(m.deskEvents)-maxBossDeskEvents:]...)
+	}
+}
+
+func bossDeskActivityEventSummary(activity ViewEngineerActivity, fallback string) string {
+	title := strings.TrimSpace(firstNonEmpty(activity.Title, activity.ProjectPath, activity.TaskID, "engineer work"))
+	name := strings.TrimSpace(firstNonEmpty(activity.EngineerName, "Engineer"))
+	status := strings.TrimSpace(activity.Status)
+	switch status {
+	case "", "working":
+		return name + " started " + title
+	case "finishing", "rechecking":
+		return name + " is " + status + " " + title
+	default:
+		if fallback = strings.TrimSpace(fallback); fallback != "" {
+			return fallback
+		}
+		return name + " is " + status + " on " + title
+	}
+}
+
+func bossDeskTextWithDetail(title, detail string) string {
+	title = strings.TrimSpace(title)
+	detail = cleanHandoffSummary(detail)
+	switch {
+	case title == "":
+		return detail
+	case detail == "":
+		return title
+	default:
+		return title + " - " + detail
+	}
+}
+
+func bossDeskEventTimeLabel(at, now time.Time) string {
+	if at.IsZero() {
+		return ""
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if at.After(now) {
+		return at.Format("15:04")
+	}
+	if now.Sub(at) < time.Minute {
+		return "now"
+	}
+	if sameLocalDate(at, now) {
+		return at.Format("15:04")
+	}
+	return relativeAge(now, at)
+}
+
+func sameLocalDate(a, b time.Time) bool {
+	ay, am, ad := a.Date()
+	by, bm, bd := b.Date()
+	return ay == by && am == bm && ad == bd
+}
+
+func bossDeskEventStyle(label string) lipgloss.Style {
+	switch strings.TrimSpace(label) {
+	case "failed", "error":
+		return bossAssessmentFailedStyle
+	case "review", "waiting":
+		return bossAssessmentWaitingStyle
+	case "done", "close", "completed":
+		return bossAssessmentDoneStyle
+	case "start", "working":
+		return bossAssessmentWorkingStyle
+	default:
+		return bossMutedStyle
+	}
 }
 
 func bossDeskRow(labelStyle lipgloss.Style, label, text string, width int) string {

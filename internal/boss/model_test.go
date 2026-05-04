@@ -490,6 +490,50 @@ func TestControlResultRendersTransientActiveEngineerFeedback(t *testing.T) {
 			t.Fatalf("transient engineer feedback missing from desk %q:\n%s", want, desk)
 		}
 	}
+	for _, want := range []string{"Recent", "Niklaus started Retire projects-control-center skill"} {
+		if !strings.Contains(desk, want) {
+			t.Fatalf("transient engineer event missing from desk %q:\n%s", want, desk)
+		}
+	}
+}
+
+func TestBossDeskRecentShowsHostAndStateEvents(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	m := New(context.Background(), nil)
+	m.nowFn = func() time.Time { return now }
+	m.appendDeskEvent("host", "update", "Ken finished ChatNext3: fixed SVG serving issue.")
+	m.snapshot = StateSnapshot{
+		OpenAgentTasks: []AgentTaskBrief{{
+			ID:            "agt_diff",
+			Title:         "Diff duplicate Codex skills",
+			Status:        model.AgentTaskStatusCompleted,
+			Summary:       "Canonical copy kept.",
+			LastTouchedAt: now.Add(-2 * time.Minute),
+		}},
+		HotProjects: []ProjectBrief{{
+			Name:                 "ChatNext3",
+			Path:                 "/tmp/chatnext3",
+			Status:               model.StatusActive,
+			LastActivity:         now.Add(-5 * time.Minute),
+			LatestSummary:        "SVG preview repaired.",
+			LatestCategory:       model.SessionCategoryCompleted,
+			ClassificationStatus: model.ClassificationCompleted,
+		}},
+	}
+
+	desk := ansi.Strip(m.deskContent(120, 14))
+	for _, want := range []string{
+		"Recent",
+		"Ken finished ChatNext3: fixed SVG serving issue.",
+		"Diff duplicate Codex skills - Canonical copy kept.",
+		"ChatNext3 - SVG preview repaired.",
+	} {
+		if !strings.Contains(desk, want) {
+			t.Fatalf("boss desk recent missing %q:\n%s", want, desk)
+		}
+	}
 }
 
 func TestModelSummaryFlashTracksUpdatedProjectSummaries(t *testing.T) {
@@ -1036,8 +1080,8 @@ func TestEmbeddedModelGivesSpareHeightToChatOnTallHosts(t *testing.T) {
 		if layout.middleGapHeight != 0 {
 			t.Fatalf("height %d should not insert a separator row between panel bands, got gap %d", height, layout.middleGapHeight)
 		}
-		if layout.bottomHeight > embeddedBottomPanelMaxHeight(layout.height) {
-			t.Fatalf("height %d bottom panels = %d, want <= %d", height, layout.bottomHeight, embeddedBottomPanelMaxHeight(layout.height))
+		if layout.bottomHeight > bossDeskTargetHeight(layout.height, true) {
+			t.Fatalf("height %d bottom desk = %d, want <= %d", height, layout.bottomHeight, bossDeskTargetHeight(layout.height, true))
 		}
 		if previousTopHeight > 0 && layout.topHeight <= previousTopHeight {
 			t.Fatalf("height %d top panel height = %d, want chat row to gain spare terminal height beyond %d", height, layout.topHeight, previousTopHeight)
@@ -1046,7 +1090,7 @@ func TestEmbeddedModelGivesSpareHeightToChatOnTallHosts(t *testing.T) {
 	}
 }
 
-func TestEmbeddedModelGivesChatMoreHorizontalRoom(t *testing.T) {
+func TestEmbeddedModelKeepsBossDeskAtBottom(t *testing.T) {
 	t.Parallel()
 
 	m := NewEmbedded(context.Background(), nil)
@@ -1054,17 +1098,17 @@ func TestEmbeddedModelGivesChatMoreHorizontalRoom(t *testing.T) {
 	m.height = 42
 
 	layout := m.layout()
-	if !layout.splitDesk {
-		t.Fatalf("wide embedded layout should use the split boss desk: %+v", layout)
+	if layout.chatWidth != layout.width {
+		t.Fatalf("chat width = %d, want full terminal width %d", layout.chatWidth, layout.width)
 	}
-	if got, want := layout.chatWidth+layout.attentionWidth+1, layout.width; got != want {
-		t.Fatalf("split widths = chat %d + gap 1 + desk %d = %d, want %d", layout.chatWidth, layout.attentionWidth, got, want)
+	if layout.attentionWidth != layout.width {
+		t.Fatalf("boss desk width = %d, want full terminal width %d", layout.attentionWidth, layout.width)
 	}
-	if layout.chatInnerWidth < 120 {
-		t.Fatalf("chat inner width = %d, want a roomy transcript column", layout.chatInnerWidth)
+	if layout.bottomHeight < 10 {
+		t.Fatalf("boss desk height = %d, want a roomy bottom workbench", layout.bottomHeight)
 	}
-	if layout.attentionWidth < 32 {
-		t.Fatalf("boss desk width = %d, want readable side workboard", layout.attentionWidth)
+	if layout.topHeight+layout.middleGapHeight+layout.bottomHeight != layout.height {
+		t.Fatalf("layout heights = top %d + gap %d + bottom %d, want %d", layout.topHeight, layout.middleGapHeight, layout.bottomHeight, layout.height)
 	}
 }
 
@@ -1122,20 +1166,17 @@ func TestEmbeddedModelKeepsMediumWidthLowerPanelsCompact(t *testing.T) {
 	m.syncLayout(true)
 
 	layout := m.layout()
-	if !layout.splitDesk {
-		t.Fatalf("medium-width layout should use the boss desk split: %+v", layout)
-	}
 	if layout.middleGapHeight != 0 {
 		t.Fatalf("medium-width layout should not use a vertical separator row, got %d", layout.middleGapHeight)
 	}
-	if layout.bottomHeight != 0 {
-		t.Fatalf("medium-width split layout should not reserve a bottom panel, got %d", layout.bottomHeight)
+	if layout.bottomHeight < 9 {
+		t.Fatalf("medium-width boss desk height = %d, want roomy bottom panel", layout.bottomHeight)
 	}
-	if layout.topHeight != layout.height {
-		t.Fatalf("medium-width split layout should give full height to chat and desk, got top %d terminal %d", layout.topHeight, layout.height)
+	if layout.chatWidth != layout.width || layout.attentionWidth != layout.width {
+		t.Fatalf("medium-width chat/desk should both use full width, got chat %d desk %d terminal %d", layout.chatWidth, layout.attentionWidth, layout.width)
 	}
-	if got, want := layout.chatWidth+layout.attentionWidth+1, layout.width; got != want {
-		t.Fatalf("medium-width split widths = chat %d + gap 1 + desk %d = %d, want %d", layout.chatWidth, layout.attentionWidth, got, want)
+	if layout.topHeight+layout.middleGapHeight+layout.bottomHeight != layout.height {
+		t.Fatalf("medium-width panels should fill the host body, got top %d + gap %d + bottom %d terminal %d", layout.topHeight, layout.middleGapHeight, layout.bottomHeight, layout.height)
 	}
 
 	rendered := ansi.Strip(m.View())
@@ -1143,15 +1184,15 @@ func TestEmbeddedModelKeepsMediumWidthLowerPanelsCompact(t *testing.T) {
 		t.Fatalf("boss desk should still show the highest-attention project:\n%s", rendered)
 	}
 	lines := strings.Split(rendered, "\n")
-	bottomBorderLine := layout.topHeight - 1
+	bottomBorderLine := layout.topHeight + layout.middleGapHeight + layout.bottomHeight - 1
 	if bottomBorderLine >= len(lines) {
 		t.Fatalf("bottom border row %d outside rendered view with %d lines:\n%s", bottomBorderLine, len(lines), rendered)
 	}
 	if !strings.HasPrefix(lines[bottomBorderLine], "╰") {
-		t.Fatalf("split panels should keep their bottom border visible, got %q", lines[bottomBorderLine])
+		t.Fatalf("bottom desk should keep its bottom border visible, got %q", lines[bottomBorderLine])
 	}
 	if bottomBorderLine != len(lines)-1 {
-		t.Fatalf("split panels should finish on the final embedded body row, got border row %d line count %d", bottomBorderLine, len(lines))
+		t.Fatalf("bottom desk should finish on the final embedded body row, got border row %d line count %d", bottomBorderLine, len(lines))
 	}
 }
 
