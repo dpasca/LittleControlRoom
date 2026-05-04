@@ -323,7 +323,11 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"concise coworker update",
 		"turn tool output into judgment",
 		"Do not describe UI mechanics",
-		"paraphrase the intent at boss level",
+		"lossless reframing",
+		"fill intent_excerpt",
+		"preserved_meaning",
+		"success_condition",
+		"source/metric mismatch",
 		"meaningful result and what still needs attention",
 		"recommend one next move",
 		"answer the operational substance rather than reciting the lookup",
@@ -588,12 +592,79 @@ func TestAssistantReplyCanProposeEngineerSendPromptControl(t *testing.T) {
 	if !strings.Contains(resp.Content, "Send this to OpenCode") || !strings.Contains(resp.Content, "Enter confirms") {
 		t.Fatalf("proposal content = %q, want confirmation preview", resp.Content)
 	}
-	if !strings.Contains(string(resp.ControlInvocation.Args), `"provider":"opencode"`) ||
-		!strings.Contains(string(resp.ControlInvocation.Args), `"prompt":"Please fix the failing tests and report what changed."`) {
+	var input control.EngineerSendPromptInput
+	if err := json.Unmarshal(resp.ControlInvocation.Args, &input); err != nil {
+		t.Fatalf("decode invocation args: %v", err)
+	}
+	if input.Provider != control.ProviderOpenCode ||
+		!strings.Contains(input.Prompt, "Boss Chat lossless task packet:") ||
+		!strings.Contains(input.Prompt, "Tell OpenCode to fix Alpha's tests") ||
+		!strings.Contains(input.Prompt, "Please fix the failing tests and report what changed.") {
 		t.Fatalf("invocation args = %s", resp.ControlInvocation.Args)
 	}
 	if resp.Usage.TotalTokens != 17 {
 		t.Fatalf("usage total = %d, want 17", resp.Usage.TotalTokens)
+	}
+}
+
+func TestAssistantReplyBuildsLosslessEngineerTaskPacket(t *testing.T) {
+	t.Parallel()
+
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model: "gpt-test",
+			OutputText: encodedBossAction(t, bossAction{
+				Kind:              bossActionProposeControl,
+				ControlCapability: "engineer.send_prompt",
+				ProjectPath:       "/tmp/oyk-aso",
+				EngineerProvider:  "codex",
+				SessionMode:       "resume_or_new",
+				Prompt:            "Check Fractal Strike's current Appfigures ranking and report the date, category, and rank.",
+				IntentExcerpt:     "ranking in appfigures, not the order in terms of sales among our games",
+				PreservedMeaning:  "Source must be Appfigures; metric must be external store ranking; do not substitute Google Play earnings, Play Pass, or internal sales order among our games.",
+				SuccessCondition:  "Return the Appfigures source/date/category/rank, or say Appfigures was not checked or unavailable and name any different source that was checked.",
+				Reveal:            false,
+			}),
+		}},
+	}
+	assistant := &Assistant{
+		planner: planner,
+		query:   newQueryExecutor(&fakeBossStore{}),
+		model:   "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Visible projects: 1.",
+		Messages: []ChatMessage{
+			{Role: "user", Content: "look also in the relative oyk-aso session. I was asking about ranking in appfigures, not the order in terms of sales among our games"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.ControlInvocation == nil {
+		t.Fatalf("ControlInvocation = nil, want engineer.send_prompt proposal")
+	}
+	var input control.EngineerSendPromptInput
+	if err := json.Unmarshal(resp.ControlInvocation.Args, &input); err != nil {
+		t.Fatalf("decode invocation args: %v", err)
+	}
+	for _, want := range []string{
+		"Boss Chat lossless task packet:",
+		"Original user wording to preserve:",
+		"ranking in appfigures, not the order in terms of sales among our games",
+		"Boss-reframed executable task:",
+		"Check Fractal Strike's current Appfigures ranking",
+		"Preserved meaning:",
+		"Source must be Appfigures",
+		"do not substitute Google Play earnings",
+		"Success condition:",
+		"Return the Appfigures source/date/category/rank",
+		"If the requested evidence is unavailable or a different source was checked",
+	} {
+		if !strings.Contains(input.Prompt, want) {
+			t.Fatalf("lossless prompt missing %q:\n%s", want, input.Prompt)
+		}
 	}
 }
 
@@ -692,8 +763,14 @@ func TestAssistantReplyCanProposeAgentTaskContinueControl(t *testing.T) {
 	if !strings.Contains(resp.Content, "Continue agent task agt_roguellm?") || !strings.Contains(resp.Content, "Enter confirms") {
 		t.Fatalf("proposal content = %q, want agent task continuation confirmation", resp.Content)
 	}
-	if !strings.Contains(string(resp.ControlInvocation.Args), `"task_id":"agt_roguellm"`) ||
-		!strings.Contains(string(resp.ControlInvocation.Args), `"prompt":"Continue the stale roguellm dev-server cleanup.`) {
+	var input control.AgentTaskContinueInput
+	if err := json.Unmarshal(resp.ControlInvocation.Args, &input); err != nil {
+		t.Fatalf("decode invocation args: %v", err)
+	}
+	if input.TaskID != "agt_roguellm" ||
+		!strings.Contains(input.Prompt, "Boss Chat lossless task packet:") ||
+		!strings.Contains(input.Prompt, "cool") ||
+		!strings.Contains(input.Prompt, "Continue the stale roguellm dev-server cleanup.") {
 		t.Fatalf("invocation args = %s", resp.ControlInvocation.Args)
 	}
 }

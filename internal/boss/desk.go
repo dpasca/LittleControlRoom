@@ -17,6 +17,7 @@ const (
 	bossDeskWatchingLimit = 5
 	bossLogLimit          = 7
 	maxBossDeskEvents     = 16
+	bossDeskStateMinRows  = 2
 )
 
 type bossDeskEvent struct {
@@ -49,9 +50,9 @@ func (m Model) bossSidebarContent(width, height int) string {
 }
 
 func (m Model) bossSidebarBodyLines(width, height int) []string {
-	avatarLines := m.bossSidebarCompanionLines(width)
+	avatarLines := m.bossSidebarCompanionLines(width, maxInt(0, height-bossDeskStateMinRows-1))
 	reservedAvatarHeight := 0
-	if len(avatarLines) > 0 && height >= len(avatarLines)+5 {
+	if len(avatarLines) > 0 && height >= len(avatarLines)+bossDeskStateMinRows+1 {
 		reservedAvatarHeight = len(avatarLines) + 1
 	}
 	stateHeight := maxInt(1, height-reservedAvatarHeight)
@@ -124,21 +125,24 @@ func (m Model) bossLogRows(width int, limit int) []string {
 	return rows
 }
 
-func (m Model) bossSidebarCompanionLines(width int) []string {
-	if width < 14 {
+func (m Model) bossSidebarCompanionLines(width, maxRows int) []string {
+	if width < 14 || maxRows <= 0 {
 		return nil
 	}
 	sprite := renderBossCompanionSprite(m.bossCompanionMood(), m.spinnerFrame)
 	rows := sprite.renderHalfRows()
-	if width >= 28 {
-		rows = sprite.renderHalfRowsScaled(2, 3)
-	}
 	if len(rows) == 0 {
+		return nil
+	}
+	if len(rows) > maxRows {
 		return nil
 	}
 	out := make([]string, 0, len(rows))
 	for _, row := range rows {
 		rowWidth := ansi.StringWidth(ansi.Strip(row))
+		if rowWidth > width {
+			return nil
+		}
 		leftPad := maxInt(0, (width-rowWidth)/2)
 		rightPad := maxInt(0, width-leftPad-rowWidth)
 		out = append(out, fitStyledLine(bossCompanionPanelSpaces(leftPad)+row+bossCompanionPanelSpaces(rightPad), width))

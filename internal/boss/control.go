@@ -64,7 +64,7 @@ func controlProposalFromBossAction(action bossAction) (control.Invocation, strin
 			ProjectName: strings.TrimSpace(action.ProjectName),
 			Provider:    control.Provider(strings.TrimSpace(action.EngineerProvider)),
 			SessionMode: control.SessionMode(strings.TrimSpace(action.SessionMode)),
-			Prompt:      strings.TrimSpace(action.Prompt),
+			Prompt:      bossLosslessControlPrompt(action),
 			Reveal:      action.Reveal,
 		}
 	case control.CapabilityAgentTaskCreate:
@@ -73,7 +73,7 @@ func controlProposalFromBossAction(action bossAction) (control.Invocation, strin
 			Title:        strings.TrimSpace(action.TaskTitle),
 			Kind:         control.AgentTaskKind(strings.TrimSpace(action.TaskKind)),
 			ParentTaskID: strings.TrimSpace(action.ParentTaskID),
-			Prompt:       strings.TrimSpace(action.Prompt),
+			Prompt:       bossLosslessControlPrompt(action),
 			Provider:     control.Provider(strings.TrimSpace(action.EngineerProvider)),
 			Reveal:       action.Reveal,
 			Capabilities: append([]string(nil), action.Capabilities...),
@@ -85,7 +85,7 @@ func controlProposalFromBossAction(action bossAction) (control.Invocation, strin
 			TaskID:      strings.TrimSpace(action.TaskID),
 			Provider:    control.Provider(strings.TrimSpace(action.EngineerProvider)),
 			SessionMode: control.SessionMode(strings.TrimSpace(action.SessionMode)),
-			Prompt:      strings.TrimSpace(action.Prompt),
+			Prompt:      bossLosslessControlPrompt(action),
 			Reveal:      action.Reveal,
 		}
 	case control.CapabilityAgentTaskClose:
@@ -117,6 +117,49 @@ func controlProposalFromBossAction(action bossAction) (control.Invocation, strin
 		return control.Invocation{}, "", err
 	}
 	return normalized, content, nil
+}
+
+func bossLosslessControlPrompt(action bossAction) string {
+	task := strings.TrimSpace(action.Prompt)
+	if task == "" || !bossActionHasLosslessPacket(action) {
+		return task
+	}
+	excerpt := strings.TrimSpace(action.IntentExcerpt)
+	preserved := strings.TrimSpace(action.PreservedMeaning)
+	if preserved == "" {
+		preserved = "Preserve the source, metric, timeframe, scope, negations, and explicit exclusions in the user wording above."
+	}
+	success := strings.TrimSpace(action.SuccessCondition)
+	if success == "" {
+		success = "Answer the user's original request directly. If available evidence answers a different source, metric, timeframe, or scope, report that mismatch instead of substituting it."
+	}
+
+	lines := []string{"Boss Chat lossless task packet:"}
+	if excerpt != "" {
+		lines = append(lines, "", "Original user wording to preserve:", excerpt)
+	}
+	lines = append(lines,
+		"",
+		"Boss-reframed executable task:",
+		task,
+		"",
+		"Preserved meaning:",
+		preserved,
+		"",
+		"Success condition:",
+		success,
+		"",
+		"Report contract:",
+		"- Keep source names, metric names, timeframes, and exclusions explicit.",
+		"- If the requested evidence is unavailable or a different source was checked, say that plainly and name what was checked instead.",
+	)
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func bossActionHasLosslessPacket(action bossAction) bool {
+	return strings.TrimSpace(action.IntentExcerpt) != "" ||
+		strings.TrimSpace(action.PreservedMeaning) != "" ||
+		strings.TrimSpace(action.SuccessCondition) != ""
 }
 
 func controlConfirmationContent(inv control.Invocation) (string, error) {

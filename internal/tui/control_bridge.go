@@ -714,6 +714,7 @@ func agentTaskLaunchPrompt(task model.AgentTask, prompt string) string {
 		"",
 		"Report contract:",
 		"- Answer the user's exact request directly, with enough concrete detail for Boss Chat to summarize without guessing.",
+		"- Preserve source, metric, timeframe, scope, negations, and explicit exclusions from the user request; if evidence answers a different question, report that mismatch instead of substituting it.",
 		"- For comparison, diff, cleanup, or review work, name what was compared, what was kept, what was discarded, and the substantive differences.",
 		"- Avoid vague wrap-ups like only saying the entries differ, the state is clean, or canonical copies were kept.",
 	)

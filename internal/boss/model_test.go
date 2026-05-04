@@ -13,6 +13,7 @@ import (
 	"lcroom/internal/control"
 	"lcroom/internal/events"
 	"lcroom/internal/model"
+	"lcroom/internal/pixelart"
 	"lcroom/internal/service"
 	"lcroom/internal/store"
 
@@ -1269,7 +1270,7 @@ func TestChatPanelKeepsStyledTranscriptAndInputVisible(t *testing.T) {
 	}
 }
 
-func TestChatPanelRendersCompanionInSpareTranscriptSpace(t *testing.T) {
+func TestChatPanelDoesNotRenderCompanionInTranscriptSpace(t *testing.T) {
 	t.Parallel()
 
 	m := NewEmbedded(context.Background(), nil)
@@ -1279,26 +1280,36 @@ func TestChatPanelRendersCompanionInSpareTranscriptSpace(t *testing.T) {
 	m.syncLayout(true)
 
 	rendered := m.renderChat(m.layout())
-	if !strings.Contains(rendered, "\x1b[38;2;") {
-		t.Fatalf("chat panel should render the truecolor companion when there is spare space:\n%s", ansi.Strip(rendered))
-	}
-	if !strings.Contains(ansi.Strip(rendered), "\u2588") {
-		t.Fatalf("chat panel should render pixel block glyphs for the companion:\n%s", ansi.Strip(rendered))
-	}
-	if count := strings.Count(rendered, "\x1b[38;2;"); count > 80 {
-		t.Fatalf("companion should render as a compact overlay, got %d truecolor fragments", count)
-	}
-	if strings.Contains(m.renderTranscript(m.layout().chatInnerWidth), "\u2588") {
-		t.Fatalf("companion should stay out of the durable transcript")
+	if strings.Contains(rendered, "\x1b[38;2;") || strings.Contains(ansi.Strip(rendered), "\u2580") {
+		t.Fatalf("chat panel should not render the companion; Boss Desk owns it now:\n%s", ansi.Strip(rendered))
 	}
 }
 
-func TestBossSidebarRendersScaledCompanion(t *testing.T) {
+func TestWideChatPanelDoesNotRenderCompanionWithSidebar(t *testing.T) {
 	t.Parallel()
 
 	m := NewEmbedded(context.Background(), nil)
-	m.width = 140
-	m.height = 28
+	m.width = 120
+	m.height = 24
+	m.stateLoaded = true
+	m.syncLayout(true)
+
+	layout := m.layout()
+	if layout.sidebarWidth == 0 {
+		t.Fatalf("test setup should allocate a sidebar: %+v", layout)
+	}
+	rendered := m.renderChat(layout)
+	if strings.Contains(rendered, "\x1b[38;2;") || strings.Contains(ansi.Strip(rendered), "\u2580") {
+		t.Fatalf("wide chat panel should leave the companion to Boss Desk:\n%s", ansi.Strip(rendered))
+	}
+}
+
+func TestBossSidebarRendersNativeCompanion(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbedded(context.Background(), nil)
+	m.width = 120
+	m.height = 24
 	m.stateLoaded = true
 	m.syncLayout(true)
 
@@ -1314,7 +1325,58 @@ func TestBossSidebarRendersScaledCompanion(t *testing.T) {
 		t.Fatalf("sidebar companion should paint its own panel background:\n%s", ansi.Strip(rendered))
 	}
 	if !strings.Contains(ansi.Strip(rendered), "\u2580") {
-		t.Fatalf("enlarged sidebar companion should render half-block pixels:\n%s", ansi.Strip(rendered))
+		t.Fatalf("sidebar companion should render half-block pixels:\n%s", ansi.Strip(rendered))
+	}
+	if strings.Contains(ansi.Strip(rendered), "\u2588") {
+		t.Fatalf("sidebar companion should not render full-block avatar pixels:\n%s", ansi.Strip(rendered))
+	}
+}
+
+func TestBossCompanionUsesSharedOperatorModel(t *testing.T) {
+	t.Parallel()
+
+	sprite := renderBossCompanionSprite(bossCompanionIdle, 0)
+	if got, want := sprite.width, pixelart.OperatorWidth; got != want {
+		t.Fatalf("boss companion width = %d, want shared operator width %d", got, want)
+	}
+	if got, want := sprite.height, pixelart.OperatorHeight; got != want {
+		t.Fatalf("boss companion height = %d, want shared operator height %d", got, want)
+	}
+}
+
+func TestBossCompanionHalfRowsStayNativeSize(t *testing.T) {
+	t.Parallel()
+
+	sprite := renderBossCompanionSprite(bossCompanionIdle, 0)
+	rows := sprite.renderHalfRows()
+	if len(rows) == 0 {
+		t.Fatalf("expected companion rows")
+	}
+	if got, want := len(rows), (sprite.height+1)/2; got != want {
+		t.Fatalf("companion rows = %d, want native half-block height %d", got, want)
+	}
+	rowWidth := 0
+	for _, row := range rows {
+		rowWidth = maxInt(rowWidth, ansi.StringWidth(ansi.Strip(row)))
+	}
+	if rowWidth != sprite.width {
+		t.Fatalf("companion width = %d, want native width %d", rowWidth, sprite.width)
+	}
+	stripped := ansi.Strip(strings.Join(rows, "\n"))
+	if !strings.Contains(stripped, "\u2580") || !strings.Contains(stripped, "\u2584") {
+		t.Fatalf("companion should use upper and lower half-block pixels:\n%s", stripped)
+	}
+	if strings.Contains(stripped, "\u2588") {
+		t.Fatalf("companion should not use full-block avatar pixels:\n%s", stripped)
+	}
+}
+
+func TestBossSidebarHidesNativeCompanionWhenHeightIsTooTight(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbedded(context.Background(), nil)
+	if rows := m.bossSidebarCompanionLines(35, 6); len(rows) != 0 {
+		t.Fatalf("sidebar companion should hide when native rows do not fit, got %d rows", len(rows))
 	}
 }
 
@@ -1328,28 +1390,8 @@ func TestChatPanelHidesCompanionInCrampedTranscript(t *testing.T) {
 	m.syncLayout(true)
 
 	rendered := m.renderChat(m.layout())
-	if strings.Contains(rendered, "\x1b[38;2;") || strings.Contains(ansi.Strip(rendered), "\u2588") {
+	if strings.Contains(rendered, "\x1b[38;2;") || strings.Contains(ansi.Strip(rendered), "\u2580") {
 		t.Fatalf("chat panel should not force the companion into a cramped transcript:\n%s", ansi.Strip(rendered))
-	}
-}
-
-func TestChatCompanionDoesNotOverwriteTranscriptText(t *testing.T) {
-	t.Parallel()
-
-	width := 60
-	height := 8
-	sprite := renderBossCompanionSprite(bossCompanionIdle, 0)
-	x := width - sprite.width - 1
-	y := 0
-	collidingRow := strings.Repeat(" ", x+3) + "X" + strings.Repeat(" ", width-x-4)
-	lines := []string{collidingRow}
-	for len(lines) < height {
-		lines = append(lines, strings.Repeat(" ", width))
-	}
-	base := strings.Join(lines, "\n")
-
-	if got := overlayBossCompanion(base, width, height, x, y, sprite); got != base {
-		t.Fatalf("companion overlay should leave transcript unchanged when a sprite cell would hit text:\n%s", ansi.Strip(got))
 	}
 }
 

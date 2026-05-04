@@ -57,6 +57,9 @@ type bossAction struct {
 	EngineerProvider  string                `json:"engineer_provider"`
 	SessionMode       string                `json:"session_mode"`
 	Prompt            string                `json:"prompt"`
+	IntentExcerpt     string                `json:"intent_excerpt"`
+	PreservedMeaning  string                `json:"preserved_meaning"`
+	SuccessCondition  string                `json:"success_condition"`
 	Reveal            bool                  `json:"reveal"`
 	CloseSession      bool                  `json:"close_session"`
 	Capabilities      []string              `json:"capabilities"`

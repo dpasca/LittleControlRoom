@@ -409,6 +409,7 @@ func (a *Assistant) planAction(ctx context.Context, req AssistantRequest, toolRe
 		return response, bossAction{}, fmt.Errorf("decode boss chat action: %w", err)
 	}
 	normalizeBossAction(&action)
+	prepareBossActionForRequest(&action, req)
 	if err := validateBossAction(action); err != nil {
 		if normalizeBossActionKind(action.Kind) == bossActionProposeControl {
 			return response, bossAction{}, wrapControlProposalError(err)
@@ -474,8 +475,10 @@ func bossAssistantSystemPrompt() string {
 		"Assume an ongoing coworker chat: skip onboarding, capability pitches, generic menus, and optional handoff offers.",
 		"Assume the user tracks many things and wants the highest-level read first, not implementation telemetry.",
 		"Do not describe UI mechanics such as timers, Attention rows, temporary activity lines, or tool-call notices; those are implicit.",
-		"When acknowledging delegated work, paraphrase the intent at boss level instead of echoing the exact engineer prompt.",
+		"When acknowledging delegated work, keep the spoken update concise; the actual engineer prompt should preserve the user's source, metric, timeframe, negations, and explicit exclusions.",
+		"When reframing user requests for engineers, use lossless reframing: make the task executable while preserving short original wording, hard constraints, and the success condition.",
 		"When summarizing engineer output, give the meaningful result and what still needs attention; omit raw logs and mechanical transcript details unless they change the decision.",
+		"When summarizing engineer output, do not smooth over a source/metric mismatch. If the engineer checked a different source, metric, timeframe, or scope than the user requested, say the request is not satisfied yet.",
 		"When a delegated agent task is waiting for review, summarize the result and recommend one next move: close it, keep it open, or send the named engineer back with a sharper question.",
 		"Minimize redundant information. Treat routine work-in-progress repo hygiene as background, not news.",
 		"For single-project status questions, answer like an in-the-know coworker in one or two plain sentences.",
@@ -542,7 +545,8 @@ func bossActionPlannerSystemPrompt() string {
 		"Wanting to see an app, page, server, screenshot, or browser result is not a request to reveal the engineer transcript pane; keep reveal false unless the user explicitly asks to show, open, or watch that engineer session.",
 		"For agent_task.create, task_kind must be agent unless parent_task_id is set and the user asked for a subagent; put affected projects, PIDs, ports, files, sessions, or related tasks in resources; put allowed action namespaces such as process.inspect, process.terminate, repo.edit, test.run, browser.inspect in capabilities.",
 		"For agent_task.continue, include task_id and a fresh prompt. For agent_task.close, include task_id, task_close_status, task_summary, and close_session.",
-		"For propose_control, the prompt field is the exact instruction to send to the engineer session or task. Keep it actionable and include only the relevant work request.",
+		"For propose_control, the prompt field is the boss-reframed executable task for the engineer session or task.",
+		"For prompt-bearing propose_control actions, fill intent_excerpt with a short excerpt of the user's wording that must survive reframing; fill preserved_meaning with source, metric, timeframe, negations, and explicit exclusions; fill success_condition with what the engineer must return or what missing evidence must be reported.",
 		"Use context_command for command-shaped context lookup: ctx search engineer, ctx show, ctx show agent_task, ctx recent engineer, or ctx search boss.",
 		"Use ctx search engineer when the user asks to recall, quote, verify, or inspect what an engineer session said. Use ctx show on the returned handle before quoting or correcting exact details.",
 		"When the user asks for the output or result of an open agent task, use ctx show agent_task:<task-id>; if only an engineer session id is available, use ctx show engineer:<session-id>.",
@@ -563,8 +567,10 @@ func bossActionPlannerSystemPrompt() string {
 		"Never claim you changed files, projects, TODOs, snoozes, panels, or sessions. Read-only query tools are report-only; control actions are proposals that need user confirmation before execution.",
 		"Final answers should sound like a concise coworker update: turn tool output into judgment instead of mirroring its bullet structure, and avoid capability pitches or optional menus.",
 		"Do not describe UI mechanics such as timers, Attention rows, temporary activity lines, or tool-call notices; those are implicit.",
-		"When acknowledging delegated work, paraphrase the intent at boss level instead of echoing the exact engineer prompt.",
+		"When acknowledging delegated work, keep the spoken update concise; the actual engineer prompt should preserve the user's source, metric, timeframe, negations, and explicit exclusions.",
+		"When reframing user requests for engineers, use lossless reframing: make the task executable while preserving short original wording, hard constraints, and the success condition.",
 		"When summarizing engineer output, give the meaningful result and what still needs attention; omit raw logs and mechanical transcript details unless they change the decision.",
+		"When summarizing engineer output, do not smooth over a source/metric mismatch. If the engineer checked a different source, metric, timeframe, or scope than the user requested, say the request is not satisfied yet.",
 		"When a delegated agent task is waiting for review, summarize the result and recommend one next move: close it, keep it open, or send the named engineer back with a sharper question.",
 		"When answering from project_detail or search_context, use name/path/status metadata to choose the target, then answer the operational substance rather than reciting the lookup.",
 		"Treat codenames and aliases as shared coworker context; for status questions, do not explain what the codename maps to unless the user asks for the definition.",
@@ -650,7 +656,7 @@ func bossFinalAnswerMessages(req AssistantRequest, toolResults []bossToolResult,
 		b.WriteString(draft)
 		b.WriteString("\n\n")
 	}
-	b.WriteString("Answer the user's latest Boss Chat message now. Use the gathered data, keep the coworker-update style, and do not mention tool calls unless the user asks about them. Do not claim commit/deploy/release safety or no DB migration unless the gathered data directly covers the current diff, migrations, schema, storage, or API shape.")
+	b.WriteString("Answer the user's latest Boss Chat message now. Use the gathered data, keep the coworker-update style, and do not mention tool calls unless the user asks about them. Preserve the user's source, metric, timeframe, negations, and explicit exclusions when deciding whether gathered evidence satisfies the request; if the evidence covers a different source or metric, say it is not satisfied yet instead of smoothing over the mismatch. Do not claim commit/deploy/release safety or no DB migration unless the gathered data directly covers the current diff, migrations, schema, storage, or API shape.")
 	messages = append(messages, llm.TextMessage{
 		Role:    "user",
 		Content: strings.TrimSpace(b.String()),
@@ -770,7 +776,19 @@ func bossActionSchema() map[string]any {
 			},
 			"prompt": map[string]any{
 				"type":        "string",
-				"description": "For engineer.send_prompt, agent_task.create, or agent_task.continue proposals, the exact prompt to send. Otherwise empty.",
+				"description": "For engineer.send_prompt, agent_task.create, or agent_task.continue proposals, the boss-reframed executable task for the engineer. Otherwise empty.",
+			},
+			"intent_excerpt": map[string]any{
+				"type":        "string",
+				"description": "For prompt-bearing control proposals, a short excerpt of the user's wording that must survive reframing. Preserve named sources, metrics, timeframes, negations, and exclusions. Otherwise empty.",
+			},
+			"preserved_meaning": map[string]any{
+				"type":        "string",
+				"description": "For prompt-bearing control proposals, concise hard constraints the engineer must not drift from: source, metric, timeframe, scope, negations, and explicit exclusions. Otherwise empty.",
+			},
+			"success_condition": map[string]any{
+				"type":        "string",
+				"description": "For prompt-bearing control proposals, what the engineer result must include to satisfy the user, or what missing evidence/source mismatch must be stated. Otherwise empty.",
 			},
 			"reveal": map[string]any{
 				"type":        "boolean",
@@ -841,6 +859,9 @@ func bossActionSchema() map[string]any {
 			"engineer_provider",
 			"session_mode",
 			"prompt",
+			"intent_excerpt",
+			"preserved_meaning",
+			"success_condition",
 			"reveal",
 			"close_session",
 			"capabilities",
@@ -891,9 +912,61 @@ func normalizeBossAction(action *bossAction) {
 		action.SessionMode = strings.TrimSpace(action.SessionMode)
 	}
 	action.Prompt = strings.TrimSpace(action.Prompt)
+	action.IntentExcerpt = strings.TrimSpace(action.IntentExcerpt)
+	action.PreservedMeaning = strings.TrimSpace(action.PreservedMeaning)
+	action.SuccessCondition = strings.TrimSpace(action.SuccessCondition)
 	action.Capabilities = normalizeBossActionStringList(action.Capabilities)
 	action.Resources = normalizeBossActionResources(action.Resources)
 	action.Reason = strings.TrimSpace(action.Reason)
+}
+
+func prepareBossActionForRequest(action *bossAction, req AssistantRequest) {
+	if action == nil || !bossActionCarriesEngineerPrompt(*action) {
+		return
+	}
+	if strings.TrimSpace(action.IntentExcerpt) == "" {
+		action.IntentExcerpt = recentUserWordingExcerpt(req.Messages, 3, 900)
+	}
+}
+
+func bossActionCarriesEngineerPrompt(action bossAction) bool {
+	if normalizeBossActionKind(action.Kind) != bossActionProposeControl || strings.TrimSpace(action.Prompt) == "" {
+		return false
+	}
+	switch control.CapabilityName(strings.TrimSpace(action.ControlCapability)) {
+	case control.CapabilityEngineerSendPrompt, control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:
+		return true
+	default:
+		return false
+	}
+}
+
+func recentUserWordingExcerpt(messages []ChatMessage, maxMessages, maxChars int) string {
+	if maxMessages <= 0 || maxChars <= 0 {
+		return ""
+	}
+	parts := make([]string, 0, maxMessages)
+	for i := len(messages) - 1; i >= 0 && len(parts) < maxMessages; i-- {
+		if normalizeChatRole(messages[i].Role) != "user" {
+			continue
+		}
+		content := strings.TrimSpace(messages[i].Content)
+		if content == "" {
+			continue
+		}
+		parts = append(parts, clipText(content, maxChars))
+	}
+	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
+		parts[i], parts[j] = parts[j], parts[i]
+	}
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	lines := make([]string, 0, len(parts))
+	for _, part := range parts {
+		lines = append(lines, "- "+part)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func normalizeBossActionStringList(values []string) []string {

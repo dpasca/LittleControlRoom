@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"strings"
+
+	"lcroom/internal/pixelart"
 )
 
 const (
@@ -13,14 +15,6 @@ const (
 
 var (
 	runtimeFlairOutlineColor      = runtimeFlairRGB(26, 31, 38)
-	runtimeFlairSkinColor         = runtimeFlairRGB(240, 198, 136)
-	runtimeFlairSkinShadowColor   = runtimeFlairRGB(221, 176, 118)
-	runtimeFlairHairColor         = runtimeFlairRGB(123, 75, 41)
-	runtimeFlairShirtColor        = runtimeFlairRGB(75, 142, 194)
-	runtimeFlairShirtAccentColor  = runtimeFlairRGB(141, 203, 232)
-	runtimeFlairPantsColor        = runtimeFlairRGB(76, 54, 42)
-	runtimeFlairBootColor         = runtimeFlairRGB(48, 35, 31)
-	runtimeFlairHeadsetColor      = runtimeFlairRGB(244, 196, 88)
 	runtimeFlairDeskColor         = runtimeFlairRGB(107, 79, 56)
 	runtimeFlairDeskShadowColor   = runtimeFlairRGB(69, 52, 38)
 	runtimeFlairKeyboardColor     = runtimeFlairRGB(110, 122, 132)
@@ -388,100 +382,32 @@ func runtimeFlairDrawAuxMonitor(canvas *runtimeFlairCanvas, x, y, phase int) {
 }
 
 func runtimeFlairDrawOperator(canvas *runtimeFlairCanvas, state runtimeFlairOperatorState) {
-	const spriteWidth = 10
+	pixelart.DrawOperator(func(x, y int, color pixelart.Color) {
+		canvas.set(x, y, runtimeFlairColorFromPixelArt(color))
+	}, pixelart.OperatorState{
+		X:      state.x,
+		Y:      state.y,
+		Facing: state.facing,
+		Pose:   runtimeFlairOperatorPoseToPixelArt(state.pose),
+		Blink:  state.blink,
+	})
+}
 
-	facing := state.facing
-	if facing == 0 {
-		facing = 1
-	}
-
-	px := func(dx int) int {
-		if facing < 0 {
-			return state.x + (spriteWidth - 1 - dx)
-		}
-		return state.x + dx
-	}
-	set := func(dx, dy int, color runtimeFlairColor) {
-		canvas.set(px(dx), state.y+dy, color)
-	}
-	fillRect := func(dx, dy, width, height int, color runtimeFlairColor) {
-		for row := 0; row < height; row++ {
-			for col := 0; col < width; col++ {
-				set(dx+col, dy+row, color)
-			}
-		}
-	}
-	fillHLine := func(dx, dy, width int, color runtimeFlairColor) {
-		fillRect(dx, dy, width, 1, color)
-	}
-	fillVLine := func(dx, dy, height int, color runtimeFlairColor) {
-		fillRect(dx, dy, 1, height, color)
-	}
-
-	fillHLine(1, 0, 8, runtimeFlairHairColor)
-	fillHLine(0, 1, 10, runtimeFlairHairColor)
-	fillRect(0, 2, 10, 2, runtimeFlairSkinColor)
-	fillRect(1, 4, 8, 1, runtimeFlairSkinColor)
-	fillRect(4, 5, 2, 1, runtimeFlairSkinColor)
-
-	if state.blink {
-		fillHLine(3, 3, 1, runtimeFlairOutlineColor)
-		fillHLine(6, 3, 1, runtimeFlairOutlineColor)
-	} else {
-		set(3, 3, runtimeFlairOutlineColor)
-		set(6, 3, runtimeFlairOutlineColor)
-	}
-
-	fillRect(2, 6, 6, 4, runtimeFlairShirtColor)
-	fillHLine(3, 7, 4, runtimeFlairShirtAccentColor)
-	fillHLine(2, 9, 6, runtimeFlairOutlineColor)
-
-	switch state.pose {
-	case runtimeFlairOperatorInspect:
-		fillVLine(1, 7, 2, runtimeFlairShirtColor)
-		set(1, 9, runtimeFlairSkinColor)
-		set(0, 6, runtimeFlairShirtColor)
-		fillHLine(1, 6, 2, runtimeFlairShirtColor)
-		set(8, 7, runtimeFlairShirtColor)
-		set(8, 8, runtimeFlairSkinColor)
+func runtimeFlairOperatorPoseToPixelArt(pose runtimeFlairOperatorPose) pixelart.OperatorPose {
+	switch pose {
 	case runtimeFlairOperatorWalkA:
-		fillVLine(1, 7, 2, runtimeFlairShirtColor)
-		set(1, 9, runtimeFlairSkinColor)
-		fillVLine(8, 6, 2, runtimeFlairShirtColor)
-		set(8, 8, runtimeFlairSkinColor)
+		return pixelart.OperatorWalkA
 	case runtimeFlairOperatorWalkB:
-		fillVLine(1, 6, 2, runtimeFlairShirtColor)
-		set(1, 8, runtimeFlairSkinColor)
-		fillVLine(8, 7, 2, runtimeFlairShirtColor)
-		set(8, 9, runtimeFlairSkinColor)
+		return pixelart.OperatorWalkB
 	case runtimeFlairOperatorTypeA:
-		fillVLine(1, 7, 2, runtimeFlairShirtColor)
-		set(1, 9, runtimeFlairSkinColor)
-		fillHLine(8, 6, 2, runtimeFlairShirtColor)
-		set(9, 7, runtimeFlairSkinColor)
+		return pixelart.OperatorTypeA
 	case runtimeFlairOperatorTypeB:
-		fillVLine(1, 7, 2, runtimeFlairShirtColor)
-		set(1, 9, runtimeFlairSkinColor)
-		fillHLine(7, 7, 2, runtimeFlairShirtColor)
-		set(9, 6, runtimeFlairShirtColor)
-		set(9, 7, runtimeFlairSkinColor)
-	}
-
-	switch state.pose {
-	case runtimeFlairOperatorWalkA:
-		fillRect(2, 10, 2, 3, runtimeFlairPantsColor)
-		fillRect(6, 10, 2, 2, runtimeFlairPantsColor)
-		fillRect(2, 12, 2, 1, runtimeFlairBootColor)
-		fillRect(7, 12, 2, 1, runtimeFlairBootColor)
-	case runtimeFlairOperatorWalkB:
-		fillRect(2, 10, 2, 2, runtimeFlairPantsColor)
-		fillRect(6, 10, 2, 3, runtimeFlairPantsColor)
-		fillRect(1, 12, 2, 1, runtimeFlairBootColor)
-		fillRect(6, 12, 2, 1, runtimeFlairBootColor)
+		return pixelart.OperatorTypeB
 	default:
-		fillRect(2, 10, 2, 3, runtimeFlairPantsColor)
-		fillRect(6, 10, 2, 3, runtimeFlairPantsColor)
-		fillRect(2, 12, 2, 1, runtimeFlairBootColor)
-		fillRect(6, 12, 2, 1, runtimeFlairBootColor)
+		return pixelart.OperatorInspect
 	}
+}
+
+func runtimeFlairColorFromPixelArt(color pixelart.Color) runtimeFlairColor {
+	return runtimeFlairRGB(color.R, color.G, color.B)
 }

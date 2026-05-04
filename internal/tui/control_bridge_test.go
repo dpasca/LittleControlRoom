@@ -555,6 +555,7 @@ func TestExecuteBossControlInvocationContinuesAgentTaskWithTrackedSession(t *tes
 	for _, want := range []string{
 		"Report contract:",
 		"Answer the user's exact request directly",
+		"Preserve source, metric, timeframe, scope, negations, and explicit exclusions",
 		"what was compared, what was kept, what was discarded, and the substantive differences",
 		"User request:\nCheck whether the ports stayed clear.",
 	} {
