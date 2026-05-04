@@ -221,7 +221,7 @@ type Model struct {
 	modelSettlePending          map[string]pendingModelSettleOp
 	lastSpinnerTickAt           time.Time
 	skillsInventorySeq          int64
-	pendingBossHostNotices      []string
+	pendingBossHostNotices      []bossHostNotice
 
 	pendingG      bool
 	todoLaunchSeq int64
@@ -1237,7 +1237,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("Agent task %s handoff failed: %v", msg.taskID, msg.err)
 			notice := bossEngineerCompletionNotice(msg.label, msg.summary, msg.engineerName) + "\n\nI couldn't save that review handoff: " + msg.err.Error()
 			var cmd tea.Cmd
-			m, cmd = m.updateBossHostNotice(notice)
+			m, cmd = m.updateBossHostChatNotice(notice)
 			return m, cmd
 		}
 		m.upsertOpenAgentTask(msg.task)
@@ -1250,7 +1250,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.status = "Agent task " + label + " needs your call"
 		var cmd tea.Cmd
-		m, cmd = m.updateBossHostNotice(msg.notice)
+		m, cmd = m.updateBossHostChatNotice(msg.notice)
 		if m.bossMode {
 			cmd = batchCmds(cmd, m.bossModel.RefreshCmd())
 		}
@@ -1260,7 +1260,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.storeCodexSnapshot(msg.projectPath, msg.snapshot)
 		}
 		var cmd tea.Cmd
-		m, cmd = m.updateBossHostNotice(msg.notice)
+		m, cmd = m.updateBossHostChatNotice(msg.notice)
 		return m, cmd
 	case recentProjectParentsMsg:
 		if msg.err == nil {

@@ -11,6 +11,8 @@ import (
 	"lcroom/internal/codexapp"
 	"lcroom/internal/model"
 	"lcroom/internal/procinspect"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestBossViewContextCapturesClassicTUIStateWithoutSelection(t *testing.T) {
@@ -189,15 +191,15 @@ func TestBossChatNoticesEngineerTurnCompletion(t *testing.T) {
 
 	updated, _ := m.update(codexUpdateMsg{projectPath: projectPath})
 	got := updated.(Model)
-	view := bossChatPanelText(got.bossModel.View())
+	view := bossChatOnlyText(got.bossModel)
 	noticeText := bossOperationalNoticeText(got.bossModel)
 	engineerName := bossui.EngineerNameForKey("project", projectPath, idleSnapshot.ThreadID)
 	for _, want := range []string{
 		engineerName + " is back from Project Task.",
 		"Killed the stale dev server on port 5173",
 	} {
-		if strings.Contains(view, want) {
-			t.Fatalf("boss chat transcript should not contain operational notice %q:\n%s", want, view)
+		if !strings.Contains(view, want) {
+			t.Fatalf("boss chat transcript missing engineer outcome %q:\n%s", want, view)
 		}
 		if !strings.Contains(noticeText, want) {
 			t.Fatalf("operational notice missing %q:\n%s", want, noticeText)
@@ -265,15 +267,15 @@ func TestBossChatFetchesFreshEngineerReportBeforeNotice(t *testing.T) {
 		got = updated.(Model)
 	}
 
-	view := bossChatPanelText(got.bossModel.View())
+	view := bossChatOnlyText(got.bossModel)
 	noticeText := bossOperationalNoticeText(got.bossModel)
 	engineerName := bossui.EngineerNameForKey("project", projectPath, staleIdleSnapshot.ThreadID)
 	for _, want := range []string{
 		engineerName + " is back from ChatNext3.",
 		"The broken preview is caused by the SVG",
 	} {
-		if strings.Contains(view, want) {
-			t.Fatalf("boss chat transcript should not contain operational notice %q:\n%s", want, view)
+		if !strings.Contains(view, want) {
+			t.Fatalf("boss chat transcript missing engineer outcome %q:\n%s", want, view)
 		}
 		if !strings.Contains(noticeText, want) {
 			t.Fatalf("fresh operational notice missing %q:\n%s", want, noticeText)
@@ -411,15 +413,15 @@ func TestBossEngineerCompletionLeavesAgentTaskWaitingForDecision(t *testing.T) {
 	if _, ok := got.agentTaskForProjectPath(task.WorkspacePath); !ok {
 		t.Fatalf("returned agent task should stay open for a close-or-continue decision: %#v", got.openAgentTasks)
 	}
-	view := bossChatPanelText(got.bossModel.View())
+	view := bossChatOnlyText(got.bossModel)
 	noticeText := bossOperationalNoticeText(got.bossModel)
 	engineerName := bossui.EngineerNameForKey("agent_task", task.ID)
 	for _, want := range []string{
 		engineerName + " is back from Kill stale roguellm dev server.",
 		"No stale roguellm dev server is running now.",
 	} {
-		if strings.Contains(view, want) {
-			t.Fatalf("boss transcript should not contain operational notice %q:\n%s", want, view)
+		if !strings.Contains(view, want) {
+			t.Fatalf("boss transcript missing engineer outcome %q:\n%s", want, view)
 		}
 		if !strings.Contains(noticeText, want) {
 			t.Fatalf("operational notice missing %q:\n%s", want, noticeText)
@@ -430,6 +432,9 @@ func TestBossEngineerCompletionLeavesAgentTaskWaitingForDecision(t *testing.T) {
 	}
 	if strings.Contains(noticeText, "port 8127") || strings.Contains(noticeText, "```") {
 		t.Fatalf("boss operational notice leaked raw output:\n%s", noticeText)
+	}
+	if strings.Contains(view, "port 8127") || strings.Contains(view, "```") {
+		t.Fatalf("boss transcript leaked raw output:\n%s", view)
 	}
 }
 
@@ -492,7 +497,7 @@ func TestBossHostNoticeQueuedWhileClosedAppearsOnOpen(t *testing.T) {
 	if len(got.pendingBossHostNotices) != 0 {
 		t.Fatalf("pending notices after open = %#v, want drained", got.pendingBossHostNotices)
 	}
-	view := bossChatPanelText(got.bossModel.View())
+	view := bossChatOnlyText(got.bossModel)
 	noticeText := bossOperationalNoticeText(got.bossModel)
 	for _, want := range []string{
 		"Ada is back from Cursor cleanup.",
@@ -500,6 +505,40 @@ func TestBossHostNoticeQueuedWhileClosedAppearsOnOpen(t *testing.T) {
 	} {
 		if strings.Contains(view, want) {
 			t.Fatalf("reopened Boss Chat transcript should not contain queued notice %q:\n%s", want, view)
+		}
+		if !strings.Contains(noticeText, want) {
+			t.Fatalf("queued operational notice missing %q:\n%s", want, noticeText)
+		}
+	}
+}
+
+func TestBossHostChatNoticeQueuedWhileClosedAppearsInTranscriptOnOpen(t *testing.T) {
+	t.Parallel()
+
+	m := Model{
+		ctx:    context.Background(),
+		width:  100,
+		height: 30,
+	}
+	updated, cmd := m.updateBossHostChatNotice("Ken is back from ChatNext3.\n\nNo migration needed; DB/schema stayed untouched.")
+	if cmd != nil {
+		t.Fatalf("updateBossHostChatNotice() cmd = %T, want nil while Boss Chat is closed", cmd)
+	}
+	m = updated
+	if len(m.pendingBossHostNotices) != 1 {
+		t.Fatalf("pending notices = %#v, want one queued notice", m.pendingBossHostNotices)
+	}
+
+	reopened, _ := m.openBossMode()
+	got := reopened.(Model)
+	view := bossChatOnlyText(got.bossModel)
+	noticeText := bossOperationalNoticeText(got.bossModel)
+	for _, want := range []string{
+		"Ken is back from ChatNext3.",
+		"No migration needed; DB/schema stayed untouched.",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("reopened Boss Chat transcript missing queued chat notice %q:\n%s", want, view)
 		}
 		if !strings.Contains(noticeText, want) {
 			t.Fatalf("queued operational notice missing %q:\n%s", want, noticeText)
@@ -615,7 +654,7 @@ func TestBossBrowserOpenResultIsRecordedAsOperationalNotice(t *testing.T) {
 		}
 	}
 	got := updated.(Model)
-	view := bossChatPanelText(got.bossModel.View())
+	view := bossChatOnlyText(got.bossModel)
 	noticeText := bossOperationalNoticeText(got.bossModel)
 	if strings.Contains(view, "Browser handoff") || strings.Contains(view, "Finish the browser flow there.") {
 		t.Fatalf("boss chat transcript should not echo browser handoff:\n%s", view)
@@ -636,6 +675,11 @@ func bossChatPanelText(view string) string {
 		return view[:cutAt]
 	}
 	return view
+}
+
+func bossChatOnlyText(model bossui.Model) string {
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 70, Height: 28})
+	return bossChatPanelText(normalizeBossModel(updated).View())
 }
 
 func bossOperationalNoticeText(model bossui.Model) string {

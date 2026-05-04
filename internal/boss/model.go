@@ -84,7 +84,8 @@ type StateLoadedMsg struct {
 }
 
 type HostNoticeMsg struct {
-	Content string
+	Content        string
+	AnnounceInChat bool
 }
 
 type AssistantReplyMsg struct {
@@ -240,7 +241,7 @@ func (m Model) WithViewContext(view ViewContext) Model {
 }
 
 func (m Model) HostNoticesReady() bool {
-	return true
+	return !m.hasPersistentSessions() || m.sessionLoaded
 }
 
 func (m Model) OperationalNotices() []ViewSystemNotice {

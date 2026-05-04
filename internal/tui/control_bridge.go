@@ -96,10 +96,11 @@ func bossControlExecutionCmd(inv control.Invocation, cmd tea.Cmd) tea.Cmd {
 		}
 		activity := bossControlOpenedSessionActivity(inv, msg)
 		result := bossui.ControlInvocationResultMsg{
-			Invocation: copyControlInvocationForBoss(inv),
-			Status:     status,
-			Activity:   activity,
-			Err:        err,
+			Invocation:     copyControlInvocationForBoss(inv),
+			Status:         status,
+			Activity:       activity,
+			Err:            err,
+			AnnounceInChat: true,
 		}
 		if msg == nil {
 			return result
@@ -305,9 +306,10 @@ func bossControlProjectTargetLabel(values ...string) string {
 func bossControlResultCmd(inv control.Invocation, status string, err error) tea.Cmd {
 	return func() tea.Msg {
 		return bossui.ControlInvocationResultMsg{
-			Invocation: copyControlInvocationForBoss(inv),
-			Status:     strings.TrimSpace(status),
-			Err:        err,
+			Invocation:     copyControlInvocationForBoss(inv),
+			Status:         strings.TrimSpace(status),
+			Err:            err,
+			AnnounceInChat: true,
 		}
 	}
 }

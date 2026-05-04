@@ -498,6 +498,46 @@ func TestControlResultRendersTransientActiveEngineerFeedback(t *testing.T) {
 	}
 }
 
+func TestControlResultCanAnnounceEngineerStartInChat(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	m := NewEmbedded(context.Background(), nil)
+	m.nowFn = func() time.Time { return now }
+	m.messages = []ChatMessage{{Role: "user", Content: "just nuke that skill", At: now}}
+	activity := ViewEngineerActivity{
+		Kind:         "agent_task",
+		TaskID:       "agt_skill_cleanup",
+		Title:        "Retire projects-control-center skill",
+		EngineerName: "Niklaus",
+		Provider:     model.SessionSourceCodex,
+		SessionID:    "thread-skill-cleanup",
+		Status:       "working",
+		Active:       true,
+		StartedAt:    now.Add(-3 * time.Second),
+		LastEventAt:  now.Add(-3 * time.Second),
+	}
+
+	updated, _ := m.Update(ControlInvocationResultMsg{
+		Status:         "Ok, Niklaus is working on Retire projects-control-center skill.",
+		Activity:       &activity,
+		AnnounceInChat: true,
+	})
+	got := updated.(Model)
+	if len(got.messages) != 2 {
+		t.Fatalf("control result should append a boss chat turn, got %#v", got.messages)
+	}
+	rendered := ansi.Strip(got.renderTranscript(120))
+	for _, want := range []string{
+		"You> just nuke that skill",
+		"Boss> Ok, Niklaus is working on Retire projects-control-center skill.",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("transcript missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
 func TestBossLogShowsHostAndStateEvents(t *testing.T) {
 	t.Parallel()
 

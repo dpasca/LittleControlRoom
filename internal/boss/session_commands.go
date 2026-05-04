@@ -114,6 +114,26 @@ func (m Model) saveBossChatMessageCmd(message ChatMessage) tea.Cmd {
 	}
 }
 
+func (m *Model) appendAssistantNoticeMessage(content string) (ChatMessage, bool) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ChatMessage{}, false
+	}
+	if len(m.messages) > 0 {
+		last := m.messages[len(m.messages)-1]
+		if normalizeChatRole(last.Role) == "assistant" && strings.TrimSpace(last.Content) == content {
+			return ChatMessage{}, false
+		}
+	}
+	message := ChatMessage{
+		Role:    "assistant",
+		Content: content,
+		At:      m.now(),
+	}
+	m.messages = append(m.messages, message)
+	return message, true
+}
+
 func chatMessagesFromBossMessages(messages []ChatMessage) []ChatMessage {
 	out := make([]ChatMessage, 0, len(messages))
 	for _, message := range messages {

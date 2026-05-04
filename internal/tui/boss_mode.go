@@ -47,21 +47,36 @@ func (m Model) updateBossModeMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmd, noticeCmd)
 }
 
+type bossHostNotice struct {
+	Content        string
+	AnnounceInChat bool
+}
+
 func (m Model) updateBossHostNotice(content string) (Model, tea.Cmd) {
-	content = strings.TrimSpace(content)
+	return m.updateBossHostNoticeWithOptions(bossHostNotice{Content: content})
+}
+
+func (m Model) updateBossHostChatNotice(content string) (Model, tea.Cmd) {
+	return m.updateBossHostNoticeWithOptions(bossHostNotice{Content: content, AnnounceInChat: true})
+}
+
+func (m Model) updateBossHostNoticeWithOptions(notice bossHostNotice) (Model, tea.Cmd) {
+	content := strings.TrimSpace(notice.Content)
 	if content == "" {
 		return m, nil
 	}
 	if !m.bossMode || !m.bossModel.HostNoticesReady() {
-		m.pendingBossHostNotices = appendPendingBossHostNotice(m.pendingBossHostNotices, content)
+		notice.Content = content
+		m.pendingBossHostNotices = appendPendingBossHostNotice(m.pendingBossHostNotices, notice)
 		return m, nil
 	}
-	return m.applyBossHostNotice(content)
+	notice.Content = content
+	return m.applyBossHostNotice(notice)
 }
 
-func (m Model) applyBossHostNotice(content string) (Model, tea.Cmd) {
+func (m Model) applyBossHostNotice(notice bossHostNotice) (Model, tea.Cmd) {
 	m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
-	updated, cmd := m.bossModel.Update(bossui.HostNoticeMsg{Content: content})
+	updated, cmd := m.bossModel.Update(bossui.HostNoticeMsg{Content: notice.Content, AnnounceInChat: notice.AnnounceInChat})
 	m.bossModel = normalizeBossModel(updated)
 	return m, cmd
 }
@@ -70,7 +85,7 @@ func (m Model) drainPendingBossHostNotices() (Model, tea.Cmd) {
 	if !m.bossMode || len(m.pendingBossHostNotices) == 0 || !m.bossModel.HostNoticesReady() {
 		return m, nil
 	}
-	notices := append([]string(nil), m.pendingBossHostNotices...)
+	notices := append([]bossHostNotice(nil), m.pendingBossHostNotices...)
 	m.pendingBossHostNotices = nil
 	cmds := make([]tea.Cmd, 0, len(notices))
 	for _, notice := range notices {
@@ -81,17 +96,17 @@ func (m Model) drainPendingBossHostNotices() (Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func appendPendingBossHostNotice(notices []string, content string) []string {
-	content = strings.TrimSpace(content)
-	if content == "" {
+func appendPendingBossHostNotice(notices []bossHostNotice, notice bossHostNotice) []bossHostNotice {
+	notice.Content = strings.TrimSpace(notice.Content)
+	if notice.Content == "" {
 		return notices
 	}
-	if len(notices) > 0 && notices[len(notices)-1] == content {
+	if len(notices) > 0 && notices[len(notices)-1] == notice {
 		return notices
 	}
-	notices = append(notices, content)
+	notices = append(notices, notice)
 	if len(notices) > 8 {
-		notices = append([]string(nil), notices[len(notices)-8:]...)
+		notices = append([]bossHostNotice(nil), notices[len(notices)-8:]...)
 	}
 	return notices
 }
@@ -506,7 +521,7 @@ func (m Model) handleBossEngineerTurnCompletion(projectPath string, hadPrev bool
 	if notice == "" {
 		return m, nil
 	}
-	return m.updateBossHostNotice(notice)
+	return m.updateBossHostChatNotice(notice)
 }
 
 func (m Model) markAgentTaskReadyForReviewCmd(projectPath string, task model.AgentTask, snapshot codexapp.Snapshot, session codexapp.Session) tea.Cmd {

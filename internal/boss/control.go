@@ -21,10 +21,11 @@ type ControlInvocationConfirmedMsg struct {
 }
 
 type ControlInvocationResultMsg struct {
-	Invocation control.Invocation
-	Status     string
-	Activity   *ViewEngineerActivity
-	Err        error
+	Invocation     control.Invocation
+	Status         string
+	Activity       *ViewEngineerActivity
+	Err            error
+	AnnounceInChat bool
 }
 
 type controlProposalError struct {
@@ -301,6 +302,7 @@ func (m Model) updateControlConfirmation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) applyControlInvocationResult(msg ControlInvocationResultMsg) (tea.Model, tea.Cmd) {
 	m.pendingControl = nil
 	content := controlResultContent(msg)
+	var cmds []tea.Cmd
 	if msg.Err != nil {
 		m.status = operationalStatusLine(content, "Control action failed")
 		m = m.recordOperationalNotice("control_failed", "error", content)
@@ -315,8 +317,12 @@ func (m Model) applyControlInvocationResult(msg ControlInvocationResultMsg) (tea
 			m.appendDeskEvent("control", "done", content)
 		}
 	}
-	m.syncLayout(false)
-	cmds := []tea.Cmd{}
+	if msg.AnnounceInChat {
+		if saved, ok := m.appendAssistantNoticeMessage(content); ok {
+			cmds = append(cmds, m.saveBossChatMessageCmd(saved))
+		}
+	}
+	m.syncLayout(msg.AnnounceInChat)
 	if m.svc != nil {
 		cmds = append(cmds, m.loadStateCmd())
 	}
@@ -330,9 +336,15 @@ func (m Model) applyHostNotice(msg HostNoticeMsg) (tea.Model, tea.Cmd) {
 	}
 	m = m.recordOperationalNotice("host_update", "notice", content)
 	m.appendDeskEvent("host", "update", content)
+	var cmds []tea.Cmd
+	if msg.AnnounceInChat {
+		if saved, ok := m.appendAssistantNoticeMessage(content); ok {
+			cmds = append(cmds, m.saveBossChatMessageCmd(saved))
+		}
+	}
 	m.status = operationalStatusLine(content, "Host update")
-	m.syncLayout(false)
-	return m, nil
+	m.syncLayout(msg.AnnounceInChat)
+	return m, tea.Batch(cmds...)
 }
 
 func operationalStatusLine(content, fallback string) string {
