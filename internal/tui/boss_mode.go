@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	bossui "lcroom/internal/boss"
 	"lcroom/internal/codexapp"
@@ -518,7 +520,7 @@ func (m Model) markAgentTaskReadyForReviewCmd(projectPath string, task model.Age
 	parent := m.ctx
 	return func() tea.Msg {
 		snapshot = freshEngineerCompletionSnapshot(projectPath, snapshot, session)
-		summary := latestEngineerTranscriptOutput(snapshot)
+		summary := latestEngineerTranscriptReviewOutput(snapshot)
 		notice := bossAgentTaskReviewNotice(label, summary, engineerName)
 		ctx := parent
 		if ctx == nil {
@@ -593,25 +595,9 @@ func snapshotWithCompletionProjectPath(projectPath string, snapshot codexapp.Sna
 
 func bossAgentTaskReviewNotice(label, output, engineerName string) string {
 	if strings.TrimSpace(output) == "" {
-		return bossEngineerCompletionNotice(label, "", engineerName) + "\n\nI don't have a useful summary yet. " + bossAgentTaskMissingSummaryQuestion(engineerName)
+		return bossEngineerCompletionNotice(label, "", engineerName) + "\n\nI don't have a useful summary yet."
 	}
-	return bossEngineerCompletionNotice(label, output, engineerName) + "\n\n" + bossAgentTaskDecisionQuestion(engineerName)
-}
-
-func bossAgentTaskDecisionQuestion(engineerName string) string {
-	engineerName = strings.TrimSpace(engineerName)
-	if engineerName == "" || strings.EqualFold(engineerName, "Engineer") {
-		return "Should I close it, or send the engineer back in?"
-	}
-	return "Should I close it, or send " + engineerName + " back in?"
-}
-
-func bossAgentTaskMissingSummaryQuestion(engineerName string) string {
-	engineerName = strings.TrimSpace(engineerName)
-	if engineerName == "" || strings.EqualFold(engineerName, "Engineer") {
-		return "Should I send the engineer back in for a clearer report, or close it anyway?"
-	}
-	return "Should I send " + engineerName + " back in for a clearer report, or close it anyway?"
+	return bossEngineerCompletionNotice(label, output, engineerName)
 }
 
 func bossAgentTaskCompletionLabel(task model.AgentTask) string {
@@ -673,6 +659,14 @@ func (m Model) bossEngineerCompletionName(projectPath string, snapshot codexapp.
 }
 
 func latestEngineerTranscriptOutput(snapshot codexapp.Snapshot) string {
+	return latestEngineerTranscriptOutputWithSentences(snapshot, 1, 220)
+}
+
+func latestEngineerTranscriptReviewOutput(snapshot codexapp.Snapshot) string {
+	return latestEngineerTranscriptOutputWithSentences(snapshot, 3, 360)
+}
+
+func latestEngineerTranscriptOutputWithSentences(snapshot codexapp.Snapshot, sentenceLimit, charLimit int) string {
 	for i := len(snapshot.Entries) - 1; i >= 0; i-- {
 		entry := snapshot.Entries[i]
 		if entry.Kind != codexapp.TranscriptAgent && entry.Kind != codexapp.TranscriptPlan {
@@ -682,7 +676,7 @@ func latestEngineerTranscriptOutput(snapshot codexapp.Snapshot) string {
 		if text == "" {
 			continue
 		}
-		summary := cleanEngineerNoticeSummary(compactEngineerNoticeText(engineerNoticeSummaryText(text), 220))
+		summary := cleanEngineerNoticeSummary(compactEngineerNoticeText(engineerNoticeSummaryText(text, sentenceLimit), charLimit))
 		if !engineerNoticeHasUsefulDetail(summary) {
 			return ""
 		}
@@ -696,15 +690,43 @@ func engineerNoticeHasUsefulDetail(text string) bool {
 	return len([]rune(text)) >= 16 && strings.Contains(text, " ")
 }
 
-func engineerNoticeSummaryText(text string) string {
+func engineerNoticeSummaryText(text string, sentenceLimit int) string {
+	sentenceLimit = max(1, sentenceLimit)
+	if engineerNoticeContainsFence(text) {
+		for _, paragraph := range engineerNoticeProseParagraphs(text) {
+			for _, sentence := range engineerNoticeSentences(paragraph) {
+				if strings.TrimSpace(sentence) != "" {
+					return sentence
+				}
+			}
+		}
+		return strings.TrimSpace(strings.ReplaceAll(text, "`", ""))
+	}
+
+	var sentences []string
 	for _, paragraph := range engineerNoticeProseParagraphs(text) {
 		for _, sentence := range engineerNoticeSentences(paragraph) {
 			if strings.TrimSpace(sentence) != "" {
-				return sentence
+				sentences = append(sentences, sentence)
+				if len(sentences) >= sentenceLimit {
+					return strings.Join(sentences, " ")
+				}
 			}
 		}
 	}
+	if len(sentences) > 0 {
+		return strings.Join(sentences, " ")
+	}
 	return strings.TrimSpace(strings.ReplaceAll(text, "`", ""))
+}
+
+func engineerNoticeContainsFence(text string) bool {
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "``") {
+			return true
+		}
+	}
+	return false
 }
 
 func engineerNoticeProseParagraphs(text string) []string {
@@ -755,6 +777,12 @@ func engineerNoticeSentences(text string) []string {
 			continue
 		}
 		end := i + len(string(r))
+		if end < len(text) {
+			next, _ := utf8.DecodeRuneInString(text[end:])
+			if next != utf8.RuneError && !unicode.IsSpace(next) {
+				continue
+			}
+		}
 		sentence := strings.TrimSpace(text[start:end])
 		if sentence != "" {
 			sentences = append(sentences, sentence)

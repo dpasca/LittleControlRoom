@@ -190,17 +190,21 @@ func TestBossChatNoticesEngineerTurnCompletion(t *testing.T) {
 	updated, _ := m.update(codexUpdateMsg{projectPath: projectPath})
 	got := updated.(Model)
 	view := got.bossModel.View()
+	noticeText := bossOperationalNoticeText(got.bossModel)
 	engineerName := bossui.EngineerNameForKey("project", projectPath, idleSnapshot.ThreadID)
 	for _, want := range []string{
 		engineerName + " is back from Project Task.",
 		"Killed the stale dev server on port 5173",
 	} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("boss chat completion notice missing %q:\n%s", want, view)
+		if strings.Contains(view, want) {
+			t.Fatalf("boss chat transcript should not contain operational notice %q:\n%s", want, view)
+		}
+		if !strings.Contains(noticeText, want) {
+			t.Fatalf("operational notice missing %q:\n%s", want, noticeText)
 		}
 	}
-	if strings.Contains(view, "PID 12345") {
-		t.Fatalf("boss chat completion notice should keep only the top-level paragraph:\n%s", view)
+	if strings.Contains(noticeText, "PID 12345") {
+		t.Fatalf("operational notice should keep only the top-level paragraph:\n%s", noticeText)
 	}
 }
 
@@ -262,13 +266,17 @@ func TestBossChatFetchesFreshEngineerReportBeforeNotice(t *testing.T) {
 	}
 
 	view := got.bossModel.View()
+	noticeText := bossOperationalNoticeText(got.bossModel)
 	engineerName := bossui.EngineerNameForKey("project", projectPath, staleIdleSnapshot.ThreadID)
 	for _, want := range []string{
 		engineerName + " is back from ChatNext3.",
 		"The broken preview is caused by the SVG",
 	} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("boss chat fresh completion notice missing %q:\n%s", want, view)
+		if strings.Contains(view, want) {
+			t.Fatalf("boss chat transcript should not contain operational notice %q:\n%s", want, view)
+		}
+		if !strings.Contains(noticeText, want) {
+			t.Fatalf("fresh operational notice missing %q:\n%s", want, noticeText)
 		}
 	}
 }
@@ -404,18 +412,46 @@ func TestBossEngineerCompletionLeavesAgentTaskWaitingForDecision(t *testing.T) {
 		t.Fatalf("returned agent task should stay open for a close-or-continue decision: %#v", got.openAgentTasks)
 	}
 	view := got.bossModel.View()
+	noticeText := bossOperationalNoticeText(got.bossModel)
 	engineerName := bossui.EngineerNameForKey("agent_task", task.ID)
 	for _, want := range []string{
 		engineerName + " is back from Kill stale roguellm dev server.",
 		"No stale roguellm dev server is running now.",
-		"Should I close it, or send " + engineerName + " back in?",
 	} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("boss view missing %q:\n%s", want, view)
+		if strings.Contains(view, want) {
+			t.Fatalf("boss transcript should not contain operational notice %q:\n%s", want, view)
+		}
+		if !strings.Contains(noticeText, want) {
+			t.Fatalf("operational notice missing %q:\n%s", want, noticeText)
 		}
 	}
-	if strings.Contains(view, "port 8127") || strings.Contains(view, "```") {
-		t.Fatalf("boss view leaked raw output:\n%s", view)
+	if strings.Contains(noticeText, "Should I close it") {
+		t.Fatalf("boss review notice should not append a repeated close-or-continue question:\n%s", noticeText)
+	}
+	if strings.Contains(noticeText, "port 8127") || strings.Contains(noticeText, "```") {
+		t.Fatalf("boss operational notice leaked raw output:\n%s", noticeText)
+	}
+}
+
+func TestLatestEngineerTranscriptOutputKeepsConcreteReviewDetails(t *testing.T) {
+	t.Parallel()
+
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "Compared the user-local imagegen copy with the .system imagegen copy. Kept the .system copy because it had the current metadata and prompt flow. Discarded the user-local copy because it was the stale duplicate.",
+		}},
+	}
+
+	got := latestEngineerTranscriptReviewOutput(snapshot)
+	for _, want := range []string{
+		"Compared the user-local imagegen copy",
+		"Kept the .system copy",
+		"Discarded the user-local copy",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("latestEngineerTranscriptOutput() missing %q:\n%s", want, got)
+		}
 	}
 }
 
@@ -457,12 +493,16 @@ func TestBossHostNoticeQueuedWhileClosedAppearsOnOpen(t *testing.T) {
 		t.Fatalf("pending notices after open = %#v, want drained", got.pendingBossHostNotices)
 	}
 	view := got.bossModel.View()
+	noticeText := bossOperationalNoticeText(got.bossModel)
 	for _, want := range []string{
 		"Ada is back from Cursor cleanup.",
 		"Cursor access still needs user-side confirmation.",
 	} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("reopened Boss Chat missing queued notice %q:\n%s", want, view)
+		if strings.Contains(view, want) {
+			t.Fatalf("reopened Boss Chat transcript should not contain queued notice %q:\n%s", want, view)
+		}
+		if !strings.Contains(noticeText, want) {
+			t.Fatalf("queued operational notice missing %q:\n%s", want, noticeText)
 		}
 	}
 }
@@ -558,7 +598,7 @@ func TestBossViewContextIncludesBrowserAndQuestionNotices(t *testing.T) {
 	}
 }
 
-func TestBossBrowserOpenResultIsEchoedIntoBossChat(t *testing.T) {
+func TestBossBrowserOpenResultIsRecordedAsOperationalNotice(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -576,9 +616,22 @@ func TestBossBrowserOpenResultIsEchoedIntoBossChat(t *testing.T) {
 	}
 	got := updated.(Model)
 	view := got.bossModel.View()
-	if !strings.Contains(view, "Browser handoff") || !strings.Contains(view, "Finish the browser flow there.") {
-		t.Fatalf("boss chat did not echo browser handoff:\n%s", view)
+	noticeText := bossOperationalNoticeText(got.bossModel)
+	if strings.Contains(view, "Browser handoff") || strings.Contains(view, "Finish the browser flow there.") {
+		t.Fatalf("boss chat transcript should not echo browser handoff:\n%s", view)
 	}
+	if !strings.Contains(noticeText, "Browser handoff") || !strings.Contains(noticeText, "Finish the browser flow there.") {
+		t.Fatalf("operational notice did not capture browser handoff:\n%s", noticeText)
+	}
+}
+
+func bossOperationalNoticeText(model bossui.Model) string {
+	notices := model.OperationalNotices()
+	parts := make([]string, 0, len(notices))
+	for _, notice := range notices {
+		parts = append(parts, notice.Summary)
+	}
+	return strings.Join(parts, "\n")
 }
 
 func TestBossAttentionAgentTaskJumpOpensTrackedSession(t *testing.T) {

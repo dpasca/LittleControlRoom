@@ -1,11 +1,8 @@
 package boss
 
 import (
-	"fmt"
 	"strings"
 	"time"
-
-	"lcroom/internal/model"
 )
 
 const (
@@ -45,26 +42,11 @@ func (m Model) supervisorItems(now time.Time) []bossSupervisorItem {
 		now = time.Now()
 	}
 	items := make([]bossSupervisorItem, 0, bossSupervisorItemLimit)
-	activeTaskIDs := map[string]struct{}{}
 	for _, activity := range m.activeEngineerActivities() {
 		if len(items) >= bossSupervisorItemLimit {
 			return items
 		}
-		if taskID := strings.TrimSpace(activity.TaskID); taskID != "" {
-			activeTaskIDs[taskID] = struct{}{}
-		}
 		if text := supervisorActivityLine(activity, now); text != "" {
-			items = append(items, bossSupervisorItem{Text: text})
-		}
-	}
-	for _, task := range m.snapshot.OpenAgentTasks {
-		if len(items) >= bossSupervisorItemLimit {
-			return items
-		}
-		if _, active := activeTaskIDs[strings.TrimSpace(task.ID)]; active {
-			continue
-		}
-		if text := supervisorTaskLine(task, now); text != "" {
 			items = append(items, bossSupervisorItem{Text: text})
 		}
 	}
@@ -123,51 +105,12 @@ func supervisorActivityQuietFor(activity ViewEngineerActivity, now time.Time) ti
 	return d
 }
 
-func supervisorTaskLine(task AgentTaskBrief, now time.Time) string {
-	title := compactAgentTaskTitle(task)
-	name := strings.TrimSpace(firstNonEmpty(task.EngineerName, EngineerNameForKey("agent_task", task.ID)))
-	detail := supervisorTaskDetail(task, now)
-	switch model.NormalizeAgentTaskStatus(task.Status) {
-	case model.AgentTaskStatusWaiting:
-		return supervisorJoinLine(name+" finished "+title+". "+agentTaskDecisionQuestion(name), detail)
-	case model.AgentTaskStatusActive:
-		return supervisorJoinLine(title+" is still open", detail)
-	default:
-		return ""
-	}
-}
-
-func supervisorTaskDetail(task AgentTaskBrief, now time.Time) string {
-	if summary := strings.TrimSpace(task.Summary); summary != "" {
-		return clipText(cleanHandoffSummary(summary), 140)
-	}
-	if model.NormalizeAgentTaskStatus(task.Status) == model.AgentTaskStatusActive {
-		return "no engineer is working on it right now"
-	}
-	if !task.LastTouchedAt.IsZero() {
-		return "touched " + relativeAge(now, task.LastTouchedAt)
-	}
-	return ""
-}
-
-func supervisorJoinLine(head, detail string) string {
-	head = strings.TrimSpace(head)
-	detail = strings.TrimSpace(detail)
-	if head == "" {
-		return detail
-	}
-	if detail == "" {
-		return head
-	}
-	return fmt.Sprintf("%s - %s", head, detail)
-}
-
 func agentTaskDecisionQuestion(engineerName string) string {
 	engineerName = strings.TrimSpace(engineerName)
 	if engineerName == "" || strings.EqualFold(engineerName, "Engineer") {
-		return "Should I close it, or send the engineer back in?"
+		return "ready to close or continue"
 	}
-	return "Should I close it, or send " + engineerName + " back in?"
+	return engineerName + " is ready to close or continue"
 }
 
 func (m Model) shouldRefreshSupervisorState() bool {

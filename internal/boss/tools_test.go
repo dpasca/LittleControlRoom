@@ -363,7 +363,7 @@ func TestQueryExecutorReportsLiveRunningSessionSample(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	for _, want := range []string{
-		"Live engineer session context:",
+		"Live engineer work context:",
 		"latest turn open",
 		"engineer: Currently compiling the compressed JSON profile migration path.",
 	} {
@@ -374,7 +374,7 @@ func TestQueryExecutorReportsLiveRunningSessionSample(t *testing.T) {
 	if strings.Contains(result.Text, "tool-output-should-not-leak") {
 		t.Fatalf("tool output should not appear in live session sample:\n%s", result.Text)
 	}
-	if sampleIndex, metadataIndex := strings.Index(result.Text, "Live engineer session context:"), strings.Index(result.Text, "Reference metadata"); sampleIndex < 0 || metadataIndex < 0 || sampleIndex > metadataIndex {
+	if sampleIndex, metadataIndex := strings.Index(result.Text, "Live engineer work context:"), strings.Index(result.Text, "Reference metadata"); sampleIndex < 0 || metadataIndex < 0 || sampleIndex > metadataIndex {
 		t.Fatalf("live session sample should precede reference metadata:\n%s", result.Text)
 	}
 }
@@ -487,7 +487,7 @@ func TestQueryExecutorContextCommandSearchesEngineerTranscriptsWithHandles(t *te
 	}
 	for _, want := range []string{
 		`ctx search engineer "summary flash": 1 matches.`,
-		"Engineer means Codex, OpenCode, or Claude Code work-session transcripts.",
+		"Engineer search covers Codex, OpenCode, or Claude Code task/project work logs.",
 		"handle: engineer:codex:ses_ctx",
 		"summary flash",
 		`show: ctx show engineer:codex:ses_ctx --query "summary flash" --before 1 --after 2 --max-chars 6000`,
@@ -1115,7 +1115,7 @@ func TestBuildViewContextBriefIncludesEngineerActivity(t *testing.T) {
 	}, now)
 
 	for _, want := range []string{
-		"active engineer sessions",
+		"active engineer work",
 		"Revoke Cursor GitHub access",
 		"working 00:37 via codex",
 	} {

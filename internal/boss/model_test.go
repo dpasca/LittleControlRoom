@@ -257,81 +257,38 @@ func TestBossTickRefreshesSupervisorTimer(t *testing.T) {
 	}
 }
 
-func TestModelSupervisorShowsReviewAgentTasks(t *testing.T) {
+func TestModelSupervisorDoesNotAppendReviewAgentTasksAfterTranscript(t *testing.T) {
 	t.Parallel()
 
 	now := time.Unix(1_800_000_000, 0)
 	m := New(context.Background(), nil)
 	m.nowFn = func() time.Time { return now }
-	m.snapshot = StateSnapshot{
-		OpenAgentTasks: []AgentTaskBrief{{
-			ID:            "agt_diff",
-			Title:         "Diff duplicate Codex skills",
-			EngineerName:  "Jun",
-			Status:        model.AgentTaskStatusWaiting,
-			Summary:       "Found one canonical skill and one stale duplicate.",
-			LastTouchedAt: now.Add(-2 * time.Minute),
-		}},
+	m.messages = []ChatMessage{
+		{Role: "assistant", Content: "Dennis is back from Diff duplicate Codex skills.\n\nCurrent state: there are no longer two live imagegen copies.", At: now.Add(-time.Minute)},
+		{Role: "user", Content: "the engineer has no memory?", At: now},
 	}
-
-	rendered := ansi.Strip(m.renderTranscript(180))
-	for _, want := range []string{"Jun finished Diff duplicate Codex skills. Should I close it, or send Jun back in?", "Found one canonical skill"} {
-		if !strings.Contains(rendered, want) {
-			t.Fatalf("supervisor review block missing %q:\n%s", want, rendered)
-		}
-	}
-	if strings.Contains(rendered, "Supervisor") {
-		t.Fatalf("passive supervisor review block should not expose supervisor chrome:\n%s", rendered)
-	}
-}
-
-func TestModelSupervisorReviewAgentTaskWithoutSummaryShowsDecision(t *testing.T) {
-	t.Parallel()
-
-	now := time.Unix(1_800_000_000, 0)
-	m := New(context.Background(), nil)
-	m.nowFn = func() time.Time { return now }
 	m.snapshot = StateSnapshot{
 		OpenAgentTasks: []AgentTaskBrief{{
 			ID:            "agt_diff",
 			Title:         "Diff duplicate Codex skills",
 			EngineerName:  "Dennis",
 			Status:        model.AgentTaskStatusWaiting,
-			LastTouchedAt: now.Add(-time.Hour),
+			Summary:       "Current state: there are no longer two live imagegen copies.",
+			LastTouchedAt: now.Add(-time.Minute),
 		}},
 	}
 
 	rendered := ansi.Strip(m.renderTranscript(180))
-	for _, want := range []string{"Dennis finished Diff duplicate Codex skills. Should I close it, or send Dennis back in?", "touched 1h ago"} {
+	for _, want := range []string{"Boss> Dennis is back from Diff duplicate Codex skills.", "You> the engineer has no memory?"} {
 		if !strings.Contains(rendered, want) {
-			t.Fatalf("supervisor review decision block missing %q:\n%s", want, rendered)
+			t.Fatalf("transcript missing saved chat turn %q:\n%s", want, rendered)
 		}
 	}
-	if strings.Contains(rendered, "Supervisor") {
-		t.Fatalf("review decision block should not expose supervisor chrome:\n%s", rendered)
+	if strings.Contains(rendered, "Dennis finished Diff duplicate Codex skills") {
+		t.Fatalf("review task should not be regenerated as a sticky transcript footer:\n%s", rendered)
 	}
-}
-
-func TestModelSupervisorCleansWaitingSummaryPunctuation(t *testing.T) {
-	t.Parallel()
-
-	m := New(context.Background(), nil)
-	m.snapshot = StateSnapshot{
-		OpenAgentTasks: []AgentTaskBrief{{
-			ID:           "agt_diff",
-			Title:        "Diff duplicate Codex skills",
-			EngineerName: "Dennis",
-			Status:       model.AgentTaskStatusWaiting,
-			Summary:      "Confirmed: the removed imagegen copy was the user-local directory:",
-		}},
-	}
-
-	rendered := ansi.Strip(m.renderTranscript(180))
-	if !strings.Contains(rendered, "Confirmed: the removed imagegen copy was the user-local directory.") {
-		t.Fatalf("supervisor summary should end naturally:\n%s", rendered)
-	}
-	if strings.Contains(rendered, "directory:") {
-		t.Fatalf("supervisor summary kept dangling colon:\n%s", rendered)
+	if strings.Contains(rendered, "Should I close it, or send Dennis back in?") {
+		t.Fatalf("review decision should not be appended after the saved Boss message:\n%s", rendered)
 	}
 }
 
@@ -457,6 +414,69 @@ func TestControlResultSummarizesAgentTaskHandoff(t *testing.T) {
 	} {
 		if strings.Contains(content, unwanted) {
 			t.Fatalf("control result leaked %q:\n%s", unwanted, content)
+		}
+	}
+}
+
+func TestControlResultIsContextNotBossChatTurn(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	m := NewEmbedded(context.Background(), nil)
+	m.nowFn = func() time.Time { return now }
+	m.messages = []ChatMessage{{Role: "user", Content: "what's the situation with the skills?", At: now}}
+
+	updated, cmd := m.Update(ControlInvocationResultMsg{
+		Status: "Agent task agt_20260502T230818_4c3c890b46 is now completed",
+	})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("control result without service should not emit a command, got %T", cmd)
+	}
+	if len(got.messages) != 1 {
+		t.Fatalf("control result should not append a boss chat turn, got %#v", got.messages)
+	}
+	if strings.Contains(got.renderTranscript(120), "Agent task agt_20260502T230818_4c3c890b46") {
+		t.Fatalf("control result leaked into transcript:\n%s", got.renderTranscript(120))
+	}
+	brief := BuildViewContextBrief(got.assistantViewContext(), now)
+	if !strings.Contains(brief, "control_completed") || !strings.Contains(brief, "Agent task agt_20260502T230818_4c3c890b46") {
+		t.Fatalf("control result should remain available as context:\n%s", brief)
+	}
+}
+
+func TestControlResultRendersTransientActiveEngineerFeedback(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	m := NewEmbedded(context.Background(), nil)
+	m.nowFn = func() time.Time { return now }
+	m.messages = []ChatMessage{{Role: "user", Content: "just nuke that skill", At: now}}
+	activity := ViewEngineerActivity{
+		Kind:         "agent_task",
+		TaskID:       "agt_skill_cleanup",
+		Title:        "Retire projects-control-center skill",
+		EngineerName: "Niklaus",
+		Provider:     model.SessionSourceCodex,
+		SessionID:    "thread-skill-cleanup",
+		Status:       "working",
+		Active:       true,
+		StartedAt:    now.Add(-3 * time.Second),
+		LastEventAt:  now.Add(-3 * time.Second),
+	}
+
+	updated, _ := m.Update(ControlInvocationResultMsg{
+		Status:   "Ok, Niklaus is working on Retire projects-control-center skill.",
+		Activity: &activity,
+	})
+	got := updated.(Model)
+	if len(got.messages) != 1 {
+		t.Fatalf("control result should not append a boss chat turn, got %#v", got.messages)
+	}
+	rendered := ansi.Strip(got.renderTranscript(120))
+	for _, want := range []string{"You> just nuke that skill", "Niklaus is working on Retire projects-control-center skill for 00:03"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("transient engineer feedback missing %q:\n%s", want, rendered)
 		}
 	}
 }
@@ -851,8 +871,11 @@ func TestEmbeddedModelCanCancelControlInvocation(t *testing.T) {
 	if got.status != "Control action canceled" {
 		t.Fatalf("status = %q", got.status)
 	}
-	if got.messages[len(got.messages)-1].Content != "Canceled. I did not run that control action." {
-		t.Fatalf("last message = %#v", got.messages[len(got.messages)-1])
+	if len(got.messages) != 0 {
+		t.Fatalf("cancel should not append a boss chat turn, got %#v", got.messages)
+	}
+	if len(got.operationalNotices) != 1 || got.operationalNotices[0].Code != "control_canceled" {
+		t.Fatalf("cancel notice = %#v, want one operational cancellation notice", got.operationalNotices)
 	}
 }
 

@@ -23,6 +23,7 @@ type ControlInvocationConfirmedMsg struct {
 type ControlInvocationResultMsg struct {
 	Invocation control.Invocation
 	Status     string
+	Activity   *ViewEngineerActivity
 	Err        error
 }
 
@@ -284,15 +285,10 @@ func (m Model) updateControlConfirmation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "esc", "ctrl+c":
 		m.pendingControl = nil
-		message := ChatMessage{
-			Role:    "assistant",
-			Content: "Canceled. I did not run that control action.",
-			At:      m.now(),
-		}
-		m.messages = append(m.messages, message)
 		m.status = "Control action canceled"
-		m.syncLayout(true)
-		return m, m.saveBossChatMessageCmd(message)
+		m = m.recordOperationalNotice("control_canceled", "notice", "The user canceled a pending control action.")
+		m.syncLayout(false)
+		return m, nil
 	case "alt+up":
 		return m, m.exitCmd()
 	default:
@@ -303,19 +299,19 @@ func (m Model) updateControlConfirmation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) applyControlInvocationResult(msg ControlInvocationResultMsg) (tea.Model, tea.Cmd) {
 	m.pendingControl = nil
-	message := ChatMessage{
-		Role:    "assistant",
-		Content: controlResultContent(msg),
-		At:      m.now(),
-	}
-	m.messages = append(m.messages, message)
+	content := controlResultContent(msg)
 	if msg.Err != nil {
-		m.status = "Control action failed"
+		m.status = operationalStatusLine(content, "Control action failed")
+		m = m.recordOperationalNotice("control_failed", "error", content)
 	} else {
-		m.status = "Control action completed"
+		m.status = operationalStatusLine(content, "Control action completed")
+		m = m.recordOperationalNotice("control_completed", "notice", content)
+		if msg.Activity != nil {
+			m = m.recordTransientEngineerActivity(*msg.Activity)
+		}
 	}
-	m.syncLayout(true)
-	cmds := []tea.Cmd{m.saveBossChatMessageCmd(message)}
+	m.syncLayout(false)
+	cmds := []tea.Cmd{}
 	if m.svc != nil {
 		cmds = append(cmds, m.loadStateCmd())
 	}
@@ -327,13 +323,16 @@ func (m Model) applyHostNotice(msg HostNoticeMsg) (tea.Model, tea.Cmd) {
 	if content == "" {
 		return m, nil
 	}
-	message := ChatMessage{
-		Role:    "assistant",
-		Content: content,
-		At:      m.now(),
+	m = m.recordOperationalNotice("host_update", "notice", content)
+	m.status = operationalStatusLine(content, "Host update")
+	m.syncLayout(false)
+	return m, nil
+}
+
+func operationalStatusLine(content, fallback string) string {
+	line := strings.Join(strings.Fields(content), " ")
+	if line == "" {
+		line = fallback
 	}
-	m.messages = append(m.messages, message)
-	m.status = "Host update"
-	m.syncLayout(true)
-	return m, m.saveBossChatMessageCmd(message)
+	return clipText(line, 160)
 }

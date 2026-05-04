@@ -288,7 +288,7 @@ func TestAttentionTextShowsWaitingAgentTaskDecisionWhenSummaryMissing(t *testing
 	}
 
 	attention := AttentionText(snapshot, now)
-	for _, want := range []string{"review | Diff duplicate Codex skills", "Dennis", "Should I close it, or send Dennis back in?", "touched 1h ago"} {
+	for _, want := range []string{"review | Diff duplicate Codex skills", "Dennis", "ready to close or continue", "touched 1h ago"} {
 		if !strings.Contains(attention, want) {
 			t.Fatalf("waiting agent task should show the needed decision %q:\n%s", want, attention)
 		}

@@ -277,7 +277,7 @@ func (e *QueryExecutor) projectDetail(ctx context.Context, action bossAction, vi
 	}
 	lines := []string{"Project detail:"}
 	if samples, err := e.store.SampleProjectSessionContext(ctx, path, 1); err == nil && len(samples) > 0 {
-		lines = append(lines, "Live engineer session context:")
+		lines = append(lines, "Live engineer work context:")
 		for _, sample := range samples {
 			line := fmt.Sprintf("- %s %s", sample.Source, sample.ExternalID())
 			if !sample.UpdatedAt.IsZero() {
@@ -820,7 +820,7 @@ func (e *QueryExecutor) contextCommandSearchEngineer(ctx context.Context, parsed
 	now := e.now()
 	lines := []string{
 		fmt.Sprintf("ctx search engineer %q: %d matches.", query, len(sessionResults)),
-		"Engineer means Codex, OpenCode, or Claude Code work-session transcripts. Boss Chat transcripts are separate.",
+		"Engineer search covers Codex, OpenCode, or Claude Code task/project work logs. Use ctx search boss for Boss Chat transcripts.",
 		"Use the handle with ctx show to fetch a bounded nearby exchange before quoting or correcting details.",
 	}
 	if projectPath != "" {
@@ -987,7 +987,7 @@ func (e *QueryExecutor) contextCommandRecentEngineer(ctx context.Context, parsed
 	now := e.now()
 	lines := []string{
 		fmt.Sprintf("ctx recent engineer: %d recent sessions for %s.", len(samples), projectPath),
-		"Engineer means Codex, OpenCode, or Claude Code work-session transcripts.",
+		"Engineer search covers Codex, OpenCode, or Claude Code task/project work logs.",
 	}
 	if note != "" {
 		lines = append(lines, "Target note: "+note)
@@ -1629,7 +1629,7 @@ func BuildViewContextBrief(view ViewContext, now time.Time) string {
 	if now.IsZero() {
 		now = time.Now()
 	}
-	if !view.Active && view.AllProjectCount == 0 && view.VisibleProjectCount == 0 {
+	if !view.Active && view.AllProjectCount == 0 && view.VisibleProjectCount == 0 && len(view.SystemNotices) == 0 && len(view.EngineerActivities) == 0 {
 		return "Current TUI view: no embedded classic TUI context was supplied."
 	}
 	mode := "standalone boss mode"
@@ -1658,10 +1658,10 @@ func BuildViewContextBrief(view ViewContext, now time.Time) string {
 	}
 	if len(view.EngineerActivities) > 0 {
 		limit := minInt(len(view.EngineerActivities), 5)
-		lines = append(lines, "- active engineer sessions:")
+		lines = append(lines, "- active engineer work:")
 		for i := 0; i < limit; i++ {
 			activity := view.EngineerActivities[i]
-			label := strings.TrimSpace(firstNonEmpty(activity.Title, activity.ProjectPath, activity.TaskID, "engineer session"))
+			label := strings.TrimSpace(firstNonEmpty(activity.Title, activity.ProjectPath, activity.TaskID, "engineer work"))
 			name := strings.TrimSpace(firstNonEmpty(activity.EngineerName, "Engineer"))
 			status := strings.TrimSpace(firstNonEmpty(activity.Status, "working"))
 			timer := ""

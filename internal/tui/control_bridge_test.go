@@ -259,6 +259,9 @@ func TestExecuteBossControlInvocationBatchesOpenAndBossResult(t *testing.T) {
 	if result.Status != wantStatus {
 		t.Fatalf("result status = %q, want %q", result.Status, wantStatus)
 	}
+	if result.Activity == nil || result.Activity.Kind != "project" || result.Activity.Title != "cn3" || !result.Activity.Active {
+		t.Fatalf("result activity = %#v, want active project activity", result.Activity)
+	}
 	if strings.Contains(result.Status, "Alt+Up") || strings.Contains(result.Status, "Prompt sent to embedded") || strings.Contains(result.Status, "Boss Chat stayed open") {
 		t.Fatalf("result status leaked embedded-pane copy: %q", result.Status)
 	}
@@ -433,6 +436,9 @@ func TestExecuteBossControlInvocationCreatesAgentTaskAndTracksSession(t *testing
 		strings.Contains(result.Status, "Alt+Up hides it") {
 		t.Fatalf("result status = %q, want high-level task launch status", result.Status)
 	}
+	if result.Activity == nil || result.Activity.Kind != "agent_task" || result.Activity.Title != "Clean suspicious local processes" || !result.Activity.Active {
+		t.Fatalf("result activity = %#v, want active agent task activity", result.Activity)
+	}
 	if len(requests) != 1 {
 		t.Fatalf("launch requests = %d, want 1", len(requests))
 	}
@@ -534,6 +540,9 @@ func TestExecuteBossControlInvocationContinuesAgentTaskWithTrackedSession(t *tes
 		strings.Contains(result.Status, "Attention row shows") {
 		t.Fatalf("result status = %q, want high-level continued task launch status without UI narration", result.Status)
 	}
+	if result.Activity == nil || result.Activity.TaskID != task.ID || result.Activity.Title != "Keep checking temp process cleanup" || result.Activity.EngineerName != engineerName {
+		t.Fatalf("result activity = %#v, want continued agent task activity", result.Activity)
+	}
 	if len(requests) != 1 {
 		t.Fatalf("launch requests = %d, want 1", len(requests))
 	}
@@ -542,6 +551,16 @@ func TestExecuteBossControlInvocationContinuesAgentTaskWithTrackedSession(t *tes
 	}
 	if requests[0].ResumeID != "thread-agent-existing" {
 		t.Fatalf("request ResumeID = %q, want tracked session", requests[0].ResumeID)
+	}
+	for _, want := range []string{
+		"Report contract:",
+		"Answer the user's exact request directly",
+		"what was compared, what was kept, what was discarded, and the substantive differences",
+		"User request:\nCheck whether the ports stayed clear.",
+	} {
+		if !strings.Contains(requests[0].Prompt, want) {
+			t.Fatalf("launch prompt missing %q:\n%s", want, requests[0].Prompt)
+		}
 	}
 	if requests[0].ForceNew {
 		t.Fatalf("request ForceNew = true, want resume")

@@ -234,12 +234,17 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 	for _, want := range []string{
 		"unnamed Boss Chat helper",
 		"the user is the boss",
-		"engineer sessions",
-		"Boss Chat messages",
+		"engineer threads",
+		"Boss Chat is the top-level conversation",
+		"linked task/thread records",
 		"Open agent tasks are delegated engineer work items",
+		"one tracked task with its linked engineer thread",
 		"separate from project TODOs",
 		"the AI assistant",
-		"extension of the active engineer sessions",
+		"high-level coordinator",
+		"Do not explain a missing task detail as the engineer having no persistent memory",
+		"Be proactive about finding facts",
+		"propose sending the same named engineer back with that specific question",
 		"ongoing coworker chat",
 		"skip onboarding",
 		"highest-level read first",
@@ -263,7 +268,7 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"structured control action",
 		"user must confirm",
 		"Do not say agent work will be done",
-		"ask naturally whether to close it or send the named engineer back in",
+		"recommend one next move",
 	} {
 		if !strings.Contains(directPrompt, want) {
 			t.Fatalf("assistant prompt missing %q:\n%s", want, directPrompt)
@@ -273,7 +278,11 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 	plannerPrompt := bossActionPlannerSystemPrompt()
 	for _, want := range []string{
 		"Do not answer that a concrete term is unknown until search_context has been tried.",
-		"extension of the active engineer sessions",
+		"high-level coordinator",
+		"linked task/thread records",
+		"do not imply a fresh unrelated session",
+		"Do not explain a missing task detail as the engineer having no persistent memory",
+		"Be proactive about finding facts",
 		"propose_control",
 		"agent_task.create",
 		"agent_task_report",
@@ -296,6 +305,8 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"ctx show",
 		"ctx show agent_task",
 		"output or result of an open agent task",
+		"details of a visible review/waiting agent task",
+		"propose agent_task.continue with a precise follow-up",
 		`vague request like "please try again"`,
 		"Use ctx search boss",
 		"search_boss_sessions",
@@ -304,13 +315,13 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"suspicious PIDs",
 		"XML-like boss_session and turn snippets",
 		"after it finds one project path, inspect project_detail before answering",
-		"live engineer session context",
+		"live engineer work context",
 		"concise coworker update",
 		"turn tool output into judgment",
 		"Do not describe UI mechanics",
 		"paraphrase the intent at boss level",
 		"meaningful result and what still needs attention",
-		"ask naturally whether to close it or send the named engineer back in",
+		"recommend one next move",
 		"answer the operational substance rather than reciting the lookup",
 		"codenames and aliases as shared coworker context",
 		"Alias resolution is private routing",
@@ -348,6 +359,30 @@ func TestAssistantPlannerUserTextAllowsClosingResolvedReviewTasks(t *testing.T) 
 		if !strings.Contains(got, "resolves a visible review/waiting agent task") ||
 			!strings.Contains(got, `control_capability="agent_task.close"`) {
 			t.Fatalf("planner user text should steer resolved review tasks toward close proposals:\n%s", got)
+		}
+	}
+}
+
+func TestAssistantPlannerUserTextSteersMissingTaskDetailToSameTask(t *testing.T) {
+	t.Parallel()
+
+	req := AssistantRequest{
+		StateBrief: "Open delegated agent tasks (separate from project TODOs):\n- Diff duplicate Codex skills (agt_diff); kind/status: agent/review; show: agent_task:agt_diff",
+		Messages:   []ChatMessage{{Role: "user", Content: "I was curious to know what were the differences"}},
+	}
+	normal := bossActionPlannerUserText(req, []bossToolResult{{
+		Name: bossActionContextCommand,
+		Text: "Task output: Current state: there are no longer two live imagegen copies. No line-by-line diff is included.",
+	}}, false)
+	forced := bossActionPlannerUserText(req, []bossToolResult{{
+		Name: bossActionContextCommand,
+		Text: "Task output: Current state: there are no longer two live imagegen copies. No line-by-line diff is included.",
+	}}, true)
+	for _, got := range []string{normal, forced} {
+		if !strings.Contains(got, "lacks the detail the user asked for") ||
+			!strings.Contains(got, `control_capability="agent_task.continue"`) ||
+			!strings.Contains(got, "same task") {
+			t.Fatalf("planner user text should steer missing task details back to the same task:\n%s", got)
 		}
 	}
 }

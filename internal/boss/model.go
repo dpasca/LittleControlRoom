@@ -22,9 +22,11 @@ import (
 )
 
 const (
-	defaultBossWidth     = 112
-	defaultBossHeight    = 32
-	summaryFlashDuration = time.Second
+	defaultBossWidth             = 112
+	defaultBossHeight            = 32
+	summaryFlashDuration         = time.Second
+	maxOperationalNotices        = 8
+	transientEngineerActivityTTL = 2 * time.Minute
 )
 
 type Model struct {
@@ -57,14 +59,16 @@ type Model struct {
 	sessionPickerSelected int
 	sessionPickerErr      error
 
-	snapshot     StateSnapshot
-	viewContext  ViewContext
-	stateLoaded  bool
-	stateErr     error
-	sending      bool
-	status       string
-	spinnerFrame int
-	nowFn        func() time.Time
+	snapshot            StateSnapshot
+	viewContext         ViewContext
+	operationalNotices  []ViewSystemNotice
+	transientActivities []ViewEngineerActivity
+	stateLoaded         bool
+	stateErr            error
+	sending             bool
+	status              string
+	spinnerFrame        int
+	nowFn               func() time.Time
 
 	assistantStreamID      int
 	streamingAssistantText string
@@ -170,7 +174,7 @@ func NewEmbedded(ctx context.Context, svc *service.Service) Model {
 
 func NewEmbeddedWithViewContext(ctx context.Context, svc *service.Service, view ViewContext) Model {
 	m := newModel(ctx, svc, true)
-	m.viewContext = view
+	m = m.WithViewContext(view)
 	return m
 }
 
@@ -236,10 +240,116 @@ func (m Model) WithViewContext(view ViewContext) Model {
 }
 
 func (m Model) HostNoticesReady() bool {
-	if !m.hasPersistentSessions() {
-		return true
+	return true
+}
+
+func (m Model) OperationalNotices() []ViewSystemNotice {
+	return append([]ViewSystemNotice(nil), m.operationalNotices...)
+}
+
+func (m Model) assistantViewContext() ViewContext {
+	view := m.viewContext
+	if len(m.operationalNotices) == 0 {
+		return view
 	}
-	return m.sessionLoaded && m.sessionErr == nil && strings.TrimSpace(m.sessionID) != ""
+	view.SystemNotices = append(append([]ViewSystemNotice(nil), view.SystemNotices...), m.operationalNotices...)
+	return view
+}
+
+func (m Model) recordOperationalNotice(code, severity, summary string) Model {
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return m
+	}
+	code = strings.TrimSpace(code)
+	if code == "" {
+		code = "host_update"
+	}
+	severity = strings.TrimSpace(severity)
+	if severity == "" {
+		severity = "notice"
+	}
+	notice := ViewSystemNotice{
+		Code:     code,
+		Severity: severity,
+		Summary:  summary,
+	}
+	if len(m.operationalNotices) > 0 {
+		last := m.operationalNotices[len(m.operationalNotices)-1]
+		if last.Code == notice.Code && last.Severity == notice.Severity && last.Summary == notice.Summary {
+			return m
+		}
+	}
+	m.operationalNotices = append(m.operationalNotices, notice)
+	if len(m.operationalNotices) > maxOperationalNotices {
+		m.operationalNotices = append([]ViewSystemNotice(nil), m.operationalNotices[len(m.operationalNotices)-maxOperationalNotices:]...)
+	}
+	return m
+}
+
+func (m Model) recordTransientEngineerActivity(activity ViewEngineerActivity) Model {
+	if !activity.Active {
+		return m
+	}
+	if strings.TrimSpace(activity.Title) == "" && strings.TrimSpace(activity.ProjectPath) == "" && strings.TrimSpace(activity.TaskID) == "" {
+		return m
+	}
+	now := m.now()
+	if activity.StartedAt.IsZero() {
+		activity.StartedAt = now
+	}
+	if activity.LastEventAt.IsZero() {
+		activity.LastEventAt = activity.StartedAt
+	}
+	if strings.TrimSpace(activity.Status) == "" {
+		activity.Status = "working"
+	}
+	key := viewEngineerActivityKey(activity)
+	if key == "" {
+		return m
+	}
+	replaced := false
+	for i, existing := range m.transientActivities {
+		if viewEngineerActivityKey(existing) == key {
+			m.transientActivities[i] = activity
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		m.transientActivities = append(m.transientActivities, activity)
+	}
+	m.pruneTransientEngineerActivities()
+	return m
+}
+
+func (m *Model) pruneTransientEngineerActivities() {
+	if len(m.transientActivities) == 0 {
+		return
+	}
+	now := m.now()
+	out := m.transientActivities[:0]
+	for _, activity := range m.transientActivities {
+		if transientEngineerActivityExpired(activity, now) {
+			continue
+		}
+		out = append(out, activity)
+	}
+	m.transientActivities = out
+}
+
+func transientEngineerActivityExpired(activity ViewEngineerActivity, now time.Time) bool {
+	if now.IsZero() {
+		return false
+	}
+	startedAt := activity.StartedAt
+	if startedAt.IsZero() {
+		startedAt = activity.LastEventAt
+	}
+	if startedAt.IsZero() {
+		return false
+	}
+	return now.Sub(startedAt) > transientEngineerActivityTTL
 }
 
 func (m Model) StatusText() string {
@@ -355,6 +465,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TickMsg:
 		m.spinnerFrame++
 		m.pruneSummaryFlashes()
+		m.pruneTransientEngineerActivities()
 		if m.sending || len(m.supervisorItems(m.now())) > 0 {
 			m.syncLayout(false)
 		}
@@ -1295,16 +1406,47 @@ func (m Model) renderTranscript(width int) string {
 }
 
 func (m Model) activeEngineerActivities() []ViewEngineerActivity {
-	if len(m.viewContext.EngineerActivities) == 0 {
-		return nil
-	}
-	out := make([]ViewEngineerActivity, 0, len(m.viewContext.EngineerActivities))
+	out := make([]ViewEngineerActivity, 0, len(m.viewContext.EngineerActivities)+len(m.transientActivities))
+	seen := map[string]bool{}
 	for _, activity := range m.viewContext.EngineerActivities {
 		if activity.Active {
+			if key := viewEngineerActivityKey(activity); key != "" {
+				seen[key] = true
+			}
 			out = append(out, activity)
 		}
 	}
+	now := m.now()
+	for _, activity := range m.transientActivities {
+		if !activity.Active || transientEngineerActivityExpired(activity, now) {
+			continue
+		}
+		key := viewEngineerActivityKey(activity)
+		if key != "" && seen[key] {
+			continue
+		}
+		if key != "" {
+			seen[key] = true
+		}
+		out = append(out, activity)
+	}
 	return out
+}
+
+func viewEngineerActivityKey(activity ViewEngineerActivity) string {
+	if taskID := strings.TrimSpace(activity.TaskID); taskID != "" {
+		return "task:" + taskID
+	}
+	parts := []string{
+		strings.TrimSpace(activity.Kind),
+		strings.TrimSpace(activity.ProjectPath),
+		strings.TrimSpace(string(model.NormalizeSessionSource(activity.Provider))),
+		strings.TrimSpace(activity.SessionID),
+	}
+	if strings.Join(parts, "") == "" {
+		return ""
+	}
+	return strings.Join(parts, "\x00")
 }
 
 func (m Model) now() time.Time {

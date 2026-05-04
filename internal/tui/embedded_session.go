@@ -27,6 +27,9 @@ type codexSessionOpenedMsg struct {
 	status           string
 	visibleStatus    string
 	backgroundStatus string
+	agentTaskID      string
+	agentTaskTitle   string
+	agentTaskName    string
 	perfOpID         int64
 	perfDuration     time.Duration
 	err              error

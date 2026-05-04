@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	bossui "lcroom/internal/boss"
 	"lcroom/internal/codexapp"
@@ -93,9 +94,11 @@ func bossControlExecutionCmd(inv control.Invocation, cmd tea.Cmd) tea.Cmd {
 			status = bossControlOpenedSessionStatus(inv, opened)
 			err = opened.err
 		}
+		activity := bossControlOpenedSessionActivity(inv, msg)
 		result := bossui.ControlInvocationResultMsg{
 			Invocation: copyControlInvocationForBoss(inv),
 			Status:     status,
+			Activity:   activity,
 			Err:        err,
 		}
 		if msg == nil {
@@ -106,6 +109,95 @@ func bossControlExecutionCmd(inv control.Invocation, cmd tea.Cmd) tea.Cmd {
 			func() tea.Msg { return result },
 		}
 	}
+}
+
+func bossControlOpenedSessionActivity(inv control.Invocation, msg tea.Msg) *bossui.ViewEngineerActivity {
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok || opened.err != nil {
+		return nil
+	}
+	normalized, err := control.ValidateInvocation(inv)
+	if err != nil {
+		return nil
+	}
+	provider := modelSessionSourceFromCodexProvider(embeddedProvider(opened.snapshot))
+	sessionID := strings.TrimSpace(opened.snapshot.ThreadID)
+	startedAt := bossControlActivityStartedAt(opened.snapshot)
+	switch normalized.Capability {
+	case control.CapabilityEngineerSendPrompt:
+		var input control.EngineerSendPromptInput
+		if err := json.Unmarshal(normalized.Args, &input); err != nil {
+			return nil
+		}
+		title := bossControlProjectTargetLabel(input.ProjectName, input.ProjectPath, opened.projectPath)
+		if title == "" {
+			title = "the selected project"
+		}
+		return &bossui.ViewEngineerActivity{
+			Kind:         "project",
+			ProjectPath:  strings.TrimSpace(opened.projectPath),
+			Title:        title,
+			EngineerName: bossui.EngineerNameForKey("project", opened.projectPath, sessionID),
+			Provider:     provider,
+			SessionID:    sessionID,
+			Status:       "working",
+			Active:       true,
+			StartedAt:    startedAt,
+			LastEventAt:  startedAt,
+		}
+	case control.CapabilityAgentTaskCreate:
+		var input control.AgentTaskCreateInput
+		if err := json.Unmarshal(normalized.Args, &input); err != nil {
+			return nil
+		}
+		taskID := strings.TrimSpace(opened.agentTaskID)
+		title := firstNonEmptyTrimmed(opened.agentTaskTitle, input.Title, taskID, "agent task")
+		name := firstNonEmptyTrimmed(opened.agentTaskName, bossui.EngineerNameForKey("agent_task", taskID), "Engineer")
+		return &bossui.ViewEngineerActivity{
+			Kind:         "agent_task",
+			TaskID:       taskID,
+			ProjectPath:  strings.TrimSpace(opened.projectPath),
+			Title:        title,
+			EngineerName: name,
+			Provider:     provider,
+			SessionID:    sessionID,
+			Status:       "working",
+			Active:       true,
+			StartedAt:    startedAt,
+			LastEventAt:  startedAt,
+		}
+	case control.CapabilityAgentTaskContinue:
+		var input control.AgentTaskContinueInput
+		if err := json.Unmarshal(normalized.Args, &input); err != nil {
+			return nil
+		}
+		taskID := firstNonEmptyTrimmed(opened.agentTaskID, input.TaskID)
+		title := firstNonEmptyTrimmed(opened.agentTaskTitle, taskID, "agent task")
+		name := firstNonEmptyTrimmed(opened.agentTaskName, bossui.EngineerNameForKey("agent_task", taskID), "Engineer")
+		return &bossui.ViewEngineerActivity{
+			Kind:         "agent_task",
+			TaskID:       taskID,
+			ProjectPath:  strings.TrimSpace(opened.projectPath),
+			Title:        title,
+			EngineerName: name,
+			Provider:     provider,
+			SessionID:    sessionID,
+			Status:       "working",
+			Active:       true,
+			StartedAt:    startedAt,
+			LastEventAt:  startedAt,
+		}
+	default:
+		return nil
+	}
+}
+
+func bossControlActivityStartedAt(snapshot codexapp.Snapshot) time.Time {
+	startedAt := bossEngineerActivityStartedAt(snapshot)
+	if startedAt.IsZero() {
+		startedAt = time.Now()
+	}
+	return startedAt
 }
 
 func bossControlOpenedSessionStatus(inv control.Invocation, opened codexSessionOpenedMsg) string {
@@ -353,7 +445,7 @@ func (m Model) executeAgentTaskCreateControlWithOutcome(input control.AgentTaskC
 		err := errors.New(status)
 		return controlInvocationOutcome{model: m, err: err}
 	}
-	return controlInvocationOutcome{model: m, cmd: m.agentTaskLaunchTrackingCmd(task.ID, cmd, bossAgentTaskHandoffStatus(task))}
+	return controlInvocationOutcome{model: m, cmd: m.agentTaskLaunchTrackingCmd(task, cmd, bossAgentTaskHandoffStatus(task))}
 }
 
 func (m Model) executeAgentTaskContinueControlWithOutcome(input control.AgentTaskContinueInput) controlInvocationOutcome {
@@ -401,7 +493,7 @@ func (m Model) executeAgentTaskContinueControlWithOutcome(input control.AgentTas
 		err := errors.New(status)
 		return controlInvocationOutcome{model: m, err: err}
 	}
-	return controlInvocationOutcome{model: m, cmd: m.agentTaskLaunchTrackingCmd(task.ID, cmd, bossAgentTaskHandoffStatus(task))}
+	return controlInvocationOutcome{model: m, cmd: m.agentTaskLaunchTrackingCmd(task, cmd, bossAgentTaskHandoffStatus(task))}
 }
 
 func (m Model) executeAgentTaskCloseControlWithOutcome(input control.AgentTaskCloseInput) controlInvocationOutcome {
@@ -467,13 +559,17 @@ func (m Model) liveAgentTaskSnapshot(task model.AgentTask) (codexapp.Snapshot, b
 	return codexapp.Snapshot{}, false
 }
 
-func (m Model) agentTaskLaunchTrackingCmd(taskID string, cmd tea.Cmd, successStatus string) tea.Cmd {
+func (m Model) agentTaskLaunchTrackingCmd(task model.AgentTask, cmd tea.Cmd, successStatus string) tea.Cmd {
 	return func() tea.Msg {
 		msg := cmd()
 		opened, ok := msg.(codexSessionOpenedMsg)
 		if !ok || opened.err != nil || m.svc == nil {
 			return msg
 		}
+		taskID := strings.TrimSpace(task.ID)
+		opened.agentTaskID = taskID
+		opened.agentTaskTitle = strings.TrimSpace(task.Title)
+		opened.agentTaskName = bossEngineerNameForAgentTask(task)
 		provider := modelSessionSourceFromCodexProvider(embeddedProvider(opened.snapshot))
 		sessionID := strings.TrimSpace(opened.snapshot.ThreadID)
 		if _, err := m.svc.AttachAgentTaskEngineerSession(m.ctx, taskID, provider, sessionID); err != nil {
@@ -612,6 +708,13 @@ func agentTaskLaunchPrompt(task model.AgentTask, prompt string) string {
 	if resources := agentTaskResourcePromptSummary(task.Resources); resources != "" {
 		lines = append(lines, "Resources: "+resources)
 	}
+	lines = append(lines,
+		"",
+		"Report contract:",
+		"- Answer the user's exact request directly, with enough concrete detail for Boss Chat to summarize without guessing.",
+		"- For comparison, diff, cleanup, or review work, name what was compared, what was kept, what was discarded, and the substantive differences.",
+		"- Avoid vague wrap-ups like only saying the entries differ, the state is clean, or canonical copies were kept.",
+	)
 	lines = append(lines, "", "User request:", strings.TrimSpace(prompt))
 	return strings.Join(lines, "\n")
 }
