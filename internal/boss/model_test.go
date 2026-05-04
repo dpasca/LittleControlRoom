@@ -1332,22 +1332,49 @@ func TestBossSidebarRendersNativeCompanion(t *testing.T) {
 	}
 }
 
-func TestBossCompanionUsesSharedOperatorModel(t *testing.T) {
+func TestBossCompanionUsesSharedStationScene(t *testing.T) {
 	t.Parallel()
 
-	sprite := renderBossCompanionSprite(bossCompanionIdle, 0)
-	if got, want := sprite.width, pixelart.OperatorWidth; got != want {
-		t.Fatalf("boss companion width = %d, want shared operator width %d", got, want)
+	sprite := renderBossCompanionSprite(bossCompanionIdle, 0, 36)
+	if got, want := sprite.width, 36; got != want {
+		t.Fatalf("boss companion width = %d, want panel width %d", got, want)
 	}
-	if got, want := sprite.height, pixelart.OperatorHeight; got != want {
-		t.Fatalf("boss companion height = %d, want shared operator height %d", got, want)
+	if got, want := sprite.height, pixelart.OperatorStationHeight; got != want {
+		t.Fatalf("boss companion height = %d, want shared station height %d", got, want)
+	}
+}
+
+func TestBossCompanionUsesMinimumSharedStationWidth(t *testing.T) {
+	t.Parallel()
+
+	sprite := renderBossCompanionSprite(bossCompanionIdle, 0, 12)
+	if got, want := sprite.width, pixelart.OperatorStationWidth; got != want {
+		t.Fatalf("boss companion width = %d, want shared station width %d", got, want)
+	}
+	if got, want := sprite.height, pixelart.OperatorStationHeight; got != want {
+		t.Fatalf("boss companion height = %d, want shared station height %d", got, want)
+	}
+}
+
+func TestBossSidebarCompanionRowsFillPanelWidth(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbedded(context.Background(), nil)
+	rows := m.bossSidebarCompanionLines(36, 20)
+	if len(rows) == 0 {
+		t.Fatalf("expected sidebar companion rows")
+	}
+	for i, row := range rows {
+		if got, want := ansi.StringWidth(ansi.Strip(row)), 36; got != want {
+			t.Fatalf("sidebar companion row %d width = %d, want panel width %d", i, got, want)
+		}
 	}
 }
 
 func TestBossCompanionHalfRowsStayNativeSize(t *testing.T) {
 	t.Parallel()
 
-	sprite := renderBossCompanionSprite(bossCompanionIdle, 0)
+	sprite := renderBossCompanionSprite(bossCompanionIdle, 0, 36)
 	rows := sprite.renderHalfRows()
 	if len(rows) == 0 {
 		t.Fatalf("expected companion rows")

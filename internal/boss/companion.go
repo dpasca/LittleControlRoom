@@ -89,14 +89,17 @@ func (s bossCompanionSprite) cell(x, y int) bossCompanionCell {
 	return s.cells[y*s.width+x]
 }
 
-func renderBossCompanionSprite(mood bossCompanionMood, frame int) bossCompanionSprite {
-	sprite := newBossCompanionSprite(pixelart.OperatorWidth, pixelart.OperatorHeight)
+func renderBossCompanionSprite(mood bossCompanionMood, frame, width int) bossCompanionSprite {
+	width = maxInt(pixelart.OperatorStationWidth, width)
+	sprite := newBossCompanionSprite(width, pixelart.OperatorStationHeight)
 	beat := frame % 4
-	pixelart.DrawOperator(func(x, y int, color pixelart.Color) {
+	pixelart.DrawOperatorStation(func(x, y int, color pixelart.Color) {
 		sprite.set(x, y, bossCompanionColorFromPixelArt(color))
-	}, pixelart.OperatorState{
+	}, pixelart.OperatorStationState{
+		Width: width,
 		Pose:  bossCompanionOperatorPose(mood, beat),
 		Blink: frame%13 == 7,
+		Phase: frame,
 	})
 	if mood == bossCompanionThinking {
 		sprite.set(0, 0, bossCompanionSignalColor)

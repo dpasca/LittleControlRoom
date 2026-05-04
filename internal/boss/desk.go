@@ -129,7 +129,7 @@ func (m Model) bossSidebarCompanionLines(width, maxRows int) []string {
 	if width < 14 || maxRows <= 0 {
 		return nil
 	}
-	sprite := renderBossCompanionSprite(m.bossCompanionMood(), m.spinnerFrame)
+	sprite := renderBossCompanionSprite(m.bossCompanionMood(), m.spinnerFrame, width)
 	rows := sprite.renderHalfRows()
 	if len(rows) == 0 {
 		return nil
