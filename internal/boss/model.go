@@ -162,6 +162,7 @@ type bossLayout struct {
 	inputHeight      int
 	slashHeight      int
 	narrow           bool
+	splitDesk        bool
 }
 
 func New(ctx context.Context, svc *service.Service) Model {
@@ -643,6 +644,15 @@ func (m Model) View() string {
 	body := ""
 	if layout.narrow {
 		body = m.renderNarrow(layout)
+	} else if layout.splitDesk {
+		chat := m.renderChat(layout)
+		desk := m.renderBossDesk(layout.attentionWidth, layout.topHeight)
+		body = lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			chat,
+			fitRenderedBlock("", 1, layout.topHeight),
+			desk,
+		)
 	} else {
 		chat := m.renderChat(layout)
 		if layout.bottomHeight < 4 {
@@ -879,6 +889,28 @@ func (m Model) layout() bossLayout {
 		}
 	}
 
+	if width >= 96 && height >= 16 {
+		deskWidth := clampInt(width/3, 32, 48)
+		gapWidth := 1
+		chatWidth := maxInt(48, width-deskWidth-gapWidth)
+		chatInnerWidth := bossPanelInnerWidth(chatWidth)
+		transcriptHeight, slashHeight := m.chatAuxiliaryHeights(height, inputHeight, !m.embedded)
+		return bossLayout{
+			width:            width,
+			height:           height,
+			topHeight:        height,
+			bottomHeight:     0,
+			middleGapHeight:  0,
+			chatWidth:        chatWidth,
+			attentionWidth:   width - chatWidth - gapWidth,
+			chatInnerWidth:   chatInnerWidth,
+			transcriptHeight: transcriptHeight,
+			inputHeight:      inputHeight,
+			slashHeight:      slashHeight,
+			splitDesk:        true,
+		}
+	}
+
 	minTopHeight := 10
 	minBottomHeight := 7
 	if m.embedded && height < 18 {
@@ -898,7 +930,7 @@ func (m Model) layout() bossLayout {
 	chatInnerWidth := bossPanelInnerWidth(chatWidth)
 	if m.embedded {
 		topNeeded := minTopHeight
-		bottomNeeded := maxInt(minBottomHeight, panelHeightForRawLines(countBlockLines(m.attentionContent(attentionWidth, minBottomHeight))))
+		bottomNeeded := maxInt(minBottomHeight, panelHeightForRawLines(countBlockLines(m.deskContent(attentionWidth, minBottomHeight))))
 		maxBottomHeight := embeddedBottomPanelMaxHeight(height)
 		bottomHeight = clampInt(bottomNeeded, minBottomHeight, maxBottomHeight)
 		if height-bottomHeight >= topNeeded {
@@ -982,7 +1014,7 @@ func (m Model) renderHeader(width int) string {
 }
 
 func (m Model) renderAttention(width, height int) string {
-	return m.renderRawPanel("Attention", m.attentionContent(width, height), width, height)
+	return m.renderBossDesk(width, height)
 }
 
 func (m Model) attentionContent(width, height int) string {
@@ -1094,7 +1126,7 @@ func (m Model) engineerActivityForAgentTask(taskID string) (ViewEngineerActivity
 	if taskID == "" {
 		return ViewEngineerActivity{}, false
 	}
-	for _, activity := range m.viewContext.EngineerActivities {
+	for _, activity := range m.activeEngineerActivities() {
 		if strings.TrimSpace(activity.TaskID) == taskID && activity.Active {
 			return activity, true
 		}
@@ -1107,7 +1139,7 @@ func (m Model) engineerActivityForProject(projectPath string) (ViewEngineerActiv
 	if projectPath == "" {
 		return ViewEngineerActivity{}, false
 	}
-	for _, activity := range m.viewContext.EngineerActivities {
+	for _, activity := range m.activeEngineerActivities() {
 		if strings.TrimSpace(activity.ProjectPath) == projectPath && activity.Active {
 			return activity, true
 		}
@@ -1393,9 +1425,6 @@ func (m Model) renderTranscript(width int) string {
 			continue
 		}
 		blocks = append(blocks, renderUserMessage(message.Content, width))
-	}
-	if activity := m.renderSupervisorBrief(width); activity != "" {
-		blocks = append(blocks, activity)
 	}
 	if m.sending {
 		if pending := renderStreamingAssistantMessage(m.streamingAssistantText, m.streamingToolCalls, width, m.spinnerFrame); pending != "" {

@@ -39,7 +39,7 @@ func TestModelViewRendersBossPanels(t *testing.T) {
 	m.syncLayout(true)
 
 	view := m.View()
-	for _, want := range []string{"Boss Chat", "Attention", "Alt+1", "Alpha"} {
+	for _, want := range []string{"Boss Chat", "Boss Desk", "Watching", "Next", "Alpha"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
@@ -213,18 +213,19 @@ func TestModelAttentionRowsShowActiveAgentTaskTimer(t *testing.T) {
 			t.Fatalf("active agent attention row missing %q:\n%s", want, stripped)
 		}
 	}
-	transcript := ansi.Strip(m.renderTranscript(90))
-	for _, want := range []string{"Ada is working on Revoke Cursor GitHub access for 00:37"} {
-		if !strings.Contains(transcript, want) {
-			t.Fatalf("active agent transcript status missing %q:\n%s", want, transcript)
+	desk := ansi.Strip(m.deskContent(90, 12))
+	for _, want := range []string{"Now", "00:37", "Ada on Revoke Cursor GitHub access"} {
+		if !strings.Contains(desk, want) {
+			t.Fatalf("active agent desk status missing %q:\n%s", want, desk)
 		}
 	}
-	if strings.Contains(transcript, "Supervisor") {
-		t.Fatalf("active agent transcript should not expose supervisor chrome:\n%s", transcript)
+	transcript := ansi.Strip(m.renderTranscript(90))
+	if strings.Contains(transcript, "Ada is working on Revoke Cursor GitHub access") || strings.Contains(transcript, "Supervisor") {
+		t.Fatalf("active agent status should stay out of transcript:\n%s", transcript)
 	}
 }
 
-func TestBossTickRefreshesSupervisorTimer(t *testing.T) {
+func TestBossTickRefreshesDeskTimer(t *testing.T) {
 	t.Parallel()
 
 	now := time.Unix(1_800_000_000, 0)
@@ -244,16 +245,17 @@ func TestBossTickRefreshesSupervisorTimer(t *testing.T) {
 	m.height = 24
 	m.nowFn = func() time.Time { return now }
 	m.syncLayout(true)
-	if !strings.Contains(ansi.Strip(m.chatViewport.View()), "00:03") {
-		t.Fatalf("initial supervisor block missing timer:\n%s", ansi.Strip(m.chatViewport.View()))
+	initialDesk := ansi.Strip(m.deskContent(48, 12))
+	if !strings.Contains(initialDesk, "00:03") {
+		t.Fatalf("initial desk block missing timer:\n%s", initialDesk)
 	}
 
 	now = now.Add(time.Second)
 	updated, _ := m.Update(TickMsg(now))
 	got := updated.(Model)
-	rendered := ansi.Strip(got.chatViewport.View())
+	rendered := ansi.Strip(got.deskContent(48, 12))
 	if !strings.Contains(rendered, "00:04") || strings.Contains(rendered, "00:03") {
-		t.Fatalf("supervisor timer did not refresh on tick:\n%s", rendered)
+		t.Fatalf("desk timer did not refresh on tick:\n%s", rendered)
 	}
 }
 
@@ -312,10 +314,10 @@ func TestModelSupervisorMarksQuietEngineerActivity(t *testing.T) {
 		}},
 	}
 
-	rendered := ansi.Strip(m.renderTranscript(90))
-	for _, want := range []string{"Tem has gone quiet on Alpha for 11:00"} {
+	rendered := ansi.Strip(m.deskContent(90, 12))
+	for _, want := range []string{"Now", "quiet", "Tem has gone quiet on Alpha for 11:00"} {
 		if !strings.Contains(rendered, want) {
-			t.Fatalf("supervisor quiet block missing %q:\n%s", want, rendered)
+			t.Fatalf("boss desk quiet block missing %q:\n%s", want, rendered)
 		}
 	}
 }
@@ -474,9 +476,18 @@ func TestControlResultRendersTransientActiveEngineerFeedback(t *testing.T) {
 		t.Fatalf("control result should not append a boss chat turn, got %#v", got.messages)
 	}
 	rendered := ansi.Strip(got.renderTranscript(120))
-	for _, want := range []string{"You> just nuke that skill", "Niklaus is working on Retire projects-control-center skill for 00:03"} {
+	for _, want := range []string{"You> just nuke that skill"} {
 		if !strings.Contains(rendered, want) {
-			t.Fatalf("transient engineer feedback missing %q:\n%s", want, rendered)
+			t.Fatalf("transcript missing saved turn %q:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "Niklaus is working on Retire projects-control-center skill") {
+		t.Fatalf("transient engineer feedback should stay out of transcript:\n%s", rendered)
+	}
+	desk := ansi.Strip(got.deskContent(90, 12))
+	for _, want := range []string{"Now", "00:03", "Niklaus on Retire projects-control-center skill"} {
+		if !strings.Contains(desk, want) {
+			t.Fatalf("transient engineer feedback missing from desk %q:\n%s", want, desk)
 		}
 	}
 }
@@ -1043,14 +1054,17 @@ func TestEmbeddedModelGivesChatMoreHorizontalRoom(t *testing.T) {
 	m.height = 42
 
 	layout := m.layout()
-	if layout.chatWidth != layout.width {
-		t.Fatalf("chat width = %d, want full terminal width %d", layout.chatWidth, layout.width)
+	if !layout.splitDesk {
+		t.Fatalf("wide embedded layout should use the split boss desk: %+v", layout)
 	}
-	if layout.chatInnerWidth < 170 {
-		t.Fatalf("chat inner width = %d, want full-width transcript column", layout.chatInnerWidth)
+	if got, want := layout.chatWidth+layout.attentionWidth+1, layout.width; got != want {
+		t.Fatalf("split widths = chat %d + gap 1 + desk %d = %d, want %d", layout.chatWidth, layout.attentionWidth, got, want)
 	}
-	if layout.attentionWidth != layout.width {
-		t.Fatalf("attention panel width = %d, want full terminal width %d", layout.attentionWidth, layout.width)
+	if layout.chatInnerWidth < 120 {
+		t.Fatalf("chat inner width = %d, want a roomy transcript column", layout.chatInnerWidth)
+	}
+	if layout.attentionWidth < 32 {
+		t.Fatalf("boss desk width = %d, want readable side workboard", layout.attentionWidth)
 	}
 }
 
@@ -1108,33 +1122,36 @@ func TestEmbeddedModelKeepsMediumWidthLowerPanelsCompact(t *testing.T) {
 	m.syncLayout(true)
 
 	layout := m.layout()
+	if !layout.splitDesk {
+		t.Fatalf("medium-width layout should use the boss desk split: %+v", layout)
+	}
 	if layout.middleGapHeight != 0 {
-		t.Fatalf("medium-width layout should not use a separator row, got %d", layout.middleGapHeight)
+		t.Fatalf("medium-width layout should not use a vertical separator row, got %d", layout.middleGapHeight)
 	}
-	if layout.bottomHeight > embeddedBottomPanelMaxHeight(layout.height) {
-		t.Fatalf("medium-width bottom panels = %d, want <= %d", layout.bottomHeight, embeddedBottomPanelMaxHeight(layout.height))
+	if layout.bottomHeight != 0 {
+		t.Fatalf("medium-width split layout should not reserve a bottom panel, got %d", layout.bottomHeight)
 	}
-	if renderedHeight := layout.topHeight + layout.middleGapHeight + layout.bottomHeight; renderedHeight != layout.height {
-		t.Fatalf("medium-width panels should fill the host body, got rendered height %d terminal height %d", renderedHeight, layout.height)
+	if layout.topHeight != layout.height {
+		t.Fatalf("medium-width split layout should give full height to chat and desk, got top %d terminal %d", layout.topHeight, layout.height)
 	}
-	if layout.topHeight <= layout.bottomHeight {
-		t.Fatalf("chat row should be taller than lower panels, got top %d bottom %d", layout.topHeight, layout.bottomHeight)
+	if got, want := layout.chatWidth+layout.attentionWidth+1, layout.width; got != want {
+		t.Fatalf("medium-width split widths = chat %d + gap 1 + desk %d = %d, want %d", layout.chatWidth, layout.attentionWidth, got, want)
 	}
 
 	rendered := ansi.Strip(m.View())
 	if !strings.Contains(rendered, "LittleControlRoom") {
-		t.Fatalf("compact lower panels should still show the highest-attention project:\n%s", rendered)
+		t.Fatalf("boss desk should still show the highest-attention project:\n%s", rendered)
 	}
 	lines := strings.Split(rendered, "\n")
-	bottomBorderLine := layout.topHeight + layout.middleGapHeight + layout.bottomHeight - 1
+	bottomBorderLine := layout.topHeight - 1
 	if bottomBorderLine >= len(lines) {
 		t.Fatalf("bottom border row %d outside rendered view with %d lines:\n%s", bottomBorderLine, len(lines), rendered)
 	}
 	if !strings.HasPrefix(lines[bottomBorderLine], "╰") {
-		t.Fatalf("bottom panels should keep their bottom border visible, got %q", lines[bottomBorderLine])
+		t.Fatalf("split panels should keep their bottom border visible, got %q", lines[bottomBorderLine])
 	}
 	if bottomBorderLine != len(lines)-1 {
-		t.Fatalf("bottom panels should finish on the final embedded body row, got border row %d line count %d", bottomBorderLine, len(lines))
+		t.Fatalf("split panels should finish on the final embedded body row, got border row %d line count %d", bottomBorderLine, len(lines))
 	}
 }
 
@@ -1361,7 +1378,7 @@ func TestBossMessagesDoNotIndentContinuationLines(t *testing.T) {
 	}
 }
 
-func TestModelTranscriptKeepsEngineerActivityWhileBossIsThinking(t *testing.T) {
+func TestModelKeepsEngineerActivityOutOfTranscriptWhileBossIsThinking(t *testing.T) {
 	t.Parallel()
 
 	now := time.Unix(1_800_000_000, 0)
@@ -1384,13 +1401,19 @@ func TestModelTranscriptKeepsEngineerActivityWhileBossIsThinking(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderTranscript(90))
-	for _, want := range []string{"Ada is working on Diff duplicate Codex skills for 00:09", "Tool calls", "agent_task_report"} {
+	for _, want := range []string{"Tool calls", "agent_task_report"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("thinking transcript missing %q:\n%s", want, rendered)
 		}
 	}
-	if strings.Contains(rendered, "Supervisor") {
+	if strings.Contains(rendered, "Ada is working on Diff duplicate Codex skills") || strings.Contains(rendered, "Supervisor") {
 		t.Fatalf("thinking transcript should not expose supervisor chrome:\n%s", rendered)
+	}
+	desk := ansi.Strip(m.deskContent(90, 12))
+	for _, want := range []string{"Now", "00:09", "Ada on Diff duplicate Codex skills"} {
+		if !strings.Contains(desk, want) {
+			t.Fatalf("thinking desk missing %q:\n%s", want, desk)
+		}
 	}
 }
 

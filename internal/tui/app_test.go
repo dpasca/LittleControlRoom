@@ -18024,7 +18024,7 @@ func TestCommandEnterOpensBossMode(t *testing.T) {
 		t.Fatalf("/boss should return the embedded boss init command")
 	}
 	rendered := ansi.Strip(got.View())
-	if !strings.Contains(rendered, "Boss Chat") || !strings.Contains(rendered, "Attention") {
+	if !strings.Contains(rendered, "Boss Chat") || !strings.Contains(rendered, "Boss Desk") {
 		t.Fatalf("boss view missing expected panels: %q", rendered)
 	}
 	if strings.Contains(rendered, "Jump") || strings.Contains(rendered, "Situation") || strings.Contains(rendered, "Notes") {
