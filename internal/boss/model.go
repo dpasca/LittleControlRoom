@@ -157,7 +157,7 @@ type bossLayout struct {
 	bottomHeight     int
 	middleGapHeight  int
 	chatWidth        int
-	attentionWidth   int
+	sidebarWidth     int
 	chatInnerWidth   int
 	transcriptHeight int
 	inputHeight      int
@@ -641,18 +641,23 @@ func (m Model) copyInputToClipboard() (tea.Model, tea.Cmd) {
 func (m Model) View() string {
 	layout := m.layout()
 	chat := m.renderChat(layout)
-	body := chat
+	top := chat
+	if layout.sidebarWidth >= 12 {
+		sidebar := m.renderBossSidebar(layout.sidebarWidth, layout.topHeight)
+		top = lipgloss.JoinHorizontal(lipgloss.Top, chat, sidebar)
+	}
+	body := top
 	if layout.bottomHeight >= 4 {
-		bottom := m.renderAttention(layout.attentionWidth, layout.bottomHeight)
+		bottom := m.renderBossLog(layout.width, layout.bottomHeight)
 		if layout.middleGapHeight > 0 {
 			body = lipgloss.JoinVertical(
 				lipgloss.Left,
-				chat,
+				top,
 				fitRenderedBlock("", layout.width, layout.middleGapHeight),
 				bottom,
 			)
 		} else {
-			body = lipgloss.JoinVertical(lipgloss.Left, chat, bottom)
+			body = lipgloss.JoinVertical(lipgloss.Left, top, bottom)
 		}
 	}
 	if m.sessionPickerVisible {
@@ -851,20 +856,28 @@ func (m Model) layout() bossLayout {
 	}
 	inputHeight := 2
 
+	bottomHeight := 0
+	if height >= 14 {
+		bottomHeight = bossLogTargetHeight(height, m.embedded)
+		minTopHeight := 8
+		if !m.embedded {
+			minTopHeight = 10
+		}
+		if height-bottomHeight < minTopHeight {
+			bottomHeight = maxInt(0, height-minTopHeight)
+		}
+	}
+	topHeight := maxInt(1, height-bottomHeight)
+
 	if width < 78 {
 		chatInnerWidth := bossPanelInnerWidth(width)
-		topHeight := maxInt(8, panelHeightForRawLines(maxInt(2, countBlockLines(m.renderTranscript(chatInnerWidth)))+1+inputHeight))
-		if height-topHeight < 4 {
-			topHeight = height
-		}
 		transcriptHeight, slashHeight := m.chatAuxiliaryHeights(topHeight, inputHeight, false)
 		return bossLayout{
 			width:            width,
 			height:           height,
 			topHeight:        topHeight,
-			bottomHeight:     maxInt(0, height-topHeight),
+			bottomHeight:     bottomHeight,
 			chatWidth:        width,
-			attentionWidth:   width,
 			chatInnerWidth:   chatInnerWidth,
 			transcriptHeight: transcriptHeight,
 			inputHeight:      inputHeight,
@@ -872,20 +885,8 @@ func (m Model) layout() bossLayout {
 		}
 	}
 
-	minTopHeight := 10
-	if m.embedded && height < 18 {
-		minTopHeight = 8
-	}
-	bottomHeight := 0
-	if height >= minTopHeight+4 {
-		bottomHeight = bossDeskTargetHeight(height, m.embedded)
-		if height-bottomHeight < minTopHeight {
-			bottomHeight = maxInt(4, height-minTopHeight)
-		}
-	}
-	topHeight := maxInt(1, height-bottomHeight)
-	chatWidth := width
-	attentionWidth := width
+	sidebarWidth := bossSidebarTargetWidth(width)
+	chatWidth := width - sidebarWidth
 	chatInnerWidth := bossPanelInnerWidth(chatWidth)
 	transcriptHeight, slashHeight := m.chatAuxiliaryHeights(topHeight, inputHeight, !m.embedded)
 	middleGapHeight := 0
@@ -896,7 +897,7 @@ func (m Model) layout() bossLayout {
 		bottomHeight:     bottomHeight,
 		middleGapHeight:  middleGapHeight,
 		chatWidth:        chatWidth,
-		attentionWidth:   attentionWidth,
+		sidebarWidth:     sidebarWidth,
 		chatInnerWidth:   chatInnerWidth,
 		transcriptHeight: transcriptHeight,
 		inputHeight:      inputHeight,
@@ -904,21 +905,36 @@ func (m Model) layout() bossLayout {
 	}
 }
 
-func bossDeskTargetHeight(height int, embedded bool) int {
-	if height < 12 {
-		return maxInt(4, height/3)
+func bossSidebarTargetWidth(width int) int {
+	if width < 96 {
+		return 0
 	}
-	minHeight := 7
-	maxHeight := 12
+	sidebarWidth := clampInt(width/4, 28, 42)
+	if width >= 150 {
+		sidebarWidth = clampInt(width/5, 32, 44)
+	}
+	sidebarWidth = clampInt((sidebarWidth*13+9)/10, 36, 56)
+	if width-sidebarWidth < 58 {
+		return 0
+	}
+	return sidebarWidth
+}
+
+func bossLogTargetHeight(height int, embedded bool) int {
+	if height < 14 {
+		return 0
+	}
+	minHeight := 5
+	maxHeight := 8
 	if height >= 34 {
-		minHeight = 9
-		maxHeight = 14
+		minHeight = 6
+		maxHeight = 9
 	}
 	if embedded && height < 18 {
 		minHeight = 4
-		maxHeight = 6
+		maxHeight = 5
 	}
-	return clampInt(height/3, minHeight, maxHeight)
+	return clampInt(height/5, minHeight, maxHeight)
 }
 
 func (m Model) chatAuxiliaryHeights(topHeight, inputHeight int, includesHint bool) (int, int) {
@@ -939,7 +955,7 @@ func (m Model) chatAuxiliaryHeights(topHeight, inputHeight int, includesHint boo
 func (m Model) renderChat(layout bossLayout) string {
 	input := fitRenderedBlock(renderBossInputWithSelection(m.input, m.inputSelection, layout.chatInnerWidth), layout.chatInnerWidth, layout.inputHeight)
 	transcript := m.chatViewport.View()
-	if !m.chatSelection.dragging {
+	if !m.chatSelection.dragging && layout.sidebarWidth == 0 {
 		transcript = m.renderChatCompanion(transcript, layout)
 	}
 	if m.chatSelection.dragging && m.chatSelection.hasRange() {
@@ -973,7 +989,7 @@ func (m Model) renderHeader(width int) string {
 }
 
 func (m Model) renderAttention(width, height int) string {
-	return m.renderBossDesk(width, height)
+	return m.renderBossSidebar(width, height)
 }
 
 func (m Model) attentionContent(width, height int) string {
@@ -1517,7 +1533,7 @@ var (
 	bossSummaryTextStyle            = lipgloss.NewStyle().Foreground(bossPanelText).Background(bossPanelBackground)
 	bossSummaryFlashStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("186")).Bold(true)
 	bossAssistantMessageBackground  = bossPanelBackground
-	bossUserMessageBackground       = lipgloss.Color("#101010")
+	bossUserMessageBackground       = bossPanelBackground
 	bossAssistantMessageStyle       = lipgloss.NewStyle().Background(bossAssistantMessageBackground)
 	bossAssistantPrefixStyle        = lipgloss.NewStyle().Foreground(bossPanelAccent).Background(bossAssistantMessageBackground).Bold(true)
 	bossAssistantContinuationStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Background(bossAssistantMessageBackground)

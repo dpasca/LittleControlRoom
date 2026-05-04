@@ -2,20 +2,20 @@ package boss
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
 	"lcroom/internal/model"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const (
 	bossDeskActiveLimit   = 4
 	bossDeskDecisionLimit = 4
-	bossDeskRecentLimit   = 5
 	bossDeskWatchingLimit = 5
+	bossLogLimit          = 7
 	maxBossDeskEvents     = 16
 )
 
@@ -26,37 +26,61 @@ type bossDeskEvent struct {
 	Summary string
 }
 
-func (m Model) renderBossDesk(width, height int) string {
-	return m.renderRawPanel("Boss Desk", m.deskContent(width, height), width, height)
+func (m Model) renderBossSidebar(width, height int) string {
+	return m.renderRawPanel("Boss Desk", m.bossSidebarContent(width, height), width, height)
+}
+
+func (m Model) renderBossLog(width, height int) string {
+	return m.renderRawPanel("Boss Log", m.bossLogContent(width, height), width, height)
 }
 
 func (m Model) deskContent(width, height int) string {
+	return m.bossSidebarContent(width, height)
+}
+
+func (m Model) bossSidebarContent(width, height int) string {
 	innerWidth := bossPanelInnerWidth(width)
 	bodyHeight := maxInt(1, height-4)
-	lines := m.bossDeskLines(innerWidth, bodyHeight)
+	lines := m.bossSidebarBodyLines(innerWidth, bodyHeight)
 	if len(lines) == 0 {
 		return bossMutedStyle.Render(fitLine("Nothing on the desk yet.", innerWidth))
 	}
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) bossDeskLines(width, height int) []string {
+func (m Model) bossSidebarBodyLines(width, height int) []string {
+	avatarLines := m.bossSidebarCompanionLines(width)
+	reservedAvatarHeight := 0
+	if len(avatarLines) > 0 && height >= len(avatarLines)+5 {
+		reservedAvatarHeight = len(avatarLines) + 1
+	}
+	stateHeight := maxInt(1, height-reservedAvatarHeight)
+	lines := m.bossSidebarLines(width, stateHeight)
+	if len(lines) > stateHeight {
+		lines = lines[:stateHeight]
+	}
+	if reservedAvatarHeight == 0 {
+		return lines
+	}
+	for len(lines)+len(avatarLines) < height {
+		lines = append(lines, "")
+	}
+	return append(lines, avatarLines...)
+}
+
+func (m Model) bossSidebarLines(width, height int) []string {
 	width = maxInt(24, width)
 	now := m.now()
 	var lines []string
-	nowLimit, decisionLimit, recentLimit, watchingLimit := bossDeskSectionLimits(height)
+	nowLimit, decisionLimit, watchingLimit := bossSidebarSectionLimits(height)
 
 	if rows := takeDeskRows(m.bossDeskNowRows(width, now), nowLimit); len(rows) > 0 {
 		lines = appendDeskSection(lines, "Now", rows, width)
 	}
-	if rows := takeDeskRows(m.bossDeskNeedsUserRows(width, now), decisionLimit); len(rows) > 0 {
+	needsUser := append([]string{}, m.bossDeskNeedsUserRows(width, now)...)
+	needsUser = append(needsUser, m.bossDeskReadyRows(width, now)...)
+	if rows := takeDeskRows(needsUser, decisionLimit); len(rows) > 0 {
 		lines = appendDeskSection(lines, "Needs You", rows, width)
-	}
-	if rows := m.bossDeskRecentRows(width, now, recentLimit); len(rows) > 0 {
-		lines = appendDeskSection(lines, "Recent", rows, width)
-	}
-	if rows := takeDeskRows(m.bossDeskReadyRows(width, now), decisionLimit); len(rows) > 0 {
-		lines = appendDeskSection(lines, "Ready To Close", rows, width)
 	}
 	if next := m.bossDeskNextLine(width, now); next != "" {
 		lines = appendDeskSection(lines, "Next", []string{next}, width)
@@ -67,14 +91,69 @@ func (m Model) bossDeskLines(width, height int) []string {
 	return lines
 }
 
-func bossDeskSectionLimits(height int) (nowLimit, decisionLimit, recentLimit, watchingLimit int) {
+func (m Model) bossLogContent(width, height int) string {
+	innerWidth := bossPanelInnerWidth(width)
+	bodyHeight := maxInt(1, height-4)
+	rows := m.bossLogRows(innerWidth, bodyHeight)
+	if len(rows) == 0 {
+		return bossMutedStyle.Render(fitLine("No Boss actions yet.", innerWidth))
+	}
+	return strings.Join(rows, "\n")
+}
+
+func (m Model) bossLogRows(width int, limit int) []string {
+	limit = clampInt(limit, 1, bossLogLimit)
+	events := m.deskEvents
+	if len(events) == 0 {
+		return nil
+	}
+	start := maxInt(0, len(events)-limit)
+	now := m.now()
+	rows := make([]string, 0, len(events)-start)
+	for _, event := range events[start:] {
+		summary := strings.TrimSpace(event.Summary)
+		if summary == "" {
+			continue
+		}
+		label := bossLogEventTimeLabel(event.At, now)
+		if label == "" {
+			label = firstNonEmpty(strings.TrimSpace(event.Label), "event")
+		}
+		rows = append(rows, bossDeskRow(bossDeskEventStyle(event.Label), label, summary, width))
+	}
+	return rows
+}
+
+func (m Model) bossSidebarCompanionLines(width int) []string {
+	if width < 14 {
+		return nil
+	}
+	sprite := renderBossCompanionSprite(m.bossCompanionMood(), m.spinnerFrame)
+	rows := sprite.renderHalfRows()
+	if width >= 28 {
+		rows = sprite.renderHalfRowsScaled(2, 3)
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		rowWidth := ansi.StringWidth(ansi.Strip(row))
+		leftPad := maxInt(0, (width-rowWidth)/2)
+		rightPad := maxInt(0, width-leftPad-rowWidth)
+		out = append(out, fitStyledLine(bossCompanionPanelSpaces(leftPad)+row+bossCompanionPanelSpaces(rightPad), width))
+	}
+	return out
+}
+
+func bossSidebarSectionLimits(height int) (nowLimit, decisionLimit, watchingLimit int) {
 	switch {
 	case height <= 6:
-		return 1, 1, 2, 1
+		return 1, 1, 1
 	case height <= 9:
-		return 2, 2, 3, 1
+		return 1, 2, 1
 	default:
-		return bossDeskActiveLimit, bossDeskDecisionLimit, bossDeskRecentLimit, bossDeskWatchingLimit
+		return bossDeskActiveLimit, bossDeskDecisionLimit, bossDeskWatchingLimit
 	}
 }
 
@@ -166,104 +245,6 @@ func (m Model) bossDeskReadyRows(width int, now time.Time) []string {
 			detail = "ready to close"
 		}
 		rows = append(rows, bossDeskRow(bossAssessmentDoneStyle, "close", bossDeskTextWithDetail(title, detail), width))
-	}
-	return rows
-}
-
-type bossDeskRecentCandidate struct {
-	At      time.Time
-	Label   string
-	Text    string
-	Style   lipgloss.Style
-	SortSeq int
-}
-
-func (m Model) bossDeskRecentRows(width int, now time.Time, limit int) []string {
-	limit = clampInt(limit, 1, bossDeskRecentLimit)
-	candidates := make([]bossDeskRecentCandidate, 0, len(m.deskEvents)+len(m.snapshot.OpenAgentTasks)+len(m.snapshot.HotProjects))
-	seq := 0
-	for _, event := range m.deskEvents {
-		summary := strings.TrimSpace(event.Summary)
-		if summary == "" {
-			continue
-		}
-		candidates = append(candidates, bossDeskRecentCandidate{
-			At:      event.At,
-			Label:   firstNonEmpty(strings.TrimSpace(event.Label), "event"),
-			Text:    summary,
-			Style:   bossDeskEventStyle(event.Label),
-			SortSeq: seq,
-		})
-		seq++
-	}
-	for _, task := range m.snapshot.OpenAgentTasks {
-		status := model.NormalizeAgentTaskStatus(task.Status)
-		switch status {
-		case model.AgentTaskStatusWaiting, model.AgentTaskStatusCompleted:
-		default:
-			continue
-		}
-		label, style := bossAgentTaskStatusCell(task)
-		text := bossDeskTextWithDetail(compactAgentTaskTitle(task), task.Summary)
-		candidates = append(candidates, bossDeskRecentCandidate{
-			At:      task.LastTouchedAt,
-			Label:   label,
-			Text:    text,
-			Style:   style,
-			SortSeq: seq,
-		})
-		seq++
-	}
-	for _, project := range m.snapshot.HotProjects {
-		summary := bestProjectSummary(project)
-		if summary == "" {
-			continue
-		}
-		label, style := bossAssessmentCell(project)
-		if label == "-" {
-			label = "update"
-		}
-		candidates = append(candidates, bossDeskRecentCandidate{
-			At:      project.LastActivity,
-			Label:   label,
-			Text:    bossDeskTextWithDetail(compactProjectName(project), summary),
-			Style:   style,
-			SortSeq: seq,
-		})
-		seq++
-	}
-	if len(candidates) == 0 {
-		return nil
-	}
-	sort.SliceStable(candidates, func(i, j int) bool {
-		left, right := candidates[i], candidates[j]
-		if left.At.IsZero() && !right.At.IsZero() {
-			return false
-		}
-		if !left.At.IsZero() && right.At.IsZero() {
-			return true
-		}
-		if !left.At.Equal(right.At) {
-			return left.At.After(right.At)
-		}
-		return left.SortSeq > right.SortSeq
-	})
-	rows := make([]string, 0, minInt(limit, len(candidates)))
-	seen := map[string]struct{}{}
-	for _, candidate := range candidates {
-		if len(rows) >= limit {
-			break
-		}
-		key := strings.TrimSpace(candidate.Label) + "\x00" + strings.TrimSpace(candidate.Text)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		label := bossDeskEventTimeLabel(candidate.At, now)
-		if label == "" {
-			label = candidate.Label
-		}
-		rows = append(rows, bossDeskRow(candidate.Style, label, candidate.Text, width))
 	}
 	return rows
 }
@@ -400,23 +381,17 @@ func bossDeskTextWithDetail(title, detail string) string {
 	}
 }
 
-func bossDeskEventTimeLabel(at, now time.Time) string {
+func bossLogEventTimeLabel(at, now time.Time) string {
 	if at.IsZero() {
 		return ""
 	}
 	if now.IsZero() {
 		now = time.Now()
 	}
-	if at.After(now) {
-		return at.Format("15:04")
-	}
-	if now.Sub(at) < time.Minute {
-		return "now"
-	}
 	if sameLocalDate(at, now) {
 		return at.Format("15:04")
 	}
-	return relativeAge(now, at)
+	return at.Format("01-02")
 }
 
 func sameLocalDate(a, b time.Time) bool {

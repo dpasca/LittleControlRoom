@@ -626,8 +626,14 @@ func TestBossBrowserOpenResultIsRecordedAsOperationalNotice(t *testing.T) {
 }
 
 func bossChatPanelText(view string) string {
-	if before, _, ok := strings.Cut(view, "Boss Desk"); ok {
-		return before
+	cutAt := len(view)
+	for _, marker := range []string{"Boss Desk", "Boss Log"} {
+		if index := strings.Index(view, marker); index >= 0 && index < cutAt {
+			cutAt = index
+		}
+	}
+	if cutAt < len(view) {
+		return view[:cutAt]
 	}
 	return view
 }

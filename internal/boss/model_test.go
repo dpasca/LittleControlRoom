@@ -39,7 +39,7 @@ func TestModelViewRendersBossPanels(t *testing.T) {
 	m.syncLayout(true)
 
 	view := m.View()
-	for _, want := range []string{"Boss Chat", "Boss Desk", "Watching", "Next", "Alpha"} {
+	for _, want := range []string{"Boss Chat", "Boss Desk", "Boss Log", "Watching", "Next", "Alpha"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
@@ -484,26 +484,28 @@ func TestControlResultRendersTransientActiveEngineerFeedback(t *testing.T) {
 	if strings.Contains(rendered, "Niklaus is working on Retire projects-control-center skill") {
 		t.Fatalf("transient engineer feedback should stay out of transcript:\n%s", rendered)
 	}
-	desk := ansi.Strip(got.deskContent(90, 12))
+	desk := ansi.Strip(got.bossSidebarContent(90, 12))
 	for _, want := range []string{"Now", "00:03", "Niklaus on Retire projects-control-center skill"} {
 		if !strings.Contains(desk, want) {
 			t.Fatalf("transient engineer feedback missing from desk %q:\n%s", want, desk)
 		}
 	}
-	for _, want := range []string{"Recent", "Niklaus started Retire projects-control-center skill"} {
-		if !strings.Contains(desk, want) {
-			t.Fatalf("transient engineer event missing from desk %q:\n%s", want, desk)
+	log := ansi.Strip(got.bossLogContent(90, 8))
+	for _, want := range []string{"Niklaus started Retire projects-control-center skill"} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("transient engineer event missing from log %q:\n%s", want, log)
 		}
 	}
 }
 
-func TestBossDeskRecentShowsHostAndStateEvents(t *testing.T) {
+func TestBossLogShowsHostAndStateEvents(t *testing.T) {
 	t.Parallel()
 
 	now := time.Unix(1_800_000_000, 0)
 	m := New(context.Background(), nil)
 	m.nowFn = func() time.Time { return now }
 	m.appendDeskEvent("host", "update", "Ken finished ChatNext3: fixed SVG serving issue.")
+	m.appendDeskEvent("project", "update", "ChatNext3 - SVG preview repaired.")
 	m.snapshot = StateSnapshot{
 		OpenAgentTasks: []AgentTaskBrief{{
 			ID:            "agt_diff",
@@ -523,15 +525,22 @@ func TestBossDeskRecentShowsHostAndStateEvents(t *testing.T) {
 		}},
 	}
 
-	desk := ansi.Strip(m.deskContent(120, 14))
+	log := ansi.Strip(m.bossLogContent(120, 8))
 	for _, want := range []string{
-		"Recent",
 		"Ken finished ChatNext3: fixed SVG serving issue.",
-		"Diff duplicate Codex skills - Canonical copy kept.",
 		"ChatNext3 - SVG preview repaired.",
 	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("boss log missing %q:\n%s", want, log)
+		}
+	}
+	desk := ansi.Strip(m.bossSidebarContent(80, 14))
+	for _, want := range []string{
+		"Needs You",
+		"Diff duplicate Codex skills - Canonical copy kept.",
+	} {
 		if !strings.Contains(desk, want) {
-			t.Fatalf("boss desk recent missing %q:\n%s", want, desk)
+			t.Fatalf("boss desk missing %q:\n%s", want, desk)
 		}
 	}
 }
@@ -990,7 +999,7 @@ func TestEmbeddedModelRendersBodyForHostShell(t *testing.T) {
 			m.height,
 			layout,
 			renderedLineCount(m.renderChat(layout)),
-			renderedLineCount(m.renderAttention(layout.attentionWidth, layout.bottomHeight)))
+			renderedLineCount(m.renderBossLog(layout.width, layout.bottomHeight)))
 	}
 	layout := m.layout()
 	if !strings.HasSuffix(strings.TrimRight(lines[0], " "), "╮") {
@@ -1080,8 +1089,8 @@ func TestEmbeddedModelGivesSpareHeightToChatOnTallHosts(t *testing.T) {
 		if layout.middleGapHeight != 0 {
 			t.Fatalf("height %d should not insert a separator row between panel bands, got gap %d", height, layout.middleGapHeight)
 		}
-		if layout.bottomHeight > bossDeskTargetHeight(layout.height, true) {
-			t.Fatalf("height %d bottom desk = %d, want <= %d", height, layout.bottomHeight, bossDeskTargetHeight(layout.height, true))
+		if layout.bottomHeight > bossLogTargetHeight(layout.height, true) {
+			t.Fatalf("height %d bottom log = %d, want <= %d", height, layout.bottomHeight, bossLogTargetHeight(layout.height, true))
 		}
 		if previousTopHeight > 0 && layout.topHeight <= previousTopHeight {
 			t.Fatalf("height %d top panel height = %d, want chat row to gain spare terminal height beyond %d", height, layout.topHeight, previousTopHeight)
@@ -1090,7 +1099,7 @@ func TestEmbeddedModelGivesSpareHeightToChatOnTallHosts(t *testing.T) {
 	}
 }
 
-func TestEmbeddedModelKeepsBossDeskAtBottom(t *testing.T) {
+func TestEmbeddedModelUsesSidebarAndBottomLog(t *testing.T) {
 	t.Parallel()
 
 	m := NewEmbedded(context.Background(), nil)
@@ -1098,14 +1107,14 @@ func TestEmbeddedModelKeepsBossDeskAtBottom(t *testing.T) {
 	m.height = 42
 
 	layout := m.layout()
-	if layout.chatWidth != layout.width {
-		t.Fatalf("chat width = %d, want full terminal width %d", layout.chatWidth, layout.width)
+	if layout.sidebarWidth == 0 {
+		t.Fatalf("wide embedded layout should allocate a Boss Desk sidebar: %+v", layout)
 	}
-	if layout.attentionWidth != layout.width {
-		t.Fatalf("boss desk width = %d, want full terminal width %d", layout.attentionWidth, layout.width)
+	if layout.chatWidth+layout.sidebarWidth != layout.width {
+		t.Fatalf("top row widths = chat %d + sidebar %d, want terminal width %d", layout.chatWidth, layout.sidebarWidth, layout.width)
 	}
-	if layout.bottomHeight < 10 {
-		t.Fatalf("boss desk height = %d, want a roomy bottom workbench", layout.bottomHeight)
+	if layout.bottomHeight < 6 {
+		t.Fatalf("boss log height = %d, want a compact bottom log", layout.bottomHeight)
 	}
 	if layout.topHeight+layout.middleGapHeight+layout.bottomHeight != layout.height {
 		t.Fatalf("layout heights = top %d + gap %d + bottom %d, want %d", layout.topHeight, layout.middleGapHeight, layout.bottomHeight, layout.height)
@@ -1169,11 +1178,11 @@ func TestEmbeddedModelKeepsMediumWidthLowerPanelsCompact(t *testing.T) {
 	if layout.middleGapHeight != 0 {
 		t.Fatalf("medium-width layout should not use a vertical separator row, got %d", layout.middleGapHeight)
 	}
-	if layout.bottomHeight < 9 {
-		t.Fatalf("medium-width boss desk height = %d, want roomy bottom panel", layout.bottomHeight)
+	if layout.bottomHeight < 6 {
+		t.Fatalf("medium-width boss log height = %d, want compact bottom panel", layout.bottomHeight)
 	}
-	if layout.chatWidth != layout.width || layout.attentionWidth != layout.width {
-		t.Fatalf("medium-width chat/desk should both use full width, got chat %d desk %d terminal %d", layout.chatWidth, layout.attentionWidth, layout.width)
+	if layout.sidebarWidth == 0 || layout.chatWidth+layout.sidebarWidth != layout.width {
+		t.Fatalf("medium-width layout should use chat plus sidebar, got chat %d sidebar %d terminal %d", layout.chatWidth, layout.sidebarWidth, layout.width)
 	}
 	if layout.topHeight+layout.middleGapHeight+layout.bottomHeight != layout.height {
 		t.Fatalf("medium-width panels should fill the host body, got top %d + gap %d + bottom %d terminal %d", layout.topHeight, layout.middleGapHeight, layout.bottomHeight, layout.height)
@@ -1189,10 +1198,10 @@ func TestEmbeddedModelKeepsMediumWidthLowerPanelsCompact(t *testing.T) {
 		t.Fatalf("bottom border row %d outside rendered view with %d lines:\n%s", bottomBorderLine, len(lines), rendered)
 	}
 	if !strings.HasPrefix(lines[bottomBorderLine], "╰") {
-		t.Fatalf("bottom desk should keep its bottom border visible, got %q", lines[bottomBorderLine])
+		t.Fatalf("bottom log should keep its bottom border visible, got %q", lines[bottomBorderLine])
 	}
 	if bottomBorderLine != len(lines)-1 {
-		t.Fatalf("bottom desk should finish on the final embedded body row, got border row %d line count %d", bottomBorderLine, len(lines))
+		t.Fatalf("bottom log should finish on the final embedded body row, got border row %d line count %d", bottomBorderLine, len(lines))
 	}
 }
 
@@ -1200,7 +1209,7 @@ func TestChatPanelKeepsStyledTranscriptAndInputVisible(t *testing.T) {
 	t.Parallel()
 
 	m := NewEmbedded(context.Background(), nil)
-	m.width = 120
+	m.width = 82
 	m.height = 20
 	m.stateLoaded = true
 	m.messages = []ChatMessage{{
@@ -1224,7 +1233,7 @@ func TestChatPanelRendersCompanionInSpareTranscriptSpace(t *testing.T) {
 	t.Parallel()
 
 	m := NewEmbedded(context.Background(), nil)
-	m.width = 120
+	m.width = 82
 	m.height = 20
 	m.stateLoaded = true
 	m.syncLayout(true)
@@ -1241,6 +1250,31 @@ func TestChatPanelRendersCompanionInSpareTranscriptSpace(t *testing.T) {
 	}
 	if strings.Contains(m.renderTranscript(m.layout().chatInnerWidth), "\u2588") {
 		t.Fatalf("companion should stay out of the durable transcript")
+	}
+}
+
+func TestBossSidebarRendersScaledCompanion(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbedded(context.Background(), nil)
+	m.width = 140
+	m.height = 28
+	m.stateLoaded = true
+	m.syncLayout(true)
+
+	layout := m.layout()
+	if layout.sidebarWidth == 0 {
+		t.Fatalf("test setup should allocate a sidebar: %+v", layout)
+	}
+	rendered := m.renderBossSidebar(layout.sidebarWidth, layout.topHeight)
+	if !strings.Contains(rendered, "\x1b[38;2;") {
+		t.Fatalf("sidebar companion should use truecolor pixels:\n%s", ansi.Strip(rendered))
+	}
+	if !strings.Contains(rendered, "\x1b[48;2;0;0;0m") {
+		t.Fatalf("sidebar companion should paint its own panel background:\n%s", ansi.Strip(rendered))
+	}
+	if !strings.Contains(ansi.Strip(rendered), "\u2580") {
+		t.Fatalf("enlarged sidebar companion should render half-block pixels:\n%s", ansi.Strip(rendered))
 	}
 }
 
@@ -1362,6 +1396,32 @@ func TestModelTranscriptRendersMarkdown(t *testing.T) {
 		if strings.Contains(rendered, marker) {
 			t.Fatalf("rendered transcript still contains markdown marker %q:\n%s", marker, rendered)
 		}
+	}
+}
+
+func TestModelTranscriptKeepsChatBackgroundFlat(t *testing.T) {
+	t.Parallel()
+
+	m := New(context.Background(), nil)
+	m.messages = []ChatMessage{{
+		Role:    "assistant",
+		Content: "Use `boss` mode.",
+	}, {
+		Role:    "user",
+		Content: "Ok, `commit` it.",
+	}}
+
+	rendered := m.renderTranscript(72)
+	for _, unwanted := range []string{
+		"\x1b[48;2;16;16;16m",
+		"\x1b[48;5;236m",
+	} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("transcript should not render separate chat text backgrounds %q:\n%s", unwanted, ansi.Strip(rendered))
+		}
+	}
+	if !strings.Contains(ansi.Strip(rendered), "You>") || !strings.Contains(ansi.Strip(rendered), "Boss>") {
+		t.Fatalf("transcript lost speaker labels:\n%s", ansi.Strip(rendered))
 	}
 }
 

@@ -277,8 +277,7 @@ func renderInlineMarkdown(text string, style lipgloss.Style) string {
 		return style.Render(text)
 	}
 	codeStyle := style.Copy().
-		Foreground(lipgloss.Color("223")).
-		Background(lipgloss.Color("236"))
+		Foreground(lipgloss.Color("223"))
 	var out strings.Builder
 	remaining := text
 	for len(remaining) > 0 {

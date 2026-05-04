@@ -50,6 +50,7 @@ var (
 	bossCompanionHeadsetColor    = bossCompanionRGB(244, 196, 88)
 	bossCompanionSignalColor     = bossCompanionRGB(79, 214, 203)
 	bossCompanionSignalDimColor  = bossCompanionRGB(52, 156, 149)
+	bossCompanionPanelColor      = bossCompanionRGB(0, 0, 0)
 )
 
 func bossCompanionRGB(r, g, b uint8) bossCompanionColor {
@@ -61,14 +62,7 @@ func (m Model) renderChatCompanion(transcript string, layout bossLayout) string 
 		return transcript
 	}
 
-	mood := bossCompanionIdle
-	if m.sending {
-		mood = bossCompanionThinking
-		if strings.TrimSpace(m.streamingAssistantText) != "" {
-			mood = bossCompanionStreaming
-		}
-	}
-
+	mood := m.bossCompanionMood()
 	sprite := renderBossCompanionSprite(mood, m.spinnerFrame)
 	if sprite.width == 0 || sprite.height == 0 {
 		return transcript
@@ -80,6 +74,19 @@ func (m Model) renderChatCompanion(transcript string, layout bossLayout) string 
 		y = maxInt(0, layout.transcriptHeight-sprite.height-1)
 	}
 	return overlayBossCompanion(transcript, layout.chatInnerWidth, layout.transcriptHeight, x, y, sprite)
+}
+
+func (m Model) bossCompanionMood() bossCompanionMood {
+	if m.sending {
+		if strings.TrimSpace(m.streamingAssistantText) != "" {
+			return bossCompanionStreaming
+		}
+		return bossCompanionThinking
+	}
+	if len(m.activeEngineerActivities()) > 0 {
+		return bossCompanionThinking
+	}
+	return bossCompanionIdle
 }
 
 func newBossCompanionSprite(width, height int) bossCompanionSprite {
@@ -233,7 +240,7 @@ func bossCompanionCellIsBlank(line string, col int) bool {
 
 func (cell bossCompanionCell) render() string {
 	if !cell.filled {
-		return " "
+		return bossCompanionPanelSpaces(1)
 	}
 	return fmt.Sprintf("\x1b[38;2;%d;%d;%dm%s%s", cell.color.r, cell.color.g, cell.color.b, bossCompanionGlyph, bossCompanionReset)
 }
@@ -244,4 +251,97 @@ func (s bossCompanionSprite) renderRow(y int) string {
 		builder.WriteString(s.cell(x, y).render())
 	}
 	return builder.String()
+}
+
+func (s bossCompanionSprite) renderRowsScaled(xScale, yScale int) []string {
+	if s.width <= 0 || s.height <= 0 {
+		return nil
+	}
+	xScale = maxInt(1, xScale)
+	yScale = maxInt(1, yScale)
+	rows := make([]string, 0, s.height*yScale)
+	for y := 0; y < s.height; y++ {
+		var builder strings.Builder
+		for x := 0; x < s.width; x++ {
+			cell := s.cell(x, y).render()
+			for i := 0; i < xScale; i++ {
+				builder.WriteString(cell)
+			}
+		}
+		row := builder.String()
+		for i := 0; i < yScale; i++ {
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+func (s bossCompanionSprite) renderHalfRows() []string {
+	return s.renderHalfRowsScaled(1, 1)
+}
+
+func (s bossCompanionSprite) renderHalfRowsScaled(xScale, yScale int) []string {
+	if s.width <= 0 || s.height <= 0 {
+		return nil
+	}
+	xScale = maxInt(1, xScale)
+	yScale = maxInt(1, yScale)
+	scaledWidth := s.width * xScale
+	scaledHeight := s.height * yScale
+	rows := make([]string, 0, (scaledHeight+1)/2)
+	for y := 0; y < scaledHeight; y += 2 {
+		var builder strings.Builder
+		for x := 0; x < scaledWidth; x++ {
+			top := s.scaledCell(x, y, xScale, yScale)
+			bottom := s.scaledCell(x, y+1, xScale, yScale)
+			builder.WriteString(renderBossCompanionHalfCell(top, bottom))
+		}
+		rows = append(rows, builder.String())
+	}
+	return rows
+}
+
+func (s bossCompanionSprite) scaledCell(x, y, xScale, yScale int) bossCompanionCell {
+	if x < 0 || y < 0 || xScale <= 0 || yScale <= 0 {
+		return bossCompanionCell{}
+	}
+	sourceX := x / xScale
+	sourceY := y / yScale
+	return s.cell(sourceX, sourceY)
+}
+
+func renderBossCompanionHalfCell(top, bottom bossCompanionCell) string {
+	switch {
+	case top.filled && bottom.filled:
+		return renderBossCompanionHalfBlock(top.color, bottom.color)
+	case top.filled:
+		return renderBossCompanionHalfBlock(top.color, bossCompanionPanelColor)
+	case bottom.filled:
+		return renderBossCompanionHalfBlock(bossCompanionPanelColor, bottom.color)
+	default:
+		return bossCompanionPanelSpaces(1)
+	}
+}
+
+func renderBossCompanionHalfBlock(top, bottom bossCompanionColor) string {
+	return fmt.Sprintf(
+		"\x1b[38;2;%d;%d;%dm\x1b[48;2;%d;%d;%dm\u2580%s",
+		top.r, top.g, top.b,
+		bottom.r, bottom.g, bottom.b,
+		bossCompanionReset,
+	)
+}
+
+func bossCompanionPanelSpaces(count int) string {
+	if count <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(
+		"\x1b[48;2;%d;%d;%dm%s%s",
+		bossCompanionPanelColor.r,
+		bossCompanionPanelColor.g,
+		bossCompanionPanelColor.b,
+		strings.Repeat(" ", count),
+		bossCompanionReset,
+	)
 }

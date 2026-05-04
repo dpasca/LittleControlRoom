@@ -468,6 +468,8 @@ func bossAssistantSystemPrompt() string {
 		"Live engineer sessions may have readable names such as Ada or Grace. Use those names for active delegated work when the context provides them; do not invent a name if none is present.",
 		"Do not explain a missing task detail as the engineer having no persistent memory; say we need to inspect the task output or ask the same task for a more specific comparison.",
 		"Be proactive about finding facts: before saying you do not know, inspect the available linked task or project context when the current state points to one.",
+		"Do not answer commit, deploy, release, migration, schema, storage, or API-shape safety questions from summaries alone. Say it needs a fresh check or propose asking the engineer to inspect the current diff before claiming it is safe.",
+		"Never say a deploy needs no DB migration unless direct evidence explicitly covers migrations, schema, storage, or the current diff.",
 		"If a review task's saved output does not answer the user's exact question, propose sending the same named engineer back with that specific question instead of asking whether you can ask.",
 		"Assume an ongoing coworker chat: skip onboarding, capability pitches, generic menus, and optional handoff offers.",
 		"Assume the user tracks many things and wants the highest-level read first, not implementation telemetry.",
@@ -515,6 +517,8 @@ func bossActionPlannerSystemPrompt() string {
 		"Live engineer sessions may have readable names such as Ada or Grace. Use those names for active delegated work when the context provides them; do not invent a name if none is present.",
 		"Do not explain a missing task detail as the engineer having no persistent memory; say we need to inspect the task output or ask the same task for a more specific comparison.",
 		"Be proactive about finding facts: before saying you do not know, inspect the available linked task or project context when the current state points to one.",
+		"Do not answer commit, deploy, release, migration, schema, storage, or API-shape safety questions from summaries alone. Use project_detail or context first; if direct evidence does not explicitly inspect the current diff or latest engineer output, propose engineer.send_prompt for a fresh verification.",
+		"Never say a deploy needs no DB migration unless direct evidence explicitly covers migrations, schema, storage, or the current diff.",
 		"Use queries when the user asks about a concrete project, project TODOs, open agent tasks, delegated/background agents, assessment status, current TUI state, Codex skills, suspicious PIDs/processes/CPU, codenames, aliases, concepts, or anything that requires more than the compact brief.",
 		"Available read-only query kinds: list_projects, project_detail, session_classifications, todo_report, agent_task_report, current_tui, assessment_queue, process_report, search_context, search_boss_sessions, context_command, skills_inventory.",
 		"Use agent_task_report when the user asks about open or active agent tasks, delegated tasks, background agents, or what the agents are doing.",
@@ -603,9 +607,9 @@ func bossActionPlannerUserText(req AssistantRequest, toolResults []bossToolResul
 		}
 	}
 	if forceAnswer {
-		b.WriteString("\nYou must choose kind=\"answer\" or kind=\"propose_control\" now. Use the gathered data; do not request more read-only queries. If the gathered data resolves a visible review/waiting agent task with no remaining work, choose kind=\"propose_control\" with control_capability=\"agent_task.close\" instead of a plain answer. If the gathered task data lacks the detail the user asked for and a task id is clear, choose kind=\"propose_control\" with control_capability=\"agent_task.continue\" and ask that same task for the missing detail.\n")
+		b.WriteString("\nYou must choose kind=\"answer\" or kind=\"propose_control\" now. Use the gathered data; do not request more read-only queries. If the gathered data resolves a visible review/waiting agent task with no remaining work, choose kind=\"propose_control\" with control_capability=\"agent_task.close\" instead of a plain answer. If the gathered task data lacks the detail the user asked for and a task id is clear, choose kind=\"propose_control\" with control_capability=\"agent_task.continue\" and ask that same task for the missing detail. If the user asks whether commit/deploy/release is safe, or whether DB migration/schema/storage/API shape changed, do not answer from summaries; only answer if gathered data directly covers current-diff evidence, otherwise choose kind=\"propose_control\" with control_capability=\"engineer.send_prompt\" for a fresh verification.\n")
 	} else {
-		b.WriteString("\nChoose kind=\"answer\" if you have enough data. If a visible linked task or project can likely answer the question, choose one read-only query before answering. Choose kind=\"propose_control\" if the user asked to delegate project work or manage/continue/clear/solve an agent task, if fresh gathered data resolves a visible review/waiting agent task and a task id is clear, or if gathered task data lacks the detail the user asked for and the same task should be asked a sharper follow-up. For a resolved review/waiting task use control_capability=\"agent_task.close\"; for a missing detail use control_capability=\"agent_task.continue\". For multiple open agent tasks, propose one concrete next agent_task.continue rather than only giving an order.\n")
+		b.WriteString("\nChoose kind=\"answer\" if you have enough data. If a visible linked task or project can likely answer the question, choose one read-only query before answering. Choose kind=\"propose_control\" if the user asked to delegate project work or manage/continue/clear/solve an agent task, if fresh gathered data resolves a visible review/waiting agent task and a task id is clear, or if gathered task data lacks the detail the user asked for and the same task should be asked a sharper follow-up. For commit/deploy/release safety, or DB migration/schema/storage/API-shape questions, do not answer from summaries; use a read-only project/context query first and then propose control_capability=\"engineer.send_prompt\" if direct current-diff evidence is still missing. For a resolved review/waiting task use control_capability=\"agent_task.close\"; for a missing detail use control_capability=\"agent_task.continue\". For multiple open agent tasks, propose one concrete next agent_task.continue rather than only giving an order.\n")
 	}
 	return strings.TrimSpace(b.String())
 }
@@ -646,7 +650,7 @@ func bossFinalAnswerMessages(req AssistantRequest, toolResults []bossToolResult,
 		b.WriteString(draft)
 		b.WriteString("\n\n")
 	}
-	b.WriteString("Answer the user's latest Boss Chat message now. Use the gathered data, keep the coworker-update style, and do not mention tool calls unless the user asks about them.")
+	b.WriteString("Answer the user's latest Boss Chat message now. Use the gathered data, keep the coworker-update style, and do not mention tool calls unless the user asks about them. Do not claim commit/deploy/release safety or no DB migration unless the gathered data directly covers the current diff, migrations, schema, storage, or API shape.")
 	messages = append(messages, llm.TextMessage{
 		Role:    "user",
 		Content: strings.TrimSpace(b.String()),

@@ -244,6 +244,8 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"high-level coordinator",
 		"Do not explain a missing task detail as the engineer having no persistent memory",
 		"Be proactive about finding facts",
+		"Do not answer commit, deploy, release, migration, schema, storage, or API-shape safety questions from summaries alone",
+		"Never say a deploy needs no DB migration unless direct evidence explicitly covers migrations, schema, storage, or the current diff",
 		"propose sending the same named engineer back with that specific question",
 		"ongoing coworker chat",
 		"skip onboarding",
@@ -283,6 +285,8 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"do not imply a fresh unrelated session",
 		"Do not explain a missing task detail as the engineer having no persistent memory",
 		"Be proactive about finding facts",
+		"Do not answer commit, deploy, release, migration, schema, storage, or API-shape safety questions from summaries alone",
+		"Never say a deploy needs no DB migration unless direct evidence explicitly covers migrations, schema, storage, or the current diff",
 		"propose_control",
 		"agent_task.create",
 		"agent_task_report",
@@ -359,6 +363,35 @@ func TestAssistantPlannerUserTextAllowsClosingResolvedReviewTasks(t *testing.T) 
 		if !strings.Contains(got, "resolves a visible review/waiting agent task") ||
 			!strings.Contains(got, `control_capability="agent_task.close"`) {
 			t.Fatalf("planner user text should steer resolved review tasks toward close proposals:\n%s", got)
+		}
+	}
+}
+
+func TestAssistantPlannerUserTextRequiresFreshDeployEvidence(t *testing.T) {
+	t.Parallel()
+
+	req := AssistantRequest{
+		StateBrief: "Visible projects: 1.\n- ChatNext3: latest summary says image preview was verified.",
+		Messages: []ChatMessage{
+			{Role: "user", Content: "what's the situation with chatnext3?"},
+			{Role: "assistant", Content: "The preview path is verified."},
+			{Role: "user", Content: "if we deploy, do we need to think about db migration?"},
+		},
+	}
+	normal := bossActionPlannerUserText(req, nil, false)
+	forced := bossActionPlannerUserText(req, []bossToolResult{{
+		Name: bossActionProjectDetail,
+		Text: "Project detail: latest summary says image preview was verified. No diff inspection is included.",
+	}}, true)
+	for _, got := range []string{normal, forced} {
+		for _, want := range []string{
+			"do not answer from summaries",
+			"current-diff evidence",
+			`control_capability="engineer.send_prompt"`,
+		} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("planner user text missing %q:\n%s", want, got)
+			}
 		}
 	}
 }
