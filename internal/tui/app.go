@@ -2078,6 +2078,8 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "f":
 		return m, m.openProjectFilterDialog()
+	case "B":
+		return m.openBossModeOrSetupPrompt()
 	case "f3":
 		return m.cycleCodexSession(1)
 	case "alt+down":
@@ -3126,12 +3128,10 @@ func (m Model) renderTopStatusActions(width int) string {
 	actions := []footerAction{
 		footerNavAction("f", "filter"),
 		footerNavAction("/", "command"),
+		footerNavAction("B", "boss"),
 	}
 	if len(m.errorLogEntries) > 0 && width >= 112 {
 		actions = append(actions, footerNavAction("/errors", "log"))
-	}
-	if width >= 96 {
-		actions = append(actions, footerNavAction("Tab", "switch"))
 	}
 	return renderFooterActionList(actions...)
 }
@@ -6941,7 +6941,6 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 				renderFooterActionList(
 					footerHideAction("Esc", "list"),
 					footerNavAction("PgUp/PgDn", "page"),
-					footerNavAction("/", "command"),
 					footerNavAction("Tab", "switch"),
 					footerLowAction("?", "help"),
 					footerExitAction("q", "quit"),
@@ -6953,7 +6952,6 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 				renderFooterMeta("Focus: detail"),
 				renderFooterActionList(
 					footerHideAction("Esc", "list"),
-					footerNavAction("/", "command"),
 					footerNavAction("Tab", "switch"),
 					footerLowAction("?", "help"),
 					footerExitAction("q", "quit"),
@@ -7024,8 +7022,6 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 			actions = append(actions, projectActions...)
 			actions = append(actions,
 				footerNavAction("Alt+[/]", "sessions"),
-				footerNavAction("f", "filter"),
-				footerNavAction("/", "command"),
 				footerLowAction("?", "help"),
 				footerExitAction("q", "quit"),
 			)
@@ -7039,8 +7035,6 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 		}
 		actions = append(actions, projectActions...)
 		actions = append(actions,
-			footerNavAction("f", "filter"),
-			footerNavAction("/", "command"),
 			footerNavAction("Tab", "switch"),
 			footerNavAction("t", "TODO"),
 			footerLowAction("?", "help"),
@@ -7057,8 +7051,6 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 			}
 			actions = append(actions, projectActions...)
 			actions = append(actions,
-				footerNavAction("f", "filter"),
-				footerNavAction("/", "command"),
 				footerLowAction("?", "help"),
 				footerExitAction("q", "quit"),
 			)
@@ -7072,8 +7064,6 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 		}
 		actions = append(actions, projectActions...)
 		actions = append(actions,
-			footerNavAction("f", "filter"),
-			footerNavAction("/", "command"),
 			footerNavAction("Tab", "switch"),
 			footerLowAction("?", "help"),
 			footerExitAction("q", "quit"),
@@ -7158,6 +7148,7 @@ func helpPanelLines() []string {
 		detailSectionStyle.Render("Quick Actions"),
 		renderHelpPanelActionRow(
 			renderDialogAction("f", "filter", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("B", "boss", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("t", "todo", commitActionKeyStyle, commitActionTextStyle),
 			renderDialogAction("o/v", "sort/view", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("p", "pin", pushActionKeyStyle, pushActionTextStyle),
