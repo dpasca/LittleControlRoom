@@ -300,8 +300,11 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"project TODOs are separate from delegated agent tasks",
 		"Do not answer that there are no open agent tasks",
 		"Use engineer.send_prompt only for explicit project/repo work",
+		"Default project handoffs to session_mode=new",
+		"Use session_mode=resume_or_new only when",
 		"operator note meant to steer that work",
 		"The host will steer the active Codex turn when possible",
+		"Active work alone is not enough reason to resume",
 		"Use agent_task.create for temporary delegated work",
 		"do not encode special domains as task kinds",
 		"Use scratch_task.archive when project metadata identifies kind=scratch_task",
@@ -631,7 +634,7 @@ func TestAssistantReplyCanProposeEngineerSendPromptControl(t *testing.T) {
 				ControlCapability: "engineer.send_prompt",
 				ProjectPath:       "/tmp/alpha",
 				EngineerProvider:  "opencode",
-				SessionMode:       "resume_or_new",
+				SessionMode:       "new",
 				Prompt:            "Please fix the failing tests and report what changed.",
 				Reveal:            false,
 				Reason:            "The user asked to delegate the fix.",
@@ -658,7 +661,9 @@ func TestAssistantReplyCanProposeEngineerSendPromptControl(t *testing.T) {
 	if resp.ControlInvocation.Capability != "engineer.send_prompt" {
 		t.Fatalf("capability = %q", resp.ControlInvocation.Capability)
 	}
-	if !strings.Contains(resp.Content, "Send this to OpenCode") || !strings.Contains(resp.Content, "Enter confirms") {
+	if !strings.Contains(resp.Content, "Send this to OpenCode") ||
+		!strings.Contains(resp.Content, "start a fresh session") ||
+		!strings.Contains(resp.Content, "Enter confirms") {
 		t.Fatalf("proposal content = %q, want confirmation preview", resp.Content)
 	}
 	var input control.EngineerSendPromptInput
@@ -666,6 +671,7 @@ func TestAssistantReplyCanProposeEngineerSendPromptControl(t *testing.T) {
 		t.Fatalf("decode invocation args: %v", err)
 	}
 	if input.Provider != control.ProviderOpenCode ||
+		input.SessionMode != control.SessionModeNew ||
 		!strings.Contains(input.Prompt, "Boss Chat lossless task packet:") ||
 		!strings.Contains(input.Prompt, "Tell OpenCode to fix Alpha's tests") ||
 		!strings.Contains(input.Prompt, "Please fix the failing tests and report what changed.") {
