@@ -1581,6 +1581,51 @@ func TestModelTranscriptRendersMarkdown(t *testing.T) {
 	}
 }
 
+func TestModelTranscriptHighlightsEngineerReturnNotice(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbedded(context.Background(), nil)
+	updated, _ := m.Update(HostNoticeMsg{
+		Content:        "Ada is back from Cursor cleanup: Cursor access still needs user-side confirmation.",
+		AnnounceInChat: true,
+		Handoff:        &HandoffHighlight{EngineerName: "Ada", ProjectLabel: "Cursor cleanup"},
+	})
+	got := updated.(Model)
+
+	rendered := got.renderTranscript(120)
+	stripped := ansi.Strip(rendered)
+	want := "Boss> Ada is back from Cursor cleanup: Cursor access still needs user-side confirmation."
+	if !strings.Contains(stripped, want) {
+		t.Fatalf("rendered transcript missing compact handoff %q:\n%s", want, stripped)
+	}
+	if strings.Contains(stripped, "Cursor cleanup.\n\nCursor access") {
+		t.Fatalf("engineer return notice should keep output on the first line:\n%s", stripped)
+	}
+	for label, want := range map[string]string{
+		"engineer": bossHandoffEngineerNameStyle.Render("Ada"),
+		"project":  bossHandoffProjectLabelStyle.Render("Cursor cleanup"),
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered transcript missing %s highlight:\n%s", label, stripped)
+		}
+	}
+
+	loaded := NewEmbedded(context.Background(), nil)
+	loaded.messages = []ChatMessage{{
+		Role:    "assistant",
+		Content: "Ada is back from Cursor cleanup: Cursor access still needs user-side confirmation.",
+	}}
+	loadedRendered := loaded.renderTranscript(120)
+	for label, want := range map[string]string{
+		"loaded engineer": bossHandoffEngineerNameStyle.Render("Ada"),
+		"loaded project":  bossHandoffProjectLabelStyle.Render("Cursor cleanup"),
+	} {
+		if !strings.Contains(loadedRendered, want) {
+			t.Fatalf("loaded transcript missing %s highlight:\n%s", label, ansi.Strip(loadedRendered))
+		}
+	}
+}
+
 func TestModelTranscriptKeepsChatBackgroundFlat(t *testing.T) {
 	t.Parallel()
 

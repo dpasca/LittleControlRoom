@@ -21,6 +21,12 @@ type ChatMessage struct {
 	Role    string
 	Content string
 	At      time.Time
+	Handoff *HandoffHighlight
+}
+
+type HandoffHighlight struct {
+	EngineerName string
+	ProjectLabel string
 }
 
 type AssistantRequest struct {

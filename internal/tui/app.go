@@ -1241,7 +1241,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("Agent task %s handoff failed: %v", msg.taskID, msg.err)
 			notice := bossEngineerCompletionNotice(msg.label, msg.summary, msg.engineerName) + "\n\nI couldn't save that review handoff: " + msg.err.Error()
 			var cmd tea.Cmd
-			m, cmd = m.updateBossHostChatNotice(notice)
+			m, cmd = m.updateBossHostNoticeWithOptions(bossHostNotice{Content: notice, AnnounceInChat: true, Handoff: bossEngineerCompletionHandoff(msg.label, msg.engineerName)})
 			return m, cmd
 		}
 		m.upsertOpenAgentTask(msg.task)
@@ -1254,7 +1254,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.status = "Agent task " + label + " needs your call"
 		var cmd tea.Cmd
-		m, cmd = m.updateBossHostChatNotice(msg.notice)
+		m, cmd = m.updateBossHostNoticeWithOptions(bossHostNotice{Content: msg.notice, AnnounceInChat: true, Handoff: msg.handoff})
 		if m.bossMode {
 			cmd = batchCmds(cmd, m.bossModel.RefreshCmd())
 		}
@@ -1264,7 +1264,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.storeCodexSnapshot(msg.projectPath, msg.snapshot)
 		}
 		var cmd tea.Cmd
-		m, cmd = m.updateBossHostChatNotice(msg.notice)
+		m, cmd = m.updateBossHostNoticeWithOptions(bossHostNotice{Content: msg.notice, AnnounceInChat: true, Handoff: msg.handoff})
 		return m, cmd
 	case recentProjectParentsMsg:
 		if msg.err == nil {

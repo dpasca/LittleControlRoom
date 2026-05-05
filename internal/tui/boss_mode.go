@@ -58,6 +58,7 @@ func (m Model) updateBossModeMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 type bossHostNotice struct {
 	Content        string
 	AnnounceInChat bool
+	Handoff        *bossui.HandoffHighlight
 }
 
 func (m Model) updateBossHostNotice(content string) (Model, tea.Cmd) {
@@ -84,7 +85,7 @@ func (m Model) updateBossHostNoticeWithOptions(notice bossHostNotice) (Model, te
 
 func (m Model) applyBossHostNotice(notice bossHostNotice) (Model, tea.Cmd) {
 	m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
-	updated, cmd := m.bossModel.Update(bossui.HostNoticeMsg{Content: notice.Content, AnnounceInChat: notice.AnnounceInChat})
+	updated, cmd := m.bossModel.Update(bossui.HostNoticeMsg{Content: notice.Content, AnnounceInChat: notice.AnnounceInChat, Handoff: notice.Handoff})
 	m.bossModel = normalizeBossModel(updated)
 	return m, cmd
 }
@@ -133,6 +134,7 @@ type agentTaskEngineerReturnedMsg struct {
 	engineerName string
 	summary      string
 	notice       string
+	handoff      *bossui.HandoffHighlight
 	snapshot     codexapp.Snapshot
 	task         model.AgentTask
 	err          error
@@ -144,6 +146,7 @@ type bossEngineerReturnedMsg struct {
 	engineerName string
 	summary      string
 	notice       string
+	handoff      *bossui.HandoffHighlight
 	snapshot     codexapp.Snapshot
 }
 
@@ -498,17 +501,17 @@ func bossEngineerActivityStatus(snapshot codexapp.Snapshot) string {
 	return "working"
 }
 
-func (m Model) bossEngineerTurnCompletionHostNotice(projectPath string, hadPrev bool, prevSnapshot, snapshot codexapp.Snapshot) string {
+func (m Model) bossEngineerTurnCompletionHostNotice(projectPath string, hadPrev bool, prevSnapshot, snapshot codexapp.Snapshot) bossHostNotice {
 	if !hadPrev || !bossEngineerSnapshotActive(prevSnapshot) || bossEngineerSnapshotActive(snapshot) {
-		return ""
+		return bossHostNotice{}
 	}
 	label := m.bossEngineerCompletionLabel(projectPath)
 	engineerName := m.bossEngineerCompletionName(projectPath, snapshot)
 	output := latestEngineerTranscriptOutput(snapshot)
 	if output != "" {
-		return bossEngineerCompletionNotice(label, output, engineerName)
+		return bossEngineerCompletionHostNotice(label, output, engineerName)
 	}
-	return bossEngineerCompletionNotice(label, "", engineerName)
+	return bossEngineerCompletionHostNotice(label, "", engineerName)
 }
 
 func (m Model) handleBossEngineerTurnCompletion(projectPath string, hadPrev bool, prevSnapshot, snapshot codexapp.Snapshot) (Model, tea.Cmd) {
@@ -524,10 +527,10 @@ func (m Model) handleBossEngineerTurnCompletion(projectPath string, hadPrev bool
 		return m, m.bossEngineerCompletionNoticeCmd(projectPath, snapshot, session)
 	}
 	notice := m.bossEngineerTurnCompletionHostNotice(projectPath, hadPrev, prevSnapshot, snapshot)
-	if notice == "" {
+	if strings.TrimSpace(notice.Content) == "" {
 		return m, nil
 	}
-	return m.updateBossHostChatNotice(notice)
+	return m.updateBossHostNoticeWithOptions(notice)
 }
 
 func (m Model) markAgentTaskReadyForReviewCmd(projectPath string, task model.AgentTask, snapshot codexapp.Snapshot, session codexapp.Session) tea.Cmd {
@@ -563,6 +566,7 @@ func (m Model) markAgentTaskReadyForReviewCmd(projectPath string, task model.Age
 			engineerName: engineerName,
 			summary:      summary,
 			notice:       notice,
+			handoff:      bossEngineerCompletionHandoff(label, engineerName),
 			snapshot:     snapshot,
 			task:         updated,
 			err:          err,
@@ -586,6 +590,7 @@ func (m Model) bossEngineerCompletionNoticeCmd(projectPath string, snapshot code
 			engineerName: engineerName,
 			summary:      summary,
 			notice:       bossEngineerCompletionNotice(label, summary, engineerName),
+			handoff:      bossEngineerCompletionHandoff(label, engineerName),
 			snapshot:     snapshot,
 		}
 	}
@@ -616,7 +621,7 @@ func snapshotWithCompletionProjectPath(projectPath string, snapshot codexapp.Sna
 
 func bossAgentTaskReviewNotice(label, output, engineerName string) string {
 	if strings.TrimSpace(output) == "" {
-		return bossEngineerCompletionNotice(label, "", engineerName) + "\n\nI don't have a useful summary yet."
+		return bossEngineerCompletionNotice(label, "I don't have a useful summary yet.", engineerName)
 	}
 	return bossEngineerCompletionNotice(label, output, engineerName)
 }
@@ -642,9 +647,29 @@ func bossEngineerCompletionNotice(label, output, engineerName string) string {
 	}
 	output = strings.TrimSpace(output)
 	if output != "" {
-		return engineerName + " is back from " + label + ".\n\n" + output
+		return engineerName + " is back from " + label + ": " + output
 	}
 	return engineerName + " is back from " + label + "."
+}
+
+func bossEngineerCompletionHostNotice(label, output, engineerName string) bossHostNotice {
+	return bossHostNotice{
+		Content:        bossEngineerCompletionNotice(label, output, engineerName),
+		AnnounceInChat: true,
+		Handoff:        bossEngineerCompletionHandoff(label, engineerName),
+	}
+}
+
+func bossEngineerCompletionHandoff(label, engineerName string) *bossui.HandoffHighlight {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		label = "engineer session"
+	}
+	engineerName = strings.TrimSpace(engineerName)
+	if engineerName == "" {
+		engineerName = "Engineer"
+	}
+	return &bossui.HandoffHighlight{EngineerName: engineerName, ProjectLabel: label}
 }
 
 func (m Model) bossEngineerCompletionLabel(projectPath string) string {

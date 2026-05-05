@@ -401,7 +401,7 @@ func (m Model) applyHostNotice(msg HostNoticeMsg) (tea.Model, tea.Cmd) {
 	m.appendDeskEvent("host", "update", content)
 	var cmds []tea.Cmd
 	if msg.AnnounceInChat {
-		if saved, ok := m.appendAssistantNoticeMessage(content); ok {
+		if saved, ok := m.appendAssistantNoticeMessage(content, msg.Handoff); ok {
 			cmds = append(cmds, m.saveBossChatMessageCmd(saved))
 		}
 	}

@@ -13,6 +13,7 @@ import (
 	"lcroom/internal/procinspect"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestBossViewContextCapturesClassicTUIStateWithoutSelection(t *testing.T) {
@@ -195,12 +196,16 @@ func TestBossChatNoticesEngineerTurnCompletion(t *testing.T) {
 	noticeText := bossOperationalNoticeText(got.bossModel)
 	engineerName := bossui.EngineerNameForKey("project", projectPath, idleSnapshot.ThreadID)
 	for _, want := range []string{
-		engineerName + " is back from Project Task.",
+		engineerName + " is back from Project Task:",
 		"Killed the stale dev server on port 5173",
 	} {
-		if !strings.Contains(view, want) {
+		if !bossTextContains(view, want) {
 			t.Fatalf("boss chat transcript missing engineer outcome %q:\n%s", want, view)
 		}
+	}
+	for _, want := range []string{
+		engineerName + " is back from Project Task: Killed the stale dev server on port 5173",
+	} {
 		if !strings.Contains(noticeText, want) {
 			t.Fatalf("operational notice missing %q:\n%s", want, noticeText)
 		}
@@ -271,12 +276,16 @@ func TestBossChatFetchesFreshEngineerReportBeforeNotice(t *testing.T) {
 	noticeText := bossOperationalNoticeText(got.bossModel)
 	engineerName := bossui.EngineerNameForKey("project", projectPath, staleIdleSnapshot.ThreadID)
 	for _, want := range []string{
-		engineerName + " is back from ChatNext3.",
+		engineerName + " is back from ChatNext3:",
 		"The broken preview is caused by the SVG",
 	} {
-		if !strings.Contains(view, want) {
+		if !bossTextContains(view, want) {
 			t.Fatalf("boss chat transcript missing engineer outcome %q:\n%s", want, view)
 		}
+	}
+	for _, want := range []string{
+		engineerName + " is back from ChatNext3: The broken preview is caused by the SVG",
+	} {
 		if !strings.Contains(noticeText, want) {
 			t.Fatalf("fresh operational notice missing %q:\n%s", want, noticeText)
 		}
@@ -417,12 +426,16 @@ func TestBossEngineerCompletionLeavesAgentTaskWaitingForDecision(t *testing.T) {
 	noticeText := bossOperationalNoticeText(got.bossModel)
 	engineerName := bossui.EngineerNameForKey("agent_task", task.ID)
 	for _, want := range []string{
-		engineerName + " is back from Kill stale roguellm dev server.",
+		engineerName + " is back from Kill stale roguellm dev server:",
 		"No stale roguellm dev server is running now.",
 	} {
-		if !strings.Contains(view, want) {
+		if !bossTextContains(view, want) {
 			t.Fatalf("boss transcript missing engineer outcome %q:\n%s", want, view)
 		}
+	}
+	for _, want := range []string{
+		engineerName + " is back from Kill stale roguellm dev server: No stale roguellm dev server is running now.",
+	} {
 		if !strings.Contains(noticeText, want) {
 			t.Fatalf("operational notice missing %q:\n%s", want, noticeText)
 		}
@@ -789,6 +802,17 @@ func bossOperationalNoticeText(model bossui.Model) string {
 		parts = append(parts, notice.Summary)
 	}
 	return strings.Join(parts, "\n")
+}
+
+func bossTextContains(haystack, needle string) bool {
+	normalize := func(text string) string {
+		text = ansi.Strip(text)
+		text = strings.NewReplacer("│", " ", "╭", " ", "╮", " ", "╰", " ", "╯", " ", "─", " ").Replace(text)
+		return strings.Join(strings.Fields(text), " ")
+	}
+	normalizedHaystack := normalize(haystack)
+	normalizedNeedle := normalize(needle)
+	return strings.Contains(normalizedHaystack, normalizedNeedle)
 }
 
 func TestBossAttentionAgentTaskJumpOpensTrackedSession(t *testing.T) {

@@ -86,6 +86,7 @@ type StateLoadedMsg struct {
 type HostNoticeMsg struct {
 	Content        string
 	AnnounceInChat bool
+	Handoff        *HandoffHighlight
 }
 
 type AssistantReplyMsg struct {
@@ -1423,7 +1424,7 @@ func (m Model) renderTranscript(width int) string {
 	var blocks []string
 	for _, message := range m.messages {
 		if normalizeChatRole(message.Role) == "assistant" {
-			blocks = append(blocks, renderAssistantMessage(message.Content, width))
+			blocks = append(blocks, renderAssistantChatMessage(message, width))
 			continue
 		}
 		blocks = append(blocks, renderUserMessage(message.Content, width))
@@ -1582,6 +1583,8 @@ var (
 	bossHandoffPrefixStyle          = lipgloss.NewStyle().Foreground(bossPanelAccent).Background(bossPanelBackground).Bold(true)
 	bossHandoffContinuationStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Background(bossPanelBackground)
 	bossHandoffText                 = lipgloss.Color("229")
+	bossHandoffEngineerNameStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Background(bossPanelBackground).Bold(true)
+	bossHandoffProjectLabelStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Background(bossPanelBackground).Bold(true)
 	bossToolCallStyle               = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(bossPanelBackground)
 	bossUserMessageStyle            = lipgloss.NewStyle().Background(bossUserMessageBackground)
 	bossUserPrefixStyle             = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Background(bossUserMessageBackground).Bold(true)
@@ -1642,6 +1645,14 @@ func renderAssistantMessage(content string, width int) string {
 	return renderPrefixedMessage(content, "Boss> ", bossPanelText, bossAssistantPrefixStyle, bossAssistantContinuationStyle, bossAssistantMessageStyle, width, false)
 }
 
+func renderAssistantChatMessage(message ChatMessage, width int) string {
+	highlights := handoffMessageHighlights(message.Content, message.Handoff)
+	if len(highlights) == 0 {
+		return renderAssistantMessage(message.Content, width)
+	}
+	return renderPrefixedMessageWithHighlights(message.Content, "Boss> ", bossPanelText, bossAssistantPrefixStyle, bossAssistantContinuationStyle, bossAssistantMessageStyle, width, false, highlights)
+}
+
 func renderStreamingAssistantMessage(content string, toolCalls []string, width, spinnerFrame int) string {
 	var blocks []string
 	if toolBlock := renderTemporaryToolCalls(toolCalls, width); toolBlock != "" {
@@ -1698,12 +1709,25 @@ func renderBossHandoffMessage(content string, width int) string {
 	return renderPrefixedMessage(content, "Boss> ", bossHandoffText, bossHandoffPrefixStyle, bossHandoffContinuationStyle, bossHandoffMessageStyle, width, false)
 }
 
+type prefixedMessageHighlight struct {
+	Start int
+	End   int
+	Style lipgloss.Style
+}
+
 func renderPrefixedMessage(content, prefix string, bodyColor lipgloss.Color, prefixStyle, continuationStyle, lineStyle lipgloss.Style, width int, indentContinuation bool) string {
+	return renderPrefixedMessageWithHighlights(content, prefix, bodyColor, prefixStyle, continuationStyle, lineStyle, width, indentContinuation, nil)
+}
+
+func renderPrefixedMessageWithHighlights(content, prefix string, bodyColor lipgloss.Color, prefixStyle, continuationStyle, lineStyle lipgloss.Style, width int, indentContinuation bool, highlights []prefixedMessageHighlight) string {
 	contentWidth := maxInt(8, width-len(prefix))
 	rendered := terminalmd.RenderBody(content, bodyColor, contentWidth)
 	lines := strings.Split(rendered, "\n")
 	if len(lines) == 0 {
 		lines = []string{""}
+	}
+	if len(highlights) > 0 {
+		lines[0] = applyPrefixedMessageHighlights(lines[0], highlights)
 	}
 	for i, line := range lines {
 		if i == 0 {
@@ -1715,6 +1739,99 @@ func renderPrefixedMessage(content, prefix string, bodyColor lipgloss.Color, pre
 		}
 	}
 	return renderMessageLines(strings.Join(lines, "\n"), lineStyle, width)
+}
+
+func handoffMessageHighlights(content string, handoff *HandoffHighlight) []prefixedMessageHighlight {
+	handoffValue, ok := normalizedHandoffHighlight(handoff)
+	if !ok {
+		handoffValue, ok = inferHandoffHighlight(content)
+		if !ok {
+			return nil
+		}
+	}
+	lead := handoffValue.EngineerName + " is back from " + handoffValue.ProjectLabel
+	content = strings.TrimSpace(content)
+	if !strings.HasPrefix(content, lead) {
+		return nil
+	}
+	trailer := strings.TrimPrefix(content, lead)
+	if !(strings.HasPrefix(trailer, ":") || strings.HasPrefix(trailer, ".")) {
+		return nil
+	}
+	nameWidth := ansi.StringWidth(handoffValue.EngineerName)
+	labelStart := ansi.StringWidth(handoffValue.EngineerName + " is back from ")
+	labelEnd := labelStart + ansi.StringWidth(handoffValue.ProjectLabel)
+	return []prefixedMessageHighlight{
+		{Start: 0, End: nameWidth, Style: bossHandoffEngineerNameStyle},
+		{Start: labelStart, End: labelEnd, Style: bossHandoffProjectLabelStyle},
+	}
+}
+
+func inferHandoffHighlight(content string) (HandoffHighlight, bool) {
+	content = strings.TrimSpace(content)
+	engineerName, rest, ok := strings.Cut(content, " is back from ")
+	if !ok || !knownHandoffEngineerName(engineerName) {
+		return HandoffHighlight{}, false
+	}
+	projectLabel, _, ok := strings.Cut(rest, ":")
+	if !ok {
+		projectLabel, _, ok = strings.Cut(rest, ".")
+	}
+	projectLabel = strings.TrimSpace(projectLabel)
+	if !ok || projectLabel == "" {
+		return HandoffHighlight{}, false
+	}
+	return HandoffHighlight{EngineerName: strings.TrimSpace(engineerName), ProjectLabel: projectLabel}, true
+}
+
+func knownHandoffEngineerName(name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "Engineer" {
+		return true
+	}
+	for _, candidate := range engineerNamePool {
+		if name == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizedHandoffHighlight(handoff *HandoffHighlight) (HandoffHighlight, bool) {
+	if handoff == nil {
+		return HandoffHighlight{}, false
+	}
+	out := HandoffHighlight{
+		EngineerName: strings.TrimSpace(handoff.EngineerName),
+		ProjectLabel: strings.TrimSpace(handoff.ProjectLabel),
+	}
+	if out.EngineerName == "" {
+		out.EngineerName = "Engineer"
+	}
+	if out.ProjectLabel == "" {
+		out.ProjectLabel = "engineer session"
+	}
+	return out, true
+}
+
+func applyPrefixedMessageHighlights(line string, highlights []prefixedMessageHighlight) string {
+	width := ansi.StringWidth(ansi.Strip(line))
+	if width <= 0 {
+		return line
+	}
+	for i := len(highlights) - 1; i >= 0; i-- {
+		highlight := highlights[i]
+		start := clampInt(highlight.Start, 0, width)
+		end := clampInt(highlight.End, 0, width)
+		if start >= end {
+			continue
+		}
+		before := ansi.Cut(line, 0, start)
+		selected := ansi.Strip(ansi.Cut(line, start, end))
+		after := ansi.Cut(line, end, width)
+		line = before + highlight.Style.Render(selected) + after
+	}
+	return line
 }
 
 func renderMessageLines(content string, style lipgloss.Style, width int) string {
