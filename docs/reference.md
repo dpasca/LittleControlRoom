@@ -159,6 +159,7 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 
 - `/` open the command palette
 - `/boss` opens the chat-first boss layer, or prompts for setup if boss chat is not configured; `Esc` hides Boss Chat and returns to the classic TUI
+- `B` opens the chat-first boss layer, with the same setup prompt as `/boss` when needed
 - `↑/↓` move selection
 - `Enter` open or resume the selected project's latest embedded provider
 - `Esc` hide the visible embedded session pane
