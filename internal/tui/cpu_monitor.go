@@ -11,6 +11,7 @@ import (
 	"lcroom/internal/control"
 	"lcroom/internal/procinspect"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -19,6 +20,7 @@ const cpuSnapshotTimeout = 1500 * time.Millisecond
 const cpuRemediationProcessLimit = 12
 const cpuDialogVisibleProcessRows = 7
 const hotSystemCPUCapacityPercent = 75.0
+const cpuRemediationPromptCharLimit = 40000
 
 type cpuDialogState struct {
 	Loading      bool
@@ -29,6 +31,12 @@ type cpuDialogState struct {
 	TotalCPU     float64
 	ProcessCount int
 	LogicalCPUs  int
+}
+
+type cpuRemediationEditorState struct {
+	Input      textarea.Model
+	Processes  []procinspect.CPUProcess
+	Submitting bool
 }
 
 func (m *Model) openCPUDialog() tea.Cmd {
@@ -48,6 +56,27 @@ func (m *Model) openCPUDialog() tea.Cmd {
 	m.err = nil
 	m.status = "Inspecting CPU usage..."
 	return m.requestCPUSnapshotRefreshCmd()
+}
+
+func (m *Model) syncCPURemediationEditorSize() {
+	if m.cpuRemediationEditor != nil {
+		_, panelInnerW, editorHeight := cpuRemediationEditorPanelLayout(m.width, m.height)
+		m.cpuRemediationEditor.Input.SetWidth(max(24, panelInnerW))
+		m.cpuRemediationEditor.Input.SetHeight(editorHeight)
+	}
+}
+
+func newCPURemediationPromptInput(value string) textarea.Model {
+	input := textarea.New()
+	input.Prompt = ""
+	input.Placeholder = "Ask the engineer to inspect the hot CPU processes"
+	input.CharLimit = cpuRemediationPromptCharLimit
+	input.ShowLineNumbers = false
+	styleDialogTextarea(&input)
+	input.SetWidth(84)
+	input.SetHeight(16)
+	input.SetValue(value)
+	return input
 }
 
 func (m Model) updateCPUDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -76,7 +105,7 @@ func (m Model) updateCPUDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = "Refreshing CPU usage..."
 		return m, m.requestCPUSnapshotRefreshCmd()
 	case "a":
-		return m.startCPURemediationTask()
+		return m.openCPURemediationEditor()
 	case "enter":
 		if len(dialog.Processes) == 0 {
 			return m, nil
@@ -90,6 +119,40 @@ func (m Model) updateCPUDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateNormalMode(msg)
 	}
 	return m, nil
+}
+
+func (m Model) updateCPURemediationEditorMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	editor := m.cpuRemediationEditor
+	if editor == nil {
+		return m, nil
+	}
+	if editor.Submitting {
+		return m, nil
+	}
+	switch msg.String() {
+	case "esc":
+		m.closeCPURemediationEditor("CPU engineer prompt canceled")
+		return m, nil
+	case "ctrl+s":
+		prompt := normalizeCPURemediationPrompt(editor.Input.Value())
+		if strings.TrimSpace(prompt) == "" {
+			m.status = "CPU engineer prompt is required"
+			return m, nil
+		}
+		processes := append([]procinspect.CPUProcess(nil), editor.Processes...)
+		editor.Submitting = true
+		m.closeCPURemediationEditor("")
+		return m.startCPURemediationTaskWithPrompt(processes, prompt)
+	}
+	var cmd tea.Cmd
+	editor.Input, cmd = editor.Input.Update(msg)
+	return m, cmd
+}
+
+func normalizeCPURemediationPrompt(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	return text
 }
 
 func (m Model) loadCPUSnapshotCmd() tea.Cmd {
@@ -215,22 +278,55 @@ func (m Model) cpuDialogProcesses(snapshot procinspect.CPUSnapshot) []procinspec
 	return processes
 }
 
-func (m Model) startCPURemediationTask() (tea.Model, tea.Cmd) {
-	dialog := m.cpuDialog
-	if dialog == nil || len(dialog.Processes) == 0 {
+func (m Model) openCPURemediationEditor() (tea.Model, tea.Cmd) {
+	processes := m.cpuRemediationProcesses()
+	if len(processes) == 0 {
 		m.status = "No CPU snapshot to hand to an engineer yet"
 		return m, nil
 	}
+	prompt := m.cpuRemediationPrompt(processes)
+	m.cpuRemediationEditor = &cpuRemediationEditorState{
+		Input:     newCPURemediationPromptInput(prompt),
+		Processes: append([]procinspect.CPUProcess(nil), processes...),
+	}
+	m.status = "Review CPU engineer prompt"
+	return m, m.cpuRemediationEditor.Input.Focus()
+}
+
+func (m *Model) closeCPURemediationEditor(status string) {
+	if m.cpuRemediationEditor != nil {
+		m.cpuRemediationEditor.Input.Blur()
+	}
+	m.cpuRemediationEditor = nil
+	if status != "" {
+		m.status = status
+	}
+}
+
+func (m Model) startCPURemediationTask() (tea.Model, tea.Cmd) {
 	processes := m.cpuRemediationProcesses()
 	if len(processes) == 0 {
 		m.status = "No CPU processes to hand to an engineer"
 		return m, nil
 	}
+	return m.startCPURemediationTaskWithPrompt(processes, m.cpuRemediationPrompt(processes))
+}
+
+func (m Model) startCPURemediationTaskWithPrompt(processes []procinspect.CPUProcess, prompt string) (tea.Model, tea.Cmd) {
+	if len(processes) == 0 {
+		m.status = "No CPU processes to hand to an engineer"
+		return m, nil
+	}
+	if strings.TrimSpace(prompt) == "" {
+		m.status = "CPU engineer prompt is required"
+		return m, nil
+	}
+	m.status = "Starting CPU engineer task..."
 	outcome := m.executeAgentTaskCreateControlWithOutcome(control.AgentTaskCreateInput{
 		Title:    "Investigate and reduce CPU usage",
 		Kind:     control.AgentTaskKindAgent,
 		Provider: control.ProviderAuto,
-		Prompt:   m.cpuRemediationPrompt(processes),
+		Prompt:   prompt,
 		Reveal:   false,
 		Capabilities: []string{
 			"process.inspect",
@@ -373,6 +469,42 @@ func (m Model) renderCPUDialogOverlay(body string, bodyW, bodyH int) string {
 	left := max(0, (bodyW-panelW)/2)
 	top := max(0, (bodyH-panelH)/4)
 	return overlayBlock(body, panel, bodyW, bodyH, left, top)
+}
+
+func (m Model) renderCPURemediationEditorOverlay(body string, bodyW, bodyH int) string {
+	editor := m.cpuRemediationEditor
+	if editor == nil {
+		return body
+	}
+	panelW, panelInnerW, editorHeight := cpuRemediationEditorPanelLayout(bodyW, bodyH)
+	editor.Input.SetWidth(max(24, panelInnerW))
+	editor.Input.SetHeight(editorHeight)
+	lines := []string{
+		detailSectionStyle.Render("CPU Engineer Prompt") + "  " + detailValueStyle.Render(cpuDialogScopeLabel(len(editor.Processes), len(editor.Processes))),
+		"",
+		editor.Input.View(),
+		"",
+		cpuRemediationEditorLegendLine(),
+	}
+	panel := renderDialogPanel(panelW, panelInnerW, strings.Join(lines, "\n"))
+	left := max(0, (bodyW-panelW)/2)
+	top := max(0, (bodyH-lipgloss.Height(panel))/2)
+	return overlayBlock(body, panel, bodyW, bodyH, left, top)
+}
+
+func cpuRemediationEditorPanelLayout(bodyW, bodyH int) (int, int, int) {
+	panelW := min(max(68, bodyW-8), 112)
+	panelInnerW := max(34, panelW-4)
+	editorHeight := max(8, min(18, bodyH-10))
+	return panelW, panelInnerW, editorHeight
+}
+
+func cpuRemediationEditorLegendLine() string {
+	return renderHelpPanelActionRow(
+		renderDialogAction("enter", "newline", navigateActionKeyStyle, navigateActionTextStyle),
+		renderDialogAction("ctrl+s", "send", commitActionKeyStyle, commitActionTextStyle),
+		renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
+	)
 }
 
 func (m Model) renderCPUDialogPanel(bodyW, bodyH int) string {

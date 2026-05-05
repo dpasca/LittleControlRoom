@@ -167,6 +167,7 @@ type Model struct {
 	cpuMonitorInFlight          bool
 	cpuMonitorQueued            bool
 	cpuDialog                   *cpuDialogState
+	cpuRemediationEditor        *cpuRemediationEditorState
 	processScanInFlight         bool
 	processScanQueued           bool
 	processScanQueuedDialogPath string
@@ -1036,6 +1037,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncCommandInputWidth()
 		m.syncTodoDialogSize()
 		m.syncTodoEditorSize()
+		m.syncCPURemediationEditorSize()
 		m.syncDiffView(false)
 		m.syncDetailViewport(false)
 		m.syncCodexComposerSize()
@@ -1117,6 +1119,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.errorLogVisible {
 			return m.updateErrorLogMode(msg)
+		}
+		if m.cpuRemediationEditor != nil {
+			return m.updateCPURemediationEditorMode(msg)
 		}
 		if m.cpuDialog != nil {
 			return m.updateCPUDialogMode(msg)
@@ -2851,6 +2856,9 @@ func (m Model) View() string {
 	}
 	if m.todoDialog != nil {
 		body = m.renderTodoDialogOverlay(body, layout.width, layout.height)
+	}
+	if m.cpuRemediationEditor != nil {
+		body = m.renderCPURemediationEditorOverlay(body, layout.width, layout.height)
 	}
 	if m.todoEditor != nil {
 		body = m.renderTodoEditorOverlay(body, layout.width, layout.height)
