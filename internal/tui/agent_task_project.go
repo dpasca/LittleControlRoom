@@ -43,6 +43,11 @@ func (m Model) agentTaskForProjectPath(projectPath string) (model.AgentTask, boo
 	return model.AgentTask{}, false
 }
 
+func (m Model) isAgentTaskProjectPath(projectPath string) bool {
+	_, ok := m.agentTaskForProjectPath(projectPath)
+	return ok
+}
+
 func (m *Model) upsertOpenAgentTask(task model.AgentTask) {
 	selectedPath := ""
 	if selected, ok := m.selectedProject(); ok {

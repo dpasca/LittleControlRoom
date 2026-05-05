@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
+	"lcroom/internal/codexapp"
 	"lcroom/internal/commands"
 	"lcroom/internal/events"
 	"lcroom/internal/model"
@@ -81,6 +83,61 @@ func TestProjectDataInvalidationReloadsVisibleDetailOnly(t *testing.T) {
 	}
 	if len(hidden.detailReloadInFlight) != 0 {
 		t.Fatalf("hidden project data refresh should not reload unrelated detail panes: %#v", hidden.detailReloadInFlight)
+	}
+}
+
+func TestAgentTaskPathsDoNotUseProjectRefreshPipeline(t *testing.T) {
+	workspace := "/tmp/lcroom-agent-task-refresh"
+	task := model.AgentTask{
+		ID:            "agt_refresh",
+		Title:         "Check delegated task",
+		Status:        model.AgentTaskStatusActive,
+		WorkspacePath: workspace,
+	}
+	project, err := projectSummaryForAgentTask(task)
+	if err != nil {
+		t.Fatalf("projectSummaryForAgentTask() error = %v", err)
+	}
+	m := Model{
+		svc:            newControlTestService(t),
+		openAgentTasks: []model.AgentTask{task},
+		projects:       []model.ProjectSummary{project},
+		selected:       0,
+		detail:         model.ProjectDetail{Summary: project},
+	}
+
+	if cmd := m.requestProjectInvalidationCmd(invalidateProjectData(workspace)); cmd != nil {
+		t.Fatal("agent-task data invalidation should not query project summary/detail tables")
+	}
+	if len(m.summaryReloadInFlight) != 0 {
+		t.Fatalf("summary reloads = %#v, want none for synthetic agent-task rows", m.summaryReloadInFlight)
+	}
+	if len(m.detailReloadInFlight) != 0 {
+		t.Fatalf("detail reloads = %#v, want none for synthetic agent-task rows", m.detailReloadInFlight)
+	}
+	if cmd := m.refreshProjectStatusCmd(workspace); cmd != nil {
+		t.Fatal("agent-task paths should not call RefreshProjectStatus")
+	}
+	if cmd := m.markProjectSessionSeen(workspace); cmd != nil {
+		t.Fatal("agent-task paths should not persist project-session seen state")
+	}
+	if cmd := m.markProjectSessionUnread(workspace); cmd != nil {
+		t.Fatal("agent-task paths should not persist project-session unread state")
+	}
+
+	snapshot := codexapp.Snapshot{
+		Provider:       codexapp.ProviderCodex,
+		ThreadID:       "thread-agent-refresh",
+		Started:        true,
+		Busy:           true,
+		LastActivityAt: time.Now(),
+	}
+	if cmd := m.recordEmbeddedSessionActivityCmd(workspace, snapshot); cmd != nil {
+		t.Fatal("agent-task activity should not be recorded through project session state")
+	}
+	snapshot.Busy = false
+	if cmd := m.recordEmbeddedSessionSettledAndRefreshCmd(workspace, snapshot); cmd != nil {
+		t.Fatal("agent-task settle should not schedule project status refresh")
 	}
 }
 

@@ -156,6 +156,9 @@ func (m *Model) requestDetailReloadCmd(path string) tea.Cmd {
 	if path == "" {
 		return nil
 	}
+	if m.isAgentTaskProjectPath(path) {
+		return nil
+	}
 	m.ensureRefreshState()
 	if m.detailReloadInFlight[path] {
 		m.detailReloadQueued[path] = true
@@ -184,6 +187,9 @@ func (m *Model) finishDetailReloadCmd(path string) tea.Cmd {
 func (m *Model) requestProjectSummaryReloadCmd(path string) tea.Cmd {
 	path = normalizeProjectPath(path)
 	if path == "" {
+		return nil
+	}
+	if m.isAgentTaskProjectPath(path) {
 		return nil
 	}
 	m.ensureRefreshState()
@@ -216,11 +222,11 @@ func (m Model) refreshProjectStatusCmd(path string) tea.Cmd {
 }
 
 func (m Model) refreshProjectStatusCmdWithOptions(path string, opts service.ScanOptions) tea.Cmd {
-	if m.svc == nil {
-		return nil
-	}
 	path = normalizeProjectPath(path)
 	if path == "" {
+		return nil
+	}
+	if m.isAgentTaskProjectPath(path) || m.svc == nil {
 		return nil
 	}
 	return func() tea.Msg {
@@ -261,6 +267,9 @@ func (m Model) recordEmbeddedSessionSettledCmd(projectPath string, snapshot code
 }
 
 func (m Model) recordEmbeddedSessionStateCmd(activity service.EmbeddedSessionActivity) tea.Cmd {
+	if m.isAgentTaskProjectPath(activity.ProjectPath) {
+		return nil
+	}
 	return func() tea.Msg {
 		err := m.svc.RecordEmbeddedSessionActivity(m.ctx, activity)
 		return projectStatusRefreshedMsg{projectPath: activity.ProjectPath, err: err}
@@ -273,6 +282,9 @@ func (m Model) recordEmbeddedSessionSettledAndRefreshCmd(projectPath string, sna
 	}
 	projectPath = normalizeProjectPath(projectPath)
 	if projectPath == "" {
+		return nil
+	}
+	if m.isAgentTaskProjectPath(projectPath) {
 		return nil
 	}
 	activity, ok := embeddedSessionSettledActivityFromSnapshot(projectPath, snapshot)

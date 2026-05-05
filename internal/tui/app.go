@@ -77,6 +77,7 @@ type Model struct {
 	todoEditor            *todoEditorState
 	todoDeleteConfirm     *todoDeleteConfirmState
 	scratchTaskAction     *scratchTaskActionConfirmState
+	agentTaskAction       *agentTaskActionConfirmState
 	projectRemoveConfirm  *projectRemoveConfirmState
 	todoLaunchDrafts      map[string]todoLaunchDraftState
 	todoPendingSave       *todoPendingSaveState
@@ -354,6 +355,14 @@ type todoActionMsg struct {
 }
 
 type scratchTaskActionMsg struct {
+	projectPath string
+	selectPath  string
+	status      string
+	err         error
+}
+
+type agentTaskActionMsg struct {
+	task        model.AgentTask
 	projectPath string
 	selectPath  string
 	status      string
@@ -1151,6 +1160,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.scratchTaskAction != nil {
 			return m.updateScratchTaskActionConfirmMode(msg)
 		}
+		if m.agentTaskAction != nil {
+			return m.updateAgentTaskActionConfirmMode(msg)
+		}
 		if m.projectRemoveConfirm != nil {
 			return m.updateProjectRemoveConfirmMode(msg)
 		}
@@ -1724,6 +1736,27 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = msg.status
 		}
 		return m, m.requestProjectInvalidationCmd(invalidateProjectStructure(""))
+	case agentTaskActionMsg:
+		if msg.err != nil {
+			if m.agentTaskAction != nil && filepath.Clean(strings.TrimSpace(m.agentTaskAction.ProjectPath)) == filepath.Clean(strings.TrimSpace(msg.projectPath)) {
+				m.agentTaskAction.Submitting = false
+			}
+			m.reportError("Agent task action failed", msg.err, msg.projectPath)
+			return m, nil
+		}
+		m.agentTaskAction = nil
+		m.err = nil
+		m.preferredSelectPath = strings.TrimSpace(msg.selectPath)
+		if strings.TrimSpace(msg.task.ID) != "" {
+			m.upsertOpenAgentTask(msg.task)
+			if strings.TrimSpace(msg.selectPath) != "" {
+				m.rebuildProjectList(msg.selectPath)
+			}
+		}
+		if strings.TrimSpace(msg.status) != "" {
+			m.status = msg.status
+		}
+		return m, m.requestProjectInvalidationCmd(invalidateProjectStructure(""))
 	case projectRemoveActionMsg:
 		if msg.err != nil {
 			if m.projectRemoveConfirm != nil && filepath.Clean(strings.TrimSpace(m.projectRemoveConfirm.ProjectPath)) == filepath.Clean(strings.TrimSpace(msg.projectPath)) {
@@ -2263,7 +2296,7 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "M":
 		return m, m.openWorktreeMergeConfirmForSelection()
 	case "x":
-		return m, m.openWorktreeRemoveConfirmForSelection()
+		return m.openHideActionForSelection()
 	}
 	return m, nil
 }
@@ -2778,6 +2811,17 @@ func (m Model) View() string {
 			}
 			return m.renderScratchTaskActionOverlay(body, width, height)
 		}
+		if m.agentTaskAction != nil {
+			width := m.width
+			if width <= 0 {
+				width = 120
+			}
+			height := m.height
+			if height <= 0 {
+				height = 30
+			}
+			return m.renderAgentTaskActionOverlay(body, width, height)
+		}
 		return body
 	}
 
@@ -2860,6 +2904,9 @@ func (m Model) View() string {
 	}
 	if m.scratchTaskAction != nil {
 		body = m.renderScratchTaskActionOverlay(body, layout.width, layout.height)
+	}
+	if m.agentTaskAction != nil {
+		body = m.renderAgentTaskActionOverlay(body, layout.width, layout.height)
 	}
 	if m.projectRemoveConfirm != nil {
 		body = m.renderProjectRemoveConfirmOverlay(body, layout.width, layout.height)
@@ -3848,6 +3895,9 @@ func (m Model) markProjectSessionSeenCmd(path string, seenAt time.Time, refresh 
 	if path == "" {
 		return nil
 	}
+	if m.isAgentTaskProjectPath(path) {
+		return nil
+	}
 	if seenAt.IsZero() {
 		seenAt = m.currentTime()
 	}
@@ -3866,6 +3916,9 @@ func (m Model) markProjectSessionUnreadCmd(path string) tea.Cmd {
 	}
 	path = filepath.Clean(strings.TrimSpace(path))
 	if path == "" {
+		return nil
+	}
+	if m.isAgentTaskProjectPath(path) {
 		return nil
 	}
 	return func() tea.Msg {
@@ -4484,8 +4537,7 @@ func (m Model) openRemoveActionForSelection() (tea.Model, tea.Cmd) {
 		return m, m.openScratchTaskActionConfirmForSelection()
 	}
 	if model.NormalizeProjectKind(project.Kind) == model.ProjectKindAgentTask {
-		m.status = "Agent tasks are managed from Boss Chat for now"
-		return m, nil
+		return m, m.openAgentTaskActionConfirmForSelection()
 	}
 	if row, project, ok := m.selectedProjectRow(); ok && row.Kind == projectListRowWorktree && project.WorktreeKind == model.WorktreeKindLinked {
 		return m, m.openWorktreeRemoveConfirmForSelection()
@@ -4494,6 +4546,25 @@ func (m Model) openRemoveActionForSelection() (tea.Model, tea.Cmd) {
 		return m, m.openProjectRemoveConfirmForSelection()
 	}
 	return m, m.openProjectRemoveConfirmForSelection()
+}
+
+func (m Model) openHideActionForSelection() (tea.Model, tea.Cmd) {
+	project, ok := m.selectedProject()
+	if !ok {
+		m.status = "No project selected"
+		return m, nil
+	}
+	switch model.NormalizeProjectKind(project.Kind) {
+	case model.ProjectKindAgentTask:
+		return m, m.openAgentTaskActionConfirmForSelection()
+	case model.ProjectKindScratchTask:
+		return m, m.openScratchTaskActionConfirmForSelection()
+	}
+	if row, project, ok := m.selectedProjectRow(); ok && row.Kind == projectListRowWorktree && project.WorktreeKind == model.WorktreeKindLinked {
+		return m, m.openWorktreeRemoveConfirmForSelection()
+	}
+	m.status = "Select an agent task or linked worktree to archive or remove it"
+	return m, nil
 }
 
 func projectRemovalName(project model.ProjectSummary) string {
@@ -6139,6 +6210,12 @@ func (m Model) renderFooter(width int) string {
 			return m.renderModalFooter(width, "Remove project: waiting for the list update", supplementSegments...)
 		}
 		return m.renderModalFooter(width, "Remove project: Enter choose, Tab switch, Esc cancel", supplementSegments...)
+	}
+	if m.agentTaskAction != nil {
+		if m.agentTaskAction.Submitting {
+			return m.renderModalFooter(width, "Agent task: waiting for archive", supplementSegments...)
+		}
+		return m.renderModalFooter(width, "Agent task: Enter choose, Tab switch, Esc cancel", supplementSegments...)
 	}
 	baseSegments := append([]string{
 		compactFooterBase(width, m.focusedPane, m.detailViewport.ScrollPercent(), m.runtimeViewport.ScrollPercent(), m.hasHiddenCodexSession(), m.currentEmbeddedLaunchLabel(), m.worktreeFooterActions(width)),

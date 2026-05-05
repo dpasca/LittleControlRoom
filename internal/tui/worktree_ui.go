@@ -952,6 +952,7 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 		return nil
 	}
 	actions := append([]footerAction(nil), m.scratchTaskFooterActions(width)...)
+	actions = append(actions, m.agentTaskFooterActions(width)...)
 	row, project, ok := m.selectedProjectRow()
 	if !ok {
 		return actions

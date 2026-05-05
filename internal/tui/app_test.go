@@ -1498,6 +1498,29 @@ func TestRenderFooterShowsRemoveHintForMissingProject(t *testing.T) {
 	}
 }
 
+func TestProjectRemoveHotkeyDoesNotOpenRegularProjectRemoval(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+	}
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("x on a regular project should not schedule work")
+	}
+	if got.projectRemoveConfirm != nil {
+		t.Fatalf("x on a regular project should not open the project removal dialog")
+	}
+	if got.status != "Select an agent task or linked worktree to archive or remove it" {
+		t.Fatalf("status = %q, want scoped x action guidance", got.status)
+	}
+}
+
 func TestRenderFooterShowsScratchTaskActionHint(t *testing.T) {
 	m := Model{
 		focusedPane: focusProjects,
@@ -3155,6 +3178,42 @@ func TestDispatchCommandWorktreeRemoveOpensConfirm(t *testing.T) {
 	}
 	if got.worktreeRemoveConfirm == nil {
 		t.Fatalf("dispatchCommand(/wt remove) should open the remove confirmation dialog")
+	}
+}
+
+func TestLinkedWorktreeRemoveHotkeyStillOpensConfirm(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+			},
+			{
+				Name:             "repo--feat-parallel-lane",
+				Path:             childPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+				RepoBranch:       "feat/parallel-lane",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("x on linked worktree should open the confirmation dialog without scheduling work")
+	}
+	if got.worktreeRemoveConfirm == nil {
+		t.Fatalf("x on linked worktree should open the remove confirmation dialog")
 	}
 }
 
@@ -5415,6 +5474,227 @@ func TestAgentTaskSelectionOpensTrackedEngineerSession(t *testing.T) {
 	}
 	if got.codexPendingOpen == nil || got.codexPendingOpen.projectPath != task.WorkspacePath {
 		t.Fatalf("pending open = %#v, want agent task workspace", got.codexPendingOpen)
+	}
+}
+
+func TestAgentTaskRemoveHotkeyOpensAgentTaskActionDialog(t *testing.T) {
+	task := model.AgentTask{
+		ID:            "agt_archive_hotkey",
+		Title:         "Review highlighted task",
+		Status:        model.AgentTaskStatusWaiting,
+		WorkspacePath: "/tmp/lcroom-agent-task-hotkey",
+	}
+	project, err := projectSummaryForAgentTask(task)
+	if err != nil {
+		t.Fatalf("projectSummaryForAgentTask() error = %v", err)
+	}
+	m := Model{
+		focusedPane:    focusProjects,
+		projects:       []model.ProjectSummary{project},
+		openAgentTasks: []model.AgentTask{task},
+		selected:       0,
+	}
+
+	footer := ansi.Strip(m.renderFooter(160))
+	if !strings.Contains(footer, "x archive") {
+		t.Fatalf("renderFooter() should advertise agent task archiving, got %q", footer)
+	}
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("agent task remove hotkey should open a dialog before running any command")
+	}
+	if got.agentTaskAction == nil {
+		t.Fatalf("agent task remove hotkey should open the agent task action dialog")
+	}
+	if got.worktreeRemoveConfirm != nil {
+		t.Fatalf("agent task remove hotkey should not open the linked-worktree removal dialog")
+	}
+	if got.agentTaskAction.Selected != agentTaskActionFocusKeep {
+		t.Fatalf("default agent task action selection = %d, want keep", got.agentTaskAction.Selected)
+	}
+	rendered := ansi.Strip(got.renderAgentTaskActionOverlay("", 100, 24))
+	if strings.Contains(rendered, "linked worktree") || !strings.Contains(rendered, "Archive") || !strings.Contains(rendered, "Keep") {
+		t.Fatalf("agent task action overlay should offer archive/keep without worktree copy, got %q", rendered)
+	}
+}
+
+func TestDispatchRemoveCommandOpensAgentTaskActionDialog(t *testing.T) {
+	t.Parallel()
+
+	task := model.AgentTask{
+		ID:            "agt_archive_command",
+		Title:         "Review delegated task",
+		Status:        model.AgentTaskStatusWaiting,
+		WorkspacePath: "/tmp/lcroom-agent-task-command",
+	}
+	project, err := projectSummaryForAgentTask(task)
+	if err != nil {
+		t.Fatalf("projectSummaryForAgentTask() error = %v", err)
+	}
+	m := Model{
+		projects:       []model.ProjectSummary{project},
+		openAgentTasks: []model.AgentTask{task},
+		selected:       0,
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindRemove, Canonical: "/remove"})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("dispatchCommand(/remove) should open a dialog before running any command")
+	}
+	if got.agentTaskAction == nil {
+		t.Fatalf("dispatchCommand(/remove) should open the agent task action dialog")
+	}
+}
+
+func TestAgentTaskActionArchiveQueuesArchiveCommand(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	cfg.DBPath = filepath.Join(cfg.DataDir, "little-control-room.sqlite")
+	st, err := store.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	svc := service.New(cfg, st, events.NewBus(), nil)
+
+	task, err := svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+		Title: "Archive delegated task",
+		Kind:  model.AgentTaskKindAgent,
+	})
+	if err != nil {
+		t.Fatalf("CreateAgentTask() error = %v", err)
+	}
+	project, err := projectSummaryForAgentTask(task)
+	if err != nil {
+		t.Fatalf("projectSummaryForAgentTask() error = %v", err)
+	}
+	neighbor := model.ProjectSummary{Name: "neighbor", Path: "/tmp/neighbor", PresentOnDisk: true}
+	m := Model{
+		ctx:            ctx,
+		svc:            svc,
+		allProjects:    []model.ProjectSummary{neighbor},
+		projects:       []model.ProjectSummary{project, neighbor},
+		openAgentTasks: []model.AgentTask{task},
+		selected:       0,
+		visibility:     visibilityAllFolders,
+		agentTaskAction: &agentTaskActionConfirmState{
+			TaskID:      task.ID,
+			ProjectPath: task.WorkspacePath,
+			TaskTitle:   task.Title,
+			Selected:    agentTaskActionFocusKeep,
+		},
+	}
+
+	updated, _ := m.updateAgentTaskActionConfirmMode(tea.KeyMsg{Type: tea.KeyTab})
+	got := updated.(Model)
+	if got.agentTaskAction.Selected != agentTaskActionFocusArchive {
+		t.Fatalf("first tab should move focus to archive, got %d", got.agentTaskAction.Selected)
+	}
+
+	updated, cmd := got.updateAgentTaskActionConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if got.status != "Archiving agent task..." {
+		t.Fatalf("status = %q, want archive progress", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("archive action should queue a command")
+	}
+	rawMsg := cmd()
+	msg, ok := rawMsg.(agentTaskActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want agentTaskActionMsg", rawMsg)
+	}
+	if msg.err != nil {
+		t.Fatalf("agentTaskActionMsg.err = %v, want nil", msg.err)
+	}
+	if msg.status != "Agent task archived" {
+		t.Fatalf("agentTaskActionMsg.status = %q, want archive status", msg.status)
+	}
+	if msg.selectPath != "/tmp/neighbor" {
+		t.Fatalf("agentTaskActionMsg.selectPath = %q, want neighbor fallback", msg.selectPath)
+	}
+
+	after, reloadCmd := got.Update(msg)
+	saved := after.(Model)
+	if reloadCmd == nil {
+		t.Fatalf("successful agent task archive should queue a list reload")
+	}
+	if saved.agentTaskAction != nil {
+		t.Fatalf("successful agent task archive should close the dialog")
+	}
+	if len(saved.openAgentTasks) != 0 {
+		t.Fatalf("archived agent task should leave open task cache, got %#v", saved.openAgentTasks)
+	}
+	if len(saved.projects) != 1 || saved.projects[0].Path != "/tmp/neighbor" {
+		t.Fatalf("visible projects after archive = %#v, want neighbor only", saved.projects)
+	}
+
+	openTasks, err := svc.ListOpenAgentTasks(ctx, 5)
+	if err != nil {
+		t.Fatalf("ListOpenAgentTasks() error = %v", err)
+	}
+	if len(openTasks) != 0 {
+		t.Fatalf("archived agent task should leave open task list, got %#v", openTasks)
+	}
+}
+
+func TestOpenAgentTaskActionWithBusySessionShowsAttentionDialog(t *testing.T) {
+	task := model.AgentTask{
+		ID:            "agt_archive_busy",
+		Title:         "Wait for engineer",
+		Status:        model.AgentTaskStatusActive,
+		WorkspacePath: "/tmp/lcroom-agent-task-busy",
+	}
+	project, err := projectSummaryForAgentTask(task)
+	if err != nil {
+		t.Fatalf("projectSummaryForAgentTask() error = %v", err)
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				Started:  true,
+				ThreadID: "thread-agent-busy",
+				Busy:     true,
+				Status:   req.Provider.Label() + " session busy",
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: task.WorkspacePath,
+		Provider:    codexapp.ProviderCodex,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+	m := Model{
+		codexManager:   manager,
+		projects:       []model.ProjectSummary{project},
+		openAgentTasks: []model.AgentTask{task},
+		selected:       0,
+	}
+
+	cmd := m.openAgentTaskActionConfirmForSelection()
+	if cmd != nil {
+		t.Fatalf("blocked archive should not schedule a command")
+	}
+	if m.agentTaskAction != nil {
+		t.Fatalf("agent task action dialog should stay closed while the session is busy")
+	}
+	if m.attentionDialog == nil {
+		t.Fatalf("blocked archive should show the attention dialog")
+	}
+	if m.attentionDialog.Title != "Archive blocked" {
+		t.Fatalf("attention dialog title = %q, want archive blocked", m.attentionDialog.Title)
+	}
+	if strings.Contains(m.status, "linked worktree") {
+		t.Fatalf("status should not mention linked worktrees, got %q", m.status)
 	}
 }
 
