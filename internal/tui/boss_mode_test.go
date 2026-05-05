@@ -702,6 +702,32 @@ func TestBossViewContextProcessSystemNoticeRespectsPrivacy(t *testing.T) {
 	}
 }
 
+func TestBossViewContextIncludesCPUHotSystemNotice(t *testing.T) {
+	t.Parallel()
+
+	m := Model{
+		cpuSnapshot: procinspect.CPUSnapshot{
+			TotalCPU:  155.2,
+			ScannedAt: time.Date(2026, 4, 3, 11, 0, 0, 0, time.UTC),
+			Processes: []procinspect.CPUProcess{{
+				Process: procinspect.Process{PID: 42, CPU: 91.4, Command: "/usr/local/bin/node dev.js"},
+			}},
+		},
+	}
+
+	view := m.bossViewContext()
+	if len(view.SystemNotices) != 1 {
+		t.Fatalf("SystemNotices len = %d, want 1", len(view.SystemNotices))
+	}
+	notice := view.SystemNotices[0]
+	if notice.Code != "cpu_hot" || notice.Severity != "warning" || notice.Count != 1 {
+		t.Fatalf("notice = %#v, want CPU warning", notice)
+	}
+	if !strings.Contains(notice.Summary, "CPU monitor") || !strings.Contains(notice.Summary, "PID 42") || !strings.Contains(notice.Summary, "/cpu") {
+		t.Fatalf("notice summary = %q, want CPU details and /cpu guidance", notice.Summary)
+	}
+}
+
 func TestBossViewContextIncludesBrowserAndQuestionNotices(t *testing.T) {
 	t.Parallel()
 

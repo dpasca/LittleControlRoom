@@ -16,6 +16,9 @@ import (
 const (
 	DefaultHighCPUThreshold   = 50.0
 	DefaultOrphanCPUThreshold = 1.0
+	DefaultCPUTopLimit        = 15
+	DefaultCPUCWDLimit        = 25
+	DefaultHotTotalCPU        = 100.0
 )
 
 type Process struct {
@@ -45,11 +48,37 @@ type ProjectReport struct {
 	ScannedAt   time.Time
 }
 
+type CPUProcess struct {
+	Process
+	ProjectPath       string
+	Reasons           []string
+	ManagedRuntime    bool
+	OwnedByCurrentApp bool
+}
+
+type CPUSnapshot struct {
+	Processes []CPUProcess
+	TotalCPU  float64
+	ScannedAt time.Time
+}
+
 type ScanOptions struct {
 	ProjectPaths       []string
 	ManagedPIDs        map[int]struct{}
 	ManagedPGIDs       map[int]struct{}
 	OwnPID             int
+	HighCPUThreshold   float64
+	OrphanCPUThreshold float64
+	Now                time.Time
+}
+
+type CPUScanOptions struct {
+	ProjectPaths       []string
+	ManagedPIDs        map[int]struct{}
+	ManagedPGIDs       map[int]struct{}
+	OwnPID             int
+	Limit              int
+	CWDLimit           int
 	HighCPUThreshold   float64
 	OrphanCPUThreshold float64
 	Now                time.Time
@@ -142,6 +171,109 @@ func ScanProjects(ctx context.Context, opts ScanOptions) ([]ProjectReport, error
 	return reports, nil
 }
 
+func ScanCPU(ctx context.Context, opts CPUScanOptions) (CPUSnapshot, error) {
+	processes, err := currentProcesses(ctx)
+	if err != nil {
+		return CPUSnapshot{}, err
+	}
+	pids := topProcessPIDs(processes, opts.cwdLimit())
+	cwds := map[int]string{}
+	if len(pids) > 0 {
+		if pidCWDs, err := currentProcessCWDsForPIDs(ctx, pids); err == nil {
+			cwds = pidCWDs
+		}
+	}
+	return buildCPUSnapshot(processes, cwds, opts), nil
+}
+
+func buildCPUSnapshot(processes []Process, cwds map[int]string, opts CPUScanOptions) CPUSnapshot {
+	projectPaths := cleanProjectPaths(opts.ProjectPaths)
+	ownPID := opts.OwnPID
+	if ownPID <= 0 {
+		ownPID = os.Getpid()
+	}
+	highCPUThreshold := opts.HighCPUThreshold
+	if highCPUThreshold <= 0 {
+		highCPUThreshold = DefaultHighCPUThreshold
+	}
+	orphanCPUThreshold := opts.OrphanCPUThreshold
+	if orphanCPUThreshold <= 0 {
+		orphanCPUThreshold = DefaultOrphanCPUThreshold
+	}
+	scannedAt := opts.Now
+	if scannedAt.IsZero() {
+		scannedAt = time.Now()
+	}
+
+	ppids := make(map[int]int, len(processes))
+	for _, process := range processes {
+		ppids[process.PID] = process.PPID
+	}
+
+	sorted := append([]Process(nil), processes...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		left, right := sorted[i], sorted[j]
+		if left.CPU != right.CPU {
+			return left.CPU > right.CPU
+		}
+		return left.PID < right.PID
+	})
+
+	limit := opts.limit()
+	out := make([]CPUProcess, 0, minInt(limit, len(sorted)))
+	totalCPU := 0.0
+	for _, process := range sorted {
+		if process.CPU > 0 {
+			totalCPU += process.CPU
+		}
+		if len(out) >= limit {
+			continue
+		}
+		if cwd := strings.TrimSpace(cwds[process.PID]); cwd != "" {
+			process.CWD = filepath.Clean(cwd)
+		}
+		out = append(out, classifyCPUProcess(process, projectPaths, ppids, ownPID, opts.ManagedPIDs, opts.ManagedPGIDs, highCPUThreshold, orphanCPUThreshold))
+	}
+	return CPUSnapshot{
+		Processes: out,
+		TotalCPU:  totalCPU,
+		ScannedAt: scannedAt,
+	}
+}
+
+func classifyCPUProcess(process Process, projectPaths []string, ppids map[int]int, ownPID int, managedPIDs, managedPGIDs map[int]struct{}, highCPUThreshold, orphanCPUThreshold float64) CPUProcess {
+	result := CPUProcess{Process: process}
+	if process.CWD != "" {
+		if projectPath, ok := deepestProjectForPath(process.CWD, projectPaths); ok {
+			result.ProjectPath = projectPath
+		}
+	}
+	if _, ok := managedPIDs[process.PID]; ok {
+		result.ManagedRuntime = true
+	}
+	if _, ok := managedPGIDs[process.PGID]; ok && process.PGID > 0 {
+		result.ManagedRuntime = true
+	}
+	result.OwnedByCurrentApp = processDescendsFrom(process.PID, ownPID, ppids)
+
+	if process.CPU >= highCPUThreshold {
+		result.Reasons = append(result.Reasons, fmt.Sprintf("high CPU %.1f%%", process.CPU))
+	}
+	if result.OwnedByCurrentApp {
+		result.Reasons = append(result.Reasons, "spawned by LCR")
+	}
+	if result.ManagedRuntime {
+		result.Reasons = append(result.Reasons, "managed runtime")
+	}
+	if result.ProjectPath != "" {
+		result.Reasons = append(result.Reasons, "project-local")
+	}
+	if process.PPID == 1 && process.CPU >= orphanCPUThreshold {
+		result.Reasons = append(result.Reasons, "orphaned under PID 1")
+	}
+	return result
+}
+
 func classifyProcess(process Process, projectPath string, ppids map[int]int, ownPID int, managedPIDs, managedPGIDs map[int]struct{}, highCPUThreshold, orphanCPUThreshold float64) Finding {
 	finding := Finding{
 		Process:     process,
@@ -189,6 +321,50 @@ func processDescendsFrom(pid, ancestor int, ppids map[int]int) bool {
 		}
 	}
 	return false
+}
+
+func topProcessPIDs(processes []Process, limit int) []int {
+	if limit <= 0 {
+		limit = DefaultCPUCWDLimit
+	}
+	sorted := append([]Process(nil), processes...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		left, right := sorted[i], sorted[j]
+		if left.CPU != right.CPU {
+			return left.CPU > right.CPU
+		}
+		return left.PID < right.PID
+	})
+	if len(sorted) > limit {
+		sorted = sorted[:limit]
+	}
+	out := make([]int, 0, len(sorted))
+	seen := map[int]struct{}{}
+	for _, process := range sorted {
+		if process.PID <= 0 {
+			continue
+		}
+		if _, ok := seen[process.PID]; ok {
+			continue
+		}
+		seen[process.PID] = struct{}{}
+		out = append(out, process.PID)
+	}
+	return out
+}
+
+func (opts CPUScanOptions) limit() int {
+	if opts.Limit <= 0 {
+		return DefaultCPUTopLimit
+	}
+	return opts.Limit
+}
+
+func (opts CPUScanOptions) cwdLimit() int {
+	if opts.CWDLimit <= 0 {
+		return DefaultCPUCWDLimit
+	}
+	return opts.CWDLimit
 }
 
 func cleanProjectPaths(paths []string) []string {
@@ -305,6 +481,21 @@ func currentProcessCWDs(ctx context.Context) (map[int]string, error) {
 	return parseLsofCWDOutput(string(out)), nil
 }
 
+func currentProcessCWDsForPIDs(ctx context.Context, pids []int) (map[int]string, error) {
+	pidList := joinPositiveInts(pids)
+	if pidList == "" {
+		return map[int]string{}, nil
+	}
+	out, err := exec.CommandContext(ctx, "lsof", "-nP", "-Fpcn", "-a", "-d", "cwd", "-p", pidList).Output()
+	if err != nil {
+		if len(out) > 0 {
+			return parseLsofCWDOutput(string(out)), nil
+		}
+		return nil, fmt.Errorf("list process cwd for pids: %w", err)
+	}
+	return parseLsofCWDOutput(string(out)), nil
+}
+
 func parseLsofCWDOutput(output string) map[int]string {
 	cwds := map[int]string{}
 	currentPID := 0
@@ -329,6 +520,25 @@ func parseLsofCWDOutput(output string) map[int]string {
 		}
 	}
 	return cwds
+}
+
+func joinPositiveInts(values []int) string {
+	if len(values) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(values))
+	seen := map[int]struct{}{}
+	for _, value := range values {
+		if value <= 0 {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		parts = append(parts, strconv.Itoa(value))
+	}
+	return strings.Join(parts, ",")
 }
 
 func currentListeningPorts(ctx context.Context) (map[int][]int, error) {
@@ -414,4 +624,11 @@ func dedupeSortedInts(values []int) []int {
 		last = value
 	}
 	return append([]int(nil), out...)
+}
+
+func minInt(left, right int) int {
+	if left < right {
+		return left
+	}
+	return right
 }

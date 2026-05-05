@@ -510,7 +510,7 @@ func (m Model) projectProcessWarningSummary(projectPath string) string {
 	if stats.Total == 0 {
 		return ""
 	}
-	return fmt.Sprintf("%s outside LCR control. Use /pids to inspect.", processWarningDetailLabel(stats))
+	return fmt.Sprintf("%s outside LCR control. Use /cpu to inspect.", processWarningDetailLabel(stats))
 }
 
 func processWarningDetailLabel(stats processWarningStats) string {
@@ -558,7 +558,7 @@ func processWarningSystemNoticeSummary(stats processWarningStats) string {
 	if stats.Total == 0 {
 		return ""
 	}
-	return processWarningDetailLabel(stats) + " outside LCR control; use process_report or /pids for PID details"
+	return processWarningDetailLabel(stats) + " outside LCR control; use process_report or /cpu for PID details"
 }
 
 func formatCount(count int, label string) string {
@@ -621,7 +621,7 @@ func processWarningStatus(stats processWarningStats) string {
 	if label == "" {
 		return ""
 	}
-	return label + "; /pids"
+	return label + "; /cpu"
 }
 
 func sameDialogProcessPath(left, right string) bool {

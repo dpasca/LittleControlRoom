@@ -243,7 +243,7 @@ func (m Model) renderBossModeHeader(width int) string {
 		parts = append(parts, renderFooterAlert(notice))
 	}
 	line := strings.Join(parts, "  ")
-	return fitStyledWidth(line, width)
+	return renderLineWithRightSegment(line, m.renderTopCPUUsageSegment(), width)
 }
 
 func (m Model) renderBossModeFooter(width int) string {
@@ -313,6 +313,14 @@ func (m Model) bossViewContext() bossui.ViewContext {
 			Severity: "warning",
 			Summary:  notice,
 			Count:    m.totalProcessWarningCount(),
+		})
+	}
+	if notice := cpuSnapshotSystemNoticeSummary(m.cpuSnapshot, !m.privacyMode); notice != "" {
+		view.SystemNotices = append(view.SystemNotices, bossui.ViewSystemNotice{
+			Code:     "cpu_hot",
+			Severity: "warning",
+			Summary:  notice,
+			Count:    cpuSnapshotHotProcessCount(m.cpuSnapshot),
 		})
 	}
 	if m.browserAttention != nil {
