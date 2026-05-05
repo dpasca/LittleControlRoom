@@ -5,6 +5,8 @@ const (
 	OperatorHeight = 13
 )
 
+const OperatorWalkCycleSize = 32
+
 type Color struct {
 	R uint8
 	G uint8
@@ -41,6 +43,59 @@ var (
 
 func RGB(r, g, b uint8) Color {
 	return Color{R: r, G: g, B: b}
+}
+
+func OperatorWalkCycle(leftStop, rightStop, baseY, phase int) OperatorState {
+	if rightStop < leftStop {
+		leftStop, rightStop = rightStop, leftStop
+	}
+	if rightStop < leftStop+2 {
+		rightStop = leftStop + 2
+	}
+	phase %= OperatorWalkCycleSize
+	if phase < 0 {
+		phase += OperatorWalkCycleSize
+	}
+
+	span := max(2, rightStop-leftStop)
+	stepOne := min(rightStop, leftStop+max(1, span/4))
+	stepTwo := min(rightStop, leftStop+max(2, span/2))
+	stepThree := min(rightStop, leftStop+max(3, (3*span)/4))
+
+	switch phase {
+	case 0, 1, 2, 3, 4, 5:
+		return OperatorState{X: leftStop, Y: baseY + 1, Facing: -1, Pose: OperatorInspect, Blink: phase == 2}
+	case 6:
+		return OperatorState{X: stepOne, Y: baseY, Facing: 1, Pose: OperatorWalkA}
+	case 7:
+		return OperatorState{X: stepOne, Y: baseY + 1, Facing: 1, Pose: OperatorWalkB}
+	case 8:
+		return OperatorState{X: stepTwo, Y: baseY, Facing: 1, Pose: OperatorWalkA}
+	case 9:
+		return OperatorState{X: stepTwo, Y: baseY + 1, Facing: 1, Pose: OperatorWalkB}
+	case 10:
+		return OperatorState{X: stepThree, Y: baseY, Facing: 1, Pose: OperatorWalkA}
+	case 11:
+		return OperatorState{X: stepThree, Y: baseY + 1, Facing: 1, Pose: OperatorWalkB}
+	case 12, 13, 14, 15, 16, 17, 18, 19, 20, 21:
+		return OperatorState{X: rightStop, Y: baseY, Facing: 1, Pose: OperatorTypeA, Blink: phase == 16}
+	case 22:
+		return OperatorState{X: stepThree, Y: baseY, Facing: -1, Pose: OperatorWalkA}
+	case 23:
+		return OperatorState{X: stepThree, Y: baseY + 1, Facing: -1, Pose: OperatorWalkB}
+	case 24:
+		return OperatorState{X: stepTwo, Y: baseY, Facing: -1, Pose: OperatorWalkA}
+	case 25:
+		return OperatorState{X: stepTwo, Y: baseY + 1, Facing: -1, Pose: OperatorWalkB}
+	case 26:
+		return OperatorState{X: stepOne, Y: baseY, Facing: -1, Pose: OperatorWalkA}
+	case 27:
+		return OperatorState{X: stepOne, Y: baseY + 1, Facing: -1, Pose: OperatorWalkB}
+	case 28, 29, 30, 31:
+		return OperatorState{X: leftStop, Y: baseY + 1, Facing: -1, Pose: OperatorInspect, Blink: phase == 30}
+	default:
+		return OperatorState{X: leftStop, Y: baseY + 1, Facing: -1, Pose: OperatorInspect}
+	}
 }
 
 func DrawOperator(set func(x, y int, color Color), state OperatorState) {

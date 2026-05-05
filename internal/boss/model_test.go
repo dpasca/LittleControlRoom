@@ -1392,6 +1392,35 @@ func TestBossCompanionUsesSharedStationScene(t *testing.T) {
 	}
 }
 
+func TestBossCompanionWalksAcrossSharedStationScene(t *testing.T) {
+	t.Parallel()
+
+	operator := func(frame int) pixelart.OperatorState {
+		return pixelart.OperatorStationOperatorState(bossCompanionStationState(bossCompanionIdle, frame, 36))
+	}
+	left := operator(0)
+	stepOne := operator(6)
+	stepTwo := operator(8)
+	stepThree := operator(10)
+	right := operator(12)
+	returnStepThree := operator(22)
+	returnStepTwo := operator(24)
+	backAtLeft := operator(31)
+
+	if left.Pose != pixelart.OperatorInspect || left.Facing != -1 {
+		t.Fatalf("frame 0 = %+v, want inspect pose facing left", left)
+	}
+	if right.Pose != pixelart.OperatorTypeA || right.Facing != 1 {
+		t.Fatalf("frame 12 = %+v, want typing pose facing right", right)
+	}
+	if !(left.X < stepOne.X && stepOne.X < stepTwo.X && stepTwo.X < stepThree.X && stepThree.X <= right.X) {
+		t.Fatalf("boss companion should walk right: left=%d step1=%d step2=%d step3=%d right=%d", left.X, stepOne.X, stepTwo.X, stepThree.X, right.X)
+	}
+	if !(returnStepThree.X < right.X && returnStepTwo.X < returnStepThree.X && backAtLeft.X <= returnStepTwo.X) {
+		t.Fatalf("boss companion should walk left: right=%d step3=%d step2=%d left=%d", right.X, returnStepThree.X, returnStepTwo.X, backAtLeft.X)
+	}
+}
+
 func TestBossCompanionUsesMinimumSharedStationWidth(t *testing.T) {
 	t.Parallel()
 

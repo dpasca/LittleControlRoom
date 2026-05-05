@@ -92,21 +92,26 @@ func (s bossCompanionSprite) cell(x, y int) bossCompanionCell {
 func renderBossCompanionSprite(mood bossCompanionMood, frame, width int) bossCompanionSprite {
 	width = maxInt(pixelart.OperatorStationWidth, width)
 	sprite := newBossCompanionSprite(width, pixelart.OperatorStationHeight)
-	beat := frame % 4
 	pixelart.DrawOperatorStation(func(x, y int, color pixelart.Color) {
 		sprite.set(x, y, bossCompanionColorFromPixelArt(color))
-	}, pixelart.OperatorStationState{
-		Width: width,
-		Pose:  bossCompanionOperatorPose(mood, beat),
-		Blink: frame%13 == 7,
-		Phase: frame,
-	})
+	}, bossCompanionStationState(mood, frame, width))
 	if mood == bossCompanionThinking {
 		sprite.set(0, 0, bossCompanionSignalColor)
 		sprite.set(0, 1, bossCompanionSignalDimColor)
 		sprite.set(1, 0, bossCompanionSignalDimColor)
 	}
 	return sprite
+}
+
+func bossCompanionStationState(mood bossCompanionMood, frame, width int) pixelart.OperatorStationState {
+	beat := frame % 4
+	return pixelart.OperatorStationState{
+		Width:     width,
+		Pose:      bossCompanionOperatorPose(mood, beat),
+		Blink:     frame%13 == 7,
+		Phase:     frame,
+		WalkCycle: true,
+	}
 }
 
 func bossCompanionOperatorPose(mood bossCompanionMood, beat int) pixelart.OperatorPose {

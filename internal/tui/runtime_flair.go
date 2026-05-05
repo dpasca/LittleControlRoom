@@ -10,7 +10,7 @@ import (
 const (
 	runtimeFlairMinWidth  = 24
 	runtimeFlairMinHeight = 7
-	runtimeFlairCycleSize = 32
+	runtimeFlairCycleSize = pixelart.OperatorWalkCycleSize
 )
 
 var (
@@ -199,7 +199,7 @@ func runtimeFlairANSIStyle(fg, bg runtimeFlairColor) string {
 }
 
 func runtimeFlairPhase(spinnerFrame int) int {
-	return (spinnerFrame / 4) % runtimeFlairCycleSize
+	return (spinnerFrame / 4) % pixelart.OperatorWalkCycleSize
 }
 
 func (m Model) renderRuntimeFlairPanel(width, height int) (string, bool) {
@@ -273,7 +273,7 @@ func runtimeFlairOperatorSceneState(width, floorTop, deskX, phase int, hasStatus
 	baseY := max(1, floorTop-13)
 	deskStop := max(2, deskX-10)
 	if !hasStatusPanel {
-		if phase < runtimeFlairCycleSize/2 {
+		if phase < pixelart.OperatorWalkCycleSize/2 {
 			return runtimeFlairOperatorState{x: deskStop, y: baseY, facing: 1, pose: runtimeFlairOperatorTypeA}
 		}
 		return runtimeFlairOperatorState{x: deskStop, y: baseY + 1, facing: 1, pose: runtimeFlairOperatorTypeB, blink: phase == 21 || phase == 27}
@@ -281,52 +281,14 @@ func runtimeFlairOperatorSceneState(width, floorTop, deskX, phase int, hasStatus
 
 	leftStop := max(2, min(5, deskStop))
 	rightStop := max(leftStop+2, deskStop)
-	span := max(2, rightStop-leftStop)
-	stepOne := min(rightStop, leftStop+max(1, span/4))
-	stepTwo := min(rightStop, leftStop+max(2, span/2))
-	stepThree := min(rightStop, leftStop+max(3, (3*span)/4))
-
-	switch phase {
-	case 0, 1, 2, 3, 4, 5:
-		return runtimeFlairOperatorState{x: leftStop, y: baseY + 1, facing: -1, pose: runtimeFlairOperatorInspect, blink: phase == 2}
-	case 6:
-		return runtimeFlairOperatorState{x: stepOne, y: baseY, facing: 1, pose: runtimeFlairOperatorWalkA}
-	case 7:
-		return runtimeFlairOperatorState{x: stepOne, y: baseY + 1, facing: 1, pose: runtimeFlairOperatorWalkB}
-	case 8:
-		return runtimeFlairOperatorState{x: stepTwo, y: baseY, facing: 1, pose: runtimeFlairOperatorWalkA}
-	case 9:
-		return runtimeFlairOperatorState{x: stepTwo, y: baseY + 1, facing: 1, pose: runtimeFlairOperatorWalkB}
-	case 10:
-		return runtimeFlairOperatorState{x: stepThree, y: baseY, facing: 1, pose: runtimeFlairOperatorWalkA}
-	case 11:
-		return runtimeFlairOperatorState{x: stepThree, y: baseY + 1, facing: 1, pose: runtimeFlairOperatorWalkB}
-	case 12, 13, 14, 15, 16, 17, 18, 19, 20, 21:
-		return runtimeFlairOperatorState{x: rightStop, y: baseY, facing: 1, pose: runtimeFlairOperatorTypeA, blink: phase == 16}
-	case 22:
-		return runtimeFlairOperatorState{x: stepThree, y: baseY, facing: -1, pose: runtimeFlairOperatorWalkA}
-	case 23:
-		return runtimeFlairOperatorState{x: stepThree, y: baseY + 1, facing: -1, pose: runtimeFlairOperatorWalkB}
-	case 24:
-		return runtimeFlairOperatorState{x: stepTwo, y: baseY, facing: -1, pose: runtimeFlairOperatorWalkA}
-	case 25:
-		return runtimeFlairOperatorState{x: stepTwo, y: baseY + 1, facing: -1, pose: runtimeFlairOperatorWalkB}
-	case 26:
-		return runtimeFlairOperatorState{x: stepOne, y: baseY, facing: -1, pose: runtimeFlairOperatorWalkA}
-	case 27:
-		return runtimeFlairOperatorState{x: stepOne, y: baseY + 1, facing: -1, pose: runtimeFlairOperatorWalkB}
-	case 28, 29, 30, 31:
-		return runtimeFlairOperatorState{x: leftStop, y: baseY + 1, facing: -1, pose: runtimeFlairOperatorInspect, blink: phase == 30}
-	default:
-		return runtimeFlairOperatorState{x: leftStop, y: baseY + 1, facing: -1, pose: runtimeFlairOperatorInspect}
-	}
+	return runtimeFlairOperatorStateFromPixelArt(pixelart.OperatorWalkCycle(leftStop, rightStop, baseY, phase))
 }
 
 func runtimeFlairDrawDesk(canvas *runtimeFlairCanvas, x, topY, width, phase int) {
 	if width < 8 {
 		return
 	}
-	beat := phase % runtimeFlairCycleSize
+	beat := phase % pixelart.OperatorWalkCycleSize
 
 	canvas.drawOutlinedRect(x, topY, width, 4, runtimeFlairOutlineColor, runtimeFlairDeskShadowColor)
 	canvas.fillRect(x+1, topY+1, max(1, width-2), 2, runtimeFlairDeskColor)
@@ -405,6 +367,31 @@ func runtimeFlairOperatorPoseToPixelArt(pose runtimeFlairOperatorPose) pixelart.
 		return pixelart.OperatorTypeB
 	default:
 		return pixelart.OperatorInspect
+	}
+}
+
+func runtimeFlairOperatorPoseFromPixelArt(pose pixelart.OperatorPose) runtimeFlairOperatorPose {
+	switch pose {
+	case pixelart.OperatorWalkA:
+		return runtimeFlairOperatorWalkA
+	case pixelart.OperatorWalkB:
+		return runtimeFlairOperatorWalkB
+	case pixelart.OperatorTypeA:
+		return runtimeFlairOperatorTypeA
+	case pixelart.OperatorTypeB:
+		return runtimeFlairOperatorTypeB
+	default:
+		return runtimeFlairOperatorInspect
+	}
+}
+
+func runtimeFlairOperatorStateFromPixelArt(state pixelart.OperatorState) runtimeFlairOperatorState {
+	return runtimeFlairOperatorState{
+		x:      state.X,
+		y:      state.Y,
+		facing: state.Facing,
+		pose:   runtimeFlairOperatorPoseFromPixelArt(state.Pose),
+		blink:  state.Blink,
 	}
 }
 

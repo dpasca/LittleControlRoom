@@ -6,11 +6,12 @@ const (
 )
 
 type OperatorStationState struct {
-	Width  int
-	Pose   OperatorPose
-	Blink  bool
-	Facing int
-	Phase  int
+	Width     int
+	Pose      OperatorPose
+	Blink     bool
+	Facing    int
+	Phase     int
+	WalkCycle bool
 }
 
 var (
@@ -33,25 +34,9 @@ func DrawOperatorStation(set func(x, y int, color Color), state OperatorStationS
 	if set == nil {
 		return
 	}
-	stationWidth := state.Width
-	if stationWidth < OperatorStationWidth {
-		stationWidth = OperatorStationWidth
-	}
-	operatorX := 8
-	panelX := 17
-	if stationWidth > OperatorStationWidth {
-		panelX = stationWidth - 5
-		operatorX = (stationWidth - OperatorWidth) / 2
-		if operatorX < 8 {
-			operatorX = 8
-		}
-		if operatorX+OperatorWidth >= panelX {
-			operatorX = panelX - OperatorWidth - 1
-		}
-		if operatorX < 8 {
-			operatorX = 8
-		}
-	}
+	stationWidth, panelX, _ := operatorStationLayout(state.Width)
+	operatorState := OperatorStationOperatorState(state)
+	operatorX := operatorState.X
 
 	fillRect := func(x, y, width, height int, color Color) {
 		for row := 0; row < height; row++ {
@@ -93,11 +78,54 @@ func DrawOperatorStation(set func(x, y int, color Color), state OperatorStationS
 	fillRect(panelX+1, 10, 2, 2, StationMugColor)
 	set(panelX+2, 9, StationMugColor)
 
-	DrawOperator(set, OperatorState{
+	DrawOperator(set, operatorState)
+}
+
+func OperatorStationOperatorState(state OperatorStationState) OperatorState {
+	stationWidth, panelX, operatorX := operatorStationLayout(state.Width)
+	operatorState := OperatorState{
 		X:      operatorX,
 		Y:      1,
 		Facing: state.Facing,
 		Pose:   state.Pose,
 		Blink:  state.Blink,
-	})
+	}
+	if operatorState.Facing == 0 {
+		operatorState.Facing = 1
+	}
+	if !state.WalkCycle {
+		return operatorState
+	}
+
+	rightStop := operatorX
+	if stationWidth >= OperatorStationWidth {
+		rightStop = max(operatorX, panelX-OperatorWidth-1)
+	}
+	leftStop := max(2, min(5, rightStop))
+	operatorState = OperatorWalkCycle(leftStop, rightStop, 1, state.Phase)
+	operatorState.Blink = operatorState.Blink || state.Blink
+	return operatorState
+}
+
+func operatorStationLayout(width int) (stationWidth int, panelX int, operatorX int) {
+	stationWidth = width
+	if stationWidth < OperatorStationWidth {
+		stationWidth = OperatorStationWidth
+	}
+	operatorX = 8
+	panelX = 17
+	if stationWidth > OperatorStationWidth {
+		panelX = stationWidth - 5
+		operatorX = (stationWidth - OperatorWidth) / 2
+		if operatorX < 8 {
+			operatorX = 8
+		}
+		if operatorX+OperatorWidth >= panelX {
+			operatorX = panelX - OperatorWidth - 1
+		}
+		if operatorX < 8 {
+			operatorX = 8
+		}
+	}
+	return stationWidth, panelX, operatorX
 }
