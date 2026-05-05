@@ -240,6 +240,10 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"Open agent tasks are delegated engineer work items",
 		"one tracked task with its linked engineer thread",
 		"separate from project TODOs",
+		"Completed delegated agent tasks can be archived",
+		"do not route that request to project TODO cleanup",
+		"Scratch-task projects are project records with kind=scratch_task",
+		"separate from both project TODOs and delegated agent tasks",
 		"the AI assistant",
 		"high-level coordinator",
 		"Do not explain a missing task detail as the engineer having no persistent memory",
@@ -289,8 +293,10 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"Never say a deploy needs no DB migration unless direct evidence explicitly covers migrations, schema, storage, or the current diff",
 		"propose_control",
 		"agent_task.create",
+		"scratch_task.archive",
 		"agent_task_report",
-		"Use agent_task_report when the user asks about open or active agent tasks",
+		"Use agent_task_report when the user asks about open, active, completed, archived, historical, or delegated agent tasks",
+		"include_historical=true on agent_task_report",
 		"project TODOs are separate from delegated agent tasks",
 		"Do not answer that there are no open agent tasks",
 		"Use engineer.send_prompt only for explicit project/repo work",
@@ -298,6 +304,8 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"The host will steer the active Codex turn when possible",
 		"Use agent_task.create for temporary delegated work",
 		"do not encode special domains as task kinds",
+		"Use scratch_task.archive when project metadata identifies kind=scratch_task",
+		"task_close_status=archived",
 		"fresh read-only evidence resolves it with no remaining work",
 		"A status or situation question is enough to close a review/waiting agent task",
 		"treat that as a request to manage those agent tasks",
@@ -370,6 +378,65 @@ func TestAssistantPlannerUserTextAllowsClosingResolvedReviewTasks(t *testing.T) 
 			!strings.Contains(got, `control_capability="agent_task.close"`) {
 			t.Fatalf("planner user text should steer resolved review tasks toward close proposals:\n%s", got)
 		}
+	}
+}
+
+func TestAssistantPlannerUserTextSteersCompletedTaskRemovalToArchive(t *testing.T) {
+	t.Parallel()
+
+	req := AssistantRequest{
+		StateBrief: "Open delegated agent tasks: none visible.",
+		Messages:   []ChatMessage{{Role: "user", Content: "remove the task regarding the Hex accessibility issue"}},
+	}
+	normal := bossActionPlannerUserText(req, nil, false)
+	for _, want := range []string{
+		"agent_task_report with include_historical=true",
+		"manage/continue/clear/solve/archive/remove an agent task",
+		`task_close_status="archived"`,
+	} {
+		if !strings.Contains(normal, want) {
+			t.Fatalf("planner user text missing %q:\n%s", want, normal)
+		}
+	}
+
+	forced := bossActionPlannerUserText(req, []bossToolResult{{
+		Name: bossActionAgentTaskReport,
+		Text: "Agent task report: 1 delegated agent task.\n- Hex accessibility issue (agt_hex); kind/status: agent/done",
+	}}, true)
+	for _, want := range []string{
+		`control_capability="agent_task.close"`,
+		`task_close_status="archived"`,
+	} {
+		if !strings.Contains(forced, want) {
+			t.Fatalf("forced planner user text missing %q:\n%s", want, forced)
+		}
+	}
+}
+
+func TestAssistantPlannerUserTextSteersScratchTaskRemovalToArchive(t *testing.T) {
+	t.Parallel()
+
+	req := AssistantRequest{
+		StateBrief: "Hot projects:\n- Hex accessibility issue; latest work: Accessibility check completed.",
+		Messages:   []ChatMessage{{Role: "user", Content: "remove the Hex accessibility task"}},
+	}
+	normal := bossActionPlannerUserText(req, nil, false)
+	for _, want := range []string{
+		"choose project_detail before answering",
+		"archive/remove a scratch task whose project metadata says kind=scratch_task",
+		`control_capability="scratch_task.archive"`,
+	} {
+		if !strings.Contains(normal, want) {
+			t.Fatalf("planner user text missing %q:\n%s", want, normal)
+		}
+	}
+
+	forced := bossActionPlannerUserText(req, []bossToolResult{{
+		Name: bossActionProjectDetail,
+		Text: "Reference metadata (use only for disambiguation/blockers):\n- name=Hex accessibility issue; kind=scratch_task; path=/tmp/tasks/hex",
+	}}, true)
+	if !strings.Contains(forced, `control_capability="scratch_task.archive"`) {
+		t.Fatalf("forced planner user text should allow scratch task archive:\n%s", forced)
 	}
 }
 
@@ -825,6 +892,53 @@ func TestAssistantReplyCanProposeAgentTaskCloseControl(t *testing.T) {
 	}
 	if resp.Usage.TotalTokens != 23 {
 		t.Fatalf("usage total = %d, want 23", resp.Usage.TotalTokens)
+	}
+}
+
+func TestAssistantReplyCanProposeScratchTaskArchiveControl(t *testing.T) {
+	t.Parallel()
+
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model: "gpt-test",
+			OutputText: encodedBossAction(t, bossAction{
+				Kind:              bossActionProposeControl,
+				ControlCapability: "scratch_task.archive",
+				ProjectPath:       "/tmp/tasks/hex-accessibility",
+				ProjectName:       "Hex accessibility issue",
+				Reason:            "The completed scratch task should be archived out of the dashboard.",
+			}),
+			Usage: model.LLMUsage{TotalTokens: 17},
+		}},
+	}
+	assistant := &Assistant{
+		planner: planner,
+		query:   newQueryExecutor(&fakeBossStore{}),
+		model:   "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Hot projects:\n- Hex accessibility issue; latest work: Accessibility check completed.\n  Reference metadata (use only for disambiguation/blockers): kind=scratch_task; path=/tmp/tasks/hex-accessibility",
+		Messages:   []ChatMessage{{Role: "user", Content: "remove the Hex accessibility task"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.ControlInvocation == nil {
+		t.Fatalf("ControlInvocation = nil, want scratch_task.archive proposal")
+	}
+	if resp.ControlInvocation.Capability != control.CapabilityScratchTaskArchive {
+		t.Fatalf("capability = %q", resp.ControlInvocation.Capability)
+	}
+	if !strings.Contains(resp.Content, "Archive scratch task Hex accessibility issue?") {
+		t.Fatalf("proposal content = %q, want scratch task archive confirmation", resp.Content)
+	}
+	var input control.ScratchTaskArchiveInput
+	if err := json.Unmarshal(resp.ControlInvocation.Args, &input); err != nil {
+		t.Fatalf("decode invocation args: %v", err)
+	}
+	if input.ProjectPath != "/tmp/tasks/hex-accessibility" || input.ProjectName != "Hex accessibility issue" {
+		t.Fatalf("invocation args = %#v", input)
 	}
 }
 

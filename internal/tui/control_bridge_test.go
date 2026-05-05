@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -310,6 +311,52 @@ func TestExecuteBossControlInvocationReportsBlockedLaunch(t *testing.T) {
 	}
 	if !strings.Contains(result.Status, "unfinished Codex session") {
 		t.Fatalf("result status = %q, want unfinished Codex session", result.Status)
+	}
+}
+
+func TestExecuteScratchTaskArchiveControlArchivesTask(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	cfg.DBPath = filepath.Join(cfg.DataDir, "little-control-room.sqlite")
+	cfg.ScratchRoot = filepath.Join(cfg.DataDir, "tasks")
+	st, err := store.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	svc := service.New(cfg, st, events.NewBus(), nil)
+
+	created, err := svc.CreateScratchTask(ctx, service.CreateScratchTaskRequest{Title: "Hex accessibility issue"})
+	if err != nil {
+		t.Fatalf("CreateScratchTask() error = %v", err)
+	}
+	projects, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	m := Model{
+		ctx:         ctx,
+		svc:         svc,
+		allProjects: projects,
+		projects:    projects,
+	}
+
+	updated, cmd := m.executeControlInvocation(controlInvocationRawForTest(t, control.CapabilityScratchTaskArchive, control.ScratchTaskArchiveInput{
+		ProjectPath: created.TaskPath,
+	}))
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("executeControlInvocation() cmd = %#v, want immediate archive", cmd)
+	}
+	if !strings.Contains(got.status, "Archived scratch task") || !strings.Contains(got.status, "Hex accessibility issue") {
+		t.Fatalf("status = %q, want archive status", got.status)
+	}
+	if _, err := os.Stat(created.TaskPath); !os.IsNotExist(err) {
+		t.Fatalf("original task path should be gone after archive, stat err = %v", err)
+	}
+	if _, ok := got.projectSummaryByPathAllProjects(created.TaskPath); ok {
+		t.Fatalf("archived scratch task should be removed from in-memory project list")
 	}
 }
 

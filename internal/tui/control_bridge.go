@@ -78,6 +78,13 @@ func (m Model) executeControlInvocationWithOutcome(inv control.Invocation) contr
 			return controlInvocationOutcome{model: m, err: err}
 		}
 		return m.executeAgentTaskCloseControlWithOutcome(input)
+	case control.CapabilityScratchTaskArchive:
+		var input control.ScratchTaskArchiveInput
+		if err := json.Unmarshal(normalized.Args, &input); err != nil {
+			m.status = "Control request invalid: " + err.Error()
+			return controlInvocationOutcome{model: m, err: err}
+		}
+		return m.executeScratchTaskArchiveControlWithOutcome(input)
 	default:
 		err := fmt.Errorf("unsupported capability: %s", normalized.Capability)
 		m.status = "Control request unsupported: " + string(normalized.Capability)
@@ -550,6 +557,36 @@ func (m Model) executeAgentTaskCloseControlWithOutcome(input control.AgentTaskCl
 	return controlInvocationOutcome{model: m}
 }
 
+func (m Model) executeScratchTaskArchiveControlWithOutcome(input control.ScratchTaskArchiveInput) controlInvocationOutcome {
+	if m.svc == nil {
+		err := errors.New("service unavailable")
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	project, err := m.resolveControlProjectRef(input.ProjectPath, input.ProjectName)
+	if err != nil {
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	if model.NormalizeProjectKind(project.Kind) != model.ProjectKindScratchTask {
+		err := fmt.Errorf("project is not a scratch task: %s", project.Path)
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	archivedPath, err := m.svc.ArchiveScratchTask(m.ctx, project.Path)
+	if err != nil {
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	m.removeProjectSummary(project.Path)
+	name := projectRemovalName(project)
+	m.status = fmt.Sprintf("Archived scratch task %q", name)
+	if strings.TrimSpace(archivedPath) != "" {
+		m.status += " to " + archivedPath
+	}
+	return controlInvocationOutcome{model: m}
+}
+
 func (m Model) liveAgentTaskSnapshot(task model.AgentTask) (codexapp.Snapshot, bool) {
 	path := strings.TrimSpace(task.WorkspacePath)
 	if path == "" {
@@ -831,14 +868,18 @@ func modelSessionSourceFromControlProvider(provider control.Provider) model.Sess
 }
 
 func (m Model) resolveControlProject(input control.EngineerSendPromptInput) (model.ProjectSummary, error) {
-	if path := normalizeProjectPath(input.ProjectPath); path != "" {
+	return m.resolveControlProjectRef(input.ProjectPath, input.ProjectName)
+}
+
+func (m Model) resolveControlProjectRef(projectPath, projectName string) (model.ProjectSummary, error) {
+	if path := normalizeProjectPath(projectPath); path != "" {
 		if project, ok := m.projectSummaryByPathAllProjects(path); ok {
 			return project, nil
 		}
 		return model.ProjectSummary{}, fmt.Errorf("project is not loaded: %s", path)
 	}
 
-	name := strings.TrimSpace(input.ProjectName)
+	name := strings.TrimSpace(projectName)
 	if name == "" {
 		return model.ProjectSummary{}, errors.New("project_path or project_name required")
 	}

@@ -14,6 +14,7 @@ const (
 	CapabilityAgentTaskCreate    CapabilityName = "agent_task.create"
 	CapabilityAgentTaskContinue  CapabilityName = "agent_task.continue"
 	CapabilityAgentTaskClose     CapabilityName = "agent_task.close"
+	CapabilityScratchTaskArchive CapabilityName = "scratch_task.archive"
 )
 
 type Provider string
@@ -149,6 +150,8 @@ func ValidateInvocation(inv Invocation) (Invocation, error) {
 		return validateAgentTaskContinueInvocation(inv)
 	case CapabilityAgentTaskClose:
 		return validateAgentTaskCloseInvocation(inv)
+	case CapabilityScratchTaskArchive:
+		return validateScratchTaskArchiveInvocation(inv)
 	case "":
 		return Invocation{}, fmt.Errorf("capability is required")
 	default:

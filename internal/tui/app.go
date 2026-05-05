@@ -3957,17 +3957,25 @@ func canonicalProjectLatestSessionID(project model.ProjectSummary) string {
 
 func (m *Model) removeProjectSummary(projectPath string) {
 	path := filepath.Clean(strings.TrimSpace(projectPath))
-	if path == "" || len(m.allProjects) == 0 {
+	if path == "" {
 		return
 	}
-	filtered := m.allProjects[:0]
-	for _, project := range m.allProjects {
-		if filepath.Clean(project.Path) == path {
+	m.allProjects = removeProjectSummaryFromSlice(m.allProjects, path)
+	m.projects = removeProjectSummaryFromSlice(m.projects, path)
+}
+
+func removeProjectSummaryFromSlice(projects []model.ProjectSummary, cleanPath string) []model.ProjectSummary {
+	if len(projects) == 0 {
+		return projects
+	}
+	filtered := projects[:0]
+	for _, project := range projects {
+		if filepath.Clean(project.Path) == cleanPath {
 			continue
 		}
 		filtered = append(filtered, project)
 	}
-	m.allProjects = filtered
+	return filtered
 }
 
 func (m *Model) applyRemovedProjectLocally(projectPath, selectPath string) {

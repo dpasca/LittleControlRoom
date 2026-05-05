@@ -565,13 +565,18 @@ func (e *QueryExecutor) agentTaskReport(ctx context.Context, action bossAction, 
 		tasks = filterAgentTaskBriefsForBossPrivacy(tasks, view.PrivacyPatterns)
 	}
 	if taskReader, ok := e.store.(bossAgentTaskReader); ok {
-		loaded, err := taskReader.ListAgentTasks(ctx, model.AgentTaskFilter{
-			Statuses: []model.AgentTaskStatus{
+		filter := model.AgentTaskFilter{
+			Limit: limit,
+		}
+		if action.IncludeHistorical {
+			filter.IncludeArchived = true
+		} else {
+			filter.Statuses = []model.AgentTaskStatus{
 				model.AgentTaskStatusActive,
 				model.AgentTaskStatusWaiting,
-			},
-			Limit: limit,
-		})
+			}
+		}
+		loaded, err := taskReader.ListAgentTasks(ctx, filter)
 		if err != nil {
 			return bossToolResult{}, err
 		}
@@ -584,19 +589,30 @@ func (e *QueryExecutor) agentTaskReport(ctx context.Context, action bossAction, 
 		}
 	}
 
+	reportScope := "open delegated agent"
+	if action.IncludeHistorical {
+		reportScope = "delegated agent"
+	}
 	taskNoun := "tasks"
 	if len(tasks) == 1 {
 		taskNoun = "task"
 	}
 	lines := []string{
-		fmt.Sprintf("Agent task report: %d open delegated agent %s.", len(tasks), taskNoun),
+		fmt.Sprintf("Agent task report: %d %s %s.", len(tasks), reportScope, taskNoun),
 		"Note: delegated agent tasks are separate from project TODOs.",
+	}
+	if action.IncludeHistorical {
+		lines = append(lines, "Historical mode is enabled; active, review, completed, and archived agent tasks may be included.")
 	}
 	if view.PrivacyMode {
 		lines = append(lines, "Privacy mode is enabled; agent tasks matching private titles, summaries, or resources are omitted.")
 	}
 	if len(tasks) == 0 {
-		lines = append(lines, "- no open agent tasks")
+		if action.IncludeHistorical {
+			lines = append(lines, "- no agent tasks")
+		} else {
+			lines = append(lines, "- no open agent tasks")
+		}
 		return clippedToolResult(bossActionAgentTaskReport, strings.Join(lines, "\n")), nil
 	}
 	now := e.now()

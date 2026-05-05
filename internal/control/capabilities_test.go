@@ -115,6 +115,22 @@ func TestAgentTaskCapabilitiesMetadata(t *testing.T) {
 	}
 }
 
+func TestScratchTaskArchiveCapabilityMetadata(t *testing.T) {
+	capability, ok := CapabilityByName(CapabilityScratchTaskArchive)
+	if !ok {
+		t.Fatalf("CapabilityByName(%q) not found", CapabilityScratchTaskArchive)
+	}
+	if capability.Name != CapabilityScratchTaskArchive {
+		t.Fatalf("Name = %q, want %q", capability.Name, CapabilityScratchTaskArchive)
+	}
+	if capability.Risk != RiskWrite || capability.Confirmation != ConfirmationRequired || !capability.RequiresHost {
+		t.Fatalf("unexpected scratch task capability metadata: %#v", capability)
+	}
+	if capability.InputSchema["type"] != "object" || capability.OutputSchema["type"] != "object" {
+		t.Fatalf("scratch task archive schemas should be object schemas")
+	}
+}
+
 func TestNormalizeEngineerSendPromptInput(t *testing.T) {
 	input, err := NormalizeEngineerSendPromptInput(EngineerSendPromptInput{
 		RequestID:   " req-1 ",
@@ -277,6 +293,27 @@ func TestValidateInvocationNormalizesAgentTaskCreateArgs(t *testing.T) {
 	}
 	if len(input.Resources) != 2 || input.Resources[0].PID != 93624 || input.Resources[1].Port != 9229 {
 		t.Fatalf("resources = %#v", input.Resources)
+	}
+}
+
+func TestValidateInvocationNormalizesScratchTaskArchiveArgs(t *testing.T) {
+	inv, err := ValidateInvocation(Invocation{
+		RequestID:  " boss-turn-scratch ",
+		Capability: CapabilityScratchTaskArchive,
+		Args:       json.RawMessage(`{"project_path":" /tmp/demo/../demo ","project_name":""}`),
+	})
+	if err != nil {
+		t.Fatalf("ValidateInvocation() error = %v", err)
+	}
+	if inv.RequestID != "boss-turn-scratch" {
+		t.Fatalf("RequestID = %q, want boss-turn-scratch", inv.RequestID)
+	}
+	var input ScratchTaskArchiveInput
+	if err := json.Unmarshal(inv.Args, &input); err != nil {
+		t.Fatalf("decode normalized args: %v", err)
+	}
+	if input.RequestID != "boss-turn-scratch" || input.ProjectPath != "/tmp/demo" {
+		t.Fatalf("normalized scratch task archive input = %#v", input)
 	}
 }
 

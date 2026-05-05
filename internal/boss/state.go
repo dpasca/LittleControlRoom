@@ -416,6 +416,9 @@ func operationalProjectLineFor(project ProjectBrief, includeName bool) string {
 		hasSummary = true
 		parts = append(parts, "latest work: "+clipText(summary, 160))
 	}
+	if kind := operationalProjectKindLabel(project.Kind); kind != "" {
+		parts = append(parts, "type: "+kind)
+	}
 	if state := operationalStatusLabel(project, hasSummary); state != "" {
 		parts = append(parts, "state: "+state)
 	}
@@ -665,6 +668,17 @@ func operationalStatusLabel(project ProjectBrief, hasSummary bool) string {
 	return ""
 }
 
+func operationalProjectKindLabel(kind model.ProjectKind) string {
+	switch model.NormalizeProjectKind(kind) {
+	case model.ProjectKindScratchTask:
+		return "scratch task"
+	case model.ProjectKindAgentTask:
+		return "agent task project"
+	default:
+		return ""
+	}
+}
+
 func materialRepoStatus(project ProjectBrief) []string {
 	var parts []string
 	if project.RepoConflict {
@@ -684,6 +698,9 @@ func materialRepoStatus(project ProjectBrief) []string {
 
 func projectReferenceMetadata(project ProjectBrief, now time.Time) string {
 	var parts []string
+	if kind := projectKindReferenceMetadata(project.Kind); kind != "" {
+		parts = append(parts, kind)
+	}
 	if path := strings.TrimSpace(project.Path); path != "" {
 		parts = append(parts, "path="+path)
 	}
@@ -713,6 +730,17 @@ func projectReferenceMetadata(project ProjectBrief, now time.Time) string {
 		parts = append(parts, "snoozed=true")
 	}
 	return strings.Join(parts, "; ")
+}
+
+func projectKindReferenceMetadata(kind model.ProjectKind) string {
+	switch model.NormalizeProjectKind(kind) {
+	case model.ProjectKindScratchTask:
+		return "kind=scratch_task"
+	case model.ProjectKindAgentTask:
+		return "kind=agent_task"
+	default:
+		return ""
+	}
 }
 
 func projectRepoReferenceParts(project ProjectBrief) []string {

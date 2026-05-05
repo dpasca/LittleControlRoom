@@ -111,6 +111,35 @@ func TestBuildStateBriefKeepsRoutineRepoStateAsReferenceMetadata(t *testing.T) {
 	}
 }
 
+func TestBuildStateBriefExposesScratchTaskKind(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	snapshot := StateSnapshot{
+		TotalProjects:  1,
+		ActiveProjects: 1,
+		HotProjects: []ProjectBrief{{
+			Name:          "Hex accessibility issue",
+			Path:          "/tmp/tasks/hex-accessibility",
+			Kind:          model.ProjectKindScratchTask,
+			Status:        model.StatusActive,
+			LatestSummary: "Accessibility check completed; no follow-up remains.",
+		}},
+	}
+
+	brief := BuildStateBrief(snapshot, now)
+	for _, want := range []string{
+		"Hex accessibility issue",
+		"type: scratch task",
+		"kind=scratch_task",
+		"path=/tmp/tasks/hex-accessibility",
+	} {
+		if !strings.Contains(brief, want) {
+			t.Fatalf("scratch task state brief missing %q:\n%s", want, brief)
+		}
+	}
+}
+
 func TestBuildStateBriefIncludesOpenAgentTasks(t *testing.T) {
 	t.Parallel()
 

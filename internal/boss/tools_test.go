@@ -137,6 +137,94 @@ func TestQueryExecutorReportsOpenAgentTasks(t *testing.T) {
 	}
 }
 
+func TestQueryExecutorReportsHistoricalAgentTasksWhenRequested(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	store := &fakeBossStore{
+		agentTasks: []model.AgentTask{{
+			ID:            "agt_hex",
+			Title:         "Hex accessibility issue",
+			Kind:          model.AgentTaskKindAgent,
+			Status:        model.AgentTaskStatusCompleted,
+			Summary:       "Accessibility check completed; no open follow-up remains.",
+			LastTouchedAt: now.Add(-30 * time.Minute),
+		}, {
+			ID:            "agt_old",
+			Title:         "Archived browser cleanup",
+			Kind:          model.AgentTaskKindAgent,
+			Status:        model.AgentTaskStatusArchived,
+			LastTouchedAt: now.Add(-2 * time.Hour),
+		}},
+	}
+
+	executor := newQueryExecutor(store)
+	executor.nowFn = func() time.Time { return now }
+	result, err := executor.Execute(context.Background(), bossAction{
+		Kind:              bossActionAgentTaskReport,
+		IncludeHistorical: true,
+		Limit:             8,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	for _, want := range []string{
+		"Agent task report: 2 delegated agent tasks.",
+		"Historical mode is enabled",
+		"Hex accessibility issue (agt_hex)",
+		"kind/status: agent/done",
+		"Accessibility check completed",
+		"Archived browser cleanup (agt_old)",
+		"kind/status: agent/archived",
+	} {
+		if !strings.Contains(result.Text, want) {
+			t.Fatalf("historical agent task report missing %q:\n%s", want, result.Text)
+		}
+	}
+}
+
+func TestQueryExecutorProjectDetailExposesScratchTaskKind(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeBossStore{
+		projects: []model.ProjectSummary{{
+			Path: "/tmp/tasks/hex-accessibility",
+			Name: "Hex accessibility issue",
+			Kind: model.ProjectKindScratchTask,
+		}},
+		details: map[string]model.ProjectDetail{
+			"/tmp/tasks/hex-accessibility": {
+				Summary: model.ProjectSummary{
+					Path:                 "/tmp/tasks/hex-accessibility",
+					Name:                 "Hex accessibility issue",
+					Kind:                 model.ProjectKindScratchTask,
+					Status:               model.StatusActive,
+					LatestSessionSummary: "Accessibility check completed; no follow-up remains.",
+				},
+			},
+		},
+	}
+
+	executor := newQueryExecutor(store)
+	result, err := executor.Execute(context.Background(), bossAction{
+		Kind:        bossActionProjectDetail,
+		ProjectPath: "/tmp/tasks/hex-accessibility",
+		Limit:       8,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	for _, want := range []string{
+		"type: scratch task",
+		"kind=scratch_task",
+		"path=/tmp/tasks/hex-accessibility",
+	} {
+		if !strings.Contains(result.Text, want) {
+			t.Fatalf("scratch task project detail missing %q:\n%s", want, result.Text)
+		}
+	}
+}
+
 func TestQueryExecutorAgentTaskReportRespectsPrivacyMode(t *testing.T) {
 	t.Parallel()
 

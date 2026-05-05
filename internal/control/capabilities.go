@@ -14,6 +14,7 @@ const (
 	FeatureCreateTask       = "create_task"
 	FeatureContinueTask     = "continue_task"
 	FeatureCloseTask        = "close_task"
+	FeatureArchiveTask      = "archive_task"
 	FeatureApprovalResponse = "approval_response"
 	FeatureReview           = "review"
 	FeatureCompact          = "compact"
@@ -120,12 +121,19 @@ type AgentTaskCloseInput struct {
 	CloseSession bool                 `json:"close_session"`
 }
 
+type ScratchTaskArchiveInput struct {
+	RequestID   string `json:"request_id,omitempty"`
+	ProjectPath string `json:"project_path"`
+	ProjectName string `json:"project_name"`
+}
+
 func Capabilities() []Capability {
 	return []Capability{
 		EngineerSendPromptCapability(),
 		AgentTaskCreateCapability(),
 		AgentTaskContinueCapability(),
 		AgentTaskCloseCapability(),
+		ScratchTaskArchiveCapability(),
 	}
 }
 
@@ -139,6 +147,8 @@ func CapabilityByName(name CapabilityName) (Capability, bool) {
 		return AgentTaskContinueCapability(), true
 	case CapabilityAgentTaskClose:
 		return AgentTaskCloseCapability(), true
+	case CapabilityScratchTaskArchive:
+		return ScratchTaskArchiveCapability(), true
 	default:
 		return Capability{}, false
 	}
@@ -212,6 +222,23 @@ func AgentTaskCloseCapability() Capability {
 		Risk:         RiskWrite,
 		Confirmation: ConfirmationRequired,
 		RequiresHost: true,
+	}
+}
+
+func ScratchTaskArchiveCapability() Capability {
+	return Capability{
+		Name:         CapabilityScratchTaskArchive,
+		Description:  "Archive a scratch task project so it leaves the active dashboard but remains recoverable on disk.",
+		InputSchema:  scratchTaskArchiveInputSchema(),
+		OutputSchema: scratchTaskArchiveOutputSchema(),
+		Risk:         RiskWrite,
+		Confirmation: ConfirmationRequired,
+		RequiresHost: true,
+		Providers: []ProviderCapability{{
+			ID:        ProviderAuto,
+			Available: true,
+			Features:  []string{FeatureArchiveTask},
+		}},
 	}
 }
 
@@ -296,6 +323,19 @@ func NormalizeAgentTaskCloseInput(input AgentTaskCloseInput) (AgentTaskCloseInpu
 		return AgentTaskCloseInput{}, fmt.Errorf("unsupported agent task close status: %s", input.Status)
 	}
 	input.Summary = strings.TrimSpace(input.Summary)
+	return input, nil
+}
+
+func NormalizeScratchTaskArchiveInput(input ScratchTaskArchiveInput) (ScratchTaskArchiveInput, error) {
+	input.RequestID = strings.TrimSpace(input.RequestID)
+	input.ProjectPath = strings.TrimSpace(input.ProjectPath)
+	if input.ProjectPath != "" {
+		input.ProjectPath = filepath.Clean(input.ProjectPath)
+	}
+	input.ProjectName = strings.TrimSpace(input.ProjectName)
+	if input.ProjectPath == "" && input.ProjectName == "" {
+		return ScratchTaskArchiveInput{}, fmt.Errorf("project_path or project_name is required")
+	}
 	return input, nil
 }
 
@@ -405,6 +445,34 @@ func validateAgentTaskCloseInvocation(inv Invocation) (Invocation, error) {
 	payload, err := json.Marshal(normalized)
 	if err != nil {
 		return Invocation{}, fmt.Errorf("encode normalized %s args: %w", CapabilityAgentTaskClose, err)
+	}
+	inv.RequestID = normalized.RequestID
+	inv.Args = payload
+	return inv, nil
+}
+
+func validateScratchTaskArchiveInvocation(inv Invocation) (Invocation, error) {
+	if len(inv.Args) == 0 {
+		return Invocation{}, fmt.Errorf("%s args are required", CapabilityScratchTaskArchive)
+	}
+	var input ScratchTaskArchiveInput
+	if err := json.Unmarshal(inv.Args, &input); err != nil {
+		return Invocation{}, fmt.Errorf("decode %s args: %w", CapabilityScratchTaskArchive, err)
+	}
+	input.RequestID = strings.TrimSpace(input.RequestID)
+	if inv.RequestID != "" && input.RequestID != "" && inv.RequestID != input.RequestID {
+		return Invocation{}, fmt.Errorf("request_id mismatch between invocation and %s args", CapabilityScratchTaskArchive)
+	}
+	if input.RequestID == "" {
+		input.RequestID = inv.RequestID
+	}
+	normalized, err := NormalizeScratchTaskArchiveInput(input)
+	if err != nil {
+		return Invocation{}, err
+	}
+	payload, err := json.Marshal(normalized)
+	if err != nil {
+		return Invocation{}, fmt.Errorf("encode normalized %s args: %w", CapabilityScratchTaskArchive, err)
 	}
 	inv.RequestID = normalized.RequestID
 	inv.Args = payload
@@ -578,6 +646,32 @@ func agentTaskCloseInputSchema() map[string]any {
 			"close_session": map[string]any{"type": "boolean"},
 		},
 		"required": []string{"task_id", "status", "summary", "close_session"},
+	}
+}
+
+func scratchTaskArchiveInputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"request_id":   map[string]any{"type": "string"},
+			"project_path": map[string]any{"type": "string"},
+			"project_name": map[string]any{"type": "string"},
+		},
+		"required": []string{"project_path", "project_name"},
+	}
+}
+
+func scratchTaskArchiveOutputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"project_path":  map[string]any{"type": "string"},
+			"archived_path": map[string]any{"type": "string"},
+			"status":        map[string]any{"type": "string"},
+		},
+		"required": []string{"project_path", "archived_path", "status"},
 	}
 }
 

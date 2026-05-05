@@ -96,6 +96,12 @@ func controlProposalFromBossAction(action bossAction) (control.Invocation, strin
 			Summary:      strings.TrimSpace(action.TaskSummary),
 			CloseSession: action.CloseSession,
 		}
+	case control.CapabilityScratchTaskArchive:
+		payload = control.ScratchTaskArchiveInput{
+			RequestID:   strings.TrimSpace(action.RequestID),
+			ProjectPath: strings.TrimSpace(action.ProjectPath),
+			ProjectName: strings.TrimSpace(action.ProjectName),
+		}
 	default:
 		return control.Invocation{}, "", fmt.Errorf("unsupported control capability: %s", capability)
 	}
@@ -238,6 +244,20 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 			fmt.Sprintf("Mark agent task %s as %s?", input.TaskID, input.Status),
 			"",
 			strings.TrimSpace(input.Summary),
+			"",
+			"Enter confirms; Esc cancels.",
+		}
+		return strings.TrimSpace(strings.Join(lines, "\n")), nil
+	case control.CapabilityScratchTaskArchive:
+		var input control.ScratchTaskArchiveInput
+		if err := json.Unmarshal(inv.Args, &input); err != nil {
+			return "", err
+		}
+		target := firstNonEmpty(input.ProjectName, input.ProjectPath)
+		lines := []string{
+			fmt.Sprintf("Archive scratch task %s?", target),
+			"",
+			"This moves the task into the scratch-task archive and removes it from the active dashboard.",
 			"",
 			"Enter confirms; Esc cancels.",
 		}
