@@ -240,7 +240,7 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"Open agent tasks are delegated engineer work items",
 		"one tracked task with its linked engineer thread",
 		"separate from project TODOs",
-		"Completed delegated agent tasks can be archived",
+		"Delegated agent tasks can be archived",
 		"do not route that request to project TODO cleanup",
 		"Scratch-task projects are project records with kind=scratch_task",
 		"separate from both project TODOs and delegated agent tasks",
@@ -309,10 +309,12 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"do not encode special domains as task kinds",
 		"Use scratch_task.archive when project metadata identifies kind=scratch_task",
 		"task_close_status=archived",
+		"Do not use waiting for cleanup/removal requests",
 		"fresh read-only evidence resolves it with no remaining work",
 		"A status or situation question is enough to close a review/waiting agent task",
 		"treat that as a request to manage those agent tasks",
 		"propose exactly one agent_task.continue",
+		"remove multiple delegated agent tasks",
 		"assents to a prior Boss Chat plan",
 		"Do not answer with only a priority order",
 		"Do not use the Little Control Room project or another unrelated active engineer session as a proxy venue",
@@ -384,7 +386,7 @@ func TestAssistantPlannerUserTextAllowsClosingResolvedReviewTasks(t *testing.T) 
 	}
 }
 
-func TestAssistantPlannerUserTextSteersCompletedTaskRemovalToArchive(t *testing.T) {
+func TestAssistantPlannerUserTextSteersDelegatedTaskRemovalToArchive(t *testing.T) {
 	t.Parallel()
 
 	req := AssistantRequest{
@@ -394,7 +396,7 @@ func TestAssistantPlannerUserTextSteersCompletedTaskRemovalToArchive(t *testing.
 	normal := bossActionPlannerUserText(req, nil, false)
 	for _, want := range []string{
 		"agent_task_report with include_historical=true",
-		"manage/continue/clear/solve/archive/remove an agent task",
+		"manage/continue/solve/archive/remove an agent task",
 		`task_close_status="archived"`,
 	} {
 		if !strings.Contains(normal, want) {
@@ -409,6 +411,39 @@ func TestAssistantPlannerUserTextSteersCompletedTaskRemovalToArchive(t *testing.
 	for _, want := range []string{
 		`control_capability="agent_task.close"`,
 		`task_close_status="archived"`,
+	} {
+		if !strings.Contains(forced, want) {
+			t.Fatalf("forced planner user text missing %q:\n%s", want, forced)
+		}
+	}
+}
+
+func TestAssistantPlannerUserTextSteersOpenTaskCleanupToArchive(t *testing.T) {
+	t.Parallel()
+
+	req := AssistantRequest{
+		StateBrief: "Open delegated agent tasks (separate from project TODOs):\n- Investigate and reduce CPU usage (agt_cpu); kind/status: agent/review; show: agent_task:agt_cpu",
+		Messages:   []ChatMessage{{Role: "user", Content: "let's close those about CPU usage"}},
+	}
+	normal := bossActionPlannerUserText(req, nil, false)
+	for _, want := range []string{
+		"any delegated task the user wants gone from the active record",
+		"multiple tasks the user wants removed",
+		`task_close_status="archived"`,
+	} {
+		if !strings.Contains(normal, want) {
+			t.Fatalf("planner user text missing %q:\n%s", want, normal)
+		}
+	}
+
+	forced := bossActionPlannerUserText(req, []bossToolResult{{
+		Name: bossActionAgentTaskReport,
+		Text: "Agent task report: 1 open delegated agent task.\n- Investigate and reduce CPU usage (agt_cpu); kind/status: agent/review",
+	}}, true)
+	for _, want := range []string{
+		`control_capability="agent_task.close"`,
+		`task_close_status="archived"`,
+		`do not use task_close_status="waiting" for cleanup`,
 	} {
 		if !strings.Contains(forced, want) {
 			t.Fatalf("forced planner user text missing %q:\n%s", want, forced)
@@ -898,6 +933,54 @@ func TestAssistantReplyCanProposeAgentTaskCloseControl(t *testing.T) {
 	}
 	if resp.Usage.TotalTokens != 23 {
 		t.Fatalf("usage total = %d, want 23", resp.Usage.TotalTokens)
+	}
+}
+
+func TestAssistantReplyCanArchiveOpenAgentTaskForCleanup(t *testing.T) {
+	t.Parallel()
+
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model: "gpt-test",
+			OutputText: encodedBossAction(t, bossAction{
+				Kind:              bossActionProposeControl,
+				ControlCapability: "agent_task.close",
+				TaskID:            "agt_cpu",
+				TaskCloseStatus:   "archived",
+				TaskSummary:       "Stray CPU investigation task removed from the active record.",
+				CloseSession:      false,
+				Reason:            "The user asked to close the stray CPU usage task record.",
+			}),
+			Usage: model.LLMUsage{TotalTokens: 23},
+		}},
+	}
+	assistant := &Assistant{
+		planner: planner,
+		query:   newQueryExecutor(&fakeBossStore{}),
+		model:   "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Open delegated agent tasks (separate from project TODOs):\n- Investigate and reduce CPU usage (agt_cpu); kind/status: agent/review; show: agent_task:agt_cpu",
+		Messages:   []ChatMessage{{Role: "user", Content: "let's close those about CPU usage"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.ControlInvocation == nil {
+		t.Fatalf("ControlInvocation = nil, want agent_task.close proposal")
+	}
+	if resp.ControlInvocation.Capability != control.CapabilityAgentTaskClose {
+		t.Fatalf("capability = %q", resp.ControlInvocation.Capability)
+	}
+	if !strings.Contains(resp.Content, "Mark agent task agt_cpu as archived?") ||
+		!strings.Contains(resp.Content, "Stray CPU investigation task removed") {
+		t.Fatalf("proposal content = %q, want archive-task confirmation", resp.Content)
+	}
+	if !strings.Contains(string(resp.ControlInvocation.Args), `"task_id":"agt_cpu"`) ||
+		!strings.Contains(string(resp.ControlInvocation.Args), `"status":"archived"`) ||
+		!strings.Contains(string(resp.ControlInvocation.Args), `"close_session":false`) {
+		t.Fatalf("invocation args = %s", resp.ControlInvocation.Args)
 	}
 }
 
