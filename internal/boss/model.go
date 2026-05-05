@@ -223,12 +223,25 @@ func IsMessage(msg tea.Msg) bool {
 	}
 }
 
+func IsBackgroundMessage(msg tea.Msg) bool {
+	switch msg.(type) {
+	case StateLoadedMsg, AssistantReplyMsg, assistantStreamStartedMsg, assistantStreamMsg, bossSessionLoadedMsg, bossSessionSavedMsg, bossSessionsListedMsg, bossSkillsInventoryMsg, ControlInvocationResultMsg:
+		return true
+	default:
+		return false
+	}
+}
+
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.loadStateCmd(), bossTickCmd(), tea.EnableMouseCellMotion}
 	if m.hasPersistentSessions() {
 		cmds = append(cmds, m.loadLatestBossSessionCmd())
 	}
 	return tea.Batch(cmds...)
+}
+
+func (m Model) ActivateCmd() tea.Cmd {
+	return tea.Batch(m.loadStateCmd(), bossTickCmd(), tea.EnableMouseCellMotion)
 }
 
 func (m Model) RefreshCmd() tea.Cmd {
@@ -988,12 +1001,12 @@ func (m Model) renderChat(layout bossLayout) string {
 		parts = append(parts, slashBlock)
 	}
 	if !m.embedded {
-		hint := "Enter sends | Alt+Enter newline | Alt+C copy menu | Ctrl+R refresh | Alt+Up exits"
+		hint := "Enter sends | Alt+Enter newline | Alt+C copy menu | Ctrl+R refresh | Alt+Up hides"
 		if m.bossSlashActive() {
 			hint = "Enter runs command | Tab complete | Shift+Tab previous | Alt+Enter newline"
 		}
 		if m.pendingControl != nil {
-			hint = "Enter confirms engineer prompt | Esc cancels | Alt+Up exits"
+			hint = "Enter confirms engineer prompt | Esc cancels | Alt+Up hides"
 		}
 		if m.sending {
 			hint = "Boss chat is thinking " + spinnerDots(m.spinnerFrame)
@@ -1006,7 +1019,7 @@ func (m Model) renderChat(layout bossLayout) string {
 }
 
 func (m Model) renderHeader(width int) string {
-	text := " Boss Mode  " + m.StatusText() + "  |  Alt+Up exits  Ctrl+R refresh"
+	text := " Boss Mode  " + m.StatusText() + "  |  Alt+Up hides  Ctrl+R refresh"
 	return bossHeaderStyle.Width(width).Render(fitLine(text, width))
 }
 

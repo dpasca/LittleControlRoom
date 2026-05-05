@@ -94,6 +94,7 @@ type Model struct {
 	commandInput                   textinput.Model
 	commandSelected                int
 	bossMode                       bool
+	bossModelActive                bool
 	bossModel                      bossui.Model
 	bossSetupPrompt                *bossSetupPromptState
 	errorLogVisible                bool
@@ -1004,13 +1005,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if _, ok := msg.(bossui.ExitMsg); ok {
-		m.closeBossMode("Boss mode closed")
+		m.closeBossMode("Boss mode hidden")
 		return m, nil
 	}
 	if msg, ok := msg.(bossui.ControlInvocationConfirmedMsg); ok {
 		return m.executeBossControlInvocation(msg)
 	}
 	if m.bossMode && bossui.IsMessage(msg) {
+		return m.updateBossModeMessage(msg)
+	}
+	if !m.bossMode && m.bossModelActive && bossui.IsBackgroundMessage(msg) {
 		return m.updateBossModeMessage(msg)
 	}
 
@@ -4066,7 +4070,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		switch inv.Toggle {
 		case commands.ToggleOff:
 			m.bossSetupPrompt = nil
-			m.closeBossMode("Boss mode closed")
+			m.closeBossMode("Boss mode hidden")
 			return m, nil
 		case commands.ToggleOn:
 			if m.bossMode {
@@ -4076,7 +4080,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 			return m.openBossModeOrSetupPrompt()
 		default:
 			if m.bossMode {
-				m.closeBossMode("Boss mode closed")
+				m.closeBossMode("Boss mode hidden")
 				return m, nil
 			}
 			return m.openBossModeOrSetupPrompt()

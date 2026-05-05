@@ -59,7 +59,7 @@ func TestModelViewRendersBossPanels(t *testing.T) {
 		}
 	}
 	stripped := ansi.Strip(view)
-	for _, want := range []string{"Alt+Enter newline", "Alt+Up exits"} {
+	for _, want := range []string{"Alt+Enter newline", "Alt+Up hides"} {
 		if !strings.Contains(stripped, want) {
 			t.Fatalf("view missing boss shortcut %q:\n%s", want, stripped)
 		}

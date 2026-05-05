@@ -18194,10 +18194,10 @@ func TestBossModeEscReturnsToClassicTUI(t *testing.T) {
 	updated, _ = got.Update(msg)
 	got = updated.(Model)
 	if got.bossMode {
-		t.Fatalf("boss mode should close after exit message")
+		t.Fatalf("boss mode should hide after exit message")
 	}
-	if got.status != "Boss mode closed" {
-		t.Fatalf("status = %q, want Boss mode closed", got.status)
+	if got.status != "Boss mode hidden" {
+		t.Fatalf("status = %q, want Boss mode hidden", got.status)
 	}
 }
 
@@ -18222,10 +18222,10 @@ func TestBossModeAltUpReturnsToClassicTUI(t *testing.T) {
 	updated, _ = got.Update(msg)
 	got = updated.(Model)
 	if got.bossMode {
-		t.Fatalf("boss mode should close after alt+up exit message")
+		t.Fatalf("boss mode should hide after alt+up exit message")
 	}
-	if got.status != "Boss mode closed" {
-		t.Fatalf("status = %q, want Boss mode closed", got.status)
+	if got.status != "Boss mode hidden" {
+		t.Fatalf("status = %q, want Boss mode hidden", got.status)
 	}
 }
 
@@ -18335,7 +18335,7 @@ func TestDispatchBossOffClosesBossMode(t *testing.T) {
 		t.Fatalf("/boss off should not return async work")
 	}
 	if got.bossMode {
-		t.Fatalf("/boss off should close boss mode")
+		t.Fatalf("/boss off should hide boss mode")
 	}
 }
 

@@ -19,20 +19,26 @@ import (
 
 func (m Model) openBossMode() (tea.Model, tea.Cmd) {
 	m.bossMode = true
-	m.bossModel = bossui.NewEmbeddedWithViewContext(m.ctx, m.svc, m.bossViewContext())
-	m.status = "Boss mode open. Alt+Up returns to the classic TUI."
+	var initCmd tea.Cmd
+	if !m.bossModelActive {
+		m.bossModel = bossui.NewEmbeddedWithViewContext(m.ctx, m.svc, m.bossViewContext())
+		m.bossModelActive = true
+		initCmd = m.bossModel.Init()
+	} else {
+		m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
+		initCmd = m.bossModel.ActivateCmd()
+	}
+	m.status = "Boss mode open. Alt+Up hides it and keeps replies running."
 	if m.width > 0 && m.height > 0 {
 		updated, _ := m.bossModel.Update(m.bossModeWindowSizeMsg())
 		m.bossModel = normalizeBossModel(updated)
 	}
-	initCmd := m.bossModel.Init()
 	m, noticeCmd := m.drainPendingBossHostNotices()
 	return m, tea.Batch(initCmd, noticeCmd)
 }
 
 func (m *Model) closeBossMode(status string) {
 	m.bossMode = false
-	m.bossModel = bossui.Model{}
 	if status != "" {
 		m.status = status
 	}
@@ -275,7 +281,7 @@ func (m Model) renderBossModeFooter(width int) string {
 	return fitStyledWidth(renderFooterLine(
 		width,
 		renderFooterActionList(actions...),
-		renderFooterMeta("/boss off also closes"),
+		renderFooterMeta("/boss off also hides"),
 	), width)
 }
 

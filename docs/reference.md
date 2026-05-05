@@ -25,7 +25,7 @@ Provider artifact and detector-footprint notes live in:
 
 `lcroom classify` requires a configured AI backend. That can be Codex, OpenCode, Claude Code, MLX, Ollama, or an OpenAI API key. The TUI will open `/setup` automatically until you pick one.
 
-The usual way to reach boss mode is from the classic TUI with `/boss`. It opens a minimal boss chat layer over the dashboard, gives each turn a compact plain-text app-state brief, and uses its own `boss_chat_backend` setting so live chat can use direct API inference through OpenAI API, MLX, or Ollama while project analysis keeps using Codex, OpenCode, Claude Code, MLX, Ollama, or another configured backend. Boss chat resumes the latest saved boss session on open; `/sessions` opens a saved-session picker, and `/sessions <session-id>` jumps directly. Boss Chat transcripts are Markdown text files under the app data directory, for example `~/.little-control-room/boss-sessions/`. Codex, OpenCode, and Claude Code work-session transcripts are called engineer sessions in Boss Chat, and the internal context lookup keeps Boss Chat recall separate from engineer transcript recall. If boss chat is not configured yet, `/boss` shows a setup prompt with a direct jump to the Boss chat card in `/setup`. Press `Esc`, submit `/boss off`, or run `/boss off` from the command palette after returning to the dashboard to close it. Set `boss_chat_model` or `LCROOM_BOSS_MODEL` to override the default boss-mode chat model.
+The usual way to reach boss mode is from the classic TUI with `/boss`. It opens a minimal boss chat layer over the dashboard, gives each turn a compact plain-text app-state brief, and uses its own `boss_chat_backend` setting so live chat can use direct API inference through OpenAI API, MLX, or Ollama while project analysis keeps using Codex, OpenCode, Claude Code, MLX, Ollama, or another configured backend. Boss chat resumes the latest saved boss session on open; `/sessions` opens a saved-session picker, and `/sessions <session-id>` jumps directly. Boss Chat transcripts are Markdown text files under the app data directory, for example `~/.little-control-room/boss-sessions/`. Codex, OpenCode, and Claude Code work-session transcripts are called engineer sessions in Boss Chat, and the internal context lookup keeps Boss Chat recall separate from engineer transcript recall. If boss chat is not configured yet, `/boss` shows a setup prompt with a direct jump to the Boss chat card in `/setup`. Press `Esc`, submit `/boss off`, or run `/boss off` from the command palette after returning to the dashboard to hide it; in-flight Boss replies keep running in the background. Set `boss_chat_model` or `LCROOM_BOSS_MODEL` to override the default boss-mode chat model.
 
 ## Config File
 
@@ -158,7 +158,7 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 ## TUI Keys
 
 - `/` open the command palette
-- `/boss` opens the chat-first boss layer, or prompts for setup if boss chat is not configured; `Esc` returns to the classic TUI
+- `/boss` opens the chat-first boss layer, or prompts for setup if boss chat is not configured; `Esc` hides Boss Chat and returns to the classic TUI
 - `↑/↓` move selection
 - `Enter` open or resume the selected project's latest embedded provider
 - `Esc` hide the visible embedded session pane

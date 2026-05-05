@@ -151,7 +151,7 @@ Inside boss chat:
 - `/sessions [session-id]`: Open the saved-session picker, or switch directly by ID.
 - `/session [session-id]` and `/resume [session-id]`: Aliases for `/sessions`.
 - `/help`: Show boss chat slash commands.
-- `/boss off`: Return to the classic TUI.
+- `/boss off`: Hide Boss Chat and return to the classic TUI; in-flight replies keep running.
 
 Boss chat sessions are saved as grep-friendly Markdown transcripts under the app data directory, for example `~/.little-control-room/boss-sessions/`. The `/sessions` picker uses those files for human session switching, and Boss Chat recall searches the same transcripts. Codex, OpenCode, and Claude Code transcripts are called engineer sessions in Boss Chat so they stay distinct from Boss Chat's own transcript.
 

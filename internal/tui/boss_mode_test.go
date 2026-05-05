@@ -546,6 +546,80 @@ func TestBossHostChatNoticeQueuedWhileClosedAppearsInTranscriptOnOpen(t *testing
 	}
 }
 
+func TestBossChatReplyContinuesAfterBossModeHidden(t *testing.T) {
+	t.Parallel()
+
+	svc := newControlTestService(t)
+	m := Model{
+		ctx:    context.Background(),
+		svc:    svc,
+		width:  100,
+		height: 30,
+	}
+	opened, initCmd := m.openBossMode()
+	got := opened.(Model)
+	for _, msg := range collectCmdMsgs(initCmd) {
+		if _, ok := msg.(bossui.TickMsg); ok {
+			continue
+		}
+		updated, _ := got.Update(msg)
+		got = updated.(Model)
+	}
+	if !got.bossModelActive {
+		t.Fatalf("boss model should be active after opening")
+	}
+
+	updated, _ := got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("answer this while hidden")})
+	got = updated.(Model)
+	updated, chatCmd := got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if chatCmd == nil {
+		t.Fatalf("submitting boss chat should start async work")
+	}
+
+	updated, exitCmd := got.Update(tea.KeyMsg{Type: tea.KeyUp, Alt: true})
+	got = updated.(Model)
+	if exitCmd == nil {
+		t.Fatalf("Alt+Up should hide boss mode through an exit message")
+	}
+	for _, msg := range collectCmdMsgs(exitCmd) {
+		updated, _ = got.Update(msg)
+		got = updated.(Model)
+	}
+	if got.bossMode {
+		t.Fatalf("boss mode should be hidden")
+	}
+	if !got.bossModelActive {
+		t.Fatalf("hiding boss mode should keep the boss model alive")
+	}
+
+	got = drainCmdMsgs(got, chatCmd)
+	if got.bossMode {
+		t.Fatalf("background boss reply should not reopen boss mode")
+	}
+
+	got.bossModel = bossui.Model{}
+	got.bossModelActive = false
+	reopened, initCmd := got.openBossMode()
+	got = reopened.(Model)
+	for _, msg := range collectCmdMsgs(initCmd) {
+		if _, ok := msg.(bossui.TickMsg); ok {
+			continue
+		}
+		updated, _ := got.Update(msg)
+		got = updated.(Model)
+	}
+	view := bossChatOnlyText(got.bossModel)
+	for _, want := range []string{
+		"answer this while hidden",
+		"I could not reach my chat backend yet",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("hidden boss reply did not finish with %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestBossViewContextIncludesProcessSystemNotice(t *testing.T) {
 	t.Parallel()
 
