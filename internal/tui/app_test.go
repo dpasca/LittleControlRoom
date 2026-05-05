@@ -7787,6 +7787,104 @@ func TestVisibleCodexSlashSuggestionsRender(t *testing.T) {
 	}
 }
 
+func TestVisibleCodexSlashSuggestsHostTaskActions(t *testing.T) {
+	input := newCodexTextarea()
+	input.SetValue("/task")
+
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexInput:          input,
+	}
+
+	suggestions := m.codexSlashSuggestions()
+	if len(suggestions) != 1 {
+		t.Fatalf("codexSlashSuggestions(/task) returned %d suggestions, want 1", len(suggestions))
+	}
+	if suggestions[0].Insert != "/task-actions" {
+		t.Fatalf("codexSlashSuggestions(/task)[0].Insert = %q, want /task-actions", suggestions[0].Insert)
+	}
+}
+
+func TestVisibleCodexSlashTaskActionsFallsBackToHostCommand(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started: true,
+			Preset:  codexcli.PresetYolo,
+			Status:  "Codex session ready",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/task-actions")
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		projects: []model.ProjectSummary{{
+			Name:          "answer Sarah email",
+			Path:          "/tmp/tasks/answer-sarah-email",
+			Kind:          model.ProjectKindScratchTask,
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+		width:    100,
+		height:   24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("embedded /task-actions should open the host dialog without queuing work")
+	}
+	if got.scratchTaskAction == nil {
+		t.Fatalf("embedded /task-actions should open the scratch task action dialog")
+	}
+	if got.codexInput.Value() != "" {
+		t.Fatalf("codex input should clear after host command fallback, got %q", got.codexInput.Value())
+	}
+	rendered := ansi.Strip(got.View())
+	if !strings.Contains(rendered, "Task Actions") || !strings.Contains(rendered, "Archive") || !strings.Contains(rendered, "Delete") {
+		t.Fatalf("host task action dialog should render over visible Codex, got %q", rendered)
+	}
+}
+
+func TestScratchTaskActionDialogTakesInputPriorityOverVisibleCodex(t *testing.T) {
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		scratchTaskAction: &scratchTaskActionConfirmState{
+			ProjectPath:   "/tmp/tasks/answer-sarah-email",
+			ProjectName:   "answer Sarah email",
+			PresentOnDisk: true,
+			Selected:      scratchTaskActionFocusKeep,
+		},
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("closing task actions over visible Codex should not queue work")
+	}
+	if got.scratchTaskAction != nil {
+		t.Fatalf("Esc should close the scratch task action dialog before reaching visible Codex")
+	}
+	if got.codexVisibleProject != "/tmp/demo" {
+		t.Fatalf("codexVisibleProject = %q, want visible pane to remain open", got.codexVisibleProject)
+	}
+}
+
 func TestVisibleCodexSlashTabCyclesSuggestions(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",

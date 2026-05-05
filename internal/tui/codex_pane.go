@@ -1506,6 +1506,11 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			raw := m.resolvedCodexSlashInput()
 			inv, err := codexslash.Parse(raw)
 			if err != nil {
+				if hostInv, ok := codexHostSlashCommand(raw); ok {
+					m.clearCodexDraft(m.codexVisibleProject)
+					m.err = nil
+					return m.dispatchCommand(hostInv)
+				}
 				m.status = err.Error()
 				return m, nil
 			}

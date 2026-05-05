@@ -23,7 +23,41 @@ func (m Model) codexSlashInput() string {
 }
 
 func (m Model) codexSlashSuggestions() []codexslash.Suggestion {
-	return codexslash.Suggestions(m.codexSlashInput())
+	input := m.codexSlashInput()
+	suggestions := codexslash.Suggestions(input)
+	if len(suggestions) > 0 {
+		return suggestions
+	}
+	return codexHostSlashSuggestions(input)
+}
+
+func codexHostSlashCommand(input string) (commands.Invocation, bool) {
+	inv, err := commands.Parse(input)
+	if err != nil {
+		return commands.Invocation{}, false
+	}
+	switch inv.Kind {
+	case commands.KindTaskActions:
+		return inv, true
+	default:
+		return commands.Invocation{}, false
+	}
+}
+
+func codexHostSlashSuggestions(input string) []codexslash.Suggestion {
+	suggestions := commands.Suggestions(input)
+	out := make([]codexslash.Suggestion, 0, len(suggestions))
+	for _, suggestion := range suggestions {
+		if _, ok := codexHostSlashCommand(suggestion.Insert); !ok {
+			continue
+		}
+		out = append(out, codexslash.Suggestion{
+			Insert:  suggestion.Insert,
+			Display: suggestion.Display,
+			Summary: suggestion.Summary,
+		})
+	}
+	return out
 }
 
 func (m *Model) syncCodexSlashSelection() {
@@ -109,8 +143,11 @@ func (m Model) resolvedCodexSlashInput() string {
 	}
 	suggestion, ok := m.selectedCodexSlashSuggestion()
 	return slashcmd.ResolveInput(raw, suggestion, ok, func(input string) bool {
-		_, err := codexslash.Parse(input)
-		return err == nil
+		if _, err := codexslash.Parse(input); err == nil {
+			return true
+		}
+		_, ok := codexHostSlashCommand(input)
+		return ok
 	})
 }
 
@@ -130,7 +167,7 @@ func (m Model) renderCodexSlashBlocks(width int) []string {
 
 	suggestions := m.codexSlashSuggestions()
 	if len(suggestions) == 0 {
-		lines = append(lines, commandPaletteHintStyle.Render("No supported embedded slash commands match. Try /new, /resume, /model, /status, /review, /skills, or /reconnect."))
+		lines = append(lines, commandPaletteHintStyle.Render("No supported embedded or host slash commands match. Try /new, /resume, /task-actions, /skills, or /reconnect."))
 	} else {
 		start, end := m.codexSlashSuggestionWindow(len(suggestions))
 		if start > 0 {
