@@ -1113,9 +1113,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.attentionDialog != nil {
 			return m.updateAttentionDialogMode(msg)
 		}
-		if m.codexVisible() {
-			return m.updateCodexMode(msg)
-		}
 		if m.newTaskDialog != nil {
 			return m.updateNewTaskMode(msg)
 		}
@@ -1160,6 +1157,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.projectFilterDialog != nil {
 			return m.updateProjectFilterMode(msg)
+		}
+		if m.codexVisible() {
+			return m.updateCodexMode(msg)
 		}
 		if m.commandMode {
 			return m.updateCommandMode(msg)
@@ -2741,6 +2741,17 @@ func (m Model) View() string {
 				height = 30
 			}
 			return m.renderCodexInputCopyDialogOverlay(body, width, height)
+		}
+		if m.scratchTaskAction != nil {
+			width := m.width
+			if width <= 0 {
+				width = 120
+			}
+			height := m.height
+			if height <= 0 {
+				height = 30
+			}
+			return m.renderScratchTaskActionOverlay(body, width, height)
 		}
 		return body
 	}
