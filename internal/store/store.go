@@ -3516,21 +3516,23 @@ func (s *Store) AddTodo(ctx context.Context, projectPath, text string) (model.To
 	}
 	defer tx.Rollback()
 
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE project_todos
+		SET position = position + 1
+		WHERE project_path = ? AND done = 0
+	`, projectPath); err != nil {
+		return model.TodoItem{}, err
+	}
+
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO project_todos(project_path, text, done, position, created_at, updated_at)
-		SELECT ?, ?, 0, COALESCE(MAX(position), -1) + 1, ?, ?
-		FROM project_todos
-		WHERE project_path = ?
-	`, projectPath, text, now.Unix(), now.Unix(), projectPath)
+		VALUES (?, ?, 0, 0, ?, ?)
+	`, projectPath, text, now.Unix(), now.Unix())
 	if err != nil {
 		return model.TodoItem{}, err
 	}
 	id, err := result.LastInsertId()
 	if err != nil {
-		return model.TodoItem{}, err
-	}
-	var position int
-	if err := tx.QueryRowContext(ctx, `SELECT position FROM project_todos WHERE id = ?`, id).Scan(&position); err != nil {
 		return model.TodoItem{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE projects SET updated_at = ? WHERE path = ?`, now.Unix(), projectPath); err != nil {
@@ -3543,7 +3545,7 @@ func (s *Store) AddTodo(ctx context.Context, projectPath, text string) (model.To
 		ID:          id,
 		ProjectPath: projectPath,
 		Text:        text,
-		Position:    position,
+		Position:    0,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}, nil

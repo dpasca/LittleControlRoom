@@ -689,46 +689,58 @@ func (m Model) renderSettingsPanel(bodyW, bodyH int) string {
 }
 
 func (m Model) renderSettingsContent(width, maxHeight int) string {
-	activeSection := m.activeSettingsSection()
 	lines := []string{
 		commandPaletteTitleStyle.Render("Settings"),
 		commandPaletteHintStyle.Render("Config: " + truncateText(m.displayPathWithHomeTilde(m.currentConfigPath()), max(20, width-8))),
 	}
 	lines = append(lines, m.renderCompactInferenceSetupSummary(width))
 	lines = append(lines, "")
-	lines = append(lines, m.renderSettingsSectionTabs(width))
-	lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("%s section. %s", activeSection.label, activeSection.hint)))
-	if m.settingsSaving {
-		lines = append(lines, "")
-		lines = append(lines, commandPaletteHintStyle.Render("Saving settings..."))
-	}
-
-	fieldIndexes := activeSection.fieldOrder
-	labelWidth := m.settingsLabelWidth(width, fieldIndexes)
-	inputWidth := max(10, width-labelWidth-1)
-	start, end := m.settingsVisibleWindow(fieldIndexes, m.settingsVisibleFieldCount(maxHeight))
-	if start > 0 {
-		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d above", start)))
-	}
-	for _, fieldIndex := range fieldIndexes[start:end] {
-		lines = append(lines, m.renderSettingsFieldRow(fieldIndex, m.settingsFields[fieldIndex], fieldIndex == m.settingsSelected, labelWidth, inputWidth))
-	}
-	if end < len(fieldIndexes) {
-		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d below", len(fieldIndexes)-end)))
-	}
-	if activeSection.id == settingsSectionBrowser {
-		lines = append(lines, "")
-		lines = append(lines, m.renderBrowserSettingsStatus(width)...)
-	}
-
+	lines = append(lines, splitLines(m.renderSettingsSectionLayout(width, maxHeight))...)
 	if hint := m.renderSelectedSettingsHint(width); hint != "" {
 		lines = append(lines, "")
 		lines = append(lines, hint)
 	}
-
 	lines = append(lines, "")
 	lines = append(lines, m.renderSettingsActions())
 	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderSettingsSectionLayout(width, maxHeight int) string {
+	activeSection := m.activeSettingsSection()
+	sidebarWidth := settingsSectionSidebarWidth(width)
+	separatorWidth := 3
+	contentWidth := max(18, width-sidebarWidth-separatorWidth)
+
+	mainLines := []string{
+		m.renderSettingsSectionHint(activeSection, contentWidth),
+	}
+	if m.settingsSaving {
+		mainLines = append(mainLines, "")
+		mainLines = append(mainLines, commandPaletteHintStyle.Render("Saving settings..."))
+	}
+
+	fieldIndexes := activeSection.fieldOrder
+	labelWidth := m.settingsLabelWidth(contentWidth, fieldIndexes)
+	inputWidth := max(10, contentWidth-labelWidth-1)
+	start, end := m.settingsVisibleWindow(fieldIndexes, m.settingsVisibleFieldCount(maxHeight))
+	if start > 0 {
+		mainLines = append(mainLines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d above", start)))
+	}
+	for _, fieldIndex := range fieldIndexes[start:end] {
+		mainLines = append(mainLines, m.renderSettingsFieldRow(fieldIndex, m.settingsFields[fieldIndex], fieldIndex == m.settingsSelected, labelWidth, inputWidth))
+	}
+	if end < len(fieldIndexes) {
+		mainLines = append(mainLines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d below", len(fieldIndexes)-end)))
+	}
+	if activeSection.id == settingsSectionBrowser {
+		mainLines = append(mainLines, "")
+		mainLines = append(mainLines, m.renderBrowserSettingsStatus(contentWidth)...)
+	}
+
+	sidebar := m.renderSettingsSectionSidebar(sidebarWidth)
+	separator := detailMutedStyle.Render("│")
+	main := lipgloss.NewStyle().Width(contentWidth).Render(strings.Join(mainLines, "\n"))
+	return lipgloss.JoinHorizontal(lipgloss.Top, sidebar, " ", separator, " ", main)
 }
 
 func (m Model) settingsVisibleFieldCount(maxHeight int) int {
@@ -737,9 +749,9 @@ func (m Model) settingsVisibleFieldCount(maxHeight int) int {
 		return 0
 	}
 
-	// Header/summary (5), hint block (blank + up to 2 lines), actions (blank + 1),
-	// plus up to 2 scroll indicators when the field list is windowed.
-	reserved := 12
+	// Header/summary, selected-field hint, two action rows, and the section
+	// sidebar leave less room for fields than the old inline section tabs did.
+	reserved := 17
 	visible := maxHeight - reserved
 	if visible < 1 {
 		visible = 1
@@ -784,28 +796,41 @@ func (m Model) settingsLabelWidth(width int, fieldIndexes []int) int {
 	return min(maxAllowed, max(18, widest))
 }
 
-func (m Model) renderSettingsSectionTabs(width int) string {
+func settingsSectionSidebarWidth(width int) int {
 	sections := settingsSections()
-	parts := make([]string, 0, len(sections)+1)
-	parts = append(parts, detailLabelStyle.Render("Sections:"))
+	widest := lipgloss.Width("Sections:")
+	for _, section := range sections {
+		widest = max(widest, lipgloss.Width(section.label)+2)
+	}
+	return min(max(14, widest+2), max(14, width/3))
+}
+
+func (m Model) renderSettingsSectionSidebar(width int) string {
+	sections := settingsSections()
+	lines := make([]string, 0, len(sections)+1)
+	lines = append(lines, detailLabelStyle.Width(width).Render("Sections:"))
 	activeStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("16")).
 		Background(lipgloss.Color("81")).
 		Bold(true).
-		Padding(0, 1)
+		Width(width)
 	inactiveStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252")).
-		Background(lipgloss.Color("238")).
-		Padding(0, 1)
+		Foreground(lipgloss.Color("244")).
+		Width(width)
 	for i, section := range sections {
-		label := section.label
+		label := "  " + section.label
 		if i == m.activeSettingsSectionIndex() {
-			parts = append(parts, activeStyle.Render(label))
+			lines = append(lines, activeStyle.Render(truncateText("> "+section.label, width)))
 			continue
 		}
-		parts = append(parts, inactiveStyle.Render(label))
+		lines = append(lines, inactiveStyle.Render(truncateText(label, width)))
 	}
-	return fitFooterWidth(strings.Join(parts, " "), width)
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderSettingsSectionHint(section settingsSection, width int) string {
+	text := fmt.Sprintf("%s section. %s", section.label, section.hint)
+	return commandPaletteHintStyle.Render(lipgloss.NewStyle().Width(max(18, width)).Render(text))
 }
 
 type settingsBrowserProviderCapability struct {
@@ -975,7 +1000,6 @@ func (m Model) renderSettingsActions() string {
 	actions := []string{
 		renderDialogAction("Ctrl+S", "save", commitActionKeyStyle, commitActionTextStyle),
 		renderDialogAction("Tab", "next", navigateActionKeyStyle, navigateActionTextStyle),
-		renderDialogAction("PgUp/PgDn", "section", pushActionKeyStyle, pushActionTextStyle),
 		renderDialogAction("Up/Down", "move", pushActionKeyStyle, pushActionTextStyle),
 		renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
 	}
@@ -988,7 +1012,10 @@ func (m Model) renderSettingsActions() string {
 			renderDialogAction("Enter", "save", commitActionKeyStyle, commitActionTextStyle),
 		}, actions...)
 	}
-	return strings.Join(actions, "   ")
+	return strings.Join([]string{
+		strings.Join(actions, "   "),
+		renderDialogAction("Page Up/Page Down", "changes section", pushActionKeyStyle, pushActionTextStyle),
+	}, "\n")
 }
 
 func newSettingsFields(settings config.EditableSettings) []settingsField {

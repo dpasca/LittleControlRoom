@@ -19547,6 +19547,9 @@ func TestViewWithSettingsModeRespectsHeight(t *testing.T) {
 	if !strings.Contains(rendered, "Config:") {
 		t.Fatalf("View() missing config path context: %q", rendered)
 	}
+	if !strings.Contains(rendered, "Page Up/Page Down") || !strings.Contains(rendered, "changes section") {
+		t.Fatalf("View() should keep the settings section legend visible at 24 rows: %q", rendered)
+	}
 	if !strings.Contains(rendered, "│  A") || !strings.Contains(rendered, "│ Pa") {
 		t.Fatalf("View() should preserve background list and detail context under the settings modal: %q", rendered)
 	}
@@ -19572,8 +19575,8 @@ func TestSettingsModalRendersColoredActionLegend(t *testing.T) {
 	if !strings.Contains(rendered, "Tab") || !strings.Contains(rendered, "next") {
 		t.Fatalf("settings modal should render Tab next action: %q", rendered)
 	}
-	if !strings.Contains(rendered, "PgUp/PgDn") || !strings.Contains(rendered, "section") {
-		t.Fatalf("settings modal should render PgUp/PgDn section action: %q", rendered)
+	if !strings.Contains(rendered, "Page Up/Page Down") || !strings.Contains(rendered, "changes section") {
+		t.Fatalf("settings modal should clearly render Page Up/Page Down changes section action: %q", rendered)
 	}
 	if !strings.Contains(rendered, "Up/Down") || !strings.Contains(rendered, "move") {
 		t.Fatalf("settings modal should render Up/Down move action: %q", rendered)
@@ -19705,6 +19708,19 @@ func TestSettingsSectionSwitchChangesVisibleFields(t *testing.T) {
 	rendered := ansi.Strip(got.renderSettingsContent(72, 18))
 	if !strings.Contains(rendered, "Sections:") || !strings.Contains(rendered, "Project Scope") {
 		t.Fatalf("settings modal should make the section switcher obvious: %q", rendered)
+	}
+	if !strings.Contains(rendered, "> Project Scope") {
+		t.Fatalf("settings modal should render a dedicated selected section row: %q", rendered)
+	}
+	foundColumnRow := false
+	for _, line := range strings.Split(rendered, "\n") {
+		if strings.Contains(line, "Sections:") && strings.Contains(line, "Project Scope section.") {
+			foundColumnRow = true
+			break
+		}
+	}
+	if !foundColumnRow {
+		t.Fatalf("settings modal should place sections in a left column beside section content: %q", rendered)
 	}
 	if !strings.Contains(rendered, "Project Scope section.") {
 		t.Fatalf("settings modal should render the new section hint: %q", rendered)
@@ -19903,7 +19919,8 @@ func TestSettingsBrowserSectionShowsLiveBrowserActivity(t *testing.T) {
 	rendered := ansi.Strip(m.renderSettingsContent(84, 22))
 	for _, want := range []string{
 		"Codex / demo:",
-		"playwright/browser_navigate is waiting for user input.",
+		"playwright/browser_navigate is waiting for user",
+		"input.",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("browser settings live activity is missing %q: %q", want, rendered)

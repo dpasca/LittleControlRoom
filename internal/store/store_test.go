@@ -856,6 +856,72 @@ func TestAddTodoPreservesBlankLines(t *testing.T) {
 	}
 }
 
+func TestAddTodoStacksNewOpenItemsFirst(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := "/tmp/demo"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "demo",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		InScope:        true,
+		UpdatedAt:      time.Now(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	first, err := st.AddTodo(ctx, projectPath, "First open todo")
+	if err != nil {
+		t.Fatalf("add first todo: %v", err)
+	}
+	second, err := st.AddTodo(ctx, projectPath, "Second open todo")
+	if err != nil {
+		t.Fatalf("add second todo: %v", err)
+	}
+	done, err := st.AddTodo(ctx, projectPath, "Completed todo")
+	if err != nil {
+		t.Fatalf("add completed todo: %v", err)
+	}
+	if err := st.ToggleTodoDone(ctx, done.ID, true); err != nil {
+		t.Fatalf("toggle completed todo: %v", err)
+	}
+	third, err := st.AddTodo(ctx, projectPath, "Third open todo")
+	if err != nil {
+		t.Fatalf("add third todo: %v", err)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 0)
+	if err != nil {
+		t.Fatalf("get project detail: %v", err)
+	}
+	got := make([]int64, 0, len(detail.Todos))
+	for _, item := range detail.Todos {
+		got = append(got, item.ID)
+	}
+	want := []int64{third.ID, second.ID, first.ID, done.ID}
+	if len(got) != len(want) {
+		t.Fatalf("todo order length = %d, want %d: got %#v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("todo order = %#v, want %#v", got, want)
+		}
+	}
+	if detail.Todos[0].Position != 0 {
+		t.Fatalf("new open todo position = %d, want 0", detail.Todos[0].Position)
+	}
+}
+
 func TestUpdateTodoPreservesBlankLines(t *testing.T) {
 	t.Parallel()
 
