@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -57,9 +58,11 @@ type CPUProcess struct {
 }
 
 type CPUSnapshot struct {
-	Processes []CPUProcess
-	TotalCPU  float64
-	ScannedAt time.Time
+	Processes    []CPUProcess
+	TotalCPU     float64
+	ProcessCount int
+	LogicalCPUs  int
+	ScannedAt    time.Time
 }
 
 type ScanOptions struct {
@@ -79,6 +82,7 @@ type CPUScanOptions struct {
 	OwnPID             int
 	Limit              int
 	CWDLimit           int
+	LogicalCPUs        int
 	HighCPUThreshold   float64
 	OrphanCPUThreshold float64
 	Now                time.Time
@@ -235,9 +239,11 @@ func buildCPUSnapshot(processes []Process, cwds map[int]string, opts CPUScanOpti
 		out = append(out, classifyCPUProcess(process, projectPaths, ppids, ownPID, opts.ManagedPIDs, opts.ManagedPGIDs, highCPUThreshold, orphanCPUThreshold))
 	}
 	return CPUSnapshot{
-		Processes: out,
-		TotalCPU:  totalCPU,
-		ScannedAt: scannedAt,
+		Processes:    out,
+		TotalCPU:     totalCPU,
+		ProcessCount: len(processes),
+		LogicalCPUs:  opts.logicalCPUs(),
+		ScannedAt:    scannedAt,
 	}
 }
 
@@ -365,6 +371,13 @@ func (opts CPUScanOptions) cwdLimit() int {
 		return DefaultCPUCWDLimit
 	}
 	return opts.CWDLimit
+}
+
+func (opts CPUScanOptions) logicalCPUs() int {
+	if opts.LogicalCPUs > 0 {
+		return opts.LogicalCPUs
+	}
+	return runtime.NumCPU()
 }
 
 func cleanProjectPaths(paths []string) []string {

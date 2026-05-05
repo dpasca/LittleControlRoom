@@ -6083,7 +6083,7 @@ func (m Model) renderFooter(width int) string {
 		return m.renderModalFooter(width, "Error log: ↑↓ select, Enter/c copy, Esc close", supplementSegments...)
 	}
 	if m.cpuDialog != nil {
-		return m.renderModalFooter(width, "CPU inspector: ↑↓ select, r refresh, Esc close", supplementSegments...)
+		return m.renderModalFooter(width, "CPU inspector: ↑↓ select, a ask engineer, r refresh, Esc close", supplementSegments...)
 	}
 	if m.processDialog != nil {
 		return m.renderModalFooter(width, "Process inspector: ↑↓ select, r refresh, Esc close", supplementSegments...)
