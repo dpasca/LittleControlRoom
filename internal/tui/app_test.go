@@ -4016,6 +4016,27 @@ func TestRenderTopStatusLineShowsNavigationHintsInsteadOfAICounts(t *testing.T) 
 	}
 }
 
+func TestRenderTopStatusLineShowsCPUUsageAtRight(t *testing.T) {
+	m := Model{
+		status: "Ready",
+		cpuSnapshot: procinspect.CPUSnapshot{
+			TotalCPU:  132.6,
+			ScannedAt: time.Date(2026, 4, 3, 11, 0, 0, 0, time.UTC),
+			Processes: []procinspect.CPUProcess{{
+				Process: procinspect.Process{PID: 42, CPU: 82.3, Command: "/opt/homebrew/bin/node server.js"},
+			}},
+		},
+	}
+
+	rendered := strings.TrimRight(ansi.Strip(m.renderTopStatusLine(80)), " ")
+	if !strings.Contains(rendered, "Ready") {
+		t.Fatalf("top status line missing left status: %q", rendered)
+	}
+	if !strings.HasSuffix(rendered, "CPU 133% node 82%") {
+		t.Fatalf("top status line should pin CPU summary to the right, got %q", rendered)
+	}
+}
+
 func TestCompactFooterBaseSplitsGlobalActionsFromTopStatus(t *testing.T) {
 	rendered := ansi.Strip(compactFooterBase(160, focusProjects, 0, 0, false, "Session", nil))
 	if strings.Contains(rendered, "f filter") || strings.Contains(rendered, "/ command") {
@@ -4315,8 +4336,8 @@ func TestRenderFooterShowsProcessWarningSystemNotice(t *testing.T) {
 
 func TestProcessWarningStatusIsCompact(t *testing.T) {
 	status := processWarningStatus(processWarningStats{Total: 6, HighCPU: 2, PortListeners: 1})
-	if status != "PIDs 6 hot2 port1; /pids" {
-		t.Fatalf("processWarningStatus() = %q, want compact PID status", status)
+	if status != "PIDs 6 hot2 port1; /cpu" {
+		t.Fatalf("processWarningStatus() = %q, want compact CPU status", status)
 	}
 }
 
@@ -6730,7 +6751,7 @@ func TestRuntimeCommandFocusesRuntimePane(t *testing.T) {
 	}
 }
 
-func TestPIDsCommandOpensProcessInspector(t *testing.T) {
+func TestCPUCommandOpensProcessInspector(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{
 			Name:          "demo",
@@ -6742,22 +6763,16 @@ func TestPIDsCommandOpensProcessInspector(t *testing.T) {
 		height:   24,
 	}
 
-	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindProcesses})
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindCPU})
 	got := updated.(Model)
-	if got.processDialog == nil {
-		t.Fatalf("/pids should open the process inspector")
+	if got.cpuDialog == nil {
+		t.Fatalf("/cpu should open the CPU inspector")
 	}
-	if got.processDialog.ProjectPath != "" {
-		t.Fatalf("dialog project path = %q, want global scope", got.processDialog.ProjectPath)
-	}
-	if got.processDialog.ProjectName != "All Projects" {
-		t.Fatalf("dialog project name = %q, want All Projects", got.processDialog.ProjectName)
-	}
-	if !got.processDialog.Loading {
+	if !got.cpuDialog.Loading {
 		t.Fatalf("dialog should start in loading state")
 	}
 	if cmd == nil {
-		t.Fatalf("/pids should queue an async process scan")
+		t.Fatalf("/cpu should queue an async CPU scan")
 	}
 }
 

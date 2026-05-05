@@ -126,6 +126,32 @@ func renderFooterLine(width int, segments ...string) string {
 	return ansi.Truncate(line, width, "...")
 }
 
+func renderLineWithRightSegment(left, right string, width int) string {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if right == "" {
+		return fitFooterWidth(left, width)
+	}
+	if left == "" {
+		return fitFooterWidth(right, width)
+	}
+	if width <= 0 {
+		return strings.Join([]string{left, right}, "  ")
+	}
+	rightWidth := ansi.StringWidth(ansi.Strip(right))
+	if rightWidth >= width {
+		return fitFooterWidth(right, width)
+	}
+	gap := 2
+	leftWidth := max(0, width-rightWidth-gap)
+	left = ansi.Truncate(left, leftWidth, "...")
+	padding := width - ansi.StringWidth(ansi.Strip(left)) - rightWidth
+	if padding < 1 {
+		padding = 1
+	}
+	return left + strings.Repeat(" ", padding) + right
+}
+
 func (a footerAction) render() string {
 	key := strings.TrimSpace(a.key)
 	label := strings.TrimSpace(a.label)

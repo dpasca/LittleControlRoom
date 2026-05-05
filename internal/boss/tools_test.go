@@ -1164,7 +1164,7 @@ func TestBuildViewContextBriefIncludesSystemNotices(t *testing.T) {
 		SystemNotices: []ViewSystemNotice{{
 			Code:     "process_suspicious",
 			Severity: "warning",
-			Summary:  "Processes: 2 suspicious, 1 hot; use process_report or /pids for PID details",
+			Summary:  "Processes: 2 suspicious, 1 hot; use process_report or /cpu for PID details",
 			Count:    2,
 		}},
 	}, time.Unix(1_800_000_000, 0))

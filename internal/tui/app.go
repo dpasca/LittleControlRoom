@@ -163,6 +163,10 @@ type Model struct {
 	runtimeRefreshInFlight      bool
 	runtimeRefreshQueued        bool
 	runtimeSnapshots            map[string]projectrun.Snapshot
+	cpuSnapshot                 procinspect.CPUSnapshot
+	cpuMonitorInFlight          bool
+	cpuMonitorQueued            bool
+	cpuDialog                   *cpuDialogState
 	processScanInFlight         bool
 	processScanQueued           bool
 	processScanQueuedDialogPath string
@@ -322,6 +326,11 @@ type processScanMsg struct {
 	reports           []procinspect.ProjectReport
 	dialogProjectPath string
 	err               error
+}
+
+type cpuSnapshotMsg struct {
+	snapshot procinspect.CPUSnapshot
+	err      error
 }
 
 type runCommandSavedMsg struct {
@@ -845,6 +854,7 @@ func (m Model) Init() tea.Cmd {
 		m.requestScanCmd(false),
 		m.loadRecentProjectParentsCmd(),
 		m.loadRuntimeSnapshotsCmd(),
+		m.loadCPUSnapshotCmd(),
 		m.waitBusCmd(),
 		m.waitCodexCmd(),
 		spinnerTickCmd(),
@@ -1107,6 +1117,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.errorLogVisible {
 			return m.updateErrorLogMode(msg)
+		}
+		if m.cpuDialog != nil {
+			return m.updateCPUDialogMode(msg)
 		}
 		if m.processDialog != nil {
 			return m.updateProcessDialogMode(msg)
@@ -1627,6 +1640,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, reloadCmd
 	case processScanMsg:
 		return m, m.applyProcessScanMsg(msg)
+	case cpuSnapshotMsg:
+		return m, m.applyCPUSnapshotMsg(msg)
 	case skillsInventoryMsg:
 		return m.applySkillsInventoryMsg(msg)
 	case runCommandSavedMsg:
@@ -2022,7 +2037,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.spinnerFrame%processScanRefreshEveryTicks == 0 {
 			processScanCmd = m.requestProcessScanCmd("")
 		}
-		return m, batchCmds(spinnerTickCmd(), refreshCmd, processScanCmd)
+		cpuSnapshotCmd := tea.Cmd(nil)
+		if m.spinnerFrame%cpuSnapshotRefreshEveryTicks == 0 {
+			cpuSnapshotCmd = m.requestCPUSnapshotRefreshCmd()
+		}
+		return m, batchCmds(spinnerTickCmd(), refreshCmd, processScanCmd, cpuSnapshotCmd)
 	case codexUpdateMsg:
 		return m.applyCodexUpdateMsg(msg)
 	case codexDeferredSnapshotMsg:
@@ -2815,6 +2834,8 @@ func (m Model) View() string {
 		body = m.renderCommandPaletteOverlay(body, layout.width, layout.height)
 	} else if m.errorLogVisible {
 		body = m.renderErrorLogOverlay(body, layout.width, layout.height)
+	} else if m.cpuDialog != nil {
+		body = m.renderCPUDialogOverlay(body, layout.width, layout.height)
 	} else if m.processDialog != nil {
 		body = m.renderProcessDialogOverlay(body, layout.width, layout.height)
 	} else if m.skillsDialog != nil {
@@ -2996,7 +3017,7 @@ func (m Model) renderTopStatusLine(width int) string {
 	if len(statusParts) > 0 {
 		segments = append(segments, joinFooterSegments(statusParts...))
 	}
-	return fitFooterWidth(strings.Join(segments, "  "), width)
+	return renderLineWithRightSegment(strings.Join(segments, "  "), m.renderTopCPUUsageSegment(), width)
 }
 
 type topStatusSeverity int
@@ -3803,6 +3824,7 @@ var (
 
 const spinnerTickInterval = 120 * time.Millisecond
 const runtimeSnapshotRefreshEveryTicks = 8
+const cpuSnapshotRefreshEveryTicks = 25
 const processScanRefreshEveryTicks = 500
 
 func spinnerTickCmd() tea.Cmd {
@@ -4191,8 +4213,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, m.openRunCommandDialog(p, false)
 	case commands.KindRuntime:
 		return m, m.openRuntimeInspectorForSelection()
-	case commands.KindProcesses:
-		return m, m.openProcessDialogForSelection()
+	case commands.KindCPU:
+		return m, m.openCPUDialog()
 	case commands.KindStop:
 		p, ok := m.selectedProject()
 		if !ok {
@@ -6060,6 +6082,9 @@ func (m Model) renderFooter(width int) string {
 	if m.errorLogVisible {
 		return m.renderModalFooter(width, "Error log: ↑↓ select, Enter/c copy, Esc close", supplementSegments...)
 	}
+	if m.cpuDialog != nil {
+		return m.renderModalFooter(width, "CPU inspector: ↑↓ select, r refresh, Esc close", supplementSegments...)
+	}
 	if m.processDialog != nil {
 		return m.renderModalFooter(width, "Process inspector: ↑↓ select, r refresh, Esc close", supplementSegments...)
 	}
@@ -7134,7 +7159,7 @@ func helpPanelLines() []string {
 			renderDialogAction("Tab", "complete there", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("?", "toggle help", commitActionKeyStyle, commitActionTextStyle),
 		),
-		commandPaletteHintStyle.Render("Try /setup, /ai, /perf, /errors, /codex, /todo, /skills, /pids, /remove, /wt merge|remove|prune, /commit, /diff, or /run."),
+		commandPaletteHintStyle.Render("Try /setup, /ai, /perf, /errors, /codex, /todo, /skills, /cpu, /remove, /wt merge|remove|prune, /commit, /diff, or /run."),
 		detailSectionStyle.Render("Navigate"),
 		renderHelpPanelActionRow(
 			renderDialogAction("Tab", "switch pane", navigateActionKeyStyle, navigateActionTextStyle),

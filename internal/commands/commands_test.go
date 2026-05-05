@@ -273,26 +273,14 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
-			name: "pids",
-			raw:  "/pids",
+			name: "cpu",
+			raw:  "/cpu",
 			check: func(t *testing.T, inv Invocation) {
-				if inv.Kind != KindProcesses {
-					t.Fatalf("kind = %s, want %s", inv.Kind, KindProcesses)
+				if inv.Kind != KindCPU {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindCPU)
 				}
-				if inv.Canonical != "/pids" {
-					t.Fatalf("canonical = %q, want /pids", inv.Canonical)
-				}
-			},
-		},
-		{
-			name: "processes alias",
-			raw:  "/processes",
-			check: func(t *testing.T, inv Invocation) {
-				if inv.Kind != KindProcesses {
-					t.Fatalf("kind = %s, want %s", inv.Kind, KindProcesses)
-				}
-				if inv.Canonical != "/pids" {
-					t.Fatalf("canonical = %q, want /pids", inv.Canonical)
+				if inv.Canonical != "/cpu" {
+					t.Fatalf("canonical = %q, want /cpu", inv.Canonical)
 				}
 			},
 		},
@@ -657,6 +645,15 @@ func TestParseRejectsUnknownCommand(t *testing.T) {
 func TestParseRejectsRemovedFinishCommand(t *testing.T) {
 	if _, err := Parse("/finish"); err == nil {
 		t.Fatalf("Parse(/finish) expected error after removing the ambiguous alias")
+	}
+}
+
+func TestParseRejectsRemovedPIDCommand(t *testing.T) {
+	oldPIDCommand := "/" + "pids"
+	for _, raw := range []string{"/pid", oldPIDCommand, "/process", "/processes"} {
+		if _, err := Parse(raw); err == nil {
+			t.Fatalf("Parse(%q) expected error after replacing process aliases with /cpu", raw)
+		}
 	}
 }
 

@@ -536,7 +536,7 @@ func bossActionPlannerSystemPrompt() string {
 		"For completed/archived/historical agent-task lookup, or when the user asks to remove, clear, archive, hide, or get rid of a delegated task that is not listed as open, set include_historical=true on agent_task_report.",
 		"Use todo_report for project TODOs; project TODOs are separate from delegated agent tasks.",
 		"Do not answer that there are no open agent tasks when the app-state brief lists open delegated agent tasks.",
-		"Use process_report when the user asks about suspicious PIDs, hot CPU, orphaned processes, project-local Node/server processes, or whether stale dev servers are still running.",
+		"Use process_report or the CPU system notice when the user asks about suspicious PIDs, hot CPU, orphaned processes, project-local Node/server processes, or whether stale dev servers are still running.",
 		"Use skills_inventory when the user asks about Codex skills, stale skills, installed skills, skill duplicates, or skill management.",
 		"Available control action kind: propose_control with control_capability equal to engineer.send_prompt, agent_task.create, agent_task.continue, agent_task.close, or scratch_task.archive.",
 		"Use engineer.send_prompt only for explicit project/repo work on a loaded project. Do not use it for host operations or generic temporary work.",

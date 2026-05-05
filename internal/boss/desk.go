@@ -441,7 +441,7 @@ func deskNoticeLabel(code string) string {
 	case "engineer_input_waiting":
 		return "input"
 	case "process_suspicious":
-		return "pids"
+		return "cpu"
 	case "control_completed":
 		return "done"
 	case "control_failed":
