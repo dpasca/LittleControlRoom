@@ -716,7 +716,7 @@ func engineerNoticeSummaryText(text string, sentenceLimit int) string {
 	if engineerNoticeContainsFence(text) {
 		for _, paragraph := range engineerNoticeProseParagraphs(text) {
 			for _, sentence := range engineerNoticeSentences(paragraph) {
-				if strings.TrimSpace(sentence) != "" {
+				if engineerNoticeSentenceHasUsefulDetail(sentence) {
 					return sentence
 				}
 			}
@@ -727,11 +727,12 @@ func engineerNoticeSummaryText(text string, sentenceLimit int) string {
 	var sentences []string
 	for _, paragraph := range engineerNoticeProseParagraphs(text) {
 		for _, sentence := range engineerNoticeSentences(paragraph) {
-			if strings.TrimSpace(sentence) != "" {
-				sentences = append(sentences, sentence)
-				if len(sentences) >= sentenceLimit {
-					return strings.Join(sentences, " ")
-				}
+			if !engineerNoticeSentenceHasUsefulDetail(sentence) {
+				continue
+			}
+			sentences = append(sentences, sentence)
+			if len(sentences) >= sentenceLimit {
+				return strings.Join(sentences, " ")
 			}
 		}
 	}
@@ -739,6 +740,10 @@ func engineerNoticeSummaryText(text string, sentenceLimit int) string {
 		return strings.Join(sentences, " ")
 	}
 	return strings.TrimSpace(strings.ReplaceAll(text, "`", ""))
+}
+
+func engineerNoticeSentenceHasUsefulDetail(text string) bool {
+	return engineerNoticeHasUsefulDetail(cleanEngineerNoticeSummary(text))
 }
 
 func engineerNoticeContainsFence(text string) bool {

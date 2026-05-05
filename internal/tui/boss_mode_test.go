@@ -475,6 +475,34 @@ func TestLatestEngineerTranscriptOutputDropsLowInformationDone(t *testing.T) {
 	}
 }
 
+func TestLatestEngineerTranscriptOutputSkipsLowInformationIntroBeforeArtifactDetails(t *testing.T) {
+	t.Parallel()
+
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "Done. I kept the existing promo untouched and built the new autoplay version under `captures/promo-new-autoplay`.\n\nBest comparison artifact:\n[side-by-side video](/Users/davide/dev/repos/FractalMech/captures/promo-comparisons/promo-old-vs-new-autoplay-20260505.mp4)\n\nQuick scan:\n[contact sheet](/Users/davide/dev/repos/FractalMech/captures/promo-comparisons/promo-old-vs-new-autoplay-20260505-contact-sheet.jpg)",
+		}},
+	}
+
+	got := latestEngineerTranscriptOutput(snapshot)
+	for _, want := range []string{
+		"I kept the existing promo untouched",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("latestEngineerTranscriptOutput() missing %q:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{"side-by-side video", "contact sheet"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("latestEngineerTranscriptOutput() leaked artifact detail %q:\n%s", unwanted, got)
+		}
+	}
+	if strings.HasPrefix(got, "Done.") {
+		t.Fatalf("latestEngineerTranscriptOutput() should skip low-information opener:\n%s", got)
+	}
+}
+
 func TestBossHostNoticeQueuedWhileClosedAppearsOnOpen(t *testing.T) {
 	t.Parallel()
 
