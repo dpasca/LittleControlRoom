@@ -77,7 +77,7 @@ func TestCPUDialogActionsRenderOnOneLine(t *testing.T) {
 	}
 }
 
-func TestCPUDialogAskEngineerCreatesCPUAgentTask(t *testing.T) {
+func TestCPUDialogAskEngineerCreatesScratchTask(t *testing.T) {
 	ctx := context.Background()
 	svc := newControlTestService(t)
 	var requests []codexapp.LaunchRequest
@@ -156,10 +156,44 @@ func TestCPUDialogAskEngineerCreatesCPUAgentTask(t *testing.T) {
 	updated, cmd = got.updateCPURemediationEditorMode(tea.KeyMsg{Type: tea.KeyCtrlS})
 	got = updated.(Model)
 	if cmd == nil {
-		t.Fatalf("ctrl+s should launch a CPU remediation agent task")
+		t.Fatalf("ctrl+s should create a CPU remediation task")
 	}
 	if got.cpuRemediationEditor != nil {
 		t.Fatalf("CPU engineer prompt editor should close after dispatch")
+	}
+	if got.status != "Creating CPU task..." {
+		t.Fatalf("status after dispatch = %q, want task creation", got.status)
+	}
+
+	createMsgs := collectCmdMsgs(cmd)
+	var created cpuRemediationTaskCreatedMsg
+	for _, msg := range createMsgs {
+		if candidate, ok := msg.(cpuRemediationTaskCreatedMsg); ok {
+			created = candidate
+			break
+		}
+	}
+	if created.err != nil {
+		t.Fatalf("scratch task create err = %v", created.err)
+	}
+	if created.result.TaskPath == "" {
+		t.Fatalf("create messages = %#v, want cpuRemediationTaskCreatedMsg", createMsgs)
+	}
+
+	updated, cmd = got.Update(created)
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("cpuRemediationTaskCreatedMsg should launch the task engineer")
+	}
+	if got.codexPendingOpen == nil || got.codexPendingOpen.projectPath != created.result.TaskPath || got.codexPendingOpen.showWhilePending {
+		t.Fatalf("pending open = %#v, want hidden open in scratch task", got.codexPendingOpen)
+	}
+	project, ok := got.projectSummaryByPathAllProjects(created.result.TaskPath)
+	if !ok {
+		t.Fatalf("scratch task %q should be in the local project list", created.result.TaskPath)
+	}
+	if project.Kind != model.ProjectKindScratchTask || project.Name != cpuRemediationTaskTitle {
+		t.Fatalf("project = %#v, want CPU scratch task", project)
 	}
 
 	var opened codexSessionOpenedMsg
@@ -168,6 +202,9 @@ func TestCPUDialogAskEngineerCreatesCPUAgentTask(t *testing.T) {
 			opened = candidate
 			break
 		}
+	}
+	if opened.projectPath == "" {
+		t.Fatalf("launch command did not return codexSessionOpenedMsg")
 	}
 	if opened.err != nil {
 		t.Fatalf("engineer launch err = %v", opened.err)
@@ -178,8 +215,12 @@ func TestCPUDialogAskEngineerCreatesCPUAgentTask(t *testing.T) {
 	if !requests[0].ForceNew || requests[0].ProjectPath == "" {
 		t.Fatalf("launch request = %#v, want fresh task workspace", requests[0])
 	}
+	if requests[0].ProjectPath != created.result.TaskPath {
+		t.Fatalf("launch request path = %q, want scratch task path %q", requests[0].ProjectPath, created.result.TaskPath)
+	}
 	for _, want := range []string{
-		"Little Control Room agent task:",
+		"Little Control Room task:",
+		"Title: Investigate and reduce CPU usage",
 		"Allowed capabilities: process.inspect, process.terminate",
 		"PID 34857",
 		"PID 1110",
@@ -191,20 +232,24 @@ func TestCPUDialogAskEngineerCreatesCPUAgentTask(t *testing.T) {
 			t.Fatalf("launch prompt missing %q:\n%s", want, requests[0].Prompt)
 		}
 	}
+	if strings.Contains(requests[0].Prompt, "Little Control Room agent task:") {
+		t.Fatalf("CPU launch prompt should not use agent task framing:\n%s", requests[0].Prompt)
+	}
 
 	tasks, err := svc.ListOpenAgentTasks(ctx, 5)
 	if err != nil {
 		t.Fatalf("ListOpenAgentTasks() error = %v", err)
 	}
-	if len(tasks) != 1 {
-		t.Fatalf("open tasks = %#v, want one CPU remediation task", tasks)
+	if len(tasks) != 0 {
+		t.Fatalf("open agent tasks = %#v, want none for /cpu remediation", tasks)
 	}
-	task := tasks[0]
-	if task.Title != "Investigate and reduce CPU usage" || task.Kind != model.AgentTaskKindAgent || task.SessionID != "thread-cpu-task" {
-		t.Fatalf("task = %#v", task)
+	summaries, err := svc.Store().GetProjectSummaryMap(ctx)
+	if err != nil {
+		t.Fatalf("GetProjectSummaryMap() error = %v", err)
 	}
-	if !agentTaskHasProcessResource(task, 34857) || !agentTaskHasProcessResource(task, 1110) {
-		t.Fatalf("task resources missing CPU PIDs: %#v", task.Resources)
+	stored := summaries[created.result.TaskPath]
+	if stored.Kind != model.ProjectKindScratchTask || !stored.PresentOnDisk {
+		t.Fatalf("stored project = %#v, want present scratch task", stored)
 	}
 }
 

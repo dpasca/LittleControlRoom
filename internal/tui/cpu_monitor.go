@@ -8,8 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"lcroom/internal/control"
+	"lcroom/internal/codexapp"
+	"lcroom/internal/model"
 	"lcroom/internal/procinspect"
+	"lcroom/internal/service"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
@@ -21,6 +23,7 @@ const cpuRemediationProcessLimit = 12
 const cpuDialogVisibleProcessRows = 7
 const hotSystemCPUCapacityPercent = 75.0
 const cpuRemediationPromptCharLimit = 40000
+const cpuRemediationTaskTitle = "Investigate and reduce CPU usage"
 
 type cpuDialogState struct {
 	Loading      bool
@@ -37,6 +40,12 @@ type cpuRemediationEditorState struct {
 	Input      textarea.Model
 	Processes  []procinspect.CPUProcess
 	Submitting bool
+}
+
+type cpuRemediationTaskCreatedMsg struct {
+	result service.CreateScratchTaskResult
+	prompt string
+	err    error
 }
 
 func (m *Model) openCPUDialog() tea.Cmd {
@@ -321,20 +330,92 @@ func (m Model) startCPURemediationTaskWithPrompt(processes []procinspect.CPUProc
 		m.status = "CPU engineer prompt is required"
 		return m, nil
 	}
-	m.status = "Starting CPU engineer task..."
-	outcome := m.executeAgentTaskCreateControlWithOutcome(control.AgentTaskCreateInput{
-		Title:    "Investigate and reduce CPU usage",
-		Kind:     control.AgentTaskKindAgent,
-		Provider: control.ProviderAuto,
-		Prompt:   prompt,
-		Reveal:   false,
-		Capabilities: []string{
-			"process.inspect",
-			"process.terminate",
-		},
-		Resources: cpuRemediationResources(processes),
+	m.status = "Creating CPU task..."
+	return m, m.createCPURemediationTaskCmd(prompt)
+}
+
+func (m Model) createCPURemediationTaskCmd(prompt string) tea.Cmd {
+	if m.svc == nil {
+		return func() tea.Msg {
+			return cpuRemediationTaskCreatedMsg{prompt: prompt, err: fmt.Errorf("service unavailable")}
+		}
+	}
+	return func() tea.Msg {
+		result, err := m.svc.CreateScratchTask(m.ctx, service.CreateScratchTaskRequest{Title: cpuRemediationTaskTitle})
+		return cpuRemediationTaskCreatedMsg{result: result, prompt: prompt, err: err}
+	}
+}
+
+func (m Model) applyCPURemediationTaskCreatedMsg(msg cpuRemediationTaskCreatedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.reportError("CPU task setup failed", msg.err, "")
+		return m, nil
+	}
+	if strings.TrimSpace(msg.result.TaskPath) == "" {
+		m.reportError("CPU task setup failed", fmt.Errorf("task path is empty"), "")
+		return m, nil
+	}
+	project := cpuRemediationTaskProjectSummary(msg.result, m.currentTime())
+	if strings.TrimSpace(project.Path) == "" {
+		m.reportError("CPU task setup failed", fmt.Errorf("task path is empty"), "")
+		return m, nil
+	}
+	m.err = nil
+	m.preferredSelectPath = project.Path
+	m.upsertProjectSummary(project)
+	m.rebuildProjectList(project.Path)
+
+	updated, launchCmd := m.launchEmbeddedForProjectWithOptions(project, codexapp.ProviderCodex, embeddedLaunchOptions{
+		forceNew: true,
+		prompt:   cpuRemediationTaskLaunchPrompt(project.Name, msg.prompt),
+		reveal:   false,
 	})
-	return outcome.model, outcome.cmd
+	m = normalizeUpdateModel(updated)
+	refreshCmd := m.requestProjectInvalidationCmd(invalidateProjectStructure(project.Path))
+	if launchCmd == nil {
+		return m, refreshCmd
+	}
+	return m, batchCmds(refreshCmd, launchCmd)
+}
+
+func cpuRemediationTaskProjectSummary(result service.CreateScratchTaskResult, now time.Time) model.ProjectSummary {
+	path := strings.TrimSpace(result.TaskPath)
+	if path != "" {
+		path = filepath.Clean(path)
+	}
+	name := strings.TrimSpace(result.TaskName)
+	if name == "" {
+		name = strings.TrimSpace(filepath.Base(path))
+	}
+	if name == "" || name == "." {
+		name = cpuRemediationTaskTitle
+	}
+	return model.ProjectSummary{
+		Path:                            path,
+		Name:                            name,
+		Kind:                            model.ProjectKindScratchTask,
+		LastActivity:                    now,
+		Status:                          model.StatusActive,
+		AttentionScore:                  75,
+		PresentOnDisk:                   true,
+		ManuallyAdded:                   true,
+		LatestSessionClassification:     model.ClassificationPending,
+		LatestSessionClassificationType: model.SessionCategoryInProgress,
+		LatestSessionSummary:            "CPU investigation task starting",
+		CreatedAt:                       now,
+	}
+}
+
+func cpuRemediationTaskLaunchPrompt(title, prompt string) string {
+	lines := []string{
+		"Little Control Room task:",
+		"Title: " + strings.TrimSpace(title),
+		"Allowed capabilities: process.inspect, process.terminate",
+		"",
+		"User request:",
+		strings.TrimSpace(prompt),
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) cpuRemediationProcesses() []procinspect.CPUProcess {
@@ -361,32 +442,6 @@ func (m Model) cpuRemediationProcesses() []procinspect.CPUProcess {
 		add(process)
 	}
 	return out
-}
-
-func cpuRemediationResources(processes []procinspect.CPUProcess) []control.ResourceRef {
-	resources := make([]control.ResourceRef, 0, len(processes))
-	for _, process := range processes {
-		if process.PID <= 0 {
-			continue
-		}
-		resources = append(resources, control.ResourceRef{
-			Kind:  control.ResourceProcess,
-			PID:   process.PID,
-			Label: cpuRemediationResourceLabel(process),
-		})
-	}
-	return resources
-}
-
-func cpuRemediationResourceLabel(process procinspect.CPUProcess) string {
-	parts := []string{
-		cpuProcessName(process.Process),
-		formatCPUPercent(process.CPU) + " CPU",
-	}
-	if len(process.Reasons) > 0 {
-		parts = append(parts, strings.Join(process.Reasons, ", "))
-	}
-	return strings.Join(parts, " ")
 }
 
 func (m Model) cpuRemediationPrompt(processes []procinspect.CPUProcess) string {

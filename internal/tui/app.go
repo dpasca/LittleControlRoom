@@ -1364,6 +1364,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.preferredSelectPath = msg.result.TaskPath
 		m.status = "Scratch task created and added to the list"
 		return m, m.requestProjectInvalidationCmd(invalidateProjectStructure(""))
+	case cpuRemediationTaskCreatedMsg:
+		return m.applyCPURemediationTaskCreatedMsg(msg)
 	case detailMsg:
 		reloadCmd := m.finishDetailReloadCmd(msg.path)
 		if targetPath := m.currentDetailTargetPath(); targetPath != "" && normalizeProjectPath(msg.path) != targetPath {

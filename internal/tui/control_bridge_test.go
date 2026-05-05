@@ -721,6 +721,7 @@ func newControlTestService(t *testing.T) *service.Service {
 	cfg := config.Default()
 	cfg.DataDir = t.TempDir()
 	cfg.DBPath = filepath.Join(cfg.DataDir, "little-control-room.sqlite")
+	cfg.ScratchRoot = filepath.Join(cfg.DataDir, "tasks")
 	st, err := store.Open(cfg.DBPath)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
