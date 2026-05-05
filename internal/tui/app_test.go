@@ -4005,7 +4005,7 @@ func TestRenderTopStatusLineShowsNavigationHintsInsteadOfAICounts(t *testing.T) 
 	m := Model{status: "Ready"}
 
 	rendered := ansi.Strip(m.renderTopStatusLine(160))
-	if !strings.Contains(rendered, "f filter") || !strings.Contains(rendered, "/ command") || !strings.Contains(rendered, "B boss") {
+	if !strings.Contains(rendered, "f filter") || !strings.Contains(rendered, "/ command") || !strings.Contains(rendered, "b boss") {
 		t.Fatalf("top status line should surface navigation hints, got %q", rendered)
 	}
 	if strings.Contains(rendered, "Tab switch") {
@@ -6818,7 +6818,7 @@ func TestFKeyOpensProjectFilterDialog(t *testing.T) {
 	}
 }
 
-func TestBKeyOpensBossMode(t *testing.T) {
+func TestLowercaseBKeyOpensBossMode(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.BossChatBackend = config.AIBackendOpenAIAPI
 	settings.OpenAIAPIKey = "sk-test-example"
@@ -6829,16 +6829,16 @@ func TestBKeyOpensBossMode(t *testing.T) {
 		height:           24,
 	}
 
-	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'B'}})
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
 	got := updated.(Model)
 	if !got.bossMode {
-		t.Fatalf("B key should open boss mode")
+		t.Fatalf("lowercase b key should open boss mode")
 	}
 	if got.bossSetupPrompt != nil {
-		t.Fatalf("configured B key should not show setup prompt")
+		t.Fatalf("configured lowercase b key should not show setup prompt")
 	}
 	if cmd == nil {
-		t.Fatalf("B key should return the boss init command")
+		t.Fatalf("lowercase b key should return the boss init command")
 	}
 }
 
@@ -22485,7 +22485,7 @@ func TestHelpPanelLinesStayMinimal(t *testing.T) {
 	if !strings.Contains(joined, "interrupt busy session") {
 		t.Fatalf("helpPanelLines() should keep the session interrupt hint: %q", joined)
 	}
-	if !strings.Contains(joined, "B  boss") || !strings.Contains(joined, "t  todo") || !strings.Contains(joined, "o/v  sort/view") || !strings.Contains(joined, "p  pin") || !strings.Contains(joined, "Ctrl+V  image") {
+	if !strings.Contains(joined, "b  boss") || !strings.Contains(joined, "t  todo") || !strings.Contains(joined, "o/v  sort/view") || !strings.Contains(joined, "p  pin") || !strings.Contains(joined, "Ctrl+V  image") {
 		t.Fatalf("helpPanelLines() should show the reordered quick actions: %q", joined)
 	}
 	if !strings.Contains(joined, "AGENT") || !strings.Contains(joined, "RUN") {

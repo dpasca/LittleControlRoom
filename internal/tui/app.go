@@ -2078,7 +2078,7 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "f":
 		return m, m.openProjectFilterDialog()
-	case "B":
+	case "b":
 		return m.openBossModeOrSetupPrompt()
 	case "f3":
 		return m.cycleCodexSession(1)
@@ -3128,7 +3128,7 @@ func (m Model) renderTopStatusActions(width int) string {
 	actions := []footerAction{
 		footerNavAction("f", "filter"),
 		footerNavAction("/", "command"),
-		footerNavAction("B", "boss"),
+		footerNavAction("b", "boss"),
 	}
 	if len(m.errorLogEntries) > 0 && width >= 112 {
 		actions = append(actions, footerNavAction("/errors", "log"))
@@ -7148,7 +7148,7 @@ func helpPanelLines() []string {
 		detailSectionStyle.Render("Quick Actions"),
 		renderHelpPanelActionRow(
 			renderDialogAction("f", "filter", navigateActionKeyStyle, navigateActionTextStyle),
-			renderDialogAction("B", "boss", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("b", "boss", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("t", "todo", commitActionKeyStyle, commitActionTextStyle),
 			renderDialogAction("o/v", "sort/view", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("p", "pin", pushActionKeyStyle, pushActionTextStyle),
