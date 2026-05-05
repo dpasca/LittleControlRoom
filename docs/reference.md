@@ -163,7 +163,6 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 - `↑/↓` move selection
 - `Enter` open or resume the selected project's latest embedded provider
 - `Esc` hide the visible embedded session pane
-- `Alt+Up` hide the visible embedded session pane
 - `Alt+Down` open the embedded session picker and history overlay
 - `Alt+[` jump to the previous live embedded session
 - `Alt+]` jump to the next live embedded session

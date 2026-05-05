@@ -657,14 +657,14 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 				m.status = "Embedded " + provider.Label() + " session is already open in the background"
 				return m, nil
 			}
-			return m.showCodexProject(p.Path, "Embedded "+provider.Label()+" session reopened. Alt+Up hides it.")
+			return m.showCodexProject(p.Path, "Embedded "+provider.Label()+" session reopened. Esc hides it.")
 		}
 		if m.hasRestorableEmbeddedSession(p.Path) {
 			if !options.reveal {
 				m.status = "Embedded session is already available in the background"
 				return m, nil
 			}
-			return m.showCodexProject(p.Path, "Embedded session reopened. Alt+Up hides it.")
+			return m.showCodexProject(p.Path, "Embedded session reopened. Esc hides it.")
 		}
 	}
 

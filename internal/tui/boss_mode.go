@@ -30,7 +30,7 @@ func (m Model) openBossMode() (tea.Model, tea.Cmd) {
 		m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
 		initCmd = m.bossModel.ActivateCmd()
 	}
-	m.status = "Boss mode open. Alt+Up hides it and keeps replies running."
+	m.status = "Boss mode open. Esc hides it and keeps replies running."
 	if m.width > 0 && m.height > 0 {
 		updated, _ := m.bossModel.Update(m.bossModeWindowSizeMsg())
 		m.bossModel = normalizeBossModel(updated)
@@ -253,7 +253,7 @@ func (m Model) renderBossModeFooter(width int) string {
 		footerNavAction("Alt+1..8", "jump"),
 		footerLowAction("Alt+C", "copy menu"),
 		footerNavAction("Ctrl+R", "refresh"),
-		footerHideAction("Alt+Up", "hide"),
+		footerHideAction("Esc", "hide"),
 	}
 	if m.bossModel.SlashActive() {
 		actions = []footerAction{
@@ -262,14 +262,13 @@ func (m Model) renderBossModeFooter(width int) string {
 			footerNavAction("Shift+Tab", "previous"),
 			footerNavAction("Alt+Enter", "newline"),
 			footerLowAction("Alt+C", "copy menu"),
-			footerHideAction("Alt+Up", "hide"),
+			footerHideAction("Esc", "hide"),
 		}
 	}
 	if m.bossModel.ControlConfirmationActive() {
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "send"),
 			footerExitAction("Esc", "cancel"),
-			footerHideAction("Alt+Up", "hide"),
 		}
 	}
 	if m.bossModel.SessionPickerActive() {
@@ -277,7 +276,6 @@ func (m Model) renderBossModeFooter(width int) string {
 			footerPrimaryAction("Enter", "open"),
 			footerNavAction("Up/Down", "select"),
 			footerExitAction("Esc", "close"),
-			footerHideAction("Alt+Up", "hide"),
 		}
 	}
 	return fitStyledWidth(renderFooterLine(

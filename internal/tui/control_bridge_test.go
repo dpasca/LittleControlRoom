@@ -247,7 +247,7 @@ func TestExecuteBossControlInvocationBatchesOpenAndBossResult(t *testing.T) {
 	if opened.projectPath == "" {
 		t.Fatalf("wrapped command messages = %#v, want codexSessionOpenedMsg", msgs)
 	}
-	if !strings.Contains(opened.status, "Alt+Up hides it") {
+	if !strings.Contains(opened.status, "Esc hides it") {
 		t.Fatalf("opened.status = %q, want embedded-pane status to remain visible-pane specific", opened.status)
 	}
 	if result.Invocation.Capability != control.CapabilityEngineerSendPrompt {
@@ -263,7 +263,7 @@ func TestExecuteBossControlInvocationBatchesOpenAndBossResult(t *testing.T) {
 	if result.Activity == nil || result.Activity.Kind != "project" || result.Activity.Title != "cn3" || !result.Activity.Active {
 		t.Fatalf("result activity = %#v, want active project activity", result.Activity)
 	}
-	if strings.Contains(result.Status, "Alt+Up") || strings.Contains(result.Status, "Prompt sent to embedded") || strings.Contains(result.Status, "Boss Chat stayed open") {
+	if strings.Contains(result.Status, "Esc hides it") || strings.Contains(result.Status, "Prompt sent to embedded") || strings.Contains(result.Status, "Boss Chat stayed open") {
 		t.Fatalf("result status leaked embedded-pane copy: %q", result.Status)
 	}
 }
@@ -549,7 +549,7 @@ func TestExecuteBossControlInvocationCreatesAgentTaskAndTracksSession(t *testing
 	if !strings.Contains(result.Status, "is working on Clean suspicious local processes") ||
 		strings.Contains(result.Status, "Created agent task") ||
 		strings.Contains(result.Status, "prompt sent") ||
-		strings.Contains(result.Status, "Alt+Up hides it") {
+		strings.Contains(result.Status, "Esc hides it") {
 		t.Fatalf("result status = %q, want high-level task launch status", result.Status)
 	}
 	if result.Activity == nil || result.Activity.Kind != "agent_task" || result.Activity.Title != "Clean suspicious local processes" || !result.Activity.Active {

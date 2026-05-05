@@ -539,7 +539,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		switch msg.String() {
-		case "ctrl+c", "esc", "alt+up":
+		case "ctrl+c", "esc":
 			return m, m.exitCmd()
 		case "alt+c":
 			m.openInputCopyDialog()
@@ -1001,12 +1001,12 @@ func (m Model) renderChat(layout bossLayout) string {
 		parts = append(parts, slashBlock)
 	}
 	if !m.embedded {
-		hint := "Enter sends | Alt+Enter newline | Alt+C copy menu | Ctrl+R refresh | Alt+Up hides"
+		hint := "Enter sends | Alt+Enter newline | Alt+C copy menu | Ctrl+R refresh | Esc hides"
 		if m.bossSlashActive() {
 			hint = "Enter runs command | Tab complete | Shift+Tab previous | Alt+Enter newline"
 		}
 		if m.pendingControl != nil {
-			hint = "Enter confirms engineer prompt | Esc cancels | Alt+Up hides"
+			hint = "Enter confirms engineer prompt | Esc cancels"
 		}
 		if m.sending {
 			hint = "Boss chat is thinking " + spinnerDots(m.spinnerFrame)
@@ -1019,7 +1019,13 @@ func (m Model) renderChat(layout bossLayout) string {
 }
 
 func (m Model) renderHeader(width int) string {
-	text := " Boss Mode  " + m.StatusText() + "  |  Alt+Up hides  Ctrl+R refresh"
+	escAction := "Esc hides"
+	if m.pendingControl != nil || m.inputSelection != nil {
+		escAction = "Esc cancels"
+	} else if m.sessionPickerVisible || m.inputCopyDialog != nil {
+		escAction = "Esc closes"
+	}
+	text := " Boss Mode  " + m.StatusText() + "  |  " + escAction + "  Ctrl+R refresh"
 	return bossHeaderStyle.Width(width).Render(fitLine(text, width))
 }
 

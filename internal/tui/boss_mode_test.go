@@ -603,10 +603,10 @@ func TestBossChatReplyContinuesAfterBossModeHidden(t *testing.T) {
 		t.Fatalf("submitting boss chat should start async work")
 	}
 
-	updated, exitCmd := got.Update(tea.KeyMsg{Type: tea.KeyUp, Alt: true})
+	updated, exitCmd := got.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	got = updated.(Model)
 	if exitCmd == nil {
-		t.Fatalf("Alt+Up should hide boss mode through an exit message")
+		t.Fatalf("Esc should hide boss mode through an exit message")
 	}
 	for _, msg := range collectCmdMsgs(exitCmd) {
 		updated, _ = got.Update(msg)

@@ -746,7 +746,7 @@ func screenshotEmbeddedCodexSnapshot(project model.ProjectSummary, now time.Time
 			{Kind: codexapp.TranscriptCommand, Text: "$ rg --files internal/tui docs Makefile\ninternal/tui/app.go\ninternal/tui/codex_pane.go\ninternal/tui/screenshots.go\ndocs/reference.md\nMakefile\n[command completed, exit 0]"},
 			{Kind: codexapp.TranscriptFileChange, Text: "A internal/config/screenshot_config.go\nA internal/tui/screenshots.go\nM internal/cli/run.go\nM Makefile\nA docs/screenshots.example.toml"},
 			{Kind: codexapp.TranscriptAgent, Text: fmt.Sprintf("Added a screenshots command for %s with a local allowlist config, live dashboard capture, and browser-rendered PNG output in docs/screenshots.", projectName)},
-			{Kind: codexapp.TranscriptSystem, Text: "Tip: Alt+Up hides the pane while the CX badge stays lit in the project list."},
+			{Kind: codexapp.TranscriptSystem, Text: "Tip: Esc hides the pane while the CX badge stays lit in the project list."},
 		},
 		Transcript: "",
 	}

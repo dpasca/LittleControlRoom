@@ -356,8 +356,6 @@ func (m Model) updateControlConfirmation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.appendDeskEvent("control", "cancel", "The pending control action was canceled.")
 		m.syncLayout(false)
 		return m, nil
-	case "alt+up":
-		return m, m.exitCmd()
 	default:
 		m.status = "Confirm control action with Enter, or Esc to cancel"
 		return m, nil

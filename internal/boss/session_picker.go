@@ -62,7 +62,7 @@ func (m Model) applyBossSessionsListed(msg bossSessionsListedMsg) (tea.Model, te
 
 func (m Model) updateBossSessionPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "ctrl+c", "alt+up":
+	case "ctrl+c":
 		return m, m.exitCmd()
 	case "esc", "alt+down":
 		m.closeBossSessionPicker("Boss session picker closed")

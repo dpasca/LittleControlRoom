@@ -59,7 +59,7 @@ func TestModelViewRendersBossPanels(t *testing.T) {
 		}
 	}
 	stripped := ansi.Strip(view)
-	for _, want := range []string{"Alt+Enter newline", "Alt+Up hides"} {
+	for _, want := range []string{"Alt+Enter newline", "Esc hides"} {
 		if !strings.Contains(stripped, want) {
 			t.Fatalf("view missing boss shortcut %q:\n%s", want, stripped)
 		}
@@ -1032,7 +1032,7 @@ func TestEmbeddedModelCanCancelControlInvocation(t *testing.T) {
 	}
 }
 
-func TestEmbeddedModelAltUpExits(t *testing.T) {
+func TestEmbeddedModelAltUpDoesNotExit(t *testing.T) {
 	t.Parallel()
 
 	m := NewEmbedded(context.Background(), nil)
@@ -1040,12 +1040,8 @@ func TestEmbeddedModelAltUpExits(t *testing.T) {
 	if _, ok := updated.(Model); !ok {
 		t.Fatalf("Update() returned %T, want boss.Model", updated)
 	}
-	if cmd == nil {
-		t.Fatalf("alt+up should return exit command")
-	}
-	msg := cmd()
-	if _, ok := msg.(ExitMsg); !ok {
-		t.Fatalf("alt+up command returned %T, want boss.ExitMsg", msg)
+	if cmd != nil {
+		t.Fatalf("alt+up should not return exit command")
 	}
 }
 

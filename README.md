@@ -160,7 +160,7 @@ Boss chat sessions are saved as grep-friendly Markdown transcripts under the app
 1. Start the dashboard with `lcroom tui` or `./lcroom tui`.
 2. Move through projects with the arrow keys.
 3. Press `Enter` to open or resume the selected project's latest embedded provider.
-4. Press `Esc` or `Alt+Up` to hide the embedded session pane while it keeps working, then press `Enter` on that project to reopen it from the list.
+4. Press `Esc` to hide the embedded session pane while it keeps working, then press `Enter` on that project to reopen it from the list.
 5. Press `/` for commands, `f` to filter the project list instantly, or `b` for Boss Chat.
 
 Most day-to-day use falls into a few buckets:

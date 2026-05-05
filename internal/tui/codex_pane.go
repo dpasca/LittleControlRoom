@@ -1021,7 +1021,7 @@ func embeddedSessionOpenStatus(req codexapp.LaunchRequest, threadIDsToAvoid map[
 
 func embeddedSessionOpenedStatus(action string, revealOnOpen bool) string {
 	if revealOnOpen {
-		return action + ". Alt+Up hides it."
+		return action + ". Esc hides it."
 	}
 	return action + " in the background."
 }
@@ -1039,7 +1039,7 @@ func embeddedSessionReconnectStatus(req codexapp.LaunchRequest, snapshot codexap
 	if snapshot.BusyExternal {
 		return "Reconnected embedded " + label + " session" + sessionLabel + ". It is already active in another process, so the embedded view is read-only until it finishes."
 	}
-	return "Reconnected embedded " + label + " session" + sessionLabel + ". Alt+Up hides it."
+	return "Reconnected embedded " + label + " session" + sessionLabel + ". Esc hides it."
 }
 
 func (m Model) submitVisibleCodexCmd(draft codexDraft) tea.Cmd {
@@ -1299,6 +1299,20 @@ func (m Model) toggleCodexVisibility() (tea.Model, tea.Cmd) {
 	return m.showCodexProject(projectPath, "Embedded session restored")
 }
 
+func (m Model) hidePendingCodexOpen(projectPath string) (tea.Model, tea.Cmd) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" || m.codexPendingOpen == nil {
+		return m, nil
+	}
+	label := m.codexPendingOpenProvider().Label()
+	m.codexPendingOpen.showWhilePending = false
+	m.codexPendingOpen.hideOnOpen = true
+	m.codexHiddenProject = projectPath
+	m.syncDetailViewport(false)
+	m.status = "Embedded " + label + " session hidden."
+	return m, m.focusProjectPath(projectPath)
+}
+
 func (m Model) hideCodexSession() (tea.Model, tea.Cmd) {
 	if !m.codexVisible() {
 		return m, nil
@@ -1361,8 +1375,8 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if projectPath := m.codexPendingOpenProject(); projectPath != "" {
 		label := m.codexPendingOpenProvider().Label()
 		switch msg.String() {
-		case "esc", "alt+up":
-			m.status = "Embedded " + label + " is still starting for " + filepath.Base(projectPath)
+		case "esc":
+			return m.hidePendingCodexOpen(projectPath)
 		default:
 			m.status = "Embedded " + label + " session is still starting..."
 		}
@@ -1381,14 +1395,16 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateCodexInputCopyDialogMode(msg)
 	}
 
+	if m.codexInputSelectionActive() {
+		return m.updateCodexInputSelectionMode(msg)
+	}
+
 	switch msg.String() {
 	case "f3":
 		return m.cycleCodexSession(1)
 	case "alt+down":
 		return m.openCodexPicker()
 	case "esc":
-		return m.hideCodexSession()
-	case "alt+up":
 		return m.hideCodexSession()
 	case "alt+[":
 		return m.cycleCodexSession(-1)
@@ -1403,11 +1419,11 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openCodexArtifactPicker(snapshot)
 	case "ctrl+c":
 		if snapshot.BusyExternal {
-			m.status = "This " + label + " session is busy in another process. Interrupt it there or hide it here with Alt+Up."
+			m.status = "This " + label + " session is busy in another process. Interrupt it there or hide it here with Esc."
 			return m, nil
 		}
 		if snapshot.Phase == codexapp.SessionPhaseReconciling && codexStatusIsCompacting(snapshot.Status) {
-			m.status = label + " is compacting conversation history. Wait for it to finish or hide it with Alt+Up."
+			m.status = label + " is compacting conversation history. Wait for it to finish or hide it with Esc."
 			return m, nil
 		}
 		if codexSnapshotCanSteer(snapshot) {
@@ -1419,7 +1435,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.interruptVisibleCodexCmd()
 		}
 		if snapshot.Phase == codexapp.SessionPhaseFinishing {
-			m.status = label + " is finishing the current turn. Wait for the final output to settle or hide it with Alt+Up."
+			m.status = label + " is finishing the current turn. Wait for the final output to settle or hide it with Esc."
 			return m, nil
 		}
 		if snapshot.Phase == codexapp.SessionPhaseReconciling {
@@ -1475,10 +1491,6 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		default:
 			return m, nil
 		}
-	}
-
-	if m.codexInputSelectionActive() {
-		return m.updateCodexInputSelectionMode(msg)
 	}
 
 	if snapshot.PendingToolInput != nil {
@@ -2209,7 +2221,7 @@ func (m Model) codexLowerBlocks(snapshot codexapp.Snapshot, width int) []string 
 			footerPrimaryAction("a", "accept"),
 			footerExitAction("d", "decline"),
 			footerLowAction("c", "cancel"),
-			footerHideAction("Alt+Up", "hide"),
+			footerHideAction("Esc", "hide"),
 		}
 		if snapshot.PendingApproval.AllowsDecision(codexapp.DecisionAcceptForSession) {
 			approvalActions = []footerAction{
@@ -2217,7 +2229,7 @@ func (m Model) codexLowerBlocks(snapshot codexapp.Snapshot, width int) []string 
 				footerNavAction("A", "session"),
 				footerExitAction("d", "decline"),
 				footerLowAction("c", "cancel"),
-				footerHideAction("Alt+Up", "hide"),
+				footerHideAction("Esc", "hide"),
 			}
 		}
 		lines := []string{}
@@ -2231,7 +2243,7 @@ func (m Model) codexLowerBlocks(snapshot codexapp.Snapshot, width int) []string 
 		return lines
 	case snapshot.Closed:
 		return []string{
-			fitFooterWidth(label+" session closed. Esc or Alt+Up hides it; Enter on the project opens a new one.", width),
+			fitFooterWidth(label+" session closed. Esc hides it; Enter on the project opens a new one.", width),
 			"",
 		}
 	default:
@@ -2558,7 +2570,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		actions = append(actions,
 			footerPrimaryAction("Enter", "answer"),
 			footerExitAction("Ctrl+C", "close"),
-			footerHideAction("Alt+Up", "hide"),
+			footerHideAction("Esc", "hide"),
 			footerLowAction("Alt+C", "copy menu"),
 		)
 		state := m.toolAnswerStateFor(m.codexVisibleProject, snapshot.PendingToolInput)
@@ -2577,7 +2589,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "accept"),
 			footerExitAction("Ctrl+C", "close"),
-			footerHideAction("Alt+Up", "hide"),
+			footerHideAction("Esc", "hide"),
 			footerExitAction("d", "decline"),
 			footerLowAction("c", "cancel"),
 			footerNavAction("Alt+Enter", "newline"),
@@ -2590,7 +2602,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerPrimaryAction("O", "show browser"),
 			footerPrimaryAction("Enter", "done/accept"),
 			footerExitAction("Ctrl+C", "close"),
-			footerHideAction("Alt+Up", "hide"),
+			footerHideAction("Esc", "hide"),
 			footerExitAction("d", "decline"),
 			footerLowAction("c", "cancel"),
 		}
@@ -2598,7 +2610,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "accept"),
 			footerExitAction("Ctrl+C", "close"),
-			footerHideAction("Alt+Up", "hide"),
+			footerHideAction("Esc", "hide"),
 			footerExitAction("d", "decline"),
 			footerLowAction("c", "cancel"),
 		}
@@ -2606,7 +2618,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "run"),
 			footerExitAction("Ctrl+C", "close"),
-			footerHideAction("Alt+Up", "hide"),
+			footerHideAction("Esc", "hide"),
 			footerNavAction("Tab", "complete"),
 			footerNavAction("Shift+Tab", "previous"),
 			footerNavAction("Alt+Enter", "newline"),
@@ -2614,23 +2626,23 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		}
 	case snapshot.BusyExternal:
 		actions = []footerAction{
-			footerHideAction("Alt+Up", "hide"),
+			footerHideAction("Esc", "hide"),
 		}
 		if cmd := embeddedNewCommand(embeddedProvider(snapshot)); cmd != "" {
 			actions = append(actions, footerNavAction(cmd, "session"))
 		}
 	case snapshot.Phase == codexapp.SessionPhaseReconciling:
 		actions = []footerAction{
-			footerHideAction("Alt+Up", "hide"),
+			footerHideAction("Esc", "hide"),
 		}
 	case snapshot.Phase == codexapp.SessionPhaseStalled:
 		actions = []footerAction{
-			footerHideAction("Alt+Up", "hide"),
+			footerHideAction("Esc", "hide"),
 			footerNavAction("/reconnect", "recover"),
 		}
 	case snapshot.Phase == codexapp.SessionPhaseFinishing:
 		actions = []footerAction{
-			footerHideAction("Alt+Up", "hide"),
+			footerHideAction("Esc", "hide"),
 		}
 	case m.codexInputSelectionActive():
 		actions = []footerAction{
@@ -2642,21 +2654,21 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "steer"),
 			footerExitAction("Ctrl+C", "interrupt"),
-			footerHideAction("Alt+Up", "hide"),
+			footerHideAction("Esc", "hide"),
 			footerNavAction("Alt+Enter", "newline"),
 			footerNavAction("Ctrl+V", "image"),
 			footerLowAction("Alt+C", "copy menu"),
 		}
 	case snapshot.Closed:
 		actions = []footerAction{
-			footerHideAction("Alt+Up", "hide"),
+			footerHideAction("Esc", "hide"),
 			footerLowAction("PgUp/PgDn", "scroll"),
 		}
 	default:
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "send"),
 			footerExitAction("Ctrl+C", "close"),
-			footerHideAction("Alt+Up", "hide"),
+			footerHideAction("Esc", "hide"),
 			footerNavAction("Alt+Enter", "newline"),
 			footerNavAction("Ctrl+V", "image"),
 			footerLowAction("Alt+C", "copy menu"),

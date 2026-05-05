@@ -6969,7 +6969,7 @@ func TestEnterRestoresHiddenLiveCodexSessionFromFocusedProjectList(t *testing.T)
 	if got.codexPendingOpen != nil {
 		t.Fatalf("codexPendingOpen = %#v, want nil when restoring a live session", got.codexPendingOpen)
 	}
-	if got.status != "Embedded Codex session reopened. Alt+Up hides it." {
+	if got.status != "Embedded Codex session reopened. Esc hides it." {
 		t.Fatalf("status = %q, want live restore notice", got.status)
 	}
 	if len(requests) != 1 {
@@ -7819,7 +7819,7 @@ func TestVisibleCodexSlashSuggestionsRender(t *testing.T) {
 	if !strings.Contains(rendered, "/new [prompt]") || !strings.Contains(rendered, "/resume [session-id]") || !strings.Contains(rendered, "/model") || !strings.Contains(rendered, "/status") {
 		t.Fatalf("rendered view should list embedded slash suggestions: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Enter run  Ctrl+C close  Alt+Up hide") {
+	if !strings.Contains(rendered, "Enter run  Ctrl+C close  Esc hide") {
 		t.Fatalf("rendered view should advertise slash command handling in the footer: %q", rendered)
 	}
 }
@@ -8129,7 +8129,7 @@ func TestVisibleOpenCodeSlashReconnectReopensSameSession(t *testing.T) {
 	if opened.err != nil {
 		t.Fatalf("/reconnect returned error = %v", opened.err)
 	}
-	if opened.status != "Reconnected embedded OpenCode session ses-old1. Alt+Up hides it." {
+	if opened.status != "Reconnected embedded OpenCode session ses-old1. Esc hides it." {
 		t.Fatalf("opened.status = %q, want reconnect confirmation", opened.status)
 	}
 	if len(requests) != 2 {
@@ -12098,7 +12098,7 @@ func TestVisibleOpenCodeSlashNewStartsFreshSession(t *testing.T) {
 	if opened.err != nil {
 		t.Fatalf("/new returned error = %v", opened.err)
 	}
-	if opened.status != "Fresh embedded OpenCode session ses-new1 opened. Alt+Up hides it." {
+	if opened.status != "Fresh embedded OpenCode session ses-new1 opened. Esc hides it." {
 		t.Fatalf("opened.status = %q, want fresh OpenCode session confirmation", opened.status)
 	}
 	if len(requests) != 2 {
@@ -12730,7 +12730,7 @@ func TestLaunchCodexForSelectionForceNewRetriesWhenPreviousThreadReopensFirst(t 
 	if opened.err != nil {
 		t.Fatalf("/codex-new returned error = %v", opened.err)
 	}
-	if opened.status != "Fresh embedded Codex session 019dddd4 opened. Alt+Up hides it." {
+	if opened.status != "Fresh embedded Codex session 019dddd4 opened. Esc hides it." {
 		t.Fatalf("opened.status = %q, want normal opened status after retry", opened.status)
 	}
 	if len(requests) != 2 {
@@ -12797,7 +12797,7 @@ func TestLaunchCodexForSelectionForceNewRetriesWhenCodexRejectsFreshThread(t *te
 	if opened.err != nil {
 		t.Fatalf("/codex-new returned error = %v", opened.err)
 	}
-	if opened.status != "Prompt sent to fresh embedded Codex session 019fresh. Alt+Up hides it." {
+	if opened.status != "Prompt sent to fresh embedded Codex session 019fresh. Esc hides it." {
 		t.Fatalf("opened.status = %q, want prompt-sent status after retry", opened.status)
 	}
 	if len(requests) != 2 {
@@ -12874,7 +12874,7 @@ func TestLaunchOpenCodeForSelectionForceNewRetriesWhenOpenCodeRejectsFreshSessio
 	if opened.err != nil {
 		t.Fatalf("/opencode-new returned error = %v", opened.err)
 	}
-	if opened.status != "Prompt sent to fresh embedded OpenCode session ses_fres. Alt+Up hides it." {
+	if opened.status != "Prompt sent to fresh embedded OpenCode session ses_fres. Esc hides it." {
 		t.Fatalf("opened.status = %q, want prompt-sent status after retry", opened.status)
 	}
 	if len(requests) != 2 {
@@ -12967,7 +12967,7 @@ func TestLaunchOpenCodeForSelectionForceNewRetriesWhenOpenCodeReturnsKnownReused
 	if opened.err != nil {
 		t.Fatalf("/opencode-new returned error = %v", opened.err)
 	}
-	if opened.status != "Prompt sent to fresh embedded OpenCode session ses_fres. Alt+Up hides it." {
+	if opened.status != "Prompt sent to fresh embedded OpenCode session ses_fres. Esc hides it." {
 		t.Fatalf("opened.status = %q, want prompt-sent status after stale-session retry", opened.status)
 	}
 	if len(requests) != 3 {
@@ -14181,7 +14181,7 @@ func TestVisibleCodexCompactSlashUsesStartAndCompletionMessages(t *testing.T) {
 	}
 }
 
-func TestVisibleCodexAltUpHidesSession(t *testing.T) {
+func TestVisibleCodexAltUpDoesNotHideSession(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
 		snapshot: codexapp.Snapshot{
@@ -14213,13 +14213,13 @@ func TestVisibleCodexAltUpHidesSession(t *testing.T) {
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyUp, Alt: true})
 	got := updated.(Model)
 	if cmd != nil {
-		t.Fatalf("alt+up hide should not queue a command")
+		t.Fatalf("alt+up should not queue a command")
 	}
-	if got.codexVisibleProject != "" {
-		t.Fatalf("codexVisibleProject = %q, want hidden", got.codexVisibleProject)
+	if got.codexVisibleProject != "/tmp/demo" {
+		t.Fatalf("codexVisibleProject = %q, want still visible", got.codexVisibleProject)
 	}
-	if got.status != "Embedded Codex session hidden." {
-		t.Fatalf("status = %q, want hide notice", got.status)
+	if got.status != "" {
+		t.Fatalf("status = %q, want unchanged", got.status)
 	}
 }
 
@@ -14262,6 +14262,54 @@ func TestVisibleCodexEscHidesSession(t *testing.T) {
 	}
 	if got.status != "Embedded Codex session hidden." {
 		t.Fatalf("status = %q, want hide notice", got.status)
+	}
+}
+
+func TestVisibleCodexEscCancelsInputSelectionBeforeHiding(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started: true,
+			Preset:  codexcli.PresetYolo,
+			Status:  "Codex session ready",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("select me")
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+	m.startCodexInputSelection()
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEsc})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("esc selection cancel should not queue a command")
+	}
+	if got.codexVisibleProject != "/tmp/demo" {
+		t.Fatalf("codexVisibleProject = %q, want still visible", got.codexVisibleProject)
+	}
+	if got.codexInputSelectionActive() {
+		t.Fatalf("selection should be canceled before hiding")
+	}
+	if got.status != "Text selection canceled" {
+		t.Fatalf("status = %q, want selection cancel notice", got.status)
 	}
 }
 
@@ -14575,10 +14623,10 @@ func TestVisibleCodexAltUpReturnsToLastEmbeddedProjectSelection(t *testing.T) {
 		t.Fatalf("selected project after alt+] = %#v, want /tmp/b", project)
 	}
 
-	updated, hideCmd := got.updateCodexMode(tea.KeyMsg{Type: tea.KeyUp, Alt: true})
+	updated, hideCmd := got.updateCodexMode(tea.KeyMsg{Type: tea.KeyEsc})
 	got = updated.(Model)
 	if hideCmd == nil && !got.detailReloadQueued["/tmp/b"] {
-		t.Fatalf("alt+up should refresh or queue a detail refresh for the last embedded project")
+		t.Fatalf("esc should refresh or queue a detail refresh for the last embedded project")
 	}
 	if got.codexVisibleProject != "" {
 		t.Fatalf("codexVisibleProject = %q, want hidden", got.codexVisibleProject)
@@ -14587,7 +14635,7 @@ func TestVisibleCodexAltUpReturnsToLastEmbeddedProjectSelection(t *testing.T) {
 		t.Fatalf("codexHiddenProject = %q, want /tmp/b", got.codexHiddenProject)
 	}
 	if project, ok := got.selectedProject(); !ok || project.Path != "/tmp/b" {
-		t.Fatalf("selected project after alt+up = %#v, want /tmp/b", project)
+		t.Fatalf("selected project after esc = %#v, want /tmp/b", project)
 	}
 }
 
@@ -14821,7 +14869,7 @@ func TestNormalModeEnterPrefersLiveEmbeddedProviderOverStoredLatestProvider(t *t
 	if got.codexVisibleProject != "/tmp/demo" {
 		t.Fatalf("codexVisibleProject = %q, want /tmp/demo", got.codexVisibleProject)
 	}
-	if got.status != "Embedded Codex session reopened. Alt+Up hides it." {
+	if got.status != "Embedded Codex session reopened. Esc hides it." {
 		t.Fatalf("status = %q, want live Codex reopen status", got.status)
 	}
 	if len(requests) != 1 {
@@ -14880,7 +14928,7 @@ func TestNormalModeEnterReusesLiveEmbeddedSessionWhenSnapshotIsContended(t *test
 	if got.codexVisibleProject != "/tmp/demo" {
 		t.Fatalf("codexVisibleProject = %q, want /tmp/demo", got.codexVisibleProject)
 	}
-	if got.status != "Embedded Codex session reopened. Alt+Up hides it." {
+	if got.status != "Embedded Codex session reopened. Esc hides it." {
 		t.Fatalf("status = %q, want live Codex reopen status", got.status)
 	}
 	if len(requests) != 1 {
@@ -17523,7 +17571,7 @@ func TestVisibleCodexViewHidesSessionApprovalShortcutForFileChanges(t *testing.T
 	if strings.Contains(rendered, "A session") {
 		t.Fatalf("file change approval should not advertise session-wide approval: %q", rendered)
 	}
-	if !strings.Contains(rendered, "a accept  d decline  c cancel  Alt+Up hide") {
+	if !strings.Contains(rendered, "a accept  d decline  c cancel  Esc hide") {
 		t.Fatalf("file change approval footer missing expected keys: %q", rendered)
 	}
 }
@@ -17781,12 +17829,12 @@ func TestRenderCodexFooterPrioritizesSendCloseHideAndDefersDenseBlocks(t *testin
 
 	enterIndex := strings.Index(rendered, "Enter send")
 	closeIndex := strings.Index(rendered, "Ctrl+C close")
-	hideIndex := strings.Index(rendered, "Alt+Up hide")
+	hideIndex := strings.Index(rendered, "Esc hide")
 	if enterIndex < 0 || closeIndex < 0 || hideIndex < 0 {
 		t.Fatalf("renderCodexFooter() missing expected footer actions: %q", rendered)
 	}
 	if !(enterIndex < closeIndex && closeIndex < hideIndex) {
-		t.Fatalf("renderCodexFooter() order = %q, want Enter send before Ctrl+C close before Alt+Up hide", rendered)
+		t.Fatalf("renderCodexFooter() order = %q, want Enter send before Ctrl+C close before Esc hide", rendered)
 	}
 	for _, hidden := range []string{"Alt+Down picker", "Alt+[ prev", "Alt+] next", "Alt+L blocks"} {
 		if strings.Contains(rendered, hidden) {
@@ -18181,7 +18229,7 @@ func TestCommandEnterOpensBossMode(t *testing.T) {
 	if strings.Contains(lines[0], brand.Name) {
 		t.Fatalf("boss view should not show the classic app title in the top bar: %q", rendered)
 	}
-	if !strings.Contains(lines[len(lines)-1], "Enter") || !strings.Contains(lines[len(lines)-1], "Alt+Enter") || !strings.Contains(lines[len(lines)-1], "Alt+Up") {
+	if !strings.Contains(lines[len(lines)-1], "Enter") || !strings.Contains(lines[len(lines)-1], "Alt+Enter") || !strings.Contains(lines[len(lines)-1], "Esc") {
 		t.Fatalf("boss footer should show boss chat actions: %q", rendered)
 	}
 	if strings.Contains(lines[len(lines)-1], "Ctrl+J") {
@@ -18336,7 +18384,7 @@ func TestBossModeEscReturnsToClassicTUI(t *testing.T) {
 	}
 }
 
-func TestBossModeAltUpReturnsToClassicTUI(t *testing.T) {
+func TestBossModeAltUpDoesNotReturnToClassicTUI(t *testing.T) {
 	m := Model{
 		bossMode:  true,
 		bossModel: bossui.NewEmbedded(context.Background(), nil),
@@ -18346,21 +18394,11 @@ func TestBossModeAltUpReturnsToClassicTUI(t *testing.T) {
 
 	updated, cmd := m.updateBossModeMessage(tea.KeyMsg{Type: tea.KeyUp, Alt: true})
 	got := updated.(Model)
-	if cmd == nil {
-		t.Fatalf("boss alt+up should return an exit command")
+	if cmd != nil {
+		t.Fatalf("boss alt+up should not return an exit command")
 	}
-	msg := cmd()
-	if _, ok := msg.(bossui.ExitMsg); !ok {
-		t.Fatalf("cmd() returned %T, want boss.ExitMsg", msg)
-	}
-
-	updated, _ = got.Update(msg)
-	got = updated.(Model)
-	if got.bossMode {
-		t.Fatalf("boss mode should hide after alt+up exit message")
-	}
-	if got.status != "Boss mode hidden" {
-		t.Fatalf("status = %q, want Boss mode hidden", got.status)
+	if !got.bossMode {
+		t.Fatalf("boss mode should stay visible after alt+up")
 	}
 }
 

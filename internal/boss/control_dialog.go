@@ -74,7 +74,6 @@ func renderEngineerSendPromptConfirmation(input control.EngineerSendPromptInput,
 		strings.Join([]string{
 			renderBossControlAction("Enter", "send", uistyle.DialogActionPrimary),
 			renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
-			renderBossControlAction("Alt+Up", "hide", uistyle.DialogActionNavigate),
 		}, "   "),
 	}
 	return strings.Join(lines, "\n")
@@ -106,7 +105,6 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 				strings.Join([]string{
 					renderBossControlAction("Enter", "run", uistyle.DialogActionPrimary),
 					renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
-					renderBossControlAction("Alt+Up", "hide", uistyle.DialogActionNavigate),
 				}, "   "),
 			}
 			return strings.Join(lines, "\n")
@@ -127,7 +125,6 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 				strings.Join([]string{
 					renderBossControlAction("Enter", "run", uistyle.DialogActionPrimary),
 					renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
-					renderBossControlAction("Alt+Up", "hide", uistyle.DialogActionNavigate),
 				}, "   "),
 			}
 			return strings.Join(lines, "\n")
@@ -148,7 +145,6 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 				strings.Join([]string{
 					renderBossControlAction("Enter", "run", uistyle.DialogActionPrimary),
 					renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
-					renderBossControlAction("Alt+Up", "hide", uistyle.DialogActionNavigate),
 				}, "   "),
 			}
 			return strings.Join(lines, "\n")
@@ -170,7 +166,6 @@ func (m Model) renderFallbackControlConfirmationContent(width int) string {
 		strings.Join([]string{
 			renderBossControlAction("Enter", "send", uistyle.DialogActionPrimary),
 			renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
-			renderBossControlAction("Alt+Up", "hide", uistyle.DialogActionNavigate),
 		}, "   "),
 	}
 	return strings.Join(lines, "\n")
