@@ -137,11 +137,29 @@ func TestCPUDialogAskEngineerCreatesCPUAgentTask(t *testing.T) {
 
 	updated, cmd := m.updateCPUDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	got := updated.(Model)
-	if cmd == nil {
-		t.Fatalf("a should launch a CPU remediation agent task")
-	}
 	if got.cpuDialog == nil {
-		t.Fatalf("CPU dialog should stay open while the engineer starts")
+		t.Fatalf("CPU dialog should stay open while reviewing the engineer prompt")
+	}
+	if got.cpuRemediationEditor == nil {
+		t.Fatalf("a should open the CPU engineer prompt editor")
+	}
+	if cmd == nil {
+		t.Fatalf("a should focus the CPU engineer prompt editor")
+	}
+	if len(requests) != 0 {
+		t.Fatalf("launch requests before prompt confirmation = %d, want 0", len(requests))
+	}
+	if !strings.Contains(got.cpuRemediationEditor.Input.Value(), "PID 34857") || !strings.Contains(got.cpuRemediationEditor.Input.Value(), "PID 1110") {
+		t.Fatalf("CPU engineer prompt editor missing process details:\n%s", got.cpuRemediationEditor.Input.Value())
+	}
+	got.cpuRemediationEditor.Input.SetValue(got.cpuRemediationEditor.Input.Value() + "\nExtra operator note: leave my current foreground apps alone.")
+	updated, cmd = got.updateCPURemediationEditorMode(tea.KeyMsg{Type: tea.KeyCtrlS})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("ctrl+s should launch a CPU remediation agent task")
+	}
+	if got.cpuRemediationEditor != nil {
+		t.Fatalf("CPU engineer prompt editor should close after dispatch")
 	}
 
 	var opened codexSessionOpenedMsg
@@ -167,6 +185,7 @@ func TestCPUDialogAskEngineerCreatesCPUAgentTask(t *testing.T) {
 		"PID 1110",
 		"Do not terminate macOS system services",
 		"If uncertain, do not kill the process",
+		"Extra operator note: leave my current foreground apps alone.",
 	} {
 		if !strings.Contains(requests[0].Prompt, want) {
 			t.Fatalf("launch prompt missing %q:\n%s", want, requests[0].Prompt)
