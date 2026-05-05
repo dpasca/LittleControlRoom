@@ -475,7 +475,7 @@ func TestLatestEngineerTranscriptOutputDropsLowInformationDone(t *testing.T) {
 	}
 }
 
-func TestLatestEngineerTranscriptOutputSkipsLowInformationIntroBeforeArtifactDetails(t *testing.T) {
+func TestLatestEngineerTranscriptOutputSkipsLowInformationIntroAndKeepsArtifactLinks(t *testing.T) {
 	t.Parallel()
 
 	snapshot := codexapp.Snapshot{
@@ -488,14 +488,12 @@ func TestLatestEngineerTranscriptOutputSkipsLowInformationIntroBeforeArtifactDet
 	got := latestEngineerTranscriptOutput(snapshot)
 	for _, want := range []string{
 		"I kept the existing promo untouched",
+		"Outputs:",
+		"- side-by-side video: /Users/davide/dev/repos/FractalMech/captures/promo-comparisons/promo-old-vs-new-autoplay-20260505.mp4",
+		"- contact sheet: /Users/davide/dev/repos/FractalMech/captures/promo-comparisons/promo-old-vs-new-autoplay-20260505-contact-sheet.jpg",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("latestEngineerTranscriptOutput() missing %q:\n%s", want, got)
-		}
-	}
-	for _, unwanted := range []string{"side-by-side video", "contact sheet"} {
-		if strings.Contains(got, unwanted) {
-			t.Fatalf("latestEngineerTranscriptOutput() leaked artifact detail %q:\n%s", unwanted, got)
 		}
 	}
 	if strings.HasPrefix(got, "Done.") {

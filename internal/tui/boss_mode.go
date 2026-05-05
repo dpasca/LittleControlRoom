@@ -17,6 +17,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const engineerNoticeArtifactLimit = 4
+
 func (m Model) openBossMode() (tea.Model, tea.Cmd) {
 	m.bossMode = true
 	var initCmd tea.Cmd
@@ -701,7 +703,7 @@ func latestEngineerTranscriptOutputWithSentences(snapshot codexapp.Snapshot, sen
 		if !engineerNoticeHasUsefulDetail(summary) {
 			return ""
 		}
-		return summary
+		return engineerNoticeWithEssentialArtifacts(summary, text, engineerNoticeArtifactLimit)
 	}
 	return ""
 }
@@ -744,6 +746,44 @@ func engineerNoticeSummaryText(text string, sentenceLimit int) string {
 
 func engineerNoticeSentenceHasUsefulDetail(text string) bool {
 	return engineerNoticeHasUsefulDetail(cleanEngineerNoticeSummary(text))
+}
+
+func engineerNoticeWithEssentialArtifacts(summary, text string, limit int) string {
+	lines := engineerNoticeArtifactLines(text, limit)
+	if len(lines) == 0 {
+		return summary
+	}
+	return summary + "\n\nOutputs:\n" + strings.Join(lines, "\n")
+}
+
+func engineerNoticeArtifactLines(text string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	prose := strings.Join(engineerNoticeProseParagraphs(text), "\n\n")
+	targets := codexArtifactOpenTargetsFromMarkdown(prose)
+	if len(targets) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, min(limit, len(targets)))
+	for _, target := range targets {
+		path := strings.TrimSpace(target.Path)
+		if path == "" {
+			continue
+		}
+		label := strings.TrimSpace(target.Label)
+		if label == "" {
+			label = filepath.Base(path)
+		}
+		if label == "" || label == "." || label == string(filepath.Separator) {
+			label = path
+		}
+		lines = append(lines, "- "+label+": "+path)
+		if len(lines) >= limit {
+			break
+		}
+	}
+	return lines
 }
 
 func engineerNoticeContainsFence(text string) bool {
