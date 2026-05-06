@@ -763,6 +763,13 @@ func (m Model) askAssistantCmd(messages []ChatMessage, snapshot StateSnapshot, v
 	return func() tea.Msg {
 		ctx, cancel := childContext(parent, 120*time.Second)
 		defer cancel()
+		if resp, handled, err := assistant.replyStructuredHandle(ctx, AssistantRequest{
+			Snapshot: snapshot,
+			View:     view,
+			Messages: messages,
+		}, nil); handled || err != nil {
+			return AssistantReplyMsg{response: resp, err: err, snapshot: snapshot}
+		}
 		stateErr := error(nil)
 		stateRefreshed := false
 		if svc != nil {
@@ -795,6 +802,23 @@ func (m Model) askAssistantStreamCmd(streamID int, messages []ChatMessage, snaps
 			defer close(events)
 			ctx, cancel := childContext(parent, 120*time.Second)
 			defer cancel()
+			emit := func(event AssistantStreamEvent) {
+				select {
+				case events <- assistantStreamEnvelope{event: event}:
+				case <-ctx.Done():
+				}
+			}
+			if resp, handled, err := assistant.replyStructuredHandle(ctx, AssistantRequest{
+				Snapshot: snapshot,
+				View:     view,
+				Messages: messages,
+			}, emit); handled || err != nil {
+				select {
+				case events <- assistantStreamEnvelope{response: resp, err: err, snapshot: snapshot, done: true}:
+				case <-ctx.Done():
+				}
+				return
+			}
 			stateErr := error(nil)
 			stateRefreshed := false
 			if svc != nil {
@@ -804,12 +828,6 @@ func (m Model) askAssistantStreamCmd(streamID int, messages []ChatMessage, snaps
 					stateRefreshed = true
 				} else {
 					stateErr = err
-				}
-			}
-			emit := func(event AssistantStreamEvent) {
-				select {
-				case events <- assistantStreamEnvelope{event: event}:
-				case <-ctx.Done():
 				}
 			}
 			resp, err := assistant.ReplyStream(ctx, AssistantRequest{

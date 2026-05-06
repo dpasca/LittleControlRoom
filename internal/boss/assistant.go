@@ -16,7 +16,10 @@ import (
 	"lcroom/internal/service"
 )
 
-const bossAssistantReasoningEffort = "high"
+const (
+	bossAssistantReasoningEffort      = "high"
+	bossReadOnlyRouterReasoningEffort = "low"
+)
 
 type ChatMessage struct {
 	Role    string
@@ -60,11 +63,12 @@ type AssistantStreamEvent struct {
 }
 
 type Assistant struct {
-	runner  llm.TextRunner
-	planner llm.JSONSchemaRunner
-	query   *QueryExecutor
-	model   string
-	backend config.AIBackend
+	runner      llm.TextRunner
+	planner     llm.JSONSchemaRunner
+	queryRouter llm.JSONSchemaRunner
+	query       *QueryExecutor
+	model       string
+	backend     config.AIBackend
 }
 
 func NewAssistant(svc *service.Service) *Assistant {
@@ -86,11 +90,12 @@ func NewAssistant(svc *service.Service) *Assistant {
 		query.openCodeHome = svc.Config().OpenCodeHome
 	}
 	return &Assistant{
-		runner:  runner,
-		planner: planner,
-		query:   query,
-		model:   strings.TrimSpace(modelName),
-		backend: backend,
+		runner:      runner,
+		planner:     planner,
+		queryRouter: planner,
+		query:       query,
+		model:       strings.TrimSpace(modelName),
+		backend:     backend,
 	}
 }
 
@@ -134,7 +139,7 @@ func (a *Assistant) Reply(ctx context.Context, req AssistantRequest) (AssistantR
 	if modelName == "" && a.requiresExplicitModel() {
 		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_chat_model or " + brand.BossAssistantModelEnvVar)
 	}
-	if a.planner != nil && a.query != nil {
+	if a.query != nil && (a.planner != nil || a.queryRouter != nil) {
 		return a.replyWithTools(ctx, req)
 	}
 	return a.replyDirect(ctx, req)
@@ -152,7 +157,7 @@ func (a *Assistant) ReplyStream(ctx context.Context, req AssistantRequest, emit 
 	if modelName == "" && a.requiresExplicitModel() {
 		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_chat_model or " + brand.BossAssistantModelEnvVar)
 	}
-	if a.planner != nil && a.query != nil {
+	if a.query != nil && (a.planner != nil || a.queryRouter != nil) {
 		return a.replyWithToolsStream(ctx, req, emit)
 	}
 	return a.replyDirectStream(ctx, req, emit)
@@ -223,6 +228,25 @@ func (a *Assistant) replyDirectStream(ctx context.Context, req AssistantRequest,
 	}, nil
 }
 
+func (a *Assistant) replyStructuredHandle(ctx context.Context, req AssistantRequest, emit func(AssistantStreamEvent)) (AssistantResponse, bool, error) {
+	if a == nil || a.query == nil {
+		return AssistantResponse{}, false, nil
+	}
+	handleResult, handledHandle, err := a.tryStructuredHandleQueryRoute(ctx, req, emit)
+	if err != nil {
+		return AssistantResponse{}, false, err
+	}
+	if !handledHandle {
+		return AssistantResponse{}, false, nil
+	}
+	content := directGoalRunReportAnswer(*handleResult)
+	emitAssistantDelta(emit, content)
+	return AssistantResponse{
+		Content: content,
+		Model:   strings.TrimSpace(a.model),
+	}, true, nil
+}
+
 func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (AssistantResponse, error) {
 	modelName := strings.TrimSpace(a.model)
 	if modelName == "" && a.requiresExplicitModel() {
@@ -234,6 +258,39 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 		totalUsage  model.LLMUsage
 		usedModel   string
 	)
+	if resp, handled, err := a.replyStructuredHandle(ctx, req, nil); err != nil {
+		return AssistantResponse{}, err
+	} else if handled {
+		resp.Model = firstNonEmpty(resp.Model, modelName)
+		resp.Usage = totalUsage
+		return resp, nil
+	}
+	routeResponse, routeResult, routed, err := a.tryReadOnlyQueryRoute(ctx, req, nil)
+	if err != nil {
+		return AssistantResponse{}, err
+	}
+	if strings.TrimSpace(routeResponse.OutputText) != "" {
+		addLLMUsage(&totalUsage, routeResponse.Usage)
+		if modelName := strings.TrimSpace(routeResponse.Model); modelName != "" {
+			usedModel = modelName
+		}
+	}
+	if routed {
+		if routeResult != nil && routeResult.Name == bossActionGoalRunReport {
+			content := directGoalRunReportAnswer(*routeResult)
+			return AssistantResponse{
+				Content: content,
+				Model:   firstNonEmpty(usedModel, modelName),
+				Usage:   totalUsage,
+			}, nil
+		}
+		if routeResult != nil {
+			toolResults = append(toolResults, *routeResult)
+		}
+	}
+	if a.planner == nil {
+		return AssistantResponse{}, errors.New("boss chat needs structured planning for this request")
+	}
 	for round := 0; round < bossAssistantMaxToolRounds; round++ {
 		forceAnswer := round == bossAssistantMaxToolRounds-1
 		response, action, err := a.planAction(ctx, req, toolResults, forceAnswer)
@@ -312,6 +369,40 @@ func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantReque
 		totalUsage  model.LLMUsage
 		usedModel   string
 	)
+	if resp, handled, err := a.replyStructuredHandle(ctx, req, emit); err != nil {
+		return AssistantResponse{}, err
+	} else if handled {
+		resp.Model = firstNonEmpty(resp.Model, modelName)
+		resp.Usage = totalUsage
+		return resp, nil
+	}
+	routeResponse, routeResult, routed, err := a.tryReadOnlyQueryRoute(ctx, req, emit)
+	if err != nil {
+		return AssistantResponse{}, err
+	}
+	if strings.TrimSpace(routeResponse.OutputText) != "" {
+		addLLMUsage(&totalUsage, routeResponse.Usage)
+		if modelName := strings.TrimSpace(routeResponse.Model); modelName != "" {
+			usedModel = modelName
+		}
+	}
+	if routed {
+		if routeResult != nil && routeResult.Name == bossActionGoalRunReport {
+			content := directGoalRunReportAnswer(*routeResult)
+			emitAssistantDelta(emit, content)
+			return AssistantResponse{
+				Content: content,
+				Model:   firstNonEmpty(usedModel, modelName),
+				Usage:   totalUsage,
+			}, nil
+		}
+		if routeResult != nil {
+			toolResults = append(toolResults, *routeResult)
+		}
+	}
+	if a.planner == nil {
+		return AssistantResponse{}, errors.New("boss chat needs structured planning for this request")
+	}
 	for round := 0; round < bossAssistantMaxToolRounds; round++ {
 		forceAnswer := round == bossAssistantMaxToolRounds-1
 		response, action, err := a.planAction(ctx, req, toolResults, forceAnswer)
@@ -421,6 +512,96 @@ func (a *Assistant) streamFinalAnswer(ctx context.Context, req AssistantRequest,
 		Model:   strings.TrimSpace(resp.Model),
 		Usage:   resp.Usage,
 	}, nil
+}
+
+type bossReadOnlyRoute struct {
+	Kind              string `json:"kind"`
+	Target            string `json:"target"`
+	Query             string `json:"query"`
+	Command           string `json:"command"`
+	ProjectPath       string `json:"project_path"`
+	ProjectName       string `json:"project_name"`
+	SessionID         string `json:"session_id"`
+	IncludeHistorical bool   `json:"include_historical"`
+	Limit             int    `json:"limit"`
+	Reason            string `json:"reason"`
+}
+
+const bossReadOnlyRoutePass = "pass"
+
+func (a *Assistant) tryStructuredHandleQueryRoute(ctx context.Context, req AssistantRequest, emit func(AssistantStreamEvent)) (*bossToolResult, bool, error) {
+	if a == nil || a.query == nil {
+		return nil, false, nil
+	}
+	id := explicitGoalRunIDFromRequest(req)
+	if id == "" {
+		id = explicitGoalRunIDFromStore(ctx, req, a.query)
+	}
+	if id == "" {
+		return nil, false, nil
+	}
+	action := bossAction{Kind: bossActionGoalRunReport, Query: id}
+	normalizeBossAction(&action)
+	result := a.executeReadOnlyQueryAction(ctx, action, req, emit)
+	return &result, true, nil
+}
+
+func (a *Assistant) tryReadOnlyQueryRoute(ctx context.Context, req AssistantRequest, emit func(AssistantStreamEvent)) (llm.JSONSchemaResponse, *bossToolResult, bool, error) {
+	if a == nil || a.queryRouter == nil || a.query == nil {
+		return llm.JSONSchemaResponse{}, nil, false, nil
+	}
+	response, route, err := a.planReadOnlyQueryRoute(ctx, req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return response, nil, false, err
+		}
+		return response, nil, false, nil
+	}
+	action, ok := bossActionFromReadOnlyRoute(route)
+	if !ok {
+		return response, nil, false, nil
+	}
+	result := a.executeReadOnlyQueryAction(ctx, action, req, emit)
+	return response, &result, true, nil
+}
+
+func (a *Assistant) executeReadOnlyQueryAction(ctx context.Context, action bossAction, req AssistantRequest, emit func(AssistantStreamEvent)) bossToolResult {
+	toolCall := describeBossAction(action)
+	emitToolCall(emit, toolCall, "running")
+	result, execErr := a.query.Execute(ctx, action, req.Snapshot, req.View)
+	if execErr != nil {
+		result = bossToolResult{
+			Name: normalizeBossActionKind(action.Kind),
+			Text: "Tool error: " + execErr.Error(),
+		}
+		emitToolCall(emit, toolCall, "error")
+	} else {
+		emitToolCall(emit, toolCall, "done")
+	}
+	return result
+}
+
+func (a *Assistant) planReadOnlyQueryRoute(ctx context.Context, req AssistantRequest) (llm.JSONSchemaResponse, bossReadOnlyRoute, error) {
+	response, err := a.queryRouter.RunJSONSchema(ctx, llm.JSONSchemaRequest{
+		Model:           strings.TrimSpace(a.model),
+		SystemText:      bossReadOnlyRouterSystemPrompt(),
+		UserText:        bossReadOnlyRouterUserText(req),
+		SchemaName:      "boss_read_only_query_route",
+		Schema:          bossReadOnlyRouteSchema(),
+		ReasoningEffort: bossReadOnlyRouterReasoningEffort,
+	})
+	if err != nil {
+		return llm.JSONSchemaResponse{}, bossReadOnlyRoute{}, err
+	}
+	if strings.TrimSpace(response.OutputText) == "" {
+		return response, bossReadOnlyRoute{}, errors.New("boss chat returned no read-only route")
+	}
+	var route bossReadOnlyRoute
+	if err := llm.DecodeJSONObjectOutput(response.OutputText, &route); err != nil {
+		return response, bossReadOnlyRoute{}, fmt.Errorf("decode boss read-only route: %w", err)
+	}
+	normalizeBossReadOnlyRoute(&route)
+	return response, route, nil
 }
 
 func (a *Assistant) planAction(ctx context.Context, req AssistantRequest, toolResults []bossToolResult, forceAnswer bool) (llm.JSONSchemaResponse, bossAction, error) {
@@ -639,6 +820,24 @@ func bossActionPlannerSystemPrompt() string {
 	}, "\n")
 }
 
+func bossReadOnlyRouterSystemPrompt() string {
+	return strings.Join([]string{
+		"You are the fast read-only query router for Boss Chat in Little Control Room.",
+		"Choose exactly one read-only query only when the latest user message is asking for information, status, recall, inspection, or audit details that a single query can gather.",
+		"Choose pass for requests to change state, delegate work, continue work, clear tasks, archive records, launch/stop processes, commit, fix, confirm a proposal, or anything that may need user confirmation.",
+		"Choose pass when the request needs multiple read-only queries or high-level planning; the full Boss planner will handle it.",
+		"Use goal_run_report when the user asks what Boss goal runs happened, whether a goal finished, what was verified, what failed, or asks to inspect a goal-run trace. If an exact goal run id is known from the user message or state brief, put only that id in query.",
+		"Use agent_task_report for questions about delegated/background agent tasks or what agents are doing.",
+		"Use project_detail for questions about one concrete project when an exact project path or name is available.",
+		"Use process_report for suspicious PIDs, hot CPU, ports, or project-local processes.",
+		"Use skills_inventory for Codex skill inventory questions.",
+		"Use search_context for unfamiliar project terms, codenames, aliases, or concepts.",
+		"Use search_boss_sessions only when the user asks to recall earlier Boss Chat turns.",
+		"Use context_command only when the user asks to inspect or quote linked engineer or agent-task transcript output and an exact ctx command can be formed.",
+		"Do not answer the user. Return only the structured route.",
+	}, "\n")
+}
+
 func bossActionPlannerUserText(req AssistantRequest, toolResults []bossToolResult, forceAnswer bool) string {
 	var b strings.Builder
 	b.WriteString(requestContextBrief(req))
@@ -668,6 +867,24 @@ func bossActionPlannerUserText(req AssistantRequest, toolResults []bossToolResul
 	} else {
 		b.WriteString("\nChoose kind=\"answer\" if you have enough data. If a visible linked task or project can likely answer the question, choose one read-only query before answering. If the user asks to remove, erase, archive, hide, close, get rid of, or clear from the active record delegated agent tasks and no task id is visible yet, choose agent_task_report with include_historical=true before answering. If the user asks to remove, clear, hide, archive, or get rid of a task/project and the state does not show whether it is a scratch task, choose project_detail before answering. Choose kind=\"propose_control\" if the user asked to delegate project work, manage/continue/solve/archive/remove an agent task, manage/continue/solve/archive/remove one agent task, or archive/remove a scratch task whose project metadata says kind=scratch_task; if fresh gathered data resolves a visible review/waiting agent task and a task id is clear; or if gathered task data lacks the detail the user asked for and the same task should be asked a sharper follow-up. Choose kind=\"propose_goal\" with goal_kind=\"agent_task_cleanup\" when the user wants multiple delegated agent task records removed/cleared/archived and the selected task ids are known. For commit/deploy/release safety, or DB migration/schema/storage/API-shape questions, do not answer from summaries; use a read-only project/context query first and then propose control_capability=\"engineer.send_prompt\" with session_mode=\"new\" if direct current-diff evidence is still missing. For a resolved review/waiting task use control_capability=\"agent_task.close\"; for any delegated task the user wants gone from the active record and exactly one task is selected, use control_capability=\"agent_task.close\" with task_close_status=\"archived\"; for multiple tasks the user wants removed, use propose_goal agent_task_cleanup; for multiple delegated task records the user wants gone use propose_goal agent_task_cleanup; for a scratch task project the user wants gone use control_capability=\"scratch_task.archive\"; for a missing detail or progress request use control_capability=\"agent_task.continue\". For multiple open agent tasks that need progress, propose one concrete next agent_task.continue rather than only giving an order.\n")
 	}
+	return strings.TrimSpace(b.String())
+}
+
+func bossReadOnlyRouterUserText(req AssistantRequest) string {
+	var b strings.Builder
+	b.WriteString(requestContextBrief(req))
+	b.WriteString("\n\nRecent chat:\n")
+	for _, message := range trimChatHistory(req.Messages, 8) {
+		content := strings.TrimSpace(message.Content)
+		if content == "" {
+			continue
+		}
+		b.WriteString(normalizeChatRole(message.Role))
+		b.WriteString(": ")
+		b.WriteString(clipText(content, 900))
+		b.WriteString("\n")
+	}
+	b.WriteString("\nPick one read-only route for the latest user message, or kind=\"pass\" if this is not a single-query inspection request.")
 	return strings.TrimSpace(b.String())
 }
 
@@ -744,6 +961,83 @@ func bossResourceRefSchema() map[string]any {
 			"label":        map[string]any{"type": "string"},
 		},
 		"required": []string{"kind", "id", "path", "project_path", "provider", "session_id", "todo_id", "pid", "port", "label"},
+	}
+}
+
+func bossReadOnlyRouteSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"kind": map[string]any{
+				"type": "string",
+				"enum": []string{
+					bossReadOnlyRoutePass,
+					bossActionListProjects,
+					bossActionProjectDetail,
+					bossActionSessionClassifications,
+					bossActionTodoReport,
+					bossActionAgentTaskReport,
+					bossActionCurrentTUI,
+					bossActionAssessmentQueue,
+					bossActionProcessReport,
+					bossActionSearchContext,
+					bossActionSearchBossSessions,
+					bossActionContextCommand,
+					bossActionSkillsInventory,
+					bossActionGoalRunReport,
+				},
+			},
+			"target": map[string]any{
+				"type":        "string",
+				"enum":        []string{"", "selected"},
+				"description": "Use selected only when the user explicitly asks about the selected classic TUI project.",
+			},
+			"query": map[string]any{
+				"type":        "string",
+				"description": "Search text for search_context/search_boss_sessions; exact goal run id for goal_run_report when known; otherwise empty.",
+			},
+			"command": map[string]any{
+				"type":        "string",
+				"description": "For context_command, one exact ctx command; otherwise empty.",
+			},
+			"project_path": map[string]any{
+				"type":        "string",
+				"description": "Exact project path for project-specific queries, or empty.",
+			},
+			"project_name": map[string]any{
+				"type":        "string",
+				"description": "Exact project name for project-specific queries, or empty.",
+			},
+			"session_id": map[string]any{
+				"type":        "string",
+				"description": "Exact session id for assessment/session queries, or empty.",
+			},
+			"include_historical": map[string]any{
+				"type":        "boolean",
+				"description": "Whether historical/archived records are needed.",
+			},
+			"limit": map[string]any{
+				"type":        "integer",
+				"description": "Requested result limit, or 0 for default.",
+			},
+			"reason": map[string]any{
+				"type":        "string",
+				"description": "Short private reason for the route, or empty.",
+			},
+		},
+		"required": []string{
+			"kind",
+			"target",
+			"query",
+			"command",
+			"project_path",
+			"project_name",
+			"session_id",
+			"include_historical",
+			"limit",
+			"reason",
+		},
 	}
 }
 
@@ -1070,6 +1364,62 @@ func normalizeBossAction(action *bossAction) {
 	action.Reason = strings.TrimSpace(action.Reason)
 }
 
+func normalizeBossReadOnlyRoute(route *bossReadOnlyRoute) {
+	if route == nil {
+		return
+	}
+	route.Kind = normalizeBossActionKind(route.Kind)
+	route.Target = strings.TrimSpace(strings.ToLower(route.Target))
+	route.Query = strings.TrimSpace(route.Query)
+	route.Command = strings.TrimSpace(route.Command)
+	route.ProjectPath = strings.TrimSpace(route.ProjectPath)
+	route.ProjectName = strings.TrimSpace(route.ProjectName)
+	route.SessionID = strings.TrimSpace(route.SessionID)
+	route.Reason = strings.TrimSpace(route.Reason)
+}
+
+func bossActionFromReadOnlyRoute(route bossReadOnlyRoute) (bossAction, bool) {
+	kind := normalizeBossActionKind(route.Kind)
+	if kind == "" || kind == bossReadOnlyRoutePass || !bossActionIsReadOnlyQuery(kind) {
+		return bossAction{}, false
+	}
+	action := bossAction{
+		Kind:              kind,
+		Target:            route.Target,
+		Query:             route.Query,
+		Command:           route.Command,
+		ProjectPath:       route.ProjectPath,
+		ProjectName:       route.ProjectName,
+		SessionID:         route.SessionID,
+		IncludeHistorical: route.IncludeHistorical,
+		Limit:             route.Limit,
+		Reason:            route.Reason,
+	}
+	normalizeBossAction(&action)
+	return action, true
+}
+
+func bossActionIsReadOnlyQuery(kind string) bool {
+	switch normalizeBossActionKind(kind) {
+	case bossActionListProjects,
+		bossActionProjectDetail,
+		bossActionSessionClassifications,
+		bossActionTodoReport,
+		bossActionAgentTaskReport,
+		bossActionCurrentTUI,
+		bossActionAssessmentQueue,
+		bossActionProcessReport,
+		bossActionSearchContext,
+		bossActionSearchBossSessions,
+		bossActionContextCommand,
+		bossActionSkillsInventory,
+		bossActionGoalRunReport:
+		return true
+	default:
+		return false
+	}
+}
+
 func prepareBossActionForRequest(action *bossAction, req AssistantRequest) {
 	if action == nil || !bossActionCarriesEngineerPrompt(*action) {
 		return
@@ -1196,6 +1546,130 @@ func synthesizeToolLoopFallback(results []bossToolResult) string {
 	return "I gathered the latest project data, but could not compose a polished answer. The most recent report was:\n\n" + strings.TrimSpace(last.Text)
 }
 
+func directGoalRunReportAnswer(result bossToolResult) string {
+	text := strings.TrimSpace(result.Text)
+	if text == "" {
+		return "I could not find any stored Boss goal-run detail."
+	}
+	if strings.HasPrefix(text, "Tool error:") {
+		return "I could not inspect the Boss goal run: " + strings.TrimSpace(strings.TrimPrefix(text, "Tool error:"))
+	}
+	return text
+}
+
+// explicitGoalRunIDFromRequest only resolves exact structured handles already
+// present in the state snapshot. explicitGoalRunIDFromStore extends that to
+// exact identifier tokens that storage can verify as real goal-run ids. Language
+// intent still goes through model-based routing; this keeps app-generated audit
+// handles responsive without adding a keyword classifier.
+func explicitGoalRunIDFromRequest(req AssistantRequest) string {
+	latest := latestUserMessageContent(req.Messages)
+	if latest == "" || len(req.Snapshot.RecentGoalRuns) == 0 {
+		return ""
+	}
+	for _, goal := range req.Snapshot.RecentGoalRuns {
+		id := strings.TrimSpace(goal.ID)
+		if id != "" && containsStructuredIdentifier(latest, id) {
+			return id
+		}
+	}
+	return ""
+}
+
+func explicitGoalRunIDFromStore(ctx context.Context, req AssistantRequest, query *QueryExecutor) string {
+	if query == nil || query.store == nil {
+		return ""
+	}
+	reader, ok := query.store.(bossGoalRunReader)
+	if !ok {
+		return ""
+	}
+	for _, candidate := range structuredIdentifierCandidates(latestUserMessageContent(req.Messages)) {
+		if ctx.Err() != nil {
+			return ""
+		}
+		if _, err := reader.GetGoalRun(ctx, candidate); err == nil {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func latestUserMessageContent(messages []ChatMessage) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if normalizeChatRole(messages[i].Role) != "user" {
+			continue
+		}
+		if content := strings.TrimSpace(messages[i].Content); content != "" {
+			return content
+		}
+	}
+	return ""
+}
+
+func containsStructuredIdentifier(text, id string) bool {
+	text = strings.TrimSpace(text)
+	id = strings.TrimSpace(id)
+	if text == "" || id == "" {
+		return false
+	}
+	for start := 0; start < len(text); {
+		idx := strings.Index(text[start:], id)
+		if idx < 0 {
+			return false
+		}
+		idx += start
+		beforeOK := idx == 0 || isStructuredIdentifierBoundary(text[idx-1])
+		after := idx + len(id)
+		afterOK := after >= len(text) || isStructuredIdentifierBoundary(text[after])
+		if beforeOK && afterOK {
+			return true
+		}
+		start = idx + len(id)
+	}
+	return false
+}
+
+func structuredIdentifierCandidates(text string) []string {
+	fields := strings.FieldsFunc(text, func(r rune) bool {
+		if r >= 'a' && r <= 'z' {
+			return false
+		}
+		if r >= 'A' && r <= 'Z' {
+			return false
+		}
+		if r >= '0' && r <= '9' {
+			return false
+		}
+		return r != '_' && r != '-'
+	})
+	out := make([]string, 0, len(fields))
+	seen := map[string]struct{}{}
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		if _, ok := seen[field]; ok {
+			continue
+		}
+		seen[field] = struct{}{}
+		out = append(out, field)
+		if len(out) >= 32 {
+			break
+		}
+	}
+	return out
+}
+
+func isStructuredIdentifierBoundary(ch byte) bool {
+	return !(ch >= 'a' && ch <= 'z') &&
+		!(ch >= 'A' && ch <= 'Z') &&
+		!(ch >= '0' && ch <= '9') &&
+		ch != '_' &&
+		ch != '-'
+}
+
 func trimChatHistory(messages []ChatMessage, limit int) []ChatMessage {
 	if limit <= 0 || len(messages) <= limit {
 		return append([]ChatMessage(nil), messages...)
@@ -1295,6 +1769,9 @@ func describeBossAction(action bossAction) string {
 	case bossActionSkillsInventory:
 		return kind
 	case bossActionGoalRunReport:
+		if query := strings.TrimSpace(action.Query); query != "" {
+			return kind + " " + clipText(query, 80)
+		}
 		return kind
 	case bossActionSessionClassifications, bossActionTodoReport:
 		target := firstNonEmpty(action.ProjectName, action.ProjectPath, action.SessionID, action.Target)

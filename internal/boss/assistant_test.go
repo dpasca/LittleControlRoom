@@ -299,6 +299,388 @@ func TestQueryExecutorGoalRunReportSpecificRun(t *testing.T) {
 	}
 }
 
+func TestAssistantReplyStructuredGoalRunHandleBypassesModels(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeBossStore{
+		goalRuns: []bossrun.GoalRecord{{
+			Proposal: bossrun.GoalProposal{
+				Run: bossrun.GoalRun{
+					ID:              "goal_demo",
+					Kind:            bossrun.GoalKindAgentTaskCleanup,
+					Title:           "Clear stale delegated agents",
+					SuccessCriteria: "Selected records leave the active set.",
+					Status:          bossrun.GoalStatusCompleted,
+				},
+			},
+			Result: bossrun.GoalResult{
+				Summary:  "Archived 2 delegated agent task records and verified the selected tasks are out of the active set.",
+				Verified: true,
+			},
+			Trace: []bossrun.TraceEntry{
+				{StepID: "archive-agent-tasks", ResourceID: "agt_one", Status: "completed", Summary: "Archived agent task record."},
+				{StepID: "verify-active-set", Status: "completed", Summary: "Refreshed open agent-task state."},
+			},
+		}},
+	}
+	router := &fakeJSONSchemaRunner{}
+	planner := &fakeJSONSchemaRunner{}
+	assistant := &Assistant{
+		planner:     planner,
+		queryRouter: router,
+		query:       newQueryExecutor(store),
+		model:       "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Recent Boss goal runs:\n- Clear stale delegated agents (goal_demo/completed); inspect: goal_run_report query=goal_demo",
+		Snapshot: StateSnapshot{RecentGoalRuns: []GoalRunBrief{{
+			ID:         "goal_demo",
+			Kind:       bossrun.GoalKindAgentTaskCleanup,
+			Title:      "Clear stale delegated agents",
+			Status:     bossrun.GoalStatusCompleted,
+			TraceCount: 2,
+		}}},
+		Messages: []ChatMessage{{Role: "user", Content: "inspect the goal-run trace for goal_demo"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if len(router.reqs) != 0 || len(planner.reqs) != 0 {
+		t.Fatalf("model requests router/planner = %d/%d, want none", len(router.reqs), len(planner.reqs))
+	}
+	for _, want := range []string{"Boss goal run", "goal_demo", "archive-agent-tasks agt_one [completed]", "verify-active-set [completed]"} {
+		if !strings.Contains(resp.Content, want) {
+			t.Fatalf("structured handle report missing %q:\n%s", want, resp.Content)
+		}
+	}
+}
+
+func TestAssistantReplyStructuredGoalRunHandleCanResolveFromStore(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeBossStore{
+		goalRuns: []bossrun.GoalRecord{{
+			Proposal: bossrun.GoalProposal{
+				Run: bossrun.GoalRun{ID: "goal_demo", Kind: bossrun.GoalKindAgentTaskCleanup, Title: "Goal demo", Status: bossrun.GoalStatusCompleted},
+			},
+			Result: bossrun.GoalResult{Summary: "Verified the selected task left the active set.", Verified: true},
+			Trace:  []bossrun.TraceEntry{{StepID: "verify-active-set", Status: "completed", Summary: "Refreshed open agent-task state."}},
+		}},
+	}
+	router := &fakeJSONSchemaRunner{}
+	planner := &fakeJSONSchemaRunner{}
+	assistant := &Assistant{
+		planner:     planner,
+		queryRouter: router,
+		query:       newQueryExecutor(store),
+		model:       "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Visible projects: 1.",
+		Messages:   []ChatMessage{{Role: "user", Content: "inspect the goal-run trace for goal_demo"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if len(router.reqs) != 0 || len(planner.reqs) != 0 {
+		t.Fatalf("model requests router/planner = %d/%d, want none", len(router.reqs), len(planner.reqs))
+	}
+	if !strings.Contains(resp.Content, "verify-active-set [completed]") {
+		t.Fatalf("store-resolved goal report = %q", resp.Content)
+	}
+}
+
+func TestAssistantReplyStructuredGoalRunHandleUsesBoundaries(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeBossStore{
+		goalRuns: []bossrun.GoalRecord{{
+			Proposal: bossrun.GoalProposal{
+				Run: bossrun.GoalRun{ID: "goal_demo", Kind: bossrun.GoalKindAgentTaskCleanup, Title: "Goal demo", Status: bossrun.GoalStatusCompleted},
+			},
+		}},
+	}
+	router := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			OutputText: encodedReadOnlyRoute(t, bossReadOnlyRoute{Kind: bossReadOnlyRoutePass}),
+			Usage:      model.LLMUsage{TotalTokens: 3},
+		}},
+	}
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			OutputText: encodedBossAction(t, bossAction{Kind: bossActionAnswer, Answer: "No exact goal handle was selected."}),
+			Usage:      model.LLMUsage{TotalTokens: 7},
+		}},
+	}
+	assistant := &Assistant{
+		planner:     planner,
+		queryRouter: router,
+		query:       newQueryExecutor(store),
+		model:       "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Recent Boss goal runs:\n- Goal demo (goal_demo/completed)",
+		Snapshot: StateSnapshot{RecentGoalRuns: []GoalRunBrief{{
+			ID:     "goal_demo",
+			Kind:   bossrun.GoalKindAgentTaskCleanup,
+			Title:  "Goal demo",
+			Status: bossrun.GoalStatusCompleted,
+		}}},
+		Messages: []ChatMessage{{Role: "user", Content: "inspect goal_demo_suffix"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.Content != "No exact goal handle was selected." {
+		t.Fatalf("Content = %q", resp.Content)
+	}
+	if len(router.reqs) != 1 || len(planner.reqs) != 1 {
+		t.Fatalf("model requests router/planner = %d/%d, want fallback", len(router.reqs), len(planner.reqs))
+	}
+}
+
+func TestAssistantReplyStreamStructuredGoalRunHandleEmitsToolEvents(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeBossStore{
+		goalRuns: []bossrun.GoalRecord{{
+			Proposal: bossrun.GoalProposal{
+				Run: bossrun.GoalRun{ID: "goal_demo", Kind: bossrun.GoalKindAgentTaskCleanup, Title: "Goal demo", Status: bossrun.GoalStatusCompleted},
+			},
+			Result: bossrun.GoalResult{Summary: "Verified the selected task left the active set.", Verified: true},
+			Trace:  []bossrun.TraceEntry{{StepID: "verify-active-set", Status: "completed", Summary: "Refreshed open agent-task state."}},
+		}},
+	}
+	router := &fakeJSONSchemaRunner{}
+	planner := &fakeJSONSchemaRunner{}
+	assistant := &Assistant{
+		planner:     planner,
+		queryRouter: router,
+		query:       newQueryExecutor(store),
+		model:       "gpt-test",
+	}
+
+	var events []AssistantStreamEvent
+	resp, err := assistant.ReplyStream(context.Background(), AssistantRequest{
+		StateBrief: "Recent Boss goal runs:\n- Goal demo (goal_demo/completed); inspect: goal_run_report query=goal_demo",
+		Snapshot: StateSnapshot{RecentGoalRuns: []GoalRunBrief{{
+			ID:         "goal_demo",
+			Kind:       bossrun.GoalKindAgentTaskCleanup,
+			Title:      "Goal demo",
+			Status:     bossrun.GoalStatusCompleted,
+			TraceCount: 1,
+		}}},
+		Messages: []ChatMessage{{Role: "user", Content: "inspect the goal-run trace for goal_demo"}},
+	}, func(event AssistantStreamEvent) {
+		events = append(events, event)
+	})
+	if err != nil {
+		t.Fatalf("ReplyStream() error = %v", err)
+	}
+	if len(router.reqs) != 0 || len(planner.reqs) != 0 {
+		t.Fatalf("model requests router/planner = %d/%d, want none", len(router.reqs), len(planner.reqs))
+	}
+	var toolStates []string
+	var text string
+	for _, event := range events {
+		if event.Kind == AssistantStreamToolCall {
+			toolStates = append(toolStates, event.ToolState+":"+event.ToolCall)
+		}
+		if event.Kind == AssistantStreamTextDelta {
+			text += event.Delta
+		}
+	}
+	if strings.Join(toolStates, "|") != "running:goal_run_report goal_demo|done:goal_run_report goal_demo" {
+		t.Fatalf("tool events = %#v", toolStates)
+	}
+	if text != resp.Content || !strings.Contains(text, "verify-active-set [completed]") {
+		t.Fatalf("streamed text = %q, response = %q", text, resp.Content)
+	}
+}
+
+func TestAssistantReplyFastRoutesGoalRunReport(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeBossStore{
+		goalRuns: []bossrun.GoalRecord{{
+			Proposal: bossrun.GoalProposal{
+				Run: bossrun.GoalRun{
+					ID:              "goal_demo",
+					Kind:            bossrun.GoalKindAgentTaskCleanup,
+					Title:           "Clear stale delegated agents",
+					Objective:       "Archive stale delegated agent task records.",
+					SuccessCriteria: "Selected records leave the active set.",
+					Status:          bossrun.GoalStatusCompleted,
+				},
+			},
+			Result: bossrun.GoalResult{
+				Summary:  "Archived 2 delegated agent task records and verified the selected tasks are out of the active set.",
+				Verified: true,
+			},
+			Trace: []bossrun.TraceEntry{
+				{StepID: "archive-agent-tasks", ResourceID: "agt_one", Status: "completed", Summary: "Archived agent task record."},
+				{StepID: "verify-active-set", Status: "completed", Summary: "Refreshed open agent-task state."},
+			},
+		}},
+	}
+	router := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model:      "gpt-test",
+			OutputText: encodedReadOnlyRoute(t, bossReadOnlyRoute{Kind: bossActionGoalRunReport, Query: "goal_demo", Reason: "The user asked to inspect a goal-run trace."}),
+			Usage:      model.LLMUsage{TotalTokens: 11},
+		}},
+	}
+	planner := &fakeJSONSchemaRunner{}
+	assistant := &Assistant{
+		planner:     planner,
+		queryRouter: router,
+		query:       newQueryExecutor(store),
+		model:       "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Recent Boss goal runs:\n- Clear stale delegated agents (goal_demo/completed); inspect: goal_run_report query=goal_demo",
+		Messages:   []ChatMessage{{Role: "user", Content: "inspect the latest goal-run trace"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if len(planner.reqs) != 0 {
+		t.Fatalf("heavy planner requests = %d, want none", len(planner.reqs))
+	}
+	if resp.Usage.TotalTokens != 11 {
+		t.Fatalf("usage total = %d, want router-only usage", resp.Usage.TotalTokens)
+	}
+	for _, want := range []string{"Boss goal run", "goal_demo", "archive-agent-tasks agt_one [completed]", "verify-active-set [completed]"} {
+		if !strings.Contains(resp.Content, want) {
+			t.Fatalf("fast goal report missing %q:\n%s", want, resp.Content)
+		}
+	}
+	if len(router.reqs) != 1 {
+		t.Fatalf("router requests = %d, want one", len(router.reqs))
+	}
+	if router.reqs[0].SchemaName != "boss_read_only_query_route" ||
+		router.reqs[0].ReasoningEffort != bossReadOnlyRouterReasoningEffort {
+		t.Fatalf("router request = %+v", router.reqs[0])
+	}
+}
+
+func TestAssistantReplyStreamFastRoutesGoalRunReport(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeBossStore{
+		goalRuns: []bossrun.GoalRecord{{
+			Proposal: bossrun.GoalProposal{
+				Run: bossrun.GoalRun{
+					ID:              "goal_demo",
+					Kind:            bossrun.GoalKindAgentTaskCleanup,
+					Title:           "Clear stale delegated agents",
+					SuccessCriteria: "Selected records leave the active set.",
+					Status:          bossrun.GoalStatusCompleted,
+				},
+			},
+			Result: bossrun.GoalResult{
+				Summary:  "Archived 2 delegated agent task records and verified the selected tasks are out of the active set.",
+				Verified: true,
+			},
+			Trace: []bossrun.TraceEntry{
+				{StepID: "archive-agent-tasks", ResourceID: "agt_one", Status: "completed", Summary: "Archived agent task record."},
+				{StepID: "verify-active-set", Status: "completed", Summary: "Refreshed open agent-task state."},
+			},
+		}},
+	}
+	router := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model:      "gpt-test",
+			OutputText: encodedReadOnlyRoute(t, bossReadOnlyRoute{Kind: bossActionGoalRunReport, Query: "goal_demo"}),
+		}},
+	}
+	planner := &fakeJSONSchemaRunner{}
+	assistant := &Assistant{
+		planner:     planner,
+		queryRouter: router,
+		query:       newQueryExecutor(store),
+		model:       "gpt-test",
+	}
+
+	var events []AssistantStreamEvent
+	resp, err := assistant.ReplyStream(context.Background(), AssistantRequest{
+		StateBrief: "Recent Boss goal runs:\n- Clear stale delegated agents (goal_demo/completed); inspect: goal_run_report query=goal_demo",
+		Messages:   []ChatMessage{{Role: "user", Content: "inspect the latest goal-run trace"}},
+	}, func(event AssistantStreamEvent) {
+		events = append(events, event)
+	})
+	if err != nil {
+		t.Fatalf("ReplyStream() error = %v", err)
+	}
+	if len(planner.reqs) != 0 {
+		t.Fatalf("heavy planner requests = %d, want none", len(planner.reqs))
+	}
+	if !strings.Contains(resp.Content, "archive-agent-tasks agt_one [completed]") ||
+		!strings.Contains(resp.Content, "verify-active-set [completed]") {
+		t.Fatalf("streamed goal report content = %q", resp.Content)
+	}
+	var toolStates []string
+	var text string
+	for _, event := range events {
+		if event.Kind == AssistantStreamToolCall {
+			toolStates = append(toolStates, event.ToolState+":"+event.ToolCall)
+		}
+		if event.Kind == AssistantStreamTextDelta {
+			text += event.Delta
+		}
+	}
+	if strings.Join(toolStates, "|") != "running:goal_run_report goal_demo|done:goal_run_report goal_demo" {
+		t.Fatalf("tool events = %#v", toolStates)
+	}
+	if text != resp.Content {
+		t.Fatalf("streamed text = %q, want response content", text)
+	}
+}
+
+func TestAssistantReplyReadOnlyRoutePassFallsBackToPlanner(t *testing.T) {
+	t.Parallel()
+
+	router := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			OutputText: encodedReadOnlyRoute(t, bossReadOnlyRoute{Kind: bossReadOnlyRoutePass, Reason: "The user is confirming a prior plan."}),
+			Usage:      model.LLMUsage{TotalTokens: 5},
+		}},
+	}
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			OutputText: encodedBossAction(t, bossAction{Kind: bossActionAnswer, Answer: "Okay, moving on with the plan."}),
+			Usage:      model.LLMUsage{TotalTokens: 13},
+		}},
+	}
+	assistant := &Assistant{
+		planner:     planner,
+		queryRouter: router,
+		query:       newQueryExecutor(&fakeBossStore{}),
+		model:       "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Visible projects: 1.",
+		Messages:   []ChatMessage{{Role: "user", Content: "Okay, let's do it"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.Content != "Okay, moving on with the plan." {
+		t.Fatalf("Content = %q", resp.Content)
+	}
+	if len(planner.reqs) != 1 {
+		t.Fatalf("planner requests = %d, want one", len(planner.reqs))
+	}
+	if resp.Usage.TotalTokens != 18 {
+		t.Fatalf("usage total = %d, want router plus planner usage", resp.Usage.TotalTokens)
+	}
+}
+
 func TestAssistantReplyLimitsChatHistory(t *testing.T) {
 	t.Parallel()
 
@@ -451,6 +833,19 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 	} {
 		if !strings.Contains(plannerPrompt, want) {
 			t.Fatalf("planner prompt missing %q:\n%s", want, plannerPrompt)
+		}
+	}
+
+	routerPrompt := bossReadOnlyRouterSystemPrompt()
+	for _, want := range []string{
+		"fast read-only query router",
+		"Choose pass for requests to change state",
+		"Use goal_run_report when the user asks what Boss goal runs happened",
+		"put only that id in query",
+		"Do not answer the user",
+	} {
+		if !strings.Contains(routerPrompt, want) {
+			t.Fatalf("read-only router prompt missing %q:\n%s", want, routerPrompt)
 		}
 	}
 }
@@ -1396,6 +1791,15 @@ func encodedBossAction(t *testing.T, action bossAction) string {
 	raw, err := json.Marshal(action)
 	if err != nil {
 		t.Fatalf("marshal action: %v", err)
+	}
+	return string(raw)
+}
+
+func encodedReadOnlyRoute(t *testing.T, route bossReadOnlyRoute) string {
+	t.Helper()
+	raw, err := json.Marshal(route)
+	if err != nil {
+		t.Fatalf("marshal read-only route: %v", err)
 	}
 	return string(raw)
 }
