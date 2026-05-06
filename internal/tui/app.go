@@ -5929,6 +5929,9 @@ func expandVisibleWorktreeFamilies(filtered, sorted []model.ProjectSummary) []mo
 			out = append(out, project)
 			continue
 		}
+		if !projectParticipatesInWorktreeFamily(project) {
+			continue
+		}
 		if _, ok := visibleRoots[projectWorktreeRootPath(project)]; ok {
 			out = append(out, project)
 		}

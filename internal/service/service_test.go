@@ -6343,6 +6343,253 @@ func TestScanOncePropagatesToRootProjectFromLinkedWorktreeActivity(t *testing.T)
 	}
 }
 
+func TestScanOnceCanonicalizesRepoSubdirectorySessionToGitTopLevel(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	runPath := filepath.Join(projectPath, "runs", "001-demo")
+	initGitRepo(t, projectPath)
+	if err := os.MkdirAll(runPath, 0o755); err != nil {
+		t.Fatalf("mkdir run path: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	activityAt := time.Now().UTC().Add(-5 * time.Minute).Truncate(time.Second)
+	detector := staticDetector{
+		name: "codex",
+		activities: map[string]*model.DetectorProjectActivity{
+			runPath: fakeActivity(runPath, "nested-session", activityAt),
+		},
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = []string{root}
+	svc := New(cfg, st, events.NewBus(), []detectors.Detector{detector})
+
+	report, err := svc.ScanOnce(ctx)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(report.States) != 1 || report.States[0].Path != projectPath {
+		t.Fatalf("scan states = %#v, want only root project %s", report.States, projectPath)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 10)
+	if err != nil {
+		t.Fatalf("get root detail: %v", err)
+	}
+	if len(detail.Sessions) != 1 {
+		t.Fatalf("root session count = %d, want 1", len(detail.Sessions))
+	}
+	if detail.Sessions[0].ProjectPath != projectPath {
+		t.Fatalf("session project path = %q, want %q", detail.Sessions[0].ProjectPath, projectPath)
+	}
+	if detail.Sessions[0].DetectedProjectPath != runPath {
+		t.Fatalf("session detected path = %q, want original cwd %q", detail.Sessions[0].DetectedProjectPath, runPath)
+	}
+
+	projects, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list projects: %v", err)
+	}
+	if len(projects) != 1 || projects[0].Path != projectPath {
+		t.Fatalf("visible projects = %#v, want only root project", projects)
+	}
+}
+
+func TestScanOnceKeepsLinkedWorktreeSubdirectorySessionOnLinkedWorktree(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	worktreePath := filepath.Join(root, "repo--feature")
+	runPath := filepath.Join(worktreePath, "runs", "001-demo")
+	initGitRepo(t, projectPath)
+	runGit(t, projectPath, "git", "worktree", "add", "-b", "feature", worktreePath)
+	if err := os.MkdirAll(runPath, 0o755); err != nil {
+		t.Fatalf("mkdir linked run path: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	activityAt := time.Now().UTC().Add(-5 * time.Minute).Truncate(time.Second)
+	detector := staticDetector{
+		name: "codex",
+		activities: map[string]*model.DetectorProjectActivity{
+			runPath: fakeActivity(runPath, "linked-nested-session", activityAt),
+		},
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = []string{root}
+	svc := New(cfg, st, events.NewBus(), []detectors.Detector{detector})
+
+	if _, err := svc.ScanOnce(ctx); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, worktreePath, 10)
+	if err != nil {
+		t.Fatalf("get linked worktree detail: %v", err)
+	}
+	if detail.Summary.WorktreeKind != model.WorktreeKindLinked {
+		t.Fatalf("worktree kind = %q, want linked", detail.Summary.WorktreeKind)
+	}
+	if len(detail.Sessions) != 1 {
+		t.Fatalf("linked session count = %d, want 1", len(detail.Sessions))
+	}
+	if detail.Sessions[0].ProjectPath != worktreePath {
+		t.Fatalf("session project path = %q, want linked top-level %q", detail.Sessions[0].ProjectPath, worktreePath)
+	}
+	if detail.Sessions[0].DetectedProjectPath != runPath {
+		t.Fatalf("session detected path = %q, want original cwd %q", detail.Sessions[0].DetectedProjectPath, runPath)
+	}
+}
+
+func TestScanOnceForgetsExistingDerivedRepoSubdirectoryProject(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	runPath := filepath.Join(projectPath, "runs", "001-demo")
+	initGitRepo(t, projectPath)
+	if err := os.MkdirAll(runPath, 0o755); err != nil {
+		t.Fatalf("mkdir run path: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	activityAt := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
+	sessionID := "codex:existing-derived-session"
+	sessionFile := filepath.Join(runPath, "session.jsonl")
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:             runPath,
+		Name:             filepath.Base(runPath),
+		Kind:             model.ProjectKindProject,
+		LastActivity:     activityAt,
+		Status:           model.StatusActive,
+		AttentionScore:   77,
+		PresentOnDisk:    true,
+		WorktreeRootPath: projectPath,
+		WorktreeKind:     model.WorktreeKindMain,
+		Forgotten:        false,
+		InScope:          true,
+		Sessions: []model.SessionEvidence{{
+			Source:              model.SessionSourceCodex,
+			SessionID:           sessionID,
+			RawSessionID:        "existing-derived-session",
+			ProjectPath:         runPath,
+			DetectedProjectPath: runPath,
+			SessionFile:         sessionFile,
+			Format:              "modern",
+			SnapshotHash:        "old-hash",
+			StartedAt:           activityAt.Add(-2 * time.Minute),
+			LastEventAt:         activityAt,
+		}},
+		UpdatedAt: activityAt,
+	}); err != nil {
+		t.Fatalf("seed derived project: %v", err)
+	}
+	if _, err := st.QueueSessionClassification(ctx, model.SessionClassification{
+		Source:            model.SessionSourceCodex,
+		SessionID:         sessionID,
+		RawSessionID:      "existing-derived-session",
+		ProjectPath:       runPath,
+		SessionFile:       sessionFile,
+		SessionFormat:     "modern",
+		SnapshotHash:      "old-hash",
+		Status:            model.ClassificationPending,
+		ClassifierVersion: "test",
+		SourceUpdatedAt:   activityAt,
+	}, 0); err != nil {
+		t.Fatalf("seed classification: %v", err)
+	}
+
+	newActivityAt := time.Now().UTC().Add(-5 * time.Minute).Truncate(time.Second)
+	detector := staticDetector{
+		name: "codex",
+		activities: map[string]*model.DetectorProjectActivity{
+			runPath: {
+				ProjectPath:  runPath,
+				LastActivity: newActivityAt,
+				Source:       "codex",
+				Sessions: []model.SessionEvidence{{
+					Source:              model.SessionSourceCodex,
+					SessionID:           sessionID,
+					RawSessionID:        "existing-derived-session",
+					ProjectPath:         runPath,
+					DetectedProjectPath: runPath,
+					SessionFile:         sessionFile,
+					Format:              "modern",
+					SnapshotHash:        "new-hash",
+					StartedAt:           newActivityAt.Add(-2 * time.Minute),
+					LastEventAt:         newActivityAt,
+				}},
+			},
+		},
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = []string{root}
+	svc := New(cfg, st, events.NewBus(), []detectors.Detector{detector})
+
+	if _, err := svc.ScanOnce(ctx); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+
+	rootDetail, err := st.GetProjectDetail(ctx, projectPath, 10)
+	if err != nil {
+		t.Fatalf("get root detail: %v", err)
+	}
+	if len(rootDetail.Sessions) != 1 || rootDetail.Sessions[0].ProjectPath != projectPath || rootDetail.Sessions[0].DetectedProjectPath != runPath {
+		t.Fatalf("root sessions were not canonicalized as expected: %#v", rootDetail.Sessions)
+	}
+
+	derivedDetail, err := st.GetProjectDetail(ctx, runPath, 10)
+	if err != nil {
+		t.Fatalf("get derived detail: %v", err)
+	}
+	if !derivedDetail.Summary.Forgotten || derivedDetail.Summary.InScope {
+		t.Fatalf("derived project should be forgotten and out of scope, got %#v", derivedDetail.Summary)
+	}
+	if len(derivedDetail.Sessions) != 0 {
+		t.Fatalf("derived project sessions = %#v, want none after repair", derivedDetail.Sessions)
+	}
+
+	classification, err := st.GetSessionClassification(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("get classification: %v", err)
+	}
+	if classification.ProjectPath != projectPath {
+		t.Fatalf("classification project path = %q, want canonical root %q", classification.ProjectPath, projectPath)
+	}
+
+	projects, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list projects: %v", err)
+	}
+	if len(projects) != 1 || projects[0].Path != projectPath {
+		t.Fatalf("visible projects = %#v, want only root project", projects)
+	}
+}
+
 func createSuggestedTodoWorktreeForTest(t *testing.T, ctx context.Context, svc *Service, st *store.Store, projectPath, todoText, branchName, worktreeSuffix string) CreateTodoWorktreeResult {
 	t.Helper()
 	item, err := svc.AddTodo(ctx, projectPath, todoText)

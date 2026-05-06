@@ -1907,11 +1907,28 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 		if detectedPath == "" {
 			detectedPath = state.Path
 		}
+		if _, err = tx.ExecContext(ctx, `
+			DELETE FROM project_sessions
+			WHERE session_id = ? AND project_path != ?
+		`, session.SessionID, state.Path); err != nil {
+			return err
+		}
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO project_sessions(session_id, source, raw_session_id, project_path, detected_project_path, session_file, format, snapshot_hash, started_at, last_event_at, error_count, latest_turn_started_at, latest_turn_state_known, latest_turn_completed, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, session.SessionID, string(session.Source), session.RawSessionID, state.Path, detectedPath, session.SessionFile, session.Format, session.SnapshotHash, startedAt, session.LastEventAt.Unix(), session.ErrorCount, latestTurnStartedAt, boolToInt(session.LatestTurnStateKnown), boolToInt(session.LatestTurnCompleted), state.UpdatedAt.Unix())
 		if err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `
+			UPDATE session_classifications
+			SET project_path = ?,
+				source = ?,
+				raw_session_id = ?,
+				session_file = ?,
+				session_format = ?
+			WHERE session_id = ?
+		`, state.Path, string(session.Source), session.RawSessionID, session.SessionFile, session.Format, session.SessionID); err != nil {
 			return err
 		}
 	}

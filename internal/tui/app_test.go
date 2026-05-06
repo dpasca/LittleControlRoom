@@ -918,6 +918,58 @@ func TestProjectRepoWarningIndicator(t *testing.T) {
 	}
 }
 
+func TestBuildProjectRowsDoesNotTreatRepoSubdirectoryAsLinkedWorktree(t *testing.T) {
+	rootPath := "/tmp/repo"
+	derivedPath := "/tmp/repo/runs/001-demo"
+	linkedPath := "/tmp/repo--feature"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Path:             rootPath,
+				Name:             "repo",
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				Status:           model.StatusIdle,
+			},
+			{
+				Path:             derivedPath,
+				Name:             "001-demo",
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				Status:           model.StatusIdle,
+			},
+			{
+				Path:             linkedPath,
+				Name:             "repo--feature",
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+				Status:           model.StatusIdle,
+			},
+		},
+	}
+
+	rows, meta := m.buildProjectRows(m.allProjects, "")
+	if len(rows) != 2 || len(meta) != 2 {
+		t.Fatalf("rows/meta lengths = %d/%d, want 2/2; rows=%#v meta=%#v", len(rows), len(meta), rows, meta)
+	}
+	if rows[0].Path != rootPath || meta[0].Kind != projectListRowRepo || meta[0].LinkedCount != 1 {
+		t.Fatalf("root row/meta = %#v/%#v, want repo row with exactly one linked worktree", rows[0], meta[0])
+	}
+	if rows[1].Path != derivedPath || meta[1].Kind != projectListRowStandalone {
+		t.Fatalf("derived row/meta = %#v/%#v, want standalone subdirectory row", rows[1], meta[1])
+	}
+
+	family := m.worktreeFamily(rootPath)
+	if len(family) != 2 {
+		t.Fatalf("worktree family = %#v, want root + linked only", family)
+	}
+	for _, project := range family {
+		if project.Path == derivedPath {
+			t.Fatalf("derived subdirectory should not appear in worktree family: %#v", family)
+		}
+	}
+}
+
 func TestProjectAttentionScoreAddsRunningRuntimeWeight(t *testing.T) {
 	now := time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC)
 	project := model.ProjectSummary{

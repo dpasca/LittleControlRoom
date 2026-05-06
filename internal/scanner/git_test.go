@@ -166,6 +166,9 @@ func TestReadGitWorktreeInfoFallsBackToGitFileForStaleLinkedWorktree(t *testing.
 	if info.RootPath != repoPath {
 		t.Fatalf("RootPath = %q, want %q", info.RootPath, repoPath)
 	}
+	if info.TopLevelPath != worktreePath {
+		t.Fatalf("TopLevelPath = %q, want %q", info.TopLevelPath, worktreePath)
+	}
 	if info.Kind != GitWorktreeKindLinked {
 		t.Fatalf("Kind = %q, want %q", info.Kind, GitWorktreeKindLinked)
 	}

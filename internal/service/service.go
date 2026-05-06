@@ -772,9 +772,54 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		return ScanReport{}, fmt.Errorf("load path aliases: %w", err)
 	}
 
+	knownPathVariants := append([]string(nil), discovered...)
+	knownPathVariants = append(knownPathVariants, mapKeys(oldMap)...)
+	for path := range rawActivities {
+		cleanPath := filepath.Clean(strings.TrimSpace(path))
+		if cleanPath == "" || cleanPath == "." {
+			continue
+		}
+		knownPathVariants = append(knownPathVariants, resolveProjectPath(cleanPath, aliases))
+	}
+	pathVariantResolver := newKnownPathVariantResolver(knownPathVariants)
+	normalizeWorktreeInfoPaths := func(info scanner.GitWorktreeInfo) scanner.GitWorktreeInfo {
+		if strings.TrimSpace(info.RootPath) != "" {
+			info.RootPath = pathVariantResolver.preferred(info.RootPath)
+		}
+		if strings.TrimSpace(info.TopLevelPath) != "" {
+			info.TopLevelPath = pathVariantResolver.preferred(info.TopLevelPath)
+		}
+		return info
+	}
+	worktreeInfoCache := map[string]scanner.GitWorktreeInfo{}
+	worktreeInfoMisses := map[string]struct{}{}
+	readWorktreeInfo := func(path string) (scanner.GitWorktreeInfo, bool) {
+		cleanPath := filepath.Clean(strings.TrimSpace(path))
+		if cleanPath == "" || cleanPath == "." || gitWorktreeInfoReader == nil || !projectPathExists(cleanPath) {
+			return scanner.GitWorktreeInfo{}, false
+		}
+		if info, ok := worktreeInfoCache[cleanPath]; ok {
+			return info, true
+		}
+		if _, ok := worktreeInfoMisses[cleanPath]; ok {
+			return scanner.GitWorktreeInfo{}, false
+		}
+		info, readErr := gitWorktreeInfoReader(ctx, cleanPath)
+		if readErr != nil {
+			worktreeInfoMisses[cleanPath] = struct{}{}
+			return scanner.GitWorktreeInfo{}, false
+		}
+		info = normalizeWorktreeInfoPaths(info)
+		worktreeInfoCache[cleanPath] = info
+		return info, true
+	}
+
 	activities := map[string]*model.DetectorProjectActivity{}
 	for path, activity := range rawActivities {
-		canonicalPath := resolveProjectPath(filepath.Clean(path), aliases)
+		activityPath := resolveProjectPath(filepath.Clean(path), aliases)
+		canonicalPath := canonicalGitProjectPath(activityPath, readWorktreeInfo)
+		canonicalPath = pathVariantResolver.preferred(canonicalPath)
+		canonicalPath = resolveProjectPath(canonicalPath, aliases)
 		normalized := normalizeActivity(activity, canonicalPath)
 		existing, ok := activities[canonicalPath]
 		if !ok {
@@ -834,11 +879,8 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 				currentRepoStatus[path] = repoStatus
 			}
 		}
-		if gitWorktreeInfoReader != nil {
-			worktreeInfo, readErr := gitWorktreeInfoReader(ctx, path)
-			if readErr == nil {
-				currentWorktreeInfo[path] = worktreeInfo
-			}
+		if worktreeInfo, ok := readWorktreeInfo(path); ok {
+			currentWorktreeInfo[path] = worktreeInfo
 		}
 	}
 
@@ -872,6 +914,51 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		}
 		presentOnDisk := projectPathExists(path)
 		isGitRepo := presentOnDisk && projectIsGitRepo(path)
+		worktreeInfo, haveWorktreeInfo := currentWorktreeInfo[path]
+		if presentOnDisk && shouldForgetDerivedGitSubdirProject(old, projectKind, path, worktreeInfo, haveWorktreeInfo) {
+			worktreeRootPath := filepath.Clean(strings.TrimSpace(worktreeInfo.RootPath))
+			worktreeKind := modelWorktreeKindFromGit(worktreeInfo.Kind)
+			state := model.ProjectState{
+				Path:                 path,
+				Name:                 projectName,
+				Kind:                 projectKind,
+				LastActivity:         old.LastActivity,
+				Status:               model.StatusIdle,
+				AttentionScore:       0,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     worktreeRootPath,
+				WorktreeKind:         worktreeKind,
+				WorktreeParentBranch: old.WorktreeParentBranch,
+				WorktreeMergeStatus:  old.WorktreeMergeStatus,
+				WorktreeOriginTodoID: old.WorktreeOriginTodoID,
+				RepoBranch:           old.RepoBranch,
+				RepoDirty:            old.RepoDirty,
+				RepoConflict:         old.RepoConflict,
+				RepoSyncStatus:       old.RepoSyncStatus,
+				RepoAheadCount:       old.RepoAheadCount,
+				RepoBehindCount:      old.RepoBehindCount,
+				Forgotten:            true,
+				ManuallyAdded:        old.ManuallyAdded,
+				InScope:              false,
+				Pinned:               old.Pinned,
+				SnoozedUntil:         old.SnoozedUntil,
+				RunCommand:           old.RunCommand,
+				MovedFromPath:        old.MovedFromPath,
+				MovedAt:              old.MovedAt,
+				CreatedAt:            old.CreatedAt,
+				UpdatedAt:            now,
+			}
+			if err := s.store.UpsertProjectState(ctx, state); err != nil {
+				unlockProjectState()
+				return ScanReport{}, fmt.Errorf("persist derived subdirectory project state: %w", err)
+			}
+			if projectStateChanged(old, state) {
+				updated = append(updated, path)
+				s.publishProjectChanged(ctx, now, state)
+			}
+			unlockProjectState()
+			continue
+		}
 		worktreeRootPath := old.WorktreeRootPath
 		worktreeKind := old.WorktreeKind
 		worktreeParentBranch := old.WorktreeParentBranch
@@ -1705,6 +1792,34 @@ func resolveProjectPath(path string, aliases map[string]model.PathAlias) string 
 		path = filepath.Clean(alias.NewPath)
 	}
 	return path
+}
+
+func canonicalGitProjectPath(path string, readWorktreeInfo func(string) (scanner.GitWorktreeInfo, bool)) string {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "" || path == "." || readWorktreeInfo == nil {
+		return path
+	}
+	info, ok := readWorktreeInfo(path)
+	if !ok {
+		return path
+	}
+	topLevelPath := filepath.Clean(strings.TrimSpace(info.TopLevelPath))
+	if topLevelPath == "" || topLevelPath == "." {
+		return path
+	}
+	return topLevelPath
+}
+
+func shouldForgetDerivedGitSubdirProject(old model.ProjectSummary, projectKind model.ProjectKind, path string, info scanner.GitWorktreeInfo, haveInfo bool) bool {
+	if !haveInfo || old.ManuallyAdded || old.Pinned || model.NormalizeProjectKind(projectKind) != model.ProjectKindProject {
+		return false
+	}
+	if old.OpenTODOCount > 0 || old.TotalTODOCount > 0 || strings.TrimSpace(old.RunCommand) != "" {
+		return false
+	}
+	path = filepath.Clean(strings.TrimSpace(path))
+	topLevelPath := filepath.Clean(strings.TrimSpace(info.TopLevelPath))
+	return path != "" && path != "." && topLevelPath != "" && topLevelPath != "." && topLevelPath != path
 }
 
 func normalizeActivity(activity *model.DetectorProjectActivity, projectPath string) *model.DetectorProjectActivity {

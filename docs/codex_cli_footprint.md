@@ -98,7 +98,8 @@ Observed *not* to update for every tool call in this run:
 Recommended stable identifiers for Little Control Room:
 
 - `session_id` / thread id (from `session_meta.payload.id` or legacy first-line `id`)
-- `cwd` (project path)
+- `cwd` (raw detected working directory; preserve this as provenance)
+- Git top-level path for project ownership when `cwd` is inside a Git worktree
 - file mtime for active session files
 
 ## 5. Practical detection strategy
@@ -106,10 +107,11 @@ Recommended stable identifiers for Little Control Room:
 Primary (filesystem-first):
 
 1. Parse `~/.codex/sessions/**/*.jsonl` for `(session_id, cwd, started_at)`.
-2. Use session file mtime as last activity signal.
-3. Parse structured `event_msg.payload.type` lifecycle markers (`task_started`, `task_complete`, `turn_aborted`) to infer whether the latest turn completed.
-4. For latest-session classification, read only a bounded tail of recent conversational events from the JSONL instead of reparsing full history.
-5. Optionally scan recent output text for non-zero process exit markers.
+2. Canonicalize Git-backed `cwd` values to the containing worktree top-level for project ownership, while keeping the raw `cwd` as the detected path.
+3. Use session file mtime as last activity signal.
+4. Parse structured `event_msg.payload.type` lifecycle markers (`task_started`, `task_complete`, `turn_aborted`) to infer whether the latest turn completed.
+5. For latest-session classification, read only a bounded tail of recent conversational events from the JSONL instead of reparsing full history.
+6. Optionally scan recent output text for non-zero process exit markers.
 
 Optional secondary accelerator:
 
@@ -119,3 +121,4 @@ Optional secondary accelerator:
 
 - Session data volume can be large; avoid full-file deep parsing every poll.
 - A compatibility parser should support both modern and legacy session JSONL layouts.
+- Codex runs launched from repository subdirectories should not create separate LCR projects when Git identifies the same worktree top-level.

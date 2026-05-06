@@ -473,6 +473,13 @@ func projectUsesRepoUI(project model.ProjectSummary) bool {
 	}
 }
 
+func projectParticipatesInWorktreeFamily(project model.ProjectSummary) bool {
+	if !projectUsesRepoUI(project) {
+		return false
+	}
+	return projectIsWorktreeRoot(project) || project.WorktreeKind == model.WorktreeKindLinked
+}
+
 func projectIsOrphanedWorktree(project model.ProjectSummary) bool {
 	if !projectUsesRepoUI(project) {
 		return false
@@ -617,7 +624,7 @@ func (m Model) worktreeFamily(rootPath string) []model.ProjectSummary {
 	}
 	out := make([]model.ProjectSummary, 0, 4)
 	for _, project := range m.allProjects {
-		if !projectUsesRepoUI(project) {
+		if !projectParticipatesInWorktreeFamily(project) {
 			continue
 		}
 		if projectWorktreeRootPath(project) == rootPath {
@@ -685,7 +692,7 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary, selectedPath st
 	order := []string{}
 	groups := map[string]*group{}
 	for _, project := range projects {
-		if !projectUsesRepoUI(project) {
+		if !projectParticipatesInWorktreeFamily(project) {
 			key := filepath.Clean(strings.TrimSpace(project.Path))
 			if key == "" || key == "." {
 				key = project.Path

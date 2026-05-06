@@ -33,8 +33,9 @@ const (
 )
 
 type GitWorktreeInfo struct {
-	RootPath string
-	Kind     GitWorktreeKind
+	RootPath     string
+	TopLevelPath string
+	Kind         GitWorktreeKind
 }
 
 type GitWorktree struct {
@@ -196,8 +197,9 @@ func ReadGitWorktreeInfo(ctx context.Context, path string) (GitWorktreeInfo, err
 		rootPath = topLevel
 	}
 	return GitWorktreeInfo{
-		RootPath: rootPath,
-		Kind:     kind,
+		RootPath:     rootPath,
+		TopLevelPath: topLevel,
+		Kind:         kind,
 	}, nil
 }
 
@@ -240,8 +242,9 @@ func readGitWorktreeInfoFromGitFile(path string) (GitWorktreeInfo, error) {
 		return GitWorktreeInfo{}, fmt.Errorf("%s resolves to an empty worktree root", gitPath)
 	}
 	return GitWorktreeInfo{
-		RootPath: rootPath,
-		Kind:     GitWorktreeKindLinked,
+		RootPath:     rootPath,
+		TopLevelPath: filepath.Clean(path),
+		Kind:         GitWorktreeKindLinked,
 	}, nil
 }
 
