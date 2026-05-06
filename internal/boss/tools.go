@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/bossrun"
 	"lcroom/internal/codexskills"
 	"lcroom/internal/codexstate"
 	"lcroom/internal/config"
@@ -33,40 +34,53 @@ const (
 	bossActionContextCommand         = "context_command"
 	bossActionSkillsInventory        = "skills_inventory"
 	bossActionProposeControl         = "propose_control"
+	bossActionProposeGoal            = "propose_goal"
 
 	bossToolResultLimit = 8000
 )
 
 type bossAction struct {
-	Kind              string                `json:"kind"`
-	Answer            string                `json:"answer"`
-	Target            string                `json:"target"`
-	Query             string                `json:"query"`
-	Command           string                `json:"command"`
-	ProjectPath       string                `json:"project_path"`
-	ProjectName       string                `json:"project_name"`
-	SessionID         string                `json:"session_id"`
-	ControlCapability string                `json:"control_capability"`
-	RequestID         string                `json:"request_id"`
-	TaskID            string                `json:"task_id"`
-	TaskTitle         string                `json:"task_title"`
-	TaskKind          string                `json:"task_kind"`
-	ParentTaskID      string                `json:"parent_task_id"`
-	TaskCloseStatus   string                `json:"task_close_status"`
-	TaskSummary       string                `json:"task_summary"`
-	EngineerProvider  string                `json:"engineer_provider"`
-	SessionMode       string                `json:"session_mode"`
-	Prompt            string                `json:"prompt"`
-	IntentExcerpt     string                `json:"intent_excerpt"`
-	PreservedMeaning  string                `json:"preserved_meaning"`
-	SuccessCondition  string                `json:"success_condition"`
-	Reveal            bool                  `json:"reveal"`
-	CloseSession      bool                  `json:"close_session"`
-	Capabilities      []string              `json:"capabilities"`
-	Resources         []control.ResourceRef `json:"resources"`
-	IncludeHistorical bool                  `json:"include_historical"`
-	Limit             int                   `json:"limit"`
-	Reason            string                `json:"reason"`
+	Kind                     string                `json:"kind"`
+	Answer                   string                `json:"answer"`
+	Target                   string                `json:"target"`
+	Query                    string                `json:"query"`
+	Command                  string                `json:"command"`
+	ProjectPath              string                `json:"project_path"`
+	ProjectName              string                `json:"project_name"`
+	SessionID                string                `json:"session_id"`
+	ControlCapability        string                `json:"control_capability"`
+	RequestID                string                `json:"request_id"`
+	TaskID                   string                `json:"task_id"`
+	TaskTitle                string                `json:"task_title"`
+	TaskKind                 string                `json:"task_kind"`
+	ParentTaskID             string                `json:"parent_task_id"`
+	TaskCloseStatus          string                `json:"task_close_status"`
+	TaskSummary              string                `json:"task_summary"`
+	EngineerProvider         string                `json:"engineer_provider"`
+	SessionMode              string                `json:"session_mode"`
+	Prompt                   string                `json:"prompt"`
+	IntentExcerpt            string                `json:"intent_excerpt"`
+	PreservedMeaning         string                `json:"preserved_meaning"`
+	SuccessCondition         string                `json:"success_condition"`
+	Reveal                   bool                  `json:"reveal"`
+	CloseSession             bool                  `json:"close_session"`
+	Capabilities             []string              `json:"capabilities"`
+	Resources                []control.ResourceRef `json:"resources"`
+	GoalKind                 string                `json:"goal_kind"`
+	GoalTitle                string                `json:"goal_title"`
+	GoalObjective            string                `json:"goal_objective"`
+	GoalSuccessCriteria      string                `json:"goal_success_criteria"`
+	GoalPreview              string                `json:"goal_preview"`
+	GoalMaxRisk              string                `json:"goal_max_risk"`
+	GoalResources            []control.ResourceRef `json:"goal_resources"`
+	GoalKeepResources        []control.ResourceRef `json:"goal_keep_resources"`
+	GoalReviewResources      []control.ResourceRef `json:"goal_review_resources"`
+	GoalAllowedCapabilities  []string              `json:"goal_allowed_capabilities"`
+	GoalForbiddenSideEffects []string              `json:"goal_forbidden_side_effects"`
+	GoalPlanSteps            []bossrun.PlanStep    `json:"goal_plan_steps"`
+	IncludeHistorical        bool                  `json:"include_historical"`
+	Limit                    int                   `json:"limit"`
+	Reason                   string                `json:"reason"`
 }
 
 type bossToolResult struct {

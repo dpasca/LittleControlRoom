@@ -28,6 +28,7 @@ Older notes from the previous rolling-log workflow live in [docs/status_archive.
 ## Current Priorities
 
 - Keep polishing embedded Codex and OpenCode parity and move toward a provider-neutral session abstraction.
+- Evolve Boss from single-action control proposals toward a durable goal-run runtime with scoped authority, plan execution, verification, traces, and portfolio-level attention.
 - Improve worktree ergonomics without hiding repo-centric status or merge-safety cues.
 - Strengthen managed-runtime UX and cross-platform launch and debug behavior.
 - Keep scoring reasons and backend cost and activity signals easy to inspect.

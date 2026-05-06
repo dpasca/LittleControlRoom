@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/bossrun"
 	"lcroom/internal/brand"
 	"lcroom/internal/config"
 	"lcroom/internal/control"
@@ -41,6 +42,7 @@ type AssistantResponse struct {
 	Model             string
 	Usage             model.LLMUsage
 	ControlInvocation *control.Invocation
+	GoalProposal      *bossrun.GoalProposal
 }
 
 type AssistantStreamEventKind string
@@ -266,6 +268,18 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 				ControlInvocation: &inv,
 			}, nil
 		}
+		if normalizeBossActionKind(action.Kind) == bossActionProposeGoal {
+			proposal, content, err := goalProposalFromBossAction(action)
+			if err != nil {
+				return AssistantResponse{}, wrapGoalProposalError(err)
+			}
+			return AssistantResponse{
+				Content:      content,
+				Model:        firstNonEmpty(usedModel, modelName),
+				Usage:        totalUsage,
+				GoalProposal: &proposal,
+			}, nil
+		}
 
 		result, err := a.query.Execute(ctx, action, req.Snapshot, req.View)
 		if err != nil {
@@ -347,6 +361,20 @@ func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantReque
 				ControlInvocation: &inv,
 			}, nil
 		}
+		if normalizeBossActionKind(action.Kind) == bossActionProposeGoal {
+			proposal, content, err := goalProposalFromBossAction(action)
+			if err != nil {
+				return AssistantResponse{}, wrapGoalProposalError(err)
+			}
+			emitToolCall(emit, describeBossAction(action), "ready")
+			emitAssistantDelta(emit, content)
+			return AssistantResponse{
+				Content:      content,
+				Model:        firstNonEmpty(usedModel, modelName),
+				Usage:        totalUsage,
+				GoalProposal: &proposal,
+			}, nil
+		}
 
 		toolCall := describeBossAction(action)
 		emitToolCall(emit, toolCall, "running")
@@ -420,9 +448,12 @@ func (a *Assistant) planAction(ctx context.Context, req AssistantRequest, toolRe
 		if normalizeBossActionKind(action.Kind) == bossActionProposeControl {
 			return response, bossAction{}, wrapControlProposalError(err)
 		}
+		if normalizeBossActionKind(action.Kind) == bossActionProposeGoal {
+			return response, bossAction{}, wrapGoalProposalError(err)
+		}
 		return response, bossAction{}, err
 	}
-	if forceAnswer && action.Kind != bossActionAnswer && action.Kind != bossActionProposeControl {
+	if forceAnswer && action.Kind != bossActionAnswer && action.Kind != bossActionProposeControl && action.Kind != bossActionProposeGoal {
 		action = bossAction{
 			Kind:   bossActionAnswer,
 			Answer: synthesizeToolLoopFallback(toolResults),
@@ -517,7 +548,7 @@ const bossAssistantMaxToolRounds = 4
 func bossActionPlannerSystemPrompt() string {
 	return strings.Join([]string{
 		"You are the unnamed Boss Chat helper inside Little Control Room; the user is the boss.",
-		"You decide whether to answer now, request exactly one read-only query, or propose exactly one control action for user confirmation.",
+		"You decide whether to answer now, request exactly one read-only query, propose one single control action, or propose one scoped goal run for user confirmation.",
 		"Codex, OpenCode, and Claude Code do implementation work in engineer threads; keep that architecture mostly invisible.",
 		"Boss Chat is the top-level conversation. Engineer task output lives in linked task/thread records, so inspect that record when the user asks what happened or what the engineer knows.",
 		"System notices in the app-state brief are background event context, not spoken Boss Chat turns; never answer with only a raw control or task-status notice.",
@@ -539,6 +570,7 @@ func bossActionPlannerSystemPrompt() string {
 		"Use process_report or the CPU system notice when the user asks about suspicious PIDs, hot CPU, orphaned processes, project-local Node/server processes, or whether stale dev servers are still running.",
 		"Use skills_inventory when the user asks about Codex skills, stale skills, installed skills, skill duplicates, or skill management.",
 		"Available control action kind: propose_control with control_capability equal to engineer.send_prompt, agent_task.create, agent_task.continue, agent_task.close, or scratch_task.archive.",
+		"Available goal action kind: propose_goal. Initial goal_kind is agent_task_cleanup for a scoped run that archives multiple delegated agent task records under one user approval, executes primitive agent_task.close archived actions, refreshes state, verifies that selected records left the active set, and reports failures.",
 		"Use engineer.send_prompt only for explicit project/repo work on a loaded project. Do not use it for host operations or generic temporary work.",
 		"Use agent_task.create for temporary delegated work with no natural loaded project, including host/process/browser/system investigation. Use a generic agent task with resources and capabilities; do not encode special domains as task kinds.",
 		"Use agent_task.continue when the user asks to hit an existing open agent task again. Use agent_task.close when the task is done, should wait, or should be archived.",
@@ -547,7 +579,10 @@ func bossActionPlannerSystemPrompt() string {
 		"A status or situation question is enough to close a review/waiting agent task when the gathered evidence directly says the review found no issue, completed the check, or needs no further action.",
 		"If the user asks to remove, erase, archive, hide, close, get rid of, or clear from the active record a delegated agent task, propose agent_task.close with task_close_status=archived even when the task is open, active, review, or waiting. Do not use waiting for cleanup/removal requests.",
 		"For cleanup of stale or stray agent-task records, set close_session=false unless the user explicitly asks to close the live engineer session too.",
-		"If the user asks to remove multiple delegated agent tasks, propose exactly one agent_task.close archived action for the next concrete matching task, and mention that the remaining tasks can follow after this one is confirmed.",
+		"If the user asks to remove multiple delegated agent tasks and concrete task ids are known from state or gathered evidence, use propose_goal with goal_kind=agent_task_cleanup instead of splitting the cleanup into one confirmation per task.",
+		"For agent_task_cleanup goals, put every task to archive in goal_resources as kind=agent_task. Put tasks intentionally excluded from the run in goal_keep_resources, and uncertain tasks that need a human look in goal_review_resources.",
+		"For agent_task_cleanup goals, set goal_allowed_capabilities to [\"agent_task.close\"], goal_max_risk to write, and goal_forbidden_side_effects to include closing live engineer sessions and deleting files or workspaces.",
+		"If only one delegated agent task should be archived, use propose_control with agent_task.close instead of propose_goal.",
 		"When the user asks to solve, finish, continue, or make progress on open agent tasks, treat that as a request to manage those agent tasks, not as a request for only a status answer.",
 		"If the user asks to solve or make progress on multiple open agent tasks, propose exactly one agent_task.continue for the next concrete task. Prefer the user-named task; otherwise choose the stalest or highest-risk task from the available agent-task evidence, and mention that the remaining tasks can follow after this one is confirmed.",
 		"If the user assents to a prior Boss Chat plan for clearing open agent tasks, propose agent_task.continue for the next task in that plan instead of restating the plan.",
@@ -628,9 +663,9 @@ func bossActionPlannerUserText(req AssistantRequest, toolResults []bossToolResul
 		}
 	}
 	if forceAnswer {
-		b.WriteString("\nYou must choose kind=\"answer\" or kind=\"propose_control\" now. Use the gathered data; do not request more read-only queries. If the gathered data resolves a visible review/waiting agent task with no remaining work, choose kind=\"propose_control\" with control_capability=\"agent_task.close\" instead of a plain answer. If the user asks to remove, erase, archive, hide, close, get rid of, or clear from the active record a delegated agent task and gathered data identifies the task id, choose kind=\"propose_control\" with control_capability=\"agent_task.close\" and task_close_status=\"archived\". This applies to open/review/waiting tasks too; do not use task_close_status=\"waiting\" for cleanup. If gathered project data identifies kind=scratch_task and the user wants that task gone, choose kind=\"propose_control\" with control_capability=\"scratch_task.archive\". If gathered task data lacks the detail the user asked for and a task id is clear, and the user is asking for information or progress, choose kind=\"propose_control\" with control_capability=\"agent_task.continue\" and ask that same task for the missing detail. If the user asks whether commit/deploy/release is safe, or whether DB migration/schema/storage/API shape changed, do not answer from summaries; only answer if gathered data directly covers current-diff evidence, otherwise choose kind=\"propose_control\" with control_capability=\"engineer.send_prompt\" and session_mode=\"new\" for a fresh verification.\n")
+		b.WriteString("\nYou must choose kind=\"answer\", kind=\"propose_control\", or kind=\"propose_goal\" now. Use the gathered data; do not request more read-only queries. If the gathered data resolves a visible review/waiting agent task with no remaining work, choose kind=\"propose_control\" with control_capability=\"agent_task.close\" instead of a plain answer. If the user asks to remove, erase, archive, hide, close, get rid of, or clear from the active record multiple delegated agent tasks and gathered data identifies more than one task id, choose kind=\"propose_goal\" with goal_kind=\"agent_task_cleanup\" and put all selected ids in goal_resources. If exactly one delegated task should be removed and the task id is known, choose kind=\"propose_control\" with control_capability=\"agent_task.close\" and task_close_status=\"archived\". This applies to open/review/waiting tasks too; do not use task_close_status=\"waiting\" for cleanup. If gathered project data identifies kind=scratch_task and the user wants that task gone, choose kind=\"propose_control\" with control_capability=\"scratch_task.archive\". If gathered task data lacks the detail the user asked for and a task id is clear, and the user is asking for information or progress, choose kind=\"propose_control\" with control_capability=\"agent_task.continue\" and ask that same task for the missing detail. If the user asks whether commit/deploy/release is safe, or whether DB migration/schema/storage/API shape changed, do not answer from summaries; only answer if gathered data directly covers current-diff evidence, otherwise choose kind=\"propose_control\" with control_capability=\"engineer.send_prompt\" and session_mode=\"new\" for a fresh verification.\n")
 	} else {
-		b.WriteString("\nChoose kind=\"answer\" if you have enough data. If a visible linked task or project can likely answer the question, choose one read-only query before answering. If the user asks to remove, erase, archive, hide, close, get rid of, or clear from the active record a delegated agent task and no task id is visible yet, choose agent_task_report with include_historical=true before answering. If the user asks to remove, clear, hide, archive, or get rid of a task/project and the state does not show whether it is a scratch task, choose project_detail before answering. Choose kind=\"propose_control\" if the user asked to delegate project work, manage/continue/solve/archive/remove an agent task, explicitly clean up a delegated agent task, or archive/remove a scratch task whose project metadata says kind=scratch_task; if fresh gathered data resolves a visible review/waiting agent task and a task id is clear; or if gathered task data lacks the detail the user asked for and the same task should be asked a sharper follow-up. For commit/deploy/release safety, or DB migration/schema/storage/API-shape questions, do not answer from summaries; use a read-only project/context query first and then propose control_capability=\"engineer.send_prompt\" with session_mode=\"new\" if direct current-diff evidence is still missing. For a resolved review/waiting task use control_capability=\"agent_task.close\"; for any delegated task the user wants gone from the active record use control_capability=\"agent_task.close\" with task_close_status=\"archived\"; for a scratch task project the user wants gone use control_capability=\"scratch_task.archive\"; for a missing detail or progress request use control_capability=\"agent_task.continue\". For multiple open agent tasks that need progress, propose one concrete next agent_task.continue rather than only giving an order; for multiple tasks the user wants removed, propose one concrete next agent_task.close archived action.\n")
+		b.WriteString("\nChoose kind=\"answer\" if you have enough data. If a visible linked task or project can likely answer the question, choose one read-only query before answering. If the user asks to remove, erase, archive, hide, close, get rid of, or clear from the active record delegated agent tasks and no task id is visible yet, choose agent_task_report with include_historical=true before answering. If the user asks to remove, clear, hide, archive, or get rid of a task/project and the state does not show whether it is a scratch task, choose project_detail before answering. Choose kind=\"propose_control\" if the user asked to delegate project work, manage/continue/solve/archive/remove an agent task, manage/continue/solve/archive/remove one agent task, or archive/remove a scratch task whose project metadata says kind=scratch_task; if fresh gathered data resolves a visible review/waiting agent task and a task id is clear; or if gathered task data lacks the detail the user asked for and the same task should be asked a sharper follow-up. Choose kind=\"propose_goal\" with goal_kind=\"agent_task_cleanup\" when the user wants multiple delegated agent task records removed/cleared/archived and the selected task ids are known. For commit/deploy/release safety, or DB migration/schema/storage/API-shape questions, do not answer from summaries; use a read-only project/context query first and then propose control_capability=\"engineer.send_prompt\" with session_mode=\"new\" if direct current-diff evidence is still missing. For a resolved review/waiting task use control_capability=\"agent_task.close\"; for any delegated task the user wants gone from the active record and exactly one task is selected, use control_capability=\"agent_task.close\" with task_close_status=\"archived\"; for multiple tasks the user wants removed, use propose_goal agent_task_cleanup; for multiple delegated task records the user wants gone use propose_goal agent_task_cleanup; for a scratch task project the user wants gone use control_capability=\"scratch_task.archive\"; for a missing detail or progress request use control_capability=\"agent_task.continue\". For multiple open agent tasks that need progress, propose one concrete next agent_task.continue rather than only giving an order.\n")
 	}
 	return strings.TrimSpace(b.String())
 }
@@ -691,6 +726,26 @@ func requestContextBrief(req AssistantRequest) string {
 	return strings.Join(parts, "\n\n")
 }
 
+func bossResourceRefSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"kind":         map[string]any{"type": "string", "enum": []string{string(control.ResourceProject), string(control.ResourceEngineerSession), string(control.ResourceTodo), string(control.ResourceAgentTask), string(control.ResourceProcess), string(control.ResourcePort), string(control.ResourceFile)}},
+			"id":           map[string]any{"type": "string"},
+			"path":         map[string]any{"type": "string"},
+			"project_path": map[string]any{"type": "string"},
+			"provider":     map[string]any{"type": "string", "enum": []string{"", string(control.ProviderAuto), string(control.ProviderCodex), string(control.ProviderOpenCode), string(control.ProviderClaudeCode)}},
+			"session_id":   map[string]any{"type": "string"},
+			"todo_id":      map[string]any{"type": "integer"},
+			"pid":          map[string]any{"type": "integer"},
+			"port":         map[string]any{"type": "integer"},
+			"label":        map[string]any{"type": "string"},
+		},
+		"required": []string{"kind", "id", "path", "project_path", "provider", "session_id", "todo_id", "pid", "port", "label"},
+	}
+}
+
 func bossActionSchema() map[string]any {
 	return map[string]any{
 		"type":                 "object",
@@ -713,6 +768,7 @@ func bossActionSchema() map[string]any {
 					bossActionContextCommand,
 					bossActionSkillsInventory,
 					bossActionProposeControl,
+					bossActionProposeGoal,
 				},
 			},
 			"answer": map[string]any{
@@ -819,25 +875,78 @@ func bossActionSchema() map[string]any {
 				"description": "For agent_task.create proposals, allowed action namespaces such as process.inspect, process.terminate, repo.edit, test.run, browser.inspect.",
 			},
 			"resources": map[string]any{
+				"type":        "array",
+				"items":       bossResourceRefSchema(),
+				"description": "For agent_task.create proposals, resources touched by the task.",
+			},
+			"goal_kind": map[string]any{
+				"type":        "string",
+				"enum":        []string{"", bossrun.GoalKindAgentTaskCleanup},
+				"description": "For kind=propose_goal. Initial supported value is agent_task_cleanup.",
+			},
+			"goal_title": map[string]any{
+				"type":        "string",
+				"description": "For kind=propose_goal, a concise user-facing run title.",
+			},
+			"goal_objective": map[string]any{
+				"type":        "string",
+				"description": "For kind=propose_goal, the user objective this run will achieve.",
+			},
+			"goal_success_criteria": map[string]any{
+				"type":        "string",
+				"description": "For kind=propose_goal, the state predicate that must be verified before reporting completion.",
+			},
+			"goal_preview": map[string]any{
+				"type":        "string",
+				"description": "Optional scoped confirmation preview for the goal. Empty lets Little Control Room render one from the structured fields.",
+			},
+			"goal_max_risk": map[string]any{
+				"type":        "string",
+				"enum":        []string{"", string(control.RiskRead), string(control.RiskWrite), string(control.RiskExternal), string(control.RiskDestructive)},
+				"description": "For kind=propose_goal, the maximum risk approved by this grant. Use write for agent_task_cleanup.",
+			},
+			"goal_resources": map[string]any{
+				"type":        "array",
+				"items":       bossResourceRefSchema(),
+				"description": "For kind=propose_goal, resources the run is authorized to act on. For agent_task_cleanup, each selected task is kind=agent_task with id.",
+			},
+			"goal_keep_resources": map[string]any{
+				"type":        "array",
+				"items":       bossResourceRefSchema(),
+				"description": "For kind=propose_goal, resources explicitly excluded from automatic action.",
+			},
+			"goal_review_resources": map[string]any{
+				"type":        "array",
+				"items":       bossResourceRefSchema(),
+				"description": "For kind=propose_goal, ambiguous resources that need review rather than automatic action.",
+			},
+			"goal_allowed_capabilities": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string", "enum": []string{string(control.CapabilityEngineerSendPrompt), string(control.CapabilityAgentTaskCreate), string(control.CapabilityAgentTaskContinue), string(control.CapabilityAgentTaskClose), string(control.CapabilityScratchTaskArchive)}},
+				"description": "For kind=propose_goal, primitive capabilities the approved run may execute. For agent_task_cleanup, use agent_task.close.",
+			},
+			"goal_forbidden_side_effects": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string"},
+				"description": "For kind=propose_goal, side effects outside the user's grant, such as closing live engineer sessions or deleting files/workspaces.",
+			},
+			"goal_plan_steps": map[string]any{
 				"type": "array",
 				"items": map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"kind":         map[string]any{"type": "string", "enum": []string{string(control.ResourceProject), string(control.ResourceEngineerSession), string(control.ResourceTodo), string(control.ResourceAgentTask), string(control.ResourceProcess), string(control.ResourcePort), string(control.ResourceFile)}},
-						"id":           map[string]any{"type": "string"},
-						"path":         map[string]any{"type": "string"},
-						"project_path": map[string]any{"type": "string"},
-						"provider":     map[string]any{"type": "string", "enum": []string{"", string(control.ProviderAuto), string(control.ProviderCodex), string(control.ProviderOpenCode), string(control.ProviderClaudeCode)}},
-						"session_id":   map[string]any{"type": "string"},
-						"todo_id":      map[string]any{"type": "integer"},
-						"pid":          map[string]any{"type": "integer"},
-						"port":         map[string]any{"type": "integer"},
-						"label":        map[string]any{"type": "string"},
+						"id":         map[string]any{"type": "string"},
+						"kind":       map[string]any{"type": "string", "enum": []string{string(bossrun.PlanStepObserve), string(bossrun.PlanStepClassify), string(bossrun.PlanStepSelect), string(bossrun.PlanStepPropose), string(bossrun.PlanStepAct), string(bossrun.PlanStepDelegate), string(bossrun.PlanStepAwait), string(bossrun.PlanStepVerify), string(bossrun.PlanStepBranch), string(bossrun.PlanStepReport)}},
+						"title":      map[string]any{"type": "string"},
+						"capability": map[string]any{"type": "string", "enum": []string{"", string(control.CapabilityEngineerSendPrompt), string(control.CapabilityAgentTaskCreate), string(control.CapabilityAgentTaskContinue), string(control.CapabilityAgentTaskClose), string(control.CapabilityScratchTaskArchive)}},
+						"resources":  map[string]any{"type": "array", "items": bossResourceRefSchema()},
+						"evidence":   map[string]any{"type": "string"},
+						"confidence": map[string]any{"type": "number", "minimum": 0, "maximum": 1},
 					},
-					"required": []string{"kind", "id", "path", "project_path", "provider", "session_id", "todo_id", "pid", "port", "label"},
+					"required": []string{"id", "kind", "title", "capability", "resources", "evidence", "confidence"},
 				},
-				"description": "For agent_task.create proposals, resources touched by the task.",
+				"description": "For kind=propose_goal, compact executable plan IR. Empty lets Little Control Room use the default observe/act/verify/report plan for the goal kind.",
 			},
 			"include_historical": map[string]any{
 				"type":        "boolean",
@@ -881,6 +990,18 @@ func bossActionSchema() map[string]any {
 			"close_session",
 			"capabilities",
 			"resources",
+			"goal_kind",
+			"goal_title",
+			"goal_objective",
+			"goal_success_criteria",
+			"goal_preview",
+			"goal_max_risk",
+			"goal_resources",
+			"goal_keep_resources",
+			"goal_review_resources",
+			"goal_allowed_capabilities",
+			"goal_forbidden_side_effects",
+			"goal_plan_steps",
 			"include_historical",
 			"limit",
 			"reason",
@@ -932,6 +1053,18 @@ func normalizeBossAction(action *bossAction) {
 	action.SuccessCondition = strings.TrimSpace(action.SuccessCondition)
 	action.Capabilities = normalizeBossActionStringList(action.Capabilities)
 	action.Resources = normalizeBossActionResources(action.Resources)
+	action.GoalKind = strings.TrimSpace(strings.ToLower(action.GoalKind))
+	action.GoalTitle = strings.TrimSpace(action.GoalTitle)
+	action.GoalObjective = strings.TrimSpace(action.GoalObjective)
+	action.GoalSuccessCriteria = strings.TrimSpace(action.GoalSuccessCriteria)
+	action.GoalPreview = strings.TrimSpace(action.GoalPreview)
+	action.GoalMaxRisk = strings.TrimSpace(strings.ToLower(action.GoalMaxRisk))
+	action.GoalResources = normalizeBossActionResources(action.GoalResources)
+	action.GoalKeepResources = normalizeBossActionResources(action.GoalKeepResources)
+	action.GoalReviewResources = normalizeBossActionResources(action.GoalReviewResources)
+	action.GoalAllowedCapabilities = normalizeBossActionStringList(action.GoalAllowedCapabilities)
+	action.GoalForbiddenSideEffects = normalizeBossActionStringList(action.GoalForbiddenSideEffects)
+	action.GoalPlanSteps = normalizeBossPlanSteps(action.GoalPlanSteps)
 	action.Reason = strings.TrimSpace(action.Reason)
 }
 
@@ -1019,6 +1152,23 @@ func normalizeBossActionResources(resources []control.ResourceRef) []control.Res
 	return out
 }
 
+func normalizeBossPlanSteps(steps []bossrun.PlanStep) []bossrun.PlanStep {
+	out := make([]bossrun.PlanStep, 0, len(steps))
+	for _, step := range steps {
+		step.ID = strings.TrimSpace(step.ID)
+		step.Kind = bossrun.PlanStepKind(strings.TrimSpace(strings.ToLower(string(step.Kind))))
+		step.Title = strings.TrimSpace(step.Title)
+		step.Capability = control.CapabilityName(strings.TrimSpace(string(step.Capability)))
+		step.Resources = normalizeBossActionResources(step.Resources)
+		step.Evidence = strings.TrimSpace(step.Evidence)
+		if step.ID == "" && step.Title == "" && step.Kind == "" {
+			continue
+		}
+		out = append(out, step)
+	}
+	return out
+}
+
 func validateBossAction(action bossAction) error {
 	switch action.Kind {
 	case bossActionAnswer:
@@ -1027,6 +1177,9 @@ func validateBossAction(action bossAction) error {
 		return nil
 	case bossActionProposeControl:
 		_, _, err := controlProposalFromBossAction(action)
+		return err
+	case bossActionProposeGoal:
+		_, _, err := goalProposalFromBossAction(action)
 		return err
 	default:
 		return fmt.Errorf("boss chat returned unsupported action kind %q", action.Kind)
@@ -1132,6 +1285,10 @@ func describeBossAction(action bossAction) string {
 	case bossActionProposeControl:
 		if capability := strings.TrimSpace(action.ControlCapability); capability != "" {
 			return kind + " " + capability
+		}
+	case bossActionProposeGoal:
+		if goalKind := strings.TrimSpace(action.GoalKind); goalKind != "" {
+			return kind + " " + goalKind
 		}
 	case bossActionSkillsInventory:
 		return kind

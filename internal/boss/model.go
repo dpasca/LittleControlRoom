@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/bossrun"
 	"lcroom/internal/inputcomposer"
 	"lcroom/internal/model"
 	"lcroom/internal/service"
@@ -46,6 +47,7 @@ type Model struct {
 	messages          []ChatMessage
 	bossSlashSelected int
 	pendingControl    *ControlProposal
+	pendingGoal       *bossrun.GoalProposal
 
 	sessionStore  *bossSessionStore
 	sessionID     string
@@ -217,7 +219,7 @@ func newModel(ctx context.Context, svc *service.Service, embedded bool) Model {
 
 func IsMessage(msg tea.Msg) bool {
 	switch msg.(type) {
-	case StateLoadedMsg, HostNoticeMsg, AssistantReplyMsg, assistantStreamStartedMsg, assistantStreamMsg, TickMsg, ExitMsg, bossSessionLoadedMsg, bossSessionSavedMsg, bossSessionsListedMsg, bossSkillsInventoryMsg, ControlInvocationResultMsg:
+	case StateLoadedMsg, HostNoticeMsg, AssistantReplyMsg, assistantStreamStartedMsg, assistantStreamMsg, TickMsg, ExitMsg, bossSessionLoadedMsg, bossSessionSavedMsg, bossSessionsListedMsg, bossSkillsInventoryMsg, ControlInvocationResultMsg, GoalRunResultMsg:
 		return true
 	default:
 		return false
@@ -226,7 +228,7 @@ func IsMessage(msg tea.Msg) bool {
 
 func IsBackgroundMessage(msg tea.Msg) bool {
 	switch msg.(type) {
-	case StateLoadedMsg, AssistantReplyMsg, assistantStreamStartedMsg, assistantStreamMsg, bossSessionLoadedMsg, bossSessionSavedMsg, bossSessionsListedMsg, bossSkillsInventoryMsg, ControlInvocationResultMsg:
+	case StateLoadedMsg, AssistantReplyMsg, assistantStreamStartedMsg, assistantStreamMsg, bossSessionLoadedMsg, bossSessionSavedMsg, bossSessionsListedMsg, bossSkillsInventoryMsg, ControlInvocationResultMsg, GoalRunResultMsg:
 		return true
 	default:
 		return false
@@ -501,6 +503,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyBossSkillsInventoryMsg(msg)
 	case ControlInvocationResultMsg:
 		return m.applyControlInvocationResult(msg)
+	case GoalRunResultMsg:
+		return m.applyGoalRunResult(msg)
 	case TickMsg:
 		m.spinnerFrame++
 		m.pruneSummaryFlashes()
@@ -517,6 +521,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chatSelection = bossTextSelection{}
 		if m.pendingControl != nil {
 			return m.updateControlConfirmation(msg)
+		}
+		if m.pendingGoal != nil {
+			return m.updateGoalConfirmation(msg)
 		}
 		if m.sessionPickerVisible {
 			return m.updateBossSessionPicker(msg)
@@ -597,12 +604,18 @@ func (m Model) applyAssistantReply(response AssistantResponse, err error, snapsh
 	var saved ChatMessage
 	if err != nil {
 		m.pendingControl = nil
+		m.pendingGoal = nil
 		content := "I could not reach my chat backend yet: " + err.Error()
 		status := "Boss chat could not answer"
 		var proposalErr controlProposalError
 		if errors.As(err, &proposalErr) {
 			content = "I could not prepare that control action: " + proposalErr.Unwrap().Error()
 			status = "Control action proposal failed"
+		}
+		var goalErr goalProposalError
+		if errors.As(err, &goalErr) {
+			content = "I could not prepare that goal run: " + goalProposalDetail(goalErr)
+			status = "Goal run proposal failed"
 		}
 		saved = ChatMessage{
 			Role:    "assistant",
@@ -621,7 +634,16 @@ func (m Model) applyAssistantReply(response AssistantResponse, err error, snapsh
 				Invocation: copyControlInvocation(*response.ControlInvocation),
 				Preview:    content,
 			}
+			m.pendingGoal = nil
 			m.status = "Confirm control action with Enter, or Esc to cancel"
+			m.syncLayout(true)
+			return m, nil
+		}
+		if response.GoalProposal != nil {
+			proposal := bossrun.CloneGoalProposal(*response.GoalProposal)
+			m.pendingGoal = &proposal
+			m.pendingControl = nil
+			m.status = "Confirm goal run with Enter, or Esc to cancel"
 			m.syncLayout(true)
 			return m, nil
 		}
@@ -633,9 +655,11 @@ func (m Model) applyAssistantReply(response AssistantResponse, err error, snapsh
 		m.messages = append(m.messages, saved)
 		if modelName := strings.TrimSpace(response.Model); modelName != "" {
 			m.pendingControl = nil
+			m.pendingGoal = nil
 			m.status = "Boss chat via " + modelName
 		} else {
 			m.pendingControl = nil
+			m.pendingGoal = nil
 			m.status = m.assistant.Label()
 		}
 	}
@@ -707,6 +731,9 @@ func (m Model) View() string {
 	}
 	if m.pendingControl != nil {
 		body = m.renderControlConfirmationOverlay(body, layout.width, layout.height)
+	}
+	if m.pendingGoal != nil {
+		body = m.renderGoalConfirmationOverlay(body, layout.width, layout.height)
 	}
 	if m.embedded {
 		return fitRenderedBlock(body, layout.width, layout.height)
@@ -1009,6 +1036,9 @@ func (m Model) renderChat(layout bossLayout) string {
 		if m.pendingControl != nil {
 			hint = "Enter confirms engineer prompt | Esc cancels"
 		}
+		if m.pendingGoal != nil {
+			hint = "Enter runs approved goal | Esc cancels"
+		}
 		if m.sending {
 			hint = "Boss chat is thinking " + spinnerDots(m.spinnerFrame)
 		}
@@ -1021,7 +1051,7 @@ func (m Model) renderChat(layout bossLayout) string {
 
 func (m Model) renderHeader(width int) string {
 	escAction := "Esc hides"
-	if m.pendingControl != nil || m.inputSelection != nil {
+	if m.pendingControl != nil || m.pendingGoal != nil || m.inputSelection != nil {
 		escAction = "Esc cancels"
 	} else if m.sessionPickerVisible || m.inputCopyDialog != nil {
 		escAction = "Esc closes"

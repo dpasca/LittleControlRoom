@@ -270,7 +270,7 @@ func (m Model) renderBossModeFooter(width int) string {
 	}
 	if m.bossModel.ControlConfirmationActive() {
 		actions = []footerAction{
-			footerPrimaryAction("Enter", "send"),
+			footerPrimaryAction("Enter", "confirm"),
 			footerExitAction("Esc", "cancel"),
 		}
 	}

@@ -330,7 +330,7 @@ func copyControlInvocation(inv control.Invocation) control.Invocation {
 }
 
 func (m Model) ControlConfirmationActive() bool {
-	return m.pendingControl != nil
+	return m.pendingControl != nil || m.pendingGoal != nil
 }
 
 func (m Model) updateControlConfirmation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

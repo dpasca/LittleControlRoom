@@ -10,6 +10,7 @@ import (
 	"time"
 
 	bossui "lcroom/internal/boss"
+	"lcroom/internal/bossrun"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
 	"lcroom/internal/control"
@@ -681,6 +682,83 @@ func TestExecuteBossControlInvocationContinuesAgentTaskWithTrackedSession(t *tes
 	}
 	if requests[0].ForceNew {
 		t.Fatalf("request ForceNew = true, want resume")
+	}
+}
+
+func TestExecuteBossGoalRunArchivesMultipleAgentTasksAndVerifies(t *testing.T) {
+	t.Parallel()
+
+	svc := newControlTestService(t)
+	ctx := context.Background()
+	taskOne, err := svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+		Title: "Old review",
+		Kind:  model.AgentTaskKindAgent,
+	})
+	if err != nil {
+		t.Fatalf("CreateAgentTask(one) error = %v", err)
+	}
+	taskTwo, err := svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+		Title: "Old follow-up",
+		Kind:  model.AgentTaskKindAgent,
+	})
+	if err != nil {
+		t.Fatalf("CreateAgentTask(two) error = %v", err)
+	}
+	proposal, err := bossrun.NormalizeGoalProposal(bossrun.GoalProposal{
+		Run: bossrun.GoalRun{
+			Kind:      bossrun.GoalKindAgentTaskCleanup,
+			Title:     "Clear stale delegated agents",
+			Objective: "Archive stale delegated agent task records.",
+		},
+		ArchiveResources: []control.ResourceRef{
+			{Kind: control.ResourceAgentTask, ID: taskOne.ID, Label: taskOne.Title},
+			{Kind: control.ResourceAgentTask, ID: taskTwo.ID, Label: taskTwo.Title},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NormalizeGoalProposal() error = %v", err)
+	}
+	m := Model{
+		ctx:            ctx,
+		svc:            svc,
+		openAgentTasks: []model.AgentTask{taskOne, taskTwo},
+	}
+
+	updated, cmd := m.executeBossGoalRun(bossui.GoalRunConfirmedMsg{Proposal: proposal})
+	got := updated.(Model)
+	if got.status != "Running goal: Clear stale delegated agents" {
+		t.Fatalf("status = %q, want running goal status", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("executeBossGoalRun() cmd = nil, want execution command")
+	}
+	msg := cmd()
+	result, ok := msg.(bossui.GoalRunResultMsg)
+	if !ok {
+		t.Fatalf("goal command returned %T, want GoalRunResultMsg", msg)
+	}
+	if result.Err != nil {
+		t.Fatalf("goal result err = %v", result.Err)
+	}
+	if !result.Result.Verified {
+		t.Fatalf("goal result should be verified: %#v", result.Result)
+	}
+	if len(result.Result.ArchivedTaskIDs) != 2 {
+		t.Fatalf("archived ids = %#v, want two tasks", result.Result.ArchivedTaskIDs)
+	}
+	for _, taskID := range []string{taskOne.ID, taskTwo.ID} {
+		task, err := svc.GetAgentTask(ctx, taskID)
+		if err != nil {
+			t.Fatalf("GetAgentTask(%s) error = %v", taskID, err)
+		}
+		if task.Status != model.AgentTaskStatusArchived {
+			t.Fatalf("task %s status = %q, want archived", taskID, task.Status)
+		}
+	}
+
+	pruned := got.applyBossGoalRunResultToHost(result)
+	if len(pruned.openAgentTasks) != 0 {
+		t.Fatalf("openAgentTasks = %#v, want archived tasks pruned", pruned.openAgentTasks)
 	}
 }
 

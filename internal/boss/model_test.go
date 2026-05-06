@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/bossrun"
 	"lcroom/internal/config"
 	"lcroom/internal/control"
 	"lcroom/internal/events"
@@ -1032,6 +1033,112 @@ func TestEmbeddedModelCanCancelControlInvocation(t *testing.T) {
 	}
 }
 
+func TestEmbeddedModelConfirmsGoalRun(t *testing.T) {
+	t.Parallel()
+
+	proposal := bossGoalProposalForTest(t)
+	m := NewEmbedded(context.Background(), nil)
+
+	updated, cmd := m.Update(AssistantReplyMsg{
+		response: AssistantResponse{
+			Content:      proposal.Preview,
+			GoalProposal: &proposal,
+		},
+	})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("assistant goal proposal should only update local confirmation state")
+	}
+	if got.pendingGoal == nil {
+		t.Fatalf("pendingGoal = nil, want confirmation state")
+	}
+	if got.pendingControl != nil {
+		t.Fatalf("pendingControl = %#v, want no single control proposal", got.pendingControl)
+	}
+	if got.status != "Confirm goal run with Enter, or Esc to cancel" {
+		t.Fatalf("status = %q", got.status)
+	}
+
+	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if got.pendingGoal != nil {
+		t.Fatalf("pendingGoal should clear after confirmation")
+	}
+	if cmd == nil {
+		t.Fatalf("confirmation should emit a host command")
+	}
+	msg := cmd()
+	confirmed, ok := msg.(GoalRunConfirmedMsg)
+	if !ok {
+		t.Fatalf("confirmation command returned %T, want GoalRunConfirmedMsg", msg)
+	}
+	if confirmed.Proposal.Run.Kind != bossrun.GoalKindAgentTaskCleanup {
+		t.Fatalf("confirmed goal kind = %q", confirmed.Proposal.Run.Kind)
+	}
+	if ids := bossrun.AgentTaskResourceIDs(confirmed.Proposal.Authority.Resources); len(ids) != 2 {
+		t.Fatalf("confirmed resources = %#v, want two task ids", ids)
+	}
+}
+
+func TestEmbeddedModelRendersGoalConfirmationDialog(t *testing.T) {
+	t.Parallel()
+
+	proposal := bossGoalProposalForTest(t)
+	m := NewEmbedded(context.Background(), nil)
+	m.width = 96
+	m.height = 28
+	updated, _ := m.Update(AssistantReplyMsg{
+		response: AssistantResponse{
+			Content:      proposal.Preview,
+			GoalProposal: &proposal,
+		},
+	})
+	got := updated.(Model)
+
+	rendered := ansi.Strip(got.View())
+	if !strings.Contains(rendered, "Confirm Goal Run") {
+		t.Fatalf("rendered view should show goal confirmation dialog, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "Scoped goal") || !strings.Contains(rendered, "agt_one") || !strings.Contains(rendered, "agt_two") {
+		t.Fatalf("rendered dialog should show goal framing and resources, got %q", rendered)
+	}
+	if len(got.messages) != 0 {
+		t.Fatalf("goal proposal preview should not be saved as normal chat, got %#v", got.messages)
+	}
+}
+
+func TestEmbeddedModelCanCancelGoalRun(t *testing.T) {
+	t.Parallel()
+
+	proposal := bossGoalProposalForTest(t)
+	m := NewEmbedded(context.Background(), nil)
+	updated, _ := m.Update(AssistantReplyMsg{
+		response: AssistantResponse{
+			Content:      proposal.Preview,
+			GoalProposal: &proposal,
+		},
+	})
+	got := updated.(Model)
+
+	updated, cmd := got.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	got = updated.(Model)
+	if got.pendingGoal != nil {
+		t.Fatalf("pendingGoal should clear after cancel")
+	}
+	if cmd != nil {
+		t.Fatalf("cancel should not emit a host command")
+	}
+	if got.status != "Goal run canceled" {
+		t.Fatalf("status = %q", got.status)
+	}
+	if len(got.messages) != 0 {
+		t.Fatalf("cancel should not append a boss chat turn, got %#v", got.messages)
+	}
+	if len(got.operationalNotices) != 1 || got.operationalNotices[0].Code != "goal_canceled" {
+		t.Fatalf("cancel notice = %#v, want one goal cancellation notice", got.operationalNotices)
+	}
+}
+
 func TestEmbeddedModelAltUpDoesNotExit(t *testing.T) {
 	t.Parallel()
 
@@ -1760,6 +1867,25 @@ func TestPanelUsesFullAllocatedWidthAndKeepsBottomBorder(t *testing.T) {
 	if !strings.HasPrefix(lines[len(lines)-1], "╰") {
 		t.Fatalf("panel should keep bottom border visible:\n%s", rendered)
 	}
+}
+
+func bossGoalProposalForTest(t *testing.T) bossrun.GoalProposal {
+	t.Helper()
+	proposal, err := bossrun.NormalizeGoalProposal(bossrun.GoalProposal{
+		Run: bossrun.GoalRun{
+			Kind:      bossrun.GoalKindAgentTaskCleanup,
+			Title:     "Clear stale delegated agents",
+			Objective: "Archive stale delegated agent task records that have served their scope.",
+		},
+		ArchiveResources: []control.ResourceRef{
+			{Kind: control.ResourceAgentTask, ID: "agt_one", Label: "old review"},
+			{Kind: control.ResourceAgentTask, ID: "agt_two", Label: "old follow-up"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NormalizeGoalProposal() error = %v", err)
+	}
+	return proposal
 }
 
 func renderedLineCount(s string) int {

@@ -1031,6 +1031,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if msg, ok := msg.(bossui.ControlInvocationConfirmedMsg); ok {
 		return m.executeBossControlInvocation(msg)
 	}
+	if msg, ok := msg.(bossui.GoalRunConfirmedMsg); ok {
+		return m.executeBossGoalRun(msg)
+	}
+	if msg, ok := msg.(bossui.GoalRunResultMsg); ok {
+		m = m.applyBossGoalRunResultToHost(msg)
+	}
 	if m.bossMode && bossui.IsMessage(msg) {
 		return m.updateBossModeMessage(msg)
 	}

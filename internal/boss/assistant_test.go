@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/bossrun"
 	"lcroom/internal/control"
 	"lcroom/internal/llm"
 	"lcroom/internal/model"
@@ -981,6 +982,61 @@ func TestAssistantReplyCanArchiveOpenAgentTaskForCleanup(t *testing.T) {
 		!strings.Contains(string(resp.ControlInvocation.Args), `"status":"archived"`) ||
 		!strings.Contains(string(resp.ControlInvocation.Args), `"close_session":false`) {
 		t.Fatalf("invocation args = %s", resp.ControlInvocation.Args)
+	}
+}
+
+func TestAssistantReplyCanProposeAgentTaskCleanupGoal(t *testing.T) {
+	t.Parallel()
+
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model: "gpt-test",
+			OutputText: encodedBossAction(t, bossAction{
+				Kind:                bossActionProposeGoal,
+				GoalKind:            bossrun.GoalKindAgentTaskCleanup,
+				GoalTitle:           "Clear stale delegated agents",
+				GoalObjective:       "Archive stale delegated agent task records that have served their scope.",
+				GoalSuccessCriteria: "Selected tasks no longer appear in the active delegated agent task set.",
+				GoalResources: []control.ResourceRef{
+					{Kind: control.ResourceAgentTask, ID: "agt_one", Label: "old review"},
+					{Kind: control.ResourceAgentTask, ID: "agt_two", Label: "old follow-up"},
+				},
+				GoalAllowedCapabilities:  []string{"agent_task.close"},
+				GoalForbiddenSideEffects: []string{"close live engineer sessions", "delete files or workspaces"},
+				GoalMaxRisk:              "write",
+				Reason:                   "The user asked to clear multiple stale delegated agents.",
+			}),
+			Usage: model.LLMUsage{TotalTokens: 31},
+		}},
+	}
+	assistant := &Assistant{
+		planner: planner,
+		query:   newQueryExecutor(&fakeBossStore{}),
+		model:   "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Open delegated agent tasks:\n- old review (agt_one)\n- old follow-up (agt_two)",
+		Messages:   []ChatMessage{{Role: "user", Content: "we have some stale agents that have served their scope. Let's remove them now"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.ControlInvocation != nil {
+		t.Fatalf("ControlInvocation = %#v, want goal proposal instead of one control", resp.ControlInvocation)
+	}
+	if resp.GoalProposal == nil {
+		t.Fatalf("GoalProposal = nil, want agent_task_cleanup proposal")
+	}
+	if resp.GoalProposal.Run.Kind != bossrun.GoalKindAgentTaskCleanup {
+		t.Fatalf("goal kind = %q, want agent_task_cleanup", resp.GoalProposal.Run.Kind)
+	}
+	if ids := bossrun.AgentTaskResourceIDs(resp.GoalProposal.Authority.Resources); len(ids) != 2 || ids[0] != "agt_one" || ids[1] != "agt_two" {
+		t.Fatalf("goal task ids = %#v, want both stale tasks", ids)
+	}
+	if !strings.Contains(resp.Content, "Archive 2 delegated agent task records?") ||
+		!strings.Contains(resp.Content, "Forbidden side effects") {
+		t.Fatalf("goal proposal content = %q, want scoped confirmation preview", resp.Content)
 	}
 }
 
