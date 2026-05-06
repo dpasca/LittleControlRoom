@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/bossrun"
 	"lcroom/internal/config"
 	"lcroom/internal/model"
 	"lcroom/internal/service"
@@ -19,6 +20,7 @@ const (
 	hotProjectLimit              = 8
 	defaultAttentionProjectLimit = 4
 	openAgentTaskLimit           = 4
+	recentGoalRunLimit           = 3
 )
 
 type StateSnapshot struct {
@@ -31,6 +33,7 @@ type StateSnapshot struct {
 	PendingClassifications int
 	HotProjects            []ProjectBrief
 	OpenAgentTasks         []AgentTaskBrief
+	RecentGoalRuns         []GoalRunBrief
 }
 
 type ProjectBrief struct {
@@ -72,6 +75,17 @@ type AgentTaskBrief struct {
 	SessionID     string
 	LastTouchedAt time.Time
 	Resources     []model.AgentTaskResource
+}
+
+type GoalRunBrief struct {
+	ID         string
+	Kind       string
+	Title      string
+	Status     string
+	Summary    string
+	Error      string
+	UpdatedAt  time.Time
+	TraceCount int
 }
 
 type StateSnapshotOptions struct {
@@ -127,6 +141,15 @@ func LoadStateSnapshot(ctx context.Context, svc *service.Service, now time.Time,
 			snapshot.OpenAgentTasks = append(snapshot.OpenAgentTasks, agentTaskBriefFromTask(task))
 		}
 	}
+	if records, err := svc.Store().ListGoalRuns(ctx, recentGoalRunLimit); err == nil {
+		for _, record := range records {
+			brief := goalRunBriefFromRecord(record)
+			if opts.PrivacyMode && goalRunBriefHiddenByPrivacy(brief, opts.PrivacyPatterns) {
+				continue
+			}
+			snapshot.RecentGoalRuns = append(snapshot.RecentGoalRuns, brief)
+		}
+	}
 
 	for _, project := range selectRecentAttentionProjectsWithPresence(projects, hotProjectLimit, projectCurrentlyPresent) {
 		if len(snapshot.HotProjects) >= hotProjectLimit {
@@ -142,6 +165,20 @@ func LoadStateSnapshot(ctx context.Context, svc *service.Service, now time.Time,
 		snapshot.HotProjects = append(snapshot.HotProjects, brief)
 	}
 	return snapshot, nil
+}
+
+func goalRunBriefFromRecord(record bossrun.GoalRecord) GoalRunBrief {
+	run := record.Proposal.Run
+	return GoalRunBrief{
+		ID:         strings.TrimSpace(run.ID),
+		Kind:       strings.TrimSpace(run.Kind),
+		Title:      strings.TrimSpace(run.Title),
+		Status:     strings.TrimSpace(run.Status),
+		Summary:    strings.TrimSpace(record.Result.Summary),
+		Error:      strings.TrimSpace(record.Error),
+		UpdatedAt:  record.UpdatedAt,
+		TraceCount: len(record.Trace),
+	}
 }
 
 func stateSnapshotOptionsForService(svc *service.Service) StateSnapshotOptions {
@@ -259,6 +296,13 @@ func agentTaskBriefHiddenByPrivacy(task AgentTaskBrief, patterns []string) bool 
 	return false
 }
 
+func goalRunBriefHiddenByPrivacy(goal GoalRunBrief, patterns []string) bool {
+	if len(patterns) == 0 {
+		return false
+	}
+	return bossPrivacyMatchesAny(patterns, goal.Title, goal.Summary, goal.Error)
+}
+
 func bossPrivacyMatchesAny(patterns []string, values ...string) bool {
 	for _, value := range values {
 		if config.MatchesPrivacyPattern(value, patterns) {
@@ -293,6 +337,12 @@ func BuildStateBrief(snapshot StateSnapshot, now time.Time) string {
 	} else {
 		lines = append(lines, "Open delegated agent tasks: none visible.")
 	}
+	if len(snapshot.RecentGoalRuns) > 0 {
+		lines = append(lines, "Recent Boss goal runs:")
+		for _, goal := range snapshot.RecentGoalRuns {
+			lines = append(lines, "- "+operationalGoalRunLine(goal, now))
+		}
+	}
 	if len(snapshot.HotProjects) == 0 {
 		lines = append(lines, "Hot projects: none loaded.")
 		return strings.Join(lines, "\n")
@@ -306,6 +356,38 @@ func BuildStateBrief(snapshot StateSnapshot, now time.Time) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func operationalGoalRunLine(goal GoalRunBrief, now time.Time) string {
+	title := strings.TrimSpace(goal.Title)
+	if title == "" {
+		title = strings.TrimSpace(goal.ID)
+	}
+	if title == "" {
+		title = "untitled goal"
+	}
+	parts := []string{title}
+	if goal.ID != "" {
+		parts = append(parts, goal.ID)
+	}
+	if goal.Kind != "" || goal.Status != "" {
+		parts = append(parts, "kind/status: "+strings.Trim(strings.TrimSpace(goal.Kind)+"/"+strings.TrimSpace(goal.Status), "/"))
+	}
+	if !goal.UpdatedAt.IsZero() {
+		parts = append(parts, "updated "+relativeAge(now, goal.UpdatedAt))
+	}
+	if goal.Summary != "" {
+		parts = append(parts, clipText(goal.Summary, 180))
+	} else if goal.Error != "" {
+		parts = append(parts, "error: "+clipText(goal.Error, 180))
+	}
+	if goal.TraceCount > 0 {
+		parts = append(parts, fmt.Sprintf("trace entries: %d", goal.TraceCount))
+	}
+	if goal.ID != "" {
+		parts = append(parts, "inspect: goal_run_report query="+goal.ID)
+	}
+	return strings.Join(parts, "; ")
 }
 
 func AttentionText(snapshot StateSnapshot, now time.Time) string {

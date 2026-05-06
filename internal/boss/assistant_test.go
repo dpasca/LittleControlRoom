@@ -81,6 +81,7 @@ type fakeBossStore struct {
 	excerpt         model.SessionContextExcerpt
 	excerptErr      error
 	agentTasks      []model.AgentTask
+	goalRuns        []bossrun.GoalRecord
 }
 
 func (s *fakeBossStore) ListProjects(context.Context, bool) ([]model.ProjectSummary, error) {
@@ -166,6 +167,19 @@ func (s *fakeBossStore) ListAgentTasks(_ context.Context, filter model.AgentTask
 	return out, nil
 }
 
+func (s *fakeBossStore) ListGoalRuns(context.Context, int) ([]bossrun.GoalRecord, error) {
+	return append([]bossrun.GoalRecord(nil), s.goalRuns...), nil
+}
+
+func (s *fakeBossStore) GetGoalRun(_ context.Context, id string) (bossrun.GoalRecord, error) {
+	for _, record := range s.goalRuns {
+		if record.Proposal.Run.ID == id {
+			return record, nil
+		}
+	}
+	return bossrun.GoalRecord{}, sql.ErrNoRows
+}
+
 func TestAssistantReplyIncludesStateBriefAndRecentChat(t *testing.T) {
 	t.Parallel()
 
@@ -208,6 +222,80 @@ func TestAssistantReplyIncludesStateBriefAndRecentChat(t *testing.T) {
 	}
 	if !strings.Contains(runner.req.SystemText, "Little Control Room") {
 		t.Fatalf("system prompt missing product context: %q", runner.req.SystemText)
+	}
+}
+
+func TestQueryExecutorGoalRunReport(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeBossStore{
+		goalRuns: []bossrun.GoalRecord{{
+			Proposal: bossrun.GoalProposal{
+				Run: bossrun.GoalRun{
+					ID:        "goal_demo",
+					Kind:      bossrun.GoalKindAgentTaskCleanup,
+					Title:     "Clear stale delegated agents",
+					Objective: "Archive stale delegated agent task records.",
+					Status:    bossrun.GoalStatusCompleted,
+				},
+			},
+			Result: bossrun.GoalResult{
+				Summary:         "Archived 2 delegated agent task records and verified the selected tasks are out of the active set.",
+				ArchivedTaskIDs: []string{"agt_one", "agt_two"},
+				Verified:        true,
+			},
+			Trace: []bossrun.TraceEntry{{StepID: "archive-agent-tasks", Status: "completed"}},
+		}},
+	}
+	executor := newQueryExecutor(store)
+	result, err := executor.Execute(context.Background(), bossAction{Kind: bossActionGoalRunReport}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute(goal_run_report) error = %v", err)
+	}
+	if result.Name != bossActionGoalRunReport {
+		t.Fatalf("result name = %q, want goal_run_report", result.Name)
+	}
+	for _, want := range []string{"Recent Boss goal runs", "goal_demo", "Archived 2 delegated agent task records", "trace entries: 1"} {
+		if !strings.Contains(result.Text, want) {
+			t.Fatalf("goal run report missing %q:\n%s", want, result.Text)
+		}
+	}
+}
+
+func TestQueryExecutorGoalRunReportSpecificRun(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeBossStore{
+		goalRuns: []bossrun.GoalRecord{{
+			Proposal: bossrun.GoalProposal{
+				Run: bossrun.GoalRun{
+					ID:              "goal_demo",
+					Kind:            bossrun.GoalKindAgentTaskCleanup,
+					Title:           "Clear stale delegated agents",
+					Objective:       "Archive stale delegated agent task records.",
+					SuccessCriteria: "Selected records leave the active set.",
+					Status:          bossrun.GoalStatusCompleted,
+				},
+			},
+			Result: bossrun.GoalResult{
+				Summary:  "Archived 2 delegated agent task records and verified the selected tasks are out of the active set.",
+				Verified: true,
+			},
+			Trace: []bossrun.TraceEntry{
+				{StepID: "archive-agent-tasks", ResourceID: "agt_one", Status: "completed", Summary: "Archived agent task record."},
+				{StepID: "verify-active-set", Status: "completed", Summary: "Refreshed open agent-task state."},
+			},
+		}},
+	}
+	executor := newQueryExecutor(store)
+	result, err := executor.Execute(context.Background(), bossAction{Kind: bossActionGoalRunReport, Query: "goal_demo"}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute(goal_run_report specific) error = %v", err)
+	}
+	for _, want := range []string{"Boss goal run", "goal_demo", "success criteria", "archive-agent-tasks agt_one [completed]", "verify-active-set [completed]"} {
+		if !strings.Contains(result.Text, want) {
+			t.Fatalf("specific goal report missing %q:\n%s", want, result.Text)
+		}
 	}
 }
 

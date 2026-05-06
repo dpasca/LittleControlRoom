@@ -561,14 +561,15 @@ func bossActionPlannerSystemPrompt() string {
 		"Be proactive about finding facts: before saying you do not know, inspect the available linked task or project context when the current state points to one.",
 		"Do not answer commit, deploy, release, migration, schema, storage, or API-shape safety questions from summaries alone. Use project_detail or context first; if direct evidence does not explicitly inspect the current diff or latest engineer output, propose engineer.send_prompt with session_mode=new for a fresh verification.",
 		"Never say a deploy needs no DB migration unless direct evidence explicitly covers migrations, schema, storage, or the current diff.",
-		"Use queries when the user asks about a concrete project, project TODOs, open agent tasks, delegated/background agents, assessment status, current TUI state, Codex skills, suspicious PIDs/processes/CPU, codenames, aliases, concepts, or anything that requires more than the compact brief.",
-		"Available read-only query kinds: list_projects, project_detail, session_classifications, todo_report, agent_task_report, current_tui, assessment_queue, process_report, search_context, search_boss_sessions, context_command, skills_inventory.",
+		"Use queries when the user asks about a concrete project, project TODOs, open agent tasks, delegated/background agents, Boss goal runs, assessment status, current TUI state, Codex skills, suspicious PIDs/processes/CPU, codenames, aliases, concepts, or anything that requires more than the compact brief.",
+		"Available read-only query kinds: list_projects, project_detail, session_classifications, todo_report, agent_task_report, current_tui, assessment_queue, process_report, search_context, search_boss_sessions, context_command, skills_inventory, goal_run_report.",
 		"Use agent_task_report when the user asks about open, active, completed, archived, historical, or delegated agent tasks, background agents, task cleanup, or what the agents are doing.",
 		"For completed/archived/historical agent-task lookup, or when the user asks to remove, clear, archive, hide, or get rid of a delegated task that is not listed as open, set include_historical=true on agent_task_report.",
 		"Use todo_report for project TODOs; project TODOs are separate from delegated agent tasks.",
 		"Do not answer that there are no open agent tasks when the app-state brief lists open delegated agent tasks.",
 		"Use process_report or the CPU system notice when the user asks about suspicious PIDs, hot CPU, orphaned processes, project-local Node/server processes, or whether stale dev servers are still running.",
 		"Use skills_inventory when the user asks about Codex skills, stale skills, installed skills, skill duplicates, or skill management.",
+		"Use goal_run_report when the user asks what Boss goal runs have happened, whether a multi-step goal was completed, what was verified, what failed, or asks to inspect goal-run traces.",
 		"Available control action kind: propose_control with control_capability equal to engineer.send_prompt, agent_task.create, agent_task.continue, agent_task.close, or scratch_task.archive.",
 		"Available goal action kind: propose_goal. Initial goal_kind is agent_task_cleanup for a scoped run that archives multiple delegated agent task records under one user approval, executes primitive agent_task.close archived actions, refreshes state, verifies that selected records left the active set, and reports failures.",
 		"Use engineer.send_prompt only for explicit project/repo work on a loaded project. Do not use it for host operations or generic temporary work.",
@@ -767,6 +768,7 @@ func bossActionSchema() map[string]any {
 					bossActionSearchBossSessions,
 					bossActionContextCommand,
 					bossActionSkillsInventory,
+					bossActionGoalRunReport,
 					bossActionProposeControl,
 					bossActionProposeGoal,
 				},
@@ -782,7 +784,7 @@ func bossActionSchema() map[string]any {
 			},
 			"query": map[string]any{
 				"type":        "string",
-				"description": "Search text when kind is search_context or search_boss_sessions; optional fallback command text when kind is context_command; otherwise empty.",
+				"description": "Search text when kind is search_context or search_boss_sessions; exact goal run id when kind is goal_run_report and a specific run is known; optional fallback command text when kind is context_command; otherwise empty.",
 			},
 			"command": map[string]any{
 				"type":        "string",
@@ -1173,7 +1175,7 @@ func validateBossAction(action bossAction) error {
 	switch action.Kind {
 	case bossActionAnswer:
 		return nil
-	case bossActionListProjects, bossActionProjectDetail, bossActionSessionClassifications, bossActionTodoReport, bossActionAgentTaskReport, bossActionCurrentTUI, bossActionAssessmentQueue, bossActionProcessReport, bossActionSearchContext, bossActionSearchBossSessions, bossActionContextCommand, bossActionSkillsInventory:
+	case bossActionListProjects, bossActionProjectDetail, bossActionSessionClassifications, bossActionTodoReport, bossActionAgentTaskReport, bossActionCurrentTUI, bossActionAssessmentQueue, bossActionProcessReport, bossActionSearchContext, bossActionSearchBossSessions, bossActionContextCommand, bossActionSkillsInventory, bossActionGoalRunReport:
 		return nil
 	case bossActionProposeControl:
 		_, _, err := controlProposalFromBossAction(action)
@@ -1291,6 +1293,8 @@ func describeBossAction(action bossAction) string {
 			return kind + " " + goalKind
 		}
 	case bossActionSkillsInventory:
+		return kind
+	case bossActionGoalRunReport:
 		return kind
 	case bossActionSessionClassifications, bossActionTodoReport:
 		target := firstNonEmpty(action.ProjectName, action.ProjectPath, action.SessionID, action.Target)

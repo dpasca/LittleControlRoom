@@ -33,6 +33,7 @@ const (
 	bossActionSearchBossSessions     = "search_boss_sessions"
 	bossActionContextCommand         = "context_command"
 	bossActionSkillsInventory        = "skills_inventory"
+	bossActionGoalRunReport          = "goal_run_report"
 	bossActionProposeControl         = "propose_control"
 	bossActionProposeGoal            = "propose_goal"
 
@@ -106,6 +107,11 @@ type bossAgentTaskReader interface {
 
 type bossCandidateExcerptReader interface {
 	GetSessionContextExcerptFromCandidate(ctx context.Context, req model.SessionContextExcerptCandidateRequest) (model.SessionContextExcerpt, error)
+}
+
+type bossGoalRunReader interface {
+	GetGoalRun(ctx context.Context, id string) (bossrun.GoalRecord, error)
+	ListGoalRuns(ctx context.Context, limit int) ([]bossrun.GoalRecord, error)
 }
 
 type QueryExecutor struct {
@@ -186,6 +192,9 @@ func (e *QueryExecutor) Execute(ctx context.Context, action bossAction, snapshot
 	if kind == bossActionSkillsInventory {
 		return e.skillsInventory(ctx, action)
 	}
+	if kind == bossActionGoalRunReport {
+		return e.goalRunReport(ctx, action)
+	}
 	if e.store == nil {
 		return bossToolResult{}, errors.New("boss query tools are not connected to the project store")
 	}
@@ -208,6 +217,8 @@ func (e *QueryExecutor) Execute(ctx context.Context, action bossAction, snapshot
 		return e.processReport(ctx, action, view)
 	case bossActionSearchContext:
 		return e.searchContext(ctx, action, view)
+	case bossActionGoalRunReport:
+		return e.goalRunReport(ctx, action)
 	default:
 		return bossToolResult{}, fmt.Errorf("unknown boss action kind %q", strings.TrimSpace(action.Kind))
 	}
@@ -219,6 +230,104 @@ func (e *QueryExecutor) skillsInventory(ctx context.Context, action bossAction) 
 		return bossToolResult{}, err
 	}
 	return clippedToolResult(bossActionSkillsInventory, codexskills.FormatInventoryReport(inv, clampBossLimit(action.Limit, 20, 40))), nil
+}
+
+func (e *QueryExecutor) goalRunReport(ctx context.Context, action bossAction) (bossToolResult, error) {
+	reader, ok := e.store.(bossGoalRunReader)
+	if !ok {
+		return clippedToolResult(bossActionGoalRunReport, "Goal run storage is not connected."), nil
+	}
+	if id := strings.TrimSpace(action.Query); id != "" {
+		record, err := reader.GetGoalRun(ctx, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return clippedToolResult(bossActionGoalRunReport, "No Boss goal run found for id: "+id), nil
+		}
+		if err != nil {
+			return bossToolResult{}, err
+		}
+		return clippedToolResult(bossActionGoalRunReport, formatGoalRunDetail(record)), nil
+	}
+	records, err := reader.ListGoalRuns(ctx, clampBossLimit(action.Limit, 8, 20))
+	if err != nil {
+		return bossToolResult{}, err
+	}
+	if len(records) == 0 {
+		return clippedToolResult(bossActionGoalRunReport, "No Boss goal runs have been recorded yet."), nil
+	}
+	lines := []string{fmt.Sprintf("Recent Boss goal runs: %d", len(records))}
+	for i, record := range records {
+		run := record.Proposal.Run
+		updated := ""
+		if !record.UpdatedAt.IsZero() {
+			updated = " updated " + formatBossTimestamp(record.UpdatedAt)
+		}
+		lines = append(lines, fmt.Sprintf("%d. %s (%s/%s)%s", i+1, firstNonEmpty(run.Title, run.ID), run.ID, run.Status, updated))
+		if objective := strings.TrimSpace(run.Objective); objective != "" {
+			lines = append(lines, "   objective: "+clipText(objective, 220))
+		}
+		if summary := strings.TrimSpace(record.Result.Summary); summary != "" {
+			lines = append(lines, "   result: "+clipText(summary, 260))
+		}
+		if record.Error != "" {
+			lines = append(lines, "   error: "+clipText(record.Error, 220))
+		}
+		if len(record.Trace) > 0 {
+			lines = append(lines, fmt.Sprintf("   trace entries: %d", len(record.Trace)))
+		}
+	}
+	return clippedToolResult(bossActionGoalRunReport, strings.Join(lines, "\n")), nil
+}
+
+func formatGoalRunDetail(record bossrun.GoalRecord) string {
+	run := record.Proposal.Run
+	lines := []string{
+		fmt.Sprintf("Boss goal run: %s", firstNonEmpty(run.Title, run.ID)),
+		fmt.Sprintf("id: %s", run.ID),
+		fmt.Sprintf("kind/status: %s/%s", run.Kind, run.Status),
+	}
+	if !record.CreatedAt.IsZero() {
+		lines = append(lines, "created: "+formatBossTimestamp(record.CreatedAt))
+	}
+	if !record.UpdatedAt.IsZero() {
+		lines = append(lines, "updated: "+formatBossTimestamp(record.UpdatedAt))
+	}
+	if !record.CompletedAt.IsZero() {
+		lines = append(lines, "completed: "+formatBossTimestamp(record.CompletedAt))
+	}
+	if objective := strings.TrimSpace(run.Objective); objective != "" {
+		lines = append(lines, "objective: "+clipText(objective, 500))
+	}
+	if success := strings.TrimSpace(run.SuccessCriteria); success != "" {
+		lines = append(lines, "success criteria: "+clipText(success, 500))
+	}
+	if summary := strings.TrimSpace(record.Result.Summary); summary != "" {
+		lines = append(lines, "result: "+clipText(summary, 500))
+	}
+	if record.Error != "" {
+		lines = append(lines, "error: "+clipText(record.Error, 500))
+	}
+	if len(record.Trace) > 0 {
+		lines = append(lines, fmt.Sprintf("trace entries: %d", len(record.Trace)))
+		for i, entry := range record.Trace {
+			if i >= 12 {
+				lines = append(lines, fmt.Sprintf("- ... %d more", len(record.Trace)-i))
+				break
+			}
+			label := firstNonEmpty(strings.TrimSpace(entry.StepID), strings.TrimSpace(string(entry.Capability)), "step")
+			detail := strings.TrimSpace(entry.Summary)
+			if entry.ResourceID != "" {
+				label += " " + entry.ResourceID
+			}
+			if entry.Status != "" {
+				label += " [" + entry.Status + "]"
+			}
+			if detail != "" {
+				label += ": " + clipText(detail, 240)
+			}
+			lines = append(lines, "- "+label)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (e *QueryExecutor) searchBossSessions(ctx context.Context, action bossAction) (bossToolResult, error) {

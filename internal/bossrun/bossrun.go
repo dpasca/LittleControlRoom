@@ -102,6 +102,16 @@ type GoalResult struct {
 	Trace           []TraceEntry  `json:"trace"`
 }
 
+type GoalRecord struct {
+	Proposal    GoalProposal `json:"proposal"`
+	Result      GoalResult   `json:"result"`
+	Error       string       `json:"error"`
+	Trace       []TraceEntry `json:"trace"`
+	CreatedAt   time.Time    `json:"created_at"`
+	UpdatedAt   time.Time    `json:"updated_at"`
+	CompletedAt time.Time    `json:"completed_at,omitempty"`
+}
+
 func NormalizeGoalProposal(proposal GoalProposal) (GoalProposal, error) {
 	proposal.Run.ID = strings.TrimSpace(proposal.Run.ID)
 	proposal.Run.Kind = strings.TrimSpace(strings.ToLower(proposal.Run.Kind))

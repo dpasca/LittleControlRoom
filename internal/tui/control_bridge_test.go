@@ -746,6 +746,9 @@ func TestExecuteBossGoalRunArchivesMultipleAgentTasksAndVerifies(t *testing.T) {
 	if len(result.Result.ArchivedTaskIDs) != 2 {
 		t.Fatalf("archived ids = %#v, want two tasks", result.Result.ArchivedTaskIDs)
 	}
+	if result.Result.RunID == "" {
+		t.Fatalf("goal result RunID is empty, want persisted run id")
+	}
 	for _, taskID := range []string{taskOne.ID, taskTwo.ID} {
 		task, err := svc.GetAgentTask(ctx, taskID)
 		if err != nil {
@@ -754,6 +757,19 @@ func TestExecuteBossGoalRunArchivesMultipleAgentTasksAndVerifies(t *testing.T) {
 		if task.Status != model.AgentTaskStatusArchived {
 			t.Fatalf("task %s status = %q, want archived", taskID, task.Status)
 		}
+	}
+	record, err := svc.Store().GetGoalRun(ctx, result.Result.RunID)
+	if err != nil {
+		t.Fatalf("GetGoalRun() error = %v", err)
+	}
+	if record.Proposal.Run.Status != bossrun.GoalStatusCompleted {
+		t.Fatalf("stored goal status = %q, want completed", record.Proposal.Run.Status)
+	}
+	if len(record.Trace) != 3 {
+		t.Fatalf("stored trace length = %d, want two archive entries plus verification", len(record.Trace))
+	}
+	if !record.Result.Verified || len(record.Result.ArchivedTaskIDs) != 2 {
+		t.Fatalf("stored result = %#v, want verified archive result", record.Result)
 	}
 
 	pruned := got.applyBossGoalRunResultToHost(result)

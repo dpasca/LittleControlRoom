@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/bossrun"
 	"lcroom/internal/config"
+	"lcroom/internal/control"
 	"lcroom/internal/events"
 	"lcroom/internal/model"
 	"lcroom/internal/service"
@@ -182,6 +184,39 @@ func TestBuildStateBriefIncludesOpenAgentTasks(t *testing.T) {
 	}
 }
 
+func TestBuildStateBriefIncludesRecentGoalRuns(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	snapshot := StateSnapshot{
+		TotalProjects: 1,
+		RecentGoalRuns: []GoalRunBrief{{
+			ID:         "goal_demo",
+			Kind:       bossrun.GoalKindAgentTaskCleanup,
+			Title:      "Clear stale delegated agents",
+			Status:     bossrun.GoalStatusCompleted,
+			Summary:    "Archived 2 delegated agent task records and verified the selected tasks are out of the active set.",
+			UpdatedAt:  now.Add(-2 * time.Minute),
+			TraceCount: 3,
+		}},
+	}
+
+	brief := BuildStateBrief(snapshot, now)
+	for _, want := range []string{
+		"Recent Boss goal runs:",
+		"Clear stale delegated agents",
+		"goal_demo",
+		"agent_task_cleanup/completed",
+		"Archived 2 delegated agent task records",
+		"trace entries: 3",
+		"inspect: goal_run_report query=goal_demo",
+	} {
+		if !strings.Contains(brief, want) {
+			t.Fatalf("brief missing %q:\n%s", want, brief)
+		}
+	}
+}
+
 func TestLoadStateSnapshotIncludesOpenAgentTasksWithPrivacyFiltering(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -227,6 +262,59 @@ func TestLoadStateSnapshotIncludesOpenAgentTasksWithPrivacyFiltering(t *testing.
 	}
 	if len(privateSnapshot.OpenAgentTasks) != 1 || privateSnapshot.OpenAgentTasks[0].Title != publicTitle {
 		t.Fatalf("privacy mode should include only non-private agent tasks, got %#v", privateSnapshot.OpenAgentTasks)
+	}
+}
+
+func TestLoadStateSnapshotIncludesRecentGoalRuns(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	cfg.DBPath = filepath.Join(cfg.DataDir, "little-control-room.sqlite")
+	st, err := store.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	svc := service.New(cfg, st, events.NewBus(), nil)
+
+	record, err := st.CreateGoalRun(ctx, bossrun.GoalProposal{
+		Run: bossrun.GoalRun{
+			Kind:  bossrun.GoalKindAgentTaskCleanup,
+			Title: "Clear stale delegated agents",
+		},
+		ArchiveResources: []control.ResourceRef{{Kind: control.ResourceAgentTask, ID: "agt_one"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateGoalRun() error = %v", err)
+	}
+	if err := st.AppendGoalRunTrace(ctx, record.Proposal.Run.ID, bossrun.TraceEntry{
+		StepID:     "archive-agent-tasks",
+		Capability: control.CapabilityAgentTaskClose,
+		ResourceID: "agt_one",
+		Status:     "completed",
+		Summary:    "Archived agent task record.",
+	}); err != nil {
+		t.Fatalf("AppendGoalRunTrace() error = %v", err)
+	}
+	if _, err := st.CompleteGoalRun(ctx, bossrun.GoalResult{
+		RunID:           record.Proposal.Run.ID,
+		ArchivedTaskIDs: []string{"agt_one"},
+		Verified:        true,
+	}, nil); err != nil {
+		t.Fatalf("CompleteGoalRun() error = %v", err)
+	}
+
+	snapshot, err := LoadStateSnapshot(ctx, svc, time.Unix(1_800_000_000, 0))
+	if err != nil {
+		t.Fatalf("LoadStateSnapshot() error = %v", err)
+	}
+	if len(snapshot.RecentGoalRuns) != 1 {
+		t.Fatalf("recent goal runs = %#v, want one run", snapshot.RecentGoalRuns)
+	}
+	if snapshot.RecentGoalRuns[0].TraceCount != 1 || snapshot.RecentGoalRuns[0].Status != bossrun.GoalStatusCompleted {
+		t.Fatalf("recent goal brief = %#v, want completed run with trace", snapshot.RecentGoalRuns[0])
 	}
 }
 

@@ -53,6 +53,16 @@ func (m Model) executeAgentTaskCleanupGoalCmd(proposal bossrun.GoalProposal) tea
 		if ctx == nil {
 			ctx = context.Background()
 		}
+		record, err := svc.Store().CreateGoalRun(ctx, proposal)
+		if err != nil {
+			return bossui.GoalRunResultMsg{Result: result, Err: err, AnnounceInChat: true}
+		}
+		proposal = record.Proposal
+		result.RunID = proposal.Run.ID
+		result.Kind = proposal.Run.Kind
+		if _, err := svc.Store().UpdateGoalRunStatus(ctx, proposal.Run.ID, bossrun.GoalStatusRunning); err != nil {
+			return bossui.GoalRunResultMsg{Result: result, Err: err, AnnounceInChat: true}
+		}
 		targetIDs := bossrun.AgentTaskResourceIDs(proposal.Authority.Resources)
 		for _, taskID := range targetIDs {
 			_, err := svc.ArchiveAgentTask(ctx, taskID)
@@ -72,31 +82,48 @@ func (m Model) executeAgentTaskCleanupGoalCmd(proposal bossrun.GoalProposal) tea
 				result.ArchivedTaskIDs = append(result.ArchivedTaskIDs, taskID)
 			}
 			result.Trace = append(result.Trace, entry)
+			if traceErr := svc.Store().AppendGoalRunTrace(ctx, proposal.Run.ID, entry); traceErr != nil {
+				result.FailedTasks = append(result.FailedTasks, bossrun.TaskFailure{TaskID: taskID, Error: "record trace: " + traceErr.Error()})
+			}
 		}
 		verified, verifyErr := verifyAgentTaskCleanupGoal(ctx, svc, targetIDs, result.FailedTasks)
 		result.Verified = verified
 		if verifyErr != nil {
-			result.FailedTasks = append(result.FailedTasks, bossrun.TaskFailure{Error: verifyErr.Error()})
-			result.Trace = append(result.Trace, bossrun.TraceEntry{
+			entry := bossrun.TraceEntry{
 				StepID:  "verify-active-set",
 				Status:  "failed",
 				Summary: verifyErr.Error(),
 				At:      time.Now(),
-			})
+			}
+			result.FailedTasks = append(result.FailedTasks, bossrun.TaskFailure{Error: verifyErr.Error()})
+			result.Trace = append(result.Trace, entry)
+			if traceErr := svc.Store().AppendGoalRunTrace(ctx, proposal.Run.ID, entry); traceErr != nil {
+				result.FailedTasks = append(result.FailedTasks, bossrun.TaskFailure{Error: "record verification trace: " + traceErr.Error()})
+			}
 		} else {
-			result.Trace = append(result.Trace, bossrun.TraceEntry{
+			entry := bossrun.TraceEntry{
 				StepID:  "verify-active-set",
 				Status:  "completed",
 				Summary: "Refreshed open agent-task state.",
 				At:      time.Now(),
-			})
+			}
+			result.Trace = append(result.Trace, entry)
+			if traceErr := svc.Store().AppendGoalRunTrace(ctx, proposal.Run.ID, entry); traceErr != nil {
+				result.FailedTasks = append(result.FailedTasks, bossrun.TaskFailure{Error: "record verification trace: " + traceErr.Error()})
+			}
 		}
 		result.Summary = bossrun.FormatGoalResult(result)
-		var err error
+		var runErr error
 		if len(result.FailedTasks) > 0 {
-			err = errors.New("one or more goal steps need review")
+			runErr = errors.New("one or more goal steps need review")
 		}
-		return bossui.GoalRunResultMsg{Result: result, Err: err, AnnounceInChat: true}
+		record, completeErr := svc.Store().CompleteGoalRun(ctx, result, runErr)
+		if completeErr != nil {
+			runErr = errors.Join(runErr, completeErr)
+		} else {
+			result = record.Result
+		}
+		return bossui.GoalRunResultMsg{Result: result, Err: runErr, AnnounceInChat: true}
 	}
 }
 
