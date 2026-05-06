@@ -217,19 +217,19 @@ func settingsBrowserAutomationOptions(baseline browserctl.Policy) []settingsBrow
 			Value:       settingsBrowserAutomationOnlyWhenNeeded,
 			Label:       "Only when needed",
 			Summary:     "Keep browser windows hidden until a human step is actually needed.",
-			Description: "This is the target low-friction experience: background browsing by default, per-task isolation, and a visible browser handoff only when a login or manual step needs your eyes or hands.",
+			Description: "This is the target low-friction experience for newly opened embedded sessions: background browsing by default, per-task isolation, and a visible browser handoff only when a login or manual step needs your eyes or hands.",
 		},
 		{
 			Value:       settingsBrowserAutomationAlwaysShow,
 			Label:       "Always show",
-			Summary:     "Open browser windows up front so you can watch the flow as it runs.",
-			Description: "Use this when you prefer visible browser windows for the full flow instead of letting Little Control Room keep most browser activity in the background.",
+			Summary:     "Open browser windows up front for newly opened embedded sessions.",
+			Description: "Use this when you prefer visible browser windows for the full flow instead of letting Little Control Room keep most browser activity in the background. Already-running sessions keep the browser policy they launched with until they are reopened or reconnected.",
 		},
 		{
 			Value:       settingsBrowserAutomationClassic,
 			Label:       "Classic browser behavior",
 			Summary:     "Fall back to the original provider-owned Playwright behavior.",
-			Description: "Use this as the recovery path when you want each embedded assistant to keep handling Playwright the old way, without Little Control Room trying to shape the browser flow.",
+			Description: "Use this as the recovery path for newly opened embedded sessions when you want each embedded assistant to keep handling Playwright the old way, without Little Control Room trying to shape the browser flow.",
 		},
 	}
 	if normalizedBaseline != settingsClassicPlaywrightPolicy &&
@@ -1122,7 +1122,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsField(
 			"Browser windows",
-			"Press Enter to choose when Little Control Room should show browser windows. Only when needed is the quiet default, Always show keeps them visible, and Classic browser behavior falls back to the old provider-owned flow.",
+			"Press Enter to choose when newly opened embedded sessions should show browser windows. Existing sessions keep the policy they launched with until reopened or reconnected.",
 			settingsBrowserAutomationValue(settings.PlaywrightPolicy),
 			24,
 			settingsSectionBrowser,
@@ -1291,9 +1291,9 @@ func (m Model) settingsFieldHint(index int) string {
 		case "", settingsBrowserAutomationClassic, "compatibility", string(browserctl.ManagementModeLegacy):
 			return "Classic browser behavior keeps each provider in charge of Playwright. Use this when you want the familiar fallback path or need to get out of Little Control Room's managed flow quickly."
 		case settingsBrowserAutomationOnlyWhenNeeded, "automatic":
-			return "Only when needed is the target low-friction path: background browsing by default, with a visible browser handoff only when a login or manual step needs you. Current raw policy: " + playwrightPolicy.Summary()
+			return "Only when needed is the target low-friction path for newly opened embedded sessions: background browsing by default, with a visible browser handoff only when a login or manual step needs you. Current raw policy: " + playwrightPolicy.Summary()
 		case settingsBrowserAutomationAlwaysShow:
-			return "Always show keeps browser windows visible from the start so you can follow the whole flow in real time. Current raw policy: " + playwrightPolicy.Summary()
+			return "Always show keeps browser windows visible from the start for newly opened embedded sessions, so you can follow the whole flow in real time. Current raw policy: " + playwrightPolicy.Summary()
 		case settingsBrowserAutomationCustom, "observe", "advanced", "custom", "current":
 			return "Use config file as-is preserves the raw Playwright policy already stored in config.toml. Use this when you want to keep a custom provider/browser/login combination while the simplified UI stays out of the way."
 		default:

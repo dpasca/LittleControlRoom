@@ -13,11 +13,10 @@ import (
 )
 
 var (
-	managedBrowserStateReader            = browserctl.ReadManagedPlaywrightState
-	managedBrowserRevealer               = browserctl.RevealManagedPlaywrightState
-	managedBrowserRevealMarker           = browserctl.MarkManagedPlaywrightStateRevealed
-	browserStdout              io.Writer = os.Stdout
-	browserStderr              io.Writer = os.Stderr
+	managedBrowserStateReader               = browserctl.ReadManagedPlaywrightState
+	managedBrowserSessionRevealer           = browserctl.RevealManagedPlaywrightSession
+	browserStdout                 io.Writer = os.Stdout
+	browserStderr                 io.Writer = os.Stderr
 )
 
 func runBrowser(args []string) int {
@@ -48,14 +47,13 @@ func runBrowser(args []string) int {
 		return 2
 	}
 
-	state, err := managedBrowserStateReader(*dataDir, *sessionKey)
-	if err != nil {
-		fmt.Fprintf(browserStderr, "browser %s failed: %v\n", action, err)
-		return 1
-	}
-
 	switch action {
 	case "status":
+		state, err := managedBrowserStateReader(*dataDir, *sessionKey)
+		if err != nil {
+			fmt.Fprintf(browserStderr, "browser status failed: %v\n", err)
+			return 1
+		}
 		payload, err := json.MarshalIndent(state.Normalize(), "", "  ")
 		if err != nil {
 			fmt.Fprintf(browserStderr, "browser status failed: %v\n", err)
@@ -67,12 +65,8 @@ func runBrowser(args []string) int {
 		_, _ = browserStdout.Write(out.Bytes())
 		return 0
 	case "reveal":
-		if err := managedBrowserRevealer(state); err != nil {
+		if _, err := managedBrowserSessionRevealer(*dataDir, *sessionKey); err != nil {
 			fmt.Fprintf(browserStderr, "browser reveal failed: %v\n", err)
-			return 1
-		}
-		if _, err := managedBrowserRevealMarker(*dataDir, *sessionKey); err != nil {
-			fmt.Fprintf(browserStderr, "browser reveal failed: mark revealed: %v\n", err)
 			return 1
 		}
 		fmt.Fprintf(browserStdout, "revealed managed browser session %s\n", strings.TrimSpace(*sessionKey))

@@ -79,7 +79,7 @@ func (m Model) applySettingsBrowserAutomationPickerSelection(option settingsBrow
 	if len(m.settingsFields) > settingsFieldBrowserAutomation {
 		m.settingsFields[settingsFieldBrowserAutomation].input.SetValue(option.Value)
 	}
-	m.closeSettingsBrowserAutomationPicker(fmt.Sprintf("Browser windows set to %s. Press Ctrl+S to save.", option.Label))
+	m.closeSettingsBrowserAutomationPicker(fmt.Sprintf("Browser windows set to %s for newly opened sessions. Press Ctrl+S to save.", option.Label))
 	return m, nil
 }
 

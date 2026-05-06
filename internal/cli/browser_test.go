@@ -49,16 +49,14 @@ func TestRunBrowserStatusPrintsJSON(t *testing.T) {
 	}
 }
 
-func TestRunBrowserRevealUsesManagedBrowserRevealer(t *testing.T) {
+func TestRunBrowserRevealUsesManagedBrowserSessionRevealer(t *testing.T) {
 	origReader := managedBrowserStateReader
-	origRevealer := managedBrowserRevealer
-	origRevealMarker := managedBrowserRevealMarker
+	origRevealer := managedBrowserSessionRevealer
 	origStdout := browserStdout
 	origStderr := browserStderr
 	t.Cleanup(func() {
 		managedBrowserStateReader = origReader
-		managedBrowserRevealer = origRevealer
-		managedBrowserRevealMarker = origRevealMarker
+		managedBrowserSessionRevealer = origRevealer
 		browserStdout = origStdout
 		browserStderr = origStderr
 	})
@@ -71,16 +69,11 @@ func TestRunBrowserRevealUsesManagedBrowserRevealer(t *testing.T) {
 		}, nil
 	}
 
-	var revealed browserctl.ManagedPlaywrightState
-	managedBrowserRevealer = func(state browserctl.ManagedPlaywrightState) error {
-		revealed = state
-		return nil
-	}
-	markedDataDir := ""
-	markedSessionKey := ""
-	managedBrowserRevealMarker = func(dataDir, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
-		markedDataDir = dataDir
-		markedSessionKey = sessionKey
+	revealedDataDir := ""
+	revealedSessionKey := ""
+	managedBrowserSessionRevealer = func(dataDir, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+		revealedDataDir = dataDir
+		revealedSessionKey = sessionKey
 		return browserctl.ManagedPlaywrightState{SessionKey: sessionKey, Hidden: false}, nil
 	}
 
@@ -92,11 +85,8 @@ func TestRunBrowserRevealUsesManagedBrowserRevealer(t *testing.T) {
 	if exitCode != 0 {
 		t.Fatalf("runBrowser(reveal) = %d, want 0; stderr=%q", exitCode, stderr.String())
 	}
-	if revealed.SessionKey != "session-demo" {
-		t.Fatalf("revealed session key = %q, want session-demo", revealed.SessionKey)
-	}
-	if markedDataDir != browserctl.DefaultDataDir() || markedSessionKey != "session-demo" {
-		t.Fatalf("marked reveal = dataDir %q sessionKey %q, want default data dir and session-demo", markedDataDir, markedSessionKey)
+	if revealedDataDir != browserctl.DefaultDataDir() || revealedSessionKey != "session-demo" {
+		t.Fatalf("revealed session = dataDir %q sessionKey %q, want default data dir and session-demo", revealedDataDir, revealedSessionKey)
 	}
 	if got := stdout.String(); got != "revealed managed browser session session-demo\n" {
 		t.Fatalf("stdout = %q, want reveal confirmation", got)
@@ -126,14 +116,12 @@ func TestRunBrowserRequiresSessionKey(t *testing.T) {
 
 func TestRunBrowserPropagatesRevealFailure(t *testing.T) {
 	origReader := managedBrowserStateReader
-	origRevealer := managedBrowserRevealer
-	origRevealMarker := managedBrowserRevealMarker
+	origRevealer := managedBrowserSessionRevealer
 	origStdout := browserStdout
 	origStderr := browserStderr
 	t.Cleanup(func() {
 		managedBrowserStateReader = origReader
-		managedBrowserRevealer = origRevealer
-		managedBrowserRevealMarker = origRevealMarker
+		managedBrowserSessionRevealer = origRevealer
 		browserStdout = origStdout
 		browserStderr = origStderr
 	})
@@ -141,8 +129,8 @@ func TestRunBrowserPropagatesRevealFailure(t *testing.T) {
 	managedBrowserStateReader = func(dataDir, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
 		return browserctl.ManagedPlaywrightState{SessionKey: sessionKey}, nil
 	}
-	managedBrowserRevealer = func(state browserctl.ManagedPlaywrightState) error {
-		return fmt.Errorf("boom")
+	managedBrowserSessionRevealer = func(dataDir, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+		return browserctl.ManagedPlaywrightState{}, fmt.Errorf("boom")
 	}
 
 	var stdout, stderr bytes.Buffer

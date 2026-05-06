@@ -15386,20 +15386,15 @@ func TestVisibleCodexURLBasedElicitationCanOpenBrowser(t *testing.T) {
 		t.Fatalf("manager.Open() error = %v", err)
 	}
 
-	previousStateReader := managedBrowserStateReader
-	previousRevealer := managedBrowserRevealer
+	previousSessionRevealer := managedBrowserSessionRevealer
 	defer func() {
-		managedBrowserStateReader = previousStateReader
-		managedBrowserRevealer = previousRevealer
+		managedBrowserSessionRevealer = previousSessionRevealer
 	}()
 
 	revealedSessionKey := ""
-	managedBrowserStateReader = func(_ string, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+	managedBrowserSessionRevealer = func(_ string, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+		revealedSessionKey = sessionKey
 		return browserctl.ManagedPlaywrightState{SessionKey: sessionKey, BrowserPID: 123, RevealSupported: true}, nil
-	}
-	managedBrowserRevealer = func(state browserctl.ManagedPlaywrightState) error {
-		revealedSessionKey = state.SessionKey
-		return nil
 	}
 
 	m := Model{
@@ -15460,20 +15455,15 @@ func TestVisibleCodexCanOpenCurrentBackgroundBrowserPage(t *testing.T) {
 		t.Fatalf("manager.Open() error = %v", err)
 	}
 
-	previousStateReader := managedBrowserStateReader
-	previousRevealer := managedBrowserRevealer
+	previousSessionRevealer := managedBrowserSessionRevealer
 	defer func() {
-		managedBrowserStateReader = previousStateReader
-		managedBrowserRevealer = previousRevealer
+		managedBrowserSessionRevealer = previousSessionRevealer
 	}()
 
 	revealedSessionKey := ""
-	managedBrowserStateReader = func(_ string, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+	managedBrowserSessionRevealer = func(_ string, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+		revealedSessionKey = sessionKey
 		return browserctl.ManagedPlaywrightState{SessionKey: sessionKey, BrowserPID: 123, RevealSupported: true}, nil
-	}
-	managedBrowserRevealer = func(state browserctl.ManagedPlaywrightState) error {
-		revealedSessionKey = state.SessionKey
-		return nil
 	}
 
 	m := Model{
@@ -20490,20 +20480,15 @@ func TestBrowserAttentionEnterOpensBrowserAndSessionForManagedLoginURL(t *testin
 		},
 	}
 
-	previousStateReader := managedBrowserStateReader
-	previousRevealer := managedBrowserRevealer
+	previousSessionRevealer := managedBrowserSessionRevealer
 	defer func() {
-		managedBrowserStateReader = previousStateReader
-		managedBrowserRevealer = previousRevealer
+		managedBrowserSessionRevealer = previousSessionRevealer
 	}()
 
 	revealedSessionKey := ""
-	managedBrowserStateReader = func(_ string, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+	managedBrowserSessionRevealer = func(_ string, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+		revealedSessionKey = sessionKey
 		return browserctl.ManagedPlaywrightState{SessionKey: sessionKey, BrowserPID: 123, RevealSupported: true}, nil
-	}
-	managedBrowserRevealer = func(state browserctl.ManagedPlaywrightState) error {
-		revealedSessionKey = state.SessionKey
-		return nil
 	}
 
 	updated, cmd := m.updateBrowserAttentionMode(tea.KeyMsg{Type: tea.KeyEnter})
@@ -20607,17 +20592,12 @@ func TestOpenManagedBrowserLoginReleasesLeaseOnBrowserOpenFailure(t *testing.T) 
 	}
 	controller.Observe(observation)
 
-	previousStateReader := managedBrowserStateReader
-	previousRevealer := managedBrowserRevealer
+	previousSessionRevealer := managedBrowserSessionRevealer
 	defer func() {
-		managedBrowserStateReader = previousStateReader
-		managedBrowserRevealer = previousRevealer
+		managedBrowserSessionRevealer = previousSessionRevealer
 	}()
-	managedBrowserStateReader = func(_ string, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
-		return browserctl.ManagedPlaywrightState{SessionKey: sessionKey, BrowserPID: 123, RevealSupported: true}, nil
-	}
-	managedBrowserRevealer = func(state browserctl.ManagedPlaywrightState) error {
-		return errors.New("boom")
+	managedBrowserSessionRevealer = func(_ string, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+		return browserctl.ManagedPlaywrightState{}, errors.New("boom")
 	}
 
 	m := Model{

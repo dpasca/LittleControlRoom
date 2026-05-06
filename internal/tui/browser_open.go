@@ -8,16 +8,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
 	"lcroom/internal/browserctl"
 )
 
 var externalBrowserOpener = openExternalBrowserURL
 var externalPathOpener = openExternalPath
-var managedBrowserStateReader = browserctl.ReadManagedPlaywrightState
-var managedBrowserRevealer = browserctl.RevealManagedPlaywrightState
-var managedBrowserRevealMarker = browserctl.MarkManagedPlaywrightStateRevealed
+var managedBrowserSessionRevealer = browserctl.RevealManagedPlaywrightSession
 
 func openProjectDirInBrowser(path string) error {
 	if strings.TrimSpace(path) == "" {
@@ -74,19 +71,11 @@ func revealManagedBrowserSession(dataDir, sessionKey string) (browserctl.Managed
 	if sessionKey == "" {
 		return browserctl.ManagedPlaywrightState{}, fmt.Errorf("managed browser session key is required")
 	}
-	state, err := managedBrowserStateReader(dataDir, sessionKey)
+	state, err := managedBrowserSessionRevealer(dataDir, sessionKey)
 	if err != nil {
-		return browserctl.ManagedPlaywrightState{}, fmt.Errorf("read managed browser state: %w", err)
-	}
-	if err := managedBrowserRevealer(state); err != nil {
 		return browserctl.ManagedPlaywrightState{}, fmt.Errorf("reveal managed browser: %w", err)
 	}
-	if updated, err := managedBrowserRevealMarker(dataDir, sessionKey); err == nil {
-		return updated, nil
-	}
-	state.Hidden = false
-	state.UpdatedAt = time.Now().UTC()
-	return state.Normalize(), nil
+	return state, nil
 }
 
 func (m *Model) rememberManagedBrowserState(state browserctl.ManagedPlaywrightState) {

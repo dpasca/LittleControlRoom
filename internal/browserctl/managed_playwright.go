@@ -12,9 +12,11 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"lcroom/internal/brand"
+	"lcroom/internal/keyedmutex"
 )
 
 type ManagedLaunchMode string
@@ -66,6 +68,11 @@ type ManagedBrowserProcess struct {
 	AppName        string
 	ExecutablePath string
 }
+
+var (
+	managedPlaywrightStateRevealer = RevealManagedPlaywrightState
+	managedPlaywrightStateLocks    keyedmutex.Locker
+)
 
 type osProcessSnapshot struct {
 	PID     int
@@ -186,27 +193,59 @@ func ReadManagedPlaywrightState(dataDir, sessionKey string) (ManagedPlaywrightSt
 }
 
 func MarkManagedPlaywrightStateRevealed(dataDir, sessionKey string) (ManagedPlaywrightState, error) {
+	var updated ManagedPlaywrightState
+	err := WithManagedPlaywrightStateLock(dataDir, sessionKey, func() error {
+		var err error
+		updated, err = markManagedPlaywrightStateRevealedLocked(dataDir, sessionKey)
+		return err
+	})
+	return updated, err
+}
+
+func markManagedPlaywrightStateRevealedLocked(dataDir, sessionKey string) (ManagedPlaywrightState, error) {
 	state, err := ReadManagedPlaywrightState(dataDir, sessionKey)
-	if err != nil {
-		return ManagedPlaywrightState{}, err
-	}
-	paths, err := ManagedPlaywrightPathsFor(
-		dataDir,
-		state.Provider,
-		state.ProjectPath,
-		managedPlaywrightFirstNonEmpty(state.SessionKey, sessionKey),
-		state.ProfileKey,
-		state.LaunchMode,
-	)
 	if err != nil {
 		return ManagedPlaywrightState{}, err
 	}
 	state.Hidden = false
 	state.UpdatedAt = time.Now().UTC()
-	if err := WriteManagedPlaywrightState(paths, state); err != nil {
+	if err := writeManagedPlaywrightStateFor(dataDir, sessionKey, state); err != nil {
 		return ManagedPlaywrightState{}, err
 	}
 	return state.Normalize(), nil
+}
+
+// RevealManagedPlaywrightSession records the reveal intent before raising the
+// browser so the background monitor cannot re-hide the window mid-handoff.
+func RevealManagedPlaywrightSession(dataDir, sessionKey string) (ManagedPlaywrightState, error) {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" {
+		return ManagedPlaywrightState{}, fmt.Errorf("managed browser session key required")
+	}
+
+	var revealed ManagedPlaywrightState
+	err := WithManagedPlaywrightStateLock(dataDir, sessionKey, func() error {
+		previous, err := ReadManagedPlaywrightState(dataDir, sessionKey)
+		if err != nil {
+			return err
+		}
+		updated, err := markManagedPlaywrightStateRevealedLocked(dataDir, sessionKey)
+		if err != nil {
+			return err
+		}
+		revealed = updated
+		if err := managedPlaywrightStateRevealer(updated); err != nil {
+			restored := previous.Normalize()
+			restored.UpdatedAt = time.Now().UTC()
+			if restoreErr := writeManagedPlaywrightStateFor(dataDir, sessionKey, restored); restoreErr != nil {
+				return fmt.Errorf("%w; restore managed browser state: %v", err, restoreErr)
+			}
+			revealed = restored.Normalize()
+			return err
+		}
+		return nil
+	})
+	return revealed.Normalize(), err
 }
 
 func managedPlaywrightFirstNonEmpty(values ...string) string {
@@ -218,7 +257,68 @@ func managedPlaywrightFirstNonEmpty(values ...string) string {
 	return ""
 }
 
+// WithManagedPlaywrightStateLock serializes managed browser state transitions
+// across the app process and the playwright-mcp monitor process.
+func WithManagedPlaywrightStateLock(dataDir, sessionKey string, fn func() error) error {
+	if fn == nil {
+		return nil
+	}
+	lockPath := managedPlaywrightStateLockPath(dataDir, sessionKey)
+	unlockLocal := managedPlaywrightStateLocks.Lock(lockPath)
+	defer unlockLocal()
+
+	lockFile, err := lockManagedPlaywrightState(lockPath)
+	if err != nil {
+		return err
+	}
+	defer unlockManagedPlaywrightState(lockFile)
+	return fn()
+}
+
+func managedPlaywrightStateLockPath(dataDir, sessionKey string) string {
+	return filepath.Join(EffectiveDataDir(dataDir), "browser", "playwright", "sessions", strings.TrimSpace(sessionKey), "state.lock")
+}
+
+func lockManagedPlaywrightState(lockPath string) (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		return nil, fmt.Errorf("create managed Playwright state lock directory: %w", err)
+	}
+	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("open managed Playwright state lock: %w", err)
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("lock managed Playwright state: %w", err)
+	}
+	return file, nil
+}
+
+func unlockManagedPlaywrightState(file *os.File) {
+	if file == nil {
+		return
+	}
+	_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+	_ = file.Close()
+}
+
 func WriteManagedPlaywrightState(paths ManagedPlaywrightPaths, state ManagedPlaywrightState) error {
+	return writeManagedPlaywrightStateFile(paths.StatePath, state)
+}
+
+func writeManagedPlaywrightStateFor(dataDir, sessionKey string, state ManagedPlaywrightState) error {
+	targetSessionKey := managedPlaywrightFirstNonEmpty(state.SessionKey, sessionKey)
+	if targetSessionKey == "" {
+		return fmt.Errorf("managed Playwright session key required")
+	}
+	statePath := filepath.Join(EffectiveDataDir(dataDir), "browser", "playwright", "sessions", targetSessionKey, "state.json")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
+		return err
+	}
+	return writeManagedPlaywrightStateFile(statePath, state)
+}
+
+func writeManagedPlaywrightStateFile(statePath string, state ManagedPlaywrightState) error {
 	normalized := state.Normalize()
 	if normalized.UpdatedAt.IsZero() {
 		normalized.UpdatedAt = time.Now().UTC()
@@ -227,7 +327,7 @@ func WriteManagedPlaywrightState(paths ManagedPlaywrightPaths, state ManagedPlay
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(paths.StatePath, raw, 0o644)
+	return os.WriteFile(statePath, raw, 0o644)
 }
 
 func (s ManagedPlaywrightState) Normalize() ManagedPlaywrightState {

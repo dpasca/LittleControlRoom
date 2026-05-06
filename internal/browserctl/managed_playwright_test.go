@@ -1,6 +1,7 @@
 package browserctl
 
 import (
+	"errors"
 	"runtime"
 	"strings"
 	"testing"
@@ -61,6 +62,110 @@ func TestManagedBrowserCandidateRecognizesChromeAppProcess(t *testing.T) {
 	}
 	if !strings.Contains(candidate.AppPath, "Google Chrome.app") {
 		t.Fatalf("candidate AppPath = %q, want Google Chrome.app", candidate.AppPath)
+	}
+}
+
+func TestRevealManagedPlaywrightSessionMarksRevealedBeforeOSReveal(t *testing.T) {
+	paths, err := ManagedPlaywrightPathsFor(
+		t.TempDir(),
+		"codex",
+		"/tmp/demo",
+		"session-demo",
+		"profile-demo",
+		ManagedLaunchModeBackground,
+	)
+	if err != nil {
+		t.Fatalf("ManagedPlaywrightPathsFor() error = %v", err)
+	}
+	initial := ManagedPlaywrightState{
+		SessionKey:  paths.SessionKey,
+		ProfileKey:  paths.ProfileKey,
+		Provider:    paths.Provider,
+		ProjectPath: paths.ProjectPath,
+		LaunchMode:  paths.LaunchMode,
+		Policy:      DefaultPolicy(),
+		BrowserPID:  123,
+		Hidden:      true,
+	}
+	if err := WriteManagedPlaywrightState(paths, initial); err != nil {
+		t.Fatalf("write initial state: %v", err)
+	}
+
+	previousRevealer := managedPlaywrightStateRevealer
+	t.Cleanup(func() {
+		managedPlaywrightStateRevealer = previousRevealer
+	})
+	managedPlaywrightStateRevealer = func(state ManagedPlaywrightState) error {
+		if state.Hidden {
+			t.Fatalf("revealer saw Hidden=true, want reveal intent persisted first")
+		}
+		stored, err := ReadManagedPlaywrightState(paths.DataDir, paths.SessionKey)
+		if err != nil {
+			t.Fatalf("read state during reveal: %v", err)
+		}
+		if stored.Hidden {
+			t.Fatalf("stored.Hidden during reveal = true, want false")
+		}
+		return nil
+	}
+
+	updated, err := RevealManagedPlaywrightSession(paths.DataDir, paths.SessionKey)
+	if err != nil {
+		t.Fatalf("RevealManagedPlaywrightSession() error = %v", err)
+	}
+	if updated.Hidden {
+		t.Fatalf("updated.Hidden = true, want false")
+	}
+}
+
+func TestRevealManagedPlaywrightSessionRestoresHiddenStateOnRevealFailure(t *testing.T) {
+	paths, err := ManagedPlaywrightPathsFor(
+		t.TempDir(),
+		"codex",
+		"/tmp/demo",
+		"session-demo",
+		"profile-demo",
+		ManagedLaunchModeBackground,
+	)
+	if err != nil {
+		t.Fatalf("ManagedPlaywrightPathsFor() error = %v", err)
+	}
+	initial := ManagedPlaywrightState{
+		SessionKey:  paths.SessionKey,
+		ProfileKey:  paths.ProfileKey,
+		Provider:    paths.Provider,
+		ProjectPath: paths.ProjectPath,
+		LaunchMode:  paths.LaunchMode,
+		Policy:      DefaultPolicy(),
+		BrowserPID:  123,
+		Hidden:      true,
+	}
+	if err := WriteManagedPlaywrightState(paths, initial); err != nil {
+		t.Fatalf("write initial state: %v", err)
+	}
+
+	previousRevealer := managedPlaywrightStateRevealer
+	t.Cleanup(func() {
+		managedPlaywrightStateRevealer = previousRevealer
+	})
+	revealErr := errors.New("reveal failed")
+	managedPlaywrightStateRevealer = func(state ManagedPlaywrightState) error {
+		return revealErr
+	}
+
+	updated, err := RevealManagedPlaywrightSession(paths.DataDir, paths.SessionKey)
+	if !errors.Is(err, revealErr) {
+		t.Fatalf("RevealManagedPlaywrightSession() error = %v, want %v", err, revealErr)
+	}
+	if !updated.Hidden {
+		t.Fatalf("updated.Hidden = false, want restored true")
+	}
+	stored, err := ReadManagedPlaywrightState(paths.DataDir, paths.SessionKey)
+	if err != nil {
+		t.Fatalf("read state after failed reveal: %v", err)
+	}
+	if !stored.Hidden {
+		t.Fatalf("stored.Hidden after failed reveal = false, want true")
 	}
 }
 

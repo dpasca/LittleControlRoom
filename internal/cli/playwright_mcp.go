@@ -195,38 +195,40 @@ func reconcileManagedPlaywrightBrowser(paths browserctl.ManagedPlaywrightPaths, 
 	if err != nil || !ok {
 		return err
 	}
-	state, readErr := readManagedPlaywrightState(paths.DataDir, paths.SessionKey)
-	if readErr != nil {
-		state = browserctl.ManagedPlaywrightState{
-			SessionKey:  paths.SessionKey,
-			ProfileKey:  paths.ProfileKey,
-			Provider:    paths.Provider,
-			ProjectPath: paths.ProjectPath,
-			LaunchMode:  paths.LaunchMode,
-			Policy:      browserctl.PolicyFromEnv(),
-		}
-		if monitorState != nil && monitorState.hiddenByLCR {
-			state.Hidden = true
-		}
-	}
-	state.BrowserPID = detected.PID
-	state.BrowserAppPath = detected.AppPath
-	state.BrowserAppName = detected.AppName
-	state.BrowserExecutable = detected.ExecutablePath
-	state.RevealSupported = detected.PID > 0 || detected.AppPath != "" || detected.AppName != ""
-	state.UpdatedAt = now
-	if shouldHideManagedBrowser(keepHidden, state, monitorState, now) {
-		if monitorState != nil {
-			monitorState.lastHideAttempt = now
-		}
-		if err := hideManagedBrowserProcess(detected.PID); err == nil {
-			state.Hidden = true
-			if monitorState != nil {
-				monitorState.hiddenByLCR = true
+	return browserctl.WithManagedPlaywrightStateLock(paths.DataDir, paths.SessionKey, func() error {
+		state, readErr := readManagedPlaywrightState(paths.DataDir, paths.SessionKey)
+		if readErr != nil {
+			state = browserctl.ManagedPlaywrightState{
+				SessionKey:  paths.SessionKey,
+				ProfileKey:  paths.ProfileKey,
+				Provider:    paths.Provider,
+				ProjectPath: paths.ProjectPath,
+				LaunchMode:  paths.LaunchMode,
+				Policy:      browserctl.PolicyFromEnv(),
+			}
+			if monitorState != nil && monitorState.hiddenByLCR {
+				state.Hidden = true
 			}
 		}
-	}
-	return writeManagedPlaywrightState(paths, state)
+		state.BrowserPID = detected.PID
+		state.BrowserAppPath = detected.AppPath
+		state.BrowserAppName = detected.AppName
+		state.BrowserExecutable = detected.ExecutablePath
+		state.RevealSupported = detected.PID > 0 || detected.AppPath != "" || detected.AppName != ""
+		state.UpdatedAt = now
+		if shouldHideManagedBrowser(keepHidden, state, monitorState, now) {
+			if monitorState != nil {
+				monitorState.lastHideAttempt = now
+			}
+			if err := hideManagedBrowserProcess(detected.PID); err == nil {
+				state.Hidden = true
+				if monitorState != nil {
+					monitorState.hiddenByLCR = true
+				}
+			}
+		}
+		return writeManagedPlaywrightState(paths, state)
+	})
 }
 
 func shouldHideManagedBrowser(keepHidden bool, state browserctl.ManagedPlaywrightState, monitorState *managedBrowserMonitorState, now time.Time) bool {
