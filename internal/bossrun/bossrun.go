@@ -180,6 +180,9 @@ func NormalizeGoalProposal(proposal GoalProposal) (GoalProposal, error) {
 	}
 
 	proposal.Plan = normalizePlan(proposal.Plan, proposal.Authority.Resources)
+	if err := validatePlanAuthority(proposal.Plan, proposal.Authority); err != nil {
+		return GoalProposal{}, err
+	}
 	proposal.Preview = strings.TrimSpace(proposal.Preview)
 	if proposal.Preview == "" {
 		proposal.Preview = FormatGoalProposalPreview(proposal)
@@ -385,6 +388,83 @@ func capabilityAllowed(capabilities []control.CapabilityName, want control.Capab
 		}
 	}
 	return false
+}
+
+func validatePlanAuthority(plan Plan, authority AuthorityGrant) error {
+	authorizedResources := map[string]struct{}{}
+	for _, resource := range authority.Resources {
+		key := resourceAuthorityKey(resource)
+		if key != "" {
+			authorizedResources[key] = struct{}{}
+		}
+	}
+	for _, step := range plan.Steps {
+		if step.Capability != "" && !capabilityAllowed(authority.AllowedCapabilities, step.Capability) {
+			return fmt.Errorf("plan step %s uses capability outside authority: %s", firstNonEmpty(step.ID, string(step.Kind)), step.Capability)
+		}
+		for _, resource := range step.Resources {
+			key := resourceAuthorityKey(resource)
+			if key == "" {
+				continue
+			}
+			if _, ok := authorizedResources[key]; !ok {
+				return fmt.Errorf("plan step %s references resource outside authority: %s", firstNonEmpty(step.ID, string(step.Kind)), resourceLabel(resource))
+			}
+		}
+	}
+	return nil
+}
+
+func resourceAuthorityKey(resource control.ResourceRef) string {
+	resource.Kind = control.ResourceKind(strings.TrimSpace(string(resource.Kind)))
+	if resource.Kind == "" {
+		return ""
+	}
+	parts := []string{
+		string(resource.Kind),
+		strings.TrimSpace(resource.ID),
+		strings.TrimSpace(resource.Path),
+		strings.TrimSpace(resource.ProjectPath),
+		string(resource.Provider.Normalized()),
+		strings.TrimSpace(resource.SessionID),
+		fmt.Sprintf("%d", resource.TodoID),
+		fmt.Sprintf("%d", resource.PID),
+		fmt.Sprintf("%d", resource.Port),
+	}
+	if parts[1] == "" && parts[2] == "" && parts[3] == "" && parts[5] == "" && resource.TodoID == 0 && resource.PID == 0 && resource.Port == 0 {
+		parts = append(parts, strings.TrimSpace(resource.Label))
+	}
+	return strings.Join(parts, "\x00")
+}
+
+func resourceLabel(resource control.ResourceRef) string {
+	switch {
+	case strings.TrimSpace(resource.ID) != "":
+		return fmt.Sprintf("%s:%s", resource.Kind, strings.TrimSpace(resource.ID))
+	case strings.TrimSpace(resource.Path) != "":
+		return fmt.Sprintf("%s:%s", resource.Kind, strings.TrimSpace(resource.Path))
+	case strings.TrimSpace(resource.ProjectPath) != "":
+		return fmt.Sprintf("%s:%s", resource.Kind, strings.TrimSpace(resource.ProjectPath))
+	case strings.TrimSpace(resource.SessionID) != "":
+		return fmt.Sprintf("%s:%s", resource.Kind, strings.TrimSpace(resource.SessionID))
+	case resource.PID != 0:
+		return fmt.Sprintf("%s:%d", resource.Kind, resource.PID)
+	case resource.Port != 0:
+		return fmt.Sprintf("%s:%d", resource.Kind, resource.Port)
+	case strings.TrimSpace(resource.Label) != "":
+		return fmt.Sprintf("%s:%s", resource.Kind, strings.TrimSpace(resource.Label))
+	default:
+		return string(resource.Kind)
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func clonePlanSteps(steps []PlanStep) []PlanStep {

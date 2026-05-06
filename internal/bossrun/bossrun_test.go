@@ -71,6 +71,56 @@ func TestNormalizeGoalProposalRejectsReadOnlyCleanupAuthority(t *testing.T) {
 	}
 }
 
+func TestNormalizeGoalProposalRejectsPlanCapabilityOutsideAuthority(t *testing.T) {
+	t.Parallel()
+
+	_, err := NormalizeGoalProposal(GoalProposal{
+		Run: GoalRun{Kind: GoalKindAgentTaskCleanup},
+		Authority: AuthorityGrant{
+			AllowedCapabilities: []control.CapabilityName{control.CapabilityAgentTaskClose},
+			Resources:           []control.ResourceRef{{Kind: control.ResourceAgentTask, ID: "agt_one"}},
+			MaxRisk:             control.RiskWrite,
+		},
+		Plan: Plan{
+			Version: 1,
+			Steps: []PlanStep{{
+				ID:         "delegate-extra-work",
+				Kind:       PlanStepDelegate,
+				Capability: control.CapabilityEngineerSendPrompt,
+				Resources:  []control.ResourceRef{{Kind: control.ResourceAgentTask, ID: "agt_one"}},
+			}},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "capability outside authority") {
+		t.Fatalf("NormalizeGoalProposal() err = %v, want capability authority error", err)
+	}
+}
+
+func TestNormalizeGoalProposalRejectsPlanResourceOutsideAuthority(t *testing.T) {
+	t.Parallel()
+
+	_, err := NormalizeGoalProposal(GoalProposal{
+		Run: GoalRun{Kind: GoalKindAgentTaskCleanup},
+		Authority: AuthorityGrant{
+			AllowedCapabilities: []control.CapabilityName{control.CapabilityAgentTaskClose},
+			Resources:           []control.ResourceRef{{Kind: control.ResourceAgentTask, ID: "agt_one"}},
+			MaxRisk:             control.RiskWrite,
+		},
+		Plan: Plan{
+			Version: 1,
+			Steps: []PlanStep{{
+				ID:         "archive-unapproved-task",
+				Kind:       PlanStepAct,
+				Capability: control.CapabilityAgentTaskClose,
+				Resources:  []control.ResourceRef{{Kind: control.ResourceAgentTask, ID: "agt_two"}},
+			}},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "resource outside authority") {
+		t.Fatalf("NormalizeGoalProposal() err = %v, want resource authority error", err)
+	}
+}
+
 func TestFormatGoalResultSummarizesVerifiedArchive(t *testing.T) {
 	t.Parallel()
 
