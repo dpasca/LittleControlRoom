@@ -2511,6 +2511,7 @@ func (s *Service) AddTodo(ctx context.Context, projectPath, text string) (model.
 	if err != nil {
 		return model.TodoItem{}, err
 	}
+	s.queueSavedTodoWorktreeSuggestion(ctx, projectPath, item.ID)
 	s.refreshProjectStatusAsync(projectPath)
 	now := time.Now()
 	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "add_todo"}})
@@ -2525,10 +2526,39 @@ func (s *Service) UpdateTodo(ctx context.Context, projectPath string, id int64, 
 	if err := s.store.DeleteTodoWorktreeSuggestion(ctx, id); err != nil {
 		return err
 	}
+	s.queueSavedTodoWorktreeSuggestion(ctx, projectPath, id)
 	now := time.Now()
 	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "update_todo"}})
 	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: "update_todo"})
 	return nil
+}
+
+func (s *Service) queueSavedTodoWorktreeSuggestion(ctx context.Context, projectPath string, todoID int64) {
+	if s == nil || s.store == nil || todoID <= 0 {
+		return
+	}
+	changed, err := s.store.ForceQueueTodoWorktreeSuggestion(ctx, todoID)
+	if err != nil {
+		if s.bus != nil {
+			s.bus.Publish(events.Event{
+				Type:        events.ActionApplied,
+				At:          time.Now(),
+				ProjectPath: projectPath,
+				Payload: map[string]string{
+					"action":  "todo_worktree_suggestion_failed",
+					"todo_id": fmt.Sprintf("%d", todoID),
+					"error":   err.Error(),
+				},
+			})
+		}
+		return
+	}
+	if !changed {
+		return
+	}
+	if suggester := s.currentTodoSuggester(); suggester != nil {
+		suggester.Notify()
+	}
 }
 
 func (s *Service) ToggleTodoDone(ctx context.Context, projectPath string, id int64, done bool) error {

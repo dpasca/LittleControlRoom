@@ -10545,11 +10545,7 @@ func TestTodoDialogDedicatedWorktreeRetriesFailedWorktreeSuggestion(t *testing.T
 	if err != nil {
 		t.Fatalf("add todo: %v", err)
 	}
-	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
-		t.Fatalf("queue todo worktree suggestion: %v", err)
-	} else if !queued {
-		t.Fatalf("expected todo worktree suggestion to queue")
-	}
+	queueTodoWorktreeSuggestionForTest(t, ctx, st, item.ID)
 	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
 	if err != nil {
 		t.Fatalf("claim todo worktree suggestion: %v", err)
@@ -10644,11 +10640,7 @@ func TestTodoDialogCanStartSelectedTodoInNewWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add todo: %v", err)
 	}
-	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
-		t.Fatalf("queue todo worktree suggestion: %v", err)
-	} else if !queued {
-		t.Fatalf("expected todo worktree suggestion to queue")
-	}
+	queueTodoWorktreeSuggestionForTest(t, ctx, st, item.ID)
 	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
 	if err != nil {
 		t.Fatalf("claim todo worktree suggestion: %v", err)
@@ -19373,6 +19365,24 @@ func mSetupBossSelectionForTest(backend config.AIBackend) int {
 		}
 	}
 	return 0
+}
+
+func queueTodoWorktreeSuggestionForTest(t *testing.T, ctx context.Context, st *store.Store, todoID int64) {
+	t.Helper()
+	queued, err := st.QueueTodoWorktreeSuggestion(ctx, todoID)
+	if err != nil {
+		t.Fatalf("queue todo worktree suggestion: %v", err)
+	}
+	if queued {
+		return
+	}
+	suggestion, err := st.GetTodoWorktreeSuggestion(ctx, todoID)
+	if err != nil {
+		t.Fatalf("get existing todo worktree suggestion: %v", err)
+	}
+	if suggestion.Status != model.TodoWorktreeSuggestionQueued {
+		t.Fatalf("existing todo worktree suggestion status = %q, want %q", suggestion.Status, model.TodoWorktreeSuggestionQueued)
+	}
 }
 
 func TestSettingsBossChatBackendPickerUpdatesField(t *testing.T) {

@@ -7,7 +7,7 @@ The goal is to let a user start parallel work on the same repo without forcing m
 ## Goals
 
 - Generate branch and worktree naming suggestions for TODO items using model-based structured output.
-- Cache suggestions once requested so repeated dedicated-worktree launches are usually instant without speculatively generating names for every TODO.
+- Cache suggestions as soon as TODOs are saved so dedicated-worktree launches are usually instant.
 - Keep the top-level dashboard repo-centric instead of turning each worktree into a noisy duplicate project row.
 - Let the user inspect, edit, accept, or regenerate the suggested names before creating a new worktree.
 - Keep local validation limited to safety and normalization, not semantic intent inference.
@@ -41,21 +41,22 @@ This keeps the user mental model simple: "I have one project with several possib
 
 When a TODO is created:
 
-- do not generate a worktree suggestion yet
+- queue worktree suggestion generation immediately
+- persist the queued suggestion row so it survives restart before the model finishes
 
 When a TODO text changes:
 
 - clear any cached suggestion for that TODO
-- wait until the user explicitly asks for a dedicated worktree again
+- queue a fresh worktree suggestion immediately for the updated text
 
-### 2. On-demand suggestion generation
+### 2. Background suggestion generation
 
-When the user switches the launch dialog to `Dedicated worktree` or explicitly presses `regenerate`, Little Control Room queues suggestion generation for that TODO.
+When a TODO is saved, Little Control Room queues suggestion generation for that TODO. When the user switches the launch dialog to `Dedicated worktree`, the dialog should use the cached suggestion if ready or show the current queued/running state. Pressing `regenerate` explicitly replaces the cached suggestion with a new queued request.
 
 Suggestions should be generated:
 
 - asynchronously
-- only for explicitly requested TODOs
+- for saved TODOs and explicit regeneration requests
 - with enough project context to avoid vague names
 
 ### 3. TODO launch
@@ -180,7 +181,7 @@ Add a matching model type, for example:
 
 A cached suggestion should be discarded when:
 
-- the TODO text changes
+- the TODO text changes, then replaced by a fresh queued suggestion
 - the user explicitly requests regeneration
 
 A suggestion is still valid when:
@@ -188,7 +189,7 @@ A suggestion is still valid when:
 - time passes but the TODO text is unchanged
 - the repo remains the same
 
-This keeps the cache useful without generating names for TODOs that may never be launched into dedicated worktrees.
+This keeps the cache useful and restart-safe while avoiding local semantic heuristics.
 
 ## Background Worker
 
@@ -203,6 +204,7 @@ Responsibilities:
 Suggested behavior:
 
 - avoid startup backfills for every open TODO
+- queue newly saved TODOs immediately instead of waiting for the launch dialog
 - retry on explicit user request via `regenerate`
 
 ## Service Layer
@@ -211,7 +213,8 @@ Suggested service/store capabilities:
 
 - load a TODO suggestion by TODO id
 - clear a cached suggestion when the TODO text changes
-- queue suggestion generation for one TODO on explicit demand
+- queue suggestion generation for a newly saved or updated TODO
+- queue suggestion generation for one TODO on explicit demand when missing or regenerating
 - ensure a valid suggestion exists when launching into a new worktree
 
 Possible service entry points:
@@ -298,7 +301,7 @@ Recommended implementation sequence:
 
 1. Add the new store table, model type, and stale/ready/failed persistence.
 2. Add a dedicated background manager that generates cached suggestions.
-3. Update TODO create/edit flows so creation stays cheap and text edits invalidate cached suggestions without speculatively enqueueing work.
+3. Update TODO create/edit flows so saved TODOs immediately enqueue restart-safe cached suggestions, and text edits invalidate and requeue.
 4. Surface suggestion state in the TODO dialog.
 5. Add the launch dialog path for `Start in new worktree` with accept/edit/regenerate.
 6. Add actual worktree creation and embedded provider launch using the accepted names.
@@ -311,7 +314,7 @@ Minimum verification for implementation PRs:
 
 - store migration tests for the new table
 - invalidation tests when TODO text changes
-- on-demand queue tests for queued to ready or failed transitions
+- saved-TODO and on-demand queue tests for queued to ready or failed transitions
 - TUI tests for ready, queued, and failed suggestion states
 - launch dialog tests covering accept, edit, and regenerate
 

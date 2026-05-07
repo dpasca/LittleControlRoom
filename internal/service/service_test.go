@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"image"
 	"image/color"
@@ -3572,7 +3571,7 @@ func TestScanOnceDetectsRepoAheadOfRemote(t *testing.T) {
 	}
 }
 
-func TestAddTodoAndUpdateDoNotQueueWorktreeSuggestionsSpeculatively(t *testing.T) {
+func TestAddTodoAndUpdateQueueWorktreeSuggestionsImmediately(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -3597,27 +3596,25 @@ func TestAddTodoAndUpdateDoNotQueueWorktreeSuggestionsSpeculatively(t *testing.T
 		t.Fatalf("track root project: %v", err)
 	}
 
-	item, err := svc.AddTodo(ctx, projectPath, "Only create a worktree name when I choose dedicated mode")
+	item, err := svc.AddTodo(ctx, projectPath, "Create a cached worktree name when I add the TODO")
 	if err != nil {
 		t.Fatalf("add todo: %v", err)
 	}
-	if _, err := st.GetTodoWorktreeSuggestion(ctx, item.ID); err != sql.ErrNoRows {
-		t.Fatalf("GetTodoWorktreeSuggestion() after add = %v, want sql.ErrNoRows", err)
-	}
-
-	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
-		t.Fatalf("queue todo worktree suggestion: %v", err)
-	} else if !queued {
-		t.Fatalf("expected todo worktree suggestion to queue")
-	}
-	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
+	suggestion, err := st.GetTodoWorktreeSuggestion(ctx, item.ID)
 	if err != nil {
-		t.Fatalf("claim todo worktree suggestion: %v", err)
+		t.Fatalf("GetTodoWorktreeSuggestion() after add = %v", err)
 	}
-	suggestion.BranchName = "feat/on-demand-worktree"
-	suggestion.WorktreeSuffix = "feat-on-demand-worktree"
+	if suggestion.Status != model.TodoWorktreeSuggestionQueued {
+		t.Fatalf("suggestion.Status after add = %q, want %q", suggestion.Status, model.TodoWorktreeSuggestionQueued)
+	}
+	suggestion, err = st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, time.Hour, 0)
+	if err != nil {
+		t.Fatalf("claim immediately queued todo worktree suggestion: %v", err)
+	}
+	suggestion.BranchName = "feat/cached-worktree-name"
+	suggestion.WorktreeSuffix = "feat-cached-worktree-name"
 	suggestion.Kind = "feature"
-	suggestion.Reason = "Creates a worktree on demand."
+	suggestion.Reason = "Creates the worktree name before the launch dialog opens."
 	suggestion.Confidence = 0.91
 	suggestion.Model = "test"
 	if completed, err := st.CompleteTodoWorktreeSuggestion(ctx, suggestion); err != nil {
@@ -3626,11 +3623,39 @@ func TestAddTodoAndUpdateDoNotQueueWorktreeSuggestionsSpeculatively(t *testing.T
 		t.Fatalf("expected todo worktree suggestion to complete")
 	}
 
-	if err := svc.UpdateTodo(ctx, projectPath, item.ID, "Still do not speculate on worktree names"); err != nil {
+	if err := svc.UpdateTodo(ctx, projectPath, item.ID, "Refresh the cached worktree name when the TODO changes"); err != nil {
 		t.Fatalf("update todo: %v", err)
 	}
-	if _, err := st.GetTodoWorktreeSuggestion(ctx, item.ID); err != sql.ErrNoRows {
-		t.Fatalf("GetTodoWorktreeSuggestion() after update = %v, want sql.ErrNoRows", err)
+	suggestion, err = st.GetTodoWorktreeSuggestion(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("GetTodoWorktreeSuggestion() after update = %v", err)
+	}
+	if suggestion.Status != model.TodoWorktreeSuggestionQueued {
+		t.Fatalf("suggestion.Status after update = %q, want %q", suggestion.Status, model.TodoWorktreeSuggestionQueued)
+	}
+	if suggestion.BranchName != "" || suggestion.WorktreeSuffix != "" {
+		t.Fatalf("suggestion names after update = (%q, %q), want cleared queued suggestion", suggestion.BranchName, suggestion.WorktreeSuffix)
+	}
+	if _, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, time.Hour, 0); err != nil {
+		t.Fatalf("claim immediately requeued todo worktree suggestion: %v", err)
+	}
+}
+
+func queueTodoWorktreeSuggestionForTest(t *testing.T, ctx context.Context, st *store.Store, todoID int64) {
+	t.Helper()
+	queued, err := st.QueueTodoWorktreeSuggestion(ctx, todoID)
+	if err != nil {
+		t.Fatalf("queue todo worktree suggestion: %v", err)
+	}
+	if queued {
+		return
+	}
+	suggestion, err := st.GetTodoWorktreeSuggestion(ctx, todoID)
+	if err != nil {
+		t.Fatalf("get existing todo worktree suggestion: %v", err)
+	}
+	if suggestion.Status != model.TodoWorktreeSuggestionQueued {
+		t.Fatalf("existing todo worktree suggestion status = %q, want %q", suggestion.Status, model.TodoWorktreeSuggestionQueued)
 	}
 }
 
@@ -3790,11 +3815,7 @@ func TestCreateTodoWorktreeCreatesTrackedSiblingProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add todo: %v", err)
 	}
-	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
-		t.Fatalf("queue todo worktree suggestion: %v", err)
-	} else if !queued {
-		t.Fatalf("expected todo worktree suggestion to queue")
-	}
+	queueTodoWorktreeSuggestionForTest(t, ctx, st, item.ID)
 	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
 	if err != nil {
 		t.Fatalf("claim todo worktree suggestion: %v", err)
@@ -3888,11 +3909,7 @@ func TestCreateTodoWorktreeAutoSuffixOnConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add todo: %v", err)
 	}
-	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
-		t.Fatalf("queue todo worktree suggestion: %v", err)
-	} else if !queued {
-		t.Fatalf("expected todo worktree suggestion to queue")
-	}
+	queueTodoWorktreeSuggestionForTest(t, ctx, st, item.ID)
 	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
 	if err != nil {
 		t.Fatalf("claim todo worktree suggestion: %v", err)
@@ -3954,11 +3971,7 @@ func TestCreateTodoWorktreeFallsBackToGeneratedNamesWhileSuggestionQueued(t *tes
 	if err != nil {
 		t.Fatalf("add todo: %v", err)
 	}
-	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
-		t.Fatalf("queue todo worktree suggestion: %v", err)
-	} else if !queued {
-		t.Fatalf("expected todo worktree suggestion to queue")
-	}
+	queueTodoWorktreeSuggestionForTest(t, ctx, st, item.ID)
 
 	result, err := svc.CreateTodoWorktree(ctx, CreateTodoWorktreeRequest{
 		ProjectPath: projectPath,
@@ -4006,11 +4019,7 @@ func TestRemoveWorktreeRemovesTrackedLinkedWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add todo: %v", err)
 	}
-	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
-		t.Fatalf("queue todo worktree suggestion: %v", err)
-	} else if !queued {
-		t.Fatalf("expected todo worktree suggestion to queue")
-	}
+	queueTodoWorktreeSuggestionForTest(t, ctx, st, item.ID)
 	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
 	if err != nil {
 		t.Fatalf("claim todo worktree suggestion: %v", err)
@@ -4089,11 +4098,7 @@ func TestRemoveWorktreeRemovesMissingTrackedLinkedWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add todo: %v", err)
 	}
-	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
-		t.Fatalf("queue todo worktree suggestion: %v", err)
-	} else if !queued {
-		t.Fatalf("expected todo worktree suggestion to queue")
-	}
+	queueTodoWorktreeSuggestionForTest(t, ctx, st, item.ID)
 	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
 	if err != nil {
 		t.Fatalf("claim todo worktree suggestion: %v", err)
@@ -4178,11 +4183,7 @@ func TestRemoveWorktreeRetriesWithForceForInitializedSubmodules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add todo: %v", err)
 	}
-	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
-		t.Fatalf("queue todo worktree suggestion: %v", err)
-	} else if !queued {
-		t.Fatalf("expected todo worktree suggestion to queue")
-	}
+	queueTodoWorktreeSuggestionForTest(t, ctx, st, item.ID)
 	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
 	if err != nil {
 		t.Fatalf("claim todo worktree suggestion: %v", err)
@@ -4251,11 +4252,7 @@ func TestRemoveWorktreeWaitsForScanAndStaysForgotten(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add todo: %v", err)
 	}
-	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
-		t.Fatalf("queue todo worktree suggestion: %v", err)
-	} else if !queued {
-		t.Fatalf("expected todo worktree suggestion to queue")
-	}
+	queueTodoWorktreeSuggestionForTest(t, ctx, st, item.ID)
 	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
 	if err != nil {
 		t.Fatalf("claim todo worktree suggestion: %v", err)
@@ -4366,11 +4363,7 @@ func TestMergeWorktreeBackMergesIntoRecordedParentBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add todo: %v", err)
 	}
-	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
-		t.Fatalf("queue todo worktree suggestion: %v", err)
-	} else if !queued {
-		t.Fatalf("expected todo worktree suggestion to queue")
-	}
+	queueTodoWorktreeSuggestionForTest(t, ctx, st, item.ID)
 	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
 	if err != nil {
 		t.Fatalf("claim todo worktree suggestion: %v", err)
@@ -4725,11 +4718,7 @@ func TestMergeWorktreeBackSyncsRootSubmoduleAfterMerge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add todo: %v", err)
 	}
-	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
-		t.Fatalf("queue todo worktree suggestion: %v", err)
-	} else if !queued {
-		t.Fatalf("expected todo worktree suggestion to queue")
-	}
+	queueTodoWorktreeSuggestionForTest(t, ctx, st, item.ID)
 	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
 	if err != nil {
 		t.Fatalf("claim todo worktree suggestion: %v", err)
@@ -4820,11 +4809,7 @@ func TestCommitAndMergeWorktreeBackCommitsDirtyWorktreeBeforeMerge(t *testing.T)
 	if err != nil {
 		t.Fatalf("add todo: %v", err)
 	}
-	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
-		t.Fatalf("queue todo worktree suggestion: %v", err)
-	} else if !queued {
-		t.Fatalf("expected todo worktree suggestion to queue")
-	}
+	queueTodoWorktreeSuggestionForTest(t, ctx, st, item.ID)
 	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
 	if err != nil {
 		t.Fatalf("claim todo worktree suggestion: %v", err)
@@ -4929,11 +4914,7 @@ func TestMergeWorktreeBackReportsConflictAndRefreshesStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add todo: %v", err)
 	}
-	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
-		t.Fatalf("queue todo worktree suggestion: %v", err)
-	} else if !queued {
-		t.Fatalf("expected todo worktree suggestion to queue")
-	}
+	queueTodoWorktreeSuggestionForTest(t, ctx, st, item.ID)
 	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
 	if err != nil {
 		t.Fatalf("claim todo worktree suggestion: %v", err)
@@ -5041,11 +5022,7 @@ func TestMergeWorktreeBackReportsGitIndexLockActionably(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add todo: %v", err)
 	}
-	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
-		t.Fatalf("queue todo worktree suggestion: %v", err)
-	} else if !queued {
-		t.Fatalf("expected todo worktree suggestion to queue")
-	}
+	queueTodoWorktreeSuggestionForTest(t, ctx, st, item.ID)
 	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
 	if err != nil {
 		t.Fatalf("claim todo worktree suggestion: %v", err)
@@ -6689,11 +6666,7 @@ func createSuggestedTodoWorktreeForTest(t *testing.T, ctx context.Context, svc *
 	if err != nil {
 		t.Fatalf("add todo: %v", err)
 	}
-	if queued, err := st.QueueTodoWorktreeSuggestion(ctx, item.ID); err != nil {
-		t.Fatalf("queue todo worktree suggestion: %v", err)
-	} else if !queued {
-		t.Fatalf("expected todo worktree suggestion to queue")
-	}
+	queueTodoWorktreeSuggestionForTest(t, ctx, st, item.ID)
 	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
 	if err != nil {
 		t.Fatalf("claim todo worktree suggestion: %v", err)

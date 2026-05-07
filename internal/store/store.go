@@ -3659,8 +3659,8 @@ func (s *Store) ForceQueueTodoWorktreeSuggestion(ctx context.Context, todoID int
 		return false, nil
 	}
 
-	// Force-queued suggestions are user-visible requests (open dialog / retry now),
-	// so make them immediately claimable regardless of the manager debounce window.
+	// Force-queued suggestions are expected soon (newly saved TODO / open dialog /
+	// retry now), so make them immediately claimable regardless of debounce.
 	readyAt := time.Unix(0, 0)
 	textHash := hashTodoText(todo.Text)
 	_, err = s.db.ExecContext(ctx, `
