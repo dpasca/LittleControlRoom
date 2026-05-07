@@ -11,6 +11,7 @@ import (
 	"lcroom/internal/codexapp"
 	"lcroom/internal/model"
 	"lcroom/internal/procinspect"
+	"lcroom/internal/projectrun"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -144,6 +145,43 @@ func TestBossViewContextIncludesActiveProjectEngineerActivity(t *testing.T) {
 	}
 	if activity.EngineerName != bossui.EngineerNameForKey("project", project.Path, "thread-project-1") {
 		t.Fatalf("activity engineer name = %q, want deterministic project session name", activity.EngineerName)
+	}
+}
+
+func TestBossViewContextIncludesRuntimeTestingContext(t *testing.T) {
+	t.Parallel()
+
+	project := model.ProjectSummary{
+		Path:          "/tmp/runtime-alpha",
+		Name:          "Runtime Alpha",
+		PresentOnDisk: true,
+		RunCommand:    "npm run dev",
+	}
+	m := Model{
+		allProjects: []model.ProjectSummary{project},
+		projects:    []model.ProjectSummary{project},
+		selected:    0,
+		runtimeSnapshots: map[string]projectrun.Snapshot{
+			project.Path: {
+				ProjectPath:   project.Path,
+				Command:       "npm run dev",
+				Running:       true,
+				Ports:         []int{5173},
+				AnnouncedURLs: []string{"http://127.0.0.1:5173/app"},
+			},
+		},
+	}
+
+	view := m.bossViewContext()
+	if len(view.RuntimeContexts) != 1 {
+		t.Fatalf("RuntimeContexts len = %d, want 1: %#v", len(view.RuntimeContexts), view.RuntimeContexts)
+	}
+	runtime := view.RuntimeContexts[0]
+	if runtime.ProjectPath != project.Path || runtime.ProjectName != "Runtime Alpha" || runtime.Command != "npm run dev" {
+		t.Fatalf("runtime identity = %#v, want project runtime", runtime)
+	}
+	if runtime.Status != "running" || runtime.PrimaryURL != "http://127.0.0.1:5173/app" || len(runtime.Ports) != 1 || runtime.Ports[0] != 5173 {
+		t.Fatalf("runtime state = %#v, want running URL/port", runtime)
 	}
 }
 

@@ -1213,6 +1213,67 @@ func TestBuildViewContextBriefIncludesEngineerActivity(t *testing.T) {
 	}
 }
 
+func TestBuildViewContextBriefIncludesRuntimeContext(t *testing.T) {
+	t.Parallel()
+
+	brief := BuildViewContextBrief(ViewContext{
+		Active:              true,
+		Embedded:            true,
+		AllProjectCount:     4,
+		VisibleProjectCount: 4,
+		RuntimeContexts: []ViewRuntimeContext{{
+			ProjectPath:    "/tmp/alpha",
+			ProjectName:    "Alpha",
+			Command:        "npm run dev",
+			Status:         "running",
+			PrimaryURL:     "http://127.0.0.1:3000/",
+			AdditionalURLs: []string{"http://localhost:3000/debug"},
+			Ports:          []int{3000},
+			Running:        true,
+		}},
+	}, time.Unix(1_800_000_000, 0))
+
+	for _, want := range []string{
+		"managed runtimes/testing context",
+		"Alpha",
+		"test URL http://127.0.0.1:3000/",
+		"additional URLs http://localhost:3000/debug",
+		"run command npm run dev",
+	} {
+		if !strings.Contains(brief, want) {
+			t.Fatalf("brief missing %q:\n%s", want, brief)
+		}
+	}
+}
+
+func TestBuildViewContextBriefCallsOutMissingRuntimeURL(t *testing.T) {
+	t.Parallel()
+
+	brief := BuildViewContextBrief(ViewContext{
+		Active:              true,
+		Embedded:            true,
+		AllProjectCount:     1,
+		VisibleProjectCount: 1,
+		RuntimeContexts: []ViewRuntimeContext{{
+			ProjectPath: "/tmp/alpha",
+			ProjectName: "Alpha",
+			Command:     "npm run dev",
+			Status:      "configured",
+		}},
+	}, time.Unix(1_800_000_000, 0))
+
+	for _, want := range []string{
+		"managed runtimes/testing context",
+		"Alpha",
+		"no test URL detected",
+		"run command npm run dev",
+	} {
+		if !strings.Contains(brief, want) {
+			t.Fatalf("brief missing %q:\n%s", want, brief)
+		}
+	}
+}
+
 func TestQueryExecutorDoesNotUseHiddenSelectedProject(t *testing.T) {
 	t.Parallel()
 

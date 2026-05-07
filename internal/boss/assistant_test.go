@@ -676,8 +676,159 @@ func TestAssistantReplyReadOnlyRoutePassFallsBackToPlanner(t *testing.T) {
 	if len(planner.reqs) != 1 {
 		t.Fatalf("planner requests = %d, want one", len(planner.reqs))
 	}
+	if got, want := router.reqs[0].Model, "gpt-test"; got != want {
+		t.Fatalf("router model = %q, want fallback to helm %q", got, want)
+	}
 	if resp.Usage.TotalTokens != 18 {
 		t.Fatalf("usage total = %d, want router plus planner usage", resp.Usage.TotalTokens)
+	}
+}
+
+func TestAssistantReadOnlyRouteUsesUtilityModel(t *testing.T) {
+	t.Parallel()
+
+	router := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			OutputText: encodedReadOnlyRoute(t, bossReadOnlyRoute{Kind: bossReadOnlyRoutePass, Reason: "Routine routing."}),
+			Usage:      model.LLMUsage{TotalTokens: 5},
+		}},
+	}
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			OutputText: encodedBossAction(t, bossAction{Kind: bossActionAnswer, Answer: "Done."}),
+			Usage:      model.LLMUsage{TotalTokens: 13},
+		}},
+	}
+	assistant := &Assistant{
+		planner:      planner,
+		queryRouter:  router,
+		query:        newQueryExecutor(&fakeBossStore{}),
+		model:        "gpt-5.5",
+		utilityModel: "gpt-5.4-mini",
+	}
+
+	_, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Visible projects: 1.",
+		Messages:   []ChatMessage{{Role: "user", Content: "What is up?"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if got, want := router.reqs[0].Model, "gpt-5.4-mini"; got != want {
+		t.Fatalf("router model = %q, want utility model %q", got, want)
+	}
+	if got, want := planner.reqs[0].Model, "gpt-5.5"; got != want {
+		t.Fatalf("planner model = %q, want helm model %q", got, want)
+	}
+}
+
+func TestAssistantReadOnlyRouteErrorFallsBackToHelmPlanner(t *testing.T) {
+	t.Parallel()
+
+	router := &fakeJSONSchemaRunner{err: errors.New("utility model unavailable")}
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			OutputText: encodedBossAction(t, bossAction{Kind: bossActionAnswer, Answer: "The helm planner handled it."}),
+			Usage:      model.LLMUsage{TotalTokens: 13},
+		}},
+	}
+	assistant := &Assistant{
+		planner:      planner,
+		queryRouter:  router,
+		query:        newQueryExecutor(&fakeBossStore{}),
+		model:        "gpt-5.5",
+		utilityModel: "gpt-5.4-mini",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Visible projects: 1.",
+		Messages:   []ChatMessage{{Role: "user", Content: "What should I check now?"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if got, want := resp.Content, "The helm planner handled it."; got != want {
+		t.Fatalf("Content = %q, want %q", got, want)
+	}
+	if got, want := router.reqs[0].Model, "gpt-5.4-mini"; got != want {
+		t.Fatalf("router model = %q, want utility model %q", got, want)
+	}
+	if len(planner.reqs) != 1 {
+		t.Fatalf("planner requests = %d, want one fallback request", len(planner.reqs))
+	}
+	if got, want := planner.reqs[0].Model, "gpt-5.5"; got != want {
+		t.Fatalf("planner model = %q, want helm model %q", got, want)
+	}
+}
+
+func TestAssistantStreamFinalAnswerUsesHelmAfterUtilityRoute(t *testing.T) {
+	t.Parallel()
+
+	router := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model:      "gpt-5.4-mini",
+			OutputText: encodedReadOnlyRoute(t, bossReadOnlyRoute{Kind: bossReadOnlyRoutePass, Reason: "Needs helm judgment."}),
+			Usage:      model.LLMUsage{TotalTokens: 5},
+		}},
+	}
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model:      "gpt-5.5",
+			OutputText: encodedBossAction(t, bossAction{Kind: bossActionAnswer, Answer: "Planner draft."}),
+			Usage:      model.LLMUsage{TotalTokens: 13},
+		}},
+	}
+	runner := &fakeStreamingTextRunner{
+		resp: llm.TextResponse{
+			Model:      "gpt-5.5",
+			OutputText: "Final helm answer.",
+			Usage:      model.LLMUsage{TotalTokens: 17},
+		},
+	}
+	assistant := &Assistant{
+		runner:       runner,
+		planner:      planner,
+		queryRouter:  router,
+		query:        newQueryExecutor(&fakeBossStore{}),
+		model:        "gpt-5.5",
+		utilityModel: "gpt-5.4-mini",
+	}
+
+	resp, err := assistant.ReplyStream(context.Background(), AssistantRequest{
+		StateBrief: "Visible projects: 1.",
+		Messages:   []ChatMessage{{Role: "user", Content: "What should I test now?"}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("ReplyStream() error = %v", err)
+	}
+	if got, want := router.reqs[0].Model, "gpt-5.4-mini"; got != want {
+		t.Fatalf("router model = %q, want utility model %q", got, want)
+	}
+	if got, want := planner.reqs[0].Model, "gpt-5.5"; got != want {
+		t.Fatalf("planner model = %q, want helm model %q", got, want)
+	}
+	if got, want := runner.req.Model, "gpt-5.5"; got != want {
+		t.Fatalf("final text model = %q, want helm model %q", got, want)
+	}
+	if got, want := resp.Content, "Final helm answer."; got != want {
+		t.Fatalf("Content = %q, want %q", got, want)
+	}
+	if got, want := resp.Usage.TotalTokens, int64(35); got != want {
+		t.Fatalf("usage total = %d, want router plus planner plus final answer usage", got)
+	}
+}
+
+func TestAssistantLabelShowsHelmAndUtilityModels(t *testing.T) {
+	t.Parallel()
+
+	assistant := &Assistant{
+		runner:       &fakeTextRunner{},
+		model:        "gpt-5.5",
+		utilityModel: "gpt-5.4-mini",
+	}
+
+	if got, want := assistant.Label(), "Boss chat via gpt-5.5 (utility gpt-5.4-mini)"; got != want {
+		t.Fatalf("Label() = %q, want %q", got, want)
 	}
 }
 

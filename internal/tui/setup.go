@@ -282,7 +282,7 @@ func (m Model) setupConfigFieldIndexes() []int {
 	if m.setupFocusedRole == setupRoleBossChat {
 		switch m.setupSelectedBossBackend() {
 		case config.AIBackendUnset, config.AIBackendOpenAIAPI:
-			return []int{settingsFieldOpenAIAPIKey, settingsFieldBossChatModel}
+			return []int{settingsFieldOpenAIAPIKey, settingsFieldBossChatModel, settingsFieldBossUtilityModel}
 		case config.AIBackendMLX:
 			return []int{settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel}
 		case config.AIBackendOllama:
@@ -396,7 +396,8 @@ func (m Model) setupSettingsFromCurrentChoices() config.EditableSettings {
 		return settings
 	}
 	settings.OpenAIAPIKey = m.settingsFieldValue(settingsFieldOpenAIAPIKey)
-	settings.BossChatModel = m.settingsFieldValue(settingsFieldBossChatModel)
+	settings.BossHelmModel = m.settingsFieldValue(settingsFieldBossChatModel)
+	settings.BossUtilityModel = m.settingsFieldValue(settingsFieldBossUtilityModel)
 	settings.MLXBaseURL = m.settingsFieldValue(settingsFieldMLXBaseURL)
 	settings.MLXAPIKey = m.settingsFieldValue(settingsFieldMLXAPIKey)
 	settings.MLXModel = m.settingsFieldValue(settingsFieldMLXModel)

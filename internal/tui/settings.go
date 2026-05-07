@@ -21,6 +21,7 @@ const (
 	settingsFieldOpenAIAPIKey = iota
 	settingsFieldBossChatBackend
 	settingsFieldBossChatModel
+	settingsFieldBossUtilityModel
 	settingsFieldMLXBaseURL
 	settingsFieldMLXAPIKey
 	settingsFieldMLXModel
@@ -125,6 +126,7 @@ func settingsSections() []settingsSection {
 				settingsFieldOpenAIAPIKey,
 				settingsFieldBossChatBackend,
 				settingsFieldBossChatModel,
+				settingsFieldBossUtilityModel,
 				settingsFieldMLXBaseURL,
 				settingsFieldMLXAPIKey,
 				settingsFieldMLXModel,
@@ -404,6 +406,7 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		config.AIBackend(m.settingsFieldValue(settingsFieldBossChatBackend)),
 		m.settingsFieldValue(settingsFieldOpenAIAPIKey),
 		m.settingsFieldValue(settingsFieldBossChatModel),
+		m.settingsFieldValue(settingsFieldBossUtilityModel),
 		m.settingsFieldValue(settingsFieldMLXBaseURL),
 		m.settingsFieldValue(settingsFieldMLXAPIKey),
 		m.settingsFieldValue(settingsFieldMLXModel),
@@ -1035,9 +1038,16 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionAI,
 		),
 		newSettingsField(
-			"Boss chat model",
-			"Optional model for boss chat. Leave blank for the built-in default or set LCROOM_BOSS_MODEL as an environment override.",
-			settings.BossChatModel,
+			"Boss helm model",
+			"High-grade Boss model for interactive answers, planning, risky choices, and control proposals. Leave blank for the built-in default or set LCROOM_BOSS_MODEL as an environment override.",
+			settings.BossHelmModel,
+			128,
+			settingsSectionAI,
+		),
+		newSettingsField(
+			"Boss utility model",
+			"Lower-cost Boss model for routine read-only query routing. Leave blank for the built-in utility default.",
+			settings.BossUtilityModel,
 			128,
 			settingsSectionAI,
 		),
@@ -1197,6 +1207,8 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.AIBackend = config.ResolveAIBackend(settings.AIBackend, settings.OpenAIAPIKey)
 	settings.BossChatBackend = config.ResolveBossChatBackend(settings.BossChatBackend, settings.OpenAIAPIKey)
 	settings.BossChatModel = strings.TrimSpace(settings.BossChatModel)
+	settings.BossHelmModel = strings.TrimSpace(settings.BossHelmModel)
+	settings.BossUtilityModel = strings.TrimSpace(settings.BossUtilityModel)
 	settings.OpenAIAPIKey = strings.TrimSpace(settings.OpenAIAPIKey)
 	settings.MLXBaseURL = strings.TrimSpace(settings.MLXBaseURL)
 	settings.MLXAPIKey = strings.TrimSpace(settings.MLXAPIKey)
@@ -1247,7 +1259,12 @@ func (m Model) settingsFieldHint(index int) string {
 		}
 	case settingsFieldBossChatModel:
 		if model := strings.TrimSpace(field.input.Value()); model != "" {
-			return "Boss chat will request model " + model + ". LCROOM_BOSS_MODEL still wins if set in the environment."
+			return "Boss helm calls will request model " + model + ". LCROOM_BOSS_MODEL still wins if set in the environment."
+		}
+		return field.hint
+	case settingsFieldBossUtilityModel:
+		if model := strings.TrimSpace(field.input.Value()); model != "" {
+			return "Routine Boss utility calls will request model " + model + ". LCROOM_BOSS_MODEL still overrides all Boss model choices if set."
 		}
 		return field.hint
 	case settingsFieldMLXBaseURL:

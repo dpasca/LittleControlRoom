@@ -40,6 +40,12 @@ func EstimateLLMCostUSD(modelName string, usage LLMUsage) (float64, bool) {
 func lookupLLMPriceCard(modelName string) (llmPriceCard, bool) {
 	name := strings.ToLower(strings.TrimSpace(modelName))
 	switch {
+	case name == "gpt-5.5" || strings.HasPrefix(name, "gpt-5.5-"):
+		return llmPriceCard{
+			InputUSDPerMTokens:       5.00,
+			CachedInputUSDPerMTokens: 0.50,
+			OutputUSDPerMTokens:      30.00,
+		}, true
 	case name == "gpt-5-mini" || strings.HasPrefix(name, "gpt-5-mini-"):
 		return llmPriceCard{
 			InputUSDPerMTokens:       0.25,

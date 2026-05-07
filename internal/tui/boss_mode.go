@@ -12,6 +12,7 @@ import (
 	bossui "lcroom/internal/boss"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/model"
+	"lcroom/internal/projectrun"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -309,6 +310,7 @@ func (m Model) bossViewContext() bossui.ViewContext {
 		PrivacyMode:         m.privacyMode,
 		PrivacyPatterns:     append([]string(nil), m.privacyPatterns...),
 		EngineerActivities:  m.bossEngineerActivities(),
+		RuntimeContexts:     m.bossRuntimeContexts(),
 	}
 	if notice := processWarningSystemNoticeSummary(m.totalProcessWarningStats()); notice != "" {
 		view.SystemNotices = append(view.SystemNotices, bossui.ViewSystemNotice{
@@ -343,6 +345,77 @@ func (m Model) bossViewContext() bossui.ViewContext {
 		})
 	}
 	return view
+}
+
+func (m Model) bossRuntimeContexts() []bossui.ViewRuntimeContext {
+	const limit = 5
+	contexts := make([]bossui.ViewRuntimeContext, 0, limit)
+	seen := map[string]bool{}
+	add := func(project model.ProjectSummary) {
+		if len(contexts) >= limit {
+			return
+		}
+		projectPath := filepath.Clean(strings.TrimSpace(project.Path))
+		if projectPath == "" || projectPath == "." || seen[projectPath] {
+			return
+		}
+		snapshot := m.projectRuntimeSnapshot(projectPath)
+		if !runtimeDetailAvailable(project.RunCommand, snapshot) {
+			return
+		}
+		contexts = append(contexts, bossRuntimeContextFromProject(project, snapshot))
+		seen[projectPath] = true
+	}
+	if project, ok := m.selectedProject(); ok {
+		add(project)
+	}
+	for _, project := range m.projects {
+		add(project)
+	}
+	for _, project := range m.allProjects {
+		add(project)
+	}
+	return contexts
+}
+
+func bossRuntimeContextFromProject(project model.ProjectSummary, snapshot projectrun.Snapshot) bossui.ViewRuntimeContext {
+	projectPath := filepath.Clean(strings.TrimSpace(project.Path))
+	if projectPath == "." {
+		projectPath = ""
+	}
+	primaryURL := runtimePrimaryURL(snapshot)
+	additionalURLs := append([]string(nil), snapshot.AnnouncedURLs...)
+	if primaryURL != "" && len(additionalURLs) > 0 && strings.TrimSpace(additionalURLs[0]) == primaryURL {
+		additionalURLs = additionalURLs[1:]
+	}
+	return bossui.ViewRuntimeContext{
+		ProjectPath:    projectPath,
+		ProjectName:    projectNameForPicker(project, projectPath),
+		Command:        effectiveRuntimeCommand(project.RunCommand, snapshot),
+		Status:         bossRuntimePlainStatus(snapshot),
+		PrimaryURL:     primaryURL,
+		AdditionalURLs: additionalURLs,
+		Ports:          append([]int(nil), snapshot.Ports...),
+		Running:        snapshot.Running,
+	}
+}
+
+func bossRuntimePlainStatus(snapshot projectrun.Snapshot) string {
+	switch {
+	case snapshot.Running:
+		return "running"
+	case strings.TrimSpace(snapshot.LastError) != "":
+		return "failed: " + strings.TrimSpace(snapshot.LastError)
+	case snapshot.ExitCodeKnown:
+		if snapshot.ExitCode == 0 {
+			return "exited"
+		}
+		return fmt.Sprintf("exit %d", snapshot.ExitCode)
+	case !snapshot.ExitedAt.IsZero():
+		return "stopped"
+	default:
+		return "configured"
+	}
 }
 
 func (m Model) bossEngineerActivities() []bossui.ViewEngineerActivity {

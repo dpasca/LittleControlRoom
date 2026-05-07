@@ -20,6 +20,24 @@ func TestEstimateLLMCostUSD(t *testing.T) {
 	}
 }
 
+func TestEstimateLLMCostUSDGPT55(t *testing.T) {
+	t.Parallel()
+
+	cost, ok := EstimateLLMCostUSD("gpt-5.5", LLMUsage{
+		InputTokens:       1_000_000,
+		CachedInputTokens: 100_000,
+		OutputTokens:      10_000,
+	})
+	if !ok {
+		t.Fatalf("expected pricing lookup to succeed")
+	}
+
+	want := 0.9*5.00 + 0.1*0.50 + 0.01*30.00
+	if cost != want {
+		t.Fatalf("cost = %f, want %f", cost, want)
+	}
+}
+
 func TestEstimateLLMCostUSDUnknownModel(t *testing.T) {
 	t.Parallel()
 

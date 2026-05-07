@@ -139,6 +139,7 @@ type ViewContext struct {
 	PrivacyPatterns     []string
 	SystemNotices       []ViewSystemNotice
 	EngineerActivities  []ViewEngineerActivity
+	RuntimeContexts     []ViewRuntimeContext
 }
 
 type ViewSystemNotice struct {
@@ -160,6 +161,17 @@ type ViewEngineerActivity struct {
 	Active       bool
 	StartedAt    time.Time
 	LastEventAt  time.Time
+}
+
+type ViewRuntimeContext struct {
+	ProjectPath    string
+	ProjectName    string
+	Command        string
+	Status         string
+	PrimaryURL     string
+	AdditionalURLs []string
+	Ports          []int
+	Running        bool
 }
 
 func newQueryExecutor(store bossStoreReader) *QueryExecutor {
@@ -1771,7 +1783,7 @@ func BuildViewContextBrief(view ViewContext, now time.Time) string {
 	if now.IsZero() {
 		now = time.Now()
 	}
-	if !view.Active && view.AllProjectCount == 0 && view.VisibleProjectCount == 0 && len(view.SystemNotices) == 0 && len(view.EngineerActivities) == 0 {
+	if !view.Active && view.AllProjectCount == 0 && view.VisibleProjectCount == 0 && len(view.SystemNotices) == 0 && len(view.EngineerActivities) == 0 && len(view.RuntimeContexts) == 0 {
 		return "Current TUI view: no embedded classic TUI context was supplied."
 	}
 	mode := "standalone boss mode"
@@ -1820,6 +1832,22 @@ func BuildViewContextBrief(view ViewContext, now time.Time) string {
 			lines = append(lines, fmt.Sprintf("  - ... %d more", len(view.EngineerActivities)-limit))
 		}
 	}
+	if len(view.RuntimeContexts) > 0 {
+		limit := minInt(len(view.RuntimeContexts), 5)
+		runtimeLines := []string{}
+		for i := 0; i < limit; i++ {
+			if line := compactViewRuntimeContextLine(view.RuntimeContexts[i], view); line != "" {
+				runtimeLines = append(runtimeLines, "  - "+line)
+			}
+		}
+		if len(runtimeLines) > 0 {
+			lines = append(lines, "- managed runtimes/testing context:")
+			lines = append(lines, runtimeLines...)
+			if len(view.RuntimeContexts) > limit {
+				lines = append(lines, fmt.Sprintf("  - ... %d more", len(view.RuntimeContexts)-limit))
+			}
+		}
+	}
 	noticeLines := []string{}
 	if len(view.SystemNotices) > 0 {
 		limit := minInt(len(view.SystemNotices), 5)
@@ -1852,6 +1880,43 @@ func BuildViewContextBrief(view ViewContext, now time.Time) string {
 		lines = append(lines, noticeLines...)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func compactViewRuntimeContextLine(runtime ViewRuntimeContext, view ViewContext) string {
+	if view.PrivacyMode && bossPrivacyMatchesAny(view.PrivacyPatterns, runtime.ProjectPath, runtime.ProjectName, runtime.Command, runtime.PrimaryURL, strings.Join(runtime.AdditionalURLs, " ")) {
+		return ""
+	}
+	label := strings.TrimSpace(firstNonEmpty(runtime.ProjectName, runtime.ProjectPath, "project"))
+	parts := []string{label}
+	if status := strings.TrimSpace(runtime.Status); status != "" {
+		parts = append(parts, "runtime "+status)
+	} else if runtime.Running {
+		parts = append(parts, "runtime running")
+	}
+	if url := strings.TrimSpace(runtime.PrimaryURL); url != "" {
+		parts = append(parts, "test URL "+url)
+	}
+	if len(runtime.AdditionalURLs) > 0 {
+		parts = append(parts, "additional URLs "+strings.Join(runtime.AdditionalURLs, ", "))
+	}
+	if strings.TrimSpace(runtime.PrimaryURL) == "" && len(runtime.AdditionalURLs) == 0 {
+		parts = append(parts, "no test URL detected")
+	}
+	if len(runtime.Ports) > 0 {
+		ports := make([]string, 0, len(runtime.Ports))
+		for _, port := range runtime.Ports {
+			if port > 0 {
+				ports = append(ports, strconv.Itoa(port))
+			}
+		}
+		if len(ports) > 0 {
+			parts = append(parts, "ports "+strings.Join(ports, ","))
+		}
+	}
+	if command := strings.TrimSpace(runtime.Command); command != "" {
+		parts = append(parts, "run command "+clipText(command, 160))
+	}
+	return strings.Join(parts, "; ")
 }
 
 func openTodosOnly(items []model.TodoItem) []model.TodoItem {

@@ -16,6 +16,7 @@ import (
 	"lcroom/internal/control"
 	"lcroom/internal/events"
 	"lcroom/internal/model"
+	"lcroom/internal/projectrun"
 	"lcroom/internal/service"
 	"lcroom/internal/store"
 )
@@ -105,6 +106,120 @@ func TestExecuteControlEngineerSendPromptRoutesOpenCodeHidden(t *testing.T) {
 	}
 	if got.codexHiddenProject != projectPath {
 		t.Fatalf("codexHiddenProject = %q, want %q", got.codexHiddenProject, projectPath)
+	}
+}
+
+func TestExecuteControlEngineerSendPromptIncludesRuntimeTestingContext(t *testing.T) {
+	projectPath := "/tmp/control-runtime"
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:       req.Provider,
+				ThreadID:       "runtime-session-1",
+				Started:        true,
+				LastActivityAt: time.Now(),
+			},
+		}, nil
+	})
+	m := Model{
+		allProjects: []model.ProjectSummary{{
+			Path:          projectPath,
+			Name:          "Control Runtime",
+			PresentOnDisk: true,
+			RunCommand:    "npm run dev",
+		}},
+		runtimeSnapshots: map[string]projectrun.Snapshot{
+			projectPath: {
+				ProjectPath:   projectPath,
+				Command:       "npm run dev",
+				Running:       true,
+				Ports:         []int{3000},
+				AnnouncedURLs: []string{"http://127.0.0.1:3000/demo"},
+			},
+		},
+		codexManager: manager,
+	}
+
+	_, cmd := m.executeControlInvocation(controlInvocationForTest(t, control.EngineerSendPromptInput{
+		ProjectPath: projectPath,
+		Provider:    control.ProviderCodex,
+		SessionMode: control.SessionModeNew,
+		Prompt:      "please test the app",
+		Reveal:      false,
+	}))
+	if cmd == nil {
+		t.Fatalf("executeControlInvocation() cmd = nil, want embedded open command")
+	}
+	_ = collectCmdMsgs(cmd)
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want 1", len(requests))
+	}
+	for _, want := range []string{
+		"please test the app",
+		"Little Control Room testing context:",
+		"use runtime/test URL http://127.0.0.1:3000/demo",
+		"detected listening ports: 3000",
+		"managed runtime command: npm run dev",
+		"managed runtime status: running",
+	} {
+		if !strings.Contains(requests[0].Prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, requests[0].Prompt)
+		}
+	}
+}
+
+func TestExecuteControlEngineerSendPromptCallsOutMissingRuntimeURL(t *testing.T) {
+	projectPath := "/tmp/control-runtime-no-url"
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:       req.Provider,
+				ThreadID:       "runtime-session-no-url",
+				Started:        true,
+				LastActivityAt: time.Now(),
+			},
+		}, nil
+	})
+	m := Model{
+		allProjects: []model.ProjectSummary{{
+			Path:          projectPath,
+			Name:          "Control Runtime",
+			PresentOnDisk: true,
+			RunCommand:    "npm run dev",
+		}},
+		codexManager: manager,
+	}
+
+	_, cmd := m.executeControlInvocation(controlInvocationForTest(t, control.EngineerSendPromptInput{
+		ProjectPath: projectPath,
+		Provider:    control.ProviderCodex,
+		SessionMode: control.SessionModeNew,
+		Prompt:      "please test the app",
+		Reveal:      false,
+	}))
+	if cmd == nil {
+		t.Fatalf("executeControlInvocation() cmd = nil, want embedded open command")
+	}
+	_ = collectCmdMsgs(cmd)
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want 1", len(requests))
+	}
+	for _, want := range []string{
+		"please test the app",
+		"Little Control Room testing context:",
+		"no runtime/test URL detected",
+		"managed runtime command: npm run dev",
+		"managed runtime status: configured",
+	} {
+		if !strings.Contains(requests[0].Prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, requests[0].Prompt)
+		}
 	}
 }
 

@@ -32,7 +32,8 @@ import (
 const recentActivityDiscoveryWindow = 24 * time.Hour
 const asyncProjectRefreshTimeout = 30 * time.Second
 const bossAssistantHTTPTimeout = 90 * time.Second
-const defaultBossAssistantModel = "gpt-5.4-mini"
+const defaultBossHelmModel = "gpt-5.5"
+const defaultBossUtilityModel = "gpt-5.4-mini"
 
 var scanGitMetadataTimeout = 1500 * time.Millisecond
 
@@ -293,6 +294,8 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	s.cfg.AIBackend = settings.AIBackend
 	s.cfg.BossChatBackend = settings.BossChatBackend
 	s.cfg.BossChatModel = strings.TrimSpace(settings.BossChatModel)
+	s.cfg.BossHelmModel = strings.TrimSpace(settings.BossHelmModel)
+	s.cfg.BossUtilityModel = strings.TrimSpace(settings.BossUtilityModel)
 	s.cfg.OpenAIAPIKey = strings.TrimSpace(settings.OpenAIAPIKey)
 	s.cfg.MLXBaseURL = strings.TrimSpace(settings.MLXBaseURL)
 	s.cfg.MLXAPIKey = strings.TrimSpace(settings.MLXAPIKey)
@@ -461,7 +464,7 @@ func (s *Service) NewBossTextRunner() (llm.TextRunner, string, config.AIBackend)
 	s.mu.Unlock()
 
 	backend := cfg.EffectiveBossChatBackend()
-	modelName := configuredBossAssistantModelForBackend(cfg, backend)
+	modelName := configuredBossHelmModelForBackend(cfg, backend)
 	switch backend {
 	case config.AIBackendOpenAIAPI:
 		return llm.NewResponsesTextClient(strings.TrimSpace(cfg.OpenAIAPIKey), bossAssistantHTTPTimeout, usageTracker), modelName, backend
@@ -482,7 +485,28 @@ func (s *Service) NewBossJSONRunner() (llm.JSONSchemaRunner, string, config.AIBa
 	s.mu.Unlock()
 
 	backend := cfg.EffectiveBossChatBackend()
-	modelName := configuredBossAssistantModelForBackend(cfg, backend)
+	modelName := configuredBossHelmModelForBackend(cfg, backend)
+	switch backend {
+	case config.AIBackendOpenAIAPI:
+		return llm.NewResponsesClient(strings.TrimSpace(cfg.OpenAIAPIKey), bossAssistantHTTPTimeout, usageTracker), modelName, backend
+	case config.AIBackendMLX, config.AIBackendOllama:
+		return llm.NewOpenAICompatibleResponsesRunner(cfg.OpenAICompatibleBaseURL(backend), cfg.OpenAICompatibleAPIKey(backend), modelName, bossAssistantHTTPTimeout, usageTracker), modelName, backend
+	default:
+		return nil, modelName, backend
+	}
+}
+
+func (s *Service) NewBossUtilityJSONRunner() (llm.JSONSchemaRunner, string, config.AIBackend) {
+	if s == nil {
+		return nil, "", config.AIBackendUnset
+	}
+	s.mu.Lock()
+	cfg := cloneAppConfig(s.cfg)
+	usageTracker := s.bossChatUsageTracker
+	s.mu.Unlock()
+
+	backend := cfg.EffectiveBossChatBackend()
+	modelName := configuredBossUtilityModelForBackend(cfg, backend)
 	switch backend {
 	case config.AIBackendOpenAIAPI:
 		return llm.NewResponsesClient(strings.TrimSpace(cfg.OpenAIAPIKey), bossAssistantHTTPTimeout, usageTracker), modelName, backend
@@ -494,11 +518,14 @@ func (s *Service) NewBossJSONRunner() (llm.JSONSchemaRunner, string, config.AIBa
 }
 
 func configuredBossAssistantModel(cfg config.AppConfig) string {
-	return configuredBossAssistantModelForBackend(cfg, cfg.EffectiveBossChatBackend())
+	return configuredBossHelmModelForBackend(cfg, cfg.EffectiveBossChatBackend())
 }
 
-func configuredBossAssistantModelForBackend(cfg config.AppConfig, backend config.AIBackend) string {
+func configuredBossHelmModelForBackend(cfg config.AppConfig, backend config.AIBackend) string {
 	if modelName := strings.TrimSpace(os.Getenv(brand.BossAssistantModelEnvVar)); modelName != "" {
+		return modelName
+	}
+	if modelName := strings.TrimSpace(cfg.BossHelmModel); modelName != "" {
 		return modelName
 	}
 	switch backend {
@@ -514,7 +541,24 @@ func configuredBossAssistantModelForBackend(cfg config.AppConfig, backend config
 	case config.AIBackendMLX, config.AIBackendOllama:
 		return ""
 	}
-	return defaultBossAssistantModel
+	return defaultBossHelmModel
+}
+
+func configuredBossUtilityModelForBackend(cfg config.AppConfig, backend config.AIBackend) string {
+	if modelName := strings.TrimSpace(os.Getenv(brand.BossAssistantModelEnvVar)); modelName != "" {
+		return modelName
+	}
+	if modelName := strings.TrimSpace(cfg.BossUtilityModel); modelName != "" {
+		return modelName
+	}
+	switch backend {
+	case config.AIBackendMLX, config.AIBackendOllama:
+		if modelName := strings.TrimSpace(cfg.OpenAICompatibleModel(backend)); modelName != "" {
+			return modelName
+		}
+		return ""
+	}
+	return defaultBossUtilityModel
 }
 
 func (s *Service) configureAIClientsLocked() {

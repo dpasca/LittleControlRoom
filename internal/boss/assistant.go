@@ -63,12 +63,13 @@ type AssistantStreamEvent struct {
 }
 
 type Assistant struct {
-	runner      llm.TextRunner
-	planner     llm.JSONSchemaRunner
-	queryRouter llm.JSONSchemaRunner
-	query       *QueryExecutor
-	model       string
-	backend     config.AIBackend
+	runner       llm.TextRunner
+	planner      llm.JSONSchemaRunner
+	queryRouter  llm.JSONSchemaRunner
+	query        *QueryExecutor
+	model        string
+	utilityModel string
+	backend      config.AIBackend
 }
 
 func NewAssistant(svc *service.Service) *Assistant {
@@ -77,8 +78,15 @@ func NewAssistant(svc *service.Service) *Assistant {
 	}
 	runner, modelName, backend := svc.NewBossTextRunner()
 	planner, plannerModel, plannerBackend := svc.NewBossJSONRunner()
+	queryRouter, utilityModel, _ := svc.NewBossUtilityJSONRunner()
 	if strings.TrimSpace(modelName) == "" {
 		modelName = plannerModel
+	}
+	if queryRouter == nil {
+		queryRouter = planner
+	}
+	if strings.TrimSpace(utilityModel) == "" {
+		utilityModel = modelName
 	}
 	if backend == config.AIBackendUnset {
 		backend = plannerBackend
@@ -90,12 +98,13 @@ func NewAssistant(svc *service.Service) *Assistant {
 		query.openCodeHome = svc.Config().OpenCodeHome
 	}
 	return &Assistant{
-		runner:      runner,
-		planner:     planner,
-		queryRouter: planner,
-		query:       query,
-		model:       strings.TrimSpace(modelName),
-		backend:     backend,
+		runner:       runner,
+		planner:      planner,
+		queryRouter:  queryRouter,
+		query:        query,
+		model:        strings.TrimSpace(modelName),
+		utilityModel: strings.TrimSpace(utilityModel),
+		backend:      backend,
 	}
 }
 
@@ -124,6 +133,9 @@ func (a *Assistant) Label() string {
 	if strings.TrimSpace(a.model) == "" {
 		return fmt.Sprintf("Boss chat via %s (auto model)", a.backend.Label())
 	}
+	if utilityModel := strings.TrimSpace(a.utilityModel); utilityModel != "" && utilityModel != strings.TrimSpace(a.model) {
+		return fmt.Sprintf("Boss chat via %s (utility %s)", a.model, utilityModel)
+	}
 	return fmt.Sprintf("Boss chat via %s", a.model)
 }
 
@@ -137,7 +149,7 @@ func (a *Assistant) Reply(ctx context.Context, req AssistantRequest) (AssistantR
 	}
 	modelName := strings.TrimSpace(a.model)
 	if modelName == "" && a.requiresExplicitModel() {
-		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_chat_model or " + brand.BossAssistantModelEnvVar)
+		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_helm_model, boss_chat_model, or " + brand.BossAssistantModelEnvVar)
 	}
 	if a.query != nil && (a.planner != nil || a.queryRouter != nil) {
 		return a.replyWithTools(ctx, req)
@@ -155,7 +167,7 @@ func (a *Assistant) ReplyStream(ctx context.Context, req AssistantRequest, emit 
 	}
 	modelName := strings.TrimSpace(a.model)
 	if modelName == "" && a.requiresExplicitModel() {
-		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_chat_model or " + brand.BossAssistantModelEnvVar)
+		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_helm_model, boss_chat_model, or " + brand.BossAssistantModelEnvVar)
 	}
 	if a.query != nil && (a.planner != nil || a.queryRouter != nil) {
 		return a.replyWithToolsStream(ctx, req, emit)
@@ -169,7 +181,7 @@ func (a *Assistant) replyDirect(ctx context.Context, req AssistantRequest) (Assi
 	}
 	modelName := strings.TrimSpace(a.model)
 	if modelName == "" && a.requiresExplicitModel() {
-		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_chat_model or " + brand.BossAssistantModelEnvVar)
+		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_helm_model, boss_chat_model, or " + brand.BossAssistantModelEnvVar)
 	}
 
 	messages := []llm.TextMessage{{
@@ -209,7 +221,7 @@ func (a *Assistant) replyDirectStream(ctx context.Context, req AssistantRequest,
 	}
 	modelName := strings.TrimSpace(a.model)
 	if modelName == "" && a.requiresExplicitModel() {
-		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_chat_model or " + brand.BossAssistantModelEnvVar)
+		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_helm_model, boss_chat_model, or " + brand.BossAssistantModelEnvVar)
 	}
 
 	resp, err := runBossText(ctx, a.runner, llm.TextRequest{
@@ -250,7 +262,7 @@ func (a *Assistant) replyStructuredHandle(ctx context.Context, req AssistantRequ
 func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (AssistantResponse, error) {
 	modelName := strings.TrimSpace(a.model)
 	if modelName == "" && a.requiresExplicitModel() {
-		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_chat_model or " + brand.BossAssistantModelEnvVar)
+		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_helm_model, boss_chat_model, or " + brand.BossAssistantModelEnvVar)
 	}
 
 	var (
@@ -361,7 +373,7 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantRequest, emit func(AssistantStreamEvent)) (AssistantResponse, error) {
 	modelName := strings.TrimSpace(a.model)
 	if modelName == "" && a.requiresExplicitModel() {
-		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_chat_model or " + brand.BossAssistantModelEnvVar)
+		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_helm_model, boss_chat_model, or " + brand.BossAssistantModelEnvVar)
 	}
 
 	var (
@@ -583,7 +595,7 @@ func (a *Assistant) executeReadOnlyQueryAction(ctx context.Context, action bossA
 
 func (a *Assistant) planReadOnlyQueryRoute(ctx context.Context, req AssistantRequest) (llm.JSONSchemaResponse, bossReadOnlyRoute, error) {
 	response, err := a.queryRouter.RunJSONSchema(ctx, llm.JSONSchemaRequest{
-		Model:           strings.TrimSpace(a.model),
+		Model:           firstNonEmpty(strings.TrimSpace(a.utilityModel), strings.TrimSpace(a.model)),
 		SystemText:      bossReadOnlyRouterSystemPrompt(),
 		UserText:        bossReadOnlyRouterUserText(req),
 		SchemaName:      "boss_read_only_query_route",

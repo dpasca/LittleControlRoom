@@ -363,7 +363,7 @@ func (m Model) executeEngineerSendPromptControlWithOutcome(input control.Enginee
 
 	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{
 		forceNew: input.SessionMode == control.SessionModeNew,
-		prompt:   input.Prompt,
+		prompt:   m.engineerPromptWithRuntimeContext(project, input.Prompt),
 		reveal:   input.Reveal,
 	})
 	m = normalizeUpdateModel(updated)
@@ -446,7 +446,7 @@ func (m Model) executeAgentTaskCreateControlWithOutcome(input control.AgentTaskC
 		m.status = "Control request failed: " + err.Error()
 		return controlInvocationOutcome{model: m, err: err}
 	}
-	prompt := agentTaskLaunchPrompt(task, input.Prompt)
+	prompt := m.agentTaskLaunchPromptWithRuntimeContext(task, input.Prompt)
 	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{
 		forceNew: true,
 		prompt:   prompt,
@@ -493,7 +493,7 @@ func (m Model) executeAgentTaskContinueControlWithOutcome(input control.AgentTas
 		m.status = err.Error()
 		return controlInvocationOutcome{model: m, err: err}
 	}
-	prompt := agentTaskLaunchPrompt(task, input.Prompt)
+	prompt := m.agentTaskLaunchPromptWithRuntimeContext(task, input.Prompt)
 	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{
 		forceNew: input.SessionMode == control.SessionModeNew,
 		prompt:   prompt,
@@ -764,6 +764,87 @@ func agentTaskLaunchPrompt(task model.AgentTask, prompt string) string {
 	)
 	lines = append(lines, "", "User request:", strings.TrimSpace(prompt))
 	return strings.Join(lines, "\n")
+}
+
+func (m Model) agentTaskLaunchPromptWithRuntimeContext(task model.AgentTask, prompt string) string {
+	return m.promptWithRuntimeContext(agentTaskLaunchPrompt(task, prompt), m.agentTaskRuntimeContextLines(task))
+}
+
+func (m Model) engineerPromptWithRuntimeContext(project model.ProjectSummary, prompt string) string {
+	return m.promptWithRuntimeContext(prompt, m.projectRuntimeContextLines(project))
+}
+
+func (m Model) promptWithRuntimeContext(prompt string, contextLines []string) string {
+	prompt = strings.TrimSpace(prompt)
+	if len(contextLines) == 0 {
+		return prompt
+	}
+	lines := []string{}
+	if prompt != "" {
+		lines = append(lines, prompt, "")
+	}
+	lines = append(lines, "Little Control Room testing context:")
+	lines = append(lines, contextLines...)
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) agentTaskRuntimeContextLines(task model.AgentTask) []string {
+	seen := map[string]bool{}
+	var lines []string
+	for _, resource := range task.Resources {
+		if model.NormalizeAgentTaskResourceKind(resource.Kind) != model.AgentTaskResourceProject {
+			continue
+		}
+		path := firstNonEmptyTrimmed(resource.ProjectPath, resource.Path)
+		if path == "" {
+			continue
+		}
+		cleanPath := filepath.Clean(path)
+		if cleanPath == "." || seen[cleanPath] {
+			continue
+		}
+		seen[cleanPath] = true
+		project, ok := m.projectSummaryByPathAllProjects(cleanPath)
+		if !ok {
+			project = model.ProjectSummary{Path: cleanPath, Name: strings.TrimSpace(resource.Label)}
+		}
+		lines = append(lines, m.projectRuntimeContextLines(project)...)
+	}
+	return lines
+}
+
+func (m Model) projectRuntimeContextLines(project model.ProjectSummary) []string {
+	projectPath := filepath.Clean(strings.TrimSpace(project.Path))
+	if projectPath == "" || projectPath == "." {
+		return nil
+	}
+	snapshot := m.projectRuntimeSnapshot(projectPath)
+	if !runtimeDetailAvailable(project.RunCommand, snapshot) {
+		return nil
+	}
+	context := bossRuntimeContextFromProject(project, snapshot)
+	label := strings.TrimSpace(firstNonEmptyTrimmed(context.ProjectName, context.ProjectPath, "project"))
+	prefix := "Project " + label + ": "
+	lines := []string{}
+	if url := strings.TrimSpace(context.PrimaryURL); url != "" {
+		lines = append(lines, "- "+prefix+"use runtime/test URL "+url)
+	}
+	if len(context.AdditionalURLs) > 0 {
+		lines = append(lines, "- "+prefix+"additional runtime URLs: "+strings.Join(context.AdditionalURLs, ", "))
+	}
+	if strings.TrimSpace(context.PrimaryURL) == "" && len(context.AdditionalURLs) == 0 {
+		lines = append(lines, "- "+prefix+"no runtime/test URL detected; if browser testing is needed, start or inspect the app and report the URL used")
+	}
+	if len(context.Ports) > 0 {
+		lines = append(lines, "- "+prefix+"detected listening ports: "+joinPorts(context.Ports))
+	}
+	if command := strings.TrimSpace(context.Command); command != "" {
+		lines = append(lines, "- "+prefix+"managed runtime command: "+command)
+	}
+	if status := strings.TrimSpace(context.Status); status != "" {
+		lines = append(lines, "- "+prefix+"managed runtime status: "+status)
+	}
+	return lines
 }
 
 func agentTaskResourcePromptSummary(resources []model.AgentTaskResource) string {

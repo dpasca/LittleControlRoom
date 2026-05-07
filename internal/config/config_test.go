@@ -71,6 +71,8 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 	content := "" +
 		"boss_chat_backend = \"openai_api\"\n" +
 		"boss_chat_model = \"gpt-5.4-mini\"\n" +
+		"boss_helm_model = \"gpt-5.5\"\n" +
+		"boss_utility_model = \"gpt-5.4-mini\"\n" +
 		"openai_api_key = \"sk-live-example\"\n" +
 		"include_paths = [\"/tmp/a\", \"/tmp/b\"]\n" +
 		"exclude_paths = [\"/tmp/skip\"]\n" +
@@ -103,6 +105,12 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 	}
 	if got, want := cfg.BossChatModel, "gpt-5.4-mini"; got != want {
 		t.Fatalf("boss chat model = %q, want %q", got, want)
+	}
+	if got, want := cfg.BossHelmModel, "gpt-5.5"; got != want {
+		t.Fatalf("boss helm model = %q, want %q", got, want)
+	}
+	if got, want := cfg.BossUtilityModel, "gpt-5.4-mini"; got != want {
+		t.Fatalf("boss utility model = %q, want %q", got, want)
 	}
 	if got, want := cfg.ExcludePaths, []string{"/tmp/skip"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("exclude paths = %v, want %v", got, want)
@@ -372,7 +380,7 @@ func TestParseRejectsInvalidSnapshotLimit(t *testing.T) {
 func TestParseEditableSettings(t *testing.T) {
 	useTempHome(t)
 
-	settings, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "gpt-5.4-mini", "", "", "", "", "", "", "~/dev/repos,/tmp/other", "/tmp/skip", "quickgame_*,secret-demo", "medical,visa", "yolo", "observe", "headed", "promote", "project", "true", "false", "free", "10m", "2h", "45s")
+	settings, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "gpt-5.5", "gpt-5.4-mini", "", "", "", "", "", "", "~/dev/repos,/tmp/other", "/tmp/skip", "quickgame_*,secret-demo", "medical,visa", "yolo", "observe", "headed", "promote", "project", "true", "false", "free", "10m", "2h", "45s")
 	if err != nil {
 		t.Fatalf("ParseEditableSettings() error = %v", err)
 	}
@@ -391,8 +399,11 @@ func TestParseEditableSettings(t *testing.T) {
 	if got, want := settings.BossChatBackend, AIBackendOpenAIAPI; got != want {
 		t.Fatalf("boss chat backend = %q, want %q", got, want)
 	}
-	if got, want := settings.BossChatModel, "gpt-5.4-mini"; got != want {
-		t.Fatalf("boss chat model = %q, want %q", got, want)
+	if got, want := settings.BossHelmModel, "gpt-5.5"; got != want {
+		t.Fatalf("boss helm model = %q, want %q", got, want)
+	}
+	if got, want := settings.BossUtilityModel, "gpt-5.4-mini"; got != want {
+		t.Fatalf("boss utility model = %q, want %q", got, want)
 	}
 	if got, want := settings.ExcludePaths, []string{"/tmp/skip"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("exclude paths = %v, want %v", got, want)
@@ -429,7 +440,7 @@ func TestParseEditableSettings(t *testing.T) {
 func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 	useTempHome(t)
 
-	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "20m", "10m", "60s"); err == nil {
+	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "20m", "10m", "60s"); err == nil {
 		t.Fatalf("expected validation error")
 	}
 }
@@ -437,7 +448,7 @@ func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 func TestParseEditableSettingsRejectsInvalidCodexPreset(t *testing.T) {
 	useTempHome(t)
 
-	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "turbo", "legacy", "headless", "manual", "task", "false", "false", "", "20m", "2h", "60s"); err == nil {
+	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "turbo", "legacy", "headless", "manual", "task", "false", "false", "", "20m", "2h", "60s"); err == nil {
 		t.Fatalf("expected codex preset validation error")
 	}
 }
@@ -445,7 +456,7 @@ func TestParseEditableSettingsRejectsInvalidCodexPreset(t *testing.T) {
 func TestParseEditableSettingsAllowsMissingOpenAIAPIKeyForNonAPIBackends(t *testing.T) {
 	useTempHome(t)
 
-	settings, err := ParseEditableSettings(AIBackendCodex, AIBackendUnset, "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "20m", "2h", "60s")
+	settings, err := ParseEditableSettings(AIBackendCodex, AIBackendUnset, "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "20m", "2h", "60s")
 	if err != nil {
 		t.Fatalf("ParseEditableSettings() error = %v", err)
 	}
@@ -461,7 +472,8 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 	err := SaveEditableSettings(configPath, EditableSettings{
 		AIBackend:                 AIBackendOpenAIAPI,
 		BossChatBackend:           AIBackendOpenAIAPI,
-		BossChatModel:             "gpt-5.4-mini",
+		BossHelmModel:             "gpt-5.5",
+		BossUtilityModel:          "gpt-5.4-mini",
 		OpenAIAPIKey:              "sk-test-example",
 		MLXBaseURL:                "http://127.0.0.1:8080/v1",
 		MLXAPIKey:                 "mlx",
@@ -507,8 +519,11 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 	if !strings.Contains(text, "boss_chat_backend = \"openai_api\"") {
 		t.Fatalf("saved config should include boss_chat_backend: %q", text)
 	}
-	if !strings.Contains(text, "boss_chat_model = \"gpt-5.4-mini\"") {
-		t.Fatalf("saved config should include boss_chat_model: %q", text)
+	if !strings.Contains(text, "boss_helm_model = \"gpt-5.5\"") {
+		t.Fatalf("saved config should include boss_helm_model: %q", text)
+	}
+	if !strings.Contains(text, "boss_utility_model = \"gpt-5.4-mini\"") {
+		t.Fatalf("saved config should include boss_utility_model: %q", text)
 	}
 	if !strings.Contains(text, "openai_api_key = \"sk-test-example\"") {
 		t.Fatalf("saved config should include openai api key: %q", text)

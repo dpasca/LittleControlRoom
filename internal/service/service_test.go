@@ -205,6 +205,7 @@ func TestBossChatRunnerUsesBossChatBackendNotProjectAnalysisBackend(t *testing.T
 	cfg.AIBackend = config.AIBackendOpenCode
 	cfg.BossChatBackend = config.AIBackendOpenAIAPI
 	cfg.BossChatModel = "gpt-5.4-mini"
+	cfg.BossHelmModel = "gpt-5.5"
 	cfg.OpenAIAPIKey = "sk-test-example"
 	svc := &Service{
 		cfg:                  cfg,
@@ -218,8 +219,100 @@ func TestBossChatRunnerUsesBossChatBackendNotProjectAnalysisBackend(t *testing.T
 	if backend != config.AIBackendOpenAIAPI {
 		t.Fatalf("boss chat backend = %s, want %s", backend, config.AIBackendOpenAIAPI)
 	}
+	if modelName != "gpt-5.5" {
+		t.Fatalf("boss chat model = %q, want gpt-5.5", modelName)
+	}
+}
+
+func TestBossChatRunnerKeepsBossChatModelAsLegacyHelmAlias(t *testing.T) {
+	t.Setenv("LCROOM_BOSS_MODEL", "")
+
+	cfg := config.Default()
+	cfg.AIBackend = config.AIBackendOpenCode
+	cfg.BossChatBackend = config.AIBackendOpenAIAPI
+	cfg.BossChatModel = "gpt-5.4-mini"
+	cfg.OpenAIAPIKey = "sk-test-example"
+	svc := &Service{
+		cfg:                  cfg,
+		bossChatUsageTracker: llm.NewUsageTracker(),
+	}
+
+	_, modelName, backend := svc.NewBossTextRunner()
+	if backend != config.AIBackendOpenAIAPI {
+		t.Fatalf("boss chat backend = %s, want %s", backend, config.AIBackendOpenAIAPI)
+	}
 	if modelName != "gpt-5.4-mini" {
-		t.Fatalf("boss chat model = %q, want gpt-5.4-mini", modelName)
+		t.Fatalf("legacy boss chat model = %q, want gpt-5.4-mini", modelName)
+	}
+}
+
+func TestBossChatRunnerDefaultsToGPT55(t *testing.T) {
+	t.Setenv("LCROOM_BOSS_MODEL", "")
+
+	cfg := config.Default()
+	cfg.AIBackend = config.AIBackendOpenAIAPI
+	cfg.BossChatBackend = config.AIBackendOpenAIAPI
+	cfg.OpenAIAPIKey = "sk-test-example"
+	svc := &Service{
+		cfg:                  cfg,
+		bossChatUsageTracker: llm.NewUsageTracker(),
+	}
+
+	runner, modelName, backend := svc.NewBossTextRunner()
+	if runner == nil {
+		t.Fatalf("NewBossTextRunner() runner = nil, want OpenAI API text runner")
+	}
+	if backend != config.AIBackendOpenAIAPI {
+		t.Fatalf("boss chat backend = %s, want %s", backend, config.AIBackendOpenAIAPI)
+	}
+	if modelName != "gpt-5.5" {
+		t.Fatalf("boss chat model = %q, want gpt-5.5", modelName)
+	}
+}
+
+func TestBossUtilityRunnerDefaultsToMini(t *testing.T) {
+	t.Setenv("LCROOM_BOSS_MODEL", "")
+
+	cfg := config.Default()
+	cfg.AIBackend = config.AIBackendOpenAIAPI
+	cfg.BossChatBackend = config.AIBackendOpenAIAPI
+	cfg.OpenAIAPIKey = "sk-test-example"
+	svc := &Service{
+		cfg:                  cfg,
+		bossChatUsageTracker: llm.NewUsageTracker(),
+	}
+
+	runner, modelName, backend := svc.NewBossUtilityJSONRunner()
+	if runner == nil {
+		t.Fatalf("NewBossUtilityJSONRunner() runner = nil, want OpenAI API structured runner")
+	}
+	if backend != config.AIBackendOpenAIAPI {
+		t.Fatalf("boss utility backend = %s, want %s", backend, config.AIBackendOpenAIAPI)
+	}
+	if modelName != "gpt-5.4-mini" {
+		t.Fatalf("boss utility model = %q, want gpt-5.4-mini", modelName)
+	}
+}
+
+func TestBossUtilityRunnerUsesConfiguredUtilityModel(t *testing.T) {
+	t.Setenv("LCROOM_BOSS_MODEL", "")
+
+	cfg := config.Default()
+	cfg.AIBackend = config.AIBackendOpenAIAPI
+	cfg.BossChatBackend = config.AIBackendOpenAIAPI
+	cfg.BossUtilityModel = "gpt-5.4-nano"
+	cfg.OpenAIAPIKey = "sk-test-example"
+	svc := &Service{
+		cfg:                  cfg,
+		bossChatUsageTracker: llm.NewUsageTracker(),
+	}
+
+	_, modelName, backend := svc.NewBossUtilityJSONRunner()
+	if backend != config.AIBackendOpenAIAPI {
+		t.Fatalf("boss utility backend = %s, want %s", backend, config.AIBackendOpenAIAPI)
+	}
+	if modelName != "gpt-5.4-nano" {
+		t.Fatalf("boss utility model = %q, want gpt-5.4-nano", modelName)
 	}
 }
 

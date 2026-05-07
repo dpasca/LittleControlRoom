@@ -20,6 +20,8 @@ type AppConfig struct {
 	AIBackend                 AIBackend
 	BossChatBackend           AIBackend
 	BossChatModel             string
+	BossHelmModel             string
+	BossUtilityModel          string
 	OpenAIAPIKey              string
 	MLXBaseURL                string
 	MLXAPIKey                 string
@@ -112,6 +114,8 @@ type fileConfig struct {
 	AIBackend                 string    `toml:"ai_backend"`
 	BossChatBackend           string    `toml:"boss_chat_backend"`
 	BossChatModel             *string   `toml:"boss_chat_model"`
+	BossHelmModel             *string   `toml:"boss_helm_model"`
+	BossUtilityModel          *string   `toml:"boss_utility_model"`
 	OpenAIAPIKey              *string   `toml:"openai_api_key"`
 	MLXBaseURL                *string   `toml:"mlx_base_url"`
 	MLXAPIKey                 *string   `toml:"mlx_api_key"`
@@ -395,6 +399,8 @@ func applyConfigFile(cfg *AppConfig) error {
 		cfg.BossChatBackend = backend
 	}
 	applyOptionalTrimmedString(&cfg.BossChatModel, fc.BossChatModel)
+	applyOptionalTrimmedString(&cfg.BossHelmModel, fc.BossHelmModel)
+	applyOptionalTrimmedString(&cfg.BossUtilityModel, fc.BossUtilityModel)
 	applyOptionalTrimmedString(&cfg.OpenAIAPIKey, fc.OpenAIAPIKey)
 	applyOptionalTrimmedString(&cfg.MLXBaseURL, fc.MLXBaseURL)
 	applyOptionalTrimmedString(&cfg.MLXAPIKey, fc.MLXAPIKey)

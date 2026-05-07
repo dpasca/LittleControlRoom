@@ -16,6 +16,8 @@ type EditableSettings struct {
 	AIBackend                 AIBackend
 	BossChatBackend           AIBackend
 	BossChatModel             string
+	BossHelmModel             string
+	BossUtilityModel          string
 	OpenAIAPIKey              string
 	MLXBaseURL                string
 	MLXAPIKey                 string
@@ -51,6 +53,8 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		AIBackend:                 cfg.EffectiveAIBackend(),
 		BossChatBackend:           cfg.EffectiveBossChatBackend(),
 		BossChatModel:             cfg.BossChatModel,
+		BossHelmModel:             firstNonEmptyTrimmed(cfg.BossHelmModel, cfg.BossChatModel),
+		BossUtilityModel:          cfg.BossUtilityModel,
 		OpenAIAPIKey:              cfg.OpenAIAPIKey,
 		MLXBaseURL:                cfg.MLXBaseURL,
 		MLXAPIKey:                 cfg.MLXAPIKey,
@@ -106,7 +110,16 @@ func (s *EditableSettings) SetOpenAICompatibleModel(backend AIBackend, model str
 	}
 }
 
-func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, bossChatModelRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
+func firstNonEmptyTrimmed(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, bossHelmModelRaw, bossUtilityModelRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
 	parsedBackend, err := ParseAIBackend(string(aiBackend))
 	if err != nil {
 		return EditableSettings{}, err
@@ -116,7 +129,8 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 		return EditableSettings{}, err
 	}
 	openAIAPIKey := strings.TrimSpace(openAIAPIKeyRaw)
-	bossChatModel := strings.TrimSpace(bossChatModelRaw)
+	bossHelmModel := strings.TrimSpace(bossHelmModelRaw)
+	bossUtilityModel := strings.TrimSpace(bossUtilityModelRaw)
 	mlxBaseURL := strings.TrimSpace(mlxBaseURLRaw)
 	mlxAPIKey := strings.TrimSpace(mlxAPIKeyRaw)
 	mlxModel := strings.TrimSpace(mlxModelRaw)
@@ -176,7 +190,8 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 	settings := EditableSettings{
 		AIBackend:              parsedBackend,
 		BossChatBackend:        parsedBossChatBackend,
-		BossChatModel:          bossChatModel,
+		BossHelmModel:          bossHelmModel,
+		BossUtilityModel:       bossUtilityModel,
 		OpenAIAPIKey:           openAIAPIKey,
 		MLXBaseURL:             mlxBaseURL,
 		MLXAPIKey:              mlxAPIKey,
@@ -250,6 +265,8 @@ func validateEditableSettings(settings EditableSettings) error {
 	cfg.AIBackend = settings.AIBackend
 	cfg.BossChatBackend = settings.BossChatBackend
 	cfg.BossChatModel = strings.TrimSpace(settings.BossChatModel)
+	cfg.BossHelmModel = strings.TrimSpace(settings.BossHelmModel)
+	cfg.BossUtilityModel = strings.TrimSpace(settings.BossUtilityModel)
 	cfg.OpenAIAPIKey = settings.OpenAIAPIKey
 	cfg.MLXBaseURL = settings.MLXBaseURL
 	cfg.MLXAPIKey = settings.MLXAPIKey
@@ -299,10 +316,16 @@ func renderEditableSettings(settings EditableSettings) string {
 	if settings.BossChatBackend != AIBackendUnset {
 		lines = append(lines, fmt.Sprintf("boss_chat_backend = %s", strconv.Quote(string(settings.BossChatBackend))))
 	}
-	if value := strings.TrimSpace(settings.BossChatModel); value != "" {
-		lines = append(lines, fmt.Sprintf("boss_chat_model = %s", strconv.Quote(value)))
+	if value := strings.TrimSpace(firstNonEmptyTrimmed(settings.BossHelmModel, settings.BossChatModel)); value != "" {
+		lines = append(lines, fmt.Sprintf("boss_helm_model = %s", strconv.Quote(value)))
 	}
-	if settings.BossChatBackend != AIBackendUnset || strings.TrimSpace(settings.BossChatModel) != "" {
+	if value := strings.TrimSpace(settings.BossUtilityModel); value != "" {
+		lines = append(lines, fmt.Sprintf("boss_utility_model = %s", strconv.Quote(value)))
+	}
+	if settings.BossChatBackend != AIBackendUnset ||
+		strings.TrimSpace(settings.BossChatModel) != "" ||
+		strings.TrimSpace(settings.BossHelmModel) != "" ||
+		strings.TrimSpace(settings.BossUtilityModel) != "" {
 		lines = append(lines, "")
 	}
 	if settings.OpenAIAPIKey != "" {
