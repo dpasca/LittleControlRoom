@@ -386,6 +386,28 @@ func TestLatestEngineerTranscriptOutputCleansDanglingColon(t *testing.T) {
 	}
 }
 
+func TestLatestEngineerTranscriptOutputDoesNotTruncateMarkdownLinkTargets(t *testing.T) {
+	t.Parallel()
+
+	path := "/Users/davide/dev/repos/LittleControlRoom--worktree-name-generation/internal/service.go:263"
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "TODO saves now immediately enqueue a persisted worktree-name suggestion, and edits clear/requeue it for the updated text so the boss handoff still has useful context: [service.go](" + path + ")",
+		}},
+	}
+
+	got := latestEngineerTranscriptOutput(snapshot)
+	summary, _, _ := strings.Cut(got, "\n\nOutputs:")
+	wantLink := "[service.go](" + path + ")"
+	if !strings.Contains(summary, wantLink) {
+		t.Fatalf("summary should preserve the full markdown link target %q:\n%s", wantLink, summary)
+	}
+	if strings.Contains(summary, "[service.go]("+path[:len(path)-12]+"...") {
+		t.Fatalf("summary contains a truncated markdown link target:\n%s", summary)
+	}
+}
+
 func TestBossEngineerCompletionLeavesAgentTaskWaitingForDecision(t *testing.T) {
 	t.Parallel()
 

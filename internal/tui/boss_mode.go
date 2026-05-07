@@ -997,9 +997,14 @@ func compactEngineerNoticeText(text string, limit int) string {
 		return text
 	}
 	if limit <= 1 {
-		return text[:limit]
+		return text[:compactTextCutAtUTF8Boundary(text, limit)]
 	}
-	return strings.TrimSpace(text[:limit-1]) + "..."
+	cut := compactTextCutAtUTF8Boundary(text, limit-1)
+	cut = compactTextCutPreservingMarkdownLinks(text, cut)
+	if cut >= len(text) {
+		return text
+	}
+	return strings.TrimSpace(text[:cut]) + "..."
 }
 
 func cleanEngineerNoticeSummary(text string) string {
@@ -1014,6 +1019,47 @@ func cleanEngineerNoticeSummary(text string) string {
 		return text
 	}
 	return text + "."
+}
+
+func compactTextCutAtUTF8Boundary(text string, cut int) int {
+	if cut <= 0 {
+		return 0
+	}
+	if cut >= len(text) {
+		return len(text)
+	}
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return cut
+}
+
+func compactTextCutPreservingMarkdownLinks(text string, cut int) int {
+	if cut <= 0 || cut >= len(text) {
+		return cut
+	}
+	offset := 0
+	for offset < len(text) {
+		idx := strings.IndexByte(text[offset:], '[')
+		if idx < 0 {
+			return cut
+		}
+		start := offset + idx
+		if start >= cut {
+			return cut
+		}
+		_, _, consumed, ok := parseCodexMarkdownLink(text[start:])
+		if !ok {
+			offset = start + 1
+			continue
+		}
+		end := start + consumed
+		if cut > start && cut < end {
+			return end
+		}
+		offset = max(start+1, end)
+	}
+	return cut
 }
 
 func bossBrowserAttentionNoticeSummary(notify browserAttentionNotification) string {
