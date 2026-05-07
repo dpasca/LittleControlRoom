@@ -4642,6 +4642,49 @@ func (m Model) openCodexLinkTargetCmd(target codexArtifactOpenTarget) tea.Cmd {
 	return m.openArtifactCmd(target.Path)
 }
 
+func (m Model) openCodexLinkTargetFolderCmd(target codexArtifactOpenTarget) tea.Cmd {
+	projectPath := m.codexVisibleProject
+	return func() tea.Msg {
+		folder, err := codexArtifactContainingFolder(target)
+		if err != nil {
+			return browserOpenMsg{projectPath: projectPath, err: err}
+		}
+		if err := externalPathOpener(folder); err != nil {
+			return browserOpenMsg{projectPath: projectPath, err: err}
+		}
+		return browserOpenMsg{projectPath: projectPath, status: "Opened containing folder"}
+	}
+}
+
+func codexArtifactContainingFolder(target codexArtifactOpenTarget) (string, error) {
+	if strings.TrimSpace(target.Kind) == "url" {
+		return "", fmt.Errorf("links do not have containing folders")
+	}
+	path := strings.TrimSpace(target.Path)
+	if path == "" {
+		return "", fmt.Errorf("path is required")
+	}
+	info, err := os.Stat(path)
+	if err == nil && info.IsDir() {
+		return path, nil
+	}
+	folder := filepath.Dir(path)
+	if folder == "" || folder == "." {
+		if err != nil {
+			return "", fmt.Errorf("inspect path: %w", err)
+		}
+		return "", fmt.Errorf("containing folder is not available")
+	}
+	info, err = os.Stat(folder)
+	if err != nil {
+		return "", fmt.Errorf("inspect containing folder: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("containing path is not a directory")
+	}
+	return folder, nil
+}
+
 func (m Model) openBrowserURLCmd(rawURL, action, successStatus string) tea.Cmd {
 	return func() tea.Msg {
 		if err := openBrowserURL(rawURL, action); err != nil {

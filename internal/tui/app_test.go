@@ -17603,6 +17603,130 @@ func TestCodexArtifactPickerOpensSelectedImageTargets(t *testing.T) {
 	}
 }
 
+func TestCodexArtifactPickerOrdersTargetsByLastChatAppearance(t *testing.T) {
+	dir := t.TempDir()
+	alphaPath := filepath.Join(dir, "alpha.txt")
+	betaPath := filepath.Join(dir, "beta.txt")
+	for _, path := range []string{alphaPath, betaPath} {
+		if err := os.WriteFile(path, []byte("demo\n"), 0o600); err != nil {
+			t.Fatalf("write target: %v", err)
+		}
+	}
+	snapshot := codexapp.Snapshot{
+		ProjectPath: "/tmp/demo",
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptAgent,
+				Text: "First [Alpha](" + alphaPath + ").",
+			},
+			{
+				Kind: codexapp.TranscriptAgent,
+				Text: "Then [Beta](" + betaPath + ").",
+			},
+			{
+				Kind: codexapp.TranscriptAgent,
+				Text: "Updated [Alpha latest](" + alphaPath + ").",
+			},
+		},
+	}
+
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": snapshot,
+		},
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
+	if cmd != nil {
+		t.Fatalf("Alt+O should open the artifact picker without a command, got %T", cmd)
+	}
+	got := normalizeUpdateModel(updated)
+	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 2 {
+		t.Fatalf("artifact picker targets = %#v, want two de-duplicated targets", got.codexArtifactPicker)
+	}
+	targets := got.codexArtifactPicker.Targets
+	if targets[0].Path != betaPath || targets[1].Path != alphaPath {
+		t.Fatalf("target order = [%q, %q], want beta then alpha by last appearance", targets[0].Path, targets[1].Path)
+	}
+	if targets[1].Label != "Alpha latest" {
+		t.Fatalf("latest duplicate label = %q, want latest label", targets[1].Label)
+	}
+	if got.codexArtifactPicker.Selected != 1 {
+		t.Fatalf("picker selected = %d, want latest target selected", got.codexArtifactPicker.Selected)
+	}
+}
+
+func TestCodexArtifactPickerOpensContainingFolder(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "brief.pdf")
+	if err := os.WriteFile(path, []byte("%PDF-1.7\n"), 0o600); err != nil {
+		t.Fatalf("write pdf: %v", err)
+	}
+	snapshot := codexapp.Snapshot{
+		ProjectPath: "/tmp/demo",
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptAgent,
+				Text: "Open [brief](" + path + ").",
+			},
+		},
+	}
+
+	opened := ""
+	oldOpener := externalPathOpener
+	externalPathOpener = func(path string) error {
+		opened = path
+		return nil
+	}
+	t.Cleanup(func() { externalPathOpener = oldOpener })
+
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": snapshot,
+		},
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
+	if cmd != nil {
+		t.Fatalf("Alt+O should open the artifact picker without a command, got %T", cmd)
+	}
+	got := normalizeUpdateModel(updated)
+	if got.codexArtifactPicker == nil {
+		t.Fatalf("Alt+O should show the artifact picker")
+	}
+	overlay := ansi.Strip(got.renderCodexArtifactPicker(80, 24))
+	for _, want := range []string{"f", "folder"} {
+		if !strings.Contains(overlay, want) {
+			t.Fatalf("artifact picker missing containing-folder action %q: %q", want, overlay)
+		}
+	}
+
+	updated, cmd = got.updateCodexArtifactPickerMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	if cmd == nil {
+		t.Fatalf("f on selected artifact should queue a containing-folder open command")
+	}
+	rawMsg := cmd()
+	openMsg, ok := rawMsg.(browserOpenMsg)
+	if !ok {
+		t.Fatalf("folder open command returned %T, want browserOpenMsg", rawMsg)
+	}
+	if openMsg.err != nil {
+		t.Fatalf("folder open command error = %v", openMsg.err)
+	}
+	if openMsg.status != "Opened containing folder" {
+		t.Fatalf("folder open status = %q, want success", openMsg.status)
+	}
+	if opened != dir {
+		t.Fatalf("folder picker opened %q, want %q", opened, dir)
+	}
+	got = normalizeUpdateModel(updated)
+	if got.codexArtifactPicker != nil {
+		t.Fatalf("picker should close after opening a containing folder")
+	}
+}
+
 func TestCodexArtifactPickerLoadsPreviewForPathOnlyImage(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mockup.png")
 	imageBytes := mustTestPNG(color.RGBA{R: 40, G: 180, B: 220, A: 255})
