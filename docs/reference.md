@@ -271,7 +271,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/snooze [duration|off]` snoozes the selected project for a period, and `/unsnooze` clears any active snooze.
 - `f` opens a live project-name filter dialog for the whole dashboard; `/filter <text>` applies the same temporary filter from the command palette, and `/filter clear` removes it.
 - `/ignored` opens a reversible picker of hidden project names and paths; press `Enter` there to restore one.
-- `/run` starts the selected project's saved managed runtime. If no command is saved yet, Little Control Room opens a small dialog with an auto-suggested command when it can infer one from common files like `bin/dev`, `package.json`, `Makefile`, `justfile`, or a simple Go entrypoint.
+- `/run` starts the selected project's saved managed runtime. If no command is saved yet, Little Control Room opens a small dialog with an auto-suggested command when it can infer one from common files like `bin/dev`, `package.json`, `Makefile`, `justfile`, a simple Go entrypoint, or a Unity project at the root or in one unambiguous nested project folder.
 - `/start` is an alias for `/run`.
 - `/run <command>` saves that command as the selected project's default runtime command and starts it immediately.
 - `/restart` restarts the selected project's managed runtime with the saved command, or with the active runtime command when one is already known.

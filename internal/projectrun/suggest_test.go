@@ -89,6 +89,84 @@ func TestSuggestUsesSingleNestedPackageScript(t *testing.T) {
 	}
 }
 
+func TestSuggestUsesUnityProjectAtRoot(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeUnityProject(t, root, "6000.3.14f1")
+
+	suggestion, err := Suggest(root)
+	if err != nil {
+		t.Fatalf("Suggest() error = %v", err)
+	}
+	if suggestion.Command != unityEditorCommand() {
+		t.Fatalf("suggested command = %q, want %q", suggestion.Command, unityEditorCommand())
+	}
+	if suggestion.Reason != "Found Unity project version 6000.3.14f1." {
+		t.Fatalf("suggested reason = %q", suggestion.Reason)
+	}
+}
+
+func TestSuggestUsesSingleNestedUnityProject(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeUnityProject(t, filepath.Join(root, "Leaf"), "6000.3.14f1")
+
+	suggestion, err := Suggest(root)
+	if err != nil {
+		t.Fatalf("Suggest() error = %v", err)
+	}
+	wantCommand := "cd Leaf && " + unityEditorCommand()
+	if suggestion.Command != wantCommand {
+		t.Fatalf("suggested command = %q, want %q", suggestion.Command, wantCommand)
+	}
+	if suggestion.Reason != "Found Unity project version 6000.3.14f1 under Leaf." {
+		t.Fatalf("suggested reason = %q", suggestion.Reason)
+	}
+}
+
+func TestSuggestDoesNotUseBareUnityVersionFile(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "ProjectSettings"), 0o755); err != nil {
+		t.Fatalf("mkdir ProjectSettings: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "ProjectSettings", "ProjectVersion.txt"), []byte("m_EditorVersion: 6000.3.14f1\n"), 0o644); err != nil {
+		t.Fatalf("write ProjectVersion.txt: %v", err)
+	}
+
+	suggestion, err := Suggest(root)
+	if err != nil {
+		t.Fatalf("Suggest() error = %v", err)
+	}
+	if suggestion.Command != "" {
+		t.Fatalf("suggested command = %q, want empty command", suggestion.Command)
+	}
+}
+
+func TestSuggestUsesUnityProjectWithoutPackagesDir(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeUnityProject(t, root, "2022.3.62f1")
+	if err := os.RemoveAll(filepath.Join(root, "Packages")); err != nil {
+		t.Fatalf("remove Packages: %v", err)
+	}
+
+	suggestion, err := Suggest(root)
+	if err != nil {
+		t.Fatalf("Suggest() error = %v", err)
+	}
+	if suggestion.Command != unityEditorCommand() {
+		t.Fatalf("suggested command = %q, want %q", suggestion.Command, unityEditorCommand())
+	}
+	if suggestion.Reason != "Found Unity project version 2022.3.62f1." {
+		t.Fatalf("suggested reason = %q", suggestion.Reason)
+	}
+}
+
 func TestSuggestPrefersRootCandidateOverNestedCandidate(t *testing.T) {
 	t.Parallel()
 
@@ -131,5 +209,19 @@ func TestSuggestDoesNotGuessAcrossMultipleNestedCandidates(t *testing.T) {
 	}
 	if suggestion.Command != "" {
 		t.Fatalf("suggested command = %q, want empty command", suggestion.Command)
+	}
+}
+
+func writeUnityProject(t *testing.T, projectPath, version string) {
+	t.Helper()
+	for _, dir := range []string{"Assets", "Packages", "ProjectSettings"} {
+		if err := os.MkdirAll(filepath.Join(projectPath, dir), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	versionFile := filepath.Join(projectPath, "ProjectSettings", "ProjectVersion.txt")
+	raw := []byte("m_EditorVersion: " + version + "\nm_EditorVersionWithRevision: " + version + " (test)\n")
+	if err := os.WriteFile(versionFile, raw, 0o644); err != nil {
+		t.Fatalf("write ProjectVersion.txt: %v", err)
 	}
 }

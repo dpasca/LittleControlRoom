@@ -18,10 +18,18 @@ var skippedNestedSuggestionDirs = map[string]struct{}{
 	".turbo":       {},
 	".yarn":        {},
 	"build":        {},
+	"builds":       {},
 	"coverage":     {},
 	"dist":         {},
+	"library":      {},
+	"logs":         {},
 	"node_modules": {},
+	"obj":          {},
+	"recordings":   {},
+	"saves":        {},
+	"temp":         {},
 	"tmp":          {},
+	"usersettings": {},
 	"vendor":       {},
 }
 
@@ -83,6 +91,9 @@ func candidatesAtPath(projectPath string) ([]Suggestion, error) {
 		candidates = append(candidates, suggestion)
 	}
 	if suggestion, ok := suggestGoEntrypoint(projectPath); ok {
+		candidates = append(candidates, suggestion)
+	}
+	if suggestion, ok := suggestUnityEditor(projectPath); ok {
 		candidates = append(candidates, suggestion)
 	}
 
@@ -152,7 +163,7 @@ func shouldSkipNestedSuggestionDir(name, relPath string) bool {
 	if strings.TrimSpace(relPath) == "" || relPath == "." {
 		return false
 	}
-	_, skip := skippedNestedSuggestionDirs[name]
+	_, skip := skippedNestedSuggestionDirs[strings.ToLower(strings.TrimSpace(name))]
 	return skip
 }
 
@@ -369,6 +380,47 @@ func suggestGoEntrypoint(projectPath string) (Suggestion, bool) {
 		Command: "go run ./cmd/" + dirs[0],
 		Reason:  fmt.Sprintf("Found a single Go entrypoint under cmd/%s.", dirs[0]),
 	}, true
+}
+
+func suggestUnityEditor(projectPath string) (Suggestion, bool) {
+	version, ok := unityProjectVersion(projectPath)
+	if !ok {
+		return Suggestion{}, false
+	}
+	return Suggestion{
+		Command: unityEditorCommand(),
+		Reason:  fmt.Sprintf("Found Unity project version %s.", version),
+	}, true
+}
+
+func unityProjectVersion(projectPath string) (string, bool) {
+	for _, dir := range []string{"Assets", "ProjectSettings"} {
+		info, err := os.Stat(filepath.Join(projectPath, dir))
+		if err != nil || !info.IsDir() {
+			return "", false
+		}
+	}
+
+	raw, err := os.ReadFile(filepath.Join(projectPath, "ProjectSettings", "ProjectVersion.txt"))
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) >= 2 && fields[0] == "m_EditorVersion:" {
+			return fields[1], true
+		}
+	}
+	return "", false
+}
+
+func unityEditorCommand() string {
+	return strings.Join([]string{
+		`UNITY_PROJECT_PATH="$PWD"`,
+		`UNITY_VERSION="$(awk '$1=="m_EditorVersion:"{print $2; exit}' ProjectSettings/ProjectVersion.txt)"`,
+		`UNITY_BIN="${UNITY_BIN:-/Applications/Unity/Hub/Editor/$UNITY_VERSION/Unity.app/Contents/MacOS/Unity}"`,
+		`if [ -x "$UNITY_BIN" ]; then "$UNITY_BIN" -projectPath "$UNITY_PROJECT_PATH" -logFile -; elif command -v Unity >/dev/null 2>&1; then Unity -projectPath "$UNITY_PROJECT_PATH" -logFile -; else echo "Unity executable not found; set UNITY_BIN or install Unity $UNITY_VERSION" >&2; exit 127; fi`,
+	}, "; ")
 }
 
 func dedupeSuggestions(candidates []Suggestion) []Suggestion {
