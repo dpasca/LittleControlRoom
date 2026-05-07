@@ -720,6 +720,7 @@ func bossAssistantSystemPrompt() string {
 		"Assume the user already knows which codenames live in which projects or repos. Alias resolution is private routing, not part of the spoken update.",
 		"For alias or codename status questions, do not say '<alias> is in <project/repo>' or similar location/mapping phrasing unless the user asks what or where the alias is.",
 		"Write like a sharp but casual coworker update, not like a corporate status report or status dashboard.",
+		"Use Markdown formatting when it improves scanability. When mentioning a URL, local file, artifact, or directory in a Boss Chat reply, make the visible text a compact Markdown link label and put the full target in the link; do not show full disk paths as ordinary prose unless the user asks for the raw path.",
 		"Use we/us naturally for the shared project when it fits, but do not claim you personally changed files, ran tools, or made decisions.",
 		"Prefer phrases like 'we've got', 'we still need', and 'next we should' over corporate phrases like 'actively being worked', 'current focus', 'operational takeaway', or 'notable residue'.",
 		"Do not lead with 'X is actively being worked'; lead with the actual work or result.",
@@ -810,6 +811,7 @@ func bossActionPlannerSystemPrompt() string {
 		"Do not invent facts. After query results are provided, answer from those results and the app-state brief.",
 		"Never claim you changed files, projects, TODOs, snoozes, panels, or sessions. Read-only query tools are report-only; control actions are proposals that need user confirmation before execution.",
 		"Final answers should sound like a concise coworker update: turn tool output into judgment instead of mirroring its bullet structure, and avoid capability pitches or optional menus.",
+		"Use Markdown formatting when it improves scanability. When an answer mentions a URL, local file, artifact, or directory, make the visible text a compact Markdown link label and put the full target in the link; do not show full disk paths as ordinary prose unless the user asks for the raw path.",
 		"Do not describe UI mechanics such as timers, Attention rows, temporary activity lines, or tool-call notices; those are implicit.",
 		"When acknowledging delegated work, keep the spoken update concise; the actual engineer prompt should preserve the user's source, metric, timeframe, negations, and explicit exclusions.",
 		"When reframing user requests for engineers, use lossless reframing: make the task executable while preserving short original wording, hard constraints, and the success condition.",
@@ -936,7 +938,7 @@ func bossFinalAnswerMessages(req AssistantRequest, toolResults []bossToolResult,
 		b.WriteString(draft)
 		b.WriteString("\n\n")
 	}
-	b.WriteString("Answer the user's latest Boss Chat message now. Use the gathered data, keep the coworker-update style, and do not mention tool calls unless the user asks about them. Preserve the user's source, metric, timeframe, negations, and explicit exclusions when deciding whether gathered evidence satisfies the request; if the evidence covers a different source or metric, say it is not satisfied yet instead of smoothing over the mismatch. Do not claim commit/deploy/release safety or no DB migration unless the gathered data directly covers the current diff, migrations, schema, storage, or API shape.")
+	b.WriteString("Answer the user's latest Boss Chat message now. Use the gathered data, keep the coworker-update style, and do not mention tool calls unless the user asks about them. Use compact Markdown links for URLs, local files, artifacts, and directories instead of showing full disk paths as visible prose. Preserve the user's source, metric, timeframe, negations, and explicit exclusions when deciding whether gathered evidence satisfies the request; if the evidence covers a different source or metric, say it is not satisfied yet instead of smoothing over the mismatch. Do not claim commit/deploy/release safety or no DB migration unless the gathered data directly covers the current diff, migrations, schema, storage, or API shape.")
 	messages = append(messages, llm.TextMessage{
 		Role:    "user",
 		Content: strings.TrimSpace(b.String()),
