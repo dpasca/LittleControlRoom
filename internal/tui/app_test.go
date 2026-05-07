@@ -18887,6 +18887,25 @@ func TestBossModeFooterDoesNotCoverTerminalFrames(t *testing.T) {
 	}
 }
 
+func TestBossModeFooterAdvertisesFilePickerInsteadOfBossOffHint(t *testing.T) {
+	m := Model{
+		bossMode:  true,
+		bossModel: bossui.NewEmbedded(context.Background(), nil),
+		width:     120,
+		height:    24,
+	}
+
+	rendered := ansi.Strip(m.renderBossModeFooter(120))
+	if strings.Contains(rendered, "/boss off") {
+		t.Fatalf("boss footer should not include old /boss off hint: %q", rendered)
+	}
+	for _, want := range []string{"Alt+O", "files"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("boss footer missing %q: %q", want, rendered)
+		}
+	}
+}
+
 func TestBossModeForwardsTypingToChatInput(t *testing.T) {
 	m := Model{
 		bossMode:  true,

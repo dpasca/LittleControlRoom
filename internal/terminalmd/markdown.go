@@ -26,6 +26,14 @@ type syntaxHighlightOptions struct {
 	NoItalic        bool
 }
 
+// OpenLink describes a Markdown link that can be opened by a terminal UI.
+type OpenLink struct {
+	Kind     string
+	Label    string
+	Target   string
+	OpenPath string
+}
+
 // RenderBody renders lightweight Markdown for terminal transcripts.
 func RenderBody(body string, color lipgloss.Color, width int) string {
 	lines := strings.Split(body, "\n")
@@ -430,6 +438,47 @@ func parseMarkdownLinkTarget(text string) (target string, consumed int, ok bool)
 	return strings.TrimSpace(trimmed[:closeTarget]), leading + closeTarget + 1, true
 }
 
+// ExtractOpenLinks returns Markdown links with normalized system-open targets.
+func ExtractOpenLinks(text string) []OpenLink {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	links := make([]OpenLink, 0)
+	remaining := text
+	for len(remaining) > 0 {
+		idx := strings.IndexByte(remaining, '[')
+		if idx < 0 {
+			return links
+		}
+		label, target, consumed, ok := parseMarkdownLink(remaining[idx:])
+		if !ok {
+			remaining = remaining[idx+1:]
+			continue
+		}
+		if localPath, ok := localLinkText(target); ok {
+			openPath, _ := localOpenPath(localPath)
+			if openPath != "" {
+				links = append(links, OpenLink{
+					Kind:     localOpenLinkKind(openPath, localPath),
+					Label:    localLinkLabel(label, localPath),
+					Target:   localPath,
+					OpenPath: openPath,
+				})
+			}
+		} else if externalTarget, ok := externalOpenLinkTarget(target); ok {
+			links = append(links, OpenLink{
+				Kind:     "url",
+				Label:    strings.TrimSpace(label),
+				Target:   externalTarget,
+				OpenPath: externalTarget,
+			})
+		}
+		remaining = remaining[idx+max(1, consumed):]
+	}
+	return links
+}
+
 func boundedIndexByte(text string, c byte, limit int) int {
 	if limit > 0 && len(text) > limit {
 		text = text[:limit]
@@ -466,6 +515,18 @@ func hyperlinkTarget(target string) string {
 		return target
 	}
 	return parsed.String()
+}
+
+func externalOpenLinkTarget(target string) (string, bool) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "", false
+	}
+	parsed, err := url.Parse(target)
+	if err != nil || parsed.Scheme == "" || parsed.Scheme == "file" {
+		return "", false
+	}
+	return parsed.String(), true
 }
 
 func localLinkText(target string) (string, bool) {
@@ -533,6 +594,16 @@ func localLinkLabel(label, target string) string {
 	return label
 }
 
+func localOpenLinkKind(openPath, rawPath string) string {
+	if _, location := localOpenPath(rawPath); location != "" {
+		return "source"
+	}
+	if kind := artifactKindForPath(openPath); kind != "" {
+		return kind
+	}
+	return "file"
+}
+
 func localOpenPath(target string) (path, location string) {
 	path = strings.TrimSpace(target)
 	if path == "" {
@@ -578,6 +649,31 @@ func cutTrailingNumberSuffix(path string) (base, suffix string, ok bool) {
 		}
 	}
 	return path[:idx], path[idx:], true
+}
+
+func artifactKindForPath(path string) string {
+	switch strings.ToLower(filepath.Ext(strings.TrimSpace(path))) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".heif", ".svg":
+		return "image"
+	case ".pdf":
+		return "pdf"
+	case ".csv", ".tsv", ".xlsx", ".xls", ".ods", ".numbers":
+		return "sheet"
+	case ".doc", ".docx", ".pages", ".rtf", ".md", ".markdown":
+		return "doc"
+	case ".ppt", ".pptx", ".key":
+		return "deck"
+	case ".zip", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar":
+		return "archive"
+	case ".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm":
+		return "video"
+	case ".mp3", ".wav", ".m4a", ".aac", ".flac":
+		return "audio"
+	case ".html", ".htm":
+		return "html"
+	default:
+		return ""
+	}
 }
 
 func syntaxHighlightBlock(text, languageHint, filename string, opts syntaxHighlightOptions) string {

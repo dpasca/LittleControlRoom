@@ -905,6 +905,82 @@ func TestModelAltCDialogCanCopyVisibleOutput(t *testing.T) {
 	}
 }
 
+func TestModelAltOOpensFilePickerForMarkdownLinks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "notes.md")
+	m := New(context.Background(), nil)
+	m.width = 100
+	m.height = 28
+	m.messages = []ChatMessage{{
+		Role:    "assistant",
+		Content: "Outputs:\n- [docs](https://example.com/docs)\n- [notes](" + path + ")",
+	}}
+	m.syncLayout(true)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
+	if cmd != nil {
+		t.Fatalf("alt+o should open the picker without a command")
+	}
+	got := updated.(Model)
+	if got.openTargetPicker == nil {
+		t.Fatalf("alt+o should open the file picker")
+	}
+	if len(got.openTargetPicker.Targets) != 2 {
+		t.Fatalf("targets = %#v, want two links", got.openTargetPicker.Targets)
+	}
+	if !strings.Contains(ansi.Strip(got.View()), "Open Files") {
+		t.Fatalf("view should render the file picker:\n%s", got.View())
+	}
+
+	oldPathOpener := bossExternalPathOpener
+	defer func() { bossExternalPathOpener = oldPathOpener }()
+	opened := ""
+	bossExternalPathOpener = func(path string) error {
+		opened = path
+		return nil
+	}
+
+	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should return an open command")
+	}
+	msg := cmd()
+	if opened != path {
+		t.Fatalf("opened path = %q, want %q", opened, path)
+	}
+	openMsg, ok := msg.(bossOpenTargetOpenedMsg)
+	if !ok {
+		t.Fatalf("open command returned %T, want bossOpenTargetOpenedMsg", msg)
+	}
+	updated, cmd = got.Update(openMsg)
+	if cmd != nil {
+		t.Fatalf("open result should not queue a command")
+	}
+	got = updated.(Model)
+	if got.status != "Opened file" {
+		t.Fatalf("status = %q, want Opened file", got.status)
+	}
+}
+
+func TestModelAltOWithoutLinksLeavesPickerClosed(t *testing.T) {
+	t.Parallel()
+
+	m := New(context.Background(), nil)
+	m.messages = []ChatMessage{{Role: "assistant", Content: "No artifacts here."}}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
+	if cmd != nil {
+		t.Fatalf("alt+o without links should not queue a command")
+	}
+	got := updated.(Model)
+	if got.openTargetPicker != nil {
+		t.Fatalf("file picker should stay closed")
+	}
+	if got.status != "No files or links in this boss chat" {
+		t.Fatalf("status = %q, want no-links notice", got.status)
+	}
+}
+
 func TestEmbeddedModelConfirmsControlInvocation(t *testing.T) {
 	t.Parallel()
 

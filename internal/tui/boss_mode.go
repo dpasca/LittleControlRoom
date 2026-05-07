@@ -254,6 +254,7 @@ func (m Model) renderBossModeFooter(width int) string {
 	actions := []footerAction{
 		footerPrimaryAction("Enter", "send"),
 		footerNavAction("Alt+Enter", "newline"),
+		footerNavAction("Alt+O", "files"),
 		footerNavAction("Alt+1..8", "jump"),
 		footerLowAction("Alt+C", "copy menu"),
 		footerNavAction("Ctrl+R", "refresh"),
@@ -282,10 +283,17 @@ func (m Model) renderBossModeFooter(width int) string {
 			footerExitAction("Esc", "close"),
 		}
 	}
+	if m.bossModel.OpenTargetPickerActive() {
+		actions = []footerAction{
+			footerPrimaryAction("Enter/Alt+O", "open"),
+			footerNavAction("f", "folder"),
+			footerNavAction("Up/Down", "select"),
+			footerExitAction("Esc", "close"),
+		}
+	}
 	return fitStyledWidth(renderFooterLine(
 		width,
 		renderFooterActionList(actions...),
-		renderFooterMeta("/boss off also hides"),
 	), width)
 }
 

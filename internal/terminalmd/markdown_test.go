@@ -69,3 +69,19 @@ func TestRenderBodyKeepsExternalMarkdownLinksClickable(t *testing.T) {
 		t.Fatalf("rendered text should keep the external link label: %q", stripped)
 	}
 }
+
+func TestExtractOpenLinksUsesOpenableLocalPath(t *testing.T) {
+	t.Parallel()
+
+	path := "/tmp/demo/manager.go:107"
+	links := ExtractOpenLinks("Changed [manager.go](" + path + ") and [docs](https://example.com/docs).")
+	if len(links) != 2 {
+		t.Fatalf("links = %d, want 2: %#v", len(links), links)
+	}
+	if links[0].Kind != "source" || links[0].Label != "manager.go" || links[0].OpenPath != "/tmp/demo/manager.go" {
+		t.Fatalf("local link = %#v, want source manager.go with line suffix stripped", links[0])
+	}
+	if links[1].Kind != "url" || links[1].OpenPath != "https://example.com/docs" {
+		t.Fatalf("external link = %#v, want openable URL", links[1])
+	}
+}

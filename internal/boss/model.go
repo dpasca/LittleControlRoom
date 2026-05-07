@@ -42,6 +42,7 @@ type Model struct {
 	input             textarea.Model
 	inputCopyDialog   *inputcomposer.CopyDialogState
 	inputSelection    *inputcomposer.SelectionState
+	openTargetPicker  *bossOpenTargetPickerState
 	chatViewport      viewport.Model
 	chatSelection     bossTextSelection
 	messages          []ChatMessage
@@ -219,7 +220,7 @@ func newModel(ctx context.Context, svc *service.Service, embedded bool) Model {
 
 func IsMessage(msg tea.Msg) bool {
 	switch msg.(type) {
-	case StateLoadedMsg, HostNoticeMsg, AssistantReplyMsg, assistantStreamStartedMsg, assistantStreamMsg, TickMsg, ExitMsg, bossSessionLoadedMsg, bossSessionSavedMsg, bossSessionsListedMsg, bossSkillsInventoryMsg, ControlInvocationResultMsg, GoalRunResultMsg:
+	case StateLoadedMsg, HostNoticeMsg, AssistantReplyMsg, assistantStreamStartedMsg, assistantStreamMsg, TickMsg, ExitMsg, bossSessionLoadedMsg, bossSessionSavedMsg, bossSessionsListedMsg, bossSkillsInventoryMsg, ControlInvocationResultMsg, GoalRunResultMsg, bossOpenTargetOpenedMsg:
 		return true
 	default:
 		return false
@@ -228,7 +229,7 @@ func IsMessage(msg tea.Msg) bool {
 
 func IsBackgroundMessage(msg tea.Msg) bool {
 	switch msg.(type) {
-	case StateLoadedMsg, AssistantReplyMsg, assistantStreamStartedMsg, assistantStreamMsg, bossSessionLoadedMsg, bossSessionSavedMsg, bossSessionsListedMsg, bossSkillsInventoryMsg, ControlInvocationResultMsg, GoalRunResultMsg:
+	case StateLoadedMsg, AssistantReplyMsg, assistantStreamStartedMsg, assistantStreamMsg, bossSessionLoadedMsg, bossSessionSavedMsg, bossSessionsListedMsg, bossSkillsInventoryMsg, ControlInvocationResultMsg, GoalRunResultMsg, bossOpenTargetOpenedMsg:
 		return true
 	default:
 		return false
@@ -505,6 +506,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyControlInvocationResult(msg)
 	case GoalRunResultMsg:
 		return m.applyGoalRunResult(msg)
+	case bossOpenTargetOpenedMsg:
+		return m.applyBossOpenTargetOpenedMsg(msg)
 	case TickMsg:
 		m.spinnerFrame++
 		m.pruneSummaryFlashes()
@@ -527,6 +530,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.sessionPickerVisible {
 			return m.updateBossSessionPicker(msg)
+		}
+		if m.openTargetPicker != nil {
+			return m.updateBossOpenTargetPicker(msg)
 		}
 		if m.inputCopyDialog != nil {
 			return m.updateInputCopyDialog(msg)
@@ -552,6 +558,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "alt+c":
 			m.openInputCopyDialog()
 			return m, nil
+		case "alt+o":
+			return m.openBossOpenTargetPicker()
 		case "alt+s":
 			m.status = "Use Alt+C to copy input or output"
 			return m, nil
@@ -725,6 +733,9 @@ func (m Model) View() string {
 	}
 	if m.sessionPickerVisible {
 		body = m.renderBossSessionPickerOverlay(body, layout.width, layout.height)
+	}
+	if m.openTargetPicker != nil {
+		body = m.renderBossOpenTargetPickerOverlay(body, layout.width, layout.height)
 	}
 	if m.inputCopyDialog != nil {
 		body = m.renderInputCopyDialogOverlay(body, layout.width, layout.height)
@@ -1047,7 +1058,7 @@ func (m Model) renderChat(layout bossLayout) string {
 		parts = append(parts, slashBlock)
 	}
 	if !m.embedded {
-		hint := "Enter sends | Alt+Enter newline | Alt+C copy menu | Ctrl+R refresh | Esc hides"
+		hint := "Enter sends | Alt+Enter newline | Alt+O files | Alt+C copy menu | Ctrl+R refresh | Esc hides"
 		if m.bossSlashActive() {
 			hint = "Enter runs command | Tab complete | Shift+Tab previous | Alt+Enter newline"
 		}
@@ -1071,7 +1082,7 @@ func (m Model) renderHeader(width int) string {
 	escAction := "Esc hides"
 	if m.pendingControl != nil || m.pendingGoal != nil || m.inputSelection != nil {
 		escAction = "Esc cancels"
-	} else if m.sessionPickerVisible || m.inputCopyDialog != nil {
+	} else if m.sessionPickerVisible || m.openTargetPicker != nil || m.inputCopyDialog != nil {
 		escAction = "Esc closes"
 	}
 	text := " Boss Mode  " + m.StatusText() + "  |  " + escAction + "  Ctrl+R refresh"
