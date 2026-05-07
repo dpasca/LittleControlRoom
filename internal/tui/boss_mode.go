@@ -882,12 +882,35 @@ func engineerNoticeArtifactLines(text string, limit int) []string {
 		if label == "" || label == "." || label == string(filepath.Separator) {
 			label = path
 		}
-		lines = append(lines, "- "+label+": "+path)
+		lines = append(lines, "- "+markdownLinkText(label, path))
 		if len(lines) >= limit {
 			break
 		}
 	}
 	return lines
+}
+
+func markdownLinkText(label, target string) string {
+	label = strings.TrimSpace(label)
+	target = strings.TrimSpace(target)
+	if label == "" {
+		label = target
+	}
+	if target == "" {
+		return label
+	}
+	return "[" + label + "](" + markdownLinkTarget(target) + ")"
+}
+
+func markdownLinkTarget(target string) string {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return ""
+	}
+	if strings.ContainsAny(target, " \t\r\n()") {
+		return "<" + target + ">"
+	}
+	return target
 }
 
 func engineerNoticeContainsFence(text string) bool {

@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	chroma "github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/lexers"
@@ -14,6 +15,9 @@ import (
 const (
 	syntaxHighlightMaxBytes = 12 * 1024
 	syntaxHighlightMaxLines = 240
+
+	markdownLinkLabelScanLimit  = 512
+	markdownLinkTargetScanLimit = 8192
 )
 
 type syntaxHighlightOptions struct {
@@ -376,25 +380,75 @@ func parseMarkdownLink(text string) (label, target string, consumed int, ok bool
 	if !strings.HasPrefix(text, "[") {
 		return "", "", 0, false
 	}
-	closeLabel := strings.Index(text, "](")
+	closeLabelOffset := boundedIndexByte(text[1:], ']', markdownLinkLabelScanLimit)
+	if closeLabelOffset < 0 {
+		return "", "", 0, false
+	}
+	closeLabel := 1 + closeLabelOffset
 	if closeLabel <= 1 {
 		return "", "", 0, false
 	}
-	closeTarget := strings.IndexByte(text[closeLabel+2:], ')')
-	if closeTarget < 0 {
+	if closeLabel+1 >= len(text) || text[closeLabel+1] != '(' {
+		return "", "", 0, false
+	}
+	targetText := text[closeLabel+2:]
+	target, targetConsumed, ok := parseMarkdownLinkTarget(targetText)
+	if !ok {
 		return "", "", 0, false
 	}
 	label = text[1:closeLabel]
-	target = text[closeLabel+2 : closeLabel+2+closeTarget]
 	if strings.TrimSpace(label) == "" || strings.TrimSpace(target) == "" {
 		return "", "", 0, false
 	}
-	return label, target, closeLabel + 3 + closeTarget, true
+	return label, target, closeLabel + 2 + targetConsumed, true
+}
+
+func parseMarkdownLinkTarget(text string) (target string, consumed int, ok bool) {
+	leading := len(text) - len(strings.TrimLeftFunc(text, unicode.IsSpace))
+	if leading >= len(text) || leading > markdownLinkTargetScanLimit {
+		return "", 0, false
+	}
+	trimmed := text[leading:]
+	if strings.HasPrefix(trimmed, "<") {
+		closeAngle := boundedIndexByte(trimmed[1:], '>', markdownLinkTargetScanLimit)
+		if closeAngle < 0 {
+			return "", 0, false
+		}
+		target = trimmed[1 : 1+closeAngle]
+		afterTarget := trimmed[1+closeAngle+1:]
+		trailing := len(afterTarget) - len(strings.TrimLeftFunc(afterTarget, unicode.IsSpace))
+		afterTarget = afterTarget[trailing:]
+		if !strings.HasPrefix(afterTarget, ")") {
+			return "", 0, false
+		}
+		return strings.TrimSpace(target), leading + 1 + closeAngle + 1 + trailing + 1, true
+	}
+	closeTarget := boundedIndexByte(trimmed, ')', markdownLinkTargetScanLimit)
+	if closeTarget < 0 {
+		return "", 0, false
+	}
+	return strings.TrimSpace(trimmed[:closeTarget]), leading + closeTarget + 1, true
+}
+
+func boundedIndexByte(text string, c byte, limit int) int {
+	if limit > 0 && len(text) > limit {
+		text = text[:limit]
+	}
+	return strings.IndexByte(text, c)
 }
 
 func renderHyperlink(label, target string, style lipgloss.Style) string {
-	target = hyperlinkTarget(target)
 	linkStyle := style.Copy().Foreground(lipgloss.Color("111")).Underline(true)
+	if localPath, ok := localLinkText(target); ok {
+		label = localLinkLabel(label, localPath)
+		openPath, _ := localOpenPath(localPath)
+		renderedLabel := linkStyle.Render(label)
+		if openPath == "" {
+			return renderedLabel
+		}
+		return ansi.SetHyperlink(openPath) + renderedLabel + ansi.ResetHyperlink()
+	}
+	target = hyperlinkTarget(target)
 	renderedLabel := linkStyle.Render(label)
 	if target == "" {
 		return renderedLabel
@@ -407,20 +461,123 @@ func hyperlinkTarget(target string) string {
 	if target == "" {
 		return ""
 	}
-	if strings.HasPrefix(target, "/") {
-		path := target
-		fragment := ""
-		if before, after, found := strings.Cut(path, "#"); found {
-			path = before
-			fragment = after
-		}
-		return (&url.URL{Scheme: "file", Path: path, Fragment: fragment}).String()
-	}
 	parsed, err := url.Parse(target)
 	if err != nil || parsed.Scheme == "" {
 		return target
 	}
 	return parsed.String()
+}
+
+func localLinkText(target string) (string, bool) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "", false
+	}
+	if strings.HasPrefix(target, "/") {
+		return localPathText(target, ""), true
+	}
+	parsed, err := url.Parse(target)
+	if err != nil || parsed.Scheme != "file" {
+		return "", false
+	}
+	pathText := localPathText(parsed.Path, parsed.Fragment)
+	if parsed.Host != "" && parsed.Host != "localhost" {
+		pathText = parsed.Host + ":" + pathText
+	}
+	return pathText, parsed.Path != ""
+}
+
+func localPathText(path, fragment string) string {
+	if fragment == "" {
+		if before, after, found := strings.Cut(path, "#"); found {
+			path = before
+			fragment = after
+		}
+	}
+	if fragment != "" {
+		if isLineFragment(fragment) {
+			path += ":" + fragment
+		} else {
+			path += "#" + fragment
+		}
+	}
+	return path
+}
+
+func isLineFragment(text string) bool {
+	if text == "" {
+		return false
+	}
+	for i, part := range strings.Split(text, ":") {
+		if part == "" || i > 1 {
+			return false
+		}
+		for _, r := range part {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func localLinkLabel(label, target string) string {
+	label = strings.TrimSpace(label)
+	target = strings.TrimSpace(target)
+	if label == "" || label == target {
+		label = filepath.Base(target)
+		if label == "." || label == string(filepath.Separator) {
+			label = target
+		}
+	}
+	return label
+}
+
+func localOpenPath(target string) (path, location string) {
+	path = strings.TrimSpace(target)
+	if path == "" {
+		return "", ""
+	}
+	if before, after, found := strings.Cut(path, "#"); found {
+		path = before
+		if after != "" {
+			location = "#" + after
+		}
+	}
+	path, lineLocation := splitLocalLineSuffix(path)
+	if lineLocation != "" {
+		location = lineLocation
+	}
+	return path, location
+}
+
+func splitLocalLineSuffix(path string) (string, string) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", ""
+	}
+	base, suffix, ok := cutTrailingNumberSuffix(path)
+	if !ok {
+		return path, ""
+	}
+	if nextBase, nextSuffix, ok := cutTrailingNumberSuffix(base); ok {
+		return nextBase, nextSuffix + suffix
+	}
+	return base, suffix
+}
+
+func cutTrailingNumberSuffix(path string) (base, suffix string, ok bool) {
+	idx := strings.LastIndexByte(path, ':')
+	if idx <= 0 || idx == len(path)-1 {
+		return path, "", false
+	}
+	tail := path[idx+1:]
+	for _, r := range tail {
+		if r < '0' || r > '9' {
+			return path, "", false
+		}
+	}
+	return path[:idx], path[idx:], true
 }
 
 func syntaxHighlightBlock(text, languageHint, filename string, opts syntaxHighlightOptions) string {

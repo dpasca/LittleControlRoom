@@ -540,8 +540,8 @@ func TestLatestEngineerTranscriptOutputSkipsLowInformationIntroAndKeepsArtifactL
 	for _, want := range []string{
 		"I kept the existing promo untouched",
 		"Outputs:",
-		"- side-by-side video: /Users/davide/dev/repos/FractalMech/captures/promo-comparisons/promo-old-vs-new-autoplay-20260505.mp4",
-		"- contact sheet: /Users/davide/dev/repos/FractalMech/captures/promo-comparisons/promo-old-vs-new-autoplay-20260505-contact-sheet.jpg",
+		"- [side-by-side video](/Users/davide/dev/repos/FractalMech/captures/promo-comparisons/promo-old-vs-new-autoplay-20260505.mp4)",
+		"- [contact sheet](/Users/davide/dev/repos/FractalMech/captures/promo-comparisons/promo-old-vs-new-autoplay-20260505-contact-sheet.jpg)",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("latestEngineerTranscriptOutput() missing %q:\n%s", want, got)

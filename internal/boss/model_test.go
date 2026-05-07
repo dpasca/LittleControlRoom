@@ -1688,6 +1688,40 @@ func TestModelTranscriptRendersMarkdown(t *testing.T) {
 	}
 }
 
+func TestModelTranscriptRendersMarkdownLinksCompactly(t *testing.T) {
+	t.Parallel()
+
+	path := "/Users/davide/dev/repos/FractalMech/captures/promo-comparisons/promo-old-vs-new-autoplay-20260505.mp4"
+	m := New(context.Background(), nil)
+	m.messages = []ChatMessage{{
+		Role:    "assistant",
+		Content: "Outputs:\n- [side-by-side video](" + path + ")\n- [docs](https://example.com/docs)",
+	}}
+
+	rendered := m.renderTranscript(160)
+	if !strings.Contains(rendered, ansi.SetHyperlink(path)) {
+		t.Fatalf("rendered transcript should keep the local file as a hyperlink target:\n%q", rendered)
+	}
+	if !strings.Contains(rendered, ansi.SetHyperlink("https://example.com/docs")) {
+		t.Fatalf("rendered transcript should keep external URLs clickable:\n%q", rendered)
+	}
+	if strings.Contains(rendered, "file://") {
+		t.Fatalf("rendered transcript should not use file URLs for local paths:\n%q", rendered)
+	}
+
+	stripped := ansi.Strip(rendered)
+	for _, unwanted := range []string{path, "https://example.com/docs", "[side-by-side video]", "(https://example.com/docs)"} {
+		if strings.Contains(stripped, unwanted) {
+			t.Fatalf("rendered transcript should hide markdown target %q:\n%s", unwanted, stripped)
+		}
+	}
+	for _, want := range []string{"Boss>", "Outputs:", "side-by-side video", "docs"} {
+		if !strings.Contains(stripped, want) {
+			t.Fatalf("rendered transcript missing %q:\n%s", want, stripped)
+		}
+	}
+}
+
 func TestModelTranscriptHighlightsEngineerReturnNotice(t *testing.T) {
 	t.Parallel()
 
