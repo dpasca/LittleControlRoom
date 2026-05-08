@@ -20,6 +20,7 @@ import (
 	"lcroom/internal/detectors"
 	"lcroom/internal/detectors/claudecode"
 	"lcroom/internal/detectors/codex"
+	lcagentdetector "lcroom/internal/detectors/lcagent"
 	"lcroom/internal/detectors/opencode"
 	"lcroom/internal/events"
 	"lcroom/internal/model"
@@ -130,6 +131,7 @@ func Run(programName string, args []string) int {
 		codex.New(cfg.CodexHome),
 		opencode.New(cfg.OpenCodeHome),
 		claudecode.New(cfg.ClaudeCodeHome),
+		lcagentdetector.New(cfg.DataDir),
 	}
 	svc := service.New(cfg, st, bus, detectorList)
 

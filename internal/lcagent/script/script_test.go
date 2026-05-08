@@ -1,0 +1,66 @@
+package script
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"lcroom/internal/lcagent/policy"
+	"lcroom/internal/lcagent/session"
+	"lcroom/internal/lcagent/tools"
+)
+
+func TestRunnerExecutesScriptedMiniSession(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Prompt:    "patch readme",
+		Command:   tools.CommandRunner{Workspace: w, ArtifactDir: t.TempDir()},
+		Patch:     tools.PatchApplier{Workspace: w},
+	}
+	actions := []Action{
+		{Type: "tool_call", Tool: "run_command", Args: raw(`{"command":"cat README.md","timeout_ms":1000}`)},
+		{Type: "tool_call", Tool: "update_plan", Args: raw(`{"items":[{"step":"Inspect","status":"completed"},{"step":"Patch","status":"in_progress"}]}`)},
+		{Type: "tool_call", Tool: "apply_patch", Args: raw(`{"patch":"*** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch\n"}`)},
+		{Type: "final_response", Summary: "done", FilesChanged: []string{"README.md"}, Verification: []string{"script"}},
+	}
+	if err := runner.Run(context.Background(), actions); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "new\n" {
+		t.Fatalf("README = %q", data)
+	}
+	text := stream.String()
+	for _, eventType := range []string{"user_message", "tool_call", "tool_result", "plan_update", "files_touched", "turn_complete"} {
+		if !strings.Contains(text, `"type":"`+eventType+`"`) {
+			t.Fatalf("stream missing %s:\n%s", eventType, text)
+		}
+	}
+}
+
+func raw(value string) json.RawMessage {
+	return json.RawMessage(value)
+}

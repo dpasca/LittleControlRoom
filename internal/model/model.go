@@ -90,6 +90,7 @@ const (
 	SessionSourceCodex      SessionSource = "codex"
 	SessionSourceOpenCode   SessionSource = "opencode"
 	SessionSourceClaudeCode SessionSource = "claude_code"
+	SessionSourceLCAgent    SessionSource = "lcagent"
 )
 
 type AgentTaskKind string
@@ -473,7 +474,7 @@ type TodoItem struct {
 
 func NormalizeSessionSource(source SessionSource) SessionSource {
 	switch source {
-	case SessionSourceCodex, SessionSourceOpenCode, SessionSourceClaudeCode:
+	case SessionSourceCodex, SessionSourceOpenCode, SessionSourceClaudeCode, SessionSourceLCAgent:
 		return source
 	default:
 		return SessionSourceUnknown
@@ -524,6 +525,8 @@ func SessionSourceFromFormat(format string) SessionSource {
 		return SessionSourceOpenCode
 	case "claude_code":
 		return SessionSourceClaudeCode
+	case "lcagent_jsonl":
+		return SessionSourceLCAgent
 	default:
 		return SessionSourceUnknown
 	}
