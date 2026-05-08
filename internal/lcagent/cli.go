@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	projectinstructions "lcroom/internal/lcagent/instructions"
 	"lcroom/internal/lcagent/modeladapter"
 	"lcroom/internal/lcagent/policy"
 	"lcroom/internal/lcagent/script"
@@ -79,6 +80,10 @@ func runExec(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	instructions, err := projectinstructions.LoadWorkspace(workspace.Root)
+	if err != nil {
+		return fmt.Errorf("load project instructions: %w", err)
+	}
 	catalog, err := skillcatalog.Discover(context.Background(), skillcatalog.DefaultOptions(workspace.Root))
 	if err != nil {
 		return fmt.Errorf("load skills: %w", err)
@@ -109,6 +114,17 @@ func runExec(args []string, stdout io.Writer) error {
 	defer writer.Close()
 	if err := writer.Write(session.Meta(sessionID, workspace.Root, string(auto), provider, model, version, started)); err != nil {
 		return err
+	}
+	if strings.TrimSpace(instructions.Body) != "" {
+		if err := writer.Write(session.Event{
+			"type":       "project_instructions",
+			"session_id": sessionID,
+			"path":       instructions.Path,
+			"body":       instructions.Body,
+			"truncated":  instructions.Truncated,
+		}); err != nil {
+			return err
+		}
 	}
 	if len(catalog.Skills) > 0 {
 		if err := writer.Write(session.Event{
@@ -145,7 +161,7 @@ func runExec(args []string, stdout io.Writer) error {
 		}
 		runErr = runner.Run(context.Background(), actions)
 	case "openrouter":
-		runErr = runOpenRouter(context.Background(), writer, runner, modeladapter.OpenRouterConfig{
+		runErr = runOpenRouter(context.Background(), writer, runner, instructions.PromptSection(), modeladapter.OpenRouterConfig{
 			Model:    model,
 			EnvFile:  envFile,
 			MaxTurns: maxTurns,
@@ -169,7 +185,7 @@ func runExec(args []string, stdout io.Writer) error {
 	return nil
 }
 
-func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Runner, cfg modeladapter.OpenRouterConfig) error {
+func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Runner, projectInstructionPrompt string, cfg modeladapter.OpenRouterConfig) error {
 	client, err := modeladapter.NewOpenRouterClient(cfg)
 	if err != nil {
 		_ = writer.Write(session.Event{
@@ -188,7 +204,7 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 	}
 
 	messages := []modeladapter.Message{
-		{Role: "system", Content: modeladapter.SystemPrompt(runner.Skills.PromptIndex(0))},
+		{Role: "system", Content: modeladapter.SystemPrompt(runner.Skills.PromptIndex(0), projectInstructionPrompt)},
 		{Role: "user", Content: runner.Prompt},
 	}
 	toolsDef := modeladapter.Tools()

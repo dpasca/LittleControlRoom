@@ -373,7 +373,7 @@ func Tools() []ToolDefinition {
 	}
 }
 
-func SystemPrompt(skillIndex string) string {
+func SystemPrompt(skillIndex, projectInstructions string) string {
 	lines := []string{
 		"You are lcagent, a small local coding-agent harness controlled by Little Control Room.",
 		"Use the provided tools for all workspace inspection, edits, plan updates, and final responses.",
@@ -385,6 +385,9 @@ func SystemPrompt(skillIndex string) string {
 	}
 	if strings.TrimSpace(skillIndex) != "" {
 		lines = append(lines, "", strings.TrimSpace(skillIndex))
+	}
+	if strings.TrimSpace(projectInstructions) != "" {
+		lines = append(lines, "", strings.TrimSpace(projectInstructions))
 	}
 	return strings.Join(lines, "\n")
 }

@@ -41,8 +41,8 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 }
 
 func TestSystemPromptIncludesSkillMetadata(t *testing.T) {
-	prompt := SystemPrompt("Available skills\n- demo [project]: Demo workflow")
-	if !strings.Contains(prompt, "call load_skill") || !strings.Contains(prompt, "demo [project]") {
+	prompt := SystemPrompt("Available skills\n- demo [project]: Demo workflow", "Project instructions from AGENTS.md:\nRun tests.")
+	if !strings.Contains(prompt, "call load_skill") || !strings.Contains(prompt, "demo [project]") || !strings.Contains(prompt, "Run tests.") {
 		t.Fatalf("prompt missing skill guidance:\n%s", prompt)
 	}
 }

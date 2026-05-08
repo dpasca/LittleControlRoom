@@ -17,6 +17,9 @@ func TestRunExecScriptedStreamJSON(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("old\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("Run the scripted checks.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	scriptPath := filepath.Join(t.TempDir(), "script.jsonl")
 	script := `{"type":"tool_call","tool":"apply_patch","args":{"patch":"*** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch\n"}}
 {"type":"final_response","summary":"done","files_changed":["README.md"],"verification":["scripted"]}
@@ -36,7 +39,7 @@ func TestRunExecScriptedStreamJSON(t *testing.T) {
 	if string(data) != "new\n" {
 		t.Fatalf("README = %q", data)
 	}
-	if !strings.Contains(stdout.String(), `"type":"session_meta"`) || !strings.Contains(stdout.String(), `"type":"turn_complete"`) {
+	if !strings.Contains(stdout.String(), `"type":"session_meta"`) || !strings.Contains(stdout.String(), `"type":"project_instructions"`) || !strings.Contains(stdout.String(), `"type":"turn_complete"`) {
 		t.Fatalf("stdout missing events:\n%s", stdout.String())
 	}
 }
@@ -110,6 +113,9 @@ func TestRunExecOpenRouterCanUseReadOnlyTool(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("alpha\nbeta needle\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("Always prefer the project instructions.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	skillPath := filepath.Join(root, ".agents", "skills", "demo", "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(skillPath), 0o755); err != nil {
 		t.Fatal(err)
@@ -133,6 +139,9 @@ func TestRunExecOpenRouterCanUseReadOnlyTool(t *testing.T) {
 		if requests == 1 {
 			if len(body.Messages) == 0 || !strings.Contains(body.Messages[0].Content, "demo [project]: Demo workflow") {
 				t.Fatalf("system prompt missing skill metadata: %#v", body.Messages)
+			}
+			if !strings.Contains(body.Messages[0].Content, "Always prefer the project instructions.") {
+				t.Fatalf("system prompt missing project instructions: %#v", body.Messages)
 			}
 			_, _ = w.Write([]byte(`{
 				"id":"resp_tool",
