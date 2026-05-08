@@ -101,3 +101,85 @@ func TestRunExecOpenRouterEmitsModelResponseUsage(t *testing.T) {
 		}
 	}
 }
+
+func TestRunExecOpenRouterCanUseReadOnlyTool(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("alpha\nbeta needle\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if requests == 1 {
+			_, _ = w.Write([]byte(`{
+				"id":"resp_tool",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_read","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"README.md\",\"offset\":2,\"limit\":1}"}}]}
+				}]
+			}`))
+			return
+		}
+		foundToolOutput := false
+		for _, msg := range body.Messages {
+			if msg.Role == "tool" && strings.Contains(msg.Content, "2 | beta needle") {
+				foundToolOutput = true
+			}
+		}
+		if !foundToolOutput {
+			t.Fatalf("second request missing read_file tool output: %#v", body.Messages)
+		}
+		_, _ = w.Write([]byte(`{
+			"id":"resp_final",
+			"model":"deepseek/test-model",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"read the file"}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--max-turns", "3",
+		"read README",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"tool":"read_file"`,
+		`2 | beta needle`,
+		`"summary":"read the file"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+}

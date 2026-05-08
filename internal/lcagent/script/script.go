@@ -16,6 +16,7 @@ type Runner struct {
 	Session      *session.Writer
 	Command      tools.CommandRunner
 	Patch        tools.PatchApplier
+	Files        tools.FileTools
 	SessionID    string
 	Prompt       string
 	ArtifactsDir string
@@ -41,6 +42,25 @@ type patchArgs struct {
 
 type planArgs struct {
 	Items []tools.PlanItem `json:"items"`
+}
+
+type readFileArgs struct {
+	Path   string `json:"path"`
+	Offset int    `json:"offset"`
+	Limit  int    `json:"limit"`
+}
+
+type listFilesArgs struct {
+	Path       string `json:"path"`
+	Glob       string `json:"glob"`
+	MaxEntries int    `json:"max_entries"`
+}
+
+type searchArgs struct {
+	Query      string `json:"query"`
+	Path       string `json:"path"`
+	FileGlob   string `json:"file_glob"`
+	MaxMatches int    `json:"max_matches"`
 }
 
 func Load(path string) ([]Action, error) {
@@ -122,6 +142,24 @@ func (r Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, e
 
 	var result tools.ToolResult
 	switch action.Tool {
+	case "read_file":
+		var args readFileArgs
+		if err := json.Unmarshal(action.Args, &args); err != nil {
+			return tools.ToolResult{}, err
+		}
+		result = r.Files.Read(args.Path, args.Offset, args.Limit)
+	case "list_files":
+		var args listFilesArgs
+		if err := json.Unmarshal(action.Args, &args); err != nil {
+			return tools.ToolResult{}, err
+		}
+		result = r.Files.List(args.Path, args.Glob, args.MaxEntries)
+	case "search":
+		var args searchArgs
+		if err := json.Unmarshal(action.Args, &args); err != nil {
+			return tools.ToolResult{}, err
+		}
+		result = r.Files.Search(args.Query, args.Path, args.FileGlob, args.MaxMatches)
 	case "run_command":
 		var args commandArgs
 		if err := json.Unmarshal(action.Args, &args); err != nil {

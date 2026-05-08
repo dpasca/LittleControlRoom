@@ -111,6 +111,7 @@ func runExec(args []string, stdout io.Writer) error {
 		Session:      writer,
 		Command:      tools.CommandRunner{Workspace: workspace, ArtifactDir: artifactDir},
 		Patch:        tools.PatchApplier{Workspace: workspace},
+		Files:        tools.FileTools{Workspace: workspace},
 		SessionID:    sessionID,
 		Prompt:       prompt,
 		ArtifactsDir: artifactDir,

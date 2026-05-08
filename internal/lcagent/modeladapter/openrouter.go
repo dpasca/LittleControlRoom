@@ -233,6 +233,57 @@ func Tools() []ToolDefinition {
 		{
 			Type: "function",
 			Function: FunctionSpec{
+				Name:        "read_file",
+				Description: "Read a bounded line range from a text file inside the workspace.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"path":   map[string]any{"type": "string"},
+						"offset": map[string]any{"type": "integer", "minimum": 1, "description": "1-based starting line. Defaults to 1."},
+						"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": 1000, "description": "Maximum lines to read. Defaults to 200."},
+					},
+					"required": []string{"path"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "list_files",
+				Description: "List files under a workspace path, optionally filtered by a simple glob.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"path":        map[string]any{"type": "string", "description": "Directory or file to list. Defaults to workspace root."},
+						"glob":        map[string]any{"type": "string", "description": "Optional filepath glob matched against relative path or basename."},
+						"max_entries": map[string]any{"type": "integer", "minimum": 1, "maximum": 1000},
+					},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "search",
+				Description: "Search text files in the workspace for a literal query string.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"query":       map[string]any{"type": "string"},
+						"path":        map[string]any{"type": "string", "description": "Directory or file to search. Defaults to workspace root."},
+						"file_glob":   map[string]any{"type": "string", "description": "Optional filepath glob matched against relative path or basename."},
+						"max_matches": map[string]any{"type": "integer", "minimum": 1, "maximum": 200},
+					},
+					"required": []string{"query"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionSpec{
 				Name:        "run_command",
 				Description: "Run a bounded shell command in the workspace. Use short commands and inspect results before editing.",
 				Parameters: map[string]any{
@@ -312,6 +363,7 @@ func SystemPrompt() string {
 		"You are lcagent, a small local coding-agent harness controlled by Little Control Room.",
 		"Use the provided tools for all workspace inspection, edits, plan updates, and final responses.",
 		"Do not claim to have inspected files or run verification unless a tool result shows that happened.",
+		"Prefer read_file, list_files, and search for routine inspection before reaching for shell commands.",
 		"Use apply_patch for source edits. Keep changes focused on the user's prompt.",
 		"When done, call final_response exactly once.",
 	}, "\n")

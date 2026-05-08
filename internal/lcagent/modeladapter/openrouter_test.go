@@ -28,6 +28,18 @@ func TestLoadEnvFileDoesNotOverrideExistingEnv(t *testing.T) {
 	}
 }
 
+func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
+	names := map[string]bool{}
+	for _, tool := range Tools() {
+		names[tool.Function.Name] = true
+	}
+	for _, want := range []string{"read_file", "list_files", "search", "run_command", "apply_patch", "update_plan", "final_response"} {
+		if !names[want] {
+			t.Fatalf("Tools() missing %s", want)
+		}
+	}
+}
+
 func TestOpenRouterClientSendsToolRequestAndParsesResponse(t *testing.T) {
 	var gotModel string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
