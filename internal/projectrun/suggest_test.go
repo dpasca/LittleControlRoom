@@ -46,6 +46,33 @@ func TestSuggestUsesPnpmForDevScript(t *testing.T) {
 	}
 }
 
+func TestSuggestFollowsPackageScriptDelegation(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	manifest := `{
+		"scripts": {
+			"dev": "pnpm run dev:askmei",
+			"dev:askmei": "concurrently \"vite --mode development\" \"pnpm --filter chatnext3-server dev\""
+		},
+		"packageManager": "pnpm@9.0.0"
+	}`
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+
+	suggestion, err := Suggest(root)
+	if err != nil {
+		t.Fatalf("Suggest() error = %v", err)
+	}
+	if suggestion.Command != "pnpm dev:askmei" {
+		t.Fatalf("suggested command = %q, want pnpm dev:askmei", suggestion.Command)
+	}
+	if suggestion.Reason != `Found package.json script "dev" delegating to "dev:askmei".` {
+		t.Fatalf("suggested reason = %q", suggestion.Reason)
+	}
+}
+
 func TestSuggestUsesSingleGoCmdEntrypoint(t *testing.T) {
 	t.Parallel()
 

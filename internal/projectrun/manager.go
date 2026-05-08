@@ -21,7 +21,7 @@ import (
 const (
 	portRefreshInterval = 2 * time.Second
 	maxRecentOutput     = 8
-	maxAnnouncedURLs    = 4
+	maxAnnouncedURLs    = 8
 	closeAllWaitTimeout = 2 * time.Second
 )
 
@@ -430,10 +430,10 @@ func (m *Manager) appendOutput(projectPath, line string) {
 		if slicesContainString(runtime.announcedURLs, url) {
 			continue
 		}
-		runtime.announcedURLs = append(runtime.announcedURLs, url)
-		if len(runtime.announcedURLs) > maxAnnouncedURLs {
-			runtime.announcedURLs = append([]string(nil), runtime.announcedURLs[len(runtime.announcedURLs)-maxAnnouncedURLs:]...)
+		if len(runtime.announcedURLs) >= maxAnnouncedURLs {
+			continue
 		}
+		runtime.announcedURLs = append(runtime.announcedURLs, url)
 	}
 }
 

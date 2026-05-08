@@ -3,6 +3,7 @@ package projectrun
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -142,5 +143,33 @@ func TestCloseAllIgnoresAlreadyStoppedRuntime(t *testing.T) {
 
 	if err := manager.CloseAll(); err != nil {
 		t.Fatalf("CloseAll() error = %v, want nil for stopped runtime", err)
+	}
+}
+
+func TestAppendOutputPreservesFirstAnnouncedRuntimeURLs(t *testing.T) {
+	dir := t.TempDir()
+	manager := NewManager()
+	defer func() { _ = manager.CloseAll() }()
+
+	manager.mu.Lock()
+	manager.runtimes[dir] = &managedRuntime{projectPath: dir}
+	manager.mu.Unlock()
+
+	for i := 0; i < maxAnnouncedURLs+2; i++ {
+		manager.appendOutput(dir, fmt.Sprintf("ready http://localhost:%d/", 3000+i))
+	}
+
+	snapshot, err := manager.Snapshot(dir)
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	if len(snapshot.AnnouncedURLs) != maxAnnouncedURLs {
+		t.Fatalf("announced URL count = %d, want %d: %v", len(snapshot.AnnouncedURLs), maxAnnouncedURLs, snapshot.AnnouncedURLs)
+	}
+	if snapshot.AnnouncedURLs[0] != "http://localhost:3000/" {
+		t.Fatalf("first announced URL = %q, want first discovered local URL", snapshot.AnnouncedURLs[0])
+	}
+	if snapshot.AnnouncedURLs[len(snapshot.AnnouncedURLs)-1] != fmt.Sprintf("http://localhost:%d/", 3000+maxAnnouncedURLs-1) {
+		t.Fatalf("last announced URL = %q, want the last retained URL before cap", snapshot.AnnouncedURLs[len(snapshot.AnnouncedURLs)-1])
 	}
 }

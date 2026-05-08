@@ -38,6 +38,11 @@ type Suggestion struct {
 	Reason  string
 }
 
+type packageManifest struct {
+	PackageManager string            `json:"packageManager"`
+	Scripts        map[string]string `json:"scripts"`
+}
+
 func Suggest(projectPath string) (Suggestion, error) {
 	candidates, err := Candidates(projectPath)
 	if err != nil {
@@ -229,10 +234,7 @@ func suggestPackageScript(projectPath string) (Suggestion, bool, error) {
 		}
 		return Suggestion{}, false, fmt.Errorf("read package.json: %w", err)
 	}
-	var manifest struct {
-		PackageManager string            `json:"packageManager"`
-		Scripts        map[string]string `json:"scripts"`
-	}
+	var manifest packageManifest
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		return Suggestion{}, false, nil
 	}
@@ -244,12 +246,63 @@ func suggestPackageScript(projectPath string) (Suggestion, bool, error) {
 		if strings.TrimSpace(manifest.Scripts[script]) == "" {
 			continue
 		}
+		if delegatedScript, ok := delegatedPackageScript(manifest.Scripts, script); ok {
+			return Suggestion{
+				Command: packageManagerCommand(manager, delegatedScript),
+				Reason:  fmt.Sprintf("Found package.json script %q delegating to %q.", script, delegatedScript),
+			}, true, nil
+		}
 		return Suggestion{
 			Command: packageManagerCommand(manager, script),
 			Reason:  fmt.Sprintf("Found package.json script %q.", script),
 		}, true, nil
 	}
 	return Suggestion{}, false, nil
+}
+
+func delegatedPackageScript(scripts map[string]string, script string) (string, bool) {
+	target := packageScriptRunTarget(scripts[script])
+	if target == "" || target == script {
+		return "", false
+	}
+	if strings.TrimSpace(scripts[target]) == "" {
+		return "", false
+	}
+	return target, true
+}
+
+func packageScriptRunTarget(command string) string {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) == 0 {
+		return ""
+	}
+	if fields[0] == "corepack" {
+		fields = fields[1:]
+	}
+	if len(fields) == 0 {
+		return ""
+	}
+	switch fields[0] {
+	case "npm", "bun":
+		if len(fields) == 3 && fields[1] == "run" && !strings.HasPrefix(fields[2], "-") {
+			return fields[2]
+		}
+	case "pnpm":
+		if len(fields) == 3 && fields[1] == "run" && !strings.HasPrefix(fields[2], "-") {
+			return fields[2]
+		}
+		if len(fields) == 2 && !strings.HasPrefix(fields[1], "-") {
+			return fields[1]
+		}
+	case "yarn":
+		if len(fields) == 3 && fields[1] == "run" && !strings.HasPrefix(fields[2], "-") {
+			return fields[2]
+		}
+		if len(fields) == 2 && !strings.HasPrefix(fields[1], "-") {
+			return fields[1]
+		}
+	}
+	return ""
 }
 
 func detectPackageManager(projectPath, packageManager string) string {
