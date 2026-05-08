@@ -43,11 +43,23 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 	if !strings.Contains(descriptions["apply_patch"], "*** Update File: README.md") {
 		t.Fatalf("apply_patch description missing format example: %q", descriptions["apply_patch"])
 	}
+	var readFilePathDescription string
+	for _, tool := range Tools() {
+		if tool.Function.Name != "read_file" {
+			continue
+		}
+		properties, _ := tool.Function.Parameters["properties"].(map[string]any)
+		pathSpec, _ := properties["path"].(map[string]any)
+		readFilePathDescription, _ = pathSpec["description"].(string)
+	}
+	if !strings.Contains(readFilePathDescription, "Workspace-relative") {
+		t.Fatalf("read_file path description should mention relative paths: %q", readFilePathDescription)
+	}
 }
 
 func TestSystemPromptIncludesSkillMetadata(t *testing.T) {
 	prompt := SystemPrompt("Available skills\n- demo [project]: Demo workflow", "Project instructions from AGENTS.md:\nRun tests.")
-	if !strings.Contains(prompt, "call load_skill") || !strings.Contains(prompt, "demo [project]") || !strings.Contains(prompt, "Run tests.") || !strings.Contains(prompt, "*** Update File: path") {
+	if !strings.Contains(prompt, "call load_skill") || !strings.Contains(prompt, "demo [project]") || !strings.Contains(prompt, "Run tests.") || !strings.Contains(prompt, "*** Update File: path") || !strings.Contains(prompt, "workspace-relative paths") {
 		t.Fatalf("prompt missing skill guidance:\n%s", prompt)
 	}
 }

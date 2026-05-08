@@ -223,15 +223,6 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 			return err
 		}
 		messages = append(messages, msg)
-		if msg.Content != "" {
-			if err := writer.Write(session.Event{
-				"type":       "assistant_message",
-				"session_id": runner.SessionID,
-				"message":    msg.Content,
-			}); err != nil {
-				return err
-			}
-		}
 		if len(msg.ToolCalls) == 0 {
 			if strings.TrimSpace(msg.Content) == "" {
 				err := fmt.Errorf("openrouter response had no content or tool calls")
@@ -246,6 +237,15 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 				Type:    "final_response",
 				Summary: msg.Content,
 			})
+		}
+		if msg.Content != "" && !hasToolCall(msg.ToolCalls, "final_response") {
+			if err := writer.Write(session.Event{
+				"type":       "assistant_message",
+				"session_id": runner.SessionID,
+				"message":    msg.Content,
+			}); err != nil {
+				return err
+			}
 		}
 		for _, call := range msg.ToolCalls {
 			args, err := modeladapter.NormalizeArguments(call.Function.Arguments)
@@ -285,6 +285,15 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 		"reason":     err.Error(),
 	})
 	return err
+}
+
+func hasToolCall(calls []modeladapter.ToolCall, name string) bool {
+	for _, call := range calls {
+		if call.Function.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func modelResponseEvent(sessionID string, turn int, completion modeladapter.Completion, toolCallCount int) session.Event {

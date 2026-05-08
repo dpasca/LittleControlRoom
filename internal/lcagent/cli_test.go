@@ -105,6 +105,9 @@ func TestRunExecOpenRouterEmitsModelResponseUsage(t *testing.T) {
 			t.Fatalf("stdout missing %q:\n%s", want, text)
 		}
 	}
+	if got := strings.Count(text, `"type":"assistant_message"`); got != 1 {
+		t.Fatalf("assistant_message count = %d, want 1:\n%s", got, text)
+	}
 }
 
 func TestRunExecOpenRouterCanUseReadOnlyTool(t *testing.T) {
@@ -203,6 +206,63 @@ func TestRunExecOpenRouterCanUseReadOnlyTool(t *testing.T) {
 	}
 	if requests != 2 {
 		t.Fatalf("requests = %d, want 2", requests)
+	}
+}
+
+func TestRunExecOpenRouterFinalResponseToolIsCanonical(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"resp_final_tool",
+			"model":"deepseek/test-model",
+			"choices":[{
+				"finish_reason":"tool_calls",
+				"message":{
+					"role":"assistant",
+					"content":"ignore this prose wrapper",
+					"tool_calls":[{
+						"id":"call_final",
+						"type":"function",
+						"function":{
+							"name":"final_response",
+							"arguments":{"summary":"canonical final","files_changed":[],"verification":[]}
+						}
+					}]
+				}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--max-turns", "2",
+		"finish directly",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	if got := strings.Count(text, `"type":"assistant_message"`); got != 1 {
+		t.Fatalf("assistant_message count = %d, want 1:\n%s", got, text)
+	}
+	if !strings.Contains(text, `"summary":"canonical final"`) {
+		t.Fatalf("stdout missing canonical final summary:\n%s", text)
+	}
+	if strings.Contains(text, "ignore this prose wrapper") {
+		t.Fatalf("stdout should not include wrapper content when final_response is present:\n%s", text)
 	}
 }
 

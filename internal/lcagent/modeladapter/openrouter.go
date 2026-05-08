@@ -239,7 +239,7 @@ func Tools() []ToolDefinition {
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"path":   map[string]any{"type": "string"},
+						"path":   map[string]any{"type": "string", "description": "Workspace-relative path. Absolute paths are denied."},
 						"offset": map[string]any{"type": "integer", "minimum": 1, "description": "1-based starting line. Defaults to 1."},
 						"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": 1000, "description": "Maximum lines to read. Defaults to 200."},
 					},
@@ -256,7 +256,7 @@ func Tools() []ToolDefinition {
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"path":        map[string]any{"type": "string", "description": "Directory or file to list. Defaults to workspace root."},
+						"path":        map[string]any{"type": "string", "description": "Workspace-relative directory or file to list. Defaults to workspace root. Absolute paths are denied."},
 						"glob":        map[string]any{"type": "string", "description": "Optional filepath glob matched against relative path or basename."},
 						"max_entries": map[string]any{"type": "integer", "minimum": 1, "maximum": 1000},
 					},
@@ -273,7 +273,7 @@ func Tools() []ToolDefinition {
 					"additionalProperties": false,
 					"properties": map[string]any{
 						"query":       map[string]any{"type": "string"},
-						"path":        map[string]any{"type": "string", "description": "Directory or file to search. Defaults to workspace root."},
+						"path":        map[string]any{"type": "string", "description": "Workspace-relative directory or file to search. Defaults to workspace root. Absolute paths are denied."},
 						"file_glob":   map[string]any{"type": "string", "description": "Optional filepath glob matched against relative path or basename."},
 						"max_matches": map[string]any{"type": "integer", "minimum": 1, "maximum": 200},
 					},
@@ -380,6 +380,7 @@ func SystemPrompt(skillIndex, projectInstructions string) string {
 		"Use the provided tools for all workspace inspection, edits, plan updates, and final responses.",
 		"Do not claim to have inspected files or run verification unless a tool result shows that happened.",
 		"Prefer read_file, list_files, and search for routine inspection before reaching for shell commands.",
+		"Use workspace-relative paths in file tools; absolute paths are denied.",
 		"When using run_command, prefer argv over command strings; shell commands are for shell syntax only.",
 		"Skill descriptions in this prompt are metadata only; call load_skill before relying on any skill instructions.",
 		"Use apply_patch for source edits. Patches must use this exact shape: *** Begin Patch, *** Update File: path, @@, -old line, +new line, *** End Patch.",
