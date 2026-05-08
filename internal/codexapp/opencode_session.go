@@ -517,6 +517,18 @@ func (s *openCodeSession) ShowStatus() error {
 	return nil
 }
 
+func (s *openCodeSession) ShowGoal() error {
+	return fmt.Errorf("embedded OpenCode goals are not supported yet")
+}
+
+func (s *openCodeSession) SetGoal(objective string, tokenBudget *int64) error {
+	return fmt.Errorf("embedded OpenCode goals are not supported yet")
+}
+
+func (s *openCodeSession) ClearGoal() error {
+	return fmt.Errorf("embedded OpenCode goals are not supported yet")
+}
+
 func (s *openCodeSession) Compact() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

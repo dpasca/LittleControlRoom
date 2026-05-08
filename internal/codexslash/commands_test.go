@@ -72,6 +72,20 @@ func TestSuggestionsIncludeSkillsCommand(t *testing.T) {
 	}
 }
 
+func TestSuggestionsIncludeGoalCommand(t *testing.T) {
+	suggestions := Suggestions("/")
+	found := false
+	for _, suggestion := range suggestions {
+		if suggestion.Insert == "/goal" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Suggestions(/) should include /goal: %#v", suggestions)
+	}
+}
+
 func TestParseModelCommand(t *testing.T) {
 	inv, err := Parse("/model")
 	if err != nil {
@@ -134,6 +148,60 @@ func TestParseSkillsCommand(t *testing.T) {
 	}
 	if inv.Canonical != "/skills" {
 		t.Fatalf("Parse(/skills) canonical = %q, want /skills", inv.Canonical)
+	}
+}
+
+func TestParseGoalStatusCommand(t *testing.T) {
+	inv, err := Parse("/goal status")
+	if err != nil {
+		t.Fatalf("Parse(/goal status) error = %v", err)
+	}
+	if inv.Kind != KindGoal {
+		t.Fatalf("Parse(/goal status) kind = %q, want %q", inv.Kind, KindGoal)
+	}
+	if inv.GoalAction != GoalActionShow {
+		t.Fatalf("Parse(/goal status) action = %q, want %q", inv.GoalAction, GoalActionShow)
+	}
+	if inv.Canonical != "/goal" {
+		t.Fatalf("Parse(/goal status) canonical = %q, want /goal", inv.Canonical)
+	}
+}
+
+func TestParseGoalClearCommand(t *testing.T) {
+	inv, err := Parse("/goal clear")
+	if err != nil {
+		t.Fatalf("Parse(/goal clear) error = %v", err)
+	}
+	if inv.Kind != KindGoal {
+		t.Fatalf("Parse(/goal clear) kind = %q, want %q", inv.Kind, KindGoal)
+	}
+	if inv.GoalAction != GoalActionClear {
+		t.Fatalf("Parse(/goal clear) action = %q, want %q", inv.GoalAction, GoalActionClear)
+	}
+	if inv.Canonical != "/goal clear" {
+		t.Fatalf("Parse(/goal clear) canonical = %q, want /goal clear", inv.Canonical)
+	}
+}
+
+func TestParseGoalSetCommandWithBudget(t *testing.T) {
+	inv, err := Parse("/goal ship this feature --budget 5000")
+	if err != nil {
+		t.Fatalf("Parse(/goal ship this feature --budget 5000) error = %v", err)
+	}
+	if inv.Kind != KindGoal {
+		t.Fatalf("Parse(/goal ...) kind = %q, want %q", inv.Kind, KindGoal)
+	}
+	if inv.GoalAction != GoalActionSet {
+		t.Fatalf("Parse(/goal ...) action = %q, want %q", inv.GoalAction, GoalActionSet)
+	}
+	if inv.GoalObjective != "ship this feature" {
+		t.Fatalf("Parse(/goal ...) objective = %q, want ship this feature", inv.GoalObjective)
+	}
+	if inv.GoalTokenBudget == nil || *inv.GoalTokenBudget != 5000 {
+		t.Fatalf("Parse(/goal ...) token budget = %v, want 5000", inv.GoalTokenBudget)
+	}
+	if inv.Canonical != "/goal ship this feature --budget 5000" {
+		t.Fatalf("Parse(/goal ...) canonical = %q, want /goal ship this feature --budget 5000", inv.Canonical)
 	}
 }
 

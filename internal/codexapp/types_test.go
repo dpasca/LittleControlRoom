@@ -55,6 +55,18 @@ func (s *fakeSession) ShowStatus() error {
 	return nil
 }
 
+func (s *fakeSession) ShowGoal() error {
+	return nil
+}
+
+func (s *fakeSession) SetGoal(objective string, tokenBudget *int64) error {
+	return nil
+}
+
+func (s *fakeSession) ClearGoal() error {
+	return nil
+}
+
 func (s *fakeSession) Compact() error {
 	return nil
 }

@@ -644,6 +644,18 @@ func (s *screenshotCodexSession) ShowStatus() error {
 	return nil
 }
 
+func (s *screenshotCodexSession) ShowGoal() error {
+	return nil
+}
+
+func (s *screenshotCodexSession) SetGoal(objective string, tokenBudget *int64) error {
+	return nil
+}
+
+func (s *screenshotCodexSession) ClearGoal() error {
+	return nil
+}
+
 func (s *screenshotCodexSession) Compact() error {
 	return nil
 }

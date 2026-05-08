@@ -54,6 +54,10 @@ type fakeCodexSession struct {
 	toolAnswers      []map[string][]string
 	elicitations     []fakeElicitationResponse
 	statusCalls      int
+	showGoalCalls    int
+	clearGoalCalls   int
+	goalSetObjective string
+	goalSetBudget    *int64
 	compactCalls     int
 	reviewCalls      int
 	interrupted      bool
@@ -151,6 +155,46 @@ func (s *fakeCodexSession) ShowStatus() error {
 			"usage window: limit=Codex; window=5h; left=85; resetsAt=1773027840",
 		}, "\n"),
 	})
+	return nil
+}
+
+func (s *fakeCodexSession) ShowGoal() error {
+	s.showGoalCalls++
+	text := "Embedded Codex goal\nstatus: none"
+	if s.snapshot.Goal != nil {
+		text = strings.Join([]string{
+			"Embedded Codex goal",
+			"objective: " + s.snapshot.Goal.Objective,
+			"status: " + string(s.snapshot.Goal.Status),
+		}, "\n")
+	}
+	s.snapshot.Entries = append(s.snapshot.Entries, codexapp.TranscriptEntry{
+		Kind: codexapp.TranscriptStatus,
+		Text: text,
+	})
+	return nil
+}
+
+func (s *fakeCodexSession) SetGoal(objective string, tokenBudget *int64) error {
+	s.goalSetObjective = strings.TrimSpace(objective)
+	if tokenBudget == nil {
+		s.goalSetBudget = nil
+	} else {
+		copied := *tokenBudget
+		s.goalSetBudget = &copied
+	}
+	s.snapshot.Goal = &codexapp.ThreadGoal{
+		ThreadID:    s.snapshot.ThreadID,
+		Objective:   s.goalSetObjective,
+		Status:      codexapp.ThreadGoalStatusActive,
+		TokenBudget: s.goalSetBudget,
+	}
+	return nil
+}
+
+func (s *fakeCodexSession) ClearGoal() error {
+	s.clearGoalCalls++
+	s.snapshot.Goal = nil
 	return nil
 }
 
@@ -8555,6 +8599,73 @@ func TestVisibleCodexSlashStatusRunsLocally(t *testing.T) {
 	rendered := ansi.Strip(got.renderCodexView())
 	if !strings.Contains(rendered, "Status") || !strings.Contains(rendered, "85% left") {
 		t.Fatalf("rendered view should include the local /status transcript block: %q", rendered)
+	}
+}
+
+func TestVisibleCodexSlashGoalSetRunsLocally(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started:  true,
+			Preset:   codexcli.PresetYolo,
+			Status:   "Codex session ready",
+			ThreadID: "thread_demo",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/goal ship the change --budget 5000")
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should run the embedded /goal command")
+	}
+	if got.codexInput.Value() != "" {
+		t.Fatalf("codex input should clear after /goal, got %q", got.codexInput.Value())
+	}
+	if got.status != "Setting embedded Codex goal..." {
+		t.Fatalf("status = %q, want goal set notice", got.status)
+	}
+
+	msg := cmd()
+	action, ok := msg.(codexActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexActionMsg", msg)
+	}
+	if action.err != nil {
+		t.Fatalf("/goal returned error = %v", action.err)
+	}
+	if action.status != "Embedded Codex goal set" {
+		t.Fatalf("action status = %q, want Embedded Codex goal set", action.status)
+	}
+	if session.goalSetObjective != "ship the change" {
+		t.Fatalf("goal objective = %q, want ship the change", session.goalSetObjective)
+	}
+	if session.goalSetBudget == nil || *session.goalSetBudget != 5000 {
+		t.Fatalf("goal budget = %v, want 5000", session.goalSetBudget)
+	}
+	if len(session.submissions) != 0 {
+		t.Fatalf("/goal should not submit a Codex prompt, submissions = %d", len(session.submissions))
 	}
 }
 

@@ -2,6 +2,7 @@ package codexslash
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"lcroom/internal/slashcmd"
@@ -19,17 +20,29 @@ const (
 	KindReview    Kind = "review"
 	KindBoss      Kind = "boss"
 	KindSkills    Kind = "skills"
+	KindGoal      Kind = "goal"
 )
 
 type Spec = slashcmd.Spec
 
 type Suggestion = slashcmd.Suggestion
 
+type GoalAction string
+
+const (
+	GoalActionShow  GoalAction = "show"
+	GoalActionSet   GoalAction = "set"
+	GoalActionClear GoalAction = "clear"
+)
+
 type Invocation struct {
-	Kind      Kind
-	Prompt    string
-	SessionID string
-	Canonical string
+	Kind            Kind
+	Prompt          string
+	SessionID       string
+	GoalAction      GoalAction
+	GoalObjective   string
+	GoalTokenBudget *int64
+	Canonical       string
 }
 
 var specs = []Spec{
@@ -43,6 +56,7 @@ var specs = []Spec{
 	{Name: "review", Usage: "/review", Summary: "Ask embedded Codex to review uncommitted changes"},
 	{Name: "boss", Usage: "/boss", Summary: "Open the high-level boss chat layer"},
 	{Name: "skills", Usage: "/skills", Summary: "Open the local Codex skills inventory"},
+	{Name: "goal", Usage: "/goal [status|clear|objective] [--budget N]", Summary: "Show, set, or clear the embedded Codex goal"},
 }
 
 func Specs() []Spec {
@@ -123,6 +137,29 @@ func Suggestions(input string) []Suggestion {
 			Display: "/skills",
 			Summary: "Open the local Codex skills inventory",
 		}}
+	case "goal":
+		return []Suggestion{
+			{
+				Insert:  "/goal",
+				Display: "/goal",
+				Summary: "Show the current embedded Codex goal",
+			},
+			{
+				Insert:  "/goal status",
+				Display: "/goal status",
+				Summary: "Show the current embedded Codex goal",
+			},
+			{
+				Insert:  "/goal clear",
+				Display: "/goal clear",
+				Summary: "Clear the current embedded Codex goal",
+			},
+			{
+				Insert:  "/goal --budget ",
+				Display: "/goal --budget N objective",
+				Summary: "Set a goal with a token budget",
+			},
+		}
 	default:
 		return slashcmd.NameSuggestions(specs, strings.ToLower(fields[0]))
 	}
@@ -216,9 +253,93 @@ func Parse(input string) (Invocation, error) {
 			Kind:      KindSkills,
 			Canonical: "/skills",
 		}, nil
+	case "goal":
+		return parseGoalInvocation(rawArgs)
 	default:
 		return Invocation{}, fmt.Errorf("unsupported embedded slash command: /%s", name)
 	}
+}
+
+func parseGoalInvocation(rawArgs string) (Invocation, error) {
+	trimmed := strings.TrimSpace(rawArgs)
+	if trimmed == "" || strings.EqualFold(trimmed, "status") || strings.EqualFold(trimmed, "show") {
+		return Invocation{
+			Kind:       KindGoal,
+			GoalAction: GoalActionShow,
+			Canonical:  "/goal",
+		}, nil
+	}
+	if strings.EqualFold(trimmed, "clear") || strings.EqualFold(trimmed, "reset") {
+		return Invocation{
+			Kind:       KindGoal,
+			GoalAction: GoalActionClear,
+			Canonical:  "/goal clear",
+		}, nil
+	}
+
+	objective, tokenBudget, err := parseGoalSetArgs(trimmed)
+	if err != nil {
+		return Invocation{}, err
+	}
+	canonical := "/goal " + objective
+	if tokenBudget != nil {
+		canonical += fmt.Sprintf(" --budget %d", *tokenBudget)
+	}
+	return Invocation{
+		Kind:            KindGoal,
+		GoalAction:      GoalActionSet,
+		GoalObjective:   objective,
+		GoalTokenBudget: tokenBudget,
+		Canonical:       canonical,
+	}, nil
+}
+
+func parseGoalSetArgs(rawArgs string) (string, *int64, error) {
+	fields := strings.Fields(rawArgs)
+	objectiveFields := make([]string, 0, len(fields))
+	var tokenBudget *int64
+	for i := 0; i < len(fields); i++ {
+		field := fields[i]
+		switch {
+		case field == "--budget" || field == "--tokens":
+			if i+1 >= len(fields) {
+				return "", nil, fmt.Errorf("usage: /goal [status|clear|objective] [--budget N]")
+			}
+			i++
+			parsed, err := parseGoalTokenBudget(fields[i])
+			if err != nil {
+				return "", nil, err
+			}
+			tokenBudget = &parsed
+		case strings.HasPrefix(field, "--budget="):
+			parsed, err := parseGoalTokenBudget(strings.TrimPrefix(field, "--budget="))
+			if err != nil {
+				return "", nil, err
+			}
+			tokenBudget = &parsed
+		case strings.HasPrefix(field, "--tokens="):
+			parsed, err := parseGoalTokenBudget(strings.TrimPrefix(field, "--tokens="))
+			if err != nil {
+				return "", nil, err
+			}
+			tokenBudget = &parsed
+		default:
+			objectiveFields = append(objectiveFields, field)
+		}
+	}
+	objective := strings.TrimSpace(strings.Join(objectiveFields, " "))
+	if objective == "" {
+		return "", nil, fmt.Errorf("goal objective required")
+	}
+	return objective, tokenBudget, nil
+}
+
+func parseGoalTokenBudget(raw string) (int64, error) {
+	parsed, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil || parsed <= 0 {
+		return 0, fmt.Errorf("goal token budget must be a positive integer")
+	}
+	return parsed, nil
 }
 
 func resumeSuggestion(insert string) Suggestion {

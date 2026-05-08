@@ -117,6 +117,7 @@ type appServerSession struct {
 	tokenUsage            *threadTokenUsage
 	rateLimits            *rateLimitSnapshot
 	rateLimitsByID        map[string]rateLimitSnapshot
+	goal                  *ThreadGoal
 	pendingApproval       *ApprovalRequest
 	pendingToolInput      *ToolInputRequest
 	pendingElicitation    *ElicitationRequest
@@ -218,6 +219,49 @@ type threadStatusChangedNotification struct {
 type threadCompactedNotification struct {
 	ThreadID string `json:"threadId"`
 	TurnID   string `json:"turnId"`
+}
+
+type threadGoalResponse struct {
+	Goal *threadGoal `json:"goal"`
+}
+
+type threadGoalClearResponse struct {
+	Cleared bool `json:"cleared"`
+}
+
+type threadGoalSetParams struct {
+	ThreadID    string `json:"threadId"`
+	Objective   string `json:"objective"`
+	TokenBudget *int64 `json:"tokenBudget,omitempty"`
+}
+
+type threadGoalGetParams struct {
+	ThreadID string `json:"threadId"`
+}
+
+type threadGoalClearParams struct {
+	ThreadID string `json:"threadId"`
+}
+
+type threadGoal struct {
+	ThreadID        string           `json:"threadId"`
+	Objective       string           `json:"objective"`
+	Status          ThreadGoalStatus `json:"status"`
+	TokenBudget     *int64           `json:"tokenBudget"`
+	TokensUsed      int64            `json:"tokensUsed"`
+	TimeUsedSeconds int64            `json:"timeUsedSeconds"`
+	CreatedAt       int64            `json:"createdAt"`
+	UpdatedAt       int64            `json:"updatedAt"`
+}
+
+type threadGoalUpdatedNotification struct {
+	ThreadID string     `json:"threadId"`
+	TurnID   *string    `json:"turnId"`
+	Goal     threadGoal `json:"goal"`
+}
+
+type threadGoalClearedNotification struct {
+	ThreadID string `json:"threadId"`
 }
 
 type mcpServerStartupStatusUpdatedNotification struct {
@@ -638,6 +682,7 @@ func (s *appServerSession) stateSnapshotLocked() Snapshot {
 		PendingReasoning:         s.pendingReasoning,
 		TokenUsage:               tokenUsage,
 		UsageWindows:             usageWindows,
+		Goal:                     cloneThreadGoal(s.goal),
 	}
 }
 
@@ -1264,6 +1309,208 @@ func (s *appServerSession) ShowStatus() error {
 	return nil
 }
 
+func (s *appServerSession) ShowGoal() error {
+	goal, err := s.readAndStoreGoal()
+	if err != nil {
+		return err
+	}
+
+	statusText := buildEmbeddedGoalStatusText(goal)
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return fmt.Errorf("codex session is closed")
+	}
+	s.touchLocked()
+	s.appendEntryLocked("", TranscriptStatus, statusText)
+	s.lastSystemNotice = "Displayed embedded Codex goal"
+	s.status = "Displayed embedded Codex goal"
+	s.mu.Unlock()
+	s.notify()
+	return nil
+}
+
+func (s *appServerSession) SetGoal(objective string, tokenBudget *int64) error {
+	objective = strings.TrimSpace(objective)
+	if objective == "" {
+		return fmt.Errorf("goal objective required")
+	}
+	if tokenBudget != nil && *tokenBudget <= 0 {
+		return fmt.Errorf("goal token budget must be greater than zero")
+	}
+
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return fmt.Errorf("codex session is closed")
+	}
+	if s.compacting {
+		s.mu.Unlock()
+		return fmt.Errorf("cannot update the goal while conversation compaction is in progress")
+	}
+	if s.busy {
+		s.mu.Unlock()
+		return fmt.Errorf("cannot update the goal while a turn is in progress")
+	}
+	threadID := strings.TrimSpace(s.threadID)
+	if threadID == "" {
+		s.mu.Unlock()
+		return fmt.Errorf("no active thread for goal")
+	}
+	s.touchLocked()
+	s.status = "Setting embedded Codex goal..."
+	s.mu.Unlock()
+	s.notify()
+
+	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
+	defer cancel()
+
+	result, err := s.call(ctx, "thread/goal/set", threadGoalSetParams{
+		ThreadID:    threadID,
+		Objective:   objective,
+		TokenBudget: cloneInt64Ptr(tokenBudget),
+	})
+	if err != nil {
+		s.appendSystemError(err)
+		return err
+	}
+	var response threadGoalResponse
+	if err := json.Unmarshal(result, &response); err != nil {
+		s.appendSystemError(err)
+		return err
+	}
+	goal := exportedThreadGoal(response.Goal)
+	if goal == nil {
+		goal = &ThreadGoal{
+			ThreadID:    threadID,
+			Objective:   objective,
+			Status:      ThreadGoalStatusActive,
+			TokenBudget: cloneInt64Ptr(tokenBudget),
+		}
+	}
+
+	s.mu.Lock()
+	s.goal = cloneThreadGoal(goal)
+	s.touchLocked()
+	s.appendEntryLocked("", TranscriptStatus, buildEmbeddedGoalSetText(goal, objective))
+	s.lastSystemNotice = "Set embedded Codex goal"
+	s.status = "Set embedded Codex goal"
+	s.mu.Unlock()
+	s.notify()
+	return nil
+}
+
+func (s *appServerSession) ClearGoal() error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return fmt.Errorf("codex session is closed")
+	}
+	if s.compacting {
+		s.mu.Unlock()
+		return fmt.Errorf("cannot clear the goal while conversation compaction is in progress")
+	}
+	if s.busy {
+		s.mu.Unlock()
+		return fmt.Errorf("cannot clear the goal while a turn is in progress")
+	}
+	threadID := strings.TrimSpace(s.threadID)
+	if threadID == "" {
+		s.mu.Unlock()
+		return fmt.Errorf("no active thread for goal")
+	}
+	s.touchLocked()
+	s.status = "Clearing embedded Codex goal..."
+	s.mu.Unlock()
+	s.notify()
+
+	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
+	defer cancel()
+
+	result, err := s.call(ctx, "thread/goal/clear", threadGoalClearParams{ThreadID: threadID})
+	if err != nil {
+		s.appendSystemError(err)
+		return err
+	}
+	var response threadGoalClearResponse
+	if err := json.Unmarshal(result, &response); err != nil {
+		s.appendSystemError(err)
+		return err
+	}
+
+	s.mu.Lock()
+	s.goal = nil
+	s.touchLocked()
+	text := "Embedded Codex goal cleared"
+	if !response.Cleared {
+		text = "No embedded Codex goal was active"
+	}
+	s.appendEntryLocked("", TranscriptStatus, text)
+	s.lastSystemNotice = text
+	s.status = text
+	s.mu.Unlock()
+	s.notify()
+	return nil
+}
+
+func (s *appServerSession) readAndStoreGoal() (*ThreadGoal, error) {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("codex session is closed")
+	}
+	threadID := strings.TrimSpace(s.threadID)
+	if threadID == "" {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("no active thread for goal")
+	}
+	s.touchLocked()
+	s.status = "Reading embedded Codex goal..."
+	s.mu.Unlock()
+	s.notify()
+
+	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
+	defer cancel()
+	goal, err := s.readThreadGoal(ctx, threadID)
+	if err != nil {
+		s.appendSystemError(err)
+		return nil, err
+	}
+
+	s.mu.Lock()
+	s.goal = cloneThreadGoal(goal)
+	s.mu.Unlock()
+	s.notify()
+	return goal, nil
+}
+
+func (s *appServerSession) refreshGoalState(ctx context.Context, threadID string) error {
+	goal, err := s.readThreadGoal(ctx, threadID)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.goal = cloneThreadGoal(goal)
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *appServerSession) readThreadGoal(ctx context.Context, threadID string) (*ThreadGoal, error) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return nil, fmt.Errorf("thread id required")
+	}
+	result, err := s.call(ctx, "thread/goal/get", threadGoalGetParams{ThreadID: threadID})
+	if err != nil {
+		return nil, err
+	}
+	var response threadGoalResponse
+	if err := json.Unmarshal(result, &response); err != nil {
+		return nil, err
+	}
+	return exportedThreadGoal(response.Goal), nil
+}
+
 func (s *appServerSession) Compact() error {
 	s.mu.Lock()
 	if s.closed {
@@ -1778,6 +2025,9 @@ func (s *appServerSession) start(req LaunchRequest) error {
 			"title":   "Little Control Room",
 			"version": "0.1.0",
 		},
+		"capabilities": map[string]any{
+			"experimentalApi": true,
+		},
 	}); err != nil {
 		return err
 	}
@@ -1811,6 +2061,10 @@ func (s *appServerSession) start(req LaunchRequest) error {
 	s.status = ""
 	s.mu.Unlock()
 	s.notify()
+
+	if err := s.refreshGoalState(ctx, threadID); err != nil {
+		s.appendSystemNotice("Embedded Codex goal status could not refresh: " + err.Error())
+	}
 
 	if strings.TrimSpace(req.Prompt) != "" {
 		if snapshot := s.Snapshot(); snapshot.BusyExternal {
@@ -2355,6 +2609,41 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 		s.lastSystemNotice = "Conversation history compacted"
 		s.mu.Unlock()
 		s.notify()
+	case "thread/goal/updated":
+		var msg threadGoalUpdatedNotification
+		if err := json.Unmarshal(params, &msg); err != nil {
+			return
+		}
+		s.mu.Lock()
+		s.touchLocked()
+		if current := strings.TrimSpace(s.threadID); current == "" || strings.TrimSpace(msg.ThreadID) == "" || current == strings.TrimSpace(msg.ThreadID) {
+			s.goal = exportedThreadGoal(&msg.Goal)
+			if s.goal != nil {
+				switch s.goal.Status {
+				case ThreadGoalStatusBudgetLimited:
+					s.lastSystemNotice = "Embedded Codex goal reached its token budget"
+				case ThreadGoalStatusComplete:
+					s.lastSystemNotice = "Embedded Codex goal marked complete"
+				default:
+					s.lastSystemNotice = "Embedded Codex goal updated"
+				}
+			}
+		}
+		s.mu.Unlock()
+		s.notify()
+	case "thread/goal/cleared":
+		var msg threadGoalClearedNotification
+		if err := json.Unmarshal(params, &msg); err != nil {
+			return
+		}
+		s.mu.Lock()
+		s.touchLocked()
+		if current := strings.TrimSpace(s.threadID); current == "" || strings.TrimSpace(msg.ThreadID) == "" || current == strings.TrimSpace(msg.ThreadID) {
+			s.goal = nil
+			s.lastSystemNotice = "Embedded Codex goal cleared"
+		}
+		s.mu.Unlock()
+		s.notify()
 	case "thread/started":
 		var msg threadStartedNotification
 		if err := json.Unmarshal(params, &msg); err == nil && msg.Thread.ID != "" {
@@ -2840,6 +3129,46 @@ func exportedUsageWindowsSnapshot(primary *rateLimitSnapshot, byID map[string]ra
 		out = append(out, snapshot)
 	}
 	return out
+}
+
+func exportedThreadGoal(in *threadGoal) *ThreadGoal {
+	if in == nil {
+		return nil
+	}
+	return &ThreadGoal{
+		ThreadID:        strings.TrimSpace(in.ThreadID),
+		Objective:       strings.TrimSpace(in.Objective),
+		Status:          in.Status,
+		TokenBudget:     cloneInt64Ptr(in.TokenBudget),
+		TokensUsed:      in.TokensUsed,
+		TimeUsedSeconds: in.TimeUsedSeconds,
+		CreatedAt:       unixSecondsTime(in.CreatedAt),
+		UpdatedAt:       unixSecondsTime(in.UpdatedAt),
+	}
+}
+
+func cloneThreadGoal(in *ThreadGoal) *ThreadGoal {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.TokenBudget = cloneInt64Ptr(in.TokenBudget)
+	return &out
+}
+
+func cloneInt64Ptr(in *int64) *int64 {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	return &out
+}
+
+func unixSecondsTime(seconds int64) time.Time {
+	if seconds <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(seconds, 0)
 }
 
 func cloneRateLimitSnapshot(in *rateLimitSnapshot) *rateLimitSnapshot {
@@ -4419,6 +4748,48 @@ func formatThreadTokenUsage(usage *threadTokenUsage) string {
 		return ""
 	}
 	return strings.Join(parts, "; ")
+}
+
+func buildEmbeddedGoalStatusText(goal *ThreadGoal) string {
+	if goal == nil {
+		return "Embedded Codex goal\nstatus: none"
+	}
+	lines := []string{"Embedded Codex goal"}
+	appendEmbeddedGoalLines(&lines, goal)
+	return strings.Join(lines, "\n")
+}
+
+func buildEmbeddedGoalSetText(goal *ThreadGoal, fallbackObjective string) string {
+	if goal == nil {
+		goal = &ThreadGoal{
+			Objective: strings.TrimSpace(fallbackObjective),
+			Status:    ThreadGoalStatusActive,
+		}
+	}
+	lines := []string{"Embedded Codex goal set"}
+	appendEmbeddedGoalLines(&lines, goal)
+	return strings.Join(lines, "\n")
+}
+
+func appendEmbeddedGoalLines(lines *[]string, goal *ThreadGoal) {
+	if goal == nil {
+		return
+	}
+	if goal.Objective != "" {
+		*lines = append(*lines, "objective: "+goal.Objective)
+	}
+	if goal.Status != "" {
+		*lines = append(*lines, "status: "+string(goal.Status))
+	}
+	if goal.TokenBudget != nil {
+		*lines = append(*lines, fmt.Sprintf("token budget: %d", *goal.TokenBudget))
+	}
+	if goal.TokensUsed > 0 {
+		*lines = append(*lines, fmt.Sprintf("tokens used: %d", goal.TokensUsed))
+	}
+	if goal.TimeUsedSeconds > 0 {
+		*lines = append(*lines, "time used: "+formatTurnStatusDuration(time.Duration(goal.TimeUsedSeconds)*time.Second))
+	}
 }
 
 func buildEmbeddedStatusText(threadID, projectPath, currentCWD, model, modelProvider, reasoningEffort, serviceTier string, approvalPolicy, sandboxPolicy json.RawMessage, tokenUsage *threadTokenUsage, rateLimits *rateLimitSnapshot, rateLimitsByID map[string]rateLimitSnapshot) string {

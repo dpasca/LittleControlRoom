@@ -1086,6 +1086,63 @@ func (m Model) showVisibleCodexStatusCmd() tea.Cmd {
 	})
 }
 
+func (m Model) showVisibleCodexGoalCmd() tea.Cmd {
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	if projectPath == "" {
+		return nil
+	}
+	label := "Codex"
+	if snapshot, ok := m.currentCodexSnapshot(); ok {
+		label = embeddedProvider(snapshot).Label()
+	}
+	return m.codexSessionCmd(projectPath, nil, func(session codexapp.Session) tea.Msg {
+		if err := session.ShowGoal(); err != nil {
+			return codexActionMsg{projectPath: projectPath, err: err}
+		}
+		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " goal added to the transcript"}
+	})
+}
+
+func (m Model) setVisibleCodexGoalCmd(objective string, tokenBudget *int64) tea.Cmd {
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	if projectPath == "" {
+		return nil
+	}
+	label := "Codex"
+	if snapshot, ok := m.currentCodexSnapshot(); ok {
+		label = embeddedProvider(snapshot).Label()
+	}
+	var budgetCopy *int64
+	if tokenBudget != nil {
+		copied := *tokenBudget
+		budgetCopy = &copied
+	}
+	objective = strings.TrimSpace(objective)
+	return m.codexSessionCmd(projectPath, nil, func(session codexapp.Session) tea.Msg {
+		if err := session.SetGoal(objective, budgetCopy); err != nil {
+			return codexActionMsg{projectPath: projectPath, err: err}
+		}
+		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " goal set"}
+	})
+}
+
+func (m Model) clearVisibleCodexGoalCmd() tea.Cmd {
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	if projectPath == "" {
+		return nil
+	}
+	label := "Codex"
+	if snapshot, ok := m.currentCodexSnapshot(); ok {
+		label = embeddedProvider(snapshot).Label()
+	}
+	return m.codexSessionCmd(projectPath, nil, func(session codexapp.Session) tea.Msg {
+		if err := session.ClearGoal(); err != nil {
+			return codexActionMsg{projectPath: projectPath, err: err}
+		}
+		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " goal cleared"}
+	})
+}
+
 func (m Model) restartVisibleCodexSessionCmd(prompt string) tea.Cmd {
 	if m.codexManager == nil || strings.TrimSpace(m.codexVisibleProject) == "" {
 		return nil
@@ -1528,7 +1585,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.clearCodexDraft(m.codexVisibleProject)
-			if snapshot.Closed && (inv.Kind == codexslash.KindModel || inv.Kind == codexslash.KindStatus || inv.Kind == codexslash.KindCompact || inv.Kind == codexslash.KindReview) {
+			if snapshot.Closed && (inv.Kind == codexslash.KindModel || inv.Kind == codexslash.KindStatus || inv.Kind == codexslash.KindCompact || inv.Kind == codexslash.KindReview || inv.Kind == codexslash.KindGoal) {
 				m.status = label + " session is closed. Use /resume, /new, or /reconnect to reopen it."
 				return m, nil
 			}
@@ -1558,6 +1615,21 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case codexslash.KindStatus:
 				m.status = "Reading embedded " + label + " status..."
 				return m, m.showVisibleCodexStatusCmd()
+			case codexslash.KindGoal:
+				switch inv.GoalAction {
+				case codexslash.GoalActionShow:
+					m.status = "Reading embedded " + label + " goal..."
+					return m, m.showVisibleCodexGoalCmd()
+				case codexslash.GoalActionSet:
+					m.status = "Setting embedded " + label + " goal..."
+					return m, m.setVisibleCodexGoalCmd(inv.GoalObjective, inv.GoalTokenBudget)
+				case codexslash.GoalActionClear:
+					m.status = "Clearing embedded " + label + " goal..."
+					return m, m.clearVisibleCodexGoalCmd()
+				default:
+					m.status = "Unsupported embedded goal action"
+					return m, nil
+				}
 			case codexslash.KindCompact:
 				m.status = "Starting embedded " + label + " conversation compaction..."
 				return m, m.compactVisibleCodexSessionCmd()

@@ -445,6 +445,18 @@ func (s *claudeCodeSession) ShowStatus() error {
 	return nil
 }
 
+func (s *claudeCodeSession) ShowGoal() error {
+	return fmt.Errorf("embedded Claude Code goals are not supported yet")
+}
+
+func (s *claudeCodeSession) SetGoal(objective string, tokenBudget *int64) error {
+	return fmt.Errorf("embedded Claude Code goals are not supported yet")
+}
+
+func (s *claudeCodeSession) ClearGoal() error {
+	return fmt.Errorf("embedded Claude Code goals are not supported yet")
+}
+
 func (s *claudeCodeSession) Compact() error {
 	return fmt.Errorf(claudeCompactUnsupported)
 }

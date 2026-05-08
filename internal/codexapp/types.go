@@ -424,6 +424,26 @@ type UsageWindowSnapshot struct {
 	ResetsAt    time.Time
 }
 
+type ThreadGoalStatus string
+
+const (
+	ThreadGoalStatusActive        ThreadGoalStatus = "active"
+	ThreadGoalStatusPaused        ThreadGoalStatus = "paused"
+	ThreadGoalStatusBudgetLimited ThreadGoalStatus = "budgetLimited"
+	ThreadGoalStatusComplete      ThreadGoalStatus = "complete"
+)
+
+type ThreadGoal struct {
+	ThreadID        string
+	Objective       string
+	Status          ThreadGoalStatus
+	TokenBudget     *int64
+	TokensUsed      int64
+	TimeUsedSeconds int64
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
 type ReasoningEffortOption struct {
 	ReasoningEffort string
 	Description     string
@@ -476,6 +496,7 @@ type Snapshot struct {
 	PendingReasoning         string
 	TokenUsage               *TokenUsageSnapshot
 	UsageWindows             []UsageWindowSnapshot
+	Goal                     *ThreadGoal
 }
 
 type Session interface {
@@ -489,6 +510,9 @@ type Session interface {
 	Submit(prompt string) error
 	SubmitInput(input Submission) error
 	ShowStatus() error
+	ShowGoal() error
+	SetGoal(objective string, tokenBudget *int64) error
+	ClearGoal() error
 	Compact() error
 	Review() error
 	ListModels() ([]ModelOption, error)

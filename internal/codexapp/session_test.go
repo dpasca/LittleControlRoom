@@ -2031,6 +2031,95 @@ func TestReviewStartsUncommittedChangesReview(t *testing.T) {
 	}
 }
 
+func TestSetGoalCallsThreadGoalSetAndStoresGoal(t *testing.T) {
+	callCount := 0
+	tokenBudget := int64(5000)
+
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		threadID:    "thread_456",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			callCount++
+			if method != "thread/goal/set" {
+				t.Fatalf("method = %q, want thread/goal/set", method)
+			}
+			request, ok := params.(threadGoalSetParams)
+			if !ok {
+				t.Fatalf("params = %#v, want threadGoalSetParams", params)
+			}
+			if request.ThreadID != "thread_456" {
+				t.Fatalf("thread id = %q, want thread_456", request.ThreadID)
+			}
+			if request.Objective != "ship the goal command" {
+				t.Fatalf("objective = %q, want ship the goal command", request.Objective)
+			}
+			if request.TokenBudget == nil || *request.TokenBudget != 5000 {
+				t.Fatalf("token budget = %v, want 5000", request.TokenBudget)
+			}
+			return json.RawMessage(`{"goal":{"threadId":"thread_456","objective":"ship the goal command","status":"active","tokenBudget":5000,"tokensUsed":12,"timeUsedSeconds":3,"createdAt":1773027000,"updatedAt":1773027010}}`), nil
+		},
+	}
+
+	if err := s.SetGoal(" ship the goal command ", &tokenBudget); err != nil {
+		t.Fatalf("SetGoal() error = %v", err)
+	}
+	if callCount != 1 {
+		t.Fatalf("rpc call count = %d, want 1", callCount)
+	}
+
+	snapshot := s.Snapshot()
+	if snapshot.Goal == nil {
+		t.Fatalf("snapshot goal = nil, want stored goal")
+	}
+	if snapshot.Goal.Objective != "ship the goal command" {
+		t.Fatalf("goal objective = %q, want ship the goal command", snapshot.Goal.Objective)
+	}
+	if snapshot.Goal.TokenBudget == nil || *snapshot.Goal.TokenBudget != 5000 {
+		t.Fatalf("goal token budget = %v, want 5000", snapshot.Goal.TokenBudget)
+	}
+	if snapshot.Goal.TokensUsed != 12 {
+		t.Fatalf("goal tokens used = %d, want 12", snapshot.Goal.TokensUsed)
+	}
+	if snapshot.Status != "Set embedded Codex goal" {
+		t.Fatalf("status = %q, want Set embedded Codex goal", snapshot.Status)
+	}
+	if len(snapshot.Entries) != 1 || !strings.Contains(snapshot.Entries[0].Text, "objective: ship the goal command") {
+		t.Fatalf("entries = %#v, want goal transcript entry", snapshot.Entries)
+	}
+}
+
+func TestHandleGoalNotificationsUpdateSnapshot(t *testing.T) {
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		threadID:    "thread_456",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+	}
+
+	s.handleNotification("thread/goal/updated", json.RawMessage(`{"threadId":"thread_456","goal":{"threadId":"thread_456","objective":"finish the branch","status":"budgetLimited","tokenBudget":100,"tokensUsed":101,"timeUsedSeconds":9,"createdAt":1773027000,"updatedAt":1773027010}}`))
+	snapshot := s.Snapshot()
+	if snapshot.Goal == nil {
+		t.Fatalf("snapshot goal = nil, want updated goal")
+	}
+	if snapshot.Goal.Status != ThreadGoalStatusBudgetLimited {
+		t.Fatalf("goal status = %q, want %q", snapshot.Goal.Status, ThreadGoalStatusBudgetLimited)
+	}
+	if snapshot.LastSystemNotice != "Embedded Codex goal reached its token budget" {
+		t.Fatalf("last system notice = %q, want budget notice", snapshot.LastSystemNotice)
+	}
+
+	s.handleNotification("thread/goal/cleared", json.RawMessage(`{"threadId":"thread_456"}`))
+	snapshot = s.Snapshot()
+	if snapshot.Goal != nil {
+		t.Fatalf("snapshot goal = %#v, want nil after clear", snapshot.Goal)
+	}
+	if snapshot.LastSystemNotice != "Embedded Codex goal cleared" {
+		t.Fatalf("last system notice = %q, want clear notice", snapshot.LastSystemNotice)
+	}
+}
+
 func TestHydrateCompactingThreadKeepsSessionWritableAndShowsProgress(t *testing.T) {
 	s := &appServerSession{
 		projectPath: "/tmp/demo",
