@@ -24,6 +24,7 @@ const (
 	ProviderCodex      Provider = "codex"
 	ProviderOpenCode   Provider = "opencode"
 	ProviderClaudeCode Provider = "claude_code"
+	ProviderLCAgent    Provider = "lcagent"
 )
 
 func NormalizeProvider(value string) Provider {
@@ -36,6 +37,8 @@ func NormalizeProvider(value string) Provider {
 		return ProviderOpenCode
 	case string(ProviderClaudeCode), "claude-code", "claude":
 		return ProviderClaudeCode
+	case string(ProviderLCAgent), "lc-agent", "lc_agent":
+		return ProviderLCAgent
 	default:
 		return ""
 	}
@@ -57,6 +60,8 @@ func (p Provider) Label() string {
 		return "OpenCode"
 	case ProviderClaudeCode:
 		return "Claude Code"
+	case ProviderLCAgent:
+		return "LCAgent"
 	case ProviderCodex:
 		return "Codex"
 	default:

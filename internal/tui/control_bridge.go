@@ -419,6 +419,8 @@ func codexProviderFromControlProvider(provider control.Provider) codexapp.Provid
 		return codexapp.ProviderOpenCode
 	case control.ProviderClaudeCode:
 		return codexapp.ProviderClaudeCode
+	case control.ProviderLCAgent:
+		return codexapp.ProviderLCAgent
 	default:
 		return ""
 	}
@@ -608,7 +610,7 @@ func (m Model) liveAgentTaskSnapshot(task model.AgentTask) (codexapp.Snapshot, b
 		return codexapp.Snapshot{}, false
 	}
 	providers := []codexapp.Provider{codexProviderFromSessionSource(task.Provider)}
-	providers = append(providers, codexapp.ProviderCodex, codexapp.ProviderOpenCode, codexapp.ProviderClaudeCode)
+	providers = append(providers, codexapp.ProviderCodex, codexapp.ProviderOpenCode, codexapp.ProviderClaudeCode, codexapp.ProviderLCAgent)
 	for _, provider := range providers {
 		if provider == "" {
 			continue
@@ -673,6 +675,8 @@ func (m Model) resolveAgentTaskControlProvider(provider control.Provider, task m
 		return codexapp.ProviderOpenCode, nil
 	case control.ProviderClaudeCode:
 		return "", errors.New("Claude Code is present in the protocol but disabled for control execution")
+	case control.ProviderLCAgent:
+		return codexapp.ProviderLCAgent, nil
 	default:
 		return "", fmt.Errorf("unsupported engineer provider: %s", provider)
 	}
@@ -684,6 +688,8 @@ func codexProviderFromSessionSource(source model.SessionSource) codexapp.Provide
 		return codexapp.ProviderOpenCode
 	case model.SessionSourceClaudeCode:
 		return codexapp.ProviderClaudeCode
+	case model.SessionSourceLCAgent:
+		return codexapp.ProviderLCAgent
 	case model.SessionSourceCodex:
 		return codexapp.ProviderCodex
 	default:
@@ -697,6 +703,8 @@ func modelSessionSourceFromCodexProvider(provider codexapp.Provider) model.Sessi
 		return model.SessionSourceOpenCode
 	case codexapp.ProviderClaudeCode:
 		return model.SessionSourceClaudeCode
+	case codexapp.ProviderLCAgent:
+		return model.SessionSourceLCAgent
 	case codexapp.ProviderCodex:
 		return model.SessionSourceCodex
 	default:
@@ -973,6 +981,8 @@ func modelSessionSourceFromControlProvider(provider control.Provider) model.Sess
 		return model.SessionSourceOpenCode
 	case control.ProviderClaudeCode:
 		return model.SessionSourceClaudeCode
+	case control.ProviderLCAgent:
+		return model.SessionSourceLCAgent
 	case control.ProviderCodex:
 		return model.SessionSourceCodex
 	default:
@@ -1048,6 +1058,8 @@ func (m Model) resolveControlEngineerProvider(provider control.Provider, project
 		return codexapp.ProviderOpenCode, nil
 	case control.ProviderClaudeCode:
 		return "", errors.New("Claude Code is present in the protocol but disabled for control execution")
+	case control.ProviderLCAgent:
+		return codexapp.ProviderLCAgent, nil
 	default:
 		return "", fmt.Errorf("unsupported engineer provider: %s", provider)
 	}

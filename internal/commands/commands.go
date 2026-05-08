@@ -43,6 +43,8 @@ const (
 	KindClaudeNew      Kind = "claude-new"
 	KindOpenCode       Kind = "opencode"
 	KindOpenCodeNew    Kind = "opencode-new"
+	KindLCAgent        Kind = "lcagent"
+	KindLCAgentNew     Kind = "lcagent-new"
 	KindTodo           Kind = "todo"
 	KindWorktreeLanes  Kind = "worktree-lanes"
 	KindWorktreeMerge  Kind = "worktree-merge"
@@ -146,6 +148,8 @@ var specs = []Spec{
 	{Name: "claude-new", Usage: "/claude-new [prompt]", Summary: "Start a fresh Claude Code session in the selected project"},
 	{Name: "opencode", Usage: "/opencode [prompt]", Summary: "Resume the selected project's latest OpenCode session, or start a new one"},
 	{Name: "opencode-new", Usage: "/opencode-new [prompt]", Summary: "Start a fresh OpenCode session in the selected project"},
+	{Name: "lcagent", Usage: "/lcagent [prompt]", Summary: "Resume the selected project's latest LCAgent session, or start a new one"},
+	{Name: "lcagent-new", Usage: "/lcagent-new [prompt]", Summary: "Start a fresh LCAgent session in the selected project"},
 	{Name: "todo", Usage: "/todo", Summary: "Open the selected project's TODO list"},
 	{Name: "wt", Usage: "/wt lanes|merge|remove|prune", Summary: "Toggle worktree lanes or manage the selected worktree"},
 	{Name: "pin", Usage: "/pin", Summary: "Toggle pin on the selected project"},
@@ -518,6 +522,18 @@ func Parse(input string) (Invocation, error) {
 			Kind:      KindOpenCodeNew,
 			Prompt:    strings.TrimSpace(rawArgs),
 			Canonical: slashcmd.CanonicalCommand("opencode-new", rawArgs),
+		}, nil
+	case "lcagent":
+		return Invocation{
+			Kind:      KindLCAgent,
+			Prompt:    strings.TrimSpace(rawArgs),
+			Canonical: slashcmd.CanonicalCommand("lcagent", rawArgs),
+		}, nil
+	case "lcagent-new", "lca-start":
+		return Invocation{
+			Kind:      KindLCAgentNew,
+			Prompt:    strings.TrimSpace(rawArgs),
+			Canonical: slashcmd.CanonicalCommand("lcagent-new", rawArgs),
 		}, nil
 	case "snooze":
 		switch strings.ToLower(strings.TrimSpace(rawArgs)) {

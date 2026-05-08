@@ -209,6 +209,8 @@ func embeddedNewCommand(provider codexapp.Provider) string {
 		return "/opencode-new"
 	case codexapp.ProviderClaudeCode:
 		return "/claude-new"
+	case codexapp.ProviderLCAgent:
+		return "/lcagent-new"
 	default:
 		return "/codex-new"
 	}

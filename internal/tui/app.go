@@ -4330,6 +4330,10 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m.launchOpenCodeForSelection(false, inv.Prompt)
 	case commands.KindOpenCodeNew:
 		return m.launchOpenCodeForSelection(true, inv.Prompt)
+	case commands.KindLCAgent:
+		return m.launchLCAgentForSelection(false, inv.Prompt)
+	case commands.KindLCAgentNew:
+		return m.launchLCAgentForSelection(true, inv.Prompt)
 	case commands.KindTodo:
 		return m, m.openTodoDialogForSelection()
 	case commands.KindWorktreeLanes:

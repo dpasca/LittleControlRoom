@@ -530,6 +530,8 @@ func embeddedSessionSource(provider codexapp.Provider) model.SessionSource {
 		return model.SessionSourceOpenCode
 	case codexapp.ProviderClaudeCode:
 		return model.SessionSourceClaudeCode
+	case codexapp.ProviderLCAgent:
+		return model.SessionSourceLCAgent
 	default:
 		return model.SessionSourceCodex
 	}
@@ -541,6 +543,8 @@ func embeddedSessionFormat(provider codexapp.Provider) string {
 		return "opencode_db"
 	case codexapp.ProviderClaudeCode:
 		return "claude_code"
+	case codexapp.ProviderLCAgent:
+		return "lcagent_jsonl"
 	default:
 		return "modern"
 	}
@@ -579,6 +583,10 @@ func (m Model) launchOpenCodeForSelection(forceNew bool, prompt string) (tea.Mod
 
 func (m Model) launchClaudeForSelection(forceNew bool, prompt string) (tea.Model, tea.Cmd) {
 	return m.launchEmbeddedForSelection(codexapp.ProviderClaudeCode, forceNew, prompt)
+}
+
+func (m Model) launchLCAgentForSelection(forceNew bool, prompt string) (tea.Model, tea.Cmd) {
+	return m.launchEmbeddedForSelection(codexapp.ProviderLCAgent, forceNew, prompt)
 }
 
 func (m Model) revealPendingEmbeddedOpen(projectPath string) (Model, bool) {
@@ -872,6 +880,8 @@ func providerForSessionFormat(format string) codexapp.Provider {
 		return codexapp.ProviderOpenCode
 	case "claude_code":
 		return codexapp.ProviderClaudeCode
+	case "lcagent_jsonl":
+		return codexapp.ProviderLCAgent
 	default:
 		return ""
 	}

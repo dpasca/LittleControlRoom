@@ -707,6 +707,8 @@ func newEmbeddedSession(req LaunchRequest, notify func()) (Session, error) {
 		return newOpenCodeSession(req, notify)
 	case ProviderClaudeCode:
 		return newClaudeCodeSession(req, notify)
+	case ProviderLCAgent:
+		return newLCAgentSession(req, notify)
 	default:
 		return newAppServerSession(req, notify)
 	}
