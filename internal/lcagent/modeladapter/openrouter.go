@@ -317,7 +317,7 @@ func Tools() []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "apply_patch",
-				Description: "Apply an apply_patch-format patch. Files must stay inside the workspace.",
+				Description: "Apply a Codex apply_patch patch. The patch must use the exact envelope: *** Begin Patch, then *** Update File: path or *** Add File: path, hunks with @@ and +/- lines, then *** End Patch. Example: *** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
@@ -382,7 +382,7 @@ func SystemPrompt(skillIndex, projectInstructions string) string {
 		"Prefer read_file, list_files, and search for routine inspection before reaching for shell commands.",
 		"When using run_command, prefer argv over command strings; shell commands are for shell syntax only.",
 		"Skill descriptions in this prompt are metadata only; call load_skill before relying on any skill instructions.",
-		"Use apply_patch for source edits. Keep changes focused on the user's prompt.",
+		"Use apply_patch for source edits. Patches must use this exact shape: *** Begin Patch, *** Update File: path, @@, -old line, +new line, *** End Patch.",
 		"When done, call final_response exactly once.",
 	}
 	if strings.TrimSpace(skillIndex) != "" {

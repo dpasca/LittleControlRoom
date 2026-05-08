@@ -68,6 +68,24 @@ func TestAutonomyPatchAndCommandPolicy(t *testing.T) {
 	if err := low.AllowCommandSpec([]string{"go", "test", "./..."}, "", false); err == nil {
 		t.Fatal("go test allowed with auto low, want medium-only denial")
 	}
+	if err := low.AllowCommandSpec([]string{"sed", "-n", "1,20p", "README.md"}, "", false); err != nil {
+		t.Fatalf("read-only sed denied with auto low: %v", err)
+	}
+	if err := low.AllowCommandSpec([]string{"sed", "-i", "s/old/new/", "README.md"}, "", false); err == nil {
+		t.Fatal("sed -i allowed with auto low, want denial")
+	}
+	if err := low.AllowCommandSpec([]string{"sed", "-i.bak", "s/old/new/", "README.md"}, "", false); err == nil {
+		t.Fatal("sed -i.bak allowed with auto low, want denial")
+	}
+	if err := low.AllowCommandSpec([]string{"find", ".", "-delete"}, "", false); err == nil {
+		t.Fatal("find -delete allowed with auto low, want denial")
+	}
+	if err := low.AllowCommandSpec([]string{"git", "branch", "feature"}, "", false); err == nil {
+		t.Fatal("git branch create allowed with auto low, want denial")
+	}
+	if err := low.AllowCommandSpec([]string{"git", "branch", "--show-current"}, "", false); err != nil {
+		t.Fatalf("git branch --show-current denied with auto low: %v", err)
+	}
 	medium := Workspace{Root: t.TempDir(), Auto: AutonomyMedium}
 	if err := medium.AllowCommandSpec([]string{"go", "test", "./..."}, "", false); err != nil {
 		t.Fatalf("go test denied with auto medium: %v", err)

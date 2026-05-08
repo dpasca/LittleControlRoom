@@ -82,3 +82,23 @@ func TestPatchApplierDeniesOutsidePath(t *testing.T) {
 		t.Fatal("outside patch succeeded, want denial")
 	}
 }
+
+func TestPatchApplierMalformedPatchReturnsFormatHint(t *testing.T) {
+	root := t.TempDir()
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := PatchApplier{Workspace: w}.Apply(`--- a/README.md
++++ b/README.md
+@@ -1 +1 @@
+-old
++new
+`)
+	if result.Success {
+		t.Fatal("malformed patch succeeded, want error")
+	}
+	if !strings.Contains(result.Error, "*** Update File: README.md") {
+		t.Fatalf("error missing apply_patch format hint: %q", result.Error)
+	}
+}

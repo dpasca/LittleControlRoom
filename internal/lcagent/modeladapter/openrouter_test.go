@@ -30,19 +30,24 @@ func TestLoadEnvFileDoesNotOverrideExistingEnv(t *testing.T) {
 
 func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 	names := map[string]bool{}
+	descriptions := map[string]string{}
 	for _, tool := range Tools() {
 		names[tool.Function.Name] = true
+		descriptions[tool.Function.Name] = tool.Function.Description
 	}
 	for _, want := range []string{"read_file", "list_files", "search", "load_skill", "run_command", "apply_patch", "update_plan", "final_response"} {
 		if !names[want] {
 			t.Fatalf("Tools() missing %s", want)
 		}
 	}
+	if !strings.Contains(descriptions["apply_patch"], "*** Update File: README.md") {
+		t.Fatalf("apply_patch description missing format example: %q", descriptions["apply_patch"])
+	}
 }
 
 func TestSystemPromptIncludesSkillMetadata(t *testing.T) {
 	prompt := SystemPrompt("Available skills\n- demo [project]: Demo workflow", "Project instructions from AGENTS.md:\nRun tests.")
-	if !strings.Contains(prompt, "call load_skill") || !strings.Contains(prompt, "demo [project]") || !strings.Contains(prompt, "Run tests.") {
+	if !strings.Contains(prompt, "call load_skill") || !strings.Contains(prompt, "demo [project]") || !strings.Contains(prompt, "Run tests.") || !strings.Contains(prompt, "*** Update File: path") {
 		t.Fatalf("prompt missing skill guidance:\n%s", prompt)
 	}
 }

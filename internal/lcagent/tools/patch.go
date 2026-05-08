@@ -14,13 +14,15 @@ type PatchApplier struct {
 	Workspace policy.Workspace
 }
 
+const applyPatchFormatHint = "expected Codex apply_patch format, for example: *** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch"
+
 func (a PatchApplier) Apply(patch string) ToolResult {
 	if err := a.Workspace.AllowPatch(); err != nil {
 		return ToolResult{Success: false, Error: err.Error()}
 	}
 	ops, err := parseApplyPatch(patch)
 	if err != nil {
-		return ToolResult{Success: false, Error: err.Error()}
+		return ToolResult{Success: false, Error: err.Error() + "; " + applyPatchFormatHint}
 	}
 	touched := make([]string, 0, len(ops))
 	for _, op := range ops {

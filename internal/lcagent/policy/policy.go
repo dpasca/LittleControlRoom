@@ -178,22 +178,7 @@ func readOnlyShellCommand(command string) bool {
 	if len(fields) == 0 {
 		return false
 	}
-	switch fields[0] {
-	case "pwd", "ls", "find", "rg", "grep", "sed", "cat", "head", "tail", "wc", "jq":
-		return true
-	case "git":
-		if len(fields) < 2 {
-			return false
-		}
-		switch fields[1] {
-		case "status", "diff", "show", "log", "branch", "rev-parse":
-			return true
-		default:
-			return false
-		}
-	default:
-		return false
-	}
+	return readOnlyCommandFields(fields)
 }
 
 func readOnlyArgvCommand(argv []string) bool {
@@ -201,23 +186,88 @@ func readOnlyArgvCommand(argv []string) bool {
 	if len(argv) == 0 {
 		return false
 	}
-	name := filepath.Base(argv[0])
+	return readOnlyCommandFields(argv)
+}
+
+func readOnlyCommandFields(fields []string) bool {
+	if len(fields) == 0 {
+		return false
+	}
+	name := filepath.Base(fields[0])
 	switch name {
-	case "pwd", "ls", "find", "rg", "grep", "sed", "cat", "head", "tail", "wc", "jq":
+	case "pwd", "ls", "rg", "grep", "cat", "head", "tail", "wc", "jq":
 		return true
+	case "find":
+		return readOnlyFindArgs(fields[1:])
+	case "sed":
+		return readOnlySedArgs(fields[1:])
 	case "git":
-		if len(argv) < 2 {
-			return false
-		}
-		switch argv[1] {
-		case "status", "diff", "show", "log", "branch", "rev-parse":
-			return true
-		default:
-			return false
-		}
+		return readOnlyGitArgs(fields[1:])
 	default:
 		return false
 	}
+}
+
+func readOnlyFindArgs(args []string) bool {
+	for _, arg := range args {
+		switch {
+		case arg == "-delete" || arg == "-exec" || arg == "-execdir" || arg == "-ok" || arg == "-okdir":
+			return false
+		case arg == "-fls" || arg == "-fprint" || arg == "-fprint0" || arg == "-fprintf":
+			return false
+		}
+	}
+	return true
+}
+
+func readOnlySedArgs(args []string) bool {
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-i") {
+			return false
+		}
+	}
+	return true
+}
+
+func readOnlyGitArgs(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "status", "show", "log", "rev-parse":
+		return true
+	case "diff":
+		return !hasAnyArgPrefix(args[1:], "--output", "--ext-diff")
+	case "branch":
+		if len(args) == 1 {
+			return true
+		}
+		for _, arg := range args[1:] {
+			switch arg {
+			case "--show-current", "--list", "-l", "-a", "-r", "-v", "-vv", "--verbose", "--all", "--remotes", "--merged", "--no-merged", "--contains", "--no-contains", "--points-at", "--format", "--sort", "--color", "--no-color", "--column", "--no-column":
+				continue
+			default:
+				if strings.HasPrefix(arg, "--format=") || strings.HasPrefix(arg, "--sort=") || strings.HasPrefix(arg, "--color=") || strings.HasPrefix(arg, "--column=") {
+					continue
+				}
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func hasAnyArgPrefix(args []string, prefixes ...string) bool {
+	for _, arg := range args {
+		for _, prefix := range prefixes {
+			if arg == prefix || strings.HasPrefix(arg, prefix+"=") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func cleanArgv(argv []string) []string {
