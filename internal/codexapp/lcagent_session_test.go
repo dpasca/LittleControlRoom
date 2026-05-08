@@ -36,18 +36,18 @@ printf '%s\n' '{"type":"turn_complete"}'
 		t.Fatalf("write fake lcagent: %v", err)
 	}
 
-	t.Setenv("LCROOM_LCAGENT_PATH", exe)
-	t.Setenv("LCROOM_LCAGENT_ENV_FILE", envPath)
-	t.Setenv("LCROOM_LCAGENT_AUTO", "medium")
 	t.Setenv("LCAGENT_ARGS_FILE", argsPath)
 
 	notify := make(chan struct{}, 20)
 	session, err := newLCAgentSession(LaunchRequest{
-		Provider:     ProviderLCAgent,
-		ProjectPath:  root,
-		AppDataDir:   dataDir,
-		PendingModel: "deepseek/test-model",
-		Prompt:       "please run the fake agent",
+		Provider:       ProviderLCAgent,
+		ProjectPath:    root,
+		AppDataDir:     dataDir,
+		LCAgentPath:    exe,
+		LCAgentEnvFile: envPath,
+		LCAgentAuto:    "medium",
+		PendingModel:   "deepseek/test-model",
+		Prompt:         "please run the fake agent",
 	}, func() {
 		select {
 		case notify <- struct{}{}:

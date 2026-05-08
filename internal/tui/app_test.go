@@ -18713,8 +18713,8 @@ func TestCommandEnterOpensSettingsMode(t *testing.T) {
 	if got.commandMode {
 		t.Fatalf("command mode should close after /settings")
 	}
-	if len(got.settingsFields) != 20 {
-		t.Fatalf("settings field count = %d, want 20", len(got.settingsFields))
+	if len(got.settingsFields) != 23 {
+		t.Fatalf("settings field count = %d, want 23", len(got.settingsFields))
 	}
 }
 

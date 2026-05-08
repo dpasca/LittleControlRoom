@@ -39,14 +39,20 @@ type AppConfig struct {
 	EmbeddedClaudeReasoning   string
 	EmbeddedOpenCodeModel     string
 	EmbeddedOpenCodeReasoning string
+	EmbeddedLCAgentModel      string
+	EmbeddedLCAgentReasoning  string
 	OpenCodeModelTier         string
 	RecentCodexModels         []string
 	RecentClaudeModels        []string
 	RecentOpenCodeModels      []string
+	RecentLCAgentModels       []string
 	ScratchRoot               string
 	CodexHome                 string
 	OpenCodeHome              string
 	ClaudeCodeHome            string
+	LCAgentPath               string
+	LCAgentEnvFile            string
+	LCAgentAuto               string
 	CodexLaunchPreset         codexcli.Preset
 	PlaywrightPolicy          browserctl.Policy
 	DataDir                   string
@@ -133,10 +139,16 @@ type fileConfig struct {
 	EmbeddedClaudeReasoning   *string   `toml:"embedded_claude_reasoning_effort"`
 	EmbeddedOpenCodeModel     *string   `toml:"embedded_opencode_model"`
 	EmbeddedOpenCodeReasoning *string   `toml:"embedded_opencode_reasoning_effort"`
+	EmbeddedLCAgentModel      *string   `toml:"embedded_lcagent_model"`
+	EmbeddedLCAgentReasoning  *string   `toml:"embedded_lcagent_reasoning_effort"`
 	OpenCodeModelTier         *string   `toml:"opencode_model_tier"`
 	RecentCodexModels         *[]string `toml:"recent_codex_models"`
 	RecentClaudeModels        *[]string `toml:"recent_claude_models"`
 	RecentOpenCodeModels      *[]string `toml:"recent_opencode_models"`
+	RecentLCAgentModels       *[]string `toml:"recent_lcagent_models"`
+	LCAgentPath               *string   `toml:"lcagent_path"`
+	LCAgentEnvFile            *string   `toml:"lcagent_env_file"`
+	LCAgentAuto               *string   `toml:"lcagent_auto"`
 	CodexLaunchPreset         string    `toml:"codex_launch_preset"`
 	PlaywrightManagementMode  *string   `toml:"playwright_management_mode"`
 	PlaywrightDefaultBrowser  *string   `toml:"playwright_default_browser_mode"`
@@ -158,6 +170,7 @@ func Default() AppConfig {
 		CodexHome:             filepath.Join(home, ".codex"),
 		OpenCodeHome:          filepath.Join(home, ".local", "share", "opencode"),
 		ClaudeCodeHome:        filepath.Join(home, ".claude"),
+		LCAgentAuto:           "low",
 		CodexLaunchPreset:     codexcli.DefaultPreset(),
 		PlaywrightPolicy:      browserctl.DefaultPolicy(),
 		DataDir:               dataDir,
@@ -202,6 +215,9 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	codexHome := fs.String("codex-home", cfg.CodexHome, "Path to Codex home directory")
 	opencodeHome := fs.String("opencode-home", cfg.OpenCodeHome, "Path to OpenCode data directory")
 	claudeCodeHome := fs.String("claude-code-home", cfg.ClaudeCodeHome, "Path to Claude Code home directory")
+	lcagentPath := fs.String("lcagent-path", cfg.LCAgentPath, "Path to lcagent executable")
+	lcagentEnvFile := fs.String("lcagent-env-file", cfg.LCAgentEnvFile, "Path to lcagent env file containing provider credentials")
+	lcagentAuto := fs.String("lcagent-auto", cfg.LCAgentAuto, "LCAgent autonomy level: off, low, or medium")
 	codexLaunchPreset := fs.String("codex-launch-preset", string(cfg.CodexLaunchPreset), "Codex launch preset: yolo, full-auto, or safe")
 	dbPath := fs.String("db", cfg.DBPath, fmt.Sprintf("Path to %s SQLite database", brand.Name))
 	scanInterval := fs.Duration("interval", cfg.ScanInterval, "Scan interval")
@@ -261,6 +277,18 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 		return AppConfig{}, err
 	}
 	cfg.ClaudeCodeHome, err = expandHome(*claudeCodeHome)
+	if err != nil {
+		return AppConfig{}, err
+	}
+	cfg.LCAgentPath, err = expandHome(strings.TrimSpace(*lcagentPath))
+	if err != nil {
+		return AppConfig{}, err
+	}
+	cfg.LCAgentEnvFile, err = expandHome(strings.TrimSpace(*lcagentEnvFile))
+	if err != nil {
+		return AppConfig{}, err
+	}
+	cfg.LCAgentAuto, err = parseLCAgentAuto(*lcagentAuto)
 	if err != nil {
 		return AppConfig{}, err
 	}
@@ -427,6 +455,8 @@ func applyConfigFile(cfg *AppConfig) error {
 	applyOptionalTrimmedString(&cfg.EmbeddedClaudeReasoning, fc.EmbeddedClaudeReasoning)
 	applyOptionalTrimmedString(&cfg.EmbeddedOpenCodeModel, fc.EmbeddedOpenCodeModel)
 	applyOptionalTrimmedString(&cfg.EmbeddedOpenCodeReasoning, fc.EmbeddedOpenCodeReasoning)
+	applyOptionalTrimmedString(&cfg.EmbeddedLCAgentModel, fc.EmbeddedLCAgentModel)
+	applyOptionalTrimmedString(&cfg.EmbeddedLCAgentReasoning, fc.EmbeddedLCAgentReasoning)
 	applyOptionalTrimmedString(&cfg.OpenCodeModelTier, fc.OpenCodeModelTier)
 	if fc.RecentCodexModels != nil {
 		cfg.RecentCodexModels = trimStrings(*fc.RecentCodexModels)
@@ -436,6 +466,30 @@ func applyConfigFile(cfg *AppConfig) error {
 	}
 	if fc.RecentOpenCodeModels != nil {
 		cfg.RecentOpenCodeModels = trimStrings(*fc.RecentOpenCodeModels)
+	}
+	if fc.RecentLCAgentModels != nil {
+		cfg.RecentLCAgentModels = trimStrings(*fc.RecentLCAgentModels)
+	}
+	if fc.LCAgentPath != nil {
+		value, err := expandHome(strings.TrimSpace(*fc.LCAgentPath))
+		if err != nil {
+			return fmt.Errorf("config lcagent_path: %w", err)
+		}
+		cfg.LCAgentPath = value
+	}
+	if fc.LCAgentEnvFile != nil {
+		value, err := expandHome(strings.TrimSpace(*fc.LCAgentEnvFile))
+		if err != nil {
+			return fmt.Errorf("config lcagent_env_file: %w", err)
+		}
+		cfg.LCAgentEnvFile = value
+	}
+	if fc.LCAgentAuto != nil {
+		value, err := parseLCAgentAuto(*fc.LCAgentAuto)
+		if err != nil {
+			return fmt.Errorf("config lcagent_auto: %w", err)
+		}
+		cfg.LCAgentAuto = value
 	}
 	if strings.TrimSpace(fc.CodexLaunchPreset) != "" {
 		preset, err := codexcli.ParsePreset(fc.CodexLaunchPreset)
@@ -513,7 +567,23 @@ func validate(cfg AppConfig) error {
 	if _, err := ParseBossChatBackend(string(cfg.BossChatBackend)); err != nil {
 		return err
 	}
+	if _, err := parseLCAgentAuto(cfg.LCAgentAuto); err != nil {
+		return err
+	}
 	return nil
+}
+
+func parseLCAgentAuto(raw string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if value == "" {
+		return "low", nil
+	}
+	switch value {
+	case "off", "low", "medium":
+		return value, nil
+	default:
+		return "", fmt.Errorf("lcagent-auto must be one of: off, low, medium")
+	}
 }
 
 func expandHome(path string) (string, error) {

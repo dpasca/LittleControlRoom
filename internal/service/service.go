@@ -312,7 +312,12 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	s.cfg.EmbeddedClaudeReasoning = strings.TrimSpace(settings.EmbeddedClaudeReasoning)
 	s.cfg.EmbeddedOpenCodeModel = strings.TrimSpace(settings.EmbeddedOpenCodeModel)
 	s.cfg.EmbeddedOpenCodeReasoning = strings.TrimSpace(settings.EmbeddedOpenCodeReasoning)
+	s.cfg.EmbeddedLCAgentModel = strings.TrimSpace(settings.EmbeddedLCAgentModel)
+	s.cfg.EmbeddedLCAgentReasoning = strings.TrimSpace(settings.EmbeddedLCAgentReasoning)
 	s.cfg.OpenCodeModelTier = strings.TrimSpace(settings.OpenCodeModelTier)
+	s.cfg.LCAgentPath = strings.TrimSpace(settings.LCAgentPath)
+	s.cfg.LCAgentEnvFile = strings.TrimSpace(settings.LCAgentEnvFile)
+	s.cfg.LCAgentAuto = strings.TrimSpace(settings.LCAgentAuto)
 	s.cfg.CodexLaunchPreset = settings.CodexLaunchPreset
 	s.cfg.PlaywrightPolicy = settings.PlaywrightPolicy.Normalize()
 	s.cfg.ScanInterval = settings.ScanInterval

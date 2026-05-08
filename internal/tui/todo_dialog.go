@@ -1162,6 +1162,9 @@ func (m Model) startTodoInProjectPath(projectPath, todoText string, provider cod
 		PlaywrightPolicy: m.currentPlaywrightPolicy(),
 		AppDataDir:       m.appDataDir(),
 		CodexHome:        m.codexHome(),
+		LCAgentPath:      m.lcagentPath(),
+		LCAgentEnvFile:   m.lcagentEnvFile(),
+		LCAgentAuto:      m.lcagentAuto(),
 	}
 	if err := req.Validate(); err != nil {
 		m.clearTodoLaunchDraft(project.Path)

@@ -35,10 +35,16 @@ type EditableSettings struct {
 	EmbeddedClaudeReasoning   string
 	EmbeddedOpenCodeModel     string
 	EmbeddedOpenCodeReasoning string
+	EmbeddedLCAgentModel      string
+	EmbeddedLCAgentReasoning  string
 	OpenCodeModelTier         string
 	RecentCodexModels         []string
 	RecentClaudeModels        []string
 	RecentOpenCodeModels      []string
+	RecentLCAgentModels       []string
+	LCAgentPath               string
+	LCAgentEnvFile            string
+	LCAgentAuto               string
 	CodexLaunchPreset         codexcli.Preset
 	PlaywrightPolicy          browserctl.Policy
 	ScanInterval              time.Duration
@@ -72,10 +78,16 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		EmbeddedClaudeReasoning:   cfg.EmbeddedClaudeReasoning,
 		EmbeddedOpenCodeModel:     cfg.EmbeddedOpenCodeModel,
 		EmbeddedOpenCodeReasoning: cfg.EmbeddedOpenCodeReasoning,
+		EmbeddedLCAgentModel:      cfg.EmbeddedLCAgentModel,
+		EmbeddedLCAgentReasoning:  cfg.EmbeddedLCAgentReasoning,
 		OpenCodeModelTier:         cfg.OpenCodeModelTier,
 		RecentCodexModels:         append([]string(nil), cfg.RecentCodexModels...),
 		RecentClaudeModels:        append([]string(nil), cfg.RecentClaudeModels...),
 		RecentOpenCodeModels:      append([]string(nil), cfg.RecentOpenCodeModels...),
+		RecentLCAgentModels:       append([]string(nil), cfg.RecentLCAgentModels...),
+		LCAgentPath:               cfg.LCAgentPath,
+		LCAgentEnvFile:            cfg.LCAgentEnvFile,
+		LCAgentAuto:               cfg.LCAgentAuto,
 		CodexLaunchPreset:         cfg.CodexLaunchPreset,
 		PlaywrightPolicy:          cfg.PlaywrightPolicy.Normalize(),
 		ScanInterval:              cfg.ScanInterval,
@@ -119,7 +131,7 @@ func firstNonEmptyTrimmed(values ...string) string {
 	return ""
 }
 
-func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, bossHelmModelRaw, bossUtilityModelRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
+func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, bossHelmModelRaw, bossUtilityModelRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, lcagentPathRaw, lcagentEnvFileRaw, lcagentAutoRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
 	parsedBackend, err := ParseAIBackend(string(aiBackend))
 	if err != nil {
 		return EditableSettings{}, err
@@ -137,6 +149,18 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 	ollamaBaseURL := strings.TrimSpace(ollamaBaseURLRaw)
 	ollamaAPIKey := strings.TrimSpace(ollamaAPIKeyRaw)
 	ollamaModel := strings.TrimSpace(ollamaModelRaw)
+	lcagentPath, err := expandHome(strings.TrimSpace(lcagentPathRaw))
+	if err != nil {
+		return EditableSettings{}, fmt.Errorf("lcagent path: %w", err)
+	}
+	lcagentEnvFile, err := expandHome(strings.TrimSpace(lcagentEnvFileRaw))
+	if err != nil {
+		return EditableSettings{}, fmt.Errorf("lcagent env file: %w", err)
+	}
+	lcagentAuto, err := parseLCAgentAuto(lcagentAutoRaw)
+	if err != nil {
+		return EditableSettings{}, err
+	}
 
 	includePaths, err := expandAndSplitPaths(includeRaw)
 	if err != nil {
@@ -211,6 +235,9 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 			IsolationScope:     playwrightIsolationScope,
 		},
 		OpenCodeModelTier:     strings.TrimSpace(openCodeModelTierRaw),
+		LCAgentPath:           lcagentPath,
+		LCAgentEnvFile:        lcagentEnvFile,
+		LCAgentAuto:           lcagentAuto,
 		HideReasoningSections: hideReasoningSections,
 		PrivacyMode:           privacyMode,
 		ScanInterval:          interval,
@@ -284,10 +311,16 @@ func validateEditableSettings(settings EditableSettings) error {
 	cfg.EmbeddedClaudeReasoning = strings.TrimSpace(settings.EmbeddedClaudeReasoning)
 	cfg.EmbeddedOpenCodeModel = strings.TrimSpace(settings.EmbeddedOpenCodeModel)
 	cfg.EmbeddedOpenCodeReasoning = strings.TrimSpace(settings.EmbeddedOpenCodeReasoning)
+	cfg.EmbeddedLCAgentModel = strings.TrimSpace(settings.EmbeddedLCAgentModel)
+	cfg.EmbeddedLCAgentReasoning = strings.TrimSpace(settings.EmbeddedLCAgentReasoning)
 	cfg.OpenCodeModelTier = strings.TrimSpace(settings.OpenCodeModelTier)
 	cfg.RecentCodexModels = append([]string(nil), settings.RecentCodexModels...)
 	cfg.RecentClaudeModels = append([]string(nil), settings.RecentClaudeModels...)
 	cfg.RecentOpenCodeModels = append([]string(nil), settings.RecentOpenCodeModels...)
+	cfg.RecentLCAgentModels = append([]string(nil), settings.RecentLCAgentModels...)
+	cfg.LCAgentPath = strings.TrimSpace(settings.LCAgentPath)
+	cfg.LCAgentEnvFile = strings.TrimSpace(settings.LCAgentEnvFile)
+	cfg.LCAgentAuto = strings.TrimSpace(settings.LCAgentAuto)
 	cfg.CodexLaunchPreset = settings.CodexLaunchPreset
 	cfg.PlaywrightPolicy = settings.PlaywrightPolicy.Normalize()
 	cfg.ScanInterval = settings.ScanInterval
@@ -400,12 +433,36 @@ func renderEditableSettings(settings EditableSettings) string {
 	if value := strings.TrimSpace(settings.EmbeddedOpenCodeReasoning); value != "" {
 		lines = append(lines, fmt.Sprintf("embedded_opencode_reasoning_effort = %s", strconv.Quote(value)))
 	}
+	if value := strings.TrimSpace(settings.EmbeddedLCAgentModel); value != "" {
+		lines = append(lines, fmt.Sprintf("embedded_lcagent_model = %s", strconv.Quote(value)))
+	}
+	if value := strings.TrimSpace(settings.EmbeddedLCAgentReasoning); value != "" {
+		lines = append(lines, fmt.Sprintf("embedded_lcagent_reasoning_effort = %s", strconv.Quote(value)))
+	}
 	if strings.TrimSpace(settings.EmbeddedCodexModel) != "" ||
 		strings.TrimSpace(settings.EmbeddedCodexReasoning) != "" ||
 		strings.TrimSpace(settings.EmbeddedClaudeModel) != "" ||
 		strings.TrimSpace(settings.EmbeddedClaudeReasoning) != "" ||
 		strings.TrimSpace(settings.EmbeddedOpenCodeModel) != "" ||
-		strings.TrimSpace(settings.EmbeddedOpenCodeReasoning) != "" {
+		strings.TrimSpace(settings.EmbeddedOpenCodeReasoning) != "" ||
+		strings.TrimSpace(settings.EmbeddedLCAgentModel) != "" ||
+		strings.TrimSpace(settings.EmbeddedLCAgentReasoning) != "" {
+		lines = append(lines, "")
+	}
+	wroteLCAgentConfig := false
+	if value := strings.TrimSpace(settings.LCAgentPath); value != "" {
+		lines = append(lines, fmt.Sprintf("lcagent_path = %s", strconv.Quote(value)))
+		wroteLCAgentConfig = true
+	}
+	if value := strings.TrimSpace(settings.LCAgentEnvFile); value != "" {
+		lines = append(lines, fmt.Sprintf("lcagent_env_file = %s", strconv.Quote(value)))
+		wroteLCAgentConfig = true
+	}
+	if value, err := parseLCAgentAuto(settings.LCAgentAuto); err == nil && value != "" {
+		lines = append(lines, fmt.Sprintf("lcagent_auto = %s", strconv.Quote(value)))
+		wroteLCAgentConfig = true
+	}
+	if wroteLCAgentConfig {
 		lines = append(lines, "")
 	}
 	if value := strings.TrimSpace(settings.OpenCodeModelTier); value != "" {
@@ -430,6 +487,14 @@ func renderEditableSettings(settings EditableSettings) string {
 	if len(settings.RecentOpenCodeModels) > 0 {
 		lines = append(lines, "recent_opencode_models = [")
 		for _, model := range settings.RecentOpenCodeModels {
+			lines = append(lines, fmt.Sprintf("  %s,", strconv.Quote(model)))
+		}
+		lines = append(lines, "]")
+		lines = append(lines, "")
+	}
+	if len(settings.RecentLCAgentModels) > 0 {
+		lines = append(lines, "recent_lcagent_models = [")
+		for _, model := range settings.RecentLCAgentModels {
 			lines = append(lines, fmt.Sprintf("  %s,", strconv.Quote(model)))
 		}
 		lines = append(lines, "]")

@@ -545,6 +545,9 @@ type LaunchRequest struct {
 	AppDataDir               string
 	OpenCodeDataHome         string
 	CodexHome                string
+	LCAgentPath              string
+	LCAgentEnvFile           string
+	LCAgentAuto              string
 	CLIExecutablePath        string
 }
 

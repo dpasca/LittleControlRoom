@@ -686,6 +686,9 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 		PlaywrightPolicy: m.currentPlaywrightPolicy(),
 		AppDataDir:       m.appDataDir(),
 		CodexHome:        m.codexHome(),
+		LCAgentPath:      m.lcagentPath(),
+		LCAgentEnvFile:   m.lcagentEnvFile(),
+		LCAgentAuto:      m.lcagentAuto(),
 	}
 	if err := req.Validate(); err != nil {
 		m.status = err.Error()
@@ -732,6 +735,27 @@ func (m Model) codexHome() string {
 		return strings.TrimSpace(m.svc.Config().CodexHome)
 	}
 	return strings.TrimSpace(config.Default().CodexHome)
+}
+
+func (m Model) lcagentPath() string {
+	if m.svc != nil {
+		return strings.TrimSpace(m.svc.Config().LCAgentPath)
+	}
+	return strings.TrimSpace(config.Default().LCAgentPath)
+}
+
+func (m Model) lcagentEnvFile() string {
+	if m.svc != nil {
+		return strings.TrimSpace(m.svc.Config().LCAgentEnvFile)
+	}
+	return strings.TrimSpace(config.Default().LCAgentEnvFile)
+}
+
+func (m Model) lcagentAuto() string {
+	if m.svc != nil {
+		return strings.TrimSpace(m.svc.Config().LCAgentAuto)
+	}
+	return strings.TrimSpace(config.Default().LCAgentAuto)
 }
 
 type embeddedLaunchBlock struct {

@@ -551,6 +551,9 @@ func (m Model) openCodexSessionChoice(choice codexSessionChoice) (tea.Model, tea
 		PlaywrightPolicy: m.currentPlaywrightPolicy(),
 		AppDataDir:       m.appDataDir(),
 		CodexHome:        m.codexHome(),
+		LCAgentPath:      m.lcagentPath(),
+		LCAgentEnvFile:   m.lcagentEnvFile(),
+		LCAgentAuto:      m.lcagentAuto(),
 	}
 	if choice.Provider.Normalized() == codexapp.ProviderCodex {
 		req.Preset = m.currentCodexLaunchPreset()

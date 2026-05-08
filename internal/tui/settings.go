@@ -28,6 +28,9 @@ const (
 	settingsFieldOllamaBaseURL
 	settingsFieldOllamaAPIKey
 	settingsFieldOllamaModel
+	settingsFieldLCAgentPath
+	settingsFieldLCAgentEnvFile
+	settingsFieldLCAgentAuto
 	settingsFieldIncludePaths
 	settingsFieldExcludePaths
 	settingsFieldExcludeProjectPatterns
@@ -133,6 +136,9 @@ func settingsSections() []settingsSection {
 				settingsFieldOllamaBaseURL,
 				settingsFieldOllamaAPIKey,
 				settingsFieldOllamaModel,
+				settingsFieldLCAgentPath,
+				settingsFieldLCAgentEnvFile,
+				settingsFieldLCAgentAuto,
 				settingsFieldCodexLaunchPreset,
 				settingsFieldHideReasoningSections,
 			},
@@ -425,6 +431,9 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		invertBoolString(m.settingsFieldValue(settingsFieldHideReasoningSections)),
 		strconv.FormatBool(m.currentSettingsBaseline().PrivacyMode),
 		m.currentSettingsBaseline().OpenCodeModelTier,
+		m.settingsFieldValue(settingsFieldLCAgentPath),
+		m.settingsFieldValue(settingsFieldLCAgentEnvFile),
+		m.settingsFieldValue(settingsFieldLCAgentAuto),
 		m.settingsFieldValue(settingsFieldActiveThreshold),
 		m.settingsFieldValue(settingsFieldStuckThreshold),
 		m.settingsFieldValue(settingsFieldInterval),
@@ -606,6 +615,7 @@ func (m Model) saveEmbeddedModelPreferencesCmd() tea.Cmd {
 	settings.RecentCodexModels = append([]string(nil), m.recentCodexModels...)
 	settings.RecentClaudeModels = append([]string(nil), m.recentClaudeModels...)
 	settings.RecentOpenCodeModels = append([]string(nil), m.recentOpenCodeModels...)
+	settings.RecentLCAgentModels = append([]string(nil), m.recentLCAgentModels...)
 	if embeddedModelSettingsEqual(baseline, settings) {
 		return nil
 	}
@@ -1096,6 +1106,27 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionAI,
 		),
 		newSettingsField(
+			"LCAgent executable",
+			"Optional path to the lcagent binary. Leave blank to use the bundled sibling binary, PATH lookup, or local go run fallback.",
+			settings.LCAgentPath,
+			512,
+			settingsSectionAI,
+		),
+		newSettingsField(
+			"LCAgent env file",
+			"Optional env file for LCAgent provider credentials, such as an OpenRouter key. The key contents are not copied into this config.",
+			settings.LCAgentEnvFile,
+			1024,
+			settingsSectionAI,
+		),
+		newSettingsField(
+			"LCAgent autonomy",
+			"Accepted values: off, low, medium. Low allows conservative local edits while keeping higher-risk actions constrained.",
+			settings.LCAgentAuto,
+			16,
+			settingsSectionAI,
+		),
+		newSettingsField(
 			"Include paths",
 			"Optional comma-separated path prefixes to keep in scope. Leave blank for all detected paths.",
 			strings.Join(settings.IncludePaths, ","),
@@ -1216,6 +1247,9 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.OllamaBaseURL = strings.TrimSpace(settings.OllamaBaseURL)
 	settings.OllamaAPIKey = strings.TrimSpace(settings.OllamaAPIKey)
 	settings.OllamaModel = strings.TrimSpace(settings.OllamaModel)
+	settings.LCAgentPath = strings.TrimSpace(settings.LCAgentPath)
+	settings.LCAgentEnvFile = strings.TrimSpace(settings.LCAgentEnvFile)
+	settings.LCAgentAuto = strings.TrimSpace(settings.LCAgentAuto)
 	settings.IncludePaths = append([]string(nil), settings.IncludePaths...)
 	settings.ExcludePaths = append([]string(nil), settings.ExcludePaths...)
 	settings.ExcludeProjectPatterns = append([]string(nil), settings.ExcludeProjectPatterns...)
@@ -1224,6 +1258,7 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.RecentCodexModels = append([]string(nil), settings.RecentCodexModels...)
 	settings.RecentClaudeModels = append([]string(nil), settings.RecentClaudeModels...)
 	settings.RecentOpenCodeModels = append([]string(nil), settings.RecentOpenCodeModels...)
+	settings.RecentLCAgentModels = append([]string(nil), settings.RecentLCAgentModels...)
 	return settings
 }
 
@@ -1291,6 +1326,27 @@ func (m Model) settingsFieldHint(index int) string {
 			return "Ollama will prefer model " + model + ". Leave blank to auto-use the first /v1/models result."
 		}
 		return field.hint
+	case settingsFieldLCAgentPath:
+		if path := strings.TrimSpace(field.input.Value()); path != "" {
+			return "LCAgent launches will use " + path + "."
+		}
+		return field.hint
+	case settingsFieldLCAgentEnvFile:
+		if path := strings.TrimSpace(field.input.Value()); path != "" {
+			return "LCAgent launches will load provider credentials from " + path + "."
+		}
+		return field.hint
+	case settingsFieldLCAgentAuto:
+		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
+		case "off":
+			return "LCAgent will deny file edits and use the most restrictive command policy."
+		case "", "low":
+			return "LCAgent will use the default low autonomy policy."
+		case "medium":
+			return "LCAgent can run a broader set of workspace-contained actions."
+		default:
+			return field.hint
+		}
 	case settingsFieldPrivacyPatterns:
 		hint := field.hint
 		if m.settingsRevealPrivacy {

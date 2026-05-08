@@ -211,6 +211,7 @@ type Model struct {
 	recentCodexModels           []string
 	recentClaudeModels          []string
 	recentOpenCodeModels        []string
+	recentLCAgentModels         []string
 	codexDenseBlockMode         codexDenseBlockMode
 	codexArtifactPicker         *codexArtifactPickerState
 	codexArtifactLinkScans      map[string]codexArtifactLinkScanState
@@ -589,6 +590,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		recentCodexModels:          append([]string(nil), initialSettings.RecentCodexModels...),
 		recentClaudeModels:         append([]string(nil), initialSettings.RecentClaudeModels...),
 		recentOpenCodeModels:       append([]string(nil), initialSettings.RecentOpenCodeModels...),
+		recentLCAgentModels:        append([]string(nil), initialSettings.RecentLCAgentModels...),
 		hideReasoningSections:      initialSettings.HideReasoningSections,
 		browserController:          browserctl.NewController(),
 		managedBrowserStates:       make(map[string]browserctl.ManagedPlaywrightState),
@@ -1849,6 +1851,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			PlaywrightPolicy: m.currentPlaywrightPolicy(),
 			AppDataDir:       m.appDataDir(),
 			CodexHome:        m.codexHome(),
+			LCAgentPath:      m.lcagentPath(),
+			LCAgentEnvFile:   m.lcagentEnvFile(),
+			LCAgentAuto:      m.lcagentAuto(),
 		}
 		if !msg.openModelFirst {
 			req.Prompt = msg.todoText

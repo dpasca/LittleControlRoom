@@ -25,6 +25,9 @@ const (
 type lcagentSession struct {
 	projectPath string
 	dataDir     string
+	execPath    string
+	envFile     string
+	auto        string
 	notify      func()
 
 	mu                 sync.Mutex
@@ -61,6 +64,9 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	session := &lcagentSession{
 		projectPath: strings.TrimSpace(req.ProjectPath),
 		dataDir:     dataDir,
+		execPath:    strings.TrimSpace(req.LCAgentPath),
+		envFile:     strings.TrimSpace(req.LCAgentEnvFile),
+		auto:        strings.TrimSpace(req.LCAgentAuto),
 		notify:      notify,
 		model:       model,
 		status:      "Ready",
@@ -224,7 +230,7 @@ func (s *lcagentSession) startRun(prompt, displayPrompt string) error {
 	model := firstNonEmpty(s.model, modeladapter.DefaultOpenRouterModel)
 	s.mu.Unlock()
 
-	spec, err := lcagentCommandSpec()
+	spec, err := lcagentCommandSpec(s.execPath)
 	if err != nil {
 		s.finishRun("", false, err)
 		return err
@@ -235,12 +241,13 @@ func (s *lcagentSession) startRun(prompt, displayPrompt string) error {
 		"exec",
 		"--cwd", s.projectPath,
 		"--data-dir", s.dataDir,
-		"--auto", lcagentAutoLevel(),
+		"--auto", lcagentAutoLevel(s.auto),
 		"--output", "stream-json",
 		"--provider", "openrouter",
 		"--model", model,
 	)
-	if envFile := strings.TrimSpace(os.Getenv("LCROOM_LCAGENT_ENV_FILE")); envFile != "" {
+	envFile := firstNonEmpty(s.envFile, os.Getenv("LCROOM_LCAGENT_ENV_FILE"))
+	if envFile != "" {
 		args = append(args, "--env-file", envFile)
 	}
 	args = append(args, prompt)
@@ -474,8 +481,8 @@ type lcagentCommand struct {
 	Dir     string
 }
 
-func lcagentCommandSpec() (lcagentCommand, error) {
-	if configured := strings.TrimSpace(os.Getenv("LCROOM_LCAGENT_PATH")); configured != "" {
+func lcagentCommandSpec(configuredPath string) (lcagentCommand, error) {
+	if configured := firstNonEmpty(configuredPath, os.Getenv("LCROOM_LCAGENT_PATH")); configured != "" {
 		return lcagentCommand{Command: configured}, nil
 	}
 	if exe, err := os.Executable(); err == nil {
@@ -495,10 +502,11 @@ func lcagentCommandSpec() (lcagentCommand, error) {
 	return lcagentCommand{}, fmt.Errorf("lcagent executable not found; set LCROOM_LCAGENT_PATH")
 }
 
-func lcagentAutoLevel() string {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("LCROOM_LCAGENT_AUTO"))) {
+func lcagentAutoLevel(configured string) string {
+	raw := firstNonEmpty(configured, os.Getenv("LCROOM_LCAGENT_AUTO"))
+	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "off", "low", "medium":
-		return strings.ToLower(strings.TrimSpace(os.Getenv("LCROOM_LCAGENT_AUTO")))
+		return strings.ToLower(strings.TrimSpace(raw))
 	default:
 		return lcagentDefaultAuto
 	}

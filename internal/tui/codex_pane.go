@@ -862,6 +862,17 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 	if provider == "" {
 		provider = codexapp.ProviderCodex
 	}
+	if provider == codexapp.ProviderLCAgent {
+		if strings.TrimSpace(req.LCAgentPath) == "" {
+			req.LCAgentPath = m.lcagentPath()
+		}
+		if strings.TrimSpace(req.LCAgentEnvFile) == "" {
+			req.LCAgentEnvFile = m.lcagentEnvFile()
+		}
+		if strings.TrimSpace(req.LCAgentAuto) == "" {
+			req.LCAgentAuto = m.lcagentAuto()
+		}
+	}
 	perfOpID := m.beginAILatencyOp("Embedded open", req.ProjectPath, provider.Label())
 	previousThreadID := ""
 	if manager != nil {
