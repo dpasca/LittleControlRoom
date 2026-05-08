@@ -33,10 +33,17 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 	for _, tool := range Tools() {
 		names[tool.Function.Name] = true
 	}
-	for _, want := range []string{"read_file", "list_files", "search", "run_command", "apply_patch", "update_plan", "final_response"} {
+	for _, want := range []string{"read_file", "list_files", "search", "load_skill", "run_command", "apply_patch", "update_plan", "final_response"} {
 		if !names[want] {
 			t.Fatalf("Tools() missing %s", want)
 		}
+	}
+}
+
+func TestSystemPromptIncludesSkillMetadata(t *testing.T) {
+	prompt := SystemPrompt("Available skills\n- demo [project]: Demo workflow")
+	if !strings.Contains(prompt, "call load_skill") || !strings.Contains(prompt, "demo [project]") {
+		t.Fatalf("prompt missing skill guidance:\n%s", prompt)
 	}
 }
 

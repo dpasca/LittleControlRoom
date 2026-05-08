@@ -15,6 +15,7 @@ import (
 	"lcroom/internal/lcagent/policy"
 	"lcroom/internal/lcagent/script"
 	"lcroom/internal/lcagent/session"
+	skillcatalog "lcroom/internal/lcagent/skills"
 	"lcroom/internal/lcagent/tools"
 )
 
@@ -78,6 +79,10 @@ func runExec(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	catalog, err := skillcatalog.Discover(context.Background(), skillcatalog.DefaultOptions(workspace.Root))
+	if err != nil {
+		return fmt.Errorf("load skills: %w", err)
+	}
 	if dataDir == "" {
 		dataDir = defaultDataDir()
 	}
@@ -105,6 +110,16 @@ func runExec(args []string, stdout io.Writer) error {
 	if err := writer.Write(session.Meta(sessionID, workspace.Root, string(auto), provider, model, version, started)); err != nil {
 		return err
 	}
+	if len(catalog.Skills) > 0 {
+		if err := writer.Write(session.Event{
+			"type":       "skill_catalog",
+			"session_id": sessionID,
+			"count":      len(catalog.Skills),
+			"skills":     catalog.EventSkills(40),
+		}); err != nil {
+			return err
+		}
+	}
 
 	artifactDir := filepath.Join(filepath.Dir(writer.Path()), sessionID+"-artifacts")
 	runner := script.Runner{
@@ -112,6 +127,7 @@ func runExec(args []string, stdout io.Writer) error {
 		Command:      tools.CommandRunner{Workspace: workspace, ArtifactDir: artifactDir},
 		Patch:        tools.PatchApplier{Workspace: workspace},
 		Files:        tools.FileTools{Workspace: workspace},
+		Skills:       catalog,
 		SessionID:    sessionID,
 		Prompt:       prompt,
 		ArtifactsDir: artifactDir,
@@ -172,7 +188,7 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 	}
 
 	messages := []modeladapter.Message{
-		{Role: "system", Content: modeladapter.SystemPrompt()},
+		{Role: "system", Content: modeladapter.SystemPrompt(runner.Skills.PromptIndex(0))},
 		{Role: "user", Content: runner.Prompt},
 	}
 	toolsDef := modeladapter.Tools()

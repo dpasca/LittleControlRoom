@@ -284,6 +284,21 @@ func Tools() []ToolDefinition {
 		{
 			Type: "function",
 			Function: FunctionSpec{
+				Name:        "load_skill",
+				Description: "Load the full body of an available skill by name. Use only after checking the skill metadata in the system prompt.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"name": map[string]any{"type": "string"},
+					},
+					"required": []string{"name"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionSpec{
 				Name:        "run_command",
 				Description: "Run a bounded shell command in the workspace. Use short commands and inspect results before editing.",
 				Parameters: map[string]any{
@@ -358,15 +373,20 @@ func Tools() []ToolDefinition {
 	}
 }
 
-func SystemPrompt() string {
-	return strings.Join([]string{
+func SystemPrompt(skillIndex string) string {
+	lines := []string{
 		"You are lcagent, a small local coding-agent harness controlled by Little Control Room.",
 		"Use the provided tools for all workspace inspection, edits, plan updates, and final responses.",
 		"Do not claim to have inspected files or run verification unless a tool result shows that happened.",
 		"Prefer read_file, list_files, and search for routine inspection before reaching for shell commands.",
+		"Skill descriptions in this prompt are metadata only; call load_skill before relying on any skill instructions.",
 		"Use apply_patch for source edits. Keep changes focused on the user's prompt.",
 		"When done, call final_response exactly once.",
-	}, "\n")
+	}
+	if strings.TrimSpace(skillIndex) != "" {
+		lines = append(lines, "", strings.TrimSpace(skillIndex))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func NormalizeArguments(raw json.RawMessage) (json.RawMessage, error) {

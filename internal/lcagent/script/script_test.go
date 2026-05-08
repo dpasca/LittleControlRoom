@@ -12,6 +12,7 @@ import (
 
 	"lcroom/internal/lcagent/policy"
 	"lcroom/internal/lcagent/session"
+	skillcatalog "lcroom/internal/lcagent/skills"
 	"lcroom/internal/lcagent/tools"
 )
 
@@ -20,7 +21,18 @@ func TestRunnerExecutesScriptedMiniSession(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("old\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	skillPath := filepath.Join(root, ".agents", "skills", "demo", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skillPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(skillPath, []byte("---\nname: demo\ndescription: Demo skill\n---\n# Demo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := skillcatalog.Discover(context.Background(), skillcatalog.Options{WorkspaceRoot: w.Root})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,11 +49,13 @@ func TestRunnerExecutesScriptedMiniSession(t *testing.T) {
 		Command:   tools.CommandRunner{Workspace: w, ArtifactDir: t.TempDir()},
 		Patch:     tools.PatchApplier{Workspace: w},
 		Files:     tools.FileTools{Workspace: w},
+		Skills:    catalog,
 	}
 	actions := []Action{
 		{Type: "tool_call", Tool: "list_files", Args: raw(`{"path":".","glob":"*.md","max_entries":10}`)},
 		{Type: "tool_call", Tool: "read_file", Args: raw(`{"path":"README.md","limit":20}`)},
 		{Type: "tool_call", Tool: "search", Args: raw(`{"query":"old","path":".","file_glob":"*.md","max_matches":10}`)},
+		{Type: "tool_call", Tool: "load_skill", Args: raw(`{"name":"demo"}`)},
 		{Type: "tool_call", Tool: "run_command", Args: raw(`{"command":"cat README.md","timeout_ms":1000}`)},
 		{Type: "tool_call", Tool: "update_plan", Args: raw(`{"items":[{"step":"Inspect","status":"completed"},{"step":"Patch","status":"in_progress"}]}`)},
 		{Type: "tool_call", Tool: "apply_patch", Args: raw(`{"patch":"*** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch\n"}`)},
@@ -58,7 +72,7 @@ func TestRunnerExecutesScriptedMiniSession(t *testing.T) {
 		t.Fatalf("README = %q", data)
 	}
 	text := stream.String()
-	for _, eventType := range []string{"user_message", "tool_call", "tool_result", "plan_update", "files_touched", "turn_complete"} {
+	for _, eventType := range []string{"user_message", "tool_call", "tool_result", "skill_loaded", "plan_update", "files_touched", "turn_complete"} {
 		if !strings.Contains(text, `"type":"`+eventType+`"`) {
 			t.Fatalf("stream missing %s:\n%s", eventType, text)
 		}

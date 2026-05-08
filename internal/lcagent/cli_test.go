@@ -12,6 +12,7 @@ import (
 )
 
 func TestRunExecScriptedStreamJSON(t *testing.T) {
+	isolateSkillHomes(t)
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("old\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -41,6 +42,7 @@ func TestRunExecScriptedStreamJSON(t *testing.T) {
 }
 
 func TestRunExecOpenRouterEmitsModelResponseUsage(t *testing.T) {
+	isolateSkillHomes(t)
 	root := t.TempDir()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
@@ -103,8 +105,16 @@ func TestRunExecOpenRouterEmitsModelResponseUsage(t *testing.T) {
 }
 
 func TestRunExecOpenRouterCanUseReadOnlyTool(t *testing.T) {
+	isolateSkillHomes(t)
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("alpha\nbeta needle\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skillPath := filepath.Join(root, ".agents", "skills", "demo", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skillPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(skillPath, []byte("---\nname: demo\ndescription: Demo workflow\n---\n# Demo\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	requests := 0
@@ -121,6 +131,9 @@ func TestRunExecOpenRouterCanUseReadOnlyTool(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if requests == 1 {
+			if len(body.Messages) == 0 || !strings.Contains(body.Messages[0].Content, "demo [project]: Demo workflow") {
+				t.Fatalf("system prompt missing skill metadata: %#v", body.Messages)
+			}
 			_, _ = w.Write([]byte(`{
 				"id":"resp_tool",
 				"model":"deepseek/test-model",
@@ -182,4 +195,10 @@ func TestRunExecOpenRouterCanUseReadOnlyTool(t *testing.T) {
 	if requests != 2 {
 		t.Fatalf("requests = %d, want 2", requests)
 	}
+}
+
+func isolateSkillHomes(t *testing.T) {
+	t.Helper()
+	t.Setenv("CODEX_HOME", filepath.Join(t.TempDir(), "codex"))
+	t.Setenv("AGENTS_HOME", filepath.Join(t.TempDir(), "agents"))
 }

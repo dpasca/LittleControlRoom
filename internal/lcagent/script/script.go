@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"lcroom/internal/lcagent/session"
+	skillcatalog "lcroom/internal/lcagent/skills"
 	"lcroom/internal/lcagent/tools"
 )
 
@@ -17,6 +19,7 @@ type Runner struct {
 	Command      tools.CommandRunner
 	Patch        tools.PatchApplier
 	Files        tools.FileTools
+	Skills       skillcatalog.Catalog
 	SessionID    string
 	Prompt       string
 	ArtifactsDir string
@@ -61,6 +64,10 @@ type searchArgs struct {
 	Path       string `json:"path"`
 	FileGlob   string `json:"file_glob"`
 	MaxMatches int    `json:"max_matches"`
+}
+
+type loadSkillArgs struct {
+	Name string `json:"name"`
 }
 
 func Load(path string) ([]Action, error) {
@@ -160,6 +167,28 @@ func (r Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, e
 			return tools.ToolResult{}, err
 		}
 		result = r.Files.Search(args.Query, args.Path, args.FileGlob, args.MaxMatches)
+	case "load_skill":
+		var args loadSkillArgs
+		if err := json.Unmarshal(action.Args, &args); err != nil {
+			return tools.ToolResult{}, err
+		}
+		loaded, err := r.Skills.Load(args.Name)
+		if err != nil {
+			result = tools.ToolResult{Success: false, Error: err.Error()}
+			break
+		}
+		result = tools.ToolResult{Success: true, Output: formatLoadedSkill(loaded), Truncated: loaded.Truncated}
+		if err := r.Session.Write(session.Event{
+			"type":        "skill_loaded",
+			"session_id":  r.SessionID,
+			"name":        loaded.Skill.Name,
+			"source":      loaded.Skill.Source,
+			"path":        loaded.Skill.Path,
+			"description": loaded.Skill.Description,
+			"truncated":   loaded.Truncated,
+		}); err != nil {
+			return tools.ToolResult{}, err
+		}
 	case "run_command":
 		var args commandArgs
 		if err := json.Unmarshal(action.Args, &args); err != nil {
@@ -210,6 +239,22 @@ func (r Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, e
 		return result, fmt.Errorf("%s failed: %s", action.Tool, result.Error)
 	}
 	return result, nil
+}
+
+func formatLoadedSkill(loaded skillcatalog.LoadedSkill) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "skill: %s\n", loaded.Skill.Name)
+	fmt.Fprintf(&b, "source: %s\n", loaded.Skill.Source)
+	fmt.Fprintf(&b, "path: %s\n", loaded.Skill.Path)
+	if loaded.Skill.Description != "" {
+		fmt.Fprintf(&b, "description: %s\n", loaded.Skill.Description)
+	}
+	b.WriteString("\n")
+	b.WriteString(loaded.Body)
+	if loaded.Truncated {
+		b.WriteString("\n--- skill body truncated ---\n")
+	}
+	return b.String()
 }
 
 func (r Runner) Final(action Action) error {
