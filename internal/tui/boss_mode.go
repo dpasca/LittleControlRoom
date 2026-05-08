@@ -794,7 +794,7 @@ func (m Model) bossEngineerCompletionName(projectPath string, snapshot codexapp.
 }
 
 func latestEngineerTranscriptOutput(snapshot codexapp.Snapshot) string {
-	return latestEngineerTranscriptOutputWithSentences(snapshot, 1, 220)
+	return latestEngineerTranscriptOutputWithSentences(snapshot, 3, 360)
 }
 
 func latestEngineerTranscriptReviewOutput(snapshot codexapp.Snapshot) string {
@@ -838,26 +838,41 @@ func engineerNoticeSummaryText(text string, sentenceLimit int) string {
 		return strings.TrimSpace(strings.ReplaceAll(text, "`", ""))
 	}
 
-	var sentences []string
+	var thinFallback string
 	for _, paragraph := range engineerNoticeProseParagraphs(text) {
+		var sentences []string
 		for _, sentence := range engineerNoticeSentences(paragraph) {
 			if !engineerNoticeSentenceHasUsefulDetail(sentence) {
 				continue
 			}
 			sentences = append(sentences, sentence)
 			if len(sentences) >= sentenceLimit {
-				return strings.Join(sentences, " ")
+				break
 			}
 		}
+		if len(sentences) == 0 {
+			continue
+		}
+		summary := strings.Join(sentences, " ")
+		if !engineerNoticeSummaryIsThin(summary) {
+			return summary
+		}
+		if thinFallback == "" {
+			thinFallback = summary
+		}
 	}
-	if len(sentences) > 0 {
-		return strings.Join(sentences, " ")
+	if thinFallback != "" {
+		return thinFallback
 	}
 	return strings.TrimSpace(strings.ReplaceAll(text, "`", ""))
 }
 
 func engineerNoticeSentenceHasUsefulDetail(text string) bool {
 	return engineerNoticeHasUsefulDetail(cleanEngineerNoticeSummary(text))
+}
+
+func engineerNoticeSummaryIsThin(text string) bool {
+	return len(strings.Fields(strings.TrimSpace(text))) < 4
 }
 
 func engineerNoticeWithEssentialArtifacts(summary, text string, limit int) string {

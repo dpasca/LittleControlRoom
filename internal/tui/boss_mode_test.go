@@ -408,6 +408,58 @@ func TestLatestEngineerTranscriptOutputDoesNotTruncateMarkdownLinkTargets(t *tes
 	}
 }
 
+func TestLatestEngineerTranscriptOutputSkipsThinStatusWhenOutcomeFollows(t *testing.T) {
+	t.Parallel()
+
+	path := "/Users/davide/dev/repos/Leaf/docs/game-design-document.md"
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "Retry succeeded.\n\nThe Poncle Drive export changed the GDD combat section, kept the audio-recording fix intact, and removed the stale auth-blocker note.\n\nOutput:\n[game-design-document.md](" + path + ")",
+		}},
+	}
+
+	got := latestEngineerTranscriptOutput(snapshot)
+	for _, want := range []string{
+		"The Poncle Drive export changed the GDD combat section",
+		"kept the audio-recording fix intact",
+		"Outputs:",
+		"- [game-design-document.md](" + path + ")",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("latestEngineerTranscriptOutput() missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Retry succeeded") {
+		t.Fatalf("latestEngineerTranscriptOutput() should not stop at the thin status opener:\n%s", got)
+	}
+}
+
+func TestLatestEngineerTranscriptOutputKeepsMultiSentenceOutcomeParagraph(t *testing.T) {
+	t.Parallel()
+
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "Synced the GDD export. It added the combat tuning notes. It removed the stale auth blocker.\n\nRaw export log stayed in the workspace.",
+		}},
+	}
+
+	got := latestEngineerTranscriptOutput(snapshot)
+	for _, want := range []string{
+		"Synced the GDD export.",
+		"It added the combat tuning notes.",
+		"It removed the stale auth blocker.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("latestEngineerTranscriptOutput() missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Raw export log") {
+		t.Fatalf("latestEngineerTranscriptOutput() should not pull in the next paragraph:\n%s", got)
+	}
+}
+
 func TestBossEngineerCompletionLeavesAgentTaskWaitingForDecision(t *testing.T) {
 	t.Parallel()
 

@@ -95,8 +95,15 @@ func TestExecuteControlEngineerSendPromptRoutesOpenCodeHidden(t *testing.T) {
 	if requests[0].ForceNew {
 		t.Fatalf("request ForceNew = true, want resume_or_new")
 	}
-	if requests[0].Prompt != "please run the next step" {
-		t.Fatalf("request Prompt = %q, want control prompt", requests[0].Prompt)
+	for _, want := range []string{
+		"Little Control Room engineer task:",
+		"Report contract:",
+		"Do not final-report only success/failure plus artifact links",
+		"User request:\nplease run the next step",
+	} {
+		if !strings.Contains(requests[0].Prompt, want) {
+			t.Fatalf("request prompt missing %q:\n%s", want, requests[0].Prompt)
+		}
 	}
 
 	updated, _ = got.Update(opened)
@@ -158,6 +165,9 @@ func TestExecuteControlEngineerSendPromptIncludesRuntimeTestingContext(t *testin
 		t.Fatalf("launch requests = %d, want 1", len(requests))
 	}
 	for _, want := range []string{
+		"Little Control Room engineer task:",
+		"Report contract:",
+		"whether content changed and summarize the meaningful changes",
 		"please test the app",
 		"Little Control Room testing context:",
 		"use runtime/test URL http://127.0.0.1:3000/demo",
@@ -211,6 +221,9 @@ func TestExecuteControlEngineerSendPromptCallsOutMissingRuntimeURL(t *testing.T)
 		t.Fatalf("launch requests = %d, want 1", len(requests))
 	}
 	for _, want := range []string{
+		"Little Control Room engineer task:",
+		"Report contract:",
+		"Do not final-report only success/failure plus artifact links",
 		"please test the app",
 		"Little Control Room testing context:",
 		"no runtime/test URL detected",
@@ -789,6 +802,8 @@ func TestExecuteBossControlInvocationContinuesAgentTaskWithTrackedSession(t *tes
 		"Answer the user's exact request directly",
 		"Preserve source, metric, timeframe, scope, negations, and explicit exclusions",
 		"what was compared, what was kept, what was discarded, and the substantive differences",
+		"whether content changed and summarize the meaningful changes",
+		"Do not final-report only success/failure plus artifact links",
 		"User request:\nCheck whether the ports stayed clear.",
 	} {
 		if !strings.Contains(requests[0].Prompt, want) {

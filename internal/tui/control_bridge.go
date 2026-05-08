@@ -361,9 +361,13 @@ func (m Model) executeEngineerSendPromptControlWithOutcome(input control.Enginee
 		return controlInvocationOutcome{model: m, err: err}
 	}
 
+	prompt := m.engineerPromptWithRuntimeContext(project, input.Prompt)
+	if controlPromptWillSteerActiveEmbeddedSession(input, m, project.Path, provider) {
+		prompt = m.promptWithRuntimeContext(input.Prompt, m.projectRuntimeContextLines(project))
+	}
 	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{
 		forceNew: input.SessionMode == control.SessionModeNew,
-		prompt:   m.engineerPromptWithRuntimeContext(project, input.Prompt),
+		prompt:   prompt,
 		reveal:   input.Reveal,
 	})
 	m = normalizeUpdateModel(updated)
@@ -390,6 +394,17 @@ func controlPromptTargetsNonSteerableActiveEmbeddedSession(input control.Enginee
 		return false
 	}
 	return !controlPromptCanSteerActiveEmbeddedSession(snapshot)
+}
+
+func controlPromptWillSteerActiveEmbeddedSession(input control.EngineerSendPromptInput, m Model, projectPath string, provider codexapp.Provider) bool {
+	if input.SessionMode == control.SessionModeNew || strings.TrimSpace(input.Prompt) == "" {
+		return false
+	}
+	snapshot, ok := m.liveEmbeddedSnapshotForProject(projectPath, provider)
+	if !ok || !embeddedSessionBlocksProviderSwitch(snapshot) {
+		return false
+	}
+	return controlPromptCanSteerActiveEmbeddedSession(snapshot)
 }
 
 func controlPromptCanSteerActiveEmbeddedSession(snapshot codexapp.Snapshot) bool {
@@ -754,14 +769,7 @@ func agentTaskLaunchPrompt(task model.AgentTask, prompt string) string {
 	if resources := agentTaskResourcePromptSummary(task.Resources); resources != "" {
 		lines = append(lines, "Resources: "+resources)
 	}
-	lines = append(lines,
-		"",
-		"Report contract:",
-		"- Answer the user's exact request directly, with enough concrete detail for Boss Chat to summarize without guessing.",
-		"- Preserve source, metric, timeframe, scope, negations, and explicit exclusions from the user request; if evidence answers a different question, report that mismatch instead of substituting it.",
-		"- For comparison, diff, cleanup, or review work, name what was compared, what was kept, what was discarded, and the substantive differences.",
-		"- Avoid vague wrap-ups like only saying the entries differ, the state is clean, or canonical copies were kept.",
-	)
+	lines = append(lines, engineerReportContractPromptLines()...)
 	lines = append(lines, "", "User request:", strings.TrimSpace(prompt))
 	return strings.Join(lines, "\n")
 }
@@ -771,7 +779,31 @@ func (m Model) agentTaskLaunchPromptWithRuntimeContext(task model.AgentTask, pro
 }
 
 func (m Model) engineerPromptWithRuntimeContext(project model.ProjectSummary, prompt string) string {
-	return m.promptWithRuntimeContext(prompt, m.projectRuntimeContextLines(project))
+	return m.promptWithRuntimeContext(engineerLaunchPrompt(prompt), m.projectRuntimeContextLines(project))
+}
+
+func engineerLaunchPrompt(prompt string) string {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return ""
+	}
+	lines := []string{"Little Control Room engineer task:"}
+	lines = append(lines, engineerReportContractPromptLines()...)
+	lines = append(lines, "", "User request:", prompt)
+	return strings.Join(lines, "\n")
+}
+
+func engineerReportContractPromptLines() []string {
+	return []string{
+		"",
+		"Report contract:",
+		"- Answer the user's exact request directly, with enough concrete detail for Boss Chat to summarize without guessing.",
+		"- Preserve source, metric, timeframe, scope, negations, and explicit exclusions from the user request; if evidence answers a different question, report that mismatch instead of substituting it.",
+		"- For comparison, diff, cleanup, or review work, name what was compared, what was kept, what was discarded, and the substantive differences.",
+		"- For retry, sync, export, file, or document work, say whether content changed and summarize the meaningful changes; if nothing changed, name the file or document and say there were no content changes.",
+		"- Do not final-report only success/failure plus artifact links; include the substantive outcome, or say exactly which requested outcome evidence is still missing.",
+		"- Avoid vague wrap-ups like only saying the entries differ, the state is clean, canonical copies were kept, or the retry succeeded.",
+	}
 }
 
 func (m Model) promptWithRuntimeContext(prompt string, contextLines []string) string {
