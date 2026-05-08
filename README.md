@@ -120,6 +120,8 @@ The main TUI command palette opens with `/`.
 - `/claude-new [prompt]`: Start a fresh Claude Code session.
 - `/opencode [prompt]`: Resume the latest OpenCode session or start one.
 - `/opencode-new [prompt]`: Start a fresh OpenCode session.
+- `/lcagent [prompt]`: Resume the latest experimental LCAgent session or start one.
+- `/lcagent-new [prompt]`: Start a fresh experimental LCAgent session.
 - `/pin`: Toggle pin on the selected project.
 - `/read [all]`: Mark the selected project, or all visible projects, as read.
 - `/unread`: Mark the selected project's latest completed assessment as unread.
@@ -169,11 +171,11 @@ Most day-to-day use falls into a few buckets:
 
   [![Runtime pane focused on a running session](docs/screenshots/main-panel-live-runtime.png)](docs/screenshots/main-panel-live-runtime.png)
 
-- **Resume agent work** — Use `/codex`, `/claude`, or `/opencode` to pick up where you left off, and `/codex-new`, `/claude-new`, or `/opencode-new` when you want a fresh session. Inside the embedded pane, `/resume`, `/session`, and `/reconnect` handle switching sessions or reattaching the helper. Claude Code support currently uses a headless CLI MVP, so approvals and attachments are still less complete than Codex/OpenCode, even though `/model` now offers saved Claude aliases and reasoning levels.
+- **Resume agent work** — Use `/codex`, `/claude`, `/opencode`, or experimental `/lcagent` to pick up where you left off, and `/codex-new`, `/claude-new`, `/opencode-new`, or `/lcagent-new` when you want a fresh session. Inside the embedded pane, `/resume`, `/session`, and `/reconnect` handle switching sessions or reattaching the helper. Claude Code support currently uses a headless CLI MVP, so approvals and attachments are still less complete than Codex/OpenCode, even though `/model` now offers saved Claude aliases and reasoning levels. LCAgent is a one-shot LCR-native worker backed by OpenRouter-compatible tool calls and structured local JSONL artifacts.
 
   [![Embedded Codex conversation](docs/screenshots/codex-embedded.png)](docs/screenshots/codex-embedded.png)
 
-- **TODO-driven sessions** — Press `t` or use `/todo` to open a per-project TODO list. Add items you want an agent to work on, then press `Enter` on any item to start a fresh embedded session with that task as the prompt. The dialog shows the model that will be used and lets you pick the provider (Codex, Claude Code, or OpenCode).
+- **TODO-driven sessions** — Press `t` or use `/todo` to open a per-project TODO list. Add items you want an agent to work on, then press `Enter` on any item to start a fresh embedded session with that task as the prompt. The dialog shows the model that will be used and lets you pick the provider (Codex, Claude Code, OpenCode, or experimental LCAgent).
 
   [![TODO dialog with per-project task list](docs/screenshots/todo-dialog.png)](docs/screenshots/todo-dialog.png)
 
@@ -184,7 +186,7 @@ Most day-to-day use falls into a few buckets:
   | [![Diff window](docs/screenshots/diff-view.png)](docs/screenshots/diff-view.png) | [![Commit preview dialog](docs/screenshots/commit-preview.png)](docs/screenshots/commit-preview.png) | [![Image diff with before/after previews](docs/screenshots/diff-view-image.png)](docs/screenshots/diff-view-image.png) |
 
 - **Keep the list clean** — Use `f` or `/filter <text>` to narrow the project list, `/pin` and `/snooze` to control attention, `/remove` to confirm and archive/delete/hide the selected item based on context. Use `/ignore` when you want an explicit exact-name hide rule, and `/ignored` to restore hidden names or paths.
-- **Adjust setup** — Use `/setup` for AI roles, API keys, and MLX/Ollama endpoint/model overrides. Use `/settings` for paths, refresh timing, advanced toggles, and the simplified browser windows control. For embedded Codex and OpenCode sessions, LCR can isolate Playwright per session so browser-heavy work multitasks more cleanly in parallel, then surface the right managed browser window only when a human step is actually needed. Switch to `Classic browser behavior` if you want the original provider-owned flow, then use `/new-project` for repo-backed work and `/new-task` for quick scratch work.
+- **Adjust setup** — Use `/setup` for AI roles, API keys, and MLX/Ollama endpoint/model overrides. Use `/settings` for paths, refresh timing, advanced toggles, LCAgent env-file/autonomy settings, and the simplified browser windows control. For embedded Codex and OpenCode sessions, LCR can isolate Playwright per session so browser-heavy work multitasks more cleanly in parallel, then surface the right managed browser window only when a human step is actually needed. Switch to `Classic browser behavior` if you want the original provider-owned flow, then use `/new-project` for repo-backed work and `/new-task` for quick scratch work.
 
 For the full command list and detailed behavior, see [`docs/reference.md`](docs/reference.md).
 

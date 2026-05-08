@@ -50,6 +50,11 @@ For managed-browser debugging outside the TUI, Little Control Room also exposes:
 - `exclude_paths`
 - `exclude_project_patterns`
 - `codex_launch_preset`
+- `embedded_lcagent_model`
+- `embedded_lcagent_reasoning_effort`
+- `lcagent_path`
+- `lcagent_env_file`
+- `lcagent_auto`
 - `playwright_management_mode`
 - `playwright_default_browser_mode`
 - `playwright_login_mode`
@@ -70,6 +75,11 @@ include_paths = [
 exclude_paths = []
 exclude_project_patterns = []
 codex_launch_preset = "yolo"
+# LCAgent is experimental. Leave lcagent_path blank to use the bundled binary,
+# PATH lookup, or local go run fallback. Put OPENROUTER_API_KEY in the env file.
+# embedded_lcagent_model = "deepseek/deepseek-v4-pro"
+# lcagent_env_file = "~/path/to/openrouter.env"
+# lcagent_auto = "low"
 playwright_management_mode = "managed"
 playwright_default_browser_mode = "headless"
 playwright_login_mode = "promote"
@@ -229,6 +239,9 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/opencode`
 - `/opencode continue from the last breakpoint`
 - `/opencode-new sketch a plan for this repo`
+- `/lcagent`
+- `/lcagent continue with the next small step`
+- `/lcagent-new inspect and patch the failing check`
 - `/commit`
 - `/commit tighten git status parsing`
 - `/push`
@@ -257,6 +270,9 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `--codex-launch-preset "yolo"`
 - `--codex-home "~/.codex"`
 - `--opencode-home "~/.local/share/opencode"`
+- `--lcagent-path "~/bin/lcagent"`
+- `--lcagent-env-file "~/path/to/openrouter.env"`
+- `--lcagent-auto low`
 - `--db "~/.little-control-room/little-control-room.sqlite"`
 - `--interval 60s`
 - `--active-threshold 20m`
@@ -284,7 +300,9 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/claude-new` always starts a fresh Claude Code session.
 - `/opencode` resumes the selected project's latest known OpenCode session when available, otherwise it starts a new one.
 - `/opencode-new` always starts a fresh OpenCode session.
-- While an embedded Codex, Claude Code, or OpenCode pane is visible, local slash commands include `/new`, `/resume` (`/session` alias), `/reconnect`, `/model`, `/status`, `/compact`, and `/review`.
+- `/lcagent` resumes the selected project's latest known LCAgent session when available, otherwise it starts a new one-shot OpenRouter-backed run.
+- `/lcagent-new` always starts a fresh LCAgent run. LCAgent is experimental and currently supports prompt turns, model selection, local read/edit tools, and structured JSONL artifacts; approvals, attachments, compact, and review are not wired yet.
+- While an embedded Codex, Claude Code, OpenCode, or LCAgent pane is visible, local slash commands include `/new`, `/resume` (`/session` alias), `/reconnect`, `/model`, `/status`, `/compact`, and `/review`.
 - `/model` changes the model and reasoning for the current embedded tool and carries that choice forward to future embedded sessions of the same tool, including after restarting LCR.
 - `/resume` with no session ID opens a picker for saved sessions from the current project and provider; `/resume <session-id>` jumps straight to that session.
 - `/reconnect` restarts the current embedded provider helper and reconnects to the same session when possible, which is useful after refreshing `codex login` or other provider auth outside Little Control Room.
