@@ -226,6 +226,101 @@ func TestSearchContextCachesSessionTranscriptWithoutToolOutput(t *testing.T) {
 	}
 }
 
+func TestSearchContextCachesLCAgentTranscriptWithoutToolOutput(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now()
+	sessionFile := filepath.Join(t.TempDir(), "lcagent-session.jsonl")
+	transcript := strings.Join([]string{
+		`{"type":"session_meta","id":"lca_transcript","cwd":"/tmp/lcagent-search","started_at":"2026-05-09T10:00:00Z"}`,
+		`{"type":"user_message","session_id":"lca_transcript","message":"Please investigate FluxCacheVariant for FCX."}`,
+		`{"type":"tool_call","session_id":"lca_transcript","tool":"run_command","args":{"command":"cat secret-output.txt"}}`,
+		`{"type":"tool_result","session_id":"lca_transcript","tool":"run_command","result":{"success":true,"output":"zqxjlcagenttoolleak","files_touched":["internal/fcx/cache.go"]}}`,
+		`{"type":"plan_update","session_id":"lca_transcript","items":[{"step":"Inspect FluxCacheVariant","status":"completed"},{"step":"Patch cache docs","status":"in_progress"}]}`,
+		`{"type":"files_touched","session_id":"lca_transcript","files":["internal/fcx/cache.go"]}`,
+		`{"type":"assistant_message","session_id":"lca_transcript","message":"FluxCacheVariant now explains FCX cache behavior.","files_changed":["internal/fcx/cache.go"],"verification":["go test ./internal/fcx"]}`,
+		`{"type":"turn_complete","session_id":"lca_transcript","summary":"FluxCacheVariant work complete.","files_changed":["internal/fcx/cache.go"],"verification":["go test ./internal/fcx"]}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(sessionFile, []byte(transcript), 0o644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           "/tmp/lcagent-search",
+		Name:           "lcagent-search",
+		Status:         model.StatusIdle,
+		AttentionScore: 8,
+		PresentOnDisk:  true,
+		InScope:        true,
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{{
+			Source:              model.SessionSourceLCAgent,
+			SessionID:           "lca_transcript",
+			ProjectPath:         "/tmp/lcagent-search",
+			DetectedProjectPath: "/tmp/lcagent-search",
+			SessionFile:         sessionFile,
+			Format:              "lcagent_jsonl",
+			SnapshotHash:        "hash-lcagent-transcript",
+			LastEventAt:         now,
+		}},
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	results, err := st.SearchContext(ctx, model.ContextSearchRequest{Query: "FluxCacheVariant", Limit: 5})
+	if err != nil {
+		t.Fatalf("search lcagent transcript context: %v", err)
+	}
+	foundSession := false
+	for _, result := range results {
+		if result.Source == "session" && result.SessionID == "lcagent:lca_transcript" && strings.Contains(strings.ToLower(result.Snippet), "fluxcachevariant") {
+			foundSession = true
+			break
+		}
+	}
+	if !foundSession {
+		t.Fatalf("SearchContext did not return cached lcagent transcript evidence: %#v", results)
+	}
+
+	toolResults, err := st.SearchContext(ctx, model.ContextSearchRequest{Query: "zqxjlcagenttoolleak", Limit: 5})
+	if err != nil {
+		t.Fatalf("search lcagent tool output context: %v", err)
+	}
+	if len(toolResults) != 0 {
+		t.Fatalf("lcagent tool output should not be indexed, got %#v", toolResults)
+	}
+
+	excerpt, err := st.GetSessionContextExcerpt(ctx, model.SessionContextExcerptRequest{
+		SessionID:   "lcagent:lca_transcript",
+		Query:       "FluxCacheVariant",
+		BeforeTurns: 3,
+		AfterTurns:  1,
+	})
+	if err != nil {
+		t.Fatalf("get lcagent session excerpt: %v", err)
+	}
+	if excerpt.Source != model.SessionSourceLCAgent || excerpt.SessionFormat != "lcagent_jsonl" || !excerpt.AnchorMatched {
+		t.Fatalf("excerpt metadata = source:%s format:%s anchor:%v, want lcagent/lcagent_jsonl/matched", excerpt.Source, excerpt.SessionFormat, excerpt.AnchorMatched)
+	}
+	excerptText := ""
+	for _, turn := range excerpt.Turns {
+		excerptText += turn.Text + "\n"
+	}
+	if !strings.Contains(excerptText, "FluxCacheVariant") {
+		t.Fatalf("excerpt missing lcagent transcript text:\n%s", excerptText)
+	}
+	if strings.Contains(excerptText, "zqxjlcagenttoolleak") {
+		t.Fatalf("excerpt should not include lcagent tool output:\n%s", excerptText)
+	}
+}
+
 func TestSearchContextRefreshesSessionCacheFromArtifactMTime(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
