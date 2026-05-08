@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -59,13 +60,14 @@ func TestOpenRouterClientSendsToolRequestAndParsesResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	msg, err := client.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}, Tools())
+	completion, err := client.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}, Tools())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if gotModel != "deepseek/deepseek-v4-pro" {
 		t.Fatalf("model = %q", gotModel)
 	}
+	msg := completion.Message
 	if len(msg.ToolCalls) != 1 || msg.ToolCalls[0].Function.Name != "run_command" {
 		t.Fatalf("tool calls = %#v", msg.ToolCalls)
 	}
@@ -75,5 +77,28 @@ func TestOpenRouterClientSendsToolRequestAndParsesResponse(t *testing.T) {
 	}
 	if string(args) != `{"command":"pwd"}` {
 		t.Fatalf("args = %s", args)
+	}
+}
+
+func TestOpenRouterClientReportsHTTPStatusForNonJSONError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "upstream temporarily unavailable", http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	client, err := NewOpenRouterClient(OpenRouterConfig{
+		APIKey:  "key",
+		BaseURL: server.URL,
+		Model:   "deepseek/deepseek-v4-pro",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}, Tools())
+	if err == nil {
+		t.Fatal("expected OpenRouter HTTP error")
+	}
+	if got := err.Error(); !strings.Contains(got, "HTTP 502") || !strings.Contains(got, "upstream temporarily unavailable") {
+		t.Fatalf("error = %q, want status and body snippet", got)
 	}
 }

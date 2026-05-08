@@ -53,6 +53,7 @@ func runExec(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, envFile string
+	var maxTurns int
 	fs.StringVar(&cwd, "cwd", "", "workspace root")
 	fs.StringVar(&dataDir, "data-dir", "", "artifact data root")
 	fs.StringVar(&autoRaw, "auto", "off", "autonomy: off, low, medium")
@@ -61,6 +62,7 @@ func runExec(args []string, stdout io.Writer) error {
 	fs.StringVar(&provider, "provider", "scripted", "provider: scripted or openrouter")
 	fs.StringVar(&model, "model", "", "model name")
 	fs.StringVar(&envFile, "env-file", "", "optional dotenv file for provider credentials")
+	fs.IntVar(&maxTurns, "max-turns", 16, "maximum model turns for provider loops")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -127,8 +129,9 @@ func runExec(args []string, stdout io.Writer) error {
 		runErr = runner.Run(context.Background(), actions)
 	case "openrouter":
 		runErr = runOpenRouter(context.Background(), writer, runner, modeladapter.OpenRouterConfig{
-			Model:   model,
-			EnvFile: envFile,
+			Model:    model,
+			EnvFile:  envFile,
+			MaxTurns: maxTurns,
 		})
 	default:
 		return fmt.Errorf("unsupported provider: %s", provider)
@@ -173,13 +176,17 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 	}
 	toolsDef := modeladapter.Tools()
 	for turn := 0; turn < client.MaxTurns(); turn++ {
-		msg, err := client.Complete(ctx, messages, toolsDef)
+		completion, err := client.Complete(ctx, messages, toolsDef)
 		if err != nil {
 			_ = writer.Write(session.Event{
 				"type":       "turn_aborted",
 				"session_id": runner.SessionID,
 				"reason":     err.Error(),
 			})
+			return err
+		}
+		msg := completion.Message
+		if err := writer.Write(modelResponseEvent(runner.SessionID, turn+1, completion, len(msg.ToolCalls))); err != nil {
 			return err
 		}
 		messages = append(messages, msg)
@@ -193,6 +200,15 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 			}
 		}
 		if len(msg.ToolCalls) == 0 {
+			if strings.TrimSpace(msg.Content) == "" {
+				err := fmt.Errorf("openrouter response had no content or tool calls")
+				_ = writer.Write(session.Event{
+					"type":       "turn_aborted",
+					"session_id": runner.SessionID,
+					"reason":     err.Error(),
+				})
+				return err
+			}
 			return runner.Final(script.Action{
 				Type:    "final_response",
 				Summary: msg.Content,
@@ -236,6 +252,26 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 		"reason":     err.Error(),
 	})
 	return err
+}
+
+func modelResponseEvent(sessionID string, turn int, completion modeladapter.Completion, toolCallCount int) session.Event {
+	event := session.Event{
+		"type":            "model_response",
+		"session_id":      sessionID,
+		"turn":            turn,
+		"model":           completion.Model,
+		"tool_call_count": toolCallCount,
+	}
+	if completion.ID != "" {
+		event["response_id"] = completion.ID
+	}
+	if completion.FinishReason != "" {
+		event["finish_reason"] = completion.FinishReason
+	}
+	if len(completion.Usage) > 0 && string(completion.Usage) != "null" {
+		event["usage"] = json.RawMessage(completion.Usage)
+	}
+	return event
 }
 
 func defaultDataDir() string {

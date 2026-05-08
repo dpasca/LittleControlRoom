@@ -62,14 +62,26 @@ type FunctionCall struct {
 }
 
 type ChatResponse struct {
+	ID      string `json:"id,omitempty"`
+	Model   string `json:"model,omitempty"`
 	Choices []struct {
-		Message Message `json:"message"`
+		Message      Message `json:"message"`
+		FinishReason string  `json:"finish_reason,omitempty"`
 	} `json:"choices"`
+	Usage json.RawMessage `json:"usage,omitempty"`
 	Error *struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
 		Code    any    `json:"code"`
 	} `json:"error,omitempty"`
+}
+
+type Completion struct {
+	Message      Message
+	ID           string
+	Model        string
+	FinishReason string
+	Usage        json.RawMessage
 }
 
 func NewOpenRouterClient(cfg OpenRouterConfig) (*Client, error) {
@@ -113,7 +125,7 @@ func NewOpenRouterClient(cfg OpenRouterConfig) (*Client, error) {
 	}, nil
 }
 
-func (c *Client) Complete(ctx context.Context, messages []Message, tools []ToolDefinition) (Message, error) {
+func (c *Client) Complete(ctx context.Context, messages []Message, tools []ToolDefinition) (Completion, error) {
 	body := map[string]any{
 		"model":       c.model,
 		"messages":    messages,
@@ -123,15 +135,15 @@ func (c *Client) Complete(ctx context.Context, messages []Message, tools []ToolD
 	}
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(body); err != nil {
-		return Message{}, err
+		return Completion{}, err
 	}
 	endpoint, err := url.JoinPath(c.baseURL, "chat", "completions")
 	if err != nil {
-		return Message{}, err
+		return Completion{}, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &buf)
 	if err != nil {
-		return Message{}, err
+		return Completion{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
@@ -140,30 +152,44 @@ func (c *Client) Complete(ctx context.Context, messages []Message, tools []ToolD
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return Message{}, err
+		return Completion{}, err
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 8*1024*1024))
 	if err != nil {
-		return Message{}, err
+		return Completion{}, err
 	}
 	var parsed ChatResponse
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		return Message{}, fmt.Errorf("openrouter response decode failed: %w", err)
-	}
+	decodeErr := json.Unmarshal(data, &parsed)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if parsed.Error != nil && parsed.Error.Message != "" {
-			return Message{}, fmt.Errorf("openrouter request failed: %s", parsed.Error.Message)
+		if decodeErr != nil {
+			if body := responseSnippet(data); body != "" {
+				return Completion{}, fmt.Errorf("openrouter request failed: HTTP %d: %s", resp.StatusCode, body)
+			}
+			return Completion{}, fmt.Errorf("openrouter request failed: HTTP %d", resp.StatusCode)
 		}
-		return Message{}, fmt.Errorf("openrouter request failed: HTTP %d", resp.StatusCode)
+		if parsed.Error != nil && parsed.Error.Message != "" {
+			return Completion{}, fmt.Errorf("openrouter request failed: HTTP %d: %s", resp.StatusCode, parsed.Error.Message)
+		}
+		return Completion{}, fmt.Errorf("openrouter request failed: HTTP %d", resp.StatusCode)
+	}
+	if decodeErr != nil {
+		return Completion{}, fmt.Errorf("openrouter response decode failed: %w", decodeErr)
 	}
 	if parsed.Error != nil && parsed.Error.Message != "" {
-		return Message{}, fmt.Errorf("openrouter request failed: %s", parsed.Error.Message)
+		return Completion{}, fmt.Errorf("openrouter request failed: %s", parsed.Error.Message)
 	}
 	if len(parsed.Choices) == 0 {
-		return Message{}, fmt.Errorf("openrouter response had no choices")
+		return Completion{}, fmt.Errorf("openrouter response had no choices")
 	}
-	return parsed.Choices[0].Message, nil
+	choice := parsed.Choices[0]
+	return Completion{
+		Message:      choice.Message,
+		ID:           strings.TrimSpace(parsed.ID),
+		Model:        strings.TrimSpace(firstNonEmpty(parsed.Model, c.model)),
+		FinishReason: strings.TrimSpace(choice.FinishReason),
+		Usage:        append(json.RawMessage(nil), parsed.Usage...),
+	}, nil
 }
 
 func (c *Client) MaxTurns() int {
@@ -308,4 +334,25 @@ func NormalizeArguments(raw json.RawMessage) (json.RawMessage, error) {
 		return json.RawMessage(`{}`), nil
 	}
 	return json.RawMessage(encoded), nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func responseSnippet(data []byte) string {
+	text := strings.TrimSpace(string(data))
+	if text == "" {
+		return ""
+	}
+	text = strings.Join(strings.Fields(text), " ")
+	if len(text) > 512 {
+		return text[:512] + "..."
+	}
+	return text
 }

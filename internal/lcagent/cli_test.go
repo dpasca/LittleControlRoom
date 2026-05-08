@@ -2,6 +2,9 @@ package lcagent
 
 import (
 	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,5 +37,67 @@ func TestRunExecScriptedStreamJSON(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), `"type":"session_meta"`) || !strings.Contains(stdout.String(), `"type":"turn_complete"`) {
 		t.Fatalf("stdout missing events:\n%s", stdout.String())
+	}
+}
+
+func TestRunExecOpenRouterEmitsModelResponseUsage(t *testing.T) {
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
+			t.Fatalf("authorization = %q, want bearer test-key", got)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body["model"] != "deepseek/test-model" {
+			t.Fatalf("model = %q, want deepseek/test-model", body["model"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"resp_test",
+			"model":"deepseek/test-model",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"done from model"}
+			}],
+			"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--max-turns", "2",
+		"answer directly",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"model_response"`,
+		`"response_id":"resp_test"`,
+		`"finish_reason":"stop"`,
+		`"prompt_tokens":7`,
+		`"type":"turn_complete"`,
+		`"summary":"done from model"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
 	}
 }
