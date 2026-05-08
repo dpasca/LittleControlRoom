@@ -10,7 +10,7 @@ import (
 )
 
 func TestCommandRunnerIncludesStderrOnFailure(t *testing.T) {
-	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyLow)
+	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyMedium)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +27,7 @@ func TestCommandRunnerIncludesStderrOnFailure(t *testing.T) {
 }
 
 func TestCommandRunnerTimesOut(t *testing.T) {
-	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyLow)
+	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyMedium)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,5 +37,39 @@ func TestCommandRunnerTimesOut(t *testing.T) {
 	}
 	if !result.TimedOut {
 		t.Fatalf("TimedOut = false, output %q", result.Output)
+	}
+}
+
+func TestCommandRunnerSupportsArgv(t *testing.T) {
+	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyOff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := CommandRunner{Workspace: w, ArtifactDir: t.TempDir()}.RunSpec(context.Background(), CommandSpec{
+		Argv:      []string{"pwd"},
+		TimeoutMS: 1000,
+	})
+	if !result.Success {
+		t.Fatalf("argv command failed: %#v", result)
+	}
+	if !strings.Contains(result.Output, w.Root) {
+		t.Fatalf("output = %q, want workspace path", result.Output)
+	}
+}
+
+func TestCommandRunnerDeniesBroadCommandBelowMedium(t *testing.T) {
+	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := CommandRunner{Workspace: w, ArtifactDir: t.TempDir()}.RunSpec(context.Background(), CommandSpec{
+		Argv:      []string{"sh", "-c", "printf hi > out.txt"},
+		TimeoutMS: 1000,
+	})
+	if result.Success {
+		t.Fatalf("broad command succeeded below medium: %#v", result)
+	}
+	if !strings.Contains(result.Error, "below medium autonomy") {
+		t.Fatalf("error = %q", result.Error)
 	}
 }

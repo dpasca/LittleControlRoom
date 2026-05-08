@@ -64,6 +64,14 @@ func TestAutonomyPatchAndCommandPolicy(t *testing.T) {
 	if err := w.AllowCommand("rm file.txt"); err == nil {
 		t.Fatal("rm allowed with auto off, want error")
 	}
+	low := Workspace{Root: t.TempDir(), Auto: AutonomyLow}
+	if err := low.AllowCommandSpec([]string{"go", "test", "./..."}, "", false); err == nil {
+		t.Fatal("go test allowed with auto low, want medium-only denial")
+	}
+	medium := Workspace{Root: t.TempDir(), Auto: AutonomyMedium}
+	if err := medium.AllowCommandSpec([]string{"go", "test", "./..."}, "", false); err != nil {
+		t.Fatalf("go test denied with auto medium: %v", err)
+	}
 	if got := ClampTimeout(5*time.Minute, time.Second, 10*time.Second); got != 10*time.Second {
 		t.Fatalf("ClampTimeout = %s, want 10s", got)
 	}

@@ -300,15 +300,16 @@ func Tools() []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "run_command",
-				Description: "Run a bounded shell command in the workspace. Use short commands and inspect results before editing.",
+				Description: "Run a bounded command in the workspace. Prefer argv. Use shell command strings only when shell behavior is genuinely needed.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"command":    map[string]any{"type": "string"},
+						"argv":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Command argv, for example [\"go\",\"test\",\"./...\"]"},
+						"command":    map[string]any{"type": "string", "description": "Legacy shell command string. Prefer argv unless shell syntax is required."},
+						"shell":      map[string]any{"type": "boolean", "description": "Set true when using command as a shell string."},
 						"timeout_ms": map[string]any{"type": "integer", "minimum": 1, "maximum": 60000},
 					},
-					"required": []string{"command"},
 				},
 			},
 		},
@@ -379,6 +380,7 @@ func SystemPrompt(skillIndex, projectInstructions string) string {
 		"Use the provided tools for all workspace inspection, edits, plan updates, and final responses.",
 		"Do not claim to have inspected files or run verification unless a tool result shows that happened.",
 		"Prefer read_file, list_files, and search for routine inspection before reaching for shell commands.",
+		"When using run_command, prefer argv over command strings; shell commands are for shell syntax only.",
 		"Skill descriptions in this prompt are metadata only; call load_skill before relying on any skill instructions.",
 		"Use apply_patch for source edits. Keep changes focused on the user's prompt.",
 		"When done, call final_response exactly once.",

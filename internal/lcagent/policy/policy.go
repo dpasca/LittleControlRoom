@@ -113,16 +113,34 @@ func (w Workspace) AllowPatch() error {
 }
 
 func (w Workspace) AllowCommand(command string) error {
-	if strings.TrimSpace(command) == "" {
+	return w.AllowCommandSpec(nil, command, true)
+}
+
+func (w Workspace) AllowCommandSpec(argv []string, command string, shell bool) error {
+	argv = cleanArgv(argv)
+	command = strings.TrimSpace(command)
+	if len(argv) == 0 && command == "" {
 		return fmt.Errorf("command is required")
 	}
-	if w.Auto != AutonomyOff {
+	if w.Auto == AutonomyMedium {
 		return nil
+	}
+	if len(argv) > 0 {
+		if readOnlyArgvCommand(argv) {
+			return nil
+		}
+		return fmt.Errorf("command denied with --auto %s: only explicit read-only command forms are allowed below medium autonomy", w.Auto)
+	}
+	if strings.TrimSpace(command) == "" {
+		return fmt.Errorf("command is required")
 	}
 	if readOnlyShellCommand(command) {
 		return nil
 	}
-	return fmt.Errorf("command denied with --auto off: only explicit read-only command forms are allowed")
+	if shell {
+		return fmt.Errorf("shell command denied with --auto %s: only explicit read-only command forms are allowed below medium autonomy", w.Auto)
+	}
+	return fmt.Errorf("command denied with --auto %s: only explicit read-only command forms are allowed below medium autonomy", w.Auto)
 }
 
 func ClampTimeout(requested time.Duration, fallback time.Duration, max time.Duration) time.Duration {
@@ -176,4 +194,39 @@ func readOnlyShellCommand(command string) bool {
 	default:
 		return false
 	}
+}
+
+func readOnlyArgvCommand(argv []string) bool {
+	argv = cleanArgv(argv)
+	if len(argv) == 0 {
+		return false
+	}
+	name := filepath.Base(argv[0])
+	switch name {
+	case "pwd", "ls", "find", "rg", "grep", "sed", "cat", "head", "tail", "wc", "jq":
+		return true
+	case "git":
+		if len(argv) < 2 {
+			return false
+		}
+		switch argv[1] {
+		case "status", "diff", "show", "log", "branch", "rev-parse":
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
+}
+
+func cleanArgv(argv []string) []string {
+	out := make([]string, 0, len(argv))
+	for _, value := range argv {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }

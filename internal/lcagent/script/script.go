@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"lcroom/internal/lcagent/session"
 	skillcatalog "lcroom/internal/lcagent/skills"
@@ -35,8 +34,10 @@ type Action struct {
 }
 
 type commandArgs struct {
-	Command   string `json:"command"`
-	TimeoutMS int    `json:"timeout_ms"`
+	Command   string   `json:"command"`
+	Argv      []string `json:"argv"`
+	Shell     bool     `json:"shell"`
+	TimeoutMS int      `json:"timeout_ms"`
 }
 
 type patchArgs struct {
@@ -194,7 +195,12 @@ func (r Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, e
 		if err := json.Unmarshal(action.Args, &args); err != nil {
 			return tools.ToolResult{}, err
 		}
-		result = r.Command.Run(ctx, args.Command, time.Duration(args.TimeoutMS)*time.Millisecond)
+		result = r.Command.RunSpec(ctx, tools.CommandSpec{
+			Command:   args.Command,
+			Argv:      args.Argv,
+			Shell:     args.Shell || args.Command != "",
+			TimeoutMS: args.TimeoutMS,
+		})
 	case "apply_patch":
 		var args patchArgs
 		if err := json.Unmarshal(action.Args, &args); err != nil {

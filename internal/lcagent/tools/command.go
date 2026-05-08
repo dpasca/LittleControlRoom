@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,21 +24,35 @@ type CommandRunner struct {
 	ArtifactDir string
 }
 
+type CommandSpec struct {
+	Command   string
+	Argv      []string
+	Shell     bool
+	TimeoutMS int
+}
+
 func (r CommandRunner) Run(ctx context.Context, command string, timeout time.Duration) ToolResult {
-	if err := r.Workspace.AllowCommand(command); err != nil {
+	return r.RunSpec(ctx, CommandSpec{Command: command, Shell: true, TimeoutMS: int(timeout / time.Millisecond)})
+}
+
+func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult {
+	if err := r.Workspace.AllowCommandSpec(spec.Argv, spec.Command, spec.Shell); err != nil {
 		return ToolResult{Success: false, Error: err.Error()}
 	}
-	timeout = policy.ClampTimeout(timeout, defaultCommandTimeout, maxCommandTimeout)
+	timeout := policy.ClampTimeout(time.Duration(spec.TimeoutMS)*time.Millisecond, defaultCommandTimeout, maxCommandTimeout)
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
+	cmd, label, err := commandFromSpec(ctx, spec)
+	if err != nil {
+		return ToolResult{Success: false, Error: err.Error()}
+	}
 	cmd.Dir = r.Workspace.Root
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err := cmd.Run()
+	err = cmd.Run()
 	duration := time.Since(start)
 	timedOut := ctx.Err() == context.DeadlineExceeded
 	exitCode := 0
@@ -53,7 +69,7 @@ func (r CommandRunner) Run(ctx context.Context, command string, timeout time.Dur
 		Duration:     duration,
 		TimedOut:     timedOut,
 		ArtifactDir:  r.ArtifactDir,
-		CommandLabel: command,
+		CommandLabel: label,
 	})
 	return ToolResult{
 		Success:      err == nil && !timedOut,
@@ -66,6 +82,32 @@ func (r CommandRunner) Run(ctx context.Context, command string, timeout time.Dur
 		Binary:       p.Binary,
 		ArtifactPath: p.ArtifactPath,
 	}
+}
+
+func commandFromSpec(ctx context.Context, spec CommandSpec) (*exec.Cmd, string, error) {
+	if len(spec.Argv) > 0 {
+		argv := cleanArgv(spec.Argv)
+		if len(argv) == 0 {
+			return nil, "", fmt.Errorf("argv is required")
+		}
+		return exec.CommandContext(ctx, argv[0], argv[1:]...), strings.Join(argv, " "), nil
+	}
+	command := strings.TrimSpace(spec.Command)
+	if command == "" {
+		return nil, "", fmt.Errorf("command is required")
+	}
+	return exec.CommandContext(ctx, "/bin/sh", "-c", command), command, nil
+}
+
+func cleanArgv(argv []string) []string {
+	out := make([]string, 0, len(argv))
+	for _, value := range argv {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func exitCodeFromError(err error) int {
