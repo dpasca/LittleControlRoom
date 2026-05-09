@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -372,7 +373,8 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m.openSettingsBrowserAutomationPicker()
 			}
 		}
-		return m.saveSettingsFromFields()
+		m.status = "Press Ctrl+S to save settings."
+		return m, nil
 	case "ctrl+r":
 		if m.settingsSelected == settingsFieldPrivacyPatterns {
 			m.settingsRevealPrivacy = !m.settingsRevealPrivacy
@@ -443,11 +445,34 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		m.status = err.Error()
 		return m, nil
 	}
+	if err := validateSettingsLocalFiles(settings); err != nil {
+		m.err = nil
+		m.status = err.Error()
+		return m, nil
+	}
 	applyEmbeddedModelPreferencesToSettings(&settings, embeddedModelPreferencesFromSettings(m.currentSettingsBaseline()))
 	m.err = nil
 	m.settingsSaving = true
 	m.status = "Saving settings..."
 	return m, m.saveSettingsCmd(settings)
+}
+
+func validateSettingsLocalFiles(settings config.EditableSettings) error {
+	envFile := strings.TrimSpace(settings.LCAgentEnvFile)
+	if envFile == "" {
+		return nil
+	}
+	info, err := os.Stat(envFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("lcagent env file not found: %s", envFile)
+		}
+		return fmt.Errorf("lcagent env file: %w", err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("lcagent env file is a directory: %s", envFile)
+	}
+	return nil
 }
 
 func (m *Model) moveSettingsSelection(delta int) tea.Cmd {
@@ -1019,10 +1044,6 @@ func (m Model) renderSettingsActions() string {
 	if settingsFieldUsesPicker(m.settingsSelected) {
 		actions = append([]string{
 			renderDialogAction("Enter", "choose", navigateActionKeyStyle, navigateActionTextStyle),
-		}, actions...)
-	} else {
-		actions = append([]string{
-			renderDialogAction("Enter", "save", commitActionKeyStyle, commitActionTextStyle),
 		}, actions...)
 	}
 	return strings.Join([]string{

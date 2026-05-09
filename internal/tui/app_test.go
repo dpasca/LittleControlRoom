@@ -20208,8 +20208,11 @@ func TestSettingsModalRendersColoredActionLegend(t *testing.T) {
 	_ = m.setSettingsSelection(0)
 
 	rendered := ansi.Strip(m.renderSettingsContent(72, 18))
-	if !strings.Contains(rendered, "Enter") || !strings.Contains(rendered, "save") {
-		t.Fatalf("settings modal should render Enter save action: %q", rendered)
+	if !strings.Contains(rendered, "Ctrl+S") || !strings.Contains(rendered, "save") {
+		t.Fatalf("settings modal should render Ctrl+S save action: %q", rendered)
+	}
+	if strings.Contains(rendered, "Enter") {
+		t.Fatalf("settings modal should not render Enter for plain text fields: %q", rendered)
 	}
 	if !strings.Contains(rendered, "Tab") || !strings.Contains(rendered, "next") {
 		t.Fatalf("settings modal should render Tab next action: %q", rendered)
@@ -20946,7 +20949,7 @@ func TestBrowserAttentionBrowserSettingsShortcutOpensBrowserSection(t *testing.T
 	}
 }
 
-func TestSettingsEnterSavesConfigAndClosesModal(t *testing.T) {
+func TestSettingsCtrlSSavesConfigAndClosesModal(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -20967,13 +20970,13 @@ func TestSettingsEnterSavesConfigAndClosesModal(t *testing.T) {
 	m.settingsFields[settingsFieldStuckThreshold].input.SetValue("3h")
 	m.settingsFields[settingsFieldInterval].input.SetValue("45s")
 
-	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyCtrlS})
 	got := updated.(Model)
 	if cmd == nil {
 		t.Fatalf("expected save command")
 	}
 	if !got.settingsSaving {
-		t.Fatalf("settings enter should mark saving in progress")
+		t.Fatalf("settings ctrl+s should mark saving in progress")
 	}
 	if got.status != "Saving settings..." {
 		t.Fatalf("status = %q, want saving message", got.status)
@@ -20997,6 +21000,28 @@ func TestSettingsEnterSavesConfigAndClosesModal(t *testing.T) {
 	text := string(raw)
 	if !strings.Contains(text, "openai_api_key = \"sk-test-example\"") || !strings.Contains(text, "include_paths = [") || !strings.Contains(text, "exclude_paths = [") || !strings.Contains(text, "exclude_project_patterns = [") || !strings.Contains(text, "codex_launch_preset = \"full-auto\"") || !strings.Contains(text, "interval = \"45s\"") {
 		t.Fatalf("saved config missing edited values: %q", text)
+	}
+}
+
+func TestSettingsEnterOnTextFieldDoesNotSave(t *testing.T) {
+	m := Model{
+		settingsMode:   true,
+		settingsFields: newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
+		width:          100,
+		height:         24,
+	}
+	_ = m.setSettingsSelection(settingsFieldOpenAIAPIKey)
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("settings enter on text field should not save")
+	}
+	if got.settingsSaving {
+		t.Fatalf("settings enter on text field should not mark saving")
+	}
+	if got.status != "Press Ctrl+S to save settings." {
+		t.Fatalf("status = %q, want Ctrl+S hint", got.status)
 	}
 }
 
@@ -21066,7 +21091,7 @@ func TestSettingsBrowserAutomationMapsToManagedPolicy(t *testing.T) {
 	}
 }
 
-func TestSettingsSavingBlocksRepeatEnter(t *testing.T) {
+func TestSettingsSavingBlocksRepeatCtrlS(t *testing.T) {
 	m := Model{
 		settingsMode:   true,
 		settingsSaving: true,
@@ -21077,10 +21102,10 @@ func TestSettingsSavingBlocksRepeatEnter(t *testing.T) {
 	}
 	_ = m.setSettingsSelection(0)
 
-	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyCtrlS})
 	got := updated.(Model)
 	if cmd != nil {
-		t.Fatalf("settings enter should not queue another save while saving")
+		t.Fatalf("settings ctrl+s should not queue another save while saving")
 	}
 	if !got.settingsSaving {
 		t.Fatalf("settings saving flag should stay true until the save completes")
@@ -21090,7 +21115,7 @@ func TestSettingsSavingBlocksRepeatEnter(t *testing.T) {
 	}
 }
 
-func TestSettingsEnterShowsValidationError(t *testing.T) {
+func TestSettingsCtrlSShowsValidationError(t *testing.T) {
 	m := Model{
 		settingsMode:   true,
 		settingsFields: newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
@@ -21102,7 +21127,7 @@ func TestSettingsEnterShowsValidationError(t *testing.T) {
 	m.settingsFields[settingsFieldActiveThreshold].input.SetValue("20m")
 	m.settingsFields[settingsFieldStuckThreshold].input.SetValue("10m")
 
-	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyCtrlS})
 	got := updated.(Model)
 	if cmd != nil {
 		t.Fatalf("expected no save command when validation fails")
@@ -21112,6 +21137,36 @@ func TestSettingsEnterShowsValidationError(t *testing.T) {
 	}
 	if !got.settingsMode {
 		t.Fatalf("settings mode should stay open after validation failure")
+	}
+}
+
+func TestSettingsCtrlSRejectsMissingLCAgentEnvFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	missingPath := filepath.Join(home, "missing.env")
+
+	m := Model{
+		settingsMode:   true,
+		settingsFields: newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
+		width:          100,
+		height:         24,
+	}
+	_ = m.setSettingsSelection(settingsFieldLCAgentEnvFile)
+	m.settingsFields[settingsFieldLCAgentEnvFile].input.SetValue(missingPath)
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyCtrlS})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("expected no save command for missing env file")
+	}
+	if got.settingsSaving {
+		t.Fatalf("settings should not start saving for missing env file")
+	}
+	if got.status != "lcagent env file not found: "+missingPath {
+		t.Fatalf("status = %q, want missing env file message", got.status)
+	}
+	if !got.settingsMode {
+		t.Fatalf("settings mode should stay open after missing env file validation failure")
 	}
 }
 
@@ -21137,9 +21192,9 @@ func TestSettingsSavePreservesEmbeddedModelPreferences(t *testing.T) {
 	_ = m.setSettingsSelection(settingsFieldOpenAIAPIKey)
 	m.settingsFields[settingsFieldOpenAIAPIKey].input.SetValue("sk-test-example")
 
-	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyCtrlS})
 	if cmd == nil {
-		t.Fatalf("expected save command from settings enter")
+		t.Fatalf("expected save command from settings ctrl+s")
 	}
 	msg := cmd()
 	savedMsg, ok := msg.(settingsSavedMsg)
