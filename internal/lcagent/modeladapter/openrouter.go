@@ -13,7 +13,10 @@ import (
 	"time"
 )
 
-const DefaultOpenRouterModel = "deepseek/deepseek-v4-pro"
+const (
+	DefaultOpenRouterModel    = "deepseek/deepseek-v4-pro"
+	DefaultOpenRouterMaxTurns = 48
+)
 
 type OpenRouterConfig struct {
 	APIKey     string
@@ -110,7 +113,7 @@ func NewOpenRouterClient(cfg OpenRouterConfig) (*Client, error) {
 	}
 	maxTurns := cfg.MaxTurns
 	if maxTurns <= 0 {
-		maxTurns = 16
+		maxTurns = DefaultOpenRouterMaxTurns
 	}
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
@@ -129,9 +132,11 @@ func (c *Client) Complete(ctx context.Context, messages []Message, tools []ToolD
 	body := map[string]any{
 		"model":       c.model,
 		"messages":    messages,
-		"tools":       tools,
-		"tool_choice": "auto",
 		"temperature": 0.2,
+	}
+	if len(tools) > 0 {
+		body["tools"] = tools
+		body["tool_choice"] = "auto"
 	}
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(body); err != nil {
@@ -194,7 +199,7 @@ func (c *Client) Complete(ctx context.Context, messages []Message, tools []ToolD
 
 func (c *Client) MaxTurns() int {
 	if c == nil || c.maxTurns <= 0 {
-		return 16
+		return DefaultOpenRouterMaxTurns
 	}
 	return c.maxTurns
 }

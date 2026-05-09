@@ -133,6 +133,20 @@ func TestOpenRouterClientSendsToolRequestAndParsesResponse(t *testing.T) {
 	}
 }
 
+func TestOpenRouterClientDefaultsMaxTurns(t *testing.T) {
+	t.Setenv("OPENROUTER_API_KEY", "key")
+	client, err := NewOpenRouterClient(OpenRouterConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := client.MaxTurns(); got != DefaultOpenRouterMaxTurns {
+		t.Fatalf("MaxTurns() = %d, want %d", got, DefaultOpenRouterMaxTurns)
+	}
+	if got := (*Client)(nil).MaxTurns(); got != DefaultOpenRouterMaxTurns {
+		t.Fatalf("nil MaxTurns() = %d, want %d", got, DefaultOpenRouterMaxTurns)
+	}
+}
+
 func TestOpenRouterClientReportsHTTPStatusForNonJSONError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "upstream temporarily unavailable", http.StatusBadGateway)

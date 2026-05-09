@@ -3,6 +3,7 @@ package lcagent
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -396,6 +397,88 @@ func TestRunExecOpenRouterAbortsProviderMarkupWithoutStructuredToolCalls(t *test
 	}
 	if !strings.Contains(stderr.String(), "provider tool-call markup") {
 		t.Fatalf("stderr missing abort reason: %s", stderr.String())
+	}
+}
+
+func TestRunExecOpenRouterFinalizesGracefullyAtMaxTurns(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("alpha\nbeta\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if requests <= 2 {
+			if _, ok := body["tools"]; !ok {
+				t.Fatalf("tool loop request %d missing tools: %#v", requests, body)
+			}
+			_, _ = w.Write([]byte(`{
+				"id":"resp_tool",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_read","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"README.md\",\"limit\":1}"}}]}
+				}]
+			}`))
+			return
+		}
+		if _, ok := body["tools"]; ok {
+			t.Fatalf("final handoff request should not include tools: %#v", body)
+		}
+		messages, _ := body["messages"].([]any)
+		if len(messages) == 0 || !strings.Contains(fmt.Sprint(messages[len(messages)-1]), "Do not call more tools") {
+			t.Fatalf("final handoff request missing no-tools prompt: %#v", body)
+		}
+		_, _ = w.Write([]byte(`{
+			"id":"resp_handoff",
+			"model":"deepseek/test-model",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"Turn budget reached. I read README.md and found alpha. No files changed. Verification not run. Ask me to continue from README.md."}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--max-turns", "2",
+		"keep reading",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"turn_complete"`,
+		`Turn budget reached`,
+		`"turn":3`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, `"type":"turn_aborted"`) || strings.Contains(stderr.String(), "maximum turns") {
+		t.Fatalf("max turns should finalize, not abort; stderr=%s stdout=%s", stderr.String(), text)
+	}
+	if requests != 3 {
+		t.Fatalf("requests = %d, want 3", requests)
 	}
 }
 

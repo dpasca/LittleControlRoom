@@ -72,7 +72,7 @@ printf '%s\n' '{"type":"turn_complete"}'
 	if snapshot.Model != "deepseek/test-model" || snapshot.ModelProvider != "openrouter" {
 		t.Fatalf("model = %q/%q, want deepseek/test-model/openrouter", snapshot.ModelProvider, snapshot.Model)
 	}
-	for _, want := range []string{"please run the fake agent", "Tool call: run_command", "command ok", "completed: exercise fake agent", "fake lcagent response", "Files touched:\nREADME.md"} {
+	for _, want := range []string{"please run the fake agent", "Tool run_command running", "command ok", "completed: exercise fake agent", "fake lcagent response", "Files touched:\nREADME.md"} {
 		if !strings.Contains(snapshot.Transcript, want) {
 			t.Fatalf("transcript missing %q:\n%s", want, snapshot.Transcript)
 		}
@@ -134,7 +134,7 @@ func TestLCAgentSessionReplaysRequestedArtifact(t *testing.T) {
 			"tool":       "read_file",
 			"result": map[string]any{
 				"success": true,
-				"output":  "hello from README",
+				"output":  "file: README.md\nlines: 1-1\n\n1 | hello from README\n",
 			},
 		},
 		{
@@ -194,8 +194,8 @@ func TestLCAgentSessionReplaysRequestedArtifact(t *testing.T) {
 	for _, want := range []string{
 		"Loaded LCAgent session " + sessionID + " from disk",
 		"summarize this repo",
-		"Tool call: read_file",
-		"hello from README",
+		"Tool read_file running",
+		"README.md lines 1-1",
 		"done: inspect repo",
 		"Replay answer",
 		"Files touched:\nREADME.md",
@@ -203,6 +203,9 @@ func TestLCAgentSessionReplaysRequestedArtifact(t *testing.T) {
 		if !strings.Contains(snapshot.Transcript, want) {
 			t.Fatalf("transcript missing %q:\n%s", want, snapshot.Transcript)
 		}
+	}
+	if strings.Contains(snapshot.Transcript, "1 | hello from README") {
+		t.Fatalf("transcript should summarize read_file contents instead of embedding them:\n%s", snapshot.Transcript)
 	}
 }
 

@@ -64,7 +64,7 @@ func runExec(args []string, stdout io.Writer) error {
 	fs.StringVar(&provider, "provider", "scripted", "provider: scripted or openrouter")
 	fs.StringVar(&model, "model", "", "model name")
 	fs.StringVar(&envFile, "env-file", "", "optional dotenv file for provider credentials")
-	fs.IntVar(&maxTurns, "max-turns", 16, "maximum model turns for provider loops")
+	fs.IntVar(&maxTurns, "max-turns", modeladapter.DefaultOpenRouterMaxTurns, "maximum model turns for provider loops")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -284,13 +284,49 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 			}
 		}
 	}
-	err = fmt.Errorf("openrouter model loop exceeded maximum turns")
-	_ = writer.Write(session.Event{
-		"type":       "turn_aborted",
-		"session_id": runner.SessionID,
-		"reason":     err.Error(),
+	return finalizeOpenRouterAfterMaxTurns(ctx, writer, runner, client, messages)
+}
+
+func finalizeOpenRouterAfterMaxTurns(ctx context.Context, writer *session.Writer, runner script.Runner, client *modeladapter.Client, messages []modeladapter.Message) error {
+	maxTurns := client.MaxTurns()
+	messages = append(messages, modeladapter.Message{
+		Role:    "user",
+		Content: openRouterMaxTurnsFinalPrompt(maxTurns),
 	})
-	return err
+	completion, err := client.Complete(ctx, messages, nil)
+	if err != nil {
+		return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("openrouter model loop exceeded maximum turns; final handoff failed: %w", err))
+	}
+	msg := completion.Message
+	if err := writer.Write(modelResponseEvent(runner.SessionID, maxTurns+1, completion, len(msg.ToolCalls))); err != nil {
+		return err
+	}
+	sanitizedContent, strippedProviderMarkup := modeladapter.SanitizeAssistantContent(msg.Content)
+	if len(msg.ToolCalls) > 0 {
+		return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("openrouter model loop exceeded maximum turns; final handoff tried to call tools"))
+	}
+	if strippedProviderMarkup && strings.TrimSpace(sanitizedContent) == "" {
+		return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("openrouter model loop exceeded maximum turns; final handoff contained only provider tool-call markup"))
+	}
+	sanitizedContent = strings.TrimSpace(sanitizedContent)
+	if sanitizedContent == "" {
+		return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("openrouter model loop exceeded maximum turns; final handoff was empty"))
+	}
+	return runner.Final(script.Action{
+		Type:    "final_response",
+		Summary: sanitizedContent,
+	})
+}
+
+func openRouterMaxTurnsFinalPrompt(maxTurns int) string {
+	return fmt.Sprintf(`You have reached the configured maximum of %d model turns.
+
+Do not call more tools. Produce a concise handoff for the user instead:
+- Say that the turn budget was reached.
+- Summarize what you completed or learned from the available tool results.
+- List any files you believe were changed, or say none/unknown.
+- List verification already run, or say not run.
+- State the next concrete step the user can ask for to continue.`, maxTurns)
 }
 
 func abortOpenRouterRun(writer *session.Writer, sessionID string, err error) error {

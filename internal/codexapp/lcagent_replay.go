@@ -184,7 +184,7 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			replay.appendEntry(TranscriptUser, rawJSONString(event["message"]))
 		case "tool_call":
 			tool := rawJSONString(event["tool"])
-			replay.appendEntry(TranscriptTool, "Tool call: "+firstNonEmpty(tool, "unknown"))
+			replay.appendEntry(TranscriptTool, lcagentToolCallText(tool, event["args"]))
 		case "tool_result":
 			tool := rawJSONString(event["tool"])
 			replay.appendEntry(TranscriptTool, lcagentToolResultText(tool, event["result"]))

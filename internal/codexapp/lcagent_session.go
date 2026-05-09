@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -349,7 +350,7 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		s.mu.Unlock()
 	case "tool_call":
 		tool := rawJSONString(event["tool"])
-		s.appendAsync(TranscriptTool, "Tool call: "+firstNonEmpty(tool, "unknown"))
+		s.appendAsync(TranscriptTool, lcagentToolCallText(tool, event["args"]))
 	case "tool_result":
 		tool := rawJSONString(event["tool"])
 		text := lcagentToolResultText(tool, event["result"])
@@ -579,26 +580,280 @@ func rawJSONString(raw json.RawMessage) string {
 	return strings.TrimSpace(value)
 }
 
+func lcagentToolCallText(tool string, raw json.RawMessage) string {
+	tool = firstNonEmpty(strings.TrimSpace(tool), "unknown")
+	summary := lcagentToolArgsSummary(tool, raw)
+	if summary != "" {
+		return fmt.Sprintf("Tool %s running: %s", tool, summary)
+	}
+	return fmt.Sprintf("Tool %s running", tool)
+}
+
 func lcagentToolResultText(tool string, raw json.RawMessage) string {
 	var result struct {
-		Success bool   `json:"success"`
-		Output  string `json:"output"`
-		Error   string `json:"error"`
+		Success      bool          `json:"success"`
+		Output       string        `json:"output"`
+		Error        string        `json:"error"`
+		ExitCode     int           `json:"exit_code"`
+		Duration     time.Duration `json:"duration"`
+		TimedOut     bool          `json:"timed_out"`
+		Truncated    bool          `json:"truncated"`
+		Binary       bool          `json:"binary"`
+		ArtifactPath string        `json:"artifact_path"`
+		FilesTouched []string      `json:"files_touched"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil {
-		return "Tool result: " + firstNonEmpty(tool, "unknown")
+		return "Tool " + firstNonEmpty(tool, "unknown") + " completed"
 	}
-	label := "Tool result"
-	if strings.TrimSpace(tool) != "" {
-		label += ": " + strings.TrimSpace(tool)
+	tool = firstNonEmpty(strings.TrimSpace(tool), "unknown")
+	status := "completed"
+	if result.TimedOut {
+		status = "timed out"
+	} else if !result.Success {
+		status = "failed"
 	}
-	if result.Output != "" {
-		return label + "\n" + strings.TrimSpace(result.Output)
+	summary := lcagentToolResultSummary(tool, result.Output, result.Error, result.ExitCode, result.Duration, result.Truncated, result.Binary, result.ArtifactPath, result.FilesTouched)
+	if summary != "" {
+		return fmt.Sprintf("Tool %s %s: %s", tool, status, summary)
 	}
-	if result.Error != "" {
-		return label + "\n" + strings.TrimSpace(result.Error)
+	return fmt.Sprintf("Tool %s %s", tool, status)
+}
+
+func lcagentToolArgsSummary(tool string, raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
 	}
-	return label
+	switch strings.TrimSpace(tool) {
+	case "read_file":
+		var args struct {
+			Path   string `json:"path"`
+			Offset int    `json:"offset"`
+			Limit  int    `json:"limit"`
+		}
+		if json.Unmarshal(raw, &args) == nil {
+			parts := []string{strings.TrimSpace(args.Path)}
+			if args.Offset > 0 || args.Limit > 0 {
+				lineSpec := "lines"
+				if args.Offset > 0 && args.Limit > 0 {
+					lineSpec = fmt.Sprintf("lines %d-%d", args.Offset, args.Offset+args.Limit-1)
+				} else if args.Offset > 0 {
+					lineSpec = fmt.Sprintf("from line %d", args.Offset)
+				} else {
+					lineSpec = fmt.Sprintf("%d lines", args.Limit)
+				}
+				parts = append(parts, lineSpec)
+			}
+			return strings.Join(nonEmptyStrings(parts), " ")
+		}
+	case "list_files":
+		var args struct {
+			Path       string `json:"path"`
+			Glob       string `json:"glob"`
+			MaxEntries int    `json:"max_entries"`
+		}
+		if json.Unmarshal(raw, &args) == nil {
+			parts := []string{firstNonEmpty(args.Path, ".")}
+			if strings.TrimSpace(args.Glob) != "" {
+				parts = append(parts, "glob "+strings.TrimSpace(args.Glob))
+			}
+			return strings.Join(nonEmptyStrings(parts), " ")
+		}
+	case "search":
+		var args struct {
+			Query    string `json:"query"`
+			Path     string `json:"path"`
+			FileGlob string `json:"file_glob"`
+		}
+		if json.Unmarshal(raw, &args) == nil {
+			parts := []string{quoteIfSpaced(args.Query)}
+			if strings.TrimSpace(args.Path) != "" {
+				parts = append(parts, "in "+strings.TrimSpace(args.Path))
+			}
+			if strings.TrimSpace(args.FileGlob) != "" {
+				parts = append(parts, "glob "+strings.TrimSpace(args.FileGlob))
+			}
+			return strings.Join(nonEmptyStrings(parts), " ")
+		}
+	case "load_skill":
+		var args struct {
+			Name string `json:"name"`
+		}
+		if json.Unmarshal(raw, &args) == nil {
+			return strings.TrimSpace(args.Name)
+		}
+	case "run_command":
+		var args struct {
+			Command string   `json:"command"`
+			Argv    []string `json:"argv"`
+		}
+		if json.Unmarshal(raw, &args) == nil {
+			if strings.TrimSpace(args.Command) != "" {
+				return strings.TrimSpace(args.Command)
+			}
+			return strings.Join(nonEmptyStrings(args.Argv), " ")
+		}
+	}
+	return ""
+}
+
+func lcagentToolResultSummary(tool, output, errText string, exitCode int, duration time.Duration, truncated, binary bool, artifactPath string, filesTouched []string) string {
+	if strings.TrimSpace(errText) != "" {
+		return strings.TrimSpace(errText)
+	}
+	switch strings.TrimSpace(tool) {
+	case "read_file":
+		return lcagentFileReadSummary(output, truncated)
+	case "list_files":
+		return lcagentListFilesSummary(output, truncated)
+	case "search":
+		return lcagentSearchSummary(output, truncated)
+	case "run_command":
+		return lcagentCommandResultSummary(output, exitCode, duration, truncated, binary, artifactPath)
+	case "apply_patch":
+		if len(filesTouched) > 0 {
+			return fmt.Sprintf("touched %s", strings.Join(filesTouched, ", "))
+		}
+		return firstOutputLine(output)
+	case "load_skill":
+		return lcagentLoadedSkillSummary(output, truncated)
+	default:
+		return firstOutputLine(output)
+	}
+}
+
+func lcagentFileReadSummary(output string, truncated bool) string {
+	values := lcagentOutputHeaderValues(output)
+	linePart := ""
+	if values["lines"] != "" {
+		linePart = "lines " + values["lines"]
+	}
+	summary := strings.Join(nonEmptyStrings([]string{values["file"], linePart}), " ")
+	if truncated {
+		summary = strings.TrimSpace(summary + " truncated")
+	}
+	return summary
+}
+
+func lcagentListFilesSummary(output string, truncated bool) string {
+	values := lcagentOutputHeaderValues(output)
+	parts := []string{values["path"]}
+	if values["glob"] != "" {
+		parts = append(parts, "glob "+values["glob"])
+	}
+	if values["entries"] != "" {
+		parts = append(parts, values["entries"]+" entries")
+	}
+	if truncated {
+		parts = append(parts, "truncated")
+	}
+	return strings.Join(nonEmptyStrings(parts), " ")
+}
+
+func lcagentSearchSummary(output string, truncated bool) string {
+	values := lcagentOutputHeaderValues(output)
+	parts := []string{}
+	if values["query"] != "" {
+		parts = append(parts, quoteIfSpaced(values["query"]))
+	}
+	if values["path"] != "" {
+		parts = append(parts, "in "+values["path"])
+	}
+	if values["matches"] != "" {
+		parts = append(parts, values["matches"]+" matches")
+	}
+	if truncated {
+		parts = append(parts, "truncated")
+	}
+	return strings.Join(nonEmptyStrings(parts), " ")
+}
+
+func lcagentCommandResultSummary(output string, exitCode int, duration time.Duration, truncated, binary bool, artifactPath string) string {
+	if binary {
+		return "binary output suppressed"
+	}
+	parts := []string{}
+	if outputLine := firstNonMetadataOutputLine(output); outputLine != "" {
+		parts = append(parts, outputLine)
+	}
+	if exitCode != 0 {
+		parts = append(parts, fmt.Sprintf("exit %d", exitCode))
+	}
+	if duration > 0 {
+		parts = append(parts, duration.Round(time.Millisecond).String())
+	}
+	if truncated {
+		if strings.TrimSpace(artifactPath) != "" {
+			parts = append(parts, "truncated; full output saved")
+		} else {
+			parts = append(parts, "truncated")
+		}
+	}
+	return strings.Join(nonEmptyStrings(parts), " | ")
+}
+
+func lcagentLoadedSkillSummary(output string, truncated bool) string {
+	values := lcagentOutputHeaderValues(output)
+	summary := strings.Join(nonEmptyStrings([]string{values["skill"], values["source"]}), " from ")
+	if truncated {
+		summary = strings.TrimSpace(summary + " truncated")
+	}
+	return summary
+}
+
+func lcagentOutputHeaderValues(output string) map[string]string {
+	values := map[string]string{}
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			break
+		}
+		key, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		values[strings.TrimSpace(key)] = strings.TrimSpace(value)
+	}
+	return values
+}
+
+func firstOutputLine(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+func firstNonMetadataOutputLine(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "[exit:") || strings.HasPrefix(line, "--- output truncated") || strings.HasPrefix(line, "Full output:") || strings.HasPrefix(line, "Explore:") {
+			continue
+		}
+		return line
+	}
+	return ""
+}
+
+func nonEmptyStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func quoteIfSpaced(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || (!strings.ContainsAny(value, " \t\n") && !strings.Contains(value, `"`)) {
+		return value
+	}
+	return strconv.Quote(value)
 }
 
 func lcagentPlanText(raw json.RawMessage) string {

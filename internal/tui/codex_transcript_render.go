@@ -388,11 +388,11 @@ func toolCategoryColor(toolName string) (accent lipgloss.Color, symbol string) {
 	switch {
 	case lower == "bash" || lower == "shell" || lower == "command" || lower == "execute":
 		return lipgloss.Color("111"), "$" // blue
-	case lower == "read" || lower == "cat" || lower == "view":
+	case lower == "read" || lower == "read_file" || lower == "cat" || lower == "view":
 		return lipgloss.Color("179"), "→" // yellow/amber
-	case lower == "write" || lower == "edit" || lower == "patch" || lower == "apply_diff":
+	case lower == "write" || lower == "edit" || lower == "patch" || lower == "apply_patch" || lower == "apply_diff":
 		return lipgloss.Color("120"), "+" // green
-	case lower == "grep" || lower == "search" || lower == "find" || lower == "glob" || lower == "rg":
+	case lower == "grep" || lower == "search" || lower == "find" || lower == "glob" || lower == "rg" || lower == "list_files":
 		return lipgloss.Color("81"), "?" // cyan
 	case strings.Contains(lower, "/"):
 		return lipgloss.Color("141"), "◆" // purple for MCP (server/tool format)
