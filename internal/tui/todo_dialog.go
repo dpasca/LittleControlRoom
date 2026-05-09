@@ -1654,7 +1654,7 @@ func (m Model) renderTodoWorktreeEditorOverlay(body string, bodyW, bodyH int) st
 		"",
 		renderHelpPanelActionRow(
 			renderDialogAction("Tab/↑↓", "switch", navigateActionKeyStyle, navigateActionTextStyle),
-			renderDialogAction("Ctrl+S", "save", commitActionKeyStyle, commitActionTextStyle),
+			renderDialogAction("ctrl+s", "save", commitActionKeyStyle, commitActionTextStyle),
 			renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
 		),
 	}

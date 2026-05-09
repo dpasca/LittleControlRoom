@@ -267,7 +267,7 @@ func TestScreenshotSettingsRendersLocalBackendFields(t *testing.T) {
 		height:       31,
 		homeDir:      "/Users/davide",
 		settingsMode: true,
-		status:       "Editing settings. Enter to save, Esc to cancel",
+		status:       "Editing settings. ctrl+s to save, Esc to cancel",
 		projects: []model.ProjectSummary{
 			{Name: "LittleControlRoom", Path: "/tmp/LittleControlRoom", PresentOnDisk: true},
 		},

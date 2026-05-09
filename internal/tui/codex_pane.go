@@ -1722,7 +1722,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, refreshCmd
 		}
 		if snapshot.Phase == codexapp.SessionPhaseStalled {
-			m.status = label + " looks stuck or disconnected. Interrupt the current turn with Ctrl+C or use /reconnect before sending another prompt."
+			m.status = label + " looks stuck or disconnected. Interrupt the current turn with ctrl+c or use /reconnect before sending another prompt."
 			return m, refreshCmd
 		}
 		m.clearCodexDraft(m.codexVisibleProject)
@@ -2655,7 +2655,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 	case snapshot.PendingToolInput != nil:
 		actions = append(actions,
 			footerPrimaryAction("Enter", "answer"),
-			footerExitAction("Ctrl+C", "close"),
+			footerExitAction("ctrl+c", "close"),
 			footerHideAction("Esc", "hide"),
 			footerLowAction("Alt+C", "copy menu"),
 		)
@@ -2669,12 +2669,12 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			actions = append(actions, footerNavAction("Tab", "next"))
 		}
 		if managedBrowserCurrentPageURL(snapshot) != "" && strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" {
-			actions = append(actions, footerNavAction("Ctrl+O", m.managedBrowserCurrentPageFooterLabel(snapshot)))
+			actions = append(actions, footerNavAction("ctrl+o", m.managedBrowserCurrentPageFooterLabel(snapshot)))
 		}
 	case snapshot.PendingElicitation != nil && snapshot.PendingElicitation.Mode == codexapp.ElicitationModeForm:
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "accept"),
-			footerExitAction("Ctrl+C", "close"),
+			footerExitAction("ctrl+c", "close"),
 			footerHideAction("Esc", "hide"),
 			footerExitAction("d", "decline"),
 			footerLowAction("c", "cancel"),
@@ -2687,7 +2687,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		actions = []footerAction{
 			footerPrimaryAction("O", "show browser"),
 			footerPrimaryAction("Enter", "done/accept"),
-			footerExitAction("Ctrl+C", "close"),
+			footerExitAction("ctrl+c", "close"),
 			footerHideAction("Esc", "hide"),
 			footerExitAction("d", "decline"),
 			footerLowAction("c", "cancel"),
@@ -2695,7 +2695,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 	case snapshot.PendingElicitation != nil:
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "accept"),
-			footerExitAction("Ctrl+C", "close"),
+			footerExitAction("ctrl+c", "close"),
 			footerHideAction("Esc", "hide"),
 			footerExitAction("d", "decline"),
 			footerLowAction("c", "cancel"),
@@ -2703,7 +2703,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 	case m.codexSlashActive():
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "run"),
-			footerExitAction("Ctrl+C", "close"),
+			footerExitAction("ctrl+c", "close"),
 			footerHideAction("Esc", "hide"),
 			footerNavAction("Tab", "complete"),
 			footerNavAction("Shift+Tab", "previous"),
@@ -2739,10 +2739,10 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 	case snapshot.Busy:
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "steer"),
-			footerExitAction("Ctrl+C", "interrupt"),
+			footerExitAction("ctrl+c", "interrupt"),
 			footerHideAction("Esc", "hide"),
 			footerNavAction("Alt+Enter", "newline"),
-			footerNavAction("Ctrl+V", "image"),
+			footerNavAction("ctrl+v", "image"),
 			footerLowAction("Alt+C", "copy menu"),
 		}
 	case snapshot.Closed:
@@ -2753,14 +2753,14 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 	default:
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "send"),
-			footerExitAction("Ctrl+C", "close"),
+			footerExitAction("ctrl+c", "close"),
 			footerHideAction("Esc", "hide"),
 			footerNavAction("Alt+Enter", "newline"),
-			footerNavAction("Ctrl+V", "image"),
+			footerNavAction("ctrl+v", "image"),
 			footerLowAction("Alt+C", "copy menu"),
 		}
 		if managedBrowserCurrentPageURL(snapshot) != "" && strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" {
-			actions = append(actions, footerNavAction("Ctrl+O", m.managedBrowserCurrentPageFooterLabel(snapshot)))
+			actions = append(actions, footerNavAction("ctrl+o", m.managedBrowserCurrentPageFooterLabel(snapshot)))
 		}
 	}
 	if len(m.cachedCodexOpenTargetsForPicker(snapshot)) > 0 && codexArtifactPickerAllowed(snapshot) {
@@ -2799,7 +2799,7 @@ func (m Model) managedBrowserCurrentPageHint(snapshot codexapp.Snapshot) string 
 			return ""
 		}
 	}
-	return "Press Ctrl+O to reveal the managed browser window for this same session."
+	return "Press ctrl+o to reveal the managed browser window for this same session."
 }
 
 func (m Model) managedBrowserCurrentPageFooterLabel(snapshot codexapp.Snapshot) string {

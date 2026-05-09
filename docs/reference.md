@@ -187,11 +187,11 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 While the embedded Codex, Claude Code, or OpenCode pane is visible:
 
 - `Enter` sends a prompt when idle and steers the active turn when the embedded session is busy
-- `Alt+Enter` or `Ctrl+J` inserts a newline
-- `Ctrl+V` attaches a clipboard image when available
+- `Alt+Enter` or `ctrl+j` inserts a newline
+- `ctrl+v` attaches a clipboard image when available
 - `Backspace` on an inline `[Image #n]` marker removes that attachment
 - `Alt+L` cycles dense command, file, and tool transcript blocks through hidden output, preview, and full detail
-- `Ctrl+C` interrupts the active turn when busy and closes the session when idle
+- `ctrl+c` interrupts the active turn when busy and closes the session when idle
 
 While the diff screen is visible:
 

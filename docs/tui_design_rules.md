@@ -16,11 +16,15 @@ Do not create one-off action colors in feature code. Use `uistyle.RenderDialogAc
 
 Footer hints should mirror these same semantic tones in their compact form. For example, `Esc close` should use the cancel tone, not a neutral hint tone.
 
+Write control-key shortcuts with lowercase modifiers, for example `ctrl+s`, so labels do not imply the Shift key. Keep this spelling consistent between action chips, footers, and status text.
+
 ## Modal Shape
 
 - Prefer the existing dialog panel treatment for command palettes, pickers, setup prompts, and confirmations.
 - Keep action hints in the same order where possible: primary, navigation/secondary, cancel.
 - Use `Esc` consistently for closing or backing out of a modal, and render it with the cancel tone.
+- Do not use plain `Enter` as a hidden save alias in broad settings forms. Reserve it for row choice, picker/sub-dialog entry, or an explicitly shown primary action.
+- Optional external paths may warn when missing, but should not prevent unrelated settings from being saved. The feature that actually uses the path should fail clearly at launch/use time.
 
 ## Rows
 

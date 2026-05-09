@@ -112,7 +112,7 @@ func (m Model) applySettingsBossChatBackendPickerSelection(option settingsBossCh
 	if len(m.settingsFields) > settingsFieldBossChatBackend {
 		m.settingsFields[settingsFieldBossChatBackend].input.SetValue(string(option.Value))
 	}
-	m.closeSettingsBossChatBackendPicker(fmt.Sprintf("Boss chat set to %s. Press Ctrl+S to save.", option.Label))
+	m.closeSettingsBossChatBackendPicker(fmt.Sprintf("Boss chat set to %s. Press ctrl+s to save.", option.Label))
 	return m, nil
 }
 

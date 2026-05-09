@@ -550,6 +550,10 @@ func New(ctx context.Context, svc *service.Service) Model {
 	runtimeViewport := viewport.New(0, 0)
 	codexViewport := viewport.New(0, 0)
 	initialSettings := config.EditableSettingsFromAppConfig(svc.Config())
+	initialStatus := initialProjectsStatus
+	if warning := settingsLocalFileWarning(initialSettings); warning != "" {
+		initialStatus = warning
+	}
 	homeDir, _ := os.UserHomeDir()
 
 	return Model{
@@ -558,7 +562,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		busCh:                      busCh,
 		unsub:                      unsub,
 		loading:                    true,
-		status:                     initialProjectsStatus,
+		status:                     initialStatus,
 		commandInput:               commandInput,
 		codexInput:                 codexInput,
 		codexDrafts:                make(map[string]codexDraft),
@@ -1954,6 +1958,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.hideReasoningSections = msg.settings.HideReasoningSections
 		m.settingsMode = false
 		m.status = fmt.Sprintf("Settings saved to %s. Filters, API keys, local endpoint/model overrides, Codex launch mode, and browser automation policy are applying in the background now; the running scheduler keeps its current timing until the next launch of %s.", msg.path, brand.CLIName)
+		if warning := settingsLocalFileWarning(msg.settings); warning != "" {
+			m.status += " " + warning
+		}
 		m.rebuildProjectList(selectedPath)
 		cmds := []tea.Cmd{m.applyEditableSettingsCmd(msg.settings), m.refreshSetupSnapshotCmd(false)}
 		if len(m.projects) > 0 {
@@ -6241,12 +6248,12 @@ func (m Model) renderFooter(width int) string {
 	}
 	if m.setupMode {
 		if m.setupConfigMode {
-			return m.renderModalFooter(width, "Setup fields: type to edit, Ctrl+S/Enter save, Esc done", supplementSegments...)
+			return m.renderModalFooter(width, "Setup fields: type to edit, ctrl+s/Enter save, Esc done", supplementSegments...)
 		}
 		return m.renderModalFooter(width, "Setup: Tab role, ↑↓ provider, e edit fields, Enter choose, Esc close", supplementSegments...)
 	}
 	if m.settingsMode {
-		return m.renderModalFooter(width, "Settings: Enter save, Tab next, Esc cancel", supplementSegments...)
+		return m.renderModalFooter(width, "Settings: ctrl+s save, Tab next, Esc cancel", supplementSegments...)
 	}
 	if m.showPerf {
 		return m.renderModalFooter(width, "Performance: c copy, Esc close", supplementSegments...)
@@ -7325,12 +7332,12 @@ func helpPanelLines() []string {
 			renderDialogAction("t", "todo", commitActionKeyStyle, commitActionTextStyle),
 			renderDialogAction("o/v", "sort/view", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("p", "pin", pushActionKeyStyle, pushActionTextStyle),
-			renderDialogAction("Ctrl+V", "image", pushActionKeyStyle, pushActionTextStyle),
+			renderDialogAction("ctrl+v", "image", pushActionKeyStyle, pushActionTextStyle),
 		),
 		detailSectionStyle.Render("Compose & Status"),
 		renderHelpPanelActionRow(
 			renderDialogAction("Alt+Enter", "newline", commitActionKeyStyle, commitActionTextStyle),
-			renderDialogAction("Ctrl+C", "interrupt busy session", cancelActionKeyStyle, cancelActionTextStyle),
+			renderDialogAction("ctrl+c", "interrupt busy session", cancelActionKeyStyle, cancelActionTextStyle),
 		),
 		detailSectionStyle.Render("Legend"),
 		renderHelpPanelLegendLine(),

@@ -308,7 +308,7 @@ func (m *Model) openBrowserSettingsMode() tea.Cmd {
 	m.commandMode = false
 	m.showHelp = false
 	m.err = nil
-	m.status = "Browser settings open. Press Enter to choose automation mode and Ctrl+S to save."
+	m.status = "Browser settings open. Press Enter to choose automation mode and ctrl+s to save."
 	return m.setSettingsSelection(settingsFieldBrowserAutomation)
 }
 
@@ -329,7 +329,10 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	m.commandMode = false
 	m.showHelp = false
 	m.err = nil
-	m.status = "Editing settings. Enter chooses pickers, Ctrl+S saves, Esc cancels."
+	m.status = "Editing settings. Enter chooses pickers, ctrl+s saves, Esc cancels."
+	if warning := settingsLocalFileWarning(saved); warning != "" {
+		m.status = warning
+	}
 	return m.setSettingsSelection(0)
 }
 
@@ -373,7 +376,7 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m.openSettingsBrowserAutomationPicker()
 			}
 		}
-		m.status = "Press Ctrl+S to save settings."
+		m.status = "Press ctrl+s to save settings."
 		return m, nil
 	case "ctrl+r":
 		if m.settingsSelected == settingsFieldPrivacyPatterns {
@@ -445,11 +448,6 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		m.status = err.Error()
 		return m, nil
 	}
-	if err := validateSettingsLocalFiles(settings); err != nil {
-		m.err = nil
-		m.status = err.Error()
-		return m, nil
-	}
 	applyEmbeddedModelPreferencesToSettings(&settings, embeddedModelPreferencesFromSettings(m.currentSettingsBaseline()))
 	m.err = nil
 	m.settingsSaving = true
@@ -457,22 +455,22 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 	return m, m.saveSettingsCmd(settings)
 }
 
-func validateSettingsLocalFiles(settings config.EditableSettings) error {
+func settingsLocalFileWarning(settings config.EditableSettings) string {
 	envFile := strings.TrimSpace(settings.LCAgentEnvFile)
 	if envFile == "" {
-		return nil
+		return ""
 	}
 	info, err := os.Stat(envFile)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("lcagent env file not found: %s", envFile)
+			return fmt.Sprintf("Warning: LCAgent env file not found: %s", envFile)
 		}
-		return fmt.Errorf("lcagent env file: %w", err)
+		return fmt.Sprintf("Warning: LCAgent env file cannot be checked: %v", err)
 	}
 	if info.IsDir() {
-		return fmt.Errorf("lcagent env file is a directory: %s", envFile)
+		return fmt.Sprintf("Warning: LCAgent env file is a directory: %s", envFile)
 	}
-	return nil
+	return ""
 }
 
 func (m *Model) moveSettingsSelection(delta int) tea.Cmd {
@@ -1036,7 +1034,7 @@ func (m Model) renderSelectedSettingsHint(width int) string {
 
 func (m Model) renderSettingsActions() string {
 	actions := []string{
-		renderDialogAction("Ctrl+S", "save", commitActionKeyStyle, commitActionTextStyle),
+		renderDialogAction("ctrl+s", "save", commitActionKeyStyle, commitActionTextStyle),
 		renderDialogAction("Tab", "next", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("Up/Down", "move", pushActionKeyStyle, pushActionTextStyle),
 		renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
@@ -1135,7 +1133,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsField(
 			"LCAgent env file",
-			"Optional env file for LCAgent provider credentials, such as an OpenRouter key. The key contents are not copied into this config.",
+			"Optional env file for LCAgent provider credentials, such as an OpenRouter or DeepSeek key. Missing files are shown as warnings and LCAgent launches will fail until fixed or cleared.",
 			settings.LCAgentEnvFile,
 			1024,
 			settingsSectionAI,
@@ -1371,9 +1369,9 @@ func (m Model) settingsFieldHint(index int) string {
 	case settingsFieldPrivacyPatterns:
 		hint := field.hint
 		if m.settingsRevealPrivacy {
-			hint += " (revealed - press Ctrl+R to hide)"
+			hint += " (revealed - press ctrl+r to hide)"
 		} else {
-			hint += " (hidden - press Ctrl+R to reveal)"
+			hint += " (hidden - press ctrl+r to reveal)"
 		}
 		return hint
 	case settingsFieldBrowserAutomation:
