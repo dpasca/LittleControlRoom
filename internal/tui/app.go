@@ -550,19 +550,15 @@ func New(ctx context.Context, svc *service.Service) Model {
 	runtimeViewport := viewport.New(0, 0)
 	codexViewport := viewport.New(0, 0)
 	initialSettings := config.EditableSettingsFromAppConfig(svc.Config())
-	initialStatus := initialProjectsStatus
-	if warning := settingsLocalFileWarning(initialSettings); warning != "" {
-		initialStatus = warning
-	}
 	homeDir, _ := os.UserHomeDir()
 
-	return Model{
+	m := Model{
 		ctx:                        ctx,
 		svc:                        svc,
 		busCh:                      busCh,
 		unsub:                      unsub,
 		loading:                    true,
-		status:                     initialStatus,
+		status:                     initialProjectsStatus,
 		commandInput:               commandInput,
 		codexInput:                 codexInput,
 		codexDrafts:                make(map[string]codexDraft),
@@ -606,6 +602,11 @@ func New(ctx context.Context, svc *service.Service) Model {
 		homeDirFn:                  os.UserHomeDir,
 		homeDir:                    strings.TrimSpace(homeDir),
 	}
+	if issue := settingsLocalFileIssue(initialSettings); issue != nil {
+		m.appendSettingsConfigIssue(issue)
+		m.status = errorStatusWithHint(settingsConfigIssueStatus)
+	}
+	return m
 }
 
 func (m Model) currentTime() time.Time {
@@ -1958,8 +1959,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.hideReasoningSections = msg.settings.HideReasoningSections
 		m.settingsMode = false
 		m.status = fmt.Sprintf("Settings saved to %s. Filters, API keys, local endpoint/model overrides, Codex launch mode, and browser automation policy are applying in the background now; the running scheduler keeps its current timing until the next launch of %s.", msg.path, brand.CLIName)
-		if warning := settingsLocalFileWarning(msg.settings); warning != "" {
-			m.status += " " + warning
+		if issue := settingsLocalFileIssue(msg.settings); issue != nil {
+			m.appendSettingsConfigIssue(issue)
+			m.status += " " + errorStatusWithHint(settingsConfigIssueStatus) + "."
 		}
 		m.rebuildProjectList(selectedPath)
 		cmds := []tea.Cmd{m.applyEditableSettingsCmd(msg.settings), m.refreshSetupSnapshotCmd(false)}

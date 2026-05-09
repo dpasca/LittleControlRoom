@@ -53,6 +53,8 @@ const (
 	settingsSectionRefresh settingsSectionID = "refresh"
 )
 
+const settingsConfigIssueStatus = "LCAgent env file warning"
+
 type settingsSection struct {
 	id         settingsSectionID
 	label      string
@@ -330,8 +332,9 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	m.showHelp = false
 	m.err = nil
 	m.status = "Editing settings. Enter chooses pickers, ctrl+s saves, Esc cancels."
-	if warning := settingsLocalFileWarning(saved); warning != "" {
-		m.status = warning
+	if issue := settingsLocalFileIssue(saved); issue != nil {
+		m.appendSettingsConfigIssue(issue)
+		m.status = errorStatusWithHint(settingsConfigIssueStatus)
 	}
 	return m.setSettingsSelection(0)
 }
@@ -455,22 +458,36 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 	return m, m.saveSettingsCmd(settings)
 }
 
-func settingsLocalFileWarning(settings config.EditableSettings) string {
+func settingsLocalFileIssue(settings config.EditableSettings) error {
 	envFile := strings.TrimSpace(settings.LCAgentEnvFile)
 	if envFile == "" {
-		return ""
+		return nil
 	}
 	info, err := os.Stat(envFile)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Sprintf("Warning: LCAgent env file not found: %s", envFile)
+			return fmt.Errorf("LCAgent env file not found: %s", envFile)
 		}
-		return fmt.Sprintf("Warning: LCAgent env file cannot be checked: %v", err)
+		return fmt.Errorf("LCAgent env file cannot be checked: %w", err)
 	}
 	if info.IsDir() {
-		return fmt.Sprintf("Warning: LCAgent env file is a directory: %s", envFile)
+		return fmt.Errorf("LCAgent env file is a directory: %s", envFile)
 	}
-	return ""
+	return nil
+}
+
+func (m *Model) appendSettingsConfigIssue(err error) {
+	if err == nil {
+		return
+	}
+	message := strings.TrimSpace(err.Error())
+	if len(m.errorLogEntries) > 0 {
+		latest := m.errorLogEntries[0]
+		if latest.Status == settingsConfigIssueStatus && latest.Message == message && latest.ProjectPath == "" {
+			return
+		}
+	}
+	m.appendErrorLogEntry(settingsConfigIssueStatus, err, "")
 }
 
 func (m *Model) moveSettingsSelection(delta int) tea.Cmd {

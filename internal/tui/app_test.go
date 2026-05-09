@@ -21035,8 +21035,17 @@ func TestSettingsOpenWarnsAboutMissingLCAgentEnvFile(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("opening settings should focus the first field")
 	}
-	if m.status != "Warning: LCAgent env file not found: "+missingPath {
-		t.Fatalf("status = %q, want missing env file warning", m.status)
+	if m.status != "LCAgent env file warning (use /errors)" {
+		t.Fatalf("status = %q, want missing env file error-log hint", m.status)
+	}
+	if len(m.errorLogEntries) != 1 {
+		t.Fatalf("error log count = %d, want 1", len(m.errorLogEntries))
+	}
+	if m.errorLogEntries[0].Status != "LCAgent env file warning" {
+		t.Fatalf("error log status = %q", m.errorLogEntries[0].Status)
+	}
+	if m.errorLogEntries[0].Message != "LCAgent env file not found: "+missingPath {
+		t.Fatalf("error log message = %q, want missing env file detail", m.errorLogEntries[0].Message)
 	}
 	if !m.settingsMode {
 		t.Fatalf("settings mode should be open")
@@ -21050,8 +21059,14 @@ func TestNewWarnsAboutMissingLCAgentEnvFile(t *testing.T) {
 	svc := service.New(cfg, nil, events.NewBus(), nil)
 
 	m := New(context.Background(), svc)
-	if m.status != "Warning: LCAgent env file not found: "+missingPath {
-		t.Fatalf("status = %q, want startup warning", m.status)
+	if m.status != "LCAgent env file warning (use /errors)" {
+		t.Fatalf("status = %q, want startup error-log hint", m.status)
+	}
+	if len(m.errorLogEntries) != 1 {
+		t.Fatalf("error log count = %d, want 1", len(m.errorLogEntries))
+	}
+	if m.errorLogEntries[0].Message != "LCAgent env file not found: "+missingPath {
+		t.Fatalf("error log message = %q, want missing env file detail", m.errorLogEntries[0].Message)
 	}
 }
 
@@ -21198,8 +21213,14 @@ func TestSettingsCtrlSWarnsAboutMissingLCAgentEnvFile(t *testing.T) {
 	if saved.settingsMode {
 		t.Fatalf("settings mode should close after saving with a missing optional env file")
 	}
-	if !strings.Contains(saved.status, "Warning: LCAgent env file not found: "+missingPath) {
-		t.Fatalf("status = %q, want missing env file warning", saved.status)
+	if !strings.Contains(saved.status, "LCAgent env file warning (use /errors)") {
+		t.Fatalf("status = %q, want missing env file error-log hint", saved.status)
+	}
+	if len(saved.errorLogEntries) != 1 {
+		t.Fatalf("error log count = %d, want 1", len(saved.errorLogEntries))
+	}
+	if saved.errorLogEntries[0].Message != "LCAgent env file not found: "+missingPath {
+		t.Fatalf("error log message = %q, want missing env file detail", saved.errorLogEntries[0].Message)
 	}
 }
 

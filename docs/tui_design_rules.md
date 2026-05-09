@@ -24,7 +24,7 @@ Write control-key shortcuts with lowercase modifiers, for example `ctrl+s`, so l
 - Keep action hints in the same order where possible: primary, navigation/secondary, cancel.
 - Use `Esc` consistently for closing or backing out of a modal, and render it with the cancel tone.
 - Do not use plain `Enter` as a hidden save alias in broad settings forms. Reserve it for row choice, picker/sub-dialog entry, or an explicitly shown primary action.
-- Optional external paths may warn when missing, but should not prevent unrelated settings from being saved. The feature that actually uses the path should fail clearly at launch/use time.
+- Optional external paths may warn when missing, but should not prevent unrelated settings from being saved. Record the warning in `/errors` when available; the feature that actually uses the path should fail clearly at launch/use time.
 
 ## Rows
 
