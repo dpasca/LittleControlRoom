@@ -13047,6 +13047,145 @@ func TestLaunchEmbeddedForSelectionBlocksWhileAnotherEmbeddedProviderIsOpen(t *t
 	}
 }
 
+func TestLaunchEmbeddedForSelectionBlocksOpenDifferentEmbeddedProviderPairs(t *testing.T) {
+	providers := []codexapp.Provider{
+		codexapp.ProviderCodex,
+		codexapp.ProviderOpenCode,
+		codexapp.ProviderClaudeCode,
+		codexapp.ProviderLCAgent,
+	}
+	for _, liveProvider := range providers {
+		for _, requestedProvider := range providers {
+			if liveProvider == requestedProvider {
+				continue
+			}
+			t.Run(liveProvider.Label()+" to "+requestedProvider.Label(), func(t *testing.T) {
+				var requests []codexapp.LaunchRequest
+				manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+					requests = append(requests, req)
+					return &fakeCodexSession{
+						projectPath: req.ProjectPath,
+						snapshot: codexapp.Snapshot{
+							Provider: req.Provider.Normalized(),
+							Started:  true,
+							ThreadID: "thread-" + string(req.Provider.Normalized()),
+							Status:   req.Provider.Label() + " session ready",
+						},
+					}, nil
+				})
+				if _, _, err := manager.Open(codexapp.LaunchRequest{
+					ProjectPath: "/tmp/demo",
+					Provider:    liveProvider,
+				}); err != nil {
+					t.Fatalf("manager.Open() error = %v", err)
+				}
+
+				m := Model{
+					codexManager: manager,
+					projects: []model.ProjectSummary{{
+						Path:          "/tmp/demo",
+						Name:          "demo",
+						PresentOnDisk: true,
+					}},
+					selected: 0,
+				}
+
+				updated, cmd := m.launchEmbeddedForSelection(requestedProvider, false, "")
+				got := updated.(Model)
+				if cmd != nil {
+					t.Fatalf("launchEmbeddedForSelection() cmd = %#v, want nil", cmd)
+				}
+				wantStatus := fmt.Sprintf("This project already has an open embedded %s session. Close it before starting %s here.", liveProvider.Label(), requestedProvider.Label())
+				if got.status != wantStatus {
+					t.Fatalf("status = %q, want %q", got.status, wantStatus)
+				}
+				if got.attentionDialog == nil {
+					t.Fatalf("launchEmbeddedForSelection() should show an attention dialog")
+				}
+				if got.attentionDialog.PrimaryProvider != liveProvider {
+					t.Fatalf("attention dialog provider = %q, want %q", got.attentionDialog.PrimaryProvider, liveProvider)
+				}
+				if got.attentionDialog.PrimaryLabel != "Open "+liveProvider.Label() {
+					t.Fatalf("attention dialog primary label = %q, want open action", got.attentionDialog.PrimaryLabel)
+				}
+				if len(requests) != 1 {
+					t.Fatalf("launch requests = %d, want only the original provider open", len(requests))
+				}
+			})
+		}
+	}
+}
+
+func TestLaunchEmbeddedForSelectionBlocksActiveDifferentEmbeddedProviderPairs(t *testing.T) {
+	providers := []codexapp.Provider{
+		codexapp.ProviderCodex,
+		codexapp.ProviderOpenCode,
+		codexapp.ProviderClaudeCode,
+		codexapp.ProviderLCAgent,
+	}
+	for _, liveProvider := range providers {
+		for _, requestedProvider := range providers {
+			if liveProvider == requestedProvider {
+				continue
+			}
+			t.Run(liveProvider.Label()+" to "+requestedProvider.Label(), func(t *testing.T) {
+				var requests []codexapp.LaunchRequest
+				manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+					requests = append(requests, req)
+					return &fakeCodexSession{
+						projectPath: req.ProjectPath,
+						snapshot: codexapp.Snapshot{
+							Provider: req.Provider.Normalized(),
+							Started:  true,
+							Busy:     true,
+							ThreadID: "thread-" + string(req.Provider.Normalized()),
+							Status:   req.Provider.Label() + " session ready",
+						},
+					}, nil
+				})
+				if _, _, err := manager.Open(codexapp.LaunchRequest{
+					ProjectPath: "/tmp/demo",
+					Provider:    liveProvider,
+				}); err != nil {
+					t.Fatalf("manager.Open() error = %v", err)
+				}
+
+				m := Model{
+					codexManager: manager,
+					projects: []model.ProjectSummary{{
+						Path:          "/tmp/demo",
+						Name:          "demo",
+						PresentOnDisk: true,
+					}},
+					selected: 0,
+				}
+
+				updated, cmd := m.launchEmbeddedForSelection(requestedProvider, true, "")
+				got := updated.(Model)
+				if cmd != nil {
+					t.Fatalf("launchEmbeddedForSelection() cmd = %#v, want nil", cmd)
+				}
+				wantStatus := fmt.Sprintf("This project already has an active embedded %s session. Finish or close it before starting %s here.", liveProvider.Label(), requestedProvider.Label())
+				if got.status != wantStatus {
+					t.Fatalf("status = %q, want %q", got.status, wantStatus)
+				}
+				if got.attentionDialog == nil {
+					t.Fatalf("launchEmbeddedForSelection() should show an attention dialog")
+				}
+				if got.attentionDialog.PrimaryProvider != liveProvider {
+					t.Fatalf("attention dialog provider = %q, want %q", got.attentionDialog.PrimaryProvider, liveProvider)
+				}
+				if got.attentionDialog.PrimaryLabel != "Open "+liveProvider.Label() {
+					t.Fatalf("attention dialog primary label = %q, want open action", got.attentionDialog.PrimaryLabel)
+				}
+				if len(requests) != 1 {
+					t.Fatalf("launch requests = %d, want only the original provider open", len(requests))
+				}
+			})
+		}
+	}
+}
+
 func TestLaunchEmbeddedForSelectionBlocksWhileAnotherProviderSessionIsUnfinished(t *testing.T) {
 	now := time.Date(2026, 3, 30, 20, 30, 0, 0, time.UTC)
 	m := Model{
