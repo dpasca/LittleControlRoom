@@ -177,7 +177,7 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 - `↑/↓` move selection
 - `Enter` open or resume the selected project's latest embedded provider
 - `Esc` hide the visible embedded session pane
-- `Alt+Down` open the embedded session picker and history overlay
+- `Alt+Down` or `/session` open the embedded session picker and history overlay
 - `Alt+[` jump to the previous live embedded session
 - `Alt+]` jump to the next live embedded session
 - `PgUp/PgDn/Home/End` fast scrolling in long project lists
@@ -246,6 +246,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/lcagent`
 - `/lcagent continue with the next small step`
 - `/lcagent-new inspect and patch the failing check`
+- `/session`
 - `/commit`
 - `/commit tighten git status parsing`
 - `/push`

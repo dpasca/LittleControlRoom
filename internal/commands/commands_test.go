@@ -582,6 +582,18 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "session picker",
+			raw:  "/session",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindSession {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindSession)
+				}
+				if inv.Canonical != "/session" {
+					t.Fatalf("canonical = %q, want /session", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "ignore",
 			raw:  "/ignore",
 			check: func(t *testing.T, inv Invocation) {

@@ -12993,6 +12993,60 @@ func TestLaunchEmbeddedForSelectionBlocksWhileAnotherEmbeddedProviderIsActive(t 
 	}
 }
 
+func TestLaunchEmbeddedForSelectionBlocksWhileAnotherEmbeddedProviderIsOpen(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				Started:  true,
+				ThreadID: "thread-codex",
+				Status:   req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderCodex,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/demo",
+			Name:          "demo",
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+	}
+
+	updated, cmd := m.launchEmbeddedForSelection(codexapp.ProviderLCAgent, false, "")
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("launchEmbeddedForSelection() cmd = %#v, want nil when another embedded provider is open", cmd)
+	}
+	wantStatus := "This project already has an open embedded Codex session. Close it before starting LCAgent here."
+	if got.status != wantStatus {
+		t.Fatalf("status = %q, want %q", got.status, wantStatus)
+	}
+	if got.attentionDialog == nil {
+		t.Fatalf("launchEmbeddedForSelection() should show an attention dialog when another embedded provider is open")
+	}
+	if got.attentionDialog.PrimaryProvider != codexapp.ProviderCodex {
+		t.Fatalf("attention dialog provider = %q, want Codex", got.attentionDialog.PrimaryProvider)
+	}
+	if got.attentionDialog.PrimaryLabel != "Open Codex" {
+		t.Fatalf("attention dialog primary label = %q, want open action", got.attentionDialog.PrimaryLabel)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want only the original Codex open", len(requests))
+	}
+}
+
 func TestLaunchEmbeddedForSelectionBlocksWhileAnotherProviderSessionIsUnfinished(t *testing.T) {
 	now := time.Date(2026, 3, 30, 20, 30, 0, 0, time.UTC)
 	m := Model{
@@ -23201,6 +23255,47 @@ func TestCommandPaletteScrollsSelectedSuggestionIntoView(t *testing.T) {
 	}
 	if strings.Contains(rendered, "/help  Open the help panel") {
 		t.Fatalf("rendered palette should scroll past the initial suggestions when selection moves later: %q", rendered)
+	}
+}
+
+func TestDispatchSessionCommandOpensEmbeddedSessionPicker(t *testing.T) {
+	now := time.Date(2026, 5, 9, 11, 30, 0, 0, time.UTC)
+	m := Model{
+		allProjects: []model.ProjectSummary{{
+			Path:          "/tmp/demo",
+			Name:          "demo",
+			PresentOnDisk: true,
+		}},
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": {
+				Provider:       codexapp.ProviderLCAgent,
+				ProjectPath:    "/tmp/demo",
+				ThreadID:       "lca_demo",
+				Started:        true,
+				LastActivityAt: now,
+				Status:         "Loaded LCAgent session lca_demo from disk",
+			},
+		},
+		width:  100,
+		height: 24,
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindSession, Canonical: "/session"})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("dispatchCommand(/session) cmd = %#v, want nil", cmd)
+	}
+	if !got.codexPickerVisible {
+		t.Fatalf("/session should open the embedded session picker")
+	}
+	if got.codexPickerTitle != "Embedded Sessions" {
+		t.Fatalf("picker title = %q", got.codexPickerTitle)
+	}
+	if got.status != "Embedded session picker open" {
+		t.Fatalf("status = %q, want picker-open status", got.status)
+	}
+	if len(got.codexPickerChoices) != 1 || got.codexPickerChoices[0].Provider != codexapp.ProviderLCAgent {
+		t.Fatalf("picker choices = %#v, want one LCAgent choice", got.codexPickerChoices)
 	}
 }
 

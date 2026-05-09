@@ -350,7 +350,7 @@ func (m Model) executeEngineerSendPromptControlWithOutcome(input control.Enginee
 		m.status = err.Error()
 		return controlInvocationOutcome{model: m, err: err}
 	}
-	if block, blocked := m.embeddedLaunchBlock(project, provider); blocked {
+	if block, blocked := m.embeddedLaunchBlock(project, provider, input.SessionMode == control.SessionModeNew); blocked {
 		err := errors.New(block.Message)
 		m.status = block.Message
 		return controlInvocationOutcome{model: m, err: err}

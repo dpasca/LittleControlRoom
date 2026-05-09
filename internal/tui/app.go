@@ -4439,6 +4439,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.clearSnoozeCmd(p.Path)
+	case commands.KindSession:
+		return m.openCodexPicker()
 	case commands.KindSessions:
 		m.applySectionToggle("Sessions", inv.Toggle, &m.showSessions)
 		return m, nil

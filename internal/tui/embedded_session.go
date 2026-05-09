@@ -642,7 +642,7 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 		m.status = provider.Label() + " launch requires a folder present on disk"
 		return m, nil
 	}
-	if block, blocked := m.embeddedLaunchBlock(p, provider); blocked {
+	if block, blocked := m.embeddedLaunchBlock(p, provider, options.forceNew); blocked {
 		actionLabel := m.attentionDialogSessionActionLabel(p, block.BlockingProvider)
 		hint := fmt.Sprintf("Finish or close the %s session, then try starting %s here again.", block.BlockingProvider.Label(), provider.Label())
 		if actionLabel != "" {
@@ -667,12 +667,12 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 			}
 			return m.showCodexProject(p.Path, "Embedded "+provider.Label()+" session reopened. Esc hides it.")
 		}
-		if m.hasRestorableEmbeddedSession(p.Path) {
+		if m.hasRestorableEmbeddedSession(p.Path, provider) {
 			if !options.reveal {
-				m.status = "Embedded session is already available in the background"
+				m.status = "Embedded " + provider.Label() + " session is already available in the background"
 				return m, nil
 			}
-			return m.showCodexProject(p.Path, "Embedded session reopened. Esc hides it.")
+			return m.showCodexProject(p.Path, "Embedded "+provider.Label()+" session reopened. Esc hides it.")
 		}
 	}
 
@@ -710,17 +710,22 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 	return m, m.openCodexSessionCmdWithVisibility(req, options.reveal)
 }
 
-func (m Model) hasRestorableEmbeddedSession(projectPath string) bool {
+func (m Model) hasRestorableEmbeddedSession(projectPath string, provider codexapp.Provider) bool {
 	session, ok := m.codexSession(projectPath)
 	if !ok {
 		return false
 	}
-	if snapshot, got := session.TrySnapshot(); got {
-		return !snapshot.Closed
+	provider = provider.Normalized()
+	if provider == "" {
+		provider = codexapp.ProviderCodex
 	}
-	// If the session lock is contended, assume the helper is still restorable.
-	// A later async snapshot refresh will reconcile the exact state.
-	return true
+	if snapshot, got := session.TrySnapshot(); got {
+		return !snapshot.Closed && embeddedProvider(snapshot) == provider
+	}
+	if snapshot, ok := m.codexCachedSnapshot(projectPath); ok {
+		return !snapshot.Closed && embeddedProvider(snapshot) == provider
+	}
+	return false
 }
 
 func (m Model) appDataDir() string {
@@ -763,7 +768,7 @@ type embeddedLaunchBlock struct {
 	BlockingProvider codexapp.Provider
 }
 
-func (m Model) embeddedLaunchBlock(project model.ProjectSummary, requested codexapp.Provider) (embeddedLaunchBlock, bool) {
+func (m Model) embeddedLaunchBlock(project model.ProjectSummary, requested codexapp.Provider, forceNew bool) (embeddedLaunchBlock, bool) {
 	requested = requested.Normalized()
 	if requested == "" {
 		requested = codexapp.ProviderCodex
@@ -773,11 +778,18 @@ func (m Model) embeddedLaunchBlock(project model.ProjectSummary, requested codex
 	}
 	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
 		liveProvider := embeddedProvider(snapshot)
-		if liveProvider != requested && embeddedSessionBlocksProviderSwitch(snapshot) {
-			return embeddedLaunchBlock{
-				Message:          fmt.Sprintf("This project already has an active embedded %s session. Finish or close it before starting %s here.", liveProvider.Label(), requested.Label()),
-				BlockingProvider: liveProvider,
-			}, true
+		if liveProvider != requested && snapshot.Started && !snapshot.Closed {
+			blocking := embeddedSessionBlocksProviderSwitch(snapshot)
+			if blocking || !forceNew {
+				message := fmt.Sprintf("This project already has an open embedded %s session. Close it before starting %s here.", liveProvider.Label(), requested.Label())
+				if blocking {
+					message = fmt.Sprintf("This project already has an active embedded %s session. Finish or close it before starting %s here.", liveProvider.Label(), requested.Label())
+				}
+				return embeddedLaunchBlock{
+					Message:          message,
+					BlockingProvider: liveProvider,
+				}, true
+			}
 		}
 	}
 	latestProvider := providerForSessionFormat(project.LatestSessionFormat)
