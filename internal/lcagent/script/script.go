@@ -61,10 +61,16 @@ type listFilesArgs struct {
 }
 
 type searchArgs struct {
-	Query      string `json:"query"`
-	Path       string `json:"path"`
-	FileGlob   string `json:"file_glob"`
-	MaxMatches int    `json:"max_matches"`
+	Query         string `json:"query"`
+	Path          string `json:"path"`
+	FileGlob      string `json:"file_glob"`
+	MaxMatches    int    `json:"max_matches"`
+	ContextBefore *int   `json:"context_before"`
+	ContextAfter  *int   `json:"context_after"`
+}
+
+type fileOutlineArgs struct {
+	Path string `json:"path"`
 }
 
 type loadSkillArgs struct {
@@ -167,7 +173,21 @@ func (r Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, e
 		if err := json.Unmarshal(action.Args, &args); err != nil {
 			return tools.ToolResult{}, err
 		}
-		result = r.Files.Search(args.Query, args.Path, args.FileGlob, args.MaxMatches)
+		contextBefore := 1
+		contextAfter := 2
+		if args.ContextBefore != nil {
+			contextBefore = *args.ContextBefore
+		}
+		if args.ContextAfter != nil {
+			contextAfter = *args.ContextAfter
+		}
+		result = r.Files.SearchContext(args.Query, args.Path, args.FileGlob, args.MaxMatches, contextBefore, contextAfter)
+	case "file_outline":
+		var args fileOutlineArgs
+		if err := json.Unmarshal(action.Args, &args); err != nil {
+			return tools.ToolResult{}, err
+		}
+		result = r.Files.Outline(args.Path)
 	case "load_skill":
 		var args loadSkillArgs
 		if err := json.Unmarshal(action.Args, &args); err != nil {

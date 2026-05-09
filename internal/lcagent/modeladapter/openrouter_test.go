@@ -35,7 +35,7 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 		names[tool.Function.Name] = true
 		descriptions[tool.Function.Name] = tool.Function.Description
 	}
-	for _, want := range []string{"read_file", "list_files", "search", "load_skill", "run_command", "apply_patch", "update_plan", "final_response"} {
+	for _, want := range []string{"read_file", "file_outline", "list_files", "search", "load_skill", "run_command", "apply_patch", "update_plan", "final_response"} {
 		if !names[want] {
 			t.Fatalf("Tools() missing %s", want)
 		}
@@ -55,11 +55,14 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 	if !strings.Contains(readFilePathDescription, "Workspace-relative") {
 		t.Fatalf("read_file path description should mention relative paths: %q", readFilePathDescription)
 	}
+	if !strings.Contains(descriptions["file_outline"], "line ranges") {
+		t.Fatalf("file_outline description should mention line ranges: %q", descriptions["file_outline"])
+	}
 }
 
 func TestSystemPromptIncludesSkillMetadata(t *testing.T) {
 	prompt := SystemPrompt("Available skills\n- demo [project]: Demo workflow", "Project instructions from AGENTS.md:\nRun tests.")
-	if !strings.Contains(prompt, "call load_skill") || !strings.Contains(prompt, "demo [project]") || !strings.Contains(prompt, "Run tests.") || !strings.Contains(prompt, "*** Update File: path") || !strings.Contains(prompt, "workspace-relative paths") || !strings.Contains(prompt, "workspace-only") || !strings.Contains(prompt, "structured tool_calls") {
+	if !strings.Contains(prompt, "call load_skill") || !strings.Contains(prompt, "demo [project]") || !strings.Contains(prompt, "Run tests.") || !strings.Contains(prompt, "*** Update File: path") || !strings.Contains(prompt, "workspace-relative paths") || !strings.Contains(prompt, "workspace-only") || !strings.Contains(prompt, "structured tool_calls") || !strings.Contains(prompt, "prefer file_outline") || !strings.Contains(prompt, "next_offset") {
 		t.Fatalf("prompt missing skill guidance:\n%s", prompt)
 	}
 }
@@ -101,7 +104,7 @@ func TestOpenRouterClientSendsToolRequestAndParsesResponse(t *testing.T) {
 		if len(req.Tools) == 0 {
 			t.Fatal("tools empty")
 		}
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"run_command","arguments":"{\"command\":\"pwd\"}"}}]}}]}`))
+		_, _ = w.Write([]byte(`{"model":"deepseek/deepseek-v4-pro","choices":[{"message":{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"run_command","arguments":"{\"command\":\"pwd\"}"}}]}}],"usage":{"prompt_tokens":1200,"prompt_tokens_details":{"cached_tokens":300},"completion_tokens":40,"completion_tokens_details":{"reasoning_tokens":7},"total_tokens":1240,"cost":0.0123}}`))
 	}))
 	defer server.Close()
 
@@ -130,6 +133,25 @@ func TestOpenRouterClientSendsToolRequestAndParsesResponse(t *testing.T) {
 	}
 	if string(args) != `{"command":"pwd"}` {
 		t.Fatalf("args = %s", args)
+	}
+	if completion.UsageSummary.InputTokens != 1200 || completion.UsageSummary.OutputTokens != 40 || completion.UsageSummary.TotalTokens != 1240 || completion.UsageSummary.CachedInputTokens != 300 || completion.UsageSummary.ReasoningTokens != 7 {
+		t.Fatalf("UsageSummary = %+v", completion.UsageSummary)
+	}
+	if completion.UsageSummary.EstimatedCostUSD != 0.0123 {
+		t.Fatalf("EstimatedCostUSD = %f, want provider cost", completion.UsageSummary.EstimatedCostUSD)
+	}
+}
+
+func TestUsageFromRawSupportsResponsesShape(t *testing.T) {
+	usage := UsageFromRaw(json.RawMessage(`{
+		"input_tokens":345,
+		"input_tokens_details":{"cached_tokens":21},
+		"output_tokens":67,
+		"output_tokens_details":{"reasoning_tokens":5},
+		"total_tokens":412
+	}`), "unknown-model")
+	if usage.InputTokens != 345 || usage.OutputTokens != 67 || usage.TotalTokens != 412 || usage.CachedInputTokens != 21 || usage.ReasoningTokens != 5 {
+		t.Fatalf("UsageFromRaw() = %+v", usage)
 	}
 }
 

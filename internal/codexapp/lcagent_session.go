@@ -645,6 +645,13 @@ func lcagentToolArgsSummary(tool string, raw json.RawMessage) string {
 			}
 			return strings.Join(nonEmptyStrings(parts), " ")
 		}
+	case "file_outline":
+		var args struct {
+			Path string `json:"path"`
+		}
+		if json.Unmarshal(raw, &args) == nil {
+			return strings.TrimSpace(args.Path)
+		}
 	case "list_files":
 		var args struct {
 			Path       string `json:"path"`
@@ -660,9 +667,11 @@ func lcagentToolArgsSummary(tool string, raw json.RawMessage) string {
 		}
 	case "search":
 		var args struct {
-			Query    string `json:"query"`
-			Path     string `json:"path"`
-			FileGlob string `json:"file_glob"`
+			Query         string `json:"query"`
+			Path          string `json:"path"`
+			FileGlob      string `json:"file_glob"`
+			ContextBefore int    `json:"context_before"`
+			ContextAfter  int    `json:"context_after"`
 		}
 		if json.Unmarshal(raw, &args) == nil {
 			parts := []string{quoteIfSpaced(args.Query)}
@@ -671,6 +680,9 @@ func lcagentToolArgsSummary(tool string, raw json.RawMessage) string {
 			}
 			if strings.TrimSpace(args.FileGlob) != "" {
 				parts = append(parts, "glob "+strings.TrimSpace(args.FileGlob))
+			}
+			if args.ContextBefore > 0 || args.ContextAfter > 0 {
+				parts = append(parts, fmt.Sprintf("context %d/%d", args.ContextBefore, args.ContextAfter))
 			}
 			return strings.Join(nonEmptyStrings(parts), " ")
 		}
@@ -703,6 +715,8 @@ func lcagentToolResultSummary(tool, output, errText string, exitCode int, durati
 	switch strings.TrimSpace(tool) {
 	case "read_file":
 		return lcagentFileReadSummary(output, truncated)
+	case "file_outline":
+		return lcagentFileOutlineSummary(output)
 	case "list_files":
 		return lcagentListFilesSummary(output, truncated)
 	case "search":
@@ -732,6 +746,18 @@ func lcagentFileReadSummary(output string, truncated bool) string {
 		summary = strings.TrimSpace(summary + " truncated")
 	}
 	return summary
+}
+
+func lcagentFileOutlineSummary(output string) string {
+	values := lcagentOutputHeaderValues(output)
+	parts := []string{values["file"]}
+	if values["type"] != "" {
+		parts = append(parts, values["type"])
+	}
+	if values["total_lines"] != "" {
+		parts = append(parts, values["total_lines"]+" lines")
+	}
+	return strings.Join(nonEmptyStrings(parts), " ")
 }
 
 func lcagentListFilesSummary(output string, truncated bool) string {

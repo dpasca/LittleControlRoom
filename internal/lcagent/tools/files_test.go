@@ -37,6 +37,9 @@ func TestFileToolsReadListAndSearch(t *testing.T) {
 	if !strings.Contains(read.Output, "lines: 2-2") || !strings.Contains(read.Output, "2 | beta needle") {
 		t.Fatalf("read output = %q", read.Output)
 	}
+	if !strings.Contains(read.Output, "total_lines: 3") || !strings.Contains(read.Output, "has_more: true") || !strings.Contains(read.Output, "next_offset: 3") {
+		t.Fatalf("read metadata missing:\n%s", read.Output)
+	}
 
 	list := files.List(".", "*.md", 20)
 	if !list.Success {
@@ -54,9 +57,74 @@ func TestFileToolsReadListAndSearch(t *testing.T) {
 		t.Fatalf("search output = %q", search.Output)
 	}
 
+	searchWithContext := files.SearchContext("needle", "README.md", "", 20, 1, 1)
+	if !searchWithContext.Success {
+		t.Fatalf("search with context failed: %s", searchWithContext.Error)
+	}
+	for _, want := range []string{"README.md:2: beta needle", "  1 | alpha", "> 2 | beta needle", "  3 | gamma"} {
+		if !strings.Contains(searchWithContext.Output, want) {
+			t.Fatalf("search context missing %q:\n%s", want, searchWithContext.Output)
+		}
+	}
+
 	binary := files.Read("image.bin", 1, 20)
 	if binary.Success || !binary.Binary || !strings.Contains(binary.Error, "binary file suppressed") {
 		t.Fatalf("binary read = %#v, want suppressed failure", binary)
+	}
+}
+
+func TestFileToolsOutlineGoAndMarkdown(t *testing.T) {
+	root := t.TempDir()
+	goBody := `package demo
+
+import (
+	"context"
+	"fmt"
+)
+
+type Runner struct{}
+
+const statusReady = "ready"
+
+func Run(ctx context.Context) error {
+	return nil
+}
+
+func (r *Runner) String() string {
+	return fmt.Sprint(statusReady)
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "demo.go"), []byte(goBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mdBody := "# Title\n\nIntro\n\n## Details\n\nBody\n\n### Deep\n\nMore\n"
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte(mdBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyOff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := FileTools{Workspace: w}
+
+	goOutline := files.Outline("demo.go")
+	if !goOutline.Success {
+		t.Fatalf("go outline failed: %s", goOutline.Error)
+	}
+	for _, want := range []string{"type: go", "package: demo", "imports: 2", "type Runner lines", "const statusReady lines", "func Run lines", "method *Runner.String lines"} {
+		if !strings.Contains(goOutline.Output, want) {
+			t.Fatalf("go outline missing %q:\n%s", want, goOutline.Output)
+		}
+	}
+
+	mdOutline := files.Outline("README.md")
+	if !mdOutline.Success {
+		t.Fatalf("markdown outline failed: %s", mdOutline.Error)
+	}
+	for _, want := range []string{"type: markdown", "h1 lines 1-11: Title", "h2 lines 5-11: Details", "h3 lines 9-11: Deep"} {
+		if !strings.Contains(mdOutline.Output, want) {
+			t.Fatalf("markdown outline missing %q:\n%s", want, mdOutline.Output)
+		}
 	}
 }
 

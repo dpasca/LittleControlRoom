@@ -16,8 +16,10 @@ import (
 	"lcroom/internal/lcagent/policy"
 	"lcroom/internal/lcagent/script"
 	"lcroom/internal/lcagent/session"
+	"lcroom/internal/lcagent/sessionmetrics"
 	skillcatalog "lcroom/internal/lcagent/skills"
 	"lcroom/internal/lcagent/tools"
+	lcrmodel "lcroom/internal/model"
 )
 
 const version = "dev"
@@ -32,7 +34,7 @@ const (
 
 func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: lcagent exec [flags] <prompt>")
+		fmt.Fprintln(stderr, "usage: lcagent exec [flags] <prompt>\n       lcagent metrics <session.jsonl>...")
 		return 2
 	}
 	switch args[0] {
@@ -42,13 +44,32 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 			return 1
 		}
 		return 0
+	case "metrics":
+		if err := runMetrics(args[1:], stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 	case "help", "--help", "-h":
-		fmt.Fprintln(stdout, "usage: lcagent exec [flags] <prompt>")
+		fmt.Fprintln(stdout, "usage: lcagent exec [flags] <prompt>\n       lcagent metrics <session.jsonl>...")
 		return 0
 	default:
 		fmt.Fprintf(stderr, "unknown command: %s\n", args[0])
 		return 2
 	}
+}
+
+func runMetrics(args []string, stdout io.Writer) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: lcagent metrics <session.jsonl>...")
+	}
+	summary, err := sessionmetrics.AnalyzeFiles(args)
+	if err != nil {
+		return err
+	}
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(summary)
 }
 
 func runExec(args []string, stdout io.Writer) error {
@@ -364,7 +385,19 @@ func modelResponseEvent(sessionID string, turn int, completion modeladapter.Comp
 	if len(completion.Usage) > 0 && string(completion.Usage) != "null" {
 		event["usage"] = json.RawMessage(completion.Usage)
 	}
+	if usageTracked(completion.UsageSummary) {
+		event["usage_summary"] = completion.UsageSummary
+	}
 	return event
+}
+
+func usageTracked(usage lcrmodel.LLMUsage) bool {
+	return usage.InputTokens != 0 ||
+		usage.OutputTokens != 0 ||
+		usage.TotalTokens != 0 ||
+		usage.CachedInputTokens != 0 ||
+		usage.ReasoningTokens != 0 ||
+		usage.EstimatedCostUSD != 0
 }
 
 func defaultDataDir() string {

@@ -4,11 +4,15 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -22,6 +26,7 @@ const (
 	maxListEntryLimit      = 1000
 	defaultSearchMaxMatch  = 50
 	maxSearchMaxMatch      = 200
+	maxSearchContextLines  = 8
 	fileScannerInitialSize = 64 * 1024
 	fileScannerMaxToken    = 1024 * 1024
 )
@@ -42,49 +47,28 @@ func (t FileTools) Read(path string, offset, limit int) ToolResult {
 	if info.IsDir() {
 		return ToolResult{Success: false, Error: fmt.Sprintf("path is a directory: %s", rel)}
 	}
-	file, err := os.Open(target)
-	if err != nil {
-		return ToolResult{Success: false, Error: err.Error()}
+	startLine := offset
+	if startLine <= 0 {
+		startLine = 1
 	}
-	defer file.Close()
-	binary, err := fileLooksBinary(file)
+	limit = clampInt(limit, defaultReadLineLimit, maxReadLineLimit)
+	lines, totalLines, binary, err := readTextFileRange(target, startLine, limit)
 	if err != nil {
 		return ToolResult{Success: false, Error: err.Error()}
 	}
 	if binary {
 		return ToolResult{Success: false, Error: fmt.Sprintf("binary file suppressed: %s", rel), Binary: true}
 	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return ToolResult{Success: false, Error: err.Error()}
-	}
-
-	startLine := offset
-	if startLine <= 0 {
-		startLine = 1
-	}
-	limit = clampInt(limit, defaultReadLineLimit, maxReadLineLimit)
-
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, fileScannerInitialSize), fileScannerMaxToken)
-	lines := []string{}
-	lineNo := 0
-	for scanner.Scan() {
-		lineNo++
-		if lineNo < startLine {
-			continue
-		}
-		if len(lines) >= limit {
-			break
-		}
-		lines = append(lines, fmt.Sprintf("%d | %s", lineNo, scanner.Text()))
-	}
-	if err := scanner.Err(); err != nil {
-		return ToolResult{Success: false, Error: err.Error()}
-	}
 
 	endLine := startLine + len(lines) - 1
+	hasMore := len(lines) > 0 && endLine < totalLines
 	var b strings.Builder
 	fmt.Fprintf(&b, "file: %s\n", rel)
+	fmt.Fprintf(&b, "total_lines: %d\n", totalLines)
+	fmt.Fprintf(&b, "has_more: %t\n", hasMore)
+	if hasMore {
+		fmt.Fprintf(&b, "next_offset: %d\n", endLine+1)
+	}
 	if len(lines) == 0 {
 		fmt.Fprintf(&b, "lines: none from %d\n", startLine)
 	} else {
@@ -92,11 +76,10 @@ func (t FileTools) Read(path string, offset, limit int) ToolResult {
 		b.WriteString(strings.Join(lines, "\n"))
 		b.WriteByte('\n')
 	}
-	truncated := len(lines) == limit
-	if truncated {
-		fmt.Fprintf(&b, "\n--- read truncated after %d lines ---\n", limit)
+	if hasMore {
+		fmt.Fprintf(&b, "\n--- read truncated after %d lines; continue with next_offset %d ---\n", limit, endLine+1)
 	}
-	return ToolResult{Success: true, Output: b.String(), Truncated: truncated}
+	return ToolResult{Success: true, Output: b.String(), Truncated: hasMore}
 }
 
 func (t FileTools) List(path, glob string, maxEntries int) ToolResult {
@@ -173,6 +156,10 @@ func (t FileTools) List(path, glob string, maxEntries int) ToolResult {
 }
 
 func (t FileTools) Search(query, path, fileGlob string, maxMatches int) ToolResult {
+	return t.SearchContext(query, path, fileGlob, maxMatches, 0, 0)
+}
+
+func (t FileTools) SearchContext(query, path, fileGlob string, maxMatches, contextBefore, contextAfter int) ToolResult {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return ToolResult{Success: false, Error: "query is required"}
@@ -186,6 +173,8 @@ func (t FileTools) Search(query, path, fileGlob string, maxMatches int) ToolResu
 		return ToolResult{Success: false, Error: err.Error()}
 	}
 	maxMatches = clampInt(maxMatches, defaultSearchMaxMatch, maxSearchMaxMatch)
+	contextBefore = clampNonNegative(contextBefore, maxSearchContextLines)
+	contextAfter = clampNonNegative(contextAfter, maxSearchContextLines)
 	fileGlob = strings.TrimSpace(fileGlob)
 
 	matches := []string{}
@@ -198,7 +187,7 @@ func (t FileTools) Search(query, path, fileGlob string, maxMatches int) ToolResu
 		if fileGlob != "" && !fileGlobMatches(fileGlob, display) {
 			return
 		}
-		fileMatches, err := searchTextFile(path, display, query, maxMatches-len(matches))
+		fileMatches, err := searchTextFile(path, display, query, maxMatches-len(matches), contextBefore, contextAfter)
 		if err != nil {
 			return
 		}
@@ -232,6 +221,10 @@ func (t FileTools) Search(query, path, fileGlob string, maxMatches int) ToolResu
 	if fileGlob != "" {
 		fmt.Fprintf(&b, "file_glob: %s\n", fileGlob)
 	}
+	if contextBefore > 0 || contextAfter > 0 {
+		fmt.Fprintf(&b, "context_before: %d\n", contextBefore)
+		fmt.Fprintf(&b, "context_after: %d\n", contextAfter)
+	}
 	fmt.Fprintf(&b, "matches: %d\n\n", len(matches))
 	b.WriteString(strings.Join(matches, "\n"))
 	if len(matches) > 0 {
@@ -241,6 +234,28 @@ func (t FileTools) Search(query, path, fileGlob string, maxMatches int) ToolResu
 		fmt.Fprintf(&b, "\n--- search truncated after %d matches ---\n", maxMatches)
 	}
 	return ToolResult{Success: true, Output: b.String(), Truncated: truncated}
+}
+
+func (t FileTools) Outline(path string) ToolResult {
+	target, rel, err := t.resolve(path)
+	if err != nil {
+		return ToolResult{Success: false, Error: err.Error()}
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return ToolResult{Success: false, Error: err.Error()}
+	}
+	if info.IsDir() {
+		return ToolResult{Success: false, Error: fmt.Sprintf("path is a directory: %s", rel)}
+	}
+	switch strings.ToLower(filepath.Ext(target)) {
+	case ".go":
+		return goOutline(target, rel)
+	case ".md", ".markdown":
+		return markdownOutline(target, rel)
+	default:
+		return ToolResult{Success: false, Error: fmt.Sprintf("outline unsupported for %s", rel)}
+	}
 }
 
 func (t FileTools) resolve(path string) (string, string, error) {
@@ -269,39 +284,205 @@ func defaultPath(path string) string {
 	return path
 }
 
-func searchTextFile(path, display, query string, remaining int) ([]string, error) {
+func searchTextFile(path, display, query string, remaining, contextBefore, contextAfter int) ([]string, error) {
 	if remaining <= 0 {
 		return nil, nil
 	}
-	file, err := os.Open(path)
+	lines, binary, err := readTextFileLines(path)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
-	binary, err := fileLooksBinary(file)
-	if err != nil || binary {
-		return nil, err
-	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return nil, err
+	if binary {
+		return nil, nil
 	}
 
 	needle := strings.ToLower(query)
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, fileScannerInitialSize), fileScannerMaxToken)
 	matches := []string{}
-	lineNo := 0
-	for scanner.Scan() {
-		lineNo++
-		line := scanner.Text()
+	for i, line := range lines {
 		if strings.Contains(strings.ToLower(line), needle) {
-			matches = append(matches, fmt.Sprintf("%s:%d: %s", display, lineNo, strings.TrimSpace(line)))
+			matches = append(matches, formatSearchMatch(display, i, lines, contextBefore, contextAfter))
 			if len(matches) >= remaining {
 				break
 			}
 		}
 	}
-	return matches, scanner.Err()
+	return matches, nil
+}
+
+func formatSearchMatch(display string, index int, lines []string, contextBefore, contextAfter int) string {
+	lineNo := index + 1
+	summary := fmt.Sprintf("%s:%d: %s", display, lineNo, strings.TrimSpace(lines[index]))
+	if contextBefore == 0 && contextAfter == 0 {
+		return summary
+	}
+	start := index - contextBefore
+	if start < 0 {
+		start = 0
+	}
+	end := index + contextAfter
+	if end >= len(lines) {
+		end = len(lines) - 1
+	}
+	var b strings.Builder
+	b.WriteString(summary)
+	for i := start; i <= end; i++ {
+		prefix := "  "
+		if i == index {
+			prefix = "> "
+		}
+		fmt.Fprintf(&b, "\n%s%d | %s", prefix, i+1, lines[i])
+	}
+	return b.String()
+}
+
+func readTextFileRange(path string, startLine, limit int) ([]string, int, bool, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	defer file.Close()
+	binary, err := fileLooksBinary(file)
+	if err != nil || binary {
+		return nil, 0, binary, err
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, 0, false, err
+	}
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, fileScannerInitialSize), fileScannerMaxToken)
+	lines := []string{}
+	lineNo := 0
+	for scanner.Scan() {
+		lineNo++
+		if lineNo < startLine {
+			continue
+		}
+		if len(lines) < limit {
+			lines = append(lines, fmt.Sprintf("%d | %s", lineNo, scanner.Text()))
+		}
+	}
+	return lines, lineNo, false, scanner.Err()
+}
+
+func readTextFileLines(path string) ([]string, bool, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, false, err
+	}
+	defer file.Close()
+	binary, err := fileLooksBinary(file)
+	if err != nil || binary {
+		return nil, binary, err
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, false, err
+	}
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, fileScannerInitialSize), fileScannerMaxToken)
+	var lines []string
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	return lines, false, scanner.Err()
+}
+
+func goOutline(path, display string) ToolResult {
+	lines, binary, err := readTextFileLines(path)
+	if err != nil {
+		return ToolResult{Success: false, Error: err.Error()}
+	}
+	if binary {
+		return ToolResult{Success: false, Error: fmt.Sprintf("binary file suppressed: %s", display), Binary: true}
+	}
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+	if err != nil {
+		return ToolResult{Success: false, Error: err.Error()}
+	}
+	imports := make([]string, 0, len(file.Imports))
+	for _, imported := range file.Imports {
+		name := importPath(imported)
+		if imported.Name != nil {
+			name = imported.Name.Name + " " + name
+		}
+		imports = append(imports, name)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "file: %s\n", display)
+	fmt.Fprintf(&b, "type: go\n")
+	fmt.Fprintf(&b, "total_lines: %d\n", len(lines))
+	fmt.Fprintf(&b, "package: %s\n", file.Name.Name)
+	fmt.Fprintf(&b, "imports: %d", len(imports))
+	if len(imports) > 0 {
+		fmt.Fprintf(&b, " (%s)", strings.Join(trimStrings(imports, 20), ", "))
+	}
+	b.WriteString("\n")
+	b.WriteString("symbols:\n")
+	symbolCount := 0
+	for _, decl := range file.Decls {
+		switch typed := decl.(type) {
+		case *ast.GenDecl:
+			for _, spec := range typed.Specs {
+				switch spec := spec.(type) {
+				case *ast.TypeSpec:
+					writeSymbol(&b, "type", spec.Name.Name, fset, spec.Pos(), spec.End())
+					symbolCount++
+				case *ast.ValueSpec:
+					names := make([]string, 0, len(spec.Names))
+					for _, name := range spec.Names {
+						names = append(names, name.Name)
+					}
+					writeSymbol(&b, strings.ToLower(typed.Tok.String()), strings.Join(names, ", "), fset, spec.Pos(), spec.End())
+					symbolCount++
+				}
+			}
+		case *ast.FuncDecl:
+			kind := "func"
+			name := typed.Name.Name
+			if receiver := receiverName(typed.Recv); receiver != "" {
+				kind = "method"
+				name = receiver + "." + name
+			}
+			writeSymbol(&b, kind, name, fset, typed.Pos(), typed.End())
+			symbolCount++
+		}
+	}
+	if symbolCount == 0 {
+		b.WriteString("- none\n")
+	}
+	return ToolResult{Success: true, Output: b.String()}
+}
+
+func markdownOutline(path, display string) ToolResult {
+	lines, binary, err := readTextFileLines(path)
+	if err != nil {
+		return ToolResult{Success: false, Error: err.Error()}
+	}
+	if binary {
+		return ToolResult{Success: false, Error: fmt.Sprintf("binary file suppressed: %s", display), Binary: true}
+	}
+	headings := markdownHeadings(lines)
+	var b strings.Builder
+	fmt.Fprintf(&b, "file: %s\n", display)
+	fmt.Fprintf(&b, "type: markdown\n")
+	fmt.Fprintf(&b, "total_lines: %d\n", len(lines))
+	b.WriteString("headings:\n")
+	if len(headings) == 0 {
+		b.WriteString("- none\n")
+		return ToolResult{Success: true, Output: b.String()}
+	}
+	for i, heading := range headings {
+		endLine := len(lines)
+		for j := i + 1; j < len(headings); j++ {
+			if headings[j].Level <= heading.Level {
+				endLine = headings[j].Line - 1
+				break
+			}
+		}
+		fmt.Fprintf(&b, "- h%d lines %d-%d: %s\n", heading.Level, heading.Line, endLine, heading.Title)
+	}
+	return ToolResult{Success: true, Output: b.String()}
 }
 
 func fileLooksBinary(file *os.File) (bool, error) {
@@ -337,4 +518,92 @@ func clampInt(value, fallback, maxValue int) int {
 		return maxValue
 	}
 	return value
+}
+
+func clampNonNegative(value, maxValue int) int {
+	if value < 0 {
+		return 0
+	}
+	if value > maxValue {
+		return maxValue
+	}
+	return value
+}
+
+func importPath(imported *ast.ImportSpec) string {
+	if imported == nil || imported.Path == nil {
+		return ""
+	}
+	if value, err := strconv.Unquote(imported.Path.Value); err == nil {
+		return value
+	}
+	return strings.Trim(imported.Path.Value, `"`)
+}
+
+func trimStrings(values []string, limit int) []string {
+	if limit <= 0 || len(values) <= limit {
+		return values
+	}
+	out := append([]string{}, values[:limit]...)
+	out = append(out, fmt.Sprintf("+%d more", len(values)-limit))
+	return out
+}
+
+func writeSymbol(b *strings.Builder, kind, name string, fset *token.FileSet, pos, end token.Pos) {
+	startLine := fset.Position(pos).Line
+	endLine := fset.Position(end).Line
+	fmt.Fprintf(b, "- %s %s lines %d-%d\n", kind, name, startLine, endLine)
+}
+
+func receiverName(recv *ast.FieldList) string {
+	if recv == nil || len(recv.List) == 0 {
+		return ""
+	}
+	return exprName(recv.List[0].Type)
+}
+
+func exprName(expr ast.Expr) string {
+	switch typed := expr.(type) {
+	case *ast.Ident:
+		return typed.Name
+	case *ast.StarExpr:
+		return "*" + exprName(typed.X)
+	case *ast.SelectorExpr:
+		if left := exprName(typed.X); left != "" {
+			return left + "." + typed.Sel.Name
+		}
+		return typed.Sel.Name
+	case *ast.IndexExpr:
+		return exprName(typed.X)
+	case *ast.IndexListExpr:
+		return exprName(typed.X)
+	default:
+		return fmt.Sprintf("%T", expr)
+	}
+}
+
+type markdownHeading struct {
+	Level int
+	Line  int
+	Title string
+}
+
+func markdownHeadings(lines []string) []markdownHeading {
+	var headings []markdownHeading
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		level := 0
+		for level < len(trimmed) && level < 6 && trimmed[level] == '#' {
+			level++
+		}
+		if level == 0 || level >= len(trimmed) || trimmed[level] != ' ' {
+			continue
+		}
+		title := strings.TrimSpace(trimmed[level+1:])
+		if title == "" {
+			continue
+		}
+		headings = append(headings, markdownHeading{Level: level, Line: i + 1, Title: title})
+	}
+	return headings
 }

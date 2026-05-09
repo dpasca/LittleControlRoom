@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"lcroom/internal/model"
 )
 
 const (
@@ -85,6 +87,7 @@ type Completion struct {
 	Model        string
 	FinishReason string
 	Usage        json.RawMessage
+	UsageSummary model.LLMUsage
 }
 
 func NewOpenRouterClient(cfg OpenRouterConfig) (*Client, error) {
@@ -188,13 +191,69 @@ func (c *Client) Complete(ctx context.Context, messages []Message, tools []ToolD
 		return Completion{}, fmt.Errorf("openrouter response had no choices")
 	}
 	choice := parsed.Choices[0]
+	modelName := strings.TrimSpace(firstNonEmpty(parsed.Model, c.model))
+	usage := UsageFromRaw(parsed.Usage, modelName)
 	return Completion{
 		Message:      choice.Message,
 		ID:           strings.TrimSpace(parsed.ID),
-		Model:        strings.TrimSpace(firstNonEmpty(parsed.Model, c.model)),
+		Model:        modelName,
 		FinishReason: strings.TrimSpace(choice.FinishReason),
 		Usage:        append(json.RawMessage(nil), parsed.Usage...),
+		UsageSummary: usage,
 	}, nil
+}
+
+func UsageFromRaw(raw json.RawMessage, modelName string) model.LLMUsage {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return model.LLMUsage{}
+	}
+	var envelope struct {
+		PromptTokens        int64 `json:"prompt_tokens"`
+		PromptTokensDetails struct {
+			CachedTokens int64 `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
+		CompletionTokens        int64 `json:"completion_tokens"`
+		CompletionTokensDetails struct {
+			ReasoningTokens int64 `json:"reasoning_tokens"`
+		} `json:"completion_tokens_details"`
+		TotalTokens int64 `json:"total_tokens"`
+
+		InputTokens        int64 `json:"input_tokens"`
+		InputTokensDetails struct {
+			CachedTokens int64 `json:"cached_tokens"`
+		} `json:"input_tokens_details"`
+		OutputTokens        int64 `json:"output_tokens"`
+		OutputTokensDetails struct {
+			ReasoningTokens int64 `json:"reasoning_tokens"`
+		} `json:"output_tokens_details"`
+
+		CachedInputTokens int64   `json:"cached_input_tokens"`
+		ReasoningTokens   int64   `json:"reasoning_tokens"`
+		Cost              float64 `json:"cost"`
+		CostUSD           float64 `json:"cost_usd"`
+		EstimatedCostUSD  float64 `json:"estimated_cost_usd"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return model.LLMUsage{}
+	}
+	usage := model.LLMUsage{
+		InputTokens:       firstPositiveInt64(envelope.InputTokens, envelope.PromptTokens),
+		OutputTokens:      firstPositiveInt64(envelope.OutputTokens, envelope.CompletionTokens),
+		TotalTokens:       envelope.TotalTokens,
+		CachedInputTokens: firstPositiveInt64(envelope.CachedInputTokens, envelope.InputTokensDetails.CachedTokens, envelope.PromptTokensDetails.CachedTokens),
+		ReasoningTokens:   firstPositiveInt64(envelope.ReasoningTokens, envelope.OutputTokensDetails.ReasoningTokens, envelope.CompletionTokensDetails.ReasoningTokens),
+		EstimatedCostUSD:  firstPositiveFloat64(envelope.EstimatedCostUSD, envelope.CostUSD, envelope.Cost),
+	}
+	if usage.TotalTokens == 0 && (usage.InputTokens > 0 || usage.OutputTokens > 0) {
+		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+	}
+	if usage.EstimatedCostUSD == 0 {
+		if estimatedCostUSD, ok := model.EstimateLLMCostUSD(strings.TrimSpace(modelName), usage); ok {
+			usage.EstimatedCostUSD = estimatedCostUSD
+		}
+	}
+	return usage
 }
 
 func (c *Client) MaxTurns() int {
@@ -239,14 +298,29 @@ func Tools() []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "read_file",
-				Description: "Read a bounded line range from a text file inside the workspace.",
+				Description: "Read a bounded line range from a text file inside the workspace. Prefer targeted ranges after search or file_outline; use broad reads only when the whole range is relevant.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
 						"path":   map[string]any{"type": "string", "description": "Workspace-relative path. Absolute paths are denied."},
 						"offset": map[string]any{"type": "integer", "minimum": 1, "description": "1-based starting line. Defaults to 1."},
-						"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": 1000, "description": "Maximum lines to read. Defaults to 200."},
+						"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": 1000, "description": "Maximum lines to read. For scouting, prefer 40-100 lines; larger ranges are allowed when needed. Defaults to 200."},
+					},
+					"required": []string{"path"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "file_outline",
+				Description: "Summarize structure for a source or Markdown file before reading raw text. Go files return package/import summary and top-level symbols with line ranges; Markdown files return headings with line ranges.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"path": map[string]any{"type": "string", "description": "Workspace-relative path to a .go, .md, or .markdown file. Absolute paths are denied."},
 					},
 					"required": []string{"path"},
 				},
@@ -272,15 +346,17 @@ func Tools() []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "search",
-				Description: "Search text files in the workspace for a literal query string.",
+				Description: "Search text files in the workspace for a literal query string, optionally returning a small context window around each match.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"query":       map[string]any{"type": "string"},
-						"path":        map[string]any{"type": "string", "description": "Workspace-relative directory or file to search. Defaults to workspace root. Absolute paths are denied."},
-						"file_glob":   map[string]any{"type": "string", "description": "Optional filepath glob matched against relative path or basename."},
-						"max_matches": map[string]any{"type": "integer", "minimum": 1, "maximum": 200},
+						"query":          map[string]any{"type": "string"},
+						"path":           map[string]any{"type": "string", "description": "Workspace-relative directory or file to search. Defaults to workspace root. Absolute paths are denied."},
+						"file_glob":      map[string]any{"type": "string", "description": "Optional filepath glob matched against relative path or basename."},
+						"max_matches":    map[string]any{"type": "integer", "minimum": 1, "maximum": 200},
+						"context_before": map[string]any{"type": "integer", "minimum": 0, "maximum": 8, "description": "Lines of context before each match. Defaults to 1 in the harness."},
+						"context_after":  map[string]any{"type": "integer", "minimum": 0, "maximum": 8, "description": "Lines of context after each match. Defaults to 2 in the harness."},
 					},
 					"required": []string{"query"},
 				},
@@ -384,7 +460,10 @@ func SystemPrompt(skillIndex, projectInstructions string) string {
 		"You are lcagent, a small local coding-agent harness controlled by Little Control Room.",
 		"Use the provided tools for all workspace inspection, edits, plan updates, and final responses.",
 		"Do not claim to have inspected files or run verification unless a tool result shows that happened.",
-		"Prefer read_file, list_files, and search for routine inspection before reaching for shell commands.",
+		"For unfamiliar source or Markdown files, prefer file_outline before raw reads.",
+		"For specific behavior, identifiers, errors, commands, or tests, prefer search with context before raw reads.",
+		"Use read_file for targeted ranges. Reading from line 1 is useful for imports/package context, but do not default to first-N-line scouting when an outline or search can locate the relevant range.",
+		"When scouting with read_file, prefer 40-100 lines; use larger ranges only when the whole range is relevant. If read_file returns next_offset, continue there instead of overlapping the previous range.",
 		"Use workspace-relative paths in file tools; absolute paths are denied.",
 		"File tools are workspace-only; use read-only run_command argv for paths outside the workspace.",
 		"When using run_command, prefer argv over command strings; shell commands are for shell syntax only.",
@@ -452,6 +531,24 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstPositiveInt64(values ...int64) int64 {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func firstPositiveFloat64(values ...float64) float64 {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func responseSnippet(data []byte) string {

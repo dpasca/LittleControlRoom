@@ -99,6 +99,9 @@ func TestRunExecOpenRouterEmitsModelResponseUsage(t *testing.T) {
 		`"response_id":"resp_test"`,
 		`"finish_reason":"stop"`,
 		`"prompt_tokens":7`,
+		`"usage_summary"`,
+		`"input_tokens":7`,
+		`"output_tokens":3`,
 		`"type":"turn_complete"`,
 		`"summary":"done from model"`,
 	} {
@@ -479,6 +482,30 @@ func TestRunExecOpenRouterFinalizesGracefullyAtMaxTurns(t *testing.T) {
 	}
 	if requests != 3 {
 		t.Fatalf("requests = %d, want 3", requests)
+	}
+}
+
+func TestRunMetricsSummarizesSessionArtifact(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	body := `{"type":"session_meta","id":"lca_metrics","cwd":"/repo"}
+{"type":"model_response","model":"deepseek/test","usage":{"prompt_tokens":12,"prompt_tokens_details":{"cached_tokens":4},"completion_tokens":3,"total_tokens":15,"cost":0.01}}
+{"type":"tool_call","tool":"read_file","args":{"path":"README.md"}}
+{"type":"tool_result","tool":"read_file","result":{"success":true,"output":"file: README.md\ntotal_lines: 2\nhas_more: false\nlines: 1-2\n\n1 | hello\n2 | world\n"}}
+{"type":"turn_complete","summary":"done"}
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"metrics", path}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s", code, stderr.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{`"sessions": 1`, `"read_file_calls": 1`, `"read_file_lines": 2`, `"input_tokens": 12`, `"cached_input_tokens": 4`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("metrics output missing %q:\n%s", want, text)
+		}
 	}
 }
 
