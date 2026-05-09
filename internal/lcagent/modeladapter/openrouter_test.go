@@ -59,8 +59,25 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 
 func TestSystemPromptIncludesSkillMetadata(t *testing.T) {
 	prompt := SystemPrompt("Available skills\n- demo [project]: Demo workflow", "Project instructions from AGENTS.md:\nRun tests.")
-	if !strings.Contains(prompt, "call load_skill") || !strings.Contains(prompt, "demo [project]") || !strings.Contains(prompt, "Run tests.") || !strings.Contains(prompt, "*** Update File: path") || !strings.Contains(prompt, "workspace-relative paths") {
+	if !strings.Contains(prompt, "call load_skill") || !strings.Contains(prompt, "demo [project]") || !strings.Contains(prompt, "Run tests.") || !strings.Contains(prompt, "*** Update File: path") || !strings.Contains(prompt, "workspace-relative paths") || !strings.Contains(prompt, "workspace-only") || !strings.Contains(prompt, "structured tool_calls") {
 		t.Fatalf("prompt missing skill guidance:\n%s", prompt)
+	}
+}
+
+func TestSanitizeAssistantContentStripsProviderToolMarkup(t *testing.T) {
+	content := "No filename matches.\n\n<\uff5cDSML\uff5ctool_calls><\uff5cDSML\uff5cinvoke name=\"run_command\">"
+	got, stripped := SanitizeAssistantContent(content)
+	if !stripped {
+		t.Fatal("SanitizeAssistantContent() stripped = false, want true")
+	}
+	if got != "No filename matches." {
+		t.Fatalf("sanitized content = %q", got)
+	}
+	if !ContainsProviderToolMarkup(content) {
+		t.Fatal("ContainsProviderToolMarkup() = false, want true")
+	}
+	if clean, stripped := SanitizeAssistantContent("plain answer"); stripped || clean != "plain answer" {
+		t.Fatalf("plain sanitize = %q/%v", clean, stripped)
 	}
 }
 

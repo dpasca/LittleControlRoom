@@ -266,6 +266,139 @@ func TestRunExecOpenRouterFinalResponseToolIsCanonical(t *testing.T) {
 	}
 }
 
+func TestRunExecOpenRouterStripsProviderToolMarkupFromToolTurn(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("needle\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		for _, msg := range body.Messages {
+			if strings.Contains(msg.Content, "<\uff5cDSML") {
+				t.Fatalf("request history leaked provider markup: %#v", body.Messages)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if requests == 1 {
+			_, _ = w.Write([]byte(`{
+				"id":"resp_tool",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{
+						"role":"assistant",
+						"content":"Let me read it.\n\n<\uff5cDSML\uff5ctool_calls><\uff5cDSML\uff5cinvoke name=\"read_file\">",
+						"tool_calls":[{"id":"call_read","type":"function","function":{"name":"read_file","arguments":{"path":"README.md","limit":1}}}]
+					}
+				}]
+			}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{
+			"id":"resp_final",
+			"model":"deepseek/test-model",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"done"}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--max-turns", "3",
+		"read README",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	if strings.Contains(text, "DSML") {
+		t.Fatalf("stdout should not include provider markup:\n%s", text)
+	}
+	if !strings.Contains(text, "Let me read it.") || !strings.Contains(text, `"tool":"read_file"`) || !strings.Contains(text, `"summary":"done"`) {
+		t.Fatalf("stdout missing sanitized tool flow:\n%s", text)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+}
+
+func TestRunExecOpenRouterAbortsProviderMarkupWithoutStructuredToolCalls(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"resp_bad_markup",
+			"model":"deepseek/test-model",
+			"choices":[{
+				"finish_reason":"tool_calls",
+				"message":{
+					"role":"assistant",
+					"content":"<\uff5cDSML\uff5ctool_calls><\uff5cDSML\uff5cinvoke name=\"run_command\">"
+				}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--max-turns", "2",
+		"search files",
+	}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("code = 0, want failure stdout=%s", stdout.String())
+	}
+	text := stdout.String()
+	if strings.Contains(text, "DSML") {
+		t.Fatalf("stdout should not include provider markup:\n%s", text)
+	}
+	for _, want := range []string{
+		`"type":"turn_aborted"`,
+		`provider tool-call markup`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+	if !strings.Contains(stderr.String(), "provider tool-call markup") {
+		t.Fatalf("stderr missing abort reason: %s", stderr.String())
+	}
+}
+
 func isolateSkillHomes(t *testing.T) {
 	t.Helper()
 	t.Setenv("CODEX_HOME", filepath.Join(t.TempDir(), "codex"))

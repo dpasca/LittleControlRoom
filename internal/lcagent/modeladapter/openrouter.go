@@ -381,7 +381,9 @@ func SystemPrompt(skillIndex, projectInstructions string) string {
 		"Do not claim to have inspected files or run verification unless a tool result shows that happened.",
 		"Prefer read_file, list_files, and search for routine inspection before reaching for shell commands.",
 		"Use workspace-relative paths in file tools; absolute paths are denied.",
+		"File tools are workspace-only; use read-only run_command argv for paths outside the workspace.",
 		"When using run_command, prefer argv over command strings; shell commands are for shell syntax only.",
+		"Never write provider tool-call markup such as DSML in assistant text; call tools only through structured tool_calls.",
 		"Skill descriptions in this prompt are metadata only; call load_skill before relying on any skill instructions.",
 		"Use apply_patch for source edits. Patches must use this exact shape: *** Begin Patch, *** Update File: path, @@, -old line, +new line, *** End Patch.",
 		"When done, call final_response exactly once.",
@@ -393,6 +395,24 @@ func SystemPrompt(skillIndex, projectInstructions string) string {
 		lines = append(lines, "", strings.TrimSpace(projectInstructions))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func SanitizeAssistantContent(content string) (string, bool) {
+	first := -1
+	for _, marker := range providerToolMarkupMarkers {
+		if idx := strings.Index(content, marker); idx >= 0 && (first == -1 || idx < first) {
+			first = idx
+		}
+	}
+	if first == -1 {
+		return content, false
+	}
+	return strings.TrimSpace(content[:first]), true
+}
+
+func ContainsProviderToolMarkup(content string) bool {
+	_, stripped := SanitizeAssistantContent(content)
+	return stripped
 }
 
 func NormalizeArguments(raw json.RawMessage) (json.RawMessage, error) {
@@ -412,6 +432,12 @@ func NormalizeArguments(raw json.RawMessage) (json.RawMessage, error) {
 		return json.RawMessage(`{}`), nil
 	}
 	return json.RawMessage(encoded), nil
+}
+
+var providerToolMarkupMarkers = []string{
+	"<\uff5cDSML\uff5c",
+	"<|tool_calls|>",
+	"<|tool_call|>",
 }
 
 func firstNonEmpty(values ...string) string {

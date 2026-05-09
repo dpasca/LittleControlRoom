@@ -222,16 +222,18 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 		if err := writer.Write(modelResponseEvent(runner.SessionID, turn+1, completion, len(msg.ToolCalls))); err != nil {
 			return err
 		}
+		sanitizedContent, strippedProviderMarkup := modeladapter.SanitizeAssistantContent(msg.Content)
+		msg.Content = sanitizedContent
 		messages = append(messages, msg)
 		if len(msg.ToolCalls) == 0 {
+			if strippedProviderMarkup {
+				return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("openrouter response contained provider tool-call markup but no structured tool calls"))
+			}
+			if strings.EqualFold(completion.FinishReason, "tool_calls") {
+				return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("openrouter response finished with tool_calls but returned no structured tool calls"))
+			}
 			if strings.TrimSpace(msg.Content) == "" {
-				err := fmt.Errorf("openrouter response had no content or tool calls")
-				_ = writer.Write(session.Event{
-					"type":       "turn_aborted",
-					"session_id": runner.SessionID,
-					"reason":     err.Error(),
-				})
-				return err
+				return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("openrouter response had no content or tool calls"))
 			}
 			return runner.Final(script.Action{
 				Type:    "final_response",
@@ -250,13 +252,17 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 		for _, call := range msg.ToolCalls {
 			args, err := modeladapter.NormalizeArguments(call.Function.Arguments)
 			if err != nil {
-				return err
+				toolName := strings.TrimSpace(call.Function.Name)
+				if toolName == "" {
+					toolName = "unknown tool"
+				}
+				return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("decode arguments for %s: %w", toolName, err))
 			}
 			action := script.Action{Type: "tool_call", Tool: call.Function.Name, Args: args}
 			if call.Function.Name == "final_response" {
 				var final script.Action
 				if err := json.Unmarshal(args, &final); err != nil {
-					return err
+					return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("decode final_response arguments: %w", err))
 				}
 				final.Type = "final_response"
 				return runner.Final(final)
@@ -282,6 +288,15 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 	_ = writer.Write(session.Event{
 		"type":       "turn_aborted",
 		"session_id": runner.SessionID,
+		"reason":     err.Error(),
+	})
+	return err
+}
+
+func abortOpenRouterRun(writer *session.Writer, sessionID string, err error) error {
+	_ = writer.Write(session.Event{
+		"type":       "turn_aborted",
+		"session_id": sessionID,
 		"reason":     err.Error(),
 	})
 	return err
