@@ -43,7 +43,9 @@ type lcagentSession struct {
 	status             string
 	lastError          string
 	model              string
+	modelProvider      string
 	reasoningEffort    string
+	replayLoaded       bool
 	entries            []TranscriptEntry
 	revision           uint64
 	cache              transcriptExportCache
@@ -62,16 +64,21 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		model = modeladapter.DefaultOpenRouterModel
 	}
 	session := &lcagentSession{
-		projectPath: strings.TrimSpace(req.ProjectPath),
-		dataDir:     dataDir,
-		execPath:    strings.TrimSpace(req.LCAgentPath),
-		envFile:     strings.TrimSpace(req.LCAgentEnvFile),
-		auto:        strings.TrimSpace(req.LCAgentAuto),
-		notify:      notify,
-		model:       model,
-		status:      "Ready",
+		projectPath:   strings.TrimSpace(req.ProjectPath),
+		dataDir:       dataDir,
+		execPath:      strings.TrimSpace(req.LCAgentPath),
+		envFile:       strings.TrimSpace(req.LCAgentEnvFile),
+		auto:          strings.TrimSpace(req.LCAgentAuto),
+		notify:        notify,
+		model:         model,
+		modelProvider: "openrouter",
+		status:        "Ready",
 	}
-	if prompt := strings.TrimSpace(req.Prompt); prompt != "" {
+	if replay, err := loadLCAgentReplay(req); err != nil {
+		return nil, err
+	} else if replay != nil {
+		session.applyReplay(replay)
+	} else if prompt := strings.TrimSpace(req.Prompt); prompt != "" {
 		if err := session.Submit(prompt); err != nil {
 			return nil, err
 		}
@@ -226,6 +233,10 @@ func (s *lcagentSession) startRun(prompt, displayPrompt string) error {
 	s.lastActivityAt = now
 	s.status = "Starting LCAgent"
 	s.lastError = ""
+	if s.replayLoaded && len(s.entries) > 0 {
+		s.appendEntryLocked(TranscriptStatus, "Starting a new one-shot LCAgent run. Loaded history is display-only and is not sent as model context.")
+		s.replayLoaded = false
+	}
 	s.appendEntryLocked(TranscriptUser, firstNonEmpty(displayPrompt, prompt))
 	model := firstNonEmpty(s.model, modeladapter.DefaultOpenRouterModel)
 	s.mu.Unlock()
@@ -428,6 +439,56 @@ func (s *lcagentSession) appendEntryLocked(kind TranscriptKind, text string) {
 	s.touchLocked()
 }
 
+func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
+	if s == nil || replay == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.threadID = strings.TrimSpace(replay.sessionID)
+	s.started = true
+	s.busy = false
+	s.closed = false
+	s.busySince = time.Time{}
+	s.lastBusyActivityAt = time.Time{}
+	s.lastActivityAt = replay.lastActivityAt
+	if s.lastActivityAt.IsZero() {
+		s.lastActivityAt = replay.startedAt
+	}
+	if s.lastActivityAt.IsZero() {
+		s.lastActivityAt = time.Now()
+	}
+	s.lastError = strings.TrimSpace(replay.lastError)
+	if model := strings.TrimSpace(replay.model); model != "" {
+		s.model = model
+	}
+	if provider := strings.TrimSpace(replay.modelProvider); provider != "" {
+		s.modelProvider = provider
+	}
+	label := firstNonEmpty(s.threadID, "history")
+	s.status = "Loaded LCAgent session " + label + " from disk"
+	s.replayLoaded = true
+	s.entries = nil
+	s.revision = 0
+	s.cache.ready = false
+	replayActivityAt := s.lastActivityAt
+	s.appendEntryLocked(TranscriptStatus, "Loaded LCAgent session "+label+" from disk. History is read-only; sending a prompt starts a new one-shot run.")
+	for _, entry := range replay.entries {
+		text := strings.TrimSpace(entry.Text)
+		if text == "" {
+			continue
+		}
+		s.entries = append(s.entries, TranscriptEntry{
+			ItemID:      firstNonEmpty(strings.TrimSpace(entry.ItemID), fmt.Sprintf("lcagent-replay-%d", len(s.entries)+1)),
+			Kind:        entry.Kind,
+			Text:        text,
+			DisplayText: strings.TrimSpace(entry.DisplayText),
+		})
+	}
+	s.lastActivityAt = replayActivityAt
+	s.cache.invalidate(&s.revision)
+}
+
 func (s *lcagentSession) touchLocked() {
 	s.lastActivityAt = time.Now()
 	s.revision++
@@ -470,7 +531,7 @@ func (s *lcagentSession) snapshotLocked() Snapshot {
 		LastActivityAt:     s.lastActivityAt,
 		CurrentCWD:         s.projectPath,
 		Model:              firstNonEmpty(s.model, modeladapter.DefaultOpenRouterModel),
-		ModelProvider:      "openrouter",
+		ModelProvider:      firstNonEmpty(s.modelProvider, "openrouter"),
 		ReasoningEffort:    s.reasoningEffort,
 	}
 }

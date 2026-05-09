@@ -86,6 +86,10 @@ playwright_login_mode = "promote"
 playwright_isolation_scope = "task"
 ```
 
+LCAgent session JSONL artifacts are replayable in the embedded pane. Opening a previous
+LCAgent session loads read-only transcript history; sending a new prompt starts a fresh
+one-shot run rather than continuing that prior model context.
+
 Saved-from-TUI example:
 
 ```toml
