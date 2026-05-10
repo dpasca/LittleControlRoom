@@ -32,6 +32,12 @@ func embeddedModelPreferencesFromSettings(settings config.EditableSettings) map[
 			Reasoning: strings.TrimSpace(settings.EmbeddedOpenCodeReasoning),
 		}
 	}
+	if model := strings.TrimSpace(settings.EmbeddedLCAgentModel); model != "" || strings.TrimSpace(settings.EmbeddedLCAgentReasoning) != "" {
+		prefs[codexapp.ProviderLCAgent] = embeddedModelPreference{
+			Model:     model,
+			Reasoning: strings.TrimSpace(settings.EmbeddedLCAgentReasoning),
+		}
+	}
 	if len(prefs) == 0 {
 		return nil
 	}
@@ -48,6 +54,8 @@ func applyEmbeddedModelPreferencesToSettings(settings *config.EditableSettings, 
 	settings.EmbeddedClaudeReasoning = ""
 	settings.EmbeddedOpenCodeModel = ""
 	settings.EmbeddedOpenCodeReasoning = ""
+	settings.EmbeddedLCAgentModel = ""
+	settings.EmbeddedLCAgentReasoning = ""
 	if pref, ok := prefs[codexapp.ProviderCodex]; ok {
 		settings.EmbeddedCodexModel = strings.TrimSpace(pref.Model)
 		settings.EmbeddedCodexReasoning = strings.TrimSpace(pref.Reasoning)
@@ -59,6 +67,10 @@ func applyEmbeddedModelPreferencesToSettings(settings *config.EditableSettings, 
 	if pref, ok := prefs[codexapp.ProviderOpenCode]; ok {
 		settings.EmbeddedOpenCodeModel = strings.TrimSpace(pref.Model)
 		settings.EmbeddedOpenCodeReasoning = strings.TrimSpace(pref.Reasoning)
+	}
+	if pref, ok := prefs[codexapp.ProviderLCAgent]; ok {
+		settings.EmbeddedLCAgentModel = strings.TrimSpace(pref.Model)
+		settings.EmbeddedLCAgentReasoning = strings.TrimSpace(pref.Reasoning)
 	}
 }
 
@@ -118,6 +130,8 @@ func (m *Model) recordRecentModel(provider codexapp.Provider, model string) {
 		recent = &m.recentClaudeModels
 	case codexapp.ProviderOpenCode:
 		recent = &m.recentOpenCodeModels
+	case codexapp.ProviderLCAgent:
+		recent = &m.recentLCAgentModels
 	default:
 		return
 	}
@@ -142,9 +156,12 @@ func embeddedModelSettingsEqual(left, right config.EditableSettings) bool {
 		strings.TrimSpace(left.EmbeddedClaudeReasoning) == strings.TrimSpace(right.EmbeddedClaudeReasoning) &&
 		strings.TrimSpace(left.EmbeddedOpenCodeModel) == strings.TrimSpace(right.EmbeddedOpenCodeModel) &&
 		strings.TrimSpace(left.EmbeddedOpenCodeReasoning) == strings.TrimSpace(right.EmbeddedOpenCodeReasoning) &&
+		strings.TrimSpace(left.EmbeddedLCAgentModel) == strings.TrimSpace(right.EmbeddedLCAgentModel) &&
+		strings.TrimSpace(left.EmbeddedLCAgentReasoning) == strings.TrimSpace(right.EmbeddedLCAgentReasoning) &&
 		trimmedStringSlicesEqual(left.RecentCodexModels, right.RecentCodexModels) &&
 		trimmedStringSlicesEqual(left.RecentClaudeModels, right.RecentClaudeModels) &&
-		trimmedStringSlicesEqual(left.RecentOpenCodeModels, right.RecentOpenCodeModels)
+		trimmedStringSlicesEqual(left.RecentOpenCodeModels, right.RecentOpenCodeModels) &&
+		trimmedStringSlicesEqual(left.RecentLCAgentModels, right.RecentLCAgentModels)
 }
 
 func trimmedStringSlicesEqual(left, right []string) bool {

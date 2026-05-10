@@ -209,6 +209,8 @@ func embeddedNewCommand(provider codexapp.Provider) string {
 		return "/opencode-new"
 	case codexapp.ProviderClaudeCode:
 		return "/claude-new"
+	case codexapp.ProviderLCAgent:
+		return "/lcagent-new"
 	default:
 		return "/codex-new"
 	}
@@ -859,6 +861,29 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 	provider := req.Provider.Normalized()
 	if provider == "" {
 		provider = codexapp.ProviderCodex
+	}
+	if provider == codexapp.ProviderLCAgent {
+		if strings.TrimSpace(req.LCAgentPath) == "" {
+			req.LCAgentPath = m.lcagentPath()
+		}
+		if strings.TrimSpace(req.LCAgentEnvFile) == "" {
+			req.LCAgentEnvFile = m.lcagentEnvFile()
+		}
+		if strings.TrimSpace(req.LCAgentProvider) == "" {
+			req.LCAgentProvider = m.lcagentProvider()
+		}
+		if strings.TrimSpace(req.LCAgentAuto) == "" {
+			req.LCAgentAuto = m.lcagentAuto()
+		}
+		if strings.TrimSpace(req.LCAgentToolProfile) == "" {
+			req.LCAgentToolProfile = m.lcagentToolProfile()
+		}
+		if strings.TrimSpace(req.LCAgentContextProfile) == "" {
+			req.LCAgentContextProfile = m.lcagentContextProfile()
+		}
+		if req.LCAgentRequestTimeout <= 0 {
+			req.LCAgentRequestTimeout = m.lcagentRequestTimeout()
+		}
 	}
 	perfOpID := m.beginAILatencyOp("Embedded open", req.ProjectPath, provider.Label())
 	previousThreadID := ""
@@ -1709,7 +1734,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, refreshCmd
 		}
 		if snapshot.Phase == codexapp.SessionPhaseStalled {
-			m.status = label + " looks stuck or disconnected. Interrupt the current turn with Ctrl+C or use /reconnect before sending another prompt."
+			m.status = label + " looks stuck or disconnected. Interrupt the current turn with ctrl+c or use /reconnect before sending another prompt."
 			return m, refreshCmd
 		}
 		m.clearCodexDraft(m.codexVisibleProject)
@@ -2589,6 +2614,9 @@ func (m Model) renderCodexSessionMeta(snapshot codexapp.Snapshot, width int) str
 	if context := codexSnapshotContextLeftLabel(snapshot); context != "" {
 		segments = append(segments, renderFooterMeta("Context")+" "+renderFooterStatus(context))
 	}
+	if tokens := codexSnapshotTokenUsageLabel(snapshot); tokens != "" {
+		segments = append(segments, renderFooterMeta("Tok")+" "+renderFooterStatus(tokens))
+	}
 	if nextModel := strings.TrimSpace(snapshot.PendingModel); nextModel != "" && !showPendingAsCurrent {
 		nextReasoning := firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingReasoning), strings.TrimSpace(snapshot.ReasoningEffort))
 		next := nextModel
@@ -2625,6 +2653,36 @@ func codexSnapshotContextLeftLabel(snapshot codexapp.Snapshot) string {
 	return fmt.Sprintf("%d%% left (%s tok)", snapshot.TokenUsage.ContextLeftPercent(), formatInt64(snapshot.TokenUsage.ContextLeftTokens()))
 }
 
+func codexSnapshotTokenUsageLabel(snapshot codexapp.Snapshot) string {
+	if snapshot.TokenUsage == nil {
+		return ""
+	}
+	usage := snapshot.TokenUsage.Total
+	if usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.TotalTokens == 0 && usage.CachedInputTokens == 0 && usage.ReasoningOutputTokens == 0 {
+		usage = snapshot.TokenUsage.Last
+	}
+	if usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.TotalTokens == 0 && usage.CachedInputTokens == 0 && usage.ReasoningOutputTokens == 0 {
+		return ""
+	}
+	parts := make([]string, 0, 5)
+	if usage.InputTokens > 0 {
+		parts = append(parts, "i"+formatTokenCount(usage.InputTokens))
+	}
+	if usage.OutputTokens > 0 {
+		parts = append(parts, "o"+formatTokenCount(usage.OutputTokens))
+	}
+	if usage.CachedInputTokens > 0 {
+		parts = append(parts, "c"+formatTokenCount(usage.CachedInputTokens))
+	}
+	if usage.ReasoningOutputTokens > 0 {
+		parts = append(parts, "r"+formatTokenCount(usage.ReasoningOutputTokens))
+	}
+	if usage.TotalTokens > 0 {
+		parts = append(parts, "t"+formatTokenCount(usage.TotalTokens))
+	}
+	return strings.Join(parts, " ")
+}
+
 func firstNonEmptyCodexLabel(values ...string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
@@ -2642,7 +2700,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 	case snapshot.PendingToolInput != nil:
 		actions = append(actions,
 			footerPrimaryAction("Enter", "answer"),
-			footerExitAction("Ctrl+C", "close"),
+			footerExitAction("ctrl+c", "close"),
 			footerHideAction("Esc", "hide"),
 			footerLowAction("Alt+C", "copy menu"),
 		)
@@ -2656,12 +2714,12 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			actions = append(actions, footerNavAction("Tab", "next"))
 		}
 		if managedBrowserCurrentPageURL(snapshot) != "" && strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" {
-			actions = append(actions, footerNavAction("Ctrl+O", m.managedBrowserCurrentPageFooterLabel(snapshot)))
+			actions = append(actions, footerNavAction("ctrl+o", m.managedBrowserCurrentPageFooterLabel(snapshot)))
 		}
 	case snapshot.PendingElicitation != nil && snapshot.PendingElicitation.Mode == codexapp.ElicitationModeForm:
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "accept"),
-			footerExitAction("Ctrl+C", "close"),
+			footerExitAction("ctrl+c", "close"),
 			footerHideAction("Esc", "hide"),
 			footerExitAction("d", "decline"),
 			footerLowAction("c", "cancel"),
@@ -2674,7 +2732,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		actions = []footerAction{
 			footerPrimaryAction("O", "show browser"),
 			footerPrimaryAction("Enter", "done/accept"),
-			footerExitAction("Ctrl+C", "close"),
+			footerExitAction("ctrl+c", "close"),
 			footerHideAction("Esc", "hide"),
 			footerExitAction("d", "decline"),
 			footerLowAction("c", "cancel"),
@@ -2682,7 +2740,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 	case snapshot.PendingElicitation != nil:
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "accept"),
-			footerExitAction("Ctrl+C", "close"),
+			footerExitAction("ctrl+c", "close"),
 			footerHideAction("Esc", "hide"),
 			footerExitAction("d", "decline"),
 			footerLowAction("c", "cancel"),
@@ -2690,7 +2748,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 	case m.codexSlashActive():
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "run"),
-			footerExitAction("Ctrl+C", "close"),
+			footerExitAction("ctrl+c", "close"),
 			footerHideAction("Esc", "hide"),
 			footerNavAction("Tab", "complete"),
 			footerNavAction("Shift+Tab", "previous"),
@@ -2726,10 +2784,10 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 	case snapshot.Busy:
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "steer"),
-			footerExitAction("Ctrl+C", "interrupt"),
+			footerExitAction("ctrl+c", "interrupt"),
 			footerHideAction("Esc", "hide"),
 			footerNavAction("Alt+Enter", "newline"),
-			footerNavAction("Ctrl+V", "image"),
+			footerNavAction("ctrl+v", "image"),
 			footerLowAction("Alt+C", "copy menu"),
 		}
 	case snapshot.Closed:
@@ -2740,14 +2798,14 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 	default:
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "send"),
-			footerExitAction("Ctrl+C", "close"),
+			footerExitAction("ctrl+c", "close"),
 			footerHideAction("Esc", "hide"),
 			footerNavAction("Alt+Enter", "newline"),
-			footerNavAction("Ctrl+V", "image"),
+			footerNavAction("ctrl+v", "image"),
 			footerLowAction("Alt+C", "copy menu"),
 		}
 		if managedBrowserCurrentPageURL(snapshot) != "" && strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" {
-			actions = append(actions, footerNavAction("Ctrl+O", m.managedBrowserCurrentPageFooterLabel(snapshot)))
+			actions = append(actions, footerNavAction("ctrl+o", m.managedBrowserCurrentPageFooterLabel(snapshot)))
 		}
 	}
 	if len(m.cachedCodexOpenTargetsForPicker(snapshot)) > 0 && codexArtifactPickerAllowed(snapshot) {
@@ -2786,7 +2844,7 @@ func (m Model) managedBrowserCurrentPageHint(snapshot codexapp.Snapshot) string 
 			return ""
 		}
 	}
-	return "Press Ctrl+O to reveal the managed browser window for this same session."
+	return "Press ctrl+o to reveal the managed browser window for this same session."
 }
 
 func (m Model) managedBrowserCurrentPageFooterLabel(snapshot codexapp.Snapshot) string {

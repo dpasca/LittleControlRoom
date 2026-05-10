@@ -257,7 +257,7 @@ func (m Model) renderBossModeFooter(width int) string {
 		footerNavAction("Alt+O", "files"),
 		footerNavAction("Alt+1..8", "jump"),
 		footerLowAction("Alt+C", "copy menu"),
-		footerNavAction("Ctrl+R", "refresh"),
+		footerNavAction("ctrl+r", "refresh"),
 		footerHideAction("Esc", "hide"),
 	}
 	if m.bossModel.SlashActive() {

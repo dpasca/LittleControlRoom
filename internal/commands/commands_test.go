@@ -480,6 +480,33 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "lcagent smart resume prompt",
+			raw:  "/lcagent continue with the latest session",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindLCAgent {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindLCAgent)
+				}
+				if inv.Prompt != "continue with the latest session" {
+					t.Fatalf("prompt = %q, want LCAgent prompt", inv.Prompt)
+				}
+			},
+		},
+		{
+			name: "lcagent new alias",
+			raw:  "/lca-start summarize the repo",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindLCAgentNew {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindLCAgentNew)
+				}
+				if inv.Prompt != "summarize the repo" {
+					t.Fatalf("prompt = %q, want LCAgent prompt", inv.Prompt)
+				}
+				if inv.Canonical != "/lcagent-new summarize the repo" {
+					t.Fatalf("canonical = %q, want canonical lcagent-new form", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "snooze default",
 			raw:  "/snooze",
 			check: func(t *testing.T, inv Invocation) {
@@ -551,6 +578,18 @@ func TestParse(t *testing.T) {
 			check: func(t *testing.T, inv Invocation) {
 				if inv.Toggle != ToggleToggle {
 					t.Fatalf("toggle = %s, want %s", inv.Toggle, ToggleToggle)
+				}
+			},
+		},
+		{
+			name: "session picker",
+			raw:  "/session",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindSession {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindSession)
+				}
+				if inv.Canonical != "/session" {
+					t.Fatalf("canonical = %q, want /session", inv.Canonical)
 				}
 			},
 		},
@@ -862,6 +901,19 @@ func TestSuggestionsIncludeOpenCodeCommands(t *testing.T) {
 	}
 	if got[2].Insert != "/opencode-new" {
 		t.Fatalf("third /open suggestion = %q, want /opencode-new", got[2].Insert)
+	}
+}
+
+func TestSuggestionsIncludeLCAgentCommands(t *testing.T) {
+	got := Suggestions("/lca")
+	if len(got) < 2 {
+		t.Fatalf("Suggestions(/lca) len = %d, want at least 2", len(got))
+	}
+	if got[0].Insert != "/lcagent" {
+		t.Fatalf("first /lca suggestion = %q, want /lcagent", got[0].Insert)
+	}
+	if got[1].Insert != "/lcagent-new" {
+		t.Fatalf("second /lca suggestion = %q, want /lcagent-new", got[1].Insert)
 	}
 }
 

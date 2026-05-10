@@ -784,7 +784,7 @@ func bossActionPlannerSystemPrompt() string {
 		"Do not answer with only a priority order when the user asks Boss to get open agent tasks solved and a task id is visible.",
 		"Do not use the Little Control Room project or another unrelated active engineer session as a proxy venue for generic or host-level work.",
 		"Before propose_control, resolve ambiguous targets with read-only queries or ask the user to name the project. Do not infer a project from hidden UI cursor state.",
-		"For engineer.send_prompt, set provider to auto unless the user explicitly names Codex, OpenCode, or Claude Code. Default project handoffs to session_mode=new so unrelated work does not inherit stale engineer context. Use session_mode=resume_or_new only when the user explicitly asks to resume/continue a prior engineer session, clearly gives a same-topic follow-up, or provides an operator note meant to steer active work. Set reveal true only when the user asks to show/open the session.",
+		"For engineer.send_prompt, set provider to auto unless the user explicitly names Codex, OpenCode, Claude Code, or LCAgent. Default project handoffs to session_mode=new so unrelated work does not inherit stale engineer context. Use session_mode=resume_or_new only when the user explicitly asks to resume/continue a prior engineer session, clearly gives a same-topic follow-up, or provides an operator note meant to steer active work. Set reveal true only when the user asks to show/open the session.",
 		"If the current view lists active Codex engineer work and the user gives an operator note meant to steer that work, such as offering to log in or clarifying what the engineer should try next, propose engineer.send_prompt with session_mode=resume_or_new for that same project/task. The host will steer the active Codex turn when possible. Active work alone is not enough reason to resume; start a fresh separate handoff for new or unrelated project work.",
 		"Wanting to see an app, page, server, screenshot, or browser result is not a request to reveal the engineer transcript pane; keep reveal false unless the user explicitly asks to show, open, or watch that engineer session.",
 		"For agent_task.create, task_kind must be agent unless parent_task_id is set and the user asked for a subagent; put affected projects, PIDs, ports, files, sessions, or related tasks in resources; put allowed action namespaces such as process.inspect, process.terminate, repo.edit, test.run, browser.inspect in capabilities.",
@@ -967,7 +967,7 @@ func bossResourceRefSchema() map[string]any {
 			"id":           map[string]any{"type": "string"},
 			"path":         map[string]any{"type": "string"},
 			"project_path": map[string]any{"type": "string"},
-			"provider":     map[string]any{"type": "string", "enum": []string{"", string(control.ProviderAuto), string(control.ProviderCodex), string(control.ProviderOpenCode), string(control.ProviderClaudeCode)}},
+			"provider":     map[string]any{"type": "string", "enum": []string{"", string(control.ProviderAuto), string(control.ProviderCodex), string(control.ProviderOpenCode), string(control.ProviderClaudeCode), string(control.ProviderLCAgent)}},
 			"session_id":   map[string]any{"type": "string"},
 			"todo_id":      map[string]any{"type": "integer"},
 			"pid":          map[string]any{"type": "integer"},
@@ -1147,8 +1147,8 @@ func bossActionSchema() map[string]any {
 			},
 			"engineer_provider": map[string]any{
 				"type":        "string",
-				"enum":        []string{"", string(control.ProviderAuto), string(control.ProviderCodex), string(control.ProviderOpenCode), string(control.ProviderClaudeCode)},
-				"description": "For engineer.send_prompt and agent task launch proposals: auto, codex, opencode, claude_code. Empty is treated as auto.",
+				"enum":        []string{"", string(control.ProviderAuto), string(control.ProviderCodex), string(control.ProviderOpenCode), string(control.ProviderClaudeCode), string(control.ProviderLCAgent)},
+				"description": "For engineer.send_prompt and agent task launch proposals: auto, codex, opencode, claude_code, lcagent. Empty is treated as auto.",
 			},
 			"session_mode": map[string]any{
 				"type":        "string",

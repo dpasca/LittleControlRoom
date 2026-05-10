@@ -34,6 +34,7 @@ const (
 	ProviderCodex      Provider = "codex"
 	ProviderOpenCode   Provider = "opencode"
 	ProviderClaudeCode Provider = "claude_code"
+	ProviderLCAgent    Provider = "lcagent"
 )
 
 func (p Provider) Normalized() Provider {
@@ -44,6 +45,8 @@ func (p Provider) Normalized() Provider {
 		return ProviderOpenCode
 	case string(ProviderClaudeCode), "claude-code", "claude":
 		return ProviderClaudeCode
+	case string(ProviderLCAgent), "lc-agent", "lc_agent":
+		return ProviderLCAgent
 	default:
 		return ""
 	}
@@ -55,6 +58,8 @@ func (p Provider) Label() string {
 		return "OpenCode"
 	case ProviderClaudeCode:
 		return "Claude Code"
+	case ProviderLCAgent:
+		return "LCAgent"
 	default:
 		return "Codex"
 	}
@@ -66,6 +71,8 @@ func (p Provider) SourceTag() string {
 		return "OC"
 	case ProviderClaudeCode:
 		return "CC"
+	case ProviderLCAgent:
+		return "LA"
 	default:
 		return "CX"
 	}
@@ -538,6 +545,13 @@ type LaunchRequest struct {
 	AppDataDir               string
 	OpenCodeDataHome         string
 	CodexHome                string
+	LCAgentPath              string
+	LCAgentEnvFile           string
+	LCAgentProvider          string
+	LCAgentAuto              string
+	LCAgentToolProfile       string
+	LCAgentContextProfile    string
+	LCAgentRequestTimeout    time.Duration
 	CLIExecutablePath        string
 }
 
@@ -557,10 +571,10 @@ func (r LaunchRequest) Validate() error {
 		if _, err := codexcli.ParsePreset(string(preset)); err != nil {
 			return err
 		}
-	case ProviderClaudeCode:
-		// Claude Code sessions are read-only; no preset validation needed.
+	case ProviderClaudeCode, ProviderLCAgent:
+		// These providers do not use Codex launch presets.
 	default:
-		return fmt.Errorf("embedded provider must be one of: codex, opencode, claude_code")
+		return fmt.Errorf("embedded provider must be one of: codex, opencode, claude_code, lcagent")
 	}
 	return nil
 }

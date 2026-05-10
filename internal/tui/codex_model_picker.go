@@ -107,6 +107,8 @@ func (m *Model) openLoadedCodexModelPicker(models []codexapp.ModelOption) {
 		recentModelIDs = m.recentClaudeModels
 	case codexapp.ProviderOpenCode:
 		recentModelIDs = m.recentOpenCodeModels
+	case codexapp.ProviderLCAgent:
+		recentModelIDs = m.recentLCAgentModels
 	}
 	state.RecentModels = codexBuildRecentModels(models, recentModelIDs, 5)
 

@@ -1,4 +1,5 @@
 .DS_Store
+/.env
 /Session.vim
 /.littlecontrolroom.db
 /lcroom

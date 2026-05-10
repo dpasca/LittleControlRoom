@@ -116,6 +116,73 @@ func TestExecuteControlEngineerSendPromptRoutesOpenCodeHidden(t *testing.T) {
 	}
 }
 
+func TestExecuteControlEngineerSendPromptRoutesLCAgentHidden(t *testing.T) {
+	projectPath := "/tmp/control-lcagent"
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:       req.Provider,
+				ThreadID:       "lca-session-1",
+				Started:        true,
+				LastActivityAt: time.Now(),
+			},
+		}, nil
+	})
+	m := Model{
+		allProjects: []model.ProjectSummary{{
+			Path:          projectPath,
+			Name:          "control-lcagent",
+			PresentOnDisk: true,
+		}},
+		codexManager: manager,
+	}
+
+	updated, cmd := m.executeControlInvocation(controlInvocationForTest(t, control.EngineerSendPromptInput{
+		ProjectPath: projectPath,
+		Provider:    control.ProviderLCAgent,
+		SessionMode: control.SessionModeNew,
+		Prompt:      "try this through lcagent",
+		Reveal:      false,
+	}))
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("executeControlInvocation() cmd = nil, want embedded lcagent command")
+	}
+	if got.codexPendingOpen == nil || got.codexPendingOpen.provider != codexapp.ProviderLCAgent {
+		t.Fatalf("pending provider = %#v, want lcagent", got.codexPendingOpen)
+	}
+	if got.codexPendingOpen.showWhilePending || !got.codexPendingOpen.hideOnOpen {
+		t.Fatalf("pending visibility = show:%v hide:%v, want hidden background open", got.codexPendingOpen.showWhilePending, got.codexPendingOpen.hideOnOpen)
+	}
+
+	msgs := collectCmdMsgs(cmd)
+	var opened codexSessionOpenedMsg
+	for _, msg := range msgs {
+		if candidate, ok := msg.(codexSessionOpenedMsg); ok {
+			opened = candidate
+			break
+		}
+	}
+	if opened.err != nil {
+		t.Fatalf("codexSessionOpenedMsg.err = %v", opened.err)
+	}
+	if opened.status != "Prompt sent to fresh embedded LCAgent session lca-sess in the background." {
+		t.Fatalf("opened.status = %q, want hidden background LCAgent prompt status", opened.status)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want 1", len(requests))
+	}
+	if requests[0].Provider != codexapp.ProviderLCAgent || !requests[0].ForceNew {
+		t.Fatalf("request provider/ForceNew = %q/%v, want lcagent/true", requests[0].Provider, requests[0].ForceNew)
+	}
+	if !strings.Contains(requests[0].Prompt, "User request:\ntry this through lcagent") {
+		t.Fatalf("request prompt missing user request:\n%s", requests[0].Prompt)
+	}
+}
+
 func TestExecuteControlEngineerSendPromptIncludesRuntimeTestingContext(t *testing.T) {
 	projectPath := "/tmp/control-runtime"
 	var requests []codexapp.LaunchRequest

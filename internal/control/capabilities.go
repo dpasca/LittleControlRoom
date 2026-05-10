@@ -181,6 +181,12 @@ func EngineerSendPromptCapability() Capability {
 				Reason:    "disabled",
 				Features:  []string{FeatureSendPrompt, FeatureResume, FeatureForceNew},
 			},
+			{
+				ID:        ProviderLCAgent,
+				Available: true,
+				Reason:    "experimental",
+				Features:  []string{FeatureSendPrompt, FeatureResume, FeatureForceNew},
+			},
 		},
 	}
 }
@@ -544,6 +550,7 @@ func engineerSendPromptInputSchema() map[string]any {
 					string(ProviderCodex),
 					string(ProviderOpenCode),
 					string(ProviderClaudeCode),
+					string(ProviderLCAgent),
 				},
 			},
 			"session_mode": map[string]any{
@@ -577,6 +584,7 @@ func engineerSendPromptOutputSchema() map[string]any {
 					string(ProviderCodex),
 					string(ProviderOpenCode),
 					string(ProviderClaudeCode),
+					string(ProviderLCAgent),
 				},
 			},
 			"project_path": map[string]any{"type": "string"},
@@ -602,7 +610,7 @@ func agentTaskCreateInputSchema() map[string]any {
 			"prompt":         map[string]any{"type": "string"},
 			"provider": map[string]any{
 				"type": "string",
-				"enum": []string{string(ProviderAuto), string(ProviderCodex), string(ProviderOpenCode), string(ProviderClaudeCode)},
+				"enum": []string{string(ProviderAuto), string(ProviderCodex), string(ProviderOpenCode), string(ProviderClaudeCode), string(ProviderLCAgent)},
 			},
 			"reveal":       map[string]any{"type": "boolean"},
 			"capabilities": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
@@ -622,7 +630,7 @@ func agentTaskContinueInputSchema() map[string]any {
 			"prompt":     map[string]any{"type": "string"},
 			"provider": map[string]any{
 				"type": "string",
-				"enum": []string{string(ProviderAuto), string(ProviderCodex), string(ProviderOpenCode), string(ProviderClaudeCode)},
+				"enum": []string{string(ProviderAuto), string(ProviderCodex), string(ProviderOpenCode), string(ProviderClaudeCode), string(ProviderLCAgent)},
 			},
 			"session_mode": map[string]any{
 				"type": "string",
@@ -702,7 +710,7 @@ func resourceRefsSchema() map[string]any {
 				"id":           map[string]any{"type": "string"},
 				"path":         map[string]any{"type": "string"},
 				"project_path": map[string]any{"type": "string"},
-				"provider":     map[string]any{"type": "string", "enum": []string{"", string(ProviderAuto), string(ProviderCodex), string(ProviderOpenCode), string(ProviderClaudeCode)}},
+				"provider":     map[string]any{"type": "string", "enum": []string{"", string(ProviderAuto), string(ProviderCodex), string(ProviderOpenCode), string(ProviderClaudeCode), string(ProviderLCAgent)}},
 				"session_id":   map[string]any{"type": "string"},
 				"todo_id":      map[string]any{"type": "integer"},
 				"pid":          map[string]any{"type": "integer"},

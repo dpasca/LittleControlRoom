@@ -211,6 +211,7 @@ type Model struct {
 	recentCodexModels           []string
 	recentClaudeModels          []string
 	recentOpenCodeModels        []string
+	recentLCAgentModels         []string
 	codexDenseBlockMode         codexDenseBlockMode
 	codexArtifactPicker         *codexArtifactPickerState
 	codexArtifactLinkScans      map[string]codexArtifactLinkScanState
@@ -551,7 +552,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 	initialSettings := config.EditableSettingsFromAppConfig(svc.Config())
 	homeDir, _ := os.UserHomeDir()
 
-	return Model{
+	m := Model{
 		ctx:                        ctx,
 		svc:                        svc,
 		busCh:                      busCh,
@@ -589,6 +590,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		recentCodexModels:          append([]string(nil), initialSettings.RecentCodexModels...),
 		recentClaudeModels:         append([]string(nil), initialSettings.RecentClaudeModels...),
 		recentOpenCodeModels:       append([]string(nil), initialSettings.RecentOpenCodeModels...),
+		recentLCAgentModels:        append([]string(nil), initialSettings.RecentLCAgentModels...),
 		hideReasoningSections:      initialSettings.HideReasoningSections,
 		browserController:          browserctl.NewController(),
 		managedBrowserStates:       make(map[string]browserctl.ManagedPlaywrightState),
@@ -600,6 +602,11 @@ func New(ctx context.Context, svc *service.Service) Model {
 		homeDirFn:                  os.UserHomeDir,
 		homeDir:                    strings.TrimSpace(homeDir),
 	}
+	if issue := settingsLocalFileIssue(initialSettings); issue != nil {
+		m.appendSettingsConfigIssue(issue)
+		m.status = errorStatusWithHint(settingsConfigIssueStatus)
+	}
+	return m
 }
 
 func (m Model) currentTime() time.Time {
@@ -1842,13 +1849,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			autoSubmit:     !msg.openModelFirst,
 		})
 		req := codexapp.LaunchRequest{
-			Provider:         provider,
-			ProjectPath:      strings.TrimSpace(msg.projectPath),
-			ForceNew:         true,
-			Preset:           m.currentCodexLaunchPreset(),
-			PlaywrightPolicy: m.currentPlaywrightPolicy(),
-			AppDataDir:       m.appDataDir(),
-			CodexHome:        m.codexHome(),
+			Provider:              provider,
+			ProjectPath:           strings.TrimSpace(msg.projectPath),
+			ForceNew:              true,
+			Preset:                m.currentCodexLaunchPreset(),
+			PlaywrightPolicy:      m.currentPlaywrightPolicy(),
+			AppDataDir:            m.appDataDir(),
+			CodexHome:             m.codexHome(),
+			LCAgentPath:           m.lcagentPath(),
+			LCAgentEnvFile:        m.lcagentEnvFile(),
+			LCAgentProvider:       m.lcagentProvider(),
+			LCAgentAuto:           m.lcagentAuto(),
+			LCAgentToolProfile:    m.lcagentToolProfile(),
+			LCAgentContextProfile: m.lcagentContextProfile(),
+			LCAgentRequestTimeout: m.lcagentRequestTimeout(),
 		}
 		if !msg.openModelFirst {
 			req.Prompt = msg.todoText
@@ -1949,6 +1963,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.hideReasoningSections = msg.settings.HideReasoningSections
 		m.settingsMode = false
 		m.status = fmt.Sprintf("Settings saved to %s. Filters, API keys, local endpoint/model overrides, Codex launch mode, and browser automation policy are applying in the background now; the running scheduler keeps its current timing until the next launch of %s.", msg.path, brand.CLIName)
+		if issue := settingsLocalFileIssue(msg.settings); issue != nil {
+			m.appendSettingsConfigIssue(issue)
+			m.status += " " + errorStatusWithHint(settingsConfigIssueStatus) + "."
+		}
 		m.rebuildProjectList(selectedPath)
 		cmds := []tea.Cmd{m.applyEditableSettingsCmd(msg.settings), m.refreshSetupSnapshotCmd(false)}
 		if len(m.projects) > 0 {
@@ -4330,6 +4348,10 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m.launchOpenCodeForSelection(false, inv.Prompt)
 	case commands.KindOpenCodeNew:
 		return m.launchOpenCodeForSelection(true, inv.Prompt)
+	case commands.KindLCAgent:
+		return m.launchLCAgentForSelection(false, inv.Prompt)
+	case commands.KindLCAgentNew:
+		return m.launchLCAgentForSelection(true, inv.Prompt)
 	case commands.KindTodo:
 		return m, m.openTodoDialogForSelection()
 	case commands.KindWorktreeLanes:
@@ -4421,6 +4443,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.clearSnoozeCmd(p.Path)
+	case commands.KindSession:
+		return m.openCodexPicker()
 	case commands.KindSessions:
 		m.applySectionToggle("Sessions", inv.Toggle, &m.showSessions)
 		return m, nil
@@ -6232,12 +6256,12 @@ func (m Model) renderFooter(width int) string {
 	}
 	if m.setupMode {
 		if m.setupConfigMode {
-			return m.renderModalFooter(width, "Setup fields: type to edit, Ctrl+S/Enter save, Esc done", supplementSegments...)
+			return m.renderModalFooter(width, "Setup fields: type to edit, ctrl+s/Enter save, Esc done", supplementSegments...)
 		}
 		return m.renderModalFooter(width, "Setup: Tab role, ↑↓ provider, e edit fields, Enter choose, Esc close", supplementSegments...)
 	}
 	if m.settingsMode {
-		return m.renderModalFooter(width, "Settings: Enter save, Tab next, Esc cancel", supplementSegments...)
+		return m.renderModalFooter(width, "Settings: ctrl+s save, Tab next, Esc cancel", supplementSegments...)
 	}
 	if m.showPerf {
 		return m.renderModalFooter(width, "Performance: c copy, Esc close", supplementSegments...)
@@ -7316,12 +7340,12 @@ func helpPanelLines() []string {
 			renderDialogAction("t", "todo", commitActionKeyStyle, commitActionTextStyle),
 			renderDialogAction("o/v", "sort/view", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("p", "pin", pushActionKeyStyle, pushActionTextStyle),
-			renderDialogAction("Ctrl+V", "image", pushActionKeyStyle, pushActionTextStyle),
+			renderDialogAction("ctrl+v", "image", pushActionKeyStyle, pushActionTextStyle),
 		),
 		detailSectionStyle.Render("Compose & Status"),
 		renderHelpPanelActionRow(
 			renderDialogAction("Alt+Enter", "newline", commitActionKeyStyle, commitActionTextStyle),
-			renderDialogAction("Ctrl+C", "interrupt busy session", cancelActionKeyStyle, cancelActionTextStyle),
+			renderDialogAction("ctrl+c", "interrupt busy session", cancelActionKeyStyle, cancelActionTextStyle),
 		),
 		detailSectionStyle.Render("Legend"),
 		renderHelpPanelLegendLine(),

@@ -234,7 +234,7 @@ func (m Model) enterSetupConfigMode() (tea.Model, tea.Cmd) {
 	if m.setupConfigSelected < 0 || m.setupConfigSelected >= len(fields) {
 		m.setupConfigSelected = 0
 	}
-	m.status = "Editing AI setup fields. Press Ctrl+S or Enter to save."
+	m.status = "Editing AI setup fields. Press ctrl+s or Enter to save."
 	cmd := m.focusSetupConfigField()
 	return m, cmd
 }
@@ -314,7 +314,7 @@ func (m Model) activateSetupSelection() (tea.Model, tea.Cmd) {
 		return m.saveSetupFromCurrentChoices()
 	case config.AIBackendOpenAIAPI:
 		if strings.TrimSpace(settings.OpenAIAPIKey) == "" {
-			return m.enterSetupConfigModeWithStatus("Paste an OpenAI API key here, then press Ctrl+S or Enter to save.")
+			return m.enterSetupConfigModeWithStatus("Paste an OpenAI API key here, then press ctrl+s or Enter to save.")
 		}
 		return m.saveSetupFromCurrentChoices()
 	case config.AIBackendMLX, config.AIBackendOllama:
@@ -349,7 +349,7 @@ func (m Model) activateBossChatSetupSelection() (tea.Model, tea.Cmd) {
 		return m.saveSetupFromCurrentChoices()
 	case config.AIBackendOpenAIAPI:
 		if strings.TrimSpace(settings.OpenAIAPIKey) == "" {
-			return m.enterSetupConfigModeWithStatus("Paste an OpenAI API key here, then press Ctrl+S or Enter to save.")
+			return m.enterSetupConfigModeWithStatus("Paste an OpenAI API key here, then press ctrl+s or Enter to save.")
 		}
 		return m.saveSetupFromCurrentChoices()
 	case config.AIBackendMLX, config.AIBackendOllama:
@@ -644,7 +644,7 @@ func (m Model) renderSetupConfigLines(width int) []string {
 		return lines
 	}
 	if m.setupConfigMode {
-		lines = append(lines, commandPaletteHintStyle.Render("Editing here in /setup. Type normally; Ctrl+S or Enter saves."))
+		lines = append(lines, commandPaletteHintStyle.Render("Editing here in /setup. Type normally; ctrl+s or Enter saves."))
 	} else {
 		lines = append(lines, commandPaletteHintStyle.Render("Press e to edit these fields here in /setup."))
 	}
@@ -866,7 +866,7 @@ func (m Model) renderBossChatSetupHint(width int) string {
 func (m Model) renderSetupActions() string {
 	if m.setupConfigMode {
 		return strings.Join([]string{
-			renderDialogAction("Ctrl+S/Enter", "save", commitActionKeyStyle, commitActionTextStyle),
+			renderDialogAction("ctrl+s/Enter", "save", commitActionKeyStyle, commitActionTextStyle),
 			renderDialogAction("Tab", "field", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("Up/Down", "field", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("Esc", "done", cancelActionKeyStyle, cancelActionTextStyle),

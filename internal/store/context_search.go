@@ -881,6 +881,8 @@ func compactContextSessionText(ctx context.Context, candidate contextSessionCand
 		return compactContextJSONLTranscript(ctx, candidate.SessionFile, extractContextCodexTranscriptItem)
 	case "claude_code":
 		return compactContextJSONLTranscript(ctx, candidate.SessionFile, extractContextClaudeTranscriptItem)
+	case "lcagent_jsonl":
+		return compactContextJSONLTranscript(ctx, candidate.SessionFile, extractContextLCAgentTranscriptItem)
 	case "opencode_db":
 		return compactContextOpenCodeTranscript(ctx, candidate.SessionFile)
 	default:
@@ -894,6 +896,8 @@ func sessionContextTranscriptItems(ctx context.Context, candidate contextSession
 		return contextJSONLTranscriptItems(ctx, candidate.SessionFile, extractContextCodexTranscriptItem)
 	case "claude_code":
 		return contextJSONLTranscriptItems(ctx, candidate.SessionFile, extractContextClaudeTranscriptItem)
+	case "lcagent_jsonl":
+		return contextJSONLTranscriptItems(ctx, candidate.SessionFile, extractContextLCAgentTranscriptItem)
 	case "opencode_db":
 		return contextOpenCodeTranscriptItems(ctx, candidate.SessionFile)
 	default:
@@ -1184,6 +1188,158 @@ func extractContextClaudeTranscriptItem(line string) (contextTranscriptItem, boo
 	default:
 		return contextTranscriptItem{}, false
 	}
+}
+
+func extractContextLCAgentTranscriptItem(line string) (contextTranscriptItem, bool) {
+	var event struct {
+		Type    string          `json:"type"`
+		Message string          `json:"message"`
+		Summary string          `json:"summary"`
+		Reason  string          `json:"reason"`
+		Tool    string          `json:"tool"`
+		Result  json.RawMessage `json:"result"`
+		Items   []struct {
+			Step   string `json:"step"`
+			Status string `json:"status"`
+		} `json:"items"`
+		Files        []string `json:"files"`
+		FilesChanged []string `json:"files_changed"`
+		Verification []string `json:"verification"`
+	}
+	if err := json.Unmarshal([]byte(line), &event); err != nil {
+		return contextTranscriptItem{}, false
+	}
+
+	switch event.Type {
+	case "user_message":
+		return contextTranscriptItemFromText("user", event.Message)
+	case "assistant_message":
+		return contextTranscriptItemFromText("assistant", contextLCAgentFinalText(event.Message, event.FilesChanged, event.Verification))
+	case "tool_call":
+		return contextTranscriptItemFromText("assistant", contextLCAgentToolCallText(event.Tool))
+	case "tool_result":
+		return contextTranscriptItemFromText("assistant", contextLCAgentToolResultText(event.Tool, event.Result))
+	case "plan_update":
+		return contextTranscriptItemFromText("assistant", contextLCAgentPlanText(event.Items))
+	case "files_touched":
+		return contextTranscriptItemFromText("assistant", contextLCAgentFilesText("files touched", event.Files))
+	case "turn_complete":
+		return contextTranscriptItemFromText("assistant", contextLCAgentFinalText(event.Summary, event.FilesChanged, event.Verification))
+	case "turn_aborted":
+		return contextTranscriptItemFromText("assistant", "turn aborted: "+event.Reason)
+	default:
+		return contextTranscriptItem{}, false
+	}
+}
+
+func contextLCAgentToolCallText(tool string) string {
+	tool = contextSanitizeText(tool)
+	if tool == "" {
+		return ""
+	}
+	return "tool call: " + tool
+}
+
+func contextLCAgentToolResultText(tool string, raw json.RawMessage) string {
+	var result struct {
+		Success      bool     `json:"success"`
+		Error        string   `json:"error"`
+		ExitCode     int      `json:"exit_code"`
+		TimedOut     bool     `json:"timed_out"`
+		Truncated    bool     `json:"truncated"`
+		Binary       bool     `json:"binary"`
+		ArtifactPath string   `json:"artifact_path"`
+		FilesTouched []string `json:"files_touched"`
+	}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &result)
+	}
+
+	tool = contextSanitizeText(tool)
+	status := "succeeded"
+	if !result.Success {
+		status = "failed"
+	}
+	parts := []string{"tool result"}
+	if tool != "" {
+		parts[0] = "tool result: " + tool
+	}
+	parts = append(parts, status)
+	if result.Error = contextSanitizeText(result.Error); result.Error != "" {
+		parts = append(parts, "error: "+result.Error)
+	}
+	if result.ExitCode != 0 {
+		parts = append(parts, fmt.Sprintf("exit code: %d", result.ExitCode))
+	}
+	if result.TimedOut {
+		parts = append(parts, "timed out")
+	}
+	if result.Truncated {
+		parts = append(parts, "output truncated")
+	}
+	if result.Binary {
+		parts = append(parts, "binary output")
+	}
+	if result.ArtifactPath = contextSanitizeText(result.ArtifactPath); result.ArtifactPath != "" {
+		parts = append(parts, "artifact: "+result.ArtifactPath)
+	}
+	if files := contextLCAgentFilesText("files touched", result.FilesTouched); files != "" {
+		parts = append(parts, files)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func contextLCAgentPlanText(items []struct {
+	Step   string `json:"step"`
+	Status string `json:"status"`
+}) string {
+	if len(items) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		step := contextSanitizeText(item.Step)
+		if step == "" {
+			continue
+		}
+		status := contextSanitizeText(item.Status)
+		if status != "" {
+			step = status + ": " + step
+		}
+		parts = append(parts, step)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "plan: " + strings.Join(parts, "; ")
+}
+
+func contextLCAgentFinalText(summary string, filesChanged, verification []string) string {
+	parts := []string{}
+	if summary = contextSanitizeText(summary); summary != "" {
+		parts = append(parts, summary)
+	}
+	if files := contextLCAgentFilesText("files changed", filesChanged); files != "" {
+		parts = append(parts, files)
+	}
+	if checks := contextLCAgentFilesText("verification", verification); checks != "" {
+		parts = append(parts, checks)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func contextLCAgentFilesText(label string, files []string) string {
+	cleaned := make([]string, 0, len(files))
+	for _, file := range files {
+		file = contextSanitizeText(file)
+		if file != "" {
+			cleaned = append(cleaned, file)
+		}
+	}
+	if len(cleaned) == 0 {
+		return ""
+	}
+	return contextSanitizeText(label) + ": " + strings.Join(cleaned, ", ")
 }
 
 func compactContextOpenCodeTranscript(ctx context.Context, sessionRef string) (string, error) {

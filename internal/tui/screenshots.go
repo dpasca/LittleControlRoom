@@ -201,7 +201,7 @@ func GenerateScreenshots(ctx context.Context, svc *service.Service, cfg config.S
 	settingsModel.settingsFields = newSettingsFields(localSettings)
 	settingsModel.settingsSelected = settingsFieldMLXBaseURL
 	settingsModel.settingsBaseline = &localSettings
-	settingsModel.status = "Editing settings. Enter to save, Esc to cancel"
+	settingsModel.status = "Editing settings. ctrl+s to save, Esc to cancel"
 	assets = append(assets, screenshotAsset("settings-local-backends", "Settings - Local Backends", settingsModel.View(), cfg))
 
 	report := ScreenshotReport{

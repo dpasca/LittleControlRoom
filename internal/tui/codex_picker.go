@@ -545,12 +545,19 @@ func (m Model) openCodexSessionChoice(choice codexSessionChoice) (tea.Model, tea
 		return m, nil
 	}
 	req := codexapp.LaunchRequest{
-		Provider:         choice.Provider,
-		ProjectPath:      choice.ProjectPath,
-		ResumeID:         choice.SessionID,
-		PlaywrightPolicy: m.currentPlaywrightPolicy(),
-		AppDataDir:       m.appDataDir(),
-		CodexHome:        m.codexHome(),
+		Provider:              choice.Provider,
+		ProjectPath:           choice.ProjectPath,
+		ResumeID:              choice.SessionID,
+		PlaywrightPolicy:      m.currentPlaywrightPolicy(),
+		AppDataDir:            m.appDataDir(),
+		CodexHome:             m.codexHome(),
+		LCAgentPath:           m.lcagentPath(),
+		LCAgentEnvFile:        m.lcagentEnvFile(),
+		LCAgentProvider:       m.lcagentProvider(),
+		LCAgentAuto:           m.lcagentAuto(),
+		LCAgentToolProfile:    m.lcagentToolProfile(),
+		LCAgentContextProfile: m.lcagentContextProfile(),
+		LCAgentRequestTimeout: m.lcagentRequestTimeout(),
 	}
 	if choice.Provider.Normalized() == codexapp.ProviderCodex {
 		req.Preset = m.currentCodexLaunchPreset()

@@ -20,6 +20,9 @@ func TestNormalizeProvider(t *testing.T) {
 		{raw: "claude", want: ProviderClaudeCode},
 		{raw: "claude-code", want: ProviderClaudeCode},
 		{raw: "claude_code", want: ProviderClaudeCode},
+		{raw: "lcagent", want: ProviderLCAgent},
+		{raw: "lc-agent", want: ProviderLCAgent},
+		{raw: "lc_agent", want: ProviderLCAgent},
 		{raw: "other", want: ""},
 	}
 	for _, tt := range tests {
@@ -82,6 +85,12 @@ func TestEngineerSendPromptCapabilityMetadata(t *testing.T) {
 	}
 	if providers[ProviderClaudeCode].Available {
 		t.Fatalf("Claude Code provider should be disabled in default metadata")
+	}
+	if !providers[ProviderLCAgent].Available {
+		t.Fatalf("LCAgent provider should be available in default metadata")
+	}
+	if providers[ProviderLCAgent].Reason != "experimental" {
+		t.Fatalf("LCAgent reason = %q, want experimental", providers[ProviderLCAgent].Reason)
 	}
 	if !stringSliceContains(providers[ProviderCodex].Features, FeatureCompact) {
 		t.Fatalf("Codex features = %#v, want compact support", providers[ProviderCodex].Features)

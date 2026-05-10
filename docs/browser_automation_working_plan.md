@@ -21,11 +21,11 @@ It is intentionally different from `STATUS.md`:
 - Newly launched embedded OpenCode sessions now override `mcp.playwright` through `OPENCODE_CONFIG_CONTENT` to point at the same LCR-managed Playwright wrapper, using the same managed session/profile key model as Codex.
 - Newly launched embedded OpenCode sessions also get a session-local `XDG_CONFIG_HOME` overlay that shadows only the `playwright` skill, so OpenCode is steered toward the managed MCP path without changing the user's real `~/.config/opencode`.
 - OpenCode sessions now track their live Playwright tool activity plus the current managed browser page URL, so the shared browser strip/reveal UI can surface the same current-page and reconnect guidance patterns that Codex already uses.
-- OpenCode browser-backed question waits now reuse that same managed browser state, so when OpenCode pauses for user input the session can stay in a `waiting for user` browser state and keep `Ctrl+O` available to reveal or refocus the managed browser window.
+- OpenCode browser-backed question waits now reuse that same managed browser state, so when OpenCode pauses for user input the session can stay in a `waiting for user` browser state and keep `ctrl+o` available to reveal or refocus the managed browser window.
 - Existing embedded Codex sessions do not retroactively pick up the new launch behavior; they need to be reopened or reconnected.
 - URL-based login waits already have an LCR-managed attention flow and interactive-browser lease.
 - Live browser waits are now surfaced passively in the project list, detail pane, attention reasons, and footer so the popup is not the only visible signal.
-- Embedded Codex sessions now remember the latest Playwright page URL they reached, and the visible pane can reveal that same managed browser window with `Ctrl+O`.
+- Embedded Codex sessions now remember the latest Playwright page URL they reached, and the visible pane can reveal that same managed browser window with `ctrl+o`.
 - OpenCode and Claude Code still remain behind Codex in managed-browser support.
 
 ## Maintenance Rule
@@ -88,7 +88,7 @@ Make browser automation feel quiet and predictable by default:
 - Visible embedded Codex sessions:
   - can reveal the same managed browser window with `o`
   - show footer/request hints that explain the browser-login flow
-  - can reveal the current managed browser window with `Ctrl+O` after a background navigation finishes
+  - can reveal the current managed browser window with `ctrl+o` after a background navigation finishes
 - Managed Codex login flows now go through an LCR-owned interactive browser lease:
   - one session can hold the interactive browser slot at a time
   - later sessions are blocked cleanly instead of blindly opening another browser login flow
@@ -124,7 +124,7 @@ Make browser automation feel quiet and predictable by default:
 - Policy/status plumbing exists.
 - Managed Playwright launch now overrides OpenCode's `mcp.playwright` entry to use the LCR wrapper plus persistent managed browser/session keys.
 - Managed sessions now also shadow the OpenCode `playwright` skill per session, which keeps real browser tasks on the managed MCP path instead of falling back to standalone Playwright CLI/browser launches.
-- OpenCode now reports live Playwright tool activity and the current managed browser page URL into the shared embedded browser UI, including `Ctrl+O` reveal/focus handling and reconnect guidance when the session browser wiring no longer matches current settings.
+- OpenCode now reports live Playwright tool activity and the current managed browser page URL into the shared embedded browser UI, including `ctrl+o` reveal/focus handling and reconnect guidance when the session browser wiring no longer matches current settings.
 - OpenCode browser-backed structured-input waits now keep the session in a `waiting for user` browser state, which lets the same browser-attention/reveal flow stay active while the user is answering a browser-related prompt.
 - Managed OpenCode browser smoke coverage is now isolated from the user's real OpenCode data home, so smoke verification no longer depends on or mutates the normal dashboard state.
 - Embedded elicitation control is still weaker than Codex, so browser-attention/login waits are not yet at full parity.

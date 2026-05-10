@@ -43,6 +43,8 @@ const (
 	KindClaudeNew      Kind = "claude-new"
 	KindOpenCode       Kind = "opencode"
 	KindOpenCodeNew    Kind = "opencode-new"
+	KindLCAgent        Kind = "lcagent"
+	KindLCAgentNew     Kind = "lcagent-new"
 	KindTodo           Kind = "todo"
 	KindWorktreeLanes  Kind = "worktree-lanes"
 	KindWorktreeMerge  Kind = "worktree-merge"
@@ -53,6 +55,7 @@ const (
 	KindUnread         Kind = "unread"
 	KindSnooze         Kind = "snooze"
 	KindClearSnooze    Kind = "clear-snooze"
+	KindSession        Kind = "session"
 	KindSessions       Kind = "sessions"
 	KindEvents         Kind = "events"
 	KindIgnore         Kind = "ignore"
@@ -146,6 +149,8 @@ var specs = []Spec{
 	{Name: "claude-new", Usage: "/claude-new [prompt]", Summary: "Start a fresh Claude Code session in the selected project"},
 	{Name: "opencode", Usage: "/opencode [prompt]", Summary: "Resume the selected project's latest OpenCode session, or start a new one"},
 	{Name: "opencode-new", Usage: "/opencode-new [prompt]", Summary: "Start a fresh OpenCode session in the selected project"},
+	{Name: "lcagent", Usage: "/lcagent [prompt]", Summary: "Resume the selected project's latest experimental LCAgent session, or start a new one"},
+	{Name: "lcagent-new", Usage: "/lcagent-new [prompt]", Summary: "Start a fresh experimental LCAgent session in the selected project"},
 	{Name: "todo", Usage: "/todo", Summary: "Open the selected project's TODO list"},
 	{Name: "wt", Usage: "/wt lanes|merge|remove|prune", Summary: "Toggle worktree lanes or manage the selected worktree"},
 	{Name: "pin", Usage: "/pin", Summary: "Toggle pin on the selected project"},
@@ -154,6 +159,7 @@ var specs = []Spec{
 	{Name: "snooze", Usage: "/snooze [duration|off]", Summary: "Snooze the selected project or clear with /snooze off"},
 	{Name: "clear-snooze", Usage: "/clear-snooze", Summary: "Clear snooze on the selected project"},
 	{Name: "unsnooze", Usage: "/unsnooze", Summary: "Clear snooze on the selected project"},
+	{Name: "session", Usage: "/session", Summary: "Open the embedded session picker"},
 	{Name: "sessions", Usage: "/sessions on|off|toggle", Summary: "Show or hide the Sessions section"},
 	{Name: "events", Usage: "/events on|off|toggle", Summary: "Show or hide Recent events"},
 	{Name: "ignore", Usage: "/ignore", Summary: "Hide the selected project's exact name"},
@@ -519,6 +525,18 @@ func Parse(input string) (Invocation, error) {
 			Prompt:    strings.TrimSpace(rawArgs),
 			Canonical: slashcmd.CanonicalCommand("opencode-new", rawArgs),
 		}, nil
+	case "lcagent":
+		return Invocation{
+			Kind:      KindLCAgent,
+			Prompt:    strings.TrimSpace(rawArgs),
+			Canonical: slashcmd.CanonicalCommand("lcagent", rawArgs),
+		}, nil
+	case "lcagent-new", "lca-start":
+		return Invocation{
+			Kind:      KindLCAgentNew,
+			Prompt:    strings.TrimSpace(rawArgs),
+			Canonical: slashcmd.CanonicalCommand("lcagent-new", rawArgs),
+		}, nil
 	case "snooze":
 		switch strings.ToLower(strings.TrimSpace(rawArgs)) {
 		case "", "now":
@@ -541,6 +559,11 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /clear-snooze")
 		}
 		return Invocation{Kind: KindClearSnooze, Canonical: "/clear-snooze"}, nil
+	case "session":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /session")
+		}
+		return Invocation{Kind: KindSession, Canonical: "/session"}, nil
 	case "sessions":
 		mode, err := parseToggleMode(rawArgs, "/sessions")
 		if err != nil {

@@ -1485,6 +1485,23 @@ func TestFormatTokenCount(t *testing.T) {
 	}
 }
 
+func TestCodexSnapshotTokenUsageLabel(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		TokenUsage: &codexapp.TokenUsageSnapshot{
+			Total: codexapp.TokenUsageBreakdown{
+				InputTokens:           12_345,
+				OutputTokens:          6_789,
+				CachedInputTokens:     2_000,
+				ReasoningOutputTokens: 123,
+				TotalTokens:           19_134,
+			},
+		},
+	}
+	if got := codexSnapshotTokenUsageLabel(snapshot); got != "i12k o6.8k c2.0k r123 t19k" {
+		t.Fatalf("codexSnapshotTokenUsageLabel() = %q", got)
+	}
+}
+
 func TestScanCompleteStatusIncludesQueuedClassifications(t *testing.T) {
 	report := service.ScanReport{
 		UpdatedProjects:       []string{"/tmp/demo"},
@@ -8210,7 +8227,7 @@ func TestVisibleCodexSlashSuggestionsRender(t *testing.T) {
 	if !strings.Contains(rendered, "/new [prompt]") || !strings.Contains(rendered, "/resume [session-id]") || !strings.Contains(rendered, "/model") || !strings.Contains(rendered, "/status") {
 		t.Fatalf("rendered view should list embedded slash suggestions: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Enter run  Ctrl+C close  Esc hide") {
+	if !strings.Contains(rendered, "Enter run  ctrl+c close  Esc hide") {
 		t.Fatalf("rendered view should advertise slash command handling in the footer: %q", rendered)
 	}
 }
@@ -12993,6 +13010,199 @@ func TestLaunchEmbeddedForSelectionBlocksWhileAnotherEmbeddedProviderIsActive(t 
 	}
 }
 
+func TestLaunchEmbeddedForSelectionBlocksWhileAnotherEmbeddedProviderIsOpen(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				Started:  true,
+				ThreadID: "thread-codex",
+				Status:   req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderCodex,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/demo",
+			Name:          "demo",
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+	}
+
+	updated, cmd := m.launchEmbeddedForSelection(codexapp.ProviderLCAgent, false, "")
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("launchEmbeddedForSelection() cmd = %#v, want nil when another embedded provider is open", cmd)
+	}
+	wantStatus := "This project already has an open embedded Codex session. Close it before starting LCAgent here."
+	if got.status != wantStatus {
+		t.Fatalf("status = %q, want %q", got.status, wantStatus)
+	}
+	if got.attentionDialog == nil {
+		t.Fatalf("launchEmbeddedForSelection() should show an attention dialog when another embedded provider is open")
+	}
+	if got.attentionDialog.PrimaryProvider != codexapp.ProviderCodex {
+		t.Fatalf("attention dialog provider = %q, want Codex", got.attentionDialog.PrimaryProvider)
+	}
+	if got.attentionDialog.PrimaryLabel != "Open Codex" {
+		t.Fatalf("attention dialog primary label = %q, want open action", got.attentionDialog.PrimaryLabel)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want only the original Codex open", len(requests))
+	}
+}
+
+func TestLaunchEmbeddedForSelectionBlocksOpenDifferentEmbeddedProviderPairs(t *testing.T) {
+	providers := []codexapp.Provider{
+		codexapp.ProviderCodex,
+		codexapp.ProviderOpenCode,
+		codexapp.ProviderClaudeCode,
+		codexapp.ProviderLCAgent,
+	}
+	for _, liveProvider := range providers {
+		for _, requestedProvider := range providers {
+			if liveProvider == requestedProvider {
+				continue
+			}
+			t.Run(liveProvider.Label()+" to "+requestedProvider.Label(), func(t *testing.T) {
+				var requests []codexapp.LaunchRequest
+				manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+					requests = append(requests, req)
+					return &fakeCodexSession{
+						projectPath: req.ProjectPath,
+						snapshot: codexapp.Snapshot{
+							Provider: req.Provider.Normalized(),
+							Started:  true,
+							ThreadID: "thread-" + string(req.Provider.Normalized()),
+							Status:   req.Provider.Label() + " session ready",
+						},
+					}, nil
+				})
+				if _, _, err := manager.Open(codexapp.LaunchRequest{
+					ProjectPath: "/tmp/demo",
+					Provider:    liveProvider,
+				}); err != nil {
+					t.Fatalf("manager.Open() error = %v", err)
+				}
+
+				m := Model{
+					codexManager: manager,
+					projects: []model.ProjectSummary{{
+						Path:          "/tmp/demo",
+						Name:          "demo",
+						PresentOnDisk: true,
+					}},
+					selected: 0,
+				}
+
+				updated, cmd := m.launchEmbeddedForSelection(requestedProvider, false, "")
+				got := updated.(Model)
+				if cmd != nil {
+					t.Fatalf("launchEmbeddedForSelection() cmd = %#v, want nil", cmd)
+				}
+				wantStatus := fmt.Sprintf("This project already has an open embedded %s session. Close it before starting %s here.", liveProvider.Label(), requestedProvider.Label())
+				if got.status != wantStatus {
+					t.Fatalf("status = %q, want %q", got.status, wantStatus)
+				}
+				if got.attentionDialog == nil {
+					t.Fatalf("launchEmbeddedForSelection() should show an attention dialog")
+				}
+				if got.attentionDialog.PrimaryProvider != liveProvider {
+					t.Fatalf("attention dialog provider = %q, want %q", got.attentionDialog.PrimaryProvider, liveProvider)
+				}
+				if got.attentionDialog.PrimaryLabel != "Open "+liveProvider.Label() {
+					t.Fatalf("attention dialog primary label = %q, want open action", got.attentionDialog.PrimaryLabel)
+				}
+				if len(requests) != 1 {
+					t.Fatalf("launch requests = %d, want only the original provider open", len(requests))
+				}
+			})
+		}
+	}
+}
+
+func TestLaunchEmbeddedForSelectionBlocksActiveDifferentEmbeddedProviderPairs(t *testing.T) {
+	providers := []codexapp.Provider{
+		codexapp.ProviderCodex,
+		codexapp.ProviderOpenCode,
+		codexapp.ProviderClaudeCode,
+		codexapp.ProviderLCAgent,
+	}
+	for _, liveProvider := range providers {
+		for _, requestedProvider := range providers {
+			if liveProvider == requestedProvider {
+				continue
+			}
+			t.Run(liveProvider.Label()+" to "+requestedProvider.Label(), func(t *testing.T) {
+				var requests []codexapp.LaunchRequest
+				manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+					requests = append(requests, req)
+					return &fakeCodexSession{
+						projectPath: req.ProjectPath,
+						snapshot: codexapp.Snapshot{
+							Provider: req.Provider.Normalized(),
+							Started:  true,
+							Busy:     true,
+							ThreadID: "thread-" + string(req.Provider.Normalized()),
+							Status:   req.Provider.Label() + " session ready",
+						},
+					}, nil
+				})
+				if _, _, err := manager.Open(codexapp.LaunchRequest{
+					ProjectPath: "/tmp/demo",
+					Provider:    liveProvider,
+				}); err != nil {
+					t.Fatalf("manager.Open() error = %v", err)
+				}
+
+				m := Model{
+					codexManager: manager,
+					projects: []model.ProjectSummary{{
+						Path:          "/tmp/demo",
+						Name:          "demo",
+						PresentOnDisk: true,
+					}},
+					selected: 0,
+				}
+
+				updated, cmd := m.launchEmbeddedForSelection(requestedProvider, true, "")
+				got := updated.(Model)
+				if cmd != nil {
+					t.Fatalf("launchEmbeddedForSelection() cmd = %#v, want nil", cmd)
+				}
+				wantStatus := fmt.Sprintf("This project already has an active embedded %s session. Finish or close it before starting %s here.", liveProvider.Label(), requestedProvider.Label())
+				if got.status != wantStatus {
+					t.Fatalf("status = %q, want %q", got.status, wantStatus)
+				}
+				if got.attentionDialog == nil {
+					t.Fatalf("launchEmbeddedForSelection() should show an attention dialog")
+				}
+				if got.attentionDialog.PrimaryProvider != liveProvider {
+					t.Fatalf("attention dialog provider = %q, want %q", got.attentionDialog.PrimaryProvider, liveProvider)
+				}
+				if got.attentionDialog.PrimaryLabel != "Open "+liveProvider.Label() {
+					t.Fatalf("attention dialog primary label = %q, want open action", got.attentionDialog.PrimaryLabel)
+				}
+				if len(requests) != 1 {
+					t.Fatalf("launch requests = %d, want only the original provider open", len(requests))
+				}
+			})
+		}
+	}
+}
+
 func TestLaunchEmbeddedForSelectionBlocksWhileAnotherProviderSessionIsUnfinished(t *testing.T) {
 	now := time.Date(2026, 3, 30, 20, 30, 0, 0, time.UTC)
 	m := Model{
@@ -15609,15 +15819,15 @@ func TestVisibleCodexCanOpenCurrentBackgroundBrowserPage(t *testing.T) {
 		t.Fatalf("browser-open followup should not queue more work")
 	}
 	renderedBlocks := ansi.Strip(got.renderCodexBrowserPanel(session.snapshot, 120))
-	if strings.Contains(renderedBlocks, "Press Ctrl+O to reveal the managed browser window for this same session.") {
-		t.Fatalf("renderCodexBrowserPanel() kept stale Ctrl+O reveal hint after successful reveal: %q", renderedBlocks)
+	if strings.Contains(renderedBlocks, "Press ctrl+o to reveal the managed browser window for this same session.") {
+		t.Fatalf("renderCodexBrowserPanel() kept stale ctrl+o reveal hint after successful reveal: %q", renderedBlocks)
 	}
 	if !strings.Contains(renderedBlocks, "Managed browser page: https://chartboost.us.auth0.com/u/login?state=demo") {
 		t.Fatalf("renderCodexBrowserPanel() missing managed browser page label after reveal: %q", renderedBlocks)
 	}
 	footer := ansi.Strip(got.renderCodexFooter(session.snapshot, 160))
-	if !strings.Contains(footer, "Ctrl+O focus browser") {
-		t.Fatalf("renderCodexFooter() should downgrade Ctrl+O to focus browser after reveal: %q", footer)
+	if !strings.Contains(footer, "ctrl+o focus browser") {
+		t.Fatalf("renderCodexFooter() should downgrade ctrl+o to focus browser after reveal: %q", footer)
 	}
 }
 
@@ -15755,13 +15965,13 @@ func TestVisibleCodexCurrentBackgroundBrowserPageHintsOpenPage(t *testing.T) {
 	if !strings.Contains(renderedBlocks, "Background browser page: https://chartboost.us.auth0.com/u/login?state=demo") {
 		t.Fatalf("renderCodexBrowserPanel() missing current background page: %q", renderedBlocks)
 	}
-	if !strings.Contains(renderedBlocks, "Press Ctrl+O to reveal the managed browser window for this same session.") {
-		t.Fatalf("renderCodexBrowserPanel() missing Ctrl+O reveal hint: %q", renderedBlocks)
+	if !strings.Contains(renderedBlocks, "Press ctrl+o to reveal the managed browser window for this same session.") {
+		t.Fatalf("renderCodexBrowserPanel() missing ctrl+o reveal hint: %q", renderedBlocks)
 	}
 
 	footer := ansi.Strip(m.renderCodexFooter(snapshot, 160))
-	if !strings.Contains(footer, "Ctrl+O show browser") {
-		t.Fatalf("renderCodexFooter() missing Ctrl+O show browser action: %q", footer)
+	if !strings.Contains(footer, "ctrl+o show browser") {
+		t.Fatalf("renderCodexFooter() missing ctrl+o show browser action: %q", footer)
 	}
 }
 
@@ -15786,15 +15996,15 @@ func TestVisibleCodexCurrentBackgroundBrowserPageUsesVisibleBrowserCopyWhenCache
 		},
 	}
 	renderedBlocks := ansi.Strip(m.renderCodexBrowserPanel(snapshot, 120))
-	if strings.Contains(renderedBlocks, "Press Ctrl+O to reveal the managed browser window for this same session.") {
-		t.Fatalf("renderCodexBrowserPanel() should hide stale Ctrl+O reveal hint when browser is already visible: %q", renderedBlocks)
+	if strings.Contains(renderedBlocks, "Press ctrl+o to reveal the managed browser window for this same session.") {
+		t.Fatalf("renderCodexBrowserPanel() should hide stale ctrl+o reveal hint when browser is already visible: %q", renderedBlocks)
 	}
 	if !strings.Contains(renderedBlocks, "Managed browser page: https://chartboost.us.auth0.com/u/login?state=demo") {
 		t.Fatalf("renderCodexBrowserPanel() missing managed browser page label: %q", renderedBlocks)
 	}
 
 	footer := ansi.Strip(m.renderCodexFooter(snapshot, 160))
-	if !strings.Contains(footer, "Ctrl+O focus browser") {
+	if !strings.Contains(footer, "ctrl+o focus browser") {
 		t.Fatalf("renderCodexFooter() should show focus-browser action when browser is already visible: %q", footer)
 	}
 }
@@ -15904,13 +16114,13 @@ func TestVisibleOpenCodeCurrentBackgroundBrowserPageHintsOpenPage(t *testing.T) 
 	if !strings.Contains(renderedBlocks, "Background browser page: https://example.com/") {
 		t.Fatalf("renderCodexBrowserPanel() missing current background page for OpenCode: %q", renderedBlocks)
 	}
-	if !strings.Contains(renderedBlocks, "Press Ctrl+O to reveal the managed browser window for this same session.") {
-		t.Fatalf("renderCodexBrowserPanel() missing Ctrl+O reveal hint for OpenCode: %q", renderedBlocks)
+	if !strings.Contains(renderedBlocks, "Press ctrl+o to reveal the managed browser window for this same session.") {
+		t.Fatalf("renderCodexBrowserPanel() missing ctrl+o reveal hint for OpenCode: %q", renderedBlocks)
 	}
 
 	footer := ansi.Strip(m.renderCodexFooter(snapshot, 160))
-	if !strings.Contains(footer, "Ctrl+O show browser") {
-		t.Fatalf("renderCodexFooter() missing Ctrl+O show browser action for OpenCode: %q", footer)
+	if !strings.Contains(footer, "ctrl+o show browser") {
+		t.Fatalf("renderCodexFooter() missing ctrl+o show browser action for OpenCode: %q", footer)
 	}
 }
 
@@ -15972,7 +16182,7 @@ func TestVisibleOpenCodePendingToolInputKeepsShowBrowserAction(t *testing.T) {
 
 	m := Model{codexVisibleProject: "/tmp/demo"}
 	footer := ansi.Strip(m.renderCodexFooter(snapshot, 180))
-	for _, want := range []string{"Enter answer", "Ctrl+O show browser"} {
+	for _, want := range []string{"Enter answer", "ctrl+o show browser"} {
 		if !strings.Contains(footer, want) {
 			t.Fatalf("renderCodexFooter() missing %q for OpenCode pending browser question: %q", want, footer)
 		}
@@ -18392,13 +18602,13 @@ func TestRenderCodexFooterPrioritizesSendCloseHideAndDefersDenseBlocks(t *testin
 	}, 140))
 
 	enterIndex := strings.Index(rendered, "Enter send")
-	closeIndex := strings.Index(rendered, "Ctrl+C close")
+	closeIndex := strings.Index(rendered, "ctrl+c close")
 	hideIndex := strings.Index(rendered, "Esc hide")
 	if enterIndex < 0 || closeIndex < 0 || hideIndex < 0 {
 		t.Fatalf("renderCodexFooter() missing expected footer actions: %q", rendered)
 	}
 	if !(enterIndex < closeIndex && closeIndex < hideIndex) {
-		t.Fatalf("renderCodexFooter() order = %q, want Enter send before Ctrl+C close before Esc hide", rendered)
+		t.Fatalf("renderCodexFooter() order = %q, want Enter send before ctrl+c close before Esc hide", rendered)
 	}
 	for _, hidden := range []string{"Alt+Down picker", "Alt+[ prev", "Alt+] next", "Alt+L blocks"} {
 		if strings.Contains(rendered, hidden) {
@@ -18713,8 +18923,8 @@ func TestCommandEnterOpensSettingsMode(t *testing.T) {
 	if got.commandMode {
 		t.Fatalf("command mode should close after /settings")
 	}
-	if len(got.settingsFields) != 20 {
-		t.Fatalf("settings field count = %d, want 20", len(got.settingsFields))
+	if len(got.settingsFields) != 27 {
+		t.Fatalf("settings field count = %d, want 27", len(got.settingsFields))
 	}
 }
 
@@ -18796,8 +19006,8 @@ func TestCommandEnterOpensBossMode(t *testing.T) {
 	if !strings.Contains(lines[len(lines)-1], "Enter") || !strings.Contains(lines[len(lines)-1], "Alt+Enter") || !strings.Contains(lines[len(lines)-1], "Esc") {
 		t.Fatalf("boss footer should show boss chat actions: %q", rendered)
 	}
-	if strings.Contains(lines[len(lines)-1], "Ctrl+J") {
-		t.Fatalf("boss footer should advertise Alt+Enter newline, not Ctrl+J: %q", rendered)
+	if strings.Contains(lines[len(lines)-1], "ctrl+j") {
+		t.Fatalf("boss footer should advertise Alt+Enter newline, not ctrl+j: %q", rendered)
 	}
 	if strings.Contains(lines[len(lines)-1], "q quit") {
 		t.Fatalf("boss footer should not show the classic q quit action: %q", rendered)
@@ -20208,8 +20418,11 @@ func TestSettingsModalRendersColoredActionLegend(t *testing.T) {
 	_ = m.setSettingsSelection(0)
 
 	rendered := ansi.Strip(m.renderSettingsContent(72, 18))
-	if !strings.Contains(rendered, "Enter") || !strings.Contains(rendered, "save") {
-		t.Fatalf("settings modal should render Enter save action: %q", rendered)
+	if !strings.Contains(rendered, "ctrl+s") || !strings.Contains(rendered, "save") {
+		t.Fatalf("settings modal should render ctrl+s save action: %q", rendered)
+	}
+	if strings.Contains(rendered, "Enter") {
+		t.Fatalf("settings modal should not render Enter for plain text fields: %q", rendered)
 	}
 	if !strings.Contains(rendered, "Tab") || !strings.Contains(rendered, "next") {
 		t.Fatalf("settings modal should render Tab next action: %q", rendered)
@@ -20518,7 +20731,7 @@ func TestSettingsBrowserAutomationFieldRendersChooserHint(t *testing.T) {
 	for _, want := range []string{
 		"Only when needed",
 		"Enter to choose",
-		"Ctrl+S",
+		"ctrl+s",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("browser settings field is missing %q: %q", want, rendered)
@@ -20946,7 +21159,7 @@ func TestBrowserAttentionBrowserSettingsShortcutOpensBrowserSection(t *testing.T
 	}
 }
 
-func TestSettingsEnterSavesConfigAndClosesModal(t *testing.T) {
+func TestSettingsCtrlSSavesConfigAndClosesModal(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -20967,13 +21180,13 @@ func TestSettingsEnterSavesConfigAndClosesModal(t *testing.T) {
 	m.settingsFields[settingsFieldStuckThreshold].input.SetValue("3h")
 	m.settingsFields[settingsFieldInterval].input.SetValue("45s")
 
-	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyCtrlS})
 	got := updated.(Model)
 	if cmd == nil {
 		t.Fatalf("expected save command")
 	}
 	if !got.settingsSaving {
-		t.Fatalf("settings enter should mark saving in progress")
+		t.Fatalf("settings ctrl+s should mark saving in progress")
 	}
 	if got.status != "Saving settings..." {
 		t.Fatalf("status = %q, want saving message", got.status)
@@ -20997,6 +21210,73 @@ func TestSettingsEnterSavesConfigAndClosesModal(t *testing.T) {
 	text := string(raw)
 	if !strings.Contains(text, "openai_api_key = \"sk-test-example\"") || !strings.Contains(text, "include_paths = [") || !strings.Contains(text, "exclude_paths = [") || !strings.Contains(text, "exclude_project_patterns = [") || !strings.Contains(text, "codex_launch_preset = \"full-auto\"") || !strings.Contains(text, "interval = \"45s\"") {
 		t.Fatalf("saved config missing edited values: %q", text)
+	}
+}
+
+func TestSettingsEnterOnTextFieldDoesNotSave(t *testing.T) {
+	m := Model{
+		settingsMode:   true,
+		settingsFields: newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
+		width:          100,
+		height:         24,
+	}
+	_ = m.setSettingsSelection(settingsFieldOpenAIAPIKey)
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("settings enter on text field should not save")
+	}
+	if got.settingsSaving {
+		t.Fatalf("settings enter on text field should not mark saving")
+	}
+	if got.status != "Press ctrl+s to save settings." {
+		t.Fatalf("status = %q, want ctrl+s hint", got.status)
+	}
+}
+
+func TestSettingsOpenWarnsAboutMissingLCAgentEnvFile(t *testing.T) {
+	missingPath := filepath.Join(t.TempDir(), "missing.env")
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.LCAgentEnvFile = missingPath
+
+	m := Model{width: 100, height: 24}
+	cmd := m.openSettingsModeWithBaseline(settings)
+	if cmd == nil {
+		t.Fatalf("opening settings should focus the first field")
+	}
+	if m.status != "LCAgent env file warning (use /errors)" {
+		t.Fatalf("status = %q, want missing env file error-log hint", m.status)
+	}
+	if len(m.errorLogEntries) != 1 {
+		t.Fatalf("error log count = %d, want 1", len(m.errorLogEntries))
+	}
+	if m.errorLogEntries[0].Status != "LCAgent env file warning" {
+		t.Fatalf("error log status = %q", m.errorLogEntries[0].Status)
+	}
+	if m.errorLogEntries[0].Message != "LCAgent env file not found: "+missingPath {
+		t.Fatalf("error log message = %q, want missing env file detail", m.errorLogEntries[0].Message)
+	}
+	if !m.settingsMode {
+		t.Fatalf("settings mode should be open")
+	}
+}
+
+func TestNewWarnsAboutMissingLCAgentEnvFile(t *testing.T) {
+	missingPath := filepath.Join(t.TempDir(), "missing.env")
+	cfg := config.Default()
+	cfg.LCAgentEnvFile = missingPath
+	svc := service.New(cfg, nil, events.NewBus(), nil)
+
+	m := New(context.Background(), svc)
+	if m.status != "LCAgent env file warning (use /errors)" {
+		t.Fatalf("status = %q, want startup error-log hint", m.status)
+	}
+	if len(m.errorLogEntries) != 1 {
+		t.Fatalf("error log count = %d, want 1", len(m.errorLogEntries))
+	}
+	if m.errorLogEntries[0].Message != "LCAgent env file not found: "+missingPath {
+		t.Fatalf("error log message = %q, want missing env file detail", m.errorLogEntries[0].Message)
 	}
 }
 
@@ -21066,7 +21346,7 @@ func TestSettingsBrowserAutomationMapsToManagedPolicy(t *testing.T) {
 	}
 }
 
-func TestSettingsSavingBlocksRepeatEnter(t *testing.T) {
+func TestSettingsSavingBlocksRepeatCtrlS(t *testing.T) {
 	m := Model{
 		settingsMode:   true,
 		settingsSaving: true,
@@ -21077,10 +21357,10 @@ func TestSettingsSavingBlocksRepeatEnter(t *testing.T) {
 	}
 	_ = m.setSettingsSelection(0)
 
-	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyCtrlS})
 	got := updated.(Model)
 	if cmd != nil {
-		t.Fatalf("settings enter should not queue another save while saving")
+		t.Fatalf("settings ctrl+s should not queue another save while saving")
 	}
 	if !got.settingsSaving {
 		t.Fatalf("settings saving flag should stay true until the save completes")
@@ -21090,7 +21370,7 @@ func TestSettingsSavingBlocksRepeatEnter(t *testing.T) {
 	}
 }
 
-func TestSettingsEnterShowsValidationError(t *testing.T) {
+func TestSettingsCtrlSShowsValidationError(t *testing.T) {
 	m := Model{
 		settingsMode:   true,
 		settingsFields: newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
@@ -21102,7 +21382,7 @@ func TestSettingsEnterShowsValidationError(t *testing.T) {
 	m.settingsFields[settingsFieldActiveThreshold].input.SetValue("20m")
 	m.settingsFields[settingsFieldStuckThreshold].input.SetValue("10m")
 
-	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyCtrlS})
 	got := updated.(Model)
 	if cmd != nil {
 		t.Fatalf("expected no save command when validation fails")
@@ -21112,6 +21392,45 @@ func TestSettingsEnterShowsValidationError(t *testing.T) {
 	}
 	if !got.settingsMode {
 		t.Fatalf("settings mode should stay open after validation failure")
+	}
+}
+
+func TestSettingsCtrlSWarnsAboutMissingLCAgentEnvFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	missingPath := filepath.Join(home, "missing.env")
+
+	m := Model{
+		settingsMode:   true,
+		settingsFields: newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
+		width:          100,
+		height:         24,
+	}
+	_ = m.setSettingsSelection(settingsFieldLCAgentEnvFile)
+	m.settingsFields[settingsFieldLCAgentEnvFile].input.SetValue(missingPath)
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyCtrlS})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("expected save command even with missing optional env file")
+	}
+	if !got.settingsSaving {
+		t.Fatalf("settings should still start saving for missing optional env file")
+	}
+	msg := cmd()
+	finalModel, _ := got.Update(msg)
+	saved := finalModel.(Model)
+	if saved.settingsMode {
+		t.Fatalf("settings mode should close after saving with a missing optional env file")
+	}
+	if !strings.Contains(saved.status, "LCAgent env file warning (use /errors)") {
+		t.Fatalf("status = %q, want missing env file error-log hint", saved.status)
+	}
+	if len(saved.errorLogEntries) != 1 {
+		t.Fatalf("error log count = %d, want 1", len(saved.errorLogEntries))
+	}
+	if saved.errorLogEntries[0].Message != "LCAgent env file not found: "+missingPath {
+		t.Fatalf("error log message = %q, want missing env file detail", saved.errorLogEntries[0].Message)
 	}
 }
 
@@ -21137,9 +21456,9 @@ func TestSettingsSavePreservesEmbeddedModelPreferences(t *testing.T) {
 	_ = m.setSettingsSelection(settingsFieldOpenAIAPIKey)
 	m.settingsFields[settingsFieldOpenAIAPIKey].input.SetValue("sk-test-example")
 
-	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyCtrlS})
 	if cmd == nil {
-		t.Fatalf("expected save command from settings enter")
+		t.Fatalf("expected save command from settings ctrl+s")
 	}
 	msg := cmd()
 	savedMsg, ok := msg.(settingsSavedMsg)
@@ -23095,6 +23414,47 @@ func TestCommandPaletteScrollsSelectedSuggestionIntoView(t *testing.T) {
 	}
 }
 
+func TestDispatchSessionCommandOpensEmbeddedSessionPicker(t *testing.T) {
+	now := time.Date(2026, 5, 9, 11, 30, 0, 0, time.UTC)
+	m := Model{
+		allProjects: []model.ProjectSummary{{
+			Path:          "/tmp/demo",
+			Name:          "demo",
+			PresentOnDisk: true,
+		}},
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": {
+				Provider:       codexapp.ProviderLCAgent,
+				ProjectPath:    "/tmp/demo",
+				ThreadID:       "lca_demo",
+				Started:        true,
+				LastActivityAt: now,
+				Status:         "Loaded LCAgent session lca_demo from disk",
+			},
+		},
+		width:  100,
+		height: 24,
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindSession, Canonical: "/session"})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("dispatchCommand(/session) cmd = %#v, want nil", cmd)
+	}
+	if !got.codexPickerVisible {
+		t.Fatalf("/session should open the embedded session picker")
+	}
+	if got.codexPickerTitle != "Embedded Sessions" {
+		t.Fatalf("picker title = %q", got.codexPickerTitle)
+	}
+	if got.status != "Embedded session picker open" {
+		t.Fatalf("status = %q, want picker-open status", got.status)
+	}
+	if len(got.codexPickerChoices) != 1 || got.codexPickerChoices[0].Provider != codexapp.ProviderLCAgent {
+		t.Fatalf("picker choices = %#v, want one LCAgent choice", got.codexPickerChoices)
+	}
+}
+
 func TestHelpPanelLinesStayMinimal(t *testing.T) {
 	lines := helpPanelLines()
 	joined := ansi.Strip(strings.Join(lines, "\n"))
@@ -23114,7 +23474,7 @@ func TestHelpPanelLinesStayMinimal(t *testing.T) {
 	if !strings.Contains(joined, "interrupt busy session") {
 		t.Fatalf("helpPanelLines() should keep the session interrupt hint: %q", joined)
 	}
-	if !strings.Contains(joined, "b  boss") || !strings.Contains(joined, "t  todo") || !strings.Contains(joined, "o/v  sort/view") || !strings.Contains(joined, "p  pin") || !strings.Contains(joined, "Ctrl+V  image") {
+	if !strings.Contains(joined, "b  boss") || !strings.Contains(joined, "t  todo") || !strings.Contains(joined, "o/v  sort/view") || !strings.Contains(joined, "p  pin") || !strings.Contains(joined, "ctrl+v  image") {
 		t.Fatalf("helpPanelLines() should show the reordered quick actions: %q", joined)
 	}
 	if !strings.Contains(joined, "AGENT") || !strings.Contains(joined, "RUN") {
@@ -23141,7 +23501,7 @@ func TestRenderHelpPanelOmitsVerboseLegacyHints(t *testing.T) {
 	if !strings.Contains(rendered, "slash-command palette") {
 		t.Fatalf("renderHelpPanel() should explain the slash-command palette: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Ctrl+V") || !strings.Contains(rendered, "image") {
+	if !strings.Contains(rendered, "ctrl+v") || !strings.Contains(rendered, "image") {
 		t.Fatalf("renderHelpPanel() should keep the paste hint: %q", rendered)
 	}
 }

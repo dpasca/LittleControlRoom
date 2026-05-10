@@ -1,0 +1,1001 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LCAgent Large Context Follow-Up Report</title>
+  <style type="text/css">
+    :root {
+      --ink: #1d2528;
+      --muted: #5b666a;
+      --line: #cfd8dc;
+      --surface: #f7f9f8;
+      --surface-strong: #eef4f4;
+      --accent: #0b7285;
+      --accent-soft: #d8f0f2;
+      --gpt: #207856;
+      --glm: #9b6a00;
+      --good: #1b7052;
+      --good-soft: #ddf3e9;
+      --warn: #8a4b0f;
+      --warn-soft: #fff1d6;
+      --bad: #8f2b2b;
+      --bad-soft: #ffe0e0;
+      --kimi: #c45a2b;
+      --deepseek: #0f8b8d;
+      --aborted: #68727a;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: #fff;
+      font: 16px/1.58 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .page {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 32px 28px 48px;
+    }
+
+    .report-header {
+      border-bottom: 2px solid var(--ink);
+      padding-bottom: 18px;
+      margin-bottom: 24px;
+    }
+
+    h1, h2, h3 {
+      line-height: 1.16;
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 36px;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      font-size: 24px;
+      margin-top: 34px;
+      padding-top: 20px;
+      border-top: 1px solid var(--line);
+    }
+
+    h3 {
+      font-size: 17px;
+      margin-top: 18px;
+    }
+
+    p {
+      margin: 10px 0;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: .88em;
+      background: #f1f4f4;
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #f1f4f4;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 12px;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    ul {
+      margin: 8px 0 8px 20px;
+      padding: 0;
+    }
+
+    li {
+      margin: 4px 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0 18px;
+      table-layout: fixed;
+      font-size: 13px;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 8px 7px;
+      vertical-align: top;
+    }
+
+    th {
+      background: var(--surface-strong);
+      color: #263235;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .045em;
+      text-align: left;
+    }
+
+    td.num, th.num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .lede {
+      max-width: 940px;
+      color: var(--muted);
+      font-size: 17px;
+      margin-top: 12px;
+    }
+
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin: 18px 0 8px;
+    }
+
+    .meta div,
+    .callout,
+    .note-card,
+    .metric-legend,
+    .chart-box {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      border-radius: 6px;
+    }
+
+    .meta div {
+      padding: 10px 12px;
+    }
+
+    .label {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      margin-bottom: 2px;
+    }
+
+    .links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .button-link {
+      display: inline-block;
+      border: 1px solid var(--accent);
+      border-radius: 5px;
+      padding: 7px 10px;
+      background: #fff;
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: var(--accent-soft);
+      padding: 12px 14px;
+      margin: 16px 0;
+    }
+
+    .callout.good {
+      border-left-color: var(--good);
+      background: var(--good-soft);
+    }
+
+    .callout.warning {
+      border-left-color: var(--warn);
+      background: var(--warn-soft);
+    }
+
+    .callout.bad {
+      border-left-color: var(--bad);
+      background: var(--bad-soft);
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+    }
+
+    .three-col {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin: 14px 0;
+    }
+
+    .note-card {
+      padding: 12px;
+    }
+
+    .note-card strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .subtle {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .model {
+      font-weight: 800;
+    }
+
+    .score {
+      font-weight: 800;
+      color: var(--accent);
+    }
+
+    .status-complete {
+      color: var(--good);
+      font-weight: 800;
+    }
+
+    .status-aborted {
+      color: var(--bad);
+      font-weight: 800;
+    }
+
+    .metric-legend {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px 18px;
+      margin: 10px 0 14px;
+      padding: 10px 12px;
+      font-size: 12px;
+    }
+
+    .metric-name {
+      font-weight: 800;
+    }
+
+    .metric-desc {
+      color: var(--muted);
+    }
+
+    .results-table th:nth-child(1) { width: 14%; }
+    .results-table th:nth-child(2) { width: 12%; }
+    .results-table th:nth-child(3) { width: 10%; }
+    .results-table th:nth-child(4) { width: 7%; }
+    .results-table th:nth-child(5) { width: 7%; }
+    .results-table th:nth-child(6) { width: 8%; }
+    .results-table th:nth-child(7) { width: 8%; }
+    .results-table th:nth-child(8) { width: 6%; }
+    .results-table th:nth-child(9) { width: 6%; }
+    .results-table th:nth-child(10) { width: 6%; }
+    .results-table th:nth-child(11) { width: 6%; }
+    .results-table th:nth-child(12) { width: 5%; }
+    .results-table th:nth-child(13) { width: 5%; }
+
+    .tool-table th:nth-child(1) { width: 22%; }
+    .tool-table th:nth-child(2) { width: 13%; }
+    .tool-table th:nth-child(3) { width: 13%; }
+    .tool-table th:nth-child(4) { width: 13%; }
+    .tool-table th:nth-child(5) { width: 39%; }
+
+    .quote-table th:nth-child(1) { width: 18%; }
+    .quote-table th:nth-child(2) { width: 38%; }
+    .quote-table th:nth-child(3) { width: 44%; }
+
+    .quote {
+      font-style: italic;
+      color: var(--ink);
+    }
+
+    .chart-box {
+      padding: 14px;
+      margin: 14px 0 18px;
+      background: #fff;
+    }
+
+    .chart-scroll {
+      overflow: visible;
+      padding-bottom: 48px;
+    }
+
+    .chart-area {
+      position: relative;
+      min-width: 720px;
+      height: 360px;
+      margin: 12px 18px 28px 58px;
+      border-left: 2px solid var(--ink);
+      border-bottom: 2px solid var(--ink);
+      background:
+        linear-gradient(to right, rgba(207, 216, 220, .55) 1px, transparent 1px) 0 0 / 25% 100%,
+        linear-gradient(to bottom, rgba(207, 216, 220, .55) 1px, transparent 1px) 0 0 / 100% 25%,
+        #fff;
+    }
+
+    .threshold-x,
+    .threshold-y {
+      position: absolute;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    .threshold-x {
+      top: 0;
+      bottom: 0;
+      left: 65.1%;
+      border-left: 2px dashed rgba(138, 75, 15, .65);
+    }
+
+    .threshold-y {
+      left: 0;
+      right: 0;
+      top: 40%;
+      border-top: 2px dashed rgba(138, 75, 15, .65);
+    }
+
+    .chart-point {
+      position: absolute;
+      z-index: 4;
+      transform: translate(-50%, -50%);
+      --point-color: var(--accent);
+    }
+
+    .point-dot {
+      display: block;
+      width: 15px;
+      height: 15px;
+      border: 2px solid #fff;
+      border-radius: 50%;
+      background: var(--point-color);
+      box-shadow: 0 0 0 1px rgba(29, 37, 40, .4);
+      font-size: 0;
+      line-height: 0;
+    }
+
+    .point-name {
+      position: absolute;
+      left: 18px;
+      top: -9px;
+      white-space: nowrap;
+      background: rgba(255, 255, 255, .88);
+      border-radius: 3px;
+      padding: 1px 4px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .label-left .point-name {
+      left: auto;
+      right: 18px;
+      text-align: right;
+    }
+
+    .point-kimi { --point-color: var(--kimi); }
+    .point-deepseek { --point-color: var(--deepseek); }
+    .point-gpt { --point-color: var(--gpt); }
+    .point-glm { --point-color: var(--glm); }
+
+    .tick-label {
+      position: absolute;
+      color: var(--muted);
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .x-label {
+      top: 100%;
+      transform: translate(-50%, 8px);
+    }
+
+    .y-label {
+      right: 100%;
+      transform: translate(-8px, -50%);
+    }
+
+    .axis-title {
+      position: absolute;
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .02em;
+    }
+
+    .axis-title-x {
+      left: 50%;
+      bottom: -42px;
+      transform: translateX(-50%);
+    }
+
+    .axis-title-y {
+      left: -54px;
+      top: 50%;
+      transform: translate(-50%, -50%) rotate(-90deg);
+      transform-origin: center;
+    }
+
+    .chart-legend {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .legend-swatch {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      margin-right: 5px;
+      border-radius: 50%;
+      vertical-align: -1px;
+      background: var(--accent);
+    }
+
+    .legend-kimi { background: var(--kimi); }
+    .legend-deepseek { background: var(--deepseek); }
+    .legend-gpt { background: var(--gpt); }
+    .legend-glm { background: var(--glm); }
+    .legend-aborted { background: var(--aborted); }
+
+    .report-footer {
+      margin-top: 34px;
+      color: var(--muted);
+      font-size: 12px;
+      border-top: 1px solid var(--line);
+      padding-top: 12px;
+    }
+
+    @media (max-width: 760px) {
+      .page {
+        padding: 22px 16px 36px;
+      }
+
+      .meta,
+      .two-col,
+      .three-col,
+      .metric-legend {
+        grid-template-columns: 1fr;
+      }
+
+      table {
+        table-layout: auto;
+        font-size: 12px;
+      }
+
+      th, td {
+        padding: 7px 5px;
+      }
+
+      .chart-scroll {
+        overflow-x: auto;
+        overflow-y: hidden;
+      }
+
+      .chart-area {
+        min-width: 700px;
+      }
+    }
+
+    @media print {
+      body {
+        font-size: 11px;
+      }
+
+      .page {
+        max-width: none;
+        padding: 0;
+      }
+
+      h1 {
+        font-size: 24px;
+      }
+
+      h2 {
+        font-size: 16px;
+        page-break-after: avoid;
+      }
+
+      table,
+      .callout,
+      .note-card,
+      .chart-box,
+      pre {
+        break-inside: avoid;
+      }
+
+      table {
+        font-size: 9px;
+      }
+
+      th, td {
+        padding: 4px 3px;
+      }
+
+      .chart-area {
+        min-width: 0;
+        height: 320px;
+      }
+
+      .chart-scroll {
+        overflow: visible;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="report-header">
+      <h1>LCAgent Large Context Follow-Up</h1>
+      <p class="lede">
+        Research report for Little Control Room, <a href="https://github.com/dpasca/LittleControlRoom">github.com/dpasca/LittleControlRoom</a>. This follow-up asks whether LCAgent can make better use of large-context, cache-friendly model routes by delaying loop compaction while preserving the same fixed target snapshot and benchmark prompt.
+      </p>
+      <div class="meta">
+        <div>
+          <span class="label">Report Date</span>
+          May 10, 2026 JST
+        </div>
+        <div>
+          <span class="label">Target Snapshot</span>
+          <code>885fd24f1f24ce903b7de12d34c5166d54ebe251</code>
+        </div>
+        <div>
+          <span class="label">Operator</span>
+          Codex, GPT-5 XHigh reasoning; no delegated subagents
+        </div>
+      </div>
+      <div class="links">
+        <a class="button-link" href="lcagent_context_profile_followup_2026-05-10.md">Markdown research note</a>
+        <a class="button-link" href="lcagent_context_profile_followup_2026-05-10_results.csv">CSV data</a>
+        <a class="button-link" href="lcagent_model_benchmark_2026-05-10_report.html">Main model benchmark report</a>
+      </div>
+    </div>
+
+    <div class="report-section">
+      <h2>Summary</h2>
+      <div class="callout good">
+        <strong>Large-context mode is worth keeping.</strong> It eliminated overlapping read ranges in every run attempted here, while keeping the model informed enough to complete the task without forced synthesis in the completed rows.
+      </div>
+      <p>
+        The central harness change under test was not a new tool or a cheaper heuristic. It was a context-retention profile: keep the default loop conservative, but allow large-window routes to carry more raw tool evidence before transcript compaction. This directly targets the repeated-read pattern observed in earlier LCAgent benchmark sessions.
+      </p>
+      <p>
+        <strong>GPT-5.5 with low reasoning effort</strong> produced the strongest final answer in this follow-up, with a working score of 8.6. <strong>GPT-5.5 with no reasoning effort</strong> was cheaper and still strong, but less crisp. <strong>Kimi K2.6</strong> remained the best lower-cost large-context route in this batch, while <strong>GLM 5.1</strong> improved markedly versus its earlier low-effort result.
+      </p>
+    </div>
+
+    <div class="report-section">
+      <h2>Benchmark Setup</h2>
+      <div class="two-col">
+        <div>
+          <h3>Fixed Task</h3>
+          <p>
+            The agent inspected a fixed Little Control Room snapshot and compared the existing <code>lcagent</code> implementation against <code>docs/lcagent_mvp_implementation_handoff.md</code>.
+          </p>
+          <pre>please review lcagent, see whaat functionalities are missing, compared to the doc that describes how it shoudl be</pre>
+        </div>
+        <div>
+          <h3>Shared Run Controls</h3>
+          <ul>
+            <li><code>--tool-profile generous</code></li>
+            <li><code>--context-profile large</code></li>
+            <li><code>--max-turns 32</code></li>
+            <li><code>--request-timeout 10m</code></li>
+            <li>Target worktree checked out from <code>885fd24f1f24ce903b7de12d34c5166d54ebe251</code></li>
+          </ul>
+        </div>
+      </div>
+      <p>
+        The large context profile raises the loop-compaction threshold and retained transcript/tool-output budgets. It does not change the user task, the target repository, or the scoring criteria.
+      </p>
+    </div>
+
+    <div class="report-section">
+      <h2>Metric Legend</h2>
+      <div class="metric-legend">
+        <div><span class="metric-name">Wall</span> <span class="metric-desc">elapsed wall-clock runtime for the session.</span></div>
+        <div><span class="metric-name">Cost</span> <span class="metric-desc">estimated provider cost reported or derived by LCAgent metrics.</span></div>
+        <div><span class="metric-name">Tok.</span> <span class="metric-desc">total input plus output tokens across model responses.</span></div>
+        <div><span class="metric-name">Cache</span> <span class="metric-desc">reported cached input tokens.</span></div>
+        <div><span class="metric-name">Resp.</span> <span class="metric-desc">model response count.</span></div>
+        <div><span class="metric-name">Reads</span> <span class="metric-desc"><code>read_file</code> tool-call count.</span></div>
+        <div><span class="metric-name">Lines</span> <span class="metric-desc">source lines returned by <code>read_file</code>.</span></div>
+        <div><span class="metric-name">Overlap</span> <span class="metric-desc">lines read again after already being covered by earlier reads.</span></div>
+        <div><span class="metric-name">Comp.</span> <span class="metric-desc">loop compaction count.</span></div>
+        <div><span class="metric-name">Synth.</span> <span class="metric-desc">whether the harness forced a no-tools synthesis checkpoint.</span></div>
+      </div>
+    </div>
+
+    <div class="report-section">
+      <h2>Run Matrix</h2>
+      <table class="results-table" summary="Large-context follow-up results">
+        <thead>
+          <tr>
+            <th>Run</th>
+            <th>Provider</th>
+            <th>Status</th>
+            <th class="num">Score</th>
+            <th class="num">Wall</th>
+            <th class="num">Cost</th>
+            <th class="num">Tok.</th>
+            <th class="num">Cache</th>
+            <th class="num">Resp.</th>
+            <th class="num">Reads</th>
+            <th class="num">Lines</th>
+            <th class="num">Overlap</th>
+            <th class="num">Comp.</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="model">DeepSeek V4 Pro</span></td>
+            <td>DeepSeek API<br><span class="subtle">temperature 0.2</span></td>
+            <td><span class="status-complete">complete</span><br><span class="subtle">no forced synthesis</span></td>
+            <td class="num score">6.8</td>
+            <td class="num">337s</td>
+            <td class="num">$0.077</td>
+            <td class="num">720,504</td>
+            <td class="num">555,648</td>
+            <td class="num">15</td>
+            <td class="num">23</td>
+            <td class="num">4,666</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+          </tr>
+          <tr>
+            <td><span class="model">GPT-5.5</span></td>
+            <td>OpenAI API<br><span class="subtle">low reasoning, temp omitted</span></td>
+            <td><span class="status-complete">complete</span><br><span class="subtle">no forced synthesis</span></td>
+            <td class="num score">8.6</td>
+            <td class="num">83s</td>
+            <td class="num">$0.689</td>
+            <td class="num">511,384</td>
+            <td class="num">432,640</td>
+            <td class="num">16</td>
+            <td class="num">14</td>
+            <td class="num">3,606</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+          </tr>
+          <tr>
+            <td><span class="model">GPT-5.5</span><br><span class="subtle">none</span></td>
+            <td>OpenAI API<br><span class="subtle">no reasoning effort, temp omitted</span></td>
+            <td><span class="status-complete">complete</span><br><span class="subtle">no forced synthesis</span></td>
+            <td class="num score">8.1</td>
+            <td class="num">72s</td>
+            <td class="num">$0.599</td>
+            <td class="num">534,321</td>
+            <td class="num">476,160</td>
+            <td class="num">22</td>
+            <td class="num">14</td>
+            <td class="num">2,258</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+          </tr>
+          <tr>
+            <td><span class="model">GLM 5.1</span></td>
+            <td>OpenRouter<br><span class="subtle">low reasoning, temp 0.2</span></td>
+            <td><span class="status-complete">complete</span><br><span class="subtle">no forced synthesis</span></td>
+            <td class="num score">7.1</td>
+            <td class="num">305s</td>
+            <td class="num">$0.566</td>
+            <td class="num">713,163</td>
+            <td class="num">420,672</td>
+            <td class="num">13</td>
+            <td class="num">17</td>
+            <td class="num">3,467</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+          </tr>
+          <tr>
+            <td><span class="model">Kimi K2.6</span></td>
+            <td>OpenRouter<br><span class="subtle">temperature omitted</span></td>
+            <td><span class="status-complete">complete</span><br><span class="subtle">no forced synthesis</span></td>
+            <td class="num score">7.7</td>
+            <td class="num">420s</td>
+            <td class="num">$0.236</td>
+            <td class="num">543,949</td>
+            <td class="num">414,590</td>
+            <td class="num">16</td>
+            <td class="num">20</td>
+            <td class="num">3,683</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+          </tr>
+          <tr>
+            <td><span class="model">Kimi K2.6</span></td>
+            <td>Moonshot API<br><span class="subtle">temperature omitted</span></td>
+            <td><span class="status-complete">complete</span><br><span class="subtle">no forced synthesis</span></td>
+            <td class="num score">7.4</td>
+            <td class="num">172s</td>
+            <td class="num">$0.256</td>
+            <td class="num">933,634</td>
+            <td class="num">825,600</td>
+            <td class="num">19</td>
+            <td class="num">26</td>
+            <td class="num">5,509</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+          </tr>
+          <tr>
+            <td><span class="model">Kimi K2.6</span><br><span class="subtle">earlier attempt</span></td>
+            <td>Moonshot API<br><span class="subtle">temperature omitted</span></td>
+            <td><span class="status-aborted">aborted</span><br><span class="subtle">TPD limit</span></td>
+            <td class="num">n/a</td>
+            <td class="num">93s</td>
+            <td class="num">$0.139</td>
+            <td class="num">396,446</td>
+            <td class="num">313,088</td>
+            <td class="num">12</td>
+            <td class="num">28</td>
+            <td class="num">4,540</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="three-col">
+        <div class="note-card">
+          <strong>Read Efficiency</strong>
+          <p class="subtle">All attempted large-context runs had zero overlapping read lines. That is the clearest harness-level improvement in this batch.</p>
+        </div>
+        <div class="note-card">
+          <strong>Cache Behavior</strong>
+          <p class="subtle">All completed rows used meaningful cache. Direct Kimi and GPT none had the highest cached-token counts in this follow-up.</p>
+        </div>
+        <div class="note-card">
+          <strong>Route Variance Caveat</strong>
+          <p class="subtle">Kimi OpenRouter vs direct Moonshot should be treated as observed route variance, not proof of more precise inference on either route.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="report-section">
+      <h2>Score Vs Cost</h2>
+      <div class="chart-box">
+        <p class="subtle">
+          Completed rows only. X-axis uses estimated cost on a log scale from $0.05 to $1.00. The dashed lines mark a rough score 7.0 and $0.20 routing threshold.
+        </p>
+        <div class="chart-scroll">
+          <div class="chart-area">
+            <div class="threshold-x" style="left: 46.3%;"></div>
+            <div class="threshold-y" style="top: 57.1%;"></div>
+            <span class="tick-label x-label" style="left: 0%;">$0.05</span>
+            <span class="tick-label x-label" style="left: 23.1%;">$0.10</span>
+            <span class="tick-label x-label" style="left: 46.3%;">$0.20</span>
+            <span class="tick-label x-label" style="left: 76.8%;">$0.50</span>
+            <span class="tick-label x-label" style="left: 100%;">$1.00</span>
+            <span class="tick-label y-label" style="top: 0%;">9.0</span>
+            <span class="tick-label y-label" style="top: 28.6%;">8.0</span>
+            <span class="tick-label y-label" style="top: 57.1%;">7.0</span>
+            <span class="tick-label y-label" style="top: 85.7%;">6.0</span>
+            <span class="axis-title axis-title-x">Estimated cost per benchmark run</span>
+            <span class="axis-title axis-title-y">Working score</span>
+
+            <span class="chart-point point-deepseek" style="left: 14.6%; top: 62.9%;"><span class="point-dot">&nbsp;</span><span class="point-name">DeepSeek V4 Pro</span></span>
+            <span class="chart-point point-kimi" style="left: 51.8%; top: 37.1%;"><span class="point-dot">&nbsp;</span><span class="point-name">Kimi OR</span></span>
+            <span class="chart-point point-kimi label-left" style="left: 54.4%; top: 45.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Kimi direct</span></span>
+            <span class="chart-point point-glm label-left" style="left: 81.0%; top: 54.3%;"><span class="point-dot">&nbsp;</span><span class="point-name">GLM 5.1</span></span>
+            <span class="chart-point point-gpt label-left" style="left: 82.9%; top: 25.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">GPT none</span></span>
+            <span class="chart-point point-gpt label-left" style="left: 87.5%; top: 11.4%;"><span class="point-dot">&nbsp;</span><span class="point-name">GPT low</span></span>
+          </div>
+        </div>
+        <div class="chart-legend">
+          <span><span class="legend-swatch legend-gpt">&nbsp;</span>OpenAI GPT</span>
+          <span><span class="legend-swatch legend-deepseek">&nbsp;</span>DeepSeek API</span>
+          <span><span class="legend-swatch legend-kimi">&nbsp;</span>Kimi via OpenRouter</span>
+          <span><span class="legend-swatch legend-kimi">&nbsp;</span>Kimi direct Moonshot</span>
+          <span><span class="legend-swatch legend-glm">&nbsp;</span>GLM via OpenRouter</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="report-section">
+      <h2>Tool Use Details</h2>
+      <table class="tool-table" summary="Tool-call details by run">
+        <thead>
+          <tr>
+            <th>Run</th>
+            <th class="num">Tool Calls</th>
+            <th class="num">Read Bytes</th>
+            <th class="num">Max Input</th>
+            <th>Tool Mix</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="model">DeepSeek V4 Pro</span></td>
+            <td class="num">37</td>
+            <td class="num">159,350</td>
+            <td class="num">80,831</td>
+            <td><code>read_file</code> 23, <code>search</code> 7, <code>list_files</code> 4, <code>update_plan</code> 3</td>
+          </tr>
+          <tr>
+            <td><span class="model">GPT-5.5 low</span></td>
+            <td class="num">21</td>
+            <td class="num">125,595</td>
+            <td class="num">65,346</td>
+            <td><code>read_file</code> 14, <code>file_outline</code> 2, <code>module_outline</code> 2, <code>search</code> 2, <code>list_files</code> 1, <code>run_command</code> 1</td>
+          </tr>
+          <tr>
+            <td><span class="model">GPT-5.5 none</span></td>
+            <td class="num">21</td>
+            <td class="num">78,756</td>
+            <td class="num">44,570</td>
+            <td><code>read_file</code> 14, <code>module_outline</code> 2, <code>search</code> 2, <code>file_outline</code> 1, <code>list_files</code> 1, <code>run_command</code> 1</td>
+          </tr>
+          <tr>
+            <td><span class="model">GLM 5.1</span></td>
+            <td class="num">28</td>
+            <td class="num">117,783</td>
+            <td class="num">78,823</td>
+            <td><code>read_file</code> 17, <code>search</code> 5, <code>module_outline</code> 2, <code>list_files</code> 2, <code>update_plan</code> 2</td>
+          </tr>
+          <tr>
+            <td><span class="model">Kimi K2.6 OpenRouter</span></td>
+            <td class="num">47</td>
+            <td class="num">132,903</td>
+            <td class="num">68,081</td>
+            <td><code>read_file</code> 20, <code>file_outline</code> 11, <code>list_files</code> 7, <code>search</code> 5, <code>run_command</code> 3, <code>module_outline</code> 1</td>
+          </tr>
+          <tr>
+            <td><span class="model">Kimi K2.6 Moonshot</span></td>
+            <td class="num">48</td>
+            <td class="num">214,705</td>
+            <td class="num">92,409</td>
+            <td><code>read_file</code> 26, <code>file_outline</code> 9, <code>list_files</code> 7, <code>search</code> 4, <code>run_command</code> 2</td>
+          </tr>
+          <tr>
+            <td><span class="model">Kimi K2.6 Moonshot</span><br><span class="subtle">earlier attempt</span></td>
+            <td class="num">40</td>
+            <td class="num">159,634</td>
+            <td class="num">72,988</td>
+            <td><code>read_file</code> 28, <code>search</code> 5, <code>list_files</code> 4, <code>module_outline</code> 3</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="subtle">
+        The earlier direct Moonshot row stopped after a 429 organization TPD-limit response. After the tier upgrade, the rerun completed cleanly.
+      </p>
+    </div>
+
+    <div class="report-section">
+      <h2>Qualitative Scoring Notes</h2>
+      <table class="quote-table" summary="Representative qualitative scoring notes">
+        <thead>
+          <tr>
+            <th>Run</th>
+            <th>Representative Output</th>
+            <th>Score Rationale</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="model">DeepSeek V4 Pro</span><br><span class="subtle">score 6.8</span></td>
+            <td><span class="quote">"The implementation has completed all 4 spec milestones and extended well beyond them."</span></td>
+            <td>Better than previous DeepSeek runs: no forced synthesis, no repeated reads, and it stopped falsely marking <code>load_skill</code> as absent. It still overclaimed some gaps and included a contradictory outline-tool note, so it is not yet a top route.</td>
+          </tr>
+          <tr>
+            <td><span class="model">GPT-5.5 low</span><br><span class="subtle">score 8.6</span></td>
+            <td><span class="quote">"The missing or weak pieces are around policy fidelity, artifact richness, patch robustness, and provider maturity."</span></td>
+            <td>Strongest large-context answer. It identified the implemented baseline, called out the important <code>go test</code> policy mismatch, did not overclaim denied verification, and kept the loop short. Cost is the main drawback.</td>
+          </tr>
+          <tr>
+            <td><span class="model">GPT-5.5 none</span><br><span class="subtle">score 8.1</span></td>
+            <td><span class="quote">"Overall, the implementation is already beyond the first MVP doc in several areas."</span></td>
+            <td>Useful and efficient on reads, but took more response turns and the final was a little broader and less selective than GPT low. Good evidence that none can work when large context is available.</td>
+          </tr>
+          <tr>
+            <td><span class="model">GLM 5.1</span><br><span class="subtle">score 7.1</span></td>
+            <td><span class="quote">"Below is a structured breakdown of what's done and what's missing."</span></td>
+            <td>Much better than the earlier GLM row and no longer a failed candidate. The answer was detailed, but more checklist-like and spec-literal, with higher latency and many output/reasoning tokens.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Kimi K2.6 OpenRouter</span><br><span class="subtle">score 7.7</span></td>
+            <td><span class="quote">"The lcagent binary itself is very close to the doc's intent."</span></td>
+            <td>Strong lower-cost large-context route. It separated implemented milestones from real divergences and distinguished LCR-side parity stubs from binary-level gaps. The OpenRouter/direct gap should be treated as route variance, not proof of intrinsic inference quality.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Kimi K2.6 Moonshot</span><br><span class="subtle">score 7.4</span></td>
+            <td><span class="quote">"The implementation matches the handoff document very closely for the defined MVP scope."</span></td>
+            <td>Fast and now viable after the quota upgrade. It avoided repeat reads and did not claim denied verification as completed. It scored below OpenRouter Kimi because the answer drifted more into broader feasibility-doc gaps and was less precise on the immediate handoff comparison.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Kimi K2.6 Moonshot</span><br><span class="subtle">earlier aborted attempt</span></td>
+            <td><span class="quote">No final answer; request hit organization TPD limit.</span></td>
+            <td>The partial session still had zero read overlap, but without a final answer it cannot be scored. It remains useful as a historical quota and cost warning for the direct Moonshot route.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="report-section">
+      <h2>Comparison To Earlier Runs</h2>
+      <div class="callout">
+        <strong>Large context improved the harness behavior most clearly on read overlap.</strong> In an earlier generous-read run, DeepSeek used 40 reads, 7,620 read lines, and 2,275 overlapping lines, then still produced a wobbly final. With large context, it used 23 reads, 4,666 lines, zero overlap, no forced synthesis, and a lower estimated cost.
+      </div>
+      <p>
+        This suggests the repeated-read problem was partly harness-induced. Early compaction removed too much raw evidence from the live conversation, so models re-read central files. Keeping more evidence available is cleaner than making the model read fewer lines or adding brittle duplicate-read blocks.
+      </p>
+      <p>
+        The tradeoff is context volume. Large-context mode should stay opt-in for now, used when a model route has enough context window and cache economics to justify it.
+      </p>
+    </div>
+
+    <div class="report-section">
+      <h2>Recommendation</h2>
+      <div class="two-col">
+        <div>
+          <h3>Harness Defaults</h3>
+          <ul>
+            <li>Keep <code>--context-profile balanced</code> as the default.</li>
+            <li>Use <code>--context-profile large</code> for large-window benchmark lanes.</li>
+            <li>Track compaction count and forced synthesis in future benchmark tables.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>Model Routes</h3>
+          <ul>
+            <li>Use GPT-5.5 low as the quality ceiling for this task, with cost caveats.</li>
+            <li>Keep Kimi K2.6 as the stronger lower-cost large-context candidate.</li>
+            <li>Rerun GLM on another task before dismissing it; large context improved it a lot.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="report-section">
+      <h2>Reproduction Command Shape</h2>
+      <pre>BENCH_REF=885fd24f1f24ce903b7de12d34c5166d54ebe251
+BENCH_ROOT=$(mktemp -d /tmp/lcagent-largectx-XXXXXX)
+git worktree add --detach "$BENCH_ROOT/repo" "$BENCH_REF"
+
+go run ./cmd/lcagent exec \
+  --cwd "$BENCH_ROOT/repo" \
+  --data-dir "$BENCH_ROOT/data" \
+  --auto off \
+  --output stream-json \
+  --provider deepseek \
+  --model deepseek-v4-pro \
+  --env-file .env \
+  --tool-profile generous \
+  --context-profile large \
+  --max-turns 32 \
+  --request-timeout 10m \
+  "please review lcagent, see whaat functionalities are missing, compared to the doc that describes how it shoudl be"</pre>
+    </div>
+
+    <div class="report-footer">
+      Generated as a local research artifact for Little Control Room. See the Markdown note and CSV next to this file for the source summary data.
+    </div>
+  </div>
+</body>
+</html>

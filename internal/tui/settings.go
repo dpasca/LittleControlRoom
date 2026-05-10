@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -28,6 +29,13 @@ const (
 	settingsFieldOllamaBaseURL
 	settingsFieldOllamaAPIKey
 	settingsFieldOllamaModel
+	settingsFieldLCAgentPath
+	settingsFieldLCAgentEnvFile
+	settingsFieldLCAgentProvider
+	settingsFieldLCAgentAuto
+	settingsFieldLCAgentToolProfile
+	settingsFieldLCAgentContextProfile
+	settingsFieldLCAgentRequestTimeout
 	settingsFieldIncludePaths
 	settingsFieldExcludePaths
 	settingsFieldExcludeProjectPatterns
@@ -48,6 +56,8 @@ const (
 	settingsSectionBrowser settingsSectionID = "browser"
 	settingsSectionRefresh settingsSectionID = "refresh"
 )
+
+const settingsConfigIssueStatus = "LCAgent env file warning"
 
 type settingsSection struct {
 	id         settingsSectionID
@@ -133,6 +143,13 @@ func settingsSections() []settingsSection {
 				settingsFieldOllamaBaseURL,
 				settingsFieldOllamaAPIKey,
 				settingsFieldOllamaModel,
+				settingsFieldLCAgentPath,
+				settingsFieldLCAgentEnvFile,
+				settingsFieldLCAgentProvider,
+				settingsFieldLCAgentAuto,
+				settingsFieldLCAgentToolProfile,
+				settingsFieldLCAgentContextProfile,
+				settingsFieldLCAgentRequestTimeout,
 				settingsFieldCodexLaunchPreset,
 				settingsFieldHideReasoningSections,
 			},
@@ -301,7 +318,7 @@ func (m *Model) openBrowserSettingsMode() tea.Cmd {
 	m.commandMode = false
 	m.showHelp = false
 	m.err = nil
-	m.status = "Browser settings open. Press Enter to choose automation mode and Ctrl+S to save."
+	m.status = "Browser settings open. Press Enter to choose automation mode and ctrl+s to save."
 	return m.setSettingsSelection(settingsFieldBrowserAutomation)
 }
 
@@ -322,7 +339,11 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	m.commandMode = false
 	m.showHelp = false
 	m.err = nil
-	m.status = "Editing settings. Enter chooses pickers, Ctrl+S saves, Esc cancels."
+	m.status = "Editing settings. Enter chooses pickers, ctrl+s saves, Esc cancels."
+	if issue := settingsLocalFileIssue(saved); issue != nil {
+		m.appendSettingsConfigIssue(issue)
+		m.status = errorStatusWithHint(settingsConfigIssueStatus)
+	}
 	return m.setSettingsSelection(0)
 }
 
@@ -366,7 +387,8 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m.openSettingsBrowserAutomationPicker()
 			}
 		}
-		return m.saveSettingsFromFields()
+		m.status = "Press ctrl+s to save settings."
+		return m, nil
 	case "ctrl+r":
 		if m.settingsSelected == settingsFieldPrivacyPatterns {
 			m.settingsRevealPrivacy = !m.settingsRevealPrivacy
@@ -425,6 +447,13 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		invertBoolString(m.settingsFieldValue(settingsFieldHideReasoningSections)),
 		strconv.FormatBool(m.currentSettingsBaseline().PrivacyMode),
 		m.currentSettingsBaseline().OpenCodeModelTier,
+		m.settingsFieldValue(settingsFieldLCAgentPath),
+		m.settingsFieldValue(settingsFieldLCAgentEnvFile),
+		m.settingsFieldValue(settingsFieldLCAgentProvider),
+		m.settingsFieldValue(settingsFieldLCAgentAuto),
+		m.settingsFieldValue(settingsFieldLCAgentToolProfile),
+		m.settingsFieldValue(settingsFieldLCAgentContextProfile),
+		m.settingsFieldValue(settingsFieldLCAgentRequestTimeout),
 		m.settingsFieldValue(settingsFieldActiveThreshold),
 		m.settingsFieldValue(settingsFieldStuckThreshold),
 		m.settingsFieldValue(settingsFieldInterval),
@@ -439,6 +468,38 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 	m.settingsSaving = true
 	m.status = "Saving settings..."
 	return m, m.saveSettingsCmd(settings)
+}
+
+func settingsLocalFileIssue(settings config.EditableSettings) error {
+	envFile := strings.TrimSpace(settings.LCAgentEnvFile)
+	if envFile == "" {
+		return nil
+	}
+	info, err := os.Stat(envFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("LCAgent env file not found: %s", envFile)
+		}
+		return fmt.Errorf("LCAgent env file cannot be checked: %w", err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("LCAgent env file is a directory: %s", envFile)
+	}
+	return nil
+}
+
+func (m *Model) appendSettingsConfigIssue(err error) {
+	if err == nil {
+		return
+	}
+	message := strings.TrimSpace(err.Error())
+	if len(m.errorLogEntries) > 0 {
+		latest := m.errorLogEntries[0]
+		if latest.Status == settingsConfigIssueStatus && latest.Message == message && latest.ProjectPath == "" {
+			return
+		}
+	}
+	m.appendErrorLogEntry(settingsConfigIssueStatus, err, "")
 }
 
 func (m *Model) moveSettingsSelection(delta int) tea.Cmd {
@@ -606,6 +667,7 @@ func (m Model) saveEmbeddedModelPreferencesCmd() tea.Cmd {
 	settings.RecentCodexModels = append([]string(nil), m.recentCodexModels...)
 	settings.RecentClaudeModels = append([]string(nil), m.recentClaudeModels...)
 	settings.RecentOpenCodeModels = append([]string(nil), m.recentOpenCodeModels...)
+	settings.RecentLCAgentModels = append([]string(nil), m.recentLCAgentModels...)
 	if embeddedModelSettingsEqual(baseline, settings) {
 		return nil
 	}
@@ -1001,7 +1063,7 @@ func (m Model) renderSelectedSettingsHint(width int) string {
 
 func (m Model) renderSettingsActions() string {
 	actions := []string{
-		renderDialogAction("Ctrl+S", "save", commitActionKeyStyle, commitActionTextStyle),
+		renderDialogAction("ctrl+s", "save", commitActionKeyStyle, commitActionTextStyle),
 		renderDialogAction("Tab", "next", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("Up/Down", "move", pushActionKeyStyle, pushActionTextStyle),
 		renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
@@ -1009,10 +1071,6 @@ func (m Model) renderSettingsActions() string {
 	if settingsFieldUsesPicker(m.settingsSelected) {
 		actions = append([]string{
 			renderDialogAction("Enter", "choose", navigateActionKeyStyle, navigateActionTextStyle),
-		}, actions...)
-	} else {
-		actions = append([]string{
-			renderDialogAction("Enter", "save", commitActionKeyStyle, commitActionTextStyle),
 		}, actions...)
 	}
 	return strings.Join([]string{
@@ -1093,6 +1151,55 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			"Optional exact model ID for the Ollama backend. Leave blank to auto-use the first model returned by /v1/models. Use /setup and press M to pick from discovered models.",
 			settings.OllamaModel,
 			512,
+			settingsSectionAI,
+		),
+		newSettingsField(
+			"LCAgent executable",
+			"Optional path to the lcagent binary. Leave blank to use the bundled sibling binary, PATH lookup, or local go run fallback.",
+			settings.LCAgentPath,
+			512,
+			settingsSectionAI,
+		),
+		newSettingsField(
+			"LCAgent env file",
+			"Optional env file for experimental LCAgent provider credentials, such as OpenRouter, DeepSeek, Moonshot, or OpenAI keys. Missing files are shown as warnings and launches will fail until fixed or cleared.",
+			settings.LCAgentEnvFile,
+			1024,
+			settingsSectionAI,
+		),
+		newSettingsField(
+			"LCAgent provider",
+			"Experimental LCAgent provider. Accepted values: openrouter, openai, deepseek, moonshot.",
+			settings.LCAgentProvider,
+			32,
+			settingsSectionAI,
+		),
+		newSettingsField(
+			"LCAgent autonomy",
+			"Accepted values: off, low, medium. Low allows conservative local edits while keeping higher-risk actions constrained.",
+			settings.LCAgentAuto,
+			16,
+			settingsSectionAI,
+		),
+		newSettingsField(
+			"LCAgent tool profile",
+			"Accepted values: balanced, generous. Balanced keeps read budgets conservative; generous is useful for large-context model experiments.",
+			settings.LCAgentToolProfile,
+			32,
+			settingsSectionAI,
+		),
+		newSettingsField(
+			"LCAgent context profile",
+			"Accepted values: balanced, large. Large delays provider-loop compaction when the selected model/provider can use bigger context.",
+			settings.LCAgentContextProfile,
+			32,
+			settingsSectionAI,
+		),
+		newSettingsField(
+			"LCAgent timeout",
+			"Provider HTTP request timeout for experimental LCAgent runs, for example 10m.",
+			formatSettingsDuration(settings.LCAgentRequestTimeout),
+			32,
 			settingsSectionAI,
 		),
 		newSettingsField(
@@ -1216,6 +1323,12 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.OllamaBaseURL = strings.TrimSpace(settings.OllamaBaseURL)
 	settings.OllamaAPIKey = strings.TrimSpace(settings.OllamaAPIKey)
 	settings.OllamaModel = strings.TrimSpace(settings.OllamaModel)
+	settings.LCAgentPath = strings.TrimSpace(settings.LCAgentPath)
+	settings.LCAgentEnvFile = strings.TrimSpace(settings.LCAgentEnvFile)
+	settings.LCAgentProvider = strings.TrimSpace(settings.LCAgentProvider)
+	settings.LCAgentAuto = strings.TrimSpace(settings.LCAgentAuto)
+	settings.LCAgentToolProfile = strings.TrimSpace(settings.LCAgentToolProfile)
+	settings.LCAgentContextProfile = strings.TrimSpace(settings.LCAgentContextProfile)
 	settings.IncludePaths = append([]string(nil), settings.IncludePaths...)
 	settings.ExcludePaths = append([]string(nil), settings.ExcludePaths...)
 	settings.ExcludeProjectPatterns = append([]string(nil), settings.ExcludeProjectPatterns...)
@@ -1224,6 +1337,7 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.RecentCodexModels = append([]string(nil), settings.RecentCodexModels...)
 	settings.RecentClaudeModels = append([]string(nil), settings.RecentClaudeModels...)
 	settings.RecentOpenCodeModels = append([]string(nil), settings.RecentOpenCodeModels...)
+	settings.RecentLCAgentModels = append([]string(nil), settings.RecentLCAgentModels...)
 	return settings
 }
 
@@ -1291,12 +1405,69 @@ func (m Model) settingsFieldHint(index int) string {
 			return "Ollama will prefer model " + model + ". Leave blank to auto-use the first /v1/models result."
 		}
 		return field.hint
+	case settingsFieldLCAgentPath:
+		if path := strings.TrimSpace(field.input.Value()); path != "" {
+			return "LCAgent launches will use " + path + "."
+		}
+		return field.hint
+	case settingsFieldLCAgentEnvFile:
+		if path := strings.TrimSpace(field.input.Value()); path != "" {
+			return "LCAgent launches will load provider credentials from " + path + "."
+		}
+		return field.hint
+	case settingsFieldLCAgentProvider:
+		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
+		case "", "openrouter":
+			return "LCAgent will use OpenRouter-compatible tool calls and model IDs such as deepseek/deepseek-v4-pro."
+		case "deepseek":
+			return "LCAgent will call DeepSeek directly and use direct DeepSeek model IDs."
+		case "moonshot":
+			return "LCAgent will call Moonshot directly and use Kimi model IDs."
+		case "openai":
+			return "LCAgent will call the OpenAI Responses API directly."
+		default:
+			return field.hint
+		}
+	case settingsFieldLCAgentAuto:
+		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
+		case "off":
+			return "LCAgent will deny file edits and use the most restrictive command policy."
+		case "", "low":
+			return "LCAgent will use the default low autonomy policy."
+		case "medium":
+			return "LCAgent can run a broader set of workspace-contained actions."
+		default:
+			return field.hint
+		}
+	case settingsFieldLCAgentToolProfile:
+		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
+		case "", "balanced":
+			return "Balanced is the conservative default read budget for early experimental runs."
+		case "generous":
+			return "Generous allows more file-reading context and works best with larger-context providers."
+		default:
+			return field.hint
+		}
+	case settingsFieldLCAgentContextProfile:
+		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
+		case "", "balanced":
+			return "Balanced keeps provider-loop compaction on the normal budget."
+		case "large":
+			return "Large retains more loop context before compaction; use it with models that can spend the context well."
+		default:
+			return field.hint
+		}
+	case settingsFieldLCAgentRequestTimeout:
+		if value := strings.TrimSpace(field.input.Value()); value != "" {
+			return "LCAgent provider requests will wait up to " + value + " before timing out."
+		}
+		return field.hint
 	case settingsFieldPrivacyPatterns:
 		hint := field.hint
 		if m.settingsRevealPrivacy {
-			hint += " (revealed - press Ctrl+R to hide)"
+			hint += " (revealed - press ctrl+r to hide)"
 		} else {
-			hint += " (hidden - press Ctrl+R to reveal)"
+			hint += " (hidden - press ctrl+r to reveal)"
 		}
 		return hint
 	case settingsFieldBrowserAutomation:

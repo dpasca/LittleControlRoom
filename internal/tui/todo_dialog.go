@@ -1154,14 +1154,21 @@ func (m Model) startTodoInProjectPath(projectPath, todoText string, provider cod
 		return m, nil
 	}
 	req := codexapp.LaunchRequest{
-		Provider:         provider,
-		ProjectPath:      project.Path,
-		ResumeID:         m.selectedProjectSessionID(project, provider),
-		ForceNew:         true,
-		Preset:           m.currentCodexLaunchPreset(),
-		PlaywrightPolicy: m.currentPlaywrightPolicy(),
-		AppDataDir:       m.appDataDir(),
-		CodexHome:        m.codexHome(),
+		Provider:              provider,
+		ProjectPath:           project.Path,
+		ResumeID:              m.selectedProjectSessionID(project, provider),
+		ForceNew:              true,
+		Preset:                m.currentCodexLaunchPreset(),
+		PlaywrightPolicy:      m.currentPlaywrightPolicy(),
+		AppDataDir:            m.appDataDir(),
+		CodexHome:             m.codexHome(),
+		LCAgentPath:           m.lcagentPath(),
+		LCAgentEnvFile:        m.lcagentEnvFile(),
+		LCAgentProvider:       m.lcagentProvider(),
+		LCAgentAuto:           m.lcagentAuto(),
+		LCAgentToolProfile:    m.lcagentToolProfile(),
+		LCAgentContextProfile: m.lcagentContextProfile(),
+		LCAgentRequestTimeout: m.lcagentRequestTimeout(),
 	}
 	if err := req.Validate(); err != nil {
 		m.clearTodoLaunchDraft(project.Path)
@@ -1651,7 +1658,7 @@ func (m Model) renderTodoWorktreeEditorOverlay(body string, bodyW, bodyH int) st
 		"",
 		renderHelpPanelActionRow(
 			renderDialogAction("Tab/↑↓", "switch", navigateActionKeyStyle, navigateActionTextStyle),
-			renderDialogAction("Ctrl+S", "save", commitActionKeyStyle, commitActionTextStyle),
+			renderDialogAction("ctrl+s", "save", commitActionKeyStyle, commitActionTextStyle),
 			renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
 		),
 	}
