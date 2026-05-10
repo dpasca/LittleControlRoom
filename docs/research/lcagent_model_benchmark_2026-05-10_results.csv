@@ -21,7 +21,3 @@ run,status,score,api_provider,provider_pin,reasoning_effort,temperature,wall_sec
 "MiniMax M2.7 pinned low",complete,4.2,"OpenRouter","minimax","low","0.2",126,0.034,222201,154496,19,8,1140,2874,"Completed cheaply, but low effort produced broader false missing-feature claims than the default-effort retry."
 "GLM 5.1 medium",complete,3.8,"OpenRouter","none","medium","0.2",440,0.394,373779,156608,24,18,2032,14911,"Medium effort made GLM slower and more confidently wrong about implemented tools."
 "Grok 4.3 medium",complete,3.0,"OpenRouter","none","medium","0.2",174,0.227,220245,59200,16,5,247,9167,"Read the right docs this time, but falsely marked core implemented tools and LCR wiring as absent."
-"MiniMax M2.7 unpinned default",aborted,3.0,"OpenRouter","none","default","0.2",211,0.047,306637,212704,21,18,2245,4756,"Reached final tool call but emitted invalid schema."
-"MiniMax M2.7 pinned medium",aborted,2.9,"OpenRouter","minimax","medium","0.2",104,0.043,229773,121728,16,24,2967,1850,"Pinned medium regressed to invalid final_response schema after useful tool work."
-"Claude Sonnet 4.6 unpinned",aborted,2.8,"OpenRouter","none","low","0.2",296,1.284,371252,0,20,13,1695,6571,"Did substantial work, then failed the final structured-output schema."
-"MiniMax M2.7 unpinned low",aborted,2.5,"OpenRouter","none","low","0.2",221,0.056,242236,89504,18,25,3158,4563,"Aborted on empty visible response after tool work."

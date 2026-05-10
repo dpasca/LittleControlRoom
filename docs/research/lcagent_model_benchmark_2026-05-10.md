@@ -90,9 +90,7 @@ Claude Sonnet 4.6 substantially, kept Claude Opus 4.7 strong, and made GPT-5.5
 more expensive without making it more useful than the low-effort run.
 
 Kimi K2.6 was not rerun in this pass because the direct Moonshot adapter does
-not accept the LCAgent `reasoning_effort` option. MiniMax M2.7 was rerun with a
-strict MiniMax provider pin and `reasoning_effort=medium`, but it regressed to
-an invalid `final_response` schema.
+not accept the LCAgent `reasoning_effort` option.
 
 | Run | Status | Score | Cost | Verdict |
 |---|---:|---:|---:|---|
@@ -105,7 +103,12 @@ an invalid `final_response` schema.
 | Gemini 3.1 Pro Custom Tools medium | complete | 4.4 | $0.520 | Medium effort increased cost and still made false missing-tool claims. |
 | GLM 5.1 medium | complete | 3.8 | $0.394 | Slower and more confidently wrong about implemented tools. |
 | Grok 4.3 medium | complete | 3.0 | $0.227 | Read the right docs this time, but falsely marked core implemented tools and LCR wiring as absent. |
-| MiniMax M2.7 pinned medium | aborted | 2.9 | $0.043 | Regressed to invalid final-response schema after useful tool work. |
+
+Aborted or unpinned attempts are excluded from the main scoring table and chart.
+The excluded set was useful diagnostically but not comparable as route
+candidates: unpinned MiniMax and Sonnet attempts failed final-output reliability,
+and the pinned MiniMax medium retry also emitted an invalid `final_response`
+schema.
 
 ## Scoring Evidence Excerpts
 
@@ -131,7 +134,6 @@ they show why a run was scored up or down.
 | Gemini 3.1 Pro Custom Tools medium | "`load_skill` tool logic ... appears to be missing or incomplete" | False in the benchmark snapshot; medium effort did not fix overclaiming. |
 | GLM 5.1 medium | "no `apply_patch` or diff-application tool" | False in the benchmark snapshot and more damaging than the low-effort GLM answer. |
 | Grok 4.3 medium | "`update_plan` ... absent" | False in the benchmark snapshot; it read the right docs but missed implemented core tools. |
-| MiniMax M2.7 pinned medium | "I need to read the remaining ranges and check..." | The run aborted before a usable final answer, despite provider pinning and medium effort. |
 
 ## Caveats
 

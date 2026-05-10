@@ -262,11 +262,6 @@
       font-weight: 700;
     }
 
-    .status-fail {
-      color: var(--warn);
-      font-weight: 700;
-    }
-
     .value-chart {
       border: 1px solid var(--line);
       background: #fff;
@@ -449,13 +444,6 @@
       box-shadow: 0 0 0 2px rgba(11, 114, 133, .28);
     }
 
-    .point-fail .point-dot {
-      background: #fff;
-      border-color: var(--warn);
-      border-radius: 3px;
-      transform: rotate(45deg);
-    }
-
     .point-name {
       position: absolute;
       left: 15px;
@@ -520,13 +508,6 @@
     .legend-swatch.medium {
       background: #fff;
       border: 2px solid var(--accent);
-    }
-
-    .legend-swatch.fail {
-      background: #fff;
-      border: 2px solid var(--warn);
-      border-radius: 3px;
-      transform: rotate(45deg);
     }
 
     .chart-note {
@@ -677,7 +658,7 @@
         Retry runs used OpenRouter provider pins with fallbacks disabled and required parameter support enabled. Temperature was explicit at <code>0.2</code> for OpenRouter and direct DeepSeek chat-completions runs; OpenAI Responses and direct Moonshot runs omitted temperature.
       </p>
       <p>
-        A medium-effort follow-up did not change the recommendation. Medium helped pinned Sonnet materially and kept Opus strong, but GPT-5.5 medium became slower, pricier, and less calibrated than GPT-5.5 low. MiniMax pinned medium regressed to an invalid final-response schema.
+        A medium-effort follow-up did not change the recommendation. Medium helped pinned Sonnet materially and kept Opus strong, but GPT-5.5 medium became slower, pricier, and less calibrated than GPT-5.5 low.
       </p>
     </div>
 
@@ -749,10 +730,6 @@
             <span class="chart-point label-below" style="left: 3.0%; top: 68.6%;"><span class="point-dot">&nbsp;</span><span class="point-name">MiniMax low pin</span></span>
             <span class="chart-point point-medium label-left" style="left: 61.3%; top: 74.3%;"><span class="point-dot">&nbsp;</span><span class="point-name">GLM med</span></span>
             <span class="chart-point point-medium label-left" style="left: 48.1%; top: 85.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Grok med</span></span>
-            <span class="chart-point point-fail" style="left: 10.7%; top: 85.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">MiniMax unpin</span></span>
-            <span class="chart-point point-fail label-below" style="left: 8.7%; top: 87.1%;"><span class="point-dot">&nbsp;</span><span class="point-name">MiniMax med</span></span>
-            <span class="chart-point point-fail label-left" style="left: 89.4%; top: 88.6%;"><span class="point-dot">&nbsp;</span><span class="point-name">Sonnet unpin</span></span>
-            <span class="chart-point point-fail" style="left: 14.9%; top: 92.9%;"><span class="point-dot">&nbsp;</span><span class="point-name">MiniMax low unpin</span></span>
           </div>
         </div>
         <div class="chart-legend">
@@ -760,10 +737,9 @@
           <span><span class="legend-swatch verify">&nbsp;</span>Verification lane</span>
           <span><span class="legend-swatch">&nbsp;</span>Completed run</span>
           <span><span class="legend-swatch medium">&nbsp;</span>Medium-effort follow-up</span>
-          <span><span class="legend-swatch fail">&nbsp;</span>Aborted or invalid final output</span>
         </div>
         <p class="chart-note">
-          No model landed in the ideal quadrant in this batch. Medium effort moved pinned Sonnet into the premium verification area, but did not make it economical. Kimi K2.6 is still the closest budget candidate; GPT-5.5 low remains the practical default; Claude Opus 4.7 remains the expensive audit pass.
+          No model landed in the ideal quadrant in this batch. Medium effort moved pinned Sonnet into the premium verification area, but did not make it economical. Kimi K2.6 is still the closest budget candidate; GPT-5.5 low remains the practical default; Claude Opus 4.7 remains the expensive audit pass. Aborted and unpinned attempts are excluded from this chart.
         </p>
       </div>
     </div>
@@ -1119,71 +1095,12 @@
             <td class="num">9,167</td>
             <td>Read the right docs this time, but falsely marked core implemented tools and LCR wiring as absent.</td>
           </tr>
-          <tr>
-            <td><span class="model">MiniMax M2.7 unpinned default</span><br><span class="subtle">OpenRouter</span></td>
-            <td class="status-fail">aborted</td>
-            <td class="num score">3.0</td>
-            <td>default</td>
-            <td class="num">211s</td>
-            <td class="num">$0.047</td>
-            <td class="num">306,637</td>
-            <td class="num">212,704</td>
-            <td class="num">21</td>
-            <td class="num">18</td>
-            <td class="num">2,245</td>
-            <td class="num">4,756</td>
-            <td>Reached final tool call but emitted invalid schema.</td>
-          </tr>
-          <tr>
-            <td><span class="model">MiniMax M2.7 pinned medium</span><br><span class="subtle">OpenRouter / pin: minimax</span></td>
-            <td class="status-fail">aborted</td>
-            <td class="num score">2.9</td>
-            <td>medium</td>
-            <td class="num">104s</td>
-            <td class="num">$0.043</td>
-            <td class="num">229,773</td>
-            <td class="num">121,728</td>
-            <td class="num">16</td>
-            <td class="num">24</td>
-            <td class="num">2,967</td>
-            <td class="num">1,850</td>
-            <td>Pinned medium regressed to invalid final_response schema after useful tool work.</td>
-          </tr>
-          <tr>
-            <td><span class="model">Claude Sonnet 4.6 unpinned</span><br><span class="subtle">OpenRouter</span></td>
-            <td class="status-fail">aborted</td>
-            <td class="num score">2.8</td>
-            <td>low</td>
-            <td class="num">296s</td>
-            <td class="num">$1.284</td>
-            <td class="num">371,252</td>
-            <td class="num">0</td>
-            <td class="num">20</td>
-            <td class="num">13</td>
-            <td class="num">1,695</td>
-            <td class="num">6,571</td>
-            <td>Did substantial work, then failed the final structured-output schema.</td>
-          </tr>
-          <tr>
-            <td><span class="model">MiniMax M2.7 unpinned low</span><br><span class="subtle">OpenRouter</span></td>
-            <td class="status-fail">aborted</td>
-            <td class="num score">2.5</td>
-            <td>low</td>
-            <td class="num">221s</td>
-            <td class="num">$0.056</td>
-            <td class="num">242,236</td>
-            <td class="num">89,504</td>
-            <td class="num">18</td>
-            <td class="num">25</td>
-            <td class="num">3,158</td>
-            <td class="num">4,563</td>
-            <td>Aborted on empty visible response after tool work.</td>
-          </tr>
         </tbody>
       </table>
       <p class="subtle">
         Scores are subjective default-routing scores out of 10, not pure answer-quality scores. The Effort column is the requested reasoning-effort setting only, separate from reported reasoning tokens. Temperature is recorded per row in the CSV; OpenRouter and direct DeepSeek chat-completions runs used <code>0.2</code>, while OpenAI Responses and direct Moonshot runs omitted temperature.
         Kimi K2.6 was not rerun in the medium-effort pass because the direct Moonshot adapter does not accept the LCAgent reasoning-effort option.
+        Aborted or unpinned attempts are excluded from the main scoring table; they were useful diagnostically but not comparable as route candidates. The excluded set includes unpinned MiniMax and Sonnet attempts that failed final-output reliability, plus the pinned MiniMax medium retry that emitted an invalid <code>final_response</code> schema.
       </p>
     </div>
 
@@ -1280,11 +1197,6 @@
             <td><span class="model">Grok 4.3 medium</span></td>
             <td><span class="quote">"`update_plan` ... absent"</span></td>
             <td>False in the benchmark snapshot; it read the right docs but missed implemented core tools.</td>
-          </tr>
-          <tr>
-            <td><span class="model">MiniMax M2.7 pinned medium</span></td>
-            <td><span class="quote">"I need to read the remaining ranges and check..."</span></td>
-            <td>The run aborted before a usable final answer, despite provider pinning and medium effort.</td>
           </tr>
         </tbody>
       </table>
