@@ -8,3 +8,4 @@
 *.sqlite-wal
 screenshots.local.toml
 .claude/
+dist/
