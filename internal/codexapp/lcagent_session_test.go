@@ -26,6 +26,7 @@ func TestLCAgentSessionLaunchesConfiguredCommandAndStreamsTranscript(t *testing.
   done
 } > "$LCAGENT_ARGS_FILE"
 printf '%s\n' '{"type":"session_meta","id":"lca_fake_session","cwd":"/tmp/demo"}'
+printf '%s\n' '{"type":"model_response","model":"deepseek/test-model","usage":{"prompt_tokens":120,"prompt_tokens_details":{"cached_tokens":40},"completion_tokens":30,"total_tokens":150},"usage_summary":{"input_tokens":120,"output_tokens":30,"total_tokens":150,"cached_input_tokens":40}}'
 printf '%s\n' '{"type":"tool_call","tool":"run_command"}'
 printf '%s\n' '{"type":"tool_result","tool":"run_command","result":{"success":true,"output":"command ok"}}'
 printf '%s\n' '{"type":"plan_update","items":[{"step":"exercise fake agent","status":"completed"}]}'
@@ -60,6 +61,7 @@ printf '%s\n' '{"type":"turn_complete"}'
 	}
 
 	snapshot := waitForLCAgentIdleSnapshot(t, session, notify)
+	snapshot = waitForLCAgentTranscript(t, session, "Files touched:\nREADME.md")
 	if snapshot.Provider != ProviderLCAgent {
 		t.Fatalf("Provider = %q, want %q", snapshot.Provider, ProviderLCAgent)
 	}
@@ -71,6 +73,9 @@ printf '%s\n' '{"type":"turn_complete"}'
 	}
 	if snapshot.Model != "deepseek/test-model" || snapshot.ModelProvider != "openrouter" {
 		t.Fatalf("model = %q/%q, want deepseek/test-model/openrouter", snapshot.ModelProvider, snapshot.Model)
+	}
+	if snapshot.TokenUsage == nil || snapshot.TokenUsage.Last.InputTokens != 120 || snapshot.TokenUsage.Last.OutputTokens != 30 || snapshot.TokenUsage.Last.CachedInputTokens != 40 || snapshot.TokenUsage.Total.TotalTokens != 150 {
+		t.Fatalf("TokenUsage = %#v", snapshot.TokenUsage)
 	}
 	for _, want := range []string{"please run the fake agent", "Tool run_command running", "command ok", "completed: exercise fake agent", "fake lcagent response", "Files touched:\nREADME.md"} {
 		if !strings.Contains(snapshot.Transcript, want) {
@@ -126,6 +131,18 @@ func TestLCAgentSessionReplaysRequestedArtifact(t *testing.T) {
 			"session_id": sessionID,
 			"timestamp":  started.Add(2 * time.Second).Format(time.RFC3339Nano),
 			"tool":       "read_file",
+		},
+		{
+			"type":       "model_response",
+			"session_id": sessionID,
+			"timestamp":  started.Add(2500 * time.Millisecond).Format(time.RFC3339Nano),
+			"model":      "deepseek/replay-model",
+			"usage_summary": map[string]any{
+				"input_tokens":        200,
+				"output_tokens":       50,
+				"total_tokens":        250,
+				"cached_input_tokens": 75,
+			},
 		},
 		{
 			"type":       "tool_result",
@@ -190,6 +207,9 @@ func TestLCAgentSessionReplaysRequestedArtifact(t *testing.T) {
 	}
 	if snapshot.Model != "deepseek/replay-model" || snapshot.ModelProvider != "openrouter" {
 		t.Fatalf("model = %q/%q, want openrouter/deepseek replay model", snapshot.ModelProvider, snapshot.Model)
+	}
+	if snapshot.TokenUsage == nil || snapshot.TokenUsage.Last.InputTokens != 200 || snapshot.TokenUsage.Last.OutputTokens != 50 || snapshot.TokenUsage.Last.CachedInputTokens != 75 || snapshot.TokenUsage.Total.TotalTokens != 250 {
+		t.Fatalf("TokenUsage = %#v", snapshot.TokenUsage)
 	}
 	for _, want := range []string{
 		"Loaded LCAgent session " + sessionID + " from disk",
@@ -263,6 +283,24 @@ func waitForLCAgentIdleSnapshot(t *testing.T, session Session, notify <-chan str
 		case <-tick.C:
 		case <-deadline:
 			t.Fatalf("timed out waiting for lcagent session to finish; snapshot=%#v", snapshot)
+		}
+	}
+}
+
+func waitForLCAgentTranscript(t *testing.T, session Session, want string) Snapshot {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		snapshot := session.Snapshot()
+		if strings.Contains(snapshot.Transcript, want) {
+			return snapshot
+		}
+		select {
+		case <-tick.C:
+		case <-deadline:
+			t.Fatalf("timed out waiting for lcagent transcript %q; snapshot=%#v", want, snapshot)
 		}
 	}
 }

@@ -20,15 +20,18 @@ import (
 )
 
 const (
-	defaultReadLineLimit   = 200
-	maxReadLineLimit       = 1000
-	defaultListEntryLimit  = 200
-	maxListEntryLimit      = 1000
-	defaultSearchMaxMatch  = 50
-	maxSearchMaxMatch      = 200
-	maxSearchContextLines  = 8
-	fileScannerInitialSize = 64 * 1024
-	fileScannerMaxToken    = 1024 * 1024
+	defaultReadLineLimit    = 200
+	maxReadLineLimit        = 1000
+	defaultListEntryLimit   = 200
+	maxListEntryLimit       = 1000
+	defaultSearchMaxMatch   = 50
+	maxSearchMaxMatch       = 200
+	maxSearchContextLines   = 8
+	defaultOutlineFileLimit = 30
+	maxOutlineFileLimit     = 80
+	maxModuleOutlineChars   = 24000
+	fileScannerInitialSize  = 64 * 1024
+	fileScannerMaxToken     = 1024 * 1024
 )
 
 type FileTools struct {
@@ -248,14 +251,91 @@ func (t FileTools) Outline(path string) ToolResult {
 	if info.IsDir() {
 		return ToolResult{Success: false, Error: fmt.Sprintf("path is a directory: %s", rel)}
 	}
-	switch strings.ToLower(filepath.Ext(target)) {
-	case ".go":
-		return goOutline(target, rel)
-	case ".md", ".markdown":
-		return markdownOutline(target, rel)
-	default:
-		return ToolResult{Success: false, Error: fmt.Sprintf("outline unsupported for %s", rel)}
+	return outlineFile(target, rel)
+}
+
+func (t FileTools) ModuleOutline(path, fileGlob string, maxFiles int) ToolResult {
+	target, rel, err := t.resolve(defaultPath(path))
+	if err != nil {
+		return ToolResult{Success: false, Error: err.Error()}
 	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return ToolResult{Success: false, Error: err.Error()}
+	}
+	if !info.IsDir() {
+		return t.Outline(rel)
+	}
+
+	maxFiles = clampInt(maxFiles, defaultOutlineFileLimit, maxOutlineFileLimit)
+	fileGlob = strings.TrimSpace(fileGlob)
+	candidates := []string{}
+	err = filepath.WalkDir(target, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if path == target || entry == nil {
+			return nil
+		}
+		if entry.IsDir() {
+			if shouldSkipOutlineDir(entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		display := t.relative(path)
+		if !outlineSupported(display) {
+			return nil
+		}
+		if fileGlob != "" && !fileGlobMatches(fileGlob, display) {
+			return nil
+		}
+		candidates = append(candidates, path)
+		return nil
+	})
+	if err != nil {
+		return ToolResult{Success: false, Error: err.Error()}
+	}
+	sort.Strings(candidates)
+
+	truncated := false
+	if len(candidates) > maxFiles {
+		candidates = candidates[:maxFiles]
+		truncated = true
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "path: %s\n", rel)
+	if fileGlob != "" {
+		fmt.Fprintf(&b, "file_glob: %s\n", fileGlob)
+	}
+	fmt.Fprintf(&b, "files: %d\n", len(candidates))
+	fmt.Fprintf(&b, "max_files: %d\n", maxFiles)
+	if truncated {
+		fmt.Fprintf(&b, "file_limit_truncated: true\n")
+	}
+	b.WriteByte('\n')
+
+	for _, candidate := range candidates {
+		section := outlineFile(candidate, t.relative(candidate))
+		if !section.Success {
+			continue
+		}
+		next := "\n---\n" + strings.TrimSpace(section.Output) + "\n"
+		if b.Len()+len(next) > maxModuleOutlineChars {
+			truncated = true
+			fmt.Fprintf(&b, "\n--- module outline truncated after %d chars ---\n", maxModuleOutlineChars)
+			break
+		}
+		b.WriteString(next)
+	}
+	if len(candidates) == 0 {
+		b.WriteString("No supported .go, .md, or .markdown files found.\n")
+	}
+	return ToolResult{Success: true, Output: b.String(), Truncated: truncated}
 }
 
 func (t FileTools) resolve(path string) (string, string, error) {
@@ -553,6 +633,35 @@ func writeSymbol(b *strings.Builder, kind, name string, fset *token.FileSet, pos
 	startLine := fset.Position(pos).Line
 	endLine := fset.Position(end).Line
 	fmt.Fprintf(b, "- %s %s lines %d-%d\n", kind, name, startLine, endLine)
+}
+
+func outlineFile(path, display string) ToolResult {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".go":
+		return goOutline(path, display)
+	case ".md", ".markdown":
+		return markdownOutline(path, display)
+	default:
+		return ToolResult{Success: false, Error: fmt.Sprintf("outline unsupported for %s", display)}
+	}
+}
+
+func outlineSupported(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".go", ".md", ".markdown":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldSkipOutlineDir(name string) bool {
+	switch name {
+	case ".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "coverage":
+		return true
+	default:
+		return false
+	}
 }
 
 func receiverName(recv *ast.FieldList) string {

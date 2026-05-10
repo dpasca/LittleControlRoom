@@ -114,6 +114,254 @@ func TestRunExecOpenRouterEmitsModelResponseUsage(t *testing.T) {
 	}
 }
 
+func TestRunExecDeepSeekUsesDirectProviderEnv(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-deepseek-key" {
+			t.Fatalf("authorization = %q, want bearer test key", got)
+		}
+		if got := r.Header.Get("HTTP-Referer"); got != "" {
+			t.Fatalf("deepseek request should not send OpenRouter referer header: %q", got)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body["model"] != "deepseek-v4-pro" {
+			t.Fatalf("model = %q, want deepseek-v4-pro", body["model"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"resp_deepseek",
+			"model":"deepseek-v4-pro",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"done from direct deepseek"}
+			}],
+			"usage":{"prompt_tokens":7,"prompt_cache_hit_tokens":2,"completion_tokens":3,"total_tokens":10}
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+	t.Setenv("DEEPSEEK_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "deepseek",
+		"--max-turns", "2",
+		"answer directly",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"provider":"deepseek"`,
+		`"model":"deepseek-v4-pro"`,
+		`"response_id":"resp_deepseek"`,
+		`"cached_input_tokens":2`,
+		`"summary":"done from direct deepseek"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestRunExecMoonshotUsesDirectProviderEnv(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-moonshot-key" {
+			t.Fatalf("authorization = %q, want bearer test key", got)
+		}
+		if got := r.Header.Get("HTTP-Referer"); got != "" {
+			t.Fatalf("moonshot request should not send OpenRouter referer header: %q", got)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body["model"] != "kimi-k2.6" {
+			t.Fatalf("model = %q, want kimi-k2.6", body["model"])
+		}
+		for _, key := range []string{"temperature", "max_completion_tokens", "max_tokens", "thinking"} {
+			if _, ok := body[key]; ok {
+				t.Fatalf("moonshot request should not send %s by default: %#v", key, body[key])
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"resp_moonshot",
+			"model":"kimi-k2.6",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"done from direct moonshot"}
+			}],
+			"usage":{"prompt_tokens":7,"cached_tokens":2,"completion_tokens":3,"total_tokens":10}
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("MOONSHOT_API_KEY", "test-moonshot-key")
+	t.Setenv("MOONSHOT_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "moonshot",
+		"--max-turns", "2",
+		"answer directly",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"provider":"moonshot"`,
+		`"model":"kimi-k2.6"`,
+		`"response_id":"resp_moonshot"`,
+		`"cached_input_tokens":2`,
+		`"summary":"done from direct moonshot"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestRunExecOpenRouterPassesReasoningEffort(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		reasoning, _ := body["reasoning"].(map[string]any)
+		if reasoning["effort"] != "low" {
+			t.Fatalf("reasoning = %#v, want effort=low", body["reasoning"])
+		}
+		if _, ok := body["max_completion_tokens"]; ok {
+			t.Fatalf("request should not set max_completion_tokens with reasoning effort: %#v", body["max_completion_tokens"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"resp_reasoning",
+			"model":"openai/gpt-5.5",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"done with low reasoning"}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "openai/gpt-5.5",
+		"--reasoning-effort", "low",
+		"--max-turns", "2",
+		"answer directly",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"summary":"done with low reasoning"`) {
+		t.Fatalf("stdout missing final summary:\n%s", stdout.String())
+	}
+}
+
+func TestRunExecOpenRouterPassesProviderOnlyAndTemperature(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Temperature float64 `json:"temperature"`
+			Provider    struct {
+				Only              []string `json:"only"`
+				AllowFallbacks    bool     `json:"allow_fallbacks"`
+				RequireParameters bool     `json:"require_parameters"`
+			} `json:"provider"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body.Temperature != 0.4 {
+			t.Fatalf("temperature = %f, want 0.4", body.Temperature)
+		}
+		if strings.Join(body.Provider.Only, ",") != "anthropic,minimax" {
+			t.Fatalf("provider.only = %#v", body.Provider.Only)
+		}
+		if body.Provider.AllowFallbacks {
+			t.Fatalf("provider.allow_fallbacks = true, want false")
+		}
+		if !body.Provider.RequireParameters {
+			t.Fatalf("provider.require_parameters = false, want true")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"resp_routing",
+			"model":"anthropic/claude-sonnet-4.6",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"done with provider pin"}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "anthropic/claude-sonnet-4.6",
+		"--openrouter-provider-only", "anthropic, minimax",
+		"--temperature", "0.4",
+		"--max-turns", "2",
+		"answer directly",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"summary":"done with provider pin"`) {
+		t.Fatalf("stdout missing final summary:\n%s", stdout.String())
+	}
+}
+
 func TestRunExecOpenRouterCanUseReadOnlyTool(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
@@ -204,6 +452,111 @@ func TestRunExecOpenRouterCanUseReadOnlyTool(t *testing.T) {
 		`2 | beta needle`,
 		`"summary":"read the file"`,
 	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+}
+
+func TestRunExecOpenRouterCompactsLargeToolHistoryBeforeNextRequest(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	var big strings.Builder
+	for i := 1; i <= 1000; i++ {
+		fmt.Fprintf(&big, "line %04d with enough repeated context to force compaction before the next provider request abcdefghijklmnopqrstuvwxyz abcdefghijklmnopqrstuvwxyz\n", i)
+	}
+	if err := os.WriteFile(filepath.Join(root, "BIG.md"), []byte(big.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+			Tools []any `json:"tools"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if requests == 1 {
+			if len(body.Tools) == 0 {
+				t.Fatalf("first request missing tools: %#v", body)
+			}
+			_, _ = w.Write([]byte(`{
+				"id":"resp_tool",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_read","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"BIG.md\",\"limit\":1000}"}}]}
+				}]
+			}`))
+			return
+		}
+		if len(body.Tools) == 0 {
+			t.Fatalf("compacted continuation request should still include tools: %#v", body)
+		}
+		originalRequestSeen := false
+		compactedContextSeen := false
+		readLedgerSeen := false
+		for _, msg := range body.Messages {
+			if msg.Role == "tool" {
+				t.Fatalf("compacted request should not contain raw tool messages: %#v", body.Messages)
+			}
+			if msg.Role == "user" && msg.Content == "read the big file" {
+				originalRequestSeen = true
+			}
+			if strings.Contains(msg.Content, loopCompactedContextPrefix) && strings.Contains(msg.Content, "tool_result: read_file") {
+				compactedContextSeen = true
+			}
+			if strings.Contains(msg.Content, "Read ledger") && strings.Contains(msg.Content, "- BIG.md: lines 1-1000 of 1000") {
+				readLedgerSeen = true
+			}
+			if strings.Contains(msg.Content, "line 0500 with enough repeated context") {
+				t.Fatalf("compacted request kept middle of large file output: %#v", body.Messages)
+			}
+		}
+		if !originalRequestSeen || !compactedContextSeen || !readLedgerSeen {
+			t.Fatalf("compacted request missing original=%v compacted=%v ledger=%v messages=%#v", originalRequestSeen, compactedContextSeen, readLedgerSeen, body.Messages)
+		}
+		_, _ = w.Write([]byte(`{
+			"id":"resp_final",
+			"model":"deepseek/test-model",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"done after compaction"}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--max-turns", "3",
+		"read the big file",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{`"type":"context_compacted"`, `"type":"turn_complete"`, `"summary":"done after compaction"`} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("stdout missing %q:\n%s", want, text)
 		}
@@ -438,6 +791,9 @@ func TestRunExecOpenRouterFinalizesGracefullyAtMaxTurns(t *testing.T) {
 		if len(messages) == 0 || !strings.Contains(fmt.Sprint(messages[len(messages)-1]), "Do not call more tools") {
 			t.Fatalf("final handoff request missing no-tools prompt: %#v", body)
 		}
+		if !strings.Contains(fmt.Sprint(messages[len(messages)-1]), "Compact transcript of work so far") {
+			t.Fatalf("final handoff request was not compacted: %#v", body)
+		}
 		_, _ = w.Write([]byte(`{
 			"id":"resp_handoff",
 			"model":"deepseek/test-model",
@@ -470,6 +826,7 @@ func TestRunExecOpenRouterFinalizesGracefullyAtMaxTurns(t *testing.T) {
 	text := stdout.String()
 	for _, want := range []string{
 		`"type":"turn_complete"`,
+		`"type":"final_handoff_compacted"`,
 		`Turn budget reached`,
 		`"turn":3`,
 	} {
@@ -482,6 +839,122 @@ func TestRunExecOpenRouterFinalizesGracefullyAtMaxTurns(t *testing.T) {
 	}
 	if requests != 3 {
 		t.Fatalf("requests = %d, want 3", requests)
+	}
+}
+
+func TestRunExecOpenRouterRequestsSynthesisBeforeLongRunMaxTurns(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("alpha\nbeta\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if requests < openRouterMinimumTurnBeforeSynthesis {
+			if body["model"] != "deepseek/test-model" {
+				t.Fatalf("tool loop request %d model = %#v", requests, body["model"])
+			}
+			if _, ok := body["tools"]; !ok {
+				t.Fatalf("tool loop request %d missing tools: %#v", requests, body)
+			}
+			_, _ = w.Write([]byte(`{
+				"id":"resp_tool",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_read","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"README.md\",\"limit\":1}"}}]}
+				}]
+			}`))
+			return
+		}
+		if body["model"] != "deepseek/final-model" {
+			t.Fatalf("synthesis request model = %#v, want final model", body["model"])
+		}
+		if _, ok := body["tools"]; ok {
+			t.Fatalf("synthesis request should not include tools: %#v", body)
+		}
+		if _, ok := body["max_completion_tokens"]; ok {
+			t.Fatalf("synthesis request should not cap max_completion_tokens: %#v", body["max_completion_tokens"])
+		}
+		if _, ok := body["max_tokens"]; ok {
+			t.Fatalf("synthesis request should not cap max_tokens: %#v", body["max_tokens"])
+		}
+		if _, ok := body["reasoning"]; ok {
+			t.Fatalf("synthesis request should not force reasoning options on the final model: %#v", body["reasoning"])
+		}
+		if _, ok := body["thinking"]; ok {
+			t.Fatalf("synthesis request should not disable thinking on the final model: %#v", body["thinking"])
+		}
+		messages, _ := body["messages"].([]any)
+		if len(messages) == 0 {
+			t.Fatalf("synthesis request missing messages: %#v", body)
+		}
+		last := fmt.Sprint(messages[len(messages)-1])
+		for _, want := range []string{
+			"Original user request",
+			"keep reading until synthesis",
+			"Compact transcript of work so far",
+			"planned synthesis checkpoint",
+			"Tools are unavailable",
+			"not missing merely because there is no same-named file",
+		} {
+			if !strings.Contains(last, want) {
+				t.Fatalf("synthesis request missing %q in last message: %s", want, last)
+			}
+		}
+		_, _ = w.Write([]byte(`{
+			"id":"resp_synthesis",
+			"model":"deepseek/final-model",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"synthesized before the hard cap"}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--final-model", "deepseek/final-model",
+		"--max-turns", "28",
+		"keep reading until synthesis",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"synthesis_requested"`,
+		`"final_model":"deepseek/final-model"`,
+		`"force_synthesis":true`,
+		`"model":"deepseek/final-model"`,
+		`"summary":"synthesized before the hard cap"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, `"type":"final_handoff_compacted"`) {
+		t.Fatalf("synthesis should complete inside the normal loop, not final handoff:\n%s", text)
+	}
+	if requests != openRouterMinimumTurnBeforeSynthesis {
+		t.Fatalf("requests = %d, want %d", requests, openRouterMinimumTurnBeforeSynthesis)
 	}
 }
 

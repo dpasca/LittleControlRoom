@@ -17,6 +17,7 @@ import (
 
 	"lcroom/internal/appfs"
 	"lcroom/internal/lcagent/modeladapter"
+	lcrmodel "lcroom/internal/model"
 )
 
 const (
@@ -46,6 +47,7 @@ type lcagentSession struct {
 	model              string
 	modelProvider      string
 	reasoningEffort    string
+	tokenUsage         *threadTokenUsage
 	replayLoaded       bool
 	entries            []TranscriptEntry
 	revision           uint64
@@ -292,11 +294,25 @@ func (s *lcagentSession) startRun(prompt, displayPrompt string) error {
 		s.notify()
 	}
 
-	go s.readStream(stdout)
-	go s.readStderr(stderr)
+	stdoutDone := make(chan error, 1)
+	stderrDone := make(chan error, 1)
 	go func() {
+		stdoutDone <- s.readStream(stdout)
+	}()
+	go func() {
+		stderrDone <- s.readStderr(stderr)
+	}()
+	go func() {
+		stdoutErr := <-stdoutDone
+		stderrErr := <-stderrDone
 		err := cmd.Wait()
 		cancel()
+		if stdoutErr != nil && !lcagentIgnorableStreamError(stdoutErr) {
+			s.appendAsync(TranscriptError, "LCAgent stream error: "+stdoutErr.Error())
+		}
+		if stderrErr != nil && !lcagentIgnorableStreamError(stderrErr) {
+			s.appendAsync(TranscriptError, "LCAgent stderr stream error: "+stderrErr.Error())
+		}
 		if ctx.Err() == context.Canceled && err != nil {
 			err = errors.New("LCAgent run interrupted")
 		}
@@ -309,18 +325,16 @@ func (s *lcagentSession) startRun(prompt, displayPrompt string) error {
 	return nil
 }
 
-func (s *lcagentSession) readStream(reader io.Reader) {
+func (s *lcagentSession) readStream(reader io.Reader) error {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		s.handleEvent(scanner.Bytes())
 	}
-	if err := scanner.Err(); err != nil {
-		s.appendAsync(TranscriptError, "LCAgent stream error: "+err.Error())
-	}
+	return scanner.Err()
 }
 
-func (s *lcagentSession) readStderr(reader io.Reader) {
+func (s *lcagentSession) readStderr(reader io.Reader) error {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
@@ -329,6 +343,11 @@ func (s *lcagentSession) readStderr(reader io.Reader) {
 			s.appendAsync(TranscriptError, text)
 		}
 	}
+	return scanner.Err()
+}
+
+func lcagentIgnorableStreamError(err error) bool {
+	return err == nil || errors.Is(err, os.ErrClosed)
 }
 
 func (s *lcagentSession) handleEvent(line []byte) {
@@ -346,6 +365,18 @@ func (s *lcagentSession) handleEvent(line []byte) {
 			s.threadID = id
 		}
 		s.status = "LCAgent session " + firstNonEmpty(id, "started")
+		s.touchLocked()
+		s.mu.Unlock()
+	case "model_response":
+		modelName := rawJSONString(event["model"])
+		usage, ok := lcagentUsageFromModelResponseEvent(event, modelName)
+		s.mu.Lock()
+		if modelName != "" {
+			s.model = modelName
+		}
+		if ok {
+			s.addTokenUsageLocked(usage)
+		}
 		s.touchLocked()
 		s.mu.Unlock()
 	case "tool_call":
@@ -466,6 +497,7 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 	if provider := strings.TrimSpace(replay.modelProvider); provider != "" {
 		s.modelProvider = provider
 	}
+	s.tokenUsage = cloneThreadTokenUsage(replay.tokenUsage)
 	label := firstNonEmpty(s.threadID, "history")
 	s.status = "Loaded LCAgent session " + label + " from disk"
 	s.replayLoaded = true
@@ -494,6 +526,56 @@ func (s *lcagentSession) touchLocked() {
 	s.lastActivityAt = time.Now()
 	s.revision++
 	s.cache.invalidate(nil)
+}
+
+func (s *lcagentSession) addTokenUsageLocked(usage lcrmodel.LLMUsage) {
+	if !lcagentUsageTracked(usage) {
+		return
+	}
+	breakdown := lcagentTokenUsageBreakdown(usage)
+	if s.tokenUsage == nil {
+		s.tokenUsage = &threadTokenUsage{}
+	}
+	s.tokenUsage.Last = breakdown
+	s.tokenUsage.Total.CachedInputTokens += breakdown.CachedInputTokens
+	s.tokenUsage.Total.InputTokens += breakdown.InputTokens
+	s.tokenUsage.Total.OutputTokens += breakdown.OutputTokens
+	s.tokenUsage.Total.ReasoningOutputTokens += breakdown.ReasoningOutputTokens
+	s.tokenUsage.Total.TotalTokens += breakdown.TotalTokens
+}
+
+func lcagentUsageFromModelResponseEvent(event map[string]json.RawMessage, modelName string) (lcrmodel.LLMUsage, bool) {
+	var usage lcrmodel.LLMUsage
+	if raw := event["usage_summary"]; len(raw) > 0 {
+		_ = json.Unmarshal(raw, &usage)
+	}
+	if !lcagentUsageTracked(usage) {
+		usage = modeladapter.UsageFromRaw(event["usage"], modelName)
+	}
+	return usage, lcagentUsageTracked(usage)
+}
+
+func lcagentTokenUsageBreakdown(usage lcrmodel.LLMUsage) tokenUsageBreakdown {
+	total := usage.TotalTokens
+	if total == 0 && (usage.InputTokens > 0 || usage.OutputTokens > 0) {
+		total = usage.InputTokens + usage.OutputTokens
+	}
+	return tokenUsageBreakdown{
+		CachedInputTokens:     usage.CachedInputTokens,
+		InputTokens:           usage.InputTokens,
+		OutputTokens:          usage.OutputTokens,
+		ReasoningOutputTokens: usage.ReasoningTokens,
+		TotalTokens:           total,
+	}
+}
+
+func lcagentUsageTracked(usage lcrmodel.LLMUsage) bool {
+	return usage.InputTokens != 0 ||
+		usage.OutputTokens != 0 ||
+		usage.TotalTokens != 0 ||
+		usage.CachedInputTokens != 0 ||
+		usage.ReasoningTokens != 0 ||
+		usage.EstimatedCostUSD != 0
 }
 
 func (s *lcagentSession) snapshotLocked() Snapshot {
@@ -534,6 +616,7 @@ func (s *lcagentSession) snapshotLocked() Snapshot {
 		Model:              firstNonEmpty(s.model, modeladapter.DefaultOpenRouterModel),
 		ModelProvider:      firstNonEmpty(s.modelProvider, "openrouter"),
 		ReasoningEffort:    s.reasoningEffort,
+		TokenUsage:         exportedTokenUsageSnapshot(s.tokenUsage),
 	}
 }
 

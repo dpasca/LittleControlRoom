@@ -40,7 +40,7 @@ func EstimateLLMCostUSD(modelName string, usage LLMUsage) (float64, bool) {
 func lookupLLMPriceCard(modelName string) (llmPriceCard, bool) {
 	name := strings.ToLower(strings.TrimSpace(modelName))
 	switch {
-	case name == "gpt-5.5" || strings.HasPrefix(name, "gpt-5.5-"):
+	case name == "gpt-5.5" || name == "openai/gpt-5.5" || strings.HasPrefix(name, "gpt-5.5-") || strings.HasPrefix(name, "openai/gpt-5.5-"):
 		return llmPriceCard{
 			InputUSDPerMTokens:       5.00,
 			CachedInputUSDPerMTokens: 0.50,
@@ -69,6 +69,30 @@ func lookupLLMPriceCard(modelName string) (llmPriceCard, bool) {
 			InputUSDPerMTokens:       0.20,
 			CachedInputUSDPerMTokens: 0.02,
 			OutputUSDPerMTokens:      1.25,
+		}, true
+	case name == "deepseek-v4-flash" || name == "deepseek-chat":
+		return llmPriceCard{
+			InputUSDPerMTokens:       0.14,
+			CachedInputUSDPerMTokens: 0.0028,
+			OutputUSDPerMTokens:      0.28,
+		}, true
+	case name == "deepseek-v4-pro" || name == "deepseek-reasoner":
+		return llmPriceCard{
+			InputUSDPerMTokens:       0.435,
+			CachedInputUSDPerMTokens: 0.003625,
+			OutputUSDPerMTokens:      0.87,
+		}, true
+	case name == "kimi-k2.6" || name == "moonshotai/kimi-k2.6":
+		return llmPriceCard{
+			InputUSDPerMTokens:       0.95,
+			CachedInputUSDPerMTokens: 0.16,
+			OutputUSDPerMTokens:      4.00,
+		}, true
+	case name == "z-ai/glm-5.1" || name == "glm-5.1":
+		return llmPriceCard{
+			InputUSDPerMTokens:       1.05,
+			CachedInputUSDPerMTokens: 0.525,
+			OutputUSDPerMTokens:      3.50,
 		}, true
 	default:
 		return llmPriceCard{}, false

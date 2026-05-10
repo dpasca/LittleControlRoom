@@ -1485,6 +1485,23 @@ func TestFormatTokenCount(t *testing.T) {
 	}
 }
 
+func TestCodexSnapshotTokenUsageLabel(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		TokenUsage: &codexapp.TokenUsageSnapshot{
+			Total: codexapp.TokenUsageBreakdown{
+				InputTokens:           12_345,
+				OutputTokens:          6_789,
+				CachedInputTokens:     2_000,
+				ReasoningOutputTokens: 123,
+				TotalTokens:           19_134,
+			},
+		},
+	}
+	if got := codexSnapshotTokenUsageLabel(snapshot); got != "i12k o6.8k c2.0k r123 t19k" {
+		t.Fatalf("codexSnapshotTokenUsageLabel() = %q", got)
+	}
+}
+
 func TestScanCompleteStatusIncludesQueuedClassifications(t *testing.T) {
 	report := service.ScanReport{
 		UpdatedProjects:       []string{"/tmp/demo"},

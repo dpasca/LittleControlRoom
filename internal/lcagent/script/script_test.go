@@ -56,6 +56,7 @@ func TestRunnerExecutesScriptedMiniSession(t *testing.T) {
 		{Type: "tool_call", Tool: "read_file", Args: raw(`{"path":"README.md","limit":20}`)},
 		{Type: "tool_call", Tool: "search", Args: raw(`{"query":"old","path":".","file_glob":"*.md","max_matches":10}`)},
 		{Type: "tool_call", Tool: "file_outline", Args: raw(`{"path":"README.md"}`)},
+		{Type: "tool_call", Tool: "module_outline", Args: raw(`{"path":".","file_glob":"*.md","max_files":10}`)},
 		{Type: "tool_call", Tool: "load_skill", Args: raw(`{"name":"demo"}`)},
 		{Type: "tool_call", Tool: "run_command", Args: raw(`{"argv":["cat","README.md"],"timeout_ms":1000}`)},
 		{Type: "tool_call", Tool: "update_plan", Args: raw(`{"items":[{"step":"Inspect","status":"completed"},{"step":"Patch","status":"in_progress"}]}`)},

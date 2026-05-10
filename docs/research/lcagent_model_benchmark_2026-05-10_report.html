@@ -1,0 +1,1136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LCAgent Model Benchmark Report</title>
+  <style type="text/css">
+    :root {
+      --ink: #1d2528;
+      --muted: #5b666a;
+      --line: #cfd8dc;
+      --surface: #f7f9f8;
+      --accent: #0b7285;
+      --accent-soft: #d8f0f2;
+      --warn: #8a4b0f;
+      --warn-soft: #fff1d6;
+      --good: #1b7052;
+      --good-soft: #ddf3e9;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: #fff;
+      font: 14px/1.48 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .page {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 32px 28px 48px;
+    }
+
+    .report-header {
+      border-bottom: 2px solid var(--ink);
+      padding-bottom: 18px;
+      margin-bottom: 22px;
+    }
+
+    h1, h2, h3 {
+      line-height: 1.16;
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 32px;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      font-size: 20px;
+      margin-top: 30px;
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+    }
+
+    h3 {
+      font-size: 15px;
+      margin-top: 18px;
+    }
+
+    p {
+      margin: 8px 0;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    .lede {
+      max-width: 850px;
+      color: var(--muted);
+      font-size: 15px;
+      margin-top: 10px;
+    }
+
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin: 18px 0 8px;
+    }
+
+    .meta div,
+    .callout {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      border-radius: 6px;
+      padding: 10px 12px;
+    }
+
+    .label {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      margin-bottom: 2px;
+    }
+
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: var(--accent-soft);
+      margin: 16px 0;
+    }
+
+    .callout.warning {
+      border-left-color: var(--warn);
+      background: var(--warn-soft);
+    }
+
+    .callout.good {
+      border-left-color: var(--good);
+      background: var(--good-soft);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0 18px;
+      table-layout: fixed;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 8px 7px;
+      vertical-align: top;
+    }
+
+    th {
+      background: #eef4f4;
+      color: #263235;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .045em;
+      text-align: left;
+    }
+
+    td.num, th.num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .model {
+      font-weight: 700;
+    }
+
+    .subtle {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .score {
+      font-weight: 800;
+      color: var(--accent);
+    }
+
+    .pill {
+      display: inline-block;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 8px;
+      margin: 2px 3px 2px 0;
+      font-size: 12px;
+      background: #fff;
+      white-space: nowrap;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      background: #f1f4f4;
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #f1f4f4;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 12px;
+      font-size: 12px;
+      line-height: 1.42;
+    }
+
+    ul {
+      margin: 8px 0 8px 20px;
+      padding: 0;
+    }
+
+    li {
+      margin: 4px 0;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+    }
+
+    .candidate-table th:nth-child(1) { width: 9%; }
+    .candidate-table th:nth-child(2) { width: 25%; }
+    .candidate-table th:nth-child(3) { width: 16%; }
+    .candidate-table th:nth-child(4) { width: 18%; }
+    .candidate-table th:nth-child(5) { width: 32%; }
+
+    .bench-table th:nth-child(1) { width: 24%; }
+    .bench-table th:nth-child(2) { width: 7%; }
+    .bench-table th:nth-child(3) { width: 7%; }
+    .bench-table th:nth-child(4) { width: 8%; }
+    .bench-table th:nth-child(5) { width: 9%; }
+    .bench-table th:nth-child(6) { width: 8%; }
+    .bench-table th:nth-child(7) { width: 8%; }
+    .bench-table th:nth-child(8) { width: 29%; }
+
+    .combined-table {
+      font-size: 11.5px;
+    }
+
+    .combined-table th,
+    .combined-table td {
+      padding: 6px 5px;
+    }
+
+    .combined-table th:nth-child(1) { width: 15%; }
+    .combined-table th:nth-child(2) { width: 6%; }
+    .combined-table th:nth-child(3) { width: 5%; }
+    .combined-table th:nth-child(4) { width: 5%; }
+    .combined-table th:nth-child(5) { width: 5%; }
+    .combined-table th:nth-child(6) { width: 6%; }
+    .combined-table th:nth-child(7) { width: 6%; }
+    .combined-table th:nth-child(8) { width: 6%; }
+    .combined-table th:nth-child(9) { width: 5%; }
+    .combined-table th:nth-child(10) { width: 5%; }
+    .combined-table th:nth-child(11) { width: 5%; }
+    .combined-table th:nth-child(12) { width: 6%; }
+    .combined-table th:nth-child(13) { width: 25%; }
+
+    .evidence-table th:nth-child(1) { width: 20%; }
+    .evidence-table th:nth-child(2) { width: 38%; }
+    .evidence-table th:nth-child(3) { width: 42%; }
+
+    .quote {
+      color: var(--ink);
+      font-style: italic;
+    }
+
+    .status-ok {
+      color: var(--good);
+      font-weight: 700;
+    }
+
+    .status-fail {
+      color: var(--warn);
+      font-weight: 700;
+    }
+
+    .value-chart {
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 6px;
+      padding: 14px 14px 12px;
+      margin: 14px 0 18px;
+    }
+
+    .chart-scroll {
+      overflow: visible;
+      padding-bottom: 58px;
+    }
+
+    .chart-area {
+      position: relative;
+      min-width: 820px;
+      height: 430px;
+      margin: 12px 18px 28px 58px;
+      border-left: 2px solid var(--ink);
+      border-bottom: 2px solid var(--ink);
+      background: #fff;
+    }
+
+    .quadrant {
+      position: absolute;
+      z-index: 0;
+      padding: 8px;
+      color: rgba(29, 37, 40, .64);
+      font-size: 12px;
+      line-height: 1.2;
+      border: 1px solid rgba(207, 216, 220, .55);
+    }
+
+    .quadrant strong {
+      display: block;
+      color: rgba(29, 37, 40, .76);
+      font-size: 12px;
+    }
+
+    .q-ideal {
+      left: 0;
+      top: 0;
+      width: 45.2%;
+      height: 28.6%;
+      background: rgba(221, 243, 233, .78);
+    }
+
+    .q-premium {
+      left: 45.2%;
+      top: 0;
+      width: 54.8%;
+      height: 28.6%;
+      background: rgba(216, 240, 242, .62);
+    }
+
+    .q-scout {
+      left: 0;
+      top: 28.6%;
+      width: 45.2%;
+      height: 71.4%;
+      background: rgba(247, 249, 248, .78);
+    }
+
+    .q-poor {
+      left: 45.2%;
+      top: 28.6%;
+      width: 54.8%;
+      height: 71.4%;
+      background: rgba(255, 241, 214, .6);
+    }
+
+    .threshold-x,
+    .threshold-y,
+    .grid-x,
+    .grid-y {
+      position: absolute;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    .grid-x {
+      top: 0;
+      bottom: 0;
+      border-left: 1px solid rgba(207, 216, 220, .7);
+    }
+
+    .grid-y {
+      left: 0;
+      right: 0;
+      border-top: 1px solid rgba(207, 216, 220, .7);
+    }
+
+    .threshold-x {
+      top: 0;
+      bottom: 0;
+      border-left: 2px dashed rgba(138, 75, 15, .65);
+    }
+
+    .threshold-y {
+      left: 0;
+      right: 0;
+      border-top: 2px dashed rgba(138, 75, 15, .65);
+    }
+
+    .tick-label {
+      position: absolute;
+      z-index: 3;
+      color: var(--muted);
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .x-label {
+      top: 100%;
+      transform: translate(-50%, 8px);
+    }
+
+    .y-label {
+      right: 100%;
+      transform: translate(-8px, -50%);
+    }
+
+    .axis-title {
+      position: absolute;
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .02em;
+    }
+
+    .axis-title-x {
+      left: 50%;
+      bottom: -44px;
+      transform: translateX(-50%);
+    }
+
+    .axis-title-y {
+      left: -54px;
+      top: 50%;
+      transform: translate(-50%, -50%) rotate(-90deg);
+      transform-origin: center;
+    }
+
+    .chart-point {
+      position: absolute;
+      z-index: 5;
+      transform: translate(-50%, -50%);
+    }
+
+    .point-dot {
+      display: block;
+      width: 12px;
+      height: 12px;
+      border: 2px solid #fff;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 1px rgba(29, 37, 40, .38);
+      font-size: 0;
+      line-height: 0;
+    }
+
+    .point-default .point-dot {
+      width: 14px;
+      height: 14px;
+      background: var(--good);
+      box-shadow: 0 0 0 2px rgba(27, 112, 82, .32);
+    }
+
+    .point-verify .point-dot {
+      width: 14px;
+      height: 14px;
+      background: #6b5c12;
+      box-shadow: 0 0 0 2px rgba(107, 92, 18, .25);
+    }
+
+    .point-fail .point-dot {
+      background: #fff;
+      border-color: var(--warn);
+      border-radius: 3px;
+      transform: rotate(45deg);
+    }
+
+    .point-name {
+      position: absolute;
+      left: 15px;
+      top: -4px;
+      color: var(--ink);
+      font-size: 11px;
+      line-height: 1.1;
+      white-space: nowrap;
+      background: rgba(255, 255, 255, .84);
+      padding: 1px 3px;
+      border-radius: 3px;
+    }
+
+    .label-left .point-name {
+      left: auto;
+      right: 15px;
+      text-align: right;
+    }
+
+    .label-above .point-name {
+      left: 50%;
+      top: auto;
+      bottom: 15px;
+      transform: translateX(-50%);
+    }
+
+    .label-below .point-name {
+      left: 50%;
+      top: 15px;
+      transform: translateX(-50%);
+    }
+
+    .chart-legend {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 12px;
+      margin: 6px 0 0;
+    }
+
+    .legend-swatch {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      margin-right: 5px;
+      border-radius: 50%;
+      background: var(--accent);
+      vertical-align: -1px;
+      font-size: 0;
+      line-height: 0;
+    }
+
+    .legend-swatch.default {
+      background: var(--good);
+    }
+
+    .legend-swatch.verify {
+      background: #6b5c12;
+    }
+
+    .legend-swatch.fail {
+      background: #fff;
+      border: 2px solid var(--warn);
+      border-radius: 3px;
+      transform: rotate(45deg);
+    }
+
+    .chart-note {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 6px;
+    }
+
+    .report-footer {
+      margin-top: 34px;
+      color: var(--muted);
+      font-size: 12px;
+      border-top: 1px solid var(--line);
+      padding-top: 12px;
+    }
+
+    @media (max-width: 760px) {
+      .page {
+        padding: 22px 16px 36px;
+      }
+
+      .meta,
+      .two-col {
+        grid-template-columns: 1fr;
+      }
+
+      table {
+        table-layout: auto;
+        font-size: 12px;
+      }
+
+      th, td {
+        padding: 7px 5px;
+      }
+
+      .combined-table {
+        font-size: 11px;
+      }
+
+      .chart-area {
+        min-width: 760px;
+        height: 400px;
+      }
+
+      .chart-scroll {
+        overflow-x: auto;
+        overflow-y: hidden;
+      }
+    }
+
+    @media print {
+      body {
+        font-size: 11px;
+      }
+
+      .page {
+        max-width: none;
+        padding: 0;
+      }
+
+      h1 {
+        font-size: 24px;
+      }
+
+      h2 {
+        font-size: 16px;
+        page-break-after: avoid;
+      }
+
+      table,
+      .callout,
+      pre {
+        break-inside: avoid;
+      }
+
+      .combined-table {
+        font-size: 8.6px;
+      }
+
+      .combined-table th,
+      .combined-table td {
+        padding: 4px 3px;
+      }
+
+      .value-chart {
+        break-inside: avoid;
+      }
+
+      .chart-scroll {
+        overflow: visible;
+      }
+
+      .chart-area {
+        min-width: 0;
+        height: 360px;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .no-print {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="report-header">
+      <h1>LCAgent Model Benchmark Report</h1>
+      <p class="lede">
+        Print-oriented summary of LCAgent model benchmark runs against one fixed repository snapshot, prompt, turn budget, and tool harness.
+      </p>
+      <div class="meta">
+        <div>
+          <span class="label">Report Date</span>
+          May 10, 2026 JST
+        </div>
+        <div>
+          <span class="label">Target Snapshot</span>
+          <code>885fd24f1f24ce903b7de12d34c5166d54ebe251</code>
+        </div>
+        <div>
+          <span class="label">Benchmark Root</span>
+          <code>/tmp/lcagent-bench-20260509T203500</code>
+        </div>
+      </div>
+    </div>
+
+    <div class="report-section">
+      <h2>Executive Take</h2>
+      <div class="callout good">
+        <strong>Default pick:</strong> GPT-5.5 with <code>reasoning.effort=low</code>. It gave the best overall balance of answer quality, harness reliability, latency, and cost.
+      </div>
+      <div class="callout warning">
+        <strong>Quality challenger:</strong> Claude Opus 4.7 produced the most detailed audit-style review, but GPT-5.5 low still scored higher overall because the default score also includes reliability, cost, cache behavior, and latency. Opus is a verification model, not the economical default.
+      </div>
+      <p>
+        Kimi K2.6 remains the best budget secondary. Gemini 3.1 Flash Lite is the fastest cheap scout, but shallow. Strict OpenRouter origin routing let Claude Sonnet 4.6 and MiniMax M2.7 complete on retry, but it did not make either a default candidate: Sonnet was slow, costly, and still overclaimed; MiniMax became reliable enough to measure but not accurate enough to route to by default.
+      </p>
+      <p>
+        Retry runs used OpenRouter provider pins with fallbacks disabled and required parameter support enabled. Temperature was explicit at <code>0.2</code> for OpenRouter and direct DeepSeek chat-completions runs; OpenAI Responses and direct Moonshot runs omitted temperature.
+      </p>
+    </div>
+
+    <div class="report-section">
+      <h2>Score Vs Cost</h2>
+      <div class="value-chart">
+        <p class="subtle">
+          X-axis uses estimated benchmark cost on a log scale. The quadrant thresholds are score 7.0 and $0.20 per benchmark run.
+        </p>
+        <div class="chart-scroll">
+          <div class="chart-area">
+            <div class="quadrant q-ideal"><strong>Ideal</strong>High score, low cost</div>
+            <div class="quadrant q-premium"><strong>Premium Verification</strong>High score, high cost</div>
+            <div class="quadrant q-scout"><strong>Cheap Scouts</strong>Low cost, weaker answers</div>
+            <div class="quadrant q-poor"><strong>Poor Value</strong>Lower score, higher cost</div>
+
+            <div class="grid-x" style="left: 0%;"></div>
+            <div class="grid-x" style="left: 12.2%;"></div>
+            <div class="grid-x" style="left: 28.7%;"></div>
+            <div class="grid-x" style="left: 45.2%;"></div>
+            <div class="grid-x" style="left: 67.0%;"></div>
+            <div class="grid-x" style="left: 83.5%;"></div>
+            <div class="grid-x" style="left: 100%;"></div>
+            <div class="grid-y" style="top: 0%;"></div>
+            <div class="grid-y" style="top: 14.3%;"></div>
+            <div class="grid-y" style="top: 28.6%;"></div>
+            <div class="grid-y" style="top: 42.9%;"></div>
+            <div class="grid-y" style="top: 71.4%;"></div>
+            <div class="grid-y" style="top: 100%;"></div>
+
+            <div class="threshold-x" style="left: 45.2%;"></div>
+            <div class="threshold-y" style="top: 28.6%;"></div>
+
+            <span class="tick-label x-label" style="left: 0%;">$0.03</span>
+            <span class="tick-label x-label" style="left: 12.2%;">$0.05</span>
+            <span class="tick-label x-label" style="left: 28.7%;">$0.10</span>
+            <span class="tick-label x-label" style="left: 45.2%;">$0.20</span>
+            <span class="tick-label x-label" style="left: 67.0%;">$0.50</span>
+            <span class="tick-label x-label" style="left: 83.5%;">$1.00</span>
+            <span class="tick-label x-label" style="left: 100%;">$2.00</span>
+            <span class="tick-label y-label" style="top: 0%;">9</span>
+            <span class="tick-label y-label" style="top: 14.3%;">8</span>
+            <span class="tick-label y-label" style="top: 28.6%;">7</span>
+            <span class="tick-label y-label" style="top: 42.9%;">6</span>
+            <span class="tick-label y-label" style="top: 71.4%;">4</span>
+            <span class="tick-label y-label" style="top: 100%;">2</span>
+            <span class="axis-title axis-title-x">Estimated cost per benchmark run (log scale)</span>
+            <span class="axis-title axis-title-y">Score</span>
+
+            <span class="chart-point point-default label-above" style="left: 63.5%; top: 2.9%;"><span class="point-dot">&nbsp;</span><span class="point-name">GPT-5.5 low</span></span>
+            <span class="chart-point point-verify label-left" style="left: 99.3%; top: 7.1%;"><span class="point-dot">&nbsp;</span><span class="point-name">Opus 4.7</span></span>
+            <span class="chart-point" style="left: 39.1%; top: 31.4%;"><span class="point-dot">&nbsp;</span><span class="point-name">Kimi K2.6</span></span>
+            <span class="chart-point label-left" style="left: 67.5%; top: 40.0%;"><span class="point-dot">&nbsp;</span><span class="point-name">GPT none</span></span>
+            <span class="chart-point" style="left: 2.3%; top: 41.4%;"><span class="point-dot">&nbsp;</span><span class="point-name">Flash Lite</span></span>
+            <span class="chart-point label-left" style="left: 55.5%; top: 44.3%;"><span class="point-dot">&nbsp;</span><span class="point-name">GLM 5.1</span></span>
+            <span class="chart-point label-below" style="left: 59.7%; top: 45.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Gemini Pro</span></span>
+            <span class="chart-point" style="left: 18.4%; top: 48.6%;"><span class="point-dot">&nbsp;</span><span class="point-name">DeepSeek</span></span>
+            <span class="chart-point label-left" style="left: 96.7%; top: 55.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Sonnet pin</span></span>
+            <span class="chart-point" style="left: 39.3%; top: 57.1%;"><span class="point-dot">&nbsp;</span><span class="point-name">Grok 4.3</span></span>
+            <span class="chart-point" style="left: 28.2%; top: 60.0%;"><span class="point-dot">&nbsp;</span><span class="point-name">Gemini Flash</span></span>
+            <span class="chart-point label-below" style="left: 11.6%; top: 61.4%;"><span class="point-dot">&nbsp;</span><span class="point-name">MiniMax pin</span></span>
+            <span class="chart-point label-below" style="left: 3.0%; top: 68.6%;"><span class="point-dot">&nbsp;</span><span class="point-name">MiniMax low pin</span></span>
+            <span class="chart-point point-fail" style="left: 10.7%; top: 85.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">MiniMax unpin</span></span>
+            <span class="chart-point point-fail label-left" style="left: 89.4%; top: 88.6%;"><span class="point-dot">&nbsp;</span><span class="point-name">Sonnet unpin</span></span>
+            <span class="chart-point point-fail" style="left: 14.9%; top: 92.9%;"><span class="point-dot">&nbsp;</span><span class="point-name">MiniMax low unpin</span></span>
+          </div>
+        </div>
+        <div class="chart-legend">
+          <span><span class="legend-swatch default">&nbsp;</span>Recommended default</span>
+          <span><span class="legend-swatch verify">&nbsp;</span>Verification lane</span>
+          <span><span class="legend-swatch">&nbsp;</span>Completed run</span>
+          <span><span class="legend-swatch fail">&nbsp;</span>Aborted or invalid final output</span>
+        </div>
+        <p class="chart-note">
+          No model landed in the ideal quadrant in this batch. Provider pinning moved MiniMax and Sonnet from failed runs to completed runs, but it did not move them into the recommended lanes. Kimi K2.6 is still the closest budget candidate; GPT-5.5 low remains the practical default; Claude Opus 4.7 is the expensive audit pass.
+        </p>
+      </div>
+    </div>
+
+    <div class="report-section">
+      <h2>Combined Benchmark Table</h2>
+      <table class="combined-table" summary="Combined model benchmark results">
+        <thead>
+          <tr>
+            <th>Run</th>
+            <th>Status</th>
+            <th class="num">Score</th>
+            <th>Effort</th>
+            <th class="num">Wall</th>
+            <th class="num">Cost</th>
+            <th class="num">Tok.</th>
+            <th class="num">Cache</th>
+            <th class="num">Resp.</th>
+            <th class="num">Reads</th>
+            <th class="num">Lines</th>
+            <th class="num">Reason</th>
+            <th>Verdict</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="model">GPT-5.5 low</span><br><span class="subtle">OpenAI API</span></td>
+            <td class="status-ok">complete</td>
+            <td class="num score">8.8</td>
+            <td>low</td>
+            <td class="num">92s</td>
+            <td class="num">$0.432</td>
+            <td class="num">172,435</td>
+            <td class="num">111,616</td>
+            <td class="num">16</td>
+            <td class="num">15</td>
+            <td class="num">2,121</td>
+            <td class="num">165</td>
+            <td>Best answer and best default despite not being the fastest.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Claude Opus 4.7</span><br><span class="subtle">OpenRouter</span></td>
+            <td class="status-ok">complete</td>
+            <td class="num score">8.5</td>
+            <td>low</td>
+            <td class="num">122s</td>
+            <td class="num">$1.946</td>
+            <td class="num">343,713</td>
+            <td class="num">0</td>
+            <td class="num">16</td>
+            <td class="num">11</td>
+            <td class="num">1,493</td>
+            <td class="num">1,239</td>
+            <td>Strongest audit quality, but far too costly for default routing.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Kimi K2.6</span><br><span class="subtle">Moonshot API</span></td>
+            <td class="status-ok">complete</td>
+            <td class="num score">6.8</td>
+            <td>default</td>
+            <td class="num">143s</td>
+            <td class="num">$0.155</td>
+            <td class="num">323,374</td>
+            <td class="num">222,049</td>
+            <td class="num">24</td>
+            <td class="num">26</td>
+            <td class="num">2,798</td>
+            <td class="num">0</td>
+            <td>Best cheap secondary so far; more wandering than GPT.</td>
+          </tr>
+          <tr>
+            <td><span class="model">GPT-5.5 none</span><br><span class="subtle">OpenAI API</span></td>
+            <td class="status-ok">complete</td>
+            <td class="num score">6.2</td>
+            <td>disabled</td>
+            <td class="num">59s</td>
+            <td class="num">$0.511</td>
+            <td class="num">117,441</td>
+            <td class="num">32,256</td>
+            <td class="num">11</td>
+            <td class="num">19</td>
+            <td class="num">2,546</td>
+            <td class="num">0</td>
+            <td>Fast, but weaker and worse cache economics than low.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Gemini 3.1 Flash Lite</span><br><span class="subtle">OpenRouter</span></td>
+            <td class="status-ok">complete</td>
+            <td class="num score">6.1</td>
+            <td>low</td>
+            <td class="num">39s</td>
+            <td class="num">$0.033</td>
+            <td class="num">136,858</td>
+            <td class="num">44,883</td>
+            <td class="num">11</td>
+            <td class="num">9</td>
+            <td class="num">999</td>
+            <td class="num">6,066</td>
+            <td>Very fast and cheap; final was shallow but plausible.</td>
+          </tr>
+          <tr>
+            <td><span class="model">GLM 5.1</span><br><span class="subtle">OpenRouter</span></td>
+            <td class="status-ok">complete</td>
+            <td class="num score">5.9</td>
+            <td>low</td>
+            <td class="num">388s</td>
+            <td class="num">$0.308</td>
+            <td class="num">277,963</td>
+            <td class="num">102,720</td>
+            <td class="num">21</td>
+            <td class="num">8</td>
+            <td class="num">1,001</td>
+            <td class="num">9,757</td>
+            <td>Read less raw source but searched heavily and was slow.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Gemini 3.1 Pro Custom Tools</span><br><span class="subtle">OpenRouter</span></td>
+            <td class="status-ok">complete</td>
+            <td class="num score">5.8</td>
+            <td>low</td>
+            <td class="num">112s</td>
+            <td class="num">$0.368</td>
+            <td class="num">233,110</td>
+            <td class="num">109,515</td>
+            <td class="num">17</td>
+            <td class="num">9</td>
+            <td class="num">1,518</td>
+            <td class="num">8,762</td>
+            <td>Completed cleanly but made costly false claims.</td>
+          </tr>
+          <tr>
+            <td><span class="model">DeepSeek V4 Pro</span><br><span class="subtle">DeepSeek API</span></td>
+            <td class="status-ok">complete</td>
+            <td class="num score">5.6</td>
+            <td>default</td>
+            <td class="num">365s</td>
+            <td class="num">$0.065</td>
+            <td class="num">323,884</td>
+            <td class="num">184,960</td>
+            <td class="num">24</td>
+            <td class="num">30</td>
+            <td class="num">3,364</td>
+            <td class="num">4,426</td>
+            <td>Extremely cheap, but weak quality and very slow.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Claude Sonnet 4.6 pinned</span><br><span class="subtle">OpenRouter / pin: anthropic</span></td>
+            <td class="status-ok">complete</td>
+            <td class="num score">5.1</td>
+            <td>low</td>
+            <td class="num">552s</td>
+            <td class="num">$1.744</td>
+            <td class="num">450,982</td>
+            <td class="num">0</td>
+            <td class="num">24</td>
+            <td class="num">13</td>
+            <td class="num">1,583</td>
+            <td class="num">12,973</td>
+            <td>Strict Anthropic routing completed, but it wandered, needed forced synthesis, and included false missing-feature claims.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Grok 4.3</span><br><span class="subtle">OpenRouter</span></td>
+            <td class="status-ok">complete</td>
+            <td class="num score">5.0</td>
+            <td>low</td>
+            <td class="num">150s</td>
+            <td class="num">$0.156</td>
+            <td class="num">162,032</td>
+            <td class="num">55,168</td>
+            <td class="num">16</td>
+            <td class="num">4</td>
+            <td class="num">190</td>
+            <td class="num">7,669</td>
+            <td>Completed, but used too little evidence and reviewed the wrong doc.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Gemini 3 Flash Preview</span><br><span class="subtle">OpenRouter</span></td>
+            <td class="status-ok">complete</td>
+            <td class="num score">4.8</td>
+            <td>low</td>
+            <td class="num">42s</td>
+            <td class="num">$0.098</td>
+            <td class="num">334,189</td>
+            <td class="num">161,659</td>
+            <td class="num">24</td>
+            <td class="num">15</td>
+            <td class="num">1,984</td>
+            <td class="num">0</td>
+            <td>Fast, but final included confident false missing-feature claims.</td>
+          </tr>
+          <tr>
+            <td><span class="model">MiniMax M2.7 pinned default</span><br><span class="subtle">OpenRouter / pin: minimax</span></td>
+            <td class="status-ok">complete</td>
+            <td class="num score">4.7</td>
+            <td>default</td>
+            <td class="num">103s</td>
+            <td class="num">$0.049</td>
+            <td class="num">277,041</td>
+            <td class="num">162,720</td>
+            <td class="num">21</td>
+            <td class="num">21</td>
+            <td class="num">3,029</td>
+            <td class="num">3,308</td>
+            <td>Strict MiniMax routing fixed completion, but the final missed important gaps and added false tool/skill claims.</td>
+          </tr>
+          <tr>
+            <td><span class="model">MiniMax M2.7 pinned low</span><br><span class="subtle">OpenRouter / pin: minimax</span></td>
+            <td class="status-ok">complete</td>
+            <td class="num score">4.2</td>
+            <td>low</td>
+            <td class="num">126s</td>
+            <td class="num">$0.034</td>
+            <td class="num">222,201</td>
+            <td class="num">154,496</td>
+            <td class="num">19</td>
+            <td class="num">8</td>
+            <td class="num">1,140</td>
+            <td class="num">2,874</td>
+            <td>Completed cheaply, but low effort produced broader false missing-feature claims than the default-effort retry.</td>
+          </tr>
+          <tr>
+            <td><span class="model">MiniMax M2.7 unpinned default</span><br><span class="subtle">OpenRouter</span></td>
+            <td class="status-fail">aborted</td>
+            <td class="num score">3.0</td>
+            <td>default</td>
+            <td class="num">211s</td>
+            <td class="num">$0.047</td>
+            <td class="num">306,637</td>
+            <td class="num">212,704</td>
+            <td class="num">21</td>
+            <td class="num">18</td>
+            <td class="num">2,245</td>
+            <td class="num">4,756</td>
+            <td>Reached final tool call but emitted invalid schema.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Claude Sonnet 4.6 unpinned</span><br><span class="subtle">OpenRouter</span></td>
+            <td class="status-fail">aborted</td>
+            <td class="num score">2.8</td>
+            <td>low</td>
+            <td class="num">296s</td>
+            <td class="num">$1.284</td>
+            <td class="num">371,252</td>
+            <td class="num">0</td>
+            <td class="num">20</td>
+            <td class="num">13</td>
+            <td class="num">1,695</td>
+            <td class="num">6,571</td>
+            <td>Did substantial work, then failed the final structured-output schema.</td>
+          </tr>
+          <tr>
+            <td><span class="model">MiniMax M2.7 unpinned low</span><br><span class="subtle">OpenRouter</span></td>
+            <td class="status-fail">aborted</td>
+            <td class="num score">2.5</td>
+            <td>low</td>
+            <td class="num">221s</td>
+            <td class="num">$0.056</td>
+            <td class="num">242,236</td>
+            <td class="num">89,504</td>
+            <td class="num">18</td>
+            <td class="num">25</td>
+            <td class="num">3,158</td>
+            <td class="num">4,563</td>
+            <td>Aborted on empty visible response after tool work.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="subtle">
+        Scores are subjective default-routing scores out of 10, not pure answer-quality scores. The Effort column is the requested reasoning-effort setting only, separate from reported reasoning tokens. Temperature is recorded per row in the CSV; OpenRouter and direct DeepSeek chat-completions runs used <code>0.2</code>, while OpenAI Responses and direct Moonshot runs omitted temperature.
+      </p>
+    </div>
+
+    <div class="report-section">
+      <h2>Scoring Evidence Excerpts</h2>
+      <p class="subtle">
+        Short snippets from generated final answers, used only to make the subjective scores inspectable. They illustrate scoring rationale; they are not treated as ground truth.
+      </p>
+      <table class="evidence-table" summary="Representative output excerpts used for scoring rationale">
+        <thead>
+          <tr>
+            <th>Run</th>
+            <th>Excerpt</th>
+            <th>Why It Mattered</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="model">GPT-5.5 low</span></td>
+            <td><span class="quote">"the MVP is largely implemented and in several places goes beyond the original first-slice handoff"</span></td>
+            <td>Correctly framed the task: not a missing-skeleton story, but a smaller set of harness-quality gaps.</td>
+          </tr>
+          <tr>
+            <td><span class="model">GPT-5.5 low</span></td>
+            <td><span class="quote">"lcagent is not missing the core MVP skeleton"</span></td>
+            <td>Strong bottom-line calibration, with specific gaps called out after that.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Claude Opus 4.7</span></td>
+            <td><span class="quote">"Milestone 1 is essentially complete, Milestone 2 is in place, Milestone 3 is partially wired"</span></td>
+            <td>Best audit-style structure and lifecycle awareness, which is why answer quality was high.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Claude Opus 4.7</span></td>
+            <td><span class="quote">"permission_denied event, the LCR-side launcher... future-context scaffolding"</span></td>
+            <td>Found nuanced follow-up gaps, but the run was too expensive for default routing.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Kimi K2.6</span></td>
+            <td><span class="quote">"The biggest confirmed holes are the two missing outline tools"</span></td>
+            <td>Useful budget answer, but it also wandered into weaker claims like <code>plan_item</code> and piped stdin.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Grok 4.3</span></td>
+            <td><span class="quote">"vs. `docs/ai_coding_agent_feasibility.md`"</span></td>
+            <td>Penalized because the user asked for the implementation handoff doc; this targeted the wrong comparison source.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Claude Sonnet 4.6 pinned</span></td>
+            <td><span class="quote">"no search finds `\"turn_aborted\"` written as a structured event anywhere"</span></td>
+            <td>This was false in the benchmark snapshot; strict provider routing fixed completion but not overclaiming.</td>
+          </tr>
+          <tr>
+            <td><span class="model">MiniMax M2.7 pinned default</span></td>
+            <td><span class="quote">"`load_skill` implementation ... MISSING"</span></td>
+            <td>Also false in the benchmark snapshot; the run completed cheaply but missed important implemented behavior.</td>
+          </tr>
+          <tr>
+            <td><span class="model">MiniMax M2.7 pinned low</span></td>
+            <td><span class="quote">"`search` tool ... No `search` tool implementation"</span></td>
+            <td>A broader false-missing-feature claim than the default-effort MiniMax retry.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Gemini 3 Flash Preview</span></td>
+            <td><span class="quote">"Tool-Call Markup Guardrail ... Missing"</span></td>
+            <td>Fast, but it confidently missed existing provider-markup guardrail work.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="report-section">
+      <h2>Remaining Optional Tests</h2>
+      <p>
+        The remaining useful comparisons are cheaper long-context alternatives such as <code>qwen/qwen3.6-plus</code>, <code>x-ai/grok-4.1-fast</code>, and <code>mistralai/mistral-medium-3-5</code>. They are optional because the current routing decision is already clear enough: use GPT-5.5 low as the default, Kimi K2.6 as the cheap secondary, and Claude Opus 4.7 as an expensive verification pass.
+      </p>
+    </div>
+
+    <div class="report-section">
+      <h2>Interpretation Notes</h2>
+      <div class="two-col">
+        <div>
+          <h3>Why GPT-5.5 low wins</h3>
+          <p>
+            It had a strong final answer, reliable structured-tool behavior, and good cache reuse. The <code>none</code> run was faster, but weaker and more expensive because cache reuse collapsed.
+          </p>
+        </div>
+        <div>
+          <h3>Why Opus Is Special-Case</h3>
+          <p>
+            Claude Opus 4.7 gave a very strong, detailed audit-style answer, but its run cost roughly 4.5x GPT-5.5 low and reported no cached input. It is best treated as a review/verification lane, not the highest overall routing choice.
+          </p>
+        </div>
+      </div>
+      <div class="two-col">
+        <div>
+          <h3>Why not GPT-5.5 none</h3>
+          <p>
+            It finished quickly, but it inspected more raw lines than GPT-5.5 low, made more doubtful claims, and cost more because cached input dropped from 111,616 to 32,256 tokens.
+          </p>
+        </div>
+        <div>
+          <h3>Why not Gemini, Grok, MiniMax</h3>
+          <p>
+            Gemini's speed is real, but the answers were too shallow or too wrong to displace Kimi. Grok 4.3 completed but inspected very little source and targeted the wrong doc. Strict provider routing fixed MiniMax's completion failure, but not its answer quality.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="report-section">
+      <h2>Sources</h2>
+      <ul>
+        <li>OpenAI reasoning guidance: <a href="https://developers.openai.com/api/docs/guides/reasoning">developers.openai.com/api/docs/guides/reasoning</a></li>
+        <li>OpenAI GPT-5.5 API guidance: <a href="https://developers.openai.com/api/docs/guides/latest-model#api-and-model-parameters">developers.openai.com/api/docs/guides/latest-model</a></li>
+        <li>Google Gemini 3 developer guide: <a href="https://ai.google.dev/gemini-api/docs/gemini-3">ai.google.dev/gemini-api/docs/gemini-3</a></li>
+        <li>Google Gemini model reference: <a href="https://ai.google.dev/gemini-api/docs/models">ai.google.dev/gemini-api/docs/models</a></li>
+        <li>Google Gemini API pricing: <a href="https://ai.google.dev/pricing">ai.google.dev/pricing</a></li>
+        <li>MiniMax M2.7 coding tools guide: <a href="https://platform.minimax.io/docs/guides/text-ai-coding-tools">platform.minimax.io/docs/guides/text-ai-coding-tools</a></li>
+        <li>OpenRouter provider routing: <a href="https://openrouter.ai/docs/guides/routing/provider-selection">openrouter.ai/docs/guides/routing/provider-selection</a></li>
+        <li>OpenRouter model metadata endpoint queried locally with the configured API key: <a href="https://openrouter.ai/api/v1/models">openrouter.ai/api/v1/models</a></li>
+      </ul>
+    </div>
+
+    <div class="report-footer">
+      Generated from local benchmark artifacts in <code>/tmp/lcagent-bench-20260509T203500</code>. This report is static HTML and can be printed directly from a browser.
+    </div>
+  </div>
+</body>
+</html>

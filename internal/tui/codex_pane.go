@@ -2602,6 +2602,9 @@ func (m Model) renderCodexSessionMeta(snapshot codexapp.Snapshot, width int) str
 	if context := codexSnapshotContextLeftLabel(snapshot); context != "" {
 		segments = append(segments, renderFooterMeta("Context")+" "+renderFooterStatus(context))
 	}
+	if tokens := codexSnapshotTokenUsageLabel(snapshot); tokens != "" {
+		segments = append(segments, renderFooterMeta("Tok")+" "+renderFooterStatus(tokens))
+	}
 	if nextModel := strings.TrimSpace(snapshot.PendingModel); nextModel != "" && !showPendingAsCurrent {
 		nextReasoning := firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingReasoning), strings.TrimSpace(snapshot.ReasoningEffort))
 		next := nextModel
@@ -2636,6 +2639,36 @@ func codexSnapshotContextLeftLabel(snapshot codexapp.Snapshot) string {
 		return ""
 	}
 	return fmt.Sprintf("%d%% left (%s tok)", snapshot.TokenUsage.ContextLeftPercent(), formatInt64(snapshot.TokenUsage.ContextLeftTokens()))
+}
+
+func codexSnapshotTokenUsageLabel(snapshot codexapp.Snapshot) string {
+	if snapshot.TokenUsage == nil {
+		return ""
+	}
+	usage := snapshot.TokenUsage.Total
+	if usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.TotalTokens == 0 && usage.CachedInputTokens == 0 && usage.ReasoningOutputTokens == 0 {
+		usage = snapshot.TokenUsage.Last
+	}
+	if usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.TotalTokens == 0 && usage.CachedInputTokens == 0 && usage.ReasoningOutputTokens == 0 {
+		return ""
+	}
+	parts := make([]string, 0, 5)
+	if usage.InputTokens > 0 {
+		parts = append(parts, "i"+formatTokenCount(usage.InputTokens))
+	}
+	if usage.OutputTokens > 0 {
+		parts = append(parts, "o"+formatTokenCount(usage.OutputTokens))
+	}
+	if usage.CachedInputTokens > 0 {
+		parts = append(parts, "c"+formatTokenCount(usage.CachedInputTokens))
+	}
+	if usage.ReasoningOutputTokens > 0 {
+		parts = append(parts, "r"+formatTokenCount(usage.ReasoningOutputTokens))
+	}
+	if usage.TotalTokens > 0 {
+		parts = append(parts, "t"+formatTokenCount(usage.TotalTokens))
+	}
+	return strings.Join(parts, " ")
 }
 
 func firstNonEmptyCodexLabel(values ...string) string {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"lcroom/internal/appfs"
+	lcrmodel "lcroom/internal/model"
 )
 
 type lcagentReplay struct {
@@ -23,6 +24,7 @@ type lcagentReplay struct {
 	startedAt      time.Time
 	lastActivityAt time.Time
 	lastError      string
+	tokenUsage     *threadTokenUsage
 	entries        []TranscriptEntry
 }
 
@@ -180,6 +182,14 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			if replay.lastActivityAt.IsZero() {
 				replay.lastActivityAt = replay.startedAt
 			}
+		case "model_response":
+			modelName := rawJSONString(event["model"])
+			if modelName != "" {
+				replay.model = modelName
+			}
+			if usage, ok := lcagentUsageFromModelResponseEvent(event, modelName); ok {
+				replay.addTokenUsage(usage)
+			}
 		case "user_message":
 			replay.appendEntry(TranscriptUser, rawJSONString(event["message"]))
 		case "tool_call":
@@ -210,6 +220,22 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 		return nil, err
 	}
 	return replay, nil
+}
+
+func (r *lcagentReplay) addTokenUsage(usage lcrmodel.LLMUsage) {
+	if r == nil || !lcagentUsageTracked(usage) {
+		return
+	}
+	breakdown := lcagentTokenUsageBreakdown(usage)
+	if r.tokenUsage == nil {
+		r.tokenUsage = &threadTokenUsage{}
+	}
+	r.tokenUsage.Last = breakdown
+	r.tokenUsage.Total.CachedInputTokens += breakdown.CachedInputTokens
+	r.tokenUsage.Total.InputTokens += breakdown.InputTokens
+	r.tokenUsage.Total.OutputTokens += breakdown.OutputTokens
+	r.tokenUsage.Total.ReasoningOutputTokens += breakdown.ReasoningOutputTokens
+	r.tokenUsage.Total.TotalTokens += breakdown.TotalTokens
 }
 
 func (r *lcagentReplay) appendEntry(kind TranscriptKind, text string) {

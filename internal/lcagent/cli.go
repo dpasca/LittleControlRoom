@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -75,16 +76,22 @@ func runMetrics(args []string, stdout io.Writer) error {
 func runExec(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, envFile string
+	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, finalModel, envFile, reasoningEffort, temperatureRaw, providerOnlyRaw string
+	var requestTimeout time.Duration
 	var maxTurns int
 	fs.StringVar(&cwd, "cwd", "", "workspace root")
 	fs.StringVar(&dataDir, "data-dir", "", "artifact data root")
 	fs.StringVar(&autoRaw, "auto", "off", "autonomy: off, low, medium")
 	fs.StringVar(&outputRaw, "output", string(outputStreamJSON), "output: text, json, stream-json")
 	fs.StringVar(&scriptPath, "script", "", "scripted JSONL actions")
-	fs.StringVar(&provider, "provider", "scripted", "provider: scripted or openrouter")
+	fs.StringVar(&provider, "provider", "scripted", "provider: scripted, openrouter, openai, deepseek, or moonshot")
 	fs.StringVar(&model, "model", "", "model name")
+	fs.StringVar(&finalModel, "final-model", "", "optional model for no-tools final synthesis")
 	fs.StringVar(&envFile, "env-file", "", "optional dotenv file for provider credentials")
+	fs.StringVar(&reasoningEffort, "reasoning-effort", "", "optional provider reasoning effort, for example low")
+	fs.StringVar(&temperatureRaw, "temperature", "", "optional sampling temperature; defaults to 0.2 for chat-completions providers that send temperature")
+	fs.StringVar(&providerOnlyRaw, "openrouter-provider-only", "", "comma-separated OpenRouter provider slugs allowed for this request, for example anthropic")
+	fs.DurationVar(&requestTimeout, "request-timeout", 0, "provider HTTP request timeout, for example 10m; default 2m")
 	fs.IntVar(&maxTurns, "max-turns", modeladapter.DefaultOpenRouterMaxTurns, "maximum model turns for provider loops")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -116,10 +123,21 @@ func runExec(args []string, stdout io.Writer) error {
 	if outMode != outputText && outMode != outputJSON && outMode != outputStreamJSON {
 		return fmt.Errorf("unsupported output mode: %s", outputRaw)
 	}
+	temperature, err := parseOptionalTemperature(temperatureRaw)
+	if err != nil {
+		return err
+	}
 	if strings.TrimSpace(model) == "" {
-		if provider == "openrouter" {
+		switch strings.ToLower(strings.TrimSpace(provider)) {
+		case "openrouter":
 			model = modeladapter.DefaultOpenRouterModel
-		} else {
+		case "openai":
+			model = modeladapter.DefaultOpenAIModel
+		case "deepseek":
+			model = modeladapter.DefaultDeepSeekModel
+		case "moonshot":
+			model = modeladapter.DefaultMoonshotModel
+		default:
 			model = "scripted"
 		}
 	}
@@ -181,12 +199,17 @@ func runExec(args []string, stdout io.Writer) error {
 			return err
 		}
 		runErr = runner.Run(context.Background(), actions)
-	case "openrouter":
+	case "openrouter", "openai", "deepseek", "moonshot":
 		runErr = runOpenRouter(context.Background(), writer, runner, instructions.PromptSection(), modeladapter.OpenRouterConfig{
-			Model:    model,
-			EnvFile:  envFile,
-			MaxTurns: maxTurns,
-		})
+			Model:           model,
+			FinalModel:      finalModel,
+			EnvFile:         envFile,
+			MaxTurns:        maxTurns,
+			RequestTimeout:  requestTimeout,
+			ReasoningEffort: reasoningEffort,
+			Temperature:     temperature,
+			ProviderOnly:    splitCommaFields(providerOnlyRaw),
+		}, strings.ToLower(strings.TrimSpace(provider)))
 	default:
 		return fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -206,8 +229,21 @@ func runExec(args []string, stdout io.Writer) error {
 	return nil
 }
 
-func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Runner, projectInstructionPrompt string, cfg modeladapter.OpenRouterConfig) error {
-	client, err := modeladapter.NewOpenRouterClient(cfg)
+func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Runner, projectInstructionPrompt string, cfg modeladapter.OpenRouterConfig, provider string) error {
+	providerLabel := strings.ToLower(strings.TrimSpace(provider))
+	if providerLabel == "" {
+		providerLabel = "openrouter"
+	}
+	client, err := newChatProviderClient(provider, cfg)
+	if err != nil {
+		_ = writer.Write(session.Event{
+			"type":       "turn_aborted",
+			"session_id": runner.SessionID,
+			"reason":     err.Error(),
+		})
+		return err
+	}
+	finalClient, err := openRouterFinalClient(provider, cfg, client)
 	if err != nil {
 		_ = writer.Write(session.Event{
 			"type":       "turn_aborted",
@@ -228,9 +264,44 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 		{Role: "system", Content: modeladapter.SystemPrompt(runner.Skills.PromptIndex(0), projectInstructionPrompt)},
 		{Role: "user", Content: runner.Prompt},
 	}
+	readLedger := newReadLedger()
 	toolsDef := modeladapter.Tools()
 	for turn := 0; turn < client.MaxTurns(); turn++ {
-		completion, err := client.Complete(ctx, messages, toolsDef)
+		if compactedMessages, compaction, compacted := compactOpenRouterLoopMessagesWithReadLedger(messages, readLedger); compacted {
+			if err := writer.Write(session.Event{
+				"type":       "context_compacted",
+				"session_id": runner.SessionID,
+				"turn":       turn + 1,
+				"threshold":  loopCompactionCharThreshold,
+				"stats":      compaction,
+			}); err != nil {
+				return err
+			}
+			messages = compactedMessages
+		}
+		guidance := openRouterGuidanceForTurn(turn+1, client.MaxTurns(), messages, readLedger)
+		requestMessages := appendOpenRouterProgressNote(messages, guidance, readLedger)
+		requestTools := toolsDef
+		if guidance.ForceSynthesis {
+			var compaction finalHandoffCompactionStats
+			requestMessages, compaction = compactOpenRouterFinalMessagesWithReadLedger(messages, openRouterSynthesisFinalPrompt(guidance), readLedger)
+			requestTools = nil
+			if err := writer.Write(session.Event{
+				"type":        "synthesis_requested",
+				"session_id":  runner.SessionID,
+				"guidance":    guidance,
+				"final_model": finalClient.Model(),
+				"stats":       compaction,
+			}); err != nil {
+				return err
+			}
+		}
+		var completion modeladapter.Completion
+		if guidance.ForceSynthesis {
+			completion, err = finalClient.CompleteWithOptions(ctx, requestMessages, requestTools, openRouterFinalCompletionOptions(cfg))
+		} else {
+			completion, err = client.CompleteWithOptions(ctx, requestMessages, requestTools, openRouterCompletionOptions(cfg))
+		}
 		if err != nil {
 			_ = writer.Write(session.Event{
 				"type":       "turn_aborted",
@@ -245,16 +316,19 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 		}
 		sanitizedContent, strippedProviderMarkup := modeladapter.SanitizeAssistantContent(msg.Content)
 		msg.Content = sanitizedContent
+		if guidance.ForceSynthesis && len(msg.ToolCalls) > 0 {
+			return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s synthesis request returned tool calls", providerLabel))
+		}
 		messages = append(messages, msg)
 		if len(msg.ToolCalls) == 0 {
 			if strippedProviderMarkup {
-				return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("openrouter response contained provider tool-call markup but no structured tool calls"))
+				return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s response contained provider tool-call markup but no structured tool calls", providerLabel))
 			}
 			if strings.EqualFold(completion.FinishReason, "tool_calls") {
-				return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("openrouter response finished with tool_calls but returned no structured tool calls"))
+				return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s response finished with tool_calls but returned no structured tool calls", providerLabel))
 			}
 			if strings.TrimSpace(msg.Content) == "" {
-				return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("openrouter response had no content or tool calls"))
+				return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s response had no content or tool calls", providerLabel))
 			}
 			return runner.Final(script.Action{
 				Type:    "final_response",
@@ -289,6 +363,9 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 				return runner.Final(final)
 			}
 			result, err := runner.RunTool(ctx, action)
+			if call.Function.Name == "read_file" {
+				readLedger.ObserveReadResult(result)
+			}
 			resultJSON, marshalErr := json.Marshal(result)
 			if marshalErr != nil {
 				return marshalErr
@@ -305,18 +382,62 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 			}
 		}
 	}
-	return finalizeOpenRouterAfterMaxTurns(ctx, writer, runner, client, messages)
+	return finalizeOpenRouterAfterMaxTurns(ctx, writer, runner, client, finalClient, messages, readLedger, providerLabel, cfg)
 }
 
-func finalizeOpenRouterAfterMaxTurns(ctx context.Context, writer *session.Writer, runner script.Runner, client *modeladapter.Client, messages []modeladapter.Message) error {
+func newChatProviderClient(provider string, cfg modeladapter.OpenRouterConfig) (*modeladapter.Client, error) {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openai":
+		return modeladapter.NewOpenAIClient(cfg)
+	case "deepseek":
+		return modeladapter.NewDeepSeekClient(cfg)
+	case "moonshot":
+		return modeladapter.NewMoonshotClient(cfg)
+	default:
+		return modeladapter.NewOpenRouterClient(cfg)
+	}
+}
+
+func openRouterFinalClient(provider string, cfg modeladapter.OpenRouterConfig, client *modeladapter.Client) (*modeladapter.Client, error) {
+	finalModel := openRouterFinalModel(provider, cfg)
+	if finalModel == "" || finalModel == client.Model() {
+		return client, nil
+	}
+	finalCfg := cfg
+	finalCfg.Model = finalModel
+	return newChatProviderClient(provider, finalCfg)
+}
+
+func openRouterFinalModel(provider string, cfg modeladapter.OpenRouterConfig) string {
+	if finalModel := strings.TrimSpace(cfg.FinalModel); finalModel != "" {
+		return finalModel
+	}
+	if strings.EqualFold(strings.TrimSpace(provider), "deepseek") {
+		return strings.TrimSpace(os.Getenv("DEEPSEEK_FINAL_MODEL"))
+	}
+	if strings.EqualFold(strings.TrimSpace(provider), "openai") {
+		return strings.TrimSpace(os.Getenv("OPENAI_FINAL_MODEL"))
+	}
+	if strings.EqualFold(strings.TrimSpace(provider), "moonshot") {
+		return strings.TrimSpace(os.Getenv("MOONSHOT_FINAL_MODEL"))
+	}
+	return strings.TrimSpace(os.Getenv("OPENROUTER_FINAL_MODEL"))
+}
+
+func finalizeOpenRouterAfterMaxTurns(ctx context.Context, writer *session.Writer, runner script.Runner, client *modeladapter.Client, finalClient *modeladapter.Client, messages []modeladapter.Message, readLedger *readLedger, providerLabel string, cfg modeladapter.OpenRouterConfig) error {
 	maxTurns := client.MaxTurns()
-	messages = append(messages, modeladapter.Message{
-		Role:    "user",
-		Content: openRouterMaxTurnsFinalPrompt(maxTurns),
-	})
-	completion, err := client.Complete(ctx, messages, nil)
+	compactedMessages, compaction := compactOpenRouterFinalMessagesWithReadLedger(messages, openRouterMaxTurnsFinalPrompt(maxTurns), readLedger)
+	if err := writer.Write(session.Event{
+		"type":        "final_handoff_compacted",
+		"session_id":  runner.SessionID,
+		"final_model": finalClient.Model(),
+		"stats":       compaction,
+	}); err != nil {
+		return err
+	}
+	completion, err := finalClient.CompleteWithOptions(ctx, compactedMessages, nil, openRouterFinalCompletionOptions(cfg))
 	if err != nil {
-		return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("openrouter model loop exceeded maximum turns; final handoff failed: %w", err))
+		return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s model loop exceeded maximum turns; final handoff failed: %w", providerLabel, err))
 	}
 	msg := completion.Message
 	if err := writer.Write(modelResponseEvent(runner.SessionID, maxTurns+1, completion, len(msg.ToolCalls))); err != nil {
@@ -324,14 +445,14 @@ func finalizeOpenRouterAfterMaxTurns(ctx context.Context, writer *session.Writer
 	}
 	sanitizedContent, strippedProviderMarkup := modeladapter.SanitizeAssistantContent(msg.Content)
 	if len(msg.ToolCalls) > 0 {
-		return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("openrouter model loop exceeded maximum turns; final handoff tried to call tools"))
+		return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s model loop exceeded maximum turns; final handoff tried to call tools", providerLabel))
 	}
 	if strippedProviderMarkup && strings.TrimSpace(sanitizedContent) == "" {
-		return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("openrouter model loop exceeded maximum turns; final handoff contained only provider tool-call markup"))
+		return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s model loop exceeded maximum turns; final handoff contained only provider tool-call markup", providerLabel))
 	}
 	sanitizedContent = strings.TrimSpace(sanitizedContent)
 	if sanitizedContent == "" {
-		return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("openrouter model loop exceeded maximum turns; final handoff was empty"))
+		return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s model loop exceeded maximum turns; final handoff was empty", providerLabel))
 	}
 	return runner.Final(script.Action{
 		Type:    "final_response",
@@ -348,6 +469,28 @@ Do not call more tools. Produce a concise handoff for the user instead:
 - List any files you believe were changed, or say none/unknown.
 - List verification already run, or say not run.
 - State the next concrete step the user can ask for to continue.`, maxTurns)
+}
+
+func openRouterCompletionOptions(cfg modeladapter.OpenRouterConfig) modeladapter.CompletionOptions {
+	return modeladapter.CompletionOptions{
+		ReasoningEffort: strings.TrimSpace(cfg.ReasoningEffort),
+	}
+}
+
+func openRouterFinalCompletionOptions(cfg modeladapter.OpenRouterConfig) modeladapter.CompletionOptions {
+	return openRouterCompletionOptions(cfg)
+}
+
+func openRouterSynthesisFinalPrompt(guidance openRouterProgressGuidance) string {
+	return fmt.Sprintf(`This is a planned synthesis checkpoint at turn %d of %d, before the hard cap.
+
+Tools are unavailable for this request. Produce the final user-facing answer now from the gathered evidence:
+- Do not say the turn budget was reached.
+- Answer the original user request directly.
+- Distinguish confirmed gaps from unverified items.
+- A feature is not missing merely because there is no same-named file; it may be implemented inline in CLI, script, model adapter, or orchestration code.
+- Keep uncertainty where it is honest, but do not ask the user to continue unless a concrete blocker remains.
+- Prefer a concise structured answer over exhaustive audit notes.`, guidance.Turn, guidance.MaxTurns)
 }
 
 func abortOpenRouterRun(writer *session.Writer, sessionID string, err error) error {
@@ -409,4 +552,30 @@ func defaultDataDir() string {
 		return "."
 	}
 	return filepath.Join(home, ".little-control-room")
+}
+
+func parseOptionalTemperature(raw string) (*float64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	temperature, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --temperature %q: %w", raw, err)
+	}
+	if temperature < 0 {
+		return nil, fmt.Errorf("invalid --temperature %q: must be non-negative", raw)
+	}
+	return &temperature, nil
+}
+
+func splitCommaFields(raw string) []string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }

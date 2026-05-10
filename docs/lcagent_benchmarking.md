@@ -12,6 +12,18 @@ There are two commits to keep straight:
 For harness comparisons, vary the harness commit and keep the target commit,
 prompt, model, provider, autonomy level, and data-dir freshness fixed.
 
+## Archived Research Runs
+
+Research artifacts should keep a compact human-readable note, a printable report
+when useful, and structured summary data. Avoid committing raw stream logs by
+default; they are large and usually belong in a temporary scratch root unless a
+specific debugging task needs them.
+
+- 2026-05-10 model-routing comparison:
+  [research note](research/lcagent_model_benchmark_2026-05-10.md),
+  [printable report](research/lcagent_model_benchmark_2026-05-10_report.html),
+  [CSV results](research/lcagent_model_benchmark_2026-05-10_results.csv).
+
 ## Fixed Snapshot Workflow
 
 Pick a target commit and create an isolated worktree:
@@ -62,6 +74,13 @@ Track at least:
 - `read_file_overlapping_lines`
 - `token_usage`
 - `max_input_tokens`
+
+Also record model-control knobs separately from provider labels:
+
+- requested reasoning effort (`low`, `default`, `disabled`, etc.)
+- temperature, including whether it was omitted
+- provider routing/pinning, such as OpenRouter `provider.only`
+- whether provider fallbacks were allowed
 
 For fair comparisons, keep the task prompt, model, provider, autonomy level,
 data-dir freshness, and benchmark commit fixed.

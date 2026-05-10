@@ -73,6 +73,12 @@ type fileOutlineArgs struct {
 	Path string `json:"path"`
 }
 
+type moduleOutlineArgs struct {
+	Path     string `json:"path"`
+	FileGlob string `json:"file_glob"`
+	MaxFiles int    `json:"max_files"`
+}
+
 type loadSkillArgs struct {
 	Name string `json:"name"`
 }
@@ -188,6 +194,12 @@ func (r Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, e
 			return tools.ToolResult{}, err
 		}
 		result = r.Files.Outline(args.Path)
+	case "module_outline":
+		var args moduleOutlineArgs
+		if err := json.Unmarshal(action.Args, &args); err != nil {
+			return tools.ToolResult{}, err
+		}
+		result = r.Files.ModuleOutline(args.Path, args.FileGlob, args.MaxFiles)
 	case "load_skill":
 		var args loadSkillArgs
 		if err := json.Unmarshal(action.Args, &args); err != nil {

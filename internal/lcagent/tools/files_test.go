@@ -101,6 +101,18 @@ func (r *Runner) String() string {
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte(mdBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(root, "internal", "mod"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal", "mod", "worker.go"), []byte("package mod\n\nfunc Work() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "vendor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "vendor", "skip.go"), []byte("package vendor\n\nfunc Skip() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	w, err := policy.NewWorkspace(root, policy.AutonomyOff)
 	if err != nil {
 		t.Fatal(err)
@@ -125,6 +137,19 @@ func (r *Runner) String() string {
 		if !strings.Contains(mdOutline.Output, want) {
 			t.Fatalf("markdown outline missing %q:\n%s", want, mdOutline.Output)
 		}
+	}
+
+	moduleOutline := files.ModuleOutline(".", "*.go", 10)
+	if !moduleOutline.Success {
+		t.Fatalf("module outline failed: %s", moduleOutline.Error)
+	}
+	for _, want := range []string{"path: .", "files: 2", "file: demo.go", "file: internal/mod/worker.go", "func Work lines"} {
+		if !strings.Contains(moduleOutline.Output, want) {
+			t.Fatalf("module outline missing %q:\n%s", want, moduleOutline.Output)
+		}
+	}
+	if strings.Contains(moduleOutline.Output, "vendor/skip.go") {
+		t.Fatalf("module outline should skip vendor:\n%s", moduleOutline.Output)
 	}
 }
 

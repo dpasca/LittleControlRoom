@@ -654,7 +654,7 @@ func TestBossHostNoticeQueuedWhileClosedAppearsOnOpen(t *testing.T) {
 		"Ada is back from Cursor cleanup.",
 		"Cursor access still needs user-side confirmation.",
 	} {
-		if strings.Contains(view, want) {
+		if bossTextContains(view, want) {
 			t.Fatalf("reopened Boss Chat transcript should not contain queued notice %q:\n%s", want, view)
 		}
 		if !strings.Contains(noticeText, want) {
@@ -688,7 +688,7 @@ func TestBossHostChatNoticeQueuedWhileClosedAppearsInTranscriptOnOpen(t *testing
 		"Ken is back from ChatNext3.",
 		"No migration needed; DB/schema stayed untouched.",
 	} {
-		if !strings.Contains(view, want) {
+		if !bossTextContains(view, want) {
 			t.Fatalf("reopened Boss Chat transcript missing queued chat notice %q:\n%s", want, view)
 		}
 		if !strings.Contains(noticeText, want) {
