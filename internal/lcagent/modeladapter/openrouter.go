@@ -821,20 +821,45 @@ func LoadEnvFile(path string) error {
 	return nil
 }
 
+type ToolOptions struct {
+	ToolProfile             string
+	DefaultReadLineLimit    int
+	MaxReadLineLimit        int
+	DefaultListEntryLimit   int
+	MaxListEntryLimit       int
+	DefaultSearchMaxMatch   int
+	MaxSearchMaxMatch       int
+	MaxSearchContextLines   int
+	DefaultOutlineFileLimit int
+	MaxOutlineFileLimit     int
+	MaxModuleOutlineChars   int
+}
+
 func Tools() []ToolDefinition {
+	return ToolsWithOptions(ToolOptions{})
+}
+
+func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
+	opts = opts.withDefaults()
+	readDescription := "Read a bounded line range from a text file inside the workspace. Prefer targeted ranges after search or file_outline; use broad reads only when the whole range is relevant."
+	limitDescription := fmt.Sprintf("Maximum lines to read. For scouting, prefer 40-100 lines; larger ranges are allowed when needed. Defaults to %d.", opts.DefaultReadLineLimit)
+	if strings.EqualFold(opts.ToolProfile, "generous") {
+		readDescription = "Read a bounded line range from a text file inside the workspace. Larger read limits are available in this run: after search or file_outline identifies a central file, prefer contiguous evidence-complete ranges over tiny samples."
+		limitDescription = fmt.Sprintf("Maximum lines to read. For central files, prefer 120-300 line ranges and continue with next_offset when useful. Defaults to %d.", opts.DefaultReadLineLimit)
+	}
 	return []ToolDefinition{
 		{
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "read_file",
-				Description: "Read a bounded line range from a text file inside the workspace. Prefer targeted ranges after search or file_outline; use broad reads only when the whole range is relevant.",
+				Description: readDescription,
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
 						"path":   map[string]any{"type": "string", "description": "Workspace-relative path. Absolute paths are denied."},
 						"offset": map[string]any{"type": "integer", "minimum": 1, "description": "1-based starting line. Defaults to 1."},
-						"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": 1000, "description": "Maximum lines to read. For scouting, prefer 40-100 lines; larger ranges are allowed when needed. Defaults to 200."},
+						"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": opts.MaxReadLineLimit, "description": limitDescription},
 					},
 					"required": []string{"path"},
 				},
@@ -866,7 +891,7 @@ func Tools() []ToolDefinition {
 					"properties": map[string]any{
 						"path":      map[string]any{"type": "string", "description": "Workspace-relative directory or file. Defaults to workspace root. Absolute paths are denied."},
 						"file_glob": map[string]any{"type": "string", "description": "Optional filepath glob matched against relative path or basename, for example *.go."},
-						"max_files": map[string]any{"type": "integer", "minimum": 1, "maximum": 80, "description": "Maximum files to outline. Defaults to 30."},
+						"max_files": map[string]any{"type": "integer", "minimum": 1, "maximum": opts.MaxOutlineFileLimit, "description": fmt.Sprintf("Maximum files to outline. Defaults to %d.", opts.DefaultOutlineFileLimit)},
 					},
 				},
 			},
@@ -882,7 +907,7 @@ func Tools() []ToolDefinition {
 					"properties": map[string]any{
 						"path":        map[string]any{"type": "string", "description": "Workspace-relative directory or file to list. Defaults to workspace root. Absolute paths are denied."},
 						"glob":        map[string]any{"type": "string", "description": "Optional filepath glob matched against relative path or basename."},
-						"max_entries": map[string]any{"type": "integer", "minimum": 1, "maximum": 1000},
+						"max_entries": map[string]any{"type": "integer", "minimum": 1, "maximum": opts.MaxListEntryLimit},
 					},
 				},
 			},
@@ -891,17 +916,17 @@ func Tools() []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "search",
-				Description: "Search text files in the workspace for a literal query string, optionally returning a small context window around each match.",
+				Description: "Search text files in the workspace with case-insensitive literal substring matching, optionally returning a small context window around each match. The query is not a regex, glob, or alternation pattern.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"query":          map[string]any{"type": "string"},
+						"query":          map[string]any{"type": "string", "description": "Case-insensitive literal substring to find. Do not use regex syntax; use separate calls for separate identifiers or phrases."},
 						"path":           map[string]any{"type": "string", "description": "Workspace-relative directory or file to search. Defaults to workspace root. Absolute paths are denied."},
 						"file_glob":      map[string]any{"type": "string", "description": "Optional filepath glob matched against relative path or basename."},
-						"max_matches":    map[string]any{"type": "integer", "minimum": 1, "maximum": 200},
-						"context_before": map[string]any{"type": "integer", "minimum": 0, "maximum": 8, "description": "Lines of context before each match. Defaults to 1 in the harness."},
-						"context_after":  map[string]any{"type": "integer", "minimum": 0, "maximum": 8, "description": "Lines of context after each match. Defaults to 2 in the harness."},
+						"max_matches":    map[string]any{"type": "integer", "minimum": 1, "maximum": opts.MaxSearchMaxMatch},
+						"context_before": map[string]any{"type": "integer", "minimum": 0, "maximum": opts.MaxSearchContextLines, "description": "Lines of context before each match. Defaults to 1 in the harness."},
+						"context_after":  map[string]any{"type": "integer", "minimum": 0, "maximum": opts.MaxSearchContextLines, "description": "Lines of context after each match. Defaults to 2 in the harness."},
 					},
 					"required": []string{"query"},
 				},
@@ -1000,7 +1025,73 @@ func Tools() []ToolDefinition {
 	}
 }
 
+func (o ToolOptions) withDefaults() ToolOptions {
+	if o.DefaultReadLineLimit <= 0 {
+		o.DefaultReadLineLimit = 200
+	}
+	if o.MaxReadLineLimit <= 0 {
+		o.MaxReadLineLimit = 1000
+	}
+	if o.DefaultListEntryLimit <= 0 {
+		o.DefaultListEntryLimit = 200
+	}
+	if o.MaxListEntryLimit <= 0 {
+		o.MaxListEntryLimit = 1000
+	}
+	if o.DefaultSearchMaxMatch <= 0 {
+		o.DefaultSearchMaxMatch = 50
+	}
+	if o.MaxSearchMaxMatch <= 0 {
+		o.MaxSearchMaxMatch = 200
+	}
+	if o.MaxSearchContextLines <= 0 {
+		o.MaxSearchContextLines = 8
+	}
+	if o.DefaultOutlineFileLimit <= 0 {
+		o.DefaultOutlineFileLimit = 30
+	}
+	if o.MaxOutlineFileLimit <= 0 {
+		o.MaxOutlineFileLimit = 80
+	}
+	if o.MaxModuleOutlineChars <= 0 {
+		o.MaxModuleOutlineChars = 24000
+	}
+	if o.MaxReadLineLimit < o.DefaultReadLineLimit {
+		o.MaxReadLineLimit = o.DefaultReadLineLimit
+	}
+	if o.MaxListEntryLimit < o.DefaultListEntryLimit {
+		o.MaxListEntryLimit = o.DefaultListEntryLimit
+	}
+	if o.MaxSearchMaxMatch < o.DefaultSearchMaxMatch {
+		o.MaxSearchMaxMatch = o.DefaultSearchMaxMatch
+	}
+	if o.MaxOutlineFileLimit < o.DefaultOutlineFileLimit {
+		o.MaxOutlineFileLimit = o.DefaultOutlineFileLimit
+	}
+	return o
+}
+
+type SystemPromptOptions struct {
+	ToolProfile          string
+	DefaultReadLineLimit int
+	MaxReadLineLimit     int
+}
+
 func SystemPrompt(skillIndex, projectInstructions string) string {
+	return SystemPromptWithOptions(skillIndex, projectInstructions, SystemPromptOptions{})
+}
+
+func SystemPromptWithOptions(skillIndex, projectInstructions string, opts SystemPromptOptions) string {
+	if opts.DefaultReadLineLimit <= 0 {
+		opts.DefaultReadLineLimit = 200
+	}
+	if opts.MaxReadLineLimit <= 0 {
+		opts.MaxReadLineLimit = 1000
+	}
+	readScoutingLine := "When scouting with read_file, prefer 40-100 lines; use larger ranges only when the whole range is relevant. If read_file returns next_offset, continue there instead of overlapping the previous range."
+	if strings.EqualFold(opts.ToolProfile, "generous") {
+		readScoutingLine = "When a file is plausibly central, prefer 120-300 line read_file ranges and continue with next_offset until the relevant contiguous context is covered."
+	}
 	lines := []string{
 		"You are lcagent, a small local coding-agent harness controlled by Little Control Room.",
 		"Use the provided tools for all workspace inspection, edits, plan updates, and final responses.",
@@ -1008,8 +1099,9 @@ func SystemPrompt(skillIndex, projectInstructions string) string {
 		"For unfamiliar source or Markdown files, prefer file_outline before raw reads.",
 		"For broad repo, package, or module review, prefer module_outline before reading many files.",
 		"For specific behavior, identifiers, errors, commands, or tests, prefer search with context before raw reads.",
+		"Search queries are case-insensitive literal substrings, not regexes, globs, or alternation patterns; use separate searches for separate identifiers or phrases.",
 		"Use read_file for targeted ranges. Reading from line 1 is useful for imports/package context, but do not default to first-N-line scouting when an outline or search can locate the relevant range.",
-		"When scouting with read_file, prefer 40-100 lines; use larger ranges only when the whole range is relevant. If read_file returns next_offset, continue there instead of overlapping the previous range.",
+		readScoutingLine,
 		"Use workspace-relative paths in file tools; absolute paths are denied.",
 		"File tools are workspace-only; use read-only run_command argv for paths outside the workspace.",
 		"When using run_command, prefer argv over command strings; shell commands are for shell syntax only.",
@@ -1017,6 +1109,11 @@ func SystemPrompt(skillIndex, projectInstructions string) string {
 		"Skill descriptions in this prompt are metadata only; call load_skill before relying on any skill instructions.",
 		"Use apply_patch for source edits. Patches must use this exact shape: *** Begin Patch, *** Update File: path, @@, -old line, +new line, *** End Patch.",
 		"When done, call final_response exactly once. Its summary must contain the full answer; verification is only supporting evidence.",
+	}
+	if strings.EqualFold(opts.ToolProfile, "generous") {
+		lines = append(lines,
+			fmt.Sprintf("For this run, read_file defaults to %d lines and permits up to %d lines. Once outline/search identifies a central file, read enough contiguous context to understand it rather than sampling only small first chunks.", opts.DefaultReadLineLimit, opts.MaxReadLineLimit),
+		)
 	}
 	if strings.TrimSpace(skillIndex) != "" {
 		lines = append(lines, "", strings.TrimSpace(skillIndex))

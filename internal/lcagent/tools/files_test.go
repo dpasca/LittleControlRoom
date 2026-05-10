@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -56,6 +57,9 @@ func TestFileToolsReadListAndSearch(t *testing.T) {
 	if !strings.Contains(search.Output, "docs/note.txt:1: needle in docs") || strings.Contains(search.Output, "README.md") {
 		t.Fatalf("search output = %q", search.Output)
 	}
+	if !strings.Contains(search.Output, "match_type: literal_substring_case_insensitive") {
+		t.Fatalf("search output missing match type:\n%s", search.Output)
+	}
 
 	searchWithContext := files.SearchContext("needle", "README.md", "", 20, 1, 1)
 	if !searchWithContext.Success {
@@ -70,6 +74,44 @@ func TestFileToolsReadListAndSearch(t *testing.T) {
 	binary := files.Read("image.bin", 1, 20)
 	if binary.Success || !binary.Binary || !strings.Contains(binary.Error, "binary file suppressed") {
 		t.Fatalf("binary read = %#v, want suppressed failure", binary)
+	}
+}
+
+func TestFileToolsHonorsCustomReadLimits(t *testing.T) {
+	root := t.TempDir()
+	var body strings.Builder
+	for i := 1; i <= 12; i++ {
+		fmt.Fprintf(&body, "line %02d\n", i)
+	}
+	if err := os.WriteFile(filepath.Join(root, "big.txt"), []byte(body.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyOff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := FileTools{
+		Workspace: w,
+		Limits: FileLimits{
+			DefaultReadLineLimit: 3,
+			MaxReadLineLimit:     5,
+		},
+	}
+
+	readDefault := files.Read("big.txt", 1, 0)
+	if !readDefault.Success {
+		t.Fatalf("read default failed: %s", readDefault.Error)
+	}
+	if !strings.Contains(readDefault.Output, "lines: 1-3") || !strings.Contains(readDefault.Output, "read truncated after 3 lines") {
+		t.Fatalf("default read did not honor custom limit:\n%s", readDefault.Output)
+	}
+
+	readCapped := files.Read("big.txt", 1, 100)
+	if !readCapped.Success {
+		t.Fatalf("read capped failed: %s", readCapped.Error)
+	}
+	if !strings.Contains(readCapped.Output, "lines: 1-5") || !strings.Contains(readCapped.Output, "read truncated after 5 lines") {
+		t.Fatalf("capped read did not honor custom max:\n%s", readCapped.Output)
 	}
 }
 

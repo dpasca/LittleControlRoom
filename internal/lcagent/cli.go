@@ -76,7 +76,7 @@ func runMetrics(args []string, stdout io.Writer) error {
 func runExec(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, finalModel, envFile, reasoningEffort, temperatureRaw, providerOnlyRaw string
+	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, finalModel, envFile, reasoningEffort, temperatureRaw, providerOnlyRaw, toolProfileRaw, contextProfileRaw string
 	var requestTimeout time.Duration
 	var maxTurns int
 	fs.StringVar(&cwd, "cwd", "", "workspace root")
@@ -91,6 +91,8 @@ func runExec(args []string, stdout io.Writer) error {
 	fs.StringVar(&reasoningEffort, "reasoning-effort", "", "optional provider reasoning effort, for example low")
 	fs.StringVar(&temperatureRaw, "temperature", "", "optional sampling temperature; defaults to 0.2 for chat-completions providers that send temperature; use omitted to suppress")
 	fs.StringVar(&providerOnlyRaw, "openrouter-provider-only", "", "comma-separated OpenRouter provider slugs allowed for this request, for example anthropic")
+	fs.StringVar(&toolProfileRaw, "tool-profile", string(tools.FileProfileBalanced), "file tool budget profile: balanced or generous")
+	fs.StringVar(&contextProfileRaw, "context-profile", string(openRouterContextProfileBalanced), "provider loop context profile: balanced or large")
 	fs.DurationVar(&requestTimeout, "request-timeout", 0, "provider HTTP request timeout, for example 10m; default 2m")
 	fs.IntVar(&maxTurns, "max-turns", modeladapter.DefaultOpenRouterMaxTurns, "maximum model turns for provider loops")
 	if err := fs.Parse(args); err != nil {
@@ -127,6 +129,16 @@ func runExec(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	toolProfile, err := tools.ParseFileProfile(toolProfileRaw)
+	if err != nil {
+		return err
+	}
+	fileLimits := tools.FileLimitsForProfile(toolProfile)
+	contextProfile, err := parseOpenRouterContextProfile(contextProfileRaw)
+	if err != nil {
+		return err
+	}
+	contextOptions := openRouterContextOptionsForProfile(contextProfile)
 	if strings.TrimSpace(model) == "" {
 		switch strings.ToLower(strings.TrimSpace(provider)) {
 		case "openrouter":
@@ -152,6 +164,23 @@ func runExec(args []string, stdout io.Writer) error {
 	}
 	defer writer.Close()
 	if err := writer.Write(session.Meta(sessionID, workspace.Root, string(auto), provider, model, version, started)); err != nil {
+		return err
+	}
+	if err := writer.Write(session.Event{
+		"type":         "tool_profile",
+		"session_id":   sessionID,
+		"profile":      string(toolProfile),
+		"file_limits":  fileLimits,
+		"schema_label": "file_tools",
+	}); err != nil {
+		return err
+	}
+	if err := writer.Write(session.Event{
+		"type":       "context_profile",
+		"session_id": sessionID,
+		"profile":    string(contextProfile),
+		"options":    contextOptions,
+	}); err != nil {
 		return err
 	}
 	if strings.TrimSpace(instructions.Body) != "" {
@@ -181,7 +210,7 @@ func runExec(args []string, stdout io.Writer) error {
 		Session:      writer,
 		Command:      tools.CommandRunner{Workspace: workspace, ArtifactDir: artifactDir},
 		Patch:        tools.PatchApplier{Workspace: workspace},
-		Files:        tools.FileTools{Workspace: workspace},
+		Files:        tools.FileTools{Workspace: workspace, Limits: fileLimits},
 		Skills:       catalog,
 		SessionID:    sessionID,
 		Prompt:       prompt,
@@ -210,7 +239,7 @@ func runExec(args []string, stdout io.Writer) error {
 			Temperature:     temperature,
 			OmitTemperature: omitTemperature,
 			ProviderOnly:    splitCommaFields(providerOnlyRaw),
-		}, strings.ToLower(strings.TrimSpace(provider)))
+		}, strings.ToLower(strings.TrimSpace(provider)), toolProfile, fileLimits, contextOptions)
 	default:
 		return fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -230,7 +259,8 @@ func runExec(args []string, stdout io.Writer) error {
 	return nil
 }
 
-func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Runner, projectInstructionPrompt string, cfg modeladapter.OpenRouterConfig, provider string) error {
+func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Runner, projectInstructionPrompt string, cfg modeladapter.OpenRouterConfig, provider string, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions) error {
+	contextOptions = contextOptions.withDefaults()
 	providerLabel := strings.ToLower(strings.TrimSpace(provider))
 	if providerLabel == "" {
 		providerLabel = "openrouter"
@@ -262,30 +292,30 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 	}
 
 	messages := []modeladapter.Message{
-		{Role: "system", Content: modeladapter.SystemPrompt(runner.Skills.PromptIndex(0), projectInstructionPrompt)},
+		{Role: "system", Content: modeladapter.SystemPromptWithOptions(runner.Skills.PromptIndex(0), projectInstructionPrompt, modelSystemPromptOptions(toolProfile, fileLimits))},
 		{Role: "user", Content: runner.Prompt},
 	}
 	readLedger := newReadLedger()
-	toolsDef := modeladapter.Tools()
+	toolsDef := modeladapter.ToolsWithOptions(modelToolOptions(toolProfile, fileLimits))
 	for turn := 0; turn < client.MaxTurns(); turn++ {
-		if compactedMessages, compaction, compacted := compactOpenRouterLoopMessagesWithReadLedger(messages, readLedger); compacted {
+		if compactedMessages, compaction, compacted := compactOpenRouterLoopMessagesWithOptions(messages, readLedger, contextOptions); compacted {
 			if err := writer.Write(session.Event{
 				"type":       "context_compacted",
 				"session_id": runner.SessionID,
 				"turn":       turn + 1,
-				"threshold":  loopCompactionCharThreshold,
+				"threshold":  contextOptions.LoopCompactionCharThreshold,
 				"stats":      compaction,
 			}); err != nil {
 				return err
 			}
 			messages = compactedMessages
 		}
-		guidance := openRouterGuidanceForTurn(turn+1, client.MaxTurns(), messages, readLedger)
+		guidance := openRouterGuidanceForTurnWithOptions(turn+1, client.MaxTurns(), messages, readLedger, openRouterGuidanceOptions{ToolProfile: string(toolProfile)})
 		requestMessages := appendOpenRouterProgressNote(messages, guidance, readLedger)
 		requestTools := toolsDef
 		if guidance.ForceSynthesis {
 			var compaction finalHandoffCompactionStats
-			requestMessages, compaction = compactOpenRouterFinalMessagesWithReadLedger(messages, openRouterSynthesisFinalPrompt(guidance), readLedger)
+			requestMessages, compaction = compactOpenRouterFinalMessagesWithOptions(messages, openRouterSynthesisFinalPrompt(guidance), readLedger, contextOptions)
 			requestTools = nil
 			if err := writer.Write(session.Event{
 				"type":        "synthesis_requested",
@@ -383,7 +413,7 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 			}
 		}
 	}
-	return finalizeOpenRouterAfterMaxTurns(ctx, writer, runner, client, finalClient, messages, readLedger, providerLabel, cfg)
+	return finalizeOpenRouterAfterMaxTurns(ctx, writer, runner, client, finalClient, messages, readLedger, providerLabel, cfg, contextOptions)
 }
 
 func newChatProviderClient(provider string, cfg modeladapter.OpenRouterConfig) (*modeladapter.Client, error) {
@@ -425,9 +455,9 @@ func openRouterFinalModel(provider string, cfg modeladapter.OpenRouterConfig) st
 	return strings.TrimSpace(os.Getenv("OPENROUTER_FINAL_MODEL"))
 }
 
-func finalizeOpenRouterAfterMaxTurns(ctx context.Context, writer *session.Writer, runner script.Runner, client *modeladapter.Client, finalClient *modeladapter.Client, messages []modeladapter.Message, readLedger *readLedger, providerLabel string, cfg modeladapter.OpenRouterConfig) error {
+func finalizeOpenRouterAfterMaxTurns(ctx context.Context, writer *session.Writer, runner script.Runner, client *modeladapter.Client, finalClient *modeladapter.Client, messages []modeladapter.Message, readLedger *readLedger, providerLabel string, cfg modeladapter.OpenRouterConfig, contextOptions openRouterContextOptions) error {
 	maxTurns := client.MaxTurns()
-	compactedMessages, compaction := compactOpenRouterFinalMessagesWithReadLedger(messages, openRouterMaxTurnsFinalPrompt(maxTurns), readLedger)
+	compactedMessages, compaction := compactOpenRouterFinalMessagesWithOptions(messages, openRouterMaxTurnsFinalPrompt(maxTurns), readLedger, contextOptions)
 	if err := writer.Write(session.Event{
 		"type":        "final_handoff_compacted",
 		"session_id":  runner.SessionID,
@@ -583,4 +613,28 @@ func splitCommaFields(raw string) []string {
 		}
 	}
 	return out
+}
+
+func modelToolOptions(profile tools.FileProfile, limits tools.FileLimits) modeladapter.ToolOptions {
+	return modeladapter.ToolOptions{
+		ToolProfile:             string(profile),
+		DefaultReadLineLimit:    limits.DefaultReadLineLimit,
+		MaxReadLineLimit:        limits.MaxReadLineLimit,
+		DefaultListEntryLimit:   limits.DefaultListEntryLimit,
+		MaxListEntryLimit:       limits.MaxListEntryLimit,
+		DefaultSearchMaxMatch:   limits.DefaultSearchMaxMatch,
+		MaxSearchMaxMatch:       limits.MaxSearchMaxMatch,
+		MaxSearchContextLines:   limits.MaxSearchContextLines,
+		DefaultOutlineFileLimit: limits.DefaultOutlineFileLimit,
+		MaxOutlineFileLimit:     limits.MaxOutlineFileLimit,
+		MaxModuleOutlineChars:   limits.MaxModuleOutlineChars,
+	}
+}
+
+func modelSystemPromptOptions(profile tools.FileProfile, limits tools.FileLimits) modeladapter.SystemPromptOptions {
+	return modeladapter.SystemPromptOptions{
+		ToolProfile:          string(profile),
+		DefaultReadLineLimit: limits.DefaultReadLineLimit,
+		MaxReadLineLimit:     limits.MaxReadLineLimit,
+	}
 }

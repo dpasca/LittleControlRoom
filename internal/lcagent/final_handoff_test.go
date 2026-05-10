@@ -142,3 +142,51 @@ func TestCompactOpenRouterLoopMessagesIncludesReadLedger(t *testing.T) {
 		}
 	}
 }
+
+func TestLargeContextProfileDefersLoopCompaction(t *testing.T) {
+	var output strings.Builder
+	output.WriteString("file: big.go\ntotal_lines: 1000\nhas_more: false\nlines: 1-1000\n\n")
+	for i := 1; i <= 1000; i++ {
+		fmt.Fprintf(&output, "%d | line %04d compact-me compact-me compact-me compact-me compact-me compact-me\n", i, i)
+	}
+	result, err := json.Marshal(tools.ToolResult{Success: true, Output: output.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages := []modeladapter.Message{
+		{Role: "system", Content: "system prompt"},
+		{Role: "user", Content: "review the module"},
+		{Role: "assistant", ToolCalls: []modeladapter.ToolCall{{
+			ID: "call_read",
+			Function: modeladapter.FunctionCall{
+				Name:      "read_file",
+				Arguments: json.RawMessage(`{"path":"big.go","limit":1000}`),
+			},
+		}}},
+		{Role: "tool", ToolCallID: "call_read", Content: string(result)},
+	}
+
+	if _, _, ok := compactOpenRouterLoopMessages(messages); !ok {
+		t.Fatal("default loop compaction did not trigger")
+	}
+	largeOpts := openRouterContextOptionsForProfile(openRouterContextProfileLarge)
+	if _, _, ok := compactOpenRouterLoopMessagesWithOptions(messages, nil, largeOpts); ok {
+		t.Fatal("large context profile compacted before its larger threshold")
+	}
+	if largeOpts.LoopCompactionCharThreshold <= loopCompactionCharThreshold {
+		t.Fatalf("large threshold = %d, want > %d", largeOpts.LoopCompactionCharThreshold, loopCompactionCharThreshold)
+	}
+}
+
+func TestParseOpenRouterContextProfile(t *testing.T) {
+	profile, err := parseOpenRouterContextProfile(" large ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile != openRouterContextProfileLarge {
+		t.Fatalf("profile = %q, want large", profile)
+	}
+	if _, err := parseOpenRouterContextProfile("huge"); err == nil {
+		t.Fatal("invalid context profile parsed without error")
+	}
+}

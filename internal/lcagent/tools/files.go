@@ -34,11 +34,134 @@ const (
 	fileScannerMaxToken     = 1024 * 1024
 )
 
+type FileProfile string
+
+const (
+	FileProfileBalanced FileProfile = "balanced"
+	FileProfileGenerous FileProfile = "generous"
+)
+
+type FileLimits struct {
+	DefaultReadLineLimit    int `json:"default_read_line_limit"`
+	MaxReadLineLimit        int `json:"max_read_line_limit"`
+	DefaultListEntryLimit   int `json:"default_list_entry_limit"`
+	MaxListEntryLimit       int `json:"max_list_entry_limit"`
+	DefaultSearchMaxMatch   int `json:"default_search_max_match"`
+	MaxSearchMaxMatch       int `json:"max_search_max_match"`
+	MaxSearchContextLines   int `json:"max_search_context_lines"`
+	DefaultOutlineFileLimit int `json:"default_outline_file_limit"`
+	MaxOutlineFileLimit     int `json:"max_outline_file_limit"`
+	MaxModuleOutlineChars   int `json:"max_module_outline_chars"`
+}
+
 type FileTools struct {
 	Workspace policy.Workspace
+	Limits    FileLimits
+}
+
+func ParseFileProfile(raw string) (FileProfile, error) {
+	switch FileProfile(strings.ToLower(strings.TrimSpace(raw))) {
+	case "", FileProfileBalanced:
+		return FileProfileBalanced, nil
+	case FileProfileGenerous:
+		return FileProfileGenerous, nil
+	default:
+		return "", fmt.Errorf("unknown tool profile %q (expected %q or %q)", raw, FileProfileBalanced, FileProfileGenerous)
+	}
+}
+
+func FileLimitsForProfile(profile FileProfile) FileLimits {
+	switch profile {
+	case FileProfileGenerous:
+		return GenerousFileLimits()
+	default:
+		return BalancedFileLimits()
+	}
+}
+
+func BalancedFileLimits() FileLimits {
+	return FileLimits{
+		DefaultReadLineLimit:    defaultReadLineLimit,
+		MaxReadLineLimit:        maxReadLineLimit,
+		DefaultListEntryLimit:   defaultListEntryLimit,
+		MaxListEntryLimit:       maxListEntryLimit,
+		DefaultSearchMaxMatch:   defaultSearchMaxMatch,
+		MaxSearchMaxMatch:       maxSearchMaxMatch,
+		MaxSearchContextLines:   maxSearchContextLines,
+		DefaultOutlineFileLimit: defaultOutlineFileLimit,
+		MaxOutlineFileLimit:     maxOutlineFileLimit,
+		MaxModuleOutlineChars:   maxModuleOutlineChars,
+	}
+}
+
+func GenerousFileLimits() FileLimits {
+	return FileLimits{
+		DefaultReadLineLimit:    400,
+		MaxReadLineLimit:        2500,
+		DefaultListEntryLimit:   400,
+		MaxListEntryLimit:       2000,
+		DefaultSearchMaxMatch:   100,
+		MaxSearchMaxMatch:       500,
+		MaxSearchContextLines:   16,
+		DefaultOutlineFileLimit: 60,
+		MaxOutlineFileLimit:     160,
+		MaxModuleOutlineChars:   48000,
+	}
+}
+
+func (t FileTools) limits() FileLimits {
+	return t.Limits.withDefaults()
+}
+
+func (l FileLimits) withDefaults() FileLimits {
+	defaults := BalancedFileLimits()
+	if l.DefaultReadLineLimit <= 0 {
+		l.DefaultReadLineLimit = defaults.DefaultReadLineLimit
+	}
+	if l.MaxReadLineLimit <= 0 {
+		l.MaxReadLineLimit = defaults.MaxReadLineLimit
+	}
+	if l.DefaultListEntryLimit <= 0 {
+		l.DefaultListEntryLimit = defaults.DefaultListEntryLimit
+	}
+	if l.MaxListEntryLimit <= 0 {
+		l.MaxListEntryLimit = defaults.MaxListEntryLimit
+	}
+	if l.DefaultSearchMaxMatch <= 0 {
+		l.DefaultSearchMaxMatch = defaults.DefaultSearchMaxMatch
+	}
+	if l.MaxSearchMaxMatch <= 0 {
+		l.MaxSearchMaxMatch = defaults.MaxSearchMaxMatch
+	}
+	if l.MaxSearchContextLines <= 0 {
+		l.MaxSearchContextLines = defaults.MaxSearchContextLines
+	}
+	if l.DefaultOutlineFileLimit <= 0 {
+		l.DefaultOutlineFileLimit = defaults.DefaultOutlineFileLimit
+	}
+	if l.MaxOutlineFileLimit <= 0 {
+		l.MaxOutlineFileLimit = defaults.MaxOutlineFileLimit
+	}
+	if l.MaxModuleOutlineChars <= 0 {
+		l.MaxModuleOutlineChars = defaults.MaxModuleOutlineChars
+	}
+	if l.MaxReadLineLimit < l.DefaultReadLineLimit {
+		l.MaxReadLineLimit = l.DefaultReadLineLimit
+	}
+	if l.MaxListEntryLimit < l.DefaultListEntryLimit {
+		l.MaxListEntryLimit = l.DefaultListEntryLimit
+	}
+	if l.MaxSearchMaxMatch < l.DefaultSearchMaxMatch {
+		l.MaxSearchMaxMatch = l.DefaultSearchMaxMatch
+	}
+	if l.MaxOutlineFileLimit < l.DefaultOutlineFileLimit {
+		l.MaxOutlineFileLimit = l.DefaultOutlineFileLimit
+	}
+	return l
 }
 
 func (t FileTools) Read(path string, offset, limit int) ToolResult {
+	limits := t.limits()
 	target, rel, err := t.resolve(path)
 	if err != nil {
 		return ToolResult{Success: false, Error: err.Error()}
@@ -54,7 +177,7 @@ func (t FileTools) Read(path string, offset, limit int) ToolResult {
 	if startLine <= 0 {
 		startLine = 1
 	}
-	limit = clampInt(limit, defaultReadLineLimit, maxReadLineLimit)
+	limit = clampInt(limit, limits.DefaultReadLineLimit, limits.MaxReadLineLimit)
 	lines, totalLines, binary, err := readTextFileRange(target, startLine, limit)
 	if err != nil {
 		return ToolResult{Success: false, Error: err.Error()}
@@ -86,6 +209,7 @@ func (t FileTools) Read(path string, offset, limit int) ToolResult {
 }
 
 func (t FileTools) List(path, glob string, maxEntries int) ToolResult {
+	limits := t.limits()
 	target, rel, err := t.resolve(defaultPath(path))
 	if err != nil {
 		return ToolResult{Success: false, Error: err.Error()}
@@ -94,7 +218,7 @@ func (t FileTools) List(path, glob string, maxEntries int) ToolResult {
 	if err != nil {
 		return ToolResult{Success: false, Error: err.Error()}
 	}
-	maxEntries = clampInt(maxEntries, defaultListEntryLimit, maxListEntryLimit)
+	maxEntries = clampInt(maxEntries, limits.DefaultListEntryLimit, limits.MaxListEntryLimit)
 	glob = strings.TrimSpace(glob)
 
 	entries := []string{}
@@ -163,6 +287,7 @@ func (t FileTools) Search(query, path, fileGlob string, maxMatches int) ToolResu
 }
 
 func (t FileTools) SearchContext(query, path, fileGlob string, maxMatches, contextBefore, contextAfter int) ToolResult {
+	limits := t.limits()
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return ToolResult{Success: false, Error: "query is required"}
@@ -175,9 +300,9 @@ func (t FileTools) SearchContext(query, path, fileGlob string, maxMatches, conte
 	if err != nil {
 		return ToolResult{Success: false, Error: err.Error()}
 	}
-	maxMatches = clampInt(maxMatches, defaultSearchMaxMatch, maxSearchMaxMatch)
-	contextBefore = clampNonNegative(contextBefore, maxSearchContextLines)
-	contextAfter = clampNonNegative(contextAfter, maxSearchContextLines)
+	maxMatches = clampInt(maxMatches, limits.DefaultSearchMaxMatch, limits.MaxSearchMaxMatch)
+	contextBefore = clampNonNegative(contextBefore, limits.MaxSearchContextLines)
+	contextAfter = clampNonNegative(contextAfter, limits.MaxSearchContextLines)
 	fileGlob = strings.TrimSpace(fileGlob)
 
 	matches := []string{}
@@ -220,6 +345,7 @@ func (t FileTools) SearchContext(query, path, fileGlob string, maxMatches, conte
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "query: %s\n", query)
+	fmt.Fprintf(&b, "match_type: literal_substring_case_insensitive\n")
 	fmt.Fprintf(&b, "path: %s\n", rel)
 	if fileGlob != "" {
 		fmt.Fprintf(&b, "file_glob: %s\n", fileGlob)
@@ -255,6 +381,7 @@ func (t FileTools) Outline(path string) ToolResult {
 }
 
 func (t FileTools) ModuleOutline(path, fileGlob string, maxFiles int) ToolResult {
+	limits := t.limits()
 	target, rel, err := t.resolve(defaultPath(path))
 	if err != nil {
 		return ToolResult{Success: false, Error: err.Error()}
@@ -267,7 +394,7 @@ func (t FileTools) ModuleOutline(path, fileGlob string, maxFiles int) ToolResult
 		return t.Outline(rel)
 	}
 
-	maxFiles = clampInt(maxFiles, defaultOutlineFileLimit, maxOutlineFileLimit)
+	maxFiles = clampInt(maxFiles, limits.DefaultOutlineFileLimit, limits.MaxOutlineFileLimit)
 	fileGlob = strings.TrimSpace(fileGlob)
 	candidates := []string{}
 	err = filepath.WalkDir(target, func(path string, entry fs.DirEntry, walkErr error) error {
@@ -325,9 +452,9 @@ func (t FileTools) ModuleOutline(path, fileGlob string, maxFiles int) ToolResult
 			continue
 		}
 		next := "\n---\n" + strings.TrimSpace(section.Output) + "\n"
-		if b.Len()+len(next) > maxModuleOutlineChars {
+		if b.Len()+len(next) > limits.MaxModuleOutlineChars {
 			truncated = true
-			fmt.Fprintf(&b, "\n--- module outline truncated after %d chars ---\n", maxModuleOutlineChars)
+			fmt.Fprintf(&b, "\n--- module outline truncated after %d chars ---\n", limits.MaxModuleOutlineChars)
 			break
 		}
 		b.WriteString(next)

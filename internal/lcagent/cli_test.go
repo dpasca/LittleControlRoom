@@ -114,6 +114,90 @@ func TestRunExecOpenRouterEmitsModelResponseUsage(t *testing.T) {
 	}
 }
 
+func TestRunExecOpenRouterUsesGenerousToolProfile(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+			Tools []struct {
+				Function struct {
+					Name        string         `json:"name"`
+					Description string         `json:"description"`
+					Parameters  map[string]any `json:"parameters"`
+				} `json:"function"`
+			} `json:"tools"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if len(body.Messages) == 0 || !strings.Contains(body.Messages[0].Content, "read_file defaults to 400 lines") {
+			t.Fatalf("system prompt missing larger read-limit guidance: %#v", body.Messages)
+		}
+		if strings.Contains(body.Messages[0].Content, "tool profile") {
+			t.Fatalf("system prompt should not expose benchmark profile labels: %#v", body.Messages)
+		}
+		if strings.Contains(body.Messages[0].Content, "context profile") {
+			t.Fatalf("system prompt should not expose context profile labels: %#v", body.Messages)
+		}
+		var readMax, searchContextMax string
+		var readDescription string
+		for _, tool := range body.Tools {
+			props, _ := tool.Function.Parameters["properties"].(map[string]any)
+			switch tool.Function.Name {
+			case "read_file":
+				readDescription = tool.Function.Description
+				readMax = fmt.Sprint(props["limit"].(map[string]any)["maximum"])
+			case "search":
+				searchContextMax = fmt.Sprint(props["context_before"].(map[string]any)["maximum"])
+			}
+		}
+		if readMax != "2500" || searchContextMax != "16" || !strings.Contains(readDescription, "Larger read limits") {
+			t.Fatalf("generous tool schema mismatch: readMax=%s searchContextMax=%s readDescription=%q", readMax, searchContextMax, readDescription)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"resp_test",
+			"model":"deepseek/test-model",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"done"}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--tool-profile", "generous",
+		"--context-profile", "large",
+		"--max-turns", "2",
+		"answer directly",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"type":"tool_profile"`) || !strings.Contains(stdout.String(), `"profile":"generous"`) {
+		t.Fatalf("stdout missing generous tool profile event:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"type":"context_profile"`) || !strings.Contains(stdout.String(), `"profile":"large"`) {
+		t.Fatalf("stdout missing large context profile event:\n%s", stdout.String())
+	}
+}
+
 func TestRunExecDeepSeekUsesDirectProviderEnv(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
@@ -1009,6 +1093,8 @@ func TestRunExecOpenRouterRequestsSynthesisBeforeLongRunMaxTurns(t *testing.T) {
 func TestRunMetricsSummarizesSessionArtifact(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	body := `{"type":"session_meta","id":"lca_metrics","cwd":"/repo"}
+{"type":"tool_profile","profile":"balanced"}
+{"type":"context_profile","profile":"large"}
 {"type":"model_response","model":"deepseek/test","usage":{"prompt_tokens":12,"prompt_tokens_details":{"cached_tokens":4},"completion_tokens":3,"total_tokens":15,"cost":0.01}}
 {"type":"tool_call","tool":"read_file","args":{"path":"README.md"}}
 {"type":"tool_result","tool":"read_file","result":{"success":true,"output":"file: README.md\ntotal_lines: 2\nhas_more: false\nlines: 1-2\n\n1 | hello\n2 | world\n"}}
@@ -1023,7 +1109,7 @@ func TestRunMetricsSummarizesSessionArtifact(t *testing.T) {
 		t.Fatalf("code = %d stderr=%s", code, stderr.String())
 	}
 	text := stdout.String()
-	for _, want := range []string{`"sessions": 1`, `"read_file_calls": 1`, `"read_file_lines": 2`, `"input_tokens": 12`, `"cached_input_tokens": 4`} {
+	for _, want := range []string{`"sessions": 1`, `"tool_profiles": {`, `"balanced": 1`, `"context_profiles": {`, `"large": 1`, `"read_file_calls": 1`, `"read_file_lines": 2`, `"input_tokens": 12`, `"cached_input_tokens": 4`} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("metrics output missing %q:\n%s", want, text)
 		}

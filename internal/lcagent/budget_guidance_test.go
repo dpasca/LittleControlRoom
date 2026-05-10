@@ -56,6 +56,19 @@ func TestOpenRouterProgressNoteIncludesReadLedgerAndSynthesisInstructions(t *tes
 	}
 }
 
+func TestOpenRouterProgressNoteUsesGenerousExplorationGuidance(t *testing.T) {
+	guidance := openRouterGuidanceForTurnWithOptions(1, 32, nil, nil, openRouterGuidanceOptions{ToolProfile: "generous"})
+	note := openRouterProgressNote(guidance, nil)
+	for _, want := range []string{"larger contiguous ranges", "Continue with next_offset", "Do not reread ranges", "read ledger"} {
+		if !strings.Contains(note, want) {
+			t.Fatalf("generous progress note missing %q:\n%s", want, note)
+		}
+	}
+	if strings.Contains(note, "Inspect narrowly") {
+		t.Fatalf("generous progress note kept balanced guidance:\n%s", note)
+	}
+}
+
 func TestAppendOpenRouterProgressNoteDoesNotMutateHistory(t *testing.T) {
 	messages := []modeladapter.Message{
 		{Role: "system", Content: "system"},

@@ -22,11 +22,20 @@ type openRouterProgressGuidance struct {
 	Phase            string `json:"phase"`
 	ForceSynthesis   bool   `json:"force_synthesis"`
 	ToolResults      int    `json:"tool_results"`
+	ToolProfile      string `json:"tool_profile,omitempty"`
 	ReadLedgerFiles  int    `json:"read_ledger_files,omitempty"`
 	ReadLedgerRanges int    `json:"read_ledger_ranges,omitempty"`
 }
 
+type openRouterGuidanceOptions struct {
+	ToolProfile string
+}
+
 func openRouterGuidanceForTurn(turn, maxTurns int, messages []modeladapter.Message, ledger *readLedger) openRouterProgressGuidance {
+	return openRouterGuidanceForTurnWithOptions(turn, maxTurns, messages, ledger, openRouterGuidanceOptions{})
+}
+
+func openRouterGuidanceForTurnWithOptions(turn, maxTurns int, messages []modeladapter.Message, ledger *readLedger, opts openRouterGuidanceOptions) openRouterProgressGuidance {
 	if turn < 1 {
 		turn = 1
 	}
@@ -41,6 +50,7 @@ func openRouterGuidanceForTurn(turn, maxTurns int, messages []modeladapter.Messa
 		TurnsRemaining:   remaining,
 		Phase:            "exploration",
 		ToolResults:      countToolResultMessages(messages),
+		ToolProfile:      strings.TrimSpace(opts.ToolProfile),
 		ReadLedgerFiles:  files,
 		ReadLedgerRanges: ranges,
 	}
@@ -94,7 +104,12 @@ func openRouterProgressNote(guidance openRouterProgressGuidance, ledger *readLed
 		b.WriteString("- Prefer final_response once the main question can be answered with the evidence already collected.\n")
 		b.WriteString("- Do not audit every file for completeness; prioritize the user-visible conclusion.")
 	default:
-		b.WriteString("- Inspect narrowly. Prefer outline/search before broad reads, and use the read ledger to avoid duplicate ranges.\n")
+		if strings.EqualFold(guidance.ToolProfile, "generous") {
+			b.WriteString("- Be evidence-complete rather than overly terse. Use outline/search to choose files, then read larger contiguous ranges for central files.\n")
+			b.WriteString("- Continue with next_offset for relevant files instead of sampling only first chunks. Do not reread ranges already listed in the read ledger.\n")
+		} else {
+			b.WriteString("- Inspect narrowly. Prefer outline/search before broad reads, and do not reread ranges already listed in the read ledger.\n")
+		}
 		b.WriteString("- Keep track of what answer the user needs, not just what can be inspected next.")
 	}
 	return b.String()

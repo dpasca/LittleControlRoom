@@ -62,13 +62,90 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 	if !strings.Contains(descriptions["module_outline"], "many Go or Markdown files") {
 		t.Fatalf("module_outline description should mention many files: %q", descriptions["module_outline"])
 	}
+	if !strings.Contains(descriptions["search"], "literal substring") || !strings.Contains(descriptions["search"], "not a regex") {
+		t.Fatalf("search description should explain literal matching: %q", descriptions["search"])
+	}
+}
+
+func TestToolsWithOptionsExposeConfiguredFileLimits(t *testing.T) {
+	tools := ToolsWithOptions(ToolOptions{
+		ToolProfile:             "generous",
+		DefaultReadLineLimit:    400,
+		MaxReadLineLimit:        2500,
+		DefaultListEntryLimit:   400,
+		MaxListEntryLimit:       2000,
+		DefaultSearchMaxMatch:   100,
+		MaxSearchMaxMatch:       500,
+		MaxSearchContextLines:   16,
+		DefaultOutlineFileLimit: 60,
+		MaxOutlineFileLimit:     160,
+	})
+
+	spec := toolSpec(t, tools, "read_file")
+	if !strings.Contains(spec.Description, "Larger read limits") {
+		t.Fatalf("read_file description missing generous guidance: %q", spec.Description)
+	}
+	readProps := spec.Parameters["properties"].(map[string]any)
+	limitSpec := readProps["limit"].(map[string]any)
+	if got := limitSpec["maximum"]; got != 2500 {
+		t.Fatalf("read_file max = %#v, want 2500", got)
+	}
+	if !strings.Contains(limitSpec["description"].(string), "Defaults to 400") {
+		t.Fatalf("read_file limit description = %q", limitSpec["description"])
+	}
+
+	searchSpec := toolSpec(t, tools, "search")
+	searchProps := searchSpec.Parameters["properties"].(map[string]any)
+	querySpec := searchProps["query"].(map[string]any)
+	if !strings.Contains(querySpec["description"].(string), "Do not use regex") {
+		t.Fatalf("search query description = %q", querySpec["description"])
+	}
+	if got := searchProps["max_matches"].(map[string]any)["maximum"]; got != 500 {
+		t.Fatalf("search max_matches max = %#v, want 500", got)
+	}
+	if got := searchProps["context_before"].(map[string]any)["maximum"]; got != 16 {
+		t.Fatalf("search context max = %#v, want 16", got)
+	}
+
+	outlineSpec := toolSpec(t, tools, "module_outline")
+	outlineProps := outlineSpec.Parameters["properties"].(map[string]any)
+	if got := outlineProps["max_files"].(map[string]any)["maximum"]; got != 160 {
+		t.Fatalf("module_outline max_files max = %#v, want 160", got)
+	}
 }
 
 func TestSystemPromptIncludesSkillMetadata(t *testing.T) {
 	prompt := SystemPrompt("Available skills\n- demo [project]: Demo workflow", "Project instructions from AGENTS.md:\nRun tests.")
-	if !strings.Contains(prompt, "call load_skill") || !strings.Contains(prompt, "demo [project]") || !strings.Contains(prompt, "Run tests.") || !strings.Contains(prompt, "*** Update File: path") || !strings.Contains(prompt, "workspace-relative paths") || !strings.Contains(prompt, "workspace-only") || !strings.Contains(prompt, "structured tool_calls") || !strings.Contains(prompt, "prefer file_outline") || !strings.Contains(prompt, "prefer module_outline") || !strings.Contains(prompt, "next_offset") || !strings.Contains(prompt, "summary must contain the full answer") {
+	if !strings.Contains(prompt, "call load_skill") || !strings.Contains(prompt, "demo [project]") || !strings.Contains(prompt, "Run tests.") || !strings.Contains(prompt, "*** Update File: path") || !strings.Contains(prompt, "workspace-relative paths") || !strings.Contains(prompt, "workspace-only") || !strings.Contains(prompt, "structured tool_calls") || !strings.Contains(prompt, "prefer file_outline") || !strings.Contains(prompt, "prefer module_outline") || !strings.Contains(prompt, "literal substrings") || !strings.Contains(prompt, "next_offset") || !strings.Contains(prompt, "summary must contain the full answer") {
 		t.Fatalf("prompt missing skill guidance:\n%s", prompt)
 	}
+}
+
+func TestSystemPromptIncludesGenerousToolProfile(t *testing.T) {
+	prompt := SystemPromptWithOptions("", "", SystemPromptOptions{
+		ToolProfile:          "generous",
+		DefaultReadLineLimit: 400,
+		MaxReadLineLimit:     2500,
+	})
+	for _, want := range []string{"For this run", "defaults to 400 lines", "permits up to 2500 lines", "outline/search identifies a central file"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "tool profile") {
+		t.Fatalf("prompt should not expose benchmark profile labels to the model:\n%s", prompt)
+	}
+}
+
+func toolSpec(t *testing.T, tools []ToolDefinition, name string) FunctionSpec {
+	t.Helper()
+	for _, tool := range tools {
+		if tool.Function.Name == name {
+			return tool.Function
+		}
+	}
+	t.Fatalf("missing tool %s", name)
+	return FunctionSpec{}
 }
 
 func TestSanitizeAssistantContentStripsProviderToolMarkup(t *testing.T) {

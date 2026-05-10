@@ -20,6 +20,8 @@ type Summary struct {
 	Files                    []string          `json:"files,omitempty"`
 	Sessions                 int               `json:"sessions"`
 	SessionIDs               []string          `json:"session_ids,omitempty"`
+	ToolProfiles             map[string]int    `json:"tool_profiles,omitempty"`
+	ContextProfiles          map[string]int    `json:"context_profiles,omitempty"`
 	ModelResponses           int               `json:"model_responses"`
 	ToolCalls                map[string]int    `json:"tool_calls"`
 	ToolResults              map[string]int    `json:"tool_results"`
@@ -114,6 +116,12 @@ func (s *Summary) init() {
 	if s.ToolResults == nil {
 		s.ToolResults = map[string]int{}
 	}
+	if s.ToolProfiles == nil {
+		s.ToolProfiles = map[string]int{}
+	}
+	if s.ContextProfiles == nil {
+		s.ContextProfiles = map[string]int{}
+	}
 	if s.rangesByFile == nil {
 		s.rangesByFile = map[string][]lineRange{}
 	}
@@ -154,6 +162,18 @@ func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
 		if id := rawString(event["id"]); id != "" {
 			s.SessionIDs = append(s.SessionIDs, id)
 		}
+	case "tool_profile":
+		profile := rawString(event["profile"])
+		if profile == "" {
+			profile = "unknown"
+		}
+		s.ToolProfiles[profile]++
+	case "context_profile":
+		profile := rawString(event["profile"])
+		if profile == "" {
+			profile = "unknown"
+		}
+		s.ContextProfiles[profile]++
 	case "model_response":
 		s.ModelResponses++
 		usage := usageFromEvent(event)

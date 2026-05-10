@@ -8,6 +8,8 @@ import (
 )
 
 const benchmarkSessionJSONL = `{"type":"session_meta","id":"lca_demo","cwd":"/repo","model":"deepseek/test"}
+{"type":"tool_profile","profile":"generous"}
+{"type":"context_profile","profile":"large"}
 {"type":"model_response","model":"deepseek/test","usage":{"prompt_tokens":100,"prompt_tokens_details":{"cached_tokens":25},"completion_tokens":10,"total_tokens":110,"cost":0.001}}
 {"type":"tool_call","tool":"read_file","args":{"path":"a.go"}}
 {"type":"tool_result","tool":"read_file","result":{"success":true,"output":"file: a.go\ntotal_lines: 300\nhas_more: true\nnext_offset: 201\nlines: 1-200\n\n1 | package demo\n200 | func A() {}\n","truncated":true}}
@@ -34,6 +36,12 @@ func TestAnalyzeFilesSummarizesLCAgentSession(t *testing.T) {
 	}
 	if summary.ToolCalls["read_file"] != 2 || summary.ToolResults["search"] != 1 {
 		t.Fatalf("tool counts = calls %#v results %#v", summary.ToolCalls, summary.ToolResults)
+	}
+	if summary.ToolProfiles["generous"] != 1 {
+		t.Fatalf("tool profiles = %#v", summary.ToolProfiles)
+	}
+	if summary.ContextProfiles["large"] != 1 {
+		t.Fatalf("context profiles = %#v", summary.ContextProfiles)
 	}
 	if summary.ReadFileCalls != 2 || summary.ReadFileLines != 301 {
 		t.Fatalf("read stats = calls %d lines %d", summary.ReadFileCalls, summary.ReadFileLines)
