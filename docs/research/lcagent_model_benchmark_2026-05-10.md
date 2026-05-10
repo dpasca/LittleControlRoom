@@ -1,9 +1,11 @@
 # LCAgent Model Benchmark, 2026-05-10
 
 This is a research artifact for the May 2026 LCAgent harness/model-routing
-tests. It is intentionally lightweight: keep the printable report and compact
-summary data in git, but do not commit the raw stream logs unless a future
-investigation needs line-by-line replay evidence.
+tests in the Little Control Room project:
+<https://github.com/dpasca/LittleControlRoom>. It is intentionally lightweight:
+keep the printable report and compact summary data in git, but do not commit
+the raw stream logs unless a future investigation needs line-by-line replay
+evidence.
 
 ## Artifacts
 
