@@ -248,6 +248,30 @@
     .combined-table th:nth-child(12) { width: 6%; }
     .combined-table th:nth-child(13) { width: 25%; }
 
+    .metric-legend {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px 18px;
+      margin: -6px 0 14px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      font-size: 12px;
+    }
+
+    .metric-legend div {
+      min-width: 0;
+    }
+
+    .metric-name {
+      font-weight: 800;
+    }
+
+    .metric-desc {
+      color: var(--muted);
+    }
+
     .evidence-table th:nth-child(1) { width: 20%; }
     .evidence-table th:nth-child(2) { width: 38%; }
     .evidence-table th:nth-child(3) { width: 42%; }
@@ -797,7 +821,7 @@
         </thead>
         <tbody>
           <tr>
-            <td><span class="model">GPT-5.5 low</span><br><span class="subtle">OpenAI API</span></td>
+            <td><span class="model">GPT-5.5</span><br><span class="subtle">OpenAI API</span></td>
             <td class="status-ok">complete</td>
             <td class="num score">8.8</td>
             <td>low</td>
@@ -827,7 +851,7 @@
             <td>Strongest audit quality, but far too costly for default routing.</td>
           </tr>
           <tr>
-            <td><span class="model">Claude Opus 4.7 medium</span><br><span class="subtle">OpenRouter</span></td>
+            <td><span class="model">Claude Opus 4.7</span><br><span class="subtle">OpenRouter</span></td>
             <td class="status-ok">complete</td>
             <td class="num score">8.2</td>
             <td>medium</td>
@@ -842,7 +866,7 @@
             <td>Excellent audit structure again; one false gap and premium cost keep it in verification lane.</td>
           </tr>
           <tr>
-            <td><span class="model">GPT-5.5 medium</span><br><span class="subtle">OpenAI API</span></td>
+            <td><span class="model">GPT-5.5</span><br><span class="subtle">OpenAI API</span></td>
             <td class="status-ok">complete</td>
             <td class="num score">7.4</td>
             <td>medium</td>
@@ -857,7 +881,7 @@
             <td>Useful answer, but more expensive and less calibrated than GPT-5.5 low.</td>
           </tr>
           <tr>
-            <td><span class="model">Claude Sonnet 4.6 medium</span><br><span class="subtle">OpenRouter</span></td>
+            <td><span class="model">Claude Sonnet 4.6</span><br><span class="subtle">OpenRouter</span></td>
             <td class="status-ok">complete</td>
             <td class="num score">7.2</td>
             <td>medium</td>
@@ -887,7 +911,7 @@
             <td>Best cheap secondary so far; more wandering than GPT.</td>
           </tr>
           <tr>
-            <td><span class="model">GPT-5.5 none</span><br><span class="subtle">OpenAI API</span></td>
+            <td><span class="model">GPT-5.5</span><br><span class="subtle">OpenAI API</span></td>
             <td class="status-ok">complete</td>
             <td class="num score">6.2</td>
             <td>disabled</td>
@@ -947,7 +971,7 @@
             <td>Completed cleanly but made costly false claims.</td>
           </tr>
           <tr>
-            <td><span class="model">Gemini 3.1 Flash Lite medium</span><br><span class="subtle">OpenRouter</span></td>
+            <td><span class="model">Gemini 3.1 Flash Lite</span><br><span class="subtle">OpenRouter</span></td>
             <td class="status-ok">complete</td>
             <td class="num score">5.7</td>
             <td>medium</td>
@@ -977,7 +1001,7 @@
             <td>Extremely cheap, but weak quality and very slow.</td>
           </tr>
           <tr>
-            <td><span class="model">DeepSeek V4 Pro medium</span><br><span class="subtle">DeepSeek API</span></td>
+            <td><span class="model">DeepSeek V4 Pro</span><br><span class="subtle">DeepSeek API</span></td>
             <td class="status-ok">complete</td>
             <td class="num score">5.3</td>
             <td>medium</td>
@@ -992,7 +1016,7 @@
             <td>Cheap again, but medium did not fix false tool and architecture claims.</td>
           </tr>
           <tr>
-            <td><span class="model">Claude Sonnet 4.6 low</span><br><span class="subtle">OpenRouter</span></td>
+            <td><span class="model">Claude Sonnet 4.6</span><br><span class="subtle">OpenRouter</span></td>
             <td class="status-ok">complete</td>
             <td class="num score">5.1</td>
             <td>low</td>
@@ -1007,7 +1031,7 @@
             <td>Strict Anthropic routing completed, but it wandered, needed forced synthesis, and included false missing-feature claims.</td>
           </tr>
           <tr>
-            <td><span class="model">Gemini 3 Flash Preview medium</span><br><span class="subtle">OpenRouter</span></td>
+            <td><span class="model">Gemini 3 Flash Preview</span><br><span class="subtle">OpenRouter</span></td>
             <td class="status-ok">complete</td>
             <td class="num score">5.1</td>
             <td>medium</td>
@@ -1052,7 +1076,7 @@
             <td>Fast, but final included confident false missing-feature claims.</td>
           </tr>
           <tr>
-            <td><span class="model">MiniMax M2.7 default</span><br><span class="subtle">OpenRouter</span></td>
+            <td><span class="model">MiniMax M2.7</span><br><span class="subtle">OpenRouter</span></td>
             <td class="status-ok">complete</td>
             <td class="num score">4.7</td>
             <td>default</td>
@@ -1067,7 +1091,7 @@
             <td>Strict MiniMax routing fixed completion, but the final missed important gaps and added false tool/skill claims.</td>
           </tr>
           <tr>
-            <td><span class="model">Gemini 3.1 Pro Custom Tools medium</span><br><span class="subtle">OpenRouter</span></td>
+            <td><span class="model">Gemini 3.1 Pro Custom Tools</span><br><span class="subtle">OpenRouter</span></td>
             <td class="status-ok">complete</td>
             <td class="num score">4.4</td>
             <td>medium</td>
@@ -1082,7 +1106,7 @@
             <td>Medium effort increased cost and still made false missing-tool claims.</td>
           </tr>
           <tr>
-            <td><span class="model">MiniMax M2.7 low</span><br><span class="subtle">OpenRouter</span></td>
+            <td><span class="model">MiniMax M2.7</span><br><span class="subtle">OpenRouter</span></td>
             <td class="status-ok">complete</td>
             <td class="num score">4.2</td>
             <td>low</td>
@@ -1097,7 +1121,7 @@
             <td>Completed cheaply, but low effort produced broader false missing-feature claims than the default-effort retry.</td>
           </tr>
           <tr>
-            <td><span class="model">GLM 5.1 medium</span><br><span class="subtle">OpenRouter</span></td>
+            <td><span class="model">GLM 5.1</span><br><span class="subtle">OpenRouter</span></td>
             <td class="status-ok">complete</td>
             <td class="num score">3.8</td>
             <td>medium</td>
@@ -1112,7 +1136,7 @@
             <td>Medium effort made GLM slower and more confidently wrong about implemented tools.</td>
           </tr>
           <tr>
-            <td><span class="model">Grok 4.3 medium</span><br><span class="subtle">OpenRouter</span></td>
+            <td><span class="model">Grok 4.3</span><br><span class="subtle">OpenRouter</span></td>
             <td class="status-ok">complete</td>
             <td class="num score">3.0</td>
             <td>medium</td>
@@ -1128,6 +1152,16 @@
           </tr>
         </tbody>
       </table>
+      <div class="metric-legend">
+        <div><span class="metric-name">Wall</span><span class="metric-desc">: elapsed wall-clock time for the run.</span></div>
+        <div><span class="metric-name">Tok.</span><span class="metric-desc">: total tokens reported by the provider.</span></div>
+        <div><span class="metric-name">Cache</span><span class="metric-desc">: cached input tokens reported by the provider.</span></div>
+        <div><span class="metric-name">Resp.</span><span class="metric-desc">: model response calls during the run.</span></div>
+        <div><span class="metric-name">Reads</span><span class="metric-desc">: file-read tool calls.</span></div>
+        <div><span class="metric-name">Lines</span><span class="metric-desc">: source and doc lines returned by file reads.</span></div>
+        <div><span class="metric-name">Reason</span><span class="metric-desc">: reasoning tokens reported by the provider.</span></div>
+        <div><span class="metric-name">Cost</span><span class="metric-desc">: estimated API cost for this benchmark run.</span></div>
+      </div>
       <p class="subtle">
         Scores are subjective default-routing scores out of 10, not pure answer-quality scores. The Effort column is the requested reasoning-effort setting only, separate from reported reasoning tokens. Temperature is recorded per row in the CSV; OpenRouter and direct DeepSeek chat-completions runs used <code>0.2</code>, while OpenAI Responses and direct Moonshot runs omitted temperature.
         Kimi K2.6 was not rerun in the medium-effort pass because the direct Moonshot adapter does not accept the LCAgent reasoning-effort option.

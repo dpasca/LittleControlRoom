@@ -122,15 +122,15 @@ not accept the LCAgent `reasoning_effort` option.
 
 | Run | Status | Score | Cost | Verdict |
 |---|---:|---:|---:|---|
-| Claude Opus 4.7 medium | complete | 8.2 | $1.817 | Excellent audit structure again; one false gap and premium cost keep it in the verification lane. |
-| GPT-5.5 medium | complete | 7.4 | $0.900 | Useful answer, but more expensive and less calibrated than GPT-5.5 low. |
-| Claude Sonnet 4.6 medium | complete | 7.2 | $1.726 | Medium effort substantially improved the final answer, but it stayed slow and costly. |
-| Gemini 3.1 Flash Lite medium | complete | 5.7 | $0.036 | Still cheap and fast, but under-called real gaps and became less useful than low. |
-| DeepSeek V4 Pro medium | complete | 5.3 | $0.069 | Cheap again, but medium did not fix false tool and architecture claims. |
-| Gemini 3 Flash Preview medium | complete | 5.1 | $0.123 | More substantial than low, but included unearned verification claims and factual misses. |
-| Gemini 3.1 Pro Custom Tools medium | complete | 4.4 | $0.520 | Medium effort increased cost and still made false missing-tool claims. |
-| GLM 5.1 medium | complete | 3.8 | $0.394 | Slower and more confidently wrong about implemented tools. |
-| Grok 4.3 medium | complete | 3.0 | $0.227 | Read the right docs this time, but falsely marked core implemented tools and LCR wiring as absent. |
+| Claude Opus 4.7 | complete | 8.2 | $1.817 | Excellent audit structure again; one false gap and premium cost keep it in the verification lane. |
+| GPT-5.5 | complete | 7.4 | $0.900 | Useful answer, but more expensive and less calibrated than GPT-5.5 low. |
+| Claude Sonnet 4.6 | complete | 7.2 | $1.726 | Medium effort substantially improved the final answer, but it stayed slow and costly. |
+| Gemini 3.1 Flash Lite | complete | 5.7 | $0.036 | Still cheap and fast, but under-called real gaps and became less useful than low. |
+| DeepSeek V4 Pro | complete | 5.3 | $0.069 | Cheap again, but medium did not fix false tool and architecture claims. |
+| Gemini 3 Flash Preview | complete | 5.1 | $0.123 | More substantial than low, but included unearned verification claims and factual misses. |
+| Gemini 3.1 Pro Custom Tools | complete | 4.4 | $0.520 | Medium effort increased cost and still made false missing-tool claims. |
+| GLM 5.1 | complete | 3.8 | $0.394 | Slower and more confidently wrong about implemented tools. |
+| Grok 4.3 | complete | 3.0 | $0.227 | Read the right docs this time, but falsely marked core implemented tools and LCR wiring as absent. |
 
 Earlier failed attempts are excluded from the main scoring table and chart. The
 excluded set was useful diagnostically but not comparable as route candidates:
