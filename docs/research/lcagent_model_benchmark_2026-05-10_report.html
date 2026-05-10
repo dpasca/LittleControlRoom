@@ -674,6 +674,10 @@
           <span class="label">Target Snapshot</span>
           <code>885fd24f1f24ce903b7de12d34c5166d54ebe251</code>
         </div>
+        <div>
+          <span class="label">Operator</span>
+          Codex, GPT-5 XHigh reasoning; no delegated subagents
+        </div>
       </div>
     </div>
 
@@ -696,16 +700,16 @@
         <strong>Default pick:</strong> <strong>GPT-5.5</strong> with <code>reasoning.effort=low</code>. It gave the best overall balance of answer quality, harness reliability, latency, and cost.
       </div>
       <div class="callout warning">
-        <strong>Quality challenger:</strong> <strong>Claude Opus 4.7</strong> produced the most detailed audit-style review. Explicit Anthropic prompt caching reduced cost, but <strong>GPT-5.5</strong> low still scored higher overall because the default score also includes reliability, cost, cache behavior, and latency. Opus is a verification model, not the economical default.
+        <strong>Quality challenger:</strong> <strong>Claude Opus 4.7</strong> produced the most detailed audit-style review and used Anthropic prompt caching, but <strong>GPT-5.5</strong> low still scored higher overall because the default score also includes reliability, cost, cache behavior, and latency. Opus is a verification model, not the economical default.
       </div>
       <p>
-        <strong>Notable mentions:</strong> <strong>Kimi K2.6</strong> remains the best budget secondary. <strong>Gemini 3.1 Flash Lite</strong> is the fastest cheap scout, but shallow. Strict OpenRouter origin routing let <strong>Claude Sonnet 4.6</strong> and <strong>MiniMax M2.7</strong> complete on retry, and explicit Anthropic prompt-cache breakpoints made Claude costs fairer. That still did not make Sonnet a default candidate: low effort needed forced synthesis, while medium effort became too narrow. MiniMax became reliable enough to measure but not accurate enough to route to by default.
+        <strong>Notable mentions:</strong> <strong>Kimi K2.6</strong> remains the best budget secondary. <strong>Gemini 3.1 Flash Lite</strong> is the fastest cheap scout, but shallow. Strict OpenRouter origin routing was used for <strong>Claude Sonnet 4.6</strong> and <strong>MiniMax M2.7</strong>. Claude rows used explicit Anthropic cache controls; the cache reads were real, but cache writes are not free. That still did not make Sonnet a default candidate: low effort needed forced synthesis, while medium effort became too narrow. MiniMax completed reliably but was not accurate enough to route to by default.
       </p>
       <p>
-        Provider routing is recorded in the CSV. Completed Claude and MiniMax retry rows used strict OpenRouter origin-provider pins with fallbacks disabled and required parameter support enabled. Other completed OpenRouter rows used default OpenRouter routing. Temperature was explicit at <code>0.2</code> for most OpenRouter and direct DeepSeek chat-completions runs; OpenAI Responses, direct Moonshot, and Claude Opus 4.7 runs omitted temperature.
+        Provider routing is recorded in the CSV. Completed Claude and MiniMax rows used strict OpenRouter origin-provider pins with fallbacks disabled and required parameter support enabled. Other completed OpenRouter rows used default OpenRouter routing. Temperature was explicit at <code>0.2</code> for most OpenRouter and direct DeepSeek chat-completions runs; OpenAI Responses, direct Moonshot, and Claude Opus 4.7 runs omitted temperature.
       </p>
       <p>
-        A medium-effort follow-up did not change the recommendation. Medium kept Opus strong but more expensive, improved Sonnet's cache economics without fixing answer focus, and made GPT-5.5 slower, pricier, and less calibrated than GPT-5.5 low.
+        The medium-effort runs did not change the recommendation. They kept Opus strong but more expensive, gave Sonnet strong cache reads without fixing answer focus, and made GPT-5.5 slower, pricier, and less calibrated than GPT-5.5 low.
       </p>
     </div>
 
@@ -812,7 +816,7 @@
           <span><span class="legend-swatch followup">&nbsp;</span>Medium effort</span>
         </div>
         <p class="chart-note">
-          No model landed in the ideal quadrant in this batch. Explicit Anthropic prompt caching moved Claude runs to a fairer cost basis, but Sonnet remained too uneven and Opus remained premium. Kimi K2.6 is still the closest budget candidate; GPT-5.5 low remains the practical default; Claude Opus 4.7 remains the expensive audit pass. Earlier failed attempts are excluded from this chart.
+          No model landed in the ideal quadrant in this batch. Claude rows used explicit Anthropic prompt caching; Sonnet remained too uneven and Opus remained premium. Kimi K2.6 is still the closest budget candidate; GPT-5.5 low remains the practical default; Claude Opus 4.7 remains the expensive audit pass. Rows with invalid or missing final output are excluded from this chart.
         </p>
       </div>
     </div>
@@ -863,7 +867,7 @@
             <td class="num">20</td>
             <td class="num">2,608</td>
             <td class="num">1,163</td>
-            <td>Strongest audit quality; explicit Anthropic prompt caching reduced cost, but it remains a premium verification route.</td>
+            <td>Strongest audit quality with Anthropic cache reads, but it remains a premium verification route.</td>
           </tr>
           <tr>
             <td><span class="model">Claude Opus 4.7</span><br><span class="subtle">OpenRouter</span></td>
@@ -877,7 +881,7 @@
             <td class="num">18</td>
             <td class="num">2,575</td>
             <td class="num">1,811</td>
-            <td>Strong milestone calibration, but medium cost rose and the answer was not better than Opus low.</td>
+            <td>Strong milestone calibration, but cache writes and longer context made it more expensive than Opus low.</td>
           </tr>
           <tr>
             <td><span class="model">GPT-5.5</span><br><span class="subtle">OpenAI API</span></td>
@@ -919,7 +923,7 @@
             <td class="num">11</td>
             <td class="num">1,304</td>
             <td class="num">9,810</td>
-            <td>Prompt caching made Sonnet cheaper, but the final answer narrowed onto tool-surface gaps and missed broader doc drift.</td>
+            <td>Strong Anthropic cache reads, but the final answer narrowed onto tool-surface gaps and missed broader doc drift.</td>
           </tr>
           <tr>
             <td><span class="model">GPT-5.5</span><br><span class="subtle">OpenAI API</span></td>
@@ -1031,7 +1035,7 @@
             <td class="num">12</td>
             <td class="num">1,662</td>
             <td class="num">11,465</td>
-            <td>Explicit cache lowered cost, but the run still needed forced synthesis and included false missing-feature claims.</td>
+            <td>Completed with Anthropic cache reads, but still needed forced synthesis and included false missing-feature claims.</td>
           </tr>
           <tr>
             <td><span class="model">Gemini 3 Flash Preview</span><br><span class="subtle">OpenRouter</span></td>
@@ -1115,7 +1119,7 @@
             <td class="num">8</td>
             <td class="num">1,140</td>
             <td class="num">2,874</td>
-            <td>Completed cheaply, but low effort produced broader false missing-feature claims than the default-effort retry.</td>
+            <td>Completed cheaply, but low effort produced broader false missing-feature claims than the default-effort MiniMax run.</td>
           </tr>
           <tr>
             <td><span class="model">GLM 5.1</span><br><span class="subtle">OpenRouter</span></td>
@@ -1163,16 +1167,16 @@
       <p class="subtle">
         Scores are subjective default-routing scores out of 10, not pure answer-quality scores. The Effort column is the requested reasoning-effort setting only, separate from reported reasoning tokens. Temperature is recorded per row in the CSV; most OpenRouter and direct DeepSeek chat-completions runs used <code>0.2</code>, while OpenAI Responses, direct Moonshot, and Claude Opus 4.7 runs omitted temperature.
         Kimi K2.6 was not rerun in the medium-effort pass because the direct Moonshot adapter does not accept the LCAgent reasoning-effort option.
-        Provider routing is recorded in the CSV: completed Claude and MiniMax retry rows used strict provider pins, while other completed OpenRouter rows used default OpenRouter routing. The Cache column records cache reads; Anthropic cache writes are called out separately below because they affect pricing but were not part of the original CSV schema. Earlier failed attempts are excluded from the main scoring table because they were useful diagnostically but not comparable as route candidates.
+        Provider routing is recorded in the CSV: completed Claude and MiniMax rows used strict provider pins, while other completed OpenRouter rows used default OpenRouter routing. The Cache column records cache reads; Anthropic cache writes are called out separately below because they affect pricing but were not part of the original CSV schema. Rows with invalid or missing final output are excluded from the main scoring table because they are not comparable as route candidates.
       </p>
     </div>
 
     <div class="report-section">
-      <h2>Anthropic Prompt-Cache Retest</h2>
+      <h2>Anthropic Prompt Caching</h2>
       <p>
-        The original Claude rows reported zero cache hits. The retest showed that was a harness issue, not a model limitation: Anthropic routes need explicit <code>cache_control</code> breakpoints on stable prompt content to get reliable reads in this setup. The harness now marks the stable system message with an explicit 5-minute ephemeral cache breakpoint and pins OpenRouter to Anthropic for the Claude rows.
+        OpenAI, Moonshot, DeepSeek, Gemini, Grok, and several OpenRouter routes can rely on implicit prompt caching. Anthropic Claude routes need <code>cache_control</code> to make prompt caching intentional. This benchmark used an explicit per-block cache breakpoint on the stable system message and pinned OpenRouter to Anthropic for Claude rows.
       </p>
-      <table class="bench-table" summary="Anthropic prompt-cache retest results">
+      <table class="bench-table" summary="Anthropic prompt caching results">
         <thead>
           <tr>
             <th>Run</th>
@@ -1190,7 +1194,7 @@
             <td class="num">$1.644</td>
             <td class="num">96,242</td>
             <td class="num">82,348</td>
-            <td>Best Claude route: strong audit quality with lower cost than the first Opus pass.</td>
+            <td>Best Claude route: strong audit quality with substantial cache reads.</td>
           </tr>
           <tr>
             <td><span class="model">Claude Opus 4.7</span> medium</td>
@@ -1214,12 +1218,12 @@
             <td class="num">$1.094</td>
             <td class="num">195,190</td>
             <td class="num">67,135</td>
-            <td>Cost improved, but the run still needed forced synthesis and overclaimed.</td>
+            <td>Completed with cache reads, but the run still needed forced synthesis and overclaimed.</td>
           </tr>
         </tbody>
       </table>
       <p class="subtle">
-        Anthropic cache reads are cheaper than normal input, while 5-minute cache writes are billed at a premium. That is why cache writes can make a run more expensive even when cache reads are working.
+        Anthropic cache reads are discounted, while 5-minute cache writes are billed at a premium. The strategy is useful but not automatically ideal: it works best when a stable prompt prefix is reused enough to amortize writes.
       </p>
     </div>
 
@@ -1250,7 +1254,7 @@
           <tr>
             <td><span class="model">Claude Opus 4.7</span></td>
             <td><span class="quote">"Most of the four milestones are implemented"</span></td>
-            <td>Best audit-style structure and lifecycle awareness, and explicit prompt caching made the cost story fairer.</td>
+            <td>Best audit-style structure and lifecycle awareness, with substantial Anthropic cache reads.</td>
           </tr>
           <tr>
             <td><span class="model">Claude Opus 4.7</span></td>
@@ -1270,7 +1274,7 @@
           <tr>
             <td><span class="model">Claude Sonnet 4.6 low</span></td>
             <td><span class="quote">"`internal/lcagent/script/` missing as a distinct package"</span></td>
-            <td>False in the benchmark snapshot; explicit prompt caching lowered cost but not overclaiming.</td>
+            <td>False in the benchmark snapshot; cache reads did not fix overclaiming.</td>
           </tr>
           <tr>
             <td><span class="model">MiniMax M2.7 default</span></td>
@@ -1280,7 +1284,7 @@
           <tr>
             <td><span class="model">MiniMax M2.7 low</span></td>
             <td><span class="quote">"`search` tool ... No `search` tool implementation"</span></td>
-            <td>A broader false-missing-feature claim than the default-effort MiniMax retry.</td>
+            <td>A broader false-missing-feature claim than the default-effort MiniMax run.</td>
           </tr>
           <tr>
             <td><span class="model">Gemini 3 Flash Preview</span></td>
