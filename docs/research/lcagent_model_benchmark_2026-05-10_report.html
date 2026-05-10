@@ -443,6 +443,12 @@
       box-shadow: 0 0 0 2px rgba(107, 92, 18, .25);
     }
 
+    .point-medium .point-dot {
+      background: #fff;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(11, 114, 133, .28);
+    }
+
     .point-fail .point-dot {
       background: #fff;
       border-color: var(--warn);
@@ -509,6 +515,11 @@
 
     .legend-swatch.verify {
       background: #6b5c12;
+    }
+
+    .legend-swatch.medium {
+      background: #fff;
+      border: 2px solid var(--accent);
     }
 
     .legend-swatch.fail {
@@ -644,6 +655,10 @@
           <span class="label">Benchmark Root</span>
           <code>/tmp/lcagent-bench-20260509T203500</code>
         </div>
+        <div>
+          <span class="label">Medium Root</span>
+          <code>/tmp/lcagent-bench-medium-20260510T104803</code>
+        </div>
       </div>
     </div>
 
@@ -660,6 +675,9 @@
       </p>
       <p>
         Retry runs used OpenRouter provider pins with fallbacks disabled and required parameter support enabled. Temperature was explicit at <code>0.2</code> for OpenRouter and direct DeepSeek chat-completions runs; OpenAI Responses and direct Moonshot runs omitted temperature.
+      </p>
+      <p>
+        A medium-effort follow-up did not change the recommendation. Medium helped pinned Sonnet materially and kept Opus strong, but GPT-5.5 medium became slower, pricier, and less calibrated than GPT-5.5 low. MiniMax pinned medium regressed to an invalid final-response schema.
       </p>
     </div>
 
@@ -711,18 +729,28 @@
 
             <span class="chart-point point-default label-above" style="left: 63.5%; top: 2.9%;"><span class="point-dot">&nbsp;</span><span class="point-name">GPT-5.5 low</span></span>
             <span class="chart-point point-verify label-left" style="left: 99.3%; top: 7.1%;"><span class="point-dot">&nbsp;</span><span class="point-name">Opus 4.7</span></span>
+            <span class="chart-point point-medium label-left" style="left: 97.7%; top: 11.4%;"><span class="point-dot">&nbsp;</span><span class="point-name">Opus med</span></span>
+            <span class="chart-point point-medium label-above" style="left: 81.0%; top: 22.9%;"><span class="point-dot">&nbsp;</span><span class="point-name">GPT med</span></span>
+            <span class="chart-point point-medium label-left" style="left: 96.5%; top: 25.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Sonnet med</span></span>
             <span class="chart-point" style="left: 39.1%; top: 31.4%;"><span class="point-dot">&nbsp;</span><span class="point-name">Kimi K2.6</span></span>
             <span class="chart-point label-left" style="left: 67.5%; top: 40.0%;"><span class="point-dot">&nbsp;</span><span class="point-name">GPT none</span></span>
             <span class="chart-point" style="left: 2.3%; top: 41.4%;"><span class="point-dot">&nbsp;</span><span class="point-name">Flash Lite</span></span>
+            <span class="chart-point point-medium label-below" style="left: 4.5%; top: 47.1%;"><span class="point-dot">&nbsp;</span><span class="point-name">Flash Lite med</span></span>
             <span class="chart-point label-left" style="left: 55.5%; top: 44.3%;"><span class="point-dot">&nbsp;</span><span class="point-name">GLM 5.1</span></span>
             <span class="chart-point label-below" style="left: 59.7%; top: 45.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Gemini Pro</span></span>
             <span class="chart-point" style="left: 18.4%; top: 48.6%;"><span class="point-dot">&nbsp;</span><span class="point-name">DeepSeek</span></span>
+            <span class="chart-point point-medium label-below" style="left: 20.0%; top: 52.9%;"><span class="point-dot">&nbsp;</span><span class="point-name">DeepSeek med</span></span>
             <span class="chart-point label-left" style="left: 96.7%; top: 55.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Sonnet pin</span></span>
+            <span class="chart-point point-medium label-above" style="left: 33.6%; top: 55.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Gemini Flash med</span></span>
             <span class="chart-point" style="left: 39.3%; top: 57.1%;"><span class="point-dot">&nbsp;</span><span class="point-name">Grok 4.3</span></span>
             <span class="chart-point" style="left: 28.2%; top: 60.0%;"><span class="point-dot">&nbsp;</span><span class="point-name">Gemini Flash</span></span>
+            <span class="chart-point point-medium label-left" style="left: 67.9%; top: 65.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Gemini Pro med</span></span>
             <span class="chart-point label-below" style="left: 11.6%; top: 61.4%;"><span class="point-dot">&nbsp;</span><span class="point-name">MiniMax pin</span></span>
             <span class="chart-point label-below" style="left: 3.0%; top: 68.6%;"><span class="point-dot">&nbsp;</span><span class="point-name">MiniMax low pin</span></span>
+            <span class="chart-point point-medium label-left" style="left: 61.3%; top: 74.3%;"><span class="point-dot">&nbsp;</span><span class="point-name">GLM med</span></span>
+            <span class="chart-point point-medium label-left" style="left: 48.1%; top: 85.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Grok med</span></span>
             <span class="chart-point point-fail" style="left: 10.7%; top: 85.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">MiniMax unpin</span></span>
+            <span class="chart-point point-fail label-below" style="left: 8.7%; top: 87.1%;"><span class="point-dot">&nbsp;</span><span class="point-name">MiniMax med</span></span>
             <span class="chart-point point-fail label-left" style="left: 89.4%; top: 88.6%;"><span class="point-dot">&nbsp;</span><span class="point-name">Sonnet unpin</span></span>
             <span class="chart-point point-fail" style="left: 14.9%; top: 92.9%;"><span class="point-dot">&nbsp;</span><span class="point-name">MiniMax low unpin</span></span>
           </div>
@@ -731,10 +759,11 @@
           <span><span class="legend-swatch default">&nbsp;</span>Recommended default</span>
           <span><span class="legend-swatch verify">&nbsp;</span>Verification lane</span>
           <span><span class="legend-swatch">&nbsp;</span>Completed run</span>
+          <span><span class="legend-swatch medium">&nbsp;</span>Medium-effort follow-up</span>
           <span><span class="legend-swatch fail">&nbsp;</span>Aborted or invalid final output</span>
         </div>
         <p class="chart-note">
-          No model landed in the ideal quadrant in this batch. Provider pinning moved MiniMax and Sonnet from failed runs to completed runs, but it did not move them into the recommended lanes. Kimi K2.6 is still the closest budget candidate; GPT-5.5 low remains the practical default; Claude Opus 4.7 is the expensive audit pass.
+          No model landed in the ideal quadrant in this batch. Medium effort moved pinned Sonnet into the premium verification area, but did not make it economical. Kimi K2.6 is still the closest budget candidate; GPT-5.5 low remains the practical default; Claude Opus 4.7 remains the expensive audit pass.
         </p>
       </div>
     </div>
@@ -789,6 +818,51 @@
             <td class="num">1,493</td>
             <td class="num">1,239</td>
             <td>Strongest audit quality, but far too costly for default routing.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Claude Opus 4.7 medium</span><br><span class="subtle">OpenRouter</span></td>
+            <td class="status-ok">complete</td>
+            <td class="num score">8.2</td>
+            <td>medium</td>
+            <td class="num">101s</td>
+            <td class="num">$1.817</td>
+            <td class="num">326,288</td>
+            <td class="num">0</td>
+            <td class="num">16</td>
+            <td class="num">14</td>
+            <td class="num">1,963</td>
+            <td class="num">696</td>
+            <td>Excellent audit structure again; one false gap and premium cost keep it in verification lane.</td>
+          </tr>
+          <tr>
+            <td><span class="model">GPT-5.5 medium</span><br><span class="subtle">OpenAI API</span></td>
+            <td class="status-ok">complete</td>
+            <td class="num score">7.4</td>
+            <td>medium</td>
+            <td class="num">191s</td>
+            <td class="num">$0.900</td>
+            <td class="num">234,660</td>
+            <td class="num">97,280</td>
+            <td class="num">24</td>
+            <td class="num">24</td>
+            <td class="num">2,014</td>
+            <td class="num">1,802</td>
+            <td>Useful answer, but more expensive and less calibrated than GPT-5.5 low.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Claude Sonnet 4.6 pinned medium</span><br><span class="subtle">OpenRouter / pin: anthropic</span></td>
+            <td class="status-ok">complete</td>
+            <td class="num score">7.2</td>
+            <td>medium</td>
+            <td class="num">417s</td>
+            <td class="num">$1.726</td>
+            <td class="num">480,381</td>
+            <td class="num">0</td>
+            <td class="num">23</td>
+            <td class="num">11</td>
+            <td class="num">1,115</td>
+            <td class="num">10,176</td>
+            <td>Medium effort substantially improved the final answer, but it stayed slow and costly.</td>
           </tr>
           <tr>
             <td><span class="model">Kimi K2.6</span><br><span class="subtle">Moonshot API</span></td>
@@ -866,6 +940,21 @@
             <td>Completed cleanly but made costly false claims.</td>
           </tr>
           <tr>
+            <td><span class="model">Gemini 3.1 Flash Lite medium</span><br><span class="subtle">OpenRouter</span></td>
+            <td class="status-ok">complete</td>
+            <td class="num score">5.7</td>
+            <td>medium</td>
+            <td class="num">30s</td>
+            <td class="num">$0.036</td>
+            <td class="num">224,738</td>
+            <td class="num">94,556</td>
+            <td class="num">18</td>
+            <td class="num">12</td>
+            <td class="num">1,601</td>
+            <td class="num">0</td>
+            <td>Still cheap and fast, but under-called real gaps and became less useful than low.</td>
+          </tr>
+          <tr>
             <td><span class="model">DeepSeek V4 Pro</span><br><span class="subtle">DeepSeek API</span></td>
             <td class="status-ok">complete</td>
             <td class="num score">5.6</td>
@@ -881,6 +970,21 @@
             <td>Extremely cheap, but weak quality and very slow.</td>
           </tr>
           <tr>
+            <td><span class="model">DeepSeek V4 Pro medium</span><br><span class="subtle">DeepSeek API</span></td>
+            <td class="status-ok">complete</td>
+            <td class="num score">5.3</td>
+            <td>medium</td>
+            <td class="num">331s</td>
+            <td class="num">$0.069</td>
+            <td class="num">308,450</td>
+            <td class="num">159,232</td>
+            <td class="num">19</td>
+            <td class="num">30</td>
+            <td class="num">2,818</td>
+            <td class="num">4,717</td>
+            <td>Cheap again, but medium did not fix false tool and architecture claims.</td>
+          </tr>
+          <tr>
             <td><span class="model">Claude Sonnet 4.6 pinned</span><br><span class="subtle">OpenRouter / pin: anthropic</span></td>
             <td class="status-ok">complete</td>
             <td class="num score">5.1</td>
@@ -894,6 +998,21 @@
             <td class="num">1,583</td>
             <td class="num">12,973</td>
             <td>Strict Anthropic routing completed, but it wandered, needed forced synthesis, and included false missing-feature claims.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Gemini 3 Flash Preview medium</span><br><span class="subtle">OpenRouter</span></td>
+            <td class="status-ok">complete</td>
+            <td class="num score">5.1</td>
+            <td>medium</td>
+            <td class="num">122s</td>
+            <td class="num">$0.123</td>
+            <td class="num">308,555</td>
+            <td class="num">161,487</td>
+            <td class="num">21</td>
+            <td class="num">12</td>
+            <td class="num">1,340</td>
+            <td class="num">15,072</td>
+            <td>More substantial than low, but included unearned verification claims and factual misses.</td>
           </tr>
           <tr>
             <td><span class="model">Grok 4.3</span><br><span class="subtle">OpenRouter</span></td>
@@ -941,6 +1060,21 @@
             <td>Strict MiniMax routing fixed completion, but the final missed important gaps and added false tool/skill claims.</td>
           </tr>
           <tr>
+            <td><span class="model">Gemini 3.1 Pro Custom Tools medium</span><br><span class="subtle">OpenRouter</span></td>
+            <td class="status-ok">complete</td>
+            <td class="num score">4.4</td>
+            <td>medium</td>
+            <td class="num">201s</td>
+            <td class="num">$0.520</td>
+            <td class="num">331,810</td>
+            <td class="num">186,282</td>
+            <td class="num">24</td>
+            <td class="num">12</td>
+            <td class="num">1,729</td>
+            <td class="num">17,695</td>
+            <td>Medium effort increased cost and still made false missing-tool claims.</td>
+          </tr>
+          <tr>
             <td><span class="model">MiniMax M2.7 pinned low</span><br><span class="subtle">OpenRouter / pin: minimax</span></td>
             <td class="status-ok">complete</td>
             <td class="num score">4.2</td>
@@ -956,6 +1090,36 @@
             <td>Completed cheaply, but low effort produced broader false missing-feature claims than the default-effort retry.</td>
           </tr>
           <tr>
+            <td><span class="model">GLM 5.1 medium</span><br><span class="subtle">OpenRouter</span></td>
+            <td class="status-ok">complete</td>
+            <td class="num score">3.8</td>
+            <td>medium</td>
+            <td class="num">440s</td>
+            <td class="num">$0.394</td>
+            <td class="num">373,779</td>
+            <td class="num">156,608</td>
+            <td class="num">24</td>
+            <td class="num">18</td>
+            <td class="num">2,032</td>
+            <td class="num">14,911</td>
+            <td>Medium effort made GLM slower and more confidently wrong about implemented tools.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Grok 4.3 medium</span><br><span class="subtle">OpenRouter</span></td>
+            <td class="status-ok">complete</td>
+            <td class="num score">3.0</td>
+            <td>medium</td>
+            <td class="num">174s</td>
+            <td class="num">$0.227</td>
+            <td class="num">220,245</td>
+            <td class="num">59,200</td>
+            <td class="num">16</td>
+            <td class="num">5</td>
+            <td class="num">247</td>
+            <td class="num">9,167</td>
+            <td>Read the right docs this time, but falsely marked core implemented tools and LCR wiring as absent.</td>
+          </tr>
+          <tr>
             <td><span class="model">MiniMax M2.7 unpinned default</span><br><span class="subtle">OpenRouter</span></td>
             <td class="status-fail">aborted</td>
             <td class="num score">3.0</td>
@@ -969,6 +1133,21 @@
             <td class="num">2,245</td>
             <td class="num">4,756</td>
             <td>Reached final tool call but emitted invalid schema.</td>
+          </tr>
+          <tr>
+            <td><span class="model">MiniMax M2.7 pinned medium</span><br><span class="subtle">OpenRouter / pin: minimax</span></td>
+            <td class="status-fail">aborted</td>
+            <td class="num score">2.9</td>
+            <td>medium</td>
+            <td class="num">104s</td>
+            <td class="num">$0.043</td>
+            <td class="num">229,773</td>
+            <td class="num">121,728</td>
+            <td class="num">16</td>
+            <td class="num">24</td>
+            <td class="num">2,967</td>
+            <td class="num">1,850</td>
+            <td>Pinned medium regressed to invalid final_response schema after useful tool work.</td>
           </tr>
           <tr>
             <td><span class="model">Claude Sonnet 4.6 unpinned</span><br><span class="subtle">OpenRouter</span></td>
@@ -1004,6 +1183,7 @@
       </table>
       <p class="subtle">
         Scores are subjective default-routing scores out of 10, not pure answer-quality scores. The Effort column is the requested reasoning-effort setting only, separate from reported reasoning tokens. Temperature is recorded per row in the CSV; OpenRouter and direct DeepSeek chat-completions runs used <code>0.2</code>, while OpenAI Responses and direct Moonshot runs omitted temperature.
+        Kimi K2.6 was not rerun in the medium-effort pass because the direct Moonshot adapter does not accept the LCAgent reasoning-effort option.
       </p>
     </div>
 
@@ -1070,6 +1250,41 @@
             <td><span class="model">Gemini 3 Flash Preview</span></td>
             <td><span class="quote">"Tool-Call Markup Guardrail ... Missing"</span></td>
             <td>Fast, but it confidently missed existing provider-markup guardrail work.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Claude Opus 4.7 medium</span></td>
+            <td><span class="quote">"Milestones 1-3 are essentially in place"</span></td>
+            <td>Strong medium-effort calibration, but still too expensive for default routing.</td>
+          </tr>
+          <tr>
+            <td><span class="model">GPT-5.5 medium</span></td>
+            <td><span class="quote">"`--dry-run` is documented but not implemented"</span></td>
+            <td>Penalized because <code>dry-run</code> was not actually in the benchmark docs; medium effort added a false headline gap.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Claude Sonnet 4.6 pinned medium</span></td>
+            <td><span class="quote">"No approval/interrupt loop for autonomy `low`"</span></td>
+            <td>Medium effort gave a much more relevant final than the low run, including real lifecycle gaps.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Gemini 3.1 Pro Custom Tools medium</span></td>
+            <td><span class="quote">"`load_skill` tool logic ... appears to be missing or incomplete"</span></td>
+            <td>False in the benchmark snapshot; medium effort did not fix overclaiming.</td>
+          </tr>
+          <tr>
+            <td><span class="model">GLM 5.1 medium</span></td>
+            <td><span class="quote">"no `apply_patch` or diff-application tool"</span></td>
+            <td>False in the benchmark snapshot and more damaging than the low-effort GLM answer.</td>
+          </tr>
+          <tr>
+            <td><span class="model">Grok 4.3 medium</span></td>
+            <td><span class="quote">"`update_plan` ... absent"</span></td>
+            <td>False in the benchmark snapshot; it read the right docs but missed implemented core tools.</td>
+          </tr>
+          <tr>
+            <td><span class="model">MiniMax M2.7 pinned medium</span></td>
+            <td><span class="quote">"I need to read the remaining ranges and check..."</span></td>
+            <td>The run aborted before a usable final answer, despite provider pinning and medium effort.</td>
           </tr>
         </tbody>
       </table>

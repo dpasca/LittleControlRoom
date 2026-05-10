@@ -16,9 +16,11 @@ investigation needs line-by-line replay evidence.
 - Report date: 2026-05-10 JST
 - Harness branch at artifact creation: `spike/lcagent-mvp`
 - Harness commit before benchmark and docs wrapping edits: `f5908ac384818831d9cb29bdd910ae96ed02be7a`
+- Medium-effort follow-up harness commit: `3bdb7b2e41581814716195d76eddab8c26fcaa42`
 - Archival artifact state: the repository commit that contains this file
 - Target snapshot inspected by the agents: `885fd24f1f24ce903b7de12d34c5166d54ebe251`
 - Original scratch root: `/tmp/lcagent-bench-20260509T203500`
+- Medium-effort scratch root: `/tmp/lcagent-bench-medium-20260510T104803`
 - Turn budget for final comparison runs: 32
 - Timeout for final comparison runs: 10 minutes
 - OpenRouter retry routing used strict origin-provider pins with fallbacks
@@ -81,6 +83,30 @@ shape from this run is:
 - Budget secondary: Kimi K2.6
 - Expensive verification: Claude Opus 4.7
 
+## Medium Effort Follow-up
+
+The medium-effort follow-up did not change the routing recommendation. It helped
+Claude Sonnet 4.6 substantially, kept Claude Opus 4.7 strong, and made GPT-5.5
+more expensive without making it more useful than the low-effort run.
+
+Kimi K2.6 was not rerun in this pass because the direct Moonshot adapter does
+not accept the LCAgent `reasoning_effort` option. MiniMax M2.7 was rerun with a
+strict MiniMax provider pin and `reasoning_effort=medium`, but it regressed to
+an invalid `final_response` schema.
+
+| Run | Status | Score | Cost | Verdict |
+|---|---:|---:|---:|---|
+| Claude Opus 4.7 medium | complete | 8.2 | $1.817 | Excellent audit structure again; one false gap and premium cost keep it in the verification lane. |
+| GPT-5.5 medium | complete | 7.4 | $0.900 | Useful answer, but more expensive and less calibrated than GPT-5.5 low. |
+| Claude Sonnet 4.6 pinned medium | complete | 7.2 | $1.726 | Medium effort substantially improved the final answer, but it stayed slow and costly. |
+| Gemini 3.1 Flash Lite medium | complete | 5.7 | $0.036 | Still cheap and fast, but under-called real gaps and became less useful than low. |
+| DeepSeek V4 Pro medium | complete | 5.3 | $0.069 | Cheap again, but medium did not fix false tool and architecture claims. |
+| Gemini 3 Flash Preview medium | complete | 5.1 | $0.123 | More substantial than low, but included unearned verification claims and factual misses. |
+| Gemini 3.1 Pro Custom Tools medium | complete | 4.4 | $0.520 | Medium effort increased cost and still made false missing-tool claims. |
+| GLM 5.1 medium | complete | 3.8 | $0.394 | Slower and more confidently wrong about implemented tools. |
+| Grok 4.3 medium | complete | 3.0 | $0.227 | Read the right docs this time, but falsely marked core implemented tools and LCR wiring as absent. |
+| MiniMax M2.7 pinned medium | aborted | 2.9 | $0.043 | Regressed to invalid final-response schema after useful tool work. |
+
 ## Scoring Evidence Excerpts
 
 These excerpts are short snippets from the generated final answers, quoted to
@@ -99,6 +125,13 @@ they show why a run was scored up or down.
 | MiniMax M2.7 pinned default | "`load_skill` implementation ... MISSING" | Also false in the benchmark snapshot; the run completed cheaply but missed important implemented behavior. |
 | MiniMax M2.7 pinned low | "`search` tool ... No `search` tool implementation" | A broader false-missing-feature claim than the default-effort MiniMax retry. |
 | Gemini 3 Flash Preview | "Tool-Call Markup Guardrail ... Missing" | Fast, but it confidently missed existing provider-markup guardrail work. |
+| Claude Opus 4.7 medium | "Milestones 1-3 are essentially in place" | Strong medium-effort calibration, but still too expensive for default routing. |
+| GPT-5.5 medium | "`--dry-run` is documented but not implemented" | Penalized because `dry-run` was not actually in the benchmark docs; medium effort added a false headline gap. |
+| Claude Sonnet 4.6 pinned medium | "No approval/interrupt loop for autonomy `low`" | Medium effort gave a much more relevant final than the low run, including real lifecycle gaps. |
+| Gemini 3.1 Pro Custom Tools medium | "`load_skill` tool logic ... appears to be missing or incomplete" | False in the benchmark snapshot; medium effort did not fix overclaiming. |
+| GLM 5.1 medium | "no `apply_patch` or diff-application tool" | False in the benchmark snapshot and more damaging than the low-effort GLM answer. |
+| Grok 4.3 medium | "`update_plan` ... absent" | False in the benchmark snapshot; it read the right docs but missed implemented core tools. |
+| MiniMax M2.7 pinned medium | "I need to read the remaining ranges and check..." | The run aborted before a usable final answer, despite provider pinning and medium effort. |
 
 ## Caveats
 
