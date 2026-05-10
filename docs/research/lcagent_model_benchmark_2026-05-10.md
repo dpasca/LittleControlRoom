@@ -88,7 +88,7 @@ down, but the excerpts are illustrative rather than a separate formula.
 
 ## Takeaways
 
-**GPT-5.5** with `reasoning.effort=low` was the best default. It produced the best
+**GPT-5.5** with **low** reasoning effort was the best default. It produced the best
 overall answer with reliable tool behavior and good cache reuse.
 
 **Claude Opus 4.7** produced the most detailed audit-style review, but GPT-5.5 low
