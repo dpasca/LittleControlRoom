@@ -23,6 +23,10 @@ specific debugging task needs them.
   [research note](research/lcagent_model_benchmark_2026-05-10.md),
   [printable report](research/lcagent_model_benchmark_2026-05-10_report.html),
   [CSV results](research/lcagent_model_benchmark_2026-05-10_results.csv).
+- 2026-05-10 large-context follow-up:
+  [research note](research/lcagent_context_profile_followup_2026-05-10.md),
+  [printable report](research/lcagent_context_profile_followup_2026-05-10_report.html),
+  [CSV results](research/lcagent_context_profile_followup_2026-05-10_results.csv).
 
 ## Fixed Snapshot Workflow
 
@@ -46,8 +50,23 @@ go run ./cmd/lcagent exec \
   --output stream-json \
   --provider openrouter \
   --model deepseek/deepseek-v4-pro \
+  --tool-profile balanced \
   "review lcagent and compare it with the design docs"
 ```
+
+Use `--tool-profile generous` for a qualitative read-budget lane. The default
+`balanced` profile keeps read/list/search/outline output conservative. The
+`generous` profile keeps the same tool set and harness behavior, but raises the
+file-inspection budgets so a capable model can read larger contiguous ranges
+after outline/search has identified central files. Treat it as a benchmark
+variable, not as a free apples-to-apples replacement for balanced runs.
+
+Use `--context-profile large` when the model and provider have enough context
+window to justify delaying loop compaction. This keeps the default harness
+conservative while allowing large-window benchmark lanes to preserve more raw
+tool evidence before the harness summarizes the transcript. It is especially
+useful when measuring whether a model can reduce duplicate reads once earlier
+tool outputs remain available in context longer.
 
 Summarize the resulting session artifact:
 
@@ -83,6 +102,10 @@ Also record model-control knobs separately from provider labels:
 - whether provider fallbacks were allowed
 - prompt-cache strategy, especially explicit Anthropic `cache_control`
   breakpoints and cache read/write token accounting
+- tool profile (`balanced` or `generous`), since it changes read/list/search
+  and module-outline budgets
+- context profile (`balanced` or `large`), since it changes when loop/final
+  transcript compaction occurs and how much tool evidence is retained
 
 For fair comparisons, keep the task prompt, model, provider, autonomy level,
 data-dir freshness, and benchmark commit fixed.
