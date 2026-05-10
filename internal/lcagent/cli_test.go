@@ -362,6 +362,54 @@ func TestRunExecOpenRouterPassesProviderOnlyAndTemperature(t *testing.T) {
 	}
 }
 
+func TestRunExecOpenRouterCanOmitTemperature(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if _, ok := body["temperature"]; ok {
+			t.Fatalf("temperature should be omitted: %#v", body["temperature"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"resp_no_temperature",
+			"model":"anthropic/claude-opus-4.7",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"done without temperature"}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "anthropic/claude-opus-4.7",
+		"--openrouter-provider-only", "anthropic",
+		"--temperature", "omitted",
+		"--max-turns", "2",
+		"answer directly",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"summary":"done without temperature"`) {
+		t.Fatalf("stdout missing final summary:\n%s", stdout.String())
+	}
+}
+
 func TestRunExecOpenRouterCanUseReadOnlyTool(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()

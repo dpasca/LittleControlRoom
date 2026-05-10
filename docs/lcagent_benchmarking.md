@@ -81,6 +81,8 @@ Also record model-control knobs separately from provider labels:
 - temperature, including whether it was omitted
 - provider routing/pinning, such as OpenRouter `provider.only`
 - whether provider fallbacks were allowed
+- prompt-cache strategy, especially explicit Anthropic `cache_control`
+  breakpoints and cache read/write token accounting
 
 For fair comparisons, keep the task prompt, model, provider, autonomy level,
 data-dir freshness, and benchmark commit fixed.

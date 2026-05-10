@@ -229,6 +229,111 @@ func TestOpenRouterClientSendsProviderRoutingAndTemperature(t *testing.T) {
 	}
 }
 
+func TestOpenRouterClientCanOmitTemperature(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := req["temperature"]; ok {
+			t.Fatalf("temperature should be omitted: %#v", req["temperature"])
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"done"}}]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewOpenRouterClient(OpenRouterConfig{
+		APIKey:          "key",
+		BaseURL:         server.URL,
+		Model:           "anthropic/claude-opus-4.7",
+		OmitTemperature: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Complete(context.Background(), []Message{{Role: "system", Content: "stable system"}, {Role: "user", Content: "hi"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOpenRouterClientEnablesAnthropicPromptCacheForClaudeModels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Model        string        `json:"model"`
+			CacheControl *CacheControl `json:"cache_control"`
+			Messages     []struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if req.Model != "anthropic/claude-sonnet-4.6" {
+			t.Fatalf("model = %q", req.Model)
+		}
+		if req.CacheControl != nil {
+			t.Fatalf("top-level cache_control should be omitted for explicit prompt-cache breakpoint: %+v", req.CacheControl)
+		}
+		if len(req.Messages) == 0 || req.Messages[0].Role != "system" {
+			t.Fatalf("messages = %#v, want system message first", req.Messages)
+		}
+		var blocks []struct {
+			Type         string `json:"type"`
+			Text         string `json:"text"`
+			CacheControl struct {
+				Type string `json:"type"`
+			} `json:"cache_control"`
+		}
+		if err := json.Unmarshal(req.Messages[0].Content, &blocks); err != nil {
+			t.Fatalf("decode cached system content: %v; raw=%s", err, req.Messages[0].Content)
+		}
+		if len(blocks) != 1 || blocks[0].Type != "text" || !strings.Contains(blocks[0].Text, "stable system") || blocks[0].CacheControl.Type != "ephemeral" {
+			t.Fatalf("cached system content = %#v, want explicit ephemeral cache breakpoint", blocks)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"done"}}]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewOpenRouterClient(OpenRouterConfig{
+		APIKey:  "key",
+		BaseURL: server.URL,
+		Model:   "anthropic/claude-sonnet-4.6",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Complete(context.Background(), []Message{{Role: "system", Content: "stable system"}, {Role: "user", Content: "hi"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOpenRouterClientDoesNotEnableAnthropicPromptCacheForOtherModels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := req["cache_control"]; ok {
+			t.Fatalf("cache_control should be omitted for non-Anthropic model: %#v", req["cache_control"])
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"done"}}]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewOpenRouterClient(OpenRouterConfig{
+		APIKey:  "key",
+		BaseURL: server.URL,
+		Model:   "deepseek/deepseek-v4-pro",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestOpenAIClientUsesDirectEndpointShape(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/responses" {
@@ -681,6 +786,18 @@ func TestUsageFromRawSupportsResponsesShape(t *testing.T) {
 		"total_tokens":412
 	}`), "unknown-model")
 	if usage.InputTokens != 345 || usage.OutputTokens != 67 || usage.TotalTokens != 412 || usage.CachedInputTokens != 21 || usage.ReasoningTokens != 5 {
+		t.Fatalf("UsageFromRaw() = %+v", usage)
+	}
+}
+
+func TestUsageFromRawSupportsAnthropicCacheShape(t *testing.T) {
+	usage := UsageFromRaw(json.RawMessage(`{
+		"input_tokens":50,
+		"cache_read_input_tokens":1000,
+		"cache_creation_input_tokens":200,
+		"output_tokens":67
+	}`), "anthropic/claude-sonnet-4.6")
+	if usage.InputTokens != 1250 || usage.OutputTokens != 67 || usage.TotalTokens != 1317 || usage.CachedInputTokens != 1000 {
 		t.Fatalf("UsageFromRaw() = %+v", usage)
 	}
 }

@@ -34,6 +34,7 @@ type OpenRouterConfig struct {
 	RequestTimeout  time.Duration
 	ReasoningEffort string
 	Temperature     *float64
+	OmitTemperature bool
 	ProviderOnly    []string
 	HTTPClient      *http.Client
 }
@@ -67,11 +68,12 @@ type FunctionSpec struct {
 }
 
 type Message struct {
-	Role             string     `json:"role"`
-	Content          string     `json:"content,omitempty"`
-	ReasoningContent string     `json:"reasoning_content,omitempty"`
-	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID       string     `json:"tool_call_id,omitempty"`
+	Role             string        `json:"role"`
+	Content          string        `json:"content,omitempty"`
+	ReasoningContent string        `json:"reasoning_content,omitempty"`
+	ToolCalls        []ToolCall    `json:"tool_calls,omitempty"`
+	ToolCallID       string        `json:"tool_call_id,omitempty"`
+	CacheControl     *CacheControl `json:"-"`
 }
 
 type ToolCall struct {
@@ -83,6 +85,46 @@ type ToolCall struct {
 type FunctionCall struct {
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
+}
+
+type CacheControl struct {
+	Type string `json:"type"`
+	TTL  string `json:"ttl,omitempty"`
+}
+
+type messageContentBlock struct {
+	Type         string        `json:"type"`
+	Text         string        `json:"text"`
+	CacheControl *CacheControl `json:"cache_control,omitempty"`
+}
+
+func (m Message) MarshalJSON() ([]byte, error) {
+	type wireMessage struct {
+		Role             string     `json:"role"`
+		Content          any        `json:"content,omitempty"`
+		ReasoningContent string     `json:"reasoning_content,omitempty"`
+		ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
+		ToolCallID       string     `json:"tool_call_id,omitempty"`
+	}
+	var content any
+	if m.Content != "" {
+		if m.CacheControl != nil {
+			content = []messageContentBlock{{
+				Type:         "text",
+				Text:         m.Content,
+				CacheControl: m.CacheControl,
+			}}
+		} else {
+			content = m.Content
+		}
+	}
+	return json.Marshal(wireMessage{
+		Role:             m.Role,
+		Content:          content,
+		ReasoningContent: m.ReasoningContent,
+		ToolCalls:        m.ToolCalls,
+		ToolCallID:       m.ToolCallID,
+	})
 }
 
 type ChatResponse struct {
@@ -232,7 +274,7 @@ func newChatCompletionsClient(cfg OpenRouterConfig, profile chatProviderProfile)
 		extraHeaders:    profile.ExtraHeaders,
 		maxTokensField:  firstNonEmpty(profile.MaxTokensField, "max_completion_tokens"),
 		reasoningStyle:  profile.ReasoningStyle,
-		omitTemperature: profile.OmitTemperature,
+		omitTemperature: profile.OmitTemperature || cfg.OmitTemperature,
 		temperature:     cfg.Temperature,
 		providerOnly:    openRouterProviderOnly(profile.Name, cfg.ProviderOnly),
 	}, nil
@@ -246,9 +288,13 @@ func (c *Client) CompleteWithOptions(ctx context.Context, messages []Message, to
 	if c.reasoningStyle == "openai" {
 		return c.completeResponses(ctx, messages, tools, opts)
 	}
+	requestMessages := messages
+	if c.shouldEnableAnthropicPromptCache() {
+		requestMessages = withAnthropicPromptCache(messages)
+	}
 	body := map[string]any{
 		"model":    c.model,
-		"messages": messages,
+		"messages": requestMessages,
 	}
 	if !c.omitTemperature {
 		temperature := DefaultChatTemperature
@@ -655,10 +701,12 @@ func UsageFromRaw(raw json.RawMessage, modelName string) model.LLMUsage {
 		CompletionTokensDetails struct {
 			ReasoningTokens int64 `json:"reasoning_tokens"`
 		} `json:"completion_tokens_details"`
-		TotalTokens           int64 `json:"total_tokens"`
-		PromptCacheHitTokens  int64 `json:"prompt_cache_hit_tokens"`
-		PromptCacheMissTokens int64 `json:"prompt_cache_miss_tokens"`
-		CachedTokens          int64 `json:"cached_tokens"`
+		TotalTokens              int64 `json:"total_tokens"`
+		PromptCacheHitTokens     int64 `json:"prompt_cache_hit_tokens"`
+		PromptCacheMissTokens    int64 `json:"prompt_cache_miss_tokens"`
+		CachedTokens             int64 `json:"cached_tokens"`
+		CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+		CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
 
 		InputTokens        int64 `json:"input_tokens"`
 		InputTokensDetails struct {
@@ -678,11 +726,15 @@ func UsageFromRaw(raw json.RawMessage, modelName string) model.LLMUsage {
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return model.LLMUsage{}
 	}
+	inputTokens := firstPositiveInt64(envelope.InputTokens, envelope.PromptTokens)
+	if envelope.PromptTokens == 0 && (envelope.CacheReadInputTokens > 0 || envelope.CacheCreationInputTokens > 0) {
+		inputTokens += envelope.CacheReadInputTokens + envelope.CacheCreationInputTokens
+	}
 	usage := model.LLMUsage{
-		InputTokens:       firstPositiveInt64(envelope.InputTokens, envelope.PromptTokens),
+		InputTokens:       inputTokens,
 		OutputTokens:      firstPositiveInt64(envelope.OutputTokens, envelope.CompletionTokens),
 		TotalTokens:       envelope.TotalTokens,
-		CachedInputTokens: firstPositiveInt64(envelope.CachedInputTokens, envelope.InputTokensDetails.CachedTokens, envelope.PromptTokensDetails.CachedTokens, envelope.PromptCacheHitTokens, envelope.CachedTokens),
+		CachedInputTokens: firstPositiveInt64(envelope.CachedInputTokens, envelope.InputTokensDetails.CachedTokens, envelope.PromptTokensDetails.CachedTokens, envelope.PromptCacheHitTokens, envelope.CachedTokens, envelope.CacheReadInputTokens),
 		ReasoningTokens:   firstPositiveInt64(envelope.ReasoningTokens, envelope.OutputTokensDetails.ReasoningTokens, envelope.CompletionTokensDetails.ReasoningTokens),
 		EstimatedCostUSD:  firstPositiveFloat64(envelope.EstimatedCostUSD, envelope.CostUSD, envelope.Cost),
 	}
@@ -702,6 +754,25 @@ func (c *Client) MaxTurns() int {
 		return DefaultOpenRouterMaxTurns
 	}
 	return c.maxTurns
+}
+
+func (c *Client) shouldEnableAnthropicPromptCache() bool {
+	if c == nil || !strings.EqualFold(strings.TrimSpace(c.providerName), "openrouter") {
+		return false
+	}
+	modelName := strings.ToLower(strings.TrimSpace(c.model))
+	return strings.HasPrefix(modelName, "anthropic/")
+}
+
+func withAnthropicPromptCache(messages []Message) []Message {
+	out := append([]Message(nil), messages...)
+	for i := range out {
+		if out[i].Role == "system" && strings.TrimSpace(out[i].Content) != "" {
+			out[i].CacheControl = &CacheControl{Type: "ephemeral"}
+			return out
+		}
+	}
+	return out
 }
 
 func (c *Client) Model() string {

@@ -23,14 +23,14 @@ evidence.
 - Target snapshot inspected by the agents: `885fd24f1f24ce903b7de12d34c5166d54ebe251`
 - Turn budget for final comparison runs: 32
 - Timeout for final comparison runs: 10 minutes
-- Provider routing is recorded in the CSV. Completed Claude Sonnet 4.6 and
-  MiniMax M2.7 retry rows used strict OpenRouter origin-provider pins with
-  fallbacks disabled and required parameter support (`anthropic` and
+- Provider routing is recorded in the CSV. Completed Claude Sonnet 4.6, Claude
+  Opus 4.7, and MiniMax M2.7 retry rows used strict OpenRouter origin-provider
+  pins with fallbacks disabled and required parameter support (`anthropic` and
   `minimax`). Other completed OpenRouter rows used default OpenRouter routing
   (`provider_pin=none`).
 - Temperature was explicit for the retry runs. OpenRouter and direct DeepSeek
-  chat-completions runs used `temperature=0.2`; OpenAI Responses API runs and
-  direct Moonshot runs omitted temperature.
+  chat-completions runs used `temperature=0.2`; OpenAI Responses API runs,
+  direct Moonshot runs, and Claude Opus 4.7 runs omitted temperature.
 
 The original prompt, including typos, was:
 
@@ -87,8 +87,8 @@ overall answer with reliable tool behavior and good cache reuse.
 
 **Claude Opus 4.7** produced the most detailed audit-style review, but GPT-5.5 low
 still scored higher overall because the score is a default-routing score, not a
-pure answer-quality score. Opus's cost and lack of reported cache hits make it a
-verification lane rather than the default.
+pure answer-quality score. Explicit Anthropic prompt-cache breakpoints reduced
+Opus cost, but it remained a premium verification lane rather than the default.
 
 Notable mentions: **Kimi K2.6** was the best budget secondary in this batch. It
 was cheaper than GPT and produced a usable answer, but it wandered more.
@@ -98,11 +98,12 @@ default review model. **DeepSeek V4 Pro** was extremely cheap but weak and slow
 in this task. **Grok 4.3** completed but inspected too little evidence.
 
 Strict OpenRouter origin routing improved reliability for **Claude Sonnet 4.6**
-and **MiniMax M2.7**: both completed under native-provider routing. That did
-not change the recommendation. Sonnet was slow, costly, forced into synthesis,
-and still made false missing-feature claims. MiniMax became a valid completed
-run, but its final answers missed important gaps and added false tool/skill
-claims.
+and **MiniMax M2.7**: both completed under native-provider routing. Explicit
+Anthropic prompt-cache breakpoints then reduced Claude costs materially. That
+did not change the recommendation. Sonnet was still slow and uneven, with the
+low-effort run forced into synthesis and the medium-effort run too narrow.
+MiniMax became a valid completed run, but its final answers missed important
+gaps and added false tool/skill claims.
 
 The sibling ChatNext3 legal-intent eval reached a similar operational lesson:
 origin-provider routing is a useful control variable, especially with fallbacks
@@ -119,17 +120,18 @@ shape from this run is:
 ## Medium Effort Follow-up
 
 The medium-effort follow-up did not change the routing recommendation. It helped
-Claude Sonnet 4.6 substantially, kept Claude Opus 4.7 strong, and made GPT-5.5
-more expensive without making it more useful than the low-effort run.
+Claude Sonnet 4.6 operationally once explicit prompt caching was added, kept
+Claude Opus 4.7 strong, and made GPT-5.5 more expensive without making it more
+useful than the low-effort run.
 
 Kimi K2.6 was not rerun in this pass because the direct Moonshot adapter does
 not accept the LCAgent `reasoning_effort` option.
 
 | Run | Score | Cost | Verdict |
 |---|---:|---:|---|
-| Claude Opus 4.7 | 8.2 | $1.817 | Excellent audit structure again; one false gap and premium cost keep it in the verification lane. |
+| Claude Opus 4.7 | 7.8 | $2.104 | Strong milestone calibration, but medium cost rose and the answer was not better than Opus low. |
 | GPT-5.5 | 7.4 | $0.900 | Useful answer, but more expensive and less calibrated than GPT-5.5 low. |
-| Claude Sonnet 4.6 | 7.2 | $1.726 | Medium effort substantially improved the final answer, but it stayed slow and costly. |
+| Claude Sonnet 4.6 | 6.3 | $0.986 | Prompt caching made Sonnet cheaper, but the final answer narrowed onto tool-surface gaps and missed broader doc drift. |
 | Gemini 3.1 Flash Lite | 5.7 | $0.036 | Still cheap and fast, but under-called real gaps and became less useful than low. |
 | DeepSeek V4 Pro | 5.3 | $0.069 | Cheap again, but medium did not fix false tool and architecture claims. |
 | Gemini 3 Flash Preview | 5.1 | $0.123 | More substantial than low, but included unearned verification claims and factual misses. |
@@ -143,6 +145,29 @@ default-routed MiniMax and Sonnet attempts failed final-output reliability, and
 the strict-routed MiniMax medium retry also emitted an invalid `final_response`
 schema.
 
+## Anthropic Prompt-Cache Retest
+
+The original Claude rows reported zero cache hits. That turned out to be a
+harness issue, not proof that Anthropic could not cache this workload. OpenAI,
+Moonshot, DeepSeek, Gemini, Grok, and several OpenRouter routes can rely on
+implicit prompt caching, but Anthropic performs best when the caller marks a
+stable prompt prefix with `cache_control`. The retest added an explicit
+per-block cache breakpoint on the stable system message and pinned OpenRouter to
+the Anthropic provider.
+
+The result was measurable cache reuse:
+
+| Run | Cache Reads | Cache Writes | Cost | Note |
+|---|---:|---:|---:|---|
+| Claude Sonnet 4.6 low | 195,190 | 67,135 | $1.094 | Cost improved, but the run still needed forced synthesis and overclaimed. |
+| Claude Sonnet 4.6 medium | 227,415 | 52,008 | $0.986 | Cheapest Claude run, but final answer was too narrow. |
+| Claude Opus 4.7 low | 96,242 | 82,348 | $1.644 | Best Claude route: strong audit quality with lower cost than the first Opus pass. |
+| Claude Opus 4.7 medium | 134,897 | 120,938 | $2.104 | Completed cleanly, but cache writes and longer context made it more expensive than Opus low. |
+
+This changed the cost story, not the routing conclusion: **Claude Opus 4.7 low**
+is the fair Anthropic verification lane, while **GPT-5.5 low** remains the best
+default.
+
 ## Scoring Evidence Excerpts
 
 These excerpts are short snippets from the generated final answers, quoted to
@@ -153,17 +178,17 @@ they show why a run was scored up or down.
 |---|---|---|
 | GPT-5.5 low | "the MVP is largely implemented and in several places goes beyond the original first-slice handoff" | Correctly framed the task: not a missing-skeleton story, but a smaller set of harness-quality gaps. |
 | GPT-5.5 low | "lcagent is not missing the core MVP skeleton" | Strong bottom-line calibration, with specific gaps called out after that. |
-| Claude Opus 4.7 | "Milestone 1 is essentially complete, Milestone 2 is in place, Milestone 3 is partially wired" | Best audit-style structure and lifecycle awareness, which is why answer quality was high. |
-| Claude Opus 4.7 | "permission_denied event, the LCR-side launcher... future-context scaffolding" | Found nuanced follow-up gaps, but the run was too expensive for default routing. |
+| Claude Opus 4.7 | "Most of the four milestones are implemented" | Best audit-style structure and lifecycle awareness, and explicit prompt caching made the cost story fairer. |
+| Claude Opus 4.7 | "permission_denied event, the LCR-side launcher... future-context scaffolding" | Found nuanced follow-up gaps, but the run was still too expensive for default routing. |
 | Kimi K2.6 | "The biggest confirmed holes are the two missing outline tools" | Useful budget answer, but it also wandered into weaker claims like `plan_item` and piped stdin. |
 | Grok 4.3 | "vs. `docs/ai_coding_agent_feasibility.md`" | Penalized because the user asked for the implementation handoff doc; this targeted the wrong comparison source. |
-| Claude Sonnet 4.6 low | "no search finds `\"turn_aborted\"` written as a structured event anywhere" | This was false in the benchmark snapshot; strict provider routing fixed completion but not overclaiming. |
+| Claude Sonnet 4.6 low | "`internal/lcagent/script/` missing as a distinct package" | False in the benchmark snapshot; explicit prompt caching lowered cost but not overclaiming. |
 | MiniMax M2.7 default | "`load_skill` implementation ... MISSING" | Also false in the benchmark snapshot; the run completed cheaply but missed important implemented behavior. |
 | MiniMax M2.7 low | "`search` tool ... No `search` tool implementation" | A broader false-missing-feature claim than the default-effort MiniMax retry. |
 | Gemini 3 Flash Preview | "Tool-Call Markup Guardrail ... Missing" | Fast, but it confidently missed existing provider-markup guardrail work. |
 | Claude Opus 4.7 medium | "Milestones 1-3 are essentially in place" | Strong medium-effort calibration, but still too expensive for default routing. |
 | GPT-5.5 medium | "`--dry-run` is documented but not implemented" | Penalized because `dry-run` was not actually in the benchmark docs; medium effort added a false headline gap. |
-| Claude Sonnet 4.6 medium | "No approval/interrupt loop for autonomy `low`" | Medium effort gave a much more relevant final than the low run, including real lifecycle gaps. |
+| Claude Sonnet 4.6 medium | "`search` tool missing `context_before` / `context_after` parameters" | A plausible harness-improvement note, but the answer over-focused on tool-surface details and missed broader doc drift. |
 | Gemini 3.1 Pro Custom Tools medium | "`load_skill` tool logic ... appears to be missing or incomplete" | False in the benchmark snapshot; medium effort did not fix overclaiming. |
 | GLM 5.1 medium | "no `apply_patch` or diff-application tool" | False in the benchmark snapshot and more damaging than the low-effort GLM answer. |
 | Grok 4.3 medium | "`update_plan` ... absent" | False in the benchmark snapshot; it read the right docs but missed implemented core tools. |
@@ -176,6 +201,11 @@ the scores as a useful routing signal, not a pure model-quality leaderboard.
 Provider pricing, model aliases, cache accounting, and structured-output
 behavior can change. If this artifact is used for a future decision, rerun the
 same prompt against the same target snapshot and compare with the CSV here.
+
+Anthropic cache rows are from an explicit prompt-cache retest. Cache read tokens
+are shown in the CSV `cached_tokens` column; cache write tokens are recorded in
+the retest table above because they affect Anthropic pricing but are not part of
+the original CSV schema.
 
 The `reasoning_effort` CSV column records only the requested effort setting
 (`low`, `default`, or `disabled`). It is separate from reported

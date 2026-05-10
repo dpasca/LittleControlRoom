@@ -89,7 +89,7 @@ func runExec(args []string, stdout io.Writer) error {
 	fs.StringVar(&finalModel, "final-model", "", "optional model for no-tools final synthesis")
 	fs.StringVar(&envFile, "env-file", "", "optional dotenv file for provider credentials")
 	fs.StringVar(&reasoningEffort, "reasoning-effort", "", "optional provider reasoning effort, for example low")
-	fs.StringVar(&temperatureRaw, "temperature", "", "optional sampling temperature; defaults to 0.2 for chat-completions providers that send temperature")
+	fs.StringVar(&temperatureRaw, "temperature", "", "optional sampling temperature; defaults to 0.2 for chat-completions providers that send temperature; use omitted to suppress")
 	fs.StringVar(&providerOnlyRaw, "openrouter-provider-only", "", "comma-separated OpenRouter provider slugs allowed for this request, for example anthropic")
 	fs.DurationVar(&requestTimeout, "request-timeout", 0, "provider HTTP request timeout, for example 10m; default 2m")
 	fs.IntVar(&maxTurns, "max-turns", modeladapter.DefaultOpenRouterMaxTurns, "maximum model turns for provider loops")
@@ -123,7 +123,7 @@ func runExec(args []string, stdout io.Writer) error {
 	if outMode != outputText && outMode != outputJSON && outMode != outputStreamJSON {
 		return fmt.Errorf("unsupported output mode: %s", outputRaw)
 	}
-	temperature, err := parseOptionalTemperature(temperatureRaw)
+	temperature, omitTemperature, err := parseTemperatureOption(temperatureRaw)
 	if err != nil {
 		return err
 	}
@@ -208,6 +208,7 @@ func runExec(args []string, stdout io.Writer) error {
 			RequestTimeout:  requestTimeout,
 			ReasoningEffort: reasoningEffort,
 			Temperature:     temperature,
+			OmitTemperature: omitTemperature,
 			ProviderOnly:    splitCommaFields(providerOnlyRaw),
 		}, strings.ToLower(strings.TrimSpace(provider)))
 	default:
@@ -554,19 +555,23 @@ func defaultDataDir() string {
 	return filepath.Join(home, ".little-control-room")
 }
 
-func parseOptionalTemperature(raw string) (*float64, error) {
+func parseTemperatureOption(raw string) (*float64, bool, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return nil, nil
+		return nil, false, nil
+	}
+	switch strings.ToLower(raw) {
+	case "omit", "omitted", "none", "null":
+		return nil, true, nil
 	}
 	temperature, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
-		return nil, fmt.Errorf("invalid --temperature %q: %w", raw, err)
+		return nil, false, fmt.Errorf("invalid --temperature %q: %w", raw, err)
 	}
 	if temperature < 0 {
-		return nil, fmt.Errorf("invalid --temperature %q: must be non-negative", raw)
+		return nil, false, fmt.Errorf("invalid --temperature %q: must be non-negative", raw)
 	}
-	return &temperature, nil
+	return &temperature, false, nil
 }
 
 func splitCommaFields(raw string) []string {
