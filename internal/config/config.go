@@ -52,7 +52,11 @@ type AppConfig struct {
 	ClaudeCodeHome            string
 	LCAgentPath               string
 	LCAgentEnvFile            string
+	LCAgentProvider           string
 	LCAgentAuto               string
+	LCAgentToolProfile        string
+	LCAgentContextProfile     string
+	LCAgentRequestTimeout     time.Duration
 	CodexLaunchPreset         codexcli.Preset
 	PlaywrightPolicy          browserctl.Policy
 	DataDir                   string
@@ -148,7 +152,11 @@ type fileConfig struct {
 	RecentLCAgentModels       *[]string `toml:"recent_lcagent_models"`
 	LCAgentPath               *string   `toml:"lcagent_path"`
 	LCAgentEnvFile            *string   `toml:"lcagent_env_file"`
+	LCAgentProvider           *string   `toml:"lcagent_provider"`
 	LCAgentAuto               *string   `toml:"lcagent_auto"`
+	LCAgentToolProfile        *string   `toml:"lcagent_tool_profile"`
+	LCAgentContextProfile     *string   `toml:"lcagent_context_profile"`
+	LCAgentRequestTimeout     *string   `toml:"lcagent_request_timeout"`
 	CodexLaunchPreset         string    `toml:"codex_launch_preset"`
 	PlaywrightManagementMode  *string   `toml:"playwright_management_mode"`
 	PlaywrightDefaultBrowser  *string   `toml:"playwright_default_browser_mode"`
@@ -170,7 +178,11 @@ func Default() AppConfig {
 		CodexHome:             filepath.Join(home, ".codex"),
 		OpenCodeHome:          filepath.Join(home, ".local", "share", "opencode"),
 		ClaudeCodeHome:        filepath.Join(home, ".claude"),
+		LCAgentProvider:       "openrouter",
 		LCAgentAuto:           "low",
+		LCAgentToolProfile:    "balanced",
+		LCAgentContextProfile: "balanced",
+		LCAgentRequestTimeout: 10 * time.Minute,
 		CodexLaunchPreset:     codexcli.DefaultPreset(),
 		PlaywrightPolicy:      browserctl.DefaultPolicy(),
 		DataDir:               dataDir,
@@ -217,7 +229,11 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	claudeCodeHome := fs.String("claude-code-home", cfg.ClaudeCodeHome, "Path to Claude Code home directory")
 	lcagentPath := fs.String("lcagent-path", cfg.LCAgentPath, "Path to lcagent executable")
 	lcagentEnvFile := fs.String("lcagent-env-file", cfg.LCAgentEnvFile, "Path to lcagent env file containing provider credentials")
+	lcagentProvider := fs.String("lcagent-provider", cfg.LCAgentProvider, "LCAgent provider: openrouter, openai, deepseek, or moonshot")
 	lcagentAuto := fs.String("lcagent-auto", cfg.LCAgentAuto, "LCAgent autonomy level: off, low, or medium")
+	lcagentToolProfile := fs.String("lcagent-tool-profile", cfg.LCAgentToolProfile, "LCAgent file tool budget profile: balanced or generous")
+	lcagentContextProfile := fs.String("lcagent-context-profile", cfg.LCAgentContextProfile, "LCAgent provider loop context profile: balanced or large")
+	lcagentRequestTimeout := fs.Duration("lcagent-request-timeout", cfg.LCAgentRequestTimeout, "LCAgent provider HTTP request timeout")
 	codexLaunchPreset := fs.String("codex-launch-preset", string(cfg.CodexLaunchPreset), "Codex launch preset: yolo, full-auto, or safe")
 	dbPath := fs.String("db", cfg.DBPath, fmt.Sprintf("Path to %s SQLite database", brand.Name))
 	scanInterval := fs.Duration("interval", cfg.ScanInterval, "Scan interval")
@@ -288,10 +304,23 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	if err != nil {
 		return AppConfig{}, err
 	}
+	cfg.LCAgentProvider, err = parseLCAgentProvider(*lcagentProvider)
+	if err != nil {
+		return AppConfig{}, err
+	}
 	cfg.LCAgentAuto, err = parseLCAgentAuto(*lcagentAuto)
 	if err != nil {
 		return AppConfig{}, err
 	}
+	cfg.LCAgentToolProfile, err = parseLCAgentToolProfile(*lcagentToolProfile)
+	if err != nil {
+		return AppConfig{}, err
+	}
+	cfg.LCAgentContextProfile, err = parseLCAgentContextProfile(*lcagentContextProfile)
+	if err != nil {
+		return AppConfig{}, err
+	}
+	cfg.LCAgentRequestTimeout = *lcagentRequestTimeout
 	cfg.CodexLaunchPreset, err = codexcli.ParsePreset(*codexLaunchPreset)
 	if err != nil {
 		return AppConfig{}, fmt.Errorf("codex-launch-preset: %w", err)
@@ -484,12 +513,40 @@ func applyConfigFile(cfg *AppConfig) error {
 		}
 		cfg.LCAgentEnvFile = value
 	}
+	if fc.LCAgentProvider != nil {
+		value, err := parseLCAgentProvider(*fc.LCAgentProvider)
+		if err != nil {
+			return fmt.Errorf("config lcagent_provider: %w", err)
+		}
+		cfg.LCAgentProvider = value
+	}
 	if fc.LCAgentAuto != nil {
 		value, err := parseLCAgentAuto(*fc.LCAgentAuto)
 		if err != nil {
 			return fmt.Errorf("config lcagent_auto: %w", err)
 		}
 		cfg.LCAgentAuto = value
+	}
+	if fc.LCAgentToolProfile != nil {
+		value, err := parseLCAgentToolProfile(*fc.LCAgentToolProfile)
+		if err != nil {
+			return fmt.Errorf("config lcagent_tool_profile: %w", err)
+		}
+		cfg.LCAgentToolProfile = value
+	}
+	if fc.LCAgentContextProfile != nil {
+		value, err := parseLCAgentContextProfile(*fc.LCAgentContextProfile)
+		if err != nil {
+			return fmt.Errorf("config lcagent_context_profile: %w", err)
+		}
+		cfg.LCAgentContextProfile = value
+	}
+	if fc.LCAgentRequestTimeout != nil {
+		value, err := parseConfigDuration(strings.TrimSpace(*fc.LCAgentRequestTimeout), "lcagent_request_timeout")
+		if err != nil {
+			return fmt.Errorf("config lcagent_request_timeout: %w", err)
+		}
+		cfg.LCAgentRequestTimeout = value
 	}
 	if strings.TrimSpace(fc.CodexLaunchPreset) != "" {
 		preset, err := codexcli.ParsePreset(fc.CodexLaunchPreset)
@@ -567,10 +624,35 @@ func validate(cfg AppConfig) error {
 	if _, err := ParseBossChatBackend(string(cfg.BossChatBackend)); err != nil {
 		return err
 	}
+	if _, err := parseLCAgentProvider(cfg.LCAgentProvider); err != nil {
+		return err
+	}
 	if _, err := parseLCAgentAuto(cfg.LCAgentAuto); err != nil {
 		return err
 	}
+	if _, err := parseLCAgentToolProfile(cfg.LCAgentToolProfile); err != nil {
+		return err
+	}
+	if _, err := parseLCAgentContextProfile(cfg.LCAgentContextProfile); err != nil {
+		return err
+	}
+	if cfg.LCAgentRequestTimeout <= 0 {
+		return errors.New("lcagent-request-timeout must be > 0")
+	}
 	return nil
+}
+
+func parseLCAgentProvider(raw string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if value == "" {
+		return "openrouter", nil
+	}
+	switch value {
+	case "openrouter", "openai", "deepseek", "moonshot":
+		return value, nil
+	default:
+		return "", fmt.Errorf("lcagent-provider must be one of: openrouter, openai, deepseek, moonshot")
+	}
 }
 
 func parseLCAgentAuto(raw string) (string, error) {
@@ -583,6 +665,32 @@ func parseLCAgentAuto(raw string) (string, error) {
 		return value, nil
 	default:
 		return "", fmt.Errorf("lcagent-auto must be one of: off, low, medium")
+	}
+}
+
+func parseLCAgentToolProfile(raw string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if value == "" {
+		return "balanced", nil
+	}
+	switch value {
+	case "balanced", "generous":
+		return value, nil
+	default:
+		return "", fmt.Errorf("lcagent-tool-profile must be one of: balanced, generous")
+	}
+}
+
+func parseLCAgentContextProfile(raw string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if value == "" {
+		return "balanced", nil
+	}
+	switch value {
+	case "balanced", "large":
+		return value, nil
+	default:
+		return "", fmt.Errorf("lcagent-context-profile must be one of: balanced, large")
 	}
 }
 

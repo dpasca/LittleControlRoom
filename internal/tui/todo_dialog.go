@@ -1154,17 +1154,21 @@ func (m Model) startTodoInProjectPath(projectPath, todoText string, provider cod
 		return m, nil
 	}
 	req := codexapp.LaunchRequest{
-		Provider:         provider,
-		ProjectPath:      project.Path,
-		ResumeID:         m.selectedProjectSessionID(project, provider),
-		ForceNew:         true,
-		Preset:           m.currentCodexLaunchPreset(),
-		PlaywrightPolicy: m.currentPlaywrightPolicy(),
-		AppDataDir:       m.appDataDir(),
-		CodexHome:        m.codexHome(),
-		LCAgentPath:      m.lcagentPath(),
-		LCAgentEnvFile:   m.lcagentEnvFile(),
-		LCAgentAuto:      m.lcagentAuto(),
+		Provider:              provider,
+		ProjectPath:           project.Path,
+		ResumeID:              m.selectedProjectSessionID(project, provider),
+		ForceNew:              true,
+		Preset:                m.currentCodexLaunchPreset(),
+		PlaywrightPolicy:      m.currentPlaywrightPolicy(),
+		AppDataDir:            m.appDataDir(),
+		CodexHome:             m.codexHome(),
+		LCAgentPath:           m.lcagentPath(),
+		LCAgentEnvFile:        m.lcagentEnvFile(),
+		LCAgentProvider:       m.lcagentProvider(),
+		LCAgentAuto:           m.lcagentAuto(),
+		LCAgentToolProfile:    m.lcagentToolProfile(),
+		LCAgentContextProfile: m.lcagentContextProfile(),
+		LCAgentRequestTimeout: m.lcagentRequestTimeout(),
 	}
 	if err := req.Validate(); err != nil {
 		m.clearTodoLaunchDraft(project.Path)

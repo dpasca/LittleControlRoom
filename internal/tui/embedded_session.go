@@ -677,18 +677,22 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 	}
 
 	req := codexapp.LaunchRequest{
-		Provider:         provider,
-		ProjectPath:      p.Path,
-		ResumeID:         firstNonEmptyTrimmed(options.resumeID, m.selectedProjectSessionID(p, provider)),
-		ForceNew:         options.forceNew,
-		Prompt:           options.prompt,
-		Preset:           m.currentCodexLaunchPreset(),
-		PlaywrightPolicy: m.currentPlaywrightPolicy(),
-		AppDataDir:       m.appDataDir(),
-		CodexHome:        m.codexHome(),
-		LCAgentPath:      m.lcagentPath(),
-		LCAgentEnvFile:   m.lcagentEnvFile(),
-		LCAgentAuto:      m.lcagentAuto(),
+		Provider:              provider,
+		ProjectPath:           p.Path,
+		ResumeID:              firstNonEmptyTrimmed(options.resumeID, m.selectedProjectSessionID(p, provider)),
+		ForceNew:              options.forceNew,
+		Prompt:                options.prompt,
+		Preset:                m.currentCodexLaunchPreset(),
+		PlaywrightPolicy:      m.currentPlaywrightPolicy(),
+		AppDataDir:            m.appDataDir(),
+		CodexHome:             m.codexHome(),
+		LCAgentPath:           m.lcagentPath(),
+		LCAgentEnvFile:        m.lcagentEnvFile(),
+		LCAgentProvider:       m.lcagentProvider(),
+		LCAgentAuto:           m.lcagentAuto(),
+		LCAgentToolProfile:    m.lcagentToolProfile(),
+		LCAgentContextProfile: m.lcagentContextProfile(),
+		LCAgentRequestTimeout: m.lcagentRequestTimeout(),
 	}
 	if err := req.Validate(); err != nil {
 		m.status = err.Error()
@@ -756,11 +760,39 @@ func (m Model) lcagentEnvFile() string {
 	return strings.TrimSpace(config.Default().LCAgentEnvFile)
 }
 
+func (m Model) lcagentProvider() string {
+	if m.svc != nil {
+		return strings.TrimSpace(m.svc.Config().LCAgentProvider)
+	}
+	return strings.TrimSpace(config.Default().LCAgentProvider)
+}
+
 func (m Model) lcagentAuto() string {
 	if m.svc != nil {
 		return strings.TrimSpace(m.svc.Config().LCAgentAuto)
 	}
 	return strings.TrimSpace(config.Default().LCAgentAuto)
+}
+
+func (m Model) lcagentToolProfile() string {
+	if m.svc != nil {
+		return strings.TrimSpace(m.svc.Config().LCAgentToolProfile)
+	}
+	return strings.TrimSpace(config.Default().LCAgentToolProfile)
+}
+
+func (m Model) lcagentContextProfile() string {
+	if m.svc != nil {
+		return strings.TrimSpace(m.svc.Config().LCAgentContextProfile)
+	}
+	return strings.TrimSpace(config.Default().LCAgentContextProfile)
+}
+
+func (m Model) lcagentRequestTimeout() time.Duration {
+	if m.svc != nil {
+		return m.svc.Config().LCAgentRequestTimeout
+	}
+	return config.Default().LCAgentRequestTimeout
 }
 
 type embeddedLaunchBlock struct {

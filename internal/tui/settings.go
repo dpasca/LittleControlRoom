@@ -31,7 +31,11 @@ const (
 	settingsFieldOllamaModel
 	settingsFieldLCAgentPath
 	settingsFieldLCAgentEnvFile
+	settingsFieldLCAgentProvider
 	settingsFieldLCAgentAuto
+	settingsFieldLCAgentToolProfile
+	settingsFieldLCAgentContextProfile
+	settingsFieldLCAgentRequestTimeout
 	settingsFieldIncludePaths
 	settingsFieldExcludePaths
 	settingsFieldExcludeProjectPatterns
@@ -141,7 +145,11 @@ func settingsSections() []settingsSection {
 				settingsFieldOllamaModel,
 				settingsFieldLCAgentPath,
 				settingsFieldLCAgentEnvFile,
+				settingsFieldLCAgentProvider,
 				settingsFieldLCAgentAuto,
+				settingsFieldLCAgentToolProfile,
+				settingsFieldLCAgentContextProfile,
+				settingsFieldLCAgentRequestTimeout,
 				settingsFieldCodexLaunchPreset,
 				settingsFieldHideReasoningSections,
 			},
@@ -441,7 +449,11 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		m.currentSettingsBaseline().OpenCodeModelTier,
 		m.settingsFieldValue(settingsFieldLCAgentPath),
 		m.settingsFieldValue(settingsFieldLCAgentEnvFile),
+		m.settingsFieldValue(settingsFieldLCAgentProvider),
 		m.settingsFieldValue(settingsFieldLCAgentAuto),
+		m.settingsFieldValue(settingsFieldLCAgentToolProfile),
+		m.settingsFieldValue(settingsFieldLCAgentContextProfile),
+		m.settingsFieldValue(settingsFieldLCAgentRequestTimeout),
 		m.settingsFieldValue(settingsFieldActiveThreshold),
 		m.settingsFieldValue(settingsFieldStuckThreshold),
 		m.settingsFieldValue(settingsFieldInterval),
@@ -1150,9 +1162,16 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsField(
 			"LCAgent env file",
-			"Optional env file for LCAgent provider credentials, such as an OpenRouter or DeepSeek key. Missing files are shown as warnings and LCAgent launches will fail until fixed or cleared.",
+			"Optional env file for experimental LCAgent provider credentials, such as OpenRouter, DeepSeek, Moonshot, or OpenAI keys. Missing files are shown as warnings and launches will fail until fixed or cleared.",
 			settings.LCAgentEnvFile,
 			1024,
+			settingsSectionAI,
+		),
+		newSettingsField(
+			"LCAgent provider",
+			"Experimental LCAgent provider. Accepted values: openrouter, openai, deepseek, moonshot.",
+			settings.LCAgentProvider,
+			32,
 			settingsSectionAI,
 		),
 		newSettingsField(
@@ -1160,6 +1179,27 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			"Accepted values: off, low, medium. Low allows conservative local edits while keeping higher-risk actions constrained.",
 			settings.LCAgentAuto,
 			16,
+			settingsSectionAI,
+		),
+		newSettingsField(
+			"LCAgent tool profile",
+			"Accepted values: balanced, generous. Balanced keeps read budgets conservative; generous is useful for large-context model experiments.",
+			settings.LCAgentToolProfile,
+			32,
+			settingsSectionAI,
+		),
+		newSettingsField(
+			"LCAgent context profile",
+			"Accepted values: balanced, large. Large delays provider-loop compaction when the selected model/provider can use bigger context.",
+			settings.LCAgentContextProfile,
+			32,
+			settingsSectionAI,
+		),
+		newSettingsField(
+			"LCAgent timeout",
+			"Provider HTTP request timeout for experimental LCAgent runs, for example 10m.",
+			formatSettingsDuration(settings.LCAgentRequestTimeout),
+			32,
 			settingsSectionAI,
 		),
 		newSettingsField(
@@ -1285,7 +1325,10 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.OllamaModel = strings.TrimSpace(settings.OllamaModel)
 	settings.LCAgentPath = strings.TrimSpace(settings.LCAgentPath)
 	settings.LCAgentEnvFile = strings.TrimSpace(settings.LCAgentEnvFile)
+	settings.LCAgentProvider = strings.TrimSpace(settings.LCAgentProvider)
 	settings.LCAgentAuto = strings.TrimSpace(settings.LCAgentAuto)
+	settings.LCAgentToolProfile = strings.TrimSpace(settings.LCAgentToolProfile)
+	settings.LCAgentContextProfile = strings.TrimSpace(settings.LCAgentContextProfile)
 	settings.IncludePaths = append([]string(nil), settings.IncludePaths...)
 	settings.ExcludePaths = append([]string(nil), settings.ExcludePaths...)
 	settings.ExcludeProjectPatterns = append([]string(nil), settings.ExcludeProjectPatterns...)
@@ -1372,6 +1415,19 @@ func (m Model) settingsFieldHint(index int) string {
 			return "LCAgent launches will load provider credentials from " + path + "."
 		}
 		return field.hint
+	case settingsFieldLCAgentProvider:
+		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
+		case "", "openrouter":
+			return "LCAgent will use OpenRouter-compatible tool calls and model IDs such as deepseek/deepseek-v4-pro."
+		case "deepseek":
+			return "LCAgent will call DeepSeek directly and use direct DeepSeek model IDs."
+		case "moonshot":
+			return "LCAgent will call Moonshot directly and use Kimi model IDs."
+		case "openai":
+			return "LCAgent will call the OpenAI Responses API directly."
+		default:
+			return field.hint
+		}
 	case settingsFieldLCAgentAuto:
 		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
 		case "off":
@@ -1383,6 +1439,29 @@ func (m Model) settingsFieldHint(index int) string {
 		default:
 			return field.hint
 		}
+	case settingsFieldLCAgentToolProfile:
+		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
+		case "", "balanced":
+			return "Balanced is the conservative default read budget for early experimental runs."
+		case "generous":
+			return "Generous allows more file-reading context and works best with larger-context providers."
+		default:
+			return field.hint
+		}
+	case settingsFieldLCAgentContextProfile:
+		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
+		case "", "balanced":
+			return "Balanced keeps provider-loop compaction on the normal budget."
+		case "large":
+			return "Large retains more loop context before compaction; use it with models that can spend the context well."
+		default:
+			return field.hint
+		}
+	case settingsFieldLCAgentRequestTimeout:
+		if value := strings.TrimSpace(field.input.Value()); value != "" {
+			return "LCAgent provider requests will wait up to " + value + " before timing out."
+		}
+		return field.hint
 	case settingsFieldPrivacyPatterns:
 		hint := field.hint
 		if m.settingsRevealPrivacy {

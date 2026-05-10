@@ -34,7 +34,7 @@ The usual way to reach boss mode is from the classic TUI with `/boss`. It opens 
 - Example file: [`config.example.toml`](config.example.toml)
 - Supported format: TOML
 
-Use `/setup` for AI roles, API keys, and MLX/Ollama endpoint/model overrides. The TUI `/settings` modal is split into sections for the remaining app configuration, including project scope, browser behavior, refresh timing, and advanced toggles. The Browser section exposes a simplified `Browser windows` field with plain-language choices such as `Only when needed`, `Always show`, and `Classic browser behavior`, while the config file still stores the raw Playwright policy keys below:
+Use `/setup` for AI roles, API keys, and MLX/Ollama endpoint/model overrides. The TUI `/settings` modal is split into sections for the remaining app configuration, including project scope, experimental LCAgent launch settings, browser behavior, refresh timing, and advanced toggles. The Browser section exposes a simplified `Browser windows` field with plain-language choices such as `Only when needed`, `Always show`, and `Classic browser behavior`, while the config file still stores the raw Playwright policy keys below:
 
 In `Only when needed`, newly launched embedded Codex and OpenCode sessions now route Playwright through an LCR-managed wrapper with a persistent browser profile. Codex gets a session-local `CODEX_HOME` overlay and OpenCode gets a session-local `XDG_CONFIG_HOME` overlay, both shadowing only the `playwright` skill so embedded sessions are guided toward the managed MCP path without changing the user's real global installs. On macOS, LCR backgrounds that managed browser and later reveals the same browser window for login or other human steps, so auth stays in the Playwright session the embedded assistant is actually driving. Existing embedded sessions still need to be reopened or reconnected before they pick up the new launch path, and Codex currently has the more complete browser-attention UX.
 
@@ -54,7 +54,11 @@ For managed-browser debugging outside the TUI, Little Control Room also exposes:
 - `embedded_lcagent_reasoning_effort`
 - `lcagent_path`
 - `lcagent_env_file`
+- `lcagent_provider`
 - `lcagent_auto`
+- `lcagent_tool_profile`
+- `lcagent_context_profile`
+- `lcagent_request_timeout`
 - `playwright_management_mode`
 - `playwright_default_browser_mode`
 - `playwright_login_mode`
@@ -76,10 +80,14 @@ exclude_paths = []
 exclude_project_patterns = []
 codex_launch_preset = "yolo"
 # LCAgent is experimental. Leave lcagent_path blank to use the bundled binary,
-# PATH lookup, or local go run fallback. Put OPENROUTER_API_KEY in the env file.
+# PATH lookup, or local go run fallback. Put provider API keys in the env file.
 # embedded_lcagent_model = "deepseek/deepseek-v4-pro"
 # lcagent_env_file = "~/path/to/openrouter.env"
+# lcagent_provider = "openrouter"
 # lcagent_auto = "low"
+# lcagent_tool_profile = "balanced"
+# lcagent_context_profile = "balanced"
+# lcagent_request_timeout = "10m"
 playwright_management_mode = "managed"
 playwright_default_browser_mode = "headless"
 playwright_login_mode = "promote"
@@ -305,7 +313,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/claude-new` always starts a fresh Claude Code session.
 - `/opencode` resumes the selected project's latest known OpenCode session when available, otherwise it starts a new one.
 - `/opencode-new` always starts a fresh OpenCode session.
-- `/lcagent` resumes the selected project's latest known LCAgent session when available, otherwise it starts a new one-shot OpenRouter-backed run.
+- `/lcagent` resumes the selected project's latest known LCAgent session when available, otherwise it starts a new one-shot run with the configured experimental provider.
 - `/lcagent-new` always starts a fresh LCAgent run. LCAgent is experimental and currently supports prompt turns, model selection, local read/edit tools, and structured JSONL artifacts; approvals, attachments, compact, and review are not wired yet.
 - While an embedded Codex, Claude Code, OpenCode, or LCAgent pane is visible, local slash commands include `/new`, `/resume` (`/session` alias), `/reconnect`, `/model`, `/status`, `/compact`, and `/review`.
 - `/model` changes the model and reasoning for the current embedded tool and carries that choice forward to future embedded sessions of the same tool, including after restarting LCR.

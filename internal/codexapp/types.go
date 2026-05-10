@@ -547,7 +547,11 @@ type LaunchRequest struct {
 	CodexHome                string
 	LCAgentPath              string
 	LCAgentEnvFile           string
+	LCAgentProvider          string
 	LCAgentAuto              string
+	LCAgentToolProfile       string
+	LCAgentContextProfile    string
+	LCAgentRequestTimeout    time.Duration
 	CLIExecutablePath        string
 }
 

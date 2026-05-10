@@ -44,7 +44,11 @@ type EditableSettings struct {
 	RecentLCAgentModels       []string
 	LCAgentPath               string
 	LCAgentEnvFile            string
+	LCAgentProvider           string
 	LCAgentAuto               string
+	LCAgentToolProfile        string
+	LCAgentContextProfile     string
+	LCAgentRequestTimeout     time.Duration
 	CodexLaunchPreset         codexcli.Preset
 	PlaywrightPolicy          browserctl.Policy
 	ScanInterval              time.Duration
@@ -87,7 +91,11 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		RecentLCAgentModels:       append([]string(nil), cfg.RecentLCAgentModels...),
 		LCAgentPath:               cfg.LCAgentPath,
 		LCAgentEnvFile:            cfg.LCAgentEnvFile,
+		LCAgentProvider:           cfg.LCAgentProvider,
 		LCAgentAuto:               cfg.LCAgentAuto,
+		LCAgentToolProfile:        cfg.LCAgentToolProfile,
+		LCAgentContextProfile:     cfg.LCAgentContextProfile,
+		LCAgentRequestTimeout:     cfg.LCAgentRequestTimeout,
 		CodexLaunchPreset:         cfg.CodexLaunchPreset,
 		PlaywrightPolicy:          cfg.PlaywrightPolicy.Normalize(),
 		ScanInterval:              cfg.ScanInterval,
@@ -131,7 +139,7 @@ func firstNonEmptyTrimmed(values ...string) string {
 	return ""
 }
 
-func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, bossHelmModelRaw, bossUtilityModelRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, lcagentPathRaw, lcagentEnvFileRaw, lcagentAutoRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
+func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, bossHelmModelRaw, bossUtilityModelRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, lcagentPathRaw, lcagentEnvFileRaw, lcagentProviderRaw, lcagentAutoRaw, lcagentToolProfileRaw, lcagentContextProfileRaw, lcagentRequestTimeoutRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
 	parsedBackend, err := ParseAIBackend(string(aiBackend))
 	if err != nil {
 		return EditableSettings{}, err
@@ -157,7 +165,23 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 	if err != nil {
 		return EditableSettings{}, fmt.Errorf("lcagent env file: %w", err)
 	}
+	lcagentProvider, err := parseLCAgentProvider(lcagentProviderRaw)
+	if err != nil {
+		return EditableSettings{}, err
+	}
 	lcagentAuto, err := parseLCAgentAuto(lcagentAutoRaw)
+	if err != nil {
+		return EditableSettings{}, err
+	}
+	lcagentToolProfile, err := parseLCAgentToolProfile(lcagentToolProfileRaw)
+	if err != nil {
+		return EditableSettings{}, err
+	}
+	lcagentContextProfile, err := parseLCAgentContextProfile(lcagentContextProfileRaw)
+	if err != nil {
+		return EditableSettings{}, err
+	}
+	lcagentRequestTimeout, err := parseConfigDuration(strings.TrimSpace(lcagentRequestTimeoutRaw), "lcagent_request_timeout")
 	if err != nil {
 		return EditableSettings{}, err
 	}
@@ -237,7 +261,11 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 		OpenCodeModelTier:     strings.TrimSpace(openCodeModelTierRaw),
 		LCAgentPath:           lcagentPath,
 		LCAgentEnvFile:        lcagentEnvFile,
+		LCAgentProvider:       lcagentProvider,
 		LCAgentAuto:           lcagentAuto,
+		LCAgentToolProfile:    lcagentToolProfile,
+		LCAgentContextProfile: lcagentContextProfile,
+		LCAgentRequestTimeout: lcagentRequestTimeout,
 		HideReasoningSections: hideReasoningSections,
 		PrivacyMode:           privacyMode,
 		ScanInterval:          interval,
@@ -320,7 +348,14 @@ func validateEditableSettings(settings EditableSettings) error {
 	cfg.RecentLCAgentModels = append([]string(nil), settings.RecentLCAgentModels...)
 	cfg.LCAgentPath = strings.TrimSpace(settings.LCAgentPath)
 	cfg.LCAgentEnvFile = strings.TrimSpace(settings.LCAgentEnvFile)
+	cfg.LCAgentProvider = strings.TrimSpace(settings.LCAgentProvider)
 	cfg.LCAgentAuto = strings.TrimSpace(settings.LCAgentAuto)
+	cfg.LCAgentToolProfile = strings.TrimSpace(settings.LCAgentToolProfile)
+	cfg.LCAgentContextProfile = strings.TrimSpace(settings.LCAgentContextProfile)
+	cfg.LCAgentRequestTimeout = settings.LCAgentRequestTimeout
+	if cfg.LCAgentRequestTimeout <= 0 {
+		cfg.LCAgentRequestTimeout = Default().LCAgentRequestTimeout
+	}
 	cfg.CodexLaunchPreset = settings.CodexLaunchPreset
 	cfg.PlaywrightPolicy = settings.PlaywrightPolicy.Normalize()
 	cfg.ScanInterval = settings.ScanInterval
@@ -458,8 +493,24 @@ func renderEditableSettings(settings EditableSettings) string {
 		lines = append(lines, fmt.Sprintf("lcagent_env_file = %s", strconv.Quote(value)))
 		wroteLCAgentConfig = true
 	}
+	if value, err := parseLCAgentProvider(settings.LCAgentProvider); err == nil && value != "" {
+		lines = append(lines, fmt.Sprintf("lcagent_provider = %s", strconv.Quote(value)))
+		wroteLCAgentConfig = true
+	}
 	if value, err := parseLCAgentAuto(settings.LCAgentAuto); err == nil && value != "" {
 		lines = append(lines, fmt.Sprintf("lcagent_auto = %s", strconv.Quote(value)))
+		wroteLCAgentConfig = true
+	}
+	if value, err := parseLCAgentToolProfile(settings.LCAgentToolProfile); err == nil && value != "" {
+		lines = append(lines, fmt.Sprintf("lcagent_tool_profile = %s", strconv.Quote(value)))
+		wroteLCAgentConfig = true
+	}
+	if value, err := parseLCAgentContextProfile(settings.LCAgentContextProfile); err == nil && value != "" {
+		lines = append(lines, fmt.Sprintf("lcagent_context_profile = %s", strconv.Quote(value)))
+		wroteLCAgentConfig = true
+	}
+	if settings.LCAgentRequestTimeout > 0 {
+		lines = append(lines, fmt.Sprintf("lcagent_request_timeout = %s", strconv.Quote(formatConfigDuration(settings.LCAgentRequestTimeout))))
 		wroteLCAgentConfig = true
 	}
 	if wroteLCAgentConfig {

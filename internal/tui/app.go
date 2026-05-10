@@ -1849,16 +1849,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			autoSubmit:     !msg.openModelFirst,
 		})
 		req := codexapp.LaunchRequest{
-			Provider:         provider,
-			ProjectPath:      strings.TrimSpace(msg.projectPath),
-			ForceNew:         true,
-			Preset:           m.currentCodexLaunchPreset(),
-			PlaywrightPolicy: m.currentPlaywrightPolicy(),
-			AppDataDir:       m.appDataDir(),
-			CodexHome:        m.codexHome(),
-			LCAgentPath:      m.lcagentPath(),
-			LCAgentEnvFile:   m.lcagentEnvFile(),
-			LCAgentAuto:      m.lcagentAuto(),
+			Provider:              provider,
+			ProjectPath:           strings.TrimSpace(msg.projectPath),
+			ForceNew:              true,
+			Preset:                m.currentCodexLaunchPreset(),
+			PlaywrightPolicy:      m.currentPlaywrightPolicy(),
+			AppDataDir:            m.appDataDir(),
+			CodexHome:             m.codexHome(),
+			LCAgentPath:           m.lcagentPath(),
+			LCAgentEnvFile:        m.lcagentEnvFile(),
+			LCAgentProvider:       m.lcagentProvider(),
+			LCAgentAuto:           m.lcagentAuto(),
+			LCAgentToolProfile:    m.lcagentToolProfile(),
+			LCAgentContextProfile: m.lcagentContextProfile(),
+			LCAgentRequestTimeout: m.lcagentRequestTimeout(),
 		}
 		if !msg.openModelFirst {
 			req.Prompt = msg.todoText

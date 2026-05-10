@@ -42,14 +42,19 @@ printf '%s\n' '{"type":"turn_complete"}'
 
 	notify := make(chan struct{}, 20)
 	session, err := newLCAgentSession(LaunchRequest{
-		Provider:       ProviderLCAgent,
-		ProjectPath:    root,
-		AppDataDir:     dataDir,
-		LCAgentPath:    exe,
-		LCAgentEnvFile: envPath,
-		LCAgentAuto:    "medium",
-		PendingModel:   "deepseek/test-model",
-		Prompt:         "please run the fake agent",
+		Provider:              ProviderLCAgent,
+		ProjectPath:           root,
+		AppDataDir:            dataDir,
+		LCAgentPath:           exe,
+		LCAgentEnvFile:        envPath,
+		LCAgentProvider:       "deepseek",
+		LCAgentAuto:           "medium",
+		LCAgentToolProfile:    "generous",
+		LCAgentContextProfile: "large",
+		LCAgentRequestTimeout: 10 * time.Minute,
+		PendingModel:          "deepseek/test-model",
+		PendingReasoning:      "low",
+		Prompt:                "please run the fake agent",
 	}, func() {
 		select {
 		case notify <- struct{}{}:
@@ -71,8 +76,8 @@ printf '%s\n' '{"type":"turn_complete"}'
 	if snapshot.Busy {
 		t.Fatalf("Busy = true, want false")
 	}
-	if snapshot.Model != "deepseek/test-model" || snapshot.ModelProvider != "openrouter" {
-		t.Fatalf("model = %q/%q, want deepseek/test-model/openrouter", snapshot.ModelProvider, snapshot.Model)
+	if snapshot.Model != "deepseek/test-model" || snapshot.ModelProvider != "deepseek" || snapshot.ReasoningEffort != "low" {
+		t.Fatalf("model = %q/%q reasoning=%q, want deepseek/test-model/deepseek low", snapshot.ModelProvider, snapshot.Model, snapshot.ReasoningEffort)
 	}
 	if snapshot.TokenUsage == nil || snapshot.TokenUsage.Last.InputTokens != 120 || snapshot.TokenUsage.Last.OutputTokens != 30 || snapshot.TokenUsage.Last.CachedInputTokens != 40 || snapshot.TokenUsage.Total.TotalTokens != 150 {
 		t.Fatalf("TokenUsage = %#v", snapshot.TokenUsage)
@@ -94,8 +99,12 @@ printf '%s\n' '{"type":"turn_complete"}'
 		"--data-dir", dataDir,
 		"--auto", "medium",
 		"--output", "stream-json",
-		"--provider", "openrouter",
+		"--provider", "deepseek",
 		"--model", "deepseek/test-model",
+		"--tool-profile", "generous",
+		"--context-profile", "large",
+		"--request-timeout", "10m0s",
+		"--reasoning-effort", "low",
 		"--env-file", envPath,
 		"please run the fake agent",
 	} {

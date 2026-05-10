@@ -317,7 +317,11 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	s.cfg.OpenCodeModelTier = strings.TrimSpace(settings.OpenCodeModelTier)
 	s.cfg.LCAgentPath = strings.TrimSpace(settings.LCAgentPath)
 	s.cfg.LCAgentEnvFile = strings.TrimSpace(settings.LCAgentEnvFile)
+	s.cfg.LCAgentProvider = strings.TrimSpace(settings.LCAgentProvider)
 	s.cfg.LCAgentAuto = strings.TrimSpace(settings.LCAgentAuto)
+	s.cfg.LCAgentToolProfile = strings.TrimSpace(settings.LCAgentToolProfile)
+	s.cfg.LCAgentContextProfile = strings.TrimSpace(settings.LCAgentContextProfile)
+	s.cfg.LCAgentRequestTimeout = settings.LCAgentRequestTimeout
 	s.cfg.CodexLaunchPreset = settings.CodexLaunchPreset
 	s.cfg.PlaywrightPolicy = settings.PlaywrightPolicy.Normalize()
 	s.cfg.ScanInterval = settings.ScanInterval

@@ -21,16 +21,24 @@ import (
 )
 
 const (
-	lcagentDefaultAuto = "low"
+	lcagentDefaultAuto           = "low"
+	lcagentDefaultProvider       = "openrouter"
+	lcagentDefaultToolProfile    = "balanced"
+	lcagentDefaultContextProfile = "balanced"
+	lcagentDefaultRequestTimeout = 10 * time.Minute
 )
 
 type lcagentSession struct {
-	projectPath string
-	dataDir     string
-	execPath    string
-	envFile     string
-	auto        string
-	notify      func()
+	projectPath    string
+	dataDir        string
+	execPath       string
+	envFile        string
+	provider       string
+	auto           string
+	toolProfile    string
+	contextProfile string
+	requestTimeout time.Duration
+	notify         func()
 
 	mu                 sync.Mutex
 	cmd                *exec.Cmd
@@ -62,20 +70,38 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	if dataDir == "" {
 		dataDir = appfs.DefaultDataDir()
 	}
+	provider, err := lcagentProviderValue(req.LCAgentProvider)
+	if err != nil {
+		return nil, err
+	}
+	toolProfile, err := lcagentToolProfileValue(req.LCAgentToolProfile)
+	if err != nil {
+		return nil, err
+	}
+	contextProfile, err := lcagentContextProfileValue(req.LCAgentContextProfile)
+	if err != nil {
+		return nil, err
+	}
+	requestTimeout := lcagentRequestTimeoutValue(req.LCAgentRequestTimeout)
 	model := strings.TrimSpace(req.PendingModel)
 	if model == "" {
-		model = modeladapter.DefaultOpenRouterModel
+		model = lcagentDefaultModel(provider)
 	}
 	session := &lcagentSession{
-		projectPath:   strings.TrimSpace(req.ProjectPath),
-		dataDir:       dataDir,
-		execPath:      strings.TrimSpace(req.LCAgentPath),
-		envFile:       strings.TrimSpace(req.LCAgentEnvFile),
-		auto:          strings.TrimSpace(req.LCAgentAuto),
-		notify:        notify,
-		model:         model,
-		modelProvider: "openrouter",
-		status:        "Ready",
+		projectPath:     strings.TrimSpace(req.ProjectPath),
+		dataDir:         dataDir,
+		execPath:        strings.TrimSpace(req.LCAgentPath),
+		envFile:         strings.TrimSpace(req.LCAgentEnvFile),
+		provider:        provider,
+		auto:            strings.TrimSpace(req.LCAgentAuto),
+		toolProfile:     toolProfile,
+		contextProfile:  contextProfile,
+		requestTimeout:  requestTimeout,
+		notify:          notify,
+		model:           model,
+		modelProvider:   provider,
+		reasoningEffort: strings.TrimSpace(req.PendingReasoning),
+		status:          "Ready",
 	}
 	if replay, err := loadLCAgentReplay(req); err != nil {
 		return nil, err
@@ -86,7 +112,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 			return nil, err
 		}
 	} else {
-		session.appendEntryLocked(TranscriptStatus, "LCAgent is ready. Send a prompt to start a one-shot run.")
+		session.appendEntryLocked(TranscriptStatus, "Experimental LCAgent is ready. Send a prompt to start a one-shot run.")
 	}
 	return session, nil
 }
@@ -158,11 +184,32 @@ func (s *lcagentSession) Review() error {
 }
 
 func (s *lcagentSession) ListModels() ([]ModelOption, error) {
+	provider := s.provider
+	if provider == "" {
+		provider = lcagentDefaultProvider
+	}
+	model := lcagentDefaultModel(provider)
+	displayName := model
+	description := "Experimental LCAgent tool-calling model."
+	switch provider {
+	case "openrouter":
+		displayName = "DeepSeek V4 Pro via OpenRouter"
+		description = "OpenRouter-backed model used by the experimental LCAgent."
+	case "deepseek":
+		displayName = "DeepSeek V4 Pro"
+		description = "Direct DeepSeek model used by the experimental LCAgent."
+	case "moonshot":
+		displayName = "Kimi K2.6"
+		description = "Direct Moonshot/Kimi model used by the experimental LCAgent."
+	case "openai":
+		displayName = "GPT-5.5"
+		description = "Direct OpenAI model used by the experimental LCAgent."
+	}
 	return []ModelOption{{
-		ID:          modeladapter.DefaultOpenRouterModel,
-		Model:       modeladapter.DefaultOpenRouterModel,
-		DisplayName: "DeepSeek V4 Pro via OpenRouter",
-		Description: "OpenAI-compatible tool-calling model used by the LCAgent spike.",
+		ID:          model,
+		Model:       model,
+		DisplayName: displayName,
+		Description: description,
 		IsDefault:   true,
 	}}, nil
 }
@@ -241,7 +288,15 @@ func (s *lcagentSession) startRun(prompt, displayPrompt string) error {
 		s.replayLoaded = false
 	}
 	s.appendEntryLocked(TranscriptUser, firstNonEmpty(displayPrompt, prompt))
-	model := firstNonEmpty(s.model, modeladapter.DefaultOpenRouterModel)
+	provider := firstNonEmpty(s.provider, lcagentDefaultProvider)
+	model := firstNonEmpty(s.model, lcagentDefaultModel(provider))
+	toolProfile := firstNonEmpty(s.toolProfile, lcagentDefaultToolProfile)
+	contextProfile := firstNonEmpty(s.contextProfile, lcagentDefaultContextProfile)
+	requestTimeout := s.requestTimeout
+	if requestTimeout <= 0 {
+		requestTimeout = lcagentDefaultRequestTimeout
+	}
+	reasoningEffort := strings.TrimSpace(s.reasoningEffort)
 	s.mu.Unlock()
 
 	spec, err := lcagentCommandSpec(s.execPath)
@@ -257,9 +312,15 @@ func (s *lcagentSession) startRun(prompt, displayPrompt string) error {
 		"--data-dir", s.dataDir,
 		"--auto", lcagentAutoLevel(s.auto),
 		"--output", "stream-json",
-		"--provider", "openrouter",
+		"--provider", provider,
 		"--model", model,
+		"--tool-profile", toolProfile,
+		"--context-profile", contextProfile,
+		"--request-timeout", requestTimeout.String(),
 	)
+	if reasoningEffort != "" {
+		args = append(args, "--reasoning-effort", reasoningEffort)
+	}
 	envFile := firstNonEmpty(s.envFile, os.Getenv("LCROOM_LCAGENT_ENV_FILE"))
 	if envFile != "" {
 		args = append(args, "--env-file", envFile)
@@ -578,6 +639,70 @@ func lcagentUsageTracked(usage lcrmodel.LLMUsage) bool {
 		usage.EstimatedCostUSD != 0
 }
 
+func lcagentProviderValue(configured string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(firstNonEmpty(configured, os.Getenv("LCROOM_LCAGENT_PROVIDER"))))
+	if value == "" {
+		return lcagentDefaultProvider, nil
+	}
+	switch value {
+	case "openrouter", "openai", "deepseek", "moonshot":
+		return value, nil
+	default:
+		return "", fmt.Errorf("LCAgent provider must be one of: openrouter, openai, deepseek, moonshot")
+	}
+}
+
+func lcagentToolProfileValue(configured string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(firstNonEmpty(configured, os.Getenv("LCROOM_LCAGENT_TOOL_PROFILE"))))
+	if value == "" {
+		return lcagentDefaultToolProfile, nil
+	}
+	switch value {
+	case "balanced", "generous":
+		return value, nil
+	default:
+		return "", fmt.Errorf("LCAgent tool profile must be one of: balanced, generous")
+	}
+}
+
+func lcagentContextProfileValue(configured string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(firstNonEmpty(configured, os.Getenv("LCROOM_LCAGENT_CONTEXT_PROFILE"))))
+	if value == "" {
+		return lcagentDefaultContextProfile, nil
+	}
+	switch value {
+	case "balanced", "large":
+		return value, nil
+	default:
+		return "", fmt.Errorf("LCAgent context profile must be one of: balanced, large")
+	}
+}
+
+func lcagentRequestTimeoutValue(configured time.Duration) time.Duration {
+	if configured > 0 {
+		return configured
+	}
+	if raw := strings.TrimSpace(os.Getenv("LCROOM_LCAGENT_REQUEST_TIMEOUT")); raw != "" {
+		if parsed, err := time.ParseDuration(raw); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return lcagentDefaultRequestTimeout
+}
+
+func lcagentDefaultModel(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openai":
+		return modeladapter.DefaultOpenAIModel
+	case "deepseek":
+		return modeladapter.DefaultDeepSeekModel
+	case "moonshot":
+		return modeladapter.DefaultMoonshotModel
+	default:
+		return modeladapter.DefaultOpenRouterModel
+	}
+}
+
 func (s *lcagentSession) snapshotLocked() Snapshot {
 	entries := cloneTranscriptEntries(s.entries)
 	transcript := ""
@@ -613,8 +738,8 @@ func (s *lcagentSession) snapshotLocked() Snapshot {
 		LastError:          s.lastError,
 		LastActivityAt:     s.lastActivityAt,
 		CurrentCWD:         s.projectPath,
-		Model:              firstNonEmpty(s.model, modeladapter.DefaultOpenRouterModel),
-		ModelProvider:      firstNonEmpty(s.modelProvider, "openrouter"),
+		Model:              firstNonEmpty(s.model, lcagentDefaultModel(s.provider)),
+		ModelProvider:      firstNonEmpty(s.modelProvider, lcagentDefaultProvider),
 		ReasoningEffort:    s.reasoningEffort,
 		TokenUsage:         exportedTokenUsageSnapshot(s.tokenUsage),
 	}

@@ -24,12 +24,18 @@ exclude_project_patterns = []
 codex_launch_preset = "yolo"
 
 # Experimental LCAgent provider. Leave lcagent_path blank to use the bundled
-# sibling binary, PATH lookup, or local go run fallback. The env file should
-# contain OPENROUTER_API_KEY; key contents are not copied into this config.
+# sibling binary, PATH lookup, or local go run fallback. The env file can
+# contain OPENROUTER_API_KEY, DEEPSEEK_API_KEY, MOONSHOT_API_KEY, or
+# OPENAI_API_KEY; key contents are not copied into this config.
 # embedded_lcagent_model = "deepseek/deepseek-v4-pro"
+# embedded_lcagent_reasoning_effort = "low"
 # lcagent_path = ""
 # lcagent_env_file = "~/path/to/openrouter.env"
+# lcagent_provider = "openrouter"
 # lcagent_auto = "low"
+# lcagent_tool_profile = "balanced"
+# lcagent_context_profile = "balanced"
+# lcagent_request_timeout = "10m"
 
 # Quiet browser automation by default; LCR opens a visible browser only when needed.
 playwright_management_mode = "managed"

@@ -869,8 +869,20 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 		if strings.TrimSpace(req.LCAgentEnvFile) == "" {
 			req.LCAgentEnvFile = m.lcagentEnvFile()
 		}
+		if strings.TrimSpace(req.LCAgentProvider) == "" {
+			req.LCAgentProvider = m.lcagentProvider()
+		}
 		if strings.TrimSpace(req.LCAgentAuto) == "" {
 			req.LCAgentAuto = m.lcagentAuto()
+		}
+		if strings.TrimSpace(req.LCAgentToolProfile) == "" {
+			req.LCAgentToolProfile = m.lcagentToolProfile()
+		}
+		if strings.TrimSpace(req.LCAgentContextProfile) == "" {
+			req.LCAgentContextProfile = m.lcagentContextProfile()
+		}
+		if req.LCAgentRequestTimeout <= 0 {
+			req.LCAgentRequestTimeout = m.lcagentRequestTimeout()
 		}
 	}
 	perfOpID := m.beginAILatencyOp("Embedded open", req.ProjectPath, provider.Label())
