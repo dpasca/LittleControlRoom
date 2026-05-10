@@ -18,6 +18,10 @@
       --good-soft: #ddf3e9;
       --best-soft: #fff7cf;
       --best-line: #d4af37;
+      --cost-green: #eef9f0;
+      --cost-yellow: #fff9df;
+      --cost-orange: #fff1e3;
+      --cost-red: #fdeeee;
     }
 
     * {
@@ -175,6 +179,11 @@
       font-weight: 800;
     }
 
+    .cost-green { background: var(--cost-green); }
+    .cost-yellow { background: var(--cost-yellow); }
+    .cost-orange { background: var(--cost-orange); }
+    .cost-red { background: var(--cost-red); }
+
     .pill {
       display: inline-block;
       border: 1px solid var(--line);
@@ -279,6 +288,21 @@
 
     .metric-desc {
       color: var(--muted);
+    }
+
+    .metric-legend .wide {
+      grid-column: 1 / -1;
+    }
+
+    .cost-chip {
+      display: inline-block;
+      margin: 2px 4px 0 0;
+      padding: 1px 6px;
+      border: 1px solid rgba(29, 37, 40, .1);
+      border-radius: 4px;
+      color: var(--ink);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
     }
 
     .evidence-table th:nth-child(1) { width: 20%; }
@@ -846,7 +870,7 @@
             <td class="num score best-cell" title="Best score">8.8</td>
             <td>low</td>
             <td class="num">92s</td>
-            <td class="num">$0.432</td>
+            <td class="num cost-orange">$0.432</td>
             <td class="num">172,435</td>
             <td class="num">111,616</td>
             <td class="num">16</td>
@@ -860,7 +884,7 @@
             <td class="num score">8.5</td>
             <td>low</td>
             <td class="num">203s</td>
-            <td class="num">$1.644</td>
+            <td class="num cost-red">$1.644</td>
             <td class="num">348,210</td>
             <td class="num">96,242</td>
             <td class="num">16</td>
@@ -874,7 +898,7 @@
             <td class="num score">7.8</td>
             <td>medium</td>
             <td class="num">249s</td>
-            <td class="num">$2.104</td>
+            <td class="num cost-red">$2.104</td>
             <td class="num">451,186</td>
             <td class="num">134,897</td>
             <td class="num">21</td>
@@ -888,7 +912,7 @@
             <td class="num score">7.4</td>
             <td>medium</td>
             <td class="num">191s</td>
-            <td class="num">$0.900</td>
+            <td class="num cost-orange">$0.900</td>
             <td class="num">234,660</td>
             <td class="num">97,280</td>
             <td class="num">24</td>
@@ -902,7 +926,7 @@
             <td class="num score">6.8</td>
             <td>baseline</td>
             <td class="num">143s</td>
-            <td class="num">$0.155</td>
+            <td class="num cost-yellow">$0.155</td>
             <td class="num">323,374</td>
             <td class="num">222,049</td>
             <td class="num">24</td>
@@ -916,7 +940,7 @@
             <td class="num score">6.3</td>
             <td>medium</td>
             <td class="num">430s</td>
-            <td class="num">$0.986</td>
+            <td class="num cost-orange">$0.986</td>
             <td class="num">415,109</td>
             <td class="num">227,415</td>
             <td class="num">21</td>
@@ -930,7 +954,7 @@
             <td class="num score">6.2</td>
             <td>disabled</td>
             <td class="num">59s</td>
-            <td class="num">$0.511</td>
+            <td class="num cost-orange">$0.511</td>
             <td class="num">117,441</td>
             <td class="num">32,256</td>
             <td class="num">11</td>
@@ -944,7 +968,7 @@
             <td class="num score">6.1</td>
             <td>low</td>
             <td class="num">39s</td>
-            <td class="num best-cell" title="Lowest estimated cost">$0.033</td>
+            <td class="num cost-green best-cell" title="Lowest estimated cost">$0.033</td>
             <td class="num">136,858</td>
             <td class="num">44,883</td>
             <td class="num">11</td>
@@ -958,7 +982,7 @@
             <td class="num score">5.9</td>
             <td>low</td>
             <td class="num">388s</td>
-            <td class="num">$0.308</td>
+            <td class="num cost-orange">$0.308</td>
             <td class="num">277,963</td>
             <td class="num">102,720</td>
             <td class="num">21</td>
@@ -972,7 +996,7 @@
             <td class="num score">5.8</td>
             <td>low</td>
             <td class="num">112s</td>
-            <td class="num">$0.368</td>
+            <td class="num cost-orange">$0.368</td>
             <td class="num">233,110</td>
             <td class="num">109,515</td>
             <td class="num">17</td>
@@ -986,7 +1010,7 @@
             <td class="num score">5.7</td>
             <td>medium</td>
             <td class="num best-cell" title="Fastest wall time">30s</td>
-            <td class="num">$0.036</td>
+            <td class="num cost-green">$0.036</td>
             <td class="num">224,738</td>
             <td class="num">94,556</td>
             <td class="num">18</td>
@@ -1000,7 +1024,7 @@
             <td class="num score">5.6</td>
             <td>baseline</td>
             <td class="num">365s</td>
-            <td class="num">$0.065</td>
+            <td class="num cost-green">$0.065</td>
             <td class="num">323,884</td>
             <td class="num">184,960</td>
             <td class="num">24</td>
@@ -1014,7 +1038,7 @@
             <td class="num score">5.3</td>
             <td>medium</td>
             <td class="num">331s</td>
-            <td class="num">$0.069</td>
+            <td class="num cost-green">$0.069</td>
             <td class="num">308,450</td>
             <td class="num">159,232</td>
             <td class="num">19</td>
@@ -1028,7 +1052,7 @@
             <td class="num score">5.2</td>
             <td>low</td>
             <td class="num">488s</td>
-            <td class="num">$1.094</td>
+            <td class="num cost-red">$1.094</td>
             <td class="num">407,487</td>
             <td class="num">195,190</td>
             <td class="num">24</td>
@@ -1042,7 +1066,7 @@
             <td class="num score">5.1</td>
             <td>medium</td>
             <td class="num">122s</td>
-            <td class="num">$0.123</td>
+            <td class="num cost-yellow">$0.123</td>
             <td class="num">308,555</td>
             <td class="num">161,487</td>
             <td class="num">21</td>
@@ -1056,7 +1080,7 @@
             <td class="num score">5.0</td>
             <td>low</td>
             <td class="num">150s</td>
-            <td class="num">$0.156</td>
+            <td class="num cost-yellow">$0.156</td>
             <td class="num">162,032</td>
             <td class="num">55,168</td>
             <td class="num">16</td>
@@ -1070,7 +1094,7 @@
             <td class="num score">4.8</td>
             <td>low</td>
             <td class="num">42s</td>
-            <td class="num">$0.098</td>
+            <td class="num cost-green">$0.098</td>
             <td class="num">334,189</td>
             <td class="num">161,659</td>
             <td class="num">24</td>
@@ -1084,7 +1108,7 @@
             <td class="num score">4.7</td>
             <td>baseline</td>
             <td class="num">103s</td>
-            <td class="num">$0.049</td>
+            <td class="num cost-green">$0.049</td>
             <td class="num">277,041</td>
             <td class="num">162,720</td>
             <td class="num">21</td>
@@ -1098,7 +1122,7 @@
             <td class="num score">4.4</td>
             <td>medium</td>
             <td class="num">201s</td>
-            <td class="num">$0.520</td>
+            <td class="num cost-orange">$0.520</td>
             <td class="num">331,810</td>
             <td class="num">186,282</td>
             <td class="num">24</td>
@@ -1112,7 +1136,7 @@
             <td class="num score">4.2</td>
             <td>low</td>
             <td class="num">126s</td>
-            <td class="num">$0.034</td>
+            <td class="num cost-green">$0.034</td>
             <td class="num">222,201</td>
             <td class="num">154,496</td>
             <td class="num">19</td>
@@ -1126,7 +1150,7 @@
             <td class="num score">3.8</td>
             <td>medium</td>
             <td class="num">440s</td>
-            <td class="num">$0.394</td>
+            <td class="num cost-orange">$0.394</td>
             <td class="num">373,779</td>
             <td class="num">156,608</td>
             <td class="num">24</td>
@@ -1140,7 +1164,7 @@
             <td class="num score">3.0</td>
             <td>medium</td>
             <td class="num">174s</td>
-            <td class="num">$0.227</td>
+            <td class="num cost-yellow">$0.227</td>
             <td class="num">220,245</td>
             <td class="num">59,200</td>
             <td class="num">16</td>
@@ -1160,9 +1184,15 @@
         <div><span class="metric-name">Lines</span><span class="metric-desc">: source and doc lines returned by file reads.</span></div>
         <div><span class="metric-name">Reason</span><span class="metric-desc">: reasoning tokens reported by the provider.</span></div>
         <div><span class="metric-name">Cost</span><span class="metric-desc">: estimated API cost for this benchmark run.</span></div>
+        <div class="wide"><span class="metric-name">Cost tint</span><span class="metric-desc">:
+          <span class="cost-chip cost-green">&lt;$0.10</span>
+          <span class="cost-chip cost-yellow">$0.10-$0.30</span>
+          <span class="cost-chip cost-orange">$0.30-$1.00</span>
+          <span class="cost-chip cost-red">&gt;$1.00</span>
+        </span></div>
       </div>
       <p class="subtle">
-        Highlighted cells mark the unambiguous best values in the table: highest score, shortest wall time, and lowest estimated cost. Read and line counts are deliberately not highlighted because less reading is not automatically better in a source-review benchmark.
+        Highlighted cells mark the unambiguous best values in the table: highest score, shortest wall time, and lowest estimated cost. The cost column also uses faint bucket tints: green under $0.10, yellow $0.10-$0.30, orange $0.30-$1.00, and red above $1.00. Read and line counts are deliberately not highlighted because less reading is not automatically better in a source-review benchmark.
       </p>
       <p class="subtle">
         Scores are subjective benchmark-routing scores out of 10, not pure answer-quality scores. The Effort column is the requested reasoning-effort setting only, separate from reported reasoning tokens. Temperature is recorded per row in the CSV; most OpenRouter and direct DeepSeek chat-completions runs used <code>0.2</code>, while OpenAI Responses, direct Moonshot, and Claude Opus 4.7 runs omitted temperature.
@@ -1192,7 +1222,7 @@
           <tr>
             <td><span class="model">Claude Opus 4.7</span> low</td>
             <td class="num score">8.5</td>
-            <td class="num">$1.644</td>
+            <td class="num cost-red">$1.644</td>
             <td class="num">96,242</td>
             <td class="num">82,348</td>
             <td>Best Claude route: strong audit quality with substantial cache reads.</td>
@@ -1200,7 +1230,7 @@
           <tr>
             <td><span class="model">Claude Opus 4.7</span> medium</td>
             <td class="num score">7.8</td>
-            <td class="num">$2.104</td>
+            <td class="num cost-red">$2.104</td>
             <td class="num">134,897</td>
             <td class="num">120,938</td>
             <td>Completed cleanly, but cache writes and longer context made it more expensive than Opus low.</td>
@@ -1208,7 +1238,7 @@
           <tr>
             <td><span class="model">Claude Sonnet 4.6</span> medium</td>
             <td class="num score">6.3</td>
-            <td class="num">$0.986</td>
+            <td class="num cost-orange">$0.986</td>
             <td class="num">227,415</td>
             <td class="num">52,008</td>
             <td>Cheapest Claude run, but final answer was too narrow.</td>
@@ -1216,7 +1246,7 @@
           <tr>
             <td><span class="model">Claude Sonnet 4.6</span> low</td>
             <td class="num score">5.2</td>
-            <td class="num">$1.094</td>
+            <td class="num cost-red">$1.094</td>
             <td class="num">195,190</td>
             <td class="num">67,135</td>
             <td>Completed with cache reads, but the run still needed forced synthesis and overclaimed.</td>
