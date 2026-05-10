@@ -16,6 +16,8 @@
       --warn-soft: #fff1d6;
       --good: #1b7052;
       --good-soft: #ddf3e9;
+      --best-soft: #fff7cf;
+      --best-line: #d4af37;
     }
 
     * {
@@ -165,6 +167,12 @@
     .score {
       font-weight: 800;
       color: var(--accent);
+    }
+
+    .best-cell {
+      background: var(--best-soft);
+      box-shadow: inset 0 0 0 1px var(--best-line);
+      font-weight: 800;
     }
 
     .pill {
@@ -677,18 +685,21 @@
       <p>
         The benchmark is therefore about routing behavior inside this harness, not a universal model leaderboard. It measures final-answer calibration, tool discipline, structured-output reliability, cache behavior, latency, and cost under the same prompt, turn budget, timeout, and repository snapshot.
       </p>
+      <p>
+        Cost matters because this is repeated agent-routing work, not a one-off demo. That is why low reasoning effort stays in the comparison as a first-class route, with medium effort sampled when there is a plausible quality or reliability return.
+      </p>
     </div>
 
     <div class="report-section">
       <h2>Summary</h2>
       <div class="callout good">
-        <strong>Default pick:</strong> GPT-5.5 with <code>reasoning.effort=low</code>. It gave the best overall balance of answer quality, harness reliability, latency, and cost.
+        <strong>Default pick:</strong> <strong>GPT-5.5</strong> with <code>reasoning.effort=low</code>. It gave the best overall balance of answer quality, harness reliability, latency, and cost.
       </div>
       <div class="callout warning">
-        <strong>Quality challenger:</strong> Claude Opus 4.7 produced the most detailed audit-style review, but GPT-5.5 low still scored higher overall because the default score also includes reliability, cost, cache behavior, and latency. Opus is a verification model, not the economical default.
+        <strong>Quality challenger:</strong> <strong>Claude Opus 4.7</strong> produced the most detailed audit-style review, but <strong>GPT-5.5</strong> low still scored higher overall because the default score also includes reliability, cost, cache behavior, and latency. Opus is a verification model, not the economical default.
       </div>
       <p>
-        Kimi K2.6 remains the best budget secondary. Gemini 3.1 Flash Lite is the fastest cheap scout, but shallow. Strict OpenRouter origin routing let Claude Sonnet 4.6 and MiniMax M2.7 complete on retry, but it did not make either a default candidate: Sonnet was slow, costly, and still overclaimed; MiniMax became reliable enough to measure but not accurate enough to route to by default.
+        <strong>Notable mentions:</strong> <strong>Kimi K2.6</strong> remains the best budget secondary. <strong>Gemini 3.1 Flash Lite</strong> is the fastest cheap scout, but shallow. Strict OpenRouter origin routing let <strong>Claude Sonnet 4.6</strong> and <strong>MiniMax M2.7</strong> complete on retry, but it did not make either a default candidate: Sonnet was slow, costly, and still overclaimed; MiniMax became reliable enough to measure but not accurate enough to route to by default.
       </p>
       <p>
         Provider routing is recorded in the CSV. Completed Sonnet and MiniMax retry rows used strict OpenRouter origin-provider pins with fallbacks disabled and required parameter support enabled. Other completed OpenRouter rows used default OpenRouter routing. Temperature was explicit at <code>0.2</code> for OpenRouter and direct DeepSeek chat-completions runs; OpenAI Responses and direct Moonshot runs omitted temperature.
@@ -828,7 +839,7 @@
         <tbody>
           <tr>
             <td><span class="model">GPT-5.5</span><br><span class="subtle">OpenAI API</span></td>
-            <td class="num score">8.8</td>
+            <td class="num score best-cell" title="Best score">8.8</td>
             <td>low</td>
             <td class="num">92s</td>
             <td class="num">$0.432</td>
@@ -929,7 +940,7 @@
             <td class="num score">6.1</td>
             <td>low</td>
             <td class="num">39s</td>
-            <td class="num">$0.033</td>
+            <td class="num best-cell" title="Lowest estimated cost">$0.033</td>
             <td class="num">136,858</td>
             <td class="num">44,883</td>
             <td class="num">11</td>
@@ -970,7 +981,7 @@
             <td><span class="model">Gemini 3.1 Flash Lite</span><br><span class="subtle">OpenRouter</span></td>
             <td class="num score">5.7</td>
             <td>medium</td>
-            <td class="num">30s</td>
+            <td class="num best-cell" title="Fastest wall time">30s</td>
             <td class="num">$0.036</td>
             <td class="num">224,738</td>
             <td class="num">94,556</td>
@@ -1146,6 +1157,9 @@
         <div><span class="metric-name">Reason</span><span class="metric-desc">: reasoning tokens reported by the provider.</span></div>
         <div><span class="metric-name">Cost</span><span class="metric-desc">: estimated API cost for this benchmark run.</span></div>
       </div>
+      <p class="subtle">
+        Highlighted cells mark the unambiguous best values in the table: highest score, shortest wall time, and lowest estimated cost. Read and line counts are deliberately not highlighted because less reading is not automatically better in a source-review benchmark.
+      </p>
       <p class="subtle">
         Scores are subjective default-routing scores out of 10, not pure answer-quality scores. The Effort column is the requested reasoning-effort setting only, separate from reported reasoning tokens. Temperature is recorded per row in the CSV; OpenRouter and direct DeepSeek chat-completions runs used <code>0.2</code>, while OpenAI Responses and direct Moonshot runs omitted temperature.
         Kimi K2.6 was not rerun in the medium-effort pass because the direct Moonshot adapter does not accept the LCAgent reasoning-effort option.

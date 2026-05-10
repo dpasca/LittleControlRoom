@@ -56,6 +56,11 @@ finish with a structured `final_response`. No file edits were expected. That
 made it a useful benchmark for source-reading discipline, cache behavior,
 tool-call overhead, final-answer calibration, and route reliability.
 
+Cost matters because this is repeated agent-routing work, not a one-off demo.
+That is why low reasoning effort stays in the comparison as a first-class route,
+with medium effort sampled when there is a plausible quality or reliability
+return.
+
 ## Scoring Method
 
 The score is a 0-10 operator routing score, not a pure model leaderboard. It was
@@ -77,23 +82,23 @@ down, but the excerpts are illustrative rather than a separate formula.
 
 ## Takeaways
 
-GPT-5.5 with `reasoning.effort=low` was the best default. It produced the best
+**GPT-5.5** with `reasoning.effort=low` was the best default. It produced the best
 overall answer with reliable tool behavior and good cache reuse.
 
-Claude Opus 4.7 produced the most detailed audit-style review, but GPT-5.5 low
+**Claude Opus 4.7** produced the most detailed audit-style review, but GPT-5.5 low
 still scored higher overall because the score is a default-routing score, not a
 pure answer-quality score. Opus's cost and lack of reported cache hits make it a
 verification lane rather than the default.
 
-Kimi K2.6 was the best budget secondary in this batch. It was cheaper than GPT
-and produced a usable answer, but it wandered more.
+Notable mentions: **Kimi K2.6** was the best budget secondary in this batch. It
+was cheaper than GPT and produced a usable answer, but it wandered more.
 
-Gemini 3.1 Flash Lite was very fast and cheap, but too shallow to be the default
-review model. DeepSeek V4 Pro was extremely cheap but weak and slow in this
-task. Grok 4.3 completed but inspected too little evidence.
+**Gemini 3.1 Flash Lite** was very fast and cheap, but too shallow to be the
+default review model. **DeepSeek V4 Pro** was extremely cheap but weak and slow
+in this task. **Grok 4.3** completed but inspected too little evidence.
 
-Strict OpenRouter origin routing improved reliability for Claude Sonnet 4.6 and
-MiniMax M2.7: both completed under native-provider routing. That did
+Strict OpenRouter origin routing improved reliability for **Claude Sonnet 4.6**
+and **MiniMax M2.7**: both completed under native-provider routing. That did
 not change the recommendation. Sonnet was slow, costly, forced into synthesis,
 and still made false missing-feature claims. MiniMax became a valid completed
 run, but its final answers missed important gaps and added false tool/skill
@@ -107,9 +112,9 @@ behavior on tasks where the model drifts or overclaims.
 No model landed in the ideal quadrant of high score and low cost. The practical
 shape from this run is:
 
-- Default: GPT-5.5 low
-- Budget secondary: Kimi K2.6
-- Expensive verification: Claude Opus 4.7
+- Default: **GPT-5.5** low
+- Budget secondary: **Kimi K2.6**
+- Expensive verification: **Claude Opus 4.7**
 
 ## Medium Effort Follow-up
 
