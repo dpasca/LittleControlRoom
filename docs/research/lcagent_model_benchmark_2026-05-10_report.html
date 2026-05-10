@@ -235,18 +235,17 @@
     }
 
     .combined-table th:nth-child(1) { width: 15%; }
-    .combined-table th:nth-child(2) { width: 6%; }
+    .combined-table th:nth-child(2) { width: 5%; }
     .combined-table th:nth-child(3) { width: 5%; }
     .combined-table th:nth-child(4) { width: 5%; }
-    .combined-table th:nth-child(5) { width: 5%; }
+    .combined-table th:nth-child(5) { width: 6%; }
     .combined-table th:nth-child(6) { width: 6%; }
     .combined-table th:nth-child(7) { width: 6%; }
-    .combined-table th:nth-child(8) { width: 6%; }
+    .combined-table th:nth-child(8) { width: 5%; }
     .combined-table th:nth-child(9) { width: 5%; }
     .combined-table th:nth-child(10) { width: 5%; }
-    .combined-table th:nth-child(11) { width: 5%; }
-    .combined-table th:nth-child(12) { width: 6%; }
-    .combined-table th:nth-child(13) { width: 25%; }
+    .combined-table th:nth-child(11) { width: 6%; }
+    .combined-table th:nth-child(12) { width: 31%; }
 
     .metric-legend {
       display: grid;
@@ -279,11 +278,6 @@
     .quote {
       color: var(--ink);
       font-style: italic;
-    }
-
-    .status-ok {
-      color: var(--good);
-      font-weight: 700;
     }
 
     .value-chart {
@@ -434,6 +428,7 @@
       position: absolute;
       z-index: 5;
       transform: translate(-50%, -50%);
+      --point-color: var(--accent);
     }
 
     .point-dot {
@@ -442,7 +437,7 @@
       height: 12px;
       border: 2px solid #fff;
       border-radius: 50%;
-      background: var(--accent);
+      background: var(--point-color);
       box-shadow: 0 0 0 1px rgba(29, 37, 40, .38);
       font-size: 0;
       line-height: 0;
@@ -451,21 +446,33 @@
     .point-default .point-dot {
       width: 14px;
       height: 14px;
-      background: var(--good);
-      box-shadow: 0 0 0 2px rgba(27, 112, 82, .32);
+      box-shadow: 0 0 0 2px rgba(29, 37, 40, .32);
     }
 
     .point-verify .point-dot {
       width: 14px;
       height: 14px;
-      background: #6b5c12;
-      box-shadow: 0 0 0 2px rgba(107, 92, 18, .25);
+      box-shadow: 0 0 0 2px rgba(29, 37, 40, .32);
     }
 
     .point-medium .point-dot {
       background: #fff;
-      border-color: var(--accent);
-      box-shadow: 0 0 0 2px rgba(11, 114, 133, .28);
+      border-color: var(--point-color);
+      box-shadow: 0 0 0 2px rgba(29, 37, 40, .18);
+    }
+
+    .family-openai { --point-color: #1b7052; }
+    .family-claude { --point-color: #7b4ab3; }
+    .family-gemini { --point-color: #1f78b4; }
+    .family-kimi { --point-color: #c45a2b; }
+    .family-deepseek { --point-color: #0f8b8d; }
+    .family-glm { --point-color: #9b6a00; }
+    .family-grok { --point-color: #59656f; }
+    .family-minimax { --point-color: #c4377f; }
+
+    .point-default .point-name,
+    .point-verify .point-name {
+      font-weight: 700;
     }
 
     .point-name {
@@ -521,17 +528,18 @@
       line-height: 0;
     }
 
-    .legend-swatch.default {
-      background: var(--good);
-    }
+    .legend-swatch.openai { background: #1b7052; }
+    .legend-swatch.claude { background: #7b4ab3; }
+    .legend-swatch.gemini { background: #1f78b4; }
+    .legend-swatch.kimi { background: #c45a2b; }
+    .legend-swatch.deepseek { background: #0f8b8d; }
+    .legend-swatch.glm { background: #9b6a00; }
+    .legend-swatch.grok { background: #59656f; }
+    .legend-swatch.minimax { background: #c4377f; }
 
-    .legend-swatch.verify {
-      background: #6b5c12;
-    }
-
-    .legend-swatch.medium {
+    .legend-swatch.followup {
       background: #fff;
-      border: 2px solid var(--accent);
+      border: 2px solid var(--ink);
     }
 
     .chart-note {
@@ -763,35 +771,40 @@
             <span class="axis-title axis-title-x">Estimated cost per benchmark run (log scale)</span>
             <span class="axis-title axis-title-y">Score</span>
 
-            <span class="chart-point point-default label-above" style="left: 63.5%; top: 2.9%;"><span class="point-dot">&nbsp;</span><span class="point-name">GPT-5.5 low</span></span>
-            <span class="chart-point point-verify label-left" style="left: 99.3%; top: 7.1%;"><span class="point-dot">&nbsp;</span><span class="point-name">Opus 4.7</span></span>
-            <span class="chart-point point-medium label-left" style="left: 97.7%; top: 11.4%;"><span class="point-dot">&nbsp;</span><span class="point-name">Opus med</span></span>
-            <span class="chart-point point-medium label-above" style="left: 81.0%; top: 22.9%;"><span class="point-dot">&nbsp;</span><span class="point-name">GPT med</span></span>
-            <span class="chart-point point-medium label-left" style="left: 96.5%; top: 25.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Sonnet med</span></span>
-            <span class="chart-point" style="left: 39.1%; top: 31.4%;"><span class="point-dot">&nbsp;</span><span class="point-name">Kimi K2.6</span></span>
-            <span class="chart-point label-left" style="left: 67.5%; top: 40.0%;"><span class="point-dot">&nbsp;</span><span class="point-name">GPT none</span></span>
-            <span class="chart-point" style="left: 2.3%; top: 41.4%;"><span class="point-dot">&nbsp;</span><span class="point-name">Flash Lite</span></span>
-            <span class="chart-point point-medium label-below" style="left: 4.5%; top: 47.1%;"><span class="point-dot">&nbsp;</span><span class="point-name">Flash Lite med</span></span>
-            <span class="chart-point label-left" style="left: 55.5%; top: 44.3%;"><span class="point-dot">&nbsp;</span><span class="point-name">GLM 5.1</span></span>
-            <span class="chart-point label-below" style="left: 59.7%; top: 45.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Gemini Pro</span></span>
-            <span class="chart-point" style="left: 18.4%; top: 48.6%;"><span class="point-dot">&nbsp;</span><span class="point-name">DeepSeek</span></span>
-            <span class="chart-point point-medium label-below" style="left: 20.0%; top: 52.9%;"><span class="point-dot">&nbsp;</span><span class="point-name">DeepSeek med</span></span>
-            <span class="chart-point label-left" style="left: 96.7%; top: 55.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Sonnet low</span></span>
-            <span class="chart-point point-medium label-above" style="left: 33.6%; top: 55.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Gemini Flash med</span></span>
-            <span class="chart-point" style="left: 39.3%; top: 57.1%;"><span class="point-dot">&nbsp;</span><span class="point-name">Grok 4.3</span></span>
-            <span class="chart-point" style="left: 28.2%; top: 60.0%;"><span class="point-dot">&nbsp;</span><span class="point-name">Gemini Flash</span></span>
-            <span class="chart-point point-medium label-left" style="left: 67.9%; top: 65.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Gemini Pro med</span></span>
-            <span class="chart-point label-below" style="left: 11.6%; top: 61.4%;"><span class="point-dot">&nbsp;</span><span class="point-name">MiniMax default</span></span>
-            <span class="chart-point label-below" style="left: 3.0%; top: 68.6%;"><span class="point-dot">&nbsp;</span><span class="point-name">MiniMax low</span></span>
-            <span class="chart-point point-medium label-left" style="left: 61.3%; top: 74.3%;"><span class="point-dot">&nbsp;</span><span class="point-name">GLM med</span></span>
-            <span class="chart-point point-medium label-left" style="left: 48.1%; top: 85.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Grok med</span></span>
+            <span class="chart-point family-openai point-default label-above" style="left: 63.5%; top: 2.9%;"><span class="point-dot">&nbsp;</span><span class="point-name">GPT-5.5 low</span></span>
+            <span class="chart-point family-claude point-verify label-left" style="left: 99.3%; top: 7.1%;"><span class="point-dot">&nbsp;</span><span class="point-name">Opus 4.7</span></span>
+            <span class="chart-point family-claude point-medium label-left" style="left: 97.7%; top: 11.4%;"><span class="point-dot">&nbsp;</span><span class="point-name">Opus med</span></span>
+            <span class="chart-point family-openai point-medium label-above" style="left: 81.0%; top: 22.9%;"><span class="point-dot">&nbsp;</span><span class="point-name">GPT med</span></span>
+            <span class="chart-point family-claude point-medium label-left" style="left: 96.5%; top: 25.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Sonnet med</span></span>
+            <span class="chart-point family-kimi" style="left: 39.1%; top: 31.4%;"><span class="point-dot">&nbsp;</span><span class="point-name">Kimi K2.6</span></span>
+            <span class="chart-point family-openai label-left" style="left: 67.5%; top: 40.0%;"><span class="point-dot">&nbsp;</span><span class="point-name">GPT none</span></span>
+            <span class="chart-point family-gemini" style="left: 2.3%; top: 41.4%;"><span class="point-dot">&nbsp;</span><span class="point-name">Flash Lite</span></span>
+            <span class="chart-point family-gemini point-medium label-below" style="left: 4.5%; top: 47.1%;"><span class="point-dot">&nbsp;</span><span class="point-name">Flash Lite med</span></span>
+            <span class="chart-point family-glm label-left" style="left: 55.5%; top: 44.3%;"><span class="point-dot">&nbsp;</span><span class="point-name">GLM 5.1</span></span>
+            <span class="chart-point family-gemini label-below" style="left: 59.7%; top: 45.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Gemini Pro</span></span>
+            <span class="chart-point family-deepseek" style="left: 18.4%; top: 48.6%;"><span class="point-dot">&nbsp;</span><span class="point-name">DeepSeek</span></span>
+            <span class="chart-point family-deepseek point-medium label-below" style="left: 20.0%; top: 52.9%;"><span class="point-dot">&nbsp;</span><span class="point-name">DeepSeek med</span></span>
+            <span class="chart-point family-claude label-left" style="left: 96.7%; top: 55.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Sonnet low</span></span>
+            <span class="chart-point family-gemini point-medium label-above" style="left: 33.6%; top: 55.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Gemini Flash med</span></span>
+            <span class="chart-point family-grok" style="left: 39.3%; top: 57.1%;"><span class="point-dot">&nbsp;</span><span class="point-name">Grok 4.3</span></span>
+            <span class="chart-point family-gemini" style="left: 28.2%; top: 60.0%;"><span class="point-dot">&nbsp;</span><span class="point-name">Gemini Flash</span></span>
+            <span class="chart-point family-gemini point-medium label-left" style="left: 67.9%; top: 65.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Gemini Pro med</span></span>
+            <span class="chart-point family-minimax label-below" style="left: 11.6%; top: 61.4%;"><span class="point-dot">&nbsp;</span><span class="point-name">MiniMax default</span></span>
+            <span class="chart-point family-minimax label-below" style="left: 3.0%; top: 68.6%;"><span class="point-dot">&nbsp;</span><span class="point-name">MiniMax low</span></span>
+            <span class="chart-point family-glm point-medium label-left" style="left: 61.3%; top: 74.3%;"><span class="point-dot">&nbsp;</span><span class="point-name">GLM med</span></span>
+            <span class="chart-point family-grok point-medium label-left" style="left: 48.1%; top: 85.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Grok med</span></span>
           </div>
         </div>
         <div class="chart-legend">
-          <span><span class="legend-swatch default">&nbsp;</span>Recommended default</span>
-          <span><span class="legend-swatch verify">&nbsp;</span>Verification lane</span>
-          <span><span class="legend-swatch">&nbsp;</span>Completed run</span>
-          <span><span class="legend-swatch medium">&nbsp;</span>Medium-effort follow-up</span>
+          <span><span class="legend-swatch openai">&nbsp;</span>OpenAI</span>
+          <span><span class="legend-swatch claude">&nbsp;</span>Claude</span>
+          <span><span class="legend-swatch gemini">&nbsp;</span>Gemini</span>
+          <span><span class="legend-swatch kimi">&nbsp;</span>Kimi</span>
+          <span><span class="legend-swatch deepseek">&nbsp;</span>DeepSeek</span>
+          <span><span class="legend-swatch glm">&nbsp;</span>GLM</span>
+          <span><span class="legend-swatch grok">&nbsp;</span>Grok</span>
+          <span><span class="legend-swatch minimax">&nbsp;</span>MiniMax</span>
+          <span><span class="legend-swatch followup">&nbsp;</span>Medium effort</span>
         </div>
         <p class="chart-note">
           No model landed in the ideal quadrant in this batch. Medium effort moved Sonnet into the premium verification area, but did not make it economical. Kimi K2.6 is still the closest budget candidate; GPT-5.5 low remains the practical default; Claude Opus 4.7 remains the expensive audit pass. Earlier failed attempts are excluded from this chart.
@@ -805,7 +818,6 @@
         <thead>
           <tr>
             <th>Run</th>
-            <th>Status</th>
             <th class="num">Score</th>
             <th>Effort</th>
             <th class="num">Wall</th>
@@ -822,7 +834,6 @@
         <tbody>
           <tr>
             <td><span class="model">GPT-5.5</span><br><span class="subtle">OpenAI API</span></td>
-            <td class="status-ok">complete</td>
             <td class="num score">8.8</td>
             <td>low</td>
             <td class="num">92s</td>
@@ -837,7 +848,6 @@
           </tr>
           <tr>
             <td><span class="model">Claude Opus 4.7</span><br><span class="subtle">OpenRouter</span></td>
-            <td class="status-ok">complete</td>
             <td class="num score">8.5</td>
             <td>low</td>
             <td class="num">122s</td>
@@ -852,7 +862,6 @@
           </tr>
           <tr>
             <td><span class="model">Claude Opus 4.7</span><br><span class="subtle">OpenRouter</span></td>
-            <td class="status-ok">complete</td>
             <td class="num score">8.2</td>
             <td>medium</td>
             <td class="num">101s</td>
@@ -867,7 +876,6 @@
           </tr>
           <tr>
             <td><span class="model">GPT-5.5</span><br><span class="subtle">OpenAI API</span></td>
-            <td class="status-ok">complete</td>
             <td class="num score">7.4</td>
             <td>medium</td>
             <td class="num">191s</td>
@@ -882,7 +890,6 @@
           </tr>
           <tr>
             <td><span class="model">Claude Sonnet 4.6</span><br><span class="subtle">OpenRouter</span></td>
-            <td class="status-ok">complete</td>
             <td class="num score">7.2</td>
             <td>medium</td>
             <td class="num">417s</td>
@@ -897,7 +904,6 @@
           </tr>
           <tr>
             <td><span class="model">Kimi K2.6</span><br><span class="subtle">Moonshot API</span></td>
-            <td class="status-ok">complete</td>
             <td class="num score">6.8</td>
             <td>default</td>
             <td class="num">143s</td>
@@ -912,7 +918,6 @@
           </tr>
           <tr>
             <td><span class="model">GPT-5.5</span><br><span class="subtle">OpenAI API</span></td>
-            <td class="status-ok">complete</td>
             <td class="num score">6.2</td>
             <td>disabled</td>
             <td class="num">59s</td>
@@ -927,7 +932,6 @@
           </tr>
           <tr>
             <td><span class="model">Gemini 3.1 Flash Lite</span><br><span class="subtle">OpenRouter</span></td>
-            <td class="status-ok">complete</td>
             <td class="num score">6.1</td>
             <td>low</td>
             <td class="num">39s</td>
@@ -942,7 +946,6 @@
           </tr>
           <tr>
             <td><span class="model">GLM 5.1</span><br><span class="subtle">OpenRouter</span></td>
-            <td class="status-ok">complete</td>
             <td class="num score">5.9</td>
             <td>low</td>
             <td class="num">388s</td>
@@ -957,7 +960,6 @@
           </tr>
           <tr>
             <td><span class="model">Gemini 3.1 Pro Custom Tools</span><br><span class="subtle">OpenRouter</span></td>
-            <td class="status-ok">complete</td>
             <td class="num score">5.8</td>
             <td>low</td>
             <td class="num">112s</td>
@@ -972,7 +974,6 @@
           </tr>
           <tr>
             <td><span class="model">Gemini 3.1 Flash Lite</span><br><span class="subtle">OpenRouter</span></td>
-            <td class="status-ok">complete</td>
             <td class="num score">5.7</td>
             <td>medium</td>
             <td class="num">30s</td>
@@ -987,7 +988,6 @@
           </tr>
           <tr>
             <td><span class="model">DeepSeek V4 Pro</span><br><span class="subtle">DeepSeek API</span></td>
-            <td class="status-ok">complete</td>
             <td class="num score">5.6</td>
             <td>default</td>
             <td class="num">365s</td>
@@ -1002,7 +1002,6 @@
           </tr>
           <tr>
             <td><span class="model">DeepSeek V4 Pro</span><br><span class="subtle">DeepSeek API</span></td>
-            <td class="status-ok">complete</td>
             <td class="num score">5.3</td>
             <td>medium</td>
             <td class="num">331s</td>
@@ -1017,7 +1016,6 @@
           </tr>
           <tr>
             <td><span class="model">Claude Sonnet 4.6</span><br><span class="subtle">OpenRouter</span></td>
-            <td class="status-ok">complete</td>
             <td class="num score">5.1</td>
             <td>low</td>
             <td class="num">552s</td>
@@ -1032,7 +1030,6 @@
           </tr>
           <tr>
             <td><span class="model">Gemini 3 Flash Preview</span><br><span class="subtle">OpenRouter</span></td>
-            <td class="status-ok">complete</td>
             <td class="num score">5.1</td>
             <td>medium</td>
             <td class="num">122s</td>
@@ -1047,7 +1044,6 @@
           </tr>
           <tr>
             <td><span class="model">Grok 4.3</span><br><span class="subtle">OpenRouter</span></td>
-            <td class="status-ok">complete</td>
             <td class="num score">5.0</td>
             <td>low</td>
             <td class="num">150s</td>
@@ -1062,7 +1058,6 @@
           </tr>
           <tr>
             <td><span class="model">Gemini 3 Flash Preview</span><br><span class="subtle">OpenRouter</span></td>
-            <td class="status-ok">complete</td>
             <td class="num score">4.8</td>
             <td>low</td>
             <td class="num">42s</td>
@@ -1077,7 +1072,6 @@
           </tr>
           <tr>
             <td><span class="model">MiniMax M2.7</span><br><span class="subtle">OpenRouter</span></td>
-            <td class="status-ok">complete</td>
             <td class="num score">4.7</td>
             <td>default</td>
             <td class="num">103s</td>
@@ -1092,7 +1086,6 @@
           </tr>
           <tr>
             <td><span class="model">Gemini 3.1 Pro Custom Tools</span><br><span class="subtle">OpenRouter</span></td>
-            <td class="status-ok">complete</td>
             <td class="num score">4.4</td>
             <td>medium</td>
             <td class="num">201s</td>
@@ -1107,7 +1100,6 @@
           </tr>
           <tr>
             <td><span class="model">MiniMax M2.7</span><br><span class="subtle">OpenRouter</span></td>
-            <td class="status-ok">complete</td>
             <td class="num score">4.2</td>
             <td>low</td>
             <td class="num">126s</td>
@@ -1122,7 +1114,6 @@
           </tr>
           <tr>
             <td><span class="model">GLM 5.1</span><br><span class="subtle">OpenRouter</span></td>
-            <td class="status-ok">complete</td>
             <td class="num score">3.8</td>
             <td>medium</td>
             <td class="num">440s</td>
@@ -1137,7 +1128,6 @@
           </tr>
           <tr>
             <td><span class="model">Grok 4.3</span><br><span class="subtle">OpenRouter</span></td>
-            <td class="status-ok">complete</td>
             <td class="num score">3.0</td>
             <td>medium</td>
             <td class="num">174s</td>
