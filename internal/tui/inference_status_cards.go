@@ -50,7 +50,7 @@ func (m Model) renderCompactInferenceSetupSummary(width int) string {
 	if relationship := bossChatRelationshipSummary(settings); relationship != "" {
 		summary += " " + relationship
 	}
-	summary += " Run /setup to change roles."
+	summary += " Run /settings to change roles."
 	return commandPaletteHintStyle.Render(lipgloss.NewStyle().Width(width).Render(summary))
 }
 

@@ -46,15 +46,17 @@ const (
 	settingsFieldActiveThreshold
 	settingsFieldStuckThreshold
 	settingsFieldInterval
+	settingsFieldAIBackend
 )
 
 type settingsSectionID string
 
 const (
-	settingsSectionAI      settingsSectionID = "ai"
-	settingsSectionScope   settingsSectionID = "scope"
-	settingsSectionBrowser settingsSectionID = "browser"
-	settingsSectionRefresh settingsSectionID = "refresh"
+	settingsSectionGettingStarted settingsSectionID = "getting-started"
+	settingsSectionAI             settingsSectionID = "ai"
+	settingsSectionScope          settingsSectionID = "scope"
+	settingsSectionBrowser        settingsSectionID = "browser"
+	settingsSectionAdvanced       settingsSectionID = "advanced"
 )
 
 const settingsConfigIssueStatus = "LCAgent env file warning"
@@ -129,12 +131,21 @@ func invertBoolString(s string) string {
 func settingsSections() []settingsSection {
 	return []settingsSection{
 		{
+			id:    settingsSectionGettingStarted,
+			label: "Getting Started",
+			hint:  "Pick your AI backend and where to look for projects.",
+			fieldOrder: []int{
+				settingsFieldAIBackend,
+				settingsFieldOpenAIAPIKey,
+				settingsFieldBossChatBackend,
+				settingsFieldIncludePaths,
+			},
+		},
+		{
 			id:    settingsSectionAI,
 			label: "AI & Models",
 			hint:  "Project-analysis backend credentials, boss-chat inference, local model overrides, and embedded assistant launch defaults.",
 			fieldOrder: []int{
-				settingsFieldOpenAIAPIKey,
-				settingsFieldBossChatBackend,
 				settingsFieldBossChatModel,
 				settingsFieldBossUtilityModel,
 				settingsFieldMLXBaseURL,
@@ -143,13 +154,6 @@ func settingsSections() []settingsSection {
 				settingsFieldOllamaBaseURL,
 				settingsFieldOllamaAPIKey,
 				settingsFieldOllamaModel,
-				settingsFieldLCAgentPath,
-				settingsFieldLCAgentEnvFile,
-				settingsFieldLCAgentProvider,
-				settingsFieldLCAgentAuto,
-				settingsFieldLCAgentToolProfile,
-				settingsFieldLCAgentContextProfile,
-				settingsFieldLCAgentRequestTimeout,
 				settingsFieldCodexLaunchPreset,
 				settingsFieldHideReasoningSections,
 			},
@@ -159,7 +163,6 @@ func settingsSections() []settingsSection {
 			label: "Project Scope",
 			hint:  "Choose which folders stay visible and which names should stay hidden or masked in demos.",
 			fieldOrder: []int{
-				settingsFieldIncludePaths,
 				settingsFieldExcludePaths,
 				settingsFieldExcludeProjectPatterns,
 				settingsFieldPrivacyPatterns,
@@ -174,10 +177,17 @@ func settingsSections() []settingsSection {
 			},
 		},
 		{
-			id:    settingsSectionRefresh,
-			label: "Refresh",
-			hint:  "Tune how quickly projects move between active, stale, and stuck states.",
+			id:    settingsSectionAdvanced,
+			label: "Advanced",
+			hint:  "Experimental features and tuning knobs. Most users can leave these alone.",
 			fieldOrder: []int{
+				settingsFieldLCAgentPath,
+				settingsFieldLCAgentEnvFile,
+				settingsFieldLCAgentProvider,
+				settingsFieldLCAgentAuto,
+				settingsFieldLCAgentToolProfile,
+				settingsFieldLCAgentContextProfile,
+				settingsFieldLCAgentRequestTimeout,
 				settingsFieldActiveThreshold,
 				settingsFieldStuckThreshold,
 				settingsFieldInterval,
@@ -287,7 +297,7 @@ func settingsBrowserAutomationOptionLabel(raw string, baseline browserctl.Policy
 }
 
 func settingsFieldUsesPicker(index int) bool {
-	return index == settingsFieldBossChatBackend || index == settingsFieldBrowserAutomation
+	return index == settingsFieldAIBackend || index == settingsFieldBossChatBackend || index == settingsFieldBrowserAutomation
 }
 
 func normalizeSettingsChoice(raw string) string {
@@ -309,6 +319,8 @@ func (m *Model) openBrowserSettingsMode() tea.Cmd {
 	m.settingsMode = true
 	m.settingsSaving = false
 	m.settingsRevealPrivacy = false
+	m.settingsAIBackendPickerVisible = false
+	m.settingsAIBackendPickerSelected = 0
 	m.settingsBossChatPickerVisible = false
 	m.settingsBossChatPickerSelected = 0
 	m.settingsBrowserPickerVisible = false
@@ -330,6 +342,8 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	m.settingsSaving = false
 	m.settingsSectionSelected = 0
 	m.settingsRevealPrivacy = false
+	m.settingsAIBackendPickerVisible = false
+	m.settingsAIBackendPickerSelected = 0
 	m.settingsBossChatPickerVisible = false
 	m.settingsBossChatPickerSelected = 0
 	m.settingsBrowserPickerVisible = false
@@ -351,6 +365,8 @@ func (m *Model) closeSettingsMode(status string) {
 	m.blurSettingsFields()
 	m.settingsMode = false
 	m.settingsSaving = false
+	m.settingsAIBackendPickerVisible = false
+	m.settingsAIBackendPickerSelected = 0
 	m.settingsBossChatPickerVisible = false
 	m.settingsBossChatPickerSelected = 0
 	m.settingsBrowserPickerVisible = false
@@ -381,6 +397,8 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if settingsFieldUsesPicker(m.settingsSelected) {
 			switch m.settingsSelected {
+			case settingsFieldAIBackend:
+				return m.openSettingsAIBackendPicker()
 			case settingsFieldBossChatBackend:
 				return m.openSettingsBossChatBackendPicker()
 			case settingsFieldBrowserAutomation:
@@ -424,7 +442,7 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	settings, err := config.ParseEditableSettings(
-		m.currentSettingsBaseline().AIBackend,
+		config.AIBackend(m.settingsFieldValue(settingsFieldAIBackend)),
 		config.AIBackend(m.settingsFieldValue(settingsFieldBossChatBackend)),
 		m.settingsFieldValue(settingsFieldOpenAIAPIKey),
 		m.settingsFieldValue(settingsFieldBossChatModel),
@@ -1023,6 +1041,8 @@ func (m Model) renderSettingsFieldRow(fieldIndex int, field settingsField, selec
 	if settingsFieldUsesPicker(fieldIndex) {
 		var row string
 		switch fieldIndex {
+		case settingsFieldAIBackend:
+			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsAIBackendValue(selected, inputWidth)
 		case settingsFieldBossChatBackend:
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsBossChatBackendValue(selected, inputWidth)
 		case settingsFieldBrowserAutomation:
@@ -1086,14 +1106,14 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			"Used by OpenAI API backed features, including boss chat when its backend is openai_api.",
 			settings.OpenAIAPIKey,
 			512,
-			settingsSectionAI,
+			settingsSectionGettingStarted,
 		),
 		newSettingsField(
 			"Boss chat backend",
 			"Press Enter to choose Auto, OpenAI API, or Off. This is separate from project analysis, so summaries can stay on Codex/OpenCode while boss chat uses direct API inference.",
 			string(settings.BossChatBackend),
 			32,
-			settingsSectionAI,
+			settingsSectionGettingStarted,
 		),
 		newSettingsField(
 			"Boss helm model",
@@ -1158,49 +1178,49 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			"Optional path to the lcagent binary. Leave blank to use the bundled sibling binary, PATH lookup, or local go run fallback.",
 			settings.LCAgentPath,
 			512,
-			settingsSectionAI,
+			settingsSectionAdvanced,
 		),
 		newSettingsField(
 			"LCAgent env file",
 			"Optional env file for experimental LCAgent provider credentials, such as OpenRouter, DeepSeek, Moonshot, or OpenAI keys. Missing files are shown as warnings and launches will fail until fixed or cleared.",
 			settings.LCAgentEnvFile,
 			1024,
-			settingsSectionAI,
+			settingsSectionAdvanced,
 		),
 		newSettingsField(
 			"LCAgent provider",
 			"Experimental LCAgent provider. Accepted values: openrouter, openai, deepseek, moonshot.",
 			settings.LCAgentProvider,
 			32,
-			settingsSectionAI,
+			settingsSectionAdvanced,
 		),
 		newSettingsField(
 			"LCAgent autonomy",
 			"Accepted values: off, low, medium. Low allows conservative local edits while keeping higher-risk actions constrained.",
 			settings.LCAgentAuto,
 			16,
-			settingsSectionAI,
+			settingsSectionAdvanced,
 		),
 		newSettingsField(
 			"LCAgent tool profile",
 			"Accepted values: balanced, generous. Balanced keeps read budgets conservative; generous is useful for large-context model experiments.",
 			settings.LCAgentToolProfile,
 			32,
-			settingsSectionAI,
+			settingsSectionAdvanced,
 		),
 		newSettingsField(
 			"LCAgent context profile",
 			"Accepted values: balanced, large. Large delays provider-loop compaction when the selected model/provider can use bigger context.",
 			settings.LCAgentContextProfile,
 			32,
-			settingsSectionAI,
+			settingsSectionAdvanced,
 		),
 		newSettingsField(
 			"LCAgent timeout",
 			"Provider HTTP request timeout for experimental LCAgent runs, for example 10m.",
 			formatSettingsDuration(settings.LCAgentRequestTimeout),
 			32,
-			settingsSectionAI,
+			settingsSectionAdvanced,
 		),
 		newSettingsField(
 			"Include paths",
@@ -1256,21 +1276,28 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			"Projects newer than this count as active. Example: 20m",
 			formatSettingsDuration(settings.ActiveThreshold),
 			24,
-			settingsSectionRefresh,
+			settingsSectionAdvanced,
 		),
 		newSettingsField(
 			"Stuck threshold",
 			"Must be greater than active threshold. Example: 4h",
 			formatSettingsDuration(settings.StuckThreshold),
 			24,
-			settingsSectionRefresh,
+			settingsSectionAdvanced,
 		),
 		newSettingsField(
 			"Scan interval",
 			"Background refresh interval. Example: 60s",
 			formatSettingsDuration(settings.ScanInterval),
 			24,
-			settingsSectionRefresh,
+			settingsSectionAdvanced,
+		),
+		newSettingsField(
+			"AI backend",
+			"Press Enter to choose the provider for summaries, classification, and commit help.",
+			string(settings.AIBackend),
+			32,
+			settingsSectionGettingStarted,
 		),
 	}
 }
@@ -1347,6 +1374,21 @@ func (m Model) settingsFieldHint(index int) string {
 	}
 	field := m.settingsFields[index]
 	switch index {
+	case settingsFieldAIBackend:
+		backend := config.AIBackend(strings.TrimSpace(field.input.Value()))
+		switch backend {
+		case config.AIBackendUnset:
+			return "Choose a backend to enable summaries, classification, and commit help."
+		case config.AIBackendDisabled:
+			return "AI features are disabled. Project reports and commit help stay off."
+		case config.AIBackendOpenAIAPI:
+			if strings.TrimSpace(m.currentSettingsBaseline().OpenAIAPIKey) == "" {
+				return "OpenAI API backend selected. Save an OpenAI API key above to enable it."
+			}
+			return "OpenAI API backend selected. Uses the saved API key for summaries and commit help."
+		default:
+			return backend.Label() + " backend selected. Project reports and commit help will use this provider."
+		}
 	case settingsFieldOpenAIAPIKey:
 		if suffix := maskedOpenAIKeySuffix(field.input.Value()); suffix != "" {
 			return "Used for OpenAI API backed features. Stored key ends with " + suffix + "."

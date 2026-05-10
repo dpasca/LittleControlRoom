@@ -18923,8 +18923,8 @@ func TestCommandEnterOpensSettingsMode(t *testing.T) {
 	if got.commandMode {
 		t.Fatalf("command mode should close after /settings")
 	}
-	if len(got.settingsFields) != 27 {
-		t.Fatalf("settings field count = %d, want 27", len(got.settingsFields))
+	if len(got.settingsFields) != 28 {
+		t.Fatalf("settings field count = %d, want 28", len(got.settingsFields))
 	}
 }
 
@@ -19093,18 +19093,18 @@ func TestCommandEnterBossUnconfiguredShowsSetupPrompt(t *testing.T) {
 	if strings.Contains(got.bossSetupPrompt.Reason, "OpenAI API") || strings.Contains(got.bossSetupPrompt.Reason, "MLX") || strings.Contains(got.bossSetupPrompt.Reason, "Ollama") {
 		t.Fatalf("default boss setup prompt reason should stay provider-agnostic: %q", got.bossSetupPrompt.Reason)
 	}
-	if !strings.Contains(got.bossSetupPrompt.Reason, "/setup") || !strings.Contains(got.bossSetupPrompt.Reason, "boss chat backend") {
-		t.Fatalf("boss setup prompt reason = %q, want setup guidance", got.bossSetupPrompt.Reason)
+	if !strings.Contains(got.bossSetupPrompt.Reason, "/settings") || !strings.Contains(got.bossSetupPrompt.Reason, "boss chat backend") {
+		t.Fatalf("boss setup prompt reason = %q, want settings guidance", got.bossSetupPrompt.Reason)
 	}
 	rendered := ansi.Strip(got.View())
-	for _, want := range []string{"Boss Chat Setup", "Open /setup", "Cancel"} {
+	for _, want := range []string{"Boss Chat Setup", "Open /settings", "Cancel"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("boss setup prompt missing %q: %q", want, rendered)
 		}
 	}
 }
 
-func TestBossSetupPromptEnterOpensSetupFocusedOnBossChat(t *testing.T) {
+func TestBossSetupPromptEnterOpensSettingsFocusedOnBossChat(t *testing.T) {
 	m := Model{
 		bossSetupPrompt: &bossSetupPromptState{Selected: bossSetupPromptOpenSetup},
 		width:           100,
@@ -19114,19 +19114,16 @@ func TestBossSetupPromptEnterOpensSetupFocusedOnBossChat(t *testing.T) {
 	updated, cmd := m.updateBossSetupPromptMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
 	if cmd == nil {
-		t.Fatalf("opening setup from boss prompt should refresh provider status")
+		t.Fatalf("opening settings from boss prompt should return a focus command")
 	}
 	if got.bossSetupPrompt != nil {
 		t.Fatalf("boss setup prompt should close")
 	}
-	if !got.setupMode {
-		t.Fatalf("setup mode should open")
+	if !got.settingsMode {
+		t.Fatalf("settings mode should open")
 	}
-	if got.setupFocusedRole != setupRoleBossChat {
-		t.Fatalf("setup focused role = %v, want boss chat", got.setupFocusedRole)
-	}
-	if got.setupSelectedBossBackend() != config.AIBackendOpenAIAPI {
-		t.Fatalf("selected boss backend = %s, want openai_api", got.setupSelectedBossBackend())
+	if got.settingsSelected != settingsFieldBossChatBackend {
+		t.Fatalf("settings selected = %d, want boss chat backend field", got.settingsSelected)
 	}
 }
 
@@ -19378,7 +19375,7 @@ func TestDispatchCommandRefreshAlsoRefreshesSelectedProject(t *testing.T) {
 	}
 }
 
-func TestStartupUnconfiguredAIBackendOpensSetupMode(t *testing.T) {
+func TestStartupUnconfiguredAIBackendOpensSettingsMode(t *testing.T) {
 	m := Model{
 		width:  100,
 		height: 24,
@@ -19391,14 +19388,14 @@ func TestStartupUnconfiguredAIBackendOpensSetupMode(t *testing.T) {
 		},
 	})
 	got := updated.(Model)
-	if !got.setupMode {
-		t.Fatalf("setup mode should open when startup detects no configured backend")
+	if !got.settingsMode {
+		t.Fatalf("settings mode should open when startup detects no configured backend")
 	}
-	if got.status != "Choose AI roles for project reports and boss chat." {
-		t.Fatalf("status = %q, want startup setup explanation", got.status)
+	if got.status != "Editing settings. Enter chooses pickers, ctrl+s saves, Esc cancels." {
+		t.Fatalf("status = %q, want startup settings explanation", got.status)
 	}
 	if cmd == nil {
-		t.Fatalf("opening setup should return a refresh command")
+		t.Fatalf("opening settings should return a focus command")
 	}
 }
 
@@ -20546,15 +20543,15 @@ func TestSettingsSectionSwitchChangesVisibleFields(t *testing.T) {
 		width:          100,
 		height:         24,
 	}
-	_ = m.setSettingsSelection(settingsFieldOpenAIAPIKey)
+	_ = m.setSettingsSelection(settingsFieldBossChatModel)
 
 	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyPgDown})
 	if cmd == nil {
 		t.Fatalf("PgDn should move to the next settings section")
 	}
 	got := updated.(Model)
-	if got.settingsSelected != settingsFieldIncludePaths {
-		t.Fatalf("settingsSelected = %d, want include paths field", got.settingsSelected)
+	if got.settingsSelected != settingsFieldExcludePaths {
+		t.Fatalf("settingsSelected = %d, want exclude paths field", got.settingsSelected)
 	}
 
 	rendered := ansi.Strip(got.renderSettingsContent(72, 18))
@@ -20577,10 +20574,10 @@ func TestSettingsSectionSwitchChangesVisibleFields(t *testing.T) {
 	if !strings.Contains(rendered, "Project Scope section.") {
 		t.Fatalf("settings modal should render the new section hint: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Include paths") {
+	if !strings.Contains(rendered, "Exclude paths") {
 		t.Fatalf("settings modal should show scope fields after switching sections: %q", rendered)
 	}
-	if strings.Contains(rendered, "OpenAI API key    ") {
+	if strings.Contains(rendered, "Boss helm model") {
 		t.Fatalf("settings modal should not keep rendering the old section fields: %q", rendered)
 	}
 }
@@ -20763,12 +20760,12 @@ func TestSettingsBrowserSectionShowsLiveBrowserActivity(t *testing.T) {
 				},
 			},
 		},
-		width:  100,
+		width:  120,
 		height: 24,
 	}
 	_ = m.setSettingsSelection(settingsFieldBrowserAutomation)
 
-	rendered := ansi.Strip(m.renderSettingsContent(84, 22))
+	rendered := ansi.Strip(m.renderSettingsContent(120, 22))
 	for _, want := range []string{
 		"Codex / demo:",
 		"playwright/browser_navigate is waiting for user",
@@ -20813,12 +20810,12 @@ func TestSettingsBrowserSectionShowsInteractiveLeaseOwner(t *testing.T) {
 		settingsBaseline:     &settings,
 		browserController:    controller,
 		browserLeaseSnapshot: snapshot,
-		width:                100,
+		width:                120,
 		height:               24,
 	}
 	_ = m.setSettingsSelection(settingsFieldBrowserAutomation)
 
-	rendered := ansi.Strip(m.renderSettingsContent(84, 22))
+	rendered := ansi.Strip(m.renderSettingsContent(120, 22))
 	for _, want := range []string{
 		"Interactive browser reserved by Codex / owner-demo",
 		"1 managed login flow(s) waiting",

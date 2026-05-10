@@ -147,6 +147,8 @@ type Model struct {
 	settingsBossChatPickerSelected int
 	settingsBrowserPickerVisible   bool
 	settingsBrowserPickerSelected  int
+	settingsAIBackendPickerVisible bool
+	settingsAIBackendPickerSelected int
 
 	detailViewport        viewport.Model
 	runtimeViewport       viewport.Model
@@ -1130,6 +1132,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.localModelPickerVisible {
 			return m.updateLocalBackendModelPickerMode(msg)
 		}
+		if m.settingsAIBackendPickerVisible {
+			return m.updateSettingsAIBackendPickerMode(msg)
+		}
 		if m.settingsBossChatPickerVisible {
 			return m.updateSettingsBossChatBackendPickerMode(msg)
 		}
@@ -1326,7 +1331,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setupLoading = false
 		m.setupSnapshot = msg.snapshot
 		if msg.openOnStartup && msg.snapshot.NeedsSetup() {
-			return m, m.openSetupMode()
+			return m, m.openSettingsMode()
 		}
 		return m, nil
 	case newProjectResultMsg:
@@ -2891,6 +2896,9 @@ func (m Model) View() string {
 		}
 	} else if m.settingsMode {
 		body = m.renderSettingsOverlay(body, layout.width, layout.height)
+		if m.settingsAIBackendPickerVisible {
+			body = m.renderSettingsAIBackendPickerOverlay(body, layout.width, layout.height)
+		}
 		if m.settingsBossChatPickerVisible {
 			body = m.renderSettingsBossChatBackendPickerOverlay(body, layout.width, layout.height)
 		}
@@ -3290,7 +3298,7 @@ func (m Model) renderProjectList(width, height int) string {
 		if len(m.allProjects) > 0 && m.visibility == visibilityAIFolders {
 			return "No AI-linked folders\nPress v for All folders"
 		}
-		return "No projects detected"
+		return "No projects detected\nUse /settings to set your project search paths"
 	}
 
 	if height < 3 {
@@ -4227,7 +4235,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 	case commands.KindView:
 		return m, m.setVisibilityMode(commandVisibilityMode(inv.View))
 	case commands.KindSetup:
-		return m, m.openSetupMode()
+		return m, m.openSettingsMode()
 	case commands.KindSettings:
 		return m, m.openSettingsMode()
 	case commands.KindSkills:
