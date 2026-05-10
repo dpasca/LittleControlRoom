@@ -23,9 +23,11 @@ investigation needs line-by-line replay evidence.
 - Medium-effort scratch root: `/tmp/lcagent-bench-medium-20260510T104803`
 - Turn budget for final comparison runs: 32
 - Timeout for final comparison runs: 10 minutes
-- OpenRouter retry routing used strict origin-provider pins with fallbacks
-  disabled and required parameter support:
-  `anthropic` for Claude Sonnet 4.6 and `minimax` for MiniMax M2.7.
+- Provider routing is recorded in the CSV. Completed Claude Sonnet 4.6 and
+  MiniMax M2.7 retry rows used strict OpenRouter origin-provider pins with
+  fallbacks disabled and required parameter support (`anthropic` and
+  `minimax`). Other completed OpenRouter rows used default OpenRouter routing
+  (`provider_pin=none`).
 - Temperature was explicit for the retry runs. OpenRouter and direct DeepSeek
   chat-completions runs used `temperature=0.2`; OpenAI Responses API runs and
   direct Moonshot runs omitted temperature.
@@ -47,6 +49,32 @@ answer a narrower routing question for LCAgent:
 - Do structured-output reliability, cache behavior, and tool discipline change
   the choice, not just final answer quality?
 
+The task simulates typical headless coding-agent work: inspect a fixed source
+snapshot, use search and file-read tools, compare the implementation against a
+project document, preserve enough context to synthesize a final review, and
+finish with a structured `final_response`. No file edits were expected. That
+made it a useful benchmark for source-reading discipline, cache behavior,
+tool-call overhead, final-answer calibration, and route reliability.
+
+## Scoring Method
+
+The score is a 0-10 operator routing score, not a pure model leaderboard. It was
+assigned after inspecting each final answer alongside the run metrics in the
+CSV. The rough weighting was:
+
+- Answer correctness, calibration, and concrete gap identification: 40%.
+- Tool discipline, evidence gathering, and using the right comparison source:
+  20%.
+- Structured-output and harness reliability: 15%.
+- Cost and cache behavior for this harness: 15%.
+- Latency and practical routing ergonomics: 10%.
+
+Runs were penalized heavily for invalid or missing final output, reviewing the
+wrong document, confident false missing-feature claims, or forcing a synthesis
+after wandering. Concise, actionable, well-calibrated findings were rewarded.
+The evidence excerpts below show representative reasons for scoring runs up or
+down, but the excerpts are illustrative rather than a separate formula.
+
 ## Takeaways
 
 GPT-5.5 with `reasoning.effort=low` was the best default. It produced the best
@@ -65,7 +93,7 @@ review model. DeepSeek V4 Pro was extremely cheap but weak and slow in this
 task. Grok 4.3 completed but inspected too little evidence.
 
 Strict OpenRouter origin routing improved reliability for Claude Sonnet 4.6 and
-MiniMax M2.7: both completed when pinned to their native providers. That did
+MiniMax M2.7: both completed under native-provider routing. That did
 not change the recommendation. Sonnet was slow, costly, forced into synthesis,
 and still made false missing-feature claims. MiniMax became a valid completed
 run, but its final answers missed important gaps and added false tool/skill
@@ -96,7 +124,7 @@ not accept the LCAgent `reasoning_effort` option.
 |---|---:|---:|---:|---|
 | Claude Opus 4.7 medium | complete | 8.2 | $1.817 | Excellent audit structure again; one false gap and premium cost keep it in the verification lane. |
 | GPT-5.5 medium | complete | 7.4 | $0.900 | Useful answer, but more expensive and less calibrated than GPT-5.5 low. |
-| Claude Sonnet 4.6 pinned medium | complete | 7.2 | $1.726 | Medium effort substantially improved the final answer, but it stayed slow and costly. |
+| Claude Sonnet 4.6 medium | complete | 7.2 | $1.726 | Medium effort substantially improved the final answer, but it stayed slow and costly. |
 | Gemini 3.1 Flash Lite medium | complete | 5.7 | $0.036 | Still cheap and fast, but under-called real gaps and became less useful than low. |
 | DeepSeek V4 Pro medium | complete | 5.3 | $0.069 | Cheap again, but medium did not fix false tool and architecture claims. |
 | Gemini 3 Flash Preview medium | complete | 5.1 | $0.123 | More substantial than low, but included unearned verification claims and factual misses. |
@@ -104,10 +132,10 @@ not accept the LCAgent `reasoning_effort` option.
 | GLM 5.1 medium | complete | 3.8 | $0.394 | Slower and more confidently wrong about implemented tools. |
 | Grok 4.3 medium | complete | 3.0 | $0.227 | Read the right docs this time, but falsely marked core implemented tools and LCR wiring as absent. |
 
-Aborted or unpinned attempts are excluded from the main scoring table and chart.
-The excluded set was useful diagnostically but not comparable as route
-candidates: unpinned MiniMax and Sonnet attempts failed final-output reliability,
-and the pinned MiniMax medium retry also emitted an invalid `final_response`
+Earlier failed attempts are excluded from the main scoring table and chart. The
+excluded set was useful diagnostically but not comparable as route candidates:
+default-routed MiniMax and Sonnet attempts failed final-output reliability, and
+the strict-routed MiniMax medium retry also emitted an invalid `final_response`
 schema.
 
 ## Scoring Evidence Excerpts
@@ -124,13 +152,13 @@ they show why a run was scored up or down.
 | Claude Opus 4.7 | "permission_denied event, the LCR-side launcher... future-context scaffolding" | Found nuanced follow-up gaps, but the run was too expensive for default routing. |
 | Kimi K2.6 | "The biggest confirmed holes are the two missing outline tools" | Useful budget answer, but it also wandered into weaker claims like `plan_item` and piped stdin. |
 | Grok 4.3 | "vs. `docs/ai_coding_agent_feasibility.md`" | Penalized because the user asked for the implementation handoff doc; this targeted the wrong comparison source. |
-| Claude Sonnet 4.6 pinned | "no search finds `\"turn_aborted\"` written as a structured event anywhere" | This was false in the benchmark snapshot; strict provider routing fixed completion but not overclaiming. |
-| MiniMax M2.7 pinned default | "`load_skill` implementation ... MISSING" | Also false in the benchmark snapshot; the run completed cheaply but missed important implemented behavior. |
-| MiniMax M2.7 pinned low | "`search` tool ... No `search` tool implementation" | A broader false-missing-feature claim than the default-effort MiniMax retry. |
+| Claude Sonnet 4.6 low | "no search finds `\"turn_aborted\"` written as a structured event anywhere" | This was false in the benchmark snapshot; strict provider routing fixed completion but not overclaiming. |
+| MiniMax M2.7 default | "`load_skill` implementation ... MISSING" | Also false in the benchmark snapshot; the run completed cheaply but missed important implemented behavior. |
+| MiniMax M2.7 low | "`search` tool ... No `search` tool implementation" | A broader false-missing-feature claim than the default-effort MiniMax retry. |
 | Gemini 3 Flash Preview | "Tool-Call Markup Guardrail ... Missing" | Fast, but it confidently missed existing provider-markup guardrail work. |
 | Claude Opus 4.7 medium | "Milestones 1-3 are essentially in place" | Strong medium-effort calibration, but still too expensive for default routing. |
 | GPT-5.5 medium | "`--dry-run` is documented but not implemented" | Penalized because `dry-run` was not actually in the benchmark docs; medium effort added a false headline gap. |
-| Claude Sonnet 4.6 pinned medium | "No approval/interrupt loop for autonomy `low`" | Medium effort gave a much more relevant final than the low run, including real lifecycle gaps. |
+| Claude Sonnet 4.6 medium | "No approval/interrupt loop for autonomy `low`" | Medium effort gave a much more relevant final than the low run, including real lifecycle gaps. |
 | Gemini 3.1 Pro Custom Tools medium | "`load_skill` tool logic ... appears to be missing or incomplete" | False in the benchmark snapshot; medium effort did not fix overclaiming. |
 | GLM 5.1 medium | "no `apply_patch` or diff-application tool" | False in the benchmark snapshot and more damaging than the low-effort GLM answer. |
 | Grok 4.3 medium | "`update_plan` ... absent" | False in the benchmark snapshot; it read the right docs but missed implemented core tools. |

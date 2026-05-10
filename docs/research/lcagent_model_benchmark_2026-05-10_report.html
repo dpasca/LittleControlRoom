@@ -644,6 +644,16 @@
     </div>
 
     <div class="report-section">
+      <h2>Benchmark Scope</h2>
+      <p>
+        This report benchmarks typical headless coding-agent work against a fixed repository snapshot: inspect source and docs, issue search and file-read tool calls, preserve enough context to compare implementation against a target document, and synthesize a structured final review. The task expected no file edits.
+      </p>
+      <p>
+        The benchmark is therefore about routing behavior inside this harness, not a universal model leaderboard. It measures final-answer calibration, tool discipline, structured-output reliability, cache behavior, latency, and cost under the same prompt, turn budget, timeout, and repository snapshot.
+      </p>
+    </div>
+
+    <div class="report-section">
       <h2>Executive Take</h2>
       <div class="callout good">
         <strong>Default pick:</strong> GPT-5.5 with <code>reasoning.effort=low</code>. It gave the best overall balance of answer quality, harness reliability, latency, and cost.
@@ -655,11 +665,32 @@
         Kimi K2.6 remains the best budget secondary. Gemini 3.1 Flash Lite is the fastest cheap scout, but shallow. Strict OpenRouter origin routing let Claude Sonnet 4.6 and MiniMax M2.7 complete on retry, but it did not make either a default candidate: Sonnet was slow, costly, and still overclaimed; MiniMax became reliable enough to measure but not accurate enough to route to by default.
       </p>
       <p>
-        Retry runs used OpenRouter provider pins with fallbacks disabled and required parameter support enabled. Temperature was explicit at <code>0.2</code> for OpenRouter and direct DeepSeek chat-completions runs; OpenAI Responses and direct Moonshot runs omitted temperature.
+        Provider routing is recorded in the CSV. Completed Sonnet and MiniMax retry rows used strict OpenRouter origin-provider pins with fallbacks disabled and required parameter support enabled. Other completed OpenRouter rows used default OpenRouter routing. Temperature was explicit at <code>0.2</code> for OpenRouter and direct DeepSeek chat-completions runs; OpenAI Responses and direct Moonshot runs omitted temperature.
       </p>
       <p>
-        A medium-effort follow-up did not change the recommendation. Medium helped pinned Sonnet materially and kept Opus strong, but GPT-5.5 medium became slower, pricier, and less calibrated than GPT-5.5 low.
+        A medium-effort follow-up did not change the recommendation. Medium helped Sonnet materially and kept Opus strong, but GPT-5.5 medium became slower, pricier, and less calibrated than GPT-5.5 low.
       </p>
+    </div>
+
+    <div class="report-section">
+      <h2>Scoring Method</h2>
+      <p>
+        Scores are 0-10 operator routing scores, not pure answer-quality scores. Each score was assigned after reviewing the final answer and the run metrics in the CSV.
+      </p>
+      <div class="two-col">
+        <div>
+          <h3>Primary Criteria</h3>
+          <p>
+            Answer correctness, calibration, and concrete gap identification carried the most weight, roughly 40%. Tool discipline, evidence gathering, and selecting the right comparison source added roughly 20%. Structured-output and harness reliability added roughly 15%.
+          </p>
+        </div>
+        <div>
+          <h3>Operational Criteria</h3>
+          <p>
+            Cost and cache behavior contributed roughly 15%, while latency and practical routing ergonomics contributed roughly 10%. Invalid final output, reviewing the wrong document, confident false missing-feature claims, or forced synthesis after wandering received hard penalties.
+          </p>
+        </div>
+      </div>
     </div>
 
     <div class="report-section">
@@ -721,13 +752,13 @@
             <span class="chart-point label-below" style="left: 59.7%; top: 45.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Gemini Pro</span></span>
             <span class="chart-point" style="left: 18.4%; top: 48.6%;"><span class="point-dot">&nbsp;</span><span class="point-name">DeepSeek</span></span>
             <span class="chart-point point-medium label-below" style="left: 20.0%; top: 52.9%;"><span class="point-dot">&nbsp;</span><span class="point-name">DeepSeek med</span></span>
-            <span class="chart-point label-left" style="left: 96.7%; top: 55.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Sonnet pin</span></span>
+            <span class="chart-point label-left" style="left: 96.7%; top: 55.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Sonnet low</span></span>
             <span class="chart-point point-medium label-above" style="left: 33.6%; top: 55.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Gemini Flash med</span></span>
             <span class="chart-point" style="left: 39.3%; top: 57.1%;"><span class="point-dot">&nbsp;</span><span class="point-name">Grok 4.3</span></span>
             <span class="chart-point" style="left: 28.2%; top: 60.0%;"><span class="point-dot">&nbsp;</span><span class="point-name">Gemini Flash</span></span>
             <span class="chart-point point-medium label-left" style="left: 67.9%; top: 65.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Gemini Pro med</span></span>
-            <span class="chart-point label-below" style="left: 11.6%; top: 61.4%;"><span class="point-dot">&nbsp;</span><span class="point-name">MiniMax pin</span></span>
-            <span class="chart-point label-below" style="left: 3.0%; top: 68.6%;"><span class="point-dot">&nbsp;</span><span class="point-name">MiniMax low pin</span></span>
+            <span class="chart-point label-below" style="left: 11.6%; top: 61.4%;"><span class="point-dot">&nbsp;</span><span class="point-name">MiniMax default</span></span>
+            <span class="chart-point label-below" style="left: 3.0%; top: 68.6%;"><span class="point-dot">&nbsp;</span><span class="point-name">MiniMax low</span></span>
             <span class="chart-point point-medium label-left" style="left: 61.3%; top: 74.3%;"><span class="point-dot">&nbsp;</span><span class="point-name">GLM med</span></span>
             <span class="chart-point point-medium label-left" style="left: 48.1%; top: 85.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Grok med</span></span>
           </div>
@@ -739,7 +770,7 @@
           <span><span class="legend-swatch medium">&nbsp;</span>Medium-effort follow-up</span>
         </div>
         <p class="chart-note">
-          No model landed in the ideal quadrant in this batch. Medium effort moved pinned Sonnet into the premium verification area, but did not make it economical. Kimi K2.6 is still the closest budget candidate; GPT-5.5 low remains the practical default; Claude Opus 4.7 remains the expensive audit pass. Aborted and unpinned attempts are excluded from this chart.
+          No model landed in the ideal quadrant in this batch. Medium effort moved Sonnet into the premium verification area, but did not make it economical. Kimi K2.6 is still the closest budget candidate; GPT-5.5 low remains the practical default; Claude Opus 4.7 remains the expensive audit pass. Earlier failed attempts are excluded from this chart.
         </p>
       </div>
     </div>
@@ -826,7 +857,7 @@
             <td>Useful answer, but more expensive and less calibrated than GPT-5.5 low.</td>
           </tr>
           <tr>
-            <td><span class="model">Claude Sonnet 4.6 pinned medium</span><br><span class="subtle">OpenRouter / pin: anthropic</span></td>
+            <td><span class="model">Claude Sonnet 4.6 medium</span><br><span class="subtle">OpenRouter</span></td>
             <td class="status-ok">complete</td>
             <td class="num score">7.2</td>
             <td>medium</td>
@@ -961,7 +992,7 @@
             <td>Cheap again, but medium did not fix false tool and architecture claims.</td>
           </tr>
           <tr>
-            <td><span class="model">Claude Sonnet 4.6 pinned</span><br><span class="subtle">OpenRouter / pin: anthropic</span></td>
+            <td><span class="model">Claude Sonnet 4.6 low</span><br><span class="subtle">OpenRouter</span></td>
             <td class="status-ok">complete</td>
             <td class="num score">5.1</td>
             <td>low</td>
@@ -1021,7 +1052,7 @@
             <td>Fast, but final included confident false missing-feature claims.</td>
           </tr>
           <tr>
-            <td><span class="model">MiniMax M2.7 pinned default</span><br><span class="subtle">OpenRouter / pin: minimax</span></td>
+            <td><span class="model">MiniMax M2.7 default</span><br><span class="subtle">OpenRouter</span></td>
             <td class="status-ok">complete</td>
             <td class="num score">4.7</td>
             <td>default</td>
@@ -1051,7 +1082,7 @@
             <td>Medium effort increased cost and still made false missing-tool claims.</td>
           </tr>
           <tr>
-            <td><span class="model">MiniMax M2.7 pinned low</span><br><span class="subtle">OpenRouter / pin: minimax</span></td>
+            <td><span class="model">MiniMax M2.7 low</span><br><span class="subtle">OpenRouter</span></td>
             <td class="status-ok">complete</td>
             <td class="num score">4.2</td>
             <td>low</td>
@@ -1100,7 +1131,7 @@
       <p class="subtle">
         Scores are subjective default-routing scores out of 10, not pure answer-quality scores. The Effort column is the requested reasoning-effort setting only, separate from reported reasoning tokens. Temperature is recorded per row in the CSV; OpenRouter and direct DeepSeek chat-completions runs used <code>0.2</code>, while OpenAI Responses and direct Moonshot runs omitted temperature.
         Kimi K2.6 was not rerun in the medium-effort pass because the direct Moonshot adapter does not accept the LCAgent reasoning-effort option.
-        Aborted or unpinned attempts are excluded from the main scoring table; they were useful diagnostically but not comparable as route candidates. The excluded set includes unpinned MiniMax and Sonnet attempts that failed final-output reliability, plus the pinned MiniMax medium retry that emitted an invalid <code>final_response</code> schema.
+        Provider routing is recorded in the CSV: Sonnet and MiniMax completed retry rows used strict provider pins, while other completed OpenRouter rows used default OpenRouter routing. Earlier failed attempts are excluded from the main scoring table because they were useful diagnostically but not comparable as route candidates.
       </p>
     </div>
 
@@ -1149,17 +1180,17 @@
             <td>Penalized because the user asked for the implementation handoff doc; this targeted the wrong comparison source.</td>
           </tr>
           <tr>
-            <td><span class="model">Claude Sonnet 4.6 pinned</span></td>
+            <td><span class="model">Claude Sonnet 4.6 low</span></td>
             <td><span class="quote">"no search finds `\"turn_aborted\"` written as a structured event anywhere"</span></td>
             <td>This was false in the benchmark snapshot; strict provider routing fixed completion but not overclaiming.</td>
           </tr>
           <tr>
-            <td><span class="model">MiniMax M2.7 pinned default</span></td>
+            <td><span class="model">MiniMax M2.7 default</span></td>
             <td><span class="quote">"`load_skill` implementation ... MISSING"</span></td>
             <td>Also false in the benchmark snapshot; the run completed cheaply but missed important implemented behavior.</td>
           </tr>
           <tr>
-            <td><span class="model">MiniMax M2.7 pinned low</span></td>
+            <td><span class="model">MiniMax M2.7 low</span></td>
             <td><span class="quote">"`search` tool ... No `search` tool implementation"</span></td>
             <td>A broader false-missing-feature claim than the default-effort MiniMax retry.</td>
           </tr>
@@ -1179,7 +1210,7 @@
             <td>Penalized because <code>dry-run</code> was not actually in the benchmark docs; medium effort added a false headline gap.</td>
           </tr>
           <tr>
-            <td><span class="model">Claude Sonnet 4.6 pinned medium</span></td>
+            <td><span class="model">Claude Sonnet 4.6 medium</span></td>
             <td><span class="quote">"No approval/interrupt loop for autonomy `low`"</span></td>
             <td>Medium effort gave a much more relevant final than the low run, including real lifecycle gaps.</td>
           </tr>
