@@ -26,7 +26,7 @@
       margin: 0;
       color: var(--ink);
       background: #fff;
-      font: 14px/1.48 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font: 16px/1.58 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
     .page {
@@ -47,24 +47,24 @@
     }
 
     h1 {
-      font-size: 32px;
+      font-size: 36px;
       letter-spacing: 0;
     }
 
     h2 {
-      font-size: 20px;
-      margin-top: 30px;
-      padding-top: 18px;
+      font-size: 24px;
+      margin-top: 34px;
+      padding-top: 20px;
       border-top: 1px solid var(--line);
     }
 
     h3 {
-      font-size: 15px;
-      margin-top: 18px;
+      font-size: 17px;
+      margin-top: 20px;
     }
 
     p {
-      margin: 8px 0;
+      margin: 10px 0;
     }
 
     a {
@@ -77,17 +77,18 @@
     }
 
     .lede {
-      max-width: 850px;
+      max-width: 900px;
       color: var(--muted);
-      font-size: 15px;
-      margin-top: 10px;
+      font-size: 17px;
+      margin-top: 12px;
     }
 
     .meta {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 10px;
       margin: 18px 0 8px;
+      max-width: 760px;
     }
 
     .meta div,
@@ -128,6 +129,7 @@
       border-collapse: collapse;
       margin: 12px 0 18px;
       table-layout: fixed;
+      font-size: 14px;
     }
 
     th, td {
@@ -157,7 +159,7 @@
 
     .subtle {
       color: var(--muted);
-      font-size: 12px;
+      font-size: 13px;
     }
 
     .score {
@@ -178,7 +180,7 @@
 
     code {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 12px;
+      font-size: .88em;
       background: #f1f4f4;
       padding: 1px 4px;
       border-radius: 3px;
@@ -664,14 +666,6 @@
           <span class="label">Target Snapshot</span>
           <code>885fd24f1f24ce903b7de12d34c5166d54ebe251</code>
         </div>
-        <div>
-          <span class="label">Benchmark Root</span>
-          <code>/tmp/lcagent-bench-20260509T203500</code>
-        </div>
-        <div>
-          <span class="label">Medium Root</span>
-          <code>/tmp/lcagent-bench-medium-20260510T104803</code>
-        </div>
       </div>
     </div>
 
@@ -686,7 +680,7 @@
     </div>
 
     <div class="report-section">
-      <h2>Executive Take</h2>
+      <h2>Summary</h2>
       <div class="callout good">
         <strong>Default pick:</strong> GPT-5.5 with <code>reasoning.effort=low</code>. It gave the best overall balance of answer quality, harness reliability, latency, and cost.
       </div>
@@ -1304,7 +1298,7 @@
     </div>
 
     <div class="report-footer">
-      Generated from local benchmark artifacts in <code>/tmp/lcagent-bench-20260509T203500</code>. This report is static HTML and can be printed directly from a browser.
+      Generated from local benchmark summary artifacts. This static HTML report can be printed directly from a browser.
     </div>
   </div>
 </body>

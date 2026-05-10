@@ -21,8 +21,6 @@ evidence.
 - Medium-effort follow-up harness commit: `3bdb7b2e41581814716195d76eddab8c26fcaa42`
 - Archival artifact state: the repository commit that contains this file
 - Target snapshot inspected by the agents: `885fd24f1f24ce903b7de12d34c5166d54ebe251`
-- Original scratch root: `/tmp/lcagent-bench-20260509T203500`
-- Medium-effort scratch root: `/tmp/lcagent-bench-medium-20260510T104803`
 - Turn budget for final comparison runs: 32
 - Timeout for final comparison runs: 10 minutes
 - Provider routing is recorded in the CSV. Completed Claude Sonnet 4.6 and
@@ -179,6 +177,5 @@ The `reasoning_effort` CSV column records only the requested effort setting
 `reasoning_tokens`, because some providers report internal reasoning tokens even
 when no explicit effort was requested.
 
-The raw stream logs were left in the local scratch root during the experiment.
-They are intentionally not part of this artifact because they are large,
-provider-specific, and mostly useful for debugging one run at a time.
+The raw stream logs are intentionally not part of this artifact because they are
+large, provider-specific, and mostly useful for debugging one run at a time.
