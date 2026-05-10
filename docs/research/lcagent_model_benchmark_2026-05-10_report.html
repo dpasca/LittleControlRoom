@@ -453,7 +453,7 @@
       line-height: 0;
     }
 
-    .point-default .point-dot {
+    .point-best .point-dot {
       width: 14px;
       height: 14px;
       box-shadow: 0 0 0 2px rgba(29, 37, 40, .32);
@@ -480,7 +480,7 @@
     .family-grok { --point-color: #59656f; }
     .family-minimax { --point-color: #c4377f; }
 
-    .point-default .point-name,
+    .point-best .point-name,
     .point-verify .point-name {
       font-weight: 700;
     }
@@ -697,16 +697,16 @@
     <div class="report-section">
       <h2>Summary</h2>
       <div class="callout good">
-        <strong>Default pick:</strong> <strong>GPT-5.5</strong> with <strong>low</strong> reasoning effort. It gave the best overall balance of answer quality, harness reliability, latency, and cost.
+        <strong>Best pick:</strong> <strong>GPT-5.5</strong> with <strong>low</strong> reasoning effort. It gave the best overall balance of answer quality, harness reliability, latency, and cost.
       </div>
       <div class="callout warning">
-        <strong>Quality challenger:</strong> <strong>Claude Opus 4.7</strong> produced the most detailed audit-style review and used Anthropic prompt caching, but <strong>GPT-5.5</strong> low still scored higher overall because the default score also includes reliability, cost, cache behavior, and latency. Opus is a verification model, not the economical default.
+        <strong>Quality challenger:</strong> <strong>Claude Opus 4.7</strong> produced the most detailed audit-style review and used Anthropic prompt caching, but <strong>GPT-5.5</strong> low still scored higher overall because the benchmark score also includes reliability, cost, cache behavior, and latency. Opus is a verification model, not the economical top pick.
       </div>
       <p>
-        <strong>Notable mentions:</strong> <strong>Kimi K2.6</strong> remains the best budget secondary. <strong>Gemini 3.1 Flash Lite</strong> is the fastest cheap scout, but shallow. Strict OpenRouter origin routing was used for <strong>Claude Sonnet 4.6</strong> and <strong>MiniMax M2.7</strong>. Claude rows used explicit Anthropic cache controls; the cache reads were real, but cache writes are not free. That still did not make Sonnet a default candidate: low effort needed forced synthesis, while medium effort became too narrow. MiniMax completed reliably but was not accurate enough to route to by default.
+        <strong>Notable mentions:</strong> <strong>Kimi K2.6</strong> remains the best budget secondary. <strong>Gemini 3.1 Flash Lite</strong> is the fastest cheap scout, but shallow. Strict OpenRouter origin routing was used for <strong>Claude Sonnet 4.6</strong> and <strong>MiniMax M2.7</strong>. Claude rows used explicit Anthropic cache controls; the cache reads were real, but cache writes are not free. That still did not make Sonnet a top candidate: low effort needed forced synthesis, while medium effort became too narrow. MiniMax completed reliably but was not accurate enough to pick as the main route.
       </p>
       <p>
-        Provider routing is recorded in the CSV. Completed Claude and MiniMax rows used strict OpenRouter origin-provider pins with fallbacks disabled and required parameter support enabled. Other completed OpenRouter rows used default OpenRouter routing. Temperature was explicit at <code>0.2</code> for most OpenRouter and direct DeepSeek chat-completions runs; OpenAI Responses, direct Moonshot, and Claude Opus 4.7 runs omitted temperature.
+        Provider routing is recorded in the CSV. Completed Claude and MiniMax rows used strict OpenRouter origin-provider pins with fallbacks disabled and required parameter support enabled. Other completed OpenRouter rows used ordinary OpenRouter routing. Temperature was explicit at <code>0.2</code> for most OpenRouter and direct DeepSeek chat-completions runs; OpenAI Responses, direct Moonshot, and Claude Opus 4.7 runs omitted temperature.
       </p>
       <p>
         The medium-effort runs did not change the recommendation. They kept Opus strong but more expensive, gave Sonnet strong cache reads without fixing answer focus, and made GPT-5.5 slower, pricier, and less calibrated than GPT-5.5 low.
@@ -780,7 +780,7 @@
             <span class="axis-title axis-title-x">Estimated cost per benchmark run (log scale)</span>
             <span class="axis-title axis-title-y">Score</span>
 
-            <span class="chart-point family-openai point-default label-above" style="left: 60.3%; top: 2.9%;"><span class="point-dot">&nbsp;</span><span class="point-name">GPT-5.5 low</span></span>
+            <span class="chart-point family-openai point-best label-above" style="left: 60.3%; top: 2.9%;"><span class="point-dot">&nbsp;</span><span class="point-name">GPT-5.5 low</span></span>
             <span class="chart-point family-claude point-verify label-left" style="left: 90.5%; top: 7.1%;"><span class="point-dot">&nbsp;</span><span class="point-name">Opus 4.7</span></span>
             <span class="chart-point family-claude point-medium label-left" style="left: 96.1%; top: 17.1%;"><span class="point-dot">&nbsp;</span><span class="point-name">Opus med</span></span>
             <span class="chart-point family-openai point-medium label-above" style="left: 76.9%; top: 22.9%;"><span class="point-dot">&nbsp;</span><span class="point-name">GPT med</span></span>
@@ -797,7 +797,7 @@
             <span class="chart-point family-gemini point-medium label-above" style="left: 31.9%; top: 55.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Gemini Flash med</span></span>
             <span class="chart-point family-grok" style="left: 37.3%; top: 57.1%;"><span class="point-dot">&nbsp;</span><span class="point-name">Grok 4.3</span></span>
             <span class="chart-point family-gemini" style="left: 26.8%; top: 60.0%;"><span class="point-dot">&nbsp;</span><span class="point-name">Gemini Flash</span></span>
-            <span class="chart-point family-minimax label-below" style="left: 11.1%; top: 61.4%;"><span class="point-dot">&nbsp;</span><span class="point-name">MiniMax default</span></span>
+            <span class="chart-point family-minimax label-below" style="left: 11.1%; top: 61.4%;"><span class="point-dot">&nbsp;</span><span class="point-name">MiniMax base</span></span>
             <span class="chart-point family-gemini point-medium label-left" style="left: 64.5%; top: 65.7%;"><span class="point-dot">&nbsp;</span><span class="point-name">Gemini Pro med</span></span>
             <span class="chart-point family-minimax label-below" style="left: 2.8%; top: 68.6%;"><span class="point-dot">&nbsp;</span><span class="point-name">MiniMax low</span></span>
             <span class="chart-point family-glm point-medium label-left" style="left: 58.2%; top: 74.3%;"><span class="point-dot">&nbsp;</span><span class="point-name">GLM med</span></span>
@@ -816,7 +816,7 @@
           <span><span class="legend-swatch followup">&nbsp;</span>Medium effort</span>
         </div>
         <p class="chart-note">
-          No model landed in the ideal quadrant in this batch. Claude rows used explicit Anthropic prompt caching; Sonnet remained too uneven and Opus remained premium. Kimi K2.6 is still the closest budget candidate; GPT-5.5 low remains the practical default; Claude Opus 4.7 remains the expensive audit pass. Rows with invalid or missing final output are excluded from this chart.
+          No model landed in the ideal quadrant in this batch. Claude rows used explicit Anthropic prompt caching; Sonnet remained too uneven and Opus remained premium. Kimi K2.6 is still the closest budget candidate; GPT-5.5 low remains the practical top pick; Claude Opus 4.7 remains the expensive audit pass. Rows with invalid or missing final output are excluded from this chart.
         </p>
       </div>
     </div>
@@ -853,7 +853,7 @@
             <td class="num">15</td>
             <td class="num">2,121</td>
             <td class="num">165</td>
-            <td>Best answer and best default despite not being the fastest.</td>
+            <td>Best answer and best overall pick despite not being the fastest.</td>
           </tr>
           <tr>
             <td><span class="model">Claude Opus 4.7</span><br><span class="subtle">OpenRouter</span></td>
@@ -900,7 +900,7 @@
           <tr>
             <td><span class="model">Kimi K2.6</span><br><span class="subtle">Moonshot API</span></td>
             <td class="num score">6.8</td>
-            <td>default</td>
+            <td>baseline</td>
             <td class="num">143s</td>
             <td class="num">$0.155</td>
             <td class="num">323,374</td>
@@ -998,7 +998,7 @@
           <tr>
             <td><span class="model">DeepSeek V4 Pro</span><br><span class="subtle">DeepSeek API</span></td>
             <td class="num score">5.6</td>
-            <td>default</td>
+            <td>baseline</td>
             <td class="num">365s</td>
             <td class="num">$0.065</td>
             <td class="num">323,884</td>
@@ -1082,7 +1082,7 @@
           <tr>
             <td><span class="model">MiniMax M2.7</span><br><span class="subtle">OpenRouter</span></td>
             <td class="num score">4.7</td>
-            <td>default</td>
+            <td>baseline</td>
             <td class="num">103s</td>
             <td class="num">$0.049</td>
             <td class="num">277,041</td>
@@ -1119,7 +1119,7 @@
             <td class="num">8</td>
             <td class="num">1,140</td>
             <td class="num">2,874</td>
-            <td>Completed cheaply, but low effort produced broader false missing-feature claims than the default-effort MiniMax run.</td>
+            <td>Completed cheaply, but low effort produced broader false missing-feature claims than the baseline-effort MiniMax run.</td>
           </tr>
           <tr>
             <td><span class="model">GLM 5.1</span><br><span class="subtle">OpenRouter</span></td>
@@ -1165,9 +1165,10 @@
         Highlighted cells mark the unambiguous best values in the table: highest score, shortest wall time, and lowest estimated cost. Read and line counts are deliberately not highlighted because less reading is not automatically better in a source-review benchmark.
       </p>
       <p class="subtle">
-        Scores are subjective default-routing scores out of 10, not pure answer-quality scores. The Effort column is the requested reasoning-effort setting only, separate from reported reasoning tokens. Temperature is recorded per row in the CSV; most OpenRouter and direct DeepSeek chat-completions runs used <code>0.2</code>, while OpenAI Responses, direct Moonshot, and Claude Opus 4.7 runs omitted temperature.
+        Scores are subjective benchmark-routing scores out of 10, not pure answer-quality scores. The Effort column is the requested reasoning-effort setting only, separate from reported reasoning tokens. Temperature is recorded per row in the CSV; most OpenRouter and direct DeepSeek chat-completions runs used <code>0.2</code>, while OpenAI Responses, direct Moonshot, and Claude Opus 4.7 runs omitted temperature.
         Kimi K2.6 was not rerun in the medium-effort pass because the direct Moonshot adapter does not accept the LCAgent reasoning-effort option.
-        Provider routing is recorded in the CSV: completed Claude and MiniMax rows used strict provider pins, while other completed OpenRouter rows used default OpenRouter routing. The Cache column records cache reads; Anthropic cache writes are called out separately below because they affect pricing but were not part of the original CSV schema. Rows with invalid or missing final output are excluded from the main scoring table because they are not comparable as route candidates.
+        Reasoning-token counts are provider-reported usage accounting, not harness estimates; a zero can mean the provider did not report a recognized reasoning-token field. For the direct Moonshot Kimi K2.6 row, it should be read as not reported rather than proof that no internal reasoning happened.
+        Provider routing is recorded in the CSV: completed Claude and MiniMax rows used strict provider pins, while other completed OpenRouter rows used ordinary OpenRouter routing. The Cache column records cache reads; Anthropic cache writes are called out separately below because they affect pricing but were not part of the original CSV schema. Rows with invalid or missing final output are excluded from the main scoring table because they are not comparable as route candidates.
       </p>
     </div>
 
@@ -1259,7 +1260,7 @@
           <tr>
             <td><span class="model">Claude Opus 4.7</span></td>
             <td><span class="quote">"permission_denied event, the LCR-side launcher... future-context scaffolding"</span></td>
-            <td>Found nuanced follow-up gaps, but the run was still too expensive for default routing.</td>
+            <td>Found nuanced follow-up gaps, but the run was still too expensive for primary routing.</td>
           </tr>
           <tr>
             <td><span class="model">Kimi K2.6</span></td>
@@ -1277,14 +1278,14 @@
             <td>False in the benchmark snapshot; cache reads did not fix overclaiming.</td>
           </tr>
           <tr>
-            <td><span class="model">MiniMax M2.7 default</span></td>
+            <td><span class="model">MiniMax M2.7 baseline</span></td>
             <td><span class="quote">"`load_skill` implementation ... MISSING"</span></td>
             <td>Also false in the benchmark snapshot; the run completed cheaply but missed important implemented behavior.</td>
           </tr>
           <tr>
             <td><span class="model">MiniMax M2.7 low</span></td>
             <td><span class="quote">"`search` tool ... No `search` tool implementation"</span></td>
-            <td>A broader false-missing-feature claim than the default-effort MiniMax run.</td>
+            <td>A broader false-missing-feature claim than the baseline-effort MiniMax run.</td>
           </tr>
           <tr>
             <td><span class="model">Gemini 3 Flash Preview</span></td>
@@ -1294,7 +1295,7 @@
           <tr>
             <td><span class="model">Claude Opus 4.7 medium</span></td>
             <td><span class="quote">"Milestones 1-3 are essentially in place"</span></td>
-            <td>Strong medium-effort calibration, but still too expensive for default routing.</td>
+            <td>Strong medium-effort calibration, but still too expensive for primary routing.</td>
           </tr>
           <tr>
             <td><span class="model">GPT-5.5 medium</span></td>

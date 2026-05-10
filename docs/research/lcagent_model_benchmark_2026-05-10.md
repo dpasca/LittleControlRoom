@@ -17,7 +17,7 @@ evidence.
 
 - Report date: 2026-05-10 JST
 - Harness branch at artifact creation: `spike/lcagent-mvp`
-- Harness commit for low/default-effort runs: `f5908ac384818831d9cb29bdd910ae96ed02be7a`
+- Harness commit for low/baseline-effort runs: `f5908ac384818831d9cb29bdd910ae96ed02be7a`
 - Harness commit for medium-effort runs: `3bdb7b2e41581814716195d76eddab8c26fcaa42`
 - Artifact commit: the repository commit that contains this file
 - Target snapshot inspected by the agents: `885fd24f1f24ce903b7de12d34c5166d54ebe251`
@@ -28,15 +28,14 @@ evidence.
 - Provider routing is recorded in the CSV. Completed Claude Sonnet 4.6, Claude
   Opus 4.7, and MiniMax M2.7 rows used strict OpenRouter origin-provider
   pins with fallbacks disabled and required parameter support (`anthropic` and
-  `minimax`). Other completed OpenRouter rows used default OpenRouter routing
+  `minimax`). Other completed OpenRouter rows used ordinary OpenRouter routing
   (`provider_pin=none`).
 - Temperature was explicit for most chat-completions runs. OpenRouter and direct DeepSeek
   chat-completions runs used `temperature=0.2`; OpenAI Responses API runs,
   direct Moonshot runs, and Claude Opus 4.7 runs omitted temperature.
 - Prompt caching was treated as part of the harness configuration. Anthropic
   Claude rows used explicit `cache_control` breakpoints, because Anthropic
-  caching is not automatic by default in OpenRouter the way it is for several
-  other providers.
+  caching is not automatic in OpenRouter unless configured.
 
 The original prompt, including typos, was:
 
@@ -49,7 +48,7 @@ please review lcagent, see whaat functionalities are missing, compared to the do
 The benchmark was not meant to prove a universal model ranking. It was meant to
 answer a narrower routing question for LCAgent:
 
-- Which model should be the default for this harness?
+- Which model was the best pick for this benchmark workload?
 - Which lower-cost model is plausible as a secondary lane?
 - Which expensive model is worth keeping as a verification pass?
 - Do structured-output reliability, cache behavior, and tool discipline change
@@ -88,19 +87,19 @@ down, but the excerpts are illustrative rather than a separate formula.
 
 ## Takeaways
 
-**GPT-5.5** with **low** reasoning effort was the best default. It produced the best
+**GPT-5.5** with **low** reasoning effort was the best pick. It produced the best
 overall answer with reliable tool behavior and good cache reuse.
 
 **Claude Opus 4.7** produced the most detailed audit-style review, but GPT-5.5 low
-still scored higher overall because the score is a default-routing score, not a
+still scored higher overall because the score is a benchmark-routing score, not a
 pure answer-quality score. Opus used Anthropic prompt caching and still remained
-a premium verification lane rather than the default.
+a premium verification lane rather than the top pick.
 
 Notable mentions: **Kimi K2.6** was the best budget secondary in this batch. It
 was cheaper than GPT and produced a usable answer, but it wandered more.
 
 **Gemini 3.1 Flash Lite** was very fast and cheap, but too shallow to be the
-default review model. **DeepSeek V4 Pro** was extremely cheap but weak and slow
+top review model. **DeepSeek V4 Pro** was extremely cheap but weak and slow
 in this task. **Grok 4.3** completed but inspected too little evidence.
 
 Strict OpenRouter origin routing was used for **Claude Sonnet 4.6** and
@@ -118,7 +117,7 @@ behavior on tasks where the model drifts or overclaims.
 No model landed in the ideal quadrant of high score and low cost. The practical
 shape from this run is:
 
-- Default: **GPT-5.5** low
+- Best pick: **GPT-5.5** low
 - Budget secondary: **Kimi K2.6**
 - Expensive verification: **Claude Opus 4.7**
 
@@ -168,7 +167,7 @@ Anthropic cache reads are discounted, but cache writes are billed at a premium.
 That makes the cache strategy useful but not automatically ideal: it works best
 when a stable prompt prefix is reused enough to amortize writes. In this
 benchmark, **Claude Opus 4.7 low** is the Claude verification lane, while
-**GPT-5.5 low** remains the best default.
+**GPT-5.5 low** remains the best overall pick.
 
 ## Scoring Evidence Excerpts
 
@@ -181,14 +180,14 @@ they show why a run was scored up or down.
 | GPT-5.5 low | "the MVP is largely implemented and in several places goes beyond the original first-slice handoff" | Correctly framed the task: not a missing-skeleton story, but a smaller set of harness-quality gaps. |
 | GPT-5.5 low | "lcagent is not missing the core MVP skeleton" | Strong bottom-line calibration, with specific gaps called out after that. |
 | Claude Opus 4.7 | "Most of the four milestones are implemented" | Best audit-style structure and lifecycle awareness, with substantial Anthropic cache reads. |
-| Claude Opus 4.7 | "permission_denied event, the LCR-side launcher... future-context scaffolding" | Found nuanced follow-up gaps, but the run was still too expensive for default routing. |
+| Claude Opus 4.7 | "permission_denied event, the LCR-side launcher... future-context scaffolding" | Found nuanced follow-up gaps, but the run was still too expensive for primary routing. |
 | Kimi K2.6 | "The biggest confirmed holes are the two missing outline tools" | Useful budget answer, but it also wandered into weaker claims like `plan_item` and piped stdin. |
 | Grok 4.3 | "vs. `docs/ai_coding_agent_feasibility.md`" | Penalized because the user asked for the implementation handoff doc; this targeted the wrong comparison source. |
 | Claude Sonnet 4.6 low | "`internal/lcagent/script/` missing as a distinct package" | False in the benchmark snapshot; cache reads did not fix overclaiming. |
-| MiniMax M2.7 default | "`load_skill` implementation ... MISSING" | Also false in the benchmark snapshot; the run completed cheaply but missed important implemented behavior. |
-| MiniMax M2.7 low | "`search` tool ... No `search` tool implementation" | A broader false-missing-feature claim than the default-effort MiniMax run. |
+| MiniMax M2.7 baseline | "`load_skill` implementation ... MISSING" | Also false in the benchmark snapshot; the run completed cheaply but missed important implemented behavior. |
+| MiniMax M2.7 low | "`search` tool ... No `search` tool implementation" | A broader false-missing-feature claim than the baseline-effort MiniMax run. |
 | Gemini 3 Flash Preview | "Tool-Call Markup Guardrail ... Missing" | Fast, but it confidently missed existing provider-markup guardrail work. |
-| Claude Opus 4.7 medium | "Milestones 1-3 are essentially in place" | Strong medium-effort calibration, but still too expensive for default routing. |
+| Claude Opus 4.7 medium | "Milestones 1-3 are essentially in place" | Strong medium-effort calibration, but still too expensive for primary routing. |
 | GPT-5.5 medium | "`--dry-run` is documented but not implemented" | Penalized because `dry-run` was not actually in the benchmark docs; medium effort added a false headline gap. |
 | Claude Sonnet 4.6 medium | "`search` tool missing `context_before` / `context_after` parameters" | A plausible harness-improvement note, but the answer over-focused on tool-surface details and missed broader doc drift. |
 | Gemini 3.1 Pro Custom Tools medium | "`load_skill` tool logic ... appears to be missing or incomplete" | False in the benchmark snapshot; medium effort did not fix overclaiming. |
@@ -210,9 +209,15 @@ the Anthropic cache table above because they affect Anthropic pricing but are
 not part of the original CSV schema.
 
 The `reasoning_effort` CSV column records only the requested effort setting
-(`low`, `default`, or `disabled`). It is separate from reported
+(`low`, `baseline`, or `disabled`). It is separate from reported
 `reasoning_tokens`, because some providers report internal reasoning tokens even
 when no explicit effort was requested.
+
+Reported `reasoning_tokens` are provider usage accounting, not a harness-derived
+estimate. A zero can mean the provider did not report a recognized reasoning
+token field for that run. For example, the direct Moonshot **Kimi K2.6** row
+does not prove that no internal reasoning happened; it means no reasoning-token
+usage was reported in the fields LCAgent records.
 
 The raw stream logs are intentionally not part of this artifact because they are
 large, provider-specific, and mostly useful for debugging one run at a time.
