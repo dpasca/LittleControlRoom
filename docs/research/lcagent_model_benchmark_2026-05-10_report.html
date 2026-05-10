@@ -16,8 +16,6 @@
       --warn-soft: #fff1d6;
       --good: #1b7052;
       --good-soft: #ddf3e9;
-      --best-soft: #fff7cf;
-      --best-line: #d4af37;
       --cost-green: #dff3e6;
       --cost-yellow: #fff0b8;
       --cost-orange: #ffd9ba;
@@ -173,9 +171,7 @@
       color: var(--accent);
     }
 
-    .best-cell {
-      background: var(--best-soft);
-      box-shadow: inset 0 0 0 1px var(--best-line);
+    .best-cost {
       font-weight: 800;
     }
 
@@ -968,7 +964,7 @@
             <td class="num score">6.1</td>
             <td>low</td>
             <td class="num">39s</td>
-            <td class="num cost-green best-cell" title="Lowest estimated cost">$0.033</td>
+            <td class="num cost-green best-cost" title="Lowest estimated cost">$0.033</td>
             <td class="num">136,858</td>
             <td class="num">44,883</td>
             <td class="num">11</td>
@@ -1192,7 +1188,7 @@
         </span></div>
       </div>
       <p class="subtle">
-        The lowest estimated cost keeps a thin outline. The cost column also uses bucket tints: green under $0.10, yellow $0.10-$0.30, orange $0.30-$1.00, and red above $1.00. Read and line counts are deliberately not highlighted because less reading is not automatically better in a source-review benchmark.
+        The lowest estimated cost is bolded. The cost column also uses bucket tints: green under $0.10, yellow $0.10-$0.30, orange $0.30-$1.00, and red above $1.00. Read and line counts are deliberately not highlighted because less reading is not automatically better in a source-review benchmark.
       </p>
       <p class="subtle">
         Scores are subjective benchmark-routing scores out of 10, not pure answer-quality scores. The Effort column is the requested reasoning-effort setting only, separate from reported reasoning tokens. Temperature is recorded per row in the CSV; most OpenRouter and direct DeepSeek chat-completions runs used <code>0.2</code>, while OpenAI Responses, direct Moonshot, and Claude Opus 4.7 runs omitted temperature.
