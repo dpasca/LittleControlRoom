@@ -109,7 +109,7 @@ func (m Model) applyLocalBackendModelSelection(model string) (tea.Model, tea.Cmd
 		m.closeLocalBackendModelPicker(fmt.Sprintf("%s model reset to auto selection%s", backend.Label(), formatAutoModelSuffix(active)))
 		return m, nil
 	}
-	m.closeLocalBackendModelPicker(fmt.Sprintf("%s model set to %s. Press Enter in /setup to save.", backend.Label(), model))
+	m.closeLocalBackendModelPicker(fmt.Sprintf("%s model set to %s. Press Enter in /setup to continue.", backend.Label(), model))
 	return m, nil
 }
 

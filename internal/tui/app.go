@@ -6265,12 +6265,12 @@ func (m Model) renderFooter(width int) string {
 	}
 	if m.setupMode {
 		if m.setupReviewMode {
-			return m.renderModalFooter(width, "Setup review: Enter save, Esc adjust", supplementSegments...)
+			return m.renderModalFooter(width, "Setup save: Enter save, Esc back", supplementSegments...)
 		}
 		if m.setupConfigMode {
-			return m.renderModalFooter(width, "Setup fields: type to edit, ctrl+s/Enter review, Esc done", supplementSegments...)
+			return m.renderModalFooter(width, "Setup configuration: type to edit, Tab field, Enter continue, Esc back", supplementSegments...)
 		}
-		return m.renderModalFooter(width, "Setup: Tab role, ↑↓ provider, e edit fields, Enter review, Esc close", supplementSegments...)
+		return m.renderModalFooter(width, "Setup: Tab role, ↑↓ provider, Enter select, Esc close", supplementSegments...)
 	}
 	if m.settingsMode {
 		return m.renderModalFooter(width, "Settings: ctrl+s save, Tab next, Esc cancel", supplementSegments...)

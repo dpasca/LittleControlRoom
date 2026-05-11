@@ -19593,7 +19593,7 @@ func TestSetupLoadingBlocksRepeatRefresh(t *testing.T) {
 	}
 }
 
-func TestSetupEnterOpensReviewThenReviewEnterSaves(t *testing.T) {
+func TestSetupEnterSelectsSaveStepThenEnterSaves(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -19608,32 +19608,32 @@ func TestSetupEnterOpensReviewThenReviewEnterSaves(t *testing.T) {
 	updated, cmd := m.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
 	if cmd != nil {
-		t.Fatalf("setup enter should not save before review")
+		t.Fatalf("setup enter should not save before the save step")
 	}
 	if !got.setupReviewMode {
-		t.Fatalf("setup enter should open review mode")
+		t.Fatalf("setup enter should open the save step")
 	}
 	if got.setupSaving {
-		t.Fatalf("setup enter should not mark saving before review confirmation")
+		t.Fatalf("setup enter should not mark saving before save confirmation")
 	}
 
 	updated, cmd = got.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
 	if cmd == nil {
-		t.Fatalf("review enter should queue a save command")
+		t.Fatalf("save step enter should queue a save command")
 	}
 	if !got.setupSaving {
-		t.Fatalf("review enter should mark saving in progress")
+		t.Fatalf("save step enter should mark saving in progress")
 	}
 	if got.setupReviewMode {
-		t.Fatalf("review should close once saving starts")
+		t.Fatalf("save step should close once saving starts")
 	}
 	if got.status != "Saving AI setup..." {
 		t.Fatalf("status = %q, want saving message", got.status)
 	}
 }
 
-func TestRenderSetupReviewShowsFinalChoices(t *testing.T) {
+func TestRenderSetupSaveStepShowsFinalChoices(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.AIBackend = config.AIBackendOpenCode
 	settings.BossChatBackend = config.AIBackendOpenAIAPI
@@ -19667,7 +19667,7 @@ func TestRenderSetupReviewShowsFinalChoices(t *testing.T) {
 
 	rendered := ansi.Strip(m.renderSetupContent(96, 24))
 	for _, want := range []string{
-		"Ready to Save",
+		"Save Setup",
 		"Project reports",
 		"OpenCode",
 		"Boss chat",
@@ -19675,11 +19675,14 @@ func TestRenderSetupReviewShowsFinalChoices(t *testing.T) {
 		"OpenAI key",
 		"OpenCode tier",
 		"cheap",
-		"Press Enter to save this setup, or Esc to adjust it.",
+		"Enter selects Save setup. Esc returns to the provider tree.",
 	} {
 		if !strings.Contains(rendered, want) {
-			t.Fatalf("setup review missing %q:\n%s", want, rendered)
+			t.Fatalf("setup save step missing %q:\n%s", want, rendered)
 		}
+	}
+	if strings.Contains(rendered, "Ready to Save") {
+		t.Fatalf("setup save step should avoid ambiguous ready-to-save wording:\n%s", rendered)
 	}
 }
 
@@ -19704,7 +19707,7 @@ func TestRenderSetupContentKeepsActionLegendWhileLoading(t *testing.T) {
 		"Setup Concierge",
 		"Checking local backend availability",
 		"Enter",
-		"review",
+		"select",
 		"Tab",
 		"role",
 		"Up/Down",
@@ -19712,6 +19715,93 @@ func TestRenderSetupContentKeepsActionLegendWhileLoading(t *testing.T) {
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("setup loading screen missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestRenderSetupSelectedRoleCardPulsesSlowly(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendOpenCode
+	settings.BossChatBackend = config.AIBackendOpenAIAPI
+	settings.OpenAIAPIKey = "sk-pulse-test"
+
+	m := Model{
+		setupMode:         true,
+		settingsBaseline:  &settings,
+		setupFocusedRole:  setupRoleProjectReports,
+		setupSelected:     mSetupSelectionForTest(config.AIBackendOpenCode),
+		setupBossSelected: mSetupBossSelectionForTest(config.AIBackendOpenAIAPI),
+	}
+
+	m.spinnerFrame = 0
+	first := m.renderSetupRoleCards(88)
+	m.spinnerFrame = 16
+	second := m.renderSetupRoleCards(88)
+
+	if ansi.Strip(first) != ansi.Strip(second) {
+		t.Fatalf("selected setup card pulse should preserve visible text:\n%s\n---\n%s", ansi.Strip(first), ansi.Strip(second))
+	}
+	if first == second {
+		t.Fatalf("selected setup card should animate border styling across slow pulse frames")
+	}
+	if !strings.Contains(first, "38;2;") || !strings.Contains(second, "38;2;") {
+		t.Fatalf("selected setup card pulse should use 24-bit RGB color escapes")
+	}
+}
+
+func TestSetupFieldsStayInSubdialogUntilEnter(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendCodex
+	settings.MLXBaseURL = "http://127.0.0.1:8080/v1"
+	settings.MLXModel = "local-test-model"
+
+	m := Model{
+		setupMode:        true,
+		settingsBaseline: &settings,
+		settingsFields:   newSettingsFields(settings),
+		setupFocusedRole: setupRoleProjectReports,
+		setupSelected:    mSetupSelectionForTest(config.AIBackendMLX),
+	}
+
+	rendered := ansi.Strip(m.renderSetupPanel(96, 28))
+	for _, unwanted := range []string{
+		"Configure Project Reports",
+		"MLX base URL",
+		"local-test-model",
+		"Press e",
+	} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("setup concierge should keep field editor hidden before Enter; found %q:\n%s", unwanted, rendered)
+		}
+	}
+
+	updated, cmd := m.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("entering a configurable setup choice should focus the subdialog field")
+	}
+	if !got.setupConfigMode {
+		t.Fatalf("entering a configurable setup choice should open setup config mode")
+	}
+	rendered = ansi.Strip(got.renderSetupOverlay("", 104, 34))
+	for _, want := range []string{
+		"Configure Project Reports",
+		"MLX base URL",
+		"local-test-model",
+		"Enter",
+		"continue",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("setup config subdialog missing %q:\n%s", want, rendered)
 		}
 	}
 }
@@ -19755,17 +19845,17 @@ func TestSetupBossChatDisabledSavesSeparately(t *testing.T) {
 	updated, cmd := m.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
 	if cmd != nil {
-		t.Fatalf("choosing disabled boss chat should not save before review")
+		t.Fatalf("selecting disabled boss chat should not save before the save step")
 	}
 	if !got.setupReviewMode {
-		t.Fatalf("choosing disabled boss chat should open review")
+		t.Fatalf("selecting disabled boss chat should open the save step")
 	}
 	if got.currentSettingsBaseline().AIBackend != config.AIBackendCodex {
 		t.Fatalf("boss chat selection should not change project reports backend")
 	}
 }
 
-func TestSetupOpenAIKeyEditsInlineInsteadOfOpeningSettings(t *testing.T) {
+func TestSetupOpenAIKeyOpensConfigSubdialogInsteadOfSettings(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.AIBackend = config.AIBackendCodex
 	settings.OpenAIAPIKey = ""
@@ -19781,10 +19871,10 @@ func TestSetupOpenAIKeyEditsInlineInsteadOfOpeningSettings(t *testing.T) {
 	updated, cmd := m.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
 	if cmd == nil {
-		t.Fatalf("entering OpenAI setup should focus the inline config field")
+		t.Fatalf("entering OpenAI setup should focus the config field")
 	}
 	if !got.setupConfigMode {
-		t.Fatalf("OpenAI setup should enter inline setup config mode")
+		t.Fatalf("OpenAI setup should enter setup config mode")
 	}
 	if got.settingsMode {
 		t.Fatalf("OpenAI setup should not open /settings")
@@ -19794,7 +19884,7 @@ func TestSetupOpenAIKeyEditsInlineInsteadOfOpeningSettings(t *testing.T) {
 	}
 }
 
-func TestSetupInlineConfigSaveUsesEditedFields(t *testing.T) {
+func TestSetupConfigSubdialogSaveStepUsesEditedFields(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	settings := config.EditableSettingsFromAppConfig(config.Default())
@@ -19814,22 +19904,22 @@ func TestSetupInlineConfigSaveUsesEditedFields(t *testing.T) {
 	updated, cmd := m.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
 	if cmd != nil {
-		t.Fatalf("saving inline setup fields should open review before save")
+		t.Fatalf("continuing from setup config fields should open the save step before save")
 	}
 	if !got.setupReviewMode {
-		t.Fatalf("saving inline setup fields should open review")
+		t.Fatalf("continuing from setup config fields should open the save step")
 	}
 	if got.setupSaving {
-		t.Fatalf("inline setup fields should not save until review confirmation")
+		t.Fatalf("setup config fields should not save until save confirmation")
 	}
 
 	updated, cmd = got.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
 	if cmd == nil {
-		t.Fatalf("reviewing inline setup fields should queue a save command")
+		t.Fatalf("confirming setup config fields should queue a save command")
 	}
 	if !got.setupSaving {
-		t.Fatalf("reviewing inline setup fields should mark setup saving")
+		t.Fatalf("confirming setup config fields should mark setup saving")
 	}
 	msg := cmd()
 	saved, ok := msg.(setupSavedMsg)

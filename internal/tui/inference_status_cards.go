@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+	"math"
 	"strings"
 
 	"lcroom/internal/aibackend"
@@ -17,6 +19,7 @@ type inferenceStatusCard struct {
 	Detail      string
 	DetailStyle lipgloss.Style
 	Selected    bool
+	PulseFrame  int
 }
 
 func (m Model) renderInferenceStatusCards(width int) string {
@@ -238,7 +241,7 @@ func renderInferenceStatusCard(card inferenceStatusCard, width int) string {
 	lines = append(lines, renderWrappedDialogTextLines(card.DetailStyle, innerWidth, strings.TrimSpace(card.Detail))...)
 	style := inferenceStatusCardStyle
 	if card.Selected {
-		style = inferenceStatusCardSelectedStyle
+		style = inferenceStatusCardSelectedStyle.BorderForeground(inferenceStatusSelectedBorderColor(card.PulseFrame))
 	}
 	return style.Width(innerWidth).Render(strings.Join(lines, "\n"))
 }
@@ -256,3 +259,17 @@ var inferenceStatusCardSelectedStyle = inferenceStatusCardStyle.
 	Border(lipgloss.ThickBorder()).
 	BorderForeground(lipgloss.Color("214")).
 	Background(lipgloss.Color("237"))
+
+func inferenceStatusSelectedBorderColor(spinnerFrame int) lipgloss.Color {
+	if spinnerFrame < 0 {
+		spinnerFrame = 0
+	}
+	const cycleFrames = 36.0
+	phase := (math.Sin((float64(spinnerFrame)/cycleFrames)*2*math.Pi-math.Pi/2) + 1) / 2
+	start := [3]int{184, 115, 51}
+	end := [3]int{255, 209, 102}
+	r := start[0] + int(math.Round(float64(end[0]-start[0])*phase))
+	g := start[1] + int(math.Round(float64(end[1]-start[1])*phase))
+	b := start[2] + int(math.Round(float64(end[2]-start[2])*phase))
+	return lipgloss.Color(fmt.Sprintf("#%02x%02x%02x", r, g, b))
+}
