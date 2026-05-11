@@ -143,9 +143,12 @@ func settingsSections() []settingsSection {
 		},
 		{
 			id:    settingsSectionAI,
-			label: "AI & Models",
-			hint:  "Project-analysis backend credentials, boss-chat inference, local model overrides, and embedded assistant launch defaults.",
+			label: "Providers & Models",
+			hint:  "Choose the helpers for project reports and boss chat, then tune the model fields only when you need more control.",
 			fieldOrder: []int{
+				settingsFieldAIBackend,
+				settingsFieldBossChatBackend,
+				settingsFieldOpenAIAPIKey,
 				settingsFieldBossChatModel,
 				settingsFieldBossUtilityModel,
 				settingsFieldMLXBaseURL,
@@ -567,7 +570,10 @@ func (m *Model) setSettingsSelection(index int) tea.Cmd {
 	}
 
 	m.settingsSelected = index
-	m.settingsSectionSelected = settingsSectionIndexForField(index)
+	sections := settingsSections()
+	if m.settingsSectionSelected < 0 || m.settingsSectionSelected >= len(sections) || !settingsSectionContainsField(sections[m.settingsSectionSelected], index) {
+		m.settingsSectionSelected = settingsSectionIndexForField(index)
+	}
 	cmds := make([]tea.Cmd, 0, 1)
 	for i := range m.settingsFields {
 		if i == index {
@@ -578,6 +584,15 @@ func (m *Model) setSettingsSelection(index int) tea.Cmd {
 		m.settingsFields[i].input.Blur()
 	}
 	return tea.Batch(cmds...)
+}
+
+func settingsSectionContainsField(section settingsSection, fieldIndex int) bool {
+	for _, candidate := range section.fieldOrder {
+		if candidate == fieldIndex {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Model) moveSettingsSection(delta int) tea.Cmd {
@@ -873,7 +888,7 @@ func (m Model) settingsVisibleFieldCount(maxHeight int) int {
 
 	// Header/summary, selected-field hint, two action rows, and the section
 	// sidebar leave less room for fields than the old inline section tabs did.
-	reserved := 17
+	reserved := 14
 	if m.activeSettingsSection().id == settingsSectionGettingStarted && maxHeight >= 28 {
 		reserved += 3
 	}
@@ -1347,7 +1362,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionGettingStarted,
 		),
 		newSettingsField(
-			"Boss chat backend",
+			"Boss chat",
 			"Press Enter to choose Auto, OpenAI API, or Off. This is separate from project analysis, so summaries can stay on Codex/OpenCode while boss chat uses direct API inference.",
 			string(settings.BossChatBackend),
 			32,
@@ -1369,7 +1384,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsField(
 			"MLX base URL",
-			"Used when the AI backend is MLX. Leave blank to use the default local OpenAI-compatible URL: http://127.0.0.1:8080/v1",
+			"Used when Project reports or Boss chat uses MLX. Leave blank to use the default local OpenAI-compatible URL: http://127.0.0.1:8080/v1",
 			settings.MLXBaseURL,
 			512,
 			settingsSectionAI,
@@ -1391,7 +1406,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsField(
 			"Ollama base URL",
-			"Used when the AI backend is Ollama. Leave blank to use the default OpenAI-compatible URL: http://127.0.0.1:11434/v1",
+			"Used when Project reports or Boss chat uses Ollama. Leave blank to use the default OpenAI-compatible URL: http://127.0.0.1:11434/v1",
 			settings.OllamaBaseURL,
 			512,
 			settingsSectionAI,
@@ -1531,8 +1546,8 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionAdvanced,
 		),
 		newSettingsField(
-			"AI backend",
-			"Press Enter to choose the provider for summaries, classification, and commit help.",
+			"Project reports",
+			"Press Enter to choose the helper for summaries, classification, TODO help, and commit help.",
 			string(settings.AIBackend),
 			32,
 			settingsSectionGettingStarted,

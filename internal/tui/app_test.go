@@ -20866,6 +20866,45 @@ func TestSettingsGettingStartedRendersStepGuide(t *testing.T) {
 	}
 }
 
+func TestSettingsAISectionUsesProviderRoleRows(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendOpenCode
+	settings.BossChatBackend = config.AIBackendOpenAIAPI
+	settings.OpenAIAPIKey = "sk-test-example"
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            120,
+		height:           30,
+	}
+	_ = m.setSettingsSection(1)
+	_ = m.setSettingsSelection(settingsFieldAIBackend)
+	if m.activeSettingsSection().id != settingsSectionAI {
+		t.Fatalf("active settings section = %q, want providers and models", m.activeSettingsSection().id)
+	}
+
+	rendered := ansi.Strip(m.renderSettingsContent(100, 24))
+	for _, want := range []string{"Providers & Models", "Project reports", "OpenCode", "Boss chat", "OpenAI API", "OpenAI API key"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("providers and models section missing %q: %q", want, rendered)
+		}
+	}
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyTab})
+	if cmd == nil {
+		t.Fatalf("Tab should refocus the next provider row")
+	}
+	got := updated.(Model)
+	if got.activeSettingsSection().id != settingsSectionAI {
+		t.Fatalf("provider rows should stay in Providers & Models section, got %q", got.activeSettingsSection().id)
+	}
+	if got.settingsSelected != settingsFieldBossChatBackend {
+		t.Fatalf("settingsSelected = %d, want boss chat provider row", got.settingsSelected)
+	}
+}
+
 func TestSettingsModalShowsSelectedHintAndWindowsLowerFields(t *testing.T) {
 	m := Model{
 		settingsMode:   true,
