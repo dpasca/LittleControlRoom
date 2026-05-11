@@ -33,12 +33,13 @@ func TestCodexPlaywrightMCPConfigOverridesManagedHeadless(t *testing.T) {
 	if got[0] != `mcp_servers.playwright.command="/tmp/lcroom-test-bin"` {
 		t.Fatalf("command override = %q, want configured lcroom executable path", got[0])
 	}
+	launchMode := string(browserctl.ManagedLaunchModeForPolicy(req.PlaywrightPolicy))
 	for _, want := range []string{
 		`"playwright-mcp"`,
 		`"--project-path","/tmp/demo"`,
 		`"--data-dir","/tmp/lcr-data"`,
 		`"--session-key","session-demo"`,
-		`"--launch-mode","background"`,
+		`"--launch-mode","` + launchMode + `"`,
 		`"--profile-key","`,
 	} {
 		if !strings.Contains(got[1], want) {
@@ -158,13 +159,14 @@ func TestOpenCodePlaywrightMCPOverrideManagedHeadless(t *testing.T) {
 	if got.Command[0] != "/tmp/lcroom-test-bin" {
 		t.Fatalf("override executable = %q, want configured lcroom executable", got.Command[0])
 	}
+	launchMode := string(browserctl.ManagedLaunchModeForPolicy(req.PlaywrightPolicy))
 	for _, want := range []string{
 		"playwright-mcp",
 		"--provider", "opencode",
 		"--project-path", "/tmp/demo",
 		"--data-dir", "/tmp/lcr-data",
 		"--session-key", "session-demo",
-		"--launch-mode", "background",
+		"--launch-mode", launchMode,
 	} {
 		if !containsString(got.Command, want) {
 			t.Fatalf("override command = %#v, want entry %q", got.Command, want)
