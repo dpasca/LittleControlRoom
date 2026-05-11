@@ -20,15 +20,6 @@ const (
 	setupRoleBossChat
 )
 
-var setupBackendOptions = config.SelectableAIBackends()
-var setupBossChatOptions = []config.AIBackend{
-	config.AIBackendUnset,
-	config.AIBackendOpenAIAPI,
-	config.AIBackendMLX,
-	config.AIBackendOllama,
-	config.AIBackendDisabled,
-}
-
 func (m *Model) openSetupMode() tea.Cmd {
 	settings := m.currentSettingsBaseline()
 	m.settingsFields = newSettingsFields(settings)
@@ -41,6 +32,7 @@ func (m *Model) openSetupMode() tea.Cmd {
 	m.showHelp = false
 	m.err = nil
 	m.setupSaving = false
+	m.setupReviewMode = false
 	m.localModelPickerVisible = false
 	m.setupFocusedRole = setupRoleProjectReports
 	m.setupConfigMode = false
@@ -65,6 +57,7 @@ func (m *Model) closeSetupMode(status string) {
 	m.setupMode = false
 	m.setupLoading = false
 	m.setupSaving = false
+	m.setupReviewMode = false
 	m.setupConfigMode = false
 	m.setupConfigSelected = 0
 	m.localModelPickerVisible = false
@@ -104,6 +97,9 @@ func (m Model) saveSetupCmd(settings config.EditableSettings) tea.Cmd {
 func (m Model) updateSetupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.setupLoading || m.setupSaving {
 		return m, nil
+	}
+	if m.setupReviewMode {
+		return m.updateSetupReviewMode(msg)
 	}
 	if m.setupConfigMode {
 		return m.updateSetupConfigMode(msg)
@@ -159,7 +155,7 @@ func (m Model) updateSetupConfigMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cmd := m.moveSetupConfigSelection(-1)
 		return m, cmd
 	case "ctrl+s", "enter":
-		return m.saveSetupFromCurrentChoices()
+		return m.enterSetupReviewMode("Review these choices, then press Enter to save.")
 	}
 
 	fieldIndex := m.setupSelectedConfigFieldIndex()
@@ -169,6 +165,42 @@ func (m Model) updateSetupConfigMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	input, cmd := m.settingsFields[fieldIndex].input.Update(msg)
 	m.settingsFields[fieldIndex].input = input
 	return m, cmd
+}
+
+func (m Model) updateSetupReviewMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter", "ctrl+s":
+		return m.saveSetupFromCurrentChoices()
+	case "esc":
+		m.setupReviewMode = false
+		m.status = "Review closed. Adjust helpers or press Enter to review again."
+		return m, nil
+	case "tab", "right", "]":
+		m.setupReviewMode = false
+		m.moveSetupRole(1)
+		return m, nil
+	case "shift+tab", "left", "[":
+		m.setupReviewMode = false
+		m.moveSetupRole(-1)
+		return m, nil
+	case "down", "j", "ctrl+n":
+		m.setupReviewMode = false
+		m.moveSetupProvider(1)
+		return m, nil
+	case "up", "k", "ctrl+p":
+		m.setupReviewMode = false
+		m.moveSetupProvider(-1)
+		return m, nil
+	case "e":
+		m.setupReviewMode = false
+		return m.enterSetupConfigMode()
+	case "r":
+		m.setupReviewMode = false
+		m.setupLoading = true
+		m.status = "Refreshing AI backend checks..."
+		return m, m.refreshSetupSnapshotCmd(false)
+	}
+	return m, nil
 }
 
 func (m Model) cycleModelTier(tier config.ModelTier) config.ModelTier {
@@ -187,6 +219,7 @@ func (m *Model) moveSetupRole(delta int) {
 		return
 	}
 	m.setupConfigMode = false
+	m.setupReviewMode = false
 	m.setupConfigSelected = 0
 	m.blurSettingsFields()
 	count := int(setupRoleBossChat) + 1
@@ -205,13 +238,14 @@ func (m *Model) moveSetupProvider(delta int) {
 		return
 	}
 	m.setupConfigMode = false
+	m.setupReviewMode = false
 	m.setupConfigSelected = 0
 	m.blurSettingsFields()
 	if m.setupFocusedRole == setupRoleBossChat {
-		m.setupBossSelected = wrapIndex(m.setupBossSelected+delta, len(m.setupBossProviderChoices()))
+		m.setupBossSelected = wrapIndex(m.setupBossSelected+delta, len(m.setupFocusedProviderChoices()))
 		return
 	}
-	m.setupSelected = wrapIndex(m.setupSelected+delta, len(m.setupProjectProviderChoices()))
+	m.setupSelected = wrapIndex(m.setupSelected+delta, len(m.setupFocusedProviderChoices()))
 }
 
 func wrapIndex(index, count int) int {
@@ -231,6 +265,7 @@ func (m Model) enterSetupConfigMode() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.setupConfigMode = true
+	m.setupReviewMode = false
 	if m.setupConfigSelected < 0 || m.setupConfigSelected >= len(fields) {
 		m.setupConfigSelected = 0
 	}
@@ -311,12 +346,12 @@ func (m Model) activateSetupSelection() (tea.Model, tea.Cmd) {
 	selectedStatus := m.setupSnapshot.StatusFor(settings.AIBackend)
 	switch settings.AIBackend {
 	case config.AIBackendDisabled:
-		return m.saveSetupFromCurrentChoices()
+		return m.enterSetupReviewMode("Project reports will be off. Review the setup before saving.")
 	case config.AIBackendOpenAIAPI:
 		if strings.TrimSpace(settings.OpenAIAPIKey) == "" {
-			return m.enterSetupConfigModeWithStatus("Paste an OpenAI API key here, then press ctrl+s or Enter to save.")
+			return m.enterSetupConfigModeWithStatus("Paste an OpenAI API key here, then press ctrl+s or Enter to review.")
 		}
-		return m.saveSetupFromCurrentChoices()
+		return m.enterSetupReviewMode("OpenAI API is ready. Review the setup before saving.")
 	case config.AIBackendMLX, config.AIBackendOllama:
 		if strings.TrimSpace(selectedStatus.Detail) == "" || !selectedStatus.Ready {
 			if selectedStatus.LoginHint != "" {
@@ -326,7 +361,7 @@ func (m Model) activateSetupSelection() (tea.Model, tea.Cmd) {
 			}
 			return m.enterSetupConfigMode()
 		}
-		return m.saveSetupFromCurrentChoices()
+		return m.enterSetupReviewMode(settings.AIBackend.Label() + " is ready. Review the setup before saving.")
 	default:
 		if !selectedStatus.Ready {
 			if selectedStatus.LoginHint != "" {
@@ -336,7 +371,7 @@ func (m Model) activateSetupSelection() (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		return m.saveSetupFromCurrentChoices()
+		return m.enterSetupReviewMode(settings.AIBackend.Label() + " is ready. Review the setup before saving.")
 	}
 }
 
@@ -344,14 +379,14 @@ func (m Model) activateBossChatSetupSelection() (tea.Model, tea.Cmd) {
 	settings := m.setupSettingsFromCurrentChoices()
 	switch settings.BossChatBackend {
 	case config.AIBackendUnset:
-		return m.saveSetupFromCurrentChoices()
+		return m.enterSetupReviewMode("Boss chat will use Auto. Review the setup before saving.")
 	case config.AIBackendDisabled:
-		return m.saveSetupFromCurrentChoices()
+		return m.enterSetupReviewMode("Boss chat will be off. Review the setup before saving.")
 	case config.AIBackendOpenAIAPI:
 		if strings.TrimSpace(settings.OpenAIAPIKey) == "" {
-			return m.enterSetupConfigModeWithStatus("Paste an OpenAI API key here, then press ctrl+s or Enter to save.")
+			return m.enterSetupConfigModeWithStatus("Paste an OpenAI API key here, then press ctrl+s or Enter to review.")
 		}
-		return m.saveSetupFromCurrentChoices()
+		return m.enterSetupReviewMode("Boss chat can use OpenAI API. Review the setup before saving.")
 	case config.AIBackendMLX, config.AIBackendOllama:
 		selectedStatus := m.setupSnapshot.StatusFor(settings.BossChatBackend)
 		if strings.TrimSpace(selectedStatus.Detail) == "" || !selectedStatus.Ready {
@@ -362,7 +397,7 @@ func (m Model) activateBossChatSetupSelection() (tea.Model, tea.Cmd) {
 			}
 			return m.enterSetupConfigMode()
 		}
-		return m.saveSetupFromCurrentChoices()
+		return m.enterSetupReviewMode(settings.BossChatBackend.Label() + " is ready for boss chat. Review the setup before saving.")
 	default:
 		m.status = "Boss chat can use OpenAI API, MLX, Ollama, or stay off for now."
 		return m, nil
@@ -378,10 +413,22 @@ func (m Model) enterSetupConfigModeWithStatus(status string) (tea.Model, tea.Cmd
 	return got, cmd
 }
 
+func (m Model) enterSetupReviewMode(status string) (tea.Model, tea.Cmd) {
+	m.setupReviewMode = true
+	m.setupConfigMode = false
+	m.blurSettingsFields()
+	if strings.TrimSpace(status) == "" {
+		status = "Review these choices, then press Enter to save."
+	}
+	m.status = status
+	return m, nil
+}
+
 func (m Model) saveSetupFromCurrentChoices() (tea.Model, tea.Cmd) {
 	settings := m.setupSettingsFromCurrentChoices()
 	m.setupSaving = true
 	m.setupConfigMode = false
+	m.setupReviewMode = false
 	m.blurSettingsFields()
 	m.status = "Saving AI setup..."
 	return m, m.saveSetupCmd(settings)
@@ -501,7 +548,7 @@ func (m Model) renderSetupContent(width, maxHeight int) string {
 	cards := m.renderSetupRoleCards(width)
 	lines := []string{
 		commandPaletteTitleStyle.Render("Setup Concierge"),
-		commandPaletteHintStyle.Render("I can help with quiet project reports and the optional /boss chat. Pick the helper for each role."),
+		commandPaletteHintStyle.Render(m.setupConciergeSummary()),
 	}
 	lines = append(lines, "")
 	lines = append(lines, cards)
@@ -512,13 +559,35 @@ func (m Model) renderSetupContent(width, maxHeight int) string {
 		lines = append(lines, "")
 		lines = append(lines, commandPaletteHintStyle.Render("Saving AI setup..."))
 	}
+	if m.setupReviewMode {
+		lines = append(lines, "")
+		lines = append(lines, m.renderSetupReview(width))
+		if actions := m.renderSetupActionLines(width); len(actions) > 0 {
+			lines = append(lines, "")
+			lines = append(lines, actions...)
+		}
+		return strings.Join(lines, "\n")
+	}
 	lines = append(lines, "")
 	lines = append(lines, detailSectionStyle.Render(m.setupProviderListTitle()))
 	lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, width, m.setupRolePurpose())...)
 
 	configLines := m.renderSetupConfigLines(width)
+	hintLines := []string{}
+	if hint := m.renderSetupHint(width); hint != "" {
+		hintLines = []string{"", hint}
+	}
+	actionLines := m.renderSetupActionLines(width)
+	actionHeight := 0
+	if len(actionLines) > 0 {
+		actionHeight = renderedLinesHeight(actionLines) + 1
+	}
+	configHeight := 0
+	if len(configLines) > 0 {
+		configHeight = renderedLinesHeight(configLines) + 1
+	}
 	providerRows := m.renderSetupProviderRows(width)
-	providerLimit := max(2, maxHeight-renderedLinesHeight(lines)-renderedLinesHeight(configLines)-5)
+	providerLimit := max(1, maxHeight-renderedLinesHeight(lines)-configHeight-renderedLinesHeight(hintLines)-actionHeight-2)
 	start, end := m.setupProviderWindow(len(providerRows), providerLimit)
 	if start > 0 {
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d above", start)))
@@ -529,19 +598,67 @@ func (m Model) renderSetupContent(width, maxHeight int) string {
 	if end < len(providerRows) {
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d below", len(providerRows)-end)))
 	}
+	if len(actionLines) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, actionLines...)
+	}
 	if len(configLines) > 0 {
 		lines = append(lines, "")
 		lines = append(lines, configLines...)
 	}
-	if hint := m.renderSetupHint(width); hint != "" {
-		lines = append(lines, "")
-		lines = append(lines, hint)
-	}
-	if actions := m.renderSetupActions(); actions != "" && lipgloss.Width(actions) <= width && renderedLinesHeight(lines)+2 <= maxHeight {
-		lines = append(lines, "")
-		lines = append(lines, actions)
+	if len(hintLines) > 0 {
+		lines = append(lines, hintLines...)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (m Model) setupConciergeSummary() string {
+	settings := m.setupSettingsFromCurrentChoices()
+	projectChoice := m.selectedSettingsProviderChoice(providerChoiceRoleProjectReports, settings.AIBackend, settings)
+	bossChoice := m.selectedSettingsProviderChoice(providerChoiceRoleBossChat, settings.BossChatBackend, settings)
+	projectState := strings.ToLower(strings.TrimSpace(projectChoice.State))
+	bossState := strings.ToLower(strings.TrimSpace(bossChoice.State))
+	if projectState == "" {
+		projectState = "unchecked"
+	}
+	if bossState == "" {
+		bossState = "unchecked"
+	}
+	return "I can write project reports with " + firstNonEmptyTrimmed(projectChoice.Label, "a helper") + " (" + projectState + ") and answer /boss with " + firstNonEmptyTrimmed(bossChoice.Label, "Auto") + " (" + bossState + ")."
+}
+
+func (m Model) renderSetupReview(width int) string {
+	settings := m.setupSettingsFromCurrentChoices()
+	projectChoice := m.selectedSettingsProviderChoice(providerChoiceRoleProjectReports, settings.AIBackend, settings)
+	bossChoice := m.selectedSettingsProviderChoice(providerChoiceRoleBossChat, settings.BossChatBackend, settings)
+	lines := []string{
+		detailSectionStyle.Render("Ready to Save"),
+		renderWrappedDetailField("Project reports", detailValueStyle, width, m.setupReviewChoiceSummary(projectChoice)),
+		renderWrappedDetailField("Boss chat", detailValueStyle, width, m.setupReviewChoiceSummary(bossChoice)),
+	}
+	if strings.TrimSpace(settings.OpenAIAPIKey) != "" {
+		keyText := "saved"
+		if suffix := maskedOpenAIKeySuffix(settings.OpenAIAPIKey); suffix != "" {
+			keyText += " " + suffix
+		}
+		lines = append(lines, renderWrappedDetailField("OpenAI key", detailValueStyle, width, keyText))
+	}
+	if settings.AIBackend == config.AIBackendOpenCode {
+		lines = append(lines, renderWrappedDetailField("OpenCode tier", detailValueStyle, width, string(m.setupModelTier)))
+	}
+	lines = append(lines, renderWrappedDetailField("Next", detailValueStyle, width, "Press Enter to save this setup, or Esc to adjust it."))
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) setupReviewChoiceSummary(choice providerChoice) string {
+	parts := []string{firstNonEmptyTrimmed(choice.Label, string(choice.Value))}
+	if state := strings.TrimSpace(choice.State); state != "" {
+		parts = append(parts, "("+state+")")
+	}
+	if next := strings.TrimSpace(choice.NextStep); next != "" && choice.State != "ready" && choice.State != "off" {
+		parts = append(parts, "- "+next)
+	}
+	return strings.Join(parts, " ")
 }
 
 func (m Model) setupProviderWindow(total, limit int) (int, int) {
@@ -601,17 +718,11 @@ func (m Model) renderSetupRoleCards(width int) string {
 }
 
 func (m Model) setupProviderListTitle() string {
-	if m.setupFocusedRole == setupRoleBossChat {
-		return "Who Should Handle Boss Chat?"
-	}
-	return "Who Should Handle Project Reports?"
+	return providerChoiceRoleListTitle(m.setupFocusedProviderChoiceRole())
 }
 
 func (m Model) setupRolePurpose() string {
-	if m.setupFocusedRole == setupRoleBossChat {
-		return "This is the direct high-level /boss conversation. It can use a different helper from background reports, or stay off."
-	}
-	return "This helper writes summaries, classifications, TODO help, and commit help in the background."
+	return providerChoiceRolePurpose(m.setupFocusedProviderChoiceRole())
 }
 
 func (m Model) setupProjectProviderChoices() []providerChoice {
@@ -622,22 +733,49 @@ func (m Model) setupBossProviderChoices() []providerChoice {
 	return m.providerChoices(providerChoiceRoleBossChat, m.setupDraftSettingsForProviderChoices())
 }
 
-func (m Model) renderSetupProviderRows(width int) []string {
+func (m Model) setupFocusedProviderChoiceRole() providerChoiceRole {
 	if m.setupFocusedRole == setupRoleBossChat {
-		choices := m.setupBossProviderChoices()
-		current := m.setupCurrentBossBackend()
-		lines := make([]string, 0, len(choices))
-		for i, choice := range choices {
-			lines = append(lines, renderProviderChoiceRow(choice, i == m.setupBossSelected, choice.Value == current, width))
-		}
-		return lines
+		return providerChoiceRoleBossChat
 	}
+	return providerChoiceRoleProjectReports
+}
 
-	choices := m.setupProjectProviderChoices()
-	current := m.setupCurrentBackend()
+func (m Model) setupFocusedProviderChoices() []providerChoice {
+	if m.setupFocusedRole == setupRoleBossChat {
+		return m.setupBossProviderChoices()
+	}
+	return m.setupProjectProviderChoices()
+}
+
+func (m Model) setupFocusedCurrentBackend() config.AIBackend {
+	if m.setupFocusedRole == setupRoleBossChat {
+		return m.setupCurrentBossBackend()
+	}
+	return m.setupCurrentBackend()
+}
+
+func (m Model) setupFocusedProviderSelection() int {
+	if m.setupFocusedRole == setupRoleBossChat {
+		return m.setupBossSelected
+	}
+	return m.setupSelected
+}
+
+func (m Model) setupFocusedProviderChoice() providerChoice {
+	choices := m.setupFocusedProviderChoices()
+	if len(choices) == 0 {
+		return providerChoice{}
+	}
+	return choices[wrapIndex(m.setupFocusedProviderSelection(), len(choices))]
+}
+
+func (m Model) renderSetupProviderRows(width int) []string {
+	choices := m.setupFocusedProviderChoices()
+	current := m.setupFocusedCurrentBackend()
+	selected := m.setupFocusedProviderSelection()
 	lines := make([]string, 0, len(choices))
 	for i, choice := range choices {
-		lines = append(lines, renderProviderChoiceRow(choice, i == m.setupSelected, choice.Value == current, width))
+		lines = append(lines, renderProviderChoiceRow(choice, i == selected, choice.Value == current, width))
 	}
 	return lines
 }
@@ -667,153 +805,14 @@ func (m Model) renderSetupConfigLines(width int) []string {
 }
 
 func (m Model) setupNoConfigText() string {
-	if m.setupFocusedRole == setupRoleBossChat {
-		if m.setupSelectedBossBackend() == config.AIBackendDisabled {
-			return "Boss chat will be off. No extra fields needed."
-		}
-		return "No extra fields for this boss chat provider."
-	}
-	switch m.setupSelectedBackend() {
-	case config.AIBackendOpenCode:
+	choice := m.setupFocusedProviderChoice()
+	if m.setupFocusedRole == setupRoleProjectReports && m.setupSelectedBackend() == config.AIBackendOpenCode {
 		return "OpenCode uses your OpenCode login. Press t to change the model tier."
-	case config.AIBackendCodex:
-		return "Codex uses your Codex login. No API key is stored by Little Control Room."
-	case config.AIBackendClaude:
-		return "Claude Code uses your Claude Code login. Background tasks default to Haiku."
-	case config.AIBackendDisabled:
-		return "Project reports will be off. No extra fields needed."
-	default:
-		return "No extra fields for this provider."
 	}
-}
-
-func (m Model) renderSetupOptionRow(backend config.AIBackend, selected bool, width int) string {
-	status := m.setupSnapshot.StatusFor(backend)
-	label := "  " + backend.Label()
-	labelStyle := detailLabelStyle
-	if selected {
-		label = "> " + backend.Label()
-		labelStyle = commandPalettePickStyle
-	} else if status.Ready || backend == m.setupCurrentBackend() {
-		labelStyle = detailValueStyle
+	if strings.TrimSpace(choice.Description) != "" {
+		return choice.Description
 	}
-	state, stateStyle := m.setupOptionState(backend, status)
-	labelWidth := min(24, max(18, width/3))
-	stateWidth := 9
-	detailWidth := max(12, width-labelWidth-stateWidth-2)
-	detailStyle := commandPaletteHintStyle
-	if status.Ready || backend == m.setupCurrentBackend() {
-		detailStyle = detailValueStyle
-	}
-	detailText := m.setupOptionDetail(backend, status)
-	if backend.SupportsModelTier() && selected {
-		tierHint := " [T: " + string(m.setupModelTier) + "]"
-		if len(detailText)+len(tierHint) < detailWidth {
-			detailText = detailText + tierHint
-		}
-	}
-	row := labelStyle.Width(labelWidth).Render(truncateText(label, labelWidth)) +
-		" " + stateStyle.Width(stateWidth).Render(truncateText(state, stateWidth)) +
-		" " + detailStyle.Render(truncateText(detailText, detailWidth))
-	if selected {
-		return dialogSelectedRowStyle.Width(width).Render(fitFooterWidth(row, width))
-	}
-	return row
-}
-
-func (m Model) renderBossChatSetupOptionRow(backend config.AIBackend, selected bool, width int) string {
-	settings := m.currentSettingsBaseline()
-	status, _ := m.inferenceBackendStatus(backend, settings)
-	label := "  " + bossChatBackendSetupLabel(backend)
-	labelStyle := detailLabelStyle
-	if selected {
-		label = "> " + bossChatBackendSetupLabel(backend)
-		labelStyle = commandPalettePickStyle
-	} else if backend == m.setupCurrentBossBackend() {
-		labelStyle = detailValueStyle
-	}
-	state, stateStyle := m.bossChatSetupOptionState(backend, status)
-	labelWidth := min(24, max(18, width/3))
-	stateWidth := 9
-	detailWidth := max(12, width-labelWidth-stateWidth-2)
-	detailText := m.bossChatSetupOptionDetail(backend, settings)
-	detailStyle := commandPaletteHintStyle
-	if status.Ready || backend == m.setupCurrentBossBackend() {
-		detailStyle = detailValueStyle
-	}
-	row := labelStyle.Width(labelWidth).Render(truncateText(label, labelWidth)) +
-		" " + stateStyle.Width(stateWidth).Render(truncateText(state, stateWidth)) +
-		" " + detailStyle.Render(truncateText(detailText, detailWidth))
-	if selected {
-		return dialogSelectedRowStyle.Width(width).Render(fitFooterWidth(row, width))
-	}
-	return row
-}
-
-func bossChatBackendSetupLabel(backend config.AIBackend) string {
-	if backend == config.AIBackendUnset {
-		return "Auto"
-	}
-	if backend == config.AIBackendDisabled {
-		return "Off"
-	}
-	return backend.Label()
-}
-
-func (m Model) bossChatSetupOptionState(backend config.AIBackend, status aibackend.Status) (string, lipgloss.Style) {
-	switch {
-	case backend == config.AIBackendUnset:
-		return "auto", commandPalettePickStyle
-	case backend == m.setupCurrentBossBackend() && backend != config.AIBackendUnset:
-		return "active", commandPalettePickStyle
-	case backend == config.AIBackendDisabled:
-		return "off", detailMutedStyle
-	case status.Ready:
-		return "ready", footerPrimaryLabelStyle
-	default:
-		return "setup", detailWarningStyle
-	}
-}
-
-func (m Model) bossChatSetupOptionDetail(backend config.AIBackend, settings config.EditableSettings) string {
-	switch backend {
-	case config.AIBackendUnset:
-		if strings.TrimSpace(settings.OpenAIAPIKey) == "" {
-			return "save a key to auto-enable boss chat"
-		}
-		return "auto-enables with the saved OpenAI API key"
-	case config.AIBackendDisabled:
-		return "turn off high-level chat inference"
-	case config.AIBackendOpenAIAPI:
-		if strings.TrimSpace(settings.OpenAIAPIKey) == "" {
-			return "needs a saved OpenAI API key"
-		}
-		if settings.AIBackend == config.AIBackendOpenAIAPI {
-			return "uses the shared saved OpenAI API key"
-		}
-		return "direct API chat; project reports stay separate"
-	case config.AIBackendMLX:
-		return "local MLX chat; project reports stay separate"
-	case config.AIBackendOllama:
-		return "local Ollama chat; project reports stay separate"
-	default:
-		return "not available"
-	}
-}
-
-func (m Model) setupOptionState(backend config.AIBackend, status aibackend.Status) (string, lipgloss.Style) {
-	switch {
-	case backend == m.setupCurrentBackend() && backend != config.AIBackendUnset:
-		return "active", commandPalettePickStyle
-	case backend == config.AIBackendDisabled:
-		return "off", detailMutedStyle
-	case status.Ready:
-		return "ready", footerPrimaryLabelStyle
-	case !status.Installed && backend.RequiresCLIInstallHint():
-		return "install", detailWarningStyle
-	default:
-		return "setup", commandPaletteHintStyle
-	}
+	return "No extra fields for this provider."
 }
 
 func (m Model) renderSetupHint(width int) string {
@@ -910,17 +909,55 @@ func (m Model) renderSetupChoiceHint(choice providerChoice, next string, width i
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) renderSetupActions() string {
+func (m Model) renderSetupActionLines(width int) []string {
+	segments := m.setupActionSegments()
+	if len(segments) == 0 {
+		return nil
+	}
+	separator := dialogPanelFillStyle.Render("   ")
+	lines := make([]string, 0, 2)
+	current := ""
+	for _, segment := range segments {
+		if strings.TrimSpace(segment) == "" {
+			continue
+		}
+		if current == "" {
+			current = segment
+			continue
+		}
+		candidate := current + separator + segment
+		if lipgloss.Width(candidate) <= width {
+			current = candidate
+			continue
+		}
+		lines = append(lines, current)
+		current = segment
+	}
+	if current != "" {
+		lines = append(lines, current)
+	}
+	return lines
+}
+
+func (m Model) setupActionSegments() []string {
+	if m.setupReviewMode {
+		return []string{
+			renderDialogAction("Enter", "save", commitActionKeyStyle, commitActionTextStyle),
+			renderDialogAction("Esc", "adjust", cancelActionKeyStyle, cancelActionTextStyle),
+			renderDialogAction("Tab", "role", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("e", "edit fields", pushActionKeyStyle, pushActionTextStyle),
+		}
+	}
 	if m.setupConfigMode {
-		return strings.Join([]string{
-			renderDialogAction("ctrl+s/Enter", "save", commitActionKeyStyle, commitActionTextStyle),
+		return []string{
+			renderDialogAction("ctrl+s/Enter", "review", commitActionKeyStyle, commitActionTextStyle),
 			renderDialogAction("Tab", "field", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("Up/Down", "field", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("Esc", "done", cancelActionKeyStyle, cancelActionTextStyle),
-		}, "   ")
+		}
 	}
 	actions := []string{
-		renderDialogAction("Enter", "choose", commitActionKeyStyle, commitActionTextStyle),
+		renderDialogAction("Enter", "review", commitActionKeyStyle, commitActionTextStyle),
 		renderDialogAction("Tab", "role", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("Up/Down", "provider", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("e", "edit fields", pushActionKeyStyle, pushActionTextStyle),
@@ -937,35 +974,7 @@ func (m Model) renderSetupActions() string {
 			renderDialogAction("t", "tier", navigateActionKeyStyle, navigateActionTextStyle),
 		}, actions[4:]...)...)
 	}
-	return strings.Join(actions, "   ")
-}
-
-func (m Model) setupOptionDetail(backend config.AIBackend, status aibackend.Status) string {
-	if !isLocalBackendModelPickerBackend(backend) {
-		return status.Detail
-	}
-
-	models := localBackendPickerModels(status.Models)
-	if len(models) == 0 {
-		return status.Detail
-	}
-
-	selectedModel := strings.TrimSpace(m.currentSettingsBaseline().OpenAICompatibleModel(backend))
-	endpoint := strings.TrimSpace(status.Endpoint)
-	if selectedModel != "" {
-		if localBackendModelExists(selectedModel, models) {
-			if endpoint != "" {
-				return fmt.Sprintf("using %s @ %s", selectedModel, endpoint)
-			}
-			return "using " + selectedModel
-		}
-		return fmt.Sprintf("configured %s (server offers %s)", selectedModel, summarizeLocalBackendModels(models))
-	}
-
-	if endpoint != "" {
-		return fmt.Sprintf("auto %s @ %s", firstString(models), endpoint)
-	}
-	return "auto " + firstString(models)
+	return actions
 }
 
 func (m Model) localBackendSetupHint(backend config.AIBackend, status aibackend.Status) string {

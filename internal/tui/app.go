@@ -126,6 +126,7 @@ type Model struct {
 	setupChecked                    bool
 	setupLoading                    bool
 	setupSaving                     bool
+	setupReviewMode                 bool
 	setupFocusedRole                setupRole
 	setupSelected                   int
 	setupBossSelected               int
@@ -1331,7 +1332,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setupLoading = false
 		m.setupSnapshot = msg.snapshot
 		if msg.openOnStartup && msg.snapshot.NeedsSetup() {
-			return m, m.openSetupSettingsMode()
+			return m, m.openSetupMode()
 		}
 		return m, nil
 	case newProjectResultMsg:
@@ -4235,7 +4236,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 	case commands.KindView:
 		return m, m.setVisibilityMode(commandVisibilityMode(inv.View))
 	case commands.KindSetup:
-		return m, m.openSetupSettingsMode()
+		return m, m.openSetupMode()
 	case commands.KindSettings:
 		return m, m.openSettingsMode()
 	case commands.KindSkills:
@@ -6263,10 +6264,13 @@ func (m Model) renderFooter(width int) string {
 		return m.renderModalFooter(width, "Boss chat setup: Enter choose, Tab switch, Esc cancel", supplementSegments...)
 	}
 	if m.setupMode {
-		if m.setupConfigMode {
-			return m.renderModalFooter(width, "Setup fields: type to edit, ctrl+s/Enter save, Esc done", supplementSegments...)
+		if m.setupReviewMode {
+			return m.renderModalFooter(width, "Setup review: Enter save, Esc adjust", supplementSegments...)
 		}
-		return m.renderModalFooter(width, "Setup: Tab role, ↑↓ provider, e edit fields, Enter choose, Esc close", supplementSegments...)
+		if m.setupConfigMode {
+			return m.renderModalFooter(width, "Setup fields: type to edit, ctrl+s/Enter review, Esc done", supplementSegments...)
+		}
+		return m.renderModalFooter(width, "Setup: Tab role, ↑↓ provider, e edit fields, Enter review, Esc close", supplementSegments...)
 	}
 	if m.settingsMode {
 		return m.renderModalFooter(width, "Settings: ctrl+s save, Tab next, Esc cancel", supplementSegments...)

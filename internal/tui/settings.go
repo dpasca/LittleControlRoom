@@ -312,12 +312,6 @@ func (m *Model) openSettingsMode() tea.Cmd {
 	return tea.Batch(cmd, m.refreshSetupSnapshotCmd(false))
 }
 
-func (m *Model) openSetupSettingsMode() tea.Cmd {
-	cmd := m.openSettingsModeWithBaseline(m.currentSettingsBaseline())
-	m.status = "Setup guide open. Pick the helper for project reports and boss chat; Enter chooses, ctrl+s saves, Esc skips."
-	return tea.Batch(cmd, m.refreshSetupSnapshotCmd(false))
-}
-
 func (m *Model) openBrowserSettingsMode() tea.Cmd {
 	settings := m.currentSettingsBaseline()
 	m.settingsFields = newSettingsFields(settings)

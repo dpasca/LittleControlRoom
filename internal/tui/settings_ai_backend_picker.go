@@ -14,7 +14,7 @@ func (m Model) openSettingsAIBackendPicker() (tea.Model, tea.Cmd) {
 	options := m.settingsAIBackendOptions()
 	m.settingsAIBackendPickerVisible = true
 	m.settingsAIBackendPickerSelected = m.settingsAIBackendPickerSelection(options)
-	m.status = "Choose the AI backend for project analysis."
+	m.status = "Choose the helper for project reports."
 	return m, nil
 }
 
@@ -90,34 +90,14 @@ func (m Model) renderSettingsAIBackendPickerPanel(bodyW, bodyH int) string {
 
 func (m Model) renderSettingsAIBackendPickerContent(width int) string {
 	options := m.settingsAIBackendOptions()
-	lines := []string{
-		commandPaletteTitleStyle.Render("AI Backend"),
-		renderDialogAction("Up/Down", "move", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
-			renderDialogAction("Enter", "choose", commitActionKeyStyle, commitActionTextStyle) + "   " +
-			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
-	}
 	currentLabel := settingsAIBackendOptionLabel(m.settingsFieldValue(settingsFieldAIBackend))
-	lines = append(lines, detailField("Current", detailValueStyle.Render(currentLabel)))
-	lines = append(lines, "")
-
 	current := config.AIBackend(strings.TrimSpace(m.settingsFieldValue(settingsFieldAIBackend)))
-	for i, option := range options {
-		lines = append(lines, renderProviderChoiceRow(option, i == m.settingsAIBackendPickerSelected, option.Value == current, width))
-	}
-
-	selected := options[m.settingsAIBackendPickerSelected]
-	lines = append(lines, "")
-	lines = append(lines, detailSectionStyle.Render("About"))
-	lines = append(lines, renderWrappedDialogTextLines(detailValueStyle, max(20, width-2), selected.Summary)...)
-	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, max(20, width-2), selected.Description)...)
-	lines = append(lines, detailField("Status", renderProviderChoiceStatus(selected)))
-	lines = append(lines, renderWrappedDetailField("Next", detailValueStyle, width, selected.NextStep))
-	return strings.Join(lines, "\n")
+	return renderProviderChoicePickerContent(providerChoiceRoleTitle(providerChoiceRoleProjectReports), currentLabel, options, m.settingsAIBackendPickerSelected, current, width)
 }
 
 func settingsAIBackendOptionLabel(raw string) string {
 	current := config.AIBackend(strings.TrimSpace(raw))
-	return providerChoiceLabel(Model{}.providerChoices(providerChoiceRoleProjectReports, config.EditableSettings{}), current, "Not configured")
+	return providerChoiceLabel(Model{}.providerChoices(providerChoiceRoleProjectReports, config.EditableSettings{}), current, providerChoiceRoleFallbackLabel(providerChoiceRoleProjectReports))
 }
 
 func (m Model) renderSettingsAIBackendValue(selected bool, inputWidth int) string {

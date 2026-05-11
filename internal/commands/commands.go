@@ -127,7 +127,7 @@ var specs = []Spec{
 	{Name: "view", Usage: "/view ai|all", Summary: "Choose AI-linked or all folders"},
 	{Name: "settings", Usage: "/settings", Summary: "Edit onboarding, AI, scope, browser, and advanced settings"},
 	{Name: "skills", Usage: "/skills", Summary: "Review Codex skills and local duplicates that may be stale"},
-	{Name: "setup", Usage: "/setup", Summary: "Open the Getting Started settings for first-run AI roles"},
+	{Name: "setup", Usage: "/setup", Summary: "Open the friendly AI setup concierge"},
 	{Name: "filter", Usage: "/filter [text|clear]", Summary: "Temporarily show only matching project names"},
 	{Name: "new-project", Usage: "/new-project", Summary: "Create a project folder, or paste an existing path to add it"},
 	{Name: "new-task", Usage: "/new-task", Summary: "Create a scratch task folder under the default task root"},

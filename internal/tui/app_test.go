@@ -19305,6 +19305,33 @@ func TestDispatchBossOffClosesBossMode(t *testing.T) {
 	}
 }
 
+func TestDispatchSetupOpensSetupConcierge(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendOpenCode
+
+	m := Model{
+		settingsBaseline: &settings,
+		settingsMode:     true,
+		width:            100,
+		height:           24,
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindSetup})
+	got := updated.(Model)
+	if !got.setupMode {
+		t.Fatalf("/setup should open the setup concierge")
+	}
+	if got.settingsMode {
+		t.Fatalf("/setup should leave the full settings editor closed")
+	}
+	if got.status != "Setup concierge open. Pick who should handle project reports and boss chat." {
+		t.Fatalf("status = %q, want setup concierge status", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("/setup should refresh backend availability")
+	}
+}
+
 func TestDispatchCommandRefreshAlsoRefreshesSelectedProject(t *testing.T) {
 	t.Parallel()
 
@@ -19378,7 +19405,7 @@ func TestDispatchCommandRefreshAlsoRefreshesSelectedProject(t *testing.T) {
 	}
 }
 
-func TestStartupUnconfiguredAIBackendOpensSettingsMode(t *testing.T) {
+func TestStartupUnconfiguredAIBackendOpensSetupConcierge(t *testing.T) {
 	m := Model{
 		width:  100,
 		height: 24,
@@ -19391,14 +19418,17 @@ func TestStartupUnconfiguredAIBackendOpensSettingsMode(t *testing.T) {
 		},
 	})
 	got := updated.(Model)
-	if !got.settingsMode {
-		t.Fatalf("settings mode should open when startup detects no configured backend")
+	if !got.setupMode {
+		t.Fatalf("setup concierge should open when startup detects no configured backend")
 	}
-	if got.status != "Setup guide open. Pick the helper for project reports and boss chat; Enter chooses, ctrl+s saves, Esc skips." {
-		t.Fatalf("status = %q, want startup settings explanation", got.status)
+	if got.settingsMode {
+		t.Fatalf("startup setup should not open full settings mode")
+	}
+	if got.status != "Setup concierge open. Pick who should handle project reports and boss chat." {
+		t.Fatalf("status = %q, want setup concierge explanation", got.status)
 	}
 	if cmd == nil {
-		t.Fatalf("opening settings should return a focus command")
+		t.Fatalf("opening setup should refresh backend availability")
 	}
 }
 
@@ -19449,7 +19479,7 @@ func TestOpenSetupModePrefersReadyBackendOverUnavailableCurrentBackend(t *testin
 	}
 }
 
-func TestRenderSetupOptionRowDistinguishesActiveAndReadyBackends(t *testing.T) {
+func TestRenderSetupProviderRowsUseSharedProviderChoiceRows(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.AIBackend = config.AIBackendOpenAIAPI
 
@@ -19473,21 +19503,19 @@ func TestRenderSetupOptionRowDistinguishesActiveAndReadyBackends(t *testing.T) {
 		},
 	}
 
-	activeRow := ansi.Strip(m.renderSetupOptionRow(config.AIBackendOpenAIAPI, false, 88))
-	if !strings.Contains(activeRow, "active") {
-		t.Fatalf("active backend row should say active, got %q", activeRow)
+	rows := ansi.Strip(strings.Join(m.renderSetupProviderRows(88), "\n"))
+	if !strings.Contains(rows, "OpenAI API") || !strings.Contains(rows, "(current)") {
+		t.Fatalf("current backend row should come from shared provider choice rows, got %q", rows)
 	}
-
-	readyRow := ansi.Strip(m.renderSetupOptionRow(config.AIBackendCodex, false, 88))
-	if !strings.Contains(readyRow, "ready") {
-		t.Fatalf("ready backend row should say ready, got %q", readyRow)
+	if !strings.Contains(rows, "Codex") || !strings.Contains(rows, "ready") {
+		t.Fatalf("ready backend row should say ready, got %q", rows)
 	}
-	if strings.Contains(readyRow, "active") {
-		t.Fatalf("ready backend row should not look active, got %q", readyRow)
+	if strings.Contains(rows, "active") {
+		t.Fatalf("provider rows should use shared current marker instead of setup-only active state, got %q", rows)
 	}
 }
 
-func TestRenderSetupOptionRowShowsLocalModelSelection(t *testing.T) {
+func TestProviderChoiceStatusShowsLocalModelSelection(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.AIBackend = config.AIBackendMLX
 	settings.MLXModel = "mlx-community/Qwen3.5-9B-MLX-4bit"
@@ -19507,9 +19535,11 @@ func TestRenderSetupOptionRowShowsLocalModelSelection(t *testing.T) {
 		},
 	}
 
-	row := ansi.Strip(m.renderSetupOptionRow(config.AIBackendMLX, true, 120))
-	if !strings.Contains(row, "using mlx-community/Qwen3.5-9B-MLX-4bit") {
-		t.Fatalf("setup row = %q, want configured local model detail", row)
+	choices := m.providerChoices(providerChoiceRoleProjectReports, settings)
+	choice := choices[providerChoiceSelection(choices, config.AIBackendMLX)]
+	status := ansi.Strip(renderProviderChoiceStatus(choice))
+	if !strings.Contains(status, "using mlx-community/Qwen3.5-9B-MLX-4bit") {
+		t.Fatalf("provider choice status = %q, want configured local model detail", status)
 	}
 }
 
@@ -19563,7 +19593,7 @@ func TestSetupLoadingBlocksRepeatRefresh(t *testing.T) {
 	}
 }
 
-func TestSetupEnterMarksSavingAndBlocksRepeatEnter(t *testing.T) {
+func TestSetupEnterOpensReviewThenReviewEnterSaves(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -19577,23 +19607,112 @@ func TestSetupEnterMarksSavingAndBlocksRepeatEnter(t *testing.T) {
 
 	updated, cmd := m.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
-	if cmd == nil {
-		t.Fatalf("setup enter should queue a save command")
+	if cmd != nil {
+		t.Fatalf("setup enter should not save before review")
 	}
-	if !got.setupSaving {
-		t.Fatalf("setup enter should mark saving in progress")
+	if !got.setupReviewMode {
+		t.Fatalf("setup enter should open review mode")
 	}
-	if got.status != "Saving AI setup..." {
-		t.Fatalf("status = %q, want saving message", got.status)
+	if got.setupSaving {
+		t.Fatalf("setup enter should not mark saving before review confirmation")
 	}
 
 	updated, cmd = got.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
-	if cmd != nil {
-		t.Fatalf("setup enter should not queue another save while saving")
+	if cmd == nil {
+		t.Fatalf("review enter should queue a save command")
 	}
 	if !got.setupSaving {
-		t.Fatalf("setup saving flag should stay true until the save completes")
+		t.Fatalf("review enter should mark saving in progress")
+	}
+	if got.setupReviewMode {
+		t.Fatalf("review should close once saving starts")
+	}
+	if got.status != "Saving AI setup..." {
+		t.Fatalf("status = %q, want saving message", got.status)
+	}
+}
+
+func TestRenderSetupReviewShowsFinalChoices(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendOpenCode
+	settings.BossChatBackend = config.AIBackendOpenAIAPI
+	settings.OpenAIAPIKey = "sk-review-test"
+	settings.OpenCodeModelTier = string(config.ModelTierCheap)
+
+	m := Model{
+		setupMode:         true,
+		setupReviewMode:   true,
+		settingsBaseline:  &settings,
+		setupFocusedRole:  setupRoleProjectReports,
+		setupSelected:     mSetupSelectionForTest(config.AIBackendOpenCode),
+		setupBossSelected: mSetupBossSelectionForTest(config.AIBackendOpenAIAPI),
+		setupModelTier:    config.ModelTierCheap,
+		setupSnapshot: aibackend.Snapshot{
+			OpenCode: aibackend.Status{
+				Backend:       config.AIBackendOpenCode,
+				Label:         "OpenCode",
+				Installed:     true,
+				Authenticated: true,
+				Ready:         true,
+			},
+			OpenAIAPI: aibackend.Status{
+				Backend:       config.AIBackendOpenAIAPI,
+				Label:         "OpenAI API key",
+				Authenticated: true,
+				Ready:         true,
+			},
+		},
+	}
+
+	rendered := ansi.Strip(m.renderSetupContent(96, 24))
+	for _, want := range []string{
+		"Ready to Save",
+		"Project reports",
+		"OpenCode",
+		"Boss chat",
+		"OpenAI API key",
+		"OpenAI key",
+		"OpenCode tier",
+		"cheap",
+		"Press Enter to save this setup, or Esc to adjust it.",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("setup review missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestRenderSetupContentKeepsActionLegendWhileLoading(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendOpenCode
+	settings.BossChatBackend = config.AIBackendOpenAIAPI
+	settings.OpenAIAPIKey = "sk-loading-legend"
+
+	m := Model{
+		setupMode:         true,
+		setupLoading:      true,
+		settingsBaseline:  &settings,
+		setupFocusedRole:  setupRoleProjectReports,
+		setupSelected:     mSetupSelectionForTest(config.AIBackendOpenCode),
+		setupBossSelected: mSetupBossSelectionForTest(config.AIBackendOpenAIAPI),
+		setupModelTier:    config.ModelTierCheap,
+	}
+
+	rendered := ansi.Strip(m.renderSetupContent(72, 20))
+	for _, want := range []string{
+		"Setup Concierge",
+		"Checking local backend availability",
+		"Enter",
+		"review",
+		"Tab",
+		"role",
+		"Up/Down",
+		"provider",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("setup loading screen missing %q:\n%s", want, rendered)
+		}
 	}
 }
 
@@ -19635,11 +19754,11 @@ func TestSetupBossChatDisabledSavesSeparately(t *testing.T) {
 
 	updated, cmd := m.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
-	if cmd == nil {
-		t.Fatalf("choosing disabled boss chat should queue a save command")
+	if cmd != nil {
+		t.Fatalf("choosing disabled boss chat should not save before review")
 	}
-	if !got.setupSaving {
-		t.Fatalf("choosing disabled boss chat should mark setup saving")
+	if !got.setupReviewMode {
+		t.Fatalf("choosing disabled boss chat should open review")
 	}
 	if got.currentSettingsBaseline().AIBackend != config.AIBackendCodex {
 		t.Fatalf("boss chat selection should not change project reports backend")
@@ -19694,11 +19813,23 @@ func TestSetupInlineConfigSaveUsesEditedFields(t *testing.T) {
 
 	updated, cmd := m.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("saving inline setup fields should open review before save")
+	}
+	if !got.setupReviewMode {
+		t.Fatalf("saving inline setup fields should open review")
+	}
+	if got.setupSaving {
+		t.Fatalf("inline setup fields should not save until review confirmation")
+	}
+
+	updated, cmd = got.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
 	if cmd == nil {
-		t.Fatalf("saving inline setup fields should queue a save command")
+		t.Fatalf("reviewing inline setup fields should queue a save command")
 	}
 	if !got.setupSaving {
-		t.Fatalf("saving inline setup fields should mark setup saving")
+		t.Fatalf("reviewing inline setup fields should mark setup saving")
 	}
 	msg := cmd()
 	saved, ok := msg.(setupSavedMsg)
@@ -19814,21 +19945,11 @@ func TestSetupLocalModelPickerUpdatesBaseline(t *testing.T) {
 }
 
 func mSetupSelectionForTest(backend config.AIBackend) int {
-	for i, option := range setupBackendOptions {
-		if option == backend {
-			return i
-		}
-	}
-	return 0
+	return providerChoiceSelection(Model{}.providerChoices(providerChoiceRoleProjectReports, config.EditableSettings{}), backend)
 }
 
 func mSetupBossSelectionForTest(backend config.AIBackend) int {
-	for i, option := range setupBossChatOptions {
-		if option == backend {
-			return i
-		}
-	}
-	return 0
+	return providerChoiceSelection(Model{}.providerChoices(providerChoiceRoleBossChat, config.EditableSettings{}), backend)
 }
 
 func queueTodoWorktreeSuggestionForTest(t *testing.T, ctx context.Context, st *store.Store, todoID int64) {
@@ -20584,14 +20705,14 @@ func TestSettingsProviderPickersRenderSharedStatus(t *testing.T) {
 	}
 
 	projectPicker := ansi.Strip(m.renderSettingsAIBackendPickerContent(72))
-	for _, want := range []string{"AI Backend", "Codex", "ready", "Status", "Next"} {
+	for _, want := range []string{"Project Reports Helper", "Codex", "ready", "Status", "Next"} {
 		if !strings.Contains(projectPicker, want) {
 			t.Fatalf("project picker missing %q: %q", want, projectPicker)
 		}
 	}
 
 	bossPicker := ansi.Strip(m.renderSettingsBossChatBackendPickerContent(72))
-	for _, want := range []string{"Boss Chat", "Auto", "ready", "saved OpenAI API key", "Next"} {
+	for _, want := range []string{"Boss Chat Helper", "Auto", "ready", "saved OpenAI API key", "Next"} {
 		if !strings.Contains(bossPicker, want) {
 			t.Fatalf("boss picker missing %q: %q", want, bossPicker)
 		}

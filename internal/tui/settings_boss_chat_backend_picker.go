@@ -14,7 +14,7 @@ func (m Model) openSettingsBossChatBackendPicker() (tea.Model, tea.Cmd) {
 	options := m.settingsBossChatBackendOptions()
 	m.settingsBossChatPickerVisible = true
 	m.settingsBossChatPickerSelected = m.settingsBossChatBackendPickerSelection(options)
-	m.status = "Choose boss chat inference."
+	m.status = "Choose the helper for boss chat."
 	return m, nil
 }
 
@@ -90,29 +90,9 @@ func (m Model) renderSettingsBossChatBackendPickerPanel(bodyW, bodyH int) string
 
 func (m Model) renderSettingsBossChatBackendPickerContent(width int) string {
 	options := m.settingsBossChatBackendOptions()
-	lines := []string{
-		commandPaletteTitleStyle.Render("Boss Chat"),
-		renderDialogAction("Up/Down", "move", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
-			renderDialogAction("Enter", "choose", commitActionKeyStyle, commitActionTextStyle) + "   " +
-			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
-	}
 	currentLabel := settingsBossChatBackendOptionLabel(m.settingsFieldValue(settingsFieldBossChatBackend))
-	lines = append(lines, detailField("Current", detailValueStyle.Render(currentLabel)))
-	lines = append(lines, "")
-
 	current := config.AIBackend(strings.TrimSpace(m.settingsFieldValue(settingsFieldBossChatBackend)))
-	for i, option := range options {
-		lines = append(lines, renderProviderChoiceRow(option, i == m.settingsBossChatPickerSelected, option.Value == current, width))
-	}
-
-	selected := options[m.settingsBossChatPickerSelected]
-	lines = append(lines, "")
-	lines = append(lines, detailSectionStyle.Render("About"))
-	lines = append(lines, renderWrappedDialogTextLines(detailValueStyle, max(20, width-2), selected.Summary)...)
-	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, max(20, width-2), selected.Description)...)
-	lines = append(lines, detailField("Status", renderProviderChoiceStatus(selected)))
-	lines = append(lines, renderWrappedDetailField("Next", detailValueStyle, width, selected.NextStep))
-	return strings.Join(lines, "\n")
+	return renderProviderChoicePickerContent(providerChoiceRoleTitle(providerChoiceRoleBossChat), currentLabel, options, m.settingsBossChatPickerSelected, current, width)
 }
 
 func renderSettingsBossChatBackendLabel(raw string) string {
@@ -121,7 +101,7 @@ func renderSettingsBossChatBackendLabel(raw string) string {
 
 func settingsBossChatBackendOptionLabel(raw string) string {
 	current := config.AIBackend(strings.TrimSpace(raw))
-	return providerChoiceLabel(Model{}.providerChoices(providerChoiceRoleBossChat, config.EditableSettings{}), current, "Auto")
+	return providerChoiceLabel(Model{}.providerChoices(providerChoiceRoleBossChat, config.EditableSettings{}), current, providerChoiceRoleFallbackLabel(providerChoiceRoleBossChat))
 }
 
 func (m Model) renderSettingsBossChatBackendValue(selected bool, inputWidth int) string {

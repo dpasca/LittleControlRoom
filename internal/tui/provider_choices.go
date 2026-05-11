@@ -27,6 +27,42 @@ type providerChoice struct {
 	NextStep    string
 }
 
+func providerChoiceRoleTitle(role providerChoiceRole) string {
+	switch role {
+	case providerChoiceRoleBossChat:
+		return "Boss Chat Helper"
+	default:
+		return "Project Reports Helper"
+	}
+}
+
+func providerChoiceRoleListTitle(role providerChoiceRole) string {
+	switch role {
+	case providerChoiceRoleBossChat:
+		return "Who Should Handle Boss Chat?"
+	default:
+		return "Who Should Handle Project Reports?"
+	}
+}
+
+func providerChoiceRolePurpose(role providerChoiceRole) string {
+	switch role {
+	case providerChoiceRoleBossChat:
+		return "This is the direct high-level /boss conversation. It can use a different helper from background reports, or stay off."
+	default:
+		return "This helper writes summaries, classifications, TODO help, and commit help in the background."
+	}
+}
+
+func providerChoiceRoleFallbackLabel(role providerChoiceRole) string {
+	switch role {
+	case providerChoiceRoleBossChat:
+		return "Auto"
+	default:
+		return "Not configured"
+	}
+}
+
 func (m Model) providerChoices(role providerChoiceRole, settings config.EditableSettings) []providerChoice {
 	switch role {
 	case providerChoiceRoleBossChat:
@@ -84,7 +120,7 @@ func (m Model) projectReportsProviderChoices(settings config.EditableSettings) [
 	for i := range specs {
 		status, known := m.inferenceBackendStatus(specs[i].Value, settings)
 		specs[i].State, specs[i].StateStyle = inferenceStateForBackend(specs[i].Value, status, known)
-		specs[i].Detail = providerChoiceStatusDetail(status, "Availability will refresh in the background.")
+		specs[i].Detail = m.projectReportsProviderDetail(specs[i].Value, status)
 		specs[i].NextStep = projectReportsProviderNextStep(specs[i].Value, status, known)
 	}
 	return specs
@@ -133,6 +169,37 @@ func (m Model) bossChatProviderChoices(settings config.EditableSettings) []provi
 		specs[i].NextStep = bossChatProviderNextStep(specs[i], settings)
 	}
 	return specs
+}
+
+func (m Model) projectReportsProviderDetail(backend config.AIBackend, status aibackend.Status) string {
+	if isLocalBackendModelPickerBackend(backend) && status.Ready {
+		if detail := m.localProviderChoiceDetail(backend, status); detail != "" {
+			return detail
+		}
+	}
+	return providerChoiceStatusDetail(status, "Availability will refresh in the background.")
+}
+
+func (m Model) localProviderChoiceDetail(backend config.AIBackend, status aibackend.Status) string {
+	models := localBackendPickerModels(status.Models)
+	if len(models) == 0 {
+		return ""
+	}
+	selectedModel := strings.TrimSpace(m.currentSettingsBaseline().OpenAICompatibleModel(backend))
+	endpoint := strings.TrimSpace(status.Endpoint)
+	if selectedModel != "" {
+		if localBackendModelExists(selectedModel, models) {
+			if endpoint != "" {
+				return "using " + selectedModel + " @ " + endpoint
+			}
+			return "using " + selectedModel
+		}
+		return "configured " + selectedModel + " (server offers " + summarizeLocalBackendModels(models) + ")"
+	}
+	if endpoint != "" {
+		return "auto " + firstString(models) + " @ " + endpoint
+	}
+	return "auto " + firstString(models)
 }
 
 func projectReportsProviderNextStep(backend config.AIBackend, status aibackend.Status, known bool) string {
@@ -241,4 +308,37 @@ func renderProviderChoiceRow(choice providerChoice, selected, current bool, widt
 		return projectListSelectedRowStyle.Width(width).Render(row)
 	}
 	return lipgloss.NewStyle().Width(width).Render(row)
+}
+
+func renderProviderChoicePickerContent(title string, currentLabel string, options []providerChoice, selectedIndex int, current config.AIBackend, width int) string {
+	lines := []string{
+		commandPaletteTitleStyle.Render(title),
+		renderDialogAction("Up/Down", "move", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
+			renderDialogAction("Enter", "choose", commitActionKeyStyle, commitActionTextStyle) + "   " +
+			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
+	}
+	lines = append(lines, detailField("Current", detailValueStyle.Render(currentLabel)))
+	lines = append(lines, "")
+
+	if len(options) == 0 {
+		lines = append(lines, commandPaletteHintStyle.Render("No provider choices are available right now."))
+		return strings.Join(lines, "\n")
+	}
+
+	selectedIndex = wrapIndex(selectedIndex, len(options))
+	for i, option := range options {
+		lines = append(lines, renderProviderChoiceRow(option, i == selectedIndex, option.Value == current, width))
+	}
+	lines = append(lines, "")
+	lines = append(lines, renderProviderChoiceDetail(options[selectedIndex], width))
+	return strings.Join(lines, "\n")
+}
+
+func renderProviderChoiceDetail(choice providerChoice, width int) string {
+	lines := []string{detailSectionStyle.Render("About")}
+	lines = append(lines, renderWrappedDialogTextLines(detailValueStyle, max(20, width-2), choice.Summary)...)
+	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, max(20, width-2), choice.Description)...)
+	lines = append(lines, detailField("Status", renderProviderChoiceStatus(choice)))
+	lines = append(lines, renderWrappedDetailField("Next", detailValueStyle, width, choice.NextStep))
+	return strings.Join(lines, "\n")
 }
