@@ -23,6 +23,11 @@ jobs:
         with:
           go-version: "1.25"
 
+      - name: Configure git identity for tests
+        run: |
+          git config --global user.name "Little Control Room CI"
+          git config --global user.email "ci@little-control-room.local"
+
       - name: Run tests
         run: go test ./...
 

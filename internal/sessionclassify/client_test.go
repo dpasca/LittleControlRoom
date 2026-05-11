@@ -867,7 +867,7 @@ func TestOpenAIClientClassifyTransportRetriesRemainBounded(t *testing.T) {
 	if attempts != classifierTransientRetryAttempts {
 		t.Fatalf("attempts = %d, want %d", attempts, classifierTransientRetryAttempts)
 	}
-	if !strings.Contains(err.Error(), "can't assign requested address") {
+	if !strings.Contains(err.Error(), "can't assign requested address") && !strings.Contains(err.Error(), "cannot assign requested address") {
 		t.Fatalf("error = %q, want transport detail", err.Error())
 	}
 }

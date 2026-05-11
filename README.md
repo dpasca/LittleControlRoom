@@ -43,7 +43,7 @@ Requirements:
 
 ### Prebuilt binaries
 
-Prebuilt binaries are the intended install path once a published GitHub Release exists. The repo now has a GoReleaser workflow for `v*` tags, but if the [Releases page](https://github.com/dpasca/LittleControlRoom/releases) does not show downloadable assets yet, use the source build below.
+Prebuilt binaries are the intended install path. Download the archive for your platform from the [Releases page](https://github.com/dpasca/LittleControlRoom/releases), or use the source build below if no release asset is available yet.
 
 ```bash
 # Example: macOS ARM64
@@ -118,7 +118,7 @@ The main TUI command palette opens with `/`.
 - `/sort <attention|recent>`: Change the project ordering.
 - `/view <ai|all>`: Switch between AI-linked and all tracked folders.
 - `/setup`: Open the Getting Started settings for first-run AI roles. Runs automatically on launch until you pick a backend.
-- `/settings`: Full preferences with Getting Started first, then AI & Models, Project Scope, Browser, and Advanced.
+- `/settings`: Full preferences with Getting Started first, then Providers & Models, Project Scope, Browser, and Advanced.
 - `/filter [text|clear]`: Temporarily narrow the whole dashboard to matching project names.
 - `/new-project`: Create a project folder, or paste an existing project path to add it directly.
 - `/new-task`: Create a scratch task folder under the default task root.
@@ -206,7 +206,7 @@ Most day-to-day use falls into a few buckets:
   | [![Diff window](docs/screenshots/diff-view.png)](docs/screenshots/diff-view.png) | [![Commit preview dialog](docs/screenshots/commit-preview.png)](docs/screenshots/commit-preview.png) | [![Image diff with before/after previews](docs/screenshots/diff-view-image.png)](docs/screenshots/diff-view-image.png) |
 
 - **Keep the list clean** — Use `f` or `/filter <text>` to narrow the project list, `/pin` and `/snooze` to control attention, `/remove` to confirm and archive/delete/hide the selected item based on context. Use `/ignore` when you want an explicit exact-name hide rule, and `/ignored` to restore hidden names or paths.
-- **Adjust setup** — `/setup` jumps to the Getting Started settings; `/settings` is the full preferences panel. Getting Started covers project-report AI, boss chat, the OpenAI key when needed, and project search paths. AI & Models handles local endpoints, model overrides, and launch presets. Project Scope controls include/exclude paths and privacy patterns. Browser sets the Playwright window policy. Advanced holds experimental LCAgent settings and tuning knobs like refresh thresholds. For embedded Codex and OpenCode sessions, LCR can isolate Playwright per session so browser-heavy work multitasks more cleanly in parallel, then surface the right managed browser window only when a human step is actually needed. Switch to `Classic browser behavior` if you want the original provider-owned flow, then use `/new-project` for repo-backed work and `/new-task` for quick scratch work.
+- **Adjust setup** — `/setup` jumps to the Getting Started settings; `/settings` is the full preferences panel. Getting Started covers project-report AI, boss chat, the OpenAI key when needed, and project search paths. Providers & Models keeps the same provider choices visible beside local endpoints, model overrides, and launch presets. Project Scope controls include/exclude paths and privacy patterns. Browser sets the Playwright window policy. Advanced holds experimental LCAgent settings and tuning knobs like refresh thresholds. For embedded Codex and OpenCode sessions, LCR can isolate Playwright per session so browser-heavy work multitasks more cleanly in parallel, then surface the right managed browser window only when a human step is actually needed. Switch to `Classic browser behavior` if you want the original provider-owned flow, then use `/new-project` for repo-backed work and `/new-task` for quick scratch work.
 
 For the full command list and detailed behavior, see [`docs/reference.md`](docs/reference.md).
 
