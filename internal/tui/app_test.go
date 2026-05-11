@@ -4241,8 +4241,6 @@ func TestRenderTopStatusLineShowsMergeConflictBadge(t *testing.T) {
 }
 
 func TestRenderAIBackendStatusNoticeUsesWarningBadge(t *testing.T) {
-	t.Parallel()
-
 	prevProfile := lipgloss.ColorProfile()
 	prevDarkBackground := lipgloss.HasDarkBackground()
 	lipgloss.SetColorProfile(termenv.ANSI256)
@@ -4298,8 +4296,6 @@ func TestSetupSnapshotUnavailableKeepsExistingStatus(t *testing.T) {
 }
 
 func TestRenderFooterPulsesWhenUsageIncreases(t *testing.T) {
-	t.Parallel()
-
 	prevProfile := lipgloss.ColorProfile()
 	prevDarkBackground := lipgloss.HasDarkBackground()
 	lipgloss.SetColorProfile(termenv.ANSI256)
@@ -19305,7 +19301,7 @@ func TestDispatchBossOffClosesBossMode(t *testing.T) {
 	}
 }
 
-func TestDispatchSetupOpensSetupConcierge(t *testing.T) {
+func TestDispatchSetupOpensSetupWizard(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.AIBackend = config.AIBackendOpenCode
 
@@ -19319,13 +19315,13 @@ func TestDispatchSetupOpensSetupConcierge(t *testing.T) {
 	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindSetup})
 	got := updated.(Model)
 	if !got.setupMode {
-		t.Fatalf("/setup should open the setup concierge")
+		t.Fatalf("/setup should open the setup wizard")
 	}
 	if got.settingsMode {
 		t.Fatalf("/setup should leave the full settings editor closed")
 	}
-	if got.status != "Setup concierge open. Pick who should handle project reports and boss chat." {
-		t.Fatalf("status = %q, want setup concierge status", got.status)
+	if got.status != "Setup wizard open. Press Enter to accept each page and continue." {
+		t.Fatalf("status = %q, want setup wizard status", got.status)
 	}
 	if cmd == nil {
 		t.Fatalf("/setup should refresh backend availability")
@@ -19405,7 +19401,7 @@ func TestDispatchCommandRefreshAlsoRefreshesSelectedProject(t *testing.T) {
 	}
 }
 
-func TestStartupUnconfiguredAIBackendOpensSetupConcierge(t *testing.T) {
+func TestStartupUnconfiguredAIBackendOpensSetupWizard(t *testing.T) {
 	m := Model{
 		width:  100,
 		height: 24,
@@ -19419,13 +19415,13 @@ func TestStartupUnconfiguredAIBackendOpensSetupConcierge(t *testing.T) {
 	})
 	got := updated.(Model)
 	if !got.setupMode {
-		t.Fatalf("setup concierge should open when startup detects no configured backend")
+		t.Fatalf("setup wizard should open when startup detects no configured backend")
 	}
 	if got.settingsMode {
 		t.Fatalf("startup setup should not open full settings mode")
 	}
-	if got.status != "Setup concierge open. Pick who should handle project reports and boss chat." {
-		t.Fatalf("status = %q, want setup concierge explanation", got.status)
+	if got.status != "Setup wizard open. Press Enter to accept each page and continue." {
+		t.Fatalf("status = %q, want setup wizard explanation", got.status)
 	}
 	if cmd == nil {
 		t.Fatalf("opening setup should refresh backend availability")
@@ -19598,8 +19594,10 @@ func TestSetupEnterSelectsSaveStepThenEnterSaves(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	m := Model{
-		setupMode:     true,
-		setupSelected: mSetupSelectionForTest(config.AIBackendDisabled),
+		setupMode:         true,
+		setupStep:         setupStepProjectProvider,
+		setupSelected:     mSetupSelectionForTest(config.AIBackendDisabled),
+		setupBossSelected: mSetupBossSelectionForTest(config.AIBackendDisabled),
 		setupSnapshot: aibackend.Snapshot{
 			Selected: config.AIBackendDisabled,
 		},
@@ -19608,13 +19606,22 @@ func TestSetupEnterSelectsSaveStepThenEnterSaves(t *testing.T) {
 	updated, cmd := m.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
 	if cmd != nil {
-		t.Fatalf("setup enter should not save before the save step")
+		t.Fatalf("project provider enter should not save")
 	}
-	if !got.setupReviewMode {
-		t.Fatalf("setup enter should open the save step")
+	if got.setupStep != setupStepBossProvider || got.setupFocusedRole != setupRoleBossChat {
+		t.Fatalf("project provider enter should advance to boss provider, got step=%v role=%v", got.setupStep, got.setupFocusedRole)
 	}
 	if got.setupSaving {
 		t.Fatalf("setup enter should not mark saving before save confirmation")
+	}
+
+	updated, cmd = got.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("boss provider enter should not save before the save step")
+	}
+	if !got.setupReviewMode || got.setupStep != setupStepSave {
+		t.Fatalf("boss provider enter should open the save step, got step=%v review=%v", got.setupStep, got.setupReviewMode)
 	}
 
 	updated, cmd = got.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
@@ -19643,6 +19650,7 @@ func TestRenderSetupSaveStepShowsFinalChoices(t *testing.T) {
 	m := Model{
 		setupMode:         true,
 		setupReviewMode:   true,
+		setupStep:         setupStepSave,
 		settingsBaseline:  &settings,
 		setupFocusedRole:  setupRoleProjectReports,
 		setupSelected:     mSetupSelectionForTest(config.AIBackendOpenCode),
@@ -19671,11 +19679,11 @@ func TestRenderSetupSaveStepShowsFinalChoices(t *testing.T) {
 		"Project reports",
 		"OpenCode",
 		"Boss chat",
-		"OpenAI API key",
+		"OpenAI API",
 		"OpenAI key",
 		"OpenCode tier",
 		"cheap",
-		"Enter selects Save setup. Esc returns to the provider tree.",
+		"Enter saves setup. Esc goes back to the previous page.",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("setup save step missing %q:\n%s", want, rendered)
@@ -19704,12 +19712,10 @@ func TestRenderSetupContentKeepsActionLegendWhileLoading(t *testing.T) {
 
 	rendered := ansi.Strip(m.renderSetupContent(72, 20))
 	for _, want := range []string{
-		"Setup Concierge",
+		"Setup Wizard",
 		"Checking local backend availability",
 		"Enter",
-		"select",
-		"Tab",
-		"role",
+		"next",
 		"Up/Down",
 		"provider",
 	} {
@@ -19758,7 +19764,7 @@ func TestRenderSetupSelectedRoleCardPulsesSlowly(t *testing.T) {
 	}
 }
 
-func TestSetupFieldsStayInSubdialogUntilEnter(t *testing.T) {
+func TestSetupFieldsStayOnDetailsPageUntilEnter(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.AIBackend = config.AIBackendCodex
 	settings.MLXBaseURL = "http://127.0.0.1:8080/v1"
@@ -19766,6 +19772,7 @@ func TestSetupFieldsStayInSubdialogUntilEnter(t *testing.T) {
 
 	m := Model{
 		setupMode:        true,
+		setupStep:        setupStepProjectProvider,
 		settingsBaseline: &settings,
 		settingsFields:   newSettingsFields(settings),
 		setupFocusedRole: setupRoleProjectReports,
@@ -19780,19 +19787,22 @@ func TestSetupFieldsStayInSubdialogUntilEnter(t *testing.T) {
 		"Press e",
 	} {
 		if strings.Contains(rendered, unwanted) {
-			t.Fatalf("setup concierge should keep field editor hidden before Enter; found %q:\n%s", unwanted, rendered)
+			t.Fatalf("setup wizard should keep field editor hidden before Enter; found %q:\n%s", unwanted, rendered)
 		}
 	}
 
 	updated, cmd := m.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
 	if cmd == nil {
-		t.Fatalf("entering a configurable setup choice should focus the subdialog field")
+		t.Fatalf("entering a configurable setup choice should focus the details field")
 	}
 	if !got.setupConfigMode {
-		t.Fatalf("entering a configurable setup choice should open setup config mode")
+		t.Fatalf("entering a configurable setup choice should open setup details mode")
 	}
-	rendered = ansi.Strip(got.renderSetupOverlay("", 104, 34))
+	if got.setupStep != setupStepProjectConfig {
+		t.Fatalf("setup step = %v, want project config", got.setupStep)
+	}
+	rendered = ansi.Strip(got.renderSetupPanel(104, 34))
 	for _, want := range []string{
 		"Configure Project Reports",
 		"MLX base URL",
@@ -19801,25 +19811,27 @@ func TestSetupFieldsStayInSubdialogUntilEnter(t *testing.T) {
 		"continue",
 	} {
 		if !strings.Contains(rendered, want) {
-			t.Fatalf("setup config subdialog missing %q:\n%s", want, rendered)
+			t.Fatalf("setup details page missing %q:\n%s", want, rendered)
 		}
 	}
 }
 
-func TestSetupTabFocusesBossChatRole(t *testing.T) {
+func TestSetupEnterAdvancesToBossChatRole(t *testing.T) {
 	m := Model{
 		setupMode:         true,
+		setupStep:         setupStepProjectProvider,
 		setupFocusedRole:  setupRoleProjectReports,
+		setupSelected:     mSetupSelectionForTest(config.AIBackendDisabled),
 		setupBossSelected: 0,
 	}
 
-	updated, cmd := m.updateSetupMode(tea.KeyMsg{Type: tea.KeyTab})
+	updated, cmd := m.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
 	if cmd != nil {
-		t.Fatalf("switching setup roles should not queue a command")
+		t.Fatalf("advancing setup roles should not queue a command")
 	}
-	if got.setupFocusedRole != setupRoleBossChat {
-		t.Fatalf("setup focused role = %v, want boss chat", got.setupFocusedRole)
+	if got.setupFocusedRole != setupRoleBossChat || got.setupStep != setupStepBossProvider {
+		t.Fatalf("setup step=%v role=%v, want boss provider", got.setupStep, got.setupFocusedRole)
 	}
 
 	updated, _ = got.updateSetupMode(tea.KeyMsg{Type: tea.KeyDown})
@@ -19837,6 +19849,7 @@ func TestSetupBossChatDisabledSavesSeparately(t *testing.T) {
 
 	m := Model{
 		setupMode:         true,
+		setupStep:         setupStepBossProvider,
 		settingsBaseline:  &settings,
 		setupFocusedRole:  setupRoleBossChat,
 		setupBossSelected: mSetupBossSelectionForTest(config.AIBackendDisabled),
@@ -19855,7 +19868,7 @@ func TestSetupBossChatDisabledSavesSeparately(t *testing.T) {
 	}
 }
 
-func TestSetupOpenAIKeyOpensConfigSubdialogInsteadOfSettings(t *testing.T) {
+func TestSetupOpenAIKeyOpensDetailsPageInsteadOfSettings(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.AIBackend = config.AIBackendCodex
 	settings.OpenAIAPIKey = ""
@@ -19884,7 +19897,7 @@ func TestSetupOpenAIKeyOpensConfigSubdialogInsteadOfSettings(t *testing.T) {
 	}
 }
 
-func TestSetupConfigSubdialogSaveStepUsesEditedFields(t *testing.T) {
+func TestSetupDetailsPageSaveStepUsesEditedFields(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	settings := config.EditableSettingsFromAppConfig(config.Default())
@@ -19893,6 +19906,7 @@ func TestSetupConfigSubdialogSaveStepUsesEditedFields(t *testing.T) {
 	m := Model{
 		setupMode:           true,
 		setupConfigMode:     true,
+		setupStep:           setupStepBossConfig,
 		settingsBaseline:    &settings,
 		settingsFields:      newSettingsFields(settings),
 		setupFocusedRole:    setupRoleBossChat,
@@ -19984,7 +19998,7 @@ func TestRenderSetupHintExplainsLocalModelPicker(t *testing.T) {
 	}
 
 	hint := ansi.Strip(m.renderSetupHint(120))
-	if !strings.Contains(hint, "Press m to pin a discovered") || !strings.Contains(hint, "model or e to edit endpoint") {
+	if !strings.Contains(hint, "Press m to pin a discovered") || !strings.Contains(hint, "Enter continues to endpoint") {
 		t.Fatalf("renderSetupHint() = %q, want local model picker guidance", hint)
 	}
 	if !strings.Contains(hint, "Qwen3.5-9B-MLX-4bit") {

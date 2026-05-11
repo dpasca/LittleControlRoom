@@ -20,6 +20,16 @@ const (
 	setupRoleBossChat
 )
 
+type setupStep int
+
+const (
+	setupStepProjectProvider setupStep = iota
+	setupStepProjectConfig
+	setupStepBossProvider
+	setupStepBossConfig
+	setupStepSave
+)
+
 func (m *Model) openSetupMode() tea.Cmd {
 	settings := m.currentSettingsBaseline()
 	m.settingsFields = newSettingsFields(settings)
@@ -34,6 +44,7 @@ func (m *Model) openSetupMode() tea.Cmd {
 	m.setupSaving = false
 	m.setupReviewMode = false
 	m.localModelPickerVisible = false
+	m.setupStep = setupStepProjectProvider
 	m.setupFocusedRole = setupRoleProjectReports
 	m.setupConfigMode = false
 	m.setupConfigSelected = 0
@@ -42,7 +53,7 @@ func (m *Model) openSetupMode() tea.Cmd {
 	tier, _ := config.ParseModelTier(m.currentSettingsBaseline().OpenCodeModelTier)
 	m.setupModelTier = tier
 	m.setupLoading = true
-	m.status = "Setup concierge open. Pick who should handle project reports and boss chat."
+	m.status = "Setup wizard open. Press Enter to accept each page and continue."
 	return m.refreshSetupSnapshotCmd(false)
 }
 
@@ -59,6 +70,7 @@ func (m *Model) closeSetupMode(status string) {
 	m.setupSaving = false
 	m.setupReviewMode = false
 	m.setupConfigMode = false
+	m.setupStep = setupStepProjectProvider
 	m.setupConfigSelected = 0
 	m.localModelPickerVisible = false
 	m.blurSettingsFields()
@@ -106,14 +118,11 @@ func (m Model) updateSetupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case "esc":
-		m.closeSetupMode("Setup skipped for now. Run /setup anytime.")
-		return m, nil
-	case "tab", "right", "]":
-		m.moveSetupRole(1)
-		return m, nil
-	case "shift+tab", "left", "[":
-		m.moveSetupRole(-1)
-		return m, nil
+		return m.setupGoBack()
+	case "right", "]":
+		return m.setupAdvance()
+	case "left", "[":
+		return m.setupGoBack()
 	case "down", "j", "ctrl+n":
 		m.moveSetupProvider(1)
 		return m, nil
@@ -125,19 +134,19 @@ func (m Model) updateSetupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = "Refreshing AI backend checks..."
 		return m, m.refreshSetupSnapshotCmd(false)
 	case "t":
-		if m.setupFocusedRole == setupRoleProjectReports && m.setupSelectedBackend().SupportsModelTier() {
+		if m.setupStep == setupStepProjectProvider && m.setupSelectedBackend().SupportsModelTier() {
 			m.setupModelTier = m.cycleModelTier(m.setupModelTier)
 			return m, nil
 		}
 	case "e":
 		// Keep the old shortcut working quietly while Enter becomes the guided path.
-		return m.enterSetupConfigMode()
+		return m.setupEnterConfigStep()
 	case "m":
 		if isLocalBackendModelPickerBackend(m.setupSelectedLocalModelBackend()) {
 			return m.openLocalBackendModelPicker()
 		}
 	case "enter":
-		return m.activateSetupSelection()
+		return m.setupAdvance()
 	}
 	return m, nil
 }
@@ -145,10 +154,7 @@ func (m Model) updateSetupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) updateSetupConfigMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
-		m.setupConfigMode = false
-		m.blurSettingsFields()
-		m.status = "Setup fields closed. Press Enter to select this provider."
-		return m, nil
+		return m.setupGoBack()
 	case "tab", "down", "ctrl+n":
 		cmd := m.moveSetupConfigSelection(1)
 		return m, cmd
@@ -156,7 +162,7 @@ func (m Model) updateSetupConfigMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cmd := m.moveSetupConfigSelection(-1)
 		return m, cmd
 	case "ctrl+s", "enter":
-		return m.enterSetupReviewMode("Save setup selected. Press Enter to save, or Esc to go back.")
+		return m.setupAdvance()
 	}
 
 	fieldIndex := m.setupSelectedConfigFieldIndex()
@@ -173,30 +179,10 @@ func (m Model) updateSetupReviewMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter", "ctrl+s":
 		return m.saveSetupFromCurrentChoices()
 	case "esc":
-		m.setupReviewMode = false
-		m.status = "Save step closed. Use the provider tree, then press Enter to select."
-		return m, nil
-	case "tab", "right", "]":
-		m.setupReviewMode = false
-		m.moveSetupRole(1)
-		return m, nil
-	case "shift+tab", "left", "[":
-		m.setupReviewMode = false
-		m.moveSetupRole(-1)
-		return m, nil
-	case "down", "j", "ctrl+n":
-		m.setupReviewMode = false
-		m.moveSetupProvider(1)
-		return m, nil
-	case "up", "k", "ctrl+p":
-		m.setupReviewMode = false
-		m.moveSetupProvider(-1)
-		return m, nil
-	case "e":
-		m.setupReviewMode = false
-		return m.enterSetupConfigMode()
+		return m.setupGoBack()
+	case "left", "[":
+		return m.setupGoBack()
 	case "r":
-		m.setupReviewMode = false
 		m.setupLoading = true
 		m.status = "Refreshing AI backend checks..."
 		return m, m.refreshSetupSnapshotCmd(false)
@@ -259,20 +245,147 @@ func wrapIndex(index, count int) int {
 	return index % count
 }
 
-func (m Model) enterSetupConfigMode() (tea.Model, tea.Cmd) {
-	fields := m.setupConfigFieldIndexes()
-	if len(fields) == 0 {
-		m.status = "No extra configuration fields for this setup choice."
+func (m Model) setupAdvance() (tea.Model, tea.Cmd) {
+	switch m.setupStep {
+	case setupStepProjectProvider:
+		return m.enterSetupStep(m.nextSetupStepAfterProjectProvider(), "Project reports selected. Press Enter to continue.")
+	case setupStepProjectConfig:
+		return m.enterSetupStep(setupStepBossProvider, "Project reports details accepted. Choose the boss chat helper.")
+	case setupStepBossProvider:
+		return m.enterSetupStep(m.nextSetupStepAfterBossProvider(), "Boss chat selected. Press Enter to continue.")
+	case setupStepBossConfig:
+		return m.enterSetupStep(setupStepSave, "Boss chat details accepted. Press Enter to save setup.")
+	case setupStepSave:
+		return m.saveSetupFromCurrentChoices()
+	default:
+		return m.enterSetupStep(setupStepProjectProvider, "Setup wizard open. Press Enter to accept each page and continue.")
+	}
+}
+
+func (m Model) setupGoBack() (tea.Model, tea.Cmd) {
+	switch m.setupStep {
+	case setupStepProjectProvider:
+		m.closeSetupMode("Setup skipped for now. Run /setup anytime.")
+		return m, nil
+	case setupStepProjectConfig:
+		return m.enterSetupStep(setupStepProjectProvider, "Back to project reports. Press Enter to accept the selected provider.")
+	case setupStepBossProvider:
+		return m.enterSetupStep(m.previousSetupStepBeforeBossProvider(), "Back to project reports. Press Enter to continue.")
+	case setupStepBossConfig:
+		return m.enterSetupStep(setupStepBossProvider, "Back to boss chat. Press Enter to accept the selected provider.")
+	case setupStepSave:
+		return m.enterSetupStep(m.previousSetupStepBeforeSave(), "Back to the previous setup page.")
+	default:
+		m.closeSetupMode("Setup skipped for now. Run /setup anytime.")
 		return m, nil
 	}
-	m.setupConfigMode = true
-	m.setupReviewMode = false
-	if m.setupConfigSelected < 0 || m.setupConfigSelected >= len(fields) {
-		m.setupConfigSelected = 0
+}
+
+func (m Model) setupEnterConfigStep() (tea.Model, tea.Cmd) {
+	switch m.setupFocusedRole {
+	case setupRoleBossChat:
+		if m.setupStep == setupStepBossProvider || m.setupStep == setupStepBossConfig {
+			return m.enterSetupStep(setupStepBossConfig, "Boss chat details. Press Enter to continue.")
+		}
+	default:
+		if m.setupStep == setupStepProjectProvider || m.setupStep == setupStepProjectConfig {
+			return m.enterSetupStep(setupStepProjectConfig, "Project reports details. Press Enter to continue.")
+		}
 	}
-	m.status = "Configure this branch, then press Enter to continue."
-	cmd := m.focusSetupConfigField()
-	return m, cmd
+	m.status = "No setup details page for this step."
+	return m, nil
+}
+
+func (m Model) nextSetupStepAfterProjectProvider() setupStep {
+	if m.setupStepNeedsConfig(setupStepProjectConfig) {
+		return setupStepProjectConfig
+	}
+	return setupStepBossProvider
+}
+
+func (m Model) nextSetupStepAfterBossProvider() setupStep {
+	if m.setupStepNeedsConfig(setupStepBossConfig) {
+		return setupStepBossConfig
+	}
+	return setupStepSave
+}
+
+func (m Model) previousSetupStepBeforeBossProvider() setupStep {
+	if m.setupStepNeedsConfig(setupStepProjectConfig) {
+		return setupStepProjectConfig
+	}
+	return setupStepProjectProvider
+}
+
+func (m Model) previousSetupStepBeforeSave() setupStep {
+	if m.setupStepNeedsConfig(setupStepBossConfig) {
+		return setupStepBossConfig
+	}
+	return setupStepBossProvider
+}
+
+func (m Model) setupStepNeedsConfig(step setupStep) bool {
+	role := m.setupFocusedRole
+	switch step {
+	case setupStepProjectConfig:
+		role = setupRoleProjectReports
+	case setupStepBossConfig:
+		role = setupRoleBossChat
+	default:
+		return false
+	}
+	check := m
+	check.setupFocusedRole = role
+	return len(check.setupConfigFieldIndexes()) > 0
+}
+
+func (m Model) enterSetupStep(step setupStep, status string) (tea.Model, tea.Cmd) {
+	m.setupStep = step
+	m.setupReviewMode = false
+	m.setupConfigMode = false
+	m.setupConfigSelected = 0
+	m.localModelPickerVisible = false
+	m.blurSettingsFields()
+	switch step {
+	case setupStepProjectProvider:
+		m.setupFocusedRole = setupRoleProjectReports
+		if status == "" {
+			status = "Choose the project reports helper. Enter accepts the selected provider."
+		}
+	case setupStepProjectConfig:
+		m.setupFocusedRole = setupRoleProjectReports
+		m.setupConfigMode = true
+		if status == "" {
+			status = "Project reports details. Enter accepts these fields."
+		}
+		cmd := m.focusSetupConfigField()
+		m.status = status
+		return m, cmd
+	case setupStepBossProvider:
+		m.setupFocusedRole = setupRoleBossChat
+		if status == "" {
+			status = "Choose the boss chat helper. Enter accepts the selected provider."
+		}
+	case setupStepBossConfig:
+		m.setupFocusedRole = setupRoleBossChat
+		m.setupConfigMode = true
+		if status == "" {
+			status = "Boss chat details. Enter accepts these fields."
+		}
+		cmd := m.focusSetupConfigField()
+		m.status = status
+		return m, cmd
+	case setupStepSave:
+		m.setupReviewMode = true
+		if status == "" {
+			status = "Save setup. Enter saves, Esc goes back."
+		}
+	default:
+		m.setupStep = setupStepProjectProvider
+		m.setupFocusedRole = setupRoleProjectReports
+	}
+	m.status = status
+	return m, nil
 }
 
 func (m *Model) moveSetupConfigSelection(delta int) tea.Cmd {
@@ -337,92 +450,6 @@ func (m Model) setupConfigFieldIndexes() []int {
 	default:
 		return nil
 	}
-}
-
-func (m Model) activateSetupSelection() (tea.Model, tea.Cmd) {
-	if m.setupFocusedRole == setupRoleBossChat {
-		return m.activateBossChatSetupSelection()
-	}
-	settings := m.setupSettingsFromCurrentChoices()
-	selectedStatus := m.setupSnapshot.StatusFor(settings.AIBackend)
-	switch settings.AIBackend {
-	case config.AIBackendDisabled:
-		return m.enterSetupReviewMode("Project reports: Off selected. Press Enter to save, or Esc to go back.")
-	case config.AIBackendOpenAIAPI:
-		if strings.TrimSpace(settings.OpenAIAPIKey) == "" {
-			return m.enterSetupConfigModeWithStatus("Paste an OpenAI API key here, then press Enter to continue.")
-		}
-		return m.enterSetupConfigModeWithStatus("OpenAI API selected. Press Enter to continue, or update the saved key first.")
-	case config.AIBackendMLX, config.AIBackendOllama:
-		if strings.TrimSpace(selectedStatus.Detail) == "" || !selectedStatus.Ready {
-			if selectedStatus.LoginHint != "" {
-				m.status = selectedStatus.LoginHint
-			} else {
-				m.status = selectedStatus.Detail
-			}
-			return m.enterSetupConfigMode()
-		}
-		return m.enterSetupConfigModeWithStatus(settings.AIBackend.Label() + " selected. Press Enter to continue, or adjust endpoint/model first.")
-	default:
-		if !selectedStatus.Ready {
-			if selectedStatus.LoginHint != "" {
-				m.status = selectedStatus.LoginHint
-			} else {
-				m.status = selectedStatus.Detail
-			}
-			return m, nil
-		}
-		return m.enterSetupReviewMode(settings.AIBackend.Label() + " selected. Press Enter to save, or Esc to go back.")
-	}
-}
-
-func (m Model) activateBossChatSetupSelection() (tea.Model, tea.Cmd) {
-	settings := m.setupSettingsFromCurrentChoices()
-	switch settings.BossChatBackend {
-	case config.AIBackendUnset:
-		return m.enterSetupConfigModeWithStatus("Boss chat: Auto selected. Press Enter to continue, or adjust OpenAI/model fields first.")
-	case config.AIBackendDisabled:
-		return m.enterSetupReviewMode("Boss chat: Off selected. Press Enter to save, or Esc to go back.")
-	case config.AIBackendOpenAIAPI:
-		if strings.TrimSpace(settings.OpenAIAPIKey) == "" {
-			return m.enterSetupConfigModeWithStatus("Paste an OpenAI API key here, then press Enter to continue.")
-		}
-		return m.enterSetupConfigModeWithStatus("Boss chat: OpenAI API selected. Press Enter to continue, or adjust model fields first.")
-	case config.AIBackendMLX, config.AIBackendOllama:
-		selectedStatus := m.setupSnapshot.StatusFor(settings.BossChatBackend)
-		if strings.TrimSpace(selectedStatus.Detail) == "" || !selectedStatus.Ready {
-			if selectedStatus.LoginHint != "" {
-				m.status = selectedStatus.LoginHint
-			} else {
-				m.status = selectedStatus.Detail
-			}
-			return m.enterSetupConfigMode()
-		}
-		return m.enterSetupConfigModeWithStatus(settings.BossChatBackend.Label() + " selected for boss chat. Press Enter to continue, or adjust endpoint/model first.")
-	default:
-		m.status = "Boss chat can use OpenAI API, MLX, Ollama, or stay off for now."
-		return m, nil
-	}
-}
-
-func (m Model) enterSetupConfigModeWithStatus(status string) (tea.Model, tea.Cmd) {
-	updated, cmd := m.enterSetupConfigMode()
-	got := updated.(Model)
-	if strings.TrimSpace(status) != "" {
-		got.status = status
-	}
-	return got, cmd
-}
-
-func (m Model) enterSetupReviewMode(status string) (tea.Model, tea.Cmd) {
-	m.setupReviewMode = true
-	m.setupConfigMode = false
-	m.blurSettingsFields()
-	if strings.TrimSpace(status) == "" {
-		status = "Save setup selected. Press Enter to save, or Esc to go back."
-	}
-	m.status = status
-	return m, nil
 }
 
 func (m Model) saveSetupFromCurrentChoices() (tea.Model, tea.Cmd) {
@@ -531,9 +558,6 @@ func (m Model) setupBossSelectionForBackend(backend config.AIBackend) int {
 
 func (m Model) renderSetupOverlay(body string, bodyW, bodyH int) string {
 	panel := m.renderSetupPanel(bodyW, bodyH)
-	if m.setupConfigMode {
-		panel = m.renderSetupConfigSubdialogOverlay(panel)
-	}
 	panelWidth := lipgloss.Width(panel)
 	panelHeight := lipgloss.Height(panel)
 	left := max(0, (bodyW-panelWidth)/2)
@@ -545,30 +569,14 @@ func (m Model) renderSetupPanel(bodyW, bodyH int) string {
 	panelWidth := min(bodyW, min(max(66, bodyW-10), 108))
 	panelInnerWidth := max(28, panelWidth-4)
 	maxContentHeight := max(12, bodyH-2)
-	contentModel := m
-	contentModel.setupConfigMode = false
-	return renderDialogPanel(panelWidth, panelInnerWidth, contentModel.renderSetupContent(panelInnerWidth, maxContentHeight))
-}
-
-func (m Model) renderSetupConfigSubdialogOverlay(panel string) string {
-	panelWidth := lipgloss.Width(panel)
-	panelHeight := lipgloss.Height(panel)
-	dialogWidth := min(max(50, panelWidth-22), max(34, panelWidth-6))
-	dialogInnerWidth := max(24, dialogWidth-4)
-	dialog := renderDialogPanel(dialogWidth, dialogInnerWidth, m.renderSetupConfigDialogContent(dialogInnerWidth))
-	left := max(0, (panelWidth-lipgloss.Width(dialog))/2)
-	top := max(2, (panelHeight-lipgloss.Height(dialog))/2)
-	return overlayBlock(panel, dialog, panelWidth, panelHeight, left, top)
+	return renderDialogPanel(panelWidth, panelInnerWidth, m.renderSetupContent(panelInnerWidth, maxContentHeight))
 }
 
 func (m Model) renderSetupContent(width, maxHeight int) string {
-	cards := m.renderSetupRoleCards(width)
 	lines := []string{
-		commandPaletteTitleStyle.Render("Setup Concierge"),
-		commandPaletteHintStyle.Render(m.setupConciergeSummary()),
+		commandPaletteTitleStyle.Render("Setup Wizard"),
+		m.renderSetupWizardProgress(width),
 	}
-	lines = append(lines, "")
-	lines = append(lines, cards)
 	if m.setupLoading {
 		lines = append(lines, "")
 		lines = append(lines, commandPaletteHintStyle.Render("Checking local backend availability..."))
@@ -583,6 +591,11 @@ func (m Model) renderSetupContent(width, maxHeight int) string {
 			lines = append(lines, "")
 			lines = append(lines, actions...)
 		}
+		return strings.Join(lines, "\n")
+	}
+	if m.setupConfigMode {
+		lines = append(lines, "")
+		lines = append(lines, m.renderSetupConfigContent(width))
 		return strings.Join(lines, "\n")
 	}
 	lines = append(lines, "")
@@ -620,19 +633,63 @@ func (m Model) renderSetupContent(width, maxHeight int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) setupConciergeSummary() string {
-	settings := m.setupSettingsFromCurrentChoices()
-	projectChoice := m.selectedSettingsProviderChoice(providerChoiceRoleProjectReports, settings.AIBackend, settings)
-	bossChoice := m.selectedSettingsProviderChoice(providerChoiceRoleBossChat, settings.BossChatBackend, settings)
-	projectState := strings.ToLower(strings.TrimSpace(projectChoice.State))
-	bossState := strings.ToLower(strings.TrimSpace(bossChoice.State))
-	if projectState == "" {
-		projectState = "unchecked"
+func (m Model) renderSetupWizardProgress(width int) string {
+	steps := []struct {
+		step  setupStep
+		label string
+	}{
+		{setupStepProjectProvider, "Project reports"},
+		{setupStepProjectConfig, "Project details"},
+		{setupStepBossProvider, "Boss chat"},
+		{setupStepBossConfig, "Boss details"},
+		{setupStepSave, "Save"},
 	}
-	if bossState == "" {
-		bossState = "unchecked"
+	parts := make([]string, 0, len(steps)*2)
+	for i, step := range steps {
+		label := step.label
+		if !m.setupStepIsVisible(step.step) {
+			label = commandPaletteHintStyle.Render(label)
+		} else if step.step == m.setupStep {
+			label = detailSectionStyle.Render(label)
+		} else {
+			label = detailValueStyle.Render(label)
+		}
+		if i > 0 {
+			parts = append(parts, commandPaletteHintStyle.Render(">"))
+		}
+		parts = append(parts, label)
 	}
-	return "I can write project reports with " + firstNonEmptyTrimmed(projectChoice.Label, "a helper") + " (" + projectState + ") and answer /boss with " + firstNonEmptyTrimmed(bossChoice.Label, "Auto") + " (" + bossState + ")."
+	line := strings.Join(parts, " ")
+	if lipgloss.Width(line) <= width {
+		return line
+	}
+	return commandPaletteHintStyle.Render(m.setupStepTitle())
+}
+
+func (m Model) setupStepIsVisible(step setupStep) bool {
+	switch step {
+	case setupStepProjectConfig, setupStepBossConfig:
+		return m.setupStepNeedsConfig(step)
+	default:
+		return true
+	}
+}
+
+func (m Model) setupStepTitle() string {
+	switch m.setupStep {
+	case setupStepProjectProvider:
+		return "Project reports"
+	case setupStepProjectConfig:
+		return "Project details"
+	case setupStepBossProvider:
+		return "Boss chat"
+	case setupStepBossConfig:
+		return "Boss details"
+	case setupStepSave:
+		return "Save"
+	default:
+		return "Setup"
+	}
 }
 
 func (m Model) renderSetupReview(width int) string {
@@ -654,7 +711,7 @@ func (m Model) renderSetupReview(width int) string {
 	if settings.AIBackend == config.AIBackendOpenCode {
 		lines = append(lines, renderWrappedDetailField("OpenCode tier", detailValueStyle, width, string(m.setupModelTier)))
 	}
-	lines = append(lines, renderWrappedDetailField("Next", detailValueStyle, width, "Enter selects Save setup. Esc returns to the provider tree."))
+	lines = append(lines, renderWrappedDetailField("Next", detailValueStyle, width, "Enter saves setup. Esc goes back to the previous page."))
 	return strings.Join(lines, "\n")
 }
 
@@ -790,7 +847,7 @@ func (m Model) renderSetupProviderRows(width int) []string {
 	return lines
 }
 
-func (m Model) renderSetupConfigDialogContent(width int) string {
+func (m Model) renderSetupConfigContent(width int) string {
 	if len(m.settingsFields) == 0 {
 		return detailWarningStyle.Render("Settings fields are not loaded yet.")
 	}
@@ -963,7 +1020,6 @@ func (m Model) setupActionSegments() []string {
 		return []string{
 			renderDialogAction("Enter", "save", commitActionKeyStyle, commitActionTextStyle),
 			renderDialogAction("Esc", "back", cancelActionKeyStyle, cancelActionTextStyle),
-			renderDialogAction("Tab", "role", navigateActionKeyStyle, navigateActionTextStyle),
 		}
 	}
 	if m.setupConfigMode {
@@ -975,23 +1031,29 @@ func (m Model) setupActionSegments() []string {
 		}
 	}
 	actions := []string{
-		renderDialogAction("Enter", "select", commitActionKeyStyle, commitActionTextStyle),
-		renderDialogAction("Tab", "role", navigateActionKeyStyle, navigateActionTextStyle),
+		renderDialogAction("Enter", "next", commitActionKeyStyle, commitActionTextStyle),
 		renderDialogAction("Up/Down", "provider", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("r", "refresh", navigateActionKeyStyle, navigateActionTextStyle),
-		renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
+		renderDialogAction("Esc", m.setupBackActionLabel(), cancelActionKeyStyle, cancelActionTextStyle),
 	}
 	if isLocalBackendModelPickerBackend(m.setupSelectedLocalModelBackend()) {
-		actions = append(actions[:3], append([]string{
+		actions = append(actions[:2], append([]string{
 			renderDialogAction("m", "model", navigateActionKeyStyle, navigateActionTextStyle),
-		}, actions[3:]...)...)
+		}, actions[2:]...)...)
 	}
 	if m.setupFocusedRole == setupRoleProjectReports && m.setupSelectedBackend().SupportsModelTier() {
-		actions = append(actions[:4], append([]string{
+		actions = append(actions[:3], append([]string{
 			renderDialogAction("t", "tier", navigateActionKeyStyle, navigateActionTextStyle),
-		}, actions[4:]...)...)
+		}, actions[3:]...)...)
 	}
 	return actions
+}
+
+func (m Model) setupBackActionLabel() string {
+	if m.setupStep == setupStepProjectProvider {
+		return "close"
+	}
+	return "back"
 }
 
 func (m Model) localBackendSetupHint(backend config.AIBackend, status aibackend.Status) string {
@@ -1002,12 +1064,12 @@ func (m Model) localBackendSetupHint(backend config.AIBackend, status aibackend.
 	models := localBackendPickerModels(status.Models)
 	selectedModel := strings.TrimSpace(m.currentSettingsBaseline().OpenAICompatibleModel(backend))
 	if selectedModel != "" && localBackendModelExists(selectedModel, models) {
-		return fmt.Sprintf("%s will use %s for background AI tasks. Press m to pick another discovered model, or e to edit endpoint and manual settings.%s", backend.Label(), selectedModel, localBackendEnvOverrideNotice())
+		return fmt.Sprintf("%s will use %s for background AI tasks. Press m to pick another discovered model; Enter continues to endpoint and manual settings.%s", backend.Label(), selectedModel, localBackendEnvOverrideNotice())
 	}
 	if len(models) == 0 {
 		return fmt.Sprintf("%s uses an OpenAI-compatible local server at %s. Press r after the server is running, then m to pick a model.", backend.Label(), endpoint)
 	}
-	return fmt.Sprintf("%s will auto-use %s from %s. Press m to pin a discovered model or e to edit endpoint and manual settings.%s", backend.Label(), firstString(models), endpoint, localBackendEnvOverrideNotice())
+	return fmt.Sprintf("%s will auto-use %s from %s. Press m to pin a discovered model; Enter continues to endpoint and manual settings.%s", backend.Label(), firstString(models), endpoint, localBackendEnvOverrideNotice())
 }
 
 func summarizeLocalBackendModels(models []string) string {

@@ -127,6 +127,7 @@ type Model struct {
 	setupLoading                    bool
 	setupSaving                     bool
 	setupReviewMode                 bool
+	setupStep                       setupStep
 	setupFocusedRole                setupRole
 	setupSelected                   int
 	setupBossSelected               int
@@ -6270,7 +6271,7 @@ func (m Model) renderFooter(width int) string {
 		if m.setupConfigMode {
 			return m.renderModalFooter(width, "Setup configuration: type to edit, Tab field, Enter continue, Esc back", supplementSegments...)
 		}
-		return m.renderModalFooter(width, "Setup: Tab role, ↑↓ provider, Enter select, Esc close", supplementSegments...)
+		return m.renderModalFooter(width, "Setup: ↑↓ provider, Enter next, Esc back/close", supplementSegments...)
 	}
 	if m.settingsMode {
 		return m.renderModalFooter(width, "Settings: ctrl+s save, Tab next, Esc cancel", supplementSegments...)
