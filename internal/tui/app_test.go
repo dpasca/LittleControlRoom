@@ -20598,6 +20598,49 @@ func TestSettingsProviderPickersRenderSharedStatus(t *testing.T) {
 	}
 }
 
+func TestSettingsGettingStartedRendersStepGuide(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendOpenCode
+	settings.BossChatBackend = config.AIBackendOpenAIAPI
+	settings.OpenAIAPIKey = "sk-test-example"
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		setupSnapshot: aibackend.Snapshot{
+			OpenCode: aibackend.Status{
+				Backend: config.AIBackendOpenCode,
+				Label:   config.AIBackendOpenCode.Label(),
+				Ready:   true,
+				Detail:  "OpenCode ready.",
+			},
+		},
+		width:  120,
+		height: 30,
+	}
+	_ = m.setSettingsSelection(settingsFieldAIBackend)
+
+	rendered := ansi.Strip(m.renderSettingsContent(100, 24))
+	for _, want := range []string{"Setup Guide", "Project reports", "OpenAI key", "Boss chat", "Project roots", "Next: press Enter"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("getting started guide missing %q: %q", want, rendered)
+		}
+	}
+	for _, want := range []string{"About:", "Save to use this for project reports."} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("getting started guide should show selected detail %q below the rows: %q", want, rendered)
+		}
+	}
+	narrowRow := ansi.Strip(m.renderSettingsGettingStartedStep(m.settingsGettingStartedSteps()[0], 44))
+	if !strings.Contains(narrowRow, "ready") || strings.Contains(narrowRow, "rea...") {
+		t.Fatalf("getting started guide should preserve short status in narrow rows: %q", narrowRow)
+	}
+	if strings.Contains(rendered, "I will keep the setup small") {
+		t.Fatalf("getting started guide should use steps instead of paragraph copy: %q", rendered)
+	}
+}
+
 func TestSettingsModalShowsSelectedHintAndWindowsLowerFields(t *testing.T) {
 	m := Model{
 		settingsMode:   true,

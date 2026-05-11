@@ -826,11 +826,12 @@ func (m Model) renderSettingsSectionLayout(width, maxHeight int) string {
 	separatorWidth := 3
 	contentWidth := max(18, width-sidebarWidth-separatorWidth)
 
-	mainLines := []string{
-		m.renderSettingsSectionHint(activeSection, contentWidth),
-	}
-	if activeSection.id == settingsSectionGettingStarted && maxHeight >= 28 {
+	gettingStartedGuide := activeSection.id == settingsSectionGettingStarted && maxHeight >= 20
+	mainLines := []string{}
+	if gettingStartedGuide {
 		mainLines = append(mainLines, m.renderSettingsGettingStartedGuide(contentWidth)...)
+	} else {
+		mainLines = append(mainLines, m.renderSettingsSectionHint(activeSection, contentWidth))
 	}
 	if m.settingsSaving {
 		mainLines = append(mainLines, "")
@@ -840,15 +841,24 @@ func (m Model) renderSettingsSectionLayout(width, maxHeight int) string {
 	fieldIndexes := activeSection.fieldOrder
 	labelWidth := m.settingsLabelWidth(contentWidth, fieldIndexes)
 	inputWidth := max(10, contentWidth-labelWidth-1)
-	start, end := m.settingsVisibleWindow(fieldIndexes, m.settingsVisibleFieldCount(maxHeight))
-	if start > 0 {
-		mainLines = append(mainLines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d above", start)))
-	}
-	for _, fieldIndex := range fieldIndexes[start:end] {
-		mainLines = append(mainLines, m.renderSettingsFieldRow(fieldIndex, m.settingsFields[fieldIndex], fieldIndex == m.settingsSelected, labelWidth, inputWidth))
-	}
-	if end < len(fieldIndexes) {
-		mainLines = append(mainLines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d below", len(fieldIndexes)-end)))
+	if gettingStartedGuide {
+		if maxHeight >= 28 {
+			if editor := m.renderSettingsGettingStartedFocusedEditor(contentWidth, labelWidth, inputWidth); editor != "" {
+				mainLines = append(mainLines, "")
+				mainLines = append(mainLines, editor)
+			}
+		}
+	} else {
+		start, end := m.settingsVisibleWindow(fieldIndexes, m.settingsVisibleFieldCount(maxHeight))
+		if start > 0 {
+			mainLines = append(mainLines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d above", start)))
+		}
+		for _, fieldIndex := range fieldIndexes[start:end] {
+			mainLines = append(mainLines, m.renderSettingsFieldRow(fieldIndex, m.settingsFields[fieldIndex], fieldIndex == m.settingsSelected, labelWidth, inputWidth))
+		}
+		if end < len(fieldIndexes) {
+			mainLines = append(mainLines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d below", len(fieldIndexes)-end)))
+		}
 	}
 	if activeSection.id == settingsSectionBrowser {
 		mainLines = append(mainLines, "")
@@ -955,11 +965,154 @@ func (m Model) renderSettingsSectionHint(section settingsSection, width int) str
 }
 
 func (m Model) renderSettingsGettingStartedGuide(width int) []string {
-	return []string{
-		"",
-		detailSectionStyle.Render("Guide"),
-		commandPaletteHintStyle.Render(lipgloss.NewStyle().Width(max(18, width)).Render("I will keep the setup small: choose the project-report helper, choose the /boss chat helper, then save. If a row says ready, you can use it now.")),
+	lines := []string{
+		detailSectionStyle.Render("Setup Guide"),
 	}
+	for _, step := range m.settingsGettingStartedSteps() {
+		lines = append(lines, m.renderSettingsGettingStartedStep(step, width))
+	}
+	return lines
+}
+
+func (m Model) settingsGettingStartedSteps() []settingsGettingStartedStep {
+	settings := m.settingsDraftForInferenceStatus()
+	projectChoice := m.selectedSettingsProviderChoice(providerChoiceRoleProjectReports, settings.AIBackend, settings)
+	bossChoice := m.selectedSettingsProviderChoice(providerChoiceRoleBossChat, settings.BossChatBackend, settings)
+	keyState, keyStyle, keyDetail := m.settingsOpenAIKeyStepState(settings)
+	rootsValue, rootsState, rootsStyle, rootsDetail := m.settingsProjectRootsStepState()
+	return []settingsGettingStartedStep{
+		{
+			Number:     "1",
+			Title:      "Project reports",
+			Value:      firstNonEmptyTrimmed(projectChoice.Label, "Not configured"),
+			State:      firstNonEmptyTrimmed(projectChoice.State, "needs setup"),
+			StateStyle: projectChoice.StateStyle,
+			Detail:     firstNonEmptyTrimmed(projectChoice.NextStep, projectChoice.Detail),
+			FieldIndex: settingsFieldAIBackend,
+		},
+		{
+			Number:     "2",
+			Title:      "OpenAI key",
+			Value:      keyState,
+			State:      keyState,
+			StateStyle: keyStyle,
+			Detail:     keyDetail,
+			FieldIndex: settingsFieldOpenAIAPIKey,
+		},
+		{
+			Number:     "3",
+			Title:      "Boss chat",
+			Value:      firstNonEmptyTrimmed(bossChoice.Label, "Auto"),
+			State:      firstNonEmptyTrimmed(bossChoice.State, "needs setup"),
+			StateStyle: bossChoice.StateStyle,
+			Detail:     firstNonEmptyTrimmed(bossChoice.NextStep, bossChoice.Detail),
+			FieldIndex: settingsFieldBossChatBackend,
+		},
+		{
+			Number:     "4",
+			Title:      "Project roots",
+			Value:      rootsValue,
+			State:      rootsState,
+			StateStyle: rootsStyle,
+			Detail:     rootsDetail,
+			FieldIndex: settingsFieldIncludePaths,
+		},
+	}
+}
+
+func (m Model) selectedSettingsProviderChoice(role providerChoiceRole, backend config.AIBackend, settings config.EditableSettings) providerChoice {
+	choices := m.providerChoices(role, settings)
+	if len(choices) == 0 {
+		return providerChoice{}
+	}
+	return choices[providerChoiceSelection(choices, backend)]
+}
+
+func (m Model) settingsOpenAIKeyStepState(settings config.EditableSettings) (string, lipgloss.Style, string) {
+	hasKey := strings.TrimSpace(settings.OpenAIAPIKey) != ""
+	needsKey := settings.AIBackend == config.AIBackendOpenAIAPI ||
+		settings.BossChatBackend == config.AIBackendOpenAIAPI ||
+		settings.BossChatBackend == config.AIBackendUnset
+	if hasKey {
+		return "saved", footerPrimaryLabelStyle, "Ready for OpenAI API and Auto Boss chat."
+	}
+	if needsKey {
+		return "needed", detailWarningStyle, "Paste a key or choose local/off paths."
+	}
+	return "optional", detailMutedStyle, "Only needed for OpenAI API paths."
+}
+
+func (m Model) settingsProjectRootsStepState() (string, string, lipgloss.Style, string) {
+	paths := splitCommaList(m.settingsFieldValue(settingsFieldIncludePaths))
+	if len(paths) == 0 {
+		return "none", "optional", detailMutedStyle, "Leave blank to scan the default roots."
+	}
+	if len(paths) == 1 {
+		return displayPathWithHomeTilde(paths[0], m.homeDir), "ready", footerPrimaryLabelStyle, "This is where projects are discovered."
+	}
+	return fmt.Sprintf("%d roots", len(paths)), "ready", footerPrimaryLabelStyle, "These folders are scanned for projects."
+}
+
+func splitCommaList(raw string) []string {
+	parts := strings.Split(raw, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			values = append(values, trimmed)
+		}
+	}
+	return values
+}
+
+func (m Model) renderSettingsGettingStartedStep(step settingsGettingStartedStep, width int) string {
+	selected := step.FieldIndex == m.settingsSelected
+	numberStyle := detailSectionStyle.Width(3)
+	titleStyle := detailValueStyle.Bold(true)
+	valueStyle := detailValueStyle
+	if selected {
+		numberStyle = commandPalettePickStyle.Width(3)
+		titleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Bold(true)
+		valueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Bold(true)
+	}
+	fixedWidth := 8
+	availableWidth := max(1, width-fixedWidth)
+	stateWidth := min(10, max(7, availableWidth/4))
+	remainingWidth := max(1, availableWidth-stateWidth)
+	titleWidth := min(28, max(10, remainingWidth*56/100))
+	if valueRoom := remainingWidth - titleWidth; valueRoom < 8 {
+		titleWidth = max(6, remainingWidth-8)
+	}
+	valueWidth := max(1, remainingWidth-titleWidth)
+	marker := " "
+	if selected {
+		marker = ">"
+	}
+	row := marker + " " +
+		numberStyle.Render(step.Number) + " " +
+		titleStyle.Width(titleWidth).Render(truncateText(step.Title, titleWidth)) + " " +
+		valueStyle.Width(valueWidth).Render(truncateText(step.Value, valueWidth)) + " " +
+		step.StateStyle.Width(stateWidth).Render(truncateText(step.State, stateWidth))
+	row = fitFooterWidth(row, width)
+	if selected {
+		return dialogSelectedRowStyle.Width(width).Render(row)
+	}
+	return lipgloss.NewStyle().Width(width).Render(row)
+}
+
+func (m Model) renderSettingsGettingStartedFocusedEditor(width, labelWidth, inputWidth int) string {
+	if m.settingsSelected < 0 || m.settingsSelected >= len(m.settingsFields) || settingsFieldUsesPicker(m.settingsSelected) {
+		return ""
+	}
+	label := "Edit"
+	if m.settingsSelected == settingsFieldOpenAIAPIKey {
+		label = "Paste key"
+	}
+	if m.settingsSelected == settingsFieldIncludePaths {
+		label = "Project roots"
+	}
+	field := m.settingsFields[m.settingsSelected]
+	row := m.renderSettingsFieldRow(m.settingsSelected, field, true, min(labelWidth, max(12, width/3)), max(12, inputWidth))
+	return detailSectionStyle.Render(label) + "\n" + row
 }
 
 type settingsBrowserProviderCapability struct {
@@ -972,6 +1125,16 @@ type settingsBrowserLiveActivity struct {
 	provider    codexapp.Provider
 	projectPath string
 	activity    browserctl.SessionActivity
+}
+
+type settingsGettingStartedStep struct {
+	Number     string
+	Title      string
+	Value      string
+	State      string
+	StateStyle lipgloss.Style
+	Detail     string
+	FieldIndex int
 }
 
 func browserProviderCapabilities() []settingsBrowserProviderCapability {
@@ -1113,6 +1276,9 @@ func (m Model) renderSelectedSettingsHint(width int) string {
 	if m.settingsSelected < 0 || m.settingsSelected >= len(m.settingsFields) {
 		return ""
 	}
+	if m.activeSettingsSection().id == settingsSectionGettingStarted {
+		return m.renderSettingsGettingStartedNextAction(width)
+	}
 
 	hintWidth := max(18, width)
 	wrapped := lipgloss.NewStyle().Width(hintWidth).Render("Hint: " + m.settingsFieldHint(m.settingsSelected))
@@ -1125,6 +1291,38 @@ func (m Model) renderSelectedSettingsHint(width int) string {
 		lines[len(lines)-1] = truncateText(strings.TrimSpace(lines[len(lines)-1]), hintWidth-1)
 	}
 	return commandPaletteHintStyle.Render(strings.Join(lines, "\n"))
+}
+
+func (m Model) renderSettingsGettingStartedNextAction(width int) string {
+	step := m.selectedSettingsGettingStartedStep()
+	action := "Use Tab to move through setup, then ctrl+s to save."
+	switch m.settingsSelected {
+	case settingsFieldAIBackend, settingsFieldBossChatBackend:
+		action = "Next: press Enter to choose from the provider list."
+	case settingsFieldOpenAIAPIKey:
+		if suffix := maskedOpenAIKeySuffix(m.settingsFieldValue(settingsFieldOpenAIAPIKey)); suffix != "" {
+			action = "Stored key ends with " + suffix + ". Replace it here only if you want to change API keys."
+		} else {
+			action = "Next: paste a key here, or choose local/off providers if you want no OpenAI API key."
+		}
+	case settingsFieldIncludePaths:
+		action = "Next: enter comma-separated project roots, or leave the default and save."
+	}
+	lines := []string{}
+	if detail := strings.TrimSpace(step.Detail); detail != "" {
+		lines = append(lines, renderWrappedDetailField("About", detailValueStyle, width, detail))
+	}
+	lines = append(lines, detailSectionStyle.Render(lipgloss.NewStyle().Width(max(18, width)).Render(action)))
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) selectedSettingsGettingStartedStep() settingsGettingStartedStep {
+	for _, step := range m.settingsGettingStartedSteps() {
+		if step.FieldIndex == m.settingsSelected {
+			return step
+		}
+	}
+	return settingsGettingStartedStep{}
 }
 
 func (m Model) renderSettingsActions() string {
