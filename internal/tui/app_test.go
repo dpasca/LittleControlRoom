@@ -20809,14 +20809,14 @@ func TestSettingsProviderPickersRenderSharedStatus(t *testing.T) {
 	}
 
 	projectPicker := ansi.Strip(m.renderSettingsAIBackendPickerContent(72))
-	for _, want := range []string{"Project Reports Helper", "Codex", "ready", "Status", "Next"} {
+	for _, want := range []string{"Project Reports", "Codex", "ready", "Selected Helper", "Will do", "Needs", "Readiness", "After choosing"} {
 		if !strings.Contains(projectPicker, want) {
 			t.Fatalf("project picker missing %q: %q", want, projectPicker)
 		}
 	}
 
 	bossPicker := ansi.Strip(m.renderSettingsBossChatBackendPickerContent(72))
-	for _, want := range []string{"Boss Chat Helper", "Auto", "ready", "saved OpenAI API key", "Next"} {
+	for _, want := range []string{"Boss Chat", "Auto", "ready", "saved OpenAI API key", "Selected Helper", "After choosing"} {
 		if !strings.Contains(bossPicker, want) {
 			t.Fatalf("boss picker missing %q: %q", want, bossPicker)
 		}

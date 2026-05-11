@@ -30,9 +30,9 @@ type providerChoice struct {
 func providerChoiceRoleTitle(role providerChoiceRole) string {
 	switch role {
 	case providerChoiceRoleBossChat:
-		return "Boss Chat Helper"
+		return "Boss Chat"
 	default:
-		return "Project Reports Helper"
+		return "Project Reports"
 	}
 }
 
@@ -77,44 +77,44 @@ func (m Model) projectReportsProviderChoices(settings config.EditableSettings) [
 		{
 			Value:       config.AIBackendCodex,
 			Label:       "Codex",
-			Summary:     "Use your local Codex CLI installation for project analysis.",
-			Description: "Requires Codex to be installed and authenticated. No API key is stored by Little Control Room.",
+			Summary:     "Writes project summaries, classifications, TODO help, and commit help through your local Codex CLI.",
+			Description: "Codex must be installed and signed in. Little Control Room does not store an API key for this path.",
 		},
 		{
 			Value:       config.AIBackendOpenCode,
 			Label:       "OpenCode",
-			Summary:     "Use your local OpenCode installation for project analysis.",
-			Description: "Requires OpenCode to be installed and authenticated. No API key is stored by Little Control Room.",
+			Summary:     "Writes project summaries, classifications, TODO help, and commit help through your local OpenCode installation.",
+			Description: "OpenCode must be installed and signed in. Little Control Room does not store an API key for this path.",
 		},
 		{
 			Value:       config.AIBackendClaude,
 			Label:       "Claude Code",
-			Summary:     "Use your local Claude Code installation for project analysis.",
-			Description: "Requires Claude Code to be installed and authenticated. Background tasks default to Haiku to keep usage lighter.",
+			Summary:     "Writes project summaries, classifications, TODO help, and commit help through your local Claude Code installation.",
+			Description: "Claude Code must be installed and signed in. Background tasks default to Haiku to keep usage lighter.",
 		},
 		{
 			Value:       config.AIBackendMLX,
 			Label:       "MLX",
-			Summary:     "Use a local MLX OpenAI-compatible endpoint for project analysis.",
-			Description: "Requires a local MLX server running at the configured endpoint. Leave the model blank to auto-use the first discovered local model.",
+			Summary:     "Writes project summaries and helper output through a local MLX OpenAI-compatible endpoint.",
+			Description: "The MLX server must be running at the configured endpoint. Leave the model blank to use the first discovered local model.",
 		},
 		{
 			Value:       config.AIBackendOllama,
 			Label:       "Ollama",
-			Summary:     "Use a local Ollama OpenAI-compatible endpoint for project analysis.",
-			Description: "Requires a local Ollama server running at the configured endpoint. Leave the model blank to auto-use the first discovered local model.",
+			Summary:     "Writes project summaries and helper output through a local Ollama OpenAI-compatible endpoint.",
+			Description: "The Ollama server must be running at the configured endpoint. Leave the model blank to use the first discovered local model.",
 		},
 		{
 			Value:       config.AIBackendOpenAIAPI,
 			Label:       "OpenAI API",
-			Summary:     "Use a direct OpenAI API key for project analysis.",
-			Description: "Requires an OpenAI API key to be saved. This is the most predictable setup if you do not have Codex, OpenCode, or Claude Code installed.",
+			Summary:     "Writes project summaries and helper output directly through the saved OpenAI API key.",
+			Description: "An OpenAI API key must be saved. This is the most predictable path if you do not want to rely on local CLI tools.",
 		},
 		{
 			Value:       config.AIBackendDisabled,
 			Label:       "Disabled",
-			Summary:     "Turn off AI-powered project analysis.",
-			Description: "Little Control Room keeps working, but summaries, classifications, and commit help stay off.",
+			Summary:     "Keeps Little Control Room running without background project-report AI.",
+			Description: "No provider setup is needed. Summaries, classifications, TODO help, and commit help stay off.",
 		},
 	}
 	for i := range specs {
@@ -131,32 +131,32 @@ func (m Model) bossChatProviderChoices(settings config.EditableSettings) []provi
 		{
 			Value:       config.AIBackendUnset,
 			Label:       "Auto",
-			Summary:     "Use OpenAI API automatically when a saved API key exists.",
-			Description: "This keeps boss chat low-friction without forcing a separate backend choice. If no OpenAI API key is saved, boss chat stays unconfigured.",
+			Summary:     "Lets /boss answer through OpenAI API automatically when a saved API key exists.",
+			Description: "A saved OpenAI API key is enough. If no key is saved, boss chat stays unconfigured until you choose another path.",
 		},
 		{
 			Value:       config.AIBackendOpenAIAPI,
 			Label:       "OpenAI API",
-			Summary:     "Use direct OpenAI API inference for the high-level /boss conversation.",
-			Description: "Project reports can still use Codex, OpenCode, Claude Code, MLX, Ollama, or another backend. Boss chat only shares the saved API key.",
+			Summary:     "Lets /boss answer through direct OpenAI API inference.",
+			Description: "A saved OpenAI API key is required. Project reports can still use Codex, OpenCode, Claude Code, MLX, Ollama, or another provider.",
 		},
 		{
 			Value:       config.AIBackendMLX,
 			Label:       "MLX",
-			Summary:     "Use your local MLX OpenAI-compatible endpoint for boss chat.",
-			Description: "Uses the MLX endpoint, API key, and model fields. Leave the model blank to auto-use the first discovered local model.",
+			Summary:     "Lets /boss answer through your local MLX OpenAI-compatible endpoint.",
+			Description: "The MLX endpoint must be running. It uses the shared MLX endpoint, API key, and model fields.",
 		},
 		{
 			Value:       config.AIBackendOllama,
 			Label:       "Ollama",
-			Summary:     "Use your local Ollama OpenAI-compatible endpoint for boss chat.",
-			Description: "Uses the Ollama endpoint, API key, and model fields. Leave the model blank to auto-use the first discovered local model.",
+			Summary:     "Lets /boss answer through your local Ollama OpenAI-compatible endpoint.",
+			Description: "The Ollama endpoint must be running. It uses the shared Ollama endpoint, API key, and model fields.",
 		},
 		{
 			Value:       config.AIBackendDisabled,
 			Label:       "Off",
-			Summary:     "Turn off boss chat inference.",
-			Description: "The classic TUI and project-report inference keep working. This only disables the high-level chat assistant.",
+			Summary:     "Keeps /boss from answering with AI.",
+			Description: "No provider setup is needed. The rest of the TUI and project-report inference keep working.",
 		},
 	}
 	for i := range specs {
@@ -335,10 +335,10 @@ func renderProviderChoicePickerContent(title string, currentLabel string, option
 }
 
 func renderProviderChoiceDetail(choice providerChoice, width int) string {
-	lines := []string{detailSectionStyle.Render("About")}
-	lines = append(lines, renderWrappedDialogTextLines(detailValueStyle, max(20, width-2), choice.Summary)...)
-	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, max(20, width-2), choice.Description)...)
-	lines = append(lines, detailField("Status", renderProviderChoiceStatus(choice)))
-	lines = append(lines, renderWrappedDetailField("Next", detailValueStyle, width, choice.NextStep))
+	lines := []string{detailSectionStyle.Render("Selected Helper")}
+	lines = append(lines, renderWrappedDetailField("Will do", detailValueStyle, width, choice.Summary))
+	lines = append(lines, renderWrappedDetailField("Needs", detailValueStyle, width, choice.Description))
+	lines = append(lines, detailField("Readiness", renderProviderChoiceStatus(choice)))
+	lines = append(lines, renderWrappedDetailField("After choosing", detailValueStyle, width, choice.NextStep))
 	return strings.Join(lines, "\n")
 }
