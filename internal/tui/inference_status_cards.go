@@ -110,9 +110,15 @@ func (m Model) bossChatStatusCard(settings config.EditableSettings) inferenceSta
 	detail := strings.TrimSpace(status.Detail)
 	if backend == config.AIBackendUnset {
 		value = "Auto"
-		state = "needs setup"
-		stateStyle = detailWarningStyle
-		detail = "Auto uses OpenAI when a saved key exists; otherwise choose Off."
+		if strings.TrimSpace(settings.OpenAIAPIKey) != "" {
+			state = "ready"
+			stateStyle = footerPrimaryLabelStyle
+			detail = "Auto will use the saved OpenAI API key."
+		} else {
+			state = "needs setup"
+			stateStyle = detailWarningStyle
+			detail = "Auto uses OpenAI when a saved key exists; otherwise choose Off."
+		}
 	}
 	if backend == config.AIBackendDisabled {
 		detail = "High-level chat is off; project reports can still run."

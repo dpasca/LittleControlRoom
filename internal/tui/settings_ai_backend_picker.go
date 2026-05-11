@@ -4,69 +4,14 @@ import (
 	"fmt"
 	"strings"
 
-	"lcroom/internal/aibackend"
 	"lcroom/internal/config"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-type settingsAIBackendOption struct {
-	Value       config.AIBackend
-	Label       string
-	Summary     string
-	Description string
-}
-
-func settingsAIBackendOptions() []settingsAIBackendOption {
-	return []settingsAIBackendOption{
-		{
-			Value:       config.AIBackendCodex,
-			Label:       "Codex",
-			Summary:     "Use your local Codex CLI installation for project analysis.",
-			Description: "Requires Codex to be installed and authenticated. No API key is stored by Little Control Room.",
-		},
-		{
-			Value:       config.AIBackendOpenCode,
-			Label:       "OpenCode",
-			Summary:     "Use your local OpenCode installation for project analysis.",
-			Description: "Requires OpenCode to be installed and authenticated. No API key is stored by Little Control Room.",
-		},
-		{
-			Value:       config.AIBackendClaude,
-			Label:       "Claude Code",
-			Summary:     "Use your local Claude Code installation for project analysis.",
-			Description: "Requires Claude Code to be installed and authenticated. Background tasks default to Haiku to keep usage lighter.",
-		},
-		{
-			Value:       config.AIBackendMLX,
-			Label:       "MLX",
-			Summary:     "Use a local MLX OpenAI-compatible endpoint for project analysis.",
-			Description: "Requires a local MLX server running at the configured endpoint. Leave the model blank to auto-use the first discovered local model.",
-		},
-		{
-			Value:       config.AIBackendOllama,
-			Label:       "Ollama",
-			Summary:     "Use a local Ollama OpenAI-compatible endpoint for project analysis.",
-			Description: "Requires a local Ollama server running at the configured endpoint. Leave the model blank to auto-use the first discovered local model.",
-		},
-		{
-			Value:       config.AIBackendOpenAIAPI,
-			Label:       "OpenAI API",
-			Summary:     "Use a direct OpenAI API key for project analysis.",
-			Description: "Requires an OpenAI API key to be saved. This is the most predictable setup if you do not have Codex, OpenCode, or Claude Code installed.",
-		},
-		{
-			Value:       config.AIBackendDisabled,
-			Label:       "Disabled",
-			Summary:     "Turn off AI-powered project analysis.",
-			Description: "Little Control Room keeps working, but summaries, classifications, and commit help stay off.",
-		},
-	}
-}
-
 func (m Model) openSettingsAIBackendPicker() (tea.Model, tea.Cmd) {
-	options := settingsAIBackendOptions()
+	options := m.settingsAIBackendOptions()
 	m.settingsAIBackendPickerVisible = true
 	m.settingsAIBackendPickerSelected = m.settingsAIBackendPickerSelection(options)
 	m.status = "Choose the AI backend for project analysis."
@@ -81,18 +26,17 @@ func (m *Model) closeSettingsAIBackendPicker(status string) {
 	}
 }
 
-func (m Model) settingsAIBackendPickerSelection(options []settingsAIBackendOption) int {
+func (m Model) settingsAIBackendOptions() []providerChoice {
+	return m.providerChoices(providerChoiceRoleProjectReports, m.settingsDraftForInferenceStatus())
+}
+
+func (m Model) settingsAIBackendPickerSelection(options []providerChoice) int {
 	current := config.AIBackend(strings.TrimSpace(m.settingsFieldValue(settingsFieldAIBackend)))
-	for i, option := range options {
-		if option.Value == current {
-			return i
-		}
-	}
-	return 0
+	return providerChoiceSelection(options, current)
 }
 
 func (m Model) updateSettingsAIBackendPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	options := settingsAIBackendOptions()
+	options := m.settingsAIBackendOptions()
 	if len(options) == 0 {
 		m.closeSettingsAIBackendPicker("No AI backend options are available right now.")
 		return m, nil
@@ -121,7 +65,7 @@ func (m Model) updateSettingsAIBackendPickerMode(msg tea.KeyMsg) (tea.Model, tea
 	return m, nil
 }
 
-func (m Model) applySettingsAIBackendPickerSelection(option settingsAIBackendOption) (tea.Model, tea.Cmd) {
+func (m Model) applySettingsAIBackendPickerSelection(option providerChoice) (tea.Model, tea.Cmd) {
 	if len(m.settingsFields) > settingsFieldAIBackend {
 		m.settingsFields[settingsFieldAIBackend].input.SetValue(string(option.Value))
 	}
@@ -145,7 +89,7 @@ func (m Model) renderSettingsAIBackendPickerPanel(bodyW, bodyH int) string {
 }
 
 func (m Model) renderSettingsAIBackendPickerContent(width int) string {
-	options := settingsAIBackendOptions()
+	options := m.settingsAIBackendOptions()
 	lines := []string{
 		commandPaletteTitleStyle.Render("AI Backend"),
 		renderDialogAction("Up/Down", "move", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
@@ -158,69 +102,22 @@ func (m Model) renderSettingsAIBackendPickerContent(width int) string {
 
 	current := config.AIBackend(strings.TrimSpace(m.settingsFieldValue(settingsFieldAIBackend)))
 	for i, option := range options {
-		lines = append(lines, m.renderSettingsAIBackendPickerRow(option, i == m.settingsAIBackendPickerSelected, option.Value == current, width))
+		lines = append(lines, renderProviderChoiceRow(option, i == m.settingsAIBackendPickerSelected, option.Value == current, width))
 	}
 
 	selected := options[m.settingsAIBackendPickerSelected]
-	status, known := m.inferenceBackendStatus(selected.Value, m.settingsDraftForInferenceStatus())
 	lines = append(lines, "")
 	lines = append(lines, detailSectionStyle.Render("About"))
 	lines = append(lines, renderWrappedDialogTextLines(detailValueStyle, max(20, width-2), selected.Summary)...)
 	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, max(20, width-2), selected.Description)...)
-	lines = append(lines, detailField("Status", m.renderSettingsBackendStatus(selected.Value, status, known)))
+	lines = append(lines, detailField("Status", renderProviderChoiceStatus(selected)))
+	lines = append(lines, renderWrappedDetailField("Next", detailValueStyle, width, selected.NextStep))
 	return strings.Join(lines, "\n")
-}
-
-func (m Model) renderSettingsAIBackendPickerRow(option settingsAIBackendOption, selected, current bool, width int) string {
-	labelStyle := detailValueStyle.Bold(true)
-	if selected {
-		labelStyle = labelStyle.Foreground(lipgloss.Color("230"))
-	}
-	markerStyle := commandPaletteHintStyle
-	if selected {
-		markerStyle = commandPalettePickStyle
-	}
-	marker := markerStyle.Render(" ")
-	if selected {
-		marker = markerStyle.Render("›")
-	}
-	status, known := m.inferenceBackendStatus(option.Value, m.settingsDraftForInferenceStatus())
-	state, stateStyle := inferenceStateForBackend(option.Value, status, known)
-	labelWidth := min(24, max(12, width/2))
-	stateWidth := 12
-	row := marker + " " +
-		labelStyle.Width(labelWidth).Render(truncateText(option.Label, labelWidth)) +
-		stateStyle.Width(stateWidth).Render(truncateText(state, stateWidth))
-	if current {
-		row += "  " + detailMutedStyle.Render("(current)")
-	}
-	row = fitFooterWidth(row, width)
-	if selected {
-		return projectListSelectedRowStyle.Width(width).Render(row)
-	}
-	return lipgloss.NewStyle().Width(width).Render(row)
-}
-
-func (m Model) renderSettingsBackendStatus(backend config.AIBackend, status aibackend.Status, known bool) string {
-	state, stateStyle := inferenceStateForBackend(backend, status, known)
-	detail := strings.TrimSpace(status.Detail)
-	if status.LoginHint != "" && !status.Ready {
-		detail = strings.TrimSpace(status.LoginHint)
-	}
-	if detail == "" {
-		detail = "Availability will refresh in the background."
-	}
-	return stateStyle.Render(state) + detailMutedStyle.Render(" - "+detail)
 }
 
 func settingsAIBackendOptionLabel(raw string) string {
 	current := config.AIBackend(strings.TrimSpace(raw))
-	for _, option := range settingsAIBackendOptions() {
-		if option.Value == current {
-			return option.Label
-		}
-	}
-	return "Not configured"
+	return providerChoiceLabel(Model{}.providerChoices(providerChoiceRoleProjectReports, config.EditableSettings{}), current, "Not configured")
 }
 
 func (m Model) renderSettingsAIBackendValue(selected bool, inputWidth int) string {

@@ -10,50 +10,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-type settingsBossChatBackendOption struct {
-	Value       config.AIBackend
-	Label       string
-	Summary     string
-	Description string
-}
-
-func settingsBossChatBackendOptions() []settingsBossChatBackendOption {
-	return []settingsBossChatBackendOption{
-		{
-			Value:       config.AIBackendUnset,
-			Label:       "Auto",
-			Summary:     "Use OpenAI API automatically when a saved API key exists.",
-			Description: "This keeps boss chat low-friction without forcing a separate backend choice. If no OpenAI API key is saved, boss chat stays unconfigured.",
-		},
-		{
-			Value:       config.AIBackendOpenAIAPI,
-			Label:       "OpenAI API",
-			Summary:     "Use direct OpenAI API inference for the high-level /boss conversation.",
-			Description: "Project reports can still use Codex, OpenCode, Claude Code, MLX, Ollama, or another backend. Boss chat only shares the saved API key.",
-		},
-		{
-			Value:       config.AIBackendMLX,
-			Label:       "MLX",
-			Summary:     "Use your local MLX OpenAI-compatible endpoint for boss chat.",
-			Description: "Uses the MLX endpoint, API key, and model fields. Leave the model blank to auto-use the first discovered local model.",
-		},
-		{
-			Value:       config.AIBackendOllama,
-			Label:       "Ollama",
-			Summary:     "Use your local Ollama OpenAI-compatible endpoint for boss chat.",
-			Description: "Uses the Ollama endpoint, API key, and model fields. Leave the model blank to auto-use the first discovered local model.",
-		},
-		{
-			Value:       config.AIBackendDisabled,
-			Label:       "Off",
-			Summary:     "Turn off boss chat inference.",
-			Description: "The classic TUI and project-report inference keep working. This only disables the high-level chat assistant.",
-		},
-	}
-}
-
 func (m Model) openSettingsBossChatBackendPicker() (tea.Model, tea.Cmd) {
-	options := settingsBossChatBackendOptions()
+	options := m.settingsBossChatBackendOptions()
 	m.settingsBossChatPickerVisible = true
 	m.settingsBossChatPickerSelected = m.settingsBossChatBackendPickerSelection(options)
 	m.status = "Choose boss chat inference."
@@ -68,18 +26,17 @@ func (m *Model) closeSettingsBossChatBackendPicker(status string) {
 	}
 }
 
-func (m Model) settingsBossChatBackendPickerSelection(options []settingsBossChatBackendOption) int {
+func (m Model) settingsBossChatBackendOptions() []providerChoice {
+	return m.providerChoices(providerChoiceRoleBossChat, m.settingsDraftForInferenceStatus())
+}
+
+func (m Model) settingsBossChatBackendPickerSelection(options []providerChoice) int {
 	current := config.AIBackend(strings.TrimSpace(m.settingsFieldValue(settingsFieldBossChatBackend)))
-	for i, option := range options {
-		if option.Value == current {
-			return i
-		}
-	}
-	return 0
+	return providerChoiceSelection(options, current)
 }
 
 func (m Model) updateSettingsBossChatBackendPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	options := settingsBossChatBackendOptions()
+	options := m.settingsBossChatBackendOptions()
 	if len(options) == 0 {
 		m.closeSettingsBossChatBackendPicker("No boss chat options are available right now.")
 		return m, nil
@@ -108,7 +65,7 @@ func (m Model) updateSettingsBossChatBackendPickerMode(msg tea.KeyMsg) (tea.Mode
 	return m, nil
 }
 
-func (m Model) applySettingsBossChatBackendPickerSelection(option settingsBossChatBackendOption) (tea.Model, tea.Cmd) {
+func (m Model) applySettingsBossChatBackendPickerSelection(option providerChoice) (tea.Model, tea.Cmd) {
 	if len(m.settingsFields) > settingsFieldBossChatBackend {
 		m.settingsFields[settingsFieldBossChatBackend].input.SetValue(string(option.Value))
 	}
@@ -132,7 +89,7 @@ func (m Model) renderSettingsBossChatBackendPickerPanel(bodyW, bodyH int) string
 }
 
 func (m Model) renderSettingsBossChatBackendPickerContent(width int) string {
-	options := settingsBossChatBackendOptions()
+	options := m.settingsBossChatBackendOptions()
 	lines := []string{
 		commandPaletteTitleStyle.Render("Boss Chat"),
 		renderDialogAction("Up/Down", "move", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
@@ -145,50 +102,17 @@ func (m Model) renderSettingsBossChatBackendPickerContent(width int) string {
 
 	current := config.AIBackend(strings.TrimSpace(m.settingsFieldValue(settingsFieldBossChatBackend)))
 	for i, option := range options {
-		lines = append(lines, m.renderSettingsBossChatBackendPickerRow(option, i == m.settingsBossChatPickerSelected, option.Value == current, width))
+		lines = append(lines, renderProviderChoiceRow(option, i == m.settingsBossChatPickerSelected, option.Value == current, width))
 	}
 
 	selected := options[m.settingsBossChatPickerSelected]
-	selectedSettings := m.settingsDraftForInferenceStatus()
-	selectedSettings.BossChatBackend = selected.Value
-	selectedCard := m.bossChatStatusCard(selectedSettings)
 	lines = append(lines, "")
 	lines = append(lines, detailSectionStyle.Render("About"))
 	lines = append(lines, renderWrappedDialogTextLines(detailValueStyle, max(20, width-2), selected.Summary)...)
 	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, max(20, width-2), selected.Description)...)
-	lines = append(lines, detailField("Status", selectedCard.StateStyle.Render(selectedCard.State)+detailMutedStyle.Render(" - "+selectedCard.Detail)))
+	lines = append(lines, detailField("Status", renderProviderChoiceStatus(selected)))
+	lines = append(lines, renderWrappedDetailField("Next", detailValueStyle, width, selected.NextStep))
 	return strings.Join(lines, "\n")
-}
-
-func (m Model) renderSettingsBossChatBackendPickerRow(option settingsBossChatBackendOption, selected, current bool, width int) string {
-	labelStyle := detailValueStyle.Bold(true)
-	if selected {
-		labelStyle = labelStyle.Foreground(lipgloss.Color("230"))
-	}
-	markerStyle := commandPaletteHintStyle
-	if selected {
-		markerStyle = commandPalettePickStyle
-	}
-	marker := markerStyle.Render(" ")
-	if selected {
-		marker = markerStyle.Render("›")
-	}
-	rowSettings := m.settingsDraftForInferenceStatus()
-	rowSettings.BossChatBackend = option.Value
-	card := m.bossChatStatusCard(rowSettings)
-	labelWidth := min(24, max(12, width/2))
-	stateWidth := 12
-	row := marker + " " +
-		labelStyle.Width(labelWidth).Render(truncateText(option.Label, labelWidth)) +
-		card.StateStyle.Width(stateWidth).Render(truncateText(card.State, stateWidth))
-	if current {
-		row += "  " + detailMutedStyle.Render("(current)")
-	}
-	row = fitFooterWidth(row, width)
-	if selected {
-		return projectListSelectedRowStyle.Width(width).Render(row)
-	}
-	return lipgloss.NewStyle().Width(width).Render(row)
 }
 
 func renderSettingsBossChatBackendLabel(raw string) string {
@@ -197,12 +121,7 @@ func renderSettingsBossChatBackendLabel(raw string) string {
 
 func settingsBossChatBackendOptionLabel(raw string) string {
 	current := config.AIBackend(strings.TrimSpace(raw))
-	for _, option := range settingsBossChatBackendOptions() {
-		if option.Value == current {
-			return option.Label
-		}
-	}
-	return "Auto"
+	return providerChoiceLabel(Model{}.providerChoices(providerChoiceRoleBossChat, config.EditableSettings{}), current, "Auto")
 }
 
 func (m Model) renderSettingsBossChatBackendValue(selected bool, inputWidth int) string {

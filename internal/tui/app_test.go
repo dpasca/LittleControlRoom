@@ -20509,6 +20509,92 @@ func TestInferenceStatusCardsTreatMissingSnapshotAsSelected(t *testing.T) {
 	}
 }
 
+func TestProviderChoicesAreRoleSpecific(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.OpenAIAPIKey = "sk-test-example"
+
+	m := Model{
+		setupSnapshot: aibackend.Snapshot{
+			Codex: aibackend.Status{
+				Backend:       config.AIBackendCodex,
+				Label:         config.AIBackendCodex.Label(),
+				Installed:     true,
+				Authenticated: true,
+				Ready:         true,
+				Detail:        "Codex ready.",
+			},
+		},
+	}
+
+	projectChoices := m.providerChoices(providerChoiceRoleProjectReports, settings)
+	foundCodex := false
+	for _, choice := range projectChoices {
+		if choice.Value == config.AIBackendCodex {
+			foundCodex = true
+			break
+		}
+	}
+	if !foundCodex {
+		t.Fatalf("project report choices should include Codex")
+	}
+	if got := providerChoiceLabel(projectChoices, config.AIBackendDisabled, "missing"); got != "Disabled" {
+		t.Fatalf("disabled project label = %q, want Disabled", got)
+	}
+
+	bossChoices := m.providerChoices(providerChoiceRoleBossChat, settings)
+	if got := providerChoiceLabel(bossChoices, config.AIBackendUnset, "missing"); got != "Auto" {
+		t.Fatalf("auto boss label = %q, want Auto", got)
+	}
+	if index := providerChoiceSelection(bossChoices, config.AIBackendCodex); index != 0 {
+		t.Fatalf("boss chat choices should not include Codex; selection fallback = %d, want 0", index)
+	}
+	auto := bossChoices[providerChoiceSelection(bossChoices, config.AIBackendUnset)]
+	if auto.State != "ready" || !strings.Contains(auto.Detail, "saved OpenAI API key") {
+		t.Fatalf("auto boss choice = state:%q detail:%q, want ready with saved-key detail", auto.State, auto.Detail)
+	}
+	if !strings.Contains(auto.NextStep, "Save") || !strings.Contains(auto.NextStep, "automatically") {
+		t.Fatalf("auto boss next step = %q, want save guidance", auto.NextStep)
+	}
+}
+
+func TestSettingsProviderPickersRenderSharedStatus(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendCodex
+	settings.BossChatBackend = config.AIBackendUnset
+	settings.OpenAIAPIKey = "sk-test-example"
+
+	m := Model{
+		settingsMode:   true,
+		settingsFields: newSettingsFields(settings),
+		setupSnapshot: aibackend.Snapshot{
+			Codex: aibackend.Status{
+				Backend:       config.AIBackendCodex,
+				Label:         config.AIBackendCodex.Label(),
+				Installed:     true,
+				Authenticated: true,
+				Ready:         true,
+				Detail:        "Codex ready.",
+			},
+		},
+		width:  100,
+		height: 24,
+	}
+
+	projectPicker := ansi.Strip(m.renderSettingsAIBackendPickerContent(72))
+	for _, want := range []string{"AI Backend", "Codex", "ready", "Status", "Next"} {
+		if !strings.Contains(projectPicker, want) {
+			t.Fatalf("project picker missing %q: %q", want, projectPicker)
+		}
+	}
+
+	bossPicker := ansi.Strip(m.renderSettingsBossChatBackendPickerContent(72))
+	for _, want := range []string{"Boss Chat", "Auto", "ready", "saved OpenAI API key", "Next"} {
+		if !strings.Contains(bossPicker, want) {
+			t.Fatalf("boss picker missing %q: %q", want, bossPicker)
+		}
+	}
+}
+
 func TestSettingsModalShowsSelectedHintAndWindowsLowerFields(t *testing.T) {
 	m := Model{
 		settingsMode:   true,
