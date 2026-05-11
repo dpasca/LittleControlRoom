@@ -172,17 +172,14 @@ func GenerateScreenshots(ctx context.Context, svc *service.Service, cfg config.S
 	if err != nil {
 		return ScreenshotReport{}, err
 	}
-	setupModel.setupMode = true
-	setupModel.setupChecked = true
-	setupModel.setupLoading = false
-	setupModel.setupSelected = setupModel.setupSelectionForBackend(config.AIBackendClaude)
-	setupModel.setupModelTier = config.ModelTierCheap
-	setupModel.setupSnapshot = screenshotSetupSnapshot()
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.AIBackend = config.AIBackendCodex
 	settings.OpenCodeModelTier = string(config.ModelTierCheap)
 	setupModel.settingsBaseline = &settings
-	setupModel.status = "Choose AI roles for project reports and boss chat."
+	setupModel.setupChecked = true
+	setupModel.setupSnapshot = screenshotSetupSnapshot()
+	_ = setupModel.openSetupSettingsMode()
+	setupModel.setupSnapshot = screenshotSetupSnapshot()
 	assets = append(assets, screenshotAsset("setup", "Setup", setupModel.View(), cfg))
 
 	settingsModel, err := buildScreenshotDashboardModel(ctx, svc, data, filtered, selectedProject.Path, cfg, now)

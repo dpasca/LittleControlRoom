@@ -143,15 +143,20 @@ func (m Model) renderSettingsBossChatBackendPickerContent(width int) string {
 	lines = append(lines, detailField("Current", detailValueStyle.Render(currentLabel)))
 	lines = append(lines, "")
 
+	current := config.AIBackend(strings.TrimSpace(m.settingsFieldValue(settingsFieldBossChatBackend)))
 	for i, option := range options {
-		lines = append(lines, m.renderSettingsBossChatBackendPickerRow(option, i == m.settingsBossChatPickerSelected, option.Label == currentLabel, width))
+		lines = append(lines, m.renderSettingsBossChatBackendPickerRow(option, i == m.settingsBossChatPickerSelected, option.Value == current, width))
 	}
 
 	selected := options[m.settingsBossChatPickerSelected]
+	selectedSettings := m.settingsDraftForInferenceStatus()
+	selectedSettings.BossChatBackend = selected.Value
+	selectedCard := m.bossChatStatusCard(selectedSettings)
 	lines = append(lines, "")
 	lines = append(lines, detailSectionStyle.Render("About"))
 	lines = append(lines, renderWrappedDialogTextLines(detailValueStyle, max(20, width-2), selected.Summary)...)
 	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, max(20, width-2), selected.Description)...)
+	lines = append(lines, detailField("Status", selectedCard.StateStyle.Render(selectedCard.State)+detailMutedStyle.Render(" - "+selectedCard.Detail)))
 	return strings.Join(lines, "\n")
 }
 
@@ -168,7 +173,14 @@ func (m Model) renderSettingsBossChatBackendPickerRow(option settingsBossChatBac
 	if selected {
 		marker = markerStyle.Render("›")
 	}
-	row := marker + " " + labelStyle.Render(truncateText(option.Label, max(10, width-4)))
+	rowSettings := m.settingsDraftForInferenceStatus()
+	rowSettings.BossChatBackend = option.Value
+	card := m.bossChatStatusCard(rowSettings)
+	labelWidth := min(24, max(12, width/2))
+	stateWidth := 12
+	row := marker + " " +
+		labelStyle.Width(labelWidth).Render(truncateText(option.Label, labelWidth)) +
+		card.StateStyle.Width(stateWidth).Render(truncateText(card.State, stateWidth))
 	if current {
 		row += "  " + detailMutedStyle.Render("(current)")
 	}

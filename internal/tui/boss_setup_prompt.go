@@ -70,7 +70,7 @@ func (m Model) bossSetupPromptReason() string {
 	case settings.BossChatBackend == config.AIBackendOpenAIAPI && strings.TrimSpace(settings.OpenAIAPIKey) == "":
 		return "Boss chat is set to OpenAI API, but needs a saved OpenAI API key before it can start."
 	case settings.BossChatBackend == config.AIBackendUnset:
-		return "Boss chat is not configured yet. Open /settings to choose a boss chat backend."
+		return "Boss chat is not configured yet. Open setup to choose a boss chat backend."
 	case settings.BossChatBackend != config.AIBackendOpenAIAPI:
 		return "Boss chat is not connected to a supported direct chat backend yet."
 	default:
@@ -84,7 +84,7 @@ func (m Model) updateBossSetupPromptMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case "esc":
-		m.closeBossSetupPrompt("Boss mode canceled. Run /settings anytime to configure boss chat.")
+		m.closeBossSetupPrompt("Boss mode canceled. Run /setup anytime to configure boss chat.")
 		return m, nil
 	case "tab", "shift+tab", "left", "right", "up", "down":
 		if m.bossSetupPrompt.Selected == bossSetupPromptOpenSetup {
@@ -94,7 +94,7 @@ func (m Model) updateBossSetupPromptMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "c", "n":
-		m.closeBossSetupPrompt("Boss mode canceled. Run /settings anytime to configure boss chat.")
+		m.closeBossSetupPrompt("Boss mode canceled. Run /setup anytime to configure boss chat.")
 		return m, nil
 	case "s", "o":
 		return m.openSetupFromBossSetupPrompt()
@@ -102,7 +102,7 @@ func (m Model) updateBossSetupPromptMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.bossSetupPrompt.Selected == bossSetupPromptOpenSetup {
 			return m.openSetupFromBossSetupPrompt()
 		}
-		m.closeBossSetupPrompt("Boss mode canceled. Run /settings anytime to configure boss chat.")
+		m.closeBossSetupPrompt("Boss mode canceled. Run /setup anytime to configure boss chat.")
 		return m, nil
 	}
 	return m, nil
@@ -116,7 +116,7 @@ func (m Model) openSetupFromBossSetupPrompt() (tea.Model, tea.Cmd) {
 
 func (m *Model) openSettingsModeForBossChat() tea.Cmd {
 	m.openSettingsModeWithBaseline(m.currentSettingsBaseline())
-	m.status = "Configure boss chat here, then run /boss again."
+	m.status = "Configure boss chat in Getting Started, then run /boss again."
 	return m.setSettingsSelection(settingsFieldBossChatBackend)
 }
 
@@ -147,7 +147,7 @@ func (m Model) renderBossSetupPromptContent(width int) string {
 	lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, width, "Project reports can stay on their current backend. This only configures the high-level /boss conversation.")...)
 	lines = append(lines, "")
 	lines = append(lines, strings.Join([]string{
-		renderDialogButton("Open /settings", prompt.Selected == bossSetupPromptOpenSetup),
+		renderDialogButton("Open setup", prompt.Selected == bossSetupPromptOpenSetup),
 		renderDialogButton("Cancel", prompt.Selected == bossSetupPromptCancel),
 	}, "  "))
 	lines = append(lines, "")

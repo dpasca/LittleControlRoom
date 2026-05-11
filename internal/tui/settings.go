@@ -133,7 +133,7 @@ func settingsSections() []settingsSection {
 		{
 			id:    settingsSectionGettingStarted,
 			label: "Getting Started",
-			hint:  "Pick your AI backend and where to look for projects.",
+			hint:  "Only the first-run choices: project reports, boss chat, API key if needed, and project roots. Everything else can wait.",
 			fieldOrder: []int{
 				settingsFieldAIBackend,
 				settingsFieldOpenAIAPIKey,
@@ -308,7 +308,14 @@ func normalizeSettingsChoice(raw string) string {
 }
 
 func (m *Model) openSettingsMode() tea.Cmd {
-	return m.openSettingsModeWithBaseline(m.currentSettingsBaseline())
+	cmd := m.openSettingsModeWithBaseline(m.currentSettingsBaseline())
+	return tea.Batch(cmd, m.refreshSetupSnapshotCmd(false))
+}
+
+func (m *Model) openSetupSettingsMode() tea.Cmd {
+	cmd := m.openSettingsModeWithBaseline(m.currentSettingsBaseline())
+	m.status = "Setup open. Pick project reports and boss chat in Getting Started; Enter chooses, ctrl+s saves, Esc skips."
+	return tea.Batch(cmd, m.refreshSetupSnapshotCmd(false))
 }
 
 func (m *Model) openBrowserSettingsMode() tea.Cmd {
@@ -353,12 +360,20 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	m.commandMode = false
 	m.showHelp = false
 	m.err = nil
-	m.status = "Editing settings. Enter chooses pickers, ctrl+s saves, Esc cancels."
+	m.status = "Settings open. Getting Started has the onboarding basics; Enter chooses pickers, ctrl+s saves, Esc cancels."
 	if issue := settingsLocalFileIssue(saved); issue != nil {
 		m.appendSettingsConfigIssue(issue)
 		m.status = errorStatusWithHint(settingsConfigIssueStatus)
 	}
-	return m.setSettingsSelection(0)
+	return m.setSettingsSelection(defaultSettingsSelection())
+}
+
+func defaultSettingsSelection() int {
+	sections := settingsSections()
+	if len(sections) == 0 || len(sections[0].fieldOrder) == 0 {
+		return 0
+	}
+	return sections[0].fieldOrder[0]
 }
 
 func (m *Model) closeSettingsMode(status string) {
@@ -755,6 +770,23 @@ func (m Model) settingsFieldValue(index int) string {
 	return strings.TrimSpace(m.settingsFields[index].input.Value())
 }
 
+func (m Model) settingsDraftForInferenceStatus() config.EditableSettings {
+	settings := m.currentSettingsBaseline()
+	if len(m.settingsFields) == 0 {
+		return settings
+	}
+	settings.AIBackend = config.AIBackend(m.settingsFieldValue(settingsFieldAIBackend))
+	settings.BossChatBackend = config.AIBackend(m.settingsFieldValue(settingsFieldBossChatBackend))
+	settings.OpenAIAPIKey = m.settingsFieldValue(settingsFieldOpenAIAPIKey)
+	settings.MLXBaseURL = m.settingsFieldValue(settingsFieldMLXBaseURL)
+	settings.MLXAPIKey = m.settingsFieldValue(settingsFieldMLXAPIKey)
+	settings.MLXModel = m.settingsFieldValue(settingsFieldMLXModel)
+	settings.OllamaBaseURL = m.settingsFieldValue(settingsFieldOllamaBaseURL)
+	settings.OllamaAPIKey = m.settingsFieldValue(settingsFieldOllamaAPIKey)
+	settings.OllamaModel = m.settingsFieldValue(settingsFieldOllamaModel)
+	return settings
+}
+
 func (m Model) renderSettingsOverlay(body string, bodyW, bodyH int) string {
 	panel := m.renderSettingsPanel(bodyW, bodyH)
 	panelWidth := lipgloss.Width(panel)
@@ -1146,7 +1178,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsField(
 			"MLX model",
-			"Optional exact model ID for the MLX backend. Leave blank to auto-use the first model returned by /v1/models. Use /setup and press M to pick from discovered models.",
+			"Optional exact model ID for the MLX backend. Leave blank to auto-use the first model returned by /v1/models.",
 			settings.MLXModel,
 			512,
 			settingsSectionAI,
@@ -1168,7 +1200,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsField(
 			"Ollama model",
-			"Optional exact model ID for the Ollama backend. Leave blank to auto-use the first model returned by /v1/models. Use /setup and press M to pick from discovered models.",
+			"Optional exact model ID for the Ollama backend. Leave blank to auto-use the first model returned by /v1/models.",
 			settings.OllamaModel,
 			512,
 			settingsSectionAI,

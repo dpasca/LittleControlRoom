@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"lcroom/internal/aibackend"
 	"lcroom/internal/config"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -155,15 +156,18 @@ func (m Model) renderSettingsAIBackendPickerContent(width int) string {
 	lines = append(lines, detailField("Current", detailValueStyle.Render(currentLabel)))
 	lines = append(lines, "")
 
+	current := config.AIBackend(strings.TrimSpace(m.settingsFieldValue(settingsFieldAIBackend)))
 	for i, option := range options {
-		lines = append(lines, m.renderSettingsAIBackendPickerRow(option, i == m.settingsAIBackendPickerSelected, option.Label == currentLabel, width))
+		lines = append(lines, m.renderSettingsAIBackendPickerRow(option, i == m.settingsAIBackendPickerSelected, option.Value == current, width))
 	}
 
 	selected := options[m.settingsAIBackendPickerSelected]
+	status, known := m.inferenceBackendStatus(selected.Value, m.settingsDraftForInferenceStatus())
 	lines = append(lines, "")
 	lines = append(lines, detailSectionStyle.Render("About"))
 	lines = append(lines, renderWrappedDialogTextLines(detailValueStyle, max(20, width-2), selected.Summary)...)
 	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, max(20, width-2), selected.Description)...)
+	lines = append(lines, detailField("Status", m.renderSettingsBackendStatus(selected.Value, status, known)))
 	return strings.Join(lines, "\n")
 }
 
@@ -180,7 +184,13 @@ func (m Model) renderSettingsAIBackendPickerRow(option settingsAIBackendOption, 
 	if selected {
 		marker = markerStyle.Render("›")
 	}
-	row := marker + " " + labelStyle.Render(truncateText(option.Label, max(10, width-4)))
+	status, known := m.inferenceBackendStatus(option.Value, m.settingsDraftForInferenceStatus())
+	state, stateStyle := inferenceStateForBackend(option.Value, status, known)
+	labelWidth := min(24, max(12, width/2))
+	stateWidth := 12
+	row := marker + " " +
+		labelStyle.Width(labelWidth).Render(truncateText(option.Label, labelWidth)) +
+		stateStyle.Width(stateWidth).Render(truncateText(state, stateWidth))
 	if current {
 		row += "  " + detailMutedStyle.Render("(current)")
 	}
@@ -189,6 +199,18 @@ func (m Model) renderSettingsAIBackendPickerRow(option settingsAIBackendOption, 
 		return projectListSelectedRowStyle.Width(width).Render(row)
 	}
 	return lipgloss.NewStyle().Width(width).Render(row)
+}
+
+func (m Model) renderSettingsBackendStatus(backend config.AIBackend, status aibackend.Status, known bool) string {
+	state, stateStyle := inferenceStateForBackend(backend, status, known)
+	detail := strings.TrimSpace(status.Detail)
+	if status.LoginHint != "" && !status.Ready {
+		detail = strings.TrimSpace(status.LoginHint)
+	}
+	if detail == "" {
+		detail = "Availability will refresh in the background."
+	}
+	return stateStyle.Render(state) + detailMutedStyle.Render(" - "+detail)
 }
 
 func settingsAIBackendOptionLabel(raw string) string {

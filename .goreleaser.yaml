@@ -21,9 +21,25 @@ builds:
       - arm64
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+  - id: lcagent
+    main: ./cmd/lcagent
+    binary: lcagent
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
 
 archives:
-  - id: lcroom
+  - id: binaries
+    ids:
+      - lcroom
+      - lcagent
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
@@ -49,5 +65,5 @@ changelog:
       - "Merge branch"
 
 release:
-  draft: true
+  draft: false
   prerelease: auto

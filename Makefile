@@ -32,7 +32,7 @@ SCREENSHOT_OUTPUT_FLAG := $(if $(strip $(SCREENSHOT_OUTPUT_DIR)),--output-dir "$
 COMMON_FLAGS := --config "$(CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 PARALLEL_FLAGS := --config "$(PARALLEL_CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(PARALLEL_DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 
-.PHONY: help tidy fmt test build install clean scope scan classify doctor doctor-scan screenshots mockups boss tui tui-parallel tui-parallel-clean serve
+.PHONY: help tidy fmt test build build-agent build-all install clean scope scan classify doctor doctor-scan release-snapshot screenshots mockups boss tui tui-parallel tui-parallel-clean serve
 
 help:
 	@echo "$(APP_NAME) Make Targets"
@@ -41,6 +41,8 @@ help:
 	@echo "  make fmt             - gofmt project files"
 	@echo "  make test            - run go test ./..."
 	@echo "  make build           - build ./$(APP)"
+	@echo "  make build-agent     - build ./lcagent"
+	@echo "  make build-all       - build lcroom and lcagent"
 	@echo "  make install         - go install the CLI"
 	@echo "  make clean           - remove local build output"
 	@echo "  make scope           - print effective scope for this run"
@@ -48,6 +50,7 @@ help:
 	@echo "  make classify        - drain latest-session AI classification queue"
 	@echo "  make doctor          - print cached detected artifacts/reasons"
 	@echo "  make doctor-scan     - refresh state, then print detected artifacts/reasons"
+	@echo "  make release-snapshot - build local GoReleaser archives under dist/"
 	@echo "  make screenshots     - render curated PNG screenshots for docs"
 	@echo "  make mockups         - render static high-level UI mockups"
 	@echo "  make boss            - run chat-first boss mode"
@@ -87,11 +90,16 @@ test:
 build:
 	$(GO) build -o ./$(APP) ./cmd/$(APP)
 
+build-agent:
+	$(GO) build -o ./lcagent ./cmd/lcagent
+
+build-all: build build-agent
+
 install:
 	$(GO) install ./cmd/$(APP)
 
 clean:
-	rm -f ./$(APP)
+	rm -f ./$(APP) ./lcagent
 
 scope:
 	$(GO) run ./cmd/$(APP) scope $(COMMON_FLAGS)
@@ -107,6 +115,9 @@ doctor:
 
 doctor-scan:
 	$(GO) run ./cmd/$(APP) doctor $(COMMON_FLAGS) --scan
+
+release-snapshot:
+	goreleaser release --snapshot --clean
 
 screenshots:
 	$(GO) run ./cmd/$(APP) screenshots $(COMMON_FLAGS) --screenshot-config "$(SCREENSHOT_CONFIG)" $(SCREENSHOT_OUTPUT_FLAG)

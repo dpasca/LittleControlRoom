@@ -3,6 +3,7 @@
 /Session.vim
 /.littlecontrolroom.db
 /lcroom
+/lcagent
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal

@@ -43,19 +43,28 @@ Requirements:
 
 ### Prebuilt binaries
 
-Download the latest release for your platform from [GitHub Releases](https://github.com/davidepasca/little-control-room/releases).
+Prebuilt binaries are the intended install path once a published GitHub Release exists. The repo now has a GoReleaser workflow for `v*` tags, but if the [Releases page](https://github.com/dpasca/LittleControlRoom/releases) does not show downloadable assets yet, use the source build below.
 
 ```bash
 # Example: macOS ARM64
-curl -L -o lcroom.tar.gz https://github.com/davidepasca/little-control-room/releases/latest/download/lcroom_Darwin_arm64.tar.gz
+curl -L -o lcroom.tar.gz https://github.com/dpasca/LittleControlRoom/releases/latest/download/lcroom_Darwin_arm64.tar.gz
 tar -xzf lcroom.tar.gz
 ./lcroom tui
 ```
+
+Release archives include `lcroom` and the sibling `lcagent` helper binary used by the experimental embedded LCAgent provider.
 
 ### Build from source
 
 ```bash
 make build
+./lcroom tui
+```
+
+To build both local binaries:
+
+```bash
+make build-all
 ./lcroom tui
 ```
 
@@ -66,11 +75,11 @@ make install
 lcroom tui
 ```
 
-On the first run, LCR opens `/setup` if no AI backend is configured. From there you can choose AI roles for project reports and boss chat, edit the related API keys/endpoints/models inline, or continue without AI and come back later. After setup, use `/settings` anytime to change your preferences. Claude-backed background inference currently defaults to Haiku to keep usage lighter. MLX and Ollama use their OpenAI-compatible local endpoints, with defaults of `http://127.0.0.1:8080/v1` for MLX and `http://127.0.0.1:11434/v1` for Ollama.
+On the first run, LCR opens `/setup` if no AI backend is configured. `/setup` is the Getting Started view inside `/settings`: choose the backend for project reports, choose whether boss chat should use a separate direct-chat backend, save an OpenAI API key only if that path needs one, or turn AI off and come back later. `/settings` keeps the same Getting Started section plus deeper AI/model, scope, browser, and advanced controls. Claude-backed background inference currently defaults to Haiku to keep usage lighter. MLX and Ollama use their OpenAI-compatible local endpoints, with defaults of `http://127.0.0.1:8080/v1` for MLX and `http://127.0.0.1:11434/v1` for Ollama.
 
 <p align="center">
   <a href="docs/screenshots/setup.png">
-    <img src="docs/screenshots/setup.png" alt="Little Control Room setup screen showing Codex, OpenCode, Claude Code, MLX, Ollama, OpenAI API key, and disabled AI options" width="850">
+    <img src="docs/screenshots/setup.png" alt="Little Control Room setup screen showing Getting Started settings for project reports, boss chat, API key, and project roots" width="850">
   </a>
 </p>
 
@@ -86,8 +95,8 @@ LCR separates embedded session providers from the backend used for background wo
 For local inference, the practical setup is:
 
 - Pick `MLX` or `Ollama` in `/setup`.
-- Leave the endpoint fields blank in `/setup` if you want the defaults.
-- Or press `e` in `/setup` to override them if your local server runs elsewhere.
+- Leave the endpoint fields blank in `/settings` if you want the defaults.
+- Or edit the MLX/Ollama endpoint fields in `/settings` if your local server runs elsewhere.
 
 Default local endpoints:
 
@@ -108,8 +117,8 @@ The main TUI command palette opens with `/`.
 - `/refresh`: Rescan projects and retry failed assessments.
 - `/sort <attention|recent>`: Change the project ordering.
 - `/view <ai|all>`: Switch between AI-linked and all tracked folders.
-- `/setup`: Quick first-run wizard for choosing AI roles. Runs automatically on launch until you pick a backend.
-- `/settings`: Full preferences with sections for Getting Started, AI & Models, Project Scope, Browser, and Advanced.
+- `/setup`: Open the Getting Started settings for first-run AI roles. Runs automatically on launch until you pick a backend.
+- `/settings`: Full preferences with Getting Started first, then AI & Models, Project Scope, Browser, and Advanced.
 - `/filter [text|clear]`: Temporarily narrow the whole dashboard to matching project names.
 - `/new-project`: Create a project folder, or paste an existing project path to add it directly.
 - `/new-task`: Create a scratch task folder under the default task root.
@@ -197,7 +206,7 @@ Most day-to-day use falls into a few buckets:
   | [![Diff window](docs/screenshots/diff-view.png)](docs/screenshots/diff-view.png) | [![Commit preview dialog](docs/screenshots/commit-preview.png)](docs/screenshots/commit-preview.png) | [![Image diff with before/after previews](docs/screenshots/diff-view-image.png)](docs/screenshots/diff-view-image.png) |
 
 - **Keep the list clean** — Use `f` or `/filter <text>` to narrow the project list, `/pin` and `/snooze` to control attention, `/remove` to confirm and archive/delete/hide the selected item based on context. Use `/ignore` when you want an explicit exact-name hide rule, and `/ignored` to restore hidden names or paths.
-- **Adjust setup** — `/settings` is the unified preferences panel. The Getting Started section covers your AI backend, API key, and project search paths. AI & Models handles local endpoints, model overrides, and launch presets. Project Scope controls include/exclude paths and privacy patterns. Browser sets the Playwright window policy. Advanced holds experimental LCAgent settings and tuning knobs like refresh thresholds. For embedded Codex and OpenCode sessions, LCR can isolate Playwright per session so browser-heavy work multitasks more cleanly in parallel, then surface the right managed browser window only when a human step is actually needed. Switch to `Classic browser behavior` if you want the original provider-owned flow, then use `/new-project` for repo-backed work and `/new-task` for quick scratch work.
+- **Adjust setup** — `/setup` jumps to the Getting Started settings; `/settings` is the full preferences panel. Getting Started covers project-report AI, boss chat, the OpenAI key when needed, and project search paths. AI & Models handles local endpoints, model overrides, and launch presets. Project Scope controls include/exclude paths and privacy patterns. Browser sets the Playwright window policy. Advanced holds experimental LCAgent settings and tuning knobs like refresh thresholds. For embedded Codex and OpenCode sessions, LCR can isolate Playwright per session so browser-heavy work multitasks more cleanly in parallel, then surface the right managed browser window only when a human step is actually needed. Switch to `Classic browser behavior` if you want the original provider-owned flow, then use `/new-project` for repo-backed work and `/new-task` for quick scratch work.
 
 For the full command list and detailed behavior, see [`docs/reference.md`](docs/reference.md).
 

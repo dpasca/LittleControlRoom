@@ -50,7 +50,6 @@ func (m Model) renderCompactInferenceSetupSummary(width int) string {
 	if relationship := bossChatRelationshipSummary(settings); relationship != "" {
 		summary += " " + relationship
 	}
-	summary += " Run /settings to change roles."
 	return commandPaletteHintStyle.Render(lipgloss.NewStyle().Width(width).Render(summary))
 }
 
@@ -81,13 +80,13 @@ func (m Model) projectReportsStatusCard(settings config.EditableSettings) infere
 	detail := strings.TrimSpace(status.Detail)
 	switch {
 	case backend == config.AIBackendUnset:
-		detail = "Choose a backend in /setup for summaries, classifications, TODOs, and commit help."
+		detail = "Choose a backend in Getting Started for summaries, classifications, TODOs, and commit help."
 	case backend == config.AIBackendDisabled:
 		detail = "Project reports and commit help are off."
 	case status.Ready:
 		detail = "Ready for summaries, TODO help, and commit help."
 	case !known:
-		detail = "Selected. Run /setup to refresh availability."
+		detail = "Selected. Availability will refresh in the background."
 	case status.LoginHint != "":
 		detail = strings.TrimSpace(status.LoginHint)
 	case detail == "":
@@ -178,7 +177,7 @@ func (m Model) inferenceBackendStatus(backend config.AIBackend, settings config.
 		}
 	default:
 		if strings.TrimSpace(status.Detail) == "" {
-			status.Detail = "Selected. Run /setup to refresh availability."
+			status.Detail = "Selected. Availability will refresh in the background."
 		}
 	}
 	return status, known

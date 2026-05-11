@@ -91,63 +91,63 @@ type Model struct {
 	worktreeRemoveConfirm *worktreeRemoveConfirmState
 	attentionDialog       *attentionDialogState
 
-	commandMode                    bool
-	commandInput                   textinput.Model
-	commandSelected                int
-	bossMode                       bool
-	bossModelActive                bool
-	bossModel                      bossui.Model
-	bossSetupPrompt                *bossSetupPromptState
-	errorLogVisible                bool
-	errorLogSelected               int
-	errorLogEntries                []errorLogEntry
-	projectFilter                  string
-	projectFilterDialog            *projectFilterDialogState
-	ignoredPickerVisible           bool
-	ignoredPickerLoading           bool
-	ignoredPickerSelected          int
-	ignoredPickerItems             []model.IgnoredProject
-	newProjectDialog               *newProjectDialogState
-	newTaskDialog                  *newTaskDialogState
-	runCommandDialog               *runCommandDialogState
-	skillsDialog                   *skillsDialogState
-	preferredSelectPath            string
-	diffView                       *diffViewState
-	gitStatusDialog                *gitStatusDialog
-	gitStatusApplying              bool
-	commitPreview                  *service.CommitPreview
-	commitPreviewMessageOverride   string
-	commitPreviewRefreshing        bool
-	commitPreviewRequestID         int
-	commitApplying                 bool
-	commitTodoCompletions          []commitTodoItem
-	commitTodoSelected             int
-	setupMode                      bool
-	setupChecked                   bool
-	setupLoading                   bool
-	setupSaving                    bool
-	setupFocusedRole               setupRole
-	setupSelected                  int
-	setupBossSelected              int
-	setupConfigMode                bool
-	setupConfigSelected            int
-	setupModelTier                 config.ModelTier
-	setupSnapshot                  aibackend.Snapshot
-	localModelPickerVisible        bool
-	localModelPickerBackend        config.AIBackend
-	localModelPickerSelected       int
-	settingsMode                   bool
-	settingsSaving                 bool
-	settingsFields                 []settingsField
-	settingsSectionSelected        int
-	settingsSelected               int
-	settingsBaseline               *config.EditableSettings
-	settingsRevealPrivacy          bool
-	settingsBossChatPickerVisible  bool
-	settingsBossChatPickerSelected int
-	settingsBrowserPickerVisible   bool
-	settingsBrowserPickerSelected  int
-	settingsAIBackendPickerVisible bool
+	commandMode                     bool
+	commandInput                    textinput.Model
+	commandSelected                 int
+	bossMode                        bool
+	bossModelActive                 bool
+	bossModel                       bossui.Model
+	bossSetupPrompt                 *bossSetupPromptState
+	errorLogVisible                 bool
+	errorLogSelected                int
+	errorLogEntries                 []errorLogEntry
+	projectFilter                   string
+	projectFilterDialog             *projectFilterDialogState
+	ignoredPickerVisible            bool
+	ignoredPickerLoading            bool
+	ignoredPickerSelected           int
+	ignoredPickerItems              []model.IgnoredProject
+	newProjectDialog                *newProjectDialogState
+	newTaskDialog                   *newTaskDialogState
+	runCommandDialog                *runCommandDialogState
+	skillsDialog                    *skillsDialogState
+	preferredSelectPath             string
+	diffView                        *diffViewState
+	gitStatusDialog                 *gitStatusDialog
+	gitStatusApplying               bool
+	commitPreview                   *service.CommitPreview
+	commitPreviewMessageOverride    string
+	commitPreviewRefreshing         bool
+	commitPreviewRequestID          int
+	commitApplying                  bool
+	commitTodoCompletions           []commitTodoItem
+	commitTodoSelected              int
+	setupMode                       bool
+	setupChecked                    bool
+	setupLoading                    bool
+	setupSaving                     bool
+	setupFocusedRole                setupRole
+	setupSelected                   int
+	setupBossSelected               int
+	setupConfigMode                 bool
+	setupConfigSelected             int
+	setupModelTier                  config.ModelTier
+	setupSnapshot                   aibackend.Snapshot
+	localModelPickerVisible         bool
+	localModelPickerBackend         config.AIBackend
+	localModelPickerSelected        int
+	settingsMode                    bool
+	settingsSaving                  bool
+	settingsFields                  []settingsField
+	settingsSectionSelected         int
+	settingsSelected                int
+	settingsBaseline                *config.EditableSettings
+	settingsRevealPrivacy           bool
+	settingsBossChatPickerVisible   bool
+	settingsBossChatPickerSelected  int
+	settingsBrowserPickerVisible    bool
+	settingsBrowserPickerSelected   int
+	settingsAIBackendPickerVisible  bool
 	settingsAIBackendPickerSelected int
 
 	detailViewport        viewport.Model
@@ -1331,7 +1331,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setupLoading = false
 		m.setupSnapshot = msg.snapshot
 		if msg.openOnStartup && msg.snapshot.NeedsSetup() {
-			return m, m.openSettingsMode()
+			return m, m.openSetupSettingsMode()
 		}
 		return m, nil
 	case newProjectResultMsg:
@@ -4235,7 +4235,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 	case commands.KindView:
 		return m, m.setVisibilityMode(commandVisibilityMode(inv.View))
 	case commands.KindSetup:
-		return m, m.openSettingsMode()
+		return m, m.openSetupSettingsMode()
 	case commands.KindSettings:
 		return m, m.openSettingsMode()
 	case commands.KindSkills:

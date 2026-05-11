@@ -19093,11 +19093,11 @@ func TestCommandEnterBossUnconfiguredShowsSetupPrompt(t *testing.T) {
 	if strings.Contains(got.bossSetupPrompt.Reason, "OpenAI API") || strings.Contains(got.bossSetupPrompt.Reason, "MLX") || strings.Contains(got.bossSetupPrompt.Reason, "Ollama") {
 		t.Fatalf("default boss setup prompt reason should stay provider-agnostic: %q", got.bossSetupPrompt.Reason)
 	}
-	if !strings.Contains(got.bossSetupPrompt.Reason, "/settings") || !strings.Contains(got.bossSetupPrompt.Reason, "boss chat backend") {
-		t.Fatalf("boss setup prompt reason = %q, want settings guidance", got.bossSetupPrompt.Reason)
+	if !strings.Contains(got.bossSetupPrompt.Reason, "setup") || !strings.Contains(got.bossSetupPrompt.Reason, "boss chat backend") {
+		t.Fatalf("boss setup prompt reason = %q, want setup guidance", got.bossSetupPrompt.Reason)
 	}
 	rendered := ansi.Strip(got.View())
-	for _, want := range []string{"Boss Chat Setup", "Open /settings", "Cancel"} {
+	for _, want := range []string{"Boss Chat Setup", "Open setup", "Cancel"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("boss setup prompt missing %q: %q", want, rendered)
 		}
@@ -19391,7 +19391,7 @@ func TestStartupUnconfiguredAIBackendOpensSettingsMode(t *testing.T) {
 	if !got.settingsMode {
 		t.Fatalf("settings mode should open when startup detects no configured backend")
 	}
-	if got.status != "Editing settings. Enter chooses pickers, ctrl+s saves, Esc cancels." {
+	if got.status != "Setup open. Pick project reports and boss chat in Getting Started; Enter chooses, ctrl+s saves, Esc skips." {
 		t.Fatalf("status = %q, want startup settings explanation", got.status)
 	}
 	if cmd == nil {
@@ -20504,7 +20504,7 @@ func TestInferenceStatusCardsTreatMissingSnapshotAsSelected(t *testing.T) {
 	if strings.Contains(rendered, "INSTALL") {
 		t.Fatalf("inference cards should not invent an install warning from an empty snapshot: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Run /setup to refresh availability") {
+	if !strings.Contains(rendered, "Availability will refresh in the background") {
 		t.Fatalf("inference cards should explain how to refresh stale availability: %q", rendered)
 	}
 }
