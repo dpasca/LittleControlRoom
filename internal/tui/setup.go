@@ -50,7 +50,7 @@ func (m *Model) openSetupMode() tea.Cmd {
 	tier, _ := config.ParseModelTier(m.currentSettingsBaseline().OpenCodeModelTier)
 	m.setupModelTier = tier
 	m.setupLoading = true
-	m.status = "Choose AI roles for project reports and boss chat."
+	m.status = "Setup concierge open. Pick who should handle project reports and boss chat."
 	return m.refreshSetupSnapshotCmd(false)
 }
 
@@ -110,7 +110,7 @@ func (m Model) updateSetupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case "esc":
-		m.closeSetupMode("AI setup skipped for now. Run /setup anytime.")
+		m.closeSetupMode("Setup skipped for now. Run /setup anytime.")
 		return m, nil
 	case "tab", "right", "]":
 		m.moveSetupRole(1)
@@ -208,10 +208,10 @@ func (m *Model) moveSetupProvider(delta int) {
 	m.setupConfigSelected = 0
 	m.blurSettingsFields()
 	if m.setupFocusedRole == setupRoleBossChat {
-		m.setupBossSelected = wrapIndex(m.setupBossSelected+delta, len(setupBossChatOptions))
+		m.setupBossSelected = wrapIndex(m.setupBossSelected+delta, len(m.setupBossProviderChoices()))
 		return
 	}
-	m.setupSelected = wrapIndex(m.setupSelected+delta, len(setupBackendOptions))
+	m.setupSelected = wrapIndex(m.setupSelected+delta, len(m.setupProjectProviderChoices()))
 }
 
 func wrapIndex(index, count int) int {
@@ -388,10 +388,15 @@ func (m Model) saveSetupFromCurrentChoices() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) setupSettingsFromCurrentChoices() config.EditableSettings {
-	settings := m.currentSettingsBaseline()
+	settings := m.setupDraftSettingsForProviderChoices()
 	settings.AIBackend = m.setupSelectedBackend()
 	settings.BossChatBackend = m.setupSelectedBossBackend()
 	settings.OpenCodeModelTier = string(m.setupModelTier)
+	return settings
+}
+
+func (m Model) setupDraftSettingsForProviderChoices() config.EditableSettings {
+	settings := m.currentSettingsBaseline()
 	if len(m.settingsFields) == 0 {
 		return settings
 	}
@@ -412,12 +417,12 @@ func (m Model) recommendedSetupBackend() config.AIBackend {
 	if current != config.AIBackendUnset && m.setupSnapshot.StatusFor(current).Ready {
 		return current
 	}
-	for _, backend := range setupBackendOptions {
-		if backend == config.AIBackendDisabled {
+	for _, choice := range m.setupProjectProviderChoices() {
+		if choice.Value == config.AIBackendDisabled {
 			continue
 		}
-		if m.setupSnapshot.StatusFor(backend).Ready {
-			return backend
+		if choice.State == "ready" {
+			return choice.Value
 		}
 	}
 	if current != config.AIBackendUnset {
@@ -446,17 +451,19 @@ func (m Model) setupCurrentBossBackend() config.AIBackend {
 }
 
 func (m Model) setupSelectedBackend() config.AIBackend {
-	if m.setupSelected < 0 || m.setupSelected >= len(setupBackendOptions) {
+	choices := m.setupProjectProviderChoices()
+	if m.setupSelected < 0 || m.setupSelected >= len(choices) {
 		return config.AIBackendCodex
 	}
-	return setupBackendOptions[m.setupSelected]
+	return choices[m.setupSelected].Value
 }
 
 func (m Model) setupSelectedBossBackend() config.AIBackend {
-	if m.setupBossSelected < 0 || m.setupBossSelected >= len(setupBossChatOptions) {
-		return config.AIBackendOpenAIAPI
+	choices := m.setupBossProviderChoices()
+	if m.setupBossSelected < 0 || m.setupBossSelected >= len(choices) {
+		return config.AIBackendUnset
 	}
-	return setupBossChatOptions[m.setupBossSelected]
+	return choices[m.setupBossSelected].Value
 }
 
 func (m Model) setupSelectedLocalModelBackend() config.AIBackend {
@@ -467,21 +474,11 @@ func (m Model) setupSelectedLocalModelBackend() config.AIBackend {
 }
 
 func (m Model) setupSelectionForBackend(backend config.AIBackend) int {
-	for i, option := range setupBackendOptions {
-		if option == backend {
-			return i
-		}
-	}
-	return 0
+	return providerChoiceSelection(m.setupProjectProviderChoices(), backend)
 }
 
 func (m Model) setupBossSelectionForBackend(backend config.AIBackend) int {
-	for i, option := range setupBossChatOptions {
-		if option == backend {
-			return i
-		}
-	}
-	return 0
+	return providerChoiceSelection(m.setupBossProviderChoices(), backend)
 }
 
 func (m Model) renderSetupOverlay(body string, bodyW, bodyH int) string {
@@ -503,8 +500,8 @@ func (m Model) renderSetupPanel(bodyW, bodyH int) string {
 func (m Model) renderSetupContent(width, maxHeight int) string {
 	cards := m.renderSetupRoleCards(width)
 	lines := []string{
-		commandPaletteTitleStyle.Render("Setup"),
-		commandPaletteHintStyle.Render("Choose two AI roles. Tab switches cards; Up/Down changes the focused provider."),
+		commandPaletteTitleStyle.Render("Setup Concierge"),
+		commandPaletteHintStyle.Render("I can help with quiet project reports and the optional /boss chat. Pick the helper for each role."),
 	}
 	lines = append(lines, "")
 	lines = append(lines, cards)
@@ -581,7 +578,7 @@ func renderedLinesHeight(lines []string) int {
 }
 
 func (m Model) renderSetupRoleCards(width int) string {
-	settings := m.currentSettingsBaseline()
+	settings := m.setupSettingsFromCurrentChoices()
 	projectCard := m.projectReportsStatusCard(settings)
 	projectCard.Selected = m.setupFocusedRole == setupRoleProjectReports
 	bossCard := m.bossChatStatusCard(settings)
@@ -605,30 +602,42 @@ func (m Model) renderSetupRoleCards(width int) string {
 
 func (m Model) setupProviderListTitle() string {
 	if m.setupFocusedRole == setupRoleBossChat {
-		return "Boss Chat Provider"
+		return "Who Should Handle Boss Chat?"
 	}
-	return "Project Reports Provider"
+	return "Who Should Handle Project Reports?"
 }
 
 func (m Model) setupRolePurpose() string {
 	if m.setupFocusedRole == setupRoleBossChat {
-		return "Used only for the high-level /boss conversation. This can stay separate from background reports."
+		return "This is the direct high-level /boss conversation. It can use a different helper from background reports, or stay off."
 	}
-	return "Used for summaries, classifications, TODO help, and commit help."
+	return "This helper writes summaries, classifications, TODO help, and commit help in the background."
+}
+
+func (m Model) setupProjectProviderChoices() []providerChoice {
+	return m.providerChoices(providerChoiceRoleProjectReports, m.setupDraftSettingsForProviderChoices())
+}
+
+func (m Model) setupBossProviderChoices() []providerChoice {
+	return m.providerChoices(providerChoiceRoleBossChat, m.setupDraftSettingsForProviderChoices())
 }
 
 func (m Model) renderSetupProviderRows(width int) []string {
 	if m.setupFocusedRole == setupRoleBossChat {
-		lines := make([]string, 0, len(setupBossChatOptions))
-		for i, backend := range setupBossChatOptions {
-			lines = append(lines, m.renderBossChatSetupOptionRow(backend, i == m.setupBossSelected, width))
+		choices := m.setupBossProviderChoices()
+		current := m.setupCurrentBossBackend()
+		lines := make([]string, 0, len(choices))
+		for i, choice := range choices {
+			lines = append(lines, renderProviderChoiceRow(choice, i == m.setupBossSelected, choice.Value == current, width))
 		}
 		return lines
 	}
 
-	lines := make([]string, 0, len(setupBackendOptions))
-	for i, backend := range setupBackendOptions {
-		lines = append(lines, m.renderSetupOptionRow(backend, i == m.setupSelected, width))
+	choices := m.setupProjectProviderChoices()
+	current := m.setupCurrentBackend()
+	lines := make([]string, 0, len(choices))
+	for i, choice := range choices {
+		lines = append(lines, renderProviderChoiceRow(choice, i == m.setupSelected, choice.Value == current, width))
 	}
 	return lines
 }
@@ -812,7 +821,11 @@ func (m Model) renderSetupHint(width int) string {
 		return m.renderBossChatSetupHint(width)
 	}
 	selectedStatus := m.setupSnapshot.StatusFor(m.setupSelectedBackend())
-	hint := selectedStatus.Detail
+	choice := m.setupSelectedProjectProviderChoice()
+	hint := strings.TrimSpace(choice.NextStep)
+	if hint == "" {
+		hint = selectedStatus.Detail
+	}
 	if m.setupSelectedBackend() == config.AIBackendDisabled {
 		hint = "Disable AI features completely. Little Control Room keeps working, but summaries, classifications, and commit help stay off until you run /setup again."
 	}
@@ -831,13 +844,17 @@ func (m Model) renderSetupHint(width int) string {
 	if selectedStatus.LoginHint != "" && !selectedStatus.Ready {
 		hint = selectedStatus.LoginHint
 	}
-	return commandPaletteHintStyle.Render(lipgloss.NewStyle().Width(width).Render("Hint: " + hint))
+	return m.renderSetupChoiceHint(choice, hint, width)
 }
 
 func (m Model) renderBossChatSetupHint(width int) string {
-	settings := m.currentSettingsBaseline()
+	settings := m.setupDraftSettingsForProviderChoices()
 	selected := m.setupSelectedBossBackend()
-	hint := "Boss chat is the direct high-level conversation in /boss."
+	choice := m.setupSelectedBossProviderChoice()
+	hint := strings.TrimSpace(choice.NextStep)
+	if hint == "" {
+		hint = "Boss chat is the direct high-level conversation in /boss."
+	}
 	switch selected {
 	case config.AIBackendUnset:
 		if strings.TrimSpace(settings.OpenAIAPIKey) == "" {
@@ -860,7 +877,37 @@ func (m Model) renderBossChatSetupHint(width int) string {
 	case config.AIBackendOllama:
 		hint = "Boss chat will use your Ollama OpenAI-compatible endpoint. Press e to edit endpoint/API key/model, or m to pick a discovered model."
 	}
-	return commandPaletteHintStyle.Render(lipgloss.NewStyle().Width(width).Render("Hint: " + hint))
+	return m.renderSetupChoiceHint(choice, hint, width)
+}
+
+func (m Model) setupSelectedProjectProviderChoice() providerChoice {
+	choices := m.setupProjectProviderChoices()
+	if len(choices) == 0 {
+		return providerChoice{}
+	}
+	return choices[wrapIndex(m.setupSelected, len(choices))]
+}
+
+func (m Model) setupSelectedBossProviderChoice() providerChoice {
+	choices := m.setupBossProviderChoices()
+	if len(choices) == 0 {
+		return providerChoice{}
+	}
+	return choices[wrapIndex(m.setupBossSelected, len(choices))]
+}
+
+func (m Model) renderSetupChoiceHint(choice providerChoice, next string, width int) string {
+	lines := []string{}
+	if summary := strings.TrimSpace(choice.Summary); summary != "" {
+		lines = append(lines, renderWrappedDetailField("Why", detailValueStyle, width, summary))
+	}
+	if choice.State != "" {
+		lines = append(lines, renderWrappedDetailField("Status", detailValueStyle, width, renderProviderChoiceStatus(choice)))
+	}
+	if strings.TrimSpace(next) != "" {
+		lines = append(lines, renderWrappedDetailField("Next", detailValueStyle, width, next))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) renderSetupActions() string {

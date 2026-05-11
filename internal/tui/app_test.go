@@ -7377,7 +7377,7 @@ func TestEnterRestoresHiddenLiveCodexSessionFromFocusedProjectList(t *testing.T)
 	if got.codexPendingOpen != nil {
 		t.Fatalf("codexPendingOpen = %#v, want nil when restoring a live session", got.codexPendingOpen)
 	}
-	if got.status != "Embedded Codex session reopened. Esc hides it." {
+	if got.status != "Embedded Codex session reopened. Alt+Up hides it." {
 		t.Fatalf("status = %q, want live restore notice", got.status)
 	}
 	if len(requests) != 1 {
@@ -8227,7 +8227,7 @@ func TestVisibleCodexSlashSuggestionsRender(t *testing.T) {
 	if !strings.Contains(rendered, "/new [prompt]") || !strings.Contains(rendered, "/resume [session-id]") || !strings.Contains(rendered, "/model") || !strings.Contains(rendered, "/status") {
 		t.Fatalf("rendered view should list embedded slash suggestions: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Enter run  ctrl+c close  Esc hide") {
+	if !strings.Contains(rendered, "Enter run  ctrl+c close  Alt+Up hide") {
 		t.Fatalf("rendered view should advertise slash command handling in the footer: %q", rendered)
 	}
 }
@@ -8537,7 +8537,7 @@ func TestVisibleOpenCodeSlashReconnectReopensSameSession(t *testing.T) {
 	if opened.err != nil {
 		t.Fatalf("/reconnect returned error = %v", opened.err)
 	}
-	if opened.status != "Reconnected embedded OpenCode session ses-old1. Esc hides it." {
+	if opened.status != "Reconnected embedded OpenCode session ses-old1. Alt+Up hides it." {
 		t.Fatalf("opened.status = %q, want reconnect confirmation", opened.status)
 	}
 	if len(requests) != 2 {
@@ -12565,7 +12565,7 @@ func TestVisibleOpenCodeSlashNewStartsFreshSession(t *testing.T) {
 	if opened.err != nil {
 		t.Fatalf("/new returned error = %v", opened.err)
 	}
-	if opened.status != "Fresh embedded OpenCode session ses-new1 opened. Esc hides it." {
+	if opened.status != "Fresh embedded OpenCode session ses-new1 opened. Alt+Up hides it." {
 		t.Fatalf("opened.status = %q, want fresh OpenCode session confirmation", opened.status)
 	}
 	if len(requests) != 2 {
@@ -13390,7 +13390,7 @@ func TestLaunchCodexForSelectionForceNewRetriesWhenPreviousThreadReopensFirst(t 
 	if opened.err != nil {
 		t.Fatalf("/codex-new returned error = %v", opened.err)
 	}
-	if opened.status != "Fresh embedded Codex session 019dddd4 opened. Esc hides it." {
+	if opened.status != "Fresh embedded Codex session 019dddd4 opened. Alt+Up hides it." {
 		t.Fatalf("opened.status = %q, want normal opened status after retry", opened.status)
 	}
 	if len(requests) != 2 {
@@ -13457,7 +13457,7 @@ func TestLaunchCodexForSelectionForceNewRetriesWhenCodexRejectsFreshThread(t *te
 	if opened.err != nil {
 		t.Fatalf("/codex-new returned error = %v", opened.err)
 	}
-	if opened.status != "Prompt sent to fresh embedded Codex session 019fresh. Esc hides it." {
+	if opened.status != "Prompt sent to fresh embedded Codex session 019fresh. Alt+Up hides it." {
 		t.Fatalf("opened.status = %q, want prompt-sent status after retry", opened.status)
 	}
 	if len(requests) != 2 {
@@ -13534,7 +13534,7 @@ func TestLaunchOpenCodeForSelectionForceNewRetriesWhenOpenCodeRejectsFreshSessio
 	if opened.err != nil {
 		t.Fatalf("/opencode-new returned error = %v", opened.err)
 	}
-	if opened.status != "Prompt sent to fresh embedded OpenCode session ses_fres. Esc hides it." {
+	if opened.status != "Prompt sent to fresh embedded OpenCode session ses_fres. Alt+Up hides it." {
 		t.Fatalf("opened.status = %q, want prompt-sent status after retry", opened.status)
 	}
 	if len(requests) != 2 {
@@ -13627,7 +13627,7 @@ func TestLaunchOpenCodeForSelectionForceNewRetriesWhenOpenCodeReturnsKnownReused
 	if opened.err != nil {
 		t.Fatalf("/opencode-new returned error = %v", opened.err)
 	}
-	if opened.status != "Prompt sent to fresh embedded OpenCode session ses_fres. Esc hides it." {
+	if opened.status != "Prompt sent to fresh embedded OpenCode session ses_fres. Alt+Up hides it." {
 		t.Fatalf("opened.status = %q, want prompt-sent status after stale-session retry", opened.status)
 	}
 	if len(requests) != 3 {
@@ -14841,7 +14841,7 @@ func TestVisibleCodexCompactSlashUsesStartAndCompletionMessages(t *testing.T) {
 	}
 }
 
-func TestVisibleCodexAltUpDoesNotHideSession(t *testing.T) {
+func TestVisibleCodexAltUpHidesSession(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
 		snapshot: codexapp.Snapshot{
@@ -14873,13 +14873,13 @@ func TestVisibleCodexAltUpDoesNotHideSession(t *testing.T) {
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyUp, Alt: true})
 	got := updated.(Model)
 	if cmd != nil {
-		t.Fatalf("alt+up should not queue a command")
+		t.Fatalf("alt+up hide should not queue a command")
 	}
-	if got.codexVisibleProject != "/tmp/demo" {
-		t.Fatalf("codexVisibleProject = %q, want still visible", got.codexVisibleProject)
+	if got.codexVisibleProject != "" {
+		t.Fatalf("codexVisibleProject = %q, want hidden", got.codexVisibleProject)
 	}
-	if got.status != "" {
-		t.Fatalf("status = %q, want unchanged", got.status)
+	if got.status != "Embedded Codex session hidden." {
+		t.Fatalf("status = %q, want hide notice", got.status)
 	}
 }
 
@@ -15529,7 +15529,7 @@ func TestNormalModeEnterPrefersLiveEmbeddedProviderOverStoredLatestProvider(t *t
 	if got.codexVisibleProject != "/tmp/demo" {
 		t.Fatalf("codexVisibleProject = %q, want /tmp/demo", got.codexVisibleProject)
 	}
-	if got.status != "Embedded Codex session reopened. Esc hides it." {
+	if got.status != "Embedded Codex session reopened. Alt+Up hides it." {
 		t.Fatalf("status = %q, want live Codex reopen status", got.status)
 	}
 	if len(requests) != 1 {
@@ -15588,7 +15588,7 @@ func TestNormalModeEnterReusesLiveEmbeddedSessionWhenSnapshotIsContended(t *test
 	if got.codexVisibleProject != "/tmp/demo" {
 		t.Fatalf("codexVisibleProject = %q, want /tmp/demo", got.codexVisibleProject)
 	}
-	if got.status != "Embedded Codex session reopened. Esc hides it." {
+	if got.status != "Embedded Codex session reopened. Alt+Up hides it." {
 		t.Fatalf("status = %q, want live Codex reopen status", got.status)
 	}
 	if len(requests) != 1 {
@@ -18345,7 +18345,7 @@ func TestVisibleCodexViewHidesSessionApprovalShortcutForFileChanges(t *testing.T
 	if strings.Contains(rendered, "A session") {
 		t.Fatalf("file change approval should not advertise session-wide approval: %q", rendered)
 	}
-	if !strings.Contains(rendered, "a accept  d decline  c cancel  Esc hide") {
+	if !strings.Contains(rendered, "a accept  d decline  c cancel  Alt+Up hide") {
 		t.Fatalf("file change approval footer missing expected keys: %q", rendered)
 	}
 }
@@ -18603,12 +18603,15 @@ func TestRenderCodexFooterPrioritizesSendCloseHideAndDefersDenseBlocks(t *testin
 
 	enterIndex := strings.Index(rendered, "Enter send")
 	closeIndex := strings.Index(rendered, "ctrl+c close")
-	hideIndex := strings.Index(rendered, "Esc hide")
+	hideIndex := strings.Index(rendered, "Alt+Up hide")
 	if enterIndex < 0 || closeIndex < 0 || hideIndex < 0 {
 		t.Fatalf("renderCodexFooter() missing expected footer actions: %q", rendered)
 	}
 	if !(enterIndex < closeIndex && closeIndex < hideIndex) {
-		t.Fatalf("renderCodexFooter() order = %q, want Enter send before ctrl+c close before Esc hide", rendered)
+		t.Fatalf("renderCodexFooter() order = %q, want Enter send before ctrl+c close before Alt+Up hide", rendered)
+	}
+	if strings.Contains(rendered, "Esc hide") {
+		t.Fatalf("renderCodexFooter() should keep Esc as a silent fallback, not advertise it: %q", rendered)
 	}
 	for _, hidden := range []string{"Alt+Down picker", "Alt+[ prev", "Alt+] next", "Alt+L blocks"} {
 		if strings.Contains(rendered, hidden) {
@@ -19391,7 +19394,7 @@ func TestStartupUnconfiguredAIBackendOpensSettingsMode(t *testing.T) {
 	if !got.settingsMode {
 		t.Fatalf("settings mode should open when startup detects no configured backend")
 	}
-	if got.status != "Setup open. Pick project reports and boss chat in Getting Started; Enter chooses, ctrl+s saves, Esc skips." {
+	if got.status != "Setup guide open. Pick the helper for project reports and boss chat; Enter chooses, ctrl+s saves, Esc skips." {
 		t.Fatalf("status = %q, want startup settings explanation", got.status)
 	}
 	if cmd == nil {
@@ -20488,7 +20491,7 @@ func TestInferenceStatusCardsShowProjectAndBossChatSelections(t *testing.T) {
 	}
 }
 
-func TestInferenceStatusCardsTreatMissingSnapshotAsSelected(t *testing.T) {
+func TestInferenceStatusCardsTreatMissingSnapshotAsUnchecked(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.AIBackend = config.AIBackendOpenCode
 	settings.BossChatBackend = config.AIBackendDisabled
@@ -20498,8 +20501,8 @@ func TestInferenceStatusCardsTreatMissingSnapshotAsSelected(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderInferenceStatusCards(140))
-	if !strings.Contains(rendered, "SELECTED") {
-		t.Fatalf("inference cards should show stale unknown availability as selected: %q", rendered)
+	if !strings.Contains(rendered, "UNCHECKED") {
+		t.Fatalf("inference cards should show stale unknown availability as unchecked: %q", rendered)
 	}
 	if strings.Contains(rendered, "INSTALL") {
 		t.Fatalf("inference cards should not invent an install warning from an empty snapshot: %q", rendered)

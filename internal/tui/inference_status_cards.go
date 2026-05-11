@@ -209,7 +209,7 @@ func inferenceStateForBackend(backend config.AIBackend, status aibackend.Status,
 	case backend == config.AIBackendUnset:
 		return "needs setup", detailWarningStyle
 	case !known:
-		return "selected", commandPalettePickStyle
+		return "unchecked", commandPaletteHintStyle
 	case status.Ready:
 		return "ready", footerPrimaryLabelStyle
 	case !status.Installed && backend.RequiresCLIInstallHint():

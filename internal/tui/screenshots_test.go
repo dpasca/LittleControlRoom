@@ -234,14 +234,14 @@ func TestScreenshotSetupRendersBackendChoicesAndHaikuHint(t *testing.T) {
 	rendered := ansi.Strip(m.View())
 	for _, want := range []string{
 		"Setup",
-		"Project Reports Provider",
+		"Who Should Handle Project Reports?",
 		"Codex",
 		"OpenCode",
 		"Claude Code",
-		"OpenAI API key",
+		"OpenAI API",
 		"Disabled",
 		"Haiku",
-		"active",
+		"current",
 		"ready",
 	} {
 		if !strings.Contains(rendered, want) {

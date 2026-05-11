@@ -133,7 +133,7 @@ func settingsSections() []settingsSection {
 		{
 			id:    settingsSectionGettingStarted,
 			label: "Getting Started",
-			hint:  "Only the first-run choices: project reports, boss chat, API key if needed, and project roots. Everything else can wait.",
+			hint:  "I only need two decisions first: who writes project reports, and whether /boss should answer. Everything else can wait.",
 			fieldOrder: []int{
 				settingsFieldAIBackend,
 				settingsFieldOpenAIAPIKey,
@@ -314,7 +314,7 @@ func (m *Model) openSettingsMode() tea.Cmd {
 
 func (m *Model) openSetupSettingsMode() tea.Cmd {
 	cmd := m.openSettingsModeWithBaseline(m.currentSettingsBaseline())
-	m.status = "Setup open. Pick project reports and boss chat in Getting Started; Enter chooses, ctrl+s saves, Esc skips."
+	m.status = "Setup guide open. Pick the helper for project reports and boss chat; Enter chooses, ctrl+s saves, Esc skips."
 	return tea.Batch(cmd, m.refreshSetupSnapshotCmd(false))
 }
 
@@ -360,7 +360,7 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	m.commandMode = false
 	m.showHelp = false
 	m.err = nil
-	m.status = "Settings open. Getting Started has the onboarding basics; Enter chooses pickers, ctrl+s saves, Esc cancels."
+	m.status = "Settings open. Getting Started is the short setup guide; Enter chooses pickers, ctrl+s saves, Esc cancels."
 	if issue := settingsLocalFileIssue(saved); issue != nil {
 		m.appendSettingsConfigIssue(issue)
 		m.status = errorStatusWithHint(settingsConfigIssueStatus)
@@ -829,6 +829,9 @@ func (m Model) renderSettingsSectionLayout(width, maxHeight int) string {
 	mainLines := []string{
 		m.renderSettingsSectionHint(activeSection, contentWidth),
 	}
+	if activeSection.id == settingsSectionGettingStarted && maxHeight >= 28 {
+		mainLines = append(mainLines, m.renderSettingsGettingStartedGuide(contentWidth)...)
+	}
 	if m.settingsSaving {
 		mainLines = append(mainLines, "")
 		mainLines = append(mainLines, commandPaletteHintStyle.Render("Saving settings..."))
@@ -867,6 +870,9 @@ func (m Model) settingsVisibleFieldCount(maxHeight int) int {
 	// Header/summary, selected-field hint, two action rows, and the section
 	// sidebar leave less room for fields than the old inline section tabs did.
 	reserved := 17
+	if m.activeSettingsSection().id == settingsSectionGettingStarted && maxHeight >= 28 {
+		reserved += 3
+	}
 	visible := maxHeight - reserved
 	if visible < 1 {
 		visible = 1
@@ -946,6 +952,14 @@ func (m Model) renderSettingsSectionSidebar(width int) string {
 func (m Model) renderSettingsSectionHint(section settingsSection, width int) string {
 	text := fmt.Sprintf("%s section. %s", section.label, section.hint)
 	return commandPaletteHintStyle.Render(lipgloss.NewStyle().Width(max(18, width)).Render(text))
+}
+
+func (m Model) renderSettingsGettingStartedGuide(width int) []string {
+	return []string{
+		"",
+		detailSectionStyle.Render("Guide"),
+		commandPaletteHintStyle.Render(lipgloss.NewStyle().Width(max(18, width)).Render("I will keep the setup small: choose the project-report helper, choose the /boss chat helper, then save. If a row says ready, you can use it now.")),
+	}
 }
 
 type settingsBrowserProviderCapability struct {
