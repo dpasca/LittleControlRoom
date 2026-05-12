@@ -981,6 +981,7 @@ func TestExecuteBossGoalRunStartsLCAgentTaskAndPersistsTrace(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
 		requests = append(requests, req)
+		writeTUILCAgentTraceArtifact(t, firstNonEmptyTrimmed(req.AppDataDir, svc.Config().DataDir), req.ProjectPath, "lca-goal-session", "verified release diff")
 		return &fakeCodexSession{
 			projectPath: req.ProjectPath,
 			snapshot: codexapp.Snapshot{
@@ -1071,8 +1072,37 @@ func TestExecuteBossGoalRunStartsLCAgentTaskAndPersistsTrace(t *testing.T) {
 	if record.Proposal.Run.Status != bossrun.GoalStatusCompleted || !record.Result.Verified {
 		t.Fatalf("stored goal = %#v, want completed verified LCAgent goal", record)
 	}
-	if len(record.Trace) != 2 {
-		t.Fatalf("stored trace length = %d, want create and launch trace", len(record.Trace))
+	if record.Result.LCAgentSessionID != "lca-goal-session" || record.Result.LCAgentVerificationStatus != "reported" {
+		t.Fatalf("stored LCAgent result = %#v, want harvested session and verification", record.Result)
+	}
+	if len(record.Trace) != 4 {
+		t.Fatalf("stored trace length = %d, want create launch await verify trace", len(record.Trace))
+	}
+}
+
+func writeTUILCAgentTraceArtifact(t *testing.T, dataDir, cwd, sessionID, summary string) {
+	t.Helper()
+	started := time.Date(2026, 5, 12, 9, 0, 0, 0, time.UTC)
+	path := filepath.Join(dataDir, "lcagent", "sessions", started.Format("2006"), started.Format("01"), started.Format("02"), sessionID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir trace artifact: %v", err)
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create trace artifact: %v", err)
+	}
+	defer file.Close()
+	encoder := json.NewEncoder(file)
+	events := []map[string]any{
+		{"type": "session_meta", "id": sessionID, "cwd": cwd, "started_at": started.Format(time.RFC3339Nano)},
+		{"type": "patch_diff_summary", "session_id": sessionID, "timestamp": started.Add(time.Second).Format(time.RFC3339Nano), "summary": "README.md +1 -0"},
+		{"type": "verification_summary", "session_id": sessionID, "timestamp": started.Add(2 * time.Second).Format(time.RFC3339Nano), "status": "reported", "message": "Verification was reported in final_response."},
+		{"type": "turn_complete", "session_id": sessionID, "timestamp": started.Add(3 * time.Second).Format(time.RFC3339Nano), "summary": summary, "files_changed": []string{"README.md"}, "verification": []string{"go test ./..."}, "verification_status": "reported"},
+	}
+	for _, event := range events {
+		if err := encoder.Encode(event); err != nil {
+			t.Fatalf("write trace artifact: %v", err)
+		}
 	}
 }
 

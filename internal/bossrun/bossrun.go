@@ -92,16 +92,23 @@ type TraceEntry struct {
 }
 
 type GoalResult struct {
-	RunID           string        `json:"run_id"`
-	Kind            string        `json:"kind"`
-	Summary         string        `json:"summary"`
-	CreatedTaskIDs  []string      `json:"created_task_ids,omitempty"`
-	ArchivedTaskIDs []string      `json:"archived_task_ids"`
-	KeptTaskIDs     []string      `json:"kept_task_ids"`
-	ReviewTaskIDs   []string      `json:"review_task_ids"`
-	FailedTasks     []TaskFailure `json:"failed_tasks"`
-	Verified        bool          `json:"verified"`
-	Trace           []TraceEntry  `json:"trace"`
+	RunID                     string        `json:"run_id"`
+	Kind                      string        `json:"kind"`
+	Summary                   string        `json:"summary"`
+	CreatedTaskIDs            []string      `json:"created_task_ids,omitempty"`
+	ArchivedTaskIDs           []string      `json:"archived_task_ids"`
+	KeptTaskIDs               []string      `json:"kept_task_ids"`
+	ReviewTaskIDs             []string      `json:"review_task_ids"`
+	FailedTasks               []TaskFailure `json:"failed_tasks"`
+	Verified                  bool          `json:"verified"`
+	LCAgentSessionID          string        `json:"lcagent_session_id,omitempty"`
+	LCAgentSummary            string        `json:"lcagent_summary,omitempty"`
+	LCAgentFilesChanged       []string      `json:"lcagent_files_changed,omitempty"`
+	LCAgentVerification       []string      `json:"lcagent_verification,omitempty"`
+	LCAgentVerificationStatus string        `json:"lcagent_verification_status,omitempty"`
+	LCAgentPermissionDenials  int           `json:"lcagent_permission_denials,omitempty"`
+	LCAgentPatchSummaries     []string      `json:"lcagent_patch_summaries,omitempty"`
+	Trace                     []TraceEntry  `json:"trace"`
 }
 
 type GoalRecord struct {
@@ -157,7 +164,7 @@ func normalizeGoalRunDefaults(proposal *GoalProposal) {
 			proposal.Run.Objective = "Create a scoped LCAgent task and launch it with the approved objective."
 		}
 		if proposal.Run.SuccessCriteria == "" {
-			proposal.Run.SuccessCriteria = "A Boss-owned LCAgent task is created, launched, and recorded in the goal trace."
+			proposal.Run.SuccessCriteria = "A Boss-owned LCAgent task is created, launched, awaited, and harvested into the goal trace."
 		}
 	default:
 		if proposal.Run.Title == "" {
@@ -345,11 +352,15 @@ func FormatGoalResult(result GoalResult) string {
 	if result.Kind == GoalKindLCAgentTask {
 		created := len(result.CreatedTaskIDs)
 		failed := len(result.FailedTasks)
+		verification := strings.TrimSpace(result.LCAgentVerificationStatus)
 		switch {
 		case failed == 0 && result.Verified:
-			return fmt.Sprintf("Started %d LCAgent goal task%s and verified the launch was recorded.", created, pluralSuffix(created))
+			if verification != "" {
+				return fmt.Sprintf("Started %d LCAgent goal task%s and verified LCAgent completed with %s verification.", created, pluralSuffix(created), verification)
+			}
+			return fmt.Sprintf("Started %d LCAgent goal task%s and verified LCAgent completed.", created, pluralSuffix(created))
 		case failed == 0:
-			return fmt.Sprintf("Started %d LCAgent goal task%s, but launch verification did not complete.", created, pluralSuffix(created))
+			return fmt.Sprintf("Started %d LCAgent goal task%s, but LCAgent outcome verification did not complete.", created, pluralSuffix(created))
 		case created == 0:
 			return fmt.Sprintf("The LCAgent goal task did not start; %d step%s failed.", failed, pluralSuffix(failed))
 		default:
@@ -385,7 +396,7 @@ func formatLCAgentGoalProposalPreview(proposal GoalProposal) string {
 	if len(proposal.Authority.ForbiddenSideEffects) > 0 {
 		lines = append(lines, "Forbidden side effects: "+strings.Join(proposal.Authority.ForbiddenSideEffects, "; ")+".")
 	}
-	lines = append(lines, "Verification: confirm the task and LCAgent session launch are recorded.", "", "Enter confirms; Esc cancels.")
+	lines = append(lines, "Verification: wait for LCAgent to finish, harvest its trace, and confirm verification was reported.", "", "Enter confirms; Esc cancels.")
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
@@ -432,8 +443,9 @@ func normalizeLCAgentTaskPlan(plan Plan, resources []control.ResourceRef) Plan {
 		plan.Steps = []PlanStep{
 			{ID: "create-lcagent-task", Kind: PlanStepDelegate, Title: "Create a scoped LCAgent agent task", Capability: control.CapabilityAgentTaskCreate, Resources: resources, Confidence: 1},
 			{ID: "launch-lcagent", Kind: PlanStepAct, Title: "Launch LCAgent with the approved objective", Capability: control.CapabilityAgentTaskCreate, Resources: resources, Confidence: 1},
-			{ID: "verify-lcagent-launch", Kind: PlanStepVerify, Title: "Confirm the LCAgent session is attached to the task", Resources: resources, Confidence: 1},
-			{ID: "report-result", Kind: PlanStepReport, Title: "Report the task and session handoff", Resources: resources, Confidence: 1},
+			{ID: "await-lcagent", Kind: PlanStepAwait, Title: "Wait for the LCAgent session to finish", Resources: resources, Confidence: 1},
+			{ID: "verify-lcagent-result", Kind: PlanStepVerify, Title: "Harvest the LCAgent trace and verify reported checks", Resources: resources, Confidence: 1},
+			{ID: "report-result", Kind: PlanStepReport, Title: "Report the task, trace, and verification outcome", Resources: resources, Confidence: 1},
 		}
 		return plan
 	}

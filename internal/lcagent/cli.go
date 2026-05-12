@@ -57,6 +57,12 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 			return 1
 		}
 		return 0
+	case "smoke":
+		if err := runSmoke(args[1:], stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 	case "help", "--help", "-h":
 		fmt.Fprintln(stdout, lcagentUsage())
 		return 0
@@ -67,7 +73,7 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 }
 
 func lcagentUsage() string {
-	return "usage: lcagent exec [flags] <prompt>\n       lcagent metrics <session.jsonl>...\n       lcagent eval [flags]"
+	return "usage: lcagent exec [flags] <prompt>\n       lcagent metrics <session.jsonl>...\n       lcagent eval [flags]\n       lcagent smoke [flags]"
 }
 
 func runMetrics(args []string, stdout io.Writer) error {

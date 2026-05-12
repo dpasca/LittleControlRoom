@@ -12,6 +12,7 @@ import (
 	"lcroom/internal/codexapp"
 	"lcroom/internal/control"
 	"lcroom/internal/model"
+	"lcroom/internal/service"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -146,6 +147,12 @@ func (m Model) bossLCAgentGoalLaunchCmd(proposal bossrun.GoalProposal, task mode
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	manager := m.codexManager
+	dataDir := m.appDataDir()
+	projectPath := strings.TrimSpace(task.WorkspacePath)
+	awaitStep := bossGoalPlanStep(proposal.Plan, bossrun.PlanStepAwait, "")
+	verifyStep := bossGoalPlanStep(proposal.Plan, bossrun.PlanStepVerify, "")
+	awaitTimeout := lcagentGoalAwaitTimeout(m.lcagentRequestTimeout())
 	return func() tea.Msg {
 		msg := launchCmd()
 		result := bossrun.GoalResult{
@@ -170,7 +177,6 @@ func (m Model) bossLCAgentGoalLaunchCmd(proposal bossrun.GoalProposal, task mode
 		case opened.err != nil:
 			runErr = opened.err
 		default:
-			result.Verified = true
 			if sessionID := strings.TrimSpace(opened.snapshot.ThreadID); sessionID != "" {
 				launchTrace.Summary = "Launched LCAgent session " + sessionID + " for goal task."
 			}
@@ -187,7 +193,110 @@ func (m Model) bossLCAgentGoalLaunchCmd(proposal bossrun.GoalProposal, task mode
 				runErr = errors.Join(runErr, wrapped)
 				result.FailedTasks = append(result.FailedTasks, bossrun.TaskFailure{TaskID: task.ID, Error: wrapped.Error()})
 			}
-			record, completeErr := svc.Store().CompleteGoalRun(ctx, result, runErr)
+		}
+		if runErr != nil {
+			if svc != nil && svc.Store() != nil {
+				record, completeErr := svc.Store().CompleteGoalRun(ctx, result, runErr)
+				if completeErr != nil {
+					runErr = errors.Join(runErr, completeErr)
+				} else {
+					result = record.Result
+				}
+			}
+			result.Summary = bossrun.FormatGoalResult(result)
+			goalMsg := bossui.GoalRunResultMsg{Result: result, Err: runErr, AnnounceInChat: true}
+			if msg == nil {
+				return goalMsg
+			}
+			return tea.BatchMsg{
+				func() tea.Msg { return msg },
+				func() tea.Msg { return goalMsg },
+			}
+		}
+		awaitCmd := bossLCAgentGoalAwaitCmd(ctx, svc, manager, dataDir, projectPath, proposal, task, awaitStep, verifyStep, result, opened.snapshot, awaitTimeout)
+		if msg == nil {
+			return awaitCmd()
+		}
+		return tea.BatchMsg{
+			func() tea.Msg { return msg },
+			awaitCmd,
+		}
+	}
+}
+
+func bossLCAgentGoalAwaitCmd(parent context.Context, svc *service.Service, manager *codexapp.Manager, dataDir, projectPath string, proposal bossrun.GoalProposal, task model.AgentTask, awaitStep, verifyStep bossrun.PlanStep, initial bossrun.GoalResult, launchSnapshot codexapp.Snapshot, timeout time.Duration) tea.Cmd {
+	if parent == nil {
+		parent = context.Background()
+	}
+	return func() tea.Msg {
+		storeCtx := parent
+		ctx, cancel := context.WithTimeout(parent, timeout)
+		defer cancel()
+
+		result := initial
+		var runErr error
+		snapshot, waitErr := waitForLCAgentGoalSnapshot(ctx, manager, projectPath, launchSnapshot)
+		sessionID := firstNonEmptyTrimmed(snapshot.ThreadID, launchSnapshot.ThreadID, task.SessionID)
+		awaitTrace := bossrun.TraceEntry{
+			StepID:     bossGoalStepID(awaitStep, "await-lcagent"),
+			ResourceID: task.ID,
+			Status:     "completed",
+			Summary:    "LCAgent session finished.",
+			At:         time.Now(),
+		}
+		if sessionID != "" {
+			result.LCAgentSessionID = sessionID
+			awaitTrace.Summary = "LCAgent session " + sessionID + " finished."
+		}
+		if waitErr != nil {
+			runErr = waitErr
+			awaitTrace.Status = "failed"
+			awaitTrace.Summary = waitErr.Error()
+			result.FailedTasks = append(result.FailedTasks, bossrun.TaskFailure{TaskID: task.ID, Error: waitErr.Error()})
+		}
+		result.Trace = append(result.Trace, awaitTrace)
+		if err := appendLCAgentGoalTrace(storeCtx, svc, proposal.Run.ID, awaitTrace); err != nil {
+			runErr = errors.Join(runErr, err)
+			result.FailedTasks = append(result.FailedTasks, bossrun.TaskFailure{TaskID: task.ID, Error: err.Error()})
+		}
+
+		verifyTrace := bossrun.TraceEntry{
+			StepID:     bossGoalStepID(verifyStep, "verify-lcagent-result"),
+			ResourceID: task.ID,
+			Status:     "completed",
+			Summary:    "Verified LCAgent trace outcome.",
+			At:         time.Now(),
+		}
+		if waitErr == nil {
+			trace, traceErr := codexapp.LoadLCAgentTrace(dataDir, sessionID, projectPath)
+			if traceErr != nil {
+				runErr = errors.Join(runErr, traceErr)
+				verifyTrace.Status = "failed"
+				verifyTrace.Summary = traceErr.Error()
+				result.FailedTasks = append(result.FailedTasks, bossrun.TaskFailure{TaskID: task.ID, Error: traceErr.Error()})
+			} else {
+				applyLCAgentTraceToGoalResult(&result, trace)
+				verifyTrace.Summary = "Harvested LCAgent trace: " + trace.CompactSummary()
+				if traceErr := trace.CompletionError(); traceErr != nil {
+					runErr = errors.Join(runErr, traceErr)
+					verifyTrace.Status = "failed"
+					result.FailedTasks = append(result.FailedTasks, bossrun.TaskFailure{TaskID: task.ID, Error: traceErr.Error()})
+				} else {
+					result.Verified = true
+				}
+			}
+		} else {
+			verifyTrace.Status = "failed"
+			verifyTrace.Summary = "Skipped trace harvest because LCAgent did not finish cleanly."
+		}
+		result.Trace = append(result.Trace, verifyTrace)
+		if err := appendLCAgentGoalTrace(storeCtx, svc, proposal.Run.ID, verifyTrace); err != nil {
+			runErr = errors.Join(runErr, err)
+			result.FailedTasks = append(result.FailedTasks, bossrun.TaskFailure{TaskID: task.ID, Error: err.Error()})
+		}
+
+		if svc != nil && svc.Store() != nil {
+			record, completeErr := svc.Store().CompleteGoalRun(storeCtx, result, runErr)
 			if completeErr != nil {
 				runErr = errors.Join(runErr, completeErr)
 			} else {
@@ -195,14 +304,7 @@ func (m Model) bossLCAgentGoalLaunchCmd(proposal bossrun.GoalProposal, task mode
 			}
 		}
 		result.Summary = bossrun.FormatGoalResult(result)
-		goalMsg := bossui.GoalRunResultMsg{Result: result, Err: runErr, AnnounceInChat: true}
-		if msg == nil {
-			return goalMsg
-		}
-		return tea.BatchMsg{
-			func() tea.Msg { return msg },
-			func() tea.Msg { return goalMsg },
-		}
+		return bossui.GoalRunResultMsg{Result: result, Err: runErr, AnnounceInChat: true}
 	}
 }
 
@@ -224,6 +326,77 @@ func (m Model) completeBossGoalRunCmd(result bossrun.GoalResult, runErr error) t
 		result.Summary = bossrun.FormatGoalResult(result)
 		return bossui.GoalRunResultMsg{Result: result, Err: runErr, AnnounceInChat: true}
 	}
+}
+
+func waitForLCAgentGoalSnapshot(ctx context.Context, manager *codexapp.Manager, projectPath string, initial codexapp.Snapshot) (codexapp.Snapshot, error) {
+	if manager == nil {
+		return initial, errors.New("LCAgent session manager unavailable")
+	}
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return initial, errors.New("LCAgent goal task has no workspace path")
+	}
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	last := initial
+	for {
+		if session, ok := manager.Session(projectPath); ok {
+			last = session.Snapshot()
+			if !last.Busy {
+				if last.LastError != "" {
+					return last, errors.New(last.LastError)
+				}
+				if strings.TrimSpace(last.ThreadID) == "" {
+					return last, errors.New("LCAgent finished without reporting a session id")
+				}
+				return last, nil
+			}
+		} else if strings.TrimSpace(last.ThreadID) == "" {
+			return last, errors.New("LCAgent session disappeared before completion")
+		}
+		select {
+		case <-ctx.Done():
+			return last, fmt.Errorf("wait for LCAgent completion: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+func lcagentGoalAwaitTimeout(requestTimeout time.Duration) time.Duration {
+	if requestTimeout <= 0 {
+		requestTimeout = 10 * time.Minute
+	}
+	timeout := requestTimeout + 2*time.Minute
+	if timeout < 5*time.Minute {
+		return 5 * time.Minute
+	}
+	if timeout > 2*time.Hour {
+		return 2 * time.Hour
+	}
+	return timeout
+}
+
+func appendLCAgentGoalTrace(ctx context.Context, svc *service.Service, runID string, entry bossrun.TraceEntry) error {
+	if svc == nil || svc.Store() == nil {
+		return nil
+	}
+	if err := svc.Store().AppendGoalRunTrace(ctx, runID, entry); err != nil {
+		return fmt.Errorf("record LCAgent goal trace: %w", err)
+	}
+	return nil
+}
+
+func applyLCAgentTraceToGoalResult(result *bossrun.GoalResult, trace codexapp.LCAgentTrace) {
+	if result == nil {
+		return
+	}
+	result.LCAgentSessionID = firstNonEmptyTrimmed(trace.SessionID, result.LCAgentSessionID)
+	result.LCAgentSummary = strings.TrimSpace(trace.Summary)
+	result.LCAgentFilesChanged = append([]string(nil), trace.FilesChanged...)
+	result.LCAgentVerification = append([]string(nil), trace.Verification...)
+	result.LCAgentVerificationStatus = strings.TrimSpace(trace.VerificationStatus)
+	result.LCAgentPermissionDenials = len(trace.PermissionDenials)
+	result.LCAgentPatchSummaries = append([]string(nil), trace.PatchDiffSummaries...)
 }
 
 func bossGoalPlanStep(plan bossrun.Plan, kind bossrun.PlanStepKind, capability control.CapabilityName) bossrun.PlanStep {

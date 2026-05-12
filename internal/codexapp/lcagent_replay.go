@@ -225,7 +225,9 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			}
 			replay.appendEntry(TranscriptStatus, text)
 		case "turn_complete":
-			// The status is reflected on the loaded session snapshot.
+			if text := lcagentTurnCompleteTraceText(event); text != "" {
+				replay.appendEntry(TranscriptStatus, text)
+			}
 		case "turn_aborted":
 			reason := firstNonEmpty(rawJSONString(event["reason"]), "LCAgent run aborted")
 			replay.lastError = reason

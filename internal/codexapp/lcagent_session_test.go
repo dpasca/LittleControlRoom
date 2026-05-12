@@ -352,6 +352,44 @@ func TestLCAgentSessionReplaysLatestProjectArtifact(t *testing.T) {
 	}
 }
 
+func TestParseLCAgentTraceFileHarvestsFinalOutcome(t *testing.T) {
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	sessionID := "lca_trace_harvest"
+	started := time.Date(2026, 5, 12, 10, 0, 0, 0, time.UTC)
+	path := writeLCAgentReplayArtifact(t, dataDir, started, sessionID, []map[string]any{
+		{"type": "session_meta", "id": sessionID, "cwd": root, "started_at": started.Format(time.RFC3339Nano)},
+		{"type": "permission_denied", "session_id": sessionID, "timestamp": started.Add(time.Second).Format(time.RFC3339Nano), "tool": "run_command", "reason": "shell denied"},
+		{"type": "patch_diff_summary", "session_id": sessionID, "timestamp": started.Add(2 * time.Second).Format(time.RFC3339Nano), "summary": "README.md +1 -0"},
+		{"type": "verification_summary", "session_id": sessionID, "timestamp": started.Add(3 * time.Second).Format(time.RFC3339Nano), "status": "reported", "message": "Verification was reported in final_response."},
+		{"type": "turn_complete", "session_id": sessionID, "timestamp": started.Add(4 * time.Second).Format(time.RFC3339Nano), "summary": "updated docs", "files_changed": []string{"README.md"}, "verification": []string{"go test ./..."}, "verification_status": "reported"},
+	})
+
+	trace, err := ParseLCAgentTraceFile(path)
+	if err != nil {
+		t.Fatalf("ParseLCAgentTraceFile() error = %v", err)
+	}
+	if !trace.Verified() || trace.SessionID != sessionID || trace.ProjectPath != root {
+		t.Fatalf("trace = %#v, want verified session for project", trace)
+	}
+	if trace.Summary != "updated docs" || trace.VerificationStatus != "reported" {
+		t.Fatalf("trace summary/status = %q/%q", trace.Summary, trace.VerificationStatus)
+	}
+	if len(trace.FilesChanged) != 1 || trace.FilesChanged[0] != "README.md" || len(trace.Verification) != 1 {
+		t.Fatalf("trace files/verification = %#v/%#v", trace.FilesChanged, trace.Verification)
+	}
+	if len(trace.PermissionDenials) != 1 || len(trace.PatchDiffSummaries) != 1 {
+		t.Fatalf("trace denials/patches = %#v/%#v", trace.PermissionDenials, trace.PatchDiffSummaries)
+	}
+	loaded, err := LoadLCAgentTrace(dataDir, sessionID, root)
+	if err != nil {
+		t.Fatalf("LoadLCAgentTrace() error = %v", err)
+	}
+	if loaded.ArtifactPath != path || !strings.Contains(loaded.CompactSummary(), "verification reported") {
+		t.Fatalf("loaded trace = %#v, want artifact path and compact summary", loaded)
+	}
+}
+
 func waitForLCAgentIdleSnapshot(t *testing.T, session Session, notify <-chan struct{}) Snapshot {
 	t.Helper()
 	deadline := time.After(5 * time.Second)

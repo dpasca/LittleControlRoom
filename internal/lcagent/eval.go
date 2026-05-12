@@ -216,6 +216,49 @@ func lcagentEvalCases() []evalCase {
 			},
 		},
 		{
+			Name:   "low_autonomy_go_test_verification",
+			Prompt: "run the narrow verification command",
+			Auto:   "low",
+			Files: map[string]string{
+				"go.mod": "module lcagent-eval-low\n\ngo 1.22\n",
+				"smoke_test.go": `package smoke
+
+import "testing"
+
+func TestSmoke(t *testing.T) {}
+`,
+			},
+			Script: `{"type":"tool_call","tool":"run_command","args":{"argv":["go","test","./..."],"shell":false,"timeout_ms":120000}}
+{"type":"final_response","summary":"go tests passed","files_changed":[],"verification":["go test ./..."]}
+`,
+			Check: func(summary sessionmetrics.Summary) error {
+				if summary.ToolCalls["run_command"] < 1 || summary.ToolResults["run_command"] < 1 {
+					return fmt.Errorf("run_command calls/results = %d/%d, want >= 1", summary.ToolCalls["run_command"], summary.ToolResults["run_command"])
+				}
+				if summary.VerificationStatuses["reported"] < 1 {
+					return fmt.Errorf("verification reported count = %d, want >= 1", summary.VerificationStatuses["reported"])
+				}
+				return nil
+			},
+		},
+		{
+			Name:   "missing_verification_contract",
+			Prompt: "patch without verification to exercise the contract",
+			Auto:   "low",
+			Files: map[string]string{
+				"README.md": "before\n",
+			},
+			Script: `{"type":"tool_call","tool":"apply_patch","args":{"patch":"*** Begin Patch\n*** Update File: README.md\n@@\n-before\n+after\n*** End Patch\n"}}
+{"type":"final_response","summary":"patched without verification","files_changed":["README.md"],"verification":[]}
+`,
+			Check: func(summary sessionmetrics.Summary) error {
+				if summary.VerificationStatuses["missing_after_changes"] < 1 {
+					return fmt.Errorf("missing_after_changes count = %d, want >= 1", summary.VerificationStatuses["missing_after_changes"])
+				}
+				return nil
+			},
+		},
+		{
 			Name:   "resume_context_trace",
 			Prompt: "continue with summarized context",
 			Auto:   "low",

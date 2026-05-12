@@ -93,7 +93,7 @@ func TestNormalizeGoalProposalDefaultsLCAgentTaskAuthority(t *testing.T) {
 	if len(proposal.Authority.AllowedCapabilities) != 1 || proposal.Authority.AllowedCapabilities[0] != control.CapabilityAgentTaskCreate {
 		t.Fatalf("allowed capabilities = %#v, want agent_task.create", proposal.Authority.AllowedCapabilities)
 	}
-	if len(proposal.Plan.Steps) < 3 || proposal.Plan.Steps[0].ID != "create-lcagent-task" {
+	if len(proposal.Plan.Steps) != 5 || proposal.Plan.Steps[0].ID != "create-lcagent-task" || proposal.Plan.Steps[2].Kind != PlanStepAwait {
 		t.Fatalf("plan steps = %#v, want LCAgent task default plan", proposal.Plan.Steps)
 	}
 	if !strings.Contains(proposal.Preview, "Start a scoped LCAgent goal task?") ||
@@ -185,12 +185,13 @@ func TestFormatGoalResultSummarizesVerifiedLCAgentTask(t *testing.T) {
 	t.Parallel()
 
 	got := FormatGoalResult(GoalResult{
-		Kind:           GoalKindLCAgentTask,
-		CreatedTaskIDs: []string{"agt_lca"},
-		Verified:       true,
+		Kind:                      GoalKindLCAgentTask,
+		CreatedTaskIDs:            []string{"agt_lca"},
+		Verified:                  true,
+		LCAgentVerificationStatus: "reported",
 	})
 	if !strings.Contains(got, "Started 1 LCAgent goal task") ||
-		!strings.Contains(got, "launch was recorded") {
-		t.Fatalf("FormatGoalResult() = %q, want LCAgent launch summary", got)
+		!strings.Contains(got, "completed with reported verification") {
+		t.Fatalf("FormatGoalResult() = %q, want LCAgent outcome summary", got)
 	}
 }
