@@ -42,6 +42,8 @@ This creates temporary fixture repos and checks the LCAgent trace contract for:
 
 - patch diff summaries plus reported verification
 - explicit permission-denial events
+- low-autonomy `go test ./...` verification
+- missing-verification contract detection after edits
 - resume-context trace emission
 
 For machine-readable output:
@@ -52,6 +54,20 @@ go run ./cmd/lcagent eval --output json
 
 The lane is intentionally small. It protects harness behavior and metrics
 columns; it does not score live model quality.
+
+## Live Smoke
+
+Before spending money on a comparison run, use the live smoke script:
+
+```sh
+make lcagent-live-smoke
+```
+
+The smoke command creates a temporary Go workspace, asks the configured live
+provider to make one README edit, runs `go test ./...`, and checks the resulting
+artifact for reported verification. See
+[docs/lcagent_live_smoke_script.md](lcagent_live_smoke_script.md) for provider
+variants and the Boss goal-run smoke path.
 
 Pick a target commit and create an isolated worktree:
 

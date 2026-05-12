@@ -499,6 +499,9 @@ func (s *lcagentSession) handleEvent(line []byte) {
 	case "files_touched":
 		s.appendAsync(TranscriptFileChange, lcagentFilesTouchedText(event["files"]))
 	case "turn_complete":
+		if text := lcagentTurnCompleteTraceText(event); text != "" {
+			s.appendAsync(TranscriptStatus, text)
+		}
 		s.mu.Lock()
 		s.status = "LCAgent run complete"
 		s.touchLocked()

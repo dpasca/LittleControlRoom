@@ -315,6 +315,9 @@ func formatGoalRunDetail(record bossrun.GoalRecord) string {
 	if summary := strings.TrimSpace(record.Result.Summary); summary != "" {
 		lines = append(lines, "result: "+clipText(summary, 500))
 	}
+	if record.Result.Kind == bossrun.GoalKindLCAgentTask || run.Kind == bossrun.GoalKindLCAgentTask {
+		lines = appendGoalRunLCAgentDetail(lines, record.Result)
+	}
 	if record.Error != "" {
 		lines = append(lines, "error: "+clipText(record.Error, 500))
 	}
@@ -340,6 +343,31 @@ func formatGoalRunDetail(record bossrun.GoalRecord) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func appendGoalRunLCAgentDetail(lines []string, result bossrun.GoalResult) []string {
+	if sessionID := strings.TrimSpace(result.LCAgentSessionID); sessionID != "" {
+		lines = append(lines, "lcagent session: "+sessionID)
+	}
+	if status := strings.TrimSpace(result.LCAgentVerificationStatus); status != "" {
+		lines = append(lines, "lcagent verification: "+status)
+	}
+	if len(result.LCAgentFilesChanged) > 0 {
+		lines = append(lines, "lcagent files: "+clipText(strings.Join(result.LCAgentFilesChanged, ", "), 500))
+	}
+	if len(result.LCAgentVerification) > 0 {
+		lines = append(lines, "lcagent checks: "+clipText(strings.Join(result.LCAgentVerification, "; "), 500))
+	}
+	if result.LCAgentPermissionDenials > 0 {
+		lines = append(lines, fmt.Sprintf("lcagent denials: %d", result.LCAgentPermissionDenials))
+	}
+	if len(result.LCAgentPatchSummaries) > 0 {
+		lines = append(lines, "lcagent patch summary: "+clipText(strings.Join(result.LCAgentPatchSummaries, " | "), 500))
+	}
+	if summary := strings.TrimSpace(result.LCAgentSummary); summary != "" {
+		lines = append(lines, "lcagent final: "+clipText(summary, 500))
+	}
+	return lines
 }
 
 func (e *QueryExecutor) searchBossSessions(ctx context.Context, action bossAction) (bossToolResult, error) {
