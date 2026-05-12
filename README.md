@@ -168,7 +168,8 @@ Inside the embedded Codex, Claude Code, or OpenCode pane:
 
 Inside boss chat:
 
-- `Alt+1` through `Alt+8`: Jump from the bottom attention list into the matching embedded engineer session.
+- `Alt+1` through `Alt+8`: Open the matching marked Boss Desk task or project in an embedded engineer session.
+- `Alt+Up`: Hide Boss Chat and return to the classic TUI; in-flight replies keep running.
 - `/new [prompt]`: Start a fresh boss chat session, optionally with the first prompt.
 - `/sessions [session-id]`: Open the saved-session picker, or switch directly by ID.
 - `/session [session-id]` and `/resume [session-id]`: Aliases for `/sessions`.

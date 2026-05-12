@@ -19002,8 +19002,11 @@ func TestCommandEnterOpensBossMode(t *testing.T) {
 	if strings.Contains(lines[0], brand.Name) {
 		t.Fatalf("boss view should not show the classic app title in the top bar: %q", rendered)
 	}
-	if !strings.Contains(lines[len(lines)-1], "Enter") || !strings.Contains(lines[len(lines)-1], "Alt+Enter") || !strings.Contains(lines[len(lines)-1], "Esc") {
+	if !strings.Contains(lines[len(lines)-1], "Enter") || !strings.Contains(lines[len(lines)-1], "Alt+Enter") || !strings.Contains(lines[len(lines)-1], "Alt+Up") {
 		t.Fatalf("boss footer should show boss chat actions: %q", rendered)
+	}
+	if strings.Contains(lines[len(lines)-1], "Esc hide") {
+		t.Fatalf("boss footer should keep Esc as a silent hide alias: %q", rendered)
 	}
 	if strings.Contains(lines[len(lines)-1], "ctrl+j") {
 		t.Fatalf("boss footer should advertise Alt+Enter newline, not ctrl+j: %q", rendered)
@@ -19154,7 +19157,7 @@ func TestBossModeEscReturnsToClassicTUI(t *testing.T) {
 	}
 }
 
-func TestBossModeAltUpDoesNotReturnToClassicTUI(t *testing.T) {
+func TestBossModeAltUpReturnsToClassicTUI(t *testing.T) {
 	m := Model{
 		bossMode:  true,
 		bossModel: bossui.NewEmbedded(context.Background(), nil),
@@ -19164,11 +19167,18 @@ func TestBossModeAltUpDoesNotReturnToClassicTUI(t *testing.T) {
 
 	updated, cmd := m.updateBossModeMessage(tea.KeyMsg{Type: tea.KeyUp, Alt: true})
 	got := updated.(Model)
-	if cmd != nil {
-		t.Fatalf("boss alt+up should not return an exit command")
+	if cmd == nil {
+		t.Fatalf("boss alt+up should return an exit command")
 	}
-	if !got.bossMode {
-		t.Fatalf("boss mode should stay visible after alt+up")
+	msg := cmd()
+	if _, ok := msg.(bossui.ExitMsg); !ok {
+		t.Fatalf("cmd() returned %T, want boss.ExitMsg", msg)
+	}
+
+	updated, _ = got.Update(msg)
+	got = updated.(Model)
+	if got.bossMode {
+		t.Fatalf("boss mode should hide after alt+up exit message")
 	}
 }
 
@@ -19216,10 +19226,13 @@ func TestBossModeFooterAdvertisesFilePickerInsteadOfBossOffHint(t *testing.T) {
 	if strings.Contains(rendered, "/boss off") {
 		t.Fatalf("boss footer should not include old /boss off hint: %q", rendered)
 	}
-	for _, want := range []string{"Alt+O", "files"} {
+	for _, want := range []string{"Alt+O", "files", "Alt+Up", "hide"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("boss footer missing %q: %q", want, rendered)
 		}
+	}
+	if strings.Contains(rendered, "Esc hide") {
+		t.Fatalf("boss footer should keep Esc as a silent hide alias: %q", rendered)
 	}
 }
 

@@ -60,10 +60,13 @@ func TestModelViewRendersBossPanels(t *testing.T) {
 		}
 	}
 	stripped := ansi.Strip(view)
-	for _, want := range []string{"Alt+Enter newline", "Esc hides"} {
+	for _, want := range []string{"Alt+Enter newline", "Alt+Up hides"} {
 		if !strings.Contains(stripped, want) {
 			t.Fatalf("view missing boss shortcut %q:\n%s", want, stripped)
 		}
+	}
+	if strings.Contains(stripped, "Esc hides") {
+		t.Fatalf("view should keep Esc as a silent hide alias:\n%s", stripped)
 	}
 	if strings.Contains(stripped, "Ctrl+J newline") {
 		t.Fatalf("view should advertise Alt+Enter instead of Ctrl+J:\n%s", stripped)
@@ -175,6 +178,64 @@ func TestModelAttentionRowsIncludeOpenAgentTasks(t *testing.T) {
 	}
 	if got := m.HotAttentionItem(1); got.Kind != AttentionItemProject || got.ProjectPath != "/alpha" {
 		t.Fatalf("second attention item = %#v, want project", got)
+	}
+}
+
+func TestBossDeskRowsShowStableAltHotkeys(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	m := New(context.Background(), nil)
+	m.nowFn = func() time.Time { return now }
+	m.snapshot = StateSnapshot{
+		OpenAgentTasks: []AgentTaskBrief{{
+			ID:      "agt_review",
+			Title:   "Review Cursor OAuth cleanup",
+			Status:  model.AgentTaskStatusWaiting,
+			Summary: "Needs your decision.",
+		}},
+		HotProjects: []ProjectBrief{{
+			Name:          "Alpha",
+			Path:          "/alpha",
+			Status:        model.StatusActive,
+			LatestSummary: "Ready for review.",
+		}},
+	}
+	m.syncAttentionHotkeys()
+
+	desk := ansi.Strip(m.deskContent(80, 12))
+	for _, want := range []string{"Alt+1", "Review Cursor OAuth cleanup", "Alt+2", "Alpha"} {
+		if !strings.Contains(desk, want) {
+			t.Fatalf("boss desk missing hotkey marker %q:\n%s", want, desk)
+		}
+	}
+}
+
+func TestBossAttentionHotkeysStayWithIdentityAcrossRefresh(t *testing.T) {
+	t.Parallel()
+
+	m := New(context.Background(), nil)
+	m.snapshot = StateSnapshot{
+		OpenAgentTasks: []AgentTaskBrief{
+			{ID: "agt_one", Title: "One", Status: model.AgentTaskStatusActive},
+			{ID: "agt_two", Title: "Two", Status: model.AgentTaskStatusActive},
+		},
+	}
+	m.syncAttentionHotkeys()
+
+	m.snapshot = StateSnapshot{
+		OpenAgentTasks: []AgentTaskBrief{
+			{ID: "agt_two", Title: "Two", Status: model.AgentTaskStatusActive},
+			{ID: "agt_three", Title: "Three", Status: model.AgentTaskStatusActive},
+		},
+	}
+	m.syncAttentionHotkeys()
+
+	if got := m.attentionHotkeyLabel(AttentionItem{Kind: AttentionItemAgentTask, TaskID: "agt_two"}); got != "Alt+2" {
+		t.Fatalf("existing task hotkey = %q, want Alt+2", got)
+	}
+	if got := m.attentionHotkeyLabel(AttentionItem{Kind: AttentionItemAgentTask, TaskID: "agt_three"}); got != "Alt+1" {
+		t.Fatalf("new task hotkey = %q, want the freed Alt+1 slot", got)
 	}
 }
 
@@ -1215,7 +1276,7 @@ func TestEmbeddedModelCanCancelGoalRun(t *testing.T) {
 	}
 }
 
-func TestEmbeddedModelAltUpDoesNotExit(t *testing.T) {
+func TestEmbeddedModelAltUpExitsLikeSilentEsc(t *testing.T) {
 	t.Parallel()
 
 	m := NewEmbedded(context.Background(), nil)
@@ -1223,8 +1284,12 @@ func TestEmbeddedModelAltUpDoesNotExit(t *testing.T) {
 	if _, ok := updated.(Model); !ok {
 		t.Fatalf("Update() returned %T, want boss.Model", updated)
 	}
-	if cmd != nil {
-		t.Fatalf("alt+up should not return exit command")
+	if cmd == nil {
+		t.Fatalf("alt+up should return exit command")
+	}
+	msg := cmd()
+	if _, ok := msg.(ExitMsg); !ok {
+		t.Fatalf("alt+up command returned %T, want ExitMsg", msg)
 	}
 }
 

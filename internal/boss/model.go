@@ -67,6 +67,7 @@ type Model struct {
 	operationalNotices  []ViewSystemNotice
 	transientActivities []ViewEngineerActivity
 	deskEvents          []bossDeskEvent
+	attentionHotkeys    []AttentionItem
 	stateLoaded         bool
 	stateErr            error
 	sending             bool
@@ -414,24 +415,11 @@ func (m Model) HotProjectPath(index int) string {
 }
 
 func (m Model) HotAttentionItem(index int) AttentionItem {
-	if index < 0 {
+	slots := m.attentionHotkeySlots()
+	if index < 0 || index >= len(slots) {
 		return AttentionItem{}
 	}
-	if index < len(m.snapshot.OpenAgentTasks) {
-		task := m.snapshot.OpenAgentTasks[index]
-		return AttentionItem{
-			Kind:   AttentionItemAgentTask,
-			TaskID: strings.TrimSpace(task.ID),
-		}
-	}
-	projectIndex := index - len(m.snapshot.OpenAgentTasks)
-	if projectIndex < 0 || projectIndex >= len(m.snapshot.HotProjects) {
-		return AttentionItem{}
-	}
-	return AttentionItem{
-		Kind:        AttentionItemProject,
-		ProjectPath: strings.TrimSpace(m.snapshot.HotProjects[projectIndex].Path),
-	}
+	return slots[index]
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -447,6 +435,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.syncSummaryFlashes(msg.snapshot)
 			m.snapshot = msg.snapshot
+			m.syncAttentionHotkeys()
 			m.status = m.assistant.Label()
 		} else {
 			m.status = "State refresh failed: " + msg.err.Error()
@@ -553,7 +542,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		switch msg.String() {
-		case "ctrl+c", "esc":
+		case "ctrl+c", "esc", "alt+up":
 			return m, m.exitCmd()
 		case "alt+c":
 			m.openInputCopyDialog()
@@ -604,6 +593,7 @@ func (m Model) applyAssistantReply(response AssistantResponse, err error, snapsh
 	if stateRefreshed {
 		m.syncSummaryFlashes(snapshot)
 		m.snapshot = snapshot
+		m.syncAttentionHotkeys()
 		m.stateLoaded = true
 		m.stateErr = nil
 	} else if stateErr != nil {
@@ -1009,6 +999,9 @@ func bossSidebarTargetWidth(width int) int {
 		sidebarWidth = clampInt(width/5, 32, 44)
 	}
 	sidebarWidth = clampInt((sidebarWidth*13+9)/10, 36, 56)
+	if width-sidebarWidth-4 >= 58 {
+		sidebarWidth += 4
+	}
 	if width-sidebarWidth < 58 {
 		return 0
 	}
@@ -1058,7 +1051,7 @@ func (m Model) renderChat(layout bossLayout) string {
 		parts = append(parts, slashBlock)
 	}
 	if !m.embedded {
-		hint := "Enter sends | Alt+Enter newline | Alt+O files | Alt+C copy menu | Ctrl+R refresh | Esc hides"
+		hint := "Enter sends | Alt+Enter newline | Alt+O files | Alt+C copy menu | Ctrl+R refresh | Alt+Up hides"
 		if m.bossSlashActive() {
 			hint = "Enter runs command | Tab complete | Shift+Tab previous | Alt+Enter newline"
 		}
@@ -1079,7 +1072,7 @@ func (m Model) renderChat(layout bossLayout) string {
 }
 
 func (m Model) renderHeader(width int) string {
-	escAction := "Esc hides"
+	escAction := "Alt+Up hides"
 	if m.pendingControl != nil || m.pendingGoal != nil || m.inputSelection != nil {
 		escAction = "Esc cancels"
 	} else if m.sessionPickerVisible || m.openTargetPicker != nil || m.inputCopyDialog != nil {
@@ -1123,19 +1116,19 @@ func (m Model) renderAttentionRows(width, limit int) string {
 		if len(rows) >= limit {
 			break
 		}
-		rows = append(rows, m.renderAgentTaskAttentionRow(task, len(rows), keyW, flagW, assessmentW, nameW, summaryW, width))
+		rows = append(rows, m.renderAgentTaskAttentionRow(task, keyW, flagW, assessmentW, nameW, summaryW, width))
 	}
 	for _, project := range m.snapshot.HotProjects {
 		if len(rows) >= limit {
 			break
 		}
-		rows = append(rows, m.renderProjectAttentionRow(project, len(rows), keyW, flagW, assessmentW, nameW, summaryW, width))
+		rows = append(rows, m.renderProjectAttentionRow(project, keyW, flagW, assessmentW, nameW, summaryW, width))
 	}
 	return strings.Join(rows, "\n")
 }
 
-func (m Model) renderProjectAttentionRow(project ProjectBrief, index, keyW, flagW, assessmentW, nameW, summaryW, width int) string {
-	key := bossHotkeyStyle.Width(keyW).Render(fmt.Sprintf("Alt+%d", index+1))
+func (m Model) renderProjectAttentionRow(project ProjectBrief, keyW, flagW, assessmentW, nameW, summaryW, width int) string {
+	key := bossHotkeyStyle.Width(keyW).Render(fitLine(firstNonEmpty(m.attentionHotkeyLabel(attentionItemForProject(project)), "-"), keyW))
 	flags := bossRepoFlagStyle(project).Width(flagW).Align(lipgloss.Left).Render(bossRepoFlagText(project))
 	assessmentText, assessmentStyle := bossAssessmentCell(project)
 	activity, active := m.engineerActivityForProject(project.Path)
@@ -1168,8 +1161,8 @@ func (m Model) renderProjectAttentionRow(project ProjectBrief, index, keyW, flag
 	), width)
 }
 
-func (m Model) renderAgentTaskAttentionRow(task AgentTaskBrief, index, keyW, flagW, assessmentW, nameW, summaryW, width int) string {
-	key := bossHotkeyStyle.Width(keyW).Render(fmt.Sprintf("Alt+%d", index+1))
+func (m Model) renderAgentTaskAttentionRow(task AgentTaskBrief, keyW, flagW, assessmentW, nameW, summaryW, width int) string {
+	key := bossHotkeyStyle.Width(keyW).Render(fitLine(firstNonEmpty(m.attentionHotkeyLabel(attentionItemForAgentTask(task)), "-"), keyW))
 	flags := bossTaskFlagStyle.Width(flagW).Align(lipgloss.Left).Render("T")
 	assessmentText, assessmentStyle := bossAgentTaskStatusCell(task)
 	activity, active := m.engineerActivityForAgentTask(task.ID)

@@ -189,7 +189,7 @@ func (m Model) bossDeskNowRows(width int, now time.Time) []string {
 		}
 		if quietFor := supervisorActivityQuietFor(activity, now); quietFor >= bossSupervisorQuietAfter {
 			if text := supervisorActivityLine(activity, now); text != "" {
-				rows = append(rows, bossDeskRow(bossAssessmentWaitingStyle, "quiet", text, width))
+				rows = append(rows, m.bossDeskAttentionRow(attentionItemForEngineerActivity(activity), bossAssessmentWaitingStyle, "quiet", text, width))
 			}
 			continue
 		}
@@ -197,7 +197,7 @@ func (m Model) bossDeskNowRows(width int, now time.Time) []string {
 		title := strings.TrimSpace(firstNonEmpty(activity.Title, activity.ProjectPath, activity.TaskID, "engineer work"))
 		name := strings.TrimSpace(firstNonEmpty(activity.EngineerName, "Engineer"))
 		text := name + " on " + title
-		rows = append(rows, bossDeskRow(style, label, text, width))
+		rows = append(rows, m.bossDeskAttentionRow(attentionItemForEngineerActivity(activity), style, label, text, width))
 	}
 	return rows
 }
@@ -216,7 +216,7 @@ func (m Model) bossDeskNeedsUserRows(width int, now time.Time) []string {
 		if detail == "" {
 			detail = agentTaskDecisionQuestion(task.EngineerName)
 		}
-		rows = append(rows, bossDeskRow(bossAssessmentWaitingStyle, "review", bossDeskTextWithDetail(title, detail), width))
+		rows = append(rows, m.bossDeskAttentionRow(attentionItemForAgentTask(task), bossAssessmentWaitingStyle, "review", bossDeskTextWithDetail(title, detail), width))
 	}
 	for _, notice := range m.bossDeskSystemNotices() {
 		if len(rows) >= bossDeskDecisionLimit {
@@ -248,7 +248,7 @@ func (m Model) bossDeskReadyRows(width int, now time.Time) []string {
 		if detail == "" {
 			detail = "ready to close"
 		}
-		rows = append(rows, bossDeskRow(bossAssessmentDoneStyle, "close", bossDeskTextWithDetail(title, detail), width))
+		rows = append(rows, m.bossDeskAttentionRow(attentionItemForAgentTask(task), bossAssessmentDoneStyle, "close", bossDeskTextWithDetail(title, detail), width))
 	}
 	return rows
 }
@@ -285,7 +285,7 @@ func (m Model) bossDeskWatchingRows(width int, now time.Time) []string {
 		if strings.TrimSpace(summary) != "" && summary != "-" {
 			text += " - " + summary
 		}
-		rows = append(rows, bossDeskRow(style, label, text, width))
+		rows = append(rows, m.bossDeskAttentionRow(attentionItemForProject(project), style, label, text, width))
 	}
 	return rows
 }
@@ -293,17 +293,17 @@ func (m Model) bossDeskWatchingRows(width int, now time.Time) []string {
 func (m Model) bossDeskNextLine(width int, now time.Time) string {
 	for _, task := range m.snapshot.OpenAgentTasks {
 		if model.NormalizeAgentTaskStatus(task.Status) == model.AgentTaskStatusWaiting {
-			return bossDeskRow(bossAssessmentWaitingStyle, "next", "Review "+compactAgentTaskTitle(task), width)
+			return m.bossDeskAttentionRow(attentionItemForAgentTask(task), bossAssessmentWaitingStyle, "next", "Review "+compactAgentTaskTitle(task), width)
 		}
 	}
 	for _, activity := range m.activeEngineerActivities() {
 		title := strings.TrimSpace(firstNonEmpty(activity.Title, activity.ProjectPath, activity.TaskID, "engineer work"))
 		name := strings.TrimSpace(firstNonEmpty(activity.EngineerName, "Engineer"))
-		return bossDeskRow(bossAssessmentWorkingStyle, "next", "Let "+name+" finish "+title, width)
+		return m.bossDeskAttentionRow(attentionItemForEngineerActivity(activity), bossAssessmentWorkingStyle, "next", "Let "+name+" finish "+title, width)
 	}
 	for _, task := range m.snapshot.OpenAgentTasks {
 		if model.NormalizeAgentTaskStatus(task.Status) == model.AgentTaskStatusCompleted {
-			return bossDeskRow(bossAssessmentDoneStyle, "next", "Close "+compactAgentTaskTitle(task), width)
+			return m.bossDeskAttentionRow(attentionItemForAgentTask(task), bossAssessmentDoneStyle, "next", "Close "+compactAgentTaskTitle(task), width)
 		}
 	}
 	for _, notice := range m.viewContext.SystemNotices {
@@ -312,7 +312,7 @@ func (m Model) bossDeskNextLine(width int, now time.Time) string {
 		}
 	}
 	if len(m.snapshot.HotProjects) > 0 {
-		return bossDeskRow(bossAssessmentFollowupStyle, "next", "Check "+compactProjectName(m.snapshot.HotProjects[0]), width)
+		return m.bossDeskAttentionRow(attentionItemForProject(m.snapshot.HotProjects[0]), bossAssessmentFollowupStyle, "next", "Check "+compactProjectName(m.snapshot.HotProjects[0]), width)
 	}
 	return bossDeskRow(bossMutedStyle, "next", "No obvious move right now", width)
 }
@@ -420,6 +420,14 @@ func bossDeskEventStyle(label string) lipgloss.Style {
 }
 
 func bossDeskRow(labelStyle lipgloss.Style, label, text string, width int) string {
+	return bossDeskRowWithHotkey("", labelStyle, label, text, width)
+}
+
+func (m Model) bossDeskAttentionRow(item AttentionItem, labelStyle lipgloss.Style, label, text string, width int) string {
+	return bossDeskRowWithHotkey(m.attentionHotkeyLabel(item), labelStyle, label, text, width)
+}
+
+func bossDeskRowWithHotkey(hotkey string, labelStyle lipgloss.Style, label, text string, width int) string {
 	labelW := 8
 	if width < 36 {
 		labelW = 6
@@ -428,10 +436,23 @@ func bossDeskRow(labelStyle lipgloss.Style, label, text string, width int) strin
 	if label == "" {
 		label = "-"
 	}
-	textW := maxInt(8, width-labelW-1)
+	hotkey = strings.TrimSpace(hotkey)
+	hotkeyW := 0
+	if hotkey != "" {
+		hotkeyW = 5
+	}
+	textW := maxInt(8, width-hotkeyW-labelW-2)
+	if hotkey == "" {
+		textW = maxInt(8, width-labelW-1)
+	}
+	parts := []string{}
+	if hotkey != "" {
+		parts = append(parts, bossHotkeyStyle.Width(hotkeyW).Render(fitLine(hotkey, hotkeyW)), " ")
+	}
 	left := labelStyle.Width(labelW).Render(fitLine(label, labelW))
 	right := bossSummaryTextStyle.Render(fitLine(strings.TrimSpace(text), textW))
-	return fitStyledLine(lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right), width)
+	parts = append(parts, left, " ", right)
+	return fitStyledLine(lipgloss.JoinHorizontal(lipgloss.Top, parts...), width)
 }
 
 func deskNoticeLabel(code string) string {

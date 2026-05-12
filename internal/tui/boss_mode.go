@@ -31,7 +31,7 @@ func (m Model) openBossMode() (tea.Model, tea.Cmd) {
 		m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
 		initCmd = m.bossModel.ActivateCmd()
 	}
-	m.status = "Boss mode open. Esc hides it and keeps replies running."
+	m.status = "Boss mode open. Alt+Up hides it and keeps replies running."
 	if m.width > 0 && m.height > 0 {
 		updated, _ := m.bossModel.Update(m.bossModeWindowSizeMsg())
 		m.bossModel = normalizeBossModel(updated)
@@ -253,21 +253,21 @@ func (m Model) renderBossModeHeader(width int) string {
 func (m Model) renderBossModeFooter(width int) string {
 	actions := []footerAction{
 		footerPrimaryAction("Enter", "send"),
+		footerHideAction("Alt+Up", "hide"),
 		footerNavAction("Alt+Enter", "newline"),
 		footerNavAction("Alt+O", "files"),
-		footerNavAction("Alt+1..8", "jump"),
+		footerNavAction("Alt+1..8", "open"),
 		footerLowAction("Alt+C", "copy menu"),
 		footerNavAction("ctrl+r", "refresh"),
-		footerHideAction("Esc", "hide"),
 	}
 	if m.bossModel.SlashActive() {
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "run"),
+			footerHideAction("Alt+Up", "hide"),
 			footerNavAction("Tab", "complete"),
 			footerNavAction("Shift+Tab", "previous"),
 			footerNavAction("Alt+Enter", "newline"),
 			footerLowAction("Alt+C", "copy menu"),
-			footerHideAction("Esc", "hide"),
 		}
 	}
 	if m.bossModel.ControlConfirmationActive() {
