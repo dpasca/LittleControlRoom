@@ -75,3 +75,33 @@ func TestDetectorIgnoresOutOfScopeSessions(t *testing.T) {
 		t.Fatalf("results = %#v, want empty", results)
 	}
 }
+
+func TestDetectorCountsExplicitPermissionDenialOnce(t *testing.T) {
+	dataDir := t.TempDir()
+	project := t.TempDir()
+	sessionDir := filepath.Join(dataDir, "lcagent", "sessions", "2026", "05", "09")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sessionPath := filepath.Join(sessionDir, "lca_denied.jsonl")
+	content := `{"type":"session_meta","id":"lca_denied","started_at":"2026-05-09T01:00:00Z","cwd":"` + filepath.ToSlash(project) + `","auto":"off","model":"scripted"}
+{"type":"user_message","event_id":"evt_1","timestamp":"2026-05-09T01:00:01Z","session_id":"lca_denied","message":"hi"}
+{"type":"permission_denied","event_id":"evt_2","timestamp":"2026-05-09T01:00:02Z","session_id":"lca_denied","tool":"apply_patch","reason":"apply_patch denied with --auto off"}
+{"type":"tool_result","event_id":"evt_3","timestamp":"2026-05-09T01:00:03Z","session_id":"lca_denied","tool":"apply_patch","result":{"success":false,"denied":true,"error":"apply_patch denied with --auto off"}}
+{"type":"turn_complete","event_id":"evt_4","timestamp":"2026-05-09T01:00:04Z","session_id":"lca_denied","summary":"done"}
+`
+	if err := os.WriteFile(sessionPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	results, err := New(dataDir).Detect(context.Background(), scanner.NewPathScope([]string{project}, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := results[project]
+	if entry == nil || len(entry.Sessions) != 1 {
+		t.Fatalf("missing session entry: %#v", results)
+	}
+	if entry.ErrorCount != 1 || entry.Sessions[0].ErrorCount != 1 {
+		t.Fatalf("error counts session=%d entry=%d, want one explicit denial", entry.Sessions[0].ErrorCount, entry.ErrorCount)
+	}
+}

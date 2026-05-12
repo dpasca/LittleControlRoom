@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"lcroom/internal/aibackend"
 	"lcroom/internal/brand"
@@ -18,6 +19,7 @@ type setupRole int
 const (
 	setupRoleProjectReports setupRole = iota
 	setupRoleBossChat
+	setupRoleLCAgent
 )
 
 type setupStep int
@@ -27,6 +29,7 @@ const (
 	setupStepProjectConfig
 	setupStepBossProvider
 	setupStepBossConfig
+	setupStepLCAgentConfig
 	setupStepSave
 )
 
@@ -254,7 +257,9 @@ func (m Model) setupAdvance() (tea.Model, tea.Cmd) {
 	case setupStepBossProvider:
 		return m.enterSetupStep(m.nextSetupStepAfterBossProvider(), "Boss chat selected. Press Enter to continue.")
 	case setupStepBossConfig:
-		return m.enterSetupStep(setupStepSave, "Boss chat details accepted. Press Enter to save setup.")
+		return m.enterSetupStep(setupStepLCAgentConfig, "Boss chat details accepted. Configure LCAgent or keep the defaults.")
+	case setupStepLCAgentConfig:
+		return m.enterSetupStep(setupStepSave, "LCAgent details accepted. Press Enter to save setup.")
 	case setupStepSave:
 		return m.saveSetupFromCurrentChoices()
 	default:
@@ -273,6 +278,8 @@ func (m Model) setupGoBack() (tea.Model, tea.Cmd) {
 		return m.enterSetupStep(m.previousSetupStepBeforeBossProvider(), "Back to project reports. Press Enter to continue.")
 	case setupStepBossConfig:
 		return m.enterSetupStep(setupStepBossProvider, "Back to boss chat. Press Enter to accept the selected provider.")
+	case setupStepLCAgentConfig:
+		return m.enterSetupStep(m.previousSetupStepBeforeLCAgent(), "Back to boss chat. Press Enter to continue.")
 	case setupStepSave:
 		return m.enterSetupStep(m.previousSetupStepBeforeSave(), "Back to the previous setup page.")
 	default:
@@ -286,6 +293,10 @@ func (m Model) setupEnterConfigStep() (tea.Model, tea.Cmd) {
 	case setupRoleBossChat:
 		if m.setupStep == setupStepBossProvider || m.setupStep == setupStepBossConfig {
 			return m.enterSetupStep(setupStepBossConfig, "Boss chat details. Press Enter to continue.")
+		}
+	case setupRoleLCAgent:
+		if m.setupStep == setupStepLCAgentConfig {
+			return m.enterSetupStep(setupStepLCAgentConfig, "LCAgent details. Press Enter to continue.")
 		}
 	default:
 		if m.setupStep == setupStepProjectProvider || m.setupStep == setupStepProjectConfig {
@@ -307,7 +318,7 @@ func (m Model) nextSetupStepAfterBossProvider() setupStep {
 	if m.setupStepNeedsConfig(setupStepBossConfig) {
 		return setupStepBossConfig
 	}
-	return setupStepSave
+	return setupStepLCAgentConfig
 }
 
 func (m Model) previousSetupStepBeforeBossProvider() setupStep {
@@ -318,6 +329,10 @@ func (m Model) previousSetupStepBeforeBossProvider() setupStep {
 }
 
 func (m Model) previousSetupStepBeforeSave() setupStep {
+	return setupStepLCAgentConfig
+}
+
+func (m Model) previousSetupStepBeforeLCAgent() setupStep {
 	if m.setupStepNeedsConfig(setupStepBossConfig) {
 		return setupStepBossConfig
 	}
@@ -331,6 +346,8 @@ func (m Model) setupStepNeedsConfig(step setupStep) bool {
 		role = setupRoleProjectReports
 	case setupStepBossConfig:
 		role = setupRoleBossChat
+	case setupStepLCAgentConfig:
+		role = setupRoleLCAgent
 	default:
 		return false
 	}
@@ -371,6 +388,15 @@ func (m Model) enterSetupStep(step setupStep, status string) (tea.Model, tea.Cmd
 		m.setupConfigMode = true
 		if status == "" {
 			status = "Boss chat details. Enter accepts these fields."
+		}
+		cmd := m.focusSetupConfigField()
+		m.status = status
+		return m, cmd
+	case setupStepLCAgentConfig:
+		m.setupFocusedRole = setupRoleLCAgent
+		m.setupConfigMode = true
+		if status == "" {
+			status = "LCAgent details. Enter accepts these fields."
 		}
 		cmd := m.focusSetupConfigField()
 		m.status = status
@@ -428,6 +454,19 @@ func (m Model) setupConfigFieldIndexes() []int {
 	if len(m.settingsFields) == 0 {
 		return nil
 	}
+	if m.setupFocusedRole == setupRoleLCAgent {
+		return []int{
+			settingsFieldLCAgentPath,
+			settingsFieldLCAgentEnvFile,
+			settingsFieldLCAgentProvider,
+			settingsFieldLCAgentModel,
+			settingsFieldLCAgentReasoning,
+			settingsFieldLCAgentAuto,
+			settingsFieldLCAgentToolProfile,
+			settingsFieldLCAgentContextProfile,
+			settingsFieldLCAgentRequestTimeout,
+		}
+	}
 	if m.setupFocusedRole == setupRoleBossChat {
 		switch m.setupSelectedBossBackend() {
 		case config.AIBackendUnset, config.AIBackendOpenAIAPI:
@@ -484,6 +523,17 @@ func (m Model) setupDraftSettingsForProviderChoices() config.EditableSettings {
 	settings.OllamaBaseURL = m.settingsFieldValue(settingsFieldOllamaBaseURL)
 	settings.OllamaAPIKey = m.settingsFieldValue(settingsFieldOllamaAPIKey)
 	settings.OllamaModel = m.settingsFieldValue(settingsFieldOllamaModel)
+	settings.LCAgentPath = m.settingsFieldValue(settingsFieldLCAgentPath)
+	settings.LCAgentEnvFile = m.settingsFieldValue(settingsFieldLCAgentEnvFile)
+	settings.LCAgentProvider = m.settingsFieldValue(settingsFieldLCAgentProvider)
+	settings.EmbeddedLCAgentModel = m.settingsFieldValue(settingsFieldLCAgentModel)
+	settings.EmbeddedLCAgentReasoning = m.settingsFieldValue(settingsFieldLCAgentReasoning)
+	settings.LCAgentAuto = m.settingsFieldValue(settingsFieldLCAgentAuto)
+	settings.LCAgentToolProfile = m.settingsFieldValue(settingsFieldLCAgentToolProfile)
+	settings.LCAgentContextProfile = m.settingsFieldValue(settingsFieldLCAgentContextProfile)
+	if timeout, err := time.ParseDuration(m.settingsFieldValue(settingsFieldLCAgentRequestTimeout)); err == nil {
+		settings.LCAgentRequestTimeout = timeout
+	}
 	return settings
 }
 
@@ -642,6 +692,7 @@ func (m Model) renderSetupWizardProgress(width int) string {
 		{setupStepProjectConfig, "Project details"},
 		{setupStepBossProvider, "Boss chat"},
 		{setupStepBossConfig, "Boss details"},
+		{setupStepLCAgentConfig, "LCAgent"},
 		{setupStepSave, "Save"},
 	}
 	parts := make([]string, 0, len(steps)*2)
@@ -668,7 +719,7 @@ func (m Model) renderSetupWizardProgress(width int) string {
 
 func (m Model) setupStepIsVisible(step setupStep) bool {
 	switch step {
-	case setupStepProjectConfig, setupStepBossConfig:
+	case setupStepProjectConfig, setupStepBossConfig, setupStepLCAgentConfig:
 		return m.setupStepNeedsConfig(step)
 	default:
 		return true
@@ -685,6 +736,8 @@ func (m Model) setupStepTitle() string {
 		return "Boss chat"
 	case setupStepBossConfig:
 		return "Boss details"
+	case setupStepLCAgentConfig:
+		return "LCAgent"
 	case setupStepSave:
 		return "Save"
 	default:
@@ -700,6 +753,7 @@ func (m Model) renderSetupReview(width int) string {
 		detailSectionStyle.Render("Save Setup"),
 		renderWrappedDetailField("Project reports", detailValueStyle, width, m.setupReviewChoiceSummary(projectChoice)),
 		renderWrappedDetailField("Boss chat", detailValueStyle, width, m.setupReviewChoiceSummary(bossChoice)),
+		renderWrappedDetailField("LCAgent", detailValueStyle, width, m.setupReviewLCAgentSummary(settings)),
 	}
 	if strings.TrimSpace(settings.OpenAIAPIKey) != "" {
 		keyText := "saved"
@@ -713,6 +767,20 @@ func (m Model) renderSetupReview(width int) string {
 	}
 	lines = append(lines, renderWrappedDetailField("Next", detailValueStyle, width, "Enter saves setup. Esc goes back to the previous page."))
 	return strings.Join(lines, "\n")
+}
+
+func (m Model) setupReviewLCAgentSummary(settings config.EditableSettings) string {
+	provider := firstNonEmptyTrimmed(settings.LCAgentProvider, "openrouter")
+	model := firstNonEmptyTrimmed(settings.EmbeddedLCAgentModel, lcagentDefaultModelForProvider(provider))
+	auto := firstNonEmptyTrimmed(settings.LCAgentAuto, "low")
+	toolProfile := firstNonEmptyTrimmed(settings.LCAgentToolProfile, "balanced")
+	contextProfile := firstNonEmptyTrimmed(settings.LCAgentContextProfile, "balanced")
+	state, _, detail := lcagentCredentialSmokeCheck(settings)
+	parts := []string{provider, model, "auto " + auto, toolProfile + "/" + contextProfile, "(" + state + ")"}
+	if detail != "" && state != "ready" {
+		parts = append(parts, "- "+detail)
+	}
+	return strings.Join(parts, " ")
 }
 
 func (m Model) setupReviewChoiceSummary(choice providerChoice) string {
@@ -852,10 +920,13 @@ func (m Model) renderSetupConfigContent(width int) string {
 		return detailWarningStyle.Render("Settings fields are not loaded yet.")
 	}
 	fields := m.setupConfigFieldIndexes()
-	title := providerChoiceRoleTitle(m.setupFocusedProviderChoiceRole())
+	title := m.setupConfigTitle()
 	lines := []string{
 		detailSectionStyle.Render("Configure " + title),
 		commandPaletteHintStyle.Render("Edit only what this branch needs, then press Enter to continue."),
+	}
+	if m.setupFocusedRole == setupRoleLCAgent {
+		lines = append(lines, renderWrappedDetailField("Credential smoke", detailValueStyle, width, m.lcagentSetupSmokeText()))
 	}
 	if len(fields) == 0 {
 		lines = append(lines, commandPaletteHintStyle.Render(m.setupNoConfigText()))
@@ -878,6 +949,22 @@ func (m Model) renderSetupConfigContent(width int) string {
 		lines = append(lines, actions...)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (m Model) setupConfigTitle() string {
+	if m.setupFocusedRole == setupRoleLCAgent {
+		return "LCAgent"
+	}
+	return providerChoiceRoleTitle(m.setupFocusedProviderChoiceRole())
+}
+
+func (m Model) lcagentSetupSmokeText() string {
+	settings := m.setupDraftSettingsForProviderChoices()
+	state, _, detail := lcagentCredentialSmokeCheck(settings)
+	if detail == "" {
+		return state
+	}
+	return state + " - " + detail
 }
 
 func (m Model) setupNoConfigText() string {

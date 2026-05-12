@@ -35,7 +35,7 @@ const (
 
 func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: lcagent exec [flags] <prompt>\n       lcagent metrics <session.jsonl>...")
+		fmt.Fprintln(stderr, lcagentUsage())
 		return 2
 	}
 	switch args[0] {
@@ -51,13 +51,23 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 			return 1
 		}
 		return 0
+	case "eval":
+		if err := runEval(args[1:], stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 	case "help", "--help", "-h":
-		fmt.Fprintln(stdout, "usage: lcagent exec [flags] <prompt>\n       lcagent metrics <session.jsonl>...")
+		fmt.Fprintln(stdout, lcagentUsage())
 		return 0
 	default:
 		fmt.Fprintf(stderr, "unknown command: %s\n", args[0])
 		return 2
 	}
+}
+
+func lcagentUsage() string {
+	return "usage: lcagent exec [flags] <prompt>\n       lcagent metrics <session.jsonl>...\n       lcagent eval [flags]"
 }
 
 func runMetrics(args []string, stdout io.Writer) error {
@@ -76,7 +86,7 @@ func runMetrics(args []string, stdout io.Writer) error {
 func runExec(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, finalModel, envFile, reasoningEffort, temperatureRaw, providerOnlyRaw, toolProfileRaw, contextProfileRaw string
+	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, finalModel, envFile, reasoningEffort, temperatureRaw, providerOnlyRaw, toolProfileRaw, contextProfileRaw, resumeRaw string
 	var requestTimeout time.Duration
 	var maxTurns int
 	fs.StringVar(&cwd, "cwd", "", "workspace root")
@@ -93,6 +103,7 @@ func runExec(args []string, stdout io.Writer) error {
 	fs.StringVar(&providerOnlyRaw, "openrouter-provider-only", "", "comma-separated OpenRouter provider slugs allowed for this request, for example anthropic")
 	fs.StringVar(&toolProfileRaw, "tool-profile", string(tools.FileProfileBalanced), "file tool budget profile: balanced or generous")
 	fs.StringVar(&contextProfileRaw, "context-profile", string(openRouterContextProfileBalanced), "provider loop context profile: balanced or large")
+	fs.StringVar(&resumeRaw, "resume", "", "previous LCAgent session id or .jsonl artifact to summarize as continuation context")
 	fs.DurationVar(&requestTimeout, "request-timeout", 0, "provider HTTP request timeout, for example 10m; default 2m")
 	fs.IntVar(&maxTurns, "max-turns", modeladapter.DefaultOpenRouterMaxTurns, "maximum model turns for provider loops")
 	if err := fs.Parse(args); err != nil {
@@ -153,6 +164,10 @@ func runExec(args []string, stdout io.Writer) error {
 			model = "scripted"
 		}
 	}
+	resumeContext, err := loadResumeContext(dataDir, resumeRaw, workspace.Root)
+	if err != nil {
+		return err
+	}
 	stream := io.Writer(nil)
 	if outMode == outputStreamJSON {
 		stream = stdout
@@ -182,6 +197,11 @@ func runExec(args []string, stdout io.Writer) error {
 		"options":    contextOptions,
 	}); err != nil {
 		return err
+	}
+	if resumeContext != nil {
+		if err := writer.Write(resumeContext.event(sessionID)); err != nil {
+			return err
+		}
 	}
 	if strings.TrimSpace(instructions.Body) != "" {
 		if err := writer.Write(session.Event{
@@ -229,7 +249,7 @@ func runExec(args []string, stdout io.Writer) error {
 		}
 		runErr = runner.Run(context.Background(), actions)
 	case "openrouter", "openai", "deepseek", "moonshot":
-		runErr = runOpenRouter(context.Background(), writer, runner, instructions.PromptSection(), modeladapter.OpenRouterConfig{
+		runErr = runOpenRouter(context.Background(), writer, runner, instructions.PromptSection(), resumeContext, modeladapter.OpenRouterConfig{
 			Model:           model,
 			FinalModel:      finalModel,
 			EnvFile:         envFile,
@@ -259,7 +279,7 @@ func runExec(args []string, stdout io.Writer) error {
 	return nil
 }
 
-func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Runner, projectInstructionPrompt string, cfg modeladapter.OpenRouterConfig, provider string, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions) error {
+func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Runner, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, provider string, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions) error {
 	contextOptions = contextOptions.withDefaults()
 	providerLabel := strings.ToLower(strings.TrimSpace(provider))
 	if providerLabel == "" {
@@ -291,8 +311,12 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 		return err
 	}
 
+	systemPrompt := modeladapter.SystemPromptWithOptions(runner.Skills.PromptIndex(0), projectInstructionPrompt, modelSystemPromptOptions(toolProfile, fileLimits))
+	if resumeSection := strings.TrimSpace(resumeContext.systemPromptSection()); resumeSection != "" {
+		systemPrompt = strings.TrimSpace(systemPrompt + "\n\n" + resumeSection)
+	}
 	messages := []modeladapter.Message{
-		{Role: "system", Content: modeladapter.SystemPromptWithOptions(runner.Skills.PromptIndex(0), projectInstructionPrompt, modelSystemPromptOptions(toolProfile, fileLimits))},
+		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: runner.Prompt},
 	}
 	readLedger := newReadLedger()

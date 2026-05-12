@@ -30,6 +30,29 @@ specific debugging task needs them.
 
 ## Fixed Snapshot Workflow
 
+## Deterministic Regression Eval
+
+Run the no-network scripted eval lane before comparing live models:
+
+```sh
+make lcagent-eval
+```
+
+This creates temporary fixture repos and checks the LCAgent trace contract for:
+
+- patch diff summaries plus reported verification
+- explicit permission-denial events
+- resume-context trace emission
+
+For machine-readable output:
+
+```sh
+go run ./cmd/lcagent eval --output json
+```
+
+The lane is intentionally small. It protects harness behavior and metrics
+columns; it does not score live model quality.
+
 Pick a target commit and create an isolated worktree:
 
 ```sh

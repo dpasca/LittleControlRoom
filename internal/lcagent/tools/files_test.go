@@ -202,13 +202,13 @@ func TestFileToolsDenyWorkspaceEscape(t *testing.T) {
 		t.Fatal(err)
 	}
 	files := FileTools{Workspace: w}
-	if result := files.Read("../outside.txt", 1, 20); result.Success {
+	if result := files.Read("../outside.txt", 1, 20); result.Success || !result.Denied {
 		t.Fatalf("read outside workspace succeeded: %#v", result)
 	}
-	if result := files.List("../outside", "", 20); result.Success {
+	if result := files.List("../outside", "", 20); result.Success || !result.Denied {
 		t.Fatalf("list outside workspace succeeded: %#v", result)
 	}
-	if result := files.Search("needle", "../outside", "", 20); result.Success {
+	if result := files.Search("needle", "../outside", "", 20); result.Success || !result.Denied {
 		t.Fatalf("search outside workspace succeeded: %#v", result)
 	}
 }
@@ -230,7 +230,7 @@ func TestFileToolsDenySymlinkEscape(t *testing.T) {
 		t.Fatal(err)
 	}
 	files := FileTools{Workspace: w}
-	if result := files.Read("outside/secret.txt", 1, 20); result.Success {
+	if result := files.Read("outside/secret.txt", 1, 20); result.Success || !result.Denied {
 		t.Fatalf("read through symlink escape succeeded: %#v", result)
 	}
 }

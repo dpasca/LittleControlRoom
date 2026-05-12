@@ -18,7 +18,7 @@ const applyPatchFormatHint = "expected Codex apply_patch format, for example: **
 
 func (a PatchApplier) Apply(patch string) ToolResult {
 	if err := a.Workspace.AllowPatch(); err != nil {
-		return ToolResult{Success: false, Error: err.Error()}
+		return failureResult(err)
 	}
 	ops, err := parseApplyPatch(patch)
 	if err != nil {
@@ -27,16 +27,27 @@ func (a PatchApplier) Apply(patch string) ToolResult {
 	touched := make([]string, 0, len(ops))
 	for _, op := range ops {
 		if _, err := a.Workspace.Resolve(op.Path); err != nil {
-			return ToolResult{Success: false, Error: err.Error()}
+			return failureResult(err)
 		}
 		touched = append(touched, filepath.Clean(op.Path))
+	}
+	summary, err := a.summarizeOps(ops)
+	if err != nil {
+		return ToolResult{Success: false, Error: err.Error(), FilesTouched: uniqueStrings(touched)}
 	}
 	for _, op := range ops {
 		if err := a.applyOp(op); err != nil {
 			return ToolResult{Success: false, Error: err.Error(), FilesTouched: uniqueStrings(touched)}
 		}
 	}
-	return ToolResult{Success: true, Output: "patch applied", FilesTouched: uniqueStrings(touched)}
+	diffSummary := formatPatchSummary(summary)
+	return ToolResult{
+		Success:      true,
+		Output:       "patch applied\n\n" + diffSummary,
+		FilesTouched: uniqueStrings(touched),
+		DiffSummary:  diffSummary,
+		PatchSummary: summary,
+	}
 }
 
 type patchOp struct {
@@ -47,8 +58,10 @@ type patchOp struct {
 }
 
 type patchHunk struct {
-	Old []string
-	New []string
+	Old          []string
+	New          []string
+	AddedLines   int
+	DeletedLines int
 }
 
 func parseApplyPatch(patch string) ([]patchOp, error) {
@@ -99,8 +112,10 @@ func parseApplyPatch(patch string) ([]patchOp, error) {
 						h.New = append(h.New, text)
 					case '-':
 						h.Old = append(h.Old, text)
+						h.DeletedLines++
 					case '+':
 						h.New = append(h.New, text)
+						h.AddedLines++
 					default:
 						return nil, fmt.Errorf("malformed patch line in %s", op.Path)
 					}
@@ -121,6 +136,57 @@ func parseApplyPatch(patch string) ([]patchOp, error) {
 		}
 	}
 	return nil, fmt.Errorf("patch missing *** End Patch")
+}
+
+func (a PatchApplier) summarizeOps(ops []patchOp) (*PatchSummary, error) {
+	summary := &PatchSummary{}
+	for _, op := range ops {
+		fileSummary := FilePatchSummary{
+			Path:      filepath.Clean(op.Path),
+			Operation: op.Kind,
+		}
+		switch op.Kind {
+		case "add":
+			fileSummary.AddedLines = len(op.Lines)
+		case "delete":
+			path, err := a.Workspace.Resolve(op.Path)
+			if err != nil {
+				return nil, err
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return nil, err
+			}
+			lines, _ := splitLines(string(data))
+			fileSummary.DeletedLines = len(lines)
+		case "update":
+			for _, hunk := range op.Hunks {
+				fileSummary.AddedLines += hunk.AddedLines
+				fileSummary.DeletedLines += hunk.DeletedLines
+			}
+		}
+		summary.Files = append(summary.Files, fileSummary)
+		summary.TotalAddedLines += fileSummary.AddedLines
+		summary.TotalDeletedLines += fileSummary.DeletedLines
+	}
+	return summary, nil
+}
+
+func formatPatchSummary(summary *PatchSummary) string {
+	if summary == nil {
+		return "patch diff summary: unavailable"
+	}
+	var b strings.Builder
+	b.WriteString("patch diff summary:\n")
+	if len(summary.Files) == 0 {
+		b.WriteString("- no files changed\n")
+	} else {
+		for _, file := range summary.Files {
+			fmt.Fprintf(&b, "- %s: %s +%d -%d\n", file.Path, file.Operation, file.AddedLines, file.DeletedLines)
+		}
+	}
+	fmt.Fprintf(&b, "total: +%d -%d", summary.TotalAddedLines, summary.TotalDeletedLines)
+	return b.String()
 }
 
 func (a PatchApplier) applyOp(op patchOp) error {

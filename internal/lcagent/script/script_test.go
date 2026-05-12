@@ -74,9 +74,67 @@ func TestRunnerExecutesScriptedMiniSession(t *testing.T) {
 		t.Fatalf("README = %q", data)
 	}
 	text := stream.String()
-	for _, eventType := range []string{"user_message", "tool_call", "tool_result", "skill_loaded", "plan_update", "files_touched", "turn_complete"} {
+	for _, eventType := range []string{"user_message", "tool_call", "tool_result", "skill_loaded", "plan_update", "files_touched", "patch_diff_summary", "verification_summary", "turn_complete"} {
 		if !strings.Contains(text, `"type":"`+eventType+`"`) {
 			t.Fatalf("stream missing %s:\n%s", eventType, text)
+		}
+	}
+	if !strings.Contains(text, `"verification_status":"reported"`) || !strings.Contains(text, `"summary":"patch diff summary:`) {
+		t.Fatalf("stream missing verification status or patch summary:\n%s", text)
+	}
+}
+
+func TestRunnerEmitsPermissionDeniedEvent(t *testing.T) {
+	root := t.TempDir()
+	w, err := policy.NewWorkspace(root, policy.AutonomyOff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Prompt:    "try denied patch",
+		Patch:     tools.PatchApplier{Workspace: w},
+	}
+	actions := []Action{
+		{Type: "tool_call", Tool: "apply_patch", Args: raw(`{"patch":"*** Begin Patch\n*** Add File: denied.txt\n+nope\n*** End Patch\n"}`)},
+	}
+	if err := runner.Run(context.Background(), actions); err == nil {
+		t.Fatal("Run succeeded, want denied tool failure")
+	}
+	text := stream.String()
+	for _, want := range []string{`"type":"permission_denied"`, `"tool":"apply_patch"`, `"denied":true`, `"type":"turn_aborted"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stream missing %s:\n%s", want, text)
+		}
+	}
+}
+
+func TestRunnerFinalMarksMissingVerificationAfterChanges(t *testing.T) {
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	runner := Runner{Session: writer, SessionID: sessionID}
+	if err := runner.Final(Action{
+		Type:         "final_response",
+		Summary:      "changed without checks",
+		FilesChanged: []string{"README.md"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	text := stream.String()
+	for _, want := range []string{`"type":"verification_summary"`, `"status":"missing_after_changes"`, `"verification_status":"missing_after_changes"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stream missing %s:\n%s", want, text)
 		}
 	}
 }

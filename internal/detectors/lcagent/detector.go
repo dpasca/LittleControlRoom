@@ -216,8 +216,12 @@ func rawTime(raw json.RawMessage) time.Time {
 func toolResultFailed(raw json.RawMessage) bool {
 	var result struct {
 		Success bool `json:"success"`
+		Denied  bool `json:"denied"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil {
+		return false
+	}
+	if result.Denied {
 		return false
 	}
 	return !result.Success

@@ -18,6 +18,10 @@ const benchmarkSessionJSONL = `{"type":"session_meta","id":"lca_demo","cwd":"/re
 {"type":"tool_result","tool":"read_file","result":{"success":true,"output":"file: a.go\nlines: 200-300\n\n200 | func A() {}\n300 | func B() {}\n"}}
 {"type":"tool_call","tool":"search","args":{"query":"func","path":"."}}
 {"type":"tool_result","tool":"search","result":{"success":true,"output":"query: func\nmatches: 1\n\na.go:200: func A() {}\n"}}
+{"type":"resume_context","source_session_id":"lca_previous","summary":"source lca_previous; summary: previous work"}
+{"type":"permission_denied","tool":"apply_patch","reason":"apply_patch denied with --auto off"}
+{"type":"patch_diff_summary","summary":"patch diff summary:\n- README.md: update +1 -1\ntotal: +1 -1"}
+{"type":"verification_summary","status":"reported","verification_checks":["go test ./internal/lcagent/..."]}
 {"type":"turn_complete","summary":"done"}
 `
 
@@ -42,6 +46,9 @@ func TestAnalyzeFilesSummarizesLCAgentSession(t *testing.T) {
 	}
 	if summary.ContextProfiles["large"] != 1 {
 		t.Fatalf("context profiles = %#v", summary.ContextProfiles)
+	}
+	if summary.ResumeContexts != 1 || summary.PermissionDenials != 1 || summary.PatchDiffSummaries != 1 || summary.VerificationStatuses["reported"] != 1 {
+		t.Fatalf("trust trace metrics = resumes %d denials %d patch summaries %d verification %#v", summary.ResumeContexts, summary.PermissionDenials, summary.PatchDiffSummaries, summary.VerificationStatuses)
 	}
 	if summary.ReadFileCalls != 2 || summary.ReadFileLines != 301 {
 		t.Fatalf("read stats = calls %d lines %d", summary.ReadFileCalls, summary.ReadFileLines)

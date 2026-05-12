@@ -32,7 +32,7 @@ SCREENSHOT_OUTPUT_FLAG := $(if $(strip $(SCREENSHOT_OUTPUT_DIR)),--output-dir "$
 COMMON_FLAGS := --config "$(CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 PARALLEL_FLAGS := --config "$(PARALLEL_CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(PARALLEL_DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 
-.PHONY: help tidy fmt test build build-agent build-all install clean scope scan classify doctor doctor-scan release-snapshot screenshots mockups boss tui tui-parallel tui-parallel-clean serve
+.PHONY: help tidy fmt test lcagent-eval build build-agent build-all install clean scope scan classify doctor doctor-scan release-snapshot screenshots mockups boss tui tui-parallel tui-parallel-clean serve
 
 help:
 	@echo "$(APP_NAME) Make Targets"
@@ -40,6 +40,7 @@ help:
 	@echo "  make tidy            - go mod tidy"
 	@echo "  make fmt             - gofmt project files"
 	@echo "  make test            - run go test ./..."
+	@echo "  make lcagent-eval    - run deterministic LCAgent regression evals"
 	@echo "  make build           - build ./$(APP)"
 	@echo "  make build-agent     - build ./lcagent"
 	@echo "  make build-all       - build lcroom and lcagent"
@@ -86,6 +87,9 @@ fmt:
 
 test:
 	$(GO) test ./...
+
+lcagent-eval:
+	$(GO) run ./cmd/lcagent eval
 
 build:
 	$(GO) build -o ./$(APP) ./cmd/$(APP)

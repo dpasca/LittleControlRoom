@@ -107,11 +107,12 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		return nil, err
 	} else if replay != nil {
 		session.applyReplay(replay)
-	} else if prompt := strings.TrimSpace(req.Prompt); prompt != "" {
+	}
+	if prompt := strings.TrimSpace(req.Prompt); prompt != "" {
 		if err := session.Submit(prompt); err != nil {
 			return nil, err
 		}
-	} else {
+	} else if !session.started {
 		session.appendEntryLocked(TranscriptStatus, "Experimental LCAgent is ready. Send a prompt to start a one-shot run.")
 	}
 	return session, nil
@@ -283,8 +284,13 @@ func (s *lcagentSession) startRun(prompt, displayPrompt string) error {
 	s.lastActivityAt = now
 	s.status = "Starting LCAgent"
 	s.lastError = ""
-	if s.replayLoaded && len(s.entries) > 0 {
-		s.appendEntryLocked(TranscriptStatus, "Starting a new one-shot LCAgent run. Loaded history is display-only and is not sent as model context.")
+	resumeID := strings.TrimSpace(s.threadID)
+	if resumeID != "" {
+		if s.replayLoaded && len(s.entries) > 0 {
+			s.appendEntryLocked(TranscriptStatus, "Starting a continuing LCAgent run with summarized context from "+resumeID+".")
+		} else {
+			s.appendEntryLocked(TranscriptStatus, "Continuing from LCAgent session "+resumeID+".")
+		}
 		s.replayLoaded = false
 	}
 	s.appendEntryLocked(TranscriptUser, firstNonEmpty(displayPrompt, prompt))
@@ -324,6 +330,9 @@ func (s *lcagentSession) startRun(prompt, displayPrompt string) error {
 	envFile := firstNonEmpty(s.envFile, os.Getenv("LCROOM_LCAGENT_ENV_FILE"))
 	if envFile != "" {
 		args = append(args, "--env-file", envFile)
+	}
+	if resumeID != "" {
+		args = append(args, "--resume", resumeID)
 	}
 	args = append(args, prompt)
 	cmd := exec.CommandContext(ctx, spec.Command, args...)
@@ -447,6 +456,40 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		tool := rawJSONString(event["tool"])
 		text := lcagentToolResultText(tool, event["result"])
 		s.appendAsync(TranscriptTool, text)
+	case "permission_denied":
+		reason := rawJSONString(event["reason"])
+		tool := rawJSONString(event["tool"])
+		if tool != "" {
+			reason = firstNonEmpty(reason, tool+" denied")
+		}
+		if reason == "" {
+			reason = "LCAgent permission denied"
+		}
+		s.appendAsync(TranscriptError, "Permission denied: "+reason)
+	case "patch_diff_summary":
+		if summary := rawJSONString(event["summary"]); summary != "" {
+			s.appendAsync(TranscriptFileChange, summary)
+		}
+	case "verification_summary":
+		status := rawJSONString(event["status"])
+		message := rawJSONString(event["message"])
+		if message == "" && status != "" {
+			message = "Verification status: " + status
+		}
+		if message != "" {
+			s.appendAsync(TranscriptStatus, message)
+		}
+	case "resume_context":
+		sourceID := rawJSONString(event["source_session_id"])
+		summary := rawJSONString(event["summary"])
+		text := "Loaded resume context"
+		if sourceID != "" {
+			text += " from " + sourceID
+		}
+		if summary != "" {
+			text += ": " + summary
+		}
+		s.appendAsync(TranscriptStatus, text)
 	case "plan_update":
 		s.appendAsync(TranscriptPlan, lcagentPlanText(event["items"]))
 	case "assistant_message":
@@ -566,7 +609,7 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 	s.revision = 0
 	s.cache.ready = false
 	replayActivityAt := s.lastActivityAt
-	s.appendEntryLocked(TranscriptStatus, "Loaded LCAgent session "+label+" from disk. History is read-only; sending a prompt starts a new one-shot run.")
+	s.appendEntryLocked(TranscriptStatus, "Loaded LCAgent session "+label+" from disk. Sending a prompt starts a continuing run with summarized context.")
 	for _, entry := range replay.entries {
 		text := strings.TrimSpace(entry.Text)
 		if text == "" {

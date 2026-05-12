@@ -23,6 +23,9 @@ func TestPatchApplierDeniesAutoOff(t *testing.T) {
 	if result.Success {
 		t.Fatal("patch succeeded with auto off, want denial")
 	}
+	if !result.Denied || !strings.Contains(result.DenialReason, "--auto off") {
+		t.Fatalf("denial metadata = denied %v reason %q", result.Denied, result.DenialReason)
+	}
 }
 
 func TestPatchApplierAppliesAddAndUpdate(t *testing.T) {
@@ -65,6 +68,15 @@ func TestPatchApplierAppliesAddAndUpdate(t *testing.T) {
 	if got := strings.Join(result.FilesTouched, ","); got != "README.md,docs/note.txt" {
 		t.Fatalf("FilesTouched = %v", result.FilesTouched)
 	}
+	if result.PatchSummary == nil {
+		t.Fatal("PatchSummary is nil")
+	}
+	if result.PatchSummary.TotalAddedLines != 2 || result.PatchSummary.TotalDeletedLines != 1 {
+		t.Fatalf("patch totals = +%d -%d", result.PatchSummary.TotalAddedLines, result.PatchSummary.TotalDeletedLines)
+	}
+	if !strings.Contains(result.DiffSummary, "README.md: update +1 -1") || !strings.Contains(result.DiffSummary, "docs/note.txt: add +1 -0") {
+		t.Fatalf("diff summary = %q", result.DiffSummary)
+	}
 }
 
 func TestPatchApplierDeniesOutsidePath(t *testing.T) {
@@ -80,6 +92,9 @@ func TestPatchApplierDeniesOutsidePath(t *testing.T) {
 `)
 	if result.Success {
 		t.Fatal("outside patch succeeded, want denial")
+	}
+	if !result.Denied || !strings.Contains(result.DenialReason, "escapes workspace") {
+		t.Fatalf("denial metadata = denied %v reason %q", result.Denied, result.DenialReason)
 	}
 }
 

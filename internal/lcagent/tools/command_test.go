@@ -72,4 +72,7 @@ func TestCommandRunnerDeniesBroadCommandBelowMedium(t *testing.T) {
 	if !strings.Contains(result.Error, "below medium autonomy") {
 		t.Fatalf("error = %q", result.Error)
 	}
+	if !result.Denied || !strings.Contains(result.DenialReason, "below medium autonomy") {
+		t.Fatalf("denial metadata = denied %v reason %q", result.Denied, result.DenialReason)
+	}
 }
