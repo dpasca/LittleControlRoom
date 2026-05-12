@@ -92,6 +92,59 @@ func TestEmbeddedSnapshotHelpersUseCachedStateWithoutTranscriptSnapshot(t *testi
 	}
 }
 
+func TestCachedLiveCodexSnapshotCarriesGoalFromLightState(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started:  true,
+			Provider: codexapp.ProviderCodex,
+			ThreadID: "thread-demo",
+			Goal: &codexapp.ThreadGoal{
+				ThreadID:   "thread-demo",
+				Objective:  "finish the branch",
+				Status:     codexapp.ThreadGoalStatusActive,
+				TokensUsed: 42,
+			},
+			LastActivityAt: time.Date(2026, 4, 4, 10, 30, 0, 0, time.UTC),
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderCodex,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": {
+				Started:        true,
+				Provider:       codexapp.ProviderCodex,
+				ThreadID:       "thread-demo",
+				LastActivityAt: time.Date(2026, 4, 4, 10, 29, 0, 0, time.UTC),
+			},
+		},
+	}
+
+	snapshot, ok := m.liveCodexSnapshot("/tmp/demo")
+	if !ok {
+		t.Fatalf("liveCodexSnapshot() = false, want live snapshot")
+	}
+	if snapshot.Goal == nil {
+		t.Fatalf("liveCodexSnapshot().Goal = nil, want goal from lightweight session state")
+	}
+	if snapshot.Goal.Objective != "finish the branch" {
+		t.Fatalf("goal objective = %q, want finish the branch", snapshot.Goal.Objective)
+	}
+	if session.snapshotCalls != 0 || session.trySnapshotCalls != 0 {
+		t.Fatalf("helper should use lightweight session state; Snapshot/TrySnapshot calls = %d/%d", session.snapshotCalls, session.trySnapshotCalls)
+	}
+}
+
 func TestEmbeddedSnapshotHelpersIgnoreStaleOpenCacheWithoutBackingSession(t *testing.T) {
 	m := Model{
 		codexSnapshots: map[string]codexapp.Snapshot{

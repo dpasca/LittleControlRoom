@@ -447,6 +447,7 @@ func (m Model) cachedLiveCodexSnapshot(projectPath string) (codexapp.Snapshot, b
 		cached.LastError = state.LastError
 		cached.LastSystemNotice = state.LastSystemNotice
 		cached.LastActivityAt = state.LastActivityAt
+		cached.Goal = cloneCodexThreadGoal(state.Goal)
 		if strings.TrimSpace(state.ThreadID) != "" {
 			cached.ThreadID = state.ThreadID
 		}
@@ -2617,6 +2618,9 @@ func (m Model) renderCodexSessionMeta(snapshot codexapp.Snapshot, width int) str
 	if tokens := codexSnapshotTokenUsageLabel(snapshot); tokens != "" {
 		segments = append(segments, renderFooterMeta("Tok")+" "+renderFooterStatus(tokens))
 	}
+	if goal := codexSnapshotGoalLabel(snapshot); goal != "" {
+		segments = append(segments, renderFooterMeta("Goal")+" "+renderFooterStatus(goal))
+	}
 	if nextModel := strings.TrimSpace(snapshot.PendingModel); nextModel != "" && !showPendingAsCurrent {
 		nextReasoning := firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingReasoning), strings.TrimSpace(snapshot.ReasoningEffort))
 		next := nextModel
@@ -2681,6 +2685,48 @@ func codexSnapshotTokenUsageLabel(snapshot codexapp.Snapshot) string {
 		parts = append(parts, "t"+formatTokenCount(usage.TotalTokens))
 	}
 	return strings.Join(parts, " ")
+}
+
+func codexSnapshotGoalLabel(snapshot codexapp.Snapshot) string {
+	if snapshot.Goal == nil {
+		return ""
+	}
+	status := codexGoalStatusLabel(snapshot.Goal.Status)
+	if status == "" {
+		status = "active"
+	}
+	if snapshot.Goal.TokenBudget != nil && *snapshot.Goal.TokenBudget > 0 {
+		usage := fmt.Sprintf("%s/%s tok", formatInt64(snapshot.Goal.TokensUsed), formatInt64(*snapshot.Goal.TokenBudget))
+		return status + " " + usage
+	}
+	return status
+}
+
+func codexGoalStatusLabel(status codexapp.ThreadGoalStatus) string {
+	switch status {
+	case codexapp.ThreadGoalStatusActive:
+		return "active"
+	case codexapp.ThreadGoalStatusPaused:
+		return "paused"
+	case codexapp.ThreadGoalStatusBudgetLimited:
+		return "budget-limited"
+	case codexapp.ThreadGoalStatusComplete:
+		return "complete"
+	default:
+		return strings.TrimSpace(string(status))
+	}
+}
+
+func cloneCodexThreadGoal(goal *codexapp.ThreadGoal) *codexapp.ThreadGoal {
+	if goal == nil {
+		return nil
+	}
+	cloned := *goal
+	if goal.TokenBudget != nil {
+		budget := *goal.TokenBudget
+		cloned.TokenBudget = &budget
+	}
+	return &cloned
 }
 
 func firstNonEmptyCodexLabel(values ...string) string {

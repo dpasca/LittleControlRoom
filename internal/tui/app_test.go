@@ -16312,11 +16312,18 @@ func TestVisibleOpenCodeViewShowsBannerAndYoloWarning(t *testing.T) {
 }
 
 func TestRenderCodexSessionMetaShowsModelReasoningContextAndPending(t *testing.T) {
+	tokenBudget := int64(5000)
 	rendered := ansi.Strip((Model{}).renderCodexSessionMeta(codexapp.Snapshot{
 		Model:            "gpt-5-codex",
 		ReasoningEffort:  "high",
 		PendingModel:     "gpt-5",
 		PendingReasoning: "medium",
+		Goal: &codexapp.ThreadGoal{
+			Objective:   "ship the goal indicator",
+			Status:      codexapp.ThreadGoalStatusActive,
+			TokenBudget: &tokenBudget,
+			TokensUsed:  1200,
+		},
 		Entries: []codexapp.TranscriptEntry{
 			{Kind: codexapp.TranscriptUser, Text: "Continue from the last breakpoint"},
 		},
@@ -16334,10 +16341,48 @@ func TestRenderCodexSessionMetaShowsModelReasoningContextAndPending(t *testing.T
 		},
 	}, 140))
 
-	for _, want := range []string{"Model", "gpt-5-codex", "Reasoning", "high", "Context", "94% left", "188,000 tok", "Next", "gpt-5 / medium"} {
+	for _, want := range []string{"Model", "gpt-5-codex", "Reasoning", "high", "Context", "94% left", "188,000 tok", "Goal", "active 1,200/5,000 tok", "Next", "gpt-5 / medium"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("renderCodexSessionMeta() missing %q: %q", want, rendered)
 		}
+	}
+}
+
+func TestCodexSnapshotGoalLabelShowsGoalStates(t *testing.T) {
+	budget := int64(100)
+	tests := []struct {
+		name string
+		goal *codexapp.ThreadGoal
+		want string
+	}{
+		{
+			name: "none",
+			goal: nil,
+			want: "",
+		},
+		{
+			name: "active",
+			goal: &codexapp.ThreadGoal{Status: codexapp.ThreadGoalStatusActive},
+			want: "active",
+		},
+		{
+			name: "budget limited",
+			goal: &codexapp.ThreadGoal{Status: codexapp.ThreadGoalStatusBudgetLimited, TokenBudget: &budget, TokensUsed: 101},
+			want: "budget-limited 101/100 tok",
+		},
+		{
+			name: "complete",
+			goal: &codexapp.ThreadGoal{Status: codexapp.ThreadGoalStatusComplete},
+			want: "complete",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := codexSnapshotGoalLabel(codexapp.Snapshot{Goal: tt.goal}); got != tt.want {
+				t.Fatalf("codexSnapshotGoalLabel() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
