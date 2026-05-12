@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,6 +36,34 @@ type Workspace struct {
 	Auto Autonomy
 }
 
+type DenialError struct {
+	Reason string
+}
+
+func (e DenialError) Error() string {
+	return strings.TrimSpace(e.Reason)
+}
+
+func Denied(reason string) error {
+	return DenialError{Reason: strings.TrimSpace(reason)}
+}
+
+func IsDenied(err error) bool {
+	var denial DenialError
+	return errors.As(err, &denial)
+}
+
+func DenialReason(err error) string {
+	var denial DenialError
+	if errors.As(err, &denial) {
+		return strings.TrimSpace(denial.Reason)
+	}
+	if err == nil {
+		return ""
+	}
+	return strings.TrimSpace(err.Error())
+}
+
 func NewWorkspace(root string, auto Autonomy) (Workspace, error) {
 	if strings.TrimSpace(root) == "" {
 		return Workspace{}, fmt.Errorf("--cwd is required")
@@ -63,11 +92,11 @@ func (w Workspace) Resolve(rel string) (string, error) {
 		return "", fmt.Errorf("path is required")
 	}
 	if filepath.IsAbs(rel) {
-		return "", fmt.Errorf("absolute paths are not allowed: %s", rel)
+		return "", Denied(fmt.Sprintf("absolute paths are not allowed: %s", rel))
 	}
 	clean := filepath.Clean(rel)
 	if clean == "." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) || clean == ".." {
-		return "", fmt.Errorf("path escapes workspace: %s", rel)
+		return "", Denied(fmt.Sprintf("path escapes workspace: %s", rel))
 	}
 	target := filepath.Join(w.Root, clean)
 	parent := existingParent(target)
@@ -76,10 +105,10 @@ func (w Workspace) Resolve(rel string) (string, error) {
 		return "", err
 	}
 	if !isUnder(w.Root, canonParent) {
-		return "", fmt.Errorf("path escapes workspace through symlink: %s", rel)
+		return "", Denied(fmt.Sprintf("path escapes workspace through symlink: %s", rel))
 	}
 	if canonTarget, err := filepath.EvalSymlinks(target); err == nil && !isUnder(w.Root, canonTarget) {
-		return "", fmt.Errorf("path escapes workspace through symlink: %s", rel)
+		return "", Denied(fmt.Sprintf("path escapes workspace through symlink: %s", rel))
 	}
 	return target, nil
 }
@@ -107,7 +136,7 @@ func existingParent(path string) string {
 
 func (w Workspace) AllowPatch() error {
 	if w.Auto == AutonomyOff {
-		return fmt.Errorf("apply_patch denied with --auto off")
+		return Denied("apply_patch denied with --auto off")
 	}
 	return nil
 }
@@ -129,7 +158,10 @@ func (w Workspace) AllowCommandSpec(argv []string, command string, shell bool) e
 		if readOnlyArgvCommand(argv) {
 			return nil
 		}
-		return fmt.Errorf("command denied with --auto %s: only explicit read-only command forms are allowed below medium autonomy", w.Auto)
+		if w.Auto == AutonomyLow && lowAutonomyVerificationArgvCommand(argv) {
+			return nil
+		}
+		return Denied(fmt.Sprintf("command denied with --auto %s: only explicit read-only or approved verification argv forms are allowed below medium autonomy", w.Auto))
 	}
 	if strings.TrimSpace(command) == "" {
 		return fmt.Errorf("command is required")
@@ -138,9 +170,9 @@ func (w Workspace) AllowCommandSpec(argv []string, command string, shell bool) e
 		return nil
 	}
 	if shell {
-		return fmt.Errorf("shell command denied with --auto %s: only explicit read-only command forms are allowed below medium autonomy", w.Auto)
+		return Denied(fmt.Sprintf("shell command denied with --auto %s: only explicit read-only command forms are allowed below medium autonomy", w.Auto))
 	}
-	return fmt.Errorf("command denied with --auto %s: only explicit read-only command forms are allowed below medium autonomy", w.Auto)
+	return Denied(fmt.Sprintf("command denied with --auto %s: only explicit read-only or approved verification argv forms are allowed below medium autonomy", w.Auto))
 }
 
 func ClampTimeout(requested time.Duration, fallback time.Duration, max time.Duration) time.Duration {
@@ -168,6 +200,120 @@ func isUnder(root, path string) bool {
 		return false
 	}
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+}
+
+func lowAutonomyVerificationArgvCommand(argv []string) bool {
+	argv = cleanArgv(argv)
+	if len(argv) == 0 {
+		return false
+	}
+	switch filepath.Base(argv[0]) {
+	case "go":
+		return lowAutonomyGoTestArgs(argv[1:])
+	default:
+		return false
+	}
+}
+
+func lowAutonomyGoTestArgs(args []string) bool {
+	if len(args) == 0 || args[0] != "test" {
+		return false
+	}
+	expectValue := false
+	for _, arg := range args[1:] {
+		if arg == "" {
+			return false
+		}
+		if expectValue {
+			if strings.HasPrefix(arg, "-") {
+				return false
+			}
+			expectValue = false
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			switch {
+			case goTestFlagTakesSeparateValue(arg):
+				expectValue = true
+			case goTestFlagAllowed(arg):
+				continue
+			default:
+				return false
+			}
+			continue
+		}
+		if !goTestPackageArgAllowed(arg) {
+			return false
+		}
+	}
+	return !expectValue
+}
+
+func goTestFlagTakesSeparateValue(arg string) bool {
+	switch arg {
+	case "-run", "-count", "-timeout", "-parallel", "-vet", "-tags", "-covermode", "-coverpkg", "-list":
+		return true
+	default:
+		return false
+	}
+}
+
+func goTestFlagAllowed(arg string) bool {
+	switch arg {
+	case "-v", "-json", "-short", "-race", "-failfast", "-cover":
+		return true
+	case "-args", "-c", "-bench", "-fuzz", "-exec", "-toolexec", "-coverprofile", "-outputdir":
+		return false
+	}
+	for _, prefix := range []string{
+		"-run=",
+		"-count=",
+		"-timeout=",
+		"-parallel=",
+		"-vet=",
+		"-tags=",
+		"-covermode=",
+		"-coverpkg=",
+		"-list=",
+	} {
+		if strings.HasPrefix(arg, prefix) && strings.TrimSpace(strings.TrimPrefix(arg, prefix)) != "" {
+			return true
+		}
+	}
+	for _, prefix := range []string{
+		"-args=",
+		"-c=",
+		"-bench=",
+		"-fuzz=",
+		"-exec=",
+		"-toolexec=",
+		"-coverprofile=",
+		"-outputdir=",
+	} {
+		if strings.HasPrefix(arg, prefix) {
+			return false
+		}
+	}
+	return false
+}
+
+func goTestPackageArgAllowed(arg string) bool {
+	arg = filepath.ToSlash(strings.TrimSpace(arg))
+	if arg == "." || arg == "./..." {
+		return true
+	}
+	if !strings.HasPrefix(arg, "./") {
+		return false
+	}
+	for _, part := range strings.Split(strings.TrimPrefix(arg, "./"), "/") {
+		switch part {
+		case "", "..":
+			return false
+		case "...":
+			continue
+		}
+	}
+	return true
 }
 
 func readOnlyShellCommand(command string) bool {

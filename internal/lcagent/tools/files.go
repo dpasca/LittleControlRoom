@@ -164,7 +164,7 @@ func (t FileTools) Read(path string, offset, limit int) ToolResult {
 	limits := t.limits()
 	target, rel, err := t.resolve(path)
 	if err != nil {
-		return ToolResult{Success: false, Error: err.Error()}
+		return failureResult(err)
 	}
 	info, err := os.Stat(target)
 	if err != nil {
@@ -212,7 +212,7 @@ func (t FileTools) List(path, glob string, maxEntries int) ToolResult {
 	limits := t.limits()
 	target, rel, err := t.resolve(defaultPath(path))
 	if err != nil {
-		return ToolResult{Success: false, Error: err.Error()}
+		return failureResult(err)
 	}
 	info, err := os.Stat(target)
 	if err != nil {
@@ -294,7 +294,7 @@ func (t FileTools) SearchContext(query, path, fileGlob string, maxMatches, conte
 	}
 	target, rel, err := t.resolve(defaultPath(path))
 	if err != nil {
-		return ToolResult{Success: false, Error: err.Error()}
+		return failureResult(err)
 	}
 	info, err := os.Stat(target)
 	if err != nil {
@@ -368,7 +368,7 @@ func (t FileTools) SearchContext(query, path, fileGlob string, maxMatches, conte
 func (t FileTools) Outline(path string) ToolResult {
 	target, rel, err := t.resolve(path)
 	if err != nil {
-		return ToolResult{Success: false, Error: err.Error()}
+		return failureResult(err)
 	}
 	info, err := os.Stat(target)
 	if err != nil {
@@ -384,7 +384,7 @@ func (t FileTools) ModuleOutline(path, fileGlob string, maxFiles int) ToolResult
 	limits := t.limits()
 	target, rel, err := t.resolve(defaultPath(path))
 	if err != nil {
-		return ToolResult{Success: false, Error: err.Error()}
+		return failureResult(err)
 	}
 	info, err := os.Stat(target)
 	if err != nil {

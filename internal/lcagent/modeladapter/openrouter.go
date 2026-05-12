@@ -968,7 +968,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "apply_patch",
-				Description: "Apply a Codex apply_patch patch. The patch must use the exact envelope: *** Begin Patch, then *** Update File: path or *** Add File: path, hunks with @@ and +/- lines, then *** End Patch. Example: *** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch",
+				Description: "Apply a Codex apply_patch patch. The patch must use the exact envelope: *** Begin Patch, then *** Update File: path or *** Add File: path, hunks with @@ and +/- lines, then *** End Patch. Successful patches return a diff summary; use it when reporting changed files. Example: *** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
@@ -1009,14 +1009,14 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "final_response",
-				Description: "Finish the session. The summary must be the complete user-facing answer, including findings, caveats, and next steps; do not put essential answer content only in verification.",
+				Description: "Finish the session. The summary must be the complete user-facing answer, including findings, caveats, changed files, verification outcome, and next steps; do not put essential answer content only in verification.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
 						"summary":       map[string]any{"type": "string", "description": "Complete user-facing answer. Include the actual findings or outcome here, not only a preamble."},
 						"files_changed": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Workspace files changed by this session, or an empty array."},
-						"verification":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Checks run or evidence reviewed. This supports the summary; it is not a substitute for the answer."},
+						"verification":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Checks run, evidence reviewed, or an explicit not-run reason. This supports the summary; it is not a substitute for the answer."},
 					},
 					"required": []string{"summary", "files_changed", "verification"},
 				},
@@ -1105,10 +1105,12 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		"Use workspace-relative paths in file tools; absolute paths are denied.",
 		"File tools are workspace-only; use read-only run_command argv for paths outside the workspace.",
 		"When using run_command, prefer argv over command strings; shell commands are for shell syntax only.",
+		"At low autonomy, use run_command argv for conservative Go verification such as [\"go\",\"test\",\"./...\"]; shell strings and broad write-like commands are denied.",
 		"Never write provider tool-call markup such as DSML in assistant text; call tools only through structured tool_calls.",
 		"Skill descriptions in this prompt are metadata only; call load_skill before relying on any skill instructions.",
 		"Use apply_patch for source edits. Patches must use this exact shape: *** Begin Patch, *** Update File: path, @@, -old line, +new line, *** End Patch.",
-		"When done, call final_response exactly once. Its summary must contain the full answer; verification is only supporting evidence.",
+		"After edits, use the patch diff summary and run or explain verification before final_response.",
+		"When done, call final_response exactly once. Its summary must contain the full answer, changed files, and verification outcome. The verification array must name checks run or say not run with the reason; it is only supporting evidence.",
 	}
 	if strings.EqualFold(opts.ToolProfile, "generous") {
 		lines = append(lines,

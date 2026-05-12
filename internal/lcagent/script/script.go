@@ -248,6 +248,17 @@ func (r Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, e
 				return tools.ToolResult{}, err
 			}
 		}
+		if result.PatchSummary != nil || strings.TrimSpace(result.DiffSummary) != "" {
+			if err := r.Session.Write(session.Event{
+				"type":          "patch_diff_summary",
+				"session_id":    r.SessionID,
+				"files":         result.FilesTouched,
+				"summary":       result.DiffSummary,
+				"patch_summary": result.PatchSummary,
+			}); err != nil {
+				return tools.ToolResult{}, err
+			}
+		}
 	case "update_plan":
 		var args planArgs
 		if err := json.Unmarshal(action.Args, &args); err != nil {
@@ -263,6 +274,17 @@ func (r Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, e
 		}
 	default:
 		result = tools.ToolResult{Success: false, Error: "unsupported tool: " + action.Tool}
+	}
+
+	if result.Denied {
+		if err := r.Session.Write(session.Event{
+			"type":       "permission_denied",
+			"session_id": r.SessionID,
+			"tool":       action.Tool,
+			"reason":     firstNonEmpty(result.DenialReason, result.Error),
+		}); err != nil {
+			return tools.ToolResult{}, err
+		}
 	}
 
 	if err := r.Session.Write(session.Event{
@@ -296,6 +318,19 @@ func formatLoadedSkill(loaded skillcatalog.LoadedSkill) string {
 }
 
 func (r Runner) Final(action Action) error {
+	action.FilesChanged = cleanStringList(action.FilesChanged)
+	action.Verification = cleanStringList(action.Verification)
+	verificationStatus, verificationMessage := finalVerificationStatus(action.FilesChanged, action.Verification)
+	if err := r.Session.Write(session.Event{
+		"type":                "verification_summary",
+		"session_id":          r.SessionID,
+		"status":              verificationStatus,
+		"message":             verificationMessage,
+		"files_changed":       action.FilesChanged,
+		"verification_checks": action.Verification,
+	}); err != nil {
+		return err
+	}
 	if err := r.Session.Write(session.Event{
 		"type":          "assistant_message",
 		"session_id":    r.SessionID,
@@ -306,10 +341,41 @@ func (r Runner) Final(action Action) error {
 		return err
 	}
 	return r.Session.Write(session.Event{
-		"type":          "turn_complete",
-		"session_id":    r.SessionID,
-		"summary":       action.Summary,
-		"files_changed": action.FilesChanged,
-		"verification":  action.Verification,
+		"type":                "turn_complete",
+		"session_id":          r.SessionID,
+		"summary":             action.Summary,
+		"files_changed":       action.FilesChanged,
+		"verification":        action.Verification,
+		"verification_status": verificationStatus,
 	})
+}
+
+func finalVerificationStatus(filesChanged, verification []string) (string, string) {
+	if len(verification) > 0 {
+		return "reported", "Verification was reported in final_response."
+	}
+	if len(filesChanged) > 0 {
+		return "missing_after_changes", "No verification was reported for changed files."
+	}
+	return "not_reported", "No verification was reported."
+}
+
+func cleanStringList(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }

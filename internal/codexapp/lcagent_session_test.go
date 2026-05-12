@@ -221,7 +221,7 @@ func TestLCAgentSessionReplaysRequestedArtifact(t *testing.T) {
 		t.Fatalf("TokenUsage = %#v", snapshot.TokenUsage)
 	}
 	for _, want := range []string{
-		"Loaded LCAgent session " + sessionID + " from disk",
+		"Loaded LCAgent session " + sessionID + " from disk. Sending a prompt starts a continuing run with summarized context.",
 		"summarize this repo",
 		"Tool read_file running",
 		"README.md lines 1-1",
@@ -235,6 +235,81 @@ func TestLCAgentSessionReplaysRequestedArtifact(t *testing.T) {
 	}
 	if strings.Contains(snapshot.Transcript, "1 | hello from README") {
 		t.Fatalf("transcript should summarize read_file contents instead of embedding them:\n%s", snapshot.Transcript)
+	}
+}
+
+func TestLCAgentSessionContinuesLoadedReplayWithResumeArg(t *testing.T) {
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	argsPath := filepath.Join(t.TempDir(), "args.txt")
+	sessionID := "lca_replay_continue"
+	started := time.Date(2026, 5, 9, 11, 0, 0, 0, time.UTC)
+	writeLCAgentReplayArtifact(t, dataDir, started, sessionID, []map[string]any{
+		{"type": "session_meta", "id": sessionID, "cwd": root, "started_at": started.Format(time.RFC3339Nano), "model": "deepseek/replay-model"},
+		{"type": "assistant_message", "session_id": sessionID, "timestamp": started.Add(time.Second).Format(time.RFC3339Nano), "message": "loaded answer"},
+		{"type": "turn_complete", "session_id": sessionID, "timestamp": started.Add(2 * time.Second).Format(time.RFC3339Nano), "summary": "loaded answer"},
+	})
+
+	exe := filepath.Join(t.TempDir(), "fake-lcagent")
+	script := `#!/bin/sh
+{
+  for arg in "$@"; do
+    printf '%s\n' "$arg"
+  done
+} > "$LCAGENT_ARGS_FILE"
+printf '%s\n' '{"type":"session_meta","id":"lca_new_after_resume","cwd":"/tmp/demo"}'
+printf '%s\n' '{"type":"resume_context","source_session_id":"lca_replay_continue","summary":"source lca_replay_continue; summary: loaded answer"}'
+printf '%s\n' '{"type":"assistant_message","message":"continued answer"}'
+printf '%s\n' '{"type":"turn_complete"}'
+`
+	if err := os.WriteFile(exe, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake lcagent: %v", err)
+	}
+	t.Setenv("LCAGENT_ARGS_FILE", argsPath)
+
+	notify := make(chan struct{}, 20)
+	session, err := newLCAgentSession(LaunchRequest{
+		Provider:    ProviderLCAgent,
+		ProjectPath: root,
+		AppDataDir:  dataDir,
+		LCAgentPath: exe,
+		ResumeID:    sessionID,
+	}, func() {
+		select {
+		case notify <- struct{}{}:
+		default:
+		}
+	})
+	if err != nil {
+		t.Fatalf("newLCAgentSession() error = %v", err)
+	}
+	if err := session.Submit("continue the replay"); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+
+	snapshot := waitForLCAgentIdleSnapshot(t, session, notify)
+	snapshot = waitForLCAgentTranscript(t, session, "continued answer")
+	if snapshot.ThreadID != "lca_new_after_resume" {
+		t.Fatalf("ThreadID = %q, want new resumed run id", snapshot.ThreadID)
+	}
+	for _, want := range []string{
+		"Starting a continuing LCAgent run with summarized context from " + sessionID,
+		"Loaded resume context from " + sessionID,
+		"continued answer",
+	} {
+		if !strings.Contains(snapshot.Transcript, want) {
+			t.Fatalf("transcript missing %q:\n%s", want, snapshot.Transcript)
+		}
+	}
+	argsBytes, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read fake args: %v", err)
+	}
+	args := strings.Split(strings.TrimSpace(string(argsBytes)), "\n")
+	for _, want := range []string{"--resume", sessionID, "continue the replay"} {
+		if !lcagentTestStringSliceContains(args, want) {
+			t.Fatalf("args missing %q: %#v", want, args)
+		}
 	}
 }
 

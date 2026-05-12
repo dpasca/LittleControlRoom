@@ -29,7 +29,7 @@ type lcagentReplay struct {
 }
 
 func loadLCAgentReplay(req LaunchRequest) (*lcagentReplay, error) {
-	if req.ForceNew || strings.TrimSpace(req.Prompt) != "" {
+	if req.ForceNew {
 		return nil, nil
 	}
 	dataDir := strings.TrimSpace(req.AppDataDir)
@@ -204,6 +204,26 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			replay.appendEntry(TranscriptAgent, rawJSONString(event["message"]))
 		case "files_touched":
 			replay.appendEntry(TranscriptFileChange, lcagentFilesTouchedText(event["files"]))
+		case "patch_diff_summary":
+			replay.appendEntry(TranscriptFileChange, rawJSONString(event["summary"]))
+		case "verification_summary":
+			status := rawJSONString(event["status"])
+			message := rawJSONString(event["message"])
+			if message == "" && status != "" {
+				message = "Verification status: " + status
+			}
+			replay.appendEntry(TranscriptStatus, message)
+		case "resume_context":
+			sourceID := rawJSONString(event["source_session_id"])
+			summary := rawJSONString(event["summary"])
+			text := "Loaded resume context"
+			if sourceID != "" {
+				text += " from " + sourceID
+			}
+			if summary != "" {
+				text += ": " + summary
+			}
+			replay.appendEntry(TranscriptStatus, text)
 		case "turn_complete":
 			// The status is reflected on the loaded session snapshot.
 		case "turn_aborted":
@@ -273,5 +293,13 @@ func sameCleanPath(left, right string) bool {
 	if left == "" || right == "" {
 		return false
 	}
-	return filepath.Clean(left) == filepath.Clean(right)
+	return canonicalReplayPath(left) == canonicalReplayPath(right)
+}
+
+func canonicalReplayPath(path string) string {
+	path = filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(resolved)
+	}
+	return path
 }

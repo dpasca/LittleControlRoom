@@ -18922,8 +18922,8 @@ func TestCommandEnterOpensSettingsMode(t *testing.T) {
 	if got.commandMode {
 		t.Fatalf("command mode should close after /settings")
 	}
-	if len(got.settingsFields) != 28 {
-		t.Fatalf("settings field count = %d, want 28", len(got.settingsFields))
+	if len(got.settingsFields) != 30 {
+		t.Fatalf("settings field count = %d, want 30", len(got.settingsFields))
 	}
 }
 
@@ -19620,8 +19620,17 @@ func TestSetupEnterSelectsSaveStepThenEnterSaves(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("boss provider enter should not save before the save step")
 	}
+	if got.setupReviewMode || got.setupStep != setupStepLCAgentConfig || !got.setupConfigMode {
+		t.Fatalf("boss provider enter should open the LCAgent setup step, got step=%v review=%v config=%v", got.setupStep, got.setupReviewMode, got.setupConfigMode)
+	}
+
+	updated, cmd = got.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("LCAgent setup enter should not save before the save step")
+	}
 	if !got.setupReviewMode || got.setupStep != setupStepSave {
-		t.Fatalf("boss provider enter should open the save step, got step=%v review=%v", got.setupStep, got.setupReviewMode)
+		t.Fatalf("LCAgent setup enter should open the save step, got step=%v review=%v", got.setupStep, got.setupReviewMode)
 	}
 
 	updated, cmd = got.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
@@ -19860,8 +19869,8 @@ func TestSetupBossChatDisabledSavesSeparately(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("selecting disabled boss chat should not save before the save step")
 	}
-	if !got.setupReviewMode {
-		t.Fatalf("selecting disabled boss chat should open the save step")
+	if got.setupReviewMode || got.setupStep != setupStepLCAgentConfig {
+		t.Fatalf("selecting disabled boss chat should open the LCAgent setup step, got step=%v review=%v", got.setupStep, got.setupReviewMode)
 	}
 	if got.currentSettingsBaseline().AIBackend != config.AIBackendCodex {
 		t.Fatalf("boss chat selection should not change project reports backend")
@@ -19917,14 +19926,23 @@ func TestSetupDetailsPageSaveStepUsesEditedFields(t *testing.T) {
 
 	updated, cmd := m.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
-	if cmd != nil {
-		t.Fatalf("continuing from setup config fields should open the save step before save")
+	if cmd == nil {
+		t.Fatalf("continuing from setup config fields should focus the LCAgent setup field")
 	}
-	if !got.setupReviewMode {
-		t.Fatalf("continuing from setup config fields should open the save step")
+	if got.setupReviewMode || got.setupStep != setupStepLCAgentConfig {
+		t.Fatalf("continuing from boss config fields should open LCAgent setup first, got step=%v review=%v", got.setupStep, got.setupReviewMode)
 	}
 	if got.setupSaving {
 		t.Fatalf("setup config fields should not save until save confirmation")
+	}
+
+	updated, cmd = got.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("continuing from LCAgent setup should open the save step before save")
+	}
+	if !got.setupReviewMode {
+		t.Fatalf("continuing from LCAgent setup should open the save step")
 	}
 
 	updated, cmd = got.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
@@ -20946,20 +20964,20 @@ func TestSettingsSectionSwitchChangesVisibleFields(t *testing.T) {
 		t.Fatalf("PgDn should move to the next settings section")
 	}
 	got := updated.(Model)
-	if got.settingsSelected != settingsFieldExcludePaths {
-		t.Fatalf("settingsSelected = %d, want exclude paths field", got.settingsSelected)
+	if got.settingsSelected != settingsFieldLCAgentPath {
+		t.Fatalf("settingsSelected = %d, want LCAgent path field", got.settingsSelected)
 	}
 
 	rendered := ansi.Strip(got.renderSettingsContent(72, 18))
-	if !strings.Contains(rendered, "Sections:") || !strings.Contains(rendered, "Project Scope") {
+	if !strings.Contains(rendered, "Sections:") || !strings.Contains(rendered, "LCAgent") {
 		t.Fatalf("settings modal should make the section switcher obvious: %q", rendered)
 	}
-	if !strings.Contains(rendered, "> Project Scope") {
+	if !strings.Contains(rendered, "> LCAgent") {
 		t.Fatalf("settings modal should render a dedicated selected section row: %q", rendered)
 	}
 	foundColumnRow := false
 	for _, line := range strings.Split(rendered, "\n") {
-		if strings.Contains(line, "Sections:") && strings.Contains(line, "Project Scope section.") {
+		if strings.Contains(line, "Sections:") && strings.Contains(line, "LCAgent section.") {
 			foundColumnRow = true
 			break
 		}
@@ -20967,11 +20985,11 @@ func TestSettingsSectionSwitchChangesVisibleFields(t *testing.T) {
 	if !foundColumnRow {
 		t.Fatalf("settings modal should place sections in a left column beside section content: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Project Scope section.") {
+	if !strings.Contains(rendered, "LCAgent section.") {
 		t.Fatalf("settings modal should render the new section hint: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Exclude paths") {
-		t.Fatalf("settings modal should show scope fields after switching sections: %q", rendered)
+	if !strings.Contains(rendered, "LCAgent executable") || !strings.Contains(rendered, "LCAgent model") {
+		t.Fatalf("settings modal should show LCAgent fields after switching sections: %q", rendered)
 	}
 	if strings.Contains(rendered, "Boss helm model") {
 		t.Fatalf("settings modal should not keep rendering the old section fields: %q", rendered)

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRunExecScriptedStreamJSON(t *testing.T) {
@@ -111,6 +112,133 @@ func TestRunExecOpenRouterEmitsModelResponseUsage(t *testing.T) {
 	}
 	if got := strings.Count(text, `"type":"assistant_message"`); got != 1 {
 		t.Fatalf("assistant_message count = %d, want 1:\n%s", got, text)
+	}
+}
+
+func TestRunExecOpenRouterSendsResumeContext(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	sessionID := "lca_resume_source"
+	started := time.Date(2026, 5, 12, 8, 0, 0, 0, time.UTC)
+	writeLCAgentCLITestArtifact(t, dataDir, started, sessionID, []map[string]any{
+		{
+			"type":       "session_meta",
+			"id":         sessionID,
+			"cwd":        root,
+			"started_at": started.Format(time.RFC3339Nano),
+		},
+		{
+			"type":       "user_message",
+			"session_id": sessionID,
+			"timestamp":  started.Add(time.Second).Format(time.RFC3339Nano),
+			"message":    "implement the first half",
+		},
+		{
+			"type":       "patch_diff_summary",
+			"session_id": sessionID,
+			"timestamp":  started.Add(2 * time.Second).Format(time.RFC3339Nano),
+			"summary":    "README.md: +2 -1",
+			"files":      []string{"README.md"},
+		},
+		{
+			"type":                "verification_summary",
+			"session_id":          sessionID,
+			"timestamp":           started.Add(3 * time.Second).Format(time.RFC3339Nano),
+			"status":              "reported",
+			"files_changed":       []string{"README.md"},
+			"verification_checks": []string{"go test ./internal/lcagent/..."},
+		},
+		{
+			"type":       "turn_complete",
+			"session_id": sessionID,
+			"timestamp":  started.Add(4 * time.Second).Format(time.RFC3339Nano),
+			"summary":    "first half complete",
+			"files_changed": []string{
+				"README.md",
+			},
+			"verification":        []string{"go test ./internal/lcagent/..."},
+			"verification_status": "reported",
+		},
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if len(body.Messages) < 2 {
+			t.Fatalf("request missing messages: %#v", body.Messages)
+		}
+		systemPrompt := body.Messages[0].Content
+		for _, want := range []string{
+			"Previous LCAgent session context",
+			sessionID,
+			"implement the first half",
+			"first half complete",
+			"README.md: +2 -1",
+			"go test ./internal/lcagent/...",
+			"Previous verification status: reported",
+		} {
+			if !strings.Contains(systemPrompt, want) {
+				t.Fatalf("system prompt missing resume context %q:\n%s", want, systemPrompt)
+			}
+		}
+		foundCurrentPrompt := false
+		for _, msg := range body.Messages {
+			if msg.Role == "user" && msg.Content == "continue from previous work" {
+				foundCurrentPrompt = true
+			}
+		}
+		if !foundCurrentPrompt {
+			t.Fatalf("request missing current continuation prompt: %#v", body.Messages)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"resp_resume",
+			"model":"deepseek/test-model",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"continued with context"}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", dataDir,
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--resume", sessionID,
+		"--max-turns", "2",
+		"continue from previous work",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"resume_context"`,
+		`"source_session_id":"` + sessionID + `"`,
+		`"summary":"source ` + sessionID,
+		`"summary":"continued with context"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
 	}
 }
 
@@ -1114,6 +1242,45 @@ func TestRunMetricsSummarizesSessionArtifact(t *testing.T) {
 			t.Fatalf("metrics output missing %q:\n%s", want, text)
 		}
 	}
+}
+
+func TestRunEvalReportsPassingRegressionLane(t *testing.T) {
+	isolateSkillHomes(t)
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"eval", "--output", "json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	var report evalReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode eval report: %v\n%s", err, stdout.String())
+	}
+	if !report.Passed || len(report.Cases) != 3 {
+		t.Fatalf("eval report = %#v, want three passing cases", report)
+	}
+	if report.Summary.PatchDiffSummaries < 1 || report.Summary.PermissionDenials < 1 || report.Summary.ResumeContexts < 1 || report.Summary.VerificationStatuses["reported"] < 1 {
+		t.Fatalf("eval summary missing expected trace metrics: %#v", report.Summary)
+	}
+}
+
+func writeLCAgentCLITestArtifact(t *testing.T, dataDir string, started time.Time, sessionID string, events []map[string]any) string {
+	t.Helper()
+	path := filepath.Join(dataDir, "lcagent", "sessions", started.Format("2006"), started.Format("01"), started.Format("02"), sessionID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir lcagent artifact dir: %v", err)
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create lcagent artifact: %v", err)
+	}
+	defer file.Close()
+	encoder := json.NewEncoder(file)
+	for _, event := range events {
+		if err := encoder.Encode(event); err != nil {
+			t.Fatalf("encode lcagent artifact: %v", err)
+		}
+	}
+	return path
 }
 
 func isolateSkillHomes(t *testing.T) {

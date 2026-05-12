@@ -25,6 +25,10 @@ type Summary struct {
 	ModelResponses           int               `json:"model_responses"`
 	ToolCalls                map[string]int    `json:"tool_calls"`
 	ToolResults              map[string]int    `json:"tool_results"`
+	ResumeContexts           int               `json:"resume_contexts"`
+	PermissionDenials        int               `json:"permission_denials"`
+	PatchDiffSummaries       int               `json:"patch_diff_summaries"`
+	VerificationStatuses     map[string]int    `json:"verification_statuses,omitempty"`
 	ReadFileCalls            int               `json:"read_file_calls"`
 	ReadFileLines            int               `json:"read_file_lines"`
 	ReadFileOutputBytes      int               `json:"read_file_output_bytes"`
@@ -122,6 +126,9 @@ func (s *Summary) init() {
 	if s.ContextProfiles == nil {
 		s.ContextProfiles = map[string]int{}
 	}
+	if s.VerificationStatuses == nil {
+		s.VerificationStatuses = map[string]int{}
+	}
 	if s.rangesByFile == nil {
 		s.rangesByFile = map[string][]lineRange{}
 	}
@@ -178,6 +185,18 @@ func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
 		s.ModelResponses++
 		usage := usageFromEvent(event)
 		s.addUsage(usage)
+	case "permission_denied":
+		s.PermissionDenials++
+	case "resume_context":
+		s.ResumeContexts++
+	case "patch_diff_summary":
+		s.PatchDiffSummaries++
+	case "verification_summary":
+		status := rawString(event["status"])
+		if status == "" {
+			status = "unknown"
+		}
+		s.VerificationStatuses[status]++
 	case "tool_call":
 		tool := rawString(event["tool"])
 		if tool == "" {

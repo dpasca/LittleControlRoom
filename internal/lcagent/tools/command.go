@@ -37,6 +37,9 @@ func (r CommandRunner) Run(ctx context.Context, command string, timeout time.Dur
 
 func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult {
 	if err := r.Workspace.AllowCommandSpec(spec.Argv, spec.Command, spec.Shell); err != nil {
+		if policy.IsDenied(err) {
+			return ToolResult{Success: false, Error: err.Error(), Denied: true, DenialReason: policy.DenialReason(err)}
+		}
 		return ToolResult{Success: false, Error: err.Error()}
 	}
 	timeout := policy.ClampTimeout(time.Duration(spec.TimeoutMS)*time.Millisecond, defaultCommandTimeout, maxCommandTimeout)

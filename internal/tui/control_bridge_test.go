@@ -975,6 +975,107 @@ func TestExecuteBossGoalRunArchivesMultipleAgentTasksAndVerifies(t *testing.T) {
 	}
 }
 
+func TestExecuteBossGoalRunStartsLCAgentTaskAndPersistsTrace(t *testing.T) {
+	ctx := context.Background()
+	svc := newControlTestService(t)
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:       req.Provider,
+				ThreadID:       "lca-goal-session",
+				Started:        true,
+				LastActivityAt: time.Now(),
+			},
+		}, nil
+	})
+	proposal, err := bossrun.NormalizeGoalProposal(bossrun.GoalProposal{
+		Run: bossrun.GoalRun{
+			Kind:            bossrun.GoalKindLCAgentTask,
+			Title:           "Verify release diff",
+			Objective:       "Inspect the current diff and verify the relevant Go tests.",
+			SuccessCriteria: "Report changed files and verification commands.",
+		},
+		Authority: bossrun.AuthorityGrant{
+			Resources: []control.ResourceRef{{Kind: control.ResourceProject, ProjectPath: "/tmp/release", Label: "release repo"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NormalizeGoalProposal() error = %v", err)
+	}
+	m := Model{
+		ctx:          ctx,
+		svc:          svc,
+		codexManager: manager,
+	}
+
+	updated, cmd := m.executeBossGoalRun(bossui.GoalRunConfirmedMsg{Proposal: proposal})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("executeBossGoalRun() cmd = nil, want LCAgent launch command")
+	}
+	if !strings.Contains(got.status, "Starting LCAgent goal task") {
+		t.Fatalf("status = %q, want LCAgent goal launch status", got.status)
+	}
+	msgs := collectCmdMsgs(cmd)
+	var opened codexSessionOpenedMsg
+	var result bossui.GoalRunResultMsg
+	for _, msg := range msgs {
+		switch typed := msg.(type) {
+		case codexSessionOpenedMsg:
+			opened = typed
+		case bossui.GoalRunResultMsg:
+			result = typed
+		}
+	}
+	if opened.err != nil || opened.projectPath == "" {
+		t.Fatalf("opened = %#v, want successful LCAgent session open", opened)
+	}
+	if result.Err != nil {
+		t.Fatalf("goal result err = %v", result.Err)
+	}
+	if !result.Result.Verified || len(result.Result.CreatedTaskIDs) != 1 {
+		t.Fatalf("goal result = %#v, want verified created task", result.Result)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want 1", len(requests))
+	}
+	if requests[0].Provider != codexapp.ProviderLCAgent || !requests[0].ForceNew {
+		t.Fatalf("launch request provider/forceNew = %q/%v, want LCAgent fresh", requests[0].Provider, requests[0].ForceNew)
+	}
+	for _, want := range []string{
+		"Little Control Room agent task:",
+		"Boss goal run:",
+		"Inspect the current diff",
+		"Report changed files and verification commands.",
+		"release repo",
+		"Run inside LCAgent low-autonomy",
+	} {
+		if !strings.Contains(requests[0].Prompt, want) {
+			t.Fatalf("launch prompt missing %q:\n%s", want, requests[0].Prompt)
+		}
+	}
+	task, err := svc.GetAgentTask(ctx, result.Result.CreatedTaskIDs[0])
+	if err != nil {
+		t.Fatalf("GetAgentTask() error = %v", err)
+	}
+	if task.Provider != model.SessionSourceLCAgent || task.SessionID != "lca-goal-session" {
+		t.Fatalf("task tracking = %#v, want LCAgent session attached", task)
+	}
+	record, err := svc.Store().GetGoalRun(ctx, result.Result.RunID)
+	if err != nil {
+		t.Fatalf("GetGoalRun() error = %v", err)
+	}
+	if record.Proposal.Run.Status != bossrun.GoalStatusCompleted || !record.Result.Verified {
+		t.Fatalf("stored goal = %#v, want completed verified LCAgent goal", record)
+	}
+	if len(record.Trace) != 2 {
+		t.Fatalf("stored trace length = %d, want create and launch trace", len(record.Trace))
+	}
+}
+
 func controlInvocationForTest(t *testing.T, input control.EngineerSendPromptInput) control.Invocation {
 	t.Helper()
 	if input.Provider == "" {

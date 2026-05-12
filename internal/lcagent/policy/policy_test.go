@@ -64,9 +64,24 @@ func TestAutonomyPatchAndCommandPolicy(t *testing.T) {
 	if err := w.AllowCommand("rm file.txt"); err == nil {
 		t.Fatal("rm allowed with auto off, want error")
 	}
+	if err := w.AllowCommandSpec([]string{"go", "test", "./..."}, "", false); err == nil {
+		t.Fatal("go test allowed with auto off, want low-or-medium denial")
+	}
 	low := Workspace{Root: t.TempDir(), Auto: AutonomyLow}
-	if err := low.AllowCommandSpec([]string{"go", "test", "./..."}, "", false); err == nil {
-		t.Fatal("go test allowed with auto low, want medium-only denial")
+	if err := low.AllowCommandSpec([]string{"go", "test", "./..."}, "", false); err != nil {
+		t.Fatalf("go test denied with auto low: %v", err)
+	}
+	if err := low.AllowCommandSpec([]string{"go", "test", "./internal/lcagent/...", "-run", "TestRunner", "-count=1"}, "", false); err != nil {
+		t.Fatalf("scoped go test denied with auto low: %v", err)
+	}
+	if err := low.AllowCommandSpec([]string{"go", "test", "../..."}, "", false); err == nil {
+		t.Fatal("go test outside package pattern allowed with auto low, want denial")
+	}
+	if err := low.AllowCommandSpec([]string{"go", "test", "./...", "-exec", "/bin/true"}, "", false); err == nil {
+		t.Fatal("go test -exec allowed with auto low, want denial")
+	}
+	if err := low.AllowCommandSpec([]string{"go", "test", "./...", "-coverprofile=cover.out"}, "", false); err == nil {
+		t.Fatal("go test -coverprofile allowed with auto low, want denial")
 	}
 	if err := low.AllowCommandSpec([]string{"sed", "-n", "1,20p", "README.md"}, "", false); err != nil {
 		t.Fatalf("read-only sed denied with auto low: %v", err)

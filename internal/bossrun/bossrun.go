@@ -11,6 +11,7 @@ import (
 
 const (
 	GoalKindAgentTaskCleanup = "agent_task_cleanup"
+	GoalKindLCAgentTask      = "lcagent_task"
 
 	GoalStatusWaitingForApproval = "waiting_for_approval"
 	GoalStatusRunning            = "running"
@@ -94,6 +95,7 @@ type GoalResult struct {
 	RunID           string        `json:"run_id"`
 	Kind            string        `json:"kind"`
 	Summary         string        `json:"summary"`
+	CreatedTaskIDs  []string      `json:"created_task_ids,omitempty"`
 	ArchivedTaskIDs []string      `json:"archived_task_ids"`
 	KeptTaskIDs     []string      `json:"kept_task_ids"`
 	ReviewTaskIDs   []string      `json:"review_task_ids"`
@@ -122,22 +124,55 @@ func NormalizeGoalProposal(proposal GoalProposal) (GoalProposal, error) {
 	if proposal.Run.Kind == "" {
 		proposal.Run.Kind = GoalKindAgentTaskCleanup
 	}
-	if proposal.Run.Kind != GoalKindAgentTaskCleanup {
+	switch proposal.Run.Kind {
+	case GoalKindAgentTaskCleanup, GoalKindLCAgentTask:
+	default:
 		return GoalProposal{}, fmt.Errorf("unsupported goal kind: %s", proposal.Run.Kind)
 	}
-	if proposal.Run.Title == "" {
-		proposal.Run.Title = "Clear stale delegated agent tasks"
-	}
-	if proposal.Run.Objective == "" {
-		proposal.Run.Objective = "Archive delegated agent task records that have served their scope."
-	}
-	if proposal.Run.SuccessCriteria == "" {
-		proposal.Run.SuccessCriteria = "Selected delegated agent tasks are no longer active or waiting after execution."
-	}
+	normalizeGoalRunDefaults(&proposal)
 	if proposal.Run.Status == "" {
 		proposal.Run.Status = GoalStatusWaitingForApproval
 	}
 
+	switch proposal.Run.Kind {
+	case GoalKindAgentTaskCleanup:
+		return normalizeAgentTaskCleanupGoalProposal(proposal)
+	case GoalKindLCAgentTask:
+		return normalizeLCAgentTaskGoalProposal(proposal)
+	default:
+		return GoalProposal{}, fmt.Errorf("unsupported goal kind: %s", proposal.Run.Kind)
+	}
+}
+
+func normalizeGoalRunDefaults(proposal *GoalProposal) {
+	if proposal == nil {
+		return
+	}
+	switch proposal.Run.Kind {
+	case GoalKindLCAgentTask:
+		if proposal.Run.Title == "" {
+			proposal.Run.Title = "Start LCAgent goal task"
+		}
+		if proposal.Run.Objective == "" {
+			proposal.Run.Objective = "Create a scoped LCAgent task and launch it with the approved objective."
+		}
+		if proposal.Run.SuccessCriteria == "" {
+			proposal.Run.SuccessCriteria = "A Boss-owned LCAgent task is created, launched, and recorded in the goal trace."
+		}
+	default:
+		if proposal.Run.Title == "" {
+			proposal.Run.Title = "Clear stale delegated agent tasks"
+		}
+		if proposal.Run.Objective == "" {
+			proposal.Run.Objective = "Archive delegated agent task records that have served their scope."
+		}
+		if proposal.Run.SuccessCriteria == "" {
+			proposal.Run.SuccessCriteria = "Selected delegated agent tasks are no longer active or waiting after execution."
+		}
+	}
+}
+
+func normalizeAgentTaskCleanupGoalProposal(proposal GoalProposal) (GoalProposal, error) {
 	proposal.ArchiveResources = normalizeResources(proposal.ArchiveResources)
 	proposal.KeepResources = normalizeResources(proposal.KeepResources)
 	proposal.ReviewResources = normalizeResources(proposal.ReviewResources)
@@ -190,6 +225,47 @@ func NormalizeGoalProposal(proposal GoalProposal) (GoalProposal, error) {
 	return CloneGoalProposal(proposal), nil
 }
 
+func normalizeLCAgentTaskGoalProposal(proposal GoalProposal) (GoalProposal, error) {
+	proposal.Authority.Resources = uniqueResources(normalizeResources(proposal.Authority.Resources))
+	proposal.ArchiveResources = nil
+	proposal.KeepResources = uniqueResources(normalizeResources(proposal.KeepResources))
+	proposal.ReviewResources = uniqueResources(normalizeResources(proposal.ReviewResources))
+
+	proposal.Authority.Summary = strings.TrimSpace(proposal.Authority.Summary)
+	if proposal.Authority.Summary == "" {
+		proposal.Authority.Summary = proposal.Run.Title
+	}
+	proposal.Authority.AllowedCapabilities = normalizeCapabilities(proposal.Authority.AllowedCapabilities)
+	if len(proposal.Authority.AllowedCapabilities) == 0 {
+		proposal.Authority.AllowedCapabilities = []control.CapabilityName{control.CapabilityAgentTaskCreate}
+	}
+	if !capabilityAllowed(proposal.Authority.AllowedCapabilities, control.CapabilityAgentTaskCreate) {
+		return GoalProposal{}, errors.New("LCAgent task goal authority must allow agent_task.create")
+	}
+	proposal.Authority.ForbiddenSideEffects = normalizeStrings(proposal.Authority.ForbiddenSideEffects)
+	if len(proposal.Authority.ForbiddenSideEffects) == 0 {
+		proposal.Authority.ForbiddenSideEffects = []string{"delete files or workspaces outside the approved task scope", "change credentials or secrets", "close unrelated engineer sessions"}
+	}
+	switch proposal.Authority.MaxRisk {
+	case "", control.RiskExternal:
+		proposal.Authority.MaxRisk = control.RiskExternal
+	case control.RiskRead, control.RiskWrite:
+		return GoalProposal{}, errors.New("LCAgent task goal authority must allow external model execution")
+	case control.RiskDestructive:
+	default:
+		return GoalProposal{}, fmt.Errorf("unsupported goal risk level: %s", proposal.Authority.MaxRisk)
+	}
+	proposal.Plan = normalizeLCAgentTaskPlan(proposal.Plan, proposal.Authority.Resources)
+	if err := validatePlanAuthority(proposal.Plan, proposal.Authority); err != nil {
+		return GoalProposal{}, err
+	}
+	proposal.Preview = strings.TrimSpace(proposal.Preview)
+	if proposal.Preview == "" {
+		proposal.Preview = FormatGoalProposalPreview(proposal)
+	}
+	return CloneGoalProposal(proposal), nil
+}
+
 func CloneGoalProposal(proposal GoalProposal) GoalProposal {
 	proposal.Plan.Steps = clonePlanSteps(proposal.Plan.Steps)
 	proposal.Authority.AllowedCapabilities = append([]control.CapabilityName(nil), proposal.Authority.AllowedCapabilities...)
@@ -225,6 +301,9 @@ func AgentTaskResourceIDs(resources []control.ResourceRef) []string {
 }
 
 func FormatGoalProposalPreview(proposal GoalProposal) string {
+	if proposal.Run.Kind == GoalKindLCAgentTask {
+		return formatLCAgentGoalProposalPreview(proposal)
+	}
 	ids := AgentTaskResourceIDs(proposal.Authority.Resources)
 	lines := []string{fmt.Sprintf("Archive %d delegated agent task record%s?", len(ids), pluralSuffix(len(ids)))}
 	for _, resource := range proposal.Authority.Resources {
@@ -263,6 +342,20 @@ func FormatGoalResult(result GoalResult) string {
 	if result.Summary != "" {
 		return strings.TrimSpace(result.Summary)
 	}
+	if result.Kind == GoalKindLCAgentTask {
+		created := len(result.CreatedTaskIDs)
+		failed := len(result.FailedTasks)
+		switch {
+		case failed == 0 && result.Verified:
+			return fmt.Sprintf("Started %d LCAgent goal task%s and verified the launch was recorded.", created, pluralSuffix(created))
+		case failed == 0:
+			return fmt.Sprintf("Started %d LCAgent goal task%s, but launch verification did not complete.", created, pluralSuffix(created))
+		case created == 0:
+			return fmt.Sprintf("The LCAgent goal task did not start; %d step%s failed.", failed, pluralSuffix(failed))
+		default:
+			return fmt.Sprintf("Started %d LCAgent goal task%s; %d step%s still need review.", created, pluralSuffix(created), failed, pluralSuffix(failed))
+		}
+	}
 	archived := len(result.ArchivedTaskIDs)
 	failed := len(result.FailedTasks)
 	switch {
@@ -275,6 +368,25 @@ func FormatGoalResult(result GoalResult) string {
 	default:
 		return fmt.Sprintf("Archived %d delegated agent task record%s; %d task%s still need review.", archived, pluralSuffix(archived), failed, pluralSuffix(failed))
 	}
+}
+
+func formatLCAgentGoalProposalPreview(proposal GoalProposal) string {
+	lines := []string{
+		"Start a scoped LCAgent goal task?",
+		"",
+		"Goal: " + proposal.Run.Title,
+		"Objective: " + proposal.Run.Objective,
+	}
+	if len(proposal.Authority.Resources) > 0 {
+		lines = append(lines, "", "Resources:")
+		lines = appendResourceLines(lines, proposal.Authority.Resources)
+	}
+	lines = append(lines, "", "Allowed action: create one Boss-owned agent task and launch LCAgent for it.")
+	if len(proposal.Authority.ForbiddenSideEffects) > 0 {
+		lines = append(lines, "Forbidden side effects: "+strings.Join(proposal.Authority.ForbiddenSideEffects, "; ")+".")
+	}
+	lines = append(lines, "Verification: confirm the task and LCAgent session launch are recorded.", "", "Enter confirms; Esc cancels.")
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 func normalizePlan(plan Plan, resources []control.ResourceRef) Plan {
@@ -310,6 +422,22 @@ func normalizePlan(plan Plan, resources []control.ResourceRef) Plan {
 		}
 	}
 	return plan
+}
+
+func normalizeLCAgentTaskPlan(plan Plan, resources []control.ResourceRef) Plan {
+	if plan.Version <= 0 {
+		plan.Version = 1
+	}
+	if len(plan.Steps) == 0 {
+		plan.Steps = []PlanStep{
+			{ID: "create-lcagent-task", Kind: PlanStepDelegate, Title: "Create a scoped LCAgent agent task", Capability: control.CapabilityAgentTaskCreate, Resources: resources, Confidence: 1},
+			{ID: "launch-lcagent", Kind: PlanStepAct, Title: "Launch LCAgent with the approved objective", Capability: control.CapabilityAgentTaskCreate, Resources: resources, Confidence: 1},
+			{ID: "verify-lcagent-launch", Kind: PlanStepVerify, Title: "Confirm the LCAgent session is attached to the task", Resources: resources, Confidence: 1},
+			{ID: "report-result", Kind: PlanStepReport, Title: "Report the task and session handoff", Resources: resources, Confidence: 1},
+		}
+		return plan
+	}
+	return normalizePlan(plan, resources)
 }
 
 func normalizeResources(resources []control.ResourceRef) []control.ResourceRef {

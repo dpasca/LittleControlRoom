@@ -32,6 +32,8 @@ const (
 	settingsFieldLCAgentPath
 	settingsFieldLCAgentEnvFile
 	settingsFieldLCAgentProvider
+	settingsFieldLCAgentModel
+	settingsFieldLCAgentReasoning
 	settingsFieldLCAgentAuto
 	settingsFieldLCAgentToolProfile
 	settingsFieldLCAgentContextProfile
@@ -54,6 +56,7 @@ type settingsSectionID string
 const (
 	settingsSectionGettingStarted settingsSectionID = "getting-started"
 	settingsSectionAI             settingsSectionID = "ai"
+	settingsSectionLCAgent        settingsSectionID = "lcagent"
 	settingsSectionScope          settingsSectionID = "scope"
 	settingsSectionBrowser        settingsSectionID = "browser"
 	settingsSectionAdvanced       settingsSectionID = "advanced"
@@ -138,6 +141,7 @@ func settingsSections() []settingsSection {
 				settingsFieldAIBackend,
 				settingsFieldOpenAIAPIKey,
 				settingsFieldBossChatBackend,
+				settingsFieldLCAgentProvider,
 				settingsFieldIncludePaths,
 			},
 		},
@@ -162,6 +166,22 @@ func settingsSections() []settingsSection {
 			},
 		},
 		{
+			id:    settingsSectionLCAgent,
+			label: "LCAgent",
+			hint:  "Configure the experimental LCR-native worker separately from project reports and Boss chat.",
+			fieldOrder: []int{
+				settingsFieldLCAgentPath,
+				settingsFieldLCAgentEnvFile,
+				settingsFieldLCAgentProvider,
+				settingsFieldLCAgentModel,
+				settingsFieldLCAgentReasoning,
+				settingsFieldLCAgentAuto,
+				settingsFieldLCAgentToolProfile,
+				settingsFieldLCAgentContextProfile,
+				settingsFieldLCAgentRequestTimeout,
+			},
+		},
+		{
 			id:    settingsSectionScope,
 			label: "Project Scope",
 			hint:  "Choose which folders stay visible and which names should stay hidden or masked in demos.",
@@ -182,15 +202,8 @@ func settingsSections() []settingsSection {
 		{
 			id:    settingsSectionAdvanced,
 			label: "Advanced",
-			hint:  "Experimental features and tuning knobs. Most users can leave these alone.",
+			hint:  "Refresh timing and other low-level tuning knobs. Most users can leave these alone.",
 			fieldOrder: []int{
-				settingsFieldLCAgentPath,
-				settingsFieldLCAgentEnvFile,
-				settingsFieldLCAgentProvider,
-				settingsFieldLCAgentAuto,
-				settingsFieldLCAgentToolProfile,
-				settingsFieldLCAgentContextProfile,
-				settingsFieldLCAgentRequestTimeout,
 				settingsFieldActiveThreshold,
 				settingsFieldStuckThreshold,
 				settingsFieldInterval,
@@ -494,6 +507,8 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	applyEmbeddedModelPreferencesToSettings(&settings, embeddedModelPreferencesFromSettings(m.currentSettingsBaseline()))
+	settings.EmbeddedLCAgentModel = strings.TrimSpace(m.settingsFieldValue(settingsFieldLCAgentModel))
+	settings.EmbeddedLCAgentReasoning = strings.TrimSpace(m.settingsFieldValue(settingsFieldLCAgentReasoning))
 	m.err = nil
 	m.settingsSaving = true
 	m.status = "Saving settings..."
@@ -793,6 +808,17 @@ func (m Model) settingsDraftForInferenceStatus() config.EditableSettings {
 	settings.OllamaBaseURL = m.settingsFieldValue(settingsFieldOllamaBaseURL)
 	settings.OllamaAPIKey = m.settingsFieldValue(settingsFieldOllamaAPIKey)
 	settings.OllamaModel = m.settingsFieldValue(settingsFieldOllamaModel)
+	settings.LCAgentPath = m.settingsFieldValue(settingsFieldLCAgentPath)
+	settings.LCAgentEnvFile = m.settingsFieldValue(settingsFieldLCAgentEnvFile)
+	settings.LCAgentProvider = m.settingsFieldValue(settingsFieldLCAgentProvider)
+	settings.EmbeddedLCAgentModel = m.settingsFieldValue(settingsFieldLCAgentModel)
+	settings.EmbeddedLCAgentReasoning = m.settingsFieldValue(settingsFieldLCAgentReasoning)
+	settings.LCAgentAuto = m.settingsFieldValue(settingsFieldLCAgentAuto)
+	settings.LCAgentToolProfile = m.settingsFieldValue(settingsFieldLCAgentToolProfile)
+	settings.LCAgentContextProfile = m.settingsFieldValue(settingsFieldLCAgentContextProfile)
+	if timeout, err := time.ParseDuration(m.settingsFieldValue(settingsFieldLCAgentRequestTimeout)); err == nil {
+		settings.LCAgentRequestTimeout = timeout
+	}
 	return settings
 }
 
@@ -988,6 +1014,7 @@ func (m Model) settingsGettingStartedSteps() []settingsGettingStartedStep {
 	projectChoice := m.selectedSettingsProviderChoice(providerChoiceRoleProjectReports, settings.AIBackend, settings)
 	bossChoice := m.selectedSettingsProviderChoice(providerChoiceRoleBossChat, settings.BossChatBackend, settings)
 	keyState, keyStyle, keyDetail := m.settingsOpenAIKeyStepState(settings)
+	lcagentValue, lcagentState, lcagentStyle, lcagentDetail := settingsLCAgentStepState(settings)
 	rootsValue, rootsState, rootsStyle, rootsDetail := m.settingsProjectRootsStepState()
 	return []settingsGettingStartedStep{
 		{
@@ -1019,6 +1046,15 @@ func (m Model) settingsGettingStartedSteps() []settingsGettingStartedStep {
 		},
 		{
 			Number:     "4",
+			Title:      "LCAgent",
+			Value:      lcagentValue,
+			State:      lcagentState,
+			StateStyle: lcagentStyle,
+			Detail:     lcagentDetail,
+			FieldIndex: settingsFieldLCAgentProvider,
+		},
+		{
+			Number:     "5",
 			Title:      "Project roots",
 			Value:      rootsValue,
 			State:      rootsState,
@@ -1049,6 +1085,88 @@ func (m Model) settingsOpenAIKeyStepState(settings config.EditableSettings) (str
 		return "needed", detailWarningStyle, "Paste a key or choose local/off paths."
 	}
 	return "optional", detailMutedStyle, "Only needed for OpenAI API paths."
+}
+
+func settingsLCAgentStepState(settings config.EditableSettings) (string, string, lipgloss.Style, string) {
+	provider := firstNonEmptyTrimmed(settings.LCAgentProvider, "openrouter")
+	model := firstNonEmptyTrimmed(settings.EmbeddedLCAgentModel, lcagentDefaultModelForProvider(provider))
+	state, style, detail := lcagentCredentialSmokeCheck(settings)
+	value := provider + " / " + model
+	if state == "optional" {
+		value = provider
+	}
+	return value, state, style, detail
+}
+
+func lcagentCredentialSmokeCheck(settings config.EditableSettings) (string, lipgloss.Style, string) {
+	provider := firstNonEmptyTrimmed(settings.LCAgentProvider, "openrouter")
+	keyName := lcagentProviderAPIKeyName(provider)
+	if keyName == "" {
+		return "unknown", detailWarningStyle, "Unknown LCAgent provider " + provider + "."
+	}
+	envFile := strings.TrimSpace(settings.LCAgentEnvFile)
+	if envFile != "" {
+		value, found, err := readEnvFileKey(envFile, keyName)
+		if err != nil {
+			return "blocked", detailWarningStyle, err.Error()
+		}
+		if found && strings.TrimSpace(value) != "" {
+			return "ready", footerPrimaryLabelStyle, keyName + " found in env file " + maskedOpenAIKeySuffix(value) + "."
+		}
+		return "needed", detailWarningStyle, keyName + " was not found in the selected LCAgent env file."
+	}
+	if value := strings.TrimSpace(os.Getenv(keyName)); value != "" {
+		return "ready", footerPrimaryLabelStyle, keyName + " found in process environment " + maskedOpenAIKeySuffix(value) + "."
+	}
+	return "needed", detailWarningStyle, keyName + " is not configured; set an env file or process environment variable."
+}
+
+func lcagentProviderAPIKeyName(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "", "openrouter":
+		return "OPENROUTER_API_KEY"
+	case "openai":
+		return "OPENAI_API_KEY"
+	case "deepseek":
+		return "DEEPSEEK_API_KEY"
+	case "moonshot":
+		return "MOONSHOT_API_KEY"
+	default:
+		return ""
+	}
+}
+
+func lcagentDefaultModelForProvider(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openai":
+		return "gpt-5.5"
+	case "deepseek":
+		return "deepseek-v4-pro"
+	case "moonshot":
+		return "kimi-k2.6"
+	default:
+		return "deepseek/deepseek-v4-pro"
+	}
+}
+
+func readEnvFileKey(path, key string) (string, bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false, fmt.Errorf("LCAgent env file cannot be read: %w", err)
+	}
+	key = strings.TrimSpace(key)
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		name, value, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(name) != key {
+			continue
+		}
+		return strings.Trim(strings.TrimSpace(value), `"'`), true, nil
+	}
+	return "", false, nil
 }
 
 func (m Model) settingsProjectRootsStepState() (string, string, lipgloss.Style, string) {
@@ -1431,49 +1549,63 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			"Optional path to the lcagent binary. Leave blank to use the bundled sibling binary, PATH lookup, or local go run fallback.",
 			settings.LCAgentPath,
 			512,
-			settingsSectionAdvanced,
+			settingsSectionLCAgent,
 		),
 		newSettingsField(
 			"LCAgent env file",
 			"Optional env file for experimental LCAgent provider credentials, such as OpenRouter, DeepSeek, Moonshot, or OpenAI keys. Missing files are shown as warnings and launches will fail until fixed or cleared.",
 			settings.LCAgentEnvFile,
 			1024,
-			settingsSectionAdvanced,
+			settingsSectionLCAgent,
 		),
 		newSettingsField(
 			"LCAgent provider",
 			"Experimental LCAgent provider. Accepted values: openrouter, openai, deepseek, moonshot.",
 			settings.LCAgentProvider,
 			32,
-			settingsSectionAdvanced,
+			settingsSectionLCAgent,
+		),
+		newSettingsField(
+			"LCAgent model",
+			"Optional exact model ID for experimental LCAgent runs. Leave blank to use the provider default.",
+			settings.EmbeddedLCAgentModel,
+			256,
+			settingsSectionLCAgent,
+		),
+		newSettingsField(
+			"LCAgent reasoning",
+			"Optional reasoning effort for experimental LCAgent runs, such as low. Leave blank to omit provider-specific effort controls.",
+			settings.EmbeddedLCAgentReasoning,
+			32,
+			settingsSectionLCAgent,
 		),
 		newSettingsField(
 			"LCAgent autonomy",
 			"Accepted values: off, low, medium. Low allows conservative local edits while keeping higher-risk actions constrained.",
 			settings.LCAgentAuto,
 			16,
-			settingsSectionAdvanced,
+			settingsSectionLCAgent,
 		),
 		newSettingsField(
 			"LCAgent tool profile",
 			"Accepted values: balanced, generous. Balanced keeps read budgets conservative; generous is useful for large-context model experiments.",
 			settings.LCAgentToolProfile,
 			32,
-			settingsSectionAdvanced,
+			settingsSectionLCAgent,
 		),
 		newSettingsField(
 			"LCAgent context profile",
 			"Accepted values: balanced, large. Large delays provider-loop compaction when the selected model/provider can use bigger context.",
 			settings.LCAgentContextProfile,
 			32,
-			settingsSectionAdvanced,
+			settingsSectionLCAgent,
 		),
 		newSettingsField(
 			"LCAgent timeout",
 			"Provider HTTP request timeout for experimental LCAgent runs, for example 10m.",
 			formatSettingsDuration(settings.LCAgentRequestTimeout),
 			32,
-			settingsSectionAdvanced,
+			settingsSectionLCAgent,
 		),
 		newSettingsField(
 			"Include paths",
@@ -1603,6 +1735,8 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.OllamaBaseURL = strings.TrimSpace(settings.OllamaBaseURL)
 	settings.OllamaAPIKey = strings.TrimSpace(settings.OllamaAPIKey)
 	settings.OllamaModel = strings.TrimSpace(settings.OllamaModel)
+	settings.EmbeddedLCAgentModel = strings.TrimSpace(settings.EmbeddedLCAgentModel)
+	settings.EmbeddedLCAgentReasoning = strings.TrimSpace(settings.EmbeddedLCAgentReasoning)
 	settings.LCAgentPath = strings.TrimSpace(settings.LCAgentPath)
 	settings.LCAgentEnvFile = strings.TrimSpace(settings.LCAgentEnvFile)
 	settings.LCAgentProvider = strings.TrimSpace(settings.LCAgentProvider)
@@ -1723,12 +1857,22 @@ func (m Model) settingsFieldHint(index int) string {
 		default:
 			return field.hint
 		}
+	case settingsFieldLCAgentModel:
+		if model := strings.TrimSpace(field.input.Value()); model != "" {
+			return "LCAgent will request model " + model + "."
+		}
+		return "Blank uses the selected provider default: " + lcagentDefaultModelForProvider(m.settingsFieldValue(settingsFieldLCAgentProvider)) + "."
+	case settingsFieldLCAgentReasoning:
+		if effort := strings.TrimSpace(field.input.Value()); effort != "" {
+			return "LCAgent will request reasoning effort " + effort + " when the selected provider supports it."
+		}
+		return field.hint
 	case settingsFieldLCAgentAuto:
 		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
 		case "off":
 			return "LCAgent will deny file edits and use the most restrictive command policy."
 		case "", "low":
-			return "LCAgent will use the default low autonomy policy."
+			return "LCAgent will use the default low autonomy policy: project-local edits plus conservative read-only and Go test verification commands."
 		case "medium":
 			return "LCAgent can run a broader set of workspace-contained actions."
 		default:
