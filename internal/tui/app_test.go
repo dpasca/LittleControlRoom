@@ -19227,6 +19227,99 @@ func TestBossModeAltUpReturnsToClassicTUI(t *testing.T) {
 	}
 }
 
+func TestBossAttentionEngineerAltUpReturnsToBossMode(t *testing.T) {
+	project := model.ProjectSummary{
+		Path:          "/tmp/demo",
+		Name:          "demo",
+		PresentOnDisk: true,
+	}
+	m := Model{
+		ctx:             context.Background(),
+		allProjects:     []model.ProjectSummary{project},
+		projects:        []model.ProjectSummary{project},
+		bossMode:        true,
+		bossModelActive: true,
+		bossModel:       bossui.NewEmbedded(context.Background(), nil),
+		codexInput:      newCodexTextarea(),
+		codexViewport:   viewport.New(0, 0),
+		codexSnapshots: map[string]codexapp.Snapshot{
+			project.Path: {
+				ProjectPath: project.Path,
+				Provider:    codexapp.ProviderCodex,
+				Started:     true,
+				Status:      "Codex session ready",
+			},
+		},
+		width:  100,
+		height: 24,
+	}
+
+	updated, launchCmd := m.openBossAttentionProjectItem(0, project.Path)
+	got := updated.(Model)
+	if got.bossMode {
+		t.Fatalf("boss mode should hide while the engineer session is open")
+	}
+	if !got.returnToBossModeAfterCodexHide {
+		t.Fatalf("engineer session should remember boss mode as its return target")
+	}
+	if got.codexPendingOpen == nil || !got.codexPendingOpen.showWhilePending {
+		t.Fatalf("codexPendingOpen = %#v, want visible pending open", got.codexPendingOpen)
+	}
+	if launchCmd == nil {
+		t.Fatalf("opening engineer session should return launch command")
+	}
+
+	got.codexPendingOpen = nil
+	got.codexVisibleProject = project.Path
+	updated, _ = got.updateCodexMode(tea.KeyMsg{Type: tea.KeyUp, Alt: true})
+	got = updated.(Model)
+	if !got.bossMode {
+		t.Fatalf("alt+up from boss-opened engineer session should return to boss mode")
+	}
+	if got.returnToBossModeAfterCodexHide {
+		t.Fatalf("return target should be consumed after returning to boss mode")
+	}
+	if got.codexVisibleProject != "" {
+		t.Fatalf("codexVisibleProject = %q, want hidden", got.codexVisibleProject)
+	}
+}
+
+func TestBossAttentionPendingEngineerAltUpReturnsToBossMode(t *testing.T) {
+	project := model.ProjectSummary{
+		Path:          "/tmp/demo",
+		Name:          "demo",
+		PresentOnDisk: true,
+	}
+	m := Model{
+		ctx:             context.Background(),
+		allProjects:     []model.ProjectSummary{project},
+		projects:        []model.ProjectSummary{project},
+		bossMode:        true,
+		bossModelActive: true,
+		bossModel:       bossui.NewEmbedded(context.Background(), nil),
+		codexInput:      newCodexTextarea(),
+		width:           100,
+		height:          24,
+	}
+
+	updated, _ := m.openBossAttentionProjectItem(0, project.Path)
+	got := updated.(Model)
+	updated, _ = got.updateCodexMode(tea.KeyMsg{Type: tea.KeyUp, Alt: true})
+	got = updated.(Model)
+	if !got.bossMode {
+		t.Fatalf("alt+up while the engineer session starts should return to boss mode")
+	}
+	if got.codexPendingOpen == nil {
+		t.Fatalf("pending open should continue in the background")
+	}
+	if got.codexPendingOpen.showWhilePending {
+		t.Fatalf("pending open should be hidden after alt+up")
+	}
+	if !got.codexPendingOpen.hideOnOpen {
+		t.Fatalf("pending open should stay hidden when it finishes")
+	}
+}
+
 func TestBossModeFooterDoesNotCoverTerminalFrames(t *testing.T) {
 	for _, height := range []int{52, 45, 18, 13} {
 		m := Model{

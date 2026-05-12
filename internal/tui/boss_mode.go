@@ -188,6 +188,9 @@ func (m Model) openBossAttentionProjectItem(index int, projectPath string) (tea.
 	focusCmd := m.focusProjectPath(project.Path)
 	updated, launchCmd := m.launchEmbeddedForProject(project, m.preferredEmbeddedProviderForProject(project), false, "")
 	m = normalizeUpdateModel(updated)
+	if launchCmd != nil || m.codexVisible() || m.codexPendingOpenProject() != "" {
+		m.returnToBossModeAfterCodexHide = true
+	}
 	return m, tea.Batch(focusCmd, launchCmd)
 }
 
@@ -221,6 +224,9 @@ func (m Model) openBossAttentionAgentTask(index int, taskID string) (tea.Model, 
 		resumeID: taskSessionIDForProvider(task, provider),
 	})
 	m = normalizeUpdateModel(updated)
+	if launchCmd != nil || m.codexVisible() || m.codexPendingOpenProject() != "" {
+		m.returnToBossModeAfterCodexHide = true
+	}
 	return m, launchCmd
 }
 

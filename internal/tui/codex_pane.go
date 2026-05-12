@@ -1394,7 +1394,17 @@ func (m Model) hidePendingCodexOpen(projectPath string) (tea.Model, tea.Cmd) {
 	m.codexHiddenProject = projectPath
 	m.syncDetailViewport(false)
 	m.status = "Embedded " + label + " session hidden."
-	return m, m.focusProjectPath(projectPath)
+	return m.returnToBossModeAfterCodexHidden(m.focusProjectPath(projectPath))
+}
+
+func (m Model) returnToBossModeAfterCodexHidden(cmd tea.Cmd) (tea.Model, tea.Cmd) {
+	if !m.returnToBossModeAfterCodexHide {
+		return m, cmd
+	}
+	m.returnToBossModeAfterCodexHide = false
+	updated, bossCmd := m.openBossMode()
+	m = normalizeUpdateModel(updated)
+	return m, batchCmds(cmd, bossCmd)
 }
 
 func (m Model) hideCodexSession() (tea.Model, tea.Cmd) {
@@ -1423,11 +1433,11 @@ func (m Model) hideCodexSession() (tea.Model, tea.Cmd) {
 	m.codexInput.Blur()
 	m.syncDetailViewport(false)
 	m.status = label + " hidden."
-	return m, batchCmds(
+	return m.returnToBossModeAfterCodexHidden(batchCmds(
 		m.focusProjectPath(projectPath),
 		m.markProjectSessionSeen(projectPath),
 		refreshCmd,
-	)
+	))
 }
 
 func (m Model) cycleCodexSession(direction int) (tea.Model, tea.Cmd) {

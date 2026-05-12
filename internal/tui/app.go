@@ -97,6 +97,7 @@ type Model struct {
 	bossMode                        bool
 	bossModelActive                 bool
 	bossModel                       bossui.Model
+	returnToBossModeAfterCodexHide  bool
 	bossSetupPrompt                 *bossSetupPromptState
 	errorLogVisible                 bool
 	errorLogSelected                int

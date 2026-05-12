@@ -113,6 +113,7 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 	if msg.err != nil {
 		provider := m.codexPendingOpenProvider()
 		m.finishCodexPendingOpen(msg.projectPath, codexapp.Snapshot{}, false, false)
+		m.returnToBossModeAfterCodexHide = false
 		m.clearTodoLaunchDraft(msg.projectPath)
 		if projectPath := strings.TrimSpace(msg.projectPath); projectPath != "" {
 			shouldShowFailure := true
