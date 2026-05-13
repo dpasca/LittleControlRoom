@@ -196,8 +196,14 @@ func (m Model) bossDeskNowRows(width int, now time.Time) []string {
 		label, style := bossEngineerActivityCell(activity, now)
 		title := strings.TrimSpace(firstNonEmpty(activity.Title, activity.ProjectPath, activity.TaskID, "engineer work"))
 		name := strings.TrimSpace(firstNonEmpty(activity.EngineerName, "Engineer"))
-		text := name + " on " + title
-		rows = append(rows, m.bossDeskAttentionRow(attentionItemForEngineerActivity(activity), style, label, text, width))
+		item := attentionItemForEngineerActivity(activity)
+		text := bossSummaryTextStyle.Render(name + " on ")
+		if item.Kind == AttentionItemProject {
+			text += bossProjectIdentityStyle(item.ProjectPath, bossProjectNameStyle).Render(title)
+			rows = append(rows, m.bossDeskAttentionStyledRow(item, style, label, text, width))
+			continue
+		}
+		rows = append(rows, m.bossDeskAttentionRow(item, style, label, name+" on "+title, width))
 	}
 	return rows
 }
@@ -281,11 +287,7 @@ func (m Model) bossDeskWatchingRows(width int, now time.Time) []string {
 		}
 		title := compactProjectName(project)
 		summary := bossProjectSummaryText(project, now)
-		text := title
-		if strings.TrimSpace(summary) != "" && summary != "-" {
-			text += " - " + summary
-		}
-		rows = append(rows, m.bossDeskAttentionRow(attentionItemForProject(project), style, label, text, width))
+		rows = append(rows, m.bossDeskProjectRow(project, style, label, title, summary, width))
 	}
 	return rows
 }
@@ -299,7 +301,12 @@ func (m Model) bossDeskNextLine(width int, now time.Time) string {
 	for _, activity := range m.activeEngineerActivities() {
 		title := strings.TrimSpace(firstNonEmpty(activity.Title, activity.ProjectPath, activity.TaskID, "engineer work"))
 		name := strings.TrimSpace(firstNonEmpty(activity.EngineerName, "Engineer"))
-		return m.bossDeskAttentionRow(attentionItemForEngineerActivity(activity), bossAssessmentWorkingStyle, "next", "Let "+name+" finish "+title, width)
+		item := attentionItemForEngineerActivity(activity)
+		if item.Kind == AttentionItemProject {
+			text := bossSummaryTextStyle.Render("Let "+name+" finish ") + bossProjectIdentityStyle(item.ProjectPath, bossProjectNameStyle).Render(title)
+			return m.bossDeskAttentionStyledRow(item, bossAssessmentWorkingStyle, "next", text, width)
+		}
+		return m.bossDeskAttentionRow(item, bossAssessmentWorkingStyle, "next", "Let "+name+" finish "+title, width)
 	}
 	for _, task := range m.snapshot.OpenAgentTasks {
 		if model.NormalizeAgentTaskStatus(task.Status) == model.AgentTaskStatusCompleted {
@@ -312,7 +319,9 @@ func (m Model) bossDeskNextLine(width int, now time.Time) string {
 		}
 	}
 	if len(m.snapshot.HotProjects) > 0 {
-		return m.bossDeskAttentionRow(attentionItemForProject(m.snapshot.HotProjects[0]), bossAssessmentFollowupStyle, "next", "Check "+compactProjectName(m.snapshot.HotProjects[0]), width)
+		project := m.snapshot.HotProjects[0]
+		text := bossSummaryTextStyle.Render("Check ") + bossProjectIdentityStyle(bossProjectBriefIdentity(project), bossProjectNameStyle).Render(compactProjectName(project))
+		return m.bossDeskAttentionStyledRow(attentionItemForProject(project), bossAssessmentFollowupStyle, "next", text, width)
 	}
 	return bossDeskRow(bossMutedStyle, "next", "No obvious move right now", width)
 }
@@ -427,7 +436,28 @@ func (m Model) bossDeskAttentionRow(item AttentionItem, labelStyle lipgloss.Styl
 	return bossDeskRowWithHotkey(m.attentionHotkeyLabel(item), labelStyle, label, text, width)
 }
 
+func (m Model) bossDeskAttentionStyledRow(item AttentionItem, labelStyle lipgloss.Style, label, styledText string, width int) string {
+	return bossDeskStyledRowWithHotkey(m.attentionHotkeyLabel(item), labelStyle, label, styledText, width)
+}
+
+func (m Model) bossDeskProjectRow(project ProjectBrief, labelStyle lipgloss.Style, label, title, summary string, width int) string {
+	styled := bossProjectIdentityStyle(bossProjectBriefIdentity(project), bossProjectNameStyle).Render(strings.TrimSpace(title))
+	summary = strings.TrimSpace(summary)
+	if summary != "" && summary != "-" {
+		styled += bossSummaryTextStyle.Render(" - " + summary)
+	}
+	return m.bossDeskAttentionStyledRow(attentionItemForProject(project), labelStyle, label, styled, width)
+}
+
 func bossDeskRowWithHotkey(hotkey string, labelStyle lipgloss.Style, label, text string, width int) string {
+	return bossDeskRenderRow(hotkey, labelStyle, label, bossSummaryTextStyle.Render(strings.TrimSpace(text)), width)
+}
+
+func bossDeskStyledRowWithHotkey(hotkey string, labelStyle lipgloss.Style, label, styledText string, width int) string {
+	return bossDeskRenderRow(hotkey, labelStyle, label, styledText, width)
+}
+
+func bossDeskRenderRow(hotkey string, labelStyle lipgloss.Style, label, styledText string, width int) string {
 	labelW := 8
 	if width < 36 {
 		labelW = 6
@@ -450,7 +480,7 @@ func bossDeskRowWithHotkey(hotkey string, labelStyle lipgloss.Style, label, text
 		parts = append(parts, bossHotkeyStyle.Width(hotkeyW).Render(fitLine(hotkey, hotkeyW)), " ")
 	}
 	left := labelStyle.Width(labelW).Render(fitLine(label, labelW))
-	right := bossSummaryTextStyle.Render(fitLine(strings.TrimSpace(text), textW))
+	right := fitStyledLine(styledText, textW)
 	parts = append(parts, left, " ", right)
 	return fitStyledLine(lipgloss.JoinHorizontal(lipgloss.Top, parts...), width)
 }

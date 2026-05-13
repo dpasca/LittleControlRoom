@@ -134,6 +134,10 @@ func TestModelAttentionRowsUseCompactProjectColumns(t *testing.T) {
 			t.Fatalf("attention row missing %q:\n%s", want, stripped)
 		}
 	}
+	coloredProjectName := bossProjectIdentityStyle("/alpha", bossProjectNameStyle).Width(21).Render(fitLine("Alpha", 21))
+	if !strings.Contains(rendered, coloredProjectName) {
+		t.Fatalf("attention row should color the project identity:\n%s", stripped)
+	}
 	if !m.summaryFlashActive("/alpha") {
 		t.Fatalf("updated project summary should be inside the flash window:\n%s", rendered)
 	}
@@ -203,11 +207,15 @@ func TestBossDeskRowsShowStableAltHotkeys(t *testing.T) {
 	}
 	m.syncAttentionHotkeys()
 
-	desk := ansi.Strip(m.deskContent(80, 12))
+	renderedDesk := m.deskContent(80, 12)
+	desk := ansi.Strip(renderedDesk)
 	for _, want := range []string{"Alt+1", "Review Cursor OAuth cleanup", "Alt+2", "Alpha"} {
 		if !strings.Contains(desk, want) {
 			t.Fatalf("boss desk missing hotkey marker %q:\n%s", want, desk)
 		}
+	}
+	if want := bossProjectIdentityStyle("/alpha", bossProjectNameStyle).Render("Alpha"); !strings.Contains(renderedDesk, want) {
+		t.Fatalf("boss desk should color the project identity:\n%s", desk)
 	}
 }
 
@@ -1885,7 +1893,7 @@ func TestModelTranscriptHighlightsEngineerReturnNotice(t *testing.T) {
 	}
 	for label, want := range map[string]string{
 		"engineer": bossHandoffEngineerNameStyle.Render("Ada"),
-		"project":  bossHandoffProjectLabelStyle.Render("Cursor cleanup"),
+		"project":  bossProjectIdentityStyle("Cursor cleanup", bossHandoffProjectLabelStyle).Render("Cursor cleanup"),
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered transcript missing %s highlight:\n%s", label, stripped)
@@ -1900,7 +1908,7 @@ func TestModelTranscriptHighlightsEngineerReturnNotice(t *testing.T) {
 	loadedRendered := loaded.renderTranscript(120)
 	for label, want := range map[string]string{
 		"loaded engineer": bossHandoffEngineerNameStyle.Render("Ada"),
-		"loaded project":  bossHandoffProjectLabelStyle.Render("Cursor cleanup"),
+		"loaded project":  bossProjectIdentityStyle("Cursor cleanup", bossHandoffProjectLabelStyle).Render("Cursor cleanup"),
 	} {
 		if !strings.Contains(loadedRendered, want) {
 			t.Fatalf("loaded transcript missing %s highlight:\n%s", label, ansi.Strip(loadedRendered))

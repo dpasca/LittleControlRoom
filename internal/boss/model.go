@@ -1136,7 +1136,8 @@ func (m Model) renderProjectAttentionRow(project ProjectBrief, keyW, flagW, asse
 		assessmentText, assessmentStyle = bossEngineerActivityCell(activity, m.now())
 	}
 	assessment := assessmentStyle.Width(assessmentW).Render(fitLine(assessmentText, assessmentW))
-	name := bossProjectNameStyle.Width(nameW).Render(fitLine(compactProjectName(project), nameW))
+	nameStyle := bossProjectIdentityStyle(bossProjectBriefIdentity(project), bossProjectNameStyle)
+	name := nameStyle.Width(nameW).Render(fitLine(compactProjectName(project), nameW))
 	summaryStyle := bossSummaryStyle(project)
 	if m.summaryFlashActive(project.Path) {
 		summaryStyle = bossSummaryFlashStyle
@@ -1815,7 +1816,7 @@ func handoffMessageHighlights(content string, handoff *HandoffHighlight) []prefi
 	labelEnd := labelStart + ansi.StringWidth(handoffValue.ProjectLabel)
 	return []prefixedMessageHighlight{
 		{Start: 0, End: nameWidth, Style: bossHandoffEngineerNameStyle},
-		{Start: labelStart, End: labelEnd, Style: bossHandoffProjectLabelStyle},
+		{Start: labelStart, End: labelEnd, Style: bossProjectIdentityStyle(handoffValue.ProjectLabel, bossHandoffProjectLabelStyle)},
 	}
 }
 
