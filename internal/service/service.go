@@ -322,6 +322,10 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	s.cfg.LCAgentToolProfile = strings.TrimSpace(settings.LCAgentToolProfile)
 	s.cfg.LCAgentContextProfile = strings.TrimSpace(settings.LCAgentContextProfile)
 	s.cfg.LCAgentRequestTimeout = settings.LCAgentRequestTimeout
+	s.cfg.LCAgentWebSearchBackend = strings.TrimSpace(settings.LCAgentWebSearchBackend)
+	s.cfg.LCAgentWebSearchAPIKey = strings.TrimSpace(settings.LCAgentWebSearchAPIKey)
+	s.cfg.LCAgentWebSearchEngineID = strings.TrimSpace(settings.LCAgentWebSearchEngineID)
+	s.cfg.LCAgentWebSearchURL = strings.TrimSpace(settings.LCAgentWebSearchURL)
 	s.cfg.CodexLaunchPreset = settings.CodexLaunchPreset
 	s.cfg.PlaywrightPolicy = settings.PlaywrightPolicy.Normalize()
 	s.cfg.ScanInterval = settings.ScanInterval

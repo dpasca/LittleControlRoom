@@ -26,19 +26,24 @@ const (
 	lcagentDefaultToolProfile    = "balanced"
 	lcagentDefaultContextProfile = "balanced"
 	lcagentDefaultRequestTimeout = 10 * time.Minute
+	lcagentDefaultWebSearch      = "off"
 )
 
 type lcagentSession struct {
-	projectPath    string
-	dataDir        string
-	execPath       string
-	envFile        string
-	provider       string
-	auto           string
-	toolProfile    string
-	contextProfile string
-	requestTimeout time.Duration
-	notify         func()
+	projectPath       string
+	dataDir           string
+	execPath          string
+	envFile           string
+	provider          string
+	auto              string
+	toolProfile       string
+	contextProfile    string
+	requestTimeout    time.Duration
+	webSearchBackend  string
+	webSearchAPIKey   string
+	webSearchEngineID string
+	webSearchURL      string
+	notify            func()
 
 	mu                 sync.Mutex
 	cmd                *exec.Cmd
@@ -88,20 +93,24 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		model = lcagentDefaultModel(provider)
 	}
 	session := &lcagentSession{
-		projectPath:     strings.TrimSpace(req.ProjectPath),
-		dataDir:         dataDir,
-		execPath:        strings.TrimSpace(req.LCAgentPath),
-		envFile:         strings.TrimSpace(req.LCAgentEnvFile),
-		provider:        provider,
-		auto:            strings.TrimSpace(req.LCAgentAuto),
-		toolProfile:     toolProfile,
-		contextProfile:  contextProfile,
-		requestTimeout:  requestTimeout,
-		notify:          notify,
-		model:           model,
-		modelProvider:   provider,
-		reasoningEffort: strings.TrimSpace(req.PendingReasoning),
-		status:          "Ready",
+		projectPath:       strings.TrimSpace(req.ProjectPath),
+		dataDir:           dataDir,
+		execPath:          strings.TrimSpace(req.LCAgentPath),
+		envFile:           strings.TrimSpace(req.LCAgentEnvFile),
+		provider:          provider,
+		auto:              strings.TrimSpace(req.LCAgentAuto),
+		toolProfile:       toolProfile,
+		contextProfile:    contextProfile,
+		requestTimeout:    requestTimeout,
+		webSearchBackend:  lcagentWebSearchBackendValue(req.LCAgentWebSearchBackend),
+		webSearchAPIKey:   strings.TrimSpace(req.LCAgentWebSearchAPIKey),
+		webSearchEngineID: strings.TrimSpace(req.LCAgentWebSearchEngineID),
+		webSearchURL:      strings.TrimSpace(req.LCAgentWebSearchURL),
+		notify:            notify,
+		model:             model,
+		modelProvider:     provider,
+		reasoningEffort:   strings.TrimSpace(req.PendingReasoning),
+		status:            "Ready",
 	}
 	if replay, err := loadLCAgentReplay(req); err != nil {
 		return nil, err
@@ -114,6 +123,9 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		}
 	} else if !session.started {
 		session.appendEntryLocked(TranscriptStatus, "Experimental LCAgent is ready. Send a prompt to start a one-shot run.")
+		if warning := session.webSearchWarning(); warning != "" {
+			session.appendEntryLocked(TranscriptStatus, warning)
+		}
 	}
 	return session, nil
 }
@@ -303,6 +315,13 @@ func (s *lcagentSession) startRun(prompt, displayPrompt string) error {
 		requestTimeout = lcagentDefaultRequestTimeout
 	}
 	reasoningEffort := strings.TrimSpace(s.reasoningEffort)
+	webSearchBackend := firstNonEmpty(s.webSearchBackend, lcagentDefaultWebSearch)
+	webSearchAPIKey := strings.TrimSpace(s.webSearchAPIKey)
+	webSearchEngineID := strings.TrimSpace(s.webSearchEngineID)
+	webSearchURL := strings.TrimSpace(s.webSearchURL)
+	if warning := s.webSearchWarningLocked(); warning != "" {
+		s.appendEntryLocked(TranscriptStatus, warning)
+	}
 	s.mu.Unlock()
 
 	spec, err := lcagentCommandSpec(s.execPath)
@@ -323,7 +342,14 @@ func (s *lcagentSession) startRun(prompt, displayPrompt string) error {
 		"--tool-profile", toolProfile,
 		"--context-profile", contextProfile,
 		"--request-timeout", requestTimeout.String(),
+		"--web-search-backend", webSearchBackend,
 	)
+	if webSearchEngineID != "" {
+		args = append(args, "--web-search-engine-id", webSearchEngineID)
+	}
+	if webSearchURL != "" {
+		args = append(args, "--web-search-url", webSearchURL)
+	}
 	if reasoningEffort != "" {
 		args = append(args, "--reasoning-effort", reasoningEffort)
 	}
@@ -338,6 +364,14 @@ func (s *lcagentSession) startRun(prompt, displayPrompt string) error {
 	cmd := exec.CommandContext(ctx, spec.Command, args...)
 	cmd.Dir = spec.Dir
 	cmd.Env = os.Environ()
+	if webSearchAPIKey != "" {
+		switch webSearchBackend {
+		case "exa":
+			cmd.Env = append(cmd.Env, "EXA_API_KEY="+webSearchAPIKey)
+		default:
+			cmd.Env = append(cmd.Env, "GOOGLE_SEARCH_API_KEY="+webSearchAPIKey)
+		}
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		cancel()
@@ -490,6 +524,15 @@ func (s *lcagentSession) handleEvent(line []byte) {
 			text += ": " + summary
 		}
 		s.appendAsync(TranscriptStatus, text)
+	case "web_search_profile":
+		enabled := rawJSONBool(event["enabled"])
+		message := rawJSONString(event["message"])
+		backend := rawJSONString(event["backend"])
+		if !enabled {
+			s.appendAsync(TranscriptStatus, firstNonEmpty(message, "LCAgent web search is not available. Configure a web search backend and API key in /settings."))
+		} else if backend != "" {
+			s.appendAsync(TranscriptStatus, "LCAgent web search enabled: "+backend)
+		}
 	case "plan_update":
 		s.appendAsync(TranscriptPlan, lcagentPlanText(event["items"]))
 	case "assistant_message":
@@ -724,6 +767,47 @@ func lcagentContextProfileValue(configured string) (string, error) {
 	}
 }
 
+func lcagentWebSearchBackendValue(configured string) string {
+	value := strings.ToLower(strings.TrimSpace(firstNonEmpty(configured, os.Getenv("LCROOM_LCAGENT_WEB_SEARCH_BACKEND"))))
+	switch value {
+	case "exa", "google", "searxng":
+		return value
+	default:
+		return lcagentDefaultWebSearch
+	}
+}
+
+func (s *lcagentSession) webSearchWarning() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.webSearchWarningLocked()
+}
+
+func (s *lcagentSession) webSearchWarningLocked() string {
+	backend := lcagentWebSearchBackendValue(s.webSearchBackend)
+	switch backend {
+	case "exa":
+		hasAPIKey := firstNonEmpty(s.webSearchAPIKey, os.Getenv("EXA_API_KEY")) != ""
+		if !hasAPIKey && strings.TrimSpace(s.envFile) == "" {
+			return "LCAgent web search is not available. Configure the Exa API key in /settings."
+		}
+	case "google":
+		hasAPIKey := firstNonEmpty(s.webSearchAPIKey, os.Getenv("GOOGLE_SEARCH_API_KEY"), os.Getenv("GOOGLE_API_KEY")) != ""
+		hasEngineID := firstNonEmpty(s.webSearchEngineID, os.Getenv("GOOGLE_SEARCH_ENGINE_ID"), os.Getenv("GOOGLE_CSE_ID")) != ""
+		if (!hasAPIKey || !hasEngineID) && strings.TrimSpace(s.envFile) == "" {
+			return "LCAgent web search is not available. Configure the Google search API key and search engine ID in /settings."
+		}
+	case "searxng":
+		hasURL := firstNonEmpty(s.webSearchURL, os.Getenv("LCAGENT_WEB_SEARCH_URL"), os.Getenv("LCAGENT_SEARXNG_URL")) != ""
+		if !hasURL && strings.TrimSpace(s.envFile) == "" {
+			return "LCAgent web search is not available. Configure the SearXNG URL in /settings."
+		}
+	default:
+		return "LCAgent web search is not available. Configure a web search backend and API key in /settings."
+	}
+	return ""
+}
+
 func lcagentRequestTimeoutValue(configured time.Duration) time.Duration {
 	if configured > 0 {
 		return configured
@@ -834,6 +918,12 @@ func rawJSONString(raw json.RawMessage) string {
 	return strings.TrimSpace(value)
 }
 
+func rawJSONBool(raw json.RawMessage) bool {
+	var value bool
+	_ = json.Unmarshal(raw, &value)
+	return value
+}
+
 func lcagentToolCallText(tool string, raw json.RawMessage) string {
 	tool = firstNonEmpty(strings.TrimSpace(tool), "unknown")
 	summary := lcagentToolArgsSummary(tool, raw)
@@ -940,6 +1030,26 @@ func lcagentToolArgsSummary(tool string, raw json.RawMessage) string {
 			}
 			return strings.Join(nonEmptyStrings(parts), " ")
 		}
+	case "web_search":
+		var args struct {
+			Query       string `json:"query"`
+			MaxResults  int    `json:"max_results"`
+			Site        string `json:"site"`
+			RecencyDays int    `json:"recency_days"`
+		}
+		if json.Unmarshal(raw, &args) == nil {
+			parts := []string{quoteIfSpaced(args.Query)}
+			if strings.TrimSpace(args.Site) != "" {
+				parts = append(parts, "site "+strings.TrimSpace(args.Site))
+			}
+			if args.RecencyDays > 0 {
+				parts = append(parts, fmt.Sprintf("last %dd", args.RecencyDays))
+			}
+			if args.MaxResults > 0 {
+				parts = append(parts, fmt.Sprintf("%d results", args.MaxResults))
+			}
+			return strings.Join(nonEmptyStrings(parts), " ")
+		}
 	case "load_skill":
 		var args struct {
 			Name string `json:"name"`
@@ -975,6 +1085,8 @@ func lcagentToolResultSummary(tool, output, errText string, exitCode int, durati
 		return lcagentListFilesSummary(output, truncated)
 	case "search":
 		return lcagentSearchSummary(output, truncated)
+	case "web_search":
+		return lcagentWebSearchSummary(output, truncated)
 	case "run_command":
 		return lcagentCommandResultSummary(output, exitCode, duration, truncated, binary, artifactPath)
 	case "apply_patch":
@@ -987,6 +1099,24 @@ func lcagentToolResultSummary(tool, output, errText string, exitCode int, durati
 	default:
 		return firstOutputLine(output)
 	}
+}
+
+func lcagentWebSearchSummary(output string, truncated bool) string {
+	values := lcagentOutputHeaderValues(output)
+	parts := []string{}
+	if values["query"] != "" {
+		parts = append(parts, quoteIfSpaced(values["query"]))
+	}
+	if values["backend"] != "" {
+		parts = append(parts, "via "+values["backend"])
+	}
+	if values["results"] != "" {
+		parts = append(parts, values["results"]+" results")
+	}
+	if truncated {
+		parts = append(parts, "truncated")
+	}
+	return strings.Join(nonEmptyStrings(parts), " ")
 }
 
 func lcagentFileReadSummary(output string, truncated bool) string {

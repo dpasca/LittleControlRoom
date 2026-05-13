@@ -20,13 +20,13 @@ Implemented pieces:
   final responses, touched files, provider usage, tool profiles, and context
   profiles.
 - Workspace-contained tools: `read_file`, `file_outline`, `module_outline`,
-  `list_files`, literal `search`, `load_skill`, `run_command`, `apply_patch`,
-  `update_plan`, and `final_response`.
+  `list_files`, literal `search`, optional `web_search`, `load_skill`,
+  `run_command`, `apply_patch`, `update_plan`, and `final_response`.
 - Provider adapters for OpenRouter, OpenAI, DeepSeek, and Moonshot/Kimi routes.
 - Experimental tool profiles: `balanced` and `generous`.
 - Experimental context profiles: `balanced` and `large`.
 - LCR settings for executable path, env file, provider, autonomy, tool profile,
-  context profile, and request timeout.
+  context profile, request timeout, and optional web search backend credentials.
 - LCR detector/replay support for LCAgent artifacts.
 - Benchmarking artifacts under `docs/research/` and workflow notes in
   `docs/lcagent_benchmarking.md`.
@@ -49,6 +49,9 @@ LCR session parity:
   one-shot run rather than continuing the previous model context.
 - The model picker is intentionally minimal and does not discover provider
   models or validate provider credentials.
+- `web_search` is off by default. Exa-backed search needs an Exa API key;
+  Google-backed search needs a Programmable Search API key and search engine
+  ID; SearXNG-backed search needs a base URL.
 
 Setup and product UX:
 

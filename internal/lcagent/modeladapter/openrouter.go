@@ -833,6 +833,7 @@ type ToolOptions struct {
 	DefaultOutlineFileLimit int
 	MaxOutlineFileLimit     int
 	MaxModuleOutlineChars   int
+	WebSearchEnabled        bool
 }
 
 func Tools() []ToolDefinition {
@@ -847,7 +848,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 		readDescription = "Read a bounded line range from a text file inside the workspace. Larger read limits are available in this run: after search or file_outline identifies a central file, prefer contiguous evidence-complete ranges over tiny samples."
 		limitDescription = fmt.Sprintf("Maximum lines to read. For central files, prefer 120-300 line ranges and continue with next_offset when useful. Defaults to %d.", opts.DefaultReadLineLimit)
 	}
-	return []ToolDefinition{
+	defs := []ToolDefinition{
 		{
 			Type: "function",
 			Function: FunctionSpec{
@@ -932,7 +933,29 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 				},
 			},
 		},
-		{
+	}
+	if opts.WebSearchEnabled {
+		defs = append(defs, ToolDefinition{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "web_search",
+				Description: "Search the public web for current external information and return concise source results with URLs. Use this for discovery; use run_command or file tools for workspace-local evidence.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"query":        map[string]any{"type": "string", "description": "Natural-language search query."},
+						"max_results":  map[string]any{"type": "integer", "minimum": 1, "maximum": 10, "description": "Maximum results to return. Defaults to 5."},
+						"site":         map[string]any{"type": "string", "description": "Optional domain to restrict results, for example docs.example.com."},
+						"recency_days": map[string]any{"type": "integer", "minimum": 1, "maximum": 365, "description": "Optional recency window in days."},
+					},
+					"required": []string{"query"},
+				},
+			},
+		})
+	}
+	defs = append(defs,
+		ToolDefinition{
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "load_skill",
@@ -947,7 +970,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 				},
 			},
 		},
-		{
+		ToolDefinition{
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "run_command",
@@ -964,7 +987,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 				},
 			},
 		},
-		{
+		ToolDefinition{
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "apply_patch",
@@ -979,7 +1002,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 				},
 			},
 		},
-		{
+		ToolDefinition{
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "update_plan",
@@ -1005,7 +1028,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 				},
 			},
 		},
-		{
+		ToolDefinition{
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "final_response",
@@ -1022,7 +1045,8 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 				},
 			},
 		},
-	}
+	)
+	return defs
 }
 
 func (o ToolOptions) withDefaults() ToolOptions {
@@ -1075,6 +1099,7 @@ type SystemPromptOptions struct {
 	ToolProfile          string
 	DefaultReadLineLimit int
 	MaxReadLineLimit     int
+	WebSearchEnabled     bool
 }
 
 func SystemPrompt(skillIndex, projectInstructions string) string {
@@ -1102,6 +1127,13 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		"Search queries are case-insensitive literal substrings, not regexes, globs, or alternation patterns; use separate searches for separate identifiers or phrases.",
 		"Use read_file for targeted ranges. Reading from line 1 is useful for imports/package context, but do not default to first-N-line scouting when an outline or search can locate the relevant range.",
 		readScoutingLine,
+	}
+	if opts.WebSearchEnabled {
+		lines = append(lines,
+			"Use web_search for current public web information or documentation discovery when workspace evidence is not enough; cite URLs from the tool result in final_response when web evidence affects the answer.",
+		)
+	}
+	lines = append(lines,
 		"Use workspace-relative paths in file tools; absolute paths are denied.",
 		"File tools are workspace-only; use read-only run_command argv for paths outside the workspace.",
 		"When using run_command, prefer argv over command strings; shell commands are for shell syntax only.",
@@ -1111,7 +1143,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		"Use apply_patch for source edits. Patches must use this exact shape: *** Begin Patch, *** Update File: path, @@, -old line, +new line, *** End Patch.",
 		"After edits, use the patch diff summary and run or explain verification before final_response.",
 		"When done, call final_response exactly once. Its summary must contain the full answer, changed files, and verification outcome. The verification array must name checks run or say not run with the reason; it is only supporting evidence.",
-	}
+	)
 	if strings.EqualFold(opts.ToolProfile, "generous") {
 		lines = append(lines,
 			fmt.Sprintf("For this run, read_file defaults to %d lines and permits up to %d lines. Once outline/search identifies a central file, read enough contiguous context to understand it rather than sampling only small first chunks.", opts.DefaultReadLineLimit, opts.MaxReadLineLimit),

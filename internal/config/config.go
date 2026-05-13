@@ -57,6 +57,10 @@ type AppConfig struct {
 	LCAgentToolProfile        string
 	LCAgentContextProfile     string
 	LCAgentRequestTimeout     time.Duration
+	LCAgentWebSearchBackend   string
+	LCAgentWebSearchAPIKey    string
+	LCAgentWebSearchEngineID  string
+	LCAgentWebSearchURL       string
 	CodexLaunchPreset         codexcli.Preset
 	PlaywrightPolicy          browserctl.Policy
 	DataDir                   string
@@ -157,6 +161,10 @@ type fileConfig struct {
 	LCAgentToolProfile        *string   `toml:"lcagent_tool_profile"`
 	LCAgentContextProfile     *string   `toml:"lcagent_context_profile"`
 	LCAgentRequestTimeout     *string   `toml:"lcagent_request_timeout"`
+	LCAgentWebSearchBackend   *string   `toml:"lcagent_web_search_backend"`
+	LCAgentWebSearchAPIKey    *string   `toml:"lcagent_web_search_api_key"`
+	LCAgentWebSearchEngineID  *string   `toml:"lcagent_web_search_engine_id"`
+	LCAgentWebSearchURL       *string   `toml:"lcagent_web_search_url"`
 	CodexLaunchPreset         string    `toml:"codex_launch_preset"`
 	PlaywrightManagementMode  *string   `toml:"playwright_management_mode"`
 	PlaywrightDefaultBrowser  *string   `toml:"playwright_default_browser_mode"`
@@ -173,27 +181,28 @@ func Default() AppConfig {
 	home, _ := os.UserHomeDir()
 	dataDir := filepath.Join(home, brand.DataDirName)
 	return AppConfig{
-		IncludePaths:          []string{filepath.Join(home, "dev", "repos")},
-		ScratchRoot:           filepath.Join(home, "LittleControlRoom", "tasks"),
-		CodexHome:             filepath.Join(home, ".codex"),
-		OpenCodeHome:          filepath.Join(home, ".local", "share", "opencode"),
-		ClaudeCodeHome:        filepath.Join(home, ".claude"),
-		LCAgentProvider:       "openrouter",
-		LCAgentAuto:           "low",
-		LCAgentToolProfile:    "balanced",
-		LCAgentContextProfile: "balanced",
-		LCAgentRequestTimeout: 10 * time.Minute,
-		CodexLaunchPreset:     codexcli.DefaultPreset(),
-		PlaywrightPolicy:      browserctl.DefaultPolicy(),
-		DataDir:               dataDir,
-		DBPath:                filepath.Join(dataDir, brand.DBFileName),
-		ConfigPath:            filepath.Join(dataDir, brand.ConfigFileName),
-		SnapshotLimit:         3,
-		ScanInterval:          60 * time.Second,
-		ActiveThreshold:       20 * time.Minute,
-		StuckThreshold:        4 * time.Hour,
-		HideReasoningSections: true,
-		PrivacyMode:           false,
+		IncludePaths:            []string{filepath.Join(home, "dev", "repos")},
+		ScratchRoot:             filepath.Join(home, "LittleControlRoom", "tasks"),
+		CodexHome:               filepath.Join(home, ".codex"),
+		OpenCodeHome:            filepath.Join(home, ".local", "share", "opencode"),
+		ClaudeCodeHome:          filepath.Join(home, ".claude"),
+		LCAgentProvider:         "openrouter",
+		LCAgentAuto:             "low",
+		LCAgentToolProfile:      "balanced",
+		LCAgentContextProfile:   "balanced",
+		LCAgentRequestTimeout:   10 * time.Minute,
+		LCAgentWebSearchBackend: "off",
+		CodexLaunchPreset:       codexcli.DefaultPreset(),
+		PlaywrightPolicy:        browserctl.DefaultPolicy(),
+		DataDir:                 dataDir,
+		DBPath:                  filepath.Join(dataDir, brand.DBFileName),
+		ConfigPath:              filepath.Join(dataDir, brand.ConfigFileName),
+		SnapshotLimit:           3,
+		ScanInterval:            60 * time.Second,
+		ActiveThreshold:         20 * time.Minute,
+		StuckThreshold:          4 * time.Hour,
+		HideReasoningSections:   true,
+		PrivacyMode:             false,
 	}
 }
 
@@ -234,6 +243,10 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	lcagentToolProfile := fs.String("lcagent-tool-profile", cfg.LCAgentToolProfile, "LCAgent file tool budget profile: balanced or generous")
 	lcagentContextProfile := fs.String("lcagent-context-profile", cfg.LCAgentContextProfile, "LCAgent provider loop context profile: balanced or large")
 	lcagentRequestTimeout := fs.Duration("lcagent-request-timeout", cfg.LCAgentRequestTimeout, "LCAgent provider HTTP request timeout")
+	lcagentWebSearchBackend := fs.String("lcagent-web-search-backend", cfg.LCAgentWebSearchBackend, "LCAgent web search backend: off, exa, google, or searxng")
+	lcagentWebSearchAPIKey := fs.String("lcagent-web-search-api-key", cfg.LCAgentWebSearchAPIKey, "LCAgent web search API key for Exa or Google")
+	lcagentWebSearchEngineID := fs.String("lcagent-web-search-engine-id", cfg.LCAgentWebSearchEngineID, "LCAgent Google Programmable Search engine ID")
+	lcagentWebSearchURL := fs.String("lcagent-web-search-url", cfg.LCAgentWebSearchURL, "LCAgent web search endpoint URL, used by SearXNG")
 	codexLaunchPreset := fs.String("codex-launch-preset", string(cfg.CodexLaunchPreset), "Codex launch preset: yolo, full-auto, or safe")
 	dbPath := fs.String("db", cfg.DBPath, fmt.Sprintf("Path to %s SQLite database", brand.Name))
 	scanInterval := fs.Duration("interval", cfg.ScanInterval, "Scan interval")
@@ -321,6 +334,13 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 		return AppConfig{}, err
 	}
 	cfg.LCAgentRequestTimeout = *lcagentRequestTimeout
+	cfg.LCAgentWebSearchBackend, err = parseLCAgentWebSearchBackend(*lcagentWebSearchBackend)
+	if err != nil {
+		return AppConfig{}, err
+	}
+	cfg.LCAgentWebSearchAPIKey = strings.TrimSpace(*lcagentWebSearchAPIKey)
+	cfg.LCAgentWebSearchEngineID = strings.TrimSpace(*lcagentWebSearchEngineID)
+	cfg.LCAgentWebSearchURL = strings.TrimSpace(*lcagentWebSearchURL)
 	cfg.CodexLaunchPreset, err = codexcli.ParsePreset(*codexLaunchPreset)
 	if err != nil {
 		return AppConfig{}, fmt.Errorf("codex-launch-preset: %w", err)
@@ -548,6 +568,16 @@ func applyConfigFile(cfg *AppConfig) error {
 		}
 		cfg.LCAgentRequestTimeout = value
 	}
+	if fc.LCAgentWebSearchBackend != nil {
+		value, err := parseLCAgentWebSearchBackend(*fc.LCAgentWebSearchBackend)
+		if err != nil {
+			return fmt.Errorf("config lcagent_web_search_backend: %w", err)
+		}
+		cfg.LCAgentWebSearchBackend = value
+	}
+	applyOptionalTrimmedString(&cfg.LCAgentWebSearchAPIKey, fc.LCAgentWebSearchAPIKey)
+	applyOptionalTrimmedString(&cfg.LCAgentWebSearchEngineID, fc.LCAgentWebSearchEngineID)
+	applyOptionalTrimmedString(&cfg.LCAgentWebSearchURL, fc.LCAgentWebSearchURL)
 	if strings.TrimSpace(fc.CodexLaunchPreset) != "" {
 		preset, err := codexcli.ParsePreset(fc.CodexLaunchPreset)
 		if err != nil {
@@ -639,6 +669,9 @@ func validate(cfg AppConfig) error {
 	if cfg.LCAgentRequestTimeout <= 0 {
 		return errors.New("lcagent-request-timeout must be > 0")
 	}
+	if _, err := parseLCAgentWebSearchBackend(cfg.LCAgentWebSearchBackend); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -691,6 +724,19 @@ func parseLCAgentContextProfile(raw string) (string, error) {
 		return value, nil
 	default:
 		return "", fmt.Errorf("lcagent-context-profile must be one of: balanced, large")
+	}
+}
+
+func parseLCAgentWebSearchBackend(raw string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if value == "" {
+		return "off", nil
+	}
+	switch value {
+	case "off", "exa", "google", "searxng":
+		return value, nil
+	default:
+		return "", fmt.Errorf("lcagent-web-search-backend must be one of: off, exa, google, searxng")
 	}
 }
 

@@ -19,6 +19,15 @@ type ToolResult struct {
 	PatchSummary *PatchSummary `json:"patch_summary,omitempty"`
 }
 
+type WebSearchBackend string
+
+const (
+	WebSearchBackendOff     WebSearchBackend = "off"
+	WebSearchBackendExa     WebSearchBackend = "exa"
+	WebSearchBackendGoogle  WebSearchBackend = "google"
+	WebSearchBackendSearXNG WebSearchBackend = "searxng"
+)
+
 type PlanItem struct {
 	Step   string `json:"step"`
 	Status string `json:"status"`

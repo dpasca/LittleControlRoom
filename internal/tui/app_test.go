@@ -18967,8 +18967,8 @@ func TestCommandEnterOpensSettingsMode(t *testing.T) {
 	if got.commandMode {
 		t.Fatalf("command mode should close after /settings")
 	}
-	if len(got.settingsFields) != 30 {
-		t.Fatalf("settings field count = %d, want 30", len(got.settingsFields))
+	if len(got.settingsFields) != 34 {
+		t.Fatalf("settings field count = %d, want 34", len(got.settingsFields))
 	}
 }
 
@@ -21298,6 +21298,149 @@ func TestSettingsBrowserAutomationFieldRendersChooserHint(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("browser settings field is missing %q: %q", want, rendered)
 		}
+	}
+}
+
+func TestSettingsLCAgentWebSearchEnterOpensPicker(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+	_ = m.setSettingsSelection(settingsFieldLCAgentWebSearchBackend)
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("web search picker enter should not save immediately")
+	}
+	if !got.settingsLCAgentSearchPickerVisible {
+		t.Fatalf("web search enter should open the chooser")
+	}
+	if got.status != "Choose the web search backend for LCAgent." {
+		t.Fatalf("status = %q, want chooser status", got.status)
+	}
+}
+
+func TestSettingsLCAgentWebSearchPickerChoosesExa(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+	_ = m.setSettingsSelection(settingsFieldLCAgentWebSearchBackend)
+
+	updated, _ := m.openSettingsLCAgentWebSearchPicker()
+	got := updated.(Model)
+	updated, _ = got.updateSettingsLCAgentWebSearchPickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	rendered := ansi.Strip(got.renderSettingsLCAgentWebSearchPickerContent(56, 18))
+	for _, want := range []string{"Off  (current)", "> Exa", "Selected: Exa"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("web search picker is missing %q: %q", want, rendered)
+		}
+	}
+
+	updated, _ = got.updateSettingsLCAgentWebSearchPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if got.settingsLCAgentSearchPickerVisible {
+		t.Fatalf("web search picker should close after choosing")
+	}
+	if got.settingsFields[settingsFieldLCAgentWebSearchBackend].input.Value() != "exa" {
+		t.Fatalf("web search backend = %q, want exa", got.settingsFields[settingsFieldLCAgentWebSearchBackend].input.Value())
+	}
+}
+
+func TestSettingsLCAgentWebSearchShowsOnlyRelevantFields(t *testing.T) {
+	tests := []struct {
+		name    string
+		backend string
+		want    []string
+		hide    []string
+	}{
+		{
+			name:    "off",
+			backend: "off",
+			hide:    []string{"LCAgent search key", "LCAgent search engine", "LCAgent SearXNG URL"},
+		},
+		{
+			name:    "exa",
+			backend: "exa",
+			want:    []string{"LCAgent search key"},
+			hide:    []string{"LCAgent search engine", "LCAgent SearXNG URL"},
+		},
+		{
+			name:    "google",
+			backend: "google",
+			want:    []string{"LCAgent search key", "LCAgent search engine"},
+			hide:    []string{"LCAgent SearXNG URL"},
+		},
+		{
+			name:    "searxng",
+			backend: "searxng",
+			want:    []string{"LCAgent SearXNG URL"},
+			hide:    []string{"LCAgent search key", "LCAgent search engine"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			settings := config.EditableSettingsFromAppConfig(config.Default())
+			settings.LCAgentWebSearchBackend = tt.backend
+			settings.LCAgentWebSearchAPIKey = "search-key"
+			settings.LCAgentWebSearchEngineID = "engine-id"
+			settings.LCAgentWebSearchURL = "http://127.0.0.1:8888"
+			m := Model{
+				settingsMode:     true,
+				settingsFields:   newSettingsFields(settings),
+				settingsBaseline: &settings,
+				width:            100,
+				height:           32,
+			}
+			_ = m.setSettingsSelection(settingsFieldLCAgentWebSearchBackend)
+
+			rendered := ansi.Strip(m.renderSettingsSectionLayout(96, 40))
+			for _, want := range tt.want {
+				if !strings.Contains(rendered, want) {
+					t.Fatalf("settings for %s missing %q:\n%s", tt.backend, want, rendered)
+				}
+			}
+			for _, hide := range tt.hide {
+				if strings.Contains(rendered, hide) {
+					t.Fatalf("settings for %s should hide %q:\n%s", tt.backend, hide, rendered)
+				}
+			}
+		})
+	}
+}
+
+func TestSettingsLCAgentWebSearchNavigationSkipsHiddenFields(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.LCAgentWebSearchBackend = "exa"
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+	_ = m.setSettingsSelection(settingsFieldLCAgentWebSearchBackend)
+
+	_ = m.moveSettingsSelection(1)
+	if m.settingsSelected != settingsFieldLCAgentWebSearchAPIKey {
+		t.Fatalf("after backend, selected = %d, want search API key", m.settingsSelected)
+	}
+	_ = m.moveSettingsSelection(1)
+	if m.settingsSelected == settingsFieldLCAgentWebSearchEngineID || m.settingsSelected == settingsFieldLCAgentWebSearchURL {
+		t.Fatalf("navigation selected hidden web search field %d", m.settingsSelected)
 	}
 }
 

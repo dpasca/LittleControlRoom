@@ -65,6 +65,20 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 	if !strings.Contains(descriptions["search"], "literal substring") || !strings.Contains(descriptions["search"], "not a regex") {
 		t.Fatalf("search description should explain literal matching: %q", descriptions["search"])
 	}
+	if names["web_search"] {
+		t.Fatalf("Tools() should not expose web_search unless it is enabled")
+	}
+}
+
+func TestToolsWithOptionsExposeWebSearchWhenEnabled(t *testing.T) {
+	spec := toolSpec(t, ToolsWithOptions(ToolOptions{WebSearchEnabled: true}), "web_search")
+	if !strings.Contains(spec.Description, "public web") {
+		t.Fatalf("web_search description = %q", spec.Description)
+	}
+	props := spec.Parameters["properties"].(map[string]any)
+	if _, ok := props["query"]; !ok {
+		t.Fatalf("web_search missing query property: %#v", props)
+	}
 }
 
 func TestToolsWithOptionsExposeConfiguredFileLimits(t *testing.T) {

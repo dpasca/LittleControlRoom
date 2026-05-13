@@ -91,67 +91,69 @@ type Model struct {
 	worktreeRemoveConfirm *worktreeRemoveConfirmState
 	attentionDialog       *attentionDialogState
 
-	commandMode                     bool
-	commandInput                    textinput.Model
-	commandSelected                 int
-	bossMode                        bool
-	bossModelActive                 bool
-	bossModel                       bossui.Model
-	returnToBossModeAfterCodexHide  bool
-	bossSetupPrompt                 *bossSetupPromptState
-	errorLogVisible                 bool
-	errorLogSelected                int
-	errorLogEntries                 []errorLogEntry
-	projectFilter                   string
-	projectFilterDialog             *projectFilterDialogState
-	ignoredPickerVisible            bool
-	ignoredPickerLoading            bool
-	ignoredPickerSelected           int
-	ignoredPickerItems              []model.IgnoredProject
-	newProjectDialog                *newProjectDialogState
-	newTaskDialog                   *newTaskDialogState
-	runCommandDialog                *runCommandDialogState
-	skillsDialog                    *skillsDialogState
-	preferredSelectPath             string
-	diffView                        *diffViewState
-	gitStatusDialog                 *gitStatusDialog
-	gitStatusApplying               bool
-	commitPreview                   *service.CommitPreview
-	commitPreviewMessageOverride    string
-	commitPreviewRefreshing         bool
-	commitPreviewRequestID          int
-	commitApplying                  bool
-	commitTodoCompletions           []commitTodoItem
-	commitTodoSelected              int
-	setupMode                       bool
-	setupChecked                    bool
-	setupLoading                    bool
-	setupSaving                     bool
-	setupReviewMode                 bool
-	setupStep                       setupStep
-	setupFocusedRole                setupRole
-	setupSelected                   int
-	setupBossSelected               int
-	setupConfigMode                 bool
-	setupConfigSelected             int
-	setupModelTier                  config.ModelTier
-	setupSnapshot                   aibackend.Snapshot
-	localModelPickerVisible         bool
-	localModelPickerBackend         config.AIBackend
-	localModelPickerSelected        int
-	settingsMode                    bool
-	settingsSaving                  bool
-	settingsFields                  []settingsField
-	settingsSectionSelected         int
-	settingsSelected                int
-	settingsBaseline                *config.EditableSettings
-	settingsRevealPrivacy           bool
-	settingsBossChatPickerVisible   bool
-	settingsBossChatPickerSelected  int
-	settingsBrowserPickerVisible    bool
-	settingsBrowserPickerSelected   int
-	settingsAIBackendPickerVisible  bool
-	settingsAIBackendPickerSelected int
+	commandMode                         bool
+	commandInput                        textinput.Model
+	commandSelected                     int
+	bossMode                            bool
+	bossModelActive                     bool
+	bossModel                           bossui.Model
+	returnToBossModeAfterCodexHide      bool
+	bossSetupPrompt                     *bossSetupPromptState
+	errorLogVisible                     bool
+	errorLogSelected                    int
+	errorLogEntries                     []errorLogEntry
+	projectFilter                       string
+	projectFilterDialog                 *projectFilterDialogState
+	ignoredPickerVisible                bool
+	ignoredPickerLoading                bool
+	ignoredPickerSelected               int
+	ignoredPickerItems                  []model.IgnoredProject
+	newProjectDialog                    *newProjectDialogState
+	newTaskDialog                       *newTaskDialogState
+	runCommandDialog                    *runCommandDialogState
+	skillsDialog                        *skillsDialogState
+	preferredSelectPath                 string
+	diffView                            *diffViewState
+	gitStatusDialog                     *gitStatusDialog
+	gitStatusApplying                   bool
+	commitPreview                       *service.CommitPreview
+	commitPreviewMessageOverride        string
+	commitPreviewRefreshing             bool
+	commitPreviewRequestID              int
+	commitApplying                      bool
+	commitTodoCompletions               []commitTodoItem
+	commitTodoSelected                  int
+	setupMode                           bool
+	setupChecked                        bool
+	setupLoading                        bool
+	setupSaving                         bool
+	setupReviewMode                     bool
+	setupStep                           setupStep
+	setupFocusedRole                    setupRole
+	setupSelected                       int
+	setupBossSelected                   int
+	setupConfigMode                     bool
+	setupConfigSelected                 int
+	setupModelTier                      config.ModelTier
+	setupSnapshot                       aibackend.Snapshot
+	localModelPickerVisible             bool
+	localModelPickerBackend             config.AIBackend
+	localModelPickerSelected            int
+	settingsMode                        bool
+	settingsSaving                      bool
+	settingsFields                      []settingsField
+	settingsSectionSelected             int
+	settingsSelected                    int
+	settingsBaseline                    *config.EditableSettings
+	settingsRevealPrivacy               bool
+	settingsBossChatPickerVisible       bool
+	settingsBossChatPickerSelected      int
+	settingsBrowserPickerVisible        bool
+	settingsBrowserPickerSelected       int
+	settingsAIBackendPickerVisible      bool
+	settingsAIBackendPickerSelected     int
+	settingsLCAgentSearchPickerVisible  bool
+	settingsLCAgentSearchPickerSelected int
 
 	detailViewport        viewport.Model
 	runtimeViewport       viewport.Model
@@ -1143,6 +1145,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.settingsBrowserPickerVisible {
 			return m.updateSettingsBrowserAutomationPickerMode(msg)
+		}
+		if m.settingsLCAgentSearchPickerVisible {
+			return m.updateSettingsLCAgentWebSearchPickerMode(msg)
 		}
 		if m.ignoredPickerVisible {
 			return m.updateIgnoredPickerMode(msg)
@@ -2907,6 +2912,9 @@ func (m Model) View() string {
 		}
 		if m.settingsBrowserPickerVisible {
 			body = m.renderSettingsBrowserAutomationPickerOverlay(body, layout.width, layout.height)
+		}
+		if m.settingsLCAgentSearchPickerVisible {
+			body = m.renderSettingsLCAgentWebSearchPickerOverlay(body, layout.width, layout.height)
 		}
 	} else if m.showPerf {
 		body = m.renderPerfOverlay(body, layout.width, layout.height)

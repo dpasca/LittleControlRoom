@@ -678,22 +678,26 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 	}
 
 	req := codexapp.LaunchRequest{
-		Provider:              provider,
-		ProjectPath:           p.Path,
-		ResumeID:              firstNonEmptyTrimmed(options.resumeID, m.selectedProjectSessionID(p, provider)),
-		ForceNew:              options.forceNew,
-		Prompt:                options.prompt,
-		Preset:                m.currentCodexLaunchPreset(),
-		PlaywrightPolicy:      m.currentPlaywrightPolicy(),
-		AppDataDir:            m.appDataDir(),
-		CodexHome:             m.codexHome(),
-		LCAgentPath:           m.lcagentPath(),
-		LCAgentEnvFile:        m.lcagentEnvFile(),
-		LCAgentProvider:       m.lcagentProvider(),
-		LCAgentAuto:           m.lcagentAuto(),
-		LCAgentToolProfile:    m.lcagentToolProfile(),
-		LCAgentContextProfile: m.lcagentContextProfile(),
-		LCAgentRequestTimeout: m.lcagentRequestTimeout(),
+		Provider:                 provider,
+		ProjectPath:              p.Path,
+		ResumeID:                 firstNonEmptyTrimmed(options.resumeID, m.selectedProjectSessionID(p, provider)),
+		ForceNew:                 options.forceNew,
+		Prompt:                   options.prompt,
+		Preset:                   m.currentCodexLaunchPreset(),
+		PlaywrightPolicy:         m.currentPlaywrightPolicy(),
+		AppDataDir:               m.appDataDir(),
+		CodexHome:                m.codexHome(),
+		LCAgentPath:              m.lcagentPath(),
+		LCAgentEnvFile:           m.lcagentEnvFile(),
+		LCAgentProvider:          m.lcagentProvider(),
+		LCAgentAuto:              m.lcagentAuto(),
+		LCAgentToolProfile:       m.lcagentToolProfile(),
+		LCAgentContextProfile:    m.lcagentContextProfile(),
+		LCAgentRequestTimeout:    m.lcagentRequestTimeout(),
+		LCAgentWebSearchBackend:  m.lcagentWebSearchBackend(),
+		LCAgentWebSearchAPIKey:   m.lcagentWebSearchAPIKey(),
+		LCAgentWebSearchEngineID: m.lcagentWebSearchEngineID(),
+		LCAgentWebSearchURL:      m.lcagentWebSearchURL(),
 	}
 	if err := req.Validate(); err != nil {
 		m.status = err.Error()
@@ -794,6 +798,34 @@ func (m Model) lcagentRequestTimeout() time.Duration {
 		return m.svc.Config().LCAgentRequestTimeout
 	}
 	return config.Default().LCAgentRequestTimeout
+}
+
+func (m Model) lcagentWebSearchBackend() string {
+	if m.svc != nil {
+		return strings.TrimSpace(m.svc.Config().LCAgentWebSearchBackend)
+	}
+	return strings.TrimSpace(config.Default().LCAgentWebSearchBackend)
+}
+
+func (m Model) lcagentWebSearchAPIKey() string {
+	if m.svc != nil {
+		return strings.TrimSpace(m.svc.Config().LCAgentWebSearchAPIKey)
+	}
+	return strings.TrimSpace(config.Default().LCAgentWebSearchAPIKey)
+}
+
+func (m Model) lcagentWebSearchEngineID() string {
+	if m.svc != nil {
+		return strings.TrimSpace(m.svc.Config().LCAgentWebSearchEngineID)
+	}
+	return strings.TrimSpace(config.Default().LCAgentWebSearchEngineID)
+}
+
+func (m Model) lcagentWebSearchURL() string {
+	if m.svc != nil {
+		return strings.TrimSpace(m.svc.Config().LCAgentWebSearchURL)
+	}
+	return strings.TrimSpace(config.Default().LCAgentWebSearchURL)
 }
 
 type embeddedLaunchBlock struct {

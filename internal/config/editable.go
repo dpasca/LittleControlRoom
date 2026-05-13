@@ -49,6 +49,10 @@ type EditableSettings struct {
 	LCAgentToolProfile        string
 	LCAgentContextProfile     string
 	LCAgentRequestTimeout     time.Duration
+	LCAgentWebSearchBackend   string
+	LCAgentWebSearchAPIKey    string
+	LCAgentWebSearchEngineID  string
+	LCAgentWebSearchURL       string
 	CodexLaunchPreset         codexcli.Preset
 	PlaywrightPolicy          browserctl.Policy
 	ScanInterval              time.Duration
@@ -96,6 +100,10 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		LCAgentToolProfile:        cfg.LCAgentToolProfile,
 		LCAgentContextProfile:     cfg.LCAgentContextProfile,
 		LCAgentRequestTimeout:     cfg.LCAgentRequestTimeout,
+		LCAgentWebSearchBackend:   cfg.LCAgentWebSearchBackend,
+		LCAgentWebSearchAPIKey:    cfg.LCAgentWebSearchAPIKey,
+		LCAgentWebSearchEngineID:  cfg.LCAgentWebSearchEngineID,
+		LCAgentWebSearchURL:       cfg.LCAgentWebSearchURL,
 		CodexLaunchPreset:         cfg.CodexLaunchPreset,
 		PlaywrightPolicy:          cfg.PlaywrightPolicy.Normalize(),
 		ScanInterval:              cfg.ScanInterval,
@@ -139,7 +147,7 @@ func firstNonEmptyTrimmed(values ...string) string {
 	return ""
 }
 
-func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, bossHelmModelRaw, bossUtilityModelRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, lcagentPathRaw, lcagentEnvFileRaw, lcagentProviderRaw, lcagentAutoRaw, lcagentToolProfileRaw, lcagentContextProfileRaw, lcagentRequestTimeoutRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
+func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, bossHelmModelRaw, bossUtilityModelRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, lcagentPathRaw, lcagentEnvFileRaw, lcagentProviderRaw, lcagentAutoRaw, lcagentToolProfileRaw, lcagentContextProfileRaw, lcagentRequestTimeoutRaw, lcagentWebSearchBackendRaw, lcagentWebSearchAPIKeyRaw, lcagentWebSearchEngineIDRaw, lcagentWebSearchURLRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
 	parsedBackend, err := ParseAIBackend(string(aiBackend))
 	if err != nil {
 		return EditableSettings{}, err
@@ -182,6 +190,10 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 		return EditableSettings{}, err
 	}
 	lcagentRequestTimeout, err := parseConfigDuration(strings.TrimSpace(lcagentRequestTimeoutRaw), "lcagent_request_timeout")
+	if err != nil {
+		return EditableSettings{}, err
+	}
+	lcagentWebSearchBackend, err := parseLCAgentWebSearchBackend(lcagentWebSearchBackendRaw)
 	if err != nil {
 		return EditableSettings{}, err
 	}
@@ -258,19 +270,23 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 			LoginMode:          playwrightLoginMode,
 			IsolationScope:     playwrightIsolationScope,
 		},
-		OpenCodeModelTier:     strings.TrimSpace(openCodeModelTierRaw),
-		LCAgentPath:           lcagentPath,
-		LCAgentEnvFile:        lcagentEnvFile,
-		LCAgentProvider:       lcagentProvider,
-		LCAgentAuto:           lcagentAuto,
-		LCAgentToolProfile:    lcagentToolProfile,
-		LCAgentContextProfile: lcagentContextProfile,
-		LCAgentRequestTimeout: lcagentRequestTimeout,
-		HideReasoningSections: hideReasoningSections,
-		PrivacyMode:           privacyMode,
-		ScanInterval:          interval,
-		ActiveThreshold:       active,
-		StuckThreshold:        stuck,
+		OpenCodeModelTier:        strings.TrimSpace(openCodeModelTierRaw),
+		LCAgentPath:              lcagentPath,
+		LCAgentEnvFile:           lcagentEnvFile,
+		LCAgentProvider:          lcagentProvider,
+		LCAgentAuto:              lcagentAuto,
+		LCAgentToolProfile:       lcagentToolProfile,
+		LCAgentContextProfile:    lcagentContextProfile,
+		LCAgentRequestTimeout:    lcagentRequestTimeout,
+		LCAgentWebSearchBackend:  lcagentWebSearchBackend,
+		LCAgentWebSearchAPIKey:   strings.TrimSpace(lcagentWebSearchAPIKeyRaw),
+		LCAgentWebSearchEngineID: strings.TrimSpace(lcagentWebSearchEngineIDRaw),
+		LCAgentWebSearchURL:      strings.TrimSpace(lcagentWebSearchURLRaw),
+		HideReasoningSections:    hideReasoningSections,
+		PrivacyMode:              privacyMode,
+		ScanInterval:             interval,
+		ActiveThreshold:          active,
+		StuckThreshold:           stuck,
 	}
 	if err := validateEditableSettings(settings); err != nil {
 		return EditableSettings{}, err
@@ -356,6 +372,10 @@ func validateEditableSettings(settings EditableSettings) error {
 	if cfg.LCAgentRequestTimeout <= 0 {
 		cfg.LCAgentRequestTimeout = Default().LCAgentRequestTimeout
 	}
+	cfg.LCAgentWebSearchBackend = strings.TrimSpace(settings.LCAgentWebSearchBackend)
+	cfg.LCAgentWebSearchAPIKey = strings.TrimSpace(settings.LCAgentWebSearchAPIKey)
+	cfg.LCAgentWebSearchEngineID = strings.TrimSpace(settings.LCAgentWebSearchEngineID)
+	cfg.LCAgentWebSearchURL = strings.TrimSpace(settings.LCAgentWebSearchURL)
 	cfg.CodexLaunchPreset = settings.CodexLaunchPreset
 	cfg.PlaywrightPolicy = settings.PlaywrightPolicy.Normalize()
 	cfg.ScanInterval = settings.ScanInterval
@@ -511,6 +531,22 @@ func renderEditableSettings(settings EditableSettings) string {
 	}
 	if settings.LCAgentRequestTimeout > 0 {
 		lines = append(lines, fmt.Sprintf("lcagent_request_timeout = %s", strconv.Quote(formatConfigDuration(settings.LCAgentRequestTimeout))))
+		wroteLCAgentConfig = true
+	}
+	if value, err := parseLCAgentWebSearchBackend(settings.LCAgentWebSearchBackend); err == nil && value != "" {
+		lines = append(lines, fmt.Sprintf("lcagent_web_search_backend = %s", strconv.Quote(value)))
+		wroteLCAgentConfig = true
+	}
+	if value := strings.TrimSpace(settings.LCAgentWebSearchAPIKey); value != "" {
+		lines = append(lines, fmt.Sprintf("lcagent_web_search_api_key = %s", strconv.Quote(value)))
+		wroteLCAgentConfig = true
+	}
+	if value := strings.TrimSpace(settings.LCAgentWebSearchEngineID); value != "" {
+		lines = append(lines, fmt.Sprintf("lcagent_web_search_engine_id = %s", strconv.Quote(value)))
+		wroteLCAgentConfig = true
+	}
+	if value := strings.TrimSpace(settings.LCAgentWebSearchURL); value != "" {
+		lines = append(lines, fmt.Sprintf("lcagent_web_search_url = %s", strconv.Quote(value)))
 		wroteLCAgentConfig = true
 	}
 	if wroteLCAgentConfig {

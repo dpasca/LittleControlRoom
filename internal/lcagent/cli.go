@@ -93,6 +93,7 @@ func runExec(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, finalModel, envFile, reasoningEffort, temperatureRaw, providerOnlyRaw, toolProfileRaw, contextProfileRaw, resumeRaw string
+	var webSearchBackend, webSearchAPIKey, webSearchEngineID, webSearchURL string
 	var requestTimeout time.Duration
 	var maxTurns int
 	fs.StringVar(&cwd, "cwd", "", "workspace root")
@@ -110,6 +111,10 @@ func runExec(args []string, stdout io.Writer) error {
 	fs.StringVar(&toolProfileRaw, "tool-profile", string(tools.FileProfileBalanced), "file tool budget profile: balanced or generous")
 	fs.StringVar(&contextProfileRaw, "context-profile", string(openRouterContextProfileBalanced), "provider loop context profile: balanced or large")
 	fs.StringVar(&resumeRaw, "resume", "", "previous LCAgent session id or .jsonl artifact to summarize as continuation context")
+	fs.StringVar(&webSearchBackend, "web-search-backend", "", "web search backend: off, exa, google, or searxng")
+	fs.StringVar(&webSearchAPIKey, "web-search-api-key", "", "optional web search API key, used by exa or google")
+	fs.StringVar(&webSearchEngineID, "web-search-engine-id", "", "optional Google Programmable Search engine ID")
+	fs.StringVar(&webSearchURL, "web-search-url", "", "optional web search endpoint URL, used by searxng")
 	fs.DurationVar(&requestTimeout, "request-timeout", 0, "provider HTTP request timeout, for example 10m; default 2m")
 	fs.IntVar(&maxTurns, "max-turns", modeladapter.DefaultOpenRouterMaxTurns, "maximum model turns for provider loops")
 	if err := fs.Parse(args); err != nil {
@@ -232,11 +237,29 @@ func runExec(args []string, stdout io.Writer) error {
 	}
 
 	artifactDir := filepath.Join(filepath.Dir(writer.Path()), sessionID+"-artifacts")
+	webSearch, webSearchStatus := tools.NewWebSearchRunner(tools.WebSearchConfig{
+		Backend:        webSearchBackend,
+		APIKey:         webSearchAPIKey,
+		SearchEngineID: webSearchEngineID,
+		URL:            webSearchURL,
+		EnvFile:        envFile,
+	})
+	if err := writer.Write(session.Event{
+		"type":       "web_search_profile",
+		"session_id": sessionID,
+		"enabled":    webSearchStatus.Enabled,
+		"backend":    webSearchStatus.Backend,
+		"message":    webSearchStatus.Message,
+	}); err != nil {
+		return err
+	}
 	runner := script.Runner{
 		Session:      writer,
 		Command:      tools.CommandRunner{Workspace: workspace, ArtifactDir: artifactDir},
 		Patch:        tools.PatchApplier{Workspace: workspace},
 		Files:        tools.FileTools{Workspace: workspace, Limits: fileLimits},
+		WebSearch:    webSearch,
+		WebSearchOn:  webSearchStatus.Enabled,
 		Skills:       catalog,
 		SessionID:    sessionID,
 		Prompt:       prompt,
@@ -265,7 +288,7 @@ func runExec(args []string, stdout io.Writer) error {
 			Temperature:     temperature,
 			OmitTemperature: omitTemperature,
 			ProviderOnly:    splitCommaFields(providerOnlyRaw),
-		}, strings.ToLower(strings.TrimSpace(provider)), toolProfile, fileLimits, contextOptions)
+		}, strings.ToLower(strings.TrimSpace(provider)), toolProfile, fileLimits, contextOptions, webSearchStatus.Enabled)
 	default:
 		return fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -285,7 +308,7 @@ func runExec(args []string, stdout io.Writer) error {
 	return nil
 }
 
-func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Runner, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, provider string, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions) error {
+func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Runner, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, provider string, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, webSearchEnabled bool) error {
 	contextOptions = contextOptions.withDefaults()
 	providerLabel := strings.ToLower(strings.TrimSpace(provider))
 	if providerLabel == "" {
@@ -317,7 +340,9 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 		return err
 	}
 
-	systemPrompt := modeladapter.SystemPromptWithOptions(runner.Skills.PromptIndex(0), projectInstructionPrompt, modelSystemPromptOptions(toolProfile, fileLimits))
+	systemPromptOptions := modelSystemPromptOptions(toolProfile, fileLimits)
+	systemPromptOptions.WebSearchEnabled = webSearchEnabled
+	systemPrompt := modeladapter.SystemPromptWithOptions(runner.Skills.PromptIndex(0), projectInstructionPrompt, systemPromptOptions)
 	if resumeSection := strings.TrimSpace(resumeContext.systemPromptSection()); resumeSection != "" {
 		systemPrompt = strings.TrimSpace(systemPrompt + "\n\n" + resumeSection)
 	}
@@ -326,7 +351,9 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 		{Role: "user", Content: runner.Prompt},
 	}
 	readLedger := newReadLedger()
-	toolsDef := modeladapter.ToolsWithOptions(modelToolOptions(toolProfile, fileLimits))
+	toolOptions := modelToolOptions(toolProfile, fileLimits)
+	toolOptions.WebSearchEnabled = webSearchEnabled
+	toolsDef := modeladapter.ToolsWithOptions(toolOptions)
 	for turn := 0; turn < client.MaxTurns(); turn++ {
 		if compactedMessages, compaction, compacted := compactOpenRouterLoopMessagesWithOptions(messages, readLedger, contextOptions); compacted {
 			if err := writer.Write(session.Event{

@@ -552,6 +552,10 @@ type LaunchRequest struct {
 	LCAgentToolProfile       string
 	LCAgentContextProfile    string
 	LCAgentRequestTimeout    time.Duration
+	LCAgentWebSearchBackend  string
+	LCAgentWebSearchAPIKey   string
+	LCAgentWebSearchEngineID string
+	LCAgentWebSearchURL      string
 	CLIExecutablePath        string
 }
 

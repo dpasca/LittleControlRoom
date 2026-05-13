@@ -38,6 +38,10 @@ const (
 	settingsFieldLCAgentToolProfile
 	settingsFieldLCAgentContextProfile
 	settingsFieldLCAgentRequestTimeout
+	settingsFieldLCAgentWebSearchBackend
+	settingsFieldLCAgentWebSearchAPIKey
+	settingsFieldLCAgentWebSearchEngineID
+	settingsFieldLCAgentWebSearchURL
 	settingsFieldIncludePaths
 	settingsFieldExcludePaths
 	settingsFieldExcludeProjectPatterns
@@ -80,6 +84,13 @@ type settingsField struct {
 }
 
 type settingsBrowserAutomationOption struct {
+	Value       string
+	Label       string
+	Summary     string
+	Description string
+}
+
+type settingsLCAgentWebSearchOption struct {
 	Value       string
 	Label       string
 	Summary     string
@@ -179,6 +190,10 @@ func settingsSections() []settingsSection {
 				settingsFieldLCAgentToolProfile,
 				settingsFieldLCAgentContextProfile,
 				settingsFieldLCAgentRequestTimeout,
+				settingsFieldLCAgentWebSearchBackend,
+				settingsFieldLCAgentWebSearchAPIKey,
+				settingsFieldLCAgentWebSearchEngineID,
+				settingsFieldLCAgentWebSearchURL,
 			},
 		},
 		{
@@ -313,7 +328,10 @@ func settingsBrowserAutomationOptionLabel(raw string, baseline browserctl.Policy
 }
 
 func settingsFieldUsesPicker(index int) bool {
-	return index == settingsFieldAIBackend || index == settingsFieldBossChatBackend || index == settingsFieldBrowserAutomation
+	return index == settingsFieldAIBackend ||
+		index == settingsFieldBossChatBackend ||
+		index == settingsFieldBrowserAutomation ||
+		index == settingsFieldLCAgentWebSearchBackend
 }
 
 func normalizeSettingsChoice(raw string) string {
@@ -342,6 +360,8 @@ func (m *Model) openBrowserSettingsMode() tea.Cmd {
 	m.settingsBossChatPickerSelected = 0
 	m.settingsBrowserPickerVisible = false
 	m.settingsBrowserPickerSelected = 0
+	m.settingsLCAgentSearchPickerVisible = false
+	m.settingsLCAgentSearchPickerSelected = 0
 	m.localModelPickerVisible = false
 	m.setupMode = false
 	m.commandMode = false
@@ -365,6 +385,8 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	m.settingsBossChatPickerSelected = 0
 	m.settingsBrowserPickerVisible = false
 	m.settingsBrowserPickerSelected = 0
+	m.settingsLCAgentSearchPickerVisible = false
+	m.settingsLCAgentSearchPickerSelected = 0
 	m.localModelPickerVisible = false
 	m.setupMode = false
 	m.commandMode = false
@@ -396,6 +418,8 @@ func (m *Model) closeSettingsMode(status string) {
 	m.settingsBossChatPickerSelected = 0
 	m.settingsBrowserPickerVisible = false
 	m.settingsBrowserPickerSelected = 0
+	m.settingsLCAgentSearchPickerVisible = false
+	m.settingsLCAgentSearchPickerSelected = 0
 	if status != "" {
 		m.status = status
 	}
@@ -428,6 +452,8 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m.openSettingsBossChatBackendPicker()
 			case settingsFieldBrowserAutomation:
 				return m.openSettingsBrowserAutomationPicker()
+			case settingsFieldLCAgentWebSearchBackend:
+				return m.openSettingsLCAgentWebSearchPicker()
 			}
 		}
 		m.status = "Press ctrl+s to save settings."
@@ -497,6 +523,10 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		m.settingsFieldValue(settingsFieldLCAgentToolProfile),
 		m.settingsFieldValue(settingsFieldLCAgentContextProfile),
 		m.settingsFieldValue(settingsFieldLCAgentRequestTimeout),
+		m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend),
+		m.settingsFieldValue(settingsFieldLCAgentWebSearchAPIKey),
+		m.settingsFieldValue(settingsFieldLCAgentWebSearchEngineID),
+		m.settingsFieldValue(settingsFieldLCAgentWebSearchURL),
 		m.settingsFieldValue(settingsFieldActiveThreshold),
 		m.settingsFieldValue(settingsFieldStuckThreshold),
 		m.settingsFieldValue(settingsFieldInterval),
@@ -551,16 +581,19 @@ func (m *Model) moveSettingsSelection(delta int) tea.Cmd {
 	if len(m.settingsFields) == 0 || delta == 0 {
 		return nil
 	}
-	fields := m.activeSettingsSection().fieldOrder
+	fields := m.visibleSettingsFieldOrder(m.activeSettingsSection())
 	if len(fields) == 0 {
 		return nil
 	}
-	position := 0
+	position := -1
 	for i, index := range fields {
 		if index == m.settingsSelected {
 			position = i
 			break
 		}
+	}
+	if position < 0 {
+		return m.setSettingsSelection(fields[0])
 	}
 	position += delta
 	if position < 0 {
@@ -584,8 +617,17 @@ func (m *Model) setSettingsSelection(index int) tea.Cmd {
 		index = len(m.settingsFields) - 1
 	}
 
-	m.settingsSelected = index
 	sections := settingsSections()
+	if !m.settingsFieldVisible(index) {
+		sectionIndex := settingsSectionIndexForField(index)
+		if sectionIndex >= 0 && sectionIndex < len(sections) {
+			if fields := m.visibleSettingsFieldOrder(sections[sectionIndex]); len(fields) > 0 {
+				index = fields[0]
+			}
+		}
+	}
+
+	m.settingsSelected = index
 	if m.settingsSectionSelected < 0 || m.settingsSectionSelected >= len(sections) || !settingsSectionContainsField(sections[m.settingsSectionSelected], index) {
 		m.settingsSectionSelected = settingsSectionIndexForField(index)
 	}
@@ -638,7 +680,7 @@ func (m *Model) setSettingsSection(index int) tea.Cmd {
 		index = len(sections) - 1
 	}
 	m.settingsSectionSelected = index
-	fields := sections[index].fieldOrder
+	fields := m.visibleSettingsFieldOrder(sections[index])
 	if len(fields) == 0 {
 		return nil
 	}
@@ -674,6 +716,33 @@ func (m Model) activeSettingsSection() settingsSection {
 		return settingsSection{}
 	}
 	return sections[m.activeSettingsSectionIndex()]
+}
+
+func (m Model) visibleSettingsFieldOrder(section settingsSection) []int {
+	if len(section.fieldOrder) == 0 {
+		return nil
+	}
+	fields := make([]int, 0, len(section.fieldOrder))
+	for _, fieldIndex := range section.fieldOrder {
+		if m.settingsFieldVisible(fieldIndex) {
+			fields = append(fields, fieldIndex)
+		}
+	}
+	return fields
+}
+
+func (m Model) settingsFieldVisible(index int) bool {
+	switch index {
+	case settingsFieldLCAgentWebSearchAPIKey:
+		backend := normalizeSettingsChoice(m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend))
+		return backend == "exa" || backend == "google"
+	case settingsFieldLCAgentWebSearchEngineID:
+		return normalizeSettingsChoice(m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend)) == "google"
+	case settingsFieldLCAgentWebSearchURL:
+		return normalizeSettingsChoice(m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend)) == "searxng"
+	default:
+		return true
+	}
 }
 
 func (m *Model) blurSettingsFields() {
@@ -816,6 +885,10 @@ func (m Model) settingsDraftForInferenceStatus() config.EditableSettings {
 	settings.LCAgentAuto = m.settingsFieldValue(settingsFieldLCAgentAuto)
 	settings.LCAgentToolProfile = m.settingsFieldValue(settingsFieldLCAgentToolProfile)
 	settings.LCAgentContextProfile = m.settingsFieldValue(settingsFieldLCAgentContextProfile)
+	settings.LCAgentWebSearchBackend = m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend)
+	settings.LCAgentWebSearchAPIKey = m.settingsFieldValue(settingsFieldLCAgentWebSearchAPIKey)
+	settings.LCAgentWebSearchEngineID = m.settingsFieldValue(settingsFieldLCAgentWebSearchEngineID)
+	settings.LCAgentWebSearchURL = m.settingsFieldValue(settingsFieldLCAgentWebSearchURL)
 	if timeout, err := time.ParseDuration(m.settingsFieldValue(settingsFieldLCAgentRequestTimeout)); err == nil {
 		settings.LCAgentRequestTimeout = timeout
 	}
@@ -873,7 +946,7 @@ func (m Model) renderSettingsSectionLayout(width, maxHeight int) string {
 		mainLines = append(mainLines, commandPaletteHintStyle.Render("Saving settings..."))
 	}
 
-	fieldIndexes := activeSection.fieldOrder
+	fieldIndexes := m.visibleSettingsFieldOrder(activeSection)
 	labelWidth := m.settingsLabelWidth(contentWidth, fieldIndexes)
 	inputWidth := max(10, contentWidth-labelWidth-1)
 	if gettingStartedGuide {
@@ -907,7 +980,7 @@ func (m Model) renderSettingsSectionLayout(width, maxHeight int) string {
 }
 
 func (m Model) settingsVisibleFieldCount(maxHeight int) int {
-	total := len(m.activeSettingsSection().fieldOrder)
+	total := len(m.visibleSettingsFieldOrder(m.activeSettingsSection()))
 	if total == 0 {
 		return 0
 	}
@@ -1383,6 +1456,8 @@ func (m Model) renderSettingsFieldRow(fieldIndex int, field settingsField, selec
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsBossChatBackendValue(selected, inputWidth)
 		case settingsFieldBrowserAutomation:
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsBrowserAutomationValue(selected, inputWidth)
+		case settingsFieldLCAgentWebSearchBackend:
+			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsLCAgentWebSearchValue(selected, inputWidth)
 		}
 		if selected {
 			return dialogSelectedRowStyle.Width(labelWidth + inputWidth + 1).Render(fitFooterWidth(row, labelWidth+inputWidth+1))
@@ -1608,6 +1683,35 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionLCAgent,
 		),
 		newSettingsField(
+			"LCAgent web search",
+			"Press Enter to choose Off, Exa, Google, or SearXNG.",
+			settings.LCAgentWebSearchBackend,
+			32,
+			settingsSectionLCAgent,
+		),
+		newSensitiveSettingsFieldWithPlaceholder(
+			"LCAgent search key",
+			"Optional Exa or Google search API key for LCAgent web_search.",
+			settings.LCAgentWebSearchAPIKey,
+			256,
+			"Paste Exa or Google search API key",
+			settingsSectionLCAgent,
+		),
+		newSettingsField(
+			"LCAgent search engine",
+			"Optional Google Programmable Search engine ID for LCAgent web_search.",
+			settings.LCAgentWebSearchEngineID,
+			128,
+			settingsSectionLCAgent,
+		),
+		newSettingsField(
+			"LCAgent SearXNG URL",
+			"Optional SearXNG base URL for LCAgent web_search, for example http://127.0.0.1:8888.",
+			settings.LCAgentWebSearchURL,
+			512,
+			settingsSectionLCAgent,
+		),
+		newSettingsField(
 			"Include paths",
 			"Optional comma-separated path prefixes to keep in scope. Leave blank for all detected paths.",
 			strings.Join(settings.IncludePaths, ","),
@@ -1743,6 +1847,10 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.LCAgentAuto = strings.TrimSpace(settings.LCAgentAuto)
 	settings.LCAgentToolProfile = strings.TrimSpace(settings.LCAgentToolProfile)
 	settings.LCAgentContextProfile = strings.TrimSpace(settings.LCAgentContextProfile)
+	settings.LCAgentWebSearchBackend = strings.TrimSpace(settings.LCAgentWebSearchBackend)
+	settings.LCAgentWebSearchAPIKey = strings.TrimSpace(settings.LCAgentWebSearchAPIKey)
+	settings.LCAgentWebSearchEngineID = strings.TrimSpace(settings.LCAgentWebSearchEngineID)
+	settings.LCAgentWebSearchURL = strings.TrimSpace(settings.LCAgentWebSearchURL)
 	settings.IncludePaths = append([]string(nil), settings.IncludePaths...)
 	settings.ExcludePaths = append([]string(nil), settings.ExcludePaths...)
 	settings.ExcludeProjectPatterns = append([]string(nil), settings.ExcludeProjectPatterns...)
@@ -1899,6 +2007,34 @@ func (m Model) settingsFieldHint(index int) string {
 	case settingsFieldLCAgentRequestTimeout:
 		if value := strings.TrimSpace(field.input.Value()); value != "" {
 			return "LCAgent provider requests will wait up to " + value + " before timing out."
+		}
+		return field.hint
+	case settingsFieldLCAgentWebSearchBackend:
+		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
+		case "exa":
+			return "LCAgent will expose web_search using Exa when an Exa API key is saved."
+		case "google":
+			return "LCAgent will expose web_search using Google Programmable Search when the key and search engine ID are saved."
+		case "searxng":
+			return "LCAgent will expose web_search using the configured SearXNG base URL."
+		case "", "off":
+			return "LCAgent web_search will be unavailable, and new sessions will show a setup warning."
+		default:
+			return field.hint
+		}
+	case settingsFieldLCAgentWebSearchAPIKey:
+		if suffix := maskedOpenAIKeySuffix(field.input.Value()); suffix != "" {
+			return "Used for Exa or Google backed LCAgent web_search. Stored key ends with " + suffix + "."
+		}
+		return field.hint
+	case settingsFieldLCAgentWebSearchEngineID:
+		if value := strings.TrimSpace(field.input.Value()); value != "" {
+			return "Google-backed LCAgent web_search will use search engine " + value + "."
+		}
+		return field.hint
+	case settingsFieldLCAgentWebSearchURL:
+		if value := strings.TrimSpace(field.input.Value()); value != "" {
+			return "SearXNG-backed LCAgent web_search will use " + value + "."
 		}
 		return field.hint
 	case settingsFieldPrivacyPatterns:

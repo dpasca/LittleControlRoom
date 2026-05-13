@@ -114,6 +114,22 @@ printf '%s\n' '{"type":"turn_complete"}'
 	}
 }
 
+func TestLCAgentSessionWarnsWhenWebSearchUnavailable(t *testing.T) {
+	session, err := newLCAgentSession(LaunchRequest{
+		Provider:    ProviderLCAgent,
+		ProjectPath: t.TempDir(),
+		AppDataDir:  t.TempDir(),
+	}, nil)
+	if err != nil {
+		t.Fatalf("newLCAgentSession() error = %v", err)
+	}
+	snapshot := session.Snapshot()
+	if !strings.Contains(snapshot.Transcript, "LCAgent web search is not available") ||
+		!strings.Contains(snapshot.Transcript, "/settings") {
+		t.Fatalf("transcript missing web search setup warning:\n%s", snapshot.Transcript)
+	}
+}
+
 func TestLCAgentSessionReplaysRequestedArtifact(t *testing.T) {
 	root := t.TempDir()
 	dataDir := t.TempDir()

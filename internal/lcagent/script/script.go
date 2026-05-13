@@ -18,6 +18,8 @@ type Runner struct {
 	Command      tools.CommandRunner
 	Patch        tools.PatchApplier
 	Files        tools.FileTools
+	WebSearch    tools.WebSearchRunner
+	WebSearchOn  bool
 	Skills       skillcatalog.Catalog
 	SessionID    string
 	Prompt       string
@@ -67,6 +69,13 @@ type searchArgs struct {
 	MaxMatches    int    `json:"max_matches"`
 	ContextBefore *int   `json:"context_before"`
 	ContextAfter  *int   `json:"context_after"`
+}
+
+type webSearchArgs struct {
+	Query       string `json:"query"`
+	MaxResults  int    `json:"max_results"`
+	Site        string `json:"site"`
+	RecencyDays int    `json:"recency_days"`
 }
 
 type fileOutlineArgs struct {
@@ -188,6 +197,16 @@ func (r Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, e
 			contextAfter = *args.ContextAfter
 		}
 		result = r.Files.SearchContext(args.Query, args.Path, args.FileGlob, args.MaxMatches, contextBefore, contextAfter)
+	case "web_search":
+		var args webSearchArgs
+		if err := json.Unmarshal(action.Args, &args); err != nil {
+			return tools.ToolResult{}, err
+		}
+		if !r.WebSearchOn {
+			result = tools.ToolResult{Success: false, Error: "web_search is not configured for this LCAgent run"}
+			break
+		}
+		result = r.WebSearch.Search(ctx, args.Query, args.MaxResults, args.Site, args.RecencyDays)
 	case "file_outline":
 		var args fileOutlineArgs
 		if err := json.Unmarshal(action.Args, &args); err != nil {
