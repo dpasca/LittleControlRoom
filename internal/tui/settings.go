@@ -342,8 +342,18 @@ func normalizeSettingsChoice(raw string) string {
 }
 
 func (m *Model) openSettingsMode() tea.Cmd {
+	m.settingsEmbeddedProject = ""
+	m.settingsEmbeddedProvider = ""
 	cmd := m.openSettingsModeWithBaseline(m.currentSettingsBaseline())
 	return tea.Batch(cmd, m.refreshSetupSnapshotCmd(false))
+}
+
+func (m *Model) openEmbeddedLCAgentSettingsMode(projectPath string) tea.Cmd {
+	cmd := m.openSettingsModeWithBaseline(m.currentSettingsBaseline())
+	m.settingsEmbeddedProject = strings.TrimSpace(projectPath)
+	m.settingsEmbeddedProvider = codexapp.ProviderLCAgent
+	m.status = "LCAgent settings open. Configure web search, then press ctrl+s to save."
+	return tea.Batch(cmd, m.setSettingsSelection(settingsFieldLCAgentWebSearchBackend), m.refreshSetupSnapshotCmd(false))
 }
 
 func (m *Model) openBrowserSettingsMode() tea.Cmd {
@@ -362,6 +372,8 @@ func (m *Model) openBrowserSettingsMode() tea.Cmd {
 	m.settingsBrowserPickerSelected = 0
 	m.settingsLCAgentSearchPickerVisible = false
 	m.settingsLCAgentSearchPickerSelected = 0
+	m.settingsEmbeddedProject = ""
+	m.settingsEmbeddedProvider = ""
 	m.localModelPickerVisible = false
 	m.setupMode = false
 	m.commandMode = false
@@ -387,6 +399,8 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	m.settingsBrowserPickerSelected = 0
 	m.settingsLCAgentSearchPickerVisible = false
 	m.settingsLCAgentSearchPickerSelected = 0
+	m.settingsEmbeddedProject = ""
+	m.settingsEmbeddedProvider = ""
 	m.localModelPickerVisible = false
 	m.setupMode = false
 	m.commandMode = false
@@ -420,6 +434,8 @@ func (m *Model) closeSettingsMode(status string) {
 	m.settingsBrowserPickerSelected = 0
 	m.settingsLCAgentSearchPickerVisible = false
 	m.settingsLCAgentSearchPickerSelected = 0
+	m.settingsEmbeddedProject = ""
+	m.settingsEmbeddedProvider = ""
 	if status != "" {
 		m.status = status
 	}

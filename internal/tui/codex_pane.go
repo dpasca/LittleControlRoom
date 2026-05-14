@@ -885,6 +885,18 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 		if req.LCAgentRequestTimeout <= 0 {
 			req.LCAgentRequestTimeout = m.lcagentRequestTimeout()
 		}
+		if strings.TrimSpace(req.LCAgentWebSearchBackend) == "" {
+			req.LCAgentWebSearchBackend = m.lcagentWebSearchBackend()
+		}
+		if strings.TrimSpace(req.LCAgentWebSearchAPIKey) == "" {
+			req.LCAgentWebSearchAPIKey = m.lcagentWebSearchAPIKey()
+		}
+		if strings.TrimSpace(req.LCAgentWebSearchEngineID) == "" {
+			req.LCAgentWebSearchEngineID = m.lcagentWebSearchEngineID()
+		}
+		if strings.TrimSpace(req.LCAgentWebSearchURL) == "" {
+			req.LCAgentWebSearchURL = m.lcagentWebSearchURL()
+		}
 	}
 	perfOpID := m.beginAILatencyOp("Embedded open", req.ProjectPath, provider.Label())
 	previousThreadID := ""
@@ -1676,6 +1688,11 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m.openBossModeOrSetupPrompt()
 			case codexslash.KindSkills:
 				return m, m.openSkillsDialog()
+			case codexslash.KindSettings:
+				if embeddedProvider(snapshot) == codexapp.ProviderLCAgent {
+					return m, m.openEmbeddedLCAgentSettingsMode(m.codexVisibleProject)
+				}
+				return m, m.openSettingsMode()
 			default:
 				m.status = "Unsupported embedded slash command"
 				return m, nil

@@ -737,6 +737,138 @@ func (m Model) hasRestorableEmbeddedSession(projectPath string, provider codexap
 	return false
 }
 
+func (m Model) shouldReloadEmbeddedLCAgentAfterSettingsSave(previous, saved config.EditableSettings) (string, bool) {
+	projectPath := strings.TrimSpace(m.settingsEmbeddedProject)
+	if projectPath == "" || m.settingsEmbeddedProvider.Normalized() != codexapp.ProviderLCAgent {
+		return "", false
+	}
+	if !lcagentLaunchSettingsChanged(previous, saved) {
+		return "", false
+	}
+	session, ok := m.codexSession(projectPath)
+	if !ok {
+		return "", false
+	}
+	if snapshot, got := session.TrySnapshot(); got {
+		if snapshot.Closed || embeddedProvider(snapshot) != codexapp.ProviderLCAgent {
+			return "", false
+		}
+		return projectPath, true
+	}
+	if snapshot, ok := m.codexCachedSnapshot(projectPath); ok {
+		if snapshot.Closed || embeddedProvider(snapshot) != codexapp.ProviderLCAgent {
+			return "", false
+		}
+	}
+	return projectPath, true
+}
+
+func lcagentLaunchSettingsChanged(previous, saved config.EditableSettings) bool {
+	return strings.TrimSpace(previous.LCAgentPath) != strings.TrimSpace(saved.LCAgentPath) ||
+		strings.TrimSpace(previous.LCAgentEnvFile) != strings.TrimSpace(saved.LCAgentEnvFile) ||
+		strings.TrimSpace(previous.LCAgentProvider) != strings.TrimSpace(saved.LCAgentProvider) ||
+		strings.TrimSpace(previous.EmbeddedLCAgentModel) != strings.TrimSpace(saved.EmbeddedLCAgentModel) ||
+		strings.TrimSpace(previous.EmbeddedLCAgentReasoning) != strings.TrimSpace(saved.EmbeddedLCAgentReasoning) ||
+		strings.TrimSpace(previous.LCAgentAuto) != strings.TrimSpace(saved.LCAgentAuto) ||
+		strings.TrimSpace(previous.LCAgentToolProfile) != strings.TrimSpace(saved.LCAgentToolProfile) ||
+		strings.TrimSpace(previous.LCAgentContextProfile) != strings.TrimSpace(saved.LCAgentContextProfile) ||
+		previous.LCAgentRequestTimeout != saved.LCAgentRequestTimeout ||
+		strings.TrimSpace(previous.LCAgentWebSearchBackend) != strings.TrimSpace(saved.LCAgentWebSearchBackend) ||
+		strings.TrimSpace(previous.LCAgentWebSearchAPIKey) != strings.TrimSpace(saved.LCAgentWebSearchAPIKey) ||
+		strings.TrimSpace(previous.LCAgentWebSearchEngineID) != strings.TrimSpace(saved.LCAgentWebSearchEngineID) ||
+		strings.TrimSpace(previous.LCAgentWebSearchURL) != strings.TrimSpace(saved.LCAgentWebSearchURL)
+}
+
+func (m Model) lcagentLaunchRequestFromSettings(projectPath string, settings config.EditableSettings) codexapp.LaunchRequest {
+	return codexapp.LaunchRequest{
+		Provider:                 codexapp.ProviderLCAgent,
+		ProjectPath:              strings.TrimSpace(projectPath),
+		PendingModel:             strings.TrimSpace(settings.EmbeddedLCAgentModel),
+		PendingReasoning:         strings.TrimSpace(settings.EmbeddedLCAgentReasoning),
+		PlaywrightPolicy:         settings.PlaywrightPolicy,
+		AppDataDir:               m.appDataDir(),
+		CodexHome:                m.codexHome(),
+		LCAgentPath:              strings.TrimSpace(settings.LCAgentPath),
+		LCAgentEnvFile:           strings.TrimSpace(settings.LCAgentEnvFile),
+		LCAgentProvider:          strings.TrimSpace(settings.LCAgentProvider),
+		LCAgentAuto:              strings.TrimSpace(settings.LCAgentAuto),
+		LCAgentToolProfile:       strings.TrimSpace(settings.LCAgentToolProfile),
+		LCAgentContextProfile:    strings.TrimSpace(settings.LCAgentContextProfile),
+		LCAgentRequestTimeout:    settings.LCAgentRequestTimeout,
+		LCAgentWebSearchBackend:  strings.TrimSpace(settings.LCAgentWebSearchBackend),
+		LCAgentWebSearchAPIKey:   strings.TrimSpace(settings.LCAgentWebSearchAPIKey),
+		LCAgentWebSearchEngineID: strings.TrimSpace(settings.LCAgentWebSearchEngineID),
+		LCAgentWebSearchURL:      strings.TrimSpace(settings.LCAgentWebSearchURL),
+	}
+}
+
+func (m *Model) reloadEmbeddedLCAgentAfterSettingsCmd(projectPath string, settings config.EditableSettings) tea.Cmd {
+	projectPath = strings.TrimSpace(projectPath)
+	manager := m.codexManager
+	req := m.lcagentLaunchRequestFromSettings(projectPath, settings)
+	perfOpID := m.beginAILatencyOp("Embedded reload", projectPath, "LCAgent settings")
+	return func() tea.Msg {
+		startedAt := time.Now()
+		if manager == nil {
+			return codexSessionOpenedMsg{
+				projectPath:  projectPath,
+				perfOpID:     perfOpID,
+				perfDuration: time.Since(startedAt),
+				err:          fmt.Errorf("LCAgent manager unavailable"),
+			}
+		}
+		if existing, ok := manager.Session(projectPath); ok {
+			snapshot := existing.Snapshot()
+			if embeddedProvider(snapshot) != codexapp.ProviderLCAgent {
+				return codexActionMsg{
+					projectPath:  projectPath,
+					perfOpID:     perfOpID,
+					perfDuration: time.Since(startedAt),
+					status:       "Settings saved. New LCAgent sessions will use the saved configuration.",
+				}
+			}
+			if threadID := strings.TrimSpace(snapshot.ThreadID); threadID != "" {
+				req.ResumeID = threadID
+			}
+			if err := manager.CloseProject(projectPath); err != nil {
+				return codexSessionOpenedMsg{
+					projectPath:  projectPath,
+					perfOpID:     perfOpID,
+					perfDuration: time.Since(startedAt),
+					err:          err,
+				}
+			}
+		}
+		if err := req.Validate(); err != nil {
+			return codexSessionOpenedMsg{
+				projectPath:  projectPath,
+				perfOpID:     perfOpID,
+				perfDuration: time.Since(startedAt),
+				err:          err,
+			}
+		}
+		session, _, err := manager.Open(req)
+		if err != nil {
+			return codexSessionOpenedMsg{
+				projectPath:  projectPath,
+				perfOpID:     perfOpID,
+				perfDuration: time.Since(startedAt),
+				err:          err,
+			}
+		}
+		snapshot := session.Snapshot()
+		return codexSessionOpenedMsg{
+			projectPath:      projectPath,
+			snapshot:         snapshot,
+			status:           "Settings saved. Restarted LCAgent so the next run uses the new configuration.",
+			visibleStatus:    "Settings saved. Restarted LCAgent so the next run uses the new configuration.",
+			backgroundStatus: "Settings saved. Restarted LCAgent in the background.",
+			perfOpID:         perfOpID,
+			perfDuration:     time.Since(startedAt),
+		}
+	}
+}
+
 func (m Model) appDataDir() string {
 	if m.svc != nil {
 		return m.svc.Config().DataDir
@@ -752,80 +884,47 @@ func (m Model) codexHome() string {
 }
 
 func (m Model) lcagentPath() string {
-	if m.svc != nil {
-		return strings.TrimSpace(m.svc.Config().LCAgentPath)
-	}
-	return strings.TrimSpace(config.Default().LCAgentPath)
+	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentPath)
 }
 
 func (m Model) lcagentEnvFile() string {
-	if m.svc != nil {
-		return strings.TrimSpace(m.svc.Config().LCAgentEnvFile)
-	}
-	return strings.TrimSpace(config.Default().LCAgentEnvFile)
+	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentEnvFile)
 }
 
 func (m Model) lcagentProvider() string {
-	if m.svc != nil {
-		return strings.TrimSpace(m.svc.Config().LCAgentProvider)
-	}
-	return strings.TrimSpace(config.Default().LCAgentProvider)
+	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentProvider)
 }
 
 func (m Model) lcagentAuto() string {
-	if m.svc != nil {
-		return strings.TrimSpace(m.svc.Config().LCAgentAuto)
-	}
-	return strings.TrimSpace(config.Default().LCAgentAuto)
+	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentAuto)
 }
 
 func (m Model) lcagentToolProfile() string {
-	if m.svc != nil {
-		return strings.TrimSpace(m.svc.Config().LCAgentToolProfile)
-	}
-	return strings.TrimSpace(config.Default().LCAgentToolProfile)
+	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentToolProfile)
 }
 
 func (m Model) lcagentContextProfile() string {
-	if m.svc != nil {
-		return strings.TrimSpace(m.svc.Config().LCAgentContextProfile)
-	}
-	return strings.TrimSpace(config.Default().LCAgentContextProfile)
+	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentContextProfile)
 }
 
 func (m Model) lcagentRequestTimeout() time.Duration {
-	if m.svc != nil {
-		return m.svc.Config().LCAgentRequestTimeout
-	}
-	return config.Default().LCAgentRequestTimeout
+	return m.currentSettingsBaseline().LCAgentRequestTimeout
 }
 
 func (m Model) lcagentWebSearchBackend() string {
-	if m.svc != nil {
-		return strings.TrimSpace(m.svc.Config().LCAgentWebSearchBackend)
-	}
-	return strings.TrimSpace(config.Default().LCAgentWebSearchBackend)
+	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentWebSearchBackend)
 }
 
 func (m Model) lcagentWebSearchAPIKey() string {
-	if m.svc != nil {
-		return strings.TrimSpace(m.svc.Config().LCAgentWebSearchAPIKey)
-	}
-	return strings.TrimSpace(config.Default().LCAgentWebSearchAPIKey)
+	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentWebSearchAPIKey)
 }
 
 func (m Model) lcagentWebSearchEngineID() string {
-	if m.svc != nil {
-		return strings.TrimSpace(m.svc.Config().LCAgentWebSearchEngineID)
-	}
-	return strings.TrimSpace(config.Default().LCAgentWebSearchEngineID)
+	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentWebSearchEngineID)
 }
 
 func (m Model) lcagentWebSearchURL() string {
-	if m.svc != nil {
-		return strings.TrimSpace(m.svc.Config().LCAgentWebSearchURL)
-	}
-	return strings.TrimSpace(config.Default().LCAgentWebSearchURL)
+	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentWebSearchURL)
 }
 
 type embeddedLaunchBlock struct {

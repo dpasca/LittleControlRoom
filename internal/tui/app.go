@@ -154,6 +154,8 @@ type Model struct {
 	settingsAIBackendPickerSelected     int
 	settingsLCAgentSearchPickerVisible  bool
 	settingsLCAgentSearchPickerSelected int
+	settingsEmbeddedProject             string
+	settingsEmbeddedProvider            codexapp.Provider
 
 	detailViewport        viewport.Model
 	runtimeViewport       viewport.Model
@@ -1964,6 +1966,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.reportError("Settings save failed", msg.err, "")
 			return m, nil
 		}
+		previousSettings := m.currentSettingsBaseline()
+		reloadLCAgentProject, shouldReloadLCAgent := m.shouldReloadEmbeddedLCAgentAfterSettingsSave(previousSettings, msg.settings)
+		settingsEmbeddedProject := m.settingsEmbeddedProject
+		settingsEmbeddedProvider := m.settingsEmbeddedProvider
+		lcagentSettingsChanged := strings.TrimSpace(settingsEmbeddedProject) != "" &&
+			settingsEmbeddedProvider.Normalized() == codexapp.ProviderLCAgent &&
+			lcagentLaunchSettingsChanged(previousSettings, msg.settings)
+		m.settingsEmbeddedProject = ""
+		m.settingsEmbeddedProvider = ""
 		selectedPath := ""
 		if p, ok := m.selectedProject(); ok {
 			selectedPath = p.Path
@@ -1976,12 +1987,21 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.hideReasoningSections = msg.settings.HideReasoningSections
 		m.settingsMode = false
 		m.status = fmt.Sprintf("Settings saved to %s. Filters, API keys, local endpoint/model overrides, Codex launch mode, and browser automation policy are applying in the background now; the running scheduler keeps its current timing until the next launch of %s.", msg.path, brand.CLIName)
+		if shouldReloadLCAgent {
+			m.beginCodexPendingOpen(reloadLCAgentProject, codexapp.ProviderLCAgent)
+			m.status = fmt.Sprintf("Settings saved to %s. Restarting LCAgent so the next run uses the new configuration.", msg.path)
+		} else if lcagentSettingsChanged {
+			m.status = fmt.Sprintf("Settings saved to %s. New LCAgent sessions will use the saved configuration.", msg.path)
+		}
 		if issue := settingsLocalFileIssue(msg.settings); issue != nil {
 			m.appendSettingsConfigIssue(issue)
 			m.status += " " + errorStatusWithHint(settingsConfigIssueStatus) + "."
 		}
 		m.rebuildProjectList(selectedPath)
 		cmds := []tea.Cmd{m.applyEditableSettingsCmd(msg.settings), m.refreshSetupSnapshotCmd(false)}
+		if shouldReloadLCAgent {
+			cmds = append(cmds, m.reloadEmbeddedLCAgentAfterSettingsCmd(reloadLCAgentProject, msg.settings))
+		}
 		if len(m.projects) > 0 {
 			m.syncDetailViewport(false)
 			cmds = append(cmds, m.requestSelectedProjectDetailViewCmd())

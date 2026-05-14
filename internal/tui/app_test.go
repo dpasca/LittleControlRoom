@@ -8302,6 +8302,59 @@ func TestVisibleCodexSlashTaskActionsFallsBackToHostCommand(t *testing.T) {
 	}
 }
 
+func TestVisibleLCAgentSlashSettingsOpensLCAgentSettings(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderLCAgent,
+			Started:  true,
+			Status:   "LCAgent session ready",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		Provider:    codexapp.ProviderLCAgent,
+		ProjectPath: "/tmp/demo",
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/settings")
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("embedded /settings should queue settings refresh/focus commands")
+	}
+	if !got.settingsMode {
+		t.Fatalf("embedded /settings should open settings mode")
+	}
+	if got.settingsSelected != settingsFieldLCAgentWebSearchBackend {
+		t.Fatalf("settingsSelected = %d, want LCAgent web search backend", got.settingsSelected)
+	}
+	if got.activeSettingsSection().id != settingsSectionLCAgent {
+		t.Fatalf("active settings section = %q, want LCAgent", got.activeSettingsSection().id)
+	}
+	if got.settingsEmbeddedProject != "/tmp/demo" || got.settingsEmbeddedProvider != codexapp.ProviderLCAgent {
+		t.Fatalf("embedded settings context = (%q, %q), want LCAgent /tmp/demo", got.settingsEmbeddedProject, got.settingsEmbeddedProvider)
+	}
+	if got.codexInput.Value() != "" {
+		t.Fatalf("codex input should clear after embedded /settings, got %q", got.codexInput.Value())
+	}
+}
+
 func TestScratchTaskActionDialogTakesInputPriorityOverVisibleCodex(t *testing.T) {
 	m := Model{
 		codexVisibleProject: "/tmp/demo",
@@ -21441,6 +21494,147 @@ func TestSettingsLCAgentWebSearchNavigationSkipsHiddenFields(t *testing.T) {
 	_ = m.moveSettingsSelection(1)
 	if m.settingsSelected == settingsFieldLCAgentWebSearchEngineID || m.settingsSelected == settingsFieldLCAgentWebSearchURL {
 		t.Fatalf("navigation selected hidden web search field %d", m.settingsSelected)
+	}
+}
+
+func TestOpenLCAgentSessionFillsWebSearchSettings(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.LCAgentWebSearchBackend = "google"
+	settings.LCAgentWebSearchAPIKey = "search-key"
+	settings.LCAgentWebSearchEngineID = "engine-id"
+	settings.LCAgentWebSearchURL = "http://127.0.0.1:8888"
+	settings.LCAgentProvider = "openai"
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderLCAgent,
+			Started:  true,
+			Status:   "LCAgent session ready",
+		},
+	}
+	var captured codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		captured = req
+		return session, nil
+	})
+	m := Model{
+		codexManager:     manager,
+		settingsBaseline: &settings,
+		codexInput:       newCodexTextarea(),
+		codexViewport:    viewport.New(0, 0),
+		width:            100,
+		height:           24,
+	}
+
+	cmd := m.openCodexSessionCmd(codexapp.LaunchRequest{
+		Provider:    codexapp.ProviderLCAgent,
+		ProjectPath: "/tmp/demo",
+	})
+	if cmd == nil {
+		t.Fatalf("openCodexSessionCmd() returned nil")
+	}
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("opened.err = %v, want nil", opened.err)
+	}
+	if captured.LCAgentWebSearchBackend != "google" {
+		t.Fatalf("web search backend = %q, want google", captured.LCAgentWebSearchBackend)
+	}
+	if captured.LCAgentWebSearchAPIKey != "search-key" {
+		t.Fatalf("web search API key = %q, want search-key", captured.LCAgentWebSearchAPIKey)
+	}
+	if captured.LCAgentWebSearchEngineID != "engine-id" {
+		t.Fatalf("web search engine ID = %q, want engine-id", captured.LCAgentWebSearchEngineID)
+	}
+	if captured.LCAgentProvider != "openai" {
+		t.Fatalf("lcagent provider = %q, want openai", captured.LCAgentProvider)
+	}
+}
+
+func TestReloadEmbeddedLCAgentAfterSettingsUsesSavedWebSearch(t *testing.T) {
+	previous := config.EditableSettingsFromAppConfig(config.Default())
+	saved := previous
+	saved.LCAgentWebSearchBackend = "exa"
+	saved.LCAgentWebSearchAPIKey = "exa-key"
+	saved.EmbeddedLCAgentModel = "custom-lcagent-model"
+	initial := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderLCAgent,
+			Started:  true,
+			ThreadID: "lca_existing",
+			Status:   "LCAgent run complete",
+		},
+	}
+	reopened := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderLCAgent,
+			Started:  true,
+			ThreadID: "lca_existing",
+			Status:   "Loaded LCAgent session lca_existing from disk",
+		},
+	}
+	var openCount int
+	var captured codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		openCount++
+		captured = req
+		if openCount == 1 {
+			return initial, nil
+		}
+		return reopened, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		Provider:    codexapp.ProviderLCAgent,
+		ProjectPath: "/tmp/demo",
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+	m := Model{
+		codexManager:             manager,
+		settingsBaseline:         &previous,
+		settingsEmbeddedProject:  "/tmp/demo",
+		settingsEmbeddedProvider: codexapp.ProviderLCAgent,
+	}
+	projectPath, ok := m.shouldReloadEmbeddedLCAgentAfterSettingsSave(previous, saved)
+	if !ok {
+		t.Fatalf("shouldReloadEmbeddedLCAgentAfterSettingsSave() = false, want true")
+	}
+	if projectPath != "/tmp/demo" {
+		t.Fatalf("reload project = %q, want /tmp/demo", projectPath)
+	}
+
+	cmd := m.reloadEmbeddedLCAgentAfterSettingsCmd(projectPath, saved)
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("reload cmd returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("reload err = %v, want nil", opened.err)
+	}
+	if openCount != 2 {
+		t.Fatalf("open count = %d, want 2", openCount)
+	}
+	if !initial.snapshot.Closed {
+		t.Fatalf("initial session should be closed before reload")
+	}
+	if captured.ResumeID != "lca_existing" {
+		t.Fatalf("resume ID = %q, want lca_existing", captured.ResumeID)
+	}
+	if captured.LCAgentWebSearchBackend != "exa" || captured.LCAgentWebSearchAPIKey != "exa-key" {
+		t.Fatalf("captured web search = (%q, %q), want exa/exa-key", captured.LCAgentWebSearchBackend, captured.LCAgentWebSearchAPIKey)
+	}
+	if captured.PendingModel != "custom-lcagent-model" {
+		t.Fatalf("pending model = %q, want custom-lcagent-model", captured.PendingModel)
+	}
+	if !strings.Contains(opened.status, "Restarted LCAgent") {
+		t.Fatalf("opened status = %q, want restart notice", opened.status)
 	}
 }
 
