@@ -1072,7 +1072,7 @@ func TestExecuteBossGoalRunStartsLCAgentTaskAndPersistsTrace(t *testing.T) {
 	if record.Proposal.Run.Status != bossrun.GoalStatusCompleted || !record.Result.Verified {
 		t.Fatalf("stored goal = %#v, want completed verified LCAgent goal", record)
 	}
-	if record.Result.LCAgentSessionID != "lca-goal-session" || record.Result.LCAgentVerificationStatus != "reported" {
+	if record.Result.LCAgentSessionID != "lca-goal-session" || record.Result.LCAgentVerificationStatus != "verified" {
 		t.Fatalf("stored LCAgent result = %#v, want harvested session and verification", record.Result)
 	}
 	if len(record.Trace) != 4 {
@@ -1096,8 +1096,9 @@ func writeTUILCAgentTraceArtifact(t *testing.T, dataDir, cwd, sessionID, summary
 	events := []map[string]any{
 		{"type": "session_meta", "id": sessionID, "cwd": cwd, "started_at": started.Format(time.RFC3339Nano)},
 		{"type": "patch_diff_summary", "session_id": sessionID, "timestamp": started.Add(time.Second).Format(time.RFC3339Nano), "summary": "README.md +1 -0"},
-		{"type": "verification_summary", "session_id": sessionID, "timestamp": started.Add(2 * time.Second).Format(time.RFC3339Nano), "status": "reported", "message": "Verification was reported in final_response."},
-		{"type": "turn_complete", "session_id": sessionID, "timestamp": started.Add(3 * time.Second).Format(time.RFC3339Nano), "summary": summary, "files_changed": []string{"README.md"}, "verification": []string{"go test ./..."}, "verification_status": "reported"},
+		{"type": "verification_check", "session_id": sessionID, "timestamp": started.Add(2 * time.Second).Format(time.RFC3339Nano), "command": "go test ./...", "status": "passed", "success": true},
+		{"type": "verification_summary", "session_id": sessionID, "timestamp": started.Add(2500 * time.Millisecond).Format(time.RFC3339Nano), "status": "verified", "message": "Verification checks passed: go test ./..."},
+		{"type": "turn_complete", "session_id": sessionID, "timestamp": started.Add(3 * time.Second).Format(time.RFC3339Nano), "summary": summary, "files_changed": []string{"README.md"}, "verification": []string{"go test ./..."}, "verification_status": "verified", "actual_checks": []map[string]any{{"command": "go test ./...", "status": "passed", "success": true}}},
 	}
 	for _, event := range events {
 		if err := encoder.Encode(event); err != nil {

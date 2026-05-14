@@ -130,9 +130,9 @@ func runSmoke(args []string, stdout io.Writer) error {
 		report.Passed = false
 		return writeSmokeReport(stdout, report, outputRaw, fmt.Errorf("README.md did not contain the expected smoke line"))
 	}
-	if report.Metrics.VerificationStatuses["reported"] < 1 {
+	if report.Metrics.VerificationStatuses["verified"] < 1 {
 		report.Passed = false
-		return writeSmokeReport(stdout, report, outputRaw, fmt.Errorf("smoke session did not report verification"))
+		return writeSmokeReport(stdout, report, outputRaw, fmt.Errorf("smoke session did not record verified run_command checks"))
 	}
 	return writeSmokeReport(stdout, report, outputRaw, nil)
 }
@@ -166,7 +166,7 @@ func smokePrompt() string {
 Please update README.md by adding exactly this line:
 LCAgent smoke: updated
 
-Then run go test ./... and finish with final_response that lists README.md in files_changed and go test ./... in verification.`)
+Then run go test ./... with run_command purpose set to verify, and finish with final_response that lists README.md in files_changed and go test ./... in verification.`)
 }
 
 func firstSmokeNonEmpty(values ...string) string {

@@ -57,6 +57,24 @@ func TestCommandRunnerSupportsArgv(t *testing.T) {
 	}
 }
 
+func TestCommandRunnerPreservesVerificationPurpose(t *testing.T) {
+	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyOff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := CommandRunner{Workspace: w, ArtifactDir: t.TempDir()}.RunSpec(context.Background(), CommandSpec{
+		Argv:      []string{"pwd"},
+		TimeoutMS: 1000,
+		Purpose:   "test",
+	})
+	if !result.Success {
+		t.Fatalf("argv command failed: %#v", result)
+	}
+	if result.Purpose != CommandPurposeVerify || result.Command != "pwd" {
+		t.Fatalf("purpose/command = %q/%q, want verify/pwd", result.Purpose, result.Command)
+	}
+}
+
 func TestCommandRunnerDeniesBroadCommandBelowMedium(t *testing.T) {
 	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyLow)
 	if err != nil {

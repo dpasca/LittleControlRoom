@@ -983,6 +983,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 						"command":    map[string]any{"type": "string", "description": "Legacy shell command string. Prefer argv unless shell syntax is required."},
 						"shell":      map[string]any{"type": "boolean", "description": "Set true when using command as a shell string."},
 						"timeout_ms": map[string]any{"type": "integer", "minimum": 1, "maximum": 60000},
+						"purpose":    map[string]any{"type": "string", "enum": []string{"inspect", "verify"}, "description": "Use verify for tests, linters, typechecks, builds, or other commands intended to verify the final answer. Use inspect for read-only exploration."},
 					},
 				},
 			},
@@ -1137,11 +1138,12 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		"Use workspace-relative paths in file tools; absolute paths are denied.",
 		"File tools are workspace-only; use read-only run_command argv for paths outside the workspace.",
 		"When using run_command, prefer argv over command strings; shell commands are for shell syntax only.",
+		"When a run_command is a test, lint, typecheck, build, or other verification check, set purpose to verify so LCR can audit what actually ran.",
 		"At low autonomy, use run_command argv for conservative Go verification such as [\"go\",\"test\",\"./...\"]; shell strings and broad write-like commands are denied.",
 		"Never write provider tool-call markup such as DSML in assistant text; call tools only through structured tool_calls.",
 		"Skill descriptions in this prompt are metadata only; call load_skill before relying on any skill instructions.",
 		"Use apply_patch for source edits. Patches must use this exact shape: *** Begin Patch, *** Update File: path, @@, -old line, +new line, *** End Patch.",
-		"After edits, use the patch diff summary and run or explain verification before final_response.",
+		"After edits, use the patch diff summary and run or explain verification before final_response. If verification ran through run_command, final_response verification should match the actual purpose=verify command result.",
 		"When done, call final_response exactly once. Its summary must contain the full answer, changed files, and verification outcome. The verification array must name checks run or say not run with the reason; it is only supporting evidence.",
 	)
 	if strings.EqualFold(opts.ToolProfile, "generous") {

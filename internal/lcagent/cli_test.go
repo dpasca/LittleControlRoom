@@ -1255,10 +1255,19 @@ func TestRunEvalReportsPassingRegressionLane(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
 		t.Fatalf("decode eval report: %v\n%s", err, stdout.String())
 	}
-	if !report.Passed || len(report.Cases) != 5 {
-		t.Fatalf("eval report = %#v, want five passing cases", report)
+	if !report.Passed || len(report.Cases) != 6 {
+		t.Fatalf("eval report = %#v, want six passing cases", report)
 	}
-	if report.Summary.PatchDiffSummaries < 2 || report.Summary.PermissionDenials < 1 || report.Summary.ResumeContexts < 1 || report.Summary.VerificationStatuses["reported"] < 2 || report.Summary.VerificationStatuses["missing_after_changes"] < 1 {
+	if report.Summary.PatchDiffSummaries < 2 ||
+		report.Summary.PermissionDenials < 1 ||
+		report.Summary.ResumeContexts < 1 ||
+		report.Summary.VerificationChecks < 3 ||
+		report.Summary.VerificationStatuses["reported_only"] < 1 ||
+		report.Summary.VerificationStatuses["verified"] < 1 ||
+		report.Summary.VerificationStatuses["missing_after_changes"] < 1 ||
+		report.Summary.VerificationCheckStatuses["passed"] < 1 ||
+		report.Summary.VerificationCheckStatuses["failed"] < 1 ||
+		report.Summary.VerificationCheckStatuses["denied"] < 1 {
 		t.Fatalf("eval summary missing expected trace metrics: %#v", report.Summary)
 	}
 }

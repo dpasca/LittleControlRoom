@@ -40,7 +40,8 @@ make lcagent-eval
 
 This creates temporary fixture repos and checks the LCAgent trace contract for:
 
-- patch diff summaries plus reported verification
+- actual `purpose=verify` command traces plus final verification summaries
+- patch diff summaries plus final verification summaries
 - explicit permission-denial events
 - low-autonomy `go test ./...` verification
 - missing-verification contract detection after edits
@@ -65,7 +66,7 @@ make lcagent-live-smoke
 
 The smoke command creates a temporary Go workspace, asks the configured live
 provider to make one README edit, runs `go test ./...`, and checks the resulting
-artifact for reported verification. See
+artifact for verified `purpose=verify` command traces. See
 [docs/lcagent_live_smoke_script.md](lcagent_live_smoke_script.md) for provider
 variants and the Boss goal-run smoke path.
 

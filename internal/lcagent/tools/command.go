@@ -29,6 +29,7 @@ type CommandSpec struct {
 	Argv      []string
 	Shell     bool
 	TimeoutMS int
+	Purpose   string
 }
 
 func (r CommandRunner) Run(ctx context.Context, command string, timeout time.Duration) ToolResult {
@@ -37,10 +38,18 @@ func (r CommandRunner) Run(ctx context.Context, command string, timeout time.Dur
 
 func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult {
 	if err := r.Workspace.AllowCommandSpec(spec.Argv, spec.Command, spec.Shell); err != nil {
-		if policy.IsDenied(err) {
-			return ToolResult{Success: false, Error: err.Error(), Denied: true, DenialReason: policy.DenialReason(err)}
+		result := ToolResult{
+			Success: false,
+			Error:   err.Error(),
+			Command: commandLabelFromSpec(spec),
+			Argv:    cleanArgv(spec.Argv),
+			Purpose: normalizeCommandPurpose(spec.Purpose),
 		}
-		return ToolResult{Success: false, Error: err.Error()}
+		if policy.IsDenied(err) {
+			result.Denied = true
+			result.DenialReason = policy.DenialReason(err)
+		}
+		return result
 	}
 	timeout := policy.ClampTimeout(time.Duration(spec.TimeoutMS)*time.Millisecond, defaultCommandTimeout, maxCommandTimeout)
 	start := time.Now()
@@ -49,7 +58,7 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 
 	cmd, label, err := commandFromSpec(ctx, spec)
 	if err != nil {
-		return ToolResult{Success: false, Error: err.Error()}
+		return ToolResult{Success: false, Error: err.Error(), Command: commandLabelFromSpec(spec), Argv: cleanArgv(spec.Argv), Purpose: normalizeCommandPurpose(spec.Purpose)}
 	}
 	cmd.Dir = r.Workspace.Root
 	var stdout, stderr bytes.Buffer
@@ -78,12 +87,33 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 		Success:      err == nil && !timedOut,
 		Output:       p.Text,
 		Error:        errorString(err, timedOut),
+		Command:      label,
+		Argv:         cleanArgv(spec.Argv),
+		Purpose:      normalizeCommandPurpose(spec.Purpose),
 		ExitCode:     exitCode,
 		Duration:     duration,
 		TimedOut:     timedOut,
 		Truncated:    p.Truncated,
 		Binary:       p.Binary,
 		ArtifactPath: p.ArtifactPath,
+	}
+}
+
+func commandLabelFromSpec(spec CommandSpec) string {
+	if len(spec.Argv) > 0 {
+		return strings.Join(cleanArgv(spec.Argv), " ")
+	}
+	return strings.TrimSpace(spec.Command)
+}
+
+func normalizeCommandPurpose(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case CommandPurposeVerify, "verification", "test", "tests", "lint", "typecheck", "type-check", "build":
+		return CommandPurposeVerify
+	case CommandPurposeInspect, "":
+		return ""
+	default:
+		return strings.ToLower(strings.TrimSpace(raw))
 	}
 }
 

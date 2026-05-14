@@ -504,6 +504,8 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		if summary := rawJSONString(event["summary"]); summary != "" {
 			s.appendAsync(TranscriptFileChange, summary)
 		}
+	case "verification_check":
+		s.appendAsync(TranscriptStatus, lcagentVerificationCheckText(event))
 	case "verification_summary":
 		status := rawJSONString(event["status"])
 		message := rawJSONString(event["message"])
@@ -920,6 +922,12 @@ func rawJSONString(raw json.RawMessage) string {
 
 func rawJSONBool(raw json.RawMessage) bool {
 	var value bool
+	_ = json.Unmarshal(raw, &value)
+	return value
+}
+
+func rawJSONInt(raw json.RawMessage) int {
+	var value int
 	_ = json.Unmarshal(raw, &value)
 	return value
 }

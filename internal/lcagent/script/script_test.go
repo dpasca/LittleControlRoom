@@ -79,8 +79,44 @@ func TestRunnerExecutesScriptedMiniSession(t *testing.T) {
 			t.Fatalf("stream missing %s:\n%s", eventType, text)
 		}
 	}
-	if !strings.Contains(text, `"verification_status":"reported"`) || !strings.Contains(text, `"summary":"patch diff summary:`) {
+	if !strings.Contains(text, `"verification_status":"reported_only"`) || !strings.Contains(text, `"summary":"patch diff summary:`) {
 		t.Fatalf("stream missing verification status or patch summary:\n%s", text)
+	}
+}
+
+func TestRunnerRecordsActualVerificationCheck(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Prompt:    "verify",
+		Command:   tools.CommandRunner{Workspace: w, ArtifactDir: t.TempDir()},
+	}
+	actions := []Action{
+		{Type: "tool_call", Tool: "run_command", Args: raw(`{"argv":["cat","README.md"],"timeout_ms":1000,"purpose":"verify"}`)},
+		{Type: "final_response", Summary: "verified", Verification: []string{"cat README.md"}},
+	}
+	if err := runner.Run(context.Background(), actions); err != nil {
+		t.Fatal(err)
+	}
+	text := stream.String()
+	for _, want := range []string{`"type":"verification_check"`, `"command":"cat README.md"`, `"status":"passed"`, `"verification_status":"verified"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stream missing %s:\n%s", want, text)
+		}
 	}
 }
 

@@ -1,6 +1,6 @@
 # LCAgent Experimental Handoff
 
-Date updated: 2026-05-10
+Date updated: 2026-05-14
 
 This note describes the current LCAgent state after the MVP branch was made
 merge-ready. The older `docs/lcagent_mvp_implementation_handoff.md` is still a
@@ -19,6 +19,8 @@ Implemented pieces:
 - Structured JSONL events for session metadata, tool calls/results, plans,
   final responses, touched files, provider usage, tool profiles, and context
   profiles.
+- Verification traces distinguish actual `run_command` checks marked with
+  `purpose=verify` from verification text merely reported in `final_response`.
 - Workspace-contained tools: `read_file`, `file_outline`, `module_outline`,
   `list_files`, literal `search`, optional `web_search`, `load_skill`,
   `run_command`, `apply_patch`, `update_plan`, and `final_response`.
@@ -38,6 +40,9 @@ Default posture:
   `lcagent_context_profile = "balanced"` as the conservative defaults.
 - Use `generous` and `large` for benchmark lanes or providers with enough
   context/cache economics to spend the extra evidence well.
+- Keep the roadmap coding-first. Global memory, broad personal-assistant
+  behavior, and rich non-coding connectors can wait until the coding loop is
+  reliable enough to use as a daily worker.
 
 ## Known Gaps
 
@@ -45,8 +50,9 @@ LCR session parity:
 
 - LCAgent does not support approvals, attachments, structured tool input,
   elicitation, compact, review, or goal state in the embedded pane.
-- Replayed LCAgent history is display-only. Sending a new prompt starts a fresh
-  one-shot run rather than continuing the previous model context.
+- Replayed LCAgent history can seed a continuing run through summarized context,
+  but it is not a true persistent model thread with full transcript state,
+  branching, or user-controlled compaction.
 - The model picker is intentionally minimal and does not discover provider
   models or validate provider credentials.
 - `web_search` is off by default. Exa-backed search needs an Exa API key;
@@ -65,18 +71,24 @@ Setup and product UX:
 
 Harness and policy hardening:
 
-- Policy denials currently surface through tool failures; there is no dedicated
-  `permission_denied` lifecycle event or first-class denial audit surface yet.
-- Patch application works, but the run trace would benefit from a post-apply
-  diff summary and stronger verification guidance.
+- Permission denials and patch diff summaries are recorded, but they need a
+  better first-class UI/audit surface in run summaries and Boss reports.
+- Verification traces now separate "checks actually ran" from "the model
+  reported checks"; the next hardening step is to use that signal for clearer
+  repair loops when verification fails or is only reported.
 - The command policy needs more real-task calibration, especially around what
-  low autonomy should permit for normal test workflows.
+  low autonomy should permit for normal test, lint, format, and build workflows
+  across common stacks, not just conservative Go test forms.
 - Provider-specific quirks still need hardening: retries, rate-limit messages,
   timeout defaults, prompt-cache behavior, and OpenRouter provider pinning.
+- Patch/edit ergonomics are still basic. Multi-file edits work, but there is no
+  model-adaptive edit dialect, fallback edit tool, or post-edit formatting hook.
 
 Eval maturity:
 
-- The current benchmark is valuable but still small and partly qualitative.
+- The deterministic eval lane protects the trace contract, but it does not
+  score live coding quality.
+- The current live benchmark is valuable but still small and partly qualitative.
 - Scores are human-assigned from fixed-task outputs; there is no automated
   regression suite for answer quality yet.
 - We should keep using fixed target commits for comparable runs and avoid
@@ -84,34 +96,117 @@ Eval maturity:
 
 ## Recommended Next Steps
 
-1. Merge the branch as an experimental feature after push/PR review.
-   The release note should say LCAgent is opt-in, one-shot, and configured from
-   `/settings`.
+### P0: Make The Coding Loop Trustworthy
 
-2. Add a dedicated LCAgent setup card.
-   It should cover provider, env file, model, autonomy, tool/context profiles,
-   and a redacted credential/provider smoke check.
+This is the highest-leverage track. LCAgent should become boringly reliable for
+small-to-medium coding tasks before it tries to be a broader assistant.
 
-3. Improve embedded-session parity.
-   Start with graceful UI behavior for unsupported `/compact`, `/review`,
-   approvals, and attachments, then decide whether true resumable context is in
-   scope.
+1. Use verification semantics to drive repair loops.
+   The trace can now distinguish actual `purpose=verify` command checks from
+   reported-only verification. Next, make failed, denied, timed-out, or
+   reported-only verification feed clearer model guidance, Boss summaries, and
+   UI calls to action.
 
-4. Harden policy traces.
-   Add explicit denial events, post-patch diff summaries, and clearer
-   verification outcomes so LCR can explain what the agent did and what it
-   refused.
+2. Calibrate low-autonomy command policy around real coding workflows.
+   Add explicit argv allowances and tests for common safe verification commands:
+   Go test/list/vet where appropriate, package-manager test scripts in read-safe
+   forms, linters, format check modes, typecheck commands, and project-local
+   build commands that do not publish, install globally, mutate secrets, or
+   delete broad paths.
 
-5. Turn the benchmark into a repeatable eval lane.
-   Keep the fixed-commit workflow, add a small set of coding-agent tasks, record
-   tool/context profile columns, and preserve short qualitative excerpts for the
-   human score.
+3. Improve edit application and recovery.
+   Keep `apply_patch` as the primary typed mutation tool, but add better
+   failure feedback, optional post-patch diff context, and eventually a
+   model-adaptive fallback edit strategy for providers that struggle with strict
+   patch syntax.
 
-6. Continue model-route exploration selectively.
-   DeepSeek V4 Pro and Kimi K2.6 remain the most interesting cost/performance
-   routes to improve. GPT-5.5 low remains the high-quality reference lane. Large
-   context should stay opt-in unless a route demonstrates better quality per
-   dollar.
+4. Surface trace quality in LCR.
+   Make run summaries show denials, files changed, patch diff summaries,
+   verification status, actual verification commands, token/cost/cached-token
+   totals, and whether a continuation used summarized prior context.
+
+### P1: Make Continuation Feel Like A Coding Session
+
+1. Promote summarized continuation from "nice fallback" to an explicit session
+   model.
+   Record a continuation chain, source artifact id, compact handoff, files
+   touched, verification state, and warnings when exact file contents must be
+   re-read before edits.
+
+2. Add user-visible compact/review behavior for LCAgent.
+   `/compact` can create or refresh the durable handoff summary. `/review` can
+   start as a read-only current-diff review task using the same trace format,
+   even before it reaches Codex parity.
+
+3. Preserve coding state across LCR surfaces.
+   Boss goal runs, TODO-driven sessions, replay, and direct `/lcagent` launches
+   should all show the same chain, latest artifact, files changed, verification,
+   and next-step status.
+
+### P2: Improve Setup And Model Routing
+
+1. Add a guided LCAgent setup card.
+   Cover provider, env file, model, reasoning effort, autonomy, tool/context
+   profiles, request timeout, and optional web search. Include a redacted
+   provider smoke check before the user spends a real task on setup debugging.
+
+2. Replace free-text model/profile fields with curated choices plus an escape
+   hatch.
+   Keep direct text entry for experiments, but make the normal path hard to
+   misconfigure.
+
+3. Add model-route presets for coding work.
+   Suggested starting lanes:
+   - `quality`: GPT-5.5 low or the current best high-quality route.
+   - `balanced`: DeepSeek V4 Pro or Kimi K2.6 with conservative context.
+   - `cheap scout`: DeepSeek V4 Flash or another low-cost route for bounded
+     read-only exploration, summarization, and small follow-up tasks.
+
+### P3: Build Real Coding Evals
+
+1. Extend the deterministic eval lane only for harness contracts.
+   Keep it fast and no-network: trace shape, denials, patch summaries,
+   verification accounting, continuation chains, command policy, and metrics.
+
+2. Add a repeatable live coding eval lane.
+   Use fixed target commits and a small task suite: bug fix, test failure,
+   feature slice, refactor-with-tests, current-diff review, and repo
+   orientation. Score correctness, unnecessary reads, failed tool calls,
+   verification quality, cost, and wall time.
+
+3. Make model-tier comparisons first-class.
+   Record helm model, optional scout model, context/tool profile, reasoning
+   knobs, provider pinning, cache behavior, and final human score.
+
+### P4: Add Bounded Delegation Without Chasing Subagents
+
+Subagents are not a priority by themselves. The useful feature is efficient
+model-tiered delegation for small jobs.
+
+1. Add a lightweight delegated-job primitive.
+   It should run a bounded prompt with a specific model/profile, read/write
+   scope, max turns, and expected structured handoff. It can reuse `lcagent exec`
+   artifacts instead of inventing a new runtime.
+
+2. Start with read-only scout jobs on cheaper/faster models.
+   Examples: "map the relevant files", "summarize this package", "find likely
+   failing test owners", or "extract API usage points". The main model decides
+   whether to trust or verify the handoff.
+
+3. Add small write jobs only after scout jobs are boring.
+   Keep write delegation scoped to disjoint files or disposable worktrees, with
+   explicit patch summaries and verification requirements.
+
+4. Make Boss and LCAgent share the same delegation vocabulary.
+   A delegated LCAgent job should appear as an agent task or goal-run trace with
+   model, scope, files touched, denials, verification, and cost.
+
+### P5: Defer General-Assistant Breadth
+
+Do not spend early roadmap energy on global memory, email/calendar/docs
+connectors, rich personal-assistant behavior, or broad multimodal workflows.
+Those can become useful later, but the near-term product goal is a coding-first
+agent that can inspect, edit, test, explain, resume, and be supervised cleanly.
 
 ## Merge Checklist
 

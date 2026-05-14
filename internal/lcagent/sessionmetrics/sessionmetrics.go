@@ -17,30 +17,32 @@ import (
 const largestToolOutputLimit = 5
 
 type Summary struct {
-	Files                    []string          `json:"files,omitempty"`
-	Sessions                 int               `json:"sessions"`
-	SessionIDs               []string          `json:"session_ids,omitempty"`
-	ToolProfiles             map[string]int    `json:"tool_profiles,omitempty"`
-	ContextProfiles          map[string]int    `json:"context_profiles,omitempty"`
-	ModelResponses           int               `json:"model_responses"`
-	ToolCalls                map[string]int    `json:"tool_calls"`
-	ToolResults              map[string]int    `json:"tool_results"`
-	ResumeContexts           int               `json:"resume_contexts"`
-	PermissionDenials        int               `json:"permission_denials"`
-	PatchDiffSummaries       int               `json:"patch_diff_summaries"`
-	VerificationStatuses     map[string]int    `json:"verification_statuses,omitempty"`
-	ReadFileCalls            int               `json:"read_file_calls"`
-	ReadFileLines            int               `json:"read_file_lines"`
-	ReadFileOutputBytes      int               `json:"read_file_output_bytes"`
-	ReadFileOverlappingCalls int               `json:"read_file_overlapping_calls"`
-	ReadFileOverlappingLines int               `json:"read_file_overlapping_lines"`
-	RepeatedReadRanges       []ReadRangeCount  `json:"repeated_read_ranges,omitempty"`
-	LargestToolOutputs       []ToolOutputSize  `json:"largest_tool_outputs,omitempty"`
-	TokenUsage               lcrmodel.LLMUsage `json:"token_usage"`
-	MaxInputTokens           int64             `json:"max_input_tokens"`
-	MaxTotalTokens           int64             `json:"max_total_tokens"`
-	rangesByFile             map[string][]lineRange
-	readRangeCounts          map[string]rangeSeen
+	Files                     []string          `json:"files,omitempty"`
+	Sessions                  int               `json:"sessions"`
+	SessionIDs                []string          `json:"session_ids,omitempty"`
+	ToolProfiles              map[string]int    `json:"tool_profiles,omitempty"`
+	ContextProfiles           map[string]int    `json:"context_profiles,omitempty"`
+	ModelResponses            int               `json:"model_responses"`
+	ToolCalls                 map[string]int    `json:"tool_calls"`
+	ToolResults               map[string]int    `json:"tool_results"`
+	ResumeContexts            int               `json:"resume_contexts"`
+	PermissionDenials         int               `json:"permission_denials"`
+	PatchDiffSummaries        int               `json:"patch_diff_summaries"`
+	VerificationChecks        int               `json:"verification_checks"`
+	VerificationCheckStatuses map[string]int    `json:"verification_check_statuses,omitempty"`
+	VerificationStatuses      map[string]int    `json:"verification_statuses,omitempty"`
+	ReadFileCalls             int               `json:"read_file_calls"`
+	ReadFileLines             int               `json:"read_file_lines"`
+	ReadFileOutputBytes       int               `json:"read_file_output_bytes"`
+	ReadFileOverlappingCalls  int               `json:"read_file_overlapping_calls"`
+	ReadFileOverlappingLines  int               `json:"read_file_overlapping_lines"`
+	RepeatedReadRanges        []ReadRangeCount  `json:"repeated_read_ranges,omitempty"`
+	LargestToolOutputs        []ToolOutputSize  `json:"largest_tool_outputs,omitempty"`
+	TokenUsage                lcrmodel.LLMUsage `json:"token_usage"`
+	MaxInputTokens            int64             `json:"max_input_tokens"`
+	MaxTotalTokens            int64             `json:"max_total_tokens"`
+	rangesByFile              map[string][]lineRange
+	readRangeCounts           map[string]rangeSeen
 }
 
 type ReadRangeCount struct {
@@ -129,6 +131,9 @@ func (s *Summary) init() {
 	if s.VerificationStatuses == nil {
 		s.VerificationStatuses = map[string]int{}
 	}
+	if s.VerificationCheckStatuses == nil {
+		s.VerificationCheckStatuses = map[string]int{}
+	}
 	if s.rangesByFile == nil {
 		s.rangesByFile = map[string][]lineRange{}
 	}
@@ -191,6 +196,13 @@ func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
 		s.ResumeContexts++
 	case "patch_diff_summary":
 		s.PatchDiffSummaries++
+	case "verification_check":
+		s.VerificationChecks++
+		status := rawString(event["status"])
+		if status == "" {
+			status = "unknown"
+		}
+		s.VerificationCheckStatuses[status]++
 	case "verification_summary":
 		status := rawString(event["status"])
 		if status == "" {

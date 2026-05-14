@@ -21,6 +21,7 @@ type LCAgentTrace struct {
 	Summary               string
 	FilesChanged          []string
 	Verification          []string
+	ActualChecks          []LCAgentVerificationCheck
 	VerificationStatus    string
 	PermissionDenials     []LCAgentPermissionDenial
 	PatchDiffSummaries    []string
@@ -31,6 +32,14 @@ type LCAgentTrace struct {
 type LCAgentPermissionDenial struct {
 	Tool   string
 	Reason string
+}
+
+type LCAgentVerificationCheck struct {
+	Command  string
+	Status   string
+	Success  bool
+	ExitCode int
+	Error    string
 }
 
 func LoadLCAgentTrace(dataDir, sessionID, projectPath string) (LCAgentTrace, error) {
@@ -104,10 +113,15 @@ func ParseLCAgentTraceFile(path string) (LCAgentTrace, error) {
 			if summary := rawJSONString(event["summary"]); summary != "" {
 				trace.PatchDiffSummaries = append(trace.PatchDiffSummaries, summary)
 			}
+		case "verification_check":
+			trace.ActualChecks = append(trace.ActualChecks, lcagentVerificationCheckFromEvent(event))
 		case "verification_summary":
 			status := rawJSONString(event["status"])
 			if status != "" {
 				trace.VerificationStatus = status
+			}
+			if len(trace.ActualChecks) == 0 {
+				trace.ActualChecks = append(trace.ActualChecks, lcagentVerificationChecksFromRaw(event["actual_checks"])...)
 			}
 			if message := rawJSONString(event["message"]); message != "" {
 				trace.VerificationSummaries = append(trace.VerificationSummaries, message)
@@ -122,6 +136,9 @@ func ParseLCAgentTraceFile(path string) (LCAgentTrace, error) {
 			trace.FilesChanged = rawJSONStringList(event["files_changed"])
 			trace.Verification = rawJSONStringList(event["verification"])
 			trace.VerificationStatus = firstNonEmpty(rawJSONString(event["verification_status"]), trace.VerificationStatus)
+			if len(trace.ActualChecks) == 0 {
+				trace.ActualChecks = append(trace.ActualChecks, lcagentVerificationChecksFromRaw(event["actual_checks"])...)
+			}
 		case "turn_aborted":
 			trace.Aborted = true
 			reason := firstNonEmpty(rawJSONString(event["reason"]), "LCAgent run aborted")
@@ -135,7 +152,8 @@ func ParseLCAgentTraceFile(path string) (LCAgentTrace, error) {
 }
 
 func (t LCAgentTrace) Verified() bool {
-	return t.Completed && !t.Aborted && strings.EqualFold(strings.TrimSpace(t.VerificationStatus), "reported")
+	status := strings.ToLower(strings.TrimSpace(t.VerificationStatus))
+	return t.Completed && !t.Aborted && (status == "verified" || status == "reported")
 }
 
 func (t LCAgentTrace) CompletionError() error {
@@ -168,6 +186,9 @@ func (t LCAgentTrace) CompactSummary() string {
 	}
 	if len(t.FilesChanged) > 0 {
 		parts = append(parts, fmt.Sprintf("%d file%s changed", len(t.FilesChanged), pluralSuffix(len(t.FilesChanged))))
+	}
+	if len(t.ActualChecks) > 0 {
+		parts = append(parts, fmt.Sprintf("%d verification check%s", len(t.ActualChecks), pluralSuffix(len(t.ActualChecks))))
 	}
 	if len(t.PermissionDenials) > 0 {
 		parts = append(parts, fmt.Sprintf("%d denial%s", len(t.PermissionDenials), pluralSuffix(len(t.PermissionDenials))))
@@ -223,7 +244,53 @@ func lcagentTurnCompleteTraceText(event map[string]json.RawMessage) string {
 	if len(verification) > 0 {
 		parts = append(parts, "checks "+strings.Join(limitStrings(verification, 3), ", "))
 	}
+	actualChecks := lcagentVerificationChecksFromRaw(event["actual_checks"])
+	if len(actualChecks) > 0 {
+		parts = append(parts, fmt.Sprintf("actual %d", len(actualChecks)))
+	}
 	return strings.Join(parts, "; ")
+}
+
+func lcagentVerificationCheckFromEvent(event map[string]json.RawMessage) LCAgentVerificationCheck {
+	return LCAgentVerificationCheck{
+		Command:  rawJSONString(event["command"]),
+		Status:   firstNonEmpty(rawJSONString(event["status"]), "unknown"),
+		Success:  rawJSONBool(event["success"]),
+		ExitCode: rawJSONInt(event["exit_code"]),
+		Error:    rawJSONString(event["error"]),
+	}
+}
+
+func lcagentVerificationChecksFromRaw(raw json.RawMessage) []LCAgentVerificationCheck {
+	var checks []LCAgentVerificationCheck
+	if err := json.Unmarshal(raw, &checks); err != nil {
+		return nil
+	}
+	out := checks[:0]
+	for _, check := range checks {
+		check.Command = strings.TrimSpace(check.Command)
+		check.Status = firstNonEmpty(strings.TrimSpace(check.Status), "unknown")
+		check.Error = strings.TrimSpace(check.Error)
+		if check.Command == "" && check.Status == "unknown" {
+			continue
+		}
+		out = append(out, check)
+	}
+	return out
+}
+
+func lcagentVerificationCheckText(event map[string]json.RawMessage) string {
+	check := lcagentVerificationCheckFromEvent(event)
+	label := firstNonEmpty(check.Command, "verification check")
+	status := firstNonEmpty(check.Status, "unknown")
+	text := "Verification " + status + ": " + label
+	if check.ExitCode != 0 {
+		text += fmt.Sprintf(" (exit %d)", check.ExitCode)
+	}
+	if check.Error != "" {
+		text += ": " + check.Error
+	}
+	return text
 }
 
 func limitStrings(values []string, limit int) []string {

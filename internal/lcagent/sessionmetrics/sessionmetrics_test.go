@@ -21,7 +21,8 @@ const benchmarkSessionJSONL = `{"type":"session_meta","id":"lca_demo","cwd":"/re
 {"type":"resume_context","source_session_id":"lca_previous","summary":"source lca_previous; summary: previous work"}
 {"type":"permission_denied","tool":"apply_patch","reason":"apply_patch denied with --auto off"}
 {"type":"patch_diff_summary","summary":"patch diff summary:\n- README.md: update +1 -1\ntotal: +1 -1"}
-{"type":"verification_summary","status":"reported","verification_checks":["go test ./internal/lcagent/..."]}
+{"type":"verification_check","command":"go test ./internal/lcagent/...","argv":["go","test","./internal/lcagent/..."],"purpose":"verify","status":"passed","success":true}
+{"type":"verification_summary","status":"verified","verification_checks":["go test ./internal/lcagent/..."]}
 {"type":"turn_complete","summary":"done"}
 `
 
@@ -47,8 +48,8 @@ func TestAnalyzeFilesSummarizesLCAgentSession(t *testing.T) {
 	if summary.ContextProfiles["large"] != 1 {
 		t.Fatalf("context profiles = %#v", summary.ContextProfiles)
 	}
-	if summary.ResumeContexts != 1 || summary.PermissionDenials != 1 || summary.PatchDiffSummaries != 1 || summary.VerificationStatuses["reported"] != 1 {
-		t.Fatalf("trust trace metrics = resumes %d denials %d patch summaries %d verification %#v", summary.ResumeContexts, summary.PermissionDenials, summary.PatchDiffSummaries, summary.VerificationStatuses)
+	if summary.ResumeContexts != 1 || summary.PermissionDenials != 1 || summary.PatchDiffSummaries != 1 || summary.VerificationChecks != 1 || summary.VerificationStatuses["verified"] != 1 || summary.VerificationCheckStatuses["passed"] != 1 {
+		t.Fatalf("trust trace metrics = resumes %d denials %d patch summaries %d verification checks %d statuses %#v check statuses %#v", summary.ResumeContexts, summary.PermissionDenials, summary.PatchDiffSummaries, summary.VerificationChecks, summary.VerificationStatuses, summary.VerificationCheckStatuses)
 	}
 	if summary.ReadFileCalls != 2 || summary.ReadFileLines != 301 {
 		t.Fatalf("read stats = calls %d lines %d", summary.ReadFileCalls, summary.ReadFileLines)

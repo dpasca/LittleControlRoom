@@ -24,8 +24,9 @@ Expected result:
 
 - The command exits 0.
 - `README.md` in the temporary workspace receives the exact smoke line.
-- The session artifact records `verification_status=reported`.
-- Metrics show at least one patch diff summary and a reported verification.
+- The session artifact records `verification_status=verified`.
+- Metrics show at least one patch diff summary and an actual
+  `purpose=verify` command trace.
 
 If it fails before a session starts, check the selected provider key in the env
 file or process environment. If it starts but fails verification, inspect the
@@ -41,7 +42,7 @@ From Boss Chat, ask for one traceable LCAgent task against a disposable project,
 for example:
 
 ```text
-Have LCAgent take a scoped task to inspect this temporary repo, make a one-line README change, run go test ./..., and report the result as a Boss goal.
+Have LCAgent take a scoped task to inspect this temporary repo, make a one-line README change, run go test ./... as a verification command, and report the result as a Boss goal.
 ```
 
 Expected Boss behavior:

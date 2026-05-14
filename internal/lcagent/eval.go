@@ -194,8 +194,8 @@ func lcagentEvalCases() []evalCase {
 				if summary.PatchDiffSummaries < 1 {
 					return fmt.Errorf("patch diff summary count = %d, want >= 1", summary.PatchDiffSummaries)
 				}
-				if summary.VerificationStatuses["reported"] < 1 {
-					return fmt.Errorf("verification reported count = %d, want >= 1", summary.VerificationStatuses["reported"])
+				if summary.VerificationStatuses["reported_only"] < 1 {
+					return fmt.Errorf("verification reported_only count = %d, want >= 1", summary.VerificationStatuses["reported_only"])
 				}
 				return nil
 			},
@@ -205,12 +205,15 @@ func lcagentEvalCases() []evalCase {
 			Prompt:      "try a denied command",
 			Auto:        "off",
 			ExpectError: true,
-			Script: `{"type":"tool_call","tool":"run_command","args":{"argv":["go","test","./..."],"shell":false}}
+			Script: `{"type":"tool_call","tool":"run_command","args":{"argv":["go","test","./..."],"shell":false,"purpose":"verify"}}
 {"type":"final_response","summary":"should not reach final"}
 `,
 			Check: func(summary sessionmetrics.Summary) error {
 				if summary.PermissionDenials < 1 {
 					return fmt.Errorf("permission denial count = %d, want >= 1", summary.PermissionDenials)
+				}
+				if summary.VerificationCheckStatuses["denied"] < 1 {
+					return fmt.Errorf("verification denied count = %d, want >= 1", summary.VerificationCheckStatuses["denied"])
 				}
 				return nil
 			},
@@ -228,15 +231,42 @@ import "testing"
 func TestSmoke(t *testing.T) {}
 `,
 			},
-			Script: `{"type":"tool_call","tool":"run_command","args":{"argv":["go","test","./..."],"shell":false,"timeout_ms":120000}}
+			Script: `{"type":"tool_call","tool":"run_command","args":{"argv":["go","test","./..."],"shell":false,"timeout_ms":120000,"purpose":"verify"}}
 {"type":"final_response","summary":"go tests passed","files_changed":[],"verification":["go test ./..."]}
 `,
 			Check: func(summary sessionmetrics.Summary) error {
 				if summary.ToolCalls["run_command"] < 1 || summary.ToolResults["run_command"] < 1 {
 					return fmt.Errorf("run_command calls/results = %d/%d, want >= 1", summary.ToolCalls["run_command"], summary.ToolResults["run_command"])
 				}
-				if summary.VerificationStatuses["reported"] < 1 {
-					return fmt.Errorf("verification reported count = %d, want >= 1", summary.VerificationStatuses["reported"])
+				if summary.VerificationChecks < 1 || summary.VerificationCheckStatuses["passed"] < 1 {
+					return fmt.Errorf("verification checks = %d statuses %#v, want passed", summary.VerificationChecks, summary.VerificationCheckStatuses)
+				}
+				if summary.VerificationStatuses["verified"] < 1 {
+					return fmt.Errorf("verification verified count = %d, want >= 1", summary.VerificationStatuses["verified"])
+				}
+				return nil
+			},
+		},
+		{
+			Name:        "failed_verification_trace",
+			Prompt:      "run a failing verification command",
+			Auto:        "low",
+			ExpectError: true,
+			Files: map[string]string{
+				"go.mod": "module lcagent-eval-fail\n\ngo 1.22\n",
+				"smoke_test.go": `package smoke
+
+import "testing"
+
+func TestSmoke(t *testing.T) { t.Fatal("intentional failure") }
+`,
+			},
+			Script: `{"type":"tool_call","tool":"run_command","args":{"argv":["go","test","./..."],"shell":false,"timeout_ms":120000,"purpose":"verify"}}
+{"type":"final_response","summary":"should not reach final","files_changed":[],"verification":["go test ./..."]}
+`,
+			Check: func(summary sessionmetrics.Summary) error {
+				if summary.VerificationCheckStatuses["failed"] < 1 {
+					return fmt.Errorf("verification failed count = %d, want >= 1", summary.VerificationCheckStatuses["failed"])
 				}
 				return nil
 			},
@@ -375,7 +405,7 @@ func writeLCAgentEvalResumeArtifact(dataDir, cwd, sessionID string, started time
 	events := []map[string]any{
 		{"type": "session_meta", "id": sessionID, "cwd": cwd, "started_at": started.Format(time.RFC3339Nano)},
 		{"type": "user_message", "session_id": sessionID, "timestamp": started.Add(time.Second).Format(time.RFC3339Nano), "message": "previous eval task"},
-		{"type": "turn_complete", "session_id": sessionID, "timestamp": started.Add(2 * time.Second).Format(time.RFC3339Nano), "summary": "previous eval summary", "verification_status": "reported", "verification": []string{"scripted"}},
+		{"type": "turn_complete", "session_id": sessionID, "timestamp": started.Add(2 * time.Second).Format(time.RFC3339Nano), "summary": "previous eval summary", "verification_status": "reported_only", "verification": []string{"scripted"}},
 	}
 	for _, event := range events {
 		if err := encoder.Encode(event); err != nil {

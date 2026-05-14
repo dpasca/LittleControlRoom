@@ -377,8 +377,9 @@ func TestParseLCAgentTraceFileHarvestsFinalOutcome(t *testing.T) {
 		{"type": "session_meta", "id": sessionID, "cwd": root, "started_at": started.Format(time.RFC3339Nano)},
 		{"type": "permission_denied", "session_id": sessionID, "timestamp": started.Add(time.Second).Format(time.RFC3339Nano), "tool": "run_command", "reason": "shell denied"},
 		{"type": "patch_diff_summary", "session_id": sessionID, "timestamp": started.Add(2 * time.Second).Format(time.RFC3339Nano), "summary": "README.md +1 -0"},
-		{"type": "verification_summary", "session_id": sessionID, "timestamp": started.Add(3 * time.Second).Format(time.RFC3339Nano), "status": "reported", "message": "Verification was reported in final_response."},
-		{"type": "turn_complete", "session_id": sessionID, "timestamp": started.Add(4 * time.Second).Format(time.RFC3339Nano), "summary": "updated docs", "files_changed": []string{"README.md"}, "verification": []string{"go test ./..."}, "verification_status": "reported"},
+		{"type": "verification_check", "session_id": sessionID, "timestamp": started.Add(3 * time.Second).Format(time.RFC3339Nano), "command": "go test ./...", "status": "passed", "success": true},
+		{"type": "verification_summary", "session_id": sessionID, "timestamp": started.Add(3500 * time.Millisecond).Format(time.RFC3339Nano), "status": "verified", "message": "Verification checks passed: go test ./..."},
+		{"type": "turn_complete", "session_id": sessionID, "timestamp": started.Add(4 * time.Second).Format(time.RFC3339Nano), "summary": "updated docs", "files_changed": []string{"README.md"}, "verification": []string{"go test ./..."}, "verification_status": "verified", "actual_checks": []map[string]any{{"command": "go test ./...", "status": "passed", "success": true}}},
 	})
 
 	trace, err := ParseLCAgentTraceFile(path)
@@ -388,11 +389,11 @@ func TestParseLCAgentTraceFileHarvestsFinalOutcome(t *testing.T) {
 	if !trace.Verified() || trace.SessionID != sessionID || trace.ProjectPath != root {
 		t.Fatalf("trace = %#v, want verified session for project", trace)
 	}
-	if trace.Summary != "updated docs" || trace.VerificationStatus != "reported" {
+	if trace.Summary != "updated docs" || trace.VerificationStatus != "verified" {
 		t.Fatalf("trace summary/status = %q/%q", trace.Summary, trace.VerificationStatus)
 	}
-	if len(trace.FilesChanged) != 1 || trace.FilesChanged[0] != "README.md" || len(trace.Verification) != 1 {
-		t.Fatalf("trace files/verification = %#v/%#v", trace.FilesChanged, trace.Verification)
+	if len(trace.FilesChanged) != 1 || trace.FilesChanged[0] != "README.md" || len(trace.Verification) != 1 || len(trace.ActualChecks) != 1 {
+		t.Fatalf("trace files/verification/checks = %#v/%#v/%#v", trace.FilesChanged, trace.Verification, trace.ActualChecks)
 	}
 	if len(trace.PermissionDenials) != 1 || len(trace.PatchDiffSummaries) != 1 {
 		t.Fatalf("trace denials/patches = %#v/%#v", trace.PermissionDenials, trace.PatchDiffSummaries)
@@ -401,7 +402,7 @@ func TestParseLCAgentTraceFileHarvestsFinalOutcome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadLCAgentTrace() error = %v", err)
 	}
-	if loaded.ArtifactPath != path || !strings.Contains(loaded.CompactSummary(), "verification reported") {
+	if loaded.ArtifactPath != path || !strings.Contains(loaded.CompactSummary(), "verification verified") || !strings.Contains(loaded.CompactSummary(), "1 verification check") {
 		t.Fatalf("loaded trace = %#v, want artifact path and compact summary", loaded)
 	}
 }

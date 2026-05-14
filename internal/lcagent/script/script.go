@@ -24,6 +24,8 @@ type Runner struct {
 	SessionID    string
 	Prompt       string
 	ArtifactsDir string
+
+	verificationChecks []tools.VerificationCheck
 }
 
 type Action struct {
@@ -40,6 +42,7 @@ type commandArgs struct {
 	Argv      []string `json:"argv"`
 	Shell     bool     `json:"shell"`
 	TimeoutMS int      `json:"timeout_ms"`
+	Purpose   string   `json:"purpose"`
 }
 
 type patchArgs struct {
@@ -119,7 +122,7 @@ func Load(path string) ([]Action, error) {
 	return actions, nil
 }
 
-func (r Runner) Run(ctx context.Context, actions []Action) error {
+func (r *Runner) Run(ctx context.Context, actions []Action) error {
 	if err := r.Session.Write(session.Event{
 		"type":       "user_message",
 		"session_id": r.SessionID,
@@ -159,7 +162,7 @@ func (r Runner) Run(ctx context.Context, actions []Action) error {
 	return err
 }
 
-func (r Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, error) {
+func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, error) {
 	if err := r.Session.Write(session.Event{
 		"type":       "tool_call",
 		"session_id": r.SessionID,
@@ -251,7 +254,15 @@ func (r Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, e
 			Argv:      args.Argv,
 			Shell:     args.Shell || args.Command != "",
 			TimeoutMS: args.TimeoutMS,
+			Purpose:   args.Purpose,
 		})
+		if strings.EqualFold(result.Purpose, tools.CommandPurposeVerify) {
+			check := tools.VerificationCheckFromResult(result)
+			r.verificationChecks = append(r.verificationChecks, check)
+			if err := r.Session.Write(verificationCheckEvent(r.SessionID, check)); err != nil {
+				return tools.ToolResult{}, err
+			}
+		}
 	case "apply_patch":
 		var args patchArgs
 		if err := json.Unmarshal(action.Args, &args); err != nil {
@@ -336,10 +347,10 @@ func formatLoadedSkill(loaded skillcatalog.LoadedSkill) string {
 	return b.String()
 }
 
-func (r Runner) Final(action Action) error {
+func (r *Runner) Final(action Action) error {
 	action.FilesChanged = cleanStringList(action.FilesChanged)
 	action.Verification = cleanStringList(action.Verification)
-	verificationStatus, verificationMessage := finalVerificationStatus(action.FilesChanged, action.Verification)
+	verificationStatus, verificationMessage := finalVerificationStatus(action.FilesChanged, action.Verification, r.verificationChecks)
 	if err := r.Session.Write(session.Event{
 		"type":                "verification_summary",
 		"session_id":          r.SessionID,
@@ -347,6 +358,7 @@ func (r Runner) Final(action Action) error {
 		"message":             verificationMessage,
 		"files_changed":       action.FilesChanged,
 		"verification_checks": action.Verification,
+		"actual_checks":       append([]tools.VerificationCheck(nil), r.verificationChecks...),
 	}); err != nil {
 		return err
 	}
@@ -366,17 +378,74 @@ func (r Runner) Final(action Action) error {
 		"files_changed":       action.FilesChanged,
 		"verification":        action.Verification,
 		"verification_status": verificationStatus,
+		"actual_checks":       append([]tools.VerificationCheck(nil), r.verificationChecks...),
 	})
 }
 
-func finalVerificationStatus(filesChanged, verification []string) (string, string) {
+func verificationCheckEvent(sessionID string, check tools.VerificationCheck) session.Event {
+	return session.Event{
+		"type":       "verification_check",
+		"session_id": sessionID,
+		"command":    check.Command,
+		"argv":       check.Argv,
+		"purpose":    check.Purpose,
+		"status":     check.Status,
+		"success":    check.Success,
+		"exit_code":  check.ExitCode,
+		"duration":   check.Duration,
+		"timed_out":  check.TimedOut,
+		"denied":     check.Denied,
+		"error":      check.Error,
+	}
+}
+
+func finalVerificationStatus(filesChanged, verification []string, actualChecks []tools.VerificationCheck) (string, string) {
+	if len(actualChecks) > 0 {
+		failed := failedVerificationChecks(actualChecks)
+		if len(failed) > 0 {
+			return "failed", "Verification checks failed: " + strings.Join(formatVerificationChecks(failed, 3), "; ")
+		}
+		message := "Verification checks passed: " + strings.Join(formatVerificationChecks(actualChecks, 3), "; ")
+		if len(verification) == 0 {
+			message += ". final_response did not list verification details."
+		}
+		return "verified", message
+	}
 	if len(verification) > 0 {
-		return "reported", "Verification was reported in final_response."
+		return "reported_only", "Verification was reported in final_response, but no run_command check was marked with purpose=verify."
 	}
 	if len(filesChanged) > 0 {
-		return "missing_after_changes", "No verification was reported for changed files."
+		return "missing_after_changes", "No verification check was run or reported for changed files."
 	}
-	return "not_reported", "No verification was reported."
+	return "not_run", "No verification check was run."
+}
+
+func failedVerificationChecks(checks []tools.VerificationCheck) []tools.VerificationCheck {
+	var failed []tools.VerificationCheck
+	for _, check := range checks {
+		if check.Status != tools.VerificationStatusPassed {
+			failed = append(failed, check)
+		}
+	}
+	return failed
+}
+
+func formatVerificationChecks(checks []tools.VerificationCheck, limit int) []string {
+	if limit <= 0 || limit > len(checks) {
+		limit = len(checks)
+	}
+	out := make([]string, 0, limit+1)
+	for _, check := range checks[:limit] {
+		label := firstNonEmpty(check.Command, strings.Join(check.Argv, " "), "verification check")
+		if check.Status != "" && check.Status != tools.VerificationStatusPassed {
+			label += " (" + check.Status + ")"
+		}
+		out = append(out, label)
+	}
+	if len(checks) > limit {
+		out = append(out, fmt.Sprintf("%d more", len(checks)-limit))
+	}
+	return out
 }
 
 func cleanStringList(values []string) []string {

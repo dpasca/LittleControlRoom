@@ -8,6 +8,9 @@ type ToolResult struct {
 	Error        string        `json:"error,omitempty"`
 	Denied       bool          `json:"denied,omitempty"`
 	DenialReason string        `json:"denial_reason,omitempty"`
+	Command      string        `json:"command,omitempty"`
+	Argv         []string      `json:"argv,omitempty"`
+	Purpose      string        `json:"purpose,omitempty"`
 	ExitCode     int           `json:"exit_code,omitempty"`
 	Duration     time.Duration `json:"duration,omitempty"`
 	TimedOut     bool          `json:"timed_out,omitempty"`
@@ -31,6 +34,53 @@ const (
 type PlanItem struct {
 	Step   string `json:"step"`
 	Status string `json:"status"`
+}
+
+const (
+	CommandPurposeInspect = "inspect"
+	CommandPurposeVerify  = "verify"
+
+	VerificationStatusPassed   = "passed"
+	VerificationStatusFailed   = "failed"
+	VerificationStatusTimedOut = "timed_out"
+	VerificationStatusDenied   = "denied"
+)
+
+type VerificationCheck struct {
+	Command  string        `json:"command,omitempty"`
+	Argv     []string      `json:"argv,omitempty"`
+	Purpose  string        `json:"purpose,omitempty"`
+	Status   string        `json:"status"`
+	Success  bool          `json:"success"`
+	ExitCode int           `json:"exit_code,omitempty"`
+	Duration time.Duration `json:"duration,omitempty"`
+	TimedOut bool          `json:"timed_out,omitempty"`
+	Denied   bool          `json:"denied,omitempty"`
+	Error    string        `json:"error,omitempty"`
+}
+
+func VerificationCheckFromResult(result ToolResult) VerificationCheck {
+	status := VerificationStatusFailed
+	switch {
+	case result.Denied:
+		status = VerificationStatusDenied
+	case result.TimedOut:
+		status = VerificationStatusTimedOut
+	case result.Success:
+		status = VerificationStatusPassed
+	}
+	return VerificationCheck{
+		Command:  result.Command,
+		Argv:     append([]string(nil), result.Argv...),
+		Purpose:  result.Purpose,
+		Status:   status,
+		Success:  result.Success,
+		ExitCode: result.ExitCode,
+		Duration: result.Duration,
+		TimedOut: result.TimedOut,
+		Denied:   result.Denied,
+		Error:    result.Error,
+	}
 }
 
 type PatchSummary struct {
