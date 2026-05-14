@@ -1871,6 +1871,43 @@ func TestModelTranscriptRendersMarkdownLinksCompactly(t *testing.T) {
 	}
 }
 
+func TestModelTranscriptColorsProjectNames(t *testing.T) {
+	t.Parallel()
+
+	m := New(context.Background(), nil)
+	m.snapshot = StateSnapshot{HotProjects: []ProjectBrief{{
+		Name: "Alpha Project",
+		Path: "/alpha",
+	}}}
+	m.messages = []ChatMessage{{
+		Role:    "assistant",
+		Content: "Alpha Project is waiting on review.",
+	}, {
+		Role:    "user",
+		Content: "Check Alpha Project before lunch.",
+	}}
+	m.sending = true
+	m.streamingAssistantText = "Alpha Project has one open decision."
+
+	rendered := m.renderTranscript(100)
+	coloredProject := bossProjectIdentityStyle("/alpha", bossProjectNameStyle).Render("Alpha Project")
+	if got := strings.Count(rendered, coloredProject); got != 3 {
+		t.Fatalf("transcript colored Alpha Project %d times, want assistant, user, and streaming mentions:\n%s", got, ansi.Strip(rendered))
+	}
+}
+
+func TestProjectTextHighlightsDoNotColorPartialWords(t *testing.T) {
+	t.Parallel()
+
+	if projectNameMentionBoundary("Alphabet soup", 0, len("Alpha")) {
+		t.Fatalf("project mention boundary should reject the start of Alphabet")
+	}
+	text := "Check Alpha."
+	if !projectNameMentionBoundary(text, len("Check "), len("Check Alpha")) {
+		t.Fatalf("project mention boundary should accept standalone Alpha")
+	}
+}
+
 func TestModelTranscriptHighlightsEngineerReturnNotice(t *testing.T) {
 	t.Parallel()
 

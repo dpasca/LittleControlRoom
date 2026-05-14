@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"lcroom/internal/bossrun"
 	"lcroom/internal/inputcomposer"
@@ -1475,19 +1478,50 @@ func (m Model) renderRawPanel(title, content string, width, height int) string {
 func (m Model) renderTranscript(width int) string {
 	width = maxInt(12, width)
 	var blocks []string
+	projectHighlights := m.chatProjectHighlights()
 	for _, message := range m.messages {
 		if normalizeChatRole(message.Role) == "assistant" {
-			blocks = append(blocks, renderAssistantChatMessage(message, width))
+			blocks = append(blocks, renderAssistantChatMessage(message, width, projectHighlights))
 			continue
 		}
-		blocks = append(blocks, renderUserMessage(message.Content, width))
+		blocks = append(blocks, renderUserMessage(message.Content, width, projectHighlights))
 	}
 	if m.sending {
-		if pending := renderStreamingAssistantMessage(m.streamingAssistantText, m.streamingToolCalls, width, m.spinnerFrame); pending != "" {
+		if pending := renderStreamingAssistantMessage(m.streamingAssistantText, m.streamingToolCalls, width, m.spinnerFrame, projectHighlights); pending != "" {
 			blocks = append(blocks, pending)
 		}
 	}
 	return strings.Join(blocks, "\n\n")
+}
+
+func (m Model) chatProjectHighlights() []bossProjectTextHighlight {
+	if len(m.snapshot.HotProjects) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	highlights := make([]bossProjectTextHighlight, 0, len(m.snapshot.HotProjects)*2)
+	add := func(label, identity string) {
+		label = strings.TrimSpace(label)
+		identity = strings.TrimSpace(identity)
+		if label == "" || identity == "" {
+			return
+		}
+		key := label + "\x00" + identity
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		highlights = append(highlights, bossProjectTextHighlight{Label: label, Identity: identity})
+	}
+	for _, project := range m.snapshot.HotProjects {
+		identity := bossProjectBriefIdentity(project)
+		add(project.Name, identity)
+		add(compactProjectName(project), identity)
+	}
+	sort.SliceStable(highlights, func(i, j int) bool {
+		return ansi.StringWidth(highlights[i].Label) > ansi.StringWidth(highlights[j].Label)
+	})
+	return highlights
 }
 
 func (m Model) activeEngineerActivities() []ViewEngineerActivity {
@@ -1695,24 +1729,28 @@ func attentionProjectLimit(height int) int {
 }
 
 func renderAssistantMessage(content string, width int) string {
-	return renderPrefixedMessage(content, "Boss> ", bossPanelText, bossAssistantPrefixStyle, bossAssistantContinuationStyle, bossAssistantMessageStyle, width, false)
+	return renderAssistantMessageWithProjectHighlights(content, width, nil)
 }
 
-func renderAssistantChatMessage(message ChatMessage, width int) string {
+func renderAssistantMessageWithProjectHighlights(content string, width int, projectHighlights []bossProjectTextHighlight) string {
+	return renderPrefixedMessageWithProjectHighlights(content, "Boss> ", bossPanelText, bossAssistantPrefixStyle, bossAssistantContinuationStyle, bossAssistantMessageStyle, width, false, nil, projectHighlights)
+}
+
+func renderAssistantChatMessage(message ChatMessage, width int, projectHighlights []bossProjectTextHighlight) string {
 	highlights := handoffMessageHighlights(message.Content, message.Handoff)
 	if len(highlights) == 0 {
-		return renderAssistantMessage(message.Content, width)
+		return renderAssistantMessageWithProjectHighlights(message.Content, width, projectHighlights)
 	}
-	return renderPrefixedMessageWithHighlights(message.Content, "Boss> ", bossPanelText, bossAssistantPrefixStyle, bossAssistantContinuationStyle, bossAssistantMessageStyle, width, false, highlights)
+	return renderPrefixedMessageWithProjectHighlights(message.Content, "Boss> ", bossPanelText, bossAssistantPrefixStyle, bossAssistantContinuationStyle, bossAssistantMessageStyle, width, false, highlights, projectHighlights)
 }
 
-func renderStreamingAssistantMessage(content string, toolCalls []string, width, spinnerFrame int) string {
+func renderStreamingAssistantMessage(content string, toolCalls []string, width, spinnerFrame int, projectHighlights []bossProjectTextHighlight) string {
 	var blocks []string
 	if toolBlock := renderTemporaryToolCalls(toolCalls, width); toolBlock != "" {
 		blocks = append(blocks, toolBlock)
 	}
 	if strings.TrimSpace(content) != "" {
-		blocks = append(blocks, renderAssistantMessage(content, width))
+		blocks = append(blocks, renderAssistantMessageWithProjectHighlights(content, width, projectHighlights))
 	}
 	if len(blocks) == 0 {
 		blocks = append(blocks, bossMutedStyle.Render(fitLine("Boss chat is thinking "+spinnerDots(spinnerFrame), width)))
@@ -1754,8 +1792,8 @@ func formatAssistantToolCallStatus(event AssistantStreamEvent) string {
 	}
 }
 
-func renderUserMessage(content string, width int) string {
-	return renderPrefixedMessage(content, "You> ", bossPanelText, bossUserPrefixStyle, bossUserContinuationPrefixStyle, bossUserMessageStyle, width, true)
+func renderUserMessage(content string, width int, projectHighlights []bossProjectTextHighlight) string {
+	return renderPrefixedMessageWithProjectHighlights(content, "You> ", bossPanelText, bossUserPrefixStyle, bossUserContinuationPrefixStyle, bossUserMessageStyle, width, true, nil, projectHighlights)
 }
 
 func renderBossHandoffMessage(content string, width int) string {
@@ -1773,6 +1811,10 @@ func renderPrefixedMessage(content, prefix string, bodyColor lipgloss.Color, pre
 }
 
 func renderPrefixedMessageWithHighlights(content, prefix string, bodyColor lipgloss.Color, prefixStyle, continuationStyle, lineStyle lipgloss.Style, width int, indentContinuation bool, highlights []prefixedMessageHighlight) string {
+	return renderPrefixedMessageWithProjectHighlights(content, prefix, bodyColor, prefixStyle, continuationStyle, lineStyle, width, indentContinuation, highlights, nil)
+}
+
+func renderPrefixedMessageWithProjectHighlights(content, prefix string, bodyColor lipgloss.Color, prefixStyle, continuationStyle, lineStyle lipgloss.Style, width int, indentContinuation bool, highlights []prefixedMessageHighlight, projectHighlights []bossProjectTextHighlight) string {
 	contentWidth := maxInt(8, width-len(prefix))
 	rendered := terminalmd.RenderBody(content, bodyColor, contentWidth)
 	lines := strings.Split(rendered, "\n")
@@ -1781,6 +1823,11 @@ func renderPrefixedMessageWithHighlights(content, prefix string, bodyColor lipgl
 	}
 	if len(highlights) > 0 {
 		lines[0] = applyPrefixedMessageHighlights(lines[0], highlights)
+	}
+	if len(projectHighlights) > 0 {
+		for i, line := range lines {
+			lines[i] = applyProjectTextHighlights(line, projectHighlights)
+		}
 	}
 	for i, line := range lines {
 		if i == 0 {
@@ -1792,6 +1839,94 @@ func renderPrefixedMessageWithHighlights(content, prefix string, bodyColor lipgl
 		}
 	}
 	return renderMessageLines(strings.Join(lines, "\n"), lineStyle, width)
+}
+
+type bossProjectTextHighlight struct {
+	Label    string
+	Identity string
+}
+
+func applyProjectTextHighlights(line string, projects []bossProjectTextHighlight) string {
+	plain := ansi.Strip(line)
+	if strings.TrimSpace(plain) == "" || len(projects) == 0 {
+		return line
+	}
+	occupied := make([]bool, maxInt(0, ansi.StringWidth(plain)))
+	var highlights []prefixedMessageHighlight
+	for _, project := range projects {
+		label := strings.TrimSpace(project.Label)
+		identity := strings.TrimSpace(project.Identity)
+		if label == "" || identity == "" {
+			continue
+		}
+		searchFrom := 0
+		for searchFrom < len(plain) {
+			relative := strings.Index(plain[searchFrom:], label)
+			if relative < 0 {
+				break
+			}
+			startByte := searchFrom + relative
+			endByte := startByte + len(label)
+			searchFrom = endByte
+			if !projectNameMentionBoundary(plain, startByte, endByte) {
+				continue
+			}
+			startCell := ansi.StringWidth(plain[:startByte])
+			endCell := startCell + ansi.StringWidth(label)
+			if highlightCellsOccupied(occupied, startCell, endCell) {
+				continue
+			}
+			markHighlightCells(occupied, startCell, endCell)
+			highlights = append(highlights, prefixedMessageHighlight{
+				Start: startCell,
+				End:   endCell,
+				Style: bossProjectIdentityStyle(identity, bossProjectNameStyle),
+			})
+		}
+	}
+	if len(highlights) == 0 {
+		return line
+	}
+	return applyPrefixedMessageHighlights(line, highlights)
+}
+
+func projectNameMentionBoundary(text string, startByte, endByte int) bool {
+	if startByte > 0 {
+		before, _ := utf8.DecodeLastRuneInString(text[:startByte])
+		if isProjectNameWordRune(before) {
+			return false
+		}
+	}
+	if endByte < len(text) {
+		after, _ := utf8.DecodeRuneInString(text[endByte:])
+		if isProjectNameWordRune(after) {
+			return false
+		}
+	}
+	return true
+}
+
+func isProjectNameWordRune(r rune) bool {
+	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)
+}
+
+func highlightCellsOccupied(occupied []bool, start, end int) bool {
+	start = clampInt(start, 0, len(occupied))
+	end = clampInt(end, start, len(occupied))
+	for i := start; i < end; i++ {
+		if occupied[i] {
+			return true
+		}
+	}
+	return false
+}
+
+func markHighlightCells(occupied []bool, start, end int) {
+	start = clampInt(start, 0, len(occupied))
+	end = clampInt(end, start, len(occupied))
+	for i := start; i < end; i++ {
+		occupied[i] = true
+	}
 }
 
 func handoffMessageHighlights(content string, handoff *HandoffHighlight) []prefixedMessageHighlight {
