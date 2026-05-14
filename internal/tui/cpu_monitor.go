@@ -30,6 +30,8 @@ type cpuDialogState struct {
 	Error        string
 	Processes    []procinspect.CPUProcess
 	Selected     int
+	SelectedPID  int
+	MarkedPIDs   map[int]struct{}
 	ScannedAt    time.Time
 	TotalCPU     float64
 	ProcessCount int
@@ -55,6 +57,7 @@ func (m *Model) openCPUDialog() tea.Cmd {
 	if !m.cpuSnapshot.ScannedAt.IsZero() {
 		dialog.Loading = false
 		dialog.Processes = m.cpuDialogProcesses(m.cpuSnapshot)
+		cpuDialogSyncSelectedPID(&dialog)
 		dialog.ScannedAt = m.cpuSnapshot.ScannedAt
 		dialog.TotalCPU = m.cpuSnapshot.TotalCPU
 		dialog.ProcessCount = m.cpuSnapshot.ProcessCount
@@ -101,12 +104,28 @@ func (m Model) updateCPUDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		if dialog.Selected > 0 {
 			dialog.Selected--
+			cpuDialogSyncSelectedPID(dialog)
 		}
 		return m, nil
 	case "down", "j":
 		if dialog.Selected < len(dialog.Processes)-1 {
 			dialog.Selected++
+			cpuDialogSyncSelectedPID(dialog)
 		}
+		return m, nil
+	case " ":
+		process, marked, ok := cpuDialogToggleMarkedProcess(dialog)
+		if !ok {
+			m.status = "No CPU process selected"
+			return m, nil
+		}
+		action := "Removed"
+		preposition := "from"
+		if marked {
+			action = "Added"
+			preposition = "to"
+		}
+		m.status = fmt.Sprintf("%s PID %d %s %s CPU ask scope", action, process.PID, cpuProcessName(process.Process), preposition)
 		return m, nil
 	case "r":
 		dialog.Loading = true
@@ -121,6 +140,7 @@ func (m Model) updateCPUDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		dialog.Selected = clampInt(dialog.Selected, 0, len(dialog.Processes)-1)
 		process := dialog.Processes[dialog.Selected]
+		dialog.SelectedPID = process.PID
 		m.status = fmt.Sprintf("PID %d: CPU %s %s", process.PID, formatCPUPercent(process.CPU), cpuProcessName(process.Process))
 		return m, nil
 	case "ctrl+c":
@@ -212,14 +232,18 @@ func (m *Model) applyCPUSnapshotMsg(msg cpuSnapshotMsg) tea.Cmd {
 	if msg.err == nil {
 		m.cpuSnapshot = msg.snapshot
 		if m.cpuDialog != nil {
+			selectedPID := cpuDialogSelectedPID(m.cpuDialog)
+			processes := m.cpuDialogProcesses(msg.snapshot)
+			processes = stableCPUDialogProcesses(m.cpuDialog.Processes, processes)
 			m.cpuDialog.Loading = false
 			m.cpuDialog.Error = ""
-			m.cpuDialog.Processes = m.cpuDialogProcesses(msg.snapshot)
+			m.cpuDialog.Processes = processes
 			m.cpuDialog.ScannedAt = msg.snapshot.ScannedAt
 			m.cpuDialog.TotalCPU = msg.snapshot.TotalCPU
 			m.cpuDialog.ProcessCount = msg.snapshot.ProcessCount
 			m.cpuDialog.LogicalCPUs = msg.snapshot.LogicalCPUs
-			m.cpuDialog.Selected = clampInt(m.cpuDialog.Selected, 0, max(0, len(m.cpuDialog.Processes)-1))
+			cpuDialogPruneMarkedPIDs(m.cpuDialog)
+			cpuDialogSelectPID(m.cpuDialog, selectedPID)
 			m.status = cpuDialogReadyStatus(msg.snapshot)
 		}
 		if m.bossMode {
@@ -285,6 +309,165 @@ func (m Model) cpuDialogProcesses(snapshot procinspect.CPUSnapshot) []procinspec
 		})
 	}
 	return processes
+}
+
+func stableCPUDialogProcesses(previous, current []procinspect.CPUProcess) []procinspect.CPUProcess {
+	current = append([]procinspect.CPUProcess(nil), current...)
+	if len(previous) == 0 || len(current) <= 1 {
+		return current
+	}
+	byPID := make(map[int]procinspect.CPUProcess, len(current))
+	for _, process := range current {
+		if process.PID > 0 {
+			byPID[process.PID] = process
+		}
+	}
+	out := make([]procinspect.CPUProcess, 0, len(current))
+	used := map[int]struct{}{}
+	for _, previousProcess := range previous {
+		if previousProcess.PID <= 0 {
+			continue
+		}
+		process, ok := byPID[previousProcess.PID]
+		if !ok {
+			continue
+		}
+		if _, ok := used[process.PID]; ok {
+			continue
+		}
+		used[process.PID] = struct{}{}
+		out = append(out, process)
+	}
+	for _, process := range current {
+		if process.PID > 0 {
+			if _, ok := used[process.PID]; ok {
+				continue
+			}
+			used[process.PID] = struct{}{}
+		}
+		out = append(out, process)
+	}
+	return out
+}
+
+func cpuDialogSelectedPID(dialog *cpuDialogState) int {
+	if dialog == nil {
+		return 0
+	}
+	if dialog.SelectedPID > 0 {
+		return dialog.SelectedPID
+	}
+	if process, ok := cpuDialogSelectedProcess(dialog); ok {
+		return process.PID
+	}
+	return 0
+}
+
+func cpuDialogSelectPID(dialog *cpuDialogState, pid int) {
+	if dialog == nil {
+		return
+	}
+	if len(dialog.Processes) == 0 {
+		dialog.Selected = 0
+		dialog.SelectedPID = 0
+		return
+	}
+	if pid > 0 {
+		for i, process := range dialog.Processes {
+			if process.PID == pid {
+				dialog.Selected = i
+				dialog.SelectedPID = pid
+				return
+			}
+		}
+	}
+	dialog.Selected = clampInt(dialog.Selected, 0, len(dialog.Processes)-1)
+	dialog.SelectedPID = dialog.Processes[dialog.Selected].PID
+}
+
+func cpuDialogSyncSelectedPID(dialog *cpuDialogState) {
+	if dialog == nil {
+		return
+	}
+	if len(dialog.Processes) == 0 {
+		dialog.Selected = 0
+		dialog.SelectedPID = 0
+		return
+	}
+	dialog.Selected = clampInt(dialog.Selected, 0, len(dialog.Processes)-1)
+	dialog.SelectedPID = dialog.Processes[dialog.Selected].PID
+}
+
+func cpuDialogSelectedProcess(dialog *cpuDialogState) (procinspect.CPUProcess, bool) {
+	if dialog == nil || len(dialog.Processes) == 0 {
+		return procinspect.CPUProcess{}, false
+	}
+	dialog.Selected = clampInt(dialog.Selected, 0, len(dialog.Processes)-1)
+	process := dialog.Processes[dialog.Selected]
+	dialog.SelectedPID = process.PID
+	return process, process.PID > 0
+}
+
+func cpuDialogToggleMarkedProcess(dialog *cpuDialogState) (procinspect.CPUProcess, bool, bool) {
+	process, ok := cpuDialogSelectedProcess(dialog)
+	if !ok {
+		return procinspect.CPUProcess{}, false, false
+	}
+	if dialog.MarkedPIDs == nil {
+		dialog.MarkedPIDs = map[int]struct{}{}
+	}
+	if _, ok := dialog.MarkedPIDs[process.PID]; ok {
+		delete(dialog.MarkedPIDs, process.PID)
+		return process, false, true
+	}
+	dialog.MarkedPIDs[process.PID] = struct{}{}
+	return process, true, true
+}
+
+func cpuDialogMarkedProcesses(dialog *cpuDialogState) []procinspect.CPUProcess {
+	if dialog == nil || len(dialog.MarkedPIDs) == 0 {
+		return nil
+	}
+	out := make([]procinspect.CPUProcess, 0, min(cpuRemediationProcessLimit, len(dialog.MarkedPIDs)))
+	seen := map[int]struct{}{}
+	for _, process := range dialog.Processes {
+		if len(out) >= cpuRemediationProcessLimit || process.PID <= 0 {
+			continue
+		}
+		if _, ok := dialog.MarkedPIDs[process.PID]; !ok {
+			continue
+		}
+		if _, ok := seen[process.PID]; ok {
+			continue
+		}
+		seen[process.PID] = struct{}{}
+		out = append(out, process)
+	}
+	return out
+}
+
+func cpuDialogPruneMarkedPIDs(dialog *cpuDialogState) {
+	if dialog == nil || len(dialog.MarkedPIDs) == 0 {
+		return
+	}
+	present := map[int]struct{}{}
+	for _, process := range dialog.Processes {
+		if process.PID > 0 {
+			present[process.PID] = struct{}{}
+		}
+	}
+	for pid := range dialog.MarkedPIDs {
+		if _, ok := present[pid]; !ok {
+			delete(dialog.MarkedPIDs, pid)
+		}
+	}
+	if len(dialog.MarkedPIDs) == 0 {
+		dialog.MarkedPIDs = nil
+	}
+}
+
+func cpuDialogMarkedCount(dialog *cpuDialogState) int {
+	return len(cpuDialogMarkedProcesses(dialog))
 }
 
 func (m Model) openCPURemediationEditor() (tea.Model, tea.Cmd) {
@@ -423,25 +606,13 @@ func (m Model) cpuRemediationProcesses() []procinspect.CPUProcess {
 	if dialog == nil || len(dialog.Processes) == 0 {
 		return nil
 	}
-	out := make([]procinspect.CPUProcess, 0, min(cpuRemediationProcessLimit, len(dialog.Processes)))
-	seen := map[int]struct{}{}
-	add := func(process procinspect.CPUProcess) {
-		if len(out) >= cpuRemediationProcessLimit || process.PID <= 0 {
-			return
-		}
-		if _, ok := seen[process.PID]; ok {
-			return
-		}
-		seen[process.PID] = struct{}{}
-		out = append(out, process)
+	if marked := cpuDialogMarkedProcesses(dialog); len(marked) > 0 {
+		return marked
 	}
-	if dialog.Selected >= 0 && dialog.Selected < len(dialog.Processes) {
-		add(dialog.Processes[dialog.Selected])
+	if process, ok := cpuDialogSelectedProcess(dialog); ok {
+		return []procinspect.CPUProcess{process}
 	}
-	for _, process := range dialog.Processes {
-		add(process)
-	}
-	return out
+	return nil
 }
 
 func (m Model) cpuRemediationPrompt(processes []procinspect.CPUProcess) string {
@@ -465,10 +636,10 @@ func (m Model) cpuRemediationPrompt(processes []procinspect.CPUProcess) string {
 	}
 	lines = append(lines,
 		"Total CPU: "+formatSystemCPUPercent(totalCPU, logicalCPUs),
-		"Listed CPU: "+formatSystemCPUPercent(sumCPUProcesses(processes), logicalCPUs),
+		"Scoped CPU: "+formatSystemCPUPercent(sumCPUProcesses(processes), logicalCPUs),
 		"Note: per-process CPU values are raw ps percentages, so totals can exceed 100% on multicore machines.",
 		"",
-		"Current CPU processes:",
+		"Scoped CPU processes:",
 	)
 	for _, process := range processes {
 		lines = append(lines, "- "+m.cpuRemediationProcessLine(process))
@@ -535,7 +706,7 @@ func (m Model) renderCPURemediationEditorOverlay(body string, bodyW, bodyH int) 
 	editor.Input.SetWidth(max(24, panelInnerW))
 	editor.Input.SetHeight(editorHeight)
 	lines := []string{
-		detailSectionStyle.Render("CPU Engineer Prompt") + "  " + detailValueStyle.Render(cpuDialogScopeLabel(len(editor.Processes), len(editor.Processes))),
+		detailSectionStyle.Render("CPU Engineer Prompt") + "  " + detailValueStyle.Render(cpuRemediationScopeLabel(len(editor.Processes))),
 		"",
 		editor.Input.View(),
 		"",
@@ -594,7 +765,7 @@ func (m Model) renderCPUDialogContent(width, maxHeight int) string {
 	} else if len(dialog.Processes) == 0 {
 		lines = append(lines, "", detailValueStyle.Render("No CPU-using processes found."))
 	} else {
-		lines = append(lines, "", detailWarningStyle.Render(cpuDialogCountLabel(len(dialog.Processes))))
+		lines = append(lines, "", detailWarningStyle.Render(cpuDialogCountLabel(len(dialog.Processes), cpuDialogMarkedCount(dialog))))
 		processRowLimit := min(cpuDialogVisibleProcessRows, max(3, maxHeight-len(lines)-7))
 		lines = append(lines, m.renderCPUProcessRows(width, processRowLimit)...)
 		if dialog.Selected >= 0 && dialog.Selected < len(dialog.Processes) {
@@ -609,7 +780,8 @@ func (m Model) renderCPUDialogContent(width, maxHeight int) string {
 }
 
 func renderCPUDialogActions() string {
-	return renderDialogAction("a", "ask engineer", pushActionKeyStyle, pushActionTextStyle) + "   " +
+	return renderDialogAction("space", "mark", pushActionKeyStyle, pushActionTextStyle) + "   " +
+		renderDialogAction("a", "ask scoped", pushActionKeyStyle, pushActionTextStyle) + "   " +
 		renderDialogAction("r", "refresh", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
 		renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle)
 }
@@ -620,12 +792,7 @@ func (m Model) renderCPUProcessRows(width, maxLines int) []string {
 		return nil
 	}
 	maxLines = min(cpuDialogVisibleProcessRows, max(1, maxLines))
-	if dialog.Selected < 0 {
-		dialog.Selected = 0
-	}
-	if dialog.Selected >= len(dialog.Processes) {
-		dialog.Selected = len(dialog.Processes) - 1
-	}
+	cpuDialogSyncSelectedPID(dialog)
 	start, end := cpuProcessRowWindow(len(dialog.Processes), dialog.Selected, maxLines)
 	rows := []string{}
 	if start > 0 {
@@ -633,15 +800,21 @@ func (m Model) renderCPUProcessRows(width, maxLines int) []string {
 	}
 	for i := start; i < end; i++ {
 		process := dialog.Processes[i]
-		marker := " "
+		cursor := " "
 		style := commandPaletteRowStyle
 		if i == dialog.Selected {
-			marker = "›"
+			cursor = "›"
 			style = commandPaletteSelectStyle
+		}
+		scope := " "
+		if dialog.MarkedPIDs != nil {
+			if _, ok := dialog.MarkedPIDs[process.PID]; ok {
+				scope = "*"
+			}
 		}
 		owner := truncateText(m.cpuProcessOwnerLabel(process), 24)
 		name := truncateText(cpuProcessName(process.Process), 18)
-		row := fmt.Sprintf("%s PID %-6d CPU %6s MEM %5s  %-18s  %-24s", marker, process.PID, formatCPUPercent(process.CPU), formatCPUPercent(process.Mem), name, owner)
+		row := fmt.Sprintf("%s%s PID %-6d CPU %6s MEM %5s  %-18s  %-24s", cursor, scope, process.PID, formatCPUPercent(process.CPU), formatCPUPercent(process.Mem), name, owner)
 		rows = append(rows, style.Width(width).Render(truncateText(row, width)))
 	}
 	if end < len(dialog.Processes) {
@@ -835,11 +1008,15 @@ func cpuDialogReadyStatus(snapshot procinspect.CPUSnapshot) string {
 	return fmt.Sprintf("CPU %s total; top PID %d %s", formatSystemCPUPercent(snapshot.TotalCPU, snapshot.LogicalCPUs), top.PID, formatCPUPercent(top.CPU))
 }
 
-func cpuDialogCountLabel(count int) string {
-	if count == 1 {
-		return "Top CPU process"
+func cpuDialogCountLabel(count, marked int) string {
+	scope := ""
+	if marked > 0 {
+		scope = fmt.Sprintf(" (%d marked)", marked)
 	}
-	return fmt.Sprintf("Top %d CPU processes", count)
+	if count == 1 {
+		return "Top CPU process" + scope
+	}
+	return fmt.Sprintf("Top %d CPU processes%s", count, scope)
 }
 
 func cpuDialogScopeLabel(shown, total int) string {
@@ -847,6 +1024,13 @@ func cpuDialogScopeLabel(shown, total int) string {
 		return fmt.Sprintf("top %d of %d system processes", shown, total)
 	}
 	return "top system processes"
+}
+
+func cpuRemediationScopeLabel(count int) string {
+	if count == 1 {
+		return "1 scoped process"
+	}
+	return fmt.Sprintf("%d scoped processes", count)
 }
 
 func cpuProcessName(process procinspect.Process) string {
