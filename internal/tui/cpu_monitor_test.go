@@ -67,7 +67,7 @@ func TestCPUProcessRowsStayWithinCompactLimit(t *testing.T) {
 func TestCPUDialogActionsRenderOnOneLine(t *testing.T) {
 	rendered := ansi.Strip(renderCPUDialogActions())
 	compact := strings.Join(strings.Fields(rendered), " ")
-	for _, want := range []string{"a ask engineer", "r refresh", "Esc close"} {
+	for _, want := range []string{"space mark", "a ask scoped", "r refresh", "Esc close"} {
 		if !strings.Contains(compact, want) {
 			t.Fatalf("actions missing %q: %q", want, rendered)
 		}
@@ -149,8 +149,11 @@ func TestCPUDialogAskEngineerCreatesScratchTask(t *testing.T) {
 	if len(requests) != 0 {
 		t.Fatalf("launch requests before prompt confirmation = %d, want 0", len(requests))
 	}
-	if !strings.Contains(got.cpuRemediationEditor.Input.Value(), "PID 34857") || !strings.Contains(got.cpuRemediationEditor.Input.Value(), "PID 1110") {
-		t.Fatalf("CPU engineer prompt editor missing process details:\n%s", got.cpuRemediationEditor.Input.Value())
+	if !strings.Contains(got.cpuRemediationEditor.Input.Value(), "PID 34857") {
+		t.Fatalf("CPU engineer prompt editor missing selected process details:\n%s", got.cpuRemediationEditor.Input.Value())
+	}
+	if strings.Contains(got.cpuRemediationEditor.Input.Value(), "PID 1110") {
+		t.Fatalf("CPU engineer prompt editor should only include the selected process when no rows are marked:\n%s", got.cpuRemediationEditor.Input.Value())
 	}
 	got.cpuRemediationEditor.Input.SetValue(got.cpuRemediationEditor.Input.Value() + "\nExtra operator note: leave my current foreground apps alone.")
 	updated, cmd = got.updateCPURemediationEditorMode(tea.KeyMsg{Type: tea.KeyCtrlS})
@@ -223,7 +226,6 @@ func TestCPUDialogAskEngineerCreatesScratchTask(t *testing.T) {
 		"Title: Investigate and reduce CPU usage",
 		"Allowed capabilities: process.inspect, process.terminate",
 		"PID 34857",
-		"PID 1110",
 		"Do not terminate macOS system services",
 		"If uncertain, do not kill the process",
 		"Extra operator note: leave my current foreground apps alone.",
@@ -234,6 +236,9 @@ func TestCPUDialogAskEngineerCreatesScratchTask(t *testing.T) {
 	}
 	if strings.Contains(requests[0].Prompt, "Little Control Room agent task:") {
 		t.Fatalf("CPU launch prompt should not use agent task framing:\n%s", requests[0].Prompt)
+	}
+	if strings.Contains(requests[0].Prompt, "PID 1110") {
+		t.Fatalf("CPU launch prompt should only include selected process when no rows are marked:\n%s", requests[0].Prompt)
 	}
 
 	tasks, err := svc.ListOpenAgentTasks(ctx, 5)
@@ -250,6 +255,103 @@ func TestCPUDialogAskEngineerCreatesScratchTask(t *testing.T) {
 	stored := summaries[created.result.TaskPath]
 	if stored.Kind != model.ProjectKindScratchTask || !stored.PresentOnDisk {
 		t.Fatalf("stored project = %#v, want present scratch task", stored)
+	}
+}
+
+func TestCPUDialogAskEngineerUsesMarkedRows(t *testing.T) {
+	m := Model{
+		cpuDialog: &cpuDialogState{
+			Processes: []procinspect.CPUProcess{
+				{Process: procinspect.Process{PID: 1110, CPU: 75.7, Command: "fileproviderd"}},
+				{Process: procinspect.Process{PID: 34857, CPU: 41, Command: "python runaway.py"}},
+				{Process: procinspect.Process{PID: 982, CPU: 12, Command: "WindowServer"}},
+			},
+		},
+	}
+
+	updated, _ := m.updateCPUDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	got := updated.(Model)
+	updated, _ = got.updateCPUDialogMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	updated, _ = got.updateCPUDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	got = updated.(Model)
+	updated, cmd := got.updateCPUDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	got = updated.(Model)
+
+	if cmd == nil {
+		t.Fatalf("a should focus the CPU engineer prompt editor")
+	}
+	if got.cpuRemediationEditor == nil {
+		t.Fatalf("a should open the CPU engineer prompt editor")
+	}
+	prompt := got.cpuRemediationEditor.Input.Value()
+	if len(got.cpuRemediationEditor.Processes) != 2 {
+		t.Fatalf("scoped processes = %d, want 2", len(got.cpuRemediationEditor.Processes))
+	}
+	for _, want := range []string{"PID 1110", "PID 34857"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("marked CPU prompt/editor missing %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "PID 982") {
+		t.Fatalf("marked CPU prompt should exclude unmarked row:\n%s", prompt)
+	}
+}
+
+func TestCPUDialogRefreshKeepsPIDOrderAndSelectionStable(t *testing.T) {
+	now := time.Date(2026, 5, 5, 14, 46, 39, 0, time.UTC)
+	m := Model{
+		cpuDialog: &cpuDialogState{
+			Selected:    1,
+			SelectedPID: 222,
+			MarkedPIDs:  map[int]struct{}{333: {}, 999: {}},
+			Processes: []procinspect.CPUProcess{
+				{Process: procinspect.Process{PID: 111, CPU: 90, Command: "first"}},
+				{Process: procinspect.Process{PID: 222, CPU: 80, Command: "selected"}},
+				{Process: procinspect.Process{PID: 333, CPU: 70, Command: "marked"}},
+			},
+		},
+	}
+
+	cmd := m.applyCPUSnapshotMsg(cpuSnapshotMsg{
+		snapshot: procinspect.CPUSnapshot{
+			ScannedAt: now,
+			Processes: []procinspect.CPUProcess{
+				{Process: procinspect.Process{PID: 333, CPU: 99, Command: "marked"}},
+				{Process: procinspect.Process{PID: 222, CPU: 10, Command: "selected"}},
+				{Process: procinspect.Process{PID: 111, CPU: 5, Command: "first"}},
+				{Process: procinspect.Process{PID: 444, CPU: 4, Command: "new"}},
+			},
+			ProcessCount: 4,
+		},
+	})
+	if cmd != nil {
+		t.Fatalf("unexpected queued CPU refresh command")
+	}
+	if m.cpuDialog == nil {
+		t.Fatalf("CPU dialog should stay open")
+	}
+	gotPIDs := []int{}
+	for _, process := range m.cpuDialog.Processes {
+		gotPIDs = append(gotPIDs, process.PID)
+	}
+	wantPIDs := []int{111, 222, 333, 444}
+	if len(gotPIDs) != len(wantPIDs) {
+		t.Fatalf("process order = %#v, want %#v", gotPIDs, wantPIDs)
+	}
+	for i := range wantPIDs {
+		if gotPIDs[i] != wantPIDs[i] {
+			t.Fatalf("process order = %#v, want %#v", gotPIDs, wantPIDs)
+		}
+	}
+	if m.cpuDialog.Selected != 1 || m.cpuDialog.SelectedPID != 222 {
+		t.Fatalf("selection = index %d PID %d, want index 1 PID 222", m.cpuDialog.Selected, m.cpuDialog.SelectedPID)
+	}
+	if _, ok := m.cpuDialog.MarkedPIDs[333]; !ok {
+		t.Fatalf("marked live PID should be preserved: %#v", m.cpuDialog.MarkedPIDs)
+	}
+	if _, ok := m.cpuDialog.MarkedPIDs[999]; ok {
+		t.Fatalf("stale marked PID should be pruned: %#v", m.cpuDialog.MarkedPIDs)
 	}
 }
 
