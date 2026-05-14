@@ -5042,6 +5042,107 @@ func TestProjectAgentDisplayUsesLiveBusyTimer(t *testing.T) {
 	}
 }
 
+func TestProjectAgentDisplayUsesLiveActiveTurnTimer(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider:     codexapp.ProviderOpenCode,
+			Started:      true,
+			ActiveTurnID: "turn-live",
+			BusySince:    time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC),
+			ThreadID:     "thread-live",
+			Goal: &codexapp.ThreadGoal{
+				Objective: "Wiring active row summaries into the project list.",
+				Status:    codexapp.ThreadGoalStatusActive,
+			},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		Provider:    codexapp.ProviderOpenCode,
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{codexManager: manager}
+	project := model.ProjectSummary{
+		Path:                "/tmp/demo",
+		PresentOnDisk:       true,
+		LatestSessionFormat: "opencode_db",
+	}
+
+	label, tag, live := m.projectAgentDisplay(project, time.Date(2026, 3, 9, 12, 0, 37, 0, time.UTC))
+	if !live {
+		t.Fatalf("projectAgentDisplay() live = false, want true")
+	}
+	if tag != "OC" {
+		t.Fatalf("projectAgentDisplay() tag = %q, want %q", tag, "OC")
+	}
+	if label != "OC 00:37" {
+		t.Fatalf("projectAgentDisplay() label = %q, want %q", label, "OC 00:37")
+	}
+}
+
+func TestRenderProjectListShowsWorkingAssessmentForLiveEmbeddedTurn(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider:     codexapp.ProviderOpenCode,
+			Started:      true,
+			ActiveTurnID: "turn-live",
+			BusySince:    time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC),
+			ThreadID:     "thread-live",
+			Goal: &codexapp.ThreadGoal{
+				Objective: "Wiring active row summaries into the project list.",
+				Status:    codexapp.ThreadGoalStatusActive,
+			},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		Provider:    codexapp.ProviderOpenCode,
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	project := model.ProjectSummary{
+		Name:                            "demo",
+		Path:                            "/tmp/demo",
+		Status:                          model.StatusIdle,
+		PresentOnDisk:                   true,
+		LatestSessionFormat:             "opencode_db",
+		LatestSessionClassification:     model.ClassificationCompleted,
+		LatestSessionClassificationType: model.SessionCategoryCompleted,
+		LatestSessionSummary:            "Previous turn looked done.",
+	}
+	m := Model{
+		projects:     []model.ProjectSummary{project},
+		codexManager: manager,
+		nowFn: func() time.Time {
+			return time.Date(2026, 3, 9, 12, 0, 37, 0, time.UTC)
+		},
+	}
+
+	rendered := ansi.Strip(m.renderProjectList(120, 4))
+	if !strings.Contains(rendered, "working") || !strings.Contains(rendered, "Wiring active row summaries") {
+		t.Fatalf("renderProjectList() should show active embedded work in assessment columns: %q", rendered)
+	}
+	if strings.Contains(rendered, "OpenCode:") {
+		t.Fatalf("renderProjectList() should keep provider labels out of active summaries: %q", rendered)
+	}
+	if strings.Contains(rendered, "done") || strings.Contains(rendered, "Previous turn looked done.") {
+		t.Fatalf("renderProjectList() should not show stale completed assessment for active embedded work: %q", rendered)
+	}
+}
+
 func TestProjectAgentDisplayShowsStalledLiveSession(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",

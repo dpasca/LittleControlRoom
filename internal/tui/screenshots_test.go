@@ -488,6 +488,67 @@ func TestScreenshotDemoDataSetUsesSafeFixturePaths(t *testing.T) {
 	}
 }
 
+func TestScreenshotListLiveSnapshotsMixCodexAndOpenCodeTimers(t *testing.T) {
+	t.Parallel()
+
+	data := screenshotDemoDataSet()
+	now := time.Date(2026, time.March, 11, 8, 20, 0, 0, time.FixedZone("JST", 9*60*60))
+
+	snapshots := screenshotListLiveCodexSnapshots(data.projects, now)
+	if len(snapshots) < 2 {
+		t.Fatalf("live screenshot snapshots = %d, want multiple providers represented", len(snapshots))
+	}
+
+	seenCodex := false
+	seenOpenCode := false
+	for path, snapshot := range snapshots {
+		if snapshot.BusySince.IsZero() {
+			t.Fatalf("snapshot %s BusySince is zero; screenshot list would not show a running timer", path)
+		}
+		if strings.TrimSpace(snapshot.ActiveTurnID) == "" {
+			t.Fatalf("snapshot %s ActiveTurnID is empty; screenshot should look like an active turn", path)
+		}
+		switch embeddedProvider(snapshot) {
+		case codexapp.ProviderCodex:
+			seenCodex = true
+		case codexapp.ProviderOpenCode:
+			seenOpenCode = true
+		}
+	}
+	if !seenCodex || !seenOpenCode {
+		t.Fatalf("live screenshot snapshots should include Codex and OpenCode providers: codex=%v opencode=%v", seenCodex, seenOpenCode)
+	}
+}
+
+func TestScreenshotProjectListRendersLiveProviderTimers(t *testing.T) {
+	t.Parallel()
+
+	data := screenshotDemoDataSet()
+	now := time.Date(2026, time.March, 11, 8, 20, 0, 0, time.FixedZone("JST", 9*60*60))
+	m := Model{
+		projects:     data.projects,
+		codexManager: newScreenshotCodexManager(screenshotListLiveCodexSnapshots(data.projects, now)),
+		nowFn:        func() time.Time { return now },
+	}
+
+	rendered := ansi.Strip(m.renderProjectList(112, len(data.projects)+2))
+	for _, want := range []string{
+		"CX 24:17",
+		"OC 18:42",
+		"Instrumenting IPC flake",
+		"Stabilizing the build",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("screenshot project list missing live timer %q: %q", want, rendered)
+		}
+	}
+	for _, unwanted := range []string{"Codex:", "OpenCode:"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("screenshot project list should keep provider labels out of summaries: %q", rendered)
+		}
+	}
+}
+
 func mustScreenshotPNG(fill color.RGBA) []byte {
 	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
 	for y := 0; y < img.Bounds().Dy(); y++ {

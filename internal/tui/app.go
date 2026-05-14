@@ -3448,7 +3448,9 @@ func (m Model) renderProjectList(width, height int) string {
 		statusStyle := m.projectListAssessmentStatusStyle(p)
 		summaryStyle := m.projectListAssessmentSummaryStyle(p)
 		nameStyle := lipgloss.NewStyle().Width(projectW).Bold(selectedRow)
+		agentTaskRow := false
 		if task, ok := m.agentTaskForProjectPath(p.Path); ok {
+			agentTaskRow = true
 			statusText = agentTaskListStatus(task)
 			assessmentText = agentTaskListSummary(task)
 			statusStyle = agentTaskStatusStyle(task)
@@ -3457,7 +3459,9 @@ func (m Model) renderProjectList(width, height int) string {
 				summaryStyle = detailWarningStyle
 			}
 		}
+		browserAttentionRow := false
 		if browserAttention, ok := m.projectPendingBrowserAttention(p.Path); ok {
+			browserAttentionRow = true
 			statusText = "browser"
 			assessmentText = browserAttentionListSummary(browserAttention)
 			statusStyle = detailWarningStyle
@@ -3510,6 +3514,12 @@ func (m Model) renderProjectList(width, height int) string {
 		assessment := truncateText(assessmentText, assessmentW)
 		runtimeSnapshot := m.projectRuntimeSnapshot(p.Path)
 		agentLabel, agentTag, agentLive := m.projectAgentDisplay(p, now)
+		if liveSummary, ok := m.projectLiveEngineerAssessmentSummary(p, now); ok && !agentTaskRow && !browserAttentionRow {
+			statusText = "working"
+			assessmentText = liveSummary
+			statusStyle = classificationCategoryStyle(model.SessionCategoryInProgress)
+			summaryStyle = detailValueStyle
+		}
 		todoCount := projectTODOCountLabel(p.OpenTODOCount)
 		runLabel, runState := projectRunSummary(runtimeSnapshot, p.RunCommand)
 		if processFlag := m.projectProcessRunFlag(p.Path); processFlag != "" {
@@ -3520,6 +3530,7 @@ func (m Model) renderProjectList(width, height int) string {
 			}
 			runState = projectRunError
 		}
+		assessment = truncateText(assessmentText, assessmentW)
 		row := lipgloss.JoinHorizontal(
 			lipgloss.Top,
 			flagIndicators+cellStyle(lipgloss.NewStyle().Width(4).Align(lipgloss.Right).Bold(selectedRow)).Render(attention),
@@ -5271,11 +5282,7 @@ func (m Model) projectAgentDisplay(project model.ProjectSummary, now time.Time) 
 		label := tag
 		if snapshot.Phase == codexapp.SessionPhaseStalled {
 			label += " stalled"
-		} else if snapshot.Busy {
-			startedAt := snapshot.BusySince
-			if startedAt.IsZero() && !project.LatestTurnStartedAt.IsZero() {
-				startedAt = project.LatestTurnStartedAt
-			}
+		} else if startedAt, active := embeddedSnapshotActiveStartedAt(snapshot, project); active {
 			if !startedAt.IsZero() && !now.IsZero() {
 				label += " " + formatRunningDuration(now.Sub(startedAt))
 			}
@@ -5301,6 +5308,157 @@ func (m Model) projectAgentDisplay(project model.ProjectSummary, now time.Time) 
 		return label, tag, true
 	}
 	return tag, tag, false
+}
+
+func (m Model) projectLiveEngineerAssessmentSummary(project model.ProjectSummary, now time.Time) (string, bool) {
+	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
+		startedAt, active := embeddedSnapshotActiveStartedAt(snapshot, project)
+		if !active {
+			return "", false
+		}
+		if detail := liveEngineerSnapshotDetail(snapshot); detail != "" {
+			return formatLiveEngineerSummary(detail, startedAt, now), true
+		}
+		if detail := liveEngineerProjectInProgressSummary(project); detail != "" {
+			return formatLiveEngineerSummary(detail, startedAt, now), true
+		}
+		return formatLiveEngineerSummary("Work in progress", startedAt, now), true
+	}
+
+	provider := providerForSessionFormat(project.LatestSessionFormat)
+	if provider == "" {
+		return "", false
+	}
+	if project.LatestTurnStateKnown && !project.LatestTurnCompleted && !m.startupScanCompleted {
+		return "", false
+	}
+	if !m.projectUnfinishedTurnLooksLive(project, now) {
+		return "", false
+	}
+	if detail := liveEngineerProjectInProgressSummary(project); detail != "" {
+		return formatLiveEngineerSummary(detail, project.LatestTurnStartedAt, now), true
+	}
+	return formatLiveEngineerSummary("Work in progress", project.LatestTurnStartedAt, now), true
+}
+
+func formatLiveEngineerSummary(detail string, startedAt, now time.Time) string {
+	summary := strings.TrimSpace(detail)
+	if !startedAt.IsZero() && !now.IsZero() {
+		timer := formatRunningDuration(now.Sub(startedAt))
+		if strings.TrimSpace(summary) == "" {
+			return timer
+		}
+		summary += " (" + timer + ")"
+	}
+	return strings.TrimSpace(summary)
+}
+
+func liveEngineerProjectInProgressSummary(project model.ProjectSummary) string {
+	if project.LatestSessionClassificationType != model.SessionCategoryInProgress {
+		return ""
+	}
+	return liveEngineerStatusDetail(project.LatestSessionSummary)
+}
+
+func liveEngineerSnapshotDetail(snapshot codexapp.Snapshot) string {
+	if snapshot.PendingApproval != nil {
+		return liveEngineerCleanSummary("Waiting for approval: " + snapshot.PendingApproval.Summary())
+	}
+	if snapshot.PendingToolInput != nil {
+		return liveEngineerCleanSummary("Waiting for input: " + snapshot.PendingToolInput.Summary())
+	}
+	if snapshot.PendingElicitation != nil {
+		return liveEngineerCleanSummary("Waiting for input: " + snapshot.PendingElicitation.Summary())
+	}
+	if snapshot.Goal != nil && snapshot.Goal.Status == codexapp.ThreadGoalStatusActive {
+		if objective := liveEngineerCleanSummary(snapshot.Goal.Objective); objective != "" {
+			return objective
+		}
+	}
+	if detail := liveEngineerTranscriptDetail(snapshot.Entries); detail != "" {
+		return detail
+	}
+	if detail := liveEngineerStatusDetail(snapshot.LastSystemNotice); detail != "" {
+		return detail
+	}
+	return liveEngineerStatusDetail(snapshot.Status)
+}
+
+func liveEngineerTranscriptDetail(entries []codexapp.TranscriptEntry) string {
+	for i := len(entries) - 1; i >= 0; i-- {
+		entry := entries[i]
+		text := liveEngineerCleanSummary(firstNonEmptyString(entry.DisplayText, entry.Text))
+		if text == "" {
+			continue
+		}
+		switch entry.Kind {
+		case codexapp.TranscriptAgent, codexapp.TranscriptPlan:
+			return text
+		case codexapp.TranscriptCommand:
+			if line := liveEngineerFirstLine(text); line != "" {
+				line = strings.TrimSpace(strings.TrimPrefix(line, "$ "))
+				return "Running " + line
+			}
+		case codexapp.TranscriptFileChange:
+			if line := liveEngineerFirstLine(text); line != "" {
+				return "Editing " + line
+			}
+		case codexapp.TranscriptStatus, codexapp.TranscriptSystem:
+			if detail := liveEngineerStatusDetail(text); detail != "" {
+				return detail
+			}
+		}
+	}
+	return ""
+}
+
+func liveEngineerStatusDetail(status string) string {
+	status = liveEngineerCleanSummary(status)
+	if status == "" || liveEngineerGenericStatus(status) {
+		return ""
+	}
+	return status
+}
+
+func liveEngineerCleanSummary(text string) string {
+	text = sanitizeCodexRenderedText(text)
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	return singleLineStatusText(text)
+}
+
+func liveEngineerFirstLine(text string) string {
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+func liveEngineerGenericStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "working", "codex is working...", "opencode is working...", "codex ready", "opencode ready", "codex turn completed", "turn completed":
+		return true
+	default:
+		return false
+	}
+}
+
+func embeddedSnapshotActiveStartedAt(snapshot codexapp.Snapshot, project model.ProjectSummary) (time.Time, bool) {
+	active := snapshot.Busy || snapshot.BusyExternal || strings.TrimSpace(snapshot.ActiveTurnID) != ""
+	switch snapshot.Phase {
+	case codexapp.SessionPhaseRunning, codexapp.SessionPhaseFinishing, codexapp.SessionPhaseExternal:
+		active = true
+	}
+	if !active {
+		return time.Time{}, false
+	}
+	startedAt := snapshot.BusySince
+	if startedAt.IsZero() {
+		startedAt = project.LatestTurnStartedAt
+	}
+	return startedAt, true
 }
 
 func projectRunSummary(snapshot projectrun.Snapshot, savedCommand string) (string, projectRunState) {

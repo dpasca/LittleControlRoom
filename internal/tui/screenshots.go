@@ -625,6 +625,10 @@ func (s *screenshotCodexSession) Snapshot() codexapp.Snapshot {
 	return snapshot
 }
 
+func (s *screenshotCodexSession) StateSnapshot() codexapp.Snapshot {
+	return s.Snapshot()
+}
+
 func (s *screenshotCodexSession) TrySnapshot() (codexapp.Snapshot, bool) {
 	return s.Snapshot(), true
 }
@@ -763,18 +767,21 @@ func screenshotEmbeddedCodexSnapshot(project model.ProjectSummary, now time.Time
 
 func screenshotListLiveCodexSnapshots(projects []model.ProjectSummary, now time.Time) map[string]codexapp.Snapshot {
 	type timerSpec struct {
-		filter   string
-		duration time.Duration
+		filter    string
+		provider  codexapp.Provider
+		duration  time.Duration
+		objective string
 	}
 
 	specs := []timerSpec{
-		{filter: "LCR", duration: 18*time.Minute + 42*time.Second},
-		{filter: "FractalMech", duration: 11*time.Minute + 8*time.Second},
-		{filter: "okmain", duration: 24*time.Minute + 17*time.Second},
-		{filter: "local-llm-lab", duration: 7*time.Minute + 41*time.Second},
-		{filter: screenshotDemoBusyProject, duration: 24*time.Minute + 17*time.Second},
-		{filter: screenshotDemoFollowupProject, duration: 11*time.Minute + 8*time.Second},
-		{filter: "platform-api", duration: 7*time.Minute + 41*time.Second},
+		{filter: "LCR", provider: codexapp.ProviderCodex, duration: 18*time.Minute + 42*time.Second, objective: "Aligning live engineer rows with screenshot state."},
+		{filter: "FractalMech", provider: codexapp.ProviderOpenCode, duration: 11*time.Minute + 8*time.Second, objective: "Tracing the Electron assert crash and runtime output."},
+		{filter: "okmain", provider: codexapp.ProviderCodex, duration: 24*time.Minute + 17*time.Second, objective: "Finishing milestone notes after smoke checks."},
+		{filter: "local-llm-lab", provider: codexapp.ProviderOpenCode, duration: 7*time.Minute + 41*time.Second, objective: "Verifying local backend cache cleanup."},
+		{filter: screenshotDemoBusyProject, provider: codexapp.ProviderCodex, duration: 24*time.Minute + 17*time.Second, objective: "Instrumenting IPC flake diagnostics."},
+		{filter: "render-bench", provider: codexapp.ProviderOpenCode, duration: 18*time.Minute + 42*time.Second, objective: "Stabilizing the build and serve loop."},
+		{filter: screenshotDemoFollowupProject, provider: codexapp.ProviderOpenCode, duration: 11*time.Minute + 8*time.Second, objective: "Running the billing verification checklist."},
+		{filter: "platform-api", provider: codexapp.ProviderCodex, duration: 7*time.Minute + 41*time.Second, objective: "Checking blackout and tint smoke output."},
 	}
 
 	snapshots := make(map[string]codexapp.Snapshot, 4)
@@ -787,13 +794,16 @@ func screenshotListLiveCodexSnapshots(projects []model.ProjectSummary, now time.
 			continue
 		}
 		snapshots[project.Path] = codexapp.Snapshot{
+			Provider:       spec.provider,
 			ThreadID:       fmt.Sprintf("thread-%s-live", normalizeScreenshotProjectToken(project.Name)),
 			Preset:         codexcli.PresetYolo,
 			Started:        true,
 			Busy:           true,
+			ActiveTurnID:   fmt.Sprintf("turn-%s-live", normalizeScreenshotProjectToken(project.Name)),
 			BusySince:      now.Add(-spec.duration),
 			Status:         "Working",
 			LastActivityAt: now,
+			Goal:           screenshotLiveThreadGoal(project, spec.objective, now),
 		}
 		if len(snapshots) >= 4 {
 			break
@@ -808,19 +818,43 @@ func screenshotListLiveCodexSnapshots(projects []model.ProjectSummary, now time.
 		}
 		duration := 5*time.Minute + time.Duration(len(snapshots))*6*time.Minute + 19*time.Second
 		snapshots[project.Path] = codexapp.Snapshot{
+			Provider:       screenshotProviderForLiveIndex(len(snapshots)),
 			ThreadID:       fmt.Sprintf("thread-%s-live", normalizeScreenshotProjectToken(project.Name)),
 			Preset:         codexcli.PresetYolo,
 			Started:        true,
 			Busy:           true,
+			ActiveTurnID:   fmt.Sprintf("turn-%s-live", normalizeScreenshotProjectToken(project.Name)),
 			BusySince:      now.Add(-duration),
 			Status:         "Working",
 			LastActivityAt: now,
+			Goal:           screenshotLiveThreadGoal(project, "Advancing "+screenshotProjectLabel(project)+" implementation.", now),
 		}
 		if len(snapshots) >= 4 {
 			break
 		}
 	}
 	return snapshots
+}
+
+func screenshotLiveThreadGoal(project model.ProjectSummary, objective string, now time.Time) *codexapp.ThreadGoal {
+	objective = strings.TrimSpace(objective)
+	if objective == "" {
+		return nil
+	}
+	return &codexapp.ThreadGoal{
+		ThreadID:  fmt.Sprintf("thread-%s-live", normalizeScreenshotProjectToken(project.Name)),
+		Objective: objective,
+		Status:    codexapp.ThreadGoalStatusActive,
+		CreatedAt: now.Add(-20 * time.Minute),
+		UpdatedAt: now,
+	}
+}
+
+func screenshotProviderForLiveIndex(index int) codexapp.Provider {
+	if index%2 == 1 {
+		return codexapp.ProviderOpenCode
+	}
+	return codexapp.ProviderCodex
 }
 
 func cloneScreenshotSnapshots(src map[string]codexapp.Snapshot) map[string]codexapp.Snapshot {
