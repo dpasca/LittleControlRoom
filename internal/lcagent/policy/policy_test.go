@@ -109,3 +109,69 @@ func TestAutonomyPatchAndCommandPolicy(t *testing.T) {
 		t.Fatalf("ClampTimeout = %s, want 10s", got)
 	}
 }
+
+func TestLowAutonomyVerificationCommandPolicy(t *testing.T) {
+	low := Workspace{Root: t.TempDir(), Auto: AutonomyLow}
+	tests := []struct {
+		name  string
+		argv  []string
+		allow bool
+	}{
+		{name: "go list packages", argv: []string{"go", "list", "-json", "./..."}, allow: true},
+		{name: "go vet packages", argv: []string{"go", "vet", "./..."}, allow: true},
+		{name: "go build all packages", argv: []string{"go", "build", "./..."}, allow: true},
+		{name: "go build explicit binary output", argv: []string{"go", "build", "-o", "lcagent", "./..."}, allow: false},
+		{name: "go build scoped command package", argv: []string{"go", "build", "./cmd/lcagent"}, allow: false},
+		{name: "go fmt mutating formatter", argv: []string{"go", "fmt", "./..."}, allow: false},
+		{name: "go vet custom vettool", argv: []string{"go", "vet", "-vettool=./tool", "./..."}, allow: false},
+		{name: "make test", argv: []string{"make", "test"}, allow: true},
+		{name: "make jobs test", argv: []string{"make", "-j4", "test"}, allow: true},
+		{name: "make install", argv: []string{"make", "install"}, allow: false},
+		{name: "make assignment", argv: []string{"make", "test", "GO=./evil"}, allow: false},
+		{name: "npm test", argv: []string{"npm", "test", "--", "--runInBand"}, allow: true},
+		{name: "npm typecheck script", argv: []string{"npm", "run", "typecheck", "--", "--noEmit"}, allow: true},
+		{name: "npm install", argv: []string{"npm", "install"}, allow: false},
+		{name: "npm write flag", argv: []string{"npm", "run", "format", "--", "--write"}, allow: false},
+		{name: "npm watch flag", argv: []string{"npm", "run", "test", "--", "--watch=all"}, allow: false},
+		{name: "pnpm lint script", argv: []string{"pnpm", "run", "lint"}, allow: true},
+		{name: "yarn test script", argv: []string{"yarn", "test"}, allow: true},
+		{name: "bun test", argv: []string{"bun", "test"}, allow: true},
+		{name: "cargo test", argv: []string{"cargo", "test", "--all"}, allow: true},
+		{name: "cargo fmt check", argv: []string{"cargo", "fmt", "--check"}, allow: true},
+		{name: "cargo json file reporter", argv: []string{"cargo", "test", "--reporter=json:out.json"}, allow: false},
+		{name: "cargo publish", argv: []string{"cargo", "publish"}, allow: false},
+		{name: "cargo fmt without check", argv: []string{"cargo", "fmt"}, allow: false},
+		{name: "pytest quiet", argv: []string{"pytest", "-q"}, allow: true},
+		{name: "pytest parent path", argv: []string{"pytest", "../outside"}, allow: false},
+		{name: "pytest cache clear", argv: []string{"pytest", "--cache-clear"}, allow: false},
+		{name: "pytest junit output", argv: []string{"pytest", "--junitxml=out.xml"}, allow: false},
+		{name: "python module pytest", argv: []string{"python", "-m", "pytest", "tests"}, allow: true},
+		{name: "python compileall", argv: []string{"python", "-m", "compileall", "."}, allow: false},
+		{name: "mypy install types", argv: []string{"mypy", "--install-types"}, allow: false},
+		{name: "pyright create stub", argv: []string{"pyright", "--createstub", "pkg"}, allow: false},
+		{name: "ruff check", argv: []string{"ruff", "check", "."}, allow: true},
+		{name: "ruff fix", argv: []string{"ruff", "check", "--fix", "."}, allow: false},
+		{name: "ruff format check", argv: []string{"ruff", "format", "--check", "."}, allow: true},
+		{name: "prettier check", argv: []string{"prettier", "--check", "."}, allow: true},
+		{name: "prettier write", argv: []string{"prettier", "--write", "."}, allow: false},
+		{name: "eslint check", argv: []string{"eslint", "."}, allow: true},
+		{name: "eslint fix", argv: []string{"eslint", "--fix=true", "."}, allow: false},
+		{name: "typescript no emit", argv: []string{"tsc", "--noEmit"}, allow: true},
+		{name: "typescript emit", argv: []string{"tsc"}, allow: false},
+		{name: "gofmt list", argv: []string{"gofmt", "-l", "internal/lcagent/policy/policy.go"}, allow: true},
+		{name: "gofmt write", argv: []string{"gofmt", "-w", "internal/lcagent/policy/policy.go"}, allow: false},
+		{name: "biome check", argv: []string{"biome", "check", "."}, allow: true},
+		{name: "biome write", argv: []string{"biome", "check", "--write", "."}, allow: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := low.AllowCommandSpec(tt.argv, "", false)
+			if tt.allow && err != nil {
+				t.Fatalf("AllowCommandSpec(%q) denied: %v", tt.argv, err)
+			}
+			if !tt.allow && err == nil {
+				t.Fatalf("AllowCommandSpec(%q) allowed, want denial", tt.argv)
+			}
+		})
+	}
+}

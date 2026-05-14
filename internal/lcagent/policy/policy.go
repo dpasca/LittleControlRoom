@@ -208,8 +208,58 @@ func lowAutonomyVerificationArgvCommand(argv []string) bool {
 		return false
 	}
 	switch filepath.Base(argv[0]) {
+	case "biome":
+		return lowAutonomyBiomeArgs(argv[1:])
+	case "bun":
+		return lowAutonomyBunArgs(argv[1:])
+	case "cargo":
+		return lowAutonomyCargoArgs(argv[1:])
+	case "eslint":
+		return lowAutonomyESLintArgs(argv[1:])
 	case "go":
-		return lowAutonomyGoTestArgs(argv[1:])
+		return lowAutonomyGoArgs(argv[1:])
+	case "gofmt", "goimports":
+		return lowAutonomyGoFormatArgs(argv[1:])
+	case "just":
+		return lowAutonomyTaskRunnerArgs(argv[1:])
+	case "make", "gmake":
+		return lowAutonomyMakeArgs(argv[1:])
+	case "mypy", "pyright":
+		return safeVerificationArgs(argv[1:])
+	case "npm":
+		return lowAutonomyNPMArgs(argv[1:])
+	case "pnpm":
+		return lowAutonomyPNPMArgs(argv[1:])
+	case "prettier":
+		return lowAutonomyPrettierArgs(argv[1:])
+	case "pytest":
+		return safeVerificationArgs(argv[1:])
+	case "python", "python3":
+		return lowAutonomyPythonArgs(argv[1:])
+	case "ruff":
+		return lowAutonomyRuffArgs(argv[1:])
+	case "tsc", "vue-tsc":
+		return lowAutonomyTypeScriptArgs(argv[1:])
+	case "yarn":
+		return lowAutonomyYarnArgs(argv[1:])
+	default:
+		return false
+	}
+}
+
+func lowAutonomyGoArgs(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "test":
+		return lowAutonomyGoTestArgs(args)
+	case "list":
+		return lowAutonomyGoListArgs(args[1:])
+	case "vet":
+		return lowAutonomyGoVetArgs(args[1:])
+	case "build":
+		return lowAutonomyGoBuildArgs(args[1:])
 	default:
 		return false
 	}
@@ -297,6 +347,154 @@ func goTestFlagAllowed(arg string) bool {
 	return false
 }
 
+func lowAutonomyGoListArgs(args []string) bool {
+	expectValue := false
+	for _, arg := range args {
+		if arg == "" {
+			return false
+		}
+		if expectValue {
+			if strings.HasPrefix(arg, "-") {
+				return false
+			}
+			expectValue = false
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			switch {
+			case goListFlagTakesSeparateValue(arg):
+				expectValue = true
+			case goListFlagAllowed(arg):
+				continue
+			default:
+				return false
+			}
+			continue
+		}
+		if !goTestPackageArgAllowed(arg) {
+			return false
+		}
+	}
+	return !expectValue
+}
+
+func goListFlagTakesSeparateValue(arg string) bool {
+	switch arg {
+	case "-f", "-tags":
+		return true
+	default:
+		return false
+	}
+}
+
+func goListFlagAllowed(arg string) bool {
+	switch arg {
+	case "-json", "-deps", "-test", "-e":
+		return true
+	case "-m", "-u":
+		return false
+	}
+	for _, prefix := range []string{"-f=", "-tags="} {
+		if strings.HasPrefix(arg, prefix) && strings.TrimSpace(strings.TrimPrefix(arg, prefix)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func lowAutonomyGoVetArgs(args []string) bool {
+	expectValue := false
+	for _, arg := range args {
+		if arg == "" {
+			return false
+		}
+		if expectValue {
+			if strings.HasPrefix(arg, "-") {
+				return false
+			}
+			expectValue = false
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			switch {
+			case arg == "-tags":
+				expectValue = true
+			case arg == "-json" || strings.HasPrefix(arg, "-tags="):
+				continue
+			default:
+				return false
+			}
+			continue
+		}
+		if !goTestPackageArgAllowed(arg) {
+			return false
+		}
+	}
+	return !expectValue
+}
+
+func lowAutonomyGoBuildArgs(args []string) bool {
+	expectValue := false
+	packages := make([]string, 0, len(args))
+	for _, arg := range args {
+		if arg == "" {
+			return false
+		}
+		if expectValue {
+			if strings.HasPrefix(arg, "-") {
+				return false
+			}
+			expectValue = false
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			switch {
+			case goBuildFlagTakesSeparateValue(arg):
+				expectValue = true
+			case goBuildFlagAllowed(arg):
+				continue
+			default:
+				return false
+			}
+			continue
+		}
+		if !goTestPackageArgAllowed(arg) {
+			return false
+		}
+		packages = append(packages, filepath.ToSlash(arg))
+	}
+	return !expectValue && len(packages) == 1 && packages[0] == "./..."
+}
+
+func goBuildFlagTakesSeparateValue(arg string) bool {
+	switch arg {
+	case "-tags", "-mod":
+		return true
+	default:
+		return false
+	}
+}
+
+func goBuildFlagAllowed(arg string) bool {
+	switch arg {
+	case "-v", "-x", "-race", "-trimpath":
+		return true
+	case "-o", "-exec", "-toolexec", "-buildmode":
+		return false
+	}
+	for _, prefix := range []string{"-tags=", "-mod="} {
+		if strings.HasPrefix(arg, prefix) && strings.TrimSpace(strings.TrimPrefix(arg, prefix)) != "" {
+			return true
+		}
+	}
+	for _, prefix := range []string{"-o=", "-exec=", "-toolexec=", "-buildmode="} {
+		if strings.HasPrefix(arg, prefix) {
+			return false
+		}
+	}
+	return false
+}
+
 func goTestPackageArgAllowed(arg string) bool {
 	arg = filepath.ToSlash(strings.TrimSpace(arg))
 	if arg == "." || arg == "./..." {
@@ -311,6 +509,366 @@ func goTestPackageArgAllowed(arg string) bool {
 			return false
 		case "...":
 			continue
+		}
+	}
+	return true
+}
+
+func lowAutonomyMakeArgs(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	sawTarget := false
+	expectJobsValue := false
+	for _, arg := range args {
+		if expectJobsValue {
+			if !unsignedInteger(arg) {
+				return false
+			}
+			expectJobsValue = false
+			continue
+		}
+		switch {
+		case arg == "-j" || arg == "--jobs":
+			expectJobsValue = true
+		case strings.HasPrefix(arg, "-j") && len(arg) > 2:
+			if !unsignedInteger(strings.TrimPrefix(arg, "-j")) {
+				return false
+			}
+		case strings.HasPrefix(arg, "--jobs="):
+			if !unsignedInteger(strings.TrimPrefix(arg, "--jobs=")) {
+				return false
+			}
+		case arg == "-k" || arg == "--keep-going" || arg == "-s" || arg == "--silent":
+			continue
+		case strings.HasPrefix(arg, "-") || strings.Contains(arg, "="):
+			return false
+		default:
+			if !verificationTargetAllowed(arg) {
+				return false
+			}
+			sawTarget = true
+		}
+	}
+	return sawTarget && !expectJobsValue
+}
+
+func lowAutonomyTaskRunnerArgs(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	sawTarget := false
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") || strings.Contains(arg, "=") {
+			return false
+		}
+		if !verificationTargetAllowed(arg) {
+			return false
+		}
+		sawTarget = true
+	}
+	return sawTarget
+}
+
+func lowAutonomyNPMArgs(args []string) bool {
+	args = stripPackageManagerOptions(args)
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "test", "t":
+		return safeVerificationArgs(args[1:])
+	case "run", "run-script":
+		return lowAutonomyScriptArgs(args[1:])
+	default:
+		return false
+	}
+}
+
+func lowAutonomyPNPMArgs(args []string) bool {
+	args = stripPackageManagerOptions(args)
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "test":
+		return safeVerificationArgs(args[1:])
+	case "run":
+		return lowAutonomyScriptArgs(args[1:])
+	default:
+		return false
+	}
+}
+
+func lowAutonomyYarnArgs(args []string) bool {
+	args = stripPackageManagerOptions(args)
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "test":
+		return safeVerificationArgs(args[1:])
+	case "run":
+		return lowAutonomyScriptArgs(args[1:])
+	default:
+		return lowAutonomyScriptArgs(args)
+	}
+}
+
+func lowAutonomyBunArgs(args []string) bool {
+	args = stripPackageManagerOptions(args)
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "test":
+		return safeVerificationArgs(args[1:])
+	case "run":
+		return lowAutonomyScriptArgs(args[1:])
+	default:
+		return false
+	}
+}
+
+func stripPackageManagerOptions(args []string) []string {
+	for len(args) > 0 {
+		switch args[0] {
+		case "--silent", "--if-present", "--no-audit", "--no-fund", "--ignore-scripts", "--offline":
+			args = args[1:]
+		default:
+			return args
+		}
+	}
+	return args
+}
+
+func lowAutonomyScriptArgs(args []string) bool {
+	if len(args) == 0 || !verificationTargetAllowed(args[0]) {
+		return false
+	}
+	return safeVerificationArgs(args[1:])
+}
+
+func lowAutonomyCargoArgs(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "test", "check", "clippy", "build":
+		return safeVerificationArgs(args[1:])
+	case "fmt":
+		return safeVerificationArgs(args[1:]) && hasArg(args[1:], "--check")
+	default:
+		return false
+	}
+}
+
+func lowAutonomyPythonArgs(args []string) bool {
+	if len(args) < 2 || args[0] != "-m" {
+		return false
+	}
+	switch args[1] {
+	case "pytest", "mypy":
+		return safeVerificationArgs(args[2:])
+	default:
+		return false
+	}
+}
+
+func lowAutonomyRuffArgs(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "check":
+		return safeVerificationArgs(args[1:])
+	case "format":
+		return hasArg(args[1:], "--check") && safeVerificationArgs(args[1:])
+	default:
+		return false
+	}
+}
+
+func lowAutonomyPrettierArgs(args []string) bool {
+	return len(args) > 0 && (hasArg(args, "--check") || hasArg(args, "--list-different")) && safeVerificationArgs(args)
+}
+
+func lowAutonomyESLintArgs(args []string) bool {
+	return safeVerificationArgs(args)
+}
+
+func lowAutonomyTypeScriptArgs(args []string) bool {
+	return hasArg(args, "--noEmit") && safeVerificationArgs(args)
+}
+
+func lowAutonomyBiomeArgs(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "check", "ci", "lint":
+		return safeVerificationArgs(args[1:])
+	case "format":
+		return hasArg(args[1:], "--check") && safeVerificationArgs(args[1:])
+	default:
+		return false
+	}
+}
+
+func lowAutonomyGoFormatArgs(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	sawPath := false
+	for _, arg := range args {
+		switch arg {
+		case "-l", "-d", "-e", "-s":
+			continue
+		case "-w":
+			return false
+		default:
+			if strings.HasPrefix(arg, "-") || argEscapesWorkspaceLexically(arg) {
+				return false
+			}
+			sawPath = true
+		}
+	}
+	return sawPath
+}
+
+func verificationTargetAllowed(target string) bool {
+	target = strings.TrimSpace(strings.ToLower(target))
+	if target == "" || !safeScriptOrTargetName(target) {
+		return false
+	}
+	if base, _, ok := strings.Cut(target, ":"); ok {
+		target = base
+	}
+	switch target {
+	case "build", "check", "checks", "ci", "lint", "test", "tests", "type-check", "typecheck", "unit", "verify":
+		return true
+	default:
+		return false
+	}
+}
+
+func safeScriptOrTargetName(value string) bool {
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			continue
+		case r >= 'A' && r <= 'Z':
+			continue
+		case r >= '0' && r <= '9':
+			continue
+		case r == '-' || r == '_' || r == ':' || r == '.':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func safeVerificationArgs(args []string) bool {
+	for _, arg := range args {
+		if arg == "" {
+			return false
+		}
+		if arg == "--" {
+			continue
+		}
+		if verificationArgDenied(arg) || argEscapesWorkspaceLexically(arg) {
+			return false
+		}
+	}
+	return true
+}
+
+func verificationArgDenied(arg string) bool {
+	lower := strings.ToLower(strings.TrimSpace(arg))
+	switch lower {
+	case "-g", "-i", "-u", "-w",
+		"--clean", "--delete", "--fix", "--force", "--global", "--install",
+		"--interactive", "--open", "--publish", "--remove", "--update",
+		"--update-snapshot", "--updatesnapshot", "--watch", "--watchall", "--write":
+		return true
+	}
+	if strings.HasPrefix(lower, "--reporter=json:") {
+		return true
+	}
+	for _, prefix := range []string{
+		"--cache-location",
+		"--cache-clear",
+		"--clean",
+		"--coverage",
+		"--cov",
+		"--cov-report",
+		"--createstub",
+		"--delete",
+		"--fix",
+		"--html",
+		"--install-types",
+		"--junitxml",
+		"--out",
+		"--out-dir",
+		"--out-file",
+		"--outdir",
+		"--outfile",
+		"--output",
+		"--output-file",
+		"--outputfile",
+		"--update",
+		"--update-snapshot",
+		"--updatesnapshot",
+		"--watch",
+		"--watchall",
+		"--write",
+	} {
+		if lower == prefix || strings.HasPrefix(lower, prefix+"=") {
+			return true
+		}
+	}
+	return false
+}
+
+func argEscapesWorkspaceLexically(arg string) bool {
+	if strings.TrimSpace(arg) == "" {
+		return true
+	}
+	values := []string{arg}
+	if key, value, ok := strings.Cut(arg, "="); ok && strings.HasPrefix(key, "-") {
+		values = append(values, value)
+	}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		slash := filepath.ToSlash(value)
+		if filepath.IsAbs(value) || slash == ".." || strings.HasPrefix(slash, "../") || strings.Contains(slash, "/../") || strings.HasSuffix(slash, "/..") {
+			return true
+		}
+	}
+	return false
+}
+
+func hasArg(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
+}
+
+func unsignedInteger(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
 		}
 	}
 	return true

@@ -21,6 +21,10 @@ Implemented pieces:
   profiles.
 - Verification traces distinguish actual `run_command` checks marked with
   `purpose=verify` from verification text merely reported in `final_response`.
+- Low-autonomy command policy permits argv-only verification forms across common
+  stacks: Go test/list/vet and whole-repo build, Make/Just verification
+  targets, package-manager test/check/build scripts, Cargo checks, Python test
+  and typecheck tools, JS/TS checks, and read-only formatter modes.
 - Workspace-contained tools: `read_file`, `file_outline`, `module_outline`,
   `list_files`, literal `search`, optional `web_search`, `load_skill`,
   `run_command`, `apply_patch`, `update_plan`, and `final_response`.
@@ -76,9 +80,9 @@ Harness and policy hardening:
 - Verification traces now separate "checks actually ran" from "the model
   reported checks"; the next hardening step is to use that signal for clearer
   repair loops when verification fails or is only reported.
-- The command policy needs more real-task calibration, especially around what
-  low autonomy should permit for normal test, lint, format, and build workflows
-  across common stacks, not just conservative Go test forms.
+- The command policy has an initial common-stack low-autonomy allowlist, but it
+  still needs trace-driven calibration against real coding tasks and provider
+  mistakes.
 - Provider-specific quirks still need hardening: retries, rate-limit messages,
   timeout defaults, prompt-cache behavior, and OpenRouter provider pinning.
 - Patch/edit ergonomics are still basic. Multi-file edits work, but there is no
@@ -108,11 +112,10 @@ small-to-medium coding tasks before it tries to be a broader assistant.
    UI calls to action.
 
 2. Calibrate low-autonomy command policy around real coding workflows.
-   Add explicit argv allowances and tests for common safe verification commands:
-   Go test/list/vet where appropriate, package-manager test scripts in read-safe
-   forms, linters, format check modes, typecheck commands, and project-local
-   build commands that do not publish, install globally, mutate secrets, or
-   delete broad paths.
+   The initial argv allowlist now covers common verification commands across Go,
+   Make/Just, package managers, Cargo, Python, JS/TS, and format check modes.
+   Next, use real traces to tighten false positives/negatives and improve denial
+   messages when the model asks for a nearby but unsafe command form.
 
 3. Improve edit application and recovery.
    Keep `apply_patch` as the primary typed mutation tool, but add better

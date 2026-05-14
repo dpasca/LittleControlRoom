@@ -1139,7 +1139,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		"File tools are workspace-only; use read-only run_command argv for paths outside the workspace.",
 		"When using run_command, prefer argv over command strings; shell commands are for shell syntax only.",
 		"When a run_command is a test, lint, typecheck, build, or other verification check, set purpose to verify so LCR can audit what actually ran.",
-		"At low autonomy, use run_command argv for conservative Go verification such as [\"go\",\"test\",\"./...\"]; shell strings and broad write-like commands are denied.",
+		"At low autonomy, use run_command argv for approved verification forms such as go test/list/vet, make test, npm test, cargo test/check, pytest, ruff/prettier/eslint checks, and tsc --noEmit; shell strings and broad write-like commands are denied.",
 		"Never write provider tool-call markup such as DSML in assistant text; call tools only through structured tool_calls.",
 		"Skill descriptions in this prompt are metadata only; call load_skill before relying on any skill instructions.",
 		"Use apply_patch for source edits. Patches must use this exact shape: *** Begin Patch, *** Update File: path, @@, -old line, +new line, *** End Patch.",
