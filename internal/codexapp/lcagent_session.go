@@ -531,7 +531,7 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		message := rawJSONString(event["message"])
 		backend := rawJSONString(event["backend"])
 		if !enabled {
-			s.appendAsync(TranscriptStatus, firstNonEmpty(message, "LCAgent web search is not available. Configure a web search backend and API key in /settings."))
+			s.appendAsync(TranscriptStatus, firstNonEmpty(message, "LCAgent web search is not available. Use /settings here to configure a web search backend and API key."))
 		} else if backend != "" {
 			s.appendAsync(TranscriptStatus, "LCAgent web search enabled: "+backend)
 		}
@@ -791,21 +791,21 @@ func (s *lcagentSession) webSearchWarningLocked() string {
 	case "exa":
 		hasAPIKey := firstNonEmpty(s.webSearchAPIKey, os.Getenv("EXA_API_KEY")) != ""
 		if !hasAPIKey && strings.TrimSpace(s.envFile) == "" {
-			return "LCAgent web search is not available. Configure the Exa API key in /settings."
+			return "LCAgent web search is not available. Use /settings here to configure the Exa API key."
 		}
 	case "google":
 		hasAPIKey := firstNonEmpty(s.webSearchAPIKey, os.Getenv("GOOGLE_SEARCH_API_KEY"), os.Getenv("GOOGLE_API_KEY")) != ""
 		hasEngineID := firstNonEmpty(s.webSearchEngineID, os.Getenv("GOOGLE_SEARCH_ENGINE_ID"), os.Getenv("GOOGLE_CSE_ID")) != ""
 		if (!hasAPIKey || !hasEngineID) && strings.TrimSpace(s.envFile) == "" {
-			return "LCAgent web search is not available. Configure the Google search API key and search engine ID in /settings."
+			return "LCAgent web search is not available. Use /settings here to configure the Google search API key and search engine ID."
 		}
 	case "searxng":
 		hasURL := firstNonEmpty(s.webSearchURL, os.Getenv("LCAGENT_WEB_SEARCH_URL"), os.Getenv("LCAGENT_SEARXNG_URL")) != ""
 		if !hasURL && strings.TrimSpace(s.envFile) == "" {
-			return "LCAgent web search is not available. Configure the SearXNG URL in /settings."
+			return "LCAgent web search is not available. Use /settings here to configure the SearXNG URL."
 		}
 	default:
-		return "LCAgent web search is not available. Configure a web search backend and API key in /settings."
+		return "LCAgent web search is not available. Use /settings here to configure a web search backend and API key."
 	}
 	return ""
 }

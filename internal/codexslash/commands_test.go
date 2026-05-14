@@ -86,6 +86,20 @@ func TestSuggestionsIncludeGoalCommand(t *testing.T) {
 	}
 }
 
+func TestSuggestionsIncludeSettingsCommand(t *testing.T) {
+	suggestions := Suggestions("/")
+	found := false
+	for _, suggestion := range suggestions {
+		if suggestion.Insert == "/settings" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Suggestions(/) should include /settings: %#v", suggestions)
+	}
+}
+
 func TestParseModelCommand(t *testing.T) {
 	inv, err := Parse("/model")
 	if err != nil {
@@ -148,6 +162,19 @@ func TestParseSkillsCommand(t *testing.T) {
 	}
 	if inv.Canonical != "/skills" {
 		t.Fatalf("Parse(/skills) canonical = %q, want /skills", inv.Canonical)
+	}
+}
+
+func TestParseSettingsCommand(t *testing.T) {
+	inv, err := Parse("/settings")
+	if err != nil {
+		t.Fatalf("Parse(/settings) error = %v", err)
+	}
+	if inv.Kind != KindSettings {
+		t.Fatalf("Parse(/settings) kind = %q, want %q", inv.Kind, KindSettings)
+	}
+	if inv.Canonical != "/settings" {
+		t.Fatalf("Parse(/settings) canonical = %q, want /settings", inv.Canonical)
 	}
 }
 

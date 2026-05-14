@@ -21,6 +21,7 @@ const (
 	KindBoss      Kind = "boss"
 	KindSkills    Kind = "skills"
 	KindGoal      Kind = "goal"
+	KindSettings  Kind = "settings"
 )
 
 type Spec = slashcmd.Spec
@@ -57,6 +58,7 @@ var specs = []Spec{
 	{Name: "boss", Usage: "/boss", Summary: "Open the high-level boss chat layer"},
 	{Name: "skills", Usage: "/skills", Summary: "Open the local Codex skills inventory"},
 	{Name: "goal", Usage: "/goal [status|clear|objective] [--budget N]", Summary: "Show, set, or clear the embedded Codex goal"},
+	{Name: "settings", Usage: "/settings", Summary: "Open app settings for this embedded provider"},
 }
 
 func Specs() []Spec {
@@ -136,6 +138,12 @@ func Suggestions(input string) []Suggestion {
 			Insert:  "/skills",
 			Display: "/skills",
 			Summary: "Open the local Codex skills inventory",
+		}}
+	case "settings":
+		return []Suggestion{{
+			Insert:  "/settings",
+			Display: "/settings",
+			Summary: "Open app settings for this embedded provider",
 		}}
 	case "goal":
 		return []Suggestion{
@@ -252,6 +260,14 @@ func Parse(input string) (Invocation, error) {
 		return Invocation{
 			Kind:      KindSkills,
 			Canonical: "/skills",
+		}, nil
+	case "settings":
+		if strings.TrimSpace(rawArgs) != "" {
+			return Invocation{}, fmt.Errorf("usage: /settings")
+		}
+		return Invocation{
+			Kind:      KindSettings,
+			Canonical: "/settings",
 		}, nil
 	case "goal":
 		return parseGoalInvocation(rawArgs)
