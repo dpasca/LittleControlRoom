@@ -85,51 +85,52 @@ type appServerSession struct {
 	exitCh    chan struct{}
 	exitOnce  sync.Once
 
-	mu                    sync.Mutex
-	threadID              string
-	activeTurnID          string
-	activeItems           map[string]struct{}
-	pendingCompletion     *turnCompletionState
-	started               bool
-	busy                  bool
-	busyExternal          bool
-	compacting            bool
-	reconciling           bool
-	reportedAuth403       bool
-	busySince             time.Time
-	closed                bool
-	stalled               bool
-	stallCount            int
-	status                string
-	lastError             string
-	lastSystemNotice      string
-	lastActivityAt        time.Time
-	lastBusyActivityAt    time.Time
-	currentCWD            string
-	model                 string
-	modelProvider         string
-	reasoningEffort       string
-	pendingModel          string
-	pendingReasoning      string
-	serviceTier           string
-	approvalPolicy        json.RawMessage
-	sandboxPolicy         json.RawMessage
-	tokenUsage            *threadTokenUsage
-	rateLimits            *rateLimitSnapshot
-	rateLimitsByID        map[string]rateLimitSnapshot
-	goal                  *ThreadGoal
-	pendingApproval       *ApprovalRequest
-	pendingToolInput      *ToolInputRequest
-	pendingElicitation    *ElicitationRequest
-	browserActivity       browserctl.SessionActivity
-	currentBrowserPageURL string
-	browserToolCalls      map[string]browserToolCall
-	mcpServerStartup      map[string]mcpServerStartupState
-	playwrightMCPReady    bool
-	entries               []transcriptEntry
-	entryIndex            map[string]int
-	transcriptRevision    uint64
-	transcriptCache       transcriptExportCache
+	mu                      sync.Mutex
+	threadID                string
+	activeTurnID            string
+	activeItems             map[string]struct{}
+	pendingCompletion       *turnCompletionState
+	started                 bool
+	busy                    bool
+	busyExternal            bool
+	compacting              bool
+	reconciling             bool
+	reportedAuth403         bool
+	busySince               time.Time
+	closed                  bool
+	stalled                 bool
+	stallCount              int
+	status                  string
+	lastError               string
+	lastSystemNotice        string
+	lastActivityAt          time.Time
+	lastBusyActivityAt      time.Time
+	currentCWD              string
+	model                   string
+	modelProvider           string
+	reasoningEffort         string
+	pendingModel            string
+	pendingReasoning        string
+	serviceTier             string
+	approvalPolicy          json.RawMessage
+	sandboxPolicy           json.RawMessage
+	tokenUsage              *threadTokenUsage
+	rateLimits              *rateLimitSnapshot
+	rateLimitsByID          map[string]rateLimitSnapshot
+	goal                    *ThreadGoal
+	pendingApproval         *ApprovalRequest
+	pendingToolInput        *ToolInputRequest
+	pendingElicitation      *ElicitationRequest
+	browserActivity         browserctl.SessionActivity
+	currentBrowserPageURL   string
+	currentBrowserPageStale bool
+	browserToolCalls        map[string]browserToolCall
+	mcpServerStartup        map[string]mcpServerStartupState
+	playwrightMCPReady      bool
+	entries                 []transcriptEntry
+	entryIndex              map[string]int
+	transcriptRevision      uint64
+	transcriptCache         transcriptExportCache
 }
 
 type transcriptEntry struct {
@@ -657,6 +658,7 @@ func (s *appServerSession) stateSnapshotLocked() Snapshot {
 		BrowserActivity:          s.browserActivity.Normalize(),
 		ManagedBrowserSessionKey: strings.TrimSpace(s.managedBrowserSessionKey),
 		CurrentBrowserPageURL:    strings.TrimSpace(s.currentBrowserPageURL),
+		CurrentBrowserPageStale:  s.currentBrowserPageStale,
 		TranscriptRevision:       s.transcriptRevision,
 		Phase:                    s.phaseLocked(),
 		Started:                  s.started,
@@ -3253,10 +3255,12 @@ func (s *appServerSession) browserToolCallForItem(item map[string]json.RawMessag
 func (s *appServerSession) updateBrowserPageURLLocked(call browserToolCall, item map[string]json.RawMessage) {
 	if pageURL := extractPlaywrightPageURL(item["result"]); pageURL != "" {
 		s.currentBrowserPageURL = pageURL
+		s.currentBrowserPageStale = false
 		return
 	}
 	if strings.EqualFold(strings.TrimSpace(call.ToolName), "browser_close") {
 		s.currentBrowserPageURL = ""
+		s.currentBrowserPageStale = false
 	}
 }
 
@@ -3929,6 +3933,7 @@ func (s *appServerSession) hydrateResumedThreadLocked(thread resumedThread) {
 	s.lastBusyActivityAt = lastBusyActivityAt
 	s.activeTurnID = activeTurnID
 	s.currentBrowserPageURL = strings.TrimSpace(currentBrowserPageURL)
+	s.currentBrowserPageStale = s.currentBrowserPageURL != ""
 }
 
 func (s *appServerSession) mergeResumedThreadItemsLocked(thread resumedThread) string {
