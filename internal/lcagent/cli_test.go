@@ -1085,7 +1085,9 @@ func TestRunExecOpenRouterFeedsPatchFailureBackToModel(t *testing.T) {
 		}
 		feedbackSeen := false
 		for _, msg := range body.Messages {
-			if msg.Role == "user" && strings.Contains(msg.Content, "Patch feedback: README.md failed during apply") && strings.Contains(msg.Content, "re-read exact current lines") {
+			if msg.Role == "user" &&
+				strings.Contains(msg.Content, "Patch feedback: README.md failed during apply") &&
+				strings.Contains(msg.Content, `read_file {"path":"README.md","offset":1,"limit":2}`) {
 				feedbackSeen = true
 			}
 		}
@@ -1126,6 +1128,7 @@ func TestRunExecOpenRouterFeedsPatchFailureBackToModel(t *testing.T) {
 		`"type":"patch_feedback"`,
 		`"stage":"apply"`,
 		`"path":"README.md"`,
+		`"suggested_reads":[{"path":"README.md","offset":1,"limit":2`,
 		`"summary":"patch failed; need to re-read README.md"`,
 	} {
 		if !strings.Contains(text, want) {

@@ -25,8 +25,9 @@ Implemented pieces:
   timed-out, or prematurely reported verification, so the next turn can repair,
   choose a safer command, or explain why verification is blocked.
 - Patch feedback events add structured recovery hints for failed `apply_patch`
-  attempts, especially stale hunk context, and feed those hints back into the
-  live model loop before the next retry.
+  attempts, especially stale hunk context. When possible, they include exact
+  `read_file` suggestions for the current target range and feed those hints
+  back into the live model loop before the next retry.
 - Low-autonomy command policy permits argv-only verification forms across common
   stacks: Go test/list/vet and whole-repo build, Make/Just verification
   targets, package-manager test/check/build scripts, Cargo checks, Python test
@@ -91,8 +92,9 @@ Harness and policy hardening:
   mistakes.
 - Provider-specific quirks still need hardening: retries, rate-limit messages,
   timeout defaults, prompt-cache behavior, and OpenRouter provider pinning.
-- Patch/edit ergonomics now include first-pass failure feedback, but there is no
-  model-adaptive edit dialect, fallback edit tool, or post-edit formatting hook.
+- Patch/edit ergonomics now include first-pass failure feedback and concrete
+  re-read suggestions for stale hunks, but there is no model-adaptive edit
+  dialect, fallback edit tool, or post-edit formatting hook.
 
 Eval maturity:
 
@@ -125,10 +127,11 @@ small-to-medium coding tasks before it tries to be a broader assistant.
 
 3. Improve edit application and recovery.
    `apply_patch` now returns typed `patch_failure` metadata and emits
-   `patch_feedback` guidance for stale context and malformed patches. Next, tune
-   the retry behavior against live traces, add optional exact post-failure read
-   suggestions, and eventually a model-adaptive fallback edit strategy for
-   providers that struggle with strict patch syntax.
+   `patch_feedback` guidance for stale context and malformed patches, including
+   concrete suggested `read_file` ranges when a failed hunk can be localized.
+   Next, tune the retry behavior against live traces and eventually add a
+   model-adaptive fallback edit strategy for providers that struggle with strict
+   patch syntax.
 
 4. Surface trace quality in LCR.
    Make run summaries show denials, files changed, patch diff summaries,

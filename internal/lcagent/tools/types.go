@@ -91,10 +91,18 @@ type PatchSummary struct {
 }
 
 type PatchFailure struct {
-	Stage   string `json:"stage"`
-	Path    string `json:"path,omitempty"`
-	Message string `json:"message"`
-	Hint    string `json:"hint,omitempty"`
+	Stage          string           `json:"stage"`
+	Path           string           `json:"path,omitempty"`
+	Message        string           `json:"message"`
+	Hint           string           `json:"hint,omitempty"`
+	SuggestedReads []ReadSuggestion `json:"suggested_reads,omitempty"`
+}
+
+type ReadSuggestion struct {
+	Path   string `json:"path"`
+	Offset int    `json:"offset"`
+	Limit  int    `json:"limit"`
+	Reason string `json:"reason,omitempty"`
 }
 
 type FilePatchSummary struct {

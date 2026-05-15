@@ -144,7 +144,14 @@ func TestPatchApplierContextFailureReturnsRecoveryHint(t *testing.T) {
 	if result.PatchFailure == nil || result.PatchFailure.Stage != "apply" || result.PatchFailure.Path != "README.md" {
 		t.Fatalf("patch failure = %#v", result.PatchFailure)
 	}
-	if !strings.Contains(result.Error, "re-read exact current lines") || !strings.Contains(result.Error, "smaller hunk") {
+	if len(result.PatchFailure.SuggestedReads) != 1 {
+		t.Fatalf("suggested reads = %#v, want one read suggestion", result.PatchFailure.SuggestedReads)
+	}
+	suggestion := result.PatchFailure.SuggestedReads[0]
+	if suggestion.Path != "README.md" || suggestion.Offset != 1 || suggestion.Limit != 2 {
+		t.Fatalf("suggested read = %#v, want README.md lines 1-2", suggestion)
+	}
+	if !strings.Contains(result.Error, `read_file {"path":"README.md","offset":1,"limit":2}`) || !strings.Contains(result.Error, "smaller hunk") {
 		t.Fatalf("error missing recovery hint: %q", result.Error)
 	}
 }

@@ -145,14 +145,20 @@ func TestPatchFeedbackForFailedPatch(t *testing.T) {
 			Stage:   "apply",
 			Path:    "README.md",
 			Message: "README.md: hunk context not found",
-			Hint:    "re-read exact current lines around README.md",
+			Hint:    `call read_file {"path":"README.md","offset":1,"limit":2} to refresh exact current lines`,
+			SuggestedReads: []tools.ReadSuggestion{{
+				Path:   "README.md",
+				Offset: 1,
+				Limit:  2,
+				Reason: "refresh current context for failed patch hunk 1",
+			}},
 		},
 	}
 	feedback, ok := PatchFeedbackForResult(result)
 	if !ok {
 		t.Fatal("PatchFeedbackForResult returned ok=false, want feedback")
 	}
-	if feedback.Stage != "apply" || feedback.Path != "README.md" || !strings.Contains(feedback.Message, "re-read exact current lines") {
+	if feedback.Stage != "apply" || feedback.Path != "README.md" || !strings.Contains(feedback.Message, `read_file {"path":"README.md","offset":1,"limit":2}`) || len(feedback.SuggestedReads) != 1 {
 		t.Fatalf("feedback = %#v", feedback)
 	}
 }

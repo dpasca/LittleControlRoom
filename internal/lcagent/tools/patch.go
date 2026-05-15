@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,7 +23,7 @@ func (a PatchApplier) Apply(patch string) ToolResult {
 	}
 	ops, err := parseApplyPatch(patch)
 	if err != nil {
-		return patchFailureResult("parse", "", err, nil)
+		return patchFailureResult("parse", "", err, nil, nil)
 	}
 	touched := make([]string, 0, len(ops))
 	for _, op := range ops {
@@ -33,11 +34,11 @@ func (a PatchApplier) Apply(patch string) ToolResult {
 	}
 	summary, err := a.summarizeOps(ops)
 	if err != nil {
-		return patchFailureResult("summarize", "", err, touched)
+		return patchFailureResult("summarize", "", err, touched, nil)
 	}
 	for _, op := range ops {
 		if err := a.applyOp(op); err != nil {
-			return patchFailureResult("apply", op.Path, err, touched)
+			return patchFailureResult("apply", op.Path, err, touched, a.patchFailureReadSuggestions(op, err))
 		}
 	}
 	diffSummary := formatPatchSummary(summary)
@@ -50,9 +51,10 @@ func (a PatchApplier) Apply(patch string) ToolResult {
 	}
 }
 
-func patchFailureResult(stage, path string, err error, touched []string) ToolResult {
+func patchFailureResult(stage, path string, err error, touched []string, suggestedReads []ReadSuggestion) ToolResult {
 	message := strings.TrimSpace(err.Error())
-	hint := patchRecoveryHint(stage, path, message)
+	suggestedReads = cleanReadSuggestions(suggestedReads)
+	hint := patchRecoveryHint(stage, path, message, suggestedReads)
 	full := message
 	if hint != "" {
 		full += "; " + hint
@@ -62,10 +64,11 @@ func patchFailureResult(stage, path string, err error, touched []string) ToolRes
 		Error:        full,
 		FilesTouched: uniqueStrings(touched),
 		PatchFailure: &PatchFailure{
-			Stage:   stage,
-			Path:    cleanPatchFailurePath(path),
-			Message: message,
-			Hint:    hint,
+			Stage:          stage,
+			Path:           cleanPatchFailurePath(path),
+			Message:        message,
+			Hint:           hint,
+			SuggestedReads: suggestedReads,
 		},
 	}
 }
@@ -78,7 +81,7 @@ func cleanPatchFailurePath(path string) string {
 	return filepath.Clean(path)
 }
 
-func patchRecoveryHint(stage, path, message string) string {
+func patchRecoveryHint(stage, path, message string, suggestedReads []ReadSuggestion) string {
 	switch stage {
 	case "parse":
 		return applyPatchFormatHint
@@ -88,6 +91,9 @@ func patchRecoveryHint(stage, path, message string) string {
 		lower := strings.ToLower(message)
 		switch {
 		case strings.Contains(lower, "hunk context not found"):
+			if len(suggestedReads) > 0 {
+				return "call " + formatReadSuggestionCall(suggestedReads[0]) + " to refresh exact current lines, then retry with a smaller hunk that preserves unchanged context"
+			}
 			target := strings.TrimSpace(path)
 			if target == "" {
 				target = "the target file"
@@ -105,6 +111,136 @@ func patchRecoveryHint(stage, path, message string) string {
 	}
 }
 
+func (a PatchApplier) patchFailureReadSuggestions(op patchOp, err error) []ReadSuggestion {
+	if op.Kind != "update" {
+		return nil
+	}
+	var hunkErr *patchHunkApplyError
+	if !errors.As(err, &hunkErr) {
+		return nil
+	}
+	target, resolveErr := a.Workspace.Resolve(op.Path)
+	if resolveErr != nil {
+		return nil
+	}
+	lines, binary, readErr := readTextFileLines(target)
+	if readErr != nil || binary {
+		return nil
+	}
+	offset, limit := suggestedReadRangeForHunk(lines, hunkErr.Hunk)
+	if limit <= 0 {
+		return nil
+	}
+	reason := "refresh current context for failed patch hunk"
+	if hunkErr.Index >= 0 {
+		reason = fmt.Sprintf("refresh current context for failed patch hunk %d", hunkErr.Index+1)
+	}
+	return []ReadSuggestion{{
+		Path:   cleanPatchFailurePath(op.Path),
+		Offset: offset,
+		Limit:  limit,
+		Reason: reason,
+	}}
+}
+
+func suggestedReadRangeForHunk(lines []string, hunk patchHunk) (int, int) {
+	if len(lines) == 0 {
+		return 1, 0
+	}
+	const contextLines = 20
+	const minimumWindow = 40
+	const maximumWindow = 120
+	bestStart := bestApproximateHunkStart(lines, hunk.Old)
+	if bestStart < 0 {
+		bestStart = 0
+	}
+	start := bestStart - contextLines
+	if start < 0 {
+		start = 0
+	}
+	window := len(hunk.Old) + 2*contextLines
+	if window < minimumWindow {
+		window = minimumWindow
+	}
+	if window > maximumWindow {
+		window = maximumWindow
+	}
+	if start+window > len(lines) {
+		window = len(lines) - start
+	}
+	if window <= 0 {
+		return 1, 0
+	}
+	return start + 1, window
+}
+
+func bestApproximateHunkStart(lines, old []string) int {
+	bestStart := -1
+	bestScore := 0
+	for start := range lines {
+		score := 0
+		for i, oldLine := range old {
+			lineIndex := start + i
+			if lineIndex >= len(lines) {
+				break
+			}
+			if oldLine == lines[lineIndex] {
+				score += 2
+				continue
+			}
+			if strings.TrimSpace(oldLine) != "" && strings.TrimSpace(oldLine) == strings.TrimSpace(lines[lineIndex]) {
+				score++
+			}
+		}
+		if score > bestScore {
+			bestScore = score
+			bestStart = start
+		}
+	}
+	if bestScore > 0 {
+		return bestStart
+	}
+	for _, oldLine := range old {
+		if strings.TrimSpace(oldLine) == "" {
+			continue
+		}
+		for i, line := range lines {
+			if line == oldLine || strings.TrimSpace(line) == strings.TrimSpace(oldLine) {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func cleanReadSuggestions(suggestions []ReadSuggestion) []ReadSuggestion {
+	if len(suggestions) == 0 {
+		return nil
+	}
+	out := make([]ReadSuggestion, 0, len(suggestions))
+	seen := map[string]struct{}{}
+	for _, suggestion := range suggestions {
+		suggestion.Path = cleanPatchFailurePath(suggestion.Path)
+		if suggestion.Path == "" || suggestion.Offset <= 0 || suggestion.Limit <= 0 {
+			continue
+		}
+		key := fmt.Sprintf("%s:%d:%d", suggestion.Path, suggestion.Offset, suggestion.Limit)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, suggestion)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func formatReadSuggestionCall(suggestion ReadSuggestion) string {
+	return fmt.Sprintf(`read_file {"path":%q,"offset":%d,"limit":%d}`, suggestion.Path, suggestion.Offset, suggestion.Limit)
+}
+
 type patchOp struct {
 	Kind  string
 	Path  string
@@ -117,6 +253,15 @@ type patchHunk struct {
 	New          []string
 	AddedLines   int
 	DeletedLines int
+}
+
+type patchHunkApplyError struct {
+	Index int
+	Hunk  patchHunk
+}
+
+func (e *patchHunkApplyError) Error() string {
+	return "hunk context not found"
 }
 
 func parseApplyPatch(patch string) ([]patchOp, error) {
@@ -278,10 +423,10 @@ func (a PatchApplier) applyOp(op patchOp) error {
 func applyHunks(content string, hunks []patchHunk) (string, error) {
 	lines, trailing := splitLines(content)
 	cursor := 0
-	for _, h := range hunks {
+	for hunkIndex, h := range hunks {
 		idx := findSequence(lines, h.Old, cursor)
 		if idx < 0 {
-			return "", fmt.Errorf("hunk context not found")
+			return "", &patchHunkApplyError{Index: hunkIndex, Hunk: h}
 		}
 		replaced := append([]string{}, lines[:idx]...)
 		replaced = append(replaced, h.New...)

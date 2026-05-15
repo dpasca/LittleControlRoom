@@ -35,9 +35,10 @@ type VerificationFeedback struct {
 }
 
 type PatchFeedback struct {
-	Stage   string `json:"stage"`
-	Path    string `json:"path,omitempty"`
-	Message string `json:"message"`
+	Stage          string                 `json:"stage"`
+	Path           string                 `json:"path,omitempty"`
+	Message        string                 `json:"message"`
+	SuggestedReads []tools.ReadSuggestion `json:"suggested_reads,omitempty"`
 }
 
 type Action struct {
@@ -123,7 +124,12 @@ func PatchFeedbackForResult(result tools.ToolResult) (PatchFeedback, bool) {
 	if hint := strings.TrimSpace(failure.Hint); hint != "" {
 		message += ". " + hint
 	}
-	return PatchFeedback{Stage: failure.Stage, Path: failure.Path, Message: message}, true
+	return PatchFeedback{
+		Stage:          failure.Stage,
+		Path:           failure.Path,
+		Message:        message,
+		SuggestedReads: append([]tools.ReadSuggestion(nil), failure.SuggestedReads...),
+	}, true
 }
 
 func (f PatchFeedback) ModelMessage() string {
@@ -514,13 +520,17 @@ func verificationFeedbackEvent(sessionID string, feedback VerificationFeedback) 
 }
 
 func patchFeedbackEvent(sessionID string, feedback PatchFeedback) session.Event {
-	return session.Event{
+	event := session.Event{
 		"type":       "patch_feedback",
 		"session_id": sessionID,
 		"stage":      feedback.Stage,
 		"path":       feedback.Path,
 		"message":    feedback.Message,
 	}
+	if len(feedback.SuggestedReads) > 0 {
+		event["suggested_reads"] = feedback.SuggestedReads
+	}
+	return event
 }
 
 func finalVerificationStatus(filesChanged, verification []string, actualChecks []tools.VerificationCheck) (string, string) {

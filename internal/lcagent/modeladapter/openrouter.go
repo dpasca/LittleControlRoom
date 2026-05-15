@@ -992,7 +992,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "apply_patch",
-				Description: "Apply a Codex apply_patch patch. The patch must use the exact envelope: *** Begin Patch, then *** Update File: path or *** Add File: path, hunks with @@ and +/- lines, then *** End Patch. Successful patches return a diff summary; failed patches return recovery feedback. Example: *** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch",
+				Description: "Apply a Codex apply_patch patch. The patch must use the exact envelope: *** Begin Patch, then *** Update File: path or *** Add File: path, hunks with @@ and +/- lines, then *** End Patch. Successful patches return a diff summary; failed stale hunks may return suggested read_file ranges to refresh before retrying. Example: *** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
@@ -1144,7 +1144,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		"Never write provider tool-call markup such as DSML in assistant text; call tools only through structured tool_calls.",
 		"Skill descriptions in this prompt are metadata only; call load_skill before relying on any skill instructions.",
 		"Use apply_patch for source edits. Patches must use this exact shape: *** Begin Patch, *** Update File: path, @@, -old line, +new line, *** End Patch.",
-		"If apply_patch fails, follow patch feedback before retrying: re-read exact current lines, preserve unchanged context, and use a smaller hunk when context was stale.",
+		"If apply_patch fails, follow patch feedback before retrying: when a suggested read_file range is provided, read that exact range first, then preserve unchanged context and use a smaller hunk when context was stale.",
 		"After edits, use the patch diff summary and run or explain verification before final_response. If verification ran through run_command, final_response verification should match the actual purpose=verify command result.",
 		"When done, call final_response exactly once. Its summary must contain the full answer, changed files, and verification outcome. The verification array must name checks run or say not run with the reason; it is only supporting evidence.",
 	)
