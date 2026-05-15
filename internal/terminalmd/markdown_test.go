@@ -70,6 +70,26 @@ func TestRenderBodyKeepsExternalMarkdownLinksClickable(t *testing.T) {
 	}
 }
 
+func TestRenderBodyWrapsMarkdownTableCellsWithoutTruncation(t *testing.T) {
+	t.Parallel()
+
+	longValue := "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJ"
+	table := "| Name | Value |\n| --- | --- |\n| item | " + longValue + " |"
+	rendered := ansi.Strip(RenderBody(table, lipgloss.Color("252"), 40))
+	if strings.Contains(rendered, "…") || strings.Contains(rendered, "...") {
+		t.Fatalf("table cells should wrap instead of truncating: %q", rendered)
+	}
+	compact := markdownTableReadableText(rendered)
+	if !strings.Contains(compact, longValue) {
+		t.Fatalf("wrapped table should preserve full cell contents, got %q from %q", compact, rendered)
+	}
+	for _, line := range strings.Split(rendered, "\n") {
+		if width := ansi.StringWidth(line); width > 40 {
+			t.Fatalf("wrapped table line width = %d, want <= 40: %q", width, line)
+		}
+	}
+}
+
 func TestExtractOpenLinksUsesOpenableLocalPath(t *testing.T) {
 	t.Parallel()
 
@@ -84,4 +104,18 @@ func TestExtractOpenLinksUsesOpenableLocalPath(t *testing.T) {
 	if links[1].Kind != "url" || links[1].OpenPath != "https://example.com/docs" {
 		t.Fatalf("external link = %#v, want openable URL", links[1])
 	}
+}
+
+func markdownTableReadableText(text string) string {
+	replacer := strings.NewReplacer(
+		"\n", "",
+		"\t", "",
+		" ", "",
+		"│", "",
+		"├", "",
+		"┤", "",
+		"─", "",
+		"┼", "",
+	)
+	return replacer.Replace(text)
 }

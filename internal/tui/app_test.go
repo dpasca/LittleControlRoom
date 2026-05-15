@@ -17360,6 +17360,24 @@ func TestRenderCodexBodyRendersMarkdownTable(t *testing.T) {
 	}
 }
 
+func TestRenderCodexBodyWrapsMarkdownTableCellsWithoutTruncation(t *testing.T) {
+	longValue := "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJ"
+	table := "| Name | Value |\n| --- | --- |\n| item | " + longValue + " |"
+	rendered := ansi.Strip(renderCodexBody(table, lipgloss.Color("252"), 40))
+	if strings.Contains(rendered, "…") || strings.Contains(rendered, "...") {
+		t.Fatalf("table cells should wrap instead of truncating: %q", rendered)
+	}
+	compact := renderedMarkdownTableReadableText(rendered)
+	if !strings.Contains(compact, longValue) {
+		t.Fatalf("wrapped table should preserve full cell contents, got %q from %q", compact, rendered)
+	}
+	for _, line := range strings.Split(rendered, "\n") {
+		if width := ansi.StringWidth(line); width > 40 {
+			t.Fatalf("wrapped table line width = %d, want <= 40: %q", width, line)
+		}
+	}
+}
+
 func TestRenderCodexTranscriptEntriesKeepsMassiveAgentOutput(t *testing.T) {
 	lines := make([]string, 1200)
 	for i := range lines {
@@ -17380,6 +17398,20 @@ func TestRenderCodexTranscriptEntriesKeepsMassiveAgentOutput(t *testing.T) {
 	if !strings.Contains(rendered, "This is output line 1199 with some content.") {
 		t.Fatalf("assistant output should preserve the final line: %q", rendered)
 	}
+}
+
+func renderedMarkdownTableReadableText(text string) string {
+	replacer := strings.NewReplacer(
+		"\n", "",
+		"\t", "",
+		" ", "",
+		"│", "",
+		"├", "",
+		"┤", "",
+		"─", "",
+		"┼", "",
+	)
+	return replacer.Replace(text)
 }
 
 func TestRenderCodexTranscriptEntriesKeepsLongReadableMarkdownAgentOutput(t *testing.T) {

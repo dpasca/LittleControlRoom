@@ -163,8 +163,8 @@ func renderMarkdownTable(rows []string, color lipgloss.Color, maxWidth int) []st
 	colWidths := make([]int, numCols)
 	for _, cells := range parsed {
 		for j, cell := range cells {
-			if len(cell) > colWidths[j] {
-				colWidths[j] = len(cell)
+			if w := ansi.StringWidth(cell); w > colWidths[j] {
+				colWidths[j] = w
 			}
 		}
 	}
@@ -174,22 +174,8 @@ func renderMarkdownTable(rows []string, color lipgloss.Color, maxWidth int) []st
 	for _, w := range colWidths {
 		totalWidth += w
 	}
-	if totalWidth > maxWidth && maxWidth > tableOverhead+numCols {
-		available := maxWidth - tableOverhead
-		for i, w := range colWidths {
-			remaining := numCols - i
-			maxCol := available / remaining
-			if maxCol < 1 {
-				maxCol = 1
-			}
-			if w > maxCol {
-				colWidths[i] = maxCol
-			}
-			available -= colWidths[i]
-			if available < 0 {
-				available = 0
-			}
-		}
+	if totalWidth > maxWidth {
+		colWidths = fitMarkdownTableColumnWidths(colWidths, maxWidth, tableOverhead)
 	}
 	for i, w := range colWidths {
 		if w < 1 {
@@ -212,35 +198,131 @@ func renderMarkdownTable(rows []string, color lipgloss.Color, maxWidth int) []st
 			continue
 		}
 		isHeader := i == 0 && len(parsed) > 1 && separatorIdxs[1]
-		parts := make([]string, numCols)
+		wrappedCells := make([][]string, numCols)
+		rowHeight := 1
 		for j := 0; j < numCols; j++ {
 			cell := ""
 			if j < len(cells) {
 				cell = cells[j]
 			}
-			w := colWidths[j]
-			if len(cell) > w {
-				if w > 1 {
-					cell = cell[:w-1] + "…"
-				} else {
-					cell = "…"
-				}
-			}
-			pad := w - len(cell)
-			if pad < 0 {
-				pad = 0
-			}
-			padded := cell + strings.Repeat(" ", pad)
-			if isHeader {
-				parts[j] = headerStyle.Render(padded)
-			} else {
-				parts[j] = cellStyle.Render(padded)
+			wrappedCells[j] = wrapMarkdownTableCell(cell, colWidths[j])
+			if len(wrappedCells[j]) > rowHeight {
+				rowHeight = len(wrappedCells[j])
 			}
 		}
-		sep := borderStyle.Render(" │ ")
-		out = append(out, borderStyle.Render("│ ")+strings.Join(parts, sep)+borderStyle.Render(" │"))
+		for lineIdx := 0; lineIdx < rowHeight; lineIdx++ {
+			parts := make([]string, numCols)
+			for j := 0; j < numCols; j++ {
+				cellLine := ""
+				if lineIdx < len(wrappedCells[j]) {
+					cellLine = wrappedCells[j][lineIdx]
+				}
+				w := colWidths[j]
+				pad := w - ansi.StringWidth(cellLine)
+				if pad < 0 {
+					pad = 0
+				}
+				padded := cellLine + strings.Repeat(" ", pad)
+				if isHeader {
+					parts[j] = headerStyle.Render(padded)
+				} else {
+					parts[j] = cellStyle.Render(padded)
+				}
+			}
+			sep := borderStyle.Render(" │ ")
+			out = append(out, borderStyle.Render("│ ")+strings.Join(parts, sep)+borderStyle.Render(" │"))
+		}
 	}
 	return out
+}
+
+func fitMarkdownTableColumnWidths(maxWidths []int, maxWidth int, tableOverhead int) []int {
+	widths := append([]int(nil), maxWidths...)
+	target := maxWidth - tableOverhead
+	if target <= 0 {
+		target = len(widths)
+	}
+	if target < len(widths) {
+		for i := range widths {
+			widths[i] = 1
+		}
+		return widths
+	}
+
+	available := target
+	unresolved := make([]bool, len(widths))
+	remaining := 0
+	for i := range widths {
+		unresolved[i] = true
+		remaining++
+	}
+	for remaining > 0 {
+		share := available / remaining
+		if share < 1 {
+			share = 1
+		}
+		changed := false
+		for i, maxWidth := range maxWidths {
+			if !unresolved[i] || maxWidth > share {
+				continue
+			}
+			widths[i] = max(1, maxWidth)
+			available -= widths[i]
+			unresolved[i] = false
+			remaining--
+			changed = true
+		}
+		if changed {
+			continue
+		}
+		remainder := available - share*remaining
+		for i := range widths {
+			if !unresolved[i] {
+				continue
+			}
+			widths[i] = share
+			if remainder > 0 {
+				widths[i]++
+				remainder--
+			}
+		}
+		break
+	}
+	return widths
+}
+
+func wrapMarkdownTableCell(cell string, width int) []string {
+	if width <= 0 || cell == "" {
+		return []string{cell}
+	}
+	wrapped := lipgloss.NewStyle().Width(width).Render(cell)
+	rawLines := strings.Split(strings.ReplaceAll(wrapped, "\r\n", "\n"), "\n")
+	lines := make([]string, 0, len(rawLines))
+	for _, raw := range rawLines {
+		lines = append(lines, hardWrapMarkdownTableLine(raw, width)...)
+	}
+	if len(lines) == 0 {
+		return []string{""}
+	}
+	return lines
+}
+
+func hardWrapMarkdownTableLine(line string, width int) []string {
+	if width <= 0 || ansi.StringWidth(line) <= width {
+		return []string{line}
+	}
+	lines := []string{}
+	remaining := line
+	for remaining != "" {
+		part := ansi.Truncate(remaining, width, "")
+		if part == "" {
+			runes := []rune(remaining)
+			part = string(runes[:1])
+		}
+		lines = append(lines, part)
+		remaining = strings.TrimPrefix(remaining, part)
+	}
+	return lines
 }
 
 func isMarkdownHorizontalRule(line string) bool {
