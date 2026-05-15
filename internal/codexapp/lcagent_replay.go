@@ -206,6 +206,8 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			replay.appendEntry(TranscriptFileChange, lcagentFilesTouchedText(event["files"]))
 		case "patch_diff_summary":
 			replay.appendEntry(TranscriptFileChange, rawJSONString(event["summary"]))
+		case "patch_feedback":
+			replay.appendEntry(TranscriptError, lcagentPatchFeedbackText(event))
 		case "verification_check":
 			replay.appendEntry(TranscriptStatus, lcagentVerificationCheckText(event))
 		case "verification_feedback":

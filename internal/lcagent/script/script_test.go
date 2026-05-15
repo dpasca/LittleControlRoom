@@ -137,6 +137,26 @@ func TestVerificationFeedbackForFailedCheck(t *testing.T) {
 	}
 }
 
+func TestPatchFeedbackForFailedPatch(t *testing.T) {
+	result := tools.ToolResult{
+		Success: false,
+		Error:   "README.md: hunk context not found; re-read exact current lines",
+		PatchFailure: &tools.PatchFailure{
+			Stage:   "apply",
+			Path:    "README.md",
+			Message: "README.md: hunk context not found",
+			Hint:    "re-read exact current lines around README.md",
+		},
+	}
+	feedback, ok := PatchFeedbackForResult(result)
+	if !ok {
+		t.Fatal("PatchFeedbackForResult returned ok=false, want feedback")
+	}
+	if feedback.Stage != "apply" || feedback.Path != "README.md" || !strings.Contains(feedback.Message, "re-read exact current lines") {
+		t.Fatalf("feedback = %#v", feedback)
+	}
+}
+
 func TestRunnerFinalVerificationFeedbackAfterChangedFiles(t *testing.T) {
 	runner := Runner{}
 	feedback, ok := runner.VerificationFeedbackForFinal(Action{

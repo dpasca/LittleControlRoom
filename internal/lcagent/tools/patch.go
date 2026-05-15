@@ -22,7 +22,7 @@ func (a PatchApplier) Apply(patch string) ToolResult {
 	}
 	ops, err := parseApplyPatch(patch)
 	if err != nil {
-		return ToolResult{Success: false, Error: err.Error() + "; " + applyPatchFormatHint}
+		return patchFailureResult("parse", "", err, nil)
 	}
 	touched := make([]string, 0, len(ops))
 	for _, op := range ops {
@@ -33,11 +33,11 @@ func (a PatchApplier) Apply(patch string) ToolResult {
 	}
 	summary, err := a.summarizeOps(ops)
 	if err != nil {
-		return ToolResult{Success: false, Error: err.Error(), FilesTouched: uniqueStrings(touched)}
+		return patchFailureResult("summarize", "", err, touched)
 	}
 	for _, op := range ops {
 		if err := a.applyOp(op); err != nil {
-			return ToolResult{Success: false, Error: err.Error(), FilesTouched: uniqueStrings(touched)}
+			return patchFailureResult("apply", op.Path, err, touched)
 		}
 	}
 	diffSummary := formatPatchSummary(summary)
@@ -47,6 +47,61 @@ func (a PatchApplier) Apply(patch string) ToolResult {
 		FilesTouched: uniqueStrings(touched),
 		DiffSummary:  diffSummary,
 		PatchSummary: summary,
+	}
+}
+
+func patchFailureResult(stage, path string, err error, touched []string) ToolResult {
+	message := strings.TrimSpace(err.Error())
+	hint := patchRecoveryHint(stage, path, message)
+	full := message
+	if hint != "" {
+		full += "; " + hint
+	}
+	return ToolResult{
+		Success:      false,
+		Error:        full,
+		FilesTouched: uniqueStrings(touched),
+		PatchFailure: &PatchFailure{
+			Stage:   stage,
+			Path:    cleanPatchFailurePath(path),
+			Message: message,
+			Hint:    hint,
+		},
+	}
+}
+
+func cleanPatchFailurePath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	return filepath.Clean(path)
+}
+
+func patchRecoveryHint(stage, path, message string) string {
+	switch stage {
+	case "parse":
+		return applyPatchFormatHint
+	case "summarize":
+		return "re-read the target path and retry with a patch that matches the current workspace state"
+	case "apply":
+		lower := strings.ToLower(message)
+		switch {
+		case strings.Contains(lower, "hunk context not found"):
+			target := strings.TrimSpace(path)
+			if target == "" {
+				target = "the target file"
+			}
+			return "re-read exact current lines around " + target + " and retry with a smaller hunk that preserves unchanged context"
+		case strings.Contains(lower, "already exists"):
+			return "use *** Update File for an existing file, or choose a new path for *** Add File"
+		case strings.Contains(lower, "no such file") || strings.Contains(lower, "cannot find"):
+			return "confirm the workspace-relative path exists before updating or deleting it"
+		default:
+			return "re-read the affected file and retry with exact current context"
+		}
+	default:
+		return ""
 	}
 }
 

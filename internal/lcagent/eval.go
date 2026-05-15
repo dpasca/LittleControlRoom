@@ -222,6 +222,24 @@ func lcagentEvalCases() []evalCase {
 			},
 		},
 		{
+			Name:        "patch_failure_feedback",
+			Prompt:      "try a stale patch",
+			Auto:        "low",
+			ExpectError: true,
+			Files: map[string]string{
+				"README.md": "current\nkeep\n",
+			},
+			Script: `{"type":"tool_call","tool":"apply_patch","args":{"patch":"*** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n keep\n*** End Patch\n"}}
+{"type":"final_response","summary":"should not reach final"}
+`,
+			Check: func(summary sessionmetrics.Summary) error {
+				if summary.PatchFeedback < 1 {
+					return fmt.Errorf("patch feedback count = %d, want >= 1", summary.PatchFeedback)
+				}
+				return nil
+			},
+		},
+		{
 			Name:   "low_autonomy_go_test_verification",
 			Prompt: "run the narrow verification command",
 			Auto:   "low",
@@ -337,10 +355,11 @@ func writeEvalTextReport(stdout io.Writer, report evalReport) {
 		}
 		fmt.Fprintln(stdout)
 	}
-	fmt.Fprintf(stdout, "sessions=%d denials=%d patch_diff_summaries=%d resume_contexts=%d verification_feedback=%d verification=%v\n",
+	fmt.Fprintf(stdout, "sessions=%d denials=%d patch_diff_summaries=%d patch_feedback=%d resume_contexts=%d verification_feedback=%d verification=%v\n",
 		report.Summary.Sessions,
 		report.Summary.PermissionDenials,
 		report.Summary.PatchDiffSummaries,
+		report.Summary.PatchFeedback,
 		report.Summary.ResumeContexts,
 		report.Summary.VerificationFeedback,
 		report.Summary.VerificationStatuses,

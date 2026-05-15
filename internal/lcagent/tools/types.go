@@ -20,6 +20,7 @@ type ToolResult struct {
 	FilesTouched []string      `json:"files_touched,omitempty"`
 	DiffSummary  string        `json:"diff_summary,omitempty"`
 	PatchSummary *PatchSummary `json:"patch_summary,omitempty"`
+	PatchFailure *PatchFailure `json:"patch_failure,omitempty"`
 }
 
 type WebSearchBackend string
@@ -87,6 +88,13 @@ type PatchSummary struct {
 	Files             []FilePatchSummary `json:"files"`
 	TotalAddedLines   int                `json:"total_added_lines"`
 	TotalDeletedLines int                `json:"total_deleted_lines"`
+}
+
+type PatchFailure struct {
+	Stage   string `json:"stage"`
+	Path    string `json:"path,omitempty"`
+	Message string `json:"message"`
+	Hint    string `json:"hint,omitempty"`
 }
 
 type FilePatchSummary struct {

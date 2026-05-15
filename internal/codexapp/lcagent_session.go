@@ -504,6 +504,8 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		if summary := rawJSONString(event["summary"]); summary != "" {
 			s.appendAsync(TranscriptFileChange, summary)
 		}
+	case "patch_feedback":
+		s.appendAsync(TranscriptError, lcagentPatchFeedbackText(event))
 	case "verification_check":
 		s.appendAsync(TranscriptStatus, lcagentVerificationCheckText(event))
 	case "verification_feedback":

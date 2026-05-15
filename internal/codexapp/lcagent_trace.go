@@ -25,6 +25,7 @@ type LCAgentTrace struct {
 	VerificationStatus    string
 	PermissionDenials     []LCAgentPermissionDenial
 	PatchDiffSummaries    []string
+	PatchFeedback         []string
 	VerificationSummaries []string
 	VerificationFeedback  []string
 	Errors                []string
@@ -114,6 +115,10 @@ func ParseLCAgentTraceFile(path string) (LCAgentTrace, error) {
 			if summary := rawJSONString(event["summary"]); summary != "" {
 				trace.PatchDiffSummaries = append(trace.PatchDiffSummaries, summary)
 			}
+		case "patch_feedback":
+			if message := rawJSONString(event["message"]); message != "" {
+				trace.PatchFeedback = append(trace.PatchFeedback, message)
+			}
 		case "verification_check":
 			trace.ActualChecks = append(trace.ActualChecks, lcagentVerificationCheckFromEvent(event))
 		case "verification_feedback":
@@ -200,6 +205,9 @@ func (t LCAgentTrace) CompactSummary() string {
 	}
 	if len(t.PermissionDenials) > 0 {
 		parts = append(parts, fmt.Sprintf("%d denial%s", len(t.PermissionDenials), pluralSuffix(len(t.PermissionDenials))))
+	}
+	if len(t.PatchFeedback) > 0 {
+		parts = append(parts, fmt.Sprintf("%d patch feedback item%s", len(t.PatchFeedback), pluralSuffix(len(t.PatchFeedback))))
 	}
 	if summary := strings.TrimSpace(t.Summary); summary != "" {
 		parts = append(parts, summary)
@@ -312,6 +320,19 @@ func lcagentVerificationFeedbackText(event map[string]json.RawMessage) string {
 		return "Verification feedback: " + command + " is " + status
 	}
 	return "Verification feedback: " + status
+}
+
+func lcagentPatchFeedbackText(event map[string]json.RawMessage) string {
+	message := rawJSONString(event["message"])
+	if message != "" {
+		return message
+	}
+	path := rawJSONString(event["path"])
+	stage := firstNonEmpty(rawJSONString(event["stage"]), "apply_patch")
+	if path != "" {
+		return "Patch feedback: " + path + " failed during " + stage
+	}
+	return "Patch feedback: " + stage
 }
 
 func limitStrings(values []string, limit int) []string {

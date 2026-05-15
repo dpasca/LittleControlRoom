@@ -116,4 +116,35 @@ func TestPatchApplierMalformedPatchReturnsFormatHint(t *testing.T) {
 	if !strings.Contains(result.Error, "*** Update File: README.md") {
 		t.Fatalf("error missing apply_patch format hint: %q", result.Error)
 	}
+	if result.PatchFailure == nil || result.PatchFailure.Stage != "parse" || !strings.Contains(result.PatchFailure.Hint, "*** Begin Patch") {
+		t.Fatalf("patch failure = %#v", result.PatchFailure)
+	}
+}
+
+func TestPatchApplierContextFailureReturnsRecoveryHint(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("current\nkeep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := PatchApplier{Workspace: w}.Apply(`*** Begin Patch
+*** Update File: README.md
+@@
+-old
++new
+ keep
+*** End Patch
+`)
+	if result.Success {
+		t.Fatal("stale-context patch succeeded, want error")
+	}
+	if result.PatchFailure == nil || result.PatchFailure.Stage != "apply" || result.PatchFailure.Path != "README.md" {
+		t.Fatalf("patch failure = %#v", result.PatchFailure)
+	}
+	if !strings.Contains(result.Error, "re-read exact current lines") || !strings.Contains(result.Error, "smaller hunk") {
+		t.Fatalf("error missing recovery hint: %q", result.Error)
+	}
 }

@@ -24,6 +24,9 @@ Implemented pieces:
 - Verification feedback events nudge the live model loop after failed, denied,
   timed-out, or prematurely reported verification, so the next turn can repair,
   choose a safer command, or explain why verification is blocked.
+- Patch feedback events add structured recovery hints for failed `apply_patch`
+  attempts, especially stale hunk context, and feed those hints back into the
+  live model loop before the next retry.
 - Low-autonomy command policy permits argv-only verification forms across common
   stacks: Go test/list/vet and whole-repo build, Make/Just verification
   targets, package-manager test/check/build scripts, Cargo checks, Python test
@@ -88,7 +91,7 @@ Harness and policy hardening:
   mistakes.
 - Provider-specific quirks still need hardening: retries, rate-limit messages,
   timeout defaults, prompt-cache behavior, and OpenRouter provider pinning.
-- Patch/edit ergonomics are still basic. Multi-file edits work, but there is no
+- Patch/edit ergonomics now include first-pass failure feedback, but there is no
   model-adaptive edit dialect, fallback edit tool, or post-edit formatting hook.
 
 Eval maturity:
@@ -121,10 +124,11 @@ small-to-medium coding tasks before it tries to be a broader assistant.
    messages when the model asks for a nearby but unsafe command form.
 
 3. Improve edit application and recovery.
-   Keep `apply_patch` as the primary typed mutation tool, but add better
-   failure feedback, optional post-patch diff context, and eventually a
-   model-adaptive fallback edit strategy for providers that struggle with strict
-   patch syntax.
+   `apply_patch` now returns typed `patch_failure` metadata and emits
+   `patch_feedback` guidance for stale context and malformed patches. Next, tune
+   the retry behavior against live traces, add optional exact post-failure read
+   suggestions, and eventually a model-adaptive fallback edit strategy for
+   providers that struggle with strict patch syntax.
 
 4. Surface trace quality in LCR.
    Make run summaries show denials, files changed, patch diff summaries,

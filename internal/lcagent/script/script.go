@@ -34,6 +34,12 @@ type VerificationFeedback struct {
 	Message string `json:"message"`
 }
 
+type PatchFeedback struct {
+	Stage   string `json:"stage"`
+	Path    string `json:"path,omitempty"`
+	Message string `json:"message"`
+}
+
 type Action struct {
 	Type         string          `json:"type"`
 	Tool         string          `json:"tool,omitempty"`
@@ -105,6 +111,27 @@ func (f VerificationFeedback) ModelMessage() string {
 
 func (r *Runner) WriteVerificationFeedback(feedback VerificationFeedback) error {
 	return r.Session.Write(verificationFeedbackEvent(r.SessionID, feedback))
+}
+
+func PatchFeedbackForResult(result tools.ToolResult) (PatchFeedback, bool) {
+	if result.Success || result.PatchFailure == nil {
+		return PatchFeedback{}, false
+	}
+	failure := result.PatchFailure
+	target := firstNonEmpty(failure.Path, "patch")
+	message := "Patch feedback: " + target + " failed during " + firstNonEmpty(failure.Stage, "apply_patch") + ": " + firstNonEmpty(failure.Message, result.Error)
+	if hint := strings.TrimSpace(failure.Hint); hint != "" {
+		message += ". " + hint
+	}
+	return PatchFeedback{Stage: failure.Stage, Path: failure.Path, Message: message}, true
+}
+
+func (f PatchFeedback) ModelMessage() string {
+	return strings.TrimSpace(f.Message)
+}
+
+func (r *Runner) WritePatchFeedback(feedback PatchFeedback) error {
+	return r.Session.Write(patchFeedbackEvent(r.SessionID, feedback))
 }
 
 type commandArgs struct {
@@ -205,6 +232,9 @@ func (r *Runner) Run(ctx context.Context, actions []Action) error {
 		case "tool_call":
 			result, err := r.RunTool(ctx, action)
 			if err != nil {
+				if feedback, ok := PatchFeedbackForResult(result); ok {
+					_ = r.WritePatchFeedback(feedback)
+				}
 				if feedback, ok := VerificationFeedbackForResult(result); ok {
 					_ = r.WriteVerificationFeedback(feedback)
 				}
@@ -479,6 +509,16 @@ func verificationFeedbackEvent(sessionID string, feedback VerificationFeedback) 
 		"session_id": sessionID,
 		"status":     feedback.Status,
 		"command":    feedback.Command,
+		"message":    feedback.Message,
+	}
+}
+
+func patchFeedbackEvent(sessionID string, feedback PatchFeedback) session.Event {
+	return session.Event{
+		"type":       "patch_feedback",
+		"session_id": sessionID,
+		"stage":      feedback.Stage,
+		"path":       feedback.Path,
 		"message":    feedback.Message,
 	}
 }

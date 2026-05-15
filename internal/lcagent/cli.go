@@ -434,6 +434,7 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 			}
 		}
 		var pendingVerificationFeedback []script.VerificationFeedback
+		var pendingPatchFeedback []script.PatchFeedback
 		for _, call := range msg.ToolCalls {
 			args, err := modeladapter.NormalizeArguments(call.Function.Arguments)
 			if err != nil {
@@ -502,11 +503,20 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 			if feedback, ok := script.VerificationFeedbackForResult(result); ok {
 				pendingVerificationFeedback = append(pendingVerificationFeedback, feedback)
 			}
+			if feedback, ok := script.PatchFeedbackForResult(result); ok {
+				pendingPatchFeedback = append(pendingPatchFeedback, feedback)
+			}
 			if err != nil {
 				// Feed tool failures back to the model once; the structured event has
 				// already recorded the failure for LCR.
 				continue
 			}
+		}
+		for _, feedback := range pendingPatchFeedback {
+			if err := runner.WritePatchFeedback(feedback); err != nil {
+				return err
+			}
+			messages = append(messages, modeladapter.Message{Role: "user", Content: feedback.ModelMessage()})
 		}
 		for _, feedback := range pendingVerificationFeedback {
 			if err := runner.WriteVerificationFeedback(feedback); err != nil {

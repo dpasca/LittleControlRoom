@@ -1053,6 +1053,90 @@ func TestRunExecOpenRouterBouncesFinalAfterChangedFilesWithoutActualVerification
 	}
 }
 
+func TestRunExecOpenRouterFeedsPatchFailureBackToModel(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("current\nkeep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if requests == 1 {
+			_, _ = w.Write([]byte(`{
+				"id":"resp_patch",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_patch","type":"function","function":{"name":"apply_patch","arguments":{"patch":"*** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n keep\n*** End Patch\n"}}}]}
+				}]
+			}`))
+			return
+		}
+		feedbackSeen := false
+		for _, msg := range body.Messages {
+			if msg.Role == "user" && strings.Contains(msg.Content, "Patch feedback: README.md failed during apply") && strings.Contains(msg.Content, "re-read exact current lines") {
+				feedbackSeen = true
+			}
+		}
+		if !feedbackSeen {
+			t.Fatalf("second request missing patch feedback: %#v", body.Messages)
+		}
+		_, _ = w.Write([]byte(`{
+			"id":"resp_final",
+			"model":"deepseek/test-model",
+			"choices":[{
+				"finish_reason":"tool_calls",
+				"message":{"role":"assistant","tool_calls":[{"id":"call_final","type":"function","function":{"name":"final_response","arguments":{"summary":"patch failed; need to re-read README.md","files_changed":[],"verification":[]}}}]}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "low",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--max-turns", "3",
+		"patch README",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"patch_feedback"`,
+		`"stage":"apply"`,
+		`"path":"README.md"`,
+		`"summary":"patch failed; need to re-read README.md"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+}
+
 func TestRunExecOpenRouterStripsProviderToolMarkupFromToolTurn(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
@@ -1425,10 +1509,11 @@ func TestRunEvalReportsPassingRegressionLane(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
 		t.Fatalf("decode eval report: %v\n%s", err, stdout.String())
 	}
-	if !report.Passed || len(report.Cases) != 6 {
-		t.Fatalf("eval report = %#v, want six passing cases", report)
+	if !report.Passed || len(report.Cases) != 7 {
+		t.Fatalf("eval report = %#v, want seven passing cases", report)
 	}
 	if report.Summary.PatchDiffSummaries < 2 ||
+		report.Summary.PatchFeedback < 1 ||
 		report.Summary.PermissionDenials < 1 ||
 		report.Summary.ResumeContexts < 1 ||
 		report.Summary.VerificationChecks < 3 ||
