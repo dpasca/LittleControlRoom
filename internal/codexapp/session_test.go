@@ -268,6 +268,9 @@ func TestHydrateResumedThreadTracksCurrentPlaywrightPageURL(t *testing.T) {
 	if got, want := snapshot.CurrentBrowserPageURL, "https://chartboost.us.auth0.com/u/login?state=demo"; got != want {
 		t.Fatalf("current browser page URL = %q, want %q", got, want)
 	}
+	if !snapshot.CurrentBrowserPageStale {
+		t.Fatalf("current browser page should be marked stale after resume")
+	}
 }
 
 func mustGeneratedImageTestPNG(t *testing.T) []byte {
@@ -1034,11 +1037,12 @@ func TestHandleItemStartedTracksPlaywrightBrowserActivity(t *testing.T) {
 		IsolationScope:     browserctl.IsolationScopeTask,
 	}
 	s := &appServerSession{
-		projectPath:      "/tmp/demo",
-		entryIndex:       make(map[string]int),
-		notify:           func() {},
-		playwrightPolicy: policy,
-		browserActivity:  browserctl.DefaultSessionActivity(policy),
+		projectPath:             "/tmp/demo",
+		entryIndex:              make(map[string]int),
+		notify:                  func() {},
+		playwrightPolicy:        policy,
+		browserActivity:         browserctl.DefaultSessionActivity(policy),
+		currentBrowserPageStale: true,
 	}
 
 	s.handleItemStarted(json.RawMessage(`{
@@ -1099,6 +1103,9 @@ func TestHandleItemCompletedTracksCurrentPlaywrightPageURL(t *testing.T) {
 	snapshot := s.Snapshot()
 	if got, want := snapshot.CurrentBrowserPageURL, "https://chartboost.us.auth0.com/u/login?state=demo"; got != want {
 		t.Fatalf("current browser page URL = %q, want %q", got, want)
+	}
+	if snapshot.CurrentBrowserPageStale {
+		t.Fatalf("current browser page should no longer be stale after live Playwright result")
 	}
 }
 

@@ -16159,6 +16159,66 @@ func TestVisibleCodexCurrentBackgroundBrowserPageUsesVisibleBrowserCopyWhenCache
 	}
 }
 
+func TestVisibleCodexStaleResumedBrowserPageDoesNotOfferReveal(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider:                 codexapp.ProviderCodex,
+			Started:                  true,
+			ThreadID:                 "thread-demo",
+			Preset:                   codexcli.PresetYolo,
+			Status:                   "Codex session ready",
+			BrowserActivity:          browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy},
+			ManagedBrowserSessionKey: "managed-demo",
+			CurrentBrowserPageURL:    "https://kakaku.com/item/K0001687585/pricehistory/",
+			CurrentBrowserPageStale:  true,
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	renderedBlocks := ansi.Strip(m.renderCodexBrowserPanel(session.snapshot, 140))
+	if !strings.Contains(renderedBlocks, "Previous browser page is no longer attached: https://kakaku.com/item/K0001687585/pricehistory/") {
+		t.Fatalf("renderCodexBrowserPanel() missing stale browser page message: %q", renderedBlocks)
+	}
+	if !strings.Contains(renderedBlocks, "This page came from the resumed transcript, so ctrl+o cannot reveal it.") {
+		t.Fatalf("renderCodexBrowserPanel() missing stale browser page explanation: %q", renderedBlocks)
+	}
+	if strings.Contains(renderedBlocks, "Press ctrl+o to reveal the managed browser window for this same session.") {
+		t.Fatalf("renderCodexBrowserPanel() offered stale ctrl+o reveal hint: %q", renderedBlocks)
+	}
+	footer := ansi.Strip(m.renderCodexFooter(session.snapshot, 160))
+	if strings.Contains(footer, "ctrl+o show browser") || strings.Contains(footer, "ctrl+o focus browser") {
+		t.Fatalf("renderCodexFooter() offered stale browser action: %q", footer)
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlO})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("ctrl+o should not queue a browser-open command for stale resumed browser page")
+	}
+	if !strings.Contains(got.status, "came from the resumed transcript") {
+		t.Fatalf("status = %q, want stale browser page guidance", got.status)
+	}
+}
+
 func TestVisibleCodexBrowserPanelShowsReconnectHintForChangedBrowserSettings(t *testing.T) {
 	settings := config.EditableSettings{PlaywrightPolicy: settingsAlwaysShowPlaywrightPolicy}
 	snapshot := codexapp.Snapshot{

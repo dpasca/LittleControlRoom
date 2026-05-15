@@ -476,6 +476,7 @@ type Snapshot struct {
 	BrowserActivity          browserctl.SessionActivity
 	ManagedBrowserSessionKey string
 	CurrentBrowserPageURL    string
+	CurrentBrowserPageStale  bool
 	TranscriptRevision       uint64
 	Phase                    SessionPhase
 	Started                  bool

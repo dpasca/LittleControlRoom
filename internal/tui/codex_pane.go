@@ -442,6 +442,7 @@ func (m Model) cachedLiveCodexSnapshot(projectPath string) (codexapp.Snapshot, b
 		cached.PendingElicitation = state.PendingElicitation
 		cached.BrowserActivity = state.BrowserActivity
 		cached.CurrentBrowserPageURL = state.CurrentBrowserPageURL
+		cached.CurrentBrowserPageStale = state.CurrentBrowserPageStale
 		cached.ManagedBrowserSessionKey = state.ManagedBrowserSessionKey
 		cached.Status = state.Status
 		cached.LastError = state.LastError
@@ -1715,6 +1716,10 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+o":
 		pageURL := managedBrowserCurrentPageURL(snapshot)
 		sessionKey := strings.TrimSpace(snapshot.ManagedBrowserSessionKey)
+		if pageURL != "" && sessionKey != "" && snapshot.CurrentBrowserPageStale {
+			m.status = "That browser page came from the resumed transcript and is no longer attached. Ask the assistant to reopen it if you still need it."
+			return m, nil
+		}
 		if pageURL == "" || sessionKey == "" || snapshot.BusyExternal || snapshot.Closed || snapshot.PendingToolInput != nil || snapshot.PendingElicitation != nil {
 			if status := m.codexBrowserReconnectStatus(snapshot); status != "" {
 				m.status = status
@@ -2493,6 +2498,12 @@ func (m Model) renderCodexCurrentBrowserPageBlocks(snapshot codexapp.Snapshot, w
 	if pageURL == "" || strings.TrimSpace(snapshot.ManagedBrowserSessionKey) == "" {
 		return nil
 	}
+	if snapshot.CurrentBrowserPageStale {
+		return []string{
+			fitFooterWidth("Previous browser page is no longer attached: "+pageURL, width),
+			fitFooterWidth("This page came from the resumed transcript, so ctrl+o cannot reveal it. Ask the assistant to reopen the page if you still need it.", width),
+		}
+	}
 	lines := []string{fitFooterWidth(m.managedBrowserCurrentPageLabel(snapshot)+pageURL, width)}
 	if hint := m.managedBrowserCurrentPageHint(snapshot); hint != "" {
 		lines = append(lines, fitFooterWidth(hint, width))
@@ -2786,7 +2797,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		if len(snapshot.PendingToolInput.Questions) > 1 {
 			actions = append(actions, footerNavAction("Tab", "next"))
 		}
-		if managedBrowserCurrentPageURL(snapshot) != "" && strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" {
+		if managedBrowserCurrentPageURL(snapshot) != "" && strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" && !snapshot.CurrentBrowserPageStale {
 			actions = append(actions, footerNavAction("ctrl+o", m.managedBrowserCurrentPageFooterLabel(snapshot)))
 		}
 	case snapshot.PendingElicitation != nil && snapshot.PendingElicitation.Mode == codexapp.ElicitationModeForm:
@@ -2877,7 +2888,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerNavAction("ctrl+v", "image"),
 			footerLowAction("Alt+C", "copy menu"),
 		}
-		if managedBrowserCurrentPageURL(snapshot) != "" && strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" {
+		if managedBrowserCurrentPageURL(snapshot) != "" && strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" && !snapshot.CurrentBrowserPageStale {
 			actions = append(actions, footerNavAction("ctrl+o", m.managedBrowserCurrentPageFooterLabel(snapshot)))
 		}
 	}
