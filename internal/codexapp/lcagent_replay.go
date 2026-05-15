@@ -212,6 +212,8 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			replay.appendEntry(TranscriptStatus, lcagentVerificationCheckText(event))
 		case "verification_feedback":
 			replay.appendEntry(TranscriptStatus, lcagentVerificationFeedbackText(event))
+		case "repair_feedback_suppressed":
+			replay.appendEntry(TranscriptStatus, lcagentRepairFeedbackSuppressedText(event))
 		case "verification_summary":
 			status := rawJSONString(event["status"])
 			message := rawJSONString(event["message"])
@@ -220,16 +222,7 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			}
 			replay.appendEntry(TranscriptStatus, message)
 		case "resume_context":
-			sourceID := rawJSONString(event["source_session_id"])
-			summary := rawJSONString(event["summary"])
-			text := "Loaded resume context"
-			if sourceID != "" {
-				text += " from " + sourceID
-			}
-			if summary != "" {
-				text += ": " + summary
-			}
-			replay.appendEntry(TranscriptStatus, text)
+			replay.appendEntry(TranscriptStatus, lcagentResumeContextText(event))
 		case "turn_complete":
 			if text := lcagentTurnCompleteTraceText(event); text != "" {
 				replay.appendEntry(TranscriptStatus, text)

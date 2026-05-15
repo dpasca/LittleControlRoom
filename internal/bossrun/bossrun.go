@@ -92,23 +92,30 @@ type TraceEntry struct {
 }
 
 type GoalResult struct {
-	RunID                     string        `json:"run_id"`
-	Kind                      string        `json:"kind"`
-	Summary                   string        `json:"summary"`
-	CreatedTaskIDs            []string      `json:"created_task_ids,omitempty"`
-	ArchivedTaskIDs           []string      `json:"archived_task_ids"`
-	KeptTaskIDs               []string      `json:"kept_task_ids"`
-	ReviewTaskIDs             []string      `json:"review_task_ids"`
-	FailedTasks               []TaskFailure `json:"failed_tasks"`
-	Verified                  bool          `json:"verified"`
-	LCAgentSessionID          string        `json:"lcagent_session_id,omitempty"`
-	LCAgentSummary            string        `json:"lcagent_summary,omitempty"`
-	LCAgentFilesChanged       []string      `json:"lcagent_files_changed,omitempty"`
-	LCAgentVerification       []string      `json:"lcagent_verification,omitempty"`
-	LCAgentVerificationStatus string        `json:"lcagent_verification_status,omitempty"`
-	LCAgentPermissionDenials  int           `json:"lcagent_permission_denials,omitempty"`
-	LCAgentPatchSummaries     []string      `json:"lcagent_patch_summaries,omitempty"`
-	Trace                     []TraceEntry  `json:"trace"`
+	RunID                       string        `json:"run_id"`
+	Kind                        string        `json:"kind"`
+	Summary                     string        `json:"summary"`
+	CreatedTaskIDs              []string      `json:"created_task_ids,omitempty"`
+	ArchivedTaskIDs             []string      `json:"archived_task_ids"`
+	KeptTaskIDs                 []string      `json:"kept_task_ids"`
+	ReviewTaskIDs               []string      `json:"review_task_ids"`
+	FailedTasks                 []TaskFailure `json:"failed_tasks"`
+	Verified                    bool          `json:"verified"`
+	LCAgentSessionID            string        `json:"lcagent_session_id,omitempty"`
+	LCAgentContinuationSourceID string        `json:"lcagent_continuation_source_id,omitempty"`
+	LCAgentContinuationSource   string        `json:"lcagent_continuation_source,omitempty"`
+	LCAgentSummary              string        `json:"lcagent_summary,omitempty"`
+	LCAgentFilesChanged         []string      `json:"lcagent_files_changed,omitempty"`
+	LCAgentVerification         []string      `json:"lcagent_verification,omitempty"`
+	LCAgentVerificationStatus   string        `json:"lcagent_verification_status,omitempty"`
+	LCAgentActualChecks         []string      `json:"lcagent_actual_checks,omitempty"`
+	LCAgentPermissionDenials    int           `json:"lcagent_permission_denials,omitempty"`
+	LCAgentPatchFeedback        int           `json:"lcagent_patch_feedback,omitempty"`
+	LCAgentVerificationFeedback int           `json:"lcagent_verification_feedback,omitempty"`
+	LCAgentPatchSummaries       []string      `json:"lcagent_patch_summaries,omitempty"`
+	LCAgentTokenUsage           string        `json:"lcagent_token_usage,omitempty"`
+	LCAgentTraceQuality         string        `json:"lcagent_trace_quality,omitempty"`
+	Trace                       []TraceEntry  `json:"trace"`
 }
 
 type GoalRecord struct {
@@ -355,10 +362,11 @@ func FormatGoalResult(result GoalResult) string {
 		verification := strings.TrimSpace(result.LCAgentVerificationStatus)
 		switch {
 		case failed == 0 && result.Verified:
+			quality := formatLCAgentResultQuality(result)
 			if verification != "" {
-				return fmt.Sprintf("Started %d LCAgent goal task%s and verified LCAgent completed with %s verification.", created, pluralSuffix(created), verification)
+				return strings.TrimSpace(fmt.Sprintf("Started %d LCAgent goal task%s and verified LCAgent completed with %s verification. %s", created, pluralSuffix(created), verification, quality))
 			}
-			return fmt.Sprintf("Started %d LCAgent goal task%s and verified LCAgent completed.", created, pluralSuffix(created))
+			return strings.TrimSpace(fmt.Sprintf("Started %d LCAgent goal task%s and verified LCAgent completed. %s", created, pluralSuffix(created), quality))
 		case failed == 0:
 			return fmt.Sprintf("Started %d LCAgent goal task%s, but LCAgent outcome verification did not complete.", created, pluralSuffix(created))
 		case created == 0:
@@ -379,6 +387,33 @@ func FormatGoalResult(result GoalResult) string {
 	default:
 		return fmt.Sprintf("Archived %d delegated agent task record%s; %d task%s still need review.", archived, pluralSuffix(archived), failed, pluralSuffix(failed))
 	}
+}
+
+func formatLCAgentResultQuality(result GoalResult) string {
+	quality := strings.TrimSpace(result.LCAgentTraceQuality)
+	if quality != "" {
+		return "Trace: " + quality + "."
+	}
+	parts := []string{}
+	if len(result.LCAgentActualChecks) > 0 {
+		parts = append(parts, "actual checks: "+strings.Join(limitStrings(result.LCAgentActualChecks, 3), "; "))
+	}
+	if result.LCAgentPermissionDenials > 0 {
+		parts = append(parts, fmt.Sprintf("denials: %d", result.LCAgentPermissionDenials))
+	}
+	if result.LCAgentPatchFeedback > 0 {
+		parts = append(parts, fmt.Sprintf("patch feedback: %d", result.LCAgentPatchFeedback))
+	}
+	if result.LCAgentVerificationFeedback > 0 {
+		parts = append(parts, fmt.Sprintf("verification feedback: %d", result.LCAgentVerificationFeedback))
+	}
+	if usage := strings.TrimSpace(result.LCAgentTokenUsage); usage != "" {
+		parts = append(parts, usage)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "Trace: " + strings.Join(parts, "; ") + "."
 }
 
 func formatLCAgentGoalProposalPreview(proposal GoalProposal) string {
@@ -635,4 +670,13 @@ func pluralSuffix(count int) string {
 		return ""
 	}
 	return "s"
+}
+
+func limitStrings(values []string, limit int) []string {
+	if limit <= 0 || len(values) <= limit {
+		return values
+	}
+	out := append([]string(nil), values[:limit]...)
+	out = append(out, fmt.Sprintf("%d more", len(values)-limit))
+	return out
 }

@@ -391,12 +391,19 @@ func applyLCAgentTraceToGoalResult(result *bossrun.GoalResult, trace codexapp.LC
 		return
 	}
 	result.LCAgentSessionID = firstNonEmptyTrimmed(trace.SessionID, result.LCAgentSessionID)
+	result.LCAgentContinuationSourceID = strings.TrimSpace(trace.ResumeSourceSessionID)
+	result.LCAgentContinuationSource = strings.TrimSpace(trace.ResumeSourcePath)
 	result.LCAgentSummary = strings.TrimSpace(trace.Summary)
 	result.LCAgentFilesChanged = append([]string(nil), trace.FilesChanged...)
 	result.LCAgentVerification = append([]string(nil), trace.Verification...)
 	result.LCAgentVerificationStatus = strings.TrimSpace(trace.VerificationStatus)
+	result.LCAgentActualChecks = trace.ActualCheckSummaries()
 	result.LCAgentPermissionDenials = len(trace.PermissionDenials)
+	result.LCAgentPatchFeedback = len(trace.PatchFeedback)
+	result.LCAgentVerificationFeedback = len(trace.VerificationFeedback)
 	result.LCAgentPatchSummaries = append([]string(nil), trace.PatchDiffSummaries...)
+	result.LCAgentTokenUsage = trace.TokenUsageSummary()
+	result.LCAgentTraceQuality = trace.TraceQualitySummary()
 }
 
 func bossGoalPlanStep(plan bossrun.Plan, kind bossrun.PlanStepKind, capability control.CapabilityName) bossrun.PlanStep {

@@ -22,6 +22,7 @@ const benchmarkSessionJSONL = `{"type":"session_meta","id":"lca_demo","cwd":"/re
 {"type":"permission_denied","tool":"apply_patch","reason":"apply_patch denied with --auto off"}
 {"type":"patch_diff_summary","summary":"patch diff summary:\n- README.md: update +1 -1\ntotal: +1 -1"}
 {"type":"patch_feedback","stage":"apply","path":"README.md","message":"Patch feedback: README.md failed during apply."}
+{"type":"repair_feedback_suppressed","kind":"patch","message":"Patch feedback: README.md failed during apply.","count":2}
 {"type":"verification_check","command":"go test ./internal/lcagent/...","argv":["go","test","./internal/lcagent/..."],"purpose":"verify","status":"passed","success":true}
 {"type":"verification_feedback","status":"failed","command":"go test ./internal/lcagent/...","message":"Verification feedback: go test ./internal/lcagent/... failed."}
 {"type":"verification_summary","status":"verified","verification_checks":["go test ./internal/lcagent/..."]}
@@ -50,8 +51,8 @@ func TestAnalyzeFilesSummarizesLCAgentSession(t *testing.T) {
 	if summary.ContextProfiles["large"] != 1 {
 		t.Fatalf("context profiles = %#v", summary.ContextProfiles)
 	}
-	if summary.ResumeContexts != 1 || summary.PermissionDenials != 1 || summary.PatchDiffSummaries != 1 || summary.PatchFeedback != 1 || summary.VerificationChecks != 1 || summary.VerificationFeedback != 1 || summary.VerificationStatuses["verified"] != 1 || summary.VerificationCheckStatuses["passed"] != 1 {
-		t.Fatalf("trust trace metrics = resumes %d denials %d patch summaries %d patch feedback %d verification checks %d feedback %d statuses %#v check statuses %#v", summary.ResumeContexts, summary.PermissionDenials, summary.PatchDiffSummaries, summary.PatchFeedback, summary.VerificationChecks, summary.VerificationFeedback, summary.VerificationStatuses, summary.VerificationCheckStatuses)
+	if summary.ResumeContexts != 1 || summary.PermissionDenials != 1 || summary.PatchDiffSummaries != 1 || summary.PatchFeedback != 1 || summary.RepairFeedbackSuppressed != 1 || summary.VerificationChecks != 1 || summary.VerificationFeedback != 1 || summary.VerificationStatuses["verified"] != 1 || summary.VerificationCheckStatuses["passed"] != 1 {
+		t.Fatalf("trust trace metrics = resumes %d denials %d patch summaries %d patch feedback %d suppressed %d verification checks %d feedback %d statuses %#v check statuses %#v", summary.ResumeContexts, summary.PermissionDenials, summary.PatchDiffSummaries, summary.PatchFeedback, summary.RepairFeedbackSuppressed, summary.VerificationChecks, summary.VerificationFeedback, summary.VerificationStatuses, summary.VerificationCheckStatuses)
 	}
 	if summary.ReadFileCalls != 2 || summary.ReadFileLines != 301 {
 		t.Fatalf("read stats = calls %d lines %d", summary.ReadFileCalls, summary.ReadFileLines)

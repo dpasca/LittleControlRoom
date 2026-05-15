@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -173,5 +174,69 @@ func TestLowAutonomyVerificationCommandPolicy(t *testing.T) {
 				t.Fatalf("AllowCommandSpec(%q) allowed, want denial", tt.argv)
 			}
 		})
+	}
+}
+
+func TestLowAutonomyCommandDenialHints(t *testing.T) {
+	low := Workspace{Root: t.TempDir(), Auto: AutonomyLow}
+	tests := []struct {
+		name string
+		argv []string
+		want string
+	}{
+		{
+			name: "go test output file",
+			argv: []string{"go", "test", "./...", "-coverprofile=cover.out"},
+			want: "output-file flags are denied",
+		},
+		{
+			name: "formatter write mode",
+			argv: []string{"gofmt", "-w", "main.go"},
+			want: "use gofmt -l or gofmt -d",
+		},
+		{
+			name: "package manager install",
+			argv: []string{"npm", "install"},
+			want: "Dependency, publish, and package-execution commands require medium autonomy",
+		},
+		{
+			name: "typescript emits files",
+			argv: []string{"tsc"},
+			want: "Add --noEmit",
+		},
+		{
+			name: "cargo format mutation",
+			argv: []string{"cargo", "fmt"},
+			want: "cargo fmt --check",
+		},
+		{
+			name: "parent path",
+			argv: []string{"pytest", "../outside"},
+			want: "workspace-relative paths",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := low.AllowCommandSpec(tt.argv, "", false)
+			if err == nil {
+				t.Fatalf("AllowCommandSpec(%q) allowed, want denial", tt.argv)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("denial = %q, want hint %q", err.Error(), tt.want)
+			}
+		})
+	}
+}
+
+func TestLowAutonomyShellDenialSuggestsArgvVerification(t *testing.T) {
+	low := Workspace{Root: t.TempDir(), Auto: AutonomyLow}
+	err := low.AllowCommandSpec(nil, "go test ./...", true)
+	if err == nil {
+		t.Fatal("shell verification command allowed, want denial")
+	}
+	for _, want := range []string{"argv-only run_command", `argv=["go","test","./..."]`, "purpose=verify"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("denial = %q, want %q", err.Error(), want)
+		}
 	}
 }

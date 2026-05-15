@@ -242,10 +242,14 @@ func TestSearchContextCachesLCAgentTranscriptWithoutToolOutput(t *testing.T) {
 	transcript := strings.Join([]string{
 		`{"type":"session_meta","id":"lca_transcript","cwd":"/tmp/lcagent-search","started_at":"2026-05-09T10:00:00Z"}`,
 		`{"type":"user_message","session_id":"lca_transcript","message":"Please investigate FluxCacheVariant for FCX."}`,
+		`{"type":"resume_context","session_id":"lca_transcript","source_session_id":"lca_previous_context","source_path":"/tmp/lcagent-search/previous.jsonl","source_cwd":"/tmp/lcagent-search","summary":"source lca_previous_context; summary: PreviousContextSignal"}`,
 		`{"type":"tool_call","session_id":"lca_transcript","tool":"run_command","args":{"command":"cat secret-output.txt"}}`,
 		`{"type":"tool_result","session_id":"lca_transcript","tool":"run_command","result":{"success":true,"output":"zqxjlcagenttoolleak","files_touched":["internal/fcx/cache.go"]}}`,
 		`{"type":"plan_update","session_id":"lca_transcript","items":[{"step":"Inspect FluxCacheVariant","status":"completed"},{"step":"Patch cache docs","status":"in_progress"}]}`,
 		`{"type":"files_touched","session_id":"lca_transcript","files":["internal/fcx/cache.go"]}`,
+		`{"type":"patch_feedback","session_id":"lca_transcript","stage":"apply","path":"internal/fcx/cache.go","message":"Patch feedback: PatchRepairSignal failed during apply."}`,
+		`{"type":"verification_check","session_id":"lca_transcript","argv":["go","test","./internal/fcx"],"status":"passed","success":true}`,
+		`{"type":"verification_summary","session_id":"lca_transcript","status":"verified","message":"Verification checks passed: go test ./internal/fcx"}`,
 		`{"type":"assistant_message","session_id":"lca_transcript","message":"FluxCacheVariant now explains FCX cache behavior.","files_changed":["internal/fcx/cache.go"],"verification":["go test ./internal/fcx"]}`,
 		`{"type":"turn_complete","session_id":"lca_transcript","summary":"FluxCacheVariant work complete.","files_changed":["internal/fcx/cache.go"],"verification":["go test ./internal/fcx"]}`,
 	}, "\n") + "\n"
@@ -295,6 +299,36 @@ func TestSearchContextCachesLCAgentTranscriptWithoutToolOutput(t *testing.T) {
 	}
 	if len(toolResults) != 0 {
 		t.Fatalf("lcagent tool output should not be indexed, got %#v", toolResults)
+	}
+
+	qualityResults, err := st.SearchContext(ctx, model.ContextSearchRequest{Query: "PatchRepairSignal", Limit: 5})
+	if err != nil {
+		t.Fatalf("search lcagent patch feedback context: %v", err)
+	}
+	foundQualitySignal := false
+	for _, result := range qualityResults {
+		if result.Source == "session" && result.SessionID == "lcagent:lca_transcript" && strings.Contains(result.Snippet, "PatchRepairSignal") {
+			foundQualitySignal = true
+			break
+		}
+	}
+	if !foundQualitySignal {
+		t.Fatalf("SearchContext did not return lcagent trace-quality evidence: %#v", qualityResults)
+	}
+
+	resumeResults, err := st.SearchContext(ctx, model.ContextSearchRequest{Query: "PreviousContextSignal", Limit: 5})
+	if err != nil {
+		t.Fatalf("search lcagent resume context: %v", err)
+	}
+	foundResumeSignal := false
+	for _, result := range resumeResults {
+		if result.Source == "session" && result.SessionID == "lcagent:lca_transcript" && strings.Contains(result.Snippet, "PreviousContextSignal") {
+			foundResumeSignal = true
+			break
+		}
+	}
+	if !foundResumeSignal {
+		t.Fatalf("SearchContext did not return lcagent resume context evidence: %#v", resumeResults)
 	}
 
 	excerpt, err := st.GetSessionContextExcerpt(ctx, model.SessionContextExcerptRequest{

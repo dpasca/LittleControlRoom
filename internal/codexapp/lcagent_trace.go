@@ -8,27 +8,37 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	lcrmodel "lcroom/internal/model"
 )
 
 type LCAgentTrace struct {
-	SessionID             string
-	ArtifactPath          string
-	ProjectPath           string
-	StartedAt             time.Time
-	LastActivityAt        time.Time
-	Completed             bool
-	Aborted               bool
-	Summary               string
-	FilesChanged          []string
-	Verification          []string
-	ActualChecks          []LCAgentVerificationCheck
-	VerificationStatus    string
-	PermissionDenials     []LCAgentPermissionDenial
-	PatchDiffSummaries    []string
-	PatchFeedback         []string
-	VerificationSummaries []string
-	VerificationFeedback  []string
-	Errors                []string
+	SessionID                string
+	ArtifactPath             string
+	ProjectPath              string
+	StartedAt                time.Time
+	LastActivityAt           time.Time
+	ResumeSourceSessionID    string
+	ResumeSourcePath         string
+	ResumeSourceProject      string
+	ResumeSourceSummary      string
+	ResumeSourceLastAt       time.Time
+	Completed                bool
+	Aborted                  bool
+	Summary                  string
+	FilesChanged             []string
+	Verification             []string
+	ActualChecks             []LCAgentVerificationCheck
+	VerificationStatus       string
+	PermissionDenials        []LCAgentPermissionDenial
+	PatchDiffSummaries       []string
+	PatchFeedback            []string
+	VerificationSummaries    []string
+	VerificationFeedback     []string
+	RepairFeedbackSuppressed []string
+	ModelResponses           int
+	TokenUsage               lcrmodel.LLMUsage
+	Errors                   []string
 }
 
 type LCAgentPermissionDenial struct {
@@ -38,6 +48,8 @@ type LCAgentPermissionDenial struct {
 
 type LCAgentVerificationCheck struct {
 	Command  string
+	Argv     []string
+	Purpose  string
 	Status   string
 	Success  bool
 	ExitCode int
@@ -106,6 +118,18 @@ func ParseLCAgentTraceFile(path string) (LCAgentTrace, error) {
 			if trace.LastActivityAt.IsZero() {
 				trace.LastActivityAt = trace.StartedAt
 			}
+		case "model_response":
+			trace.ModelResponses++
+			modelName := rawJSONString(event["model"])
+			if usage, ok := lcagentUsageFromModelResponseEvent(event, modelName); ok {
+				trace.addTokenUsage(usage)
+			}
+		case "resume_context":
+			trace.ResumeSourceSessionID = firstNonEmpty(rawJSONString(event["source_session_id"]), trace.ResumeSourceSessionID)
+			trace.ResumeSourcePath = firstNonEmpty(rawJSONString(event["source_path"]), trace.ResumeSourcePath)
+			trace.ResumeSourceProject = firstNonEmpty(rawJSONString(event["source_cwd"]), trace.ResumeSourceProject)
+			trace.ResumeSourceSummary = firstNonEmpty(rawJSONString(event["summary"]), trace.ResumeSourceSummary)
+			trace.ResumeSourceLastAt = firstNonZeroTime(rawJSONTime(event["source_last_activity"]), trace.ResumeSourceLastAt)
 		case "permission_denied":
 			trace.PermissionDenials = append(trace.PermissionDenials, LCAgentPermissionDenial{
 				Tool:   rawJSONString(event["tool"]),
@@ -124,6 +148,10 @@ func ParseLCAgentTraceFile(path string) (LCAgentTrace, error) {
 		case "verification_feedback":
 			if message := rawJSONString(event["message"]); message != "" {
 				trace.VerificationFeedback = append(trace.VerificationFeedback, message)
+			}
+		case "repair_feedback_suppressed":
+			if message := lcagentRepairFeedbackSuppressedText(event); message != "" {
+				trace.RepairFeedbackSuppressed = append(trace.RepairFeedbackSuppressed, message)
 			}
 		case "verification_summary":
 			status := rawJSONString(event["status"])
@@ -191,6 +219,9 @@ func (t LCAgentTrace) CompactSummary() string {
 	if t.Aborted {
 		parts = append(parts, "aborted")
 	}
+	if source := strings.TrimSpace(t.ResumeSourceSessionID); source != "" {
+		parts = append(parts, "continued from "+source)
+	}
 	if status := strings.TrimSpace(t.VerificationStatus); status != "" {
 		parts = append(parts, "verification "+status)
 	}
@@ -198,10 +229,14 @@ func (t LCAgentTrace) CompactSummary() string {
 		parts = append(parts, fmt.Sprintf("%d file%s changed", len(t.FilesChanged), pluralSuffix(len(t.FilesChanged))))
 	}
 	if len(t.ActualChecks) > 0 {
-		parts = append(parts, fmt.Sprintf("%d verification check%s", len(t.ActualChecks), pluralSuffix(len(t.ActualChecks))))
+		checks := t.ActualCheckSummaries()
+		parts = append(parts, fmt.Sprintf("%d verification check%s: %s", len(t.ActualChecks), pluralSuffix(len(t.ActualChecks)), strings.Join(limitStrings(checks, 2), "; ")))
 	}
 	if len(t.VerificationFeedback) > 0 {
 		parts = append(parts, fmt.Sprintf("%d verification feedback item%s", len(t.VerificationFeedback), pluralSuffix(len(t.VerificationFeedback))))
+	}
+	if len(t.RepairFeedbackSuppressed) > 0 {
+		parts = append(parts, fmt.Sprintf("%d duplicate repair feedback item%s suppressed", len(t.RepairFeedbackSuppressed), pluralSuffix(len(t.RepairFeedbackSuppressed))))
 	}
 	if len(t.PermissionDenials) > 0 {
 		parts = append(parts, fmt.Sprintf("%d denial%s", len(t.PermissionDenials), pluralSuffix(len(t.PermissionDenials))))
@@ -209,10 +244,95 @@ func (t LCAgentTrace) CompactSummary() string {
 	if len(t.PatchFeedback) > 0 {
 		parts = append(parts, fmt.Sprintf("%d patch feedback item%s", len(t.PatchFeedback), pluralSuffix(len(t.PatchFeedback))))
 	}
+	if len(t.PatchDiffSummaries) > 0 {
+		parts = append(parts, fmt.Sprintf("%d patch diff summar%s", len(t.PatchDiffSummaries), pluralY(len(t.PatchDiffSummaries))))
+	}
+	if usageSummary := t.TokenUsageSummary(); usageSummary != "" {
+		parts = append(parts, usageSummary)
+	}
 	if summary := strings.TrimSpace(t.Summary); summary != "" {
 		parts = append(parts, summary)
 	}
 	return strings.Join(parts, "; ")
+}
+
+func (t LCAgentTrace) TraceQualitySummary() string {
+	parts := []string{}
+	if status := strings.TrimSpace(t.VerificationStatus); status != "" {
+		parts = append(parts, "verification "+status)
+	}
+	if source := strings.TrimSpace(t.ResumeSourceSessionID); source != "" {
+		parts = append(parts, "continuation: "+source)
+	}
+	if checks := t.ActualCheckSummaries(); len(checks) > 0 {
+		parts = append(parts, "actual checks: "+strings.Join(limitStrings(checks, 3), "; "))
+	}
+	if len(t.FilesChanged) > 0 {
+		parts = append(parts, "files changed: "+strings.Join(limitStrings(t.FilesChanged, 4), ", "))
+	}
+	if len(t.PermissionDenials) > 0 {
+		parts = append(parts, fmt.Sprintf("denials: %d", len(t.PermissionDenials)))
+	}
+	if len(t.PatchFeedback) > 0 {
+		parts = append(parts, fmt.Sprintf("patch feedback: %d", len(t.PatchFeedback)))
+	}
+	if len(t.VerificationFeedback) > 0 {
+		parts = append(parts, fmt.Sprintf("verification feedback: %d", len(t.VerificationFeedback)))
+	}
+	if len(t.RepairFeedbackSuppressed) > 0 {
+		parts = append(parts, fmt.Sprintf("duplicate repair feedback suppressed: %d", len(t.RepairFeedbackSuppressed)))
+	}
+	if len(t.PatchDiffSummaries) > 0 {
+		parts = append(parts, fmt.Sprintf("patch summaries: %d", len(t.PatchDiffSummaries)))
+	}
+	if usageSummary := t.TokenUsageSummary(); usageSummary != "" {
+		parts = append(parts, usageSummary)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func (t LCAgentTrace) ActualCheckSummaries() []string {
+	out := make([]string, 0, len(t.ActualChecks))
+	for _, check := range t.ActualChecks {
+		text := formatLCAgentVerificationCheck(check)
+		if text != "" {
+			out = append(out, text)
+		}
+	}
+	return out
+}
+
+func (t LCAgentTrace) TokenUsageSummary() string {
+	if !lcagentUsageTracked(t.TokenUsage) {
+		return ""
+	}
+	parts := []string{}
+	total := t.TokenUsage.TotalTokens
+	if total == 0 && (t.TokenUsage.InputTokens != 0 || t.TokenUsage.OutputTokens != 0) {
+		total = t.TokenUsage.InputTokens + t.TokenUsage.OutputTokens
+	}
+	if total > 0 {
+		parts = append(parts, fmt.Sprintf("tokens: %d", total))
+	}
+	if t.TokenUsage.CachedInputTokens > 0 {
+		parts = append(parts, fmt.Sprintf("cached: %d", t.TokenUsage.CachedInputTokens))
+	}
+	if t.TokenUsage.ReasoningTokens > 0 {
+		parts = append(parts, fmt.Sprintf("reasoning: %d", t.TokenUsage.ReasoningTokens))
+	}
+	if t.TokenUsage.EstimatedCostUSD > 0 {
+		parts = append(parts, fmt.Sprintf("cost: $%.4f", t.TokenUsage.EstimatedCostUSD))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func (t *LCAgentTrace) addTokenUsage(usage lcrmodel.LLMUsage) {
+	t.TokenUsage.InputTokens += usage.InputTokens
+	t.TokenUsage.OutputTokens += usage.OutputTokens
+	t.TokenUsage.TotalTokens += usage.TotalTokens
+	t.TokenUsage.CachedInputTokens += usage.CachedInputTokens
+	t.TokenUsage.ReasoningTokens += usage.ReasoningTokens
+	t.TokenUsage.EstimatedCostUSD += usage.EstimatedCostUSD
 }
 
 func (t *LCAgentTrace) observeEventTime(event map[string]json.RawMessage) {
@@ -228,11 +348,24 @@ func (t *LCAgentTrace) observeEventTime(event map[string]json.RawMessage) {
 	}
 }
 
+func firstNonZeroTime(values ...time.Time) time.Time {
+	for _, value := range values {
+		if !value.IsZero() {
+			return value
+		}
+	}
+	return time.Time{}
+}
+
 func rawJSONStringList(raw json.RawMessage) []string {
 	var values []string
 	if err := json.Unmarshal(raw, &values); err != nil {
 		return nil
 	}
+	return cleanLCAgentStringList(values)
+}
+
+func cleanLCAgentStringList(values []string) []string {
 	out := make([]string, 0, len(values))
 	seen := map[string]struct{}{}
 	for _, value := range values {
@@ -262,7 +395,13 @@ func lcagentTurnCompleteTraceText(event map[string]json.RawMessage) string {
 	}
 	actualChecks := lcagentVerificationChecksFromRaw(event["actual_checks"])
 	if len(actualChecks) > 0 {
-		parts = append(parts, fmt.Sprintf("actual %d", len(actualChecks)))
+		var checkText []string
+		for _, check := range actualChecks {
+			if text := formatLCAgentVerificationCheck(check); text != "" {
+				checkText = append(checkText, text)
+			}
+		}
+		parts = append(parts, "actual "+strings.Join(limitStrings(checkText, 3), "; "))
 	}
 	return strings.Join(parts, "; ")
 }
@@ -270,6 +409,8 @@ func lcagentTurnCompleteTraceText(event map[string]json.RawMessage) string {
 func lcagentVerificationCheckFromEvent(event map[string]json.RawMessage) LCAgentVerificationCheck {
 	return LCAgentVerificationCheck{
 		Command:  rawJSONString(event["command"]),
+		Argv:     rawJSONStringList(event["argv"]),
+		Purpose:  rawJSONString(event["purpose"]),
 		Status:   firstNonEmpty(rawJSONString(event["status"]), "unknown"),
 		Success:  rawJSONBool(event["success"]),
 		ExitCode: rawJSONInt(event["exit_code"]),
@@ -285,9 +426,11 @@ func lcagentVerificationChecksFromRaw(raw json.RawMessage) []LCAgentVerification
 	out := checks[:0]
 	for _, check := range checks {
 		check.Command = strings.TrimSpace(check.Command)
+		check.Argv = cleanLCAgentStringList(check.Argv)
+		check.Purpose = strings.TrimSpace(check.Purpose)
 		check.Status = firstNonEmpty(strings.TrimSpace(check.Status), "unknown")
 		check.Error = strings.TrimSpace(check.Error)
-		if check.Command == "" && check.Status == "unknown" {
+		if check.Command == "" && len(check.Argv) == 0 && check.Status == "unknown" {
 			continue
 		}
 		out = append(out, check)
@@ -295,9 +438,19 @@ func lcagentVerificationChecksFromRaw(raw json.RawMessage) []LCAgentVerification
 	return out
 }
 
+func formatLCAgentVerificationCheck(check LCAgentVerificationCheck) string {
+	label := firstNonEmpty(strings.TrimSpace(check.Command), strings.Join(check.Argv, " "), "verification check")
+	status := firstNonEmpty(strings.TrimSpace(check.Status), "unknown")
+	text := label + " " + status
+	if check.ExitCode != 0 {
+		text += fmt.Sprintf(" exit %d", check.ExitCode)
+	}
+	return strings.TrimSpace(text)
+}
+
 func lcagentVerificationCheckText(event map[string]json.RawMessage) string {
 	check := lcagentVerificationCheckFromEvent(event)
-	label := firstNonEmpty(check.Command, "verification check")
+	label := firstNonEmpty(check.Command, strings.Join(check.Argv, " "), "verification check")
 	status := firstNonEmpty(check.Status, "unknown")
 	text := "Verification " + status + ": " + label
 	if check.ExitCode != 0 {
@@ -305,6 +458,23 @@ func lcagentVerificationCheckText(event map[string]json.RawMessage) string {
 	}
 	if check.Error != "" {
 		text += ": " + check.Error
+	}
+	return text
+}
+
+func lcagentResumeContextText(event map[string]json.RawMessage) string {
+	sourceID := rawJSONString(event["source_session_id"])
+	sourcePath := rawJSONString(event["source_path"])
+	summary := rawJSONString(event["summary"])
+	text := "Loaded resume context"
+	if sourceID != "" {
+		text += " from " + sourceID
+	}
+	if sourcePath != "" {
+		text += " (" + sourcePath + ")"
+	}
+	if summary != "" {
+		text += ": " + summary
 	}
 	return text
 }
@@ -320,6 +490,19 @@ func lcagentVerificationFeedbackText(event map[string]json.RawMessage) string {
 		return "Verification feedback: " + command + " is " + status
 	}
 	return "Verification feedback: " + status
+}
+
+func lcagentRepairFeedbackSuppressedText(event map[string]json.RawMessage) string {
+	kind := firstNonEmpty(rawJSONString(event["kind"]), "repair")
+	count := rawJSONInt(event["count"])
+	message := rawJSONString(event["message"])
+	if count > 0 && message != "" {
+		return fmt.Sprintf("Suppressed duplicate %s feedback after %d repeats: %s", kind, count, message)
+	}
+	if message != "" {
+		return "Suppressed duplicate " + kind + " feedback: " + message
+	}
+	return "Suppressed duplicate " + kind + " feedback"
 }
 
 func lcagentPatchFeedbackText(event map[string]json.RawMessage) string {
@@ -349,4 +532,11 @@ func pluralSuffix(count int) string {
 		return ""
 	}
 	return "s"
+}
+
+func pluralY(count int) string {
+	if count == 1 {
+		return "y"
+	}
+	return "ies"
 }

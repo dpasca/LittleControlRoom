@@ -161,7 +161,7 @@ func (w Workspace) AllowCommandSpec(argv []string, command string, shell bool) e
 		if w.Auto == AutonomyLow && lowAutonomyVerificationArgvCommand(argv) {
 			return nil
 		}
-		return Denied(fmt.Sprintf("command denied with --auto %s: only explicit read-only or approved verification argv forms are allowed below medium autonomy", w.Auto))
+		return Denied(commandDenialReason(w.Auto, argv, command, shell))
 	}
 	if strings.TrimSpace(command) == "" {
 		return fmt.Errorf("command is required")
@@ -170,9 +170,158 @@ func (w Workspace) AllowCommandSpec(argv []string, command string, shell bool) e
 		return nil
 	}
 	if shell {
-		return Denied(fmt.Sprintf("shell command denied with --auto %s: only explicit read-only command forms are allowed below medium autonomy", w.Auto))
+		return Denied(commandDenialReason(w.Auto, argv, command, shell))
 	}
-	return Denied(fmt.Sprintf("command denied with --auto %s: only explicit read-only or approved verification argv forms are allowed below medium autonomy", w.Auto))
+	return Denied(commandDenialReason(w.Auto, argv, command, shell))
+}
+
+func commandDenialReason(auto Autonomy, argv []string, command string, shell bool) string {
+	base := fmt.Sprintf("command denied with --auto %s: only explicit read-only or approved verification argv forms are allowed below medium autonomy", auto)
+	if shell && strings.TrimSpace(command) != "" {
+		base = fmt.Sprintf("shell command denied with --auto %s: only explicit read-only shell forms are allowed below medium autonomy", auto)
+	}
+	if hint := commandDenialHint(argv, command, shell); hint != "" {
+		base += ". " + hint
+	}
+	return base
+}
+
+func commandDenialHint(argv []string, command string, shell bool) string {
+	argv = cleanArgv(argv)
+	if shell && strings.TrimSpace(command) != "" {
+		return "Use argv-only run_command for verification, for example argv=[\"go\",\"test\",\"./...\"] with shell=false and purpose=verify."
+	}
+	if len(argv) == 0 {
+		return ""
+	}
+	if argvEscapesWorkspaceLexically(argv[1:]) {
+		return "Use workspace-relative paths inside the project; parent-directory and absolute paths require a higher-autonomy review."
+	}
+	name := filepath.Base(argv[0])
+	args := argv[1:]
+	switch name {
+	case "go":
+		return goCommandDenialHint(args)
+	case "gofmt", "goimports":
+		return "Format-writing modes are denied at low autonomy; use " + name + " -l or " + name + " -d to inspect formatting differences."
+	case "make", "gmake", "just":
+		return "Use verification targets such as test, check, lint, typecheck, build, ci, or verify; install/deploy/custom mutation targets require medium autonomy."
+	case "npm", "pnpm", "yarn", "bun":
+		return packageManagerDenialHint(args)
+	case "cargo":
+		return cargoCommandDenialHint(args)
+	case "python", "python3":
+		return "Use python -m pytest or python -m mypy with safe workspace-relative arguments; other Python modules may mutate files or environment state."
+	case "pytest":
+		return verificationArgsDenialHint(args, "Use one-shot pytest checks with workspace-relative paths and without cache-clear, junit/output, watch, or update flags.")
+	case "mypy", "pyright":
+		return verificationArgsDenialHint(args, "Use typecheck commands without install-types, createstub, output, watch, or update flags.")
+	case "ruff":
+		return ruffCommandDenialHint(args)
+	case "prettier":
+		return prettierCommandDenialHint(args)
+	case "eslint":
+		return verificationArgsDenialHint(args, "Use eslint check mode without --fix, --output-file, cache/output mutation, or watch flags.")
+	case "tsc", "vue-tsc":
+		return "Add --noEmit for low-autonomy typechecking; emitting files requires medium autonomy."
+	case "biome":
+		return biomeCommandDenialHint(args)
+	case "git":
+		return "Only read-only git commands are allowed below medium autonomy; branch creation, checkout, reset, commit, and mutation commands require explicit user control."
+	default:
+		return "Use read_file/search/file_outline for inspection, or an approved argv-only test/lint/typecheck/build command with purpose=verify."
+	}
+}
+
+func goCommandDenialHint(args []string) string {
+	if len(args) == 0 {
+		return "Use go test/list/vet, or go build ./... without output flags."
+	}
+	switch args[0] {
+	case "fmt":
+		return "go fmt mutates files; use gofmt -l or gofmt -d for low-autonomy formatting inspection."
+	case "test":
+		for _, arg := range args[1:] {
+			lower := strings.ToLower(strings.TrimSpace(arg))
+			switch {
+			case lower == "-exec" || strings.HasPrefix(lower, "-exec=") ||
+				lower == "-toolexec" || strings.HasPrefix(lower, "-toolexec="):
+				return "go test exec/toolexec hooks are denied; rerun without custom execution hooks."
+			case lower == "-coverprofile" || strings.HasPrefix(lower, "-coverprofile=") ||
+				lower == "-outputdir" || strings.HasPrefix(lower, "-outputdir="):
+				return "go test output-file flags are denied; use -cover without writing a profile, or run the output-producing command at medium autonomy."
+			}
+		}
+		return "Use workspace-relative package patterns such as ./... and safe flags like -run, -count, -timeout, -short, -race, -json, or -cover."
+	case "build":
+		return "Low autonomy only allows whole-repo verification builds such as go build ./... without -o or custom exec flags."
+	case "list", "vet":
+		return "Use workspace-relative package patterns and safe flags only; custom tools, output files, and parent paths require higher autonomy."
+	default:
+		return "Use go test/list/vet, or go build ./... for low-autonomy verification."
+	}
+}
+
+func packageManagerDenialHint(args []string) string {
+	if len(args) == 0 {
+		return "Use test/check/lint/typecheck/build scripts, not dependency or script mutation commands."
+	}
+	command := strings.ToLower(strings.TrimSpace(args[0]))
+	switch command {
+	case "install", "add", "remove", "update", "upgrade", "publish", "exec", "dlx":
+		return "Dependency, publish, and package-execution commands require medium autonomy; use an existing test/check/lint/typecheck/build script instead."
+	case "run", "run-script":
+		if len(args) < 2 {
+			return "Name a verification script such as test, check, lint, typecheck, build, ci, or verify."
+		}
+		if !verificationTargetAllowed(args[1]) {
+			return "Only verification-like scripts are allowed at low autonomy: test, check, lint, typecheck, build, ci, or verify."
+		}
+	}
+	return verificationArgsDenialHint(args, "Use one-shot package-manager verification scripts without --watch, --write, --fix, output, install, or update flags.")
+}
+
+func cargoCommandDenialHint(args []string) string {
+	if len(args) == 0 {
+		return "Use cargo test/check/clippy/build, or cargo fmt --check."
+	}
+	if args[0] == "fmt" && !hasArg(args[1:], "--check") {
+		return "cargo fmt mutates files unless --check is present; retry as cargo fmt --check."
+	}
+	return verificationArgsDenialHint(args, "Use cargo test/check/clippy/build with safe flags, or cargo fmt --check; publish/install/output/watch modes require medium autonomy.")
+}
+
+func ruffCommandDenialHint(args []string) string {
+	if len(args) > 0 && args[0] == "format" && !hasArg(args[1:], "--check") {
+		return "ruff format mutates files unless --check is present; retry as ruff format --check."
+	}
+	return verificationArgsDenialHint(args, "Use ruff check or ruff format --check without --fix, --write, output, or watch flags.")
+}
+
+func prettierCommandDenialHint(args []string) string {
+	if !hasArg(args, "--check") && !hasArg(args, "--list-different") {
+		return "Prettier mutates files unless --check or --list-different is used; retry with prettier --check."
+	}
+	return verificationArgsDenialHint(args, "Use prettier --check or --list-different without --write, output, or watch flags.")
+}
+
+func biomeCommandDenialHint(args []string) string {
+	if len(args) > 0 && args[0] == "format" && !hasArg(args[1:], "--check") {
+		return "biome format mutates files unless --check is present; retry as biome format --check."
+	}
+	return verificationArgsDenialHint(args, "Use biome check/ci/lint or biome format --check without --write, --fix, output, or watch flags.")
+}
+
+func verificationArgsDenialHint(args []string, fallback string) string {
+	for _, arg := range args {
+		if verificationArgDenied(arg) {
+			return fmt.Sprintf("Flag %s is denied at low autonomy because it may write files, update state, install dependencies, watch, or emit reports. %s", arg, fallback)
+		}
+		if argEscapesWorkspaceLexically(arg) {
+			return "Use workspace-relative paths inside the project; parent-directory and absolute paths require a higher-autonomy review."
+		}
+	}
+	return fallback
 }
 
 func ClampTimeout(requested time.Duration, fallback time.Duration, max time.Duration) time.Duration {
@@ -847,6 +996,15 @@ func argEscapesWorkspaceLexically(arg string) bool {
 		}
 		slash := filepath.ToSlash(value)
 		if filepath.IsAbs(value) || slash == ".." || strings.HasPrefix(slash, "../") || strings.Contains(slash, "/../") || strings.HasSuffix(slash, "/..") {
+			return true
+		}
+	}
+	return false
+}
+
+func argvEscapesWorkspaceLexically(args []string) bool {
+	for _, arg := range args {
+		if argEscapesWorkspaceLexically(arg) {
 			return true
 		}
 	}

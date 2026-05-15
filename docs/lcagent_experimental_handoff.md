@@ -77,19 +77,23 @@ Setup and product UX:
 - The env-file path is checked for existence, but LCR does not validate the
   selected provider key or perform a lightweight provider smoke call.
 - Provider/model/profile choices are text fields, not curated pickers.
-- Cost/cached-token feedback is visible through session artifacts and metrics,
-  but not yet surfaced as a friendly setup or run summary.
+- Cost/cached-token feedback is visible through session artifacts, metrics, and
+  LCAgent trace-quality summaries, but not yet surfaced in a guided setup card.
 
 Harness and policy hardening:
 
-- Permission denials and patch diff summaries are recorded, but they need a
-  better first-class UI/audit surface in run summaries and Boss reports.
+- Permission denials, patch feedback, patch diff summaries, actual
+  verification commands, and token/cached-token usage are now harvested into
+  shared LCAgent trace-quality summaries and Boss goal-run reports. Dedicated
+  visual treatment in the main TUI can still improve scanability.
 - Verification traces now feed first-pass repair guidance back into the live
-  model loop. The next hardening step is to tune this against real traces and
-  surface the resulting repair/blocked state more richly in Boss summaries.
-- The command policy has an initial common-stack low-autonomy allowlist, but it
-  still needs trace-driven calibration against real coding tasks and provider
-  mistakes.
+  model loop. Duplicate repair feedback is suppressed and recorded as an
+  explicit trace signal so stuck retry loops are easier to spot.
+- The command policy has a common-stack low-autonomy allowlist plus
+  command-specific denial hints for nearby unsafe forms such as shell
+  verification, output-writing test flags, mutating formatters, dependency
+  installs, watch modes, and path escapes. It still needs ongoing
+  trace-driven calibration against real coding tasks and provider mistakes.
 - Provider-specific quirks still need hardening: retries, rate-limit messages,
   timeout defaults, prompt-cache behavior, and OpenRouter provider pinning.
 - Patch/edit ergonomics now include first-pass failure feedback and concrete
@@ -115,15 +119,16 @@ small-to-medium coding tasks before it tries to be a broader assistant.
 
 1. Use verification semantics to drive repair loops.
    Failed, denied, timed-out, and prematurely reported verification now emit
-   `verification_feedback` events and model-facing guidance. Next, use real
-   traces to tune the wording, avoid repeated nudges, and turn the feedback
-   signal into clearer Boss summary and UI call-to-action states.
+   `verification_feedback` events and model-facing guidance. Duplicate repair
+   feedback is suppressed and recorded as `repair_feedback_suppressed`. Next,
+   use real traces to tune the wording and turn the feedback signal into
+   clearer blocked/retry UI call-to-action states.
 
 2. Calibrate low-autonomy command policy around real coding workflows.
    The initial argv allowlist now covers common verification commands across Go,
    Make/Just, package managers, Cargo, Python, JS/TS, and format check modes.
-   Next, use real traces to tighten false positives/negatives and improve denial
-   messages when the model asks for a nearby but unsafe command form.
+   Denials now include command-specific retry guidance for common unsafe nearby
+   forms. Next, use real traces to tighten false positives/negatives.
 
 3. Improve edit application and recovery.
    `apply_patch` now returns typed `patch_failure` metadata and emits
@@ -134,17 +139,20 @@ small-to-medium coding tasks before it tries to be a broader assistant.
    patch syntax.
 
 4. Surface trace quality in LCR.
-   Make run summaries show denials, files changed, patch diff summaries,
-   verification status, actual verification commands, token/cost/cached-token
-   totals, and whether a continuation used summarized prior context.
+   Shared LCAgent summaries and Boss goal-run reports now show denials, files
+   changed, patch feedback, patch diff summaries, verification status, actual
+   verification commands, token/cached-token totals, duplicate repair feedback,
+   and continuation-chain state. Next, add more visual treatment in the
+   interactive TUI.
 
 ### P1: Make Continuation Feel Like A Coding Session
 
 1. Promote summarized continuation from "nice fallback" to an explicit session
    model.
-   Record a continuation chain, source artifact id, compact handoff, files
-   touched, verification state, and warnings when exact file contents must be
-   re-read before edits.
+   LCAgent resume events now record source session/artifact/workspace metadata
+   and shared traces surface the continuation chain. Next, persist richer chain
+   relationships across all LCR surfaces and keep the warning that exact file
+   contents must be re-read before edits.
 
 2. Add user-visible compact/review behavior for LCAgent.
    `/compact` can create or refresh the durable handoff summary. `/review` can

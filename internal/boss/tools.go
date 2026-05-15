@@ -349,6 +349,13 @@ func appendGoalRunLCAgentDetail(lines []string, result bossrun.GoalResult) []str
 	if sessionID := strings.TrimSpace(result.LCAgentSessionID); sessionID != "" {
 		lines = append(lines, "lcagent session: "+sessionID)
 	}
+	if sourceID := strings.TrimSpace(result.LCAgentContinuationSourceID); sourceID != "" {
+		source := sourceID
+		if sourcePath := strings.TrimSpace(result.LCAgentContinuationSource); sourcePath != "" {
+			source += " (" + sourcePath + ")"
+		}
+		lines = append(lines, "lcagent continued from: "+clipText(source, 500))
+	}
 	if status := strings.TrimSpace(result.LCAgentVerificationStatus); status != "" {
 		lines = append(lines, "lcagent verification: "+status)
 	}
@@ -358,11 +365,26 @@ func appendGoalRunLCAgentDetail(lines []string, result bossrun.GoalResult) []str
 	if len(result.LCAgentVerification) > 0 {
 		lines = append(lines, "lcagent checks: "+clipText(strings.Join(result.LCAgentVerification, "; "), 500))
 	}
+	if len(result.LCAgentActualChecks) > 0 {
+		lines = append(lines, "lcagent actual checks: "+clipText(strings.Join(result.LCAgentActualChecks, "; "), 500))
+	}
 	if result.LCAgentPermissionDenials > 0 {
 		lines = append(lines, fmt.Sprintf("lcagent denials: %d", result.LCAgentPermissionDenials))
 	}
+	if result.LCAgentPatchFeedback > 0 {
+		lines = append(lines, fmt.Sprintf("lcagent patch feedback: %d", result.LCAgentPatchFeedback))
+	}
+	if result.LCAgentVerificationFeedback > 0 {
+		lines = append(lines, fmt.Sprintf("lcagent verification feedback: %d", result.LCAgentVerificationFeedback))
+	}
 	if len(result.LCAgentPatchSummaries) > 0 {
 		lines = append(lines, "lcagent patch summary: "+clipText(strings.Join(result.LCAgentPatchSummaries, " | "), 500))
+	}
+	if usage := strings.TrimSpace(result.LCAgentTokenUsage); usage != "" {
+		lines = append(lines, "lcagent usage: "+usage)
+	}
+	if quality := strings.TrimSpace(result.LCAgentTraceQuality); quality != "" {
+		lines = append(lines, "lcagent trace quality: "+clipText(quality, 500))
 	}
 	if summary := strings.TrimSpace(result.LCAgentSummary); summary != "" {
 		lines = append(lines, "lcagent final: "+clipText(summary, 500))

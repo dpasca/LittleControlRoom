@@ -1202,9 +1202,19 @@ func extractContextLCAgentTranscriptItem(line string) (contextTranscriptItem, bo
 			Step   string `json:"step"`
 			Status string `json:"status"`
 		} `json:"items"`
-		Files        []string `json:"files"`
-		FilesChanged []string `json:"files_changed"`
-		Verification []string `json:"verification"`
+		Files           []string `json:"files"`
+		FilesChanged    []string `json:"files_changed"`
+		Verification    []string `json:"verification"`
+		Status          string   `json:"status"`
+		Command         string   `json:"command"`
+		Argv            []string `json:"argv"`
+		Path            string   `json:"path"`
+		Stage           string   `json:"stage"`
+		Kind            string   `json:"kind"`
+		Count           int      `json:"count"`
+		SourceSessionID string   `json:"source_session_id"`
+		SourcePath      string   `json:"source_path"`
+		SourceCWD       string   `json:"source_cwd"`
 	}
 	if err := json.Unmarshal([]byte(line), &event); err != nil {
 		return contextTranscriptItem{}, false
@@ -1223,6 +1233,22 @@ func extractContextLCAgentTranscriptItem(line string) (contextTranscriptItem, bo
 		return contextTranscriptItemFromText("assistant", contextLCAgentPlanText(event.Items))
 	case "files_touched":
 		return contextTranscriptItemFromText("assistant", contextLCAgentFilesText("files touched", event.Files))
+	case "resume_context":
+		return contextTranscriptItemFromText("assistant", contextLCAgentResumeContextText(event.SourceSessionID, event.SourcePath, event.SourceCWD, event.Summary))
+	case "permission_denied":
+		return contextTranscriptItemFromText("assistant", contextLCAgentPermissionDeniedText(event.Tool, event.Reason))
+	case "patch_diff_summary":
+		return contextTranscriptItemFromText("assistant", contextLCAgentPatchDiffSummaryText(event.Summary))
+	case "patch_feedback":
+		return contextTranscriptItemFromText("assistant", contextLCAgentPatchFeedbackText(event.Path, event.Stage, event.Message))
+	case "verification_check":
+		return contextTranscriptItemFromText("assistant", contextLCAgentVerificationCheckText(event.Command, event.Argv, event.Status))
+	case "verification_feedback":
+		return contextTranscriptItemFromText("assistant", contextLCAgentVerificationFeedbackText(event.Command, event.Status, event.Message))
+	case "repair_feedback_suppressed":
+		return contextTranscriptItemFromText("assistant", contextLCAgentRepairFeedbackSuppressedText(event.Kind, event.Message, event.Count))
+	case "verification_summary":
+		return contextTranscriptItemFromText("assistant", contextLCAgentVerificationSummaryText(event.Status, event.Message))
 	case "turn_complete":
 		return contextTranscriptItemFromText("assistant", contextLCAgentFinalText(event.Summary, event.FilesChanged, event.Verification))
 	case "turn_aborted":
@@ -1328,6 +1354,99 @@ func contextLCAgentFinalText(summary string, filesChanged, verification []string
 	return strings.Join(parts, "; ")
 }
 
+func contextLCAgentPermissionDeniedText(tool, reason string) string {
+	reason = contextSanitizeText(reason)
+	tool = contextSanitizeText(tool)
+	if reason == "" && tool != "" {
+		reason = tool + " denied"
+	}
+	if reason == "" {
+		reason = "permission denied"
+	}
+	return "permission denied: " + reason
+}
+
+func contextLCAgentResumeContextText(sourceID, sourcePath, sourceCWD, summary string) string {
+	parts := []string{"resume context"}
+	if sourceID = contextSanitizeText(sourceID); sourceID != "" {
+		parts = append(parts, "source session: "+sourceID)
+	}
+	if sourcePath = contextSanitizeText(sourcePath); sourcePath != "" {
+		parts = append(parts, "source artifact: "+sourcePath)
+	}
+	if sourceCWD = contextSanitizeText(sourceCWD); sourceCWD != "" {
+		parts = append(parts, "source workspace: "+sourceCWD)
+	}
+	if summary = contextSanitizeText(summary); summary != "" {
+		parts = append(parts, summary)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func contextLCAgentPatchDiffSummaryText(summary string) string {
+	summary = contextSanitizeText(summary)
+	if summary == "" {
+		return ""
+	}
+	return "patch diff summary: " + summary
+}
+
+func contextLCAgentPatchFeedbackText(path, stage, message string) string {
+	message = contextSanitizeText(message)
+	if message != "" {
+		return message
+	}
+	path = contextSanitizeText(path)
+	stage = contextFirstNonEmpty(contextSanitizeText(stage), "apply_patch")
+	if path != "" {
+		return "patch feedback: " + path + " failed during " + stage
+	}
+	return "patch feedback: " + stage
+}
+
+func contextLCAgentVerificationCheckText(command string, argv []string, status string) string {
+	command = contextFirstNonEmpty(contextSanitizeText(command), contextSanitizeText(strings.Join(argv, " ")), "verification check")
+	status = contextFirstNonEmpty(contextSanitizeText(status), "unknown")
+	return "verification " + status + ": " + command
+}
+
+func contextLCAgentVerificationFeedbackText(command, status, message string) string {
+	message = contextSanitizeText(message)
+	if message != "" {
+		return message
+	}
+	command = contextSanitizeText(command)
+	status = contextFirstNonEmpty(contextSanitizeText(status), "needs attention")
+	if command != "" {
+		return "verification feedback: " + command + " is " + status
+	}
+	return "verification feedback: " + status
+}
+
+func contextLCAgentRepairFeedbackSuppressedText(kind, message string, count int) string {
+	kind = contextFirstNonEmpty(contextSanitizeText(kind), "repair")
+	message = contextSanitizeText(message)
+	if count > 0 && message != "" {
+		return fmt.Sprintf("suppressed duplicate %s feedback after %d repeats: %s", kind, count, message)
+	}
+	if message != "" {
+		return "suppressed duplicate " + kind + " feedback: " + message
+	}
+	return "suppressed duplicate " + kind + " feedback"
+}
+
+func contextLCAgentVerificationSummaryText(status, message string) string {
+	message = contextSanitizeText(message)
+	if message != "" {
+		return message
+	}
+	status = contextSanitizeText(status)
+	if status == "" {
+		return ""
+	}
+	return "verification status: " + status
+}
+
 func contextLCAgentFilesText(label string, files []string) string {
 	cleaned := make([]string, 0, len(files))
 	for _, file := range files {
@@ -1340,6 +1459,15 @@ func contextLCAgentFilesText(label string, files []string) string {
 		return ""
 	}
 	return contextSanitizeText(label) + ": " + strings.Join(cleaned, ", ")
+}
+
+func contextFirstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func compactContextOpenCodeTranscript(ctx context.Context, sessionRef string) (string, error) {

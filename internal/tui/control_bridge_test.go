@@ -1075,6 +1075,13 @@ func TestExecuteBossGoalRunStartsLCAgentTaskAndPersistsTrace(t *testing.T) {
 	if record.Result.LCAgentSessionID != "lca-goal-session" || record.Result.LCAgentVerificationStatus != "verified" {
 		t.Fatalf("stored LCAgent result = %#v, want harvested session and verification", record.Result)
 	}
+	if len(record.Result.LCAgentActualChecks) != 1 || record.Result.LCAgentActualChecks[0] != "go test ./... passed" ||
+		record.Result.LCAgentPatchFeedback != 1 ||
+		record.Result.LCAgentVerificationFeedback != 1 ||
+		!strings.Contains(record.Result.LCAgentTokenUsage, "tokens: 150") ||
+		!strings.Contains(record.Result.LCAgentTraceQuality, "patch feedback: 1") {
+		t.Fatalf("stored LCAgent trace quality = %#v, want checks, feedback, and usage", record.Result)
+	}
 	if len(record.Trace) != 4 {
 		t.Fatalf("stored trace length = %d, want create launch await verify trace", len(record.Trace))
 	}
@@ -1095,8 +1102,11 @@ func writeTUILCAgentTraceArtifact(t *testing.T, dataDir, cwd, sessionID, summary
 	encoder := json.NewEncoder(file)
 	events := []map[string]any{
 		{"type": "session_meta", "id": sessionID, "cwd": cwd, "started_at": started.Format(time.RFC3339Nano)},
+		{"type": "model_response", "session_id": sessionID, "timestamp": started.Add(500 * time.Millisecond).Format(time.RFC3339Nano), "model": "deepseek/test-model", "usage_summary": map[string]any{"input_tokens": 100, "output_tokens": 50, "total_tokens": 150, "cached_input_tokens": 25}},
 		{"type": "patch_diff_summary", "session_id": sessionID, "timestamp": started.Add(time.Second).Format(time.RFC3339Nano), "summary": "README.md +1 -0"},
+		{"type": "patch_feedback", "session_id": sessionID, "timestamp": started.Add(1500 * time.Millisecond).Format(time.RFC3339Nano), "stage": "apply", "path": "README.md", "message": "Patch feedback: README.md failed during apply."},
 		{"type": "verification_check", "session_id": sessionID, "timestamp": started.Add(2 * time.Second).Format(time.RFC3339Nano), "command": "go test ./...", "status": "passed", "success": true},
+		{"type": "verification_feedback", "session_id": sessionID, "timestamp": started.Add(2250 * time.Millisecond).Format(time.RFC3339Nano), "status": "failed", "command": "go test ./...", "message": "Verification feedback: go test ./... failed."},
 		{"type": "verification_summary", "session_id": sessionID, "timestamp": started.Add(2500 * time.Millisecond).Format(time.RFC3339Nano), "status": "verified", "message": "Verification checks passed: go test ./..."},
 		{"type": "turn_complete", "session_id": sessionID, "timestamp": started.Add(3 * time.Second).Format(time.RFC3339Nano), "summary": summary, "files_changed": []string{"README.md"}, "verification": []string{"go test ./..."}, "verification_status": "verified", "actual_checks": []map[string]any{{"command": "go test ./...", "status": "passed", "success": true}}},
 	}

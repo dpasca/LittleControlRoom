@@ -189,9 +189,11 @@ func TestFormatGoalResultSummarizesVerifiedLCAgentTask(t *testing.T) {
 		CreatedTaskIDs:            []string{"agt_lca"},
 		Verified:                  true,
 		LCAgentVerificationStatus: "reported",
+		LCAgentTraceQuality:       "verification reported; actual checks: go test ./... passed; tokens: 150",
 	})
 	if !strings.Contains(got, "Started 1 LCAgent goal task") ||
-		!strings.Contains(got, "completed with reported verification") {
+		!strings.Contains(got, "completed with reported verification") ||
+		!strings.Contains(got, "actual checks: go test ./... passed") {
 		t.Fatalf("FormatGoalResult() = %q, want LCAgent outcome summary", got)
 	}
 }

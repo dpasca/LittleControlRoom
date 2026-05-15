@@ -355,11 +355,12 @@ func writeEvalTextReport(stdout io.Writer, report evalReport) {
 		}
 		fmt.Fprintln(stdout)
 	}
-	fmt.Fprintf(stdout, "sessions=%d denials=%d patch_diff_summaries=%d patch_feedback=%d resume_contexts=%d verification_feedback=%d verification=%v\n",
+	fmt.Fprintf(stdout, "sessions=%d denials=%d patch_diff_summaries=%d patch_feedback=%d repair_feedback_suppressed=%d resume_contexts=%d verification_feedback=%d verification=%v\n",
 		report.Summary.Sessions,
 		report.Summary.PermissionDenials,
 		report.Summary.PatchDiffSummaries,
 		report.Summary.PatchFeedback,
+		report.Summary.RepairFeedbackSuppressed,
 		report.Summary.ResumeContexts,
 		report.Summary.VerificationFeedback,
 		report.Summary.VerificationStatuses,

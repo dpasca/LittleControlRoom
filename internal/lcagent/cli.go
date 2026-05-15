@@ -355,6 +355,7 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 	toolOptions.WebSearchEnabled = webSearchEnabled
 	toolsDef := modeladapter.ToolsWithOptions(toolOptions)
 	finalVerificationFeedbacks := 0
+	feedbackTracker := newOpenRouterFeedbackTracker()
 	for turn := 0; turn < client.MaxTurns(); turn++ {
 		if compactedMessages, compaction, compacted := compactOpenRouterLoopMessagesWithOptions(messages, readLedger, contextOptions); compacted {
 			if err := writer.Write(session.Event{
@@ -513,12 +514,24 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 			}
 		}
 		for _, feedback := range pendingPatchFeedback {
+			if !feedbackTracker.Allow("patch", feedback.ModelMessage()) {
+				if err := writeRepairFeedbackSuppressed(writer, runner.SessionID, "patch", feedback.ModelMessage(), feedbackTracker.Count("patch", feedback.ModelMessage())); err != nil {
+					return err
+				}
+				continue
+			}
 			if err := runner.WritePatchFeedback(feedback); err != nil {
 				return err
 			}
 			messages = append(messages, modeladapter.Message{Role: "user", Content: feedback.ModelMessage()})
 		}
 		for _, feedback := range pendingVerificationFeedback {
+			if !feedbackTracker.Allow("verification", feedback.ModelMessage()) {
+				if err := writeRepairFeedbackSuppressed(writer, runner.SessionID, "verification", feedback.ModelMessage(), feedbackTracker.Count("verification", feedback.ModelMessage())); err != nil {
+					return err
+				}
+				continue
+			}
 			if err := runner.WriteVerificationFeedback(feedback); err != nil {
 				return err
 			}
@@ -618,6 +631,50 @@ func openRouterCompletionOptions(cfg modeladapter.OpenRouterConfig) modeladapter
 	return modeladapter.CompletionOptions{
 		ReasoningEffort: strings.TrimSpace(cfg.ReasoningEffort),
 	}
+}
+
+type openRouterFeedbackTracker struct {
+	counts map[string]int
+}
+
+func newOpenRouterFeedbackTracker() *openRouterFeedbackTracker {
+	return &openRouterFeedbackTracker{counts: map[string]int{}}
+}
+
+func (t *openRouterFeedbackTracker) Allow(kind, message string) bool {
+	key := openRouterFeedbackKey(kind, message)
+	if key == "" {
+		return true
+	}
+	t.counts[key]++
+	return t.counts[key] == 1
+}
+
+func (t *openRouterFeedbackTracker) Count(kind, message string) int {
+	if t == nil {
+		return 0
+	}
+	return t.counts[openRouterFeedbackKey(kind, message)]
+}
+
+func openRouterFeedbackKey(kind, message string) string {
+	kind = strings.TrimSpace(kind)
+	message = strings.TrimSpace(message)
+	if kind == "" || message == "" {
+		return ""
+	}
+	return kind + "\x00" + message
+}
+
+func writeRepairFeedbackSuppressed(writer *session.Writer, sessionID, kind, message string, count int) error {
+	return writer.Write(session.Event{
+		"type":       "repair_feedback_suppressed",
+		"session_id": sessionID,
+		"kind":       strings.TrimSpace(kind),
+		"message":    strings.TrimSpace(message),
+		"count":      count,
+		"reason":     "duplicate feedback already sent to model",
+	})
 }
 
 func openRouterFinalCompletionOptions(cfg modeladapter.OpenRouterConfig) modeladapter.CompletionOptions {

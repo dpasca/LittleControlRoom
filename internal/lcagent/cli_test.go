@@ -233,6 +233,7 @@ func TestRunExecOpenRouterSendsResumeContext(t *testing.T) {
 	for _, want := range []string{
 		`"type":"resume_context"`,
 		`"source_session_id":"` + sessionID + `"`,
+		`"source_path":`,
 		`"summary":"source ` + sessionID,
 		`"summary":"continued with context"`,
 	} {
@@ -1137,6 +1138,95 @@ func TestRunExecOpenRouterFeedsPatchFailureBackToModel(t *testing.T) {
 	}
 	if requests != 2 {
 		t.Fatalf("requests = %d, want 2", requests)
+	}
+}
+
+func TestRunExecOpenRouterSuppressesDuplicatePatchFeedback(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("current\nkeep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stalePatch := "*** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n keep\n*** End Patch\n"
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch requests {
+		case 1, 2:
+			_, _ = fmt.Fprintf(w, `{
+				"id":"resp_patch_%d",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_patch_%d","type":"function","function":{"name":"apply_patch","arguments":{"patch":%q}}}]}
+				}]
+			}`, requests, requests, stalePatch)
+		default:
+			feedbackMessages := 0
+			for _, msg := range body.Messages {
+				if msg.Role == "user" && strings.Contains(msg.Content, "Patch feedback: README.md failed during apply") {
+					feedbackMessages++
+				}
+			}
+			if feedbackMessages != 1 {
+				t.Fatalf("third request patch feedback user messages = %d, want one: %#v", feedbackMessages, body.Messages)
+			}
+			_, _ = w.Write([]byte(`{
+				"id":"resp_final",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_final","type":"function","function":{"name":"final_response","arguments":{"summary":"patch retry blocked after duplicate feedback","files_changed":[],"verification":[]}}}]}
+				}]
+			}`))
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "low",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--max-turns", "4",
+		"patch README",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	if strings.Count(text, `"type":"patch_feedback"`) != 1 {
+		t.Fatalf("stdout patch feedback count mismatch:\n%s", text)
+	}
+	for _, want := range []string{
+		`"type":"repair_feedback_suppressed"`,
+		`"kind":"patch"`,
+		`"reason":"duplicate feedback already sent to model"`,
+		`"summary":"patch retry blocked after duplicate feedback"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+	if requests != 3 {
+		t.Fatalf("requests = %d, want 3", requests)
 	}
 }
 

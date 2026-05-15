@@ -510,6 +510,8 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		s.appendAsync(TranscriptStatus, lcagentVerificationCheckText(event))
 	case "verification_feedback":
 		s.appendAsync(TranscriptStatus, lcagentVerificationFeedbackText(event))
+	case "repair_feedback_suppressed":
+		s.appendAsync(TranscriptStatus, lcagentRepairFeedbackSuppressedText(event))
 	case "verification_summary":
 		status := rawJSONString(event["status"])
 		message := rawJSONString(event["message"])
@@ -520,16 +522,7 @@ func (s *lcagentSession) handleEvent(line []byte) {
 			s.appendAsync(TranscriptStatus, message)
 		}
 	case "resume_context":
-		sourceID := rawJSONString(event["source_session_id"])
-		summary := rawJSONString(event["summary"])
-		text := "Loaded resume context"
-		if sourceID != "" {
-			text += " from " + sourceID
-		}
-		if summary != "" {
-			text += ": " + summary
-		}
-		s.appendAsync(TranscriptStatus, text)
+		s.appendAsync(TranscriptStatus, lcagentResumeContextText(event))
 	case "web_search_profile":
 		enabled := rawJSONBool(event["enabled"])
 		message := rawJSONString(event["message"])
