@@ -28,6 +28,12 @@ type Runner struct {
 	verificationChecks []tools.VerificationCheck
 }
 
+type VerificationFeedback struct {
+	Status  string `json:"status"`
+	Command string `json:"command,omitempty"`
+	Message string `json:"message"`
+}
+
 type Action struct {
 	Type         string          `json:"type"`
 	Tool         string          `json:"tool,omitempty"`
@@ -35,6 +41,70 @@ type Action struct {
 	Summary      string          `json:"summary,omitempty"`
 	FilesChanged []string        `json:"files_changed,omitempty"`
 	Verification []string        `json:"verification,omitempty"`
+}
+
+func VerificationFeedbackForResult(result tools.ToolResult) (VerificationFeedback, bool) {
+	if !strings.EqualFold(result.Purpose, tools.CommandPurposeVerify) || result.Success {
+		return VerificationFeedback{}, false
+	}
+	check := tools.VerificationCheckFromResult(result)
+	command := firstNonEmpty(check.Command, strings.Join(check.Argv, " "), "verification check")
+	status := firstNonEmpty(check.Status, "failed")
+	var next string
+	switch status {
+	case tools.VerificationStatusDenied:
+		next = "Choose an approved argv-only verification command, or explain clearly why verification is blocked."
+	case tools.VerificationStatusTimedOut:
+		next = "Narrow the verification command, inspect the timeout, or explain clearly why verification is blocked."
+	default:
+		next = "Inspect the failure, fix the issue if it is caused by your changes, and rerun a purpose=verify check."
+	}
+	detail := firstNonEmpty(check.Error, result.Error)
+	message := fmt.Sprintf("Verification feedback: %s %s. %s", command, verificationStatusPhrase(status), next)
+	if detail != "" {
+		message += " Error: " + detail
+	}
+	return VerificationFeedback{Status: status, Command: command, Message: message}, true
+}
+
+func verificationStatusPhrase(status string) string {
+	switch status {
+	case tools.VerificationStatusDenied:
+		return "was denied"
+	case tools.VerificationStatusTimedOut:
+		return "timed out"
+	case tools.VerificationStatusPassed:
+		return "passed"
+	case tools.VerificationStatusFailed:
+		return "failed"
+	default:
+		return "finished with status " + status
+	}
+}
+
+func (r *Runner) VerificationFeedbackForFinal(action Action) (VerificationFeedback, bool) {
+	action.FilesChanged = cleanStringList(action.FilesChanged)
+	action.Verification = cleanStringList(action.Verification)
+	if len(action.FilesChanged) == 0 || len(r.verificationChecks) > 0 {
+		return VerificationFeedback{}, false
+	}
+	status, _ := finalVerificationStatus(action.FilesChanged, action.Verification, r.verificationChecks)
+	if status != "missing_after_changes" && status != "reported_only" {
+		return VerificationFeedback{}, false
+	}
+	message := "Verification feedback: final_response listed changed files, but no run_command check marked purpose=verify has run. Run an appropriate verification command, or explain clearly why verification is blocked, then call final_response again."
+	if status == "reported_only" {
+		message = "Verification feedback: final_response reported verification, but no run_command check marked purpose=verify has run. Run an appropriate verification command, or explain clearly why verification is blocked, then call final_response again."
+	}
+	return VerificationFeedback{Status: status, Message: message}, true
+}
+
+func (f VerificationFeedback) ModelMessage() string {
+	return strings.TrimSpace(f.Message)
+}
+
+func (r *Runner) WriteVerificationFeedback(feedback VerificationFeedback) error {
+	return r.Session.Write(verificationFeedbackEvent(r.SessionID, feedback))
 }
 
 type commandArgs struct {
@@ -133,7 +203,11 @@ func (r *Runner) Run(ctx context.Context, actions []Action) error {
 	for _, action := range actions {
 		switch action.Type {
 		case "tool_call":
-			if _, err := r.RunTool(ctx, action); err != nil {
+			result, err := r.RunTool(ctx, action)
+			if err != nil {
+				if feedback, ok := VerificationFeedbackForResult(result); ok {
+					_ = r.WriteVerificationFeedback(feedback)
+				}
 				_ = r.Session.Write(session.Event{
 					"type":       "turn_aborted",
 					"session_id": r.SessionID,
@@ -396,6 +470,16 @@ func verificationCheckEvent(sessionID string, check tools.VerificationCheck) ses
 		"timed_out":  check.TimedOut,
 		"denied":     check.Denied,
 		"error":      check.Error,
+	}
+}
+
+func verificationFeedbackEvent(sessionID string, feedback VerificationFeedback) session.Event {
+	return session.Event{
+		"type":       "verification_feedback",
+		"session_id": sessionID,
+		"status":     feedback.Status,
+		"command":    feedback.Command,
+		"message":    feedback.Message,
 	}
 }
 

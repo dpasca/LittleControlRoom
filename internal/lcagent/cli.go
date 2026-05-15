@@ -354,6 +354,7 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 	toolOptions := modelToolOptions(toolProfile, fileLimits)
 	toolOptions.WebSearchEnabled = webSearchEnabled
 	toolsDef := modeladapter.ToolsWithOptions(toolOptions)
+	finalVerificationFeedbacks := 0
 	for turn := 0; turn < client.MaxTurns(); turn++ {
 		if compactedMessages, compaction, compacted := compactOpenRouterLoopMessagesWithOptions(messages, readLedger, contextOptions); compacted {
 			if err := writer.Write(session.Event{
@@ -432,6 +433,7 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 				return err
 			}
 		}
+		var pendingVerificationFeedback []script.VerificationFeedback
 		for _, call := range msg.ToolCalls {
 			args, err := modeladapter.NormalizeArguments(call.Function.Arguments)
 			if err != nil {
@@ -448,6 +450,40 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 					return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("decode final_response arguments: %w", err))
 				}
 				final.Type = "final_response"
+				if feedback, ok := runner.VerificationFeedbackForFinal(final); ok && finalVerificationFeedbacks == 0 {
+					finalVerificationFeedbacks++
+					if err := writer.Write(session.Event{
+						"type":       "tool_call",
+						"session_id": runner.SessionID,
+						"tool":       call.Function.Name,
+						"args":       json.RawMessage(args),
+					}); err != nil {
+						return err
+					}
+					if err := runner.WriteVerificationFeedback(feedback); err != nil {
+						return err
+					}
+					result := tools.ToolResult{Success: false, Error: feedback.ModelMessage()}
+					if err := writer.Write(session.Event{
+						"type":       "tool_result",
+						"session_id": runner.SessionID,
+						"tool":       call.Function.Name,
+						"result":     result,
+					}); err != nil {
+						return err
+					}
+					resultJSON, marshalErr := json.Marshal(result)
+					if marshalErr != nil {
+						return marshalErr
+					}
+					messages = append(messages, modeladapter.Message{
+						Role:       "tool",
+						ToolCallID: call.ID,
+						Content:    string(resultJSON),
+					})
+					messages = append(messages, modeladapter.Message{Role: "user", Content: feedback.ModelMessage()})
+					continue
+				}
 				return runner.Final(final)
 			}
 			result, err := runner.RunTool(ctx, action)
@@ -463,11 +499,20 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 				ToolCallID: call.ID,
 				Content:    string(resultJSON),
 			})
+			if feedback, ok := script.VerificationFeedbackForResult(result); ok {
+				pendingVerificationFeedback = append(pendingVerificationFeedback, feedback)
+			}
 			if err != nil {
 				// Feed tool failures back to the model once; the structured event has
 				// already recorded the failure for LCR.
 				continue
 			}
+		}
+		for _, feedback := range pendingVerificationFeedback {
+			if err := runner.WriteVerificationFeedback(feedback); err != nil {
+				return err
+			}
+			messages = append(messages, modeladapter.Message{Role: "user", Content: feedback.ModelMessage()})
 		}
 	}
 	return finalizeOpenRouterAfterMaxTurns(ctx, writer, runner, client, finalClient, messages, readLedger, providerLabel, cfg, contextOptions)

@@ -378,6 +378,7 @@ func TestParseLCAgentTraceFileHarvestsFinalOutcome(t *testing.T) {
 		{"type": "permission_denied", "session_id": sessionID, "timestamp": started.Add(time.Second).Format(time.RFC3339Nano), "tool": "run_command", "reason": "shell denied"},
 		{"type": "patch_diff_summary", "session_id": sessionID, "timestamp": started.Add(2 * time.Second).Format(time.RFC3339Nano), "summary": "README.md +1 -0"},
 		{"type": "verification_check", "session_id": sessionID, "timestamp": started.Add(3 * time.Second).Format(time.RFC3339Nano), "command": "go test ./...", "status": "passed", "success": true},
+		{"type": "verification_feedback", "session_id": sessionID, "timestamp": started.Add(3200 * time.Millisecond).Format(time.RFC3339Nano), "status": "failed", "command": "go test ./...", "message": "Verification feedback: go test ./... failed."},
 		{"type": "verification_summary", "session_id": sessionID, "timestamp": started.Add(3500 * time.Millisecond).Format(time.RFC3339Nano), "status": "verified", "message": "Verification checks passed: go test ./..."},
 		{"type": "turn_complete", "session_id": sessionID, "timestamp": started.Add(4 * time.Second).Format(time.RFC3339Nano), "summary": "updated docs", "files_changed": []string{"README.md"}, "verification": []string{"go test ./..."}, "verification_status": "verified", "actual_checks": []map[string]any{{"command": "go test ./...", "status": "passed", "success": true}}},
 	})
@@ -397,6 +398,9 @@ func TestParseLCAgentTraceFileHarvestsFinalOutcome(t *testing.T) {
 	}
 	if len(trace.PermissionDenials) != 1 || len(trace.PatchDiffSummaries) != 1 {
 		t.Fatalf("trace denials/patches = %#v/%#v", trace.PermissionDenials, trace.PatchDiffSummaries)
+	}
+	if len(trace.VerificationFeedback) != 1 {
+		t.Fatalf("trace feedback = %#v, want one item", trace.VerificationFeedback)
 	}
 	loaded, err := LoadLCAgentTrace(dataDir, sessionID, root)
 	if err != nil {

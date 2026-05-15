@@ -208,6 +208,8 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			replay.appendEntry(TranscriptFileChange, rawJSONString(event["summary"]))
 		case "verification_check":
 			replay.appendEntry(TranscriptStatus, lcagentVerificationCheckText(event))
+		case "verification_feedback":
+			replay.appendEntry(TranscriptStatus, lcagentVerificationFeedbackText(event))
 		case "verification_summary":
 			status := rawJSONString(event["status"])
 			message := rawJSONString(event["message"])

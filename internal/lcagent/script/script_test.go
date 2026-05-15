@@ -120,6 +120,39 @@ func TestRunnerRecordsActualVerificationCheck(t *testing.T) {
 	}
 }
 
+func TestVerificationFeedbackForFailedCheck(t *testing.T) {
+	result := tools.ToolResult{
+		Success:  false,
+		Command:  "go test ./...",
+		Purpose:  tools.CommandPurposeVerify,
+		ExitCode: 1,
+		Error:    "exit status 1",
+	}
+	feedback, ok := VerificationFeedbackForResult(result)
+	if !ok {
+		t.Fatal("VerificationFeedbackForResult returned ok=false, want feedback")
+	}
+	if feedback.Status != tools.VerificationStatusFailed || !strings.Contains(feedback.Message, "go test ./...") || !strings.Contains(feedback.Message, "rerun a purpose=verify check") {
+		t.Fatalf("feedback = %#v", feedback)
+	}
+}
+
+func TestRunnerFinalVerificationFeedbackAfterChangedFiles(t *testing.T) {
+	runner := Runner{}
+	feedback, ok := runner.VerificationFeedbackForFinal(Action{
+		Type:         "final_response",
+		Summary:      "done",
+		FilesChanged: []string{"README.md"},
+		Verification: []string{"go test ./..."},
+	})
+	if !ok {
+		t.Fatal("VerificationFeedbackForFinal returned ok=false, want feedback")
+	}
+	if feedback.Status != "reported_only" || !strings.Contains(feedback.Message, "no run_command check marked purpose=verify") {
+		t.Fatalf("feedback = %#v", feedback)
+	}
+}
+
 func TestRunnerEmitsPermissionDeniedEvent(t *testing.T) {
 	root := t.TempDir()
 	w, err := policy.NewWorkspace(root, policy.AutonomyOff)

@@ -29,6 +29,7 @@ type Summary struct {
 	PermissionDenials         int               `json:"permission_denials"`
 	PatchDiffSummaries        int               `json:"patch_diff_summaries"`
 	VerificationChecks        int               `json:"verification_checks"`
+	VerificationFeedback      int               `json:"verification_feedback"`
 	VerificationCheckStatuses map[string]int    `json:"verification_check_statuses,omitempty"`
 	VerificationStatuses      map[string]int    `json:"verification_statuses,omitempty"`
 	ReadFileCalls             int               `json:"read_file_calls"`
@@ -203,6 +204,8 @@ func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
 			status = "unknown"
 		}
 		s.VerificationCheckStatuses[status]++
+	case "verification_feedback":
+		s.VerificationFeedback++
 	case "verification_summary":
 		status := rawString(event["status"])
 		if status == "" {

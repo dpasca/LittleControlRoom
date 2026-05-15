@@ -215,6 +215,9 @@ func lcagentEvalCases() []evalCase {
 				if summary.VerificationCheckStatuses["denied"] < 1 {
 					return fmt.Errorf("verification denied count = %d, want >= 1", summary.VerificationCheckStatuses["denied"])
 				}
+				if summary.VerificationFeedback < 1 {
+					return fmt.Errorf("verification feedback count = %d, want >= 1", summary.VerificationFeedback)
+				}
 				return nil
 			},
 		},
@@ -267,6 +270,9 @@ func TestSmoke(t *testing.T) { t.Fatal("intentional failure") }
 			Check: func(summary sessionmetrics.Summary) error {
 				if summary.VerificationCheckStatuses["failed"] < 1 {
 					return fmt.Errorf("verification failed count = %d, want >= 1", summary.VerificationCheckStatuses["failed"])
+				}
+				if summary.VerificationFeedback < 1 {
+					return fmt.Errorf("verification feedback count = %d, want >= 1", summary.VerificationFeedback)
 				}
 				return nil
 			},
@@ -331,11 +337,12 @@ func writeEvalTextReport(stdout io.Writer, report evalReport) {
 		}
 		fmt.Fprintln(stdout)
 	}
-	fmt.Fprintf(stdout, "sessions=%d denials=%d patch_diff_summaries=%d resume_contexts=%d verification=%v\n",
+	fmt.Fprintf(stdout, "sessions=%d denials=%d patch_diff_summaries=%d resume_contexts=%d verification_feedback=%d verification=%v\n",
 		report.Summary.Sessions,
 		report.Summary.PermissionDenials,
 		report.Summary.PatchDiffSummaries,
 		report.Summary.ResumeContexts,
+		report.Summary.VerificationFeedback,
 		report.Summary.VerificationStatuses,
 	)
 }

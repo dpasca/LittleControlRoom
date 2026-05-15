@@ -26,6 +26,7 @@ type LCAgentTrace struct {
 	PermissionDenials     []LCAgentPermissionDenial
 	PatchDiffSummaries    []string
 	VerificationSummaries []string
+	VerificationFeedback  []string
 	Errors                []string
 }
 
@@ -115,6 +116,10 @@ func ParseLCAgentTraceFile(path string) (LCAgentTrace, error) {
 			}
 		case "verification_check":
 			trace.ActualChecks = append(trace.ActualChecks, lcagentVerificationCheckFromEvent(event))
+		case "verification_feedback":
+			if message := rawJSONString(event["message"]); message != "" {
+				trace.VerificationFeedback = append(trace.VerificationFeedback, message)
+			}
 		case "verification_summary":
 			status := rawJSONString(event["status"])
 			if status != "" {
@@ -189,6 +194,9 @@ func (t LCAgentTrace) CompactSummary() string {
 	}
 	if len(t.ActualChecks) > 0 {
 		parts = append(parts, fmt.Sprintf("%d verification check%s", len(t.ActualChecks), pluralSuffix(len(t.ActualChecks))))
+	}
+	if len(t.VerificationFeedback) > 0 {
+		parts = append(parts, fmt.Sprintf("%d verification feedback item%s", len(t.VerificationFeedback), pluralSuffix(len(t.VerificationFeedback))))
 	}
 	if len(t.PermissionDenials) > 0 {
 		parts = append(parts, fmt.Sprintf("%d denial%s", len(t.PermissionDenials), pluralSuffix(len(t.PermissionDenials))))
@@ -291,6 +299,19 @@ func lcagentVerificationCheckText(event map[string]json.RawMessage) string {
 		text += ": " + check.Error
 	}
 	return text
+}
+
+func lcagentVerificationFeedbackText(event map[string]json.RawMessage) string {
+	message := rawJSONString(event["message"])
+	if message != "" {
+		return message
+	}
+	status := firstNonEmpty(rawJSONString(event["status"]), "needs attention")
+	command := rawJSONString(event["command"])
+	if command != "" {
+		return "Verification feedback: " + command + " is " + status
+	}
+	return "Verification feedback: " + status
 }
 
 func limitStrings(values []string, limit int) []string {

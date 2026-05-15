@@ -883,6 +883,176 @@ func TestRunExecOpenRouterFinalResponseToolIsCanonical(t *testing.T) {
 	}
 }
 
+func TestRunExecOpenRouterFeedsFailedVerificationBackToModel(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module demo\n\ngo 1.25\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "demo_test.go"), []byte("package demo\n\nimport \"testing\"\n\nfunc TestDemo(t *testing.T) { t.Fatal(\"boom\") }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if requests == 1 {
+			_, _ = w.Write([]byte(`{
+				"id":"resp_verify",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_verify","type":"function","function":{"name":"run_command","arguments":{"argv":["go","test","./..."],"shell":false,"purpose":"verify","timeout_ms":120000}}}]}
+				}]
+			}`))
+			return
+		}
+		feedbackSeen := false
+		for _, msg := range body.Messages {
+			if msg.Role == "user" && strings.Contains(msg.Content, "Verification feedback: go test ./... failed") && strings.Contains(msg.Content, "rerun a purpose=verify check") {
+				feedbackSeen = true
+			}
+		}
+		if !feedbackSeen {
+			t.Fatalf("second request missing verification feedback: %#v", body.Messages)
+		}
+		_, _ = w.Write([]byte(`{
+			"id":"resp_final",
+			"model":"deepseek/test-model",
+			"choices":[{
+				"finish_reason":"tool_calls",
+				"message":{"role":"assistant","tool_calls":[{"id":"call_final","type":"function","function":{"name":"final_response","arguments":{"summary":"verification failed and needs a fix","files_changed":[],"verification":["go test ./... failed"]}}}]}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "low",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--max-turns", "3",
+		"run verification",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"verification_check"`,
+		`"status":"failed"`,
+		`"type":"verification_feedback"`,
+		`"verification_status":"failed"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+}
+
+func TestRunExecOpenRouterBouncesFinalAfterChangedFilesWithoutActualVerification(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if requests == 1 {
+			_, _ = w.Write([]byte(`{
+				"id":"resp_early_final",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_final_1","type":"function","function":{"name":"final_response","arguments":{"summary":"changed README","files_changed":["README.md"],"verification":["go test ./..."]}}}]}
+				}]
+			}`))
+			return
+		}
+		feedbackSeen := false
+		for _, msg := range body.Messages {
+			if strings.Contains(msg.Content, "final_response reported verification") && strings.Contains(msg.Content, "purpose=verify") {
+				feedbackSeen = true
+			}
+		}
+		if !feedbackSeen {
+			t.Fatalf("second request missing final verification feedback: %#v", body.Messages)
+		}
+		_, _ = w.Write([]byte(`{
+			"id":"resp_final",
+			"model":"deepseek/test-model",
+			"choices":[{
+				"finish_reason":"tool_calls",
+				"message":{"role":"assistant","tool_calls":[{"id":"call_final_2","type":"function","function":{"name":"final_response","arguments":{"summary":"verification blocked after one reminder","files_changed":["README.md"],"verification":["not run: no applicable check"]}}}]}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "low",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--max-turns", "3",
+		"patch README",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"verification_feedback"`,
+		`"status":"reported_only"`,
+		`"summary":"verification blocked after one reminder"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+}
+
 func TestRunExecOpenRouterStripsProviderToolMarkupFromToolTurn(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()

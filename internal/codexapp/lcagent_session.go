@@ -506,6 +506,8 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		}
 	case "verification_check":
 		s.appendAsync(TranscriptStatus, lcagentVerificationCheckText(event))
+	case "verification_feedback":
+		s.appendAsync(TranscriptStatus, lcagentVerificationFeedbackText(event))
 	case "verification_summary":
 		status := rawJSONString(event["status"])
 		message := rawJSONString(event["message"])
