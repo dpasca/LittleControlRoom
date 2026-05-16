@@ -26,6 +26,7 @@ type Runner struct {
 	ArtifactsDir string
 
 	verificationChecks []tools.VerificationCheck
+	filesTouched       []string
 }
 
 type VerificationFeedback struct {
@@ -416,6 +417,7 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 
 	if action.Tool == "apply_patch" || action.Tool == "replace_text" {
 		if len(result.FilesTouched) > 0 {
+			r.filesTouched = appendCleanUniqueStrings(r.filesTouched, result.FilesTouched...)
 			if err := r.Session.Write(session.Event{
 				"type":       "files_touched",
 				"session_id": r.SessionID,
@@ -460,6 +462,20 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		return result, fmt.Errorf("%s failed: %s", action.Tool, result.Error)
 	}
 	return result, nil
+}
+
+func (r *Runner) FilesTouched() []string {
+	if r == nil {
+		return nil
+	}
+	return append([]string(nil), r.filesTouched...)
+}
+
+func (r *Runner) VerificationDetails() []string {
+	if r == nil || len(r.verificationChecks) == 0 {
+		return nil
+	}
+	return formatVerificationChecks(r.verificationChecks, len(r.verificationChecks))
 }
 
 func formatLoadedSkill(loaded skillcatalog.LoadedSkill) string {
@@ -612,6 +628,21 @@ func cleanStringList(values []string) []string {
 		}
 	}
 	return out
+}
+
+func appendCleanUniqueStrings(existing []string, values ...string) []string {
+	seen := map[string]bool{}
+	for _, value := range existing {
+		seen[value] = true
+	}
+	for _, value := range cleanStringList(values) {
+		if seen[value] {
+			continue
+		}
+		existing = append(existing, value)
+		seen[value] = true
+	}
+	return existing
 }
 
 func firstNonEmpty(values ...string) string {

@@ -354,7 +354,7 @@ func checkLiveEvalTask(workspace string, task liveEvalTask, initialDiff string, 
 		for _, want := range task.ExpectFiles {
 			if !changed[want] {
 				result.Score.ExpectedFilesTouched = false
-				return fmt.Errorf("final_response did not list expected changed file %s", want)
+				return fmt.Errorf("final result did not list expected changed file %s", want)
 			}
 		}
 	}
@@ -448,7 +448,9 @@ func liveEvalFinalFilesChanged(path string) (map[string]bool, error) {
 	}
 	changed := map[string]bool{}
 	for _, event := range events {
-		if liveEvalRawString(event["type"]) != "final_response" {
+		switch liveEvalRawString(event["type"]) {
+		case "final_response", "assistant_message", "turn_complete":
+		default:
 			continue
 		}
 		var files []string

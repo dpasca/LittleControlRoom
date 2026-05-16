@@ -27,7 +27,7 @@ rather than a ground-up redesign.
 
 | Priority | Goal | Status | Why It Matters |
 | --- | --- | --- | --- |
-| P0 | Real session continuity | Open | Long coding tasks need durable context without pretending summaries are full memory. |
+| P0 | Real session continuity | Started | Long coding tasks need durable context without pretending summaries are full memory. |
 | P0 | Provider hardening | Started | Same-model quality only matters if the adapter survives rate limits, timeouts, and provider quirks. |
 | P0 | More brutal live evals | Started | We need evidence from tasks that resemble actual coding work, not only smoke fixtures. |
 | P0 | Edit/apply sophistication | Open | A coding agent is only as good as its ability to make and repair changes reliably. |
@@ -45,6 +45,8 @@ Current state:
 - Replay can seed a continuing run through summarized context.
 - `/compact` can write a durable handoff summary.
 - Continuation metadata appears in traces.
+- Max-turn final handoff now preserves harness-known files touched and recorded
+  verification details in structured final events.
 
 Missing:
 
@@ -100,6 +102,10 @@ Current state:
   read-only repo orientation, current-diff review, and a multi-file refactor.
 - Per-case reports include correctness, observed/expected verification status,
   trace quality, cost, read volume, and artifacts.
+- The 2026-05-16 expanded-case run is archived in
+  [lcagent_live_eval_runs.md](lcagent_live_eval_runs.md). It showed the review
+  case passing and the refactor case reaching correct code but missing the final
+  rerun/report because of the turn budget.
 
 Missing:
 

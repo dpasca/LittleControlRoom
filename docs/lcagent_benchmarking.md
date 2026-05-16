@@ -92,6 +92,9 @@ root unless `--data-dir` is provided. It currently covers:
   with expected failed verification
 - `multi_file_price_refactor`: multi-file implementation refactor against tests
 
+Selected live run notes are archived in
+[docs/lcagent_live_eval_runs.md](lcagent_live_eval_runs.md).
+
 List the suite without making provider calls:
 
 ```sh

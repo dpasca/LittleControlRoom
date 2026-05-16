@@ -1665,6 +1665,93 @@ func TestRunExecOpenRouterFinalizesGracefullyAtMaxTurns(t *testing.T) {
 	}
 }
 
+func TestRunExecOpenRouterFinalHandoffPreservesFilesTouched(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch requests {
+		case 1:
+			if _, ok := body["tools"]; !ok {
+				t.Fatalf("tool loop request missing tools: %#v", body)
+			}
+			_, _ = w.Write([]byte(`{
+				"id":"resp_replace",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_replace","type":"function","function":{"name":"replace_text","arguments":"{\"path\":\"README.md\",\"old_text\":\"old\\n\",\"new_text\":\"new\\n\",\"expected_replacements\":1}"}}]}
+				}]
+			}`))
+		default:
+			if _, ok := body["tools"]; ok {
+				t.Fatalf("final handoff request should not include tools: %#v", body)
+			}
+			messages, _ := body["messages"].([]any)
+			if len(messages) == 0 || !strings.Contains(fmt.Sprint(messages[len(messages)-1]), "Files touched by edit tools: README.md") {
+				t.Fatalf("final handoff request missing files touched state: %#v", body)
+			}
+			_, _ = w.Write([]byte(`{
+				"id":"resp_handoff",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"stop",
+					"message":{"role":"assistant","content":"Turn budget reached. README.md was changed from old to new. Verification not run. Continue by running checks."}
+				}]
+			}`))
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "low",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--max-turns", "1",
+		"patch README",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"final_handoff_compacted"`,
+		`"files_changed":["README.md"]`,
+		`"verification_status":"missing_after_changes"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(root, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "new\n" {
+		t.Fatalf("README.md = %q, want new", string(data))
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+}
+
 func TestRunExecOpenRouterRequestsSynthesisBeforeLongRunMaxTurns(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
@@ -1888,6 +1975,7 @@ func TestLiveEvalArtifactScoringHelpers(t *testing.T) {
 {"type":"tool_result","tool":"read_file","result":{"success":true,"output":"ok"}}
 {"type":"tool_result","tool":"run_command","result":{"success":false,"error":"failed"}}
 {"type":"final_response","summary":"done","files_changed":["calc.go"],"verification":["go test ./..."]}
+{"type":"turn_complete","summary":"done","files_changed":["README.md"],"verification":["go test ./..."]}
 `
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -1903,7 +1991,7 @@ func TestLiveEvalArtifactScoringHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("files changed: %v", err)
 	}
-	if !changed["calc.go"] || changed["README.md"] {
+	if !changed["calc.go"] || !changed["README.md"] {
 		t.Fatalf("changed files = %#v", changed)
 	}
 }

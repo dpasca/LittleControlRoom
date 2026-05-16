@@ -691,7 +691,9 @@ func openRouterFinalModel(provider string, cfg modeladapter.OpenRouterConfig) st
 
 func finalizeOpenRouterAfterMaxTurns(ctx context.Context, writer *session.Writer, runner script.Runner, client *modeladapter.Client, finalClient *modeladapter.Client, messages []modeladapter.Message, readLedger *readLedger, providerLabel string, cfg modeladapter.OpenRouterConfig, contextOptions openRouterContextOptions) error {
 	maxTurns := client.MaxTurns()
-	compactedMessages, compaction := compactOpenRouterFinalMessagesWithOptions(messages, openRouterMaxTurnsFinalPrompt(maxTurns), readLedger, contextOptions)
+	filesChanged := runner.FilesTouched()
+	verification := runner.VerificationDetails()
+	compactedMessages, compaction := compactOpenRouterFinalMessagesWithOptions(messages, openRouterMaxTurnsFinalPrompt(maxTurns, filesChanged, verification), readLedger, contextOptions)
 	if err := writer.Write(session.Event{
 		"type":        "final_handoff_compacted",
 		"session_id":  runner.SessionID,
@@ -722,13 +724,15 @@ func finalizeOpenRouterAfterMaxTurns(ctx context.Context, writer *session.Writer
 		return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s model loop exceeded maximum turns; final handoff was empty", providerLabel))
 	}
 	return runner.Final(script.Action{
-		Type:    "final_response",
-		Summary: sanitizedContent,
+		Type:         "final_response",
+		Summary:      sanitizedContent,
+		FilesChanged: filesChanged,
+		Verification: verification,
 	})
 }
 
-func openRouterMaxTurnsFinalPrompt(maxTurns int) string {
-	return fmt.Sprintf(`You have reached the configured maximum of %d model turns.
+func openRouterMaxTurnsFinalPrompt(maxTurns int, filesChanged, verification []string) string {
+	prompt := fmt.Sprintf(`You have reached the configured maximum of %d model turns.
 
 Do not call more tools. Produce a concise handoff for the user instead:
 - Say that the turn budget was reached.
@@ -736,6 +740,17 @@ Do not call more tools. Produce a concise handoff for the user instead:
 - List any files you believe were changed, or say none/unknown.
 - List verification already run, or say not run.
 - State the next concrete step the user can ask for to continue.`, maxTurns)
+	var state []string
+	if len(filesChanged) > 0 {
+		state = append(state, "Files touched by edit tools: "+strings.Join(filesChanged, ", "))
+	}
+	if len(verification) > 0 {
+		state = append(state, "Verification checks already recorded: "+strings.Join(verification, "; "))
+	}
+	if len(state) > 0 {
+		prompt += "\n\nHarness-known continuation state:\n- " + strings.Join(state, "\n- ")
+	}
+	return prompt
 }
 
 func openRouterCompletionOptions(cfg modeladapter.OpenRouterConfig) modeladapter.CompletionOptions {
