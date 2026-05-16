@@ -33,8 +33,9 @@ Implemented pieces:
   back into the live model loop before the next retry.
 - Low-autonomy command policy permits argv-only verification forms across common
   stacks: Go test/list/vet and whole-repo build, Make/Just verification
-  targets, package-manager test/check/build scripts, Cargo checks, Python test
-  and typecheck tools, JS/TS checks, and read-only formatter modes.
+  targets, package-manager test/check/build scripts, controlled `pnpm exec`
+  wrappers around local JS/TS verifier CLIs, Cargo checks, Python test and
+  typecheck tools, JS/TS checks, and read-only formatter modes.
 - Workspace-contained tools: `read_file`, `file_outline`, `module_outline`,
   `list_files`, literal `search`, optional `web_search`, `load_skill`,
   `run_command`, `apply_patch`, literal `replace_text`, `update_plan`, and
@@ -46,6 +47,8 @@ Implemented pieces:
 - Explicit summarized continuation via `--continue-from` with backward-compatible
   `--resume`, `continuation` trace events, parent/root chain metadata, handoff
   source, and pending verification/file state.
+- LCAgent saved-session resume choices include continuation/pending-verification
+  hints and compact trace-quality badges.
 - Experimental tool profiles: `balanced` and `generous`.
 - Experimental context profiles: `balanced` and `large`.
 - LCR settings for executable path, env file, provider, autonomy, tool profile,
@@ -164,7 +167,9 @@ small-to-medium coding tasks before it tries to be a broader assistant.
    The initial argv allowlist now covers common verification commands across Go,
    Make/Just, package managers, Cargo, Python, JS/TS, and format check modes.
    Denials now include command-specific retry guidance for common unsafe nearby
-   forms. Next, use real traces to tighten false positives/negatives.
+   forms, and controlled `pnpm exec` wrappers cover local JS/TS verifier CLIs
+   without allowing broad package execution. Next, use real traces to tighten
+   false positives/negatives.
 
 3. Improve edit application and recovery.
    `apply_patch` now returns typed `patch_failure` metadata and emits
@@ -181,8 +186,10 @@ small-to-medium coding tasks before it tries to be a broader assistant.
    verification commands, token/cached-token totals, duplicate repair feedback,
    per-tool success/failure counts, derived trace-quality findings, and
    continuation-chain state. Embedded LCAgent runs append a compact
-   trace-quality score/grade line when the final artifact is available. Next,
-   add more visual treatment in the interactive TUI.
+   trace-quality score/grade line when the final artifact is available, and the
+   LCAgent resume picker now shows continuation/pending-verification hints plus
+   compact trace-quality badges. Next, add project-level quality rollups and
+   trace-event drill-downs in the interactive TUI.
 
 ### P1: Make Continuation Feel Like A Coding Session
 

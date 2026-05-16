@@ -36,6 +36,7 @@ type codexSessionChoice struct {
 	Title        string
 	Summary      string
 	TraceHint    string
+	TraceBadge   string
 	Live         bool
 	Current      bool
 	Latest       bool
@@ -336,6 +337,9 @@ func enrichLCAgentResumeChoice(choice *codexSessionChoice, session model.Session
 		return
 	}
 	var parts []string
+	if quality := strings.TrimSpace(trace.TraceQualitySummaryLabel()); quality != "" {
+		parts = append(parts, quality)
+	}
 	if source := strings.TrimSpace(trace.ResumeSourceSessionID); source != "" {
 		parts = append(parts, "continued from "+shortID(source))
 	}
@@ -348,6 +352,15 @@ func enrichLCAgentResumeChoice(choice *codexSessionChoice, session model.Session
 	if len(parts) > 0 {
 		choice.TraceHint = strings.Join(parts, "; ")
 	}
+	choice.TraceBadge = lcagentPickerTraceBadge(trace)
+}
+
+func lcagentPickerTraceBadge(trace codexapp.LCAgentTrace) string {
+	quality := trace.TraceQuality
+	if quality.Score == 0 && strings.TrimSpace(quality.Grade) == "" {
+		return ""
+	}
+	return fmt.Sprintf("Q%d", max(0, min(999, quality.Score)))
 }
 
 func lcagentPickerPendingSummary(trace codexapp.LCAgentTrace) string {
@@ -910,6 +923,9 @@ func (m Model) codexPickerBadgeColumn(choice codexSessionChoice) string {
 	if m.codexPickerKind == codexPickerKindResume {
 		parts = append(parts, fixedBadgeSlot(boolBadge(choice.Current, "CUR"), 3))
 		parts = append(parts, fixedBadgeSlot(m.codexPickerResumeState(choice), 4))
+		if choice.Provider.Normalized() == codexapp.ProviderLCAgent {
+			parts = append(parts, fixedBadgeSlot(choice.TraceBadge, 4))
+		}
 	} else {
 		parts = append(parts, fixedBadgeSlot(m.codexPickerGlobalState(choice), 4))
 	}
@@ -988,6 +1004,9 @@ func (m Model) mergeCurrentResumeChoice(choices []codexSessionChoice) []codexSes
 			}
 			if strings.TrimSpace(choice.TraceHint) != "" {
 				mergedCurrent.TraceHint = choice.TraceHint
+			}
+			if strings.TrimSpace(choice.TraceBadge) != "" {
+				mergedCurrent.TraceBadge = choice.TraceBadge
 			}
 			if choice.LastActivity.After(mergedCurrent.LastActivity) {
 				mergedCurrent.LastActivity = choice.LastActivity

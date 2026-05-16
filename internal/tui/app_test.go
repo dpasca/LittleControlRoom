@@ -9491,14 +9491,21 @@ func TestBuildCodexResumeChoicesAddsLCAgentContinuationHint(t *testing.T) {
 	if len(choices) != 1 {
 		t.Fatalf("resume picker choices = %d, want 1", len(choices))
 	}
-	for _, want := range []string{"continued from lcaold", "depth 2", "pending verification missing_after_changes: README.md"} {
+	for _, want := range []string{"trace quality:", "continued from lcaold", "depth 2", "pending verification missing_after_changes: README.md"} {
 		if !strings.Contains(choices[0].TraceHint, want) {
 			t.Fatalf("trace hint missing %q: %#v", want, choices[0])
 		}
 	}
+	if !strings.HasPrefix(choices[0].TraceBadge, "Q") {
+		t.Fatalf("trace badge = %q, want quality badge", choices[0].TraceBadge)
+	}
 	m := Model{codexPickerKind: codexPickerKindResume}
 	if secondary := m.codexPickerSecondaryLabel(choices[0]); !strings.Contains(secondary, "pending verification missing_after_changes") {
 		t.Fatalf("secondary label = %q, want continuation hint", secondary)
+	}
+	row := ansi.Strip(m.renderCodexPickerRow(choices[0], false, 96))
+	if !strings.Contains(row, "LA     SAVE Q") {
+		t.Fatalf("resume picker row should surface LCAgent trace quality badge: %q", row)
 	}
 }
 

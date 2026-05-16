@@ -18,7 +18,8 @@ LCAgent now has the important coding-agent skeleton:
 - verification semantics and repair feedback
 - route presets for common coding lanes
 - embedded `/review` and `/compact`
-- JSONL trace artifacts, metrics, trace-quality summaries, and live evals
+- JSONL trace artifacts, metrics, trace-quality summaries, resume-picker trace
+  hints, and live evals
 
 The remaining goals below are mostly hardening, calibration, and UX polish
 rather than a ground-up redesign.
@@ -30,10 +31,10 @@ rather than a ground-up redesign.
 | P0 | Real session continuity | Started | Long coding tasks need durable context without pretending summaries are full memory. |
 | P0 | Provider hardening | Started | Same-model quality only matters if the adapter survives rate limits, timeouts, and provider quirks. |
 | P0 | More brutal live evals | Started | We need evidence from tasks that resemble actual coding work, not only smoke fixtures. |
-| P0 | Edit/apply sophistication | Open | A coding agent is only as good as its ability to make and repair changes reliably. |
-| P0 | Autonomy calibration | Open | Low-autonomy needs to allow normal verification while still blocking risky commands. |
-| P1 | Interactive UX parity | Open | The embedded experience should make approvals, blocking states, review, and trace quality easy to act on. |
-| P1 | Trace-quality dashboarding | Open | The trace signals exist; LCR should make them scannable during daily use. |
+| P0 | Edit/apply sophistication | Started | A coding agent is only as good as its ability to make and repair changes reliably. |
+| P0 | Autonomy calibration | Started | Low-autonomy needs to allow normal verification while still blocking risky commands. |
+| P1 | Interactive UX parity | Started | The embedded experience should make approvals, blocking states, review, and trace quality easy to act on. |
+| P1 | Trace-quality dashboarding | Started | The trace signals exist; LCR should make them scannable during daily use. |
 | P2 | Efficient scout/delegation lanes | Open | Cheap bounded exploration can save time/cost once core reliability is strong. |
 
 ## P0 Goals
@@ -137,10 +138,12 @@ Current state:
 - `apply_patch` returns structured failure metadata.
 - Patch feedback suggests targeted re-reads.
 - `replace_text` gives a simple exact-replacement fallback.
+- Repeated identical patch feedback is suppressed and escalated into
+  model-facing repair guidance that asks the model to re-read current lines,
+  retry a smaller hunk, or use exact `replace_text`.
 
 Missing:
 
-- Better retry policy after repeated patch/edit failures.
 - More reliable multi-hunk edits against stale context.
 - Optional post-edit formatter/check hooks.
 - Guardrails for generated files and large mechanical edits.
@@ -158,10 +161,12 @@ Current state:
 
 - Low-autonomy allows common verification commands across common stacks.
 - Denials produce guidance for safer nearby forms.
+- Controlled `pnpm exec` wrappers are allowed for local JS/TS verifier CLIs
+  such as `tsc --noEmit`, `eslint`, `prettier --check`, and `biome check`,
+  while broader package execution remains denied.
 
 Missing:
 
-- Calibration from real coding traces.
 - Fewer false denials for normal project verification.
 - Better command-specific blocked states in the UI.
 - Confidence that mutating commands remain appropriately gated.
@@ -180,6 +185,8 @@ Current state:
 
 - Embedded LCAgent supports prompt turns, replay, curated model choices,
   `/review`, `/compact`, and trace-quality status after completed runs.
+- LCAgent saved-session resume choices show continuation/pending-verification
+  hints and compact trace-quality badges.
 
 Missing:
 
@@ -202,10 +209,13 @@ Current state:
 
 - `lcagent metrics` and live evals emit `trace_quality`.
 - Boss/LCR trace harvests include compact quality summaries.
+- The LCAgent resume picker surfaces compact trace-quality badges and selected
+  session detail hints for quality, continuation depth, pending verification,
+  and repair/feedback counts.
 
 Missing:
 
-- A compact trace-quality view in the TUI.
+- Project-list or dashboard-level trace-quality rollups.
 - Per-project recent LCAgent quality trends.
 - Quick drill-down from score/finding to the relevant trace event.
 

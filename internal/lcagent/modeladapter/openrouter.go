@@ -1157,7 +1157,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		"File tools are workspace-only; use read-only run_command argv for paths outside the workspace.",
 		"When using run_command, prefer argv over command strings; shell commands are for shell syntax only.",
 		"When a run_command is a test, lint, typecheck, build, or other verification check, set purpose to verify so LCR can audit what actually ran.",
-		"At low autonomy, use run_command argv for approved verification forms such as go test/list/vet, make test, npm test, cargo test/check, pytest, ruff/prettier/eslint checks, and tsc --noEmit; shell strings and broad write-like commands are denied.",
+		"At low autonomy, use run_command argv for approved verification forms such as go test/list/vet, make test, npm test, pnpm exec wrappers around tsc/eslint/prettier/biome checks, cargo test/check, pytest, ruff/prettier/eslint checks, and tsc --noEmit; shell strings and broad write-like commands are denied.",
 		"If LCAgent sends verification feedback, address it before final_response: repair failing checks, choose an approved argv-only alternative after denial, narrow timed-out checks, or clearly state why verification is blocked.",
 		"Never write provider tool-call markup such as DSML in assistant text; call tools only through structured tool_calls.",
 		"Skill descriptions in this prompt are metadata only; call load_skill before relying on any skill instructions.",

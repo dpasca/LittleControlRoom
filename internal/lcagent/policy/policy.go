@@ -276,8 +276,13 @@ func packageManagerDenialHint(args []string) string {
 	}
 	command := strings.ToLower(strings.TrimSpace(args[0]))
 	switch command {
-	case "install", "add", "remove", "update", "upgrade", "publish", "exec", "dlx":
+	case "install", "add", "remove", "update", "upgrade", "publish", "dlx":
 		return "Dependency, publish, and package-execution commands require medium autonomy; use an existing test/check/lint/typecheck/build script instead."
+	case "exec":
+		if len(args) >= 2 {
+			return verificationArgsDenialHint(args[2:], "Only pnpm exec wrappers around approved local verifier CLIs are allowed at low autonomy, such as pnpm exec tsc --noEmit, pnpm exec eslint ., pnpm exec prettier --check ., or pnpm exec biome check .")
+		}
+		return "Only pnpm exec wrappers around approved local verifier CLIs are allowed at low autonomy, such as pnpm exec tsc --noEmit, pnpm exec eslint ., pnpm exec prettier --check ., or pnpm exec biome check ."
 	case "run", "run-script":
 		if len(args) < 2 {
 			return "Name a verification script such as test, check, lint, typecheck, build, ci, or verify."
@@ -752,6 +757,8 @@ func lowAutonomyPNPMArgs(args []string) bool {
 		return safeVerificationArgs(args[1:])
 	case "run":
 		return lowAutonomyScriptArgs(args[1:])
+	case "exec":
+		return lowAutonomyPNPMExecArgs(args[1:])
 	default:
 		return false
 	}
@@ -804,6 +811,30 @@ func lowAutonomyScriptArgs(args []string) bool {
 		return false
 	}
 	return safeVerificationArgs(args[1:])
+}
+
+func lowAutonomyPNPMExecArgs(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	if args[0] == "--" {
+		args = args[1:]
+	}
+	if len(args) == 0 {
+		return false
+	}
+	switch filepath.Base(args[0]) {
+	case "biome":
+		return lowAutonomyBiomeArgs(args[1:])
+	case "eslint":
+		return lowAutonomyESLintArgs(args[1:])
+	case "prettier":
+		return lowAutonomyPrettierArgs(args[1:])
+	case "tsc", "vue-tsc":
+		return lowAutonomyTypeScriptArgs(args[1:])
+	default:
+		return false
+	}
 }
 
 func lowAutonomyCargoArgs(args []string) bool {
