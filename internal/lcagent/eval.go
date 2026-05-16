@@ -240,6 +240,29 @@ func lcagentEvalCases() []evalCase {
 			},
 		},
 		{
+			Name:   "replace_text_fallback_trace",
+			Prompt: "use exact replacement fallback",
+			Auto:   "low",
+			Files: map[string]string{
+				"README.md": "before\nkeep\n",
+			},
+			Script: `{"type":"tool_call","tool":"replace_text","args":{"path":"README.md","old_text":"before\n","new_text":"after\n"}}
+{"type":"final_response","summary":"replaced README text","files_changed":["README.md"],"verification":["not run: deterministic edit fixture"]}
+`,
+			Check: func(summary sessionmetrics.Summary) error {
+				if summary.ToolCalls["replace_text"] < 1 || summary.ToolResults["replace_text"] < 1 {
+					return fmt.Errorf("replace_text calls/results = %d/%d, want >= 1", summary.ToolCalls["replace_text"], summary.ToolResults["replace_text"])
+				}
+				if summary.PatchDiffSummaries < 1 {
+					return fmt.Errorf("patch diff summary count = %d, want >= 1", summary.PatchDiffSummaries)
+				}
+				if summary.VerificationStatuses["reported_only"] < 1 {
+					return fmt.Errorf("verification reported_only count = %d, want >= 1", summary.VerificationStatuses["reported_only"])
+				}
+				return nil
+			},
+		},
+		{
 			Name:   "low_autonomy_go_test_verification",
 			Prompt: "run the narrow verification command",
 			Auto:   "low",

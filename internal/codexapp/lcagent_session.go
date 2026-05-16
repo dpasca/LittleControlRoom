@@ -29,11 +29,19 @@ const (
 	lcagentDefaultWebSearch      = "off"
 )
 
+type lcagentRunOptions struct {
+	autoOverride   string
+	disableResume  bool
+	startingStatus string
+	runningStatus  string
+}
+
 type lcagentSession struct {
 	projectPath       string
 	dataDir           string
 	execPath          string
 	envFile           string
+	routePreset       string
 	provider          string
 	auto              string
 	toolProfile       string
@@ -79,6 +87,10 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	routePreset, err := lcagentRoutePresetValue(req.LCAgentRoutePreset)
+	if err != nil {
+		return nil, err
+	}
 	toolProfile, err := lcagentToolProfileValue(req.LCAgentToolProfile)
 	if err != nil {
 		return nil, err
@@ -89,7 +101,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	}
 	requestTimeout := lcagentRequestTimeoutValue(req.LCAgentRequestTimeout)
 	model := strings.TrimSpace(req.PendingModel)
-	if model == "" {
+	if model == "" && routePreset == "" {
 		model = lcagentDefaultModel(provider)
 	}
 	session := &lcagentSession{
@@ -97,6 +109,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		dataDir:           dataDir,
 		execPath:          strings.TrimSpace(req.LCAgentPath),
 		envFile:           strings.TrimSpace(req.LCAgentEnvFile),
+		routePreset:       routePreset,
 		provider:          provider,
 		auto:              strings.TrimSpace(req.LCAgentAuto),
 		toolProfile:       toolProfile,
@@ -108,7 +121,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		webSearchURL:      strings.TrimSpace(req.LCAgentWebSearchURL),
 		notify:            notify,
 		model:             model,
-		modelProvider:     provider,
+		modelProvider:     firstNonEmpty(lcagentRoutePresetProvider(routePreset), provider),
 		reasoningEffort:   strings.TrimSpace(req.PendingReasoning),
 		status:            "Ready",
 	}
@@ -189,11 +202,63 @@ func (s *lcagentSession) ClearGoal() error {
 }
 
 func (s *lcagentSession) Compact() error {
-	return fmt.Errorf("LCAgent compact is not supported yet")
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return fmt.Errorf("LCAgent session is closed")
+	}
+	if s.busy {
+		s.mu.Unlock()
+		return fmt.Errorf("cannot compact while LCAgent is running")
+	}
+	sessionID := strings.TrimSpace(s.threadID)
+	dataDir := s.dataDir
+	projectPath := s.projectPath
+	s.mu.Unlock()
+
+	trace, err := LoadLCAgentTrace(dataDir, sessionID, projectPath)
+	if err != nil {
+		if sessionID == "" && strings.Contains(err.Error(), "artifact not found") {
+			return s.unsupportedNotice("No LCAgent session to compact yet.")
+		}
+		return err
+	}
+	path, summary, err := writeLCAgentCompactSummary(dataDir, trace)
+	if err != nil {
+		return err
+	}
+	notice := "LCAgent compact summary refreshed"
+	if path != "" {
+		notice += ": " + path
+	}
+	s.mu.Lock()
+	if trace.SessionID != "" {
+		s.threadID = trace.SessionID
+	}
+	s.status = notice
+	s.appendEntryLocked(TranscriptStatus, notice)
+	s.appendEntryLocked(TranscriptStatus, summary)
+	s.mu.Unlock()
+	if s.notify != nil {
+		s.notify()
+	}
+	return nil
 }
 
 func (s *lcagentSession) Review() error {
-	return fmt.Errorf("LCAgent review is not supported yet")
+	prompt, ok, err := lcagentReviewPrompt(s.projectPath)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return s.unsupportedNotice("No uncommitted changes to review.")
+	}
+	return s.startRunWithOptions(prompt, "/review current uncommitted changes", lcagentRunOptions{
+		autoOverride:   "off",
+		disableResume:  true,
+		startingStatus: "Starting LCAgent review",
+		runningStatus:  "LCAgent reviewing uncommitted changes",
+	})
 }
 
 func (s *lcagentSession) ListModels() ([]ModelOption, error) {
@@ -201,30 +266,78 @@ func (s *lcagentSession) ListModels() ([]ModelOption, error) {
 	if provider == "" {
 		provider = lcagentDefaultProvider
 	}
-	model := lcagentDefaultModel(provider)
-	displayName := model
-	description := "Experimental LCAgent tool-calling model."
+	models := lcagentModelOptionsForProvider(provider)
+	for _, model := range []string{s.model} {
+		model = strings.TrimSpace(model)
+		if model == "" || lcagentModelOptionExists(models, model) {
+			continue
+		}
+		models = append([]ModelOption{{
+			ID:          model,
+			Model:       model,
+			DisplayName: model,
+			Description: "Custom LCAgent model.",
+		}}, models...)
+	}
+	return models, nil
+}
+
+func lcagentModelOptionsForProvider(provider string) []ModelOption {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		provider = lcagentDefaultProvider
+	}
+	defaultModel := lcagentDefaultModel(provider)
+	reasoning := []ReasoningEffortOption{
+		{ReasoningEffort: "low", Description: "Light reasoning for coding turns."},
+		{ReasoningEffort: "medium", Description: "More reasoning for harder coding turns."},
+		{ReasoningEffort: "high", Description: "Deeper reasoning for difficult reviews or refactors."},
+	}
+	option := func(model, displayName, description, defaultReasoning string, isDefault bool) ModelOption {
+		return ModelOption{
+			ID:                        model,
+			Model:                     model,
+			DisplayName:               displayName,
+			Description:               description,
+			SupportedReasoningEfforts: reasoning,
+			DefaultReasoningEffort:    defaultReasoning,
+			IsDefault:                 isDefault,
+		}
+	}
 	switch provider {
 	case "openrouter":
-		displayName = "DeepSeek V4 Pro via OpenRouter"
-		description = "OpenRouter-backed model used by the experimental LCAgent."
+		return []ModelOption{
+			option(modeladapter.DefaultOpenRouterModel, "Balanced: DeepSeek V4 Pro", "Recommended balanced OpenRouter coding route.", "", defaultModel == modeladapter.DefaultOpenRouterModel),
+			option("openai/gpt-5.5", "Quality: GPT-5.5", "Higher-quality OpenRouter coding route.", "low", defaultModel == "openai/gpt-5.5"),
+			option("deepseek/deepseek-v4-flash", "Cheap Scout: DeepSeek V4 Flash", "Lower-cost route for bounded read-first exploration.", "", defaultModel == "deepseek/deepseek-v4-flash"),
+		}
 	case "deepseek":
-		displayName = "DeepSeek V4 Pro"
-		description = "Direct DeepSeek model used by the experimental LCAgent."
+		return []ModelOption{
+			option(modeladapter.DefaultDeepSeekModel, "Balanced: DeepSeek V4 Pro", "Direct DeepSeek coding route.", "", defaultModel == modeladapter.DefaultDeepSeekModel),
+			option("deepseek-v4-flash", "Cheap Scout: DeepSeek V4 Flash", "Lower-cost direct DeepSeek exploration route.", "", defaultModel == "deepseek-v4-flash"),
+		}
 	case "moonshot":
-		displayName = "Kimi K2.6"
-		description = "Direct Moonshot/Kimi model used by the experimental LCAgent."
+		return []ModelOption{
+			option(modeladapter.DefaultMoonshotModel, "Balanced: Kimi K2.6", "Direct Moonshot/Kimi coding route.", "", true),
+		}
 	case "openai":
-		displayName = "GPT-5.5"
-		description = "Direct OpenAI model used by the experimental LCAgent."
+		return []ModelOption{
+			option(modeladapter.DefaultOpenAIModel, "Quality: GPT-5.5", "Direct OpenAI coding route.", "low", true),
+		}
+	default:
+		return []ModelOption{
+			option(defaultModel, defaultModel, "Experimental LCAgent tool-calling model.", "", true),
+		}
 	}
-	return []ModelOption{{
-		ID:          model,
-		Model:       model,
-		DisplayName: displayName,
-		Description: description,
-		IsDefault:   true,
-	}}, nil
+}
+
+func lcagentModelOptionExists(models []ModelOption, id string) bool {
+	for _, option := range models {
+		if option.ID == id || option.Model == id {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *lcagentSession) StageModelOverride(model, reasoningEffort string) error {
@@ -279,6 +392,10 @@ func (s *lcagentSession) Close() error {
 }
 
 func (s *lcagentSession) startRun(prompt, displayPrompt string) error {
+	return s.startRunWithOptions(prompt, displayPrompt, lcagentRunOptions{})
+}
+
+func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts lcagentRunOptions) error {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -294,9 +411,12 @@ func (s *lcagentSession) startRun(prompt, displayPrompt string) error {
 	s.busySince = now
 	s.lastBusyActivityAt = now
 	s.lastActivityAt = now
-	s.status = "Starting LCAgent"
+	s.status = firstNonEmpty(opts.startingStatus, "Starting LCAgent")
 	s.lastError = ""
 	resumeID := strings.TrimSpace(s.threadID)
+	if opts.disableResume {
+		resumeID = ""
+	}
 	if resumeID != "" {
 		if s.replayLoaded && len(s.entries) > 0 {
 			s.appendEntryLocked(TranscriptStatus, "Starting a continuing LCAgent run with summarized context from "+resumeID+".")
@@ -307,7 +427,11 @@ func (s *lcagentSession) startRun(prompt, displayPrompt string) error {
 	}
 	s.appendEntryLocked(TranscriptUser, firstNonEmpty(displayPrompt, prompt))
 	provider := firstNonEmpty(s.provider, lcagentDefaultProvider)
-	model := firstNonEmpty(s.model, lcagentDefaultModel(provider))
+	routePreset := strings.TrimSpace(s.routePreset)
+	model := strings.TrimSpace(s.model)
+	if model == "" && routePreset == "" {
+		model = lcagentDefaultModel(provider)
+	}
 	toolProfile := firstNonEmpty(s.toolProfile, lcagentDefaultToolProfile)
 	contextProfile := firstNonEmpty(s.contextProfile, lcagentDefaultContextProfile)
 	requestTimeout := s.requestTimeout
@@ -335,23 +459,33 @@ func (s *lcagentSession) startRun(prompt, displayPrompt string) error {
 		"exec",
 		"--cwd", s.projectPath,
 		"--data-dir", s.dataDir,
-		"--auto", lcagentAutoLevel(s.auto),
 		"--output", "stream-json",
-		"--provider", provider,
-		"--model", model,
-		"--tool-profile", toolProfile,
-		"--context-profile", contextProfile,
-		"--request-timeout", requestTimeout.String(),
 		"--web-search-backend", webSearchBackend,
 	)
+	if routePreset != "" && opts.autoOverride == "" {
+		args = append(args, "--route-preset", routePreset)
+	} else {
+		args = append(args,
+			"--auto", lcagentAutoLevel(firstNonEmpty(opts.autoOverride, s.auto)),
+			"--provider", provider,
+		)
+		if model != "" {
+			args = append(args, "--model", model)
+		}
+		args = append(args,
+			"--tool-profile", toolProfile,
+			"--context-profile", contextProfile,
+			"--request-timeout", requestTimeout.String(),
+		)
+		if reasoningEffort != "" {
+			args = append(args, "--reasoning-effort", reasoningEffort)
+		}
+	}
 	if webSearchEngineID != "" {
 		args = append(args, "--web-search-engine-id", webSearchEngineID)
 	}
 	if webSearchURL != "" {
 		args = append(args, "--web-search-url", webSearchURL)
-	}
-	if reasoningEffort != "" {
-		args = append(args, "--reasoning-effort", reasoningEffort)
 	}
 	envFile := firstNonEmpty(s.envFile, os.Getenv("LCROOM_LCAGENT_ENV_FILE"))
 	if envFile != "" {
@@ -392,7 +526,7 @@ func (s *lcagentSession) startRun(prompt, displayPrompt string) error {
 	s.mu.Lock()
 	s.cmd = cmd
 	s.cancel = cancel
-	s.status = "LCAgent running"
+	s.status = firstNonEmpty(opts.runningStatus, "LCAgent running")
 	s.mu.Unlock()
 	if s.notify != nil {
 		s.notify()
@@ -567,6 +701,9 @@ func (s *lcagentSession) handleEvent(line []byte) {
 
 func (s *lcagentSession) finishRun(processState string, ok bool, err error) {
 	s.mu.Lock()
+	sessionID := strings.TrimSpace(s.threadID)
+	dataDir := s.dataDir
+	projectPath := s.projectPath
 	s.busy = false
 	s.cancel = nil
 	s.cmd = nil
@@ -582,6 +719,13 @@ func (s *lcagentSession) finishRun(processState string, ok bool, err error) {
 		s.status = firstNonEmpty(processState, "LCAgent stopped")
 	}
 	s.mu.Unlock()
+	if err == nil && ok {
+		if trace, traceErr := LoadLCAgentTrace(dataDir, sessionID, projectPath); traceErr == nil {
+			if quality := trace.TraceQualitySummaryLabel(); quality != "" {
+				s.appendAsync(TranscriptStatus, "LCAgent "+quality)
+			}
+		}
+	}
 	if s.notify != nil {
 		s.notify()
 	}
@@ -740,6 +884,21 @@ func lcagentProviderValue(configured string) (string, error) {
 	}
 }
 
+func lcagentRoutePresetValue(configured string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(firstNonEmpty(configured, os.Getenv("LCROOM_LCAGENT_ROUTE_PRESET"))))
+	value = strings.ReplaceAll(value, "_", "-")
+	switch value {
+	case "":
+		return "", nil
+	case "scout", "cheap", "cheapscout":
+		return "cheap-scout", nil
+	case "balanced", "quality", "cheap-scout":
+		return value, nil
+	default:
+		return "", fmt.Errorf("LCAgent route preset must be blank or one of: balanced, quality, cheap-scout")
+	}
+}
+
 func lcagentToolProfileValue(configured string) (string, error) {
 	value := strings.ToLower(strings.TrimSpace(firstNonEmpty(configured, os.Getenv("LCROOM_LCAGENT_TOOL_PROFILE"))))
 	if value == "" {
@@ -832,6 +991,30 @@ func lcagentDefaultModel(provider string) string {
 	}
 }
 
+func lcagentRoutePresetProvider(preset string) string {
+	switch strings.ToLower(strings.TrimSpace(preset)) {
+	case "quality":
+		return "openai"
+	case "balanced", "cheap-scout":
+		return "openrouter"
+	default:
+		return ""
+	}
+}
+
+func lcagentRoutePresetModel(preset string) string {
+	switch strings.ToLower(strings.TrimSpace(preset)) {
+	case "quality":
+		return modeladapter.DefaultOpenAIModel
+	case "balanced":
+		return modeladapter.DefaultOpenRouterModel
+	case "cheap-scout":
+		return "deepseek/deepseek-v4-flash"
+	default:
+		return ""
+	}
+}
+
 func (s *lcagentSession) snapshotLocked() Snapshot {
 	entries := cloneTranscriptEntries(s.entries)
 	transcript := ""
@@ -867,8 +1050,8 @@ func (s *lcagentSession) snapshotLocked() Snapshot {
 		LastError:          s.lastError,
 		LastActivityAt:     s.lastActivityAt,
 		CurrentCWD:         s.projectPath,
-		Model:              firstNonEmpty(s.model, lcagentDefaultModel(s.provider)),
-		ModelProvider:      firstNonEmpty(s.modelProvider, lcagentDefaultProvider),
+		Model:              firstNonEmpty(s.model, lcagentRoutePresetModel(s.routePreset), lcagentDefaultModel(s.provider)),
+		ModelProvider:      firstNonEmpty(s.modelProvider, lcagentRoutePresetProvider(s.routePreset), lcagentDefaultProvider),
 		ReasoningEffort:    s.reasoningEffort,
 		TokenUsage:         exportedTokenUsageSnapshot(s.tokenUsage),
 	}

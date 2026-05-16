@@ -57,6 +57,18 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 			return 1
 		}
 		return 0
+	case "live-eval":
+		if err := runLiveEval(args[1:], stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	case "presets":
+		if err := runPresets(args[1:], stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 	case "smoke":
 		if err := runSmoke(args[1:], stdout); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -73,7 +85,72 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 }
 
 func lcagentUsage() string {
-	return "usage: lcagent exec [flags] <prompt>\n       lcagent metrics <session.jsonl>...\n       lcagent eval [flags]\n       lcagent smoke [flags]"
+	return "usage: lcagent exec [flags] <prompt>\n       lcagent presets [flags]\n       lcagent metrics <session.jsonl>...\n       lcagent eval [flags]\n       lcagent live-eval [flags]\n       lcagent smoke [flags]"
+}
+
+func runPresets(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("presets", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var outputRaw string
+	fs.StringVar(&outputRaw, "output", string(outputText), "output: text or json")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if len(fs.Args()) > 0 {
+		return fmt.Errorf("usage: lcagent presets [--output text|json]")
+	}
+	switch outputMode(strings.TrimSpace(outputRaw)) {
+	case "", outputText:
+		printLCAgentRoutePresets(stdout)
+	case outputJSON:
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(lcagentRoutePresets())
+	default:
+		return fmt.Errorf("unsupported output mode: %s", outputRaw)
+	}
+	return nil
+}
+
+func visitedFlagNames(fs *flag.FlagSet) map[string]bool {
+	visited := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) {
+		visited[f.Name] = true
+	})
+	return visited
+}
+
+func applyLCAgentRoutePreset(preset lcagentRoutePreset, visited map[string]bool, provider, model, finalModel, reasoningEffort, autoRaw, toolProfileRaw, contextProfileRaw, providerOnlyRaw, temperatureRaw *string, requestTimeout *time.Duration) {
+	if !visited["provider"] && strings.TrimSpace(preset.Provider) != "" {
+		*provider = preset.Provider
+	}
+	if !visited["model"] && strings.TrimSpace(preset.Model) != "" {
+		*model = preset.Model
+	}
+	if !visited["final-model"] && strings.TrimSpace(preset.FinalModel) != "" {
+		*finalModel = preset.FinalModel
+	}
+	if !visited["reasoning-effort"] && strings.TrimSpace(preset.ReasoningEffort) != "" {
+		*reasoningEffort = preset.ReasoningEffort
+	}
+	if !visited["auto"] && strings.TrimSpace(preset.Auto) != "" {
+		*autoRaw = preset.Auto
+	}
+	if !visited["tool-profile"] && strings.TrimSpace(preset.ToolProfile) != "" {
+		*toolProfileRaw = preset.ToolProfile
+	}
+	if !visited["context-profile"] && strings.TrimSpace(preset.ContextProfile) != "" {
+		*contextProfileRaw = preset.ContextProfile
+	}
+	if !visited["openrouter-provider-only"] && len(preset.ProviderOnly) > 0 {
+		*providerOnlyRaw = strings.Join(preset.ProviderOnly, ",")
+	}
+	if !visited["temperature"] && strings.TrimSpace(preset.Temperature) != "" {
+		*temperatureRaw = preset.Temperature
+	}
+	if !visited["request-timeout"] && preset.RequestTimeout > 0 {
+		*requestTimeout = preset.RequestTimeout
+	}
 }
 
 func runMetrics(args []string, stdout io.Writer) error {
@@ -92,7 +169,7 @@ func runMetrics(args []string, stdout io.Writer) error {
 func runExec(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, finalModel, envFile, reasoningEffort, temperatureRaw, providerOnlyRaw, toolProfileRaw, contextProfileRaw, resumeRaw string
+	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, finalModel, envFile, reasoningEffort, temperatureRaw, providerOnlyRaw, toolProfileRaw, contextProfileRaw, resumeRaw, routePresetRaw string
 	var webSearchBackend, webSearchAPIKey, webSearchEngineID, webSearchURL string
 	var requestTimeout time.Duration
 	var maxTurns int
@@ -101,6 +178,7 @@ func runExec(args []string, stdout io.Writer) error {
 	fs.StringVar(&autoRaw, "auto", "off", "autonomy: off, low, medium")
 	fs.StringVar(&outputRaw, "output", string(outputStreamJSON), "output: text, json, stream-json")
 	fs.StringVar(&scriptPath, "script", "", "scripted JSONL actions")
+	fs.StringVar(&routePresetRaw, "route-preset", "", "coding route preset: balanced, quality, or cheap-scout; explicit flags override preset values")
 	fs.StringVar(&provider, "provider", "scripted", "provider: scripted, openrouter, openai, deepseek, or moonshot")
 	fs.StringVar(&model, "model", "", "model name")
 	fs.StringVar(&finalModel, "final-model", "", "optional model for no-tools final synthesis")
@@ -119,6 +197,18 @@ func runExec(args []string, stdout io.Writer) error {
 	fs.IntVar(&maxTurns, "max-turns", modeladapter.DefaultOpenRouterMaxTurns, "maximum model turns for provider loops")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	visitedFlags := visitedFlagNames(fs)
+	var routePreset lcagentRoutePreset
+	routePresetSet := false
+	if strings.TrimSpace(routePresetRaw) != "" {
+		var ok bool
+		routePreset, ok = lcagentRoutePresetByName(routePresetRaw)
+		if !ok {
+			return fmt.Errorf("unknown route preset %q; available presets: %s", routePresetRaw, lcagentRoutePresetNames())
+		}
+		routePresetSet = true
+		applyLCAgentRoutePreset(routePreset, visitedFlags, &provider, &model, &finalModel, &reasoningEffort, &autoRaw, &toolProfileRaw, &contextProfileRaw, &providerOnlyRaw, &temperatureRaw, &requestTimeout)
 	}
 	prompt := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	if prompt == "" {
@@ -191,6 +281,24 @@ func runExec(args []string, stdout io.Writer) error {
 	defer writer.Close()
 	if err := writer.Write(session.Meta(sessionID, workspace.Root, string(auto), provider, model, version, started)); err != nil {
 		return err
+	}
+	if routePresetSet {
+		if err := writer.Write(session.Event{
+			"type":              "route_preset",
+			"session_id":        sessionID,
+			"name":              routePreset.Name,
+			"display_name":      routePreset.DisplayName,
+			"description":       routePreset.Description,
+			"resolved_provider": provider,
+			"resolved_model":    model,
+			"auto":              string(auto),
+			"tool_profile":      string(toolProfile),
+			"context_profile":   string(contextProfile),
+			"reasoning_effort":  reasoningEffort,
+			"request_timeout":   requestTimeout.String(),
+		}); err != nil {
+			return err
+		}
 	}
 	if err := writer.Write(session.Event{
 		"type":         "tool_profile",

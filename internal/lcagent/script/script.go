@@ -50,6 +50,13 @@ type Action struct {
 	Verification []string        `json:"verification,omitempty"`
 }
 
+type replaceTextArgs struct {
+	Path                 string `json:"path"`
+	OldText              string `json:"old_text"`
+	NewText              string `json:"new_text"`
+	ExpectedReplacements int    `json:"expected_replacements,omitempty"`
+}
+
 func VerificationFeedbackForResult(result tools.ToolResult) (VerificationFeedback, bool) {
 	if !strings.EqualFold(result.Purpose, tools.CommandPurposeVerify) || result.Success {
 		return VerificationFeedback{}, false
@@ -379,6 +386,35 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			return tools.ToolResult{}, err
 		}
 		result = r.Patch.Apply(args.Patch)
+	case "replace_text":
+		var args replaceTextArgs
+		if err := json.Unmarshal(action.Args, &args); err != nil {
+			return tools.ToolResult{}, err
+		}
+		result = tools.TextEditor{Workspace: r.Patch.Workspace}.ReplaceText(tools.ReplaceTextSpec{
+			Path:                 args.Path,
+			OldText:              args.OldText,
+			NewText:              args.NewText,
+			ExpectedReplacements: args.ExpectedReplacements,
+		})
+	case "update_plan":
+		var args planArgs
+		if err := json.Unmarshal(action.Args, &args); err != nil {
+			return tools.ToolResult{}, err
+		}
+		result = tools.ToolResult{Success: true, Output: "plan updated"}
+		if err := r.Session.Write(session.Event{
+			"type":       "plan_update",
+			"session_id": r.SessionID,
+			"items":      args.Items,
+		}); err != nil {
+			return tools.ToolResult{}, err
+		}
+	default:
+		result = tools.ToolResult{Success: false, Error: "unsupported tool: " + action.Tool}
+	}
+
+	if action.Tool == "apply_patch" || action.Tool == "replace_text" {
 		if len(result.FilesTouched) > 0 {
 			if err := r.Session.Write(session.Event{
 				"type":       "files_touched",
@@ -399,21 +435,6 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 				return tools.ToolResult{}, err
 			}
 		}
-	case "update_plan":
-		var args planArgs
-		if err := json.Unmarshal(action.Args, &args); err != nil {
-			return tools.ToolResult{}, err
-		}
-		result = tools.ToolResult{Success: true, Output: "plan updated"}
-		if err := r.Session.Write(session.Event{
-			"type":       "plan_update",
-			"session_id": r.SessionID,
-			"items":      args.Items,
-		}); err != nil {
-			return tools.ToolResult{}, err
-		}
-	default:
-		result = tools.ToolResult{Success: false, Error: "unsupported tool: " + action.Tool}
 	}
 
 	if result.Denied {

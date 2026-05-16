@@ -3,6 +3,7 @@ package codexapp
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -254,6 +255,125 @@ func TestLCAgentSessionReplaysRequestedArtifact(t *testing.T) {
 	}
 }
 
+func TestLCAgentSessionListModelsReturnsCuratedCodingRoutes(t *testing.T) {
+	session, err := newLCAgentSession(LaunchRequest{
+		Provider:        ProviderLCAgent,
+		ProjectPath:     t.TempDir(),
+		AppDataDir:      t.TempDir(),
+		LCAgentProvider: "openrouter",
+	}, nil)
+	if err != nil {
+		t.Fatalf("newLCAgentSession() error = %v", err)
+	}
+	models, err := session.ListModels()
+	if err != nil {
+		t.Fatalf("ListModels() error = %v", err)
+	}
+	if len(models) < 3 {
+		t.Fatalf("ListModels() returned %d models, want curated routes: %#v", len(models), models)
+	}
+	want := map[string]string{
+		"deepseek/deepseek-v4-pro":   "Balanced: DeepSeek V4 Pro",
+		"openai/gpt-5.5":             "Quality: GPT-5.5",
+		"deepseek/deepseek-v4-flash": "Cheap Scout: DeepSeek V4 Flash",
+	}
+	for _, option := range models {
+		delete(want, option.Model)
+		if option.Model == "openai/gpt-5.5" && option.DefaultReasoningEffort != "low" {
+			t.Fatalf("GPT-5.5 default reasoning = %q, want low", option.DefaultReasoningEffort)
+		}
+	}
+	if len(want) > 0 {
+		t.Fatalf("missing curated LCAgent model options: %#v in %#v", want, models)
+	}
+	if !models[0].IsDefault {
+		t.Fatalf("first model should be default balanced route: %#v", models[0])
+	}
+}
+
+func TestLCAgentSessionListModelsKeepsCustomCurrentModel(t *testing.T) {
+	session, err := newLCAgentSession(LaunchRequest{
+		Provider:        ProviderLCAgent,
+		ProjectPath:     t.TempDir(),
+		AppDataDir:      t.TempDir(),
+		LCAgentProvider: "deepseek",
+		PendingModel:    "deepseek/custom-experiment",
+	}, nil)
+	if err != nil {
+		t.Fatalf("newLCAgentSession() error = %v", err)
+	}
+	models, err := session.ListModels()
+	if err != nil {
+		t.Fatalf("ListModels() error = %v", err)
+	}
+	if len(models) == 0 || models[0].Model != "deepseek/custom-experiment" {
+		t.Fatalf("custom model should be preserved first: %#v", models)
+	}
+}
+
+func TestLCAgentSessionLaunchUsesRoutePresetBundle(t *testing.T) {
+	root := t.TempDir()
+	argsPath := filepath.Join(t.TempDir(), "args.txt")
+	exe := filepath.Join(t.TempDir(), "fake-lcagent")
+	script := `#!/bin/sh
+{
+  for arg in "$@"; do
+    printf '%s\n' "$arg"
+  done
+} > "$LCAGENT_ARGS_FILE"
+printf '%s\n' '{"type":"session_meta","id":"lca_route_session","cwd":"/tmp/demo"}'
+printf '%s\n' '{"type":"turn_complete","summary":"route preset run"}'
+`
+	if err := os.WriteFile(exe, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake lcagent: %v", err)
+	}
+	t.Setenv("LCAGENT_ARGS_FILE", argsPath)
+
+	notify := make(chan struct{}, 20)
+	session, err := newLCAgentSession(LaunchRequest{
+		Provider:            ProviderLCAgent,
+		ProjectPath:         root,
+		AppDataDir:          t.TempDir(),
+		LCAgentPath:         exe,
+		LCAgentRoutePreset:  "quality",
+		LCAgentProvider:     "deepseek",
+		LCAgentAuto:         "medium",
+		LCAgentToolProfile:  "generous",
+		PendingModel:        "",
+		PendingReasoning:    "high",
+		LCAgentEnvFile:      "/tmp/test.env",
+		LCAgentWebSearchURL: "http://127.0.0.1:8888",
+		Prompt:              "use the configured route",
+	}, func() {
+		select {
+		case notify <- struct{}{}:
+		default:
+		}
+	})
+	if err != nil {
+		t.Fatalf("newLCAgentSession() error = %v", err)
+	}
+	snapshot := waitForLCAgentIdleSnapshot(t, session, notify)
+	if snapshot.Model != "gpt-5.5" || snapshot.ModelProvider != "openai" {
+		t.Fatalf("snapshot model/provider = %q/%q, want quality route", snapshot.Model, snapshot.ModelProvider)
+	}
+	argsBytes, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read fake args: %v", err)
+	}
+	args := strings.Split(strings.TrimSpace(string(argsBytes)), "\n")
+	for _, want := range []string{"--route-preset", "quality", "--env-file", "/tmp/test.env", "--web-search-url", "http://127.0.0.1:8888"} {
+		if !lcagentTestStringSliceContains(args, want) {
+			t.Fatalf("args missing %q: %#v", want, args)
+		}
+	}
+	for _, blocked := range []string{"--provider", "--model", "--auto", "--tool-profile", "--context-profile", "--reasoning-effort"} {
+		if lcagentTestStringSliceContains(args, blocked) {
+			t.Fatalf("route preset should own %s unless review/override is active: %#v", blocked, args)
+		}
+	}
+}
+
 func TestLCAgentSessionContinuesLoadedReplayWithResumeArg(t *testing.T) {
 	root := t.TempDir()
 	dataDir := t.TempDir()
@@ -329,6 +449,163 @@ printf '%s\n' '{"type":"turn_complete"}'
 	}
 }
 
+func TestLCAgentSessionReviewStartsReadOnlyCurrentDiffRun(t *testing.T) {
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	initLCAgentReviewGitRepo(t, root)
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("# Demo\n\nchanged\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	argsPath := filepath.Join(t.TempDir(), "args.txt")
+	exe := filepath.Join(t.TempDir(), "fake-lcagent")
+	script := `#!/bin/sh
+{
+  for arg in "$@"; do
+    printf '%s\n' "$arg"
+  done
+} > "$LCAGENT_ARGS_FILE"
+printf '%s\n' '{"type":"session_meta","id":"lca_review_session","cwd":"/tmp/demo"}'
+printf '%s\n' '{"type":"assistant_message","message":"reviewed current diff"}'
+printf '%s\n' '{"type":"turn_complete","summary":"reviewed current diff","files_changed":[],"verification":["reviewed provided diff"]}'
+`
+	if err := os.WriteFile(exe, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake lcagent: %v", err)
+	}
+	t.Setenv("LCAGENT_ARGS_FILE", argsPath)
+
+	notify := make(chan struct{}, 20)
+	session, err := newLCAgentSession(LaunchRequest{
+		Provider:    ProviderLCAgent,
+		ProjectPath: root,
+		AppDataDir:  dataDir,
+		LCAgentPath: exe,
+		LCAgentAuto: "medium",
+	}, func() {
+		select {
+		case notify <- struct{}{}:
+		default:
+		}
+	})
+	if err != nil {
+		t.Fatalf("newLCAgentSession() error = %v", err)
+	}
+	lcSession := session.(*lcagentSession)
+	lcSession.mu.Lock()
+	lcSession.threadID = "previous-session-should-not-be-used"
+	lcSession.mu.Unlock()
+	if err := session.Review(); err != nil {
+		t.Fatalf("Review() error = %v", err)
+	}
+	snapshot := waitForLCAgentIdleSnapshot(t, session, notify)
+	snapshot = waitForLCAgentTranscript(t, session, "reviewed current diff")
+	if snapshot.ThreadID != "lca_review_session" {
+		t.Fatalf("ThreadID = %q, want review session", snapshot.ThreadID)
+	}
+	if !strings.Contains(snapshot.Transcript, "/review current uncommitted changes") ||
+		!strings.Contains(snapshot.Transcript, "reviewed current diff") {
+		t.Fatalf("transcript missing review prompt/answer:\n%s", snapshot.Transcript)
+	}
+	argsBytes, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read fake args: %v", err)
+	}
+	args := strings.Split(strings.TrimSpace(string(argsBytes)), "\n")
+	for _, want := range []string{"--auto", "off", "Review the current uncommitted changes", "Git diff HEAD", "- Do not edit files."} {
+		if !lcagentTestStringSliceContains(args, want) && !strings.Contains(string(argsBytes), want) {
+			t.Fatalf("args missing %q: %#v", want, args)
+		}
+	}
+	if lcagentTestStringSliceContains(args, "--resume") || strings.Contains(string(argsBytes), "previous-session-should-not-be-used") {
+		t.Fatalf("review should not resume previous LCAgent session: %#v", args)
+	}
+}
+
+func TestLCAgentSessionReviewReportsNoUncommittedChanges(t *testing.T) {
+	root := t.TempDir()
+	initLCAgentReviewGitRepo(t, root)
+	session, err := newLCAgentSession(LaunchRequest{
+		Provider:    ProviderLCAgent,
+		ProjectPath: root,
+		AppDataDir:  t.TempDir(),
+	}, nil)
+	if err != nil {
+		t.Fatalf("newLCAgentSession() error = %v", err)
+	}
+	if err := session.Review(); err != nil {
+		t.Fatalf("Review() error = %v", err)
+	}
+	snapshot := session.Snapshot()
+	if snapshot.Busy {
+		t.Fatalf("review should not start a run when no changes exist: %#v", snapshot)
+	}
+	if !strings.Contains(snapshot.Transcript, "No uncommitted changes to review.") {
+		t.Fatalf("transcript missing no-change review notice:\n%s", snapshot.Transcript)
+	}
+}
+
+func TestLCAgentSessionCompactWritesDurableHandoffSummary(t *testing.T) {
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	sessionID := "lca_compact_source"
+	started := time.Date(2026, 5, 13, 12, 0, 0, 0, time.UTC)
+	writeLCAgentReplayArtifact(t, dataDir, started, sessionID, []map[string]any{
+		{"type": "session_meta", "id": sessionID, "cwd": root, "started_at": started.Format(time.RFC3339Nano)},
+		{"type": "patch_diff_summary", "session_id": sessionID, "timestamp": started.Add(time.Second).Format(time.RFC3339Nano), "summary": "README.md: update +1 -0"},
+		{"type": "verification_check", "session_id": sessionID, "timestamp": started.Add(2 * time.Second).Format(time.RFC3339Nano), "command": "go test ./...", "status": "passed", "success": true},
+		{"type": "verification_summary", "session_id": sessionID, "timestamp": started.Add(3 * time.Second).Format(time.RFC3339Nano), "status": "verified", "message": "Verification checks passed: go test ./..."},
+		{"type": "turn_complete", "session_id": sessionID, "timestamp": started.Add(4 * time.Second).Format(time.RFC3339Nano), "summary": "updated README", "files_changed": []string{"README.md"}, "verification": []string{"go test ./..."}, "verification_status": "verified"},
+	})
+	session, err := newLCAgentSession(LaunchRequest{
+		Provider:    ProviderLCAgent,
+		ProjectPath: root,
+		AppDataDir:  dataDir,
+	}, nil)
+	if err != nil {
+		t.Fatalf("newLCAgentSession() error = %v", err)
+	}
+	if err := session.Compact(); err != nil {
+		t.Fatalf("Compact() error = %v", err)
+	}
+	snapshot := session.Snapshot()
+	if snapshot.Status == "" || !strings.Contains(snapshot.Status, "LCAgent compact summary refreshed") {
+		t.Fatalf("Status = %q, want compact notice", snapshot.Status)
+	}
+	for _, want := range []string{"# LCAgent Compact Summary", "updated README", "Actual Checks", "go test ./... passed", "Re-read exact workspace files before editing"} {
+		if !strings.Contains(snapshot.Transcript, want) {
+			t.Fatalf("transcript missing %q:\n%s", want, snapshot.Transcript)
+		}
+	}
+	path := lcagentCompactSummaryPath(dataDir, sessionID)
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read compact summary: %v", err)
+	}
+	for _, want := range []string{"# LCAgent Compact Summary", "Session: " + sessionID, "README.md", "Verification checks passed"} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("compact summary missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestLCAgentSessionCompactReportsNoSessionYet(t *testing.T) {
+	session, err := newLCAgentSession(LaunchRequest{
+		Provider:    ProviderLCAgent,
+		ProjectPath: t.TempDir(),
+		AppDataDir:  t.TempDir(),
+		ForceNew:    true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("newLCAgentSession() error = %v", err)
+	}
+	if err := session.Compact(); err != nil {
+		t.Fatalf("Compact() error = %v", err)
+	}
+	snapshot := session.Snapshot()
+	if !strings.Contains(snapshot.Transcript, "No LCAgent session to compact yet.") {
+		t.Fatalf("transcript missing compact no-session notice:\n%s", snapshot.Transcript)
+	}
+}
+
 func TestLCAgentSessionReplaysLatestProjectArtifact(t *testing.T) {
 	root := t.TempDir()
 	otherRoot := t.TempDir()
@@ -365,6 +642,25 @@ func TestLCAgentSessionReplaysLatestProjectArtifact(t *testing.T) {
 	}
 	if strings.Contains(snapshot.Transcript, "old answer") || strings.Contains(snapshot.Transcript, "other answer") {
 		t.Fatalf("transcript should only replay latest matching project session:\n%s", snapshot.Transcript)
+	}
+}
+
+func initLCAgentReviewGitRepo(t *testing.T, root string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("# Demo\n\ninitial\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	commands := [][]string{
+		{"git", "init", "-q"},
+		{"git", "add", "README.md"},
+		{"git", "-c", "user.name=LCAgent Review", "-c", "user.email=lcagent-review@example.invalid", "commit", "-qm", "seed"},
+	}
+	for _, argv := range commands {
+		cmd := exec.Command(argv[0], argv[1:]...)
+		cmd.Dir = root
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%s failed: %v\n%s", strings.Join(argv, " "), err, output)
+		}
 	}
 }
 
@@ -409,6 +705,9 @@ func TestParseLCAgentTraceFileHarvestsFinalOutcome(t *testing.T) {
 	if len(trace.VerificationFeedback) != 1 || len(trace.RepairFeedbackSuppressed) != 1 || trace.ModelResponses != 1 || trace.TokenUsage.TotalTokens != 150 || trace.TokenUsage.CachedInputTokens != 40 {
 		t.Fatalf("trace feedback/model usage = %#v/%#v/%d/%+v, want feedback suppression and token usage", trace.VerificationFeedback, trace.RepairFeedbackSuppressed, trace.ModelResponses, trace.TokenUsage)
 	}
+	if trace.TraceQuality.Score != 83 || trace.TraceQuality.Grade != "good" || trace.TraceQuality.RepairEvents != 4 {
+		t.Fatalf("trace quality = %#v, want derived score and repair pressure", trace.TraceQuality)
+	}
 	loaded, err := LoadLCAgentTrace(dataDir, sessionID, root)
 	if err != nil {
 		t.Fatalf("LoadLCAgentTrace() error = %v", err)
@@ -416,7 +715,7 @@ func TestParseLCAgentTraceFileHarvestsFinalOutcome(t *testing.T) {
 	if loaded.ArtifactPath != path || !strings.Contains(loaded.CompactSummary(), "continued from lca_previous_trace") || !strings.Contains(loaded.CompactSummary(), "verification verified") || !strings.Contains(loaded.CompactSummary(), "1 verification check") {
 		t.Fatalf("loaded trace = %#v, want artifact path and compact summary", loaded)
 	}
-	for _, want := range []string{"continuation: lca_previous_trace", "actual checks: go test ./... passed", "patch feedback: 1", "duplicate repair feedback suppressed: 1", "tokens: 150", "cached: 40"} {
+	for _, want := range []string{"trace quality: 83/good", "repair events: 4", "continuation: lca_previous_trace", "actual checks: go test ./... passed", "patch feedback: 1", "duplicate repair feedback suppressed: 1", "tokens: 150", "cached: 40"} {
 		if !strings.Contains(loaded.TraceQualitySummary(), want) {
 			t.Fatalf("trace quality missing %q:\n%s", want, loaded.TraceQualitySummary())
 		}

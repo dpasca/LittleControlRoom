@@ -34,8 +34,12 @@ Implemented pieces:
   and typecheck tools, JS/TS checks, and read-only formatter modes.
 - Workspace-contained tools: `read_file`, `file_outline`, `module_outline`,
   `list_files`, literal `search`, optional `web_search`, `load_skill`,
-  `run_command`, `apply_patch`, `update_plan`, and `final_response`.
+  `run_command`, `apply_patch`, literal `replace_text`, `update_plan`, and
+  `final_response`.
 - Provider adapters for OpenRouter, OpenAI, DeepSeek, and Moonshot/Kimi routes.
+- Coding route presets for `balanced`, `quality`, and `cheap-scout` CLI lanes,
+  with traceable `route_preset` events, explicit flag overrides, and optional
+  embedded-launch wiring through `lcagent_route_preset`.
 - Experimental tool profiles: `balanced` and `generous`.
 - Experimental context profiles: `balanced` and `large`.
 - LCR settings for executable path, env file, provider, autonomy, tool profile,
@@ -60,11 +64,16 @@ Default posture:
 LCR session parity:
 
 - LCAgent does not support approvals, attachments, structured tool input,
-  elicitation, compact, review, or goal state in the embedded pane.
+  elicitation, compact, or goal state in the embedded pane.
+- Embedded `/review` now starts a read-only current-diff LCAgent review run
+  using the same JSONL trace path, with `--auto off` and no continuation resume.
+- Embedded `/compact` now writes a durable Markdown handoff summary from the
+  latest LCAgent JSONL trace under the app data dir and shows it in the pane.
 - Replayed LCAgent history can seed a continuing run through summarized context,
   but it is not a true persistent model thread with full transcript state,
   branching, or user-controlled compaction.
-- The model picker is intentionally minimal and does not discover provider
+- The model picker now offers curated coding choices for the configured
+  provider plus a custom-model escape hatch. It still does not discover provider
   models or validate provider credentials.
 - `web_search` is off by default. Exa-backed search needs an Exa API key;
   Google-backed search needs a Programmable Search API key and search engine
@@ -73,12 +82,18 @@ LCR session parity:
 Setup and product UX:
 
 - `/settings` exposes the LCAgent knobs, but there is no dedicated guided
-  `/setup` card yet.
+  `/setup` card with provider smoke actions yet.
 - The env-file path is checked for existence, but LCR does not validate the
   selected provider key or perform a lightweight provider smoke call.
-- Provider/model/profile choices are text fields, not curated pickers.
+- Provider/model/profile choices now have curated route presets and embedded
+  model options, but the setup flow still needs a more guided picker/smoke
+  experience.
 - Cost/cached-token feedback is visible through session artifacts, metrics, and
   LCAgent trace-quality summaries, but not yet surfaced in a guided setup card.
+- `sessionmetrics` emits a derived `trace_quality` block with score, grade,
+  findings, tool failure rate, repair pressure, verification rate, read overlap
+  rate, cached-token rate, and estimated cost. `live-eval` reports the same
+  score/grade per case for trace-driven calibration across routes.
 
 Harness and policy hardening:
 
@@ -96,15 +111,21 @@ Harness and policy hardening:
   trace-driven calibration against real coding tasks and provider mistakes.
 - Provider-specific quirks still need hardening: retries, rate-limit messages,
   timeout defaults, prompt-cache behavior, and OpenRouter provider pinning.
-- Patch/edit ergonomics now include first-pass failure feedback and concrete
-  re-read suggestions for stale hunks, but there is no model-adaptive edit
-  dialect, fallback edit tool, or post-edit formatting hook.
+- Patch/edit ergonomics now include first-pass failure feedback, concrete
+  re-read suggestions for stale hunks, and a literal `replace_text` fallback
+  tool for small exact replacements when strict patch syntax is failing. There
+  is still no model-adaptive edit dialect or post-edit formatting hook.
 
 Eval maturity:
 
 - The deterministic eval lane protects the trace contract, but it does not
   score live coding quality.
-- The current live benchmark is valuable but still small and partly qualitative.
+- The repeatable `lcagent live-eval` lane now runs fixed live-provider coding
+  tasks for README edit, Go bug fix, small feature implementation, and
+  read-only orientation, with per-case correctness, verification, tool-churn,
+  token, cost, artifact, workspace, and wall-time reporting.
+- The current archived live benchmark is valuable but still small and partly
+  qualitative.
 - Scores are human-assigned from fixed-task outputs; there is no automated
   regression suite for answer quality yet.
 - We should keep using fixed target commits for comparable runs and avoid
@@ -134,16 +155,19 @@ small-to-medium coding tasks before it tries to be a broader assistant.
    `apply_patch` now returns typed `patch_failure` metadata and emits
    `patch_feedback` guidance for stale context and malformed patches, including
    concrete suggested `read_file` ranges when a failed hunk can be localized.
-   Next, tune the retry behavior against live traces and eventually add a
-   model-adaptive fallback edit strategy for providers that struggle with strict
-   patch syntax.
+   `replace_text` now provides a simpler exact-replacement fallback for small
+   edits after reading current file text. Next, tune retry behavior against live
+   traces and eventually add a model-adaptive edit dialect for providers that
+   struggle with strict patch syntax.
 
 4. Surface trace quality in LCR.
    Shared LCAgent summaries and Boss goal-run reports now show denials, files
    changed, patch feedback, patch diff summaries, verification status, actual
    verification commands, token/cached-token totals, duplicate repair feedback,
-   and continuation-chain state. Next, add more visual treatment in the
-   interactive TUI.
+   per-tool success/failure counts, derived trace-quality findings, and
+   continuation-chain state. Embedded LCAgent runs append a compact
+   trace-quality score/grade line when the final artifact is available. Next,
+   add more visual treatment in the interactive TUI.
 
 ### P1: Make Continuation Feel Like A Coding Session
 
@@ -155,9 +179,10 @@ small-to-medium coding tasks before it tries to be a broader assistant.
    contents must be re-read before edits.
 
 2. Add user-visible compact/review behavior for LCAgent.
-   `/compact` can create or refresh the durable handoff summary. `/review` can
-   start as a read-only current-diff review task using the same trace format,
-   even before it reaches Codex parity.
+   `/review` now starts as a read-only current-diff review task using the same
+   trace format. `/compact` now creates or refreshes a durable handoff summary
+   before LCAgent reaches full Codex parity. Next, make the summary easier to
+   browse from replay/session pickers and tune the handoff shape from use.
 
 3. Preserve coding state across LCR surfaces.
    Boss goal runs, TODO-driven sessions, replay, and direct `/lcagent` launches
@@ -173,11 +198,15 @@ small-to-medium coding tasks before it tries to be a broader assistant.
 
 2. Replace free-text model/profile fields with curated choices plus an escape
    hatch.
-   Keep direct text entry for experiments, but make the normal path hard to
-   misconfigure.
+   The embedded model picker now exposes curated choices for normal LCAgent
+   routes while preserving custom model entry. `/settings` can also apply the
+   named route preset bundle to embedded launches through
+   `lcagent_route_preset`. Next, make this friendlier with a picker/setup card
+   rather than requiring exact text entry.
 
 3. Add model-route presets for coding work.
-   Suggested starting lanes:
+   The CLI and embedded LCAgent launch path now support these starting lanes
+   through `--route-preset`, `lcagent presets`, and `lcagent_route_preset`:
    - `quality`: GPT-5.5 low or the current best high-quality route.
    - `balanced`: DeepSeek V4 Pro or Kimi K2.6 with conservative context.
    - `cheap scout`: DeepSeek V4 Flash or another low-cost route for bounded
@@ -189,11 +218,10 @@ small-to-medium coding tasks before it tries to be a broader assistant.
    Keep it fast and no-network: trace shape, denials, patch summaries,
    verification accounting, continuation chains, command policy, and metrics.
 
-2. Add a repeatable live coding eval lane.
-   Use fixed target commits and a small task suite: bug fix, test failure,
-   feature slice, refactor-with-tests, current-diff review, and repo
-   orientation. Score correctness, unnecessary reads, failed tool calls,
-   verification quality, cost, and wall time.
+2. Keep extending the repeatable live coding eval lane.
+   The first live suite covers a small edit, bug fix, feature slice, and repo
+   orientation. Next, add refactor-with-tests and current-diff review cases, and
+   tune pass/fail scoring against repeated model runs.
 
 3. Make model-tier comparisons first-class.
    Record helm model, optional scout model, context/tool profile, reasoning

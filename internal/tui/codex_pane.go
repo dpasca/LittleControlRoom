@@ -871,6 +871,9 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 		if strings.TrimSpace(req.LCAgentEnvFile) == "" {
 			req.LCAgentEnvFile = m.lcagentEnvFile()
 		}
+		if strings.TrimSpace(req.LCAgentRoutePreset) == "" {
+			req.LCAgentRoutePreset = m.lcagentRoutePreset()
+		}
 		if strings.TrimSpace(req.LCAgentProvider) == "" {
 			req.LCAgentProvider = m.lcagentProvider()
 		}

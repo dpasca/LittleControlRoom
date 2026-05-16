@@ -54,6 +54,7 @@ For managed-browser debugging outside the TUI, Little Control Room also exposes:
 - `embedded_lcagent_reasoning_effort`
 - `lcagent_path`
 - `lcagent_env_file`
+- `lcagent_route_preset`
 - `lcagent_provider`
 - `lcagent_auto`
 - `lcagent_tool_profile`
@@ -83,6 +84,7 @@ codex_launch_preset = "yolo"
 # PATH lookup, or local go run fallback. Put provider API keys in the env file.
 # embedded_lcagent_model = "deepseek/deepseek-v4-pro"
 # lcagent_env_file = "~/path/to/openrouter.env"
+# lcagent_route_preset = "balanced" # optional: balanced, quality, cheap-scout
 # lcagent_provider = "openrouter"
 # lcagent_auto = "low"
 # lcagent_tool_profile = "balanced"
@@ -97,6 +99,19 @@ playwright_isolation_scope = "task"
 LCAgent session JSONL artifacts are replayable in the embedded pane. Opening a previous
 LCAgent session loads read-only transcript history; sending a new prompt starts a fresh
 one-shot run rather than continuing that prior model context.
+
+For direct CLI use, `lcagent presets` lists coding route presets. `lcagent exec
+--route-preset balanced|quality|cheap-scout` applies a provider, model,
+autonomy, reasoning, tool-profile, context-profile, timeout, and temperature
+bundle; any explicit flag such as `--model` or `--context-profile` still wins.
+In Little Control Room settings, `lcagent_route_preset` applies the same bundle
+to embedded LCAgent launches; leave it blank to use the individual provider,
+model, autonomy, tool-profile, and context-profile fields.
+
+`lcagent metrics <session.jsonl>...` summarizes trace artifacts and includes a
+derived `trace_quality` block with verification coverage, tool failures, repair
+pressure, read overlap, cached-token rate, and estimated cost. The repeatable
+`lcagent live-eval` lane reports the same trace-quality score per case.
 
 Current LCAgent status and next work are tracked in
 [`lcagent_experimental_handoff.md`](lcagent_experimental_handoff.md).
@@ -317,7 +332,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/opencode` resumes the selected project's latest known OpenCode session when available, otherwise it starts a new one.
 - `/opencode-new` always starts a fresh OpenCode session.
 - `/lcagent` resumes the selected project's latest known LCAgent session when available, otherwise it starts a new one-shot run with the configured experimental provider.
-- `/lcagent-new` always starts a fresh LCAgent run. LCAgent is experimental and currently supports prompt turns, model selection, local read/edit tools, and structured JSONL artifacts; approvals, attachments, compact, and review are not wired yet.
+- `/lcagent-new` always starts a fresh LCAgent run. LCAgent is experimental and currently supports prompt turns, curated model selection plus custom model entry, local read/edit tools, `/review` for read-only current-diff review, `/compact` for a Markdown handoff summary from the latest JSONL trace, and structured JSONL artifacts; approvals and attachments are not wired yet.
 - While an embedded Codex, Claude Code, OpenCode, or LCAgent pane is visible, local slash commands include `/new`, `/resume` (`/session` alias), `/reconnect`, `/model`, `/status`, `/compact`, and `/review`.
 - `/model` changes the model and reasoning for the current embedded tool and carries that choice forward to future embedded sessions of the same tool, including after restarting LCR.
 - `/resume` with no session ID opens a picker for saved sessions from the current project and provider; `/resume <session-id>` jumps straight to that session.

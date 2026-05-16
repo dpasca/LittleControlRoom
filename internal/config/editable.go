@@ -44,6 +44,7 @@ type EditableSettings struct {
 	RecentLCAgentModels       []string
 	LCAgentPath               string
 	LCAgentEnvFile            string
+	LCAgentRoutePreset        string
 	LCAgentProvider           string
 	LCAgentAuto               string
 	LCAgentToolProfile        string
@@ -95,6 +96,7 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		RecentLCAgentModels:       append([]string(nil), cfg.RecentLCAgentModels...),
 		LCAgentPath:               cfg.LCAgentPath,
 		LCAgentEnvFile:            cfg.LCAgentEnvFile,
+		LCAgentRoutePreset:        cfg.LCAgentRoutePreset,
 		LCAgentProvider:           cfg.LCAgentProvider,
 		LCAgentAuto:               cfg.LCAgentAuto,
 		LCAgentToolProfile:        cfg.LCAgentToolProfile,
@@ -147,7 +149,7 @@ func firstNonEmptyTrimmed(values ...string) string {
 	return ""
 }
 
-func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, bossHelmModelRaw, bossUtilityModelRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, lcagentPathRaw, lcagentEnvFileRaw, lcagentProviderRaw, lcagentAutoRaw, lcagentToolProfileRaw, lcagentContextProfileRaw, lcagentRequestTimeoutRaw, lcagentWebSearchBackendRaw, lcagentWebSearchAPIKeyRaw, lcagentWebSearchEngineIDRaw, lcagentWebSearchURLRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
+func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, bossHelmModelRaw, bossUtilityModelRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, lcagentPathRaw, lcagentEnvFileRaw, lcagentRoutePresetRaw, lcagentProviderRaw, lcagentAutoRaw, lcagentToolProfileRaw, lcagentContextProfileRaw, lcagentRequestTimeoutRaw, lcagentWebSearchBackendRaw, lcagentWebSearchAPIKeyRaw, lcagentWebSearchEngineIDRaw, lcagentWebSearchURLRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
 	parsedBackend, err := ParseAIBackend(string(aiBackend))
 	if err != nil {
 		return EditableSettings{}, err
@@ -172,6 +174,10 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 	lcagentEnvFile, err := expandHome(strings.TrimSpace(lcagentEnvFileRaw))
 	if err != nil {
 		return EditableSettings{}, fmt.Errorf("lcagent env file: %w", err)
+	}
+	lcagentRoutePreset, err := parseLCAgentRoutePreset(lcagentRoutePresetRaw)
+	if err != nil {
+		return EditableSettings{}, err
 	}
 	lcagentProvider, err := parseLCAgentProvider(lcagentProviderRaw)
 	if err != nil {
@@ -273,6 +279,7 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 		OpenCodeModelTier:        strings.TrimSpace(openCodeModelTierRaw),
 		LCAgentPath:              lcagentPath,
 		LCAgentEnvFile:           lcagentEnvFile,
+		LCAgentRoutePreset:       lcagentRoutePreset,
 		LCAgentProvider:          lcagentProvider,
 		LCAgentAuto:              lcagentAuto,
 		LCAgentToolProfile:       lcagentToolProfile,
@@ -364,6 +371,7 @@ func validateEditableSettings(settings EditableSettings) error {
 	cfg.RecentLCAgentModels = append([]string(nil), settings.RecentLCAgentModels...)
 	cfg.LCAgentPath = strings.TrimSpace(settings.LCAgentPath)
 	cfg.LCAgentEnvFile = strings.TrimSpace(settings.LCAgentEnvFile)
+	cfg.LCAgentRoutePreset = strings.TrimSpace(settings.LCAgentRoutePreset)
 	cfg.LCAgentProvider = strings.TrimSpace(settings.LCAgentProvider)
 	cfg.LCAgentAuto = strings.TrimSpace(settings.LCAgentAuto)
 	cfg.LCAgentToolProfile = strings.TrimSpace(settings.LCAgentToolProfile)
@@ -511,6 +519,10 @@ func renderEditableSettings(settings EditableSettings) string {
 	}
 	if value := strings.TrimSpace(settings.LCAgentEnvFile); value != "" {
 		lines = append(lines, fmt.Sprintf("lcagent_env_file = %s", strconv.Quote(value)))
+		wroteLCAgentConfig = true
+	}
+	if value, err := parseLCAgentRoutePreset(settings.LCAgentRoutePreset); err == nil && value != "" {
+		lines = append(lines, fmt.Sprintf("lcagent_route_preset = %s", strconv.Quote(value)))
 		wroteLCAgentConfig = true
 	}
 	if value, err := parseLCAgentProvider(settings.LCAgentProvider); err == nil && value != "" {

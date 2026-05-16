@@ -1873,6 +1873,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			CodexHome:             m.codexHome(),
 			LCAgentPath:           m.lcagentPath(),
 			LCAgentEnvFile:        m.lcagentEnvFile(),
+			LCAgentRoutePreset:    m.lcagentRoutePreset(),
 			LCAgentProvider:       m.lcagentProvider(),
 			LCAgentAuto:           m.lcagentAuto(),
 			LCAgentToolProfile:    m.lcagentToolProfile(),

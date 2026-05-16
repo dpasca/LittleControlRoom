@@ -548,6 +548,7 @@ type LaunchRequest struct {
 	CodexHome                string
 	LCAgentPath              string
 	LCAgentEnvFile           string
+	LCAgentRoutePreset       string
 	LCAgentProvider          string
 	LCAgentAuto              string
 	LCAgentToolProfile       string

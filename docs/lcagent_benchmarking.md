@@ -42,6 +42,7 @@ This creates temporary fixture repos and checks the LCAgent trace contract for:
 
 - actual `purpose=verify` command traces plus final verification summaries
 - patch diff summaries plus final verification summaries
+- literal `replace_text` fallback edits plus diff summaries
 - explicit permission-denial events
 - low-autonomy `go test ./...` verification
 - missing-verification contract detection after edits
@@ -69,6 +70,62 @@ provider to make one README edit, runs `go test ./...`, and checks the resulting
 artifact for verified `purpose=verify` command traces. See
 [docs/lcagent_live_smoke_script.md](lcagent_live_smoke_script.md) for provider
 variants and the Boss goal-run smoke path.
+
+## Repeatable Live Coding Eval
+
+Use the live eval lane when the smoke test passes and you want a comparable
+coding-quality run across models or harness commits:
+
+```sh
+make lcagent-live-eval
+```
+
+The live lane runs a fixed task suite in temporary Git workspaces and writes
+LCAgent artifacts to a timestamped data dir under the Little Control Room data
+root unless `--data-dir` is provided. It currently covers:
+
+- `readme_edit_verify`: small edit plus explicit verification
+- `go_bug_fix`: fix a failing unit test
+- `feature_slice`: implement a small missing feature against tests
+- `repo_orientation`: read-only repo orientation with verification
+
+List the suite without making provider calls:
+
+```sh
+go run ./cmd/lcagent live-eval --list
+```
+
+List the current coding route bundles without making provider calls:
+
+```sh
+go run ./cmd/lcagent presets
+```
+
+Run one case while keeping model-control knobs explicit:
+
+```sh
+go run ./cmd/lcagent live-eval \
+  --case go_bug_fix \
+  --provider openrouter \
+  --model deepseek/deepseek-v4-pro \
+  --tool-profile balanced \
+  --context-profile balanced \
+  --reasoning-effort low \
+  --output json
+```
+
+For route-level comparisons, `lcagent exec --route-preset
+balanced|quality|cheap-scout ...` applies the provider, model, autonomy,
+reasoning, tool/context profile, timeout, and temperature bundle. Explicit
+flags still override preset values, so record both the preset name and any
+overrides in benchmark notes.
+
+Each case reports correctness, recorded verification, expected files touched,
+failed tool results, permission denials, repair feedback, read volume,
+overlapping reads, trace quality score/grade, token usage, estimated cost,
+artifact path, workspace path, and wall time. Keep
+provider/model/profile/request-timeout values fixed when comparing harness
+commits.
 
 Pick a target commit and create an isolated worktree:
 
@@ -114,6 +171,12 @@ Summarize the resulting session artifact:
 go run ./cmd/lcagent metrics "$BENCH_DATA"/lcagent/sessions/*/*/*/*.jsonl
 ```
 
+The metrics output includes a `trace_quality` block. Treat it as a calibration
+signal, not a product-grade leaderboard: it combines verified-session coverage,
+failed tool results, repair feedback, duplicate repair suppression, read
+overlap, cached-token rate, and estimated cost so route/profile changes can be
+compared without re-reading every JSONL trace by hand.
+
 Clean up when finished:
 
 ```sh
@@ -131,6 +194,9 @@ Track at least:
 - `read_file_output_bytes`
 - `read_file_overlapping_calls`
 - `read_file_overlapping_lines`
+- `tool_successes`
+- `tool_failures`
+- `trace_quality`
 - `token_usage`
 - `max_input_tokens`
 

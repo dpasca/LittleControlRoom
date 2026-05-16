@@ -1164,6 +1164,7 @@ func (m Model) startTodoInProjectPath(projectPath, todoText string, provider cod
 		CodexHome:             m.codexHome(),
 		LCAgentPath:           m.lcagentPath(),
 		LCAgentEnvFile:        m.lcagentEnvFile(),
+		LCAgentRoutePreset:    m.lcagentRoutePreset(),
 		LCAgentProvider:       m.lcagentProvider(),
 		LCAgentAuto:           m.lcagentAuto(),
 		LCAgentToolProfile:    m.lcagentToolProfile(),

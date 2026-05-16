@@ -115,6 +115,85 @@ func TestFileToolsHonorsCustomReadLimits(t *testing.T) {
 	}
 }
 
+func TestTextEditorReplaceText(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("old\nkeep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := TextEditor{Workspace: w}.ReplaceText(ReplaceTextSpec{
+		Path:    "README.md",
+		OldText: "old\n",
+		NewText: "new\n",
+	})
+	if !result.Success {
+		t.Fatalf("replace failed: %s", result.Error)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "new\nkeep\n" {
+		t.Fatalf("README = %q", data)
+	}
+	if got := strings.Join(result.FilesTouched, ","); got != "README.md" {
+		t.Fatalf("FilesTouched = %v", result.FilesTouched)
+	}
+	if result.PatchSummary == nil || result.PatchSummary.TotalAddedLines != 1 || result.PatchSummary.TotalDeletedLines != 1 {
+		t.Fatalf("PatchSummary = %#v", result.PatchSummary)
+	}
+	if !strings.Contains(result.DiffSummary, "README.md: replace +1 -1") {
+		t.Fatalf("diff summary = %q", result.DiffSummary)
+	}
+}
+
+func TestTextEditorReplaceTextRequiresExpectedOccurrences(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("same\nsame\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := TextEditor{Workspace: w}.ReplaceText(ReplaceTextSpec{
+		Path:    "README.md",
+		OldText: "same\n",
+		NewText: "changed\n",
+	})
+	if result.Success {
+		t.Fatal("replace succeeded with duplicate old_text, want failure")
+	}
+	if !strings.Contains(result.Error, "found 2 occurrences") || !strings.Contains(result.Error, "expected 1") {
+		t.Fatalf("error = %q", result.Error)
+	}
+}
+
+func TestTextEditorReplaceTextDeniesAutoOff(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyOff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := TextEditor{Workspace: w}.ReplaceText(ReplaceTextSpec{
+		Path:    "README.md",
+		OldText: "old\n",
+		NewText: "new\n",
+	})
+	if result.Success {
+		t.Fatal("replace succeeded with auto off, want denial")
+	}
+	if !result.Denied || !strings.Contains(result.DenialReason, "replace_text denied with --auto off") {
+		t.Fatalf("denial metadata = denied %v reason %q", result.Denied, result.DenialReason)
+	}
+}
+
 func TestFileToolsOutlineGoAndMarkdown(t *testing.T) {
 	root := t.TempDir()
 	goBody := `package demo

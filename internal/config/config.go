@@ -52,6 +52,7 @@ type AppConfig struct {
 	ClaudeCodeHome            string
 	LCAgentPath               string
 	LCAgentEnvFile            string
+	LCAgentRoutePreset        string
 	LCAgentProvider           string
 	LCAgentAuto               string
 	LCAgentToolProfile        string
@@ -156,6 +157,7 @@ type fileConfig struct {
 	RecentLCAgentModels       *[]string `toml:"recent_lcagent_models"`
 	LCAgentPath               *string   `toml:"lcagent_path"`
 	LCAgentEnvFile            *string   `toml:"lcagent_env_file"`
+	LCAgentRoutePreset        *string   `toml:"lcagent_route_preset"`
 	LCAgentProvider           *string   `toml:"lcagent_provider"`
 	LCAgentAuto               *string   `toml:"lcagent_auto"`
 	LCAgentToolProfile        *string   `toml:"lcagent_tool_profile"`
@@ -238,6 +240,7 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	claudeCodeHome := fs.String("claude-code-home", cfg.ClaudeCodeHome, "Path to Claude Code home directory")
 	lcagentPath := fs.String("lcagent-path", cfg.LCAgentPath, "Path to lcagent executable")
 	lcagentEnvFile := fs.String("lcagent-env-file", cfg.LCAgentEnvFile, "Path to lcagent env file containing provider credentials")
+	lcagentRoutePreset := fs.String("lcagent-route-preset", cfg.LCAgentRoutePreset, "LCAgent coding route preset: blank, balanced, quality, or cheap-scout")
 	lcagentProvider := fs.String("lcagent-provider", cfg.LCAgentProvider, "LCAgent provider: openrouter, openai, deepseek, or moonshot")
 	lcagentAuto := fs.String("lcagent-auto", cfg.LCAgentAuto, "LCAgent autonomy level: off, low, or medium")
 	lcagentToolProfile := fs.String("lcagent-tool-profile", cfg.LCAgentToolProfile, "LCAgent file tool budget profile: balanced or generous")
@@ -314,6 +317,10 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 		return AppConfig{}, err
 	}
 	cfg.LCAgentEnvFile, err = expandHome(strings.TrimSpace(*lcagentEnvFile))
+	if err != nil {
+		return AppConfig{}, err
+	}
+	cfg.LCAgentRoutePreset, err = parseLCAgentRoutePreset(*lcagentRoutePreset)
 	if err != nil {
 		return AppConfig{}, err
 	}
@@ -533,6 +540,13 @@ func applyConfigFile(cfg *AppConfig) error {
 		}
 		cfg.LCAgentEnvFile = value
 	}
+	if fc.LCAgentRoutePreset != nil {
+		value, err := parseLCAgentRoutePreset(*fc.LCAgentRoutePreset)
+		if err != nil {
+			return fmt.Errorf("config lcagent_route_preset: %w", err)
+		}
+		cfg.LCAgentRoutePreset = value
+	}
 	if fc.LCAgentProvider != nil {
 		value, err := parseLCAgentProvider(*fc.LCAgentProvider)
 		if err != nil {
@@ -657,6 +671,9 @@ func validate(cfg AppConfig) error {
 	if _, err := parseLCAgentProvider(cfg.LCAgentProvider); err != nil {
 		return err
 	}
+	if _, err := parseLCAgentRoutePreset(cfg.LCAgentRoutePreset); err != nil {
+		return err
+	}
 	if _, err := parseLCAgentAuto(cfg.LCAgentAuto); err != nil {
 		return err
 	}
@@ -673,6 +690,21 @@ func validate(cfg AppConfig) error {
 		return err
 	}
 	return nil
+}
+
+func parseLCAgentRoutePreset(raw string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	value = strings.ReplaceAll(value, "_", "-")
+	switch value {
+	case "":
+		return "", nil
+	case "scout", "cheap", "cheapscout":
+		return "cheap-scout", nil
+	case "balanced", "quality", "cheap-scout":
+		return value, nil
+	default:
+		return "", fmt.Errorf("lcagent-route-preset must be blank or one of: balanced, quality, cheap-scout")
+	}
 }
 
 func parseLCAgentProvider(raw string) (string, error) {

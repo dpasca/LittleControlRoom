@@ -458,6 +458,7 @@ func (m Model) setupConfigFieldIndexes() []int {
 		return []int{
 			settingsFieldLCAgentPath,
 			settingsFieldLCAgentEnvFile,
+			settingsFieldLCAgentRoutePreset,
 			settingsFieldLCAgentProvider,
 			settingsFieldLCAgentModel,
 			settingsFieldLCAgentReasoning,
@@ -525,6 +526,7 @@ func (m Model) setupDraftSettingsForProviderChoices() config.EditableSettings {
 	settings.OllamaModel = m.settingsFieldValue(settingsFieldOllamaModel)
 	settings.LCAgentPath = m.settingsFieldValue(settingsFieldLCAgentPath)
 	settings.LCAgentEnvFile = m.settingsFieldValue(settingsFieldLCAgentEnvFile)
+	settings.LCAgentRoutePreset = m.settingsFieldValue(settingsFieldLCAgentRoutePreset)
 	settings.LCAgentProvider = m.settingsFieldValue(settingsFieldLCAgentProvider)
 	settings.EmbeddedLCAgentModel = m.settingsFieldValue(settingsFieldLCAgentModel)
 	settings.EmbeddedLCAgentReasoning = m.settingsFieldValue(settingsFieldLCAgentReasoning)
@@ -770,6 +772,14 @@ func (m Model) renderSetupReview(width int) string {
 }
 
 func (m Model) setupReviewLCAgentSummary(settings config.EditableSettings) string {
+	if preset := strings.TrimSpace(settings.LCAgentRoutePreset); preset != "" {
+		state, _, detail := lcagentCredentialSmokeCheck(settings)
+		parts := []string{"preset " + preset, "(" + state + ")"}
+		if detail != "" && state != "ready" {
+			parts = append(parts, "- "+detail)
+		}
+		return strings.Join(parts, " ")
+	}
 	provider := firstNonEmptyTrimmed(settings.LCAgentProvider, "openrouter")
 	model := firstNonEmptyTrimmed(settings.EmbeddedLCAgentModel, lcagentDefaultModelForProvider(provider))
 	auto := firstNonEmptyTrimmed(settings.LCAgentAuto, "low")

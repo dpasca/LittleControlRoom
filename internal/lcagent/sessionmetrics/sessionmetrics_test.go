@@ -45,6 +45,9 @@ func TestAnalyzeFilesSummarizesLCAgentSession(t *testing.T) {
 	if summary.ToolCalls["read_file"] != 2 || summary.ToolResults["search"] != 1 {
 		t.Fatalf("tool counts = calls %#v results %#v", summary.ToolCalls, summary.ToolResults)
 	}
+	if summary.ToolSuccesses["read_file"] != 2 || summary.ToolSuccesses["search"] != 1 || summary.TraceQuality.ToolFailures != 0 {
+		t.Fatalf("tool result quality = successes %#v failures %#v quality %#v", summary.ToolSuccesses, summary.ToolFailures, summary.TraceQuality)
+	}
 	if summary.ToolProfiles["generous"] != 1 {
 		t.Fatalf("tool profiles = %#v", summary.ToolProfiles)
 	}
@@ -66,9 +69,47 @@ func TestAnalyzeFilesSummarizesLCAgentSession(t *testing.T) {
 	if summary.MaxInputTokens != 150 || summary.MaxTotalTokens != 170 {
 		t.Fatalf("max tokens = input %d total %d", summary.MaxInputTokens, summary.MaxTotalTokens)
 	}
+	if summary.TraceQuality.Score != 83 || summary.TraceQuality.Grade != "good" || summary.TraceQuality.RepairEvents != 4 || summary.TraceQuality.VerificationRate != 1 {
+		t.Fatalf("trace quality = %#v", summary.TraceQuality)
+	}
 	if len(summary.LargestToolOutputs) == 0 || summary.LargestToolOutputs[0].Tool != "read_file" {
 		t.Fatalf("largest outputs = %#v", summary.LargestToolOutputs)
 	}
+}
+
+func TestAnalyzeFilesTraceQualityFlagsFailures(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	body := `{"type":"session_meta","id":"lca_failure","cwd":"/repo"}
+{"type":"tool_call","tool":"read_file","args":{"path":"missing.go"}}
+{"type":"tool_result","tool":"read_file","result":{"success":false,"error":"missing.go: no such file"}}
+{"type":"verification_summary","status":"missing_after_changes"}
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := AnalyzeFiles([]string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.ToolFailures["read_file"] != 1 || summary.TraceQuality.ToolFailures != 1 {
+		t.Fatalf("tool failures = %#v quality=%#v", summary.ToolFailures, summary.TraceQuality)
+	}
+	if summary.TraceQuality.Grade != "mixed" {
+		t.Fatalf("trace quality grade = %s, want mixed: %#v", summary.TraceQuality.Grade, summary.TraceQuality)
+	}
+	if !traceQualityHasFinding(summary.TraceQuality, "tool_failures") || !traceQualityHasFinding(summary.TraceQuality, "no_verified_sessions") {
+		t.Fatalf("trace quality findings = %#v", summary.TraceQuality.Findings)
+	}
+}
+
+func traceQualityHasFinding(quality TraceQuality, code string) bool {
+	for _, finding := range quality.Findings {
+		if finding.Code == code {
+			return true
+		}
+	}
+	return false
 }
 
 func BenchmarkAnalyzeSessionMetrics(b *testing.B) {

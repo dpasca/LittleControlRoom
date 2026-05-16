@@ -1006,6 +1006,24 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 		ToolDefinition{
 			Type: "function",
 			Function: FunctionSpec{
+				Name:        "replace_text",
+				Description: "Replace an exact literal text span in one existing workspace file. Use this as a fallback for small edits when apply_patch syntax is failing and you can provide a unique old_text copied from read_file output. This is not regex-based; old_text must match exactly. Defaults to exactly one replacement.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"path":                  map[string]any{"type": "string", "description": "Workspace-relative path to an existing text file. Absolute paths are denied."},
+						"old_text":              map[string]any{"type": "string", "description": "Exact current text to replace. Re-read the target range first if unsure."},
+						"new_text":              map[string]any{"type": "string", "description": "Replacement text."},
+						"expected_replacements": map[string]any{"type": "integer", "minimum": 1, "maximum": 100, "description": "Required number of occurrences. Defaults to 1 so accidental broad edits fail."},
+					},
+					"required": []string{"path", "old_text", "new_text"},
+				},
+			},
+		},
+		ToolDefinition{
+			Type: "function",
+			Function: FunctionSpec{
 				Name:        "update_plan",
 				Description: "Publish the current short plan with statuses pending, in_progress, or completed.",
 				Parameters: map[string]any{
@@ -1144,7 +1162,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		"Never write provider tool-call markup such as DSML in assistant text; call tools only through structured tool_calls.",
 		"Skill descriptions in this prompt are metadata only; call load_skill before relying on any skill instructions.",
 		"Use apply_patch for source edits. Patches must use this exact shape: *** Begin Patch, *** Update File: path, @@, -old line, +new line, *** End Patch.",
-		"If apply_patch fails, follow patch feedback before retrying: when a suggested read_file range is provided, read that exact range first, then preserve unchanged context and use a smaller hunk when context was stale.",
+		"If apply_patch fails, follow patch feedback before retrying: when a suggested read_file range is provided, read that exact range first, then preserve unchanged context and use a smaller hunk when context was stale. For small edits where patch syntax keeps failing, use replace_text with an exact unique old_text copied from the current file.",
 		"After edits, use the patch diff summary and run or explain verification before final_response. If verification ran through run_command, final_response verification should match the actual purpose=verify command result.",
 		"When done, call final_response exactly once. Its summary must contain the full answer, changed files, and verification outcome. The verification array must name checks run or say not run with the reason; it is only supporting evidence.",
 	)

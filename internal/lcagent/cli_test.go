@@ -115,6 +115,160 @@ func TestRunExecOpenRouterEmitsModelResponseUsage(t *testing.T) {
 	}
 }
 
+func TestRunPresetsListsCodingRoutes(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"presets", "--output", "json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	var presets []struct {
+		Name     string `json:"Name"`
+		Provider string `json:"Provider"`
+		Model    string `json:"Model"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &presets); err != nil {
+		t.Fatalf("decode presets json: %v\n%s", err, stdout.String())
+	}
+	got := map[string]string{}
+	for _, preset := range presets {
+		got[preset.Name] = preset.Provider + "/" + preset.Model
+	}
+	for _, name := range []string{"balanced", "quality", "cheap-scout"} {
+		if got[name] == "/" {
+			t.Fatalf("preset %s missing provider/model: %#v", name, presets)
+		}
+		if _, ok := got[name]; !ok {
+			t.Fatalf("missing preset %s in %#v", name, presets)
+		}
+	}
+}
+
+func TestRunExecRoutePresetAppliesCodingDefaults(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" {
+			t.Fatalf("request path = %s, want /responses", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-openai-key" {
+			t.Fatalf("authorization = %q, want bearer test key", got)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body["model"] != "gpt-5.5" {
+			t.Fatalf("model = %q, want gpt-5.5", body["model"])
+		}
+		reasoning, _ := body["reasoning"].(map[string]any)
+		if reasoning["effort"] != "low" {
+			t.Fatalf("reasoning = %#v, want low effort", body["reasoning"])
+		}
+		if _, ok := body["temperature"]; ok {
+			t.Fatalf("quality preset should omit temperature for direct OpenAI: %#v", body["temperature"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"resp_quality",
+			"model":"gpt-5.5",
+			"status":"completed",
+			"output":[{
+				"type":"message",
+				"content":[{"type":"output_text","text":"done from quality route"}]
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENAI_API_KEY", "test-openai-key")
+	t.Setenv("OPENAI_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--route-preset", "quality",
+		"--output", "stream-json",
+		"--max-turns", "2",
+		"answer directly",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"session_meta"`,
+		`"provider":"openai"`,
+		`"model":"gpt-5.5"`,
+		`"type":"route_preset"`,
+		`"name":"quality"`,
+		`"context_profile":"large"`,
+		`"reasoning_effort":"low"`,
+		`"summary":"done from quality route"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestRunExecRoutePresetAllowsExplicitOverrides(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body["model"] != "deepseek/custom" {
+			t.Fatalf("model = %q, want explicit override", body["model"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"resp_override",
+			"model":"deepseek/custom",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"done from override"}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--route-preset", "quality",
+		"--provider", "openrouter",
+		"--model", "deepseek/custom",
+		"--context-profile", "balanced",
+		"--output", "stream-json",
+		"--max-turns", "2",
+		"answer directly",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"provider":"openrouter"`,
+		`"model":"deepseek/custom"`,
+		`"name":"quality"`,
+		`"context_profile":"balanced"`,
+		`"summary":"done from override"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestRunExecOpenRouterSendsResumeContext(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
@@ -1584,7 +1738,7 @@ func TestRunMetricsSummarizesSessionArtifact(t *testing.T) {
 		t.Fatalf("code = %d stderr=%s", code, stderr.String())
 	}
 	text := stdout.String()
-	for _, want := range []string{`"sessions": 1`, `"tool_profiles": {`, `"balanced": 1`, `"context_profiles": {`, `"large": 1`, `"read_file_calls": 1`, `"read_file_lines": 2`, `"input_tokens": 12`, `"cached_input_tokens": 4`} {
+	for _, want := range []string{`"sessions": 1`, `"tool_profiles": {`, `"balanced": 1`, `"context_profiles": {`, `"large": 1`, `"read_file_calls": 1`, `"read_file_lines": 2`, `"input_tokens": 12`, `"cached_input_tokens": 4`, `"trace_quality": {`, `"grade": "mixed"`} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("metrics output missing %q:\n%s", want, text)
 		}
@@ -1602,10 +1756,10 @@ func TestRunEvalReportsPassingRegressionLane(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
 		t.Fatalf("decode eval report: %v\n%s", err, stdout.String())
 	}
-	if !report.Passed || len(report.Cases) != 7 {
-		t.Fatalf("eval report = %#v, want seven passing cases", report)
+	if !report.Passed || len(report.Cases) != 8 {
+		t.Fatalf("eval report = %#v, want eight passing cases", report)
 	}
-	if report.Summary.PatchDiffSummaries < 2 ||
+	if report.Summary.PatchDiffSummaries < 3 ||
 		report.Summary.PatchFeedback < 1 ||
 		report.Summary.PermissionDenials < 1 ||
 		report.Summary.ResumeContexts < 1 ||
@@ -1617,6 +1771,75 @@ func TestRunEvalReportsPassingRegressionLane(t *testing.T) {
 		report.Summary.VerificationCheckStatuses["failed"] < 1 ||
 		report.Summary.VerificationCheckStatuses["denied"] < 1 {
 		t.Fatalf("eval summary missing expected trace metrics: %#v", report.Summary)
+	}
+	if report.Summary.TraceQuality.Score == 0 || report.Summary.TraceQuality.ToolFailures == 0 {
+		t.Fatalf("eval summary missing trace quality calibration: %#v", report.Summary.TraceQuality)
+	}
+}
+
+func TestRunLiveEvalListsFixedSuite(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"live-eval", "--list", "--output", "json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	var listed struct {
+		Cases []liveEvalTask `json:"cases"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &listed); err != nil {
+		t.Fatalf("decode live eval list: %v\n%s", err, stdout.String())
+	}
+	if len(listed.Cases) != 4 {
+		t.Fatalf("live eval cases = %d, want 4", len(listed.Cases))
+	}
+	byName := map[string]liveEvalTask{}
+	for _, tc := range listed.Cases {
+		byName[tc.Name] = tc
+	}
+	for _, want := range []string{"readme_edit_verify", "go_bug_fix", "feature_slice", "repo_orientation"} {
+		if _, ok := byName[want]; !ok {
+			t.Fatalf("live eval list missing %s: %#v", want, listed.Cases)
+		}
+	}
+	if byName["go_bug_fix"].Category != "bug_fix" || len(byName["go_bug_fix"].VerifyCommand) == 0 {
+		t.Fatalf("go_bug_fix list entry missing category/verification: %#v", byName["go_bug_fix"])
+	}
+}
+
+func TestRunLiveEvalRejectsUnknownCaseBeforeProviderUse(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"live-eval", "--case", "missing_case", "--output", "json"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("code = 0, want failure; stdout=%s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), `unknown live-eval case "missing_case"`) {
+		t.Fatalf("stderr missing unknown case error: %s", stderr.String())
+	}
+}
+
+func TestLiveEvalArtifactScoringHelpers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	body := `{"type":"session_meta","id":"lca_live_eval"}
+{"type":"tool_result","tool":"read_file","result":{"success":true,"output":"ok"}}
+{"type":"tool_result","tool":"run_command","result":{"success":false,"error":"failed"}}
+{"type":"final_response","summary":"done","files_changed":["calc.go"],"verification":["go test ./..."]}
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	failed, err := liveEvalFailedToolResults(path)
+	if err != nil {
+		t.Fatalf("failed tool results: %v", err)
+	}
+	if failed != 1 {
+		t.Fatalf("failed tool results = %d, want 1", failed)
+	}
+	changed, err := liveEvalFinalFilesChanged(path)
+	if err != nil {
+		t.Fatalf("files changed: %v", err)
+	}
+	if !changed["calc.go"] || changed["README.md"] {
+		t.Fatalf("changed files = %#v", changed)
 	}
 }
 

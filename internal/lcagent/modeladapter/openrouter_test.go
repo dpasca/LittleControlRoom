@@ -36,13 +36,16 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 		names[tool.Function.Name] = true
 		descriptions[tool.Function.Name] = tool.Function.Description
 	}
-	for _, want := range []string{"read_file", "file_outline", "module_outline", "list_files", "search", "load_skill", "run_command", "apply_patch", "update_plan", "final_response"} {
+	for _, want := range []string{"read_file", "file_outline", "module_outline", "list_files", "search", "load_skill", "run_command", "apply_patch", "replace_text", "update_plan", "final_response"} {
 		if !names[want] {
 			t.Fatalf("Tools() missing %s", want)
 		}
 	}
 	if !strings.Contains(descriptions["apply_patch"], "*** Update File: README.md") {
 		t.Fatalf("apply_patch description missing format example: %q", descriptions["apply_patch"])
+	}
+	if !strings.Contains(descriptions["replace_text"], "exact literal text span") || !strings.Contains(descriptions["replace_text"], "not regex-based") {
+		t.Fatalf("replace_text description missing exact-match guidance: %q", descriptions["replace_text"])
 	}
 	var readFilePathDescription string
 	for _, tool := range Tools() {

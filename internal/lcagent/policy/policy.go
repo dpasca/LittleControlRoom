@@ -135,8 +135,16 @@ func existingParent(path string) string {
 }
 
 func (w Workspace) AllowPatch() error {
+	return w.AllowEdit("apply_patch")
+}
+
+func (w Workspace) AllowEdit(tool string) error {
 	if w.Auto == AutonomyOff {
-		return Denied("apply_patch denied with --auto off")
+		tool = strings.TrimSpace(tool)
+		if tool == "" {
+			tool = "edit"
+		}
+		return Denied(tool + " denied with --auto off")
 	}
 	return nil
 }

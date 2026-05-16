@@ -19213,8 +19213,8 @@ func TestCommandEnterOpensSettingsMode(t *testing.T) {
 	if got.commandMode {
 		t.Fatalf("command mode should close after /settings")
 	}
-	if len(got.settingsFields) != 34 {
-		t.Fatalf("settings field count = %d, want 34", len(got.settingsFields))
+	if len(got.settingsFields) != 35 {
+		t.Fatalf("settings field count = %d, want 35", len(got.settingsFields))
 	}
 }
 
@@ -21385,7 +21385,7 @@ func TestSettingsSectionSwitchChangesVisibleFields(t *testing.T) {
 	if !strings.Contains(rendered, "LCAgent section.") {
 		t.Fatalf("settings modal should render the new section hint: %q", rendered)
 	}
-	if !strings.Contains(rendered, "LCAgent executable") || !strings.Contains(rendered, "LCAgent model") {
+	if !strings.Contains(rendered, "LCAgent executable") || !strings.Contains(rendered, "LCAgent route preset") {
 		t.Fatalf("settings modal should show LCAgent fields after switching sections: %q", rendered)
 	}
 	if strings.Contains(rendered, "Boss helm model") {

@@ -689,6 +689,7 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 		CodexHome:                m.codexHome(),
 		LCAgentPath:              m.lcagentPath(),
 		LCAgentEnvFile:           m.lcagentEnvFile(),
+		LCAgentRoutePreset:       m.lcagentRoutePreset(),
 		LCAgentProvider:          m.lcagentProvider(),
 		LCAgentAuto:              m.lcagentAuto(),
 		LCAgentToolProfile:       m.lcagentToolProfile(),
@@ -766,6 +767,7 @@ func (m Model) shouldReloadEmbeddedLCAgentAfterSettingsSave(previous, saved conf
 func lcagentLaunchSettingsChanged(previous, saved config.EditableSettings) bool {
 	return strings.TrimSpace(previous.LCAgentPath) != strings.TrimSpace(saved.LCAgentPath) ||
 		strings.TrimSpace(previous.LCAgentEnvFile) != strings.TrimSpace(saved.LCAgentEnvFile) ||
+		strings.TrimSpace(previous.LCAgentRoutePreset) != strings.TrimSpace(saved.LCAgentRoutePreset) ||
 		strings.TrimSpace(previous.LCAgentProvider) != strings.TrimSpace(saved.LCAgentProvider) ||
 		strings.TrimSpace(previous.EmbeddedLCAgentModel) != strings.TrimSpace(saved.EmbeddedLCAgentModel) ||
 		strings.TrimSpace(previous.EmbeddedLCAgentReasoning) != strings.TrimSpace(saved.EmbeddedLCAgentReasoning) ||
@@ -790,6 +792,7 @@ func (m Model) lcagentLaunchRequestFromSettings(projectPath string, settings con
 		CodexHome:                m.codexHome(),
 		LCAgentPath:              strings.TrimSpace(settings.LCAgentPath),
 		LCAgentEnvFile:           strings.TrimSpace(settings.LCAgentEnvFile),
+		LCAgentRoutePreset:       strings.TrimSpace(settings.LCAgentRoutePreset),
 		LCAgentProvider:          strings.TrimSpace(settings.LCAgentProvider),
 		LCAgentAuto:              strings.TrimSpace(settings.LCAgentAuto),
 		LCAgentToolProfile:       strings.TrimSpace(settings.LCAgentToolProfile),
@@ -889,6 +892,10 @@ func (m Model) lcagentPath() string {
 
 func (m Model) lcagentEnvFile() string {
 	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentEnvFile)
+}
+
+func (m Model) lcagentRoutePreset() string {
+	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentRoutePreset)
 }
 
 func (m Model) lcagentProvider() string {

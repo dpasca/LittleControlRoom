@@ -31,6 +31,7 @@ const (
 	settingsFieldOllamaModel
 	settingsFieldLCAgentPath
 	settingsFieldLCAgentEnvFile
+	settingsFieldLCAgentRoutePreset
 	settingsFieldLCAgentProvider
 	settingsFieldLCAgentModel
 	settingsFieldLCAgentReasoning
@@ -183,6 +184,7 @@ func settingsSections() []settingsSection {
 			fieldOrder: []int{
 				settingsFieldLCAgentPath,
 				settingsFieldLCAgentEnvFile,
+				settingsFieldLCAgentRoutePreset,
 				settingsFieldLCAgentProvider,
 				settingsFieldLCAgentModel,
 				settingsFieldLCAgentReasoning,
@@ -534,6 +536,7 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		m.currentSettingsBaseline().OpenCodeModelTier,
 		m.settingsFieldValue(settingsFieldLCAgentPath),
 		m.settingsFieldValue(settingsFieldLCAgentEnvFile),
+		m.settingsFieldValue(settingsFieldLCAgentRoutePreset),
 		m.settingsFieldValue(settingsFieldLCAgentProvider),
 		m.settingsFieldValue(settingsFieldLCAgentAuto),
 		m.settingsFieldValue(settingsFieldLCAgentToolProfile),
@@ -895,6 +898,7 @@ func (m Model) settingsDraftForInferenceStatus() config.EditableSettings {
 	settings.OllamaModel = m.settingsFieldValue(settingsFieldOllamaModel)
 	settings.LCAgentPath = m.settingsFieldValue(settingsFieldLCAgentPath)
 	settings.LCAgentEnvFile = m.settingsFieldValue(settingsFieldLCAgentEnvFile)
+	settings.LCAgentRoutePreset = m.settingsFieldValue(settingsFieldLCAgentRoutePreset)
 	settings.LCAgentProvider = m.settingsFieldValue(settingsFieldLCAgentProvider)
 	settings.EmbeddedLCAgentModel = m.settingsFieldValue(settingsFieldLCAgentModel)
 	settings.EmbeddedLCAgentReasoning = m.settingsFieldValue(settingsFieldLCAgentReasoning)
@@ -1177,6 +1181,10 @@ func (m Model) settingsOpenAIKeyStepState(settings config.EditableSettings) (str
 }
 
 func settingsLCAgentStepState(settings config.EditableSettings) (string, string, lipgloss.Style, string) {
+	if preset := strings.TrimSpace(settings.LCAgentRoutePreset); preset != "" {
+		state, style, detail := lcagentCredentialSmokeCheck(settings)
+		return "preset " + preset, state, style, detail
+	}
 	provider := firstNonEmptyTrimmed(settings.LCAgentProvider, "openrouter")
 	model := firstNonEmptyTrimmed(settings.EmbeddedLCAgentModel, lcagentDefaultModelForProvider(provider))
 	state, style, detail := lcagentCredentialSmokeCheck(settings)
@@ -1188,7 +1196,7 @@ func settingsLCAgentStepState(settings config.EditableSettings) (string, string,
 }
 
 func lcagentCredentialSmokeCheck(settings config.EditableSettings) (string, lipgloss.Style, string) {
-	provider := firstNonEmptyTrimmed(settings.LCAgentProvider, "openrouter")
+	provider := firstNonEmptyTrimmed(lcagentProviderForRoutePreset(settings.LCAgentRoutePreset), settings.LCAgentProvider, "openrouter")
 	keyName := lcagentProviderAPIKeyName(provider)
 	if keyName == "" {
 		return "unknown", detailWarningStyle, "Unknown LCAgent provider " + provider + "."
@@ -1208,6 +1216,17 @@ func lcagentCredentialSmokeCheck(settings config.EditableSettings) (string, lipg
 		return "ready", footerPrimaryLabelStyle, keyName + " found in process environment " + maskedOpenAIKeySuffix(value) + "."
 	}
 	return "needed", detailWarningStyle, keyName + " is not configured; set an env file or process environment variable."
+}
+
+func lcagentProviderForRoutePreset(preset string) string {
+	switch strings.ToLower(strings.TrimSpace(preset)) {
+	case "quality":
+		return "openai"
+	case "balanced", "cheap-scout", "cheap", "scout":
+		return "openrouter"
+	default:
+		return ""
+	}
 }
 
 func lcagentProviderAPIKeyName(provider string) string {
@@ -1650,6 +1669,13 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionLCAgent,
 		),
 		newSettingsField(
+			"LCAgent route preset",
+			"Optional coding route bundle. Accepted values: balanced, quality, cheap-scout. Leave blank to use the individual fields below.",
+			settings.LCAgentRoutePreset,
+			32,
+			settingsSectionLCAgent,
+		),
+		newSettingsField(
 			"LCAgent provider",
 			"Experimental LCAgent provider. Accepted values: openrouter, openai, deepseek, moonshot.",
 			settings.LCAgentProvider,
@@ -1859,6 +1885,7 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.EmbeddedLCAgentReasoning = strings.TrimSpace(settings.EmbeddedLCAgentReasoning)
 	settings.LCAgentPath = strings.TrimSpace(settings.LCAgentPath)
 	settings.LCAgentEnvFile = strings.TrimSpace(settings.LCAgentEnvFile)
+	settings.LCAgentRoutePreset = strings.TrimSpace(settings.LCAgentRoutePreset)
 	settings.LCAgentProvider = strings.TrimSpace(settings.LCAgentProvider)
 	settings.LCAgentAuto = strings.TrimSpace(settings.LCAgentAuto)
 	settings.LCAgentToolProfile = strings.TrimSpace(settings.LCAgentToolProfile)
@@ -1968,6 +1995,19 @@ func (m Model) settingsFieldHint(index int) string {
 			return "LCAgent launches will load provider credentials from " + path + "."
 		}
 		return field.hint
+	case settingsFieldLCAgentRoutePreset:
+		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
+		case "":
+			return "LCAgent launches will use the individual provider, model, autonomy, tool, and context fields below."
+		case "balanced":
+			return "Balanced uses DeepSeek V4 Pro through OpenRouter with conservative coding budgets."
+		case "quality":
+			return "Quality uses GPT-5.5 through the direct OpenAI route with low reasoning and larger retained context."
+		case "cheap-scout", "cheap", "scout":
+			return "Cheap scout uses a lower-cost DeepSeek V4 Flash route for bounded read-first work."
+		default:
+			return field.hint
+		}
 	case settingsFieldLCAgentProvider:
 		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
 		case "", "openrouter":

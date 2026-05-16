@@ -25,6 +25,8 @@ type Summary struct {
 	ModelResponses            int               `json:"model_responses"`
 	ToolCalls                 map[string]int    `json:"tool_calls"`
 	ToolResults               map[string]int    `json:"tool_results"`
+	ToolSuccesses             map[string]int    `json:"tool_successes,omitempty"`
+	ToolFailures              map[string]int    `json:"tool_failures,omitempty"`
 	ResumeContexts            int               `json:"resume_contexts"`
 	PermissionDenials         int               `json:"permission_denials"`
 	PatchDiffSummaries        int               `json:"patch_diff_summaries"`
@@ -44,6 +46,7 @@ type Summary struct {
 	TokenUsage                lcrmodel.LLMUsage `json:"token_usage"`
 	MaxInputTokens            int64             `json:"max_input_tokens"`
 	MaxTotalTokens            int64             `json:"max_total_tokens"`
+	TraceQuality              TraceQuality      `json:"trace_quality"`
 	rangesByFile              map[string][]lineRange
 	readRangeCounts           map[string]rangeSeen
 }
@@ -60,6 +63,26 @@ type ToolOutputSize struct {
 	Tool      string `json:"tool"`
 	Bytes     int    `json:"bytes"`
 	Truncated bool   `json:"truncated,omitempty"`
+}
+
+type TraceQuality struct {
+	Score                int                   `json:"score"`
+	Grade                string                `json:"grade"`
+	Findings             []TraceQualityFinding `json:"findings,omitempty"`
+	ToolFailures         int                   `json:"tool_failures"`
+	ToolFailureRate      float64               `json:"tool_failure_rate"`
+	RepairEvents         int                   `json:"repair_events"`
+	VerifiedSessions     int                   `json:"verified_sessions"`
+	VerificationRate     float64               `json:"verification_rate"`
+	ReadOverlapRate      float64               `json:"read_overlap_rate"`
+	CachedInputTokenRate float64               `json:"cached_input_token_rate"`
+	EstimatedCostUSD     float64               `json:"estimated_cost_usd"`
+}
+
+type TraceQualityFinding struct {
+	Severity string `json:"severity"`
+	Code     string `json:"code"`
+	Message  string `json:"message"`
 }
 
 type lineRange struct {
@@ -125,6 +148,12 @@ func (s *Summary) init() {
 	if s.ToolResults == nil {
 		s.ToolResults = map[string]int{}
 	}
+	if s.ToolSuccesses == nil {
+		s.ToolSuccesses = map[string]int{}
+	}
+	if s.ToolFailures == nil {
+		s.ToolFailures = map[string]int{}
+	}
 	if s.ToolProfiles == nil {
 		s.ToolProfiles = map[string]int{}
 	}
@@ -168,6 +197,7 @@ func (s *Summary) finish() {
 		return repeated[i].Start < repeated[j].Start
 	})
 	s.RepeatedReadRanges = repeated
+	s.TraceQuality = s.computeTraceQuality()
 }
 
 func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
@@ -231,6 +261,13 @@ func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
 		}
 		s.ToolResults[tool]++
 		result := toolResultFromRaw(event["result"])
+		if result.Success != nil {
+			if *result.Success {
+				s.ToolSuccesses[tool]++
+			} else {
+				s.ToolFailures[tool]++
+			}
+		}
 		outputBytes := len(result.Output) + len(result.Error)
 		s.addLargestToolOutput(ToolOutputSize{
 			Source:    source,
@@ -323,6 +360,7 @@ type rawToolResult struct {
 	Output    string `json:"output"`
 	Error     string `json:"error"`
 	Truncated bool   `json:"truncated"`
+	Success   *bool  `json:"success"`
 }
 
 func toolResultFromRaw(raw json.RawMessage) rawToolResult {
@@ -388,4 +426,102 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func (s Summary) computeTraceQuality() TraceQuality {
+	quality := TraceQuality{
+		Score:                100,
+		VerifiedSessions:     s.VerificationStatuses["verified"],
+		RepairEvents:         s.PermissionDenials + s.PatchFeedback + s.VerificationFeedback + s.RepairFeedbackSuppressed,
+		ReadOverlapRate:      ratio(s.ReadFileOverlappingLines, s.ReadFileLines),
+		CachedInputTokenRate: ratio64(s.TokenUsage.CachedInputTokens, s.TokenUsage.InputTokens),
+		EstimatedCostUSD:     s.TokenUsage.EstimatedCostUSD,
+	}
+	totalKnownToolResults := 0
+	for _, count := range s.ToolSuccesses {
+		totalKnownToolResults += count
+	}
+	for _, count := range s.ToolFailures {
+		quality.ToolFailures += count
+		totalKnownToolResults += count
+	}
+	quality.ToolFailureRate = ratio(quality.ToolFailures, totalKnownToolResults)
+	if s.Sessions > 0 {
+		quality.VerificationRate = ratio(quality.VerifiedSessions, s.Sessions)
+	}
+	if s.Sessions == 0 {
+		quality.addFinding("warn", "no_sessions", "No session metadata was found in the analyzed trace.")
+		quality.Score -= 20
+	}
+	if s.Sessions > 0 && quality.VerifiedSessions == 0 {
+		quality.addFinding("warn", "no_verified_sessions", "No session recorded a verified verification summary.")
+		quality.Score -= 30
+	} else if s.Sessions > 0 && quality.VerifiedSessions < s.Sessions {
+		quality.addFinding("info", "partial_verification", "Some sessions did not record a verified verification summary.")
+		quality.Score -= minInt(15, (s.Sessions-quality.VerifiedSessions)*5)
+	}
+	if quality.ToolFailures > 0 {
+		quality.addFinding("warn", "tool_failures", fmt.Sprintf("%d tool result(s) failed.", quality.ToolFailures))
+		quality.Score -= minInt(25, quality.ToolFailures*5)
+	}
+	if s.PermissionDenials > 0 {
+		quality.addFinding("info", "permission_denials", fmt.Sprintf("%d permission denial(s) were recorded.", s.PermissionDenials))
+		quality.Score -= minInt(10, s.PermissionDenials*2)
+	}
+	if s.PatchFeedback > 0 {
+		quality.addFinding("warn", "patch_repair", fmt.Sprintf("%d patch repair feedback event(s) were needed.", s.PatchFeedback))
+		quality.Score -= minInt(15, s.PatchFeedback*5)
+	}
+	if s.VerificationFeedback > 0 {
+		quality.addFinding("warn", "verification_repair", fmt.Sprintf("%d verification feedback event(s) were needed.", s.VerificationFeedback))
+		quality.Score -= minInt(15, s.VerificationFeedback*5)
+	}
+	if s.RepairFeedbackSuppressed > 0 {
+		quality.addFinding("warn", "repeated_repair_feedback", fmt.Sprintf("%d duplicate repair feedback event(s) were suppressed.", s.RepairFeedbackSuppressed))
+		quality.Score -= minInt(10, s.RepairFeedbackSuppressed*5)
+	}
+	if quality.ReadOverlapRate >= 0.25 && s.ReadFileLines >= 100 {
+		quality.addFinding("info", "read_overlap", fmt.Sprintf("%.0f%% of read_file lines overlapped earlier reads.", quality.ReadOverlapRate*100))
+		quality.Score -= minInt(10, int(quality.ReadOverlapRate*20))
+	}
+	if quality.Score < 0 {
+		quality.Score = 0
+	}
+	quality.Grade = traceQualityGrade(quality.Score)
+	return quality
+}
+
+func (q *TraceQuality) addFinding(severity, code, message string) {
+	q.Findings = append(q.Findings, TraceQualityFinding{
+		Severity: severity,
+		Code:     code,
+		Message:  message,
+	})
+}
+
+func traceQualityGrade(score int) string {
+	switch {
+	case score >= 90:
+		return "excellent"
+	case score >= 80:
+		return "good"
+	case score >= 60:
+		return "mixed"
+	default:
+		return "needs_attention"
+	}
+}
+
+func ratio(numerator, denominator int) float64 {
+	if denominator <= 0 {
+		return 0
+	}
+	return float64(numerator) / float64(denominator)
+}
+
+func ratio64(numerator, denominator int64) float64 {
+	if denominator <= 0 {
+		return 0
+	}
+	return float64(numerator) / float64(denominator)
 }

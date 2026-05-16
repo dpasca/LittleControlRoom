@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/lcagent/sessionmetrics"
 	lcrmodel "lcroom/internal/model"
 )
 
@@ -38,6 +39,7 @@ type LCAgentTrace struct {
 	RepairFeedbackSuppressed []string
 	ModelResponses           int
 	TokenUsage               lcrmodel.LLMUsage
+	TraceQuality             sessionmetrics.TraceQuality
 	Errors                   []string
 }
 
@@ -186,6 +188,9 @@ func ParseLCAgentTraceFile(path string) (LCAgentTrace, error) {
 	if err := scanner.Err(); err != nil {
 		return LCAgentTrace{}, err
 	}
+	if summary, err := sessionmetrics.AnalyzeFiles([]string{path}); err == nil {
+		trace.TraceQuality = summary.TraceQuality
+	}
 	return trace, nil
 }
 
@@ -258,6 +263,9 @@ func (t LCAgentTrace) CompactSummary() string {
 
 func (t LCAgentTrace) TraceQualitySummary() string {
 	parts := []string{}
+	if quality := t.TraceQualitySummaryLabel(); quality != "" {
+		parts = append(parts, quality)
+	}
 	if status := strings.TrimSpace(t.VerificationStatus); status != "" {
 		parts = append(parts, "verification "+status)
 	}
@@ -289,6 +297,24 @@ func (t LCAgentTrace) TraceQualitySummary() string {
 		parts = append(parts, usageSummary)
 	}
 	return strings.Join(parts, "; ")
+}
+
+func (t LCAgentTrace) TraceQualitySummaryLabel() string {
+	grade := strings.TrimSpace(t.TraceQuality.Grade)
+	if grade == "" && t.TraceQuality.Score == 0 {
+		return ""
+	}
+	parts := []string{fmt.Sprintf("trace quality: %d", t.TraceQuality.Score)}
+	if grade != "" {
+		parts[0] += "/" + grade
+	}
+	if t.TraceQuality.ToolFailures > 0 {
+		parts = append(parts, fmt.Sprintf("tool failures: %d", t.TraceQuality.ToolFailures))
+	}
+	if t.TraceQuality.RepairEvents > 0 {
+		parts = append(parts, fmt.Sprintf("repair events: %d", t.TraceQuality.RepairEvents))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func (t LCAgentTrace) ActualCheckSummaries() []string {
