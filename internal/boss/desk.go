@@ -175,9 +175,17 @@ func appendDeskSection(lines []string, title string, rows []string, width int) [
 	if len(rows) == 0 {
 		return lines
 	}
-	lines = append(lines, bossDeskSectionStyle.Render(fitLine(title, width)))
+	lines = append(lines, renderBossDeskSectionHeader(title, width))
 	lines = append(lines, rows...)
 	return lines
+}
+
+func renderBossDeskSectionHeader(title string, width int) string {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		title = "Section"
+	}
+	return bossDeskSectionStyle.Render(fitLine(" "+title, width))
 }
 
 func (m Model) bossDeskNowRows(width int, now time.Time) []string {
@@ -503,6 +511,6 @@ func deskNoticeLabel(code string) string {
 }
 
 var bossDeskSectionStyle = lipgloss.NewStyle().
-	Foreground(bossPanelAccent).
-	Background(bossPanelBackground).
+	Foreground(lipgloss.Color("229")).
+	Background(lipgloss.Color("235")).
 	Bold(true)

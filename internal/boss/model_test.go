@@ -1462,6 +1462,47 @@ func TestEmbeddedModelUsesSidebarAndBottomLog(t *testing.T) {
 	}
 }
 
+func TestBossDeskGetsWiderSidebarInEmbeddedLayout(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		width       int
+		wantSidebar int
+		wantChat    int
+	}{
+		{width: 96, wantSidebar: 38, wantChat: 58},
+		{width: 120, wantSidebar: 48, wantChat: 72},
+		{width: 180, wantSidebar: 68, wantChat: 112},
+	} {
+		m := NewEmbedded(context.Background(), nil)
+		m.width = tc.width
+		m.height = 24
+
+		layout := m.layout()
+		if layout.sidebarWidth != tc.wantSidebar || layout.chatWidth != tc.wantChat {
+			t.Fatalf("width %d allocated chat %d sidebar %d, want chat %d sidebar %d", tc.width, layout.chatWidth, layout.sidebarWidth, tc.wantChat, tc.wantSidebar)
+		}
+	}
+}
+
+func TestBossDeskSectionHeadersUseNonCyanBackgroundBand(t *testing.T) {
+	t.Parallel()
+
+	header := renderBossDeskSectionHeader("Needs You", 24)
+	if got := ansi.StringWidth(ansi.Strip(header)); got != 24 {
+		t.Fatalf("header width = %d, want 24: %q", got, ansi.Strip(header))
+	}
+	if !strings.Contains(ansi.Strip(header), " Needs You") {
+		t.Fatalf("header should keep the section title with left padding: %q", ansi.Strip(header))
+	}
+	if fmt.Sprint(bossDeskSectionStyle.GetForeground()) == fmt.Sprint(bossPanelAccent) {
+		t.Fatalf("boss desk section header should not reuse the cyan panel accent")
+	}
+	if fmt.Sprint(bossDeskSectionStyle.GetBackground()) == fmt.Sprint(bossPanelBackground) {
+		t.Fatalf("boss desk section header should have a distinct background band")
+	}
+}
+
 func TestEmbeddedModelKeepsLowerPanelsCompactForLongerConversation(t *testing.T) {
 	t.Parallel()
 

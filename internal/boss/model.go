@@ -997,14 +997,8 @@ func bossSidebarTargetWidth(width int) int {
 	if width < 96 {
 		return 0
 	}
-	sidebarWidth := clampInt(width/4, 28, 42)
-	if width >= 150 {
-		sidebarWidth = clampInt(width/5, 32, 44)
-	}
-	sidebarWidth = clampInt((sidebarWidth*13+9)/10, 36, 56)
-	if width-sidebarWidth-4 >= 58 {
-		sidebarWidth += 4
-	}
+	sidebarWidth := clampInt((width*2+4)/5, 40, 68)
+	sidebarWidth = minInt(sidebarWidth, width-58)
 	if width-sidebarWidth < 58 {
 		return 0
 	}
