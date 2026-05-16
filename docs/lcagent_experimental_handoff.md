@@ -18,7 +18,8 @@ artifacts that LCR can scan and replay.
 
 Implemented pieces:
 
-- `cmd/lcagent exec` with scripted and live provider loops.
+- `cmd/lcagent exec` with scripted and live provider loops, plus
+  `cmd/lcagent scout` for cheap read-only exploration handoffs.
 - Structured JSONL events for session metadata, tool calls/results, plans,
   final responses, touched files, provider usage, tool profiles, and context
   profiles.
@@ -44,6 +45,8 @@ Implemented pieces:
 - Coding route presets for `balanced`, `quality`, and `cheap-scout` CLI lanes,
   with traceable `route_preset` events, explicit flag overrides, and optional
   embedded-launch wiring through `lcagent_route_preset`.
+- `lcagent scout` defaults to the `cheap-scout` route, low max turns, autonomy
+  off, a read-only handoff prompt, and a `delegation_mode` trace event.
 - Explicit summarized continuation via `--continue-from` with backward-compatible
   `--resume`, `continuation` trace events, parent/root chain metadata, handoff
   source, and pending verification/file state.
@@ -103,7 +106,10 @@ Setup and product UX:
 - `sessionmetrics` emits a derived `trace_quality` block with score, grade,
   findings, tool failure rate, repair pressure, verification rate, read overlap
   rate, cached-token rate, and estimated cost. `live-eval` reports the same
-  score/grade per case for trace-driven calibration across routes.
+  score/grade per case for trace-driven calibration across routes. The project
+  detail pane now loads recent LCAgent artifacts asynchronously and shows a
+  compact `LCAgent trace` rollup for latest checks, verification, provider
+  failures/retries, repairs, pending state, and continuations.
 
 Harness and policy hardening:
 
@@ -122,9 +128,11 @@ Harness and policy hardening:
 - Provider-specific quirks still need hardening beyond the first foundation:
   provider failures now emit typed `provider_failure` events, transient failures
   can retry with bounded backoff, retry attempts are traced, and metrics fold
-  provider instability into `trace_quality`. Remaining work includes broader
-  provider coverage, richer rate-limit UX, timeout recovery, prompt-cache
-  behavior, and OpenRouter provider pinning/fallback calibration.
+  provider instability into `trace_quality`. Embedded transcripts now add
+  short actionable hints for quota, auth, rate-limit, timeout, transient HTTP,
+  and malformed-response failures. Remaining work includes broader provider
+  coverage, richer blocked-state UI, timeout recovery, prompt-cache behavior,
+  and OpenRouter provider pinning/fallback calibration.
 - Patch/edit ergonomics now include first-pass failure feedback, concrete
   re-read suggestions for stale hunks, and a literal `replace_text` fallback
   tool for small exact replacements when strict patch syntax is failing. There
@@ -138,9 +146,10 @@ Eval maturity:
   so summarized continuation from handoff artifacts is covered by the trace
   regression suite.
 - The repeatable `lcagent live-eval` lane now runs fixed live-provider coding
-  tasks for README edit, Go bug fix, small feature implementation, read-only
-  orientation, current-diff review, and a multi-file refactor, with per-case
-  correctness, verification status, tool-churn, token, cost, artifact,
+  tasks for README edit, Go bug fix, small feature implementation,
+  dependency-light JavaScript, Python unittest, and Rust cargo bug fixes,
+  read-only orientation, current-diff review, and a multi-file refactor, with
+  per-case correctness, verification status, tool-churn, token, cost, artifact,
   workspace, and wall-time reporting.
 - The current archived live benchmark is valuable but still small and partly
   qualitative.
@@ -188,8 +197,9 @@ small-to-medium coding tasks before it tries to be a broader assistant.
    continuation-chain state. Embedded LCAgent runs append a compact
    trace-quality score/grade line when the final artifact is available, and the
    LCAgent resume picker now shows continuation/pending-verification hints plus
-   compact trace-quality badges. Next, add project-level quality rollups and
-   trace-event drill-downs in the interactive TUI.
+   compact trace-quality badges. The project detail pane now adds a recent
+   LCAgent trace-quality rollup without blocking rendering. Next, add
+   project-list trends and trace-event drill-downs in the interactive TUI.
 
 ### P1: Make Continuation Feel Like A Coding Session
 
@@ -234,7 +244,9 @@ small-to-medium coding tasks before it tries to be a broader assistant.
    - `quality`: GPT-5.5 low or the current best high-quality route.
    - `balanced`: DeepSeek V4 Pro or Kimi K2.6 with conservative context.
    - `cheap scout`: DeepSeek V4 Flash or another low-cost route for bounded
-     read-only exploration, summarization, and small follow-up tasks.
+     read-only exploration, summarization, and small follow-up tasks. For
+     direct CLI use, `lcagent scout ...` applies this lane and asks for a
+     compact handoff.
 
 ### P3: Build Real Coding Evals
 
@@ -258,14 +270,16 @@ Subagents are not a priority by themselves. The useful feature is efficient
 model-tiered delegation for small jobs.
 
 1. Add a lightweight delegated-job primitive.
-   It should run a bounded prompt with a specific model/profile, read/write
-   scope, max turns, and expected structured handoff. It can reuse `lcagent exec`
-   artifacts instead of inventing a new runtime.
+   `lcagent scout` is now the first primitive: it runs a bounded cheap-scout
+   prompt with autonomy off, low max turns, expected structured handoff, and a
+   `delegation_mode` event while reusing normal `lcagent exec` artifacts.
+   Remaining work is to expose it cleanly from embedded/Boss workflows.
 
 2. Start with read-only scout jobs on cheaper/faster models.
    Examples: "map the relevant files", "summarize this package", "find likely
    failing test owners", or "extract API usage points". The main model decides
-   whether to trust or verify the handoff.
+   whether to trust or verify the handoff. This is the current supported
+   delegation shape.
 
 3. Add small write jobs only after scout jobs are boring.
    Keep write delegation scoped to disjoint files or disposable worktrees, with

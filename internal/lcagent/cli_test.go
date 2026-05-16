@@ -275,6 +275,83 @@ func TestRunExecRoutePresetAppliesCodingDefaults(t *testing.T) {
 	}
 }
 
+func TestRunScoutUsesCheapScoutDefaultsAndPromptContract(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	var capturedPrompt string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body["model"] != "deepseek/deepseek-v4-flash" {
+			t.Fatalf("model = %q, want cheap scout flash model", body["model"])
+		}
+		messages, _ := body["messages"].([]any)
+		for _, raw := range messages {
+			msg, _ := raw.(map[string]any)
+			if msg["role"] == "user" {
+				content, _ := msg["content"].(string)
+				if strings.Contains(content, "Scout task.") {
+					capturedPrompt = content
+				}
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"resp_scout",
+			"model":"deepseek/deepseek-v4-flash",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"Findings\n- mapped repo\nRelevant files\n- README.md\nSuggested next steps\n- implement\nRisks or unknowns\n- none"}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"scout",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--output", "stream-json",
+		"map the repo",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	for _, want := range []string{
+		"Scout task.",
+		"do not modify files",
+		"Return a compact handoff",
+		"User request:\nmap the repo",
+	} {
+		if !strings.Contains(capturedPrompt, want) {
+			t.Fatalf("scout prompt missing %q:\n%s", want, capturedPrompt)
+		}
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"provider":"openrouter"`,
+		`"model":"deepseek/deepseek-v4-flash"`,
+		`"type":"route_preset"`,
+		`"name":"cheap-scout"`,
+		`"type":"delegation_mode"`,
+		`"mode":"cheap_scout"`,
+		`"summary":"Findings\n- mapped repo`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestRunExecRoutePresetAllowsExplicitOverrides(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
@@ -2120,14 +2197,14 @@ func TestRunLiveEvalListsFixedSuite(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &listed); err != nil {
 		t.Fatalf("decode live eval list: %v\n%s", err, stdout.String())
 	}
-	if len(listed.Cases) != 6 {
-		t.Fatalf("live eval cases = %d, want 6", len(listed.Cases))
+	if len(listed.Cases) != 9 {
+		t.Fatalf("live eval cases = %d, want 9", len(listed.Cases))
 	}
 	byName := map[string]liveEvalTask{}
 	for _, tc := range listed.Cases {
 		byName[tc.Name] = tc
 	}
-	for _, want := range []string{"readme_edit_verify", "go_bug_fix", "feature_slice", "repo_orientation", "current_diff_review", "multi_file_price_refactor"} {
+	for _, want := range []string{"readme_edit_verify", "go_bug_fix", "feature_slice", "js_package_script_fix", "python_unittest_fix", "rust_cargo_fix", "repo_orientation", "current_diff_review", "multi_file_price_refactor"} {
 		if _, ok := byName[want]; !ok {
 			t.Fatalf("live eval list missing %s: %#v", want, listed.Cases)
 		}
@@ -2137,6 +2214,15 @@ func TestRunLiveEvalListsFixedSuite(t *testing.T) {
 	}
 	if byName["current_diff_review"].ExpectedVerificationStatus != "failed" || !byName["current_diff_review"].ExpectNoEdits {
 		t.Fatalf("current_diff_review list entry missing review contract: %#v", byName["current_diff_review"])
+	}
+	if byName["js_package_script_fix"].Category != "js_ts" || strings.Join(byName["js_package_script_fix"].VerifyCommand, " ") != "npm test" {
+		t.Fatalf("js_package_script_fix list entry missing JS verification contract: %#v", byName["js_package_script_fix"])
+	}
+	if byName["python_unittest_fix"].Category != "python" || strings.Join(byName["python_unittest_fix"].VerifyCommand, " ") != "python3 -m unittest" {
+		t.Fatalf("python_unittest_fix list entry missing Python verification contract: %#v", byName["python_unittest_fix"])
+	}
+	if byName["rust_cargo_fix"].Category != "rust" || strings.Join(byName["rust_cargo_fix"].VerifyCommand, " ") != "cargo test" {
+		t.Fatalf("rust_cargo_fix list entry missing Rust verification contract: %#v", byName["rust_cargo_fix"])
 	}
 }
 

@@ -156,6 +156,7 @@ func TestLowAutonomyVerificationCommandPolicy(t *testing.T) {
 		{name: "pytest cache clear", argv: []string{"pytest", "--cache-clear"}, allow: false},
 		{name: "pytest junit output", argv: []string{"pytest", "--junitxml=out.xml"}, allow: false},
 		{name: "python module pytest", argv: []string{"python", "-m", "pytest", "tests"}, allow: true},
+		{name: "python module unittest", argv: []string{"python", "-m", "unittest"}, allow: true},
 		{name: "python compileall", argv: []string{"python", "-m", "compileall", "."}, allow: false},
 		{name: "mypy install types", argv: []string{"mypy", "--install-types"}, allow: false},
 		{name: "pyright create stub", argv: []string{"pyright", "--createstub", "pkg"}, allow: false},

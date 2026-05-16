@@ -678,10 +678,47 @@ func lcagentProviderFailureText(event map[string]json.RawMessage) string {
 	if retrying {
 		parts = append(parts, "retrying")
 	}
+	if delayMS := rawJSONInt(event["retry_delay_ms"]); delayMS > 0 {
+		parts = append(parts, fmt.Sprintf("retry delay %dms", delayMS))
+	}
 	if message != "" {
 		parts = append(parts, message)
 	}
+	if action := lcagentProviderFailureAction(kind, retrying); action != "" {
+		parts = append(parts, action)
+	}
 	return strings.Join(parts, "; ")
+}
+
+func lcagentProviderFailureAction(kind string, retrying bool) string {
+	switch strings.TrimSpace(kind) {
+	case "rate_limited":
+		if retrying {
+			return "waiting for the provider rate limit before retry"
+		}
+		return "try again later, lower concurrency, or switch route/provider"
+	case "quota":
+		return "check provider credits/quota or choose another configured route"
+	case "auth":
+		return "check the LCAgent env file and provider API key"
+	case "timeout":
+		if retrying {
+			return "retrying after timeout; narrow the task or raise request-timeout if this repeats"
+		}
+		return "narrow the task or raise request-timeout before retrying"
+	case "malformed_response", "provider_schema":
+		return "provider response shape was not usable; retry with another model/route if it repeats"
+	case "transient_http":
+		if retrying {
+			return "transient provider error; retry scheduled"
+		}
+		return "transient provider error; retry or switch route if it persists"
+	default:
+		if retrying {
+			return "retry scheduled"
+		}
+		return ""
+	}
 }
 
 func lcagentProviderRetryText(event map[string]json.RawMessage) string {

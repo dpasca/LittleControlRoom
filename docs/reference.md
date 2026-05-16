@@ -107,6 +107,9 @@ For direct CLI use, `lcagent presets` lists coding route presets. `lcagent exec
 --route-preset balanced|quality|cheap-scout` applies a provider, model,
 autonomy, reasoning, tool-profile, context-profile, timeout, and temperature
 bundle; any explicit flag such as `--model` or `--context-profile` still wins.
+`lcagent scout <prompt>` is a direct cheap-scout wrapper for bounded read-only
+exploration; it records a `delegation_mode` trace event and asks for a compact
+handoff with findings, relevant files, next steps, and risks.
 Use `lcagent exec --continue-from <session-id-or-jsonl>` to start an explicit
 summarized continuation. The older `--resume` flag remains as a compatibility
 alias.

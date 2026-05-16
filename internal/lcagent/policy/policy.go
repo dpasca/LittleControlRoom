@@ -856,7 +856,7 @@ func lowAutonomyPythonArgs(args []string) bool {
 		return false
 	}
 	switch args[1] {
-	case "pytest", "mypy":
+	case "pytest", "mypy", "unittest":
 		return safeVerificationArgs(args[2:])
 	default:
 		return false

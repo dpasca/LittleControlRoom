@@ -45,6 +45,12 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 			return 1
 		}
 		return 0
+	case "scout":
+		if err := runScout(args[1:], stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 	case "metrics":
 		if err := runMetrics(args[1:], stdout); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -85,7 +91,17 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 }
 
 func lcagentUsage() string {
-	return "usage: lcagent exec [flags] <prompt>\n       lcagent presets [flags]\n       lcagent metrics <session.jsonl>...\n       lcagent eval [flags]\n       lcagent live-eval [flags]\n       lcagent smoke [flags]"
+	return "usage: lcagent exec [flags] <prompt>\n       lcagent scout [exec flags] <prompt>\n       lcagent presets [flags]\n       lcagent metrics <session.jsonl>...\n       lcagent eval [flags]\n       lcagent live-eval [flags]\n       lcagent smoke [flags]"
+}
+
+type execRunOptions struct {
+	CommandName           string
+	DefaultAuto           string
+	DefaultRoutePreset    string
+	DefaultMaxTurns       int
+	DelegationMode        string
+	DelegationDescription string
+	PromptTransform       func(string) string
 }
 
 func runPresets(args []string, stdout io.Writer) error {
@@ -167,7 +183,36 @@ func runMetrics(args []string, stdout io.Writer) error {
 }
 
 func runExec(args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
+	return runExecWithOptions(args, stdout, execRunOptions{CommandName: "exec"})
+}
+
+func runScout(args []string, stdout io.Writer) error {
+	return runExecWithOptions(args, stdout, execRunOptions{
+		CommandName:           "scout",
+		DefaultAuto:           "off",
+		DefaultRoutePreset:    "cheap-scout",
+		DefaultMaxTurns:       4,
+		DelegationMode:        "cheap_scout",
+		DelegationDescription: "Low-cost read-only scout for bounded exploration and handoff notes.",
+		PromptTransform:       scoutDelegationPrompt,
+	})
+}
+
+func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) error {
+	commandName := strings.TrimSpace(opts.CommandName)
+	if commandName == "" {
+		commandName = "exec"
+	}
+	defaultAuto := strings.TrimSpace(opts.DefaultAuto)
+	if defaultAuto == "" {
+		defaultAuto = "off"
+	}
+	defaultRoutePreset := strings.TrimSpace(opts.DefaultRoutePreset)
+	defaultMaxTurns := opts.DefaultMaxTurns
+	if defaultMaxTurns <= 0 {
+		defaultMaxTurns = modeladapter.DefaultOpenRouterMaxTurns
+	}
+	fs := flag.NewFlagSet(commandName, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, finalModel, envFile, reasoningEffort, temperatureRaw, providerOnlyRaw, toolProfileRaw, contextProfileRaw, resumeRaw, continueRaw, routePresetRaw string
 	var webSearchBackend, webSearchAPIKey, webSearchEngineID, webSearchURL string
@@ -175,10 +220,10 @@ func runExec(args []string, stdout io.Writer) error {
 	var maxTurns int
 	fs.StringVar(&cwd, "cwd", "", "workspace root")
 	fs.StringVar(&dataDir, "data-dir", "", "artifact data root")
-	fs.StringVar(&autoRaw, "auto", "off", "autonomy: off, low, medium")
+	fs.StringVar(&autoRaw, "auto", defaultAuto, "autonomy: off, low, medium")
 	fs.StringVar(&outputRaw, "output", string(outputStreamJSON), "output: text, json, stream-json")
 	fs.StringVar(&scriptPath, "script", "", "scripted JSONL actions")
-	fs.StringVar(&routePresetRaw, "route-preset", "", "coding route preset: balanced, quality, or cheap-scout; explicit flags override preset values")
+	fs.StringVar(&routePresetRaw, "route-preset", defaultRoutePreset, "coding route preset: balanced, quality, or cheap-scout; explicit flags override preset values")
 	fs.StringVar(&provider, "provider", "scripted", "provider: scripted, openrouter, openai, deepseek, or moonshot")
 	fs.StringVar(&model, "model", "", "model name")
 	fs.StringVar(&finalModel, "final-model", "", "optional model for no-tools final synthesis")
@@ -195,7 +240,7 @@ func runExec(args []string, stdout io.Writer) error {
 	fs.StringVar(&webSearchEngineID, "web-search-engine-id", "", "optional Google Programmable Search engine ID")
 	fs.StringVar(&webSearchURL, "web-search-url", "", "optional web search endpoint URL, used by searxng")
 	fs.DurationVar(&requestTimeout, "request-timeout", 0, "provider HTTP request timeout, for example 10m; default 2m")
-	fs.IntVar(&maxTurns, "max-turns", modeladapter.DefaultOpenRouterMaxTurns, "maximum model turns for provider loops")
+	fs.IntVar(&maxTurns, "max-turns", defaultMaxTurns, "maximum model turns for provider loops")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -214,6 +259,9 @@ func runExec(args []string, stdout io.Writer) error {
 	prompt := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	if prompt == "" {
 		return fmt.Errorf("prompt is required")
+	}
+	if opts.PromptTransform != nil {
+		prompt = strings.TrimSpace(opts.PromptTransform(prompt))
 	}
 	resumeSourceRaw := strings.TrimSpace(resumeRaw)
 	continueSourceRaw := strings.TrimSpace(continueRaw)
@@ -319,6 +367,18 @@ func runExec(args []string, stdout io.Writer) error {
 			"context_profile":   string(contextProfile),
 			"reasoning_effort":  reasoningEffort,
 			"request_timeout":   requestTimeout.String(),
+		}); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(opts.DelegationMode) != "" {
+		if err := writer.Write(session.Event{
+			"type":          "delegation_mode",
+			"session_id":    sessionID,
+			"mode":          strings.TrimSpace(opts.DelegationMode),
+			"description":   strings.TrimSpace(opts.DelegationDescription),
+			"read_only":     true,
+			"handoff_items": []string{"Findings", "Relevant files", "Suggested next steps", "Risks or unknowns"},
 		}); err != nil {
 			return err
 		}
@@ -1017,6 +1077,25 @@ func usageTracked(usage lcrmodel.LLMUsage) bool {
 		usage.CachedInputTokens != 0 ||
 		usage.ReasoningTokens != 0 ||
 		usage.EstimatedCostUSD != 0
+}
+
+func scoutDelegationPrompt(userPrompt string) string {
+	userPrompt = strings.TrimSpace(userPrompt)
+	if userPrompt == "" {
+		return ""
+	}
+	return fmt.Sprintf(`Scout task.
+
+You are a delegated low-cost scout for another coding agent. Investigate only what is needed, do not modify files, and prefer targeted reads/searches over broad scans. If a code change seems necessary, describe the exact change instead of applying it.
+
+Return a compact handoff with these sections:
+- Findings
+- Relevant files
+- Suggested next steps
+- Risks or unknowns
+
+User request:
+%s`, userPrompt)
 }
 
 func defaultDataDir() string {

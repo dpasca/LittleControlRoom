@@ -663,6 +663,106 @@ func TestSlug(t *testing.T) {
 			ExpectFiles:   []string{"stringsx.go"},
 		},
 		{
+			Name:        "js_package_script_fix",
+			Category:    "js_ts",
+			Description: "Fix a dependency-free JavaScript package test through an npm verification script.",
+			Files: map[string]string{
+				"package.json": `{
+  "name": "lcagent-live-js",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test.mjs"
+  }
+}
+`,
+				"slug.js": `export function slug(input) {
+  return input;
+}
+`,
+				"test.mjs": `import assert from "node:assert/strict";
+import { slug } from "./slug.js";
+
+assert.equal(slug("Hello, Little Control Room!"), "hello-little-control-room");
+assert.equal(slug("  Already---Slugged  "), "already-slugged");
+`,
+			},
+			Prompt: strings.TrimSpace(`The JavaScript package test is failing. Fix slug.js without adding dependencies. Then run npm test with run_command purpose set to verify, and finish with final_response listing slug.js and npm test.`),
+			ExpectedContains: map[string]string{
+				"slug.js": "toLowerCase",
+			},
+			VerifyCommand: []string{"npm", "test"},
+			ExpectFiles:   []string{"slug.js"},
+		},
+		{
+			Name:        "python_unittest_fix",
+			Category:    "python",
+			Description: "Fix a small Python function and verify with stdlib unittest.",
+			Files: map[string]string{
+				"textutil.py": `def initials(name: str) -> str:
+    return name[:1].upper()
+`,
+				"test_textutil.py": `import unittest
+
+from textutil import initials
+
+
+class InitialsTest(unittest.TestCase):
+    def test_multiple_words(self):
+        self.assertEqual(initials("Little Control Room"), "LCR")
+
+    def test_extra_spaces(self):
+        self.assertEqual(initials("  agent   runtime  "), "AR")
+
+
+if __name__ == "__main__":
+    unittest.main()
+`,
+			},
+			Prompt: strings.TrimSpace(`The Python unittest suite is failing. Fix textutil.py so initials returns the uppercase initials of each word. Then run python -m unittest with run_command purpose set to verify, and finish with final_response listing textutil.py and python -m unittest.`),
+			ExpectedContains: map[string]string{
+				"textutil.py": "split",
+			},
+			VerifyCommand: []string{"python3", "-m", "unittest"},
+			ExpectFiles:   []string{"textutil.py"},
+		},
+		{
+			Name:        "rust_cargo_fix",
+			Category:    "rust",
+			Description: "Fix a small Rust library bug and verify with cargo test.",
+			Files: map[string]string{
+				"Cargo.toml": `[package]
+name = "lcagent-live-rust"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+`,
+				"src/lib.rs": `pub fn is_even(value: i32) -> bool {
+    value % 2 == 1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_even_numbers() {
+        assert!(is_even(0));
+        assert!(is_even(42));
+        assert!(!is_even(7));
+    }
+}
+`,
+			},
+			Prompt: strings.TrimSpace(`The Rust tests are failing. Fix src/lib.rs, then run cargo test with run_command purpose set to verify. Finish with final_response listing src/lib.rs and cargo test.`),
+			ExpectedContains: map[string]string{
+				"src/lib.rs": "% 2 == 0",
+			},
+			VerifyCommand: []string{"cargo", "test"},
+			ExpectFiles:   []string{"src/lib.rs"},
+		},
+		{
 			Name:        "repo_orientation",
 			Category:    "orientation",
 			Description: "Read-only repository orientation with verification by inspection.",

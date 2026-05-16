@@ -772,6 +772,32 @@ func TestParseLCAgentTraceFileIncludesProviderQualitySignals(t *testing.T) {
 	}
 }
 
+func TestLCAgentProviderFailureTextIncludesActionableHint(t *testing.T) {
+	event := map[string]json.RawMessage{
+		"provider":       json.RawMessage(`"openrouter"`),
+		"kind":           json.RawMessage(`"quota"`),
+		"message":        json.RawMessage(`"insufficient credits"`),
+		"attempt":        json.RawMessage(`1`),
+		"retrying":       json.RawMessage(`false`),
+		"retry_delay_ms": json.RawMessage(`250`),
+	}
+	got := lcagentProviderFailureText(event)
+	for _, want := range []string{"LCAgent openrouter failure: quota", "insufficient credits", "check provider credits/quota"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("provider failure text missing %q: %q", want, got)
+		}
+	}
+
+	event["kind"] = json.RawMessage(`"rate_limited"`)
+	event["retrying"] = json.RawMessage(`true`)
+	got = lcagentProviderFailureText(event)
+	for _, want := range []string{"retrying", "retry delay 250ms", "waiting for the provider rate limit"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("retrying provider failure text missing %q: %q", want, got)
+		}
+	}
+}
+
 func waitForLCAgentIdleSnapshot(t *testing.T, session Session, notify <-chan struct{}) Snapshot {
 	t.Helper()
 	deadline := time.After(5 * time.Second)

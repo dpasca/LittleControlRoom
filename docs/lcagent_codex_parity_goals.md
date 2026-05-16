@@ -17,9 +17,10 @@ LCAgent now has the important coding-agent skeleton:
 - workspace-scoped read, search, command, patch, and exact text-edit tools
 - verification semantics and repair feedback
 - route presets for common coding lanes
+- a `lcagent scout` cheap read-only delegation lane
 - embedded `/review` and `/compact`
 - JSONL trace artifacts, metrics, trace-quality summaries, resume-picker trace
-  hints, and live evals
+  hints, project-detail trace rollups, and live evals
 
 The remaining goals below are mostly hardening, calibration, and UX polish
 rather than a ground-up redesign.
@@ -35,7 +36,7 @@ rather than a ground-up redesign.
 | P0 | Autonomy calibration | Started | Low-autonomy needs to allow normal verification while still blocking risky commands. |
 | P1 | Interactive UX parity | Started | The embedded experience should make approvals, blocking states, review, and trace quality easy to act on. |
 | P1 | Trace-quality dashboarding | Started | The trace signals exist; LCR should make them scannable during daily use. |
-| P2 | Efficient scout/delegation lanes | Open | Cheap bounded exploration can save time/cost once core reliability is strong. |
+| P2 | Efficient scout/delegation lanes | Started | Cheap bounded exploration can save time/cost once core reliability is strong. |
 
 ## P0 Goals
 
@@ -87,11 +88,14 @@ Current state:
   recorded as `provider_retry` / `provider_retry_succeeded` events.
 - `trace_quality` includes provider failure and retry counts so unstable routes
   are easier to separate from model/task failures.
+- Embedded LCAgent provider failures now include short actionable hints for
+  quota, auth, rate-limit, timeout, transient HTTP, and malformed-response
+  failures.
 
 Missing:
 
 - Broader retry/backoff calibration across real provider failures.
-- Clearer embedded rate-limit and quota call-to-action states.
+- Richer blocked-state UI beyond one-line embedded transcript hints.
 - Better timeout recovery and partial-output handling.
 - Provider-specific prompt-cache behavior and accounting.
 - OpenRouter provider pinning and fallback behavior that is explicit in traces.
@@ -109,6 +113,7 @@ Done when:
 Current state:
 
 - `lcagent live-eval` covers a small README edit, Go bug fix, feature slice,
+  dependency-light JavaScript, Python unittest, and Rust cargo bug fixes,
   read-only repo orientation, current-diff review, and a multi-file refactor.
 - Per-case reports include correctness, observed/expected verification status,
   trace quality, cost, read volume, and artifacts.
@@ -119,7 +124,6 @@ Current state:
 
 Missing:
 
-- Framework-specific tasks across JS/TS, Python, Rust, and Go.
 - Dependency and environment failure cases.
 - Long-running sessions that require compaction/resume.
 - Repeated runs for route stability, not just single-pass success.
@@ -212,11 +216,15 @@ Current state:
 - The LCAgent resume picker surfaces compact trace-quality badges and selected
   session detail hints for quality, continuation depth, pending verification,
   and repair/feedback counts.
+- Project detail now loads recent LCAgent JSONL artifacts asynchronously and
+  shows a compact `LCAgent trace` rollup with latest quality/checks and recent
+  verification, provider retry/failure, repair, pending, and continuation
+  counts.
 
 Missing:
 
-- Project-list or dashboard-level trace-quality rollups.
 - Per-project recent LCAgent quality trends.
+- Project-list or dashboard-level trace-quality rollups.
 - Quick drill-down from score/finding to the relevant trace event.
 
 Done when:
@@ -231,14 +239,17 @@ Done when:
 Current state:
 
 - Route presets include `cheap-scout`.
+- `lcagent scout` wraps `exec` with the cheap-scout preset, low max turns,
+  autonomy off, a read-only scout prompt contract, and a `delegation_mode`
+  trace event with the expected handoff sections.
 - LCR has broader agent-task concepts outside LCAgent.
 
 Missing:
 
-- A polished way to send bounded exploration or verification subtasks to a
-  cheaper/lower-latency route.
-- Trace attribution that clearly separates scout output from main coding work.
+- A polished embedded/TUI way to send bounded exploration or verification
+  subtasks to a cheaper/lower-latency route.
 - Guardrails so delegation does not create confusing overlapping edits.
+- Small write-job delegation, if we decide it is worth adding later.
 
 Done when:
 
