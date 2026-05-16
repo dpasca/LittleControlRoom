@@ -28,16 +28,17 @@ type lcagentRoutePreset struct {
 func lcagentRoutePresets() []lcagentRoutePreset {
 	return []lcagentRoutePreset{
 		{
-			Name:           "balanced",
-			DisplayName:    "Balanced Coding",
-			Description:    "Default coding lane: DeepSeek V4 Pro through OpenRouter with conservative tool and context budgets.",
-			Provider:       "openrouter",
-			Model:          modeladapter.DefaultOpenRouterModel,
-			Auto:           "low",
-			ToolProfile:    "balanced",
-			ContextProfile: "balanced",
-			RequestTimeout: 10 * time.Minute,
-			Temperature:    "0.2",
+			Name:            "balanced",
+			DisplayName:     "Balanced Coding",
+			Description:     "Default coding lane: DeepSeek V4 Pro through OpenRouter with high reasoning and conservative tool/context budgets.",
+			Provider:        "openrouter",
+			Model:           modeladapter.DefaultOpenRouterModel,
+			ReasoningEffort: "high",
+			Auto:            "low",
+			ToolProfile:     "balanced",
+			ContextProfile:  "balanced",
+			RequestTimeout:  10 * time.Minute,
+			Temperature:     "0.2",
 		},
 		{
 			Name:            "quality",

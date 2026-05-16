@@ -32,18 +32,20 @@ type liveEvalTask struct {
 }
 
 type liveEvalReport struct {
-	Passed         bool                   `json:"passed"`
-	StartedAt      string                 `json:"started_at"`
-	Provider       string                 `json:"provider,omitempty"`
-	Model          string                 `json:"model,omitempty"`
-	Autonomy       string                 `json:"autonomy,omitempty"`
-	ToolProfile    string                 `json:"tool_profile,omitempty"`
-	ContextProfile string                 `json:"context_profile,omitempty"`
-	DataDir        string                 `json:"data_dir,omitempty"`
-	Root           string                 `json:"root,omitempty"`
-	Kept           bool                   `json:"kept"`
-	Cases          []liveEvalCaseResult   `json:"cases"`
-	Summary        sessionmetrics.Summary `json:"summary"`
+	Passed          bool                   `json:"passed"`
+	StartedAt       string                 `json:"started_at"`
+	Provider        string                 `json:"provider,omitempty"`
+	Model           string                 `json:"model,omitempty"`
+	RoutePreset     string                 `json:"route_preset,omitempty"`
+	ReasoningEffort string                 `json:"reasoning_effort,omitempty"`
+	Autonomy        string                 `json:"autonomy,omitempty"`
+	ToolProfile     string                 `json:"tool_profile,omitempty"`
+	ContextProfile  string                 `json:"context_profile,omitempty"`
+	DataDir         string                 `json:"data_dir,omitempty"`
+	Root            string                 `json:"root,omitempty"`
+	Kept            bool                   `json:"kept"`
+	Cases           []liveEvalCaseResult   `json:"cases"`
+	Summary         sessionmetrics.Summary `json:"summary"`
 }
 
 type liveEvalCaseResult struct {
@@ -85,10 +87,11 @@ type liveEvalScore struct {
 func runLiveEval(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("live-eval", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	var provider, model, envFile, dataDir, outputRaw, autoRaw, reasoningEffort, caseRaw, toolProfile, contextProfile string
+	var provider, model, envFile, dataDir, outputRaw, autoRaw, reasoningEffort, caseRaw, toolProfile, contextProfile, routePresetRaw string
 	var requestTimeout time.Duration
 	var maxTurns int
 	var keepTemp, listOnly bool
+	fs.StringVar(&routePresetRaw, "route-preset", "", "coding route preset: balanced, quality, or cheap-scout; explicit flags override preset values")
 	fs.StringVar(&provider, "provider", "openrouter", "provider: openrouter, openai, deepseek, or moonshot")
 	fs.StringVar(&model, "model", "", "optional model name; blank uses provider default")
 	fs.StringVar(&envFile, "env-file", "", "optional dotenv file for provider credentials")
@@ -105,6 +108,18 @@ func runLiveEval(args []string, stdout io.Writer) error {
 	fs.BoolVar(&listOnly, "list", false, "list live eval cases without running a provider")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	visitedFlags := visitedFlagNames(fs)
+	var routePreset lcagentRoutePreset
+	routePresetSet := false
+	if strings.TrimSpace(routePresetRaw) != "" {
+		var ok bool
+		routePreset, ok = lcagentRoutePresetByName(routePresetRaw)
+		if !ok {
+			return fmt.Errorf("unknown route preset %q; available presets: %s", routePresetRaw, lcagentRoutePresetNames())
+		}
+		routePresetSet = true
+		applyLiveEvalRoutePreset(routePreset, visitedFlags, &provider, &model, &reasoningEffort, &autoRaw, &toolProfile, &contextProfile, &requestTimeout)
 	}
 	outputRaw = strings.ToLower(strings.TrimSpace(outputRaw))
 	if outputRaw == "" {
@@ -139,22 +154,25 @@ func runLiveEval(args []string, stdout io.Writer) error {
 		dataDir = filepath.Join(defaultDataDir(), "lcagent", "live-evals", started.Format("20060102-150405"))
 	}
 	report := liveEvalReport{
-		Passed:         true,
-		StartedAt:      started.Format(time.RFC3339),
-		Provider:       provider,
-		Model:          strings.TrimSpace(model),
-		Autonomy:       firstLiveEvalNonEmpty(autoRaw, "low"),
-		ToolProfile:    firstLiveEvalNonEmpty(toolProfile, "balanced"),
-		ContextProfile: firstLiveEvalNonEmpty(contextProfile, "balanced"),
-		DataDir:        dataDir,
-		Root:           root,
-		Kept:           keepTemp,
+		Passed:          true,
+		StartedAt:       started.Format(time.RFC3339),
+		Provider:        provider,
+		Model:           strings.TrimSpace(model),
+		RoutePreset:     routePresetNameForReport(routePreset, routePresetSet),
+		ReasoningEffort: strings.TrimSpace(reasoningEffort),
+		Autonomy:        firstLiveEvalNonEmpty(autoRaw, "low"),
+		ToolProfile:     firstLiveEvalNonEmpty(toolProfile, "balanced"),
+		ContextProfile:  firstLiveEvalNonEmpty(contextProfile, "balanced"),
+		DataDir:         dataDir,
+		Root:            root,
+		Kept:            keepTemp,
 	}
 	var artifacts []string
 	for _, task := range tasks {
 		result := runLiveEvalTask(root, dataDir, task, liveEvalRunConfig{
 			Provider:        provider,
 			Model:           strings.TrimSpace(model),
+			RoutePreset:     report.RoutePreset,
 			EnvFile:         strings.TrimSpace(envFile),
 			Autonomy:        report.Autonomy,
 			ReasoningEffort: strings.TrimSpace(reasoningEffort),
@@ -187,9 +205,41 @@ func runLiveEval(args []string, stdout io.Writer) error {
 	return nil
 }
 
+func applyLiveEvalRoutePreset(preset lcagentRoutePreset, visited map[string]bool, provider, model, reasoningEffort, autoRaw, toolProfileRaw, contextProfileRaw *string, requestTimeout *time.Duration) {
+	if !visited["provider"] && strings.TrimSpace(preset.Provider) != "" {
+		*provider = preset.Provider
+	}
+	if !visited["model"] && strings.TrimSpace(preset.Model) != "" {
+		*model = preset.Model
+	}
+	if !visited["reasoning-effort"] && strings.TrimSpace(preset.ReasoningEffort) != "" {
+		*reasoningEffort = preset.ReasoningEffort
+	}
+	if !visited["auto"] && strings.TrimSpace(preset.Auto) != "" {
+		*autoRaw = preset.Auto
+	}
+	if !visited["tool-profile"] && strings.TrimSpace(preset.ToolProfile) != "" {
+		*toolProfileRaw = preset.ToolProfile
+	}
+	if !visited["context-profile"] && strings.TrimSpace(preset.ContextProfile) != "" {
+		*contextProfileRaw = preset.ContextProfile
+	}
+	if !visited["request-timeout"] && preset.RequestTimeout > 0 {
+		*requestTimeout = preset.RequestTimeout
+	}
+}
+
+func routePresetNameForReport(preset lcagentRoutePreset, ok bool) string {
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(preset.Name)
+}
+
 type liveEvalRunConfig struct {
 	Provider        string
 	Model           string
+	RoutePreset     string
 	EnvFile         string
 	Autonomy        string
 	ReasoningEffort string
@@ -228,6 +278,9 @@ func runLiveEvalTask(root, dataDir string, task liveEvalTask, cfg liveEvalRunCon
 		"--context-profile", cfg.ContextProfile,
 		"--request-timeout", cfg.RequestTimeout.String(),
 		"--max-turns", fmt.Sprintf("%d", cfg.MaxTurns),
+	}
+	if cfg.RoutePreset != "" {
+		execArgs = append(execArgs, "--route-preset", cfg.RoutePreset)
 	}
 	if cfg.Model != "" {
 		execArgs = append(execArgs, "--model", cfg.Model)

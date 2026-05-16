@@ -112,19 +112,18 @@ Run one case while keeping model-control knobs explicit:
 ```sh
 go run ./cmd/lcagent live-eval \
   --case go_bug_fix \
-  --provider openrouter \
-  --model deepseek/deepseek-v4-pro \
-  --tool-profile balanced \
-  --context-profile balanced \
-  --reasoning-effort low \
+  --route-preset balanced \
   --output json
 ```
 
 For route-level comparisons, `lcagent exec --route-preset
-balanced|quality|cheap-scout ...` applies the provider, model, autonomy,
-reasoning, tool/context profile, timeout, and temperature bundle. Explicit
-flags still override preset values, so record both the preset name and any
-overrides in benchmark notes.
+balanced|quality|cheap-scout ...` and `lcagent live-eval --route-preset
+balanced|quality|cheap-scout ...` apply the provider, model, autonomy,
+reasoning, tool/context profile, timeout, and temperature bundle where the
+command supports those knobs. Explicit flags still override preset values, so
+record both the preset name and any overrides in benchmark notes. The balanced
+DeepSeek lane uses explicit high reasoning because the model is inexpensive
+enough that eval reliability is usually worth the extra tokens.
 
 Each case reports correctness, recorded verification, the observed and expected
 verification status, expected files touched, failed tool results, permission

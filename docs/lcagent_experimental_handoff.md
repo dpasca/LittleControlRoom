@@ -242,7 +242,8 @@ small-to-medium coding tasks before it tries to be a broader assistant.
    The CLI and embedded LCAgent launch path now support these starting lanes
    through `--route-preset`, `lcagent presets`, and `lcagent_route_preset`:
    - `quality`: GPT-5.5 low or the current best high-quality route.
-   - `balanced`: DeepSeek V4 Pro or Kimi K2.6 with conservative context.
+   - `balanced`: DeepSeek V4 Pro with explicit high reasoning and conservative
+     context.
    - `cheap scout`: DeepSeek V4 Flash or another low-cost route for bounded
      read-only exploration, summarization, and small follow-up tasks. For
      direct CLI use, `lcagent scout ...` applies this lane and asks for a

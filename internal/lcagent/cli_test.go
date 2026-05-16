@@ -184,9 +184,10 @@ func TestRunPresetsListsCodingRoutes(t *testing.T) {
 		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 	var presets []struct {
-		Name     string `json:"Name"`
-		Provider string `json:"Provider"`
-		Model    string `json:"Model"`
+		Name            string `json:"Name"`
+		Provider        string `json:"Provider"`
+		Model           string `json:"Model"`
+		ReasoningEffort string `json:"ReasoningEffort"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &presets); err != nil {
 		t.Fatalf("decode presets json: %v\n%s", err, stdout.String())
@@ -194,6 +195,9 @@ func TestRunPresetsListsCodingRoutes(t *testing.T) {
 	got := map[string]string{}
 	for _, preset := range presets {
 		got[preset.Name] = preset.Provider + "/" + preset.Model
+		if preset.Name == "balanced" && preset.ReasoningEffort != "high" {
+			t.Fatalf("balanced reasoning effort = %q, want high: %#v", preset.ReasoningEffort, presets)
+		}
 	}
 	for _, name := range []string{"balanced", "quality", "cheap-scout"} {
 		if got[name] == "/" {
@@ -202,6 +206,32 @@ func TestRunPresetsListsCodingRoutes(t *testing.T) {
 		if _, ok := got[name]; !ok {
 			t.Fatalf("missing preset %s in %#v", name, presets)
 		}
+	}
+}
+
+func TestLiveEvalRoutePresetAppliesBalancedReasoning(t *testing.T) {
+	preset, ok := lcagentRoutePresetByName("balanced")
+	if !ok {
+		t.Fatal("balanced preset missing")
+	}
+	provider := "openrouter"
+	model := ""
+	reasoningEffort := ""
+	autoRaw := "low"
+	toolProfile := "balanced"
+	contextProfile := "balanced"
+	var requestTimeout time.Duration
+
+	applyLiveEvalRoutePreset(preset, map[string]bool{}, &provider, &model, &reasoningEffort, &autoRaw, &toolProfile, &contextProfile, &requestTimeout)
+
+	if provider != "openrouter" || model != "deepseek/deepseek-v4-pro" || reasoningEffort != "high" || autoRaw != "low" || toolProfile != "balanced" || contextProfile != "balanced" || requestTimeout != 10*time.Minute {
+		t.Fatalf("live eval preset result provider=%q model=%q reasoning=%q auto=%q tool=%q context=%q timeout=%s", provider, model, reasoningEffort, autoRaw, toolProfile, contextProfile, requestTimeout)
+	}
+
+	reasoningEffort = "low"
+	applyLiveEvalRoutePreset(preset, map[string]bool{"reasoning-effort": true}, &provider, &model, &reasoningEffort, &autoRaw, &toolProfile, &contextProfile, &requestTimeout)
+	if reasoningEffort != "low" {
+		t.Fatalf("explicit reasoning effort was overwritten: %q", reasoningEffort)
 	}
 }
 
