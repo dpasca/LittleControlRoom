@@ -57,6 +57,7 @@ type bossAction struct {
 	ParentTaskID             string                `json:"parent_task_id"`
 	TaskCloseStatus          string                `json:"task_close_status"`
 	TaskSummary              string                `json:"task_summary"`
+	TodoText                 string                `json:"todo_text"`
 	EngineerProvider         string                `json:"engineer_provider"`
 	SessionMode              string                `json:"session_mode"`
 	Prompt                   string                `json:"prompt"`

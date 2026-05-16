@@ -102,6 +102,17 @@ func controlProposalFromBossAction(action bossAction) (control.Invocation, strin
 			ProjectPath: strings.TrimSpace(action.ProjectPath),
 			ProjectName: strings.TrimSpace(action.ProjectName),
 		}
+	case control.CapabilityTodoAdd:
+		text := strings.TrimSpace(action.TodoText)
+		if text == "" {
+			text = strings.TrimSpace(action.Prompt)
+		}
+		payload = control.TodoAddInput{
+			RequestID:   strings.TrimSpace(action.RequestID),
+			ProjectPath: strings.TrimSpace(action.ProjectPath),
+			ProjectName: strings.TrimSpace(action.ProjectName),
+			Text:        text,
+		}
 	default:
 		return control.Invocation{}, "", fmt.Errorf("unsupported control capability: %s", capability)
 	}
@@ -258,6 +269,23 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 			fmt.Sprintf("Archive scratch task %s?", target),
 			"",
 			"This moves the task into the scratch-task archive and removes it from the active dashboard.",
+			"",
+			"Enter confirms; Esc cancels.",
+		}
+		return strings.TrimSpace(strings.Join(lines, "\n")), nil
+	case control.CapabilityTodoAdd:
+		var input control.TodoAddInput
+		if err := json.Unmarshal(inv.Args, &input); err != nil {
+			return "", err
+		}
+		target := firstNonEmpty(input.ProjectName, input.ProjectPath)
+		if target == "" {
+			target = "the selected project"
+		}
+		lines := []string{
+			fmt.Sprintf("Add this TODO to %s?", target),
+			"",
+			strings.TrimSpace(input.Text),
 			"",
 			"Enter confirms; Esc cancels.",
 		}

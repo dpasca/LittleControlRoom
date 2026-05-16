@@ -85,6 +85,13 @@ func (m Model) executeControlInvocationWithOutcome(inv control.Invocation) contr
 			return controlInvocationOutcome{model: m, err: err}
 		}
 		return m.executeScratchTaskArchiveControlWithOutcome(input)
+	case control.CapabilityTodoAdd:
+		var input control.TodoAddInput
+		if err := json.Unmarshal(normalized.Args, &input); err != nil {
+			m.status = "Control request invalid: " + err.Error()
+			return controlInvocationOutcome{model: m, err: err}
+		}
+		return m.executeTodoAddControlWithOutcome(input)
 	default:
 		err := fmt.Errorf("unsupported capability: %s", normalized.Capability)
 		m.status = "Control request unsupported: " + string(normalized.Capability)
@@ -355,6 +362,13 @@ func (m Model) executeEngineerSendPromptControlWithOutcome(input control.Enginee
 		m.status = block.Message
 		return controlInvocationOutcome{model: m, err: err}
 	}
+	if input.SessionMode == control.SessionModeNew {
+		if message, blocked := m.controlFreshSessionBlockedByActiveEngineerTurn(project, provider, "project"); blocked {
+			err := errors.New(message)
+			m.status = message
+			return controlInvocationOutcome{model: m, err: err}
+		}
+	}
 	if controlPromptTargetsNonSteerableActiveEmbeddedSession(input, m, project.Path, provider) {
 		err := fmt.Errorf("The embedded %s engineer session is already running, so I did not send the prompt into it. Start a fresh session or open the target session and send manually.", provider.Label())
 		m.status = err.Error()
@@ -510,6 +524,19 @@ func (m Model) executeAgentTaskContinueControlWithOutcome(input control.AgentTas
 		m.status = err.Error()
 		return controlInvocationOutcome{model: m, err: err}
 	}
+	if input.SessionMode == control.SessionModeNew {
+		label := strings.TrimSpace(task.ID)
+		if label != "" {
+			label = "agent task " + label
+		} else {
+			label = "agent task"
+		}
+		if message, blocked := m.controlFreshSessionBlockedByActiveEngineerTurn(project, provider, label); blocked {
+			err := errors.New(message)
+			m.status = message
+			return controlInvocationOutcome{model: m, err: err}
+		}
+	}
 	prompt := m.agentTaskLaunchPromptWithRuntimeContext(task, input.Prompt)
 	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{
 		forceNew: input.SessionMode == control.SessionModeNew,
@@ -602,6 +629,46 @@ func (m Model) executeScratchTaskArchiveControlWithOutcome(input control.Scratch
 		m.status += " to " + archivedPath
 	}
 	return controlInvocationOutcome{model: m}
+}
+
+func (m Model) executeTodoAddControlWithOutcome(input control.TodoAddInput) controlInvocationOutcome {
+	if m.svc == nil {
+		err := errors.New("service unavailable")
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	project, err := m.resolveControlProjectRef(input.ProjectPath, input.ProjectName)
+	if err != nil {
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	item, err := m.svc.AddTodo(m.ctx, project.Path, input.Text)
+	if err != nil {
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	name := projectNameForPicker(project, project.Path)
+	m.status = fmt.Sprintf("Added TODO #%d to %s", item.ID, name)
+	return controlInvocationOutcome{model: m}
+}
+
+func (m Model) controlFreshSessionBlockedByActiveEngineerTurn(project model.ProjectSummary, provider codexapp.Provider, targetLabel string) (string, bool) {
+	projectPath := strings.TrimSpace(project.Path)
+	targetLabel = strings.TrimSpace(targetLabel)
+	if targetLabel == "" {
+		targetLabel = "this work"
+	}
+	if snapshot, ok := m.liveEmbeddedSnapshotForProject(projectPath, provider); ok && embeddedSessionBlocksProviderSwitch(snapshot) {
+		return fmt.Sprintf("The embedded %s engineer session is already running for %s, so I did not start a fresh session. Wait for the current turn to finish, then try again.", provider.Label(), targetLabel), true
+	}
+	latestProvider := providerForSessionFormat(project.LatestSessionFormat)
+	if latestProvider == "" || latestProvider != provider {
+		return "", false
+	}
+	if !projectLatestSessionBlocksProviderSwitch(project, m.currentTime(), m.embeddedLaunchProtectionWindow()) {
+		return "", false
+	}
+	return fmt.Sprintf("The latest %s engineer turn is still unfinished for %s, so I did not start a fresh session. Wait for the current turn to finish, then try again.", provider.Label(), targetLabel), true
 }
 
 func (m Model) liveAgentTaskSnapshot(task model.AgentTask) (codexapp.Snapshot, bool) {

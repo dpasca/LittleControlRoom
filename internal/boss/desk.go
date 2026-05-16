@@ -14,6 +14,7 @@ import (
 const (
 	bossDeskActiveLimit   = 4
 	bossDeskDecisionLimit = 4
+	bossDeskTodoLimit     = 4
 	bossDeskWatchingLimit = 5
 	bossLogLimit          = 7
 	maxBossDeskEvents     = 16
@@ -73,7 +74,7 @@ func (m Model) bossSidebarLines(width, height int) []string {
 	width = maxInt(24, width)
 	now := m.now()
 	var lines []string
-	nowLimit, decisionLimit, watchingLimit := bossSidebarSectionLimits(height)
+	nowLimit, decisionLimit, todoLimit, watchingLimit := bossSidebarSectionLimits(height)
 
 	if rows := takeDeskRows(m.bossDeskNowRows(width, now), nowLimit); len(rows) > 0 {
 		lines = appendDeskSection(lines, "Now", rows, width)
@@ -82,6 +83,9 @@ func (m Model) bossSidebarLines(width, height int) []string {
 	needsUser = append(needsUser, m.bossDeskReadyRows(width, now)...)
 	if rows := takeDeskRows(needsUser, decisionLimit); len(rows) > 0 {
 		lines = appendDeskSection(lines, "Needs You", rows, width)
+	}
+	if rows := takeDeskRows(m.bossDeskTodoRows(width, now), todoLimit); len(rows) > 0 {
+		lines = appendDeskSection(lines, "TODOs", rows, width)
 	}
 	if next := m.bossDeskNextLine(width, now); next != "" {
 		lines = appendDeskSection(lines, "Next", []string{next}, width)
@@ -150,14 +154,14 @@ func (m Model) bossSidebarCompanionLines(width, maxRows int) []string {
 	return out
 }
 
-func bossSidebarSectionLimits(height int) (nowLimit, decisionLimit, watchingLimit int) {
+func bossSidebarSectionLimits(height int) (nowLimit, decisionLimit, todoLimit, watchingLimit int) {
 	switch {
 	case height <= 6:
-		return 1, 1, 1
+		return 1, 1, 0, 1
 	case height <= 9:
-		return 1, 2, 1
+		return 1, 2, 1, 1
 	default:
-		return bossDeskActiveLimit, bossDeskDecisionLimit, bossDeskWatchingLimit
+		return bossDeskActiveLimit, bossDeskDecisionLimit, bossDeskTodoLimit, bossDeskWatchingLimit
 	}
 }
 
@@ -265,6 +269,44 @@ func (m Model) bossDeskReadyRows(width int, now time.Time) []string {
 		rows = append(rows, m.bossDeskAttentionRow(attentionItemForAgentTask(task), bossAssessmentDoneStyle, "close", bossDeskTextWithDetail(title, detail), width))
 	}
 	return rows
+}
+
+func (m Model) bossDeskTodoRows(width int, now time.Time) []string {
+	rows := make([]string, 0, minInt(len(m.snapshot.OpenTodos), bossDeskTodoLimit))
+	for _, todo := range m.snapshot.OpenTodos {
+		if len(rows) >= bossDeskTodoLimit {
+			break
+		}
+		text := bossDeskTodoStyledText(todo)
+		if strings.TrimSpace(ansi.Strip(text)) == "" {
+			continue
+		}
+		rows = append(rows, bossDeskStyledRowWithHotkey("", bossAssessmentFollowupStyle, bossDeskTodoLabel(todo), text, width))
+	}
+	return rows
+}
+
+func bossDeskTodoLabel(todo TodoBrief) string {
+	if todo.ID > 0 {
+		return fmt.Sprintf("#%d", todo.ID)
+	}
+	return "-"
+}
+
+func bossDeskTodoStyledText(todo TodoBrief) string {
+	project := strings.TrimSpace(todo.ProjectName)
+	if project == "" {
+		project = strings.TrimSpace(todo.ProjectPath)
+	}
+	text := cleanHandoffSummary(todo.Text)
+	switch {
+	case project == "":
+		return bossSummaryTextStyle.Render(text)
+	case text == "":
+		return bossProjectIdentityStyle(firstNonEmpty(todo.ProjectPath, project), bossProjectNameStyle).Render(project)
+	default:
+		return bossProjectIdentityStyle(firstNonEmpty(todo.ProjectPath, project), bossProjectNameStyle).Render(project) + bossSummaryTextStyle.Render(" - "+text)
+	}
 }
 
 func (m Model) bossDeskWatchingRows(width int, now time.Time) []string {

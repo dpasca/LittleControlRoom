@@ -1354,6 +1354,57 @@ func TestAssistantReplyCanProposeEngineerSendPromptControl(t *testing.T) {
 	}
 }
 
+func TestAssistantReplyCanProposeTodoAddControl(t *testing.T) {
+	t.Parallel()
+
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model: "gpt-test",
+			OutputText: encodedBossAction(t, bossAction{
+				Kind:              bossActionProposeControl,
+				ControlCapability: "todo.add",
+				ProjectPath:       "/tmp/alpha",
+				ProjectName:       "Alpha",
+				TodoText:          "Add a Boss Desk TODO section for pending project backlog items.",
+				Reason:            "The user asked to enqueue the work instead of starting it now.",
+			}),
+			Usage: model.LLMUsage{TotalTokens: 18},
+		}},
+	}
+	assistant := &Assistant{
+		planner: planner,
+		query:   newQueryExecutor(&fakeBossStore{}),
+		model:   "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Visible projects: 1.\nOpen project TODOs: none visible.",
+		Messages:   []ChatMessage{{Role: "user", Content: "enqueue this for Alpha: add a Boss Desk TODO section"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.ControlInvocation == nil {
+		t.Fatalf("ControlInvocation = nil, want todo.add proposal")
+	}
+	if resp.ControlInvocation.Capability != control.CapabilityTodoAdd {
+		t.Fatalf("capability = %q", resp.ControlInvocation.Capability)
+	}
+	if !strings.Contains(resp.Content, "Add this TODO to Alpha?") ||
+		!strings.Contains(resp.Content, "Boss Desk TODO section") ||
+		!strings.Contains(resp.Content, "Enter confirms") {
+		t.Fatalf("proposal content = %q, want TODO confirmation preview", resp.Content)
+	}
+	var input control.TodoAddInput
+	if err := json.Unmarshal(resp.ControlInvocation.Args, &input); err != nil {
+		t.Fatalf("decode invocation args: %v", err)
+	}
+	if input.ProjectPath != "/tmp/alpha" || input.ProjectName != "Alpha" ||
+		input.Text != "Add a Boss Desk TODO section for pending project backlog items." {
+		t.Fatalf("invocation args = %#v", input)
+	}
+}
+
 func TestAssistantReplyBuildsLosslessEngineerTaskPacket(t *testing.T) {
 	t.Parallel()
 

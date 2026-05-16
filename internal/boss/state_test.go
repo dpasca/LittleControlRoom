@@ -184,6 +184,35 @@ func TestBuildStateBriefIncludesOpenAgentTasks(t *testing.T) {
 	}
 }
 
+func TestBuildStateBriefIncludesOpenProjectTodos(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	snapshot := StateSnapshot{
+		TotalProjects: 1,
+		OpenTodos: []TodoBrief{{
+			ID:          42,
+			ProjectPath: "/tmp/alpha",
+			ProjectName: "Alpha",
+			Text:        "Add Boss Desk TODO visibility.",
+			UpdatedAt:   now.Add(-3 * time.Minute),
+		}},
+	}
+
+	brief := BuildStateBrief(snapshot, now)
+	for _, want := range []string{
+		"Open project TODOs (pending backlog, not delegated agent tasks):",
+		"#42",
+		"Alpha: Add Boss Desk TODO visibility.",
+		"updated 3m ago",
+		"project_path=/tmp/alpha",
+	} {
+		if !strings.Contains(brief, want) {
+			t.Fatalf("brief missing %q:\n%s", want, brief)
+		}
+	}
+}
+
 func TestBuildStateBriefIncludesRecentGoalRuns(t *testing.T) {
 	t.Parallel()
 
@@ -262,6 +291,58 @@ func TestLoadStateSnapshotIncludesOpenAgentTasksWithPrivacyFiltering(t *testing.
 	}
 	if len(privateSnapshot.OpenAgentTasks) != 1 || privateSnapshot.OpenAgentTasks[0].Title != publicTitle {
 		t.Fatalf("privacy mode should include only non-private agent tasks, got %#v", privateSnapshot.OpenAgentTasks)
+	}
+}
+
+func TestLoadStateSnapshotIncludesOpenTodosWithPrivacyFiltering(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	cfg.DBPath = filepath.Join(cfg.DataDir, "little-control-room.sqlite")
+	st, err := store.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	svc := service.New(cfg, st, events.NewBus(), nil)
+
+	publicPath := filepath.Join(cfg.DataDir, "alpha")
+	privatePath := filepath.Join(cfg.DataDir, "private-alpha")
+	for _, state := range []model.ProjectState{
+		{Path: publicPath, Name: "Alpha", Status: model.StatusIdle, PresentOnDisk: true, InScope: true, LastActivity: time.Unix(1_800_000_000, 0)},
+		{Path: privatePath, Name: "Private Alpha", Status: model.StatusIdle, PresentOnDisk: true, InScope: true, LastActivity: time.Unix(1_800_000_000, 0).Add(-time.Minute)},
+	} {
+		if err := st.UpsertProjectState(ctx, state); err != nil {
+			t.Fatalf("UpsertProjectState() error = %v", err)
+		}
+	}
+	publicTodo, err := svc.AddTodo(ctx, publicPath, "Add public Boss Desk TODO visibility")
+	if err != nil {
+		t.Fatalf("AddTodo(public) error = %v", err)
+	}
+	if _, err := svc.AddTodo(ctx, privatePath, "Add private Boss Desk TODO visibility"); err != nil {
+		t.Fatalf("AddTodo(private) error = %v", err)
+	}
+
+	snapshot, err := LoadStateSnapshot(ctx, svc, time.Unix(1_800_000_000, 0))
+	if err != nil {
+		t.Fatalf("LoadStateSnapshot() error = %v", err)
+	}
+	if len(snapshot.OpenTodos) != 2 {
+		t.Fatalf("open todos = %#v, want both created TODOs", snapshot.OpenTodos)
+	}
+
+	privateSnapshot, err := LoadStateSnapshot(ctx, svc, time.Unix(1_800_000_000, 0), StateSnapshotOptions{
+		PrivacyMode:     true,
+		PrivacyPatterns: []string{"*private*"},
+	})
+	if err != nil {
+		t.Fatalf("LoadStateSnapshot() with privacy error = %v", err)
+	}
+	if len(privateSnapshot.OpenTodos) != 1 || privateSnapshot.OpenTodos[0].ID != publicTodo.ID {
+		t.Fatalf("privacy mode should include only non-private TODOs, got %#v", privateSnapshot.OpenTodos)
 	}
 }
 

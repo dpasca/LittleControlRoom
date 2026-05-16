@@ -15,6 +15,7 @@ const (
 	FeatureContinueTask     = "continue_task"
 	FeatureCloseTask        = "close_task"
 	FeatureArchiveTask      = "archive_task"
+	FeatureAddTodo          = "add_todo"
 	FeatureApprovalResponse = "approval_response"
 	FeatureReview           = "review"
 	FeatureCompact          = "compact"
@@ -23,6 +24,7 @@ const (
 const (
 	HostEffectMayRevealEngineerSession = "may_reveal_engineer_session"
 	HostEffectMayCreateTaskWorkspace   = "may_create_task_workspace"
+	HostEffectMayCreateProjectTodo     = "may_create_project_todo"
 )
 
 type AgentTaskKind string
@@ -127,6 +129,13 @@ type ScratchTaskArchiveInput struct {
 	ProjectName string `json:"project_name"`
 }
 
+type TodoAddInput struct {
+	RequestID   string `json:"request_id,omitempty"`
+	ProjectPath string `json:"project_path"`
+	ProjectName string `json:"project_name"`
+	Text        string `json:"text"`
+}
+
 func Capabilities() []Capability {
 	return []Capability{
 		EngineerSendPromptCapability(),
@@ -134,6 +143,7 @@ func Capabilities() []Capability {
 		AgentTaskContinueCapability(),
 		AgentTaskCloseCapability(),
 		ScratchTaskArchiveCapability(),
+		TodoAddCapability(),
 	}
 }
 
@@ -149,6 +159,8 @@ func CapabilityByName(name CapabilityName) (Capability, bool) {
 		return AgentTaskCloseCapability(), true
 	case CapabilityScratchTaskArchive:
 		return ScratchTaskArchiveCapability(), true
+	case CapabilityTodoAdd:
+		return TodoAddCapability(), true
 	default:
 		return Capability{}, false
 	}
@@ -248,6 +260,24 @@ func ScratchTaskArchiveCapability() Capability {
 	}
 }
 
+func TodoAddCapability() Capability {
+	return Capability{
+		Name:         CapabilityTodoAdd,
+		Description:  "Add a project TODO item to the selected or named loaded project backlog.",
+		InputSchema:  todoAddInputSchema(),
+		OutputSchema: todoAddOutputSchema(),
+		Risk:         RiskWrite,
+		Confirmation: ConfirmationRequired,
+		RequiresHost: true,
+		HostEffects:  []string{HostEffectMayCreateProjectTodo},
+		Providers: []ProviderCapability{{
+			ID:        ProviderAuto,
+			Available: true,
+			Features:  []string{FeatureAddTodo},
+		}},
+	}
+}
+
 func NormalizeEngineerSendPromptInput(input EngineerSendPromptInput) (EngineerSendPromptInput, error) {
 	input.RequestID = strings.TrimSpace(input.RequestID)
 	input.ProjectPath = strings.TrimSpace(input.ProjectPath)
@@ -341,6 +371,23 @@ func NormalizeScratchTaskArchiveInput(input ScratchTaskArchiveInput) (ScratchTas
 	input.ProjectName = strings.TrimSpace(input.ProjectName)
 	if input.ProjectPath == "" && input.ProjectName == "" {
 		return ScratchTaskArchiveInput{}, fmt.Errorf("project_path or project_name is required")
+	}
+	return input, nil
+}
+
+func NormalizeTodoAddInput(input TodoAddInput) (TodoAddInput, error) {
+	input.RequestID = strings.TrimSpace(input.RequestID)
+	input.ProjectPath = strings.TrimSpace(input.ProjectPath)
+	if input.ProjectPath != "" {
+		input.ProjectPath = filepath.Clean(input.ProjectPath)
+	}
+	input.ProjectName = strings.TrimSpace(input.ProjectName)
+	input.Text = strings.TrimSpace(input.Text)
+	if input.ProjectPath == "" && input.ProjectName == "" {
+		return TodoAddInput{}, fmt.Errorf("project_path or project_name is required")
+	}
+	if input.Text == "" {
+		return TodoAddInput{}, fmt.Errorf("todo text is required")
 	}
 	return input, nil
 }
@@ -479,6 +526,34 @@ func validateScratchTaskArchiveInvocation(inv Invocation) (Invocation, error) {
 	payload, err := json.Marshal(normalized)
 	if err != nil {
 		return Invocation{}, fmt.Errorf("encode normalized %s args: %w", CapabilityScratchTaskArchive, err)
+	}
+	inv.RequestID = normalized.RequestID
+	inv.Args = payload
+	return inv, nil
+}
+
+func validateTodoAddInvocation(inv Invocation) (Invocation, error) {
+	if len(inv.Args) == 0 {
+		return Invocation{}, fmt.Errorf("%s args are required", CapabilityTodoAdd)
+	}
+	var input TodoAddInput
+	if err := json.Unmarshal(inv.Args, &input); err != nil {
+		return Invocation{}, fmt.Errorf("decode %s args: %w", CapabilityTodoAdd, err)
+	}
+	input.RequestID = strings.TrimSpace(input.RequestID)
+	if inv.RequestID != "" && input.RequestID != "" && inv.RequestID != input.RequestID {
+		return Invocation{}, fmt.Errorf("request_id mismatch between invocation and %s args", CapabilityTodoAdd)
+	}
+	if input.RequestID == "" {
+		input.RequestID = inv.RequestID
+	}
+	normalized, err := NormalizeTodoAddInput(input)
+	if err != nil {
+		return Invocation{}, err
+	}
+	payload, err := json.Marshal(normalized)
+	if err != nil {
+		return Invocation{}, fmt.Errorf("encode normalized %s args: %w", CapabilityTodoAdd, err)
 	}
 	inv.RequestID = normalized.RequestID
 	inv.Args = payload
@@ -680,6 +755,37 @@ func scratchTaskArchiveOutputSchema() map[string]any {
 			"status":        map[string]any{"type": "string"},
 		},
 		"required": []string{"project_path", "archived_path", "status"},
+	}
+}
+
+func todoAddInputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"request_id":   map[string]any{"type": "string"},
+			"project_path": map[string]any{"type": "string"},
+			"project_name": map[string]any{"type": "string"},
+			"text": map[string]any{
+				"type":        "string",
+				"description": "The exact TODO text to add to the project backlog.",
+			},
+		},
+		"required": []string{"project_path", "project_name", "text"},
+	}
+}
+
+func todoAddOutputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"project_path": map[string]any{"type": "string"},
+			"todo_id":      map[string]any{"type": "integer"},
+			"text":         map[string]any{"type": "string"},
+			"status":       map[string]any{"type": "string"},
+		},
+		"required": []string{"project_path", "todo_id", "text", "status"},
 	}
 }
 

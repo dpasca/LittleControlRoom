@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -18,7 +19,13 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-const engineerNoticeArtifactLimit = 4
+const (
+	engineerNoticeArtifactLimit          = 4
+	engineerNoticeSummarySentenceLimit   = 5
+	engineerNoticeSummaryCharLimit       = 1200
+	engineerNoticeReviewSentenceLimit    = 5
+	engineerNoticeReviewSummaryCharLimit = 1600
+)
 
 func (m Model) openBossMode() (tea.Model, tea.Cmd) {
 	m.bossMode = true
@@ -800,11 +807,11 @@ func (m Model) bossEngineerCompletionName(projectPath string, snapshot codexapp.
 }
 
 func latestEngineerTranscriptOutput(snapshot codexapp.Snapshot) string {
-	return latestEngineerTranscriptOutputWithSentences(snapshot, 3, 360)
+	return latestEngineerTranscriptOutputWithSentences(snapshot, engineerNoticeSummarySentenceLimit, engineerNoticeSummaryCharLimit)
 }
 
 func latestEngineerTranscriptReviewOutput(snapshot codexapp.Snapshot) string {
-	return latestEngineerTranscriptOutputWithSentences(snapshot, 3, 360)
+	return latestEngineerTranscriptOutputWithSentences(snapshot, engineerNoticeReviewSentenceLimit, engineerNoticeReviewSummaryCharLimit)
 }
 
 func latestEngineerTranscriptOutputWithSentences(snapshot codexapp.Snapshot, sentenceLimit, charLimit int) string {
@@ -898,6 +905,7 @@ func engineerNoticeArtifactLines(text string, limit int) []string {
 	if len(targets) == 0 {
 		return nil
 	}
+	targets = rankEngineerNoticeArtifactTargets(targets)
 	lines := make([]string, 0, min(limit, len(targets)))
 	for _, target := range targets {
 		path := strings.TrimSpace(target.Path)
@@ -917,6 +925,124 @@ func engineerNoticeArtifactLines(text string, limit int) []string {
 		}
 	}
 	return lines
+}
+
+type engineerNoticeArtifactCandidate struct {
+	target codexArtifactOpenTarget
+	score  int
+	index  int
+}
+
+func rankEngineerNoticeArtifactTargets(targets []codexArtifactOpenTarget) []codexArtifactOpenTarget {
+	if len(targets) == 0 {
+		return nil
+	}
+	candidates := make([]engineerNoticeArtifactCandidate, 0, len(targets))
+	for i, target := range targets {
+		score := engineerNoticeArtifactScore(target)
+		if score <= 0 {
+			continue
+		}
+		candidates = append(candidates, engineerNoticeArtifactCandidate{
+			target: target,
+			score:  score,
+			index:  i,
+		})
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].score == candidates[j].score {
+			return candidates[i].index < candidates[j].index
+		}
+		return candidates[i].score > candidates[j].score
+	})
+	out := make([]codexArtifactOpenTarget, 0, len(candidates))
+	for _, candidate := range candidates {
+		out = append(out, candidate.target)
+	}
+	return out
+}
+
+func engineerNoticeArtifactScore(target codexArtifactOpenTarget) int {
+	path := strings.TrimSpace(target.Path)
+	switch strings.TrimSpace(target.Kind) {
+	case "image", "video", "audio":
+		return 100
+	case "pdf", "sheet", "deck", "html", "archive":
+		return 90
+	case "doc":
+		if engineerNoticePathLooksGeneratedDoc(path) {
+			return 80
+		}
+		return 0
+	case "url":
+		return 70
+	case "source":
+		if engineerNoticePathLooksGeneratedDoc(path) && codexArtifactKindForPath(path) == "doc" {
+			return 75
+		}
+		return 0
+	case "file":
+		return 0
+	default:
+		if engineerNoticePathLooksSourceOrConfig(path) {
+			return 0
+		}
+		return 20
+	}
+}
+
+func engineerNoticePathLooksGeneratedDoc(path string) bool {
+	for _, segment := range engineerNoticePathSegments(path) {
+		switch segment {
+		case "docs", "doc", "reports", "report", "captures", "capture", "exports", "export", "artifacts", "artifact", "screenshots", "screenshot", "images", "image", "media":
+			return true
+		}
+	}
+	base := strings.ToLower(strings.TrimSpace(filepath.Base(path)))
+	switch {
+	case base == "report.md", base == "results.md", base == "output.md", base == "summary.md":
+		return true
+	case strings.HasSuffix(base, "-report.md"), strings.HasSuffix(base, "_report.md"), strings.HasSuffix(base, "-results.md"), strings.HasSuffix(base, "_results.md"):
+		return true
+	}
+	return false
+}
+
+func engineerNoticePathLooksSourceOrConfig(path string) bool {
+	ext := strings.ToLower(filepath.Ext(strings.TrimSpace(path)))
+	switch ext {
+	case ".go", ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".java", ".kt", ".kts", ".rs", ".c", ".cc", ".cpp", ".h", ".hpp", ".cs", ".rb", ".php", ".swift", ".scala", ".sh", ".bash", ".zsh", ".fish", ".sql", ".graphql", ".gql", ".proto", ".yaml", ".yml", ".toml", ".json", ".xml", ".css", ".scss", ".sass", ".less", ".lock", ".mod", ".sum":
+		return true
+	}
+	for _, segment := range engineerNoticePathSegments(path) {
+		switch segment {
+		case "internal", "cmd", "pkg", "src", "app", "components", "lib", "scripts", "test", "tests", "__tests__", "node_modules", "vendor":
+			return true
+		}
+	}
+	return false
+}
+
+func engineerNoticePathSegments(path string) []string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	path = strings.Trim(path, "<>")
+	path = filepath.ToSlash(path)
+	rawSegments := strings.Split(path, "/")
+	segments := make([]string, 0, len(rawSegments))
+	for _, segment := range rawSegments {
+		segment = strings.ToLower(strings.TrimSpace(segment))
+		if segment == "" || segment == "." {
+			continue
+		}
+		segments = append(segments, segment)
+	}
+	return segments
 }
 
 func markdownLinkText(label, target string) string {

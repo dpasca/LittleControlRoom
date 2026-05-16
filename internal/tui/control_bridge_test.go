@@ -691,6 +691,117 @@ func TestExecuteBossControlInvocationRefusesNonSteerableActiveEmbeddedSessionPro
 	}
 }
 
+func TestExecuteBossControlInvocationBlocksFreshPromptWhileSameEngineerTurnActive(t *testing.T) {
+	projectPath := "/tmp/control-active-fresh-block"
+	liveSession := &fakeCodexSession{
+		projectPath: projectPath,
+		snapshot: codexapp.Snapshot{
+			Provider:     codexapp.ProviderCodex,
+			ThreadID:     "thread-live",
+			Started:      true,
+			Busy:         true,
+			Phase:        codexapp.SessionPhaseRunning,
+			ActiveTurnID: "turn-live",
+		},
+	}
+	openCalls := 0
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		openCalls++
+		return liveSession, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: projectPath,
+		Provider:    codexapp.ProviderCodex,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+	m := Model{
+		allProjects: []model.ProjectSummary{{
+			Path:          projectPath,
+			Name:          "control-active-fresh-block",
+			PresentOnDisk: true,
+		}},
+		codexManager: manager,
+	}
+
+	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{
+		Invocation: controlInvocationForTest(t, control.EngineerSendPromptInput{
+			ProjectPath: projectPath,
+			Provider:    control.ProviderCodex,
+			SessionMode: control.SessionModeNew,
+			Prompt:      "Start a separate fresh investigation.",
+			Reveal:      false,
+		}),
+	})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("executeBossControlInvocation() cmd = nil, want immediate result")
+	}
+	if !strings.Contains(got.status, "already running for project") {
+		t.Fatalf("status = %q, want fresh-turn active-session refusal", got.status)
+	}
+	if openCalls != 1 {
+		t.Fatalf("manager opens = %d, want only setup open", openCalls)
+	}
+	msgs := collectCmdMsgs(cmd)
+	var result bossui.ControlInvocationResultMsg
+	for _, msg := range msgs {
+		if typed, ok := msg.(bossui.ControlInvocationResultMsg); ok {
+			result = typed
+			break
+		}
+	}
+	if result.Err == nil {
+		t.Fatalf("result err = nil, want active-session refusal")
+	}
+	if !strings.Contains(result.Status, "current turn to finish") {
+		t.Fatalf("result status = %q, want current-turn wait guidance", result.Status)
+	}
+}
+
+func TestExecuteBossControlInvocationBlocksFreshPromptWhenLatestSameProviderTurnUnfinished(t *testing.T) {
+	projectPath := "/tmp/control-latest-turn-block"
+	m := Model{
+		allProjects: []model.ProjectSummary{{
+			Path:                     projectPath,
+			Name:                     "control-latest-turn-block",
+			PresentOnDisk:            true,
+			LatestSessionFormat:      "modern",
+			LatestSessionLastEventAt: time.Now(),
+			LatestTurnStateKnown:     true,
+			LatestTurnCompleted:      false,
+		}},
+	}
+
+	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{
+		Invocation: controlInvocationForTest(t, control.EngineerSendPromptInput{
+			ProjectPath: projectPath,
+			Provider:    control.ProviderCodex,
+			SessionMode: control.SessionModeNew,
+			Prompt:      "Start a separate fresh investigation.",
+			Reveal:      false,
+		}),
+	})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("executeBossControlInvocation() cmd = nil, want immediate result")
+	}
+	if !strings.Contains(got.status, "latest Codex engineer turn is still unfinished") {
+		t.Fatalf("status = %q, want latest-turn refusal", got.status)
+	}
+	msgs := collectCmdMsgs(cmd)
+	var result bossui.ControlInvocationResultMsg
+	for _, msg := range msgs {
+		if typed, ok := msg.(bossui.ControlInvocationResultMsg); ok {
+			result = typed
+			break
+		}
+	}
+	if result.Err == nil || !strings.Contains(result.Status, "current turn to finish") {
+		t.Fatalf("result = %#v, want current-turn wait guidance", result)
+	}
+}
+
 func TestExecuteBossControlInvocationCreatesAgentTaskAndTracksSession(t *testing.T) {
 	ctx := context.Background()
 	svc := newControlTestService(t)
@@ -879,6 +990,124 @@ func TestExecuteBossControlInvocationContinuesAgentTaskWithTrackedSession(t *tes
 	}
 	if requests[0].ForceNew {
 		t.Fatalf("request ForceNew = true, want resume")
+	}
+}
+
+func TestExecuteBossControlInvocationBlocksFreshAgentTaskContinueWhileTurnActive(t *testing.T) {
+	ctx := context.Background()
+	svc := newControlTestService(t)
+	task, err := svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+		Title: "Keep checking temp process cleanup",
+		Kind:  model.AgentTaskKindAgent,
+	})
+	if err != nil {
+		t.Fatalf("CreateAgentTask() error = %v", err)
+	}
+	liveSession := &fakeCodexSession{
+		projectPath: task.WorkspacePath,
+		snapshot: codexapp.Snapshot{
+			Provider:     codexapp.ProviderCodex,
+			ThreadID:     "thread-agent-live",
+			Started:      true,
+			Busy:         true,
+			Phase:        codexapp.SessionPhaseRunning,
+			ActiveTurnID: "turn-agent-live",
+		},
+	}
+	openCalls := 0
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		openCalls++
+		return liveSession, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: task.WorkspacePath,
+		Provider:    codexapp.ProviderCodex,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+	m := Model{
+		ctx:          ctx,
+		svc:          svc,
+		codexManager: manager,
+	}
+
+	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{
+		Invocation: controlInvocationRawForTest(t, control.CapabilityAgentTaskContinue, control.AgentTaskContinueInput{
+			TaskID:      task.ID,
+			Provider:    control.ProviderCodex,
+			SessionMode: control.SessionModeNew,
+			Prompt:      "Start a fresh pass on the cleanup.",
+			Reveal:      false,
+		}),
+	})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("executeBossControlInvocation() cmd = nil, want immediate result")
+	}
+	if !strings.Contains(got.status, "already running for agent task "+task.ID) {
+		t.Fatalf("status = %q, want active agent task refusal", got.status)
+	}
+	if openCalls != 1 {
+		t.Fatalf("manager opens = %d, want only setup open", openCalls)
+	}
+	msgs := collectCmdMsgs(cmd)
+	var result bossui.ControlInvocationResultMsg
+	for _, msg := range msgs {
+		if typed, ok := msg.(bossui.ControlInvocationResultMsg); ok {
+			result = typed
+			break
+		}
+	}
+	if result.Err == nil || !strings.Contains(result.Status, "current turn to finish") {
+		t.Fatalf("result = %#v, want current-turn wait guidance", result)
+	}
+}
+
+func TestExecuteTodoAddControlAddsProjectTodo(t *testing.T) {
+	ctx := context.Background()
+	svc := newControlTestService(t)
+	projectPath := filepath.Join(t.TempDir(), "alpha")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := svc.Store().UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "Alpha",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		InScope:       true,
+		LastActivity:  time.Now(),
+	}); err != nil {
+		t.Fatalf("UpsertProjectState() error = %v", err)
+	}
+	projects, err := svc.Store().ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	m := Model{
+		ctx:         ctx,
+		svc:         svc,
+		allProjects: projects,
+		projects:    projects,
+	}
+
+	updated, cmd := m.executeControlInvocation(controlInvocationRawForTest(t, control.CapabilityTodoAdd, control.TodoAddInput{
+		ProjectName: "Alpha",
+		Text:        "Add the Boss Desk TODO list.",
+	}))
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("executeControlInvocation() cmd = %#v, want immediate TODO add", cmd)
+	}
+	if !strings.Contains(got.status, "Added TODO #") || !strings.Contains(got.status, "Alpha") {
+		t.Fatalf("status = %q, want TODO add status", got.status)
+	}
+	detail, err := svc.Store().GetProjectDetail(ctx, projectPath, 0)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() error = %v", err)
+	}
+	if len(detail.Todos) != 1 || detail.Todos[0].Text != "Add the Boss Desk TODO list." {
+		t.Fatalf("todos = %#v, want added TODO", detail.Todos)
 	}
 }
 

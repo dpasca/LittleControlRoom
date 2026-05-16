@@ -20,6 +20,7 @@ const (
 	hotProjectLimit              = 8
 	defaultAttentionProjectLimit = 4
 	openAgentTaskLimit           = 4
+	openTodoBriefLimit           = 6
 	recentGoalRunLimit           = 3
 )
 
@@ -32,6 +33,7 @@ type StateSnapshot struct {
 	ConflictProjects       int
 	PendingClassifications int
 	HotProjects            []ProjectBrief
+	OpenTodos              []TodoBrief
 	OpenAgentTasks         []AgentTaskBrief
 	RecentGoalRuns         []GoalRunBrief
 }
@@ -75,6 +77,14 @@ type AgentTaskBrief struct {
 	SessionID     string
 	LastTouchedAt time.Time
 	Resources     []model.AgentTaskResource
+}
+
+type TodoBrief struct {
+	ID          int64
+	ProjectPath string
+	ProjectName string
+	Text        string
+	UpdatedAt   time.Time
 }
 
 type GoalRunBrief struct {
@@ -150,6 +160,7 @@ func LoadStateSnapshot(ctx context.Context, svc *service.Service, now time.Time,
 			snapshot.RecentGoalRuns = append(snapshot.RecentGoalRuns, brief)
 		}
 	}
+	appendSnapshotOpenTodos(ctx, svc, projects, opts, &snapshot)
 
 	for _, project := range selectRecentAttentionProjectsWithPresence(projects, hotProjectLimit, projectCurrentlyPresent) {
 		if len(snapshot.HotProjects) >= hotProjectLimit {
@@ -165,6 +176,58 @@ func LoadStateSnapshot(ctx context.Context, svc *service.Service, now time.Time,
 		snapshot.HotProjects = append(snapshot.HotProjects, brief)
 	}
 	return snapshot, nil
+}
+
+func appendSnapshotOpenTodos(ctx context.Context, svc *service.Service, projects []model.ProjectSummary, opts StateSnapshotOptions, snapshot *StateSnapshot) {
+	if svc == nil || svc.Store() == nil || snapshot == nil {
+		return
+	}
+	candidates := make([]model.ProjectSummary, 0, len(projects))
+	for _, project := range projects {
+		if project.OpenTODOCount <= 0 {
+			continue
+		}
+		candidates = append(candidates, project)
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].AttentionScore != candidates[j].AttentionScore {
+			return candidates[i].AttentionScore > candidates[j].AttentionScore
+		}
+		if !candidates[i].LastActivity.Equal(candidates[j].LastActivity) {
+			return candidates[j].LastActivity.Before(candidates[i].LastActivity)
+		}
+		return strings.TrimSpace(candidates[i].Path) < strings.TrimSpace(candidates[j].Path)
+	})
+	for _, project := range candidates {
+		if len(snapshot.OpenTodos) >= openTodoBriefLimit {
+			return
+		}
+		detail, err := svc.Store().GetProjectDetail(ctx, project.Path, 0)
+		if err != nil {
+			continue
+		}
+		projectName := displayProjectName(detail.Summary)
+		for _, item := range openTodosOnly(detail.Todos) {
+			brief := todoBriefFromItem(item, projectName)
+			if opts.PrivacyMode && todoBriefHiddenByPrivacy(brief, opts.PrivacyPatterns) {
+				continue
+			}
+			snapshot.OpenTodos = append(snapshot.OpenTodos, brief)
+			if len(snapshot.OpenTodos) >= openTodoBriefLimit {
+				return
+			}
+		}
+	}
+}
+
+func todoBriefFromItem(item model.TodoItem, projectName string) TodoBrief {
+	return TodoBrief{
+		ID:          item.ID,
+		ProjectPath: strings.TrimSpace(item.ProjectPath),
+		ProjectName: strings.TrimSpace(projectName),
+		Text:        strings.TrimSpace(item.Text),
+		UpdatedAt:   item.UpdatedAt,
+	}
 }
 
 func goalRunBriefFromRecord(record bossrun.GoalRecord) GoalRunBrief {
@@ -303,6 +366,13 @@ func goalRunBriefHiddenByPrivacy(goal GoalRunBrief, patterns []string) bool {
 	return bossPrivacyMatchesAny(patterns, goal.Title, goal.Summary, goal.Error)
 }
 
+func todoBriefHiddenByPrivacy(todo TodoBrief, patterns []string) bool {
+	if len(patterns) == 0 {
+		return false
+	}
+	return bossPrivacyMatchesAny(patterns, todo.ProjectName, todo.ProjectPath, todo.Text)
+}
+
 func bossPrivacyMatchesAny(patterns []string, values ...string) bool {
 	for _, value := range values {
 		if config.MatchesPrivacyPattern(value, patterns) {
@@ -337,6 +407,12 @@ func BuildStateBrief(snapshot StateSnapshot, now time.Time) string {
 	} else {
 		lines = append(lines, "Open delegated agent tasks: none visible.")
 	}
+	if len(snapshot.OpenTodos) > 0 {
+		lines = append(lines, "Open project TODOs (pending backlog, not delegated agent tasks):")
+		for _, todo := range snapshot.OpenTodos {
+			lines = append(lines, "- "+operationalTodoLine(todo, now))
+		}
+	}
 	if len(snapshot.RecentGoalRuns) > 0 {
 		lines = append(lines, "Recent Boss goal runs:")
 		for _, goal := range snapshot.RecentGoalRuns {
@@ -356,6 +432,28 @@ func BuildStateBrief(snapshot StateSnapshot, now time.Time) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func operationalTodoLine(todo TodoBrief, now time.Time) string {
+	project := strings.TrimSpace(todo.ProjectName)
+	if project == "" {
+		project = strings.TrimSpace(filepath.Base(todo.ProjectPath))
+	}
+	if project == "" || project == "." || project == string(filepath.Separator) {
+		project = "project"
+	}
+	text := clipText(strings.TrimSpace(todo.Text), 180)
+	if text == "" {
+		text = "untitled TODO"
+	}
+	parts := []string{fmt.Sprintf("#%d", todo.ID), project + ": " + text}
+	if !todo.UpdatedAt.IsZero() {
+		parts = append(parts, "updated "+relativeAge(now, todo.UpdatedAt))
+	}
+	if path := strings.TrimSpace(todo.ProjectPath); path != "" {
+		parts = append(parts, "project_path="+path)
+	}
+	return strings.Join(parts, "; ")
 }
 
 func operationalGoalRunLine(goal GoalRunBrief, now time.Time) string {

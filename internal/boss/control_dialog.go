@@ -149,6 +149,25 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 			}
 			return strings.Join(lines, "\n")
 		}
+	case control.CapabilityTodoAdd:
+		var input control.TodoAddInput
+		if err := json.Unmarshal(m.pendingControl.Invocation.Args, &input); err == nil {
+			target := firstNonEmpty(input.ProjectName, input.ProjectPath, "selected project")
+			lines := []string{
+				bossControlNoticeStyle.Render(fitLine("External action: add a project TODO", width)),
+				"",
+				renderBossControlDetail("Project", target, width),
+				"",
+				bossControlSectionStyle.Render(fitLine("TODO", width)),
+				renderBossControlPromptBox(input.Text, width),
+				"",
+				strings.Join([]string{
+					renderBossControlAction("Enter", "add", uistyle.DialogActionPrimary),
+					renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
+				}, "   "),
+			}
+			return strings.Join(lines, "\n")
+		}
 	}
 	return m.renderFallbackControlConfirmationContent(width)
 }

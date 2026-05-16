@@ -408,6 +408,70 @@ func TestLatestEngineerTranscriptOutputDoesNotTruncateMarkdownLinkTargets(t *tes
 	}
 }
 
+func TestLatestEngineerTranscriptOutputKeepsLongUsefulExplanation(t *testing.T) {
+	t.Parallel()
+
+	longMiddle := strings.Repeat("verified the retry path keeps the exported document content stable while the status notice stays concise, ", 5)
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "The run completed and " + longMiddle + "so the important final detail is that no source document was overwritten.",
+		}},
+	}
+
+	got := latestEngineerTranscriptOutput(snapshot)
+	if strings.Contains(got, "...") {
+		t.Fatalf("summary should not use the old tiny clipping budget:\n%s", got)
+	}
+	if !strings.Contains(got, "important final detail") {
+		t.Fatalf("summary lost useful later explanation:\n%s", got)
+	}
+}
+
+func TestLatestEngineerTranscriptOutputPrefersArtifactsOverSourceLinks(t *testing.T) {
+	t.Parallel()
+
+	codePath := "/Users/davide/dev/repos/LittleControlRoom/internal/tui/boss_mode.go:802"
+	imagePath := "/Users/davide/dev/repos/LittleControlRoom/captures/boss-desk-todos.png"
+	reportPath := "/Users/davide/dev/repos/LittleControlRoom/reports/boss-desk-todo-report.md"
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "Built the Boss Desk TODO view and captured the result for review.\n\nOutputs:\n[implementation source](" + codePath + ")\n[Boss Desk screenshot](" + imagePath + ")\n[run report](" + reportPath + ")",
+		}},
+	}
+
+	got := latestEngineerTranscriptOutput(snapshot)
+	for _, want := range []string{
+		"Outputs:",
+		"- [Boss Desk screenshot](" + imagePath + ")",
+		"- [run report](" + reportPath + ")",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("latestEngineerTranscriptOutput() missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "implementation source") || strings.Contains(got, "boss_mode.go") {
+		t.Fatalf("source-code link should not be listed as an output:\n%s", got)
+	}
+}
+
+func TestLatestEngineerTranscriptOutputOmitsSourceOnlyOutputs(t *testing.T) {
+	t.Parallel()
+
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "Patched the parser and verified the focused tests.\n\nOutputs:\n[parser.go](/Users/davide/dev/repos/demo/internal/parser.go)",
+		}},
+	}
+
+	got := latestEngineerTranscriptOutput(snapshot)
+	if strings.Contains(got, "Outputs:") || strings.Contains(got, "parser.go") {
+		t.Fatalf("source-only links should not become Boss output artifacts:\n%s", got)
+	}
+}
+
 func TestLatestEngineerTranscriptOutputSkipsThinStatusWhenOutcomeFollows(t *testing.T) {
 	t.Parallel()
 

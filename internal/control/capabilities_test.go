@@ -140,6 +140,25 @@ func TestScratchTaskArchiveCapabilityMetadata(t *testing.T) {
 	}
 }
 
+func TestTodoAddCapabilityMetadata(t *testing.T) {
+	capability, ok := CapabilityByName(CapabilityTodoAdd)
+	if !ok {
+		t.Fatalf("CapabilityByName(%q) not found", CapabilityTodoAdd)
+	}
+	if capability.Name != CapabilityTodoAdd {
+		t.Fatalf("Name = %q, want %q", capability.Name, CapabilityTodoAdd)
+	}
+	if capability.Risk != RiskWrite || capability.Confirmation != ConfirmationRequired || !capability.RequiresHost {
+		t.Fatalf("unexpected TODO add capability metadata: %#v", capability)
+	}
+	if !stringSliceContains(capability.HostEffects, HostEffectMayCreateProjectTodo) {
+		t.Fatalf("HostEffects = %#v, want %q", capability.HostEffects, HostEffectMayCreateProjectTodo)
+	}
+	if capability.InputSchema["type"] != "object" || capability.OutputSchema["type"] != "object" {
+		t.Fatalf("TODO add schemas should be object schemas")
+	}
+}
+
 func TestNormalizeEngineerSendPromptInput(t *testing.T) {
 	input, err := NormalizeEngineerSendPromptInput(EngineerSendPromptInput{
 		RequestID:   " req-1 ",
@@ -323,6 +342,27 @@ func TestValidateInvocationNormalizesScratchTaskArchiveArgs(t *testing.T) {
 	}
 	if input.RequestID != "boss-turn-scratch" || input.ProjectPath != "/tmp/demo" {
 		t.Fatalf("normalized scratch task archive input = %#v", input)
+	}
+}
+
+func TestValidateInvocationNormalizesTodoAddArgs(t *testing.T) {
+	inv, err := ValidateInvocation(Invocation{
+		RequestID:  " boss-turn-todo ",
+		Capability: CapabilityTodoAdd,
+		Args:       json.RawMessage(`{"project_path":" /tmp/demo/../demo ","project_name":"","text":"  Follow up on Boss desk TODO visibility.  "}`),
+	})
+	if err != nil {
+		t.Fatalf("ValidateInvocation() error = %v", err)
+	}
+	if inv.RequestID != "boss-turn-todo" {
+		t.Fatalf("RequestID = %q, want boss-turn-todo", inv.RequestID)
+	}
+	var input TodoAddInput
+	if err := json.Unmarshal(inv.Args, &input); err != nil {
+		t.Fatalf("decode normalized args: %v", err)
+	}
+	if input.RequestID != "boss-turn-todo" || input.ProjectPath != "/tmp/demo" || input.Text != "Follow up on Boss desk TODO visibility." {
+		t.Fatalf("normalized todo add input = %#v", input)
 	}
 }
 

@@ -1673,6 +1673,34 @@ func TestBossSidebarRendersNativeCompanion(t *testing.T) {
 	}
 }
 
+func TestBossSidebarShowsOpenTodos(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbedded(context.Background(), nil)
+	m.snapshot = StateSnapshot{
+		OpenTodos: []TodoBrief{{
+			ID:          42,
+			ProjectName: "Alpha",
+			ProjectPath: "/tmp/alpha",
+			Text:        "Add Boss Desk TODO visibility.",
+		}},
+	}
+
+	rendered := strings.Join(m.bossSidebarLines(80, 12), "\n")
+	stripped := ansi.Strip(rendered)
+	for _, want := range []string{"TODOs", "#42", "Alpha - Add Boss Desk TODO visibility."} {
+		if !strings.Contains(stripped, want) {
+			t.Fatalf("Boss Desk missing TODO text %q:\n%s", want, stripped)
+		}
+	}
+	if strings.Contains(stripped, "todo Alpha") {
+		t.Fatalf("Boss Desk should use the TODO id in the label column:\n%s", stripped)
+	}
+	if want := bossProjectIdentityStyle("/tmp/alpha", bossProjectNameStyle).Render("Alpha"); !strings.Contains(rendered, want) {
+		t.Fatalf("Boss Desk should color project names; missing styled project label:\n%s", stripped)
+	}
+}
+
 func TestBossCompanionUsesSharedStationScene(t *testing.T) {
 	t.Parallel()
 
