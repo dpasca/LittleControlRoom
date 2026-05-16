@@ -14,33 +14,40 @@ import (
 )
 
 type LCAgentTrace struct {
-	SessionID                string
-	ArtifactPath             string
-	ProjectPath              string
-	StartedAt                time.Time
-	LastActivityAt           time.Time
-	ResumeSourceSessionID    string
-	ResumeSourcePath         string
-	ResumeSourceProject      string
-	ResumeSourceSummary      string
-	ResumeSourceLastAt       time.Time
-	Completed                bool
-	Aborted                  bool
-	Summary                  string
-	FilesChanged             []string
-	Verification             []string
-	ActualChecks             []LCAgentVerificationCheck
-	VerificationStatus       string
-	PermissionDenials        []LCAgentPermissionDenial
-	PatchDiffSummaries       []string
-	PatchFeedback            []string
-	VerificationSummaries    []string
-	VerificationFeedback     []string
-	RepairFeedbackSuppressed []string
-	ModelResponses           int
-	TokenUsage               lcrmodel.LLMUsage
-	TraceQuality             sessionmetrics.TraceQuality
-	Errors                   []string
+	SessionID                 string
+	ArtifactPath              string
+	ProjectPath               string
+	StartedAt                 time.Time
+	LastActivityAt            time.Time
+	ResumeSourceSessionID     string
+	ResumeSourcePath          string
+	ResumeSourceProject       string
+	ResumeSourceSummary       string
+	ResumeSourceLastAt        time.Time
+	ContinuationRootSessionID string
+	ContinuationChainDepth    int
+	ContinuationReason        string
+	ContinuationHandoffSource string
+	PendingFiles              []string
+	PendingVerification       []string
+	PendingStatus             string
+	Completed                 bool
+	Aborted                   bool
+	Summary                   string
+	FilesChanged              []string
+	Verification              []string
+	ActualChecks              []LCAgentVerificationCheck
+	VerificationStatus        string
+	PermissionDenials         []LCAgentPermissionDenial
+	PatchDiffSummaries        []string
+	PatchFeedback             []string
+	VerificationSummaries     []string
+	VerificationFeedback      []string
+	RepairFeedbackSuppressed  []string
+	ModelResponses            int
+	TokenUsage                lcrmodel.LLMUsage
+	TraceQuality              sessionmetrics.TraceQuality
+	Errors                    []string
 }
 
 type LCAgentPermissionDenial struct {
@@ -117,6 +124,13 @@ func ParseLCAgentTraceFile(path string) (LCAgentTrace, error) {
 			trace.SessionID = rawJSONString(event["id"])
 			trace.ProjectPath = rawJSONString(event["cwd"])
 			trace.StartedAt = rawJSONTime(event["started_at"])
+			trace.ResumeSourceSessionID = firstNonEmpty(rawJSONString(event["parent_session_id"]), trace.ResumeSourceSessionID)
+			trace.ContinuationRootSessionID = firstNonEmpty(rawJSONString(event["root_session_id"]), trace.ContinuationRootSessionID)
+			if depth := rawJSONInt(event["continuation_depth"]); depth > trace.ContinuationChainDepth {
+				trace.ContinuationChainDepth = depth
+			}
+			trace.ContinuationReason = firstNonEmpty(rawJSONString(event["continuation_reason"]), trace.ContinuationReason)
+			trace.ContinuationHandoffSource = firstNonEmpty(rawJSONString(event["handoff_source"]), trace.ContinuationHandoffSource)
 			if trace.LastActivityAt.IsZero() {
 				trace.LastActivityAt = trace.StartedAt
 			}
@@ -126,12 +140,36 @@ func ParseLCAgentTraceFile(path string) (LCAgentTrace, error) {
 			if usage, ok := lcagentUsageFromModelResponseEvent(event, modelName); ok {
 				trace.addTokenUsage(usage)
 			}
+		case "continuation":
+			trace.ResumeSourceSessionID = firstNonEmpty(rawJSONString(event["parent_session_id"]), trace.ResumeSourceSessionID)
+			trace.ResumeSourcePath = firstNonEmpty(rawJSONString(event["parent_path"]), trace.ResumeSourcePath)
+			trace.ResumeSourceProject = firstNonEmpty(rawJSONString(event["parent_cwd"]), trace.ResumeSourceProject)
+			trace.ResumeSourceSummary = firstNonEmpty(rawJSONString(event["parent_summary"]), trace.ResumeSourceSummary)
+			trace.ResumeSourceLastAt = firstNonZeroTime(rawJSONTime(event["parent_last_activity"]), trace.ResumeSourceLastAt)
+			trace.ContinuationRootSessionID = firstNonEmpty(rawJSONString(event["root_session_id"]), trace.ContinuationRootSessionID)
+			if depth := rawJSONInt(event["chain_depth"]); depth > trace.ContinuationChainDepth {
+				trace.ContinuationChainDepth = depth
+			}
+			trace.ContinuationReason = firstNonEmpty(rawJSONString(event["continuation_reason"]), trace.ContinuationReason)
+			trace.ContinuationHandoffSource = firstNonEmpty(rawJSONString(event["handoff_source"]), trace.ContinuationHandoffSource)
+			trace.PendingFiles = cleanLCAgentStringList(append(trace.PendingFiles, rawJSONStringList(event["pending_files"])...))
+			trace.PendingVerification = cleanLCAgentStringList(append(trace.PendingVerification, rawJSONStringList(event["pending_verification"])...))
+			trace.PendingStatus = firstNonEmpty(rawJSONString(event["pending_status"]), trace.PendingStatus)
 		case "resume_context":
-			trace.ResumeSourceSessionID = firstNonEmpty(rawJSONString(event["source_session_id"]), trace.ResumeSourceSessionID)
+			trace.ResumeSourceSessionID = firstNonEmpty(rawJSONString(event["source_session_id"]), rawJSONString(event["parent_session_id"]), trace.ResumeSourceSessionID)
 			trace.ResumeSourcePath = firstNonEmpty(rawJSONString(event["source_path"]), trace.ResumeSourcePath)
 			trace.ResumeSourceProject = firstNonEmpty(rawJSONString(event["source_cwd"]), trace.ResumeSourceProject)
 			trace.ResumeSourceSummary = firstNonEmpty(rawJSONString(event["summary"]), trace.ResumeSourceSummary)
 			trace.ResumeSourceLastAt = firstNonZeroTime(rawJSONTime(event["source_last_activity"]), trace.ResumeSourceLastAt)
+			trace.ContinuationRootSessionID = firstNonEmpty(rawJSONString(event["root_session_id"]), trace.ContinuationRootSessionID)
+			if depth := rawJSONInt(event["chain_depth"]); depth > trace.ContinuationChainDepth {
+				trace.ContinuationChainDepth = depth
+			}
+			trace.ContinuationReason = firstNonEmpty(rawJSONString(event["continuation_reason"]), trace.ContinuationReason)
+			trace.ContinuationHandoffSource = firstNonEmpty(rawJSONString(event["handoff_source"]), trace.ContinuationHandoffSource)
+			trace.PendingFiles = cleanLCAgentStringList(append(trace.PendingFiles, rawJSONStringList(event["pending_files"])...))
+			trace.PendingVerification = cleanLCAgentStringList(append(trace.PendingVerification, rawJSONStringList(event["pending_verification"])...))
+			trace.PendingStatus = firstNonEmpty(rawJSONString(event["pending_status"]), trace.PendingStatus)
 		case "permission_denied":
 			trace.PermissionDenials = append(trace.PermissionDenials, LCAgentPermissionDenial{
 				Tool:   rawJSONString(event["tool"]),
@@ -227,8 +265,17 @@ func (t LCAgentTrace) CompactSummary() string {
 	if source := strings.TrimSpace(t.ResumeSourceSessionID); source != "" {
 		parts = append(parts, "continued from "+source)
 	}
+	if t.ContinuationChainDepth > 0 {
+		parts = append(parts, fmt.Sprintf("continuation depth %d", t.ContinuationChainDepth))
+	}
 	if status := strings.TrimSpace(t.VerificationStatus); status != "" {
 		parts = append(parts, "verification "+status)
+	}
+	if pending := strings.TrimSpace(t.PendingStatus); pending != "" {
+		parts = append(parts, "pending verification "+pending)
+	}
+	if len(t.PendingFiles) > 0 {
+		parts = append(parts, fmt.Sprintf("%d pending file%s", len(t.PendingFiles), pluralSuffix(len(t.PendingFiles))))
 	}
 	if len(t.FilesChanged) > 0 {
 		parts = append(parts, fmt.Sprintf("%d file%s changed", len(t.FilesChanged), pluralSuffix(len(t.FilesChanged))))
@@ -271,6 +318,15 @@ func (t LCAgentTrace) TraceQualitySummary() string {
 	}
 	if source := strings.TrimSpace(t.ResumeSourceSessionID); source != "" {
 		parts = append(parts, "continuation: "+source)
+	}
+	if t.ContinuationChainDepth > 0 {
+		parts = append(parts, fmt.Sprintf("continuation depth: %d", t.ContinuationChainDepth))
+	}
+	if source := strings.TrimSpace(t.ContinuationHandoffSource); source != "" {
+		parts = append(parts, "handoff source: "+source)
+	}
+	if len(t.PendingFiles) > 0 {
+		parts = append(parts, "pending files: "+strings.Join(limitStrings(t.PendingFiles, 4), ", "))
 	}
 	if checks := t.ActualCheckSummaries(); len(checks) > 0 {
 		parts = append(parts, "actual checks: "+strings.Join(limitStrings(checks, 3), "; "))
@@ -495,7 +551,7 @@ func lcagentVerificationCheckText(event map[string]json.RawMessage) string {
 }
 
 func lcagentResumeContextText(event map[string]json.RawMessage) string {
-	sourceID := rawJSONString(event["source_session_id"])
+	sourceID := firstNonEmpty(rawJSONString(event["source_session_id"]), rawJSONString(event["parent_session_id"]))
 	sourcePath := rawJSONString(event["source_path"])
 	summary := rawJSONString(event["summary"])
 	text := "Loaded resume context"
@@ -504,6 +560,58 @@ func lcagentResumeContextText(event map[string]json.RawMessage) string {
 	}
 	if sourcePath != "" {
 		text += " (" + sourcePath + ")"
+	}
+	var details []string
+	if depth := rawJSONInt(event["chain_depth"]); depth > 0 {
+		details = append(details, fmt.Sprintf("depth %d", depth))
+	}
+	if source := rawJSONString(event["handoff_source"]); source != "" {
+		details = append(details, "handoff "+source)
+	}
+	if status := rawJSONString(event["pending_status"]); status != "" {
+		details = append(details, "pending verification "+status)
+	}
+	if len(details) > 0 {
+		text += " [" + strings.Join(details, "; ") + "]"
+	}
+	if summary != "" {
+		text += ": " + summary
+	}
+	return text
+}
+
+func lcagentContinuationText(event map[string]json.RawMessage) string {
+	parentID := rawJSONString(event["parent_session_id"])
+	parentPath := rawJSONString(event["parent_path"])
+	summary := rawJSONString(event["parent_summary"])
+	text := "Continuing LCAgent"
+	if parentID != "" {
+		text += " from " + parentID
+	}
+	if parentPath != "" {
+		text += " (" + parentPath + ")"
+	}
+	var details []string
+	if depth := rawJSONInt(event["chain_depth"]); depth > 0 {
+		details = append(details, fmt.Sprintf("depth %d", depth))
+	}
+	if root := rawJSONString(event["root_session_id"]); root != "" && root != parentID {
+		details = append(details, "root "+root)
+	}
+	if reason := rawJSONString(event["continuation_reason"]); reason != "" {
+		details = append(details, "reason "+reason)
+	}
+	if source := rawJSONString(event["handoff_source"]); source != "" {
+		details = append(details, "handoff "+source)
+	}
+	if status := rawJSONString(event["pending_status"]); status != "" {
+		details = append(details, "pending verification "+status)
+	}
+	if pendingFiles := rawJSONStringList(event["pending_files"]); len(pendingFiles) > 0 {
+		details = append(details, "pending files "+strings.Join(limitStrings(pendingFiles, 4), ", "))
+	}
+	if len(details) > 0 {
+		text += " [" + strings.Join(details, "; ") + "]"
 	}
 	if summary != "" {
 		text += ": " + summary

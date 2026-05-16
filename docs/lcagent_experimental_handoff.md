@@ -43,6 +43,9 @@ Implemented pieces:
 - Coding route presets for `balanced`, `quality`, and `cheap-scout` CLI lanes,
   with traceable `route_preset` events, explicit flag overrides, and optional
   embedded-launch wiring through `lcagent_route_preset`.
+- Explicit summarized continuation via `--continue-from` with backward-compatible
+  `--resume`, `continuation` trace events, parent/root chain metadata, handoff
+  source, and pending verification/file state.
 - Experimental tool profiles: `balanced` and `generous`.
 - Experimental context profiles: `balanced` and `large`.
 - LCR settings for executable path, env file, provider, autonomy, tool profile,
@@ -67,14 +70,15 @@ Default posture:
 LCR session parity:
 
 - LCAgent does not support approvals, attachments, structured tool input,
-  elicitation, compact, or goal state in the embedded pane.
+  elicitation, or goal state in the embedded pane.
 - Embedded `/review` now starts a read-only current-diff LCAgent review run
   using the same JSONL trace path, with `--auto off` and no continuation resume.
 - Embedded `/compact` now writes a durable Markdown handoff summary from the
   latest LCAgent JSONL trace under the app data dir and shows it in the pane.
 - Replayed LCAgent history can seed a continuing run through summarized context,
-  but it is not a true persistent model thread with full transcript state,
-  branching, or user-controlled compaction.
+  with explicit continuation-chain metadata in the artifact and embedded
+  transcript. It is still not a true persistent model thread with full transcript
+  state, branching, or user-controlled compaction.
 - The model picker now offers curated coding choices for the configured
   provider plus a custom-model escape hatch. It still does not discover provider
   models or validate provider credentials.
@@ -181,10 +185,11 @@ small-to-medium coding tasks before it tries to be a broader assistant.
 
 1. Promote summarized continuation from "nice fallback" to an explicit session
    model.
-   LCAgent resume events now record source session/artifact/workspace metadata
-   and shared traces surface the continuation chain. Next, persist richer chain
-   relationships across all LCR surfaces and keep the warning that exact file
-   contents must be re-read before edits.
+   LCAgent launches now have explicit `--continue-from` continuation, enriched
+   session metadata, dedicated `continuation` events, pending file/verification
+   state, embedded status text, compact summaries, and shared trace parsing.
+   Next, add browsing and branch/restart affordances across session pickers and
+   keep the warning that exact file contents must be re-read before edits.
 
 2. Add user-visible compact/review behavior for LCAgent.
    `/review` now starts as a read-only current-diff review task using the same

@@ -400,6 +400,8 @@ func TestRunExecOpenRouterSendsResumeContext(t *testing.T) {
 			"README.md: +2 -1",
 			"go test ./internal/lcagent/...",
 			"Previous verification status: reported",
+			"Handoff source: turn_complete",
+			"Pending files to verify",
 		} {
 			if !strings.Contains(systemPrompt, want) {
 				t.Fatalf("system prompt missing resume context %q:\n%s", want, systemPrompt)
@@ -438,7 +440,7 @@ func TestRunExecOpenRouterSendsResumeContext(t *testing.T) {
 		"--output", "stream-json",
 		"--provider", "openrouter",
 		"--model", "deepseek/test-model",
-		"--resume", sessionID,
+		"--continue-from", sessionID,
 		"--max-turns", "2",
 		"continue from previous work",
 	}, &stdout, &stderr)
@@ -447,6 +449,12 @@ func TestRunExecOpenRouterSendsResumeContext(t *testing.T) {
 	}
 	text := stdout.String()
 	for _, want := range []string{
+		`"type":"continuation"`,
+		`"parent_session_id":"` + sessionID + `"`,
+		`"chain_depth":1`,
+		`"continuation_reason":"continue_from"`,
+		`"handoff_source":"turn_complete"`,
+		`"pending_files":["README.md"]`,
 		`"type":"resume_context"`,
 		`"source_session_id":"` + sessionID + `"`,
 		`"source_path":`,
@@ -456,6 +464,28 @@ func TestRunExecOpenRouterSendsResumeContext(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("stdout missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestRunExecRejectsConflictingContinuationFlags(t *testing.T) {
+	isolateSkillHomes(t)
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", t.TempDir(),
+		"--data-dir", t.TempDir(),
+		"--resume", "lca_one",
+		"--continue-from", "lca_two",
+		"continue",
+	}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("code = 0, want failure")
+	}
+	if !strings.Contains(stderr.String(), "--resume and --continue-from refer to different sessions") {
+		t.Fatalf("stderr missing conflict error: %s", stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %s, want empty", stdout.String())
 	}
 }
 

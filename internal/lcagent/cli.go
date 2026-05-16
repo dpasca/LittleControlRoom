@@ -169,7 +169,7 @@ func runMetrics(args []string, stdout io.Writer) error {
 func runExec(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, finalModel, envFile, reasoningEffort, temperatureRaw, providerOnlyRaw, toolProfileRaw, contextProfileRaw, resumeRaw, routePresetRaw string
+	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, finalModel, envFile, reasoningEffort, temperatureRaw, providerOnlyRaw, toolProfileRaw, contextProfileRaw, resumeRaw, continueRaw, routePresetRaw string
 	var webSearchBackend, webSearchAPIKey, webSearchEngineID, webSearchURL string
 	var requestTimeout time.Duration
 	var maxTurns int
@@ -189,6 +189,7 @@ func runExec(args []string, stdout io.Writer) error {
 	fs.StringVar(&toolProfileRaw, "tool-profile", string(tools.FileProfileBalanced), "file tool budget profile: balanced or generous")
 	fs.StringVar(&contextProfileRaw, "context-profile", string(openRouterContextProfileBalanced), "provider loop context profile: balanced or large")
 	fs.StringVar(&resumeRaw, "resume", "", "previous LCAgent session id or .jsonl artifact to summarize as continuation context")
+	fs.StringVar(&continueRaw, "continue-from", "", "previous LCAgent session id or .jsonl artifact to continue from")
 	fs.StringVar(&webSearchBackend, "web-search-backend", "", "web search backend: off, exa, google, or searxng")
 	fs.StringVar(&webSearchAPIKey, "web-search-api-key", "", "optional web search API key, used by exa or google")
 	fs.StringVar(&webSearchEngineID, "web-search-engine-id", "", "optional Google Programmable Search engine ID")
@@ -213,6 +214,18 @@ func runExec(args []string, stdout io.Writer) error {
 	prompt := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	if prompt == "" {
 		return fmt.Errorf("prompt is required")
+	}
+	resumeSourceRaw := strings.TrimSpace(resumeRaw)
+	continueSourceRaw := strings.TrimSpace(continueRaw)
+	if resumeSourceRaw != "" && continueSourceRaw != "" && resumeSourceRaw != continueSourceRaw {
+		return fmt.Errorf("--resume and --continue-from refer to different sessions")
+	}
+	continuationReason := ""
+	if continueSourceRaw != "" {
+		resumeSourceRaw = continueSourceRaw
+		continuationReason = "continue_from"
+	} else if resumeSourceRaw != "" {
+		continuationReason = "resume"
 	}
 	auto, err := policy.ParseAutonomy(autoRaw)
 	if err != nil {
@@ -265,7 +278,7 @@ func runExec(args []string, stdout io.Writer) error {
 			model = "scripted"
 		}
 	}
-	resumeContext, err := loadResumeContext(dataDir, resumeRaw, workspace.Root)
+	resumeContext, err := loadResumeContext(dataDir, resumeSourceRaw, workspace.Root)
 	if err != nil {
 		return err
 	}
@@ -279,7 +292,17 @@ func runExec(args []string, stdout io.Writer) error {
 		return err
 	}
 	defer writer.Close()
-	if err := writer.Write(session.Meta(sessionID, workspace.Root, string(auto), provider, model, version, started)); err != nil {
+	meta := session.Meta(sessionID, workspace.Root, string(auto), provider, model, version, started)
+	if resumeContext != nil {
+		meta["parent_session_id"] = resumeContext.SourceSessionID
+		meta["root_session_id"] = resumeContext.rootSessionID()
+		meta["continuation_depth"] = resumeContext.nextChainDepth()
+		meta["continuation_reason"] = continuationReason
+		if resumeContext.HandoffSource != "" {
+			meta["handoff_source"] = resumeContext.HandoffSource
+		}
+	}
+	if err := writer.Write(meta); err != nil {
 		return err
 	}
 	if routePresetSet {
@@ -318,7 +341,10 @@ func runExec(args []string, stdout io.Writer) error {
 		return err
 	}
 	if resumeContext != nil {
-		if err := writer.Write(resumeContext.event(sessionID)); err != nil {
+		if err := writer.Write(resumeContext.continuationEvent(sessionID, continuationReason)); err != nil {
+			return err
+		}
+		if err := writer.Write(resumeContext.event(sessionID, continuationReason)); err != nil {
 			return err
 		}
 	}

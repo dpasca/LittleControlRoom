@@ -23,6 +23,9 @@ type resumeContext struct {
 	SourceSessionID    string
 	SourcePath         string
 	ProjectPath        string
+	RootSessionID      string
+	ChainDepth         int
+	HandoffSource      string
 	StartedAt          time.Time
 	LastActivityAt     time.Time
 	UserMessages       []string
@@ -136,13 +139,27 @@ func parseResumeContextFile(path string) (*resumeContext, error) {
 			ctx.SourceSessionID = resumeJSONString(event["id"])
 			ctx.ProjectPath = resumeJSONString(event["cwd"])
 			ctx.StartedAt = resumeJSONTime(event["started_at"])
+			ctx.RootSessionID = firstResumeNonEmpty(resumeJSONString(event["root_session_id"]), resumeJSONString(event["parent_session_id"]), ctx.RootSessionID)
+			if depth := resumeJSONInt(event["continuation_depth"]); depth > ctx.ChainDepth {
+				ctx.ChainDepth = depth
+			}
 			if ctx.LastActivityAt.IsZero() {
 				ctx.LastActivityAt = ctx.StartedAt
+			}
+		case "continuation":
+			ctx.RootSessionID = firstResumeNonEmpty(resumeJSONString(event["root_session_id"]), resumeJSONString(event["parent_session_id"]), ctx.RootSessionID)
+			if depth := resumeJSONInt(event["chain_depth"]); depth > ctx.ChainDepth {
+				ctx.ChainDepth = depth
 			}
 		case "user_message":
 			ctx.UserMessages = appendResumeText(ctx.UserMessages, resumeJSONString(event["message"]))
 		case "assistant_message":
 			ctx.AssistantMessages = appendResumeText(ctx.AssistantMessages, resumeJSONString(event["message"]))
+			if ctx.HandoffSource == "" && resumeJSONString(event["message"]) != "" {
+				ctx.HandoffSource = "assistant_message"
+			}
+		case "final_handoff_compacted":
+			ctx.HandoffSource = "final_handoff"
 		case "files_touched":
 			ctx.FilesChanged = appendResumeList(ctx.FilesChanged, resumeJSONStringList(event["files"])...)
 		case "patch_diff_summary":
@@ -157,10 +174,12 @@ func parseResumeContextFile(path string) (*resumeContext, error) {
 			ctx.VerificationStatus = firstResumeNonEmpty(resumeJSONString(event["verification_status"]), ctx.VerificationStatus)
 			ctx.Verification = appendResumeList(ctx.Verification, resumeJSONStringList(event["verification"])...)
 			ctx.FilesChanged = appendResumeList(ctx.FilesChanged, resumeJSONStringList(event["files_changed"])...)
+			ctx.HandoffSource = "turn_complete"
 		case "permission_denied":
 			ctx.PermissionDenials = appendResumeText(ctx.PermissionDenials, resumeJSONString(event["reason"]))
 		case "turn_aborted":
 			ctx.LastError = firstResumeNonEmpty(resumeJSONString(event["reason"]), ctx.LastError)
+			ctx.HandoffSource = "turn_aborted"
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -169,7 +188,7 @@ func parseResumeContextFile(path string) (*resumeContext, error) {
 	return ctx, nil
 }
 
-func (c *resumeContext) event(currentSessionID string) session.Event {
+func (c *resumeContext) event(currentSessionID, reason string) session.Event {
 	if c == nil {
 		return nil
 	}
@@ -177,18 +196,84 @@ func (c *resumeContext) event(currentSessionID string) session.Event {
 		"type":                 "resume_context",
 		"session_id":           currentSessionID,
 		"source_session_id":    c.SourceSessionID,
+		"parent_session_id":    c.SourceSessionID,
+		"root_session_id":      c.rootSessionID(),
+		"chain_depth":          c.nextChainDepth(),
+		"continuation_reason":  firstResumeNonEmpty(reason, "resume_context"),
+		"handoff_source":       c.HandoffSource,
 		"source_path":          c.SourcePath,
 		"source_cwd":           c.ProjectPath,
 		"summary":              c.summaryText(),
 		"files_changed":        c.FilesChanged,
 		"verification":         c.Verification,
 		"verification_status":  c.VerificationStatus,
+		"pending_files":        c.pendingFiles(),
+		"pending_verification": c.pendingVerification(),
+		"pending_status":       c.pendingVerificationStatus(),
 		"patch_summaries":      c.PatchSummaries,
 		"permission_denials":   c.PermissionDenials,
 		"last_error":           c.LastError,
 		"source_last_activity": resumeTimeString(c.LastActivityAt),
 		"source_started_at":    resumeTimeString(c.StartedAt),
 	}
+}
+
+func (c *resumeContext) continuationEvent(currentSessionID, reason string) session.Event {
+	if c == nil {
+		return nil
+	}
+	return session.Event{
+		"type":                   "continuation",
+		"session_id":             currentSessionID,
+		"parent_session_id":      c.SourceSessionID,
+		"root_session_id":        c.rootSessionID(),
+		"chain_depth":            c.nextChainDepth(),
+		"continuation_reason":    firstResumeNonEmpty(reason, "resume_context"),
+		"handoff_source":         c.HandoffSource,
+		"parent_path":            c.SourcePath,
+		"parent_cwd":             c.ProjectPath,
+		"parent_summary":         c.summaryText(),
+		"pending_files":          c.pendingFiles(),
+		"pending_verification":   c.pendingVerification(),
+		"pending_status":         c.pendingVerificationStatus(),
+		"parent_last_activity":   resumeTimeString(c.LastActivityAt),
+		"parent_session_started": resumeTimeString(c.StartedAt),
+	}
+}
+
+func (c *resumeContext) rootSessionID() string {
+	if c == nil {
+		return ""
+	}
+	return firstResumeNonEmpty(c.RootSessionID, c.SourceSessionID)
+}
+
+func (c *resumeContext) nextChainDepth() int {
+	if c == nil {
+		return 0
+	}
+	return c.ChainDepth + 1
+}
+
+func (c *resumeContext) pendingFiles() []string {
+	if c == nil || c.VerificationStatus == "" || strings.EqualFold(c.VerificationStatus, "verified") {
+		return nil
+	}
+	return compactResumeList(c.FilesChanged)
+}
+
+func (c *resumeContext) pendingVerification() []string {
+	if c == nil || c.VerificationStatus == "" || strings.EqualFold(c.VerificationStatus, "verified") {
+		return nil
+	}
+	return compactResumeList(c.Verification)
+}
+
+func (c *resumeContext) pendingVerificationStatus() string {
+	if c == nil || c.VerificationStatus == "" || strings.EqualFold(c.VerificationStatus, "verified") {
+		return ""
+	}
+	return c.VerificationStatus
 }
 
 func (c *resumeContext) systemPromptSection() string {
@@ -203,6 +288,15 @@ func (c *resumeContext) systemPromptSection() string {
 	if c.ProjectPath != "" {
 		fmt.Fprintf(&b, "- Source workspace: %s\n", c.ProjectPath)
 	}
+	if root := c.rootSessionID(); root != "" && root != c.SourceSessionID {
+		fmt.Fprintf(&b, "- Continuation root: %s\n", root)
+	}
+	if c.ChainDepth > 0 {
+		fmt.Fprintf(&b, "- Previous chain depth: %d\n", c.ChainDepth)
+	}
+	if c.HandoffSource != "" {
+		fmt.Fprintf(&b, "- Handoff source: %s\n", c.HandoffSource)
+	}
 	appendResumePromptList(&b, "Previous user request(s)", lastResumeItems(c.UserMessages, 3))
 	if c.FinalSummary != "" {
 		fmt.Fprintf(&b, "- Last final summary: %s\n", trimResumeText(c.FinalSummary))
@@ -215,6 +309,8 @@ func (c *resumeContext) systemPromptSection() string {
 	if c.VerificationStatus != "" {
 		fmt.Fprintf(&b, "- Previous verification status: %s\n", c.VerificationStatus)
 	}
+	appendResumePromptList(&b, "Pending files to verify", c.pendingFiles())
+	appendResumePromptList(&b, "Pending verification evidence", c.pendingVerification())
 	appendResumePromptList(&b, "Permission denials", c.PermissionDenials)
 	if c.LastError != "" {
 		fmt.Fprintf(&b, "- Previous run error: %s\n", trimResumeText(c.LastError))
@@ -230,6 +326,9 @@ func (c *resumeContext) summaryText() string {
 	var parts []string
 	if c.SourceSessionID != "" {
 		parts = append(parts, "source "+c.SourceSessionID)
+	}
+	if c.ChainDepth > 0 {
+		parts = append(parts, fmt.Sprintf("chain depth %d", c.ChainDepth))
 	}
 	if c.FinalSummary != "" {
 		parts = append(parts, "summary: "+trimResumeText(c.FinalSummary))
@@ -353,6 +452,12 @@ func resumeJSONTime(raw json.RawMessage) time.Time {
 		return t
 	}
 	return time.Time{}
+}
+
+func resumeJSONInt(raw json.RawMessage) int {
+	var value int
+	_ = json.Unmarshal(raw, &value)
+	return value
 }
 
 func resumeTimeString(t time.Time) string {

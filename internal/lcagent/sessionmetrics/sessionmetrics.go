@@ -30,6 +30,7 @@ type Summary struct {
 	ProviderFailures          map[string]int    `json:"provider_failures,omitempty"`
 	ProviderRetries           int               `json:"provider_retries"`
 	ProviderRetrySuccesses    int               `json:"provider_retry_successes"`
+	Continuations             int               `json:"continuations"`
 	ResumeContexts            int               `json:"resume_contexts"`
 	PermissionDenials         int               `json:"permission_denials"`
 	PatchDiffSummaries        int               `json:"patch_diff_summaries"`
@@ -243,6 +244,8 @@ func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
 		s.ProviderRetries++
 	case "provider_retry_succeeded":
 		s.ProviderRetrySuccesses++
+	case "continuation":
+		s.Continuations++
 	case "resume_context":
 		s.ResumeContexts++
 	case "patch_diff_summary":

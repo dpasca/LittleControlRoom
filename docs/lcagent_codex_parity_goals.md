@@ -47,10 +47,15 @@ Current state:
 - Continuation metadata appears in traces.
 - Max-turn final handoff now preserves harness-known files touched and recorded
   verification details in structured final events.
+- `--continue-from` is the explicit continuation entry point, with `--resume`
+  kept as a compatibility alias.
+- New continuation artifacts carry parent/root session IDs, chain depth,
+  handoff source, and pending verification/file state into trace parsing,
+  embedded status text, and compact summaries.
 
 Missing:
 
-- A true durable LCAgent session model with explicit continuation chains.
+- A true durable LCAgent session model beyond summarized continuation.
 - User-visible branch/rewind/restart behavior.
 - A clear distinction between exact transcript continuity and summary-based
   continuation.

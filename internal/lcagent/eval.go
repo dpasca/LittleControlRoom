@@ -350,6 +350,9 @@ func TestSmoke(t *testing.T) { t.Fatal("intentional failure") }
 				return []string{"--resume", sessionID}, nil
 			},
 			Check: func(summary sessionmetrics.Summary) error {
+				if summary.Continuations < 1 {
+					return fmt.Errorf("continuation count = %d, want >= 1", summary.Continuations)
+				}
 				if summary.ResumeContexts < 1 {
 					return fmt.Errorf("resume context count = %d, want >= 1", summary.ResumeContexts)
 				}
@@ -378,12 +381,13 @@ func writeEvalTextReport(stdout io.Writer, report evalReport) {
 		}
 		fmt.Fprintln(stdout)
 	}
-	fmt.Fprintf(stdout, "sessions=%d denials=%d patch_diff_summaries=%d patch_feedback=%d repair_feedback_suppressed=%d resume_contexts=%d verification_feedback=%d verification=%v\n",
+	fmt.Fprintf(stdout, "sessions=%d denials=%d patch_diff_summaries=%d patch_feedback=%d repair_feedback_suppressed=%d continuations=%d resume_contexts=%d verification_feedback=%d verification=%v\n",
 		report.Summary.Sessions,
 		report.Summary.PermissionDenials,
 		report.Summary.PatchDiffSummaries,
 		report.Summary.PatchFeedback,
 		report.Summary.RepairFeedbackSuppressed,
+		report.Summary.Continuations,
 		report.Summary.ResumeContexts,
 		report.Summary.VerificationFeedback,
 		report.Summary.VerificationStatuses,

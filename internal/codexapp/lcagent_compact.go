@@ -61,6 +61,12 @@ func formatLCAgentCompactMarkdown(trace LCAgentTrace) string {
 	if trace.ResumeSourceSessionID != "" {
 		writeLCAgentCompactField(&b, "Continued from", trace.ResumeSourceSessionID)
 	}
+	if trace.ContinuationRootSessionID != "" {
+		writeLCAgentCompactField(&b, "Continuation root", trace.ContinuationRootSessionID)
+	}
+	if trace.ContinuationChainDepth > 0 {
+		writeLCAgentCompactField(&b, "Continuation depth", fmt.Sprint(trace.ContinuationChainDepth))
+	}
 	if compact := strings.TrimSpace(trace.CompactSummary()); compact != "" {
 		b.WriteString("\n## Handoff\n\n")
 		b.WriteString(compact)
@@ -73,6 +79,8 @@ func formatLCAgentCompactMarkdown(trace LCAgentTrace) string {
 	}
 	writeLCAgentCompactList(&b, "Files Changed", trace.FilesChanged)
 	writeLCAgentCompactList(&b, "Reported Verification", trace.Verification)
+	writeLCAgentCompactList(&b, "Pending Files To Verify", trace.PendingFiles)
+	writeLCAgentCompactList(&b, "Pending Verification Evidence", trace.PendingVerification)
 	writeLCAgentCompactList(&b, "Actual Checks", trace.ActualCheckSummaries())
 	writeLCAgentCompactList(&b, "Verification Summaries", trace.VerificationSummaries)
 	writeLCAgentCompactList(&b, "Trace Quality", []string{trace.TraceQualitySummary()})

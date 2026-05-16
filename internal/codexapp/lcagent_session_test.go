@@ -374,7 +374,7 @@ printf '%s\n' '{"type":"turn_complete","summary":"route preset run"}'
 	}
 }
 
-func TestLCAgentSessionContinuesLoadedReplayWithResumeArg(t *testing.T) {
+func TestLCAgentSessionContinuesLoadedReplayWithContinueFromArg(t *testing.T) {
 	root := t.TempDir()
 	dataDir := t.TempDir()
 	argsPath := filepath.Join(t.TempDir(), "args.txt")
@@ -394,6 +394,7 @@ func TestLCAgentSessionContinuesLoadedReplayWithResumeArg(t *testing.T) {
   done
 } > "$LCAGENT_ARGS_FILE"
 printf '%s\n' '{"type":"session_meta","id":"lca_new_after_resume","cwd":"/tmp/demo"}'
+printf '%s\n' '{"type":"continuation","parent_session_id":"lca_replay_continue","chain_depth":1,"continuation_reason":"continue_from","handoff_source":"turn_complete","pending_status":"reported","pending_files":["README.md"],"parent_summary":"source lca_replay_continue; summary: loaded answer"}'
 printf '%s\n' '{"type":"resume_context","source_session_id":"lca_replay_continue","summary":"source lca_replay_continue; summary: loaded answer"}'
 printf '%s\n' '{"type":"assistant_message","message":"continued answer"}'
 printf '%s\n' '{"type":"turn_complete"}'
@@ -430,6 +431,7 @@ printf '%s\n' '{"type":"turn_complete"}'
 	}
 	for _, want := range []string{
 		"Starting a continuing LCAgent run with summarized context from " + sessionID,
+		"Continuing LCAgent from " + sessionID,
 		"Loaded resume context from " + sessionID,
 		"continued answer",
 	} {
@@ -442,7 +444,7 @@ printf '%s\n' '{"type":"turn_complete"}'
 		t.Fatalf("read fake args: %v", err)
 	}
 	args := strings.Split(strings.TrimSpace(string(argsBytes)), "\n")
-	for _, want := range []string{"--resume", sessionID, "continue the replay"} {
+	for _, want := range []string{"--continue-from", sessionID, "continue the replay"} {
 		if !lcagentTestStringSliceContains(args, want) {
 			t.Fatalf("args missing %q: %#v", want, args)
 		}
@@ -670,7 +672,8 @@ func TestParseLCAgentTraceFileHarvestsFinalOutcome(t *testing.T) {
 	sessionID := "lca_trace_harvest"
 	started := time.Date(2026, 5, 12, 10, 0, 0, 0, time.UTC)
 	path := writeLCAgentReplayArtifact(t, dataDir, started, sessionID, []map[string]any{
-		{"type": "session_meta", "id": sessionID, "cwd": root, "started_at": started.Format(time.RFC3339Nano)},
+		{"type": "session_meta", "id": sessionID, "cwd": root, "started_at": started.Format(time.RFC3339Nano), "parent_session_id": "lca_previous_trace", "root_session_id": "lca_root_trace", "continuation_depth": 2, "continuation_reason": "continue_from", "handoff_source": "turn_complete"},
+		{"type": "continuation", "session_id": sessionID, "timestamp": started.Add(200 * time.Millisecond).Format(time.RFC3339Nano), "parent_session_id": "lca_previous_trace", "root_session_id": "lca_root_trace", "chain_depth": 2, "continuation_reason": "continue_from", "handoff_source": "turn_complete", "parent_path": filepath.Join(dataDir, "previous.jsonl"), "parent_cwd": root, "parent_summary": "source lca_previous_trace; summary: earlier work", "parent_last_activity": started.Add(-time.Hour).Format(time.RFC3339Nano), "pending_files": []string{"README.md"}, "pending_verification": []string{"go test ./..."}, "pending_status": "reported"},
 		{"type": "resume_context", "session_id": sessionID, "timestamp": started.Add(250 * time.Millisecond).Format(time.RFC3339Nano), "source_session_id": "lca_previous_trace", "source_path": filepath.Join(dataDir, "previous.jsonl"), "source_cwd": root, "summary": "source lca_previous_trace; summary: earlier work", "source_last_activity": started.Add(-time.Hour).Format(time.RFC3339Nano)},
 		{"type": "model_response", "session_id": sessionID, "timestamp": started.Add(500 * time.Millisecond).Format(time.RFC3339Nano), "model": "deepseek/test-model", "usage_summary": map[string]any{"input_tokens": 120, "output_tokens": 30, "total_tokens": 150, "cached_input_tokens": 40, "estimated_cost_usd": 0.0012}},
 		{"type": "permission_denied", "session_id": sessionID, "timestamp": started.Add(time.Second).Format(time.RFC3339Nano), "tool": "run_command", "reason": "shell denied"},
@@ -696,6 +699,12 @@ func TestParseLCAgentTraceFileHarvestsFinalOutcome(t *testing.T) {
 	if trace.ResumeSourceSessionID != "lca_previous_trace" || trace.ResumeSourcePath == "" || trace.ResumeSourceSummary == "" || trace.ResumeSourceLastAt.IsZero() {
 		t.Fatalf("trace resume source = id:%q path:%q summary:%q last:%v, want continuation metadata", trace.ResumeSourceSessionID, trace.ResumeSourcePath, trace.ResumeSourceSummary, trace.ResumeSourceLastAt)
 	}
+	if trace.ContinuationRootSessionID != "lca_root_trace" || trace.ContinuationChainDepth != 2 || trace.ContinuationReason != "continue_from" || trace.ContinuationHandoffSource != "turn_complete" {
+		t.Fatalf("trace continuation = root:%q depth:%d reason:%q handoff:%q, want explicit chain metadata", trace.ContinuationRootSessionID, trace.ContinuationChainDepth, trace.ContinuationReason, trace.ContinuationHandoffSource)
+	}
+	if len(trace.PendingFiles) != 1 || trace.PendingFiles[0] != "README.md" || trace.PendingStatus != "reported" || len(trace.PendingVerification) != 1 {
+		t.Fatalf("trace pending continuation state = files:%#v status:%q verification:%#v", trace.PendingFiles, trace.PendingStatus, trace.PendingVerification)
+	}
 	if len(trace.FilesChanged) != 1 || trace.FilesChanged[0] != "README.md" || len(trace.Verification) != 1 || len(trace.ActualChecks) != 1 {
 		t.Fatalf("trace files/verification/checks = %#v/%#v/%#v", trace.FilesChanged, trace.Verification, trace.ActualChecks)
 	}
@@ -712,10 +721,10 @@ func TestParseLCAgentTraceFileHarvestsFinalOutcome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadLCAgentTrace() error = %v", err)
 	}
-	if loaded.ArtifactPath != path || !strings.Contains(loaded.CompactSummary(), "continued from lca_previous_trace") || !strings.Contains(loaded.CompactSummary(), "verification verified") || !strings.Contains(loaded.CompactSummary(), "1 verification check") {
+	if loaded.ArtifactPath != path || !strings.Contains(loaded.CompactSummary(), "continued from lca_previous_trace") || !strings.Contains(loaded.CompactSummary(), "continuation depth 2") || !strings.Contains(loaded.CompactSummary(), "verification verified") || !strings.Contains(loaded.CompactSummary(), "1 verification check") {
 		t.Fatalf("loaded trace = %#v, want artifact path and compact summary", loaded)
 	}
-	for _, want := range []string{"trace quality: 83/good", "repair events: 4", "continuation: lca_previous_trace", "actual checks: go test ./... passed", "patch feedback: 1", "duplicate repair feedback suppressed: 1", "tokens: 150", "cached: 40"} {
+	for _, want := range []string{"trace quality: 83/good", "repair events: 4", "continuation: lca_previous_trace", "continuation depth: 2", "handoff source: turn_complete", "pending files: README.md", "actual checks: go test ./... passed", "patch feedback: 1", "duplicate repair feedback suppressed: 1", "tokens: 150", "cached: 40"} {
 		if !strings.Contains(loaded.TraceQualitySummary(), want) {
 			t.Fatalf("trace quality missing %q:\n%s", want, loaded.TraceQualitySummary())
 		}

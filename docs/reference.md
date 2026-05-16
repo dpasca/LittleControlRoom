@@ -98,19 +98,26 @@ playwright_isolation_scope = "task"
 
 LCAgent session JSONL artifacts are replayable in the embedded pane. Opening a previous
 LCAgent session loads read-only transcript history; sending a new prompt starts a fresh
-one-shot run rather than continuing that prior model context.
+one-shot run with summarized continuation context rather than continuing that prior
+model context. The new run records `continuation` and `resume_context` events with
+the parent session, root session, chain depth, handoff source, and pending
+verification/file state when available.
 
 For direct CLI use, `lcagent presets` lists coding route presets. `lcagent exec
 --route-preset balanced|quality|cheap-scout` applies a provider, model,
 autonomy, reasoning, tool-profile, context-profile, timeout, and temperature
 bundle; any explicit flag such as `--model` or `--context-profile` still wins.
+Use `lcagent exec --continue-from <session-id-or-jsonl>` to start an explicit
+summarized continuation. The older `--resume` flag remains as a compatibility
+alias.
 In Little Control Room settings, `lcagent_route_preset` applies the same bundle
 to embedded LCAgent launches; leave it blank to use the individual provider,
 model, autonomy, tool-profile, and context-profile fields.
 
 `lcagent metrics <session.jsonl>...` summarizes trace artifacts and includes a
-derived `trace_quality` block with verification coverage, tool failures, repair
-pressure, read overlap, cached-token rate, and estimated cost. The repeatable
+`continuations` count plus a derived `trace_quality` block with verification
+coverage, tool failures, repair pressure, read overlap, cached-token rate, and
+estimated cost. The repeatable
 `lcagent live-eval` lane reports the same trace-quality score per case.
 
 Current LCAgent status and next work are tracked in

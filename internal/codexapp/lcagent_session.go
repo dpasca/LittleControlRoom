@@ -492,7 +492,7 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 		args = append(args, "--env-file", envFile)
 	}
 	if resumeID != "" {
-		args = append(args, "--resume", resumeID)
+		args = append(args, "--continue-from", resumeID)
 	}
 	args = append(args, prompt)
 	cmd := exec.CommandContext(ctx, spec.Command, args...)
@@ -661,6 +661,8 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		if message != "" {
 			s.appendAsync(TranscriptStatus, message)
 		}
+	case "continuation":
+		s.appendAsync(TranscriptStatus, lcagentContinuationText(event))
 	case "resume_context":
 		s.appendAsync(TranscriptStatus, lcagentResumeContextText(event))
 	case "web_search_profile":
