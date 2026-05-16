@@ -153,6 +153,17 @@ func TestLCAgentSessionReplaysRequestedArtifact(t *testing.T) {
 			"message":    "summarize this repo",
 		},
 		{
+			"type":                "continuation",
+			"session_id":          sessionID,
+			"timestamp":           started.Add(1500 * time.Millisecond).Format(time.RFC3339Nano),
+			"parent_session_id":   "lca_parent_replay",
+			"chain_depth":         1,
+			"handoff_source":      "final_handoff",
+			"pending_status":      "missing_after_changes",
+			"pending_files":       []string{"README.md"},
+			"continuation_reason": "continue_from",
+		},
+		{
 			"type":       "tool_call",
 			"session_id": sessionID,
 			"timestamp":  started.Add(2 * time.Second).Format(time.RFC3339Nano),
@@ -240,6 +251,8 @@ func TestLCAgentSessionReplaysRequestedArtifact(t *testing.T) {
 	for _, want := range []string{
 		"Loaded LCAgent session " + sessionID + " from disk. Sending a prompt starts a continuing run with summarized context.",
 		"summarize this repo",
+		"Continuing LCAgent from lca_parent_replay",
+		"pending verification missing_after_changes",
 		"Tool read_file running",
 		"README.md lines 1-1",
 		"done: inspect repo",

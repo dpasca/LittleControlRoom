@@ -174,7 +174,9 @@ func parseResumeContextFile(path string) (*resumeContext, error) {
 			ctx.VerificationStatus = firstResumeNonEmpty(resumeJSONString(event["verification_status"]), ctx.VerificationStatus)
 			ctx.Verification = appendResumeList(ctx.Verification, resumeJSONStringList(event["verification"])...)
 			ctx.FilesChanged = appendResumeList(ctx.FilesChanged, resumeJSONStringList(event["files_changed"])...)
-			ctx.HandoffSource = "turn_complete"
+			if ctx.HandoffSource != "final_handoff" {
+				ctx.HandoffSource = "turn_complete"
+			}
 		case "permission_denied":
 			ctx.PermissionDenials = appendResumeText(ctx.PermissionDenials, resumeJSONString(event["reason"]))
 		case "turn_aborted":

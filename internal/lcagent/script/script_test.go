@@ -163,6 +163,32 @@ func TestPatchFeedbackForFailedPatch(t *testing.T) {
 	}
 }
 
+func TestPatchRetryGuidanceEscalatesRepeatedPatchFeedback(t *testing.T) {
+	feedback := PatchFeedback{
+		Stage:   "apply",
+		Path:    "README.md",
+		Message: "Patch feedback: README.md failed during apply: hunk context not found",
+		SuggestedReads: []tools.ReadSuggestion{{
+			Path:   "README.md",
+			Offset: 1,
+			Limit:  40,
+		}},
+	}
+	guidance := PatchRetryGuidance(feedback, 2)
+	for _, want := range []string{
+		"same patch feedback has repeated 2 times",
+		`read_file {"path":"README.md","offset":1,"limit":40}`,
+		"replace_text",
+	} {
+		if !strings.Contains(guidance, want) {
+			t.Fatalf("guidance missing %q: %s", want, guidance)
+		}
+	}
+	if got := PatchRetryGuidance(feedback, 1); got != "" {
+		t.Fatalf("guidance for first feedback = %q, want empty", got)
+	}
+}
+
 func TestRunnerFinalVerificationFeedbackAfterChangedFiles(t *testing.T) {
 	runner := Runner{}
 	feedback, ok := runner.VerificationFeedbackForFinal(Action{

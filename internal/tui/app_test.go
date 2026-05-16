@@ -9463,6 +9463,45 @@ func TestBuildCodexResumeChoicesSkipsForkedSubagentSessions(t *testing.T) {
 	}
 }
 
+func TestBuildCodexResumeChoicesAddsLCAgentContinuationHint(t *testing.T) {
+	fixture := filepath.Join(t.TempDir(), "lcagent.jsonl")
+	body := strings.Join([]string{
+		`{"type":"session_meta","id":"lca_child","cwd":"/tmp/demo","started_at":"2026-05-12T10:00:00Z","parent_session_id":"lcaold","root_session_id":"lcaroot","continuation_depth":2,"continuation_reason":"continue_from","handoff_source":"final_handoff"}`,
+		`{"type":"continuation","session_id":"lca_child","parent_session_id":"lcaold","root_session_id":"lcaroot","chain_depth":2,"continuation_reason":"continue_from","handoff_source":"final_handoff","pending_status":"missing_after_changes","pending_files":["README.md"],"parent_summary":"source lcaold; summary: previous work"}`,
+		`{"type":"turn_complete","session_id":"lca_child","summary":"continued work","verification_status":"not_run"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(fixture, []byte(body), 0o644); err != nil {
+		t.Fatalf("write lcagent fixture: %v", err)
+	}
+
+	choices := buildCodexResumeChoices(context.Background(), model.ProjectDetail{
+		Summary: model.ProjectSummary{
+			Path:          "/tmp/demo",
+			Name:          "demo",
+			PresentOnDisk: true,
+		},
+		Sessions: []model.SessionEvidence{{
+			SessionID:   "lca_child",
+			Format:      "lcagent_jsonl",
+			SessionFile: fixture,
+			LastEventAt: time.Date(2026, 5, 12, 10, 0, 2, 0, time.UTC),
+		}},
+	}, codexapp.ProviderLCAgent)
+
+	if len(choices) != 1 {
+		t.Fatalf("resume picker choices = %d, want 1", len(choices))
+	}
+	for _, want := range []string{"continued from lcaold", "depth 2", "pending verification missing_after_changes: README.md"} {
+		if !strings.Contains(choices[0].TraceHint, want) {
+			t.Fatalf("trace hint missing %q: %#v", want, choices[0])
+		}
+	}
+	m := Model{codexPickerKind: codexPickerKindResume}
+	if secondary := m.codexPickerSecondaryLabel(choices[0]); !strings.Contains(secondary, "pending verification missing_after_changes") {
+		t.Fatalf("secondary label = %q, want continuation hint", secondary)
+	}
+}
+
 func TestAddPickerProjectHintFallsBackToPathBase(t *testing.T) {
 	m := Model{codexPickerKind: codexPickerKindGlobal}
 	row := ansi.Strip(m.renderCodexPickerRow(codexSessionChoice{

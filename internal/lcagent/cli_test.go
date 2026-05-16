@@ -1419,13 +1419,20 @@ func TestRunExecOpenRouterSuppressesDuplicatePatchFeedback(t *testing.T) {
 			}`, requests, requests, stalePatch)
 		default:
 			feedbackMessages := 0
+			guidanceMessages := 0
 			for _, msg := range body.Messages {
 				if msg.Role == "user" && strings.Contains(msg.Content, "Patch feedback: README.md failed during apply") {
 					feedbackMessages++
 				}
+				if msg.Role == "user" && strings.Contains(msg.Content, "Patch retry guidance:") {
+					guidanceMessages++
+				}
 			}
 			if feedbackMessages != 1 {
 				t.Fatalf("third request patch feedback user messages = %d, want one: %#v", feedbackMessages, body.Messages)
+			}
+			if guidanceMessages != 1 {
+				t.Fatalf("third request patch retry guidance messages = %d, want one: %#v", guidanceMessages, body.Messages)
 			}
 			_, _ = w.Write([]byte(`{
 				"id":"resp_final",
@@ -1463,6 +1470,8 @@ func TestRunExecOpenRouterSuppressesDuplicatePatchFeedback(t *testing.T) {
 	}
 	for _, want := range []string{
 		`"type":"repair_feedback_suppressed"`,
+		`"type":"repair_guidance"`,
+		`Patch retry guidance`,
 		`"kind":"patch"`,
 		`"reason":"duplicate feedback already sent to model"`,
 		`"summary":"patch retry blocked after duplicate feedback"`,
@@ -1782,6 +1791,149 @@ func TestRunExecOpenRouterFinalHandoffPreservesFilesTouched(t *testing.T) {
 	}
 }
 
+func TestRunExecOpenRouterContinuesFromMaxTurnHandoff(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+			Tools []any `json:"tools"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch requests {
+		case 1:
+			if len(body.Tools) == 0 {
+				t.Fatalf("first tool-loop request missing tools: %#v", body)
+			}
+			_, _ = w.Write([]byte(`{
+				"id":"resp_replace",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_replace","type":"function","function":{"name":"replace_text","arguments":"{\"path\":\"README.md\",\"old_text\":\"old\\n\",\"new_text\":\"new\\n\",\"expected_replacements\":1}"}}]}
+				}]
+			}`))
+		case 2:
+			if len(body.Tools) != 0 {
+				t.Fatalf("max-turn handoff request should not include tools: %#v", body)
+			}
+			if len(body.Messages) == 0 || !strings.Contains(body.Messages[len(body.Messages)-1].Content, "Files touched by edit tools: README.md") {
+				t.Fatalf("max-turn handoff prompt missing touched-file state: %#v", body)
+			}
+			_, _ = w.Write([]byte(`{
+				"id":"resp_handoff",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"stop",
+					"message":{"role":"assistant","content":"Turn budget reached. README.md was changed. Verification was not run. Continue by verifying README.md."}
+				}]
+			}`))
+		case 3:
+			if len(body.Messages) == 0 {
+				t.Fatalf("continuation request missing messages: %#v", body)
+			}
+			systemPrompt := body.Messages[0].Content
+			for _, want := range []string{
+				"Previous LCAgent session context",
+				"Handoff source: final_handoff",
+				"Previous verification status: missing_after_changes",
+				"Pending files to verify",
+				"README.md",
+			} {
+				if !strings.Contains(systemPrompt, want) {
+					t.Fatalf("continuation system prompt missing %q:\n%s", want, systemPrompt)
+				}
+			}
+			_, _ = w.Write([]byte(`{
+				"id":"resp_continue",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"stop",
+					"message":{"role":"assistant","content":"continued after handoff"}
+				}]
+			}`))
+		default:
+			t.Fatalf("unexpected provider request %d: %#v", requests, body)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var firstStdout, firstStderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", dataDir,
+		"--auto", "low",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--max-turns", "1",
+		"patch README then continue later",
+	}, &firstStdout, &firstStderr)
+	if code != 0 {
+		t.Fatalf("first code = %d stderr=%s stdout=%s", code, firstStderr.String(), firstStdout.String())
+	}
+	sourceSessionID := lcagentCLITestSessionIDFromStream(t, firstStdout.String())
+	firstText := firstStdout.String()
+	for _, want := range []string{
+		`"type":"final_handoff_compacted"`,
+		`"files_changed":["README.md"]`,
+		`"verification_status":"missing_after_changes"`,
+	} {
+		if !strings.Contains(firstText, want) {
+			t.Fatalf("first stdout missing %q:\n%s", want, firstText)
+		}
+	}
+
+	var secondStdout, secondStderr bytes.Buffer
+	code = Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", dataDir,
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--continue-from", sourceSessionID,
+		"--max-turns", "2",
+		"continue from the handoff",
+	}, &secondStdout, &secondStderr)
+	if code != 0 {
+		t.Fatalf("second code = %d stderr=%s stdout=%s", code, secondStderr.String(), secondStdout.String())
+	}
+	secondText := secondStdout.String()
+	for _, want := range []string{
+		`"type":"continuation"`,
+		`"parent_session_id":"` + sourceSessionID + `"`,
+		`"handoff_source":"final_handoff"`,
+		`"pending_status":"missing_after_changes"`,
+		`"pending_files":["README.md"]`,
+		`"summary":"continued after handoff"`,
+	} {
+		if !strings.Contains(secondText, want) {
+			t.Fatalf("second stdout missing %q:\n%s", want, secondText)
+		}
+	}
+	if requests != 3 {
+		t.Fatalf("requests = %d, want 3", requests)
+	}
+}
+
 func TestRunExecOpenRouterRequestsSynthesisBeforeLongRunMaxTurns(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
@@ -1935,8 +2087,8 @@ func TestRunEvalReportsPassingRegressionLane(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
 		t.Fatalf("decode eval report: %v\n%s", err, stdout.String())
 	}
-	if !report.Passed || len(report.Cases) != 8 {
-		t.Fatalf("eval report = %#v, want eight passing cases", report)
+	if !report.Passed || len(report.Cases) != 9 {
+		t.Fatalf("eval report = %#v, want nine passing cases", report)
 	}
 	if report.Summary.PatchDiffSummaries < 3 ||
 		report.Summary.PatchFeedback < 1 ||
@@ -2142,6 +2294,33 @@ func writeLCAgentCLITestArtifact(t *testing.T, dataDir string, started time.Time
 		}
 	}
 	return path
+}
+
+func lcagentCLITestSessionIDFromStream(t *testing.T, stream string) string {
+	t.Helper()
+	for _, line := range strings.Split(stream, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var event map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+		var eventType string
+		_ = json.Unmarshal(event["type"], &eventType)
+		if strings.TrimSpace(eventType) == "session_meta" {
+			var id string
+			_ = json.Unmarshal(event["id"], &id)
+			id = strings.TrimSpace(id)
+			if id == "" {
+				t.Fatalf("session_meta missing id in stream:\n%s", stream)
+			}
+			return id
+		}
+	}
+	t.Fatalf("stream missing session_meta:\n%s", stream)
+	return ""
 }
 
 func isolateSkillHomes(t *testing.T) {

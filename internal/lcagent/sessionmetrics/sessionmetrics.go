@@ -36,6 +36,7 @@ type Summary struct {
 	PatchDiffSummaries        int               `json:"patch_diff_summaries"`
 	PatchFeedback             int               `json:"patch_feedback"`
 	RepairFeedbackSuppressed  int               `json:"repair_feedback_suppressed"`
+	RepairGuidance            int               `json:"repair_guidance"`
 	VerificationChecks        int               `json:"verification_checks"`
 	VerificationFeedback      int               `json:"verification_feedback"`
 	VerificationCheckStatuses map[string]int    `json:"verification_check_statuses,omitempty"`
@@ -254,6 +255,8 @@ func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
 		s.PatchFeedback++
 	case "repair_feedback_suppressed":
 		s.RepairFeedbackSuppressed++
+	case "repair_guidance":
+		s.RepairGuidance++
 	case "verification_check":
 		s.VerificationChecks++
 		status := rawString(event["status"])
@@ -453,7 +456,7 @@ func (s Summary) computeTraceQuality() TraceQuality {
 	quality := TraceQuality{
 		Score:                100,
 		VerifiedSessions:     s.VerificationStatuses["verified"],
-		RepairEvents:         s.PermissionDenials + s.PatchFeedback + s.VerificationFeedback + s.RepairFeedbackSuppressed,
+		RepairEvents:         s.PermissionDenials + s.PatchFeedback + s.VerificationFeedback + s.RepairFeedbackSuppressed + s.RepairGuidance,
 		ProviderRetries:      s.ProviderRetries,
 		ReadOverlapRate:      ratio(s.ReadFileOverlappingLines, s.ReadFileLines),
 		CachedInputTokenRate: ratio64(s.TokenUsage.CachedInputTokens, s.TokenUsage.InputTokens),
@@ -508,6 +511,10 @@ func (s Summary) computeTraceQuality() TraceQuality {
 	if s.RepairFeedbackSuppressed > 0 {
 		quality.addFinding("warn", "repeated_repair_feedback", fmt.Sprintf("%d duplicate repair feedback event(s) were suppressed.", s.RepairFeedbackSuppressed))
 		quality.Score -= minInt(10, s.RepairFeedbackSuppressed*5)
+	}
+	if s.RepairGuidance > 0 {
+		quality.addFinding("warn", "repair_guidance", fmt.Sprintf("%d repair guidance escalation event(s) were needed.", s.RepairGuidance))
+		quality.Score -= minInt(10, s.RepairGuidance*5)
 	}
 	if quality.ReadOverlapRate >= 0.25 && s.ReadFileLines >= 100 {
 		quality.addFinding("info", "read_overlap", fmt.Sprintf("%.0f%% of read_file lines overlapped earlier reads.", quality.ReadOverlapRate*100))

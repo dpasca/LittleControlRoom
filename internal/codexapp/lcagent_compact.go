@@ -93,6 +93,7 @@ func formatLCAgentCompactMarkdown(trace LCAgentTrace) string {
 	}
 	writeLCAgentCompactList(&b, "Patch Feedback", trace.PatchFeedback)
 	writeLCAgentCompactList(&b, "Verification Feedback", trace.VerificationFeedback)
+	writeLCAgentCompactList(&b, "Repair Guidance", trace.RepairGuidance)
 	b.WriteString("\n## Continuation Note\n\n")
 	b.WriteString("This summary is a handoff aid, not source truth for file contents. Re-read exact workspace files before editing.\n")
 	return b.String()

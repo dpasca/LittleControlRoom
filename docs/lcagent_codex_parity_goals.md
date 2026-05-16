@@ -52,6 +52,9 @@ Current state:
 - New continuation artifacts carry parent/root session IDs, chain depth,
   handoff source, and pending verification/file state into trace parsing,
   embedded status text, and compact summaries.
+- The deterministic eval lane includes a max-turn handoff continuation case,
+  and the provider-loop tests cover an actual max-turn handoff followed by
+  `--continue-from` with pending file/verification state preserved.
 
 Missing:
 
@@ -60,6 +63,7 @@ Missing:
 - A clear distinction between exact transcript continuity and summary-based
   continuation.
 - Better browsing of compact summaries from replay/session pickers.
+- User-visible branch/rewind/restart affordances for continuation chains.
 
 Done when:
 

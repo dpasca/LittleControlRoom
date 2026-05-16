@@ -646,6 +646,8 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		s.appendAsync(TranscriptStatus, lcagentVerificationFeedbackText(event))
 	case "repair_feedback_suppressed":
 		s.appendAsync(TranscriptStatus, lcagentRepairFeedbackSuppressedText(event))
+	case "repair_guidance":
+		s.appendAsync(TranscriptStatus, lcagentRepairGuidanceText(event))
 	case "provider_failure":
 		s.appendAsync(TranscriptError, lcagentProviderFailureText(event))
 	case "provider_retry":

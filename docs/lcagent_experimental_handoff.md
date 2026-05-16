@@ -131,6 +131,9 @@ Eval maturity:
 
 - The deterministic eval lane protects the trace contract, but it does not
   score live coding quality.
+- The deterministic eval lane now includes a max-turn handoff continuation case
+  so summarized continuation from handoff artifacts is covered by the trace
+  regression suite.
 - The repeatable `lcagent live-eval` lane now runs fixed live-provider coding
   tasks for README edit, Go bug fix, small feature implementation, read-only
   orientation, current-diff review, and a multi-file refactor, with per-case
@@ -187,9 +190,10 @@ small-to-medium coding tasks before it tries to be a broader assistant.
    model.
    LCAgent launches now have explicit `--continue-from` continuation, enriched
    session metadata, dedicated `continuation` events, pending file/verification
-   state, embedded status text, compact summaries, and shared trace parsing.
-   Next, add browsing and branch/restart affordances across session pickers and
-   keep the warning that exact file contents must be re-read before edits.
+   state, embedded status text, compact summaries, shared trace parsing, and
+   regression coverage for max-turn handoff continuation. Next, add browsing
+   and branch/restart affordances across session pickers and keep the warning
+   that exact file contents must be re-read before edits.
 
 2. Add user-visible compact/review behavior for LCAgent.
    `/review` now starts as a read-only current-diff review task using the same

@@ -650,8 +650,15 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 		}
 		for _, feedback := range pendingPatchFeedback {
 			if !feedbackTracker.Allow("patch", feedback.ModelMessage()) {
-				if err := writeRepairFeedbackSuppressed(writer, runner.SessionID, "patch", feedback.ModelMessage(), feedbackTracker.Count("patch", feedback.ModelMessage())); err != nil {
+				count := feedbackTracker.Count("patch", feedback.ModelMessage())
+				if err := writeRepairFeedbackSuppressed(writer, runner.SessionID, "patch", feedback.ModelMessage(), count); err != nil {
 					return err
+				}
+				if guidance := script.PatchRetryGuidance(feedback, count); guidance != "" && count == 2 {
+					if err := writeRepairGuidance(writer, runner.SessionID, "patch", guidance, count); err != nil {
+						return err
+					}
+					messages = append(messages, modeladapter.Message{Role: "user", Content: guidance})
 				}
 				continue
 			}
@@ -826,6 +833,17 @@ func writeRepairFeedbackSuppressed(writer *session.Writer, sessionID, kind, mess
 		"message":    strings.TrimSpace(message),
 		"count":      count,
 		"reason":     "duplicate feedback already sent to model",
+	})
+}
+
+func writeRepairGuidance(writer *session.Writer, sessionID, kind, message string, count int) error {
+	return writer.Write(session.Event{
+		"type":       "repair_guidance",
+		"session_id": sessionID,
+		"kind":       strings.TrimSpace(kind),
+		"message":    strings.TrimSpace(message),
+		"count":      count,
+		"reason":     "duplicate feedback escalated to strategy guidance",
 	})
 }
 

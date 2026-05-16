@@ -35,6 +35,7 @@ type codexSessionChoice struct {
 	LastActivity time.Time
 	Title        string
 	Summary      string
+	TraceHint    string
 	Live         bool
 	Current      bool
 	Latest       bool
@@ -316,9 +317,78 @@ func buildCodexResumeChoices(ctx context.Context, detail model.ProjectDetail, pr
 		if choice.Summary == "" {
 			choice.Summary = "Saved " + provider.Label() + " session"
 		}
+		enrichLCAgentResumeChoice(&choice, session)
 		choices = append(choices, choice)
 	}
 	return choices
+}
+
+func enrichLCAgentResumeChoice(choice *codexSessionChoice, session model.SessionEvidence) {
+	if choice == nil || choice.Provider.Normalized() != codexapp.ProviderLCAgent {
+		return
+	}
+	path := strings.TrimSpace(session.SessionFile)
+	if path == "" {
+		return
+	}
+	trace, err := codexapp.ParseLCAgentTraceFile(path)
+	if err != nil {
+		return
+	}
+	var parts []string
+	if source := strings.TrimSpace(trace.ResumeSourceSessionID); source != "" {
+		parts = append(parts, "continued from "+shortID(source))
+	}
+	if trace.ContinuationChainDepth > 0 {
+		parts = append(parts, fmt.Sprintf("depth %d", trace.ContinuationChainDepth))
+	}
+	if pending := lcagentPickerPendingSummary(trace); pending != "" {
+		parts = append(parts, pending)
+	}
+	if len(parts) > 0 {
+		choice.TraceHint = strings.Join(parts, "; ")
+	}
+}
+
+func lcagentPickerPendingSummary(trace codexapp.LCAgentTrace) string {
+	status := strings.TrimSpace(trace.PendingStatus)
+	files := cleanPickerTraceList(trace.PendingFiles)
+	if status == "" && len(files) == 0 {
+		return ""
+	}
+	if status == "" {
+		return "pending files " + strings.Join(limitPickerStrings(files, 3), ", ")
+	}
+	if len(files) == 0 {
+		return "pending verification " + status
+	}
+	return "pending verification " + status + ": " + strings.Join(limitPickerStrings(files, 3), ", ")
+}
+
+func cleanPickerTraceList(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func limitPickerStrings(values []string, limit int) []string {
+	if limit <= 0 || len(values) <= limit {
+		return values
+	}
+	out := append([]string(nil), values[:limit]...)
+	out = append(out, fmt.Sprintf("%d more", len(values)-limit))
+	return out
 }
 
 func codexResumeSessionHidden(session model.SessionEvidence, provider codexapp.Provider) bool {
@@ -916,6 +986,9 @@ func (m Model) mergeCurrentResumeChoice(choices []codexSessionChoice) []codexSes
 			} else if strings.TrimSpace(mergedCurrent.Summary) == "" {
 				mergedCurrent.Summary = choice.Summary
 			}
+			if strings.TrimSpace(choice.TraceHint) != "" {
+				mergedCurrent.TraceHint = choice.TraceHint
+			}
 			if choice.LastActivity.After(mergedCurrent.LastActivity) {
 				mergedCurrent.LastActivity = choice.LastActivity
 			}
@@ -951,7 +1024,7 @@ func (m Model) codexPickerSecondaryLabel(choice codexSessionChoice) string {
 	if primary == "" {
 		return ""
 	}
-	for _, candidate := range []string{choice.Summary, choice.Title, choice.ProjectName} {
+	for _, candidate := range []string{choice.TraceHint, choice.Summary, choice.Title, choice.ProjectName} {
 		text := strings.TrimSpace(candidate)
 		if text == "" || strings.EqualFold(text, primary) {
 			continue

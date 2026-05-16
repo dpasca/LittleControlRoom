@@ -359,6 +359,36 @@ func TestSmoke(t *testing.T) { t.Fatal("intentional failure") }
 				return nil
 			},
 		},
+		{
+			Name:   "max_turn_handoff_continuation_trace",
+			Prompt: "continue from a max-turn handoff",
+			Auto:   "low",
+			Files: map[string]string{
+				"README.md": "new\n",
+			},
+			Script: `{"type":"final_response","summary":"continued from max-turn handoff","files_changed":[],"verification":[]}
+`,
+			Setup: func(cwd, dataDir string) ([]string, error) {
+				sessionID := "lca_eval_max_turn_handoff"
+				started := time.Date(2026, 5, 12, 9, 0, 0, 0, time.UTC)
+				if err := writeLCAgentEvalMaxTurnHandoffArtifact(dataDir, cwd, sessionID, started); err != nil {
+					return nil, err
+				}
+				return []string{"--continue-from", sessionID}, nil
+			},
+			Check: func(summary sessionmetrics.Summary) error {
+				if summary.Continuations < 1 {
+					return fmt.Errorf("continuation count = %d, want >= 1", summary.Continuations)
+				}
+				if summary.ResumeContexts < 1 {
+					return fmt.Errorf("resume context count = %d, want >= 1", summary.ResumeContexts)
+				}
+				if summary.VerificationStatuses["not_run"] < 1 {
+					return fmt.Errorf("verification not_run count = %d, want >= 1", summary.VerificationStatuses["not_run"])
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -381,12 +411,13 @@ func writeEvalTextReport(stdout io.Writer, report evalReport) {
 		}
 		fmt.Fprintln(stdout)
 	}
-	fmt.Fprintf(stdout, "sessions=%d denials=%d patch_diff_summaries=%d patch_feedback=%d repair_feedback_suppressed=%d continuations=%d resume_contexts=%d verification_feedback=%d verification=%v\n",
+	fmt.Fprintf(stdout, "sessions=%d denials=%d patch_diff_summaries=%d patch_feedback=%d repair_feedback_suppressed=%d repair_guidance=%d continuations=%d resume_contexts=%d verification_feedback=%d verification=%v\n",
 		report.Summary.Sessions,
 		report.Summary.PermissionDenials,
 		report.Summary.PatchDiffSummaries,
 		report.Summary.PatchFeedback,
 		report.Summary.RepairFeedbackSuppressed,
+		report.Summary.RepairGuidance,
 		report.Summary.Continuations,
 		report.Summary.ResumeContexts,
 		report.Summary.VerificationFeedback,
@@ -446,6 +477,23 @@ func lcagentEvalSessionFiles(dataDir string) ([]string, error) {
 }
 
 func writeLCAgentEvalResumeArtifact(dataDir, cwd, sessionID string, started time.Time) error {
+	return writeLCAgentEvalArtifact(dataDir, sessionID, started, []map[string]any{
+		{"type": "session_meta", "id": sessionID, "cwd": cwd, "started_at": started.Format(time.RFC3339Nano)},
+		{"type": "user_message", "session_id": sessionID, "timestamp": started.Add(time.Second).Format(time.RFC3339Nano), "message": "previous eval task"},
+		{"type": "turn_complete", "session_id": sessionID, "timestamp": started.Add(2 * time.Second).Format(time.RFC3339Nano), "summary": "previous eval summary", "verification_status": "reported_only", "verification": []string{"scripted"}},
+	})
+}
+
+func writeLCAgentEvalMaxTurnHandoffArtifact(dataDir, cwd, sessionID string, started time.Time) error {
+	return writeLCAgentEvalArtifact(dataDir, sessionID, started, []map[string]any{
+		{"type": "session_meta", "id": sessionID, "cwd": cwd, "started_at": started.Format(time.RFC3339Nano)},
+		{"type": "user_message", "session_id": sessionID, "timestamp": started.Add(time.Second).Format(time.RFC3339Nano), "message": "patch README then continue later"},
+		{"type": "final_handoff_compacted", "session_id": sessionID, "timestamp": started.Add(2 * time.Second).Format(time.RFC3339Nano), "final_model": "deepseek/test-model"},
+		{"type": "turn_complete", "session_id": sessionID, "timestamp": started.Add(3 * time.Second).Format(time.RFC3339Nano), "summary": "Turn budget reached. README.md was changed. Verification was not run. Continue by verifying README.md.", "files_changed": []string{"README.md"}, "verification": []string{}, "verification_status": "missing_after_changes"},
+	})
+}
+
+func writeLCAgentEvalArtifact(dataDir, sessionID string, started time.Time, events []map[string]any) error {
 	path := filepath.Join(dataDir, "lcagent", "sessions", started.Format("2006"), started.Format("01"), started.Format("02"), sessionID+".jsonl")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -456,11 +504,6 @@ func writeLCAgentEvalResumeArtifact(dataDir, cwd, sessionID string, started time
 	}
 	defer file.Close()
 	encoder := json.NewEncoder(file)
-	events := []map[string]any{
-		{"type": "session_meta", "id": sessionID, "cwd": cwd, "started_at": started.Format(time.RFC3339Nano)},
-		{"type": "user_message", "session_id": sessionID, "timestamp": started.Add(time.Second).Format(time.RFC3339Nano), "message": "previous eval task"},
-		{"type": "turn_complete", "session_id": sessionID, "timestamp": started.Add(2 * time.Second).Format(time.RFC3339Nano), "summary": "previous eval summary", "verification_status": "reported_only", "verification": []string{"scripted"}},
-	}
 	for _, event := range events {
 		if err := encoder.Encode(event); err != nil {
 			return err

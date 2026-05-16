@@ -144,8 +144,43 @@ func (f PatchFeedback) ModelMessage() string {
 	return strings.TrimSpace(f.Message)
 }
 
+func PatchRetryGuidance(feedback PatchFeedback, repeatCount int) string {
+	message := strings.TrimSpace(feedback.Message)
+	if message == "" || repeatCount < 2 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Patch retry guidance: the same patch feedback has repeated %d times. Stop retrying the same patch unchanged.", repeatCount)
+	if len(feedback.SuggestedReads) > 0 {
+		b.WriteString(" First call ")
+		b.WriteString(formatReadSuggestionsForModel(feedback.SuggestedReads))
+		b.WriteString(" to refresh exact current lines.")
+	} else {
+		b.WriteString(" Re-read the affected file before another patch attempt.")
+	}
+	b.WriteString(" Then retry with a smaller hunk that preserves current unchanged context, or use replace_text with exact old_text copied from the current file for a small literal edit.")
+	return b.String()
+}
+
 func (r *Runner) WritePatchFeedback(feedback PatchFeedback) error {
 	return r.Session.Write(patchFeedbackEvent(r.SessionID, feedback))
+}
+
+func formatReadSuggestionsForModel(suggestions []tools.ReadSuggestion) string {
+	calls := make([]string, 0, len(suggestions))
+	for _, suggestion := range suggestions {
+		if strings.TrimSpace(suggestion.Path) == "" || suggestion.Offset <= 0 || suggestion.Limit <= 0 {
+			continue
+		}
+		calls = append(calls, fmt.Sprintf(`read_file {"path":%q,"offset":%d,"limit":%d}`, suggestion.Path, suggestion.Offset, suggestion.Limit))
+		if len(calls) >= 2 {
+			break
+		}
+	}
+	if len(calls) == 0 {
+		return "read_file on the affected range"
+	}
+	return strings.Join(calls, " and ")
 }
 
 type commandArgs struct {

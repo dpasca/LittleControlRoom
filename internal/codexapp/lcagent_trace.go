@@ -44,6 +44,7 @@ type LCAgentTrace struct {
 	VerificationSummaries     []string
 	VerificationFeedback      []string
 	RepairFeedbackSuppressed  []string
+	RepairGuidance            []string
 	ModelResponses            int
 	TokenUsage                lcrmodel.LLMUsage
 	TraceQuality              sessionmetrics.TraceQuality
@@ -193,6 +194,10 @@ func ParseLCAgentTraceFile(path string) (LCAgentTrace, error) {
 			if message := lcagentRepairFeedbackSuppressedText(event); message != "" {
 				trace.RepairFeedbackSuppressed = append(trace.RepairFeedbackSuppressed, message)
 			}
+		case "repair_guidance":
+			if message := lcagentRepairGuidanceText(event); message != "" {
+				trace.RepairGuidance = append(trace.RepairGuidance, message)
+			}
 		case "verification_summary":
 			status := rawJSONString(event["status"])
 			if status != "" {
@@ -290,6 +295,9 @@ func (t LCAgentTrace) CompactSummary() string {
 	if len(t.RepairFeedbackSuppressed) > 0 {
 		parts = append(parts, fmt.Sprintf("%d duplicate repair feedback item%s suppressed", len(t.RepairFeedbackSuppressed), pluralSuffix(len(t.RepairFeedbackSuppressed))))
 	}
+	if len(t.RepairGuidance) > 0 {
+		parts = append(parts, fmt.Sprintf("%d repair guidance item%s", len(t.RepairGuidance), pluralSuffix(len(t.RepairGuidance))))
+	}
 	if len(t.PermissionDenials) > 0 {
 		parts = append(parts, fmt.Sprintf("%d denial%s", len(t.PermissionDenials), pluralSuffix(len(t.PermissionDenials))))
 	}
@@ -345,6 +353,9 @@ func (t LCAgentTrace) TraceQualitySummary() string {
 	}
 	if len(t.RepairFeedbackSuppressed) > 0 {
 		parts = append(parts, fmt.Sprintf("duplicate repair feedback suppressed: %d", len(t.RepairFeedbackSuppressed)))
+	}
+	if len(t.RepairGuidance) > 0 {
+		parts = append(parts, fmt.Sprintf("repair guidance: %d", len(t.RepairGuidance)))
 	}
 	if len(t.PatchDiffSummaries) > 0 {
 		parts = append(parts, fmt.Sprintf("patch summaries: %d", len(t.PatchDiffSummaries)))
@@ -643,6 +654,15 @@ func lcagentRepairFeedbackSuppressedText(event map[string]json.RawMessage) strin
 		return "Suppressed duplicate " + kind + " feedback: " + message
 	}
 	return "Suppressed duplicate " + kind + " feedback"
+}
+
+func lcagentRepairGuidanceText(event map[string]json.RawMessage) string {
+	message := rawJSONString(event["message"])
+	if message != "" {
+		return message
+	}
+	kind := firstNonEmpty(rawJSONString(event["kind"]), "repair")
+	return "Repair guidance: " + kind
 }
 
 func lcagentProviderFailureText(event map[string]json.RawMessage) string {
