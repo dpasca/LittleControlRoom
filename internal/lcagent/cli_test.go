@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"lcroom/internal/lcagent/sessionmetrics"
 )
 
 func TestRunExecScriptedStreamJSON(t *testing.T) {
@@ -112,6 +114,66 @@ func TestRunExecOpenRouterEmitsModelResponseUsage(t *testing.T) {
 	}
 	if got := strings.Count(text, `"type":"assistant_message"`); got != 1 {
 		t.Fatalf("assistant_message count = %d, want 1:\n%s", got, text)
+	}
+}
+
+func TestRunExecOpenRouterRetriesTransientProviderFailure(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		if requests == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":{"message":"rate limit exceeded","type":"rate_limit_exceeded"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{
+			"id":"resp_retry",
+			"model":"deepseek/test-model",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"done after retry"}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--max-turns", "2",
+		"answer directly",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want retry once", requests)
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"provider_failure"`,
+		`"kind":"rate_limited"`,
+		`"retrying":true`,
+		`"type":"provider_retry"`,
+		`"attempt":2`,
+		`"type":"provider_retry_succeeded"`,
+		`"summary":"done after retry"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
 	}
 }
 
@@ -1789,20 +1851,23 @@ func TestRunLiveEvalListsFixedSuite(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &listed); err != nil {
 		t.Fatalf("decode live eval list: %v\n%s", err, stdout.String())
 	}
-	if len(listed.Cases) != 4 {
-		t.Fatalf("live eval cases = %d, want 4", len(listed.Cases))
+	if len(listed.Cases) != 6 {
+		t.Fatalf("live eval cases = %d, want 6", len(listed.Cases))
 	}
 	byName := map[string]liveEvalTask{}
 	for _, tc := range listed.Cases {
 		byName[tc.Name] = tc
 	}
-	for _, want := range []string{"readme_edit_verify", "go_bug_fix", "feature_slice", "repo_orientation"} {
+	for _, want := range []string{"readme_edit_verify", "go_bug_fix", "feature_slice", "repo_orientation", "current_diff_review", "multi_file_price_refactor"} {
 		if _, ok := byName[want]; !ok {
 			t.Fatalf("live eval list missing %s: %#v", want, listed.Cases)
 		}
 	}
 	if byName["go_bug_fix"].Category != "bug_fix" || len(byName["go_bug_fix"].VerifyCommand) == 0 {
 		t.Fatalf("go_bug_fix list entry missing category/verification: %#v", byName["go_bug_fix"])
+	}
+	if byName["current_diff_review"].ExpectedVerificationStatus != "failed" || !byName["current_diff_review"].ExpectNoEdits {
+		t.Fatalf("current_diff_review list entry missing review contract: %#v", byName["current_diff_review"])
 	}
 }
 
@@ -1841,6 +1906,104 @@ func TestLiveEvalArtifactScoringHelpers(t *testing.T) {
 	if !changed["calc.go"] || changed["README.md"] {
 		t.Fatalf("changed files = %#v", changed)
 	}
+}
+
+func TestWriteLiveEvalWorkspaceSeedsUncommittedFiles(t *testing.T) {
+	workspace := t.TempDir()
+	base := map[string]string{
+		"go.mod": "module seeded-diff\n\ngo 1.22\n",
+		"state.go": `package seeded
+
+func State() string {
+	return "clean"
+}
+`,
+	}
+	dirty := map[string]string{
+		"state.go": `package seeded
+
+func State() string {
+	return "dirty"
+}
+`,
+	}
+	if err := writeLiveEvalWorkspace(workspace, base, dirty); err != nil {
+		t.Fatal(err)
+	}
+	diff, err := liveEvalWorkspaceDiff(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(diff, `return "clean"`) || !strings.Contains(diff, `return "dirty"`) {
+		t.Fatalf("seeded diff missing expected content:\n%s", diff)
+	}
+	dirtyState, err := liveEvalWorkspaceDirty(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dirtyState {
+		t.Fatal("workspace is clean, want seeded uncommitted diff")
+	}
+}
+
+func TestCheckLiveEvalTaskAllowsSeededReadOnlyDiff(t *testing.T) {
+	workspace := t.TempDir()
+	files := map[string]string{
+		"go.mod": "module readonly-diff\n\ngo 1.22\n",
+		"tasks.go": `package tasks
+
+func Ready(value int) bool {
+	return value <= 10
+}
+`,
+	}
+	uncommitted := map[string]string{
+		"tasks.go": `package tasks
+
+func Ready(value int) bool {
+	return value < 10
+}
+`,
+	}
+	if err := writeLiveEvalWorkspace(workspace, files, uncommitted); err != nil {
+		t.Fatal(err)
+	}
+	initialDiff, err := liveEvalWorkspaceDiff(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(t.TempDir(), "session.jsonl")
+	body := `{"type":"final_response","summary":"reviewed","files_changed":[],"verification":["go test ./... failed"]}
+`
+	if err := os.WriteFile(artifact, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	task := liveEvalTask{
+		Name:                       "current_diff_review",
+		ExpectedVerificationStatus: "failed",
+		ExpectNoEdits:              true,
+	}
+	result := liveEvalCaseResult{
+		Artifact: artifact,
+		Metrics:  sessionSummaryForLiveEvalTest(map[string]int{"failed": 1}),
+		Score:    liveEvalScore{ExpectedFilesTouched: true},
+	}
+	if err := checkLiveEvalTask(workspace, task, initialDiff, &result); err != nil {
+		t.Fatalf("check seeded read-only diff: %v", err)
+	}
+	if !result.Score.ExpectedVerificationSeen {
+		t.Fatal("expected verification status was not recorded in score")
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "extra.txt"), []byte("unexpected\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkLiveEvalTask(workspace, task, initialDiff, &result); err == nil {
+		t.Fatal("check succeeded after extra edit, want failure")
+	}
+}
+
+func sessionSummaryForLiveEvalTest(statuses map[string]int) sessionmetrics.Summary {
+	return sessionmetrics.Summary{VerificationStatuses: statuses}
 }
 
 func writeLCAgentCLITestArtifact(t *testing.T, dataDir string, started time.Time, sessionID string, events []map[string]any) string {

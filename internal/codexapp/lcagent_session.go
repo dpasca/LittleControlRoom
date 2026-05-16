@@ -646,6 +646,12 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		s.appendAsync(TranscriptStatus, lcagentVerificationFeedbackText(event))
 	case "repair_feedback_suppressed":
 		s.appendAsync(TranscriptStatus, lcagentRepairFeedbackSuppressedText(event))
+	case "provider_failure":
+		s.appendAsync(TranscriptError, lcagentProviderFailureText(event))
+	case "provider_retry":
+		s.appendAsync(TranscriptStatus, lcagentProviderRetryText(event))
+	case "provider_retry_succeeded":
+		s.appendAsync(TranscriptStatus, lcagentProviderRetrySucceededText(event))
 	case "verification_summary":
 		status := rawJSONString(event["status"])
 		message := rawJSONString(event["message"])

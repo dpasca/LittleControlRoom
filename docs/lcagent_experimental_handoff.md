@@ -1,11 +1,14 @@
 # LCAgent Experimental Handoff
 
-Date updated: 2026-05-14
+Date updated: 2026-05-16
 
 This note describes the current LCAgent state after the MVP branch was made
 merge-ready. The older `docs/lcagent_mvp_implementation_handoff.md` is still a
 useful historical implementation brief, but it no longer describes what is
 missing today.
+
+For the forward-looking Codex-parity tracker, see
+[`docs/lcagent_codex_parity_goals.md`](lcagent_codex_parity_goals.md).
 
 ## Current State
 
@@ -109,8 +112,12 @@ Harness and policy hardening:
   verification, output-writing test flags, mutating formatters, dependency
   installs, watch modes, and path escapes. It still needs ongoing
   trace-driven calibration against real coding tasks and provider mistakes.
-- Provider-specific quirks still need hardening: retries, rate-limit messages,
-  timeout defaults, prompt-cache behavior, and OpenRouter provider pinning.
+- Provider-specific quirks still need hardening beyond the first foundation:
+  provider failures now emit typed `provider_failure` events, transient failures
+  can retry with bounded backoff, retry attempts are traced, and metrics fold
+  provider instability into `trace_quality`. Remaining work includes broader
+  provider coverage, richer rate-limit UX, timeout recovery, prompt-cache
+  behavior, and OpenRouter provider pinning/fallback calibration.
 - Patch/edit ergonomics now include first-pass failure feedback, concrete
   re-read suggestions for stale hunks, and a literal `replace_text` fallback
   tool for small exact replacements when strict patch syntax is failing. There
@@ -121,9 +128,10 @@ Eval maturity:
 - The deterministic eval lane protects the trace contract, but it does not
   score live coding quality.
 - The repeatable `lcagent live-eval` lane now runs fixed live-provider coding
-  tasks for README edit, Go bug fix, small feature implementation, and
-  read-only orientation, with per-case correctness, verification, tool-churn,
-  token, cost, artifact, workspace, and wall-time reporting.
+  tasks for README edit, Go bug fix, small feature implementation, read-only
+  orientation, current-diff review, and a multi-file refactor, with per-case
+  correctness, verification status, tool-churn, token, cost, artifact,
+  workspace, and wall-time reporting.
 - The current archived live benchmark is valuable but still small and partly
   qualitative.
 - Scores are human-assigned from fixed-task outputs; there is no automated
@@ -219,9 +227,10 @@ small-to-medium coding tasks before it tries to be a broader assistant.
    verification accounting, continuation chains, command policy, and metrics.
 
 2. Keep extending the repeatable live coding eval lane.
-   The first live suite covers a small edit, bug fix, feature slice, and repo
-   orientation. Next, add refactor-with-tests and current-diff review cases, and
-   tune pass/fail scoring against repeated model runs.
+   The first live suite covers a small edit, bug fix, feature slice, repo
+   orientation, current-diff review, and multi-file refactor. Next, add
+   framework-specific cases and tune pass/fail scoring against repeated model
+   runs.
 
 3. Make model-tier comparisons first-class.
    Record helm model, optional scout model, context/tool profile, reasoning

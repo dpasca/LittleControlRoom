@@ -27,6 +27,9 @@ type Summary struct {
 	ToolResults               map[string]int    `json:"tool_results"`
 	ToolSuccesses             map[string]int    `json:"tool_successes,omitempty"`
 	ToolFailures              map[string]int    `json:"tool_failures,omitempty"`
+	ProviderFailures          map[string]int    `json:"provider_failures,omitempty"`
+	ProviderRetries           int               `json:"provider_retries"`
+	ProviderRetrySuccesses    int               `json:"provider_retry_successes"`
 	ResumeContexts            int               `json:"resume_contexts"`
 	PermissionDenials         int               `json:"permission_denials"`
 	PatchDiffSummaries        int               `json:"patch_diff_summaries"`
@@ -71,6 +74,8 @@ type TraceQuality struct {
 	Findings             []TraceQualityFinding `json:"findings,omitempty"`
 	ToolFailures         int                   `json:"tool_failures"`
 	ToolFailureRate      float64               `json:"tool_failure_rate"`
+	ProviderFailures     int                   `json:"provider_failures"`
+	ProviderRetries      int                   `json:"provider_retries"`
 	RepairEvents         int                   `json:"repair_events"`
 	VerifiedSessions     int                   `json:"verified_sessions"`
 	VerificationRate     float64               `json:"verification_rate"`
@@ -154,6 +159,9 @@ func (s *Summary) init() {
 	if s.ToolFailures == nil {
 		s.ToolFailures = map[string]int{}
 	}
+	if s.ProviderFailures == nil {
+		s.ProviderFailures = map[string]int{}
+	}
 	if s.ToolProfiles == nil {
 		s.ToolProfiles = map[string]int{}
 	}
@@ -225,6 +233,16 @@ func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
 		s.addUsage(usage)
 	case "permission_denied":
 		s.PermissionDenials++
+	case "provider_failure":
+		kind := rawString(event["kind"])
+		if kind == "" {
+			kind = "unknown"
+		}
+		s.ProviderFailures[kind]++
+	case "provider_retry":
+		s.ProviderRetries++
+	case "provider_retry_succeeded":
+		s.ProviderRetrySuccesses++
 	case "resume_context":
 		s.ResumeContexts++
 	case "patch_diff_summary":
@@ -433,6 +451,7 @@ func (s Summary) computeTraceQuality() TraceQuality {
 		Score:                100,
 		VerifiedSessions:     s.VerificationStatuses["verified"],
 		RepairEvents:         s.PermissionDenials + s.PatchFeedback + s.VerificationFeedback + s.RepairFeedbackSuppressed,
+		ProviderRetries:      s.ProviderRetries,
 		ReadOverlapRate:      ratio(s.ReadFileOverlappingLines, s.ReadFileLines),
 		CachedInputTokenRate: ratio64(s.TokenUsage.CachedInputTokens, s.TokenUsage.InputTokens),
 		EstimatedCostUSD:     s.TokenUsage.EstimatedCostUSD,
@@ -444,6 +463,9 @@ func (s Summary) computeTraceQuality() TraceQuality {
 	for _, count := range s.ToolFailures {
 		quality.ToolFailures += count
 		totalKnownToolResults += count
+	}
+	for _, count := range s.ProviderFailures {
+		quality.ProviderFailures += count
 	}
 	quality.ToolFailureRate = ratio(quality.ToolFailures, totalKnownToolResults)
 	if s.Sessions > 0 {
@@ -463,6 +485,10 @@ func (s Summary) computeTraceQuality() TraceQuality {
 	if quality.ToolFailures > 0 {
 		quality.addFinding("warn", "tool_failures", fmt.Sprintf("%d tool result(s) failed.", quality.ToolFailures))
 		quality.Score -= minInt(25, quality.ToolFailures*5)
+	}
+	if quality.ProviderFailures > 0 {
+		quality.addFinding("warn", "provider_failures", fmt.Sprintf("%d provider failure event(s) were recorded.", quality.ProviderFailures))
+		quality.Score -= minInt(20, quality.ProviderFailures*5)
 	}
 	if s.PermissionDenials > 0 {
 		quality.addFinding("info", "permission_denials", fmt.Sprintf("%d permission denial(s) were recorded.", s.PermissionDenials))

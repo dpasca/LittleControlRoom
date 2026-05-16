@@ -722,6 +722,34 @@ func TestParseLCAgentTraceFileHarvestsFinalOutcome(t *testing.T) {
 	}
 }
 
+func TestParseLCAgentTraceFileIncludesProviderQualitySignals(t *testing.T) {
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	sessionID := "lca_provider_retry"
+	started := time.Date(2026, 5, 12, 11, 0, 0, 0, time.UTC)
+	path := writeLCAgentReplayArtifact(t, dataDir, started, sessionID, []map[string]any{
+		{"type": "session_meta", "id": sessionID, "cwd": root, "started_at": started.Format(time.RFC3339Nano)},
+		{"type": "provider_failure", "session_id": sessionID, "timestamp": started.Add(time.Second).Format(time.RFC3339Nano), "provider": "openrouter", "kind": "rate_limited", "message": "HTTP 429: slow down", "retryable": true, "retrying": true},
+		{"type": "provider_retry", "session_id": sessionID, "timestamp": started.Add(1500 * time.Millisecond).Format(time.RFC3339Nano), "provider": "openrouter", "attempt": 2, "delay_ms": 250},
+		{"type": "provider_retry_succeeded", "session_id": sessionID, "timestamp": started.Add(2 * time.Second).Format(time.RFC3339Nano), "provider": "openrouter", "attempt": 2},
+		{"type": "verification_summary", "session_id": sessionID, "timestamp": started.Add(2500 * time.Millisecond).Format(time.RFC3339Nano), "status": "verified"},
+		{"type": "turn_complete", "session_id": sessionID, "timestamp": started.Add(3 * time.Second).Format(time.RFC3339Nano), "summary": "done", "verification_status": "verified"},
+	})
+
+	trace, err := ParseLCAgentTraceFile(path)
+	if err != nil {
+		t.Fatalf("ParseLCAgentTraceFile() error = %v", err)
+	}
+	if trace.TraceQuality.ProviderFailures != 1 || trace.TraceQuality.ProviderRetries != 1 {
+		t.Fatalf("trace provider quality = %#v, want provider failure and retry", trace.TraceQuality)
+	}
+	for _, want := range []string{"provider failures: 1", "provider retries: 1"} {
+		if !strings.Contains(trace.TraceQualitySummary(), want) {
+			t.Fatalf("trace quality summary missing %q:\n%s", want, trace.TraceQualitySummary())
+		}
+	}
+}
+
 func waitForLCAgentIdleSnapshot(t *testing.T, session Session, notify <-chan struct{}) Snapshot {
 	t.Helper()
 	deadline := time.After(5 * time.Second)

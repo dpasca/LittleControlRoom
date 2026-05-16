@@ -311,6 +311,12 @@ func (t LCAgentTrace) TraceQualitySummaryLabel() string {
 	if t.TraceQuality.ToolFailures > 0 {
 		parts = append(parts, fmt.Sprintf("tool failures: %d", t.TraceQuality.ToolFailures))
 	}
+	if t.TraceQuality.ProviderFailures > 0 {
+		parts = append(parts, fmt.Sprintf("provider failures: %d", t.TraceQuality.ProviderFailures))
+	}
+	if t.TraceQuality.ProviderRetries > 0 {
+		parts = append(parts, fmt.Sprintf("provider retries: %d", t.TraceQuality.ProviderRetries))
+	}
 	if t.TraceQuality.RepairEvents > 0 {
 		parts = append(parts, fmt.Sprintf("repair events: %d", t.TraceQuality.RepairEvents))
 	}
@@ -529,6 +535,48 @@ func lcagentRepairFeedbackSuppressedText(event map[string]json.RawMessage) strin
 		return "Suppressed duplicate " + kind + " feedback: " + message
 	}
 	return "Suppressed duplicate " + kind + " feedback"
+}
+
+func lcagentProviderFailureText(event map[string]json.RawMessage) string {
+	provider := firstNonEmpty(rawJSONString(event["provider"]), "provider")
+	kind := firstNonEmpty(rawJSONString(event["kind"]), "failure")
+	message := rawJSONString(event["message"])
+	attempt := rawJSONInt(event["attempt"])
+	retrying := rawJSONBool(event["retrying"])
+	parts := []string{fmt.Sprintf("LCAgent %s failure: %s", provider, kind)}
+	if attempt > 0 {
+		parts = append(parts, fmt.Sprintf("attempt %d", attempt))
+	}
+	if retrying {
+		parts = append(parts, "retrying")
+	}
+	if message != "" {
+		parts = append(parts, message)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func lcagentProviderRetryText(event map[string]json.RawMessage) string {
+	provider := firstNonEmpty(rawJSONString(event["provider"]), "provider")
+	attempt := rawJSONInt(event["attempt"])
+	delayMS := rawJSONInt(event["delay_ms"])
+	text := fmt.Sprintf("LCAgent retrying %s request", provider)
+	if attempt > 0 {
+		text += fmt.Sprintf(" (attempt %d)", attempt)
+	}
+	if delayMS > 0 {
+		text += fmt.Sprintf(" after %dms", delayMS)
+	}
+	return text
+}
+
+func lcagentProviderRetrySucceededText(event map[string]json.RawMessage) string {
+	provider := firstNonEmpty(rawJSONString(event["provider"]), "provider")
+	attempt := rawJSONInt(event["attempt"])
+	if attempt > 0 {
+		return fmt.Sprintf("LCAgent %s request recovered on attempt %d", provider, attempt)
+	}
+	return "LCAgent " + provider + " request recovered after retry"
 }
 
 func lcagentPatchFeedbackText(event map[string]json.RawMessage) string {

@@ -17,15 +17,18 @@ import (
 )
 
 type liveEvalTask struct {
-	Name             string            `json:"name"`
-	Category         string            `json:"category"`
-	Description      string            `json:"description"`
-	Prompt           string            `json:"prompt"`
-	Files            map[string]string `json:"-"`
-	ExpectedContains map[string]string `json:"expected_contains,omitempty"`
-	VerifyCommand    []string          `json:"verify_command,omitempty"`
-	ExpectFiles      []string          `json:"expect_files,omitempty"`
-	ExpectNoEdits    bool              `json:"expect_no_edits,omitempty"`
+	Name                       string            `json:"name"`
+	Category                   string            `json:"category"`
+	Description                string            `json:"description"`
+	Prompt                     string            `json:"prompt"`
+	Files                      map[string]string `json:"-"`
+	UncommittedFiles           map[string]string `json:"-"`
+	ExpectedContains           map[string]string `json:"expected_contains,omitempty"`
+	ExpectedVerificationStatus string            `json:"expected_verification_status,omitempty"`
+	VerifyCommand              []string          `json:"verify_command,omitempty"`
+	VerifyCommandExpectFailure bool              `json:"verify_command_expect_failure,omitempty"`
+	ExpectFiles                []string          `json:"expect_files,omitempty"`
+	ExpectNoEdits              bool              `json:"expect_no_edits,omitempty"`
 }
 
 type liveEvalReport struct {
@@ -59,6 +62,8 @@ type liveEvalCaseResult struct {
 type liveEvalScore struct {
 	Correctness              bool    `json:"correctness"`
 	Verified                 bool    `json:"verified"`
+	VerificationStatus       string  `json:"verification_status,omitempty"`
+	ExpectedVerificationSeen bool    `json:"expected_verification_seen"`
 	ExpectedFilesTouched     bool    `json:"expected_files_touched"`
 	UnexpectedWorkspaceDirty bool    `json:"unexpected_workspace_dirty,omitempty"`
 	FailedToolResults        int     `json:"failed_tool_results"`
@@ -199,9 +204,18 @@ func runLiveEvalTask(root, dataDir string, task liveEvalTask, cfg liveEvalRunCon
 	result := liveEvalCaseResult{Name: task.Name, Category: task.Category}
 	workspace := filepath.Join(root, task.Name)
 	result.Workspace = workspace
-	if err := writeLiveEvalWorkspace(workspace, task.Files); err != nil {
+	if err := writeLiveEvalWorkspace(workspace, task.Files, task.UncommittedFiles); err != nil {
 		result.Error = err.Error()
 		return result
+	}
+	initialDiff := ""
+	if task.ExpectNoEdits {
+		diff, err := liveEvalWorkspaceDiff(workspace)
+		if err != nil {
+			result.Error = err.Error()
+			return result
+		}
+		initialDiff = diff
 	}
 	before, _ := lcagentEvalSessionFileSet(dataDir)
 	execArgs := []string{
@@ -271,7 +285,7 @@ func runLiveEvalTask(root, dataDir string, task liveEvalTask, cfg liveEvalRunCon
 	if execResult.Artifact != "" {
 		result.Artifact = execResult.Artifact
 	}
-	if err := checkLiveEvalTask(workspace, task, &result); err != nil {
+	if err := checkLiveEvalTask(workspace, task, initialDiff, &result); err != nil {
 		result.Error = err.Error()
 		return result
 	}
@@ -281,25 +295,42 @@ func runLiveEvalTask(root, dataDir string, task liveEvalTask, cfg liveEvalRunCon
 }
 
 func liveEvalScoreFromMetrics(summary sessionmetrics.Summary) liveEvalScore {
+	verificationStatus := liveEvalVerificationStatus(summary)
 	score := liveEvalScore{
-		Verified:             summary.VerificationStatuses["verified"] > 0,
-		ExpectedFilesTouched: true,
-		FailedToolResults:    failedLiveEvalToolResults(summary),
-		PermissionDenials:    summary.PermissionDenials,
-		PatchFeedback:        summary.PatchFeedback,
-		VerificationFeedback: summary.VerificationFeedback,
-		ReadFileCalls:        summary.ReadFileCalls,
-		ReadFileLines:        summary.ReadFileLines,
-		OverlappingReadCalls: summary.ReadFileOverlappingCalls,
-		TraceQualityScore:    summary.TraceQuality.Score,
-		TraceQualityGrade:    summary.TraceQuality.Grade,
-		InputTokens:          summary.TokenUsage.InputTokens,
-		CachedInputTokens:    summary.TokenUsage.CachedInputTokens,
-		OutputTokens:         summary.TokenUsage.OutputTokens,
-		TotalTokens:          summary.TokenUsage.TotalTokens,
-		EstimatedCostUSD:     summary.TokenUsage.EstimatedCostUSD,
+		Verified:                 summary.VerificationStatuses["verified"] > 0,
+		VerificationStatus:       verificationStatus,
+		ExpectedVerificationSeen: verificationStatus == "verified",
+		ExpectedFilesTouched:     true,
+		FailedToolResults:        failedLiveEvalToolResults(summary),
+		PermissionDenials:        summary.PermissionDenials,
+		PatchFeedback:            summary.PatchFeedback,
+		VerificationFeedback:     summary.VerificationFeedback,
+		ReadFileCalls:            summary.ReadFileCalls,
+		ReadFileLines:            summary.ReadFileLines,
+		OverlappingReadCalls:     summary.ReadFileOverlappingCalls,
+		TraceQualityScore:        summary.TraceQuality.Score,
+		TraceQualityGrade:        summary.TraceQuality.Grade,
+		InputTokens:              summary.TokenUsage.InputTokens,
+		CachedInputTokens:        summary.TokenUsage.CachedInputTokens,
+		OutputTokens:             summary.TokenUsage.OutputTokens,
+		TotalTokens:              summary.TokenUsage.TotalTokens,
+		EstimatedCostUSD:         summary.TokenUsage.EstimatedCostUSD,
 	}
 	return score
+}
+
+func liveEvalVerificationStatus(summary sessionmetrics.Summary) string {
+	for _, status := range []string{"verified", "failed", "denied", "timed_out", "reported_only", "missing_after_changes", "not_run"} {
+		if summary.VerificationStatuses[status] > 0 {
+			return status
+		}
+	}
+	for status, count := range summary.VerificationStatuses {
+		if count > 0 {
+			return status
+		}
+	}
+	return ""
 }
 
 func failedLiveEvalToolResults(summary sessionmetrics.Summary) int {
@@ -313,7 +344,7 @@ func failedLiveEvalToolResults(summary sessionmetrics.Summary) int {
 	return total + summary.PermissionDenials + summary.PatchFeedback + summary.VerificationFeedback
 }
 
-func checkLiveEvalTask(workspace string, task liveEvalTask, result *liveEvalCaseResult) error {
+func checkLiveEvalTask(workspace string, task liveEvalTask, initialDiff string, result *liveEvalCaseResult) error {
 	if len(task.ExpectFiles) > 0 && result.Artifact != "" {
 		changed, err := liveEvalFinalFilesChanged(result.Artifact)
 		if err != nil {
@@ -325,6 +356,16 @@ func checkLiveEvalTask(workspace string, task liveEvalTask, result *liveEvalCase
 				result.Score.ExpectedFilesTouched = false
 				return fmt.Errorf("final_response did not list expected changed file %s", want)
 			}
+		}
+	}
+	if task.ExpectNoEdits && result.Artifact != "" {
+		changed, err := liveEvalFinalFilesChanged(result.Artifact)
+		if err != nil {
+			return err
+		}
+		if len(changed) > 0 {
+			result.Score.ExpectedFilesTouched = false
+			return fmt.Errorf("final_response listed changed files during read-only task")
 		}
 	}
 	for path, want := range task.ExpectedContains {
@@ -342,21 +383,32 @@ func checkLiveEvalTask(workspace string, task liveEvalTask, result *liveEvalCase
 		cmd := exec.Command(task.VerifyCommand[0], task.VerifyCommand[1:]...)
 		cmd.Dir = workspace
 		output, err := cmd.CombinedOutput()
-		if err != nil {
+		if task.VerifyCommandExpectFailure {
+			if err == nil {
+				result.Score.Verified = false
+				return fmt.Errorf("post-run verifier %q passed, want failure", strings.Join(task.VerifyCommand, " "))
+			}
+		} else if err != nil {
 			result.Score.Verified = false
 			return fmt.Errorf("post-run verifier %q failed: %w\n%s", strings.Join(task.VerifyCommand, " "), err, strings.TrimSpace(string(output)))
 		}
 	}
-	if result.Metrics.VerificationStatuses["verified"] < 1 {
-		result.Score.Verified = false
-		return fmt.Errorf("session did not record verified checks")
+	expectedStatus := task.ExpectedVerificationStatus
+	if expectedStatus == "" {
+		expectedStatus = "verified"
 	}
+	if result.Metrics.VerificationStatuses[expectedStatus] < 1 {
+		result.Score.Verified = false
+		result.Score.ExpectedVerificationSeen = false
+		return fmt.Errorf("session did not record expected verification status %q", expectedStatus)
+	}
+	result.Score.ExpectedVerificationSeen = true
 	if task.ExpectNoEdits {
-		dirty, err := liveEvalWorkspaceDirty(workspace)
+		finalDiff, err := liveEvalWorkspaceDiff(workspace)
 		if err != nil {
 			return err
 		}
-		if dirty {
+		if finalDiff != initialDiff {
 			result.Score.UnexpectedWorkspaceDirty = true
 			return fmt.Errorf("workspace changed during read-only task")
 		}
@@ -453,7 +505,23 @@ func liveEvalWorkspaceDirty(workspace string) (bool, error) {
 	return strings.TrimSpace(string(output)) != "", nil
 }
 
-func writeLiveEvalWorkspace(workspace string, files map[string]string) error {
+func liveEvalWorkspaceDiff(workspace string) (string, error) {
+	statusCmd := exec.Command("git", "status", "--porcelain=v1")
+	statusCmd.Dir = workspace
+	status, err := statusCmd.Output()
+	if err != nil {
+		return "", err
+	}
+	diffCmd := exec.Command("git", "diff", "--no-ext-diff", "--")
+	diffCmd.Dir = workspace
+	diff, err := diffCmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return "status:\n" + string(status) + "diff:\n" + string(diff), nil
+}
+
+func writeLiveEvalWorkspace(workspace string, files, uncommittedFiles map[string]string) error {
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		return err
 	}
@@ -474,6 +542,15 @@ func writeLiveEvalWorkspace(workspace string, files map[string]string) error {
 	}
 	if err := exec.Command("git", "-C", workspace, "-c", "user.name=LCAgent Eval", "-c", "user.email=lcagent-eval@example.invalid", "commit", "-qm", "seed eval workspace").Run(); err != nil {
 		return err
+	}
+	for path, body := range uncommittedFiles {
+		fullPath := filepath.Join(workspace, filepath.Clean(path))
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(fullPath, []byte(body), 0o644); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -613,6 +690,156 @@ func Message(name string) string {
 			VerifyCommand: []string{"go", "test", "./..."},
 			ExpectNoEdits: true,
 		},
+		{
+			Name:        "current_diff_review",
+			Category:    "review",
+			Description: "Read-only review of a seeded uncommitted regression with failing verification.",
+			Files: map[string]string{
+				"go.mod": "module lcagent-live-review\n\ngo 1.22\n",
+				"tasks.go": `package tasks
+
+type Task struct {
+	Title string
+	Due   int
+}
+
+func DueNow(tasks []Task, cutoff int) []Task {
+	var out []Task
+	for _, task := range tasks {
+		if task.Due <= cutoff {
+			out = append(out, task)
+		}
+	}
+	return out
+}
+`,
+				"tasks_test.go": `package tasks
+
+import (
+	"reflect"
+	"testing"
+)
+
+func TestDueNowIncludesBoundary(t *testing.T) {
+	tasks := []Task{
+		{Title: "done", Due: 5},
+		{Title: "now", Due: 10},
+		{Title: "later", Due: 11},
+	}
+	got := taskTitles(DueNow(tasks, 10))
+	want := []string{"done", "now"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DueNow titles = %#v, want %#v", got, want)
+	}
+}
+
+func taskTitles(tasks []Task) []string {
+	out := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		out = append(out, task.Title)
+	}
+	return out
+}
+`,
+			},
+			UncommittedFiles: map[string]string{
+				"tasks.go": `package tasks
+
+type Task struct {
+	Title string
+	Due   int
+}
+
+func DueNow(tasks []Task, cutoff int) []Task {
+	var out []Task
+	for _, task := range tasks {
+		if task.Due < cutoff {
+			out = append(out, task)
+		}
+	}
+	return out
+}
+`,
+			},
+			Prompt:                     strings.TrimSpace(`Review the current uncommitted diff for a bug. Do not edit files and do not fix the bug. Inspect the diff and relevant code, then run go test ./... with run_command purpose set to verify. Finish with final_response that leaves files_changed empty, reports the failed verification, and explains the regression you found.`),
+			ExpectedVerificationStatus: "failed",
+			VerifyCommand:              []string{"go", "test", "./..."},
+			VerifyCommandExpectFailure: true,
+			ExpectNoEdits:              true,
+		},
+		{
+			Name:        "multi_file_price_refactor",
+			Category:    "refactor",
+			Description: "Refactor a public field across multiple implementation files and tests.",
+			Files: map[string]string{
+				"go.mod": "module lcagent-live-refactor\n\ngo 1.22\n",
+				"item.go": `package catalog
+
+type Item struct {
+	SKU   string
+	Name  string
+	Price int
+}
+
+func NewItem(sku, name string, price int) Item {
+	return Item{SKU: sku, Name: name, Price: price}
+}
+`,
+				"cart.go": `package catalog
+
+func Total(items []Item) int {
+	total := 0
+	for _, item := range items {
+		total += item.Price
+	}
+	return total
+}
+`,
+				"receipt.go": `package catalog
+
+import "fmt"
+
+func ReceiptLine(item Item) string {
+	return fmt.Sprintf("%s: %d", item.Name, item.Price)
+}
+`,
+				"catalog_test.go": `package catalog
+
+import "testing"
+
+func TestPricingUsesCents(t *testing.T) {
+	item := NewItem("coffee", "Coffee", 1250)
+	if item.PriceCents != 1250 {
+		t.Fatalf("PriceCents = %d, want 1250", item.PriceCents)
+	}
+}
+
+func TestTotalUsesCents(t *testing.T) {
+	items := []Item{
+		NewItem("coffee", "Coffee", 1250),
+		NewItem("tea", "Tea", 375),
+	}
+	if got := Total(items); got != 1625 {
+		t.Fatalf("Total() = %d, want 1625", got)
+	}
+}
+
+func TestReceiptLineFormatsCents(t *testing.T) {
+	if got := ReceiptLine(NewItem("coffee", "Coffee", 1250)); got != "Coffee: $12.50" {
+		t.Fatalf("ReceiptLine() = %q", got)
+	}
+}
+`,
+			},
+			Prompt: strings.TrimSpace(`Refactor the implementation from Item.Price to Item.PriceCents so the existing tests pass. Keep NewItem accepting the price in cents, update all implementation files that still use the old field, then run go test ./... with run_command purpose set to verify. Finish with final_response listing item.go, cart.go, and receipt.go in files_changed plus the verification command.`),
+			ExpectedContains: map[string]string{
+				"item.go":    "PriceCents int",
+				"cart.go":    "item.PriceCents",
+				"receipt.go": "item.PriceCents",
+			},
+			VerifyCommand: []string{"go", "test", "./..."},
+			ExpectFiles:   []string{"item.go", "cart.go", "receipt.go"},
+		},
 	}
 }
 
@@ -655,9 +882,11 @@ func writeLiveEvalReport(stdout io.Writer, outputRaw string, report liveEvalRepo
 			if result.Error != "" {
 				fmt.Fprintf(stdout, "  error: %s\n", result.Error)
 			}
-			fmt.Fprintf(stdout, "  score: correctness=%v verified=%v trace_quality=%d/%s reads=%d/%d overlap=%d denials=%d feedback=%d tokens=%d cost=%.6f\n",
+			fmt.Fprintf(stdout, "  score: correctness=%v verified=%v verification_status=%s expected_verification=%v trace_quality=%d/%s reads=%d/%d overlap=%d denials=%d feedback=%d tokens=%d cost=%.6f\n",
 				result.Score.Correctness,
 				result.Score.Verified,
+				result.Score.VerificationStatus,
+				result.Score.ExpectedVerificationSeen,
 				result.Score.TraceQualityScore,
 				result.Score.TraceQualityGrade,
 				result.Score.ReadFileCalls,

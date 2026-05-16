@@ -88,6 +88,9 @@ root unless `--data-dir` is provided. It currently covers:
 - `go_bug_fix`: fix a failing unit test
 - `feature_slice`: implement a small missing feature against tests
 - `repo_orientation`: read-only repo orientation with verification
+- `current_diff_review`: read-only review of a seeded uncommitted regression
+  with expected failed verification
+- `multi_file_price_refactor`: multi-file implementation refactor against tests
 
 List the suite without making provider calls:
 
@@ -120,12 +123,12 @@ reasoning, tool/context profile, timeout, and temperature bundle. Explicit
 flags still override preset values, so record both the preset name and any
 overrides in benchmark notes.
 
-Each case reports correctness, recorded verification, expected files touched,
-failed tool results, permission denials, repair feedback, read volume,
-overlapping reads, trace quality score/grade, token usage, estimated cost,
-artifact path, workspace path, and wall time. Keep
-provider/model/profile/request-timeout values fixed when comparing harness
-commits.
+Each case reports correctness, recorded verification, the observed and expected
+verification status, expected files touched, failed tool results, permission
+denials, repair feedback, read volume, overlapping reads, trace quality
+score/grade, token usage, estimated cost, artifact path, workspace path, and
+wall time. Keep provider/model/profile/request-timeout values fixed when
+comparing harness commits.
 
 Pick a target commit and create an isolated worktree:
 

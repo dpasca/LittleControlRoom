@@ -372,35 +372,35 @@ func (c *Client) CompleteWithOptions(ctx context.Context, messages []Message, to
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return Completion{}, err
+		return Completion{}, newProviderRequestError(c.providerLabel(), err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 8*1024*1024))
 	if err != nil {
-		return Completion{}, err
+		return Completion{}, newProviderRequestError(c.providerLabel(), err)
 	}
 	var parsed ChatResponse
 	decodeErr := json.Unmarshal(data, &parsed)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if decodeErr != nil {
 			if body := responseSnippet(data); body != "" {
-				return Completion{}, fmt.Errorf("%s request failed: HTTP %d: %s", c.providerLabel(), resp.StatusCode, body)
+				return Completion{}, newProviderHTTPError(c.providerLabel(), resp.StatusCode, body, resp.Header.Get("Retry-After"))
 			}
-			return Completion{}, fmt.Errorf("%s request failed: HTTP %d", c.providerLabel(), resp.StatusCode)
+			return Completion{}, newProviderHTTPError(c.providerLabel(), resp.StatusCode, "", resp.Header.Get("Retry-After"))
 		}
 		if parsed.Error != nil && parsed.Error.Message != "" {
-			return Completion{}, fmt.Errorf("%s request failed: HTTP %d: %s", c.providerLabel(), resp.StatusCode, parsed.Error.Message)
+			return Completion{}, newProviderHTTPError(c.providerLabel(), resp.StatusCode, parsed.Error.Message, resp.Header.Get("Retry-After"))
 		}
-		return Completion{}, fmt.Errorf("%s request failed: HTTP %d", c.providerLabel(), resp.StatusCode)
+		return Completion{}, newProviderHTTPError(c.providerLabel(), resp.StatusCode, "", resp.Header.Get("Retry-After"))
 	}
 	if decodeErr != nil {
-		return Completion{}, fmt.Errorf("%s response decode failed: %w", c.providerLabel(), decodeErr)
+		return Completion{}, newProviderDecodeError(c.providerLabel(), decodeErr)
 	}
 	if parsed.Error != nil && parsed.Error.Message != "" {
-		return Completion{}, fmt.Errorf("%s request failed: %s", c.providerLabel(), parsed.Error.Message)
+		return Completion{}, newProviderBodyError(c.providerLabel(), parsed.Error.Message, parsed.Error.Type)
 	}
 	if len(parsed.Choices) == 0 {
-		return Completion{}, fmt.Errorf("%s response had no choices", c.providerLabel())
+		return Completion{}, newProviderSchemaError(c.providerLabel(), "response had no choices")
 	}
 	choice := parsed.Choices[0]
 	modelName := strings.TrimSpace(firstNonEmpty(parsed.Model, c.model))
@@ -465,39 +465,39 @@ func (c *Client) completeResponses(ctx context.Context, messages []Message, tool
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return Completion{}, err
+		return Completion{}, newProviderRequestError(c.providerLabel(), err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 8*1024*1024))
 	if err != nil {
-		return Completion{}, err
+		return Completion{}, newProviderRequestError(c.providerLabel(), err)
 	}
 	var parsed responsesResponse
 	decodeErr := json.Unmarshal(data, &parsed)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if decodeErr != nil {
 			if body := responseSnippet(data); body != "" {
-				return Completion{}, fmt.Errorf("%s request failed: HTTP %d: %s", c.providerLabel(), resp.StatusCode, body)
+				return Completion{}, newProviderHTTPError(c.providerLabel(), resp.StatusCode, body, resp.Header.Get("Retry-After"))
 			}
-			return Completion{}, fmt.Errorf("%s request failed: HTTP %d", c.providerLabel(), resp.StatusCode)
+			return Completion{}, newProviderHTTPError(c.providerLabel(), resp.StatusCode, "", resp.Header.Get("Retry-After"))
 		}
 		if parsed.Error != nil && parsed.Error.Message != "" {
-			return Completion{}, fmt.Errorf("%s request failed: HTTP %d: %s", c.providerLabel(), resp.StatusCode, parsed.Error.Message)
+			return Completion{}, newProviderHTTPError(c.providerLabel(), resp.StatusCode, parsed.Error.Message, resp.Header.Get("Retry-After"))
 		}
-		return Completion{}, fmt.Errorf("%s request failed: HTTP %d", c.providerLabel(), resp.StatusCode)
+		return Completion{}, newProviderHTTPError(c.providerLabel(), resp.StatusCode, "", resp.Header.Get("Retry-After"))
 	}
 	if decodeErr != nil {
-		return Completion{}, fmt.Errorf("%s response decode failed: %w", c.providerLabel(), decodeErr)
+		return Completion{}, newProviderDecodeError(c.providerLabel(), decodeErr)
 	}
 	if parsed.Error != nil && parsed.Error.Message != "" {
-		return Completion{}, fmt.Errorf("%s request failed: %s", c.providerLabel(), parsed.Error.Message)
+		return Completion{}, newProviderBodyError(c.providerLabel(), parsed.Error.Message, parsed.Error.Type)
 	}
 	if len(parsed.Output) == 0 {
-		return Completion{}, fmt.Errorf("%s response had no output", c.providerLabel())
+		return Completion{}, newProviderSchemaError(c.providerLabel(), "response had no output")
 	}
 	msg := responsesMessage(parsed.Output)
 	if strings.TrimSpace(msg.Content) == "" && len(msg.ToolCalls) == 0 {
-		return Completion{}, fmt.Errorf("%s response had no content or function calls", c.providerLabel())
+		return Completion{}, newProviderSchemaError(c.providerLabel(), "response had no content or function calls")
 	}
 	c.previousResponseID = strings.TrimSpace(parsed.ID)
 	modelName := strings.TrimSpace(firstNonEmpty(parsed.Model, c.model))

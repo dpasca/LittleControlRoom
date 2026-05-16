@@ -1,0 +1,227 @@
+# LCAgent Codex-Parity Goals
+
+This document tracks the remaining work for making LCAgent feel like a great
+coding-first agent, assuming it can use the same model quality as Codex.
+
+The target is not full general-assistant breadth yet. Global memory, rich
+personal-assistant connectors, and broad non-coding workflows can wait. The
+near-term bar is: LCAgent should be boringly reliable on real coding work,
+recover gracefully when tools fail, expose enough trace evidence to debug
+mistakes, and feel natural inside Little Control Room.
+
+## Current Baseline
+
+LCAgent now has the important coding-agent skeleton:
+
+- live provider loops plus scripted deterministic evals
+- workspace-scoped read, search, command, patch, and exact text-edit tools
+- verification semantics and repair feedback
+- route presets for common coding lanes
+- embedded `/review` and `/compact`
+- JSONL trace artifacts, metrics, trace-quality summaries, and live evals
+
+The remaining goals below are mostly hardening, calibration, and UX polish
+rather than a ground-up redesign.
+
+## Goal Tracker
+
+| Priority | Goal | Status | Why It Matters |
+| --- | --- | --- | --- |
+| P0 | Real session continuity | Open | Long coding tasks need durable context without pretending summaries are full memory. |
+| P0 | Provider hardening | Started | Same-model quality only matters if the adapter survives rate limits, timeouts, and provider quirks. |
+| P0 | More brutal live evals | Started | We need evidence from tasks that resemble actual coding work, not only smoke fixtures. |
+| P0 | Edit/apply sophistication | Open | A coding agent is only as good as its ability to make and repair changes reliably. |
+| P0 | Autonomy calibration | Open | Low-autonomy needs to allow normal verification while still blocking risky commands. |
+| P1 | Interactive UX parity | Open | The embedded experience should make approvals, blocking states, review, and trace quality easy to act on. |
+| P1 | Trace-quality dashboarding | Open | The trace signals exist; LCR should make them scannable during daily use. |
+| P2 | Efficient scout/delegation lanes | Open | Cheap bounded exploration can save time/cost once core reliability is strong. |
+
+## P0 Goals
+
+### 1. Real Session Continuity
+
+Current state:
+
+- Replay can seed a continuing run through summarized context.
+- `/compact` can write a durable handoff summary.
+- Continuation metadata appears in traces.
+
+Missing:
+
+- A true durable LCAgent session model with explicit continuation chains.
+- User-visible branch/rewind/restart behavior.
+- A clear distinction between exact transcript continuity and summary-based
+  continuation.
+- Better browsing of compact summaries from replay/session pickers.
+
+Done when:
+
+- A user can resume a long LCAgent task and understand exactly what context is
+  preserved, what must be re-read, and where the current handoff came from.
+- LCR surfaces the continuation chain without requiring JSONL inspection.
+- Compaction is user-controlled enough that long sessions do not feel fragile.
+
+### 2. Provider Hardening
+
+Current state:
+
+- OpenRouter, OpenAI, DeepSeek, and Moonshot/Kimi adapters exist.
+- Route presets make common lanes easier to select.
+- Request timeout knobs exist.
+- Provider failures are classified into traceable failure kinds such as
+  `rate_limited`, `timeout`, `auth`, `quota`, `malformed_response`,
+  `transient_http`, and `provider_schema`.
+- Transient provider failures can retry with bounded backoff, and retries are
+  recorded as `provider_retry` / `provider_retry_succeeded` events.
+- `trace_quality` includes provider failure and retry counts so unstable routes
+  are easier to separate from model/task failures.
+
+Missing:
+
+- Broader retry/backoff calibration across real provider failures.
+- Clearer embedded rate-limit and quota call-to-action states.
+- Better timeout recovery and partial-output handling.
+- Provider-specific prompt-cache behavior and accounting.
+- OpenRouter provider pinning and fallback behavior that is explicit in traces.
+- Adapter tests for malformed responses, transient failures, and provider
+  schema drift.
+
+Done when:
+
+- Provider failures produce actionable status text and trace events.
+- A transient failure rarely ruins a whole coding turn.
+- Route comparisons can separate model quality from adapter/provider failures.
+
+### 3. More Brutal Live Evals
+
+Current state:
+
+- `lcagent live-eval` covers a small README edit, Go bug fix, feature slice,
+  read-only repo orientation, current-diff review, and a multi-file refactor.
+- Per-case reports include correctness, observed/expected verification status,
+  trace quality, cost, read volume, and artifacts.
+
+Missing:
+
+- Framework-specific tasks across JS/TS, Python, Rust, and Go.
+- Dependency and environment failure cases.
+- Long-running sessions that require compaction/resume.
+- Repeated runs for route stability, not just single-pass success.
+
+Done when:
+
+- The live suite can catch regressions in edit quality, verification behavior,
+  tool churn, and provider-specific failure modes.
+- We can compare route presets with enough evidence to choose defaults without
+  relying on vibes.
+
+### 4. Edit/Apply Sophistication
+
+Current state:
+
+- `apply_patch` returns structured failure metadata.
+- Patch feedback suggests targeted re-reads.
+- `replace_text` gives a simple exact-replacement fallback.
+
+Missing:
+
+- Better retry policy after repeated patch/edit failures.
+- More reliable multi-hunk edits against stale context.
+- Optional post-edit formatter/check hooks.
+- Guardrails for generated files and large mechanical edits.
+- Provider-adaptive edit dialects if strict patch syntax remains brittle.
+
+Done when:
+
+- Common stale-context failures recover in one or two turns.
+- Small exact edits do not get stuck in patch syntax loops.
+- Larger edits preserve surrounding code and are easy to audit.
+
+### 5. Autonomy Calibration
+
+Current state:
+
+- Low-autonomy allows common verification commands across common stacks.
+- Denials produce guidance for safer nearby forms.
+
+Missing:
+
+- Calibration from real coding traces.
+- Fewer false denials for normal project verification.
+- Better command-specific blocked states in the UI.
+- Confidence that mutating commands remain appropriately gated.
+
+Done when:
+
+- Normal test/build/typecheck flows work without annoying detours.
+- Risky commands still produce clear, actionable denials.
+- Policy changes are backed by trace examples and regression tests.
+
+## P1 Goals
+
+### 6. Interactive UX Parity
+
+Current state:
+
+- Embedded LCAgent supports prompt turns, replay, curated model choices,
+  `/review`, `/compact`, and trace-quality status after completed runs.
+
+Missing:
+
+- Approvals.
+- Attachments.
+- Structured tool input and elicitation.
+- Richer diff/review surfaces.
+- Better status treatment for blocked, retrying, rate-limited, or waiting
+  states.
+
+Done when:
+
+- LCAgent feels like a first-class embedded engineer session, not a thinner
+  experimental pane.
+- Users can understand and resolve blocked states without reading raw traces.
+
+### 7. Trace-Quality Dashboarding
+
+Current state:
+
+- `lcagent metrics` and live evals emit `trace_quality`.
+- Boss/LCR trace harvests include compact quality summaries.
+
+Missing:
+
+- A compact trace-quality view in the TUI.
+- Per-project recent LCAgent quality trends.
+- Quick drill-down from score/finding to the relevant trace event.
+
+Done when:
+
+- A user can scan recent LCAgent work and immediately see whether failures came
+  from verification, patching, provider instability, read churn, or cost.
+
+## P2 Goals
+
+### 8. Efficient Scout/Delegation Lanes
+
+Current state:
+
+- Route presets include `cheap-scout`.
+- LCR has broader agent-task concepts outside LCAgent.
+
+Missing:
+
+- A polished way to send bounded exploration or verification subtasks to a
+  cheaper/lower-latency route.
+- Trace attribution that clearly separates scout output from main coding work.
+- Guardrails so delegation does not create confusing overlapping edits.
+
+Done when:
+
+- LCAgent can cheaply ask for bounded side information without slowing the main
+  coding path or muddying ownership of edits.
+
+## Operating Rule
+
+Prefer evidence over ambition. For each goal, land the smallest slice that
+improves real coding reliability, then run deterministic evals, live evals, and
+trace review before widening the scope.

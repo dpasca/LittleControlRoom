@@ -495,18 +495,19 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 			}
 		}
 		var completion modeladapter.Completion
+		requestClient := client
+		requestPhase := "tool_loop"
+		requestOptions := openRouterCompletionOptions(cfg)
 		if guidance.ForceSynthesis {
-			completion, err = finalClient.CompleteWithOptions(ctx, requestMessages, requestTools, openRouterFinalCompletionOptions(cfg))
-		} else {
-			completion, err = client.CompleteWithOptions(ctx, requestMessages, requestTools, openRouterCompletionOptions(cfg))
+			requestClient = finalClient
+			requestPhase = "synthesis"
+			requestOptions = openRouterFinalCompletionOptions(cfg)
 		}
+		completion, err = completeProviderWithRetries(ctx, writer, runner.SessionID, providerLabel, requestPhase, turn+1, requestClient.Model(), func() (modeladapter.Completion, error) {
+			return requestClient.CompleteWithOptions(ctx, requestMessages, requestTools, requestOptions)
+		})
 		if err != nil {
-			_ = writer.Write(session.Event{
-				"type":       "turn_aborted",
-				"session_id": runner.SessionID,
-				"reason":     err.Error(),
-			})
-			return err
+			return abortOpenRouterRun(writer, runner.SessionID, err)
 		}
 		msg := completion.Message
 		if err := writer.Write(modelResponseEvent(runner.SessionID, turn+1, completion, len(msg.ToolCalls))); err != nil {
@@ -699,7 +700,9 @@ func finalizeOpenRouterAfterMaxTurns(ctx context.Context, writer *session.Writer
 	}); err != nil {
 		return err
 	}
-	completion, err := finalClient.CompleteWithOptions(ctx, compactedMessages, nil, openRouterFinalCompletionOptions(cfg))
+	completion, err := completeProviderWithRetries(ctx, writer, runner.SessionID, providerLabel, "final_handoff", maxTurns+1, finalClient.Model(), func() (modeladapter.Completion, error) {
+		return finalClient.CompleteWithOptions(ctx, compactedMessages, nil, openRouterFinalCompletionOptions(cfg))
+	})
 	if err != nil {
 		return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s model loop exceeded maximum turns; final handoff failed: %w", providerLabel, err))
 	}
@@ -783,6 +786,112 @@ func writeRepairFeedbackSuppressed(writer *session.Writer, sessionID, kind, mess
 		"count":      count,
 		"reason":     "duplicate feedback already sent to model",
 	})
+}
+
+const providerRetryMaxAttempts = 3
+
+func completeProviderWithRetries(ctx context.Context, writer *session.Writer, sessionID, provider, phase string, turn int, modelName string, call func() (modeladapter.Completion, error)) (modeladapter.Completion, error) {
+	var lastErr error
+	for attempt := 1; attempt <= providerRetryMaxAttempts; attempt++ {
+		completion, err := call()
+		if err == nil {
+			if attempt > 1 {
+				if writeErr := writer.Write(session.Event{
+					"type":       "provider_retry_succeeded",
+					"session_id": sessionID,
+					"provider":   strings.TrimSpace(provider),
+					"model":      strings.TrimSpace(modelName),
+					"phase":      strings.TrimSpace(phase),
+					"turn":       turn,
+					"attempt":    attempt,
+				}); writeErr != nil {
+					return modeladapter.Completion{}, writeErr
+				}
+			}
+			return completion, nil
+		}
+		lastErr = err
+		failure, _ := modeladapter.AsProviderError(err)
+		retryable := failure != nil && failure.Retryable && attempt < providerRetryMaxAttempts && ctx.Err() == nil
+		delay := providerRetryDelay(failure, attempt)
+		if writeErr := writeProviderFailure(writer, sessionID, provider, phase, turn, modelName, attempt, retryable, delay, err, failure); writeErr != nil {
+			return modeladapter.Completion{}, writeErr
+		}
+		if !retryable {
+			return modeladapter.Completion{}, err
+		}
+		if writeErr := writer.Write(session.Event{
+			"type":           "provider_retry",
+			"session_id":     sessionID,
+			"provider":       strings.TrimSpace(provider),
+			"model":          strings.TrimSpace(modelName),
+			"phase":          strings.TrimSpace(phase),
+			"turn":           turn,
+			"attempt":        attempt + 1,
+			"previous_error": err.Error(),
+			"delay_ms":       delay.Milliseconds(),
+		}); writeErr != nil {
+			return modeladapter.Completion{}, writeErr
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return modeladapter.Completion{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return modeladapter.Completion{}, lastErr
+}
+
+func writeProviderFailure(writer *session.Writer, sessionID, provider, phase string, turn int, modelName string, attempt int, retrying bool, delay time.Duration, err error, failure *modeladapter.ProviderError) error {
+	event := session.Event{
+		"type":       "provider_failure",
+		"session_id": sessionID,
+		"provider":   strings.TrimSpace(provider),
+		"model":      strings.TrimSpace(modelName),
+		"phase":      strings.TrimSpace(phase),
+		"turn":       turn,
+		"attempt":    attempt,
+		"message":    err.Error(),
+		"retrying":   retrying,
+	}
+	if retrying {
+		event["retry_delay_ms"] = delay.Milliseconds()
+	}
+	if failure != nil {
+		event["kind"] = string(failure.Kind)
+		event["retryable"] = failure.Retryable
+		if failure.StatusCode > 0 {
+			event["status_code"] = failure.StatusCode
+		}
+		if failure.RetryAfter > 0 {
+			event["retry_after_ms"] = failure.RetryAfter.Milliseconds()
+		}
+	} else {
+		event["kind"] = "unknown"
+		event["retryable"] = false
+	}
+	return writer.Write(event)
+}
+
+func providerRetryDelay(failure *modeladapter.ProviderError, attempt int) time.Duration {
+	delay := time.Duration(250*attempt) * time.Millisecond
+	if failure != nil && failure.RetryAfter > 0 {
+		delay = failure.RetryAfter
+	}
+	if delay > 2*time.Second {
+		return 2 * time.Second
+	}
+	if delay <= 0 {
+		return 250 * time.Millisecond
+	}
+	return delay
 }
 
 func openRouterFinalCompletionOptions(cfg modeladapter.OpenRouterConfig) modeladapter.CompletionOptions {

@@ -103,6 +103,30 @@ func TestAnalyzeFilesTraceQualityFlagsFailures(t *testing.T) {
 	}
 }
 
+func TestAnalyzeFilesTraceQualityFlagsProviderFailures(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	body := `{"type":"session_meta","id":"lca_provider_failure","cwd":"/repo"}
+{"type":"provider_failure","provider":"openrouter","kind":"rate_limited","message":"HTTP 429: slow down","retryable":true,"retrying":true}
+{"type":"provider_retry","provider":"openrouter","attempt":2,"delay_ms":250}
+{"type":"provider_retry_succeeded","provider":"openrouter","attempt":2}
+{"type":"verification_summary","status":"verified"}
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := AnalyzeFiles([]string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.ProviderFailures["rate_limited"] != 1 || summary.ProviderRetries != 1 || summary.ProviderRetrySuccesses != 1 {
+		t.Fatalf("provider metrics = failures %#v retries %d successes %d", summary.ProviderFailures, summary.ProviderRetries, summary.ProviderRetrySuccesses)
+	}
+	if summary.TraceQuality.ProviderFailures != 1 || summary.TraceQuality.ProviderRetries != 1 || !traceQualityHasFinding(summary.TraceQuality, "provider_failures") {
+		t.Fatalf("trace quality provider signals = %#v", summary.TraceQuality)
+	}
+}
+
 func traceQualityHasFinding(quality TraceQuality, code string) bool {
 	for _, finding := range quality.Findings {
 		if finding.Code == code {

@@ -941,7 +941,108 @@ func TestOpenRouterClientReportsHTTPStatusForNonJSONError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected OpenRouter HTTP error")
 	}
+	providerErr, ok := AsProviderError(err)
+	if !ok {
+		t.Fatalf("error type = %T, want ProviderError: %v", err, err)
+	}
+	if providerErr.Kind != ProviderFailureTransientHTTP || !providerErr.Retryable || providerErr.StatusCode != http.StatusBadGateway {
+		t.Fatalf("provider error = %#v, want retryable transient HTTP 502", providerErr)
+	}
 	if got := err.Error(); !strings.Contains(got, "HTTP 502") || !strings.Contains(got, "upstream temporarily unavailable") {
 		t.Fatalf("error = %q, want status and body snippet", got)
+	}
+}
+
+func TestOpenRouterClientClassifiesProviderFailures(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		wantKind   ProviderFailureKind
+		retryable  bool
+	}{
+		{
+			name:       "rate limit",
+			statusCode: http.StatusTooManyRequests,
+			body:       `{"error":{"message":"slow down","type":"rate_limit_exceeded"}}`,
+			wantKind:   ProviderFailureRateLimited,
+			retryable:  true,
+		},
+		{
+			name:       "auth",
+			statusCode: http.StatusUnauthorized,
+			body:       `{"error":{"message":"bad key","type":"invalid_api_key"}}`,
+			wantKind:   ProviderFailureAuth,
+			retryable:  false,
+		},
+		{
+			name:       "quota",
+			statusCode: http.StatusPaymentRequired,
+			body:       `{"error":{"message":"insufficient credits","type":"quota"}}`,
+			wantKind:   ProviderFailureQuota,
+			retryable:  false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Retry-After", "1")
+				w.WriteHeader(tt.statusCode)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+
+			client, err := NewOpenRouterClient(OpenRouterConfig{
+				APIKey:  "key",
+				BaseURL: server.URL,
+				Model:   "deepseek/deepseek-v4-pro",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}, Tools())
+			if err == nil {
+				t.Fatal("expected provider error")
+			}
+			providerErr, ok := AsProviderError(err)
+			if !ok {
+				t.Fatalf("error type = %T, want ProviderError: %v", err, err)
+			}
+			if providerErr.Kind != tt.wantKind || providerErr.Retryable != tt.retryable || providerErr.StatusCode != tt.statusCode {
+				t.Fatalf("provider error = %#v, want kind=%s retryable=%v status=%d", providerErr, tt.wantKind, tt.retryable, tt.statusCode)
+			}
+			if tt.retryable && providerErr.RetryAfter != time.Second {
+				t.Fatalf("retry-after = %s, want 1s", providerErr.RetryAfter)
+			}
+		})
+	}
+}
+
+func TestOpenRouterClientClassifiesMalformedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`not-json`))
+	}))
+	defer server.Close()
+
+	client, err := NewOpenRouterClient(OpenRouterConfig{
+		APIKey:  "key",
+		BaseURL: server.URL,
+		Model:   "deepseek/deepseek-v4-pro",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}, Tools())
+	if err == nil {
+		t.Fatal("expected decode error")
+	}
+	providerErr, ok := AsProviderError(err)
+	if !ok {
+		t.Fatalf("error type = %T, want ProviderError: %v", err, err)
+	}
+	if providerErr.Kind != ProviderFailureMalformedResponse || providerErr.Retryable {
+		t.Fatalf("provider error = %#v, want non-retryable malformed_response", providerErr)
 	}
 }
