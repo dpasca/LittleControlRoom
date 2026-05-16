@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestManagedLaunchModeForPolicy(t *testing.T) {
@@ -184,6 +185,28 @@ func TestMacApplicationProcessVisibilityScriptRaisesTargetWindowWhenFrontmost(t 
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q:\n%s", want, script)
 		}
+	}
+}
+
+func TestMacApplicationProcessDelayedRaiseScriptRepeatsTargetWindowRaise(t *testing.T) {
+	args, err := macApplicationProcessDelayedRaiseScript(49916, 300*time.Millisecond)
+	if err != nil {
+		t.Fatalf("macApplicationProcessDelayedRaiseScript() error = %v", err)
+	}
+	script := strings.Join(args, "\n")
+	for _, want := range []string{
+		"delay 0.300",
+		"unix id is 49916",
+		"set visible of targetProcess to true",
+		`perform action "AXRaise" of window 1 of targetProcess`,
+		"set frontmost of targetProcess to true",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("script missing %q:\n%s", want, script)
+		}
+	}
+	if got := strings.Count(script, `perform action "AXRaise" of window 1 of targetProcess`); got != 2 {
+		t.Fatalf("raise count = %d, want 2:\n%s", got, script)
 	}
 }
 

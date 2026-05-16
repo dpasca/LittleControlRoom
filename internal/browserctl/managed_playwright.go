@@ -377,7 +377,13 @@ func setMacApplicationProcessVisible(pid int, visible, frontmost bool) error {
 	if err != nil {
 		return err
 	}
-	return exec.Command("osascript", args...).Run()
+	if err := exec.Command("osascript", args...).Run(); err != nil {
+		return err
+	}
+	if visible && frontmost {
+		scheduleMacApplicationProcessDelayedRaise(pid)
+	}
+	return nil
 }
 
 func macApplicationProcessVisibilityScript(pid int, visible, frontmost bool) ([]string, error) {
@@ -406,6 +412,57 @@ func macApplicationProcessVisibilityScript(pid int, visible, frontmost bool) ([]
 		)
 	}
 	lines = append(lines, `end tell`)
+	args := make([]string, 0, len(lines)*2)
+	for _, line := range lines {
+		args = append(args, "-e", line)
+	}
+	return args, nil
+}
+
+func scheduleMacApplicationProcessDelayedRaise(pid int) {
+	args, err := macApplicationProcessDelayedRaiseScript(pid, 300*time.Millisecond)
+	if err != nil {
+		return
+	}
+	cmd := exec.Command("osascript", args...)
+	if err := cmd.Start(); err != nil {
+		return
+	}
+	go func() {
+		_ = cmd.Wait()
+	}()
+}
+
+func macApplicationProcessDelayedRaiseScript(pid int, delay time.Duration) ([]string, error) {
+	if pid <= 0 {
+		return nil, fmt.Errorf("managed browser pid required")
+	}
+	if delay < 0 {
+		delay = 0
+	}
+	pidLiteral := strconv.Itoa(pid)
+	delayLiteral := strconv.FormatFloat(delay.Seconds(), 'f', 3, 64)
+	lines := []string{
+		`delay ` + delayLiteral,
+		`tell application "System Events"`,
+		`set targetProcess to first application process whose unix id is ` + pidLiteral,
+		`set visible of targetProcess to true`,
+		`set frontmost of targetProcess to true`,
+		`try`,
+		`if (count of windows of targetProcess) > 0 then`,
+		`perform action "AXRaise" of window 1 of targetProcess`,
+		`end if`,
+		`end try`,
+		`delay 0.300`,
+		`set visible of targetProcess to true`,
+		`set frontmost of targetProcess to true`,
+		`try`,
+		`if (count of windows of targetProcess) > 0 then`,
+		`perform action "AXRaise" of window 1 of targetProcess`,
+		`end if`,
+		`end try`,
+		`end tell`,
+	}
 	args := make([]string, 0, len(lines)*2)
 	for _, line := range lines {
 		args = append(args, "-e", line)

@@ -96,6 +96,7 @@ Make browser automation feel quiet and predictable by default:
   - failed browser-reveal attempts release the slot immediately
 - Managed browser metadata is now written under the LCR data dir so the TUI can find and reveal the correct browser session instead of opening the URL in a disconnected desktop browser.
 - On macOS, managed browser reveal now raises the target process window after un-hiding it, which keeps parallel Chrome-backed Playwright sessions from falling back to whichever Chrome window was last active.
+- On macOS, reveal also schedules a short delayed second raise so the browser stays frontmost after the TUI finishes processing the reveal key.
 - On macOS, managed background browsers are re-hidden until the user reveals them through LCR, which reduces focus stealing from later Playwright navigations or newly created browser windows.
 - The shadow Playwright skill now tells embedded Codex to use the already-registered Playwright MCP tools instead of shelling out to a separate CLI browser path.
 - LCR now has a small non-TUI browser control surface:
