@@ -607,11 +607,12 @@ func patchFeedbackEvent(sessionID string, feedback PatchFeedback) session.Event 
 
 func finalVerificationStatus(filesChanged, verification []string, actualChecks []tools.VerificationCheck) (string, string) {
 	if len(actualChecks) > 0 {
-		failed := failedVerificationChecks(actualChecks)
+		finalChecks := latestVerificationOutcomes(relevantVerificationChecks(verification, actualChecks))
+		failed := failedVerificationChecks(finalChecks)
 		if len(failed) > 0 {
 			return "failed", "Verification checks failed: " + strings.Join(formatVerificationChecks(failed, 3), "; ")
 		}
-		message := "Verification checks passed: " + strings.Join(formatVerificationChecks(actualChecks, 3), "; ")
+		message := "Verification checks passed: " + strings.Join(formatVerificationChecks(finalChecks, 3), "; ")
 		if len(verification) == 0 {
 			message += ". final_response did not list verification details."
 		}
@@ -624,6 +625,53 @@ func finalVerificationStatus(filesChanged, verification []string, actualChecks [
 		return "missing_after_changes", "No verification check was run or reported for changed files."
 	}
 	return "not_run", "No verification check was run."
+}
+
+func relevantVerificationChecks(reported []string, actual []tools.VerificationCheck) []tools.VerificationCheck {
+	if len(reported) == 0 {
+		return actual
+	}
+	relevant := make([]tools.VerificationCheck, 0, len(actual))
+	for _, check := range actual {
+		if verificationReportsCheck(reported, check) {
+			relevant = append(relevant, check)
+		}
+	}
+	if len(relevant) == 0 {
+		return actual
+	}
+	return relevant
+}
+
+func verificationReportsCheck(reported []string, check tools.VerificationCheck) bool {
+	label := strings.ToLower(verificationCheckLabel(check))
+	if label == "" {
+		return false
+	}
+	for _, item := range reported {
+		if strings.Contains(strings.ToLower(item), label) {
+			return true
+		}
+	}
+	return false
+}
+
+func latestVerificationOutcomes(checks []tools.VerificationCheck) []tools.VerificationCheck {
+	out := make([]tools.VerificationCheck, 0, len(checks))
+	indexByLabel := map[string]int{}
+	for _, check := range checks {
+		label := verificationCheckLabel(check)
+		if label == "" {
+			label = "verification check"
+		}
+		if index, ok := indexByLabel[label]; ok {
+			out[index] = check
+			continue
+		}
+		indexByLabel[label] = len(out)
+		out = append(out, check)
+	}
+	return out
 }
 
 func failedVerificationChecks(checks []tools.VerificationCheck) []tools.VerificationCheck {
@@ -642,7 +690,7 @@ func formatVerificationChecks(checks []tools.VerificationCheck, limit int) []str
 	}
 	out := make([]string, 0, limit+1)
 	for _, check := range checks[:limit] {
-		label := firstNonEmpty(check.Command, strings.Join(check.Argv, " "), "verification check")
+		label := firstNonEmpty(verificationCheckLabel(check), "verification check")
 		if check.Status != "" && check.Status != tools.VerificationStatusPassed {
 			label += " (" + check.Status + ")"
 		}
@@ -652,6 +700,10 @@ func formatVerificationChecks(checks []tools.VerificationCheck, limit int) []str
 		out = append(out, fmt.Sprintf("%d more", len(checks)-limit))
 	}
 	return out
+}
+
+func verificationCheckLabel(check tools.VerificationCheck) string {
+	return firstNonEmpty(check.Command, strings.Join(check.Argv, " "))
 }
 
 func cleanStringList(values []string) []string {

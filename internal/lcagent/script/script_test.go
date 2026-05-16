@@ -120,6 +120,45 @@ func TestRunnerRecordsActualVerificationCheck(t *testing.T) {
 	}
 }
 
+func TestFinalVerificationStatusUsesLatestPassingOutcome(t *testing.T) {
+	status, message := finalVerificationStatus(nil, []string{"go test ./... - PASS"}, []tools.VerificationCheck{
+		{Command: "go test ./...", Status: tools.VerificationStatusFailed, ExitCode: 1},
+		{Command: "go test ./...", Status: tools.VerificationStatusPassed, Success: true},
+	})
+	if status != "verified" {
+		t.Fatalf("status = %q, want verified; message=%s", status, message)
+	}
+	if strings.Contains(message, "failed") || !strings.Contains(message, "go test ./...") {
+		t.Fatalf("message = %q", message)
+	}
+}
+
+func TestFinalVerificationStatusUsesReportedReplacementCommand(t *testing.T) {
+	status, message := finalVerificationStatus(nil, []string{"python3 -m unittest: OK"}, []tools.VerificationCheck{
+		{Command: "python -m unittest", Status: tools.VerificationStatusFailed, ExitCode: 127, Error: "executable not found"},
+		{Command: "python3 -m unittest", Status: tools.VerificationStatusPassed, Success: true},
+	})
+	if status != "verified" {
+		t.Fatalf("status = %q, want verified; message=%s", status, message)
+	}
+	if !strings.Contains(message, "python3 -m unittest") || strings.Contains(message, "python -m unittest") {
+		t.Fatalf("message = %q", message)
+	}
+}
+
+func TestFinalVerificationStatusKeepsLatestFailure(t *testing.T) {
+	status, message := finalVerificationStatus(nil, []string{"go test ./..."}, []tools.VerificationCheck{
+		{Command: "go test ./...", Status: tools.VerificationStatusPassed, Success: true},
+		{Command: "go test ./...", Status: tools.VerificationStatusFailed, ExitCode: 1},
+	})
+	if status != "failed" {
+		t.Fatalf("status = %q, want failed; message=%s", status, message)
+	}
+	if !strings.Contains(message, "go test ./... (failed)") {
+		t.Fatalf("message = %q", message)
+	}
+}
+
 func TestVerificationFeedbackForFailedCheck(t *testing.T) {
 	result := tools.ToolResult{
 		Success:  false,
