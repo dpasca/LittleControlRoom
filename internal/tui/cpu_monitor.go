@@ -25,6 +25,13 @@ const hotSystemCPUCapacityPercent = 75.0
 const cpuRemediationPromptCharLimit = 40000
 const cpuRemediationTaskTitle = "Investigate and reduce CPU usage"
 
+type cpuRemediationScope int
+
+const (
+	cpuRemediationScopeScoped cpuRemediationScope = iota
+	cpuRemediationScopeSnapshot
+)
+
 type cpuDialogState struct {
 	Loading      bool
 	Error        string
@@ -41,6 +48,7 @@ type cpuDialogState struct {
 type cpuRemediationEditorState struct {
 	Input      textarea.Model
 	Processes  []procinspect.CPUProcess
+	Scope      cpuRemediationScope
 	Submitting bool
 }
 
@@ -133,7 +141,9 @@ func (m Model) updateCPUDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = "Refreshing CPU usage..."
 		return m, m.requestCPUSnapshotRefreshCmd()
 	case "a":
-		return m.openCPURemediationEditor()
+		return m.openCPURemediationEditor(cpuRemediationScopeScoped)
+	case "A", "shift+a":
+		return m.openCPURemediationEditor(cpuRemediationScopeSnapshot)
 	case "enter":
 		if len(dialog.Processes) == 0 {
 			return m, nil
@@ -470,16 +480,17 @@ func cpuDialogMarkedCount(dialog *cpuDialogState) int {
 	return len(cpuDialogMarkedProcesses(dialog))
 }
 
-func (m Model) openCPURemediationEditor() (tea.Model, tea.Cmd) {
-	processes := m.cpuRemediationProcesses()
+func (m Model) openCPURemediationEditor(scope cpuRemediationScope) (tea.Model, tea.Cmd) {
+	processes := m.cpuRemediationProcessesForScope(scope)
 	if len(processes) == 0 {
 		m.status = "No CPU snapshot to hand to an engineer yet"
 		return m, nil
 	}
-	prompt := m.cpuRemediationPrompt(processes)
+	prompt := m.cpuRemediationPrompt(processes, scope)
 	m.cpuRemediationEditor = &cpuRemediationEditorState{
 		Input:     newCPURemediationPromptInput(prompt),
 		Processes: append([]procinspect.CPUProcess(nil), processes...),
+		Scope:     scope,
 	}
 	m.status = "Review CPU engineer prompt"
 	return m, m.cpuRemediationEditor.Input.Focus()
@@ -501,7 +512,7 @@ func (m Model) startCPURemediationTask() (tea.Model, tea.Cmd) {
 		m.status = "No CPU processes to hand to an engineer"
 		return m, nil
 	}
-	return m.startCPURemediationTaskWithPrompt(processes, m.cpuRemediationPrompt(processes))
+	return m.startCPURemediationTaskWithPrompt(processes, m.cpuRemediationPrompt(processes, cpuRemediationScopeScoped))
 }
 
 func (m Model) startCPURemediationTaskWithPrompt(processes []procinspect.CPUProcess, prompt string) (tea.Model, tea.Cmd) {
@@ -602,9 +613,28 @@ func cpuRemediationTaskLaunchPrompt(title, prompt string) string {
 }
 
 func (m Model) cpuRemediationProcesses() []procinspect.CPUProcess {
+	return m.cpuRemediationProcessesForScope(cpuRemediationScopeScoped)
+}
+
+func (m Model) cpuRemediationProcessesForScope(scope cpuRemediationScope) []procinspect.CPUProcess {
 	dialog := m.cpuDialog
 	if dialog == nil || len(dialog.Processes) == 0 {
 		return nil
+	}
+	if scope == cpuRemediationScopeSnapshot {
+		out := make([]procinspect.CPUProcess, 0, len(dialog.Processes))
+		seen := map[int]struct{}{}
+		for _, process := range dialog.Processes {
+			if process.PID <= 0 {
+				continue
+			}
+			if _, ok := seen[process.PID]; ok {
+				continue
+			}
+			seen[process.PID] = struct{}{}
+			out = append(out, process)
+		}
+		return out
 	}
 	if marked := cpuDialogMarkedProcesses(dialog); len(marked) > 0 {
 		return marked
@@ -615,7 +645,7 @@ func (m Model) cpuRemediationProcesses() []procinspect.CPUProcess {
 	return nil
 }
 
-func (m Model) cpuRemediationPrompt(processes []procinspect.CPUProcess) string {
+func (m Model) cpuRemediationPrompt(processes []procinspect.CPUProcess, scope cpuRemediationScope) string {
 	dialog := m.cpuDialog
 	totalCPU := 0.0
 	logicalCPUs := 0
@@ -628,18 +658,22 @@ func (m Model) cpuRemediationPrompt(processes []procinspect.CPUProcess) string {
 		}
 	}
 
-	lines := []string{
-		"Investigate the current high CPU usage and reduce it where it is safe to do so.",
-	}
+	lines := []string{cpuRemediationOpeningInstruction(scope)}
 	if scannedAt != "" {
 		lines = append(lines, "Snapshot scanned at: "+scannedAt)
 	}
+	cpuScopeLabel := "Scoped CPU: "
+	processSectionLabel := "Scoped CPU processes:"
+	if scope == cpuRemediationScopeSnapshot {
+		cpuScopeLabel = "Listed CPU: "
+		processSectionLabel = "CPU processes to inspect:"
+	}
 	lines = append(lines,
 		"Total CPU: "+formatSystemCPUPercent(totalCPU, logicalCPUs),
-		"Scoped CPU: "+formatSystemCPUPercent(sumCPUProcesses(processes), logicalCPUs),
+		cpuScopeLabel+formatSystemCPUPercent(sumCPUProcesses(processes), logicalCPUs),
 		"Note: per-process CPU values are raw ps percentages, so totals can exceed 100% on multicore machines.",
 		"",
-		"Scoped CPU processes:",
+		processSectionLabel,
 	)
 	for _, process := range processes {
 		lines = append(lines, "- "+m.cpuRemediationProcessLine(process))
@@ -647,6 +681,11 @@ func (m Model) cpuRemediationPrompt(processes []procinspect.CPUProcess) string {
 	lines = append(lines,
 		"",
 		"Goal:",
+	)
+	if scope == cpuRemediationScopeSnapshot {
+		lines = append(lines, "- Use the whole listed snapshot as context; choose the likely culprit yourself rather than assuming the selected row is relevant.")
+	}
+	lines = append(lines,
 		"- Identify which processes are expected system or foreground user processes and which look stale, orphaned, runaway, or unintended.",
 		"- Gracefully stop only processes that are clearly stale or unintended; prefer application/runtime-specific shutdown or SIGTERM before SIGKILL.",
 		"- Do not terminate macOS system services, Finder, WindowServer, fileproviderd, browsers, chat apps, editors, or other foreground user apps unless the evidence is unambiguous.",
@@ -654,6 +693,13 @@ func (m Model) cpuRemediationPrompt(processes []procinspect.CPUProcess) string {
 		"- After any action, resample CPU and report what changed, what was left alone, and any follow-up needed.",
 	)
 	return strings.Join(lines, "\n")
+}
+
+func cpuRemediationOpeningInstruction(scope cpuRemediationScope) string {
+	if scope == cpuRemediationScopeSnapshot {
+		return "Investigate the current CPU situation and identify what, if anything, is taking CPU time unexpectedly."
+	}
+	return "Investigate the current high CPU usage and reduce it where it is safe to do so."
 }
 
 func (m Model) cpuRemediationProcessLine(process procinspect.CPUProcess) string {
@@ -706,7 +752,7 @@ func (m Model) renderCPURemediationEditorOverlay(body string, bodyW, bodyH int) 
 	editor.Input.SetWidth(max(24, panelInnerW))
 	editor.Input.SetHeight(editorHeight)
 	lines := []string{
-		detailSectionStyle.Render("CPU Engineer Prompt") + "  " + detailValueStyle.Render(cpuRemediationScopeLabel(len(editor.Processes))),
+		detailSectionStyle.Render("CPU Engineer Prompt") + "  " + detailValueStyle.Render(cpuRemediationScopeLabel(editor.Scope, len(editor.Processes))),
 		"",
 		editor.Input.View(),
 		"",
@@ -782,6 +828,7 @@ func (m Model) renderCPUDialogContent(width, maxHeight int) string {
 func renderCPUDialogActions() string {
 	return renderDialogAction("space", "mark", pushActionKeyStyle, pushActionTextStyle) + "   " +
 		renderDialogAction("a", "ask scoped", pushActionKeyStyle, pushActionTextStyle) + "   " +
+		renderDialogAction("A", "ask all", pushActionKeyStyle, pushActionTextStyle) + "   " +
 		renderDialogAction("r", "refresh", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
 		renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle)
 }
@@ -1026,7 +1073,13 @@ func cpuDialogScopeLabel(shown, total int) string {
 	return "top system processes"
 }
 
-func cpuRemediationScopeLabel(count int) string {
+func cpuRemediationScopeLabel(scope cpuRemediationScope, count int) string {
+	if scope == cpuRemediationScopeSnapshot {
+		if count == 1 {
+			return "whole snapshot: 1 process"
+		}
+		return fmt.Sprintf("whole snapshot: %d processes", count)
+	}
 	if count == 1 {
 		return "1 scoped process"
 	}

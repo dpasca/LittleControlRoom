@@ -67,7 +67,7 @@ func TestCPUProcessRowsStayWithinCompactLimit(t *testing.T) {
 func TestCPUDialogActionsRenderOnOneLine(t *testing.T) {
 	rendered := ansi.Strip(renderCPUDialogActions())
 	compact := strings.Join(strings.Fields(rendered), " ")
-	for _, want := range []string{"space mark", "a ask scoped", "r refresh", "Esc close"} {
+	for _, want := range []string{"space mark", "a ask scoped", "A ask all", "r refresh", "Esc close"} {
 		if !strings.Contains(compact, want) {
 			t.Fatalf("actions missing %q: %q", want, rendered)
 		}
@@ -295,6 +295,55 @@ func TestCPUDialogAskEngineerUsesMarkedRows(t *testing.T) {
 	}
 	if strings.Contains(prompt, "PID 982") {
 		t.Fatalf("marked CPU prompt should exclude unmarked row:\n%s", prompt)
+	}
+}
+
+func TestCPUDialogAskEngineerCanUseWholeSnapshot(t *testing.T) {
+	m := Model{
+		cpuDialog: &cpuDialogState{
+			Selected:    1,
+			MarkedPIDs:  map[int]struct{}{34857: {}},
+			TotalCPU:    180,
+			LogicalCPUs: 8,
+			Processes: []procinspect.CPUProcess{
+				{Process: procinspect.Process{PID: 1110, CPU: 75.7, Command: "fileproviderd"}},
+				{Process: procinspect.Process{PID: 34857, CPU: 41, Command: "python runaway.py"}},
+				{Process: procinspect.Process{PID: 982, CPU: 12, Command: "WindowServer"}},
+			},
+		},
+	}
+
+	updated, cmd := m.updateCPUDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	got := updated.(Model)
+
+	if cmd == nil {
+		t.Fatalf("A should focus the CPU engineer prompt editor")
+	}
+	if got.cpuRemediationEditor == nil {
+		t.Fatalf("A should open the CPU engineer prompt editor")
+	}
+	if got.cpuRemediationEditor.Scope != cpuRemediationScopeSnapshot {
+		t.Fatalf("scope = %v, want snapshot", got.cpuRemediationEditor.Scope)
+	}
+	prompt := got.cpuRemediationEditor.Input.Value()
+	if len(got.cpuRemediationEditor.Processes) != 3 {
+		t.Fatalf("snapshot processes = %d, want 3", len(got.cpuRemediationEditor.Processes))
+	}
+	for _, want := range []string{
+		"Investigate the current CPU situation",
+		"Listed CPU:",
+		"CPU processes to inspect:",
+		"choose the likely culprit yourself",
+		"PID 1110",
+		"PID 34857",
+		"PID 982",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("snapshot CPU prompt/editor missing %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "Scoped CPU processes:") {
+		t.Fatalf("snapshot CPU prompt should not use scoped process wording:\n%s", prompt)
 	}
 }
 
