@@ -28,7 +28,21 @@ func (m Model) renderControlConfirmationDialog(bodyW, bodyH int) string {
 	if bodyH > 0 {
 		panelH = minInt(panelH, maxInt(8, bodyH-2))
 	}
-	return renderBossControlPanel("Confirm Control Action", content, panelW, panelH)
+	return renderBossControlPanel(m.controlConfirmationTitle(), content, panelW, panelH)
+}
+
+func (m Model) controlConfirmationTitle() string {
+	if m.pendingControl == nil {
+		return "Control Action"
+	}
+	switch m.pendingControl.Invocation.Capability {
+	case control.CapabilityEngineerSendPrompt:
+		return "Engineer Handoff"
+	case control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:
+		return "Engineer Task"
+	default:
+		return "Confirm Control Action"
+	}
 }
 
 func (m Model) renderControlConfirmationContent(width int) string {
@@ -61,7 +75,7 @@ func renderEngineerSendPromptConfirmation(input control.EngineerSendPromptInput,
 	}
 
 	lines := []string{
-		bossControlNoticeStyle.Render(fitLine("External action: send a prompt to an engineer session", width)),
+		bossControlNoticeStyle.Render(fitLine("Routine handoff: send a prompt to an engineer session", width)),
 		"",
 		renderBossControlDetail("Provider", provider, width),
 		renderBossControlDetail("Project", target, width),
@@ -97,7 +111,7 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 				capabilities = "none"
 			}
 			lines := []string{
-				bossControlNoticeStyle.Render(fitLine("External action: create an agent task", width)),
+				bossControlNoticeStyle.Render(fitLine("Routine handoff: create an agent task", width)),
 				"",
 				renderBossControlDetail("Task", input.Title, width),
 				renderBossControlDetail("Kind", string(input.Kind), width),
@@ -118,7 +132,7 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 		var input control.AgentTaskContinueInput
 		if err := json.Unmarshal(m.pendingControl.Invocation.Args, &input); err == nil {
 			lines := []string{
-				bossControlNoticeStyle.Render(fitLine("External action: continue an agent task", width)),
+				bossControlNoticeStyle.Render(fitLine("Routine handoff: continue an agent task", width)),
 				"",
 				renderBossControlDetail("Task", input.TaskID, width),
 				renderBossControlDetail("Provider", input.Provider.Label(), width),

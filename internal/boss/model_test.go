@@ -1151,7 +1151,7 @@ func TestEmbeddedModelConfirmsControlInvocation(t *testing.T) {
 	if got.pendingControl == nil {
 		t.Fatalf("pendingControl = nil, want confirmation state")
 	}
-	if got.status != "Confirm control action with Enter, or Esc to cancel" {
+	if got.status != "Ready to send to engineer with Enter, or Esc to cancel" {
 		t.Fatalf("status = %q", got.status)
 	}
 
@@ -1214,10 +1214,10 @@ func TestEmbeddedModelRendersControlConfirmationDialog(t *testing.T) {
 	got := updated.(Model)
 
 	rendered := ansi.Strip(got.View())
-	if !strings.Contains(rendered, "Confirm Control Action") {
+	if !strings.Contains(rendered, "Engineer Handoff") {
 		t.Fatalf("rendered view should show control confirmation dialog, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "External action") || !strings.Contains(rendered, "Enter") || !strings.Contains(rendered, "Esc") {
+	if !strings.Contains(rendered, "Routine handoff") || !strings.Contains(rendered, "Enter") || !strings.Contains(rendered, "Esc") {
 		t.Fatalf("rendered dialog should show action framing and keys, got %q", rendered)
 	}
 	if !strings.Contains(rendered, "Please fix the failing tests.") {

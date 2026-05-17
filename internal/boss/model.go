@@ -636,7 +636,7 @@ func (m Model) applyAssistantReply(response AssistantResponse, err error, snapsh
 				Preview:    content,
 			}
 			m.pendingGoal = nil
-			m.status = "Confirm control action with Enter, or Esc to cancel"
+			m.status = controlProposalStatus(*response.ControlInvocation)
 			m.syncLayout(true)
 			return m, nil
 		}
@@ -1053,7 +1053,7 @@ func (m Model) renderChat(layout bossLayout) string {
 			hint = "Enter runs command | Tab complete | Shift+Tab previous | Alt+Enter newline"
 		}
 		if m.pendingControl != nil {
-			hint = "Enter confirms engineer prompt | Esc cancels"
+			hint = controlProposalFooterHint(m.pendingControl.Invocation)
 		}
 		if m.pendingGoal != nil {
 			hint = "Enter runs approved goal | Esc cancels"
