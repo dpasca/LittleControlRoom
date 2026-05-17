@@ -398,19 +398,42 @@ func (m *Manager) runWorker(ctx context.Context) {
 	}
 }
 
-func (m *Manager) processOne(ctx context.Context) (bool, error) {
+func (m *Manager) processOne(ctx context.Context) (processed bool, err error) {
+	var classification model.SessionClassification
+	classificationClaimed := false
+	usageModelName := ""
+	usageStarted := false
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			return
+		}
+		panicErr := fmt.Errorf("session classification worker panic: %v", recovered)
+		if usageStarted && m.usage != nil {
+			m.usage.fail(usageModelName)
+		}
+		if classificationClaimed && classification.SessionID != "" {
+			m.failClassification(ctx, &classification, panicErr)
+			processed = true
+			err = nil
+			return
+		}
+		err = panicErr
+	}()
+
 	client, defaultModelName := m.currentClient()
 	if client == nil {
 		return false, nil
 	}
 
-	classification, err := m.store.ClaimNextPendingSessionClassification(ctx, m.staleAfter)
+	classification, err = m.store.ClaimNextPendingSessionClassification(ctx, m.staleAfter)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
 		}
 		return false, err
 	}
+	classificationClaimed = true
 
 	gitStatus := GitStatusSnapshot{}
 	sessionEvidence := model.SessionEvidence{
@@ -463,6 +486,8 @@ func (m *Manager) processOne(ctx context.Context) (bool, error) {
 	}
 	if m.usage != nil {
 		m.usage.start(modelName)
+		usageModelName = modelName
+		usageStarted = true
 	}
 
 	classifyCtx, stopHeartbeat := context.WithCancel(ctx)
@@ -474,6 +499,7 @@ func (m *Manager) processOne(ctx context.Context) (bool, error) {
 	if err != nil {
 		if m.usage != nil {
 			m.usage.fail(modelName)
+			usageStarted = false
 		}
 		m.failClassification(ctx, &classification, err)
 		return true, nil
@@ -484,6 +510,7 @@ func (m *Manager) processOne(ctx context.Context) (bool, error) {
 	}
 	if m.usage != nil {
 		m.usage.complete(modelName, result.Usage)
+		usageStarted = false
 	}
 
 	classification.Category = result.Category
@@ -497,6 +524,7 @@ func (m *Manager) processOne(ctx context.Context) (bool, error) {
 	if !completed {
 		return true, nil
 	}
+	classificationClaimed = false
 
 	m.publishClassificationEvent(ctx, classification, "completed", nil)
 	if m.onProjectUpdated != nil {

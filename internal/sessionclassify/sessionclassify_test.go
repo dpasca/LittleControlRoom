@@ -35,6 +35,18 @@ func (f *fakeClassifier) ModelName() string {
 	return f.model
 }
 
+type panicClassifier struct {
+	model string
+}
+
+func (p *panicClassifier) Classify(context.Context, SessionSnapshot) (Result, error) {
+	panic("classifier exploded")
+}
+
+func (p *panicClassifier) ModelName() string {
+	return p.model
+}
+
 type blockingClassifier struct {
 	result  Result
 	started chan struct{}
@@ -697,6 +709,100 @@ func TestManagerProcessOnePublishesFailureDiagnosis(t *testing.T) {
 	}
 	if !strings.Contains(classification.LastError, "context deadline exceeded") {
 		t.Fatalf("last error = %q, want timeout detail", classification.LastError)
+	}
+}
+
+func TestManagerProcessOneFailsClaimedClassificationAfterPanic(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	fixture := filepath.Clean(filepath.Join("..", "..", "testdata", "codex_footprint", "sessions", "2026", "03", "05", "rollout-modern.jsonl"))
+	now := time.Now()
+	state := model.ProjectState{
+		Path:           "/tmp/panic-demo",
+		Name:           "panic-demo",
+		Status:         model.StatusPossiblyStuck,
+		AttentionScore: 30,
+		InScope:        true,
+		UpdatedAt:      now,
+		Sessions: []model.SessionEvidence{{
+			SessionID:            "ses_panic_demo",
+			ProjectPath:          "/tmp/panic-demo",
+			SessionFile:          fixture,
+			Format:               "modern",
+			LastEventAt:          now,
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  true,
+		}},
+	}
+	if err := st.UpsertProjectState(ctx, state); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	bus := events.NewBus()
+	busCh, unsub := bus.Subscribe(1)
+	defer unsub()
+
+	manager := NewManager(st, bus, Options{
+		Client:  &panicClassifier{model: "gpt-panic-test"},
+		Workers: 1,
+	})
+
+	queued, err := manager.QueueProject(ctx, state)
+	if err != nil {
+		t.Fatalf("queue project: %v", err)
+	}
+	if !queued {
+		t.Fatalf("expected queue project to enqueue work")
+	}
+
+	processed, err := manager.processOne(ctx)
+	if err != nil {
+		t.Fatalf("process one should recover classifier panic, got error: %v", err)
+	}
+	if !processed {
+		t.Fatalf("expected processOne to process work")
+	}
+
+	select {
+	case evt := <-busCh:
+		if evt.Type != events.ClassificationUpdated {
+			t.Fatalf("event type = %s, want %s", evt.Type, events.ClassificationUpdated)
+		}
+		if evt.Payload["status"] != "failed" {
+			t.Fatalf("event status = %q, want failed", evt.Payload["status"])
+		}
+		if !strings.Contains(evt.Payload["error"], "session classification worker panic") {
+			t.Fatalf("event error = %q, want panic detail", evt.Payload["error"])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for classification failure event")
+	}
+
+	classification, err := st.GetSessionClassification(ctx, "ses_panic_demo")
+	if err != nil {
+		t.Fatalf("get classification: %v", err)
+	}
+	if classification.Status != model.ClassificationFailed {
+		t.Fatalf("status = %s, want failed", classification.Status)
+	}
+	if classification.Stage != "" {
+		t.Fatalf("stage = %s, want cleared stage", classification.Stage)
+	}
+	if !strings.Contains(classification.LastError, "session classification worker panic") ||
+		!strings.Contains(classification.LastError, "classifier exploded") {
+		t.Fatalf("last error = %q, want panic detail", classification.LastError)
+	}
+
+	usage := manager.UsageSnapshot()
+	if usage.Running != 0 || usage.Failed != 1 {
+		t.Fatalf("usage after panic = %+v, want one failed and none running", usage)
 	}
 }
 
